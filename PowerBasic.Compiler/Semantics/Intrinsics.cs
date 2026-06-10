@@ -143,6 +143,7 @@ public static class Intrinsics {
     Add("STRSEG", 1, 1, IntrinsicReturn.Word);
     Add("CODEPTR", 1, 1, IntrinsicReturn.Word);
     Add("CODESEG", 1, 1, IntrinsicReturn.Word);
+    Add("CODEPTR32", 1, 1, IntrinsicReturn.Dword);
     Add("BIT", 2, 2, IntrinsicReturn.Integer);
     Add("BITS", 3, 3, IntrinsicReturn.Long);
     Add("UBOUND", 1, 2, IntrinsicReturn.Long);

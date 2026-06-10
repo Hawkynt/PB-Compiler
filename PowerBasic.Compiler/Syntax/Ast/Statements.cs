@@ -86,6 +86,9 @@ public sealed record IncrDecrStmt(SourcePosition Position, bool Increment, Expre
 /// <summary>SUB invocation: <c>CALL Name(args)</c> or bare <c>Name args</c>.</summary>
 public sealed record CallStmt(SourcePosition Position, string Name, IReadOnlyList<Expression> Arguments, bool UsedCallKeyword) : Statement(Position);
 
+/// <summary>Far call through a 32-bit pointer: <c>CALL DWORD ptr [BDECL|CDECL|SDECL] (args)</c>.</summary>
+public sealed record CallPtrStmt(SourcePosition Position, Expression Pointer, string? Convention, IReadOnlyList<Expression> Arguments) : Statement(Position);
+
 /// <summary>MID$(s$, start [, len]) = value$ statement form.</summary>
 public sealed record MidAssignStmt(SourcePosition Position, Expression Target, Expression Start, Expression? Length, Expression Value) : Statement(Position);
 

@@ -10,6 +10,18 @@ public sealed partial class Parser {
     var name = this.Expect(TokenKind.Identifier, "SUB name");
     var upper = name.Text.ToUpperInvariant();
 
+    // CALL DWORD ptr32 [BDECL|CDECL|SDECL] (args) - far call through a pointer
+    if (upper == "DWORD") {
+      var pointer = this.ParseExpression();
+      string? convention = null;
+      if (this.Current.Kind == TokenKind.Identifier && this.Current.Text.ToUpperInvariant() is "BDECL" or "CDECL" or "SDECL") {
+        convention = this.Current.Text.ToUpperInvariant();
+        this.Advance();
+      }
+      var ptrArgs = this.Current.Kind == TokenKind.LParen ? this.ParseArgumentList() : [];
+      return new CallPtrStmt(pos, pointer, convention, ptrArgs);
+    }
+
     // CALL INTERRUPT n / CALL ABSOLUTE addr are compiler services, not user SUBs
     if (upper is "INTERRUPT" or "ABSOLUTE") {
       var serviceArgs = new List<Expression?>();
@@ -22,6 +34,16 @@ public sealed partial class Parser {
 
     var arguments = this.Current.Kind == TokenKind.LParen ? this.ParseArgumentList() : [];
     return new CallStmt(pos, name.Text, arguments, true);
+  }
+
+  /// <summary>GET$ [#]fh, count, strvar / PUT$ [#]fh, strvar - string-file I/O statements.</summary>
+  private Statement ParseGetPutString(string keyword) {
+    var pos = this.Advance().Position;
+    this.Match(TokenKind.Hash);
+    var arguments = new List<Expression?> { this.ParseExpression() };
+    while (this.Match(TokenKind.Comma))
+      arguments.Add(this.Current.Kind == TokenKind.Comma ? null : this.ParseExpression());
+    return new CommandStmt(pos, keyword + "$", arguments);
   }
 
   /// <summary>Identifier-led fallback: <c>Name (args)</c> or <c>Name a, b</c> or bare <c>Name</c>.</summary>

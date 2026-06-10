@@ -194,6 +194,10 @@ public sealed partial class Parser {
     if (keyword == "MID" && token.Suffix == TypeSuffix.String && this.Peek().Kind == TokenKind.LParen)
       return this.ParseMidAssign();
 
+    // GET$ fh, count, strvar / PUT$ fh, strvar - string-file statements
+    if (keyword is "GET" or "PUT" && token.Suffix == TypeSuffix.String)
+      return this.ParseGetPutString(keyword);
+
     // IF/WHILE conditions may start with '(' and contain '=', which would look like an assignment
     if (keyword is not ("IF" or "WHILE") && this.IsAssignmentAhead())
       return this.ParseAssignment();

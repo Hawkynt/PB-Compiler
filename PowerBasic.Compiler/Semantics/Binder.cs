@@ -13,6 +13,7 @@ public sealed class Binder {
   private readonly SemanticModel _model;
   private readonly CompilationUnit _unit;
   private readonly Dictionary<char, PbType> _defaultTypes = [];
+  private readonly HashSet<string> _redimmedArrays = new(StringComparer.OrdinalIgnoreCase);
   private ConstantFolder _folder;
   private bool _dynamicMode;
   private int _optionBase;
@@ -25,9 +26,34 @@ public sealed class Binder {
 
   public static SemanticModel Bind(CompilationUnit unit) {
     var binder = new Binder(unit);
+    binder.CollectRedims(unit.Statements);
     binder.ScanModule();
     binder.BindAllBodies();
     return binder._model;
+  }
+
+  /// <summary>
+  /// PB treats every array that appears in a REDIM anywhere as $DYNAMIC, even when
+  /// its DIM has constant bounds - collect those names before declaring anything.
+  /// </summary>
+  private void CollectRedims(IReadOnlyList<Statement> statements) {
+    foreach (var statement in statements)
+      switch (statement) {
+        case RedimStmt redim:
+          foreach (var v in redim.Variables)
+            this._redimmedArrays.Add(VariableKey(v.Name, v.Suffix));
+          break;
+        case SubDecl s:
+          this.CollectRedims(s.Body);
+          break;
+        case FunctionDecl f:
+          this.CollectRedims(f.Body);
+          break;
+        default:
+          foreach (var block in ChildBlocks(statement))
+            this.CollectRedims(block);
+          break;
+      }
   }
 
   private void Error(SourcePosition position, string message) => this._model.Errors.Add(new(position, message));
@@ -214,9 +240,10 @@ public sealed class Binder {
     if (v.ArrayBounds == null)
       return new(v.Name, elementType, storage);
 
-    // try static bounds; any non-constant bound (or $DYNAMIC mode) makes the array dynamic
+    // try static bounds; any non-constant bound, $DYNAMIC mode, or a REDIM
+    // anywhere in the program makes the array dynamic
     var bounds = new List<(int, int)>();
-    var isStatic = !this._dynamicMode;
+    var isStatic = !this._dynamicMode && !this._redimmedArrays.Contains(VariableKey(v.Name, v.Suffix));
     foreach (var (lowerExpr, upperExpr) in v.ArrayBounds) {
       var lower = lowerExpr == null ? this._optionBase : (int?)(this._folder.TryFold(lowerExpr)?.Integer);
       var upper = (int?)(this._folder.TryFold(upperExpr)?.Integer);
@@ -387,6 +414,12 @@ public sealed class Binder {
 
       case CallStmt c:
         this.BindCallStatement(c, scope);
+        break;
+
+      case CallPtrStmt cp:
+        this.BindExpression(cp.Pointer, scope);
+        foreach (var argument in cp.Arguments)
+          this.BindExpression(argument, scope);
         break;
 
       case DimStmt dim:
@@ -707,17 +740,24 @@ public sealed class Binder {
   }
 
   private void BindCallStatement(CallStmt c, Scope scope) {
-    if (this._model.Procedures.TryGetValue(c.Name, out var proc) && !proc.IsFunction) {
+    // PB allows CALL on a FUNCTION too - the result is discarded
+    if (this._model.Procedures.TryGetValue(c.Name, out var proc)) {
       this._model.CallBindings[c] = proc;
       if (c.Arguments.Count != proc.Parameters.Count && !proc.Parameters.Any(p => Equals(p.Type, PbType.Any)))
-        this.Error(c.Position, $"SUB {c.Name} expects {proc.Parameters.Count} argument(s), got {c.Arguments.Count}");
-      foreach (var argument in c.Arguments)
-        this.BindExpression(argument, scope);
+        this.Error(c.Position, $"{(proc.IsFunction ? "FUNCTION" : "SUB")} {c.Name} expects {proc.Parameters.Count} argument(s), got {c.Arguments.Count}");
+      this.BindCallArguments(proc, c.Arguments, scope);
       return;
     }
 
     this.Error(c.Position, $"unknown SUB {c.Name}");
     foreach (var argument in c.Arguments)
+      this.BindExpression(argument, scope);
+  }
+
+  /// <summary>Binds call arguments; CODEPTR-family arguments referring to procedures bind as code addresses.</summary>
+  private void BindCallArguments(ProcedureSymbol proc, IReadOnlyList<Expression> arguments, Scope scope) {
+    _ = proc;
+    foreach (var argument in arguments)
       this.BindExpression(argument, scope);
   }
 
@@ -779,7 +819,15 @@ public sealed class Binder {
       }
 
       case NameExpr n: {
-        var symbol = this.ResolveVariable(n.Name, n.Suffix, scope, create: true, n.Position);
+        var symbol = this.ResolveVariable(n.Name, n.Suffix, scope, create: false, n.Position);
+
+        // a bare name may be a parameterless FUNCTION call (PB allows omitting "()")
+        if (symbol == null && this._model.Procedures.TryGetValue(n.Name, out var fn) && fn.IsFunction) {
+          this._model.CallBindings[n] = fn;
+          return fn.ReturnType ?? PbType.Integer;
+        }
+
+        symbol ??= this.ResolveVariable(n.Name, n.Suffix, scope, create: true, n.Position);
         this._model.VariableBindings[n] = symbol!;
         return symbol!.Type is ArrayType arr ? arr : symbol.Type;
       }
@@ -800,6 +848,15 @@ public sealed class Binder {
           return PbType.Integer;
         }
         return field.Type;
+      }
+
+      case IndexExpr ix: {
+        // indexing a member-access result: a UDT array field selects one element
+        // of the field's element type, so the target's bound type carries through
+        var targetType = this.BindExpression(ix.Target, scope);
+        foreach (var index in ix.Arguments)
+          this.BindExpression(index, scope);
+        return targetType is ArrayType arr ? arr.Element : targetType;
       }
 
       case UnaryExpr u: {
@@ -875,10 +932,12 @@ public sealed class Binder {
   private PbType BindCallOrIndex(CallOrIndexExpr call, Scope scope) {
     var key = VariableKey(call.Name, call.Suffix);
 
-    // 1. array indexing
+    // 1. array indexing (or a whole-array reference like `arr()` in argument lists)
     var symbol = this.LookupVariable(key, scope);
     if (symbol is { Type: ArrayType array }) {
       this._model.VariableBindings[call] = symbol;
+      if (call.Arguments.Count == 0)
+        return array;
       if (array.Rank != call.Arguments.Count && array.StaticBounds != null)
         this.Error(call.Position, $"array {call.Name} has rank {array.Rank}, got {call.Arguments.Count} index(es)");
       foreach (var index in call.Arguments)
@@ -892,6 +951,16 @@ public sealed class Binder {
       this._model.IntrinsicBindings[call] = intrinsic;
       if (call.Arguments.Count < intrinsic.MinArgs || call.Arguments.Count > intrinsic.MaxArgs)
         this.Error(call.Position, $"{intrinsic.Name} expects {intrinsic.MinArgs}..{intrinsic.MaxArgs} argument(s), got {call.Arguments.Count}");
+
+      // CODEPTR-family takes a SUB/FUNCTION name and yields its code address
+      if (intrinsic.Name is "CODEPTR" or "CODESEG" or "CODEPTR32"
+          && call.Arguments is [NameExpr procRef]
+          && this._model.Procedures.TryGetValue(procRef.Name, out var target)) {
+        this._model.CallBindings[procRef] = target;
+        this._model.ExpressionTypes[procRef] = intrinsic.Name == "CODEPTR32" ? PbType.Dword : PbType.Word;
+        return intrinsic.Name == "CODEPTR32" ? PbType.Dword : PbType.Word;
+      }
+
       PbType? firstArg = null;
       foreach (var argument in call.Arguments) {
         var t = this.BindExpression(argument, scope);
