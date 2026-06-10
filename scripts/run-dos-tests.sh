@@ -67,16 +67,31 @@ for t in "${tests[@]}"; do
     echo "FAIL  $name (compile)"; sed 's/^/      /' "build/T$i.pbcout"; fail=1; continue
   fi
 
-  # one DOSBox session per test, fully headless, stdout redirected
+  # one DOSBox session per test. DONE.TXT is the completion sentinel:
+  # dosbox-staging refuses to exit when the program finishes "too quickly"
+  # (anti-vanish UX), so the harness polls the sentinel and kills the emulator.
   {
     echo "[sdl]"; echo "[cpu]"; echo "core=auto"; echo "cycles=max"
     echo "[autoexec]"
-    echo "mount c \"$(pwd)/build\""
+    echo "mount c \"$(pwd -W 2>/dev/null || pwd)/build\""  # pwd -W: Windows-style path under git-bash
     echo "c:"
     echo "T$i.EXE > T$i.OUT"
+    echo "echo ok > DONE.TXT"
     echo "exit"
   } > "build/dosbox-T$i.conf"
-  SDL_VIDEODRIVER=dummy timeout 120 "$DOSBOX" -conf "build/dosbox-T$i.conf" >/dev/null 2>&1 || true
+  rm -f build/DONE.TXT
+  "$DOSBOX" -conf "build/dosbox-T$i.conf" >/dev/null 2>&1 &
+  dospid=$!
+  for _ in $(seq 1 600); do
+    { [ -f build/DONE.TXT ] || ! kill -0 "$dospid" 2>/dev/null; } && break
+    sleep 0.2
+  done
+  if kill -0 "$dospid" 2>/dev/null; then
+    sleep 0.3
+    kill "$dospid" 2>/dev/null || true
+    wait "$dospid" 2>/dev/null || true
+  fi
+  [ -f build/DONE.TXT ] || { echo "FAIL  $name (hang)"; fail=1; continue; }
 
   if [ -f "tests/$name.expected" ]; then
     norm() { tr -d '\r' < "$1" | sed -e 's/[[:space:]]*$//'; }
