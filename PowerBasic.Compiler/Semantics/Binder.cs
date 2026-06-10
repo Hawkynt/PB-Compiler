@@ -909,12 +909,21 @@ public sealed class Binder {
     return b.Op switch {
       BinaryOp.Divide => Widest(left, right) is ScalarType { IsFloat: true } f ? f : PbType.Ext,
       BinaryOp.Power => PbType.Ext,
-      BinaryOp.IntegerDivide or BinaryOp.Modulo => IntegralOf(Widest(left, right)),
+      BinaryOp.IntegerDivide or BinaryOp.Modulo => PromoteUnsigned(IntegralOf(Widest(left, right))),
       BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Eqv or BinaryOp.Imp => IntegralOf(Widest(left, right)),
       BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual or BinaryOp.GreaterEqual => PbType.Integer,
-      _ => Widest(left, right),
+      _ => PromoteUnsigned(Widest(left, right)),
     };
   }
+
+  /// <summary>
+  /// PB 3.5 carries unsigned arithmetic in the next wider signed type: BYTE
+  /// results widen to INTEGER, WORD results to LONG (the SVGA corpus relies on
+  /// WORD*WORD pixel offsets &gt; 65535). DWORD stays DWORD.
+  /// </summary>
+  private static PbType PromoteUnsigned(PbType t) => t is ScalarType { IsFloat: false, Signed: false } u
+    ? u.Size switch { 1 => PbType.Integer, 2 => PbType.Long, _ => t }
+    : t;
 
   private PbType ErrorType(SourcePosition position, string message) {
     this.Error(position, message);
