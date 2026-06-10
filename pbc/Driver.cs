@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Emit;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
 
@@ -12,6 +13,9 @@ public static class Driver {
       PrintUsage(stdout);
       return args.Length == 0 ? 1 : 0;
     }
+
+    if (args[0].Equals("lib", StringComparison.OrdinalIgnoreCase))
+      return RunLib(args[1..], stdout, stderr);
 
     string? source = null;
     string? output = null;
@@ -100,10 +104,57 @@ public static class Driver {
     }
   }
 
+  /// <summary>pblib-style library maintenance: build a .PBL from .PBUs, or list contents.</summary>
+  private static int RunLib(string[] args, TextWriter stdout, TextWriter stderr) {
+    switch (args) {
+      case ["build", var output, .. var unitFiles] when unitFiles.Length > 0: {
+        var library = new PblFile();
+        foreach (var file in unitFiles) {
+          if (!File.Exists(file)) {
+            stderr.WriteLine($"pbc lib: unit '{file}' not found");
+            return 1;
+          }
+          using var stream = File.OpenRead(file);
+          library.Units.Add(PbuFile.Read(stream));
+        }
+        using (var stream = File.Create(output))
+          library.Write(stream);
+        stdout.WriteLine($"{Path.GetFileName(output)}: {library.Units.Count} unit(s)");
+        return 0;
+      }
+
+      case ["list", var file] when File.Exists(file): {
+        using var stream = File.OpenRead(file);
+        if (file.EndsWith(".PBU", StringComparison.OrdinalIgnoreCase)) {
+          DescribeUnit(PbuFile.Read(stream), stdout);
+          return 0;
+        }
+        foreach (var unit in PblFile.Read(stream).Units)
+          DescribeUnit(unit, stdout);
+        return 0;
+      }
+
+      default:
+        stderr.WriteLine("usage: pbc lib build <out.PBL> <unit.PBU>...");
+        stderr.WriteLine("       pbc lib list <file.PBL|file.PBU>");
+        return 1;
+    }
+  }
+
+  private static void DescribeUnit(PbuFile unit, TextWriter stdout) {
+    stdout.WriteLine($"{unit.Name}: code={unit.Code.Length} data={unit.Data.Length} bss={unit.BssSize} cpu={unit.CpuFlags}");
+    foreach (var e in unit.Exports)
+      stdout.WriteLine($"  exports {(e.Kind == PbuExportKind.Function ? "FUNCTION" : "SUB")} {e.Name} @{e.CodeOffset:X4}");
+    foreach (var i in unit.Imports)
+      stdout.WriteLine($"  imports {i.Name}");
+  }
+
   private static void PrintUsage(TextWriter w) {
     w.WriteLine("PB-Compiler - PowerBASIC 3.5 compatible compiler for 16-bit real-mode DOS");
     w.WriteLine();
     w.WriteLine("Usage: pbc [options] <source.BAS>");
+    w.WriteLine("       pbc lib build <out.PBL> <unit.PBU>...");
+    w.WriteLine("       pbc lib list <file.PBL|file.PBU>");
     w.WriteLine();
     w.WriteLine("Options:");
     w.WriteLine("  -O <file>      output file name (default: <source>.EXE)");
