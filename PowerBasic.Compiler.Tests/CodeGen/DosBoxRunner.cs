@@ -26,7 +26,14 @@ public static class DosBoxRunner {
   }
 
   /// <summary>Runs <paramref name="exeBytes"/> in DOSBox; returns the redirected stdout text.</summary>
-  public static string Run(byte[] exeBytes, int timeoutMs = 60000) {
+  public static string Run(byte[] exeBytes, int timeoutMs = 60000)
+    => RunWithFiles(exeBytes, [], timeoutMs).Output;
+
+  /// <summary>
+  /// Runs <paramref name="exeBytes"/> in DOSBox and additionally retrieves the
+  /// named files the program created in its working directory (e.g. UNITTEST.LOG).
+  /// </summary>
+  public static (string Output, Dictionary<string, string> Files) RunWithFiles(byte[] exeBytes, IReadOnlyList<string> fetchFiles, int timeoutMs = 60000) {
     Assume.That(Executable, Is.Not.Null, "DOSBox not found - execution test skipped");
 
     var dir = Path.Combine(Path.GetTempPath(), "pbc-test-" + Guid.NewGuid().ToString("N")[..8]);
@@ -73,7 +80,13 @@ public static class DosBoxRunner {
         Assert.Fail("DOSBox run timed out - generated program probably hangs");
 
       var outFile = Path.Combine(dir, "T.OUT");
-      return File.Exists(outFile) ? File.ReadAllText(outFile) : "";
+      var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+      foreach (var name in fetchFiles) {
+        var path = Path.Combine(dir, name);
+        if (File.Exists(path))
+          files[name] = File.ReadAllText(path);
+      }
+      return (File.Exists(outFile) ? File.ReadAllText(outFile) : "", files);
     } finally {
       try {
         Directory.Delete(dir, recursive: true);

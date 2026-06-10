@@ -1,0 +1,19 @@
+[]
+[]
+[abc]
+ 0
+ 3
+ 0
+PREFIX-LT
+BYTE-GT
+EMPTY-EQ
+-7
+-12.5
+ 42
+FF 00FF
+101 10
+ababab
+AB
+ 1
+A             B
+ 1             2

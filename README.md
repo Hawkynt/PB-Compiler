@@ -44,7 +44,7 @@ breakdown and [CHANGELOG.md](CHANGELOG.md) for progress.
 | Parser | ✅ full grammar; the whole [PB-SvgaLibrary](https://github.com/Hawkynt/PB-SvgaLibrary) corpus parses (27&nbsp;772 statements) |
 | Semantic analysis | ✅ all 31 corpus suites bind error-free |
 | 8086–386 + x87 assembler, MZ writer | ✅ 680 golden-byte tests |
-| Code generator + DOS runtime | 🚧 integers/longs/floats/control flow/PRINT run verified under DOSBox; strings, procedures, arrays, file I/O in progress |
+| Code generator + DOS runtime | 🚧 integers/longs/floats/control flow/PRINT, dynamic strings (far heap with compaction), SUB/FUNCTION frames (BYREF/BYVAL, recursion, STATIC), static & REDIM arrays, UDTs, sequential file I/O — verified under DOSBox incl. a TESTLIB.BI suite; PRINT USING, RANDOM/BINARY files, graphics pending |
 | PBU/PBL units & linker | 🚧 container formats + import resolution done; codegen integration pending |
 | Inline assembler | 🚧 text-level encoder done; codegen hookup pending |
 | DOSBox harness + CI | ✅ golden battery + execution tests, headless |

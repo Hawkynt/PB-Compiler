@@ -5,18 +5,27 @@ namespace PowerBasic.Compiler.Runtime;
 /// <summary>
 /// Emits the DOS runtime kernel into the program image. Register conventions
 /// (callee preserves everything it does not return in):
-///   PrintStr:     DS:SI = text, CX = length
+///   PrintStr:     DS:SI = text, CX = length (writes to the current output
+///                 handle rt_curout; in capture mode appends to rt_capbuf)
 ///   PrintInt16:   AX = signed value      (PB style: sign/space prefix, trailing space)
 ///   PrintInt32:   DX:AX = signed value   (same formatting)
 ///   PrintSingle:  value on ST(0), popped (7 significant digits)
 ///   PrintDouble:  value on ST(0), popped (15 significant digits)
-///   PrintNewLine: -
+///   PrintNewLine: - (resets the print column)
+///   PrintZone:    advances to the next 14-column print zone
 ///   Pow:          ST(1)=base, ST(0)=exponent -> result ST(0)
 ///   LongMul/Div/Mod: left DX:AX, right CX:BX -> result DX:AX
 ///   Exit:         AL = exit code
-/// The memory model is tiny-style: CS=DS=SS, SP grows down from 0xFFFE.
+/// String/file/array routine conventions are documented in the partials
+/// (DosRuntime.Strings.cs, DosRuntime.Files.cs, DosRuntime.Arrays.cs).
+/// Memory model: CS=DS=SS single segment, SP grows down from 0xFFFE; the far
+/// string heap lives at CS+0x1000, the far array heap at CS+0x2000 (one full
+/// 64 KiB segment each, reserved via MinExtraParagraphs).
 /// </summary>
-public sealed class DosRuntime {
+public sealed partial class DosRuntime {
+
+  /// <summary>Paragraphs to reserve beyond the 64 KiB main segment: string heap + array heap.</summary>
+  public const int ExtraHeapParagraphs = 0x2000;
 
   public Label PrintStr { get; private set; } = null!;
   public Label PrintInt16 { get; private set; } = null!;
@@ -24,6 +33,7 @@ public sealed class DosRuntime {
   public Label PrintSingle { get; private set; } = null!;
   public Label PrintDouble { get; private set; } = null!;
   public Label PrintNewLine { get; private set; } = null!;
+  public Label PrintZone { get; private set; } = null!;
   public Label Pow { get; private set; } = null!;
   public Label LongMul { get; private set; } = null!;
   public Label LongDiv { get; private set; } = null!;
@@ -33,13 +43,18 @@ public sealed class DosRuntime {
   private Label _numBuffer = null!;
   private Label _scratch = null!;
 
-  /// <summary>Emits the entry stub: segment setup, FPU init, jump to user main.</summary>
+  /// <summary>Emits the entry stub: segment setup, heap segment registers, FPU init, jump to user main.</summary>
   public void EmitEntry(Assembler asm, Label userMain) {
     // CS = DS = SS already arranged by the MZ header (SS=0 reloc, SP=0xFFFE);
     // DOS loads DS/ES = PSP, so re-point them at our single segment.
     asm.Mov(Reg.AX, Reg.CS);
     asm.Mov(Reg.DS, Reg.AX);
     asm.Mov(Reg.ES, Reg.AX);
+    asm.Add(Reg.AX, 0x1000);
+    asm.Mov(Mem.Word(asm.Lbl("rt_strseg")), Reg.AX);
+    asm.Add(Reg.AX, 0x1000);
+    asm.Mov(Mem.Word(asm.Lbl("rt_arrseg")), Reg.AX);
+    asm.Mov(Mem.Word(asm.Lbl("rt_curout")), 1);
     asm.Finit();
     asm.Jmp(userMain);
   }
@@ -49,21 +64,30 @@ public sealed class DosRuntime {
     this._numBuffer = asm.Lbl("rt_numbuf");
     this._scratch = asm.Lbl("rt_scratch");
     this.EmitExit(asm);
+    this.EmitErrors(asm);
     this.EmitPrintStr(asm);
     this.EmitPrintNewLine(asm);
+    this.EmitPrintZone(asm);
     this.EmitPrintInt16(asm);
     this.EmitPrintInt32(asm);
     this.EmitPrintFloat(asm);
     this.EmitPow(asm);
     this.EmitLongHelpers(asm);
+    this.EmitStringProcedures(asm);
+    this.EmitFileProcedures(asm);
+    this.EmitArrayProcedures(asm);
   }
 
   /// <summary>Emits runtime data cells; call while laying out the data area.</summary>
   public void EmitData(Assembler asm) {
+    asm.Align(2);
     this._numBuffer = asm.MarkLabel("rt_numbuf");
-    asm.Db(new byte[32]);
+    asm.Db(new byte[36]);
     this._scratch = asm.MarkLabel("rt_scratch");
     asm.Db(new byte[16]);
+    this.EmitStringData(asm);
+    this.EmitFileData(asm);
+    this.EmitArrayData(asm);
   }
 
   private void EmitExit(Assembler asm) {
@@ -72,21 +96,76 @@ public sealed class DosRuntime {
     asm.Int(0x21);
   }
 
+  /// <summary>Fatal runtime errors: message to stdout, exit code 3.</summary>
+  private void EmitErrors(Assembler asm) {
+    void Emit(string label, string message) {
+      asm.MarkLabel(label);
+      asm.Mov(Reg.DX, Imm.OffsetOf(asm.Lbl(label + "_msg")));
+      asm.Mov(Reg.CX, message.Length + 2);
+      asm.Mov(Reg.BX, 1);
+      asm.Mov(Reg.AH, 0x40);
+      asm.Int(0x21);
+      asm.Mov(Reg.AL, (Imm)3);
+      asm.Jmp(this.Exit);
+    }
+
+    Emit("rt_err_oss", "OUT OF STRING SPACE");
+    Emit("rt_err_arr", "OUT OF ARRAY SPACE");
+    Emit("rt_err_io", "I/O ERROR");
+  }
+
+  private void EmitErrorMessages(Assembler asm) {
+    void Emit(string label, string message) {
+      asm.MarkLabel(label + "_msg");
+      asm.Db(message);
+      asm.Db(0x0D, 0x0A);
+    }
+
+    Emit("rt_err_oss", "OUT OF STRING SPACE");
+    Emit("rt_err_arr", "OUT OF ARRAY SPACE");
+    Emit("rt_err_io", "I/O ERROR");
+  }
+
   private void EmitPrintStr(Assembler asm) {
     this.PrintStr = asm.MarkLabel("rt_print_str");
     var done = asm.DefineLabel("rt_print_str_done");
+    var capture = asm.DefineLabel("rt_print_str_cap");
     asm.Jcxz(done);
+    asm.Cmp(Mem.Byte(asm.Lbl("rt_capmode")), (Imm)0);
+    asm.Jne(capture);
     asm.Push(Reg.AX);
     asm.Push(Reg.BX);
     asm.Push(Reg.DX);
     asm.Mov(Reg.DX, Reg.SI);
-    asm.Mov(Reg.BX, 1);      // stdout handle - redirectable
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_curout")));
     asm.Mov(Reg.AH, 0x40);
     asm.Int(0x21);
     asm.Pop(Reg.DX);
     asm.Pop(Reg.BX);
     asm.Pop(Reg.AX);
+    asm.Add(Mem.Word(asm.Lbl("rt_col")), Reg.CX);
     asm.MarkLabel(done);
+    asm.Ret();
+
+    // capture mode (STR$): append the bytes to rt_capbuf instead of writing
+    asm.MarkLabel(capture);
+    asm.Push(Reg.AX);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.SI);
+    asm.Push(Reg.DI);
+    asm.Mov(Reg.DI, Mem.Word(asm.Lbl("rt_caplen")));
+    asm.Add(Mem.Word(asm.Lbl("rt_caplen")), Reg.CX);
+    asm.Lea(Reg.DI, Mem.At(Reg.DI, asm.Lbl("rt_capbuf")));
+    var copy = asm.DefineLabel();
+    asm.MarkLabel(copy);
+    asm.Lodsb();
+    asm.Mov(Mem.Byte(Reg.DI), Reg.AL);
+    asm.Inc(Reg.DI);
+    asm.Loop(copy);
+    asm.Pop(Reg.DI);
+    asm.Pop(Reg.SI);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.AX);
     asm.Ret();
   }
 
@@ -98,20 +177,48 @@ public sealed class DosRuntime {
     asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_crlf")));
     asm.Mov(Reg.CX, 2);
     asm.Call(this.PrintStr);
+    asm.Mov(Mem.Word(asm.Lbl("rt_col")), (Imm)0);
     asm.Pop(Reg.AX);
     asm.Pop(Reg.CX);
     asm.Pop(Reg.SI);
     asm.Ret();
   }
 
-  /// <summary>AX (signed) -> "[ |-]digits[ ]" on stdout.</summary>
-  private void EmitPrintInt16(Assembler asm) {
-    this.PrintInt16 = asm.MarkLabel("rt_print_i16");
-    asm.Cwd();                       // sign-extend into DX
-    asm.Jmp(asm.Lbl("rt_print_i32")); // shared 32-bit path (forward label - emitted next)
+  /// <summary>Advances to the next 14-column print zone (PRINT comma separator).</summary>
+  private void EmitPrintZone(Assembler asm) {
+    this.PrintZone = asm.MarkLabel("rt_print_zone");
+    asm.Push(Reg.AX);
+    asm.Push(Reg.BX);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.DX);
+    asm.Push(Reg.SI);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_col")));
+    asm.Xor(Reg.DX, Reg.DX);
+    asm.Mov(Reg.BX, 14);
+    asm.Div(Reg.BX);
+    asm.Mov(Reg.CX, 14);
+    asm.Sub(Reg.CX, Reg.DX);
+    asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_spaces")));
+    asm.Call(this.PrintStr);
+    asm.Pop(Reg.SI);
+    asm.Pop(Reg.DX);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.BX);
+    asm.Pop(Reg.AX);
+    asm.Ret();
   }
 
-  /// <summary>DX:AX (signed) -> "[ |-]digits[ ]" on stdout.</summary>
+  /// <summary>AX (signed) -> "[ |-]digits[ ]" on the current output.</summary>
+  private void EmitPrintInt16(Assembler asm) {
+    this.PrintInt16 = asm.MarkLabel("rt_print_i16");
+    asm.Push(Reg.DX);
+    asm.Cwd();                       // sign-extend into DX
+    asm.Call(asm.Lbl("rt_print_i32"));
+    asm.Pop(Reg.DX);
+    asm.Ret();
+  }
+
+  /// <summary>DX:AX (signed) -> "[ |-]digits[ ]" on the current output.</summary>
   private void EmitPrintInt32(Assembler asm) {
     this.PrintInt32 = asm.MarkLabel("rt_print_i32");
     var convert = asm.DefineLabel();
@@ -122,6 +229,8 @@ public sealed class DosRuntime {
     asm.Push(Reg.CX);
     asm.Push(Reg.BX);
     asm.Push(Reg.DI);
+    asm.Push(Reg.AX);
+    asm.Push(Reg.DX);
 
     // SI walks backwards from the end of the number buffer; trailing space first
     asm.Mov(Reg.SI, Imm.OffsetOf(this._numBuffer, 31));
@@ -170,6 +279,8 @@ public sealed class DosRuntime {
     asm.Sub(Reg.CX, Reg.SI);
     asm.Call(this.PrintStr);
 
+    asm.Pop(Reg.DX);
+    asm.Pop(Reg.AX);
     asm.Pop(Reg.DI);
     asm.Pop(Reg.BX);
     asm.Pop(Reg.CX);
@@ -194,7 +305,6 @@ public sealed class DosRuntime {
     // The number is decomposed in C-helper style entirely on the FPU:
     //   exp10 = 0; while |x| >= 10^digits: x /= 10, exp10++; while x != 0 && |x| < 10^(digits-1): x *= 10, exp10--
     //   mantissa = round(x) as 64-bit integer; then decimal point sits at (digits + exp10).
-    var ten = asm.Lbl("rt_const_ten");
     var zero = asm.DefineLabel();
     var scaleDown = asm.DefineLabel();
     var scaleDownTest = asm.DefineLabel();
@@ -264,9 +374,11 @@ public sealed class DosRuntime {
 
     asm.MarkLabel(zero);
     asm.Fstp(St.St0);
+    asm.Push(Reg.AX);
     asm.Xor(Reg.AX, Reg.AX);
     asm.Cwd();
     asm.Call(this.PrintInt32);
+    asm.Pop(Reg.AX);
     asm.Jmp(asm.Lbl("rt_print_flt_done"));
 
     asm.MarkLabel(emit);
@@ -614,6 +726,9 @@ public sealed class DosRuntime {
   public void EmitConstants(Assembler asm) {
     asm.MarkLabel("rt_crlf");
     asm.Db(0x0D, 0x0A);
+    asm.MarkLabel("rt_spaces");
+    asm.Db(new string(' ', 16));
+    this.EmitErrorMessages(asm);
     asm.Align(2);
     asm.MarkLabel("rt_const_ten_m64");
     asm.Dq(10.0);
