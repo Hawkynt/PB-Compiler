@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  # release.yml calls this via `uses: ./.github/workflows/ci.yml` so tag
+  # releases run the exact same test matrix as per-PR CI.
+  workflow_call: {}
+
+# Force JavaScript-based actions to run on Node 24 instead of the deprecated Node 20 ahead of
+# the 2026-06-16 hard cutover, until we bump each action to a Node-24-native major version.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0                          # version.pl needs full history
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore PB-Compiler.sln
+
+      - name: Build
+        run: dotnet build PB-Compiler.sln --configuration Release --no-restore
+
+      # DOSBox lets the execution tests run the generated DOS binaries for real;
+      # installed on Linux only - the tests self-skip wherever it is absent.
+      - name: Install DOSBox (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dosbox
+          echo "DOSBOX_EXE=$(command -v dosbox)" >> "$GITHUB_ENV"
+          echo "SDL_VIDEODRIVER=dummy" >> "$GITHUB_ENV"
+
+      # Core tier - REQUIRED: compiler unit tests + corpus gates + (on Linux)
+      # the DOSBox execution tests. Anything DOSBox-dependent self-skips when
+      # the emulator is unavailable, so this stays green on Windows runners too.
+      - name: Core tests
+        run: >
+          dotnet test PowerBasic.Compiler.Tests
+          --configuration Release --no-build
+          --filter "Category!=Performance"
+          --logger "trx;LogFileName=core-tests.trx"
+
+      # Advisory tier: the full golden-output battery through the pbc CLI and
+      # headless DOSBox (compile every tests/*.BAS on the host, run the EXE in
+      # the emulator, diff against tests/*.expected).
+      - name: DOS golden battery
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true                   # advisory: emulator quirks must not block merges
+        run: bash scripts/run-dos-tests.sh
+
+      # Performance tier - advisory by definition (STANDARD.md: wall-clock
+      # assertions never block a merge).
+      - name: Performance tests
+        continue-on-error: true
+        run: >
+          dotnet test PowerBasic.Compiler.Tests
+          --configuration Release --no-build
+          --filter "Category=Performance"
+          --logger "trx;LogFileName=perf-tests.trx"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}
+          path: '**/TestResults/*.trx'
+          if-no-files-found: ignore

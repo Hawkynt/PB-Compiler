@@ -1,0 +1,71 @@
+name: Build artifacts
+
+# Shared build/pack block. Called by release.yml (manual dispatch) and
+# nightly.yml (auto, on CI success). Single place that turns a commit into
+# shippable artifacts so release and nightly never diverge.
+#
+# PER-PACKAGE versioning: `version.pl --stamp` writes each csproj's OWN <Version>
+# + the git commit count. No single version is threaded through the pipeline —
+# every NuGet package keeps its own version.
+#
+# This repo ships app binaries only (win-x64 + linux-x64 self-contained pbc),
+# no NuGet packages.
+on:
+  workflow_call:
+    inputs:
+      push-nuget:
+        description: Push packed .nupkg files to nuget.org
+        type: boolean
+        default: false
+      ref:
+        description: Git ref/SHA to build (defaults to caller ref)
+        type: string
+        required: false
+        default: ""
+    secrets:
+      NUGET_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+# Force JavaScript-based actions to run on Node 24 instead of the deprecated Node 20 ahead of
+# the 2026-06-16 hard cutover, until we bump each action to a Node-24-native major version.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0                           # version.pl counts commits
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+          include-prerelease: true
+
+      - name: Stamp per-package versions
+        shell: bash
+        run: perl .github/workflows/scripts/version.pl --stamp
+
+      - name: Restore
+        run: dotnet restore PB-Compiler.sln
+
+      - name: Build
+        run: dotnet build PB-Compiler.sln --configuration Release --no-restore
+
+      # ===== APP BINARIES =====================================================
+      - name: Publish application
+        shell: bash
+        run: |
+          dotnet publish pbc/pbc.csproj -r win-x64   -c Release --self-contained -o dist/win-x64
+          dotnet publish pbc/pbc.csproj -r linux-x64 -c Release --self-contained -o dist/linux-x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-artifacts
+          path: dist/*
+          if-no-files-found: ignore               # tolerate NuGet-only repos
