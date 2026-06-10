@@ -34,8 +34,8 @@ public sealed record FunctionDecl(SourcePosition Position, string Name, TypeSuff
 /// <summary>DECLARE SUB/FUNCTION prototype.</summary>
 public sealed record DeclareStmt(SourcePosition Position, bool IsFunction, string Name, TypeSuffix Suffix, TypeName? ReturnType, IReadOnlyList<Parameter>? Parameters) : Statement(Position);
 
-/// <summary>One field inside TYPE/UNION.</summary>
-public sealed record TypeField(SourcePosition Position, string Name, TypeName Type, IReadOnlyList<Expression>? ArrayBounds);
+/// <summary>One field inside TYPE/UNION; array fields carry bounds (lower TO upper | upper).</summary>
+public sealed record TypeField(SourcePosition Position, string Name, TypeName Type, IReadOnlyList<(Expression? Lower, Expression Upper)>? ArrayBounds);
 
 /// <summary>TYPE ... END TYPE.</summary>
 public sealed record TypeDecl(SourcePosition Position, string Name, IReadOnlyList<TypeField> Fields) : Statement(Position);
@@ -61,8 +61,11 @@ public sealed record VariableDecl(SourcePosition Position, string Name, TypeSuff
 
 public enum StorageClass { Dim, Local, Static, Shared, Public, Ext, Common }
 
-/// <summary>DIM/LOCAL/STATIC/SHARED/PUBLIC/EXT/COMMON declaration; DIM may carry an extra SHARED flag (<c>DIM x AS SHARED WORD</c>).</summary>
-public sealed record DimStmt(SourcePosition Position, StorageClass Storage, bool SharedFlag, IReadOnlyList<VariableDecl> Variables) : Statement(Position);
+/// <summary>
+/// DIM/LOCAL/STATIC/SHARED/PUBLIC/EXT/COMMON declaration; DIM may carry an extra SHARED flag
+/// (<c>DIM x AS SHARED WORD</c>); <c>COMMON /blockname/</c> carries the block name.
+/// </summary>
+public sealed record DimStmt(SourcePosition Position, StorageClass Storage, bool SharedFlag, IReadOnlyList<VariableDecl> Variables, string? CommonBlock = null) : Statement(Position);
 
 /// <summary>REDIM (re-dimension a $DYNAMIC array).</summary>
 public sealed record RedimStmt(SourcePosition Position, IReadOnlyList<VariableDecl> Variables) : Statement(Position);

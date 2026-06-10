@@ -27,6 +27,12 @@ public sealed record CallOrIndexExpr(SourcePosition Position, string Name, TypeS
 /// <summary>UDT member access, e.g. <c>ctx.CurrentMode</c>; <see cref="Target"/> is a name, index or another member access.</summary>
 public sealed record MemberExpr(SourcePosition Position, Expression Target, string Member, TypeSuffix Suffix) : Expression(Position);
 
+/// <summary>
+/// Indexing of a non-name target, e.g. the array-field access <c>ctx.NamedTimers(i)</c>
+/// (plain <c>name(args)</c> stays <see cref="CallOrIndexExpr"/>).
+/// </summary>
+public sealed record IndexExpr(SourcePosition Position, Expression Target, IReadOnlyList<Expression> Arguments) : Expression(Position);
+
 public enum BinaryOp {
   Add, Subtract, Multiply, Divide, IntegerDivide, Modulo, Power,
   Equal, NotEqual, Less, Greater, LessEqual, GreaterEqual,
