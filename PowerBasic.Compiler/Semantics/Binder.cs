@@ -827,6 +827,15 @@ public sealed class Binder {
           return fn.ReturnType ?? PbType.Integer;
         }
 
+        // ... or a parameterless intrinsic (FREEFILE, TIMER, ERR, INKEY$, ...)
+        if (symbol == null) {
+          var intrinsicName = n.Suffix == TypeSuffix.String ? n.Name + "$" : n.Name;
+          if ((Intrinsics.TryGet(intrinsicName, out var intrinsic) || Intrinsics.TryGet(n.Name, out intrinsic)) && intrinsic.MinArgs == 0) {
+            this._model.IntrinsicBindings[n] = intrinsic;
+            return ReturnTypeOf(intrinsic, null);
+          }
+        }
+
         symbol ??= this.ResolveVariable(n.Name, n.Suffix, scope, create: true, n.Position);
         this._model.VariableBindings[n] = symbol!;
         return symbol!.Type is ArrayType arr ? arr : symbol.Type;
@@ -966,17 +975,7 @@ public sealed class Binder {
         var t = this.BindExpression(argument, scope);
         firstArg ??= t;
       }
-      return intrinsic.Returns switch {
-        IntrinsicReturn.Integer => PbType.Integer,
-        IntrinsicReturn.Word => PbType.Word,
-        IntrinsicReturn.Dword => PbType.Dword,
-        IntrinsicReturn.Long => PbType.Long,
-        IntrinsicReturn.Single => PbType.Single,
-        IntrinsicReturn.Double => PbType.Double,
-        IntrinsicReturn.Ext => PbType.Ext,
-        IntrinsicReturn.String => PbType.String,
-        _ => firstArg as ScalarType ?? PbType.Ext,
-      };
+      return ReturnTypeOf(intrinsic, firstArg);
     }
 
     // 3. user function
@@ -997,6 +996,18 @@ public sealed class Binder {
       this.BindExpression(argument, scope);
     return this.ErrorType(call.Position, $"unknown array or function {call.Name}");
   }
+
+  private static PbType ReturnTypeOf(IntrinsicInfo intrinsic, PbType? firstArg) => intrinsic.Returns switch {
+    IntrinsicReturn.Integer => PbType.Integer,
+    IntrinsicReturn.Word => PbType.Word,
+    IntrinsicReturn.Dword => PbType.Dword,
+    IntrinsicReturn.Long => PbType.Long,
+    IntrinsicReturn.Single => PbType.Single,
+    IntrinsicReturn.Double => PbType.Double,
+    IntrinsicReturn.Ext => PbType.Ext,
+    IntrinsicReturn.String => PbType.String,
+    _ => firstArg as ScalarType ?? PbType.Ext,
+  };
 
   private VariableSymbol? LookupVariable(string key, Scope scope) {
     if (scope.Proc != null) {
