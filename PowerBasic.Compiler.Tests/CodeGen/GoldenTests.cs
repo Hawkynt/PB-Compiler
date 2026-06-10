@@ -36,14 +36,24 @@ public sealed class GoldenTests {
   [TestCase("SUBFN")]
   [TestCase("ARRAY")]
   [TestCase("FILEIO1")]
+  [TestCase("LOWLEVEL")]
+  [TestCase("INTREG")]
+  [TestCase("DATAREAD")]
+  [TestCase("ONERR")]
+  [TestCase("RANDFILE")]
+  [TestCase("PRTUSING")]
+  [TestCase("INPUTS")]
   public void Golden_GivenSource_WhenRunUnderDosBox_ThenOutputMatchesExpected(string name) {
     var source = Path.Combine(TestsDirectory, name + ".BAS");
     var expectedFile = Path.Combine(TestsDirectory, name + ".expected");
+    var stdinFile = Path.Combine(TestsDirectory, name + ".IN");
     Assume.That(File.Exists(source), $"{source} missing");
     Assert.That(File.Exists(expectedFile), $"{expectedFile} missing");
 
     var exe = Compile(source);
-    var output = DosBoxRunner.Normalize(DosBoxRunner.Run(exe));
+    var stdin = File.Exists(stdinFile) ? File.ReadAllText(stdinFile) : null;
+    var (rawOutput, _) = DosBoxRunner.RunWithFiles(exe, [], stdinText: stdin);
+    var output = DosBoxRunner.Normalize(rawOutput);
     var expected = DosBoxRunner.Normalize(File.ReadAllText(expectedFile)).TrimEnd('\n') + "\n";
     Assert.That(output, Is.EqualTo(expected));
   }

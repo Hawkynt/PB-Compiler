@@ -50,6 +50,7 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.AX, Reg.CS);
     asm.Mov(Reg.DS, Reg.AX);
     asm.Mov(Reg.ES, Reg.AX);
+    asm.Mov(Mem.Word(asm.Lbl("rt_defseg")), Reg.AX);
     asm.Add(Reg.AX, 0x1000);
     asm.Mov(Mem.Word(asm.Lbl("rt_strseg")), Reg.AX);
     asm.Add(Reg.AX, 0x1000);
@@ -76,6 +77,9 @@ public sealed partial class DosRuntime {
     this.EmitStringProcedures(asm);
     this.EmitFileProcedures(asm);
     this.EmitArrayProcedures(asm);
+    this.EmitLowLevelProcedures(asm);
+    this.EmitMiscProcedures(asm);
+    this.EmitMiscProcedures2(asm);
   }
 
   /// <summary>Emits runtime data cells; call while laying out the data area.</summary>
@@ -88,6 +92,8 @@ public sealed partial class DosRuntime {
     this.EmitStringData(asm);
     this.EmitFileData(asm);
     this.EmitArrayData(asm);
+    this.EmitLowLevelData(asm);
+    this.EmitMiscData(asm);
   }
 
   private void EmitExit(Assembler asm) {
@@ -111,7 +117,11 @@ public sealed partial class DosRuntime {
 
     Emit("rt_err_oss", "OUT OF STRING SPACE");
     Emit("rt_err_arr", "OUT OF ARRAY SPACE");
-    Emit("rt_err_io", "I/O ERROR");
+
+    // I/O errors are trappable: ERR 57, dispatched through the ON ERROR machinery
+    asm.MarkLabel("rt_err_io");
+    asm.Mov(Reg.AX, 57);
+    asm.Jmp(asm.Lbl("rt_raise"));
   }
 
   private void EmitErrorMessages(Assembler asm) {
@@ -123,7 +133,7 @@ public sealed partial class DosRuntime {
 
     Emit("rt_err_oss", "OUT OF STRING SPACE");
     Emit("rt_err_arr", "OUT OF ARRAY SPACE");
-    Emit("rt_err_io", "I/O ERROR");
+    Emit("rt_err_run", "RUNTIME ERROR");
   }
 
   private void EmitPrintStr(Assembler asm) {
@@ -610,7 +620,8 @@ public sealed partial class DosRuntime {
     asm.Fxch();              // ST0=x, ST1=1, ST2=y
     asm.Fyl2x();             // ST0=log2(x), ST1=y
     asm.Fmulp();             // ST0=y*log2(x)
-    // 2^z = 2^int(z) * 2^frac(z)
+    // 2^z = 2^int(z) * 2^frac(z); callable directly as rt_pow2 (ST0=z -> ST0=2^z)
+    asm.MarkLabel("rt_pow2");
     asm.Fld(St.St0);
     asm.Frndint();           // ST0=int(z) (rounding mode is fine for typical exponents)
     asm.Fxch();
@@ -732,5 +743,6 @@ public sealed partial class DosRuntime {
     asm.Align(2);
     asm.MarkLabel("rt_const_ten_m64");
     asm.Dq(10.0);
+    this.EmitMiscConstants(asm);
   }
 }

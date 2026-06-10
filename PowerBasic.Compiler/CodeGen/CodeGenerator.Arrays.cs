@@ -46,6 +46,8 @@ public sealed partial class CodeGenerator {
       return;
     }
 
+    this.EmitReclaimArrayBlock(descriptor, arrayType);
+
     asm.Mov(Mem.Word(descriptor, 4), elementSize);
     asm.Mov(Mem.Word(descriptor, 6), arrayType.Rank);
 
@@ -74,6 +76,28 @@ public sealed partial class CodeGenerator {
     asm.Mov(Mem.Word(descriptor), Reg.AX);
   }
 
+  /// <summary>
+  /// Gives the array's current block back to the bump allocator when it is the
+  /// most recent allocation (offset + bytes == top). Skips unallocated arrays.
+  /// </summary>
+  private void EmitReclaimArrayBlock(Label descriptor, ArrayType arrayType) {
+    var asm = this._asm;
+    var skip = asm.DefineLabel();
+    asm.Cmp(Mem.Word(descriptor), (Imm)0);
+    asm.Je(skip);
+    asm.Mov(Reg.AX, Mem.Word(descriptor, 8 + 2));      // element count = extent product
+    for (var d = 1; d < arrayType.Rank; ++d)
+      asm.Imul(Reg.AX, Mem.Word(descriptor, 8 + d * 4 + 2));
+    asm.Mov(Reg.CX, Mem.Word(descriptor, 4));          // * element size
+    asm.Mul(Reg.CX);
+    asm.Test(Reg.DX, Reg.DX);
+    asm.Jnz(skip);                                     // >64K would be bogus - leave it
+    asm.Mov(Reg.CX, Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(descriptor, 2));
+    asm.Call(this._rt.ArrFree);
+    asm.MarkLabel(skip);
+  }
+
   private void EmitErase(EraseStmt erase) {
     var asm = this._asm;
     foreach (var array in erase.Arrays) {
@@ -83,7 +107,8 @@ public sealed partial class CodeGenerator {
       }
       var slot = this.SlotOf(symbol);
       if (arrayType.IsDynamic) {
-        asm.Mov(Mem.Word(slot), (Imm)0);   // storage is leaked - bump allocator (documented)
+        this.EmitReclaimArrayBlock(slot, arrayType);   // rolls back when topmost; interleaved frees leak
+        asm.Mov(Mem.Word(slot), (Imm)0);
         continue;
       }
       // static arrays: zero-fill in place
@@ -127,13 +152,30 @@ public sealed partial class CodeGenerator {
       return;
     }
 
-    var descriptor = this.SlotOf(symbol);
-    asm.Mov(Reg.AX, Mem.Word(descriptor, 8 + (dimension - 1) * 4));
+    var descriptor = this.DescriptorAccessorOf(symbol);
+    asm.Mov(Reg.AX, descriptor(8 + (dimension - 1) * 4));
     if (isUpper) {
-      asm.Add(Reg.AX, Mem.Word(descriptor, 8 + (dimension - 1) * 4 + 2));
+      asm.Add(Reg.AX, descriptor(8 + (dimension - 1) * 4 + 2));
       asm.Dec(Reg.AX);
     }
     asm.Cwd();
+  }
+
+  /// <summary>
+  /// Descriptor cell accessor: direct data label for module/static arrays,
+  /// SI-indirect through the [BP+n] pointer for array parameters (SI is
+  /// reloaded on every access, so index evaluation may clobber it).
+  /// </summary>
+  private Func<int, Mem> DescriptorAccessorOf(VariableSymbol symbol) {
+    if (symbol.Storage != VariableStorage.Parameter) {
+      var label = this.SlotOf(symbol);
+      return disp => Mem.Word(label, disp);
+    }
+    var asm = this._asm;
+    return disp => {
+      asm.Mov(Reg.SI, Mem.Word(Reg.BP, symbol.Offset));
+      return Mem.Word(Reg.SI, disp);
+    };
   }
 
   /// <summary>
@@ -178,15 +220,15 @@ public sealed partial class CodeGenerator {
       return new(Mem.At(Reg.BX, this.SlotOf(symbol), -bias * elementSize), false);
     }
 
-    // dynamic: Horner over the descriptor extents
-    var descriptor = this.SlotOf(symbol);
+    // dynamic (or parameter) arrays: Horner over the descriptor extents
+    var descriptor = this.DescriptorAccessorOf(symbol);
     for (var d = 0; d < arrayType.Rank; ++d) {
       this.EmitInt16Argument(call.Arguments[d]);
-      asm.Sub(Reg.AX, Mem.Word(descriptor, 8 + d * 4));
+      asm.Sub(Reg.AX, descriptor(8 + d * 4));
       if (d > 0) {
         asm.Mov(Reg.CX, Reg.AX);
         asm.Pop(Reg.AX);
-        asm.Imul(Reg.AX, Mem.Word(descriptor, 8 + d * 4 + 2));
+        asm.Imul(Reg.AX, descriptor(8 + d * 4 + 2));
         asm.Add(Reg.AX, Reg.CX);
       }
       if (d < arrayType.Rank - 1)
@@ -194,9 +236,9 @@ public sealed partial class CodeGenerator {
     }
     if (elementSize != 1)
       asm.Imul(Reg.AX, Reg.AX, elementSize);
-    asm.Add(Reg.AX, Mem.Word(descriptor, 2));
+    asm.Add(Reg.AX, descriptor(2));
     asm.Mov(Reg.BX, Reg.AX);
-    asm.Mov(Reg.ES, Mem.Word(descriptor));
+    asm.Mov(Reg.ES, descriptor(0));
     return new(Mem.At(Reg.BX).Es(), true);
   }
 

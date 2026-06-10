@@ -1,0 +1,22 @@
+' ON ERROR GOTO / RESUME / ERR / ERROR n
+ON ERROR GOTO Handler
+OPEN "NOPE.TXT" FOR INPUT AS #1
+PRINT "not reached"
+GOTO Done
+Handler:
+PRINT "err"; ERR
+RESUME Next2
+Next2:
+PRINT "resumed"
+Done:
+PRINT "done"
+ON ERROR GOTO H2
+ERROR 99
+PRINT "after"
+GOTO Fin
+H2:
+PRINT "h2"; ERR
+RESUME NEXT
+Fin:
+PRINT "fin"
+END

@@ -45,14 +45,35 @@ public sealed partial class CodeGenerator {
     this._userLabels = new(StringComparer.OrdinalIgnoreCase);
     var paramBytes = this.LayoutFrame(proc);
     this._epilogue = asm.DefineLabel($"p_{proc.Name}_end");
+    this._trackResume = ContainsErrorHandling(proc.Body!);
 
     asm.MarkLabel(this.ProcLabelOf(proc));
     this.BeginFrame();
+
+    // procedures that arm ON ERROR save and restore the caller's handler state
+    Mem? savedHandler = null;
+    if (this._trackResume) {
+      savedHandler = this.AllocTemp(6);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_onerr")));
+      asm.Mov(savedHandler.Value.WithSize(OperandSize.Word), Reg.AX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_onerr_bp")));
+      asm.Mov(Adjust(savedHandler.Value, 2, OperandSize.Word), Reg.AX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_onerr_sp")));
+      asm.Mov(Adjust(savedHandler.Value, 4, OperandSize.Word), Reg.AX);
+    }
 
     foreach (var statement in proc.Body!)
       this.EmitStatement(statement);
 
     asm.MarkLabel(this._epilogue);
+    if (savedHandler is { } saved) {
+      asm.Mov(Reg.AX, saved.WithSize(OperandSize.Word));
+      asm.Mov(Mem.Word(asm.Lbl("rt_onerr")), Reg.AX);
+      asm.Mov(Reg.AX, Adjust(saved, 2, OperandSize.Word));
+      asm.Mov(Mem.Word(asm.Lbl("rt_onerr_bp")), Reg.AX);
+      asm.Mov(Reg.AX, Adjust(saved, 4, OperandSize.Word));
+      asm.Mov(Mem.Word(asm.Lbl("rt_onerr_sp")), Reg.AX);
+    }
 
     // release string ownership: stack locals and BYVAL string parameters
     var resultVar = proc.IsFunction && proc.Variables.TryGetValue(proc.Name, out var rv) ? rv : null;
@@ -82,6 +103,7 @@ public sealed partial class CodeGenerator {
     this.EndFrame();
     this._userLabels = outerLabels;
     this._currentProc = null;
+    this._trackResume = false;
   }
 
   private void EmitCallStatement(CallStmt c) {
@@ -116,9 +138,19 @@ public sealed partial class CodeGenerator {
       var arg = args[i];
       var argType = model.TypeOf(arg);
 
-      if (parameter.Type is ArrayType or AnyType || argType is ArrayType) {
-        this.Unsupported(arg, $"array/ANY argument to {proc.Name}");
-        return;
+      if (parameter.Type is ArrayType || argType is ArrayType) {
+        this.EmitArrayArgument(arg, proc);
+        continue;
+      }
+
+      if (parameter.Type is AnyType) {
+        // BYREF ANY: address of whatever storage the argument names - no checks
+        if (this.EmitPlace(arg) is { } anyPlace) {
+          asm.Lea(Reg.BX, anyPlace.Cell);
+          asm.Push(Reg.BX);
+        } else
+          this.Unsupported(arg, $"ANY argument to {proc.Name}");
+        continue;
       }
 
       if (parameter.ByVal) {
@@ -180,6 +212,50 @@ public sealed partial class CodeGenerator {
         asm.Fstp(St.St0);
         break;
     }
+  }
+
+  /// <summary>
+  /// Array argument: push the address of a dynamic-array descriptor. Static
+  /// arrays get a shadow descriptor in the data area, (re)filled at the call
+  /// site so the callee can index uniformly.
+  /// </summary>
+  private void EmitArrayArgument(Expression arg, ProcedureSymbol proc) {
+    var asm = this._asm;
+    if (!model.VariableBindings.TryGetValue(arg, out var symbol) || symbol.Type is not ArrayType arrayType) {
+      this.Unsupported(arg, $"array argument to {proc.Name}");
+      return;
+    }
+
+    if (symbol.Storage == VariableStorage.Parameter) {
+      asm.Push(Mem.Word(Reg.BP, symbol.Offset));   // forward the descriptor pointer
+      return;
+    }
+
+    if (arrayType.IsDynamic) {
+      asm.Push(Imm.OffsetOf(this.SlotOf(symbol)));
+      return;
+    }
+
+    var descriptor = this.ShadowDescriptorOf(symbol, arrayType);
+    asm.Mov(Mem.Word(descriptor), Reg.DS);
+    asm.Mov(Mem.Word(descriptor, 2), Imm.OffsetOf(this.SlotOf(symbol)));
+    asm.Mov(Mem.Word(descriptor, 4), Math.Max(arrayType.Element.Size, 1));
+    asm.Mov(Mem.Word(descriptor, 6), arrayType.Rank);
+    for (var d = 0; d < arrayType.Rank; ++d) {
+      var (lower, upper) = arrayType.StaticBounds![d];
+      asm.Mov(Mem.Word(descriptor, 8 + d * 4), lower);
+      asm.Mov(Mem.Word(descriptor, 8 + d * 4 + 2), upper - lower + 1);
+    }
+    asm.Push(Imm.OffsetOf(descriptor));
+  }
+
+  private readonly Dictionary<VariableSymbol, Label> _shadowDescriptors = new(ReferenceEqualityComparer.Instance);
+
+  private Label ShadowDescriptorOf(VariableSymbol symbol, ArrayType arrayType) {
+    if (!this._shadowDescriptors.TryGetValue(symbol, out var label))
+      this._shadowDescriptors[symbol] = label = this._asm.DefineLabel($"ad_{symbol.Name}_{this._shadowDescriptors.Count}");
+    _ = arrayType;
+    return label;
   }
 
   private void EmitByValArgument(Expression arg, PbType argType, PbType parameterType) {

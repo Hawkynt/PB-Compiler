@@ -70,12 +70,19 @@ for t in "${tests[@]}"; do
   # one DOSBox session per test. DONE.TXT is the completion sentinel:
   # dosbox-staging refuses to exit when the program finishes "too quickly"
   # (anti-vanish UX), so the harness polls the sentinel and kills the emulator.
+  # tests/<NAME>.IN, when present, is redirected into the program's stdin.
+  run="T$i.EXE > T$i.OUT"
+  if [ -f "tests/$name.IN" ]; then
+    cp "tests/$name.IN" "build/T$i.IN"
+    run="T$i.EXE < T$i.IN > T$i.OUT"
+  fi
   {
     echo "[sdl]"; echo "[cpu]"; echo "core=auto"; echo "cycles=max"
+    echo "[dosbox]"; echo "ems=true"
     echo "[autoexec]"
     echo "mount c \"$(pwd -W 2>/dev/null || pwd)/build\""  # pwd -W: Windows-style path under git-bash
     echo "c:"
-    echo "T$i.EXE > T$i.OUT"
+    echo "$run"
     echo "echo ok > DONE.TXT"
     echo "exit"
   } > "build/dosbox-T$i.conf"

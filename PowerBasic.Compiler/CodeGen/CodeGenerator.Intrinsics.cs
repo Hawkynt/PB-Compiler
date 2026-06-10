@@ -271,6 +271,244 @@ public sealed partial class CodeGenerator {
           asm.Frndint();   // rounding mode caveat: nearest-even, not floor
         break;
 
+      case "PEEK":
+        this.EmitPeek(args, 1);
+        break;
+      case "PEEKI":
+        this.EmitPeek(args, 2);
+        break;
+      case "PEEKL":
+        this.EmitPeek(args, 4);
+        break;
+
+      case "INP":
+        this.EmitInt16Argument(args[0]);
+        asm.Mov(Reg.DX, Reg.AX);
+        asm.In(Reg.AL, Reg.DX);
+        asm.Xor(Reg.AH, Reg.AH);
+        break;
+
+      case "VARPTR" or "VARSEG":
+        this.EmitVarPtrSeg(call, args, intrinsic.Name == "VARSEG");
+        break;
+
+      case "STRPTR" or "STRSEG":
+        this.EmitStrPtrSeg(call, args, intrinsic.Name == "STRSEG");
+        break;
+
+      case "CODEPTR" or "CODESEG" or "CODEPTR32":
+        this.EmitCodePtr(call, args, intrinsic.Name);
+        break;
+
+      case "REG":
+        this.EmitRegFunction(args);
+        break;
+
+      case "ERR":
+        asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_err")));
+        break;
+
+      case "ERL":
+        asm.Xor(Reg.AX, Reg.AX);   // line numbers are not tracked
+        asm.Cwd();
+        break;
+
+      case "BIT": {
+        this.EmitExpression(args[0]);
+        this.Coerce(model.TypeOf(args[0]), PbType.Long, args[0]);
+        asm.Push(Reg.DX);
+        asm.Push(Reg.AX);
+        this.EmitInt16Argument(args[1]);
+        asm.Mov(Reg.CX, Reg.AX);
+        asm.Pop(Reg.AX);
+        asm.Pop(Reg.DX);
+        var noShift = asm.DefineLabel();
+        var shift = asm.DefineLabel();
+        asm.Jcxz(noShift);
+        asm.MarkLabel(shift);
+        asm.Shr(Reg.DX, 1);
+        asm.Rcr(Reg.AX, 1);
+        asm.Loop(shift);
+        asm.MarkLabel(noShift);
+        asm.And(Reg.AX, 1);
+        break;
+      }
+
+      case "LOF":
+        this.EmitInt16Argument(UnwrapFileNumber(args[0]));
+        asm.Call(this._rt.Lof);
+        break;
+
+      case "SEEK" or "LOC":
+        this.EmitInt16Argument(UnwrapFileNumber(args[0]));
+        asm.Call(this._rt.FPos);
+        break;
+
+      case "CVI" or "CVWRD":
+        this.EmitExpression(args[0]);
+        asm.Mov(Reg.CX, 2);
+        asm.Call(this._rt.Cv);
+        asm.Mov(Reg.AX, Mem.Word(this.RtScratch));
+        break;
+
+      case "CVBYT":
+        this.EmitExpression(args[0]);
+        asm.Mov(Reg.CX, 1);
+        asm.Call(this._rt.Cv);
+        asm.Mov(Reg.AL, Mem.Byte(this.RtScratch));
+        asm.Xor(Reg.AH, Reg.AH);
+        break;
+
+      case "CVL" or "CVDWD":
+        this.EmitExpression(args[0]);
+        asm.Mov(Reg.CX, 4);
+        asm.Call(this._rt.Cv);
+        asm.Mov(Reg.AX, Mem.Word(this.RtScratch));
+        asm.Mov(Reg.DX, Mem.Word(this.RtScratch, 2));
+        break;
+
+      case "CVS":
+        this.EmitExpression(args[0]);
+        asm.Mov(Reg.CX, 4);
+        asm.Call(this._rt.Cv);
+        asm.Fld(Mem.Dword(this.RtScratch));
+        break;
+
+      case "CVD" or "CVE":
+        this.EmitExpression(args[0]);
+        asm.Mov(Reg.CX, 8);
+        asm.Call(this._rt.Cv);
+        asm.Fld(Mem.Qword(this.RtScratch));
+        break;
+
+      case "MKI$" or "MKWRD$":
+        this.EmitInt16Argument(args[0]);
+        asm.Mov(Mem.Word(this.RtScratch), Reg.AX);
+        this.EmitScratchString(2);
+        break;
+
+      case "MKBYT$":
+        this.EmitInt16Argument(args[0]);
+        asm.Mov(Mem.Byte(this.RtScratch), Reg.AL);
+        this.EmitScratchString(1);
+        break;
+
+      case "MKL$" or "MKDWD$":
+        this.EmitExpression(args[0]);
+        this.Coerce(model.TypeOf(args[0]), PbType.Long, args[0]);
+        asm.Mov(Mem.Word(this.RtScratch), Reg.AX);
+        asm.Mov(Mem.Word(this.RtScratch, 2), Reg.DX);
+        this.EmitScratchString(4);
+        break;
+
+      case "MKS$":
+        this.EmitExpression(args[0]);
+        this.Coerce(model.TypeOf(args[0]), PbType.Double, args[0]);
+        asm.Fstp(Mem.Dword(this.RtScratch));
+        this.EmitScratchString(4);
+        break;
+
+      case "MKD$" or "MKE$":
+        this.EmitExpression(args[0]);
+        this.Coerce(model.TypeOf(args[0]), PbType.Double, args[0]);
+        asm.Fstp(Mem.Qword(this.RtScratch));
+        this.EmitScratchString(8);
+        break;
+
+      case "RND":
+        if (args.Count > 0) {
+          this.EmitExpression(args[0]);    // RND(n) reseed semantics are not modelled
+          if (KindOf(model.TypeOf(args[0])) == ValueKind.Float)
+            asm.Fstp(St.St0);
+        }
+        asm.Call(this._rt.Rnd);
+        break;
+
+      case "TIMER":
+        asm.Call(this._rt.Timer);
+        break;
+
+      case "INKEY$":
+        asm.Call(this._rt.InKey);
+        break;
+
+      case "SIN" or "COS" or "TAN" or "ATN" or "LOG" or "LOG2" or "LOG10" or "EXP" or "EXP2" or "EXP10":
+        this.EmitExpression(args[0]);
+        this.Coerce(model.TypeOf(args[0]), PbType.Double, args[0]);
+        switch (intrinsic.Name) {
+          case "SIN":
+            asm.Fsin();
+            break;
+          case "COS":
+            asm.Fcos();
+            break;
+          case "TAN":
+            asm.Fptan();
+            asm.Fstp(St.St0);
+            break;
+          case "ATN":
+            asm.Fld1();
+            asm.Fpatan();
+            break;
+          case "LOG":
+            asm.Fldln2();
+            asm.Fxch();
+            asm.Fyl2x();
+            break;
+          case "LOG2":
+            asm.Fld1();
+            asm.Fxch();
+            asm.Fyl2x();
+            break;
+          case "LOG10":
+            asm.Fldlg2();
+            asm.Fxch();
+            asm.Fyl2x();
+            break;
+          case "EXP":
+            asm.Fldl2e();
+            asm.Fmulp();
+            asm.Call(asm.Lbl("rt_pow2"));
+            break;
+          case "EXP2":
+            asm.Call(asm.Lbl("rt_pow2"));
+            break;
+          case "EXP10":
+            asm.Fldl2t();
+            asm.Fmulp();
+            asm.Call(asm.Lbl("rt_pow2"));
+            break;
+        }
+        break;
+
+      case "FRE":
+        if (args.Count > 0) {
+          this.EmitExpression(args[0]);
+          if (KindOf(model.TypeOf(args[0])) == ValueKind.Str)
+            asm.Call(this._rt.StrFree);
+          else if (KindOf(model.TypeOf(args[0])) == ValueKind.Float)
+            asm.Fstp(St.St0);
+        }
+        asm.Mov(Reg.AX, 0x7FFF);           // advisory: plenty of room
+        asm.Cwd();
+        break;
+
+      case "POS":
+        if (args.Count > 0)
+          this.EmitExpression(args[0]);
+        asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_col")));
+        asm.Inc(Reg.AX);
+        break;
+
+      case "CSRLIN":
+        asm.Mov(Reg.AH, (Imm)3);
+        asm.Xor(Reg.BH, Reg.BH);
+        asm.Int(0x10);
+        asm.Mov(Reg.AL, Reg.DH);
+        asm.Xor(Reg.AH, Reg.AH);
+        asm.Inc(Reg.AX);
+        break;
+
       case "ISTRUE" or "ISFALSE": {
         this.EmitCondition(args[0]);
         var done = asm.DefineLabel();
@@ -292,5 +530,16 @@ public sealed partial class CodeGenerator {
   private void EmitInt16Argument(Expression e) {
     this.EmitExpression(e);
     this.Coerce(model.TypeOf(e), PbType.Integer, e);
+  }
+
+  private Label RtScratch => this._asm.Lbl("rt_scratch");
+
+  /// <summary>Wraps the first <paramref name="length"/> bytes at rt_scratch into a new string (MKx$ family).</summary>
+  private void EmitScratchString(int length) {
+    var asm = this._asm;
+    asm.Mov(Reg.SI, Imm.OffsetOf(this.RtScratch));
+    asm.Mov(Reg.CX, length);
+    asm.Mov(Reg.DX, Reg.DS);
+    asm.Call(this._rt.StrMem);
   }
 }

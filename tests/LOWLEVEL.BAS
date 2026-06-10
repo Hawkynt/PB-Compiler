@@ -1,0 +1,57 @@
+' inline assembler, DEF SEG/PEEK/POKE, SHIFT/ROTATE/BIT, VARPTR/VARSEG
+DIM v AS WORD
+v = 0
+!MOV AX, 1234
+!MOV v, AX
+PRINT v
+
+' asm-level loop jumping to a BASIC label
+DIM n AS INTEGER
+n = 0
+!MOV CX, 5
+AddLoop:
+n = n + 1
+!DEC CX
+!JNZ AddLoop
+PRINT n
+
+' VGA mode 13h: poke a pixel into A000 and read it back twice
+!MOV AX, &H0013
+!INT &H10
+DEF SEG = &HA000
+POKE 100, 77
+PRINT PEEK(100)
+DIM px AS INTEGER
+px = 0
+!PUSH ES
+!MOV AX, &HA000
+!MOV ES, AX
+!MOV BX, 100
+!MOV AL, ES:[BX]
+!XOR AH, AH
+!MOV px, AX
+!POP ES
+PRINT px
+DEF SEG
+!MOV AX, &H0003
+!INT &H10
+
+DIM s AS WORD
+s = 3
+SHIFT LEFT s, 4
+PRINT s
+SHIFT RIGHT s, 2
+PRINT s
+DIM rl AS WORD
+rl = &H8001
+ROTATE LEFT rl, 1
+PRINT rl
+PRINT BIT(s, 2)
+PRINT BIT(s, 0)
+
+DIM w AS WORD
+w = 7
+DEF SEG = VARSEG(w)
+PRINT PEEKI(VARPTR(w))
+DEF SEG
+END

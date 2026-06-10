@@ -54,12 +54,20 @@ foreach ($t in Get-ChildItem tests/*.BAS) {
   }
 
   $buildDir = (Resolve-Path build).Path
+  # tests/<NAME>.IN, when present, is redirected into the program's stdin
+  $run = "T$i.EXE > T$i.OUT"
+  if (Test-Path "tests/$name.IN") {
+    Copy-Item "tests/$name.IN" "build/T$i.IN"
+    $run = "T$i.EXE < T$i.IN > T$i.OUT"
+  }
   @"
 [sdl]
+[dosbox]
+ems=true
 [autoexec]
 mount c "$buildDir"
 c:
-T$i.EXE > T$i.OUT
+$run
 echo ok > DONE.TXT
 exit
 "@ | Set-Content "build/dosbox-T$i.conf"

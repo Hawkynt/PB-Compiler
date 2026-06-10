@@ -1,0 +1,28 @@
+' RANDOM record I/O round-trip plus BINARY GET$/PUT$/SEEK/LOF
+TYPE Rec
+  Id AS INTEGER
+  Score AS LONG
+  Nm AS STRING * 8
+END TYPE
+DIM r AS Rec, q AS Rec
+r.Id = 7
+r.Score = 123456
+r.Nm = "Bob"
+OPEN "RND.DAT" FOR RANDOM AS #1 LEN = 14
+PUT #1, 2, r
+GET #1, 2, q
+PRINT q.Id; q.Score; q.Nm
+CLOSE #1
+KILL "RND.DAT"
+OPEN "BIN.DAT" FOR BINARY AS #2
+PUT$ #2, "HelloWorld"
+SEEK #2, 5
+DIM s AS STRING
+GET$ #2, 5, s
+PRINT s
+PRINT LOF(2)
+SEEK #2, 0
+PRINT SEEK(2)
+CLOSE #2
+KILL "BIN.DAT"
+END

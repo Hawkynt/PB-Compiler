@@ -1,0 +1,16 @@
+' DATA / READ / RESTORE
+DIM a AS INTEGER, b AS LONG, s AS STRING
+READ a, b, s
+PRINT a; b; s
+READ s
+PRINT s
+RESTORE Second
+READ s
+PRINT s
+RESTORE
+READ a
+PRINT a
+DATA 42, 100000, hello
+Second:
+DATA world, again
+END

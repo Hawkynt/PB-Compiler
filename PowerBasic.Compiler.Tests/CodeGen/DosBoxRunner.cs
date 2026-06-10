@@ -32,8 +32,10 @@ public static class DosBoxRunner {
   /// <summary>
   /// Runs <paramref name="exeBytes"/> in DOSBox and additionally retrieves the
   /// named files the program created in its working directory (e.g. UNITTEST.LOG).
+  /// Optional <paramref name="stdinText"/> is redirected into the program;
+  /// <paramref name="extraFiles"/> are placed beside it before the run.
   /// </summary>
-  public static (string Output, Dictionary<string, string> Files) RunWithFiles(byte[] exeBytes, IReadOnlyList<string> fetchFiles, int timeoutMs = 60000) {
+  public static (string Output, Dictionary<string, string> Files) RunWithFiles(byte[] exeBytes, IReadOnlyList<string> fetchFiles, int timeoutMs = 60000, string? stdinText = null, IReadOnlyDictionary<string, string>? extraFiles = null) {
     Assume.That(Executable, Is.Not.Null, "DOSBox not found - execution test skipped");
 
     var dir = Path.Combine(Path.GetTempPath(), "pbc-test-" + Guid.NewGuid().ToString("N")[..8]);
@@ -43,13 +45,21 @@ public static class DosBoxRunner {
       // `exit` when the program finishes "too quickly" (its anti-vanish UX), so
       // the runner waits for the sentinel and then kills the emulator itself.
       File.WriteAllBytes(Path.Combine(dir, "T.EXE"), exeBytes);
+      if (stdinText != null)
+        File.WriteAllText(Path.Combine(dir, "IN.TXT"), stdinText);
+      if (extraFiles != null)
+        foreach (var (name, content) in extraFiles)
+          File.WriteAllText(Path.Combine(dir, name), content);
+      var run = stdinText != null ? "T.EXE < IN.TXT > T.OUT" : "T.EXE > T.OUT";
       var conf = Path.Combine(dir, "dosbox.conf");
       File.WriteAllText(conf, $"""
         [sdl]
+        [dosbox]
+        ems=true
         [autoexec]
         mount c "{dir}"
         c:
-        T.EXE > T.OUT
+        {run}
         echo ok > DONE.TXT
         exit
         """);

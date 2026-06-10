@@ -276,7 +276,10 @@ public sealed class TextAssembler(Assembler target) {
         return this.ParseSizedOperand(size);
       }
 
-      if (name.Equals("ST", StringComparison.OrdinalIgnoreCase))
+      // "ST" is the FPU stack top - unless a PB variable of that name shadows it
+      // and no ST(n) indexing follows
+      if (name.Equals("ST", StringComparison.OrdinalIgnoreCase)
+          && (this.Peek().Kind == TokenKind.LParen || this._resolver?.TryResolve(name, out _) is not true))
         return new StOperand(this.ParseSt());
 
       if (_REGISTERS.TryGetValue(name, out var register)) {
@@ -641,10 +644,10 @@ public sealed class TextAssembler(Assembler target) {
       var (first, second) = this.TwoOperands();
       switch (first, second) {
         case (RegisterOperand d, RegisterOperand s): this._asm.Mov(d.Register, s.Register); return;
-        case (RegisterOperand d, MemoryOperand s): this._asm.Mov(d.Register, s.Memory); return;
+        case (RegisterOperand d, MemoryOperand s): this._asm.Mov(d.Register, SizedLike(s.Memory, d.Register)); return;
         case (RegisterOperand d, ImmediateOperand s): this._asm.Mov(d.Register, s.Value); return;
         case (RegisterOperand d, LabelOperand s): this._asm.Mov(d.Register, Imm.OffsetOf(s.Label)); return;
-        case (MemoryOperand d, RegisterOperand s): this._asm.Mov(d.Memory, s.Register); return;
+        case (MemoryOperand d, RegisterOperand s): this._asm.Mov(SizedLike(d.Memory, s.Register), s.Register); return;
         case (MemoryOperand d, ImmediateOperand s): this._asm.Mov(SizedLike(d.Memory, null), s.Value); return;
         case (MemoryOperand d, LabelOperand s): this._asm.Mov(d.Memory, Imm.OffsetOf(s.Label)); return;
         default: throw new AsmSyntaxException("Invalid MOV operand combination.");
@@ -776,6 +779,7 @@ public sealed class TextAssembler(Assembler target) {
       switch (this.OneOperand()) {
         case LabelOperand l: this._asm.Jmp(l.Label); return;
         case RegisterOperand r: this._asm.Jmp(r.Register); return;
+        case MemoryOperand { Memory.Size: OperandSize.Dword } m: this._asm.JmpFar(m.Memory); return;
         case MemoryOperand m: this._asm.Jmp(SizedLike(m.Memory, null, OperandSize.Word)); return;
         default: throw new AsmSyntaxException("Invalid JMP target.");
       }
@@ -785,6 +789,7 @@ public sealed class TextAssembler(Assembler target) {
       switch (this.OneOperand()) {
         case LabelOperand l: this._asm.Call(l.Label); return;
         case RegisterOperand r: this._asm.Call(r.Register); return;
+        case MemoryOperand { Memory.Size: OperandSize.Dword } m: this._asm.CallFar(m.Memory); return;
         case MemoryOperand m: this._asm.Call(SizedLike(m.Memory, null, OperandSize.Word)); return;
         default: throw new AsmSyntaxException("Invalid CALL target.");
       }
@@ -837,12 +842,16 @@ public sealed class TextAssembler(Assembler target) {
       }
     }
 
-    /// <summary>Gives an unsized memory operand the size of its register partner (or a default).</summary>
+    /// <summary>
+    /// Gives a memory operand the size of its register partner (or a default).
+    /// An explicit register always wins - PB lets a byte register address the
+    /// low byte of a word variable (<c>MOV AL, count%</c>).
+    /// </summary>
     private static Mem SizedLike(Mem memory, Reg? partner, OperandSize fallback = OperandSize.None) {
-      if (memory.Size != OperandSize.None)
-        return memory;
       if (partner is { } register && register.IsGeneralPurpose())
         return memory.WithSize(register.Size());
+      if (memory.Size != OperandSize.None)
+        return memory;
       if (fallback != OperandSize.None)
         return memory.WithSize(fallback);
 

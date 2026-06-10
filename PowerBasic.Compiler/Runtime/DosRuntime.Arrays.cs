@@ -4,15 +4,31 @@ namespace PowerBasic.Compiler.Runtime;
 
 /// <summary>
 /// Dynamic array storage: a bump allocator over the far array heap segment
-/// (CS+0x2000). REDIM allocates a fresh zero-filled block; freed blocks are
-/// not reclaimed (documented limitation - 64 KiB is ample for test programs).
+/// (CS+0x2000). REDIM/ERASE roll the bump pointer back when the released
+/// block is the most recent allocation (the dominant REDIM-in-a-loop pattern);
+/// interleaved frees still leak (documented limitation).
 ///   ArrAlloc: DX:AX = byte count -> AX = offset within rt_arrseg (zero-filled)
+///   ArrFree:  AX = block offset, CX = byte count (no-op unless topmost)
 /// </summary>
 public sealed partial class DosRuntime {
 
   public Label ArrAlloc { get; private set; } = null!;
+  public Label ArrFree { get; private set; } = null!;
 
   private void EmitArrayProcedures(Assembler asm) {
+    this.ArrFree = asm.MarkLabel("rt_arr_free");
+    {
+      var done = asm.DefineLabel();
+      asm.Push(Reg.BX);
+      asm.Mov(Reg.BX, Reg.AX);
+      asm.Add(Reg.BX, Reg.CX);
+      asm.Cmp(Reg.BX, Mem.Word(asm.Lbl("rt_arrtop")));
+      asm.Jne(done);
+      asm.Mov(Mem.Word(asm.Lbl("rt_arrtop")), Reg.AX);
+      asm.MarkLabel(done);
+      asm.Pop(Reg.BX);
+      asm.Ret();
+    }
     this.ArrAlloc = asm.MarkLabel("rt_arr_alloc");
     var oom = asm.DefineLabel();
     asm.Test(Reg.DX, Reg.DX);

@@ -1,0 +1,7 @@
+' CALL INTERRUPT with the REG buffer: DOS get-version (INT 21h, AH=30h)
+REG 1, &H3000
+CALL INTERRUPT &H21
+DIM ver AS INTEGER
+ver = REG(1) AND &HFF
+PRINT ver
+END

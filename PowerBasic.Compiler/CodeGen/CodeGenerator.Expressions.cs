@@ -161,9 +161,14 @@ public sealed partial class CodeGenerator {
     }
 
     // arithmetic runs in the result type; comparisons in the widest operand type
-    var opType = b.Op is BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual or BinaryOp.GreaterEqual
-      ? WidestOf(leftType, rightType)
-      : resultType;
+    var isComparison = b.Op is BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual or BinaryOp.GreaterEqual;
+    var opType = isComparison ? WidestOf(leftType, rightType) : resultType;
+    // WORD/DWORD/BYTE pairs compare unsigned
+    var unsignedCompare = isComparison
+      && leftType is ScalarType { IsFloat: false, Signed: false }
+      && rightType is ScalarType { IsFloat: false, Signed: false };
+    if (unsignedCompare)
+      opType = leftType.Size > 2 || rightType.Size > 2 ? PbType.Dword : PbType.Word;
 
     switch (KindOf(opType)) {
       case ValueKind.Int16:
@@ -174,7 +179,7 @@ public sealed partial class CodeGenerator {
         this.Coerce(rightType, opType, b.Right);
         asm.Mov(Reg.BX, Reg.AX);
         asm.Pop(Reg.AX);
-        this.EmitInt16Op(b);
+        this.EmitInt16Op(b, unsignedCompare);
         break;
 
       case ValueKind.Int32:
@@ -188,7 +193,7 @@ public sealed partial class CodeGenerator {
         asm.Mov(Reg.CX, Reg.DX);
         asm.Pop(Reg.AX);
         asm.Pop(Reg.DX);
-        this.EmitInt32Op(b);
+        this.EmitInt32Op(b, unsignedCompare);
         break;
 
       case ValueKind.Float:
@@ -240,8 +245,18 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>left AX, right BX -> result AX.</summary>
-  private void EmitInt16Op(BinaryExpr b) {
+  private void EmitInt16Op(BinaryExpr b, bool unsignedCompare = false) {
     var asm = this._asm;
+    if (unsignedCompare) {
+      switch (b.Op) {
+        case BinaryOp.Equal: this.EmitInt16Compare(asm => asm.Je); return;
+        case BinaryOp.NotEqual: this.EmitInt16Compare(asm => asm.Jne); return;
+        case BinaryOp.Less: this.EmitInt16Compare(asm => asm.Jb); return;
+        case BinaryOp.Greater: this.EmitInt16Compare(asm => asm.Ja); return;
+        case BinaryOp.LessEqual: this.EmitInt16Compare(asm => asm.Jbe); return;
+        case BinaryOp.GreaterEqual: this.EmitInt16Compare(asm => asm.Jae); return;
+      }
+    }
     switch (b.Op) {
       case BinaryOp.Add: asm.Add(Reg.AX, Reg.BX); break;
       case BinaryOp.Subtract: asm.Sub(Reg.AX, Reg.BX); break;
@@ -289,8 +304,41 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>left DX:AX, right CX:BX -> result DX:AX.</summary>
-  private void EmitInt32Op(BinaryExpr b) {
+  private void EmitInt32Op(BinaryExpr b, bool unsignedCompare = false) {
     var asm = this._asm;
+    if (unsignedCompare && b.Op is BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual or BinaryOp.GreaterEqual) {
+      // borrow of (left - right) decides; zero via OR of the difference
+      var done = asm.DefineLabel();
+      asm.Sub(Reg.AX, Reg.BX);
+      asm.Sbb(Reg.DX, Reg.CX);            // CF = left < right
+      asm.Mov(Reg.BX, Reg.AX);
+      asm.Mov(Reg.AX, -1);
+      switch (b.Op) {
+        case BinaryOp.Less:
+          asm.Jc(done);
+          break;
+        case BinaryOp.GreaterEqual:
+          asm.Jnc(done);
+          break;
+        case BinaryOp.Greater: {
+          var no = asm.DefineLabel();
+          asm.Jc(no);
+          asm.Or(Reg.BX, Reg.DX);
+          asm.Jnz(done);
+          asm.MarkLabel(no);
+          break;
+        }
+        case BinaryOp.LessEqual:
+          asm.Jc(done);
+          asm.Or(Reg.BX, Reg.DX);
+          asm.Jz(done);
+          break;
+      }
+      asm.Mov(Reg.AX, (Imm)0);
+      asm.MarkLabel(done);
+      asm.Cwd();
+      return;
+    }
     switch (b.Op) {
       case BinaryOp.Add:
         asm.Add(Reg.AX, Reg.BX);
@@ -423,13 +471,24 @@ public sealed partial class CodeGenerator {
     if (src == dst)
       return;
 
+    var unsignedSource = from is ScalarType { IsFloat: false, Signed: false, ByteSize: 2 };
     switch (src, dst) {
+      case (ValueKind.Int16, ValueKind.Int32) when unsignedSource:
+        asm.Xor(Reg.DX, Reg.DX);   // WORD widens zero-extended
+        break;
+
       case (ValueKind.Int16, ValueKind.Int32):
         asm.Cwd();
         break;
 
       case (ValueKind.Int32, ValueKind.Int16):
         break; // keep AX (range checking is the full backend's job)
+
+      case (ValueKind.Int16, ValueKind.Float) when unsignedSource:
+        asm.Mov(Mem.Word(this._scratch), Reg.AX);
+        asm.Mov(Mem.Word(this._scratch, 2), (Imm)0);
+        asm.Fild(Mem.Dword(this._scratch));
+        break;
 
       case (ValueKind.Int16, ValueKind.Float):
         asm.Mov(Mem.Word(this._scratch), Reg.AX);
