@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>pbc</AssemblyName>
+    <RootNamespace>PowerBasic.Compiler.Cli</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PowerBasic.Compiler\PowerBasic.Compiler.csproj" />
+  </ItemGroup>
+
+</Project>

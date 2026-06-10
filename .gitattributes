@@ -1,0 +1,10 @@
+# PowerBASIC 3.5 is a DOS compiler and requires CRLF line endings.
+*.SUB text eol=crlf
+*.BAS text eol=crlf
+*.bas text eol=crlf
+*.INC text eol=crlf
+*.BI  text eol=crlf
+*.bat text eol=crlf
+# Toolchain image / binaries
+*.gz binary
+*.png binary

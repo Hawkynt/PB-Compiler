@@ -1,0 +1,123 @@
+## .NET
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## NuGet
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nupkg
+!FileFormat.NuPkg/
+**/packages/repositories.config
+
+## Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+bin
+obj
+[Ll]og/
+[Ll]ogs/
+
+## Visual Studio
+.vs/
+*.rsuser
+*.sln.docstates
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+_TeamCity*
+*.dotCover
+*.ncrunch*
+.*crunch*.local.xml
+nCrunchTemp_*
+*.ndproj
+*.VisualState.xml
+TestResult.xml
+[Dd]ebugPublic/
+[Rr]eleases/
+*_i.c
+*_p.c
+*_h.h
+*.ilk
+*.meta
+*.obj
+*.iobj
+# C/C++ *.obj must not exclude the Wavefront-OBJ format project directory.
+# On Windows core.ignorecase=true matches "FileFormat.Obj" as if ending in ".obj".
+!FileFormat.Obj/
+!FileFormat.Obj/**
+*.pch
+*.pdb
+*.ipdb
+*.pgc
+*.pgd
+*.rsp
+*.sbr
+*.tlb
+*.tli
+*.tlh
+*.tmp
+*.tmp_proj
+*_wpftmp.csproj
+*.log
+*.tlog
+*.vspscc
+*.vssscc
+.builds
+*.pidb
+*.svclog
+*.scc
+
+## Rider
+.idea/
+
+## JetBrains
+*.DotSettings
+
+## Test results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+TestResults/
+
+## SFX stubs (pre-published, large binaries)
+**/stubs/
+
+## OS files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+## Real-world test corpus (users drop private/licensed files here)
+test-corpus/*
+!test-corpus/README.md
+
+## Automated-agent artifacts (config, scratch dirs, worktrees, logs, session output)
+.claude/
+CLAUDE.md
+.agents/
+.agent/
+agent-*/
+*.agent.log
+.worktrees/
+.scratch/
+
+## Local Wine build output for the UI (see run-wine.sh)
+**/bin/wine-publish/
+
+## PB-Compiler specifics
+build/
+*.EXE
+*.PBU
+*.PBL
+UNITTEST.LOG
+dosbox*.conf
