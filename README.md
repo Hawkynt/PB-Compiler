@@ -38,6 +38,17 @@ dosbox -c "mount c ." -c "c:" -c "HELLO.EXE"
 Under construction — see [REQUIREMENTS.md](REQUIREMENTS.md) for the MoSCoW
 breakdown and [CHANGELOG.md](CHANGELOG.md) for progress.
 
+| Stage | State |
+|-------|-------|
+| Lexer + preprocessor ($INCLUDE, $IF) | ✅ full PB 3.5 token set, corpus-validated |
+| Parser | ✅ full grammar; the whole [PB-SvgaLibrary](https://github.com/Hawkynt/PB-SvgaLibrary) corpus parses (27&nbsp;772 statements) |
+| Semantic analysis | ✅ all 31 corpus suites bind error-free |
+| 8086–386 + x87 assembler, MZ writer | ✅ 680 golden-byte tests |
+| Code generator + DOS runtime | 🚧 integers/longs/floats/control flow/PRINT run verified under DOSBox; strings, procedures, arrays, file I/O in progress |
+| PBU/PBL units & linker | 🚧 container formats + import resolution done; codegen integration pending |
+| Inline assembler | 🚧 text-level encoder done; codegen hookup pending |
+| DOSBox harness + CI | ✅ golden battery + execution tests, headless |
+
 ## Layout
 
 | Path | What |
