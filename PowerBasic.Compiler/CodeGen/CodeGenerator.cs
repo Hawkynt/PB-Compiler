@@ -320,6 +320,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         asm.Call(this.UserLabel(g.Target));
         break;
 
+      case OnGotoStmt og:
+        this.EmitOnGoto(og);
+        break;
+
       case ReturnStmt { Target: null }:
         asm.Ret();
         break;
