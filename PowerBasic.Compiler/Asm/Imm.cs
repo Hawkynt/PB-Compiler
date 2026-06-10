@@ -20,7 +20,7 @@ public readonly struct Imm {
   public static implicit operator Imm(int value) => new(value, null, false);
 
   /// <summary>The 16-bit offset of <paramref name="label"/> within the image.</summary>
-  public static Imm OffsetOf(Label label) => new(0, label ?? throw new ArgumentNullException(nameof(label)), false);
+  public static Imm OffsetOf(Label label, int addend = 0) => new(addend, label ?? throw new ArgumentNullException(nameof(label)), false);
 
   /// <summary>A paragraph (segment) value relocated by the DOS loader at load time.</summary>
   public static Imm Segment(int paragraph = 0) => new(paragraph, null, true);

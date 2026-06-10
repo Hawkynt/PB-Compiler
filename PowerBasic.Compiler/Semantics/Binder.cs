@@ -128,9 +128,11 @@ public sealed class Binder {
 
       var count = 1;
       if (field.ArrayBounds != null)
-        foreach (var bound in field.ArrayBounds) {
-          if (this._folder.TryFold(bound) is { Integer: { } upper })
-            count *= (int)upper - this._optionBase + 1;
+        foreach (var (lowerExpr, upperExpr) in field.ArrayBounds) {
+          var lower = lowerExpr == null ? this._optionBase : this._folder.TryFold(lowerExpr)?.Integer;
+          var upper = this._folder.TryFold(upperExpr)?.Integer;
+          if (lower != null && upper != null)
+            count *= (int)(upper.Value - lower.Value + 1);
           else
             this.Error(field.Position, $"field array bound of {name}.{field.Name} is not constant");
         }

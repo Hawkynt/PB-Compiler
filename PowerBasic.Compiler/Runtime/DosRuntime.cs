@@ -1,0 +1,621 @@
+using PowerBasic.Compiler.Asm;
+
+namespace PowerBasic.Compiler.Runtime;
+
+/// <summary>
+/// Emits the DOS runtime kernel into the program image. Register conventions
+/// (callee preserves everything it does not return in):
+///   PrintStr:     DS:SI = text, CX = length
+///   PrintInt16:   AX = signed value      (PB style: sign/space prefix, trailing space)
+///   PrintInt32:   DX:AX = signed value   (same formatting)
+///   PrintSingle:  value on ST(0), popped (7 significant digits)
+///   PrintDouble:  value on ST(0), popped (15 significant digits)
+///   PrintNewLine: -
+///   Pow:          ST(1)=base, ST(0)=exponent -> result ST(0)
+///   LongMul/Div/Mod: left DX:AX, right CX:BX -> result DX:AX
+///   Exit:         AL = exit code
+/// The memory model is tiny-style: CS=DS=SS, SP grows down from 0xFFFE.
+/// </summary>
+public sealed class DosRuntime {
+
+  public Label PrintStr { get; private set; } = null!;
+  public Label PrintInt16 { get; private set; } = null!;
+  public Label PrintInt32 { get; private set; } = null!;
+  public Label PrintSingle { get; private set; } = null!;
+  public Label PrintDouble { get; private set; } = null!;
+  public Label PrintNewLine { get; private set; } = null!;
+  public Label Pow { get; private set; } = null!;
+  public Label LongMul { get; private set; } = null!;
+  public Label LongDiv { get; private set; } = null!;
+  public Label LongMod { get; private set; } = null!;
+  public Label Exit { get; private set; } = null!;
+
+  private Label _numBuffer = null!;
+  private Label _scratch = null!;
+
+  /// <summary>Emits the entry stub: segment setup, FPU init, jump to user main.</summary>
+  public void EmitEntry(Assembler asm, Label userMain) {
+    // CS = DS = SS already arranged by the MZ header (SS=0 reloc, SP=0xFFFE);
+    // DOS loads DS/ES = PSP, so re-point them at our single segment.
+    asm.Mov(Reg.AX, Reg.CS);
+    asm.Mov(Reg.DS, Reg.AX);
+    asm.Mov(Reg.ES, Reg.AX);
+    asm.Finit();
+    asm.Jmp(userMain);
+  }
+
+  /// <summary>Emits all runtime procedures; call once between entry stub and user code.</summary>
+  public void EmitProcedures(Assembler asm) {
+    this._numBuffer = asm.Lbl("rt_numbuf");
+    this._scratch = asm.Lbl("rt_scratch");
+    this.EmitExit(asm);
+    this.EmitPrintStr(asm);
+    this.EmitPrintNewLine(asm);
+    this.EmitPrintInt16(asm);
+    this.EmitPrintInt32(asm);
+    this.EmitPrintFloat(asm);
+    this.EmitPow(asm);
+    this.EmitLongHelpers(asm);
+  }
+
+  /// <summary>Emits runtime data cells; call while laying out the data area.</summary>
+  public void EmitData(Assembler asm) {
+    this._numBuffer = asm.MarkLabel("rt_numbuf");
+    asm.Db(new byte[32]);
+    this._scratch = asm.MarkLabel("rt_scratch");
+    asm.Db(new byte[16]);
+  }
+
+  private void EmitExit(Assembler asm) {
+    this.Exit = asm.MarkLabel("rt_exit");
+    asm.Mov(Reg.AH, 0x4C);
+    asm.Int(0x21);
+  }
+
+  private void EmitPrintStr(Assembler asm) {
+    this.PrintStr = asm.MarkLabel("rt_print_str");
+    var done = asm.DefineLabel("rt_print_str_done");
+    asm.Jcxz(done);
+    asm.Push(Reg.AX);
+    asm.Push(Reg.BX);
+    asm.Push(Reg.DX);
+    asm.Mov(Reg.DX, Reg.SI);
+    asm.Mov(Reg.BX, 1);      // stdout handle - redirectable
+    asm.Mov(Reg.AH, 0x40);
+    asm.Int(0x21);
+    asm.Pop(Reg.DX);
+    asm.Pop(Reg.BX);
+    asm.Pop(Reg.AX);
+    asm.MarkLabel(done);
+    asm.Ret();
+  }
+
+  private void EmitPrintNewLine(Assembler asm) {
+    this.PrintNewLine = asm.MarkLabel("rt_print_nl");
+    asm.Push(Reg.SI);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.AX);
+    asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_crlf")));
+    asm.Mov(Reg.CX, 2);
+    asm.Call(this.PrintStr);
+    asm.Pop(Reg.AX);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.SI);
+    asm.Ret();
+  }
+
+  /// <summary>AX (signed) -> "[ |-]digits[ ]" on stdout.</summary>
+  private void EmitPrintInt16(Assembler asm) {
+    this.PrintInt16 = asm.MarkLabel("rt_print_i16");
+    asm.Cwd();                       // sign-extend into DX
+    asm.Jmp(asm.Lbl("rt_print_i32")); // shared 32-bit path (forward label - emitted next)
+  }
+
+  /// <summary>DX:AX (signed) -> "[ |-]digits[ ]" on stdout.</summary>
+  private void EmitPrintInt32(Assembler asm) {
+    this.PrintInt32 = asm.MarkLabel("rt_print_i32");
+    var convert = asm.DefineLabel();
+    var digitLoop = asm.DefineLabel();
+    var positive = asm.DefineLabel();
+
+    asm.Push(Reg.SI);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.BX);
+    asm.Push(Reg.DI);
+
+    // SI walks backwards from the end of the number buffer; trailing space first
+    asm.Mov(Reg.SI, Imm.OffsetOf(this._numBuffer, 31));
+    asm.Mov(Mem.Byte(Reg.SI), ' ');
+
+    // remember sign, take absolute value
+    asm.Xor(Reg.DI, Reg.DI);              // DI = sign flag
+    asm.Test(Reg.DX, Reg.DX);
+    asm.Jns(positive);
+    asm.Mov(Reg.DI, 1);
+    asm.Not(Reg.DX);
+    asm.Not(Reg.AX);
+    asm.Add(Reg.AX, 1);
+    asm.Adc(Reg.DX, (Imm)0);
+    asm.MarkLabel(positive);
+
+    asm.MarkLabel(convert);
+    asm.Mov(Reg.CX, 10);
+    asm.MarkLabel(digitLoop);
+    // DX:AX / 10 -> quotient DX:AX, remainder BX (classic two-step division)
+    asm.Mov(Reg.BX, Reg.AX);
+    asm.Mov(Reg.AX, Reg.DX);
+    asm.Xor(Reg.DX, Reg.DX);
+    asm.Div(Reg.CX);                 // AX = high quotient
+    asm.Xchg(Reg.AX, Reg.BX);        // BX = high quotient, AX = low dividend
+    asm.Div(Reg.CX);                 // AX = low quotient, DX = remainder
+    asm.Add(Reg.DX, '0');
+    asm.Dec(Reg.SI);
+    asm.Mov(Mem.Byte(Reg.SI), Reg.DL);
+    asm.Mov(Reg.DX, Reg.BX);         // quotient back into DX:AX
+    asm.Mov(Reg.BX, Reg.AX);
+    asm.Or(Reg.BX, Reg.DX);          // BX is scratch here - reloaded next round
+    asm.Jnz(digitLoop);
+    var noSign = asm.DefineLabel();
+    asm.Dec(Reg.SI);
+    asm.Test(Reg.DI, Reg.DI);
+    asm.Jz(noSign);
+    asm.Mov(Mem.Byte(Reg.SI), '-');
+    asm.Jmp(asm.Lbl("rt_print_i32_out"));
+    asm.MarkLabel(noSign);
+    asm.Mov(Mem.Byte(Reg.SI), ' ');
+
+    asm.MarkLabel("rt_print_i32_out");
+    // CX = end - SI
+    asm.Mov(Reg.CX, Imm.OffsetOf(this._numBuffer, 32));
+    asm.Sub(Reg.CX, Reg.SI);
+    asm.Call(this.PrintStr);
+
+    asm.Pop(Reg.DI);
+    asm.Pop(Reg.BX);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.SI);
+    asm.Ret();
+  }
+
+  /// <summary>
+  /// Prints ST(0) (popped). Entry points select the significant-digit count:
+  /// 7 for SINGLE, 15 for DOUBLE/EXT. Fixed notation while the value fits,
+  /// otherwise exponent notation. PB-style sign/space prefix and trailing space.
+  /// </summary>
+  private void EmitPrintFloat(Assembler asm) {
+    this.PrintSingle = asm.MarkLabel("rt_print_f32");
+    asm.Mov(Reg.BX, 7);
+    asm.Jmp(asm.Lbl("rt_print_flt"));
+
+    this.PrintDouble = asm.MarkLabel("rt_print_f64");
+    asm.Mov(Reg.BX, 15);
+
+    asm.MarkLabel("rt_print_flt");
+    // The number is decomposed in C-helper style entirely on the FPU:
+    //   exp10 = 0; while |x| >= 10^digits: x /= 10, exp10++; while x != 0 && |x| < 10^(digits-1): x *= 10, exp10--
+    //   mantissa = round(x) as 64-bit integer; then decimal point sits at (digits + exp10).
+    var ten = asm.Lbl("rt_const_ten");
+    var zero = asm.DefineLabel();
+    var scaleDown = asm.DefineLabel();
+    var scaleDownTest = asm.DefineLabel();
+    var scaleUp = asm.DefineLabel();
+    var scaleUpTest = asm.DefineLabel();
+    var emit = asm.DefineLabel();
+
+    asm.Push(Reg.SI);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.DX);
+    asm.Push(Reg.DI);
+
+    // zero is special-cased (scaling would loop forever)
+    asm.Ftst();
+    asm.FstswAx();
+    asm.Sahf();
+    asm.Jz(zero);
+
+    // DI = sign flag; work on |x| (MOV keeps the SAHF flags alive for the JNC)
+    asm.Mov(Reg.DI, (Imm)0);
+    asm.Jnc(asm.Lbl("rt_print_flt_abs")); // C0 set means x < 0 after FTST
+    asm.Mov(Reg.DI, 1);
+    asm.MarkLabel("rt_print_flt_abs");
+    asm.Fabs();
+
+    // CX = decimal exponent counter
+    asm.Xor(Reg.CX, Reg.CX);
+
+    // upper bound = 10^digits, kept in ST(1) while scaling down
+    this.EmitLoadPow10(asm, Reg.BX);          // ST0 = 10^digits, ST1 = x
+    asm.MarkLabel(scaleDownTest);
+    asm.Fcom();                                // compare 10^digits with ST1? (see operand order below)
+    asm.FstswAx();
+    asm.Sahf();
+    asm.Ja(asm.Lbl("rt_print_flt_belowupper")); // 10^digits > x -> done scaling down
+    asm.MarkLabel(scaleDown);
+    asm.Fxch();
+    asm.Fdiv(Mem.Qword(asm.Lbl("rt_const_ten_m64")));  // x /= 10
+    asm.Fxch();
+    asm.Inc(Reg.CX);
+    asm.Jmp(scaleDownTest);
+    asm.MarkLabel("rt_print_flt_belowupper");
+    asm.Fstp(St.St0);                            // drop upper bound, ST0 = x
+
+    // lower bound = 10^(digits-1)
+    asm.Dec(Reg.BX);
+    this.EmitLoadPow10(asm, Reg.BX);
+    asm.Inc(Reg.BX);
+    asm.MarkLabel(scaleUpTest);
+    asm.Fcom();
+    asm.FstswAx();
+    asm.Sahf();
+    asm.Jbe(asm.Lbl("rt_print_flt_scaled"));    // 10^(digits-1) <= x -> done
+    asm.MarkLabel(scaleUp);
+    asm.Fxch();
+    asm.Fmul(Mem.Qword(asm.Lbl("rt_const_ten_m64")));  // x *= 10
+    asm.Fxch();
+    asm.Dec(Reg.CX);
+    asm.Jmp(scaleUpTest);
+    asm.MarkLabel("rt_print_flt_scaled");
+    asm.Fstp(St.St0);                             // ST0 = scaled x in [10^(digits-1), 10^digits)
+
+    // mantissa -> 64-bit integer at rt_scratch
+    asm.Frndint();
+    asm.Fistp(Mem.Qword(asm.Lbl("rt_scratch")));
+    asm.Jmp(emit);
+
+    asm.MarkLabel(zero);
+    asm.Fstp(St.St0);
+    asm.Xor(Reg.AX, Reg.AX);
+    asm.Cwd();
+    asm.Call(this.PrintInt32);
+    asm.Jmp(asm.Lbl("rt_print_flt_done"));
+
+    asm.MarkLabel(emit);
+    this.EmitFloatDigits(asm);
+
+    asm.MarkLabel("rt_print_flt_done");
+    asm.Pop(Reg.DI);
+    asm.Pop(Reg.DX);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.SI);
+    asm.Ret();
+  }
+
+  /// <summary>Loads 10^(value of <paramref name="countReg"/>) onto the FPU stack (clobbers nothing).</summary>
+  private void EmitLoadPow10(Assembler asm, Reg countReg) {
+    // FLD1; loop: FMUL ten - simple and good enough for digit counts <= 16
+    var loop = asm.DefineLabel();
+    var done = asm.DefineLabel();
+    asm.Push(Reg.CX);
+    asm.Mov(Reg.CX, countReg);
+    asm.Fld1();
+    asm.Jcxz(done);
+    asm.MarkLabel(loop);
+    asm.Fmul(Mem.Qword(asm.Lbl("rt_const_ten_m64")));
+    asm.Loop(loop);
+    asm.MarkLabel(done);
+    asm.Pop(Reg.CX);
+  }
+
+  /// <summary>
+  /// Renders the 64-bit mantissa at rt_scratch with decimal point position
+  /// digits+CX, BX = digit count, DI = sign. Trailing zeros after the point are
+  /// trimmed; the PB trailing space is appended.
+  /// </summary>
+  private void EmitFloatDigits(Assembler asm) {
+    // Extract BX decimal digits from the 64-bit integer by repeated div 10
+    // (long division across 4 words), filling the number buffer right-to-left.
+    var digitLoop = asm.MarkLabel("rt_fd_digits");
+    _ = digitLoop;
+
+    // SI -> digit write cursor (right to left), start leaving room for exponent suffix
+    asm.Push(Reg.DI);                                  // sign flag - DI doubles as word pointer below
+    asm.Push(Reg.BX);                                  // original digit count for the layout phase
+    asm.Mov(Reg.SI, Imm.OffsetOf(this._numBuffer, 24));
+    asm.Push(Reg.BX);                                  // working digit countdown
+
+    asm.MarkLabel("rt_fd_next");
+    // divide the 4-word value at rt_scratch by 10, remainder -> AL
+    asm.Push(Reg.CX);
+    asm.Mov(Reg.CX, 4);
+    asm.Mov(Reg.DI, Imm.OffsetOf(this._scratch, 6));   // highest word
+    asm.Xor(Reg.DX, Reg.DX);
+    asm.MarkLabel("rt_fd_divword");
+    asm.Mov(Reg.AX, Mem.Word(Reg.DI));
+    asm.Push(Reg.BX);
+    asm.Mov(Reg.BX, 10);
+    asm.Div(Reg.BX);                                   // DX:AX / 10
+    asm.Pop(Reg.BX);
+    asm.Mov(Mem.Word(Reg.DI), Reg.AX);
+    asm.Sub(Reg.DI, 2);
+    asm.Loop(asm.Lbl("rt_fd_divword"));
+    asm.Pop(Reg.CX);
+    asm.Add(Reg.DX, '0');
+    asm.Dec(Reg.SI);
+    asm.Mov(Mem.Byte(Reg.SI), Reg.DL);
+    asm.Pop(Reg.BX);
+    asm.Dec(Reg.BX);
+    asm.Push(Reg.BX);
+    asm.Test(Reg.BX, Reg.BX);
+    asm.Jnz(asm.Lbl("rt_fd_next"));
+    asm.Pop(Reg.BX);                                   // drop the exhausted countdown
+    asm.Pop(Reg.BX);                                   // original digit count back for layout
+    asm.Pop(Reg.DI);                                   // restore sign flag for layout
+
+    // Now: buffer holds the digit run; insert the decimal point.
+    // Point position from the left = digits + CX (CX may be negative).
+    // For the bring-up runtime only the fixed-notation common case is rendered
+    // when 0 < pointpos <= digits; otherwise falls back to integer-style output
+    // followed by E+CX (exponent notation).
+    this.EmitFloatLayout(asm);
+  }
+
+  private void EmitFloatLayout(Assembler asm) {
+    // flat helper to keep registers straight:
+    //   SI = first digit, BX = digit count, CX = exp10, DI = sign
+    asm.Call(asm.Lbl("rt_fd_layout"));
+    asm.Jmp(asm.Lbl("rt_print_flt_done")); // back into the shared epilogue (registers still pushed)
+
+    asm.MarkLabel("rt_fd_layout");
+    var outBuf = this._numBuffer;                    // reuse front of buffer for output
+    var write = Reg.DI;                              // sign consumed first, then DI = write cursor
+    _ = write;
+
+    var noSign = asm.DefineLabel();
+    var fixedNotation = asm.DefineLabel();
+
+    // DX = point position from left = BX + CX
+    asm.Mov(Reg.DX, Reg.BX);
+    asm.Add(Reg.DX, Reg.CX);
+
+    // write cursor starts at buffer[0]
+    asm.Push(Reg.SI);                                // first digit pointer
+    asm.Mov(Reg.SI, Imm.OffsetOf(outBuf));
+
+    // sign or leading space
+    asm.Test(Reg.DI, Reg.DI);
+    asm.Jz(noSign);
+    asm.Mov(Mem.Byte(Reg.SI), '-');
+    asm.Jmp(asm.Lbl("rt_fd_signdone"));
+    asm.MarkLabel(noSign);
+    asm.Mov(Mem.Byte(Reg.SI), ' ');
+    asm.MarkLabel("rt_fd_signdone");
+    asm.Inc(Reg.SI);
+    asm.Pop(Reg.DI);                                 // DI = read cursor (first digit)
+
+    // fixed notation when 1 <= pointpos <= digitcount, else exponent style
+    asm.Cmp(Reg.DX, 1);
+    asm.Jl(asm.Lbl("rt_fd_exp"));
+    asm.Cmp(Reg.DX, Reg.BX);
+    asm.Jle(fixedNotation);
+    asm.Jmp(asm.Lbl("rt_fd_exp"));
+
+    asm.MarkLabel(fixedNotation);
+    // copy DX integer digits, then '.', then the rest; afterwards trim trailing zeros/point
+    asm.Push(Reg.CX);
+    asm.Mov(Reg.CX, Reg.DX);
+    asm.MarkLabel("rt_fd_intcopy");
+    asm.Mov(Reg.AL, Mem.Byte(Reg.DI));
+    asm.Mov(Mem.Byte(Reg.SI), Reg.AL);
+    asm.Inc(Reg.SI);
+    asm.Inc(Reg.DI);
+    asm.Loop(asm.Lbl("rt_fd_intcopy"));
+    asm.Mov(Mem.Byte(Reg.SI), (byte)'.');
+    asm.Inc(Reg.SI);
+    asm.Mov(Reg.CX, Reg.BX);
+    asm.Sub(Reg.CX, Reg.DX);
+    asm.Jcxz(asm.Lbl("rt_fd_fraccopied"));
+    asm.MarkLabel("rt_fd_fraccopy");
+    asm.Mov(Reg.AL, Mem.Byte(Reg.DI));
+    asm.Mov(Mem.Byte(Reg.SI), Reg.AL);
+    asm.Inc(Reg.SI);
+    asm.Inc(Reg.DI);
+    asm.Loop(asm.Lbl("rt_fd_fraccopy"));
+    asm.MarkLabel("rt_fd_fraccopied");
+    asm.Pop(Reg.CX);
+    // trim trailing zeros, then a trailing point
+    asm.MarkLabel("rt_fd_trim");
+    asm.Dec(Reg.SI);
+    asm.Cmp(Mem.Byte(Reg.SI), (byte)'0');
+    asm.Je(asm.Lbl("rt_fd_trim"));
+    asm.Cmp(Mem.Byte(Reg.SI), (byte)'.');
+    asm.Je(asm.Lbl("rt_fd_pointtrimmed"));
+    asm.Inc(Reg.SI);
+    asm.MarkLabel("rt_fd_pointtrimmed");
+    // trailing space, emit
+    asm.Mov(Mem.Byte(Reg.SI), (byte)' ');
+    asm.Inc(Reg.SI);
+    asm.Jmp(asm.Lbl("rt_fd_flush"));
+
+    // exponent notation: d.ddddddE+nn
+    asm.MarkLabel("rt_fd_exp");
+    // first digit, point, remaining digits (trimmed), 'E', sign, 2-digit exponent
+    asm.Mov(Reg.AL, Mem.Byte(Reg.DI));
+    asm.Mov(Mem.Byte(Reg.SI), Reg.AL);
+    asm.Inc(Reg.SI);
+    asm.Inc(Reg.DI);
+    asm.Mov(Mem.Byte(Reg.SI), (byte)'.');
+    asm.Inc(Reg.SI);
+    asm.Push(Reg.CX);
+    asm.Mov(Reg.CX, Reg.BX);
+    asm.Dec(Reg.CX);
+    asm.Jcxz(asm.Lbl("rt_fd_expdigitsdone"));
+    asm.MarkLabel("rt_fd_expdigits");
+    asm.Mov(Reg.AL, Mem.Byte(Reg.DI));
+    asm.Mov(Mem.Byte(Reg.SI), Reg.AL);
+    asm.Inc(Reg.SI);
+    asm.Inc(Reg.DI);
+    asm.Loop(asm.Lbl("rt_fd_expdigits"));
+    asm.MarkLabel("rt_fd_expdigitsdone");
+    asm.Pop(Reg.CX);
+    // trim zeros backwards (but keep at least one digit after the point)
+    asm.MarkLabel("rt_fd_exptrim");
+    asm.Dec(Reg.SI);
+    asm.Cmp(Mem.Byte(Reg.SI), (byte)'0');
+    asm.Jne(asm.Lbl("rt_fd_exptrimmed"));
+    asm.Cmp(Mem.Byte(Reg.SI, -1), (byte)'.');
+    asm.Je(asm.Lbl("rt_fd_exptrimmed"));
+    asm.Jmp(asm.Lbl("rt_fd_exptrim"));
+    asm.MarkLabel("rt_fd_exptrimmed");
+    asm.Inc(Reg.SI);
+    asm.Mov(Mem.Byte(Reg.SI), (byte)'E');
+    asm.Inc(Reg.SI);
+    // exponent value = pointpos - 1
+    asm.Dec(Reg.DX);
+    asm.Mov(Mem.Byte(Reg.SI), (byte)'+');
+    asm.Test(Reg.DX, Reg.DX);
+    asm.Jns(asm.Lbl("rt_fd_exppos"));
+    asm.Mov(Mem.Byte(Reg.SI), (byte)'-');
+    asm.Neg(Reg.DX);
+    asm.MarkLabel("rt_fd_exppos");
+    asm.Inc(Reg.SI);
+    asm.Mov(Reg.AX, Reg.DX);
+    asm.Push(Reg.BX);
+    asm.Mov(Reg.BL, 10);
+    asm.Div(Reg.BL);                       // AL = tens, AH = ones
+    asm.Add(Reg.AX, 0x3030);
+    asm.Mov(Mem.Byte(Reg.SI), Reg.AL);
+    asm.Mov(Mem.Byte(Reg.SI, 1), Reg.AH);
+    asm.Pop(Reg.BX);
+    asm.Add(Reg.SI, 2);
+    asm.Mov(Mem.Byte(Reg.SI), (byte)' ');
+    asm.Inc(Reg.SI);
+
+    asm.MarkLabel("rt_fd_flush");
+    // emit outBuf .. SI
+    asm.Mov(Reg.CX, Reg.SI);
+    asm.Mov(Reg.SI, Imm.OffsetOf(this._numBuffer));
+    asm.Sub(Reg.CX, Reg.SI);
+    asm.Call(this.PrintStr);
+    asm.Ret();
+  }
+
+  /// <summary>ST(1)^ST(0) -> ST(0)  (x^y = 2^(y*log2 x); both operands popped, result pushed).</summary>
+  private void EmitPow(Assembler asm) {
+    this.Pow = asm.MarkLabel("rt_pow");
+    // y * log2(x)
+    asm.Fxch();              // ST0=x, ST1=y
+    asm.Fld1();
+    asm.Fxch();              // ST0=x, ST1=1, ST2=y
+    asm.Fyl2x();             // ST0=log2(x), ST1=y
+    asm.Fmulp();             // ST0=y*log2(x)
+    // 2^z = 2^int(z) * 2^frac(z)
+    asm.Fld(St.St0);
+    asm.Frndint();           // ST0=int(z) (rounding mode is fine for typical exponents)
+    asm.Fxch();
+    asm.Fsub(St.St0, St.St1);  // ST0=frac(z), ST1=int(z)
+    asm.F2xm1();
+    asm.Fld1();
+    asm.Faddp();             // ST0=2^frac
+    asm.Fscale();            // ST0=2^frac * 2^int(ST1)
+    asm.Fstp(St.St1);         // drop int(z)
+    asm.Ret();
+  }
+
+  private void EmitLongHelpers(Assembler asm) {
+    // DX:AX * CX:BX -> DX:AX (signed/unsigned identical for low 32 bits)
+    this.LongMul = asm.MarkLabel("rt_lmul");
+    asm.Push(Reg.SI);
+    asm.Mov(Reg.SI, Reg.AX);   // SI = a.lo
+    asm.Mov(Reg.AX, Reg.DX);   // a.hi
+    asm.Mul(Reg.BX);           // a.hi * b.lo -> AX (low part contributes to high word)
+    asm.Xchg(Reg.AX, Reg.CX);  // CX = partial high, AX = b.hi
+    asm.Mul(Reg.SI);           // b.hi * a.lo
+    asm.Add(Reg.CX, Reg.AX);   // sum of cross products
+    asm.Mov(Reg.AX, Reg.SI);
+    asm.Mul(Reg.BX);           // a.lo * b.lo -> DX:AX
+    asm.Add(Reg.DX, Reg.CX);
+    asm.Pop(Reg.SI);
+    asm.Ret();
+
+    // signed DX:AX / CX:BX -> DX:AX quotient; remainder in CX:BX
+    this.LongDiv = asm.MarkLabel("rt_ldiv");
+    this.EmitLongDivide(asm, wantRemainder: false);
+
+    // signed DX:AX MOD CX:BX -> DX:AX remainder
+    this.LongMod = asm.MarkLabel("rt_lmod");
+    this.EmitLongDivide(asm, wantRemainder: true);
+  }
+
+  /// <summary>Shift-subtract 32/32 signed division (KISS bring-up version; 32 iterations).</summary>
+  private void EmitLongDivide(Assembler asm, bool wantRemainder) {
+    var suffix = wantRemainder ? "m" : "d";
+    asm.Push(Reg.SI);
+    asm.Push(Reg.DI);
+    asm.Push(Reg.BP);
+
+    // sign bookkeeping: SI bit0 = negate quotient, bit1 = negate remainder (sign of dividend)
+    asm.Xor(Reg.SI, Reg.SI);
+    asm.Test(Reg.DX, Reg.DX);
+    asm.Jns(asm.Lbl($"rt_l{suffix}_p1"));
+    asm.Mov(Reg.SI, 3);             // dividend negative: flip quotient and remainder
+    asm.Not(Reg.DX);
+    asm.Not(Reg.AX);
+    asm.Add(Reg.AX, 1);
+    asm.Adc(Reg.DX, (Imm)0);
+    asm.MarkLabel($"rt_l{suffix}_p1");
+    asm.Test(Reg.CX, Reg.CX);
+    asm.Jns(asm.Lbl($"rt_l{suffix}_p2"));
+    asm.Xor(Reg.SI, 1);             // divisor negative flips just the quotient sign
+    asm.Not(Reg.CX);
+    asm.Not(Reg.BX);
+    asm.Add(Reg.BX, 1);
+    asm.Adc(Reg.CX, (Imm)0);
+    asm.MarkLabel($"rt_l{suffix}_p2");
+
+    // 32-bit restoring division: quotient builds in DX:AX, remainder in DI:BP
+    asm.Xor(Reg.DI, Reg.DI);
+    asm.Xor(Reg.BP, Reg.BP);
+    asm.Push(Reg.CX);               // divisor saved on stack (CX reused as counter)
+    asm.Push(Reg.BX);
+    asm.Mov(Reg.CX, 32);
+    asm.MarkLabel($"rt_l{suffix}_loop");
+    // shift remainder:dividend left one bit
+    asm.Shl(Reg.AX, 1);
+    asm.Rcl(Reg.DX, 1);
+    asm.Rcl(Reg.BP, 1);
+    asm.Rcl(Reg.DI, 1);
+    // compare remainder DI:BP with divisor [sp+2]:[sp]
+    asm.Mov(Reg.BX, Reg.SP);
+    asm.Cmp(Reg.DI, Mem.Word(Reg.BX, 2));
+    asm.Jb(asm.Lbl($"rt_l{suffix}_next"));
+    asm.Ja(asm.Lbl($"rt_l{suffix}_sub"));
+    asm.Cmp(Reg.BP, Mem.Word(Reg.BX));
+    asm.Jb(asm.Lbl($"rt_l{suffix}_next"));
+    asm.MarkLabel($"rt_l{suffix}_sub");
+    asm.Sub(Reg.BP, Mem.Word(Reg.BX));
+    asm.Sbb(Reg.DI, Mem.Word(Reg.BX, 2));
+    asm.Or(Reg.AX, 1);              // set quotient bit (low bit just shifted in is 0)
+    asm.MarkLabel($"rt_l{suffix}_next");
+    asm.Loop(asm.Lbl($"rt_l{suffix}_loop"));
+    asm.Pop(Reg.BX);
+    asm.Pop(Reg.CX);
+
+    if (wantRemainder) {
+      asm.Mov(Reg.AX, Reg.BP);
+      asm.Mov(Reg.DX, Reg.DI);
+      asm.Test(Reg.SI, 2);
+      asm.Jz(asm.Lbl($"rt_l{suffix}_done"));
+    } else {
+      asm.Test(Reg.SI, 1);
+      asm.Jz(asm.Lbl($"rt_l{suffix}_done"));
+    }
+    asm.Not(Reg.DX);
+    asm.Not(Reg.AX);
+    asm.Add(Reg.AX, 1);
+    asm.Adc(Reg.DX, (Imm)0);
+    asm.MarkLabel($"rt_l{suffix}_done");
+    asm.Pop(Reg.BP);
+    asm.Pop(Reg.DI);
+    asm.Pop(Reg.SI);
+    asm.Ret();
+  }
+
+  /// <summary>Constant pool; emitted with the data area.</summary>
+  public void EmitConstants(Assembler asm) {
+    asm.MarkLabel("rt_crlf");
+    asm.Db(0x0D, 0x0A);
+    asm.Align(2);
+    asm.MarkLabel("rt_const_ten_m64");
+    asm.Dq(10.0);
+  }
+}
