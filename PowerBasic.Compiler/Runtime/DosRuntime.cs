@@ -82,6 +82,29 @@ public sealed partial class DosRuntime {
     this.EmitMiscProcedures2(asm);
   }
 
+  /// <summary>
+  /// Unit mode (<c>$COMPILE UNIT</c>): instead of emitting the runtime, every
+  /// public runtime label becomes an external symbol with the name the real
+  /// runtime would bind it to - the linker resolves them against the main
+  /// image's export table. The names are learned from a throwaway emission so
+  /// they can never drift from the actual runtime.
+  /// </summary>
+  public void BindExternal(Assembler asm) {
+    ArgumentNullException.ThrowIfNull(asm);
+    var probe = new Assembler();
+    var reference = new DosRuntime();
+    reference.EmitEntry(probe, probe.DefineLabel());
+    reference.EmitProcedures(probe);
+    reference.EmitConstants(probe);
+    reference.EmitData(probe);
+
+    foreach (var property in typeof(DosRuntime).GetProperties().Where(p => p.PropertyType == typeof(Label))) {
+      var bound = (Label?)property.GetValue(reference)
+        ?? throw new InvalidOperationException($"runtime label {property.Name} was never assigned");
+      property.SetValue(this, asm.External(bound.Name ?? throw new InvalidOperationException($"runtime label {property.Name} is unnamed")));
+    }
+  }
+
   /// <summary>Emits runtime data cells; call while laying out the data area.</summary>
   public void EmitData(Assembler asm) {
     asm.Align(2);

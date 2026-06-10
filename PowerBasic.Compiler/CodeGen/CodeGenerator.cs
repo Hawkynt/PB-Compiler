@@ -42,7 +42,18 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// <summary>Generated diagnostics for constructs the generator does not support yet.</summary>
   public List<Diagnostic> Errors { get; } = [];
 
-  public byte[] EmitExecutable() {
+  public byte[] EmitExecutable() => this.EmitExecutable([], []);
+
+  /// <summary>
+  /// Emits the program as a DOS MZ executable; <paramref name="units"/> link
+  /// unconditionally, <paramref name="libraries"/> contribute units on demand
+  /// (<c>$LINK</c>). Link failures surface as compile diagnostics.
+  /// </summary>
+  public byte[] EmitExecutable(IReadOnlyList<PbuFile> units, IReadOnlyList<PblFile> libraries) {
+    ArgumentNullException.ThrowIfNull(units);
+    ArgumentNullException.ThrowIfNull(libraries);
+    this._allowExternalCalls = units.Count > 0 || libraries.Count > 0;
+
     var asm = this._asm;
     var userMain = asm.DefineLabel("user_main");
     this._scratch = asm.DefineLabel("cg_scratch");
@@ -69,7 +80,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this.EmitFarThunks();
     this.EmitDataArea();
 
-    var image = asm.ToArray();
+    var image = this._allowExternalCalls ? this.LinkImage(units, libraries) : asm.ToArray();
+    if (image.Length == 0)
+      return []; // link errors already reported
+
     var writer = new MzExeWriter(image) {
       EntrySegment = 0,
       EntryOffset = 0,
@@ -79,7 +93,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       // then reserve the far string and array heap segments behind it
       MinExtraParagraphs = (ushort)((0x10000 - image.Length % 0x10000 + 15) / 16 + DosRuntime.ExtraHeapParagraphs),
     };
-    writer.AddRelocations(asm.SegmentRelocations);
+    writer.AddRelocations(this._allowExternalCalls ? this._linkedSegmentSites : asm.SegmentRelocations);
     return writer.ToArray();
   }
 
@@ -94,6 +108,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     var asm = this._asm;
     this._frameBytesLabel = asm.DefineLabel();
     this._frameWordsLabel = asm.DefineLabel();
+    // their "positions" are byte counts, not image offsets - never relocate
+    this._frameBytesLabel.IsConstant = true;
+    this._frameWordsLabel.IsConstant = true;
     this._tempBytes = 0;
     this._tempMax = 0;
 
@@ -158,16 +175,21 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
   private Label ProcLabelOf(ProcedureSymbol proc) {
     if (!this._procLabels.TryGetValue(proc, out var label))
-      this._procLabels[proc] = label = this._asm.DefineLabel($"p_{proc.Name}");
+      // DECLAREd-but-undefined procedures resolve at link time by name
+      this._procLabels[proc] = label = proc.IsExternal && this._allowExternalCalls
+        ? this._asm.External(proc.Name)
+        : this._asm.DefineLabel($"p_{proc.Name}");
     return label;
   }
 
   private void EmitDataArea() {
     var asm = this._asm;
     asm.Align(2);
-    this._rt.EmitConstants(asm);
-    this._rt.EmitData(asm);
-    this.EmitDataPool();
+    if (!this._isUnit) { // units import the runtime (and the main module's DATA pool) instead
+      this._rt.EmitConstants(asm);
+      this._rt.EmitData(asm);
+      this.EmitDataPool();
+    }
 
     asm.Align(2);
     asm.MarkLabel(this._scratch);

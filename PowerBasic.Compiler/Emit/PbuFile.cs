@@ -15,6 +15,8 @@ public enum PbuFixupKind : byte {
   Segment = 2,
   /// <summary>16-bit near-call target resolved from the import with <see cref="PbuFixup.Target"/> index.</summary>
   ImportCall = 3,
+  /// <summary>16-bit absolute offset of the import (data cells, CODEPTR); the site's addend is kept.</summary>
+  ImportOffset = 4,
 }
 
 public sealed record PbuExport(string Name, PbuExportKind Kind, uint SignatureHash, uint CodeOffset);

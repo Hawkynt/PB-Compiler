@@ -121,8 +121,8 @@ public sealed partial class CodeGenerator {
   /// </summary>
   private void EmitCall(ProcedureSymbol proc, IReadOnlyList<Expression> args, bool wantResult, SourcePosition position) {
     var asm = this._asm;
-    if (proc.IsExternal) {
-      this.Unsupported(position, $"external procedure {proc.Name}");
+    if (proc.IsExternal && !this._allowExternalCalls) {
+      this.Unsupported(position, $"external procedure {proc.Name} (no $LINK provides it)");
       return;
     }
     if (args.Count != proc.Parameters.Count) {

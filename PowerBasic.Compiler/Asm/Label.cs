@@ -15,5 +15,15 @@ public sealed class Label {
 
   public bool IsBound => this.Position >= 0;
 
+  /// <summary>True for symbols resolved by the linker (<see cref="Assembler.External"/>); never bindable.</summary>
+  public bool IsExternal { get; internal set; }
+
+  /// <summary>
+  /// True for pseudo-labels whose <see cref="Position"/> is assigned manually
+  /// as a plain constant (e.g. frame sizes), not an image offset - their fixup
+  /// sites must never be rebased by a linker.
+  /// </summary>
+  public bool IsConstant { get; internal set; }
+
   public override string ToString() => this.Name ?? $"L{this.GetHashCode():X4}";
 }

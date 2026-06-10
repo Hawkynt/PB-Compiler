@@ -25,8 +25,27 @@ New-Item -ItemType Directory build | Out-Null
 Copy-Item tests/*.BI build/ -ErrorAction SilentlyContinue
 
 $fail = $false
+
+# $COMPILE UNIT sources are prerequisites, not programs: compile them FIRST
+# into build/<NAME>.PBU (their own names, so $LINK "NAME.PBU" in a test that
+# is compiled inside build/ resolves) and exclude them from the run loop.
+$unitSources = @{}
+foreach ($t in Get-ChildItem tests/*.BAS) {
+  if ((Get-Content $t.FullName -Raw) -notmatch '(?im)^\s*\$COMPILE\s+UNIT') { continue }
+  $unitSources[$t.FullName] = $true
+  & dotnet run --project pbc -c Release --no-build -v q -- $t.FullName -O "build/$($t.BaseName).PBU" 2>&1 | Out-File "build/$($t.BaseName).pbcout"
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "FAIL  $($t.BaseName) (unit compile)"
+    Get-Content "build/$($t.BaseName).pbcout" | ForEach-Object { Write-Host "      $_" }
+    $fail = $true
+  } else {
+    Write-Host "UNIT  $($t.BaseName)"
+  }
+}
+
 $i = 0
 foreach ($t in Get-ChildItem tests/*.BAS) {
+  if ($unitSources.ContainsKey($t.FullName)) { continue }
   $i++
   $name = $t.BaseName
   Copy-Item $t.FullName "build/T$i.BAS"

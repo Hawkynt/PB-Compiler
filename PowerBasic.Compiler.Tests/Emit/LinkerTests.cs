@@ -119,6 +119,48 @@ public sealed class LinkerTests {
   }
 
   [Test]
+  public void Link_GivenImportOffsetFixup_WhenLinked_ThenAbsoluteTargetPlusAddendPatched() {
+    // main exports a "runtime" symbol at offset 8; unit references it with addend 6
+    var main = new PbuFile { Name = "MAIN" };
+    main.Code = new byte[10];
+    main.Exports.Add(new("rt_datapool", PbuExportKind.Sub, 0, 8));
+
+    var unit = new PbuFile { Name = "U" };
+    unit.Code = [0xB8, 0x06, 0x00, 0xC3]; // MOV AX, addend 6 with import-offset fixup at 1
+    unit.Imports.Add(new("rt_datapool", 0));
+    unit.Fixups.Add(new(1, PbuFixupKind.ImportOffset, 0));
+    var linker = new Linker();
+    linker.AddUnit(unit);
+
+    var image = linker.Link(main);
+
+    var patched = (ushort)(image.Code[11] | (image.Code[12] << 8));
+    Assert.That(patched, Is.EqualTo(8 + 6));
+  }
+
+  [Test]
+  public void Link_GivenOddSizedBlocks_WhenLinked_ThenBasesWordAligned() {
+    var main = new PbuFile { Name = "MAIN" };
+    main.Code = [0xC3];        // 1 byte -> unit code must start at 2
+    main.Data = [0x11];        // 1 byte -> unit data base must be 2
+
+    var unit = new PbuFile { Name = "U" };
+    unit.Code = [0xA1, 0x00, 0x00, 0xC3]; // MOV AX,[disp16], data fixup at 1
+    unit.Data = [0x22];
+    unit.Fixups.Add(new(1, PbuFixupKind.DataOffset, 0));
+    var linker = new Linker();
+    linker.AddUnit(unit);
+
+    var image = linker.Link(main);
+
+    Assert.That(image.Code.Length % 2, Is.Zero, "data area must start word-aligned");
+    Assert.That(image.Code[2], Is.EqualTo(0xA1), "unit code must start at the aligned base");
+    Assert.That(image.Data[2], Is.EqualTo(0x22), "unit data must start at the aligned base");
+    var patched = (ushort)(image.Code[3] | (image.Code[4] << 8));
+    Assert.That(patched, Is.EqualTo(image.Code.Length + 2), "data fixup = code size + aligned unit data base");
+  }
+
+  [Test]
   public void Link_GivenSegmentFixups_WhenLinked_ThenSitesReportedForMzRelocation() {
     var main = new PbuFile { Name = "MAIN" };
     main.Code = [0xB8, 0x00, 0x00, 0xC3];

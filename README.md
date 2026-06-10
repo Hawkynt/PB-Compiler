@@ -24,7 +24,9 @@ the original target: 8086+ real mode under DOS or DOSBox.
 pbc HELLO.BAS              # -> HELLO.EXE (DOS MZ, real mode)
 pbc -G386 TEST.BAS         # allow 80386 instructions ($CPU 80386)
 pbc UNIT.BAS               # $COMPILE UNIT inside -> UNIT.PBU
+pbc MAIN.BAS               # $LINK "UNIT.PBU" / $LINK "MY.PBL" inside -> linked EXE
 pbc lib build MY.PBL *.PBU # bundle units into a library
+pbc lib list MY.PBL        # show exports/imports of a library or unit
 ```
 
 Run the result in DOSBox:
@@ -47,7 +49,7 @@ breakdown and [CHANGELOG.md](CHANGELOG.md) for progress.
 | Code generator + DOS runtime | ✅ integers/longs/floats (WORD→LONG arithmetic promotion, unsigned compares), control flow (FOR with LONG/float counters and variable STEP, SELECT on longs/strings), dynamic strings, SUB/FUNCTION frames, static & REDIM arrays (LIFO heap reclaim), array/ANY parameters, UDTs, sequential + RANDOM/BINARY file I/O (GET/PUT, GET$/PUT$, SEEK, LOF), DATA/READ/RESTORE, ON ERROR/RESUME/ERR, console INPUT/LINE INPUT/INKEY$, PRINT USING (literal formats), DEF SEG/PEEK/POKE/INP/OUT/WAIT, VARPTR/STRPTR families, REG + CALL INTERRUPT, CODEPTR32 far thunks + CALL DWORD, SHIFT/ROTATE/BIT, SWAP, SCREEN/CLS/LOCATE/BEEP/SOUND, RND/TIMER |
 | Inline assembler | ✅ wired into codegen: the whole corpus (5&nbsp;100+ `!` statements) assembles; locals/params resolve to BP cells (BYREF = pointer slot), BASIC labels are jump targets |
 | Corpus run gate | ✅ all 31 PB-SvgaLibrary suites compile **and run** under DOSBox: 1&nbsp;139 assertions, 0 failures |
-| PBU/PBL units & linker | 🚧 container formats + import resolution done; codegen integration pending |
+| PBU/PBL units & linker | ✅ `$COMPILE UNIT` emits .PBU (exports with signature hashes, runtime/DECLARE imports, near/data/segment/import fixups); `$LINK "X.PBU"/"Y.PBL"` resolves DECLAREd procedures at compile time (libraries on demand, transitively), signature mismatches are compile errors; cross-unit numeric/string/BYREF calls verified under DOSBox |
 | DOSBox harness + CI | ✅ golden battery (incl. stdin-redirected INPUT tests) + execution tests, headless |
 
 ## Layout

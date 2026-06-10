@@ -63,17 +63,21 @@ public sealed class Linker {
           throw new LinkException($"signature mismatch for {import.Name}: {unit.Name} expects a different parameter list than {found.Unit.Name} provides");
       }
 
-    // 3. layout: code blocks back to back, then data blocks; BSS accumulates
+    // 3. layout: code blocks back to back, then data blocks; BSS accumulates.
+    // Blocks are kept word-aligned so the units' internal Align(2) data holds.
     var codeBase = new Dictionary<PbuFile, uint>(ReferenceEqualityComparer.Instance);
     var dataBase = new Dictionary<PbuFile, uint>(ReferenceEqualityComparer.Instance);
     var codeSize = 0u;
     foreach (var unit in participating) {
+      codeSize = (codeSize + 1) & ~1u;
       codeBase[unit] = codeSize;
       codeSize += (uint)unit.Code.Length;
     }
+    codeSize = (codeSize + 1) & ~1u; // the data area starts word-aligned behind the code
     var dataSize = 0u;
     var bssSize = 0u;
     foreach (var unit in participating) {
+      dataSize = (dataSize + 1) & ~1u;
       dataBase[unit] = dataSize;
       dataSize += (uint)unit.Data.Length;
       bssSize += unit.BssSize;
@@ -105,14 +109,17 @@ public sealed class Linker {
             segmentSites.Add(site);
             break;
 
-          case PbuFixupKind.ImportCall: {
+          case PbuFixupKind.ImportCall or PbuFixupKind.ImportOffset: {
             if (fixup.Target >= unit.Imports.Count)
               throw new LinkException($"fixup in {unit.Name} references import #{fixup.Target} of {unit.Imports.Count}");
             var import = unit.Imports[fixup.Target];
             var (providerUnit, export) = exporters[import.Name];
             var target = codeBase[providerUnit] + export.CodeOffset;
-            // near-call displacement is relative to the byte after the 16-bit operand
-            Patch16(code, site, (ushort)(target - (uint)(site + 2)));
+            if (fixup.Kind == PbuFixupKind.ImportOffset)
+              Patch16(code, site, (ushort)(Read16(code, site) + target)); // site keeps its addend
+            else
+              // near-call displacement is relative to the byte after the 16-bit operand
+              Patch16(code, site, (ushort)(target - (uint)(site + 2)));
             break;
           }
 

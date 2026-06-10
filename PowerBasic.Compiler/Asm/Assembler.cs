@@ -45,6 +45,8 @@ public sealed partial class Assembler {
     ArgumentNullException.ThrowIfNull(label);
     if (label.IsBound)
       throw new InvalidOperationException($"Label {label} is already bound to offset {label.Position}.");
+    if (label.IsExternal)
+      throw new InvalidOperationException($"Label {label} is external and cannot be bound.");
 
     label.Position = this.Position;
   }
@@ -53,6 +55,16 @@ public sealed partial class Assembler {
   public Label MarkLabel(string name) {
     var label = this.Lbl(name);
     this.MarkLabel(label);
+    return label;
+  }
+
+  /// <summary>Gets or creates the named label and flags it external (resolved at link time, never bindable).</summary>
+  public Label External(string name) {
+    var label = this.Lbl(name);
+    if (label.IsBound)
+      throw new InvalidOperationException($"Label {label} is already bound and cannot become external.");
+
+    label.IsExternal = true;
     return label;
   }
 
@@ -77,33 +89,82 @@ public sealed partial class Assembler {
       if (!fixup.Target.IsBound)
         throw new InvalidOperationException($"Label {fixup.Target} was referenced but never bound.");
 
-      var target = fixup.Target.Position + fixup.Addend;
-      switch (fixup.Kind) {
-        case FixupKind.Rel8: {
-          var rel = target - (fixup.Position + 1);
-          if (rel is < sbyte.MinValue or > sbyte.MaxValue)
-            throw new InvalidOperationException($"Short jump to {fixup.Target} is out of range ({rel}).");
-
-          result[fixup.Position] = (byte)(sbyte)rel;
-          break;
-        }
-        case FixupKind.Rel16: {
-          var rel = target - (fixup.Position + 2);
-          result[fixup.Position] = (byte)rel;
-          result[fixup.Position + 1] = (byte)(rel >> 8);
-          break;
-        }
-        case FixupKind.Abs16: {
-          result[fixup.Position] = (byte)target;
-          result[fixup.Position + 1] = (byte)(target >> 8);
-          break;
-        }
-        default:
-          throw new InvalidOperationException($"Unknown fixup kind {fixup.Kind}.");
-      }
+      ApplyFixup(result, fixup);
     }
 
     return result;
+  }
+
+  /// <summary>
+  /// Resolves all internal fixups and returns the image together with the
+  /// sites a linker must patch: absolute 16-bit offsets (rebase when the image
+  /// moves), segment words, and references to external labels (unbound named
+  /// labels count as external too - units import runtime symbols by name).
+  /// </summary>
+  public RelocatableImage ToRelocatable() {
+    var result = this._buffer.ToArray();
+    var relocations = new List<AsmRelocation>();
+    var registered = new HashSet<Label>(this._namedLabels.Values, ReferenceEqualityComparer.Instance);
+    foreach (var fixup in this._fixups) {
+      if (fixup.Target.IsExternal || (!fixup.Target.IsBound && registered.Contains(fixup.Target))) {
+        switch (fixup.Kind) {
+          case FixupKind.Rel16:
+            relocations.Add(new(fixup.Position, AsmRelocationKind.ExternalRelative, fixup.Target.Name));
+            break;
+          case FixupKind.Abs16:
+            // the addend stays in the site; the linker adds the symbol's final offset
+            result[fixup.Position] = (byte)fixup.Addend;
+            result[fixup.Position + 1] = (byte)(fixup.Addend >> 8);
+            relocations.Add(new(fixup.Position, AsmRelocationKind.ExternalAbsolute, fixup.Target.Name));
+            break;
+          default:
+            throw new InvalidOperationException($"Short jump to external label {fixup.Target} is not linkable.");
+        }
+        continue;
+      }
+
+      if (!fixup.Target.IsBound)
+        throw new InvalidOperationException($"Label {fixup.Target} was referenced but never bound.");
+
+      ApplyFixup(result, fixup);
+      if (fixup.Kind == FixupKind.Abs16 && !fixup.Target.IsConstant)
+        relocations.Add(new(fixup.Position, AsmRelocationKind.Absolute, null));
+    }
+
+    foreach (var site in this._segmentRelocations)
+      relocations.Add(new(site, AsmRelocationKind.Segment, null));
+
+    var bound = this._namedLabels
+      .Where(pair => pair.Value.IsBound)
+      .ToDictionary(pair => pair.Key, pair => pair.Value.Position, StringComparer.OrdinalIgnoreCase);
+    return new(result, relocations, bound);
+  }
+
+  private static void ApplyFixup(byte[] result, Fixup fixup) {
+    var target = fixup.Target.Position + fixup.Addend;
+    switch (fixup.Kind) {
+      case FixupKind.Rel8: {
+        var rel = target - (fixup.Position + 1);
+        if (rel is < sbyte.MinValue or > sbyte.MaxValue)
+          throw new InvalidOperationException($"Short jump to {fixup.Target} is out of range ({rel}).");
+
+        result[fixup.Position] = (byte)(sbyte)rel;
+        break;
+      }
+      case FixupKind.Rel16: {
+        var rel = target - (fixup.Position + 2);
+        result[fixup.Position] = (byte)rel;
+        result[fixup.Position + 1] = (byte)(rel >> 8);
+        break;
+      }
+      case FixupKind.Abs16: {
+        result[fixup.Position] = (byte)target;
+        result[fixup.Position + 1] = (byte)(target >> 8);
+        break;
+      }
+      default:
+        throw new InvalidOperationException($"Unknown fixup kind {fixup.Kind}.");
+    }
   }
 
   #endregion

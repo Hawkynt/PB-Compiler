@@ -28,11 +28,35 @@ main code. `END`/`SYSTEM` terminate via int 21h AH=4Ch.
 | | u32 code length, code bytes |
 | | u32 data length, data bytes |
 | | u32 bss size |
-| | u16 relocation count, then per fixup: u32 site offset, u8 type (0=near target offset, 1=data offset, 2=segment base, 3=import near call), u16 target (import index for type 3, else reserved 0) |
+| | u16 relocation count, then per fixup: u32 site offset, u8 type (0=near target offset, 1=data offset, 2=segment base, 3=import near call, 4=import absolute offset), u16 target (import index for types 3/4, else reserved 0) |
 
-The *signature hash* is a FNV-1a-32 over the canonical signature string
-(`name(byval:type,byref:type,...)->type`), letting the linker reject
-unit/caller mismatches that PB 3.5 only caught at run time.
+Fixup semantics (all sites are 16-bit words inside the code image):
+
+- **0 NearCode** — site holds an offset relative to the unit's code base; the
+  linker adds the final code base.
+- **1 DataOffset** — site holds an offset relative to the unit's data base;
+  the linker adds the final code size plus the unit's data base.
+- **2 Segment** — site holds a paragraph value; becomes an MZ relocation.
+- **3 ImportCall** — site is the displacement of a near CALL/JMP/Jcc; the
+  linker writes `target - (site + 2)`.
+- **4 ImportOffset** — site holds an addend; the linker adds the import's
+  final absolute offset (used for runtime data cells and CODEPTR of imports).
+
+The *signature hash* is a FNV-1a-32 over the upper-cased canonical signature
+string, letting the linker reject unit/caller mismatches that PB 3.5 only
+caught at run time. The canonical format is
+
+```
+NAME(byval:type,byref:type,seg:type,...)->returntype
+```
+
+one entry per parameter in order (`byval`/`seg`/`byref` as declared), `->type`
+only for FUNCTIONs. Type names are the lower-case PB scalar names (`byte`,
+`word`, `dword`, `integer`, `long`, `single`, `double`, `ext`), `string`,
+`string*N` for fixed strings, `flex`, `any`, the TYPE name for UDTs, and the
+element type plus `()` for array parameters - e.g.
+`ADDINTS(byval:integer,byval:integer)->integer`. Runtime symbols (`rt_*`)
+imported by units are unchecked and hash as 0.
 
 ## .PBL — unit library
 
@@ -50,9 +74,17 @@ into the EXE (library semantics, like `.LIB`).
 ## Linking model
 
 1. Compile main source; collect unresolved calls (DECLAREd but undefined).
-2. Resolve each from explicitly `$LINK`ed PBUs, then PBLs, in source order.
+   The main image is itself unit-shaped: its code blob (runtime + main +
+   procedures + data, all internal references final because it always lands
+   at offset 0) exports every defined SUB/FUNCTION with its signature hash
+   *plus* every bound runtime label (`rt_*`, hash 0) as the runtime export
+   table units resolve against.
+2. Resolve each import from explicitly `$LINK`ed PBUs, then PBLs, in source
+   order; library units are pulled only while they satisfy unresolved imports
+   (transitively).
 3. Signature hashes must match; mismatch is a compile-time error.
-4. Pulled-in unit code/data is appended to the image; fixups are applied
-   (near offsets relative to final layout, segment fixups become MZ
-   relocation entries).
-5. Unresolved symbols after the sweep abort the compile.
+4. Pulled-in unit code is appended behind the main image, unit data behind
+   all code; every block is word-aligned. Fixups are applied (near offsets
+   relative to final layout, segment fixups become MZ relocation entries).
+5. Unresolved symbols after the sweep abort the compile, as does a combined
+   image beyond the single-segment 64 KiB.

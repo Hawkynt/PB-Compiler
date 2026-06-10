@@ -87,21 +87,61 @@ public static class Driver {
       }
 
       var generator = new CodeGenerator(model);
-      var exe = generator.EmitExecutable();
+      byte[] artifact;
+      if (IsUnitCompile(model)) {
+        var unitName = Path.GetFileNameWithoutExtension(source).ToUpperInvariant();
+        var compiledUnit = generator.EmitUnit(unitName);
+        output ??= Path.ChangeExtension(source, ".PBU");
+        using var buffer = new MemoryStream();
+        compiledUnit.Write(buffer);
+        artifact = buffer.ToArray();
+      } else {
+        if (!TryLoadLinkTargets(model, sourceDir, stderr, out var units, out var libraries))
+          return 1;
+        artifact = generator.EmitExecutable(units, libraries);
+        output ??= Path.ChangeExtension(source, ".EXE");
+      }
+
       if (generator.Errors.Count > 0) {
         foreach (var error in generator.Errors)
           stderr.WriteLine($"error: {error}");
         return 1;
       }
 
-      output ??= Path.ChangeExtension(source, ".EXE");
-      File.WriteAllBytes(output, exe);
-      stdout.WriteLine($"{Path.GetFileName(output)}: {exe.Length} bytes");
+      File.WriteAllBytes(output, artifact);
+      stdout.WriteLine($"{Path.GetFileName(output)}: {artifact.Length} bytes");
       return 0;
     } catch (Exception e) when (e is LexerException or PreprocessorException or ParserException) {
       stderr.WriteLine($"error: {e.Message}");
       return 1;
     }
+  }
+
+  /// <summary>$COMPILE UNIT selects unit emission; $COMPILE EXE (the default) is a no-op.</summary>
+  private static bool IsUnitCompile(SemanticModel model)
+    => model.MetaStatements.Any(m => m.Command == "COMPILE" && m.Arguments is [{ } target, ..] && target.Text.Equals("UNIT", StringComparison.OrdinalIgnoreCase));
+
+  /// <summary>Loads every $LINK "X.PBU"/"Y.PBL" target relative to the source directory.</summary>
+  private static bool TryLoadLinkTargets(SemanticModel model, string sourceDir, TextWriter stderr, out List<PbuFile> units, out List<PblFile> libraries) {
+    units = [];
+    libraries = [];
+    foreach (var meta in model.MetaStatements.Where(m => m.Command == "LINK")) {
+      if (meta.Arguments is not [{ Kind: Syntax.TokenKind.StringLiteral } file]) {
+        stderr.WriteLine($"error: {meta.Position}: $LINK expects a quoted file name");
+        return false;
+      }
+      var path = Path.IsPathRooted(file.Text) ? file.Text : Path.Combine(sourceDir, file.Text);
+      if (!File.Exists(path)) {
+        stderr.WriteLine($"error: {meta.Position}: $LINK file '{file.Text}' not found");
+        return false;
+      }
+      using var stream = File.OpenRead(path);
+      if (path.EndsWith(".PBL", StringComparison.OrdinalIgnoreCase))
+        libraries.Add(PblFile.Read(stream));
+      else
+        units.Add(PbuFile.Read(stream));
+    }
+    return true;
   }
 
   /// <summary>pblib-style library maintenance: build a .PBL from .PBUs, or list contents.</summary>
@@ -156,8 +196,12 @@ public static class Driver {
     w.WriteLine("       pbc lib build <out.PBL> <unit.PBU>...");
     w.WriteLine("       pbc lib list <file.PBL|file.PBU>");
     w.WriteLine();
+    w.WriteLine("A source with $COMPILE UNIT produces a .PBU unit instead of an EXE;");
+    w.WriteLine("$LINK \"X.PBU\" / $LINK \"Y.PBL\" directives (relative to the source");
+    w.WriteLine("directory) are linked into the executable.");
+    w.WriteLine();
     w.WriteLine("Options:");
-    w.WriteLine("  -O <file>      output file name (default: <source>.EXE)");
+    w.WriteLine("  -O <file>      output file name (default: <source>.EXE / .PBU)");
     w.WriteLine("  -I <dir>       additional $INCLUDE search directory");
     w.WriteLine("  -G386          allow 80386 instructions (PBC.EXE compatibility)");
     w.WriteLine("  --dump-tokens  stop after lexing/preprocessing and list tokens");

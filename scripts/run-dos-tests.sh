@@ -41,8 +41,24 @@ cp tests/*.BI build/ 2>/dev/null || true
 rm -f build/UNITTEST.LOG
 
 fail=0
+
+# $COMPILE UNIT sources are prerequisites, not programs: compile them FIRST
+# into build/<NAME>.PBU (their own names, so $LINK "NAME.PBU" in a test that
+# is compiled inside build/ resolves) and exclude them from the run loop.
+is_unit() { grep -qiE '^[[:space:]]*\$COMPILE[[:space:]]+UNIT' "$1"; }
+for t in "${tests[@]}"; do
+  is_unit "$t" || continue
+  name=$(basename "$t" .BAS); name=$(basename "$name" .bas)
+  if $PBC "$t" -O "build/$name.PBU" > "build/$name.pbcout" 2>&1; then
+    echo "UNIT  $name"
+  else
+    echo "FAIL  $name (unit compile)"; sed 's/^/      /' "build/$name.pbcout"; fail=1
+  fi
+done
+
 i=0
 for t in "${tests[@]}"; do
+  is_unit "$t" && continue
   i=$((i+1)); name=$(basename "$t" .BAS); name=$(basename "$name" .bas)
   cp "$t" "build/T$i.BAS"
 
