@@ -1,5 +1,0 @@
-<Solution>
-  <Project Path="pbc/pbc.csproj" />
-  <Project Path="PowerBasic.Compiler.Tests/PowerBasic.Compiler.Tests.csproj" />
-  <Project Path="PowerBasic.Compiler/PowerBasic.Compiler.csproj" />
-</Solution>
