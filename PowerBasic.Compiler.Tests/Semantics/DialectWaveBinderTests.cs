@@ -147,19 +147,15 @@ public sealed class DialectWaveBinderTests {
 
   #endregion
 
-  #region BCD deferrals
+  #region BCD arithmetic (computes as EXT on the x87 stack)
 
   [Test]
-  public void Bind_GivenBcdArithmetic_WhenBound_ThenLaterWaveDiagnostic() {
-    var model = Bind("DIM a AS FIX\nDIM b AS FIX\nx! = a + b");
-    Assert.That(model.Errors, Has.Some.Matches<Diagnostic>(d => d.Message.Contains("later wave")));
-  }
+  public void Bind_GivenBcdArithmetic_WhenBound_ThenAccepted()
+    => BindOk("DIM a AS FIX\nDIM b AS FIX\nx! = a + b");
 
   [Test]
-  public void Bind_GivenBcdMixedAssignment_WhenBound_ThenLaterWaveDiagnostic() {
-    var model = Bind("DIM a AS FIX\na = 1.5");
-    Assert.That(model.Errors, Has.Some.Matches<Diagnostic>(d => d.Message.Contains("later wave")));
-  }
+  public void Bind_GivenBcdMixedAssignment_WhenBound_ThenAccepted()
+    => BindOk("DIM a AS FIX\na = 1.5");
 
   [Test]
   public void Bind_GivenSameTypeBcdCopy_WhenBound_ThenAccepted()

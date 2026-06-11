@@ -1,7 +1,7 @@
 namespace PowerBasic.Compiler.Semantics;
 
 /// <summary>Return-type rule of an intrinsic function.</summary>
-public enum IntrinsicReturn { Integer, Word, Dword, Long, Single, Double, Ext, String, MatchArg }
+public enum IntrinsicReturn { Integer, Word, Dword, Long, Quad, Single, Double, Ext, Fix, Bcd, String, MatchArg }
 
 /// <summary>One built-in function signature.</summary>
 public sealed record IntrinsicInfo(string Name, int MinArgs, int MaxArgs, IntrinsicReturn Returns);
@@ -25,7 +25,7 @@ public static class Intrinsics {
 
   static Intrinsics() {
     // --- string producing -------------------------------------------------
-    Add("CHR$", 1, 1, IntrinsicReturn.String);
+    Add("CHR$", 1, 64, IntrinsicReturn.String);
     Add("STR$", 1, 2, IntrinsicReturn.String);
     Add("STRING$", 2, 2, IntrinsicReturn.String);
     Add("SPACE$", 1, 1, IntrinsicReturn.String);
@@ -49,6 +49,8 @@ public static class Intrinsics {
     Add("TIME$", 0, 0, IntrinsicReturn.String);
     Add("DATE$", 0, 0, IntrinsicReturn.String);
     Add("ERDEV$", 0, 0, IntrinsicReturn.String);
+    Add("DIR$", 0, 2, IntrinsicReturn.String);
+    Add("CURDIR$", 0, 1, IntrinsicReturn.String);
     Add("PEEK$", 2, 2, IntrinsicReturn.String);
     Add("MIN$", 2, 2, IntrinsicReturn.String);
     Add("MAX$", 2, 2, IntrinsicReturn.String);
@@ -70,6 +72,9 @@ public static class Intrinsics {
     Add("CBYT", 1, 1, IntrinsicReturn.Word);
     Add("CWRD", 1, 1, IntrinsicReturn.Word);
     Add("CDWD", 1, 1, IntrinsicReturn.Dword);
+    Add("CQUD", 1, 1, IntrinsicReturn.Quad);
+    Add("CFIX", 1, 1, IntrinsicReturn.Fix);
+    Add("CBCD", 1, 1, IntrinsicReturn.Bcd);
     Add("CVI", 1, 2, IntrinsicReturn.Integer);
     Add("CVL", 1, 2, IntrinsicReturn.Long);
     Add("CVS", 1, 2, IntrinsicReturn.Single);
@@ -136,6 +141,10 @@ public static class Intrinsics {
     Add("PLAY", 1, 1, IntrinsicReturn.Integer);
     Add("ISTRUE", 1, 1, IntrinsicReturn.Integer);
     Add("ISFALSE", 1, 1, IntrinsicReturn.Integer);
+    Add("INSTAT", 0, 0, IntrinsicReturn.Integer);
+    Add("SETMEM", 1, 1, IntrinsicReturn.Long);
+    Add("INPUT$", 1, 2, IntrinsicReturn.String);
+    Add("FILEATTR", 2, 2, IntrinsicReturn.Long);
 
     // --- low level ------------------------------------------------------------
     Add("PEEK", 1, 2, IntrinsicReturn.Integer);

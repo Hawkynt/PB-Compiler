@@ -58,6 +58,13 @@ public sealed partial class CodeGenerator {
       }
 
       case MemberExpr m: {
+        // QB-style dotted variable (binder flattened the chain into one symbol)
+        if (model.VariableBindings.TryGetValue(m, out var flat)) {
+          if (this.TryDirectCell(flat) is { } flatCell)
+            return new(flatCell, false);
+          asm.Mov(Reg.BX, Mem.Word(Reg.BP, flat.Offset));
+          return new(Mem.At(Reg.BX), false);
+        }
         if (model.TypeOf(m.Target) is not UdtType udt || udt.FindField(m.Member) is not { } field) {
           this.Unsupported(m, "member access");
           return null;
@@ -68,7 +75,11 @@ public sealed partial class CodeGenerator {
       }
 
       case CallOrIndexExpr call when model.VariableBindings.TryGetValue(call, out var array):
-        return this.EmitArrayElementPlace(call, array);
+        return this.EmitArrayElementPlace(call.Arguments, array, call);
+
+      // indexing a flattened dotted array name (Max.X(i)) - a plain array element
+      case IndexExpr { Target: MemberExpr mt } ix when model.VariableBindings.TryGetValue(mt, out var dottedArray) && dottedArray.Type is ArrayType:
+        return this.EmitArrayElementPlace(ix.Arguments, dottedArray, ix);
 
       case IndexExpr ix:
         return this.EmitFieldArrayPlace(ix);
@@ -138,6 +149,15 @@ public sealed partial class CodeGenerator {
         asm.Fild(Adjust(place.Cell, 0, OperandSize.Qword));
         break;
 
+      case BcdType { IsFixedPoint: true }: // FIX: scaled int64 / 10^pbvFixDigits
+        asm.Fild(Adjust(place.Cell, 0, OperandSize.Qword));
+        asm.Call(this._asm.Lbl("rt_fixdn"));
+        break;
+
+      case BcdType: // BCD: EXT-backed 10-byte cell
+        asm.Fld(Adjust(place.Cell, 0, OperandSize.Tbyte));
+        break;
+
       case ScalarType { IsFloat: false } or PointerType:
         asm.Mov(Reg.AX, Adjust(place.Cell, 0, OperandSize.Word));
         asm.Mov(Reg.DX, Adjust(place.Cell, 2, OperandSize.Word));
@@ -202,6 +222,15 @@ public sealed partial class CodeGenerator {
         asm.Fistp(Adjust(place.Cell, 0, OperandSize.Qword));
         break;
 
+      case BcdType { IsFixedPoint: true }: // FIX: round to pbvFixDigits decimals, store scaled
+        asm.Call(this._asm.Lbl("rt_fixup"));
+        asm.Fistp(Adjust(place.Cell, 0, OperandSize.Qword));
+        break;
+
+      case BcdType:
+        asm.Fstp(Adjust(place.Cell, 0, OperandSize.Tbyte));
+        break;
+
       case ScalarType { IsFloat: false } or PointerType:
         asm.Mov(Adjust(place.Cell, 0, OperandSize.Word), Reg.AX);
         asm.Mov(Adjust(place.Cell, 2, OperandSize.Word), Reg.DX);
@@ -258,17 +287,36 @@ public sealed partial class CodeGenerator {
       return;
     }
 
-    if (targetType is BcdType bcd) {
-      // same-type BCD copies are flat moves; arithmetic is a later wave (binder-checked)
-      if (Equals(model.TypeOf(a.Value), bcd))
-        this.EmitBlockCopy(a.Target, a.Value, bcd.Size, a.Position);
+    // FIX literal stores round DECIMALLY at compile time (genuine PBC converts
+    // the literal text: 2.555 -> 2.56 even though the binary double is below .555)
+    if (targetType is BcdType { IsFixedPoint: true } && TryLiteralValue(a.Value) is { } fixLiteral) {
+      var scaled = (long)Math.Round((decimal)fixLiteral * 100m, MidpointRounding.AwayFromZero);
+      this._asm.Fild(Mem.Qword(this.QuadConstOf(scaled)));
+      if (this.EmitPlace(a.Target) is { } fixPlace)
+        this._asm.Fistp(Adjust(fixPlace.Cell, 0, OperandSize.Qword));
       else
-        this.Unsupported(a.Position, "BCD/FIX arithmetic (comes with a later wave)");
+        this._asm.Fstp(St.St0);
       return;
     }
 
     if (targetType is ArrayType) {
       this.Unsupported(a);
+      return;
+    }
+
+    // $OPTIMIZE SPEED: v = v +/- const on a direct int16 cell is one ALU op
+    if (this.OptimizeSpeed && !this.CheckOverflow && !this.CheckNumeric
+        && targetType is ScalarType { IsFloat: false, ByteSize: 2 }
+        && a.Target is NameExpr targetName
+        && model.VariableBindings.TryGetValue(targetName, out var tSym)
+        && this.TryDirectCell(tSym) is { } tCell
+        && a.Value is BinaryExpr { Op: BinaryOp.Add or BinaryOp.Subtract, Left: NameExpr vLeft, Right: IntegerLiteralExpr { Value: >= short.MinValue and <= short.MaxValue } vConst } vBin
+        && model.VariableBindings.TryGetValue(vLeft, out var vSym)
+        && ReferenceEquals(vSym, tSym)) {
+      if (vBin.Op == BinaryOp.Add)
+        this._asm.Add(tCell.WithSize(OperandSize.Word), (Imm)(int)vConst.Value);
+      else
+        this._asm.Sub(tCell.WithSize(OperandSize.Word), (Imm)(int)vConst.Value);
       return;
     }
 
@@ -365,22 +413,57 @@ public sealed partial class CodeGenerator {
     asm.Call(this._rt.MidSet);
   }
 
+  /// <summary>Compile-time value of a numeric literal (incl. a leading minus), else null.</summary>
+  private static double? TryLiteralValue(Expression e) => e switch {
+    FloatLiteralExpr f => f.Value,
+    IntegerLiteralExpr i => i.Value,
+    UnaryExpr { Op: UnaryOp.Negate } u when TryLiteralValue(u.Operand) is { } inner => -inner,
+    _ => null,
+  };
+
   private void EmitLsetRset(LsetRsetStmt ls) {
+    var asm = this._asm;
     var targetType = model.TypeOf(ls.Target);
-    if (!ls.IsLeft) {
-      this.Unsupported(ls);   // RSET
-      return;
-    }
 
     switch (targetType) {
-      case FixedStringType: {
-        // identical to assignment: copy + blank pad
-        this.EmitAssign(new(ls.Position, ls.Target, ls.Value));
+      case StringType or FlexType: {
+        // dynamic string: justify in place within the current length
+        this.EmitExpression(ls.Value);
+        asm.Push(Reg.AX);
+        if (this.EmitPlace(ls.Target) is not { } place) {
+          asm.Pop(Reg.AX);
+          return;
+        }
+        asm.Mov(Reg.AX, Adjust(place.Cell, 0, OperandSize.Word));  // raw target handle
+        asm.Pop(Reg.DX);
+        asm.Mov(Reg.BX, ls.IsLeft ? 0 : 1);
+        asm.Call(this._rt.Justify);
         break;
       }
+
+      case FixedStringType fixedString when !ls.IsLeft: { // RSET: right-justified store
+        this.EmitExpression(ls.Value);
+        asm.Push(Reg.AX);
+        if (this.EmitPlace(ls.Target) is not { } place) {
+          asm.Pop(Reg.AX);
+          return;
+        }
+        asm.Lea(Reg.DI, place.Cell);
+        asm.Mov(Reg.DX, place.Far ? Reg.ES : Reg.DS);
+        asm.Mov(Reg.CX, fixedString.Length);
+        asm.Pop(Reg.AX);
+        asm.Call(this._rt.StoreFixedR);
+        break;
+      }
+
+      case FixedStringType: // LSET: identical to assignment (copy + blank pad)
+        this.EmitAssign(new(ls.Position, ls.Target, ls.Value));
+        break;
+
       case UdtType target when model.TypeOf(ls.Value) is UdtType source:
         this.EmitBlockCopy(ls.Target, ls.Value, Math.Min(target.Size, source.Size), ls.Position);
         break;
+
       default:
         this.Unsupported(ls);
         break;

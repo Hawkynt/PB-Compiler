@@ -26,6 +26,8 @@ public sealed class VariableSymbol(string name, PbType type, VariableStorage sto
   public bool ByVal { get; set; }
   /// <summary>Parameters only: far pointer passed (SEG modifier).</summary>
   public bool Seg { get; set; }
+  /// <summary>Parameters only: CDECL bracket parameter (<c>[, BYVAL x]</c>) - may be omitted at call sites.</summary>
+  public bool Optional { get; set; }
   /// <summary>Assigned by the storage layouter: data-segment offset or BP displacement.</summary>
   public int Offset { get; set; }
 
@@ -45,11 +47,15 @@ public sealed class ProcedureSymbol(string name, bool isFunction) {
   /// <summary>Locals & statics by name (case-insensitive), including the implicit function-result variable.</summary>
   public Dictionary<string, VariableSymbol> Variables { get; } = new(StringComparer.OrdinalIgnoreCase);
   public bool IsStatic { get; set; }
+  /// <summary>CDECL calling convention: arguments pushed right to left, caller cleans the stack.</summary>
+  public bool IsCdecl { get; set; }
   /// <summary>Null when only DECLAREd (external - resolved at link time from PBU/PBL).</summary>
   public IReadOnlyList<Statement>? Body { get; set; }
   public SourcePosition Position { get; set; }
 
   public bool IsExternal => this.Body == null;
+  /// <summary>Number of parameters a call site must provide (CDECL bracket parameters may be omitted).</summary>
+  public int RequiredParameters => this.Parameters.Count(p => !p.Optional);
   public override string ToString() => $"{(this.IsFunction ? "FUNCTION" : "SUB")} {this.Name}({this.Parameters.Count})";
 }
 

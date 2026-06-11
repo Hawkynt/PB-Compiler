@@ -27,6 +27,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private readonly Stack<Label> _exitFor = new();
   private readonly Stack<Label> _exitDo = new();
   private readonly Stack<Label> _exitSelect = new();
+  private readonly Stack<Label> _iterateFor = new();
+  private readonly Stack<Label> _iterateDo = new();
+  private readonly Stack<Label> _iterateAny = new();
   private Dictionary<string, Label> _userLabels = new(StringComparer.OrdinalIgnoreCase);
   private Label _scratch = null!;
 
@@ -41,6 +44,26 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
   /// <summary>Generated diagnostics for constructs the generator does not support yet.</summary>
   public List<Diagnostic> Errors { get; } = [];
+
+  // $ERROR BOUNDS/NUMERIC/OVERFLOW/STACK state (PBC -EB/-EN/-EO/-ES set the
+  // initial state; $ERROR ... ON|OFF metastatements toggle it lexically)
+  public bool CheckBounds { get; set; }
+  public bool CheckNumeric { get; set; }
+  public bool CheckOverflow { get; set; }
+  public bool CheckStack { get; set; }
+
+  /// <summary>$OPTIMIZE SPEED / -OZF: favor inline code over runtime calls.</summary>
+  public bool OptimizeSpeed { get; set; }
+
+  /// <summary>Raises trappable runtime error <paramref name="code"/> when the preceding Jcc falls through.</summary>
+  private void EmitRaiseWhen(Action<Label> skipJump, int code) {
+    var asm = this._asm;
+    var ok = asm.DefineLabel();
+    skipJump(ok);
+    asm.Mov(Reg.AX, code);
+    asm.Call(this._rt.Raise);
+    asm.MarkLabel(ok);
+  }
 
   public byte[] EmitExecutable() => this.EmitExecutable([], []);
 
@@ -61,8 +84,61 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._rt.EmitEntry(asm, userMain);
     this._rt.EmitProcedures(asm);
 
+    // $OPTIMIZE SIZE|SPEED - one per module (PBC -OZF preselects SPEED)
+    var optimizeMetas = model.MetaStatements.Where(m => m.Command.Equals("OPTIMIZE", StringComparison.OrdinalIgnoreCase)).ToList();
+    if (optimizeMetas.Count > 1)
+      this.Errors.Add(new(optimizeMetas[1].Position, "only one $OPTIMIZE per module"));
+    if (optimizeMetas.Count > 0 && optimizeMetas[0].Arguments is [{ } optMode, ..])
+      this.OptimizeSpeed = optMode.Text.Equals("SPEED", StringComparison.OrdinalIgnoreCase);
+
     asm.MarkLabel(userMain);
+
+    // stack probe threshold: $STACK n reserves n bytes below the 0xFFFE top,
+    // otherwise everything above the data area (margin 256) counts as stack
+    var stackMeta = model.MetaStatements.FirstOrDefault(m => m.Command.Equals("STACK", StringComparison.OrdinalIgnoreCase));
+    if (stackMeta is { Arguments: [{ Kind: TokenKind.IntegerLiteral } stackSize, ..] })
+      asm.Mov(Mem.Word(asm.Lbl("rt_stackmin")), (int)(0xFFFE - Math.Clamp(stackSize.IntegerValue, 256, 0xF000)) & 0xFFFF);
+    else {
+      asm.Mov(Reg.AX, Imm.OffsetOf(asm.Lbl("rt_memend")));
+      asm.Add(Reg.AX, 256);
+      asm.Mov(Mem.Word(asm.Lbl("rt_stackmin")), Reg.AX);
+    }
+
+    // $OPTION CNTLBREAK ON|OFF: int 23h handler (OFF ignores Ctrl-Break,
+    // ON terminates cleanly through the runtime exit)
+    var cntlBreak = model.MetaStatements.FirstOrDefault(m =>
+      m.Command.Equals("OPTION", StringComparison.OrdinalIgnoreCase)
+      && m.Arguments is [{ } o, ..] && o.Text.Equals("CNTLBREAK", StringComparison.OrdinalIgnoreCase));
+    if (cntlBreak != null) {
+      var breakOff = cntlBreak.Arguments[^1].Text.Equals("OFF", StringComparison.OrdinalIgnoreCase);
+      var install = asm.DefineLabel();
+      var handler = asm.DefineLabel();
+      asm.Jmp(install);
+      asm.MarkLabel(handler);
+      if (breakOff)
+        asm.Iret();
+      else {
+        asm.Mov(Reg.AL, (Imm)255);
+        asm.Jmp(this._rt.Exit);
+      }
+      asm.MarkLabel(install);
+      asm.Mov(Reg.DX, Imm.OffsetOf(handler));
+      asm.Mov(Reg.AX, 0x2523);
+      asm.Int(0x21);
+    }
+
+    // $STRING n selects the string-segment granularity; observable limit =
+    // usable bytes per string (the multi-segment design stays single-heap)
+    var stringMeta = model.MetaStatements.FirstOrDefault(m => m.Command.Equals("STRING", StringComparison.OrdinalIgnoreCase));
+    if (stringMeta is { Arguments: [{ Kind: TokenKind.IntegerLiteral } granularity, ..] }) {
+      var usable = granularity.IntegerValue switch {
+        1 => 1006, 2 => 2030, 4 => 4078, 8 => 8174, 16 => 16366, _ => 32750,
+      };
+      asm.Mov(Mem.Word(asm.Lbl("rt_strmaxlen")), usable);
+    }
+
     this.BeginFrame();
+    this.EmitChainCommonLoad();             // absorb a CHAIN handoff, when present
     this._trackResume = ContainsErrorHandling(model.MainBody);
     foreach (var statement in model.MainBody)
       this.EmitStatement(statement);
@@ -84,14 +160,18 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (image.Length == 0)
       return []; // link errors already reported
 
+    // grow the single segment to its full 64 KiB so data + stack always fit,
+    // then reserve the far string and array heap segments behind it
+    var extraParagraphs = (ushort)((0x10000 - image.Length % 0x10000 + 15) / 16 + DosRuntime.ExtraHeapParagraphs);
     var writer = new MzExeWriter(image) {
       EntrySegment = 0,
       EntryOffset = 0,
       StackSegment = 0,
       StackPointer = 0xFFFE,
-      // grow the single segment to its full 64 KiB so data + stack always fit,
-      // then reserve the far string and array heap segments behind it
-      MinExtraParagraphs = (ushort)((0x10000 - image.Length % 0x10000 + 15) / 16 + DosRuntime.ExtraHeapParagraphs),
+      MinExtraParagraphs = extraParagraphs,
+      // cap the allocation at what we actually use, freeing the rest of
+      // conventional memory for SHELL/EXEC and DOS 48h allocations (HUGE arrays)
+      MaxExtraParagraphs = extraParagraphs,
     };
     writer.AddRelocations(this._allowExternalCalls ? this._linkedSegmentSites : asm.SegmentRelocations);
     return writer.ToArray();
@@ -150,6 +230,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   #region slots, literals & labels
 
   private Label SlotOf(VariableSymbol symbol) {
+    // PB internal variables (pbvScrnCols, ...) live in runtime data cells
+    if (symbol.Storage == VariableStorage.Global && DosRuntime.InternalVariableLabel(symbol.Name) is { } internalCell)
+      return this._asm.Lbl(internalCell);
     if (!this._variableSlots.TryGetValue(symbol, out var label))
       this._variableSlots[symbol] = label = this._asm.DefineLabel($"v_{symbol.Name}_{this._variableSlots.Count}");
     return label;
@@ -215,7 +298,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     foreach (var (symbol, label) in this._variableSlots) {
       asm.Align(2);
       asm.MarkLabel(label);
-      asm.Db(new byte[Math.Max(symbol.Type.Size, 1)]);
+      var bytes = symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual
+        ? HvDescriptorBytes                       // dword bounds + EMS handle + page cache
+        : Math.Max(symbol.Type.Size, 1);
+      asm.Db(new byte[bytes]);
     }
 
     foreach (var (symbol, label) in this._shadowDescriptors) {
@@ -223,17 +309,22 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       asm.MarkLabel(label);
       asm.Db(new byte[8 + ((ArrayType)symbol.Type).Rank * 4]);
     }
+
+    asm.Align(2);
+    asm.MarkLabel("rt_stackmin");
+    asm.Dw(0);
+    asm.MarkLabel("rt_memend");    // stack probe baseline ($ERROR STACK ON)
   }
 
   private void Unsupported(Statement s) => this.Errors.Add(new(s.Position, $"not yet generated: {(s is CommandStmt c ? $"command {c.Keyword}" : s.GetType().Name)}"));
   private void Unsupported(Expression e, string what) => this.Errors.Add(new(e.Position, $"not yet generated: {what}"));
   private void Unsupported(SourcePosition position, string what) => this.Errors.Add(new(position, $"not yet generated: {what}"));
 
-  /// <summary>Replicates the binder's variable table key (name + canonical suffix text).</summary>
-  private static string KeyOf(string name, TypeSuffix suffix) => name + suffix.KeyText();
+  /// <summary>Replicates the binder's variable table key (name + canonical suffix text; arrays carry a "()" tail).</summary>
+  private static string KeyOf(string name, TypeSuffix suffix, bool isArray = false) => name + suffix.KeyText() + (isArray ? "()" : "");
 
-  private VariableSymbol? LookupVariable(string name, TypeSuffix suffix) {
-    var key = KeyOf(name, suffix);
+  private VariableSymbol? LookupVariable(string name, TypeSuffix suffix, bool isArray = false) {
+    var key = KeyOf(name, suffix, isArray);
     if (this._currentProc != null && this._currentProc.Variables.TryGetValue(key, out var local))
       return local;
     return model.ModuleVariables.GetValueOrDefault(key);
@@ -256,6 +347,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     ScalarType { ByteSize: 8 } => ValueKind.Int64,
     ScalarType => ValueKind.Int32,
     PointerType => ValueKind.Int32,
+    BcdType => ValueKind.Float,   // FIX/BCD compute as EXT on the x87 stack
     StringType or FixedStringType or FlexType or AsciizType => ValueKind.Str,
     _ => ValueKind.Int16,
   };
@@ -315,6 +407,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
       case LabelStmt l:
         asm.MarkLabel(this.UserLabel(l.Name));
+        // ERL bookkeeping: numeric line labels only (PB: labels do not count)
+        if (this._trackResume && l.Name.All(char.IsAsciiDigit) && int.TryParse(l.Name, out var lineNumber))
+          asm.Mov(Mem.Word(asm.Lbl("rt_erl")), lineNumber & 0xFFFF);
         break;
 
       case GotoStmt g:
@@ -351,6 +446,14 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
       case ExitStmt e:
         this.EmitExit(e);
+        break;
+
+      case IterateStmt it:
+        this.EmitIterate(it);
+        break;
+
+      case WriteStmt write:
+        this.EmitWrite(write);
         break;
 
       case EndStmt e:
@@ -414,8 +517,36 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         this.EmitSeekStatement(seek);
         break;
 
+      case FieldStmt field:
+        this.EmitField(field);
+        break;
+
+      case ChainStmt chain:
+        this.EmitChain(chain);
+        break;
+
       case SwapStmt sw:
         this.EmitSwap(sw);
+        break;
+
+      case BitStmt bit:
+        this.EmitBit(bit);
+        break;
+
+      case ReplaceStmt replace:
+        this.EmitReplaceStmt(replace);
+        break;
+
+      case ExitFarStmt ef:
+        this.EmitExitFar(ef);
+        break;
+
+      case ArraySortStmt sort:
+        this.EmitArraySort(sort);
+        break;
+
+      case ArrayScanStmt scan:
+        this.EmitArrayScan(scan);
         break;
 
       case DefSegStmt seg:
@@ -457,11 +588,131 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         this.EmitInlineAsm(ia);
         break;
 
-      case MetaStmt or EquateStmt or DefTypeStmt or DataStmt:
+      case MetaStmt meta:
+        this.ApplyMeta(meta);
+        break;
+
+      case EquateStmt or DefTypeStmt or DataStmt:
         break; // declarations & module bookkeeping - nothing to execute
 
       default:
         this.Unsupported(statement);
+        break;
+    }
+  }
+
+  /// <summary>COMMON scalars in declaration order - the stable cross-image CHAIN layout.</summary>
+  private List<VariableSymbol> CommonVariables() {
+    var result = new List<VariableSymbol>();
+    foreach (var statement in model.MainBody)
+      if (statement is DimStmt { Storage: StorageClass.Common } dim)
+        foreach (var v in dim.Variables) {
+          var symbol = this.LookupVariable(v.Name, v.Suffix) ?? this.LookupVariable(v.Name, v.Suffix, isArray: true);
+          if (symbol == null)
+            continue;
+          if (symbol.IsArray) {
+            this.Unsupported(dim.Position, $"COMMON array {v.Name} across CHAIN (scalars and strings only)");
+            continue;
+          }
+          if (!result.Contains(symbol))
+            result.Add(symbol);
+        }
+    return result;
+  }
+
+  /// <summary>
+  /// CHAIN file$: COMMON values stream into PBCHAIN.$$$ (declaration order),
+  /// then the target runs via DOS EXEC and this image exits with its code.
+  /// RUN file$: same transfer without the COMMON handoff.
+  /// </summary>
+  private void EmitChain(ChainStmt chain) {
+    var asm = this._asm;
+    var commons = chain.IsRun ? [] : this.CommonVariables();
+    if (commons.Count > 0) {
+      asm.Call(this._rt.ChainOpenWrite);
+      foreach (var symbol in commons) {
+        var cell = this.TryDirectCell(symbol)!.Value;
+        if (symbol.Type is StringType or FlexType) {
+          asm.Mov(Reg.AX, cell.WithSize(OperandSize.Word));
+          asm.Call(this._rt.ChainWriteStr);
+        } else {
+          asm.Lea(Reg.DX, cell);
+          asm.Mov(Reg.CX, Math.Max(symbol.Type.Size, 1));
+          asm.Call(this._rt.ChainWrite);
+        }
+      }
+      asm.Xor(Reg.AL, Reg.AL);              // close, keep the file
+      asm.Call(this._rt.ChainClose);
+    }
+
+    this.EmitExpression(chain.Target);
+    asm.Call(this._rt.ChainExec);           // never returns
+  }
+
+  /// <summary>The chained-to side: absorb PBCHAIN.$$$ into the COMMON cells, then delete it.</summary>
+  private void EmitChainCommonLoad() {
+    var asm = this._asm;
+    var commons = this.CommonVariables();
+    if (commons.Count == 0)
+      return;
+    var skip = asm.DefineLabel();
+    asm.Call(this._rt.ChainOpenRead);
+    asm.Test(Reg.AX, Reg.AX);
+    asm.Jz(skip);
+    foreach (var symbol in commons) {
+      var cell = this.TryDirectCell(symbol)!.Value;
+      if (symbol.Type is StringType or FlexType) {
+        asm.Call(this._rt.ChainReadStr);
+        asm.Lea(Reg.BX, cell);
+        asm.Call(this._rt.StrAssign);
+      } else {
+        asm.Lea(Reg.DX, cell);
+        asm.Mov(Reg.CX, Math.Max(symbol.Type.Size, 1));
+        asm.Call(this._rt.ChainRead);
+      }
+    }
+    asm.Mov(Reg.AL, (Imm)1);                // close + delete
+    asm.Call(this._rt.ChainClose);
+    asm.MarkLabel(skip);
+  }
+
+  /// <summary>FIELD #n, w AS a$, ...: registers record windows with the runtime.</summary>
+  private void EmitField(FieldStmt field) {
+    var asm = this._asm;
+    foreach (var (width, target) in field.Fields) {
+      if (model.TypeOf(target) is not (StringType or FlexType)) {
+        this.Unsupported(field.Position, "FIELD target must be a dynamic string");
+        continue;
+      }
+      this.EmitInt16Argument(UnwrapFileNumber(field.FileNumber));
+      asm.Push(Reg.AX);
+      this.EmitInt16Argument(width);
+      asm.Push(Reg.AX);
+      if (this.EmitPlace(target) is not { } place) {
+        asm.Pop(Reg.AX);
+        asm.Pop(Reg.AX);
+        continue;
+      }
+      asm.Lea(Reg.BX, place.Cell);
+      asm.Pop(Reg.CX);
+      asm.Pop(Reg.AX);
+      asm.Call(this._rt.FieldAdd);
+    }
+  }
+
+  /// <summary>$ERROR ... ON|OFF toggles the check state lexically; other metas were consumed earlier.</summary>
+  private void ApplyMeta(MetaStmt meta) {
+    if (!meta.Command.Equals("ERROR", StringComparison.OrdinalIgnoreCase) || meta.Arguments.Count < 2)
+      return;
+    var kind = meta.Arguments[0].Text.ToUpperInvariant();
+    var mode = meta.Arguments[^1].Text.Equals("ON", StringComparison.OrdinalIgnoreCase);
+    switch (kind) {
+      case "BOUNDS": this.CheckBounds = mode; break;
+      case "NUMERIC": this.CheckNumeric = mode; break;
+      case "OVERFLOW": this.CheckOverflow = mode; break;
+      case "STACK": this.CheckStack = mode; break;
+      case "ALL":
+        this.CheckBounds = this.CheckNumeric = this.CheckOverflow = this.CheckStack = mode;
         break;
     }
   }
@@ -473,6 +724,15 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       case "KILL" when cmd.Arguments is [{ } name]:
         this.EmitExpression(name);
         asm.Call(this._rt.Kill);
+        break;
+
+      case "NAME" when cmd.Arguments is [{ } oldName, { } newName]:
+        this.EmitExpression(oldName);
+        asm.Push(Reg.AX);
+        this.EmitExpression(newName);
+        asm.Mov(Reg.DX, Reg.AX);
+        asm.Pop(Reg.AX);
+        asm.Call(this._rt.Rename);
         break;
 
       case "POKE":
@@ -501,6 +761,14 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
       case "GET$" or "PUT$":
         this.EmitGetPutString(cmd);
+        break;
+
+      case "POKE$" when cmd.Arguments is [{ } pokeAddr, { } pokeValue]:
+        this.EmitInt16Argument(pokeAddr);
+        asm.Push(Reg.AX);
+        this.EmitExpression(pokeValue);
+        asm.Pop(Reg.DI);
+        asm.Call(this._rt.PokeStr);
         break;
 
       case "CLS":
@@ -579,6 +847,41 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         asm.Call(this._rt.Delay);
         break;
 
+      case "SLEEP": { // SLEEP [n]: wait n seconds; 0 / no argument = wait for a key
+        var waitKey = asm.DefineLabel();
+        var sleepDone = asm.DefineLabel();
+        if (cmd.Arguments.Count >= 1 && cmd.Arguments[0] is { } sleepArg) {
+          this.EmitExpression(sleepArg);
+          this.Coerce(model.TypeOf(sleepArg), PbType.Double, sleepArg);
+          asm.Ftst();
+          asm.FstswAx();
+          asm.Sahf();
+          asm.Jz(waitKey);
+          asm.Call(this._rt.Delay);
+          asm.Jmp(sleepDone);
+          asm.MarkLabel(waitKey);
+          asm.Fstp(St.St0);
+        } else
+          asm.MarkLabel(waitKey);
+        asm.Xor(Reg.AH, Reg.AH);   // BIOS blocking key read
+        asm.Int(0x16);
+        asm.MarkLabel(sleepDone);
+        break;
+      }
+
+      case "SHELL" when cmd.Arguments is [{ } shellCmd]:
+        this.EmitExpression(shellCmd);
+        asm.Call(this._rt.Shell);
+        break;
+
+      case "EXECUTE" when cmd.Arguments is [{ } executeCmd]:
+        // EXECUTE: run the program, then terminate
+        this.EmitExpression(executeCmd);
+        asm.Call(this._rt.Shell);
+        asm.Xor(Reg.AL, Reg.AL);
+        asm.Jmp(this._rt.Exit);
+        break;
+
       case "PLAY": // parse-and-ignore stub: evaluate and drop the tune string
         foreach (var argument in cmd.Arguments)
           if (argument != null) {
@@ -588,7 +891,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
           }
         break;
 
-      case "COLOR" or "WIDTH" or "KEY" or "VIEW" or "WINDOW" or "PALETTE" or "PALETTE USING" or "OPTION BASE":
+      case "COLOR" or "WIDTH" or "KEY" or "VIEW" or "VIEW TEXT" or "VIEW PRINT" or "VIEW SCREEN"
+        or "WINDOW" or "PALETTE" or "PALETTE USING" or "OPTION BASE":
         break; // accepted, harmless no-ops on this runtime
 
       default:
@@ -616,6 +920,65 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         this.Unsupported(e);
         break;
     }
+  }
+
+  /// <summary>ITERATE [FOR|DO]: jump to the loop's continue point (FOR increment / DO retest).</summary>
+  private void EmitIterate(IterateStmt it) {
+    var asm = this._asm;
+    var target = it.Kind switch {
+      ExitKind.For when this._iterateFor.Count > 0 => this._iterateFor.Peek(),
+      ExitKind.Do when this._iterateDo.Count > 0 => this._iterateDo.Peek(),
+      ExitKind.Loop when this._iterateAny.Count > 0 => this._iterateAny.Peek(),
+      _ => null,
+    };
+    if (target == null) {
+      this.Unsupported(it);
+      return;
+    }
+    asm.Jmp(target);
+  }
+
+  /// <summary>WRITE [#n,] items: comma-delimited, strings quoted, numbers without padding.</summary>
+  private void EmitWrite(WriteStmt write) {
+    var asm = this._asm;
+    if (write.FileNumber != null) {
+      this.EmitInt16Argument(UnwrapFileNumber(write.FileNumber));
+      asm.Call(this._rt.FSelect);
+    }
+
+    for (var i = 0; i < write.Items.Count; ++i) {
+      if (i > 0) {
+        asm.Mov(Reg.SI, Imm.OffsetOf(this.LiteralOf(",")));
+        asm.Mov(Reg.CX, 1);
+        asm.Call(this._rt.PrintStr);
+      }
+      var item = write.Items[i];
+      this.EmitExpression(item);
+      var kind = KindOf(model.TypeOf(item));
+      if (kind == ValueKind.Str) {
+        asm.Push(Reg.AX);
+        asm.Mov(Reg.SI, Imm.OffsetOf(this.LiteralOf("\"")));
+        asm.Mov(Reg.CX, 1);
+        asm.Call(this._rt.PrintStr);
+        asm.Pop(Reg.AX);
+        asm.Call(this._rt.StrPrint);
+        asm.Mov(Reg.SI, Imm.OffsetOf(this.LiteralOf("\"")));
+        asm.Mov(Reg.CX, 1);
+        asm.Call(this._rt.PrintStr);
+        continue;
+      }
+      switch (kind) { // STR$-style text, leading space trimmed
+        case ValueKind.Int16: asm.Call(this._rt.StrI16); break;
+        case ValueKind.Int32: asm.Call(this._rt.StrI32); break;
+        default: asm.Call(this._rt.StrF64); break;
+      }
+      asm.Call(this._rt.LTrim);
+      asm.Call(this._rt.StrPrint);
+    }
+
+    asm.Call(this._rt.PrintNewLine);
+    if (write.FileNumber != null)
+      asm.Mov(Mem.Word(asm.Lbl("rt_curout")), 1);
   }
 
   private void EmitCondition(Expression condition) {
@@ -724,7 +1087,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     var negative = asm.DefineLabel();
     var body = asm.DefineLabel();
     var done = asm.DefineLabel();
+    var continueLabel = asm.DefineLabel();
     this._exitFor.Push(done);
+    this._iterateFor.Push(continueLabel);
+    this._iterateAny.Push(continueLabel);
     asm.MarkLabel(top);
 
     switch (kind) {
@@ -814,6 +1180,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     foreach (var s in f.Body)
       this.EmitStatement(s);
 
+    asm.MarkLabel(continueLabel);
     switch (kind) {
       case ValueKind.Int16:
         asm.Mov(Reg.AX, slot.WithSize(OperandSize.Word));
@@ -837,18 +1204,36 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     asm.Jmp(top);
     asm.MarkLabel(done);
     this._exitFor.Pop();
+    this._iterateFor.Pop();
+    this._iterateAny.Pop();
     this.ReleaseTemp(slotBytes);
     this.ReleaseTemp(slotBytes);
   }
 
-  /// <summary>The common case: 16-bit counter with a constant step.</summary>
+  /// <summary>
+  /// The common case: 8/16-bit counter with a constant step. The increment runs
+  /// at the counter's own width, so BYTE/WORD counters wrap at their type
+  /// boundary (QUIRK 2.28/2.29: FOR b? = 1 TO 255 never exits) - unless
+  /// $ERROR NUMERIC ON turns the wrap into runtime error 6.
+  /// </summary>
   private void EmitForInt16Fast(ForStmt f, Mem slot, long step) {
     var asm = this._asm;
     var counterType = model.VariableBindings[(NameExpr)f.Variable].Type;
+    var isByte = counterType is ScalarType { ByteSize: 1 };
+    var unsigned = counterType is ScalarType { Signed: false };
+    var cell = slot.WithSize(isByte ? OperandSize.Byte : OperandSize.Word);
+
+    // unsigned counters read a negative STEP as its unsigned bit pattern
+    // (oracle-verified: FOR w?? = 2 TO 0 STEP -1 never enters the body)
+    if (unsigned && step < 0)
+      step &= isByte ? 0xFF : 0xFFFF;
 
     this.EmitExpression(f.From);
     this.Coerce(model.TypeOf(f.From), counterType, f.From);
-    asm.Mov(slot, Reg.AX);
+    if (isByte)
+      asm.Mov(cell, Reg.AL);
+    else
+      asm.Mov(cell, Reg.AX);
 
     var limit = this.AllocTemp(2);
     this.EmitExpression(f.To);
@@ -857,24 +1242,59 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     var top = asm.DefineLabel();
     var done = asm.DefineLabel();
+    var continueLabel = asm.DefineLabel();
     this._exitFor.Push(done);
+    this._iterateFor.Push(continueLabel);
+    this._iterateAny.Push(continueLabel);
     asm.MarkLabel(top);
-    asm.Mov(Reg.AX, slot);
-    asm.Cmp(Reg.AX, limit);
-    if (step >= 0)
-      asm.Jg(done);
-    else
-      asm.Jl(done);
+    if (isByte) {
+      asm.Mov(Reg.AL, cell);
+      asm.Cmp(Reg.AL, limit.WithSize(OperandSize.Byte));
+    } else {
+      asm.Mov(Reg.AX, cell);
+      asm.Cmp(Reg.AX, limit);
+    }
+    if (step >= 0) {
+      if (unsigned)
+        asm.Ja(done);
+      else
+        asm.Jg(done);
+    } else {
+      if (unsigned)
+        asm.Jb(done);
+      else
+        asm.Jl(done);
+    }
 
     foreach (var s in f.Body)
       this.EmitStatement(s);
 
-    asm.Mov(Reg.AX, slot);
-    asm.Add(Reg.AX, (int)step);
-    asm.Mov(slot, Reg.AX);
+    asm.MarkLabel(continueLabel);
+    var magnitude = (int)Math.Abs(step);
+    if (isByte) {
+      asm.Mov(Reg.AL, cell);
+      if (step >= 0)
+        asm.Add(Reg.AL, (Imm)magnitude);
+      else
+        asm.Sub(Reg.AL, (Imm)magnitude);
+      if (this.CheckNumeric)
+        this.EmitRaiseWhen(asm.Jnc, 6);     // byte counters are unsigned: carry = wrap
+      asm.Mov(cell, Reg.AL);
+    } else {
+      asm.Mov(Reg.AX, cell);
+      if (step >= 0)
+        asm.Add(Reg.AX, magnitude);
+      else
+        asm.Sub(Reg.AX, magnitude);
+      if (this.CheckNumeric)
+        this.EmitRaiseWhen(unsigned ? asm.Jnc : asm.Jno, 6);
+      asm.Mov(cell, Reg.AX);
+    }
     asm.Jmp(top);
     asm.MarkLabel(done);
     this._exitFor.Pop();
+    this._iterateFor.Pop();
+    this._iterateAny.Pop();
     this.ReleaseTemp(2);
   }
 
@@ -882,7 +1302,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     var asm = this._asm;
     var top = asm.DefineLabel();
     var done = asm.DefineLabel();
+    var continueLabel = asm.DefineLabel();
     this._exitDo.Push(done);
+    this._iterateDo.Push(continueLabel);
+    this._iterateAny.Push(continueLabel);
 
     asm.MarkLabel(top);
     if (d.PreCondition != null) {
@@ -896,6 +1319,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     foreach (var s in d.Body)
       this.EmitStatement(s);
 
+    asm.MarkLabel(continueLabel);
     if (d.PostCondition != null) {
       this.EmitCondition(d.PostCondition);
       if (d.PostTest == LoopTestKind.While)
@@ -907,6 +1331,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     asm.MarkLabel(done);
     this._exitDo.Pop();
+    this._iterateDo.Pop();
+    this._iterateAny.Pop();
   }
 
   private void EmitSelect(SelectStmt s) {

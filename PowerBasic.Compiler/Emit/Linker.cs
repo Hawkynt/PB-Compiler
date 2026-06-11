@@ -59,7 +59,8 @@ public sealed class Linker {
       foreach (var import in unit.Imports) {
         if (!exporters.TryGetValue(import.Name, out var found))
           throw new LinkException($"unresolved symbol {import.Name} (imported by {unit.Name})");
-        if (found.Export.SignatureHash != import.SignatureHash)
+        // hash 0 on either side = unchecked (runtime symbols and asm-level references)
+        if (found.Export.SignatureHash != import.SignatureHash && found.Export.SignatureHash != 0 && import.SignatureHash != 0)
           throw new LinkException($"signature mismatch for {import.Name}: {unit.Name} expects a different parameter list than {found.Unit.Name} provides");
       }
 

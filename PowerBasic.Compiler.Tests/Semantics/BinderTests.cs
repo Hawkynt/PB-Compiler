@@ -69,7 +69,7 @@ public sealed class BinderTests {
     ]);
     var model = Binder.Bind(Unit(equate, dim));
     Assert.That(model.Success, Is.True);
-    var array = (ArrayType)model.ModuleVariables["a"].Type;
+    var array = (ArrayType)model.ModuleVariables["a()"].Type;
     Assert.That(array.IsDynamic, Is.False);
     Assert.That(array.StaticBounds![0], Is.EqualTo((0, 15)));
   }
@@ -80,7 +80,7 @@ public sealed class BinderTests {
       new(_pos, "a", TypeSuffix.None, [(null, Name("n", TypeSuffix.Integer))], new(_pos, BuiltinType.Word)),
     ]);
     var model = Binder.Bind(Unit(Assign(Name("n", TypeSuffix.Integer), Int(5)), dim));
-    var array = (ArrayType)model.ModuleVariables["a"].Type;
+    var array = (ArrayType)model.ModuleVariables["a()"].Type;
     Assert.That(array.IsDynamic, Is.True);
   }
 

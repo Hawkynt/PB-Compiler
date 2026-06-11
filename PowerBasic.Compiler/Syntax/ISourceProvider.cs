@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace PowerBasic.Compiler.Syntax;
 
 /// <summary>Resolves source file names (e.g. <c>$INCLUDE</c> targets) to source text.</summary>
@@ -26,7 +28,7 @@ public sealed class FileSourceProvider : ISourceProvider {
       return false;
     }
 
-    text = File.ReadAllText(candidate);
+    text = File.ReadAllText(candidate, Encoding.Latin1); // byte-preserving: DOS CP437 bytes round-trip 1:1 into the image
     resolvedName = candidate;
     return true;
   }
@@ -41,7 +43,7 @@ public sealed class SearchPathSourceProvider(params string[] searchPaths) : ISou
   public bool TryReadSource(string name, string? includedFrom, out string text, out string resolvedName) {
     foreach (var candidate in this.Candidates(name, includedFrom))
       if (File.Exists(candidate)) {
-        text = File.ReadAllText(candidate);
+        text = File.ReadAllText(candidate, Encoding.Latin1); // byte-preserving: DOS CP437 bytes round-trip 1:1 into the image
         resolvedName = candidate;
         return true;
       }

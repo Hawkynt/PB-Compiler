@@ -17,21 +17,33 @@ public sealed class Binder {
   private readonly HashSet<string> _redimmedArrays = new(StringComparer.OrdinalIgnoreCase);
   private ConstantFolder _folder;
   private bool _dynamicMode;
+  private bool _optionSigned;
+  private bool _warnedAsm30;
   private int _optionBase;
 
   private Binder(CompilationUnit unit, Dialect dialect) {
     this._unit = unit;
     this._dialect = dialect;
-    this._model = new() { FileName = unit.FileName };
+    this._model = new() { FileName = unit.FileName, Dialect = dialect };
     this._folder = new(this._model.Equates);
   }
 
   public static SemanticModel Bind(CompilationUnit unit, Dialect dialect = Dialect.Pb35) {
     var binder = new Binder(unit, dialect);
+    binder.SeedInternalVariables();
     binder.CollectRedims(unit.Statements);
     binder.ScanModule();
     binder.BindAllBodies();
     return binder._model;
+  }
+
+  /// <summary>
+  /// PB internal variables (pbvScrnCols, pbvScrnRows, pbvDefSeg, ...) resolve
+  /// like SHARED module variables; codegen maps them onto runtime data cells.
+  /// </summary>
+  private void SeedInternalVariables() {
+    foreach (var (name, info) in Runtime.DosRuntime.InternalVariables)
+      this._model.ModuleVariables[name] = new(name, info.Size == 1 ? PbType.Byte : PbType.Word, VariableStorage.Global) { IsShared = true };
   }
 
   /// <summary>Adds a dialect-gate error when <paramref name="feature"/> is unavailable; true when usable.</summary>
@@ -51,7 +63,7 @@ public sealed class Binder {
       switch (statement) {
         case RedimStmt redim:
           foreach (var v in redim.Variables)
-            this._redimmedArrays.Add(VariableKey(v.Name, v.Suffix));
+            this._redimmedArrays.Add(VariableKey(v.Name, v.Suffix, isArray: true));
           break;
         case SubDecl s:
           this.CollectRedims(s.Body);
@@ -97,11 +109,11 @@ public sealed class Binder {
           break;
 
         case SubDecl s:
-          this.DefineProcedure(s.Name, isFunction: false, TypeSuffix.None, null, s.Parameters, s.IsStatic, s.Body, s.Position);
+          this.DefineProcedure(s.Name, isFunction: false, TypeSuffix.None, null, s.Parameters, s.IsStatic, s.Body, s.Position, s.Cdecl);
           break;
 
         case FunctionDecl f:
-          this.DefineProcedure(f.Name, isFunction: true, f.Suffix, f.ReturnType, f.Parameters, f.IsStatic, f.Body, f.Position);
+          this.DefineProcedure(f.Name, isFunction: true, f.Suffix, f.ReturnType, f.Parameters, f.IsStatic, f.Body, f.Position, f.Cdecl);
           break;
 
         case DefFnDecl fn: {
@@ -116,6 +128,10 @@ public sealed class Binder {
           switch (m.Command) {
             case "DYNAMIC": this._dynamicMode = true; break;
             case "STATIC": this._dynamicMode = false; break;
+            case "OPTION" when m.Arguments is [{ } opt, ..] && opt.Text.Equals("SIGNED", StringComparison.OrdinalIgnoreCase):
+              // $OPTION SIGNED: the *PTR/*SEG functions return signed INTEGER
+              this._optionSigned = m.Arguments is [_] || !m.Arguments[^1].Text.Equals("OFF", StringComparison.OrdinalIgnoreCase);
+              break;
           }
           this._model.MainBody.Add(m);
           break;
@@ -136,7 +152,7 @@ public sealed class Binder {
   }
 
   private void DefineEquate(EquateStmt e) {
-    if (this._folder.TryFold(e.Value) is not { } value) {
+    if (this._folder.TryFold(this.ApplyEquateFoldingQuirk(e.Value)) is not { } value) {
       this.Error(e.Position, $"equate %{e.Name} is not a compile-time constant");
       return;
     }
@@ -145,6 +161,34 @@ public sealed class Binder {
       return;
     }
     this._model.Equates[e.Name] = value;
+  }
+
+  /// <summary>
+  /// QUIRK 2.26 (FAQ, PB 3.0-3.2): equate constant folding mis-binds a LEADING
+  /// unary minus to the whole additive chain - <c>%k = -20-4</c> yields -16
+  /// (= -(20-4)) instead of -24. Replicated under those dialects; interpretation
+  /// pending oracle verification (needs a PBC 3.0-3.2 binary in tools/).
+  /// </summary>
+  private Expression ApplyEquateFoldingQuirk(Expression e) {
+    if (this._dialect is < Dialect.Pb30 or > Dialect.Pb32)
+      return e;
+    return TryStripLeadingNegate(e, out var stripped)
+      ? new UnaryExpr(e.Position, UnaryOp.Negate, stripped)
+      : e;
+  }
+
+  private static bool TryStripLeadingNegate(Expression e, out Expression stripped) {
+    switch (e) {
+      case UnaryExpr { Op: UnaryOp.Negate } u:
+        stripped = u.Operand;
+        return true;
+      case BinaryExpr { Op: BinaryOp.Add or BinaryOp.Subtract } b when TryStripLeadingNegate(b.Left, out var left):
+        stripped = b with { Left = left };
+        return true;
+      default:
+        stripped = e;
+        return false;
+    }
   }
 
   private void DefineUdt(string name, IReadOnlyList<TypeField> fields, bool isUnion, SourcePosition position) {
@@ -194,13 +238,13 @@ public sealed class Binder {
     this._model.Procedures[d.Name] = proc;
   }
 
-  private ProcedureSymbol DefineProcedure(string name, bool isFunction, TypeSuffix suffix, TypeName? returnType, IReadOnlyList<Parameter> parameters, bool isStatic, IReadOnlyList<Statement> body, SourcePosition position) {
+  private ProcedureSymbol DefineProcedure(string name, bool isFunction, TypeSuffix suffix, TypeName? returnType, IReadOnlyList<Parameter> parameters, bool isStatic, IReadOnlyList<Statement> body, SourcePosition position, bool isCdecl = false) {
     if (this._model.Procedures.TryGetValue(name, out var existing) && !existing.IsExternal) {
       this.Error(position, $"{(isFunction ? "FUNCTION" : "SUB")} {name} already defined");
       return existing;
     }
 
-    var proc = new ProcedureSymbol(name, isFunction) { IsStatic = isStatic, Body = body, Position = position };
+    var proc = new ProcedureSymbol(name, isFunction) { IsStatic = isStatic, Body = body, Position = position, IsCdecl = isCdecl };
     if (isFunction)
       proc.ReturnType = this.ResolveReturnType(name, suffix, returnType);
     foreach (var p in parameters)
@@ -217,7 +261,7 @@ public sealed class Binder {
     if (p.IsArray)
       type = new ArrayType(type, null, Rank: 1); // array parameters arrive as descriptors
 
-    return new(p.Name, type, VariableStorage.Parameter) { ByVal = p.ByVal, Seg = p.Seg };
+    return new(p.Name, type, VariableStorage.Parameter) { ByVal = p.ByVal, Seg = p.Seg, Optional = p.Optional };
   }
 
   private void DeclareModuleVariables(DimStmt dim) {
@@ -226,10 +270,15 @@ public sealed class Binder {
       if (symbol == null)
         continue;
       symbol.IsShared = dim.SharedFlag || dim.Storage is StorageClass.Shared or StorageClass.Public or StorageClass.Common;
-      var key = VariableKey(v.Name, v.Suffix);
+      var key = VariableKey(v.Name, v.Suffix, v.ArrayBounds != null);
       if (this._model.ModuleVariables.TryGetValue(key, out var existing)) {
-        // PB tolerates re-DIM of dynamic arrays; complain only about type changes
-        if (!Equals(existing.Type, symbol.Type) && existing.Type is not ArrayType { IsDynamic: true })
+        // PB tolerates re-DIM of dynamic arrays and bare array mentions
+        // (SHARED a$() before/after the bounds-carrying DIM); only genuine
+        // element-type changes are errors
+        var compatible = Equals(existing.Type, symbol.Type)
+          || existing.Type is ArrayType { IsDynamic: true }
+          || (existing.Type is ArrayType ea && symbol.Type is ArrayType { IsDynamic: true } na && Equals(ea.Element, na.Element));
+        if (!compatible)
           this.Error(dim.Position, $"variable {v.Name} already declared with a different type");
         existing.IsShared |= symbol.IsShared;
         continue;
@@ -250,12 +299,16 @@ public sealed class Binder {
     if (v.ArrayBounds == null)
       return new(v.Name, elementType, storage);
 
+    // bare array mention (SHARED a$()) - shape comes from a DIM/REDIM elsewhere
+    if (v.ArrayBounds.Count == 0)
+      return new(v.Name, new ArrayType(elementType, null, Rank: 1), storage) { ArrayClass = arrayClass };
+
     // try static bounds; any non-constant bound, $DYNAMIC mode, an explicit
     // dynamic class (DYNAMIC/HUGE/VIRTUAL), or a REDIM anywhere makes the array dynamic
     var bounds = new List<(int, int)>();
     var isStatic = !this._dynamicMode
-      && arrayClass is not (ArrayClass.Dynamic or ArrayClass.Huge or ArrayClass.Virtual)
-      && !this._redimmedArrays.Contains(VariableKey(v.Name, v.Suffix));
+      && arrayClass is not (ArrayClass.Dynamic or ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Absolute)
+      && !this._redimmedArrays.Contains(VariableKey(v.Name, v.Suffix, isArray: true));
     foreach (var (lowerExpr, upperExpr) in v.ArrayBounds) {
       var lower = lowerExpr == null ? this._optionBase : (int?)(this._folder.TryFold(lowerExpr)?.Integer);
       var upper = (int?)(this._folder.TryFold(upperExpr)?.Integer);
@@ -338,7 +391,12 @@ public sealed class Binder {
     return this.TypeFromSuffixOrDefault(name, suffix);
   }
 
-  private static string VariableKey(string name, TypeSuffix suffix) => name + suffix.KeyText();
+  /// <summary>
+  /// Variable table key. Arrays live in their own namespace (BASIC keeps the
+  /// scalar <c>A$</c> and the array <c>A$()</c> distinct), marked by a "()" tail.
+  /// </summary>
+  private static string VariableKey(string name, TypeSuffix suffix, bool isArray = false)
+    => name + suffix.KeyText() + (isArray ? "()" : "");
 
   #endregion
 
@@ -364,7 +422,7 @@ public sealed class Binder {
       var scope = new Scope(proc);
 
       foreach (var p in proc.Parameters)
-        proc.Variables[VariableKey(p.Name, TypeSuffix.None)] = p;
+        proc.Variables[VariableKey(p.Name, TypeSuffix.None, p.Type is ArrayType)] = p;
 
       if (proc.IsFunction) // the function name acts as the result variable
         proc.Variables.TryAdd(proc.Name, new(proc.Name, proc.ReturnType!, VariableStorage.Local));
@@ -453,7 +511,7 @@ public sealed class Binder {
               this.BindExpression(lower, scope);
             this.BindExpression(upper, scope);
           }
-          var symbol = this.ResolveVariable(v.Name, v.Suffix, scope, create: false);
+          var symbol = this.LookupArrayVariable(v.Name, v.Suffix, scope);
           if (symbol == null) {
             // REDIM can introduce a dynamic array
             var created = this.CreateVariable(v with { ArrayBounds = v.ArrayBounds }, scope.Proc == null ? VariableStorage.Global : VariableStorage.Local, redim.Position);
@@ -467,8 +525,15 @@ public sealed class Binder {
         break;
 
       case EraseStmt erase:
-        foreach (var array in erase.Arrays)
-          this.BindExpression(array, scope);
+        foreach (var array in erase.Arrays) {
+          var arraySymbol = this.LookupArrayVariable(array.Name, array.Suffix, scope);
+          if (arraySymbol == null) {
+            this.Error(array.Position, $"{array.Name} is not an array");
+            continue;
+          }
+          this._model.VariableBindings[array] = arraySymbol;
+          this._model.ExpressionTypes[array] = arraySymbol.Type;
+        }
         break;
 
       case IfStmt i:
@@ -570,6 +635,41 @@ public sealed class Binder {
         this.BindAssignTarget(sw.Right, scope);
         break;
 
+      case ReplaceStmt replace: {
+        this.BindExpression(replace.Find, scope);
+        this.BindExpression(replace.With, scope);
+        if (this.BindAssignTarget(replace.Target, scope) is not (StringType or FlexType))
+          this.Error(replace.Position, "REPLACE needs a dynamic string target");
+        break;
+      }
+
+      case BitStmt bit: {
+        var targetType = this.BindAssignTarget(bit.Target, scope);
+        if (targetType is not ScalarType { IsFloat: false })
+          this.Error(bit.Position, "BIT statement needs an integral variable");
+        this.BindExpression(bit.Bit, scope);
+        break;
+      }
+
+      case ExitFarStmt ef when ef.AtLabel != null:
+        scope.PendingLabelRefs.Add((ef.AtLabel, ef.Position));
+        break;
+
+      case ExitFarStmt:
+        break;
+
+      case ArraySortStmt sort:
+        this.BindArrayStatement(sort.Array, sort.Count, sort.FromPos, sort.ToPos, sort.Collate, scope);
+        if (sort.TagArray != null)
+          this.BindExpression(sort.TagArray, scope);
+        break;
+
+      case ArrayScanStmt scan:
+        this.BindArrayStatement(scan.Array, scan.Count, scan.FromPos, scan.ToPos, scan.Collate, scope);
+        this.BindExpression(scan.Match, scope);
+        this.BindAssignTarget(scan.Target, scope);
+        break;
+
       case MidAssignStmt mid:
         this.BindAssignTarget(mid.Target, scope);
         this.BindExpression(mid.Start, scope);
@@ -613,6 +713,16 @@ public sealed class Binder {
         foreach (var item in p.Items)
           if (item.Value != null)
             this.BindExpression(item.Value, scope);
+        break;
+
+      case WriteStmt write:
+        if (write.FileNumber != null)
+          this.BindExpression(write.FileNumber, scope);
+        foreach (var item in write.Items)
+          this.BindExpression(item, scope);
+        break;
+
+      case IterateStmt:
         break;
 
       case InputStmt input:
@@ -664,6 +774,11 @@ public sealed class Binder {
         scope.PendingLabelRefs.Add((restore.Target, restore.Position));
         break;
 
+      case ChainStmt chain:
+        if (this.BindExpression(chain.Target, scope) is not (StringType or FixedStringType or FlexType or AsciizType))
+          this.Error(chain.Position, "CHAIN/RUN needs a file-name string");
+        break;
+
       case ErrorStmt err:
         this.BindExpression(err.Code, scope);
         break;
@@ -672,8 +787,9 @@ public sealed class Binder {
         this.BindExpression(end.ExitCode, scope);
         break;
 
-      case DefSegStmt seg when seg.Segment != null:
-        this.BindExpression(seg.Segment, scope);
+      case DefSegStmt seg:
+        if (seg.Segment != null)
+          this.BindExpression(seg.Segment, scope);
         break;
 
       case CommandStmt cmd:
@@ -711,8 +827,18 @@ public sealed class Binder {
         this.BindExpression(gg.Array, scope);
         break;
 
+      case InlineAsmStmt asmStmt:
+        // QUIRK 2.21 (FAQ): 3.0 resolved inline-asm variable operands differently
+        // from 3.1+; PB-Compiler always applies 3.1+ semantics - surface that
+        // once when compiling under --dialect pb30 (oracle verification pending)
+        if (this._dialect == Dialect.Pb30 && !this._warnedAsm30) {
+          this._warnedAsm30 = true;
+          this.Warn(asmStmt.Position, "PB 3.0 inline-asm operand semantics (FAQ 2.21) are not replicated; 3.1+ semantics apply");
+        }
+        break;
+
       // declarations already handled in pass 1 (module) or harmless here; labels collected upfront
-      case LabelStmt or DataStmt or MetaStmt or InlineAsmStmt or EquateStmt or DefTypeStmt
+      case LabelStmt or DataStmt or MetaStmt or EquateStmt or DefTypeStmt
         or ExitStmt or ReturnStmt or ResumeStmt or OnErrorStmt or EndStmt or RestoreStmt or EventControlStmt:
         break;
 
@@ -732,9 +858,32 @@ public sealed class Binder {
       this.BindStatement(statement, scope);
   }
 
+  /// <summary>Binds the common parts of ARRAY SORT/SCAN; the target must be an array.</summary>
+  private void BindArrayStatement(CallOrIndexExpr array, Expression? count, Expression? fromPos, Expression? toPos, Expression? collate, Scope scope) {
+    var symbol = this.LookupArrayVariable(array.Name, array.Suffix, scope);
+    if (symbol is { Type: ArrayType arrayType }) {
+      this._model.VariableBindings[array] = symbol;
+      this._model.ExpressionTypes[array] = arrayType;
+    } else
+      this.Error(array.Position, $"{array.Name} is not an array");
+    foreach (var e in new[] { count, fromPos, toPos, collate }.OfType<Expression>())
+      this.BindExpression(e, scope);
+    foreach (var start in array.Arguments)
+      this.BindExpression(start, scope);
+  }
+
   private void BindDimInScope(DimStmt dim, Scope scope) {
-    if (scope.Proc == null)
-      return; // module DIMs were declared in pass 1
+    if (scope.Proc == null) {
+      // module DIMs were declared in pass 1 - but dynamic bounds are runtime
+      // expressions that still need binding (DIM a(n) with a variable bound)
+      foreach (var v in dim.Variables)
+        foreach (var (lower, upper) in v.ArrayBounds ?? []) {
+          if (lower != null)
+            this.BindExpression(lower, scope);
+          this.BindExpression(upper, scope);
+        }
+      return;
+    }
 
     foreach (var v in dim.Variables) {
       foreach (var (lower, upper) in v.ArrayBounds ?? []) {
@@ -743,8 +892,12 @@ public sealed class Binder {
         this.BindExpression(upper, scope);
       }
 
-      var key = VariableKey(v.Name, v.Suffix);
-      switch (dim.Storage) {
+      var key = VariableKey(v.Name, v.Suffix, v.ArrayBounds != null);
+      // DIM x AS SHARED/STATIC type inside a procedure overrides the storage class
+      var storageClass = dim.SharedFlag ? StorageClass.Shared
+        : dim.StaticFlag ? StorageClass.Static
+        : dim.Storage;
+      switch (storageClass) {
         case StorageClass.Shared: {
           // SHARED inside a proc aliases the module-level variable
           if (!this._model.ModuleVariables.TryGetValue(key, out var moduleVar)) {
@@ -782,7 +935,7 @@ public sealed class Binder {
   }
 
   private void Register(VariableSymbol symbol, VariableDecl v, Scope scope) {
-    var key = VariableKey(v.Name, v.Suffix);
+    var key = VariableKey(v.Name, v.Suffix, v.ArrayBounds != null);
     if (scope.Proc != null)
       scope.Proc.Variables[key] = symbol;
     else
@@ -793,7 +946,7 @@ public sealed class Binder {
     // PB allows CALL on a FUNCTION too - the result is discarded
     if (this._model.Procedures.TryGetValue(c.Name, out var proc)) {
       this._model.CallBindings[c] = proc;
-      if (c.Arguments.Count != proc.Parameters.Count && !proc.Parameters.Any(p => Equals(p.Type, PbType.Any)))
+      if ((c.Arguments.Count < proc.RequiredParameters || c.Arguments.Count > proc.Parameters.Count) && !proc.Parameters.Any(p => Equals(p.Type, PbType.Any)))
         this.Error(c.Position, $"{(proc.IsFunction ? "FUNCTION" : "SUB")} {c.Name} expects {proc.Parameters.Count} argument(s), got {c.Arguments.Count}");
       this.BindCallArguments(proc, c.Arguments, scope);
       return;
@@ -812,12 +965,6 @@ public sealed class Binder {
   }
 
   private void CheckAssignable(PbType target, PbType value, SourcePosition position) {
-    if (target is BcdType || value is BcdType) {
-      if (!Equals(target, value))
-        this.Error(position, "BCD/FIX arithmetic comes with a later wave");
-      return; // same-type BCD copies are plain block moves
-    }
-
     var targetIsString = target is StringType or FixedStringType or FlexType or AsciizType;
     var valueIsString = value is StringType or FixedStringType or FlexType or AsciizType;
     if (targetIsString != valueIsString)
@@ -837,7 +984,17 @@ public sealed class Binder {
   }
 
   private PbType BindAssignTarget(Expression target, Scope scope) {
-    if (target is not (NameExpr or CallOrIndexExpr or MemberExpr or PtrDerefExpr)) {
+    // plain name targets always bind as variables - never as parameterless
+    // function calls (Foo& = 0 inside FUNCTION Foo??? creates a LONG variable)
+    if (target is NameExpr n) {
+      var symbol = this.ResolveVariable(n.Name, n.Suffix, scope, create: true, n.Position)!;
+      this._model.VariableBindings[n] = symbol;
+      var type = symbol.Type is ArrayType arr ? arr : symbol.Type;
+      this._model.ExpressionTypes[n] = type;
+      return type;
+    }
+
+    if (target is not (CallOrIndexExpr or MemberExpr or PtrDerefExpr)) {
       this.Error(target.Position, "expression is not assignable");
       return PbType.Integer;
     }
@@ -917,6 +1074,11 @@ public sealed class Binder {
         return PbType.Integer;
 
       case MemberExpr m: {
+        // QB-style dotted variable names: when the chain root is not a UDT-typed
+        // variable, the whole dotted chain is one flat variable name (Max.X)
+        if (this.TryBindDottedVariable(m, scope) is { } flatType)
+          return flatType;
+
         var targetType = this.BindExpression(m.Target, scope);
         if (targetType is not UdtType udt) {
           this.Error(m.Position, "member access on non-TYPE value");
@@ -928,6 +1090,13 @@ public sealed class Binder {
           return PbType.Integer;
         }
         return field.Type;
+      }
+
+      case AnyMatchExpr any: {
+        var inner = this.BindExpression(any.Value, scope);
+        if (inner is not (StringType or FixedStringType or FlexType or AsciizType))
+          this.Error(any.Position, "ANY needs a string match set");
+        return PbType.String;
       }
 
       case IndexExpr ix: {
@@ -955,10 +1124,8 @@ public sealed class Binder {
 
       case UnaryExpr u: {
         var operand = this.BindExpression(u.Operand, scope);
-        if (operand is BcdType) {
-          this.Error(u.Position, "BCD/FIX arithmetic comes with a later wave");
-          return operand;
-        }
+        if (operand is BcdType)
+          operand = PbType.Ext; // FIX/BCD compute as EXT on the x87 stack
         if (operand is not ScalarType)
           this.Error(u.Position, "unary operator needs a numeric operand");
         return u.Op == UnaryOp.Not ? IntegralOf(operand) : operand;
@@ -976,6 +1143,41 @@ public sealed class Binder {
     }
   }
 
+  /// <summary>
+  /// Attempts to bind a member chain as one flat QB-style dotted variable
+  /// (<c>Max.X</c>, <c>TL.Char</c>). Succeeds when every link is a plain name,
+  /// and either the flat name is a declared variable or the chain root is not
+  /// a UDT-typed variable (then the flat variable is created implicitly).
+  /// </summary>
+  private PbType? TryBindDottedVariable(MemberExpr m, Scope scope) {
+    var parts = new List<string> { m.Member };
+    var target = m.Target;
+    while (target is MemberExpr { Suffix: TypeSuffix.None } inner) {
+      parts.Add(inner.Member);
+      target = inner.Target;
+    }
+    if (target is not NameExpr { Suffix: TypeSuffix.None } root)
+      return null;
+    parts.Add(root.Name);
+    parts.Reverse();
+    var flatName = string.Join(".", parts);
+
+    var declared = this.LookupVariable(VariableKey(flatName, m.Suffix), scope)
+      ?? this.LookupVariable(VariableKey(flatName, m.Suffix, isArray: true), scope);
+    if (declared == null) {
+      // root resolving to a UDT-typed variable means real member access
+      var rootSymbol = this.LookupVariable(VariableKey(root.Name, TypeSuffix.None), scope);
+      if (rootSymbol?.Type is UdtType)
+        return null;
+      if (rootSymbol == null && this._model.Procedures.TryGetValue(root.Name, out var fn) && fn is { IsFunction: true, ReturnType: UdtType })
+        return null;
+    }
+
+    var symbol = declared ?? this.ResolveVariable(flatName, m.Suffix, scope, create: true, m.Position)!;
+    this._model.VariableBindings[m] = symbol;
+    return symbol.Type is ArrayType arr ? arr : symbol.Type;
+  }
+
   private PbType BindBinary(BinaryExpr b, Scope scope) {
     var left = this.BindExpression(b.Left, scope);
     var right = this.BindExpression(b.Right, scope);
@@ -990,8 +1192,11 @@ public sealed class Binder {
       return PbType.Integer;
     }
 
-    if (left is BcdType || right is BcdType)
-      return this.ErrorType(b.Position, "BCD/FIX arithmetic comes with a later wave");
+    // FIX/BCD operands compute as EXT on the x87 stack
+    if (left is BcdType)
+      left = PbType.Ext;
+    if (right is BcdType)
+      right = PbType.Ext;
 
     // pointers participate in arithmetic/comparison as raw 32-bit values
     if (left is PointerType)
@@ -1058,11 +1263,23 @@ public sealed class Binder {
 
   private static PbType IntegralOf(PbType t) => t is ScalarType { IsFloat: false } s ? s : PbType.Long;
 
-  private PbType BindCallOrIndex(CallOrIndexExpr call, Scope scope) {
-    var key = VariableKey(call.Name, call.Suffix);
+  /// <summary>
+  /// Array lookup honoring suffix aliasing: <c>Prj$(i)</c> hits an array
+  /// declared <c>DIM Prj(...) AS STRING</c> when the suffix matches the element type.
+  /// </summary>
+  private VariableSymbol? LookupArrayVariable(string name, TypeSuffix suffix, Scope scope) {
+    var symbol = this.LookupVariable(VariableKey(name, suffix, isArray: true), scope);
+    if (symbol != null || suffix == TypeSuffix.None)
+      return symbol;
+    var bare = this.LookupVariable(VariableKey(name, TypeSuffix.None, isArray: true), scope);
+    return bare is { Type: ArrayType bareArray } && Equals(bareArray.Element, this.TypeFromSuffixOrDefault(name, suffix))
+      ? bare
+      : null;
+  }
 
+  private PbType BindCallOrIndex(CallOrIndexExpr call, Scope scope) {
     // 1. array indexing (or a whole-array reference like `arr()` in argument lists)
-    var symbol = this.LookupVariable(key, scope);
+    var symbol = this.LookupArrayVariable(call.Name, call.Suffix, scope);
     if (symbol is { Type: ArrayType array }) {
       this._model.VariableBindings[call] = symbol;
       if (call.Arguments.Count == 0)
@@ -1096,9 +1313,25 @@ public sealed class Binder {
         return PbType.Long;
       }
 
+      // UBOUND/LBOUND take a bare array name (the array namespace, not the scalar's)
+      if (intrinsic.Name is "UBOUND" or "LBOUND" && call.Arguments.Count >= 1 && call.Arguments[0] is NameExpr boundArray) {
+        var arraySymbol = this.LookupArrayVariable(boundArray.Name, boundArray.Suffix, scope);
+        if (arraySymbol == null)
+          this.Error(boundArray.Position, $"{boundArray.Name} is not an array");
+        else {
+          this._model.VariableBindings[boundArray] = arraySymbol;
+          this._model.ExpressionTypes[boundArray] = arraySymbol.Type;
+        }
+        for (var i = 1; i < call.Arguments.Count; ++i)
+          this.BindExpression(call.Arguments[i], scope);
+        return PbType.Long;
+      }
+
       // CODEPTR-family takes a SUB/FUNCTION (or label) name and yields its code address
       if (intrinsic.Name is "CODEPTR" or "CODESEG" or "CODEPTR32" && call.Arguments is [NameExpr procRef]) {
-        var ptrType = intrinsic.Name == "CODEPTR32" ? PbType.Dword : PbType.Word;
+        var ptrType = intrinsic.Name == "CODEPTR32" ? PbType.Dword
+          : this._optionSigned ? PbType.Integer
+          : PbType.Word;
         if (this._model.Procedures.TryGetValue(procRef.Name, out var target)) {
           this._model.CallBindings[procRef] = target;
           this._model.ExpressionTypes[procRef] = ptrType;
@@ -1116,6 +1349,8 @@ public sealed class Binder {
         var t = this.BindExpression(argument, scope);
         firstArg ??= t;
       }
+      if (this._optionSigned && intrinsic.Name is "VARPTR" or "VARSEG" or "STRPTR" or "STRSEG" or "CODEPTR" or "CODESEG")
+        return PbType.Integer;   // $OPTION SIGNED
       return intrinsic.Name == "RND" && call.Arguments.Count == 2
         ? PbType.Long // RND(a, z) -> LONG in [a, z]
         : ReturnTypeOf(intrinsic, firstArg);
@@ -1128,7 +1363,7 @@ public sealed class Binder {
         return PbType.Integer;
       }
       this._model.CallBindings[call] = proc;
-      if (call.Arguments.Count != proc.Parameters.Count)
+      if (call.Arguments.Count < proc.RequiredParameters || call.Arguments.Count > proc.Parameters.Count)
         this.Error(call.Position, $"FUNCTION {call.Name} expects {proc.Parameters.Count} argument(s), got {call.Arguments.Count}");
       foreach (var argument in call.Arguments)
         this.BindExpression(argument, scope);
@@ -1142,6 +1377,9 @@ public sealed class Binder {
 
   private static PbType ReturnTypeOf(IntrinsicInfo intrinsic, PbType? firstArg) => intrinsic.Returns switch {
     IntrinsicReturn.Integer => PbType.Integer,
+    IntrinsicReturn.Quad => PbType.Quad,
+    IntrinsicReturn.Fix => PbType.Fix,
+    IntrinsicReturn.Bcd => PbType.Bcd,
     IntrinsicReturn.Word => PbType.Word,
     IntrinsicReturn.Dword => PbType.Dword,
     IntrinsicReturn.Long => PbType.Long,
@@ -1164,6 +1402,10 @@ public sealed class Binder {
   }
 
   private VariableSymbol? ResolveVariable(string name, TypeSuffix suffix, Scope scope, bool create, SourcePosition position = default) {
+    // FUNCTION = expr assigns the result of the enclosing FUNCTION
+    if (scope.Proc is { IsFunction: true } fnProc && name.Equals("FUNCTION", StringComparison.OrdinalIgnoreCase))
+      return fnProc.Variables.GetValueOrDefault(fnProc.Name);
+
     var key = VariableKey(name, suffix);
     var found = this.LookupVariable(key, scope);
 

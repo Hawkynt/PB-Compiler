@@ -12,15 +12,22 @@ public sealed partial class CodeGenerator {
 
   /// <summary>
   /// Assigns BP-relative offsets: parameters at [BP+4..] (pushed left to right,
-  /// so the last parameter sits at [BP+4]), stack locals below BP. STATIC
-  /// variables and arrays use data segment slots instead.
+  /// so the last parameter sits at [BP+4]; CDECL pushes right to left, so the
+  /// FIRST parameter sits at [BP+4]), stack locals below BP. STATIC variables
+  /// and arrays use data segment slots instead.
   /// </summary>
   private int LayoutFrame(ProcedureSymbol proc) {
     var offset = 4;
-    for (var i = proc.Parameters.Count - 1; i >= 0; --i) {
-      proc.Parameters[i].Offset = offset;
-      offset += ParamSlotSize(proc.Parameters[i]);
-    }
+    if (proc.IsCdecl)
+      for (var i = 0; i < proc.Parameters.Count; ++i) {
+        proc.Parameters[i].Offset = offset;
+        offset += ParamSlotSize(proc.Parameters[i]);
+      }
+    else
+      for (var i = proc.Parameters.Count - 1; i >= 0; --i) {
+        proc.Parameters[i].Offset = offset;
+        offset += ParamSlotSize(proc.Parameters[i]);
+      }
     var paramBytes = offset - 4;
 
     this._frameLocalBytes = 0;
@@ -48,6 +55,14 @@ public sealed partial class CodeGenerator {
     this._trackResume = ContainsErrorHandling(proc.Body!);
 
     asm.MarkLabel(this.ProcLabelOf(proc));
+    if (this.CheckStack) { // $ERROR STACK ON: SP headroom probe -> Error 201 (oracle-verified)
+      var roomy = asm.DefineLabel();
+      asm.Cmp(Reg.SP, Mem.Word(asm.Lbl("rt_stackmin")));
+      asm.Ja(roomy);
+      asm.Mov(Reg.AX, 201);
+      asm.Call(this._rt.Raise);
+      asm.MarkLabel(roomy);
+    }
     this.BeginFrame();
 
     // procedures that arm ON ERROR save and restore the caller's handler state
@@ -95,7 +110,7 @@ public sealed partial class CodeGenerator {
 
     asm.Mov(Reg.SP, Reg.BP);
     asm.Pop(Reg.BP);
-    if (paramBytes > 0)
+    if (paramBytes > 0 && !proc.IsCdecl)   // CDECL: the caller cleans up
       asm.Ret((ushort)paramBytes);
     else
       asm.Ret();
@@ -125,18 +140,22 @@ public sealed partial class CodeGenerator {
       this.Unsupported(position, $"external procedure {proc.Name} (no $LINK provides it)");
       return;
     }
-    if (args.Count != proc.Parameters.Count) {
+    var cdeclVariadic = proc.IsCdecl && args.Count >= proc.RequiredParameters && args.Count <= proc.Parameters.Count;
+    if (args.Count != proc.Parameters.Count && !cdeclVariadic) {
       this.Unsupported(position, $"argument count for {proc.Name}");
       return;
     }
 
     var tempBytesUsed = 0;
     var stringTemps = new List<Mem>();
+    var pushedBytes = 0;
 
-    for (var i = 0; i < args.Count; ++i) {
+    // CDECL pushes right to left (the caller cleans up); the default convention left to right
+    foreach (var i in proc.IsCdecl ? Enumerable.Range(0, args.Count).Reverse() : Enumerable.Range(0, args.Count)) {
       var parameter = proc.Parameters[i];
       var arg = args[i];
       var argType = model.TypeOf(arg);
+      pushedBytes += ParamSlotSize(parameter);
 
       // BYVAL override (PB 3.2): the value itself is passed - against a BYREF
       // parameter the low word acts as the near address of the target
@@ -190,6 +209,8 @@ public sealed partial class CodeGenerator {
     }
 
     asm.Call(this.ProcLabelOf(proc));
+    if (proc.IsCdecl && pushedBytes > 0)
+      asm.Add(Reg.SP, pushedBytes);
 
     var resultKind = proc is { IsFunction: true, ReturnType: { } rt } ? KindOf(rt) : (ValueKind?)null;
     if (stringTemps.Count > 0) {
@@ -233,33 +254,11 @@ public sealed partial class CodeGenerator {
   /// site so the callee can index uniformly.
   /// </summary>
   private void EmitArrayArgument(Expression arg, ProcedureSymbol proc) {
-    var asm = this._asm;
     if (!model.VariableBindings.TryGetValue(arg, out var symbol) || symbol.Type is not ArrayType arrayType) {
       this.Unsupported(arg, $"array argument to {proc.Name}");
       return;
     }
-
-    if (symbol.Storage == VariableStorage.Parameter) {
-      asm.Push(Mem.Word(Reg.BP, symbol.Offset));   // forward the descriptor pointer
-      return;
-    }
-
-    if (arrayType.IsDynamic) {
-      asm.Push(Imm.OffsetOf(this.SlotOf(symbol)));
-      return;
-    }
-
-    var descriptor = this.ShadowDescriptorOf(symbol, arrayType);
-    asm.Mov(Mem.Word(descriptor), Reg.DS);
-    asm.Mov(Mem.Word(descriptor, 2), Imm.OffsetOf(this.SlotOf(symbol)));
-    asm.Mov(Mem.Word(descriptor, 4), Math.Max(arrayType.Element.Size, 1));
-    asm.Mov(Mem.Word(descriptor, 6), arrayType.Rank);
-    for (var d = 0; d < arrayType.Rank; ++d) {
-      var (lower, upper) = arrayType.StaticBounds![d];
-      asm.Mov(Mem.Word(descriptor, 8 + d * 4), lower);
-      asm.Mov(Mem.Word(descriptor, 8 + d * 4 + 2), upper - lower + 1);
-    }
-    asm.Push(Imm.OffsetOf(descriptor));
+    this.EmitArrayDescriptorPush(arg, symbol, arrayType);
   }
 
   private readonly Dictionary<VariableSymbol, Label> _shadowDescriptors = new(ReferenceEqualityComparer.Instance);
@@ -285,11 +284,15 @@ public sealed partial class CodeGenerator {
         break;
       case ValueKind.Float: {
         var size = parameterType.Size;
-        switch (size) {
-          case 4: asm.Fstp(Mem.Dword(this._scratch)); break;
-          case 8: asm.Fstp(Mem.Qword(this._scratch)); break;
-          default: asm.Fstp(Mem.Tbyte(this._scratch)); break;
-        }
+        if (parameterType is BcdType { IsFixedPoint: true }) {        // FIX: scaled int64 cell
+          asm.Call(asm.Lbl("rt_fixup"));
+          asm.Fistp(Mem.Qword(this._scratch));
+        } else
+          switch (size) {
+            case 4: asm.Fstp(Mem.Dword(this._scratch)); break;
+            case 8: asm.Fstp(Mem.Qword(this._scratch)); break;
+            default: asm.Fstp(Mem.Tbyte(this._scratch)); break;
+          }
         for (var offset = ((size + 1) & ~1) - 2; offset >= 0; offset -= 2)
           asm.Push(Mem.Word(this._scratch, offset));
         break;
@@ -308,6 +311,11 @@ public sealed partial class CodeGenerator {
         asm.Mov(Adjust(temp, 2, OperandSize.Word), Reg.DX);
         break;
       case ValueKind.Float:
+        if (type is BcdType { IsFixedPoint: true }) {                  // FIX: scaled int64 cell
+          asm.Call(asm.Lbl("rt_fixup"));
+          asm.Fistp(temp.WithSize(OperandSize.Qword));
+          break;
+        }
         switch (type.Size) {
           case 4: asm.Fstp(temp.WithSize(OperandSize.Dword)); break;
           case 8: asm.Fstp(temp.WithSize(OperandSize.Qword)); break;

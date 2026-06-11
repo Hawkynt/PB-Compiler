@@ -145,7 +145,15 @@ public sealed partial class DosRuntime {
     var fits = asm.DefineLabel();
     var oom = asm.DefineLabel();
 
-    asm.Jcxz(empty);
+    asm.Test(Reg.CX, Reg.CX);   // (Jcxz reaches only +-128 - the body outgrew it)
+    asm.Jz(empty);
+    // $STRING n caps individual string length (default 32750) -> Error 14
+    var lengthOk = asm.DefineLabel();
+    asm.Cmp(Reg.CX, Mem.Word(asm.Lbl("rt_strmaxlen")));
+    asm.Jbe(lengthOk);
+    asm.Mov(Reg.AX, 15);        // "String too long" (oracle-verified)
+    asm.Call(asm.Lbl("rt_raise"));
+    asm.MarkLabel(lengthOk);
     asm.Push(Reg.BX);
     asm.Push(Reg.DX);
     asm.Push(Reg.DI);

@@ -110,7 +110,13 @@ public sealed class TextAssembler(Assembler target) {
 
         if (char.IsAsciiLetter(c) || c == '_') {
           var start = i;
-          while (i < line.Length && (char.IsAsciiLetterOrDigit(line[i]) || line[i] == '_'))
+          // dotted QB-style variable names (BR.Char) are one identifier
+          while (i < line.Length && (char.IsAsciiLetterOrDigit(line[i]) || line[i] == '_'
+                 || (line[i] == '.' && i + 1 < line.Length && (char.IsAsciiLetterOrDigit(line[i + 1]) || line[i + 1] == '_'))))
+            ++i;
+
+          // BASIC type suffixes stay part of the operand name (Foff%, x??, d#)
+          while (i < line.Length && line[i] is '%' or '&' or '!' or '#' or '?' or '$')
             ++i;
 
           this._tokens.Add(new(TokenKind.Identifier, line[start..i], 0));

@@ -214,6 +214,27 @@ public sealed partial class Parser {
     if (keyword is "GET" or "PUT" && token.Suffix == TypeSuffix.String)
       return this.ParseGetPutString(keyword);
 
+    // POKE$ offset, bytes$ - write string bytes at DEF SEG:offset
+    if (keyword == "POKE" && token.Suffix == TypeSuffix.String) {
+      var pokePos = this.Advance().Position;
+      var pokeAddr = this.ParseExpression();
+      this.Expect(TokenKind.Comma, "','");
+      return new CommandStmt(pokePos, "POKE$", [pokeAddr, this.ParseExpression()]);
+    }
+
+    // INPUT# 1, x / PRINT# 1, x / WRITE# 1, x / CLOSE# n ... - the '#' lexes as a Double suffix on the keyword
+    if (token.Suffix == TypeSuffix.Double)
+      switch (keyword) {
+        case "INPUT": return this.ParseInput(isLineInput: false);
+        case "PRINT": return this.ParsePrint(isLPrint: false);
+        case "LPRINT": return this.ParsePrint(isLPrint: true);
+        case "WRITE": return this.ParseWrite();
+        case "CLOSE": return this.ParseClose();
+        case "GET": return this.ParseGetPutFile(isGet: true);
+        case "PUT": return this.ParseGetPutFile(isGet: false);
+        case "SEEK": return this.ParseSeek();
+      }
+
     // IF/WHILE conditions may start with '(' and contain '=', which would look like an assignment
     if (keyword is not ("IF" or "WHILE") && this.IsAssignmentAhead())
       return this.ParseAssignment();
@@ -255,6 +276,28 @@ public sealed partial class Parser {
       case "DO": return this.ParseDo();
       case "WHILE": return this.ParseWhile();
       case "EXIT": return this.ParseExit();
+      case "ITERATE": return this.ParseIterate();
+      case "WRITE": return this.ParseWrite();
+      case "CHAIN": {
+        var chainPos = this.Advance().Position;
+        return new ChainStmt(chainPos, this.ParseExpression(), IsRun: false);
+      }
+      case "RUN" when !this.IsStatementEnd(): {
+        var runPos = this.Advance().Position;
+        return new ChainStmt(runPos, this.ParseExpression(), IsRun: true);
+      }
+      case "EXECUTE": {
+        var execPos = this.Advance().Position;
+        return new CommandStmt(execPos, "EXECUTE", [this.ParseExpression()]);
+      }
+      case "REPLACE": {
+        var replacePos = this.Advance().Position;
+        var find = this.ParseExpression();
+        this.ExpectKeyword("WITH");
+        var with = this.ParseExpression();
+        this.ExpectKeyword("IN");
+        return new ReplaceStmt(replacePos, find, with, this.ParseLValue());
+      }
       case "GOTO": return this.ParseGotoGosub(isGosub: false);
       case "GOSUB": return this.ParseGotoGosub(isGosub: true);
       case "RETURN": return this.ParseReturn();
@@ -281,6 +324,10 @@ public sealed partial class Parser {
       case "INCR": return this.ParseIncrDecr(increment: true);
       case "DECR": return this.ParseIncrDecr(increment: false);
       case "SWAP": return this.ParseSwap();
+      case "BIT" when this.IsKeyword(1, "SET") || this.IsKeyword(1, "RESET") || this.IsKeyword(1, "TOGGLE"):
+        return this.ParseBit();
+      case "ARRAY" when this.IsKeyword(1, "SORT") || this.IsKeyword(1, "SCAN"):
+        return this.ParseArrayStatement();
       case "PSET": return this.ParsePset(isPreset: false);
       case "PRESET": return this.ParsePset(isPreset: true);
       case "CIRCLE": return this.ParseCircle();

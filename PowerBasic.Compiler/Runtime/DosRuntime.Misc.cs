@@ -426,7 +426,7 @@ public sealed partial class DosRuntime {
       asm.Mov(Reg.AX, Imm.OffsetOf(this._numBuffer, 34));
       asm.Sub(Reg.AX, Reg.SI);                        // AX = digit count
       asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_st0")));
-      asm.And(Reg.BX, 0xFF);                          // decimals
+      asm.And(Reg.BX, 0x7F);                          // decimals (bit 7 = grouping flag)
       asm.Cmp(Reg.AX, Reg.BX);
       asm.Jg(zeroDone);
       asm.Dec(Reg.SI);
@@ -446,27 +446,58 @@ public sealed partial class DosRuntime {
 
     asm.MarkLabel("rt_usefmt_out");
     {
-      // print: left padding to width, '-', integer digits, '.', decimal digits
-      var noPad = asm.DefineLabel();
+      // print: left padding to width, '-', integer digits (with optional
+      // thousands separators), '.', decimal digits.
+      //   AX = digit count, BX = decimals, SI = first digit, DI = sign,
+      //   rt_st0: CH = width, CL bit7 = grouping, CL bits0..6 = decimals
       var noSign = asm.DefineLabel();
       var noFrac = asm.DefineLabel();
-      // CX = printed length = count + (dec>0 ? 1:0) + sign
+      var noCommas = asm.DefineLabel();
+      var plainInt = asm.DefineLabel();
+      var intDone = asm.DefineLabel();
+
+      asm.Mov(Mem.Word(asm.Lbl("rt_st1")), Reg.AX);   // total digits
+      asm.Mov(Reg.DX, Reg.AX);
+      asm.Sub(Reg.DX, Reg.BX);
+      asm.Mov(Mem.Word(asm.Lbl("rt_st2")), Reg.DX);   // integer digits
+
+      // comma count = grouping ? (intdigits - 1) / 3 : 0
+      asm.Xor(Reg.CX, Reg.CX);
+      asm.Test(Mem.Byte(asm.Lbl("rt_st0")), (Imm)0x80);
+      asm.Jz(noCommas);
+      asm.Mov(Reg.AX, Reg.DX);
+      asm.Dec(Reg.AX);
+      asm.Js(noCommas);
+      asm.Push(Reg.BX);
+      asm.Push(Reg.DX);
+      asm.Xor(Reg.DX, Reg.DX);
+      asm.Mov(Reg.BX, 3);
+      asm.Div(Reg.BX);
       asm.Mov(Reg.CX, Reg.AX);
-      asm.Add(Reg.CX, Reg.DI);
+      asm.Pop(Reg.DX);
+      asm.Pop(Reg.BX);
+      asm.MarkLabel(noCommas);
+      asm.Mov(Mem.Word(asm.Lbl("rt_st3")), Reg.CX);   // commas
+
+      // printed length = digits + commas + sign + (decimals ? 1 : 0)
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_st1")));
+      asm.Add(Reg.AX, Reg.CX);
+      asm.Add(Reg.AX, Reg.DI);
       asm.Test(Reg.BX, Reg.BX);
-      asm.Jz(noPad);
-      asm.Inc(Reg.CX);
-      asm.MarkLabel(noPad);
-      // padding = width - CX
+      asm.Jz(asm.Lbl("rt_uf_nopoint"));
+      asm.Inc(Reg.AX);
+      asm.MarkLabel("rt_uf_nopoint");
+
+      // padding = width - printed length
       asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_st0")));
       asm.Mov(Reg.DL, Reg.DH);
-      asm.Xor(Reg.DH, Reg.DH);                        // DX = width
-      asm.Sub(Reg.DX, Reg.CX);
+      asm.Xor(Reg.DH, Reg.DH);
+      asm.Sub(Reg.DX, Reg.AX);
       asm.Mov(Reg.CX, Reg.DX);
       asm.Cmp(Reg.CX, (Imm)0);
-      asm.Jle(asm.Lbl("rt_usefmt_sign"));
+      asm.Jle(asm.Lbl("rt_uf_sign"));
       asm.Call(this.Spc);
-      asm.MarkLabel("rt_usefmt_sign");
+      asm.MarkLabel("rt_uf_sign");
       asm.Test(Reg.DI, Reg.DI);
       asm.Jz(noSign);
       asm.Push(Reg.SI);
@@ -476,11 +507,43 @@ public sealed partial class DosRuntime {
       asm.Call(this.PrintStr);
       asm.Pop(Reg.SI);
       asm.MarkLabel(noSign);
-      // integer digits: count - decimals
-      asm.Mov(Reg.CX, Reg.AX);
-      asm.Sub(Reg.CX, Reg.BX);
+
+      // integer digits
+      asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_st2")));   // remaining integer digits
+      asm.Cmp(Mem.Word(asm.Lbl("rt_st3")), (Imm)0);
+      asm.Je(plainInt);
+      // grouped: lead chunk = ((intdigits - 1) mod 3) + 1, then ",ddd" chunks
+      asm.Push(Reg.BX);
+      asm.Mov(Reg.AX, Reg.DX);
+      asm.Dec(Reg.AX);
+      asm.Push(Reg.DX);
+      asm.Xor(Reg.DX, Reg.DX);
+      asm.Mov(Reg.BX, 3);
+      asm.Div(Reg.BX);
+      asm.Mov(Reg.CX, Reg.DX);
+      asm.Inc(Reg.CX);
+      asm.Pop(Reg.DX);
+      asm.Pop(Reg.BX);
+      asm.MarkLabel("rt_uf_group");
       asm.Call(this.PrintStr);
       asm.Add(Reg.SI, Reg.CX);
+      asm.Sub(Reg.DX, Reg.CX);
+      asm.Jz(intDone);
+      asm.Push(Reg.SI);
+      asm.Mov(Mem.Byte(this._scratch), ',');
+      asm.Mov(Reg.SI, Imm.OffsetOf(this._scratch));
+      asm.Mov(Reg.CX, 1);
+      asm.Call(this.PrintStr);
+      asm.Pop(Reg.SI);
+      asm.Mov(Reg.CX, 3);
+      asm.Jmp(asm.Lbl("rt_uf_group"));
+
+      asm.MarkLabel(plainInt);
+      asm.Mov(Reg.CX, Reg.DX);
+      asm.Call(this.PrintStr);
+      asm.Add(Reg.SI, Reg.CX);
+      asm.MarkLabel(intDone);
+
       asm.Test(Reg.BX, Reg.BX);
       asm.Jz(noFrac);
       asm.Push(Reg.SI);

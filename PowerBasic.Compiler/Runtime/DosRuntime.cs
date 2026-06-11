@@ -48,16 +48,22 @@ public sealed partial class DosRuntime {
   /// <summary>Emits the entry stub: segment setup, heap segment registers, FPU init, jump to user main.</summary>
   public void EmitEntry(Assembler asm, Label userMain) {
     // CS = DS = SS already arranged by the MZ header (SS=0 reloc, SP=0xFFFE);
-    // DOS loads DS/ES = PSP, so re-point them at our single segment.
+    // DOS loads DS/ES = PSP, so re-point them at our single segment. The PSP
+    // segment is kept for COMMAND$/ENVIRON$.
+    asm.Push(Reg.DS);
     asm.Mov(Reg.AX, Reg.CS);
     asm.Mov(Reg.DS, Reg.AX);
     asm.Mov(Reg.ES, Reg.AX);
+    asm.Pop(Reg.AX);
+    asm.Mov(Mem.Word(asm.Lbl("rt_pspseg")), Reg.AX);
+    asm.Mov(Reg.AX, Reg.CS);
     asm.Mov(Mem.Word(asm.Lbl("rt_defseg")), Reg.AX);
     asm.Add(Reg.AX, 0x1000);
     asm.Mov(Mem.Word(asm.Lbl("rt_strseg")), Reg.AX);
     asm.Add(Reg.AX, 0x1000);
     asm.Mov(Mem.Word(asm.Lbl("rt_arrseg")), Reg.AX);
     asm.Mov(Mem.Word(asm.Lbl("rt_curout")), 1);
+    this.EmitInternalsInit(asm);
     asm.Finit();
     asm.Jmp(userMain);
   }
@@ -78,12 +84,18 @@ public sealed partial class DosRuntime {
     this.EmitRounding(asm);
     this.EmitLongHelpers(asm);
     this.EmitStringProcedures(asm);
+    this.EmitString2Procedures(asm);
     this.EmitFileProcedures(asm);
     this.EmitArrayProcedures(asm);
     this.EmitLowLevelProcedures(asm);
     this.EmitMiscProcedures(asm);
     this.EmitMiscProcedures2(asm);
     this.EmitExtraProcedures(asm);
+    this.EmitUsingDyn(asm);   // needs UseFmt (misc) and the string kernel
+    this.EmitQuadProcedures(asm);
+    this.EmitEmsProcedures(asm);
+    this.EmitFieldProcedures(asm);
+    this.EmitChainProcedures(asm);
   }
 
   /// <summary>
@@ -121,6 +133,11 @@ public sealed partial class DosRuntime {
     this.EmitArrayData(asm);
     this.EmitLowLevelData(asm);
     this.EmitMiscData(asm);
+    this.EmitInternalsData(asm);
+    this.EmitQuadData(asm);
+    this.EmitEmsData(asm);
+    this.EmitFieldData(asm);
+    this.EmitChainData(asm);
   }
 
   private void EmitExit(Assembler asm) {

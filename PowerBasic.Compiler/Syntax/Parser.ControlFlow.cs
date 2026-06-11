@@ -92,6 +92,21 @@ public sealed partial class Parser {
 
   private CaseSelector ParseCaseSelector() {
     var pos = this.Current.Position;
+
+    // CASE = 34 / CASE > x - the IS keyword is optional before a relation
+    if (this.Current.Kind is TokenKind.Equals or TokenKind.NotEquals or TokenKind.Less or TokenKind.LessEquals or TokenKind.Greater or TokenKind.GreaterEquals) {
+      var bare = this.Current.Kind switch {
+        TokenKind.Equals => CaseComparison.Equal,
+        TokenKind.NotEquals => CaseComparison.NotEqual,
+        TokenKind.Less => CaseComparison.Less,
+        TokenKind.LessEquals => CaseComparison.LessEqual,
+        TokenKind.Greater => CaseComparison.Greater,
+        _ => CaseComparison.GreaterEqual,
+      };
+      this.Advance();
+      return new(pos, this.ParseExpression(), null, bare);
+    }
+
     if (this.TryMatchKeyword("IS")) {
       var comparison = this.Current.Kind switch {
         TokenKind.Equals => CaseComparison.Equal,
@@ -171,6 +186,11 @@ public sealed partial class Parser {
   private Statement ParseExit() {
     var pos = this.Advance().Position;
     var token = this.Expect(TokenKind.Identifier, "EXIT kind");
+
+    // EXIT FAR [AT label] - record/trigger the far unwind point
+    if (token.Text.Equals("FAR", StringComparison.OrdinalIgnoreCase))
+      return new ExitFarStmt(pos, this.TryMatchKeyword("AT") ? this.ParseLabelReference() : null);
+
     var kind = token.Text.ToUpperInvariant() switch {
       "FOR" => ExitKind.For,
       "DO" => ExitKind.Do,
@@ -183,6 +203,19 @@ public sealed partial class Parser {
       _ => throw new ParserException($"cannot EXIT '{token.Text}'", token.Position),
     };
     return new ExitStmt(pos, kind);
+  }
+
+  /// <summary>ITERATE [FOR|DO|LOOP|WHILE] - continue with the next loop pass.</summary>
+  private Statement ParseIterate() {
+    var pos = this.Advance().Position;
+    var kind = ExitKind.Loop; // bare ITERATE: innermost loop
+    if (this.TryMatchKeyword("FOR"))
+      kind = ExitKind.For;
+    else if (this.TryMatchKeyword("DO") || this.TryMatchKeyword("LOOP") || this.TryMatchKeyword("WHILE"))
+      kind = ExitKind.Do;
+    else if (!this.IsStatementEnd())
+      throw this.Error($"cannot ITERATE '{this.Current.Text}'");
+    return new IterateStmt(pos, kind);
   }
 
   /// <summary>GOTO/GOSUB label, line number, or <c>DWORD ptr32</c> (PB 3.2 code pointers).</summary>

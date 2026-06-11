@@ -276,6 +276,17 @@ public sealed class Preprocessor {
   }
 
   private long EvalAdditive(IReadOnlyList<Token> t, ref int pos) {
+    // QUIRK 2.26 (FAQ, PB 3.0-3.2): a leading unary minus binds the whole
+    // additive chain (-20-4 = -(20-4) = -16); mirrors Binder.ApplyEquateFoldingQuirk
+    if (this._dialect is >= Dialect.Pb30 and <= Dialect.Pb32
+        && pos < t.Count && t[pos].Kind == TokenKind.Minus) {
+      ++pos;
+      return -this.EvalAdditiveCore(t, ref pos);
+    }
+    return this.EvalAdditiveCore(t, ref pos);
+  }
+
+  private long EvalAdditiveCore(IReadOnlyList<Token> t, ref int pos) {
     var left = this.EvalMultiplicative(t, ref pos);
     while (pos < t.Count && t[pos].Kind is TokenKind.Plus or TokenKind.Minus) {
       var op = t[pos++].Kind;

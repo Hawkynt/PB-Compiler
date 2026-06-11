@@ -24,9 +24,13 @@ public sealed partial class CodeGenerator {
         }
         break;
 
-      case FloatLiteralExpr f:
-        asm.Fld(Mem.Qword(this.FloatConstOf(f.Value)));
+      case FloatLiteralExpr f: {
+        // unsuffixed literals are SINGLE in PB: quantize so the single-precision
+        // noise (0.1! = 0.100000001490116...) propagates exactly like genuine PBC
+        var literal = model.TypeOf(f) is ScalarType { Kind: ScalarKind.Single } ? (float)f.Value : f.Value;
+        asm.Fld(Mem.Qword(this.FloatConstOf(literal)));
         break;
+      }
 
       case StringLiteralExpr s:
         this.EmitStringLiteral(s.Value);
@@ -110,6 +114,10 @@ public sealed partial class CodeGenerator {
         this.EmitExpression(byVal.Value);
         break;
 
+      case AnyMatchExpr any:  // the ANY flag itself is consumed by the intrinsic emitter
+        this.EmitExpression(any.Value);
+        break;
+
       case UnaryExpr u:
         this.EmitUnary(u);
         break;
@@ -166,7 +174,9 @@ public sealed partial class CodeGenerator {
         asm.Not(Reg.DX);
         break;
       case (UnaryOp.Not, ValueKind.Int64):
-        this.Unsupported(u, "QUAD bitwise NOT (comes with a later wave)");
+        asm.Fistp(Mem.Qword(asm.Lbl("rt_q0")));
+        asm.Call(this._rt.QuadNot);
+        asm.Fild(Mem.Qword(asm.Lbl("rt_q0")));
         break;
       default:
         this.Unsupported(u, "unary op");
@@ -203,6 +213,15 @@ public sealed partial class CodeGenerator {
 
     switch (KindOf(opType)) {
       case ValueKind.Int16:
+        // $OPTIMIZE SPEED: x * 2^n inlines as shifts (no overflow checking applies)
+        if (this.OptimizeSpeed && !this.CheckOverflow && b.Op == BinaryOp.Multiply
+            && b.Right is IntegerLiteralExpr { Value: > 0 and <= 16384 } pot && long.IsPow2(pot.Value)) {
+          this.EmitExpression(b.Left);
+          this.Coerce(leftType, opType, b.Left);
+          for (var shifts = System.Numerics.BitOperations.TrailingZeroCount((ulong)pot.Value); shifts > 0; --shifts)
+            asm.Shl(Reg.AX, 1);
+          break;
+        }
         this.EmitExpression(b.Left);
         this.Coerce(leftType, opType, b.Left);
         asm.Push(Reg.AX);
@@ -266,12 +285,31 @@ public sealed partial class CodeGenerator {
       case BinaryOp.Greater: this.EmitFloatCompare(asm => asm.Ja); break;
       case BinaryOp.LessEqual: this.EmitFloatCompare(asm => asm.Jbe); break;
       case BinaryOp.GreaterEqual: this.EmitFloatCompare(asm => asm.Jae); break;
+      case BinaryOp.IntegerDivide: this.EmitQuadMemoryOp(this._rt.QuadDiv); break;
+      case BinaryOp.Modulo: this.EmitQuadMemoryOp(this._rt.QuadMod); break;
+      case BinaryOp.And: this.EmitQuadMemoryOp(this._rt.QuadAnd); break;
+      case BinaryOp.Or: this.EmitQuadMemoryOp(this._rt.QuadOr); break;
+      case BinaryOp.Xor: this.EmitQuadMemoryOp(this._rt.QuadXor); break;
+      case BinaryOp.Eqv: this.EmitQuadMemoryOp(this._rt.QuadEqv); break;
+      case BinaryOp.Imp: this.EmitQuadMemoryOp(this._rt.QuadImp); break;
       default:
         asm.Fstp(St.St0);
         asm.Fstp(St.St0);
         this.Unsupported(b, $"QUAD {b.Op} (comes with a later wave)");
         break;
     }
+  }
+
+  /// <summary>
+  /// QUAD \, MOD and the bitwise family: spill ST1 (left) / ST0 (right) into
+  /// the rt_q0/rt_q1 memory cells, run the 4-word routine, reload the result.
+  /// </summary>
+  private void EmitQuadMemoryOp(Label routine) {
+    var asm = this._asm;
+    asm.Fistp(Mem.Qword(asm.Lbl("rt_q1")));   // right (top of stack)
+    asm.Fistp(Mem.Qword(asm.Lbl("rt_q0")));   // left
+    asm.Call(routine);
+    asm.Fild(Mem.Qword(asm.Lbl("rt_q0")));
   }
 
   /// <summary>Concatenation and bytewise comparisons over string temporaries (both operands consumed).</summary>
@@ -322,9 +360,21 @@ public sealed partial class CodeGenerator {
       }
     }
     switch (b.Op) {
-      case BinaryOp.Add: asm.Add(Reg.AX, Reg.BX); break;
-      case BinaryOp.Subtract: asm.Sub(Reg.AX, Reg.BX); break;
-      case BinaryOp.Multiply: asm.Imul(Reg.BX); break;
+      case BinaryOp.Add:
+        asm.Add(Reg.AX, Reg.BX);
+        if (this.CheckOverflow)
+          this.EmitRaiseWhen(asm.Jno, 6);
+        break;
+      case BinaryOp.Subtract:
+        asm.Sub(Reg.AX, Reg.BX);
+        if (this.CheckOverflow)
+          this.EmitRaiseWhen(asm.Jno, 6);
+        break;
+      case BinaryOp.Multiply:
+        asm.Imul(Reg.BX);
+        if (this.CheckOverflow)
+          this.EmitRaiseWhen(asm.Jno, 6);
+        break;
       case BinaryOp.IntegerDivide:
         asm.Cwd();
         asm.Idiv(Reg.BX);
@@ -407,10 +457,14 @@ public sealed partial class CodeGenerator {
       case BinaryOp.Add:
         asm.Add(Reg.AX, Reg.BX);
         asm.Adc(Reg.DX, Reg.CX);
+        if (this.CheckOverflow)
+          this.EmitRaiseWhen(asm.Jno, 6);
         break;
       case BinaryOp.Subtract:
         asm.Sub(Reg.AX, Reg.BX);
         asm.Sbb(Reg.DX, Reg.CX);
+        if (this.CheckOverflow)
+          this.EmitRaiseWhen(asm.Jno, 6);
         break;
       case BinaryOp.Multiply:
         asm.Call(this._rt.LongMul);
@@ -631,6 +685,10 @@ public sealed partial class CodeGenerator {
   }
 
   private static PbType WidestOf(PbType a, PbType b) {
+    if (a is BcdType)
+      a = PbType.Ext;
+    if (b is BcdType)
+      b = PbType.Ext;
     if (a is ScalarType { IsFloat: true } || b is ScalarType { IsFloat: true })
       return PbType.Double;
     if (a is ScalarType { IsFloat: false, ByteSize: 8 } || b is ScalarType { IsFloat: false, ByteSize: 8 })

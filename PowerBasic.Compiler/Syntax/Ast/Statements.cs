@@ -27,8 +27,12 @@ public sealed record TypeName(SourcePosition Position, BuiltinType Builtin, stri
 
 public enum Visibility { Default, Public, Private }
 
-/// <summary>Formal parameter: <c>BYVAL</c>/<c>SEG</c> modifiers, optional <c>AS</c> type, optional <c>()</c> array marker.</summary>
-public sealed record Parameter(SourcePosition Position, string Name, TypeSuffix Suffix, TypeName? Type, bool ByVal, bool Seg, bool IsArray);
+/// <summary>
+/// Formal parameter: <c>BYVAL</c>/<c>SEG</c> modifiers, optional <c>AS</c> type, optional <c>()</c>
+/// array marker (a dimension count inside the parens is accepted: <c>arr(1) AS LONG</c>);
+/// <see cref="Optional"/> marks CDECL bracket parameters (<c>[, BYVAL x]</c>).
+/// </summary>
+public sealed record Parameter(SourcePosition Position, string Name, TypeSuffix Suffix, TypeName? Type, bool ByVal, bool Seg, bool IsArray, bool Optional = false);
 
 /// <summary>SUB definition.</summary>
 public sealed record SubDecl(SourcePosition Position, string Name, IReadOnlyList<Parameter> Parameters, bool IsStatic, Visibility Visibility, string? Alias, bool Cdecl, IReadOnlyList<Statement> Body) : Statement(Position);
@@ -74,7 +78,7 @@ public enum ArrayClass { Default, Static, Dynamic, Huge, Virtual, Absolute }
 /// (<c>DIM x AS SHARED WORD</c>); <c>COMMON /blockname/</c> carries the block name;
 /// <c>DIM HUGE/VIRTUAL/DYNAMIC/STATIC</c> select the array class, <c>AT segment</c> maps ABSOLUTE.
 /// </summary>
-public sealed record DimStmt(SourcePosition Position, StorageClass Storage, bool SharedFlag, IReadOnlyList<VariableDecl> Variables, string? CommonBlock = null, ArrayClass Class = ArrayClass.Default, Expression? AtAddress = null) : Statement(Position);
+public sealed record DimStmt(SourcePosition Position, StorageClass Storage, bool SharedFlag, IReadOnlyList<VariableDecl> Variables, string? CommonBlock = null, ArrayClass Class = ArrayClass.Default, Expression? AtAddress = null, bool StaticFlag = false) : Statement(Position);
 
 /// <summary>REDIM (re-dimension a $DYNAMIC array); PRESERVE (3.5) keeps existing contents.</summary>
 public sealed record RedimStmt(SourcePosition Position, IReadOnlyList<VariableDecl> Variables, bool Preserve = false) : Statement(Position);
@@ -116,6 +120,26 @@ public sealed record LsetRsetStmt(SourcePosition Position, bool IsLeft, Expressi
 /// <summary>SWAP a, b.</summary>
 public sealed record SwapStmt(SourcePosition Position, Expression Left, Expression Right) : Statement(Position);
 
+/// <summary>REPLACE find$ WITH with$ IN target$ - replaces every occurrence.</summary>
+public sealed record ReplaceStmt(SourcePosition Position, Expression Find, Expression With, Expression Target) : Statement(Position);
+
+public enum BitOp { Set, Reset, Toggle }
+
+/// <summary>BIT SET/RESET/TOGGLE var, bit-number (PB 3.0).</summary>
+public sealed record BitStmt(SourcePosition Position, BitOp Op, Expression Target, Expression Bit) : Statement(Position);
+
+/// <summary>
+/// ARRAY SORT arr([start]) [FOR count] [, FROM x TO y] [, COLLATE c$] [, ASCEND|DESCEND] [, TAGARRAY tag()].
+/// FROM/TO limit string comparison to a character-position range.
+/// </summary>
+public sealed record ArraySortStmt(SourcePosition Position, CallOrIndexExpr Array, Expression? Count, Expression? FromPos, Expression? ToPos, Expression? Collate, bool Descend, CallOrIndexExpr? TagArray) : Statement(Position);
+
+/// <summary>
+/// ARRAY SCAN arr([start]) [FOR count] [, FROM x TO y] [, COLLATE c$], relop expr, TO var -
+/// var receives the 1-based position relative to the start element, 0 when not found.
+/// </summary>
+public sealed record ArrayScanStmt(SourcePosition Position, CallOrIndexExpr Array, Expression? Count, Expression? FromPos, Expression? ToPos, Expression? Collate, CaseComparison Op, Expression Match, Expression Target) : Statement(Position);
+
 #endregion
 
 #region control flow
@@ -144,6 +168,15 @@ public enum ExitKind { For, Do, Loop, Sub, Function, Def, Select, If }
 
 public sealed record ExitStmt(SourcePosition Position, ExitKind Kind) : Statement(Position);
 
+/// <summary>
+/// <c>EXIT FAR AT label</c> records the unwind point (stack mark + target);
+/// a bare <c>EXIT FAR</c> unwinds all nested procedures/GOSUBs back to it.
+/// </summary>
+public sealed record ExitFarStmt(SourcePosition Position, string? AtLabel) : Statement(Position);
+
+/// <summary>ITERATE [FOR|DO|LOOP|WHILE] - continue with the next loop pass.</summary>
+public sealed record IterateStmt(SourcePosition Position, ExitKind Kind) : Statement(Position);
+
 /// <summary>Label definition (identifier label or numeric line number).</summary>
 public sealed record LabelStmt(SourcePosition Position, string Name) : Statement(Position);
 
@@ -162,6 +195,9 @@ public sealed record ReturnStmt(SourcePosition Position, string? Target) : State
 
 /// <summary>ON expr GOTO/GOSUB label-list.</summary>
 public sealed record OnGotoStmt(SourcePosition Position, Expression Selector, bool IsGosub, IReadOnlyList<string> Targets) : Statement(Position);
+
+/// <summary>CHAIN file$ (COMMON carries over) / RUN file$ (fresh start).</summary>
+public sealed record ChainStmt(SourcePosition Position, Expression Target, bool IsRun) : Statement(Position);
 
 /// <summary>END / STOP / SYSTEM program termination (END SUB etc. are structural, not this).</summary>
 public sealed record EndStmt(SourcePosition Position, Expression? ExitCode) : Statement(Position);
@@ -200,6 +236,9 @@ public sealed record PrintStmt(SourcePosition Position, Expression? FileNumber, 
 
 /// <summary>INPUT/LINE INPUT [#n,] ["prompt",|;] var-list.</summary>
 public sealed record InputStmt(SourcePosition Position, bool IsLineInput, Expression? FileNumber, string? Prompt, bool PromptSemicolon, IReadOnlyList<Expression> Targets) : Statement(Position);
+
+/// <summary>WRITE [#n,] expr-list - comma-delimited output, strings quoted.</summary>
+public sealed record WriteStmt(SourcePosition Position, Expression? FileNumber, IReadOnlyList<Expression> Items) : Statement(Position);
 
 public enum FileMode { Input, Output, Append, Random, Binary }
 

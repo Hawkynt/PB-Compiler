@@ -36,11 +36,8 @@ public sealed partial class CodeGenerator {
           this.Errors.Add(new(d.Position, "DATA is only allowed in the main module, not in a $COMPILE UNIT"));
           break;
 
-        case DimStmt dim: // static module storage is fine; dynamic arrays would need init code the unit has no hook for
-          foreach (var v in dim.Variables)
-            if (this.LookupVariable(v.Name, v.Suffix)?.Type is ArrayType { IsDynamic: true })
-              this.Errors.Add(new(dim.Position, $"module-level array {v.Name} in a $COMPILE UNIT must have static bounds"));
-          break;
+        case DimStmt: // static module storage is laid out at compile time; dynamic
+          break;      // descriptors start zeroed - procedures DIM/REDIM them at run time
 
         default:
           this.Errors.Add(new(statement.Position, "module-level code is not allowed in a $COMPILE UNIT"));

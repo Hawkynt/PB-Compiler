@@ -20,8 +20,14 @@ public static class Driver {
     string? source = null;
     string? output = null;
     var includePaths = new List<string>();
+    var linkPaths = new List<string>();
     var dumpStage = "";
     var dialect = Dialect.Pb35;
+    var checkBounds = false;
+    var checkNumeric = false;
+    var checkOverflow = false;
+    var checkStack = false;
+    var optimizeSpeed = false;
 
     for (var i = 0; i < args.Length; ++i)
       switch (args[i]) {
@@ -30,6 +36,9 @@ public static class Driver {
           break;
         case "-I" or "--include" when i + 1 < args.Length:
           includePaths.Add(args[++i]);
+          break;
+        case "-L" or "--linkdir" when i + 1 < args.Length:
+          linkPaths.Add(args[++i]);
           break;
         case "--dialect" when i + 1 < args.Length: {
           var name = args[++i];
@@ -41,6 +50,21 @@ public static class Driver {
         }
         case "-G386":
           break; // accepted for PBC.EXE compatibility; 386 codegen is driven by $CPU
+        case "-EB":
+          checkBounds = true;
+          break;
+        case "-EN":
+          checkNumeric = true;
+          break;
+        case "-EO":
+          checkOverflow = true;
+          break;
+        case "-ES":
+          checkStack = true;
+          break;
+        case "-OZF":
+          optimizeSpeed = true;
+          break;
         case "--dump-tokens" or "--dump-ast" or "--dump-bind":
           dumpStage = args[i];
           break;
@@ -95,7 +119,13 @@ public static class Driver {
         return 0;
       }
 
-      var generator = new CodeGenerator(model);
+      var generator = new CodeGenerator(model) {
+        CheckBounds = checkBounds,    // -EB
+        CheckNumeric = checkNumeric,  // -EN
+        CheckOverflow = checkOverflow,// -EO
+        CheckStack = checkStack,      // -ES
+        OptimizeSpeed = optimizeSpeed,// -OZF
+      };
       byte[] artifact;
       if (IsUnitCompile(model)) {
         var unitName = Path.GetFileNameWithoutExtension(source).ToUpperInvariant();
@@ -105,10 +135,13 @@ public static class Driver {
         compiledUnit.Write(buffer);
         artifact = buffer.ToArray();
       } else {
-        if (!TryLoadLinkTargets(model, sourceDir, stderr, out var units, out var libraries))
+        if (!TryLoadLinkTargets(model, [.. linkPaths, sourceDir], stderr, out var units, out var libraries))
           return 1;
         artifact = generator.EmitExecutable(units, libraries);
-        output ??= Path.ChangeExtension(source, ".EXE");
+        // $COMPILE CHAIN: same MZ image, .PBC extension (our own chain artifact)
+        var isChain = model.MetaStatements.Any(m => m.Command == "COMPILE"
+          && m.Arguments is [{ } chainTarget, ..] && chainTarget.Text.Equals("CHAIN", StringComparison.OrdinalIgnoreCase));
+        output ??= Path.ChangeExtension(source, isChain ? ".PBC" : ".EXE");
       }
 
       if (generator.Errors.Count > 0) {
@@ -142,8 +175,11 @@ public static class Driver {
   private static bool IsUnitCompile(SemanticModel model)
     => model.MetaStatements.Any(m => m.Command == "COMPILE" && m.Arguments is [{ } target, ..] && target.Text.Equals("UNIT", StringComparison.OrdinalIgnoreCase));
 
-  /// <summary>Loads every $LINK "X.PBU"/"Y.PBL" target relative to the source directory.</summary>
-  private static bool TryLoadLinkTargets(SemanticModel model, string sourceDir, TextWriter stderr, out List<PbuFile> units, out List<PblFile> libraries) {
+  /// <summary>
+  /// Loads every $LINK "X.PBU"/"Y.PBL" target, trying the -L link directories
+  /// first, then the source directory (so rebuilt units shadow foreign ones).
+  /// </summary>
+  private static bool TryLoadLinkTargets(SemanticModel model, IReadOnlyList<string> searchDirs, TextWriter stderr, out List<PbuFile> units, out List<PblFile> libraries) {
     units = [];
     libraries = [];
     foreach (var meta in model.MetaStatements.Where(m => m.Command == "LINK")) {
@@ -151,16 +187,23 @@ public static class Driver {
         stderr.WriteLine($"error: {meta.Position}: $LINK expects a quoted file name");
         return false;
       }
-      var path = Path.IsPathRooted(file.Text) ? file.Text : Path.Combine(sourceDir, file.Text);
-      if (!File.Exists(path)) {
+      var path = Path.IsPathRooted(file.Text)
+        ? file.Text
+        : searchDirs.Select(dir => Path.Combine(dir, file.Text)).FirstOrDefault(File.Exists);
+      if (path == null || !File.Exists(path)) {
         stderr.WriteLine($"error: {meta.Position}: $LINK file '{file.Text}' not found");
         return false;
       }
-      using var stream = File.OpenRead(path);
-      if (path.EndsWith(".PBL", StringComparison.OrdinalIgnoreCase))
-        libraries.Add(PblFile.Read(stream));
-      else
-        units.Add(PbuFile.Read(stream));
+      try {
+        using var stream = File.OpenRead(path);
+        if (path.EndsWith(".PBL", StringComparison.OrdinalIgnoreCase))
+          libraries.Add(PblFile.Read(stream));
+        else
+          units.Add(PbuFile.Read(stream));
+      } catch (InvalidDataException e) {
+        stderr.WriteLine($"error: {meta.Position}: $LINK '{file.Text}': {e.Message} (genuine PowerBASIC units are not binary-compatible; rebuild with pbc and point -L at them)");
+        return false;
+      }
     }
     return true;
   }

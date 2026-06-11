@@ -58,3 +58,9 @@ public sealed record UnaryExpr(SourcePosition Position, UnaryOp Op, Expression O
 
 /// <summary>File-number expression, e.g. <c>#1</c> in I/O statements.</summary>
 public sealed record FileNumberExpr(SourcePosition Position, Expression Number) : Expression(Position);
+
+/// <summary>
+/// Argument-position <c>ANY</c> match-set prefix, e.g. <c>INSTR(s$, ANY "-/")</c> or
+/// <c>EXTRACT$(s$, ANY set$)</c>: matches any single character of the set.
+/// </summary>
+public sealed record AnyMatchExpr(SourcePosition Position, Expression Value) : Expression(Position);

@@ -1,3 +1,4 @@
+using PowerBasic.Compiler.Syntax;
 using PowerBasic.Compiler.Syntax.Ast;
 
 namespace PowerBasic.Compiler.Semantics;
@@ -10,6 +11,9 @@ namespace PowerBasic.Compiler.Semantics;
 public sealed class SemanticModel {
 
   public required string FileName { get; init; }
+
+  /// <summary>Dialect the unit was bound under; code generation gates quirk emulation on it.</summary>
+  public Dialect Dialect { get; set; } = Dialect.Pb35;
 
   /// <summary>Folded named constants (%equates).</summary>
   public Dictionary<string, ConstantValue> Equates { get; } = new(StringComparer.OrdinalIgnoreCase);

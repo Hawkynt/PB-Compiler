@@ -75,6 +75,91 @@ public sealed partial class Parser {
     return new SwapStmt(pos, left, this.ParseLValue());
   }
 
+  /// <summary>BIT SET/RESET/TOGGLE var, bit-number (PB 3.0).</summary>
+  private Statement ParseBit() {
+    var pos = this.Advance().Position; // BIT
+    var op = this.Advance().Text.ToUpperInvariant() switch {
+      "SET" => BitOp.Set,
+      "RESET" => BitOp.Reset,
+      _ => BitOp.Toggle,
+    };
+    var target = this.ParseLValue();
+    this.Expect(TokenKind.Comma, "','");
+    return new BitStmt(pos, op, target, this.ParseExpression());
+  }
+
+  /// <summary>ARRAY SORT / ARRAY SCAN (PB 3.5) - see <see cref="ArraySortStmt"/>/<see cref="ArrayScanStmt"/>.</summary>
+  private Statement ParseArrayStatement() {
+    var pos = this.Advance().Position; // ARRAY
+    var isScan = this.Advance().Text.Equals("SCAN", StringComparison.OrdinalIgnoreCase);
+
+    var name = this.Expect(TokenKind.Identifier, "array name");
+    this.Expect(TokenKind.LParen, "'('");
+    var start = new List<Expression>();
+    if (this.Current.Kind != TokenKind.RParen)
+      start.Add(this.ParseExpression());
+    this.Expect(TokenKind.RParen, "')'");
+    var arrayRef = new CallOrIndexExpr(name.Position, name.Text, name.Suffix, start);
+
+    Expression? count = null;
+    if (this.TryMatchKeyword("FOR"))
+      count = this.ParseExpression();
+
+    Expression? fromPos = null;
+    Expression? toPos = null;
+    Expression? collate = null;
+    var descend = false;
+    CallOrIndexExpr? tagArray = null;
+    CaseComparison? scanOp = null;
+    Expression? match = null;
+    Expression? scanTarget = null;
+
+    while (this.Match(TokenKind.Comma)) {
+      if (this.TryMatchKeyword("FROM")) {
+        fromPos = this.ParseExpression();
+        this.ExpectKeyword("TO");
+        toPos = this.ParseExpression();
+      } else if (this.TryMatchKeyword("COLLATE"))
+        collate = this.ParseExpression();
+      else if (this.TryMatchKeyword("ASCEND"))
+        descend = false;
+      else if (this.TryMatchKeyword("DESCEND"))
+        descend = true;
+      else if (this.TryMatchKeyword("TAGARRAY")) {
+        var tag = this.Expect(TokenKind.Identifier, "tag array name");
+        var tagStart = new List<Expression>();
+        if (this.Match(TokenKind.LParen)) {
+          if (this.Current.Kind != TokenKind.RParen)
+            tagStart.Add(this.ParseExpression());
+          this.Expect(TokenKind.RParen, "')'");
+        }
+        tagArray = new(tag.Position, tag.Text, tag.Suffix, tagStart);
+      } else if (isScan && this.TryMatchKeyword("TO"))
+        scanTarget = this.ParseLValue();
+      else if (isScan) {
+        scanOp = this.Current.Kind switch {
+          TokenKind.Equals => CaseComparison.Equal,
+          TokenKind.NotEquals => CaseComparison.NotEqual,
+          TokenKind.Less => CaseComparison.Less,
+          TokenKind.LessEquals => CaseComparison.LessEqual,
+          TokenKind.Greater => CaseComparison.Greater,
+          TokenKind.GreaterEquals => CaseComparison.GreaterEqual,
+          _ => throw this.Error("expected comparison operator in ARRAY SCAN"),
+        };
+        this.Advance();
+        match = this.ParseExpression();
+      } else
+        throw this.Error($"unexpected '{this.Current.Text}' in ARRAY SORT");
+    }
+
+    if (!isScan)
+      return new ArraySortStmt(pos, arrayRef, count, fromPos, toPos, collate, descend, tagArray);
+
+    if (scanOp == null || match == null || scanTarget == null)
+      throw this.Error("ARRAY SCAN needs 'relop expr, TO var'");
+    return new ArrayScanStmt(pos, arrayRef, count, fromPos, toPos, collate, scanOp.Value, match, scanTarget);
+  }
+
   private Statement ParseMidAssign() {
     var pos = this.Advance().Position; // MID$
     this.Expect(TokenKind.LParen, "'('");
@@ -165,7 +250,9 @@ public sealed partial class Parser {
 
   /// <summary>Graphics LINE (the LINE INPUT form is routed away in <see cref="ParseLine"/>).</summary>
   private Statement ParseLine() {
-    if (this.IsKeyword(1, "INPUT")) {
+    // LINE INPUT ... / LINE INPUT# 1, ... (the '#' lexes as a Double suffix on INPUT)
+    if (this.Peek() is { Kind: TokenKind.Identifier, Suffix: TypeSuffix.None or TypeSuffix.Double } next
+        && next.Text.Equals("INPUT", StringComparison.OrdinalIgnoreCase)) {
       this.Advance(); // LINE
       return this.ParseInput(isLineInput: true);
     }
@@ -244,6 +331,10 @@ public sealed partial class Parser {
 
     if (keyword == "VIEW" && this.TryMatchKeyword("SCREEN"))
       keyword = "VIEW SCREEN";
+    else if (keyword == "VIEW" && this.TryMatchKeyword("TEXT"))
+      keyword = "VIEW TEXT";
+    else if (keyword == "VIEW" && this.TryMatchKeyword("PRINT"))
+      keyword = "VIEW PRINT";
     else if (keyword == "PALETTE" && this.TryMatchKeyword("USING"))
       keyword = "PALETTE USING";
 

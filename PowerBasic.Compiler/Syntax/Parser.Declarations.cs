@@ -8,25 +8,43 @@ public sealed partial class Parser {
   private Statement ParseSub() {
     var pos = this.Advance().Position;
     var name = this.Expect(TokenKind.Identifier, "SUB name");
-    var parameters = this.Current.Kind == TokenKind.LParen ? this.ParseParameterList() : [];
-    var (isStatic, visibility, alias, cdecl) = this.ParseProcedureModifiers();
+
+    // modifiers may precede or follow the parameter list (SUB X CDECL (a, b) PUBLIC)
+    List<Parameter>? parameters = null;
+    var isStatic = false;
+    var visibility = Visibility.Default;
+    string? alias = null;
+    var cdecl = false;
+    for (;;) {
+      if (parameters == null && this.Current.Kind == TokenKind.LParen) {
+        parameters = this.ParseParameterList();
+        continue;
+      }
+      if (!this.TryParseProcedureModifier(ref isStatic, ref visibility, ref alias, ref cdecl))
+        break;
+    }
+
     var body = this.ParseBody("END SUB");
     this.Advance();
     this.Advance();
-    return new SubDecl(pos, name.Text, parameters, isStatic, visibility, alias, cdecl, body);
+    return new SubDecl(pos, name.Text, parameters ?? [], isStatic, visibility, alias, cdecl, body);
   }
 
   private Statement ParseFunction() {
     var pos = this.Advance().Position;
     var name = this.Expect(TokenKind.Identifier, "FUNCTION name");
-    var parameters = this.Current.Kind == TokenKind.LParen ? this.ParseParameterList() : (List<Parameter>)[];
 
+    List<Parameter>? parameters = null;
     TypeName? returnType = null;
     var isStatic = false;
     var visibility = Visibility.Default;
     string? alias = null;
     var cdecl = false;
     for (;;) {
+      if (parameters == null && this.Current.Kind == TokenKind.LParen) {
+        parameters = this.ParseParameterList();
+        continue;
+      }
       if (this.TryMatchKeyword("AS")) {
         returnType = this.ParseTypeName();
         continue;
@@ -38,16 +56,7 @@ public sealed partial class Parser {
     var body = this.ParseBody("END FUNCTION");
     this.Advance();
     this.Advance();
-    return new FunctionDecl(pos, name.Text, name.Suffix, returnType, parameters, isStatic, visibility, alias, cdecl, body);
-  }
-
-  private (bool IsStatic, Visibility Visibility, string? Alias, bool Cdecl) ParseProcedureModifiers() {
-    var isStatic = false;
-    var visibility = Visibility.Default;
-    string? alias = null;
-    var cdecl = false;
-    while (this.TryParseProcedureModifier(ref isStatic, ref visibility, ref alias, ref cdecl)) { }
-    return (isStatic, visibility, alias, cdecl);
+    return new FunctionDecl(pos, name.Text, name.Suffix, returnType, parameters ?? [], isStatic, visibility, alias, cdecl, body);
   }
 
   private bool TryParseProcedureModifier(ref bool isStatic, ref Visibility visibility, ref string? alias, ref bool cdecl) {
@@ -101,44 +110,75 @@ public sealed partial class Parser {
     if (this.Match(TokenKind.RParen))
       return result;
 
-    do
-      result.Add(this.ParseParameter());
-    while (this.Match(TokenKind.Comma));
+    // CDECL optional parameters arrive in brackets: (a, b [, c [, d]])
+    var optionalDepth = 0;
+    do {
+      while (this.Match(TokenKind.LBracket)) {
+        ++optionalDepth;
+        this.Expect(TokenKind.Comma, "','");
+      }
+      result.Add(this.ParseParameter(optionalDepth > 0));
+    } while (this.Match(TokenKind.Comma) || this.Current.Kind == TokenKind.LBracket);
+    while (optionalDepth-- > 0)
+      this.Expect(TokenKind.RBracket, "']'");
     this.Expect(TokenKind.RParen, "')'");
     return result;
   }
 
-  private Parameter ParseParameter() {
+  /// <summary>Builtin type keywords usable as anonymous DECLARE parameters (<c>DECLARE SUB S(BYVAL STRING, INTEGER)</c>).</summary>
+  private static readonly HashSet<string> _typeKeywords = new(StringComparer.OrdinalIgnoreCase) {
+    "BYTE", "WORD", "DWORD", "INTEGER", "LONG", "QUAD", "SINGLE", "DOUBLE", "EXT",
+    "FIX", "BCD", "STRING", "ASCIIZ", "FLEX", "ANY",
+  };
+
+  private int _anonymousParameters;
+
+  private Parameter ParseParameter(bool optional = false) {
     var byVal = this.TryMatchKeyword("BYVAL");
     var seg = this.TryMatchKeyword("SEG");
+
+    // anonymous type-only parameter (DECLARE prototypes): BYVAL STRING / INTEGER / STRING * 4
+    if (this.Current is { Kind: TokenKind.Identifier, Suffix: TypeSuffix.None } typeToken
+        && _typeKeywords.Contains(typeToken.Text)
+        && this.Peek().Kind is TokenKind.Comma or TokenKind.RParen or TokenKind.RBracket or TokenKind.Star) {
+      var anonType = this.ParseTypeName();
+      return new(typeToken.Position, $"__param{++this._anonymousParameters}", TypeSuffix.None, anonType, byVal, seg, IsArray: false, optional);
+    }
+
     var name = this.Expect(TokenKind.Identifier, "parameter name");
     var isArray = false;
     if (this.Current.Kind == TokenKind.LParen && this.Peek().Kind == TokenKind.RParen) {
       this.Advance();
       this.Advance();
       isArray = true;
+    } else if (this.Current.Kind == TokenKind.LParen && this.Peek().Kind == TokenKind.IntegerLiteral && this.Peek(2).Kind == TokenKind.RParen) {
+      // array parameter declared with its dimension count: arr(1) AS LONG
+      this.Advance();
+      this.Advance();
+      this.Advance();
+      isArray = true;
     }
     var type = this.TryMatchKeyword("AS") ? this.ParseTypeName() : null;
-    return new(name.Position, name.Text, name.Suffix, type, byVal, seg, isArray);
+    return new(name.Position, name.Text, name.Suffix, type, byVal, seg, isArray, optional);
   }
 
   private TypeName ParseTypeName() {
     var token = this.Expect(TokenKind.Identifier, "type name");
     var builtin = token.Text.ToUpperInvariant() switch {
-      "BYTE" => BuiltinType.Byte,
-      "WORD" => BuiltinType.Word,
-      "DWORD" => BuiltinType.Dword,
-      "INTEGER" => BuiltinType.Integer,
-      "LONG" => BuiltinType.Long,
-      "QUAD" => BuiltinType.Quad,
-      "SINGLE" => BuiltinType.Single,
-      "DOUBLE" => BuiltinType.Double,
-      "EXT" => BuiltinType.Ext,
+      "BYTE" or "BYT" => BuiltinType.Byte,
+      "WORD" or "WRD" => BuiltinType.Word,
+      "DWORD" or "DWD" => BuiltinType.Dword,
+      "INTEGER" or "INT" => BuiltinType.Integer,
+      "LONG" or "LNG" => BuiltinType.Long,
+      "QUAD" or "QUD" => BuiltinType.Quad,
+      "SINGLE" or "SNG" => BuiltinType.Single,
+      "DOUBLE" or "DBL" => BuiltinType.Double,
+      "EXT" or "EXTENDED" => BuiltinType.Ext,
       "FIX" => BuiltinType.Fix,
       "BCD" => BuiltinType.Bcd,
       "STRING" => BuiltinType.String,
       "ASCIIZ" => BuiltinType.Asciiz,
-      "FLEX" => BuiltinType.Flex,
+      "FLEX" or "FLX" => BuiltinType.Flex,
       "ANY" => BuiltinType.Any,
       _ => BuiltinType.None,
     };
@@ -265,9 +305,10 @@ public sealed partial class Parser {
 
     var arrayClass = this.ParseArrayClass(storage);
 
+    var statik = false;
     var variables = new List<VariableDecl>();
     do
-      variables.Add(this.ParseVariableDecl(ref shared));
+      variables.Add(this.ParseVariableDecl(ref shared, ref statik));
     while (this.Match(TokenKind.Comma));
 
     // DIM x(...) [AS type] AT segment - ABSOLUTE array mapped at a fixed address
@@ -276,7 +317,7 @@ public sealed partial class Parser {
       atAddress = this.ParseExpression();
       arrayClass = ArrayClass.Absolute;
     }
-    return new DimStmt(pos, storage, shared, variables, commonBlock, arrayClass, atAddress);
+    return new DimStmt(pos, storage, shared, variables, commonBlock, arrayClass, atAddress, statik);
   }
 
   /// <summary>Optional DIM array-class keyword: STATIC/DYNAMIC/HUGE/VIRTUAL/ABSOLUTE.</summary>
@@ -328,13 +369,23 @@ public sealed partial class Parser {
     var arrays = new List<NameExpr>();
     do {
       var name = this.Expect(TokenKind.Identifier, "array name");
+      if (this.Current.Kind == TokenKind.LParen && this.Peek().Kind == TokenKind.RParen) { // optional ERASE a()
+        this.Advance();
+        this.Advance();
+      }
       arrays.Add(new(name.Position, name.Text, name.Suffix));
     } while (this.Match(TokenKind.Comma));
     return new EraseStmt(pos, arrays);
   }
 
   private VariableDecl ParseVariableDecl(ref bool shared) {
+    var statik = false;
+    return this.ParseVariableDecl(ref shared, ref statik);
+  }
+
+  private VariableDecl ParseVariableDecl(ref bool shared, ref bool statik) {
     var name = this.Expect(TokenKind.Identifier, "variable name");
+    var (fullName, suffix) = this.ParseDottedNameRest(name);
     List<(Expression? Lower, Expression Upper)>? bounds = null;
     if (this.Match(TokenKind.LParen)) {
       bounds = [];
@@ -348,14 +399,44 @@ public sealed partial class Parser {
 
     TypeName? type = null;
     if (this.TryMatchKeyword("AS")) {
-      shared |= this.TryMatchKeyword("SHARED");
+      for (;;) { // AS [SHARED|STATIC] type
+        if (this.TryMatchKeyword("SHARED")) {
+          shared = true;
+          continue;
+        }
+        if (this.TryMatchKeyword("STATIC")) {
+          statik = true;
+          continue;
+        }
+        break;
+      }
       type = this.ParseTypeName();
     }
-    return new(name.Position, name.Text, name.Suffix, bounds, type);
+    return new(name.Position, fullName, suffix, bounds, type);
   }
 
+  /// <summary>
+  /// QB-style dotted variable names (<c>DIM TL.Char AS BYTE</c>): consumes
+  /// <c>.ident</c> chains following <paramref name="name"/> into one flat name;
+  /// the suffix of the last segment wins.
+  /// </summary>
+  private (string Name, TypeSuffix Suffix) ParseDottedNameRest(Token name) {
+    var fullName = name.Text;
+    var suffix = name.Suffix;
+    while (suffix == TypeSuffix.None && this.Current.Kind == TokenKind.Period && this.Peek().Kind == TokenKind.Identifier) {
+      this.Advance();
+      var part = this.Advance();
+      fullName += "." + part.Text;
+      suffix = part.Suffix;
+    }
+    return (fullName, suffix);
+  }
+
+  /// <summary>One array bound: <c>upper</c>, <c>lower TO upper</c>, or <c>lower:upper</c> (colon synonym).</summary>
   private (Expression? Lower, Expression Upper) ParseArrayBound() {
     var first = this.ParseExpression();
-    return this.TryMatchKeyword("TO") ? (first, this.ParseExpression()) : (null, first);
+    return this.TryMatchKeyword("TO") || this.Match(TokenKind.Colon)
+      ? (first, this.ParseExpression())
+      : (null, first);
   }
 }

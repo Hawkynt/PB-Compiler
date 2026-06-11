@@ -7,10 +7,11 @@ namespace PowerBasic.Compiler.Syntax;
 public sealed partial class Parser {
 
   private Statement ParsePrint(bool isLPrint) {
-    var pos = this.Advance().Position; // PRINT / LPRINT / ?
+    var keyword = this.Advance(); // PRINT / LPRINT / ? - a Double suffix is an attached '#' (PRINT# 1, ...)
+    var pos = keyword.Position;
 
     Expression? fileNumber = null;
-    if (this.Current.Kind == TokenKind.Hash) {
+    if (this.Current.Kind == TokenKind.Hash || keyword.Suffix == TypeSuffix.Double) {
       fileNumber = this.ParseFileNumber();
       this.Expect(TokenKind.Comma, "','");
     }
@@ -31,6 +32,8 @@ public sealed partial class Parser {
         items.Add(new(value, PrintSeparator.Semicolon));
       else if (this.Match(TokenKind.Comma))
         items.Add(new(value, PrintSeparator.Comma));
+      else if (!this.IsStatementEnd())
+        items.Add(new(value, PrintSeparator.Semicolon)); // juxtaposed items: PRINT "FOR" n "DISKS"
       else {
         items.Add(new(value, PrintSeparator.Newline));
         break;
@@ -40,12 +43,13 @@ public sealed partial class Parser {
   }
 
   private Statement ParseInput(bool isLineInput) {
-    var pos = this.Advance().Position; // INPUT
+    var keyword = this.Advance(); // INPUT - a Double suffix is an attached '#' (INPUT# 1, ...)
+    var pos = keyword.Position;
 
     Expression? fileNumber = null;
     string? prompt = null;
     var promptSemicolon = false;
-    if (this.Current.Kind == TokenKind.Hash) {
+    if (this.Current.Kind == TokenKind.Hash || keyword.Suffix == TypeSuffix.Double) {
       fileNumber = this.ParseFileNumber();
       this.Expect(TokenKind.Comma, "','");
     } else {
@@ -61,6 +65,22 @@ public sealed partial class Parser {
       targets.Add(this.ParseLValue());
     while (this.Match(TokenKind.Comma));
     return new InputStmt(pos, isLineInput, fileNumber, prompt, promptSemicolon, targets);
+  }
+
+  /// <summary>WRITE [#n,] expr-list - comma-delimited output, strings quoted.</summary>
+  private Statement ParseWrite() {
+    var keyword = this.Advance(); // WRITE - a Double suffix is an attached '#'
+    Expression? fileNumber = null;
+    if (this.Current.Kind == TokenKind.Hash || keyword.Suffix == TypeSuffix.Double) {
+      fileNumber = this.ParseFileNumber();
+      this.Expect(TokenKind.Comma, "','");
+    }
+    var items = new List<Expression>();
+    if (!this.IsStatementEnd())
+      do
+        items.Add(this.ParseExpression());
+      while (this.Match(TokenKind.Comma));
+    return new WriteStmt(keyword.Position, fileNumber, items);
   }
 
   private Statement ParseOpen() {
@@ -104,6 +124,17 @@ public sealed partial class Parser {
         recordLength = this.ParseExpression();
       }
       return new OpenStmt(pos, first, mode, access, lockSpec, fileNumber, recordLength);
+    }
+
+    // OPEN file$ AS [#]n [LEN = reclen] - RANDOM mode shorthand
+    if (this.TryMatchKeyword("AS")) {
+      var asNumber = this.ParseFileNumber();
+      Expression? asRecLen = null;
+      if (this.TryMatchKeyword("LEN")) {
+        this.Expect(TokenKind.Equals, "'='");
+        asRecLen = this.ParseExpression();
+      }
+      return new OpenStmt(pos, first, FileMode.Random, null, null, asNumber, asRecLen);
     }
 
     // legacy OPEN mode$, [#]n, file$ [, reclen]

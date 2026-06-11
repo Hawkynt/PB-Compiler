@@ -1,5 +1,6 @@
 using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Semantics;
+using PowerBasic.Compiler.Syntax;
 using PowerBasic.Compiler.Syntax.Ast;
 
 namespace PowerBasic.Compiler.CodeGen;
@@ -94,30 +95,186 @@ public sealed partial class CodeGenerator {
         asm.Call(this._rt.StrMid);
         break;
 
-      case "INSTR": {
+      case "INSTR" or "VERIFY": {
         var hasStart = args.Count > 2;
+        var needle = args[hasStart ? 2 : 1];
         if (hasStart) {
           this.EmitInt16Argument(args[0]);
           asm.Push(Reg.AX);
         }
         this.EmitExpression(args[hasStart ? 1 : 0]);
         asm.Push(Reg.AX);
-        this.EmitExpression(args[hasStart ? 2 : 1]);
+        this.EmitExpression(needle);
         asm.Mov(Reg.DX, Reg.AX);
         asm.Pop(Reg.AX);
         if (hasStart)
           asm.Pop(Reg.CX);
         else
           asm.Mov(Reg.CX, 1);
-        asm.Call(this._rt.Instr);
+        if (intrinsic.Name == "VERIFY") {
+          asm.Mov(Reg.BX, 1);              // find the first NON-member
+          asm.Call(this._rt.ScanSet);
+        } else if (needle is AnyMatchExpr) {
+          asm.Xor(Reg.BX, Reg.BX);         // INSTR ANY: first member of the set
+          asm.Call(this._rt.ScanSet);
+        } else
+          asm.Call(this._rt.Instr);
         asm.Cwd();
         break;
       }
 
-      case "CHR$":
+      case "EXTRACT$" or "TALLY": {
+        this.EmitExpression(args[0]);
+        asm.Push(Reg.AX);
+        this.EmitExpression(args[1]);
+        asm.Mov(Reg.DX, Reg.AX);
+        asm.Pop(Reg.AX);
+        asm.Mov(Reg.BX, args[1] is AnyMatchExpr ? 1 : 0);
+        asm.Call(intrinsic.Name == "EXTRACT$" ? this._rt.Extract : this._rt.Tally);
+        if (intrinsic.Name == "TALLY")
+          asm.Cwd();
+        break;
+      }
+
+      case "COMMAND$":
+        asm.Call(this._rt.Command);
+        break;
+
+      case "USING$": { // PRINT USING into a string via capture mode
+        if (args[0] is not StringLiteralExpr usingFormat) {
+          // runtime format: single numeric field supported via rt_usingdyn
+          if (args.Count != 2) {
+            this.Unsupported(call, "non-literal USING$ format with multiple values");
+            break;
+          }
+          this.EmitExpression(args[1]);
+          this.Coerce(model.TypeOf(args[1]), PbType.Double, args[1]);
+          this.EmitExpression(args[0]);   // format handle (string eval never touches the FPU)
+          asm.Call(this._rt.UsingDyn);
+          break;
+        }
+        asm.Mov(Mem.Byte(asm.Lbl("rt_capmode")), (Imm)1);
+        asm.Mov(Mem.Word(asm.Lbl("rt_caplen")), (Imm)0);
+        this.EmitUsingBody(usingFormat.Value, args.Skip(1));
+        asm.Mov(Mem.Byte(asm.Lbl("rt_capmode")), (Imm)0);
+        asm.Mov(Reg.CX, Mem.Word(asm.Lbl("rt_caplen")));
+        asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_capbuf")));
+        asm.Mov(Reg.DX, Reg.DS);
+        asm.Call(this._rt.StrMem);
+        break;
+      }
+
+      case "ENVIRON$":
+        this.EmitExpression(args[0]);
+        asm.Call(this._rt.Environ);
+        break;
+
+      case "TIME$":
+        asm.Call(this._rt.TimeStr);
+        break;
+
+      case "DATE$":
+        asm.Call(this._rt.DateStr);
+        break;
+
+      case "INPUT$": // INPUT$(n [, [#]f]) - file read or blocking keyboard read
+        this.EmitInt16Argument(args[0]);
+        if (args.Count > 1) {
+          asm.Push(Reg.AX);
+          this.EmitInt16Argument(UnwrapFileNumber(args[1]));
+          asm.Pop(Reg.CX);
+          asm.Call(this._rt.FGetStr);
+        } else {
+          asm.Mov(Reg.CX, Reg.AX);
+          asm.Call(this._rt.KeyInput);
+        }
+        break;
+
+      case "FILEATTR": {
+        // only FILEATTR(n, 2) = DOS handle is meaningful on this runtime
+        if (args[1] is not IntegerLiteralExpr { Value: 2 }) {
+          this.Unsupported(call, "FILEATTR attribute (only 2 = DOS handle)");
+          break;
+        }
+        this.EmitInt16Argument(UnwrapFileNumber(args[0]));
+        asm.Call(this._rt.FHandle);
+        asm.Mov(Reg.AX, Reg.BX);
+        asm.Cwd();
+        break;
+      }
+
+      case "CURDIR$":
+        if (args.Count > 0) { // drive argument: only the default drive is modelled
+          this.EmitExpression(args[0]);
+          if (KindOf(model.TypeOf(args[0])) == ValueKind.Str)
+            asm.Call(this._rt.StrFree);
+        }
+        asm.Call(this._rt.CurDir);
+        break;
+
+      case "DIR$": {
+        if (args.Count >= 1) {
+          this.EmitExpression(args[0]);
+          if (args.Count > 1) {
+            asm.Push(Reg.AX);
+            this.EmitInt16Argument(args[1]);
+            asm.Mov(Reg.CX, Reg.AX);
+            asm.Pop(Reg.AX);
+          } else
+            asm.Xor(Reg.CX, Reg.CX);
+        } else {
+          asm.Xor(Reg.AX, Reg.AX);          // find-next form
+          asm.Xor(Reg.CX, Reg.CX);
+        }
+        asm.Call(this._rt.Dir);
+        break;
+      }
+
+      case "CHR$": // variadic: CHR$(a, b, c) concatenates the character codes
         this.EmitInt16Argument(args[0]);
         asm.Mov(Reg.DL, Reg.AL);
         asm.Call(this._rt.Chr);
+        for (var i = 1; i < args.Count; ++i) {
+          asm.Push(Reg.AX);
+          this.EmitInt16Argument(args[i]);
+          asm.Mov(Reg.DL, Reg.AL);
+          asm.Call(this._rt.Chr);
+          asm.Mov(Reg.DX, Reg.AX);
+          asm.Pop(Reg.AX);
+          asm.Call(this._rt.StrCat);
+        }
+        break;
+
+      case "PEEK$": // PEEK$(offset, count) - bytes at DEF SEG:offset
+        this.EmitInt16Argument(args[0]);
+        asm.Push(Reg.AX);
+        this.EmitInt16Argument(args[1]);
+        asm.Mov(Reg.CX, Reg.AX);
+        asm.Pop(Reg.SI);
+        asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_defseg")));
+        asm.Call(this._rt.StrMem);
+        break;
+
+      case "INSTAT": { // keyboard status: -1 when a key is waiting
+        var noKey = asm.DefineLabel();
+        var doneInstat = asm.DefineLabel();
+        asm.Mov(Reg.AH, (Imm)1);
+        asm.Int(0x16);
+        asm.Jz(noKey);
+        asm.Mov(Reg.AX, -1);
+        asm.Jmp(doneInstat);
+        asm.MarkLabel(noKey);
+        asm.Xor(Reg.AX, Reg.AX);
+        asm.MarkLabel(doneInstat);
+        break;
+      }
+
+      case "SETMEM": // memory management is not modelled: report a large stable figure
+        this.EmitExpression(args[0]);
+        if (KindOf(model.TypeOf(args[0])) == ValueKind.Float)
+          asm.Fstp(St.St0);
+        asm.Mov(Reg.AX, 0x7FFF);
+        asm.Cwd();
         break;
 
       case "ASC" or "ASCII":
@@ -202,7 +359,14 @@ public sealed partial class CodeGenerator {
           }
         }
         this.EmitExpression(args[0]);
-        this.Coerce(model.TypeOf(args[0]), PbType.Long, args[0]);
+        if (model.Dialect >= Dialect.Pb31)
+          this.Coerce(model.TypeOf(args[0]), PbType.Long, args[0]);
+        else {
+          // 32-bit LONG arguments arrived with 3.1; older dialects render
+          // 16 bits (HEX$(-1) = "FFFF", not "FFFFFFFF")
+          this.Coerce(model.TypeOf(args[0]), PbType.Integer, args[0]);
+          asm.Xor(Reg.DX, Reg.DX);
+        }
         asm.Mov(Reg.CX, (Math.Clamp(digits, 1, 32) << 8) | bits);
         asm.Call(this._rt.Radix);
         break;
@@ -299,6 +463,33 @@ public sealed partial class CodeGenerator {
         break;
       }
 
+      case "MIN" or "MAX" or "MIN%" or "MAX%": {
+        // fold on the FPU: accumulator in ST1, candidate in ST0
+        var wantMax = intrinsic.Name.StartsWith("MAX", StringComparison.Ordinal);
+        this.EmitExpression(args[0]);
+        this.Coerce(model.TypeOf(args[0]), PbType.Double, args[0]);
+        for (var i = 1; i < args.Count; ++i) {
+          this.EmitExpression(args[i]);
+          this.Coerce(model.TypeOf(args[i]), PbType.Double, args[i]);
+          var keepNew = asm.DefineLabel();
+          var next = asm.DefineLabel();
+          asm.Fcom();                  // ST0 (new) vs ST1 (acc)
+          asm.FstswAx();
+          asm.Sahf();
+          if (wantMax)
+            asm.Ja(keepNew);
+          else
+            asm.Jb(keepNew);
+          asm.Fstp(St.St0);            // drop the candidate
+          asm.Jmp(next);
+          asm.MarkLabel(keepNew);
+          asm.Fstp(St.St1);            // candidate replaces the accumulator
+          asm.MarkLabel(next);
+        }
+        this.Coerce(PbType.Double, model.TypeOf(call), call);
+        break;
+      }
+
       case "CINT" or "CBYT" or "CWRD":
         this.EmitExpression(args[0]);
         this.Coerce(model.TypeOf(args[0]), PbType.Integer, args[0]);
@@ -310,6 +501,23 @@ public sealed partial class CodeGenerator {
         break;
 
       case "CSNG" or "CDBL" or "CEXT":
+        this.EmitExpression(args[0]);
+        this.Coerce(model.TypeOf(args[0]), PbType.Double, args[0]);
+        break;
+
+      case "CQUD": // round to the nearest 64-bit integer
+        this.EmitExpression(args[0]);
+        this.Coerce(model.TypeOf(args[0]), PbType.Quad, args[0]);
+        break;
+
+      case "CFIX": // round to pbvFixDigits decimals
+        this.EmitExpression(args[0]);
+        this.Coerce(model.TypeOf(args[0]), PbType.Double, args[0]);
+        asm.Call(asm.Lbl("rt_fixup"));
+        asm.Call(asm.Lbl("rt_fixdn"));
+        break;
+
+      case "CBCD": // identity on the x87 stack (full source precision carried)
         this.EmitExpression(args[0]);
         this.Coerce(model.TypeOf(args[0]), PbType.Double, args[0]);
         break;
@@ -380,9 +588,17 @@ public sealed partial class CodeGenerator {
         asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_err")));
         break;
 
-      case "ERL":
-        asm.Xor(Reg.AX, Reg.AX);   // line numbers are not tracked
+      case "ERL": // last executed numeric line label (tracked in error-handling scopes)
+        asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_erl")));
         asm.Cwd();
+        break;
+
+      case "ERDEV": // device-error stub
+        asm.Xor(Reg.AX, Reg.AX);
+        break;
+
+      case "ERDEV$":
+        asm.Xor(Reg.AX, Reg.AX);   // empty string handle
         break;
 
       case "BIT": {
@@ -568,6 +784,10 @@ public sealed partial class CodeGenerator {
         break;
 
       case "FRE":
+        if (args.Count > 0 && TryLiteralValue(args[0]) == -11) { // FRE(-11) = free EMS bytes
+          asm.Call(this._rt.EmsFre);
+          break;
+        }
         if (args.Count > 0) {
           this.EmitExpression(args[0]);
           if (KindOf(model.TypeOf(args[0])) == ValueKind.Str)

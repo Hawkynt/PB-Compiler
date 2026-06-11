@@ -49,7 +49,7 @@ public sealed partial class CodeGenerator {
       return;
     }
     var size = model.TypeOf(target).Size;
-    if (size is not (1 or 2 or 4)) {
+    if (size is not (1 or 2 or 4 or 8)) {
       this.Unsupported(cmd);
       return;
     }
@@ -64,7 +64,7 @@ public sealed partial class CodeGenerator {
 
     var rotate = cmd.Keyword.StartsWith("ROTATE", StringComparison.Ordinal);
     var left = cmd.Keyword.EndsWith("LEFT", StringComparison.Ordinal);
-    if (size != 4) {
+    if (size is 1 or 2) {
       var cell = Adjust(place.Cell, 0, size == 1 ? OperandSize.Byte : OperandSize.Word);
       switch (rotate, left) {
         case (false, true): asm.Shl(cell, Reg.CL); break;
@@ -75,9 +75,10 @@ public sealed partial class CodeGenerator {
       return;
     }
 
-    // 32-bit: one-bit steps through the word pair, CX times
+    // 32/64-bit: one-bit steps through the word chain, CX times
+    var words = size / 2;
     var lo = Adjust(place.Cell, 0, OperandSize.Word);
-    var hi = Adjust(place.Cell, 2, OperandSize.Word);
+    var hi = Adjust(place.Cell, size - 2, OperandSize.Word);
     var loop = asm.DefineLabel();
     var done = asm.DefineLabel();
     asm.Jcxz(done);
@@ -85,22 +86,26 @@ public sealed partial class CodeGenerator {
     switch (rotate, left) {
       case (false, true):
         asm.Shl(lo, 1);
-        asm.Rcl(hi, 1);
+        for (var w = 1; w < words; ++w)
+          asm.Rcl(Adjust(place.Cell, w * 2, OperandSize.Word), 1);
         break;
       case (false, false):
         asm.Shr(hi, 1);
-        asm.Rcr(lo, 1);
+        for (var w = words - 2; w >= 0; --w)
+          asm.Rcr(Adjust(place.Cell, w * 2, OperandSize.Word), 1);
         break;
       case (true, true):
         asm.Shl(lo, 1);
-        asm.Rcl(hi, 1);
-        asm.Adc(lo, (Imm)0);          // carry = old bit 31 -> bit 0
+        for (var w = 1; w < words; ++w)
+          asm.Rcl(Adjust(place.Cell, w * 2, OperandSize.Word), 1);
+        asm.Adc(lo, (Imm)0);          // carry = old top bit -> bit 0
         break;
       case (true, false): {
         var skip = asm.DefineLabel();
         asm.Shr(hi, 1);
-        asm.Rcr(lo, 1);
-        asm.Jnc(skip);                // carry = old bit 0 -> bit 31
+        for (var w = words - 2; w >= 0; --w)
+          asm.Rcr(Adjust(place.Cell, w * 2, OperandSize.Word), 1);
+        asm.Jnc(skip);                // carry = old bit 0 -> top bit
         asm.Or(hi, 0x8000);
         asm.MarkLabel(skip);
         break;

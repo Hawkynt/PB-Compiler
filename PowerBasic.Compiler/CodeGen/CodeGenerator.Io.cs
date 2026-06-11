@@ -120,36 +120,43 @@ public sealed partial class CodeGenerator {
       return;
     }
 
-    var segments = ParseUsingFormat(formatLiteral.Value);
+    this.EmitUsingBody(formatLiteral.Value, p.Items.Where(i => i.Value != null).Select(i => i.Value!));
+
+    if (p.Items.Count == 0 || p.Items[^1].Separator == PrintSeparator.Newline)
+      asm.Call(this._rt.PrintNewLine);
+  }
+
+  /// <summary>Shared PRINT USING / USING$ field emission (no trailing newline).</summary>
+  private void EmitUsingBody(string format, IEnumerable<Expression> values) {
+    var asm = this._asm;
+    var segments = ParseUsingFormat(format);
     var fieldIndex = 0;
-    foreach (var item in p.Items) {
-      if (item.Value == null)
-        continue;
+    foreach (var value in values) {
       // print literal text up to and including the next numeric field
       while (fieldIndex < segments.Count && segments[fieldIndex].Field == null) {
         this.EmitPrintLiteral(segments[fieldIndex].Literal!);
         ++fieldIndex;
       }
       if (fieldIndex >= segments.Count) {
-        this.Unsupported(item.Value, "more PRINT USING values than fields");
+        this.Unsupported(value, "more PRINT USING values than fields");
         return;
       }
-      var (width, decimals) = segments[fieldIndex].Field!.Value;
+      var (width, decimals, group) = segments[fieldIndex].Field!.Value;
       ++fieldIndex;
 
-      this.EmitExpression(item.Value);
-      var itemType = model.TypeOf(item.Value);
+      this.EmitExpression(value);
+      var itemType = model.TypeOf(value);
       if (KindOf(itemType) == ValueKind.Str) {
         asm.Call(this._rt.StrPrint);   // string into a numeric field: print as-is (PB '&' approximation)
         continue;
       }
-      this.Coerce(itemType, PbType.Double, item.Value);
+      this.Coerce(itemType, PbType.Double, value);
       if (decimals > 0)
         asm.Fmul(Mem.Qword(this.FloatConstOf(Math.Pow(10, decimals))));
       asm.Fistp(Mem.Dword(this.RtScratch));
       asm.Mov(Reg.AX, Mem.Word(this.RtScratch));
       asm.Mov(Reg.DX, Mem.Word(this.RtScratch, 2));
-      asm.Mov(Reg.CX, (width << 8) | decimals);
+      asm.Mov(Reg.CX, (width << 8) | decimals | (group ? 0x80 : 0));
       asm.Call(this._rt.UseFmt);
     }
 
@@ -158,9 +165,6 @@ public sealed partial class CodeGenerator {
       this.EmitPrintLiteral(segments[fieldIndex].Literal!);
       ++fieldIndex;
     }
-
-    if (p.Items.Count == 0 || p.Items[^1].Separator == PrintSeparator.Newline)
-      asm.Call(this._rt.PrintNewLine);
   }
 
   private void EmitPrintLiteral(string text) {
@@ -172,8 +176,8 @@ public sealed partial class CodeGenerator {
     asm.Call(this._rt.PrintStr);
   }
 
-  private static List<(string? Literal, (int Width, int Decimals)? Field)> ParseUsingFormat(string format) {
-    var segments = new List<(string?, (int, int)?)>();
+  private static List<(string? Literal, (int Width, int Decimals, bool Group)? Field)> ParseUsingFormat(string format) {
+    var segments = new List<(string?, (int, int, bool)?)>();
     var literal = "";
     for (var i = 0; i < format.Length;) {
       if (format[i] != '#') {
@@ -185,9 +189,20 @@ public sealed partial class CodeGenerator {
         literal = "";
       }
       var digits = 0;
-      while (i < format.Length && format[i] == '#') {
-        ++digits;
-        ++i;
+      var commas = 0;
+      for (;;) {
+        if (i < format.Length && format[i] == '#') {
+          ++digits;
+          ++i;
+          continue;
+        }
+        // a comma inside the digit run requests thousands grouping
+        if (i + 1 < format.Length && format[i] == ',' && format[i + 1] == '#') {
+          ++commas;
+          ++i;
+          continue;
+        }
+        break;
       }
       var decimals = 0;
       if (i < format.Length && format[i] == '.') {
@@ -197,8 +212,8 @@ public sealed partial class CodeGenerator {
           ++i;
         }
       }
-      var width = digits + (decimals > 0 ? decimals + 1 : 0);
-      segments.Add((null, (width, decimals)));
+      var width = digits + commas + (decimals > 0 ? decimals + 1 : 0);
+      segments.Add((null, (width, decimals, commas > 0)));
     }
     if (literal.Length > 0)
       segments.Add((literal, null));
@@ -240,10 +255,6 @@ public sealed partial class CodeGenerator {
   /// </summary>
   private void EmitGetPutFile(GetPutFileStmt gp) {
     var asm = this._asm;
-    if (gp.Variable is not { } variable) {
-      this.Unsupported(gp);
-      return;
-    }
 
     this.EmitInt16Argument(UnwrapFileNumber(gp.FileNumber));
     asm.Push(Reg.AX);
@@ -254,6 +265,13 @@ public sealed partial class CodeGenerator {
       asm.Pop(Reg.AX);
       asm.Push(Reg.AX);
       asm.Call(this._rt.FSetPos);
+    }
+
+    if (gp.Variable is not { } variable) {
+      // bare GET/PUT: move the record through the FIELD strings
+      asm.Pop(Reg.AX);
+      asm.Call(gp.IsGet ? this._rt.FieldGet : this._rt.FieldPut);
+      return;
     }
 
     if (this.EmitPlace(variable) is not { } place) {

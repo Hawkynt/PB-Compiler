@@ -4,7 +4,14 @@ Sources: PowerBASIC.GER FAQ (pbhq.de, sections 1.6–1.8), the PB 3.5 README
 ("What's New in PowerBASIC 3.5"), the PB statement reference (manmrk pbs.htm),
 and the original PB 3.5 Reference/User guides. The compiler selects a dialect
 via `--dialect pb20|pb21|pb30|pb31|pb32|pb35` (default `pb35`); features below
-are rejected with a diagnostic when used under an older dialect.
+are rejected with a diagnostic when used under an older dialect, and the
+selected dialect also **re-enables that version's documented bugs**
+(docs/QUIRKS.md - bug compatibility is part of dialect fidelity).
+
+Related documents: docs/BASIC-FAMILY.md (cross-dialect matrix for GW-BASIC,
+QuickBASIC, QBasic, Turbo Basic & friends - groundwork for cross-compiling
+those dialects), docs/PB36.md (an envisioned `pb36` successor dialect with
+optimizer features).
 
 ## Baseline (PB 2.0/2.1, Turbo Basic lineage)
 
@@ -102,12 +109,15 @@ DEFtype forms: DEFINT, DEFLNG, DEFQUD, DEFSNG, DEFDBL, DEFEXT, DEFFIX,
 DEFBCD, DEFSTR, DEFFLX. Conversions: CINT, CLNG, CQUD, CSNG, CDBL, CEXT,
 CFIX, CBCD, CBYT, CWRD, CDWD.
 
-PB-Compiler implementation notes: QUAD values ride the x87 stack (storage,
-load/store, +, −, ×, comparisons and PRINT/STR$ work; `\`, MOD and bitwise
-operators diagnose "later wave"). FIX/BCD lex, parse, bind and store (same-type
-copies are block moves); BCD *arithmetic* diagnoses "later wave". HUGE/VIRTUAL/
-ABSOLUTE arrays parse and bind; allocation diagnoses "later wave", as does
-REDIM PRESERVE code generation.
+PB-Compiler implementation notes: QUAD values ride the x87 stack; `\`, MOD,
+AND/OR/XOR/NOT/EQV/IMP and SHIFT/ROTATE run through memory-based 4-word
+routines (DIFF15). FIX stores as a scaled int64, BCD as x87 EXT; both compute
+as EXT and print byte-identically to genuine PBC (DIFF16, divergences in
+QUIRKS.md). HUGE arrays allocate conventional memory via DOS 48h with
+segment-stepping element access, VIRTUAL arrays live in EMS (int 67h, page
+pair mapped around each access), ABSOLUTE arrays map `AT segment`, and REDIM
+PRESERVE keeps the contents prefix (all DIFF17). Rank is limited to 1 for
+HUGE/VIRTUAL; dynamic strings inside them are diagnosed per the spec.
 
 ## Array allocation classes (DIM [class] a(bounds) [AS type] [AT seg])
 
@@ -150,7 +160,42 @@ except HUGE/VIRTUAL (LONG).
 - Internal variables (read via name): pbvScrnCols, pbvScrnRows?, pbvHost,
   pbvBinBase, pbvDefSeg, pbvScrnBuff, pbvSwitch, pbvVTxtX1/Y1/X2/Y2,
   pbvRestore, pbvFixDigits.
-- $OPTION SIGNED makes the *PTR/*SEG functions return signed ints.
-- $ERROR BOUNDS/NUMERIC/OVERFLOW/STACK insert runtime checks; without
-  NUMERIC, overflow wraps silently (and FOR loops at the type maximum loop
-  forever - see QUIRKS).
+- $OPTION SIGNED makes the *PTR/*SEG functions return signed ints
+  (implemented in the binder; CODEPTR/CODESEG included).
+- $ERROR BOUNDS/NUMERIC/OVERFLOW/STACK insert runtime checks (PBC switches
+  -EB/-EN/-EO/-ES preset them): BOUNDS -> error 9 on out-of-range indexes,
+  OVERFLOW -> error 6 after signed INTEGER/LONG add/sub/mul, NUMERIC ->
+  error 6 when a FOR counter wraps at its type boundary, STACK -> error 201
+  from the SP headroom probe at procedure entry ($STACK n sets the probe
+  base). Default state is all OFF: overflow wraps silently and FOR loops at
+  the type maximum loop forever - see QUIRKS (DIFF18/DIFF19). Genuine PBC
+  requires the $ERROR metastatements before executable code (Error 506);
+  PB-Compiler additionally allows lexical mid-module toggling (a superset).
+- $OPTION CNTLBREAK ON|OFF installs an int 23h handler (OFF ignores
+  Ctrl-Break, ON terminates through the runtime exit); $OPTION GOSUB is
+  accepted and recorded (the GOSUB stack survives ON ERROR unwinding by
+  construction - the handler restores the SP captured at ON ERROR time).
+- $OPTIMIZE SIZE|SPEED (-OZF selects SPEED; one per module, duplicates are
+  diagnosed). SPEED changes two code shapes: INTEGER multiplies by powers of
+  two inline as shifts, and `v = v +/- const` on a direct cell folds into one
+  ALU instruction. Both modes are oracle-verified observably identical
+  (DIFF18 runs under $OPTIMIZE SPEED; the other batteries under SIZE).
+- $STRING n caps the length of one dynamic string at the documented usable
+  bytes (1006/2030/4078/8174/16366/32750); exceeding it raises error 15
+  (oracle-verified, DIFF20). The storage stays our single far heap - only the
+  observable limit follows the segment granularity.
+- CHAIN file$ transfers control via DOS EXEC and carries COMMON scalars and
+  dynamic strings through a `PBCHAIN.$$$` temp-file handoff in declaration
+  order (the stable cross-image layout); RUN file$ transfers without COMMON.
+  `$COMPILE CHAIN` emits the same MZ image with a .PBC extension. Targets
+  without an extension default to .PBC; genuine PBC also chains to .EXE
+  (DIFF21). COMMON arrays across CHAIN are diagnosed as unsupported.
+- The MZ header caps MAXALLOC at the actually used paragraphs, so DOS 48h
+  allocations (HUGE), EMS handles and SHELL/EXECUTE/CHAIN child processes
+  have the rest of conventional memory available.
+- FIELD #n binds dynamic-string windows onto RANDOM records: bare GET/PUT
+  move the record through them (512-byte record cap, 32 entries); LSET/RSET
+  justify into both dynamic and fixed strings (DIFF20/DIFF14).
+- ERL returns the most recently executed numeric line label (tracked inside
+  error-handling scopes; alphanumeric labels do not count); ERDEV/ERDEV$ are
+  stubs (0 / "").

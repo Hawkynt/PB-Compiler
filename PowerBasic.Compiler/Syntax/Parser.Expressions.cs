@@ -67,7 +67,18 @@ public sealed partial class Parser {
       if (op == null)
         return left;
 
-      left = new BinaryExpr(this.Advance().Position, op.Value, left, this.ParseTruth());
+      var position = this.Advance().Position;
+      // PB tolerates whitespace inside two-character relations: "> =", "< =", "< >"
+      op = (op, this.Current.Kind) switch {
+        (BinaryOp.Greater, TokenKind.Equals) => BinaryOp.GreaterEqual,
+        (BinaryOp.Less, TokenKind.Equals) => BinaryOp.LessEqual,
+        (BinaryOp.Less, TokenKind.Greater) => BinaryOp.NotEqual,
+        _ => op,
+      };
+      if (op is BinaryOp.GreaterEqual or BinaryOp.LessEqual or BinaryOp.NotEqual && this.Current.Kind is TokenKind.Equals or TokenKind.Greater)
+        this.Advance();
+
+      left = new BinaryExpr(position, op.Value, left, this.ParseTruth());
     }
   }
 
@@ -252,12 +263,20 @@ public sealed partial class Parser {
     return arguments;
   }
 
-  /// <summary>One call argument; <c>BYVAL expr</c> overrides the default by-reference passing.</summary>
+  /// <summary>
+  /// One call argument; <c>BYVAL expr</c> overrides the default by-reference passing,
+  /// <c>ANY set$</c> flags a match-any character set (INSTR/EXTRACT$/...).
+  /// </summary>
   private Expression ParseArgument() {
-    if (!this.IsKeyword(0, "BYVAL"))
-      return this.ParseExpression();
-    var pos = this.Advance().Position;
-    return new ByValArgExpr(pos, this.ParseExpression());
+    if (this.IsKeyword(0, "BYVAL")) {
+      var pos = this.Advance().Position;
+      return new ByValArgExpr(pos, this.ParseExpression());
+    }
+    if (this.IsKeyword(0, "ANY") && !this.IsStatementEnd() && this.Peek().Kind is not (TokenKind.Comma or TokenKind.RParen)) {
+      var pos = this.Advance().Position;
+      return new AnyMatchExpr(pos, this.ParseExpression());
+    }
+    return this.ParseExpression();
   }
 
   /// <summary>Parses an assignable expression: name, array element, member chain, indexed member or pointer target.</summary>

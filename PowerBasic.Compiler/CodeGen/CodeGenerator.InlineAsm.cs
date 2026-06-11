@@ -30,6 +30,23 @@ public sealed partial class CodeGenerator {
   private sealed class InlineAsmResolver(CodeGenerator owner) : IAsmSymbolResolver {
 
     public bool TryResolve(string name, out AsmSymbol symbol) {
+      // FUNCTION denotes the result variable of the enclosing FUNCTION
+      if (name.Equals("FUNCTION", StringComparison.OrdinalIgnoreCase)
+          && owner._currentProc is { IsFunction: true } fn
+          && fn.Variables.TryGetValue(fn.Name, out var result)) {
+        symbol = AsmSymbol.OfMemory(owner.AsmCellOf(result));
+        return true;
+      }
+
+      // explicit BASIC type suffix on the operand name (Foff%, x??, d#)
+      if (SplitSuffix(name) is var (bare, explicitSuffix) && explicitSuffix != TypeSuffix.None) {
+        if (owner.LookupVariable(bare, explicitSuffix) is { } suffixed) {
+          symbol = AsmSymbol.OfMemory(owner.AsmCellOf(suffixed));
+          return true;
+        }
+        name = bare; // fall through: an AS-declared variable may match the bare name
+      }
+
       foreach (var suffix in _ASM_SUFFIXES)
         if (owner.LookupVariable(name, suffix) is { } variable) {
           symbol = AsmSymbol.OfMemory(owner.AsmCellOf(variable));
@@ -47,10 +64,43 @@ public sealed partial class CodeGenerator {
         return true;
       }
 
+      // string-manager runtime exports callable from inline asm (PB manual ABI)
+      if (_runtimeExports.TryGetValue(name, out var canonical)) {
+        symbol = AsmSymbol.OfLabel(owner._asm.Lbl(canonical));
+        return true;
+      }
+
       symbol = default;
       return false;
     }
   }
+
+  /// <summary>Splits a trailing BASIC type suffix off an inline-asm operand name.</summary>
+  private static (string Bare, TypeSuffix Suffix) SplitSuffix(string name) {
+    foreach (var (text, suffix) in _suffixSpellings)
+      if (name.Length > text.Length && name.EndsWith(text, StringComparison.Ordinal))
+        return (name[..^text.Length], suffix);
+    return (name, TypeSuffix.None);
+  }
+
+  private static readonly (string Text, TypeSuffix Suffix)[] _suffixSpellings = [
+    ("???", TypeSuffix.Dword), ("??", TypeSuffix.Word), ("?", TypeSuffix.Byte),
+    ("&&", TypeSuffix.Quad), ("&", TypeSuffix.Long),
+    ("##", TypeSuffix.Ext), ("#", TypeSuffix.Double),
+    ("%", TypeSuffix.Integer), ("!", TypeSuffix.Single), ("$", TypeSuffix.String),
+  ];
+
+  /// <summary>Runtime procedures resolvable by name from inline assembly (canonical label casing).</summary>
+  private static readonly Dictionary<string, string> _runtimeExports = new(StringComparer.OrdinalIgnoreCase) {
+    ["GetStrLoc"] = "GetStrLoc",
+    ["GET$LOC"] = "GetStrLoc",
+    ["GetStrLen"] = "GetStrLen",
+    ["GET$LEN"] = "GetStrLen",
+    ["GetStrAlloc"] = "GetStrAlloc",
+    ["GET$ALLOC"] = "GetStrAlloc",
+    ["RlsStrAlloc"] = "RlsStrAlloc",
+    ["RLS$ALLOC"] = "RlsStrAlloc",
+  };
 
   /// <summary>
   /// The memory cell an inline-asm reference to <paramref name="symbol"/>
