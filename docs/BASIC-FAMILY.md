@@ -114,14 +114,17 @@ differential battery before the dialect can be claimed:
 
 ## Oracles & harness
 
-| Dialect | Oracle binary | Harness invocation | Notes |
+| Dialect | Oracle binary | Harness invocation | Status |
 |---|---|---|---|
-| `gw` | `GWBASIC.EXE` | `GWBASIC T.BAS` then `SYSTEM` via stdin script | interpreter; program must `OPEN "RESULT.TXT"` and `SYSTEM` at end |
-| `qbasic` | `QBASIC.EXE` | `QBASIC /RUN T.BAS` | interpreter; needs `SYSTEM` at end |
-| `qb45` | `BC.EXE` + `LINK.EXE` | `BC T.BAS,T.OBJ; LINK T.OBJ,T.EXE,,BCOM45.LIB;` | true compile path — closest analogue to PBC |
-| `pds71` | `BC.EXE` (7.1) + `LINK` | same as qb45 | far strings mode differs (`/Fs`) |
-| `tb11` | `TB.EXE` | IDE-only — no command-line compile; automate via DOSBox keystroke injection or skip | hardest to automate |
-| `pb20/21/30/31/32` | `PBC.EXE` of that version | already supported: `tools/<dialect>/PBC.EXE` + `tests/diff/<dialect>/` | activates automatically |
+| `pb35` | `PBC.EXE` 3.50 | harness default battery | **ACTIVE** (`tools/pb35/`), 23 batteries byte-identical |
+| `pb30` | `PBC.EXE` 3.0c | `tools/pb30/PBC.EXE` + `tests/diff/pb30/` | **ACTIVE** - installed from the WinWorld 3.0c floppy via the scripted DOSBox installer drive (`tools/_downloads/postkeys.ps1` + window capture); QUIRK30 battery byte-identical, quirks 2.1/2.2, 2.26 and 16-bit HEX$/OCT$ oracle-confirmed |
+| `pb32` | `PBC.EXE` 3.20 [German] | floppy + installer staged in `tools/_downloads/pb32de/` (`install32.conf` prepared) | **pending** - installer boots to a screen the capture tool sees black (graphics-mode splash?); finish interactively once, then drop `PBC.EXE` into `tools/pb32/` |
+| `pb20/21` | `PB.EXE` 2.00b/2.10/2.10f | archives in `tools/_downloads/` (old-dos.ru ids 191/4254/4256/10317/10593) | **archived** - PB 2.x has no PBC.EXE (the IDE compiles); needs the TB-style IDE drive |
+| `qb45` | `BC.EXE` + `LINK.EXE` | `BC T.BAS,T.OBJ; LINK T.OBJ,T.EXE,,BCOM45.LIB;` | **toolchain ready** in `tools/qb45/` (BC/LINK/LIB/BRUN45/BCOM45 from archive.org item qb-450) - awaiting the `qb45` dialect |
+| `tb11` | `TB.EXE` 1.1 | IDE-only - drive via `postkeys.ps1` keystroke injection (proven on the PB 3.0c installer) | **binary ready** in `tools/tb11/` (WinWorld 5.25in floppies) |
+| `qbasic` | `QBASIC.EXE` | `QBASIC /RUN T.BAS` | not yet fetched (DOS 5+ media) |
+| `pds71` | `BC.EXE` (7.1) + `LINK` | same as qb45, far strings differ (`/Fs`) | not yet fetched |
+| `gw` | `GWBASIC.EXE` | stdin-scripted interpreter session | not yet fetched |
 
 `scripts/run-diff-tests.sh` already discovers `tests/diff/<dialect>/`
 batteries and their `tools/<dialect>/PBC.EXE` oracles generically; the

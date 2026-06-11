@@ -12,24 +12,25 @@ Quirks whose precise wrong behavior is not documented well enough to clone
 safely are listed as **pending oracle**: they activate once a genuine binary
 of that version lands in `tools/<dialect>/` and a `tests/diff/<dialect>/`
 battery pins the behavior (the harness picks both up automatically;
-`tests/diff/pb30/QUIRK30.BAS` is already waiting).
+`tests/diff/pb30/QUIRK30.BAS` runs against a genuine PBC 3.0c in
+tools/pb30/ - byte-identical as of the first oracle run).
 
 | # | Quirk (versions) | Our behavior |
 |---|------------------|--------------|
-| 2.1/2.2 | `w?? = &HA000` overflowed in 3.0 (radix read as signed); 3.1+ honors a leading zero (`&H0A000`) as unsigned | **Dialect-emulated**: `--dialect pb30` and older read every radix literal signed (`&H0A000` = −24576); pb31+ honor the leading zero (`&H0A000` = 40960 LONG) |
+| 2.1/2.2 | `w?? = &HA000` overflowed in 3.0 (radix read as signed); 3.1+ honors a leading zero (`&H0A000`) as unsigned | **Dialect-emulated, oracle-verified vs genuine PBC 3.0c**: `--dialect pb30` and older read every radix literal signed (`&H0A000` = −24576, `&H0FFFF` = −1); pb31+ honor the leading zero (`&H0A000` = 40960 LONG) |
 | 2.3 | DWORD never gets an overflow test, any version | Same: no overflow checks on DWORD arithmetic (all dialects) |
 | 2.8 | "Fixup Overflow" when >64 KiB code from units in one segment | Same diagnostic at link time (64 KiB guard); $CODE SEG planned for multi-segment (PB36.md C1) |
 | 2.9 | ASCII-154 after a remark inside inline asm breaks the parser (3.0) | **Pending oracle** (currently parses fine in all dialects) |
 | 2.21 | Inline-asm operand semantics changed 3.0→3.1 (variable references) | 3.1+ semantics in all dialects (variable = memory cell, BYREF param = pointer slot); `--dialect pb30` emits a once-per-program warning that 3.0 semantics are not replicated — **pending oracle** |
 | 2.24 | PRINT bug in 3.2 | **Pending oracle** (wrong behavior not specified precisely enough); 3.5 behavior in all dialects |
-| 2.26 | Constant folding of `%k = -20-4` wrong in 3.0–3.2 | **Dialect-emulated** under pb30–pb32: a leading unary minus binds the whole additive chain, `%k = -20-4` = −16 (= −(20−4)); pb35/pb2x fold correctly (−24). Interpretation of the mis-binding pending oracle confirmation |
+| 2.26 | Constant folding of `%k = -20-4` wrong in 3.0–3.2 | **Dialect-emulated, oracle-verified vs genuine PBC 3.0c**: a leading unary minus binds the whole additive chain, `%k = -20-4` = −16 (= −(20−4)); pb35/pb2x fold correctly (−24) |
 | 2.27 | ROTATE on QUAD wrong in 3.0/3.1 (fixed 3.2) | Fixed (3.2+) behavior generated for all dialects (DIFF15); the 3.0/3.1 wrong rotation is **pending oracle** |
 | 2.28 | FOR/NEXT increments **then** tests: a loop `FOR b? = 1 TO 255` wraps and never exits unless $ERROR NUMERIC is on | Replicated faithfully (DIFF18): counter arithmetic runs at the counter's own width, so BYTE/WORD counters wrap; with `$ERROR NUMERIC ON` the wrap raises error 6 (DIFF19) |
 | 2.29 | `STEP -1` with unsigned counters underflows the same way | Oracle-corrected (DIFF18): an unsigned counter reads `STEP -1` as its unsigned bit pattern (65535), making the loop ascending - `FOR w?? = 2 TO 0 STEP -1` never enters the body |
 | 2.30 | `VARPTR32(x) + n` miscomputed in 3.2 (fixed 3.5) | Fixed behavior; **pending oracle** for pb32 emulation (wrong result undocumented) |
 | 2.31 | KEY ON line-25 protection missing since 3.x | Row 25 not specially protected (matches 3.x) |
 | 2.34 | SWAP of UDT array elements with variable index swaps wrong cells (3.0–3.2) | Fixed behavior; **pending oracle** for pb30–pb32 emulation (which wrong cells is undocumented) |
-| 3.1 | BIN$/HEX$/OCT$ accept 32-bit LONG values only since 3.1 | **Dialect-emulated**: pb30 and older render 16 bits (`HEX$(-1)` = `FFFF`); pb31+ render 32 (`FFFFFFFF`) |
+| 3.1 | BIN$/HEX$/OCT$ accept 32-bit LONG values only since 3.1 | **Dialect-emulated, oracle-verified vs genuine PBC 3.0c**: pb30 and older render 16 bits (`HEX$(-1)` = `FFFF`, `OCT$(-1)` = `177777`); pb31+ render 32 |
 | — | PRINT goes directly to video memory; only STDOUT/PRINT# redirect | Our PRINT currently writes via DOS (redirectable, like QB). Divergence documented; STDOUT/STDIN provided for the portable path. Differential tests compare via files. |
 | — | Compiled EXEs embed environment-dependent bytes at 0x9C/0xA0 (3.x) | Not replicated; our images are deterministic |
 | — | *PTR/*SEG functions return unsigned 0–64k unless `$OPTION SIGNED` | Same |

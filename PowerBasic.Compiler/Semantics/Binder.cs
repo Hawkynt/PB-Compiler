@@ -166,8 +166,8 @@ public sealed class Binder {
   /// <summary>
   /// QUIRK 2.26 (FAQ, PB 3.0-3.2): equate constant folding mis-binds a LEADING
   /// unary minus to the whole additive chain - <c>%k = -20-4</c> yields -16
-  /// (= -(20-4)) instead of -24. Replicated under those dialects; interpretation
-  /// pending oracle verification (needs a PBC 3.0-3.2 binary in tools/).
+  /// (= -(20-4)) instead of -24. Replicated under those dialects and verified
+  /// byte-identical against a genuine PBC 3.0c (tests/diff/pb30/QUIRK30.BAS).
   /// </summary>
   private Expression ApplyEquateFoldingQuirk(Expression e) {
     if (this._dialect is < Dialect.Pb30 or > Dialect.Pb32)

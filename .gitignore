@@ -123,3 +123,10 @@ UNITTEST.LOG
 dosbox*.conf
 tools/dosbox/
 tools/pb35/
+tools/pb30/
+tools/pb31/
+tools/pb32/
+tools/pb2x/
+tools/qb45/
+tools/tb11/
+tools/_downloads/
