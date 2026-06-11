@@ -1188,8 +1188,9 @@ public sealed partial class DosRuntime {
     asm.Jmp(radixLoop);
 
     asm.MarkLabel(radixFix);
-    if (this.Dialect.IsTurboBasic()) {
-      // TB wraps radix values to 16 bits (VAL("&H10000") = 0, VAL("&HFFFF") = -1)
+    if (this.Dialect <= Dialect.Pb21) {
+      // TB and PB 2.x wrap radix values to 16 bits (VAL("&H10000") = 0,
+      // VAL("&HFFFF") = -1); the literal-style wider windows arrived with PB 3.x
       asm.Fld(Mem.Qword(asm.Lbl("rt_const_65536")));
       asm.Fxch();
       asm.MarkLabel("rt_val_tbwrap");
