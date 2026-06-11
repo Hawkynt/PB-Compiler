@@ -93,11 +93,24 @@ public sealed partial class CodeGenerator {
 
       default: {
         // numeric: PB renders "[ |-]digits[ ]" - only exact integral folds qualify
-        if (model.TypeOf(value) is not ScalarType { IsFloat: false, ByteSize: <= 4 } type)
+        if (model.TypeOf(value) is not ScalarType { ByteSize: <= 8 } type)
           return false;
         if (this.Pb36Folder.TryFold(value) is not { Integer: { } raw })
           return false;
-        var wrapped = WrapToType(raw, type);
+        long wrapped;
+        if (type.IsFloat) {
+          // PB-promoted integral arithmetic: no wrapping; plain digits only
+          // while the float display stays in fixed notation (SINGLE < 1E7,
+          // DOUBLE < 1E15), beyond that the runtime would print an exponent
+          var limit = type.Kind == ScalarKind.Single ? 10_000_000L : 1_000_000_000_000_000L;
+          if (Math.Abs(raw) >= limit)
+            return false;
+          wrapped = raw;
+        } else {
+          if (type.ByteSize > 4)
+            return false;
+          wrapped = WrapToType(raw, type);
+        }
         var rendered = (wrapped < 0 ? "" : " ") + wrapped.ToString(System.Globalization.CultureInfo.InvariantCulture) + " ";
         text.AddRange(Encoding.ASCII.GetBytes(rendered));
         column += rendered.Length;

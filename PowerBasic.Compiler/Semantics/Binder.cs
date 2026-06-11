@@ -18,6 +18,7 @@ public sealed class Binder {
   private ConstantFolder _folder;
   private bool _dynamicMode;
   private bool _optionSigned;
+  private bool _checkedArithmetic;
   private bool _warnedAsm30;
   private int _optionBase;
 
@@ -128,6 +129,13 @@ public sealed class Binder {
           switch (m.Command) {
             case "DYNAMIC": this._dynamicMode = true; break;
             case "STATIC": this._dynamicMode = false; break;
+            case "ERROR" when m.Arguments.Count >= 2
+                && m.Arguments[0].Text.ToUpperInvariant() is "NUMERIC" or "OVERFLOW" or "ALL"
+                && m.Arguments[^1].Text.Equals("ON", StringComparison.OrdinalIgnoreCase):
+              // checked arithmetic disables the FPU promotion: genuine PBC
+              // raises error 6 at the integral boundary instead
+              this._checkedArithmetic = true;
+              break;
             case "OPTION" when m.Arguments is [{ } opt, ..] && opt.Text.Equals("SIGNED", StringComparison.OrdinalIgnoreCase):
               // $OPTION SIGNED: the *PTR/*SEG functions return signed INTEGER
               this._optionSigned = m.Arguments is [_] || !m.Arguments[^1].Text.Equals("OFF", StringComparison.OrdinalIgnoreCase);
@@ -1131,7 +1139,16 @@ public sealed class Binder {
           operand = PbType.Ext; // FIX/BCD compute as EXT on the x87 stack
         if (operand is not ScalarType)
           this.Error(u.Position, "unary operator needs a numeric operand");
-        return u.Op == UnaryOp.Not ? IntegralOf(operand) : operand;
+        if (u.Op == UnaryOp.Not)
+          return IntegralOf(operand);
+        // PB computes integral negation in floating point too: with N% = -32768,
+        // PRINT -N% shows 32768 (oracle-verified); TB and QB wrap in 16 bits
+        if (u.Op == UnaryOp.Negate && this._dialect.IsPbAtLeast(Dialect.Pb20) && !this._checkedArithmetic
+            && operand is ScalarType { IsFloat: false, ByteSize: <= 4 })
+          return operand.Size <= 2 && u.Operand is not IntegerLiteralExpr { Value: < short.MinValue or > short.MaxValue }
+            ? PbType.Single
+            : PbType.Double;
+        return operand;
       }
 
       case BinaryExpr b:
@@ -1233,7 +1250,7 @@ public sealed class Binder {
       BinaryOp.IntegerDivide or BinaryOp.Modulo => PromoteUnsigned(IntegralOf(Widest(left, right))),
       BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Eqv or BinaryOp.Imp => IntegralOf(Widest(left, right)),
       BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual or BinaryOp.GreaterEqual => PbType.Integer,
-      _ => PromoteUnsigned(Widest(left, right)),
+      _ => this.ArithmeticResultType(b, left, right),
     };
   }
 
@@ -1275,6 +1292,24 @@ public sealed class Binder {
 
   private static int EffectiveDivideWidth(Expression operand, PbType type)
     => operand is IntegerLiteralExpr { Value: >= short.MinValue and <= short.MaxValue } ? 2 : type.Size;
+
+  /// <summary>
+  /// PB 2.0+ computes +, - and * of integral operands in floating point: the
+  /// result displays as SINGLE for 16-bit operands (PRINT 32767 + 1 = 32768,
+  /// A% * B% shows 9E+8) and DOUBLE for LONG/DWORD ones (D&amp; * 2 beyond LONG
+  /// stays exact), while the full FPU precision survives into typed stores
+  /// (L&amp; = A% * B% keeps 1073676289). Wrapping happens only when storing
+  /// into a narrower integral. TB and the Microsoft family wrap in-place.
+  /// </summary>
+  private PbType ArithmeticResultType(BinaryExpr b, PbType left, PbType right) {
+    if (this._dialect.IsPbAtLeast(Dialect.Pb20) && !this._checkedArithmetic
+        && left is ScalarType { IsFloat: false, ByteSize: <= 4 }
+        && right is ScalarType { IsFloat: false, ByteSize: <= 4 })
+      return Math.Max(EffectiveDivideWidth(b.Left, left), EffectiveDivideWidth(b.Right, right)) <= 2
+        ? PbType.Single
+        : PbType.Double;
+    return PromoteUnsigned(Widest(left, right));
+  }
 
   private PbType ErrorType(SourcePosition position, string message) {
     this.Error(position, message);

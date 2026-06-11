@@ -138,6 +138,12 @@ public sealed partial class CodeGenerator {
     this.EmitExpression(u.Operand);
     var kind = KindOf(model.TypeOf(u.Operand));
     switch (u.Op, kind) {
+      // PB-lineage promotion: integral negation bound to a float type goes
+      // through the FPU so -N% with N% = -32768 yields 32768, not the wrap
+      case (UnaryOp.Negate, ValueKind.Int16 or ValueKind.Int32) when model.TypeOf(u) is ScalarType { IsFloat: true } promoted:
+        this.Coerce(model.TypeOf(u.Operand), promoted, u.Operand);
+        asm.Fchs();
+        break;
       case (UnaryOp.Negate, ValueKind.Int16):
         asm.Neg(Reg.AX);
         break;
@@ -633,7 +639,9 @@ public sealed partial class CodeGenerator {
 
       case (ValueKind.Float, ValueKind.Int16):
         this.EmitDialectRounding();
-        asm.Fistp(Mem.Word(this._scratch));
+        // store through 32 bits so out-of-range values wrap like a genuine
+        // 16-bit store (C% = A% + B% = -5536), not FISTP's 8000h indefinite
+        asm.Fistp(Mem.Dword(this._scratch));
         asm.Mov(Reg.AX, Mem.Word(this._scratch));
         break;
 
