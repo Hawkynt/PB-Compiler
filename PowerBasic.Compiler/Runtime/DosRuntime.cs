@@ -570,10 +570,14 @@ public sealed partial class DosRuntime {
     var digitLoop = asm.MarkLabel("rt_fd_digits");
     _ = digitLoop;
 
-    // SI -> digit write cursor (right to left), start leaving room for exponent suffix
+    // SI -> digit write cursor (right to left). The render phase writes the
+    // final text from the buffer start, so the digit area sits high enough
+    // that the longest prefix (sign + point + up to 16 fraction zeros = 18
+    // bytes) never overtakes the read cursor (equal positions are safe:
+    // the copy loop reads before it writes).
     asm.Push(Reg.DI);                                  // sign flag - DI doubles as word pointer below
     asm.Push(Reg.BX);                                  // original digit count for the layout phase
-    asm.Mov(Reg.SI, Imm.OffsetOf(this._numBuffer, 24));
+    asm.Mov(Reg.SI, Imm.OffsetOf(this._numBuffer, 34));
     asm.Push(Reg.BX);                                  // working digit countdown
 
     asm.MarkLabel("rt_fd_next");
@@ -661,11 +665,25 @@ public sealed partial class DosRuntime {
       // it always switches to exponent notation (0.01 prints as "1E-002")
       asm.Cmp(Reg.DX, (Imm)0);
       asm.Jl(asm.Lbl("rt_fd_exp"));
-    } else {
+    } else if (this.Dialect.Family() == DialectFamily.Microsoft) {
+      // QB: SINGLE expands at most six leading zeros (1E-8 prints "1E-08"),
+      // DOUBLE keeps the digit-count bound (1D-8 prints ".00000001")
+      asm.Cmp(Reg.BX, (Imm)7);
+      asm.Jne(asm.Lbl("rt_fd_fracdbl"));
+      asm.Cmp(Reg.DX, (Imm)(-6));
+      asm.Jl(asm.Lbl("rt_fd_exp"));
+      asm.Jmp(asm.Lbl("rt_fd_fracok"));
+      asm.MarkLabel("rt_fd_fracdbl");
       asm.Mov(Reg.AX, Reg.BX);
       asm.Neg(Reg.AX);
       asm.Cmp(Reg.DX, Reg.AX);
-      asm.Jl(asm.Lbl("rt_fd_exp"));        // more leading zeros than digits -> exponent
+      asm.Jl(asm.Lbl("rt_fd_exp"));
+      asm.MarkLabel("rt_fd_fracok");
+    } else {
+      // PB: at most six leading zeros for every precision - 1E-7 prints
+      // ".0000001", 1E-8 and 1D-8 print exponent (oracle-verified)
+      asm.Cmp(Reg.DX, (Imm)(-6));
+      asm.Jl(asm.Lbl("rt_fd_exp"));
     }
 
     // fraction fixed: '.', -pointpos zeros, all digits; shared trailing trim
