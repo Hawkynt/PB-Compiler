@@ -126,7 +126,7 @@ differential battery before the dialect can be claimed:
 | `tb11` | `TB.EXE` 1.1 | `tests/diff/tb11/oracle.conf`: AUTOTYPE menu drive (Options→EXE file, Load, Compile, Quit), fully headless | **ACTIVE** - `--dialect tb11` implemented; 3 batteries byte-identical (formatting/typing, strings/math, control flow) |
 | `tb10` | `TB.EXE` 1.0 | same AUTOTYPE drive as tb11 | **ACTIVE** - `--dialect tb10`; the tb11 battery runs byte-identical against the genuine TB 1.0 (1.1 was a bugfix release; no observable language delta in the covered surface) |
 | `qbasic` | `QBASIC.EXE` | `QBASIC /RUN T.BAS` | not yet fetched (DOS 5+ media) |
-| `pds71` | `BC.EXE` 7.10 + `LINK` 5.10 | `tests/diff/pds71/oracle.conf`: `BC /O` + `LINK ...,BCL71ENR.LIB;` against the full install in `tools/pds71/bc7/` | **ACTIVE** - SETUP /BATCH install completed in DOSBox, all four BCL71 combos + BRT71 modules built, smoke-verified |
+| `pds71` | `BC.EXE` 7.10 + `LINK` 5.10 | `tests/diff/pds71/oracle.conf`: `BC /O` + `LINK ...,BCL71ENR.LIB;` against the full install in `tools/pds71/bc7/` | **ACTIVE** - `--dialect pds71`; the qb45 battery runs byte-identical; one verified runtime delta vs QB 4.5: DOUBLE display went back to 15 significant digits (`1D15` shows `1D+15`, QB shows `1000000000000000`) |
 | `pds70` | `BC.EXE` 7.00 | like pds71 | **blocked** - the WinWorld 7.0 BC.EXE hangs at startup under dosbox-staging (before its banner); plain-file disks staged in `tools/pds70/` |
 | `gw` | `GWBASIC.EXE` | stdin-scripted interpreter session | not yet fetched |
 

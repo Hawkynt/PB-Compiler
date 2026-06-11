@@ -434,7 +434,9 @@ public sealed partial class DosRuntime {
     asm.Jmp(asm.Lbl("rt_print_flt"));
 
     this.PrintDouble = asm.MarkLabel("rt_print_f64");
-    asm.Mov(Reg.BX, turbo || microsoft ? 16 : 15);
+    // QB 4.x renders DOUBLE with 16 significant digits; BASIC PDS 7.x went
+    // back to 15 (oracle-verified: PDS prints A&/3 as .333333333333333)
+    asm.Mov(Reg.BX, turbo || microsoft && this.Dialect < Dialect.Pds70 ? 16 : 15);
 
     asm.MarkLabel("rt_print_flt");
     // The number is decomposed in C-helper style entirely on the FPU:

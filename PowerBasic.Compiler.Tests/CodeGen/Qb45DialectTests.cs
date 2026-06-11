@@ -34,6 +34,19 @@ public sealed class Qb45DialectTests {
     return DosBoxRunner.Normalize(DosBoxRunner.Run(exe));
   }
 
+
+  private static string RunSourceAs(string source, Dialect dialect) {
+    var tokens = Preprocessor.Expand("T.BAS", new MemorySourceProvider(source), dialect);
+    var unit = Parser.Parse(tokens, "T.BAS", dialect);
+    var model = Binder.Bind(unit, dialect);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model);
+    var exe = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+    return DosBoxRunner.Normalize(DosBoxRunner.Run(exe));
+  }
+
+
   #endregion
 
   [Test]
@@ -86,6 +99,16 @@ public sealed class Qb45DialectTests {
       PRINT 2 ^ 0.5
       """);
     Assert.That(output, Is.EqualTo(" 1.414214  2.718282\n 1\n 1.414214\n"));
+  }
+
+  [Test]
+  public void PrintDouble_GivenPds71_ThenFifteenDigits() {
+    var output = RunSourceAs("""
+      A& = 1
+      PRINT A&/3
+      PRINT 1D15
+      """, Dialect.Pds71);
+    Assert.That(output, Is.EqualTo(" .333333333333333\n 1D+15\n"));
   }
 
   [Test]
