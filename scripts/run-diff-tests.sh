@@ -136,10 +136,15 @@ else
   exit 0
 fi
 
+# --- pb36 optimizer pass: same batteries, our side compiled with --dialect ---
+# --- pb36; outputs must STILL match genuine PBC 3.50 byte for byte         ---
+run_battery "$PB35" "pb36" "${tests[@]}"
+
 # --- dialect batteries: tests/diff/<dialect>/ with tools/<dialect>/PBC.EXE ---
 for dir in tests/diff/pb*/; do
   [ -d "$dir" ] || continue
   dialect=$(basename "$dir")
+  [ "$dialect" = "pb36" ] && continue # pb36 runs against the pb35 oracle above
   var="$(echo "$dialect" | tr '[:lower:]' '[:upper:]')_DIR"
   oracle="${!var:-tools/$dialect}"
   dtests=( "$dir"*.BAS "$dir"*.bas )

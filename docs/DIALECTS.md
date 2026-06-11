@@ -3,7 +3,8 @@
 Sources: PowerBASIC.GER FAQ (pbhq.de, sections 1.6–1.8), the PB 3.5 README
 ("What's New in PowerBASIC 3.5"), the PB statement reference (manmrk pbs.htm),
 and the original PB 3.5 Reference/User guides. The compiler selects a dialect
-via `--dialect pb20|pb21|pb30|pb31|pb32|pb35` (default `pb35`); features below
+via `--dialect pb20|pb21|pb30|pb31|pb32|pb35|pb36` (default `pb35`; `pb36` is
+the optimizing superset, docs/PB36.md); features below
 are rejected with a diagnostic when used under an older dialect, and the
 selected dialect also **re-enables that version's documented bugs**
 (docs/QUIRKS.md - bug compatibility is part of dialect fidelity).

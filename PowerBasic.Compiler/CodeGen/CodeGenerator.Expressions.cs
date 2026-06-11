@@ -10,18 +10,7 @@ public sealed partial class CodeGenerator {
     var asm = this._asm;
     switch (expression) {
       case IntegerLiteralExpr i:
-        switch (KindOf(model.TypeOf(i))) {
-          case ValueKind.Int16:
-            asm.Mov(Reg.AX, (int)i.Value);
-            break;
-          case ValueKind.Int64:
-            asm.Fild(Mem.Qword(this.QuadConstOf(i.Value)));
-            break;
-          default:
-            asm.Mov(Reg.AX, (int)(i.Value & 0xFFFF));
-            asm.Mov(Reg.DX, (int)((i.Value >> 16) & 0xFFFF));
-            break;
-        }
+        this.EmitIntegralConstant(i.Value, KindOf(model.TypeOf(i)));
         break;
 
       case FloatLiteralExpr f: {
@@ -41,19 +30,7 @@ public sealed partial class CodeGenerator {
           this.EmitStringLiteral(text);
           break;
         }
-        var value = v.AsInteger;
-        switch (KindOf(model.TypeOf(c))) {
-          case ValueKind.Int16:
-            asm.Mov(Reg.AX, (int)value);
-            break;
-          case ValueKind.Int64:
-            asm.Fild(Mem.Qword(this.QuadConstOf(value)));
-            break;
-          default:
-            asm.Mov(Reg.AX, (int)(value & 0xFFFF));
-            asm.Mov(Reg.DX, (int)((value >> 16) & 0xFFFF));
-            break;
-        }
+        this.EmitIntegralConstant(v.AsInteger, KindOf(model.TypeOf(c)));
         break;
       }
 
@@ -118,12 +95,14 @@ public sealed partial class CodeGenerator {
         this.EmitExpression(any.Value);
         break;
 
-      case UnaryExpr u:
-        this.EmitUnary(u);
+      case UnaryExpr u: // pb36 O1: pure integral expressions fold to one literal load
+        if (!this.TryEmitFolded(u))
+          this.EmitUnary(u);
         break;
 
       case BinaryExpr b:
-        this.EmitBinary(b);
+        if (!this.TryEmitFolded(b))
+          this.EmitBinary(b);
         break;
 
       case FileNumberExpr fn:
@@ -210,6 +189,10 @@ public sealed partial class CodeGenerator {
       && rightType is ScalarType { IsFloat: false, Signed: false };
     if (unsignedCompare)
       opType = leftType.Size > 2 || rightType.Size > 2 ? PbType.Dword : PbType.Word;
+
+    // pb36 O4: x * 2^n as shifts (wrap-identical to the product's low bits)
+    if (this.TryEmitStrengthReducedMultiply(b, opType))
+      return;
 
     switch (KindOf(opType)) {
       case ValueKind.Int16:

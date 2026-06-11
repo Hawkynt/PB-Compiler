@@ -43,7 +43,7 @@ public static class Driver {
         case "--dialect" when i + 1 < args.Length: {
           var name = args[++i];
           if (!TryParseDialect(name, out dialect)) {
-            stderr.WriteLine($"pbc: unknown dialect '{name}' (use pb20|pb21|pb30|pb31|pb32|pb35)");
+            stderr.WriteLine($"pbc: unknown dialect '{name}' (use pb20|pb21|pb30|pb31|pb32|pb35|pb36)");
             return 1;
           }
           break;
@@ -167,6 +167,7 @@ public static class Driver {
       case "pb31": dialect = Dialect.Pb31; return true;
       case "pb32": dialect = Dialect.Pb32; return true;
       case "pb35": dialect = Dialect.Pb35; return true;
+      case "pb36": dialect = Dialect.Pb36; return true;
       default: dialect = Dialect.Pb35; return false;
     }
   }
@@ -267,7 +268,7 @@ public static class Driver {
     w.WriteLine("Options:");
     w.WriteLine("  -O <file>      output file name (default: <source>.EXE / .PBU)");
     w.WriteLine("  -I <dir>       additional $INCLUDE search directory");
-    w.WriteLine("  --dialect <d>  language level: pb20|pb21|pb30|pb31|pb32|pb35 (default pb35)");
+    w.WriteLine("  --dialect <d>  language level: pb20|..|pb35 (default), pb36 = 3.5 + optimizer");
     w.WriteLine("  -G386          allow 80386 instructions (PBC.EXE compatibility)");
     w.WriteLine("  --dump-tokens  stop after lexing/preprocessing and list tokens");
     w.WriteLine("  --dump-ast     stop after parsing");

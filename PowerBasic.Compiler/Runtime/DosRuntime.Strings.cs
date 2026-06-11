@@ -108,7 +108,8 @@ public sealed partial class DosRuntime {
     this.EmitMidSet(asm);
   }
 
-  private void EmitStringData(Assembler asm) {
+  /// <summary>Console/string bookkeeping cells - small, needed by the entry stub and PrintStr.</summary>
+  private void EmitStringCells(Assembler asm) {
     asm.Align(2);
     asm.MarkLabel("rt_strseg");
     asm.Dw(0);
@@ -132,6 +133,11 @@ public sealed partial class DosRuntime {
     asm.Dw(0);
     asm.MarkLabel("rt_capbuf");
     asm.Db(new byte[64]);
+  }
+
+  /// <summary>The 2 KiB string descriptor table - needed only by the string kernel itself.</summary>
+  private void EmitStringTable(Assembler asm) {
+    asm.Align(2);
     asm.MarkLabel("rt_strtab");
     asm.Db(new byte[_STRING_HANDLES * 4]);
   }

@@ -68,34 +68,85 @@ public sealed partial class DosRuntime {
     asm.Jmp(userMain);
   }
 
-  /// <summary>Emits all runtime procedures; call once between entry stub and user code.</summary>
-  public void EmitProcedures(Assembler asm) {
+  /// <summary>
+  /// Code sections in canonical order. Each is self-contained (no fall-through
+  /// across sections), so the pb36 runtime trimmer can emit any subset; the
+  /// untrimmed emission iterates all of them in this exact order.
+  /// </summary>
+  internal (string Name, Action<Assembler> Emit)[] ProcedureSections() => [
+    ("exit", this.EmitExit),
+    ("errors", this.EmitErrors),
+    ("print_str", this.EmitPrintStr),
+    ("print_nl", this.EmitPrintNewLine),
+    ("print_zone", this.EmitPrintZone),
+    ("print_i16", this.EmitPrintInt16),
+    ("print_i32", this.EmitPrintInt32),
+    ("print_flt", this.EmitPrintFloat),
+    ("pow", this.EmitPow),
+    ("rounding", this.EmitRounding),
+    ("long_helpers", this.EmitLongHelpers),
+    ("strings", this.EmitStringProcedures),
+    ("strings2", this.EmitString2Procedures),
+    ("files", this.EmitFileProcedures),
+    ("arrays", this.EmitArrayProcedures),
+    ("lowlevel", this.EmitLowLevelProcedures),
+    ("misc", this.EmitMiscProcedures),
+    ("misc2", this.EmitMiscProcedures2),
+    ("extras", this.EmitExtraProcedures),
+    ("using_dyn", this.EmitUsingDyn),   // needs UseFmt (misc) and the string kernel
+    ("quad", this.EmitQuadProcedures),
+    ("ems", this.EmitEmsProcedures),
+    ("fields", this.EmitFieldProcedures),
+    ("chain", this.EmitChainProcedures),
+  ];
+
+  /// <summary>
+  /// Emits the runtime procedures; call once between entry stub and user code.
+  /// <paramref name="filter"/> selects sections (pb36 trimming; null = all),
+  /// <paramref name="onSection"/> reports each emitted section's byte range.
+  /// </summary>
+  public void EmitProcedures(Assembler asm, Func<string, bool>? filter = null, Action<string, int, int>? onSection = null) {
     this._numBuffer = asm.Lbl("rt_numbuf");
     this._scratch = asm.Lbl("rt_scratch");
-    this.EmitExit(asm);
-    this.EmitErrors(asm);
-    this.EmitPrintStr(asm);
-    this.EmitPrintNewLine(asm);
-    this.EmitPrintZone(asm);
-    this.EmitPrintInt16(asm);
-    this.EmitPrintInt32(asm);
-    this.EmitPrintFloat(asm);
-    this.EmitPow(asm);
-    this.EmitRounding(asm);
-    this.EmitLongHelpers(asm);
-    this.EmitStringProcedures(asm);
-    this.EmitString2Procedures(asm);
-    this.EmitFileProcedures(asm);
-    this.EmitArrayProcedures(asm);
-    this.EmitLowLevelProcedures(asm);
-    this.EmitMiscProcedures(asm);
-    this.EmitMiscProcedures2(asm);
-    this.EmitExtraProcedures(asm);
-    this.EmitUsingDyn(asm);   // needs UseFmt (misc) and the string kernel
-    this.EmitQuadProcedures(asm);
-    this.EmitEmsProcedures(asm);
-    this.EmitFieldProcedures(asm);
-    this.EmitChainProcedures(asm);
+    this._asmStrTab = asm.Lbl("rt_strtab"); // sections referencing descriptors may be emitted without "strings"
+    foreach (var (name, emit) in this.ProcedureSections()) {
+      if (filter != null && !filter(name))
+        continue;
+      var start = asm.Position;
+      emit(asm);
+      onSection?.Invoke(name, start, asm.Position);
+    }
+  }
+
+  /// <summary>Property name -> runtime label name, learned once from a throwaway emission (cannot drift).</summary>
+  private static readonly Lazy<IReadOnlyDictionary<string, string>> _labelNames = new(() => {
+    var probe = new Assembler();
+    var reference = new DosRuntime();
+    reference.EmitEntry(probe, probe.DefineLabel());
+    reference.EmitProcedures(probe);
+    reference.EmitConstants(probe);
+    reference.EmitData(probe);
+
+    var names = new Dictionary<string, string>(StringComparer.Ordinal);
+    foreach (var property in typeof(DosRuntime).GetProperties().Where(p => p.PropertyType == typeof(Label))) {
+      var bound = (Label?)property.GetValue(reference)
+        ?? throw new InvalidOperationException($"runtime label {property.Name} was never assigned");
+      names[property.Name] = bound.Name ?? throw new InvalidOperationException($"runtime label {property.Name} is unnamed");
+    }
+    return names;
+  });
+
+  /// <summary>
+  /// pb36 deferred emission: assigns every public runtime label property its
+  /// named (still unbound) label in <paramref name="asm"/> WITHOUT emitting
+  /// anything - user code can then reference the runtime, and the trimmed
+  /// <see cref="EmitProcedures"/>/<see cref="EmitData"/> later bind exactly
+  /// the names in use.
+  /// </summary>
+  public void BindDeferred(Assembler asm) {
+    ArgumentNullException.ThrowIfNull(asm);
+    foreach (var property in typeof(DosRuntime).GetProperties().Where(p => p.PropertyType == typeof(Label)))
+      property.SetValue(this, asm.Lbl(_labelNames.Value[property.Name]));
   }
 
   /// <summary>
@@ -121,23 +172,42 @@ public sealed partial class DosRuntime {
     }
   }
 
-  /// <summary>Emits runtime data cells; call while laying out the data area.</summary>
-  public void EmitData(Assembler asm) {
+  /// <summary>Data sections in canonical order (see <see cref="ProcedureSections"/>).</summary>
+  internal (string Name, Action<Assembler> Emit)[] DataSections() => [
+    ("core_data", this.EmitCoreData),
+    ("str_cells", this.EmitStringCells),
+    ("str_tab", this.EmitStringTable),
+    ("file_data", this.EmitFileData),
+    ("arr_data", this.EmitArrayData),
+    ("lowlevel_data", this.EmitLowLevelData),
+    ("misc_data", this.EmitMiscData),
+    ("internals_data", this.EmitInternalsData),
+    ("quad_data", this.EmitQuadData),
+    ("ems_data", this.EmitEmsData),
+    ("field_data", this.EmitFieldData),
+    ("chain_data", this.EmitChainData),
+  ];
+
+  /// <summary>
+  /// Emits runtime data cells; call while laying out the data area.
+  /// <paramref name="filter"/>/<paramref name="onSection"/> as in <see cref="EmitProcedures"/>.
+  /// </summary>
+  public void EmitData(Assembler asm, Func<string, bool>? filter = null, Action<string, int, int>? onSection = null) {
+    foreach (var (name, emit) in this.DataSections()) {
+      if (filter != null && !filter(name))
+        continue;
+      var start = asm.Position;
+      emit(asm);
+      onSection?.Invoke(name, start, asm.Position);
+    }
+  }
+
+  private void EmitCoreData(Assembler asm) {
     asm.Align(2);
     this._numBuffer = asm.MarkLabel("rt_numbuf");
     asm.Db(new byte[36]);
     this._scratch = asm.MarkLabel("rt_scratch");
     asm.Db(new byte[16]);
-    this.EmitStringData(asm);
-    this.EmitFileData(asm);
-    this.EmitArrayData(asm);
-    this.EmitLowLevelData(asm);
-    this.EmitMiscData(asm);
-    this.EmitInternalsData(asm);
-    this.EmitQuadData(asm);
-    this.EmitEmsData(asm);
-    this.EmitFieldData(asm);
-    this.EmitChainData(asm);
   }
 
   private void EmitExit(Assembler asm) {

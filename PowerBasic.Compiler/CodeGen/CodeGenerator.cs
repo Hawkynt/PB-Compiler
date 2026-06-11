@@ -82,7 +82,14 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._scratch = asm.DefineLabel("cg_scratch");
 
     this._rt.EmitEntry(asm, userMain);
-    this._rt.EmitProcedures(asm);
+
+    // pb36 (docs/PB36.md P1): the runtime is emitted AFTER user code, trimmed
+    // to the sections the program actually reaches; pb35 keeps today's layout
+    var trimRuntime = model.Dialect >= Syntax.Dialect.Pb36 && !this._allowExternalCalls;
+    if (!trimRuntime)
+      this._rt.EmitProcedures(asm);
+    else
+      this._rt.BindDeferred(asm); // labels exist now, the trimmed bodies follow the user code
 
     // $OPTIMIZE SIZE|SPEED - one per module (PBC -OZF preselects SPEED)
     var optimizeMetas = model.MetaStatements.Where(m => m.Command.Equals("OPTIMIZE", StringComparison.OrdinalIgnoreCase)).ToList();
@@ -154,15 +161,38 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         this.EmitProcedure(proc);
 
     this.EmitFarThunks();
-    this.EmitDataArea();
+
+    HashSet<string>? trimmedSections = null;
+    if (trimRuntime) {
+      // seed = every named label user code (and the entry stub) references
+      // that no user code bound - exactly the runtime's surface in use
+      var seed = asm.LabelReferences()
+        .Select(r => r.Target)
+        .Where(t => t is { Name: not null, IsBound: false })
+        .Select(t => t.Name!)
+        .Distinct(StringComparer.OrdinalIgnoreCase);
+      trimmedSections = RuntimeTrimmer.Instance.CloseOver(seed);
+      this._rt.EmitProcedures(asm, trimmedSections.Contains);
+    }
+
+    this.EmitDataArea(trimmedSections);
 
     var image = this._allowExternalCalls ? this.LinkImage(units, libraries) : asm.ToArray();
     if (image.Length == 0)
       return []; // link errors already reported
 
     // grow the single segment to its full 64 KiB so data + stack always fit,
-    // then reserve the far string and array heap segments behind it
-    var extraParagraphs = (ushort)((0x10000 - image.Length % 0x10000 + 15) / 16 + DosRuntime.ExtraHeapParagraphs);
+    // then reserve the far string and array heap segments behind it - under
+    // pb36 trimming unused heap segments are not reserved at all (P4)
+    var heapParagraphs = DosRuntime.ExtraHeapParagraphs;
+    if (trimmedSections != null && !trimmedSections.Contains("chain")) {
+      var needArrayHeap = trimmedSections.Contains("arrays") || trimmedSections.Contains("ems");
+      var needStringHeap = trimmedSections.Contains("strings");
+      heapParagraphs = needArrayHeap ? DosRuntime.ExtraHeapParagraphs
+        : needStringHeap ? DosRuntime.ExtraHeapParagraphs / 2
+        : 0;
+    }
+    var extraParagraphs = (ushort)((0x10000 - image.Length % 0x10000 + 15) / 16 + heapParagraphs);
     var writer = new MzExeWriter(image) {
       EntrySegment = 0,
       EntryOffset = 0,
@@ -265,12 +295,13 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     return label;
   }
 
-  private void EmitDataArea() {
+  private void EmitDataArea(HashSet<string>? trimmedSections = null) {
     var asm = this._asm;
     asm.Align(2);
     if (!this._isUnit) { // units import the runtime (and the main module's DATA pool) instead
-      this._rt.EmitConstants(asm);
-      this._rt.EmitData(asm);
+      if (trimmedSections == null || trimmedSections.Contains("consts"))
+        this._rt.EmitConstants(asm);
+      this._rt.EmitData(asm, trimmedSections == null ? null : trimmedSections.Contains);
       this.EmitDataPool();
     }
 

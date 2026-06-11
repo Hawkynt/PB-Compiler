@@ -26,6 +26,12 @@ public sealed partial class Assembler {
   /// <summary>Image offsets of words holding segment values the DOS loader must patch.</summary>
   public IReadOnlyList<int> SegmentRelocations => this._segmentRelocations;
 
+  /// <summary>All label references recorded so far (fixup position and target); trimming/optimizer support.</summary>
+  public IEnumerable<(int Position, Label Target)> LabelReferences() => this._fixups.Select(f => (f.Position, f.Target));
+
+  /// <summary>The named labels created so far (case-insensitive registry); trimming/optimizer support.</summary>
+  public IReadOnlyCollection<Label> KnownNamedLabels => this._namedLabels.Values;
+
   #region labels
 
   /// <summary>Creates a fresh, unbound label.</summary>

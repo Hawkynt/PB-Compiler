@@ -8,6 +8,13 @@ public enum Dialect {
   Pb31 = 31,
   Pb32 = 32,
   Pb35 = 35,
+  /// <summary>
+  /// The envisioned optimizing successor (docs/PB36.md): a strict language
+  /// superset of <see cref="Pb35"/> with byte-identical observable behavior -
+  /// it only enables optimizations (runtime trimming, constant folding,
+  /// strength reduction, zero idioms, ...).
+  /// </summary>
+  Pb36 = 36,
 }
 
 /// <summary>Version-gated language features (see docs/DIALECTS.md for the researched matrix).</summary>
