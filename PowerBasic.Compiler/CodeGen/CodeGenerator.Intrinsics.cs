@@ -268,7 +268,7 @@ public sealed partial class CodeGenerator {
       case "INT" or "FIX":
         this.EmitExpression(args[0]);
         if (KindOf(model.TypeOf(args[0])) == ValueKind.Float)
-          asm.Frndint();   // rounding mode caveat: nearest-even, not floor
+          asm.Call(intrinsic.Name == "INT" ? this._rt.Floor : this._rt.Trunc);
         break;
 
       case "PEEK":

@@ -35,6 +35,8 @@ public sealed partial class DosRuntime {
   public Label PrintNewLine { get; private set; } = null!;
   public Label PrintZone { get; private set; } = null!;
   public Label Pow { get; private set; } = null!;
+  public Label Floor { get; private set; } = null!;
+  public Label Trunc { get; private set; } = null!;
   public Label LongMul { get; private set; } = null!;
   public Label LongDiv { get; private set; } = null!;
   public Label LongMod { get; private set; } = null!;
@@ -73,6 +75,7 @@ public sealed partial class DosRuntime {
     this.EmitPrintInt32(asm);
     this.EmitPrintFloat(asm);
     this.EmitPow(asm);
+    this.EmitRounding(asm);
     this.EmitLongHelpers(asm);
     this.EmitStringProcedures(asm);
     this.EmitFileProcedures(asm);
@@ -527,12 +530,43 @@ public sealed partial class DosRuntime {
     asm.Inc(Reg.SI);
     asm.Pop(Reg.DI);                                 // DI = read cursor (first digit)
 
-    // fixed notation when 1 <= pointpos <= digitcount, else exponent style
+    // PB notation rules (verified against genuine PBC 3.50):
+    //   1 <= pointpos <= digits      -> fixed             "123.45"
+    //   -digits <= pointpos <= 0     -> fraction fixed    ".00545" (no leading 0)
+    //   otherwise                    -> exponent          "1E+20"
     asm.Cmp(Reg.DX, 1);
-    asm.Jl(asm.Lbl("rt_fd_exp"));
+    asm.Jl(asm.Lbl("rt_fd_fracmaybe"));
     asm.Cmp(Reg.DX, Reg.BX);
     asm.Jle(fixedNotation);
     asm.Jmp(asm.Lbl("rt_fd_exp"));
+
+    asm.MarkLabel("rt_fd_fracmaybe");
+    asm.Mov(Reg.AX, Reg.BX);
+    asm.Neg(Reg.AX);
+    asm.Cmp(Reg.DX, Reg.AX);
+    asm.Jl(asm.Lbl("rt_fd_exp"));          // more leading zeros than digits -> exponent
+
+    // fraction fixed: '.', -pointpos zeros, all digits; shared trailing trim
+    asm.Mov(Mem.Byte(Reg.SI), (byte)'.');
+    asm.Inc(Reg.SI);
+    asm.Push(Reg.CX);
+    asm.Mov(Reg.CX, Reg.DX);
+    asm.Neg(Reg.CX);
+    asm.Jcxz(asm.Lbl("rt_fd_fraczdone"));
+    asm.MarkLabel("rt_fd_fraczero");
+    asm.Mov(Mem.Byte(Reg.SI), (byte)'0');
+    asm.Inc(Reg.SI);
+    asm.Loop(asm.Lbl("rt_fd_fraczero"));
+    asm.MarkLabel("rt_fd_fraczdone");
+    asm.Mov(Reg.CX, Reg.BX);
+    asm.MarkLabel("rt_fd_fraccpy");
+    asm.Mov(Reg.AL, Mem.Byte(Reg.DI));
+    asm.Mov(Mem.Byte(Reg.SI), Reg.AL);
+    asm.Inc(Reg.SI);
+    asm.Inc(Reg.DI);
+    asm.Loop(asm.Lbl("rt_fd_fraccpy"));
+    asm.Pop(Reg.CX);
+    asm.Jmp(asm.Lbl("rt_fd_trim"));
 
     asm.MarkLabel(fixedNotation);
     // copy DX integer digits, then '.', then the rest; afterwards trim trailing zeros/point
@@ -592,16 +626,15 @@ public sealed partial class DosRuntime {
     asm.Loop(asm.Lbl("rt_fd_expdigits"));
     asm.MarkLabel("rt_fd_expdigitsdone");
     asm.Pop(Reg.CX);
-    // trim zeros backwards (but keep at least one digit after the point)
+    // trim all trailing zeros; a then-bare point is dropped too (PB: "1E+20")
     asm.MarkLabel("rt_fd_exptrim");
     asm.Dec(Reg.SI);
     asm.Cmp(Mem.Byte(Reg.SI), (byte)'0');
-    asm.Jne(asm.Lbl("rt_fd_exptrimmed"));
-    asm.Cmp(Mem.Byte(Reg.SI, -1), (byte)'.');
+    asm.Je(asm.Lbl("rt_fd_exptrim"));
+    asm.Cmp(Mem.Byte(Reg.SI), (byte)'.');
     asm.Je(asm.Lbl("rt_fd_exptrimmed"));
-    asm.Jmp(asm.Lbl("rt_fd_exptrim"));
-    asm.MarkLabel("rt_fd_exptrimmed");
     asm.Inc(Reg.SI);
+    asm.MarkLabel("rt_fd_exptrimmed");
     asm.Mov(Mem.Byte(Reg.SI), (byte)'E');
     asm.Inc(Reg.SI);
     // exponent value = pointpos - 1
@@ -655,6 +688,30 @@ public sealed partial class DosRuntime {
     asm.Fscale();            // ST0=2^frac * 2^int(ST1)
     asm.Fstp(St.St1);         // drop int(z)
     asm.Ret();
+  }
+
+  /// <summary>INT (floor) and FIX (truncate): FRNDINT under a temporary rounding mode.</summary>
+  private void EmitRounding(Assembler asm) {
+    void Emit(string label, int rcBits) {
+      asm.MarkLabel(label);
+      asm.Fnstcw(Mem.Word(this._scratch, 12));
+      asm.Mov(Reg.AX, Mem.Word(this._scratch, 12));
+      asm.Or(Reg.AX, 0x0C00);
+      if (rcBits != 0x0C00) {
+        asm.And(Reg.AX, ~0x0C00 & 0xFFFF);
+        asm.Or(Reg.AX, rcBits);
+      }
+      asm.Mov(Mem.Word(this._scratch, 14), Reg.AX);
+      asm.Fldcw(Mem.Word(this._scratch, 14));
+      asm.Frndint();
+      asm.Fldcw(Mem.Word(this._scratch, 12));
+      asm.Ret();
+    }
+
+    this.Floor = asm.Lbl("rt_floor");
+    Emit("rt_floor", 0x0400);  // RC=01: toward -infinity
+    this.Trunc = asm.Lbl("rt_trunc");
+    Emit("rt_trunc", 0x0C00);  // RC=11: toward zero
   }
 
   private void EmitLongHelpers(Assembler asm) {

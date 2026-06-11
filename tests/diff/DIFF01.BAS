@@ -1,0 +1,48 @@
+' Differential battery 1: numeric semantics and PRINT formatting.
+' Writes RESULT.TXT; run-diff-tests.sh compares against genuine PBC 3.5 output.
+OPEN "RESULT.TXT" FOR OUTPUT AS #1
+PRINT #1, 1 + 2
+PRINT #1, 10 - 3
+PRINT #1, 6 * 7
+PRINT #1, 7 \ 2
+PRINT #1, -7 \ 2
+PRINT #1, 7 MOD 3
+PRINT #1, -7 MOD 3
+PRINT #1, 10 / 4
+PRINT #1, 2 ^ 10
+PRINT #1, 2 ^ -1
+PRINT #1, -5
+PRINT #1, 32767
+PRINT #1, -32768
+PRINT #1, 100000&
+PRINT #1, -2000000000&
+PRINT #1, 1.5
+PRINT #1, -2.25
+PRINT #1, 0.5
+PRINT #1, 100.0
+PRINT #1, 1 = 1
+PRINT #1, 1 = 2
+PRINT #1, 2 > 1
+PRINT #1, (1 < 2) AND (3 < 4)
+PRINT #1, NOT 0
+PRINT #1, 6 AND 3
+PRINT #1, 6 OR 3
+PRINT #1, 6 XOR 3
+PRINT #1, INT(2.7)
+PRINT #1, INT(-2.7)
+PRINT #1, FIX(2.7)
+PRINT #1, FIX(-2.7)
+PRINT #1, ABS(-9)
+PRINT #1, SGN(-9)
+PRINT #1, SGN(0)
+PRINT #1, SQR(16)
+PRINT #1, HEX$(255)
+PRINT #1, HEX$(43981)
+PRINT #1, OCT$(8)
+PRINT #1, BIN$(10)
+PRINT #1, STR$(42)
+PRINT #1, STR$(-42)
+PRINT #1, VAL("123")
+PRINT #1, VAL("-1.5")
+CLOSE #1
+END

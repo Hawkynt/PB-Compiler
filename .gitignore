@@ -122,3 +122,4 @@ build/
 UNITTEST.LOG
 dosbox*.conf
 tools/dosbox/
+tools/pb35/
