@@ -362,7 +362,7 @@ public sealed partial class CodeGenerator {
           }
         }
         this.EmitExpression(args[0]);
-        if (model.Dialect >= Dialect.Pb31)
+        if (model.Dialect.IsPbAtLeast(Dialect.Pb31))
           this.Coerce(model.TypeOf(args[0]), PbType.Long, args[0]);
         else {
           // 32-bit LONG arguments arrived with 3.1; older dialects render
@@ -529,6 +529,7 @@ public sealed partial class CodeGenerator {
         this.EmitExpression(args[0]);
         this.Coerce(model.TypeOf(args[0]), PbType.Double, args[0]);
         asm.Fsqrt();
+        this.RoundFpuToIntrinsicType(call);
         break;
 
       case "INT" or "FIX":
@@ -784,6 +785,7 @@ public sealed partial class CodeGenerator {
             asm.Call(asm.Lbl("rt_pow2"));
             break;
         }
+        this.RoundFpuToIntrinsicType(call);
         break;
 
       case "FRE":
@@ -867,5 +869,23 @@ public sealed partial class CodeGenerator {
     asm.Mov(Reg.CX, length);
     asm.Mov(Reg.DX, Reg.DS);
     asm.Call(this._rt.StrMem);
+  }
+
+  /// <summary>
+  /// Rounds the FPU result of a math intrinsic to its bound type. QB returns
+  /// argument-typed results (SQR(2) is SINGLE, LOG(e#) the DOUBLE-rounded 1),
+  /// so the 80-bit FPU value must lose precision exactly like the original.
+  /// </summary>
+  private void RoundFpuToIntrinsicType(Expression call) {
+    if (model.Dialect.Family() != DialectFamily.Microsoft)
+      return;
+    var asm = this._asm;
+    if (model.TypeOf(call) is ScalarType { Kind: ScalarKind.Single }) {
+      asm.Fstp(Mem.Dword(this.RtScratch));
+      asm.Fld(Mem.Dword(this.RtScratch));
+    } else {
+      asm.Fstp(Mem.Qword(this.RtScratch));
+      asm.Fld(Mem.Qword(this.RtScratch));
+    }
   }
 }

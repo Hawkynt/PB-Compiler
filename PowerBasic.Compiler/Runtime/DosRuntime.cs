@@ -428,12 +428,13 @@ public sealed partial class DosRuntime {
   /// </summary>
   private void EmitPrintFloat(Assembler asm) {
     var turbo = this.Dialect.IsTurboBasic();
+    var microsoft = this.Dialect.Family() == DialectFamily.Microsoft;
     this.PrintSingle = asm.MarkLabel("rt_print_f32");
     asm.Mov(Reg.BX, turbo ? 16 : 7);
     asm.Jmp(asm.Lbl("rt_print_flt"));
 
     this.PrintDouble = asm.MarkLabel("rt_print_f64");
-    asm.Mov(Reg.BX, turbo ? 16 : 15);
+    asm.Mov(Reg.BX, turbo || microsoft ? 16 : 15);
 
     asm.MarkLabel("rt_print_flt");
     // The number is decomposed in C-helper style entirely on the FPU:
@@ -754,7 +755,18 @@ public sealed partial class DosRuntime {
     asm.Je(asm.Lbl("rt_fd_exptrimmed"));
     asm.Inc(Reg.SI);
     asm.MarkLabel("rt_fd_exptrimmed");
-    asm.Mov(Mem.Byte(Reg.SI), (byte)'E');
+    if (this.Dialect.Family() == DialectFamily.Microsoft) {
+      // QB renders SINGLE exponents with 'E' and DOUBLE ones with 'D'
+      // (1E+08 vs 1D+16); BX still holds the entry's digit count
+      asm.Mov(Reg.AL, 'E');
+      asm.Cmp(Reg.BX, (Imm)7);
+      asm.Je(asm.Lbl("rt_fd_expmark"));
+      asm.Mov(Reg.AL, 'D');
+      asm.MarkLabel("rt_fd_expmark");
+      asm.Mov(Mem.Byte(Reg.SI), Reg.AL);
+    } else {
+      asm.Mov(Mem.Byte(Reg.SI), (byte)'E');
+    }
     asm.Inc(Reg.SI);
     // exponent value = pointpos - 1
     asm.Dec(Reg.DX);
@@ -779,10 +791,12 @@ public sealed partial class DosRuntime {
     asm.Inc(Reg.CX);
     asm.Test(Reg.AX, Reg.AX);
     asm.Jnz(asm.Lbl("rt_fd_expdiv"));
-    if (this.Dialect.IsTurboBasic()) {
+    // TB zero-pads exponents to three digits ("1E+016"), QB to two ("1E+07")
+    var padWidth = this.Dialect.IsTurboBasic() ? 3 : this.Dialect.Family() == DialectFamily.Microsoft ? 2 : 0;
+    if (padWidth > 0) {
       asm.Xor(Reg.DX, Reg.DX);
       asm.MarkLabel("rt_fd_exppad");
-      asm.Cmp(Reg.CX, 3);
+      asm.Cmp(Reg.CX, (Imm)padWidth);
       asm.Jae(asm.Lbl("rt_fd_exppop"));
       asm.Push(Reg.DX);
       asm.Inc(Reg.CX);

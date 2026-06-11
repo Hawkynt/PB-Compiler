@@ -1063,7 +1063,7 @@ public sealed class Binder {
             this._model.IntrinsicBindings[n] = intrinsic;
             if (DialectFacts.IntrinsicGate(intrinsic.Name) is { } gate)
               this.Require(gate, n.Position);
-            return ReturnTypeOf(intrinsic, null);
+            return this.ReturnTypeOf(intrinsic, null);
           }
         }
 
@@ -1227,7 +1227,9 @@ public sealed class Binder {
 
     return b.Op switch {
       BinaryOp.Divide => this.DivideResultType(b, left, right),
-      BinaryOp.Power => this._dialect.IsTurboBasic() ? PbType.Double : PbType.Ext,
+      BinaryOp.Power => this._dialect.IsTurboBasic() ? PbType.Double
+        : this._dialect.Family() == DialectFamily.Microsoft ? this.DivideResultType(b, left, right)
+        : PbType.Ext,
       BinaryOp.IntegerDivide or BinaryOp.Modulo => PromoteUnsigned(IntegralOf(Widest(left, right))),
       BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Eqv or BinaryOp.Imp => IntegralOf(Widest(left, right)),
       BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual or BinaryOp.GreaterEqual => PbType.Integer,
@@ -1386,7 +1388,7 @@ public sealed class Binder {
         return PbType.Integer;   // $OPTION SIGNED
       return intrinsic.Name == "RND" && call.Arguments.Count == 2
         ? PbType.Long // RND(a, z) -> LONG in [a, z]
-        : ReturnTypeOf(intrinsic, firstArg);
+        : this.ReturnTypeOf(intrinsic, firstArg);
     }
 
     // 3. user function
@@ -1408,7 +1410,16 @@ public sealed class Binder {
     return this.ErrorType(call.Position, $"unknown array or function {call.Name}");
   }
 
-  private static PbType ReturnTypeOf(IntrinsicInfo intrinsic, PbType? firstArg) => intrinsic.Returns switch {
+  /// <summary>FPU math intrinsics whose QB result precision follows the argument.</summary>
+  private static readonly HashSet<string> _argTypedMath = new(StringComparer.OrdinalIgnoreCase) {
+    "SQR", "SIN", "COS", "TAN", "ATN", "EXP", "LOG",
+  };
+
+  private PbType ReturnTypeOf(IntrinsicInfo intrinsic, PbType? firstArg) => intrinsic.Returns switch {
+    // QB math functions return their argument's precision: SQR(2) prints the
+    // SINGLE "1.414214", LOG(e#) the DOUBLE-rounded " 1 " (oracle-verified)
+    IntrinsicReturn.Ext when this._dialect.Family() == DialectFamily.Microsoft && _argTypedMath.Contains(intrinsic.Name)
+      => firstArg is ScalarType { IsFloat: true, ByteSize: >= 8 } ? PbType.Double : PbType.Single,
     IntrinsicReturn.Integer => PbType.Integer,
     IntrinsicReturn.Quad => PbType.Quad,
     IntrinsicReturn.Fix => PbType.Fix,

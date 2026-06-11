@@ -2,9 +2,12 @@ namespace PowerBasic.Compiler.Syntax;
 
 /// <summary>
 /// Compiler dialect selected with <c>--dialect</c> (default <see cref="Pb35"/>).
-/// The Borland lineage is ordered by language level: Turbo Basic (PB's direct
-/// ancestor, same author) sits below PB 2.0, so every PB feature gate
-/// automatically excludes the TB dialects.
+/// Two ordered families share the value space: the Borland lineage (Turbo
+/// Basic, PB's direct ancestor by the same author, sits below PB 2.0 so every
+/// PB feature gate automatically excludes it) occupies values &lt; 100; the
+/// Microsoft lineage (QuickBASIC and its BASIC PDS successor) starts at 100.
+/// Ordinal comparisons are only meaningful within one family - cross-family
+/// checks go through <see cref="DialectFacts"/>.
 /// </summary>
 public enum Dialect {
   Tb10 = 10,
@@ -22,6 +25,21 @@ public enum Dialect {
   /// strength reduction, zero idioms, ...).
   /// </summary>
   Pb36 = 36,
+  Qb10 = 110,
+  Qb20 = 120,
+  Qb30 = 130,
+  Qb40 = 140,
+  Qb45 = 145,
+  Pds70 = 170,
+  Pds71 = 171,
+}
+
+/// <summary>BASIC product family; feature gating and runtime quirks route on it.</summary>
+public enum DialectFamily {
+  /// <summary>Turbo Basic and PowerBASIC (Bob Zale's lineage).</summary>
+  Borland,
+  /// <summary>QuickBASIC and BASIC PDS.</summary>
+  Microsoft,
 }
 
 /// <summary>Version-gated language features (see docs/DIALECTS.md for the researched matrix).</summary>
@@ -111,21 +129,51 @@ public static class DialectFacts {
     ["CODEPTR32"] = LanguageFeature.Ptr32Functions,
   };
 
-  /// <summary>Human-readable dialect name, e.g. "PB 3.5".</summary>
-  public static string DisplayName(this Dialect dialect)
-    => $"{(dialect.IsTurboBasic() ? "TB" : "PB")} {(int)dialect / 10 % 10}.{(int)dialect % 10}";
+  /// <summary>
+  /// Features the Microsoft lineage provides, with the QB/PDS version that
+  /// introduced them. A feature absent here is Borland-only and unavailable in
+  /// every Microsoft dialect (and vice versa for the PB gate table).
+  /// </summary>
+  private static readonly Dictionary<LanguageFeature, Dialect> _microsoftGates = new() {
+    [LanguageFeature.TypeUnion] = Dialect.Qb40,        // TYPE...END TYPE (QB has no UNION; the binder rejects UNION separately)
+    [LanguageFeature.RedimPreserve] = Dialect.Pds70,   // REDIM with far strings; QB REDIM never preserves
+  };
+
+  /// <summary>Human-readable dialect name, e.g. "PB 3.5", "TB 1.1", "QB 4.5", "PDS 7.1".</summary>
+  public static string DisplayName(this Dialect dialect) {
+    var v = (int)dialect % 100;
+    var prefix = dialect.Family() == DialectFamily.Microsoft
+      ? dialect >= Dialect.Pds70 ? "PDS" : "QB"
+      : dialect.IsTurboBasic() ? "TB" : "PB";
+    return $"{prefix} {v / 10}.{v % 10}";
+  }
 
   /// <summary>Turbo Basic 1.x - Borland's PB predecessor (16-digit double-everything runtime).</summary>
   public static bool IsTurboBasic(this Dialect dialect) => dialect <= Dialect.Tb11;
 
+  /// <summary>Product family - ordinal dialect comparisons are only valid within one family.</summary>
+  public static DialectFamily Family(this Dialect dialect)
+    => dialect >= Dialect.Qb10 ? DialectFamily.Microsoft : DialectFamily.Borland;
+
+  /// <summary>True for a Borland-lineage dialect of at least <paramref name="min"/> (false for every Microsoft dialect).</summary>
+  public static bool IsPbAtLeast(this Dialect dialect, Dialect min)
+    => dialect.Family() == DialectFamily.Borland && dialect >= min;
+
   /// <summary>Lowest dialect providing <paramref name="feature"/>.</summary>
   public static Dialect MinimumDialect(LanguageFeature feature) => _gates[feature].Min;
 
-  public static bool IsAvailable(LanguageFeature feature, Dialect dialect) => dialect >= _gates[feature].Min;
+  public static bool IsAvailable(LanguageFeature feature, Dialect dialect)
+    => dialect.Family() == DialectFamily.Microsoft
+      ? _microsoftGates.TryGetValue(feature, out var min) && dialect >= min
+      : dialect >= _gates[feature].Min;
 
   /// <summary>Diagnostic text: "X requires PowerBASIC 3.2 (current dialect: PB 3.0)".</summary>
   public static string RequirementMessage(LanguageFeature feature, Dialect dialect) {
     var (min, what) = _gates[feature];
+    if (dialect.Family() == DialectFamily.Microsoft)
+      return _microsoftGates.TryGetValue(feature, out var msMin)
+        ? $"{what} requires {msMin.DisplayName()} (current dialect: {dialect.DisplayName()})"
+        : $"{what} is not available in the Microsoft BASIC family (current dialect: {dialect.DisplayName()})";
     return $"{what} requires PowerBASIC {(int)min / 10}.{(int)min % 10} (current dialect: {dialect.DisplayName()})";
   }
 

@@ -120,7 +120,7 @@ differential battery before the dialect can be claimed:
 | `pb30` | `PBC.EXE` 3.0c | `tools/pb30/PBC.EXE` + `tests/diff/pb30/` | **ACTIVE** - installed from the WinWorld 3.0c floppy via the scripted DOSBox installer drive (`tools/_downloads/postkeys.ps1` + window capture); QUIRK30 battery byte-identical, quirks 2.1/2.2, 2.26 and 16-bit HEX$/OCT$ oracle-confirmed |
 | `pb32` | `PBC.EXE` 3.20 [German] | `tools/pb32/PBC.EXE` + `tests/diff/pb32/` | **staged** - installer driven headlessly (Xvfb + xdotool; it only runs from an interactive prompt, not from autoexec - that was the old "black screen") |
 | `pb20/21` | `PB.EXE` 2.1 | IDE-only - same AUTOTYPE drive as `tb11` | **binary staged** in `tools/pb2x/` (WinWorld 2.1 floppy; French 2.10b/f archived) - IDE keystroke flow still to map |
-| `qb45` | `BC.EXE` + `LINK.EXE` | `tests/diff/qb45/oracle.conf`: `BC T.BAS,T.OBJ;` + `LINK T.OBJ,T.EXE,,BCOM45.LIB;` | **ACTIVE** - smoke-verified end to end in `tools/qb45/` (WinWorld 4.5 3.5-720k set) |
+| `qb45` | `BC.EXE` + `LINK.EXE` | `tests/diff/qb45/oracle.conf`: `BC T.BAS,T.OBJ;` + `LINK T.OBJ,T.EXE,,BCOM45.LIB;` | **ACTIVE** - `--dialect qb45` implemented; 2 batteries byte-identical (typing/formatting/VAL, strings/math/control flow) |
 | `qb40` | `BC.EXE` + `LINK.EXE` | like qb45 with `BCOM40.LIB` | **staged** in `tools/qb40/` |
 | `qb30`/`qb20`/`qb10` | `QB.EXE` (3.0/2.0x) / `BASCOM.EXE` (1.0) | qb30/qb20: QB.EXE command-line or IDE drive; qb10: BASCOM+LINK | **staged** in `tools/qb30|qb20|qb10/` - compile flows still to map |
 | `tb11` | `TB.EXE` 1.1 | `tests/diff/tb11/oracle.conf`: AUTOTYPE menu drive (Options→EXE file, Load, Compile, Quit), fully headless | **ACTIVE** - `--dialect tb11` implemented; 3 batteries byte-identical (formatting/typing, strings/math, control flow) |
@@ -159,6 +159,28 @@ byte-identically (tests/diff/tb11/):
   increments-then-tests and wraps, silent 16-bit overflow wrap
   (`32767 + 1` = -32768), 16-bit `HEX$`/`OCT$`, CINT banker's rounding,
   identical PRINT zones/TAB/SPC.
+
+## Oracle-verified QB 4.5 semantics (implemented as `--dialect qb45`)
+
+Probed against genuine BC.EXE 4.50 (compiled, no /D - debug switches change
+overflow behavior) and replicated byte-identically (tests/diff/qb45/):
+
+- **Typing mirrors PB 3.5** (same Zale-compatibility direction, inverted):
+  int/int division is SINGLE, LONG operands promote to DOUBLE, float operands
+  win at their own precision; bare FP literals type by source digit count.
+- **Display**: DOUBLE prints **16** significant digits (PB: 15) and uses a
+  **D exponent marker** (`1D+16`); SINGLE uses `E`. Exponents are zero-padded
+  to two digits (`1E+07`, PB: `1E+7`). Everything else (zones, TAB/SPC,
+  small-value expansion to `.0000001`, 7-digit SINGLE) matches PB.
+- **`^` and the FPU math intrinsics return their argument's precision**:
+  `SQR(2)` prints `1.414214`, `LOG(e#)` prints the DOUBLE-rounded ` 1 `
+  (the 80-bit FPU result must be rounded through the bound type).
+- **Compiled FOR/NEXT wraps** exactly like PB (the often-cited
+  "tests before increment" applies to the QB IDE interpreter, NOT BC-compiled
+  EXEs - a `FOR I% = 32760 TO 32767 STEP 7` loops forever, oracle-proven).
+- **VAL and HEX$/OCT$** match PB 3.5 semantics (radix literal rules with the
+  16-bit signed window; HEX$ renders 16 bits).
+- Silent 16-bit overflow wrap (`F% + 1` = -32768), CINT banker's rounding.
 
 ## Suggested order of attack
 

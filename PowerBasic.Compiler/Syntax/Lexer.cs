@@ -342,7 +342,7 @@ public sealed class Lexer {
     // 3.1 - PB 3.0 and older read every radix literal signed (so the FAQ's
     // "w?? = &H0A000 overflows" bug is replicated under --dialect pb30/pb2x)
     var raw = 0UL;
-    var leadingZero = this.Current == '0' && this._dialect >= Dialect.Pb31;
+    var leadingZero = this.Current == '0' && this._dialect.IsPbAtLeast(Dialect.Pb31);
     while (digits.IndexOf(char.ToUpperInvariant(this.Current)) is var digit && digit >= 0 && this.Current != '\0') {
       raw = raw * (ulong)radix + (ulong)digit;
       this.Advance();

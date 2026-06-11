@@ -16,7 +16,7 @@ namespace PowerBasic.Compiler.CodeGen;
 public sealed partial class CodeGenerator {
 
   /// <summary>True when pb36 optimizations may alter the emitted code (never its observable behavior).</summary>
-  private bool OptimizePb36 => model.Dialect >= Dialect.Pb36;
+  private bool OptimizePb36 => model.Dialect == Dialect.Pb36;
 
   private ConstantFolder? _pb36Folder;
   private ConstantFolder Pb36Folder => this._pb36Folder ??= new(model.Equates);
