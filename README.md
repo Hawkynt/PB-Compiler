@@ -23,7 +23,7 @@ the original target: 8086+ real mode under DOS or DOSBox.
 ```bash
 pbc HELLO.BAS              # -> HELLO.EXE (DOS MZ, real mode)
 pbc -G386 TEST.BAS         # allow 80386 instructions ($CPU 80386)
-pbc --dialect pb31 OLD.BAS # gate features per dialect (pb20|pb21|pb30|pb31|pb32|pb35)
+pbc --dialect pb31 OLD.BAS # gate features per dialect (tb10|tb11|pb20..pb36|qb10..qb45|pds70|pds71)
 pbc UNIT.BAS               # $COMPILE UNIT inside -> UNIT.PBU
 pbc MAIN.BAS               # $LINK "UNIT.PBU" / $LINK "MY.PBL" inside -> linked EXE
 pbc lib build MY.PBL *.PBU # bundle units into a library
@@ -44,7 +44,7 @@ breakdown and [CHANGELOG.md](CHANGELOG.md) for progress.
 | Stage | State |
 |-------|-------|
 | Lexer + preprocessor ($INCLUDE, $IF/$ELSEIF) | ✅ full PB 3.5 token set incl. `?`/`??`/`???`/`&&`/`@`/`@@`/`$$` suffixes, PB 3.1+ radix rules and the `&` concat operator, corpus-validated |
-| Dialect gating (`--dialect pb20..pb35`) | ✅ data-driven gate table (`Syntax/Dialect.cs`): inline asm/unsigned/QUAD (3.0), typed radix/ALIAS/ANY/UDT compare (3.1), pointers/code pointers/underscores (3.2), ASCIIZ/`&`/$ELSEIF/TRIM$/… (3.5); old dialects also re-enable that version's documented bugs (signed radix pre-3.1, equate folding bug 3.0–3.2, 16-bit HEX$ pre-3.1 — [docs/QUIRKS.md](docs/QUIRKS.md)) |
+| Dialect gating (`--dialect`, two families) | ✅ data-driven gate table (`Syntax/Dialect.cs`): inline asm/unsigned/QUAD (3.0), typed radix/ALIAS/ANY/UDT compare (3.1), pointers/code pointers/underscores (3.2), ASCIIZ/`&`/$ELSEIF/TRIM$/… (3.5); old dialects also re-enable that version's documented bugs (signed radix pre-3.1, equate folding bug 3.0–3.2, 16-bit HEX$ pre-3.1 — [docs/QUIRKS.md](docs/QUIRKS.md)) |
 | Parser | ✅ full grammar; the whole [PB-SvgaLibrary](https://github.com/Hawkynt/PB-SvgaLibrary) corpus parses (27&nbsp;772 statements) |
 | Semantic analysis | ✅ all 31 corpus suites bind error-free |
 | 8086–386 + x87 assembler, MZ writer | ✅ 680 golden-byte tests |
@@ -54,6 +54,7 @@ breakdown and [CHANGELOG.md](CHANGELOG.md) for progress.
 | PBU/PBL units & linker | ✅ `$COMPILE UNIT` emits .PBU (exports with signature hashes, runtime/DECLARE imports, near/data/segment/import fixups); `$LINK "X.PBU"/"Y.PBL"` resolves DECLAREd procedures at compile time (libraries on demand, transitively), signature mismatches are compile errors; cross-unit numeric/string/BYREF calls verified under DOSBox |
 | DOSBox harness + CI | ✅ golden battery (incl. stdin-redirected INPUT tests) + execution tests, headless |
 | `--dialect pb36` optimizer | ✅ first wave: probe-based runtime trimming + on-demand heap segments (hello world 14 254 → **25 bytes** (P7 trivial-I/O lowering; 916 via general trimming), 192 KiB → 64 KiB resident), wrap-correct constant folding, `*2^n` strength reduction, zero idioms — verified byte-identical to genuine PBC 3.50 by a dedicated harness pass ([docs/PB36.md](docs/PB36.md)) |
+| Cross-vendor dialects (Turbo Basic, QuickBASIC, BASIC PDS) | ✅ `tb10`/`tb11` (16-digit double-everything runtime, three-digit exponents), `qb10`..`qb45` (QB display model with D exponents, BASCOM ^Z + half-away rounding through 3.0), `pds70`/`pds71` (15-digit DOUBLE), `pb21` — every one byte-identical against its genuine compiler via per-dialect oracle batteries ([docs/BASIC-FAMILY.md](docs/BASIC-FAMILY.md)) |
 | Differential harness vs. genuine PBC 3.50 | ✅ `scripts/run-diff-tests.sh`: 21 batteries (numerics, radix rules, suffixes, concat, QUAD incl. \/MOD/bitwise/SHIFT/ROTATE, ASCIIZ, 3.5 surface, pointers, UDT compare/$ELSEIF, code pointers, SETEOF/ERRCLEAR/BYVAL, vendor string surface, ARRAY SORT/SCAN + LSET/RSET + USING$, FIX/BCD arithmetic, HUGE/VIRTUAL/ABSOLUTE/REDIM PRESERVE, $ERROR defaults + traps + $OPTIMIZE SPEED, FIELD/ERL/$STRING/string-manager ABI, CHAIN with COMMON) byte-identical to the original compiler; per-dialect oracle batteries (`tests/diff/pb30/` + `tools/pb30/PBC.EXE`, …) activate automatically when the genuine binary is provided |
 | Vendor example corpus (PB 3.5 ships) | ✅ `scripts/run-vendor-corpus.sh`: 37/40 of `tools/pb35/EXAMPLE/*.BAS` compile (incl. rebuilding PB35.PBL from the unit sources with our own toolchain); the 3 remaining need TSR popups (ASCIITSR) or CGA/EGA raster graphics (BALL, EGABALL) |
 | Memory models & error checking | ✅ HUGE (DOS 48h, segment-stepping), VIRTUAL (EMS int 67h, FRE(-11)), ABSOLUTE (`AT seg`), REDIM PRESERVE; $ERROR BOUNDS/NUMERIC/OVERFLOW/STACK (+ -EB/-EN/-EO/-ES) raising errors 9/6/6/201; $OPTION SIGNED/CNTLBREAK/GOSUB; $OPTIMIZE SIZE\|SPEED (-OZF); $STRING limits (error 15); CHAIN/RUN/$COMPILE CHAIN with COMMON handoff; SHELL/EXECUTE via DOS EXEC |
