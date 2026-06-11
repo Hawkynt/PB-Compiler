@@ -77,6 +77,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     ArgumentNullException.ThrowIfNull(libraries);
     this._allowExternalCalls = units.Count > 0 || libraries.Count > 0;
 
+    // pb36 P7: programs whose only effect is printing compile-time text lower
+    // to a raw COM-style image of a few dozen bytes (docs/PB36.md)
+    if (model.Dialect >= Syntax.Dialect.Pb36 && !this._allowExternalCalls && !this._isUnit
+        && this.TryLowerTrivialProgram() is { } trivial)
+      return trivial;
+
     var asm = this._asm;
     var userMain = asm.DefineLabel("user_main");
     this._scratch = asm.DefineLabel("cg_scratch");
@@ -144,7 +150,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       asm.Mov(Mem.Word(asm.Lbl("rt_strmaxlen")), usable);
     }
 
-    this.BeginFrame();
+    this.BeginFrame(skipZeroing: this.OptimizePb36 && !ContainsErrorHandling(model.MainBody));
     this.EmitChainCommonLoad();             // absorb a CHAIN handoff, when present
     this._trackResume = ContainsErrorHandling(model.MainBody);
     foreach (var statement in model.MainBody)
@@ -214,7 +220,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// emitted, so the SUB SP immediate is a label whose "position" is patched
   /// to the final byte count by <see cref="EndFrame"/>.
   /// </summary>
-  private void BeginFrame() {
+  private void BeginFrame(bool skipZeroing = false) {
     var asm = this._asm;
     this._frameBytesLabel = asm.DefineLabel();
     this._frameWordsLabel = asm.DefineLabel();
@@ -228,6 +234,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     asm.Mov(Reg.BP, Reg.SP);
     asm.Mov(Reg.CX, Imm.OffsetOf(this._frameBytesLabel));
     asm.Sub(Reg.SP, Reg.CX);
+    if (skipZeroing)
+      return; // pb36 O19: every local is provably assigned before use (temps always are)
     // zero the whole frame: numeric locals start at 0, strings at handle 0
     asm.Push(Reg.DS);
     asm.Pop(Reg.ES);

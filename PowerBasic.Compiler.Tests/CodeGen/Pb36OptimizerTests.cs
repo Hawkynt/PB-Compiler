@@ -5,11 +5,11 @@ using PowerBasic.Compiler.Syntax;
 namespace PowerBasic.Compiler.Tests.CodeGen;
 
 /// <summary>
-/// pb36 optimizer (docs/PB36.md): runtime trimming, wrap-correct constant
-/// folding, multiply strength reduction and the zero idiom. The behavioral
-/// contract (byte-identical output to pb35/genuine PBC 3.50) is enforced by
-/// the differential harness's pb36 pass; these tests pin the size wins and
-/// the wrap arithmetic.
+/// pb36 optimizer (docs/PB36.md): runtime trimming, trivial-I/O lowering,
+/// wrap-correct constant folding, multiply strength reduction and the zero
+/// idiom. The behavioral contract (byte-identical output to pb35/genuine
+/// PBC 3.50) is enforced by the differential harness's pb36 pass; these tests
+/// pin the size wins, the image shapes and the wrap arithmetic.
 /// </summary>
 [TestFixture]
 public sealed class Pb36OptimizerTests {
@@ -24,27 +24,25 @@ public sealed class Pb36OptimizerTests {
     return exe;
   }
 
+  private static string Ascii(byte[] image) => System.Text.Encoding.ASCII.GetString(image);
+
   private const string _HELLO = "PRINT \"Hello, World!\"\nEND";
+
+  /// <summary>Non-trivial twin: the variable forces the general (trimmed-runtime) path.</summary>
+  private const string _HELLO_VAR = "x% = 1\nPRINT \"Hello, World!\"; x%\nEND";
 
   #region runtime trimming (P1/P2/P4)
 
   [Test]
-  public void Emit_GivenHelloWorld_WhenPb36_ThenRuntimeTrimsBelowOneKiB() {
-    var pb35 = Compile(_HELLO, Dialect.Pb35);
-    var pb36 = Compile(_HELLO, Dialect.Pb36);
+  public void Emit_GivenHelloWorldWithVariable_WhenPb36_ThenRuntimeTrimsBelowTwoKiB() {
+    var pb35 = Compile(_HELLO_VAR, Dialect.Pb35);
+    var pb36 = Compile(_HELLO_VAR, Dialect.Pb36);
     Assert.Multiple(() => {
-      Assert.That(pb36, Has.Length.LessThan(1024), "trimmed hello world should be under 1 KiB");
+      Assert.That(pb36, Has.Length.LessThan(2048), "trimmed hello world should be tiny");
       Assert.That(pb36.Length, Is.LessThan(pb35.Length / 4), "trimming should remove most of the runtime");
-    });
-  }
-
-  [Test]
-  public void Emit_GivenHelloWorld_WhenPb36_ThenImageIsValidMzWithPayload() {
-    var pb36 = Compile(_HELLO, Dialect.Pb36);
-    Assert.Multiple(() => {
       Assert.That(pb36[0], Is.EqualTo((byte)'M'));
       Assert.That(pb36[1], Is.EqualTo((byte)'Z'));
-      Assert.That(System.Text.Encoding.ASCII.GetString(pb36), Does.Contain("Hello, World!"));
+      Assert.That(Ascii(pb36), Does.Contain("Hello, World!"));
     });
   }
 
@@ -53,8 +51,8 @@ public sealed class Pb36OptimizerTests {
     // resident footprint = load image + MZ MinAlloc (header offset 0x0A) heap:
     // pb35 reserves 64 KiB main + 2 x 64 KiB heap segments (~192 KiB); a trimmed
     // hello world keeps only the 64 KiB main segment
-    var pb35 = Compile(_HELLO, Dialect.Pb35);
-    var pb36 = Compile(_HELLO, Dialect.Pb36);
+    var pb35 = Compile(_HELLO_VAR, Dialect.Pb35);
+    var pb36 = Compile(_HELLO_VAR, Dialect.Pb36);
     Assert.Multiple(() => {
       Assert.That(Resident(pb35), Is.GreaterThanOrEqualTo(0x30000), "pb35 baseline: main + string heap + array heap");
       Assert.That(Resident(pb36), Is.LessThanOrEqualTo(0x10000 + 16), "pb36: only the 64 KiB main segment");
@@ -96,6 +94,67 @@ public sealed class Pb36OptimizerTests {
 
   #endregion
 
+  #region P7 - trivial-I/O lowering (raw COM-style image)
+
+  [Test]
+  public void Emit_GivenHelloWorld_WhenPb36_ThenTwentyFiveByteComImage() {
+    var image = Compile(_HELLO, Dialect.Pb36);
+    Assert.Multiple(() => {
+      Assert.That(image, Has.Length.EqualTo(25), "MOV AH,9 / MOV DX / INT 21h / INT 20h + text + '$'");
+      Assert.That(image[..2], Is.EqualTo(new byte[] { 0xB4, 0x09 }), "AH=9 DOS string writer");
+      Assert.That(image[^1], Is.EqualTo((byte)'$'));
+      Assert.That(Ascii(image), Does.Contain("Hello, World!\r\n"));
+    });
+  }
+
+  [Test]
+  public void Emit_GivenLiteralContainingDollar_WhenPb36_ThenHandleWriterVariant() {
+    var image = Compile("PRINT \"100$ for you\"\nEND", Dialect.Pb36);
+    Assert.Multiple(() => {
+      Assert.That(image[..2], Is.EqualTo(new byte[] { 0xB4, 0x40 }), "'$' in text forces the AH=40h writer");
+      Assert.That(Ascii(image), Does.Contain("100$ for you"));
+    });
+  }
+
+  [Test]
+  public void Emit_GivenConstantNumericPrint_WhenPb36_ThenPbFormattedAtCompileTime() {
+    var image = Compile("PRINT 2 + 3\nPRINT -7\nEND", Dialect.Pb36);
+    Assert.Multiple(() => {
+      Assert.That(image, Has.Length.LessThan(64));
+      Assert.That(Ascii(image), Does.Contain(" 5 \r\n"), "PB integer format: space, digits, trailing space");
+      Assert.That(Ascii(image), Does.Contain("-7 \r\n"));
+    });
+  }
+
+  [Test]
+  public void Emit_GivenCommaSeparator_WhenPb36_ThenFourteenColumnZonesPrecomputed() {
+    var image = Compile("PRINT \"ab\", \"cd\"\nEND", Dialect.Pb36);
+    Assert.That(Ascii(image), Does.Contain("ab" + new string(' ', 12) + "cd\r\n"));
+  }
+
+  [Test]
+  public void Emit_GivenEndWithExitCode_WhenPb36_ThenExplicitTerminateCall() {
+    var image = Compile("PRINT \"x\"\nEND 3", Dialect.Pb36);
+    var hasExit = false;
+    for (var i = 0; i + 4 < image.Length; ++i)
+      hasExit |= image[i] == 0xB8 && image[i + 1] == 0x03 && image[i + 2] == 0x4C; // MOV AX,4C03h
+    Assert.That(hasExit, Is.True, "explicit exit code uses AH=4Ch with AL=3");
+  }
+
+  [Test]
+  public void Emit_GivenNonTrivialStatement_WhenPb36_ThenGeneralMzPathTaken() {
+    var image = Compile("x% = 1\nPRINT x%\nEND", Dialect.Pb36);
+    Assert.That(image[..2], Is.EqualTo(new byte[] { (byte)'M', (byte)'Z' }), "variables need the real runtime");
+  }
+
+  [Test]
+  public void Emit_GivenHelloWorld_WhenPb35_ThenNoTrivialLowering() {
+    var image = Compile(_HELLO, Dialect.Pb35);
+    Assert.That(image[..2], Is.EqualTo(new byte[] { (byte)'M', (byte)'Z' }), "P7 is pb36-only");
+  }
+
+  #endregion
+
   #region wrap-correct constant folding (O1)
 
   [TestCase(32767 + 1, (short)-32768)]
@@ -127,7 +186,72 @@ public sealed class Pb36OptimizerTests {
 
   [Test]
   public void Emit_GivenConstantExpressions_WhenPb36_ThenFoldedCodeIsSmaller() {
-    const string source = "x% = 2 + 3 * 4 - 1\ny& = 1000 * 1000\nPRINT x%; y&\nEND";
+    const string source = "y& = 7\nx% = 2 + 3 * 4 - 1\ny& = y& + 1000 * 1000\nPRINT x%; y&\nEND";
+    var pb35 = Compile(source, Dialect.Pb35);
+    var pb36 = Compile(source, Dialect.Pb36);
+    Assert.That(pb36.Length, Is.LessThan(pb35.Length));
+  }
+
+  #endregion
+
+  #region definite-assignment frame-zero elision (O19)
+
+  private static (SemanticModel Model, ProcedureSymbol Proc) BindProc(string body) {
+    var source = $"DECLARE SUB P\nCALL P\nEND\nSUB P\n{body}\nEND SUB";
+    var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
+    return (model, model.Procedures["P"]);
+  }
+
+  private static bool CanElide(string body) {
+    var (model, proc) = BindProc(body);
+    var locals = proc.Variables.Values
+      .Where(v => v.Storage == VariableStorage.Local && !v.IsArray)
+      .Distinct()
+      .ToList();
+    return CodeGenerator.CanElideFrameZeroing(model, proc.Body!, locals);
+  }
+
+  [Test]
+  public void Elide_GivenStraightLineAssignments_WhenAnalyzed_ThenProvable()
+    => Assert.That(CanElide("a% = 1\nb% = a% * 2\nPRINT b%"), Is.True);
+
+  [Test]
+  public void Elide_GivenReadBeforeAssignment_WhenAnalyzed_ThenKeepsZeroing()
+    => Assert.That(CanElide("b% = a% + 1\na% = 2\nPRINT b%"), Is.False);
+
+  [Test]
+  public void Elide_GivenAssignmentBehindIf_WhenAnalyzed_ThenKeepsZeroing()
+    => Assert.That(CanElide("IF 1 THEN\n  a% = 1\nEND IF\nPRINT a%"), Is.False);
+
+  [Test]
+  public void Elide_GivenForCounterAsOnlyLocal_WhenAnalyzed_ThenProvable()
+    => Assert.That(CanElide("FOR i% = 1 TO 3\n  PRINT i%\nNEXT i%"), Is.True);
+
+  [Test]
+  public void Elide_GivenLocalAssignedOnlyInsideFor_WhenAnalyzed_ThenKeepsZeroing()
+    => Assert.That(CanElide("FOR i% = 1 TO 3\n  a% = i%\nNEXT i%\nPRINT a%"), Is.False);
+
+  [Test]
+  public void Elide_GivenDynamicStringLocal_WhenAnalyzed_ThenProvableViaIndividualSlotZeroing()
+    => Assert.That(CanElide("a% = 1\ns$ = \"x\"\nPRINT a%; s$"), Is.True);
+
+  [Test]
+  public void Elide_GivenFunctionCallInPrefix_WhenAnalyzed_ThenKeepsZeroing() {
+    const string source = "DECLARE FUNCTION F%\nEND\nFUNCTION F%\n  F% = 1\nEND FUNCTION\nSUB P\n  a% = F%\n  PRINT a%\nEND SUB";
+    var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty);
+    var proc = model.Procedures["P"];
+    var locals = proc.Variables.Values.Where(v => v.Storage == VariableStorage.Local && !v.IsArray).Distinct().ToList();
+    Assert.That(CodeGenerator.CanElideFrameZeroing(model, proc.Body!, locals), Is.False,
+      "user FUNCTION calls are opaque - the proof must stop");
+  }
+
+  [Test]
+  public void Emit_GivenElidableSub_WhenPb36_ThenSmallerThanPb35() {
+    const string source = "DECLARE SUB P\nCALL P\nEND\nSUB P\n  a% = 1\n  b% = a% + 1\n  PRINT b%\nEND SUB";
     var pb35 = Compile(source, Dialect.Pb35);
     var pb36 = Compile(source, Dialect.Pb36);
     Assert.That(pb36.Length, Is.LessThan(pb35.Length));
@@ -147,11 +271,11 @@ public sealed class Pb36OptimizerTests {
 
   [Test]
   public void Emit_GivenMultiplyByZeroWithFunctionOperand_WhenPb36_ThenOperandStillEvaluated() {
-    // the FUNCTION call has side effects - x * 0 must keep the call (assert: it compiles
-    // and the call's PRINT side effect stays inside the image as a literal)
+    // the FUNCTION call has side effects - x * 0 must keep the call (assert: the
+    // call's PRINT side effect stays inside the image as a literal)
     const string source = "DECLARE FUNCTION F%\nx% = F% * 0\nPRINT x%\nEND\nFUNCTION F%\n  PRINT \"SIDE-EFFECT-MARKER\"\n  F% = 7\nEND FUNCTION";
     var pb36 = Compile(source, Dialect.Pb36);
-    Assert.That(System.Text.Encoding.ASCII.GetString(pb36), Does.Contain("SIDE-EFFECT-MARKER"));
+    Assert.That(Ascii(pb36), Does.Contain("SIDE-EFFECT-MARKER"));
   }
 
   #endregion

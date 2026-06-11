@@ -55,6 +55,10 @@ Unit coverage for the emulated rows: `PowerBasic.Compiler.Tests/Syntax/QuirkEmul
   (`$IF %X = 1` → `Error 477: Syntax error`); the condition is one equate,
   true when nonzero. PB-Compiler additionally accepts constant expressions
   (a superset) — programs valid for the real compiler behave identically.
+- **DECLARE SUB requires an explicit parameter list**: PBC 3.50 rejects
+  `DECLARE SUB Name` without parentheses (`Error 426: Variable expected`);
+  parameterless prototypes must read `DECLARE SUB Name ()`. PB-Compiler
+  accepts both (superset); batteries use the strict form.
 - **Narrowing QUAD/DWORD stores wrap silently** (e.g. `d??? = 3000000000`
   keeps 3000000000; a saturating FISTP would yield 2147483648) — matching the
   documented "no overflow checking" rule; PB-Compiler stores through a 64-bit

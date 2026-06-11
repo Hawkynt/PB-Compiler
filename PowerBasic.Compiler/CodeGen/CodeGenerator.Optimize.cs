@@ -92,6 +92,134 @@ public sealed partial class CodeGenerator {
 
   #endregion
 
+  #region O19 - definite-assignment frame-zero elision
+
+  /// <summary>
+  /// pb36 O19: true when every non-dynamic-string stack local of
+  /// <paramref name="body"/> is provably assigned before any use, so the
+  /// whole-frame zero fill is unobservable. The proof is a conservative
+  /// straight-line prefix scan: it accepts whole-variable assignments whose
+  /// right side reads only already-assigned (or non-local) storage and a
+  /// leading FOR header (the counter is written before the body runs); any
+  /// control flow, call or other statement ends the prefix. Dynamic STRING/
+  /// FLEX slots are excluded - assignment itself frees the previous handle,
+  /// so their slots must start at 0 (the caller zeroes them individually).
+  /// Locals whose type embeds a string handle never qualify.
+  /// </summary>
+  public static bool CanElideFrameZeroing(SemanticModel model, IReadOnlyList<Statement> body, IReadOnlyList<VariableSymbol> stackLocals) {
+    var pending = new HashSet<VariableSymbol>(ReferenceEqualityComparer.Instance);
+    foreach (var local in stackLocals) {
+      if (local.Type is StringType or FlexType)
+        continue; // zeroed individually by the caller
+      if (EmbedsStringHandle(local.Type))
+        return false; // a garbage embedded handle would corrupt the string heap
+      pending.Add(local);
+    }
+    if (pending.Count == 0)
+      return true;
+
+    foreach (var statement in body)
+      switch (statement) {
+        case MetaStmt or EquateStmt or DefTypeStmt or DataStmt or LabelStmt:
+          continue; // inert (a label alone cannot be jumped to from an accepted prefix)
+
+        case DimStmt dim: {
+          foreach (var v in dim.Variables)
+            foreach (var (lower, upper) in v.ArrayBounds ?? []) {
+              if (lower != null && ReadsPending(model, lower, pending))
+                return false;
+              if (ReadsPending(model, upper, pending))
+                return false;
+            }
+          continue;
+        }
+
+        case AssignStmt { Target: NameExpr target } assign: {
+          if (ReadsPending(model, assign.Value, pending))
+            return false;
+          if (model.VariableBindings.TryGetValue(target, out var symbol))
+            pending.Remove(symbol);
+          if (pending.Count == 0)
+            return true;
+          continue;
+        }
+
+        case ForStmt { Variable: NameExpr counter } loop: {
+          if (ReadsPending(model, loop.From, pending) || ReadsPending(model, loop.To, pending)
+              || (loop.Step != null && ReadsPending(model, loop.Step, pending)))
+            return false;
+          if (model.VariableBindings.TryGetValue(counter, out var symbol))
+            pending.Remove(symbol); // the FOR header writes the counter unconditionally
+          return pending.Count == 0; // the body may run zero times - prefix ends here
+        }
+
+        default:
+          return pending.Count == 0; // prefix ends at the first complex statement
+      }
+
+    return pending.Count == 0;
+  }
+
+  /// <summary>True when <paramref name="type"/> stores a dynamic string handle anywhere inside.</summary>
+  private static bool EmbedsStringHandle(PbType type) => type switch {
+    StringType or FlexType => true,
+    UdtType udt => udt.Fields.Any(f => EmbedsStringHandle(f.Type)),
+    ArrayType array => EmbedsStringHandle(array.Element),
+    _ => false,
+  };
+
+  /// <summary>
+  /// True when evaluating <paramref name="e"/> could read a still-unassigned
+  /// local (or do anything the prefix proof cannot see through, e.g. call a
+  /// user procedure that might receive a pending local BYREF).
+  /// </summary>
+  private static bool ReadsPending(SemanticModel model, Expression e, HashSet<VariableSymbol> pending) {
+    switch (e) {
+      case IntegerLiteralExpr or FloatLiteralExpr or StringLiteralExpr or NamedConstantExpr:
+        return false;
+
+      case NameExpr name:
+        if (model.CallBindings.ContainsKey(name))
+          return true; // parameterless user FUNCTION - opaque
+        return model.VariableBindings.TryGetValue(name, out var symbol) && pending.Contains(symbol);
+
+      case CallOrIndexExpr call: {
+        if (model.CallBindings.ContainsKey(call))
+          return true; // user FUNCTION call - opaque side effects
+        if (model.VariableBindings.TryGetValue(call, out var array) && pending.Contains(array))
+          return true;
+        return call.Arguments.Any(a => ReadsPending(model, a, pending));
+      }
+
+      case MemberExpr member:
+        return ReadsPending(model, member.Target, pending);
+
+      case IndexExpr index:
+        return ReadsPending(model, index.Target, pending) || index.Arguments.Any(a => ReadsPending(model, a, pending));
+
+      case PtrDerefExpr deref:
+        return ReadsPending(model, deref.Pointer, pending)
+          || (deref.Index != null && ReadsPending(model, deref.Index, pending));
+
+      case ByValArgExpr byVal:
+        return ReadsPending(model, byVal.Value, pending);
+
+      case UnaryExpr unary:
+        return ReadsPending(model, unary.Operand, pending);
+
+      case BinaryExpr binary:
+        return ReadsPending(model, binary.Left, pending) || ReadsPending(model, binary.Right, pending);
+
+      case FileNumberExpr file:
+        return ReadsPending(model, file.Number, pending);
+
+      default:
+        return true; // unknown expression shapes are opaque
+    }
+  }
+
+  #endregion
+
   #region O4 - multiply strength reduction
 
   /// <summary>

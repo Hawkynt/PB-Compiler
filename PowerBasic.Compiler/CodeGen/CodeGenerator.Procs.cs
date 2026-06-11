@@ -63,7 +63,19 @@ public sealed partial class CodeGenerator {
       asm.Call(this._rt.Raise);
       asm.MarkLabel(roomy);
     }
-    this.BeginFrame();
+
+    // pb36 O19: when every (non-string) local is definitely assigned before
+    // use and no error handler can re-enter with stale state, the whole-frame
+    // zero fill collapses to zeroing just the dynamic-string handle slots
+    // (those must stay 0 for the first StrAssign and the epilogue StrFree)
+    var stackLocals = this.StackLocalsOf(proc).ToList();
+    var elideZeroing = this.OptimizePb36 && !this._trackResume
+      && CanElideFrameZeroing(model, proc.Body!, stackLocals);
+    this.BeginFrame(elideZeroing);
+    if (elideZeroing)
+      foreach (var local in stackLocals)
+        if (local.Type is StringType or FlexType)
+          asm.Mov(Mem.Word(Reg.BP, local.Offset), (Imm)0);
 
     // procedures that arm ON ERROR save and restore the caller's handler state
     Mem? savedHandler = null;
