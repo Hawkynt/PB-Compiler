@@ -121,7 +121,7 @@ differential battery before the dialect can be claimed:
 | `pb32` | `PBC.EXE` 3.20 [German] | `tools/pb32/PBC.EXE` + `tests/diff/pb32/` | **staged** - installer driven headlessly (Xvfb + xdotool; it only runs from an interactive prompt, not from autoexec - that was the old "black screen") |
 | `pb20/21` | `PB.EXE` 2.1 | IDE-only - same AUTOTYPE drive as `tb11` | **binary staged** in `tools/pb2x/` (WinWorld 2.1 floppy; French 2.10b/f archived) - IDE keystroke flow still to map |
 | `qb45` | `BC.EXE` + `LINK.EXE` | `tests/diff/qb45/oracle.conf`: `BC T.BAS,T.OBJ;` + `LINK T.OBJ,T.EXE,,BCOM45.LIB;` | **ACTIVE** - `--dialect qb45` implemented; 2 batteries byte-identical (typing/formatting/VAL, strings/math/control flow) |
-| `qb40` | `BC.EXE` + `LINK.EXE` | like qb45 with `BCOM40.LIB` | **staged** in `tools/qb40/` |
+| `qb40` | `BC.EXE` 4.00 + `LINK.EXE` | `tests/diff/qb40/oracle.conf`: like qb45 with `BCOM40.LIB` | **ACTIVE** - `--dialect qb40`; the qb45 battery runs byte-identical against genuine BC 4.00 (no observable runtime delta to 4.5 in the covered surface) |
 | `qb30`/`qb20`/`qb10` | `QB.EXE` (3.0/2.0x) / `BASCOM.EXE` (1.0) | qb30/qb20: QB.EXE command-line or IDE drive; qb10: BASCOM+LINK | **staged** in `tools/qb30|qb20|qb10/` - compile flows still to map |
 | `tb11` | `TB.EXE` 1.1 | `tests/diff/tb11/oracle.conf`: AUTOTYPE menu drive (Options→EXE file, Load, Compile, Quit), fully headless | **ACTIVE** - `--dialect tb11` implemented; 3 batteries byte-identical (formatting/typing, strings/math, control flow) |
 | `tb10` | `TB.EXE` 1.0 | same AUTOTYPE drive as tb11 | **ACTIVE** - `--dialect tb10`; the tb11 battery runs byte-identical against the genuine TB 1.0 (1.1 was a bugfix release; no observable language delta in the covered surface) |
