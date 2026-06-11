@@ -980,6 +980,8 @@ public sealed partial class DosRuntime {
     asm.Align(2);
     asm.MarkLabel("rt_const_ten_m64");
     asm.Dq(10.0);
+    asm.MarkLabel("rt_const_half_m64");
+    asm.Dq(0.5);
     asm.MarkLabel("rt_const_65536");
     asm.Dq(65536.0);
     asm.MarkLabel("rt_const_2p31");

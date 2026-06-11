@@ -171,6 +171,8 @@ public sealed partial class DosRuntime {
       asm.Xor(Reg.CX, Reg.CX);
       asm.MarkLabel(setLen);
       asm.Mov(Mem.Word(Reg.BX, asm.Lbl("rt_reclen")), Reg.CX);
+      asm.Mov(Reg.CX, Mem.Word(asm.Lbl("rt_st1")));
+      asm.Mov(Mem.Word(Reg.BX, asm.Lbl("rt_fmode")), Reg.CX);
       // APPEND: position at the end
       asm.Cmp(Mem.Word(asm.Lbl("rt_st1")), (Imm)2);
       asm.Jne(done);
@@ -540,7 +542,30 @@ public sealed partial class DosRuntime {
       asm.Mov(Reg.AX, Mem.Word(Reg.BX, files));
       asm.Test(Reg.AX, Reg.AX);
       asm.Jz(done);
-      asm.Mov(Mem.Word(Reg.BX, files), (Imm)0);
+      if (this.Dialect == Syntax.Dialect.Qb10) {
+        // BASCOM 1.0 ends sequential OUTPUT/APPEND files with a CP/M-style
+        // ^Z marker (oracle-verified; QB 4.x dropped the habit)
+        var noEof = asm.DefineLabel();
+        var writeEof = asm.DefineLabel();
+        asm.Cmp(Mem.Word(Reg.BX, asm.Lbl("rt_fmode")), (Imm)1);
+        asm.Je(writeEof);
+        asm.Cmp(Mem.Word(Reg.BX, asm.Lbl("rt_fmode")), (Imm)2);
+        asm.Jne(noEof);
+        asm.MarkLabel(writeEof);
+        asm.Push(Reg.AX);
+        asm.Push(Reg.CX);
+        asm.Push(Reg.DX);
+        asm.Mov(Reg.BX, Reg.AX);
+        asm.Mov(Mem.Byte(asm.Lbl("rt_namebuf")), 0x1A);
+        asm.Mov(Reg.CX, 1);
+        asm.Mov(Reg.DX, Imm.OffsetOf(asm.Lbl("rt_namebuf")));
+        asm.Mov(Reg.AH, 0x40);
+        asm.Int(0x21);
+        asm.Pop(Reg.DX);
+        asm.Pop(Reg.CX);
+        asm.Pop(Reg.AX);
+        asm.MarkLabel(noEof);
+      }
       asm.Mov(Reg.BX, Reg.AX);
       asm.Mov(Reg.AH, 0x3E);
       asm.Int(0x21);
@@ -723,6 +748,8 @@ public sealed partial class DosRuntime {
   private void EmitFileData(Assembler asm) {
     asm.Align(2);
     asm.MarkLabel("rt_files");
+    asm.Db(new byte[32]);
+    asm.MarkLabel("rt_fmode");
     asm.Db(new byte[32]);
     asm.MarkLabel("rt_reclen");
     asm.Db(new byte[32]);

@@ -569,6 +569,30 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>Converts the current value (registers/FPU per <paramref name="from"/>) into <paramref name="to"/>'s category.</summary>
+  /// <summary>
+  /// BASCOM 1.0 rounds float-to-integer conversions half AWAY from zero
+  /// (CINT(2.5) = 3, CINT(-2.5) = -3, oracle-verified); QB 4.x and PB use the
+  /// FPU's round-to-nearest-even. Biases ST(0) by +-0.5 and truncates so the
+  /// following FISTP (nearest-even of an integral value) is exact.
+  /// </summary>
+  private void EmitDialectRounding() {
+    if (model.Dialect != Syntax.Dialect.Qb10)
+      return;
+    var asm = this._asm;
+    var negative = asm.DefineLabel();
+    var biased = asm.DefineLabel();
+    asm.Ftst();
+    asm.FstswAx();
+    asm.Sahf();
+    asm.Jc(negative);
+    asm.Fadd(Mem.Qword(asm.Lbl("rt_const_half_m64")));
+    asm.Jmp(biased);
+    asm.MarkLabel(negative);
+    asm.Fsub(Mem.Qword(asm.Lbl("rt_const_half_m64")));
+    asm.MarkLabel(biased);
+    asm.Call(asm.Lbl("rt_trunc"));
+  }
+
   private void Coerce(PbType from, PbType to, Expression at) {
     var asm = this._asm;
     var src = KindOf(from);
@@ -607,11 +631,13 @@ public sealed partial class CodeGenerator {
         break;
 
       case (ValueKind.Float, ValueKind.Int16):
+        this.EmitDialectRounding();
         asm.Fistp(Mem.Word(this._scratch));
         asm.Mov(Reg.AX, Mem.Word(this._scratch));
         break;
 
       case (ValueKind.Float, ValueKind.Int32):
+        this.EmitDialectRounding();
         asm.Fistp(Mem.Dword(this._scratch));
         asm.Mov(Reg.AX, Mem.Word(this._scratch));
         asm.Mov(Reg.DX, Mem.Word(this._scratch, 2));
