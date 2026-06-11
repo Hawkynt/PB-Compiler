@@ -124,7 +124,7 @@ differential battery before the dialect can be claimed:
 | `qb40` | `BC.EXE` + `LINK.EXE` | like qb45 with `BCOM40.LIB` | **staged** in `tools/qb40/` |
 | `qb30`/`qb20`/`qb10` | `QB.EXE` (3.0/2.0x) / `BASCOM.EXE` (1.0) | qb30/qb20: QB.EXE command-line or IDE drive; qb10: BASCOM+LINK | **staged** in `tools/qb30|qb20|qb10/` - compile flows still to map |
 | `tb11` | `TB.EXE` 1.1 | `tests/diff/tb11/oracle.conf`: AUTOTYPE menu drive (Options→EXE file, Load, Compile, Quit), fully headless | **ACTIVE** - `--dialect tb11` implemented; 3 batteries byte-identical (formatting/typing, strings/math, control flow) |
-| `tb10` | `TB.EXE` 1.0 | same AUTOTYPE drive as tb11 | **staged** in `tools/tb10/` |
+| `tb10` | `TB.EXE` 1.0 | same AUTOTYPE drive as tb11 | **ACTIVE** - `--dialect tb10`; the tb11 battery runs byte-identical against the genuine TB 1.0 (1.1 was a bugfix release; no observable language delta in the covered surface) |
 | `qbasic` | `QBASIC.EXE` | `QBASIC /RUN T.BAS` | not yet fetched (DOS 5+ media) |
 | `pds71` | `BC.EXE` 7.10 + `LINK` 5.10 | `tests/diff/pds71/oracle.conf`: `BC /O` + `LINK ...,BCL71ENR.LIB;` against the full install in `tools/pds71/bc7/` | **ACTIVE** - SETUP /BATCH install completed in DOSBox, all four BCL71 combos + BRT71 modules built, smoke-verified |
 | `pds70` | `BC.EXE` 7.00 | like pds71 | **blocked** - the WinWorld 7.0 BC.EXE hangs at startup under dosbox-staging (before its banner); plain-file disks staged in `tools/pds70/` |
