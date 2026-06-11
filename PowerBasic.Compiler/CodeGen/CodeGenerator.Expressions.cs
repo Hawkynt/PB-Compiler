@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Asm;
+using PowerBasic.Compiler.Syntax;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax.Ast;
 
@@ -570,13 +571,13 @@ public sealed partial class CodeGenerator {
 
   /// <summary>Converts the current value (registers/FPU per <paramref name="from"/>) into <paramref name="to"/>'s category.</summary>
   /// <summary>
-  /// BASCOM 1.0 rounds float-to-integer conversions half AWAY from zero
+  /// The BASCOM lineage (QB 1.0-3.0) rounds float-to-integer half AWAY from zero
   /// (CINT(2.5) = 3, CINT(-2.5) = -3, oracle-verified); QB 4.x and PB use the
   /// FPU's round-to-nearest-even. Biases ST(0) by +-0.5 and truncates so the
   /// following FISTP (nearest-even of an integral value) is exact.
   /// </summary>
   private void EmitDialectRounding() {
-    if (model.Dialect != Syntax.Dialect.Qb10)
+    if (!model.Dialect.IsBascomRuntime())
       return;
     var asm = this._asm;
     var negative = asm.DefineLabel();

@@ -151,6 +151,14 @@ public static class DialectFacts {
   /// <summary>Turbo Basic 1.x - Borland's PB predecessor (16-digit double-everything runtime).</summary>
   public static bool IsTurboBasic(this Dialect dialect) => dialect <= Dialect.Tb11;
 
+  /// <summary>
+  /// QB 1.0-3.0 share the BASCOM runtime heritage: half-away-from-zero
+  /// float-to-integer rounding and a CP/M-style ^Z terminating sequential
+  /// output (oracle-verified identical across all three).
+  /// </summary>
+  public static bool IsBascomRuntime(this Dialect dialect)
+    => dialect.Family() == DialectFamily.Microsoft && dialect < Dialect.Qb40;
+
   /// <summary>Product family - ordinal dialect comparisons are only valid within one family.</summary>
   public static DialectFamily Family(this Dialect dialect)
     => dialect >= Dialect.Qb10 ? DialectFamily.Microsoft : DialectFamily.Borland;
