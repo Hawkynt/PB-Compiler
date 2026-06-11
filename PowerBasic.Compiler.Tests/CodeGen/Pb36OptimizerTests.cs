@@ -259,6 +259,29 @@ public sealed class Pb36OptimizerTests {
 
   #endregion
 
+  #region block-move widening (C1/R3)
+
+  [Test]
+  public void Emit_GivenUdtCopies_WhenPb36_ThenNotLargerThanPb35() {
+    const string source = "TYPE T\n  x AS LONG\n  y AS LONG\nEND TYPE\nDIM a AS T\nDIM b AS T\na.x = 1\nb = a\nPRINT b.x\nEND";
+    var pb35 = Compile(source, Dialect.Pb35);
+    var pb36 = Compile(source, Dialect.Pb36);
+    Assert.That(pb36.Length, Is.LessThanOrEqualTo(pb35.Length), "word-wide REP MOVSW never grows the image");
+  }
+
+  [Test]
+  public void Emit_GivenUdtCopiesUnderCpu386_WhenPb36_ThenDwordMoves() {
+    const string source = "$CPU 80386\nTYPE T\n  x AS LONG\n  y AS LONG\nEND TYPE\nDIM a AS T\nDIM b AS T\na.x = 1\nb = a\nPRINT b.x\nEND";
+    var image = Compile(source, Dialect.Pb36);
+    // REP MOVSD = F3 66 A5
+    var found = false;
+    for (var i = 0; i + 2 < image.Length; ++i)
+      found |= image[i] == 0xF3 && image[i + 1] == 0x66 && image[i + 2] == 0xA5;
+    Assert.That(found, Is.True, "$CPU 80386 + pb36 should emit REP MOVSD block copies");
+  }
+
+  #endregion
+
   #region strength reduction (O4) and zero idiom (O8)
 
   [Test]

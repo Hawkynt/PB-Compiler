@@ -92,6 +92,46 @@ public sealed partial class CodeGenerator {
 
   #endregion
 
+  #region C1/R3 - block-move widening
+
+  /// <summary>True when $CPU 80386 (or higher) is selected - 32-bit string ops are legal.</summary>
+  private bool Cpu386 => model.MetaStatements.Any(m =>
+    m.Command.Equals("CPU", StringComparison.OrdinalIgnoreCase)
+    && m.Arguments is [{ } level, ..]
+    && level.Text is "80386" or "80486" or "386" or "486");
+
+  /// <summary>
+  /// REP-copies CX-free <paramref name="byteCount"/> bytes DS:SI -> ES:DI.
+  /// pb35 keeps the byte-wide copy; pb36 widens to words (8086-safe) and to
+  /// DWORDs under $CPU 80386, with the odd tail copied byte-wise - pure copies
+  /// are width-agnostic, so behavior is identical.
+  /// </summary>
+  private void EmitBlockMove(int byteCount) {
+    var asm = this._asm;
+    if (!this.OptimizePb36 || byteCount < 4) {
+      asm.Mov(Reg.CX, byteCount);
+      asm.Rep();
+      asm.Movsb();
+      return;
+    }
+
+    if (this.Cpu386 && byteCount >= 8) {
+      asm.Mov(Reg.CX, byteCount / 4);
+      asm.Rep();
+      asm.Movsd();
+      if ((byteCount & 2) != 0)
+        asm.Movsw();
+    } else {
+      asm.Mov(Reg.CX, byteCount / 2);
+      asm.Rep();
+      asm.Movsw();
+    }
+    if ((byteCount & 1) != 0)
+      asm.Movsb();
+  }
+
+  #endregion
+
   #region O19 - definite-assignment frame-zero elision
 
   /// <summary>

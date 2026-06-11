@@ -54,6 +54,8 @@ public static class DosBoxRunner {
       var conf = Path.Combine(dir, "dosbox.conf");
       File.WriteAllText(conf, $"""
         [sdl]
+        windowposition=-10000,-10000
+        window_position = -10000,-10000
         [dosbox]
         ems=true
         [autoexec]
@@ -67,8 +69,9 @@ public static class DosBoxRunner {
       // No stream redirection: an undrained stdout pipe deadlocks DOSBox once it
       // fills. SDL_VIDEODRIVER=dummy is also avoided - dosbox-staging on Windows
       // quits before the autoexec runs with it; CI uses classic dosbox on Linux.
-      // CreateNoWindow makes dosbox-staging hang before the autoexec, so the
-      // emulator window briefly flashes during local runs - harmless.
+      // CreateNoWindow makes dosbox-staging hang before the autoexec; instead
+      // the [sdl] windowposition above parks the window off-screen (dosbox-x)
+      // so local runs do not disturb the desktop.
       var psi = new ProcessStartInfo(Executable!, $"-conf \"{conf}\"") {
         UseShellExecute = false,
       };

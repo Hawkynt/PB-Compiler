@@ -93,7 +93,10 @@ for t in "${tests[@]}"; do
     run="T$i.EXE < T$i.IN > T$i.OUT"
   fi
   {
-    echo "[sdl]"; echo "[cpu]"; echo "core=auto"; echo "cycles=max"
+    echo "[sdl]"
+    echo "windowposition=-10000,-10000"   # dosbox-x key; others warn-and-ignore
+    echo "window_position = -10000,-10000" # dosbox-staging key
+    echo "[cpu]"; echo "core=auto"; echo "cycles=max"
     echo "[dosbox]"; echo "ems=true"
     echo "[autoexec]"
     echo "mount c \"$(pwd -W 2>/dev/null || pwd)/build\""  # pwd -W: Windows-style path under git-bash

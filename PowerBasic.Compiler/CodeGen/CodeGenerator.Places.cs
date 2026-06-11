@@ -373,11 +373,9 @@ public sealed partial class CodeGenerator {
     }
     asm.Pop(Reg.SI);
     asm.Pop(Reg.DX);
-    asm.Mov(Reg.CX, byteCount);
     asm.Push(Reg.DS);
     asm.Mov(Reg.DS, Reg.DX);
-    asm.Rep();
-    asm.Movsb();
+    this.EmitBlockMove(byteCount);
     asm.Pop(Reg.DS);
   }
 

@@ -73,7 +73,10 @@ run_battery() { # $1 = oracle dir, $2 = dialect flag ("" = default pb35), $3.. =
     cp "$t" "build/diff/$label/real/T.BAS"
     rm -f "build/diff/$label/real/RESULT.TXT" "build/diff/$label/real/T.EXE"
     {
-      echo "[sdl]"; echo "[cpu]"; echo "core=auto"; echo "cycles=max"
+      echo "[sdl]"
+      echo "windowposition=-10000,-10000"   # dosbox-x key; others warn-and-ignore
+      echo "window_position = -10000,-10000" # dosbox-staging key
+      echo "[cpu]"; echo "core=auto"; echo "cycles=max"
       echo "[dosbox]"; echo "ems=true"
       echo "[autoexec]"
       echo "mount c \"$(winpath "build/diff/$label/real")\""
@@ -98,7 +101,10 @@ run_battery() { # $1 = oracle dir, $2 = dialect flag ("" = default pb35), $3.. =
       echo "FAIL  $label/$name (our compile)"; sed 's/^/      /' "build/diff/$label/ours/pbcout.txt"; fail=1; continue
     fi
     {
-      echo "[sdl]"; echo "[cpu]"; echo "core=auto"; echo "cycles=max"
+      echo "[sdl]"
+      echo "windowposition=-10000,-10000"   # dosbox-x key; others warn-and-ignore
+      echo "window_position = -10000,-10000" # dosbox-staging key
+      echo "[cpu]"; echo "core=auto"; echo "cycles=max"
       echo "[dosbox]"; echo "ems=true"
       echo "[autoexec]"
       echo "mount c \"$(winpath "build/diff/$label/ours")\""
