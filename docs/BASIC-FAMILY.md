@@ -129,7 +129,7 @@ differential battery before the dialect can be claimed:
 | `tb10` | `TB.EXE` 1.0 | same AUTOTYPE drive as tb11 | **ACTIVE** - `--dialect tb10`; the tb11 battery runs byte-identical against the genuine TB 1.0 (1.1 was a bugfix release; no observable language delta in the covered surface) |
 | `qbasic` | `QBASIC.EXE` | `QBASIC /RUN T.BAS` | not yet fetched (DOS 5+ media) |
 | `pds71` | `BC.EXE` 7.10 + `LINK` 5.10 | `tests/diff/pds71/oracle.conf`: `BC /O` + `LINK ...,BCL71ENR.LIB;` against the full install in `tools/pds71/bc7/` | **ACTIVE** - `--dialect pds71`; the qb45 battery runs byte-identical; one verified runtime delta vs QB 4.5: DOUBLE display went back to 15 significant digits (`1D15` shows `1D+15`, QB shows `1000000000000000`) |
-| `pds70` | `BC.EXE` 7.00 | like pds71 | **blocked** - the WinWorld 7.0 BC.EXE hangs at startup under dosbox-staging (before its banner); plain-file disks staged in `tools/pds70/` |
+| `pds70` | `BC.EXE` 7.00 + `LINK` | `tests/diff/pds70/oracle.conf`: `BC /O` + `BCL70ENR.LIB` from the SETUP /BATCH install (`tools/pds70/bc7/`, binaries in `BIN`, not `BINB`) | **ACTIVE** - `--dialect pds70`; the pds71 battery runs byte-identical (7.0 and 7.1 share the runtime model incl. the 15-digit DOUBLE). The earlier "hang": the 7.0 disks ship SZDD-compressed files under PLAIN names (BC.EXE was really BC.EX$) - UNPACK.EXE fixes them |
 | `gw` | `GWBASIC.EXE` | stdin-scripted interpreter session | not yet fetched |
 
 `scripts/run-diff-tests.sh` discovers `tests/diff/<dialect>/` batteries
