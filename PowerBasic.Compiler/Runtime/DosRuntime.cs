@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Asm;
+using PowerBasic.Compiler.Syntax;
 
 namespace PowerBasic.Compiler.Runtime;
 
@@ -26,6 +27,14 @@ public sealed partial class DosRuntime {
 
   /// <summary>Paragraphs to reserve beyond the 64 KiB main segment: string heap + array heap.</summary>
   public const int ExtraHeapParagraphs = 0x2000;
+
+  /// <summary>
+  /// Dialect whose runtime behavior to replicate. Turbo Basic formats every
+  /// float with 16 significant digits, zero-padded three-digit exponents
+  /// ("1E+016") and switches to exponent notation below 0.1; its VAL wraps
+  /// radix values to 16 bits. Label names are dialect-independent.
+  /// </summary>
+  public Syntax.Dialect Dialect { get; set; } = Syntax.Dialect.Pb35;
 
   public Label PrintStr { get; private set; } = null!;
   public Label PrintInt16 { get; private set; } = null!;
@@ -418,12 +427,13 @@ public sealed partial class DosRuntime {
   /// otherwise exponent notation. PB-style sign/space prefix and trailing space.
   /// </summary>
   private void EmitPrintFloat(Assembler asm) {
+    var turbo = this.Dialect.IsTurboBasic();
     this.PrintSingle = asm.MarkLabel("rt_print_f32");
-    asm.Mov(Reg.BX, 7);
+    asm.Mov(Reg.BX, turbo ? 16 : 7);
     asm.Jmp(asm.Lbl("rt_print_flt"));
 
     this.PrintDouble = asm.MarkLabel("rt_print_f64");
-    asm.Mov(Reg.BX, 15);
+    asm.Mov(Reg.BX, turbo ? 16 : 15);
 
     asm.MarkLabel("rt_print_flt");
     // The number is decomposed in C-helper style entirely on the FPU:
@@ -643,10 +653,17 @@ public sealed partial class DosRuntime {
     asm.Jmp(asm.Lbl("rt_fd_exp"));
 
     asm.MarkLabel("rt_fd_fracmaybe");
-    asm.Mov(Reg.AX, Reg.BX);
-    asm.Neg(Reg.AX);
-    asm.Cmp(Reg.DX, Reg.AX);
-    asm.Jl(asm.Lbl("rt_fd_exp"));          // more leading zeros than digits -> exponent
+    if (this.Dialect.IsTurboBasic()) {
+      // TB shows fractions plainly only down to 0.1 (pointpos 0); below that
+      // it always switches to exponent notation (0.01 prints as "1E-002")
+      asm.Cmp(Reg.DX, (Imm)0);
+      asm.Jl(asm.Lbl("rt_fd_exp"));
+    } else {
+      asm.Mov(Reg.AX, Reg.BX);
+      asm.Neg(Reg.AX);
+      asm.Cmp(Reg.DX, Reg.AX);
+      asm.Jl(asm.Lbl("rt_fd_exp"));        // more leading zeros than digits -> exponent
+    }
 
     // fraction fixed: '.', -pointpos zeros, all digits; shared trailing trim
     asm.Mov(Mem.Byte(Reg.SI), (byte)'.');
@@ -748,7 +765,8 @@ public sealed partial class DosRuntime {
     asm.Neg(Reg.DX);
     asm.MarkLabel("rt_fd_exppos");
     asm.Inc(Reg.SI);
-    // decimal exponent digits without leading zeros (PB: "1E+7", "1E+16")
+    // decimal exponent digits: PB without leading zeros ("1E+7", "1E+16"),
+    // TB zero-padded to three digits ("1E+007", "1E+016")
     asm.Mov(Reg.AX, Reg.DX);
     asm.Push(Reg.BX);
     asm.Push(Reg.CX);
@@ -761,6 +779,15 @@ public sealed partial class DosRuntime {
     asm.Inc(Reg.CX);
     asm.Test(Reg.AX, Reg.AX);
     asm.Jnz(asm.Lbl("rt_fd_expdiv"));
+    if (this.Dialect.IsTurboBasic()) {
+      asm.Xor(Reg.DX, Reg.DX);
+      asm.MarkLabel("rt_fd_exppad");
+      asm.Cmp(Reg.CX, 3);
+      asm.Jae(asm.Lbl("rt_fd_exppop"));
+      asm.Push(Reg.DX);
+      asm.Inc(Reg.CX);
+      asm.Jmp(asm.Lbl("rt_fd_exppad"));
+    }
     asm.MarkLabel("rt_fd_exppop");
     asm.Pop(Reg.AX);
     asm.Add(Reg.AL, (byte)'0');

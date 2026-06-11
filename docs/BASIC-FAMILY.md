@@ -123,7 +123,7 @@ differential battery before the dialect can be claimed:
 | `qb45` | `BC.EXE` + `LINK.EXE` | `tests/diff/qb45/oracle.conf`: `BC T.BAS,T.OBJ;` + `LINK T.OBJ,T.EXE,,BCOM45.LIB;` | **ACTIVE** - smoke-verified end to end in `tools/qb45/` (WinWorld 4.5 3.5-720k set) |
 | `qb40` | `BC.EXE` + `LINK.EXE` | like qb45 with `BCOM40.LIB` | **staged** in `tools/qb40/` |
 | `qb30`/`qb20`/`qb10` | `QB.EXE` (3.0/2.0x) / `BASCOM.EXE` (1.0) | qb30/qb20: QB.EXE command-line or IDE drive; qb10: BASCOM+LINK | **staged** in `tools/qb30|qb20|qb10/` - compile flows still to map |
-| `tb11` | `TB.EXE` 1.1 | `tests/diff/tb11/oracle.conf`: AUTOTYPE menu drive (Options→EXE file, Load, Compile, Quit), fully headless | **ACTIVE** - smoke-verified (`HELLO TB11` byte round trip) |
+| `tb11` | `TB.EXE` 1.1 | `tests/diff/tb11/oracle.conf`: AUTOTYPE menu drive (Options→EXE file, Load, Compile, Quit), fully headless | **ACTIVE** - `--dialect tb11` implemented; 3 batteries byte-identical (formatting/typing, strings/math, control flow) |
 | `tb10` | `TB.EXE` 1.0 | same AUTOTYPE drive as tb11 | **staged** in `tools/tb10/` |
 | `qbasic` | `QBASIC.EXE` | `QBASIC /RUN T.BAS` | not yet fetched (DOS 5+ media) |
 | `pds71` | `BC.EXE` 7.10 + `LINK` 5.10 | `tests/diff/pds71/oracle.conf`: `BC /O` + `LINK ...,BCL71ENR.LIB;` against the full install in `tools/pds71/bc7/` | **ACTIVE** - SETUP /BATCH install completed in DOSBox, all four BCL71 combos + BRT71 modules built, smoke-verified |
@@ -136,6 +136,29 @@ other family on a `tests/diff/<dialect>/oracle.conf` command template (plain
 DOS lines that turn `C:\T.BAS` into `C:\T.EXE`; the oracle toolchain is
 mounted as `D:`). AUTOTYPE lines inside the template drive IDE-only
 compilers without any host-side keystroke tooling.
+
+## Oracle-verified TB 1.1 semantics (implemented as `--dialect tb11`)
+
+Everything below was probed against the genuine TB.EXE 1.1 and is replicated
+byte-identically (tests/diff/tb11/):
+
+- **One numeric display model**: every float prints with 16 significant
+  digits — there is no 7-digit SINGLE display. SINGLE variables still *store*
+  single precision (`123456789!` prints `123456792`), but all expression
+  evaluation and display happen at double precision: `2/3`, `A!/3`, `E&/3`
+  all print `.6666666666666667`; `2 ^ 0.5` prints `1.414213562373095`.
+- **Exponent display**: zero-padded three digits (`1E+016`, `1E-007`).
+  Integral values expand in fixed notation up to 16 digits (`1E15` prints
+  `1000000000000000`); fractions print plainly only down to 0.1 — anything
+  smaller switches to exponent notation (`0.01` prints `1E-002`).
+- **Literals**: bare FP literals are DOUBLE; integer literals beyond LONG
+  become DOUBLE (TB has no QUAD; `PRINT 2147483648` works).
+- **VAL**: accepts exponents and radix prefixes like PB, but radix values
+  wrap to 16 bits (`VAL("&H10000")` = 0, `VAL("&HFFFF")` = -1).
+- **Shared Borland heritage** (already PB behavior): FOR/NEXT
+  increments-then-tests and wraps, silent 16-bit overflow wrap
+  (`32767 + 1` = -32768), 16-bit `HEX$`/`OCT$`, CINT banker's rounding,
+  identical PRINT zones/TAB/SPC.
 
 ## Suggested order of attack
 

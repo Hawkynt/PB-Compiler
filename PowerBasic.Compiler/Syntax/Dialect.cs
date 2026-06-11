@@ -1,7 +1,14 @@
 namespace PowerBasic.Compiler.Syntax;
 
-/// <summary>PowerBASIC/DOS compiler version selected with <c>--dialect</c> (default <see cref="Pb35"/>).</summary>
+/// <summary>
+/// Compiler dialect selected with <c>--dialect</c> (default <see cref="Pb35"/>).
+/// The Borland lineage is ordered by language level: Turbo Basic (PB's direct
+/// ancestor, same author) sits below PB 2.0, so every PB feature gate
+/// automatically excludes the TB dialects.
+/// </summary>
 public enum Dialect {
+  Tb10 = 10,
+  Tb11 = 11,
   Pb20 = 20,
   Pb21 = 21,
   Pb30 = 30,
@@ -105,7 +112,11 @@ public static class DialectFacts {
   };
 
   /// <summary>Human-readable dialect name, e.g. "PB 3.5".</summary>
-  public static string DisplayName(this Dialect dialect) => $"PB {(int)dialect / 10}.{(int)dialect % 10}";
+  public static string DisplayName(this Dialect dialect)
+    => $"{(dialect.IsTurboBasic() ? "TB" : "PB")} {(int)dialect / 10 % 10}.{(int)dialect % 10}";
+
+  /// <summary>Turbo Basic 1.x - Borland's PB predecessor (16-digit double-everything runtime).</summary>
+  public static bool IsTurboBasic(this Dialect dialect) => dialect <= Dialect.Tb11;
 
   /// <summary>Lowest dialect providing <paramref name="feature"/>.</summary>
   public static Dialect MinimumDialect(LanguageFeature feature) => _gates[feature].Min;

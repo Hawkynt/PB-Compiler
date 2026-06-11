@@ -10,7 +10,11 @@ public sealed partial class CodeGenerator {
     var asm = this._asm;
     switch (expression) {
       case IntegerLiteralExpr i:
-        this.EmitIntegralConstant(i.Value, KindOf(model.TypeOf(i)));
+        // TB types integer literals beyond LONG as DOUBLE (no QUAD there)
+        if (model.TypeOf(i) is ScalarType { IsFloat: true })
+          asm.Fld(Mem.Qword(this.FloatConstOf(i.Value)));
+        else
+          this.EmitIntegralConstant(i.Value, KindOf(model.TypeOf(i)));
         break;
 
       case FloatLiteralExpr f: {

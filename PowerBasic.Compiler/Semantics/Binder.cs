@@ -1016,7 +1016,7 @@ public sealed class Binder {
           _ => i.Value switch {
             >= short.MinValue and <= short.MaxValue => PbType.Integer,
             >= int.MinValue and <= int.MaxValue => PbType.Long,
-            _ => PbType.Quad,
+            _ => this._dialect.IsTurboBasic() ? PbType.Double : PbType.Quad,
           },
         };
 
@@ -1226,8 +1226,8 @@ public sealed class Binder {
       return this.ErrorType(b.Position, "'&' concatenation needs string operands");
 
     return b.Op switch {
-      BinaryOp.Divide => DivideResultType(b, left, right),
-      BinaryOp.Power => PbType.Ext,
+      BinaryOp.Divide => this.DivideResultType(b, left, right),
+      BinaryOp.Power => this._dialect.IsTurboBasic() ? PbType.Double : PbType.Ext,
       BinaryOp.IntegerDivide or BinaryOp.Modulo => PromoteUnsigned(IntegralOf(Widest(left, right))),
       BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Eqv or BinaryOp.Imp => IntegralOf(Widest(left, right)),
       BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual or BinaryOp.GreaterEqual => PbType.Integer,
@@ -1251,7 +1251,10 @@ public sealed class Binder {
   /// with their value-minimal width because the genuine constant folder
   /// re-types small suffixed constants (1&amp;/3 is SINGLE while A&amp;/3 is DOUBLE).
   /// </summary>
-  private static PbType DivideResultType(BinaryExpr b, PbType left, PbType right) {
+  private PbType DivideResultType(BinaryExpr b, PbType left, PbType right) {
+    // Turbo Basic computes every division in its 16-digit double runtime
+    if (this._dialect.IsTurboBasic())
+      return PbType.Double;
     var leftFloat = left is ScalarType { IsFloat: true };
     var rightFloat = right is ScalarType { IsFloat: true };
     if (leftFloat || rightFloat) {

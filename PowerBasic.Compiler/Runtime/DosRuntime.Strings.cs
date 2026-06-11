@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Asm;
+using PowerBasic.Compiler.Syntax;
 
 namespace PowerBasic.Compiler.Runtime;
 
@@ -1187,6 +1188,17 @@ public sealed partial class DosRuntime {
     asm.Jmp(radixLoop);
 
     asm.MarkLabel(radixFix);
+    if (this.Dialect.IsTurboBasic()) {
+      // TB wraps radix values to 16 bits (VAL("&H10000") = 0, VAL("&HFFFF") = -1)
+      asm.Fld(Mem.Qword(asm.Lbl("rt_const_65536")));
+      asm.Fxch();
+      asm.MarkLabel("rt_val_tbwrap");
+      asm.Fprem();
+      asm.FstswAx();
+      asm.Test(Reg.AX, 0x0400);              // C2 set -> partial remainder, loop
+      asm.Jnz(asm.Lbl("rt_val_tbwrap"));
+      asm.Fstp(St.St1);                      // drop the 65536 divisor
+    }
     asm.Fcom(Mem.Qword(asm.Lbl("rt_const_65536")));
     asm.FstswAx();
     asm.Sahf();

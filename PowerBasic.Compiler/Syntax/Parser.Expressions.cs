@@ -177,9 +177,13 @@ public sealed partial class Parser {
   /// DOUBLE (PRINT 123456.789 keeps all nine digits), otherwise SINGLE
   /// (PRINT 1E7 shows the SINGLE exponent threshold "1E+7").
   /// </summary>
-  private static TypeSuffix InferFloatSuffix(Token token) {
+  private TypeSuffix InferFloatSuffix(Token token) {
     if (token.Suffix != TypeSuffix.None)
       return token.Suffix;
+    // Turbo Basic has no SINGLE expression semantics - every bare FP literal
+    // lives in its 16-digit double runtime
+    if (this._dialect.IsTurboBasic())
+      return TypeSuffix.Double;
     var significant = 0;
     var seenNonZero = false;
     foreach (var c in token.Text) {
@@ -201,7 +205,7 @@ public sealed partial class Parser {
       case TokenKind.IntegerLiteral:
         return new IntegerLiteralExpr(this.Advance().Position, token.IntegerValue, token.Suffix);
       case TokenKind.FloatLiteral:
-        return new FloatLiteralExpr(this.Advance().Position, token.FloatValue, InferFloatSuffix(token));
+        return new FloatLiteralExpr(this.Advance().Position, token.FloatValue, this.InferFloatSuffix(token));
       case TokenKind.StringLiteral:
         return new StringLiteralExpr(this.Advance().Position, token.StringValue!);
       case TokenKind.NamedConstant:
