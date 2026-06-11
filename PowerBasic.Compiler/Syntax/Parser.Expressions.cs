@@ -171,13 +171,37 @@ public sealed partial class Parser {
     return new UnaryExpr(pos, UnaryOp.Negate, this.ParseExponent());
   }
 
+  /// <summary>
+  /// Default type of a bare FP literal (verified against genuine PBC 3.50):
+  /// a D exponent or more than seven significant mantissa digits makes it
+  /// DOUBLE (PRINT 123456.789 keeps all nine digits), otherwise SINGLE
+  /// (PRINT 1E7 shows the SINGLE exponent threshold "1E+7").
+  /// </summary>
+  private static TypeSuffix InferFloatSuffix(Token token) {
+    if (token.Suffix != TypeSuffix.None)
+      return token.Suffix;
+    var significant = 0;
+    var seenNonZero = false;
+    foreach (var c in token.Text) {
+      if (c is 'E' or 'e' or 'D' or 'd')
+        return c is 'D' or 'd' ? TypeSuffix.Double : significant > 7 ? TypeSuffix.Double : TypeSuffix.Single;
+      if (!char.IsAsciiDigit(c))
+        continue;
+      if (c != '0')
+        seenNonZero = true;
+      if (seenNonZero)
+        ++significant;
+    }
+    return significant > 7 ? TypeSuffix.Double : TypeSuffix.Single;
+  }
+
   private Expression ParsePrimary() {
     var token = this.Current;
     switch (token.Kind) {
       case TokenKind.IntegerLiteral:
         return new IntegerLiteralExpr(this.Advance().Position, token.IntegerValue, token.Suffix);
       case TokenKind.FloatLiteral:
-        return new FloatLiteralExpr(this.Advance().Position, token.FloatValue, token.Suffix);
+        return new FloatLiteralExpr(this.Advance().Position, token.FloatValue, InferFloatSuffix(token));
       case TokenKind.StringLiteral:
         return new StringLiteralExpr(this.Advance().Position, token.StringValue!);
       case TokenKind.NamedConstant:

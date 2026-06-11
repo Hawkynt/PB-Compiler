@@ -72,6 +72,7 @@ public sealed partial class DosRuntime {
   public Label StrI16 { get; private set; } = null!;
   public Label StrI32 { get; private set; } = null!;
   public Label StrF64 { get; private set; } = null!;
+  public Label StrF32 { get; private set; } = null!;
   public Label StrPrint { get; private set; } = null!;
   public Label StrAssign { get; private set; } = null!;
   public Label StrAssignEs { get; private set; } = null!;
@@ -960,6 +961,28 @@ public sealed partial class DosRuntime {
     var scaleLoop = asm.DefineLabel();
     var applySign = asm.DefineLabel();
     var finish = asm.DefineLabel();
+    var expCheck = asm.DefineLabel();
+    var exponent = asm.DefineLabel();
+    var expDigits = asm.DefineLabel();
+    var expApply = asm.DefineLabel();
+    var expUp = asm.DefineLabel();
+    var expDown = asm.DefineLabel();
+    var radix = asm.DefineLabel();
+    var radixBase = asm.DefineLabel();
+    var radixLoop = asm.DefineLabel();
+    var radixDigit09 = asm.DefineLabel();
+    var radixGot = asm.DefineLabel();
+    var radixFix = asm.DefineLabel();
+    var radixFix32 = asm.DefineLabel();
+    var expSkipSign = asm.DefineLabel();
+    var expPositive = asm.DefineLabel();
+    var radixNotHex = asm.DefineLabel();
+    var radixNotOctal = asm.DefineLabel();
+    var noRadix = asm.DefineLabel();
+    var expNonZero = asm.DefineLabel();
+    var begin = asm.DefineLabel();
+    var toScale = asm.DefineLabel();
+    var prefix = asm.DefineLabel();
 
     asm.Push(Reg.AX);
     asm.Push(Reg.BX);
@@ -970,7 +993,9 @@ public sealed partial class DosRuntime {
     asm.Mov(Mem.Word(asm.Lbl("rt_st2")), (Imm)0);   // seen-decimal-point flag
     asm.Fldz();
     asm.Test(Reg.AX, Reg.AX);
-    asm.Jz(finish);
+    asm.Jnz(begin);
+    asm.Jmp(finish);
+    asm.MarkLabel(begin);
     asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_strseg")));
     asm.Mov(Reg.BX, Reg.AX);
     asm.Shl(Reg.BX, 2);
@@ -979,7 +1004,7 @@ public sealed partial class DosRuntime {
     asm.Xor(Reg.DX, Reg.DX);                        // DL=sign, DH=fraction digit count
 
     asm.MarkLabel(spaces);
-    asm.Jcxz(scale);
+    asm.Jcxz(toScale);
     asm.Cmp(Mem.Byte(Reg.SI).Es(), (byte)' ');
     asm.Jne(sign);
     asm.Inc(Reg.SI);
@@ -992,22 +1017,32 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.DL, 1);
     asm.Inc(Reg.SI);
     asm.Dec(Reg.CX);
-    asm.Jmp(digits);
+    asm.Jmp(prefix);
+    asm.MarkLabel(toScale);
+    asm.Jmp(scale);
     asm.MarkLabel(plus);
     asm.Cmp(Mem.Byte(Reg.SI).Es(), (byte)'+');
-    asm.Jne(digits);
+    asm.Jne(prefix);
     asm.Inc(Reg.SI);
     asm.Dec(Reg.CX);
 
+    // a leading '&' selects literal-style radix parsing (&H hex, &O/& octal, &B binary)
+    asm.MarkLabel(prefix);
+    asm.Jcxz(toScale);
+    asm.Cmp(Mem.Byte(Reg.SI).Es(), (byte)'&');
+    asm.Jne(noRadix);
+    asm.Jmp(radix);
+    asm.MarkLabel(noRadix);
+
     asm.MarkLabel(digits);
-    asm.Jcxz(scale);
+    asm.Jcxz(toScale);
     asm.Mov(Reg.AL, Mem.Byte(Reg.SI).Es());
     asm.Cmp(Reg.AL, '.');
     asm.Je(point);
     asm.Cmp(Reg.AL, '0');
-    asm.Jb(scale);
+    asm.Jb(expCheck);
     asm.Cmp(Reg.AL, '9');
-    asm.Ja(scale);
+    asm.Ja(expCheck);
     asm.Sub(Reg.AL, '0');
     asm.Xor(Reg.AH, Reg.AH);
     asm.Mov(Mem.Word(this._scratch), Reg.AX);
@@ -1023,11 +1058,156 @@ public sealed partial class DosRuntime {
 
     asm.MarkLabel(point);
     asm.Cmp(Mem.Word(asm.Lbl("rt_st2")), (Imm)0);
-    asm.Jne(scale);
+    asm.Jne(toScale);
     asm.Mov(Mem.Word(asm.Lbl("rt_st2")), 1);
     asm.Inc(Reg.SI);
     asm.Dec(Reg.CX);
     asm.Jmp(digits);
+
+    // E/e/D/d introduces a decimal exponent ("1E3", "1.5e-2", "1D20")
+    asm.MarkLabel(expCheck);
+    asm.Cmp(Reg.AL, 'E');
+    asm.Je(exponent);
+    asm.Cmp(Reg.AL, 'e');
+    asm.Je(exponent);
+    asm.Cmp(Reg.AL, 'D');
+    asm.Je(exponent);
+    asm.Cmp(Reg.AL, 'd');
+    asm.Je(exponent);
+    asm.Jmp(scale);
+
+    asm.MarkLabel(exponent);
+    asm.Inc(Reg.SI);
+    asm.Dec(Reg.CX);
+    asm.Xor(Reg.BX, Reg.BX);                        // exponent magnitude
+    asm.Mov(Mem.Word(asm.Lbl("rt_st2")), (Imm)0);   // reuse: exponent-negative flag
+    asm.Jcxz(expApply);
+    asm.Cmp(Mem.Byte(Reg.SI).Es(), (byte)'+');
+    asm.Je(expSkipSign);
+    asm.Cmp(Mem.Byte(Reg.SI).Es(), (byte)'-');
+    asm.Jne(expDigits);
+    asm.Mov(Mem.Word(asm.Lbl("rt_st2")), 1);
+    asm.MarkLabel(expSkipSign);
+    asm.Inc(Reg.SI);
+    asm.Dec(Reg.CX);
+    asm.MarkLabel(expDigits);
+    asm.Jcxz(expApply);
+    asm.Mov(Reg.AL, Mem.Byte(Reg.SI).Es());
+    asm.Cmp(Reg.AL, '0');
+    asm.Jb(expApply);
+    asm.Cmp(Reg.AL, '9');
+    asm.Ja(expApply);
+    asm.Sub(Reg.AL, '0');
+    asm.Xor(Reg.AH, Reg.AH);
+    asm.Mov(Mem.Word(this._scratch, 2), Reg.AX);
+    asm.Mov(Reg.AX, Reg.BX);                        // BX = BX*10 + digit
+    asm.Shl(Reg.AX, 2);
+    asm.Add(Reg.AX, Reg.BX);
+    asm.Shl(Reg.AX, 1);
+    asm.Add(Reg.AX, Mem.Word(this._scratch, 2));
+    asm.Mov(Reg.BX, Reg.AX);
+    asm.Inc(Reg.SI);
+    asm.Dec(Reg.CX);
+    asm.Jmp(expDigits);
+
+    asm.MarkLabel(expApply);
+    asm.Mov(Reg.AX, Reg.BX);                        // AX = signed exponent - fraction digits
+    asm.Cmp(Mem.Word(asm.Lbl("rt_st2")), (Imm)0);
+    asm.Je(expPositive);
+    asm.Neg(Reg.AX);
+    asm.MarkLabel(expPositive);
+    asm.Mov(Reg.BL, Reg.DH);
+    asm.Xor(Reg.BH, Reg.BH);
+    asm.Sub(Reg.AX, Reg.BX);
+    asm.Jnz(expNonZero);
+    asm.Jmp(applySign);
+    asm.MarkLabel(expNonZero);
+    asm.Jns(expUp);
+    asm.Neg(Reg.AX);
+    asm.MarkLabel(expDown);
+    asm.Fdiv(Mem.Qword(asm.Lbl("rt_const_ten_m64")));
+    asm.Dec(Reg.AX);
+    asm.Jnz(expDown);
+    asm.Jmp(applySign);
+    asm.MarkLabel(expUp);
+    asm.Fmul(Mem.Qword(asm.Lbl("rt_const_ten_m64")));
+    asm.Dec(Reg.AX);
+    asm.Jnz(expUp);
+    asm.Jmp(applySign);
+
+    // radix parsing follows source-literal rules: 16-bit window signed
+    // (VAL("&HFFFF") = -1), wider values widen like literals (&H10000 = 65536)
+    asm.MarkLabel(radix);
+    asm.Inc(Reg.SI);
+    asm.Dec(Reg.CX);
+    asm.Mov(Mem.Word(this._scratch, 2), (Imm)8);    // default: bare & is octal
+    asm.Jcxz(radixFix);
+    asm.Mov(Reg.AL, Mem.Byte(Reg.SI).Es());
+    asm.And(Reg.AL, 0xDF);                          // ASCII uppercase
+    asm.Cmp(Reg.AL, 'H');
+    asm.Jne(radixNotHex);
+    asm.Mov(Mem.Word(this._scratch, 2), (Imm)16);
+    asm.Jmp(radixBase);
+    asm.MarkLabel(radixNotHex);
+    asm.Cmp(Reg.AL, 'O');
+    asm.Jne(radixNotOctal);
+    asm.Jmp(radixBase);
+    asm.MarkLabel(radixNotOctal);
+    asm.Cmp(Reg.AL, 'B');
+    asm.Jne(radixLoop);                             // bare &777: digit, keep base 8
+    asm.Mov(Mem.Word(this._scratch, 2), (Imm)2);
+    asm.MarkLabel(radixBase);
+    asm.Inc(Reg.SI);
+    asm.Dec(Reg.CX);
+    asm.MarkLabel(radixLoop);
+    asm.Jcxz(radixFix);
+    asm.Mov(Reg.AL, Mem.Byte(Reg.SI).Es());
+    asm.Cmp(Reg.AL, '0');
+    asm.Jb(radixFix);
+    asm.Cmp(Reg.AL, '9');
+    asm.Jbe(radixDigit09);
+    asm.And(Reg.AL, 0xDF);
+    asm.Cmp(Reg.AL, 'A');
+    asm.Jb(radixFix);
+    asm.Cmp(Reg.AL, 'F');
+    asm.Ja(radixFix);
+    asm.Sub(Reg.AL, (byte)('A' - 10));
+    asm.Jmp(radixGot);
+    asm.MarkLabel(radixDigit09);
+    asm.Sub(Reg.AL, '0');
+    asm.MarkLabel(radixGot);
+    asm.Xor(Reg.AH, Reg.AH);
+    asm.Cmp(Reg.AX, Mem.Word(this._scratch, 2));
+    asm.Jae(radixFix);                              // digit not valid in this base
+    asm.Mov(Mem.Word(this._scratch), Reg.AX);
+    asm.Fimul(Mem.Word(this._scratch, 2));
+    asm.Fiadd(Mem.Word(this._scratch));
+    asm.Inc(Reg.SI);
+    asm.Dec(Reg.CX);
+    asm.Jmp(radixLoop);
+
+    asm.MarkLabel(radixFix);
+    asm.Fcom(Mem.Qword(asm.Lbl("rt_const_65536")));
+    asm.FstswAx();
+    asm.Sahf();
+    asm.Jae(radixFix32);
+    asm.Fcom(Mem.Qword(asm.Lbl("rt_const_32768")));
+    asm.FstswAx();
+    asm.Sahf();
+    asm.Jb(applySign);
+    asm.Fsub(Mem.Qword(asm.Lbl("rt_const_65536")));
+    asm.Jmp(applySign);
+    asm.MarkLabel(radixFix32);
+    asm.Fcom(Mem.Qword(asm.Lbl("rt_const_2p32")));
+    asm.FstswAx();
+    asm.Sahf();
+    asm.Jae(applySign);
+    asm.Fcom(Mem.Qword(asm.Lbl("rt_const_2p31")));
+    asm.FstswAx();
+    asm.Sahf();
+    asm.Jb(applySign);
+    asm.Fsub(Mem.Qword(asm.Lbl("rt_const_2p32")));
+    asm.Jmp(applySign);
 
     asm.MarkLabel(scale);
     asm.MarkLabel(scaleLoop);
@@ -1119,6 +1299,12 @@ public sealed partial class DosRuntime {
     asm.Mov(Mem.Byte(asm.Lbl("rt_capmode")), (Imm)1);
     asm.Mov(Mem.Word(asm.Lbl("rt_caplen")), (Imm)0);
     asm.Call(this.PrintInt32);
+    asm.Jmp(asm.Lbl("rt_str_cap"));
+
+    this.StrF32 = asm.MarkLabel("rt_str_f32");
+    asm.Mov(Mem.Byte(asm.Lbl("rt_capmode")), (Imm)1);
+    asm.Mov(Mem.Word(asm.Lbl("rt_caplen")), (Imm)0);
+    asm.Call(this.PrintSingle);
     asm.Jmp(asm.Lbl("rt_str_cap"));
 
     this.StrF64 = asm.MarkLabel("rt_str_f64");

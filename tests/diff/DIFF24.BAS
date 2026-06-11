@@ -1,0 +1,26 @@
+' division result typing, bare-literal precision, exponent display, VAL parsing
+OPEN "RESULT.TXT" FOR OUTPUT AS #1
+PRINT #1, 2/3; 1&/3; 1000000/3
+A& = 1
+PRINT #1, A&/3
+B% = 2
+C% = 3
+PRINT #1, B%/C%
+D! = 1
+PRINT #1, D!/3
+E# = 1
+PRINT #1, E#/3
+F## = 1
+PRINT #1, F##/3
+G& = 100000
+PRINT #1, G&/3
+H? = 200
+PRINT #1, H?/3
+PRINT #1, 123456.789; 1234567.89; 1.23456789012345678
+PRINT #1, 1E7; 1E10; 1E16; 1E-7; 1E37
+PRINT #1, 12345.678!; 123456.789!; 1D20
+PRINT #1, VAL("1e3"); VAL("1D3"); VAL("1.5E-2"); VAL(".5E1"); VAL("1E"); VAL("2E+2Q")
+PRINT #1, VAL("&HFF"); VAL("&HFFFF"); VAL("&H10000"); VAL("&O777"); VAL("&B101")
+PRINT #1, STR$(2/3)
+CLOSE #1
+END

@@ -493,6 +493,20 @@ public sealed partial class DosRuntime {
 
     // mantissa -> 64-bit integer at rt_scratch
     asm.Frndint();
+    // rounding can carry into an extra digit (9999999.93 -> 10000000, seen
+    // with SINGLE 1E37); renormalize so the leading digit survives
+    this.EmitLoadPow10(asm, Reg.BX);
+    asm.Fcom();
+    asm.FstswAx();
+    asm.Sahf();
+    asm.Ja(asm.Lbl("rt_print_flt_nocarry"));    // 10^digits > mantissa -> fine
+    asm.Fxch();
+    asm.Fdiv(Mem.Qword(asm.Lbl("rt_const_ten_m64")));
+    asm.Frndint();
+    asm.Fxch();
+    asm.Inc(Reg.CX);
+    asm.MarkLabel("rt_print_flt_nocarry");
+    asm.Fstp(St.St0);
     asm.Fistp(Mem.Qword(asm.Lbl("rt_scratch")));
     asm.Jmp(emit);
 
@@ -734,15 +748,27 @@ public sealed partial class DosRuntime {
     asm.Neg(Reg.DX);
     asm.MarkLabel("rt_fd_exppos");
     asm.Inc(Reg.SI);
+    // decimal exponent digits without leading zeros (PB: "1E+7", "1E+16")
     asm.Mov(Reg.AX, Reg.DX);
     asm.Push(Reg.BX);
-    asm.Mov(Reg.BL, 10);
-    asm.Div(Reg.BL);                       // AL = tens, AH = ones
-    asm.Add(Reg.AX, 0x3030);
+    asm.Push(Reg.CX);
+    asm.Mov(Reg.BX, 10);
+    asm.Xor(Reg.CX, Reg.CX);
+    asm.MarkLabel("rt_fd_expdiv");
+    asm.Xor(Reg.DX, Reg.DX);
+    asm.Div(Reg.BX);                       // AX = quotient, DX = digit
+    asm.Push(Reg.DX);
+    asm.Inc(Reg.CX);
+    asm.Test(Reg.AX, Reg.AX);
+    asm.Jnz(asm.Lbl("rt_fd_expdiv"));
+    asm.MarkLabel("rt_fd_exppop");
+    asm.Pop(Reg.AX);
+    asm.Add(Reg.AL, (byte)'0');
     asm.Mov(Mem.Byte(Reg.SI), Reg.AL);
-    asm.Mov(Mem.Byte(Reg.SI, 1), Reg.AH);
+    asm.Inc(Reg.SI);
+    asm.Loop(asm.Lbl("rt_fd_exppop"));
+    asm.Pop(Reg.CX);
     asm.Pop(Reg.BX);
-    asm.Add(Reg.SI, 2);
     asm.Mov(Mem.Byte(Reg.SI), (byte)' ');
     asm.Inc(Reg.SI);
 
@@ -911,6 +937,12 @@ public sealed partial class DosRuntime {
     asm.Align(2);
     asm.MarkLabel("rt_const_ten_m64");
     asm.Dq(10.0);
+    asm.MarkLabel("rt_const_65536");
+    asm.Dq(65536.0);
+    asm.MarkLabel("rt_const_2p31");
+    asm.Dq(2147483648.0);
+    asm.MarkLabel("rt_const_2p32");
+    asm.Dq(4294967296.0);
     this.EmitMiscConstants(asm);
   }
 }

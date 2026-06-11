@@ -1022,10 +1022,13 @@ public sealed class Binder {
 
       case FloatLiteralExpr f:
         return f.Suffix switch {
+          TypeSuffix.Single => PbType.Single,
           TypeSuffix.Double => PbType.Double,
           TypeSuffix.Ext => PbType.Ext,
           TypeSuffix.Fix => PbType.Fix,
           TypeSuffix.Bcd => PbType.Bcd,
+          // the parser infers SINGLE/DOUBLE for bare literals from the source
+          // digit count and exponent marker (InferFloatSuffix)
           _ => PbType.Single,
         };
 
@@ -1223,7 +1226,7 @@ public sealed class Binder {
       return this.ErrorType(b.Position, "'&' concatenation needs string operands");
 
     return b.Op switch {
-      BinaryOp.Divide => Widest(left, right) is ScalarType { IsFloat: true } f ? f : PbType.Ext,
+      BinaryOp.Divide => DivideResultType(b, left, right),
       BinaryOp.Power => PbType.Ext,
       BinaryOp.IntegerDivide or BinaryOp.Modulo => PromoteUnsigned(IntegralOf(Widest(left, right))),
       BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Eqv or BinaryOp.Imp => IntegralOf(Widest(left, right)),
@@ -1240,6 +1243,33 @@ public sealed class Binder {
   private static PbType PromoteUnsigned(PbType t) => t is ScalarType { IsFloat: false, Signed: false } u
     ? u.Size switch { 1 => PbType.Integer, 2 => PbType.Long, _ => t }
     : t;
+
+  /// <summary>
+  /// PBC 3.50 division typing (oracle-probed): a float operand wins at its own
+  /// precision; otherwise 16-bit-or-smaller integrals divide in SINGLE and
+  /// anything wider (LONG/DWORD/QUAD) in DOUBLE. Integral literals participate
+  /// with their value-minimal width because the genuine constant folder
+  /// re-types small suffixed constants (1&amp;/3 is SINGLE while A&amp;/3 is DOUBLE).
+  /// </summary>
+  private static PbType DivideResultType(BinaryExpr b, PbType left, PbType right) {
+    var leftFloat = left is ScalarType { IsFloat: true };
+    var rightFloat = right is ScalarType { IsFloat: true };
+    if (leftFloat || rightFloat) {
+      // the integral operand adopts the float operand's precision (D!/3 is
+      // SINGLE, E#/3 is DOUBLE); two floats divide at the wider precision
+      if (!leftFloat)
+        return right;
+      if (!rightFloat)
+        return left;
+      return ((ScalarType)left).Size >= ((ScalarType)right).Size ? left : right;
+    }
+    return Math.Max(EffectiveDivideWidth(b.Left, left), EffectiveDivideWidth(b.Right, right)) <= 2
+      ? PbType.Single
+      : PbType.Double;
+  }
+
+  private static int EffectiveDivideWidth(Expression operand, PbType type)
+    => operand is IntegerLiteralExpr { Value: >= short.MinValue and <= short.MaxValue } ? 2 : type.Size;
 
   private PbType ErrorType(SourcePosition position, string message) {
     this.Error(position, message);

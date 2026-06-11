@@ -305,6 +305,9 @@ public sealed partial class CodeGenerator {
             break;
           case ValueKind.Int32: asm.Call(this._rt.StrI32); break;
           case ValueKind.Int64: asm.Call(this._rt.StrF64); break; // QUAD mirrors PRINT (float formatter)
+          // STR$ keeps the argument's display precision: SINGLE renders 7
+          // significant digits (STR$(2/3) = ".6666667" on genuine PBC 3.50)
+          case ValueKind.Float when model.TypeOf(args[0]) is ScalarType { ByteSize: 4 }: asm.Call(this._rt.StrF32); break;
           case ValueKind.Float: asm.Call(this._rt.StrF64); break;
           default:
             this.Unsupported(call, "STR$ argument");
