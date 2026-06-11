@@ -185,6 +185,19 @@ public sealed partial class Parser {
     return new ExitStmt(pos, kind);
   }
 
+  /// <summary>GOTO/GOSUB label, line number, or <c>DWORD ptr32</c> (PB 3.2 code pointers).</summary>
+  private Statement ParseGotoGosub(bool isGosub) {
+    var pos = this.Advance().Position;
+    if (this.IsKeyword(0, "DWORD")) {
+      this.Require(LanguageFeature.CodePointers);
+      this.Advance();
+      var pointer = this.ParseExpression();
+      return isGosub ? new GosubPtrStmt(pos, pointer) : new GotoPtrStmt(pos, pointer);
+    }
+    var target = this.ParseLabelReference();
+    return isGosub ? new GosubStmt(pos, target) : new GotoStmt(pos, target);
+  }
+
   private string ParseLabelReference() {
     var token = this.Current;
     switch (token.Kind) {

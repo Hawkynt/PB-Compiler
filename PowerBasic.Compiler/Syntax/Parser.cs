@@ -13,8 +13,9 @@ public sealed partial class Parser {
   /// <summary>Reserved statement keywords - these can never be labels.</summary>
   private static readonly HashSet<string> _statementKeywords = new(StringComparer.OrdinalIgnoreCase) {
     "LET", "CALL", "SUB", "FUNCTION", "DECLARE", "TYPE", "UNION",
-    "DEF", "DEFINT", "DEFLNG", "DEFSNG", "DEFDBL", "DEFEXT", "DEFSTR",
+    "DEF", "DEFINT", "DEFLNG", "DEFQUD", "DEFSNG", "DEFDBL", "DEFEXT", "DEFFIX", "DEFBCD", "DEFSTR", "DEFFLX",
     "DIM", "LOCAL", "STATIC", "SHARED", "PUBLIC", "EXT", "COMMON", "REDIM", "ERASE",
+    "STDOUT", "STDIN", "SETEOF", "ERRCLEAR",
     "IF", "SELECT", "FOR", "DO", "WHILE", "EXIT", "GOTO", "GOSUB", "RETURN",
     "ON", "RESUME", "ERROR", "END", "STOP", "SYSTEM",
     "PRINT", "LPRINT", "INPUT", "LINE", "OPEN", "CLOSE", "GET", "PUT", "SEEK", "FIELD", "LSET", "RSET",
@@ -40,14 +41,18 @@ public sealed partial class Parser {
     { "KEY", "TIMER", "COM", "PLAY", "PEN", "STRIG", "UEVENT" };
 
   private readonly List<Token> _tokens;
+  private readonly Dialect _dialect;
   private int _pos;
   private bool _atLineStart = true;
   private int _pendingNexts;
 
-  private Parser(List<Token> tokens) => this._tokens = tokens;
+  private Parser(List<Token> tokens, Dialect dialect) {
+    this._tokens = tokens;
+    this._dialect = dialect;
+  }
 
   /// <summary>Parses a whole token stream (one file after preprocessing) into a compilation unit.</summary>
-  public static CompilationUnit Parse(IEnumerable<Token> tokens, string fileName) {
+  public static CompilationUnit Parse(IEnumerable<Token> tokens, string fileName, Dialect dialect = Dialect.Pb35) {
     ArgumentNullException.ThrowIfNull(tokens);
     ArgumentNullException.ThrowIfNull(fileName);
 
@@ -55,7 +60,7 @@ public sealed partial class Parser {
     if (list.Count == 0 || list[^1].Kind != TokenKind.EndOfFile)
       list.Add(new(TokenKind.EndOfFile, "", new(fileName, 0, 0)));
 
-    var parser = new Parser(list);
+    var parser = new Parser(list, dialect);
     var statements = parser.ParseBody();
     if (parser._pendingNexts > 0)
       throw new ParserException("NEXT without FOR", parser.Current.Position);
@@ -114,6 +119,12 @@ public sealed partial class Parser {
     || this.IsKeyword(0, "ELSE");
 
   private ParserException Error(string message) => new(message, this.Current.Position);
+
+  /// <summary>Throws when <paramref name="feature"/> is not available under the active dialect.</summary>
+  private void Require(LanguageFeature feature) {
+    if (!DialectFacts.IsAvailable(feature, this._dialect))
+      throw this.Error(DialectFacts.RequirementMessage(feature, this._dialect));
+  }
 
   #endregion
 
@@ -176,6 +187,7 @@ public sealed partial class Parser {
       TokenKind.NamedConstant => this.ParseEquate(),
       TokenKind.IntegerLiteral when atLineStart => new LabelStmt(this.Advance().Position, token.IntegerValue.ToString()),
       TokenKind.Question => this.ParsePrint(false),
+      TokenKind.At => this.ParseAssignment(), // @p = value
       TokenKind.Identifier => this.ParseIdentifierStatement(atLineStart),
       _ => throw this.Error($"unexpected '{token.Text}'"),
     };
@@ -193,6 +205,10 @@ public sealed partial class Parser {
 
     if (keyword == "MID" && token.Suffix == TypeSuffix.String && this.Peek().Kind == TokenKind.LParen)
       return this.ParseMidAssign();
+
+    // ASC(s$ [, n]) = code - statement form (PB 3.5)
+    if (keyword == "ASC" && token.Suffix == TypeSuffix.None && this.Peek().Kind == TokenKind.LParen && this.IsAssignmentAhead())
+      return this.ParseAscAssign();
 
     // GET$ fh, count, strvar / PUT$ fh, strvar - string-file statements
     if (keyword is "GET" or "PUT" && token.Suffix == TypeSuffix.String)
@@ -216,10 +232,14 @@ public sealed partial class Parser {
       case "DEF": return this.ParseDef();
       case "DEFINT": return this.ParseDefType(BuiltinType.Integer);
       case "DEFLNG": return this.ParseDefType(BuiltinType.Long);
+      case "DEFQUD": this.Require(LanguageFeature.QuadType); return this.ParseDefType(BuiltinType.Quad);
       case "DEFSNG": return this.ParseDefType(BuiltinType.Single);
       case "DEFDBL": return this.ParseDefType(BuiltinType.Double);
       case "DEFEXT": return this.ParseDefType(BuiltinType.Ext);
+      case "DEFFIX": return this.ParseDefType(BuiltinType.Fix);
+      case "DEFBCD": return this.ParseDefType(BuiltinType.Bcd);
       case "DEFSTR": return this.ParseDefType(BuiltinType.String);
+      case "DEFFLX": return this.ParseDefType(BuiltinType.Flex);
       case "DIM": return this.ParseDim(StorageClass.Dim);
       case "LOCAL": return this.ParseDim(StorageClass.Local);
       case "STATIC": return this.ParseDim(StorageClass.Static);
@@ -235,8 +255,8 @@ public sealed partial class Parser {
       case "DO": return this.ParseDo();
       case "WHILE": return this.ParseWhile();
       case "EXIT": return this.ParseExit();
-      case "GOTO": return new GotoStmt(this.Advance().Position, this.ParseLabelReference());
-      case "GOSUB": return new GosubStmt(this.Advance().Position, this.ParseLabelReference());
+      case "GOTO": return this.ParseGotoGosub(isGosub: false);
+      case "GOSUB": return this.ParseGotoGosub(isGosub: true);
       case "RETURN": return this.ParseReturn();
       case "ON": return this.ParseOn();
       case "RESUME": return this.ParseResume();
@@ -266,6 +286,12 @@ public sealed partial class Parser {
       case "CIRCLE": return this.ParseCircle();
       case "KEY" or "TIMER" or "COM" or "PEN" or "STRIG" or "PLAY": return this.ParseEventOrCommand(keyword);
       case "SHIFT" or "ROTATE": return this.ParseShiftRotate(keyword);
+      case "STDOUT": return this.ParseStdOut();
+      case "STDIN": return this.ParseStdIn();
+      case "SETEOF": return this.ParseSetEof();
+      case "ERRCLEAR":
+        this.Require(LanguageFeature.ErrClear);
+        return new CommandStmt(this.Advance().Position, "ERRCLEAR", []);
       case "NEXT": throw this.Error("NEXT without FOR");
       case "LOOP": throw this.Error("LOOP without DO");
       case "WEND": throw this.Error("WEND without WHILE");

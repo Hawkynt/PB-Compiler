@@ -58,7 +58,8 @@ public sealed class ParserCommandTests {
       Assert.That(stmt.Color, Is.Null);
       Assert.That(stmt.Box, Is.True);
       Assert.That(stmt.Fill, Is.False);
-      Assert.That(((IntegerLiteralExpr)stmt.Style!).Value, Is.EqualTo(0xAAAA));
+      // radix literals read signed (PB 3.1+)
+      Assert.That(((IntegerLiteralExpr)stmt.Style!).Value, Is.EqualTo(unchecked((short)0xAAAA)));
     });
   }
 

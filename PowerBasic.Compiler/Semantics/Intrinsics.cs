@@ -36,6 +36,7 @@ public static class Intrinsics {
     Add("LCASE$", 1, 1, IntrinsicReturn.String);
     Add("LTRIM$", 1, 2, IntrinsicReturn.String);
     Add("RTRIM$", 1, 2, IntrinsicReturn.String);
+    Add("TRIM$", 1, 2, IntrinsicReturn.String);
     Add("HEX$", 1, 2, IntrinsicReturn.String);
     Add("OCT$", 1, 2, IntrinsicReturn.String);
     Add("BIN$", 1, 2, IntrinsicReturn.String);
@@ -69,14 +70,14 @@ public static class Intrinsics {
     Add("CBYT", 1, 1, IntrinsicReturn.Word);
     Add("CWRD", 1, 1, IntrinsicReturn.Word);
     Add("CDWD", 1, 1, IntrinsicReturn.Dword);
-    Add("CVI", 1, 1, IntrinsicReturn.Integer);
-    Add("CVL", 1, 1, IntrinsicReturn.Long);
-    Add("CVS", 1, 1, IntrinsicReturn.Single);
-    Add("CVD", 1, 1, IntrinsicReturn.Double);
-    Add("CVE", 1, 1, IntrinsicReturn.Ext);
-    Add("CVWRD", 1, 1, IntrinsicReturn.Word);
-    Add("CVDWD", 1, 1, IntrinsicReturn.Dword);
-    Add("CVBYT", 1, 1, IntrinsicReturn.Word);
+    Add("CVI", 1, 2, IntrinsicReturn.Integer);
+    Add("CVL", 1, 2, IntrinsicReturn.Long);
+    Add("CVS", 1, 2, IntrinsicReturn.Single);
+    Add("CVD", 1, 2, IntrinsicReturn.Double);
+    Add("CVE", 1, 2, IntrinsicReturn.Ext);
+    Add("CVWRD", 1, 2, IntrinsicReturn.Word);
+    Add("CVDWD", 1, 2, IntrinsicReturn.Dword);
+    Add("CVBYT", 1, 2, IntrinsicReturn.Word);
     Add("VAL", 1, 1, IntrinsicReturn.Ext);
 
     // --- numeric: math ------------------------------------------------------
@@ -102,7 +103,7 @@ public static class Intrinsics {
     Add("LOG", 1, 1, IntrinsicReturn.Ext);
     Add("LOG2", 1, 1, IntrinsicReturn.Ext);
     Add("LOG10", 1, 1, IntrinsicReturn.Ext);
-    Add("RND", 0, 1, IntrinsicReturn.Single);
+    Add("RND", 0, 2, IntrinsicReturn.Single); // RND(a, z) -> LONG handled in the binder
 
     // --- string inspection ---------------------------------------------------
     Add("LEN", 1, 1, IntrinsicReturn.Long);
@@ -114,6 +115,10 @@ public static class Intrinsics {
 
     // --- system / runtime state ---------------------------------------------
     Add("ERR", 0, 0, IntrinsicReturn.Integer);
+    Add("ERRCLEAR", 0, 0, IntrinsicReturn.Integer);
+    Add("CONSIN", 0, 0, IntrinsicReturn.Integer);
+    Add("CONSOUT", 0, 0, IntrinsicReturn.Integer);
+    Add("SIZEOF", 1, 1, IntrinsicReturn.Long);
     Add("ERL", 0, 0, IntrinsicReturn.Long);
     Add("ERDEV", 0, 0, IntrinsicReturn.Integer);
     Add("FRE", 0, 1, IntrinsicReturn.Long);
@@ -141,6 +146,8 @@ public static class Intrinsics {
     Add("VARSEG", 1, 1, IntrinsicReturn.Word);
     Add("STRPTR", 1, 1, IntrinsicReturn.Word);
     Add("STRSEG", 1, 1, IntrinsicReturn.Word);
+    Add("VARPTR32", 1, 1, IntrinsicReturn.Dword);
+    Add("STRPTR32", 1, 1, IntrinsicReturn.Dword);
     Add("CODEPTR", 1, 1, IntrinsicReturn.Word);
     Add("CODESEG", 1, 1, IntrinsicReturn.Word);
     Add("CODEPTR32", 1, 1, IntrinsicReturn.Dword);

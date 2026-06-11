@@ -73,10 +73,40 @@ public sealed partial class CodeGenerator {
       case IndexExpr ix:
         return this.EmitFieldArrayPlace(ix);
 
+      case PtrDerefExpr deref:
+        return this.EmitPtrDerefPlace(deref);
+
       default:
         this.Unsupported(e, "addressable expression");
         return null;
     }
+  }
+
+  /// <summary>
+  /// <c>@p</c> / <c>@p[i]</c>: evaluates the 32-bit seg:off pointer, adds
+  /// i*SIZEOF(target) to the offset, and yields a far ES:BX place.
+  /// </summary>
+  private Place? EmitPtrDerefPlace(PtrDerefExpr deref) {
+    var asm = this._asm;
+    var targetType = model.TypeOf(deref);
+
+    this.EmitExpression(deref.Pointer);
+
+    if (deref.Index is { } index) {
+      asm.Push(Reg.DX);
+      asm.Push(Reg.AX);
+      this.EmitInt16Argument(index);          // zero-based, ignores OPTION BASE
+      asm.Mov(Reg.BX, Math.Max(targetType.Size, 1));
+      asm.Imul(Reg.BX);                       // DX:AX = i * size (offset wraps at 64K like real mode)
+      asm.Mov(Reg.BX, Reg.AX);
+      asm.Pop(Reg.AX);
+      asm.Pop(Reg.DX);
+      asm.Add(Reg.BX, Reg.AX);
+    } else
+      asm.Mov(Reg.BX, Reg.AX);
+
+    asm.Mov(Reg.ES, Reg.DX);
+    return new(Mem.At(Reg.BX).Seg(Reg.ES), Far: true);
   }
 
   /// <summary>True when the expression is a near-addressable lvalue (no far heap involved).</summary>
@@ -104,7 +134,11 @@ public sealed partial class CodeGenerator {
         asm.Mov(Reg.AX, Adjust(place.Cell, 0, OperandSize.Word));
         break;
 
-      case ScalarType { IsFloat: false }:
+      case ScalarType { IsFloat: false, ByteSize: 8 }: // QUAD rides the x87 stack
+        asm.Fild(Adjust(place.Cell, 0, OperandSize.Qword));
+        break;
+
+      case ScalarType { IsFloat: false } or PointerType:
         asm.Mov(Reg.AX, Adjust(place.Cell, 0, OperandSize.Word));
         asm.Mov(Reg.DX, Adjust(place.Cell, 2, OperandSize.Word));
         break;
@@ -136,6 +170,16 @@ public sealed partial class CodeGenerator {
         asm.Call(this._rt.StrMem);
         break;
 
+      case AsciizType asciiz:
+        asm.Lea(Reg.SI, place.Cell);
+        if (place.Far)
+          asm.Mov(Reg.DX, Reg.ES);
+        else
+          asm.Mov(Reg.DX, Reg.DS);
+        asm.Mov(Reg.CX, asciiz.Length);
+        asm.Call(this._rt.AsciizLoad);
+        break;
+
       default:
         this.Unsupported(at, $"load of {type}");
         break;
@@ -154,7 +198,11 @@ public sealed partial class CodeGenerator {
         asm.Mov(Adjust(place.Cell, 0, OperandSize.Word), Reg.AX);
         break;
 
-      case ScalarType { IsFloat: false }:
+      case ScalarType { IsFloat: false, ByteSize: 8 }: // QUAD rides the x87 stack
+        asm.Fistp(Adjust(place.Cell, 0, OperandSize.Qword));
+        break;
+
+      case ScalarType { IsFloat: false } or PointerType:
         asm.Mov(Adjust(place.Cell, 0, OperandSize.Word), Reg.AX);
         asm.Mov(Adjust(place.Cell, 2, OperandSize.Word), Reg.DX);
         break;
@@ -186,6 +234,16 @@ public sealed partial class CodeGenerator {
         asm.Call(this._rt.StoreFixed);
         break;
 
+      case AsciizType asciiz:
+        asm.Lea(Reg.DI, place.Cell);
+        if (place.Far)
+          asm.Mov(Reg.DX, Reg.ES);
+        else
+          asm.Mov(Reg.DX, Reg.DS);
+        asm.Mov(Reg.CX, asciiz.Length);
+        asm.Call(this._rt.AsciizStore);
+        break;
+
       default:
         this.Unsupported(at, $"store of {type}");
         break;
@@ -197,6 +255,15 @@ public sealed partial class CodeGenerator {
 
     if (targetType is UdtType udt) {
       this.EmitBlockCopy(a.Target, a.Value, udt.Size, a.Position);
+      return;
+    }
+
+    if (targetType is BcdType bcd) {
+      // same-type BCD copies are flat moves; arithmetic is a later wave (binder-checked)
+      if (Equals(model.TypeOf(a.Value), bcd))
+        this.EmitBlockCopy(a.Target, a.Value, bcd.Size, a.Position);
+      else
+        this.Unsupported(a.Position, "BCD/FIX arithmetic (comes with a later wave)");
       return;
     }
 

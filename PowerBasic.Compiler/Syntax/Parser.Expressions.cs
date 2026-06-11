@@ -89,10 +89,13 @@ public sealed partial class Parser {
       var op = this.Current.Kind switch {
         TokenKind.Plus => BinaryOp.Add,
         TokenKind.Minus => BinaryOp.Subtract,
+        TokenKind.Ampersand => BinaryOp.Concat,
         _ => (BinaryOp?)null,
       };
       if (op == null)
         return left;
+      if (op == BinaryOp.Concat)
+        this.Require(LanguageFeature.ConcatOperator);
 
       left = new BinaryExpr(this.Advance().Position, op.Value, left, this.ParseModulo());
     }
@@ -176,11 +179,36 @@ public sealed partial class Parser {
       }
       case TokenKind.Hash: // file number in I/O argument position, e.g. INPUT$(2, #1)
         return new FileNumberExpr(this.Advance().Position, this.ParsePrimary());
+      case TokenKind.At:
+        return this.ParsePtrDeref();
       case TokenKind.Identifier:
         return this.ParseNameExpression();
       default:
         throw this.Error($"unexpected '{token.Text}' in expression");
     }
+  }
+
+  /// <summary>
+  /// Pointer dereference <c>@p</c> / <c>@p(i)</c> array-of-pointer element /
+  /// indexed <c>@p[i]</c> (PB 3.5); member access binds to the target
+  /// (<c>@p.field</c> reads the field of the pointed-to TYPE).
+  /// </summary>
+  private Expression ParsePtrDeref() {
+    this.Require(LanguageFeature.Pointers);
+    var pos = this.Advance().Position; // @
+    var token = this.Expect(TokenKind.Identifier, "pointer variable");
+    Expression pointer = this.Current.Kind == TokenKind.LParen
+      ? new CallOrIndexExpr(token.Position, token.Text, token.Suffix, this.ParseArgumentList())
+      : new NameExpr(token.Position, token.Text, token.Suffix);
+
+    Expression? index = null;
+    if (this.Current.Kind == TokenKind.LBracket) {
+      this.Require(LanguageFeature.IndexedPointers);
+      this.Advance();
+      index = this.ParseExpression();
+      this.Expect(TokenKind.RBracket, "']'");
+    }
+    return this.ParsePostfix(new PtrDerefExpr(pos, pointer, index));
   }
 
   private Expression ParseNameExpression() {
@@ -218,14 +246,24 @@ public sealed partial class Parser {
       return arguments;
 
     do
-      arguments.Add(this.ParseExpression());
+      arguments.Add(this.ParseArgument());
     while (this.Match(TokenKind.Comma));
     this.Expect(TokenKind.RParen, "')'");
     return arguments;
   }
 
-  /// <summary>Parses an assignable expression: name, array element, member chain or indexed member.</summary>
+  /// <summary>One call argument; <c>BYVAL expr</c> overrides the default by-reference passing.</summary>
+  private Expression ParseArgument() {
+    if (!this.IsKeyword(0, "BYVAL"))
+      return this.ParseExpression();
+    var pos = this.Advance().Position;
+    return new ByValArgExpr(pos, this.ParseExpression());
+  }
+
+  /// <summary>Parses an assignable expression: name, array element, member chain, indexed member or pointer target.</summary>
   private Expression ParseLValue() {
+    if (this.Current.Kind == TokenKind.At)
+      return this.ParsePtrDeref();
     if (this.Current.Kind != TokenKind.Identifier)
       throw this.Error($"expected variable, found '{this.Current.Text}'");
     return this.ParseNameExpression();

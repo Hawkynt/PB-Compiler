@@ -21,6 +21,7 @@ public static class Driver {
     string? output = null;
     var includePaths = new List<string>();
     var dumpStage = "";
+    var dialect = Dialect.Pb35;
 
     for (var i = 0; i < args.Length; ++i)
       switch (args[i]) {
@@ -30,6 +31,14 @@ public static class Driver {
         case "-I" or "--include" when i + 1 < args.Length:
           includePaths.Add(args[++i]);
           break;
+        case "--dialect" when i + 1 < args.Length: {
+          var name = args[++i];
+          if (!TryParseDialect(name, out dialect)) {
+            stderr.WriteLine($"pbc: unknown dialect '{name}' (use pb20|pb21|pb30|pb31|pb32|pb35)");
+            return 1;
+          }
+          break;
+        }
         case "-G386":
           break; // accepted for PBC.EXE compatibility; 386 codegen is driven by $CPU
         case "--dump-tokens" or "--dump-ast" or "--dump-bind":
@@ -59,7 +68,7 @@ public static class Driver {
     var provider = new SearchPathSourceProvider([sourceDir, .. includePaths]);
 
     try {
-      var tokens = Preprocessor.Expand(source, provider);
+      var tokens = Preprocessor.Expand(source, provider, dialect);
 
       if (dumpStage == "--dump-tokens") {
         foreach (var token in tokens)
@@ -67,13 +76,13 @@ public static class Driver {
         return 0;
       }
 
-      var unit = Parser.Parse(tokens, source);
+      var unit = Parser.Parse(tokens, source, dialect);
       if (dumpStage == "--dump-ast") {
         stdout.WriteLine($"{unit.Statements.Count} top-level statements");
         return 0;
       }
 
-      var model = Binder.Bind(unit);
+      var model = Binder.Bind(unit, dialect);
       foreach (var warning in model.Warnings)
         stderr.WriteLine($"warning: {warning}");
       if (!model.Success) {
@@ -114,6 +123,18 @@ public static class Driver {
     } catch (Exception e) when (e is LexerException or PreprocessorException or ParserException) {
       stderr.WriteLine($"error: {e.Message}");
       return 1;
+    }
+  }
+
+  private static bool TryParseDialect(string name, out Dialect dialect) {
+    switch (name.ToLowerInvariant()) {
+      case "pb20": dialect = Dialect.Pb20; return true;
+      case "pb21": dialect = Dialect.Pb21; return true;
+      case "pb30": dialect = Dialect.Pb30; return true;
+      case "pb31": dialect = Dialect.Pb31; return true;
+      case "pb32": dialect = Dialect.Pb32; return true;
+      case "pb35": dialect = Dialect.Pb35; return true;
+      default: dialect = Dialect.Pb35; return false;
     }
   }
 
@@ -203,6 +224,7 @@ public static class Driver {
     w.WriteLine("Options:");
     w.WriteLine("  -O <file>      output file name (default: <source>.EXE / .PBU)");
     w.WriteLine("  -I <dir>       additional $INCLUDE search directory");
+    w.WriteLine("  --dialect <d>  language level: pb20|pb21|pb30|pb31|pb32|pb35 (default pb35)");
     w.WriteLine("  -G386          allow 80386 instructions (PBC.EXE compatibility)");
     w.WriteLine("  --dump-tokens  stop after lexing/preprocessing and list tokens");
     w.WriteLine("  --dump-ast     stop after parsing");

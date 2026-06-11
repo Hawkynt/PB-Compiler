@@ -1,7 +1,7 @@
 namespace PowerBasic.Compiler.Semantics;
 
 /// <summary>Discriminates the PB 3.5 scalar kinds.</summary>
-public enum ScalarKind { Byte, Word, Dword, Integer, Long, Single, Double, Ext }
+public enum ScalarKind { Byte, Word, Dword, Integer, Long, Quad, Single, Double, Ext }
 
 /// <summary>
 /// A resolved PowerBASIC type. Sizes are the on-target (16-bit real mode) byte
@@ -16,9 +16,12 @@ public abstract record PbType {
   public static readonly ScalarType Dword = new(ScalarKind.Dword, 4, false, false);
   public static readonly ScalarType Integer = new(ScalarKind.Integer, 2, true, false);
   public static readonly ScalarType Long = new(ScalarKind.Long, 4, true, false);
+  public static readonly ScalarType Quad = new(ScalarKind.Quad, 8, true, false);
   public static readonly ScalarType Single = new(ScalarKind.Single, 4, true, true);
   public static readonly ScalarType Double = new(ScalarKind.Double, 8, true, true);
   public static readonly ScalarType Ext = new(ScalarKind.Ext, 10, true, true);
+  public static readonly BcdType Fix = new(IsFixedPoint: true);
+  public static readonly BcdType Bcd = new(IsFixedPoint: false);
   public static readonly StringType String = new();
   public static readonly AnyType Any = new();
 }
@@ -45,6 +48,28 @@ public sealed record FixedStringType(int Length) : PbType {
 /// <summary>FLEX string (PB 3.5 flexible structure); stored like a dynamic string handle.</summary>
 public sealed record FlexType : PbType {
   public override int Size => 2;
+}
+
+/// <summary>
+/// ASCIIZ * n (PB 3.5): NUL-terminated fixed buffer of n bytes; LEN() is the
+/// character count before the NUL, SIZEOF() is n.
+/// </summary>
+public sealed record AsciizType(int Length) : PbType {
+  public override int Size => this.Length;
+}
+
+/// <summary>
+/// BCD numeric (baseline PB): FIX (<c>@</c>, 8 bytes fixed-point) or BCD
+/// (<c>@@</c>, 10 bytes floating). Storage is supported; arithmetic comes with
+/// a later wave and is diagnosed by the binder.
+/// </summary>
+public sealed record BcdType(bool IsFixedPoint) : PbType {
+  public override int Size => this.IsFixedPoint ? 8 : 10;
+}
+
+/// <summary>Data pointer (PB 3.2): 32-bit seg:off pointer to <see cref="Target"/>; <c>@p</c> dereferences.</summary>
+public sealed record PointerType(PbType Target) : PbType {
+  public override int Size => 4;
 }
 
 /// <summary>One UDT/UNION field with its resolved offset.</summary>

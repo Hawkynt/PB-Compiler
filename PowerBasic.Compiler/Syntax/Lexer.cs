@@ -11,20 +11,22 @@ public sealed class Lexer {
 
   private readonly string _source;
   private readonly string _file;
+  private readonly Dialect _dialect;
   private int _index;
   private int _line = 1;
   private int _column = 1;
   private bool _atStatementStart = true;
   private bool _lineHasContent;
 
-  private Lexer(string source, string file) {
+  private Lexer(string source, string file, Dialect dialect) {
     this._source = source;
     this._file = file;
+    this._dialect = dialect;
   }
 
   /// <summary>Tokenizes <paramref name="source"/>; the stream always ends with <see cref="TokenKind.EndOfFile"/>.</summary>
-  public static IEnumerable<Token> Tokenize(string source, string file) {
-    var lexer = new Lexer(source, file);
+  public static IEnumerable<Token> Tokenize(string source, string file, Dialect dialect = Dialect.Pb35) {
+    var lexer = new Lexer(source, file, dialect);
     for (;;) {
       var token = lexer.Next();
       yield return token;
@@ -90,8 +92,10 @@ public sealed class Lexer {
     var atStatementStart = this._atStatementStart;
     this._atStatementStart = false;
 
-    if (c == '!' && atStatementStart)
+    if (c == '!' && atStatementStart) {
+      this.Require(LanguageFeature.InlineAsm, position);
       return this.LexInlineAsm(position);
+    }
 
     if (c == '$' && atStatementStart)
       return this.LexMetaCommand(position);
@@ -105,7 +109,9 @@ public sealed class Lexer {
     if (char.IsAsciiDigit(c) || (c == '.' && char.IsAsciiDigit(this.Peek())))
       return this.LexNumber(position);
 
-    if (c == '&')
+    // & introduces a radix literal only with a radix letter + digits (or bare
+    // octal digits) attached; otherwise it is the PB 3.5 concatenation operator
+    if (c == '&' && this.IsRadixIntro())
       return this.LexRadixNumber(position);
 
     if (c == '"')
@@ -183,32 +189,88 @@ public sealed class Lexer {
       this.Advance();
     var text = this._source[start..this._index];
 
+    if (text.Contains('_'))
+      this.Require(LanguageFeature.IdentifierUnderscores, position);
+
     if (text.Equals("REM", StringComparison.OrdinalIgnoreCase)) {
       this.SkipToEndOfLine();
       this._atStatementStart = true;
       return this.Next();
     }
 
-    var suffix = this.LexSuffix();
+    var suffix = this.LexSuffix(position);
     return new(TokenKind.Identifier, text, position, suffix);
   }
 
-  private TypeSuffix LexSuffix() {
+  /// <summary>
+  /// Lexes a type suffix directly attached to an identifier/literal tail
+  /// (maximal munch: <c>??</c> before <c>?</c>, <c>&amp;&amp;</c> before <c>&amp;</c>, ...).
+  /// </summary>
+  private TypeSuffix LexSuffix(SourcePosition position) {
     switch (this.Current) {
-      case '%': this.Advance(); return TypeSuffix.Integer;
-      case '&': this.Advance(); return TypeSuffix.Long;
-      case '!': this.Advance(); return TypeSuffix.Single;
-      case '$': this.Advance(); return TypeSuffix.String;
+      case '%':
+        this.Advance();
+        return TypeSuffix.Integer;
+      case '?': {
+        this.Require(LanguageFeature.UnsignedTypes, position);
+        this.Advance();
+        if (this.Current != '?')
+          return TypeSuffix.Byte;
+        this.Advance();
+        if (this.Current != '?')
+          return TypeSuffix.Word;
+        this.Advance();
+        return TypeSuffix.Dword;
+      }
+      case '&':
+        this.Advance();
+        if (this.Current != '&')
+          return TypeSuffix.Long;
+        this.Require(LanguageFeature.QuadType, position);
+        this.Advance();
+        return TypeSuffix.Quad;
+      case '!':
+        this.Advance();
+        return TypeSuffix.Single;
       case '#':
         this.Advance();
-        if (this.Current == '#') {
-          this.Advance();
-          return TypeSuffix.Ext;
-        }
-        return TypeSuffix.Double;
+        if (this.Current != '#')
+          return TypeSuffix.Double;
+        this.Advance();
+        return TypeSuffix.Ext;
+      case '@':
+        this.Advance();
+        if (this.Current != '@')
+          return TypeSuffix.Fix;
+        this.Advance();
+        return TypeSuffix.Bcd;
+      case '$':
+        this.Advance();
+        if (this.Current != '$')
+          return TypeSuffix.String;
+        this.Advance();
+        return TypeSuffix.Flex;
       default:
         return TypeSuffix.None;
     }
+  }
+
+  private void Require(LanguageFeature feature, SourcePosition position) {
+    if (!DialectFacts.IsAvailable(feature, this._dialect))
+      throw new LexerException(DialectFacts.RequirementMessage(feature, this._dialect), position);
+  }
+
+  /// <summary>True when the <c>&amp;</c> at the cursor starts a radix literal (vs. the concat operator).</summary>
+  private bool IsRadixIntro() {
+    if (char.IsAsciiDigit(this.Peek()))
+      return true; // bare &nnn octal
+    var second = char.ToUpperInvariant(this.Peek(2));
+    return char.ToUpperInvariant(this.Peek()) switch {
+      'H' => char.IsAsciiHexDigit(second),
+      'O' => second is >= '0' and <= '7',
+      'B' => second is '0' or '1',
+      _ => false,
+    };
   }
 
   private Token LexNumber(SourcePosition position) {
@@ -239,7 +301,7 @@ public sealed class Lexer {
     }
 
     var text = this._source[start..this._index];
-    var suffix = this.LexSuffix();
+    var suffix = this.LexSuffix(position);
     if (suffix is TypeSuffix.Single or TypeSuffix.Double or TypeSuffix.Ext)
       isFloat = true;
 
@@ -255,6 +317,14 @@ public sealed class Lexer {
     return new(TokenKind.FloatLiteral, text, position, suffix, FloatValue: floatValue);
   }
 
+  /// <summary>
+  /// Radix literal (PB 3.1+ rules, verified against genuine PBC 3.50): up to
+  /// 64 bits; without a suffix the value's BIT LENGTH selects the size and the
+  /// value is interpreted SIGNED at that size (&amp;HFFFF = -1 INTEGER,
+  /// &amp;O177777 = -1 INTEGER, &amp;HFFFFFFFF = -1 LONG); a leading zero digit
+  /// makes it unsigned and widens as needed (&amp;H0FFFF = 65535 LONG); a typed
+  /// suffix reinterprets explicitly (&amp;HFFFF?? = 65535 WORD, &amp;HFFFF% = -1).
+  /// </summary>
   private Token LexRadixNumber(SourcePosition position) {
     var start = this._index;
     this.Advance(); // &
@@ -268,15 +338,51 @@ public sealed class Lexer {
     if (!char.IsAsciiDigit(this.Current))
       this.Advance(); // radix letter
 
-    var value = 0L;
+    // QUIRK 2.1/2.2 (FAQ): the leading-zero-reads-unsigned escape arrived with
+    // 3.1 - PB 3.0 and older read every radix literal signed (so the FAQ's
+    // "w?? = &H0A000 overflows" bug is replicated under --dialect pb30/pb2x)
+    var raw = 0UL;
+    var leadingZero = this.Current == '0' && this._dialect >= Dialect.Pb31;
     while (digits.IndexOf(char.ToUpperInvariant(this.Current)) is var digit && digit >= 0 && this.Current != '\0') {
-      value = value * radix + digit;
+      raw = raw * (ulong)radix + (ulong)digit;
       this.Advance();
     }
 
-    var suffix = this.Current == '&' && this.Peek() != 'H' && this.Peek() != 'h' ? TypeSuffix.Long : TypeSuffix.None;
-    if (suffix == TypeSuffix.Long)
-      this.Advance();
+    var suffix = this.LexSuffix(position);
+    if (suffix != TypeSuffix.None)
+      this.Require(LanguageFeature.TypedRadixLiterals, position);
+
+    long value;
+    switch (suffix) {
+      case TypeSuffix.None when leadingZero: // unsigned, widened to fit
+        value = (long)raw;
+        suffix = raw switch {
+          <= 0x7FFF => TypeSuffix.Integer,
+          <= 0x7FFFFFFF => TypeSuffix.Long,
+          _ => TypeSuffix.Quad,
+        };
+        break;
+      case TypeSuffix.None: { // signed at the smallest size covering the bit length
+        var bits = 64 - System.Numerics.BitOperations.LeadingZeroCount(raw);
+        (value, suffix) = bits switch {
+          <= 16 => ((long)(short)raw, TypeSuffix.Integer),
+          <= 32 => ((long)(int)raw, TypeSuffix.Long),
+          _ => ((long)raw, TypeSuffix.Quad),
+        };
+        break;
+      }
+      case TypeSuffix.Byte: value = (byte)raw; break;
+      case TypeSuffix.Word: value = (ushort)raw; break;
+      case TypeSuffix.Dword: value = (uint)raw; break;
+      case TypeSuffix.Integer: value = (short)raw; break;
+      case TypeSuffix.Long: value = (int)raw; break;
+      case TypeSuffix.Quad: value = (long)raw; break;
+      default:
+        throw new LexerException("invalid suffix on radix literal", position);
+    }
+
+    if (suffix == TypeSuffix.Quad)
+      this.Require(LanguageFeature.QuadType, position);
 
     return new(TokenKind.IntegerLiteral, this._source[start..this._index], position, suffix, IntegerValue: value);
   }
@@ -310,6 +416,10 @@ public sealed class Lexer {
       '.' => (TokenKind.Period, "."),
       '#' => (TokenKind.Hash, "#"),
       '?' => (TokenKind.Question, "?"),
+      '&' => (TokenKind.Ampersand, "&"),
+      '@' => (TokenKind.At, "@"),
+      '[' => (TokenKind.LBracket, "["),
+      ']' => (TokenKind.RBracket, "]"),
       '=' => this.Current switch {
         '<' => this.AdvanceTo(TokenKind.LessEquals, "=<"),
         '>' => this.AdvanceTo(TokenKind.GreaterEquals, "=>"),

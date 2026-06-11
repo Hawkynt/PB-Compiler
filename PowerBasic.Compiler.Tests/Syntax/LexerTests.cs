@@ -81,7 +81,8 @@ public sealed class LexerTests {
   [TestCase("&HFF", 255L)]
   [TestCase("&hff", 255L)]
   [TestCase("&H4F05", 0x4F05L)]
-  [TestCase("&HFFFF", 65535L)]
+  [TestCase("&HFFFF", -1L)]         // 4 hex digits: signed INTEGER (PB 3.1+ rule)
+  [TestCase("&H0FFFF", 65535L)]      // leading zero widens to LONG
   [TestCase("&O17", 15L)]
   [TestCase("&17", 15L)]        // bare & ocal form
   [TestCase("&B1010", 10L)]

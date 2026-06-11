@@ -41,4 +41,10 @@ public enum TokenKind {
   Period,
   Hash,
   Question,
+  /// <summary>Standalone <c>&amp;</c>: string concatenation operator (PB 3.5).</summary>
+  Ampersand,
+  /// <summary>Standalone <c>@</c>: pointer dereference (PB 3.2).</summary>
+  At,
+  LBracket,
+  RBracket,
 }

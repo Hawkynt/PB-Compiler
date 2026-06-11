@@ -23,6 +23,7 @@ the original target: 8086+ real mode under DOS or DOSBox.
 ```bash
 pbc HELLO.BAS              # -> HELLO.EXE (DOS MZ, real mode)
 pbc -G386 TEST.BAS         # allow 80386 instructions ($CPU 80386)
+pbc --dialect pb31 OLD.BAS # gate features per dialect (pb20|pb21|pb30|pb31|pb32|pb35)
 pbc UNIT.BAS               # $COMPILE UNIT inside -> UNIT.PBU
 pbc MAIN.BAS               # $LINK "UNIT.PBU" / $LINK "MY.PBL" inside -> linked EXE
 pbc lib build MY.PBL *.PBU # bundle units into a library
@@ -42,15 +43,17 @@ breakdown and [CHANGELOG.md](CHANGELOG.md) for progress.
 
 | Stage | State |
 |-------|-------|
-| Lexer + preprocessor ($INCLUDE, $IF) | ✅ full PB 3.5 token set, corpus-validated |
+| Lexer + preprocessor ($INCLUDE, $IF/$ELSEIF) | ✅ full PB 3.5 token set incl. `?`/`??`/`???`/`&&`/`@`/`@@`/`$$` suffixes, PB 3.1+ radix rules and the `&` concat operator, corpus-validated |
+| Dialect gating (`--dialect pb20..pb35`) | ✅ data-driven gate table (`Syntax/Dialect.cs`): inline asm/unsigned/QUAD (3.0), typed radix/ALIAS/ANY/UDT compare (3.1), pointers/code pointers/underscores (3.2), ASCIIZ/`&`/$ELSEIF/TRIM$/… (3.5) |
 | Parser | ✅ full grammar; the whole [PB-SvgaLibrary](https://github.com/Hawkynt/PB-SvgaLibrary) corpus parses (27&nbsp;772 statements) |
 | Semantic analysis | ✅ all 31 corpus suites bind error-free |
 | 8086–386 + x87 assembler, MZ writer | ✅ 680 golden-byte tests |
-| Code generator + DOS runtime | ✅ integers/longs/floats (WORD→LONG arithmetic promotion, unsigned compares), control flow (FOR with LONG/float counters and variable STEP, SELECT on longs/strings), dynamic strings, SUB/FUNCTION frames, static & REDIM arrays (LIFO heap reclaim), array/ANY parameters, UDTs, sequential + RANDOM/BINARY file I/O (GET/PUT, GET$/PUT$, SEEK, LOF), DATA/READ/RESTORE, ON ERROR/RESUME/ERR, console INPUT/LINE INPUT/INKEY$, PRINT USING (literal formats), DEF SEG/PEEK/POKE/INP/OUT/WAIT, VARPTR/STRPTR families, REG + CALL INTERRUPT, CODEPTR32 far thunks + CALL DWORD, SHIFT/ROTATE/BIT, SWAP, SCREEN/CLS/LOCATE/BEEP/SOUND, RND/TIMER |
+| Code generator + DOS runtime | ✅ integers/longs/floats (WORD→LONG arithmetic promotion, unsigned compares), control flow (FOR with LONG/float counters and variable STEP, SELECT on longs/strings), dynamic strings, SUB/FUNCTION frames, static & REDIM arrays (LIFO heap reclaim), array/ANY parameters, UDTs, sequential + RANDOM/BINARY file I/O (GET/PUT, GET$/PUT$, SEEK, LOF), DATA/READ/RESTORE, ON ERROR/RESUME/ERR, console INPUT/LINE INPUT/INKEY$, PRINT USING (literal formats), DEF SEG/PEEK/POKE/INP/OUT/WAIT, VARPTR/STRPTR families, REG + CALL INTERRUPT, CODEPTR32 far thunks + CALL/GOTO/GOSUB DWORD, data pointers (`x PTR`, `@p`, `@p[i]`, VARPTR32/STRPTR32), ASCIIZ buffers, QUAD storage/+/−/×/compare/print, TYPE/UNION whole-value compare, TRIM$, RND(a,z), CVx offsets, ASC statement, SIZEOF, ERRCLEAR, STDIN/STDOUT, SETEOF, CONSIN/CONSOUT, SHIFT/ROTATE/BIT, SWAP, SCREEN/CLS/LOCATE/BEEP/SOUND, RND/TIMER |
 | Inline assembler | ✅ wired into codegen: the whole corpus (5&nbsp;100+ `!` statements) assembles; locals/params resolve to BP cells (BYREF = pointer slot), BASIC labels are jump targets |
 | Corpus run gate | ✅ all 31 PB-SvgaLibrary suites compile **and run** under DOSBox: 1&nbsp;139 assertions, 0 failures |
 | PBU/PBL units & linker | ✅ `$COMPILE UNIT` emits .PBU (exports with signature hashes, runtime/DECLARE imports, near/data/segment/import fixups); `$LINK "X.PBU"/"Y.PBL"` resolves DECLAREd procedures at compile time (libraries on demand, transitively), signature mismatches are compile errors; cross-unit numeric/string/BYREF calls verified under DOSBox |
 | DOSBox harness + CI | ✅ golden battery (incl. stdin-redirected INPUT tests) + execution tests, headless |
+| Differential harness vs. genuine PBC 3.50 | ✅ `scripts/run-diff-tests.sh`: 11 batteries (numerics, radix rules, suffixes, concat, QUAD, ASCIIZ, 3.5 surface, pointers, UDT compare/$ELSEIF, code pointers) byte-identical to the original compiler |
 
 ## Layout
 

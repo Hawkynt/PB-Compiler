@@ -201,6 +201,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       asm.Dq(value);
     }
 
+    foreach (var (slot, value) in this._quadConstants) {
+      asm.Align(2);
+      asm.MarkLabel(slot);
+      asm.Db([.. BitConverter.GetBytes(value)]);
+    }
+
     foreach (var (text, label) in this._stringLiterals) {
       asm.MarkLabel(label);
       asm.Db(text);
@@ -223,16 +229,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private void Unsupported(Expression e, string what) => this.Errors.Add(new(e.Position, $"not yet generated: {what}"));
   private void Unsupported(SourcePosition position, string what) => this.Errors.Add(new(position, $"not yet generated: {what}"));
 
-  /// <summary>Replicates the binder's variable table key (name + suffix character).</summary>
-  private static string KeyOf(string name, TypeSuffix suffix) => suffix switch {
-    TypeSuffix.Integer => name + "%",
-    TypeSuffix.Long => name + "&",
-    TypeSuffix.Single => name + "!",
-    TypeSuffix.Double => name + "#",
-    TypeSuffix.Ext => name + "E",
-    TypeSuffix.String => name + "$",
-    _ => name,
-  };
+  /// <summary>Replicates the binder's variable table key (name + canonical suffix text).</summary>
+  private static string KeyOf(string name, TypeSuffix suffix) => name + suffix.KeyText();
 
   private VariableSymbol? LookupVariable(string name, TypeSuffix suffix) {
     var key = KeyOf(name, suffix);
@@ -245,13 +243,20 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
   #region value categories
 
-  private enum ValueKind { Int16, Int32, Float, Str }
+  /// <summary>
+  /// Evaluation-register category. <see cref="ValueKind.Int64"/> (QUAD) values
+  /// travel on the x87 stack like floats - the 64-bit mantissa holds the full
+  /// integer range exactly - but print/store as integers.
+  /// </summary>
+  private enum ValueKind { Int16, Int32, Int64, Float, Str }
 
   private static ValueKind KindOf(PbType type) => type switch {
     ScalarType { IsFloat: true } => ValueKind.Float,
     ScalarType { ByteSize: <= 2 } => ValueKind.Int16,
+    ScalarType { ByteSize: 8 } => ValueKind.Int64,
     ScalarType => ValueKind.Int32,
-    StringType or FixedStringType or FlexType => ValueKind.Str,
+    PointerType => ValueKind.Int32,
+    StringType or FixedStringType or FlexType or AsciizType => ValueKind.Str,
     _ => ValueKind.Int16,
   };
 
@@ -320,6 +325,14 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         asm.Call(this.UserLabel(g.Target));
         break;
 
+      case GotoPtrStmt gp:
+        this.EmitGotoGosubPtr(gp.Pointer, isGosub: false);
+        break;
+
+      case GosubPtrStmt gsp:
+        this.EmitGotoGosubPtr(gsp.Pointer, isGosub: true);
+        break;
+
       case OnGotoStmt og:
         this.EmitOnGoto(og);
         break;
@@ -363,6 +376,18 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
       case MidAssignStmt mid:
         this.EmitMidAssign(mid);
+        break;
+
+      case AscAssignStmt ascAssign:
+        this.EmitAscAssign(ascAssign);
+        break;
+
+      case StdOutStmt stdOut:
+        this.EmitStdOut(stdOut);
+        break;
+
+      case StdInStmt stdIn:
+        this.EmitStdIn(stdIn);
         break;
 
       case LsetRsetStmt ls:
@@ -482,6 +507,19 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         asm.Call(this._rt.Cls);
         break;
 
+      case "ERRCLEAR":
+        asm.Mov(Mem.Word(asm.Lbl("rt_err")), (Imm)0);
+        break;
+
+      case "SETEOF" when cmd.Arguments is [{ } setEofFile]:
+        // truncate at the current position: DOS write of 0 bytes
+        this.EmitInt16Argument(UnwrapFileNumber(setEofFile));
+        asm.Call(this._rt.FHandle);
+        asm.Xor(Reg.CX, Reg.CX);
+        asm.Mov(Reg.AH, 0x40);
+        asm.Int(0x21);
+        break;
+
       case "LOCATE": {
         if (cmd.Arguments.Count >= 1 && cmd.Arguments[0] is { } row)
           this.EmitInt16Argument(row);
@@ -591,7 +629,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       case ValueKind.Int32:
         asm.Or(Reg.AX, Reg.DX);
         break;
-      case ValueKind.Float:
+      case ValueKind.Int64 or ValueKind.Float:
         asm.Ftst();
         asm.FstswAx();
         asm.Fstp(St.St0);
@@ -875,8 +913,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     var asm = this._asm;
     var subjectType = model.TypeOf(s.Subject);
     var kind = KindOf(subjectType);
-    if (kind == ValueKind.Float) {
-      this.Unsupported(s); // float subjects are not used by the corpus
+    if (kind is ValueKind.Float or ValueKind.Int64) {
+      this.Unsupported(s); // float/QUAD subjects are not used by the corpus
       return;
     }
 

@@ -12,6 +12,7 @@ public sealed partial class Parser {
 
     // CALL DWORD ptr32 [BDECL|CDECL|SDECL] (args) - far call through a pointer
     if (upper == "DWORD") {
+      this.Require(LanguageFeature.CodePointers);
       var pointer = this.ParseExpression();
       string? convention = null;
       if (this.Current.Kind == TokenKind.Identifier && this.Current.Text.ToUpperInvariant() is "BDECL" or "CDECL" or "SDECL") {
@@ -55,7 +56,7 @@ public sealed partial class Parser {
     var arguments = new List<Expression>();
     if (!this.IsStatementEnd())
       do
-        arguments.Add(this.ParseExpression());
+        arguments.Add(this.ParseArgument());
       while (this.Match(TokenKind.Comma));
     return new CallStmt(name.Position, name.Text, arguments, false);
   }
@@ -84,6 +85,54 @@ public sealed partial class Parser {
     this.Expect(TokenKind.RParen, "')'");
     this.Expect(TokenKind.Equals, "'='");
     return new MidAssignStmt(pos, target, start, length, this.ParseExpression());
+  }
+
+  /// <summary>
+  /// ASC(s$, position) = code statement form (PB 3.5). The position is
+  /// mandatory - genuine PBC 3.50 rejects <c>ASC(s$) = code</c> with
+  /// <c>Error 411: "," expected</c>.
+  /// </summary>
+  private Statement ParseAscAssign() {
+    this.Require(LanguageFeature.AscStatement);
+    var pos = this.Advance().Position; // ASC
+    this.Expect(TokenKind.LParen, "'('");
+    var target = this.ParseLValue();
+    this.Expect(TokenKind.Comma, "','");
+    var index = this.ParseExpression();
+    this.Expect(TokenKind.RParen, "')'");
+    this.Expect(TokenKind.Equals, "'='");
+    return new AscAssignStmt(pos, target, index, this.ParseExpression());
+  }
+
+  /// <summary>STDOUT [expr] [;] - DOS handle 1 output (PB 3.5).</summary>
+  private Statement ParseStdOut() {
+    this.Require(LanguageFeature.StdInOut);
+    var pos = this.Advance().Position;
+    Expression? value = null;
+    if (!this.IsStatementEnd() && this.Current.Kind != TokenKind.Semicolon)
+      value = this.ParseExpression();
+    var noNewline = this.Match(TokenKind.Semicolon);
+    return new StdOutStmt(pos, value, noNewline);
+  }
+
+  /// <summary>STDIN n, s$ / STDIN LINE, s$ - DOS handle 0 input (PB 3.5).</summary>
+  private Statement ParseStdIn() {
+    this.Require(LanguageFeature.StdInOut);
+    var pos = this.Advance().Position;
+    if (this.TryMatchKeyword("LINE")) {
+      this.Expect(TokenKind.Comma, "','");
+      return new StdInStmt(pos, Line: true, null, this.ParseLValue());
+    }
+    var count = this.ParseExpression();
+    this.Expect(TokenKind.Comma, "','");
+    return new StdInStmt(pos, Line: false, count, this.ParseLValue());
+  }
+
+  /// <summary>SETEOF [#]n - truncate the file at the current position (PB 3.5).</summary>
+  private Statement ParseSetEof() {
+    this.Require(LanguageFeature.SetEof);
+    var pos = this.Advance().Position;
+    return new CommandStmt(pos, "SETEOF", [this.ParseFileNumber()]);
   }
 
   private Statement ParseLsetRset(bool isLeft) {

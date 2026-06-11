@@ -46,26 +46,7 @@ public sealed partial class CodeGenerator {
         }
       } else if (item.Value != null) {
         this.EmitExpression(item.Value);
-        switch (KindOf(model.TypeOf(item.Value))) {
-          case ValueKind.Int16:
-            asm.Call(this._rt.PrintInt16);
-            break;
-          case ValueKind.Int32:
-            asm.Call(this._rt.PrintInt32);
-            break;
-          case ValueKind.Float when model.TypeOf(item.Value).Size == 4:
-            asm.Call(this._rt.PrintSingle);
-            break;
-          case ValueKind.Float:
-            asm.Call(this._rt.PrintDouble);
-            break;
-          case ValueKind.Str:
-            asm.Call(this._rt.StrPrint);
-            break;
-          default:
-            this.Unsupported(item.Value, "PRINT of this type");
-            break;
-        }
+        this.EmitPrintValue(item.Value);
       }
 
       if (item.Separator == PrintSeparator.Comma)
@@ -78,6 +59,53 @@ public sealed partial class CodeGenerator {
 
     if (p.FileNumber != null)
       asm.Mov(Mem.Word(this._asm.Lbl("rt_curout")), 1);
+  }
+
+  /// <summary>
+  /// Prints the already-evaluated value of <paramref name="value"/>. Unsigned
+  /// WORD/DWORD widen first so they print their full unsigned range.
+  /// </summary>
+  private void EmitPrintValue(Expression value) {
+    var asm = this._asm;
+    var type = model.TypeOf(value);
+    switch (KindOf(type)) {
+      case ValueKind.Int16 when type is ScalarType { Signed: false, ByteSize: 2 }:
+        asm.Xor(Reg.DX, Reg.DX);     // WORD prints unsigned
+        asm.Call(this._rt.PrintInt32);
+        break;
+      case ValueKind.Int16:
+        asm.Call(this._rt.PrintInt16);
+        break;
+      case ValueKind.Int32 when type is ScalarType { Signed: false }:
+        // DWORD prints unsigned: zero-extend into a 64-bit print
+        asm.Mov(Mem.Word(this._scratch), Reg.AX);
+        asm.Mov(Mem.Word(this._scratch, 2), Reg.DX);
+        asm.Mov(Mem.Word(this._scratch, 4), (Imm)0);
+        asm.Mov(Mem.Word(this._scratch, 6), (Imm)0);
+        asm.Fild(Mem.Qword(this._scratch));
+        asm.Call(this._rt.PrintInt64);
+        break;
+      case ValueKind.Int32:
+        asm.Call(this._rt.PrintInt32);
+        break;
+      case ValueKind.Int64:
+        // genuine PBC 3.50 routes QUAD through the 15-digit float formatter
+        // (large values appear in E notation) - replicate byte-for-byte
+        asm.Call(this._rt.PrintDouble);
+        break;
+      case ValueKind.Float when type.Size == 4:
+        asm.Call(this._rt.PrintSingle);
+        break;
+      case ValueKind.Float:
+        asm.Call(this._rt.PrintDouble);
+        break;
+      case ValueKind.Str:
+        asm.Call(this._rt.StrPrint);
+        break;
+      default:
+        this.Unsupported(value, "PRINT of this type");
+        break;
+    }
   }
 
   /// <summary>

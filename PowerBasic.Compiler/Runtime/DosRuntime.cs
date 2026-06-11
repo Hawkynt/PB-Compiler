@@ -83,6 +83,7 @@ public sealed partial class DosRuntime {
     this.EmitLowLevelProcedures(asm);
     this.EmitMiscProcedures(asm);
     this.EmitMiscProcedures2(asm);
+    this.EmitExtraProcedures(asm);
   }
 
   /// <summary>

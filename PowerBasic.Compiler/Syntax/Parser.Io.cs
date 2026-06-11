@@ -223,16 +223,25 @@ public sealed partial class Parser {
   private static string RenderDataToken(Token token) => token.Kind switch {
     TokenKind.StringLiteral => token.StringValue!,
     TokenKind.NamedConstant => "%" + token.Text,
+    // radix literals already carry any suffix in their source text
+    TokenKind.IntegerLiteral when token.Text.StartsWith('&') => token.Text,
     _ => token.Text + SuffixText(token.Suffix),
   };
 
   private static string SuffixText(TypeSuffix suffix) => suffix switch {
+    TypeSuffix.Byte => "?",
+    TypeSuffix.Word => "??",
+    TypeSuffix.Dword => "???",
     TypeSuffix.Integer => "%",
     TypeSuffix.Long => "&",
+    TypeSuffix.Quad => "&&",
     TypeSuffix.Single => "!",
     TypeSuffix.Double => "#",
     TypeSuffix.Ext => "##",
+    TypeSuffix.Fix => "@",
+    TypeSuffix.Bcd => "@@",
     TypeSuffix.String => "$",
+    TypeSuffix.Flex => "$$",
     _ => "",
   };
 

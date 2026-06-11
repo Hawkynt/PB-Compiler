@@ -29,10 +29,14 @@ unsigned types, no QUAD, no pointers, no UNION, no 80386 codegen.
 
 ## PB 3.1
 
-- TYPE/UNION variables comparable directly (`IF a = b THEN` on whole UDTs)
+- TYPE/UNION variables comparable directly (`IF a = b THEN` on whole UDTs;
+  memcmp semantics, only `=` and `<>`)
 - Typed radix literals: suffix on the literal (`&HFFFF??` = 65535, `&HFFFF%` = −1)
-- **Radix signedness rule**: leading zero ⇒ unsigned (`&HFFFF` = −1 INTEGER,
-  `&H0FFFF` = 65535 LONG); radixes carry up to 64 bits
+- **Radix signedness rule** (verified against PBC 3.50, see QUIRKS): without a
+  suffix the value's *bit length* selects the size (16/32/64) and the bits read
+  SIGNED at that size — `&HFFFF` = −1 INTEGER, `&O177777` = −1 INTEGER,
+  `&HFFFFFFFF` = −1 LONG; a leading zero digit reads unsigned and widens as
+  needed (`&H0FFFF` = 65535 LONG); radixes carry up to 64 bits
 - Equates (%CONST) widened to signed 64-bit range
 - BIN$/HEX$/OCT$ accept 32-bit LONG values
 - `ALIAS "external_name"` on SUB/FUNCTION (for .OBJ interop)
@@ -55,8 +59,10 @@ unsigned types, no QUAD, no pointers, no UNION, no 80386 codegen.
 - Arrays as UDT fields may have 1–2 static dimensions
 - `&` as string concatenation operator
 - `STRING PTR` legal inside TYPE/UNION
-- `$ELSEIF` metastatement
-- ASC statement (`ASC(s$, n) = code`) and ASC/ASCII function start position
+- `$ELSEIF` metastatement (note: real PBC accepts only a bare equate as the
+  $IF/$ELSEIF condition — expressions raise Error 477)
+- ASC statement (`ASC(s$, n) = code` — the position is mandatory, Error 411
+  without it) and ASC/ASCII function start position
 - REDIM PRESERVE (outermost bound only; not for VIRTUAL arrays)
 - RND() and RND(a, z) → LONG in [a, z]
 - TRIM$()
@@ -95,6 +101,13 @@ unsigned types, no QUAD, no pointers, no UNION, no 80386 codegen.
 DEFtype forms: DEFINT, DEFLNG, DEFQUD, DEFSNG, DEFDBL, DEFEXT, DEFFIX,
 DEFBCD, DEFSTR, DEFFLX. Conversions: CINT, CLNG, CQUD, CSNG, CDBL, CEXT,
 CFIX, CBCD, CBYT, CWRD, CDWD.
+
+PB-Compiler implementation notes: QUAD values ride the x87 stack (storage,
+load/store, +, −, ×, comparisons and PRINT/STR$ work; `\`, MOD and bitwise
+operators diagnose "later wave"). FIX/BCD lex, parse, bind and store (same-type
+copies are block moves); BCD *arithmetic* diagnoses "later wave". HUGE/VIRTUAL/
+ABSOLUTE arrays parse and bind; allocation diagnoses "later wave", as does
+REDIM PRESERVE code generation.
 
 ## Array allocation classes (DIM [class] a(bounds) [AS type] [AT seg])
 

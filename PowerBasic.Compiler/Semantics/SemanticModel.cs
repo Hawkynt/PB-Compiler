@@ -38,6 +38,9 @@ public sealed class SemanticModel {
   /// <summary>Intrinsic behind every built-in call site.</summary>
   public Dictionary<Expression, IntrinsicInfo> IntrinsicBindings { get; } = new(ReferenceEqualityComparer.Instance);
 
+  /// <summary>Label name behind CODEPTR/CODEPTR32 arguments that reference a label instead of a procedure.</summary>
+  public Dictionary<Expression, string> LabelBindings { get; } = new(ReferenceEqualityComparer.Instance);
+
   /// <summary>Labels defined in module-level code and per procedure (scope key: "" = main).</summary>
   public Dictionary<string, HashSet<string>> Labels { get; } = new(StringComparer.OrdinalIgnoreCase);
 

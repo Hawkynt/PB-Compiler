@@ -13,6 +13,10 @@ public sealed partial class CodeGenerator {
   //   +8 + d*4: lower bound (word), extent (word) per dimension
 
   private void EmitDim(DimStmt dim) {
+    if (dim.Class is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Absolute || dim.AtAddress != null) {
+      this.Unsupported(dim.Position, $"{dim.Class} arrays (deep backend support comes with a later wave)");
+      return;
+    }
     foreach (var v in dim.Variables) {
       if (v.ArrayBounds == null)
         continue;
@@ -24,6 +28,10 @@ public sealed partial class CodeGenerator {
   }
 
   private void EmitRedim(RedimStmt redim) {
+    if (redim.Preserve) {
+      this.Unsupported(redim.Position, "REDIM PRESERVE (comes with a later wave)");
+      return;
+    }
     foreach (var v in redim.Variables) {
       var symbol = this.LookupVariable(v.Name, v.Suffix);
       if (symbol?.Type is not ArrayType { IsDynamic: true } || v.ArrayBounds == null) {

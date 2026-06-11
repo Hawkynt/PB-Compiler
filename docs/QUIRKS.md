@@ -25,11 +25,37 @@ signedness, wrap-around arithmetic, FOR boundary behavior under $ERROR).
 | — | Compiled EXEs embed environment-dependent bytes at 0x9C/0xA0 (3.x) | Not replicated; our images are deterministic |
 | — | *PTR/*SEG functions return unsigned 0–64k unless `$OPTION SIGNED` | Same |
 
+## Discoveries from the differential harness (verified against genuine PBC 3.50)
+
+- **Radix sizing is by value bit length, not digit count**: `&O177777` (6 octal
+  digits, but a 16-bit value) is `-1` INTEGER, exactly like `&HFFFF`. A leading
+  zero *digit* switches to unsigned interpretation and widens as needed
+  (`&H0FFFF` = 65535 LONG, `&O0177777` = 65535 LONG). Typed suffixes
+  reinterpret the raw bits at the suffix size (`&HFFFF??` = 65535 WORD).
+- **QUAD prints through the 15-digit float formatter**: `PRINT q&&` and
+  `STR$(q&&)` of large values appear in E notation
+  (`-9223372036854775807` prints as `-9.22337203685478E+18`); values of up to
+  15 digits print as plain integers. PB-Compiler replicates this byte-for-byte
+  (QUAD values ride the x87 stack).
+- **The ASC statement requires the position argument**: `ASC(s$) = code` is
+  rejected by PBC 3.50 with `Error 411: "," expected`; only
+  `ASC(s$, n) = code` compiles. Replicated.
+- **$IF/$ELSEIF take only a bare equate**: PBC 3.50 rejects expressions
+  (`$IF %X = 1` → `Error 477: Syntax error`); the condition is one equate,
+  true when nonzero. PB-Compiler additionally accepts constant expressions
+  (a superset) — programs valid for the real compiler behave identically.
+- **Narrowing QUAD/DWORD stores wrap silently** (e.g. `d??? = 3000000000`
+  keeps 3000000000; a saturating FISTP would yield 2147483648) — matching the
+  documented "no overflow checking" rule; PB-Compiler stores through a 64-bit
+  scratch and takes the low bits.
+
 ## Number formatting facts (verified against real PBC 3.5 in DOSBox)
 
 - `PRINT n` for numerics: leading space (or `-`), digits, **trailing space**.
 - `STR$(n)`: leading space/sign, **no** trailing space.
 - `7 \ 2` → ` 3 `, `10 / 4` → ` 2.5 `, `2 ^ 10` → ` 1024 ` (integral powers
   print without decimal point), `HEX$(255)` → `FF`.
-- Differential test `T2.BAS` (file-output battery) produces byte-identical
-  results between PB-Compiler and genuine PBC 3.50.
+- Differential batteries `tests/diff/DIFF01–11.BAS` (numerics, radix rules,
+  suffixes, `&` concat, QUAD, ASCIIZ, PB 3.5 surface, data pointers, UDT
+  comparison/$ELSEIF, code pointers) produce byte-identical RESULT.TXT between
+  PB-Compiler and genuine PBC 3.50 (`scripts/run-diff-tests.sh`).

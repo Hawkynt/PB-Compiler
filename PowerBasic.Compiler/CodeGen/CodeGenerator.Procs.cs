@@ -138,6 +138,19 @@ public sealed partial class CodeGenerator {
       var arg = args[i];
       var argType = model.TypeOf(arg);
 
+      // BYVAL override (PB 3.2): the value itself is passed - against a BYREF
+      // parameter the low word acts as the near address of the target
+      if (arg is ByValArgExpr byValOverride) {
+        var innerType = model.TypeOf(byValOverride.Value);
+        if (parameter.ByVal)
+          this.EmitByValArgument(byValOverride.Value, innerType, parameter.Type);
+        else {
+          this.EmitExpression(byValOverride.Value);
+          asm.Push(Reg.AX); // offset word of the pointer/value
+        }
+        continue;
+      }
+
       if (parameter.Type is ArrayType || argType is ArrayType) {
         this.EmitArrayArgument(arg, proc);
         continue;

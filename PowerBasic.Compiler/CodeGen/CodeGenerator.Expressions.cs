@@ -10,11 +10,17 @@ public sealed partial class CodeGenerator {
     var asm = this._asm;
     switch (expression) {
       case IntegerLiteralExpr i:
-        if (KindOf(model.TypeOf(i)) == ValueKind.Int16)
-          asm.Mov(Reg.AX, (int)i.Value);
-        else {
-          asm.Mov(Reg.AX, (int)(i.Value & 0xFFFF));
-          asm.Mov(Reg.DX, (int)((i.Value >> 16) & 0xFFFF));
+        switch (KindOf(model.TypeOf(i))) {
+          case ValueKind.Int16:
+            asm.Mov(Reg.AX, (int)i.Value);
+            break;
+          case ValueKind.Int64:
+            asm.Fild(Mem.Qword(this.QuadConstOf(i.Value)));
+            break;
+          default:
+            asm.Mov(Reg.AX, (int)(i.Value & 0xFFFF));
+            asm.Mov(Reg.DX, (int)((i.Value >> 16) & 0xFFFF));
+            break;
         }
         break;
 
@@ -32,11 +38,17 @@ public sealed partial class CodeGenerator {
           break;
         }
         var value = v.AsInteger;
-        if (KindOf(model.TypeOf(c)) == ValueKind.Int16)
-          asm.Mov(Reg.AX, (int)value);
-        else {
-          asm.Mov(Reg.AX, (int)(value & 0xFFFF));
-          asm.Mov(Reg.DX, (int)((value >> 16) & 0xFFFF));
+        switch (KindOf(model.TypeOf(c))) {
+          case ValueKind.Int16:
+            asm.Mov(Reg.AX, (int)value);
+            break;
+          case ValueKind.Int64:
+            asm.Fild(Mem.Qword(this.QuadConstOf(value)));
+            break;
+          default:
+            asm.Mov(Reg.AX, (int)(value & 0xFFFF));
+            asm.Mov(Reg.DX, (int)((value >> 16) & 0xFFFF));
+            break;
         }
         break;
       }
@@ -89,6 +101,15 @@ public sealed partial class CodeGenerator {
           this.EmitLoadPlace(indexPlace, model.TypeOf(ix), ix);
         break;
 
+      case PtrDerefExpr deref:
+        if (this.EmitPlace(deref) is { } derefPlace)
+          this.EmitLoadPlace(derefPlace, model.TypeOf(deref), deref);
+        break;
+
+      case ByValArgExpr byVal: // outside an argument list the override is the identity
+        this.EmitExpression(byVal.Value);
+        break;
+
       case UnaryExpr u:
         this.EmitUnary(u);
         break;
@@ -134,6 +155,7 @@ public sealed partial class CodeGenerator {
         asm.Sbb(Reg.DX, -1);
         break;
       case (UnaryOp.Negate, ValueKind.Float):
+      case (UnaryOp.Negate, ValueKind.Int64):
         asm.Fchs();
         break;
       case (UnaryOp.Not, ValueKind.Int16):
@@ -142,6 +164,9 @@ public sealed partial class CodeGenerator {
       case (UnaryOp.Not, ValueKind.Int32):
         asm.Not(Reg.AX);
         asm.Not(Reg.DX);
+        break;
+      case (UnaryOp.Not, ValueKind.Int64):
+        this.Unsupported(u, "QUAD bitwise NOT (comes with a later wave)");
         break;
       default:
         this.Unsupported(u, "unary op");
@@ -154,6 +179,12 @@ public sealed partial class CodeGenerator {
     var leftType = model.TypeOf(b.Left);
     var rightType = model.TypeOf(b.Right);
     var resultType = model.TypeOf(b);
+
+    // whole-value TYPE/UNION = / <> (PB 3.1): memcmp semantics
+    if (leftType is UdtType leftUdt && rightType is UdtType) {
+      this.EmitUdtCompare(b, leftUdt.Size);
+      return;
+    }
 
     if (KindOf(leftType) == ValueKind.Str || KindOf(rightType) == ValueKind.Str) {
       this.EmitStringBinary(b);
@@ -204,8 +235,41 @@ public sealed partial class CodeGenerator {
         this.EmitFloatOp(b);
         break;
 
+      case ValueKind.Int64:
+        this.EmitExpression(b.Left);
+        this.Coerce(leftType, opType, b.Left);
+        this.EmitExpression(b.Right);
+        this.Coerce(rightType, opType, b.Right);
+        this.EmitInt64Op(b);
+        break;
+
       default:
         this.Unsupported(b, "binary op on this type");
+        break;
+    }
+  }
+
+  /// <summary>
+  /// QUAD arithmetic on the x87 stack (left ST1, right ST0): +, -, * and the
+  /// comparisons are exact within 64-bit range; \, MOD and the bitwise
+  /// operators come with a later wave.
+  /// </summary>
+  private void EmitInt64Op(BinaryExpr b) {
+    var asm = this._asm;
+    switch (b.Op) {
+      case BinaryOp.Add: asm.Faddp(); break;
+      case BinaryOp.Subtract: asm.Fsubp(); break;
+      case BinaryOp.Multiply: asm.Fmulp(); break;
+      case BinaryOp.Equal: this.EmitFloatCompare(asm => asm.Je); break;
+      case BinaryOp.NotEqual: this.EmitFloatCompare(asm => asm.Jne); break;
+      case BinaryOp.Less: this.EmitFloatCompare(asm => asm.Jb); break;
+      case BinaryOp.Greater: this.EmitFloatCompare(asm => asm.Ja); break;
+      case BinaryOp.LessEqual: this.EmitFloatCompare(asm => asm.Jbe); break;
+      case BinaryOp.GreaterEqual: this.EmitFloatCompare(asm => asm.Jae); break;
+      default:
+        asm.Fstp(St.St0);
+        asm.Fstp(St.St0);
+        this.Unsupported(b, $"QUAD {b.Op} (comes with a later wave)");
         break;
     }
   }
@@ -224,7 +288,7 @@ public sealed partial class CodeGenerator {
     asm.Mov(Reg.DX, Reg.AX);
     asm.Pop(Reg.AX);
 
-    if (b.Op == BinaryOp.Add) {
+    if (b.Op is BinaryOp.Add or BinaryOp.Concat) {
       asm.Call(this._rt.StrCat);
       return;
     }
@@ -512,6 +576,54 @@ public sealed partial class CodeGenerator {
         asm.Mov(Reg.DX, Mem.Word(this._scratch, 2));
         break;
 
+      // QUAD travels on the x87 stack: int16/int32 enter via FILD, leave via FISTP
+      case (ValueKind.Int16, ValueKind.Int64) when unsignedSource:
+        asm.Mov(Mem.Word(this._scratch), Reg.AX);
+        asm.Mov(Mem.Word(this._scratch, 2), (Imm)0);
+        asm.Fild(Mem.Dword(this._scratch));
+        break;
+
+      case (ValueKind.Int16, ValueKind.Int64):
+        asm.Mov(Mem.Word(this._scratch), Reg.AX);
+        asm.Fild(Mem.Word(this._scratch));
+        break;
+
+      case (ValueKind.Int32, ValueKind.Int64) when from is ScalarType { IsFloat: false, Signed: false } or PointerType:
+        asm.Mov(Mem.Word(this._scratch), Reg.AX);
+        asm.Mov(Mem.Word(this._scratch, 2), Reg.DX);
+        asm.Mov(Mem.Word(this._scratch, 4), (Imm)0);
+        asm.Mov(Mem.Word(this._scratch, 6), (Imm)0);
+        asm.Fild(Mem.Qword(this._scratch));
+        break;
+
+      case (ValueKind.Int32, ValueKind.Int64):
+        asm.Mov(Mem.Word(this._scratch), Reg.AX);
+        asm.Mov(Mem.Word(this._scratch, 2), Reg.DX);
+        asm.Fild(Mem.Dword(this._scratch));
+        break;
+
+      // narrowing goes through the full 64-bit store and takes the low bits:
+      // PB wraps silently (FISTP into a narrower cell would saturate instead)
+      case (ValueKind.Int64, ValueKind.Int16):
+        asm.Fistp(Mem.Qword(this._scratch));
+        asm.Mov(Reg.AX, Mem.Word(this._scratch));
+        break;
+
+      case (ValueKind.Int64, ValueKind.Int32):
+        asm.Fistp(Mem.Qword(this._scratch));
+        asm.Mov(Reg.AX, Mem.Word(this._scratch));
+        asm.Mov(Reg.DX, Mem.Word(this._scratch, 2));
+        break;
+
+      case (ValueKind.Int64, ValueKind.Float):
+        break; // same representation (x87 stack)
+
+      case (ValueKind.Float, ValueKind.Int64):
+        // round to integer so subsequent integer stores/prints are exact
+        asm.Fistp(Mem.Qword(this._scratch));
+        asm.Fild(Mem.Qword(this._scratch));
+        break;
+
       default:
         this.Unsupported(at, $"conversion {from} -> {to}");
         break;
@@ -521,6 +633,8 @@ public sealed partial class CodeGenerator {
   private static PbType WidestOf(PbType a, PbType b) {
     if (a is ScalarType { IsFloat: true } || b is ScalarType { IsFloat: true })
       return PbType.Double;
+    if (a is ScalarType { IsFloat: false, ByteSize: 8 } || b is ScalarType { IsFloat: false, ByteSize: 8 })
+      return PbType.Quad;
     if (a is ScalarType { ByteSize: > 2 } || b is ScalarType { ByteSize: > 2 })
       return PbType.Long;
     return PbType.Integer;

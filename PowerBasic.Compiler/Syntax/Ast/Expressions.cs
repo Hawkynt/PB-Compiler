@@ -33,10 +33,21 @@ public sealed record MemberExpr(SourcePosition Position, Expression Target, stri
 /// </summary>
 public sealed record IndexExpr(SourcePosition Position, Expression Target, IReadOnlyList<Expression> Arguments) : Expression(Position);
 
+/// <summary>
+/// Pointer dereference <c>@p</c> (PB 3.2) or indexed <c>@p[i]</c> (PB 3.5,
+/// zero-based regardless of OPTION BASE); usable as lvalue and rvalue.
+/// </summary>
+public sealed record PtrDerefExpr(SourcePosition Position, Expression Pointer, Expression? Index) : Expression(Position);
+
+/// <summary>Argument-position <c>BYVAL</c> override: passes the pointer target / forces by-value.</summary>
+public sealed record ByValArgExpr(SourcePosition Position, Expression Value) : Expression(Position);
+
 public enum BinaryOp {
   Add, Subtract, Multiply, Divide, IntegerDivide, Modulo, Power,
   Equal, NotEqual, Less, Greater, LessEqual, GreaterEqual,
   And, Or, Xor, Eqv, Imp,
+  /// <summary><c>&amp;</c> string concatenation (PB 3.5).</summary>
+  Concat,
 }
 
 public sealed record BinaryExpr(SourcePosition Position, BinaryOp Op, Expression Left, Expression Right) : Expression(Position);

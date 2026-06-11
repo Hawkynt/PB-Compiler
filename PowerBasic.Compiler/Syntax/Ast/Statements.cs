@@ -9,11 +9,16 @@ public sealed record CompilationUnit(string FileName, IReadOnlyList<Statement> S
 #region types
 
 /// <summary>Built-in scalar type names usable in an <c>AS</c> clause.</summary>
-public enum BuiltinType { None, Byte, Word, Dword, Integer, Long, Quad, Single, Double, Ext, String, FixedString, Flex, Any }
+public enum BuiltinType { None, Byte, Word, Dword, Integer, Long, Quad, Single, Double, Ext, Fix, Bcd, String, FixedString, Asciiz, Flex, Any }
 
-/// <summary>An <c>AS</c>-clause type: builtin, fixed string (<c>STRING * n</c>) or a user-defined TYPE/UNION name.</summary>
-public sealed record TypeName(SourcePosition Position, BuiltinType Builtin, string? UserTypeName = null, Expression? FixedLength = null) {
+/// <summary>
+/// An <c>AS</c>-clause type: builtin, fixed string (<c>STRING * n</c>), ASCIIZ
+/// (<c>ASCIIZ * n</c>), a user-defined TYPE/UNION name, or - when
+/// <see cref="PointerTarget"/> is set - a pointer to that type (<c>... PTR</c>).
+/// </summary>
+public sealed record TypeName(SourcePosition Position, BuiltinType Builtin, string? UserTypeName = null, Expression? FixedLength = null, TypeName? PointerTarget = null) {
   public bool IsUserDefined => this.UserTypeName != null;
+  public bool IsPointer => this.PointerTarget != null;
 }
 
 #endregion
@@ -61,14 +66,18 @@ public sealed record VariableDecl(SourcePosition Position, string Name, TypeSuff
 
 public enum StorageClass { Dim, Local, Static, Shared, Public, Ext, Common }
 
+/// <summary>Array allocation class selected on DIM (see docs/DIALECTS.md).</summary>
+public enum ArrayClass { Default, Static, Dynamic, Huge, Virtual, Absolute }
+
 /// <summary>
 /// DIM/LOCAL/STATIC/SHARED/PUBLIC/EXT/COMMON declaration; DIM may carry an extra SHARED flag
-/// (<c>DIM x AS SHARED WORD</c>); <c>COMMON /blockname/</c> carries the block name.
+/// (<c>DIM x AS SHARED WORD</c>); <c>COMMON /blockname/</c> carries the block name;
+/// <c>DIM HUGE/VIRTUAL/DYNAMIC/STATIC</c> select the array class, <c>AT segment</c> maps ABSOLUTE.
 /// </summary>
-public sealed record DimStmt(SourcePosition Position, StorageClass Storage, bool SharedFlag, IReadOnlyList<VariableDecl> Variables, string? CommonBlock = null) : Statement(Position);
+public sealed record DimStmt(SourcePosition Position, StorageClass Storage, bool SharedFlag, IReadOnlyList<VariableDecl> Variables, string? CommonBlock = null, ArrayClass Class = ArrayClass.Default, Expression? AtAddress = null) : Statement(Position);
 
-/// <summary>REDIM (re-dimension a $DYNAMIC array).</summary>
-public sealed record RedimStmt(SourcePosition Position, IReadOnlyList<VariableDecl> Variables) : Statement(Position);
+/// <summary>REDIM (re-dimension a $DYNAMIC array); PRESERVE (3.5) keeps existing contents.</summary>
+public sealed record RedimStmt(SourcePosition Position, IReadOnlyList<VariableDecl> Variables, bool Preserve = false) : Statement(Position);
 
 /// <summary>ERASE array, ...</summary>
 public sealed record EraseStmt(SourcePosition Position, IReadOnlyList<NameExpr> Arrays) : Statement(Position);
@@ -91,6 +100,15 @@ public sealed record CallPtrStmt(SourcePosition Position, Expression Pointer, st
 
 /// <summary>MID$(s$, start [, len]) = value$ statement form.</summary>
 public sealed record MidAssignStmt(SourcePosition Position, Expression Target, Expression Start, Expression? Length, Expression Value) : Statement(Position);
+
+/// <summary>ASC(s$ [, position]) = code statement form (PB 3.5).</summary>
+public sealed record AscAssignStmt(SourcePosition Position, Expression Target, Expression? Index, Expression Value) : Statement(Position);
+
+/// <summary>STDOUT [s$] [;] - writes to DOS handle 1 (redirectable); trailing ';' suppresses the newline (PB 3.5).</summary>
+public sealed record StdOutStmt(SourcePosition Position, Expression? Value, bool NoNewline) : Statement(Position);
+
+/// <summary>STDIN n, s$ (read n bytes) / STDIN LINE, s$ (read a line) from DOS handle 0 (PB 3.5).</summary>
+public sealed record StdInStmt(SourcePosition Position, bool Line, Expression? Count, Expression Target) : Statement(Position);
 
 /// <summary>LSET/RSET str-or-field = value.</summary>
 public sealed record LsetRsetStmt(SourcePosition Position, bool IsLeft, Expression Target, Expression Value) : Statement(Position);
@@ -132,6 +150,12 @@ public sealed record LabelStmt(SourcePosition Position, string Name) : Statement
 public sealed record GotoStmt(SourcePosition Position, string Target) : Statement(Position);
 
 public sealed record GosubStmt(SourcePosition Position, string Target) : Statement(Position);
+
+/// <summary>GOTO DWORD ptr32 (PB 3.2): far jump through a 32-bit code pointer.</summary>
+public sealed record GotoPtrStmt(SourcePosition Position, Expression Pointer) : Statement(Position);
+
+/// <summary>GOSUB DWORD ptr32 (PB 3.2): far call through a 32-bit code pointer.</summary>
+public sealed record GosubPtrStmt(SourcePosition Position, Expression Pointer) : Statement(Position);
 
 /// <summary>RETURN [label].</summary>
 public sealed record ReturnStmt(SourcePosition Position, string? Target) : Statement(Position);

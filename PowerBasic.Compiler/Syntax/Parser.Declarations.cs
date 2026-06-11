@@ -67,7 +67,9 @@ public sealed partial class Parser {
       cdecl = true;
       return true;
     }
-    if (this.TryMatchKeyword("ALIAS")) {
+    if (this.IsKeyword(0, "ALIAS")) {
+      this.Require(LanguageFeature.AliasClause);
+      this.Advance();
       alias = this.Expect(TokenKind.StringLiteral, "ALIAS name").StringValue;
       return true;
     }
@@ -132,20 +134,51 @@ public sealed partial class Parser {
       "SINGLE" => BuiltinType.Single,
       "DOUBLE" => BuiltinType.Double,
       "EXT" => BuiltinType.Ext,
+      "FIX" => BuiltinType.Fix,
+      "BCD" => BuiltinType.Bcd,
       "STRING" => BuiltinType.String,
+      "ASCIIZ" => BuiltinType.Asciiz,
       "FLEX" => BuiltinType.Flex,
       "ANY" => BuiltinType.Any,
       _ => BuiltinType.None,
     };
 
-    if (builtin == BuiltinType.None)
-      return new(token.Position, BuiltinType.None, token.Text);
-    if (builtin == BuiltinType.String && this.Match(TokenKind.Star))
-      return new(token.Position, BuiltinType.FixedString, null, this.ParseExpression());
-    return new(token.Position, builtin);
+    switch (builtin) {
+      case BuiltinType.Byte or BuiltinType.Word or BuiltinType.Dword:
+        this.Require(LanguageFeature.UnsignedTypes);
+        break;
+      case BuiltinType.Quad:
+        this.Require(LanguageFeature.QuadType);
+        break;
+      case BuiltinType.Any:
+        this.Require(LanguageFeature.AnyParameter);
+        break;
+    }
+
+    var result = builtin switch {
+      BuiltinType.None => new TypeName(token.Position, BuiltinType.None, token.Text),
+      BuiltinType.String when this.Match(TokenKind.Star) => new(token.Position, BuiltinType.FixedString, null, this.ParseExpression()),
+      BuiltinType.Asciiz => this.ParseAsciiz(token),
+      _ => new(token.Position, builtin),
+    };
+
+    // <type> PTR (PB 3.2), nestable: INTEGER PTR PTR
+    while (this.IsKeyword(0, "PTR")) {
+      this.Require(LanguageFeature.Pointers);
+      this.Advance();
+      result = new(token.Position, BuiltinType.None, null, null, result);
+    }
+    return result;
+  }
+
+  private TypeName ParseAsciiz(Token token) {
+    this.Require(LanguageFeature.AsciizType);
+    this.Expect(TokenKind.Star, "'*' after ASCIIZ");
+    return new(token.Position, BuiltinType.Asciiz, null, this.ParseExpression());
   }
 
   private Statement ParseTypeDecl(bool isUnion) {
+    this.Require(LanguageFeature.TypeUnion);
     var pos = this.Advance().Position;
     var name = this.Expect(TokenKind.Identifier, "type name");
     var end = isUnion ? "END UNION" : "END TYPE";
@@ -175,7 +208,10 @@ public sealed partial class Parser {
       this.Expect(TokenKind.RParen, "')'");
     }
     this.ExpectKeyword("AS");
-    return new(name.Position, name.Text, this.ParseTypeName(), bounds);
+    var type = this.ParseTypeName();
+    if (type is { IsPointer: true, PointerTarget.Builtin: BuiltinType.String })
+      this.Require(LanguageFeature.StringPtrInType); // STRING PTR fields arrived only in 3.5
+    return new(name.Position, name.Text, type, bounds);
   }
 
   private Statement ParseDef() {
@@ -227,21 +263,64 @@ public sealed partial class Parser {
       }
     }
 
+    var arrayClass = this.ParseArrayClass(storage);
+
     var variables = new List<VariableDecl>();
     do
       variables.Add(this.ParseVariableDecl(ref shared));
     while (this.Match(TokenKind.Comma));
-    return new DimStmt(pos, storage, shared, variables, commonBlock);
+
+    // DIM x(...) [AS type] AT segment - ABSOLUTE array mapped at a fixed address
+    Expression? atAddress = null;
+    if (this.TryMatchKeyword("AT")) {
+      atAddress = this.ParseExpression();
+      arrayClass = ArrayClass.Absolute;
+    }
+    return new DimStmt(pos, storage, shared, variables, commonBlock, arrayClass, atAddress);
+  }
+
+  /// <summary>Optional DIM array-class keyword: STATIC/DYNAMIC/HUGE/VIRTUAL/ABSOLUTE.</summary>
+  private ArrayClass ParseArrayClass(StorageClass storage) {
+    if (storage != StorageClass.Dim || this.Current.Kind != TokenKind.Identifier || this.Peek().Kind != TokenKind.Identifier)
+      return ArrayClass.Default;
+
+    switch (this.Current.Text.ToUpperInvariant()) {
+      case "STATIC":
+        this.Advance();
+        return ArrayClass.Static;
+      case "DYNAMIC":
+        this.Advance();
+        return ArrayClass.Dynamic;
+      case "HUGE":
+        this.Require(LanguageFeature.HugeArrays);
+        this.Advance();
+        return ArrayClass.Huge;
+      case "VIRTUAL":
+        this.Require(LanguageFeature.VirtualArrays);
+        this.Advance();
+        return ArrayClass.Virtual;
+      case "ABSOLUTE":
+        this.Advance();
+        return ArrayClass.Absolute;
+      default:
+        return ArrayClass.Default;
+    }
   }
 
   private Statement ParseRedim() {
     var pos = this.Advance().Position;
+    var preserve = false;
+    if (this.IsKeyword(0, "PRESERVE")) {
+      this.Require(LanguageFeature.RedimPreserve);
+      this.Advance();
+      preserve = true;
+    }
     var shared = false;
     var variables = new List<VariableDecl>();
     do
       variables.Add(this.ParseVariableDecl(ref shared));
     while (this.Match(TokenKind.Comma));
-    return new RedimStmt(pos, variables);
+    return new RedimStmt(pos, variables, preserve);
   }
 
   private Statement ParseErase() {

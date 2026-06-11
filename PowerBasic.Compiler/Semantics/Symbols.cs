@@ -29,6 +29,9 @@ public sealed class VariableSymbol(string name, PbType type, VariableStorage sto
   /// <summary>Assigned by the storage layouter: data-segment offset or BP displacement.</summary>
   public int Offset { get; set; }
 
+  /// <summary>Allocation class from DIM (HUGE/VIRTUAL/ABSOLUTE are diagnosed by codegen for now).</summary>
+  public ArrayClass ArrayClass { get; set; } = ArrayClass.Default;
+
   public bool IsArray => this.Type is ArrayType;
   public override string ToString() => $"{this.Storage} {this.Name}: {this.Type}";
 }

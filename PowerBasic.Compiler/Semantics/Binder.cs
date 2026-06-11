@@ -12,24 +12,34 @@ public sealed class Binder {
 
   private readonly SemanticModel _model;
   private readonly CompilationUnit _unit;
+  private readonly Dialect _dialect;
   private readonly Dictionary<char, PbType> _defaultTypes = [];
   private readonly HashSet<string> _redimmedArrays = new(StringComparer.OrdinalIgnoreCase);
   private ConstantFolder _folder;
   private bool _dynamicMode;
   private int _optionBase;
 
-  private Binder(CompilationUnit unit) {
+  private Binder(CompilationUnit unit, Dialect dialect) {
     this._unit = unit;
+    this._dialect = dialect;
     this._model = new() { FileName = unit.FileName };
     this._folder = new(this._model.Equates);
   }
 
-  public static SemanticModel Bind(CompilationUnit unit) {
-    var binder = new Binder(unit);
+  public static SemanticModel Bind(CompilationUnit unit, Dialect dialect = Dialect.Pb35) {
+    var binder = new Binder(unit, dialect);
     binder.CollectRedims(unit.Statements);
     binder.ScanModule();
     binder.BindAllBodies();
     return binder._model;
+  }
+
+  /// <summary>Adds a dialect-gate error when <paramref name="feature"/> is unavailable; true when usable.</summary>
+  private bool Require(LanguageFeature feature, SourcePosition position) {
+    if (DialectFacts.IsAvailable(feature, this._dialect))
+      return true;
+    this.Error(position, DialectFacts.RequirementMessage(feature, this._dialect));
+    return false;
   }
 
   /// <summary>
@@ -212,7 +222,7 @@ public sealed class Binder {
 
   private void DeclareModuleVariables(DimStmt dim) {
     foreach (var v in dim.Variables) {
-      var symbol = this.CreateVariable(v, VariableStorage.Global, dim.Position);
+      var symbol = this.CreateVariable(v, VariableStorage.Global, dim.Position, dim.Class);
       if (symbol == null)
         continue;
       symbol.IsShared = dim.SharedFlag || dim.Storage is StorageClass.Shared or StorageClass.Public or StorageClass.Common;
@@ -228,7 +238,7 @@ public sealed class Binder {
     }
   }
 
-  private VariableSymbol? CreateVariable(VariableDecl v, VariableStorage storage, SourcePosition position) {
+  private VariableSymbol? CreateVariable(VariableDecl v, VariableStorage storage, SourcePosition position, ArrayClass arrayClass = ArrayClass.Default) {
     var elementType = v.Type != null
       ? this.ResolveTypeName(v.Type)
       : this.TypeFromSuffixOrDefault(v.Name, v.Suffix);
@@ -240,10 +250,12 @@ public sealed class Binder {
     if (v.ArrayBounds == null)
       return new(v.Name, elementType, storage);
 
-    // try static bounds; any non-constant bound, $DYNAMIC mode, or a REDIM
-    // anywhere in the program makes the array dynamic
+    // try static bounds; any non-constant bound, $DYNAMIC mode, an explicit
+    // dynamic class (DYNAMIC/HUGE/VIRTUAL), or a REDIM anywhere makes the array dynamic
     var bounds = new List<(int, int)>();
-    var isStatic = !this._dynamicMode && !this._redimmedArrays.Contains(VariableKey(v.Name, v.Suffix));
+    var isStatic = !this._dynamicMode
+      && arrayClass is not (ArrayClass.Dynamic or ArrayClass.Huge or ArrayClass.Virtual)
+      && !this._redimmedArrays.Contains(VariableKey(v.Name, v.Suffix));
     foreach (var (lowerExpr, upperExpr) in v.ArrayBounds) {
       var lower = lowerExpr == null ? this._optionBase : (int?)(this._folder.TryFold(lowerExpr)?.Integer);
       var upper = (int?)(this._folder.TryFold(upperExpr)?.Integer);
@@ -255,7 +267,7 @@ public sealed class Binder {
     }
 
     var arrayType = new ArrayType(elementType, isStatic ? bounds : null, v.ArrayBounds.Count);
-    return new(v.Name, arrayType, storage);
+    return new(v.Name, arrayType, storage) { ArrayClass = arrayClass };
   }
 
   #endregion
@@ -268,10 +280,12 @@ public sealed class Binder {
     BuiltinType.Dword => PbType.Dword,
     BuiltinType.Integer => PbType.Integer,
     BuiltinType.Long => PbType.Long,
-    BuiltinType.Quad => PbType.Long, // PB 3.5 has no QUAD; tolerate as LONG with a warning at use sites
+    BuiltinType.Quad => PbType.Quad,
     BuiltinType.Single => PbType.Single,
     BuiltinType.Double => PbType.Double,
     BuiltinType.Ext => PbType.Ext,
+    BuiltinType.Fix => PbType.Fix,
+    BuiltinType.Bcd => PbType.Bcd,
     BuiltinType.String => PbType.String,
     BuiltinType.Flex => new FlexType(),
     BuiltinType.Any => PbType.Any,
@@ -279,11 +293,20 @@ public sealed class Binder {
   };
 
   private PbType? ResolveTypeName(TypeName t) {
-    if (t.Builtin == BuiltinType.FixedString) {
+    if (t.IsPointer) {
+      var target = this.ResolveTypeName(t.PointerTarget!);
+      if (target == null) {
+        this.Error(t.Position, "unknown pointer target type");
+        return new PointerType(PbType.Integer);
+      }
+      return new PointerType(target);
+    }
+
+    if (t.Builtin is BuiltinType.FixedString or BuiltinType.Asciiz) {
       if (this._folder.TryFold(t.FixedLength!) is { Integer: { } n } && n is > 0 and <= 32767)
-        return new FixedStringType((int)n);
-      this.Error(t.Position, "fixed string length must be a constant in 1..32767");
-      return new FixedStringType(1);
+        return t.Builtin == BuiltinType.Asciiz ? new AsciizType((int)n) : new FixedStringType((int)n);
+      this.Error(t.Position, $"{(t.Builtin == BuiltinType.Asciiz ? "ASCIIZ" : "fixed string")} length must be a constant in 1..32767");
+      return t.Builtin == BuiltinType.Asciiz ? new AsciizType(1) : new FixedStringType(1);
     }
 
     if (t.IsUserDefined)
@@ -293,12 +316,19 @@ public sealed class Binder {
   }
 
   private PbType TypeFromSuffixOrDefault(string name, TypeSuffix suffix) => suffix switch {
+    TypeSuffix.Byte => PbType.Byte,
+    TypeSuffix.Word => PbType.Word,
+    TypeSuffix.Dword => PbType.Dword,
     TypeSuffix.Integer => PbType.Integer,
     TypeSuffix.Long => PbType.Long,
+    TypeSuffix.Quad => PbType.Quad,
     TypeSuffix.Single => PbType.Single,
     TypeSuffix.Double => PbType.Double,
     TypeSuffix.Ext => PbType.Ext,
+    TypeSuffix.Fix => PbType.Fix,
+    TypeSuffix.Bcd => PbType.Bcd,
     TypeSuffix.String => PbType.String,
+    TypeSuffix.Flex => new FlexType(),
     _ => this._defaultTypes.TryGetValue(char.ToUpperInvariant(name[0]), out var def) ? def : PbType.Single,
   };
 
@@ -308,17 +338,7 @@ public sealed class Binder {
     return this.TypeFromSuffixOrDefault(name, suffix);
   }
 
-  private static string VariableKey(string name, TypeSuffix suffix) => suffix == TypeSuffix.None ? name : name + SuffixChar(suffix);
-
-  private static char SuffixChar(TypeSuffix s) => s switch {
-    TypeSuffix.Integer => '%',
-    TypeSuffix.Long => '&',
-    TypeSuffix.Single => '!',
-    TypeSuffix.Double => '#',
-    TypeSuffix.Ext => 'E',
-    TypeSuffix.String => '$',
-    _ => ' ',
-  };
+  private static string VariableKey(string name, TypeSuffix suffix) => name + suffix.KeyText();
 
   #endregion
 
@@ -503,6 +523,14 @@ public sealed class Binder {
         scope.PendingLabelRefs.Add((g.Target, g.Position));
         break;
 
+      case GotoPtrStmt gp:
+        this.BindExpression(gp.Pointer, scope);
+        break;
+
+      case GosubPtrStmt gsp:
+        this.BindExpression(gsp.Pointer, scope);
+        break;
+
       case ReturnStmt r when r.Target != null:
         scope.PendingLabelRefs.Add((r.Target, r.Position));
         break;
@@ -548,6 +576,28 @@ public sealed class Binder {
         if (mid.Length != null)
           this.BindExpression(mid.Length, scope);
         this.BindExpression(mid.Value, scope);
+        break;
+
+      case AscAssignStmt asc: {
+        var targetType = this.BindAssignTarget(asc.Target, scope);
+        if (targetType is not (StringType or FixedStringType or AsciizType or FlexType))
+          this.Error(asc.Position, "ASC statement needs a string target");
+        if (asc.Index != null)
+          this.BindExpression(asc.Index, scope);
+        this.BindExpression(asc.Value, scope);
+        break;
+      }
+
+      case StdOutStmt so:
+        if (so.Value != null)
+          this.BindExpression(so.Value, scope);
+        break;
+
+      case StdInStmt si:
+        if (si.Count != null)
+          this.BindExpression(si.Count, scope);
+        if (this.BindAssignTarget(si.Target, scope) is not (StringType or FlexType))
+          this.Error(si.Position, "STDIN needs a dynamic string target");
         break;
 
       case LsetRsetStmt ls:
@@ -762,8 +812,14 @@ public sealed class Binder {
   }
 
   private void CheckAssignable(PbType target, PbType value, SourcePosition position) {
-    var targetIsString = target is StringType or FixedStringType or FlexType;
-    var valueIsString = value is StringType or FixedStringType or FlexType;
+    if (target is BcdType || value is BcdType) {
+      if (!Equals(target, value))
+        this.Error(position, "BCD/FIX arithmetic comes with a later wave");
+      return; // same-type BCD copies are plain block moves
+    }
+
+    var targetIsString = target is StringType or FixedStringType or FlexType or AsciizType;
+    var valueIsString = value is StringType or FixedStringType or FlexType or AsciizType;
     if (targetIsString != valueIsString)
       this.Error(position, "type mismatch: cannot mix string and numeric");
     else if (target is UdtType tu && value is UdtType vu && !tu.Name.Equals(vu.Name, StringComparison.OrdinalIgnoreCase))
@@ -781,7 +837,7 @@ public sealed class Binder {
   }
 
   private PbType BindAssignTarget(Expression target, Scope scope) {
-    if (target is not (NameExpr or CallOrIndexExpr or MemberExpr)) {
+    if (target is not (NameExpr or CallOrIndexExpr or MemberExpr or PtrDerefExpr)) {
       this.Error(target.Position, "expression is not assignable");
       return PbType.Integer;
     }
@@ -792,15 +848,27 @@ public sealed class Binder {
     switch (expression) {
       case IntegerLiteralExpr i:
         return i.Suffix switch {
-          TypeSuffix.Long => PbType.Long,
+          TypeSuffix.Byte => PbType.Byte,
+          TypeSuffix.Word => PbType.Word,
+          TypeSuffix.Dword => PbType.Dword,
           TypeSuffix.Integer => PbType.Integer,
-          _ => i.Value is >= short.MinValue and <= short.MaxValue ? PbType.Integer : PbType.Long,
+          TypeSuffix.Long => PbType.Long,
+          TypeSuffix.Quad => PbType.Quad,
+          TypeSuffix.Fix => PbType.Fix,
+          TypeSuffix.Bcd => PbType.Bcd,
+          _ => i.Value switch {
+            >= short.MinValue and <= short.MaxValue => PbType.Integer,
+            >= int.MinValue and <= int.MaxValue => PbType.Long,
+            _ => PbType.Quad,
+          },
         };
 
       case FloatLiteralExpr f:
         return f.Suffix switch {
           TypeSuffix.Double => PbType.Double,
           TypeSuffix.Ext => PbType.Ext,
+          TypeSuffix.Fix => PbType.Fix,
+          TypeSuffix.Bcd => PbType.Bcd,
           _ => PbType.Single,
         };
 
@@ -814,7 +882,8 @@ public sealed class Binder {
         }
         return value.Text != null ? PbType.String
           : value.Integer is >= short.MinValue and <= short.MaxValue ? PbType.Integer
-          : value.Integer != null ? PbType.Long
+          : value.Integer is >= int.MinValue and <= int.MaxValue ? PbType.Long
+          : value.Integer != null ? PbType.Quad
           : PbType.Ext;
       }
 
@@ -832,6 +901,8 @@ public sealed class Binder {
           var intrinsicName = n.Suffix == TypeSuffix.String ? n.Name + "$" : n.Name;
           if ((Intrinsics.TryGet(intrinsicName, out var intrinsic) || Intrinsics.TryGet(n.Name, out intrinsic)) && intrinsic.MinArgs == 0) {
             this._model.IntrinsicBindings[n] = intrinsic;
+            if (DialectFacts.IntrinsicGate(intrinsic.Name) is { } gate)
+              this.Require(gate, n.Position);
             return ReturnTypeOf(intrinsic, null);
           }
         }
@@ -868,8 +939,26 @@ public sealed class Binder {
         return targetType is ArrayType arr ? arr.Element : targetType;
       }
 
+      case PtrDerefExpr deref: {
+        var pointerType = this.BindExpression(deref.Pointer, scope);
+        if (deref.Index != null)
+          this.BindExpression(deref.Index, scope);
+        if (pointerType is not PointerType ptr) {
+          this.Error(deref.Position, "'@' dereference needs a variable declared AS ... PTR");
+          return PbType.Integer;
+        }
+        return ptr.Target;
+      }
+
+      case ByValArgExpr byVal:
+        return this.BindExpression(byVal.Value, scope);
+
       case UnaryExpr u: {
         var operand = this.BindExpression(u.Operand, scope);
+        if (operand is BcdType) {
+          this.Error(u.Position, "BCD/FIX arithmetic comes with a later wave");
+          return operand;
+        }
         if (operand is not ScalarType)
           this.Error(u.Position, "unary operator needs a numeric operand");
         return u.Op == UnaryOp.Not ? IntegralOf(operand) : operand;
@@ -891,8 +980,27 @@ public sealed class Binder {
     var left = this.BindExpression(b.Left, scope);
     var right = this.BindExpression(b.Right, scope);
 
-    var leftString = left is StringType or FixedStringType or FlexType;
-    var rightString = right is StringType or FixedStringType or FlexType;
+    // whole-value TYPE/UNION comparison (PB 3.1): memcmp semantics for = and <>
+    if (left is UdtType || right is UdtType) {
+      if (left is not UdtType lu || right is not UdtType ru || !lu.Name.Equals(ru.Name, StringComparison.OrdinalIgnoreCase))
+        return this.ErrorType(b.Position, "TYPE/UNION values compare only against the same TYPE");
+      if (b.Op is not (BinaryOp.Equal or BinaryOp.NotEqual))
+        return this.ErrorType(b.Position, "TYPE/UNION values support only = and <> comparison");
+      this.Require(LanguageFeature.UdtComparison, b.Position);
+      return PbType.Integer;
+    }
+
+    if (left is BcdType || right is BcdType)
+      return this.ErrorType(b.Position, "BCD/FIX arithmetic comes with a later wave");
+
+    // pointers participate in arithmetic/comparison as raw 32-bit values
+    if (left is PointerType)
+      left = PbType.Dword;
+    if (right is PointerType)
+      right = PbType.Dword;
+
+    var leftString = left is StringType or FixedStringType or FlexType or AsciizType;
+    var rightString = right is StringType or FixedStringType or FlexType or AsciizType;
 
     if (leftString || rightString) {
       if (!leftString || !rightString) {
@@ -900,11 +1008,14 @@ public sealed class Binder {
         return PbType.Integer;
       }
       return b.Op switch {
-        BinaryOp.Add => PbType.String,
+        BinaryOp.Add or BinaryOp.Concat => PbType.String,
         BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual or BinaryOp.GreaterEqual => PbType.Integer,
         _ => this.ErrorType(b.Position, "operator not defined for strings"),
       };
     }
+
+    if (b.Op == BinaryOp.Concat)
+      return this.ErrorType(b.Position, "'&' concatenation needs string operands");
 
     return b.Op switch {
       BinaryOp.Divide => Widest(left, right) is ScalarType { IsFloat: true } f ? f : PbType.Ext,
@@ -970,13 +1081,34 @@ public sealed class Binder {
       if (call.Arguments.Count < intrinsic.MinArgs || call.Arguments.Count > intrinsic.MaxArgs)
         this.Error(call.Position, $"{intrinsic.Name} expects {intrinsic.MinArgs}..{intrinsic.MaxArgs} argument(s), got {call.Arguments.Count}");
 
-      // CODEPTR-family takes a SUB/FUNCTION name and yields its code address
-      if (intrinsic.Name is "CODEPTR" or "CODESEG" or "CODEPTR32"
-          && call.Arguments is [NameExpr procRef]
-          && this._model.Procedures.TryGetValue(procRef.Name, out var target)) {
-        this._model.CallBindings[procRef] = target;
-        this._model.ExpressionTypes[procRef] = intrinsic.Name == "CODEPTR32" ? PbType.Dword : PbType.Word;
-        return intrinsic.Name == "CODEPTR32" ? PbType.Dword : PbType.Word;
+      if (DialectFacts.IntrinsicGate(intrinsic.Name) is { } gate)
+        this.Require(gate, call.Position);
+
+      // forms whose arity arrived only in 3.5
+      if (intrinsic.Name == "RND" && call.Arguments.Count == 2)
+        this.Require(LanguageFeature.RndRange, call.Position);
+      if (intrinsic.Name is "CVI" or "CVL" or "CVS" or "CVD" or "CVE" or "CVWRD" or "CVDWD" or "CVBYT" && call.Arguments.Count == 2)
+        this.Require(LanguageFeature.CvStartOffset, call.Position);
+
+      // SIZEOF: storage size, compile-time (2 for dynamic strings - the handle)
+      if (intrinsic.Name == "SIZEOF" && call.Arguments.Count == 1) {
+        this.BindExpression(call.Arguments[0], scope);
+        return PbType.Long;
+      }
+
+      // CODEPTR-family takes a SUB/FUNCTION (or label) name and yields its code address
+      if (intrinsic.Name is "CODEPTR" or "CODESEG" or "CODEPTR32" && call.Arguments is [NameExpr procRef]) {
+        var ptrType = intrinsic.Name == "CODEPTR32" ? PbType.Dword : PbType.Word;
+        if (this._model.Procedures.TryGetValue(procRef.Name, out var target)) {
+          this._model.CallBindings[procRef] = target;
+          this._model.ExpressionTypes[procRef] = ptrType;
+          return ptrType;
+        }
+        if (this._model.Labels.TryGetValue(scope.LabelKey, out var labels) && labels.Contains(procRef.Name)) {
+          this._model.LabelBindings[procRef] = procRef.Name;
+          this._model.ExpressionTypes[procRef] = ptrType;
+          return ptrType;
+        }
       }
 
       PbType? firstArg = null;
@@ -984,7 +1116,9 @@ public sealed class Binder {
         var t = this.BindExpression(argument, scope);
         firstArg ??= t;
       }
-      return ReturnTypeOf(intrinsic, firstArg);
+      return intrinsic.Name == "RND" && call.Arguments.Count == 2
+        ? PbType.Long // RND(a, z) -> LONG in [a, z]
+        : ReturnTypeOf(intrinsic, firstArg);
     }
 
     // 3. user function

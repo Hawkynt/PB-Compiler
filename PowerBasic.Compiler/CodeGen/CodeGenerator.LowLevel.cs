@@ -259,7 +259,24 @@ public sealed partial class CodeGenerator {
 
   private void EmitCodePtr(Expression call, IReadOnlyList<Expression> args, string name) {
     var asm = this._asm;
-    if (args is not [NameExpr procRef] || !model.CallBindings.TryGetValue(procRef, out var proc)) {
+    if (args is not [NameExpr procRef]) {
+      this.Unsupported(call, $"{name} argument");
+      return;
+    }
+
+    // label reference (GOTO/GOSUB DWORD targets): same segment, no thunk needed
+    if (model.LabelBindings.TryGetValue(procRef, out var labelName)) {
+      if (name == "CODESEG") {
+        asm.Mov(Reg.AX, Reg.CS);
+        return;
+      }
+      asm.Mov(Reg.AX, Imm.OffsetOf(this.UserLabel(labelName)));
+      if (name == "CODEPTR32")
+        asm.Mov(Reg.DX, Reg.CS);
+      return;
+    }
+
+    if (!model.CallBindings.TryGetValue(procRef, out var proc)) {
       this.Unsupported(call, $"{name} argument");
       return;
     }

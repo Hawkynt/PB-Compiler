@@ -18,11 +18,55 @@ public sealed partial class CodeGenerator {
             asm.Call(this._rt.Len);
             asm.Cwd();
             break;
+          case AsciizType asciiz: // chars before the NUL
+            if (this.EmitPlace(args[0]) is not { } azPlace) {
+              this.Unsupported(call, "LEN of this ASCIIZ expression");
+              break;
+            }
+            asm.Lea(Reg.SI, azPlace.Cell);
+            asm.Mov(Reg.DX, azPlace.Far ? Reg.ES : Reg.DS);
+            asm.Mov(Reg.CX, asciiz.Length);
+            asm.Call(this._rt.AsciizLen);
+            asm.Cwd();
+            break;
           default:
             asm.Mov(Reg.AX, argType.Size);   // fixed strings, UDTs and scalars: compile-time size
             asm.Cwd();
             break;
         }
+        break;
+      }
+
+      case "SIZEOF": {
+        // storage size, compile-time; dynamic strings report their 2-byte handle
+        var sizeofType = model.TypeOf(args[0]);
+        asm.Mov(Reg.AX, Math.Max(sizeofType.Size, 1));
+        asm.Cwd();
+        break;
+      }
+
+      case "TRIM$":
+        this.EmitExpression(args[0]);
+        asm.Call(this._rt.LTrim);
+        asm.Call(this._rt.RTrim);
+        break;
+
+      case "ERRCLEAR": // function form: yields the pending error code and clears it
+        asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_err")));
+        asm.Mov(Mem.Word(asm.Lbl("rt_err")), (Imm)0);
+        break;
+
+      case "CONSIN" or "CONSOUT": {
+        // IOCTL get-device-info on handle 0/1: bit 7 set = console, clear = redirected
+        var console = asm.DefineLabel();
+        asm.Mov(Reg.AX, 0x4400);
+        asm.Mov(Reg.BX, intrinsic.Name == "CONSIN" ? 0 : 1);
+        asm.Int(0x21);
+        asm.Mov(Reg.AX, -1);
+        asm.Test(Reg.DL, (Imm)0x80);
+        asm.Jnz(console);
+        asm.Xor(Reg.AX, Reg.AX);
+        asm.MarkLabel(console);
         break;
       }
 
@@ -93,7 +137,17 @@ public sealed partial class CodeGenerator {
         this.EmitExpression(args[0]);
         switch (KindOf(model.TypeOf(args[0]))) {
           case ValueKind.Int16: asm.Call(this._rt.StrI16); break;
+          case ValueKind.Int32 when model.TypeOf(args[0]) is ScalarType { Signed: false }:
+            // DWORD renders unsigned: zero-extend into the 64-bit formatter
+            asm.Mov(Mem.Word(this.RtScratch), Reg.AX);
+            asm.Mov(Mem.Word(this.RtScratch, 2), Reg.DX);
+            asm.Mov(Mem.Word(this.RtScratch, 4), (Imm)0);
+            asm.Mov(Mem.Word(this.RtScratch, 6), (Imm)0);
+            asm.Fild(Mem.Qword(this.RtScratch));
+            asm.Call(this._rt.StrI64);
+            break;
           case ValueKind.Int32: asm.Call(this._rt.StrI32); break;
+          case ValueKind.Int64: asm.Call(this._rt.StrF64); break; // QUAD mirrors PRINT (float formatter)
           case ValueKind.Float: asm.Call(this._rt.StrF64); break;
           default:
             this.Unsupported(call, "STR$ argument");
@@ -196,7 +250,7 @@ public sealed partial class CodeGenerator {
             asm.MarkLabel(done);
             break;
           }
-          case ValueKind.Float:
+          case ValueKind.Float or ValueKind.Int64:
             asm.Fabs();
             break;
         }
@@ -205,8 +259,9 @@ public sealed partial class CodeGenerator {
       case "SGN": {
         this.EmitExpression(args[0]);
         var type = model.TypeOf(args[0]);
-        this.Coerce(type, KindOf(type) == ValueKind.Float ? PbType.Double : PbType.Long, args[0]);
-        if (KindOf(type) == ValueKind.Float) {
+        var onFpu = KindOf(type) is ValueKind.Float or ValueKind.Int64;
+        this.Coerce(type, onFpu ? PbType.Double : PbType.Long, args[0]);
+        if (onFpu) {
           asm.Ftst();
           asm.FstswAx();
           asm.Fstp(St.St0);
@@ -292,6 +347,23 @@ public sealed partial class CodeGenerator {
         this.EmitVarPtrSeg(call, args, intrinsic.Name == "VARSEG");
         break;
 
+      case "VARPTR32": // DX:AX = seg:off of the variable's storage
+        if (this.EmitPlace(args[0]) is { } vp32) {
+          asm.Lea(Reg.AX, vp32.Cell);
+          asm.Mov(Reg.DX, vp32.Far ? Reg.ES : Reg.DS);
+        } else
+          this.Unsupported(call, "VARPTR32 argument");
+        break;
+
+      case "STRPTR32": // DX:AX = seg:off of the string data in the heap
+        if (model.TypeOf(args[0]) is StringType or FlexType && this.EmitPlace(args[0]) is { } sp32) {
+          asm.Mov(Reg.AX, Adjust(sp32.Cell, 0, OperandSize.Word));
+          asm.Call(this._rt.StrPtr);
+          asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_strseg")));
+        } else
+          this.Unsupported(call, "STRPTR32 argument");
+        break;
+
       case "STRPTR" or "STRSEG":
         this.EmitStrPtrSeg(call, args, intrinsic.Name == "STRSEG");
         break;
@@ -345,14 +417,14 @@ public sealed partial class CodeGenerator {
         break;
 
       case "CVI" or "CVWRD":
-        this.EmitExpression(args[0]);
+        this.EmitCvSource(args, 2);
         asm.Mov(Reg.CX, 2);
         asm.Call(this._rt.Cv);
         asm.Mov(Reg.AX, Mem.Word(this.RtScratch));
         break;
 
       case "CVBYT":
-        this.EmitExpression(args[0]);
+        this.EmitCvSource(args, 1);
         asm.Mov(Reg.CX, 1);
         asm.Call(this._rt.Cv);
         asm.Mov(Reg.AL, Mem.Byte(this.RtScratch));
@@ -360,7 +432,7 @@ public sealed partial class CodeGenerator {
         break;
 
       case "CVL" or "CVDWD":
-        this.EmitExpression(args[0]);
+        this.EmitCvSource(args, 4);
         asm.Mov(Reg.CX, 4);
         asm.Call(this._rt.Cv);
         asm.Mov(Reg.AX, Mem.Word(this.RtScratch));
@@ -368,14 +440,14 @@ public sealed partial class CodeGenerator {
         break;
 
       case "CVS":
-        this.EmitExpression(args[0]);
+        this.EmitCvSource(args, 4);
         asm.Mov(Reg.CX, 4);
         asm.Call(this._rt.Cv);
         asm.Fld(Mem.Dword(this.RtScratch));
         break;
 
       case "CVD" or "CVE":
-        this.EmitExpression(args[0]);
+        this.EmitCvSource(args, 8);
         asm.Mov(Reg.CX, 8);
         asm.Call(this._rt.Cv);
         asm.Fld(Mem.Qword(this.RtScratch));
@@ -416,6 +488,20 @@ public sealed partial class CodeGenerator {
         break;
 
       case "RND":
+        if (args.Count == 2) { // RND(a, z) -> LONG in [a, z] (PB 3.5)
+          this.EmitExpression(args[0]);
+          this.Coerce(model.TypeOf(args[0]), PbType.Long, args[0]);
+          asm.Push(Reg.DX);
+          asm.Push(Reg.AX);
+          this.EmitExpression(args[1]);
+          this.Coerce(model.TypeOf(args[1]), PbType.Long, args[1]);
+          asm.Mov(Reg.BX, Reg.AX);
+          asm.Mov(Reg.CX, Reg.DX);
+          asm.Pop(Reg.AX);
+          asm.Pop(Reg.DX);
+          asm.Call(this._rt.RndRange);
+          break;
+        }
         if (args.Count > 0) {
           this.EmitExpression(args[0]);    // RND(n) reseed semantics are not modelled
           if (KindOf(model.TypeOf(args[0])) == ValueKind.Float)
@@ -524,6 +610,23 @@ public sealed partial class CodeGenerator {
         this.Unsupported(call, $"intrinsic {intrinsic.Name}");
         break;
     }
+  }
+
+  /// <summary>
+  /// CVx source bytes in AX (handle): with the PB 3.5 start offset the relevant
+  /// slice is cut first (CVL(x$, 3) reads 4 bytes starting at position 3).
+  /// </summary>
+  private void EmitCvSource(IReadOnlyList<Expression> args, int size) {
+    var asm = this._asm;
+    this.EmitExpression(args[0]);
+    if (args.Count <= 1)
+      return;
+    asm.Push(Reg.AX);
+    this.EmitInt16Argument(args[1]);
+    asm.Mov(Reg.CX, Reg.AX);
+    asm.Pop(Reg.AX);
+    asm.Mov(Reg.DX, size);
+    asm.Call(this._rt.StrMid);
   }
 
   /// <summary>Evaluates an argument and coerces it to a 16-bit integer in AX.</summary>

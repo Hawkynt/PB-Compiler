@@ -145,4 +145,42 @@ public sealed class PreprocessorTests {
   }
 
   #endregion
+
+  #region $ELSEIF (PB 3.5)
+
+  [Test]
+  public void Expand_GivenElseIfChainFirstBranchTrue_WhenExpanded_ThenOnlyFirstBranchKept() {
+    var t = Expand("%A = 1\r\n%B = 1\r\n$IF %A\r\none\r\n$ELSEIF %B\r\ntwo\r\n$ELSE\r\nthree\r\n$ENDIF");
+    Assert.That(Identifiers(t), Is.EqualTo(new[] { "one" }));
+  }
+
+  [Test]
+  public void Expand_GivenElseIfChainSecondBranchTrue_WhenExpanded_ThenOnlySecondBranchKept() {
+    var t = Expand("%A = 0\r\n%B = 1\r\n$IF %A\r\none\r\n$ELSEIF %B\r\ntwo\r\n$ELSE\r\nthree\r\n$ENDIF");
+    Assert.That(Identifiers(t), Is.EqualTo(new[] { "two" }));
+  }
+
+  [Test]
+  public void Expand_GivenElseIfChainNoBranchTrue_WhenExpanded_ThenElseKept() {
+    var t = Expand("%A = 0\r\n%B = 0\r\n$IF %A\r\none\r\n$ELSEIF %B\r\ntwo\r\n$ELSE\r\nthree\r\n$ENDIF");
+    Assert.That(Identifiers(t), Is.EqualTo(new[] { "three" }));
+  }
+
+  [Test]
+  public void Expand_GivenSeveralElseIfs_WhenExpanded_ThenFirstTrueBranchWins() {
+    var t = Expand("%A = 0\r\n%B = 1\r\n%C = 1\r\n$IF %A\r\none\r\n$ELSEIF %B\r\ntwo\r\n$ELSEIF %C\r\nthree\r\n$ENDIF");
+    Assert.That(Identifiers(t), Is.EqualTo(new[] { "two" }));
+  }
+
+  [Test]
+  public void Expand_GivenNestedIfInsideSkippedElseIfBranch_WhenExpanded_ThenNestingHonored() {
+    var t = Expand("%A = 1\r\n$IF %A\r\nlive\r\n$ELSEIF %A\r\n$IF %A\r\ndead\r\n$ENDIF\r\nalsodead\r\n$ENDIF");
+    Assert.That(Identifiers(t), Is.EqualTo(new[] { "live" }));
+  }
+
+  [Test]
+  public void Expand_GivenElseIfWithoutIf_WhenExpanded_ThenPreprocessorException()
+    => Assert.Throws<PreprocessorException>(() => Expand("$ELSEIF %X\r\nx\r\n$ENDIF"));
+
+  #endregion
 }

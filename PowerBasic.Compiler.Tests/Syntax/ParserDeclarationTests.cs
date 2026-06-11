@@ -306,7 +306,7 @@ public sealed class ParserDeclarationTests {
 
   [Test]
   public void Parse_GivenDefSegWithAddress_WhenParsed_ThenSegmentIsKept()
-    => Assert.That(((IntegerLiteralExpr)ParseSingle<DefSegStmt>("DEF SEG = &HA000").Segment!).Value, Is.EqualTo(0xA000));
+    => Assert.That(((IntegerLiteralExpr)ParseSingle<DefSegStmt>("DEF SEG = &HA000").Segment!).Value, Is.EqualTo(unchecked((short)0xA000))); // radix literals read signed (PB 3.1+)
 
   #endregion
 

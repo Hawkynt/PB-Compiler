@@ -24,17 +24,24 @@ unchanged under DOSBox / real DOS on 16-bit real-mode x86.
 - **M1** Compile PB 3.5 source to DOS MZ `.EXE` running in real mode on 8086+
   (`$CPU` honored; 386 instructions only when `$CPU 80386`/`-G386`).
 - **M2** Full language core: implicit/explicit typing (suffixes `%`, `&`, `!`,
-  `#`, `##`, `$`; `DEFINT`..`DEFEXT`), all control flow (`IF`, `SELECT CASE`,
-  `FOR`, `DO`, `WHILE`, `GOTO`, `GOSUB`, `ON x GOTO/GOSUB`), `SUB`/`FUNCTION`
-  with `BYVAL`/`BYREF`/`SEG`, `STATIC`/`LOCAL`/`SHARED`/`PUBLIC`/`COMMON`,
-  `TYPE`/`UNION`, static & `$DYNAMIC` arrays, `DATA`/`READ`/`RESTORE`,
+  `#`, `##`, `$` plus PB 3.x `?`, `??`, `???`, `&&`, `@`, `@@`, `$$`;
+  `DEFINT`..`DEFEXT` plus `DEFQUD`/`DEFFIX`/`DEFBCD`/`DEFFLX`), all control
+  flow (`IF`, `SELECT CASE`, `FOR`, `DO`, `WHILE`, `GOTO`, `GOSUB`,
+  `ON x GOTO/GOSUB`, `GOTO/GOSUB/CALL DWORD`), `SUB`/`FUNCTION` with
+  `BYVAL`/`BYREF`/`SEG` (incl. argument-position `BYVAL` override),
+  `STATIC`/`LOCAL`/`SHARED`/`PUBLIC`/`COMMON`, `TYPE`/`UNION` (incl.
+  whole-value comparison), data pointers (`x PTR`, `@p`, `@p[i]`),
+  `ASCIIZ * n`, static & `$DYNAMIC` arrays, `DATA`/`READ`/`RESTORE`,
   `DEF FN`.
 - **M3** String machinery: dynamic strings with heap, fixed-length strings,
   flex strings, the complete string intrinsic set (`MID$`, `INSTR`, `STR$`,
   `VAL`, `LTRIM$`, …) including statement form `MID$(a$, n) = b$`.
-- **M4** Numeric machinery: `INTEGER`, `LONG`, `QUAD`-free PB3.5 set —
-  `WORD`/`DWORD`, `SINGLE`/`DOUBLE`/`EXT` (80-bit) via x87, `BCD`-free; math
-  intrinsics; `&H`/`&O`/`&B` literals.
+- **M4** Numeric machinery: `INTEGER`, `LONG`, `WORD`/`DWORD`, `QUAD`
+  (storage, +, −, ×, compare, PRINT/STR$ — `\`/`MOD`/bitwise deferred),
+  `SINGLE`/`DOUBLE`/`EXT` (80-bit) via x87, FIX/BCD storage (arithmetic
+  deferred); math intrinsics; `&H`/`&O`/`&B` literals with the verified
+  PB 3.1+ signedness rules (bit-length sizing, leading-zero unsigned,
+  typed suffixes).
 - **M5** Console & file I/O: `PRINT`/`PRINT USING`/`LPRINT`, `INPUT`,
   `LINE INPUT`, `INKEY$`, `OPEN` (SEQUENTIAL/RANDOM/BINARY) with `GET`/`PUT`/
   `SEEK`/`FIELD`/`LSET`/`RSET`/`EOF`/`LOF`/`LOC`, `KILL`, `NAME`, `CHDIR` etc.
@@ -58,6 +65,12 @@ unchanged under DOSBox / real DOS on 16-bit real-mode x86.
   format used by PB-SvgaLibrary; harness fails on `[FAIL]`, crash or hang.
 - **M12** Compile the PB-SvgaLibrary test battery (the "weirdest features"
   acceptance gate) and run it green under DOSBox.
+- **M13** Dialect selection `--dialect pb20|pb21|pb30|pb31|pb32|pb35`
+  (default pb35) with a data-driven gate table; using a newer feature under an
+  older dialect diagnoses "X requires PowerBASIC a.b (current dialect: PB c.d)".
+- **M14** Differential verification: `scripts/run-diff-tests.sh` compiles
+  `tests/diff/*.BAS` with both the genuine `PBC.EXE` 3.50 and `pbc`; the
+  programs' `RESULT.TXT` outputs must match byte for byte.
 
 ### Should
 
