@@ -118,19 +118,24 @@ differential battery before the dialect can be claimed:
 |---|---|---|---|
 | `pb35` | `PBC.EXE` 3.50 | harness default battery | **ACTIVE** (`tools/pb35/`), 23 batteries byte-identical |
 | `pb30` | `PBC.EXE` 3.0c | `tools/pb30/PBC.EXE` + `tests/diff/pb30/` | **ACTIVE** - installed from the WinWorld 3.0c floppy via the scripted DOSBox installer drive (`tools/_downloads/postkeys.ps1` + window capture); QUIRK30 battery byte-identical, quirks 2.1/2.2, 2.26 and 16-bit HEX$/OCT$ oracle-confirmed |
-| `pb32` | `PBC.EXE` 3.20 [German] | floppy + installer staged in `tools/_downloads/pb32de/` (`install32.conf` prepared) | **pending** - installer boots to a screen the capture tool sees black (graphics-mode splash?); finish interactively once, then drop `PBC.EXE` into `tools/pb32/` |
-| `pb20/21` | `PB.EXE` 2.00b/2.10/2.10f | archives in `tools/_downloads/` (old-dos.ru ids 191/4254/4256/10317/10593) | **archived** - PB 2.x has no PBC.EXE (the IDE compiles); needs the TB-style IDE drive |
-| `qb45` | `BC.EXE` + `LINK.EXE` | `BC T.BAS,T.OBJ; LINK T.OBJ,T.EXE,,BCOM45.LIB;` | **toolchain ready** in `tools/qb45/` (BC/LINK/LIB/BRUN45/BCOM45 from archive.org item qb-450) - awaiting the `qb45` dialect |
-| `tb11` | `TB.EXE` 1.1 | IDE-only - drive via `postkeys.ps1` keystroke injection (proven on the PB 3.0c installer) | **binary ready** in `tools/tb11/` (WinWorld 5.25in floppies) |
+| `pb32` | `PBC.EXE` 3.20 [German] | `tools/pb32/PBC.EXE` + `tests/diff/pb32/` | **staged** - installer driven headlessly (Xvfb + xdotool; it only runs from an interactive prompt, not from autoexec - that was the old "black screen") |
+| `pb20/21` | `PB.EXE` 2.1 | IDE-only - same AUTOTYPE drive as `tb11` | **binary staged** in `tools/pb2x/` (WinWorld 2.1 floppy; French 2.10b/f archived) - IDE keystroke flow still to map |
+| `qb45` | `BC.EXE` + `LINK.EXE` | `tests/diff/qb45/oracle.conf`: `BC T.BAS,T.OBJ;` + `LINK T.OBJ,T.EXE,,BCOM45.LIB;` | **ACTIVE** - smoke-verified end to end in `tools/qb45/` (WinWorld 4.5 3.5-720k set) |
+| `qb40` | `BC.EXE` + `LINK.EXE` | like qb45 with `BCOM40.LIB` | **staged** in `tools/qb40/` |
+| `qb30`/`qb20`/`qb10` | `QB.EXE` (3.0/2.0x) / `BASCOM.EXE` (1.0) | qb30/qb20: QB.EXE command-line or IDE drive; qb10: BASCOM+LINK | **staged** in `tools/qb30|qb20|qb10/` - compile flows still to map |
+| `tb11` | `TB.EXE` 1.1 | `tests/diff/tb11/oracle.conf`: AUTOTYPE menu drive (Options→EXE file, Load, Compile, Quit), fully headless | **ACTIVE** - smoke-verified (`HELLO TB11` byte round trip) |
+| `tb10` | `TB.EXE` 1.0 | same AUTOTYPE drive as tb11 | **staged** in `tools/tb10/` |
 | `qbasic` | `QBASIC.EXE` | `QBASIC /RUN T.BAS` | not yet fetched (DOS 5+ media) |
-| `pds71` | `BC.EXE` (7.1) + `LINK` | same as qb45, far strings differ (`/Fs`) | not yet fetched |
+| `pds71` | `BC.EXE` 7.10 + `LINK` 5.10 | `tests/diff/pds71/oracle.conf`: `BC /O` + `LINK ...,BCL71ENR.LIB;` against the full install in `tools/pds71/bc7/` | **ACTIVE** - SETUP /BATCH install completed in DOSBox, all four BCL71 combos + BRT71 modules built, smoke-verified |
+| `pds70` | `BC.EXE` 7.00 | like pds71 | **blocked** - the WinWorld 7.0 BC.EXE hangs at startup under dosbox-staging (before its banner); plain-file disks staged in `tools/pds70/` |
 | `gw` | `GWBASIC.EXE` | stdin-scripted interpreter session | not yet fetched |
 
-`scripts/run-diff-tests.sh` already discovers `tests/diff/<dialect>/`
-batteries and their `tools/<dialect>/PBC.EXE` oracles generically; the
-Microsoft-family oracles need per-dialect compile/run command templates —
-planned as a `tools/<dialect>/oracle.conf` snippet (autoexec lines with a
-`T.BAS` placeholder) so the script stays data-driven.
+`scripts/run-diff-tests.sh` discovers `tests/diff/<dialect>/` batteries
+generically: PB-family oracles activate on `tools/<dialect>/PBC.EXE`, every
+other family on a `tests/diff/<dialect>/oracle.conf` command template (plain
+DOS lines that turn `C:\T.BAS` into `C:\T.EXE`; the oracle toolchain is
+mounted as `D:`). AUTOTYPE lines inside the template drive IDE-only
+compilers without any host-side keystroke tooling.
 
 ## Suggested order of attack
 

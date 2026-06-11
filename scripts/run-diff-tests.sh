@@ -62,14 +62,21 @@ run_battery() { # $1 = oracle dir, $2 = dialect flag ("" = default pb35), $3.. =
   shift 2
   local label="${dialect:-pb35}"
 
+  # Non-PBC oracles (QB/PDS/TB/...) describe their compile step in
+  # tests/diff/<dialect>/oracle.conf: plain DOS commands that turn C:\T.BAS
+  # into C:\T.EXE, with the oracle toolchain mounted read-only as D:.
+  # Without such a template the classic PBC.EXE invocation is used.
+  local template=""
+  [ -n "$dialect" ] && [ -f "tests/diff/$dialect/oracle.conf" ] && template="tests/diff/$dialect/oracle.conf"
+
   rm -rf "build/diff/$label" && mkdir -p "build/diff/$label/real" "build/diff/$label/ours"
-  cp "$oracle/PBC.EXE" "build/diff/$label/real/"
+  [ -z "$template" ] && cp "$oracle/PBC.EXE" "build/diff/$label/real/"
 
   local t name
   for t in "$@"; do
     name=$(basename "$t"); name="${name%.*}"
 
-    # --- genuine PBC.EXE: compile AND run inside DOSBox ---------------------
+    # --- genuine oracle: compile AND run inside DOSBox ----------------------
     cp "$t" "build/diff/$label/real/T.BAS"
     rm -f "build/diff/$label/real/RESULT.TXT" "build/diff/$label/real/T.EXE"
     {
@@ -80,8 +87,14 @@ run_battery() { # $1 = oracle dir, $2 = dialect flag ("" = default pb35), $3.. =
       echo "[dosbox]"; echo "ems=true"
       echo "[autoexec]"
       echo "mount c \"$(winpath "build/diff/$label/real")\""
-      echo "c:"
-      echo "PBC.EXE -CE T.BAS > PBCOUT.TXT"
+      if [ -n "$template" ]; then
+        echo "mount d \"$(winpath "$oracle")\""
+        echo "c:"
+        sed -e 's/\r$//' "$template"
+      else
+        echo "c:"
+        echo "PBC.EXE -CE T.BAS > PBCOUT.TXT"
+      fi
       echo "T.EXE"
       echo "echo ok > DONE.TXT"
       echo "exit"
@@ -146,8 +159,10 @@ fi
 # --- pb36; outputs must STILL match genuine PBC 3.50 byte for byte         ---
 run_battery "$PB35" "pb36" "${tests[@]}"
 
-# --- dialect batteries: tests/diff/<dialect>/ with tools/<dialect>/PBC.EXE ---
-for dir in tests/diff/pb*/; do
+# --- dialect batteries: tests/diff/<dialect>/ + tools/<dialect>/ oracle ------
+# PB dialects ship PBC.EXE; every other family (QB/PDS/TB/...) ships an
+# oracle.conf command template next to its battery (see run_battery above).
+for dir in tests/diff/*/; do
   [ -d "$dir" ] || continue
   dialect=$(basename "$dir")
   [ "$dialect" = "pb36" ] && continue # pb36 runs against the pb35 oracle above
@@ -155,10 +170,10 @@ for dir in tests/diff/pb*/; do
   oracle="${!var:-tools/$dialect}"
   dtests=( "$dir"*.BAS "$dir"*.bas )
   [ ${#dtests[@]} -gt 0 ] || continue
-  if [ -f "$oracle/PBC.EXE" ]; then
+  if [ -f "$oracle/PBC.EXE" ] || { [ -f "$dir/oracle.conf" ] && [ -d "$oracle" ]; }; then
     run_battery "$oracle" "$dialect" "${dtests[@]}"
   else
-    echo "SKIP  $dialect battery (${#dtests[@]} file(s)) - no oracle in $oracle (drop PBC.EXE there to activate)"
+    echo "SKIP  $dialect battery (${#dtests[@]} file(s)) - no oracle in $oracle (stage the toolchain there to activate)"
   fi
 done
 
