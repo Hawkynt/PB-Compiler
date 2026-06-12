@@ -622,4 +622,152 @@ public sealed partial class CodeGenerator {
   }
 
   #endregion
+
+  #region O20 - algorithmic idiom replacement ($OPTIMIZE SPEED)
+
+  /// <summary>
+  /// pb36 O20: replaces whole constant-trip INTEGER FOR loops with better
+  /// algorithms when the result is provably bit-identical:
+  /// empty bodies collapse to the closed-form counter end value, constant
+  /// element fills with the bare counter as subscript become one REP STOSW,
+  /// and arithmetic-series accumulations add the folded series total once.
+  /// SPEED-gated like O7/O10 - DOS-era code uses such loops for timing.
+  /// </summary>
+  private bool TryEmitForIdiom(ForStmt f, VariableSymbol counter, Mem slot) {
+    if (!this.OptimizePb36 || !this.OptimizeSpeed || !Equals(counter.Type, PbType.Integer))
+      return false;
+    if (this.Pb36Folder.TryFold(f.From) is not { Integer: { } fromRaw }
+        || this.Pb36Folder.TryFold(f.To) is not { Integer: { } toRaw })
+      return false;
+    var stepRaw = 1L;
+    if (f.Step != null) {
+      if (this.Pb36Folder.TryFold(f.Step) is not { Integer: { } s })
+        return false;
+      stepRaw = s;
+    }
+    var from = (short)fromRaw;
+    var to = (short)toRaw;
+    var step = (short)stepRaw;
+    if (step == 0)
+      return false;
+
+    // simulate the iterates exactly like the generic engine (signed compare,
+    // 16-bit wrap on increment); bail out on wrap-around marathons
+    var values = new List<short>();
+    var current = from;
+    for (; values.Count <= 32767; current = unchecked((short)(current + step))) {
+      var continues = step > 0 ? current <= to : current >= to;
+      if (!continues)
+        break;
+      values.Add(current);
+    }
+    if (values.Count > 32767)
+      return false;
+
+    var asm = this._asm;
+
+    // ---- empty body: the loop IS its counter end value ----------------------
+    if (f.Body.Count == 0) {
+      asm.Mov(slot, (Imm)(int)current);
+      return true;
+    }
+
+    if (values.Count == 0)
+      return false; // zero-trip loops with bodies keep the generic engine (cheap anyway)
+
+    // ---- constant fill: a(i%) = const over the whole range -> REP STOSW -----
+    if (!this.CheckBounds
+        && f.Body is [AssignStmt { Target: CallOrIndexExpr fill } fillAssign]
+        && step == 1
+        && fill.Arguments is [NameExpr fillIndex]
+        && model.VariableBindings.TryGetValue(fillIndex, out var fillCounter)
+        && ReferenceEquals(fillCounter, counter)
+        && model.VariableBindings.TryGetValue(fill, out var array)
+        && array.Type is ArrayType { Element: ScalarType { ByteSize: 2 } }
+        && this.Pb36Folder.TryFold(fillAssign.Value) is { Integer: { } fillValue }) {
+      asm.Mov(slot, (Imm)from);                 // counter = first index for the address computation
+      if (this.EmitPlace(fill) is { } firstElement) {
+        asm.Push(Reg.ES);
+        if (firstElement.Far) {
+          asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_arrseg")));
+          asm.Mov(Reg.ES, Reg.AX);
+        } else {
+          asm.Push(Reg.DS);
+          asm.Pop(Reg.ES);
+        }
+        asm.Lea(Reg.DI, firstElement.Cell);
+        asm.Mov(Reg.CX, values.Count);
+        asm.Mov(Reg.AX, (int)(short)fillValue);
+        asm.Cld();
+        asm.Rep();
+        asm.Stosw();
+        asm.Pop(Reg.ES);
+        asm.Mov(slot, (Imm)(int)current);       // closed-form counter end (wrap included)
+        return true;
+      }
+      return false;
+    }
+
+    // ---- arithmetic series: acc = acc + i% (or i% + acc) -> one folded add --
+    if (f.Body is [AssignStmt { Target: NameExpr accName, Value: BinaryExpr { Op: BinaryOp.Add } sum }]
+        && model.VariableBindings.TryGetValue(accName, out var acc)
+        && !ReferenceEquals(acc, counter)
+        && acc.Storage != VariableStorage.Parameter
+        && this.TryDirectCell(acc) is { } accCell) {
+      var leftIsCounter = sum.Left is NameExpr ln && model.VariableBindings.TryGetValue(ln, out var lsym) && ReferenceEquals(lsym, counter);
+      var rightIsCounter = sum.Right is NameExpr rn && model.VariableBindings.TryGetValue(rn, out var rsym) && ReferenceEquals(rsym, counter);
+      var other = leftIsCounter ? sum.Right : sum.Left;
+      var otherIsAcc = other is NameExpr on && model.VariableBindings.TryGetValue(on, out var osym) && ReferenceEquals(osym, acc);
+      if ((leftIsCounter ^ rightIsCounter) && otherIsAcc) {
+        long total = 0;
+        long partialMax = 0;
+        foreach (var v in values) {
+          total += v;
+          partialMax = Math.Max(partialMax, Math.Abs(total));
+        }
+        switch (acc.Type) {
+          case ScalarType { IsFloat: false, ByteSize: 2 }: {
+            // 16-bit accumulation is modular: adding the folded total wraps
+            // exactly like the per-iteration adds
+            asm.Mov(Reg.AX, (int)(short)total);
+            asm.Add(accCell.WithSize(OperandSize.Word), Reg.AX);
+            asm.Mov(slot, (Imm)(int)current);
+            return true;
+          }
+          case ScalarType { IsFloat: false, ByteSize: 4 } when partialMax < int.MaxValue: {
+            // partial sums of a 16-bit counter stay far below 2^31, so the
+            // per-iteration exact-store chain equals one 32-bit pair add
+            asm.Mov(Reg.AX, (int)(total & 0xFFFF));
+            asm.Add(accCell.WithSize(OperandSize.Word), Reg.AX);
+            asm.Mov(Reg.AX, (int)((total >> 16) & 0xFFFF));
+            asm.Adc(Adjust(accCell, 2, OperandSize.Word), Reg.AX);
+            asm.Mov(slot, (Imm)(int)current);
+            return true;
+          }
+          case ScalarType { Kind: ScalarKind.Double }: {
+            // DOUBLE holds every partial of a 16-bit series exactly
+            asm.Fld(Adjust(accCell, 0, OperandSize.Qword));
+            asm.Fadd(Mem.Qword(this.FloatConstOf(total)));
+            asm.Fstp(Adjust(accCell, 0, OperandSize.Qword));
+            asm.Mov(slot, (Imm)(int)current);
+            return true;
+          }
+          case ScalarType { Kind: ScalarKind.Single } when partialMax <= 1L << 24: {
+            // every partial sum is exact in SINGLE, so one exact add is
+            // bit-identical to the chain of per-iteration adds
+            asm.Fld(Adjust(accCell, 0, OperandSize.Dword));
+            asm.Fadd(Mem.Qword(this.FloatConstOf(total)));
+            asm.Fstp(Adjust(accCell, 0, OperandSize.Dword));
+            asm.Mov(slot, (Imm)(int)current);
+            return true;
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
+  #endregion
 }
+

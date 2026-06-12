@@ -1095,6 +1095,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       return;
     }
 
+    // pb36 O20 ($OPTIMIZE SPEED): whole-loop algorithm replacement - empty
+    // bodies, constant fills and arithmetic-series sums collapse to their
+    // closed forms before unrolling is even considered
+    if (kind == ValueKind.Int16 && this.TryEmitForIdiom(f, counter, slot.WithSize(OperandSize.Word)))
+      return;
+
     // pb36 O7 ($OPTIMIZE SPEED): tiny constant-trip INTEGER loops unroll fully
     if (kind == ValueKind.Int16 && this.TryEmitUnrolledFor(f, counter, slot.WithSize(OperandSize.Word)))
       return;
