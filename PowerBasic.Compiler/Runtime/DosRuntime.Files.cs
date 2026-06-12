@@ -748,15 +748,11 @@ public sealed partial class DosRuntime {
 
   private void EmitFileData(Assembler asm) {
     asm.Align(2);
-    asm.MarkLabel("rt_files");
-    asm.Db(new byte[32]);
-    asm.MarkLabel("rt_fmode");
-    asm.Db(new byte[32]);
+    this.ZeroBlob(asm, "rt_files", 32);
+    this.ZeroBlob(asm, "rt_fmode", 32);
     asm.MarkLabel("rt_reclen");
     asm.Db(new byte[32]);
-    asm.MarkLabel("rt_namebuf");
-    asm.Db(new byte[128]);
-    asm.MarkLabel("rt_linebuf");
-    asm.Db(new byte[256]);
+    this.ZeroBlob(asm, "rt_namebuf", 128);
+    this.ZeroBlob(asm, "rt_linebuf", 256);
   }
 }

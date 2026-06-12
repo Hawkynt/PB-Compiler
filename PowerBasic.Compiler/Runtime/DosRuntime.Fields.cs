@@ -187,12 +187,9 @@ public sealed partial class DosRuntime {
     asm.Align(2);
     asm.MarkLabel("rt_fldcnt");
     asm.Dw(0);
-    asm.MarkLabel("rt_fldfile");
-    asm.Db(new byte[32]);
-    asm.MarkLabel("rt_fldwidth");
-    asm.Db(new byte[64]);
-    asm.MarkLabel("rt_fldcell");
-    asm.Db(new byte[64]);
+    this.ZeroBlob(asm, "rt_fldfile", 32);
+    this.ZeroBlob(asm, "rt_fldwidth", 64);
+    this.ZeroBlob(asm, "rt_fldcell", 64);
     asm.MarkLabel("rt_fieldbuf");
     asm.Db(new byte[512]);
   }

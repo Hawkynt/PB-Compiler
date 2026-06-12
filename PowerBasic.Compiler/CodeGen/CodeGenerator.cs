@@ -82,9 +82,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     // pb36 O2/O10: drop unreachable statements and redundant DEF SEGs first -
     // dead code also vanishes from the trivial-lowering analysis below
-    if (this.OptimizePb36 && !this._isUnit)
+    if (this.OptimizePb36 && !this._isUnit) {
       Pb36Pruner.Prune(model);
       Pb36FloatDemotion.Apply(model);
+    }
 
     // pb36 P7: programs whose only effect is printing compile-time text lower
     // to a raw COM-style image of a few dozen bytes (docs/PB36.md)
@@ -96,6 +97,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     var userMain = asm.DefineLabel("user_main");
     this._scratch = asm.DefineLabel("cg_scratch");
 
+    this._rt.EnableBss = this.OptimizePb36 && !this._allowExternalCalls && !this._isUnit;
     this._rt.EmitEntry(asm, userMain);
 
     // pb36 (docs/PB36.md P1): the runtime is emitted AFTER user code, trimmed
@@ -121,7 +123,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (stackMeta is { Arguments: [{ Kind: TokenKind.IntegerLiteral } stackSize, ..] })
       asm.Mov(Mem.Word(asm.Lbl("rt_stackmin")), (int)(0xFFFE - Math.Clamp(stackSize.IntegerValue, 256, 0xF000)) & 0xFFFF);
     else {
-      asm.Mov(Reg.AX, Imm.OffsetOf(asm.Lbl("rt_memend")));
+      // with virtual BSS (P3) the data area really ends behind the image
+      asm.Mov(Reg.AX, Imm.OffsetOf(asm.Lbl(this._rt.EnableBss ? "rt_bss_end" : "rt_memend")));
       asm.Add(Reg.AX, 256);
       asm.Mov(Mem.Word(asm.Lbl("rt_stackmin")), Reg.AX);
     }
@@ -191,6 +194,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     }
 
     this.EmitDataArea(trimmedSections);
+    this._rt.PlaceBss(asm); // pb36 P3: zero blobs live behind the image
 
     var image = this._allowExternalCalls ? this.LinkImage(units, libraries) : asm.ToArray();
     if (image.Length == 0)

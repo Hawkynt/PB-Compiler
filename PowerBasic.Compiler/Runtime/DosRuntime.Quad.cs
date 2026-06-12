@@ -225,11 +225,8 @@ public sealed partial class DosRuntime {
 
   private void EmitQuadData(Assembler asm) {
     asm.Align(2);
-    asm.MarkLabel("rt_q0");
-    asm.Db(new byte[8]);
-    asm.MarkLabel("rt_q1");
-    asm.Db(new byte[8]);
-    asm.MarkLabel("rt_q2");
-    asm.Db(new byte[8]);
+    this.ZeroBlob(asm, "rt_q0", 8);
+    this.ZeroBlob(asm, "rt_q1", 8);
+    this.ZeroBlob(asm, "rt_q2", 8);
   }
 }

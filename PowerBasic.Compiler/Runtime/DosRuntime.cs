@@ -36,6 +36,9 @@ public sealed partial class DosRuntime {
   /// </summary>
   public Syntax.Dialect Dialect { get; set; } = Syntax.Dialect.Pb35;
 
+  /// <summary>pb36 P3 gate: virtual BSS only applies to directly written images (the $LINK path lays out its own image).</summary>
+  public bool EnableBss { get; set; }
+
   public Label PrintStr { get; private set; } = null!;
   public Label PrintInt16 { get; private set; } = null!;
   public Label PrintInt32 { get; private set; } = null!;
@@ -55,6 +58,47 @@ public sealed partial class DosRuntime {
 
   private Label _numBuffer = null!;
   private Label _scratch = null!;
+  private readonly List<(Label Label, int Bytes)> _bss = [];
+
+  /// <summary>
+  /// pb36 P3: emits a zero-initialized blob as virtual BSS - the label points
+  /// past the image end (assigned by <see cref="PlaceBss"/>) and the entry
+  /// stub zeroes the whole region before any runtime store, so the bytes never
+  /// hit the disk image. Other dialects keep the in-image zero bytes.
+  /// </summary>
+  private Label ZeroBlob(Assembler asm, string name, int bytes) {
+    if (this.EnableBss) {
+      var label = asm.Lbl(name);
+      label.IsConstant = true;
+      this._bss.Add((label, bytes));
+      return label;
+    }
+    var bound = asm.MarkLabel(name);
+    asm.Db(new byte[bytes]);
+    return bound;
+  }
+
+  /// <summary>Lays the recorded BSS blobs out behind the image and patches the entry stub's zero range; call once after all emission.</summary>
+  public void PlaceBss(Assembler asm) {
+    ArgumentNullException.ThrowIfNull(asm);
+    if (!this.EnableBss)
+      return;
+    var start = (asm.Position + 1) & ~1;
+    var cursor = start;
+    foreach (var (label, bytes) in this._bss) {
+      label.Position = cursor;
+      cursor += (bytes + 1) & ~1;
+    }
+    var offLabel = asm.Lbl("rt_bss_off");
+    offLabel.IsConstant = true;
+    offLabel.Position = start;
+    var wordsLabel = asm.Lbl("rt_bss_words");
+    wordsLabel.IsConstant = true;
+    wordsLabel.Position = (cursor - start) / 2;
+    var endLabel = asm.Lbl("rt_bss_end");   // stack probe baseline: data now ends here
+    endLabel.IsConstant = true;
+    endLabel.Position = cursor;
+  }
 
   /// <summary>Emits the entry stub: segment setup, heap segment registers, FPU init, jump to user main.</summary>
   public void EmitEntry(Assembler asm, Label userMain) {
@@ -65,6 +109,15 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.AX, Reg.CS);
     asm.Mov(Reg.DS, Reg.AX);
     asm.Mov(Reg.ES, Reg.AX);
+    if (this.EnableBss) {
+      // P3: zero the virtual BSS behind the image (cells live there instead
+      // of as zero bytes in the EXE); must precede every runtime store
+      asm.Mov(Reg.DI, Imm.OffsetOf(asm.Lbl("rt_bss_off")));
+      asm.Mov(Reg.CX, Imm.OffsetOf(asm.Lbl("rt_bss_words")));
+      asm.Xor(Reg.AX, Reg.AX);
+      asm.Rep();
+      asm.Stosw();
+    }
     asm.Pop(Reg.AX);
     asm.Mov(Mem.Word(asm.Lbl("rt_pspseg")), Reg.AX);
     asm.Mov(Reg.AX, Reg.CS);
@@ -215,10 +268,8 @@ public sealed partial class DosRuntime {
 
   private void EmitCoreData(Assembler asm) {
     asm.Align(2);
-    this._numBuffer = asm.MarkLabel("rt_numbuf");
-    asm.Db(new byte[36]);
-    this._scratch = asm.MarkLabel("rt_scratch");
-    asm.Db(new byte[16]);
+    this._numBuffer = this.ZeroBlob(asm, "rt_numbuf", 36);
+    this._scratch = this.ZeroBlob(asm, "rt_scratch", 16);
   }
 
   private void EmitExit(Assembler asm) {

@@ -130,8 +130,7 @@ public sealed partial class DosRuntime {
 
   private void EmitLowLevelData(Assembler asm) {
     asm.Align(2);
-    asm.MarkLabel("rt_regs");
-    asm.Db(new byte[20]);
+    this.ZeroBlob(asm, "rt_regs", 20);
     asm.MarkLabel("rt_defseg");
     asm.Dw(0);
     asm.MarkLabel("rt_err");

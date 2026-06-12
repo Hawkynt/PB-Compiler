@@ -133,15 +133,13 @@ public sealed partial class DosRuntime {
     asm.Dw(0);
     asm.MarkLabel("rt_st3");
     asm.Dw(0);
-    asm.MarkLabel("rt_capbuf");
-    asm.Db(new byte[64]);
+    this.ZeroBlob(asm, "rt_capbuf", 64);
   }
 
   /// <summary>The 2 KiB string descriptor table - needed only by the string kernel itself.</summary>
   private void EmitStringTable(Assembler asm) {
     asm.Align(2);
-    asm.MarkLabel("rt_strtab");
-    asm.Db(new byte[_STRING_HANDLES * 4]);
+    this.ZeroBlob(asm, "rt_strtab", _STRING_HANDLES * 4);
   }
 
   private void EmitStrAlloc(Assembler asm) {
