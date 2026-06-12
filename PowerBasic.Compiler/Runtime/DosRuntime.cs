@@ -39,6 +39,9 @@ public sealed partial class DosRuntime {
   /// <summary>pb36 P3 gate: virtual BSS only applies to directly written images (the $LINK path lays out its own image).</summary>
   public bool EnableBss { get; set; }
 
+  /// <summary>pb36 C1 gate: $CPU 80386 selected - runtime helpers may use 32-bit instructions.</summary>
+  public bool Cpu386 { get; set; }
+
   public Label PrintStr { get; private set; } = null!;
   public Label PrintInt16 { get; private set; } = null!;
   public Label PrintInt32 { get; private set; } = null!;
@@ -969,6 +972,12 @@ public sealed partial class DosRuntime {
     // unsigned entries: DWORD \ and MOD divide unsigned (oracle-verified:
     // 4000000000 \ 4 = 1000000000 on genuine PBC) - skip the sign bookkeeping
     this.LongDivU = asm.MarkLabel("rt_uldiv");
+    asm.Mov(Mem.Word(this._scratch), Reg.BX);
+    asm.Or(Mem.Word(this._scratch), Reg.CX);
+    asm.Jnz(asm.Lbl("rt_uldiv_ok"));
+    asm.Mov(Reg.AX, 11);
+    asm.Call(asm.Lbl("rt_raise"));
+    asm.MarkLabel("rt_uldiv_ok");
     asm.Push(Reg.SI);
     asm.Push(Reg.DI);
     asm.Push(Reg.BP);
@@ -976,6 +985,12 @@ public sealed partial class DosRuntime {
     asm.Jmp(asm.Lbl("rt_ld_core"));
 
     this.LongModU = asm.MarkLabel("rt_ulmod");
+    asm.Mov(Mem.Word(this._scratch), Reg.BX);
+    asm.Or(Mem.Word(this._scratch), Reg.CX);
+    asm.Jnz(asm.Lbl("rt_ulmod_ok"));
+    asm.Mov(Reg.AX, 11);
+    asm.Call(asm.Lbl("rt_raise"));
+    asm.MarkLabel("rt_ulmod_ok");
     asm.Push(Reg.SI);
     asm.Push(Reg.DI);
     asm.Push(Reg.BP);
@@ -986,6 +1001,54 @@ public sealed partial class DosRuntime {
   /// <summary>Shift-subtract 32/32 signed division (KISS bring-up version; 32 iterations).</summary>
   private void EmitLongDivide(Assembler asm, bool wantRemainder) {
     var suffix = wantRemainder ? "m" : "d";
+
+    // pb36 C1 ($CPU 80386): one IDIV replaces the 32-iteration loop. The two
+    // fault edges fall back to the loop: divisor 0 (the loop's saturating
+    // result is the established behavior) and MININT / -1 (IDIV would trap
+    // where PB wraps). Bit-identical otherwise - same quotient/remainder
+    // contract incl. the CX:BX remainder of the divide entry.
+    var divisorOk = asm.DefineLabel();
+    asm.Mov(Mem.Word(this._scratch), Reg.BX);
+    asm.Or(Mem.Word(this._scratch), Reg.CX);
+    asm.Jnz(divisorOk);
+    asm.Mov(Reg.AX, 11);                  // division by zero (oracle-verified)
+    asm.Call(asm.Lbl("rt_raise"));
+    asm.MarkLabel(divisorOk);
+
+    if (this.Cpu386) {
+      var legacy = asm.DefineLabel();
+      var fast = asm.DefineLabel();
+      asm.Mov(Mem.Word(this._scratch), Reg.BX);
+      asm.Mov(Mem.Word(this._scratch, 2), Reg.CX);
+      asm.Mov(Reg.EBX, Mem.Dword(this._scratch));
+      asm.Mov(Mem.Word(this._scratch), Reg.AX);
+      asm.Mov(Mem.Word(this._scratch, 2), Reg.DX);
+      asm.Mov(Reg.EAX, Mem.Dword(this._scratch));
+      asm.Or(Reg.EBX, Reg.EBX);
+      asm.Jz(legacy);
+      asm.Cmp(Reg.EBX, (Imm)(-1));
+      asm.Jne(fast);
+      asm.Cmp(Reg.EAX, Mem.Dword(asm.Lbl("rt_const_min32")));
+      asm.Je(legacy);
+      asm.MarkLabel(fast);
+      asm.Cdq();
+      asm.Idiv(Reg.EBX);
+      if (wantRemainder)
+        asm.Mov(Reg.EAX, Reg.EDX);
+      asm.Mov(Mem.Dword(this._scratch), Reg.EAX);
+      asm.Mov(Reg.AX, Mem.Word(this._scratch));
+      asm.Mov(Reg.DX, Mem.Word(this._scratch, 2));
+      if (!wantRemainder) {
+        asm.Mov(Mem.Dword(this._scratch), Reg.EDX);
+        asm.Mov(Reg.BX, Mem.Word(this._scratch));
+        asm.Mov(Reg.CX, Mem.Word(this._scratch, 2));
+      }
+      asm.Ret();
+      asm.MarkLabel(legacy);
+      asm.Mov(Reg.AX, Mem.Word(this._scratch));
+      asm.Mov(Reg.DX, Mem.Word(this._scratch, 2));
+    }
+
     asm.Push(Reg.SI);
     asm.Push(Reg.DI);
     asm.Push(Reg.BP);
@@ -1076,6 +1139,8 @@ public sealed partial class DosRuntime {
     asm.Dq(2147483648.0);
     asm.MarkLabel("rt_const_2p32");
     asm.Dq(4294967296.0);
+    asm.MarkLabel("rt_const_min32");
+    asm.Dd(0x80000000u);
     this.EmitMiscConstants(asm);
   }
 }

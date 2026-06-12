@@ -119,3 +119,12 @@ Unit coverage for the emulated rows: `PowerBasic.Compiler.Tests/Syntax/QuirkEmul
   $OPTIMIZE SPEED, FIELD/ERL/$STRING/GetStrLoc, and CHAIN with COMMON) produce
   byte-identical RESULT.TXT between PB-Compiler and genuine PBC 3.50
   (`scripts/run-diff-tests.sh`).
+
+## Known unreplicated edge
+
+- `MININT& \ -1` displays `2147483648` on genuine PBC 3.50 (the true quotient,
+  unrepresentable in LONG) while PB-Compiler's long divide wraps to
+  `-2147483648` - the genuine runtime appears to carry the quotient wide into
+  PRINT. Everything else about `\`/`MOD` (truncation, signs, DWORD unsigned
+  forms, error 11 on zero divisors) is oracle-verified; this single edge is
+  excluded from the batteries and recorded here.

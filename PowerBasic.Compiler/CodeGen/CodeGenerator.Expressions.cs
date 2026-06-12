@@ -351,6 +351,19 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>left AX, right BX -> result AX.</summary>
+  /// <summary>A zero divisor raises error 11 like genuine PBC (the bare IDIV would CPU-fault instead).</summary>
+  private void EmitInt16DivideGuard() {
+    var asm = this._asm;
+    var ok = asm.DefineLabel();
+    asm.Test(Reg.BX, Reg.BX);
+    asm.Jnz(ok);
+    asm.Push(Reg.AX);
+    asm.Mov(Reg.AX, 11);
+    asm.Call(this._rt.Raise);
+    asm.Pop(Reg.AX);
+    asm.MarkLabel(ok);
+  }
+
   private void EmitInt16Op(BinaryExpr b, bool unsignedCompare = false) {
     var asm = this._asm;
     if (unsignedCompare) {
@@ -380,10 +393,12 @@ public sealed partial class CodeGenerator {
           this.EmitRaiseWhen(asm.Jno, 6);
         break;
       case BinaryOp.IntegerDivide:
+        this.EmitInt16DivideGuard();
         asm.Cwd();
         asm.Idiv(Reg.BX);
         break;
       case BinaryOp.Modulo:
+        this.EmitInt16DivideGuard();
         asm.Cwd();
         asm.Idiv(Reg.BX);
         asm.Mov(Reg.AX, Reg.DX);
