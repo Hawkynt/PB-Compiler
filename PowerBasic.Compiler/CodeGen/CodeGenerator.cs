@@ -37,6 +37,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private ProcedureSymbol? _currentProc;
   private HashSet<Statement>? _tailSelfCalls;
   private Label? _tailEntry;
+  private Dictionary<VariableSymbol, (Mem Cell, PbType Type)>? _inlineParamSlots;
   private Label _epilogue = null!;
   private Label _frameBytesLabel = null!;
   private Label _frameWordsLabel = null!;

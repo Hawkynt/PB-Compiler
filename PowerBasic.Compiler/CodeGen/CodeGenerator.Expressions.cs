@@ -56,6 +56,12 @@ public sealed partial class CodeGenerator {
           this.Unsupported(n, "whole-array reference");
           break;
         }
+        // pb36 O6: inside an inlined body, parameter reads come from the
+        // argument temps instead of a (nonexistent) callee frame
+        if (this._inlineParamSlots is { } inlined && inlined.TryGetValue(symbol, out var slot)) {
+          this.EmitLoadPlace(new(slot.Cell, Far: false), slot.Type, n);
+          break;
+        }
         if (this.EmitPlace(n) is { } place)
           this.EmitLoadPlace(place, symbol.Type, n);
         break;

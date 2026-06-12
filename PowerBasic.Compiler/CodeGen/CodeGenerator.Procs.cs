@@ -237,8 +237,78 @@ public sealed partial class CodeGenerator {
   /// near pointer, BYVAL = value; BYVAL strings transfer temp ownership to the
   /// callee), RET n cleans up. Results: AX / DX:AX / ST0 / string handle in AX.
   /// </summary>
+  /// <summary>
+  /// pb36 O6 subset: a FUNCTION whose body is exactly one result assignment
+  /// over BYVAL scalar parameters and constants inlines as the expression
+  /// itself - arguments evaluate once into frame temps (caller effects and
+  /// order preserved), the body expression emits with parameter reads mapped
+  /// onto those temps, and the frame/call/return overhead disappears.
+  /// </summary>
+  private bool TryEmitInlinedFunction(ProcedureSymbol proc, IReadOnlyList<Expression> args, bool wantResult) {
+    if (!this.OptimizePb36 || !wantResult || proc.IsCdecl || proc.IsStatic || proc.Body is not [AssignStmt single])
+      return false;
+    if (args.Count != proc.Parameters.Count)
+      return false;
+    if (proc.ReturnType is not ScalarType)
+      return false; // FIX/BCD are BcdType, strings/UDTs excluded with them
+    if (single.Target is not NameExpr resultName
+        || !model.VariableBindings.TryGetValue(resultName, out var resultSymbol)
+        || !proc.Variables.TryGetValue(proc.Name, out var expectedResult)
+        || !ReferenceEquals(resultSymbol, expectedResult))
+      return false;
+    foreach (var parameter in proc.Parameters)
+      if (!parameter.ByVal || parameter.Type is not ScalarType)
+        return false;
+    if (!InlinableExpression(single.Value, proc))
+      return false;
+
+    var asm = this._asm;
+    var outer = this._inlineParamSlots;
+    var slots = new Dictionary<VariableSymbol, (Mem Cell, PbType Type)>(ReferenceEqualityComparer.Instance);
+    var reserved = 0;
+    for (var i = 0; i < args.Count; ++i) {
+      var parameter = proc.Parameters[i];
+      this.EmitExpression(args[i]);
+      this.Coerce(model.TypeOf(args[i]), parameter.Type, args[i]);
+      var bytes = Math.Max(2, (parameter.Type.Size + 1) & ~1);
+      var cell = this.AllocTemp(bytes);
+      reserved += bytes;
+      switch (KindOf(parameter.Type)) {
+        case ValueKind.Int16:
+          asm.Mov(cell, Reg.AX);
+          break;
+        case ValueKind.Int32:
+          asm.Mov(cell, Reg.AX);
+          asm.Mov(Adjust(cell, 2, OperandSize.Word), Reg.DX);
+          break;
+        default: // float parameters park x87-exact at their declared width
+          asm.Fstp(Adjust(cell, 0, parameter.Type.Size == 4 ? OperandSize.Dword : OperandSize.Qword));
+          break;
+      }
+      slots[parameter] = (cell, parameter.Type);
+    }
+
+    this._inlineParamSlots = slots;
+    this.EmitExpression(single.Value);
+    this.Coerce(model.TypeOf(single.Value), proc.ReturnType, single.Value);
+    this._inlineParamSlots = outer;
+    this.ReleaseTemp(reserved);
+    return true;
+  }
+
+  /// <summary>True when the expression reads only the procedure's own parameters, literals and equates through scalar operators.</summary>
+  private bool InlinableExpression(Expression e, ProcedureSymbol proc) => e switch {
+    IntegerLiteralExpr or FloatLiteralExpr or NamedConstantExpr => true,
+    NameExpr n => model.VariableBindings.TryGetValue(n, out var s) && proc.Parameters.Contains(s),
+    UnaryExpr u => this.InlinableExpression(u.Operand, proc),
+    BinaryExpr b => this.InlinableExpression(b.Left, proc) && this.InlinableExpression(b.Right, proc),
+    _ => false,
+  };
+
   private void EmitCall(ProcedureSymbol proc, IReadOnlyList<Expression> args, bool wantResult, SourcePosition position) {
     var asm = this._asm;
+    if (this.TryEmitInlinedFunction(proc, args, wantResult))
+      return;
     if (proc.IsExternal && !this._allowExternalCalls) {
       this.Unsupported(position, $"external procedure {proc.Name} (no $LINK provides it)");
       return;

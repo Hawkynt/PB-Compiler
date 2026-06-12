@@ -472,4 +472,52 @@ public sealed class Pb36OptimizerTests {
   }
 
   #endregion
+
+  #region O6 - single-expression function inlining
+
+  [Test]
+  public void Emit_GivenSingleExpressionFunction_WhenPb36_ThenNoCall() {
+    const string source = """
+      DECLARE FUNCTION Triple%(BYVAL x%)
+      a% = 5
+      PRINT Triple%(a%) + Triple%(2)
+      END
+      FUNCTION Triple%(BYVAL x%)
+        Triple% = x% * 3
+      END FUNCTION
+      """;
+    var pb35 = Compile(source, Dialect.Pb35);
+    var pb36 = Compile(source, Dialect.Pb36);
+    var output35 = DosBoxRunner.Normalize(DosBoxRunner.Run(pb35));
+    var output36 = DosBoxRunner.Normalize(DosBoxRunner.Run(pb36));
+    Assert.Multiple(() => {
+      Assert.That(output36, Is.EqualTo(" 21\n"));
+      Assert.That(output36, Is.EqualTo(output35));
+      Assert.That(pb36.Length, Is.LessThan(pb35.Length), "the inlined image sheds the call frames");
+    });
+  }
+
+  [Test]
+  public void Emit_GivenSideEffectArguments_WhenInlined_ThenEvaluatedOnce() {
+    const string source = """
+      DECLARE FUNCTION Sq&(BYVAL x&)
+      DECLARE FUNCTION Bump%(q%)
+      n% = 0
+      PRINT Sq&(Bump%(n%))
+      PRINT n%
+      END
+      FUNCTION Sq&(BYVAL x&)
+        Sq& = x& * x&
+      END FUNCTION
+      FUNCTION Bump%(q%)
+        q% = q% + 7
+        Bump% = q%
+      END FUNCTION
+      """;
+    var pb36 = Compile(source, Dialect.Pb36);
+    var output = DosBoxRunner.Normalize(DosBoxRunner.Run(pb36));
+    Assert.That(output, Is.EqualTo(" 49\n 7\n"), "argument effects must run exactly once");
+  }
+
+  #endregion
 }
