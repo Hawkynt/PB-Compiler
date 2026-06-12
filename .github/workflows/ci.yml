@@ -93,6 +93,17 @@ jobs:
         continue-on-error: true                   # advisory: emulator quirks must not block merges
         run: bash scripts/run-dos-tests.sh
 
+      # Differential battery: compile each tests/diff/*.BAS with both pbc and the
+      # genuine oracle compilers, comparing RESULT.TXT byte for byte. The oracle
+      # toolchains ride in the repo as AES-encrypted tarballs (tools/*-toolchain.tar.enc);
+      # the PB_TOOLCHAIN_KEY secret unlocks them. Skips cleanly without the secret.
+      - name: Differential oracle battery
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true                   # advisory: emulator quirks must not block merges
+        env:
+          PB_TOOLCHAIN_KEY: ${{ secrets.PB_TOOLCHAIN_KEY }}
+        run: bash scripts/run-diff-tests.sh
+
       # Performance tier - advisory by definition (STANDARD.md: wall-clock
       # assertions never block a merge).
       - name: Performance tests

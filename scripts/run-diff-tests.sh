@@ -37,6 +37,26 @@ echo "building compiler ..."
 dotnet build pbc -c Release -v q --nologo
 PBC_OURS="dotnet run --project pbc -c Release --no-build --"
 
+# Decrypt any AES-packed oracle toolchains into their tools/<dialect>/ slots.
+# The proprietary binaries never live in the repo - only tools/<dialect>-toolchain.tar.enc
+# is tracked; PB_TOOLCHAIN_KEY (a CI secret / local env var) unlocks them. A slot
+# already populated on disk (a local install) wins and is left untouched.
+if [ -n "${PB_TOOLCHAIN_KEY:-}" ]; then
+  for enc in tools/*-toolchain.tar.enc; do
+    [ -e "$enc" ] || continue
+    dialect=$(basename "$enc"); dialect="${dialect%-toolchain.tar.enc}"
+    slot="tools/$dialect"
+    [ -d "$slot" ] && [ -n "$(ls -A "$slot" 2>/dev/null)" ] && continue
+    mkdir -p "$slot"
+    if openssl enc -d -aes-256-cbc -pbkdf2 -in "$enc" -pass env:PB_TOOLCHAIN_KEY 2>/dev/null | tar xz -C "$slot" 2>/dev/null; then
+      echo "unpacked oracle toolchain: $dialect"
+    else
+      echo "::warning::could not decrypt $enc (wrong PB_TOOLCHAIN_KEY?) - $dialect battery will skip"
+      rmdir "$slot" 2>/dev/null || true
+    fi
+  done
+fi
+
 run_dosbox() { # $1 = conf file, $2 = sentinel dir
   rm -f "$2/DONE.TXT"
   "$DOSBOX" -conf "$1" >/dev/null 2>&1 &

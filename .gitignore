@@ -139,3 +139,8 @@ tools/tb11/
 tools/pds70/
 tools/pds71/
 tools/_downloads/
+
+# raw oracle binaries stay out of the repo (proprietary); only the AES-encrypted
+# toolchain tarballs are tracked, decrypted at run time with PB_TOOLCHAIN_KEY.
+tools/*/
+!tools/*-toolchain.tar.enc
