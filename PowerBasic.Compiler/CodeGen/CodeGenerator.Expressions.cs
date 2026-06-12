@@ -205,6 +205,10 @@ public sealed partial class CodeGenerator {
     if (this.TryEmitStrengthReducedMultiply(b, opType))
       return;
 
+    // pb36 O4: x \ 2^n and x MOD 2^n as shift/mask with PB truncation fix-up
+    if (this.TryEmitStrengthReducedDivMod(b, opType))
+      return;
+
     switch (KindOf(opType)) {
       case ValueKind.Int16:
         // $OPTIMIZE SPEED: x * 2^n inlines as shifts (no overflow checking applies)
@@ -237,7 +241,7 @@ public sealed partial class CodeGenerator {
         asm.Mov(Reg.CX, Reg.DX);
         asm.Pop(Reg.AX);
         asm.Pop(Reg.DX);
-        this.EmitInt32Op(b, unsignedCompare);
+        this.EmitInt32Op(b, unsignedCompare, opType is ScalarType { IsFloat: false, Signed: false });
         break;
 
       case ValueKind.Float:
@@ -412,7 +416,7 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>left DX:AX, right CX:BX -> result DX:AX.</summary>
-  private void EmitInt32Op(BinaryExpr b, bool unsignedCompare = false) {
+  private void EmitInt32Op(BinaryExpr b, bool unsignedCompare = false, bool unsignedDivide = false) {
     var asm = this._asm;
     if (unsignedCompare && b.Op is BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual or BinaryOp.GreaterEqual) {
       // borrow of (left - right) decides; zero via OR of the difference
@@ -464,10 +468,10 @@ public sealed partial class CodeGenerator {
         asm.Call(this._rt.LongMul);
         break;
       case BinaryOp.IntegerDivide:
-        asm.Call(this._rt.LongDiv);
+        asm.Call(unsignedDivide ? this._rt.LongDivU : this._rt.LongDiv);
         break;
       case BinaryOp.Modulo:
-        asm.Call(this._rt.LongMod);
+        asm.Call(unsignedDivide ? this._rt.LongModU : this._rt.LongMod);
         break;
       case BinaryOp.And:
         asm.And(Reg.AX, Reg.BX);

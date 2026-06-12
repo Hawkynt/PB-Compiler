@@ -49,6 +49,8 @@ public sealed partial class DosRuntime {
   public Label LongMul { get; private set; } = null!;
   public Label LongDiv { get; private set; } = null!;
   public Label LongMod { get; private set; } = null!;
+  public Label LongDivU { get; private set; } = null!;
+  public Label LongModU { get; private set; } = null!;
   public Label Exit { get; private set; } = null!;
 
   private Label _numBuffer = null!;
@@ -912,6 +914,22 @@ public sealed partial class DosRuntime {
     // signed DX:AX MOD CX:BX -> DX:AX remainder
     this.LongMod = asm.MarkLabel("rt_lmod");
     this.EmitLongDivide(asm, wantRemainder: true);
+
+    // unsigned entries: DWORD \ and MOD divide unsigned (oracle-verified:
+    // 4000000000 \ 4 = 1000000000 on genuine PBC) - skip the sign bookkeeping
+    this.LongDivU = asm.MarkLabel("rt_uldiv");
+    asm.Push(Reg.SI);
+    asm.Push(Reg.DI);
+    asm.Push(Reg.BP);
+    asm.Xor(Reg.SI, Reg.SI);
+    asm.Jmp(asm.Lbl("rt_ld_core"));
+
+    this.LongModU = asm.MarkLabel("rt_ulmod");
+    asm.Push(Reg.SI);
+    asm.Push(Reg.DI);
+    asm.Push(Reg.BP);
+    asm.Xor(Reg.SI, Reg.SI);
+    asm.Jmp(asm.Lbl("rt_lm_core"));
   }
 
   /// <summary>Shift-subtract 32/32 signed division (KISS bring-up version; 32 iterations).</summary>
@@ -941,6 +959,7 @@ public sealed partial class DosRuntime {
     asm.MarkLabel($"rt_l{suffix}_p2");
 
     // 32-bit restoring division: quotient builds in DX:AX, remainder in DI:BP
+    asm.MarkLabel($"rt_l{suffix}_core");
     asm.Xor(Reg.DI, Reg.DI);
     asm.Xor(Reg.BP, Reg.BP);
     asm.Push(Reg.CX);               // divisor saved on stack (CX reused as counter)

@@ -1247,6 +1247,12 @@ public sealed class Binder {
       BinaryOp.Power => this._dialect.IsTurboBasic() ? PbType.Double
         : this._dialect.Family() == DialectFamily.Microsoft ? this.DivideResultType(b, left, right)
         : PbType.Ext,
+      // a DWORD operand makes \ and MOD divide UNSIGNED on genuine PBC
+      // (4000000000 \ 4 = 1000000000, oracle-verified) - even when the other
+      // operand is a small signed literal that Widest would promote to LONG
+      BinaryOp.IntegerDivide or BinaryOp.Modulo
+        when left is ScalarType { IsFloat: false, ByteSize: 4, Signed: false }
+          || right is ScalarType { IsFloat: false, ByteSize: 4, Signed: false } => PbType.Dword,
       BinaryOp.IntegerDivide or BinaryOp.Modulo => PromoteUnsigned(IntegralOf(Widest(left, right))),
       BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Eqv or BinaryOp.Imp => IntegralOf(Widest(left, right)),
       BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual or BinaryOp.GreaterEqual => PbType.Integer,
