@@ -71,7 +71,26 @@ public sealed partial class CodeGenerator {
     var stackLocals = this.StackLocalsOf(proc).ToList();
     var elideZeroing = this.OptimizePb36 && !this._trackResume
       && CanElideFrameZeroing(model, proc.Body!, stackLocals);
-    this.BeginFrame(elideZeroing);
+
+    // pb36 O14: self-calls in tail position become frame-reusing jumps when
+    // nothing must outlive the call - no error handler, no GOSUB returns, no
+    // string/FLEX locals pending release, and every parameter is a small
+    // BYVAL scalar whose slot can be rewritten in place
+    this._tailSelfCalls = null;
+    this._tailEntry = null;
+    if (this.OptimizePb36 && !this._trackResume
+        && !proc.IsCdecl
+        && proc.Parameters.All(p => p.ByVal && p.Type is ScalarType { IsFloat: false, ByteSize: <= 4 })
+        && stackLocals.All(l => l.Type is ScalarType)
+        && !ContainsGosub(proc.Body!)) {
+      var tails = CollectTailSelfCalls(proc.Body!, proc, model);
+      if (tails.Count > 0) {
+        this._tailSelfCalls = tails;
+        this._tailEntry = asm.DefineLabel($"p_{proc.Name}_tail");
+      }
+    }
+
+    this.BeginFrame(elideZeroing, this._tailEntry);
     if (elideZeroing)
       foreach (var local in stackLocals)
         if (local.Type is StringType or FlexType)
@@ -138,7 +157,79 @@ public sealed partial class CodeGenerator {
       this.Unsupported(c);
       return;
     }
+    if (this._tailSelfCalls?.Contains(c) == true && ReferenceEquals(proc, this._currentProc)
+        && c.Arguments.Count == proc.Parameters.Count) {
+      this.EmitTailSelfCall(proc, c.Arguments);
+      return;
+    }
     this.EmitCall(proc, c.Arguments, wantResult: false, c.Position);
+  }
+
+  /// <summary>
+  /// pb36 O14: evaluates the new arguments left to right onto the stack (old
+  /// parameter values stay readable during evaluation), pops them into the
+  /// BYVAL parameter slots and jumps back to the frame entry - recursion in
+  /// constant stack space.
+  /// </summary>
+  private void EmitTailSelfCall(ProcedureSymbol proc, IReadOnlyList<Expression> args) {
+    var asm = this._asm;
+    for (var i = 0; i < args.Count; ++i) {
+      var parameter = proc.Parameters[i];
+      this.EmitExpression(args[i]);
+      this.Coerce(model.TypeOf(args[i]), parameter.Type, args[i]);
+      if (parameter.Type.Size > 2)
+        asm.Push(Reg.DX);
+      asm.Push(Reg.AX);
+    }
+    for (var i = args.Count - 1; i >= 0; --i) {
+      var parameter = proc.Parameters[i];
+      asm.Pop(Reg.AX);
+      asm.Mov(Mem.Word(Reg.BP, parameter.Offset), Reg.AX);
+      if (parameter.Type.Size > 2) {
+        asm.Pop(Reg.DX);
+        asm.Mov(Mem.Word(Reg.BP, parameter.Offset + 2), Reg.DX);
+      }
+    }
+    asm.Jmp(this._tailEntry!);
+  }
+
+  /// <summary>Statements whose CallStmt to <paramref name="proc"/> sits in tail position (last in the body or last in arms of trailing IF/SELECT chains).</summary>
+  private static HashSet<Statement> CollectTailSelfCalls(IReadOnlyList<Statement> body, ProcedureSymbol proc, SemanticModel model) {
+    var tails = new HashSet<Statement>(ReferenceEqualityComparer.Instance);
+    Visit(body);
+    return tails;
+
+    void Visit(IReadOnlyList<Statement> block) {
+      if (block.Count == 0)
+        return;
+      var last = block[^1];
+      switch (last) {
+        case CallStmt c when model.CallBindings.TryGetValue(c, out var target) && ReferenceEquals(target, proc):
+          tails.Add(c);
+          break;
+        case IfStmt i:
+          Visit(i.Then);
+          foreach (var (_, armBody) in i.ElseIfs)
+            Visit(armBody);
+          if (i.Else != null)
+            Visit(i.Else);
+          break;
+        case SelectStmt s:
+          foreach (var arm in s.Arms)
+            Visit(arm.Body);
+          break;
+      }
+    }
+  }
+
+  private static bool ContainsGosub(IEnumerable<Statement> statements) {
+    foreach (var statement in statements) {
+      if (statement is GosubStmt or GosubPtrStmt or OnGotoStmt { IsGosub: true })
+        return true;
+      if (ChildStatementBlocks(statement).Any(ContainsGosub))
+        return true;
+    }
+    return false;
   }
 
   /// <summary>

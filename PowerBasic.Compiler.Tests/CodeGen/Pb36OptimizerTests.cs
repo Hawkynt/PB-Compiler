@@ -422,4 +422,54 @@ public sealed class Pb36OptimizerTests {
   }
 
   #endregion
+
+  #region O14 - tail-call optimization
+
+  [Test]
+  public void Execute_GivenDeepTailRecursion_WhenPb36_ThenConstantStack() {
+    // 60000 self-calls would devour ~480 KiB of stack without the tail jump
+    var unit = Parser.Parse(Lexer.Tokenize("""
+      DECLARE SUB CountDown(BYVAL n&)
+      CountDown 60000
+      PRINT "DONE"
+      END
+      SUB CountDown(BYVAL n&)
+        IF n& > 0 THEN CountDown n& - 1
+      END SUB
+      """, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty);
+    var generator = new CodeGenerator(model);
+    var exe = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty);
+    var output = DosBoxRunner.Normalize(DosBoxRunner.Run(exe));
+    Assert.That(output, Is.EqualTo("DONE\n"));
+  }
+
+  [Test]
+  public void Emit_GivenByRefRecursion_WhenPb36_ThenKeepsTheCall() {
+    // BYREF parameters pin the standard frame - the self-call must stay a CALL
+    var source = """
+      DECLARE SUB Twice(n&)
+      m& = 3
+      Twice m&
+      PRINT m&
+      END
+      SUB Twice(n&)
+        IF n& < 10 THEN
+          n& = n& * 2
+          Twice n&
+        END IF
+      END SUB
+      """;
+    var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    var generator = new CodeGenerator(model);
+    var exe = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty);
+    var output = DosBoxRunner.Normalize(DosBoxRunner.Run(exe));
+    Assert.That(output, Is.EqualTo(" 12\n"));
+  }
+
+  #endregion
 }

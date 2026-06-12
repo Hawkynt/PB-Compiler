@@ -35,6 +35,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
   // current frame (main or procedure)
   private ProcedureSymbol? _currentProc;
+  private HashSet<Statement>? _tailSelfCalls;
+  private Label? _tailEntry;
   private Label _epilogue = null!;
   private Label _frameBytesLabel = null!;
   private Label _frameWordsLabel = null!;
@@ -226,7 +228,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// emitted, so the SUB SP immediate is a label whose "position" is patched
   /// to the final byte count by <see cref="EndFrame"/>.
   /// </summary>
-  private void BeginFrame(bool skipZeroing = false) {
+  private void BeginFrame(bool skipZeroing = false, Label? tailEntry = null) {
     var asm = this._asm;
     this._frameBytesLabel = asm.DefineLabel();
     this._frameWordsLabel = asm.DefineLabel();
@@ -240,6 +242,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     asm.Mov(Reg.BP, Reg.SP);
     asm.Mov(Reg.CX, Imm.OffsetOf(this._frameBytesLabel));
     asm.Sub(Reg.SP, Reg.CX);
+    // pb36 O14: a tail self-call rewrites its parameter slots and re-enters
+    // here - the frame is reused, locals re-zero exactly like a fresh call
+    if (tailEntry != null)
+      asm.MarkLabel(tailEntry);
     if (skipZeroing)
       return; // pb36 O19: every local is provably assigned before use (temps always are)
     // zero the whole frame: numeric locals start at 0, strings at handle 0
