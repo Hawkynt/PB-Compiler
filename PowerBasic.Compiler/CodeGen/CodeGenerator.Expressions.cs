@@ -338,12 +338,12 @@ public sealed partial class CodeGenerator {
     asm.Call(this._rt.StrCmp);
     asm.Xor(Reg.BX, Reg.BX);
     switch (b.Op) {
-      case BinaryOp.Equal: this.EmitInt16Compare(asm => asm.Je); break;
-      case BinaryOp.NotEqual: this.EmitInt16Compare(asm => asm.Jne); break;
-      case BinaryOp.Less: this.EmitInt16Compare(asm => asm.Jl); break;
-      case BinaryOp.Greater: this.EmitInt16Compare(asm => asm.Jg); break;
-      case BinaryOp.LessEqual: this.EmitInt16Compare(asm => asm.Jle); break;
-      case BinaryOp.GreaterEqual: this.EmitInt16Compare(asm => asm.Jge); break;
+      case BinaryOp.Equal: this.EmitInt16Compare(asm => asm.Je, Condition.Equal); break;
+      case BinaryOp.NotEqual: this.EmitInt16Compare(asm => asm.Jne, Condition.NotEqual); break;
+      case BinaryOp.Less: this.EmitInt16Compare(asm => asm.Jl, Condition.Less); break;
+      case BinaryOp.Greater: this.EmitInt16Compare(asm => asm.Jg, Condition.Greater); break;
+      case BinaryOp.LessEqual: this.EmitInt16Compare(asm => asm.Jle, Condition.LessOrEqual); break;
+      case BinaryOp.GreaterEqual: this.EmitInt16Compare(asm => asm.Jge, Condition.GreaterOrEqual); break;
       default:
         this.Unsupported(b, $"string {b.Op}");
         break;
@@ -368,12 +368,12 @@ public sealed partial class CodeGenerator {
     var asm = this._asm;
     if (unsignedCompare) {
       switch (b.Op) {
-        case BinaryOp.Equal: this.EmitInt16Compare(asm => asm.Je); return;
-        case BinaryOp.NotEqual: this.EmitInt16Compare(asm => asm.Jne); return;
-        case BinaryOp.Less: this.EmitInt16Compare(asm => asm.Jb); return;
-        case BinaryOp.Greater: this.EmitInt16Compare(asm => asm.Ja); return;
-        case BinaryOp.LessEqual: this.EmitInt16Compare(asm => asm.Jbe); return;
-        case BinaryOp.GreaterEqual: this.EmitInt16Compare(asm => asm.Jae); return;
+        case BinaryOp.Equal: this.EmitInt16Compare(asm => asm.Je, Condition.Equal); return;
+        case BinaryOp.NotEqual: this.EmitInt16Compare(asm => asm.Jne, Condition.NotEqual); return;
+        case BinaryOp.Less: this.EmitInt16Compare(asm => asm.Jb, Condition.Below); return;
+        case BinaryOp.Greater: this.EmitInt16Compare(asm => asm.Ja, Condition.Above); return;
+        case BinaryOp.LessEqual: this.EmitInt16Compare(asm => asm.Jbe, Condition.BelowOrEqual); return;
+        case BinaryOp.GreaterEqual: this.EmitInt16Compare(asm => asm.Jae, Condition.AboveOrEqual); return;
       }
     }
     switch (b.Op) {
@@ -414,20 +414,28 @@ public sealed partial class CodeGenerator {
         asm.Not(Reg.AX);
         asm.Or(Reg.AX, Reg.BX);
         break;
-      case BinaryOp.Equal: this.EmitInt16Compare(asm => asm.Je); break;
-      case BinaryOp.NotEqual: this.EmitInt16Compare(asm => asm.Jne); break;
-      case BinaryOp.Less: this.EmitInt16Compare(asm => asm.Jl); break;
-      case BinaryOp.Greater: this.EmitInt16Compare(asm => asm.Jg); break;
-      case BinaryOp.LessEqual: this.EmitInt16Compare(asm => asm.Jle); break;
-      case BinaryOp.GreaterEqual: this.EmitInt16Compare(asm => asm.Jge); break;
+      case BinaryOp.Equal: this.EmitInt16Compare(asm => asm.Je, Condition.Equal); break;
+      case BinaryOp.NotEqual: this.EmitInt16Compare(asm => asm.Jne, Condition.NotEqual); break;
+      case BinaryOp.Less: this.EmitInt16Compare(asm => asm.Jl, Condition.Less); break;
+      case BinaryOp.Greater: this.EmitInt16Compare(asm => asm.Jg, Condition.Greater); break;
+      case BinaryOp.LessEqual: this.EmitInt16Compare(asm => asm.Jle, Condition.LessOrEqual); break;
+      case BinaryOp.GreaterEqual: this.EmitInt16Compare(asm => asm.Jge, Condition.GreaterOrEqual); break;
       default:
         this.Unsupported(b, $"int16 {b.Op}");
         break;
     }
   }
 
-  private void EmitInt16Compare(Func<Assembler, Action<Label>> jump) {
+  private void EmitInt16Compare(Func<Assembler, Action<Label>> jump, Condition condition) {
     var asm = this._asm;
+    // pb36 C1 ($CPU 80386): branchless SETcc - AL = 0/1, widen, negate to 0/-1
+    if (this.OptimizePb36 && this.Cpu386) {
+      asm.Cmp(Reg.AX, Reg.BX);
+      asm.Setcc(condition, Reg.AL);
+      asm.Mov(Reg.AH, (Imm)0);  // MOV leaves the SETcc result intact
+      asm.Neg(Reg.AX);
+      return;
+    }
     var done = asm.DefineLabel();
     asm.Cmp(Reg.AX, Reg.BX);
     asm.Mov(Reg.AX, -1);    // MOV leaves flags intact

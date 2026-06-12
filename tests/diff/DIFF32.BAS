@@ -16,6 +16,12 @@ PRINT #1, e??? \ 7; e??? MOD 7
 f& = 360000
 g& = 3
 PRINT #1, f& * g&; f& \ g&; f& MOD g&
+p% = 7
+q% = -3
+PRINT #1, (p% > q%); (p% < q%); (p% = 7); (p% <> 7); (p% >= 8); (q% <= -3)
+r?? = 60000
+s?? = 70
+PRINT #1, (r?? > s??); (r?? < s??); (r?? = 60000)
 ON ERROR GOTO trap
 h& = 0
 i& = a& \ h&

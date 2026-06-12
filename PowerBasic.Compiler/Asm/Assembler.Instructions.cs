@@ -502,6 +502,16 @@ public sealed partial class Assembler {
     this.EmitByte(0x98);
   }
 
+  /// <summary>386+: sets an 8-bit register to 1/0 from the condition flags (0F 90+cc).</summary>
+  public void Setcc(Condition condition, Reg destination) {
+    RequireGeneralPurpose(destination, nameof(destination));
+    if (!destination.IsByte())
+      throw new ArgumentException("SETcc takes an 8-bit register.", nameof(destination));
+    this.EmitByte(0x0F);
+    this.EmitByte((byte)(0x90 + (byte)condition));
+    this.EmitModRmRegister(0, destination);
+  }
+
   public void Cdq() {
     this.EmitByte(0x66);
     this.EmitByte(0x99);
