@@ -81,6 +81,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // dead code also vanishes from the trivial-lowering analysis below
     if (this.OptimizePb36 && !this._isUnit)
       Pb36Pruner.Prune(model);
+      Pb36FloatDemotion.Apply(model);
 
     // pb36 P7: programs whose only effect is printing compile-time text lower
     // to a raw COM-style image of a few dozen bytes (docs/PB36.md)
@@ -1384,12 +1385,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     var asm = this._asm;
     var subjectType = model.TypeOf(s.Subject);
     var kind = KindOf(subjectType);
-    if (kind is ValueKind.Float or ValueKind.Int64) {
-      this.Unsupported(s); // float/QUAD subjects are not used by the corpus
+    if (kind is ValueKind.Int64) {
+      this.Unsupported(s); // QUAD subjects are not used by the corpus
       return;
     }
 
-    var subjectBytes = kind switch { ValueKind.Int32 => 4, _ => 2 };
+    var subjectBytes = kind switch { ValueKind.Int32 => 4, ValueKind.Float => 8, _ => 2 };
     var subject = this.AllocTemp(subjectBytes);
     this.EmitExpression(s.Subject);
     switch (kind) {
@@ -1400,6 +1401,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       case ValueKind.Int32:
         asm.Mov(subject, Reg.AX);
         asm.Mov(Adjust(subject, 2, OperandSize.Word), Reg.DX);
+        break;
+      case ValueKind.Float:
+        // a DOUBLE slot holds every SINGLE exactly; comparisons stay x87-exact
+        asm.Fstp(Adjust(subject, 0, OperandSize.Qword));
         break;
       default: // owned string handle for the SELECT's duration
         asm.Mov(subject, Reg.AX);
@@ -1426,6 +1431,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
               break;
             case ValueKind.Int32:
               this.EmitSelectorInt32(s, subject, selector, armBody);
+              break;
+            case ValueKind.Float:
+              this.EmitSelectorFloat(subject, selector, armBody);
               break;
             default:
               this.EmitSelectorString(s, subject, selector, armBody);
@@ -1472,6 +1480,48 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       this.EmitRelationJump(relation, armBody);
     } else {
       asm.Cmp(subject, Reg.AX);
+      asm.Je(armBody);
+    }
+  }
+
+  /// <summary>
+  /// Float CASE selector: ST-based compares against the DOUBLE subject slot.
+  /// The CASE value loads first, then the subject on top, so after FCOMPP +
+  /// SAHF the flags read as subject-versus-value (JB = below, ...); x87
+  /// ordered compares match the runtime's relational semantics exactly.
+  /// </summary>
+  private void EmitSelectorFloat(Mem subject, CaseSelector selector, Label armBody) {
+    var asm = this._asm;
+
+    void CompareSubjectWith(Expression value) {
+      this.EmitExpression(value);
+      this.Coerce(model.TypeOf(value), PbType.Double, value);
+      asm.Fld(Adjust(subject, 0, OperandSize.Qword)); // ST0 = subject, ST1 = value
+      asm.Fcompp();
+      asm.FstswAx();
+      asm.Sahf();
+    }
+
+    if (selector.RangeUpper != null) {
+      // lower <= subject <= upper
+      var noMatch = asm.DefineLabel();
+      CompareSubjectWith(selector.Value!);
+      asm.Jb(noMatch);
+      CompareSubjectWith(selector.RangeUpper);
+      asm.Jbe(armBody);
+      asm.MarkLabel(noMatch);
+    } else if (selector.IsComparison is { } relation) {
+      CompareSubjectWith(selector.Value!);
+      switch (relation) {
+        case CaseComparison.Equal: asm.Je(armBody); break;
+        case CaseComparison.NotEqual: asm.Jne(armBody); break;
+        case CaseComparison.Less: asm.Jb(armBody); break;
+        case CaseComparison.LessEqual: asm.Jbe(armBody); break;
+        case CaseComparison.Greater: asm.Ja(armBody); break;
+        case CaseComparison.GreaterEqual: asm.Jae(armBody); break;
+      }
+    } else {
+      CompareSubjectWith(selector.Value!);
       asm.Je(armBody);
     }
   }
