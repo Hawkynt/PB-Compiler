@@ -320,6 +320,25 @@ public sealed partial class CodeGenerator {
       return;
     }
 
+    // pb36 promotion lowering: a +,-,* tree over 16-bit integral leaves stored
+    // into a 16-bit integral target computes bit-identically in modular 16-bit
+    // ALU (low bits of the exact x87 value ARE the modular result), so the
+    // whole FPU round-trip disappears; checked arithmetic never reaches here
+    // because the binder keeps it integral with its own JO semantics
+    if (this.OptimizePb36 && !this.CheckOverflow && !this.CheckNumeric
+        && targetType is ScalarType { IsFloat: false, ByteSize: <= 2 }
+        && model.TypeOf(a.Value) is ScalarType { IsFloat: true }
+        && this.IsModularInt16Tree(a.Value, 0)) {
+      this.EmitModularInt16(a.Value);
+      this._asm.Push(Reg.AX);                // the target's subscripts may clobber AX
+      if (this.EmitPlace(a.Target) is { } modularPlace) {
+        this._asm.Pop(Reg.AX);
+        this.EmitStorePlace(modularPlace, targetType, a.Target);
+      } else
+        this._asm.Pop(Reg.AX);
+      return;
+    }
+
     // evaluate the value first (it may clobber BX/ES), park it, then address the target
     this.EmitExpression(a.Value);
     this.Coerce(model.TypeOf(a.Value), targetType, a.Value);
@@ -469,4 +488,50 @@ public sealed partial class CodeGenerator {
   }
 
   #endregion
+
+  /// <summary>
+  /// True for a +,-,* (and unary negate) tree whose leaves are all 16-bit-or-
+  /// narrower integral expressions - the float-promoted result's low 16 bits
+  /// equal the modular 16-bit ALU result at every depth.
+  /// </summary>
+  private bool IsModularInt16Tree(Expression e, int depth) {
+    if (depth > 16)
+      return false;
+    if (model.TypeOf(e) is ScalarType { IsFloat: false, ByteSize: <= 2 })
+      return true; // integral leaf of any shape - evaluated through the normal emitter
+    return e switch {
+      UnaryExpr { Op: UnaryOp.Negate } u => this.IsModularInt16Tree(u.Operand, depth + 1),
+      BinaryExpr { Op: BinaryOp.Add or BinaryOp.Subtract or BinaryOp.Multiply } b =>
+        this.IsModularInt16Tree(b.Left, depth + 1) && this.IsModularInt16Tree(b.Right, depth + 1),
+      _ => false,
+    };
+  }
+
+  /// <summary>Evaluates a modular tree into AX with plain 16-bit ALU ops.</summary>
+  private void EmitModularInt16(Expression e) {
+    var asm = this._asm;
+    if (model.TypeOf(e) is ScalarType { IsFloat: false, ByteSize: <= 2 } leafType) {
+      this.EmitExpression(e);
+      this.Coerce(leafType, PbType.Integer, e);
+      return;
+    }
+    switch (e) {
+      case UnaryExpr u:
+        this.EmitModularInt16(u.Operand);
+        asm.Neg(Reg.AX);
+        break;
+      case BinaryExpr b:
+        this.EmitModularInt16(b.Left);
+        asm.Push(Reg.AX);
+        this.EmitModularInt16(b.Right);
+        asm.Mov(Reg.BX, Reg.AX);
+        asm.Pop(Reg.AX);
+        switch (b.Op) {
+          case BinaryOp.Add: asm.Add(Reg.AX, Reg.BX); break;
+          case BinaryOp.Subtract: asm.Sub(Reg.AX, Reg.BX); break;
+          default: asm.Imul(Reg.BX); break;
+        }
+        break;
+    }
+  }
 }
