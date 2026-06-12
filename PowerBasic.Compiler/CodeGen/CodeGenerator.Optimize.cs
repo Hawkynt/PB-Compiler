@@ -46,6 +46,15 @@ public sealed partial class CodeGenerator {
   private bool TryEmitFolded(Expression e) {
     if (!this.OptimizePb36)
       return false;
+
+    // O9: literal string concatenation folds into one pooled literal
+    if (model.TypeOf(e) is StringType) {
+      if (this.Pb36Folder.TryFold(e) is not { Text: { } text })
+        return false;
+      this.EmitStringLiteral(text);
+      return true;
+    }
+
     if (model.TypeOf(e) is not ScalarType { IsFloat: false } type)
       return false;
     if (this.Pb36Folder.TryFold(e) is not { Integer: { } raw })
@@ -128,6 +137,189 @@ public sealed partial class CodeGenerator {
     }
     if ((byteCount & 1) != 0)
       asm.Movsb();
+  }
+
+  #endregion
+
+  #region O7 - small-trip loop unrolling ($OPTIMIZE SPEED)
+
+  /// <summary>
+  /// pb36 O7: a constant-trip INTEGER FOR loop with at most 4 iterations and a
+  /// small straight-line body unrolls completely - no compare, no jump, the
+  /// counter slot is set per iteration and ends on the increment-then-test
+  /// final value (QUIRK 2.28). SPEED-gated because unrolling trades size.
+  /// Only signed INTEGER counters qualify (their compare semantics equal the
+  /// simulated shorts); WORD/BYTE counters keep the generic loop.
+  /// </summary>
+  private bool TryEmitUnrolledFor(ForStmt f, VariableSymbol counter, Mem slot) {
+    if (!this.OptimizePb36 || !this.OptimizeSpeed || !Equals(counter.Type, PbType.Integer))
+      return false;
+    if (this.Pb36Folder.TryFold(f.From) is not { Integer: { } fromRaw }
+        || this.Pb36Folder.TryFold(f.To) is not { Integer: { } toRaw })
+      return false;
+    var stepRaw = 1L;
+    if (f.Step != null) {
+      if (this.Pb36Folder.TryFold(f.Step) is not { Integer: { } s })
+        return false;
+      stepRaw = s;
+    }
+    var from = (short)fromRaw;
+    var to = (short)toRaw;
+    var step = (short)stepRaw;
+    if (step == 0)
+      return false;
+
+    // simulate the loop exactly as the generic engine runs it (signed compares,
+    // silent 16-bit wrap on the increment)
+    var values = new List<short>();
+    var current = from;
+    for (; values.Count <= 4; current = unchecked((short)(current + step))) {
+      var continues = step > 0 ? current <= to : current >= to;
+      if (!continues)
+        break;
+      values.Add(current);
+    }
+    if (values.Count > 4)
+      return false; // too many iterations (or a wrapping endless loop)
+
+    if (CountUnrollableStatements(f.Body, model, counter) is not { } bodySize || bodySize > 8)
+      return false;
+
+    var asm = this._asm;
+    if (values.Count == 0) {
+      asm.Mov(slot, (Imm)from); // zero-trip: FOR still assigns the start value
+      return true;
+    }
+
+    foreach (var value in values) {
+      asm.Mov(slot, (Imm)value);
+      foreach (var statement in f.Body)
+        this.EmitStatement(statement);
+    }
+    asm.Mov(slot, (Imm)(int)current); // first failing value, wrap included
+    return true;
+  }
+
+  /// <summary>
+  /// Counts the statements of an unrollable body; null when anything inside
+  /// forbids duplication (control transfer, nested loops, error handling, or
+  /// a write to the counter).
+  /// </summary>
+  private static int? CountUnrollableStatements(IReadOnlyList<Statement> body, SemanticModel model, VariableSymbol counter) {
+    var count = 0;
+    foreach (var statement in body) {
+      ++count;
+      switch (statement) {
+        case AssignStmt a:
+          if (WritesCounter(a.Target, model, counter))
+            return null;
+          continue;
+
+        case IncrDecrStmt id:
+          if (WritesCounter(id.Target, model, counter))
+            return null;
+          continue;
+
+        case SwapStmt sw:
+          if (WritesCounter(sw.Left, model, counter) || WritesCounter(sw.Right, model, counter))
+            return null;
+          continue;
+
+        case PrintStmt or CallStmt or CommandStmt or MidAssignStmt or LsetRsetStmt
+          or EraseStmt or DefSegStmt or SeekStmt or CloseStmt or OpenStmt:
+          continue;
+
+        case InputStmt input:
+          if (input.Targets.Any(t => WritesCounter(t, model, counter)))
+            return null;
+          continue;
+
+        case ReadStmt read:
+          if (read.Targets.Any(t => WritesCounter(t, model, counter)))
+            return null;
+          continue;
+
+        case IfStmt i: {
+          var branches = new List<IReadOnlyList<Statement>> { i.Then };
+          branches.AddRange(i.ElseIfs.Select(e => e.Body));
+          if (i.Else != null)
+            branches.Add(i.Else);
+          foreach (var branch in branches) {
+            if (CountUnrollableStatements(branch, model, counter) is not { } inner)
+              return null;
+            count += inner;
+          }
+          continue;
+        }
+
+        default:
+          return null; // jumps, loops, SELECT, error handling, labels, declarations, ...
+      }
+    }
+    return count;
+  }
+
+  private static bool WritesCounter(Expression target, SemanticModel model, VariableSymbol counter)
+    => model.VariableBindings.TryGetValue(target, out var symbol) && ReferenceEquals(symbol, counter);
+
+  #endregion
+
+  #region O11 - literal pool packing (containment + overlap)
+
+  /// <summary>
+  /// Emits the string-literal pool. pb35 keeps one labeled blob per literal;
+  /// pb36 packs them into a greedy superstring - contained literals share the
+  /// host's bytes, and suffix/prefix overlaps merge. Sound because generated
+  /// code only ever READS literals (copies via StrMem / prints via PrintStr);
+  /// nothing can write through a literal reference.
+  /// </summary>
+  private void EmitLiteralPool(Assembler asm) {
+    if (!this.OptimizePb36) {
+      foreach (var (text, label) in this._stringLiterals) {
+        asm.MarkLabel(label);
+        asm.Db(text);
+      }
+      return;
+    }
+
+    // longest first so shorter literals can land inside earlier ones
+    var ordered = this._stringLiterals
+      .OrderByDescending(p => p.Key.Length)
+      .ThenBy(p => p.Key, StringComparer.Ordinal)
+      .ToList();
+
+    var pool = new System.Text.StringBuilder();
+    var offsets = new List<(Asm.Label Label, int Offset)>();
+    foreach (var (text, label) in ordered) {
+      var index = IndexOf(pool, text);
+      if (index < 0) {
+        var overlap = SuffixOverlap(pool, text);
+        index = pool.Length - overlap;
+        pool.Append(text, overlap, text.Length - overlap);
+      }
+      offsets.Add((label, index));
+    }
+
+    var poolStart = asm.Position;
+    asm.Db(pool.ToString());
+    foreach (var (label, offset) in offsets)
+      label.Position = poolStart + offset;
+  }
+
+  private static int IndexOf(System.Text.StringBuilder pool, string text)
+    => pool.ToString().IndexOf(text, StringComparison.Ordinal);
+
+  /// <summary>Length of the longest pool suffix that is also a prefix of <paramref name="text"/>.</summary>
+  private static int SuffixOverlap(System.Text.StringBuilder pool, string text) {
+    var max = Math.Min(pool.Length, text.Length - 1);
+    for (var k = max; k > 0; --k) {
+      var matches = true;
+      for (var i = 0; i < k && matches; ++i)
+        matches = pool[pool.Length - k + i] == text[i];
+      if (matches)
+        return k;
+    }
+    return 0;
   }
 
   #endregion

@@ -155,6 +155,84 @@ public sealed class Pb36OptimizerTests {
 
   #endregion
 
+  #region statement pruning (O2/O10), literal pool (O11), folding (O9), unrolling (O7)
+
+  private static SemanticModel BindModel(string source) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
+    return model;
+  }
+
+  [Test]
+  public void Prune_GivenCodeAfterGoto_WhenPruned_ThenDeadStatementsDropUntilLabel() {
+    var model = BindModel("GOTO Tail\nPRINT 1\nPRINT 2\nTail:\nPRINT 3\nEND");
+    Pb36Pruner.Prune(model);
+    Assert.That(model.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.PrintStmt>().Count(), Is.EqualTo(1),
+      "only the labeled tail PRINT survives");
+  }
+
+  [Test]
+  public void Prune_GivenDataInDeadRegion_WhenPruned_ThenDataSurvives() {
+    var model = BindModel("GOTO Tail\nDATA 1,2,3\nPRINT 9\nTail:\nREAD a%\nPRINT a%\nEND");
+    Pb36Pruner.Prune(model);
+    Assert.That(model.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.DataStmt>().Count(), Is.EqualTo(1),
+      "DATA acts at compile time and must survive dead regions");
+  }
+
+  [Test]
+  public void Prune_GivenRedundantDefSegs_WhenPruned_ThenOnlyLastBeforeObserverSurvives() {
+    var model = BindModel("DEF SEG = &H40\nx% = 1\nDEF SEG = &HB800\ny% = PEEK(0)\nDEF SEG\nPRINT y%\nEND");
+    Pb36Pruner.Prune(model);
+    Assert.That(model.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.DefSegStmt>().Count(), Is.EqualTo(2),
+      "the first DEF SEG is shadowed; the one feeding PEEK and the reset survive");
+  }
+
+  [Test]
+  public void Prune_GivenPeekBetweenDefSegs_WhenPruned_ThenBothSurvive() {
+    var model = BindModel("DEF SEG = &H40\ny% = PEEK(0)\nDEF SEG = &HB800\nz% = PEEK(0)\nPRINT y%; z%\nEND");
+    Pb36Pruner.Prune(model);
+    Assert.That(model.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.DefSegStmt>().Count(), Is.EqualTo(2));
+  }
+
+  [Test]
+  public void Emit_GivenContainedLiterals_WhenPb36_ThenPoolSharesBytes() {
+    const string source = "x$ = \"Hello, World!\"\nPRINT x$; \"World!\"; \"lo, W\"\nEND";
+    var pb35 = Compile(source, Dialect.Pb35);
+    var pb36 = Compile(source, Dialect.Pb36);
+    Assert.Multiple(() => {
+      Assert.That(CountOf(pb35, "World!"), Is.EqualTo(2), "pb35 keeps one blob per literal");
+      Assert.That(CountOf(pb36, "World!"), Is.EqualTo(1), "pb36 packs contained literals");
+      Assert.That(CountOf(pb36, "lo, W"), Is.EqualTo(1));
+    });
+
+    static int CountOf(byte[] image, string text) {
+      var needle = System.Text.Encoding.ASCII.GetBytes(text);
+      var count = 0;
+      for (var i = 0; i + needle.Length <= image.Length; ++i)
+        if (image.AsSpan(i, needle.Length).SequenceEqual(needle))
+          ++count;
+      return count;
+    }
+  }
+
+  [Test]
+  public void Emit_GivenLiteralConcat_WhenPb36_ThenFoldedToOnePooledLiteral() {
+    const string source = "a$ = \"fold\" + \"ed \" + \"parts\"\nPRINT a$" + "\nEND";
+    var image = Compile(source, Dialect.Pb36);
+    Assert.That(Ascii(image), Does.Contain("folded parts"));
+  }
+
+  [Test]
+  public void Emit_GivenSmallConstantTripLoop_WhenSpeedOptimized_ThenUnrolledImageDiffers() {
+    const string body = "t% = 0\nFOR i% = 1 TO 3\n  t% = t% + i%\nNEXT i%\nPRINT t%; i%\nEND";
+    var generic = Compile(body, Dialect.Pb36);
+    var unrolled = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
+    Assert.That(unrolled, Is.Not.EqualTo(generic), "SPEED should unroll the trip-3 loop");
+  }
+
+  #endregion
+
   #region wrap-correct constant folding (O1)
 
   [TestCase(32767 + 1, (short)-32768)]

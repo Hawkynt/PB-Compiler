@@ -77,6 +77,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     ArgumentNullException.ThrowIfNull(libraries);
     this._allowExternalCalls = units.Count > 0 || libraries.Count > 0;
 
+    // pb36 O2/O10: drop unreachable statements and redundant DEF SEGs first -
+    // dead code also vanishes from the trivial-lowering analysis below
+    if (this.OptimizePb36 && !this._isUnit)
+      Pb36Pruner.Prune(model);
+
     // pb36 P7: programs whose only effect is printing compile-time text lower
     // to a raw COM-style image of a few dozen bytes (docs/PB36.md)
     if (model.Dialect == Syntax.Dialect.Pb36 && !this._allowExternalCalls && !this._isUnit
@@ -329,10 +334,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       asm.Db([.. BitConverter.GetBytes(value)]);
     }
 
-    foreach (var (text, label) in this._stringLiterals) {
-      asm.MarkLabel(label);
-      asm.Db(text);
-    }
+    this.EmitLiteralPool(asm);
 
     foreach (var (symbol, label) in this._variableSlots) {
       asm.Align(2);
@@ -1084,6 +1086,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       this.Unsupported(f);
       return;
     }
+
+    // pb36 O7 ($OPTIMIZE SPEED): tiny constant-trip INTEGER loops unroll fully
+    if (kind == ValueKind.Int16 && this.TryEmitUnrolledFor(f, counter, slot.WithSize(OperandSize.Word)))
+      return;
 
     // constant steps fix the loop direction at compile time
     long? constantStep = f.Step switch {

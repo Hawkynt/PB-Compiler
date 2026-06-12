@@ -65,7 +65,7 @@ public sealed class ConstantFolder(IReadOnlyDictionary<string, ConstantValue> eq
     // string folding: concat and comparisons only
     if (left.Text is { } lt && right.Text is { } rt)
       return b.Op switch {
-        BinaryOp.Add => ConstantValue.Of(lt + rt),
+        BinaryOp.Add or BinaryOp.Concat => ConstantValue.Of(lt + rt),
         BinaryOp.Equal => Bool(string.CompareOrdinal(lt, rt) == 0),
         BinaryOp.NotEqual => Bool(string.CompareOrdinal(lt, rt) != 0),
         BinaryOp.Less => Bool(string.CompareOrdinal(lt, rt) < 0),
