@@ -98,6 +98,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._scratch = asm.DefineLabel("cg_scratch");
 
     this._rt.EnableBss = this.OptimizePb36 && !this._allowExternalCalls && !this._isUnit;
+    this._rt.Cpu386 = this.OptimizePb36 && this.Cpu386;
     this._rt.EmitEntry(asm, userMain);
 
     // pb36 (docs/PB36.md P1): the runtime is emitted AFTER user code, trimmed
