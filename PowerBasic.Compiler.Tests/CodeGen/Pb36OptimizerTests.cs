@@ -380,4 +380,46 @@ public sealed class Pb36OptimizerTests {
   }
 
   #endregion
+
+  #region O4 - integer divide / modulo strength reduction
+
+  private static int CountIdivBx(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0xF7 && image[i + 1] == 0xFB)
+        ++count;
+    return count;
+  }
+
+  [Test]
+  public void Emit_GivenPowerOfTwoDivides_WhenPb36_ThenIdivDisappears() {
+    const string source = """
+      a% = -29
+      PRINT a% \ 8
+      PRINT a% MOD 8
+      PRINT a% \ 2
+      PRINT a% MOD 2
+      END
+      """;
+    var pb35 = Compile(source, Dialect.Pb35);
+    var pb36 = Compile(source, Dialect.Pb36);
+    Assert.That(CountIdivBx(pb36), Is.LessThan(CountIdivBx(pb35)),
+      "pb36 should shift/mask power-of-two \\ and MOD instead of IDIV BX");
+  }
+
+  [Test]
+  public void Emit_GivenLongPowerOfTwoDivide_WhenPb36_ThenNoRuntimeDivCall() {
+    const string source = """
+      b& = -100000
+      PRINT b& \ 4
+      PRINT b& MOD 4
+      END
+      """;
+    var pb35 = Compile(source, Dialect.Pb35);
+    var pb36 = Compile(source, Dialect.Pb36);
+    Assert.That(pb36.Length, Is.LessThan(pb35.Length),
+      "pb36 long power-of-two \\ / MOD should drop the LongDiv/LongMod runtime sections");
+  }
+
+  #endregion
 }

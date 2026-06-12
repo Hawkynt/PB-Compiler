@@ -511,5 +511,115 @@ public sealed partial class CodeGenerator {
     return true;
   }
 
+  /// <summary>
+  /// pb36 O4: <c>x \ 2^n</c> and <c>x MOD 2^n</c> as shift/mask sequences.
+  /// PB truncates toward zero and the MOD result carries the dividend's sign
+  /// (IDIV semantics), so signed forms bias by <c>2^n - 1</c> before shifting:
+  /// <c>x \ 2^n = (x + b) &gt;&gt; n</c> and <c>x MOD 2^n = ((x + b) AND mask) - b</c>
+  /// with <c>b = mask</c> for negative x, else 0. A positive constant divisor
+  /// can neither divide by zero nor overflow the quotient, so the sequences
+  /// are legal under every $ERROR mode. 8086-safe: shift counts above four go
+  /// through CL, never the 186+ immediate form.
+  /// </summary>
+  private bool TryEmitStrengthReducedDivMod(BinaryExpr b, PbType opType) {
+    if (!this.OptimizePb36 || b.Op is not (BinaryOp.IntegerDivide or BinaryOp.Modulo))
+      return false;
+    if (opType is not ScalarType { IsFloat: false, ByteSize: 2 or 4 } scalar)
+      return false;
+    if (this.Pb36Folder.TryFold(b.Right) is not { Integer: { } divisor })
+      return false;
+    if (divisor <= 0 || !BitOperations.IsPow2((ulong)divisor))
+      return false;
+    var shift = BitOperations.TrailingZeroCount((ulong)divisor);
+    var wide = scalar.ByteSize == 4;
+    if (shift > (wide ? 8 : 15))
+      return false; // pair shifts beyond this lose to the runtime call
+
+    var asm = this._asm;
+    this.EmitExpression(b.Left);
+    this.Coerce(model.TypeOf(b.Left), opType, b.Left);
+
+    if (shift == 0) { // \ 1 is the identity, MOD 1 is zero (operand effects kept)
+      if (b.Op == BinaryOp.Modulo) {
+        asm.Xor(Reg.AX, Reg.AX);
+        if (wide)
+          asm.Xor(Reg.DX, Reg.DX);
+      }
+      return true;
+    }
+
+    var mask = (int)(divisor - 1);
+    if (!wide) {
+      // AX = x, signed INTEGER (unsigned 16-bit never reaches: WORD promotes to LONG)
+      asm.Cwd();
+      asm.And(Reg.DX, (Imm)mask);                  // b = x < 0 ? mask : 0
+      asm.Add(Reg.AX, Reg.DX);
+      if (b.Op == BinaryOp.IntegerDivide) {
+        this.EmitShiftRight(Reg.AX, shift, arithmetic: true);
+      } else {
+        asm.And(Reg.AX, (Imm)mask);
+        asm.Sub(Reg.AX, Reg.DX);
+      }
+      return true;
+    }
+
+    // DX:AX = x (LONG signed or DWORD unsigned)
+    if (scalar.Signed) {
+      var nonNegative = asm.DefineLabel();
+      asm.Or(Reg.DX, Reg.DX);
+      asm.Jns(nonNegative);
+      asm.Add(Reg.AX, (Imm)mask);
+      asm.Adc(Reg.DX, (Imm)0);
+      if (b.Op == BinaryOp.Modulo) {
+        asm.And(Reg.AX, (Imm)mask);
+        asm.Xor(Reg.DX, Reg.DX);
+        asm.Sub(Reg.AX, (Imm)mask);
+        asm.Sbb(Reg.DX, (Imm)0);
+        var done = asm.DefineLabel();
+        asm.Jmp(done);
+        asm.MarkLabel(nonNegative);
+        asm.And(Reg.AX, (Imm)mask);
+        asm.Xor(Reg.DX, Reg.DX);
+        asm.MarkLabel(done);
+        return true;
+      }
+      asm.MarkLabel(nonNegative);
+      for (var i = 0; i < shift; ++i) {
+        asm.Sar(Reg.DX, 1);
+        asm.Rcr(Reg.AX, 1);
+      }
+      return true;
+    }
+
+    if (b.Op == BinaryOp.Modulo) {
+      asm.And(Reg.AX, (Imm)mask);
+      asm.Xor(Reg.DX, Reg.DX);
+      return true;
+    }
+    for (var i = 0; i < shift; ++i) {
+      asm.Shr(Reg.DX, 1);
+      asm.Rcr(Reg.AX, 1);
+    }
+    return true;
+  }
+
+  /// <summary>Shifts <paramref name="register"/> right by <paramref name="count"/> 8086-safely (1-shifts up to four, CL beyond).</summary>
+  private void EmitShiftRight(Reg register, int count, bool arithmetic) {
+    var asm = this._asm;
+    if (count > 4) {
+      asm.Mov(Reg.CL, (Imm)count);
+      if (arithmetic)
+        asm.Sar(register, Reg.CL);
+      else
+        asm.Shr(register, Reg.CL);
+      return;
+    }
+    for (var i = 0; i < count; ++i)
+      if (arithmetic)
+        asm.Sar(register, 1);
+      else
+        asm.Shr(register, 1);
+  }
+
   #endregion
 }
