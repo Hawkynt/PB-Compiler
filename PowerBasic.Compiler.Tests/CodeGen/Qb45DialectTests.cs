@@ -83,6 +83,7 @@ public sealed class Qb45DialectTests {
 
   [Test]
   public void Divide_GivenLongOperand_ThenSixteenDigitDouble() {
+    FpuAssume.RequireExtendedPrecision();
     var output = RunSource("""
       A& = 1
       PRINT A&/3
@@ -93,6 +94,7 @@ public sealed class Qb45DialectTests {
 
   [Test]
   public void MathIntrinsics_GivenIntegerArgs_ThenSinglePrecision() {
+    FpuAssume.RequireExtendedPrecision();
     var output = RunSource("""
       PRINT SQR(2); EXP(1)
       PRINT LOG(2.718281828459045#)

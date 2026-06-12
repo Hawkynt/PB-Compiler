@@ -47,6 +47,7 @@ public sealed class Tb11DialectTests {
 
   [Test]
   public void Divide_GivenAnyOperands_WhenPrinted_ThenSixteenDigitDouble() {
+    FpuAssume.RequireExtendedPrecision();
     var output = RunSource("""
       PRINT 2/3
       A! = 1
@@ -81,6 +82,7 @@ public sealed class Tb11DialectTests {
 
   [Test]
   public void Power_GivenFractionalExponent_WhenPrinted_ThenDoublePrecision() {
+    FpuAssume.RequireExtendedPrecision();
     var output = RunSource("PRINT 2 ^ 0.5");
     Assert.That(output, Is.EqualTo(" 1.414213562373095\n"));
   }
@@ -98,6 +100,7 @@ public sealed class Tb11DialectTests {
 
   [Test]
   public void Str_GivenDivision_WhenFormatted_ThenSixteenDigits() {
+    FpuAssume.RequireExtendedPrecision();
     var output = RunSource("PRINT STR$(2/3)");
     Assert.That(output, Is.EqualTo(" .6666666666666667\n"));
   }

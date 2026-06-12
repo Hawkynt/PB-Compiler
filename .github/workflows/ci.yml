@@ -37,8 +37,12 @@ jobs:
       - name: Build
         run: dotnet build PB-Compiler.sln --configuration Release --no-restore
 
-      # DOSBox lets the execution tests run the generated DOS binaries for real;
-      # installed on Linux only - the tests self-skip wherever it is absent.
+      # Classic DOSBox runs the execution tests against the generated DOS
+      # binaries; installed on Linux only - the tests self-skip wherever it is
+      # absent. Its portable FPU computes in 64-bit doubles (the GitHub
+      # runners offer no GLX visual for DOSBox Staging, which would use the
+      # host's real 80-bit x87), so the few assertions that depend on
+      # extended-precision rounding self-skip under PBC_TEST_REDUCED_FPU.
       - name: Install DOSBox (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -46,6 +50,7 @@ jobs:
           sudo apt-get install -y dosbox
           echo "DOSBOX_EXE=$(command -v dosbox)" >> "$GITHUB_ENV"
           echo "SDL_VIDEODRIVER=dummy" >> "$GITHUB_ENV"
+          echo "PBC_TEST_REDUCED_FPU=1" >> "$GITHUB_ENV"
 
       # Core tier - REQUIRED: compiler unit tests + corpus gates + (on Linux)
       # the DOSBox execution tests. Anything DOSBox-dependent self-skips when
@@ -56,6 +61,29 @@ jobs:
           --configuration Release --no-build
           --filter "Category!=Performance"
           --logger "trx;LogFileName=core-tests.trx"
+
+      # Failures surface as check-run annotations so they are diagnosable
+      # from the run summary without downloading artifacts.
+      - name: Annotate failing tests
+        if: failure()
+        shell: python
+        run: |
+          import glob
+          import xml.etree.ElementTree as ET
+          ns = '{http://microsoft.com/schemas/VisualStudio/TeamTest/2010}'
+          for f in glob.glob('**/*.trx', recursive=True):
+              try:
+                  tree = ET.parse(f)
+              except Exception:
+                  continue
+              for r in tree.getroot().iter(ns + 'UnitTestResult'):
+                  if r.get('outcome') != 'Failed':
+                      continue
+                  message = ''
+                  m = r.find('.//' + ns + 'Message')
+                  if m is not None and m.text:
+                      message = ' '.join(m.text.split())[:600]
+                  print(f"::error::FAILED {r.get('testName')}: {message}")
 
       # Advisory tier: the full golden-output battery through the pbc CLI and
       # headless DOSBox (compile every tests/*.BAS on the host, run the EXE in

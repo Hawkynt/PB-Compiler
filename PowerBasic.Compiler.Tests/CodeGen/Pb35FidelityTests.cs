@@ -90,6 +90,7 @@ public sealed class Pb35FidelityTests {
 
   [Test]
   public void PrintFloat_GivenSingleDigitExponent_WhenPrinted_ThenNoZeroPadding() {
+    FpuAssume.RequireExtendedPrecision();
     var output = RunSource("""
       PRINT 1E7
       PRINT 1E10
