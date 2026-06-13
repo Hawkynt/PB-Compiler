@@ -318,6 +318,9 @@ public sealed partial class CodeGenerator {
         break;
 
       case ValueKind.Int32:
+        // pb36 O8: fold a constant operand into immediate pair ops
+        if (this.TryEmitInt32ConstBinary(b, opType))
+          break;
         this.EmitExpression(b.Left);
         this.Coerce(leftType, opType, b.Left);
         asm.Push(Reg.DX);
@@ -614,6 +617,56 @@ public sealed partial class CodeGenerator {
       default:
         return false; // multiply / divide / modulo / eqv / imp keep the generic path
     }
+  }
+
+  /// <summary>
+  /// pb36 O8: a 32-bit AND/OR/XOR/ADD/SUB with a compile-time constant operand
+  /// folds the constant into immediate pair ops (low word into AX, high word
+  /// into DX) instead of loading it into CX:BX with the push/pop dance. ADD/SUB
+  /// keep their JNO overflow trap under <c>$ERROR OVERFLOW</c> (the carry chains
+  /// through ADC/SBB exactly like the register form, and OF after the high-word
+  /// op is the 32-bit signed overflow). Bitwise/add are commutative; subtract
+  /// only folds a right-hand constant. The constant is split into its 16-bit
+  /// halves, the same words the register path would load.
+  /// </summary>
+  private bool TryEmitInt32ConstBinary(BinaryExpr b, PbType opType) {
+    if (!this.OptimizePb36)
+      return false;
+    if (b.Op is not (BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Add or BinaryOp.Subtract))
+      return false;
+    var asm = this._asm;
+
+    Expression variable;
+    long c;
+    if (this.TryModularFoldConst(b.Right, out c))
+      variable = b.Left;
+    else if (b.Op != BinaryOp.Subtract && this.TryModularFoldConst(b.Left, out c))
+      variable = b.Right;
+    else
+      return false;
+
+    this.EmitExpression(variable);
+    this.Coerce(model.TypeOf(variable), opType, variable); // DX:AX = variable
+    var lo = (Imm)(int)(short)(c & 0xFFFF);
+    var hi = (Imm)(int)(short)((c >> 16) & 0xFFFF);
+    switch (b.Op) {
+      case BinaryOp.And: asm.And(Reg.AX, lo); asm.And(Reg.DX, hi); break;
+      case BinaryOp.Or: asm.Or(Reg.AX, lo); asm.Or(Reg.DX, hi); break;
+      case BinaryOp.Xor: asm.Xor(Reg.AX, lo); asm.Xor(Reg.DX, hi); break;
+      case BinaryOp.Add:
+        asm.Add(Reg.AX, lo);
+        asm.Adc(Reg.DX, hi);
+        if (this.CheckOverflow)
+          this.EmitRaiseWhen(asm.Jno, 6);
+        break;
+      default: // Subtract
+        asm.Sub(Reg.AX, lo);
+        asm.Sbb(Reg.DX, hi);
+        if (this.CheckOverflow)
+          this.EmitRaiseWhen(asm.Jno, 6);
+        break;
+    }
+    return true;
   }
 
   /// <summary>The comparison that holds for swapped operands (<c>a &lt; b</c> becomes <c>b &gt; a</c>).</summary>

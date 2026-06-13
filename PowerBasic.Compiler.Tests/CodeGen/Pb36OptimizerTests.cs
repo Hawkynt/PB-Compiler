@@ -453,6 +453,26 @@ public sealed class Pb36OptimizerTests {
     Assert.That(CountMovBxAx(pb36), Is.Zero, "comparison against a constant should fold to CMP AX,imm");
   }
 
+  private static int CountMovCxDx(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if ((image[i] == 0x8B && image[i + 1] == 0xCA) || (image[i] == 0x89 && image[i + 1] == 0xD1))
+        ++count; // MOV CX, DX (the int32 path's high-word constant load)
+    return count;
+  }
+
+  [Test]
+  public void Emit_GivenLongBitwiseConstant_WhenPb36_ThenFoldsToImmediatePairNoRegisterLoad() {
+    // b& = a& AND 255 folds into AND AX,imm / AND DX,imm; the variable form must
+    // load the high word into CX
+    var constMask = Compile("a& = &H1234\nb& = a& AND 255\nEND", Dialect.Pb36);
+    var varMask = Compile("a& = &H1234\nm& = 255\nb& = a& AND m&\nEND", Dialect.Pb36);
+    Assert.Multiple(() => {
+      Assert.That(CountMovCxDx(constMask), Is.Zero, "a& AND 255 should fold to immediate pair ops, no MOV CX,DX");
+      Assert.That(CountMovCxDx(varMask), Is.GreaterThanOrEqualTo(1), "a& AND m& must load the second operand's high word into CX");
+    });
+  }
+
   [Test]
   public void Emit_GivenModularIncrementByOne_WhenPb36_ThenUsesIncNotAddImmediate() {
     // y% = x% + 1 folds to INC AX (one byte); y% = x% + 5 needs ADD AX,imm (three)
