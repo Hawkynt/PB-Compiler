@@ -42,6 +42,28 @@ public sealed partial class DosRuntime {
   /// <summary>pb36 C1 gate: $CPU 80386 selected - runtime helpers may use 32-bit instructions.</summary>
   public bool Cpu386 { get; set; }
 
+  /// <summary>
+  /// pb36 R3: a forward byte copy of CX bytes (DS:SI -&gt; ES:DI, DF clear).
+  /// Under $CPU 80386 it moves DWORDs then the &lt;=3-byte tail (~4x on long
+  /// strings); otherwise the classic REP MOVSB. CX ends at 0 and SI/DI advance
+  /// by the full count either way, so the copied bytes are identical.
+  /// </summary>
+  private void EmitRepMovsbWidened(Assembler asm) {
+    if (!this.Cpu386) {
+      asm.Rep();
+      asm.Movsb();
+      return;
+    }
+    asm.Push(Reg.CX);
+    asm.Shr(Reg.CX, 2);
+    asm.Rep();
+    asm.Movsd();
+    asm.Pop(Reg.CX);
+    asm.And(Reg.CX, (Imm)3);
+    asm.Rep();
+    asm.Movsb();
+  }
+
   public Label PrintStr { get; private set; } = null!;
   public Label PrintInt16 { get; private set; } = null!;
   public Label PrintInt32 { get; private set; } = null!;
