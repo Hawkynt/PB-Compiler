@@ -620,19 +620,22 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
-  /// pb36 O8: a 32-bit AND/OR/XOR/ADD/SUB with a compile-time constant operand
-  /// folds the constant into immediate pair ops (low word into AX, high word
-  /// into DX) instead of loading it into CX:BX with the push/pop dance. ADD/SUB
-  /// keep their JNO overflow trap under <c>$ERROR OVERFLOW</c> (the carry chains
-  /// through ADC/SBB exactly like the register form, and OF after the high-word
-  /// op is the 32-bit signed overflow). Bitwise/add are commutative; subtract
+  /// pb36 O8: a 32-bit AND/OR/XOR/ADD/SUB/=/&lt;&gt; with a compile-time constant
+  /// operand folds the constant into immediate pair ops (low word into AX, high
+  /// word into DX) instead of loading it into CX:BX with the push/pop dance.
+  /// ADD/SUB keep their JNO overflow trap under <c>$ERROR OVERFLOW</c> (the carry
+  /// chains through ADC/SBB exactly like the register form, and OF after the
+  /// high-word op is the 32-bit signed overflow); =/&lt;&gt; subtract the halves
+  /// to test for zero (and against 0 skip the subtract entirely - the operand's
+  /// own AX|DX already decides). Bitwise/add/equality are commutative; subtract
   /// only folds a right-hand constant. The constant is split into its 16-bit
   /// halves, the same words the register path would load.
   /// </summary>
   private bool TryEmitInt32ConstBinary(BinaryExpr b, PbType opType) {
     if (!this.OptimizePb36)
       return false;
-    if (b.Op is not (BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Add or BinaryOp.Subtract))
+    if (b.Op is not (BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Add or BinaryOp.Subtract
+        or BinaryOp.Equal or BinaryOp.NotEqual))
       return false;
     var asm = this._asm;
 
@@ -659,12 +662,28 @@ public sealed partial class CodeGenerator {
         if (this.CheckOverflow)
           this.EmitRaiseWhen(asm.Jno, 6);
         break;
-      default: // Subtract
+      case BinaryOp.Subtract:
         asm.Sub(Reg.AX, lo);
         asm.Sbb(Reg.DX, hi);
         if (this.CheckOverflow)
           this.EmitRaiseWhen(asm.Jno, 6);
         break;
+      default: { // Equal / NotEqual: difference is zero iff equal, then -1/0
+        if ((c & 0xFFFFFFFFL) != 0) { // against 0 the operand's own AX|DX already decides
+          asm.Sub(Reg.AX, lo);
+          asm.Sbb(Reg.DX, hi);
+        }
+        asm.Or(Reg.AX, Reg.DX);  // zero iff the operand equalled the constant
+        var done = asm.DefineLabel();
+        asm.Mov(Reg.DX, Reg.AX);
+        asm.Mov(Reg.AX, b.Op == BinaryOp.Equal ? -1 : 0);
+        asm.Test(Reg.DX, Reg.DX);
+        asm.Jz(done);
+        asm.Mov(Reg.AX, b.Op == BinaryOp.Equal ? 0 : -1);
+        asm.MarkLabel(done);
+        asm.Cwd();
+        break;
+      }
     }
     return true;
   }

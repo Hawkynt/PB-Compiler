@@ -25,5 +25,13 @@ PRINT #1, n& - 500000000; n& AND &H7FFFFFFF&; n& OR 1
 u??? = &H80000000???
 PRINT #1, u??? AND &HF0000000???; u??? OR 15???; u??? XOR &H0FFFFFFF???
 
+' LONG equality / inequality against a constant (= 0 skips the subtract)
+h& = -1
+c& = 0
+p& = 123456
+PRINT #1, c& = 0; p& = 0; h& = 0; c& <> 0; p& <> 0
+PRINT #1, h& = -1; p& = 123456; p& <> 123456; h& = 123456
+PRINT #1, 0 = c&; 123456 = p&; -1 <> h&
+
 CLOSE #1
 END

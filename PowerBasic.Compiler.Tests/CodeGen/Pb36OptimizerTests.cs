@@ -474,6 +474,18 @@ public sealed class Pb36OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenLongEqualsConstant_WhenPb36_ThenFoldsWithoutRegisterLoad() {
+    // y% = (p& = 123456) subtracts the constant halves in place; the variable
+    // form must load the comparand into CX
+    var constEq = Compile("p& = 7\ny% = (p& = 123456)\nEND", Dialect.Pb36);
+    var varEq = Compile("p& = 7\nq& = 123456\ny% = (p& = q&)\nEND", Dialect.Pb36);
+    Assert.Multiple(() => {
+      Assert.That(CountMovCxDx(constEq), Is.Zero, "p& = const should fold the comparand, no MOV CX,DX");
+      Assert.That(CountMovCxDx(varEq), Is.GreaterThanOrEqualTo(1), "p& = q& must load the comparand's high word");
+    });
+  }
+
+  [Test]
   public void Emit_GivenModularIncrementByOne_WhenPb36_ThenUsesIncNotAddImmediate() {
     // y% = x% + 1 folds to INC AX (one byte); y% = x% + 5 needs ADD AX,imm (three)
     var inc = Compile("x% = 100\ny% = x% + 1\nEND", Dialect.Pb36);
