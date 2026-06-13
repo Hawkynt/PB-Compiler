@@ -818,6 +818,47 @@ public sealed partial class CodeGenerator {
       return false;
     }
 
+    // ---- array copy: dst(i%) = src(i%) over the whole range -> REP MOVSW ----
+    if (!this.CheckBounds
+        && f.Body is [AssignStmt { Target: CallOrIndexExpr copyDst, Value: CallOrIndexExpr copySrc }]
+        && step == 1
+        && copyDst.Arguments is [NameExpr dstIndex]
+        && copySrc.Arguments is [NameExpr srcIndex]
+        && model.VariableBindings.TryGetValue(dstIndex, out var dstCounter) && ReferenceEquals(dstCounter, counter)
+        && model.VariableBindings.TryGetValue(srcIndex, out var srcCounter) && ReferenceEquals(srcCounter, counter)
+        && model.VariableBindings.TryGetValue(copyDst, out var dstArray) && dstArray.Type is ArrayType { Element: ScalarType { ByteSize: 2 } }
+        && model.VariableBindings.TryGetValue(copySrc, out var srcArray) && srcArray.Type is ArrayType { Element: ScalarType { ByteSize: 2 } }
+        && !ReferenceEquals(dstArray, srcArray)) {
+      asm.Mov(slot, (Imm)from);
+      if (this.EmitPlace(copySrc) is { } srcElement) {
+        asm.Lea(Reg.SI, srcElement.Cell);
+        asm.Mov(Reg.DX, srcElement.Far ? Reg.ES : Reg.DS);  // remember source segment
+        asm.Push(Reg.DX);
+        asm.Push(Reg.SI);
+        if (this.EmitPlace(copyDst) is { } dstElement) {
+          asm.Lea(Reg.DI, dstElement.Cell);
+          if (!dstElement.Far) {
+            asm.Push(Reg.DS);
+            asm.Pop(Reg.ES);
+          }
+          asm.Pop(Reg.SI);
+          asm.Pop(Reg.DX);
+          asm.Push(Reg.DS);
+          asm.Mov(Reg.DS, Reg.DX);               // DS:SI = source, ES:DI = dest
+          asm.Mov(Reg.CX, values.Count);
+          asm.Cld();
+          asm.Rep();
+          asm.Movsw();
+          asm.Pop(Reg.DS);
+          asm.Mov(slot, (Imm)(int)current);
+          return true;
+        }
+        asm.Pop(Reg.SI);
+        asm.Pop(Reg.DX);
+      }
+      return false;
+    }
+
     // ---- arithmetic series: acc = acc + i% (or i% + acc) -> one folded add --
     if (f.Body is [AssignStmt { Target: NameExpr accName, Value: BinaryExpr { Op: BinaryOp.Add } sum }]
         && model.VariableBindings.TryGetValue(accName, out var acc)
