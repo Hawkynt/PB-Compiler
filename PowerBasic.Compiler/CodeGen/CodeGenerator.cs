@@ -1128,6 +1128,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (kind == ValueKind.Int16 && this.TryEmitUnrolledFor(f, counter, slot.WithSize(OperandSize.Word)))
       return;
 
+    // pb36 O13 ($OPTIMIZE SPEED): a float counter on a power-of-two-fraction
+    // grid runs as a scaled 16-bit integer (cheap compare/increment)
+    if (kind == ValueKind.Float && this.TryEmitFixedPointFor(f, counter, slot))
+      return;
+
     // constant steps fix the loop direction at compile time
     long? constantStep = f.Step switch {
       null => 1L,

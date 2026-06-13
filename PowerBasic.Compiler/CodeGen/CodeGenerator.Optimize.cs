@@ -623,6 +623,116 @@ public sealed partial class CodeGenerator {
 
   #endregion
 
+  #region O13 - silent fixed-point FOR counters ($OPTIMIZE SPEED)
+
+  /// <summary>
+  /// pb36 O13: a SINGLE/DOUBLE FOR counter whose constant bounds and step all
+  /// sit on a common power-of-two grid (step = n*2^-k) runs as a scaled 16-bit
+  /// integer - the per-iteration x87 compare (FCOM/FSTSW/SAHF) becomes a plain
+  /// CMP. Bit-exact because every iterate value i*2^-k is exactly representable
+  /// (|i| &lt; 2^15 here, far inside the 2^24 SINGLE window) and equals the
+  /// genuine FADD chain a + n*step, while FILD + FMUL by the power-of-two 2^-k
+  /// introduces no rounding. The counter cell ends on the first failing value,
+  /// matching the genuine FOR.
+  /// </summary>
+  private bool TryEmitFixedPointFor(ForStmt f, VariableSymbol counter, Mem cell) {
+    if (!this.OptimizePb36 || !this.OptimizeSpeed)
+      return false;
+    if (counter.Type is not ScalarType { IsFloat: true } counterType)
+      return false;
+    if (!TryFoldDouble(f.From, out var from) || !TryFoldDouble(f.To, out var to))
+      return false;
+    var step = 1.0;
+    if (f.Step != null && !TryFoldDouble(f.Step, out step))
+      return false;
+    if (step == 0)
+      return false;
+
+    // smallest k <= 16 putting from/to/step on the 2^-k grid exactly
+    var k = -1;
+    for (var t = 0; t <= 16; ++t)
+      if (IsExactMultiple(from, t) && IsExactMultiple(to, t) && IsExactMultiple(step, t)) {
+        k = t;
+        break;
+      }
+    if (k < 0)
+      return false;
+    var scale = 1L << k;
+    var iFrom = (long)Math.Round(from * scale);
+    var iTo = (long)Math.Round(to * scale);
+    var iStep = (long)Math.Round(step * scale);
+
+    long count = iStep > 0
+      ? iFrom > iTo ? 0 : (iTo - iFrom) / iStep + 1
+      : iFrom < iTo ? 0 : (iFrom - iTo) / -iStep + 1;
+    var iFinal = iFrom + count * iStep;
+
+    // a scaled 16-bit counter keeps the compare/increment trivial; the float
+    // exactness window is far wider (2^24 SINGLE) so 16 bits is the binding limit
+    if (Math.Abs(iFrom) > short.MaxValue || Math.Abs(iTo) > short.MaxValue
+        || Math.Abs(iFinal) > short.MaxValue || Math.Abs(iStep) > short.MaxValue)
+      return false;
+    if (CountUnrollableStatements(f.Body, model, counter) is null)
+      return false;
+
+    var asm = this._asm;
+    var floatCell = counterType.ByteSize == 8 ? Adjust(cell, 0, OperandSize.Qword) : Adjust(cell, 0, OperandSize.Dword);
+    var i16 = this.AllocTemp(2);
+    var invScale = this.FloatConstOf(1.0 / scale);
+
+    asm.Mov(i16, (Imm)(int)(short)iFrom);
+    var top = asm.DefineLabel();
+    var end = asm.DefineLabel();
+    asm.MarkLabel(top);
+    asm.Mov(Reg.AX, i16);
+    asm.Cmp(Reg.AX, (Imm)(int)(short)iTo);
+    if (iStep > 0)
+      asm.Jg(end);
+    else
+      asm.Jl(end);
+
+    // materialize x = i * 2^-k into the counter cell (exact), then the body
+    asm.Fild(i16);
+    asm.Fmul(Mem.Qword(invScale));
+    asm.Fstp(floatCell);
+    foreach (var statement in f.Body)
+      this.EmitStatement(statement);
+
+    asm.Add(i16, (Imm)(int)(short)iStep);
+    asm.Jmp(top);
+    asm.MarkLabel(end);
+
+    // counter cell ends on the first failing value (a + count*step)
+    asm.Fld(Mem.Qword(this.FloatConstOf(iFinal / (double)scale)));
+    asm.Fstp(floatCell);
+    return true;
+  }
+
+  /// <summary>True when x*2^k is an integer that reconstructs x exactly (x is on the 2^-k dyadic grid).</summary>
+  private static bool IsExactMultiple(double x, int k) {
+    var scaled = x * (1L << k);
+    return scaled == Math.Floor(scaled) && Math.Abs(scaled) < 9.0e15;
+  }
+
+  private static bool TryFoldDouble(Expression e, out double value) {
+    switch (e) {
+      case FloatLiteralExpr f:
+        value = f.Value;
+        return true;
+      case IntegerLiteralExpr i:
+        value = i.Value;
+        return true;
+      case UnaryExpr { Op: UnaryOp.Negate } u when TryFoldDouble(u.Operand, out var inner):
+        value = -inner;
+        return true;
+      default:
+        value = 0;
+        return false;
+    }
+  }
+
+  #endregion
+
   #region O20 - algorithmic idiom replacement ($OPTIMIZE SPEED)
 
   /// <summary>
