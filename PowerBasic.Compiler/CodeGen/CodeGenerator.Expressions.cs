@@ -295,6 +295,9 @@ public sealed partial class CodeGenerator {
 
     switch (KindOf(opType)) {
       case ValueKind.Int16:
+        // pb36 O8: fold a constant operand into one immediate ALU op
+        if (this.TryEmitInt16ConstBinary(b, opType, unsignedCompare))
+          break;
         // $OPTIMIZE SPEED: x * 2^n inlines as shifts (no overflow checking applies)
         if (this.OptimizeSpeed && !this.CheckOverflow && b.Op == BinaryOp.Multiply
             && b.Right is IntegerLiteralExpr { Value: > 0 and <= 16384 } pot && long.IsPow2(pot.Value)) {
@@ -505,22 +508,136 @@ public sealed partial class CodeGenerator {
   }
 
   private void EmitInt16Compare(Func<Assembler, Action<Label>> jump, Condition condition) {
+    this._asm.Cmp(Reg.AX, Reg.BX);
+    this.EmitInt16CompareResult(jump, condition);
+  }
+
+  /// <summary>Turns the flags of a preceding 16-bit CMP into AX = -1/0 (the PB truth value).</summary>
+  private void EmitInt16CompareResult(Func<Assembler, Action<Label>> jump, Condition condition) {
     var asm = this._asm;
     // pb36 C1 ($CPU 80386): branchless SETcc - AL = 0/1, widen, negate to 0/-1
     if (this.OptimizePb36 && this.Cpu386) {
-      asm.Cmp(Reg.AX, Reg.BX);
       asm.Setcc(condition, Reg.AL);
       asm.Mov(Reg.AH, (Imm)0);  // MOV leaves the SETcc result intact
       asm.Neg(Reg.AX);
       return;
     }
     var done = asm.DefineLabel();
-    asm.Cmp(Reg.AX, Reg.BX);
     asm.Mov(Reg.AX, -1);    // MOV leaves flags intact
     jump(asm)(done);
     asm.Mov(Reg.AX, (Imm)0);
     asm.MarkLabel(done);
   }
+
+  /// <summary>
+  /// pb36 O8: a 16-bit binary op with a compile-time constant operand folds the
+  /// constant into an immediate ALU instruction (AND/OR/XOR/ADD/SUB AX,imm or
+  /// CMP AX,imm) instead of loading it into BX and pushing/popping the other
+  /// operand - smaller and faster. Add/Sub keep their JNO overflow trap under
+  /// <c>$ERROR OVERFLOW</c> (an immediate ALU sets OF exactly like the register
+  /// form). Bitwise/equality constants may sit on either side (commutative);
+  /// an ordering compare with the constant on the left mirrors the operator.
+  /// The constant is taken modulo 2^16 - the same low word the generic path
+  /// would coerce into BX - so behavior is bit-identical.
+  /// </summary>
+  private bool TryEmitInt16ConstBinary(BinaryExpr b, PbType opType, bool unsignedCompare) {
+    if (!this.OptimizePb36)
+      return false;
+    var asm = this._asm;
+
+    void EmitOperand(Expression e) {
+      this.EmitExpression(e);
+      this.Coerce(model.TypeOf(e), opType, e);
+    }
+    Imm Imm16(long c) => (Imm)(int)(short)(c & 0xFFFF);
+
+    switch (b.Op) {
+      case BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Add: {
+        Expression variable;
+        long c;
+        if (this.TryModularFoldConst(b.Right, out c))
+          variable = b.Left;
+        else if (this.TryModularFoldConst(b.Left, out c))
+          variable = b.Right;
+        else
+          return false;
+        EmitOperand(variable);
+        switch (b.Op) {
+          case BinaryOp.And: asm.And(Reg.AX, Imm16(c)); break;
+          case BinaryOp.Or: asm.Or(Reg.AX, Imm16(c)); break;
+          case BinaryOp.Xor: asm.Xor(Reg.AX, Imm16(c)); break;
+          default:
+            asm.Add(Reg.AX, Imm16(c));
+            if (this.CheckOverflow)
+              this.EmitRaiseWhen(asm.Jno, 6);
+            break;
+        }
+        return true;
+      }
+
+      case BinaryOp.Subtract: {
+        if (!this.TryModularFoldConst(b.Right, out var c)) // c - v is not an immediate form
+          return false;
+        EmitOperand(b.Left);
+        asm.Sub(Reg.AX, Imm16(c));
+        if (this.CheckOverflow)
+          this.EmitRaiseWhen(asm.Jno, 6);
+        return true;
+      }
+
+      case BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
+        or BinaryOp.LessEqual or BinaryOp.GreaterEqual: {
+        BinaryOp op;
+        Expression variable;
+        long c;
+        if (this.TryModularFoldConst(b.Right, out c)) {
+          variable = b.Left;
+          op = b.Op;
+        } else if (this.TryModularFoldConst(b.Left, out c)) {
+          variable = b.Right;
+          op = MirrorCompare(b.Op); // const on the left: v <op'> c
+        } else
+          return false;
+        EmitOperand(variable);
+        // pb36 O8: compare against zero is OR AX,AX (2 bytes, same ZF/SF; OF is
+        // cleared, which every signed/unsigned condition below tolerates because
+        // their OF-dependent forms reduce to SF/CF tests when OF = 0)
+        if ((c & 0xFFFF) == 0)
+          asm.Or(Reg.AX, Reg.AX);
+        else
+          asm.Cmp(Reg.AX, Imm16(c));
+        var (jump, condition) = Int16CompareSelector(op, unsignedCompare);
+        this.EmitInt16CompareResult(jump, condition);
+        return true;
+      }
+
+      default:
+        return false; // multiply / divide / modulo / eqv / imp keep the generic path
+    }
+  }
+
+  /// <summary>The comparison that holds for swapped operands (<c>a &lt; b</c> becomes <c>b &gt; a</c>).</summary>
+  private static BinaryOp MirrorCompare(BinaryOp op) => op switch {
+    BinaryOp.Less => BinaryOp.Greater,
+    BinaryOp.Greater => BinaryOp.Less,
+    BinaryOp.LessEqual => BinaryOp.GreaterEqual,
+    BinaryOp.GreaterEqual => BinaryOp.LessEqual,
+    _ => op, // Equal / NotEqual are symmetric
+  };
+
+  /// <summary>The (jump, condition) pair realizing a 16-bit signed/unsigned compare, matching <see cref="EmitInt16Op"/>.</summary>
+  private static (Func<Assembler, Action<Label>>, Condition) Int16CompareSelector(BinaryOp op, bool unsignedCompare) => op switch {
+    BinaryOp.Equal => (asm => asm.Je, Condition.Equal),
+    BinaryOp.NotEqual => (asm => asm.Jne, Condition.NotEqual),
+    BinaryOp.Less when unsignedCompare => (asm => asm.Jb, Condition.Below),
+    BinaryOp.Greater when unsignedCompare => (asm => asm.Ja, Condition.Above),
+    BinaryOp.LessEqual when unsignedCompare => (asm => asm.Jbe, Condition.BelowOrEqual),
+    BinaryOp.GreaterEqual when unsignedCompare => (asm => asm.Jae, Condition.AboveOrEqual),
+    BinaryOp.Less => (asm => asm.Jl, Condition.Less),
+    BinaryOp.Greater => (asm => asm.Jg, Condition.Greater),
+    BinaryOp.LessEqual => (asm => asm.Jle, Condition.LessOrEqual),
+    _ => (asm => asm.Jge, Condition.GreaterOrEqual),
+  };
 
   /// <summary>left DX:AX, right CX:BX -> result DX:AX.</summary>
   private void EmitInt32Op(BinaryExpr b, bool unsignedCompare = false, bool unsignedDivide = false) {

@@ -427,6 +427,47 @@ public sealed class Pb36OptimizerTests {
       "v% + const should fold to one immediate ALU op, smaller than a two-operand add");
   }
 
+  private static int CountMovBxAx(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if ((image[i] == 0x8B && image[i + 1] == 0xD8) || (image[i] == 0x89 && image[i + 1] == 0xC3))
+        ++count; // MOV BX, AX (either direction's encoding)
+    return count;
+  }
+
+  [Test]
+  public void Emit_GivenBitwiseMaskConstant_WhenPb36_ThenFoldsToImmediateNoRegisterLoad() {
+    // y% = x% AND 15 folds the mask into AND AX,imm; the variable form must load BX
+    var constMask = Compile("x% = 100\ny% = x% AND 15\nEND", Dialect.Pb36);
+    var varMask = Compile("x% = 100\nw% = 15\ny% = x% AND w%\nEND", Dialect.Pb36);
+    Assert.Multiple(() => {
+      Assert.That(CountMovBxAx(constMask), Is.Zero, "x% AND 15 should fold to AND AX,imm with no MOV BX,AX");
+      Assert.That(CountMovBxAx(varMask), Is.GreaterThanOrEqualTo(1), "x% AND w% must load the second operand into BX");
+    });
+  }
+
+  [Test]
+  public void Emit_GivenCompareConstant_WhenPb36_ThenFoldsToImmediate() {
+    // y% = (x% = 5) compares against an immediate, no constant register load
+    var pb36 = Compile("x% = 100\ny% = (x% = 5)\nEND", Dialect.Pb36);
+    Assert.That(CountMovBxAx(pb36), Is.Zero, "comparison against a constant should fold to CMP AX,imm");
+  }
+
+  [Test]
+  public void Emit_GivenCompareAgainstZero_WhenPb36_ThenUsesOrIdiomNotCmpImmediate() {
+    var pb36 = Compile("x% = 7\ny% = (x% = 0)\nEND", Dialect.Pb36);
+    var hasOrAxAx = false;
+    var hasCmpAxZero = false;
+    for (var i = 0; i + 2 < pb36.Length; ++i) {
+      hasOrAxAx |= pb36[i] == 0x09 && pb36[i + 1] == 0xC0;                       // OR AX,AX (r/m,reg form)
+      hasCmpAxZero |= pb36[i] == 0x3D && pb36[i + 1] == 0x00 && pb36[i + 2] == 0x00; // CMP AX,0
+    }
+    Assert.Multiple(() => {
+      Assert.That(hasOrAxAx, Is.True, "x% = 0 should test via OR AX,AX");
+      Assert.That(hasCmpAxZero, Is.False, "x% = 0 should not emit CMP AX,0");
+    });
+  }
+
   [Test]
   public void Emit_GivenMultiplyByZeroWithFunctionOperand_WhenPb36_ThenOperandStillEvaluated() {
     // the FUNCTION call has side effects - x * 0 must keep the call (assert: the
