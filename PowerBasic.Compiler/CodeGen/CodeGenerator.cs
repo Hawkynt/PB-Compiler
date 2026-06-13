@@ -45,6 +45,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private int _cseBytes;
   private Dictionary<Expression, Pb36CommonSubexpr.CseMark>? _cseMarks;
   private Dictionary<VariableSymbol, ConstantValue>? _ipcp;
+  private (VariableSymbol Symbol, Reg Reg)? _registerCounter;
   private int _tempBytes;
   private int _tempMax;
 
@@ -1165,6 +1166,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     };
 
     if (kind == ValueKind.Int16 && constantStep is { } fastStep) {
+      // pb36 O5: an SI-clean body keeps the counter in SI - no per-iteration
+      // cell traffic for the compare, increment or counter reads
+      if (this.TryEmitForCounterInRegister(f, counter, slot.WithSize(OperandSize.Word), fastStep))
+        return;
       this.EmitForInt16Fast(f, slot.WithSize(OperandSize.Word), fastStep);
       return;
     }

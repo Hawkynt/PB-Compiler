@@ -623,6 +623,114 @@ public sealed partial class CodeGenerator {
 
   #endregion
 
+  #region O5 - FOR counter register residency ($OPTIMIZE SPEED)
+
+  /// <summary>
+  /// pb36 O5: a signed-INTEGER FOR counter whose loop body never touches SI
+  /// (only scalar-integer assignments / INCR over scalar locals - no arrays,
+  /// strings, calls, control flow or counter writes) lives in SI for the whole
+  /// loop. The compare and increment run register-to-register and every counter
+  /// read inside the body reads SI, eliminating the per-iteration cell load,
+  /// store and reload. The cell is written once on exit so post-loop reads see
+  /// the genuine increment-then-test end value. Overflow-checked counters
+  /// (`$ERROR NUMERIC`) stay on the memory path that carries the JO check.
+  /// </summary>
+  private bool TryEmitForCounterInRegister(ForStmt f, VariableSymbol counter, Mem cell, long step) {
+    if (!this.OptimizePb36 || !this.OptimizeSpeed)
+      return false;
+    if (counter.Type is not ScalarType { ByteSize: 2, Signed: true, IsFloat: false })
+      return false;
+    if (this.CheckNumeric || this._registerCounter != null)
+      return false;
+    if (this._trackResume)
+      return false; // an error mid-loop would let a handler read the stale cell
+    if (!this.BodyIsSiClean(f.Body, counter))
+      return false;
+
+    var asm = this._asm;
+    var limit = this.AllocTemp(2);
+    this.EmitExpression(f.To);
+    this.Coerce(model.TypeOf(f.To), PbType.Integer, f.To);
+    asm.Mov(limit, Reg.AX);
+    this.EmitExpression(f.From);
+    this.Coerce(model.TypeOf(f.From), PbType.Integer, f.From);
+    asm.Mov(Reg.SI, Reg.AX);
+
+    this._registerCounter = (counter, Reg.SI);
+    var top = asm.DefineLabel();
+    var done = asm.DefineLabel();
+    var cont = asm.DefineLabel();
+    this._exitFor.Push(done);
+    this._iterateFor.Push(cont);
+    this._iterateAny.Push(cont);
+
+    asm.MarkLabel(top);
+    asm.Cmp(Reg.SI, limit);
+    if (step >= 0)
+      asm.Jg(done);
+    else
+      asm.Jl(done);
+    foreach (var statement in f.Body)
+      this.EmitStatement(statement);
+    asm.MarkLabel(cont);
+    if (step >= 0)
+      asm.Add(Reg.SI, (Imm)(int)step);
+    else
+      asm.Sub(Reg.SI, (Imm)(int)Math.Abs(step));
+    asm.Jmp(top);
+    asm.MarkLabel(done);
+
+    this._exitFor.Pop();
+    this._iterateFor.Pop();
+    this._iterateAny.Pop();
+    asm.Mov(cell, Reg.SI);      // post-loop reads use the cell again
+    this._registerCounter = null;
+    this.ReleaseTemp(2);
+    return true;
+  }
+
+  /// <summary>True when every body statement is a scalar-integer assignment / INCR (over scalar locals, no counter write) whose emission provably leaves SI untouched.</summary>
+  private bool BodyIsSiClean(IReadOnlyList<Statement> body, VariableSymbol counter) {
+    foreach (var statement in body)
+      switch (statement) {
+        case AssignStmt { Target: NameExpr } a
+            when this.ScalarIntTarget(a.Target) is { } target && !ReferenceEquals(target, counter)
+              && SiCleanExpression(a.Value, model):
+          continue;
+        case IncrDecrStmt { Target: NameExpr } id
+            when this.ScalarIntTarget(id.Target) is { } target && !ReferenceEquals(target, counter)
+              && (id.Amount == null || SiCleanExpression(id.Amount, model)):
+          continue;
+        default:
+          return false;
+      }
+    return true;
+  }
+
+  private VariableSymbol? ScalarIntTarget(Expression e)
+    => e is NameExpr && model.VariableBindings.TryGetValue(e, out var s)
+      && s.Type is ScalarType { IsFloat: false, ByteSize: <= 4 } && s.Storage is not VariableStorage.Static
+      ? s : null;
+
+  /// <summary>Pure scalar-integer arithmetic over scalar reads and literals - its emission uses only AX/BX/CX/DX (+ the x87), never SI/DI.</summary>
+  private static bool SiCleanExpression(Expression e, SemanticModel model) => e switch {
+    IntegerLiteralExpr => true,
+    NamedConstantExpr c => !(model.Equates.TryGetValue(c.Name, out var v) && v.Text != null),
+    NameExpr n => !model.IntrinsicBindings.ContainsKey(n)
+      && model.VariableBindings.TryGetValue(n, out var s)
+      && s.Type is ScalarType { IsFloat: false },
+    UnaryExpr { Op: UnaryOp.Negate or UnaryOp.Not } u => SiCleanExpression(u.Operand, model),
+    BinaryExpr b => b.Op is BinaryOp.Add or BinaryOp.Subtract or BinaryOp.Multiply
+        or BinaryOp.IntegerDivide or BinaryOp.Modulo
+        or BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Eqv or BinaryOp.Imp
+        or BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
+        or BinaryOp.LessEqual or BinaryOp.GreaterEqual
+      && SiCleanExpression(b.Left, model) && SiCleanExpression(b.Right, model),
+    _ => false,
+  };
+
+  #endregion
+
   #region O13 - silent fixed-point FOR counters ($OPTIMIZE SPEED)
 
   /// <summary>

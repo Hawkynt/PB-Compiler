@@ -118,6 +118,11 @@ public sealed partial class CodeGenerator {
           this.EmitLoadPlace(new(slot.Cell, Far: false), slot.Type, n);
           break;
         }
+        // pb36 O5: the FOR counter living in a register this loop reads from it
+        if (this._registerCounter is { } rc && ReferenceEquals(rc.Symbol, symbol)) {
+          asm.Mov(Reg.AX, rc.Reg);
+          break;
+        }
         // pb36 O18 (IPCP): a parameter that is the same constant at every call
         // site and never written reads as that literal
         if (this._ipcp is { } ipcp && ipcp.TryGetValue(symbol, out var constant)
