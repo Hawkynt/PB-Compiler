@@ -574,4 +574,47 @@ public sealed class Pb36OptimizerTests {
   }
 
   #endregion
+
+  #region O18 - interprocedural constant propagation
+
+  [Test]
+  public void Ipcp_GivenConstantArgEverywhere_ThenParamPropagated() {
+    const string source = """
+      DECLARE SUB P(BYVAL m%, BYVAL v%)
+      P 1, 10
+      P 1, 20
+      END
+      SUB P(BYVAL m%, BYVAL v%)
+        PRINT m%; v%
+      END SUB
+      """;
+    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    var ipcp = PowerBasic.Compiler.CodeGen.Pb36Ipcp.Analyze(model);
+    var pSub = model.Procedures["P"];
+    Assert.Multiple(() => {
+      Assert.That(ipcp.ContainsKey(pSub.Parameters[0]), Is.True, "m% is always 1");
+      Assert.That(ipcp.ContainsKey(pSub.Parameters[1]), Is.False, "v% varies");
+    });
+  }
+
+  [Test]
+  public void Ipcp_GivenWrittenParam_ThenNotPropagated() {
+    const string source = """
+      DECLARE SUB P(BYVAL m%)
+      P 1
+      P 1
+      END
+      SUB P(BYVAL m%)
+        m% = m% + 1
+        PRINT m%
+      END SUB
+      """;
+    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    var ipcp = PowerBasic.Compiler.CodeGen.Pb36Ipcp.Analyze(model);
+    Assert.That(ipcp, Is.Empty, "a written parameter is not constant-propagated");
+  }
+
+  #endregion
 }

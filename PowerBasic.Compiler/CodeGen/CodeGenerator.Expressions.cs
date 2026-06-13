@@ -118,6 +118,16 @@ public sealed partial class CodeGenerator {
           this.EmitLoadPlace(new(slot.Cell, Far: false), slot.Type, n);
           break;
         }
+        // pb36 O18 (IPCP): a parameter that is the same constant at every call
+        // site and never written reads as that literal
+        if (this._ipcp is { } ipcp && ipcp.TryGetValue(symbol, out var constant)
+            && symbol.Type is ScalarType ipcpType) {
+          if (ipcpType.IsFloat)
+            asm.Fld(Mem.Qword(this.FloatConstOf(ipcpType.ByteSize == 4 ? (float)constant.AsFloat : constant.AsFloat)));
+          else
+            this.EmitIntegralConstant(WrapToType(constant.AsInteger, ipcpType), KindOf(ipcpType));
+          break;
+        }
         if (this.EmitPlace(n) is { } place)
           this.EmitLoadPlace(place, symbol.Type, n);
         break;

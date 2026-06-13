@@ -44,6 +44,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private int _frameLocalBytes;
   private int _cseBytes;
   private Dictionary<Expression, Pb36CommonSubexpr.CseMark>? _cseMarks;
+  private Dictionary<VariableSymbol, ConstantValue>? _ipcp;
   private int _tempBytes;
   private int _tempMax;
 
@@ -87,6 +88,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (this.OptimizePb36 && !this._isUnit) {
       Pb36Pruner.Prune(model);
       Pb36FloatDemotion.Apply(model);
+      this._ipcp = Pb36Ipcp.Analyze(model); // O18: constants into callee bodies
     }
 
     // pb36 P7: programs whose only effect is printing compile-time text lower
