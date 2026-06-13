@@ -33,6 +33,36 @@ public sealed partial class CodeGenerator {
   /// <summary>The frame cell of common-subexpression slot <paramref name="index"/> (4 bytes reserved each, below the locals).</summary>
   private Mem CseSlot(int index) => Mem.At(Reg.BP, -(this._frameLocalBytes + (index + 1) * 4)).WithSize(OperandSize.Word);
 
+  /// <summary>
+  /// pb36 O15/O2: structural lvalue identity - two expressions that designate
+  /// the same, side-effect-free, statically-known storage. Used to fold
+  /// self-compares and elide self-copies. Array/pointer indices must be equal
+  /// constants and free of volatile reads; bound to the same variable symbol.
+  /// </summary>
+  private bool IsSameLvalue(Expression a, Expression b) {
+    switch (a, b) {
+      case (NameExpr, NameExpr):
+        return model.VariableBindings.TryGetValue(a, out var sa)
+          && model.VariableBindings.TryGetValue(b, out var sb)
+          && ReferenceEqualityComparer.Instance.Equals(sa, sb)
+          && !model.IntrinsicBindings.ContainsKey((Expression)a);
+      case (MemberExpr ma, MemberExpr mb):
+        return ma.Member.Equals(mb.Member, StringComparison.OrdinalIgnoreCase)
+          && this.IsSameLvalue(ma.Target, mb.Target);
+      case (CallOrIndexExpr ca, CallOrIndexExpr cb)
+          when model.VariableBindings.TryGetValue(ca, out var aa) && model.VariableBindings.TryGetValue(cb, out var ab):
+        return ReferenceEqualityComparer.Instance.Equals(aa, ab)
+          && ca.Arguments.Count == cb.Arguments.Count
+          && Enumerable.Range(0, ca.Arguments.Count).All(i => SameConstIndex(ca.Arguments[i], cb.Arguments[i]));
+      default:
+        return false;
+    }
+
+    bool SameConstIndex(Expression x, Expression y)
+      => this.Pb36Folder.TryFold(x) is { Integer: { } ix }
+        && this.Pb36Folder.TryFold(y) is { Integer: { } iy } && ix == iy;
+  }
+
   private void EmitExpressionCore(Expression expression) {
     var asm = this._asm;
     switch (expression) {
@@ -214,6 +244,13 @@ public sealed partial class CodeGenerator {
 
     // whole-value TYPE/UNION = / <> (PB 3.1): memcmp semantics
     if (leftType is UdtType leftUdt && rightType is UdtType) {
+      // pb36 O15: a self-compare folds to its constant truth - memcmp of a
+      // location against itself compares identical bytes and is always equal
+      // (NaN-immune, unlike a value compare), so rec = rec is -1, rec <> rec 0
+      if (this.OptimizePb36 && this.IsSameLvalue(b.Left, b.Right)) {
+        asm.Mov(Reg.AX, b.Op == BinaryOp.Equal ? -1 : 0);
+        return;
+      }
       this.EmitUdtCompare(b, leftUdt.Size);
       return;
     }

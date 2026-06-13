@@ -282,6 +282,14 @@ public sealed partial class CodeGenerator {
   private void EmitAssign(AssignStmt a) {
     var targetType = model.TypeOf(a.Target);
 
+    // pb36 O15/O2: a copy of a non-string location onto itself moves identical
+    // bytes - a pure no-op. Excludes dynamic-string-bearing types (their
+    // assignment frees/reallocates handles, which a self-copy must not skip).
+    if (this.OptimizePb36 && !EmbedsStringHandle(targetType)
+        && targetType is not (StringType or FlexType)
+        && this.IsSameLvalue(a.Target, a.Value))
+      return;
+
     if (targetType is UdtType udt) {
       this.EmitBlockCopy(a.Target, a.Value, udt.Size, a.Position);
       return;
