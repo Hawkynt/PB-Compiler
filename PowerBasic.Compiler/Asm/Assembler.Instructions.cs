@@ -853,6 +853,21 @@ public sealed partial class Assembler {
   public void Nop() => this.EmitByte(0x90);
   public void Hlt() => this.EmitByte(0xF4);
 
+  /// <summary>486+ byte-order reverse of a 32-bit register (0F C8+reg, 0x66-prefixed in 16-bit mode).</summary>
+  public void Bswap(Reg register) {
+    if (!register.IsDword())
+      throw new ArgumentException("BSWAP takes a 32-bit register.", nameof(register));
+    this.EmitByte(0x66);
+    this.EmitByte(0x0F);
+    this.EmitByte((byte)(0xC8 + register.Index()));
+  }
+
+  /// <summary>Pads with NOPs (0x90) to the next <paramref name="alignment"/>-byte boundary - safe to fall through or jump over.</summary>
+  public void AlignCode(int alignment) {
+    while (this.Position % alignment != 0)
+      this.EmitByte(0x90);
+  }
+
   #endregion
 
   #region string instructions

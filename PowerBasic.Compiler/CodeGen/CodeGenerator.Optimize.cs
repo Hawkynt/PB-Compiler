@@ -109,6 +109,12 @@ public sealed partial class CodeGenerator {
     && m.Arguments is [{ } level, ..]
     && level.Text is "80386" or "80486" or "386" or "486");
 
+  /// <summary>True when $CPU 80486 selected - C2 alignment and 486-only opcodes (BSWAP) become legal.</summary>
+  private bool Cpu486 => model.MetaStatements.Any(m =>
+    m.Command.Equals("CPU", StringComparison.OrdinalIgnoreCase)
+    && m.Arguments is [{ } level, ..]
+    && level.Text is "80486" or "486");
+
   /// <summary>
   /// REP-copies CX-free <paramref name="byteCount"/> bytes DS:SI -> ES:DI.
   /// pb35 keeps the byte-wide copy; pb36 widens to words (8086-safe) and to

@@ -54,6 +54,10 @@ public sealed partial class CodeGenerator {
     this._epilogue = asm.DefineLabel($"p_{proc.Name}_end");
     this._trackResume = ContainsErrorHandling(proc.Body!);
 
+    // pb36 C2 ($CPU 80486): 16-byte-align procedure entries to the 486 cache
+    // line - reached only by CALL, so the NOP pad never executes
+    if (this.OptimizePb36 && this.Cpu486)
+      asm.AlignCode(16);
     asm.MarkLabel(this.ProcLabelOf(proc));
     if (this.CheckStack) { // $ERROR STACK ON: SP headroom probe -> Error 201 (oracle-verified)
       var roomy = asm.DefineLabel();

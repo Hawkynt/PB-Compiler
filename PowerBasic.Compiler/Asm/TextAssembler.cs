@@ -497,6 +497,12 @@ public sealed class TextAssembler(Assembler target) {
         // no-operand instructions
         case "NOP": this.NoOperands(mnemonic); this._asm.Nop(); return;
         case "HLT": this.NoOperands(mnemonic); this._asm.Hlt(); return;
+        case "BSWAP":
+          if (this.OneOperand() is RegisterOperand bswap)
+            this._asm.Bswap(bswap.Register);
+          else
+            throw new AsmSyntaxException("BSWAP takes a 32-bit register.");
+          return;
         case "CBW": this.NoOperands(mnemonic); this._asm.Cbw(); return;
         case "CWD": this.NoOperands(mnemonic); this._asm.Cwd(); return;
         case "CWDE": this.NoOperands(mnemonic); this._asm.Cwde(); return;

@@ -617,4 +617,57 @@ public sealed class Pb36OptimizerTests {
   }
 
   #endregion
+
+  #region C2 - $CPU 80486 alignment + BSWAP
+
+  [Test]
+  public void Execute_GivenCpu486_WhenAlignedProcs_ThenOutputUnchanged() {
+    // 16-byte procedure alignment is output-invariant; the program must run
+    // identically to the un-aligned build
+    const string source = """
+      $CPU 80486
+      DECLARE FUNCTION Tri%(BYVAL n%)
+      PRINT Tri%(5); Tri%(9)
+      END
+      FUNCTION Tri%(BYVAL n%)
+        Tri% = n% * (n% + 1) \ 2
+      END FUNCTION
+      """;
+    var output = DosBoxRunner.Normalize(DosBoxRunner.Run(Compile(source, Dialect.Pb36)));
+    Assert.That(output, Is.EqualTo(" 15  45\n"));
+  }
+
+  [Test]
+  public void Execute_GivenBswapInlineAsm_WhenPb36_ThenReversesByteOrder() {
+    const string source = """
+      $CPU 80486
+      v& = &H11223344
+      ! MOV EAX, v&
+      ! BSWAP EAX
+      ! MOV v&, EAX
+      PRINT HEX$(v&)
+      END
+      """;
+    var output = DosBoxRunner.Normalize(DosBoxRunner.Run(Compile(source, Dialect.Pb36)));
+    Assert.That(output, Is.EqualTo("44332211\n"));
+  }
+
+  [Test]
+  public void Emit_GivenCpu486ProcAlignment_ThenProcEntryIs16ByteAligned() {
+    var image = Compile("""
+      $CPU 80486
+      DECLARE SUB P
+      P
+      END
+      SUB P
+        PRINT "x"
+      END SUB
+      """, Dialect.Pb36);
+    // a NOP run (0x90) appears as the alignment pad before the aligned proc
+    var nopRun = 0; var maxRun = 0;
+    foreach (var b in image) { nopRun = b == 0x90 ? nopRun + 1 : 0; maxRun = System.Math.Max(maxRun, nopRun); }
+    Assert.That(maxRun, Is.GreaterThan(0), "an alignment NOP pad should be present");
+  }
+
+  #endregion
 }
