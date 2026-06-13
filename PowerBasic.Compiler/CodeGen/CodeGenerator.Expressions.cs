@@ -8,6 +8,32 @@ namespace PowerBasic.Compiler.CodeGen;
 public sealed partial class CodeGenerator {
 
   private void EmitExpression(Expression expression) {
+    // pb36 O3: a marked common subexpression either defines its slot (emit the
+    // tree once, then stash) or reloads it (no recompute, identical value)
+    if (this._cseMarks is { } marks && marks.TryGetValue(expression, out var mark)
+        && model.TypeOf(expression) is ScalarType { IsFloat: false }) {
+      var asm = this._asm;
+      var wide = model.TypeOf(expression) is ScalarType { ByteSize: 4 };
+      var slot = this.CseSlot(mark.Slot);
+      if (!mark.IsDefine) {
+        asm.Mov(Reg.AX, slot);
+        if (wide)
+          asm.Mov(Reg.DX, Adjust(slot, 2, OperandSize.Word));
+        return;
+      }
+      this.EmitExpressionCore(expression);
+      asm.Mov(slot, Reg.AX);
+      if (wide)
+        asm.Mov(Adjust(slot, 2, OperandSize.Word), Reg.DX);
+      return;
+    }
+    this.EmitExpressionCore(expression);
+  }
+
+  /// <summary>The frame cell of common-subexpression slot <paramref name="index"/> (4 bytes reserved each, below the locals).</summary>
+  private Mem CseSlot(int index) => Mem.At(Reg.BP, -(this._frameLocalBytes + (index + 1) * 4)).WithSize(OperandSize.Word);
+
+  private void EmitExpressionCore(Expression expression) {
     var asm = this._asm;
     switch (expression) {
       case IntegerLiteralExpr i:

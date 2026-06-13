@@ -42,6 +42,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private Label _frameBytesLabel = null!;
   private Label _frameWordsLabel = null!;
   private int _frameLocalBytes;
+  private int _cseBytes;
+  private Dictionary<Expression, Pb36CommonSubexpr.CseMark>? _cseMarks;
   private int _tempBytes;
   private int _tempMax;
 
@@ -163,6 +165,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       asm.Mov(Mem.Word(asm.Lbl("rt_strmaxlen")), usable);
     }
 
+    this.PrepareCse(model.MainBody);
     this.BeginFrame(skipZeroing: this.OptimizePb36 && !ContainsErrorHandling(model.MainBody));
     this.EmitChainCommonLoad();             // absorb a CHAIN handoff, when present
     this._trackResume = ContainsErrorHandling(model.MainBody);
@@ -265,10 +268,25 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   }
 
   private void EndFrame() {
-    var bytes = (this._frameLocalBytes + this._tempMax + 1) & ~1;
+    var bytes = (this._frameLocalBytes + this._cseBytes + this._tempMax + 1) & ~1;
     this._frameBytesLabel.Position = bytes;
     this._frameWordsLabel.Position = bytes / 2;
     this._frameLocalBytes = 0;
+    this._cseBytes = 0;
+    this._cseMarks = null;
+  }
+
+  /// <summary>pb36 O3: runs the common-subexpression analysis for a body and reserves its frame slots; call right before <see cref="BeginFrame"/>.</summary>
+  private void PrepareCse(IReadOnlyList<Statement> body) {
+    this._cseMarks = null;
+    this._cseBytes = 0;
+    if (!this.OptimizePb36)
+      return;
+    var result = Pb36CommonSubexpr.Analyze(body, model);
+    if (result.SlotCount == 0)
+      return;
+    this._cseMarks = result.Marks;
+    this._cseBytes = result.SlotCount * 4;
   }
 
   /// <summary>Reserves a BP-relative scratch block; release in reverse order.</summary>
@@ -276,7 +294,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     bytes = (bytes + 1) & ~1;
     this._tempBytes += bytes;
     this._tempMax = Math.Max(this._tempMax, this._tempBytes);
-    return Mem.At(Reg.BP, -(this._frameLocalBytes + this._tempBytes)).WithSize(size);
+    return Mem.At(Reg.BP, -(this._frameLocalBytes + this._cseBytes + this._tempBytes)).WithSize(size);
   }
 
   private void ReleaseTemp(int bytes) => this._tempBytes -= (bytes + 1) & ~1;

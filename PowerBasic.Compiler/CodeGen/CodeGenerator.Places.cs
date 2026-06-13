@@ -509,6 +509,22 @@ public sealed partial class CodeGenerator {
 
   /// <summary>Evaluates a modular tree into AX with plain 16-bit ALU ops.</summary>
   private void EmitModularInt16(Expression e) {
+    // pb36 O3 (modular context): a marked composite modular subtree defines or
+    // reloads its 16-bit slot; the value is always one word in AX
+    if (this._cseMarks is { } marks && marks.TryGetValue(e, out var mark)) {
+      var slot = this.CseSlot(mark.Slot);
+      if (!mark.IsDefine) {
+        this._asm.Mov(Reg.AX, slot);
+        return;
+      }
+      this.EmitModularInt16Core(e);
+      this._asm.Mov(slot, Reg.AX);
+      return;
+    }
+    this.EmitModularInt16Core(e);
+  }
+
+  private void EmitModularInt16Core(Expression e) {
     var asm = this._asm;
     if (model.TypeOf(e) is ScalarType { IsFloat: false, ByteSize: <= 2 } leafType) {
       this.EmitExpression(e);

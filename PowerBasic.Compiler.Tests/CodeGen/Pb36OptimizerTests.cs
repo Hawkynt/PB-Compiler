@@ -520,4 +520,58 @@ public sealed class Pb36OptimizerTests {
   }
 
   #endregion
+
+  #region O3 - common subexpression elimination
+
+  private static (int slots, System.Collections.Generic.Dictionary<PowerBasic.Compiler.Syntax.Ast.Expression, PowerBasic.Compiler.CodeGen.Pb36CommonSubexpr.CseMark> marks) AnalyzeCse(string source) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty);
+    var r = PowerBasic.Compiler.CodeGen.Pb36CommonSubexpr.Analyze(model.MainBody, model);
+    return (r.SlotCount, r.Marks);
+  }
+
+  [Test]
+  public void Cse_GivenRepeatedAddress_ThenOneSlotWithDefineAndUse() {
+    var (slots, marks) = AnalyzeCse("x% = 1\ny% = 2\na% = y% * 320 + x%\nb% = y% * 320 + x%\nEND");
+    Assert.That(slots, Is.EqualTo(1));
+    Assert.That(marks.Values.Count(m => m.IsDefine), Is.EqualTo(1));
+    Assert.That(marks.Values.Count(m => !m.IsDefine), Is.EqualTo(1));
+  }
+
+  [Test]
+  public void Cse_GivenWriteBetweenUses_ThenNotCached() {
+    var (slots, _) = AnalyzeCse("x% = 1\ny% = 2\na% = y% * 320\ny% = 9\nb% = y% * 320\nEND");
+    Assert.That(slots, Is.EqualTo(0), "the write to y% invalidates the subtree");
+  }
+
+  [Test]
+  public void Cse_GivenBarrierBetweenUses_ThenNotCached() {
+    var (slots, _) = AnalyzeCse("DECLARE SUB P\nx% = 1\na% = x% * 7\nP\nb% = x% * 7\nEND\nSUB P\nEND SUB");
+    Assert.That(slots, Is.EqualTo(0), "the CALL ends the straight-line run");
+  }
+
+  [Test]
+  public void Execute_GivenCseHeavyArithmetic_WhenPb36_ThenMatchesAndShrinks() {
+    const string source = """
+      x% = 7
+      y% = 3
+      a% = y% * 320 + x%
+      b% = y% * 320 + x%
+      c% = y% * 320 + x%
+      PRINT a%; b%; c%
+      END
+      """;
+    var pb35 = Compile(source, Dialect.Pb35);
+    var pb36 = Compile(source, Dialect.Pb36);
+    var out35 = DosBoxRunner.Normalize(DosBoxRunner.Run(pb35));
+    var out36 = DosBoxRunner.Normalize(DosBoxRunner.Run(pb36));
+    Assert.Multiple(() => {
+      Assert.That(out36, Is.EqualTo(" 967  967  967\n"));
+      Assert.That(out36, Is.EqualTo(out35));
+      Assert.That(pb36.Length, Is.LessThan(pb35.Length), "two recomputations become slot reloads");
+    });
+  }
+
+  #endregion
 }
