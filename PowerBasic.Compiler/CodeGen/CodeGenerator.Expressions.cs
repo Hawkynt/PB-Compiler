@@ -520,7 +520,22 @@ public sealed partial class CodeGenerator {
           this.EmitRaiseWhen(asm.Jno, 6);
         break;
       case BinaryOp.Multiply:
-        asm.Call(this._rt.LongMul);
+        // pb36 C1 ($CPU 80386): low-32-bit product via one IMUL EAX, EBX -
+        // identical to rt_lmul's result, dropping the runtime helper
+        if (this.OptimizePb36 && this.Cpu386) {
+          var sc = this._scratch;
+          asm.Mov(Mem.Word(sc), Reg.AX);
+          asm.Mov(Mem.Word(sc, 2), Reg.DX);
+          asm.Mov(Reg.EAX, Mem.Dword(sc));
+          asm.Mov(Mem.Word(sc), Reg.BX);
+          asm.Mov(Mem.Word(sc, 2), Reg.CX);
+          asm.Mov(Reg.EBX, Mem.Dword(sc));
+          asm.Imul(Reg.EAX, Reg.EBX);
+          asm.Mov(Mem.Dword(sc), Reg.EAX);
+          asm.Mov(Reg.AX, Mem.Word(sc));
+          asm.Mov(Reg.DX, Mem.Word(sc, 2));
+        } else
+          asm.Call(this._rt.LongMul);
         break;
       case BinaryOp.IntegerDivide:
         asm.Call(unsignedDivide ? this._rt.LongDivU : this._rt.LongDiv);
