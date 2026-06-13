@@ -370,6 +370,63 @@ public sealed class Pb36OptimizerTests {
     Assert.That(pb36.Length, Is.LessThan(pb35.Length));
   }
 
+  private static int CountImulBx(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0xF7 && image[i + 1] == 0xEB) // IMUL BX (F7 /5)
+        ++count;
+    return count;
+  }
+
+  [Test]
+  public void Emit_GivenCheckedMultiplyByTwo_WhenPb36_ThenKeepsImulForOverflowTrap() {
+    // $ERROR OVERFLOW ON: a shift chain cannot raise error 6 on signed overflow,
+    // so the strength reducer must back off and keep the genuine IMUL (the
+    // integer formatter the PRINT pulls in uses no IMUL BX, so any F7 EB present
+    // is the multiply itself). Without the guard the multiply would be a bare SHL.
+    const string source = "$ERROR OVERFLOW ON\nx% = 30000\ny% = x% * 2\nPRINT y%\nEND";
+    var checked_ = Compile(source, Dialect.Pb36);
+    Assert.That(CountImulBx(checked_), Is.GreaterThanOrEqualTo(1),
+      "checked x% * 2 must keep IMUL BX for the error-6 overflow trap, not strength-reduce to a shift");
+  }
+
+  [Test]
+  public void Emit_GivenModularMultiplyByThree_WhenPb36Speed_ThenShiftAddReplacesImul() {
+    // y% = x% * 3 in the modular int16 path lowers to (v + v<<1); no IMUL BX,
+    // and no PRINT means the integer formatter (which has none anyway) is absent
+    const string source = "$OPTIMIZE SPEED\nx% = 11\ny% = x% * 3\nEND";
+    var pb36 = Compile(source, Dialect.Pb36);
+    Assert.That(CountImulBx(pb36), Is.Zero, "x% * 3 under SPEED should be a shift-add chain, no IMUL BX");
+  }
+
+  [Test]
+  public void Emit_GivenModularMultiplyByThirteen_WhenPb36Speed_ThenKeepsCompactImul() {
+    // 13 = 1101b: three set bits, not a contiguous run - no cheap shift chain,
+    // so the compact IMUL BX is kept
+    const string source = "$OPTIMIZE SPEED\nx% = 11\ny% = x% * 13\nEND";
+    var pb36 = Compile(source, Dialect.Pb36);
+    Assert.That(CountImulBx(pb36), Is.EqualTo(1), "x% * 13 has no two-term decomposition, keep IMUL BX");
+  }
+
+  [Test]
+  public void Emit_GivenModularMultiplyByThree_WhenPb36Default_ThenKeepsImul() {
+    // the shift chains are a SPEED trade (a few bytes for the cycles); SIZE/default
+    // keep the 2-byte IMUL
+    const string source = "x% = 11\ny% = x% * 3\nEND";
+    var pb36 = Compile(source, Dialect.Pb36);
+    Assert.That(CountImulBx(pb36), Is.EqualTo(1), "without $OPTIMIZE SPEED the compact IMUL BX is kept");
+  }
+
+  [Test]
+  public void Emit_GivenModularAddConstant_WhenPb36_ThenFewerBytesThanVariableAdd() {
+    // y% = x% + 7 folds to one immediate ADD; y% = x% + z% must load and combine
+    // a second operand, so the constant form is strictly smaller
+    var constAdd = Compile("x% = 100\ny% = x% + 7\nEND", Dialect.Pb36);
+    var varAdd = Compile("x% = 100\nz% = 7\ny% = x% + z%\nEND", Dialect.Pb36);
+    Assert.That(constAdd.Length, Is.LessThan(varAdd.Length),
+      "v% + const should fold to one immediate ALU op, smaller than a two-operand add");
+  }
+
   [Test]
   public void Emit_GivenMultiplyByZeroWithFunctionOperand_WhenPb36_ThenOperandStillEvaluated() {
     // the FUNCTION call has side effects - x * 0 must keep the call (assert: the

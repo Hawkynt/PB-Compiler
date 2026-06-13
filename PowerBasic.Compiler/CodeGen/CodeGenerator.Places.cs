@@ -545,6 +545,12 @@ public sealed partial class CodeGenerator {
         asm.Neg(Reg.AX);
         break;
       case BinaryExpr b:
+        // pb36 O4: v * const lowers to a shift/add chain (SPEED) instead of IMUL
+        if (b.Op == BinaryOp.Multiply && this.TryEmitModularConstMul(b))
+          break;
+        // pb36 O8: v +/- const becomes one immediate ALU op (smaller and faster)
+        if (b.Op is BinaryOp.Add or BinaryOp.Subtract && this.TryEmitModularConstAddSub(b))
+          break;
         this.EmitModularInt16(b.Left);
         asm.Push(Reg.AX);
         this.EmitModularInt16(b.Right);

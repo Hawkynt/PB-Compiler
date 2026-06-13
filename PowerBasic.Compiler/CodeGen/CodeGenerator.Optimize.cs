@@ -465,9 +465,12 @@ public sealed partial class CodeGenerator {
   /// The non-constant operand is still evaluated (it may call FUNCTIONs), and
   /// shifting matches the low bits of the product exactly, so wrap semantics
   /// are preserved. Constants come from the pure folder only.
+  /// Disabled under <c>$ERROR OVERFLOW ON</c>: a shift chain cannot reproduce
+  /// the genuine <c>IMUL</c>'s signed-overflow trap (error 6), so the checked
+  /// multiply must keep the real instruction and its <c>JNO</c> guard.
   /// </summary>
   private bool TryEmitStrengthReducedMultiply(BinaryExpr b, PbType opType) {
-    if (!this.OptimizePb36 || b.Op != BinaryOp.Multiply)
+    if (!this.OptimizePb36 || b.Op != BinaryOp.Multiply || this.CheckOverflow)
       return false;
     if (opType is not ScalarType { IsFloat: false, ByteSize: 2 or 4 } scalar)
       return false;
@@ -609,6 +612,20 @@ public sealed partial class CodeGenerator {
     return true;
   }
 
+  /// <summary>Shifts <paramref name="register"/> left by <paramref name="count"/> 8086-safely (1-shifts up to four, CL beyond - never the 186+ immediate form).</summary>
+  private void EmitShiftLeft(Reg register, int count) {
+    var asm = this._asm;
+    if (count <= 0)
+      return;
+    if (count > 4) {
+      asm.Mov(Reg.CL, (Imm)count);
+      asm.Shl(register, Reg.CL);
+      return;
+    }
+    for (var i = 0; i < count; ++i)
+      asm.Shl(register, 1);
+  }
+
   /// <summary>Shifts <paramref name="register"/> right by <paramref name="count"/> 8086-safely (1-shifts up to four, CL beyond).</summary>
   private void EmitShiftRight(Reg register, int count, bool arithmetic) {
     var asm = this._asm;
@@ -625,6 +642,158 @@ public sealed partial class CodeGenerator {
         asm.Sar(register, 1);
       else
         asm.Shr(register, 1);
+  }
+
+  #endregion
+
+  #region O4 - modular 16-bit multiply by a constant (shift + add/sub, $OPTIMIZE SPEED)
+
+  /// <summary>
+  /// pb36 O4 (modular int16 context): <c>v * c</c> for a compile-time integral
+  /// <c>c</c> lowers to a short shift/add/sub chain instead of the ~128-cycle
+  /// 8086 <c>IMUL BX</c>. The modular path only runs when neither overflow nor
+  /// numeric checking is active (its entry gate in <see cref="EmitModularInt16"/>),
+  /// so the result is purely modular 16-bit and every chain below reproduces the
+  /// product's low 16 bits exactly. SPEED-gated: the chains trade a few bytes
+  /// for the cycles, so SIZE/default keep the compact IMUL.
+  ///
+  /// Decompositions, with <c>v</c> in AX: powers of two are one shift; a
+  /// two-bit multiplier <c>2^a+2^b</c> is <c>(v + v&lt;&lt;(a-b))&lt;&lt;b</c>; a
+  /// contiguous run of ones <c>2^a-2^b</c> is <c>(v&lt;&lt;(a-b) - v)&lt;&lt;b</c>;
+  /// negative multipliers compute the magnitude then <c>NEG</c> (modular). Other
+  /// shapes fall back to IMUL.
+  /// </summary>
+  private bool TryEmitModularConstMul(BinaryExpr b) {
+    if (!this.OptimizePb36 || !this.OptimizeSpeed)
+      return false;
+
+    Expression variable;
+    long raw;
+    if (this.TryModularFoldConst(b.Right, out raw))
+      variable = b.Left;
+    else if (this.TryModularFoldConst(b.Left, out raw))
+      variable = b.Right;
+    else
+      return false;
+
+    var asm = this._asm;
+    var m = (int)(short)(raw & 0xFFFF); // the multiplier reduced to its 16-bit modular value
+
+    if (m == 0) {                       // v * 0 - evaluate v for its side effects, result 0
+      this.EmitModularInt16(variable);
+      asm.Xor(Reg.AX, Reg.AX);
+      return true;
+    }
+    if (m == 1) {                       // identity
+      this.EmitModularInt16(variable);
+      return true;
+    }
+    if (m == -1) {                      // negation
+      this.EmitModularInt16(variable);
+      asm.Neg(Reg.AX);
+      return true;
+    }
+
+    var neg = m < 0;
+    var mag = (uint)Math.Abs(m);        // |m| <= 32768, fits a power-of-two probe
+
+    if (BitOperations.IsPow2(mag)) {
+      this.EmitModularInt16(variable);
+      this.EmitShiftLeft(Reg.AX, BitOperations.TrailingZeroCount(mag));
+      if (neg)
+        asm.Neg(Reg.AX);
+      return true;
+    }
+
+    var lo = BitOperations.TrailingZeroCount(mag);
+    if (BitOperations.PopCount(mag) == 2) {                 // 2^a + 2^b
+      var hi = 31 - BitOperations.LeadingZeroCount(mag);
+      this.EmitModularInt16(variable);
+      asm.Mov(Reg.BX, Reg.AX);
+      this.EmitShiftLeft(Reg.BX, hi - lo);
+      asm.Add(Reg.AX, Reg.BX);
+      this.EmitShiftLeft(Reg.AX, lo);
+      if (neg)
+        asm.Neg(Reg.AX);
+      return true;
+    }
+
+    var run = mag >> lo;                                    // 2^a - 2^b -> a run of ones
+    if (BitOperations.IsPow2(run + 1)) {
+      var width = BitOperations.TrailingZeroCount(run + 1); // a - b
+      this.EmitModularInt16(variable);
+      asm.Mov(Reg.BX, Reg.AX);
+      this.EmitShiftLeft(Reg.AX, width);
+      asm.Sub(Reg.AX, Reg.BX);
+      this.EmitShiftLeft(Reg.AX, lo);
+      if (neg)
+        asm.Neg(Reg.AX);
+      return true;
+    }
+
+    return false; // three-or-more-term multipliers keep the compact IMUL
+  }
+
+  /// <summary>
+  /// pb36 O8 (modular int16 context): <c>v +/- c</c> for a compile-time integral
+  /// <c>c</c> becomes one immediate ALU op instead of loading the constant into a
+  /// register and pushing/popping the other operand - smaller and faster, so it
+  /// is unconditional (no SPEED gate). <c>v - c</c> adds <c>-c</c>; <c>c - v</c>
+  /// negates then adds <c>c</c>. All arithmetic is modular 16-bit, matching the
+  /// generic <c>ADD/SUB AX,BX</c> path bit-for-bit.
+  /// </summary>
+  private bool TryEmitModularConstAddSub(BinaryExpr b) {
+    if (!this.OptimizePb36)
+      return false;
+    var asm = this._asm;
+
+    if (b.Op == BinaryOp.Add) {
+      if (this.TryModularFoldConst(b.Right, out var rc))
+        this.EmitModularInt16(b.Left);
+      else if (this.TryModularFoldConst(b.Left, out rc))
+        this.EmitModularInt16(b.Right);
+      else
+        return false;
+      this.EmitModularAddImm(rc);
+      return true;
+    }
+
+    // subtract
+    if (this.TryModularFoldConst(b.Right, out var sc)) {        // v - c
+      this.EmitModularInt16(b.Left);
+      this.EmitModularAddImm(-sc);
+      return true;
+    }
+    if (this.TryModularFoldConst(b.Left, out var lc)) {         // c - v = -(v) + c
+      this.EmitModularInt16(b.Right);
+      asm.Neg(Reg.AX);
+      this.EmitModularAddImm(lc);
+      return true;
+    }
+    return false;
+  }
+
+  /// <summary>Adds the 16-bit modular value of <paramref name="constant"/> to AX (nothing when it is zero mod 2^16).</summary>
+  private void EmitModularAddImm(long constant) {
+    var imm = (short)(constant & 0xFFFF);
+    if (imm != 0)
+      this._asm.Add(Reg.AX, (Imm)(int)imm);
+  }
+
+  /// <summary>
+  /// True when <paramref name="e"/> is a pure compile-time integral constant
+  /// safe to fold away in the modular path: it must not carry a CSE mark (whose
+  /// define another node may reload), so skipping its evaluation is observable
+  /// to no one.
+  /// </summary>
+  private bool TryModularFoldConst(Expression e, out long value) {
+    value = 0;
+    if (this._cseMarks?.ContainsKey(e) == true)
+      return false;
+    if (this.Pb36Folder.TryFold(e) is not { Integer: { } v })
+      return false;
+    value = v;
+    return true;
   }
 
   #endregion
