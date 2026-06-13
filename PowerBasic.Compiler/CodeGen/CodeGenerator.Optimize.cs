@@ -774,10 +774,33 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>Adds the 16-bit modular value of <paramref name="constant"/> to AX (nothing when it is zero mod 2^16).</summary>
-  private void EmitModularAddImm(long constant) {
-    var imm = (short)(constant & 0xFFFF);
-    if (imm != 0)
-      this._asm.Add(Reg.AX, (Imm)(int)imm);
+  private void EmitModularAddImm(long constant) => this.EmitAddImm16((short)(constant & 0xFFFF));
+
+  /// <summary>
+  /// AX += <paramref name="imm"/> (16-bit signed). O8 peephole: +/-1 uses
+  /// <c>INC</c>/<c>DEC</c> (one byte). INC/DEC still set OF, so a following
+  /// <c>JNO</c> overflow trap stays correct; they leave CF alone, which the
+  /// add/sub paths never read.
+  /// </summary>
+  private void EmitAddImm16(int imm) {
+    var asm = this._asm;
+    switch (imm) {
+      case 0: break;
+      case 1: asm.Inc(Reg.AX); break;
+      case -1: asm.Dec(Reg.AX); break;
+      default: asm.Add(Reg.AX, (Imm)imm); break;
+    }
+  }
+
+  /// <summary>AX -= <paramref name="imm"/> (16-bit signed), with the +/-1 INC/DEC peephole.</summary>
+  private void EmitSubImm16(int imm) {
+    var asm = this._asm;
+    switch (imm) {
+      case 0: break;
+      case 1: asm.Dec(Reg.AX); break;
+      case -1: asm.Inc(Reg.AX); break;
+      default: asm.Sub(Reg.AX, (Imm)imm); break;
+    }
   }
 
   /// <summary>

@@ -454,6 +454,14 @@ public sealed class Pb36OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenModularIncrementByOne_WhenPb36_ThenUsesIncNotAddImmediate() {
+    // y% = x% + 1 folds to INC AX (one byte); y% = x% + 5 needs ADD AX,imm (three)
+    var inc = Compile("x% = 100\ny% = x% + 1\nEND", Dialect.Pb36);
+    var add = Compile("x% = 100\ny% = x% + 5\nEND", Dialect.Pb36);
+    Assert.That(inc.Length, Is.LessThan(add.Length), "+1 should be INC AX, smaller than ADD AX,imm");
+  }
+
+  [Test]
   public void Emit_GivenCompareAgainstZero_WhenPb36_ThenUsesOrIdiomNotCmpImmediate() {
     var pb36 = Compile("x% = 7\ny% = (x% = 0)\nEND", Dialect.Pb36);
     var hasOrAxAx = false;

@@ -567,7 +567,7 @@ public sealed partial class CodeGenerator {
           case BinaryOp.Or: asm.Or(Reg.AX, Imm16(c)); break;
           case BinaryOp.Xor: asm.Xor(Reg.AX, Imm16(c)); break;
           default:
-            asm.Add(Reg.AX, Imm16(c));
+            this.EmitAddImm16((short)(c & 0xFFFF));
             if (this.CheckOverflow)
               this.EmitRaiseWhen(asm.Jno, 6);
             break;
@@ -579,7 +579,7 @@ public sealed partial class CodeGenerator {
         if (!this.TryModularFoldConst(b.Right, out var c)) // c - v is not an immediate form
           return false;
         EmitOperand(b.Left);
-        asm.Sub(Reg.AX, Imm16(c));
+        this.EmitSubImm16((short)(c & 0xFFFF));
         if (this.CheckOverflow)
           this.EmitRaiseWhen(asm.Jno, 6);
         return true;
