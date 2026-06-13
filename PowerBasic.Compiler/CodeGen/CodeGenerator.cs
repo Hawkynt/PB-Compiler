@@ -1079,6 +1079,27 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
   private void EmitIf(IfStmt i) {
     var asm = this._asm;
+
+    // pb36 O17 (SCCP-lite): a constant condition selects one arm at compile
+    // time - the folder is pure (no calls), so dropping the dead arm is sound.
+    // Cascades through ELSEIF chains until a non-constant condition appears.
+    if (this.OptimizePb36 && this.Pb36Folder.TryFold(i.Condition) is { Integer: { } c }) {
+      if (c != 0) {
+        foreach (var s in i.Then)
+          this.EmitStatement(s);
+        return;
+      }
+      if (i.ElseIfs.Count > 0) {
+        var (firstCond, firstBody) = i.ElseIfs[0];
+        this.EmitIf(i with { Condition = firstCond, Then = firstBody, ElseIfs = i.ElseIfs.Skip(1).ToList() });
+        return;
+      }
+      if (i.Else != null)
+        foreach (var s in i.Else)
+          this.EmitStatement(s);
+      return;
+    }
+
     var elseLabel = asm.DefineLabel();
     var endLabel = asm.DefineLabel();
 

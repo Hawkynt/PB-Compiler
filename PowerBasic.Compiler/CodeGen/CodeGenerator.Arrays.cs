@@ -456,7 +456,12 @@ public sealed partial class CodeGenerator {
 
       for (var d = 0; d < bounds.Count; ++d) {
         this.EmitInt16Argument(indexes[d]);
-        if (this.CheckBounds) { // $ERROR BOUNDS ON -> Error 9
+        // pb36 O16: a constant index provably inside the static bounds can
+        // never raise Error 9 - the check is dead and disappears
+        var provablyInRange = this.OptimizePb36
+          && this.Pb36Folder.TryFold(indexes[d]) is { Integer: { } ci }
+          && ci >= bounds[d].Lower && ci <= bounds[d].Upper;
+        if (this.CheckBounds && !provablyInRange) { // $ERROR BOUNDS ON -> Error 9
           asm.Cmp(Reg.AX, bounds[d].Lower);
           this.EmitRaiseWhen(asm.Jge, 9);
           asm.Cmp(Reg.AX, bounds[d].Upper);
