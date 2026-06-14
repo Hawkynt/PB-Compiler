@@ -20,6 +20,7 @@ public sealed class IrLowering {
   private readonly IReadOnlyDictionary<ProcedureSymbol, IrFunction>? _procMap;
   private readonly Dictionary<VariableSymbol, IrValue> _addr = new(ReferenceEqualityComparer.Instance);
   private readonly Stack<LoopContext> _loops = new();
+  private readonly Dictionary<string, IrBasicBlock> _labels = new(StringComparer.OrdinalIgnoreCase);
   private readonly ConstantFolder _folder;
 
   private IrFunction _fn = null!;
@@ -119,9 +120,37 @@ public sealed class IrLowering {
           this._addr[p] = fn.Parameters[i];
       }
 
+    // pre-create a block for every label so forward GOTOs have a target
+    foreach (var label in CollectLabels(body))
+      this._labels[label] = this._fn.CreateBlock("lbl." + label);
+
     this.LowerStatements(body);
     if (!this.Terminated)
       this.ReturnFromFunction();
+  }
+
+  private static IEnumerable<string> CollectLabels(IReadOnlyList<Statement> statements) {
+    foreach (var s in statements)
+      switch (s) {
+        case LabelStmt l: yield return l.Name; break;
+        case IfStmt i:
+          foreach (var n in CollectLabels(i.Then)) yield return n;
+          foreach (var (_, body) in i.ElseIfs)
+            foreach (var n in CollectLabels(body)) yield return n;
+          if (i.Else is { } e)
+            foreach (var n in CollectLabels(e)) yield return n;
+          break;
+        case ForStmt f:
+          foreach (var n in CollectLabels(f.Body)) yield return n;
+          break;
+        case DoLoopStmt d:
+          foreach (var n in CollectLabels(d.Body)) yield return n;
+          break;
+        case SelectStmt sel:
+          foreach (var arm in sel.Arms)
+            foreach (var n in CollectLabels(arm.Body)) yield return n;
+          break;
+      }
   }
 
   // ---- helpers -------------------------------------------------------------
@@ -181,8 +210,8 @@ public sealed class IrLowering {
 
   private void LowerStatements(IReadOnlyList<Statement> statements) {
     foreach (var statement in statements) {
-      if (this.Terminated)
-        return;
+      if (this.Terminated && statement is not LabelStmt)
+        continue;                                      // code unreachable until the next label
       this.LowerStatement(statement);
     }
   }
@@ -200,6 +229,8 @@ public sealed class IrLowering {
       case SelectStmt s: this.LowerSelect(s); break;
       case DimStmt d: this.LowerDim(d); break;
       case SwapStmt sw: this.LowerSwap(sw); break;
+      case LabelStmt l: this.LowerLabel(l); break;
+      case GotoStmt g: this.LowerGoto(g); break;
       case EndStmt: this.LowerEnd(); break;
       default: throw new IrLoweringException($"unsupported statement: {statement.GetType().Name}");
     }
@@ -236,6 +267,19 @@ public sealed class IrLowering {
     if (e is CallOrIndexExpr ci && this._model.VariableBindings.TryGetValue(ci, out var arr) && arr.Type is ArrayType)
       return this.ElementAddress(ci);
     throw new IrLoweringException("unsupported lvalue");
+  }
+
+  private void LowerLabel(LabelStmt label) {
+    var block = this._labels[label.Name];
+    if (!this.Terminated)
+      this._b.Br(block);                               // fall through into the label
+    this._b.Position(block);
+  }
+
+  private void LowerGoto(GotoStmt g) {
+    if (!this._labels.TryGetValue(g.Target, out var target))
+      throw new IrLoweringException($"GOTO to unknown label {g.Target}");
+    this._b.Br(target);
   }
 
   private void LowerEnd() {
