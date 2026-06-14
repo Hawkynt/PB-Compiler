@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -20,6 +22,10 @@ public static class InstCombine {
       if (simpler is null || ReferenceEquals(simpler, inst))
         continue;
 
+      if (simpler is IrInstruction created && created.Parent is null) {
+        inst.Parent!.InsertBefore(created, inst);     // a strength-reduced replacement needs a home
+        worklist.Enqueue(created);
+      }
       foreach (var user in inst.Users)               // users may now simplify further
         worklist.Enqueue(user);
       inst.ReplaceAllUsesWith(simpler);
@@ -57,6 +63,8 @@ public static class InstCombine {
         if (IsOne(r)) return l;
         if (IsOne(l)) return r;
         if (IsZero(r) || IsZero(l)) return Zero(t);
+        if (Pow2Shift(r) is { } sr) return new IrBinary(IrBinaryOp.Shl, l, new IrConstantInt(t, sr));   // x * 2^k -> x << k
+        if (Pow2Shift(l) is { } sl) return new IrBinary(IrBinaryOp.Shl, r, new IrConstantInt(t, sl));
         break;
       case IrBinaryOp.And:
         if (IsZero(r) || IsZero(l)) return Zero(t);
@@ -80,9 +88,13 @@ public static class InstCombine {
         break;
       case IrBinaryOp.SDiv or IrBinaryOp.UDiv:
         if (IsOne(r)) return l;
+        if (b.Op == IrBinaryOp.UDiv && Pow2Shift(r) is { } sd)
+          return new IrBinary(IrBinaryOp.LShr, l, new IrConstantInt(t, sd));    // unsigned x / 2^k -> x >>> k
         break;
       case IrBinaryOp.SRem or IrBinaryOp.URem:
         if (IsOne(r)) return Zero(t);
+        if (b.Op == IrBinaryOp.URem && r is IrConstantInt rc && Pow2Shift(rc) is not null)
+          return new IrBinary(IrBinaryOp.And, l, new IrConstantInt(t, (long)(rc.ZeroExtended - 1)));  // unsigned x % 2^k -> x & (2^k-1)
         break;
     }
     return null;
@@ -101,6 +113,14 @@ public static class InstCombine {
 
   private static bool HasSideEffects(IrInstruction inst) =>
     inst is IrStore or IrCall || inst.IsTerminator;
+
+  /// <summary>If the value is a positive power of two, returns its shift exponent; otherwise null.</summary>
+  private static long? Pow2Shift(IrValue v) {
+    if (v is not IrConstantInt c)
+      return null;
+    var u = c.ZeroExtended;
+    return u != 0 && (u & (u - 1)) == 0 ? BitOperations.TrailingZeroCount(u) : null;
+  }
 
   private static ulong FullMask(int bits) => bits >= 64 ? ~0UL : (1UL << bits) - 1;
   private static bool IsZero(IrValue v) => v is IrConstantInt c && c.IsZero;
