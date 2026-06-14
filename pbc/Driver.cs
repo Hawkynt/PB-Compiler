@@ -1,5 +1,7 @@
 using PowerBasic.Compiler.CodeGen;
 using PowerBasic.Compiler.Emit;
+using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
 
@@ -72,7 +74,7 @@ public static class Driver {
         case "--no-optimize":
           optimize = false; // the pb35-faithful escape hatch, even for pb36
           break;
-        case "--dump-tokens" or "--dump-ast" or "--dump-bind":
+        case "--dump-tokens" or "--dump-ast" or "--dump-bind" or "--emit-llvm":
           dumpStage = args[i];
           break;
         case ['-', ..] when args[i] is not "-": // unknown switches are tolerated like PBC.EXE's
@@ -123,6 +125,26 @@ public static class Driver {
       }
       if (dumpStage == "--dump-bind") {
         stdout.WriteLine($"{model.Procedures.Count} procedures, {model.ModuleVariables.Count} module variables, {model.Equates.Count} equates");
+        return 0;
+      }
+
+      if (dumpStage == "--emit-llvm") {
+        var module = IrLowering.TryLowerModule(model);
+        if (module is null) {
+          stderr.WriteLine("pbc: --emit-llvm: this program uses constructs the IR lowering does not yet support (strings, dynamic arrays, GOTO/GOSUB, I/O, intrinsics)");
+          return 1;
+        }
+        var pipeline = IrPassManager.Standard();
+        pipeline.RunOnModule(module);
+        Inliner.Run(module);
+        pipeline.RunOnModule(module);              // re-optimize the inlined bodies
+        var ll = LlvmEmitter.Emit(module, "x86_64-unknown-linux-gnu");
+        if (output != null) {
+          File.WriteAllText(output, ll);
+          stdout.WriteLine($"{Path.GetFileName(output)}: {ll.Length} bytes of LLVM IR");
+        } else {
+          stdout.Write(ll);
+        }
         return 0;
       }
 

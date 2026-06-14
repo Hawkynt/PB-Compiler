@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PowerBasic.Compiler\PowerBasic.Compiler.csproj" />
+    <ProjectReference Include="..\pbc\pbc.csproj" />
   </ItemGroup>
 
 </Project>
