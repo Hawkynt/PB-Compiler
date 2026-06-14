@@ -39,4 +39,7 @@ public sealed class IrModule(string name) {
 
   /// <summary>Finds a function by name, or null.</summary>
   public IrFunction? FindFunction(string name) => this._functions.FirstOrDefault(f => f.Name == name);
+
+  /// <summary>Finds a global variable by name, or null.</summary>
+  public IrGlobalVariable? FindGlobal(string name) => this._globals.FirstOrDefault(g => g.Name == name);
 }

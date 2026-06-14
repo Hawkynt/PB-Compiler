@@ -69,6 +69,10 @@ Supported today:
   `SPACE$`/`STRING$`, `HEX$`/`OCT$`; identical literals are interned to one global;
 - **console and file I/O** (`PRINT`/`INPUT`/`LINE INPUT`, `OPEN`/`CLOSE`/`PRINT #`/`INPUT #`)
   via `rt_print_*` / `rt_input_*` / `rt_file_*` declarations;
+- **`DATA`/`READ`/`RESTORE`**: all DATA items pack into one length-prefixed module blob
+  (`@.data`) walked by a module-global i32 cursor (`@.data_cursor`); numeric reads parse
+  via `rt_str_val`, string reads store the `rt_str_const` handle, `RESTORE [<label>]`
+  rewinds the cursor to 0 or to the label's blob offset;
 - intrinsics: `ABS`/`SGN`/`FIX`/`INT`/`CDBL`/`CSNG` (branchless/bitcast, no runtime) and
   the math functions `SQR`/`SIN`/`COS`/`EXP`/`LOG`/`TAN`/`ATN` lowered to the matching
   **LLVM intrinsics** (`llvm.sqrt.fN`, …) so `llc` optimizes them natively;
@@ -81,8 +85,8 @@ and sequential file-processing programs lower, optimize and compile to a native 
 object via `pbc --emit-llvm | llc` (linked against a runtime providing the `rt_*`
 functions; the `llvm.*` math intrinsics need no runtime).
 
-Not yet: dynamic arrays / `REDIM` (descriptors), `DATA`/`READ` and random/binary
-`GET`/`PUT` (aggregate globals + runtime table).
+Not yet: dynamic arrays / `REDIM` (descriptors), random/binary `GET`/`PUT` (record
+buffers + runtime table).
 
 ## Optimization passes (`Ir/Passes/`)
 

@@ -42,6 +42,12 @@ public sealed class IrLowering {
   private readonly List<(int Id, IrBasicBlock Cont)> _gosubConts = new();
   private int _gosubSeq;
 
+  // DATA/READ/RESTORE: every DATA item program-wide is packed into one byte blob - each
+  // item is a 2-byte little-endian length followed by its raw bytes. A module-global i32
+  // cursor holds the current byte offset; READ decodes the item there and advances.
+  private DataLayout? _dataLayout;
+  private readonly record struct DataLayout(byte[] Blob, IReadOnlyDictionary<string, int> LabelOffsets);
+
   private readonly record struct LoopContext(ExitKind Kind, IrBasicBlock Exit, IrBasicBlock Continue);
 
   private IrLowering(SemanticModel model, IReadOnlyDictionary<ProcedureSymbol, IrFunction>? procMap, IrModule? module) {
@@ -310,6 +316,9 @@ public sealed class IrLowering {
       case InputStmt inp: this.LowerInput(inp); break;
       case OpenStmt op: this.LowerOpen(op); break;
       case CloseStmt cl: this.LowerClose(cl); break;
+      case DataStmt: break;                          // DATA is gathered once into a module blob; the statement itself emits nothing
+      case ReadStmt rd: this.LowerRead(rd); break;
+      case RestoreStmt rs: this.LowerRestore(rs); break;
       case EndStmt: this.LowerEnd(); break;
       default: throw new IrLoweringException($"unsupported statement: {statement.GetType().Name}");
     }
@@ -539,6 +548,93 @@ public sealed class IrLowering {
       sw.AddCase(k + 1, target);                       // selector is 1-based
     }
     this._b.Position(fallthrough);
+  }
+
+  // ---- DATA / READ / RESTORE ----------------------------------------------
+
+  /// <summary>Packs every program-wide DATA item into one length-prefixed blob (computed once).</summary>
+  private DataLayout GetDataLayout() {
+    if (this._dataLayout is { } cached)
+      return cached;
+    var blob = new List<byte>();
+    var labels = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    GatherData(this._model.MainBody, blob, labels);
+    var layout = new DataLayout(blob.ToArray(), labels);
+    this._dataLayout = layout;
+    return layout;
+  }
+
+  private static void GatherData(IReadOnlyList<Statement> statements, List<byte> blob, Dictionary<string, int> labels) {
+    foreach (var s in statements)
+      switch (s) {
+        case LabelStmt l:
+          labels[l.Name] = blob.Count;                 // RESTORE <label> rewinds to the first DATA item at/after the label
+          break;
+        case DataStmt d:
+          foreach (var item in d.Items) {
+            var bytes = System.Text.Encoding.ASCII.GetBytes(item);
+            if (bytes.Length > 0xFFFF)
+              throw new IrLoweringException("DATA item exceeds 64KB");
+            blob.Add((byte)(bytes.Length & 0xFF));
+            blob.Add((byte)((bytes.Length >> 8) & 0xFF));
+            blob.AddRange(bytes);
+          }
+          break;
+        case IfStmt i:
+          GatherData(i.Then, blob, labels);
+          foreach (var (_, body) in i.ElseIfs) GatherData(body, blob, labels);
+          if (i.Else is { } e) GatherData(e, blob, labels);
+          break;
+        case ForStmt f: GatherData(f.Body, blob, labels); break;
+        case DoLoopStmt dl: GatherData(dl.Body, blob, labels); break;
+        case SelectStmt sel:
+          foreach (var arm in sel.Arms) GatherData(arm.Body, blob, labels);
+          break;
+      }
+  }
+
+  /// <summary>The shared DATA blob and read cursor, created on the module on first use.</summary>
+  private (IrGlobalVariable Blob, IrGlobalVariable Cursor) DataGlobals() {
+    if (this._module is null)
+      throw new IrLoweringException("DATA/READ requires whole-module lowering");
+    var blob = this._module.FindGlobal(".data")
+      ?? this._module.AddGlobal(new IrGlobalVariable(".data", IrType.I8) { Bytes = this.GetDataLayout().Blob, IsZeroInitialized = false });
+    var cursor = this._module.FindGlobal(".data_cursor")
+      ?? this._module.AddGlobal(new IrGlobalVariable(".data_cursor", IrType.I32) { IsZeroInitialized = true });
+    return (blob, cursor);
+  }
+
+  private void LowerRead(ReadStmt r) {
+    foreach (var target in r.Targets)
+      this.LowerReadInto(target);
+  }
+
+  private void LowerReadInto(Expression target) {
+    var (blob, cursor) = this.DataGlobals();
+    var off = this._b.Load(IrType.I32, cursor);
+    var len = this._b.ZExt(this._b.Load(IrType.I16, this._b.Gep(blob, off)), IrType.I32);       // 2-byte length prefix
+    var dataPtr = this._b.Gep(blob, this._b.Add(off, new IrConstantInt(IrType.I32, 2)));
+    var handle = this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_const", IrType.Ptr, IrType.Ptr, IrType.I32), dataPtr, len);
+    this._b.Store(this._b.Add(this._b.Add(off, new IrConstantInt(IrType.I32, 2)), len), cursor); // advance past length + bytes
+
+    this._model.VariableBindings.TryGetValue(target, out var sym);
+    var elementType = sym?.Type is ArrayType at ? at.Element : sym?.Type ?? this._model.TypeOf(target);
+    if (elementType is StringType) {
+      var address = target is CallOrIndexExpr ce ? this.ElementAddress(ce).Address : this.SlotFor(sym!);
+      this._b.Store(handle, address);                  // a string item is stored as its handle
+      return;
+    }
+    var value = this._b.Call(IrType.F64, this.RuntimeFn("rt_str_val", IrType.F64, IrType.Ptr), handle);  // parse a numeric item
+    var (addr, type) = this.LValue(target);
+    this._b.Store(this.Coerce(value, PbType.Double, type), addr);
+  }
+
+  private void LowerRestore(RestoreStmt r) {
+    var (_, cursor) = this.DataGlobals();
+    var offset = 0;
+    if (r.Target is { } label && !this.GetDataLayout().LabelOffsets.TryGetValue(label, out offset))
+      throw new IrLoweringException($"RESTORE to unknown DATA label {label}");
+    this._b.Store(new IrConstantInt(IrType.I32, offset), cursor);
   }
 
   private void LowerEnd() {
