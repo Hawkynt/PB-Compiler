@@ -50,6 +50,12 @@ public abstract class IrInstruction : IrValue {
         this.SetOperand(i, to);
   }
 
+  /// <summary>Removes the operand at <paramref name="index"/>, updating the use-list.</summary>
+  protected void RemoveOperandAt(int index) {
+    this._operands[index].RemoveUser(this);
+    this._operands.RemoveAt(index);
+  }
+
   /// <summary>
   /// Detaches this instruction from every operand's use-list (call before discarding
   /// it). The instruction must already be unused and removed from its block.

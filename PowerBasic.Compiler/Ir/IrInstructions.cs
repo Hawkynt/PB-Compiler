@@ -125,6 +125,16 @@ public sealed class IrPhi : IrInstruction {
         return this.GetOperand(i);
     return null;
   }
+
+  /// <summary>Drops the incoming edge from the given predecessor (used when a CFG edge disappears).</summary>
+  public void RemoveIncoming(IrBasicBlock block) {
+    for (var i = 0; i < this._blocks.Count; ++i)
+      if (ReferenceEquals(this._blocks[i], block)) {
+        this._blocks.RemoveAt(i);
+        this.RemoveOperandAt(i);
+        return;
+      }
+  }
 }
 
 /// <summary>A call: <c>[result =] call callee(args...)</c>. The callee is an operand (so indirect calls are uniform).</summary>
