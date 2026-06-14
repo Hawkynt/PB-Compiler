@@ -698,8 +698,31 @@ public sealed class IrLowering {
       "FIX" => this.LowerFix(call),
       "INT" => this.LowerInt(call),
       "CDBL" or "CSNG" => this.LowerConvert(call),
+      "LEN" => this.LowerLen(call),
       _ => throw new IrLoweringException($"intrinsic {name}"),
     };
+  }
+
+  private IrValue LowerLen(CallOrIndexExpr call) {
+    if (this._model.TypeOf(call.Arguments[0]) is not StringType)
+      throw new IrLoweringException("LEN of a non-string");
+    var length = this._b.Call(IrType.I32, this.RuntimeFn("rt_str_len", IrType.I32, IrType.Ptr), this.LowerStringExpr(call.Arguments[0]));
+    return this.Coerce(length, PbType.Long, this._model.TypeOf(call));   // LEN result narrows to its bound type
+  }
+
+  private IrValue LowerStringComparison(BinaryExpr expr, PbType resultPb) {
+    var cmp = this._b.Call(IrType.I32, this.RuntimeFn("rt_str_compare", IrType.I32, IrType.Ptr, IrType.Ptr),
+      this.LowerStringExpr(expr.Left), this.LowerStringExpr(expr.Right));   // <0 / 0 / >0
+    var pred = expr.Op switch {
+      BinaryOp.Equal => IrCmpPred.Eq,
+      BinaryOp.NotEqual => IrCmpPred.Ne,
+      BinaryOp.Less => IrCmpPred.Slt,
+      BinaryOp.LessEqual => IrCmpPred.Sle,
+      BinaryOp.Greater => IrCmpPred.Sgt,
+      BinaryOp.GreaterEqual => IrCmpPred.Sge,
+      _ => throw new IrLoweringException($"string comparison {expr.Op}"),
+    };
+    return this._b.SExt(this._b.Cmp(pred, cmp, new IrConstantInt(IrType.I32, 0)), IrTypeMapper.Map(resultPb));
   }
 
   private IrValue LowerConvert(CallOrIndexExpr call) {
@@ -822,7 +845,9 @@ public sealed class IrLowering {
     var resultPb = this._model.TypeOf(expr);
     return expr.Op switch {
       BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
-        or BinaryOp.LessEqual or BinaryOp.GreaterEqual => this.LowerComparison(expr, leftPb, rightPb, resultPb),
+        or BinaryOp.LessEqual or BinaryOp.GreaterEqual => leftPb is StringType
+          ? this.LowerStringComparison(expr, resultPb)
+          : this.LowerComparison(expr, leftPb, rightPb, resultPb),
       _ => this.LowerArithmetic(expr, leftPb, rightPb, resultPb),
     };
   }

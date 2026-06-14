@@ -39,6 +39,26 @@ public sealed class StringLoweringTests {
   }
 
   [Test]
+  public void StringLength_LowersToRuntimeLen() {
+    var module = LowerOptimized("a$ = \"apple\"\nn% = LEN(a$)\nPRINT n%\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    Assert.That(LlvmEmitter.Emit(module!), Does.Contain("call i32 @rt_str_len(ptr"));
+  }
+
+  [Test]
+  public void StringComparison_LowersToRuntimeCompare() {
+    var module = LowerOptimized("a$ = \"x\"\nIF a$ = \"x\" THEN\n PRINT \"yes\"\nEND IF\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var text = LlvmEmitter.Emit(module!);
+    Assert.That(text, Does.Contain("call i32 @rt_str_compare(ptr"));
+    Assert.That(text, Does.Contain("icmp eq i32"));
+  }
+
+  [Test]
   public void StringProgram_CompilesToNativeViaLlc() {
     var module = LowerOptimized("a$ = \"Hello, \"\nb$ = \"world!\"\nPRINT a$ & b$\nEND");
     Assert.That(module, Is.Not.Null);
