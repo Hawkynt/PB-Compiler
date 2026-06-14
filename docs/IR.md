@@ -56,15 +56,16 @@ Supported today:
 - scalar integer/float arithmetic, bitwise, comparisons (sign-extended to BASIC's
   `-1`/`0`), `Eqv`/`Imp`, unary negate/not — **faithful to PB's `INTEGER+INTEGER → SINGLE`
   promotion**;
-- `IF`/`ELSEIF`/`ELSE`, `FOR` (constant step), `DO` (pre/post `WHILE`/`UNTIL`,
-  infinite), `EXIT`/`ITERATE`;
+- `IF`/`ELSEIF`/`ELSE`, `FOR` (constant **or runtime** step), `DO` (pre/post
+  `WHILE`/`UNTIL`, infinite), `EXIT`/`ITERATE`, `END`, `SWAP`;
 - `SELECT CASE` (value / list / `x TO y` range / `IS <rel>` arms, `CASE ELSE`) as a
   short-circuit comparison chain;
 - static arrays (1-D and multi-dimensional, row-major byte GEP);
+- the pure numeric intrinsics `ABS`, `SGN`, `FIX`, `INT` (branchless / bitcast, no runtime);
 - whole modules: user `SUB`/`FUNCTION` with scalar **BYVAL and BYREF** parameters
   and direct calls; a procedure with an unsupported body is kept as a declaration.
 
-Not yet: strings, dynamic arrays, `GOTO`/`GOSUB`, file/console I/O, intrinsics.
+Not yet: strings, dynamic arrays, `GOTO`/`GOSUB`, file/console I/O, other intrinsics.
 
 ## Optimization passes (`Ir/Passes/`)
 
@@ -72,15 +73,24 @@ Per-function (`IrPassManager.Standard()`, run to a verified fixpoint):
 
 1. **mem2reg** — promote allocas to SSA registers + phis (iterated dominance
    frontier; PB zero-init seeds reads, never `undef`).
-2. **instcombine** — constant folding + algebraic identities + strength reduction
-   (`x*2^k→shl`, unsigned `x/2^k→lshr`, unsigned `x MOD 2^k→and`) + canonicalization
-   (double-complement elimination, constant reassociation through op chains).
+2. **instcombine** — constant folding (incl. bitcast); algebraic identities (x+0,
+   x*1, x*0, x^x, absorption, x+x→shl, x*-1→-x, double negate, add/sub cancellation);
+   strength reduction (`x*2^k→shl`, unsigned `x/2^k→lshr`, `x MOD 2^k→and`);
+   canonicalization (double-complement, constant reassociation through op chains,
+   sub→add-of-negation, constant-to-RHS comparison swap, widened-bool collapse,
+   `gep p,0→p`).
 3. **sccp** — Wegman-Zadeck conditional constant propagation; deletes dead arms
    and unreachable blocks.
-4. **gvn** — dominator-scoped global value numbering (commutative-aware).
-5. **licm** — hoist loop-invariant, non-trapping computations into the preheader.
-6. **dce** — remove unused side-effect-free instructions.
-7. **simplifycfg** — trivial-phi elimination + single-predecessor block merging.
+4. **correlate** — correlated value propagation (facts from `if (x==C)` into the
+   guarded region).
+5. **gvn** — dominator-scoped global value numbering (commutative-aware).
+6. **memopt** — intra-block load/store forwarding (sound alias test).
+7. **dse** — intra-block dead-store elimination.
+8. **licm** — hoist loop-invariant, non-trapping computations into the preheader.
+9. **dce** — remove unused side-effect-free instructions.
+10. **ifconv** — if-conversion: collapse a simple diamond into `select`.
+11. **simplifycfg** — trivial-phi elimination, single-predecessor merging, constant/
+    identical-target branch folding, unreachable-block removal.
 
 Module-level: **inliner** — inline direct calls to non-recursive single-block
 callees (run between per-function rounds).
