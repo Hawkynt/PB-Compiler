@@ -185,6 +185,7 @@ public sealed partial class DosRuntime {
       asm.Jz(keepCol);
       asm.Dec(Reg.AX);
       asm.Mov(Reg.DL, Reg.AL);
+      asm.Mov(Mem.Word(asm.Lbl("rt_col")), Reg.AX);  // POS(0) follows the LOCATE column (0-based)
       asm.MarkLabel(keepCol);
       asm.Mov(Reg.AH, (Imm)2);
       asm.Xor(Reg.BH, Reg.BH);
