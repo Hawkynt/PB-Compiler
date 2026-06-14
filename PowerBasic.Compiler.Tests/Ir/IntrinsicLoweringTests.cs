@@ -64,4 +64,33 @@ public sealed class IntrinsicLoweringTests {
 
     Assert.That(IrPrinter.Print(fn), Does.Contain("store i16 -1"));
   }
+
+  [Test]
+  public void Fix_OfSingle_TruncatesThroughInteger() {
+    var fn = Lower("x! = -2.5\na! = FIX(x!)");
+
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    var text = IrPrinter.Print(fn);
+    Assert.That(text, Does.Contain("fptosi f32"));
+    Assert.That(text, Does.Contain("sitofp i64"));
+  }
+
+  [Test]
+  public void Int_OfSingle_FloorsWithAnAdjustment() {
+    var fn = Lower("x! = -2.5\nb! = INT(x!)");
+
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    var text = IrPrinter.Print(fn);
+    Assert.That(text, Does.Contain("fcmp olt f32"));
+    Assert.That(text, Does.Contain("fsub f32"));
+  }
+
+  [Test]
+  public void Fix_OfConstant_FoldsAway() {
+    var fn = Lower("a! = FIX(2.9)");
+    InstCombine.Run(fn);
+
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(IrPrinter.Print(fn), Does.Not.Contain("fptosi"));   // FIX(2.9) folded to a constant
+  }
 }

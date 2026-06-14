@@ -511,8 +511,33 @@ public sealed class IrLowering {
     return name.ToUpperInvariant() switch {
       "ABS" => this.LowerAbs(call),
       "SGN" => this.LowerSgn(call),
+      "FIX" => this.LowerFix(call),
+      "INT" => this.LowerInt(call),
       _ => throw new IrLoweringException($"intrinsic {name}"),
     };
+  }
+
+  private IrValue LowerFix(CallOrIndexExpr call) {
+    var resultPb = this._model.TypeOf(call);
+    var ty = IrTypeMapper.Map(resultPb);
+    var v = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
+    if (ty.IsInteger)
+      return v;                                       // integers have no fractional part
+    // FIX = truncate toward zero: round-trip through a 64-bit integer
+    return this._b.Cast(IrCastOp.SIToFP, this._b.Cast(IrCastOp.FPToSI, v, IrType.I64), ty);
+  }
+
+  private IrValue LowerInt(CallOrIndexExpr call) {
+    var resultPb = this._model.TypeOf(call);
+    var ty = IrTypeMapper.Map(resultPb);
+    var v = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
+    if (ty.IsInteger)
+      return v;
+    // INT = floor: trunc toward zero, then subtract one when truncation rounded a negative up
+    var trunc = this._b.Cast(IrCastOp.SIToFP, this._b.Cast(IrCastOp.FPToSI, v, IrType.I64), ty);
+    var roundedUp = this._b.Cmp(IrCmpPred.Folt, v, trunc);              // v < trunc(v) => was negative non-integer
+    var one = this._b.Cast(IrCastOp.SIToFP, this._b.ZExt(roundedUp, IrType.I32), ty);
+    return this._b.Binary(IrBinaryOp.FSub, trunc, one);
   }
 
   private IrValue LowerAbs(CallOrIndexExpr call) {
