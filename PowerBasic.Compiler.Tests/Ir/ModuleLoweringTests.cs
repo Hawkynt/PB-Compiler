@@ -61,7 +61,7 @@ public sealed class ModuleLoweringTests {
       "y% = f%(3)\n" +
       "\n" +
       "FUNCTION f%(BYVAL n%)\n" +
-      "  OPEN \"x\" FOR INPUT AS #1\n" +   // file I/O unsupported -> body declines, signature stays
+      "  BEEP\n" +                  // hardware command, unsupported -> body declines, signature stays
       "  f% = n%\n" +
       "END FUNCTION");
 

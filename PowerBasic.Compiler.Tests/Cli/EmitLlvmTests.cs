@@ -37,7 +37,7 @@ public sealed class EmitLlvmTests {
 
   [Test]
   public void EmitLlvm_ForAnUnsupportedProgram_FailsWithADiagnostic() {
-    var (code, _, err) = RunEmit("OPEN \"x\" FOR INPUT AS #1\nCLOSE #1");   // file I/O is not in the subset yet
+    var (code, _, err) = RunEmit("BEEP");   // hardware command, not in the subset
 
     Assert.That(code, Is.EqualTo(1));
     Assert.That(err, Does.Contain("--emit-llvm"));

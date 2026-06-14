@@ -46,7 +46,11 @@ public sealed class InputLoweringTests {
   }
 
   [Test]
-  public void FileInput_StillDeclines() {
-    Assert.That(LowerOptimized("INPUT #1, n%\nEND"), Is.Null);   // file input not modelled yet
+  public void FileInput_LowersToAFileRuntimeRead() {
+    var module = LowerOptimized("OPEN \"x\" FOR INPUT AS #1\nINPUT #1, n%\nCLOSE #1\nPRINT n%\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    Assert.That(LlvmEmitter.Emit(module!), Does.Contain("@rt_finput_i16(i32"));
   }
 }

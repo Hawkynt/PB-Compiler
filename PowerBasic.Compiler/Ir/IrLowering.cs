@@ -238,6 +238,8 @@ public sealed class IrLowering {
       case OnGotoStmt og: this.LowerOnGoto(og); break;
       case PrintStmt pr: this.LowerPrint(pr); break;
       case InputStmt inp: this.LowerInput(inp); break;
+      case OpenStmt op: this.LowerOpen(op); break;
+      case CloseStmt cl: this.LowerClose(cl); break;
       case EndStmt: this.LowerEnd(); break;
       default: throw new IrLoweringException($"unsupported statement: {statement.GetType().Name}");
     }
@@ -282,79 +284,95 @@ public sealed class IrLowering {
 
   private void LowerPrint(PrintStmt p) {
     if (this._module is null)
-      throw new IrLoweringException("PRINT requires whole-module lowering (runtime declarations live on the module)");
-    if (p.FileNumber is not null || p.IsLPrint || p.UsingFormat is not null)
-      throw new IrLoweringException("PRINT to file / LPRINT / PRINT USING");
+      throw new IrLoweringException("PRINT requires whole-module lowering");
+    if (p.IsLPrint || p.UsingFormat is not null)
+      throw new IrLoweringException("LPRINT / PRINT USING");
+    var file = p.FileNumber is { } fn ? this.FileNum(fn) : null;
 
     foreach (var item in p.Items) {
       if (item.Value is not { } expr)
         continue;
       if (expr is StringLiteralExpr lit) {
         var bytes = System.Text.Encoding.ASCII.GetBytes(lit.Value);
-        var global = this._module!.AddStringConstant(bytes);
-        this._b.Call(IrType.Void, this.RuntimeFn("rt_print_str", IrType.Void, IrType.Ptr, IrType.I32), global, new IrConstantInt(IrType.I32, bytes.Length));
+        var global = this._module.AddStringConstant(bytes);
+        this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], global, new IrConstantInt(IrType.I32, bytes.Length));
         continue;
       }
       if (this._model.TypeOf(expr) is StringType) {
-        this._b.Call(IrType.Void, this.RuntimeFn("rt_print_strvar", IrType.Void, IrType.Ptr), this.LowerStringExpr(expr));
+        this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr], this.LowerStringExpr(expr));
         continue;
       }
       if (this._model.TypeOf(expr) is not ScalarType s)
         throw new IrLoweringException("PRINT of a non-numeric, non-literal item");
-      var (name, ty) = PrintRuntime(s);
-      this._b.Call(IrType.Void, this.RuntimeFn(name, IrType.Void, ty), this.Coerce(this.LowerExpr(expr), s, s));
+      var (suffix, ty) = NumericSuffix(s);
+      this.EmitIo(file, "print", suffix, IrType.Void, [ty], this.Coerce(this.LowerExpr(expr), s, s));
     }
 
-    // a trailing comma/semicolon suppresses the newline; otherwise (incl. bare PRINT) emit one
     if (p.Items.Count == 0 || p.Items[^1].Separator == PrintSeparator.Newline)
-      this._b.Call(IrType.Void, this.RuntimeFn("rt_print_nl", IrType.Void));
+      this.EmitIo(file, "print", "nl", IrType.Void, []);
   }
 
   private void LowerInput(InputStmt input) {
     if (this._module is null)
       throw new IrLoweringException("INPUT requires whole-module lowering");
-    if (input.FileNumber is not null)
-      throw new IrLoweringException("INPUT from a file");
+    var file = input.FileNumber is { } fn ? this.FileNum(fn) : null;
 
-    if (input.Prompt is { } prompt) {
+    if (input.Prompt is { } prompt && file is null) {
       var bytes = System.Text.Encoding.ASCII.GetBytes(prompt);
       var global = this._module.AddStringConstant(bytes);
-      this._b.Call(IrType.Void, this.RuntimeFn("rt_print_str", IrType.Void, IrType.Ptr, IrType.I32), global, new IrConstantInt(IrType.I32, bytes.Length));
+      this.EmitIo(null, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], global, new IrConstantInt(IrType.I32, bytes.Length));
     }
 
     foreach (var target in input.Targets) {
       if (target is NameExpr && this._model.VariableBindings.TryGetValue(target, out var strSym) && strSym.Type is StringType) {
-        var read = input.IsLineInput
-          ? this._b.Call(IrType.Ptr, this.RuntimeFn("rt_input_line", IrType.Ptr))
-          : this._b.Call(IrType.Ptr, this.RuntimeFn("rt_input_str", IrType.Ptr));
-        this._b.Store(read, this.SlotFor(strSym));
+        this._b.Store(this.EmitIo(file, "input", input.IsLineInput ? "line" : "str", IrType.Ptr, []), this.SlotFor(strSym));
         continue;
       }
       var (addr, type) = this.LValue(target);
       if (type is not ScalarType s)
         throw new IrLoweringException("INPUT into a non-scalar target");
-      var (name, ty) = InputRuntime(s);
-      this._b.Store(this._b.Call(ty, this.RuntimeFn(name, ty)), addr);
+      var (suffix, ty) = NumericSuffix(s);
+      this._b.Store(this.EmitIo(file, "input", suffix, ty, []), addr);
     }
   }
 
-  private static (string Name, IrType Type) InputRuntime(ScalarType s) {
-    if (s.IsFloat)
-      return s.ByteSize switch { 4 => ("rt_input_single", IrType.F32), 8 => ("rt_input_double", IrType.F64), _ => ("rt_input_ext", IrType.F80) };
-    var bits = s.ByteSize * 8;
-    return ($"rt_input_{(s.Signed ? "i" : "u")}{bits}", IrType.Integer(bits));
+  private void LowerOpen(OpenStmt o) {
+    if (this._module is null)
+      throw new IrLoweringException("OPEN requires whole-module lowering");
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_file_open", IrType.Void, IrType.I32, IrType.Ptr, IrType.I32),
+      this.FileNum(o.FileNumber), this.LowerStringExpr(o.FileName), new IrConstantInt(IrType.I32, (int)o.Mode));
   }
 
-  private static (string Name, IrType Type) PrintRuntime(ScalarType s) {
+  private void LowerClose(CloseStmt c) {
+    if (this._module is null)
+      throw new IrLoweringException("CLOSE requires whole-module lowering");
+    if (c.FileNumbers.Count == 0) {
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_file_close_all", IrType.Void));
+      return;
+    }
+    foreach (var fn in c.FileNumbers)
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_file_close", IrType.Void, IrType.I32), this.FileNum(fn));
+  }
+
+  /// <summary>Lowers a file-number expression (unwrapping the #n marker) to an i32.</summary>
+  private IrValue FileNum(Expression e) {
+    var inner = e is FileNumberExpr f ? f.Number : e;
+    return this.Coerce(this.LowerExpr(inner), this._model.TypeOf(inner), PbType.Long);
+  }
+
+  /// <summary>Emits a console (rt_*) or file (rt_f*, file number first) I/O runtime call.</summary>
+  private IrValue EmitIo(IrValue? file, string op, string suffix, IrType returnType, IrType[] argTypes, params IrValue[] args) {
+    var name = file is null ? $"rt_{op}_{suffix}" : $"rt_f{op}_{suffix}";
+    var types = file is null ? argTypes : [IrType.I32, .. argTypes];
+    var callArgs = file is null ? args : [file, .. args];
+    return this._b.Call(returnType, this.RuntimeFn(name, returnType, types), callArgs);
+  }
+
+  private static (string Suffix, IrType Type) NumericSuffix(ScalarType s) {
     if (s.IsFloat)
-      return s.ByteSize switch {
-        4 => ("rt_print_single", IrType.F32),
-        8 => ("rt_print_double", IrType.F64),
-        _ => ("rt_print_ext", IrType.F80),
-      };
+      return s.ByteSize switch { 4 => ("single", IrType.F32), 8 => ("double", IrType.F64), _ => ("ext", IrType.F80) };
     var bits = s.ByteSize * 8;
-    var kind = s.Signed ? "i" : "u";
-    return ($"rt_print_{kind}{bits}", IrType.Integer(bits));
+    return ($"{(s.Signed ? "i" : "u")}{bits}", IrType.Integer(bits));
   }
 
   /// <summary>Finds or declares an external runtime function by name and signature.</summary>
