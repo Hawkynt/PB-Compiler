@@ -19,10 +19,16 @@ public enum Dialect {
   Pb32 = 32,
   Pb35 = 35,
   /// <summary>
-  /// The envisioned optimizing successor (docs/PB36.md): a strict language
-  /// superset of <see cref="Pb35"/> with byte-identical observable behavior -
-  /// it only enables optimizations (runtime trimming, constant folding,
-  /// strength reduction, zero idioms, ...).
+  /// The envisioned optimizing successor (docs/PB36.md). Today it is a strict
+  /// superset of <see cref="Pb35"/> with byte-identical observable behavior that
+  /// only switches the (now dialect-agnostic) optimizer on by default - i.e. a
+  /// preset for "pb35 front-end + Optimize". It is kept as its own dialect on
+  /// purpose: it is the planned home for genuinely new syntax and a richer
+  /// runtime that WOULD make it a real language - e.g. <c>VAR</c>/<c>AUTO</c>
+  /// type inference with fused declare+initialize, lambdas and expression-bodied
+  /// members (VB.NET-style), EMS/XMS-backed heaps beyond 1 MB, a deterministic
+  /// reference-counting GC, and additional data types. Those are future work;
+  /// for now pb36 == optimized pb35.
   /// </summary>
   Pb36 = 36,
   Qb10 = 110,
