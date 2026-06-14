@@ -112,6 +112,10 @@ public static class InstCombine {
         break;
       case IrBinaryOp.Shl or IrBinaryOp.LShr or IrBinaryOp.AShr:
         if (IsZero(r)) return l;
+        // (x shift a) shift b -> x shift (a+b) for the same shift op, when the total stays in range
+        if (r is IrConstantInt rb && l is IrBinary shiftInner && shiftInner.Op == b.Op
+            && shiftInner.Rhs is IrConstantInt ra && ra.Value >= 0 && rb.Value >= 0 && ra.Value + rb.Value < t.Bits)
+          return new IrBinary(b.Op, shiftInner.Lhs, new IrConstantInt(t, ra.Value + rb.Value));
         break;
       case IrBinaryOp.SDiv or IrBinaryOp.UDiv:
         if (IsOne(r)) return l;
