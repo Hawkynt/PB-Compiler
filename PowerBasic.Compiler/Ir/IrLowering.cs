@@ -314,7 +314,7 @@ public sealed class IrLowering {
       return s.ByteSize switch {
         4 => ("rt_print_single", IrType.F32),
         8 => ("rt_print_double", IrType.F64),
-        _ => throw new IrLoweringException("PRINT of EXT (80-bit)"),
+        _ => ("rt_print_ext", IrType.F80),
       };
     var bits = s.ByteSize * 8;
     var kind = s.Signed ? "i" : "u";
@@ -703,6 +703,11 @@ public sealed class IrLowering {
       "LEN" => this.LowerLen(call),
       "ASC" => this.LowerAsc(call),
       "VAL" => this.LowerVal(call),
+      "SQR" => this.LowerMath(call, "sqrt"),
+      "SIN" => this.LowerMath(call, "sin"),
+      "COS" => this.LowerMath(call, "cos"),
+      "EXP" => this.LowerMath(call, "exp"),
+      "LOG" => this.LowerMath(call, "log"),
       _ => throw new IrLoweringException($"intrinsic {name}"),
     };
   }
@@ -738,6 +743,16 @@ public sealed class IrLowering {
   private IrValue LowerVal(CallOrIndexExpr call) {
     var value = this._b.Call(IrType.F64, this.RuntimeFn("rt_str_val", IrType.F64, IrType.Ptr), this.LowerStringExpr(call.Arguments[0]));
     return this.Coerce(value, PbType.Double, this._model.TypeOf(call));
+  }
+
+  /// <summary>Lowers a floating-point math intrinsic to the matching LLVM intrinsic (llvm.sqrt.fN, etc.).</summary>
+  private IrValue LowerMath(CallOrIndexExpr call, string fn) {
+    var resultPb = this._model.TypeOf(call);
+    var ty = IrTypeMapper.Map(resultPb);
+    if (!ty.IsFloat)
+      throw new IrLoweringException($"{fn} on a non-float result");
+    var arg = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
+    return this._b.Call(ty, this.RuntimeFn($"llvm.{fn}.f{ty.Bits}", ty, ty), arg);
   }
 
   private IrValue LowerAsc(CallOrIndexExpr call) {
