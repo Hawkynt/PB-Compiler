@@ -90,6 +90,27 @@ public sealed partial class CodeGenerator {
     return true;
   }
 
+  /// <summary>
+  /// pb36 O17 in the modular int16 path: when the whole tree folds via SCCP-proven
+  /// reads, emit the low 16 bits straight into AX instead of the per-node ALU
+  /// sequence. The modular path runs only unchecked, so no overflow trap is lost.
+  /// </summary>
+  private bool TryEmitModularProvenConstant(Expression e) {
+    if (this._provenReads is not { Count: > 0 } proven || this.CheckOverflow || this.CheckNumeric)
+      return false;
+    var substituted = SubstituteProven(e, proven, out var changed);
+    if (!changed)
+      return false;
+    if (this.Pb36Folder.TryFold(substituted) is not { Integer: { } raw })
+      return false;
+    var value = (short)(raw & 0xFFFF);
+    if (value == 0)
+      this._asm.Xor(Reg.AX, Reg.AX);
+    else
+      this._asm.Mov(Reg.AX, (int)value);
+    return true;
+  }
+
   /// <summary>Clones <paramref name="e"/> replacing each proven-constant read with its literal; <paramref name="changed"/> reports whether any substitution happened.</summary>
   private static Expression SubstituteProven(Expression e, Dictionary<NameExpr, long> proven, out bool changed) {
     switch (e) {

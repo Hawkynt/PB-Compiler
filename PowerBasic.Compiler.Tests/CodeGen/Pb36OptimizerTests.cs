@@ -392,10 +392,10 @@ public sealed class Pb36OptimizerTests {
 
   [Test]
   public void Emit_GivenModularMultiplyByThree_WhenPb36Speed_ThenShiftAddReplacesImul() {
-    // y% = x% * 3 in the modular int16 path lowers to (v + v<<1); no IMUL BX,
-    // and no PRINT means the integer formatter (which has none anyway) is absent
-    const string source = "$OPTIMIZE SPEED\nx% = 11\ny% = x% * 3\nEND";
-    var pb36 = Compile(source, Dialect.Pb36);
+    // x% is made opaque (BYREF call) so SCCP cannot fold it - this pins the
+    // modular shift-add path, not whole-expression constant folding
+    const string source = "$OPTIMIZE SPEED\nx% = 11\nT x%\ny% = x% * 3\nEND" + _TOUCH_END;
+    var pb36 = Compile(_TOUCH + source, Dialect.Pb36);
     Assert.That(CountImulBx(pb36), Is.Zero, "x% * 3 under SPEED should be a shift-add chain, no IMUL BX");
   }
 
@@ -403,8 +403,8 @@ public sealed class Pb36OptimizerTests {
   public void Emit_GivenModularMultiplyByThirteen_WhenPb36Speed_ThenKeepsCompactImul() {
     // 13 = 1101b: three set bits, not a contiguous run - no cheap shift chain,
     // so the compact IMUL BX is kept
-    const string source = "$OPTIMIZE SPEED\nx% = 11\ny% = x% * 13\nEND";
-    var pb36 = Compile(source, Dialect.Pb36);
+    const string source = "$OPTIMIZE SPEED\nx% = 11\nT x%\ny% = x% * 13\nEND" + _TOUCH_END;
+    var pb36 = Compile(_TOUCH + source, Dialect.Pb36);
     Assert.That(CountImulBx(pb36), Is.EqualTo(1), "x% * 13 has no two-term decomposition, keep IMUL BX");
   }
 
@@ -412,17 +412,17 @@ public sealed class Pb36OptimizerTests {
   public void Emit_GivenModularMultiplyByThree_WhenPb36Default_ThenKeepsImul() {
     // the shift chains are a SPEED trade (a few bytes for the cycles); SIZE/default
     // keep the 2-byte IMUL
-    const string source = "x% = 11\ny% = x% * 3\nEND";
-    var pb36 = Compile(source, Dialect.Pb36);
+    const string source = "x% = 11\nT x%\ny% = x% * 3\nEND" + _TOUCH_END;
+    var pb36 = Compile(_TOUCH + source, Dialect.Pb36);
     Assert.That(CountImulBx(pb36), Is.EqualTo(1), "without $OPTIMIZE SPEED the compact IMUL BX is kept");
   }
 
   [Test]
   public void Emit_GivenModularAddConstant_WhenPb36_ThenFewerBytesThanVariableAdd() {
     // y% = x% + 7 folds to one immediate ADD; y% = x% + z% must load and combine
-    // a second operand, so the constant form is strictly smaller
-    var constAdd = Compile("x% = 100\ny% = x% + 7\nEND", Dialect.Pb36);
-    var varAdd = Compile("x% = 100\nz% = 7\ny% = x% + z%\nEND", Dialect.Pb36);
+    // a second operand, so the constant form is strictly smaller (x%/z% opaque)
+    var constAdd = Compile(_TOUCH + "x% = 100\nT x%\ny% = x% + 7\nEND" + _TOUCH_END, Dialect.Pb36);
+    var varAdd = Compile(_TOUCH + "x% = 100\nz% = 7\nT x%\nT z%\ny% = x% + z%\nEND" + _TOUCH_END, Dialect.Pb36);
     Assert.That(constAdd.Length, Is.LessThan(varAdd.Length),
       "v% + const should fold to one immediate ALU op, smaller than a two-operand add");
   }
@@ -495,8 +495,9 @@ public sealed class Pb36OptimizerTests {
   [Test]
   public void Emit_GivenModularIncrementByOne_WhenPb36_ThenUsesIncNotAddImmediate() {
     // y% = x% + 1 folds to INC AX (one byte); y% = x% + 5 needs ADD AX,imm (three)
-    var inc = Compile("x% = 100\ny% = x% + 1\nEND", Dialect.Pb36);
-    var add = Compile("x% = 100\ny% = x% + 5\nEND", Dialect.Pb36);
+    // x% is opaque (BYREF call) so SCCP cannot fold the whole expression away
+    var inc = Compile(_TOUCH + "x% = 100\nT x%\ny% = x% + 1\nEND" + _TOUCH_END, Dialect.Pb36);
+    var add = Compile(_TOUCH + "x% = 100\nT x%\ny% = x% + 5\nEND" + _TOUCH_END, Dialect.Pb36);
     Assert.That(inc.Length, Is.LessThan(add.Length), "+1 should be INC AX, smaller than ADD AX,imm");
   }
 

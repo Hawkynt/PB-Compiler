@@ -533,6 +533,10 @@ public sealed partial class CodeGenerator {
   }
 
   private void EmitModularInt16Core(Expression e) {
+    // pb36 O17: a modular tree that SCCP proved constant collapses to one load
+    if (this.TryEmitModularProvenConstant(e))
+      return;
+
     var asm = this._asm;
     if (model.TypeOf(e) is ScalarType { IsFloat: false, ByteSize: <= 2 } leafType) {
       this.EmitExpression(e);
