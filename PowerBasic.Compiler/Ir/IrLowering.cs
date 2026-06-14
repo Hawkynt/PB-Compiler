@@ -88,9 +88,9 @@ public sealed class IrLowering {
     }
     var args = new List<IrArgument>();
     foreach (var p in proc.Parameters) {
-      if (!p.ByVal || p.Seg || p.Optional || !IrTypeMapper.TryMap(p.Type, out var pty))
-        return false;                                  // only scalar BYVAL parameters for now
-      args.Add(new IrArgument(pty, args.Count, p.Name));
+      if (p.Seg || p.Optional || !IrTypeMapper.TryMap(p.Type, out var pty))
+        return false;                                  // scalar parameters only (SEG/CDECL-optional excluded)
+      args.Add(new IrArgument(p.ByVal ? pty : IrType.Ptr, args.Count, p.Name));  // BYREF parameters arrive as pointers
     }
     fn = new IrFunction(proc.Name, ret, args);
     return true;
@@ -106,11 +106,15 @@ public sealed class IrLowering {
     this._entry = fn.CreateBlock("entry");
     this._b = new IrBuilder(this._entry);
 
-    // BYVAL parameters are mutable locals: copy each argument into its slot
+    // bind parameters: BYVAL copies the argument into a mutable local slot; BYREF
+    // takes the incoming pointer as the variable's address (reads/writes go through it)
     if (proc is not null)
       for (var i = 0; i < proc.Parameters.Count; ++i) {
-        var slot = this.SlotFor(proc.Parameters[i]);
-        this._b.Store(fn.Parameters[i], slot);
+        var p = proc.Parameters[i];
+        if (p.ByVal)
+          this._b.Store(fn.Parameters[i], this.SlotFor(p));
+        else
+          this._addr[p] = fn.Parameters[i];
       }
 
     this.LowerStatements(body);
@@ -499,9 +503,28 @@ public sealed class IrLowering {
     if (arguments.Count != proc.Parameters.Count)
       throw new IrLoweringException("argument count mismatch (optional/CDECL not modelled)");
     var args = new List<IrValue>(arguments.Count);
-    for (var i = 0; i < arguments.Count; ++i)
-      args.Add(this.Coerce(this.LowerExpr(arguments[i]), this._model.TypeOf(arguments[i]), proc.Parameters[i].Type));
+    for (var i = 0; i < arguments.Count; ++i) {
+      var p = proc.Parameters[i];
+      args.Add(p.ByVal
+        ? this.Coerce(this.LowerExpr(arguments[i]), this._model.TypeOf(arguments[i]), p.Type)
+        : this.AddressOfArgument(arguments[i], p.Type));
+    }
     return this._b.Call(callee.ReturnType, callee, args);
+  }
+
+  /// <summary>A pointer to a BYREF argument: the variable's own slot when the type matches, else a temp copy.</summary>
+  private IrValue AddressOfArgument(Expression arg, PbType paramType) {
+    if (arg is NameExpr && this._model.VariableBindings.TryGetValue(arg, out var sym) && sym.Type.Equals(paramType))
+      return this.SlotFor(sym);
+    if (arg is CallOrIndexExpr indexed && this._model.VariableBindings.TryGetValue(indexed, out var arrSym) && arrSym.Type is ArrayType) {
+      var (address, element) = this.ElementAddress(indexed);
+      if (element.Equals(paramType))
+        return address;
+    }
+    // a constant / expression / type-mismatched lvalue: materialize a temporary
+    var temp = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrTypeMapper.Map(paramType)) { Name = "byref.tmp" });
+    this._b.Store(this.Coerce(this.LowerExpr(arg), this._model.TypeOf(arg), paramType), temp);
+    return temp;
   }
 
   private IrValue LowerUnary(UnaryExpr u) {

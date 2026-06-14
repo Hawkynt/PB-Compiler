@@ -72,8 +72,8 @@ public sealed class ModuleLoweringTests {
   }
 
   [Test]
-  public void Module_DeclinesWhenMainCallsAByRefProcedure() {
-    // BYREF parameters are not modelled yet, so a program that calls one cannot lower
+  public void Module_LowersAByRefProcedureAndPassesAddresses() {
+    // BYREF parameters arrive as pointers; the call passes the variable's address
     var module = LowerModule(
       "DECLARE SUB inc(x%)\n" +
       "q% = 0\n" +
@@ -81,6 +81,28 @@ public sealed class ModuleLoweringTests {
       "\n" +
       "SUB inc(x%)\n" +
       "  x% = x% + 1\n" +
+      "END SUB");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var sub = module!.Functions.First(f => f.Name != "main");
+    Assert.That(sub.Parameters[0].Type, Is.EqualTo(IrType.Ptr));   // BYREF -> pointer parameter
+    Assert.That(sub.IsDeclaration, Is.False);
+    // the call passes a pointer (q's address), so q's slot is not promoted away
+    Assert.That(module.FindFunction("main")!.AllInstructions.OfType<IrCall>().Single().ArgCount, Is.EqualTo(1));
+  }
+
+  [Test]
+  public void Module_DeclinesWhenAProcedureTakesAStringParameter() {
+    // strings are not in the subset, so a procedure taking one cannot be modelled and,
+    // since main calls it, the whole module declines
+    var module = LowerModule(
+      "DECLARE SUB greet(s$)\n" +
+      "CALL greet(\"hi\")\n" +
+      "\n" +
+      "SUB greet(s$)\n" +
+      "  DIM n%\n" +
+      "  n% = LEN(s$)\n" +
       "END SUB");
 
     Assert.That(module, Is.Null);
