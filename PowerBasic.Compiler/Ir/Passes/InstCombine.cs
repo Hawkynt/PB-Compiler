@@ -43,6 +43,7 @@ public static class InstCombine {
     return inst switch {
       IrBinary b => SimplifyBinary(b),
       IrCmp c => SimplifyCmp(c),
+      IrGep g => SimplifyGep(g),
       IrCast { Op: IrCastOp.BitCast } cast when cast.Value.Type.Equals(cast.Type) => cast.Value,
       _ => null,
     };
@@ -125,6 +126,9 @@ public static class InstCombine {
     }
     return null;
   }
+
+  private static IrValue? SimplifyGep(IrGep g) =>
+    g.ByteOffset is IrConstantInt { IsZero: true } ? g.BasePtr : null;   // gep p, 0 -> p
 
   private static IrValue? SimplifyCmp(IrCmp c) {
     // canonicalize a constant operand to the right (swapping the predicate accordingly)
