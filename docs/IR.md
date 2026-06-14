@@ -58,14 +58,24 @@ Supported today:
   promotion**;
 - `IF`/`ELSEIF`/`ELSE`, `FOR` (constant **or runtime** step), `DO` (pre/post
   `WHILE`/`UNTIL`, infinite), `EXIT`/`ITERATE`, `END`, `SWAP`;
-- `SELECT CASE` (value / list / `x TO y` range / `IS <rel>` arms, `CASE ELSE`) as a
-  short-circuit comparison chain;
+- `SELECT CASE` (value / list / `x TO y` range / `IS <rel>` arms, `CASE ELSE`);
+- **`GOTO`/labels** (arbitrary control flow over the alloca form) and **`ON … GOTO`**
+  (a computed jump lowered to a `switch`);
 - static arrays (1-D and multi-dimensional, row-major byte GEP);
-- the pure numeric intrinsics `ABS`, `SGN`, `FIX`, `INT` (branchless / bitcast, no runtime);
+- the pure numeric intrinsics `ABS`, `SGN`, `FIX`, `INT`, `CDBL`, `CSNG` (branchless /
+  bitcast, no runtime);
+- **numeric `PRINT` and string-literal `PRINT`** via a runtime-call ABI (each item is a
+  typed call to an external `rt_print_*` declaration; literals become `[N x i8]` constant
+  globals). The computation feeding `PRINT` is fully optimized; only the output is opaque;
 - whole modules: user `SUB`/`FUNCTION` with scalar **BYVAL and BYREF** parameters
   and direct calls; a procedure with an unsupported body is kept as a declaration.
 
-Not yet: strings, dynamic arrays, `GOTO`/`GOSUB`, file/console I/O, other intrinsics.
+The canonical hello world (`PRINT "Hello, world!"`) and numeric compute-and-report
+programs lower, optimize and compile to a native x86-64 object via `llc` (linked against
+a runtime providing the `rt_*` functions).
+
+Not yet: string variables/concat/functions, dynamic arrays, `GOSUB`, file/console I/O,
+other intrinsics.
 
 ## Optimization passes (`Ir/Passes/`)
 
