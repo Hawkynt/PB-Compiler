@@ -1,0 +1,186 @@
+namespace PowerBasic.Compiler.Ir;
+
+/// <summary>
+/// Checks the structural and SSA well-formedness of a function or module: exactly one
+/// terminator per block, phi/predecessor agreement, operands that dominate their uses,
+/// and per-instruction type consistency. Returns a list of human-readable problems
+/// (empty means valid). Passes should leave the IR verifiable at every step.
+/// </summary>
+public sealed class IrVerifier {
+
+  private readonly IrFunction _fn;
+  private readonly IrDominators _dom;
+  private readonly Dictionary<IrInstruction, int> _order = new(ReferenceEqualityComparer.Instance);
+  private readonly List<string> _errors = [];
+
+  private IrVerifier(IrFunction fn, IrDominators dom) {
+    this._fn = fn;
+    this._dom = dom;
+    foreach (var block in fn.Blocks) {
+      var i = 0;
+      foreach (var inst in block.Instructions)
+        this._order[inst] = i++;
+    }
+  }
+
+  /// <summary>Verifies every function in the module; returns all problems found.</summary>
+  public static IReadOnlyList<string> Verify(IrModule module) {
+    var errors = new List<string>();
+    foreach (var fn in module.Functions)
+      errors.AddRange(Verify(fn));
+    return errors;
+  }
+
+  /// <summary>Verifies a single function; returns all problems found (empty = valid).</summary>
+  public static IReadOnlyList<string> Verify(IrFunction fn) {
+    if (fn.IsDeclaration)
+      return [];
+    var dom = IrDominators.Build(fn)!;
+    var v = new IrVerifier(fn, dom);
+    v.Run();
+    return v._errors;
+  }
+
+  private void Run() {
+    if (this._fn.Entry!.Predecessors.Any())
+      this.Error("entry block has predecessors (the entry must not be a branch target)");
+
+    foreach (var block in this._fn.Blocks)
+      this.VerifyBlock(block);
+  }
+
+  private void VerifyBlock(IrBasicBlock block) {
+    if (block.Instructions.Count == 0) {
+      this.Error($"block '{block.Label}' is empty");
+      return;
+    }
+
+    // exactly one terminator, as the final instruction
+    for (var i = 0; i < block.Instructions.Count; ++i) {
+      var isLast = i == block.Instructions.Count - 1;
+      var inst = block.Instructions[i];
+      if (inst.IsTerminator && !isLast)
+        this.Error($"block '{block.Label}' has a terminator '{inst.GetType().Name}' before its end");
+      if (!inst.IsTerminator && isLast)
+        this.Error($"block '{block.Label}' does not end in a terminator");
+    }
+
+    // phis lead the block and agree with the predecessor set
+    var seenNonPhi = false;
+    foreach (var inst in block.Instructions) {
+      if (inst is IrPhi phi) {
+        if (seenNonPhi)
+          this.Error($"phi in block '{block.Label}' appears after a non-phi instruction");
+        this.VerifyPhi(block, phi);
+      } else {
+        seenNonPhi = true;
+      }
+      this.VerifyTypes(inst);
+      this.VerifyOperandDominance(inst);
+    }
+  }
+
+  private void VerifyPhi(IrBasicBlock block, IrPhi phi) {
+    var preds = block.Predecessors.Where(this._dom.IsReachable).ToHashSet(ReferenceEqualityComparer.Instance);
+    var incoming = phi.IncomingBlocks.ToHashSet(ReferenceEqualityComparer.Instance);
+    if (!preds.SetEquals(incoming))
+      this.Error($"phi in block '{block.Label}' incoming blocks do not match its predecessors");
+
+    for (var i = 0; i < phi.IncomingBlocks.Count; ++i)
+      if (!phi.GetOperand(i).Type.Equals(phi.Type))
+        this.Error($"phi in block '{block.Label}' incoming value #{i} has type {phi.GetOperand(i).Type}, expected {phi.Type}");
+  }
+
+  private void VerifyOperandDominance(IrInstruction inst) {
+    if (inst is IrPhi phi) {
+      for (var i = 0; i < phi.IncomingBlocks.Count; ++i) {
+        var value = phi.GetOperand(i);
+        var predBlock = phi.IncomingBlocks[i];
+        if (value is IrInstruction def && def.Parent is { } defBlock
+            && !ReferenceEqualities(defBlock, predBlock) && !this._dom.Dominates(defBlock, predBlock))
+          this.Error($"phi incoming value does not dominate predecessor '{predBlock.Label}'");
+      }
+      return;
+    }
+
+    var useBlock = inst.Parent!;
+    foreach (var operand in inst.Operands) {
+      if (operand is not IrInstruction def || def.Parent is not { } defBlock)
+        continue;                                    // constants, args, globals impose no constraint
+      if (ReferenceEqualities(defBlock, useBlock)) {
+        if (this._order[def] >= this._order[inst])
+          this.Error($"operand defined after its use in block '{useBlock.Label}'");
+      } else if (!this._dom.Dominates(defBlock, useBlock)) {
+        this.Error($"operand defined in '{defBlock.Label}' does not dominate use in '{useBlock.Label}'");
+      }
+    }
+  }
+
+  private void VerifyTypes(IrInstruction inst) {
+    switch (inst) {
+      case IrBinary b:
+        if (!b.Lhs.Type.Equals(b.Rhs.Type) || !b.Type.Equals(b.Lhs.Type))
+          this.Error($"binary '{b.Op}' operand/result types disagree ({b.Lhs.Type}, {b.Rhs.Type} -> {b.Type})");
+        if (b.IsFloatOp && !b.Type.IsFloat)
+          this.Error($"float op '{b.Op}' on non-float type {b.Type}");
+        if (!b.IsFloatOp && !b.Type.IsInteger)
+          this.Error($"integer op '{b.Op}' on non-integer type {b.Type}");
+        break;
+      case IrCmp c:
+        if (!c.Lhs.Type.Equals(c.Rhs.Type))
+          this.Error($"comparison operands disagree ({c.Lhs.Type} vs {c.Rhs.Type})");
+        if (IsFloatPred(c.Pred) && !c.Lhs.Type.IsFloat)
+          this.Error("float comparison on non-float operands");
+        if (!IsFloatPred(c.Pred) && c.Lhs.Type.IsFloat)
+          this.Error("integer comparison on float operands");
+        break;
+      case IrCast cast:
+        this.VerifyCast(cast);
+        break;
+      case IrLoad l when !l.Pointer.Type.IsPointer:
+        this.Error("load from a non-pointer operand");
+        break;
+      case IrStore s when !s.Pointer.Type.IsPointer:
+        this.Error("store to a non-pointer operand");
+        break;
+      case IrGep g when !g.BasePtr.Type.IsPointer || !g.ByteOffset.Type.IsInteger:
+        this.Error("gep base must be a pointer and offset an integer");
+        break;
+      case IrRet r:
+        var expected = this._fn.ReturnType;
+        var actual = r.Value?.Type ?? IrType.Void;
+        if (!actual.Equals(expected))
+          this.Error($"ret type {actual} does not match function return type {expected}");
+        break;
+      case IrCondBr cb when !cb.Condition.Type.IsBool:
+        this.Error($"condbr condition must be i1, got {cb.Condition.Type}");
+        break;
+      case IrCall call when !call.Callee.Type.IsPointer:
+        this.Error("call to a non-pointer callee");
+        break;
+    }
+  }
+
+  private void VerifyCast(IrCast cast) {
+    var from = cast.Value.Type;
+    var to = cast.Type;
+    var ok = cast.Op switch {
+      IrCastOp.Trunc => from.IsInteger && to.IsInteger && from.Bits > to.Bits,
+      IrCastOp.ZExt or IrCastOp.SExt => from.IsInteger && to.IsInteger && from.Bits < to.Bits,
+      IrCastOp.FPTrunc => from.IsFloat && to.IsFloat && from.Bits > to.Bits,
+      IrCastOp.FPExt => from.IsFloat && to.IsFloat && from.Bits < to.Bits,
+      IrCastOp.SIToFP or IrCastOp.UIToFP => from.IsInteger && to.IsFloat,
+      IrCastOp.FPToSI or IrCastOp.FPToUI => from.IsFloat && to.IsInteger,
+      IrCastOp.IntToPtr => from.IsInteger && to.IsPointer,
+      IrCastOp.PtrToInt => from.IsPointer && to.IsInteger,
+      IrCastOp.BitCast => true,
+      _ => false,
+    };
+    if (!ok)
+      this.Error($"invalid cast '{cast.Op}' from {from} to {to}");
+  }
+
+  private static bool ReferenceEqualities(IrBasicBlock a, IrBasicBlock b) => ReferenceEquals(a, b);
+  private static bool IsFloatPred(IrCmpPred p) => p is >= IrCmpPred.Foeq;
+  private void Error(string message) => this._errors.Add(message);
+}
