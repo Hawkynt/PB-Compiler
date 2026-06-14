@@ -108,6 +108,14 @@ public static class InstCombine {
   }
 
   private static IrValue? SimplifyCmp(IrCmp c) {
+    // (zext/sext i1 %b) != 0  ->  %b   and   (zext/sext i1 %b) == 0  ->  !%b
+    // this collapses the "relational then compare-to-zero" shape every BASIC condition lowers to
+    if (c.Pred is IrCmpPred.Ne or IrCmpPred.Eq) {
+      var widened = AsWidenedBool(c.Lhs, c.Rhs) ?? AsWidenedBool(c.Rhs, c.Lhs);
+      if (widened is { } b)
+        return c.Pred == IrCmpPred.Ne ? b : new IrBinary(IrBinaryOp.Xor, b, new IrConstantInt(IrType.I1, 1));
+    }
+
     if (!ReferenceEquals(c.Lhs, c.Rhs))
       return null;
     // x <cmp> x: integer comparisons of identical SSA values are decidable
@@ -117,6 +125,14 @@ public static class InstCombine {
       _ => null,                                      // float x==x is false for NaN; do not fold
     };
   }
+
+  /// <summary>If <paramref name="maybeCast"/> is a zext/sext of an i1 and <paramref name="maybeZero"/> is 0, returns the i1 source.</summary>
+  private static IrValue? AsWidenedBool(IrValue maybeCast, IrValue maybeZero) =>
+    maybeZero is IrConstantInt { IsZero: true }
+      && maybeCast is IrCast { Op: IrCastOp.ZExt or IrCastOp.SExt } cast
+      && cast.Value.Type.IsBool
+      ? cast.Value
+      : null;
 
   private static bool HasSideEffects(IrInstruction inst) =>
     inst is IrStore or IrCall || inst.IsTerminator;
