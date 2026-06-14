@@ -88,8 +88,9 @@ Supported today:
   all operate on the buffer; **arrays of records** (`a(i).field`, static or dynamic)
   index the element then offset the field; composes with SWAP and field-level GET/PUT;
 - intrinsics: `ABS`/`SGN`/`FIX`/`INT`/`CDBL`/`CSNG` (branchless/bitcast, no runtime) and
-  the math functions `SQR`/`SIN`/`COS`/`EXP`/`LOG`/`TAN`/`ATN` lowered to the matching
-  **LLVM intrinsics** (`llvm.sqrt.fN`, …) so `llc` optimizes them natively;
+  the math functions `SQR`/`SIN`/`COS`/`EXP`/`LOG`/`TAN`/`ATN` and the `^` power operator
+  lowered to the matching **LLVM intrinsics** (`llvm.sqrt.fN`, `llvm.pow.fN`, …) so `llc`
+  optimizes them natively;
 - whole modules: user `SUB`/`FUNCTION` with scalar **BYVAL and BYREF** parameters and
   **BYREF `TYPE` record** parameters (passed as a pointer; the callee accesses fields
   through it) and direct calls; a procedure with an unsupported body is kept as a declaration.

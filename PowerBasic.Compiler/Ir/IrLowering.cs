@@ -1402,6 +1402,10 @@ public sealed class IrLowering {
         return this._b.Xor(this._b.Xor(l, r), new IrConstantInt(resultTy, -1));
       case BinaryOp.Imp:
         return this._b.Or(this._b.Xor(l, new IrConstantInt(resultTy, -1)), r);
+      case BinaryOp.Power:
+        if (!resultTy.IsFloat)
+          throw new IrLoweringException("integer exponentiation");   // PB ^ yields a floating result
+        return this._b.Call(resultTy, this.RuntimeFn($"llvm.pow.f{resultTy.Bits}", resultTy, resultTy, resultTy), l, r);
     }
 
     var op = expr.Op switch {

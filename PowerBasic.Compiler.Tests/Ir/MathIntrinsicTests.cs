@@ -41,6 +41,14 @@ public sealed class MathIntrinsicTests {
   }
 
   [Test]
+  public void PowerOperator_LowersToLlvmPow() {
+    var module = LowerOptimized("b# = 2.0\ne# = 10.0\nr# = b# ^ e#\nPRINT r#\nEND");
+
+    Assert.That(IrVerifier.Verify(module), Is.Empty);
+    Assert.That(LlvmEmitter.Emit(module), Does.Contain("@llvm.pow.f"));
+  }
+
+  [Test]
   public void Fp80Constant_IsEmittedInLlvmExtendedForm() {
     // SQR's EXT result surfaces an x86_fp80 constant; it must use the 0xK 20-hex form
     var module = LowerOptimized("y# = SQR(2.0)\nPRINT y#\nEND");
