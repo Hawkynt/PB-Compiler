@@ -70,6 +70,7 @@ public sealed class IrPassManager {
     .Add("sccp", Sccp.Run)
     .Add("gvn", Gvn.Run)
     .Add("memopt", RedundantMemory.Run)
+    .Add("dse", DeadStoreElim.Run)
     .Add("licm", Licm.Run)
     .Add("dce", Dce.Run)
     .Add("simplifycfg", SimplifyCfg.Run);
