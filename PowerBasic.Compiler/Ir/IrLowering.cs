@@ -250,6 +250,8 @@ public sealed class IrLowering {
       else if (!IrTypeMapper.TryMap(arr.Element, out elem))
         throw new IrLoweringException("non-scalar array element");
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(elem) { Count = arr.ElementCount, Name = symbol.Name });
+    } else if (symbol.Type is UdtType udt) {
+      alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I8) { Count = udt.Size, Name = symbol.Name });   // a packed record buffer
     } else {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrTypeMapper.Map(symbol.Type)) { Name = symbol.Name });
     }
@@ -383,6 +385,11 @@ public sealed class IrLowering {
       this._b.Store(this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), element), address);
       return;
     }
+    if (a.Target is MemberExpr member) {
+      var (address, fieldType) = this.MemberLValue(member);
+      this._b.Store(this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), fieldType), address);
+      return;
+    }
     var symbol = this.SymbolOf(a.Target);
     var slot = this.SlotFor(symbol);
     var value = this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), symbol.Type);
@@ -407,7 +414,26 @@ public sealed class IrLowering {
       return (this.SlotFor(sym), sym.Type);
     if (e is CallOrIndexExpr ci && this._model.VariableBindings.TryGetValue(ci, out var arr) && arr.Type is ArrayType)
       return this.ElementAddress(ci);
+    if (e is MemberExpr m)
+      return this.MemberLValue(m);
     throw new IrLoweringException("unsupported lvalue");
+  }
+
+  /// <summary>The storage address and field type of a UDT member (or a flat QB-style dotted variable).</summary>
+  private (IrValue Address, PbType Type) MemberLValue(MemberExpr m) {
+    if (this._model.VariableBindings.TryGetValue(m, out var flat)) {       // Max.X where Max is not a UDT: one flat scalar variable
+      if (flat.Type is not ScalarType)
+        throw new IrLoweringException("non-scalar dotted variable");
+      return (this.SlotFor(flat), flat.Type);
+    }
+    if (m.Target is not NameExpr || !this._model.VariableBindings.TryGetValue(m.Target, out var baseSym) || baseSym.Type is not UdtType udt)
+      throw new IrLoweringException("unsupported member access");
+    var field = udt.FindField(m.Member) ?? throw new IrLoweringException($"unknown field {m.Member}");
+    if (field.Type is not ScalarType || field.ElementCount != 1)
+      throw new IrLoweringException("non-scalar UDT field");
+    var basePtr = this.SlotFor(baseSym);
+    var address = field.Offset == 0 ? basePtr : this._b.Gep(basePtr, new IrConstantInt(IrType.I32, field.Offset));
+    return (address, field.Type);
   }
 
   private void LowerPrint(PrintStmt p) {
@@ -1037,6 +1063,9 @@ public sealed class IrLowering {
         return this.LowerIntrinsic(intr, info.Name);
       case CallOrIndexExpr call:
         return this.LowerCallExpr(call);
+      case MemberExpr member:
+        var (memberAddr, memberType) = this.MemberLValue(member);
+        return this._b.Load(IrTypeMapper.Map(memberType), memberAddr);
       default:
         throw new IrLoweringException($"unsupported expression: {expr.GetType().Name}");
     }

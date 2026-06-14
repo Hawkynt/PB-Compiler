@@ -80,6 +80,10 @@ Supported today:
   (`@.data`) walked by a module-global i32 cursor (`@.data_cursor`); numeric reads parse
   via `rt_str_val`, string reads store the `rt_str_const` handle, `RESTORE [<label>]`
   rewinds the cursor to 0 or to the label's blob offset;
+- **user-defined `TYPE` records**: a UDT variable is a packed i8 buffer; member access
+  (`v.field`) reads/writes the field's scalar type at its byte offset via a byte GEP
+  (QB-style flat dotted variables resolve to a plain scalar); composes with SWAP and
+  random-record GET/PUT at the field level;
 - intrinsics: `ABS`/`SGN`/`FIX`/`INT`/`CDBL`/`CSNG` (branchless/bitcast, no runtime) and
   the math functions `SQR`/`SIN`/`COS`/`EXP`/`LOG`/`TAN`/`ATN` lowered to the matching
   **LLVM intrinsics** (`llvm.sqrt.fN`, …) so `llc` optimizes them natively;
