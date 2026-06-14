@@ -245,11 +245,16 @@ public sealed class IrLowering {
       if (arr.IsDynamic)
         throw new IrLoweringException("dynamic array");
       IrType elem;
-      if (arr.Element is StringType)
-        elem = IrType.Ptr;                              // an array of string handles
-      else if (!IrTypeMapper.TryMap(arr.Element, out elem))
+      int count;
+      if (arr.Element is StringType) {
+        elem = IrType.Ptr; count = arr.ElementCount;   // an array of string handles
+      } else if (arr.Element is UdtType ue) {
+        elem = IrType.I8; count = arr.ElementCount * ue.Size;   // a packed buffer of records
+      } else if (IrTypeMapper.TryMap(arr.Element, out elem)) {
+        count = arr.ElementCount;
+      } else
         throw new IrLoweringException("non-scalar array element");
-      alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(elem) { Count = arr.ElementCount, Name = symbol.Name });
+      alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(elem) { Count = count, Name = symbol.Name });
     } else if (symbol.Type is UdtType udt) {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I8) { Count = udt.Size, Name = symbol.Name });   // a packed record buffer
     } else {
@@ -431,12 +436,21 @@ public sealed class IrLowering {
         throw new IrLoweringException("non-scalar dotted variable");
       return (this.SlotFor(flat), flat.Type);
     }
-    if (m.Target is not NameExpr || !this._model.VariableBindings.TryGetValue(m.Target, out var baseSym) || baseSym.Type is not UdtType udt)
+    // the record's base address: a UDT variable, or one element of a UDT array (a(i).field)
+    IrValue basePtr;
+    UdtType udt;
+    if (m.Target is NameExpr && this._model.VariableBindings.TryGetValue(m.Target, out var baseSym) && baseSym.Type is UdtType nameUdt) {
+      basePtr = this.SlotFor(baseSym);
+      udt = nameUdt;
+    } else if (m.Target is CallOrIndexExpr ce && this._model.VariableBindings.TryGetValue(ce, out var arrSym) && arrSym.Type is ArrayType { Element: UdtType elemUdt }) {
+      basePtr = this.ElementAddress(ce).Address;
+      udt = elemUdt;
+    } else
       throw new IrLoweringException("unsupported member access");
+
     var field = udt.FindField(m.Member) ?? throw new IrLoweringException($"unknown field {m.Member}");
     if (field.Type is not ScalarType || field.ElementCount != 1)
       throw new IrLoweringException("non-scalar UDT field");
-    var basePtr = this.SlotFor(baseSym);
     var address = field.Offset == 0 ? basePtr : this._b.Gep(basePtr, new IrConstantInt(IrType.I32, field.Offset));
     return (address, field.Type);
   }

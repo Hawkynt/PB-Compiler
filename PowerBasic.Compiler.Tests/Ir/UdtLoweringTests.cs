@@ -92,6 +92,25 @@ public sealed class UdtLoweringTests {
   }
 
   [Test]
+  public void StaticUdtArray_IndexesThenOffsetsTheField() {
+    var module = LowerModule(Point + "DIM pts(1 TO 3) AS Point\npts(1).X = 10\npts(2).Y = 20\ns% = pts(1).X + pts(2).Y\nEND", optimize: false);
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var text = LlvmEmitter.Emit(module!);
+    Assert.That(text, Does.Contain("alloca i8, i32 12"));   // 3 records * 4 bytes
+    Assert.That(text, Does.Contain("getelementptr i8"));
+  }
+
+  [Test]
+  public void StaticUdtArray_VerifiesAfterOptimization() {
+    var module = LowerModule(Point + "DIM pts(0 TO 4) AS Point\nFOR i% = 0 TO 4\n  pts(i%).X = i%\n  pts(i%).Y = i% * 2\nNEXT i%\nx% = pts(3).X + pts(3).Y\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+  }
+
+  [Test]
   public void Pipeline_UdtProgram_IsAcceptedByLlvm() {
     var module = LowerModule(Point + "DIM p AS Point\np.X = 6\np.Y = 7\nPRINT p.X * p.Y\nEND");
     Assert.That(module, Is.Not.Null);
