@@ -435,11 +435,18 @@ public sealed class Pb36OptimizerTests {
     return count;
   }
 
+  // a BYREF call makes a variable opaque to SCCP so the O8 immediate path (not
+  // whole-expression constant folding) is what these byte-level tests exercise
+  private const string _TOUCH = "DECLARE SUB T(a%)\n";
+  private const string _TOUCH_END = "\nSUB T(a%)\nEND SUB";
+  private const string _TOUCHL = "DECLARE SUB TL(a&)\n";
+  private const string _TOUCHL_END = "\nSUB TL(a&)\nEND SUB";
+
   [Test]
   public void Emit_GivenBitwiseMaskConstant_WhenPb36_ThenFoldsToImmediateNoRegisterLoad() {
     // y% = x% AND 15 folds the mask into AND AX,imm; the variable form must load BX
-    var constMask = Compile("x% = 100\ny% = x% AND 15\nEND", Dialect.Pb36);
-    var varMask = Compile("x% = 100\nw% = 15\ny% = x% AND w%\nEND", Dialect.Pb36);
+    var constMask = Compile(_TOUCH + "x% = 100\nT x%\ny% = x% AND 15\nEND" + _TOUCH_END, Dialect.Pb36);
+    var varMask = Compile(_TOUCH + "x% = 100\nw% = 15\nT x%\nT w%\ny% = x% AND w%\nEND" + _TOUCH_END, Dialect.Pb36);
     Assert.Multiple(() => {
       Assert.That(CountMovBxAx(constMask), Is.Zero, "x% AND 15 should fold to AND AX,imm with no MOV BX,AX");
       Assert.That(CountMovBxAx(varMask), Is.GreaterThanOrEqualTo(1), "x% AND w% must load the second operand into BX");
@@ -465,8 +472,8 @@ public sealed class Pb36OptimizerTests {
   public void Emit_GivenLongBitwiseConstant_WhenPb36_ThenFoldsToImmediatePairNoRegisterLoad() {
     // b& = a& AND 255 folds into AND AX,imm / AND DX,imm; the variable form must
     // load the high word into CX
-    var constMask = Compile("a& = &H1234\nb& = a& AND 255\nEND", Dialect.Pb36);
-    var varMask = Compile("a& = &H1234\nm& = 255\nb& = a& AND m&\nEND", Dialect.Pb36);
+    var constMask = Compile(_TOUCHL + "a& = &H1234\nTL a&\nb& = a& AND 255\nEND" + _TOUCHL_END, Dialect.Pb36);
+    var varMask = Compile(_TOUCHL + "a& = &H1234\nm& = 255\nTL a&\nTL m&\nb& = a& AND m&\nEND" + _TOUCHL_END, Dialect.Pb36);
     Assert.Multiple(() => {
       Assert.That(CountMovCxDx(constMask), Is.Zero, "a& AND 255 should fold to immediate pair ops, no MOV CX,DX");
       Assert.That(CountMovCxDx(varMask), Is.GreaterThanOrEqualTo(1), "a& AND m& must load the second operand's high word into CX");
@@ -477,8 +484,8 @@ public sealed class Pb36OptimizerTests {
   public void Emit_GivenLongEqualsConstant_WhenPb36_ThenFoldsWithoutRegisterLoad() {
     // y% = (p& = 123456) subtracts the constant halves in place; the variable
     // form must load the comparand into CX
-    var constEq = Compile("p& = 7\ny% = (p& = 123456)\nEND", Dialect.Pb36);
-    var varEq = Compile("p& = 7\nq& = 123456\ny% = (p& = q&)\nEND", Dialect.Pb36);
+    var constEq = Compile(_TOUCHL + "p& = 7\nTL p&\ny% = (p& = 123456)\nEND" + _TOUCHL_END, Dialect.Pb36);
+    var varEq = Compile(_TOUCHL + "p& = 7\nq& = 123456\nTL p&\nTL q&\ny% = (p& = q&)\nEND" + _TOUCHL_END, Dialect.Pb36);
     Assert.Multiple(() => {
       Assert.That(CountMovCxDx(constEq), Is.Zero, "p& = const should fold the comparand, no MOV CX,DX");
       Assert.That(CountMovCxDx(varEq), Is.GreaterThanOrEqualTo(1), "p& = q& must load the comparand's high word");
@@ -495,7 +502,7 @@ public sealed class Pb36OptimizerTests {
 
   [Test]
   public void Emit_GivenCompareAgainstZero_WhenPb36_ThenUsesOrIdiomNotCmpImmediate() {
-    var pb36 = Compile("x% = 7\ny% = (x% = 0)\nEND", Dialect.Pb36);
+    var pb36 = Compile(_TOUCH + "x% = 7\nT x%\ny% = (x% = 0)\nEND" + _TOUCH_END, Dialect.Pb36);
     var hasOrAxAx = false;
     var hasCmpAxZero = false;
     for (var i = 0; i + 2 < pb36.Length; ++i) {

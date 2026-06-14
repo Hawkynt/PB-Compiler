@@ -64,6 +64,10 @@ public sealed partial class CodeGenerator {
   }
 
   private void EmitExpressionCore(Expression expression) {
+    // pb36 O17: SCCP-proven constant reads fold here (cross-block propagation)
+    if (this.TryEmitProvenConstant(expression))
+      return;
+
     var asm = this._asm;
     switch (expression) {
       case IntegerLiteralExpr i:

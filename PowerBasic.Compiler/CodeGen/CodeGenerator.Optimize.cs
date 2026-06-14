@@ -65,6 +65,54 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
+  /// pb36 O17 (SCCP): when SSA + sparse conditional constant propagation proved
+  /// the variable reads inside <paramref name="e"/> constant, substitute them and
+  /// fold - cross-block constant propagation the local folder cannot do. Only
+  /// fires when at least one read was actually proven (so expressions with no
+  /// tracked constant emit exactly as before), and the result is wrapped to the
+  /// expression's type, so it equals the value the program would compute.
+  /// </summary>
+  private bool TryEmitProvenConstant(Expression e) {
+    if (this._provenReads is not { Count: > 0 } proven)
+      return false;
+    // under $ERROR OVERFLOW/NUMERIC a folded constant would skip a runtime trap
+    // the real arithmetic must still raise (error 6), so do not fold there
+    if (this.CheckOverflow || this.CheckNumeric)
+      return false;
+    if (model.TypeOf(e) is not ScalarType { IsFloat: false } type)
+      return false;
+    var substituted = SubstituteProven(e, proven, out var changed);
+    if (!changed)
+      return false; // no proven read here - leave emission untouched
+    if (this.Pb36Folder.TryFold(substituted) is not { Integer: { } raw })
+      return false; // an untracked read / call / float kept it non-constant
+    this.EmitIntegralConstant(WrapToType(raw, type), KindOf(type));
+    return true;
+  }
+
+  /// <summary>Clones <paramref name="e"/> replacing each proven-constant read with its literal; <paramref name="changed"/> reports whether any substitution happened.</summary>
+  private static Expression SubstituteProven(Expression e, Dictionary<NameExpr, long> proven, out bool changed) {
+    switch (e) {
+      case NameExpr n when proven.TryGetValue(n, out var value):
+        changed = true;
+        return new IntegerLiteralExpr(n.Position, value, TypeSuffix.None);
+      case UnaryExpr u: {
+        var operand = SubstituteProven(u.Operand, proven, out changed);
+        return changed ? u with { Operand = operand } : u;
+      }
+      case BinaryExpr b: {
+        var left = SubstituteProven(b.Left, proven, out var leftChanged);
+        var right = SubstituteProven(b.Right, proven, out var rightChanged);
+        changed = leftChanged || rightChanged;
+        return changed ? b with { Left = left, Right = right } : b;
+      }
+      default:
+        changed = false;
+        return e;
+    }
+  }
+
+  /// <summary>
   /// Loads an integral constant into the evaluation registers. Under pb36 the
   /// zero idiom (O8) applies: <c>XOR r,r</c> instead of <c>MOV r,0</c> - safe
   /// here because expression results never carry live flags across statements.

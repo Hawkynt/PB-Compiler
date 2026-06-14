@@ -95,6 +95,7 @@ public sealed partial class CodeGenerator {
     }
 
     this.PrepareCse(proc.Body!);
+    this.PrepareSccp(proc.Body!);
     this.BeginFrame(elideZeroing, this._tailEntry);
     if (elideZeroing)
       foreach (var local in stackLocals)

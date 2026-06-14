@@ -44,6 +44,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private int _frameLocalBytes;
   private int _cseBytes;
   private Dictionary<Expression, Pb36CommonSubexpr.CseMark>? _cseMarks;
+  private Dictionary<Syntax.Ast.NameExpr, long>? _provenReads;
   private Dictionary<VariableSymbol, ConstantValue>? _ipcp;
   private (VariableSymbol Symbol, Reg Reg)? _registerCounter;
   private int _tempBytes;
@@ -169,6 +170,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     }
 
     this.PrepareCse(model.MainBody);
+    this.PrepareSccp(model.MainBody);
     this.BeginFrame(skipZeroing: this.OptimizePb36 && !ContainsErrorHandling(model.MainBody));
     this.EmitChainCommonLoad();             // absorb a CHAIN handoff, when present
     this._trackResume = ContainsErrorHandling(model.MainBody);
@@ -290,6 +292,25 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       return;
     this._cseMarks = result.Marks;
     this._cseBytes = result.SlotCount * 4;
+  }
+
+  /// <summary>
+  /// pb36 O17: runs the SSA + SCCP mid-end over a body and records the variable
+  /// reads it proves constant (<see cref="_provenReads"/>), which the emitter
+  /// folds. Null when the body is not analyzable (loops/SELECT/unstructured flow)
+  /// or nothing is proven - then emission is exactly as before.
+  /// </summary>
+  private void PrepareSccp(IReadOnlyList<Statement> body) {
+    this._provenReads = null;
+    if (!this.OptimizePb36)
+      return;
+    if (Ssa.ControlFlowGraph.TryBuild(body) is not { } cfg)
+      return;
+    if (Ssa.SsaForm.TryBuild(model, cfg) is not { } ssa)
+      return;
+    var proven = Ssa.Sccp.Solve(model, ssa);
+    if (proven.Count > 0)
+      this._provenReads = proven;
   }
 
   /// <summary>Reserves a BP-relative scratch block; release in reverse order.</summary>
