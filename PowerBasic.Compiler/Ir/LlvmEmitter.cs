@@ -78,7 +78,7 @@ public sealed class LlvmEmitter {
       IrBinary b => $"{Mnemonic(b.Op)} {Ty(b.Type)} {this.Ref(b.Lhs)}, {this.Ref(b.Rhs)}",
       IrCmp c => $"{(IsFloatPred(c.Pred) ? "fcmp" : "icmp")} {Mnemonic(c.Pred)} {Ty(c.Lhs.Type)} {this.Ref(c.Lhs)}, {this.Ref(c.Rhs)}",
       IrCast c => $"{Mnemonic(c.Op)} {Ty(c.Value.Type)} {this.Ref(c.Value)} to {Ty(c.Type)}",
-      IrAlloca a => $"alloca {Ty(a.Allocated)}",
+      IrAlloca a => a.Count > 1 ? $"alloca {Ty(a.Allocated)}, i32 {a.Count}" : $"alloca {Ty(a.Allocated)}",
       IrLoad l => $"load {Ty(l.Type)}, ptr {this.Ref(l.Pointer)}",
       IrStore s => $"store {Ty(s.Value.Type)} {this.Ref(s.Value)}, ptr {this.Ref(s.Pointer)}",
       IrGep g => $"getelementptr i8, ptr {this.Ref(g.BasePtr)}, {Ty(g.ByteOffset.Type)} {this.Ref(g.ByteOffset)}",

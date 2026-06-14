@@ -70,7 +70,7 @@ public sealed class IrPrinter {
       IrBinary b => $"{Mnemonic(b.Op)} {b.Type} {this.Ref(b.Lhs)}, {this.Ref(b.Rhs)}",
       IrCmp c => $"{(IsFloatPred(c.Pred) ? "fcmp" : "icmp")} {Mnemonic(c.Pred)} {c.Lhs.Type} {this.Ref(c.Lhs)}, {this.Ref(c.Rhs)}",
       IrCast c => $"{Mnemonic(c.Op)} {c.Value.Type} {this.Ref(c.Value)} to {c.Type}",
-      IrAlloca a => $"alloca {a.Allocated}",
+      IrAlloca a => a.Count > 1 ? $"alloca {a.Allocated}, i32 {a.Count}" : $"alloca {a.Allocated}",
       IrLoad l => $"load {l.Type}, ptr {this.Ref(l.Pointer)}",
       IrStore s => $"store {s.Value.Type} {this.Ref(s.Value)}, ptr {this.Ref(s.Pointer)}",
       IrGep g => $"gep ptr {this.Ref(g.BasePtr)}, {g.ByteOffset.Type} {this.Ref(g.ByteOffset)}",

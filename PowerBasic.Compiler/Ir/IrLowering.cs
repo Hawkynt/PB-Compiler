@@ -134,12 +134,36 @@ public sealed class IrLowering {
   private IrValue SlotFor(VariableSymbol symbol) {
     if (this._addr.TryGetValue(symbol, out var existing))
       return existing;
-    if (symbol.IsArray)
-      throw new IrLoweringException("array variable");
-    var ir = IrTypeMapper.Map(symbol.Type);
-    var alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(ir) { Name = symbol.Name });
+    IrAlloca alloca;
+    if (symbol.Type is ArrayType arr) {
+      if (arr.IsDynamic || !IrTypeMapper.TryMap(arr.Element, out var elem))
+        throw new IrLoweringException("dynamic or non-scalar array");
+      alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(elem) { Count = arr.ElementCount, Name = symbol.Name });
+    } else {
+      alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrTypeMapper.Map(symbol.Type)) { Name = symbol.Name });
+    }
     this._addr[symbol] = alloca;
     return alloca;
+  }
+
+  /// <summary>The address of one static-array element, by row-major flattening of the index list.</summary>
+  private (IrValue Address, PbType Element) ElementAddress(CallOrIndexExpr expr) {
+    if (!this._model.VariableBindings.TryGetValue(expr, out var symbol) || symbol.Type is not ArrayType arr)
+      throw new IrLoweringException($"not a static array element: {expr.Name}");
+    if (arr.IsDynamic || arr.StaticBounds is not { } bounds || bounds.Count != expr.Arguments.Count)
+      throw new IrLoweringException("dynamic array or rank mismatch");
+    var basePtr = this.SlotFor(symbol);
+
+    IrValue? flat = null;
+    for (var k = 0; k < bounds.Count; ++k) {
+      var idx = this.Coerce(this.LowerExpr(expr.Arguments[k]), this._model.TypeOf(expr.Arguments[k]), PbType.Long);
+      var rel = this._b.Sub(idx, new IrConstantInt(IrType.I32, bounds[k].Lower));
+      var size = bounds[k].Upper - bounds[k].Lower + 1;
+      flat = flat is null ? rel : this._b.Add(this._b.Mul(flat, new IrConstantInt(IrType.I32, size)), rel);
+    }
+
+    var byteOffset = this._b.Mul(flat!, new IrConstantInt(IrType.I32, arr.Element.Size));
+    return (this._b.Gep(basePtr, byteOffset), arr.Element);
   }
 
   private VariableSymbol SymbolOf(Expression target) =>
@@ -168,15 +192,27 @@ public sealed class IrLowering {
       case IterateStmt it: this.LowerIterate(it); break;
       case CallStmt c: this.LowerCallStatement(c); break;
       case SelectStmt s: this.LowerSelect(s); break;
+      case DimStmt d: this.LowerDim(d); break;
       default: throw new IrLoweringException($"unsupported statement: {statement.GetType().Name}");
     }
   }
 
   private void LowerAssign(AssignStmt a) {
+    if (a.Target is CallOrIndexExpr indexed && this._model.VariableBindings.TryGetValue(indexed, out var arrSym) && arrSym.Type is ArrayType) {
+      var (address, element) = this.ElementAddress(indexed);
+      this._b.Store(this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), element), address);
+      return;
+    }
     var symbol = this.SymbolOf(a.Target);
     var slot = this.SlotFor(symbol);
     var value = this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), symbol.Type);
     this._b.Store(value, slot);
+  }
+
+  private void LowerDim(DimStmt d) {
+    if (d.AtAddress is not null || d.Class != ArrayClass.Default)
+      throw new IrLoweringException("DIM AT / non-default array class");
+    // a DIM is just a declaration here; storage is allocated lazily on first use
   }
 
   private void LowerIncrDecr(IncrDecrStmt id) {
@@ -424,6 +460,9 @@ public sealed class IrLowering {
         return this.LowerUnary(u);
       case BinaryExpr b:
         return this.LowerBinary(b);
+      case CallOrIndexExpr indexed when this._model.VariableBindings.TryGetValue(indexed, out var s) && s.Type is ArrayType:
+        var (address, element) = this.ElementAddress(indexed);
+        return this._b.Load(IrTypeMapper.Map(element), address);
       case CallOrIndexExpr call:
         return this.LowerCallExpr(call);
       default:

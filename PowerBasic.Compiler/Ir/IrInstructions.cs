@@ -65,9 +65,15 @@ public sealed class IrCast : IrInstruction {
   public IrValue Value => this.GetOperand(0);
 }
 
-/// <summary>Stack-allocates space for one value of <see cref="Allocated"/> and yields its pointer.</summary>
+/// <summary>
+/// Stack-allocates space for <see cref="Count"/> consecutive values of
+/// <see cref="Allocated"/> (one by default) and yields a pointer to the first.
+/// </summary>
 public sealed class IrAlloca(IrType allocated) : IrInstruction(IrType.Ptr) {
   public IrType Allocated { get; } = allocated;
+
+  /// <summary>The number of elements; greater than one for an array allocation.</summary>
+  public int Count { get; init; } = 1;
 }
 
 /// <summary>Loads a value of <see cref="Type"/> from a pointer: <c>result = load type, ptr</c>.</summary>
