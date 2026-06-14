@@ -1258,6 +1258,19 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.SI, Imm.OffsetOf(this._numBuffer, 34));
     asm.Xor(Reg.DI, Reg.DI);                        // emitted digit count
 
+    // genuine HEX$/OCT$/BIN$ render at a 16-bit width whenever the 32-bit value
+    // fits in [-32768, 65535] - a small negative arrives sign-extended as
+    // DX=FFFF with AX's high bit set, so fold the redundant FFFF away and let
+    // the digit loop stop after the low word. (DX=0000 already renders 16-bit;
+    // any other DX is a genuine 32-bit magnitude and is left intact.)
+    var keep32 = asm.DefineLabel();
+    asm.Cmp(Reg.DX, 0xFFFF);
+    asm.Jne(keep32);
+    asm.Cmp(Reg.AX, 0x8000);                        // unsigned: AX>=8000 => negative 16-bit
+    asm.Jb(keep32);
+    asm.Xor(Reg.DX, Reg.DX);
+    asm.MarkLabel(keep32);
+
     asm.MarkLabel(digit);
     asm.Push(Reg.CX);
     asm.Mov(Reg.BX, 1);
