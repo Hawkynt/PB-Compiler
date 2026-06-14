@@ -385,6 +385,11 @@ public sealed class IrLowering {
       this._b.Store(this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), element), address);
       return;
     }
+    if (a.Target is NameExpr && this._model.VariableBindings.TryGetValue(a.Target, out var udtSym) && udtSym.Type is UdtType udt) {
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_mem_copy", IrType.Void, IrType.Ptr, IrType.Ptr, IrType.I32),
+        this.SlotFor(udtSym), this.UdtAddress(a.Value), new IrConstantInt(IrType.I32, udt.Size));   // whole-record copy
+      return;
+    }
     if (a.Target is MemberExpr member) {
       var (address, fieldType) = this.MemberLValue(member);
       this._b.Store(this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), fieldType), address);
@@ -506,15 +511,24 @@ public sealed class IrLowering {
       throw new IrLoweringException("GET/PUT requires whole-module lowering");
     if (s.Variable is null)
       throw new IrLoweringException("FIELD-based GET/PUT");   // the buffer/FIELD form is not modeled
-    var (address, type) = this.LValue(s.Variable);
-    if (type is not ScalarType scalar)
-      throw new IrLoweringException("GET/PUT of a non-scalar record");
+    IrValue address;
+    int recordSize;
+    if (s.Variable is NameExpr && this._model.VariableBindings.TryGetValue(s.Variable, out var sym) && sym.Type is UdtType udt) {
+      address = this.SlotFor(sym);                    // a whole-record GET/PUT of a UDT buffer
+      recordSize = udt.Size;
+    } else {
+      var (addr, type) = this.LValue(s.Variable);
+      if (type is not ScalarType scalar)
+        throw new IrLoweringException("GET/PUT of a non-scalar record");
+      address = addr;
+      recordSize = scalar.Size;
+    }
     var fileNo = this.FileNum(s.FileNumber);
     var recNo = s.RecordNumber is { } rn
       ? this.Coerce(this.LowerExpr(rn), this._model.TypeOf(rn), PbType.Long)
       : new IrConstantInt(IrType.I32, 0);             // 0 = the current/next record
     this._b.Call(IrType.Void, this.RuntimeFn(s.IsGet ? "rt_file_get" : "rt_file_put", IrType.Void, IrType.I32, IrType.I32, IrType.Ptr, IrType.I32),
-      fileNo, recNo, address, new IrConstantInt(IrType.I32, scalar.Size));
+      fileNo, recNo, address, new IrConstantInt(IrType.I32, recordSize));
   }
 
   private void LowerClose(CloseStmt c) {
@@ -1184,6 +1198,26 @@ public sealed class IrLowering {
     return this._b.SExt(this._b.Cmp(pred, cmp, new IrConstantInt(IrType.I32, 0)), IrTypeMapper.Map(resultPb));
   }
 
+  private IrValue LowerUdtComparison(BinaryExpr expr, PbType resultPb) {
+    if (this._model.TypeOf(expr.Left) is not UdtType udt)
+      throw new IrLoweringException("UDT comparison of non-UDT");
+    var pred = expr.Op switch {
+      BinaryOp.Equal => IrCmpPred.Eq,
+      BinaryOp.NotEqual => IrCmpPred.Ne,
+      _ => throw new IrLoweringException($"UDT comparison {expr.Op}"),   // the binder allows only = / <>
+    };
+    var cmp = this._b.Call(IrType.I32, this.RuntimeFn("rt_mem_compare", IrType.I32, IrType.Ptr, IrType.Ptr, IrType.I32),
+      this.UdtAddress(expr.Left), this.UdtAddress(expr.Right), new IrConstantInt(IrType.I32, udt.Size));
+    return this._b.SExt(this._b.Cmp(pred, cmp, new IrConstantInt(IrType.I32, 0)), IrTypeMapper.Map(resultPb));
+  }
+
+  /// <summary>The base address of a whole UDT value (a UDT variable).</summary>
+  private IrValue UdtAddress(Expression e) {
+    if (e is NameExpr && this._model.VariableBindings.TryGetValue(e, out var sym) && sym.Type is UdtType)
+      return this.SlotFor(sym);
+    throw new IrLoweringException("unsupported UDT value");
+  }
+
   private IrValue LowerConvert(CallOrIndexExpr call) {
     // CDBL/CSNG are exactly a type conversion to the result type
     var resultPb = this._model.TypeOf(call);
@@ -1306,7 +1340,9 @@ public sealed class IrLowering {
       BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
         or BinaryOp.LessEqual or BinaryOp.GreaterEqual => leftPb is StringType
           ? this.LowerStringComparison(expr, resultPb)
-          : this.LowerComparison(expr, leftPb, rightPb, resultPb),
+          : leftPb is UdtType
+            ? this.LowerUdtComparison(expr, resultPb)
+            : this.LowerComparison(expr, leftPb, rightPb, resultPb),
       _ => this.LowerArithmetic(expr, leftPb, rightPb, resultPb),
     };
   }
