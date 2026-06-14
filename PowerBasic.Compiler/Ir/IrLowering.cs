@@ -391,8 +391,9 @@ public sealed class IrLowering {
       return;
     }
     if (a.Target is NameExpr && this._model.VariableBindings.TryGetValue(a.Target, out var udtSym) && udtSym.Type is UdtType udt) {
-      this._b.Call(IrType.Void, this.RuntimeFn("rt_mem_copy", IrType.Void, IrType.Ptr, IrType.Ptr, IrType.I32),
-        this.SlotFor(udtSym), this.UdtAddress(a.Value), new IrConstantInt(IrType.I32, udt.Size));   // whole-record copy
+      // whole-record copy via the LLVM intrinsic - llc inlines small fixed-size copies to plain load/store
+      this._b.Call(IrType.Void, this.RuntimeFn("llvm.memcpy.p0.p0.i32", IrType.Void, IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I1),
+        this.SlotFor(udtSym), this.UdtAddress(a.Value), new IrConstantInt(IrType.I32, udt.Size), IrBuilder.ConstBool(false));
       return;
     }
     if (a.Target is MemberExpr member) {

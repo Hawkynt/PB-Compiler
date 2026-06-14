@@ -66,7 +66,7 @@ public sealed class UdtLoweringTests {
 
     Assert.That(module, Is.Not.Null);
     Assert.That(IrVerifier.Verify(module!), Is.Empty);
-    Assert.That(LlvmEmitter.Emit(module!), Does.Contain("@rt_mem_copy(ptr"));
+    Assert.That(LlvmEmitter.Emit(module!), Does.Contain("@llvm.memcpy.p0.p0.i32(ptr"));
   }
 
   [Test]
@@ -112,7 +112,7 @@ public sealed class UdtLoweringTests {
 
   [Test]
   public void Pipeline_UdtProgram_IsAcceptedByLlvm() {
-    var module = LowerModule(Point + "DIM p AS Point\np.X = 6\np.Y = 7\nPRINT p.X * p.Y\nEND");
+    var module = LowerModule(Point + "DIM p AS Point\nDIM q AS Point\np.X = 6\np.Y = 7\nq = p\nPRINT q.X * q.Y\nEND");
     Assert.That(module, Is.Not.Null);
     Assert.That(IrVerifier.Verify(module!), Is.Empty);
 
