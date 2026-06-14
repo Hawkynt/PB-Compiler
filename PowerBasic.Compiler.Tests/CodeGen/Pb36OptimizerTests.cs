@@ -549,6 +549,14 @@ public sealed class Pb36OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenConstantDivide_WhenPb36Speed_ThenReciprocalMultiplyReplacesIdiv() {
+    // x% \ 10 by a non-power-of-two constant becomes a verified MUL+shift; x% is
+    // opaque (BYREF call) so SCCP cannot fold the whole division away
+    var speed = Compile("$OPTIMIZE SPEED\n" + _TOUCH + "x% = 7\nT x%\ny% = x% \\ 10\nz% = x% MOD 10\nEND" + _TOUCH_END, Dialect.Pb36);
+    Assert.That(CountIdivBx(speed), Is.Zero, "x% \\ 10 under SPEED should be a reciprocal multiply, no IDIV BX");
+  }
+
+  [Test]
   public void Emit_GivenPowerOfTwoDivides_WhenPb36_ThenIdivDisappears() {
     const string source = """
       a% = -29

@@ -613,10 +613,22 @@ public sealed partial class CodeGenerator {
       return false;
     if (this.Pb36Folder.TryFold(b.Right) is not { Integer: { } divisor })
       return false;
-    if (divisor <= 0 || !BitOperations.IsPow2((ulong)divisor))
+    if (divisor <= 0)
       return false;
-    var shift = BitOperations.TrailingZeroCount((ulong)divisor);
     var wide = scalar.ByteSize == 4;
+
+    // pb36 O4: a non-power-of-two constant divisor lowers to a verified
+    // reciprocal multiply (16-bit signed, $OPTIMIZE SPEED) - a MUL+shift instead
+    // of the ~25-40-cycle IDIV. The magic is brute-force-checked at compile time
+    // against every int16, so it is exact; otherwise IDIV stays.
+    if (!BitOperations.IsPow2((ulong)divisor)) {
+      if (this.OptimizeSpeed && !wide && scalar.Signed && divisor <= short.MaxValue
+          && TryMagicSigned16((int)divisor, out var magic, out var magShift, out var addX))
+        return this.EmitReciprocalDivMod16(b, (int)divisor, magic, magShift, addX);
+      return false;
+    }
+
+    var shift = BitOperations.TrailingZeroCount((ulong)divisor);
     if (shift > (wide ? 8 : 15))
       return false; // pair shifts beyond this lose to the runtime call
 
@@ -685,6 +697,83 @@ public sealed partial class CodeGenerator {
       asm.Shr(Reg.DX, 1);
       asm.Rcr(Reg.AX, 1);
     }
+    return true;
+  }
+
+  /// <summary>
+  /// pb36 O4: derives a signed 16-bit division magic (Hacker's Delight) for a
+  /// positive non-power-of-two divisor, then brute-force-verifies the exact
+  /// formula the emitter will produce against every int16 - so the reciprocal
+  /// multiply is provably bit-identical to IDIV, or it is rejected.
+  /// </summary>
+  private static bool TryMagicSigned16(int d, out int magic, out int shift, out bool addX) {
+    magic = 0;
+    shift = 0;
+    addX = false;
+    if (d < 2 || d > short.MaxValue)
+      return false;
+    const int W = 16;
+    long two15 = 1L << (W - 1);
+    long ad = d;
+    long anc = two15 - 1 - two15 % ad;        // |nc| for d > 0
+    var p = W - 1;
+    long q1 = two15 / anc, r1 = two15 - q1 * anc;
+    long q2 = two15 / ad, r2 = two15 - q2 * ad;
+    long delta;
+    do {
+      ++p;
+      q1 *= 2; r1 *= 2;
+      if (r1 >= anc) { ++q1; r1 -= anc; }
+      q2 *= 2; r2 *= 2;
+      if (r2 >= ad) { ++q2; r2 -= ad; }
+      delta = ad - r2;
+    } while (q1 < delta || (q1 == delta && r1 == 0));
+    magic = (int)((q2 + 1) & 0xFFFF);
+    shift = p - W;
+    addX = (magic & 0x8000) != 0;
+    if (shift is < 0 or > 15)
+      return false;
+    for (var xi = (int)short.MinValue; xi <= short.MaxValue; ++xi) {
+      var mulhi = (int)((long)xi * (short)magic >> 16);
+      var q0 = mulhi + (addX ? xi : 0);
+      var q = (q0 >> shift) - (xi >> 15);
+      if (q != xi / d)
+        return false;
+    }
+    return true;
+  }
+
+  /// <summary>
+  /// pb36 O4: signed 16-bit <c>x \ d</c> / <c>x MOD d</c> as the verified
+  /// reciprocal multiply <c>q = (mulhi(x, magic) [+x]) &gt;&gt; shift - (x &gt;&gt; 15)</c>,
+  /// then <c>r = x - q*d</c> for MOD. x is parked in a temp because the 8086-safe
+  /// arithmetic shifts need CL.
+  /// </summary>
+  private bool EmitReciprocalDivMod16(BinaryExpr b, int d, int magic, int shift, bool addX) {
+    var asm = this._asm;
+    this.EmitExpression(b.Left);
+    this.Coerce(model.TypeOf(b.Left), PbType.Integer, b.Left);   // AX = x
+    var xCell = this.AllocTemp(2).WithSize(OperandSize.Word);
+    asm.Mov(xCell, Reg.AX);
+    asm.Mov(Reg.BX, (Imm)(short)magic);
+    asm.Imul(Reg.BX);                          // DX:AX = x * magic; DX = mulhi
+    if (addX)
+      asm.Add(Reg.DX, xCell);                  // q0 = mulhi + x
+    this.EmitShiftRight(Reg.DX, shift, arithmetic: true);
+    asm.Mov(Reg.AX, xCell);
+    this.EmitShiftRight(Reg.AX, 15, arithmetic: true);   // AX = (x < 0) ? -1 : 0
+    asm.Sub(Reg.DX, Reg.AX);                   // DX = quotient
+    if (b.Op == BinaryOp.IntegerDivide) {
+      asm.Mov(Reg.AX, Reg.DX);
+    } else {
+      asm.Mov(Reg.AX, Reg.DX);
+      asm.Mov(Reg.BX, (Imm)d);
+      asm.Imul(Reg.BX);                        // AX = (q * d) low 16
+      asm.Mov(Reg.BX, xCell);
+      asm.Sub(Reg.BX, Reg.AX);                 // x - q*d
+      asm.Mov(Reg.AX, Reg.BX);
+    }
+    this.ReleaseTemp(2);
     return true;
   }
 
