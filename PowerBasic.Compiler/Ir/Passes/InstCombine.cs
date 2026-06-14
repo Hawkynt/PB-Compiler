@@ -54,6 +54,7 @@ public static class InstCombine {
       case IrBinaryOp.Add:
         if (IsZero(r)) return l;
         if (IsZero(l)) return r;
+        if (MergeConst(IrBinaryOp.Add, l, r, t) is { } addM) return addM;
         break;
       case IrBinaryOp.Sub:
         if (IsZero(r)) return l;
@@ -63,6 +64,7 @@ public static class InstCombine {
         if (IsOne(r)) return l;
         if (IsOne(l)) return r;
         if (IsZero(r) || IsZero(l)) return Zero(t);
+        if (MergeConst(IrBinaryOp.Mul, l, r, t) is { } mulM) return mulM;
         if (Pow2Shift(r) is { } sr) return new IrBinary(IrBinaryOp.Shl, l, new IrConstantInt(t, sr));   // x * 2^k -> x << k
         if (Pow2Shift(l) is { } sl) return new IrBinary(IrBinaryOp.Shl, r, new IrConstantInt(t, sl));
         break;
@@ -71,17 +73,22 @@ public static class InstCombine {
         if (IsAllOnes(r)) return l;
         if (IsAllOnes(l)) return r;
         if (ReferenceEquals(l, r)) return l;
+        if (MergeConst(IrBinaryOp.And, l, r, t) is { } andM) return andM;
         break;
       case IrBinaryOp.Or:
         if (IsZero(r)) return l;
         if (IsZero(l)) return r;
         if (IsAllOnes(r) || IsAllOnes(l)) return AllOnes(t);
         if (ReferenceEquals(l, r)) return l;
+        if (MergeConst(IrBinaryOp.Or, l, r, t) is { } orM) return orM;
         break;
       case IrBinaryOp.Xor:
         if (IsZero(r)) return l;
         if (IsZero(l)) return r;
         if (ReferenceEquals(l, r)) return Zero(t);
+        // double complement: xor(xor(x, -1), -1) -> x
+        if (IsAllOnes(r) && l is IrBinary { Op: IrBinaryOp.Xor } inner && IsAllOnes(inner.Rhs)) return inner.Lhs;
+        if (MergeConst(IrBinaryOp.Xor, l, r, t) is { } xorM) return xorM;
         break;
       case IrBinaryOp.Shl or IrBinaryOp.LShr or IrBinaryOp.AShr:
         if (IsZero(r)) return l;
@@ -113,6 +120,35 @@ public static class InstCombine {
 
   private static bool HasSideEffects(IrInstruction inst) =>
     inst is IrStore or IrCall || inst.IsTerminator;
+
+  /// <summary>
+  /// Reassociates a constant through a same-opcode chain: op(op(x, c1), c2) -> op(x, c1∘c2)
+  /// for the associative+commutative integer ops (add/and/or/xor/mul). Returns the merged
+  /// instruction, or null if the shape does not match.
+  /// </summary>
+  private static IrValue? MergeConst(IrBinaryOp op, IrValue l, IrValue r, IrType t) {
+    IrConstantInt outer;
+    IrBinary inner;
+    if (r is IrConstantInt rc && l is IrBinary lb && lb.Op == op) { outer = rc; inner = lb; }
+    else if (l is IrConstantInt lc && r is IrBinary rb && rb.Op == op) { outer = lc; inner = rb; }
+    else return null;
+
+    IrValue x;
+    IrConstantInt c1;
+    if (inner.Rhs is IrConstantInt ir) { x = inner.Lhs; c1 = ir; }
+    else if (inner.Lhs is IrConstantInt il) { x = inner.Rhs; c1 = il; }
+    else return null;
+
+    var merged = op switch {
+      IrBinaryOp.Add => c1.Value + outer.Value,
+      IrBinaryOp.And => c1.Value & outer.Value,
+      IrBinaryOp.Or => c1.Value | outer.Value,
+      IrBinaryOp.Xor => c1.Value ^ outer.Value,
+      IrBinaryOp.Mul => c1.Value * outer.Value,
+      _ => 0L,
+    };
+    return new IrBinary(op, x, new IrConstantInt(t, IrConstFold.Wrap(merged, t)));
+  }
 
   /// <summary>If the value is a positive power of two, returns its shift exponent; otherwise null.</summary>
   private static long? Pow2Shift(IrValue v) {
