@@ -18,6 +18,7 @@ public sealed class IrLowering {
 
   private readonly SemanticModel _model;
   private readonly IReadOnlyDictionary<ProcedureSymbol, IrFunction>? _procMap;
+  private readonly IrModule? _module;
   private readonly Dictionary<VariableSymbol, IrValue> _addr = new(ReferenceEqualityComparer.Instance);
   private readonly Stack<LoopContext> _loops = new();
   private readonly Dictionary<string, IrBasicBlock> _labels = new(StringComparer.OrdinalIgnoreCase);
@@ -33,16 +34,17 @@ public sealed class IrLowering {
 
   private readonly record struct LoopContext(ExitKind Kind, IrBasicBlock Exit, IrBasicBlock Continue);
 
-  private IrLowering(SemanticModel model, IReadOnlyDictionary<ProcedureSymbol, IrFunction>? procMap) {
+  private IrLowering(SemanticModel model, IReadOnlyDictionary<ProcedureSymbol, IrFunction>? procMap, IrModule? module) {
     this._model = model;
     this._procMap = procMap;
+    this._module = module;
     this._folder = new ConstantFolder(model.Equates);
   }
 
   /// <summary>Lowers just the main body into an <c>@main</c> function (no procedures), or null if unsupported.</summary>
   public static IrFunction? TryLowerMainBody(SemanticModel model) {
     try {
-      var lowering = new IrLowering(model, null);
+      var lowering = new IrLowering(model, null, null);
       var fn = new IrFunction("main", IrType.Void);
       lowering.LowerBodyInto(fn, model.MainBody, null);
       return fn;
@@ -65,14 +67,14 @@ public sealed class IrLowering {
     var main = new IrFunction("main", IrType.Void);
     module.AddFunction(main);
     try {
-      new IrLowering(model, procMap).LowerBodyInto(main, model.MainBody, null);
+      new IrLowering(model, procMap, module).LowerBodyInto(main, model.MainBody, null);
     } catch (IrLoweringException) {
       return null;
     }
 
     foreach (var (proc, irfn) in procMap) {
       try {
-        new IrLowering(model, procMap).LowerProcedure(proc, irfn);
+        new IrLowering(model, procMap, module).LowerProcedure(proc, irfn);
       } catch (IrLoweringException) {
         irfn.ClearBody();                              // leave it a declaration; callers can still call it
       }
@@ -231,6 +233,7 @@ public sealed class IrLowering {
       case SwapStmt sw: this.LowerSwap(sw); break;
       case LabelStmt l: this.LowerLabel(l); break;
       case GotoStmt g: this.LowerGoto(g); break;
+      case PrintStmt pr: this.LowerPrint(pr); break;
       case EndStmt: this.LowerEnd(); break;
       default: throw new IrLoweringException($"unsupported statement: {statement.GetType().Name}");
     }
@@ -267,6 +270,46 @@ public sealed class IrLowering {
     if (e is CallOrIndexExpr ci && this._model.VariableBindings.TryGetValue(ci, out var arr) && arr.Type is ArrayType)
       return this.ElementAddress(ci);
     throw new IrLoweringException("unsupported lvalue");
+  }
+
+  private void LowerPrint(PrintStmt p) {
+    if (p.FileNumber is not null || p.IsLPrint || p.UsingFormat is not null)
+      throw new IrLoweringException("PRINT to file / LPRINT / PRINT USING");
+
+    foreach (var item in p.Items) {
+      if (item.Value is not { } expr)
+        continue;
+      if (this._model.TypeOf(expr) is not ScalarType s)
+        throw new IrLoweringException("PRINT of a non-numeric item");
+      var (name, ty) = PrintRuntime(s);
+      this._b.Call(IrType.Void, this.RuntimeFn(name, IrType.Void, ty), this.Coerce(this.LowerExpr(expr), s, s));
+    }
+
+    // a trailing comma/semicolon suppresses the newline; otherwise (incl. bare PRINT) emit one
+    if (p.Items.Count == 0 || p.Items[^1].Separator == PrintSeparator.Newline)
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_print_nl", IrType.Void));
+  }
+
+  private static (string Name, IrType Type) PrintRuntime(ScalarType s) {
+    if (s.IsFloat)
+      return s.ByteSize switch {
+        4 => ("rt_print_single", IrType.F32),
+        8 => ("rt_print_double", IrType.F64),
+        _ => throw new IrLoweringException("PRINT of EXT (80-bit)"),
+      };
+    var bits = s.ByteSize * 8;
+    var kind = s.Signed ? "i" : "u";
+    return ($"rt_print_{kind}{bits}", IrType.Integer(bits));
+  }
+
+  /// <summary>Finds or declares an external runtime function by name and signature.</summary>
+  private IrFunction RuntimeFn(string name, IrType returnType, params IrType[] paramTypes) {
+    if (this._module is null)
+      throw new IrLoweringException("runtime calls require whole-module lowering");
+    if (this._module.FindFunction(name) is { } existing)
+      return existing;
+    var args = paramTypes.Select((t, i) => new IrArgument(t, i)).ToList();
+    return this._module.AddFunction(new IrFunction(name, returnType, args));   // a declaration (no body)
   }
 
   private void LowerLabel(LabelStmt label) {

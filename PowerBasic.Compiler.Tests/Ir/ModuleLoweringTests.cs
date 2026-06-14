@@ -61,7 +61,8 @@ public sealed class ModuleLoweringTests {
       "y% = f%(3)\n" +
       "\n" +
       "FUNCTION f%(BYVAL n%)\n" +
-      "  PRINT n%\n" +              // I/O is unsupported -> body declines, signature stays
+      "  DIM t$\n" +
+      "  t$ = \"x\"\n" +           // string ops are unsupported -> body declines, signature stays
       "  f% = n%\n" +
       "END FUNCTION");
 
