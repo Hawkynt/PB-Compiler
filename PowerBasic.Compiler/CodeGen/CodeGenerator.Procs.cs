@@ -95,7 +95,10 @@ public sealed partial class CodeGenerator {
     }
 
     this.PrepareCse(proc.Body!);
-    this.PrepareSccp(proc.Body!);
+    // the function result variable is read by RETURN, not by any body statement -
+    // pass it as implicitly read so SCCP/DSE never fold or drop its writes
+    var resultVar = proc.IsFunction && proc.Variables.TryGetValue(proc.Name, out var rv) ? rv : null;
+    this.PrepareSccp(proc.Body!, resultVar);
     this.BeginFrame(elideZeroing, this._tailEntry);
     if (elideZeroing)
       foreach (var local in stackLocals)
@@ -128,7 +131,7 @@ public sealed partial class CodeGenerator {
     }
 
     // release string ownership: stack locals and BYVAL string parameters
-    var resultVar = proc.IsFunction && proc.Variables.TryGetValue(proc.Name, out var rv) ? rv : null;
+    // (resultVar computed above)
     foreach (var symbol in this.StackLocalsOf(proc))
       if (symbol.Type is StringType or FlexType && !ReferenceEquals(symbol, resultVar)) {
         asm.Mov(Reg.AX, Mem.Word(Reg.BP, symbol.Offset));

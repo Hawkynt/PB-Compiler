@@ -255,6 +255,53 @@ public sealed class SsaTests {
 
   #endregion
 
+  #region dead-store elimination
+
+  private static AssignStmt AssignOf(ControlFlowGraph cfg, string name)
+    => cfg.Blocks.SelectMany(b => b.Statements).OfType<AssignStmt>()
+      .First(a => a.Target is NameExpr n && n.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase));
+
+  [Test]
+  public void Dse_GivenConstantPropagatedAway_ThenAssignmentIsDead() {
+    // PRINT x% folds to 5, so nothing really reads x% - the store is dead
+    var (model, cfg, ssa) = BuildSsa("x% = 5\nPRINT x%");
+    var proven = Sccp.Solve(model, ssa!);
+    var dead = DeadStore.Compute(model, ssa!, proven);
+    Assert.That(dead, Does.Contain(AssignOf(cfg, "x")));
+  }
+
+  [Test]
+  public void Dse_GivenCopyChainAllFolded_ThenWholeChainIsDead() {
+    // y% folds to 5 everywhere, so y% = x% and x% = 5 are both dead
+    var (model, cfg, ssa) = BuildSsa("x% = 5\ny% = x%\nPRINT y%");
+    var proven = Sccp.Solve(model, ssa!);
+    var dead = DeadStore.Compute(model, ssa!, proven);
+    Assert.Multiple(() => {
+      Assert.That(dead, Does.Contain(AssignOf(cfg, "x")));
+      Assert.That(dead, Does.Contain(AssignOf(cfg, "y")));
+    });
+  }
+
+  [Test]
+  public void Dse_GivenEscapedVariable_ThenAssignmentKept() {
+    // x% escapes via the BYREF call, so it is not tracked and never removed
+    var (model, cfg, ssa) = BuildSsa("DECLARE SUB T(a%)\nx% = 5\nT x%");
+    var proven = ssa == null ? [] : Sccp.Solve(model, ssa);
+    var dead = ssa == null ? [] : DeadStore.Compute(model, ssa, proven);
+    Assert.That(dead, Does.Not.Contain(AssignOf(cfg, "x")));
+  }
+
+  [Test]
+  public void Dse_GivenRealRead_ThenAssignmentKept() {
+    // an unfolded read (the variable is not constant) keeps the store alive
+    var (model, cfg, ssa) = BuildSsa("DECLARE FUNCTION F%()\nx% = F%()\nPRINT x%");
+    var proven = Sccp.Solve(model, ssa!);
+    var dead = DeadStore.Compute(model, ssa!, proven);
+    Assert.That(dead, Is.Empty, "x% = F%() has a side-effecting RHS and a real read - never removed");
+  }
+
+  #endregion
+
   #region SSA construction
 
   [Test]

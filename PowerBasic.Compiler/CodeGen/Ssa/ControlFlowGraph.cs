@@ -14,6 +14,12 @@ public sealed class BasicBlock {
 
   public int Id { get; }
   public List<Statement> Statements { get; } = [];
+
+  /// <summary>
+  /// Expressions read by the block that are not statements - FOR From/To/Step
+  /// bounds (evaluated at the preheader). Recorded as uses so analyses see them.
+  /// </summary>
+  public List<Expression> ExtraReads { get; } = [];
   public Expression? Condition { get; set; }
   public BasicBlock? TrueSucc { get; set; }
   public BasicBlock? FalseSucc { get; set; }
@@ -200,6 +206,13 @@ public sealed class ControlFlowGraph {
         return current;
       }
       this.LoopCounters.Add(counter);
+
+      // the bounds are evaluated once at the preheader; record their reads so
+      // SCCP/DSE see variables used only in a loop bound
+      current.ExtraReads.Add(f.From);
+      current.ExtraReads.Add(f.To);
+      if (f.Step != null)
+        current.ExtraReads.Add(f.Step);
 
       // current = preheader (From/To/Step evaluated once); header tests the
       // counter (non-trackable, so the test is opaque -> both edges live), body

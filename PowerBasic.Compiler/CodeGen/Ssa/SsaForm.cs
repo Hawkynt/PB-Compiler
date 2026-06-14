@@ -32,6 +32,9 @@ public sealed class SsaValue {
   /// <summary><see cref="SsaDefKind.Assign"/>: the RHS expression.</summary>
   public Expression? DefExpr { get; set; }
 
+  /// <summary>The AST statement that defines this version (Assign/IncrDecr only); null for phi/entry. Used by dead-store elimination.</summary>
+  public Statement? DefStmt { get; set; }
+
   /// <summary><see cref="SsaDefKind.IncrDecr"/>: the prior version, the (optional) amount, and the direction.</summary>
   public SsaValue? IncrBase { get; set; }
   public Expression? IncrAmount { get; set; }
@@ -73,8 +76,13 @@ public sealed class SsaForm {
   /// is tracked only when every reference is a plain read or whole assignment of
   /// a non-escaping, non-shared integral scalar.
   /// </summary>
-  public static SsaForm? TryBuild(SemanticModel model, ControlFlowGraph cfg) {
-    var tracked = FindTrackable(model, cfg);
+  /// <param name="implicitlyRead">
+  /// Variables read by something the body's statements do not show - chiefly the
+  /// function result variable (read by RETURN). They are never tracked, so SCCP
+  /// never folds them and dead-store elimination never removes their writes.
+  /// </param>
+  public static SsaForm? TryBuild(SemanticModel model, ControlFlowGraph cfg, IReadOnlyCollection<VariableSymbol>? implicitlyRead = null) {
+    var tracked = FindTrackable(model, cfg, implicitlyRead);
     if (tracked.Count == 0)
       return null;
 
@@ -133,9 +141,11 @@ public sealed class SsaForm {
   /// references is a plain read or whole assignment - never a call/index/member/
   /// pointer argument (BYREF or address escape) and never in an opaque statement.
   /// </summary>
-  private static HashSet<VariableSymbol> FindTrackable(SemanticModel model, ControlFlowGraph cfg) {
+  private static HashSet<VariableSymbol> FindTrackable(SemanticModel model, ControlFlowGraph cfg, IReadOnlyCollection<VariableSymbol>? implicitlyRead) {
     var candidates = new HashSet<VariableSymbol>(ReferenceEqualityComparer.Instance);
     var escaped = new HashSet<VariableSymbol>(ReferenceEqualityComparer.Instance);
+    if (implicitlyRead != null)
+      escaped.UnionWith(implicitlyRead);
 
     void Read(Expression? e, bool dangerous) {
       switch (e) {
@@ -215,6 +225,8 @@ public sealed class SsaForm {
             break;
         }
       Read(block.Condition, false);
+      foreach (var extra in block.ExtraReads)
+        Read(extra, false); // FOR bound expressions are plain reads
     }
 
     // FOR counters are written implicitly by the loop - never track them
@@ -377,6 +389,8 @@ public sealed class SsaForm {
       foreach (var stmt in block.Statements)
         this.RenameStatement(stmt, block, pushed);
 
+      foreach (var extra in block.ExtraReads)
+        this.RecordUses(extra); // FOR bounds, with the preheader's reaching versions
       this.RecordUses(block.Condition);
 
       // fill phi operands of CFG successors
@@ -397,6 +411,7 @@ public sealed class SsaForm {
           this.RecordUses(a.Value);
           var assigned = this.NewValue(sym, SsaDefKind.Assign, block);
           assigned.DefExpr = a.Value;
+          assigned.DefStmt = a;
           this._stacks[sym].Push(assigned);
           pushed.Add(sym);
           break;
@@ -409,6 +424,7 @@ public sealed class SsaForm {
           next.IncrBase = prior;
           next.IncrAmount = id.Amount;
           next.IncrUp = id.Increment;
+          next.DefStmt = id;
           this._stacks[sym].Push(next);
           pushed.Add(sym);
           break;

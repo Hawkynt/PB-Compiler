@@ -45,6 +45,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private int _cseBytes;
   private Dictionary<Expression, Pb36CommonSubexpr.CseMark>? _cseMarks;
   private Dictionary<Syntax.Ast.NameExpr, long>? _provenReads;
+  private HashSet<Statement>? _deadStatements;
   private Dictionary<VariableSymbol, ConstantValue>? _ipcp;
   private (VariableSymbol Symbol, Reg Reg)? _registerCounter;
   private int _tempBytes;
@@ -300,17 +301,23 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// folds. Null when the body is not analyzable (loops/SELECT/unstructured flow)
   /// or nothing is proven - then emission is exactly as before.
   /// </summary>
-  private void PrepareSccp(IReadOnlyList<Statement> body) {
+  private void PrepareSccp(IReadOnlyList<Statement> body, VariableSymbol? implicitResult = null) {
     this._provenReads = null;
+    this._deadStatements = null;
     if (!this.OptimizePb36)
       return;
     if (Ssa.ControlFlowGraph.TryBuild(body) is not { } cfg)
       return;
-    if (Ssa.SsaForm.TryBuild(model, cfg) is not { } ssa)
+    var implicitlyRead = implicitResult != null ? new[] { implicitResult } : null;
+    if (Ssa.SsaForm.TryBuild(model, cfg, implicitlyRead) is not { } ssa)
       return;
     var proven = Ssa.Sccp.Solve(model, ssa);
     if (proven.Count > 0)
       this._provenReads = proven;
+    // O2: assignments whose result SCCP propagated away (or never read) are dead
+    var dead = Ssa.DeadStore.Compute(model, ssa, proven);
+    if (dead.Count > 0)
+      this._deadStatements = dead;
   }
 
   /// <summary>Reserves a BP-relative scratch block; release in reverse order.</summary>
@@ -460,6 +467,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// RESUME / RESUME NEXT can re-enter after an error unwound the stack.
   /// </summary>
   private void EmitStatement(Statement statement) {
+    // pb36 O2: a dead store (pure RHS, value never really read) is not emitted
+    if (this._deadStatements != null && this._deadStatements.Contains(statement))
+      return;
     if (!this._trackResume || statement is LabelStmt or DataStmt or MetaStmt or EquateStmt or DefTypeStmt) {
       this.EmitStatementCore(statement);
       return;
@@ -1101,13 +1111,27 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     }
   }
 
+  /// <summary>
+  /// Folds an IF/ELSEIF condition to its constant truth value, substituting
+  /// SCCP-proven reads first so cross-block constants count. Gated off under
+  /// $ERROR OVERFLOW/NUMERIC, where folding (and dropping) the condition would
+  /// skip a trap the real evaluation must raise.
+  /// </summary>
+  private long? FoldConditionWithProven(Expression condition) {
+    var folded = condition;
+    if (this._provenReads is { Count: > 0 } proven && !this.CheckOverflow && !this.CheckNumeric)
+      folded = SubstituteProven(condition, proven, out _);
+    return this.Pb36Folder.TryFold(folded)?.Integer;
+  }
+
   private void EmitIf(IfStmt i) {
     var asm = this._asm;
 
-    // pb36 O17 (SCCP-lite): a constant condition selects one arm at compile
-    // time - the folder is pure (no calls), so dropping the dead arm is sound.
-    // Cascades through ELSEIF chains until a non-constant condition appears.
-    if (this.OptimizePb36 && this.Pb36Folder.TryFold(i.Condition) is { Integer: { } c }) {
+    // pb36 O17 (SCCP): a condition proven constant - locally or by cross-block
+    // SSA propagation - selects one arm at compile time and the dead arm is not
+    // emitted at all (whole-branch dead-code elimination). Cascades through the
+    // ELSEIF chain until a non-constant condition appears.
+    if (this.OptimizePb36 && this.FoldConditionWithProven(i.Condition) is { } c) {
       if (c != 0) {
         foreach (var s in i.Then)
           this.EmitStatement(s);
