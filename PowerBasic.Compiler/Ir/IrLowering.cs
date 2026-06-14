@@ -360,6 +360,7 @@ public sealed class IrLowering {
       case InputStmt inp: this.LowerInput(inp); break;
       case OpenStmt op: this.LowerOpen(op); break;
       case CloseStmt cl: this.LowerClose(cl); break;
+      case GetPutFileStmt gp: this.LowerGetPut(gp); break;
       case DataStmt: break;                          // DATA is gathered once into a module blob; the statement itself emits nothing
       case ReadStmt rd: this.LowerRead(rd); break;
       case RestoreStmt rs: this.LowerRestore(rs); break;
@@ -466,8 +467,28 @@ public sealed class IrLowering {
   private void LowerOpen(OpenStmt o) {
     if (this._module is null)
       throw new IrLoweringException("OPEN requires whole-module lowering");
-    this._b.Call(IrType.Void, this.RuntimeFn("rt_file_open", IrType.Void, IrType.I32, IrType.Ptr, IrType.I32),
-      this.FileNum(o.FileNumber), this.LowerStringExpr(o.FileName), new IrConstantInt(IrType.I32, (int)o.Mode));
+    var recLen = o.RecordLength is { } rl
+      ? this.Coerce(this.LowerExpr(rl), this._model.TypeOf(rl), PbType.Long)
+      : new IrConstantInt(IrType.I32, 0);              // 0 = no fixed record length (sequential)
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_file_open", IrType.Void, IrType.I32, IrType.Ptr, IrType.I32, IrType.I32),
+      this.FileNum(o.FileNumber), this.LowerStringExpr(o.FileName), new IrConstantInt(IrType.I32, (int)o.Mode), recLen);
+  }
+
+  /// <summary>Random/binary record I/O of one fixed-size scalar variable (GET/PUT #n, rec, var).</summary>
+  private void LowerGetPut(GetPutFileStmt s) {
+    if (this._module is null)
+      throw new IrLoweringException("GET/PUT requires whole-module lowering");
+    if (s.Variable is null)
+      throw new IrLoweringException("FIELD-based GET/PUT");   // the buffer/FIELD form is not modeled
+    var (address, type) = this.LValue(s.Variable);
+    if (type is not ScalarType scalar)
+      throw new IrLoweringException("GET/PUT of a non-scalar record");
+    var fileNo = this.FileNum(s.FileNumber);
+    var recNo = s.RecordNumber is { } rn
+      ? this.Coerce(this.LowerExpr(rn), this._model.TypeOf(rn), PbType.Long)
+      : new IrConstantInt(IrType.I32, 0);             // 0 = the current/next record
+    this._b.Call(IrType.Void, this.RuntimeFn(s.IsGet ? "rt_file_get" : "rt_file_put", IrType.Void, IrType.I32, IrType.I32, IrType.Ptr, IrType.I32),
+      fileNo, recNo, address, new IrConstantInt(IrType.I32, scalar.Size));
   }
 
   private void LowerClose(CloseStmt c) {

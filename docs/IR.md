@@ -73,7 +73,9 @@ Supported today:
   comparisons, `LEN`, `LEFT$`/`RIGHT$`/`MID$`, `CHR$`/`ASC`, `STR$`/`VAL`,
   `SPACE$`/`STRING$`, `HEX$`/`OCT$`; identical literals are interned to one global;
 - **console and file I/O** (`PRINT`/`INPUT`/`LINE INPUT`, `OPEN`/`CLOSE`/`PRINT #`/`INPUT #`)
-  via `rt_print_*` / `rt_input_*` / `rt_file_*` declarations;
+  via `rt_print_*` / `rt_input_*` / `rt_file_*` declarations; **random/binary record I/O**
+  (`OPEN … FOR RANDOM/BINARY … LEN=`, `GET`/`PUT #n, rec, var`) of a fixed-size scalar
+  variable via `rt_file_get`/`rt_file_put` (the FIELD-buffer form is declined);
 - **`DATA`/`READ`/`RESTORE`**: all DATA items pack into one length-prefixed module blob
   (`@.data`) walked by a module-global i32 cursor (`@.data_cursor`); numeric reads parse
   via `rt_str_val`, string reads store the `rt_str_const` handle, `RESTORE [<label>]`
@@ -90,7 +92,8 @@ and sequential file-processing programs lower, optimize and compile to a native 
 object via `pbc --emit-llvm | llc` (linked against a runtime providing the `rt_*`
 functions; the `llvm.*` math intrinsics need no runtime).
 
-Not yet: random/binary `GET`/`PUT` (record buffers + runtime table).
+Not yet: the FIELD-buffer form of random I/O, and `GET`/`PUT` of UDT/string records
+(only fixed-size scalar records are modeled).
 
 ## Optimization passes (`Ir/Passes/`)
 
