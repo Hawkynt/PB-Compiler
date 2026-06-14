@@ -58,7 +58,8 @@ Supported today:
   promotion**;
 - `IF`/`ELSEIF`/`ELSE`, `FOR` (constant **or runtime** step), `DO` (pre/post
   `WHILE`/`UNTIL`, infinite), `EXIT`/`ITERATE`, `END`, `SWAP`;
-- `SELECT CASE`, **`GOTO`/labels**, **`ON … GOTO`** (lowered to a `switch`),
+- `SELECT CASE` (numeric **and string** subjects - string arms/ranges compare via
+  `rt_str_compare`), **`GOTO`/labels**, **`ON … GOTO`** (lowered to a `switch`),
   **`GOSUB`/`RETURN`** (a fixed-depth return-id stack + a shared dispatch `switch`, so
   nested GOSUBs return LIFO; `RETURN <label>` pops then jumps to the explicit label);
 - static arrays (1-D and multi-dimensional, row-major byte GEP); **string arrays**

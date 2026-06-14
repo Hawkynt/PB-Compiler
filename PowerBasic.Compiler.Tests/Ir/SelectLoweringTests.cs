@@ -14,6 +14,29 @@ public sealed class SelectLoweringTests {
     return IrLowering.TryLowerMainBody(Binder.Bind(unit, Dialect.Pb35))!;
   }
 
+  private static IrModule? LowerModule(string source) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
+    return IrLowering.TryLowerModule(Binder.Bind(unit, Dialect.Pb35));
+  }
+
+  [Test]
+  public void Lower_GivenStringSubject_ComparesViaRuntime() {
+    var module = LowerModule(
+      "a$ = \"b\" : r% = 0\n" +
+      "SELECT CASE a$\n" +
+      "CASE \"a\"\n  r% = 1\n" +
+      "CASE \"b\", \"c\"\n  r% = 2\n" +
+      "CASE \"d\" TO \"f\"\n  r% = 3\n" +
+      "CASE ELSE\n  r% = 9\n" +
+      "END SELECT\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var text = LlvmEmitter.Emit(module!);
+    Assert.That(text, Does.Contain("@rt_str_compare(ptr"));   // string arms compare through the runtime
+    Assert.That(text, Does.Contain("icmp sge i32"));          // the "d" TO "f" range lower bound
+  }
+
   [Test]
   public void Lower_GivenValueListRangeAndIs_BuildsVerifiableComparisonChain() {
     var fn = Lower(

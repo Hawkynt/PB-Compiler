@@ -994,10 +994,10 @@ public sealed class IrLowering {
   }
 
   private void LowerSelect(SelectStmt s) {
-    var subject = this.LowerExpr(s.Subject);
     var subjectPb = this._model.TypeOf(s.Subject);
-    if (subjectPb is not ScalarType)
+    if (subjectPb is not (ScalarType or StringType))
       throw new IrLoweringException("SELECT CASE on a non-scalar subject");
+    var subject = subjectPb is StringType ? this.LowerStringExpr(s.Subject) : this.LowerExpr(s.Subject);
 
     var endsel = this.NewBlock("sel.end");
     CaseArm? elseArm = null;
@@ -1046,6 +1046,19 @@ public sealed class IrLowering {
   }
 
   private IrValue CompareToValue(IrValue subject, PbType subjectPb, CaseComparison op, Expression rightExpr) {
+    if (subjectPb is StringType) {
+      var cmp = this._b.Call(IrType.I32, this.RuntimeFn("rt_str_compare", IrType.I32, IrType.Ptr, IrType.Ptr), subject, this.LowerStringExpr(rightExpr));
+      var spred = op switch {
+        CaseComparison.Equal => IrCmpPred.Eq,
+        CaseComparison.NotEqual => IrCmpPred.Ne,
+        CaseComparison.Less => IrCmpPred.Slt,
+        CaseComparison.LessEqual => IrCmpPred.Sle,
+        CaseComparison.Greater => IrCmpPred.Sgt,
+        CaseComparison.GreaterEqual => IrCmpPred.Sge,
+        _ => throw new IrLoweringException($"string case comparison {op}"),
+      };
+      return this._b.Cmp(spred, cmp, new IrConstantInt(IrType.I32, 0));
+    }
     var rightPb = this._model.TypeOf(rightExpr);
     var (cmpPb, isFloat, signed) = CommonCompareType(subjectPb, rightPb);
     var l = this.Coerce(subject, subjectPb, cmpPb);
