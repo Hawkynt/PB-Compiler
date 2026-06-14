@@ -60,6 +60,9 @@ public static class InstCombine {
       case IrBinaryOp.Sub:
         if (IsZero(r)) return l;
         if (ReferenceEquals(l, r)) return Zero(t);
+        // canonicalize x - C into x + (-C) so add-chain constant merging applies
+        if (r is IrConstantInt subC && !IsZero(r))
+          return new IrBinary(IrBinaryOp.Add, l, new IrConstantInt(t, IrConstFold.Wrap(-subC.Value, t)));
         // 0 - (0 - x) -> x
         if (IsZero(l) && r is IrBinary { Op: IrBinaryOp.Sub } ds && IsZero(ds.Lhs)) return ds.Rhs;
         // (a + b) - a -> b ; (a + b) - b -> a
@@ -124,6 +127,10 @@ public static class InstCombine {
   }
 
   private static IrValue? SimplifyCmp(IrCmp c) {
+    // canonicalize a constant operand to the right (swapping the predicate accordingly)
+    if (c.Lhs is IrConstant && c.Rhs is not IrConstant)
+      return new IrCmp(Swap(c.Pred), c.Rhs, c.Lhs);
+
     // (zext/sext i1 %b) != 0  ->  %b   and   (zext/sext i1 %b) == 0  ->  !%b
     // this collapses the "relational then compare-to-zero" shape every BASIC condition lowers to
     if (c.Pred is IrCmpPred.Ne or IrCmpPred.Eq) {
@@ -149,6 +156,17 @@ public static class InstCombine {
       && cast.Value.Type.IsBool
       ? cast.Value
       : null;
+
+  /// <summary>The predicate that holds when a comparison's operands are swapped (a &lt; b becomes b &gt; a).</summary>
+  private static IrCmpPred Swap(IrCmpPred p) => p switch {
+    IrCmpPred.Slt => IrCmpPred.Sgt, IrCmpPred.Sgt => IrCmpPred.Slt,
+    IrCmpPred.Sle => IrCmpPred.Sge, IrCmpPred.Sge => IrCmpPred.Sle,
+    IrCmpPred.Ult => IrCmpPred.Ugt, IrCmpPred.Ugt => IrCmpPred.Ult,
+    IrCmpPred.Ule => IrCmpPred.Uge, IrCmpPred.Uge => IrCmpPred.Ule,
+    IrCmpPred.Folt => IrCmpPred.Fogt, IrCmpPred.Fogt => IrCmpPred.Folt,
+    IrCmpPred.Fole => IrCmpPred.Foge, IrCmpPred.Foge => IrCmpPred.Fole,
+    _ => p,   // eq/ne (signed and float) are symmetric
+  };
 
   private static bool HasSideEffects(IrInstruction inst) =>
     inst is IrStore or IrCall || inst.IsTerminator;
