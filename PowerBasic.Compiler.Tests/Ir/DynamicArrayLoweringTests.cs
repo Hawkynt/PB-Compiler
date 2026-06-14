@@ -65,10 +65,12 @@ public sealed class DynamicArrayLoweringTests {
   }
 
   [Test]
-  public void RedimPreserve_Declines() {
-    var module = LowerModule("REDIM a%(1 TO 3)\nREDIM PRESERVE a%(1 TO 9)\nEND", optimize: false);
+  public void RedimPreserve_ReallocatesKeepingContents() {
+    var module = LowerModule("REDIM a%(1 TO 3)\na%(1) = 7\nREDIM PRESERVE a%(1 TO 9)\nx% = a%(1)\nEND", optimize: false);
 
-    Assert.That(module, Is.Null);   // PRESERVE is not modeled yet, so the whole module declines
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    Assert.That(LlvmEmitter.Emit(module!), Does.Contain("@rt_arr_realloc(ptr"));   // grow in place, keeping the prefix
   }
 
   [Test]

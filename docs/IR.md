@@ -66,7 +66,8 @@ Supported today:
   scales by the target pointer size rather than the DOS 2-byte handle width);
 - **dynamic (`REDIM`'d) 1-D arrays**: a runtime-allocated buffer behind a (data pointer,
   lower-bound) descriptor - `REDIM` allocates via `rt_arr_alloc`/`rt_arr_alloc_ptr`,
-  element access indexes relative to the bound, `ERASE` frees via `rt_arr_free`;
+  `REDIM PRESERVE` grows in place via `rt_arr_realloc`/`rt_arr_realloc_ptr`, element
+  access indexes relative to the bound, `ERASE` frees via `rt_arr_free`;
 - **strings** via a runtime-handle ABI (`rt_str_*`): assignment, `&` concat, all
   comparisons, `LEN`, `LEFT$`/`RIGHT$`/`MID$`, `CHR$`/`ASC`, `STR$`/`VAL`,
   `SPACE$`/`STRING$`, `HEX$`/`OCT$`; identical literals are interned to one global;
@@ -88,8 +89,8 @@ and sequential file-processing programs lower, optimize and compile to a native 
 object via `pbc --emit-llvm | llc` (linked against a runtime providing the `rt_*`
 functions; the `llvm.*` math intrinsics need no runtime).
 
-Not yet: multi-dimensional dynamic arrays and `REDIM PRESERVE`; random/binary
-`GET`/`PUT` (record buffers + runtime table).
+Not yet: multi-dimensional dynamic arrays; random/binary `GET`/`PUT` (record buffers
++ runtime table).
 
 ## Optimization passes (`Ir/Passes/`)
 

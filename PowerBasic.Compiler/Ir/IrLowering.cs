@@ -678,8 +678,6 @@ public sealed class IrLowering {
   }
 
   private void LowerRedim(RedimStmt r) {
-    if (r.Preserve)
-      throw new IrLoweringException("REDIM PRESERVE");
     foreach (var v in r.Variables) {
       if (!this._model.RedimBindings.TryGetValue(v, out var symbol) || symbol.Type is not ArrayType { IsDynamic: true } arr)
         throw new IrLoweringException($"REDIM of non-dynamic array {v.Name}");
@@ -692,9 +690,18 @@ public sealed class IrLowering {
       var hi = this.Coerce(this.LowerExpr(upper), this._model.TypeOf(upper), PbType.Long);
       var count = this._b.Add(this._b.Sub(hi, lo), new IrConstantInt(IrType.I32, 1));
       var (dataSlot, loSlot) = this.DynDescriptor(symbol);
-      var data = arr.Element is StringType
-        ? this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_alloc_ptr", IrType.Ptr, IrType.I32), count)               // count target-pointers
-        : this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_alloc", IrType.Ptr, IrType.I32, IrType.I32), count, new IrConstantInt(IrType.I32, arr.Element.Size));
+      var isString = arr.Element is StringType;
+      IrValue data;
+      if (r.Preserve) {                                // realloc keeps the existing prefix (mem2reg seeds the unallocated slot to null = fresh malloc)
+        var old = this._b.Load(IrType.Ptr, dataSlot);
+        data = isString
+          ? this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_realloc_ptr", IrType.Ptr, IrType.Ptr, IrType.I32), old, count)
+          : this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_realloc", IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I32), old, count, new IrConstantInt(IrType.I32, arr.Element.Size));
+      } else {
+        data = isString
+          ? this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_alloc_ptr", IrType.Ptr, IrType.I32), count)             // count target-pointers
+          : this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_alloc", IrType.Ptr, IrType.I32, IrType.I32), count, new IrConstantInt(IrType.I32, arr.Element.Size));
+      }
       this._b.Store(data, dataSlot);
       this._b.Store(lo, loSlot);
     }
