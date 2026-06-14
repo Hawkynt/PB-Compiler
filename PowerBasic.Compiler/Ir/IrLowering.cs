@@ -167,6 +167,7 @@ public sealed class IrLowering {
       case ExitStmt e: this.LowerExit(e); break;
       case IterateStmt it: this.LowerIterate(it); break;
       case CallStmt c: this.LowerCallStatement(c); break;
+      case SelectStmt s: this.LowerSelect(s); break;
       default: throw new IrLoweringException($"unsupported statement: {statement.GetType().Name}");
     }
   }
@@ -321,6 +322,75 @@ public sealed class IrLowering {
     if (this._procMap is null || !this._model.CallBindings.TryGetValue(c, out var proc) || !this._procMap.TryGetValue(proc, out var callee))
       throw new IrLoweringException($"call to unsupported procedure {c.Name}");
     this.EmitCall(callee, proc, c.Arguments);
+  }
+
+  private void LowerSelect(SelectStmt s) {
+    var subject = this.LowerExpr(s.Subject);
+    var subjectPb = this._model.TypeOf(s.Subject);
+    if (subjectPb is not ScalarType)
+      throw new IrLoweringException("SELECT CASE on a non-scalar subject");
+
+    var endsel = this.NewBlock("sel.end");
+    CaseArm? elseArm = null;
+    var arms = new List<CaseArm>();
+    foreach (var arm in s.Arms) {
+      if (arm.Selectors.Count == 0)
+        elseArm = arm;                               // CASE ELSE
+      else
+        arms.Add(arm);
+    }
+
+    foreach (var arm in arms) {
+      var body = this.NewBlock("sel.case");
+      var next = this.NewBlock("sel.next");
+      IrValue? cond = null;
+      foreach (var selector in arm.Selectors) {
+        var test = this.SelectorTest(subject, subjectPb, selector);
+        cond = cond is null ? test : this._b.Or(cond, test);
+      }
+      this._b.CondBr(cond!, body, next);
+      this._b.Position(body);
+      this.LowerStatements(arm.Body);
+      if (!this.Terminated)
+        this._b.Br(endsel);
+      this._b.Position(next);
+    }
+
+    if (elseArm is not null)
+      this.LowerStatements(elseArm.Body);
+    if (!this.Terminated)
+      this._b.Br(endsel);
+    this._b.Position(endsel);
+  }
+
+  private IrValue SelectorTest(IrValue subject, PbType subjectPb, CaseSelector selector) {
+    if (selector.IsComparison is { } cmp)
+      return this.CompareToValue(subject, subjectPb, cmp, selector.Value!);
+    if (selector.RangeUpper is { } upper) {
+      var atLeast = this.CompareToValue(subject, subjectPb, CaseComparison.GreaterEqual, selector.Value!);
+      var atMost = this.CompareToValue(subject, subjectPb, CaseComparison.LessEqual, upper);
+      return this._b.And(atLeast, atMost);
+    }
+    if (selector.Value is { } value)
+      return this.CompareToValue(subject, subjectPb, CaseComparison.Equal, value);
+    throw new IrLoweringException("empty CASE selector");
+  }
+
+  private IrValue CompareToValue(IrValue subject, PbType subjectPb, CaseComparison op, Expression rightExpr) {
+    var rightPb = this._model.TypeOf(rightExpr);
+    var (cmpPb, isFloat, signed) = CommonCompareType(subjectPb, rightPb);
+    var l = this.Coerce(subject, subjectPb, cmpPb);
+    var r = this.Coerce(this.LowerExpr(rightExpr), rightPb, cmpPb);
+    var pred = op switch {
+      CaseComparison.Equal => isFloat ? IrCmpPred.Foeq : IrCmpPred.Eq,
+      CaseComparison.NotEqual => isFloat ? IrCmpPred.Fone : IrCmpPred.Ne,
+      CaseComparison.Less => isFloat ? IrCmpPred.Folt : signed ? IrCmpPred.Slt : IrCmpPred.Ult,
+      CaseComparison.LessEqual => isFloat ? IrCmpPred.Fole : signed ? IrCmpPred.Sle : IrCmpPred.Ule,
+      CaseComparison.Greater => isFloat ? IrCmpPred.Fogt : signed ? IrCmpPred.Sgt : IrCmpPred.Ugt,
+      CaseComparison.GreaterEqual => isFloat ? IrCmpPred.Foge : signed ? IrCmpPred.Sge : IrCmpPred.Uge,
+      _ => throw new IrLoweringException($"case comparison {op}"),
+    };
+    return this._b.Cmp(pred, l, r);
   }
 
   private long ConstStep(Expression? step) {
