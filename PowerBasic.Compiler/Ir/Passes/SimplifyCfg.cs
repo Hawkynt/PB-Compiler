@@ -28,16 +28,21 @@ public static class SimplifyCfg {
   private static int FoldBranches(IrFunction fn, ref bool changed) {
     var folded = 0;
     foreach (var block in fn.Blocks.ToList()) {
-      if (block.Terminator is not IrCondBr cb)
-        continue;
       IrBasicBlock? target = null;
-      if (ReferenceEquals(cb.IfTrue, cb.IfFalse))
-        target = cb.IfTrue;                            // condbr c, X, X -> br X
-      else if (cb.Condition is IrConstantInt c)
-        target = c.IsZero ? cb.IfFalse : cb.IfTrue;    // constant condition
+      switch (block.Terminator) {
+        case IrCondBr cb when ReferenceEquals(cb.IfTrue, cb.IfFalse):
+          target = cb.IfTrue;                           // condbr c, X, X -> br X
+          break;
+        case IrCondBr { Condition: IrConstantInt c } cb:
+          target = c.IsZero ? cb.IfFalse : cb.IfTrue;   // constant condition
+          break;
+        case IrSwitch { Condition: IrConstantInt s } sw:
+          target = sw.Cases.FirstOrDefault(x => x.Value == s.Value).Target ?? sw.DefaultTarget;  // constant selector
+          break;
+      }
       if (target is null)
         continue;
-      cb.EraseFromParent();
+      block.Terminator!.EraseFromParent();
       block.Append(new IrBr(target));
       ++folded;
       changed = true;

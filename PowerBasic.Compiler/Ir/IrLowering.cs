@@ -233,6 +233,7 @@ public sealed class IrLowering {
       case SwapStmt sw: this.LowerSwap(sw); break;
       case LabelStmt l: this.LowerLabel(l); break;
       case GotoStmt g: this.LowerGoto(g); break;
+      case OnGotoStmt og: this.LowerOnGoto(og); break;
       case PrintStmt pr: this.LowerPrint(pr); break;
       case EndStmt: this.LowerEnd(); break;
       default: throw new IrLoweringException($"unsupported statement: {statement.GetType().Name}");
@@ -323,6 +324,22 @@ public sealed class IrLowering {
     if (!this._labels.TryGetValue(g.Target, out var target))
       throw new IrLoweringException($"GOTO to unknown label {g.Target}");
     this._b.Br(target);
+  }
+
+  private void LowerOnGoto(OnGotoStmt o) {
+    if (o.IsGosub)
+      throw new IrLoweringException("ON ... GOSUB");
+    if (this._model.TypeOf(o.Selector) is not ScalarType { IsFloat: false })
+      throw new IrLoweringException("ON GOTO with a non-integer selector");
+    var selector = this.LowerExpr(o.Selector);
+    var fallthrough = this.NewBlock("on.next");        // out-of-range selector falls through (PB semantics)
+    var sw = this._b.Switch(selector, fallthrough);
+    for (var k = 0; k < o.Targets.Count; ++k) {
+      if (!this._labels.TryGetValue(o.Targets[k], out var target))
+        throw new IrLoweringException($"ON GOTO to unknown label {o.Targets[k]}");
+      sw.AddCase(k + 1, target);                       // selector is 1-based
+    }
+    this._b.Position(fallthrough);
   }
 
   private void LowerEnd() {
