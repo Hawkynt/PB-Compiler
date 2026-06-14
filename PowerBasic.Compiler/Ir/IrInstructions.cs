@@ -94,9 +94,10 @@ public sealed class IrStore : IrInstruction {
 }
 
 /// <summary>
-/// Pointer displacement by a byte count: <c>result = gep base, offset</c>. This is the
-/// flattened (byte-addressed) form of LLVM's getelementptr — element/field scaling is
-/// computed by the lowering, keeping the IR target-size-agnostic at this layer.
+/// Pointer displacement. In the default (byte) mode it adds a byte count to a pointer —
+/// the flattened form used for fixed-size scalar arrays. When <see cref="ElementType"/>
+/// is set it is an element-indexed GEP (LLVM scales the index by the element's target
+/// size), used for pointer-element arrays whose stride is target-dependent.
 /// </summary>
 public sealed class IrGep : IrInstruction {
   public IrGep(IrValue basePtr, IrValue byteOffset) : base(IrType.Ptr) {
@@ -104,8 +105,19 @@ public sealed class IrGep : IrInstruction {
     this.AddOperand(byteOffset);
   }
 
+  public IrGep(IrValue basePtr, IrValue index, IrType elementType) : base(IrType.Ptr) {
+    this.ElementType = elementType;
+    this.AddOperand(basePtr);
+    this.AddOperand(index);
+  }
+
   public IrValue BasePtr => this.GetOperand(0);
+
+  /// <summary>The displacement: a byte count when <see cref="ElementType"/> is null, else an element index.</summary>
   public IrValue ByteOffset => this.GetOperand(1);
+
+  /// <summary>The element type for an element-indexed GEP, or null for a byte-offset GEP.</summary>
+  public IrType? ElementType { get; }
 }
 
 /// <summary>An SSA phi: picks an incoming value according to the predecessor control came from.</summary>

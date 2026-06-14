@@ -175,8 +175,13 @@ public sealed class IrLowering {
     if (symbol.Type is StringType) {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.Ptr) { Name = symbol.Name });  // holds a string handle
     } else if (symbol.Type is ArrayType arr) {
-      if (arr.IsDynamic || !IrTypeMapper.TryMap(arr.Element, out var elem))
-        throw new IrLoweringException("dynamic or non-scalar array");
+      if (arr.IsDynamic)
+        throw new IrLoweringException("dynamic array");
+      IrType elem;
+      if (arr.Element is StringType)
+        elem = IrType.Ptr;                              // an array of string handles
+      else if (!IrTypeMapper.TryMap(arr.Element, out elem))
+        throw new IrLoweringException("non-scalar array element");
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(elem) { Count = arr.ElementCount, Name = symbol.Name });
     } else {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrTypeMapper.Map(symbol.Type)) { Name = symbol.Name });
@@ -201,6 +206,8 @@ public sealed class IrLowering {
       flat = flat is null ? rel : this._b.Add(this._b.Mul(flat, new IrConstantInt(IrType.I32, size)), rel);
     }
 
+    if (arr.Element is StringType)
+      return (this._b.Gep(basePtr, flat!, IrType.Ptr), arr.Element);   // ptr-element stride is target-dependent: typed GEP
     var byteOffset = this._b.Mul(flat!, new IrConstantInt(IrType.I32, arr.Element.Size));
     return (this._b.Gep(basePtr, byteOffset), arr.Element);
   }
@@ -252,6 +259,10 @@ public sealed class IrLowering {
     }
     if (a.Target is CallOrIndexExpr indexed && this._model.VariableBindings.TryGetValue(indexed, out var arrSym) && arrSym.Type is ArrayType) {
       var (address, element) = this.ElementAddress(indexed);
+      if (element is StringType) {
+        this._b.Store(this.LowerStringExpr(a.Value), address);   // a string array element holds an immutable handle
+        return;
+      }
       this._b.Store(this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), element), address);
       return;
     }
@@ -400,6 +411,8 @@ public sealed class IrLowering {
       case BinaryExpr { Op: BinaryOp.Concat } cat:
         return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_concat", IrType.Ptr, IrType.Ptr, IrType.Ptr),
           this.LowerStringExpr(cat.Left), this.LowerStringExpr(cat.Right));
+      case CallOrIndexExpr arrayRead when this._model.VariableBindings.TryGetValue(arrayRead, out var arr) && arr.Type is ArrayType { Element: StringType }:
+        return this._b.Load(IrType.Ptr, this.ElementAddress(arrayRead).Address);
       case CallOrIndexExpr ci when this._model.IntrinsicBindings.TryGetValue(ci, out var info):
         return this.LowerStringIntrinsic(ci, info.Name);
       default:

@@ -70,7 +70,7 @@ public sealed class IrCloner {
     IrAlloca a => new IrAlloca(a.Allocated) { Count = a.Count },
     IrLoad l => new IrLoad(l.Type, this.Map(l.Pointer)),
     IrStore s => new IrStore(this.Map(s.Value), this.Map(s.Pointer)),
-    IrGep g => new IrGep(this.Map(g.BasePtr), this.Map(g.ByteOffset)),
+    IrGep g => g.ElementType is { } et ? new IrGep(this.Map(g.BasePtr), this.Map(g.ByteOffset), et) : new IrGep(this.Map(g.BasePtr), this.Map(g.ByteOffset)),
     IrSelect sel => new IrSelect(this.Map(sel.Condition), this.Map(sel.IfTrue), this.Map(sel.IfFalse)),
     IrCall call => new IrCall(call.Type, this.Map(call.Callee), call.Args.Select(this.Map).ToList()),
     IrRet r => new IrRet(r.HasValue ? this.Map(r.Value!) : null),

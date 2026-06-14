@@ -59,7 +59,9 @@ Supported today:
 - `IF`/`ELSEIF`/`ELSE`, `FOR` (constant **or runtime** step), `DO` (pre/post
   `WHILE`/`UNTIL`, infinite), `EXIT`/`ITERATE`, `END`, `SWAP`;
 - `SELECT CASE`, **`GOTO`/labels**, **`ON … GOTO`** (lowered to a `switch`);
-- static arrays (1-D and multi-dimensional, row-major byte GEP);
+- static arrays (1-D and multi-dimensional, row-major byte GEP); **string arrays**
+  (a buffer of pointer handles addressed by a typed, element-indexed GEP so the index
+  scales by the target pointer size rather than the DOS 2-byte handle width);
 - **strings** via a runtime-handle ABI (`rt_str_*`): assignment, `&` concat, all
   comparisons, `LEN`, `LEFT$`/`RIGHT$`/`MID$`, `CHR$`/`ASC`, `STR$`/`VAL`,
   `SPACE$`/`STRING$`, `HEX$`/`OCT$`; identical literals are interned to one global;
@@ -78,8 +80,7 @@ object via `pbc --emit-llvm | llc` (linked against a runtime providing the `rt_*
 functions; the `llvm.*` math intrinsics need no runtime).
 
 Not yet: `GOSUB`/`RETURN` (return stack), dynamic arrays / `REDIM` (descriptors),
-`DATA`/`READ` and random/binary `GET`/`PUT` (aggregate globals + runtime table), string
-arrays (typed GEP).
+`DATA`/`READ` and random/binary `GET`/`PUT` (aggregate globals + runtime table).
 
 ## Optimization passes (`Ir/Passes/`)
 
@@ -117,7 +118,8 @@ semantics and traps are never silently changed.
 ## LLVM emission (targeting beyond DOS)
 
 `LlvmEmitter` renders the optimized IR as strictly-valid textual LLVM
-(`float`/`double`/`x86_fp80`, `getelementptr i8` byte GEPs, exact hex float
+(`float`/`double`/`x86_fp80`, `getelementptr i8` byte GEPs for scalar arrays and
+`getelementptr <elem>` typed GEPs for pointer-element arrays, exact hex float
 literals, optional target triple). The test suite feeds it to the real toolchain:
 `llvm-as` accepts it and `llc` lowers it to native x86-64. That is the working
 path off 16-bit DOS.

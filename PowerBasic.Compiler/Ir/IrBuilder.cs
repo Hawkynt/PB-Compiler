@@ -51,6 +51,7 @@ public sealed class IrBuilder {
   public IrLoad Load(IrType type, IrValue pointer) => this.Emit(new IrLoad(type, pointer));
   public IrStore Store(IrValue value, IrValue pointer) => this.Emit(new IrStore(value, pointer));
   public IrGep Gep(IrValue basePtr, IrValue byteOffset) => this.Emit(new IrGep(basePtr, byteOffset));
+  public IrGep Gep(IrValue basePtr, IrValue index, IrType elementType) => this.Emit(new IrGep(basePtr, index, elementType));
 
   // ---- ssa / calls ---------------------------------------------------------
 

@@ -23,7 +23,7 @@ public sealed class ArrayLoweringTests {
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
     var text = IrPrinter.Print(fn);
     Assert.That(text, Does.Contain("alloca i16, i32 5"));   // 5-element buffer
-    Assert.That(text, Does.Contain("gep ptr"));             // element addressing
+    Assert.That(text, Does.Contain("gep i8"));              // byte-offset element addressing
     Assert.That(fn.AllInstructions.OfType<IrStore>().Count(), Is.GreaterThanOrEqualTo(2));
   }
 
