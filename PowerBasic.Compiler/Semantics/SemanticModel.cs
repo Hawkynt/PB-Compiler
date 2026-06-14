@@ -36,6 +36,9 @@ public sealed class SemanticModel {
   /// <summary>Variable symbol behind every name/index/member expression that refers to storage.</summary>
   public Dictionary<Expression, VariableSymbol> VariableBindings { get; } = new(ReferenceEqualityComparer.Instance);
 
+  /// <summary>Array symbol behind every REDIM'd variable declaration (the REDIM target has no expression node).</summary>
+  public Dictionary<VariableDecl, VariableSymbol> RedimBindings { get; } = new(ReferenceEqualityComparer.Instance);
+
   /// <summary>Procedure symbol behind every user call site (CallStmt / CallOrIndexExpr).</summary>
   public Dictionary<object, ProcedureSymbol> CallBindings { get; } = new(ReferenceEqualityComparer.Instance);
 

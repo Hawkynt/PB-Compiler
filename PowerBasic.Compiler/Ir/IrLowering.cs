@@ -257,12 +257,14 @@ public sealed class IrLowering {
     return alloca;
   }
 
-  /// <summary>The address of one static-array element, by row-major flattening of the index list.</summary>
+  /// <summary>The address of one array element, by row-major flattening of the index list.</summary>
   private (IrValue Address, PbType Element) ElementAddress(CallOrIndexExpr expr) {
     if (!this._model.VariableBindings.TryGetValue(expr, out var symbol) || symbol.Type is not ArrayType arr)
-      throw new IrLoweringException($"not a static array element: {expr.Name}");
-    if (arr.IsDynamic || arr.StaticBounds is not { } bounds || bounds.Count != expr.Arguments.Count)
-      throw new IrLoweringException("dynamic array or rank mismatch");
+      throw new IrLoweringException($"not an array element: {expr.Name}");
+    if (arr.IsDynamic)
+      return this.DynamicElementAddress(expr, symbol, arr);
+    if (arr.StaticBounds is not { } bounds || bounds.Count != expr.Arguments.Count)
+      throw new IrLoweringException("rank mismatch");
     var basePtr = this.SlotFor(symbol);
 
     IrValue? flat = null;
@@ -277,6 +279,34 @@ public sealed class IrLowering {
       return (this._b.Gep(basePtr, flat!, IrType.Ptr), arr.Element);   // ptr-element stride is target-dependent: typed GEP
     var byteOffset = this._b.Mul(flat!, new IrConstantInt(IrType.I32, arr.Element.Size));
     return (this._b.Gep(basePtr, byteOffset), arr.Element);
+  }
+
+  // A dynamic array is a runtime-allocated buffer plus a bound descriptor: the data
+  // pointer and the lower bound each live in their own promotable scalar slot.
+  private readonly Dictionary<VariableSymbol, (IrValue Data, IrValue Lo)> _dynArrays = new(ReferenceEqualityComparer.Instance);
+
+  private (IrValue Data, IrValue Lo) DynDescriptor(VariableSymbol symbol) {
+    if (this._dynArrays.TryGetValue(symbol, out var existing))
+      return existing;
+    var data = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.Ptr) { Name = symbol.Name + ".data" });
+    var lo = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I32) { Name = symbol.Name + ".lo" });
+    var descriptor = ((IrValue)data, (IrValue)lo);
+    this._dynArrays[symbol] = descriptor;
+    return descriptor;
+  }
+
+  /// <summary>The address of one element of a runtime-allocated (1-D) dynamic array.</summary>
+  private (IrValue Address, PbType Element) DynamicElementAddress(CallOrIndexExpr expr, VariableSymbol symbol, ArrayType arr) {
+    if (expr.Arguments.Count != 1)
+      throw new IrLoweringException("multi-dimensional dynamic array");
+    var (dataSlot, loSlot) = this.DynDescriptor(symbol);
+    var data = this._b.Load(IrType.Ptr, dataSlot);
+    var lo = this._b.Load(IrType.I32, loSlot);
+    var idx = this.Coerce(this.LowerExpr(expr.Arguments[0]), this._model.TypeOf(expr.Arguments[0]), PbType.Long);
+    var rel = this._b.Sub(idx, lo);
+    if (arr.Element is StringType)
+      return (this._b.Gep(data, rel, IrType.Ptr), arr.Element);
+    return (this._b.Gep(data, this._b.Mul(rel, new IrConstantInt(IrType.I32, arr.Element.Size))), arr.Element);
   }
 
   private VariableSymbol SymbolOf(Expression target) =>
@@ -306,6 +336,8 @@ public sealed class IrLowering {
       case CallStmt c: this.LowerCallStatement(c); break;
       case SelectStmt s: this.LowerSelect(s); break;
       case DimStmt d: this.LowerDim(d); break;
+      case RedimStmt rdm: this.LowerRedim(rdm); break;
+      case EraseStmt er: this.LowerErase(er); break;
       case SwapStmt sw: this.LowerSwap(sw); break;
       case LabelStmt l: this.LowerLabel(l); break;
       case GotoStmt g: this.LowerGoto(g); break;
@@ -643,6 +675,41 @@ public sealed class IrLowering {
     if (!this._isMain)
       throw new IrLoweringException("END inside a procedure");
     this.ReturnFromFunction();
+  }
+
+  private void LowerRedim(RedimStmt r) {
+    if (r.Preserve)
+      throw new IrLoweringException("REDIM PRESERVE");
+    foreach (var v in r.Variables) {
+      if (!this._model.RedimBindings.TryGetValue(v, out var symbol) || symbol.Type is not ArrayType { IsDynamic: true } arr)
+        throw new IrLoweringException($"REDIM of non-dynamic array {v.Name}");
+      if (v.ArrayBounds is not { Count: 1 } dims)
+        throw new IrLoweringException("multi-dimensional dynamic array");
+      var (lower, upper) = dims[0];
+      var lo = lower is null
+        ? new IrConstantInt(IrType.I32, 0)
+        : this.Coerce(this.LowerExpr(lower), this._model.TypeOf(lower), PbType.Long);
+      var hi = this.Coerce(this.LowerExpr(upper), this._model.TypeOf(upper), PbType.Long);
+      var count = this._b.Add(this._b.Sub(hi, lo), new IrConstantInt(IrType.I32, 1));
+      var (dataSlot, loSlot) = this.DynDescriptor(symbol);
+      var data = arr.Element is StringType
+        ? this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_alloc_ptr", IrType.Ptr, IrType.I32), count)               // count target-pointers
+        : this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_alloc", IrType.Ptr, IrType.I32, IrType.I32), count, new IrConstantInt(IrType.I32, arr.Element.Size));
+      this._b.Store(data, dataSlot);
+      this._b.Store(lo, loSlot);
+    }
+  }
+
+  private void LowerErase(EraseStmt e) {
+    foreach (var name in e.Arrays) {
+      if (!this._model.VariableBindings.TryGetValue(name, out var symbol) || symbol.Type is not ArrayType arr)
+        throw new IrLoweringException("ERASE of a non-array");
+      if (!arr.IsDynamic)
+        throw new IrLoweringException("ERASE of a static array");   // PB zeroes it in place; not modeled here
+      var (dataSlot, _) = this.DynDescriptor(symbol);
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_arr_free", IrType.Void, IrType.Ptr), this._b.Load(IrType.Ptr, dataSlot));
+      this._b.Store(new IrNullPtr(), dataSlot);
+    }
   }
 
   private void LowerDim(DimStmt d) {

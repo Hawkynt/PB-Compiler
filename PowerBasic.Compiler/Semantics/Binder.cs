@@ -526,9 +526,12 @@ public sealed class Binder {
             if (created != null) {
               created.Type = created.Type is ArrayType at ? at with { StaticBounds = null } : new ArrayType(created.Type, null, v.ArrayBounds?.Count ?? 1);
               this.Register(created, v, scope);
+              this._model.RedimBindings[v] = created;
             }
           } else if (symbol.Type is ArrayType { IsDynamic: false })
             this.Error(redim.Position, $"REDIM on static array {v.Name} (use $DYNAMIC)");
+          else
+            this._model.RedimBindings[v] = symbol;
         }
         break;
 
