@@ -1127,6 +1127,8 @@ public sealed class IrLowering {
 
   /// <summary>Lowers a pure numeric intrinsic that needs no runtime (ABS, SGN); declines the rest.</summary>
   private IrValue LowerIntrinsic(CallOrIndexExpr call, string name) {
+    if (name.Equals("INSTR", StringComparison.OrdinalIgnoreCase))
+      return this.LowerInstr(call);
     if (call.Arguments.Count != 1)
       throw new IrLoweringException($"intrinsic {name} with {call.Arguments.Count} arguments");
     return name.ToUpperInvariant() switch {
@@ -1149,6 +1151,21 @@ public sealed class IrLowering {
     };
   }
 
+  /// <summary>INSTR(haystack$, needle$) or INSTR(start%, haystack$, needle$) -> 1-based position (0 = not found).</summary>
+  private IrValue LowerInstr(CallOrIndexExpr call) {
+    IrValue position;
+    if (call.Arguments.Count == 2) {
+      position = this._b.Call(IrType.I32, this.RuntimeFn("rt_str_instr", IrType.I32, IrType.Ptr, IrType.Ptr),
+        this.LowerStringExpr(call.Arguments[0]), this.LowerStringExpr(call.Arguments[1]));
+    } else if (call.Arguments.Count == 3) {
+      var start = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), PbType.Long);
+      position = this._b.Call(IrType.I32, this.RuntimeFn("rt_str_instr_start", IrType.I32, IrType.I32, IrType.Ptr, IrType.Ptr),
+        start, this.LowerStringExpr(call.Arguments[1]), this.LowerStringExpr(call.Arguments[2]));
+    } else
+      throw new IrLoweringException($"INSTR with {call.Arguments.Count} arguments");
+    return this.Coerce(position, PbType.Long, this._model.TypeOf(call));
+  }
+
   /// <summary>Lowers a string-returning intrinsic (LEFT$/RIGHT$/MID$/CHR$) to a runtime call.</summary>
   private IrValue LowerStringIntrinsic(CallOrIndexExpr ci, string name) {
     IrValue Str(int i) => this.LowerStringExpr(ci.Arguments[i]);
@@ -1164,6 +1181,10 @@ public sealed class IrLowering {
         this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_string_s", IrType.Ptr, IrType.I32, IrType.Ptr), Num(0), Str(1)),
       "STRING$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_string", IrType.Ptr, IrType.I32, IrType.I32), Num(0), Num(1)),
       "STR$" => this.LowerStrOf(ci.Arguments[0]),
+      "UCASE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_ucase", IrType.Ptr, IrType.Ptr), Str(0)),
+      "LCASE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_lcase", IrType.Ptr, IrType.Ptr), Str(0)),
+      "LTRIM$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_ltrim", IrType.Ptr, IrType.Ptr), Str(0)),
+      "RTRIM$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_rtrim", IrType.Ptr, IrType.Ptr), Str(0)),
       "HEX$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_hex", IrType.Ptr, IrType.I32), Num(0)),
       "OCT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_oct", IrType.Ptr, IrType.I32), Num(0)),
       _ => throw new IrLoweringException($"string intrinsic {name}"),

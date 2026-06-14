@@ -85,6 +85,30 @@ public sealed class StringLoweringTests {
   }
 
   [Test]
+  public void CaseAndTrimFunctions_LowerToRuntimeCalls() {
+    var module = LowerOptimized("a$ = \"  Hi  \"\nb$ = UCASE$(a$)\nc$ = LCASE$(a$)\nd$ = LTRIM$(a$)\ne$ = RTRIM$(a$)\nPRINT b$ & c$ & d$ & e$\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var text = LlvmEmitter.Emit(module!);
+    Assert.That(text, Does.Contain("@rt_str_ucase(ptr"));
+    Assert.That(text, Does.Contain("@rt_str_lcase(ptr"));
+    Assert.That(text, Does.Contain("@rt_str_ltrim(ptr"));
+    Assert.That(text, Does.Contain("@rt_str_rtrim(ptr"));
+  }
+
+  [Test]
+  public void Instr_LowersToRuntimeSearch() {
+    var module = LowerOptimized("a$ = \"hello world\"\np% = INSTR(a$, \"o\")\nq% = INSTR(5, a$, \"o\")\nPRINT p% + q%\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var text = LlvmEmitter.Emit(module!);
+    Assert.That(text, Does.Contain("@rt_str_instr(ptr"));
+    Assert.That(text, Does.Contain("@rt_str_instr_start(i32"));
+  }
+
+  [Test]
   public void HexAndOct_LowerToRuntimeFormatters() {
     var module = LowerOptimized("n% = 255\nPRINT HEX$(n%)\nPRINT OCT$(n%)\nEND");
 
