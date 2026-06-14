@@ -555,8 +555,15 @@ public sealed class IrLowering {
       "SGN" => this.LowerSgn(call),
       "FIX" => this.LowerFix(call),
       "INT" => this.LowerInt(call),
+      "CDBL" or "CSNG" => this.LowerConvert(call),
       _ => throw new IrLoweringException($"intrinsic {name}"),
     };
+  }
+
+  private IrValue LowerConvert(CallOrIndexExpr call) {
+    // CDBL/CSNG are exactly a type conversion to the result type
+    var resultPb = this._model.TypeOf(call);
+    return this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
   }
 
   private IrValue LowerFix(CallOrIndexExpr call) {

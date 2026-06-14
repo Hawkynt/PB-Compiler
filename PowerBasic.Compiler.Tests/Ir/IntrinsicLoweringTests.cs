@@ -86,6 +86,23 @@ public sealed class IntrinsicLoweringTests {
   }
 
   [Test]
+  public void Cdbl_WidensSingleToDouble() {
+    var fn = Lower("x! = 1.5\nd# = CDBL(x!)");
+
+    Assert.That(fn, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(IrPrinter.Print(fn), Does.Contain("fpext f32"));
+  }
+
+  [Test]
+  public void Csng_OfIntegerUsesSignedIntToFloat() {
+    var fn = Lower("n% = 7\ns! = CSNG(n%)");
+
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(IrPrinter.Print(fn), Does.Contain("sitofp i16"));
+  }
+
+  [Test]
   public void Fix_OfConstant_FoldsAway() {
     var fn = Lower("a! = FIX(2.9)");
     InstCombine.Run(fn);
