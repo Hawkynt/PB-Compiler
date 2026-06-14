@@ -17,10 +17,61 @@ public static class SimplifyCfg {
     bool changed;
     do {
       changed = false;
+      total += FoldBranches(fn, ref changed);
+      total += RemoveUnreachable(fn, ref changed);
       total += RemoveTrivialPhis(fn, ref changed);
       total += MergeSingleSuccessorBlocks(fn, ref changed);
     } while (changed);
     return total;
+  }
+
+  private static int FoldBranches(IrFunction fn, ref bool changed) {
+    var folded = 0;
+    foreach (var block in fn.Blocks.ToList()) {
+      if (block.Terminator is not IrCondBr cb)
+        continue;
+      IrBasicBlock? target = null;
+      if (ReferenceEquals(cb.IfTrue, cb.IfFalse))
+        target = cb.IfTrue;                            // condbr c, X, X -> br X
+      else if (cb.Condition is IrConstantInt c)
+        target = c.IsZero ? cb.IfFalse : cb.IfTrue;    // constant condition
+      if (target is null)
+        continue;
+      cb.EraseFromParent();
+      block.Append(new IrBr(target));
+      ++folded;
+      changed = true;
+    }
+    return folded;
+  }
+
+  private static int RemoveUnreachable(IrFunction fn, ref bool changed) {
+    var reachable = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance);
+    var stack = new Stack<IrBasicBlock>();
+    stack.Push(fn.Entry!);
+    reachable.Add(fn.Entry!);
+    while (stack.Count > 0)
+      foreach (var s in stack.Pop().Successors)
+        if (reachable.Add(s))
+          stack.Push(s);
+
+    var dead = fn.Blocks.Where(b => !reachable.Contains(b)).ToList();
+    if (dead.Count == 0)
+      return 0;
+
+    foreach (var block in reachable)
+      foreach (var phi in block.Phis.ToList())
+        foreach (var pred in phi.IncomingBlocks.ToList())
+          if (!reachable.Contains(pred))
+            phi.RemoveIncoming(pred);
+
+    foreach (var block in dead) {
+      foreach (var inst in block.Instructions.ToList())
+        inst.EraseFromParent();
+      fn.RemoveBlock(block);
+    }
+    changed = true;
+    return dead.Count;
   }
 
   private static int RemoveTrivialPhis(IrFunction fn, ref bool changed) {
