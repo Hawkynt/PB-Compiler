@@ -59,6 +59,19 @@ public sealed class StringLoweringTests {
   }
 
   [Test]
+  public void StringFunctions_LowerToRuntimeCalls() {
+    var module = LowerOptimized("a$ = \"Hello, world!\"\nb$ = LEFT$(a$, 5)\nc$ = MID$(a$, 8, 5)\nd$ = CHR$(33)\nPRINT b$ & c$ & d$\nn% = ASC(a$)\nPRINT n%\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var text = LlvmEmitter.Emit(module!);
+    Assert.That(text, Does.Contain("@rt_str_left(ptr"));
+    Assert.That(text, Does.Contain("@rt_str_mid(ptr"));
+    Assert.That(text, Does.Contain("@rt_str_chr(i32"));
+    Assert.That(text, Does.Contain("@rt_str_asc(ptr"));
+  }
+
+  [Test]
   public void StringProgram_CompilesToNativeViaLlc() {
     var module = LowerOptimized("a$ = \"Hello, \"\nb$ = \"world!\"\nPRINT a$ & b$\nEND");
     Assert.That(module, Is.Not.Null);

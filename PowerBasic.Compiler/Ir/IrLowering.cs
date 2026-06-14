@@ -346,6 +346,8 @@ public sealed class IrLowering {
       case BinaryExpr { Op: BinaryOp.Concat } cat:
         return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_concat", IrType.Ptr, IrType.Ptr, IrType.Ptr),
           this.LowerStringExpr(cat.Left), this.LowerStringExpr(cat.Right));
+      case CallOrIndexExpr ci when this._model.IntrinsicBindings.TryGetValue(ci, out var info):
+        return this.LowerStringIntrinsic(ci, info.Name);
       default:
         throw new IrLoweringException($"unsupported string expression: {expr.GetType().Name}");
     }
@@ -699,8 +701,28 @@ public sealed class IrLowering {
       "INT" => this.LowerInt(call),
       "CDBL" or "CSNG" => this.LowerConvert(call),
       "LEN" => this.LowerLen(call),
+      "ASC" => this.LowerAsc(call),
       _ => throw new IrLoweringException($"intrinsic {name}"),
     };
+  }
+
+  /// <summary>Lowers a string-returning intrinsic (LEFT$/RIGHT$/MID$/CHR$) to a runtime call.</summary>
+  private IrValue LowerStringIntrinsic(CallOrIndexExpr ci, string name) {
+    IrValue Str(int i) => this.LowerStringExpr(ci.Arguments[i]);
+    IrValue Num(int i) => this.Coerce(this.LowerExpr(ci.Arguments[i]), this._model.TypeOf(ci.Arguments[i]), PbType.Long);
+    return name.ToUpperInvariant() switch {
+      "LEFT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_left", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Num(1)),
+      "RIGHT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_right", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Num(1)),
+      "MID$" when ci.Arguments.Count >= 3 => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid", IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I32), Str(0), Num(1), Num(2)),
+      "MID$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid2", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Num(1)),
+      "CHR$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_chr", IrType.Ptr, IrType.I32), Num(0)),
+      _ => throw new IrLoweringException($"string intrinsic {name}"),
+    };
+  }
+
+  private IrValue LowerAsc(CallOrIndexExpr call) {
+    var code = this._b.Call(IrType.I32, this.RuntimeFn("rt_str_asc", IrType.I32, IrType.Ptr), this.LowerStringExpr(call.Arguments[0]));
+    return this.Coerce(code, PbType.Long, this._model.TypeOf(call));
   }
 
   private IrValue LowerLen(CallOrIndexExpr call) {
