@@ -113,6 +113,6 @@ public sealed class IrLoweringTests {
   [Test]
   public void Lower_GivenUnsupportedStatement_DeclinesWithNull() {
     Assert.That(Lower("PRINT \"hi\""), Is.Null);          // I/O not in the subset yet
-    Assert.That(Lower("DIM a%(10)\na%(1) = 5"), Is.Null); // arrays not in the subset yet
+    Assert.That(Lower("s$ = \"hi\""), Is.Null);           // strings not in the subset yet
   }
 }
