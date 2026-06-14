@@ -478,6 +478,8 @@ public sealed class IrLowering {
       case CallOrIndexExpr indexed when this._model.VariableBindings.TryGetValue(indexed, out var s) && s.Type is ArrayType:
         var (address, element) = this.ElementAddress(indexed);
         return this._b.Load(IrTypeMapper.Map(element), address);
+      case CallOrIndexExpr intr when this._model.IntrinsicBindings.TryGetValue(intr, out var info):
+        return this.LowerIntrinsic(intr, info.Name);
       case CallOrIndexExpr call:
         return this.LowerCallExpr(call);
       default:
@@ -500,6 +502,54 @@ public sealed class IrLowering {
     if (!this._model.VariableBindings.TryGetValue(name, out var symbol))
       throw new IrLoweringException($"unbound name {name.Name}");
     return this._b.Load(IrTypeMapper.Map(symbol.Type), this.SlotFor(symbol));
+  }
+
+  /// <summary>Lowers a pure numeric intrinsic that needs no runtime (ABS, SGN); declines the rest.</summary>
+  private IrValue LowerIntrinsic(CallOrIndexExpr call, string name) {
+    if (call.Arguments.Count != 1)
+      throw new IrLoweringException($"intrinsic {name} with {call.Arguments.Count} arguments");
+    return name.ToUpperInvariant() switch {
+      "ABS" => this.LowerAbs(call),
+      "SGN" => this.LowerSgn(call),
+      _ => throw new IrLoweringException($"intrinsic {name}"),
+    };
+  }
+
+  private IrValue LowerAbs(CallOrIndexExpr call) {
+    var resultPb = this._model.TypeOf(call);
+    var ty = IrTypeMapper.Map(resultPb);
+    var v = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
+    if (ty.IsInteger) {
+      // branchless two's-complement abs: m = v >>s (bits-1); (v ^ m) - m
+      var mask = this._b.Binary(IrBinaryOp.AShr, v, new IrConstantInt(ty, ty.Bits - 1));
+      return this._b.Sub(this._b.Xor(v, mask), mask);
+    }
+    // float abs: clear the sign bit through an integer of the same width
+    var intTy = IrType.Integer(ty.Bits);
+    var bits = ty.Bits switch {
+      32 => 0x7FFFFFFFL,
+      64 => long.MaxValue,
+      _ => throw new IrLoweringException("ABS of EXT (80-bit) not supported"),
+    };
+    var asInt = this._b.Cast(IrCastOp.BitCast, v, intTy);
+    var cleared = this._b.And(asInt, new IrConstantInt(intTy, bits));
+    return this._b.Cast(IrCastOp.BitCast, cleared, ty);
+  }
+
+  private IrValue LowerSgn(CallOrIndexExpr call) {
+    var argPb = this._model.TypeOf(call.Arguments[0]);
+    var resultTy = IrTypeMapper.Map(this._model.TypeOf(call));   // INTEGER (-1/0/1)
+    var v = this.LowerExpr(call.Arguments[0]);
+    IrValue pos, neg;
+    if (argPb is ScalarType { IsFloat: true }) {
+      pos = this._b.Cmp(IrCmpPred.Fogt, v, new IrConstantFloat(v.Type, 0.0));
+      neg = this._b.Cmp(IrCmpPred.Folt, v, new IrConstantFloat(v.Type, 0.0));
+    } else {
+      var signed = argPb is ScalarType { Signed: true };
+      pos = this._b.Cmp(signed ? IrCmpPred.Sgt : IrCmpPred.Ugt, v, new IrConstantInt(v.Type, 0));
+      neg = signed ? this._b.Cmp(IrCmpPred.Slt, v, new IrConstantInt(v.Type, 0)) : new IrConstantInt(IrType.I1, 0);
+    }
+    return this._b.Sub(this._b.ZExt(pos, resultTy), this._b.ZExt(neg, resultTy));
   }
 
   private IrValue LowerCallExpr(CallOrIndexExpr call) {

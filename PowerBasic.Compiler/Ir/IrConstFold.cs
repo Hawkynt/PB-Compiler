@@ -147,6 +147,15 @@ public static class IrConstFold {
         return new IrConstantFloat(to, NarrowFloat(c.Value, to));
       case IrCastOp.FPToSI when cast.Value is IrConstantFloat c && InLongRange(c.Value):
         return new IrConstantInt(to, Wrap((long)c.Value, to));
+      // bitcast reinterprets the bit pattern between same-width int and float
+      case IrCastOp.BitCast when cast.Value is IrConstantFloat cf && to.IsInteger && to.Bits == 32:
+        return new IrConstantInt(to, BitConverter.SingleToInt32Bits((float)cf.Value));
+      case IrCastOp.BitCast when cast.Value is IrConstantFloat cf && to.IsInteger && to.Bits == 64:
+        return new IrConstantInt(to, BitConverter.DoubleToInt64Bits(cf.Value));
+      case IrCastOp.BitCast when cast.Value is IrConstantInt ci && to.IsFloat && to.Bits == 32:
+        return new IrConstantFloat(to, BitConverter.Int32BitsToSingle((int)ci.Value));
+      case IrCastOp.BitCast when cast.Value is IrConstantInt ci && to.IsFloat && to.Bits == 64:
+        return new IrConstantFloat(to, BitConverter.Int64BitsToDouble(ci.Value));
       default:
         return null;
     }
