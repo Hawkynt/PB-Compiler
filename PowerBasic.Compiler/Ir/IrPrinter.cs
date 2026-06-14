@@ -17,7 +17,9 @@ public sealed class IrPrinter {
   public static string Print(IrModule module) {
     var sb = new StringBuilder();
     foreach (var g in module.Globals)
-      sb.Append('@').Append(g.Name).Append(" = global ").Append(g.ValueType).Append(g.IsZeroInitialized ? " zeroinitializer" : "").Append('\n');
+      sb.Append('@').Append(g.Name)
+        .Append(g.Bytes is { } bytes ? $" = constant [{bytes.Length} x i8]" : $" = global {g.ValueType}{(g.IsZeroInitialized ? " zeroinitializer" : "")}")
+        .Append('\n');
     if (module.Globals.Count > 0)
       sb.Append('\n');
     for (var i = 0; i < module.Functions.Count; ++i) {

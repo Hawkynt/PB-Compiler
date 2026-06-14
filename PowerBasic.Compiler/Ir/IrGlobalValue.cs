@@ -17,9 +17,12 @@ public abstract class IrGlobalValue : IrValue {
 
 /// <summary>A module-level variable. <see cref="ValueType"/> is the type stored at its address.</summary>
 public sealed class IrGlobalVariable(string name, IrType valueType) : IrGlobalValue(name) {
-  /// <summary>The type of the value held in this global's storage.</summary>
+  /// <summary>The type of the value held in this global's storage (the element type for a byte blob).</summary>
   public IrType ValueType { get; } = valueType;
 
   /// <summary>True when the global has no initializer and may live in BSS.</summary>
   public bool IsZeroInitialized { get; set; } = true;
+
+  /// <summary>Constant initializer bytes (a string literal / data blob), or null for a plain global.</summary>
+  public byte[]? Bytes { get; init; }
 }

@@ -274,14 +274,22 @@ public sealed class IrLowering {
   }
 
   private void LowerPrint(PrintStmt p) {
+    if (this._module is null)
+      throw new IrLoweringException("PRINT requires whole-module lowering (runtime declarations live on the module)");
     if (p.FileNumber is not null || p.IsLPrint || p.UsingFormat is not null)
       throw new IrLoweringException("PRINT to file / LPRINT / PRINT USING");
 
     foreach (var item in p.Items) {
       if (item.Value is not { } expr)
         continue;
+      if (expr is StringLiteralExpr lit) {
+        var bytes = System.Text.Encoding.ASCII.GetBytes(lit.Value);
+        var global = this._module!.AddStringConstant(bytes);
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_print_str", IrType.Void, IrType.Ptr, IrType.I32), global, new IrConstantInt(IrType.I32, bytes.Length));
+        continue;
+      }
       if (this._model.TypeOf(expr) is not ScalarType s)
-        throw new IrLoweringException("PRINT of a non-numeric item");
+        throw new IrLoweringException("PRINT of a non-numeric, non-literal item");
       var (name, ty) = PrintRuntime(s);
       this._b.Call(IrType.Void, this.RuntimeFn(name, IrType.Void, ty), this.Coerce(this.LowerExpr(expr), s, s));
     }

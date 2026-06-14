@@ -25,8 +25,12 @@ public sealed class LlvmEmitter {
     if (sb.Length > 0)
       sb.Append('\n');
     foreach (var g in module.Globals)
-      sb.Append('@').Append(g.Name).Append(" = global ").Append(Ty(g.ValueType))
-        .Append(g.IsZeroInitialized ? " zeroinitializer" : "").Append('\n');
+      if (g.Bytes is { } bytes)
+        sb.Append('@').Append(g.Name).Append(" = private constant [").Append(bytes.Length).Append(" x i8] c\"")
+          .Append(EscapeBytes(bytes)).Append("\"\n");
+      else
+        sb.Append('@').Append(g.Name).Append(" = global ").Append(Ty(g.ValueType))
+          .Append(g.IsZeroInitialized ? " zeroinitializer" : "").Append('\n');
     if (module.Globals.Count > 0)
       sb.Append('\n');
     for (var i = 0; i < module.Functions.Count; ++i) {
@@ -122,6 +126,17 @@ public sealed class LlvmEmitter {
     IrTypeKind.Ptr => "ptr",
     _ => "void",
   };
+
+  /// <summary>Escapes bytes for an LLVM c"..." string constant (\XX hex for non-printables).</summary>
+  private static string EscapeBytes(byte[] bytes) {
+    var sb = new StringBuilder(bytes.Length);
+    foreach (var b in bytes)
+      if (b is >= 0x20 and < 0x7F && b != (byte)'"' && b != (byte)'\\')
+        sb.Append((char)b);
+      else
+        sb.Append('\\').Append(b.ToString("X2", CultureInfo.InvariantCulture));
+    return sb.ToString();
+  }
 
   /// <summary>LLVM accepts hex float literals; emit doubles as 0x-bit-pattern to round-trip exactly.</summary>
   private static string FormatFloat(double value) =>

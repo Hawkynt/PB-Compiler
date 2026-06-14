@@ -25,6 +25,13 @@ public sealed class IrModule(string name) {
     return global;
   }
 
+  /// <summary>Adds a private byte-array constant (e.g. a string literal) with a fresh name and returns it.</summary>
+  public IrGlobalVariable AddStringConstant(byte[] bytes) {
+    var global = new IrGlobalVariable($".str{this._globals.Count}", IrType.I8) { Bytes = bytes, IsZeroInitialized = false };
+    this._globals.Add(global);
+    return global;
+  }
+
   /// <summary>Finds a function by name, or null.</summary>
   public IrFunction? FindFunction(string name) => this._functions.FirstOrDefault(f => f.Name == name);
 }

@@ -52,7 +52,18 @@ public sealed class PrintLoweringTests {
   }
 
   [Test]
-  public void Print_OfAString_Declines() {
-    Assert.That(LowerModule("PRINT \"hi\"\nEND"), Is.Null);   // strings not supported -> module declines (main uses it)
+  public void Print_OfAStringLiteral_EmitsAConstantAndRuntimeCall() {
+    var module = LowerModule("PRINT \"Hello, world!\"\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var text = LlvmEmitter.Emit(module!);
+    Assert.That(text, Does.Contain("private constant [13 x i8] c\"Hello, world!\""));
+    Assert.That(text, Does.Contain("call void @rt_print_str(ptr @.str0, i32 13)"));
+  }
+
+  [Test]
+  public void Print_OfAStringVariable_StillDeclines() {
+    Assert.That(LowerModule("PRINT s$\nEND"), Is.Null);   // string variables are not supported yet
   }
 }
