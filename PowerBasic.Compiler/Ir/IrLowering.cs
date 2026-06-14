@@ -28,6 +28,7 @@ public sealed class IrLowering {
   private IrBuilder _b = null!;
   private int _seq;
   private VariableSymbol? _resultVar;
+  private bool _isMain;
 
   private readonly record struct LoopContext(ExitKind Kind, IrBasicBlock Exit, IrBasicBlock Continue);
 
@@ -103,6 +104,7 @@ public sealed class IrLowering {
 
   private void LowerBodyInto(IrFunction fn, IReadOnlyList<Statement> body, ProcedureSymbol? proc) {
     this._fn = fn;
+    this._isMain = proc is null;
     this._entry = fn.CreateBlock("entry");
     this._b = new IrBuilder(this._entry);
 
@@ -197,6 +199,7 @@ public sealed class IrLowering {
       case CallStmt c: this.LowerCallStatement(c); break;
       case SelectStmt s: this.LowerSelect(s); break;
       case DimStmt d: this.LowerDim(d); break;
+      case EndStmt: this.LowerEnd(); break;
       default: throw new IrLoweringException($"unsupported statement: {statement.GetType().Name}");
     }
   }
@@ -211,6 +214,14 @@ public sealed class IrLowering {
     var slot = this.SlotFor(symbol);
     var value = this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), symbol.Type);
     this._b.Store(value, slot);
+  }
+
+  private void LowerEnd() {
+    // END terminates the whole program. In main that is simply a return; inside a
+    // procedure it would need a program-exit primitive the IR does not model yet.
+    if (!this._isMain)
+      throw new IrLoweringException("END inside a procedure");
+    this.ReturnFromFunction();
   }
 
   private void LowerDim(DimStmt d) {
