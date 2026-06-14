@@ -53,6 +53,13 @@ public sealed class IrBasicBlock : IrValue {
     return instruction;
   }
 
+  /// <summary>Inserts an instruction at a positional index (used to keep allocas at the block head).</summary>
+  public T InsertAt<T>(int index, T instruction) where T : IrInstruction {
+    instruction.Parent = this;
+    this._instructions.Insert(index, instruction);
+    return instruction;
+  }
+
   /// <summary>Inserts a phi at the head of the block (phis must precede ordinary instructions).</summary>
   public IrPhi AppendPhi(IrPhi phi) {
     phi.Parent = this;
