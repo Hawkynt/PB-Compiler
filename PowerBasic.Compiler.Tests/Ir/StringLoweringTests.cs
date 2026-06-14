@@ -109,6 +109,21 @@ public sealed class StringLoweringTests {
   }
 
   [Test]
+  public void BinaryRecordConversions_LowerToRuntimeCalls() {
+    var module = LowerOptimized("n% = 42\nl& = 100000\nd# = 3.14\nr$ = MKI$(n%) & MKL$(l&) & MKD$(d#)\nx% = CVI(MKI$(n%))\ny& = CVL(MKL$(l&))\nz# = CVD(MKD$(d#))\nPRINT r$\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var text = LlvmEmitter.Emit(module!);
+    Assert.That(text, Does.Contain("@rt_str_mki(i16"));
+    Assert.That(text, Does.Contain("@rt_str_mkl(i32"));
+    Assert.That(text, Does.Contain("@rt_str_mkd(double") .Or.Contain("@rt_str_mkd(f64"));
+    Assert.That(text, Does.Contain("@rt_str_cvi(ptr"));
+    Assert.That(text, Does.Contain("@rt_str_cvl(ptr"));
+    Assert.That(text, Does.Contain("@rt_str_cvd(ptr"));
+  }
+
+  [Test]
   public void HexAndOct_LowerToRuntimeFormatters() {
     var module = LowerOptimized("n% = 255\nPRINT HEX$(n%)\nPRINT OCT$(n%)\nEND");
 

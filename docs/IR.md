@@ -74,7 +74,8 @@ Supported today:
 - **strings** via a runtime-handle ABI (`rt_str_*`): assignment, `&` concat, all
   comparisons, `LEN`, `LEFT$`/`RIGHT$`/`MID$`, `CHR$`/`ASC`, `STR$`/`VAL`,
   `SPACE$`/`STRING$`, `HEX$`/`OCT$`, `UCASE$`/`LCASE$`/`LTRIM$`/`RTRIM$`, `INSTR`
-  (2- and 3-arg); identical literals are interned to one global;
+  (2- and 3-arg), the binary-record encoders/decoders `MKI$`/`MKL$`/`MKS$`/`MKD$`/`MKDWD$`
+  and `CVI`/`CVL`/`CVS`/`CVD`/`CVDWD`; identical literals are interned to one global;
 - **console and file I/O** (`PRINT`/`INPUT`/`LINE INPUT`, `OPEN`/`CLOSE`/`PRINT #`/`INPUT #`)
   via `rt_print_*` / `rt_input_*` / `rt_file_*` declarations; **random/binary record I/O**
   (`OPEN … FOR RANDOM/BINARY … LEN=`, `GET`/`PUT #n, rec, var`) of a fixed-size scalar

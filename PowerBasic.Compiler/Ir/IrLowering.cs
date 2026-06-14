@@ -1155,6 +1155,11 @@ public sealed class IrLowering {
       "LEN" => this.LowerLen(call),
       "ASC" => this.LowerAsc(call),
       "VAL" => this.LowerVal(call),
+      "CVI" => this.LowerCv(call, "rt_str_cvi", IrType.I16),
+      "CVL" => this.LowerCv(call, "rt_str_cvl", IrType.I32),
+      "CVDWD" => this.LowerCv(call, "rt_str_cvdwd", IrType.I32),
+      "CVS" => this.LowerCv(call, "rt_str_cvs", IrType.F32),
+      "CVD" => this.LowerCv(call, "rt_str_cvd", IrType.F64),
       "SQR" => this.LowerMath(call, "sqrt"),
       "SIN" => this.LowerMath(call, "sin"),
       "COS" => this.LowerMath(call, "cos"),
@@ -1191,6 +1196,10 @@ public sealed class IrLowering {
     return this.Coerce(result, PbType.Long, this._model.TypeOf(call));
   }
 
+  /// <summary>CVI/CVL/CVS/CVD: decode a number from a binary-record string's raw bytes.</summary>
+  private IrValue LowerCv(CallOrIndexExpr call, string fn, IrType resultType) =>
+    this._b.Call(resultType, this.RuntimeFn(fn, resultType, IrType.Ptr), this.LowerStringExpr(call.Arguments[0]));
+
   /// <summary>INSTR(haystack$, needle$) or INSTR(start%, haystack$, needle$) -> 1-based position (0 = not found).</summary>
   private IrValue LowerInstr(CallOrIndexExpr call) {
     IrValue position;
@@ -1210,7 +1219,14 @@ public sealed class IrLowering {
   private IrValue LowerStringIntrinsic(CallOrIndexExpr ci, string name) {
     IrValue Str(int i) => this.LowerStringExpr(ci.Arguments[i]);
     IrValue Num(int i) => this.Coerce(this.LowerExpr(ci.Arguments[i]), this._model.TypeOf(ci.Arguments[i]), PbType.Long);
+    IrValue Val(int i, ScalarType t) => this.Coerce(this.LowerExpr(ci.Arguments[i]), this._model.TypeOf(ci.Arguments[i]), t);
     return name.ToUpperInvariant() switch {
+      // binary-record encoders: a number to its raw little-endian bytes as a string
+      "MKI$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mki", IrType.Ptr, IrType.I16), Val(0, PbType.Integer)),
+      "MKL$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mkl", IrType.Ptr, IrType.I32), Val(0, PbType.Long)),
+      "MKDWD$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mkdwd", IrType.Ptr, IrType.I32), Val(0, PbType.Dword)),
+      "MKS$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mks", IrType.Ptr, IrType.F32), Val(0, PbType.Single)),
+      "MKD$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mkd", IrType.Ptr, IrType.F64), Val(0, PbType.Double)),
       "LEFT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_left", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Num(1)),
       "RIGHT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_right", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Num(1)),
       "MID$" when ci.Arguments.Count >= 3 => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid", IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I32), Str(0), Num(1), Num(2)),
