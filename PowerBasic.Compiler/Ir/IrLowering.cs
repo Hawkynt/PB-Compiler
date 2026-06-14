@@ -702,6 +702,7 @@ public sealed class IrLowering {
       "CDBL" or "CSNG" => this.LowerConvert(call),
       "LEN" => this.LowerLen(call),
       "ASC" => this.LowerAsc(call),
+      "VAL" => this.LowerVal(call),
       _ => throw new IrLoweringException($"intrinsic {name}"),
     };
   }
@@ -716,8 +717,27 @@ public sealed class IrLowering {
       "MID$" when ci.Arguments.Count >= 3 => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid", IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I32), Str(0), Num(1), Num(2)),
       "MID$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid2", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Num(1)),
       "CHR$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_chr", IrType.Ptr, IrType.I32), Num(0)),
+      "SPACE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_space", IrType.Ptr, IrType.I32), Num(0)),
+      "STRING$" when this._model.TypeOf(ci.Arguments[1]) is StringType =>
+        this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_string_s", IrType.Ptr, IrType.I32, IrType.Ptr), Num(0), Str(1)),
+      "STRING$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_string", IrType.Ptr, IrType.I32, IrType.I32), Num(0), Num(1)),
+      "STR$" => this.LowerStrOf(ci.Arguments[0]),
       _ => throw new IrLoweringException($"string intrinsic {name}"),
     };
+  }
+
+  private IrValue LowerStrOf(Expression arg) {
+    if (this._model.TypeOf(arg) is not ScalarType s)
+      throw new IrLoweringException("STR$ of a non-numeric value");
+    var (name, ty) = s.IsFloat
+      ? (s.ByteSize == 8 ? ("rt_str_from_double", IrType.F64) : ("rt_str_from_single", IrType.F32))
+      : ($"rt_str_from_{(s.Signed ? "i" : "u")}{s.ByteSize * 8}", IrType.Integer(s.ByteSize * 8));
+    return this._b.Call(IrType.Ptr, this.RuntimeFn(name, IrType.Ptr, ty), this.Coerce(this.LowerExpr(arg), s, s));
+  }
+
+  private IrValue LowerVal(CallOrIndexExpr call) {
+    var value = this._b.Call(IrType.F64, this.RuntimeFn("rt_str_val", IrType.F64, IrType.Ptr), this.LowerStringExpr(call.Arguments[0]));
+    return this.Coerce(value, PbType.Double, this._model.TypeOf(call));
   }
 
   private IrValue LowerAsc(CallOrIndexExpr call) {

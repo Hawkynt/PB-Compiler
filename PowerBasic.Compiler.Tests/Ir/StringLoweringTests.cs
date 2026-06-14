@@ -72,6 +72,19 @@ public sealed class StringLoweringTests {
   }
 
   [Test]
+  public void StrValStringSpace_LowerToRuntimeCalls() {
+    var module = LowerOptimized("n% = 42\ns$ = STR$(n%)\nv% = VAL(\"123\")\np$ = SPACE$(3)\nr$ = STRING$(5, 42)\nPRINT s$ & p$ & r$\nPRINT v%\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var text = LlvmEmitter.Emit(module!);
+    Assert.That(text, Does.Contain("@rt_str_from_i16(i16"));
+    Assert.That(text, Does.Contain("@rt_str_val(ptr"));
+    Assert.That(text, Does.Contain("@rt_str_space(i32"));
+    Assert.That(text, Does.Contain("@rt_str_string(i32"));
+  }
+
+  [Test]
   public void StringProgram_CompilesToNativeViaLlc() {
     var module = LowerOptimized("a$ = \"Hello, \"\nb$ = \"world!\"\nPRINT a$ & b$\nEND");
     Assert.That(module, Is.Not.Null);
