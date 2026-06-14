@@ -61,8 +61,8 @@ public sealed class ModuleLoweringTests {
       "y% = f%(3)\n" +
       "\n" +
       "FUNCTION f%(BYVAL n%)\n" +
-      "  INPUT t%\n" +            // INPUT is unsupported -> body declines, signature stays
-      "  f% = n% + t%\n" +
+      "  OPEN \"x\" FOR INPUT AS #1\n" +   // file I/O unsupported -> body declines, signature stays
+      "  f% = n%\n" +
       "END FUNCTION");
 
     Assert.That(module, Is.Not.Null);

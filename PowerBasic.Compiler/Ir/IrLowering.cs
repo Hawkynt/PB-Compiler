@@ -237,6 +237,7 @@ public sealed class IrLowering {
       case GotoStmt g: this.LowerGoto(g); break;
       case OnGotoStmt og: this.LowerOnGoto(og); break;
       case PrintStmt pr: this.LowerPrint(pr); break;
+      case InputStmt inp: this.LowerInput(inp); break;
       case EndStmt: this.LowerEnd(); break;
       default: throw new IrLoweringException($"unsupported statement: {statement.GetType().Name}");
     }
@@ -307,6 +308,41 @@ public sealed class IrLowering {
     // a trailing comma/semicolon suppresses the newline; otherwise (incl. bare PRINT) emit one
     if (p.Items.Count == 0 || p.Items[^1].Separator == PrintSeparator.Newline)
       this._b.Call(IrType.Void, this.RuntimeFn("rt_print_nl", IrType.Void));
+  }
+
+  private void LowerInput(InputStmt input) {
+    if (this._module is null)
+      throw new IrLoweringException("INPUT requires whole-module lowering");
+    if (input.FileNumber is not null)
+      throw new IrLoweringException("INPUT from a file");
+
+    if (input.Prompt is { } prompt) {
+      var bytes = System.Text.Encoding.ASCII.GetBytes(prompt);
+      var global = this._module.AddStringConstant(bytes);
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_print_str", IrType.Void, IrType.Ptr, IrType.I32), global, new IrConstantInt(IrType.I32, bytes.Length));
+    }
+
+    foreach (var target in input.Targets) {
+      if (target is NameExpr && this._model.VariableBindings.TryGetValue(target, out var strSym) && strSym.Type is StringType) {
+        var read = input.IsLineInput
+          ? this._b.Call(IrType.Ptr, this.RuntimeFn("rt_input_line", IrType.Ptr))
+          : this._b.Call(IrType.Ptr, this.RuntimeFn("rt_input_str", IrType.Ptr));
+        this._b.Store(read, this.SlotFor(strSym));
+        continue;
+      }
+      var (addr, type) = this.LValue(target);
+      if (type is not ScalarType s)
+        throw new IrLoweringException("INPUT into a non-scalar target");
+      var (name, ty) = InputRuntime(s);
+      this._b.Store(this._b.Call(ty, this.RuntimeFn(name, ty)), addr);
+    }
+  }
+
+  private static (string Name, IrType Type) InputRuntime(ScalarType s) {
+    if (s.IsFloat)
+      return s.ByteSize switch { 4 => ("rt_input_single", IrType.F32), 8 => ("rt_input_double", IrType.F64), _ => ("rt_input_ext", IrType.F80) };
+    var bits = s.ByteSize * 8;
+    return ($"rt_input_{(s.Signed ? "i" : "u")}{bits}", IrType.Integer(bits));
   }
 
   private static (string Name, IrType Type) PrintRuntime(ScalarType s) {
