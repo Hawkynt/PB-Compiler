@@ -126,6 +126,13 @@ public sealed class IrPhi : IrInstruction {
     return null;
   }
 
+  /// <summary>Repoints an incoming edge's predecessor (used when a predecessor block is merged away).</summary>
+  public void RenameIncomingBlock(IrBasicBlock from, IrBasicBlock to) {
+    for (var i = 0; i < this._blocks.Count; ++i)
+      if (ReferenceEquals(this._blocks[i], from))
+        this._blocks[i] = to;
+  }
+
   /// <summary>Drops the incoming edge from the given predecessor (used when a CFG edge disappears).</summary>
   public void RemoveIncoming(IrBasicBlock block) {
     for (var i = 0; i < this._blocks.Count; ++i)
