@@ -48,6 +48,16 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private HashSet<Statement>? _deadStatements;
   private Dictionary<VariableSymbol, ConstantValue>? _ipcp;
   private (VariableSymbol Symbol, Reg Reg)? _registerCounter;
+  private (VariableSymbol Symbol, Reg Reg)? _registerAccumulator;
+
+  /// <summary>The register a variable is currently resident in (O5 FOR counter in SI / accumulator in DI), or null when it lives in memory.</summary>
+  private Reg? ResidentRegOf(VariableSymbol symbol) {
+    if (this._registerCounter is { } counter && ReferenceEquals(counter.Symbol, symbol))
+      return counter.Reg;
+    if (this._registerAccumulator is { } accumulator && ReferenceEquals(accumulator.Symbol, symbol))
+      return accumulator.Reg;
+    return null;
+  }
   private int _tempBytes;
   private int _tempMax;
 
@@ -1757,6 +1767,27 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private void EmitIncrDecr(IncrDecrStmt id) {
     var asm = this._asm;
     var targetType = model.TypeOf(id.Target);
+
+    // pb36 O5: INCR/DECR of a register-resident accumulator updates the register
+    if (id.Target is NameExpr regTarget
+        && model.VariableBindings.TryGetValue(regTarget, out var regSym)
+        && this.ResidentRegOf(regSym) is { } accReg) {
+      if (id.Amount == null) {
+        if (id.Increment)
+          asm.Inc(accReg);
+        else
+          asm.Dec(accReg);
+      } else {
+        this.EmitExpression(id.Amount);
+        this.Coerce(model.TypeOf(id.Amount), PbType.Integer, id.Amount);
+        if (id.Increment)
+          asm.Add(accReg, Reg.AX);
+        else
+          asm.Sub(accReg, Reg.AX);
+      }
+      return;
+    }
+
     var kind = KindOf(targetType);
     if (kind is not (ValueKind.Int16 or ValueKind.Int32)) {
       this.Unsupported(id);

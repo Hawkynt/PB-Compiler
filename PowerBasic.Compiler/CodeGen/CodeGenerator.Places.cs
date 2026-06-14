@@ -282,6 +282,21 @@ public sealed partial class CodeGenerator {
   private void EmitAssign(AssignStmt a) {
     var targetType = model.TypeOf(a.Target);
 
+    // pb36 O5: the loop accumulator lives in a register - compute the value into
+    // AX (the SI-clean modular int16 path) and write the register, not the cell
+    if (a.Target is NameExpr regTarget
+        && model.VariableBindings.TryGetValue(regTarget, out var regSym)
+        && this.ResidentRegOf(regSym) is { } accReg) {
+      if (model.TypeOf(a.Value) is ScalarType { IsFloat: true } && this.IsModularInt16Tree(a.Value, 0))
+        this.EmitModularInt16(a.Value);
+      else {
+        this.EmitExpression(a.Value);
+        this.Coerce(model.TypeOf(a.Value), PbType.Integer, a.Value);
+      }
+      this._asm.Mov(accReg, Reg.AX);
+      return;
+    }
+
     // pb36 O15/O2: a copy of a non-string location onto itself moves identical
     // bytes - a pure no-op. Excludes dynamic-string-bearing types (their
     // assignment frees/reallocates handles, which a self-copy must not skip).

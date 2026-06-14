@@ -391,6 +391,17 @@ public sealed class Pb36OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenAccumulatorLoop_WhenPb36Speed_ThenSmallerFromRegisterResidency() {
+    // s% = s% + i% over a SI/DI-clean FOR loop keeps the counter in SI and the
+    // accumulator in DI, so the per-iteration cell load/store of s% disappears
+    const string body = "s% = 0\nFOR i% = 1 TO 10\n  s% = s% + i%\nNEXT i%\nPRINT s%\nEND";
+    var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
+    var plain = Compile(body, Dialect.Pb36);
+    Assert.That(speed.Length, Is.LessThan(plain.Length),
+      "the register-resident accumulator should shrink the loop versus the memory-cell version");
+  }
+
+  [Test]
   public void Emit_GivenModularMultiplyByThree_WhenPb36Speed_ThenShiftAddReplacesImul() {
     // x% is made opaque (BYREF call) so SCCP cannot fold it - this pins the
     // modular shift-add path, not whole-expression constant folding

@@ -122,9 +122,10 @@ public sealed partial class CodeGenerator {
           this.EmitLoadPlace(new(slot.Cell, Far: false), slot.Type, n);
           break;
         }
-        // pb36 O5: the FOR counter living in a register this loop reads from it
-        if (this._registerCounter is { } rc && ReferenceEquals(rc.Symbol, symbol)) {
-          asm.Mov(Reg.AX, rc.Reg);
+        // pb36 O5: a variable resident in a register this loop (FOR counter in
+        // SI, accumulator in DI) reads straight from the register
+        if (this.ResidentRegOf(symbol) is { } residentReg) {
+          asm.Mov(Reg.AX, residentReg);
           break;
         }
         // pb36 O18 (IPCP): a parameter that is the same constant at every call

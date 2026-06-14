@@ -907,7 +907,7 @@ public sealed partial class CodeGenerator {
       return false;
     if (counter.Type is not ScalarType { ByteSize: 2, Signed: true, IsFloat: false })
       return false;
-    if (this.CheckNumeric || this._registerCounter != null)
+    if (this.CheckNumeric || this.CheckOverflow || this._registerCounter != null)
       return false;
     if (this._trackResume)
       return false; // an error mid-loop would let a handler read the stale cell
@@ -919,11 +919,20 @@ public sealed partial class CodeGenerator {
     this.EmitExpression(f.To);
     this.Coerce(model.TypeOf(f.To), PbType.Integer, f.To);
     asm.Mov(limit, Reg.AX);
-    this.EmitExpression(f.From);
+    this.EmitExpression(f.From);                 // From may read the accumulator's cell - keep DI free until now
     this.Coerce(model.TypeOf(f.From), PbType.Integer, f.From);
     asm.Mov(Reg.SI, Reg.AX);
 
     this._registerCounter = (counter, Reg.SI);
+
+    // pb36 O5: keep one hot 2-byte INTEGER accumulator in DI for the loop too
+    var accumulator = this.FindAccumulator(f.Body, counter);
+    var accCell = accumulator != null ? this.TryDirectCell(accumulator) : null;
+    if (accumulator != null && accCell is { } accSlot) {
+      asm.Mov(Reg.DI, Adjust(accSlot, 0, OperandSize.Word)); // load its pre-loop value
+      this._registerAccumulator = (accumulator, Reg.DI);
+    }
+
     var top = asm.DefineLabel();
     var done = asm.DefineLabel();
     var cont = asm.DefineLabel();
@@ -951,9 +960,37 @@ public sealed partial class CodeGenerator {
     this._iterateFor.Pop();
     this._iterateAny.Pop();
     asm.Mov(cell, Reg.SI);      // post-loop reads use the cell again
+    if (this._registerAccumulator is { } resident && accCell is { } slot)
+      asm.Mov(Adjust(slot, 0, OperandSize.Word), resident.Reg); // flush the accumulator
     this._registerCounter = null;
+    this._registerAccumulator = null;
     this.ReleaseTemp(2);
     return true;
+  }
+
+  /// <summary>
+  /// The first 2-byte signed-INTEGER scalar local written in an SI-clean loop
+  /// body (assignment or INCR target, not the counter, not STATIC, with a direct
+  /// frame cell) - a candidate to live in DI for the loop. Its reads/writes all
+  /// route through the residency paths, so keeping it in a register is invisible.
+  /// </summary>
+  private VariableSymbol? FindAccumulator(IReadOnlyList<Statement> body, VariableSymbol counter) {
+    foreach (var statement in body) {
+      var target = statement switch {
+        AssignStmt { Target: NameExpr t } => t,
+        IncrDecrStmt { Target: NameExpr t } => t,
+        _ => (NameExpr?)null,
+      };
+      if (target == null || !model.VariableBindings.TryGetValue(target, out var symbol))
+        continue;
+      if (ReferenceEquals(symbol, counter))
+        continue;
+      if (symbol.Type is ScalarType { ByteSize: 2, Signed: true, IsFloat: false }
+          && symbol.Storage is not VariableStorage.Static
+          && this.TryDirectCell(symbol) != null)
+        return symbol;
+    }
+    return null;
   }
 
   /// <summary>True when every body statement is a scalar-integer assignment / INCR (over scalar locals, no counter write) whose emission provably leaves SI untouched.</summary>
