@@ -282,31 +282,43 @@ public sealed class IrLowering {
   }
 
   // A dynamic array is a runtime-allocated buffer plus a bound descriptor: the data
-  // pointer and the lower bound each live in their own promotable scalar slot.
-  private readonly Dictionary<VariableSymbol, (IrValue Data, IrValue Lo)> _dynArrays = new(ReferenceEqualityComparer.Instance);
+  // pointer and, per dimension, the lower bound and size each live in their own
+  // promotable scalar slot. Sizes feed row-major flattening and the allocation count.
+  private readonly record struct DynArr(IrValue Data, IrValue[] Lo, IrValue[] Size);
+  private readonly Dictionary<VariableSymbol, DynArr> _dynArrays = new(ReferenceEqualityComparer.Instance);
 
-  private (IrValue Data, IrValue Lo) DynDescriptor(VariableSymbol symbol) {
+  private DynArr DynDescriptor(VariableSymbol symbol, int rank) {
     if (this._dynArrays.TryGetValue(symbol, out var existing))
       return existing;
     var data = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.Ptr) { Name = symbol.Name + ".data" });
-    var lo = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I32) { Name = symbol.Name + ".lo" });
-    var descriptor = ((IrValue)data, (IrValue)lo);
+    var lo = new IrValue[rank];
+    var size = new IrValue[rank];
+    for (var k = 0; k < rank; ++k) {
+      lo[k] = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I32) { Name = $"{symbol.Name}.lo{k}" });
+      size[k] = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I32) { Name = $"{symbol.Name}.size{k}" });
+    }
+    var descriptor = new DynArr(data, lo, size);
     this._dynArrays[symbol] = descriptor;
     return descriptor;
   }
 
-  /// <summary>The address of one element of a runtime-allocated (1-D) dynamic array.</summary>
+  /// <summary>The address of one element of a runtime-allocated dynamic array (row-major flattening).</summary>
   private (IrValue Address, PbType Element) DynamicElementAddress(CallOrIndexExpr expr, VariableSymbol symbol, ArrayType arr) {
-    if (expr.Arguments.Count != 1)
-      throw new IrLoweringException("multi-dimensional dynamic array");
-    var (dataSlot, loSlot) = this.DynDescriptor(symbol);
-    var data = this._b.Load(IrType.Ptr, dataSlot);
-    var lo = this._b.Load(IrType.I32, loSlot);
-    var idx = this.Coerce(this.LowerExpr(expr.Arguments[0]), this._model.TypeOf(expr.Arguments[0]), PbType.Long);
-    var rel = this._b.Sub(idx, lo);
+    if (expr.Arguments.Count != arr.Rank)
+      throw new IrLoweringException("dynamic array rank mismatch");
+    var descriptor = this.DynDescriptor(symbol, arr.Rank);
+    var data = this._b.Load(IrType.Ptr, descriptor.Data);
+
+    IrValue? flat = null;
+    for (var k = 0; k < arr.Rank; ++k) {
+      var idx = this.Coerce(this.LowerExpr(expr.Arguments[k]), this._model.TypeOf(expr.Arguments[k]), PbType.Long);
+      var rel = this._b.Sub(idx, this._b.Load(IrType.I32, descriptor.Lo[k]));
+      flat = flat is null ? rel : this._b.Add(this._b.Mul(flat, this._b.Load(IrType.I32, descriptor.Size[k])), rel);
+    }
+
     if (arr.Element is StringType)
-      return (this._b.Gep(data, rel, IrType.Ptr), arr.Element);
-    return (this._b.Gep(data, this._b.Mul(rel, new IrConstantInt(IrType.I32, arr.Element.Size))), arr.Element);
+      return (this._b.Gep(data, flat!, IrType.Ptr), arr.Element);
+    return (this._b.Gep(data, this._b.Mul(flat!, new IrConstantInt(IrType.I32, arr.Element.Size))), arr.Element);
   }
 
   private VariableSymbol SymbolOf(Expression target) =>
@@ -681,29 +693,36 @@ public sealed class IrLowering {
     foreach (var v in r.Variables) {
       if (!this._model.RedimBindings.TryGetValue(v, out var symbol) || symbol.Type is not ArrayType { IsDynamic: true } arr)
         throw new IrLoweringException($"REDIM of non-dynamic array {v.Name}");
-      if (v.ArrayBounds is not { Count: 1 } dims)
-        throw new IrLoweringException("multi-dimensional dynamic array");
-      var (lower, upper) = dims[0];
-      var lo = lower is null
-        ? new IrConstantInt(IrType.I32, 0)
-        : this.Coerce(this.LowerExpr(lower), this._model.TypeOf(lower), PbType.Long);
-      var hi = this.Coerce(this.LowerExpr(upper), this._model.TypeOf(upper), PbType.Long);
-      var count = this._b.Add(this._b.Sub(hi, lo), new IrConstantInt(IrType.I32, 1));
-      var (dataSlot, loSlot) = this.DynDescriptor(symbol);
+      if (v.ArrayBounds is not { } dims || dims.Count != arr.Rank)
+        throw new IrLoweringException("REDIM rank mismatch");
+
+      var descriptor = this.DynDescriptor(symbol, arr.Rank);
+      IrValue? count = null;
+      for (var k = 0; k < dims.Count; ++k) {
+        var (lower, upper) = dims[k];
+        var lo = lower is null
+          ? new IrConstantInt(IrType.I32, 0)
+          : this.Coerce(this.LowerExpr(lower), this._model.TypeOf(lower), PbType.Long);
+        var hi = this.Coerce(this.LowerExpr(upper), this._model.TypeOf(upper), PbType.Long);
+        var size = this._b.Add(this._b.Sub(hi, lo), new IrConstantInt(IrType.I32, 1));
+        this._b.Store(lo, descriptor.Lo[k]);
+        this._b.Store(size, descriptor.Size[k]);
+        count = count is null ? size : this._b.Mul(count, size);
+      }
+
       var isString = arr.Element is StringType;
       IrValue data;
       if (r.Preserve) {                                // realloc keeps the existing prefix (mem2reg seeds the unallocated slot to null = fresh malloc)
-        var old = this._b.Load(IrType.Ptr, dataSlot);
+        var old = this._b.Load(IrType.Ptr, descriptor.Data);
         data = isString
-          ? this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_realloc_ptr", IrType.Ptr, IrType.Ptr, IrType.I32), old, count)
-          : this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_realloc", IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I32), old, count, new IrConstantInt(IrType.I32, arr.Element.Size));
+          ? this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_realloc_ptr", IrType.Ptr, IrType.Ptr, IrType.I32), old, count!)
+          : this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_realloc", IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I32), old, count!, new IrConstantInt(IrType.I32, arr.Element.Size));
       } else {
         data = isString
-          ? this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_alloc_ptr", IrType.Ptr, IrType.I32), count)             // count target-pointers
-          : this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_alloc", IrType.Ptr, IrType.I32, IrType.I32), count, new IrConstantInt(IrType.I32, arr.Element.Size));
+          ? this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_alloc_ptr", IrType.Ptr, IrType.I32), count!)            // count target-pointers
+          : this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_alloc", IrType.Ptr, IrType.I32, IrType.I32), count!, new IrConstantInt(IrType.I32, arr.Element.Size));
       }
-      this._b.Store(data, dataSlot);
-      this._b.Store(lo, loSlot);
+      this._b.Store(data, descriptor.Data);
     }
   }
 
@@ -713,9 +732,9 @@ public sealed class IrLowering {
         throw new IrLoweringException("ERASE of a non-array");
       if (!arr.IsDynamic)
         throw new IrLoweringException("ERASE of a static array");   // PB zeroes it in place; not modeled here
-      var (dataSlot, _) = this.DynDescriptor(symbol);
-      this._b.Call(IrType.Void, this.RuntimeFn("rt_arr_free", IrType.Void, IrType.Ptr), this._b.Load(IrType.Ptr, dataSlot));
-      this._b.Store(new IrNullPtr(), dataSlot);
+      var descriptor = this.DynDescriptor(symbol, arr.Rank);
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_arr_free", IrType.Void, IrType.Ptr), this._b.Load(IrType.Ptr, descriptor.Data));
+      this._b.Store(new IrNullPtr(), descriptor.Data);
     }
   }
 

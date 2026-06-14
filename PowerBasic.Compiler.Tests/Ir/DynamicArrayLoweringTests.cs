@@ -74,10 +74,22 @@ public sealed class DynamicArrayLoweringTests {
   }
 
   [Test]
-  public void MultiDimRedim_Declines() {
-    var module = LowerModule("REDIM g%(1 TO 2, 1 TO 3)\ng%(1, 2) = 7\nEND", optimize: false);
+  public void MultiDimRedim_FlattensRowMajor() {
+    var module = LowerModule("REDIM g%(1 TO 2, 1 TO 3)\ng%(1, 2) = 7\ny% = g%(1, 2)\nEND", optimize: false);
 
-    Assert.That(module, Is.Null);   // only 1-D dynamic arrays are modeled
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var main = module!.Functions.First(f => f.Name == "main");
+    // allocation count is the product of both dimension sizes (2 * 3)
+    Assert.That(main.AllInstructions.OfType<IrCall>().Any(c => c.Callee is IrFunction { Name: "rt_arr_alloc" }), Is.True);
+  }
+
+  [Test]
+  public void MultiDimRedim_VerifiesAfterOptimization() {
+    var module = LowerModule("REDIM g%(1 TO 3, 1 TO 4)\nFOR i% = 1 TO 3\n  FOR j% = 1 TO 4\n    g%(i%, j%) = i% * j%\n  NEXT j%\nNEXT i%\nx% = g%(2, 3)\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
   }
 
   [Test]
