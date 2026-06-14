@@ -96,6 +96,15 @@ public sealed class StringLoweringTests {
   }
 
   [Test]
+  public void IdenticalStringLiterals_AreInternedToOneGlobal() {
+    var module = LowerOptimized("a$ = \"apple\"\nIF a$ = \"apple\" THEN PRINT \"apple\"\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    var constants = System.Text.RegularExpressions.Regex.Matches(LlvmEmitter.Emit(module!), "private constant").Count;
+    Assert.That(constants, Is.EqualTo(1));   // the three "apple" literals share one global
+  }
+
+  [Test]
   public void StringProgram_CompilesToNativeViaLlc() {
     var module = LowerOptimized("a$ = \"Hello, \"\nb$ = \"world!\"\nPRINT a$ & b$\nEND");
     Assert.That(module, Is.Not.Null);

@@ -8,6 +8,7 @@ public sealed class IrModule(string name) {
 
   private readonly List<IrFunction> _functions = [];
   private readonly List<IrGlobalVariable> _globals = [];
+  private readonly Dictionary<string, IrGlobalVariable> _internedStrings = new(StringComparer.Ordinal);
 
   /// <summary>A name for the module (typically the source file).</summary>
   public string Name { get; } = name;
@@ -25,10 +26,14 @@ public sealed class IrModule(string name) {
     return global;
   }
 
-  /// <summary>Adds a private byte-array constant (e.g. a string literal) with a fresh name and returns it.</summary>
+  /// <summary>Adds (or reuses) a private byte-array constant for a string literal; identical literals are interned to one global.</summary>
   public IrGlobalVariable AddStringConstant(byte[] bytes) {
+    var key = Convert.ToBase64String(bytes);
+    if (this._internedStrings.TryGetValue(key, out var existing))
+      return existing;
     var global = new IrGlobalVariable($".str{this._globals.Count}", IrType.I8) { Bytes = bytes, IsZeroInitialized = false };
     this._globals.Add(global);
+    this._internedStrings[key] = global;
     return global;
   }
 
