@@ -56,7 +56,7 @@ public sealed partial class CodeGenerator {
 
     // pb36 C2 ($CPU 80486): 16-byte-align procedure entries to the 486 cache
     // line - reached only by CALL, so the NOP pad never executes
-    if (this.OptimizePb36 && this.Cpu486)
+    if (this.Optimize && this.Cpu486)
       asm.AlignCode(16);
     asm.MarkLabel(this.ProcLabelOf(proc));
     if (this.CheckStack) { // $ERROR STACK ON: SP headroom probe -> Error 201 (oracle-verified)
@@ -73,7 +73,7 @@ public sealed partial class CodeGenerator {
     // zero fill collapses to zeroing just the dynamic-string handle slots
     // (those must stay 0 for the first StrAssign and the epilogue StrFree)
     var stackLocals = this.StackLocalsOf(proc).ToList();
-    var elideZeroing = this.OptimizePb36 && !this._trackResume
+    var elideZeroing = this.Optimize && !this._trackResume
       && CanElideFrameZeroing(model, proc.Body!, stackLocals);
 
     // pb36 O14: self-calls in tail position become frame-reusing jumps when
@@ -82,7 +82,7 @@ public sealed partial class CodeGenerator {
     // BYVAL scalar whose slot can be rewritten in place
     this._tailSelfCalls = null;
     this._tailEntry = null;
-    if (this.OptimizePb36 && !this._trackResume
+    if (this.Optimize && !this._trackResume
         && !proc.IsCdecl
         && proc.Parameters.All(p => p.ByVal && p.Type is ScalarType { IsFloat: false, ByteSize: <= 4 })
         && stackLocals.All(l => l.Type is ScalarType)
@@ -254,7 +254,7 @@ public sealed partial class CodeGenerator {
   /// onto those temps, and the frame/call/return overhead disappears.
   /// </summary>
   private bool TryEmitInlinedFunction(ProcedureSymbol proc, IReadOnlyList<Expression> args, bool wantResult) {
-    if (!this.OptimizePb36 || !wantResult || proc.IsCdecl || proc.IsStatic || proc.Body is not [AssignStmt single])
+    if (!this.Optimize || !wantResult || proc.IsCdecl || proc.IsStatic || proc.Body is not [AssignStmt single])
       return false;
     if (args.Count != proc.Parameters.Count)
       return false;

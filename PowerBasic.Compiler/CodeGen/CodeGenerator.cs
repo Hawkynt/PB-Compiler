@@ -98,7 +98,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     // pb36 O2/O10: drop unreachable statements and redundant DEF SEGs first -
     // dead code also vanishes from the trivial-lowering analysis below
-    if (this.OptimizePb36 && !this._isUnit) {
+    if (this.Optimize && !this._isUnit) {
       Pb36Pruner.Prune(model);
       Pb36FloatDemotion.Apply(model);
       this._ipcp = Pb36Ipcp.Analyze(model); // O18: constants into callee bodies
@@ -114,8 +114,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     var userMain = asm.DefineLabel("user_main");
     this._scratch = asm.DefineLabel("cg_scratch");
 
-    this._rt.EnableBss = this.OptimizePb36 && !this._allowExternalCalls && !this._isUnit;
-    this._rt.Cpu386 = this.OptimizePb36 && this.Cpu386;
+    this._rt.EnableBss = this.Optimize && !this._allowExternalCalls && !this._isUnit;
+    this._rt.Cpu386 = this.Optimize && this.Cpu386;
     this._rt.EmitEntry(asm, userMain);
 
     // pb36 (docs/PB36.md P1): the runtime is emitted AFTER user code, trimmed
@@ -182,7 +182,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     this.PrepareCse(model.MainBody);
     this.PrepareSccp(model.MainBody);
-    this.BeginFrame(skipZeroing: this.OptimizePb36 && !ContainsErrorHandling(model.MainBody));
+    this.BeginFrame(skipZeroing: this.Optimize && !ContainsErrorHandling(model.MainBody));
     this.EmitChainCommonLoad();             // absorb a CHAIN handoff, when present
     this._trackResume = ContainsErrorHandling(model.MainBody);
     foreach (var statement in model.MainBody)
@@ -296,7 +296,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private void PrepareCse(IReadOnlyList<Statement> body) {
     this._cseMarks = null;
     this._cseBytes = 0;
-    if (!this.OptimizePb36)
+    if (!this.Optimize)
       return;
     var result = Pb36CommonSubexpr.Analyze(body, model);
     if (result.SlotCount == 0)
@@ -314,7 +314,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private void PrepareSccp(IReadOnlyList<Statement> body, VariableSymbol? implicitResult = null) {
     this._provenReads = null;
     this._deadStatements = null;
-    if (!this.OptimizePb36)
+    if (!this.Optimize)
       return;
     if (Ssa.ControlFlowGraph.TryBuild(body) is not { } cfg)
       return;
@@ -1141,7 +1141,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // SSA propagation - selects one arm at compile time and the dead arm is not
     // emitted at all (whole-branch dead-code elimination). Cascades through the
     // ELSEIF chain until a non-constant condition appears.
-    if (this.OptimizePb36 && this.FoldConditionWithProven(i.Condition) is { } c) {
+    if (this.Optimize && this.FoldConditionWithProven(i.Condition) is { } c) {
       if (c != 0) {
         foreach (var s in i.Then)
           this.EmitStatement(s);

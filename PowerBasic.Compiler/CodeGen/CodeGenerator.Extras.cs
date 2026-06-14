@@ -164,7 +164,7 @@ public sealed partial class CodeGenerator {
     asm.Pop(Reg.DX);
     asm.Push(Reg.DS);
     asm.Mov(Reg.DS, Reg.DX);
-    if (this.OptimizePb36 && byteCount % 2 == 0 && byteCount >= 4) {
+    if (this.Optimize && byteCount % 2 == 0 && byteCount >= 4) {
       // pb36 R3/C1: word-wide memcmp halves the iteration count; = / <> only
       // need equality per chunk, so chunk width is free to grow
       asm.Mov(Reg.CX, byteCount / 2);

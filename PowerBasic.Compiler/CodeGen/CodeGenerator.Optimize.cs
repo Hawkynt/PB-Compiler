@@ -11,12 +11,19 @@ namespace PowerBasic.Compiler.CodeGen;
 /// observable behavior exactly - the differential harness re-runs all pb35
 /// batteries under <c>--dialect pb36</c> against genuine PBC 3.50, and the
 /// default pb35 code paths stay bit-identical (the pb36 checks read
-/// <see cref="OptimizePb36"/> and change nothing when it is false).
+/// <see cref="Optimize"/> and change nothing when it is false).
 /// </summary>
 public sealed partial class CodeGenerator {
 
-  /// <summary>True when pb36 optimizations may alter the emitted code (never its observable behavior).</summary>
-  private bool OptimizePb36 => model.Dialect == Dialect.Pb36;
+  /// <summary>
+  /// Master optimizer gate. The optimizer is dialect-agnostic - it reads the
+  /// bound model's per-dialect types and semantics, so it preserves observable
+  /// behavior for every dialect (verified by the differential harness across
+  /// QB/PDS/TB/PB). It defaults on for pb36 (the "optimizing PB"); any other
+  /// dialect can opt in by setting this (the <c>--optimize</c> CLI flag).
+  /// Never changes observable behavior, only time and size.
+  /// </summary>
+  public bool Optimize { get; set; } = model.Dialect == Dialect.Pb36;
 
   private ConstantFolder? _pb36Folder;
   private ConstantFolder Pb36Folder => this._pb36Folder ??= new(model.Equates);
@@ -44,7 +51,7 @@ public sealed partial class CodeGenerator {
   /// type, so the bits match the unfolded runtime arithmetic exactly.
   /// </summary>
   private bool TryEmitFolded(Expression e) {
-    if (!this.OptimizePb36)
+    if (!this.Optimize)
       return false;
 
     // O9: literal string concatenation folds into one pooled literal
@@ -142,7 +149,7 @@ public sealed partial class CodeGenerator {
     var asm = this._asm;
     switch (kind) {
       case ValueKind.Int16:
-        if (this.OptimizePb36 && (value & 0xFFFF) == 0)
+        if (this.Optimize && (value & 0xFFFF) == 0)
           asm.Xor(Reg.AX, Reg.AX);
         else
           asm.Mov(Reg.AX, (int)value);
@@ -155,11 +162,11 @@ public sealed partial class CodeGenerator {
       default: {
         var low = (int)(value & 0xFFFF);
         var high = (int)((value >> 16) & 0xFFFF);
-        if (this.OptimizePb36 && low == 0)
+        if (this.Optimize && low == 0)
           asm.Xor(Reg.AX, Reg.AX);
         else
           asm.Mov(Reg.AX, low);
-        if (this.OptimizePb36 && high == 0)
+        if (this.Optimize && high == 0)
           asm.Xor(Reg.DX, Reg.DX);
         else
           asm.Mov(Reg.DX, high);
@@ -192,7 +199,7 @@ public sealed partial class CodeGenerator {
   /// </summary>
   private void EmitBlockMove(int byteCount) {
     var asm = this._asm;
-    if (!this.OptimizePb36 || byteCount < 4) {
+    if (!this.Optimize || byteCount < 4) {
       asm.Mov(Reg.CX, byteCount);
       asm.Rep();
       asm.Movsb();
@@ -227,7 +234,7 @@ public sealed partial class CodeGenerator {
   /// simulated shorts); WORD/BYTE counters keep the generic loop.
   /// </summary>
   private bool TryEmitUnrolledFor(ForStmt f, VariableSymbol counter, Mem slot) {
-    if (!this.OptimizePb36 || !this.OptimizeSpeed || !Equals(counter.Type, PbType.Integer))
+    if (!this.Optimize || !this.OptimizeSpeed || !Equals(counter.Type, PbType.Integer))
       return false;
     if (this.Pb36Folder.TryFold(f.From) is not { Integer: { } fromRaw }
         || this.Pb36Folder.TryFold(f.To) is not { Integer: { } toRaw })
@@ -349,7 +356,7 @@ public sealed partial class CodeGenerator {
   /// nothing can write through a literal reference.
   /// </summary>
   private void EmitLiteralPool(Assembler asm) {
-    if (!this.OptimizePb36) {
+    if (!this.Optimize) {
       foreach (var (text, label) in this._stringLiterals) {
         asm.MarkLabel(label);
         asm.Db(text);
@@ -539,7 +546,7 @@ public sealed partial class CodeGenerator {
   /// multiply must keep the real instruction and its <c>JNO</c> guard.
   /// </summary>
   private bool TryEmitStrengthReducedMultiply(BinaryExpr b, PbType opType) {
-    if (!this.OptimizePb36 || b.Op != BinaryOp.Multiply || this.CheckOverflow)
+    if (!this.Optimize || b.Op != BinaryOp.Multiply || this.CheckOverflow)
       return false;
     if (opType is not ScalarType { IsFloat: false, ByteSize: 2 or 4 } scalar)
       return false;
@@ -600,7 +607,7 @@ public sealed partial class CodeGenerator {
   /// through CL, never the 186+ immediate form.
   /// </summary>
   private bool TryEmitStrengthReducedDivMod(BinaryExpr b, PbType opType) {
-    if (!this.OptimizePb36 || b.Op is not (BinaryOp.IntegerDivide or BinaryOp.Modulo))
+    if (!this.Optimize || b.Op is not (BinaryOp.IntegerDivide or BinaryOp.Modulo))
       return false;
     if (opType is not ScalarType { IsFloat: false, ByteSize: 2 or 4 } scalar)
       return false;
@@ -733,7 +740,7 @@ public sealed partial class CodeGenerator {
   /// shapes fall back to IMUL.
   /// </summary>
   private bool TryEmitModularConstMul(BinaryExpr b) {
-    if (!this.OptimizePb36 || !this.OptimizeSpeed)
+    if (!this.Optimize || !this.OptimizeSpeed)
       return false;
 
     Expression variable;
@@ -812,7 +819,7 @@ public sealed partial class CodeGenerator {
   /// generic <c>ADD/SUB AX,BX</c> path bit-for-bit.
   /// </summary>
   private bool TryEmitModularConstAddSub(BinaryExpr b) {
-    if (!this.OptimizePb36)
+    if (!this.Optimize)
       return false;
     var asm = this._asm;
 
@@ -903,7 +910,7 @@ public sealed partial class CodeGenerator {
   /// (`$ERROR NUMERIC`) stay on the memory path that carries the JO check.
   /// </summary>
   private bool TryEmitForCounterInRegister(ForStmt f, VariableSymbol counter, Mem cell, long step) {
-    if (!this.OptimizePb36 || !this.OptimizeSpeed)
+    if (!this.Optimize || !this.OptimizeSpeed)
       return false;
     if (counter.Type is not ScalarType { ByteSize: 2, Signed: true, IsFloat: false })
       return false;
@@ -1048,7 +1055,7 @@ public sealed partial class CodeGenerator {
   /// matching the genuine FOR.
   /// </summary>
   private bool TryEmitFixedPointFor(ForStmt f, VariableSymbol counter, Mem cell) {
-    if (!this.OptimizePb36 || !this.OptimizeSpeed)
+    if (!this.Optimize || !this.OptimizeSpeed)
       return false;
     if (counter.Type is not ScalarType { IsFloat: true } counterType)
       return false;
@@ -1156,7 +1163,7 @@ public sealed partial class CodeGenerator {
   /// SPEED-gated like O7/O10 - DOS-era code uses such loops for timing.
   /// </summary>
   private bool TryEmitForIdiom(ForStmt f, VariableSymbol counter, Mem slot) {
-    if (!this.OptimizePb36 || !this.OptimizeSpeed || !Equals(counter.Type, PbType.Integer))
+    if (!this.Optimize || !this.OptimizeSpeed || !Equals(counter.Type, PbType.Integer))
       return false;
     if (this.Pb36Folder.TryFold(f.From) is not { Integer: { } fromRaw }
         || this.Pb36Folder.TryFold(f.To) is not { Integer: { } toRaw })

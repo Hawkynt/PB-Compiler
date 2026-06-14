@@ -267,7 +267,7 @@ public sealed partial class CodeGenerator {
       // pb36 O15: a self-compare folds to its constant truth - memcmp of a
       // location against itself compares identical bytes and is always equal
       // (NaN-immune, unlike a value compare), so rec = rec is -1, rec <> rec 0
-      if (this.OptimizePb36 && this.IsSameLvalue(b.Left, b.Right)) {
+      if (this.Optimize && this.IsSameLvalue(b.Left, b.Right)) {
         asm.Mov(Reg.AX, b.Op == BinaryOp.Equal ? -1 : 0);
         return;
       }
@@ -524,7 +524,7 @@ public sealed partial class CodeGenerator {
   private void EmitInt16CompareResult(Func<Assembler, Action<Label>> jump, Condition condition) {
     var asm = this._asm;
     // pb36 C1 ($CPU 80386): branchless SETcc - AL = 0/1, widen, negate to 0/-1
-    if (this.OptimizePb36 && this.Cpu386) {
+    if (this.Optimize && this.Cpu386) {
       asm.Setcc(condition, Reg.AL);
       asm.Mov(Reg.AH, (Imm)0);  // MOV leaves the SETcc result intact
       asm.Neg(Reg.AX);
@@ -549,7 +549,7 @@ public sealed partial class CodeGenerator {
   /// would coerce into BX - so behavior is bit-identical.
   /// </summary>
   private bool TryEmitInt16ConstBinary(BinaryExpr b, PbType opType, bool unsignedCompare) {
-    if (!this.OptimizePb36)
+    if (!this.Optimize)
       return false;
     var asm = this._asm;
 
@@ -637,7 +637,7 @@ public sealed partial class CodeGenerator {
   /// halves, the same words the register path would load.
   /// </summary>
   private bool TryEmitInt32ConstBinary(BinaryExpr b, PbType opType) {
-    if (!this.OptimizePb36)
+    if (!this.Optimize)
       return false;
     if (b.Op is not (BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Add or BinaryOp.Subtract
         or BinaryOp.Equal or BinaryOp.NotEqual))
@@ -768,7 +768,7 @@ public sealed partial class CodeGenerator {
       case BinaryOp.Multiply:
         // pb36 C1 ($CPU 80386): low-32-bit product via one IMUL EAX, EBX -
         // identical to rt_lmul's result, dropping the runtime helper
-        if (this.OptimizePb36 && this.Cpu386) {
+        if (this.Optimize && this.Cpu386) {
           var sc = this._scratch;
           asm.Mov(Mem.Word(sc), Reg.AX);
           asm.Mov(Mem.Word(sc, 2), Reg.DX);

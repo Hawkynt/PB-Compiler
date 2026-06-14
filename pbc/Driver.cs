@@ -28,6 +28,7 @@ public static class Driver {
     var checkOverflow = false;
     var checkStack = false;
     var optimizeSpeed = false;
+    bool? optimize = null; // null = dialect default (on for pb36); --optimize/--no-optimize override
 
     for (var i = 0; i < args.Length; ++i)
       switch (args[i]) {
@@ -64,6 +65,12 @@ public static class Driver {
           break;
         case "-OZF":
           optimizeSpeed = true;
+          break;
+        case "--optimize":
+          optimize = true; // enable the (dialect-agnostic) optimizer for any dialect
+          break;
+        case "--no-optimize":
+          optimize = false; // the pb35-faithful escape hatch, even for pb36
           break;
         case "--dump-tokens" or "--dump-ast" or "--dump-bind":
           dumpStage = args[i];
@@ -126,6 +133,8 @@ public static class Driver {
         CheckStack = checkStack,      // -ES
         OptimizeSpeed = optimizeSpeed,// -OZF
       };
+      if (optimize is { } opt)        // --optimize / --no-optimize override the dialect default
+        generator.Optimize = opt;
       byte[] artifact;
       if (IsUnitCompile(model)) {
         var unitName = Path.GetFileNameWithoutExtension(source).ToUpperInvariant();

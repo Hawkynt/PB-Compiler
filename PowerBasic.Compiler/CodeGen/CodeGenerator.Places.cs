@@ -300,7 +300,7 @@ public sealed partial class CodeGenerator {
     // pb36 O15/O2: a copy of a non-string location onto itself moves identical
     // bytes - a pure no-op. Excludes dynamic-string-bearing types (their
     // assignment frees/reallocates handles, which a self-copy must not skip).
-    if (this.OptimizePb36 && !EmbedsStringHandle(targetType)
+    if (this.Optimize && !EmbedsStringHandle(targetType)
         && targetType is not (StringType or FlexType)
         && this.IsSameLvalue(a.Target, a.Value))
       return;
@@ -348,7 +348,7 @@ public sealed partial class CodeGenerator {
     // ALU (low bits of the exact x87 value ARE the modular result), so the
     // whole FPU round-trip disappears; checked arithmetic never reaches here
     // because the binder keeps it integral with its own JO semantics
-    if (this.OptimizePb36 && !this.CheckOverflow && !this.CheckNumeric
+    if (this.Optimize && !this.CheckOverflow && !this.CheckNumeric
         && targetType is ScalarType { IsFloat: false, ByteSize: <= 2 }
         && model.TypeOf(a.Value) is ScalarType { IsFloat: true }
         && this.IsModularInt16Tree(a.Value, 0)) {
