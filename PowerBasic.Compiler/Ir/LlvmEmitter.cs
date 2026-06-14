@@ -1,0 +1,156 @@
+using System.Globalization;
+using System.Text;
+
+namespace PowerBasic.Compiler.Ir;
+
+/// <summary>
+/// Emits strictly-valid textual LLVM IR (a <c>.ll</c> module) that the real LLVM
+/// toolchain accepts (<c>llvm-as</c>, <c>opt -passes=verify</c>) and can lower to any
+/// LLVM target (<c>llc</c>). This is what takes the compiler beyond 16-bit DOS: the
+/// optimized IR is handed to LLVM's back end for x86-64/ARM/etc. Differs from
+/// <see cref="IrPrinter"/> in using LLVM's spelling - <c>float</c>/<c>double</c>/<c>x86_fp80</c>
+/// and the <c>getelementptr i8</c> form for byte-offset GEPs.
+/// </summary>
+public sealed class LlvmEmitter {
+
+  private readonly Dictionary<IrValue, string> _names = new(ReferenceEqualityComparer.Instance);
+  private int _slot;
+
+  /// <summary>Emits a complete module, optionally with a target triple/datalayout header.</summary>
+  public static string Emit(IrModule module, string? targetTriple = null) {
+    var sb = new StringBuilder();
+    sb.Append("; ModuleID = '").Append(module.Name).Append("'\n");
+    if (targetTriple is not null)
+      sb.Append("target triple = \"").Append(targetTriple).Append("\"\n");
+    if (sb.Length > 0)
+      sb.Append('\n');
+    foreach (var g in module.Globals)
+      sb.Append('@').Append(g.Name).Append(" = global ").Append(Ty(g.ValueType))
+        .Append(g.IsZeroInitialized ? " zeroinitializer" : "").Append('\n');
+    if (module.Globals.Count > 0)
+      sb.Append('\n');
+    for (var i = 0; i < module.Functions.Count; ++i) {
+      if (i > 0)
+        sb.Append('\n');
+      sb.Append(new LlvmEmitter().EmitFunction(module.Functions[i]));
+    }
+    return sb.ToString();
+  }
+
+  /// <summary>Emits a single function as a self-contained module fragment.</summary>
+  public static string Emit(IrFunction function) => new LlvmEmitter().EmitFunction(function);
+
+  private string EmitFunction(IrFunction fn) {
+    this.AssignNames(fn);
+    var sb = new StringBuilder();
+    sb.Append(fn.IsDeclaration ? "declare " : "define ").Append(Ty(fn.ReturnType)).Append(" @").Append(fn.Name).Append('(');
+    for (var i = 0; i < fn.Parameters.Count; ++i) {
+      if (i > 0)
+        sb.Append(", ");
+      sb.Append(Ty(fn.Parameters[i].Type)).Append(' ').Append(this.Ref(fn.Parameters[i]));
+    }
+    sb.Append(')');
+    if (fn.IsDeclaration)
+      return sb.Append('\n').ToString();
+
+    sb.Append(" {\n");
+    foreach (var block in fn.Blocks) {
+      sb.Append(block.Label).Append(":\n");
+      foreach (var inst in block.Instructions)
+        sb.Append("  ").Append(this.EmitInstruction(inst)).Append('\n');
+    }
+    sb.Append("}\n");
+    return sb.ToString();
+  }
+
+  private void AssignNames(IrFunction fn) {
+    foreach (var arg in fn.Parameters)
+      this._names[arg] = "%" + (arg.Name ?? (this._slot++).ToString(CultureInfo.InvariantCulture));
+    foreach (var block in fn.Blocks)
+      foreach (var inst in block.Instructions)
+        if (!inst.Type.IsVoid)
+          this._names[inst] = "%" + (inst.Name ?? (this._slot++).ToString(CultureInfo.InvariantCulture));
+  }
+
+  private string EmitInstruction(IrInstruction inst) {
+    var lhs = inst.Type.IsVoid ? "" : this.Ref(inst) + " = ";
+    return lhs + inst switch {
+      IrBinary b => $"{Mnemonic(b.Op)} {Ty(b.Type)} {this.Ref(b.Lhs)}, {this.Ref(b.Rhs)}",
+      IrCmp c => $"{(IsFloatPred(c.Pred) ? "fcmp" : "icmp")} {Mnemonic(c.Pred)} {Ty(c.Lhs.Type)} {this.Ref(c.Lhs)}, {this.Ref(c.Rhs)}",
+      IrCast c => $"{Mnemonic(c.Op)} {Ty(c.Value.Type)} {this.Ref(c.Value)} to {Ty(c.Type)}",
+      IrAlloca a => $"alloca {Ty(a.Allocated)}",
+      IrLoad l => $"load {Ty(l.Type)}, ptr {this.Ref(l.Pointer)}",
+      IrStore s => $"store {Ty(s.Value.Type)} {this.Ref(s.Value)}, ptr {this.Ref(s.Pointer)}",
+      IrGep g => $"getelementptr i8, ptr {this.Ref(g.BasePtr)}, {Ty(g.ByteOffset.Type)} {this.Ref(g.ByteOffset)}",
+      IrPhi p => $"phi {Ty(p.Type)} {this.PhiInputs(p)}",
+      IrCall call => $"call {Ty(call.Type)} {this.Ref(call.Callee)}({this.Args(call)})",
+      IrRet r => r.HasValue ? $"ret {Ty(r.Value!.Type)} {this.Ref(r.Value)}" : "ret void",
+      IrBr br => $"br label %{br.Target.Label}",
+      IrCondBr cb => $"br i1 {this.Ref(cb.Condition)}, label %{cb.IfTrue.Label}, label %{cb.IfFalse.Label}",
+      IrSwitch sw => this.EmitSwitch(sw),
+      IrUnreachable => "unreachable",
+      _ => throw new InvalidOperationException($"cannot emit {inst.GetType().Name} as LLVM"),
+    };
+  }
+
+  private string PhiInputs(IrPhi phi) =>
+    string.Join(", ", phi.IncomingBlocks.Select((blk, i) => $"[ {this.Ref(phi.GetOperand(i))}, %{blk.Label} ]"));
+
+  private string Args(IrCall call) =>
+    string.Join(", ", call.Args.Select(a => $"{Ty(a.Type)} {this.Ref(a)}"));
+
+  private string EmitSwitch(IrSwitch sw) {
+    var cases = string.Join(" ", sw.Cases.Select(c => $"{Ty(sw.Condition.Type)} {c.Value}, label %{c.Target.Label}"));
+    return $"switch {Ty(sw.Condition.Type)} {this.Ref(sw.Condition)}, label %{sw.DefaultTarget.Label} [ {cases} ]";
+  }
+
+  private string Ref(IrValue value) => value switch {
+    IrConstantInt ci => ci.Value.ToString(CultureInfo.InvariantCulture),
+    IrConstantFloat cf => FormatFloat(cf.Value),
+    IrNullPtr => "null",
+    IrUndef => "undef",
+    IrGlobalValue gv => "@" + gv.Name,
+    _ => this._names.TryGetValue(value, out var n) ? n : "%undef",
+  };
+
+  /// <summary>LLVM type spelling.</summary>
+  private static string Ty(IrType t) => t.Kind switch {
+    IrTypeKind.Void => "void",
+    IrTypeKind.Int => "i" + t.Bits,
+    IrTypeKind.Float => t.Bits switch { 32 => "float", 64 => "double", 80 => "x86_fp80", _ => "fp" + t.Bits },
+    IrTypeKind.Ptr => "ptr",
+    _ => "void",
+  };
+
+  /// <summary>LLVM accepts hex float literals; emit doubles as 0x-bit-pattern to round-trip exactly.</summary>
+  private static string FormatFloat(double value) =>
+    "0x" + BitConverter.DoubleToInt64Bits(value).ToString("X16", CultureInfo.InvariantCulture);
+
+  private static bool IsFloatPred(IrCmpPred p) => p is >= IrCmpPred.Foeq;
+
+  private static string Mnemonic(IrBinaryOp op) => op switch {
+    IrBinaryOp.Add => "add", IrBinaryOp.Sub => "sub", IrBinaryOp.Mul => "mul",
+    IrBinaryOp.SDiv => "sdiv", IrBinaryOp.UDiv => "udiv", IrBinaryOp.SRem => "srem", IrBinaryOp.URem => "urem",
+    IrBinaryOp.And => "and", IrBinaryOp.Or => "or", IrBinaryOp.Xor => "xor",
+    IrBinaryOp.Shl => "shl", IrBinaryOp.LShr => "lshr", IrBinaryOp.AShr => "ashr",
+    IrBinaryOp.FAdd => "fadd", IrBinaryOp.FSub => "fsub", IrBinaryOp.FMul => "fmul", IrBinaryOp.FDiv => "fdiv",
+    _ => op.ToString().ToLowerInvariant(),
+  };
+
+  private static string Mnemonic(IrCmpPred p) => p switch {
+    IrCmpPred.Eq => "eq", IrCmpPred.Ne => "ne",
+    IrCmpPred.Slt => "slt", IrCmpPred.Sle => "sle", IrCmpPred.Sgt => "sgt", IrCmpPred.Sge => "sge",
+    IrCmpPred.Ult => "ult", IrCmpPred.Ule => "ule", IrCmpPred.Ugt => "ugt", IrCmpPred.Uge => "uge",
+    IrCmpPred.Foeq => "oeq", IrCmpPred.Fone => "one", IrCmpPred.Folt => "olt",
+    IrCmpPred.Fole => "ole", IrCmpPred.Fogt => "ogt", IrCmpPred.Foge => "oge",
+    _ => p.ToString().ToLowerInvariant(),
+  };
+
+  private static string Mnemonic(IrCastOp op) => op switch {
+    IrCastOp.Trunc => "trunc", IrCastOp.ZExt => "zext", IrCastOp.SExt => "sext",
+    IrCastOp.FPToSI => "fptosi", IrCastOp.FPToUI => "fptoui", IrCastOp.SIToFP => "sitofp", IrCastOp.UIToFP => "uitofp",
+    IrCastOp.FPTrunc => "fptrunc", IrCastOp.FPExt => "fpext",
+    IrCastOp.IntToPtr => "inttoptr", IrCastOp.PtrToInt => "ptrtoint", IrCastOp.BitCast => "bitcast",
+    _ => op.ToString().ToLowerInvariant(),
+  };
+}
