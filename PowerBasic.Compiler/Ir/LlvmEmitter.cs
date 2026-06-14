@@ -83,6 +83,7 @@ public sealed class LlvmEmitter {
       IrStore s => $"store {Ty(s.Value.Type)} {this.Ref(s.Value)}, ptr {this.Ref(s.Pointer)}",
       IrGep g => $"getelementptr i8, ptr {this.Ref(g.BasePtr)}, {Ty(g.ByteOffset.Type)} {this.Ref(g.ByteOffset)}",
       IrPhi p => $"phi {Ty(p.Type)} {this.PhiInputs(p)}",
+      IrSelect sel => $"select i1 {this.Ref(sel.Condition)}, {Ty(sel.Type)} {this.Ref(sel.IfTrue)}, {Ty(sel.Type)} {this.Ref(sel.IfFalse)}",
       IrCall call => $"call {Ty(call.Type)} {this.Ref(call.Callee)}({this.Args(call)})",
       IrRet r => r.HasValue ? $"ret {Ty(r.Value!.Type)} {this.Ref(r.Value)}" : "ret void",
       IrBr br => $"br label %{br.Target.Label}",

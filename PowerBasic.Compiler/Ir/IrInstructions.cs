@@ -150,6 +150,19 @@ public sealed class IrPhi : IrInstruction {
   }
 }
 
+/// <summary>A branchless choice: <c>result = select cond, ifTrue, ifFalse</c> (cond is i1).</summary>
+public sealed class IrSelect : IrInstruction {
+  public IrSelect(IrValue condition, IrValue ifTrue, IrValue ifFalse) : base(ifTrue.Type) {
+    this.AddOperand(condition);
+    this.AddOperand(ifTrue);
+    this.AddOperand(ifFalse);
+  }
+
+  public IrValue Condition => this.GetOperand(0);
+  public IrValue IfTrue => this.GetOperand(1);
+  public IrValue IfFalse => this.GetOperand(2);
+}
+
 /// <summary>A call: <c>[result =] call callee(args...)</c>. The callee is an operand (so indirect calls are uniform).</summary>
 public sealed class IrCall : IrInstruction {
   public IrCall(IrType resultType, IrValue callee, IReadOnlyList<IrValue> args) : base(resultType) {

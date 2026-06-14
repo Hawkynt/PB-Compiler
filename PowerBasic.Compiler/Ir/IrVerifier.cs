@@ -155,6 +155,12 @@ public sealed class IrVerifier {
       case IrCondBr cb when !cb.Condition.Type.IsBool:
         this.Error($"condbr condition must be i1, got {cb.Condition.Type}");
         break;
+      case IrSelect sel:
+        if (!sel.Condition.Type.IsBool)
+          this.Error($"select condition must be i1, got {sel.Condition.Type}");
+        if (!sel.IfTrue.Type.Equals(sel.IfFalse.Type) || !sel.Type.Equals(sel.IfTrue.Type))
+          this.Error($"select arms/result types disagree ({sel.IfTrue.Type}, {sel.IfFalse.Type} -> {sel.Type})");
+        break;
       case IrCall call when !call.Callee.Type.IsPointer:
         this.Error("call to a non-pointer callee");
         break;

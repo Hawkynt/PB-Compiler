@@ -74,5 +74,6 @@ public sealed class IrPassManager {
     .Add("dse", DeadStoreElim.Run)
     .Add("licm", Licm.Run)
     .Add("dce", Dce.Run)
+    .Add("ifconv", IfConversion.Run)
     .Add("simplifycfg", SimplifyCfg.Run);
 }
