@@ -63,7 +63,11 @@ public sealed class PrintLoweringTests {
   }
 
   [Test]
-  public void Print_OfAStringVariable_StillDeclines() {
-    Assert.That(LowerModule("PRINT s$\nEND"), Is.Null);   // string variables are not supported yet
+  public void Print_OfAStringVariable_EmitsAHandlePrintCall() {
+    var module = LowerModule("a$ = \"hi\"\nPRINT a$\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    Assert.That(LlvmEmitter.Emit(module!), Does.Contain("@rt_print_strvar"));
   }
 }

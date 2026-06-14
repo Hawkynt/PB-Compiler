@@ -37,7 +37,7 @@ public sealed class EmitLlvmTests {
 
   [Test]
   public void EmitLlvm_ForAnUnsupportedProgram_FailsWithADiagnostic() {
-    var (code, _, err) = RunEmit("s$ = \"hi\"\nPRINT s$");
+    var (code, _, err) = RunEmit("INPUT n%\nPRINT n%");   // INPUT is not in the subset yet
 
     Assert.That(code, Is.EqualTo(1));
     Assert.That(err, Does.Contain("--emit-llvm"));

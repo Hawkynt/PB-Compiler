@@ -172,7 +172,9 @@ public sealed class IrLowering {
     if (this._addr.TryGetValue(symbol, out var existing))
       return existing;
     IrAlloca alloca;
-    if (symbol.Type is ArrayType arr) {
+    if (symbol.Type is StringType) {
+      alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.Ptr) { Name = symbol.Name });  // holds a string handle
+    } else if (symbol.Type is ArrayType arr) {
       if (arr.IsDynamic || !IrTypeMapper.TryMap(arr.Element, out var elem))
         throw new IrLoweringException("dynamic or non-scalar array");
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(elem) { Count = arr.ElementCount, Name = symbol.Name });
@@ -241,6 +243,10 @@ public sealed class IrLowering {
   }
 
   private void LowerAssign(AssignStmt a) {
+    if (a.Target is NameExpr && this._model.VariableBindings.TryGetValue(a.Target, out var strSym) && strSym.Type is StringType) {
+      this._b.Store(this.LowerStringExpr(a.Value), this.SlotFor(strSym));   // strings are immutable handles
+      return;
+    }
     if (a.Target is CallOrIndexExpr indexed && this._model.VariableBindings.TryGetValue(indexed, out var arrSym) && arrSym.Type is ArrayType) {
       var (address, element) = this.ElementAddress(indexed);
       this._b.Store(this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), element), address);
@@ -288,6 +294,10 @@ public sealed class IrLowering {
         this._b.Call(IrType.Void, this.RuntimeFn("rt_print_str", IrType.Void, IrType.Ptr, IrType.I32), global, new IrConstantInt(IrType.I32, bytes.Length));
         continue;
       }
+      if (this._model.TypeOf(expr) is StringType) {
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_print_strvar", IrType.Void, IrType.Ptr), this.LowerStringExpr(expr));
+        continue;
+      }
       if (this._model.TypeOf(expr) is not ScalarType s)
         throw new IrLoweringException("PRINT of a non-numeric, non-literal item");
       var (name, ty) = PrintRuntime(s);
@@ -319,6 +329,26 @@ public sealed class IrLowering {
       return existing;
     var args = paramTypes.Select((t, i) => new IrArgument(t, i)).ToList();
     return this._module.AddFunction(new IrFunction(name, returnType, args));   // a declaration (no body)
+  }
+
+  /// <summary>Lowers a string-typed expression to a runtime string handle (an opaque pointer).</summary>
+  private IrValue LowerStringExpr(Expression expr) {
+    if (this._module is null)
+      throw new IrLoweringException("strings require whole-module lowering");
+    switch (expr) {
+      case StringLiteralExpr lit: {
+        var bytes = System.Text.Encoding.ASCII.GetBytes(lit.Value);
+        var global = this._module!.AddStringConstant(bytes);
+        return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_const", IrType.Ptr, IrType.Ptr, IrType.I32), global, new IrConstantInt(IrType.I32, bytes.Length));
+      }
+      case NameExpr when this._model.VariableBindings.TryGetValue(expr, out var sym) && sym.Type is StringType:
+        return this._b.Load(IrType.Ptr, this.SlotFor(sym));
+      case BinaryExpr { Op: BinaryOp.Concat } cat:
+        return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_concat", IrType.Ptr, IrType.Ptr, IrType.Ptr),
+          this.LowerStringExpr(cat.Left), this.LowerStringExpr(cat.Right));
+      default:
+        throw new IrLoweringException($"unsupported string expression: {expr.GetType().Name}");
+    }
   }
 
   private void LowerLabel(LabelStmt label) {
