@@ -58,24 +58,28 @@ Supported today:
   promotion**;
 - `IF`/`ELSEIF`/`ELSE`, `FOR` (constant **or runtime** step), `DO` (pre/post
   `WHILE`/`UNTIL`, infinite), `EXIT`/`ITERATE`, `END`, `SWAP`;
-- `SELECT CASE` (value / list / `x TO y` range / `IS <rel>` arms, `CASE ELSE`);
-- **`GOTO`/labels** (arbitrary control flow over the alloca form) and **`ON … GOTO`**
-  (a computed jump lowered to a `switch`);
+- `SELECT CASE`, **`GOTO`/labels**, **`ON … GOTO`** (lowered to a `switch`);
 - static arrays (1-D and multi-dimensional, row-major byte GEP);
-- the pure numeric intrinsics `ABS`, `SGN`, `FIX`, `INT`, `CDBL`, `CSNG` (branchless /
-  bitcast, no runtime);
-- **numeric `PRINT` and string-literal `PRINT`** via a runtime-call ABI (each item is a
-  typed call to an external `rt_print_*` declaration; literals become `[N x i8]` constant
-  globals). The computation feeding `PRINT` is fully optimized; only the output is opaque;
+- **strings** via a runtime-handle ABI (`rt_str_*`): assignment, `&` concat, all
+  comparisons, `LEN`, `LEFT$`/`RIGHT$`/`MID$`, `CHR$`/`ASC`, `STR$`/`VAL`,
+  `SPACE$`/`STRING$`, `HEX$`/`OCT$`; identical literals are interned to one global;
+- **console and file I/O** (`PRINT`/`INPUT`/`LINE INPUT`, `OPEN`/`CLOSE`/`PRINT #`/`INPUT #`)
+  via `rt_print_*` / `rt_input_*` / `rt_file_*` declarations;
+- intrinsics: `ABS`/`SGN`/`FIX`/`INT`/`CDBL`/`CSNG` (branchless/bitcast, no runtime) and
+  the math functions `SQR`/`SIN`/`COS`/`EXP`/`LOG`/`TAN`/`ATN` lowered to the matching
+  **LLVM intrinsics** (`llvm.sqrt.fN`, …) so `llc` optimizes them natively;
 - whole modules: user `SUB`/`FUNCTION` with scalar **BYVAL and BYREF** parameters
   and direct calls; a procedure with an unsupported body is kept as a declaration.
 
-The canonical hello world (`PRINT "Hello, world!"`) and numeric compute-and-report
-programs lower, optimize and compile to a native x86-64 object via `llc` (linked against
-a runtime providing the `rt_*` functions).
+The computation in a program is fully optimized; runtime-ABI calls (I/O, strings) stay
+opaque but their inputs are optimized. Hello world, numeric/string compute-and-report,
+and sequential file-processing programs lower, optimize and compile to a native x86-64
+object via `pbc --emit-llvm | llc` (linked against a runtime providing the `rt_*`
+functions; the `llvm.*` math intrinsics need no runtime).
 
-Not yet: string variables/concat/functions, dynamic arrays, `GOSUB`, file/console I/O,
-other intrinsics.
+Not yet: `GOSUB`/`RETURN` (return stack), dynamic arrays / `REDIM` (descriptors),
+`DATA`/`READ` and random/binary `GET`/`PUT` (aggregate globals + runtime table), string
+arrays (typed GEP).
 
 ## Optimization passes (`Ir/Passes/`)
 
