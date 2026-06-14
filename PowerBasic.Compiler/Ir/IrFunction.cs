@@ -57,4 +57,12 @@ public sealed class IrFunction : IrGlobalValue {
 
   /// <summary>All instructions across all blocks, in block then program order.</summary>
   public IEnumerable<IrInstruction> AllInstructions => this._blocks.SelectMany(b => b.Instructions);
+
+  /// <summary>Removes every block, turning the function back into a declaration (used when a body fails to lower).</summary>
+  public void ClearBody() {
+    foreach (var block in this._blocks)
+      foreach (var inst in block.Instructions.ToList())
+        inst.EraseFromParent();
+    this._blocks.Clear();
+  }
 }

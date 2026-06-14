@@ -4,18 +4,21 @@ using PowerBasic.Compiler.Syntax.Ast;
 namespace PowerBasic.Compiler.Ir;
 
 /// <summary>
-/// Lowers a bound program (the main body, for now) into the IR in clang-style
-/// alloca/load/store form: every scalar variable gets an <c>alloca</c> in the entry
-/// block, reads become <c>load</c>s and writes <c>store</c>s, control flow becomes
-/// explicit blocks and branches. This form is trivially correct; a later mem2reg pass
-/// promotes the allocas to SSA registers and phis. Anything outside the supported
-/// subset (strings, arrays, UDTs, calls, GOTO, SELECT, I/O, intrinsics) makes the
-/// lowering decline (return null) so the IR path is only ever built for code it models faithfully.
+/// Lowers a bound program into the IR in clang-style alloca/load/store form: every
+/// scalar variable gets an entry-block alloca, reads/writes become load/store, control
+/// flow becomes explicit blocks and branches. A later mem2reg pass promotes the
+/// allocas to SSA. <see cref="TryLowerModule"/> lowers the whole program - the main
+/// body as <c>@main</c> plus each user SUB/FUNCTION whose signature and body fit the
+/// supported subset (scalar BYVAL parameters, scalar/void returns, direct calls).
+/// Anything outside the subset (BYREF/array/string parameters, arrays, UDTs, GOTO,
+/// SELECT, I/O, intrinsics) makes that function decline, so the IR is only built for
+/// code it models exactly.
 /// </summary>
 public sealed class IrLowering {
 
   private readonly SemanticModel _model;
-  private readonly Dictionary<VariableSymbol, IrAlloca> _slots = new(ReferenceEqualityComparer.Instance);
+  private readonly IReadOnlyDictionary<ProcedureSymbol, IrFunction>? _procMap;
+  private readonly Dictionary<VariableSymbol, IrValue> _addr = new(ReferenceEqualityComparer.Instance);
   private readonly Stack<LoopContext> _loops = new();
   private readonly ConstantFolder _folder;
 
@@ -24,31 +27,95 @@ public sealed class IrLowering {
   private int _entryAllocaCount;
   private IrBuilder _b = null!;
   private int _seq;
+  private VariableSymbol? _resultVar;
 
   private readonly record struct LoopContext(ExitKind Kind, IrBasicBlock Exit, IrBasicBlock Continue);
 
-  private IrLowering(SemanticModel model) {
+  private IrLowering(SemanticModel model, IReadOnlyDictionary<ProcedureSymbol, IrFunction>? procMap) {
     this._model = model;
+    this._procMap = procMap;
     this._folder = new ConstantFolder(model.Equates);
   }
 
-  /// <summary>Lowers the program's main body into an <c>@main</c> function, or returns null if it uses an unsupported construct.</summary>
+  /// <summary>Lowers just the main body into an <c>@main</c> function (no procedures), or null if unsupported.</summary>
   public static IrFunction? TryLowerMainBody(SemanticModel model) {
     try {
-      return new IrLowering(model).LowerMain();
+      var lowering = new IrLowering(model, null);
+      var fn = new IrFunction("main", IrType.Void);
+      lowering.LowerBodyInto(fn, model.MainBody, null);
+      return fn;
     } catch (IrLoweringException) {
       return null;
     }
   }
 
-  private IrFunction LowerMain() {
-    this._fn = new IrFunction("main", IrType.Void);
-    this._entry = this._fn.CreateBlock("entry");
+  /// <summary>Lowers the whole program into a module; declines (null) only if the main body is unsupported.</summary>
+  public static IrModule? TryLowerModule(SemanticModel model) {
+    var module = new IrModule(model.FileName);
+    var procMap = new Dictionary<ProcedureSymbol, IrFunction>(ReferenceEqualityComparer.Instance);
+
+    foreach (var proc in model.Procedures.Values)
+      if (!proc.IsExternal && TrySignature(proc, out var irfn)) {
+        procMap[proc] = irfn!;
+        module.AddFunction(irfn!);
+      }
+
+    var main = new IrFunction("main", IrType.Void);
+    module.AddFunction(main);
+    try {
+      new IrLowering(model, procMap).LowerBodyInto(main, model.MainBody, null);
+    } catch (IrLoweringException) {
+      return null;
+    }
+
+    foreach (var (proc, irfn) in procMap) {
+      try {
+        new IrLowering(model, procMap).LowerProcedure(proc, irfn);
+      } catch (IrLoweringException) {
+        irfn.ClearBody();                              // leave it a declaration; callers can still call it
+      }
+    }
+    return module;
+  }
+
+  /// <summary>Builds an IR signature for a procedure, or false if it is outside the supported subset.</summary>
+  private static bool TrySignature(ProcedureSymbol proc, out IrFunction? fn) {
+    fn = null;
+    var ret = IrType.Void;
+    if (proc.IsFunction) {
+      if (proc.ReturnType is null || !IrTypeMapper.TryMap(proc.ReturnType, out ret))
+        return false;
+    }
+    var args = new List<IrArgument>();
+    foreach (var p in proc.Parameters) {
+      if (!p.ByVal || p.Seg || p.Optional || !IrTypeMapper.TryMap(p.Type, out var pty))
+        return false;                                  // only scalar BYVAL parameters for now
+      args.Add(new IrArgument(pty, args.Count, p.Name));
+    }
+    fn = new IrFunction(proc.Name, ret, args);
+    return true;
+  }
+
+  private void LowerProcedure(ProcedureSymbol proc, IrFunction fn) {
+    this._resultVar = proc.IsFunction ? proc.Variables.GetValueOrDefault(proc.Name) : null;
+    this.LowerBodyInto(fn, proc.Body!, proc);
+  }
+
+  private void LowerBodyInto(IrFunction fn, IReadOnlyList<Statement> body, ProcedureSymbol? proc) {
+    this._fn = fn;
+    this._entry = fn.CreateBlock("entry");
     this._b = new IrBuilder(this._entry);
-    this.LowerStatements(this._model.MainBody);
+
+    // BYVAL parameters are mutable locals: copy each argument into its slot
+    if (proc is not null)
+      for (var i = 0; i < proc.Parameters.Count; ++i) {
+        var slot = this.SlotFor(proc.Parameters[i]);
+        this._b.Store(fn.Parameters[i], slot);
+      }
+
+    this.LowerStatements(body);
     if (!this.Terminated)
-      this._b.Ret();
-    return this._fn;
+      this.ReturnFromFunction();
   }
 
   // ---- helpers -------------------------------------------------------------
@@ -57,30 +124,35 @@ public sealed class IrLowering {
 
   private IrBasicBlock NewBlock(string hint) => this._fn.CreateBlock($"{hint}{this._seq++}");
 
-  private IrAlloca SlotFor(Expression target) {
-    if (target is not NameExpr || !this._model.VariableBindings.TryGetValue(target, out var symbol))
-      throw new IrLoweringException("non-scalar or unbound assignment target");
-    return this.SlotFor(symbol);
+  private void ReturnFromFunction() {
+    if (this._resultVar is not null)
+      this._b.Ret(this._b.Load(IrTypeMapper.Map(this._resultVar.Type), this.SlotFor(this._resultVar)));
+    else
+      this._b.Ret();
   }
 
-  private IrAlloca SlotFor(VariableSymbol symbol) {
-    if (this._slots.TryGetValue(symbol, out var existing))
+  private IrValue SlotFor(VariableSymbol symbol) {
+    if (this._addr.TryGetValue(symbol, out var existing))
       return existing;
     if (symbol.IsArray)
       throw new IrLoweringException("array variable");
     var ir = IrTypeMapper.Map(symbol.Type);
-    var alloca = new IrAlloca(ir) { Name = symbol.Name };
-    this._entry.InsertAt(this._entryAllocaCount++, alloca);
-    this._slots[symbol] = alloca;
+    var alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(ir) { Name = symbol.Name });
+    this._addr[symbol] = alloca;
     return alloca;
   }
+
+  private VariableSymbol SymbolOf(Expression target) =>
+    target is NameExpr && this._model.VariableBindings.TryGetValue(target, out var s)
+      ? s
+      : throw new IrLoweringException("non-scalar or unbound storage reference");
 
   // ---- statements ----------------------------------------------------------
 
   private void LowerStatements(IReadOnlyList<Statement> statements) {
     foreach (var statement in statements) {
       if (this.Terminated)
-        return;                                      // dead code after an unconditional branch
+        return;
       this.LowerStatement(statement);
     }
   }
@@ -94,21 +166,21 @@ public sealed class IrLowering {
       case DoLoopStmt d: this.LowerDo(d); break;
       case ExitStmt e: this.LowerExit(e); break;
       case IterateStmt it: this.LowerIterate(it); break;
+      case CallStmt c: this.LowerCallStatement(c); break;
       default: throw new IrLoweringException($"unsupported statement: {statement.GetType().Name}");
     }
   }
 
   private void LowerAssign(AssignStmt a) {
-    var slot = this.SlotFor(a.Target);
-    var symbol = this._model.VariableBindings[a.Target];
-    var value = this.LowerExpr(a.Value);
-    value = this.Coerce(value, this._model.TypeOf(a.Value), symbol.Type);
+    var symbol = this.SymbolOf(a.Target);
+    var slot = this.SlotFor(symbol);
+    var value = this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), symbol.Type);
     this._b.Store(value, slot);
   }
 
   private void LowerIncrDecr(IncrDecrStmt id) {
-    var slot = this.SlotFor(id.Target);
-    var symbol = this._model.VariableBindings[id.Target];
+    var symbol = this.SymbolOf(id.Target);
+    var slot = this.SlotFor(symbol);
     var ty = IrTypeMapper.Map(symbol.Type);
     if (ty.IsFloat)
       throw new IrLoweringException("INCR/DECR on float");
@@ -116,8 +188,7 @@ public sealed class IrLowering {
     var amount = id.Amount is null
       ? new IrConstantInt(ty, 1)
       : this.Coerce(this.LowerExpr(id.Amount), this._model.TypeOf(id.Amount), symbol.Type);
-    var updated = this._b.Binary(id.Increment ? IrBinaryOp.Add : IrBinaryOp.Sub, current, amount);
-    this._b.Store(updated, slot);
+    this._b.Store(this._b.Binary(id.Increment ? IrBinaryOp.Add : IrBinaryOp.Sub, current, amount), slot);
   }
 
   private void LowerIf(IfStmt stmt) {
@@ -144,13 +215,11 @@ public sealed class IrLowering {
   }
 
   private void LowerFor(ForStmt f) {
-    if (f.Variable is not NameExpr || !this._model.VariableBindings.TryGetValue(f.Variable, out var symbol))
-      throw new IrLoweringException("FOR counter is not a scalar variable");
+    var symbol = this.SymbolOf(f.Variable);
     var ty = IrTypeMapper.Map(symbol.Type);
     if (!ty.IsInteger)
       throw new IrLoweringException("FOR over a non-integer counter");
     var signed = ((ScalarType)symbol.Type).Signed;
-
     var step = this.ConstStep(f.Step);
     var slot = this.SlotFor(symbol);
     var limitSlot = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(ty) { Name = symbol.Name + ".limit" });
@@ -198,7 +267,7 @@ public sealed class IrLowering {
       if (d.PreTest == LoopTestKind.While)
         this._b.CondBr(c, body, exit);
       else
-        this._b.CondBr(c, exit, body);               // UNTIL: leave once the condition holds
+        this._b.CondBr(c, exit, body);
     } else {
       this._b.Br(body);
     }
@@ -216,7 +285,7 @@ public sealed class IrLowering {
       if (d.PostTest == LoopTestKind.While)
         this._b.CondBr(c, header, exit);
       else
-        this._b.CondBr(c, exit, header);             // LOOP UNTIL: leave once it holds
+        this._b.CondBr(c, exit, header);
     } else {
       this._b.Br(header);
     }
@@ -225,12 +294,18 @@ public sealed class IrLowering {
   }
 
   private void LowerExit(ExitStmt e) {
-    foreach (var loop in this._loops)
-      if (loop.Kind == e.Kind || e.Kind is ExitKind.Loop) {
-        this._b.Br(loop.Exit);
+    switch (e.Kind) {
+      case ExitKind.Sub or ExitKind.Function or ExitKind.Def:
+        this.ReturnFromFunction();
         return;
-      }
-    throw new IrLoweringException($"EXIT {e.Kind} outside a matching loop");
+      default:
+        foreach (var loop in this._loops)
+          if (loop.Kind == e.Kind || e.Kind is ExitKind.Loop) {
+            this._b.Br(loop.Exit);
+            return;
+          }
+        throw new IrLoweringException($"EXIT {e.Kind} outside a matching loop");
+    }
   }
 
   private void LowerIterate(IterateStmt it) {
@@ -242,22 +317,25 @@ public sealed class IrLowering {
     throw new IrLoweringException($"ITERATE {it.Kind} outside a matching loop");
   }
 
+  private void LowerCallStatement(CallStmt c) {
+    if (this._procMap is null || !this._model.CallBindings.TryGetValue(c, out var proc) || !this._procMap.TryGetValue(proc, out var callee))
+      throw new IrLoweringException($"call to unsupported procedure {c.Name}");
+    this.EmitCall(callee, proc, c.Arguments);
+  }
+
   private long ConstStep(Expression? step) {
     if (step is null)
       return 1;
-    var folded = this._folder.TryFold(step);
-    if (folded is { Integer: { } n } && n != 0)
+    if (this._folder.TryFold(step) is { Integer: { } n } && n != 0)
       return n;
     throw new IrLoweringException("FOR STEP must be a non-zero compile-time constant in this lowering");
   }
 
   // ---- conditions & expressions -------------------------------------------
 
-  /// <summary>Lowers a BASIC truth test to an i1 (any nonzero value is true).</summary>
   private IrValue LowerCondition(Expression expr) {
     var value = this.LowerExpr(expr);
-    var pb = this._model.TypeOf(expr);
-    if (pb is ScalarType { IsFloat: true })
+    if (this._model.TypeOf(expr) is ScalarType { IsFloat: true })
       return this._b.Cmp(IrCmpPred.Fone, value, new IrConstantFloat(value.Type, 0.0));
     return this._b.Cmp(IrCmpPred.Ne, value, new IrConstantInt(value.Type, 0));
   }
@@ -276,6 +354,8 @@ public sealed class IrLowering {
         return this.LowerUnary(u);
       case BinaryExpr b:
         return this.LowerBinary(b);
+      case CallOrIndexExpr call:
+        return this.LowerCallExpr(call);
       default:
         throw new IrLoweringException($"unsupported expression: {expr.GetType().Name}");
     }
@@ -294,16 +374,31 @@ public sealed class IrLowering {
 
   private IrValue LowerNameRead(NameExpr name) {
     if (!this._model.VariableBindings.TryGetValue(name, out var symbol))
-      throw new IrLoweringException($"unbound name {name.Name} (parameterless call?)");
-    var slot = this.SlotFor(symbol);
-    return this._b.Load(IrTypeMapper.Map(symbol.Type), slot);
+      throw new IrLoweringException($"unbound name {name.Name}");
+    return this._b.Load(IrTypeMapper.Map(symbol.Type), this.SlotFor(symbol));
+  }
+
+  private IrValue LowerCallExpr(CallOrIndexExpr call) {
+    if (this._procMap is null || !this._model.CallBindings.TryGetValue(call, out var proc) || !this._procMap.TryGetValue(proc, out var callee))
+      throw new IrLoweringException($"unsupported call/index {call.Name}");   // array index / intrinsic
+    if (!proc.IsFunction)
+      throw new IrLoweringException("SUB used in expression position");
+    return this.EmitCall(callee, proc, call.Arguments);
+  }
+
+  private IrValue EmitCall(IrFunction callee, ProcedureSymbol proc, IReadOnlyList<Expression> arguments) {
+    if (arguments.Count != proc.Parameters.Count)
+      throw new IrLoweringException("argument count mismatch (optional/CDECL not modelled)");
+    var args = new List<IrValue>(arguments.Count);
+    for (var i = 0; i < arguments.Count; ++i)
+      args.Add(this.Coerce(this.LowerExpr(arguments[i]), this._model.TypeOf(arguments[i]), proc.Parameters[i].Type));
+    return this._b.Call(callee.ReturnType, callee, args);
   }
 
   private IrValue LowerUnary(UnaryExpr u) {
-    var operand = this.LowerExpr(u.Operand);
     var pb = this._model.TypeOf(u);
     var ty = IrTypeMapper.Map(pb);
-    operand = this.Coerce(operand, this._model.TypeOf(u.Operand), pb);
+    var operand = this.Coerce(this.LowerExpr(u.Operand), this._model.TypeOf(u.Operand), pb);
     return u.Op switch {
       UnaryOp.Negate when ty.IsFloat => this._b.Binary(IrBinaryOp.FSub, new IrConstantFloat(ty, 0.0), operand),
       UnaryOp.Negate => this._b.Binary(IrBinaryOp.Sub, new IrConstantInt(ty, 0), operand),
@@ -316,14 +411,11 @@ public sealed class IrLowering {
     var leftPb = this._model.TypeOf(expr.Left);
     var rightPb = this._model.TypeOf(expr.Right);
     var resultPb = this._model.TypeOf(expr);
-
-    switch (expr.Op) {
-      case BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
-        or BinaryOp.LessEqual or BinaryOp.GreaterEqual:
-        return this.LowerComparison(expr, leftPb, rightPb, resultPb);
-      default:
-        return this.LowerArithmetic(expr, leftPb, rightPb, resultPb);
-    }
+    return expr.Op switch {
+      BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
+        or BinaryOp.LessEqual or BinaryOp.GreaterEqual => this.LowerComparison(expr, leftPb, rightPb, resultPb),
+      _ => this.LowerArithmetic(expr, leftPb, rightPb, resultPb),
+    };
   }
 
   private IrValue LowerArithmetic(BinaryExpr expr, PbType leftPb, PbType rightPb, PbType resultPb) {
@@ -331,6 +423,13 @@ public sealed class IrLowering {
     var signed = resultPb is ScalarType { Signed: true };
     var l = this.Coerce(this.LowerExpr(expr.Left), leftPb, resultPb);
     var r = this.Coerce(this.LowerExpr(expr.Right), rightPb, resultPb);
+
+    switch (expr.Op) {
+      case BinaryOp.Eqv:
+        return this._b.Xor(this._b.Xor(l, r), new IrConstantInt(resultTy, -1));
+      case BinaryOp.Imp:
+        return this._b.Or(this._b.Xor(l, new IrConstantInt(resultTy, -1)), r);
+    }
 
     var op = expr.Op switch {
       BinaryOp.Add => resultTy.IsFloat ? IrBinaryOp.FAdd : IrBinaryOp.Add,
@@ -342,23 +441,9 @@ public sealed class IrLowering {
       BinaryOp.And => IrBinaryOp.And,
       BinaryOp.Or => IrBinaryOp.Or,
       BinaryOp.Xor => IrBinaryOp.Xor,
-      BinaryOp.Eqv => IrBinaryOp.Xor,    // handled specially below
-      BinaryOp.Imp => IrBinaryOp.Or,     // handled specially below
       _ => throw new IrLoweringException($"unsupported binary op {expr.Op}"),
     };
-
-    switch (expr.Op) {
-      case BinaryOp.Eqv: {
-        var xor = this._b.Xor(l, r);
-        return this._b.Xor(xor, new IrConstantInt(resultTy, -1));
-      }
-      case BinaryOp.Imp: {
-        var notL = this._b.Xor(l, new IrConstantInt(resultTy, -1));
-        return this._b.Or(notL, r);
-      }
-      default:
-        return this._b.Binary(op, l, r);
-    }
+    return this._b.Binary(op, l, r);
   }
 
   private IrValue LowerComparison(BinaryExpr expr, PbType leftPb, PbType rightPb, PbType resultPb) {
@@ -374,12 +459,9 @@ public sealed class IrLowering {
       BinaryOp.GreaterEqual => isFloat ? IrCmpPred.Foge : signed ? IrCmpPred.Sge : IrCmpPred.Uge,
       _ => throw new IrLoweringException($"comparison {expr.Op}"),
     };
-    var i1 = this._b.Cmp(pred, l, r);
-    // a BASIC relational yields the INTEGER -1 (true) / 0 (false): sext i1 gives exactly that
-    return this._b.SExt(i1, IrTypeMapper.Map(resultPb));
+    return this._b.SExt(this._b.Cmp(pred, l, r), IrTypeMapper.Map(resultPb));
   }
 
-  /// <summary>The type two operands are compared in (the wider type; float wins; signed if either is signed).</summary>
   private static (PbType Type, bool IsFloat, bool Signed) CommonCompareType(PbType a, PbType b) {
     if (a is not ScalarType sa || b is not ScalarType sb)
       throw new IrLoweringException("comparison of non-scalar operands");
@@ -392,7 +474,6 @@ public sealed class IrLowering {
     return (new ScalarType(ScalarKind.Long, width, signed, false), false, signed);
   }
 
-  /// <summary>Inserts the conversion needed to bring <paramref name="value"/> from one PB type to another.</summary>
   private IrValue Coerce(IrValue value, PbType from, PbType to) {
     if (from is not ScalarType sf || to is not ScalarType st)
       throw new IrLoweringException("coercion between non-scalar types");
@@ -405,7 +486,7 @@ public sealed class IrLowering {
         return this._b.Cast(sf.Signed ? IrCastOp.SExt : IrCastOp.ZExt, value, toTy);
       if (toTy.Bits < value.Type.Bits)
         return this._b.Trunc(value, toTy);
-      return value;                                   // same width, signedness is not a representation change
+      return value;
     }
     if (sf.IsFloat && st.IsFloat)
       return this._b.Cast(toTy.Bits > value.Type.Bits ? IrCastOp.FPExt : IrCastOp.FPTrunc, value, toTy);
