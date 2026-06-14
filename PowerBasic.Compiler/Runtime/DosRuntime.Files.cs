@@ -465,6 +465,10 @@ public sealed partial class DosRuntime {
       var character = asm.DefineLabel();
       var finish = asm.DefineLabel();
       var stripCr = asm.DefineLabel();
+      var quoted = asm.DefineLabel();
+      var quotedRead = asm.DefineLabel();
+      var quotedClose = asm.DefineLabel();
+      var skipRest = asm.DefineLabel();
       asm.Push(Reg.BX);
       asm.Push(Reg.CX);
       asm.Push(Reg.DX);
@@ -488,6 +492,9 @@ public sealed partial class DosRuntime {
       asm.Je(skipLead);
       asm.Cmp(Reg.AL, (Imm)10);
       asm.Je(skipLead);
+      // a quoted field: strip the surrounding quotes (INPUT# of a WRITE# string)
+      asm.Cmp(Reg.AL, (Imm)'"');
+      asm.Je(quoted);
       asm.Jmp(character);
       // accumulate until comma / CR / LF / EOF
       asm.MarkLabel(accumulate);
@@ -520,6 +527,48 @@ public sealed partial class DosRuntime {
       asm.Cmp(Mem.Byte(Reg.SI, asm.Lbl("rt_linebuf")), (byte)13);
       asm.Jne(finish);
       asm.Dec(Reg.DI);
+      asm.Jmp(finish);
+
+      // quoted field: the opening quote was already consumed; accumulate the body
+      // into the buffer until the closing quote (which is dropped), then swallow
+      // the rest of the field up to the comma / LF so the next item starts clean
+      asm.MarkLabel(quoted);
+      asm.MarkLabel(quotedRead);
+      asm.Mov(Reg.DX, Imm.OffsetOf(asm.Lbl("rt_linebuf")));
+      asm.Add(Reg.DX, Reg.DI);
+      asm.Mov(Reg.CX, 1);
+      asm.Mov(Reg.AH, 0x3F);
+      asm.Int(0x21);
+      asm.Jc(finish);
+      asm.Test(Reg.AX, Reg.AX);
+      asm.Jz(finish);
+      asm.Mov(Reg.SI, Reg.DI);
+      asm.Mov(Reg.AL, Mem.Byte(Reg.SI, asm.Lbl("rt_linebuf")));
+      asm.Cmp(Reg.AL, (Imm)'"');
+      asm.Je(quotedClose);
+      asm.Inc(Reg.DI);
+      asm.Cmp(Reg.DI, 255);
+      asm.Jb(quotedRead);
+      asm.Jmp(finish);
+      // closing quote seen: discard remaining field bytes up to comma / LF / EOF
+      asm.MarkLabel(quotedClose);
+      asm.MarkLabel(skipRest);
+      asm.Mov(Reg.DX, Imm.OffsetOf(asm.Lbl("rt_linebuf")));
+      asm.Add(Reg.DX, Reg.DI);                   // scratch slot past the string body
+      asm.Mov(Reg.CX, 1);
+      asm.Mov(Reg.AH, 0x3F);
+      asm.Int(0x21);
+      asm.Jc(finish);
+      asm.Test(Reg.AX, Reg.AX);
+      asm.Jz(finish);
+      asm.Mov(Reg.SI, Reg.DI);
+      asm.Mov(Reg.AL, Mem.Byte(Reg.SI, asm.Lbl("rt_linebuf")));
+      asm.Cmp(Reg.AL, (Imm)',');
+      asm.Je(finish);
+      asm.Cmp(Reg.AL, (Imm)10);
+      asm.Je(finish);
+      asm.Jmp(skipRest);
+
       asm.MarkLabel(finish);
       asm.Mov(Reg.CX, Reg.DI);
       asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_linebuf")));

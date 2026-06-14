@@ -5,16 +5,16 @@ OPEN "RESULT.TXT" FOR OUTPUT AS #1
 
 ' ---- sequential WRITE # then numeric INPUT # read-back ---------------------
 OPEN "DATA1.TXT" FOR OUTPUT AS #2
-WRITE #2, 42, 3.5
-WRITE #2, -7, 2.25
+WRITE #2, 42, "hello", 3.5
+WRITE #2, -7, "world", 2.25
 CLOSE #2
 
 OPEN "DATA1.TXT" FOR INPUT AS #2
-n% = 0 : f! = 0
-INPUT #2, n%, f!
-PRINT #1, n%; f!
-INPUT #2, n%, f!
-PRINT #1, n%; f!
+n% = 0 : s$ = "" : f! = 0
+INPUT #2, n%, s$, f!
+PRINT #1, n%; s$; f!
+INPUT #2, n%, s$, f!
+PRINT #1, n%; s$; f!
 PRINT #1, EOF(2)
 CLOSE #2
 
