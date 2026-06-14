@@ -186,6 +186,12 @@ public sealed class Sccp {
       changed |= this._reachableBlocks.Add(succ);
     }
 
+    if (block.OpaqueBranch) {
+      Live(block.TrueSucc); // FOR/SELECT dispatch: both arms always reachable
+      Live(block.FalseSucc);
+      return changed;
+    }
+
     if (block.Condition == null) {
       Live(block.TrueSucc); // unconditional (or a region exit with no successor)
       return changed;

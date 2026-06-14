@@ -21,6 +21,13 @@ public sealed class BasicBlock {
   /// </summary>
   public List<Expression> ExtraReads { get; } = [];
   public Expression? Condition { get; set; }
+
+  /// <summary>
+  /// A two-way branch with no analyzable condition (FOR loop test, SELECT arm
+  /// dispatch): both successors are always reachable - SCCP must never prune
+  /// either edge. Distinct from an unconditional edge (no FalseSucc).
+  /// </summary>
+  public bool OpaqueBranch { get; set; }
   public BasicBlock? TrueSucc { get; set; }
   public BasicBlock? FalseSucc { get; set; }
   public List<BasicBlock> Predecessors { get; } = [];
@@ -86,6 +93,7 @@ public sealed class ControlFlowGraph {
     private readonly List<BasicBlock> _blocks = [];
     private readonly Stack<BasicBlock> _loopExits = new();
     private readonly Stack<BasicBlock> _loopContinues = new();
+    private readonly Stack<BasicBlock> _selectExits = new();
     public List<NameExpr> LoopCounters { get; } = [];
     public bool Failed { get; private set; }
     public BasicBlock ExitBlock { get; }
@@ -103,6 +111,13 @@ public sealed class ControlFlowGraph {
 
     private void LinkBranch(BasicBlock from, Expression condition, BasicBlock onTrue, BasicBlock onFalse) {
       from.Condition = condition;
+      from.TrueSucc = onTrue;
+      from.FalseSucc = onFalse;
+    }
+
+    /// <summary>A two-way branch whose condition is not analyzable - both edges stay reachable.</summary>
+    private void LinkOpaqueBranch(BasicBlock from, BasicBlock onTrue, BasicBlock onFalse) {
+      from.OpaqueBranch = true;
       from.TrueSucc = onTrue;
       from.FalseSucc = onFalse;
     }
@@ -142,8 +157,15 @@ public sealed class ControlFlowGraph {
         case DoLoopStmt doLoop:
           return this.BuildDoLoop(doLoop, current);
 
+        case SelectStmt sel:
+          return this.BuildSelect(sel, current);
+
         case ExitStmt { Kind: ExitKind.For or ExitKind.Do or ExitKind.Loop } when this._loopExits.Count > 0:
           this.LinkUnconditional(current, this._loopExits.Peek());
+          return null;
+
+        case ExitStmt { Kind: ExitKind.Select } when this._selectExits.Count > 0:
+          this.LinkUnconditional(current, this._selectExits.Peek());
           return null;
 
         case IterateStmt when this._loopContinues.Count > 0:
@@ -221,7 +243,7 @@ public sealed class ControlFlowGraph {
       this.LinkUnconditional(current, header);
       var body = this.NewBlock();
       var exit = this.NewBlock();
-      this.LinkBranch(header, counter, body, exit); // opaque condition: counter is untracked
+      this.LinkOpaqueBranch(header, body, exit); // the counter test is not analyzable
 
       this._loopExits.Push(exit);
       this._loopContinues.Push(header);
@@ -263,6 +285,36 @@ public sealed class ControlFlowGraph {
       this._loopExits.Pop();
       this._loopContinues.Pop();
       return exit;
+    }
+
+    private BasicBlock? BuildSelect(SelectStmt s, BasicBlock current) {
+      // conservative model: the subject is read once, then every arm (and the
+      // implicit no-match path) is reachable - SCCP/DSE analyze the bodies and
+      // the merge phis without trying to prove which arm runs. The selector
+      // dispatch is an opaque branch, so no edge is ever pruned.
+      var merge = this.NewBlock();
+      current.ExtraReads.Add(s.Subject);
+
+      this._selectExits.Push(merge);
+      var chain = current;
+      foreach (var arm in s.Arms) {
+        foreach (var selector in arm.Selectors) {
+          if (selector.Value != null)
+            chain.ExtraReads.Add(selector.Value);
+          if (selector.RangeUpper != null)
+            chain.ExtraReads.Add(selector.RangeUpper);
+        }
+        var armEntry = this.NewBlock();
+        var next = this.NewBlock();
+        this.LinkOpaqueBranch(chain, armEntry, next);
+        var armExit = this.BuildSequence(arm.Body, armEntry);
+        if (armExit != null)
+          this.LinkUnconditional(armExit, merge);
+        chain = next;
+      }
+      this.LinkUnconditional(chain, merge); // no arm matched (and no CASE ELSE)
+      this._selectExits.Pop();
+      return merge;
     }
 
     public void ComputePredecessors() {

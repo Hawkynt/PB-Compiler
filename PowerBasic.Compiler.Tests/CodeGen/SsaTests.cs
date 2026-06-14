@@ -86,13 +86,23 @@ public sealed class SsaTests {
     // the header is reached from both the preheader and the latch (back-edge)
     var header = cfg.Entry.TrueSucc!;
     Assert.That(header.Predecessors, Has.Count.EqualTo(2), "loop header has a forward and a back edge");
-    Assert.That(header.Condition, Is.Not.Null, "the header is a two-way branch (continue / exit)");
+    Assert.That(header.OpaqueBranch, Is.True, "the header is an opaque two-way branch (continue / exit)");
+    Assert.That(header.FalseSucc, Is.Not.Null);
   }
 
   [Test]
   public void Cfg_GivenUnstructuredFlow_ThenBailsToNull() {
     Assert.That(ControlFlowGraph.TryBuild(Body("x% = 1\nGOTO done\ndone:\nx% = 2")), Is.Null);
-    Assert.That(ControlFlowGraph.TryBuild(Body("SELECT CASE x%\nCASE 1\n  y% = 1\nEND SELECT")), Is.Null);
+    Assert.That(ControlFlowGraph.TryBuild(Body("x% = 1\nGOSUB sub1\nEND\nsub1:\nRETURN")), Is.Null);
+  }
+
+  [Test]
+  public void Cfg_GivenSelectCase_ThenBuildsConservativeMultiway() {
+    var cfg = ControlFlowGraph.TryBuild(Body("SELECT CASE x%\nCASE 1\n  y% = 1\nCASE 2\n  y% = 2\nCASE ELSE\n  y% = 3\nEND SELECT\nPRINT y%"));
+    Assert.That(cfg, Is.Not.Null);
+    // every arm body reconverges at the merge that dominates the PRINT
+    var print = cfg!.Blocks.SelectMany(b => b.Statements).OfType<PrintStmt>().Single();
+    Assert.That(cfg.Blocks.Any(b => b.Statements.Contains(print)), Is.True);
   }
 
   [Test]
