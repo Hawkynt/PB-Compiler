@@ -58,7 +58,9 @@ Supported today:
   promotion**;
 - `IF`/`ELSEIF`/`ELSE`, `FOR` (constant **or runtime** step), `DO` (pre/post
   `WHILE`/`UNTIL`, infinite), `EXIT`/`ITERATE`, `END`, `SWAP`;
-- `SELECT CASE`, **`GOTO`/labels**, **`ON … GOTO`** (lowered to a `switch`);
+- `SELECT CASE`, **`GOTO`/labels**, **`ON … GOTO`** (lowered to a `switch`),
+  **`GOSUB`/`RETURN`** (a fixed-depth return-id stack + a shared dispatch `switch`, so
+  nested GOSUBs return LIFO; `RETURN <label>` pops then jumps to the explicit label);
 - static arrays (1-D and multi-dimensional, row-major byte GEP); **string arrays**
   (a buffer of pointer handles addressed by a typed, element-indexed GEP so the index
   scales by the target pointer size rather than the DOS 2-byte handle width);
@@ -79,8 +81,8 @@ and sequential file-processing programs lower, optimize and compile to a native 
 object via `pbc --emit-llvm | llc` (linked against a runtime providing the `rt_*`
 functions; the `llvm.*` math intrinsics need no runtime).
 
-Not yet: `GOSUB`/`RETURN` (return stack), dynamic arrays / `REDIM` (descriptors),
-`DATA`/`READ` and random/binary `GET`/`PUT` (aggregate globals + runtime table).
+Not yet: dynamic arrays / `REDIM` (descriptors), `DATA`/`READ` and random/binary
+`GET`/`PUT` (aggregate globals + runtime table).
 
 ## Optimization passes (`Ir/Passes/`)
 

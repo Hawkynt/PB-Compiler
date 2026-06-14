@@ -32,6 +32,16 @@ public sealed class IrLowering {
   private VariableSymbol? _resultVar;
   private bool _isMain;
 
+  // GOSUB/RETURN: a fixed-depth return-id stack (PB allows nested GOSUB) plus a single
+  // dispatch block that pops the top id and switches back to the matching continuation.
+  private const int GosubStackDepth = 64;
+  private IrValue? _gosubStack;
+  private IrValue? _gosubSp;
+  private IrBasicBlock? _gosubDispatch;
+  private IrSwitch? _gosubSwitch;
+  private readonly List<(int Id, IrBasicBlock Cont)> _gosubConts = new();
+  private int _gosubSeq;
+
   private readonly record struct LoopContext(ExitKind Kind, IrBasicBlock Exit, IrBasicBlock Continue);
 
   private IrLowering(SemanticModel model, IReadOnlyDictionary<ProcedureSymbol, IrFunction>? procMap, IrModule? module) {
@@ -126,9 +136,47 @@ public sealed class IrLowering {
     foreach (var label in CollectLabels(body))
       this._labels[label] = this._fn.CreateBlock("lbl." + label);
 
+    if (ContainsGosub(body))
+      this.SetupGosub();
+
     this.LowerStatements(body);
+
+    if (this._gosubSwitch is not null)              // wire each GOSUB's continuation into the shared dispatch
+      foreach (var (id, cont) in this._gosubConts)
+        this._gosubSwitch.AddCase(id, cont);
+
     if (!this.Terminated)
       this.ReturnFromFunction();
+  }
+
+  /// <summary>Allocates the return-id stack used by GOSUB to record its call sites.</summary>
+  private void SetupGosub() {
+    this._gosubStack = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I32) { Count = GosubStackDepth, Name = "gosub.stack" });
+    this._gosubSp = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I32) { Name = "gosub.sp" });
+    this._b.Store(new IrConstantInt(IrType.I32, 0), this._gosubSp);   // builder is positioned at entry here
+  }
+
+  /// <summary>
+  /// Builds (once) the shared dispatch block a plain RETURN branches to: it pops the top
+  /// return id and switches back to the matching continuation. Built lazily so a program
+  /// that only uses <c>RETURN &lt;label&gt;</c> never gets an unreachable dispatch block.
+  /// </summary>
+  private IrBasicBlock EnsureGosubDispatch() {
+    if (this._gosubDispatch is not null)
+      return this._gosubDispatch;
+    this._gosubDispatch = this._fn.CreateBlock("gosub.dispatch");
+    var noReturn = this._fn.CreateBlock("gosub.noreturn");            // RETURN with an empty stack: unreachable in well-formed code
+    var saved = this._b.Block!;
+    this._b.Position(this._gosubDispatch);
+    var sp = this._b.Load(IrType.I32, this._gosubSp!);
+    var top = this._b.Sub(sp, new IrConstantInt(IrType.I32, 1));
+    this._b.Store(top, this._gosubSp!);                               // pop
+    var id = this._b.Load(IrType.I32, this._b.Gep(this._gosubStack!, top, IrType.I32));
+    this._gosubSwitch = this._b.Switch(id, noReturn);
+    this._b.Position(noReturn);
+    this._b.Unreachable();
+    this._b.Position(saved);
+    return this._gosubDispatch;
   }
 
   private static IEnumerable<string> CollectLabels(IReadOnlyList<Statement> statements) {
@@ -153,6 +201,19 @@ public sealed class IrLowering {
             foreach (var n in CollectLabels(arm.Body)) yield return n;
           break;
       }
+  }
+
+  private static bool ContainsGosub(IReadOnlyList<Statement> statements) {
+    foreach (var s in statements)
+      switch (s) {
+        case GosubStmt: return true;
+        case IfStmt i when ContainsGosub(i.Then) || i.ElseIfs.Any(e => ContainsGosub(e.Body)) || (i.Else is { } el && ContainsGosub(el)):
+          return true;
+        case ForStmt f when ContainsGosub(f.Body): return true;
+        case DoLoopStmt d when ContainsGosub(d.Body): return true;
+        case SelectStmt sel when sel.Arms.Any(a => ContainsGosub(a.Body)): return true;
+      }
+    return false;
   }
 
   // ---- helpers -------------------------------------------------------------
@@ -242,6 +303,8 @@ public sealed class IrLowering {
       case SwapStmt sw: this.LowerSwap(sw); break;
       case LabelStmt l: this.LowerLabel(l); break;
       case GotoStmt g: this.LowerGoto(g); break;
+      case GosubStmt gs: this.LowerGosub(gs); break;
+      case ReturnStmt rs: this.LowerReturn(rs); break;
       case OnGotoStmt og: this.LowerOnGoto(og); break;
       case PrintStmt pr: this.LowerPrint(pr); break;
       case InputStmt inp: this.LowerInput(inp); break;
@@ -431,6 +494,35 @@ public sealed class IrLowering {
     if (!this._labels.TryGetValue(g.Target, out var target))
       throw new IrLoweringException($"GOTO to unknown label {g.Target}");
     this._b.Br(target);
+  }
+
+  private void LowerGosub(GosubStmt g) {
+    if (this._gosubSp is null)
+      throw new IrLoweringException("GOSUB without return-stack setup");
+    if (!this._labels.TryGetValue(g.Target, out var target))
+      throw new IrLoweringException($"GOSUB to unknown label {g.Target}");
+    var id = ++this._gosubSeq;
+    var sp = this._b.Load(IrType.I32, this._gosubSp);
+    this._b.Store(new IrConstantInt(IrType.I32, id), this._b.Gep(this._gosubStack!, sp, IrType.I32));  // push the return id
+    this._b.Store(this._b.Add(sp, new IrConstantInt(IrType.I32, 1)), this._gosubSp);
+    this._b.Br(target);
+    var cont = this.NewBlock("gosub.cont");            // RETURN dispatches back here
+    this._gosubConts.Add((id, cont));
+    this._b.Position(cont);
+  }
+
+  private void LowerReturn(ReturnStmt r) {
+    if (this._gosubSp is null)
+      throw new IrLoweringException("RETURN without a matching GOSUB");
+    if (r.Target is { } label) {                       // RETURN <label>: pop the id, jump to the explicit label
+      var sp = this._b.Load(IrType.I32, this._gosubSp);
+      this._b.Store(this._b.Sub(sp, new IrConstantInt(IrType.I32, 1)), this._gosubSp);
+      if (!this._labels.TryGetValue(label, out var target))
+        throw new IrLoweringException($"RETURN to unknown label {label}");
+      this._b.Br(target);
+      return;
+    }
+    this._b.Br(this.EnsureGosubDispatch());            // plain RETURN: dispatch back to the caller's continuation
   }
 
   private void LowerOnGoto(OnGotoStmt o) {
