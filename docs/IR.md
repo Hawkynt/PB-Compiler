@@ -89,8 +89,9 @@ Supported today:
 - intrinsics: `ABS`/`SGN`/`FIX`/`INT`/`CDBL`/`CSNG` (branchless/bitcast, no runtime) and
   the math functions `SQR`/`SIN`/`COS`/`EXP`/`LOG`/`TAN`/`ATN` lowered to the matching
   **LLVM intrinsics** (`llvm.sqrt.fN`, …) so `llc` optimizes them natively;
-- whole modules: user `SUB`/`FUNCTION` with scalar **BYVAL and BYREF** parameters
-  and direct calls; a procedure with an unsupported body is kept as a declaration.
+- whole modules: user `SUB`/`FUNCTION` with scalar **BYVAL and BYREF** parameters and
+  **BYREF `TYPE` record** parameters (passed as a pointer; the callee accesses fields
+  through it) and direct calls; a procedure with an unsupported body is kept as a declaration.
 
 The computation in a program is fully optimized; runtime-ABI calls (I/O, strings) stay
 opaque but their inputs are optimized. Hello world, numeric/string compute-and-report,

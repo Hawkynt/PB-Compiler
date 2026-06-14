@@ -108,8 +108,16 @@ public sealed class IrLowering {
     }
     var args = new List<IrArgument>();
     foreach (var p in proc.Parameters) {
-      if (p.Seg || p.Optional || !IrTypeMapper.TryMap(p.Type, out var pty))
-        return false;                                  // scalar parameters only (SEG/CDECL-optional excluded)
+      if (p.Seg || p.Optional)
+        return false;                                  // SEG / CDECL-optional excluded
+      if (p.Type is UdtType) {
+        if (p.ByVal)
+          return false;                                // a BYVAL record copy is not modeled
+        args.Add(new IrArgument(IrType.Ptr, args.Count, p.Name));   // a record is passed BYREF as a pointer
+        continue;
+      }
+      if (!IrTypeMapper.TryMap(p.Type, out var pty))
+        return false;                                  // scalar parameters only
       args.Add(new IrArgument(p.ByVal ? pty : IrType.Ptr, args.Count, p.Name));  // BYREF parameters arrive as pointers
     }
     fn = new IrFunction(proc.Name, ret, args);
