@@ -744,6 +744,8 @@ public sealed class IrLowering {
       "COS" => this.LowerMath(call, "cos"),
       "EXP" => this.LowerMath(call, "exp"),
       "LOG" => this.LowerMath(call, "log"),
+      "TAN" => this.LowerMath(call, "tan"),
+      "ATN" => this.LowerMath(call, "atan"),
       _ => throw new IrLoweringException($"intrinsic {name}"),
     };
   }
@@ -763,6 +765,8 @@ public sealed class IrLowering {
         this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_string_s", IrType.Ptr, IrType.I32, IrType.Ptr), Num(0), Str(1)),
       "STRING$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_string", IrType.Ptr, IrType.I32, IrType.I32), Num(0), Num(1)),
       "STR$" => this.LowerStrOf(ci.Arguments[0]),
+      "HEX$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_hex", IrType.Ptr, IrType.I32), Num(0)),
+      "OCT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_oct", IrType.Ptr, IrType.I32), Num(0)),
       _ => throw new IrLoweringException($"string intrinsic {name}"),
     };
   }

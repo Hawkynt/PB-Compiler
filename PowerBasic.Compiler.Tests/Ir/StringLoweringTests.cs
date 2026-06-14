@@ -85,6 +85,17 @@ public sealed class StringLoweringTests {
   }
 
   [Test]
+  public void HexAndOct_LowerToRuntimeFormatters() {
+    var module = LowerOptimized("n% = 255\nPRINT HEX$(n%)\nPRINT OCT$(n%)\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var text = LlvmEmitter.Emit(module!);
+    Assert.That(text, Does.Contain("@rt_str_hex(i32"));
+    Assert.That(text, Does.Contain("@rt_str_oct(i32"));
+  }
+
+  [Test]
   public void StringProgram_CompilesToNativeViaLlc() {
     var module = LowerOptimized("a$ = \"Hello, \"\nb$ = \"world!\"\nPRINT a$ & b$\nEND");
     Assert.That(module, Is.Not.Null);

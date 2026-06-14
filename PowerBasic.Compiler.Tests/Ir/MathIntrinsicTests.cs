@@ -31,6 +31,16 @@ public sealed class MathIntrinsicTests {
   }
 
   [Test]
+  public void TanAndAtan_LowerToLlvmIntrinsics() {
+    var module = LowerOptimized("x# = 1.0\ny# = TAN(x#) + ATN(x#)\nPRINT y#\nEND");
+
+    Assert.That(IrVerifier.Verify(module), Is.Empty);
+    var text = LlvmEmitter.Emit(module);
+    Assert.That(text, Does.Contain("@llvm.tan.f"));
+    Assert.That(text, Does.Contain("@llvm.atan.f"));
+  }
+
+  [Test]
   public void Fp80Constant_IsEmittedInLlvmExtendedForm() {
     // SQR's EXT result surfaces an x86_fp80 constant; it must use the 0xK 20-hex form
     var module = LowerOptimized("y# = SQR(2.0)\nPRINT y#\nEND");
