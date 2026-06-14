@@ -199,6 +199,7 @@ public sealed class IrLowering {
       case CallStmt c: this.LowerCallStatement(c); break;
       case SelectStmt s: this.LowerSelect(s); break;
       case DimStmt d: this.LowerDim(d); break;
+      case SwapStmt sw: this.LowerSwap(sw); break;
       case EndStmt: this.LowerEnd(); break;
       default: throw new IrLoweringException($"unsupported statement: {statement.GetType().Name}");
     }
@@ -214,6 +215,27 @@ public sealed class IrLowering {
     var slot = this.SlotFor(symbol);
     var value = this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), symbol.Type);
     this._b.Store(value, slot);
+  }
+
+  private void LowerSwap(SwapStmt sw) {
+    var (leftAddr, leftType) = this.LValue(sw.Left);
+    var (rightAddr, rightType) = this.LValue(sw.Right);
+    if (!leftType.Equals(rightType))
+      throw new IrLoweringException("SWAP of differently-typed operands");
+    var ty = IrTypeMapper.Map(leftType);
+    var leftVal = this._b.Load(ty, leftAddr);
+    var rightVal = this._b.Load(ty, rightAddr);
+    this._b.Store(rightVal, leftAddr);
+    this._b.Store(leftVal, rightAddr);
+  }
+
+  /// <summary>The storage address and element type of a scalar lvalue (a variable or a static-array element).</summary>
+  private (IrValue Address, PbType Type) LValue(Expression e) {
+    if (e is NameExpr && this._model.VariableBindings.TryGetValue(e, out var sym) && sym.Type is ScalarType)
+      return (this.SlotFor(sym), sym.Type);
+    if (e is CallOrIndexExpr ci && this._model.VariableBindings.TryGetValue(ci, out var arr) && arr.Type is ArrayType)
+      return this.ElementAddress(ci);
+    throw new IrLoweringException("unsupported lvalue");
   }
 
   private void LowerEnd() {
