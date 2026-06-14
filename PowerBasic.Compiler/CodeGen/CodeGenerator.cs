@@ -104,9 +104,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       this._ipcp = Pb36Ipcp.Analyze(model); // O18: constants into callee bodies
     }
 
-    // pb36 P7: programs whose only effect is printing compile-time text lower
-    // to a raw COM-style image of a few dozen bytes (docs/PB36.md)
-    if (model.Dialect == Syntax.Dialect.Pb36 && !this._allowExternalCalls && !this._isUnit
+    // P7: programs whose only effect is printing compile-time text lower to a
+    // raw COM-style image of a few dozen bytes (docs/PB36.md) - a lean-output
+    // optimization, available to any dialect under the optimizer flag
+    if (this.Optimize && !this._allowExternalCalls && !this._isUnit
         && this.TryLowerTrivialProgram() is { } trivial)
       return trivial;
 
@@ -120,7 +121,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     // pb36 (docs/PB36.md P1): the runtime is emitted AFTER user code, trimmed
     // to the sections the program actually reaches; pb35 keeps today's layout
-    var trimRuntime = model.Dialect == Syntax.Dialect.Pb36 && !this._allowExternalCalls;
+    var trimRuntime = this.Optimize && !this._allowExternalCalls;
     if (!trimRuntime)
       this._rt.EmitProcedures(asm);
     else

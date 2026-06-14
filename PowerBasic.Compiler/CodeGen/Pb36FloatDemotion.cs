@@ -40,11 +40,8 @@ public static class Pb36FloatDemotion {
     }
   }
 
-  /// <summary>Runs the analysis and re-types the proven variables; returns them (for tests and diagnostics).</summary>
+  /// <summary>Runs the analysis and re-types the proven variables; returns them (for tests and diagnostics). The caller gates on the optimizer flag; this pass is dialect-agnostic (SINGLE-default counters exist in QB/TB/PB alike).</summary>
   public static IReadOnlyList<VariableSymbol> Apply(SemanticModel model) {
-    if (model.Dialect != Dialect.Pb36)
-      return [];
-
     var pass = new State(model);
     pass.Collect();
     if (pass.Killed || pass.Candidates.Count == 0)
