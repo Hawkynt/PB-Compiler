@@ -54,16 +54,26 @@ public static class InstCombine {
       case IrBinaryOp.Add:
         if (IsZero(r)) return l;
         if (IsZero(l)) return r;
+        if (ReferenceEquals(l, r)) return new IrBinary(IrBinaryOp.Shl, l, new IrConstantInt(t, 1));  // x + x -> x << 1
         if (MergeConst(IrBinaryOp.Add, l, r, t) is { } addM) return addM;
         break;
       case IrBinaryOp.Sub:
         if (IsZero(r)) return l;
         if (ReferenceEquals(l, r)) return Zero(t);
+        // 0 - (0 - x) -> x
+        if (IsZero(l) && r is IrBinary { Op: IrBinaryOp.Sub } ds && IsZero(ds.Lhs)) return ds.Rhs;
+        // (a + b) - a -> b ; (a + b) - b -> a
+        if (l is IrBinary { Op: IrBinaryOp.Add } la) {
+          if (ReferenceEquals(la.Lhs, r)) return la.Rhs;
+          if (ReferenceEquals(la.Rhs, r)) return la.Lhs;
+        }
         break;
       case IrBinaryOp.Mul:
         if (IsOne(r)) return l;
         if (IsOne(l)) return r;
         if (IsZero(r) || IsZero(l)) return Zero(t);
+        if (IsAllOnes(r)) return new IrBinary(IrBinaryOp.Sub, Zero(t), l);   // x * -1 -> -x
+        if (IsAllOnes(l)) return new IrBinary(IrBinaryOp.Sub, Zero(t), r);
         if (MergeConst(IrBinaryOp.Mul, l, r, t) is { } mulM) return mulM;
         if (Pow2Shift(r) is { } sr) return new IrBinary(IrBinaryOp.Shl, l, new IrConstantInt(t, sr));   // x * 2^k -> x << k
         if (Pow2Shift(l) is { } sl) return new IrBinary(IrBinaryOp.Shl, r, new IrConstantInt(t, sl));
@@ -73,6 +83,9 @@ public static class InstCombine {
         if (IsAllOnes(r)) return l;
         if (IsAllOnes(l)) return r;
         if (ReferenceEquals(l, r)) return l;
+        // absorption: x & (x | y) -> x
+        if (Absorbs(l, r, IrBinaryOp.Or)) return l;
+        if (Absorbs(r, l, IrBinaryOp.Or)) return r;
         if (MergeConst(IrBinaryOp.And, l, r, t) is { } andM) return andM;
         break;
       case IrBinaryOp.Or:
@@ -80,6 +93,9 @@ public static class InstCombine {
         if (IsZero(l)) return r;
         if (IsAllOnes(r) || IsAllOnes(l)) return AllOnes(t);
         if (ReferenceEquals(l, r)) return l;
+        // absorption: x | (x & y) -> x
+        if (Absorbs(l, r, IrBinaryOp.And)) return l;
+        if (Absorbs(r, l, IrBinaryOp.And)) return r;
         if (MergeConst(IrBinaryOp.Or, l, r, t) is { } orM) return orM;
         break;
       case IrBinaryOp.Xor:
@@ -165,6 +181,10 @@ public static class InstCombine {
     };
     return new IrBinary(op, x, new IrConstantInt(t, IrConstFold.Wrap(merged, t)));
   }
+
+  /// <summary>True if <paramref name="other"/> is an <paramref name="innerOp"/> instruction one of whose operands is <paramref name="x"/> (for absorption laws).</summary>
+  private static bool Absorbs(IrValue x, IrValue other, IrBinaryOp innerOp) =>
+    other is IrBinary inner && inner.Op == innerOp && (ReferenceEquals(inner.Lhs, x) || ReferenceEquals(inner.Rhs, x));
 
   /// <summary>If the value is a positive power of two, returns its shift exponent; otherwise null.</summary>
   private static long? Pow2Shift(IrValue v) {
