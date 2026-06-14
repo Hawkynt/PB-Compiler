@@ -46,6 +46,15 @@ public sealed class ArrayLoweringTests {
   }
 
   [Test]
+  public void LBoundUBound_OfStaticArray_FoldToConstants() {
+    var fn = Lower("DIM a%(5 TO 12)\nlo% = LBOUND(a%)\nhi% = UBOUND(a%)\nn% = hi% - lo% + 1\nEND")!;
+    IrPassManager.Standard().RunToFixpoint(fn);
+
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(fn.AllInstructions.OfType<IrCall>(), Is.Empty);   // bounds are compile-time constants, no runtime
+  }
+
+  [Test]
   public void Pipeline_ArrayProgram_IsAcceptedByLlvm() {
     var fn = Lower("DIM a%(0 TO 9)\nFOR i% = 0 TO 9\n  a%(i%) = i% * 2\nNEXT i%\nx% = a%(3)");
     IrPassManager.Standard().RunToFixpoint(fn);

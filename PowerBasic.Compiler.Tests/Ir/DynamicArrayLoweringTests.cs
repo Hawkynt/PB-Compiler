@@ -101,6 +101,17 @@ public sealed class DynamicArrayLoweringTests {
   }
 
   [Test]
+  public void LBoundUBound_OfDynamicArray_ReadTheDescriptor() {
+    var module = LowerModule("REDIM a%(2 TO 8)\nlo% = LBOUND(a%)\nhi% = UBOUND(a%)\nn% = hi% - lo%\nEND", optimize: false);
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var main = module!.Functions.First(f => f.Name == "main");
+    // the bounds come from descriptor loads, not constants (the size is only known at REDIM time)
+    Assert.That(main.AllInstructions.OfType<IrLoad>().Count(), Is.GreaterThanOrEqualTo(3));
+  }
+
+  [Test]
   public void Pipeline_DynamicArrayProgram_IsAcceptedByLlvm() {
     var module = LowerModule("REDIM a%(1 TO 4)\nFOR i% = 1 TO 4\n  a%(i%) = i% * i%\nNEXT i%\nPRINT a%(4)\nEND");
     Assert.That(module, Is.Not.Null);

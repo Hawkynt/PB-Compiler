@@ -1129,6 +1129,8 @@ public sealed class IrLowering {
   private IrValue LowerIntrinsic(CallOrIndexExpr call, string name) {
     if (name.Equals("INSTR", StringComparison.OrdinalIgnoreCase))
       return this.LowerInstr(call);
+    if (name.Equals("LBOUND", StringComparison.OrdinalIgnoreCase) || name.Equals("UBOUND", StringComparison.OrdinalIgnoreCase))
+      return this.LowerArrayBound(call, name.Equals("UBOUND", StringComparison.OrdinalIgnoreCase));
     if (call.Arguments.Count != 1)
       throw new IrLoweringException($"intrinsic {name} with {call.Arguments.Count} arguments");
     return name.ToUpperInvariant() switch {
@@ -1149,6 +1151,31 @@ public sealed class IrLowering {
       "ATN" => this.LowerMath(call, "atan"),
       _ => throw new IrLoweringException($"intrinsic {name}"),
     };
+  }
+
+  /// <summary>LBOUND/UBOUND of an array dimension: a compile-time constant for static arrays, a descriptor read for dynamic ones.</summary>
+  private IrValue LowerArrayBound(CallOrIndexExpr call, bool upper) {
+    if (!this._model.VariableBindings.TryGetValue(call.Arguments[0], out var sym) || sym.Type is not ArrayType arr)
+      throw new IrLoweringException("LBOUND/UBOUND of a non-array");
+    var dim = call.Arguments.Count >= 2
+      ? call.Arguments[1] is IntegerLiteralExpr lit ? (int)lit.Value - 1 : throw new IrLoweringException("non-constant LBOUND/UBOUND dimension")
+      : 0;
+    if (dim < 0 || dim >= arr.Rank)
+      throw new IrLoweringException("LBOUND/UBOUND dimension out of range");
+
+    IrValue result;
+    if (!arr.IsDynamic) {
+      if (arr.StaticBounds is not { } bounds)
+        throw new IrLoweringException("static array without bounds");
+      result = new IrConstantInt(IrType.I32, upper ? bounds[dim].Upper : bounds[dim].Lower);
+    } else {
+      var descriptor = this.DynDescriptor(sym, arr.Rank);
+      var lo = this._b.Load(IrType.I32, descriptor.Lo[dim]);
+      result = upper
+        ? this._b.Sub(this._b.Add(lo, this._b.Load(IrType.I32, descriptor.Size[dim])), new IrConstantInt(IrType.I32, 1))
+        : lo;
+    }
+    return this.Coerce(result, PbType.Long, this._model.TypeOf(call));
   }
 
   /// <summary>INSTR(haystack$, needle$) or INSTR(start%, haystack$, needle$) -> 1-based position (0 = not found).</summary>

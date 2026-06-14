@@ -69,6 +69,7 @@ Supported today:
   allocates via `rt_arr_alloc`/`rt_arr_alloc_ptr` (count = product of dimension sizes),
   `REDIM PRESERVE` grows in place via `rt_arr_realloc`/`rt_arr_realloc_ptr`, element
   access is row-major flattened relative to the bounds, `ERASE` frees via `rt_arr_free`;
+  `LBOUND`/`UBOUND` fold to constants for static arrays and read the descriptor for dynamic;
 - **strings** via a runtime-handle ABI (`rt_str_*`): assignment, `&` concat, all
   comparisons, `LEN`, `LEFT$`/`RIGHT$`/`MID$`, `CHR$`/`ASC`, `STR$`/`VAL`,
   `SPACE$`/`STRING$`, `HEX$`/`OCT$`, `UCASE$`/`LCASE$`/`LTRIM$`/`RTRIM$`, `INSTR`
