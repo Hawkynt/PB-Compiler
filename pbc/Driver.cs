@@ -138,6 +138,13 @@ public static class Driver {
         pipeline.RunOnModule(module);
         Inliner.Run(module);
         pipeline.RunOnModule(module);              // re-optimize the inlined bodies
+        var verifyErrors = IrVerifier.Verify(module);
+        if (verifyErrors.Count > 0) {
+          stderr.WriteLine("pbc: --emit-llvm: internal error, optimized IR failed verification:");
+          foreach (var e in verifyErrors)
+            stderr.WriteLine("  " + e);
+          return 1;
+        }
         var ll = LlvmEmitter.Emit(module, "x86_64-unknown-linux-gnu");
         if (output != null) {
           File.WriteAllText(output, ll);

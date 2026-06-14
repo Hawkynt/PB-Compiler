@@ -1,79 +1,83 @@
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
-/// Function inlining for the safe, common case: a direct call to a non-recursive,
-/// defined function whose body is a single straight-line block ending in a return.
-/// Such a callee has no internal control flow, so inlining is a clean splice - its
-/// instructions are cloned before the call site with parameters remapped to the call
-/// arguments, and the call is replaced by the (remapped) returned value. Restricting
-/// to single-block callees avoids block cloning, phi fix-ups and recursion blow-up,
-/// while still folding away the abundant small expression-bodied helpers. Run it
-/// between per-function optimization rounds so the exposed body is then optimized in
-/// the caller's context.
+/// Function inlining for direct calls to non-recursive defined callees within a size
+/// budget. The callee's blocks are cloned into the caller (IrCloner), parameters are
+/// mapped to the call arguments, the call site's block is split so the code after the
+/// call becomes a continuation, each cloned <c>ret</c> branches to that continuation,
+/// and the call's result is the single returned value (or a phi over the returns).
+/// Eliminates call overhead and exposes the callee body to the caller's optimizer.
 /// </summary>
 public static class Inliner {
 
-  /// <summary>Inlines eligible single-block calls across the module; returns how many were inlined.</summary>
+  private const int MaxCalleeInstructions = 64;     // keep code growth bounded
+
+  /// <summary>Inlines eligible direct calls across the module; returns how many were inlined.</summary>
   public static int Run(IrModule module) {
     var inlined = 0;
     foreach (var fn in module.Functions) {
       if (fn.IsDeclaration)
         continue;
       foreach (var call in fn.AllInstructions.OfType<IrCall>().ToList())
-        if (call.Parent is not null && call.Callee is IrFunction callee && !ReferenceEquals(callee, fn) && IsInlinable(callee)) {
-          InlineSingleBlock(call, callee);
+        if (call.Parent is not null && call.Callee is IrFunction callee && IsInlinable(callee, fn)) {
+          InlineCall(call, callee, fn, inlined);
           ++inlined;
         }
     }
     return inlined;
   }
 
-  private static bool IsInlinable(IrFunction callee) {
-    if (callee.IsDeclaration || callee.Blocks.Count != 1)
-      return false;
-    var block = callee.Entry!;
-    if (block.Terminator is not IrRet)
-      return false;
-    // every non-terminator instruction must be one we can clone
-    foreach (var inst in block.Instructions)
-      if (inst is not (IrBinary or IrCmp or IrCast or IrAlloca or IrLoad or IrStore or IrGep or IrCall or IrRet))
-        return false;
-    return true;
-  }
+  private static bool IsInlinable(IrFunction callee, IrFunction caller) =>
+    !callee.IsDeclaration
+    && !ReferenceEquals(callee, caller)               // no direct recursion
+    && callee.AllInstructions.Count() <= MaxCalleeInstructions;
 
-  private static void InlineSingleBlock(IrCall call, IrFunction callee) {
-    var map = new Dictionary<IrValue, IrValue>(ReferenceEqualityComparer.Instance);
-    for (var i = 0; i < callee.Parameters.Count; ++i)
-      map[callee.Parameters[i]] = call.GetOperand(1 + i);          // operand 0 is the callee
-
-    IrValue Remap(IrValue v) => map.GetValueOrDefault(v, v);
-
-    IrValue? result = null;
+  private static void InlineCall(IrCall call, IrFunction callee, IrFunction caller, int id) {
     var host = call.Parent!;
-    foreach (var inst in callee.Entry!.Instructions) {
-      if (inst is IrRet ret) {
-        result = ret.HasValue ? Remap(ret.Value!) : null;
-        break;
+    var prefix = $"inl{id}.";
+
+    // 1. split the host block at the call: everything after it becomes the continuation
+    var cont = caller.CreateBlock(prefix + "cont");
+    var after = host.Instructions.SkipWhile(i => !ReferenceEquals(i, call)).Skip(1).ToList();
+    foreach (var inst in after) {
+      host.Remove(inst);
+      cont.Append(inst);
+    }
+    // the moved terminator now leaves from cont, so successor phis must name cont, not host
+    foreach (var succ in cont.Successors)
+      foreach (var phi in succ.Phis)
+        phi.RenameIncomingBlock(host, cont);
+
+    // 2. map parameters to the call arguments and clone the callee body in
+    var seed = new Dictionary<IrValue, IrValue>(ReferenceEqualityComparer.Instance);
+    for (var i = 0; i < callee.Parameters.Count; ++i)
+      seed[callee.Parameters[i]] = call.GetOperand(1 + i);
+    var blocks = IrCloner.Clone(caller, callee.Blocks, seed, prefix);
+
+    // 3. turn each cloned return into a branch to the continuation, collecting its value
+    var returns = new List<(IrValue Value, IrBasicBlock From)>();
+    foreach (var cloned in blocks.Values)
+      if (cloned.Terminator is IrRet ret) {
+        if (ret.HasValue)
+          returns.Add((ret.Value!, cloned));
+        ret.EraseFromParent();
+        cloned.Append(new IrBr(cont));
       }
-      var clone = CloneInstruction(inst, Remap);
-      host.InsertBefore(clone, call);
-      map[inst] = clone;
+
+    // 4. wire the call's result and the entry edge
+    if (!call.Type.IsVoid && returns.Count > 0) {
+      if (returns.Count == 1) {
+        call.ReplaceAllUsesWith(returns[0].Value);
+      } else {
+        var phi = new IrPhi(call.Type);
+        cont.AppendPhi(phi);
+        foreach (var (value, from) in returns)
+          phi.AddIncoming(value, from);
+        call.ReplaceAllUsesWith(phi);
+      }
     }
 
-    if (!call.Type.IsVoid)
-      call.ReplaceAllUsesWith(result ?? new IrUndef(call.Type));
     call.EraseFromParent();
+    host.Append(new IrBr(blocks[callee.Entry!]));
   }
-
-  private static IrInstruction CloneInstruction(IrInstruction inst, Func<IrValue, IrValue> map) => inst switch {
-    IrBinary b => new IrBinary(b.Op, map(b.Lhs), map(b.Rhs)),
-    IrCmp c => new IrCmp(c.Pred, map(c.Lhs), map(c.Rhs)),
-    IrCast x => new IrCast(x.Op, map(x.Value), x.Type),
-    IrAlloca a => new IrAlloca(a.Allocated) { Count = a.Count },
-    IrLoad l => new IrLoad(l.Type, map(l.Pointer)),
-    IrStore s => new IrStore(map(s.Value), map(s.Pointer)),
-    IrGep g => new IrGep(map(g.BasePtr), map(g.ByteOffset)),
-    IrCall c => new IrCall(c.Type, map(c.Callee), c.Args.Select(map).ToList()),
-    _ => throw new InvalidOperationException($"cannot clone {inst.GetType().Name} for inlining"),
-  };
 }

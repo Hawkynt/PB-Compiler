@@ -35,7 +35,8 @@ public sealed class InlinerTests {
   }
 
   [Test]
-  public void Run_DoesNotInlineAMultiBlockCallee() {
+  public void Run_InlinesAMultiBlockCalleeWithAReturnPhi() {
+    // i32 @f(i32 n) { return n>0 ? 1 : 0 } with two returns -> inlined with a merge phi
     var module = new IrModule("T");
     var n = new IrArgument(IrType.I32, 0, "n");
     var f = new IrFunction("f", IrType.I32, [n]);
@@ -51,8 +52,23 @@ public sealed class InlinerTests {
     mb.Ret(mb.Call(IrType.I32, f, main.Parameters[0]));
     module.AddFunction(main);
 
+    Assert.That(Inliner.Run(module), Is.EqualTo(1));
+    Assert.That(main.AllInstructions.OfType<IrCall>(), Is.Empty);            // call gone
+    Assert.That(main.AllInstructions.OfType<IrPhi>().Count(), Is.EqualTo(1)); // returns merged
+    Assert.That(IrVerifier.Verify(main), Is.Empty);
+  }
+
+  [Test]
+  public void Run_DoesNotInlineDirectRecursion() {
+    var module = new IrModule("T");
+    var n = new IrArgument(IrType.I32, 0, "n");
+    var f = new IrFunction("f", IrType.I32, [n]);
+    var fb = new IrBuilder(f.CreateBlock("entry"));
+    fb.Ret(fb.Call(IrType.I32, f, n));   // f calls itself
+    module.AddFunction(f);
+
     Assert.That(Inliner.Run(module), Is.EqualTo(0));
-    Assert.That(main.AllInstructions.OfType<IrCall>().Count(), Is.EqualTo(1));
+    Assert.That(f.AllInstructions.OfType<IrCall>().Count(), Is.EqualTo(1));
   }
 
   [Test]
