@@ -44,7 +44,7 @@ public static class InstCombine {
       IrBinary b => SimplifyBinary(b),
       IrCmp c => SimplifyCmp(c),
       IrGep g => SimplifyGep(g),
-      IrCast { Op: IrCastOp.BitCast } cast when cast.Value.Type.Equals(cast.Type) => cast.Value,
+      IrCast cast => SimplifyCast(cast),
       _ => null,
     };
   }
@@ -127,6 +127,30 @@ public static class InstCombine {
         if (b.Op == IrBinaryOp.URem && r is IrConstantInt rc && Pow2Shift(rc) is not null)
           return new IrBinary(IrBinaryOp.And, l, new IrConstantInt(t, (long)(rc.ZeroExtended - 1)));  // unsigned x % 2^k -> x & (2^k-1)
         break;
+    }
+    return null;
+  }
+
+  private static IrValue? SimplifyCast(IrCast c) {
+    if (c.Op == IrCastOp.BitCast && c.Value.Type.Equals(c.Type))
+      return c.Value;                                              // bitcast to same type
+
+    // chained widenings of the same kind combine: zext(zext x) -> zext x ; sext(sext x) -> sext x
+    if ((c.Op == IrCastOp.ZExt || c.Op == IrCastOp.SExt) && c.Value is IrCast wider && wider.Op == c.Op)
+      return new IrCast(c.Op, wider.Value, c.Type);
+
+    // trunc of trunc combines
+    if (c.Op == IrCastOp.Trunc && c.Value is IrCast { Op: IrCastOp.Trunc } innerTrunc)
+      return new IrCast(IrCastOp.Trunc, innerTrunc.Value, c.Type);
+
+    // trunc of a widening: trunc(ext(x to W) to A)
+    if (c.Op == IrCastOp.Trunc && c.Value is IrCast { Op: IrCastOp.ZExt or IrCastOp.SExt } ext) {
+      var orig = ext.Value.Type.Bits;
+      if (c.Type.Bits == orig)
+        return ext.Value;                                          // round-trip back to the original width
+      if (c.Type.Bits > orig)
+        return new IrCast(ext.Op, ext.Value, c.Type);              // still a (smaller) widening of the same kind
+      return new IrCast(IrCastOp.Trunc, ext.Value, c.Type);        // narrower than the original: a plain trunc
     }
     return null;
   }
