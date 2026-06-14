@@ -217,6 +217,11 @@ public sealed class SsaForm {
       Read(block.Condition, false);
     }
 
+    // FOR counters are written implicitly by the loop - never track them
+    foreach (var counter in cfg.LoopCounters)
+      if (model.VariableBindings.TryGetValue(counter, out var sym))
+        escaped.Add(sym);
+
     candidates.ExceptWith(escaped);
     return candidates;
   }
@@ -370,7 +375,7 @@ public sealed class SsaForm {
       }
 
       foreach (var stmt in block.Statements)
-        this.RenameStatement(stmt, pushed);
+        this.RenameStatement(stmt, block, pushed);
 
       this.RecordUses(block.Condition);
 
@@ -386,11 +391,11 @@ public sealed class SsaForm {
         this._stacks[pushed[i]].Pop();
     }
 
-    private void RenameStatement(Statement stmt, List<VariableSymbol> pushed) {
+    private void RenameStatement(Statement stmt, BasicBlock block, List<VariableSymbol> pushed) {
       switch (stmt) {
         case AssignStmt { Target: NameExpr target } a when this.IsTracked(target, out var sym):
           this.RecordUses(a.Value);
-          var assigned = this.NewValue(sym, SsaDefKind.Assign, this._cfg.Entry);
+          var assigned = this.NewValue(sym, SsaDefKind.Assign, block);
           assigned.DefExpr = a.Value;
           this._stacks[sym].Push(assigned);
           pushed.Add(sym);
@@ -400,7 +405,7 @@ public sealed class SsaForm {
           var prior = this.Top(sym);          // INCR reads the old version first
           this.UseVersions[target] = prior;
           this.RecordUses(id.Amount);
-          var next = this.NewValue(sym, SsaDefKind.IncrDecr, this._cfg.Entry);
+          var next = this.NewValue(sym, SsaDefKind.IncrDecr, block);
           next.IncrBase = prior;
           next.IncrAmount = id.Amount;
           next.IncrUp = id.Increment;

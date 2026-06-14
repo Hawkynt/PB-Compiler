@@ -40,10 +40,11 @@ public sealed class BasicBlock {
 /// foundation for the dominator/SSA/SCCP passes (docs/PB36.md mid-end).
 /// </summary>
 public sealed class ControlFlowGraph {
-  private ControlFlowGraph(BasicBlock entry, BasicBlock exit, IReadOnlyList<BasicBlock> blocks) {
+  private ControlFlowGraph(BasicBlock entry, BasicBlock exit, IReadOnlyList<BasicBlock> blocks, IReadOnlyList<NameExpr> loopCounters) {
     this.Entry = entry;
     this.Exit = exit;
     this.Blocks = blocks;
+    this.LoopCounters = loopCounters;
   }
 
   /// <summary>The unique entry block (no predecessors).</summary>
@@ -54,6 +55,9 @@ public sealed class ControlFlowGraph {
 
   /// <summary>All blocks, Entry first, in creation order.</summary>
   public IReadOnlyList<BasicBlock> Blocks { get; }
+
+  /// <summary>FOR-counter variable references: implicitly written by the loop, so SSA must not track them as constants.</summary>
+  public IReadOnlyList<NameExpr> LoopCounters { get; }
 
   /// <summary>
   /// Builds a CFG for <paramref name="body"/>, or returns null when the body
@@ -69,11 +73,14 @@ public sealed class ControlFlowGraph {
     if (fall != null)
       builder.LinkUnconditional(fall, builder.ExitBlock);
     builder.ComputePredecessors();
-    return new(entry, builder.ExitBlock, builder.AllBlocks);
+    return new(entry, builder.ExitBlock, builder.AllBlocks, builder.LoopCounters);
   }
 
   private sealed class Builder {
     private readonly List<BasicBlock> _blocks = [];
+    private readonly Stack<BasicBlock> _loopExits = new();
+    private readonly Stack<BasicBlock> _loopContinues = new();
+    public List<NameExpr> LoopCounters { get; } = [];
     public bool Failed { get; private set; }
     public BasicBlock ExitBlock { get; }
     public IReadOnlyList<BasicBlock> AllBlocks => this._blocks;
@@ -123,6 +130,20 @@ public sealed class ControlFlowGraph {
         case IfStmt ifStmt:
           return this.BuildIf(ifStmt, current);
 
+        case ForStmt forStmt:
+          return this.BuildFor(forStmt, current);
+
+        case DoLoopStmt doLoop:
+          return this.BuildDoLoop(doLoop, current);
+
+        case ExitStmt { Kind: ExitKind.For or ExitKind.Do or ExitKind.Loop } when this._loopExits.Count > 0:
+          this.LinkUnconditional(current, this._loopExits.Peek());
+          return null;
+
+        case IterateStmt when this._loopContinues.Count > 0:
+          this.LinkUnconditional(current, this._loopContinues.Peek());
+          return null;
+
         // straight-line statements the builder understands as a unit (their
         // defs/uses are read off the AST by the SSA pass); anything genuinely
         // unsupported as control flow fails the whole build below
@@ -171,6 +192,64 @@ public sealed class ControlFlowGraph {
         this.LinkUnconditional(chain, merge);
 
       return merge;
+    }
+
+    private BasicBlock? BuildFor(ForStmt f, BasicBlock current) {
+      if (f.Variable is not NameExpr counter) {
+        this.Failed = true; // a non-name FOR target is not modeled
+        return current;
+      }
+      this.LoopCounters.Add(counter);
+
+      // current = preheader (From/To/Step evaluated once); header tests the
+      // counter (non-trackable, so the test is opaque -> both edges live), body
+      // runs, the latch edge carries values back for the loop phi
+      var header = this.NewBlock();
+      this.LinkUnconditional(current, header);
+      var body = this.NewBlock();
+      var exit = this.NewBlock();
+      this.LinkBranch(header, counter, body, exit); // opaque condition: counter is untracked
+
+      this._loopExits.Push(exit);
+      this._loopContinues.Push(header);
+      var bodyExit = this.BuildSequence(f.Body, body);
+      if (bodyExit != null)
+        this.LinkUnconditional(bodyExit, header); // back-edge (implicit increment + retest)
+      this._loopExits.Pop();
+      this._loopContinues.Pop();
+      return exit;
+    }
+
+    private BasicBlock? BuildDoLoop(DoLoopStmt d, BasicBlock current) {
+      if (d.PreTest != LoopTestKind.None && d.PostTest != LoopTestKind.None) {
+        this.Failed = true; // DO WHILE..LOOP UNTIL etc. - not modeled
+        return current;
+      }
+      if (d.PostTest != LoopTestKind.None) {
+        this.Failed = true; // post-test loops: ITERATE target differs - keep sound by bailing
+        return current;
+      }
+
+      var header = this.NewBlock();
+      this.LinkUnconditional(current, header);
+      var body = this.NewBlock();
+      var exit = this.NewBlock();
+
+      if (d.PreTest == LoopTestKind.While)
+        this.LinkBranch(header, d.PreCondition!, body, exit);
+      else if (d.PreTest == LoopTestKind.Until)
+        this.LinkBranch(header, d.PreCondition!, exit, body); // UNTIL: leave when true
+      else
+        this.LinkUnconditional(header, body); // infinite DO ... LOOP (exit only via EXIT)
+
+      this._loopExits.Push(exit);
+      this._loopContinues.Push(header);
+      var bodyExit = this.BuildSequence(d.Body, body);
+      if (bodyExit != null)
+        this.LinkUnconditional(bodyExit, header);
+      this._loopExits.Pop();
+      this._loopContinues.Pop();
+      return exit;
     }
 
     public void ComputePredecessors() {

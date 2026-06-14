@@ -61,7 +61,8 @@ public sealed class Sccp {
       this._byBlock[block] = [];
     foreach (var value in this._ssa.Values) {
       this._values[value] = value.Kind == SsaDefKind.EntryZero ? Lat.Of(0) : Lat.Top;
-      this._byBlock[value.Block].Add(value);
+      if (this._byBlock.TryGetValue(value.Block, out var list))
+        list.Add(value); // values in unreachable blocks stay Top (never folded)
     }
 
     this._reachableBlocks.Add(this._ssa.Cfg.Entry);
