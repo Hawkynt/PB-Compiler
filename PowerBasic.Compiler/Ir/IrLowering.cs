@@ -272,12 +272,20 @@ public sealed class IrLowering {
     if (!ty.IsInteger)
       throw new IrLoweringException("FOR over a non-integer counter");
     var signed = ((ScalarType)symbol.Type).Signed;
-    var step = this.ConstStep(f.Step);
+    var constStep = this.TryConstStep(f.Step);
     var slot = this.SlotFor(symbol);
     var limitSlot = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(ty) { Name = symbol.Name + ".limit" });
 
     this._b.Store(this.Coerce(this.LowerExpr(f.From), this._model.TypeOf(f.From), symbol.Type), slot);
     this._b.Store(this.Coerce(this.LowerExpr(f.To), this._model.TypeOf(f.To), symbol.Type), limitSlot);
+
+    // a non-constant step has an unknown direction, so keep it as a loop-invariant SSA value
+    IrValue? stepValue = null;
+    if (constStep is null) {
+      if (!signed)
+        throw new IrLoweringException("FOR with a runtime STEP over an unsigned counter");
+      stepValue = this.Coerce(this.LowerExpr(f.Step!), this._model.TypeOf(f.Step!), symbol.Type);
+    }
 
     var header = this.NewBlock("for.head");
     var body = this.NewBlock("for.body");
@@ -288,8 +296,19 @@ public sealed class IrLowering {
     this._b.Position(header);
     var i = this._b.Load(ty, slot);
     var limit = this._b.Load(ty, limitSlot);
-    var pred = step > 0 ? (signed ? IrCmpPred.Sle : IrCmpPred.Ule) : (signed ? IrCmpPred.Sge : IrCmpPred.Uge);
-    this._b.CondBr(this._b.Cmp(pred, i, limit), body, exit);
+    IrValue cond;
+    if (constStep is { } cs) {
+      var pred = cs > 0 ? (signed ? IrCmpPred.Sle : IrCmpPred.Ule) : (signed ? IrCmpPred.Sge : IrCmpPred.Uge);
+      cond = this._b.Cmp(pred, i, limit);
+    } else {
+      // continue = step >= 0 ? i <= limit : i >= limit  (the sign test is loop-invariant; LICM hoists it)
+      var ascending = this._b.Cmp(IrCmpPred.Sge, stepValue!, new IrConstantInt(ty, 0));
+      var inAsc = this._b.And(ascending, this._b.Cmp(IrCmpPred.Sle, i, limit));
+      var notAsc = this._b.Xor(ascending, new IrConstantInt(IrType.I1, 1));
+      var inDesc = this._b.And(notAsc, this._b.Cmp(IrCmpPred.Sge, i, limit));
+      cond = this._b.Or(inAsc, inDesc);
+    }
+    this._b.CondBr(cond, body, exit);
 
     this._b.Position(body);
     this._loops.Push(new LoopContext(ExitKind.For, exit, inc));
@@ -300,7 +319,8 @@ public sealed class IrLowering {
 
     this._b.Position(inc);
     var iv = this._b.Load(ty, slot);
-    this._b.Store(this._b.Binary(IrBinaryOp.Add, iv, new IrConstantInt(ty, step)), slot);
+    var increment = constStep is { } c2 ? (IrValue)new IrConstantInt(ty, c2) : stepValue!;
+    this._b.Store(this._b.Binary(IrBinaryOp.Add, iv, increment), slot);
     this._b.Br(header);
 
     this._b.Position(exit);
@@ -444,12 +464,12 @@ public sealed class IrLowering {
     return this._b.Cmp(pred, l, r);
   }
 
-  private long ConstStep(Expression? step) {
+  private long? TryConstStep(Expression? step) {
     if (step is null)
       return 1;
     if (this._folder.TryFold(step) is { Integer: { } n } && n != 0)
       return n;
-    throw new IrLoweringException("FOR STEP must be a non-zero compile-time constant in this lowering");
+    return null;   // runtime step (or a constant zero, which the direction test also handles)
   }
 
   // ---- conditions & expressions -------------------------------------------
