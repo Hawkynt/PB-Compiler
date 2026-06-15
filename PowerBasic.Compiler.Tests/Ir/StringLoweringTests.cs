@@ -124,6 +124,18 @@ public sealed class StringLoweringTests {
   }
 
   [Test]
+  public void FixedLengthString_AllocatesInlineBufferAndConvertsAtTheBoundary() {
+    var module = LowerOptimized("DIM s AS STRING * 8\ns = \"hi\"\nt$ = s & \"!\"\nPRINT t$\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var text = LlvmEmitter.Emit(module!);
+    Assert.That(text, Does.Contain("alloca i8, i32 8"));          // the inline fixed buffer
+    Assert.That(text, Does.Contain("@rt_str_to_fixed(ptr"));      // assignment pads/truncates into it
+    Assert.That(text, Does.Contain("@rt_str_from_fixed(ptr"));    // reading it yields a handle
+  }
+
+  [Test]
   public void MidStatement_ReplacesSubstringInPlace() {
     var module = LowerOptimized("a$ = \"hello\"\nMID$(a$, 2, 3) = \"ELL\"\nMID$(a$, 1) = \"H\"\nPRINT a$\nEND");
 

@@ -249,6 +249,8 @@ public sealed class IrLowering {
     IrAlloca alloca;
     if (symbol.Type is StringType) {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.Ptr) { Name = symbol.Name });  // holds a string handle
+    } else if (symbol.Type is FixedStringType fixedStr) {
+      alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I8) { Count = fixedStr.Length, Name = symbol.Name });  // inline fixed buffer
     } else if (symbol.Type is ArrayType arr) {
       if (arr.IsDynamic)
         throw new IrLoweringException("dynamic array");
@@ -388,6 +390,11 @@ public sealed class IrLowering {
   private void LowerAssign(AssignStmt a) {
     if (a.Target is NameExpr && this._model.VariableBindings.TryGetValue(a.Target, out var strSym) && strSym.Type is StringType) {
       this._b.Store(this.LowerStringExpr(a.Value), this.SlotFor(strSym));   // strings are immutable handles
+      return;
+    }
+    if (a.Target is NameExpr && this._model.VariableBindings.TryGetValue(a.Target, out var fstrSym) && fstrSym.Type is FixedStringType fixedStr) {
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_str_to_fixed", IrType.Void, IrType.Ptr, IrType.I32, IrType.Ptr),
+        this.SlotFor(fstrSym), new IrConstantInt(IrType.I32, fixedStr.Length), this.LowerStringExpr(a.Value));  // copy, space-pad / truncate to N
       return;
     }
     if (a.Target is CallOrIndexExpr indexed && this._model.VariableBindings.TryGetValue(indexed, out var arrSym) && arrSym.Type is ArrayType) {
@@ -642,6 +649,9 @@ public sealed class IrLowering {
       }
       case NameExpr when this._model.VariableBindings.TryGetValue(expr, out var sym) && sym.Type is StringType:
         return this._b.Load(IrType.Ptr, this.SlotFor(sym));
+      case NameExpr when this._model.VariableBindings.TryGetValue(expr, out var fsym) && fsym.Type is FixedStringType fixedStr:
+        return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_from_fixed", IrType.Ptr, IrType.Ptr, IrType.I32),
+          this.SlotFor(fsym), new IrConstantInt(IrType.I32, fixedStr.Length));   // the inline N bytes as a handle
       case BinaryExpr { Op: BinaryOp.Concat } cat:
         return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_concat", IrType.Ptr, IrType.Ptr, IrType.Ptr),
           this.LowerStringExpr(cat.Left), this.LowerStringExpr(cat.Right));

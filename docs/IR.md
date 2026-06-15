@@ -77,6 +77,8 @@ Supported today:
   (2- and 3-arg), the binary-record encoders/decoders `MKI$`/`MKL$`/`MKS$`/`MKD$`/`MKDWD$`
   and `CVI`/`CVL`/`CVS`/`CVD`/`CVDWD`, and the `MID$()=` in-place-replacement statement;
   identical literals are interned to one global;
+- **fixed-length strings** (`STRING * n`): an inline n-byte buffer; assignment pads/truncates
+  into it (`rt_str_to_fixed`) and any string use reads it back as a handle (`rt_str_from_fixed`);
 - **console and file I/O** (`PRINT` incl. `TAB`/`SPC` and `,` print-zone advance,
   `INPUT`/`LINE INPUT`, `OPEN`/`CLOSE`/`PRINT #`/`INPUT #`)
   via `rt_print_*` / `rt_input_*` / `rt_file_*` declarations; **random/binary record I/O**
