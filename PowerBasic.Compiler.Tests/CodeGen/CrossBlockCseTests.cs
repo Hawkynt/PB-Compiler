@@ -60,6 +60,25 @@ public sealed class CrossBlockCseTests {
   }
 
   [Test]
+  public void Analyze_GivenValueReusedAfterSelect_FlowsPastTheMerge() {
+    // a SELECT join behaves like an IF merge: y%*320 (input y%) computed before the SELECT,
+    // the arms write only b%, so it survives and the post-SELECT recomputation reloads
+    var result = Analyze("y% = 2\nx% = 3\na% = y% * 320 + x%\nSELECT CASE x%\nCASE 1\n b% = 1\nCASE ELSE\n b% = 2\nEND SELECT\nc% = y% * 320 + x%");
+
+    Assert.That(result.SlotCount, Is.GreaterThanOrEqualTo(1), "the value should flow past the SELECT merge and reload after it");
+    Assert.That(result.Marks.Values.Any(m => !m.IsDefine), Is.True);
+  }
+
+  [Test]
+  public void Analyze_GivenSelectArmWritesAnInput_DoesNotFlowPastTheMerge() {
+    // an arm overwrites y%, an input of the cached y%*320, so the value is invalidated at
+    // the merge and the post-SELECT recomputation is fresh
+    var result = Analyze("y% = 2\nx% = 3\na% = y% * 320 + x%\nSELECT CASE x%\nCASE 1\n y% = 9\nCASE ELSE\n b% = 2\nEND SELECT\nc% = y% * 320 + x%");
+
+    Assert.That(result.SlotCount, Is.EqualTo(0));
+  }
+
+  [Test]
   public void Analyze_GivenBarrierInsideIf_DoesNotElide() {
     // a CALL in the branch is a barrier; the recomputation follows it, so no cross-block reuse
     var result = Analyze("DECLARE SUB noop()\ny% = 2\nx% = 3\na% = y% * 320 + x%\nIF a% > 100 THEN\n CALL noop()\n b% = y% * 320 + x%\nEND IF\n\nSUB noop()\nEND SUB");

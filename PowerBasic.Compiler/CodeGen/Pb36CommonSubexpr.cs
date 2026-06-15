@@ -429,7 +429,22 @@ public static class Pb36CommonSubexpr {
             this.RunInheriting(elseIfBody, new(this._live, StringComparer.Ordinal));
           if (iff.Else != null)
             this.RunInheriting(iff.Else, new(this._live, StringComparer.Ordinal));
-          this.RetainPastMerge(iff);
+          var ifBranches = new List<IReadOnlyList<Statement>> { iff.Then };
+          foreach (var (_, elseIfBody) in iff.ElseIfs)
+            ifBranches.Add(elseIfBody);
+          if (iff.Else != null)
+            ifBranches.Add(iff.Else);
+          this.RetainPastMerge(ifBranches);
+          return;
+
+        case SelectStmt sel when IsBarrierFree(sel.Subject, model) && sel.Arms.All(SelectorsBarrierFree):
+          // a SELECT join behaves like an IF merge: the subject is evaluated once and
+          // dominates every arm; the (barrier-free) subject and CASE selectors write
+          // nothing, so the inherited cache is valid in each arm and a value that no arm
+          // overwrites flows past the merge - including the implicit "no arm matched" path
+          foreach (var arm in sel.Arms)
+            this.RunInheriting(arm.Body, new(this._live, StringComparer.Ordinal));
+          this.RetainPastMerge(sel.Arms.Select(a => a.Body).ToList());
           return;
 
         default:
@@ -531,13 +546,7 @@ public static class Pb36CommonSubexpr {
     /// set of scalars any branch may write; entries reading none of them survive.
     /// Otherwise (nested control, calls, anything that could write unseen) we clear.
     /// </summary>
-    private void RetainPastMerge(IfStmt iff) {
-      var branches = new List<IReadOnlyList<Statement>> { iff.Then };
-      foreach (var (_, body) in iff.ElseIfs)
-        branches.Add(body);
-      if (iff.Else != null)
-        branches.Add(iff.Else);
-
+    private void RetainPastMerge(List<IReadOnlyList<Statement>> branches) {
       foreach (var branch in branches)
         if (!this.IsRetainableBranch(branch)) {
           this._live.Clear();
@@ -575,6 +584,20 @@ public static class Pb36CommonSubexpr {
           default:
             return false;
         }
+      return true;
+    }
+
+    /// <summary>
+    /// A CASE arm whose selector expressions are all call-free, so evaluating them (the
+    /// comparisons the SELECT performs) writes nothing and can't invalidate the cache.
+    /// </summary>
+    private bool SelectorsBarrierFree(CaseArm arm) {
+      foreach (var sel in arm.Selectors) {
+        if (sel.Value != null && !IsBarrierFree(sel.Value, model))
+          return false;
+        if (sel.RangeUpper != null && !IsBarrierFree(sel.RangeUpper, model))
+          return false;
+      }
       return true;
     }
 
