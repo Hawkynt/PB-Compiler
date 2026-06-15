@@ -925,11 +925,36 @@ public sealed partial class CodeGenerator {
         } else
           asm.Call(this._rt.LongMul);
         break;
-      case BinaryOp.IntegerDivide:
-        asm.Call(unsignedDivide ? this._rt.LongDivU : this._rt.LongDiv);
-        break;
-      case BinaryOp.Modulo:
-        asm.Call(unsignedDivide ? this._rt.LongModU : this._rt.LongMod);
+      case BinaryOp.IntegerDivide or BinaryOp.Modulo:
+        // pb36 C1 ($CPU 80386): divide by a compile-time-constant divisor of
+        // magnitude >= 2 with the exact hardware IDIV/DIV (EAX=quotient, EDX=
+        // remainder), dropping the LongDiv/LongMod runtime call. x86 truncates
+        // toward zero and the remainder takes the dividend's sign - exactly PB's
+        // \ and MOD. The constant >= 2 gate rules out divide-by-zero (error 11)
+        // and the MININT \ -1 overflow, so no trap path is lost.
+        if (this.Optimize && this.Cpu386
+            && this.Pb36Folder.TryFold(b.Right) is { Integer: { } divisor } && Math.Abs(divisor) >= 2) {
+          var sc = this._scratch;
+          asm.Mov(Mem.Word(sc), Reg.AX);
+          asm.Mov(Mem.Word(sc, 2), Reg.DX);
+          asm.Mov(Reg.EAX, Mem.Dword(sc));      // EAX = dividend
+          asm.Mov(Mem.Word(sc), Reg.BX);
+          asm.Mov(Mem.Word(sc, 2), Reg.CX);
+          asm.Mov(Reg.EBX, Mem.Dword(sc));      // EBX = divisor
+          if (unsignedDivide) {
+            asm.Xor(Reg.EDX, Reg.EDX);
+            asm.Div(Reg.EBX);
+          } else {
+            asm.Cdq();
+            asm.Idiv(Reg.EBX);
+          }
+          asm.Mov(Mem.Dword(sc), b.Op == BinaryOp.Modulo ? Reg.EDX : Reg.EAX);
+          asm.Mov(Reg.AX, Mem.Word(sc));
+          asm.Mov(Reg.DX, Mem.Word(sc, 2));
+        } else if (b.Op == BinaryOp.IntegerDivide)
+          asm.Call(unsignedDivide ? this._rt.LongDivU : this._rt.LongDiv);
+        else
+          asm.Call(unsignedDivide ? this._rt.LongModU : this._rt.LongMod);
         break;
       case BinaryOp.And:
         asm.And(Reg.AX, Reg.BX);

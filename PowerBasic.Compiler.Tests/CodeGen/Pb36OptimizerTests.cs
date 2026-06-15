@@ -377,6 +377,26 @@ public sealed class Pb36OptimizerTests {
     return count;
   }
 
+  [Test]
+  public void Emit_GivenLongDivideByConstantUnderCpu386_WhenPb36_ThenHardwareIdiv() {
+    // a constant divisor of magnitude >= 2 drops the LongDiv runtime call for a 66 F7 IDIV;
+    // the dividend is a SUB parameter with differing call args so it cannot be folded away
+    const string with386 = "$CPU 80386\n$OPTIMIZE SPEED\nDECLARE SUB d(BYVAL n AS LONG)\nd 100000007\nd 9\nEND\nSUB d(BYVAL n AS LONG)\nPRINT n \\ 7\nEND SUB";
+    const string no386 = "$OPTIMIZE SPEED\nDECLARE SUB d(BYVAL n AS LONG)\nd 100000007\nd 9\nEND\nSUB d(BYVAL n AS LONG)\nPRINT n \\ 7\nEND SUB";
+    Assert.That(CountDwordF7(Compile(with386, Dialect.Pb36)),
+      Is.GreaterThan(CountDwordF7(Compile(no386, Dialect.Pb36))),
+      "$CPU 80386 should add a 32-bit IDIV the runtime-call version lacks");
+  }
+
+  // 66 F7 = operand-size-prefixed group-3 (IDIV/DIV/MUL/NEG) = a 32-bit divide here
+  private static int CountDwordF7(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0x66 && image[i + 1] == 0xF7)
+        ++count;
+    return count;
+  }
+
   #endregion
 
   #region strength reduction (O4) and zero idiom (O8)
