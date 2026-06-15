@@ -21,8 +21,19 @@ public sealed class SemanticModel {
   /// <summary>TYPE/UNION definitions with resolved layout.</summary>
   public Dictionary<string, UdtType> Udts { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-  /// <summary>All SUBs/FUNCTIONs: defined, DECLAREd-external, and DEF FNs (named with their FN prefix).</summary>
+  /// <summary>
+  /// First (primary) SUB/FUNCTION of each name - kept for "does a proc named X exist /
+  /// is it a function" lookups. With PB 3.6 overloading a name may have several
+  /// definitions; <see cref="Overloads"/> holds them all and <see cref="ProcedureList"/>
+  /// is the flat emission/analysis order.
+  /// </summary>
   public Dictionary<string, ProcedureSymbol> Procedures { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+  /// <summary>Every defined/DECLAREd procedure in source order, including all overloads (the iteration set for binding and codegen).</summary>
+  public List<ProcedureSymbol> ProcedureList { get; } = [];
+
+  /// <summary>All overloads of each name (PB 3.6); a non-overloaded name maps to a single-element list.</summary>
+  public Dictionary<string, List<ProcedureSymbol>> Overloads { get; } = new(StringComparer.OrdinalIgnoreCase);
 
   /// <summary>Module-level variables (globals, shared, statics of main).</summary>
   public Dictionary<string, VariableSymbol> ModuleVariables { get; } = new(StringComparer.OrdinalIgnoreCase);

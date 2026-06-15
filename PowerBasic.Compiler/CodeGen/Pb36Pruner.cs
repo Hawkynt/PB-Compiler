@@ -26,7 +26,7 @@ public static class Pb36Pruner {
     model.MainBody.Clear();
     model.MainBody.AddRange(main);
 
-    foreach (var proc in model.Procedures.Values)
+    foreach (var proc in model.ProcedureList)
       if (proc.Body != null)
         proc.Body = PruneBlock(proc.Body, model);
   }

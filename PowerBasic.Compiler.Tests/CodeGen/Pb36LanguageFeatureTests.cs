@@ -158,6 +158,57 @@ public sealed class Pb36LanguageFeatureTests {
   }
 
   [Test]
+  public void Execute_GivenOverloadedFunctionByArity_WhenRun_ThenResolvesPerArgCount() {
+    const string source = """
+      DECLARE FUNCTION Area&(BYVAL r AS LONG)
+      DECLARE FUNCTION Area&(BYVAL w AS LONG, BYVAL h AS LONG)
+      PRINT Area&(5)
+      PRINT Area&(4, 6)
+      FUNCTION Area&(BYVAL r AS LONG)
+        Area& = r * r
+      END FUNCTION
+      FUNCTION Area&(BYVAL w AS LONG, BYVAL h AS LONG)
+        Area& = w * h
+      END FUNCTION
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 25\n 24\n"));
+  }
+
+  [Test]
+  public void Execute_GivenOverloadedSubByArity_WhenRun_ThenResolvesPerArgCount() {
+    const string source = """
+      DECLARE SUB Show(BYVAL n AS LONG)
+      DECLARE SUB Show(BYVAL a AS LONG, BYVAL b AS LONG)
+      Show 7
+      Show 3, 4
+      SUB Show(BYVAL n AS LONG)
+        PRINT n
+      END SUB
+      SUB Show(BYVAL a AS LONG, BYVAL b AS LONG)
+        PRINT a * b
+      END SUB
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 7\n 12\n"));
+  }
+
+  [Test]
+  public void Execute_GivenOverloadedFunctionByType_WhenRun_ThenResolvesPerArgType() {
+    const string source = """
+      DECLARE FUNCTION Kind&(BYVAL n AS LONG)
+      DECLARE FUNCTION Kind&(BYVAL s AS STRING)
+      PRINT Kind&(42&)
+      PRINT Kind&("x")
+      FUNCTION Kind&(BYVAL n AS LONG)
+        Kind& = 1
+      END FUNCTION
+      FUNCTION Kind&(BYVAL s AS STRING)
+        Kind& = 2
+      END FUNCTION
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 1\n 2\n"));
+  }
+
+  [Test]
   public void Execute_GivenObjectInitializer_WhenRun_ThenListedFieldsSetAndOthersZero() {
     // Z is not listed, so it must keep its zero-initialized value.
     const string source = """

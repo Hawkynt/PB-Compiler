@@ -24,7 +24,7 @@ public sealed partial class CodeGenerator {
   /// END, and inert declarations qualify - and there must be no procedures.
   /// </summary>
   private byte[]? TryLowerTrivialProgram() {
-    if (model.Procedures.Values.Any(p => !p.IsExternal))
+    if (model.ProcedureList.Any(p => !p.IsExternal))
       return null;
 
     var text = new List<byte>();

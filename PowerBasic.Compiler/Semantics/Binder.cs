@@ -53,7 +53,7 @@ public sealed class Binder {
     this._model.MainBody.Clear();
     this._model.MainBody.AddRange(spliced);
 
-    foreach (var proc in this._model.Procedures.Values.Where(p => !p.IsExternal))
+    foreach (var proc in this._model.ProcedureList.Where(p => !p.IsExternal))
       proc.Body = this.SpliceBody(proc.Body!);
   }
 
@@ -283,32 +283,109 @@ public sealed class Binder {
   }
 
   private void DeclareProcedure(DeclareStmt d) {
-    if (this._model.Procedures.ContainsKey(d.Name))
-      return; // a definition or earlier DECLARE wins; signatures checked when bodies bind
-
     var proc = new ProcedureSymbol(d.Name, d.IsFunction) { Position = d.Position };
     if (d.IsFunction)
       proc.ReturnType = this.ResolveReturnType(d.Name, d.Suffix, d.ReturnType);
     if (d.Parameters != null)
       foreach (var p in d.Parameters)
         proc.Parameters.Add(this.BindParameter(p));
-    this._model.Procedures[d.Name] = proc;
+
+    // an identical prototype (or a definition) already on record: first one wins
+    if (this._model.Overloads.TryGetValue(d.Name, out var set) && set.Any(e => SameSignature(e, proc)))
+      return;
+    this.RegisterProcedure(proc);
   }
 
   private ProcedureSymbol DefineProcedure(string name, bool isFunction, TypeSuffix suffix, TypeName? returnType, IReadOnlyList<Parameter> parameters, bool isStatic, IReadOnlyList<Statement> body, SourcePosition position, bool isCdecl = false) {
-    if (this._model.Procedures.TryGetValue(name, out var existing) && !existing.IsExternal) {
-      this.Error(position, $"{(isFunction ? "FUNCTION" : "SUB")} {name} already defined");
-      return existing;
-    }
-
     var proc = new ProcedureSymbol(name, isFunction) { IsStatic = isStatic, Body = body, Position = position, IsCdecl = isCdecl };
     if (isFunction)
       proc.ReturnType = this.ResolveReturnType(name, suffix, returnType);
     foreach (var p in parameters)
       proc.Parameters.Add(this.BindParameter(p));
 
-    this._model.Procedures[name] = proc;
+    if (this._model.Overloads.TryGetValue(name, out var set)) {
+      var sameSig = set.FirstOrDefault(e => SameSignature(e, proc));
+      if (sameSig is { IsExternal: false }) {
+        this.Error(position, $"{(isFunction ? "FUNCTION" : "SUB")} {name} already defined");
+        return sameSig;
+      }
+      if (sameSig is { IsExternal: true }) {
+        this.ReplaceProcedure(sameSig, proc); // a DECLARE prototype: the definition supplies its body
+        return proc;
+      }
+      // a new signature for an existing name = overloading (PB 3.6 only)
+      this.Require(LanguageFeature.SubFunctionOverloading, position);
+    }
+    this.RegisterProcedure(proc);
     return proc;
+  }
+
+  /// <summary>Two procedures share a signature when their parameter lists have equal length and element types.</summary>
+  private static bool SameSignature(ProcedureSymbol a, ProcedureSymbol b) {
+    if (a.Parameters.Count != b.Parameters.Count)
+      return false;
+    for (var i = 0; i < a.Parameters.Count; ++i)
+      if (!Equals(a.Parameters[i].Type, b.Parameters[i].Type))
+        return false;
+    return true;
+  }
+
+  private void RegisterProcedure(ProcedureSymbol proc) {
+    this._model.ProcedureList.Add(proc);
+    if (!this._model.Overloads.TryGetValue(proc.Name, out var list))
+      this._model.Overloads[proc.Name] = list = [];
+    proc.OverloadIndex = list.Count;
+    list.Add(proc);
+    this._model.Procedures.TryAdd(proc.Name, proc); // first of a name is the primary
+  }
+
+  /// <summary>Replaces a DECLARE prototype with its definition, keeping its overload slot.</summary>
+  private void ReplaceProcedure(ProcedureSymbol old, ProcedureSymbol definition) {
+    definition.OverloadIndex = old.OverloadIndex;
+    var listIndex = this._model.ProcedureList.IndexOf(old);
+    if (listIndex >= 0)
+      this._model.ProcedureList[listIndex] = definition;
+    else
+      this._model.ProcedureList.Add(definition);
+    var overloadList = this._model.Overloads[old.Name];
+    var slot = overloadList.IndexOf(old);
+    if (slot >= 0)
+      overloadList[slot] = definition;
+    if (this._model.Procedures.TryGetValue(old.Name, out var primary) && ReferenceEquals(primary, old))
+      this._model.Procedures[old.Name] = definition;
+  }
+
+  /// <summary>
+  /// Resolves a call to the best-matching overload of <paramref name="name"/>:
+  /// the single definition when not overloaded, else the unique arity match, else
+  /// the arity match with the most exact argument-type matches (PB 3.6). The
+  /// arguments must already be bound (their types drive the tie-break).
+  /// </summary>
+  private ProcedureSymbol? ResolveOverload(string name, IReadOnlyList<Expression> args) {
+    if (!this._model.Overloads.TryGetValue(name, out var set) || set.Count == 0)
+      return null;
+    if (set.Count == 1)
+      return set[0];
+
+    var byArity = set.Where(p => args.Count >= p.RequiredParameters && args.Count <= p.Parameters.Count).ToList();
+    if (byArity.Count == 0)
+      return set[0]; // no arity fits - let the argument-count diagnostic fire on the primary
+    if (byArity.Count == 1)
+      return byArity[0];
+
+    ProcedureSymbol best = byArity[0];
+    var bestScore = -1;
+    foreach (var candidate in byArity) {
+      var score = 0;
+      for (var i = 0; i < args.Count && i < candidate.Parameters.Count; ++i)
+        if (Equals(this._model.ExpressionTypes.GetValueOrDefault(args[i]), candidate.Parameters[i].Type))
+          ++score;
+      if (score > bestScore) {
+        best = candidate;
+        bestScore = score;
+      }
+    }
+    return best;
   }
 
   private VariableSymbol BindParameter(Parameter p) {
@@ -477,7 +554,7 @@ public sealed class Binder {
       this.BindStatement(statement, main);
     this.CheckLabelRefs(main);
 
-    foreach (var proc in this._model.Procedures.Values.Where(p => !p.IsExternal)) {
+    foreach (var proc in this._model.ProcedureList.Where(p => !p.IsExternal)) {
       var scope = new Scope(proc);
 
       foreach (var p in proc.Parameters)
@@ -1088,25 +1165,19 @@ public sealed class Binder {
     => this._model.DimInitializers.TryGetValue(dim, out var list) ? list : this._model.DimInitializers[dim] = [];
 
   private void BindCallStatement(CallStmt c, Scope scope) {
+    // bind arguments first so their types can pick the overload (PB 3.6)
+    foreach (var argument in c.Arguments)
+      this.BindExpression(argument, scope);
+
     // PB allows CALL on a FUNCTION too - the result is discarded
-    if (this._model.Procedures.TryGetValue(c.Name, out var proc)) {
+    if (this.ResolveOverload(c.Name, c.Arguments) is { } proc) {
       this._model.CallBindings[c] = proc;
       if ((c.Arguments.Count < proc.RequiredParameters || c.Arguments.Count > proc.Parameters.Count) && !proc.Parameters.Any(p => Equals(p.Type, PbType.Any)))
         this.Error(c.Position, $"{(proc.IsFunction ? "FUNCTION" : "SUB")} {c.Name} expects {proc.Parameters.Count} argument(s), got {c.Arguments.Count}");
-      this.BindCallArguments(proc, c.Arguments, scope);
       return;
     }
 
     this.Error(c.Position, $"unknown SUB {c.Name}");
-    foreach (var argument in c.Arguments)
-      this.BindExpression(argument, scope);
-  }
-
-  /// <summary>Binds call arguments; CODEPTR-family arguments referring to procedures bind as code addresses.</summary>
-  private void BindCallArguments(ProcedureSymbol proc, IReadOnlyList<Expression> arguments, Scope scope) {
-    _ = proc;
-    foreach (var argument in arguments)
-      this.BindExpression(argument, scope);
   }
 
   private void CheckAssignable(PbType target, PbType value, SourcePosition position) {
@@ -1598,8 +1669,11 @@ public sealed class Binder {
         : this.ReturnTypeOf(intrinsic, firstArg);
     }
 
-    // 3. user function
-    if (this._model.Procedures.TryGetValue(call.Name, out var proc)) {
+    // 3. user function - bind arguments first so their types can select the overload
+    if (this._model.Overloads.ContainsKey(call.Name)) {
+      foreach (var argument in call.Arguments)
+        this.BindExpression(argument, scope);
+      var proc = this.ResolveOverload(call.Name, call.Arguments)!;
       if (!proc.IsFunction) {
         this.Error(call.Position, $"SUB {call.Name} used as a function");
         return PbType.Integer;
@@ -1607,8 +1681,6 @@ public sealed class Binder {
       this._model.CallBindings[call] = proc;
       if (call.Arguments.Count < proc.RequiredParameters || call.Arguments.Count > proc.Parameters.Count)
         this.Error(call.Position, $"FUNCTION {call.Name} expects {proc.Parameters.Count} argument(s), got {call.Arguments.Count}");
-      foreach (var argument in call.Arguments)
-        this.BindExpression(argument, scope);
       return proc.ReturnType ?? PbType.Integer;
     }
 

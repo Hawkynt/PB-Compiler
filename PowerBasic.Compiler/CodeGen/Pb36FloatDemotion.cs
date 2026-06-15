@@ -83,7 +83,7 @@ public static class Pb36FloatDemotion {
 
     public IEnumerable<IReadOnlyList<Statement>> AllBodies() {
       yield return model.MainBody;
-      foreach (var proc in model.Procedures.Values)
+      foreach (var proc in model.ProcedureList)
         if (proc.Body is { } body)
           yield return body;
     }
@@ -91,7 +91,7 @@ public static class Pb36FloatDemotion {
     public void Collect() {
       foreach (var symbol in model.ModuleVariables.Values)
         this.Consider(symbol);
-      foreach (var proc in model.Procedures.Values) {
+      foreach (var proc in model.ProcedureList) {
         foreach (var symbol in proc.Variables.Values)
           this.Consider(symbol);
         foreach (var parameter in proc.Parameters)

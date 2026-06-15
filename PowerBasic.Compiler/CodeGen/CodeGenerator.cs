@@ -195,7 +195,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this.EndFrame();
     this._trackResume = false;
 
-    foreach (var proc in model.Procedures.Values)
+    foreach (var proc in model.ProcedureList)
       if (!proc.IsExternal)
         this.EmitProcedure(proc);
 
@@ -374,10 +374,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
   private Label ProcLabelOf(ProcedureSymbol proc) {
     if (!this._procLabels.TryGetValue(proc, out var label))
-      // DECLAREd-but-undefined procedures resolve at link time by name
+      // DECLAREd-but-undefined procedures resolve at link time by name; overloaded
+      // definitions (PB 3.6) get an index suffix so each has its own label (the
+      // first/only one keeps the plain p_<name> for byte-identical output).
       this._procLabels[proc] = label = proc.IsExternal && this._allowExternalCalls
         ? this._asm.External(proc.Name)
-        : this._asm.DefineLabel($"p_{proc.Name}");
+        : this._asm.DefineLabel(proc.OverloadIndex == 0 ? $"p_{proc.Name}" : $"p_{proc.Name}__{proc.OverloadIndex}");
     return label;
   }
 

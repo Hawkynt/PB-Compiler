@@ -49,6 +49,11 @@ public sealed class ProcedureSymbol(string name, bool isFunction) {
   public bool IsStatic { get; set; }
   /// <summary>CDECL calling convention: arguments pushed right to left, caller cleans the stack.</summary>
   public bool IsCdecl { get; set; }
+  /// <summary>
+  /// Position of this overload within its same-name set (PB 3.6 overloading). 0 for
+  /// the first/only one, so a non-overloaded procedure keeps its plain emitted label.
+  /// </summary>
+  public int OverloadIndex { get; set; }
   /// <summary>Null when only DECLAREd (external - resolved at link time from PBU/PBL).</summary>
   public IReadOnlyList<Statement>? Body { get; set; }
   public SourcePosition Position { get; set; }

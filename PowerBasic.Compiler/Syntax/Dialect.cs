@@ -90,6 +90,7 @@ public enum LanguageFeature {
   TernaryIf,
   ObjectInitializer,
   ShortCircuitOps,
+  SubFunctionOverloading,
 }
 
 /// <summary>
@@ -134,6 +135,7 @@ public static class DialectFacts {
     [LanguageFeature.TernaryIf] = (Dialect.Pb36, "ternary IF() operator ('IF(condition, trueValue, falseValue)')"),
     [LanguageFeature.ObjectInitializer] = (Dialect.Pb36, "object initializer ('NEW type { .field = value }')"),
     [LanguageFeature.ShortCircuitOps] = (Dialect.Pb36, "short-circuit operators (ANDALSO / ORELSE)"),
+    [LanguageFeature.SubFunctionOverloading] = (Dialect.Pb36, "SUB/FUNCTION overloading (same name, different signature)"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>
