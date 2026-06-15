@@ -75,7 +75,8 @@ Supported today:
   comparisons, `LEN`, `LEFT$`/`RIGHT$`/`MID$`, `CHR$`/`ASC`, `STR$`/`VAL`,
   `SPACE$`/`STRING$`, `HEX$`/`OCT$`, `UCASE$`/`LCASE$`/`LTRIM$`/`RTRIM$`, `INSTR`
   (2- and 3-arg), the binary-record encoders/decoders `MKI$`/`MKL$`/`MKS$`/`MKD$`/`MKDWD$`
-  and `CVI`/`CVL`/`CVS`/`CVD`/`CVDWD`; identical literals are interned to one global;
+  and `CVI`/`CVL`/`CVS`/`CVD`/`CVDWD`, and the `MID$()=` in-place-replacement statement;
+  identical literals are interned to one global;
 - **console and file I/O** (`PRINT` incl. `TAB`/`SPC` and `,` print-zone advance,
   `INPUT`/`LINE INPUT`, `OPEN`/`CLOSE`/`PRINT #`/`INPUT #`)
   via `rt_print_*` / `rt_input_*` / `rt_file_*` declarations; **random/binary record I/O**

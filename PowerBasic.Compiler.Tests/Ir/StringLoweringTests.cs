@@ -124,6 +124,16 @@ public sealed class StringLoweringTests {
   }
 
   [Test]
+  public void MidStatement_ReplacesSubstringInPlace() {
+    var module = LowerOptimized("a$ = \"hello\"\nMID$(a$, 2, 3) = \"ELL\"\nMID$(a$, 1) = \"H\"\nPRINT a$\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var text = LlvmEmitter.Emit(module!);
+    Assert.That(text, Does.Contain("@rt_str_mid_assign(ptr"));   // replace into the buffer, store the new handle back
+  }
+
+  [Test]
   public void HexAndOct_LowerToRuntimeFormatters() {
     var module = LowerOptimized("n% = 255\nPRINT HEX$(n%)\nPRINT OCT$(n%)\nEND");
 

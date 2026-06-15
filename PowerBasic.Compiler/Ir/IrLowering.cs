@@ -366,6 +366,7 @@ public sealed class IrLowering {
       case RedimStmt rdm: this.LowerRedim(rdm); break;
       case EraseStmt er: this.LowerErase(er); break;
       case SwapStmt sw: this.LowerSwap(sw); break;
+      case MidAssignStmt mid: this.LowerMidAssign(mid); break;
       case LabelStmt l: this.LowerLabel(l); break;
       case GotoStmt g: this.LowerGoto(g); break;
       case GosubStmt gs: this.LowerGosub(gs); break;
@@ -413,6 +414,29 @@ public sealed class IrLowering {
     var slot = this.SlotFor(symbol);
     var value = this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), symbol.Type);
     this._b.Store(value, slot);
+  }
+
+  /// <summary>MID$(target$, start[, length]) = value$ - replace a substring in place (strings are handles, so store a new one back).</summary>
+  private void LowerMidAssign(MidAssignStmt m) {
+    if (this._module is null)
+      throw new IrLoweringException("MID$ statement requires whole-module lowering");
+    var current = this.LowerStringExpr(m.Target);
+    var start = this.Coerce(this.LowerExpr(m.Start), this._model.TypeOf(m.Start), PbType.Long);
+    var length = m.Length is { } len
+      ? this.Coerce(this.LowerExpr(len), this._model.TypeOf(len), PbType.Long)
+      : new IrConstantInt(IrType.I32, -1);             // -1 = replace to the end of the source slice
+    var result = this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid_assign", IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I32, IrType.Ptr),
+      current, start, length, this.LowerStringExpr(m.Value));
+    this._b.Store(result, this.StringTargetAddress(m.Target));
+  }
+
+  /// <summary>The storage slot of a string lvalue (a string variable or a string-array element).</summary>
+  private IrValue StringTargetAddress(Expression target) {
+    if (target is NameExpr && this._model.VariableBindings.TryGetValue(target, out var sym) && sym.Type is StringType)
+      return this.SlotFor(sym);
+    if (target is CallOrIndexExpr ce && this._model.VariableBindings.TryGetValue(ce, out var arr) && arr.Type is ArrayType { Element: StringType })
+      return this.ElementAddress(ce).Address;
+    throw new IrLoweringException("unsupported MID$ target");
   }
 
   private void LowerSwap(SwapStmt sw) {
