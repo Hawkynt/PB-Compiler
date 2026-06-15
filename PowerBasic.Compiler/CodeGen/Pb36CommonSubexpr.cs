@@ -63,9 +63,12 @@ public static class Pb36CommonSubexpr {
     // live within the current straight-line run: key -> the node currently holding the value
     private Dictionary<string, Expression> _live = new(StringComparer.Ordinal);
 
-    public void Run(IReadOnlyList<Statement> statements) {
+    public void Run(IReadOnlyList<Statement> statements) => this.RunInheriting(statements, new(StringComparer.Ordinal));
+
+    /// <summary>Runs a block starting from an inherited live cache (the dominating code's still-valid values).</summary>
+    private void RunInheriting(IReadOnlyList<Statement> statements, Dictionary<string, Expression> inherited) {
       var savedLive = this._live;
-      this._live = new(StringComparer.Ordinal);
+      this._live = inherited;
       foreach (var statement in statements)
         this.Walk(statement);
       this._live = savedLive;
@@ -97,6 +100,22 @@ public static class Pb36CommonSubexpr {
           if (id.Amount is { } amount)
             this.Register(amount, Mode.Integer);
           this.Invalidate(target);
+          return;
+
+        case IfStmt iff when IsBarrierFree(iff.Condition, model) && iff.ElseIfs.All(e => IsBarrierFree(e.Condition, model)):
+          // cross-block CSE: the code before the IF dominates every branch, so a value
+          // computed before the IF is still available at each branch's start. The
+          // (side-effect-free) conditions write nothing, so the inherited cache stays
+          // valid; each branch invalidates a key incrementally when it writes that key's
+          // inputs. Branch computations do not survive the merge, so the cache is cleared
+          // afterwards. Branches emit through the mark-aware EmitExpression, so a reload
+          // pairs with the unconditional pre-IF DEFINE.
+          this.RunInheriting(iff.Then, new(this._live, StringComparer.Ordinal));
+          foreach (var (_, elseIfBody) in iff.ElseIfs)
+            this.RunInheriting(elseIfBody, new(this._live, StringComparer.Ordinal));
+          if (iff.Else != null)
+            this.RunInheriting(iff.Else, new(this._live, StringComparer.Ordinal));
+          this._live.Clear();
           return;
 
         default:
