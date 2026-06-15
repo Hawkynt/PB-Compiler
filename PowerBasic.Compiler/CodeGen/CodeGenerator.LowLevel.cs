@@ -75,6 +75,23 @@ public sealed partial class CodeGenerator {
       return;
     }
 
+    // pb36 C1 ($CPU 80386): a 32-bit cell with a compile-time-constant count in 1..31
+    // shifts/rotates the dword in place with a single 386 instruction, replacing the
+    // CX-times per-word loop. The count must be a constant in range because the 386
+    // masks it to 5 bits (a count >= 32 would differ from the unmasked loop). SHIFT
+    // RIGHT here is logical (the loop uses SHR), matching genuine PBC.
+    if (size == 4 && this.Optimize && this.Cpu386
+        && this.Pb36Folder.TryFold(count) is { Integer: { } cnt } && cnt is >= 1 and <= 31) {
+      var dword = Adjust(place.Cell, 0, OperandSize.Dword);
+      switch (rotate, left) {
+        case (false, true): asm.Shl(dword, (int)cnt); break;
+        case (false, false): asm.Shr(dword, (int)cnt); break;
+        case (true, true): asm.Rol(dword, (int)cnt); break;
+        case (true, false): asm.Ror(dword, (int)cnt); break;
+      }
+      return;
+    }
+
     // 32/64-bit: one-bit steps through the word chain, CX times
     var words = size / 2;
     var lo = Adjust(place.Cell, 0, OperandSize.Word);

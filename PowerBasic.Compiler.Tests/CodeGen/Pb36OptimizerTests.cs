@@ -358,6 +358,25 @@ public sealed class Pb36OptimizerTests {
     Assert.That(found, Is.True, "$CPU 80386 + pb36 should emit REP MOVSD block copies");
   }
 
+  [Test]
+  public void Emit_GivenLongShiftUnderCpu386_WhenPb36_ThenSingleDwordShift() {
+    // a constant-count LONG SHIFT collapses the per-bit loop to one 66 C1 dword shift
+    const string with386 = "$CPU 80386\n$OPTIMIZE SPEED\nx& = 3\nSHIFT LEFT x&, 4\nPRINT x&\nEND";
+    const string no386 = "$OPTIMIZE SPEED\nx& = 3\nSHIFT LEFT x&, 4\nPRINT x&\nEND";
+    Assert.That(CountDwordShiftImm(Compile(with386, Dialect.Pb36)),
+      Is.GreaterThan(CountDwordShiftImm(Compile(no386, Dialect.Pb36))),
+      "$CPU 80386 should add a 32-bit dword shift the per-bit-loop version lacks");
+  }
+
+  // 66 C1 = operand-size-prefixed shift-group-by-imm8 = a 32-bit SHL/SHR/ROL/ROR imm
+  private static int CountDwordShiftImm(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0x66 && image[i + 1] == 0xC1)
+        ++count;
+    return count;
+  }
+
   #endregion
 
   #region strength reduction (O4) and zero idiom (O8)
