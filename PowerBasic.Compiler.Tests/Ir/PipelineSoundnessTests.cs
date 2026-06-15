@@ -35,6 +35,19 @@ public sealed class PipelineSoundnessTests {
     yield return Case("byref-sub", "DECLARE SUB inc(x%)\nq% = 5\nCALL inc(q%)\n\nSUB inc(x%)\n x% = x% + 1\nEND SUB");
     yield return Case("multi-block-fn", "DECLARE FUNCTION clamp%(BYVAL n%)\nr% = clamp%(50)\n\nFUNCTION clamp%(BYVAL n%)\n IF n% > 9 THEN\n  clamp% = 9\n ELSE\n  clamp% = n%\n END IF\nEND FUNCTION");
     yield return Case("call-in-loop", "DECLARE FUNCTION dbl%(BYVAL n%)\nDIM a%(0 TO 4)\nFOR i% = 0 TO 4\n a%(i%) = dbl%(i%)\nNEXT i%\n\nFUNCTION dbl%(BYVAL n%)\n dbl% = n% OR n%\nEND FUNCTION");
+    // wave 5/6 feature shapes
+    yield return Case("gosub", "x% = 1\nGOSUB bump\ny% = x%\nEND\nbump:\nx% = x% + 10\nRETURN");
+    yield return Case("data-read", "READ n%\nREAD s$\nPRINT s$\nPRINT n%\nEND\nDATA 42, hi");
+    yield return Case("dynamic-array", "REDIM a%(1 TO 8)\nFOR i% = 1 TO 8\n a%(i%) = i% * i%\nNEXT i%\nx% = a%(4)\nEND");
+    yield return Case("redim-preserve", "REDIM a%(1 TO 3)\na%(1) = 7\nREDIM PRESERVE a%(1 TO 9)\nx% = a%(1)\nEND");
+    yield return Case("udt-record", "TYPE Pt\n X AS INTEGER\n Y AS INTEGER\nEND TYPE\nDIM a AS Pt\nDIM b AS Pt\na.X = 5\nb = a\nIF a = b THEN PRINT \"eq\"\nEND");
+    yield return Case("udt-fixed-field", "TYPE Person\n Name AS STRING * 16\n Age AS INTEGER\nEND TYPE\nDIM p AS Person\np.Name = \"Ada\"\np.Age = 36\nPRINT p.Name\nEND");
+    yield return Case("string-funcs", "a$ = \"Hello World\"\nb$ = UCASE$(LEFT$(a$, 5))\np% = INSTR(a$, \"World\")\nMID$(a$, 1, 5) = \"HELLO\"\nPRINT b$\nPRINT p%\nEND");
+    yield return Case("select-string", "a$ = \"b\"\nSELECT CASE a$\nCASE \"a\"\n PRINT 1\nCASE \"b\", \"c\"\n PRINT 2\nCASE ELSE\n PRINT 9\nEND SELECT\nEND");
+    yield return Case("random-file", "OPEN \"d.dat\" FOR RANDOM AS #1 LEN = 2\nFOR i% = 1 TO 5\n PUT #1, i%, i%\nNEXT i%\nGET #1, 3, r%\nCLOSE #1\nEND");
+    yield return Case("print-layout", "PRINT \"a\", \"b\"\nPRINT TAB(10); \"x\"\nPRINT SPC(3); \"y\"\nEND");
+    yield return Case("power-op", "b# = 2.0\nr# = b# ^ 10.0\nPRINT r#\nEND");
+    yield return Case("binary-record", "n% = 42\nr$ = MKI$(n%)\nx% = CVI(r$)\nPRINT x%\nEND");
   }
 
   private static TestCaseData Case(string name, string source) => new TestCaseData(source) { TestName = name };

@@ -540,7 +540,7 @@ public sealed class IrLowering {
       this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], global, new IrConstantInt(IrType.I32, bytes.Length));
       return;
     }
-    if (this._model.TypeOf(expr) is StringType) {
+    if (this._model.TypeOf(expr) is StringType or FixedStringType) {
       this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr], this.LowerStringExpr(expr));
       return;
     }
@@ -1500,7 +1500,7 @@ public sealed class IrLowering {
     var resultPb = this._model.TypeOf(expr);
     return expr.Op switch {
       BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
-        or BinaryOp.LessEqual or BinaryOp.GreaterEqual => leftPb is StringType
+        or BinaryOp.LessEqual or BinaryOp.GreaterEqual => leftPb is StringType or FixedStringType
           ? this.LowerStringComparison(expr, resultPb)
           : leftPb is UdtType
             ? this.LowerUdtComparison(expr, resultPb)
