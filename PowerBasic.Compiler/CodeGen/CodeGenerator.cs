@@ -1279,6 +1279,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     }
     this.EmitStorePlace(new(step, false), limitType, f.From);
 
+    // pb36 LICM: hoist loop-invariant pure subexpressions into the preheader
+    this.EmitLicmPreheader(f, counter);
+
     var top = asm.DefineLabel();
     var negative = asm.DefineLabel();
     var body = asm.DefineLabel();
@@ -1435,6 +1438,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this.EmitExpression(f.To);
     this.Coerce(model.TypeOf(f.To), counterType, f.To);
     asm.Mov(limit, Reg.AX);
+
+    // pb36 LICM: hoist loop-invariant pure subexpressions into the preheader
+    if (f.Variable is NameExpr nameVar && model.VariableBindings.TryGetValue(nameVar, out var counterSym))
+      this.EmitLicmPreheader(f, counterSym);
 
     var top = asm.DefineLabel();
     var done = asm.DefineLabel();

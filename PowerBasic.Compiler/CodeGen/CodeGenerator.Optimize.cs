@@ -1730,6 +1730,79 @@ public sealed partial class CodeGenerator {
     this.ReleaseTemp(2); // limitSlot
     return true;
   }
+  #endregion
+  #region LICM - loop-invariant code motion ($OPTIMIZE SPEED)
+
+  /// <summary>
+  /// pb36 LICM: hoists pure integer subexpressions from the body of
+  /// <paramref name="f"/> into the preheader when their operands are all
+  /// loop-invariant (not written in the body and not the loop counter).
+  ///
+  /// Each hoistable expression is computed once into a dedicated CSE frame slot
+  /// before the loop; in-body occurrences reload the slot via the existing CSE
+  /// DEFINE/reload mechanism. Returns the number of new slots allocated (0 when
+  /// no invariants are found or the gate rejects the loop).
+  ///
+  /// Gate:
+  /// <list type="bullet">
+  ///   <item><see cref="OptimizeSpeed"/> must be on.</item>
+  ///   <item>No checked arithmetic (<see cref="CheckNumeric"/> /
+  ///   <see cref="CheckOverflow"/>): hoisted expressions must never trap in a
+  ///   zero-trip loop where the body does not execute.</item>
+  ///   <item>No error-handler scope (<c>_trackResume</c>): a handler could
+  ///   observe the preheader computation in a loop that would otherwise be
+  ///   skipped.</item>
+  /// </list>
+  /// </summary>
+  private int EmitLicmPreheader(ForStmt f, VariableSymbol counter) {
+    if (!this.Optimize || !this.OptimizeSpeed)
+      return 0;
+    if (this.CheckNumeric || this.CheckOverflow)
+      return 0;
+    if (this._trackResume)
+      return 0;
+
+    // checkedArithmetic mirrors the gate in Pb36CommonSubexpr.Analyze
+    var checkedArithmetic = model.MetaStatements.Any(m =>
+      m.Command.Equals("ERROR", StringComparison.OrdinalIgnoreCase)
+      && m.Arguments.Count >= 2
+      && m.Arguments[0].Text.ToUpperInvariant() is "NUMERIC" or "OVERFLOW" or "ALL"
+      && m.Arguments[^1].Text.Equals("ON", StringComparison.OrdinalIgnoreCase));
+
+    var firstSlot = this._cseBytes / 4; // next available slot index
+    var licm = Pb36CommonSubexpr.AnalyzeLicm(f.Body, counter, firstSlot, checkedArithmetic, model);
+    if (licm.SlotCount == 0)
+      return 0;
+
+    // allocate the new slots in the frame (EndFrame will see the updated _cseBytes)
+    this._cseBytes += licm.SlotCount * 4;
+
+    // merge LICM marks into the frame-wide CSE mark dictionary
+    this._cseMarks ??= new(ReferenceEqualityComparer.Instance);
+    foreach (var (node, mark) in licm.Marks)
+      this._cseMarks[node] = mark;
+
+    // emit the preheader: each DEFINE is emitted here (once, before the loop);
+    // EmitExpression sees the DEFINE mark, evaluates the tree and stashes the
+    // result to the slot - identical to the in-body DEFINE path for block-local CSE.
+    // After the preheader emit we downgrade the DEFINE mark on the same node to a
+    // USE, so that the body occurrence (same AST node instance) reloads the slot
+    // rather than recomputing and re-stashing it.
+    foreach (var defineNode in licm.Preheader) {
+      // integer nodes: DEFINE fires inside EmitExpression (checks _cseMarks for IsFloat:false nodes)
+      // modular nodes: DEFINE fires inside EmitModularInt16 (typed Single/Double by the binder but
+      //   computed on the 16-bit ALU); EmitExpression would bypass the CSE mark for float-typed nodes
+      if (licm.ModularPreheader.Contains(defineNode))
+        this.EmitModularInt16(defineNode); // DEFINE: compute on 16-bit ALU + stash to slot
+      else
+        this.EmitExpression(defineNode);   // DEFINE: compute + stash to slot
+      // downgrade to USE so the body occurrence (same AST node) reloads the slot
+      if (this._cseMarks!.TryGetValue(defineNode, out var defMark))
+        this._cseMarks[defineNode] = new Pb36CommonSubexpr.CseMark(defMark.Slot, IsDefine: false);
+    }
+
+    return licm.SlotCount;
+  }
 
   #endregion
 }

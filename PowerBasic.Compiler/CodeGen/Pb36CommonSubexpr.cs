@@ -34,6 +34,320 @@ public static class Pb36CommonSubexpr {
     public int SlotCount { get; set; }
   }
 
+  /// <summary>
+  /// pb36 LICM analysis result: a hoistable loop-invariant subexpression, the
+  /// first AST node that computes it (emitted once in the preheader as a DEFINE),
+  /// and the subsequent body occurrences (marked as reloads). The slot index is
+  /// allocated relative to the <c>firstSlot</c> offset supplied to
+  /// <see cref="AnalyzeLicm"/>; the caller merges it into its CSE mark dictionary
+  /// and bumps <c>_cseBytes</c> accordingly.
+  /// </summary>
+  public sealed class LicmResult {
+    /// <summary>New mark entries to merge into the frame-wide CSE mark dict.</summary>
+    public Dictionary<Expression, CseMark> Marks { get; } = new(ReferenceEqualityComparer.Instance);
+    /// <summary>The DEFINE node for each invariant (in discovery order): caller emits these in the preheader.</summary>
+    public List<Expression> Preheader { get; } = [];
+    /// <summary>
+    /// Subset of <see cref="Preheader"/> whose nodes are modular-int16 trees (typed
+    /// <c>Single</c> by the binder but computed on the 16-bit ALU). The caller must
+    /// emit these via <c>EmitModularInt16</c> rather than <c>EmitExpression</c>.
+    /// </summary>
+    public HashSet<Expression> ModularPreheader { get; } = new(ReferenceEqualityComparer.Instance);
+    /// <summary>Number of new 4-byte frame slots needed (one per unique invariant key).</summary>
+    public int SlotCount { get; set; }
+  }
+
+  /// <summary>
+  /// pb36 LICM: identifies pure integer subexpressions in the loop body whose
+  /// operands are all loop-invariant (not written anywhere in the body, not the
+  /// loop counter) and that cannot trap when computed unconditionally.
+  ///
+  /// Safety contract:
+  /// <list type="bullet">
+  ///   <item>Only fires when <c>checkedArithmetic</c> is false (no $ERROR
+  ///   NUMERIC/OVERFLOW/ALL) — overflow traps would fire even in a zero-trip
+  ///   loop if we hoisted them.</item>
+  ///   <item><c>\</c> and <c>MOD</c> are excluded unless their right operand is a
+  ///   compile-time non-zero constant — a zero divisor could trap in the body but
+  ///   not in a zero-trip preheader, changing behavior.</item>
+  ///   <item>The body must be a flat straight-line sequence (no control flow
+  ///   nesting): any nested block makes the written-set conservative but the
+  ///   structure check is the belt-and-suspenders gate ensuring no conditional
+  ///   write is missed.</item>
+  /// </list>
+  ///
+  /// Slot indices start at <paramref name="firstSlot"/> so the returned marks
+  /// slot-interleave cleanly with the existing block-local CSE slots.
+  /// </summary>
+  public static LicmResult AnalyzeLicm(
+      IReadOnlyList<Statement> body,
+      VariableSymbol counter,
+      int firstSlot,
+      bool checkedArithmetic,
+      SemanticModel model) {
+    var result = new LicmResult();
+    if (checkedArithmetic)
+      return result; // overflow/numeric traps must fire in-body, never in preheader
+
+    // the body must be a flat straight-line sequence with no nested control flow -
+    // any branching makes conditional writes invisible in the write-set scan
+    if (!IsBodyFlatStraightLine(body))
+      return result;
+
+    // collect every variable written anywhere in the body (conservative union)
+    var written = new HashSet<VariableSymbol>(ReferenceEqualityComparer.Instance);
+    written.Add(counter); // the counter is always written by the FOR increment
+    CollectWrites(body, written, model);
+
+    // track which invariant keys we have already seen (key -> slot), and the
+    // set of variable ids for stable key generation (shared, no id collisions)
+    var slotOfKey = new Dictionary<string, int>(StringComparer.Ordinal);
+    var varId = new Dictionary<VariableSymbol, int>(ReferenceEqualityComparer.Instance);
+
+    // walk each statement's expressions to discover cacheable invariants
+    foreach (var stmt in body)
+      WalkStmtForLicm(stmt, written, firstSlot, slotOfKey, varId, result, model);
+
+    result.SlotCount = slotOfKey.Count;
+    return result;
+  }
+
+  /// <summary>
+  /// True when every statement in <paramref name="body"/> is a flat, straight-line
+  /// kind with no nested control-flow blocks and no opaque writes. Accepted:
+  /// AssignStmt, IncrDecrStmt, PrintStmt (no side effects on tracked scalars, or
+  /// side effects we can fully account for), plus inert metadata statements
+  /// (MetaStmt, EquateStmt, DefTypeStmt, DataStmt - never executed).
+  /// Rejected: CallStmt (BYREF args can write anything), InputStmt (writes targets),
+  /// ReadStmt (writes targets), SwapStmt (writes two variables), CommandStmt (POKE,
+  /// DEF SEG, SOUND, etc. - runtime side effects, may alias memory), and any
+  /// control-flow statement (IF, FOR, DO, SELECT, GOTO, GOSUB, labels, ...).
+  /// </summary>
+  private static bool IsBodyFlatStraightLine(IReadOnlyList<Statement> body) {
+    foreach (var s in body)
+      if (s is not (AssignStmt or IncrDecrStmt or PrintStmt
+          or MetaStmt or EquateStmt or DefTypeStmt or DataStmt))
+        return false;
+    return true;
+  }
+
+  /// <summary>Collects every variable symbol written anywhere in <paramref name="body"/> (conservatively traverses nested blocks).</summary>
+  private static void CollectWrites(IReadOnlyList<Statement> body, HashSet<VariableSymbol> written, SemanticModel model) {
+    foreach (var stmt in body) {
+      switch (stmt) {
+        case AssignStmt a:
+          if (ScalarSymbolOfStatic(a.Target, model) is { } sym)
+            written.Add(sym);
+          // array-element writes: the array symbol itself is not a scalar input,
+          // so no scalar is invalidated; we don't need to add the array
+          break;
+        case IncrDecrStmt id:
+          if (ScalarSymbolOfStatic(id.Target, model) is { } isym)
+            written.Add(isym);
+          break;
+        // PrintStmt, MetaStmt, EquateStmt, DefTypeStmt, DataStmt: no tracked writes
+        default:
+          break;
+      }
+    }
+  }
+
+  private static VariableSymbol? ScalarSymbolOfStatic(Expression e, SemanticModel model)
+    => e is NameExpr && model.VariableBindings.TryGetValue(e, out var s)
+       && s.Type is ScalarType && s.Storage is not VariableStorage.Static
+       ? s : null;
+
+  /// <summary>
+  /// Walks a single statement's expressions for LICM candidates. For each
+  /// cacheable pure subexpression whose inputs are all loop-invariant (not in
+  /// <paramref name="written"/> and not the counter), records the first occurrence
+  /// as a DEFINE and all subsequent occurrences as reloads.
+  /// </summary>
+  private static void WalkStmtForLicm(
+      Statement stmt,
+      HashSet<VariableSymbol> written,
+      int firstSlot,
+      Dictionary<string, int> slotOfKey,
+      Dictionary<VariableSymbol, int> varId,
+      LicmResult result,
+      SemanticModel model) {
+    // we only scan statements whose expressions are barrier-free (no calls,
+    // no intrinsic reads, no pointer deref) - same criterion as the block-local CSE
+    switch (stmt) {
+      case AssignStmt a when IsBarrierFree(a.Value, model):
+        FindLicmIn(a.Value, written, firstSlot, slotOfKey, varId, result, model);
+        // array index expressions on the target are also emitted and can be hoisted
+        if (a.Target is CallOrIndexExpr { Arguments: { } args })
+          foreach (var arg in args)
+            if (IsBarrierFree(arg, model))
+              FindLicmIn(arg, written, firstSlot, slotOfKey, varId, result, model);
+        break;
+      case IncrDecrStmt id when id.Amount != null && IsBarrierFree(id.Amount, model):
+        FindLicmIn(id.Amount, written, firstSlot, slotOfKey, varId, result, model);
+        break;
+      case PrintStmt p when !p.IsLPrint && p.UsingFormat == null:
+        if (p.FileNumber is { } fn && IsBarrierFree(fn, model))
+          FindLicmIn(fn, written, firstSlot, slotOfKey, varId, result, model);
+        foreach (var item in p.Items)
+          if (item.Value is { } v && IsBarrierFree(v, model))
+            FindLicmIn(v, written, firstSlot, slotOfKey, varId, result, model);
+        break;
+    }
+    // MetaStmt, EquateStmt, DefTypeStmt, DataStmt: inert, no expressions to scan
+  }
+
+  /// <summary>
+  /// Recursively finds cacheable pure subexpressions of <paramref name="e"/> that
+  /// are loop-invariant (no input in <paramref name="written"/>). The first
+  /// occurrence of each unique key becomes a DEFINE (preheader computation);
+  /// subsequent occurrences become reloads.
+  /// </summary>
+  private static void FindLicmIn(
+      Expression e,
+      HashSet<VariableSymbol> written,
+      int firstSlot,
+      Dictionary<string, int> slotOfKey,
+      Dictionary<VariableSymbol, int> varId,
+      LicmResult result,
+      SemanticModel model) {
+    if (!IsLicmCacheable(e, model))
+      goto recurse;
+
+    // check: all inputs are loop-invariant (not written, not the counter —
+    // counter is already in `written`) and the expression itself cannot trap
+    var inputs = Inputs(e, model);
+    if (inputs.Any(sym => written.Contains(sym)))
+      goto recurse; // a variant input: not hoistable; recurse into children
+
+    // trap check: exclude \ and MOD unless divisor is a constant non-zero literal
+    if (!IsHoistableSafely(e, model))
+      goto recurse;
+
+    // hoistable invariant: assign a slot if new, record define/use marks
+    var isModular = model.TypeOf(e) is ScalarType { IsFloat: true };
+    var key = (isModular ? "LM" : "L") + BuildKey(e, varId, model);
+    if (!slotOfKey.TryGetValue(key, out var slot)) {
+      slot = firstSlot + slotOfKey.Count;
+      slotOfKey[key] = slot;
+      // first occurrence: the DEFINE - preheader emits this, body reloads it
+      result.Preheader.Add(e);
+      result.Marks[e] = new CseMark(slot, IsDefine: true);
+      if (isModular)
+        result.ModularPreheader.Add(e);
+    } else if (!result.Marks.ContainsKey(e)) {
+      // subsequent occurrence (by reference identity): a reload
+      result.Marks[e] = new CseMark(slot, IsDefine: false);
+    }
+    return; // do NOT recurse into children of a hoisted node (the define covers them)
+
+    recurse:
+    // not hoistable at this level: recurse into children to find inner invariants
+    foreach (var child in Children(e))
+      FindLicmIn(child, written, firstSlot, slotOfKey, varId, result, model);
+  }
+
+  /// <summary>
+  /// True for a composite worth a LICM slot: a pure integer-typed BinaryExpr or
+  /// UnaryExpr (ByteSize &lt;= 4, not float), OR a pure modular-int16 tree (typed
+  /// Single/Double by the binder but computed on the 16-bit ALU). Mirrors
+  /// <see cref="State.IsCacheable"/> for both Integer and Modular modes.
+  /// </summary>
+  private static bool IsLicmCacheable(Expression e, SemanticModel model)
+    => e is (BinaryExpr or UnaryExpr)
+       && IsPure(e, model)
+       && (model.TypeOf(e) is ScalarType { IsFloat: false, ByteSize: <= 4 }
+           || (model.TypeOf(e) is ScalarType { IsFloat: true } && IsModularInt16Tree(e, model, 0)));
+
+  /// <summary>
+  /// True when <paramref name="e"/> is a modular-int16 tree: a tree of +,-,* (and
+  /// unary negate) nodes over 16-bit-or-narrower integer leaves. These are typed as
+  /// <c>Single</c> or <c>Double</c> by the binder (PB 2.0+ arithmetic widening) but
+  /// are actually computed on the 16-bit ALU by <c>EmitModularInt16</c>, producing
+  /// the modular 16-bit result. Mirrors <see cref="State.IsModularInt16Tree"/>.
+  /// </summary>
+  private static bool IsModularInt16Tree(Expression e, SemanticModel model, int depth) {
+    if (depth > 16) return false;
+    if (model.TypeOf(e) is ScalarType { IsFloat: false, ByteSize: <= 2 }) return true;
+    return e switch {
+      UnaryExpr { Op: UnaryOp.Negate } u => IsModularInt16Tree(u.Operand, model, depth + 1),
+      BinaryExpr { Op: BinaryOp.Add or BinaryOp.Subtract or BinaryOp.Multiply } b =>
+        IsModularInt16Tree(b.Left, model, depth + 1) && IsModularInt16Tree(b.Right, model, depth + 1),
+      _ => false,
+    };
+  }
+
+  /// <summary>
+  /// True when <paramref name="e"/> (already known to be pure) cannot trap when
+  /// evaluated in a loop preheader (which runs even when the loop body does not).
+  /// <c>\</c> and <c>MOD</c> can raise divide-by-zero (error 11) or quotient
+  /// overflow — they are only safe when the right operand is a compile-time
+  /// non-zero integer literal or equate. All other operators (+,-,*,AND,OR,XOR,
+  /// shifts, NEG) are safe: modular wrap-around cannot trap when checked
+  /// arithmetic is off.
+  /// </summary>
+  private static bool IsHoistableSafely(Expression e, SemanticModel model) {
+    switch (e) {
+      case BinaryExpr { Op: BinaryOp.IntegerDivide or BinaryOp.Modulo } b: {
+        // safe only when divisor is a statically-known non-zero constant
+        var divisor = FoldToInteger(b.Right, model);
+        if (divisor is null or 0)
+          return false;
+        return IsHoistableSafely(b.Left, model);
+      }
+      case BinaryExpr b:
+        return IsHoistableSafely(b.Left, model) && IsHoistableSafely(b.Right, model);
+      case UnaryExpr u:
+        return IsHoistableSafely(u.Operand, model);
+      default:
+        return true; // leaves (NameExpr, literal): trivially safe
+    }
+  }
+
+  /// <summary>Folds a pure-integer expression to its compile-time value, or null if not a constant.</summary>
+  private static long? FoldToInteger(Expression e, SemanticModel model) => e switch {
+    IntegerLiteralExpr i => i.Value,
+    NamedConstantExpr c when model.Equates.TryGetValue(c.Name, out var v) && v.Text == null => v.AsInteger,
+    _ => null,
+  };
+
+  private static string BuildKey(Expression e, Dictionary<VariableSymbol, int> varId, SemanticModel model) {
+    var sb = new StringBuilder();
+    AppendLicmKey(sb, e, varId, model);
+    return sb.ToString();
+  }
+
+  private static void AppendLicmKey(StringBuilder sb, Expression e, Dictionary<VariableSymbol, int> varId, SemanticModel model) {
+    switch (e) {
+      case IntegerLiteralExpr i:
+        sb.Append('#').Append(i.Value).Append(';');
+        break;
+      case NamedConstantExpr c:
+        sb.Append('#').Append(model.Equates.TryGetValue(c.Name, out var v) ? v.AsInteger : 0).Append(';');
+        break;
+      case NameExpr when model.VariableBindings.TryGetValue(e, out var sym):
+        if (!varId.TryGetValue(sym, out var id)) {
+          id = varId.Count;
+          varId[sym] = id;
+        }
+        sb.Append('v').Append(id).Append(';');
+        break;
+      case UnaryExpr u:
+        sb.Append('u').Append((int)u.Op).Append('(');
+        AppendLicmKey(sb, u.Operand, varId, model);
+        sb.Append(')');
+        break;
+      case BinaryExpr b:
+        sb.Append('b').Append((int)b.Op).Append('(');
+        AppendLicmKey(sb, b.Left, varId, model);
+        AppendLicmKey(sb, b.Right, varId, model);
+        sb.Append(')');
+        break;
+      default:
+        sb.Append('?').Append(e.GetHashCode()).Append(';');
+        break;
+    }
+  }
+
   public static Result Analyze(IReadOnlyList<Statement> body, SemanticModel model) {
     // the modular-int16 emission path (a% = y%*320+x% computed on the 16-bit
     // ALU) is disabled whenever $ERROR NUMERIC/OVERFLOW/ALL is active, so its

@@ -995,4 +995,118 @@ public sealed class Pb36OptimizerTests {
   }
 
   #endregion
+
+  #region LICM - loop-invariant code motion ($OPTIMIZE SPEED)
+
+  /// <summary>
+  /// Parses and binds a source snippet, extracts the first FOR loop from the main
+  /// body, and runs AnalyzeLicm on its body with the given parameters.
+  /// </summary>
+  private static (int slots, int preheaderCount, int useMarks) RunLicmAnalysis(string source, bool checkedArithmetic = false) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
+    // find the first FOR loop
+    var loop = model.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.ForStmt>().FirstOrDefault();
+    Assert.That(loop, Is.Not.Null, "source must contain a FOR loop");
+    var name = (PowerBasic.Compiler.Syntax.Ast.NameExpr)loop!.Variable;
+    var counter = model.VariableBindings[name];
+    var r = PowerBasic.Compiler.CodeGen.Pb36CommonSubexpr.AnalyzeLicm(loop.Body, counter, 0, checkedArithmetic, model);
+    return (r.SlotCount, r.Preheader.Count, r.Marks.Values.Count(m => !m.IsDefine));
+  }
+
+  [Test]
+  public void Licm_GivenInvariantMultiply_WhenAnalyzed_ThenOneSlotWithOnePreheaderAndOneUse() {
+    // k%*m% appears twice in the body; both k% and m% are not written in the body.
+    // Expected: 1 LICM slot, 1 preheader DEFINE (first occurrence), 1 USE (second).
+    // Use plain scalar targets (not array) to avoid array-CSE path interference.
+    const string source = """
+      k% = 7
+      m% = 13
+      FOR i% = 1 TO 10
+        a% = k% * m% + i%
+        b% = k% * m% - i%
+      NEXT i%
+      END
+      """;
+    var (slots, preheader, uses) = RunLicmAnalysis(source);
+    Assert.Multiple(() => {
+      Assert.That(slots, Is.EqualTo(1), "one invariant subexpression (k%*m%) should get one slot");
+      Assert.That(preheader, Is.EqualTo(1), "one preheader DEFINE (first body occurrence)");
+      Assert.That(uses, Is.EqualTo(1), "one USE mark (second body occurrence reloads the slot)");
+    });
+  }
+
+  [Test]
+  public void Licm_GivenVariantInput_WhenAnalyzed_ThenNoSlots() {
+    // k% IS written in the loop body (k% = k% + 1), so k%*m% is NOT invariant.
+    // AnalyzeLicm must find zero hoistable expressions.
+    const string source = """
+      k% = 7
+      m% = 13
+      DIM a%(1 TO 10)
+      FOR i% = 1 TO 10
+        k% = k% + 1
+        a%(i%) = k% * m% + i%
+      NEXT i%
+      END
+      """;
+    var (slots, _, _) = RunLicmAnalysis(source);
+    Assert.That(slots, Is.EqualTo(0), "k% is written in the body: k%*m% is NOT invariant, no LICM slot");
+  }
+
+  [Test]
+  public void Licm_GivenCounterInExpression_WhenAnalyzed_ThenNoSlots() {
+    // k%*i% reads the loop counter i%; the counter is always in the written set.
+    // The expression is NOT invariant and must not be hoisted.
+    const string source = """
+      k% = 7
+      FOR i% = 1 TO 10
+        a% = k% * i%
+      NEXT i%
+      END
+      """;
+    var (slots, _, _) = RunLicmAnalysis(source);
+    Assert.That(slots, Is.EqualTo(0), "k%*i% reads the loop counter: NOT invariant, no LICM slot");
+  }
+
+  [Test]
+  public void Licm_GivenCheckedArithmetic_WhenAnalyzed_ThenNoSlots() {
+    // under checked arithmetic ($ERROR NUMERIC ON) a multiply could trap;
+    // AnalyzeLicm must suppress LICM entirely (checkedArithmetic=true).
+    const string source = """
+      k% = 7
+      m% = 13
+      FOR i% = 1 TO 10
+        a% = k% * m% + i%
+        b% = k% * m% - i%
+      NEXT i%
+      END
+      """;
+    var (slots, _, _) = RunLicmAnalysis(source, checkedArithmetic: true);
+    Assert.That(slots, Is.EqualTo(0), "checkedArithmetic=true: LICM must be suppressed entirely");
+  }
+
+  [Test]
+  public void Emit_GivenSpeedOptimized_WhenInvariantMultiplyInLoop_ThenImageDiffersFromGeneric() {
+    // With $OPTIMIZE SPEED, LICM hoists k%*m% to the preheader; without SPEED it
+    // stays in the body. The emitted images must differ (code is in a different place).
+    const string body = """
+      k% = 7
+      m% = 13
+      DIM a%(1 TO 10)
+      FOR i% = 1 TO 10
+        a%(i%) = k% * m% + i%
+      NEXT i%
+      PRINT a%(1); a%(10)
+      END
+      """;
+    var generic = Compile(body, Dialect.Pb36);
+    var speed   = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
+    Assert.That(speed, Is.Not.EqualTo(generic),
+      "$OPTIMIZE SPEED with a loop-invariant multiply should produce a different image " +
+      "(LICM moves the computation to the preheader, changing code layout)");
+  }
+
+  #endregion
 }
