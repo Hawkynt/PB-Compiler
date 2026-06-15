@@ -45,6 +45,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private int _cseBytes;
   private Dictionary<Expression, Pb36CommonSubexpr.CseMark>? _cseMarks;
   private Dictionary<Syntax.Ast.NameExpr, long>? _provenReads;
+  private IReadOnlyDictionary<Syntax.Ast.NameExpr, VariableSymbol>? _copyReads;
   private HashSet<Statement>? _deadStatements;
   private Dictionary<VariableSymbol, ConstantValue>? _ipcp;
   private (VariableSymbol Symbol, Reg Reg)? _registerCounter;
@@ -314,6 +315,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// </summary>
   private void PrepareSccp(IReadOnlyList<Statement> body, VariableSymbol? implicitResult = null) {
     this._provenReads = null;
+    this._copyReads = null;
     this._deadStatements = null;
     if (!this.Optimize)
       return;
@@ -327,6 +329,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       this._provenReads = proven;
     // O2: assignments whose result SCCP propagated away (or never read) are dead
     var dead = Ssa.DeadStore.Compute(model, ssa, proven);
+    // copy propagation: redirect reads of a copy y = x to x and drop the copy
+    var (copyReads, deadCopies) = Pb36CopyProp.Analyze(ssa);
+    if (copyReads.Count > 0)
+      this._copyReads = copyReads;
+    foreach (var s in deadCopies)
+      dead.Add(s);
     if (dead.Count > 0)
       this._deadStatements = dead;
   }

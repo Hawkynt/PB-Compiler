@@ -47,6 +47,11 @@ public sealed partial class CodeGenerator {
     var asm = this._asm;
     switch (e) {
       case NameExpr n: {
+        // copy propagation: a read remapped to the source of a removed copy y = x (the
+        // source is a non-escaping tracked scalar, so it always has a direct cell)
+        if (this._copyReads is { } copyReads && copyReads.TryGetValue(n, out var copySource)
+            && this.TryDirectCell(copySource) is { } srcCell)
+          return new(srcCell, false);
         if (!model.VariableBindings.TryGetValue(n, out var symbol)) {
           this.Unsupported(n, $"address of {n.Name}");
           return null;
