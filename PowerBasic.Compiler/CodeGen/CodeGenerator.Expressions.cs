@@ -336,13 +336,39 @@ public sealed partial class CodeGenerator {
 
     // arithmetic runs in the result type; comparisons in the widest operand type
     var isComparison = b.Op is BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual or BinaryOp.GreaterEqual;
-    var opType = isComparison ? WidestOf(leftType, rightType) : resultType;
-    // WORD/DWORD/BYTE pairs compare unsigned
-    var unsignedCompare = isComparison
-      && leftType is ScalarType { IsFloat: false, Signed: false }
-      && rightType is ScalarType { IsFloat: false, Signed: false };
-    if (unsignedCompare)
-      opType = leftType.Size > 2 || rightType.Size > 2 ? PbType.Dword : PbType.Word;
+    PbType opType;
+    bool unsignedCompare;
+    if (isComparison) {
+      var leftUnsigned = leftType is ScalarType { IsFloat: false, Signed: false };
+      var rightUnsigned = rightType is ScalarType { IsFloat: false, Signed: false };
+      var dwordOperand = (leftUnsigned && leftType.Size == 4) || (rightUnsigned && rightType.Size == 4);
+      var widest = WidestOf(leftType, rightType);
+      if (dwordOperand && widest is ScalarType { IsFloat: false, ByteSize: <= 4 }) {
+        // a DWORD operand forces an unsigned 32-bit comparison even against a signed
+        // operand: genuine PBC reads the signed side as unsigned (4000000000 > -1 is
+        // FALSE), while a wider QUAD/float operand keeps the widened compare
+        opType = PbType.Dword;
+        unsignedCompare = true;
+      } else if (leftUnsigned && rightUnsigned) {
+        opType = leftType.Size > 2 || rightType.Size > 2 ? PbType.Dword : PbType.Word;
+        unsignedCompare = true;
+      } else {
+        // a WORD/BYTE mixed with a signed type compares signed, but widened to the next
+        // signed size that holds the unsigned operand (WORD->LONG, BYTE->INTEGER) so its
+        // value stays positive (w?? = 50000 > -1 is TRUE, not a 16-bit -15536 > -1)
+        opType = widest;
+        if (leftUnsigned != rightUnsigned && widest is ScalarType { IsFloat: false, ByteSize: <= 4 }) {
+          var unsignedOperand = leftUnsigned ? leftType : rightType;
+          var promoted = unsignedOperand.Size == 1 ? PbType.Integer : PbType.Long;
+          if (promoted.Size > ((ScalarType)widest).Size)
+            opType = promoted;
+        }
+        unsignedCompare = false;
+      }
+    } else {
+      opType = resultType;
+      unsignedCompare = false;
+    }
 
     // pb36 O4: x * 2^n as shifts (wrap-identical to the product's low bits)
     if (this.TryEmitStrengthReducedMultiply(b, opType))
@@ -1067,6 +1093,16 @@ public sealed partial class CodeGenerator {
         asm.Fild(Mem.Word(this._scratch));
         break;
 
+      case (ValueKind.Int32, ValueKind.Float) when from is ScalarType { IsFloat: false, Signed: false } or PointerType:
+        // a DWORD is unsigned: zero-extend through 64 bits so FILD reads it as a
+        // positive value (4000000000.0, not the signed -294967296.0)
+        asm.Mov(Mem.Word(this._scratch), Reg.AX);
+        asm.Mov(Mem.Word(this._scratch, 2), Reg.DX);
+        asm.Mov(Mem.Word(this._scratch, 4), (Imm)0);
+        asm.Mov(Mem.Word(this._scratch, 6), (Imm)0);
+        asm.Fild(Mem.Qword(this._scratch));
+        break;
+
       case (ValueKind.Int32, ValueKind.Float):
         asm.Mov(Mem.Word(this._scratch), Reg.AX);
         asm.Mov(Mem.Word(this._scratch, 2), Reg.DX);
@@ -1079,6 +1115,16 @@ public sealed partial class CodeGenerator {
         // 16-bit store (C% = A% + B% = -5536), not FISTP's 8000h indefinite
         asm.Fistp(Mem.Dword(this._scratch));
         asm.Mov(Reg.AX, Mem.Word(this._scratch));
+        break;
+
+      case (ValueKind.Float, ValueKind.Int32) when to is ScalarType { IsFloat: false, Signed: false } or PointerType:
+        // a DWORD target holds values up to 2^32, beyond signed FISTP's range: store
+        // through 64 bits and keep the low dword (4000000005.0 -> 4000000005, not the
+        // 80000000h indefinite a signed FISTP DWORD would give)
+        this.EmitDialectRounding();
+        asm.Fistp(Mem.Qword(this._scratch));
+        asm.Mov(Reg.AX, Mem.Word(this._scratch));
+        asm.Mov(Reg.DX, Mem.Word(this._scratch, 2));
         break;
 
       case (ValueKind.Float, ValueKind.Int32):

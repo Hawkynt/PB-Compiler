@@ -1136,6 +1136,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// skip a trap the real evaluation must raise.
   /// </summary>
   private long? FoldConditionWithProven(Expression condition) {
+    if (this.IsUnsignedDwordCompare(condition))
+      return null; // a DWORD ordered comparison must run unsigned; the type-less folder does it signed
     var folded = condition;
     if (this._provenReads is { Count: > 0 } proven && !this.CheckOverflow && !this.CheckNumeric)
       folded = SubstituteProven(condition, proven, out _);

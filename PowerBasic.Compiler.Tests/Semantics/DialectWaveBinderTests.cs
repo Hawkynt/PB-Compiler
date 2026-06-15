@@ -30,6 +30,14 @@ public sealed class DialectWaveBinderTests {
     Assert.That(((ScalarType)model.ModuleVariables[key].Type).Kind, Is.EqualTo(kind));
   }
 
+  [TestCase("e??? = d??? AND 255", ScalarKind.Dword)]   // bitwise: DWORD dominates a signed literal
+  [TestCase("e??? = w?? AND 255", ScalarKind.Long)]      // WORD widens to signed LONG
+  public void Bind_GivenUnsignedBitwiseWithSignedLiteral_WhenBound_ThenResultKeepsUnsignedWidth(string op, ScalarKind kind) {
+    var model = BindOk("d??? = 0\nw?? = 0\n" + op);
+    var assign = (AssignStmt)model.MainBody[^1];
+    Assert.That(((ScalarType)model.TypeOf(assign.Value)).Kind, Is.EqualTo(kind));
+  }
+
   [Test]
   public void Bind_GivenFixAndBcdSuffixes_WhenBound_ThenBcdTypesAssigned() {
     var model = BindOk("DIM f AS FIX\nDIM b AS BCD");

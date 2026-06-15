@@ -141,9 +141,18 @@ public sealed class Sccp {
   private long? Fold(Expression? e, long defaultWhenNull) {
     if (e == null)
       return defaultWhenNull;
+    // an ordered comparison with a DWORD operand must run unsigned; the type-less
+    // ConstantFolder would compare the substituted literals signed (4000000000 > -1
+    // is FALSE unsigned but TRUE signed), so leave it to the runtime unsigned compare
+    if (e is BinaryExpr { Op: BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual or BinaryOp.GreaterEqual } cmp
+        && (this.IsUnsignedDword(cmp.Left) || this.IsUnsignedDword(cmp.Right)))
+      return null;
     var folded = this._folder.TryFold(this.Substitute(e));
     return folded?.Integer;
   }
+
+  private bool IsUnsignedDword(Expression e) =>
+    this._model.TypeOf(e) is ScalarType { IsFloat: false, Signed: false, ByteSize: 4 };
 
   /// <summary>Clones <paramref name="e"/> replacing each tracked, proven-constant read with its literal value.</summary>
   private Expression Substitute(Expression e) {

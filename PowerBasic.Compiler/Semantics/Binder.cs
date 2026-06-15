@@ -2026,6 +2026,12 @@ public sealed class Binder {
       return sa.Size >= sb.Size ? sa : sb;
     var unsigned = sa.Signed ? sb : sa;
     var signed = sa.Signed ? sa : sb;
+    // DWORD has no 32-bit signed type that holds its full range, so it dominates a
+    // same-or-narrower signed operand (genuine PBC keeps the result DWORD:
+    // 4000000000 + 5 = 4000000005, d??? > 100 compares unsigned) - BYTE/WORD instead
+    // widen to the next signed size (INTEGER/LONG) via PromoteUnsigned upstream
+    if (unsigned.Size == 4 && signed.Size <= 4)
+      return unsigned;
     return unsigned.Size >= signed.Size ? PbType.Long : signed;
   }
 

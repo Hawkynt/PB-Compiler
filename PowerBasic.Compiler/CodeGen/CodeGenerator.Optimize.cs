@@ -88,6 +88,8 @@ public sealed partial class CodeGenerator {
       return false;
     if (model.TypeOf(e) is not ScalarType { IsFloat: false } type)
       return false;
+    if (IsUnsignedDwordCompare(e))
+      return false; // a DWORD ordered comparison must run unsigned; the type-less folder does it signed
     var substituted = SubstituteProven(e, proven, out var changed);
     if (!changed)
       return false; // no proven read here - leave emission untouched
@@ -96,6 +98,12 @@ public sealed partial class CodeGenerator {
     this.EmitIntegralConstant(WrapToType(raw, type), KindOf(type));
     return true;
   }
+
+  /// <summary>An ordered (&lt;/&gt;/&lt;=/&gt;=) comparison with a DWORD operand: the type-less folder would compare signed, so it must stay a runtime unsigned compare.</summary>
+  private bool IsUnsignedDwordCompare(Expression e) =>
+    e is BinaryExpr { Op: BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual or BinaryOp.GreaterEqual } cmp
+      && (model.TypeOf(cmp.Left) is ScalarType { IsFloat: false, Signed: false, ByteSize: 4 }
+          || model.TypeOf(cmp.Right) is ScalarType { IsFloat: false, Signed: false, ByteSize: 4 });
 
   /// <summary>
   /// pb36 O17 in the modular int16 path: when the whole tree folds via SCCP-proven
