@@ -118,6 +118,42 @@ public sealed class Pb36LanguageFeatureTests {
   }
 
   [Test]
+  public void Execute_GivenArrayInitializerAutoSized_WhenRun_ThenElementsAndBound() {
+    const string source = """
+      DIM a%() = {10, 20, 30}
+      PRINT a%(0)
+      PRINT a%(2)
+      PRINT UBOUND(a%)
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 10\n 30\n 2\n"));
+  }
+
+  [Test]
+  public void Execute_GivenArrayInitializerRange_WhenRun_ThenRangeExpands() {
+    const string source = """
+      DIM r%() = {5..8}
+      PRINT r%(0)
+      PRINT r%(3)
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 5\n 8\n"));
+  }
+
+  [Test]
+  public void Execute_GivenArrayInitializerSpread_WhenRun_ThenStaticArrayFlattened() {
+    const string source = """
+      DIM base%(2)
+      base%(0) = 1
+      base%(1) = 2
+      base%(2) = 3
+      DIM combo%() = {..base%, 99}
+      PRINT combo%(0)
+      PRINT combo%(2)
+      PRINT combo%(3)
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 1\n 3\n 99\n"));
+  }
+
+  [Test]
   public void Execute_GivenFromEndIndexStatic_WhenRun_ThenCountsFromEnd() {
     const string source = """
       DIM a%(5)

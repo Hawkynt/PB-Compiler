@@ -280,7 +280,8 @@ public sealed class Lexer {
     while (char.IsAsciiDigit(this.Current))
       this.Advance();
 
-    if (this.Current == '.' && (char.IsAsciiDigit(this.Peek()) || !IsIdentifierStart(this.Peek()))) {
+    // '..' is the PB 3.6 range operator, never a decimal point (0..3 is 0, .., 3)
+    if (this.Current == '.' && this.Peek() != '.' && (char.IsAsciiDigit(this.Peek()) || !IsIdentifierStart(this.Peek()))) {
       isFloat = true;
       this.Advance();
       while (char.IsAsciiDigit(this.Current))
@@ -417,7 +418,8 @@ public sealed class Lexer {
       ')' => (TokenKind.RParen, ")"),
       ',' => (TokenKind.Comma, ","),
       ';' => (TokenKind.Semicolon, ";"),
-      '.' => (TokenKind.Period, "."),
+      '.' => this.Current == '.' ? this.AdvanceTo(TokenKind.DotDot, "..") : (TokenKind.Period, "."), // PB 3.6 '..' range/spread
+
       '#' => (TokenKind.Hash, "#"),
       '?' => (TokenKind.Question, "?"),
       '&' => (TokenKind.Ampersand, "&"),

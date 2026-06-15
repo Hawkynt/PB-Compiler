@@ -29,6 +29,12 @@ public static class AstQuery {
     NewExpr n => [.. n.Fields.Select(f => f.Value)],
     NamedArgExpr na => [na.Value],
     FromEndExpr fe => [fe.Index],
+    ArrayLiteralExpr al => [.. al.Elements.SelectMany(e => e switch {
+      ValueElement v => (IEnumerable<Expression>)[v.Value],
+      RangeElement r => [r.Lo, r.Hi],
+      SpreadElement s => [s.Source],
+      _ => [],
+    })],
     // leaves with no child expressions: IntegerLiteralExpr, FloatLiteralExpr,
     // StringLiteralExpr, NamedConstantExpr, NameExpr.
     _ => [],

@@ -1143,6 +1143,10 @@ public sealed class Binder {
       this.BindNewInitializer(dim, v, nu, scope);
       return;
     }
+    if (v.Initializer is ArrayLiteralExpr lit) {
+      this.BindArrayInitializer(dim, v, lit, scope);
+      return;
+    }
 
     var valueType = this.BindExpression(v.Initializer!, scope);
     var declaredType = v.Type != null ? this.ResolveTypeName(v.Type) : valueType;
@@ -1164,6 +1168,78 @@ public sealed class Binder {
   /// <c>p</c> as the UDT and lowers to one <c>p.field = value</c> assignment per listed
   /// field (unlisted fields keep their zero-initialized value).
   /// </summary>
+  /// <summary>
+  /// PB 3.6 array initializer: <c>DIM a(...) = { v, lo..hi, ..arr }</c> (or <c>a()</c> to
+  /// auto-size). Expands ranges and static-array spreads into a flat value list, declares
+  /// the (static) array sized to the literal, and lowers to one element assignment each.
+  /// </summary>
+  private void BindArrayInitializer(DimStmt dim, VariableDecl v, ArrayLiteralExpr lit, Scope scope) {
+    var element = v.Type != null ? this.ResolveTypeName(v.Type) : this.TypeFromSuffixOrDefault(v.Name, v.Suffix);
+    if (element is null or ArrayType) {
+      this.Error(v.Position, $"unknown element type for array {v.Name}");
+      return;
+    }
+
+    var values = new List<Expression>();
+    foreach (var el in lit.Elements)
+      switch (el) {
+        case ValueElement ve:
+          this.BindExpression(ve.Value, scope);
+          values.Add(ve.Value);
+          break;
+        case RangeElement re:
+          if (this._folder.TryFold(re.Lo)?.Integer is not { } lo || this._folder.TryFold(re.Hi)?.Integer is not { } hi) {
+            this.Error(re.Position, "array-literal range bounds must be compile-time constants");
+            return;
+          }
+          for (var k = lo; lo <= hi ? k <= hi : k >= hi; k += lo <= hi ? 1 : -1)
+            values.Add(new IntegerLiteralExpr(re.Position, k, TypeSuffix.None));
+          break;
+        case SpreadElement se:
+          if (se.Source is not NameExpr src
+              || this.LookupArrayVariable(src.Name, src.Suffix, scope) is not { Type: ArrayType { StaticBounds: [var dimBound] } }) {
+            this.Error(se.Position, "spread (..arr) requires a 1-D static array");
+            return;
+          }
+          for (var j = dimBound.Item1; j <= dimBound.Item2; ++j) {
+            var read = new CallOrIndexExpr(se.Position, src.Name, src.Suffix, [new IntegerLiteralExpr(se.Position, j, TypeSuffix.None)]);
+            this.BindExpression(read, scope);
+            values.Add(read);
+          }
+          break;
+      }
+
+    // explicit DIM size (a(n)) or auto-size (a()) from the element count
+    var lower = this._optionBase;
+    int upper;
+    if (v.ArrayBounds is [var (lowerExpr, upperExpr)] && this._folder.TryFold(upperExpr)?.Integer is { } u) {
+      if (lowerExpr != null && this._folder.TryFold(lowerExpr)?.Integer is { } l)
+        lower = (int)l;
+      upper = (int)u;
+    } else {
+      upper = lower + values.Count - 1;
+    }
+
+    var arrayType = new ArrayType(element, [(lower, upper)], 1);
+    var storage = scope.Proc == null ? VariableStorage.Global
+      : scope.Proc.IsStatic || dim.StaticFlag ? VariableStorage.Static
+      : VariableStorage.Local;
+    var symbol = new VariableSymbol(v.Name, arrayType, storage);
+    var key = VariableKey(v.Name, v.Suffix, isArray: true);
+    if (scope.Proc != null)
+      scope.Proc.Variables[key] = symbol;
+    else
+      this._model.ModuleVariables[key] = symbol;
+
+    var list = this.InitListOf(dim);
+    for (var k = 0; k < values.Count && lower + k <= upper; ++k) {
+      var target = new CallOrIndexExpr(v.Position, v.Name, v.Suffix, [new IntegerLiteralExpr(v.Position, lower + k, TypeSuffix.None)]);
+      var assign = new AssignStmt(v.Position, target, values[k]);
+      this.BindStatement(assign, scope);
+      list.Add(assign);
+    }
+  }
+
   private void BindNewInitializer(DimStmt dim, VariableDecl v, NewExpr nu, Scope scope) {
     if (!this._model.Udts.TryGetValue(nu.TypeName, out var udt)) {
       this.Error(nu.Position, $"unknown type {nu.TypeName}");
@@ -1478,6 +1554,9 @@ public sealed class Binder {
       case FromEndExpr fromEnd: // arr(^n) is consumed in the array path; here it is misused
         this.BindExpression(fromEnd.Index, scope);
         return this.ErrorType(fromEnd.Position, "'^' from-end index is only valid as an array subscript");
+
+      case ArrayLiteralExpr lit: // { ... } is consumed by BindArrayInitializer; here it is misused
+        return this.ErrorType(lit.Position, "an array initializer '{ ... }' is only allowed as a DIM array initializer");
 
       case CallOrIndexExpr call:
         return this.BindCallOrIndex(call, scope);

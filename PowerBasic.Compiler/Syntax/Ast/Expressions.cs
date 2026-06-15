@@ -87,3 +87,15 @@ public sealed record NamedArgExpr(SourcePosition Position, string Name, Expressi
 
 /// <summary>PB 3.6 from-end array index: <c>arr(^n)</c> = the n-th element from the end (^1 = last). Valid only as an array index.</summary>
 public sealed record FromEndExpr(SourcePosition Position, Expression Index) : Expression(Position);
+
+/// <summary>One element of a PB 3.6 collection literal: a single value, an inclusive integer range, or a spread of another array.</summary>
+public abstract record CollectionElement(SourcePosition Position);
+public sealed record ValueElement(SourcePosition Position, Expression Value) : CollectionElement(Position);
+public sealed record RangeElement(SourcePosition Position, Expression Lo, Expression Hi) : CollectionElement(Position);
+public sealed record SpreadElement(SourcePosition Position, Expression Source) : CollectionElement(Position);
+
+/// <summary>
+/// PB 3.6 array-initializer literal: <c>{ v1, v2, lo..hi, ..arr }</c>, used as a DIM
+/// array initializer. The binder lowers it to per-element assignments.
+/// </summary>
+public sealed record ArrayLiteralExpr(SourcePosition Position, IReadOnlyList<CollectionElement> Elements) : Expression(Position);

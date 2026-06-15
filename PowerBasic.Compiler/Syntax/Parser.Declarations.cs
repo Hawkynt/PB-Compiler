@@ -480,12 +480,14 @@ public sealed partial class Parser {
       type = this.ParseTypeName();
     }
 
-    // fused declare-and-initialize (PB 3.6): DIM x = value / DIM x AS type = value.
-    // Only on scalar declarations (an array carries bounds, not an initializer).
+    // fused declare-and-initialize (PB 3.6): DIM x = value / DIM x AS type = value
+    // (scalar), or DIM a(...) = { ... } / DIM a() = { ... } (array initializer).
     Expression? initializer = null;
-    if (bounds == null && this.Match(TokenKind.Equals)) {
-      this.Require(LanguageFeature.DimInitializer);
+    if (this.Match(TokenKind.Equals)) {
       initializer = this.ParseExpression();
+      this.Require(initializer is ArrayLiteralExpr ? LanguageFeature.ArrayInitializer
+        : bounds != null ? LanguageFeature.ArrayInitializer
+        : LanguageFeature.DimInitializer);
     }
     return new(name.Position, fullName, suffix, bounds, type, initializer);
   }

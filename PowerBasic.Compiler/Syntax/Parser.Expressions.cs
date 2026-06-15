@@ -283,6 +283,8 @@ public sealed partial class Parser {
         return new FileNumberExpr(this.Advance().Position, this.ParsePrimary());
       case TokenKind.At:
         return this.ParsePtrDeref();
+      case TokenKind.LBrace: // PB 3.6 array-initializer literal { ... }
+        return this.ParseArrayLiteral();
       // PB 3.6 WITH: a leading '.member' binds to the innermost WITH subject
       case TokenKind.Period when this.Peek().Kind == TokenKind.Identifier && this._withSubjects.Count > 0:
         return this.ParseImplicitWithMember();
@@ -357,6 +359,25 @@ public sealed partial class Parser {
       } while (this.Match(TokenKind.Comma));
     this.Expect(TokenKind.RBrace, "'}'");
     return new NewExpr(pos, typeName, fields);
+  }
+
+  private Expression ParseArrayLiteral() {
+    this.Require(LanguageFeature.ArrayInitializer);
+    var pos = this.Advance().Position; // '{'
+    var elements = new List<CollectionElement>();
+    if (this.Current.Kind != TokenKind.RBrace)
+      do {
+        if (this.Match(TokenKind.DotDot)) { // ..arr spread
+          elements.Add(new SpreadElement(pos, this.ParseExpression()));
+          continue;
+        }
+        var first = this.ParseExpression();
+        elements.Add(this.Match(TokenKind.DotDot)
+          ? new RangeElement(first.Position, first, this.ParseExpression()) // lo..hi range
+          : new ValueElement(first.Position, first));
+      } while (this.Match(TokenKind.Comma));
+    this.Expect(TokenKind.RBrace, "'}'");
+    return new ArrayLiteralExpr(pos, elements);
   }
 
   private Expression ParseTernaryIf() {

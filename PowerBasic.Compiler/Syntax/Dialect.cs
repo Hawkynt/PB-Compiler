@@ -99,6 +99,7 @@ public enum LanguageFeature {
   NamedArguments,
   XmsEmsArrays,
   FromEndIndex,
+  ArrayInitializer,
 }
 
 /// <summary>
@@ -152,6 +153,7 @@ public static class DialectFacts {
     [LanguageFeature.NamedArguments] = (Dialect.Pb36, "named arguments ('name := value')"),
     [LanguageFeature.XmsEmsArrays] = (Dialect.Pb36, "XMS/EMS arrays ('DIM XMS/EMS a(...)')"),
     [LanguageFeature.FromEndIndex] = (Dialect.Pb36, "from-end array index ('arr(^n)')"),
+    [LanguageFeature.ArrayInitializer] = (Dialect.Pb36, "array initializer literal ('= { v1, v2, lo..hi, ..arr }')"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

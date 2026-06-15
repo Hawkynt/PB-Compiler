@@ -369,6 +369,17 @@ public sealed class ParserDeclarationTests {
   }
 
   [Test]
+  public void Parse_GivenArrayInitializer_WhenPb36_ThenElementKindsCaptured() {
+    var stmt = (DimStmt)Parse("DIM a%() = {1, 2..4, ..b%}", Dialect.Pb36).Statements[0];
+    var lit = (ArrayLiteralExpr)stmt.Variables[0].Initializer!;
+    Assert.Multiple(() => {
+      Assert.That(lit.Elements[0], Is.InstanceOf<ValueElement>());
+      Assert.That(lit.Elements[1], Is.InstanceOf<RangeElement>());
+      Assert.That(lit.Elements[2], Is.InstanceOf<SpreadElement>());
+    });
+  }
+
+  [Test]
   public void Parse_GivenFromEndIndex_WhenPb36_ThenFromEndExprArgument() {
     var assign = (AssignStmt)Parse("x = a%(^2)", Dialect.Pb36).Statements[0];
     var call = (CallOrIndexExpr)assign.Value;

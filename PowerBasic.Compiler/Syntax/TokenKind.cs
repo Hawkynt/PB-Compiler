@@ -69,4 +69,6 @@ public enum TokenKind {
   PlusStar,
   /// <summary><c>-*</c> scaled pointer subtract (PB 3.6).</summary>
   MinusStar,
+  /// <summary><c>..</c> range/spread in collection literals (PB 3.6).</summary>
+  DotDot,
 }
