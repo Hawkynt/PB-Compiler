@@ -141,7 +141,9 @@ public static class Pb36Pruner {
       PtrDerefExpr d => ObservesSegment(d.Pointer, model) || (d.Index != null && ObservesSegment(d.Index, model)),
       ByValArgExpr bv => ObservesSegment(bv.Value, model),
       FileNumberExpr f => ObservesSegment(f.Number, model),
-      _ => false, // literals, names, equates
+      // literals/names/equates have no children (Subexpressions empty -> false);
+      // an unmodeled node observes the segment if any nested expression does.
+      _ => AstQuery.Subexpressions(e).Any(c => ObservesSegment(c, model)),
     };
   }
 

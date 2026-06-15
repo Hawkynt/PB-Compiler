@@ -125,7 +125,9 @@ public static class Pb36Ipcp {
         case FileNumberExpr f:
           return ExprMightWrite(f.Number);
         default:
-          return false;
+          // unmodeled node: assume a write if any nested expression might write a
+          // parameter (conservative - blocks specialization rather than risk it).
+          return AstQuery.Subexpressions(e).Any(ExprMightWrite);
       }
     }
 

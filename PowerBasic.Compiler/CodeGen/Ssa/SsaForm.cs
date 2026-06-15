@@ -191,6 +191,13 @@ public sealed class SsaForm {
           Read(f.Number, true);
           break;
         // literals / named constants: no variable
+        default:
+          // any expression node this pass does not model explicitly (e.g. a new
+          // pb36 operator): conservatively escape every variable it contains so it
+          // is excluded from SSA/SCCP/DSE entirely - sound, just unoptimized.
+          foreach (var child in AstQuery.Subexpressions(e))
+            Read(child, true);
+          break;
       }
     }
 

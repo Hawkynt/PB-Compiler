@@ -485,7 +485,9 @@ public static class Pb36FloatDemotion {
         BinaryExpr b => this.ContainsCandidate(b.Left) || this.ContainsCandidate(b.Right),
         CallOrIndexExpr c => c.Arguments.Any(this.ContainsCandidate),
         ByValArgExpr bv => this.ContainsCandidate(bv.Value),
-        _ => false,
+        // unmodeled node (e.g. a new pb36 operator): recurse its children so a
+        // candidate nested inside it is still detected (and then blocked).
+        _ => AstQuery.Subexpressions(e).Any(this.ContainsCandidate),
       };
     }
 
@@ -506,6 +508,11 @@ public static class Pb36FloatDemotion {
           break;
         case ByValArgExpr bv:
           this.BlockContained(bv.Value);
+          break;
+        default:
+          // unmodeled node: block every candidate nested inside it (conservative).
+          foreach (var child in AstQuery.Subexpressions(e))
+            this.BlockContained(child);
           break;
       }
     }
