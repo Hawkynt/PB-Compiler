@@ -89,6 +89,7 @@ public enum LanguageFeature {
   DimInitializer,
   TernaryIf,
   ObjectInitializer,
+  ShortCircuitOps,
 }
 
 /// <summary>
@@ -132,6 +133,7 @@ public static class DialectFacts {
     [LanguageFeature.DimInitializer] = (Dialect.Pb36, "DIM with initializer ('DIM x = value' / 'DIM x AS type = value')"),
     [LanguageFeature.TernaryIf] = (Dialect.Pb36, "ternary IF() operator ('IF(condition, trueValue, falseValue)')"),
     [LanguageFeature.ObjectInitializer] = (Dialect.Pb36, "object initializer ('NEW type { .field = value }')"),
+    [LanguageFeature.ShortCircuitOps] = (Dialect.Pb36, "short-circuit operators (ANDALSO / ORELSE)"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

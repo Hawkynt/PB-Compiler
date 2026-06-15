@@ -260,6 +260,29 @@ public sealed class ParserDeclarationTests {
   }
 
   [Test]
+  public void Parse_GivenAndAlso_WhenPb36_ThenLowersToShortCircuitIfExpr() {
+    // a ANDALSO b => IF(a, b <> 0, 0)
+    var assign = (AssignStmt)Parse("x = a ANDALSO b", Dialect.Pb36).Statements[0];
+    var ternary = (IfExpr)assign.Value;
+    Assert.Multiple(() => {
+      Assert.That(((NameExpr)ternary.Condition).Name, Is.EqualTo("a"));
+      Assert.That(((BinaryExpr)ternary.WhenTrue).Op, Is.EqualTo(BinaryOp.NotEqual));
+      Assert.That(((IntegerLiteralExpr)ternary.WhenFalse).Value, Is.EqualTo(0));
+    });
+  }
+
+  [Test]
+  public void Parse_GivenOrElse_WhenPb36_ThenLowersToShortCircuitIfExpr() {
+    // a ORELSE b => IF(a, -1, b <> 0)
+    var assign = (AssignStmt)Parse("x = a ORELSE b", Dialect.Pb36).Statements[0];
+    var ternary = (IfExpr)assign.Value;
+    Assert.Multiple(() => {
+      Assert.That(((IntegerLiteralExpr)ternary.WhenTrue).Value, Is.EqualTo(-1));
+      Assert.That(((BinaryExpr)ternary.WhenFalse).Op, Is.EqualTo(BinaryOp.NotEqual));
+    });
+  }
+
+  [Test]
   public void Parse_GivenTernaryIf_WhenPb36_ThenIfExprWithThreeOperands() {
     var assign = (AssignStmt)Parse("x = IF(c > 0, 1, 2)", Dialect.Pb36).Statements[0];
     var ternary = (IfExpr)assign.Value;

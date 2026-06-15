@@ -32,16 +32,47 @@ public sealed partial class Parser {
 
   private Expression ParseOr() {
     var left = this.ParseAnd();
-    while (this.IsKeyword(0, "OR"))
-      left = new BinaryExpr(this.Advance().Position, BinaryOp.Or, left, this.ParseAnd());
-    return left;
+    for (;;) {
+      if (this.IsKeyword(0, "OR")) {
+        left = new BinaryExpr(this.Advance().Position, BinaryOp.Or, left, this.ParseAnd());
+        continue;
+      }
+      if (this.IsKeyword(0, "ORELSE")) {
+        left = this.MakeShortCircuit(this.Advance().Position, isAnd: false, left, this.ParseAnd());
+        continue;
+      }
+      return left;
+    }
   }
 
   private Expression ParseAnd() {
     var left = this.ParseNot();
-    while (this.IsKeyword(0, "AND"))
-      left = new BinaryExpr(this.Advance().Position, BinaryOp.And, left, this.ParseNot());
-    return left;
+    for (;;) {
+      if (this.IsKeyword(0, "AND")) {
+        left = new BinaryExpr(this.Advance().Position, BinaryOp.And, left, this.ParseNot());
+        continue;
+      }
+      if (this.IsKeyword(0, "ANDALSO")) {
+        left = this.MakeShortCircuit(this.Advance().Position, isAnd: true, left, this.ParseNot());
+        continue;
+      }
+      return left;
+    }
+  }
+
+  /// <summary>
+  /// PB 3.6 short-circuit boolean operators, lowered to the ternary (so they reuse
+  /// its short-circuit codegen and stay sound in the optimizer):
+  /// <c>a ANDALSO b</c> = <c>IF(a, b &lt;&gt; 0, 0)</c> (b skipped when a is false);
+  /// <c>a ORELSE b</c> = <c>IF(a, -1, b &lt;&gt; 0)</c> (b skipped when a is true).
+  /// The result is the normalized PB truth value (-1 / 0).
+  /// </summary>
+  private Expression MakeShortCircuit(SourcePosition pos, bool isAnd, Expression left, Expression right) {
+    this.Require(LanguageFeature.ShortCircuitOps);
+    var rightTruth = new BinaryExpr(pos, BinaryOp.NotEqual, right, new IntegerLiteralExpr(pos, 0, TypeSuffix.None));
+    return isAnd
+      ? new IfExpr(pos, left, rightTruth, new IntegerLiteralExpr(pos, 0, TypeSuffix.None))
+      : new IfExpr(pos, left, new IntegerLiteralExpr(pos, -1, TypeSuffix.None), rightTruth);
   }
 
   private Expression ParseNot() {

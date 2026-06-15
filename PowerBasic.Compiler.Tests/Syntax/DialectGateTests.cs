@@ -239,6 +239,13 @@ public sealed class DialectGateTests {
     AssertAccepted(source, Dialect.Pb36);
   }
 
+  [TestCase("x = a ANDALSO b")]
+  [TestCase("x = a ORELSE b")]
+  public void Gate_GivenShortCircuitOps_WhenPb35_ThenRejectedButPb36Accepts(string source) {
+    AssertRejected(source, Dialect.Pb35, "3.6");
+    AssertAccepted(source, Dialect.Pb36);
+  }
+
   #endregion
 
   #region preprocessor gate

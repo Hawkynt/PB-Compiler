@@ -118,6 +118,36 @@ public sealed class Pb36LanguageFeatureTests {
     Assert.That(Run(source), Is.EqualTo(" 42\n"));
   }
 
+  [TestCase("PRINT (1 ANDALSO 1)", "-1\n")]
+  [TestCase("PRINT (1 ANDALSO 0)", " 0\n")]
+  [TestCase("PRINT (0 ANDALSO 1)", " 0\n")]
+  [TestCase("PRINT (0 ORELSE 1)", "-1\n")]
+  [TestCase("PRINT (1 ORELSE 0)", "-1\n")]
+  [TestCase("PRINT (0 ORELSE 0)", " 0\n")]
+  public void Execute_GivenShortCircuitOps_WhenRun_ThenNormalizedTruth(string source, string expected) {
+    Assert.That(Run(source), Is.EqualTo(expected));
+  }
+
+  [Test]
+  public void Execute_GivenAndAlso_WhenRun_ThenRightOperandSkippedOnFalseLeft() {
+    // (100 \ x%) would raise division-by-zero error 11 if evaluated; ANDALSO must
+    // skip it because the left operand is false.
+    const string source = """
+      x% = 0
+      PRINT (x% <> 0 ANDALSO (100 \ x%) > 0)
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 0\n"));
+  }
+
+  [Test]
+  public void Execute_GivenOrElse_WhenRun_ThenRightOperandSkippedOnTrueLeft() {
+    const string source = """
+      x% = 0
+      PRINT (x% = 0 ORELSE (100 \ x%) > 0)
+      """;
+    Assert.That(Run(source), Is.EqualTo("-1\n"));
+  }
+
   [Test]
   public void Execute_GivenDimFromTernary_WhenRun_ThenInferredFromResult() {
     const string source = """
