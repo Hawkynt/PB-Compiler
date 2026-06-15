@@ -157,6 +157,50 @@ public sealed class Pb36LanguageFeatureTests {
     Assert.That(Run(source), Is.EqualTo(" 7\n"));
   }
 
+  [TestCase("PRINT 1 << 4", " 16\n")]
+  [TestCase("PRINT 256 >> 2", " 64\n")]
+  [TestCase("PRINT 6 <<> 1", " 12\n")]              // rotate left
+  [TestCase("PRINT 1 <>> 1", "-32768\n")]           // rotate right: bit0 -> bit15
+  [TestCase("PRINT 12 | 1", " 13\n")]               // bitwise OR
+  public void Execute_GivenShiftRotate16_WhenRun_ThenComputesPerOperator(string source, string expected) {
+    Assert.That(Run(source), Is.EqualTo(expected));
+  }
+
+  [Test]
+  public void Execute_GivenSignedShiftRight16_WhenRun_ThenArithmeticVsLogicalDiffer() {
+    // the width follows the left operand's type: an INTEGER variable shifts 16-bit,
+    // so >> (arithmetic) keeps the sign while >>> (logical) zero-fills.
+    const string source = """
+      i% = -16
+      PRINT i% >> 2
+      PRINT i% >>> 2
+      """;
+    Assert.That(Run(source), Is.EqualTo("-4\n 16380\n"));
+  }
+
+  [Test]
+  public void Execute_GivenShiftRotateCompound_WhenRun_ThenUpdatesInPlace() {
+    const string source = """
+      x% = 1
+      x% <<= 4
+      PRINT x%
+      x% |= 1
+      PRINT x%
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 16\n 17\n"));
+  }
+
+  [Test]
+  public void Execute_GivenShift32_WhenRun_ThenLongWidthLoop() {
+    const string source = """
+      DIM n AS LONG = 1
+      PRINT n << 20
+      DIM m AS LONG = 1
+      PRINT m <>> 1
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 1048576\n-2147483648\n"));
+  }
+
   [Test]
   public void Execute_GivenOverloadedFunctionByArity_WhenRun_ThenResolvesPerArgCount() {
     const string source = """

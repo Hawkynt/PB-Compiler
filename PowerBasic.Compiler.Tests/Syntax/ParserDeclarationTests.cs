@@ -322,6 +322,18 @@ public sealed class ParserDeclarationTests {
     });
   }
 
+  [TestCase("a << b", BinaryOp.ShiftLeft)]
+  [TestCase("a <<< b", BinaryOp.ShiftLeft)]
+  [TestCase("a >> b", BinaryOp.ShiftRightArith)]
+  [TestCase("a >>> b", BinaryOp.ShiftRightLogical)]
+  [TestCase("a <<> b", BinaryOp.RotateLeft)]
+  [TestCase("a <>> b", BinaryOp.RotateRight)]
+  [TestCase("a | b", BinaryOp.Or)]
+  public void Parse_GivenShiftRotateOperator_WhenPb36_ThenBinaryExprWithOp(string source, BinaryOp expected) {
+    var assign = (AssignStmt)Parse("x = " + source, Dialect.Pb36).Statements[0];
+    Assert.That(((BinaryExpr)assign.Value).Op, Is.EqualTo(expected));
+  }
+
   [TestCase("n += 1", BinaryOp.Add)]
   [TestCase("n -= 2", BinaryOp.Subtract)]
   [TestCase("n *= 3", BinaryOp.Multiply)]

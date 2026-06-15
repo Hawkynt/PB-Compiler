@@ -50,4 +50,19 @@ public enum TokenKind {
   /// <summary><c>{</c> / <c>}</c>: object-initializer braces (PB 3.6).</summary>
   LBrace,
   RBrace,
+  // PB 3.6 shift/rotate/bitwise operators
+  /// <summary><c>&lt;&lt;</c> arithmetic/logical shift left.</summary>
+  ShiftLeft,
+  /// <summary><c>&lt;&lt;&lt;</c> logical shift left (same as <c>&lt;&lt;</c>).</summary>
+  ShiftLeftLogical,
+  /// <summary><c>&gt;&gt;</c> arithmetic (signed) shift right.</summary>
+  ShiftRight,
+  /// <summary><c>&gt;&gt;&gt;</c> logical (unsigned) shift right.</summary>
+  ShiftRightLogical,
+  /// <summary><c>&lt;&lt;&gt;</c> rotate left.</summary>
+  RotateLeft,
+  /// <summary><c>&lt;&gt;&gt;</c> rotate right.</summary>
+  RotateRight,
+  /// <summary><c>|</c> bitwise OR.</summary>
+  Pipe,
 }

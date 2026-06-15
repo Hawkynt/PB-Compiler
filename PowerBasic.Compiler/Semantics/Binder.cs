@@ -1492,6 +1492,9 @@ public sealed class Binder {
           || right is ScalarType { IsFloat: false, ByteSize: 4, Signed: false } => PbType.Dword,
       BinaryOp.IntegerDivide or BinaryOp.Modulo => PromoteUnsigned(IntegralOf(Widest(left, right))),
       BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Eqv or BinaryOp.Imp => IntegralOf(Widest(left, right)),
+      // PB 3.6 shift/rotate: the result is the (integral) type of the left operand;
+      // its width sets the shift/rotate width, the right operand is the count
+      BinaryOp.ShiftLeft or BinaryOp.ShiftRightArith or BinaryOp.ShiftRightLogical or BinaryOp.RotateLeft or BinaryOp.RotateRight => IntegralOf(left),
       BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual or BinaryOp.GreaterEqual => PbType.Integer,
       _ => this.ArithmeticResultType(b, left, right),
     };

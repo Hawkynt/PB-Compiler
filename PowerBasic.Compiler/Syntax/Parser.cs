@@ -371,6 +371,8 @@ public sealed partial class Parser {
     // and read positions - structurally correct (it is genuinely read+written).
     if (CompoundOp(this.Current.Kind) is { } op && this.Peek().Kind == TokenKind.Equals) {
       this.Require(LanguageFeature.CompoundAssignment);
+      if (IsShiftRotateToken(this.Current.Kind)) // <<= >>= <<<= >>>= <<>= <>>= |=
+        this.Require(LanguageFeature.ShiftRotateOps);
       this.Advance(); // operator
       this.Advance(); // '='
       var value = this.ParseExpression();
@@ -390,8 +392,18 @@ public sealed partial class Parser {
     TokenKind.Backslash => BinaryOp.IntegerDivide,
     TokenKind.Caret => BinaryOp.Power,
     TokenKind.Ampersand => BinaryOp.Concat,
+    TokenKind.Pipe => BinaryOp.Or,
+    TokenKind.ShiftLeft or TokenKind.ShiftLeftLogical => BinaryOp.ShiftLeft,
+    TokenKind.ShiftRight => BinaryOp.ShiftRightArith,
+    TokenKind.ShiftRightLogical => BinaryOp.ShiftRightLogical,
+    TokenKind.RotateLeft => BinaryOp.RotateLeft,
+    TokenKind.RotateRight => BinaryOp.RotateRight,
     _ => null,
   };
+
+  private static bool IsShiftRotateToken(TokenKind kind) => kind
+    is TokenKind.Pipe or TokenKind.ShiftLeft or TokenKind.ShiftLeftLogical
+    or TokenKind.ShiftRight or TokenKind.ShiftRightLogical or TokenKind.RotateLeft or TokenKind.RotateRight;
 
   #endregion
 }

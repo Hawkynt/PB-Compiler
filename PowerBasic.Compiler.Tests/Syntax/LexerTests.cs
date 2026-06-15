@@ -14,6 +14,33 @@ public sealed class LexerTests {
     return tokens[..^2];
   }
 
+  #region pb36 shift/rotate operators
+
+  [TestCase("<<", TokenKind.ShiftLeft)]
+  [TestCase("<<<", TokenKind.ShiftLeftLogical)]
+  [TestCase(">>", TokenKind.ShiftRight)]
+  [TestCase(">>>", TokenKind.ShiftRightLogical)]
+  [TestCase("<<>", TokenKind.RotateLeft)]
+  [TestCase("<>>", TokenKind.RotateRight)]
+  [TestCase("|", TokenKind.Pipe)]
+  public void Tokenize_GivenShiftRotateOperator_WhenLexed_ThenSingleToken(string src, TokenKind expected) {
+    var t = LexLine("a " + src + " b");
+    Assert.That(t, Has.Length.EqualTo(3), src);
+    Assert.That(t[1].Kind, Is.EqualTo(expected), src);
+  }
+
+  [TestCase("<", TokenKind.Less)]
+  [TestCase("<=", TokenKind.LessEquals)]
+  [TestCase("<>", TokenKind.NotEquals)]
+  [TestCase(">", TokenKind.Greater)]
+  [TestCase(">=", TokenKind.GreaterEquals)]
+  public void Tokenize_GivenComparisonOperator_WhenLexed_ThenStillRecognized(string src, TokenKind expected) {
+    var t = LexLine("a " + src + " b");
+    Assert.That(t[1].Kind, Is.EqualTo(expected), src);
+  }
+
+  #endregion
+
   #region identifiers and suffixes
 
   [Test]

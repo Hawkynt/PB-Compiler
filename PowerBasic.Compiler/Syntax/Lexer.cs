@@ -427,16 +427,9 @@ public sealed class Lexer {
         '>' => this.AdvanceTo(TokenKind.GreaterEquals, "=>"),
         _ => (TokenKind.Equals, "="),
       },
-      '<' => this.Current switch {
-        '=' => this.AdvanceTo(TokenKind.LessEquals, "<="),
-        '>' => this.AdvanceTo(TokenKind.NotEquals, "<>"),
-        _ => (TokenKind.Less, "<"),
-      },
-      '>' => this.Current switch {
-        '=' => this.AdvanceTo(TokenKind.GreaterEquals, ">="),
-        '<' => this.AdvanceTo(TokenKind.NotEquals, "><"),
-        _ => (TokenKind.Greater, ">"),
-      },
+      '<' => this.LexLess(),
+      '>' => this.LexGreater(),
+      '|' => (TokenKind.Pipe, "|"),
       ':' => (TokenKind.Colon, ":"),
       _ => throw new LexerException($"unexpected character '{c}'", position),
     };
@@ -450,6 +443,43 @@ public sealed class Lexer {
   private (TokenKind, string) AdvanceTo(TokenKind kind, string text) {
     this.Advance();
     return (kind, text);
+  }
+
+  // '<' family: <= (LessEqual), <> (NotEqual), and the PB 3.6 operators
+  // << (ShiftLeft), <<< (ShiftLeftLogical), <<> (RotateLeft), <>> (RotateRight).
+  private (TokenKind, string) LexLess() {
+    switch (this.Current) {
+      case '=':
+        return this.AdvanceTo(TokenKind.LessEquals, "<=");
+      case '<':
+        this.Advance();
+        return this.Current switch {
+          '<' => this.AdvanceTo(TokenKind.ShiftLeftLogical, "<<<"),
+          '>' => this.AdvanceTo(TokenKind.RotateLeft, "<<>"),
+          _ => (TokenKind.ShiftLeft, "<<"),
+        };
+      case '>':
+        this.Advance();
+        return this.Current == '>' ? this.AdvanceTo(TokenKind.RotateRight, "<>>") : (TokenKind.NotEquals, "<>");
+      default:
+        return (TokenKind.Less, "<");
+    }
+  }
+
+  // '>' family: >= (GreaterEqual), >< (NotEqual), and the PB 3.6 operators
+  // >> (ShiftRight, arithmetic) and >>> (ShiftRightLogical).
+  private (TokenKind, string) LexGreater() {
+    switch (this.Current) {
+      case '=':
+        return this.AdvanceTo(TokenKind.GreaterEquals, ">=");
+      case '<':
+        return this.AdvanceTo(TokenKind.NotEquals, "><");
+      case '>':
+        this.Advance();
+        return this.Current == '>' ? this.AdvanceTo(TokenKind.ShiftRightLogical, ">>>") : (TokenKind.ShiftRight, ">>");
+      default:
+        return (TokenKind.Greater, ">");
+    }
   }
 }
 

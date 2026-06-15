@@ -48,6 +48,8 @@ public enum BinaryOp {
   And, Or, Xor, Eqv, Imp,
   /// <summary><c>&amp;</c> string concatenation (PB 3.5).</summary>
   Concat,
+  // PB 3.6 shift/rotate operators (left operand's type sets the width)
+  ShiftLeft, ShiftRightArith, ShiftRightLogical, RotateLeft, RotateRight,
 }
 
 public sealed record BinaryExpr(SourcePosition Position, BinaryOp Op, Expression Left, Expression Right) : Expression(Position);

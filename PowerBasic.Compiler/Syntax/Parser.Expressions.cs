@@ -37,6 +37,11 @@ public sealed partial class Parser {
         left = new BinaryExpr(this.Advance().Position, BinaryOp.Or, left, this.ParseAnd());
         continue;
       }
+      if (this.Current.Kind == TokenKind.Pipe) { // PB 3.6 bitwise OR operator
+        this.Require(LanguageFeature.ShiftRotateOps);
+        left = new BinaryExpr(this.Advance().Position, BinaryOp.Or, left, this.ParseAnd());
+        continue;
+      }
       if (this.IsKeyword(0, "ORELSE")) {
         left = this.MakeShortCircuit(this.Advance().Position, isAnd: false, left, this.ParseAnd());
         continue;
@@ -122,7 +127,30 @@ public sealed partial class Parser {
       return new UnaryExpr(pos, UnaryOp.Not, this.ParseTruth());
     }
 
-    return this.ParseAdditive();
+    return this.ParseShift();
+  }
+
+  /// <summary>
+  /// PB 3.6 shift/rotate operators, binding looser than +/- but tighter than
+  /// comparison: &lt;&lt; / &lt;&lt;&lt; shift left, &gt;&gt; arithmetic shift right,
+  /// &gt;&gt;&gt; logical shift right, &lt;&lt;&gt; rotate left, &lt;&gt;&gt; rotate right.
+  /// </summary>
+  private Expression ParseShift() {
+    var left = this.ParseAdditive();
+    for (;;) {
+      var op = this.Current.Kind switch {
+        TokenKind.ShiftLeft or TokenKind.ShiftLeftLogical => BinaryOp.ShiftLeft,
+        TokenKind.ShiftRight => BinaryOp.ShiftRightArith,
+        TokenKind.ShiftRightLogical => BinaryOp.ShiftRightLogical,
+        TokenKind.RotateLeft => BinaryOp.RotateLeft,
+        TokenKind.RotateRight => BinaryOp.RotateRight,
+        _ => (BinaryOp?)null,
+      };
+      if (op == null)
+        return left;
+      this.Require(LanguageFeature.ShiftRotateOps);
+      left = new BinaryExpr(this.Advance().Position, op.Value, left, this.ParseAdditive());
+    }
   }
 
   private Expression ParseAdditive() {

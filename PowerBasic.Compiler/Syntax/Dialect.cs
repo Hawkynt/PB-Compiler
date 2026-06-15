@@ -91,6 +91,7 @@ public enum LanguageFeature {
   ObjectInitializer,
   ShortCircuitOps,
   SubFunctionOverloading,
+  ShiftRotateOps,
 }
 
 /// <summary>
@@ -136,6 +137,7 @@ public static class DialectFacts {
     [LanguageFeature.ObjectInitializer] = (Dialect.Pb36, "object initializer ('NEW type { .field = value }')"),
     [LanguageFeature.ShortCircuitOps] = (Dialect.Pb36, "short-circuit operators (ANDALSO / ORELSE)"),
     [LanguageFeature.SubFunctionOverloading] = (Dialect.Pb36, "SUB/FUNCTION overloading (same name, different signature)"),
+    [LanguageFeature.ShiftRotateOps] = (Dialect.Pb36, "shift/rotate/bitwise operators (<<, >>, <<<, >>>, <<>, <>>, |)"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

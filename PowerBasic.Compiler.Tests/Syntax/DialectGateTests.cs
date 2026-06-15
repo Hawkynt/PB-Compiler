@@ -246,6 +246,18 @@ public sealed class DialectGateTests {
     AssertAccepted(source, Dialect.Pb36);
   }
 
+  [TestCase("x = a << 2")]
+  [TestCase("x = a >> 2")]
+  [TestCase("x = a <<> 2")]
+  [TestCase("x = a <>> 2")]
+  [TestCase("x = a | b")]
+  [TestCase("x <<= 2")]
+  [TestCase("x |= 4")]
+  public void Gate_GivenShiftRotateOps_WhenPb35_ThenRejectedButPb36Accepts(string source) {
+    AssertRejected(source, Dialect.Pb35, "3.6");
+    AssertAccepted(source, Dialect.Pb36);
+  }
+
   [Test]
   public void Gate_GivenOverloadedFunction_WhenPb35_ThenRejectedButPb36Accepts() {
     const string source = """

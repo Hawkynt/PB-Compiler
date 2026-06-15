@@ -530,6 +530,12 @@ public sealed partial class CodeGenerator {
         asm.Not(Reg.AX);
         asm.Or(Reg.AX, Reg.BX);
         break;
+      // pb36 shift/rotate: AX = left value, BL = count (8086 shifts/rotates by CL)
+      case BinaryOp.ShiftLeft: asm.Mov(Reg.CL, Reg.BL); asm.Shl(Reg.AX, Reg.CL); break;
+      case BinaryOp.ShiftRightArith: asm.Mov(Reg.CL, Reg.BL); asm.Sar(Reg.AX, Reg.CL); break;
+      case BinaryOp.ShiftRightLogical: asm.Mov(Reg.CL, Reg.BL); asm.Shr(Reg.AX, Reg.CL); break;
+      case BinaryOp.RotateLeft: asm.Mov(Reg.CL, Reg.BL); asm.Rol(Reg.AX, Reg.CL); break;
+      case BinaryOp.RotateRight: asm.Mov(Reg.CL, Reg.BL); asm.Ror(Reg.AX, Reg.CL); break;
       case BinaryOp.Equal: this.EmitInt16Compare(asm => asm.Je, Condition.Equal); break;
       case BinaryOp.NotEqual: this.EmitInt16Compare(asm => asm.Jne, Condition.NotEqual); break;
       case BinaryOp.Less: this.EmitInt16Compare(asm => asm.Jl, Condition.Less); break;
@@ -744,6 +750,36 @@ public sealed partial class CodeGenerator {
   };
 
   /// <summary>left DX:AX, right CX:BX -> result DX:AX.</summary>
+  /// <summary>
+  /// pb36 32-bit shift/rotate of DX:AX by the count in BL (no single 8086
+  /// instruction does a 32-bit shift, so it runs a per-bit loop).
+  /// </summary>
+  private void EmitInt32ShiftRotate(BinaryOp op) {
+    var asm = this._asm;
+    asm.Mov(Reg.CL, Reg.BL);
+    var done = asm.DefineLabel();
+    var loop = asm.DefineLabel();
+    asm.Test(Reg.CL, Reg.CL);
+    asm.Jz(done);
+    asm.MarkLabel(loop);
+    switch (op) {
+      case BinaryOp.ShiftLeft:
+        asm.Shl(Reg.AX, 1); asm.Rcl(Reg.DX, 1); break;
+      case BinaryOp.ShiftRightArith:
+        asm.Sar(Reg.DX, 1); asm.Rcr(Reg.AX, 1); break;
+      case BinaryOp.ShiftRightLogical:
+        asm.Shr(Reg.DX, 1); asm.Rcr(Reg.AX, 1); break;
+      case BinaryOp.RotateLeft:
+        asm.Shl(Reg.AX, 1); asm.Rcl(Reg.DX, 1); asm.Adc(Reg.AX, (Imm)0); break;
+      case BinaryOp.RotateRight:
+        var skip = asm.DefineLabel();
+        asm.Shr(Reg.DX, 1); asm.Rcr(Reg.AX, 1); asm.Jnc(skip); asm.Or(Reg.DX, (Imm)0x8000); asm.MarkLabel(skip); break;
+    }
+    asm.Dec(Reg.CL);
+    asm.Jnz(loop);
+    asm.MarkLabel(done);
+  }
+
   private void EmitInt32Op(BinaryExpr b, bool unsignedCompare = false, bool unsignedDivide = false) {
     var asm = this._asm;
     if (unsignedCompare && b.Op is BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual or BinaryOp.GreaterEqual) {
@@ -780,6 +816,9 @@ public sealed partial class CodeGenerator {
       return;
     }
     switch (b.Op) {
+      case BinaryOp.ShiftLeft or BinaryOp.ShiftRightArith or BinaryOp.ShiftRightLogical or BinaryOp.RotateLeft or BinaryOp.RotateRight:
+        this.EmitInt32ShiftRotate(b.Op);
+        break;
       case BinaryOp.Add:
         asm.Add(Reg.AX, Reg.BX);
         asm.Adc(Reg.DX, Reg.CX);
