@@ -53,6 +53,16 @@ public sealed partial class Parser {
         break;
     }
 
+    // expression-bodied function (PB 3.6): FUNCTION F(...) [AS T] = expression
+    // desugars to a single FUNCTION-result assignment, mirroring DEF FN's '= expr'.
+    if (this.Current.Kind == TokenKind.Equals) {
+      this.Require(LanguageFeature.ExpressionBodiedProc);
+      var eq = this.Advance();
+      var result = new NameExpr(eq.Position, "FUNCTION", TypeSuffix.None);
+      IReadOnlyList<Statement> exprBody = [new AssignStmt(eq.Position, result, this.ParseExpression())];
+      return new FunctionDecl(pos, name.Text, name.Suffix, returnType, parameters ?? [], isStatic, visibility, alias, cdecl, exprBody);
+    }
+
     var body = this.ParseBody("END FUNCTION");
     this.Advance();
     this.Advance();

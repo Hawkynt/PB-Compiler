@@ -83,6 +83,8 @@ public enum LanguageFeature {
   SetEof,
   ConsInOut,
   StringPtrInType,
+  // PB 3.6 (new syntax, see docs/PB36.md)
+  ExpressionBodiedProc,
 }
 
 /// <summary>
@@ -121,6 +123,7 @@ public static class DialectFacts {
     [LanguageFeature.SetEof] = (Dialect.Pb35, "SETEOF"),
     [LanguageFeature.ConsInOut] = (Dialect.Pb35, "CONSIN/CONSOUT"),
     [LanguageFeature.StringPtrInType] = (Dialect.Pb35, "STRING PTR fields inside TYPE/UNION"),
+    [LanguageFeature.ExpressionBodiedProc] = (Dialect.Pb36, "expression-bodied FUNCTION ('= expression' single-expression body)"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

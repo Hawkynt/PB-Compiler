@@ -1,0 +1,37 @@
+using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Semantics;
+using PowerBasic.Compiler.Syntax;
+
+namespace PowerBasic.Compiler.Tests.CodeGen;
+
+/// <summary>
+/// End-to-end tests for the PB 3.6 new-syntax surface (docs/PB36.md): source is
+/// compiled with <c>--dialect pb36</c> through the full pipeline and run under
+/// DOSBox. Skipped when DOSBox is unavailable. These prove the new sugar lowers
+/// to the same observable behavior the hand-written equivalent would produce.
+/// </summary>
+[TestFixture]
+[NonParallelizable]
+public sealed class Pb36LanguageFeatureTests {
+
+  private static string Run(string source) {
+    var tokens = Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36);
+    var unit = Parser.Parse(tokens, "TEST.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model);
+    var exe = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+    return DosBoxRunner.Normalize(DosBoxRunner.Run(exe));
+  }
+
+  [Test]
+  public void Execute_GivenExpressionBodiedFunction_WhenRun_ThenResultMatchesEquivalentBody() {
+    const string source = """
+      DECLARE FUNCTION Sq&(BYVAL x AS LONG)
+      PRINT Sq&(7)
+      FUNCTION Sq&(BYVAL x AS LONG) = x * x
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 49\n"));
+  }
+}

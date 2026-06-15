@@ -259,6 +259,31 @@ public sealed class ParserDeclarationTests {
     });
   }
 
+  [Test]
+  public void Parse_GivenExpressionBodiedFunction_WhenPb36_ThenBodyIsSingleResultAssignment() {
+    var unit = Parse("FUNCTION Sq&(BYVAL x AS LONG) = x * x", Dialect.Pb36);
+    var fn = (FunctionDecl)unit.Statements[0];
+    Assert.Multiple(() => {
+      Assert.That(fn.Name, Is.EqualTo("Sq"));
+      Assert.That(fn.Parameters, Has.Count.EqualTo(1));
+      Assert.That(fn.Body, Has.Count.EqualTo(1));
+      var assign = (AssignStmt)fn.Body[0];
+      Assert.That(((NameExpr)assign.Target).Name, Is.EqualTo("FUNCTION"));
+      Assert.That(assign.Value, Is.InstanceOf<BinaryExpr>());
+    });
+  }
+
+  [Test]
+  public void Parse_GivenExpressionBodiedFunctionWithAsType_WhenPb36_ThenReturnTypeAndBodyKept() {
+    var unit = Parse("FUNCTION Twice(BYVAL n AS INTEGER) AS LONG = n + n", Dialect.Pb36);
+    var fn = (FunctionDecl)unit.Statements[0];
+    Assert.Multiple(() => {
+      Assert.That(fn.ReturnType!.Builtin, Is.EqualTo(BuiltinType.Long));
+      Assert.That(fn.Body, Has.Count.EqualTo(1));
+      Assert.That(fn.Body[0], Is.InstanceOf<AssignStmt>());
+    });
+  }
+
   #endregion
 
   #region DEF FN / DEFtype / DEF SEG

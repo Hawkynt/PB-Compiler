@@ -209,6 +209,17 @@ public sealed class DialectGateTests {
 
   #endregion
 
+  #region PB 3.6 gates
+
+  [Test]
+  public void Gate_GivenExpressionBodiedFunction_WhenPb35_ThenRejectedButPb36Accepts() {
+    const string source = "FUNCTION Sq&(BYVAL x AS LONG) = x * x";
+    AssertRejected(source, Dialect.Pb35, "3.6");
+    AssertAccepted(source, Dialect.Pb36);
+  }
+
+  #endregion
+
   #region preprocessor gate
 
   [Test]
