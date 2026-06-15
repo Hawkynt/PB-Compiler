@@ -420,6 +420,8 @@ public sealed class Lexer {
       '@' => (TokenKind.At, "@"),
       '[' => (TokenKind.LBracket, "["),
       ']' => (TokenKind.RBracket, "]"),
+      '{' => (TokenKind.LBrace, "{"),
+      '}' => (TokenKind.RBrace, "}"),
       '=' => this.Current switch {
         '<' => this.AdvanceTo(TokenKind.LessEquals, "=<"),
         '>' => this.AdvanceTo(TokenKind.GreaterEquals, "=>"),

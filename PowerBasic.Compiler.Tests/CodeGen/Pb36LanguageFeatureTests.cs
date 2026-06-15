@@ -158,6 +158,23 @@ public sealed class Pb36LanguageFeatureTests {
   }
 
   [Test]
+  public void Execute_GivenObjectInitializer_WhenRun_ThenListedFieldsSetAndOthersZero() {
+    // Z is not listed, so it must keep its zero-initialized value.
+    const string source = """
+      TYPE Point
+        X AS INTEGER
+        Y AS INTEGER
+        Z AS INTEGER
+      END TYPE
+      DIM p = NEW Point { .X = 3, .Y = 4 }
+      PRINT p.X
+      PRINT p.Y
+      PRINT p.Z
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 3\n 4\n 0\n"));
+  }
+
+  [Test]
   public void Execute_GivenDimInitializerInProcedure_WhenRun_ThenLocalInferred() {
     const string source = """
       DECLARE FUNCTION Cube&(BYVAL x AS LONG)

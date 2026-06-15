@@ -1020,6 +1020,14 @@ public sealed class Binder {
   /// or a module global at main level).
   /// </summary>
   private void BindDimInitializer(DimStmt dim, VariableDecl v, Scope scope) {
+    // PB 3.6 object initializer: DIM p = NEW Udt { .field = value, ... } lowers to a
+    // UDT declaration plus one assignment per listed field (unlisted fields keep
+    // their zero value). The NEW node is consumed here and never reaches codegen.
+    if (v.Initializer is NewExpr nu) {
+      this.BindNewInitializer(dim, v, nu, scope);
+      return;
+    }
+
     var valueType = this.BindExpression(v.Initializer!, scope);
     var declaredType = v.Type != null ? this.ResolveTypeName(v.Type) : valueType;
     if (declaredType == null) {
@@ -1027,11 +1035,43 @@ public sealed class Binder {
       return;
     }
 
+    this.DeclareInitializedVariable(dim, v, declaredType, scope);
+
+    // lower the initializer to a real assignment (bound here, spliced after the DIM)
+    var assign = new AssignStmt(v.Position, new NameExpr(v.Position, v.Name, v.Suffix), v.Initializer!);
+    this.BindStatement(assign, scope);
+    this.InitListOf(dim).Add(assign);
+  }
+
+  /// <summary>
+  /// PB 3.6 object initializer: <c>DIM p [AS Udt] = NEW Udt { .f = v, ... }</c> declares
+  /// <c>p</c> as the UDT and lowers to one <c>p.field = value</c> assignment per listed
+  /// field (unlisted fields keep their zero-initialized value).
+  /// </summary>
+  private void BindNewInitializer(DimStmt dim, VariableDecl v, NewExpr nu, Scope scope) {
+    if (!this._model.Udts.TryGetValue(nu.TypeName, out var udt)) {
+      this.Error(nu.Position, $"unknown type {nu.TypeName}");
+      return;
+    }
+    var declaredType = v.Type != null ? this.ResolveTypeName(v.Type) ?? udt : udt;
+    this.DeclareInitializedVariable(dim, v, declaredType, scope);
+
+    var list = this.InitListOf(dim);
+    foreach (var (field, value) in nu.Fields) {
+      var target = new MemberExpr(v.Position, new NameExpr(v.Position, v.Name, v.Suffix), field, TypeSuffix.None);
+      var assign = new AssignStmt(v.Position, target, value);
+      this.BindStatement(assign, scope);
+      list.Add(assign);
+    }
+  }
+
+  /// <summary>Creates and registers a DIM-initialized variable in the right scope (with a redeclaration check).</summary>
+  private VariableSymbol DeclareInitializedVariable(DimStmt dim, VariableDecl v, PbType type, Scope scope) {
     var key = VariableKey(v.Name, v.Suffix);
     var storage = scope.Proc == null ? VariableStorage.Global
       : scope.Proc.IsStatic || dim.StaticFlag ? VariableStorage.Static
       : VariableStorage.Local;
-    var symbol = new VariableSymbol(v.Name, declaredType, storage);
+    var symbol = new VariableSymbol(v.Name, type, storage);
     if (scope.Proc != null) {
       if (scope.Proc.Variables.ContainsKey(key))
         this.Error(v.Position, $"variable {v.Name} already declared");
@@ -1041,14 +1081,11 @@ public sealed class Binder {
         this.Error(v.Position, $"variable {v.Name} already declared");
       this._model.ModuleVariables[key] = symbol;
     }
-
-    // lower the initializer to a real assignment (bound here, spliced after the DIM)
-    var assign = new AssignStmt(v.Position, new NameExpr(v.Position, v.Name, v.Suffix), v.Initializer!);
-    this.BindStatement(assign, scope);
-    if (!this._model.DimInitializers.TryGetValue(dim, out var list))
-      this._model.DimInitializers[dim] = list = [];
-    list.Add(assign);
+    return symbol;
   }
+
+  private List<AssignStmt> InitListOf(DimStmt dim)
+    => this._model.DimInitializers.TryGetValue(dim, out var list) ? list : this._model.DimInitializers[dim] = [];
 
   private void BindCallStatement(CallStmt c, Scope scope) {
     // PB allows CALL on a FUNCTION too - the result is discarded
@@ -1256,6 +1293,11 @@ public sealed class Binder {
 
       case IfExpr ternary:
         return this.BindTernaryIf(ternary, scope);
+
+      case NewExpr neu:
+        // a NEW initializer is consumed by BindNewInitializer; reaching here means
+        // it was used somewhere other than a DIM initializer.
+        return this.ErrorType(neu.Position, "NEW { ... } object initializer is only allowed as a DIM initializer");
 
       case CallOrIndexExpr call:
         return this.BindCallOrIndex(call, scope);

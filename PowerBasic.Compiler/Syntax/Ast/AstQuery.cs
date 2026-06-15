@@ -26,6 +26,7 @@ public static class AstQuery {
     FileNumberExpr f => [f.Number],
     AnyMatchExpr a => [a.Value],
     IfExpr t => [t.Condition, t.WhenTrue, t.WhenFalse],
+    NewExpr n => [.. n.Fields.Select(f => f.Value)],
     // leaves with no child expressions: IntegerLiteralExpr, FloatLiteralExpr,
     // StringLiteralExpr, NamedConstantExpr, NameExpr.
     _ => [],

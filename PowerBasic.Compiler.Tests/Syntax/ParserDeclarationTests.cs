@@ -303,6 +303,17 @@ public sealed class ParserDeclarationTests {
   }
 
   [Test]
+  public void Parse_GivenDimWithObjectInitializer_WhenPb36_ThenNewExprWithFields() {
+    var stmt = (DimStmt)Parse("DIM p = NEW Point { .X = 1, .Y = 2 }", Dialect.Pb36).Statements[0];
+    var neu = (NewExpr)stmt.Variables[0].Initializer!;
+    Assert.Multiple(() => {
+      Assert.That(neu.TypeName, Is.EqualTo("Point"));
+      Assert.That(neu.Fields.Select(f => f.Field), Is.EqualTo(new[] { "X", "Y" }));
+      Assert.That(((IntegerLiteralExpr)neu.Fields[1].Value).Value, Is.EqualTo(2));
+    });
+  }
+
+  [Test]
   public void Parse_GivenDimWithTypedInitializer_WhenPb36_ThenTypeAndInitializerKept() {
     var stmt = (DimStmt)Parse("DIM n AS LONG = 100000", Dialect.Pb36).Statements[0];
     Assert.Multiple(() => {

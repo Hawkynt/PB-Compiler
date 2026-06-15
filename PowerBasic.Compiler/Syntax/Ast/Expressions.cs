@@ -70,3 +70,10 @@ public sealed record AnyMatchExpr(SourcePosition Position, Expression Value) : E
 /// only the selected branch at runtime (VB.NET-style <c>If</c> operator).
 /// </summary>
 public sealed record IfExpr(SourcePosition Position, Expression Condition, Expression WhenTrue, Expression WhenFalse) : Expression(Position);
+
+/// <summary>
+/// PB 3.6 object initializer: <c>NEW type { .field = value, ... }</c>. Valid only as a
+/// DIM initializer; the binder lowers it to per-field assignments on the declared
+/// variable (unlisted fields keep their zero-initialized value).
+/// </summary>
+public sealed record NewExpr(SourcePosition Position, string TypeName, IReadOnlyList<(string Field, Expression Value)> Fields) : Expression(Position);

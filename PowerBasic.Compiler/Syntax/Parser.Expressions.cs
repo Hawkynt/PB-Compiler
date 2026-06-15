@@ -289,11 +289,32 @@ public sealed partial class Parser {
     if (this.Current is { Suffix: TypeSuffix.None } && this.IsKeyword(0, "IF") && this.Peek().Kind == TokenKind.LParen)
       return this.ParseTernaryIf();
 
+    // PB 3.6 object initializer: NEW type { .field = value, ... }
+    if (this.IsKeyword(0, "NEW") && this.Peek().Kind == TokenKind.Identifier && this.Peek(2).Kind == TokenKind.LBrace)
+      return this.ParseNewExpr();
+
     var token = this.Advance();
     Expression expr = this.Current.Kind == TokenKind.LParen
       ? new CallOrIndexExpr(token.Position, token.Text, token.Suffix, this.ParseArgumentList())
       : new NameExpr(token.Position, token.Text, token.Suffix);
     return this.ParsePostfix(expr);
+  }
+
+  private Expression ParseNewExpr() {
+    this.Require(LanguageFeature.ObjectInitializer);
+    var pos = this.Advance().Position; // NEW
+    var typeName = this.Expect(TokenKind.Identifier, "type name").Text;
+    this.Expect(TokenKind.LBrace, "'{'");
+    var fields = new List<(string Field, Expression Value)>();
+    if (this.Current.Kind != TokenKind.RBrace)
+      do {
+        this.Expect(TokenKind.Period, "'.' before field name");
+        var field = this.Expect(TokenKind.Identifier, "field name").Text;
+        this.Expect(TokenKind.Equals, "'='");
+        fields.Add((field, this.ParseExpression()));
+      } while (this.Match(TokenKind.Comma));
+    this.Expect(TokenKind.RBrace, "'}'");
+    return new NewExpr(pos, typeName, fields);
   }
 
   private Expression ParseTernaryIf() {

@@ -47,4 +47,7 @@ public enum TokenKind {
   At,
   LBracket,
   RBracket,
+  /// <summary><c>{</c> / <c>}</c>: object-initializer braces (PB 3.6).</summary>
+  LBrace,
+  RBrace,
 }
