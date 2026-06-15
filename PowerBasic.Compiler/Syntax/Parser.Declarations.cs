@@ -402,6 +402,14 @@ public sealed partial class Parser {
       case "ABSOLUTE":
         this.Advance();
         return ArrayClass.Absolute;
+      case "EMS": // PB 3.6 external-memory arrays
+        this.Require(LanguageFeature.XmsEmsArrays);
+        this.Advance();
+        return ArrayClass.Ems;
+      case "XMS":
+        this.Require(LanguageFeature.XmsEmsArrays);
+        this.Advance();
+        return ArrayClass.Xms;
       default:
         return ArrayClass.Default;
     }

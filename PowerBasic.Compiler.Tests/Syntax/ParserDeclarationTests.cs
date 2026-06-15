@@ -368,6 +368,13 @@ public sealed class ParserDeclarationTests {
     });
   }
 
+  [TestCase("DIM EMS a&(10)", ArrayClass.Ems)]
+  [TestCase("DIM XMS a&(10)", ArrayClass.Xms)]
+  public void Parse_GivenExternalMemoryArray_WhenPb36_ThenArrayClassSet(string source, ArrayClass expected) {
+    var stmt = (DimStmt)Parse(source, Dialect.Pb36).Statements[0];
+    Assert.That(stmt.Class, Is.EqualTo(expected));
+  }
+
   [Test]
   public void Parse_GivenNamedArgument_WhenPb36_ThenNamedArgExpr() {
     var assign = (AssignStmt)Parse("x = Foo(y := 5)", Dialect.Pb36).Statements[0];

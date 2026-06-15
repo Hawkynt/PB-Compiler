@@ -117,6 +117,21 @@ public sealed class Pb36LanguageFeatureTests {
     Assert.That(Run(source), Is.EqualTo(" 1\n 9\n"));
   }
 
+  [TestCase("EMS")]
+  [TestCase("XMS")]
+  public void Execute_GivenExternalMemoryArray_WhenRun_ThenStoresAndLoads(string kind) {
+    // EMS uses the EMS-paged allocator; XMS is routed through it as a stand-in until
+    // the optimizer instance lands a true XMS runtime - both must round-trip values.
+    var source = $"""
+      DIM {kind} a&(10)
+      a&(3) = 1234
+      a&(7) = 5678
+      PRINT a&(3)
+      PRINT a&(7)
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 1234\n 5678\n"));
+  }
+
   [Test]
   public void Execute_GivenEnumAutoAndExplicit_WhenRun_ThenMembersAreConstants() {
     const string source = """

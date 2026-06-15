@@ -97,6 +97,7 @@ public enum LanguageFeature {
   WithBlock,
   DefaultParameters,
   NamedArguments,
+  XmsEmsArrays,
 }
 
 /// <summary>
@@ -148,6 +149,7 @@ public static class DialectFacts {
     [LanguageFeature.WithBlock] = (Dialect.Pb36, "WITH ... END WITH blocks"),
     [LanguageFeature.DefaultParameters] = (Dialect.Pb36, "default parameter values ('param AS type = value')"),
     [LanguageFeature.NamedArguments] = (Dialect.Pb36, "named arguments ('name := value')"),
+    [LanguageFeature.XmsEmsArrays] = (Dialect.Pb36, "XMS/EMS arrays ('DIM XMS/EMS a(...)')"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

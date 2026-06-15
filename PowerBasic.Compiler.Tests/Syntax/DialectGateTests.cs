@@ -211,6 +211,13 @@ public sealed class DialectGateTests {
 
   #region PB 3.6 gates
 
+  [TestCase("DIM EMS a%(10)")]
+  [TestCase("DIM XMS a%(10)")]
+  public void Gate_GivenExternalMemoryArray_WhenPb35_ThenRejectedButPb36Accepts(string source) {
+    AssertRejected(source, Dialect.Pb35, "3.6");
+    AssertAccepted(source, Dialect.Pb36);
+  }
+
   [Test]
   public void Gate_GivenNamedArgument_WhenPb35_ThenRejectedButPb36Accepts() {
     const string source = "DECLARE FUNCTION Foo&(BYVAL y AS LONG)\nx& = Foo&(y := 5)\nFUNCTION Foo&(BYVAL y AS LONG)\nFoo& = y\nEND FUNCTION";

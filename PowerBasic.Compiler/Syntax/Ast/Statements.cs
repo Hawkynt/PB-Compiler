@@ -82,8 +82,8 @@ public sealed record VariableDecl(SourcePosition Position, string Name, TypeSuff
 
 public enum StorageClass { Dim, Local, Static, Shared, Public, Ext, Common }
 
-/// <summary>Array allocation class selected on DIM (see docs/DIALECTS.md).</summary>
-public enum ArrayClass { Default, Static, Dynamic, Huge, Virtual, Absolute }
+/// <summary>Array allocation class selected on DIM (see docs/DIALECTS.md). PB 3.6 adds Ems/Xms (external-memory backed).</summary>
+public enum ArrayClass { Default, Static, Dynamic, Huge, Virtual, Absolute, Ems, Xms }
 
 /// <summary>
 /// DIM/LOCAL/STATIC/SHARED/PUBLIC/EXT/COMMON declaration; DIM may carry an extra SHARED flag

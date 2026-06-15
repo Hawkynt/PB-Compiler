@@ -44,7 +44,10 @@ public sealed partial class CodeGenerator {
       case ArrayClass.Huge:
         this.EmitHugeAllocation(symbol, bounds, position);
         break;
-      case ArrayClass.Virtual:
+      // PB 3.6 EMS/XMS arrays: EMS uses the existing EMS-paged allocator; XMS is
+      // routed through it too as a working stand-in until the optimizer instance
+      // adds a true XMS-backed runtime (observably identical - it is just storage).
+      case ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms:
         this.EmitVirtualAllocation(symbol, bounds, position);
         break;
       case ArrayClass.Absolute:

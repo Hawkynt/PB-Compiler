@@ -469,7 +469,7 @@ public sealed class Binder {
     // dynamic class (DYNAMIC/HUGE/VIRTUAL), or a REDIM anywhere makes the array dynamic
     var bounds = new List<(int, int)>();
     var isStatic = !this._dynamicMode
-      && arrayClass is not (ArrayClass.Dynamic or ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Absolute)
+      && arrayClass is not (ArrayClass.Dynamic or ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Absolute or ArrayClass.Ems or ArrayClass.Xms)
       && !this._redimmedArrays.Contains(VariableKey(v.Name, v.Suffix, isArray: true));
     foreach (var (lowerExpr, upperExpr) in v.ArrayBounds) {
       var lower = lowerExpr == null ? this._optionBase : (int?)(this._folder.TryFold(lowerExpr)?.Integer);
