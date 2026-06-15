@@ -160,12 +160,16 @@ public sealed partial class Parser {
         TokenKind.Plus => BinaryOp.Add,
         TokenKind.Minus => BinaryOp.Subtract,
         TokenKind.Ampersand => BinaryOp.Concat,
+        TokenKind.PlusStar => BinaryOp.PointerAdd,
+        TokenKind.MinusStar => BinaryOp.PointerSub,
         _ => (BinaryOp?)null,
       };
       if (op == null)
         return left;
       if (op == BinaryOp.Concat)
         this.Require(LanguageFeature.ConcatOperator);
+      if (op is BinaryOp.PointerAdd or BinaryOp.PointerSub)
+        this.Require(LanguageFeature.PointerArithmetic);
 
       left = new BinaryExpr(this.Advance().Position, op.Value, left, this.ParseModulo());
     }

@@ -322,6 +322,13 @@ public sealed class ParserDeclarationTests {
     });
   }
 
+  [TestCase("p +* i", BinaryOp.PointerAdd)]
+  [TestCase("p -* i", BinaryOp.PointerSub)]
+  public void Parse_GivenScaledPointerArith_WhenPb36_ThenBinaryExprWithOp(string source, BinaryOp expected) {
+    var assign = (AssignStmt)Parse("x = " + source, Dialect.Pb36).Statements[0];
+    Assert.That(((BinaryExpr)assign.Value).Op, Is.EqualTo(expected));
+  }
+
   [TestCase("a << b", BinaryOp.ShiftLeft)]
   [TestCase("a <<< b", BinaryOp.ShiftLeft)]
   [TestCase("a >> b", BinaryOp.ShiftRightArith)]

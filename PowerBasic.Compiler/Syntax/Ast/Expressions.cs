@@ -50,6 +50,8 @@ public enum BinaryOp {
   Concat,
   // PB 3.6 shift/rotate operators (left operand's type sets the width)
   ShiftLeft, ShiftRightArith, ShiftRightLogical, RotateLeft, RotateRight,
+  // PB 3.6 scaled pointer arithmetic: ptr +* i / ptr -* i scale i by the target size
+  PointerAdd, PointerSub,
 }
 
 public sealed record BinaryExpr(SourcePosition Position, BinaryOp Op, Expression Left, Expression Right) : Expression(Position);

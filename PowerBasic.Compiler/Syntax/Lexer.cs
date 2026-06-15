@@ -403,6 +403,10 @@ public sealed class Lexer {
     this.Advance();
 
     var (kind, text) = c switch {
+      // PB 3.6 scaled pointer arithmetic: '+*' / '-*' (contiguous; '+ *' / '- *'
+      // never occur in valid source since PB has no prefix '*')
+      '+' when this.Current == '*' => this.AdvanceTo(TokenKind.PlusStar, "+*"),
+      '-' when this.Current == '*' => this.AdvanceTo(TokenKind.MinusStar, "-*"),
       '+' => (TokenKind.Plus, "+"),
       '-' => (TokenKind.Minus, "-"),
       '*' => (TokenKind.Star, "*"),

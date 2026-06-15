@@ -65,4 +65,8 @@ public enum TokenKind {
   RotateRight,
   /// <summary><c>|</c> bitwise OR.</summary>
   Pipe,
+  /// <summary><c>+*</c> scaled pointer add (index times target size, PB 3.6).</summary>
+  PlusStar,
+  /// <summary><c>-*</c> scaled pointer subtract (PB 3.6).</summary>
+  MinusStar,
 }

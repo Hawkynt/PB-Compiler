@@ -290,6 +290,12 @@ public sealed partial class CodeGenerator {
     var rightType = model.TypeOf(b.Right);
     var resultType = model.TypeOf(b);
 
+    // pb36 scaled pointer arithmetic: ptr +* i / ptr -* i (offset-only, like @p[i])
+    if (b.Op is BinaryOp.PointerAdd or BinaryOp.PointerSub) {
+      this.EmitPointerArith(b, leftType);
+      return;
+    }
+
     // whole-value TYPE/UNION = / <> (PB 3.1): memcmp semantics
     if (leftType is UdtType leftUdt && rightType is UdtType) {
       // pb36 O15: a self-compare folds to its constant truth - memcmp of a
@@ -431,6 +437,29 @@ public sealed partial class CodeGenerator {
     asm.Fistp(Mem.Qword(asm.Lbl("rt_q0")));   // left
     asm.Call(routine);
     asm.Fild(Mem.Qword(asm.Lbl("rt_q0")));
+  }
+
+  /// <summary>
+  /// pb36 <c>ptr +* i</c> / <c>ptr -* i</c>: moves the far pointer's offset by
+  /// <c>i * targetSize</c> (segment fixed, offset wraps at 64K - the same real-mode
+  /// scaling <c>@p[i]</c> uses); result DX:AX = seg:off.
+  /// </summary>
+  private void EmitPointerArith(BinaryExpr b, PbType pointerType) {
+    var asm = this._asm;
+    var size = Math.Max((pointerType as PointerType)?.Target.Size ?? 1, 1);
+    this.EmitExpression(b.Left);     // DX:AX = seg:off of the pointer
+    asm.Push(Reg.DX);
+    asm.Push(Reg.AX);
+    this.EmitInt16Argument(b.Right); // AX = index (16-bit)
+    asm.Mov(Reg.BX, size);
+    asm.Imul(Reg.BX);                // DX:AX = index * size
+    asm.Mov(Reg.BX, Reg.AX);         // BX = low word = offset delta
+    asm.Pop(Reg.AX);                 // AX = original offset
+    asm.Pop(Reg.DX);                 // DX = original segment (preserved)
+    if (b.Op == BinaryOp.PointerAdd)
+      asm.Add(Reg.AX, Reg.BX);
+    else
+      asm.Sub(Reg.AX, Reg.BX);
   }
 
   /// <summary>Concatenation and bytewise comparisons over string temporaries (both operands consumed).</summary>

@@ -291,6 +291,45 @@ public sealed class Pb36LanguageFeatureTests {
   }
 
   [Test]
+  public void Execute_GivenScaledPointerArith_WhenRun_ThenScalesByElementSize() {
+    // p +* i scales i by the target size (2 for INTEGER), matching @p[i].
+    const string source = """
+      DIM a%(3)
+      a%(0) = 10
+      a%(1) = 20
+      a%(2) = 30
+      DIM p AS INTEGER PTR
+      p = VARPTR32(a%(0))
+      DIM q AS INTEGER PTR
+      q = p +* 1
+      PRINT @q
+      q = p +* 2
+      PRINT @q
+      PRINT @p[1]
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 20\n 30\n 20\n"));
+  }
+
+  [Test]
+  public void Execute_GivenScaledPointerArithLong_WhenRun_ThenScalesByFour() {
+    // a LONG PTR scales by 4; p -* brings it back down again.
+    const string source = """
+      DIM b&(3)
+      b&(0) = 100
+      b&(1) = 200
+      b&(2) = 300
+      DIM p AS LONG PTR
+      p = VARPTR32(b&(0))
+      DIM q AS LONG PTR
+      q = p +* 2
+      PRINT @q
+      q = q -* 1
+      PRINT @q
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 300\n 200\n"));
+  }
+
+  [Test]
   public void Execute_GivenObjectInitializer_WhenRun_ThenListedFieldsSetAndOthersZero() {
     // Z is not listed, so it must keep its zero-initialized value.
     const string source = """

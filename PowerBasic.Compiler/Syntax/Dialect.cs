@@ -92,6 +92,7 @@ public enum LanguageFeature {
   ShortCircuitOps,
   SubFunctionOverloading,
   ShiftRotateOps,
+  PointerArithmetic,
 }
 
 /// <summary>
@@ -138,6 +139,7 @@ public static class DialectFacts {
     [LanguageFeature.ShortCircuitOps] = (Dialect.Pb36, "short-circuit operators (ANDALSO / ORELSE)"),
     [LanguageFeature.SubFunctionOverloading] = (Dialect.Pb36, "SUB/FUNCTION overloading (same name, different signature)"),
     [LanguageFeature.ShiftRotateOps] = (Dialect.Pb36, "shift/rotate/bitwise operators (<<, >>, <<<, >>>, <<>, <>>, |)"),
+    [LanguageFeature.PointerArithmetic] = (Dialect.Pb36, "scaled pointer arithmetic (ptr +* index / ptr -* index)"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

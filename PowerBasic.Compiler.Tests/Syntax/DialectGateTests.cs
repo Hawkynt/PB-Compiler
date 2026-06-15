@@ -258,6 +258,13 @@ public sealed class DialectGateTests {
     AssertAccepted(source, Dialect.Pb36);
   }
 
+  [TestCase("DIM p AS INTEGER PTR\nDIM q AS INTEGER PTR\nq = p +* 1")]
+  [TestCase("DIM p AS INTEGER PTR\nDIM q AS INTEGER PTR\nq = p -* 1")]
+  public void Gate_GivenScaledPointerArith_WhenPb35_ThenRejectedButPb36Accepts(string source) {
+    AssertRejected(source, Dialect.Pb35, "3.6");
+    AssertAccepted(source, Dialect.Pb36);
+  }
+
   [Test]
   public void Gate_GivenOverloadedFunction_WhenPb35_ThenRejectedButPb36Accepts() {
     const string source = """

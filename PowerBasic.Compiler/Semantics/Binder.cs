@@ -1435,9 +1435,28 @@ public sealed class Binder {
 
   private static bool IsStringLike(PbType t) => t is StringType or FixedStringType or FlexType or AsciizType;
 
+  /// <summary>
+  /// PB 3.6 scaled pointer arithmetic: <c>ptr +* i</c> / <c>ptr -* i</c> add/subtract
+  /// <c>i</c> scaled by the pointer's target size. The left operand must be a pointer
+  /// and the result is that pointer type; the codegen does offset-only real-mode
+  /// arithmetic (the same scaling <c>@p[i]</c> uses), so raw <c>ptr + n</c> keeps its
+  /// unscaled meaning and the pb35 superset holds.
+  /// </summary>
+  private PbType BindPointerArith(BinaryExpr b, PbType left, PbType right) {
+    if (left is not PointerType ptr)
+      return this.ErrorType(b.Position, "the left operand of '+*' / '-*' must be a pointer");
+    if (right is not ScalarType { IsFloat: false })
+      this.Error(b.Position, "the index of '+*' / '-*' must be an integer");
+    return ptr; // the operator's result is the pointer type (so chaining and assignment to a pointer work)
+  }
+
   private PbType BindBinary(BinaryExpr b, Scope scope) {
     var left = this.BindExpression(b.Left, scope);
     var right = this.BindExpression(b.Right, scope);
+
+    // PB 3.6 scaled pointer arithmetic: ptr +* i / ptr -* i
+    if (b.Op is BinaryOp.PointerAdd or BinaryOp.PointerSub)
+      return this.BindPointerArith(b, left, right);
 
     // whole-value TYPE/UNION comparison (PB 3.1): memcmp semantics for = and <>
     if (left is UdtType || right is UdtType) {
