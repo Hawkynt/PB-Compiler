@@ -26,6 +26,47 @@ public sealed class Pb36LanguageFeatureTests {
   }
 
   [Test]
+  public void Execute_GivenWithBlock_WhenRun_ThenDotMembersHitTheSubject() {
+    const string source = """
+      TYPE Point
+        X AS INTEGER
+        Y AS INTEGER
+      END TYPE
+      DIM p AS Point
+      WITH p
+        .X = 3
+        .Y = .X + 4
+      END WITH
+      PRINT p.X
+      PRINT p.Y
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 3\n 7\n"));
+  }
+
+  [Test]
+  public void Execute_GivenNestedWith_WhenRun_ThenInnermostSubjectWins() {
+    const string source = """
+      TYPE Inner
+        V AS INTEGER
+      END TYPE
+      TYPE Outer
+        A AS INTEGER
+        I AS Inner
+      END TYPE
+      DIM o AS Outer
+      WITH o
+        .A = 1
+        WITH .I
+          .V = 9
+        END WITH
+      END WITH
+      PRINT o.A
+      PRINT o.I.V
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 1\n 9\n"));
+  }
+
+  [Test]
   public void Execute_GivenEnumAutoAndExplicit_WhenRun_ThenMembersAreConstants() {
     const string source = """
       ENUM Status

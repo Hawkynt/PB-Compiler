@@ -369,6 +369,20 @@ public sealed class ParserDeclarationTests {
   }
 
   [Test]
+  public void Parse_GivenWithBlock_WhenPb36_ThenDotMembersDesugarToSubjectAccess() {
+    // WITH p : .X = 1 : .Y = 2 : END WITH  ->  spliced p.X = 1 : p.Y = 2 (no WITH node)
+    var unit = Parse("WITH p\n.X = 1\n.Y = 2\nEND WITH", Dialect.Pb36);
+    Assert.That(unit.Statements, Has.Count.EqualTo(2));
+    var a0 = (AssignStmt)unit.Statements[0];
+    var m0 = (MemberExpr)a0.Target;
+    Assert.Multiple(() => {
+      Assert.That(m0.Member, Is.EqualTo("X"));
+      Assert.That(((NameExpr)m0.Target).Name, Is.EqualTo("p"));
+      Assert.That(((MemberExpr)((AssignStmt)unit.Statements[1]).Target).Member, Is.EqualTo("Y"));
+    });
+  }
+
+  [Test]
   public void Parse_GivenEnum_WhenPb36_ThenMembersCaptured() {
     var unit = Parse("ENUM Color\nRed\nGreen = 5\nBlue\nEND ENUM", Dialect.Pb36);
     var e = (EnumDecl)unit.Statements[0];

@@ -212,6 +212,13 @@ public sealed class DialectGateTests {
   #region PB 3.6 gates
 
   [Test]
+  public void Gate_GivenWithBlock_WhenPb35_ThenRejectedButPb36Accepts() {
+    const string source = "TYPE T\n  X AS INTEGER\nEND TYPE\nDIM p AS T\nWITH p\n.X = 1\nEND WITH";
+    AssertRejected(source, Dialect.Pb35, "3.6");
+    AssertAccepted(source, Dialect.Pb36);
+  }
+
+  [Test]
   public void Gate_GivenEnum_WhenPb35_ThenRejectedButPb36Accepts() {
     const string source = "ENUM Color\nRed\nGreen\nBlue\nEND ENUM";
     AssertRejected(source, Dialect.Pb35, "3.6");

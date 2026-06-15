@@ -283,11 +283,21 @@ public sealed partial class Parser {
         return new FileNumberExpr(this.Advance().Position, this.ParsePrimary());
       case TokenKind.At:
         return this.ParsePtrDeref();
+      // PB 3.6 WITH: a leading '.member' binds to the innermost WITH subject
+      case TokenKind.Period when this.Peek().Kind == TokenKind.Identifier && this._withSubjects.Count > 0:
+        return this.ParseImplicitWithMember();
       case TokenKind.Identifier:
         return this.ParseNameExpression();
       default:
         throw this.Error($"unexpected '{token.Text}' in expression");
     }
+  }
+
+  private Expression ParseImplicitWithMember() {
+    var dot = this.Advance(); // '.'
+    var member = this.Advance(); // member name
+    Expression expr = new MemberExpr(dot.Position, this._withSubjects[^1], member.Text, member.Suffix);
+    return this.ParsePostfix(expr);
   }
 
   /// <summary>
@@ -415,6 +425,8 @@ public sealed partial class Parser {
   private Expression ParseLValue() {
     if (this.Current.Kind == TokenKind.At)
       return this.ParsePtrDeref();
+    if (this.Current.Kind == TokenKind.Period && this.Peek().Kind == TokenKind.Identifier && this._withSubjects.Count > 0)
+      return this.ParseImplicitWithMember(); // PB 3.6 WITH: .member = value
     if (this.Current.Kind != TokenKind.Identifier)
       throw this.Error($"expected variable, found '{this.Current.Text}'");
     return this.ParseNameExpression();

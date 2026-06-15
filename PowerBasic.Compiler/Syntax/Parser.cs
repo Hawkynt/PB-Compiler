@@ -12,7 +12,7 @@ public sealed partial class Parser {
 
   /// <summary>Reserved statement keywords - these can never be labels.</summary>
   private static readonly HashSet<string> _statementKeywords = new(StringComparer.OrdinalIgnoreCase) {
-    "LET", "CALL", "SUB", "FUNCTION", "DECLARE", "TYPE", "UNION", "ENUM",
+    "LET", "CALL", "SUB", "FUNCTION", "DECLARE", "TYPE", "UNION", "ENUM", "WITH",
     "DEF", "DEFINT", "DEFLNG", "DEFQUD", "DEFSNG", "DEFDBL", "DEFEXT", "DEFFIX", "DEFBCD", "DEFSTR", "DEFFLX",
     "DIM", "LOCAL", "STATIC", "SHARED", "PUBLIC", "EXT", "COMMON", "REDIM", "ERASE",
     "STDOUT", "STDIN", "SETEOF", "ERRCLEAR",
@@ -45,6 +45,12 @@ public sealed partial class Parser {
   private int _pos;
   private bool _atLineStart = true;
   private int _pendingNexts;
+
+  /// <summary>Active WITH subjects (innermost last); a leading-dot member binds to the top.</summary>
+  private readonly List<Expression> _withSubjects = [];
+
+  /// <summary>Parser-only marker: a WITH body whose statements ParseBody splices inline (never reaches the binder).</summary>
+  private sealed record StatementGroup(SourcePosition Position, IReadOnlyList<Statement> Statements) : Ast.Statement(Position);
 
   private Parser(List<Token> tokens, Dialect dialect) {
     this._tokens = tokens;
@@ -154,7 +160,11 @@ public sealed partial class Parser {
       }
       if (this.IsAtAnyTerminator(terminators))
         return result;
-      result.Add(this.ParseStatement());
+      // a WITH block desugars to a StatementGroup spliced inline here
+      if (this.ParseStatement() is var parsed && parsed is StatementGroup group)
+        result.AddRange(group.Statements);
+      else
+        result.Add(parsed);
     }
   }
 
@@ -188,6 +198,7 @@ public sealed partial class Parser {
       TokenKind.IntegerLiteral when atLineStart => new LabelStmt(this.Advance().Position, token.IntegerValue.ToString()),
       TokenKind.Question => this.ParsePrint(false),
       TokenKind.At => this.ParseAssignment(), // @p = value
+      TokenKind.Period when this._withSubjects.Count > 0 && this.Peek().Kind == TokenKind.Identifier => this.ParseAssignment(), // WITH: .member = value
       TokenKind.Identifier => this.ParseIdentifierStatement(atLineStart),
       _ => throw this.Error($"unexpected '{token.Text}'"),
     };
@@ -251,6 +262,7 @@ public sealed partial class Parser {
       case "TYPE": return this.ParseTypeDecl(isUnion: false);
       case "UNION": return this.ParseTypeDecl(isUnion: true);
       case "ENUM": return this.ParseEnum();
+      case "WITH": return this.ParseWith();
       case "DEF": return this.ParseDef();
       case "DEFINT": return this.ParseDefType(BuiltinType.Integer);
       case "DEFLNG": return this.ParseDefType(BuiltinType.Long);

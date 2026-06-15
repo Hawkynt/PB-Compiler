@@ -227,6 +227,23 @@ public sealed partial class Parser {
     return new(token.Position, BuiltinType.Asciiz, null, this.ParseExpression());
   }
 
+  // PB 3.6 WITH expr ... END WITH: a leading '.member' inside the body refers to
+  // expr.member. Pure parser desugar - the body's dots are rewritten to member
+  // accesses on the subject and the block is spliced inline (StatementGroup), so
+  // no WITH node reaches the binder/codegen. The subject is re-read per access
+  // (use a simple subject if that matters).
+  private Statement ParseWith() {
+    this.Require(LanguageFeature.WithBlock);
+    var pos = this.Advance().Position; // WITH
+    var subject = this.ParseExpression();
+    this._withSubjects.Add(subject);
+    var body = this.ParseBody("END WITH");
+    this._withSubjects.RemoveAt(this._withSubjects.Count - 1);
+    this.Advance(); // END
+    this.Advance(); // WITH
+    return new StatementGroup(pos, body);
+  }
+
   private Statement ParseEnum() {
     this.Require(LanguageFeature.EnumType);
     var pos = this.Advance().Position; // ENUM
