@@ -111,9 +111,7 @@ public sealed class IrLowering {
       if (p.Seg || p.Optional)
         return false;                                  // SEG / CDECL-optional excluded
       if (p.Type is UdtType) {
-        if (p.ByVal)
-          return false;                                // a BYVAL record copy is not modeled
-        args.Add(new IrArgument(IrType.Ptr, args.Count, p.Name));   // a record is passed BYREF as a pointer
+        args.Add(new IrArgument(IrType.Ptr, args.Count, p.Name));   // a record is passed as a pointer (BYVAL = callee copies on entry)
         continue;
       }
       if (!IrTypeMapper.TryMap(p.Type, out var pty))
@@ -140,7 +138,14 @@ public sealed class IrLowering {
     if (proc is not null)
       for (var i = 0; i < proc.Parameters.Count; ++i) {
         var p = proc.Parameters[i];
-        if (p.ByVal)
+        if (p.Type is UdtType pudt) {
+          if (p.ByVal) {                               // BYVAL record: copy the caller's record into a private local
+            var local = this.SlotFor(p);
+            this._b.Call(IrType.Void, this.RuntimeFn("llvm.memcpy.p0.p0.i32", IrType.Void, IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I1),
+              local, fn.Parameters[i], new IrConstantInt(IrType.I32, pudt.Size), IrBuilder.ConstBool(false));
+          } else
+            this._addr[p] = fn.Parameters[i];          // BYREF record: use the caller's storage
+        } else if (p.ByVal)
           this._b.Store(fn.Parameters[i], this.SlotFor(p));
         else
           this._addr[p] = fn.Parameters[i];
@@ -1460,9 +1465,11 @@ public sealed class IrLowering {
     var args = new List<IrValue>(arguments.Count);
     for (var i = 0; i < arguments.Count; ++i) {
       var p = proc.Parameters[i];
-      args.Add(p.ByVal
-        ? this.Coerce(this.LowerExpr(arguments[i]), this._model.TypeOf(arguments[i]), p.Type)
-        : this.AddressOfArgument(arguments[i], p.Type));
+      args.Add(p.Type is UdtType
+        ? this.UdtAddress(arguments[i])                 // a record argument passes its address (BYVAL callee copies, BYREF uses it)
+        : p.ByVal
+          ? this.Coerce(this.LowerExpr(arguments[i]), this._model.TypeOf(arguments[i]), p.Type)
+          : this.AddressOfArgument(arguments[i], p.Type));
     }
     return this._b.Call(callee.ReturnType, callee, args);
   }

@@ -136,6 +136,18 @@ public sealed class UdtLoweringTests {
   }
 
   [Test]
+  public void UdtByValParameter_CopiesTheRecordOnEntry() {
+    var module = LowerModule("TYPE Point\n  X AS INTEGER\n  Y AS INTEGER\nEND TYPE\nSUB Show(BYVAL p AS Point)\n  p.X = 999\nEND SUB\nDIM q AS Point\nq.X = 5\nCALL Show(q)\ns% = q.X\nEND", optimize: false);
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var show = module!.Functions.First(f => f.Name.Equals("Show", System.StringComparison.OrdinalIgnoreCase));
+    Assert.That(show.IsDeclaration, Is.False);
+    Assert.That(show.Parameters.Single().Type, Is.EqualTo(IrType.Ptr));
+    Assert.That(show.AllInstructions.OfType<IrCall>().Any(c => c.Callee is IrFunction { Name: "llvm.memcpy.p0.p0.i32" }), Is.True);  // copy on entry
+  }
+
+  [Test]
   public void Pipeline_UdtProgram_IsAcceptedByLlvm() {
     var module = LowerModule(Point + "DIM p AS Point\nDIM q AS Point\np.X = 6\np.Y = 7\nq = p\nPRINT q.X * q.Y\nEND");
     Assert.That(module, Is.Not.Null);

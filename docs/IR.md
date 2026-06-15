@@ -101,8 +101,9 @@ Supported today:
   lowered to the matching **LLVM intrinsics** (`llvm.sqrt.fN`, `llvm.pow.fN`, …) so `llc`
   optimizes them natively;
 - whole modules: user `SUB`/`FUNCTION` with scalar **BYVAL and BYREF** parameters and
-  **BYREF `TYPE` record** parameters (passed as a pointer; the callee accesses fields
-  through it) and direct calls; a procedure with an unsupported body is kept as a declaration.
+  **`TYPE` record** parameters (passed as a pointer; BYREF accesses the caller's storage,
+  BYVAL `llvm.memcpy`s a private copy on entry) and direct calls; a procedure with an
+  unsupported body is kept as a declaration.
 
 The computation in a program is fully optimized; runtime-ABI calls (I/O, strings) stay
 opaque but their inputs are optimized. Hello world, numeric/string compute-and-report,
