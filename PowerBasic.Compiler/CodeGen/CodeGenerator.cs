@@ -1239,6 +1239,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     };
 
     if (kind == ValueKind.Int16 && constantStep is { } fastStep) {
+      // pb36 O6b: a single-statement array store a%(i%)=expr steps a pointer
+      // instead of recomputing (i-lbound)*2 with IMUL on every iteration
+      if (this.TryEmitForArrayStore(f, counter, slot.WithSize(OperandSize.Word), fastStep))
+        return;
       // pb36 O5: an SI-clean body keeps the counter in SI - no per-iteration
       // cell traffic for the compare, increment or counter reads
       if (this.TryEmitForCounterInRegister(f, counter, slot.WithSize(OperandSize.Word), fastStep))

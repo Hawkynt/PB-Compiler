@@ -538,6 +538,112 @@ public sealed class Pb36OptimizerTests {
 
   #endregion
 
+  #region O6b - induction-variable array store ($OPTIMIZE SPEED)
+
+  private static int CountImulAx2(byte[] image) {
+    // 3-operand 186+ IMUL AX, AX, 2 (sign-extended immediate): 6B C0 02
+    // used by EmitArrayElementPlace to scale a flat index by element size 2
+    var count = 0;
+    for (var i = 0; i + 2 < image.Length; ++i)
+      if (image[i] == 0x6B && image[i + 1] == 0xC0 && image[i + 2] == 0x02)
+        ++count;
+    return count;
+  }
+
+  [Test]
+  public void Emit_GivenArrayStoreForLoop_WhenPb36Speed_ThenFewerElementSizeMultiplies() {
+    // FOR i%=0 TO 9: a%(i%)=i%: NEXT - the normal loop body emits IMUL AX,AX,2
+    // (element size) per iteration to compute the array element address; O6b steps
+    // a DS-relative pointer by 2 instead, replacing each IMUL+MOV BX,AX with a
+    // PUSH/POP+ADD BX,2 sequence.  The PRINT after the loop still reads a%(3) the
+    // normal way (one IMUL), so we compare speed-vs-plain at the count level:
+    // speed should have exactly one (from PRINT), plain should have two (loop + PRINT).
+    const string body = """
+      DIM a%(0 TO 9)
+      FOR i% = 0 TO 9
+        a%(i%) = i%
+      NEXT i%
+      PRINT a%(3)
+      END
+      """;
+    var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
+    var plain = Compile(body, Dialect.Pb36);
+    Assert.That(CountImulAx2(speed), Is.LessThan(CountImulAx2(plain)),
+      "O6b should reduce IMUL AX,AX,2 count: the per-iteration element-size multiply becomes a pointer step");
+  }
+
+  [Test]
+  public void Execute_GivenArrayStoreForLoop_WhenPb36Speed_ThenCorrectValues() {
+    // verify the stored values are byte-identical to the unoptimized path
+    const string source = """
+      $OPTIMIZE SPEED
+      DIM a%(0 TO 4)
+      FOR i% = 0 TO 4
+        a%(i%) = i% * 10
+      NEXT i%
+      PRINT a%(0); a%(1); a%(2); a%(3); a%(4)
+      END
+      """;
+    var output = DosBoxRunner.Normalize(DosBoxRunner.Run(Compile(source, Dialect.Pb36)));
+    Assert.That(output, Is.EqualTo(" 0  10  20  30  40\n"));
+  }
+
+  [Test]
+  public void Execute_GivenArrayStoreForLoopNonZeroLbound_WhenPb36Speed_ThenCorrectValues() {
+    // lbound != 0: the initial pointer must account for the bias
+    const string source = """
+      $OPTIMIZE SPEED
+      DIM a%(3 TO 7)
+      FOR i% = 3 TO 7
+        a%(i%) = i% * 2
+      NEXT i%
+      PRINT a%(3); a%(5); a%(7)
+      END
+      """;
+    var output = DosBoxRunner.Normalize(DosBoxRunner.Run(Compile(source, Dialect.Pb36)));
+    Assert.That(output, Is.EqualTo(" 6  10  14\n"));
+  }
+
+  [Test]
+  public void Emit_GivenArrayStoreExprReadsArray_WhenPb36Speed_ThenSameAsPlain() {
+    // expr reads a%(0) - O6b must decline (conservative aliasing: any a% reference
+    // in expr causes fallback to the standard per-iteration address computation)
+    const string body = """
+      DIM a%(0 TO 9)
+      a%(0) = 1
+      FOR i% = 1 TO 9
+        a%(i%) = a%(0) + i%
+      NEXT i%
+      PRINT a%(5)
+      END
+      """;
+    var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
+    var plain = Compile(body, Dialect.Pb36);
+    // when O6b declines, the loop body still uses the standard IMUL AX,AX,2 path;
+    // the IMUL count should NOT be fewer in the speed version (no optimization fired)
+    Assert.That(CountImulAx2(speed), Is.GreaterThanOrEqualTo(CountImulAx2(plain)),
+      "when expr references a%, O6b declines and the IMUL count does not drop");
+  }
+
+  [Test]
+  public void Emit_GivenArrayStoreWithBoundsCheck_WhenPb36Speed_ThenSameAsPlain() {
+    // $ERROR BOUNDS ON suppresses O6b so per-element bounds checking keeps working
+    const string body = """
+      DIM a%(0 TO 9)
+      FOR i% = 0 TO 9
+        a%(i%) = i%
+      NEXT i%
+      PRINT a%(3)
+      END
+      """;
+    var checked_ = Compile("$OPTIMIZE SPEED\n$ERROR BOUNDS ON\n" + body, Dialect.Pb36);
+    var plain = Compile(body, Dialect.Pb36);
+    Assert.That(CountImulAx2(checked_), Is.GreaterThanOrEqualTo(CountImulAx2(plain)),
+      "O6b must not fire under $ERROR BOUNDS ON - IMUL count must not drop");
+  }
+
+  #endregion
+
   #region O4 - integer divide / modulo strength reduction
 
   private static int CountIdivBx(byte[] image) {

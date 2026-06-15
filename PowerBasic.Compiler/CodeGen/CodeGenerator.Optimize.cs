@@ -1139,6 +1139,162 @@ public sealed partial class CodeGenerator {
 
   #endregion
 
+  #region O6b - induction-variable array store ($OPTIMIZE SPEED)
+
+  /// <summary>
+  /// pb36 O6b: a FOR loop whose single body statement is an INTEGER-array store
+  /// <c>a%(i%) = expr</c>, where the counter <c>i%</c> is the sole index and
+  /// <c>expr</c> is barrier-free (no calls, no intrinsics, no reads from <c>a%</c>),
+  /// steps a DS-relative byte pointer by the element stride (2) instead of
+  /// recomputing <c>(i - lbound)*2 + base</c> with IMUL each iteration.
+  ///
+  /// The stored value is computed into AX via the normal expression emitter
+  /// (with BX saved/restored across the evaluation since integer multiply uses
+  /// BX), then written through the stepped pointer as <c>MOV [BX], AX</c>.
+  ///
+  /// Gate: $OPTIMIZE SPEED; no $ERROR BOUNDS/OVERFLOW/NUMERIC/ON ERROR RESUME;
+  /// signed INTEGER counter with a compile-time-constant nonzero step; static,
+  /// non-HUGE/VIRTUAL/ABSOLUTE, rank-1, INTEGER-element array; exactly one body
+  /// statement of the form <c>a%(i%) = expr</c>; expr is barrier-free and
+  /// references no element of <c>a%</c> (checked conservatively: if the array
+  /// symbol appears anywhere in the expression tree we decline).
+  /// </summary>
+  private bool TryEmitForArrayStore(ForStmt f, VariableSymbol counter, Mem counterCell, long step) {
+    if (!this.Optimize || !this.OptimizeSpeed)
+      return false;
+    if (counter.Type is not ScalarType { ByteSize: 2, Signed: true, IsFloat: false })
+      return false;
+    if (this.CheckBounds || this.CheckOverflow || this.CheckNumeric)
+      return false;
+    if (this._trackResume)
+      return false;
+
+    // body must be exactly one array-store statement a%(i%) = expr
+    if (f.Body is not [AssignStmt { Target: CallOrIndexExpr storeTarget } storeAssign])
+      return false;
+    if (!model.VariableBindings.TryGetValue(storeTarget, out var array))
+      return false;
+    if (storeTarget.Arguments is not [NameExpr idxExpr])
+      return false;
+    if (!model.VariableBindings.TryGetValue(idxExpr, out var idxSym) || !ReferenceEquals(idxSym, counter))
+      return false;
+
+    // array must be static, rank-1, INTEGER-element, not special
+    if (array.Type is not ArrayType { Element: ScalarType { ByteSize: 2, IsFloat: false }, IsDynamic: false, Rank: 1 } arrayType)
+      return false;
+    if (arrayType.StaticBounds is not { } bounds)
+      return false;
+    if (array.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Absolute)
+      return false;
+
+    // expr must be barrier-free and must not reference the array symbol
+    var expr = storeAssign.Value;
+    if (!SiCleanExpression(expr, model))
+      return false;
+    if (ExpressionReferencesArray(expr, array, model))
+      return false;
+
+    // set up the loop
+    var asm = this._asm;
+    var arraySlot = this.SlotOf(array);
+    var lbound = bounds[0].Lower;
+
+    // counter = from; compute initial pointer in BX = &a%[from]
+    this.EmitExpression(f.From);
+    this.Coerce(model.TypeOf(f.From), PbType.Integer, f.From);
+    asm.Mov(counterCell, Reg.AX);          // counter cell = from value
+    asm.Sub(Reg.AX, lbound);               // AX = from - lbound
+    asm.Shl(Reg.AX, 1);                    // AX = (from-lbound)*2  (byte offset; shift-by-1, 8086-safe)
+    asm.Mov(Reg.BX, Reg.AX);
+    asm.Lea(Reg.BX, Mem.At(Reg.BX, arraySlot)); // BX = DS-relative address of first element
+
+    var limit = this.AllocTemp(2);
+    this.EmitExpression(f.To);
+    this.Coerce(model.TypeOf(f.To), PbType.Integer, f.To);
+    asm.Mov(limit, Reg.AX);
+
+    var top = asm.DefineLabel();
+    var done = asm.DefineLabel();
+    var cont = asm.DefineLabel();
+    this._exitFor.Push(done);
+    this._iterateFor.Push(cont);
+    this._iterateAny.Push(cont);
+
+    asm.MarkLabel(top);
+    asm.Mov(Reg.AX, counterCell);
+    asm.Cmp(Reg.AX, limit);
+    if (step >= 0)
+      asm.Jg(done);
+    else
+      asm.Jl(done);
+
+    // save BX across the expression evaluation (integer ops may use BX internally)
+    asm.Push(Reg.BX);
+    this.EmitExpression(expr);
+    this.Coerce(model.TypeOf(expr), PbType.Integer, expr);
+    asm.Pop(Reg.BX);
+
+    // store into the stepped element address, then advance the pointer
+    asm.Mov(Mem.Word(Reg.BX), Reg.AX);
+    var stepBytes = (int)step * 2;
+    if (stepBytes >= 0)
+      asm.Add(Reg.BX, stepBytes);
+    else
+      asm.Sub(Reg.BX, -stepBytes);
+
+    asm.MarkLabel(cont);
+    // increment counter
+    var mag = (int)Math.Abs(step);
+    asm.Mov(Reg.AX, counterCell);
+    if (step >= 0)
+      asm.Add(Reg.AX, mag);
+    else
+      asm.Sub(Reg.AX, mag);
+    asm.Mov(counterCell, Reg.AX);
+    asm.Jmp(top);
+
+    asm.MarkLabel(done);
+    this._exitFor.Pop();
+    this._iterateFor.Pop();
+    this._iterateAny.Pop();
+    this.ReleaseTemp(2);
+    return true;
+  }
+
+  /// <summary>
+  /// True when <paramref name="expr"/> contains any reference to <paramref name="array"/>
+  /// (as an array element read or as a bare array name) - conservative aliasing check
+  /// for O6b: if the expression reads <c>a%</c> through any subscript, the stepped
+  /// write pointer and a fresh address computation would produce the same bytes, but
+  /// we decline anyway to stay strictly safe.
+  /// </summary>
+  private static bool ExpressionReferencesArray(Expression expr, VariableSymbol array, SemanticModel model) {
+    switch (expr) {
+      case IntegerLiteralExpr or FloatLiteralExpr or StringLiteralExpr or NamedConstantExpr:
+        return false;
+
+      case NameExpr n:
+        return model.VariableBindings.TryGetValue(n, out var s) && ReferenceEquals(s, array);
+
+      case CallOrIndexExpr call:
+        if (model.VariableBindings.TryGetValue(call, out var cs) && ReferenceEquals(cs, array))
+          return true;
+        return call.Arguments.Any(a => ExpressionReferencesArray(a, array, model));
+
+      case UnaryExpr u:
+        return ExpressionReferencesArray(u.Operand, array, model);
+
+      case BinaryExpr b:
+        return ExpressionReferencesArray(b.Left, array, model)
+          || ExpressionReferencesArray(b.Right, array, model);
+
+      default:
+        return true; // unknown shape - be conservative
+    }
+  }
+
+  #endregion
+
   #region O13 - silent fixed-point FOR counters ($OPTIMIZE SPEED)
 
   /// <summary>
