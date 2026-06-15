@@ -369,6 +369,17 @@ public sealed class ParserDeclarationTests {
   }
 
   [Test]
+  public void Parse_GivenLambda_WhenPb36_ThenLambdaExprWithParamsAndBody() {
+    var assign = (AssignStmt)Parse("x = FUNCTION(BYVAL y AS LONG) AS LONG => y * y", Dialect.Pb36).Statements[0];
+    var lambda = (LambdaExpr)assign.Value;
+    Assert.Multiple(() => {
+      Assert.That(lambda.Parameters, Has.Count.EqualTo(1));
+      Assert.That(lambda.ReturnType!.Builtin, Is.EqualTo(BuiltinType.Long));
+      Assert.That(lambda.Body, Is.InstanceOf<BinaryExpr>());
+    });
+  }
+
+  [Test]
   public void Parse_GivenNestedProcedure_WhenPb36_ThenNestedDeclInOuterBody() {
     var unit = Parse("SUB Outer()\nDIM x AS LONG\nSUB Inner()\nx = 1\nEND SUB\nEND SUB", Dialect.Pb36);
     var outer = (SubDecl)unit.Statements[0];

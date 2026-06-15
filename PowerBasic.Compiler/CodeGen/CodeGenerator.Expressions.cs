@@ -208,6 +208,12 @@ public sealed partial class CodeGenerator {
           this.EmitTernaryIf(ternary);
         break;
 
+      case LambdaExpr lambda when model.LambdaProcs.TryGetValue(lambda, out var lambdaProc):
+        // the lambda value is the far code pointer of its lifted proc (like CODEPTR32)
+        asm.Mov(Reg.AX, Imm.OffsetOf(this.ThunkOf(lambdaProc)));
+        asm.Mov(Reg.DX, Reg.CS);
+        break;
+
       default:
         this.Unsupported(expression, expression.GetType().Name);
         break;

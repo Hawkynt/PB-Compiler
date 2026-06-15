@@ -337,6 +337,10 @@ public sealed partial class Parser {
     if (this.IsKeyword(0, "NEW") && this.Peek().Kind == TokenKind.Identifier && this.Peek(2).Kind == TokenKind.LBrace)
       return this.ParseNewExpr();
 
+    // PB 3.6 inline lambda: FUNCTION(params) [AS type] => expr (in expression position)
+    if (this.IsKeyword(0, "FUNCTION") && this.Peek().Kind == TokenKind.LParen)
+      return this.ParseLambda();
+
     var token = this.Advance();
     Expression expr = this.Current.Kind == TokenKind.LParen
       ? new CallOrIndexExpr(token.Position, token.Text, token.Suffix, this.ParseArgumentList())
@@ -359,6 +363,18 @@ public sealed partial class Parser {
       } while (this.Match(TokenKind.Comma));
     this.Expect(TokenKind.RBrace, "'}'");
     return new NewExpr(pos, typeName, fields);
+  }
+
+  private Expression ParseLambda() {
+    this.Require(LanguageFeature.Lambdas);
+    var pos = this.Advance().Position; // FUNCTION
+    var parameters = this.ParseParameterList();
+    var returnType = this.TryMatchKeyword("AS") ? this.ParseTypeName() : null;
+    // the arrow '=>' lexes as GreaterEquals (PB tolerates => for >=)
+    if (this.Current.Kind != TokenKind.GreaterEquals)
+      throw this.Error("expected '=>' in lambda expression");
+    this.Advance();
+    return new LambdaExpr(pos, parameters, returnType, this.ParseExpression());
   }
 
   private Expression ParseArrayLiteral() {

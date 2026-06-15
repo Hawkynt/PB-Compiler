@@ -193,6 +193,23 @@ public sealed class Pb36LanguageFeatureTests {
   }
 
   [Test]
+  public void Execute_GivenNonCapturingLambda_WhenCalledViaPointer_ThenRuns() {
+    // the lambda is lifted to an anonymous proc; its value is a code pointer called
+    // (for its side effect) via CALL DWORD.
+    const string source = """
+      DECLARE FUNCTION DoShout&()
+      DIM f???
+      f??? = FUNCTION() AS LONG => DoShout&()
+      CALL DWORD f??? BDECL()
+      FUNCTION DoShout&()
+        PRINT "hi"
+        DoShout& = 0
+      END FUNCTION
+      """;
+    Assert.That(Run(source), Is.EqualTo("hi\n"));
+  }
+
+  [Test]
   public void Execute_GivenNestedSubCapturingOuterLocal_WhenRun_ThenStackCaptureByRef() {
     // Bump captures the outer local x (stack capture via a hidden BYREF parameter);
     // each call mutates the outer x.

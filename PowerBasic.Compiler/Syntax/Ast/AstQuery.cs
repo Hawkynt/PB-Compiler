@@ -29,6 +29,7 @@ public static class AstQuery {
     NewExpr n => [.. n.Fields.Select(f => f.Value)],
     NamedArgExpr na => [na.Value],
     FromEndExpr fe => [fe.Index],
+    LambdaExpr => [], // the lambda body is compiled as a separate proc, not the enclosing scope
     ArrayLiteralExpr al => [.. al.Elements.SelectMany(e => e switch {
       ValueElement v => (IEnumerable<Expression>)[v.Value],
       RangeElement r => [r.Lo, r.Hi],

@@ -32,6 +32,9 @@ public sealed class Binder {
   private readonly Dictionary<ProcedureSymbol, List<(object Call, IReadOnlyList<Expression> Args)>> _nestedCallSites = new(ReferenceEqualityComparer.Instance);
   // lifted nested proc -> its original (unmangled) name, for the function-result variable alias
   private readonly Dictionary<ProcedureSymbol, string> _nestedOriginalName = new(ReferenceEqualityComparer.Instance);
+  // PB 3.6 inline lambdas lifted to anonymous procs, to bind (capture-checked) after the main bodies
+  private readonly List<(ProcedureSymbol Lifted, ProcedureSymbol? Enclosing, SourcePosition Position)> _pendingLambdas = [];
+  private int _lambdaCounter;
 
   private Binder(CompilationUnit unit, Dialect dialect) {
     this._unit = unit;
@@ -623,6 +626,7 @@ public sealed class Binder {
     }
 
     this.BindNestedProcedures();
+    this.BindLambdaBodies();
   }
 
   #region PB 3.6 nested procedures (stack capture)
@@ -1402,6 +1406,44 @@ public sealed class Binder {
     this.Error(c.Position, $"unknown SUB {c.Name}");
   }
 
+  /// <summary>
+  /// PB 3.6 inline lambda: lifts <c>FUNCTION(params) =&gt; expr</c> to an anonymous
+  /// top-level function, records the mapping, and types the expression as a code
+  /// pointer (DWORD). The lifted body is bound later (capture-checked: a reference to
+  /// an outer local is rejected - capturing lambdas need the closure-env stage).
+  /// </summary>
+  private PbType BindLambda(LambdaExpr lambda, Scope scope) {
+    var lifted = new ProcedureSymbol($"$lambda${++this._lambdaCounter}", isFunction: true) {
+      IsNested = true, // skipped by the main body loop; bound in the lambda phase
+      Position = lambda.Position,
+      Body = [new AssignStmt(lambda.Position, new NameExpr(lambda.Position, "FUNCTION", TypeSuffix.None), lambda.Body)],
+      ReturnType = lambda.ReturnType != null ? this.ResolveTypeName(lambda.ReturnType) ?? PbType.Long : PbType.Long,
+    };
+    foreach (var p in lambda.Parameters)
+      lifted.Parameters.Add(this.BindParameter(p));
+    this._model.LambdaProcs[lambda] = lifted;
+    this._pendingLambdas.Add((lifted, scope.Proc, lambda.Position)); // added to ProcedureList + bound in BindLambdaBodies
+    return PbType.Dword; // the lambda value is a (far) code pointer
+  }
+
+  /// <summary>Binds each lifted lambda body in its own scope and rejects captures (first stage is non-capturing); adds the lifted procs to the emission list.</summary>
+  private void BindLambdaBodies() {
+    foreach (var (lifted, enclosing, position) in this._pendingLambdas) {
+      this._model.ProcedureList.Add(lifted);
+      this._nestedCaptures[lifted] = [];
+      var scope = new Scope(lifted, captureFrom: enclosing);
+      foreach (var p in lifted.Parameters)
+        lifted.Variables[VariableKey(p.Name, TypeSuffix.None, p.Type is ArrayType)] = p;
+      lifted.Variables.TryAdd(lifted.Name, new(lifted.Name, lifted.ReturnType!, VariableStorage.Local));
+      this.CollectLabels(lifted.Body!, scope);
+      foreach (var statement in lifted.Body!)
+        this.BindStatement(statement, scope);
+      this.CheckLabelRefs(scope);
+      if (this._nestedCaptures[lifted].Count > 0)
+        this.Error(position, "a capturing lambda is not yet supported (it references an outer local) - use a nested SUB/FUNCTION, or pass the value as a parameter");
+    }
+  }
+
   /// <summary>Resolves a call to a nested procedure of the enclosing proc (PB 3.6), recording the site so captures can be appended once known; null when there is no such nested proc.</summary>
   private ProcedureSymbol? ResolveNestedCall(string name, Scope scope, object callKey, IReadOnlyList<Expression> args) {
     if (scope.Proc == null || !this._nestedProcs.TryGetValue(scope.Proc, out var map) || !map.TryGetValue(name, out var lifted))
@@ -1672,6 +1714,9 @@ public sealed class Binder {
 
       case ArrayLiteralExpr lit: // { ... } is consumed by BindArrayInitializer; here it is misused
         return this.ErrorType(lit.Position, "an array initializer '{ ... }' is only allowed as a DIM array initializer");
+
+      case LambdaExpr lambda:
+        return this.BindLambda(lambda, scope);
 
       case CallOrIndexExpr call:
         return this.BindCallOrIndex(call, scope);

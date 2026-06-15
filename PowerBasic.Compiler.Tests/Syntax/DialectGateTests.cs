@@ -212,6 +212,20 @@ public sealed class DialectGateTests {
   #region PB 3.6 gates
 
   [Test]
+  public void Gate_GivenLambda_WhenPb35_ThenRejectedButPb36Accepts() {
+    const string source = "DIM f???\nf??? = FUNCTION(BYVAL x AS LONG) AS LONG => x * x";
+    AssertRejected(source, Dialect.Pb35, "3.6");
+    AssertAccepted(source, Dialect.Pb36);
+  }
+
+  [Test]
+  public void Bind_GivenCapturingLambda_WhenPb36_ThenRejectedWithGuidance() {
+    var tokens = Lexer.Tokenize("SUB Outer()\n  DIM base AS LONG\n  DIM f???\n  f??? = FUNCTION(BYVAL x AS LONG) AS LONG => x + base\nEND SUB", "T.BAS", Dialect.Pb36);
+    var model = Binder.Bind(Parser.Parse(tokens, "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors.Select(e => e.Message), Has.Some.Contains("capturing lambda"));
+  }
+
+  [Test]
   public void Gate_GivenNestedProcedure_WhenPb35_ThenRejectedButPb36Accepts() {
     const string source = "SUB Outer()\n  DIM x AS LONG\n  SUB Inner()\n    x = 1\n  END SUB\nEND SUB";
     AssertRejected(source, Dialect.Pb35, "3.6");

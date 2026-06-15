@@ -88,6 +88,13 @@ public sealed record NamedArgExpr(SourcePosition Position, string Name, Expressi
 /// <summary>PB 3.6 from-end array index: <c>arr(^n)</c> = the n-th element from the end (^1 = last). Valid only as an array index.</summary>
 public sealed record FromEndExpr(SourcePosition Position, Expression Index) : Expression(Position);
 
+/// <summary>
+/// PB 3.6 inline lambda: <c>FUNCTION(params) [AS type] =&gt; expr</c>. Lifted to an
+/// anonymous top-level FUNCTION; the expression's value is its code pointer (callable
+/// via <c>CALL DWORD</c>). First stage: non-capturing (no reference to outer locals).
+/// </summary>
+public sealed record LambdaExpr(SourcePosition Position, IReadOnlyList<Parameter> Parameters, TypeName? ReturnType, Expression Body) : Expression(Position);
+
 /// <summary>One element of a PB 3.6 collection literal: a single value, an inclusive integer range, or a spread of another array.</summary>
 public abstract record CollectionElement(SourcePosition Position);
 public sealed record ValueElement(SourcePosition Position, Expression Value) : CollectionElement(Position);
