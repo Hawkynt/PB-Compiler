@@ -22,6 +22,17 @@ public sealed class Binder {
   private bool _warnedAsm30;
   private int _optionBase;
 
+  // PB 3.6 nested procedures: outer proc -> (nested name -> lifted top-level proc)
+  private readonly Dictionary<ProcedureSymbol, Dictionary<string, ProcedureSymbol>> _nestedProcs = new(ReferenceEqualityComparer.Instance);
+  // lifted nested proc -> the outer proc it is nested in, and its body to bind later
+  private readonly List<(ProcedureSymbol Lifted, ProcedureSymbol Outer, bool IsFunction)> _nestedToBind = [];
+  // lifted nested proc -> the outer locals it captures (in BYREF-param order)
+  private readonly Dictionary<ProcedureSymbol, List<VariableSymbol>> _nestedCaptures = new(ReferenceEqualityComparer.Instance);
+  // lifted nested proc -> the call sites (CallStmt / CallOrIndexExpr) to append capture args to
+  private readonly Dictionary<ProcedureSymbol, List<(object Call, IReadOnlyList<Expression> Args)>> _nestedCallSites = new(ReferenceEqualityComparer.Instance);
+  // lifted nested proc -> its original (unmangled) name, for the function-result variable alias
+  private readonly Dictionary<ProcedureSymbol, string> _nestedOriginalName = new(ReferenceEqualityComparer.Instance);
+
   private Binder(CompilationUnit unit, Dialect dialect) {
     this._unit = unit;
     this._dialect = dialect;
@@ -570,14 +581,17 @@ public sealed class Binder {
   #region pass 2 - bodies
 
   /// <summary>Per-procedure (or main) binding context.</summary>
-  private sealed class Scope(ProcedureSymbol? proc) {
+  private sealed class Scope(ProcedureSymbol? proc, ProcedureSymbol? captureFrom = null) {
     public ProcedureSymbol? Proc => proc;
+    /// <summary>PB 3.6 nested procedure: the enclosing proc whose locals this one may capture (BYREF).</summary>
+    public ProcedureSymbol? CaptureFrom => captureFrom;
     public string LabelKey => proc?.Name ?? "";
     public List<(string Target, SourcePosition Position)> PendingLabelRefs { get; } = [];
   }
 
   private void BindAllBodies() {
     this._folder = new(this._model.Equates, this._model.EnumMembers);
+    this.PreScanNestedProcedures();
 
     var main = new Scope(null);
 
@@ -593,7 +607,7 @@ public sealed class Binder {
       this.BindStatement(statement, main);
     this.CheckLabelRefs(main);
 
-    foreach (var proc in this._model.ProcedureList.Where(p => !p.IsExternal)) {
+    foreach (var proc in this._model.ProcedureList.Where(p => !p.IsExternal && !p.IsNested)) {
       var scope = new Scope(proc);
 
       foreach (var p in proc.Parameters)
@@ -607,7 +621,85 @@ public sealed class Binder {
         this.BindStatement(statement, scope);
       this.CheckLabelRefs(scope);
     }
+
+    this.BindNestedProcedures();
   }
+
+  #region PB 3.6 nested procedures (stack capture)
+
+  /// <summary>Finds nested SUB/FUNCTION declarations in every top-level proc body and pre-registers each as a lifted top-level proc (so calls resolve before its captures are known).</summary>
+  private void PreScanNestedProcedures() {
+    foreach (var outer in this._model.ProcedureList.Where(p => !p.IsExternal && !p.IsNested).ToList())
+      this.ScanNestedIn(outer, outer.Body!);
+  }
+
+  private void ScanNestedIn(ProcedureSymbol outer, IReadOnlyList<Statement> body) {
+    foreach (var s in body)
+      switch (s) {
+        case SubDecl sub:
+          this.RegisterNested(outer, sub.Name, isFunction: false, TypeSuffix.None, null, sub.Parameters, sub.Body, sub.Position);
+          break;
+        case FunctionDecl fn:
+          this.RegisterNested(outer, fn.Name, isFunction: true, fn.Suffix, fn.ReturnType, fn.Parameters, fn.Body, fn.Position);
+          break;
+        default:
+          foreach (var block in ChildBlocks(s))
+            this.ScanNestedIn(outer, block);
+          break;
+      }
+  }
+
+  private void RegisterNested(ProcedureSymbol outer, string name, bool isFunction, TypeSuffix suffix, TypeName? returnType, IReadOnlyList<Parameter> parameters, IReadOnlyList<Statement> body, SourcePosition position) {
+    if (!this.Require(LanguageFeature.NestedProcedures, position))
+      return;
+    var lifted = new ProcedureSymbol($"{outer.Name}${name}", isFunction) { IsNested = true, Body = body, Position = position };
+    if (isFunction)
+      lifted.ReturnType = this.ResolveReturnType(name, suffix, returnType);
+    foreach (var p in parameters)
+      lifted.Parameters.Add(this.BindParameter(p));
+    this._model.ProcedureList.Add(lifted);
+    if (!this._nestedProcs.TryGetValue(outer, out var map))
+      this._nestedProcs[outer] = map = new(StringComparer.OrdinalIgnoreCase);
+    map[name] = lifted;
+    this._nestedOriginalName[lifted] = name;
+    this._nestedToBind.Add((lifted, outer, isFunction));
+  }
+
+  /// <summary>Binds each lifted nested proc's body in a scope that may capture the outer proc's locals (added as BYREF parameters), then appends those captures to its call sites.</summary>
+  private void BindNestedProcedures() {
+    foreach (var (lifted, outer, isFunction) in this._nestedToBind) {
+      this._nestedCaptures[lifted] = [];
+      var scope = new Scope(lifted, captureFrom: outer);
+      foreach (var p in lifted.Parameters)
+        lifted.Variables[VariableKey(p.Name, TypeSuffix.None, p.Type is ArrayType)] = p;
+      if (isFunction) {
+        var result = new VariableSymbol(lifted.Name, lifted.ReturnType!, VariableStorage.Local);
+        lifted.Variables.TryAdd(lifted.Name, result);                            // for codegen + FUNCTION = expr
+        lifted.Variables.TryAdd(this._nestedOriginalName[lifted], result);       // for OriginalName = expr
+      }
+      this.CollectLabels(lifted.Body!, scope);
+      foreach (var statement in lifted.Body!)
+        this.BindStatement(statement, scope);
+      this.CheckLabelRefs(scope);
+    }
+
+    // now that captures (extra BYREF params) are known, append them to every call
+    // site as already-bound references to the outer locals (passed BYREF by codegen)
+    foreach (var (lifted, captures) in this._nestedCaptures)
+      if (captures.Count > 0 && this._nestedCallSites.TryGetValue(lifted, out var sites))
+        foreach (var (call, args) in sites) {
+          var full = new List<Expression>(args);
+          foreach (var captured in captures) {
+            var captureArg = new NameExpr(default, captured.Name, TypeSuffix.None);
+            this._model.VariableBindings[captureArg] = captured;
+            this._model.ExpressionTypes[captureArg] = captured.Type;
+            full.Add(captureArg);
+          }
+          this._model.ReorderedArguments[call] = full;
+        }
+  }
+
+  #endregion
 
   private void CollectLabels(IReadOnlyList<Statement> body, Scope scope) {
     var labels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1020,6 +1112,13 @@ public sealed class Binder {
         or ExitStmt or ReturnStmt or ResumeStmt or OnErrorStmt or EndStmt or RestoreStmt or EventControlStmt:
         break;
 
+      // PB 3.6: a nested SUB/FUNCTION inside a proc is lifted + bound separately (see
+      // PreScanNestedProcedures); here it is a no-op when the feature is available.
+      case SubDecl or FunctionDecl when scope.Proc != null:
+        if (!DialectFacts.IsAvailable(LanguageFeature.NestedProcedures, this._dialect))
+          this.Error(statement.Position, "declaration not allowed inside SUB/FUNCTION");
+        break;
+
       case TypeDecl or UnionDecl or DeclareStmt or SubDecl or FunctionDecl or DefFnDecl:
         if (scope.Proc != null)
           this.Error(statement.Position, "declaration not allowed inside SUB/FUNCTION");
@@ -1284,6 +1383,12 @@ public sealed class Binder {
     foreach (var argument in c.Arguments)
       this.BindExpression(argument, scope);
 
+    // PB 3.6 nested procedure call (scoped to the enclosing proc); captures appended later
+    if (this.ResolveNestedCall(c.Name, scope, c, c.Arguments) is { } nested) {
+      this._model.CallBindings[c] = nested;
+      return;
+    }
+
     // PB allows CALL on a FUNCTION too - the result is discarded
     if (this.ResolveOverload(c.Name, c.Arguments) is { } proc) {
       this._model.CallBindings[c] = proc;
@@ -1295,6 +1400,16 @@ public sealed class Binder {
     }
 
     this.Error(c.Position, $"unknown SUB {c.Name}");
+  }
+
+  /// <summary>Resolves a call to a nested procedure of the enclosing proc (PB 3.6), recording the site so captures can be appended once known; null when there is no such nested proc.</summary>
+  private ProcedureSymbol? ResolveNestedCall(string name, Scope scope, object callKey, IReadOnlyList<Expression> args) {
+    if (scope.Proc == null || !this._nestedProcs.TryGetValue(scope.Proc, out var map) || !map.TryGetValue(name, out var lifted))
+      return null;
+    if (!this._nestedCallSites.TryGetValue(lifted, out var sites))
+      this._nestedCallSites[lifted] = sites = [];
+    sites.Add((callKey, args));
+    return lifted;
   }
 
   /// <summary>
@@ -1902,6 +2017,17 @@ public sealed class Binder {
         : this.ReturnTypeOf(intrinsic, firstArg);
     }
 
+    // 3a. PB 3.6 nested function of the enclosing proc (scoped); captures appended later
+    if (scope.Proc != null && this._nestedProcs.TryGetValue(scope.Proc, out var nestedMap) && nestedMap.ContainsKey(call.Name)) {
+      foreach (var argument in call.Arguments)
+        this.BindExpression(argument, scope);
+      var nestedFn = this.ResolveNestedCall(call.Name, scope, call, call.Arguments)!;
+      if (!nestedFn.IsFunction)
+        return this.ErrorType(call.Position, $"SUB {call.Name} used as a function");
+      this._model.CallBindings[call] = nestedFn;
+      return nestedFn.ReturnType ?? PbType.Integer;
+    }
+
     // 3. user function - bind arguments first so their types can select the overload
     if (this._model.Overloads.ContainsKey(call.Name)) {
       foreach (var argument in call.Arguments)
@@ -1972,6 +2098,18 @@ public sealed class Binder {
       var bare = this.LookupVariable(name, scope);
       if (bare != null && Equals(bare.Type, this.TypeFromSuffixOrDefault(name, suffix)))
         found = bare;
+    }
+
+    // PB 3.6 nested procedure: a name resolving to the enclosing proc's scalar local
+    // is captured - added as a BYREF parameter the call site fills with its address
+    // (stack capture). First reference adds the param; later ones find it locally.
+    if (found == null && scope is { CaptureFrom: { } outer, Proc: { } nested }
+        && (outer.Variables.GetValueOrDefault(key) ?? (suffix == TypeSuffix.None ? null : outer.Variables.GetValueOrDefault(name))) is { Storage: VariableStorage.Local or VariableStorage.Static, IsArray: false } captured) {
+      var param = new VariableSymbol(name, captured.Type, VariableStorage.Parameter) { ByVal = false };
+      nested.Parameters.Add(param);
+      nested.Variables[key] = param;
+      this._nestedCaptures[nested].Add(captured);
+      return param;
     }
 
     if (found != null || !create)

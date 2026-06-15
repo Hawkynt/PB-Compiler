@@ -212,6 +212,13 @@ public sealed class DialectGateTests {
   #region PB 3.6 gates
 
   [Test]
+  public void Gate_GivenNestedProcedure_WhenPb35_ThenRejectedButPb36Accepts() {
+    const string source = "SUB Outer()\n  DIM x AS LONG\n  SUB Inner()\n    x = 1\n  END SUB\nEND SUB";
+    AssertRejected(source, Dialect.Pb35, "3.6");
+    AssertAccepted(source, Dialect.Pb36);
+  }
+
+  [Test]
   public void Gate_GivenArrayInitializer_WhenPb35_ThenRejectedButPb36Accepts() {
     const string source = "DIM a%() = {1, 2, 3}";
     AssertRejected(source, Dialect.Pb35, "3.6");

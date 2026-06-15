@@ -100,6 +100,7 @@ public enum LanguageFeature {
   XmsEmsArrays,
   FromEndIndex,
   ArrayInitializer,
+  NestedProcedures,
 }
 
 /// <summary>
@@ -154,6 +155,7 @@ public static class DialectFacts {
     [LanguageFeature.XmsEmsArrays] = (Dialect.Pb36, "XMS/EMS arrays ('DIM XMS/EMS a(...)')"),
     [LanguageFeature.FromEndIndex] = (Dialect.Pb36, "from-end array index ('arr(^n)')"),
     [LanguageFeature.ArrayInitializer] = (Dialect.Pb36, "array initializer literal ('= { v1, v2, lo..hi, ..arr }')"),
+    [LanguageFeature.NestedProcedures] = (Dialect.Pb36, "nested local SUB/FUNCTION (with stack capture of outer locals)"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

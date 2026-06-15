@@ -56,6 +56,8 @@ public sealed class ProcedureSymbol(string name, bool isFunction) {
   /// the first/only one, so a non-overloaded procedure keeps its plain emitted label.
   /// </summary>
   public int OverloadIndex { get; set; }
+  /// <summary>PB 3.6: true for a nested local SUB/FUNCTION lifted to top level (bound in a separate capture phase).</summary>
+  public bool IsNested { get; set; }
   /// <summary>Null when only DECLAREd (external - resolved at link time from PBU/PBL).</summary>
   public IReadOnlyList<Statement>? Body { get; set; }
   public SourcePosition Position { get; set; }

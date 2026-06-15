@@ -369,6 +369,13 @@ public sealed class ParserDeclarationTests {
   }
 
   [Test]
+  public void Parse_GivenNestedProcedure_WhenPb36_ThenNestedDeclInOuterBody() {
+    var unit = Parse("SUB Outer()\nDIM x AS LONG\nSUB Inner()\nx = 1\nEND SUB\nEND SUB", Dialect.Pb36);
+    var outer = (SubDecl)unit.Statements[0];
+    Assert.That(outer.Body.OfType<SubDecl>().Any(s => s.Name == "Inner"), Is.True);
+  }
+
+  [Test]
   public void Parse_GivenArrayInitializer_WhenPb36_ThenElementKindsCaptured() {
     var stmt = (DimStmt)Parse("DIM a%() = {1, 2..4, ..b%}", Dialect.Pb36).Statements[0];
     var lit = (ArrayLiteralExpr)stmt.Variables[0].Initializer!;

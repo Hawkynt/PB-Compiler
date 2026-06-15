@@ -193,6 +193,44 @@ public sealed class Pb36LanguageFeatureTests {
   }
 
   [Test]
+  public void Execute_GivenNestedSubCapturingOuterLocal_WhenRun_ThenStackCaptureByRef() {
+    // Bump captures the outer local x (stack capture via a hidden BYREF parameter);
+    // each call mutates the outer x.
+    const string source = """
+      DECLARE SUB Outer()
+      Outer
+      SUB Outer()
+        DIM x AS LONG
+        x = 10
+        SUB Bump()
+          x = x + 5
+        END SUB
+        Bump
+        Bump
+        PRINT x
+      END SUB
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 20\n"));
+  }
+
+  [Test]
+  public void Execute_GivenNestedFunctionWithParamAndCapture_WhenRun_ThenBoth() {
+    const string source = """
+      DECLARE FUNCTION Compute&()
+      PRINT Compute&()
+      FUNCTION Compute&()
+        DIM base AS LONG
+        base = 100
+        FUNCTION AddBase&(BYVAL n AS LONG)
+          AddBase& = n + base
+        END FUNCTION
+        Compute& = AddBase&(7)
+      END FUNCTION
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 107\n"));
+  }
+
+  [Test]
   public void Execute_GivenEnumAutoAndExplicit_WhenRun_ThenMembersAreConstants() {
     const string source = """
       ENUM Status

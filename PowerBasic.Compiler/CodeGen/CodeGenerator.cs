@@ -500,6 +500,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private void EmitStatementCore(Statement statement) {
     var asm = this._asm;
     switch (statement) {
+      // compile-time declarations carry no code here; a PB 3.6 nested SUB/FUNCTION is
+      // lifted to its own top-level proc and emitted separately, not inline.
+      case SubDecl or FunctionDecl or DeclareStmt or TypeDecl or UnionDecl or EnumDecl or DefTypeStmt or DefFnDecl:
+        break;
+
       case AssignStmt a:
         this.EmitAssign(a);
         break;
