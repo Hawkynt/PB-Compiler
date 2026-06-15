@@ -472,26 +472,36 @@ public sealed class IrLowering {
     var file = p.FileNumber is { } fn ? this.FileNum(fn) : null;
 
     foreach (var item in p.Items) {
-      if (item.Value is not { } expr)
-        continue;
-      if (expr is StringLiteralExpr lit) {
-        var bytes = System.Text.Encoding.ASCII.GetBytes(lit.Value);
-        var global = this._module.AddStringConstant(bytes);
-        this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], global, new IrConstantInt(IrType.I32, bytes.Length));
-        continue;
-      }
-      if (this._model.TypeOf(expr) is StringType) {
-        this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr], this.LowerStringExpr(expr));
-        continue;
-      }
-      if (this._model.TypeOf(expr) is not ScalarType s)
-        throw new IrLoweringException("PRINT of a non-numeric, non-literal item");
-      var (suffix, ty) = NumericSuffix(s);
-      this.EmitIo(file, "print", suffix, IrType.Void, [ty], this.Coerce(this.LowerExpr(expr), s, s));
+      if (item.Value is { } expr)
+        this.LowerPrintItem(file, expr);
+      if (item.Separator == PrintSeparator.Comma)
+        this.EmitIo(file, "print", "comma", IrType.Void, []);   // advance to the next 14-column print zone
     }
 
     if (p.Items.Count == 0 || p.Items[^1].Separator == PrintSeparator.Newline)
       this.EmitIo(file, "print", "nl", IrType.Void, []);
+  }
+
+  private void LowerPrintItem(IrValue? file, Expression expr) {
+    if (expr is CallOrIndexExpr ts && this._model.IntrinsicBindings.TryGetValue(ts, out var tsi) && tsi.Name is "TAB" or "SPC") {
+      var n = this.Coerce(this.LowerExpr(ts.Arguments[0]), this._model.TypeOf(ts.Arguments[0]), PbType.Long);
+      this.EmitIo(file, "print", tsi.Name == "TAB" ? "tab" : "spc", IrType.Void, [IrType.I32], n);
+      return;
+    }
+    if (expr is StringLiteralExpr lit) {
+      var bytes = System.Text.Encoding.ASCII.GetBytes(lit.Value);
+      var global = this._module!.AddStringConstant(bytes);
+      this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], global, new IrConstantInt(IrType.I32, bytes.Length));
+      return;
+    }
+    if (this._model.TypeOf(expr) is StringType) {
+      this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr], this.LowerStringExpr(expr));
+      return;
+    }
+    if (this._model.TypeOf(expr) is not ScalarType s)
+      throw new IrLoweringException("PRINT of a non-numeric, non-literal item");
+    var (suffix, ty) = NumericSuffix(s);
+    this.EmitIo(file, "print", suffix, IrType.Void, [ty], this.Coerce(this.LowerExpr(expr), s, s));
   }
 
   private void LowerInput(InputStmt input) {

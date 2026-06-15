@@ -15,6 +15,18 @@ public sealed class PrintLoweringTests {
   }
 
   [Test]
+  public void Print_WithTabSpcAndCommaZones_EmitsLayoutCalls() {
+    var module = LowerModule("PRINT \"a\", \"b\"\nPRINT TAB(10); \"x\"\nPRINT SPC(3); \"y\"\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var text = LlvmEmitter.Emit(module!);
+    Assert.That(text, Does.Contain("@rt_print_comma()"));     // the , zone advance
+    Assert.That(text, Does.Contain("@rt_print_tab(i32"));     // TAB(10)
+    Assert.That(text, Does.Contain("@rt_print_spc(i32"));     // SPC(3)
+  }
+
+  [Test]
   public void Print_OfNumbers_EmitsTypedRuntimeCallsAndDeclarations() {
     var module = LowerModule("x% = 21 * 2\nPRINT x%\ny& = 100000\nPRINT y&\nPRINT\nEND");
 
