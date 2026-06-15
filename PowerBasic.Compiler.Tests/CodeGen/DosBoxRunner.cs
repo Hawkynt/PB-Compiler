@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 namespace PowerBasic.Compiler.Tests.CodeGen;
 
@@ -52,10 +53,12 @@ public static class DosBoxRunner {
           File.WriteAllText(Path.Combine(dir, name), content);
       var run = stdinText != null ? "T.EXE < IN.TXT > T.OUT" : "T.EXE > T.OUT";
       var conf = Path.Combine(dir, "dosbox.conf");
+      // window_position is best-effort (dosbox-staging 0.82.2 clamps off-screen
+      // values, and rejects the old 'windowposition' spelling); the window is
+      // actually hidden by minimizing it via the OS once it appears (below).
       File.WriteAllText(conf, $"""
         [sdl]
-        windowposition=-10000,-10000
-        window_position = -10000,-10000
+        window_position = 9000,9000
         [dosbox]
         ems=true
         [autoexec]
@@ -79,8 +82,12 @@ public static class DosBoxRunner {
       using var process = Process.Start(psi)!;
       var sentinel = Path.Combine(dir, "DONE.TXT");
       var deadline = Environment.TickCount64 + timeoutMs;
-      while (!File.Exists(sentinel) && !process.HasExited && Environment.TickCount64 < deadline)
-        Thread.Sleep(100);
+      var minimized = false;
+      while (!File.Exists(sentinel) && !process.HasExited && Environment.TickCount64 < deadline) {
+        if (!minimized)
+          minimized = TryHideWindow(process);
+        Thread.Sleep(50);
+      }
 
       var finished = File.Exists(sentinel) || process.HasExited;
       if (!process.HasExited) {
@@ -108,6 +115,30 @@ public static class DosBoxRunner {
       }
     }
   }
+
+  /// <summary>
+  /// dosbox-staging on Windows always shows its SDL window (off-screen positioning is
+  /// clamped), so minimize it as soon as it appears - the tests read the redirected
+  /// output file, never the screen. Returns true once handled (or on non-Windows,
+  /// where CI runs headless under Xvfb and there is nothing to hide); false means the
+  /// window has not been created yet, so the caller retries on the next poll.
+  /// </summary>
+  private static bool TryHideWindow(Process process) {
+    if (!OperatingSystem.IsWindows())
+      return true;
+    process.Refresh();
+    var handle = process.MainWindowHandle;
+    if (handle == IntPtr.Zero)
+      return false;
+    ShowWindow(handle, SW_SHOWMINNOACTIVE);
+    return true;
+  }
+
+  private const int SW_SHOWMINNOACTIVE = 7; // minimize without stealing focus
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
   /// <summary>Normalizes CRLF and trailing whitespace per line for golden comparison.</summary>
   public static string Normalize(string text) => string.Join("\n", text.Replace("\r\n", "\n").Split('\n').Select(l => l.TrimEnd()));
