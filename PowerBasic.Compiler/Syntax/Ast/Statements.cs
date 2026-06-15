@@ -65,8 +65,13 @@ public sealed record EquateStmt(SourcePosition Position, string Name, Expression
 
 #region variable declarations
 
-/// <summary>One declared entity inside DIM/LOCAL/STATIC/SHARED/PUBLIC: optional bounds (lower TO upper | upper).</summary>
-public sealed record VariableDecl(SourcePosition Position, string Name, TypeSuffix Suffix, IReadOnlyList<(Expression? Lower, Expression Upper)>? ArrayBounds, TypeName? Type);
+/// <summary>
+/// One declared entity inside DIM/LOCAL/STATIC/SHARED/PUBLIC: optional bounds (lower TO upper | upper).
+/// <paramref name="Initializer"/> is the fused declare-and-initialize value (PB 3.6:
+/// <c>DIM x = value</c> / <c>DIM x AS type = value</c>); the binder infers the type from it
+/// when no explicit type is given and lowers the init to a real assignment after the declaration.
+/// </summary>
+public sealed record VariableDecl(SourcePosition Position, string Name, TypeSuffix Suffix, IReadOnlyList<(Expression? Lower, Expression Upper)>? ArrayBounds, TypeName? Type, Expression? Initializer = null);
 
 public enum StorageClass { Dim, Local, Static, Shared, Public, Ext, Common }
 

@@ -259,6 +259,24 @@ public sealed class ParserDeclarationTests {
     });
   }
 
+  [Test]
+  public void Parse_GivenDimWithInferredInitializer_WhenPb36_ThenInitializerKeptAndTypeNull() {
+    var stmt = (DimStmt)Parse("DIM x = 5", Dialect.Pb36).Statements[0];
+    Assert.Multiple(() => {
+      Assert.That(stmt.Variables[0].Type, Is.Null);
+      Assert.That(((IntegerLiteralExpr)stmt.Variables[0].Initializer!).Value, Is.EqualTo(5));
+    });
+  }
+
+  [Test]
+  public void Parse_GivenDimWithTypedInitializer_WhenPb36_ThenTypeAndInitializerKept() {
+    var stmt = (DimStmt)Parse("DIM n AS LONG = 100000", Dialect.Pb36).Statements[0];
+    Assert.Multiple(() => {
+      Assert.That(stmt.Variables[0].Type!.Builtin, Is.EqualTo(BuiltinType.Long));
+      Assert.That(((IntegerLiteralExpr)stmt.Variables[0].Initializer!).Value, Is.EqualTo(100000));
+    });
+  }
+
   [TestCase("n += 1", BinaryOp.Add)]
   [TestCase("n -= 2", BinaryOp.Subtract)]
   [TestCase("n *= 3", BinaryOp.Multiply)]

@@ -35,8 +35,57 @@ public sealed class Binder {
     binder.CollectRedims(unit.Statements);
     binder.ScanModule();
     binder.BindAllBodies();
+    binder.SpliceDimInitializers();
     return binder._model;
   }
+
+  /// <summary>
+  /// PB 3.6: inserts each DIM-initializer's lowered assignment(s) right after its
+  /// DIM in the executable stream (main body and every procedure body, recursing
+  /// nested blocks). Codegen and the optimizer passes then see a normal
+  /// declaration-then-assignment pair - no hidden writes.
+  /// </summary>
+  private void SpliceDimInitializers() {
+    if (this._model.DimInitializers.Count == 0)
+      return;
+
+    var spliced = this.SpliceBody(this._model.MainBody);
+    this._model.MainBody.Clear();
+    this._model.MainBody.AddRange(spliced);
+
+    foreach (var proc in this._model.Procedures.Values.Where(p => !p.IsExternal))
+      proc.Body = this.SpliceBody(proc.Body!);
+  }
+
+  private List<Statement> SpliceBody(IReadOnlyList<Statement> statements) {
+    var result = new List<Statement>(statements.Count);
+    foreach (var statement in statements) {
+      var rewritten = RewriteChildBlocks(statement, b => this.SpliceBody(b));
+      result.Add(rewritten);
+      if (statement is DimStmt dim && this._model.DimInitializers.TryGetValue(dim, out var inits))
+        result.AddRange(inits);
+    }
+    return result;
+  }
+
+  /// <summary>
+  /// Rebuilds a block-bearing statement with each child block replaced by
+  /// <paramref name="map"/>(block); non-block statements are returned unchanged.
+  /// The mirror of <see cref="ChildBlocks"/> for rewriting.
+  /// </summary>
+  private static Statement RewriteChildBlocks(Statement s, Func<IReadOnlyList<Statement>, List<Statement>> map) => s switch {
+    IfStmt i => i with {
+      Then = map(i.Then),
+      ElseIfs = [.. i.ElseIfs.Select(e => (e.Condition, (IReadOnlyList<Statement>)map(e.Body)))],
+      Else = i.Else == null ? null : map(i.Else),
+    },
+    SelectStmt sel => sel with {
+      Arms = [.. sel.Arms.Select(a => a with { Body = map(a.Body) })],
+    },
+    ForStmt f => f with { Body = map(f.Body) },
+    DoLoopStmt d => d with { Body = map(d.Body) },
+    _ => s,
+  };
 
   /// <summary>
   /// PB internal variables (pbvScrnCols, pbvScrnRows, pbvDefSeg, ...) resolve
@@ -274,6 +323,8 @@ public sealed class Binder {
 
   private void DeclareModuleVariables(DimStmt dim) {
     foreach (var v in dim.Variables) {
+      if (v.Initializer != null)
+        continue; // DIM-with-initializer is declared in pass 2 with its inferred type
       var symbol = this.CreateVariable(v, VariableStorage.Global, dim.Position, dim.Class);
       if (symbol == null)
         continue;
@@ -884,6 +935,12 @@ public sealed class Binder {
   }
 
   private void BindDimInScope(DimStmt dim, Scope scope) {
+    // PB 3.6 fused declare-and-initialize: bind the initializer, infer/resolve the
+    // type, declare the variable, and record a real assignment that the post-bind
+    // splice pass inserts after this DIM (so codegen/optimizer see the write).
+    foreach (var v in dim.Variables.Where(v => v.Initializer != null))
+      this.BindDimInitializer(dim, v, scope);
+
     if (scope.Proc == null) {
       // module DIMs were declared in pass 1 - but dynamic bounds are runtime
       // expressions that still need binding (DIM a(n) with a variable bound)
@@ -897,6 +954,8 @@ public sealed class Binder {
     }
 
     foreach (var v in dim.Variables) {
+      if (v.Initializer != null)
+        continue; // already declared + bound by BindDimInitializer above
       foreach (var (lower, upper) in v.ArrayBounds ?? []) {
         if (lower != null)
           this.BindExpression(lower, scope);
@@ -951,6 +1010,44 @@ public sealed class Binder {
       scope.Proc.Variables[key] = symbol;
     else
       this._model.ModuleVariables[key] = symbol;
+  }
+
+  /// <summary>
+  /// Declares a PB 3.6 <c>DIM x [AS type] = value</c>: binds the initializer (so its
+  /// type is known), creates the variable with the explicit type or the inferred
+  /// initializer type, and records a bound assignment for the splice pass to insert
+  /// after the DIM. The variable lives where its storage class dictates (a proc local,
+  /// or a module global at main level).
+  /// </summary>
+  private void BindDimInitializer(DimStmt dim, VariableDecl v, Scope scope) {
+    var valueType = this.BindExpression(v.Initializer!, scope);
+    var declaredType = v.Type != null ? this.ResolveTypeName(v.Type) : valueType;
+    if (declaredType == null) {
+      this.Error(v.Position, $"unknown type for variable {v.Name}");
+      return;
+    }
+
+    var key = VariableKey(v.Name, v.Suffix);
+    var storage = scope.Proc == null ? VariableStorage.Global
+      : scope.Proc.IsStatic || dim.StaticFlag ? VariableStorage.Static
+      : VariableStorage.Local;
+    var symbol = new VariableSymbol(v.Name, declaredType, storage);
+    if (scope.Proc != null) {
+      if (scope.Proc.Variables.ContainsKey(key))
+        this.Error(v.Position, $"variable {v.Name} already declared");
+      scope.Proc.Variables[key] = symbol;
+    } else {
+      if (this._model.ModuleVariables.ContainsKey(key))
+        this.Error(v.Position, $"variable {v.Name} already declared");
+      this._model.ModuleVariables[key] = symbol;
+    }
+
+    // lower the initializer to a real assignment (bound here, spliced after the DIM)
+    var assign = new AssignStmt(v.Position, new NameExpr(v.Position, v.Name, v.Suffix), v.Initializer!);
+    this.BindStatement(assign, scope);
+    if (!this._model.DimInitializers.TryGetValue(dim, out var list))
+      this._model.DimInitializers[dim] = list = [];
+    list.Add(assign);
   }
 
   private void BindCallStatement(CallStmt c, Scope scope) {

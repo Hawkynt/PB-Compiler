@@ -57,4 +57,55 @@ public sealed class Pb36LanguageFeatureTests {
       """;
     Assert.That(Run(source), Is.EqualTo("abcdef\n"));
   }
+
+  [Test]
+  public void Execute_GivenDimInferredInteger_WhenRun_ThenDeclaresAndInitializes() {
+    const string source = """
+      DIM x = 7
+      PRINT x
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 7\n"));
+  }
+
+  [Test]
+  public void Execute_GivenDimInferredString_WhenRun_ThenStringStored() {
+    const string source = """
+      DIM s = "hello"
+      PRINT s
+      """;
+    Assert.That(Run(source), Is.EqualTo("hello\n"));
+  }
+
+  [Test]
+  public void Execute_GivenDimInferredLargeLiteral_WhenRun_ThenInfersWideEnoughType() {
+    // 100000 does not fit INTEGER; inference must pick LONG so the value survives.
+    const string source = """
+      DIM big = 100000
+      PRINT big
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 100000\n"));
+  }
+
+  [Test]
+  public void Execute_GivenDimTypedInitializer_WhenRun_ThenUsesExplicitType() {
+    const string source = """
+      DIM n AS LONG = 100000
+      PRINT n * 2
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 200000\n"));
+  }
+
+  [Test]
+  public void Execute_GivenDimInitializerInProcedure_WhenRun_ThenLocalInferred() {
+    const string source = """
+      DECLARE FUNCTION Cube&(BYVAL x AS LONG)
+      PRINT Cube&(4)
+      FUNCTION Cube&(BYVAL x AS LONG)
+        DIM r AS LONG = x * x
+        r = r * x
+        Cube& = r
+      END FUNCTION
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 64\n"));
+  }
 }

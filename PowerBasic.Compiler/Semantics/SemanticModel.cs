@@ -39,6 +39,13 @@ public sealed class SemanticModel {
   /// <summary>Array symbol behind every REDIM'd variable declaration (the REDIM target has no expression node).</summary>
   public Dictionary<VariableDecl, VariableSymbol> RedimBindings { get; } = new(ReferenceEqualityComparer.Instance);
 
+  /// <summary>
+  /// PB 3.6 DIM-initializer lowering: the bound assignment(s) a DIM-with-initializer
+  /// produces, in variable order. After binding, a splice pass inserts these right
+  /// after their DIM so codegen and every optimizer pass see a real write.
+  /// </summary>
+  public Dictionary<DimStmt, List<AssignStmt>> DimInitializers { get; } = new(ReferenceEqualityComparer.Instance);
+
   /// <summary>Procedure symbol behind every user call site (CallStmt / CallOrIndexExpr).</summary>
   public Dictionary<object, ProcedureSymbol> CallBindings { get; } = new(ReferenceEqualityComparer.Instance);
 
