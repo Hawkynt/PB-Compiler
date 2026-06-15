@@ -227,6 +227,29 @@ public sealed partial class Parser {
     return new(token.Position, BuiltinType.Asciiz, null, this.ParseExpression());
   }
 
+  private Statement ParseEnum() {
+    this.Require(LanguageFeature.EnumType);
+    var pos = this.Advance().Position; // ENUM
+    var name = this.Expect(TokenKind.Identifier, "enum name");
+    var underlying = this.TryMatchKeyword("AS") ? this.ParseTypeName() : null;
+    var members = new List<(string Name, Expression? Value)>();
+    for (;;) {
+      this.SkipSeparators();
+      if (this.IsAtTerminator("END ENUM")) {
+        this.Advance();
+        this.Advance();
+        break;
+      }
+      if (this.Current.Kind == TokenKind.EndOfFile)
+        throw this.Error("unexpected end of file, expected END ENUM");
+      var member = this.Expect(TokenKind.Identifier, "enum member name");
+      var value = this.Match(TokenKind.Equals) ? this.ParseExpression() : null;
+      members.Add((member.Text, value));
+      this.Match(TokenKind.Comma); // members may be comma- and/or newline-separated
+    }
+    return new EnumDecl(pos, name.Text, underlying, members);
+  }
+
   private Statement ParseTypeDecl(bool isUnion) {
     this.Require(LanguageFeature.TypeUnion);
     var pos = this.Advance().Position;

@@ -26,7 +26,7 @@ public sealed class Binder {
     this._unit = unit;
     this._dialect = dialect;
     this._model = new() { FileName = unit.FileName, Dialect = dialect };
-    this._folder = new(this._model.Equates);
+    this._folder = new(this._model.Equates, this._model.EnumMembers);
   }
 
   public static SemanticModel Bind(CompilationUnit unit, Dialect dialect = Dialect.Pb35) {
@@ -140,6 +140,10 @@ public sealed class Binder {
           this.DefineEquate(e);
           break;
 
+        case EnumDecl e:
+          this.DefineEnum(e);
+          break;
+
         case TypeDecl t:
           this.DefineUdt(t.Name, t.Fields, isUnion: false, t.Position);
           break;
@@ -206,6 +210,28 @@ public sealed class Binder {
           this._model.MainBody.Add(statement);
           break;
       }
+  }
+
+  /// <summary>
+  /// PB 3.6 ENUM: registers each member as a bare integer constant (auto-incrementing
+  /// from 0, or last+1, with explicit <c>= expr</c> values folded), and the enum name
+  /// as an alias for its underlying integer type (INTEGER by default).
+  /// </summary>
+  private void DefineEnum(EnumDecl e) {
+    var underlying = e.UnderlyingType != null ? this.ResolveTypeName(e.UnderlyingType) ?? PbType.Integer : PbType.Integer;
+    this._model.EnumTypes[e.Name] = underlying;
+    long next = 0;
+    foreach (var (name, value) in e.Members) {
+      if (value != null) {
+        if (this._folder.TryFold(value) is { Integer: { } v })
+          next = v;
+        else
+          this.Error(e.Position, $"ENUM member {name} value is not a compile-time constant");
+      }
+      this._model.EnumMembers[name] = next;
+      this._model.EnumMemberTypes[name] = underlying;
+      ++next;
+    }
   }
 
   private void DefineEquate(EquateStmt e) {
@@ -498,8 +524,13 @@ public sealed class Binder {
       return t.Builtin == BuiltinType.Asciiz ? new AsciizType(1) : new FixedStringType(1);
     }
 
-    if (t.IsUserDefined)
-      return this._model.Udts.TryGetValue(t.UserTypeName!, out var udt) ? udt : null;
+    if (t.IsUserDefined) {
+      if (this._model.Udts.TryGetValue(t.UserTypeName!, out var udt))
+        return udt;
+      if (this._model.EnumTypes.TryGetValue(t.UserTypeName!, out var enumType)) // PB 3.6: an ENUM name aliases its integer type
+        return enumType;
+      return null;
+    }
 
     return MapBuiltin(t.Builtin);
   }
@@ -546,7 +577,7 @@ public sealed class Binder {
   }
 
   private void BindAllBodies() {
-    this._folder = new(this._model.Equates);
+    this._folder = new(this._model.Equates, this._model.EnumMembers);
 
     var main = new Scope(null);
     this.CollectLabels(this._model.MainBody, main);
@@ -1265,6 +1296,13 @@ public sealed class Binder {
 
       case NameExpr n: {
         var symbol = this.ResolveVariable(n.Name, n.Suffix, scope, create: false, n.Position);
+
+        // a bare name with no matching variable may be a PB 3.6 ENUM member (its own
+        // namespace - a real variable of the same name wins, hence the symbol check first)
+        if (symbol == null && n.Suffix == TypeSuffix.None && this._model.EnumMembers.TryGetValue(n.Name, out var enumValue)) {
+          this._model.ResolvedConstants[n] = enumValue;
+          return this._model.EnumMemberTypes.GetValueOrDefault(n.Name, PbType.Integer);
+        }
 
         // a bare name may be a parameterless FUNCTION call (PB allows omitting "()")
         if (symbol == null && this._model.Procedures.TryGetValue(n.Name, out var fn) && fn.IsFunction) {

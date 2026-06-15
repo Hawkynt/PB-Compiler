@@ -18,7 +18,7 @@ public readonly record struct ConstantValue(long? Integer, double? Float, string
 /// Evaluates constant expressions at compile time: equate definitions, array
 /// bounds, CASE ranges, DATA limits. Equates resolve through the supplied table.
 /// </summary>
-public sealed class ConstantFolder(IReadOnlyDictionary<string, ConstantValue> equates) {
+public sealed class ConstantFolder(IReadOnlyDictionary<string, ConstantValue> equates, IReadOnlyDictionary<string, long>? enumMembers = null) {
 
   private static readonly IReadOnlyDictionary<string, ConstantValue> _empty = new Dictionary<string, ConstantValue>();
 
@@ -38,6 +38,9 @@ public sealed class ConstantFolder(IReadOnlyDictionary<string, ConstantValue> eq
 
       case NamedConstantExpr c:
         return equates.TryGetValue(c.Name, out var known) ? known : null;
+
+      case NameExpr n when enumMembers is { } e && e.TryGetValue(n.Name, out var enumValue):
+        return ConstantValue.Of(enumValue); // a bare PB 3.6 ENUM member is a compile-time constant
 
       case UnaryExpr u: {
         if (this.TryFold(u.Operand) is not { } operand)

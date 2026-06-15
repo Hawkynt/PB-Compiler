@@ -12,7 +12,7 @@ public sealed partial class Parser {
 
   /// <summary>Reserved statement keywords - these can never be labels.</summary>
   private static readonly HashSet<string> _statementKeywords = new(StringComparer.OrdinalIgnoreCase) {
-    "LET", "CALL", "SUB", "FUNCTION", "DECLARE", "TYPE", "UNION",
+    "LET", "CALL", "SUB", "FUNCTION", "DECLARE", "TYPE", "UNION", "ENUM",
     "DEF", "DEFINT", "DEFLNG", "DEFQUD", "DEFSNG", "DEFDBL", "DEFEXT", "DEFFIX", "DEFBCD", "DEFSTR", "DEFFLX",
     "DIM", "LOCAL", "STATIC", "SHARED", "PUBLIC", "EXT", "COMMON", "REDIM", "ERASE",
     "STDOUT", "STDIN", "SETEOF", "ERRCLEAR",
@@ -35,7 +35,7 @@ public sealed partial class Parser {
   };
 
   private static readonly HashSet<string> _structuralEndKeywords = new(StringComparer.OrdinalIgnoreCase)
-    { "IF", "SELECT", "SUB", "FUNCTION", "TYPE", "UNION", "DEF" };
+    { "IF", "SELECT", "SUB", "FUNCTION", "TYPE", "UNION", "DEF", "ENUM" };
 
   private static readonly HashSet<string> _eventKinds = new(StringComparer.OrdinalIgnoreCase)
     { "KEY", "TIMER", "COM", "PLAY", "PEN", "STRIG", "UEVENT" };
@@ -250,6 +250,7 @@ public sealed partial class Parser {
       case "DECLARE": return this.ParseDeclare();
       case "TYPE": return this.ParseTypeDecl(isUnion: false);
       case "UNION": return this.ParseTypeDecl(isUnion: true);
+      case "ENUM": return this.ParseEnum();
       case "DEF": return this.ParseDef();
       case "DEFINT": return this.ParseDefType(BuiltinType.Integer);
       case "DEFLNG": return this.ParseDefType(BuiltinType.Long);

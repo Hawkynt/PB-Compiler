@@ -64,6 +64,12 @@ public sealed partial class CodeGenerator {
   }
 
   private void EmitExpressionCore(Expression expression) {
+    // pb36 ENUM member: the binder resolved this node to a compile-time integer
+    if (model.ResolvedConstants.TryGetValue(expression, out var enumConst) && model.TypeOf(expression) is ScalarType enumType) {
+      this.EmitIntegralConstant(WrapToType(enumConst, enumType), KindOf(enumType));
+      return;
+    }
+
     // pb36 O17: SCCP-proven constant reads fold here (cross-block propagation)
     if (this.TryEmitProvenConstant(expression))
       return;

@@ -93,6 +93,7 @@ public enum LanguageFeature {
   SubFunctionOverloading,
   ShiftRotateOps,
   PointerArithmetic,
+  EnumType,
 }
 
 /// <summary>
@@ -140,6 +141,7 @@ public static class DialectFacts {
     [LanguageFeature.SubFunctionOverloading] = (Dialect.Pb36, "SUB/FUNCTION overloading (same name, different signature)"),
     [LanguageFeature.ShiftRotateOps] = (Dialect.Pb36, "shift/rotate/bitwise operators (<<, >>, <<<, >>>, <<>, <>>, |)"),
     [LanguageFeature.PointerArithmetic] = (Dialect.Pb36, "scaled pointer arithmetic (ptr +* index / ptr -* index)"),
+    [LanguageFeature.EnumType] = (Dialect.Pb36, "ENUM declarations"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

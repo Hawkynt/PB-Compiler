@@ -18,6 +18,18 @@ public sealed class SemanticModel {
   /// <summary>Folded named constants (%equates).</summary>
   public Dictionary<string, ConstantValue> Equates { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+  /// <summary>PB 3.6 ENUM members: bare name -> integer value (their own namespace, variable reads win).</summary>
+  public Dictionary<string, long> EnumMembers { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+  /// <summary>PB 3.6 ENUM members: bare name -> the enum's underlying integer type.</summary>
+  public Dictionary<string, PbType> EnumMemberTypes { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+  /// <summary>PB 3.6 ENUM names -> the integer type they alias (so DIM c AS Color works).</summary>
+  public Dictionary<string, PbType> EnumTypes { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+  /// <summary>Expression nodes the binder resolved to a compile-time integer (an ENUM member reference); codegen emits the literal.</summary>
+  public Dictionary<Expression, long> ResolvedConstants { get; } = new(ReferenceEqualityComparer.Instance);
+
   /// <summary>TYPE/UNION definitions with resolved layout.</summary>
   public Dictionary<string, UdtType> Udts { get; } = new(StringComparer.OrdinalIgnoreCase);
 

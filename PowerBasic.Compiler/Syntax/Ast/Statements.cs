@@ -61,6 +61,13 @@ public sealed record DefTypeStmt(SourcePosition Position, BuiltinType Type, IRea
 /// <summary>Named-constant (equate) definition: <c>%NAME = const-expr</c>.</summary>
 public sealed record EquateStmt(SourcePosition Position, string Name, Expression Value) : Statement(Position);
 
+/// <summary>
+/// PB 3.6 <c>ENUM Name [AS type] : A [= v], B, ... : END ENUM</c>: a group of named
+/// integer constants (auto-incrementing from 0 / last+1, or explicit values). The
+/// name is usable as an integer type alias.
+/// </summary>
+public sealed record EnumDecl(SourcePosition Position, string Name, TypeName? UnderlyingType, IReadOnlyList<(string Name, Expression? Value)> Members) : Statement(Position);
+
 #endregion
 
 #region variable declarations

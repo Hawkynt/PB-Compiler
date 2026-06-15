@@ -26,6 +26,40 @@ public sealed class Pb36LanguageFeatureTests {
   }
 
   [Test]
+  public void Execute_GivenEnumAutoAndExplicit_WhenRun_ThenMembersAreConstants() {
+    const string source = """
+      ENUM Status
+        Red
+        Green
+        Blue = 5
+        Cyan
+      END ENUM
+      PRINT Red
+      PRINT Green
+      PRINT Blue
+      PRINT Cyan
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 0\n 1\n 5\n 6\n"));
+  }
+
+  [Test]
+  public void Execute_GivenEnumTypeAliasAndCompare_WhenRun_ThenUsableAsValue() {
+    const string source = """
+      ENUM Color
+        Red
+        Green
+        Blue
+      END ENUM
+      DIM c AS Color
+      c = Green
+      PRINT c
+      IF c = Green THEN PRINT "yes" ELSE PRINT "no"
+      PRINT Red + Blue
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 1\nyes\n 2\n"));
+  }
+
+  [Test]
   public void Execute_GivenExpressionBodiedFunction_WhenRun_ThenResultMatchesEquivalentBody() {
     const string source = """
       DECLARE FUNCTION Sq&(BYVAL x AS LONG)

@@ -212,6 +212,13 @@ public sealed class DialectGateTests {
   #region PB 3.6 gates
 
   [Test]
+  public void Gate_GivenEnum_WhenPb35_ThenRejectedButPb36Accepts() {
+    const string source = "ENUM Color\nRed\nGreen\nBlue\nEND ENUM";
+    AssertRejected(source, Dialect.Pb35, "3.6");
+    AssertAccepted(source, Dialect.Pb36);
+  }
+
+  [Test]
   public void Gate_GivenExpressionBodiedFunction_WhenPb35_ThenRejectedButPb36Accepts() {
     const string source = "FUNCTION Sq&(BYVAL x AS LONG) = x * x";
     AssertRejected(source, Dialect.Pb35, "3.6");

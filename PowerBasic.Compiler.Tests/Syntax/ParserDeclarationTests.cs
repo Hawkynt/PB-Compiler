@@ -369,6 +369,18 @@ public sealed class ParserDeclarationTests {
   }
 
   [Test]
+  public void Parse_GivenEnum_WhenPb36_ThenMembersCaptured() {
+    var unit = Parse("ENUM Color\nRed\nGreen = 5\nBlue\nEND ENUM", Dialect.Pb36);
+    var e = (EnumDecl)unit.Statements[0];
+    Assert.Multiple(() => {
+      Assert.That(e.Name, Is.EqualTo("Color"));
+      Assert.That(e.Members.Select(m => m.Name), Is.EqualTo(new[] { "Red", "Green", "Blue" }));
+      Assert.That(((IntegerLiteralExpr)e.Members[1].Value!).Value, Is.EqualTo(5));
+      Assert.That(e.Members[2].Value, Is.Null);
+    });
+  }
+
+  [Test]
   public void Parse_GivenExpressionBodiedFunction_WhenPb36_ThenBodyIsSingleResultAssignment() {
     var unit = Parse("FUNCTION Sq&(BYVAL x AS LONG) = x * x", Dialect.Pb36);
     var fn = (FunctionDecl)unit.Statements[0];

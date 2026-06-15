@@ -26,7 +26,7 @@ public sealed partial class CodeGenerator {
   public bool Optimize { get; set; } = model.Dialect == Dialect.Pb36;
 
   private ConstantFolder? _pb36Folder;
-  private ConstantFolder Pb36Folder => this._pb36Folder ??= new(model.Equates);
+  private ConstantFolder Pb36Folder => this._pb36Folder ??= new(model.Equates, model.EnumMembers);
 
   /// <summary>
   /// Wraps a compile-time value to the silent-wrap storage semantics of
