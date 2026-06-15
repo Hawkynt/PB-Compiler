@@ -169,7 +169,16 @@ public sealed partial class Parser {
       isArray = true;
     }
     var type = this.TryMatchKeyword("AS") ? this.ParseTypeName() : null;
-    return new(name.Position, name.Text, name.Suffix, type, byVal, seg, isArray, optional);
+
+    // default parameter value (PB 3.6): SUB Foo(x AS INTEGER = 10). A defaulted
+    // parameter is optional - a call site may omit it (trailing).
+    Expression? defaultValue = null;
+    if (!isArray && this.Match(TokenKind.Equals)) {
+      this.Require(LanguageFeature.DefaultParameters);
+      defaultValue = this.ParseExpression();
+      optional = true;
+    }
+    return new(name.Position, name.Text, name.Suffix, type, byVal, seg, isArray, optional, defaultValue);
   }
 
   private TypeName ParseTypeName() {

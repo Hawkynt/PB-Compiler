@@ -28,6 +28,8 @@ public sealed class VariableSymbol(string name, PbType type, VariableStorage sto
   public bool Seg { get; set; }
   /// <summary>Parameters only: CDECL bracket parameter (<c>[, BYVAL x]</c>) - may be omitted at call sites.</summary>
   public bool Optional { get; set; }
+  /// <summary>Parameters only (PB 3.6): the default-value expression a call site uses when the (trailing) argument is omitted.</summary>
+  public Expression? DefaultValue { get; set; }
   /// <summary>Assigned by the storage layouter: data-segment offset or BP displacement.</summary>
   public int Offset { get; set; }
 

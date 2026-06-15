@@ -212,6 +212,13 @@ public sealed class DialectGateTests {
   #region PB 3.6 gates
 
   [Test]
+  public void Gate_GivenDefaultParameter_WhenPb35_ThenRejectedButPb36Accepts() {
+    const string source = "SUB Foo(BYVAL x AS INTEGER = 5)\nEND SUB";
+    AssertRejected(source, Dialect.Pb35, "3.6");
+    AssertAccepted(source, Dialect.Pb36);
+  }
+
+  [Test]
   public void Gate_GivenWithBlock_WhenPb35_ThenRejectedButPb36Accepts() {
     const string source = "TYPE T\n  X AS INTEGER\nEND TYPE\nDIM p AS T\nWITH p\n.X = 1\nEND WITH";
     AssertRejected(source, Dialect.Pb35, "3.6");

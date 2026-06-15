@@ -316,6 +316,18 @@ public sealed partial class CodeGenerator {
 
   private void EmitCall(ProcedureSymbol proc, IReadOnlyList<Expression> args, bool wantResult, SourcePosition position) {
     var asm = this._asm;
+
+    // PB 3.6 default parameter values: fill omitted trailing arguments with each
+    // parameter's default expression (evaluated here, at the call site) before any
+    // path that assumes full arity (inlining, tail call, the count check).
+    if (args.Count < proc.Parameters.Count && !proc.IsCdecl
+        && proc.Parameters[args.Count].DefaultValue != null) {
+      var filled = new List<Expression>(args);
+      for (var i = args.Count; i < proc.Parameters.Count && proc.Parameters[i].DefaultValue is { } d; ++i)
+        filled.Add(d);
+      args = filled;
+    }
+
     if (this.TryEmitInlinedFunction(proc, args, wantResult))
       return;
     if (proc.IsExternal && !this._allowExternalCalls) {

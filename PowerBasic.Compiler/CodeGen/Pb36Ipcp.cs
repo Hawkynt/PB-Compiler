@@ -28,7 +28,7 @@ public static class Pb36Ipcp {
         return result;
       }
 
-    var folder = new ConstantFolder(model.Equates);
+    var folder = new ConstantFolder(model.Equates, model.EnumMembers);
 
     // collect, per (proc, param index), the set of constant arguments seen
     var seen = new Dictionary<ProcedureSymbol, ConstantValue?[]>(ReferenceEqualityComparer.Instance);
@@ -39,8 +39,25 @@ public static class Pb36Ipcp {
       if (proc.IsExternal || proc.IsCdecl || proc.Body == null)
         continue;
       var args = ArgsOf(key);
-      if (args.Count != proc.Parameters.Count)
+      if (args.Count > proc.Parameters.Count)
         continue;
+      // PB 3.6 default parameters: a call that omits trailing defaulted arguments
+      // effectively passes those defaults, so fold them in - otherwise IPCP would
+      // see only the explicit call sites and wrongly think a parameter is constant.
+      if (args.Count < proc.Parameters.Count) {
+        var extended = new List<Expression>(args);
+        var allDefaulted = true;
+        for (var i = args.Count; i < proc.Parameters.Count; ++i) {
+          if (proc.Parameters[i].DefaultValue is not { } d) {
+            allDefaulted = false; // an unaccounted omitted argument (e.g. CDECL variadic)
+            break;
+          }
+          extended.Add(d);
+        }
+        if (!allDefaulted)
+          continue; // cannot account for the omitted arguments - do not propagate
+        args = extended;
+      }
       callCount[proc] = callCount.GetValueOrDefault(proc) + 1;
       if (!seen.TryGetValue(proc, out var slots)) {
         slots = new ConstantValue?[proc.Parameters.Count];

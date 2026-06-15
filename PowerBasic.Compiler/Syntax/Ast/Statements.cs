@@ -32,7 +32,7 @@ public enum Visibility { Default, Public, Private }
 /// array marker (a dimension count inside the parens is accepted: <c>arr(1) AS LONG</c>);
 /// <see cref="Optional"/> marks CDECL bracket parameters (<c>[, BYVAL x]</c>).
 /// </summary>
-public sealed record Parameter(SourcePosition Position, string Name, TypeSuffix Suffix, TypeName? Type, bool ByVal, bool Seg, bool IsArray, bool Optional = false);
+public sealed record Parameter(SourcePosition Position, string Name, TypeSuffix Suffix, TypeName? Type, bool ByVal, bool Seg, bool IsArray, bool Optional = false, Expression? DefaultValue = null);
 
 /// <summary>SUB definition.</summary>
 public sealed record SubDecl(SourcePosition Position, string Name, IReadOnlyList<Parameter> Parameters, bool IsStatic, Visibility Visibility, string? Alias, bool Cdecl, IReadOnlyList<Statement> Body) : Statement(Position);

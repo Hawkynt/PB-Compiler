@@ -369,6 +369,17 @@ public sealed class ParserDeclarationTests {
   }
 
   [Test]
+  public void Parse_GivenDefaultParameter_WhenPb36_ThenDefaultValueAndOptionalKept() {
+    var unit = Parse("SUB Foo(BYVAL x AS INTEGER, BYVAL y AS INTEGER = 10)\nEND SUB", Dialect.Pb36);
+    var sub = (SubDecl)unit.Statements[0];
+    Assert.Multiple(() => {
+      Assert.That(sub.Parameters[1].Optional, Is.True);
+      Assert.That(((IntegerLiteralExpr)sub.Parameters[1].DefaultValue!).Value, Is.EqualTo(10));
+      Assert.That(sub.Parameters[0].DefaultValue, Is.Null);
+    });
+  }
+
+  [Test]
   public void Parse_GivenWithBlock_WhenPb36_ThenDotMembersDesugarToSubjectAccess() {
     // WITH p : .X = 1 : .Y = 2 : END WITH  ->  spliced p.X = 1 : p.Y = 2 (no WITH node)
     var unit = Parse("WITH p\n.X = 1\n.Y = 2\nEND WITH", Dialect.Pb36);

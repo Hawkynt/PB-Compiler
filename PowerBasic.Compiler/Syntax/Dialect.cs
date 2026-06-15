@@ -95,6 +95,7 @@ public enum LanguageFeature {
   PointerArithmetic,
   EnumType,
   WithBlock,
+  DefaultParameters,
 }
 
 /// <summary>
@@ -144,6 +145,7 @@ public static class DialectFacts {
     [LanguageFeature.PointerArithmetic] = (Dialect.Pb36, "scaled pointer arithmetic (ptr +* index / ptr -* index)"),
     [LanguageFeature.EnumType] = (Dialect.Pb36, "ENUM declarations"),
     [LanguageFeature.WithBlock] = (Dialect.Pb36, "WITH ... END WITH blocks"),
+    [LanguageFeature.DefaultParameters] = (Dialect.Pb36, "default parameter values ('param AS type = value')"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

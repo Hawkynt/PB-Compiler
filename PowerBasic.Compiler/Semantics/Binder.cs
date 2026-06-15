@@ -421,7 +421,7 @@ public sealed class Binder {
     if (p.IsArray)
       type = new ArrayType(type, null, Rank: 1); // array parameters arrive as descriptors
 
-    return new(p.Name, type, VariableStorage.Parameter) { ByVal = p.ByVal, Seg = p.Seg, Optional = p.Optional };
+    return new(p.Name, type, VariableStorage.Parameter) { ByVal = p.ByVal, Seg = p.Seg, Optional = p.Optional, DefaultValue = p.DefaultValue };
   }
 
   private void DeclareModuleVariables(DimStmt dim) {
@@ -580,6 +580,14 @@ public sealed class Binder {
     this._folder = new(this._model.Equates, this._model.EnumMembers);
 
     var main = new Scope(null);
+
+    // PB 3.6 default parameter values are constant/global expressions evaluated at the
+    // call site; bind them once in the module scope so codegen has their types.
+    foreach (var proc in this._model.ProcedureList)
+      foreach (var p in proc.Parameters)
+        if (p.DefaultValue is { } d)
+          this.BindExpression(d, main);
+
     this.CollectLabels(this._model.MainBody, main);
     foreach (var statement in this._model.MainBody)
       this.BindStatement(statement, main);

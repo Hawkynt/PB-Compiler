@@ -26,6 +26,32 @@ public sealed class Pb36LanguageFeatureTests {
   }
 
   [Test]
+  public void Execute_GivenDefaultParameter_WhenRun_ThenOmittedArgUsesDefault() {
+    const string source = """
+      DECLARE FUNCTION Inc&(BYVAL x AS LONG, BYVAL by AS LONG)
+      PRINT Inc&(5)
+      PRINT Inc&(5, 10)
+      FUNCTION Inc&(BYVAL x AS LONG, BYVAL by AS LONG = 1)
+        Inc& = x + by
+      END FUNCTION
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 6\n 15\n"));
+  }
+
+  [Test]
+  public void Execute_GivenDefaultParameterSub_WhenRun_ThenOmittedArgUsesDefault() {
+    const string source = """
+      DECLARE SUB Greet(BYVAL n AS LONG, BYVAL times AS LONG)
+      Greet 5
+      Greet 7, 3
+      SUB Greet(BYVAL n AS LONG, BYVAL times AS LONG = 2)
+        PRINT n * times
+      END SUB
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 10\n 21\n"));
+  }
+
+  [Test]
   public void Execute_GivenWithBlock_WhenRun_ThenDotMembersHitTheSubject() {
     const string source = """
       TYPE Point
