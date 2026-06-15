@@ -1,5 +1,22 @@
 # PB-Compiler
 
+[![License](https://img.shields.io/github/license/Hawkynt/PB-Compiler)](https://github.com/Hawkynt/PB-Compiler/blob/main/LICENSE)
+[![Language](https://img.shields.io/badge/language-C%23-178600)](https://github.com/Hawkynt/PB-Compiler)
+
+[![CI](https://github.com/Hawkynt/PB-Compiler/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Hawkynt/PB-Compiler/actions/workflows/ci.yml)
+![Last Commit](https://img.shields.io/github/last-commit/Hawkynt/PB-Compiler?branch=main)
+![Activity](https://img.shields.io/github/commit-activity/m/Hawkynt/PB-Compiler)
+
+[![Stars](https://img.shields.io/github/stars/Hawkynt/PB-Compiler?color=FFD700)](https://github.com/Hawkynt/PB-Compiler/stargazers)
+[![Forks](https://img.shields.io/github/forks/Hawkynt/PB-Compiler?color=008080)](https://github.com/Hawkynt/PB-Compiler/network/members)
+[![Issues](https://img.shields.io/github/issues/Hawkynt/PB-Compiler)](https://github.com/Hawkynt/PB-Compiler/issues)
+![Code Size](https://img.shields.io/github/languages/code-size/Hawkynt/PB-Compiler?color=4CAF50)
+![Repo Size](https://img.shields.io/github/repo-size/Hawkynt/PB-Compiler?color=FF9800)
+
+[![Release](https://img.shields.io/github/v/release/Hawkynt/PB-Compiler)](https://github.com/Hawkynt/PB-Compiler/releases/latest)
+[![Nightly](https://img.shields.io/github/v/release/Hawkynt/PB-Compiler?include_prereleases&sort=date&filter=nightly*&label=nightly&color=FF9800)](https://github.com/Hawkynt/PB-Compiler/releases)
+[![Downloads](https://img.shields.io/github/downloads/Hawkynt/PB-Compiler/total)](https://github.com/Hawkynt/PB-Compiler/releases)
+
 A PowerBASIC 3.5 (DOS) compatible compiler written in C#, targeting 16-bit
 real-mode DOS.
 
@@ -9,7 +26,7 @@ real-mode DOS.
 - **`.PBU`** — compiled units (`$COMPILE UNIT`),
 - **`.PBL`** — unit libraries (linkable via `$LINK`).
 
-## Why
+## 💡 Why
 
 PowerBASIC 3.5 for DOS is proprietary, 16-bit and long out of print — it
 cannot run on modern 64-bit hosts. This project provides a clean-room,
@@ -18,7 +35,7 @@ cross-platform reimplementation of the compiler so PB 3.5 codebases (such as
 verified on modern machines and CI, while the produced binaries still run on
 the original target: 8086+ real mode under DOS or DOSBox.
 
-## Usage
+## 🚀 Usage
 
 ```bash
 pbc HELLO.BAS              # -> HELLO.EXE (DOS MZ, real mode)
@@ -36,7 +53,7 @@ Run the result in DOSBox:
 dosbox -c "mount c ." -c "c:" -c "HELLO.EXE"
 ```
 
-## Status
+## ✅ Status
 
 Under construction — see [REQUIREMENTS.md](REQUIREMENTS.md) for the MoSCoW
 breakdown and [CHANGELOG.md](CHANGELOG.md) for progress.
@@ -59,7 +76,7 @@ breakdown and [CHANGELOG.md](CHANGELOG.md) for progress.
 | Vendor example corpus (PB 3.5 ships) | ✅ `scripts/run-vendor-corpus.sh`: 37/40 of `tools/pb35/EXAMPLE/*.BAS` compile (incl. rebuilding PB35.PBL from the unit sources with our own toolchain); the 3 remaining need TSR popups (ASCIITSR) or CGA/EGA raster graphics (BALL, EGABALL) |
 | Memory models & error checking | ✅ HUGE (DOS 48h, segment-stepping), VIRTUAL (EMS int 67h, FRE(-11)), ABSOLUTE (`AT seg`), REDIM PRESERVE; $ERROR BOUNDS/NUMERIC/OVERFLOW/STACK (+ -EB/-EN/-EO/-ES) raising errors 9/6/6/201; $OPTION SIGNED/CNTLBREAK/GOSUB; $OPTIMIZE SIZE\|SPEED (-OZF); $STRING limits (error 15); CHAIN/RUN/$COMPILE CHAIN with COMMON handoff; SHELL/EXECUTE via DOS EXEC |
 
-## Layout
+## 🗂️ Layout
 
 | Path | What |
 |------|------|
@@ -69,6 +86,13 @@ breakdown and [CHANGELOG.md](CHANGELOG.md) for progress.
 | `tests/` | PowerBASIC test battery executed under DOSBox |
 | `scripts/` | DOSBox integration harness |
 
-## License
+## ❤️ Support
 
-[LGPL-3.0-or-later](LICENSE)
+If this project saves you time or money, consider supporting its development:
+
+[![GitHub Sponsors](https://img.shields.io/badge/GitHub-Sponsor-EA4AAA?logo=githubsponsors)](https://github.com/sponsors/Hawkynt)
+[![PayPal](https://img.shields.io/badge/PayPal-Donate-00457C?logo=paypal)](https://www.paypal.me/hawkynt)
+
+## 📜 License
+
+Licensed under LGPL-3.0-or-later — see [LICENSE](LICENSE).
