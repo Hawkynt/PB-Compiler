@@ -34,4 +34,27 @@ public sealed class Pb36LanguageFeatureTests {
       """;
     Assert.That(Run(source), Is.EqualTo(" 49\n"));
   }
+
+  [Test]
+  public void Execute_GivenCompoundArithmetic_WhenRun_ThenAccumulates() {
+    const string source = """
+      n% = 10
+      n% += 5
+      n% *= 3
+      n% -= 1
+      PRINT n%
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 44\n"));
+  }
+
+  [Test]
+  public void Execute_GivenCompoundConcat_WhenRun_ThenStringGrows() {
+    const string source = """
+      s$ = "ab"
+      s$ &= "cd"
+      s$ &= "ef"
+      PRINT s$
+      """;
+    Assert.That(Run(source), Is.EqualTo("abcdef\n"));
+  }
 }

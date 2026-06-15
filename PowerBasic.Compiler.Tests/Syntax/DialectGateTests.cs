@@ -218,6 +218,13 @@ public sealed class DialectGateTests {
     AssertAccepted(source, Dialect.Pb36);
   }
 
+  [TestCase("n% += 1")]
+  [TestCase("s$ &= \"x\"")]
+  public void Gate_GivenCompoundAssignment_WhenPb35_ThenRejectedButPb36Accepts(string source) {
+    AssertRejected(source, Dialect.Pb35, "3.6");
+    AssertAccepted(source, Dialect.Pb36);
+  }
+
   #endregion
 
   #region preprocessor gate

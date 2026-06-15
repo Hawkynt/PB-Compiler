@@ -365,9 +365,33 @@ public sealed partial class Parser {
 
   private Statement ParseAssignment() {
     var target = this.ParseLValue();
+
+    // compound assignment (PB 3.6): 'target OP= value' desugars to
+    // 'target = target OP value'. The lvalue node is reused in both the write
+    // and read positions - structurally correct (it is genuinely read+written).
+    if (CompoundOp(this.Current.Kind) is { } op && this.Peek().Kind == TokenKind.Equals) {
+      this.Require(LanguageFeature.CompoundAssignment);
+      this.Advance(); // operator
+      this.Advance(); // '='
+      var value = this.ParseExpression();
+      return new AssignStmt(target.Position, target, new BinaryExpr(target.Position, op, target, value));
+    }
+
     this.Expect(TokenKind.Equals, "'='");
     return new AssignStmt(target.Position, target, this.ParseExpression());
   }
+
+  /// <summary>Binary operator behind a compound-assignment token (when followed by '='), else null.</summary>
+  private static BinaryOp? CompoundOp(TokenKind kind) => kind switch {
+    TokenKind.Plus => BinaryOp.Add,
+    TokenKind.Minus => BinaryOp.Subtract,
+    TokenKind.Star => BinaryOp.Multiply,
+    TokenKind.Slash => BinaryOp.Divide,
+    TokenKind.Backslash => BinaryOp.IntegerDivide,
+    TokenKind.Caret => BinaryOp.Power,
+    TokenKind.Ampersand => BinaryOp.Concat,
+    _ => null,
+  };
 
   #endregion
 }

@@ -259,6 +259,33 @@ public sealed class ParserDeclarationTests {
     });
   }
 
+  [TestCase("n += 1", BinaryOp.Add)]
+  [TestCase("n -= 2", BinaryOp.Subtract)]
+  [TestCase("n *= 3", BinaryOp.Multiply)]
+  [TestCase("n /= 4", BinaryOp.Divide)]
+  [TestCase("n \\= 5", BinaryOp.IntegerDivide)]
+  [TestCase("n ^= 6", BinaryOp.Power)]
+  public void Parse_GivenCompoundAssignment_WhenPb36_ThenDesugarsToTargetOpValue(string source, BinaryOp expected) {
+    var assign = (AssignStmt)Parse(source, Dialect.Pb36).Statements[0];
+    var bin = (BinaryExpr)assign.Value;
+    Assert.Multiple(() => {
+      Assert.That(((NameExpr)assign.Target).Name, Is.EqualTo("n"));
+      Assert.That(bin.Op, Is.EqualTo(expected));
+      Assert.That(((NameExpr)bin.Left).Name, Is.EqualTo("n"));
+    });
+  }
+
+  [Test]
+  public void Parse_GivenStringConcatCompound_WhenPb36_ThenConcatDesugar() {
+    var assign = (AssignStmt)Parse("s$ &= \"x\"", Dialect.Pb36).Statements[0];
+    var bin = (BinaryExpr)assign.Value;
+    Assert.Multiple(() => {
+      Assert.That(bin.Op, Is.EqualTo(BinaryOp.Concat));
+      Assert.That(((NameExpr)bin.Left).Suffix, Is.EqualTo(TypeSuffix.String));
+      Assert.That(((StringLiteralExpr)bin.Right).Value, Is.EqualTo("x"));
+    });
+  }
+
   [Test]
   public void Parse_GivenExpressionBodiedFunction_WhenPb36_ThenBodyIsSingleResultAssignment() {
     var unit = Parse("FUNCTION Sq&(BYVAL x AS LONG) = x * x", Dialect.Pb36);

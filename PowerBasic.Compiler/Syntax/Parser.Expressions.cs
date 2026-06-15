@@ -342,7 +342,9 @@ public sealed partial class Parser {
         i += 2;
         continue;
       }
-      return kind == TokenKind.Equals;
+      // plain '=' assignment, or a compound 'OP=' (PB 3.6: += -= *= /= \= ^= &=)
+      return kind == TokenKind.Equals
+        || (CompoundOp(kind) != null && this.TokenAt(i + 1).Kind == TokenKind.Equals);
     }
   }
 
