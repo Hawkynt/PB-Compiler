@@ -150,7 +150,9 @@ public sealed partial class CodeGenerator {
       }
 
       case CallOrIndexExpr call:
-        if (model.IntrinsicBindings.TryGetValue(call, out var intrinsic))
+        if (model.ProcPtrCalls.TryGetValue(call, out var ptrSig))
+          this.EmitProcPtrCall(call, ptrSig);
+        else if (model.IntrinsicBindings.TryGetValue(call, out var intrinsic))
           this.EmitIntrinsic(call, call.Arguments, intrinsic);
         else if (model.VariableBindings.TryGetValue(call, out var array)) {
           if (call.Arguments.Count == 0) {

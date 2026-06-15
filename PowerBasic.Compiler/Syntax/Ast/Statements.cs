@@ -16,7 +16,8 @@ public enum BuiltinType { None, Byte, Word, Dword, Integer, Long, Quad, Single, 
 /// (<c>ASCIIZ * n</c>), a user-defined TYPE/UNION name, or - when
 /// <see cref="PointerTarget"/> is set - a pointer to that type (<c>... PTR</c>).
 /// </summary>
-public sealed record TypeName(SourcePosition Position, BuiltinType Builtin, string? UserTypeName = null, Expression? FixedLength = null, TypeName? PointerTarget = null) {
+public sealed record TypeName(SourcePosition Position, BuiltinType Builtin, string? UserTypeName = null, Expression? FixedLength = null, TypeName? PointerTarget = null,
+    IReadOnlyList<TypeName>? ProcParameterTypes = null, TypeName? ProcReturnType = null, bool IsProcPtr = false) {
   public bool IsUserDefined => this.UserTypeName != null;
   public bool IsPointer => this.PointerTarget != null;
 }

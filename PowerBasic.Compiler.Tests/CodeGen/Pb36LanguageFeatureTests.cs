@@ -615,4 +615,46 @@ public sealed class Pb36LanguageFeatureTests {
       """;
     Assert.That(Run(source), Is.EqualTo(" 64\n"));
   }
+
+  [Test]
+  public void Execute_GivenTypedProcPointerToLambda_WhenCalled_ThenCoercesArgsAndReturns() {
+    // a typed FUNCTION-pointer carries the signature, so the indirect call passes
+    // the LONG argument at the right width and reads the LONG result - the untyped
+    // CALL DWORD path could not (it pushed the bare value with no coercion).
+    const string source = """
+      DIM f AS FUNCTION(LONG) AS LONG
+      f = FUNCTION(BYVAL x AS LONG) AS LONG => x * x
+      PRINT f(7)
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 49\n"));
+  }
+
+  [Test]
+  public void Execute_GivenTypedProcPointerReassigned_WhenCalled_ThenLatestTargetRuns() {
+    // the pointer variable is plain storage: reassigning it switches the callee.
+    const string source = """
+      DIM op AS FUNCTION(LONG, LONG) AS LONG
+      op = FUNCTION(BYVAL a AS LONG, BYVAL b AS LONG) AS LONG => a + b
+      PRINT op(20, 3)
+      op = FUNCTION(BYVAL a AS LONG, BYVAL b AS LONG) AS LONG => a * b
+      PRINT op(20, 3)
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 23\n 60\n"));
+  }
+
+  [Test]
+  public void Execute_GivenTypedProcPointerToNamedFunction_WhenCalled_ThenCallsThroughThunk() {
+    // CODEPTR32 of a named FUNCTION yields a far thunk pointer; assigned to a typed
+    // pointer it is callable like a lambda, now with argument coercion.
+    const string source = """
+      DECLARE FUNCTION Triple&(BYVAL n AS LONG)
+      DIM f AS FUNCTION(LONG) AS LONG
+      f = CODEPTR32(Triple&)
+      PRINT f(9)
+      FUNCTION Triple&(BYVAL n AS LONG)
+        Triple& = n * 3
+      END FUNCTION
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 27\n"));
+  }
 }

@@ -462,7 +462,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     ScalarType { ByteSize: <= 2 } => ValueKind.Int16,
     ScalarType { ByteSize: 8 } => ValueKind.Int64,
     ScalarType => ValueKind.Int32,
-    PointerType => ValueKind.Int32,
+    PointerType or ProcPtrType => ValueKind.Int32, // far pointers are 32-bit values
     BcdType => ValueKind.Float,   // FIX/BCD compute as EXT on the x87 stack
     StringType or FixedStringType or FlexType or AsciizType => ValueKind.Str,
     _ => ValueKind.Int16,

@@ -182,6 +182,10 @@ public sealed partial class Parser {
   }
 
   private TypeName ParseTypeName() {
+    // PB 3.6 typed procedure pointer: FUNCTION(types) AS ret / SUB(types)
+    if ((this.IsKeyword(0, "FUNCTION") || this.IsKeyword(0, "SUB")) && this.Peek().Kind == TokenKind.LParen)
+      return this.ParseProcPtrType();
+
     var token = this.Expect(TokenKind.Identifier, "type name");
     var builtin = token.Text.ToUpperInvariant() switch {
       "BYTE" or "BYT" => BuiltinType.Byte,
@@ -228,6 +232,21 @@ public sealed partial class Parser {
       result = new(token.Position, BuiltinType.None, null, null, result);
     }
     return result;
+  }
+
+  private TypeName ParseProcPtrType() {
+    this.Require(LanguageFeature.ProcPointers);
+    var isFunction = this.IsKeyword(0, "FUNCTION");
+    var pos = this.Advance().Position; // FUNCTION / SUB
+    this.Expect(TokenKind.LParen, "'('");
+    var paramTypes = new List<TypeName>();
+    if (this.Current.Kind != TokenKind.RParen)
+      do
+        paramTypes.Add(this.ParseTypeName());
+      while (this.Match(TokenKind.Comma));
+    this.Expect(TokenKind.RParen, "')'");
+    var returnType = isFunction && this.TryMatchKeyword("AS") ? this.ParseTypeName() : null;
+    return new TypeName(pos, BuiltinType.None, IsProcPtr: true, ProcParameterTypes: paramTypes, ProcReturnType: returnType);
   }
 
   private TypeName ParseAsciiz(Token token) {

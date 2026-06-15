@@ -72,6 +72,16 @@ public sealed record PointerType(PbType Target) : PbType {
   public override int Size => 4;
 }
 
+/// <summary>
+/// PB 3.6 typed procedure pointer (delegate): a 32-bit far code pointer with a known
+/// signature, so a call through it coerces arguments to <see cref="ParameterTypes"/>
+/// (BYVAL) and yields <see cref="ReturnType"/> (null for a SUB). Assignable from a
+/// lambda or CODEPTR32 of a matching procedure.
+/// </summary>
+public sealed record ProcPtrType(IReadOnlyList<PbType> ParameterTypes, PbType? ReturnType) : PbType {
+  public override int Size => 4;
+}
+
 /// <summary>One UDT/UNION field with its resolved offset.</summary>
 public sealed record UdtField(string Name, PbType Type, int Offset, int ElementCount = 1) {
   public int TotalSize => this.Type.Size * this.ElementCount;

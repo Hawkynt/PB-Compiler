@@ -522,6 +522,11 @@ public sealed class Binder {
   };
 
   private PbType? ResolveTypeName(TypeName t) {
+    if (t.IsProcPtr) // PB 3.6 typed procedure pointer
+      return new ProcPtrType(
+        [.. (t.ProcParameterTypes ?? []).Select(p => this.ResolveTypeName(p) ?? PbType.Integer)],
+        t.ProcReturnType != null ? this.ResolveTypeName(t.ProcReturnType) ?? PbType.Long : null);
+
     if (t.IsPointer) {
       var target = this.ResolveTypeName(t.PointerTarget!);
       if (target == null) {
@@ -758,6 +763,8 @@ public sealed class Binder {
         var targetType = this.BindAssignTarget(a.Target, scope);
         var valueType = this.BindExpression(a.Value, scope);
         this.CheckAssignable(targetType, valueType, a.Position);
+        if (targetType is ProcPtrType pp && a.Value is LambdaExpr lam && this._model.LambdaProcs.TryGetValue(lam, out var lifted))
+          this.CheckProcPtrCompatible(pp, lifted, a.Position);
         break;
       }
 
@@ -1517,6 +1524,17 @@ public sealed class Binder {
       this.Error(position, $"type mismatch: {vu.Name} cannot be assigned to {tu.Name}");
   }
 
+  /// <summary>PB 3.6: a lambda bound to a typed procedure pointer must match its arity and pass each parameter BYVAL (delegates pass by value over the far call).</summary>
+  private void CheckProcPtrCompatible(ProcPtrType sig, ProcedureSymbol lambda, SourcePosition position) {
+    if (lambda.Parameters.Count != sig.ParameterTypes.Count) {
+      this.Error(position, $"lambda has {lambda.Parameters.Count} parameter(s) but the procedure pointer expects {sig.ParameterTypes.Count}");
+      return;
+    }
+    for (var i = 0; i < sig.ParameterTypes.Count; ++i)
+      if (!lambda.Parameters[i].ByVal)
+        this.Error(position, $"procedure-pointer parameter {i + 1} must be declared BYVAL");
+  }
+
   #endregion
 
   #region expression binding
@@ -1995,6 +2013,17 @@ public sealed class Binder {
         else
           this.BindExpression(call.Arguments[d], scope);
       return array.Element;
+    }
+
+    // 1b. PB 3.6 typed procedure-pointer call: f(args) where f is a FUNCTION(...) pointer
+    if (this.ResolveVariable(call.Name, call.Suffix, scope, create: false) is { Type: ProcPtrType procPtr } ptrVar) {
+      this._model.VariableBindings[call] = ptrVar;
+      this._model.ProcPtrCalls[call] = procPtr;
+      if (call.Arguments.Count != procPtr.ParameterTypes.Count)
+        this.Error(call.Position, $"procedure pointer {call.Name} expects {procPtr.ParameterTypes.Count} argument(s), got {call.Arguments.Count}");
+      foreach (var argument in call.Arguments)
+        this.BindExpression(argument, scope);
+      return procPtr.ReturnType ?? this.ErrorType(call.Position, $"SUB-pointer {call.Name} has no result; call it with CALL");
     }
 
     // 2. intrinsic

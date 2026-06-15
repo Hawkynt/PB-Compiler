@@ -158,7 +158,7 @@ public sealed partial class CodeGenerator {
         asm.Fld(Adjust(place.Cell, 0, OperandSize.Tbyte));
         break;
 
-      case ScalarType { IsFloat: false } or PointerType:
+      case ScalarType { IsFloat: false } or PointerType or ProcPtrType:
         asm.Mov(Reg.AX, Adjust(place.Cell, 0, OperandSize.Word));
         asm.Mov(Reg.DX, Adjust(place.Cell, 2, OperandSize.Word));
         break;
@@ -231,7 +231,7 @@ public sealed partial class CodeGenerator {
         asm.Fstp(Adjust(place.Cell, 0, OperandSize.Tbyte));
         break;
 
-      case ScalarType { IsFloat: false } or PointerType:
+      case ScalarType { IsFloat: false } or PointerType or ProcPtrType:
         asm.Mov(Adjust(place.Cell, 0, OperandSize.Word), Reg.AX);
         asm.Mov(Adjust(place.Cell, 2, OperandSize.Word), Reg.DX);
         break;

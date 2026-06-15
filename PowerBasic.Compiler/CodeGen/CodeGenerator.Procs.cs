@@ -443,6 +443,43 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
+  /// PB 3.6 typed procedure-pointer call <c>f(args)</c>. Arguments are pushed
+  /// BYVAL, each coerced to the pointer's declared parameter type - delegates
+  /// pass by value, which is also what fixes the width mismatch an untyped
+  /// CALL DWORD suffers. The pointer (a far code address / lambda thunk) is then
+  /// far-called; the lifted target's RET n cleans the arguments, and a FUNCTION
+  /// result is already in the evaluation registers on return.
+  /// </summary>
+  private void EmitProcPtrCall(CallOrIndexExpr call, ProcPtrType signature) {
+    var asm = this._asm;
+    var argc = Math.Min(call.Arguments.Count, signature.ParameterTypes.Count);
+    for (var i = 0; i < argc; ++i)
+      this.EmitByValArgument(call.Arguments[i], model.TypeOf(call.Arguments[i]), signature.ParameterTypes[i]);
+
+    if (!model.VariableBindings.TryGetValue(call, out var symbol)) {
+      this.Unsupported(call, $"procedure pointer {call.Name}");
+      return;
+    }
+    var cell = this.TryDirectCell(symbol) is { } direct
+      ? direct
+      : this.LoadByRefPointer(symbol);                 // BYREF parameter: [BP+off] -> [BX]
+    asm.Mov(Reg.AX, Adjust(cell, 0, OperandSize.Word));
+    asm.Mov(Reg.DX, Adjust(cell, 2, OperandSize.Word));
+
+    var pointer = this.AllocTemp(4);
+    asm.Mov(pointer.WithSize(OperandSize.Word), Reg.AX);
+    asm.Mov(Adjust(pointer, 2, OperandSize.Word), Reg.DX);
+    asm.CallFar(pointer.WithSize(OperandSize.Dword));
+    this.ReleaseTemp(4);
+  }
+
+  /// <summary>Loads a BYREF parameter's near pointer into BX and yields a <c>[BX]</c> cell (mirrors EmitPlace's NameExpr fallback).</summary>
+  private Mem LoadByRefPointer(VariableSymbol symbol) {
+    this._asm.Mov(Reg.BX, Mem.Word(Reg.BP, symbol.Offset));
+    return Mem.At(Reg.BX);
+  }
+
+  /// <summary>
   /// Array argument: push the address of a dynamic-array descriptor. Static
   /// arrays get a shadow descriptor in the data area, (re)filled at the call
   /// site so the callee can index uniformly.

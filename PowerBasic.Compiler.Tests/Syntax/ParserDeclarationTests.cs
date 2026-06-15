@@ -58,6 +58,30 @@ public sealed class ParserDeclarationTests {
   }
 
   [Test]
+  public void Parse_GivenProcPointerType_WhenParsedAsPb36_ThenSignatureIsKept() {
+    var unit = Parse("DIM f AS FUNCTION(LONG, INTEGER) AS LONG", Dialect.Pb36);
+    var type = ((DimStmt)unit.Statements[0]).Variables[0].Type!;
+    Assert.Multiple(() => {
+      Assert.That(type.IsProcPtr, Is.True);
+      Assert.That(type.ProcParameterTypes, Has.Count.EqualTo(2));
+      Assert.That(type.ProcParameterTypes![0].Builtin, Is.EqualTo(BuiltinType.Long));
+      Assert.That(type.ProcParameterTypes![1].Builtin, Is.EqualTo(BuiltinType.Integer));
+      Assert.That(type.ProcReturnType!.Builtin, Is.EqualTo(BuiltinType.Long));
+    });
+  }
+
+  [Test]
+  public void Parse_GivenSubPointerType_WhenParsedAsPb36_ThenNoReturnType() {
+    var unit = Parse("DIM g AS SUB(INTEGER)", Dialect.Pb36);
+    var type = ((DimStmt)unit.Statements[0]).Variables[0].Type!;
+    Assert.Multiple(() => {
+      Assert.That(type.IsProcPtr, Is.True);
+      Assert.That(type.ProcParameterTypes, Has.Count.EqualTo(1));
+      Assert.That(type.ProcReturnType, Is.Null);
+    });
+  }
+
+  [Test]
   public void Parse_GivenDimWithMultipleVariables_WhenParsed_ThenAllAreCaptured() {
     var stmt = ParseSingle<DimStmt>("DIM a AS BYTE, b(10) AS WORD, c$");
     Assert.Multiple(() => {

@@ -102,6 +102,7 @@ public enum LanguageFeature {
   ArrayInitializer,
   NestedProcedures,
   Lambdas,
+  ProcPointers,
 }
 
 /// <summary>
@@ -158,6 +159,7 @@ public static class DialectFacts {
     [LanguageFeature.ArrayInitializer] = (Dialect.Pb36, "array initializer literal ('= { v1, v2, lo..hi, ..arr }')"),
     [LanguageFeature.NestedProcedures] = (Dialect.Pb36, "nested local SUB/FUNCTION (with stack capture of outer locals)"),
     [LanguageFeature.Lambdas] = (Dialect.Pb36, "inline lambdas ('FUNCTION(params) => expr')"),
+    [LanguageFeature.ProcPointers] = (Dialect.Pb36, "typed procedure pointers ('DIM f AS FUNCTION(types) AS type')"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>
