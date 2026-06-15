@@ -588,6 +588,60 @@ public sealed class Pb36OptimizerTests {
 
   #endregion
 
+  #region O6b - array element address induction-variable strength reduction ($OPTIMIZE SPEED)
+
+  private static int CountImulAxAx2(byte[] image) {
+    // IMUL AX, AX, 2: 6B C0 02  (sign-extended 8-bit immediate form)
+    var count = 0;
+    for (var i = 0; i + 2 < image.Length; ++i)
+      if (image[i] == 0x6B && image[i + 1] == 0xC0 && image[i + 2] == 0x02)
+        ++count;
+    return count;
+  }
+
+  [Test]
+  public void Emit_GivenArrayReadLoop_WhenPb36Speed_ThenPerIterationImulRemoved() {
+    // Without IVSR: x% = a%(i%) emits IMUL AX,AX,2 every iteration to scale the subscript.
+    // With IVSR: the address is pre-computed and stepped by 2 each iteration - no IMUL inside the loop.
+    // The array has elementSize=2 so the unoptimized subscript scale is exactly IMUL AX,AX,2.
+    const string body = "DIM a%(1 TO 10)\nDIM x%\nFOR i% = 1 TO 10\n  x% = a%(i%)\nNEXT i%\nPRINT x%\nEND";
+    var plain = Compile(body, Dialect.Pb36);
+    var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
+    Assert.Multiple(() => {
+      // the optimized loop must not contain the per-iteration element-scale IMUL
+      Assert.That(CountImulAxAx2(speed), Is.Zero,
+        "IVSR should eliminate the per-iteration IMUL AX,AX,2 inside the x%=a%(i%) loop");
+      // without $OPTIMIZE SPEED the scaling IMUL must be present
+      Assert.That(CountImulAxAx2(plain), Is.GreaterThanOrEqualTo(1),
+        "without $OPTIMIZE SPEED the scaling IMUL must be present");
+    });
+  }
+
+  [Test]
+  public void Emit_GivenArrayReadLoop_WhenBoundsChecking_ThenNoIvsr() {
+    // $ERROR BOUNDS ON must suppress the optimization: the bounds check that the
+    // IMUL path raises for out-of-range subscripts must not be silently removed.
+    const string body = "$ERROR BOUNDS ON\nDIM a%(1 TO 5)\nDIM x%\nFOR i% = 1 TO 5\n  x% = a%(i%)\nNEXT i%\nPRINT x%\nEND";
+    var checked_ = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
+    // bounds-checked: every subscript must still go through the real address path with range checks
+    // (the IMUL may be folded away but the bounds-check emitter must still be there - we just
+    // confirm the optimization does NOT fire by checking that the image is not suspiciously tiny)
+    Assert.That(CountImulAxAx2(checked_), Is.GreaterThanOrEqualTo(1),
+      "$ERROR BOUNDS ON must keep the address recomputation path (with the range check), not step a blind pointer");
+  }
+
+  [Test]
+  public void Emit_GivenArrayReadLoop_WhenMultiStatementBody_ThenNoIvsr() {
+    // A body with more than one statement does not qualify - the optimization must not fire.
+    // Two-statement body: x% = a%(i%) followed by PRINT x%.
+    const string body = "$OPTIMIZE SPEED\nDIM a%(1 TO 3)\nDIM x%\nFOR i% = 1 TO 3\n  x% = a%(i%)\n  PRINT x%\nNEXT i%\nEND";
+    var image = Compile(body, Dialect.Pb36);
+    Assert.That(CountImulAxAx2(image), Is.GreaterThanOrEqualTo(1),
+      "two-statement body must not trigger IVSR; the address IMUL must still appear per-iteration");
+  }
+
+  #endregion
+
   #region O14 - tail-call optimization
 
   [Test]

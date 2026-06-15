@@ -1436,5 +1436,145 @@ public sealed partial class CodeGenerator {
   }
 
   #endregion
+
+  #region O6b - induction-variable strength reduction for array element addressing ($OPTIMIZE SPEED)
+
+  /// <summary>
+  /// pb36 O6b ($OPTIMIZE SPEED): a FOR loop whose single-statement body reads a
+  /// static rank-1 INTEGER array element indexed by exactly the loop counter
+  /// (<c>x% = a%(i%)</c>) replaces the per-iteration address recomputation
+  /// (IMUL + label offset) with a pre-computed stepped pointer stored in a frame
+  /// slot. The initial element address is computed once before the loop; at the
+  /// end of each iteration the slot advances by <c>elementSize * step</c>. Inside
+  /// the loop body the element is accessed as <c>MOV BX,[addrSlot] / MOV AX,[BX]</c>,
+  /// eliminating the IMUL that scales the subscript.
+  ///
+  /// Sound because:
+  /// - $ERROR BOUNDS / NUMERIC / OVERFLOW / on-error-resume are all off, so no
+  ///   runtime check is skipped.
+  /// - The array is static (no REDIM possible), non-HUGE/VIRTUAL (near DS element).
+  /// - The body is a single read-only array access assigned to a scalar - the
+  ///   counter is not written and no call, label, or control flow appears.
+  /// - The step is a compile-time constant, so the stride and address arithmetic
+  ///   are exact.
+  /// </summary>
+  private bool TryEmitForArrayIvsr(ForStmt f, VariableSymbol counter, Mem counterCell, long step) {
+    if (!this.Optimize || !this.OptimizeSpeed)
+      return false;
+    if (counter.Type is not ScalarType { ByteSize: 2, Signed: true, IsFloat: false })
+      return false;
+    if (this.CheckBounds || this.CheckNumeric || this.CheckOverflow)
+      return false;
+    if (this._trackResume)
+      return false; // stale cell observable to an error handler
+    if (this._registerCounter != null || this._registerAccumulator != null)
+      return false; // nested register-residency loops - keep it simple
+
+    // Body must be exactly one assignment: x% = a%(i%)
+    if (f.Body.Count != 1 || f.Body[0] is not AssignStmt assign)
+      return false;
+
+    // Value must be a CallOrIndexExpr bound to a variable (array read), indexed
+    // by exactly the FOR counter, with no other arguments or nested expressions
+    if (assign.Value is not CallOrIndexExpr { Arguments: [NameExpr readIdx] } readCall)
+      return false;
+    if (!model.VariableBindings.TryGetValue(readIdx, out var idxSym) || !ReferenceEquals(idxSym, counter))
+      return false;
+    if (!model.VariableBindings.TryGetValue(readCall, out var readArr))
+      return false;
+    // Static rank-1 array with 2-byte integer element, not HUGE/VIRTUAL/ABSOLUTE
+    if (readArr.Type is not ArrayType { StaticBounds: { } readBounds } readArrType
+        || readBounds.Count != 1
+        || readArr.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Absolute
+        || readArrType.Element is not ScalarType { ByteSize: 2, IsFloat: false })
+      return false;
+    // Target must be a writable 2-byte integer scalar (not the counter, not BYREF param)
+    if (assign.Target is not NameExpr tgtExpr)
+      return false;
+    if (!model.VariableBindings.TryGetValue(tgtExpr, out var tgtSym))
+      return false;
+    if (ReferenceEquals(tgtSym, counter))
+      return false; // writing counter through x% = a%(i%) is pathological - skip
+    if (tgtSym.Type is not ScalarType { ByteSize: 2, IsFloat: false })
+      return false;
+    if (tgtSym.Storage == VariableStorage.Parameter)
+      return false; // BYREF parameter pointer: aliasing risk
+    if (this.TryDirectCell(tgtSym) is not { } tgtCell)
+      return false;
+
+    var asm = this._asm;
+    var arrayLabel = this.SlotOf(readArr);
+    var lbound = readBounds[0].Lower;
+    var elementSize = Math.Max(readArrType.Element.Size, 1); // always 2 for INTEGER gate above
+
+    // Initialize counter cell to From
+    this.EmitExpression(f.From);
+    this.Coerce(model.TypeOf(f.From), PbType.Integer, f.From);
+    asm.Mov(counterCell.WithSize(OperandSize.Word), Reg.AX);
+
+    // Evaluate limit once into a temp slot
+    var limitSlot = this.AllocTemp(2);
+    this.EmitExpression(f.To);
+    this.Coerce(model.TypeOf(f.To), PbType.Integer, f.To);
+    asm.Mov(limitSlot, Reg.AX);
+
+    // Compute initial element pointer: OFFSET(array) + (from - lbound) * elementSize.
+    // Done directly (no EmitPlace) so no IMUL appears — for elementSize=2, use ADD AX,AX.
+    var addrSlot = this.AllocTemp(2);
+    if (this.Pb36Folder.TryFold(f.From) is { Integer: { } fromConst }) {
+      // Compile-time FROM: initial offset is a pure assembler-time constant.
+      var byteOffset = checked((int)((fromConst - lbound) * elementSize));
+      asm.Mov(addrSlot, Imm.OffsetOf(arrayLabel, byteOffset));
+    } else {
+      // Runtime FROM: counter cell already holds the from value (stored just above).
+      asm.Mov(Reg.AX, counterCell.WithSize(OperandSize.Word)); // AX = from
+      if (lbound != 0)
+        asm.Sub(Reg.AX, (Imm)lbound);                          // AX = from - lbound
+      // Multiply by elementSize using shifts (no IMUL).
+      // Gate above ensures elementSize == 2; one ADD AX,AX doubles it.
+      for (var s = elementSize; s > 1; s >>= 1)
+        asm.Add(Reg.AX, Reg.AX);                               // AX *= 2 per bit
+      asm.Add(Reg.AX, Imm.OffsetOf(arrayLabel));               // AX += base label offset
+      asm.Mov(addrSlot, Reg.AX);
+    }
+
+    var top = asm.DefineLabel();
+    var done = asm.DefineLabel();
+    var cont = asm.DefineLabel();
+    this._exitFor.Push(done);
+    this._iterateFor.Push(cont);
+    this._iterateAny.Push(cont);
+
+    asm.MarkLabel(top);
+    asm.Mov(Reg.AX, counterCell.WithSize(OperandSize.Word));
+    asm.Cmp(Reg.AX, limitSlot);
+    if (step >= 0) asm.Jg(done); else asm.Jl(done);
+
+    // Body: x% = a%(i%) via the stepped address slot (no per-iteration IMUL)
+    asm.Mov(Reg.BX, addrSlot);
+    asm.Mov(Reg.AX, Mem.Word(Reg.BX));
+    asm.Mov(tgtCell.WithSize(OperandSize.Word), Reg.AX);
+
+    asm.MarkLabel(cont);
+    // Advance stepped address and counter
+    var addrStride = (Imm)(int)(Math.Max(readArrType.Element.Size, 1) * Math.Abs(step));
+    if (step >= 0) asm.Add(addrSlot, addrStride); else asm.Sub(addrSlot, addrStride);
+    asm.Mov(Reg.AX, counterCell.WithSize(OperandSize.Word));
+    var counterStride = (Imm)(int)Math.Abs(step);
+    if (step >= 0) asm.Add(Reg.AX, counterStride); else asm.Sub(Reg.AX, counterStride);
+    asm.Mov(counterCell.WithSize(OperandSize.Word), Reg.AX);
+
+    asm.Jmp(top);
+    asm.MarkLabel(done);
+
+    this._exitFor.Pop();
+    this._iterateFor.Pop();
+    this._iterateAny.Pop();
+    this.ReleaseTemp(2); // addrSlot (released last-allocated first)
+    this.ReleaseTemp(2); // limitSlot
+    return true;
+  }
+
+  #endregion
 }
 

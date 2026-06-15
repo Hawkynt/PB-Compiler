@@ -1243,6 +1243,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       // cell traffic for the compare, increment or counter reads
       if (this.TryEmitForCounterInRegister(f, counter, slot.WithSize(OperandSize.Word), fastStep))
         return;
+      // pb36 O6b: a single-statement a%(i%) read replaces the per-iteration IMUL
+      // with a stepped frame-slot pointer
+      if (this.TryEmitForArrayIvsr(f, counter, slot, fastStep))
+        return;
       this.EmitForInt16Fast(f, slot.WithSize(OperandSize.Word), fastStep);
       return;
     }
