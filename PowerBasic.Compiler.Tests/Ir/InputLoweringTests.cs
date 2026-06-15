@@ -29,6 +29,17 @@ public sealed class InputLoweringTests {
   }
 
   [Test]
+  public void FixedStringInput_PadsIntoTheBuffer() {
+    var module = LowerOptimized("DIM s AS STRING * 12\nINPUT s\nPRINT s\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var text = LlvmEmitter.Emit(module!);
+    Assert.That(text, Does.Contain("call ptr @rt_input_str()"));
+    Assert.That(text, Does.Contain("@rt_str_to_fixed(ptr"));   // the input is padded/truncated into the fixed buffer
+  }
+
+  [Test]
   public void StringInput_ReadsAHandle() {
     var module = LowerOptimized("INPUT a$\nPRINT a$\nEND");
 

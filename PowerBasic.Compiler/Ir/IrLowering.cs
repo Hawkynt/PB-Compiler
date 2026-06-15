@@ -571,6 +571,12 @@ public sealed class IrLowering {
         this._b.Store(this.EmitIo(file, "input", input.IsLineInput ? "line" : "str", IrType.Ptr, []), this.SlotFor(strSym));
         continue;
       }
+      if (target is NameExpr && this._model.VariableBindings.TryGetValue(target, out var fstrSym) && fstrSym.Type is FixedStringType fixedStr) {
+        var handle = this.EmitIo(file, "input", input.IsLineInput ? "line" : "str", IrType.Ptr, []);
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_str_to_fixed", IrType.Void, IrType.Ptr, IrType.I32, IrType.Ptr),
+          this.SlotFor(fstrSym), new IrConstantInt(IrType.I32, fixedStr.Length), handle);   // pad/truncate the input into the fixed buffer
+        continue;
+      }
       var (addr, type) = this.LValue(target);
       if (type is not ScalarType s)
         throw new IrLoweringException("INPUT into a non-scalar target");
