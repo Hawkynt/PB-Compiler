@@ -1606,13 +1606,15 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   }
 
   /// <summary>
-  /// pb36: a 16-bit SELECT whose arms are all single integer-constant cases (no ranges /
-  /// IS, dense value span) dispatches through a jump table: subtract the minimum, one
+  /// pb36: a dense integer SELECT (all single-value constant cases, no ranges / IS) with
+  /// a small value span dispatches through a word jump table: subtract the minimum, one
   /// unsigned bounds check, then an indexed indirect JMP - the same arm runs as the
-  /// compare chain, so output is unchanged. Declines (false) to the chain otherwise.
+  /// compare chain, so output is unchanged. Handles both 16-bit (Int16) and 32-bit
+  /// (Int32 / LONG) subjects. Declines (false) to the chain otherwise.
   /// </summary>
   private bool TryEmitSelectJumpTable(SelectStmt s) {
-    if (KindOf(model.TypeOf(s.Subject)) != ValueKind.Int16)
+    var kind = KindOf(model.TypeOf(s.Subject));
+    if (kind is not (ValueKind.Int16 or ValueKind.Int32))
       return false;
     var byValue = new Dictionary<long, int>();   // case value -> first arm index (first match wins)
     int? elseArm = null;
@@ -1627,9 +1629,16 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       foreach (var sel in arm.Selectors) {
         if (sel.Value == null || sel.RangeUpper != null || sel.IsComparison != null)
           return false;
-        if (this.Pb36Folder.TryFold(sel.Value) is not { Integer: { } v } || v is < short.MinValue or > short.MaxValue)
-          return false;
-        byValue.TryAdd(v, i);
+        if (kind == ValueKind.Int16) {
+          if (this.Pb36Folder.TryFold(sel.Value) is not { Integer: { } v } || v is < short.MinValue or > short.MaxValue)
+            return false;
+          byValue.TryAdd(v, i);
+        } else {
+          // Int32: values must be compile-time constants in LONG range
+          if (this.Pb36Folder.TryFold(sel.Value) is not { Integer: { } v } || v is < int.MinValue or > int.MaxValue)
+            return false;
+          byValue.TryAdd(v, i);
+        }
       }
     }
     if (byValue.Count < 4)
@@ -1647,11 +1656,31 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     this._exitSelect.Push(end);
     this.EmitExpression(s.Subject);
-    this.Coerce(model.TypeOf(s.Subject), PbType.Integer, s.Subject);   // subject -> AX
-    if (min != 0)
-      asm.Sub(Reg.AX, (Imm)(int)min);             // AX = index (0..span-1)
-    asm.Cmp(Reg.AX, (Imm)(int)span);
-    asm.Jae(defaultLabel);                         // unsigned: catches below-min (wrapped) and above-max
+
+    if (kind == ValueKind.Int16) {
+      this.Coerce(model.TypeOf(s.Subject), PbType.Integer, s.Subject);  // subject -> AX
+      if (min != 0)
+        asm.Sub(Reg.AX, (Imm)(int)min);           // AX = index (0..span-1)
+      asm.Cmp(Reg.AX, (Imm)(int)span);
+      asm.Jae(defaultLabel);                       // unsigned: catches below-min (wrapped) and above-max
+    } else {
+      // Int32: subject is DX:AX after coerce to LONG
+      this.Coerce(model.TypeOf(s.Subject), PbType.Long, s.Subject);     // subject -> DX:AX
+      // 32-bit subtract: (DX:AX) -= min, giving the 0-based index
+      // Split min into two 16-bit halves for the two-instruction 32-bit subtract
+      var minLo = (int)min & 0xFFFF;
+      var minHi = (int)((int)min >> 16) & 0xFFFF;
+      if (min != 0) {
+        asm.Sub(Reg.AX, (Imm)minLo);              // AX -= lo16(min), sets borrow
+        asm.Sbb(Reg.DX, (Imm)minHi);              // DX -= hi16(min) - borrow
+      }
+      // In-range iff DX == 0 (index fits in 16 bits) AND AX < span (unsigned)
+      asm.Test(Reg.DX, Reg.DX);
+      asm.Jnz(defaultLabel);                       // high word nonzero: far out of range
+      asm.Cmp(Reg.AX, (Imm)(int)span);
+      asm.Jae(defaultLabel);                       // AX >= span (unsigned): below min or above max
+    }
+
     asm.Mov(Reg.BX, Reg.AX);
     asm.Shl(Reg.BX, 1);                            // word-sized entries
     asm.Jmp(Mem.Word(Reg.BX, table));              // JMP [table + index*2]
