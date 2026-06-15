@@ -251,11 +251,31 @@ public sealed partial class Parser {
   }
 
   private Expression ParseNameExpression() {
+    // PB 3.6 ternary: IF(condition, whenTrue, whenFalse) in expression position.
+    // IF is a reserved statement keyword (no valid program has a function named IF),
+    // so intercepting IF( here never shadows existing code; statement-leading IF is
+    // dispatched before expression parsing.
+    if (this.Current is { Suffix: TypeSuffix.None } && this.IsKeyword(0, "IF") && this.Peek().Kind == TokenKind.LParen)
+      return this.ParseTernaryIf();
+
     var token = this.Advance();
     Expression expr = this.Current.Kind == TokenKind.LParen
       ? new CallOrIndexExpr(token.Position, token.Text, token.Suffix, this.ParseArgumentList())
       : new NameExpr(token.Position, token.Text, token.Suffix);
     return this.ParsePostfix(expr);
+  }
+
+  private Expression ParseTernaryIf() {
+    this.Require(LanguageFeature.TernaryIf);
+    var pos = this.Advance().Position; // IF
+    this.Expect(TokenKind.LParen, "'('");
+    var condition = this.ParseExpression();
+    this.Expect(TokenKind.Comma, "','");
+    var whenTrue = this.ParseExpression();
+    this.Expect(TokenKind.Comma, "','");
+    var whenFalse = this.ParseExpression();
+    this.Expect(TokenKind.RParen, "')'");
+    return this.ParsePostfix(new IfExpr(pos, condition, whenTrue, whenFalse));
   }
 
   private Expression ParsePostfix(Expression expr) {

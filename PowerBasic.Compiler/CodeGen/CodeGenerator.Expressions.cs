@@ -197,10 +197,37 @@ public sealed partial class CodeGenerator {
         this.Coerce(model.TypeOf(fn.Number), PbType.Integer, fn.Number);
         break;
 
+      case IfExpr ternary:
+        this.EmitTernaryIf(ternary);
+        break;
+
       default:
         this.Unsupported(expression, expression.GetType().Name);
         break;
     }
+  }
+
+  /// <summary>
+  /// pb36 short-circuit ternary IF(cond, t, f): evaluates the condition, then only
+  /// the taken branch; both branches are coerced to the result type so the value
+  /// lands in the same place (AX / DX:AX / FPU / string handle in AX).
+  /// </summary>
+  private void EmitTernaryIf(IfExpr t) {
+    var asm = this._asm;
+    var resultType = model.TypeOf(t);
+    var elseLabel = asm.DefineLabel();
+    var endLabel = asm.DefineLabel();
+
+    this.EmitCondition(t.Condition);
+    asm.Jz(elseLabel);
+    this.EmitExpression(t.WhenTrue);
+    this.Coerce(model.TypeOf(t.WhenTrue), resultType, t.WhenTrue);
+    asm.Jmp(endLabel);
+
+    asm.MarkLabel(elseLabel);
+    this.EmitExpression(t.WhenFalse);
+    this.Coerce(model.TypeOf(t.WhenFalse), resultType, t.WhenFalse);
+    asm.MarkLabel(endLabel);
   }
 
   private void EmitStringLiteral(string text) {

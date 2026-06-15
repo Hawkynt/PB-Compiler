@@ -260,6 +260,17 @@ public sealed class ParserDeclarationTests {
   }
 
   [Test]
+  public void Parse_GivenTernaryIf_WhenPb36_ThenIfExprWithThreeOperands() {
+    var assign = (AssignStmt)Parse("x = IF(c > 0, 1, 2)", Dialect.Pb36).Statements[0];
+    var ternary = (IfExpr)assign.Value;
+    Assert.Multiple(() => {
+      Assert.That(ternary.Condition, Is.InstanceOf<BinaryExpr>());
+      Assert.That(((IntegerLiteralExpr)ternary.WhenTrue).Value, Is.EqualTo(1));
+      Assert.That(((IntegerLiteralExpr)ternary.WhenFalse).Value, Is.EqualTo(2));
+    });
+  }
+
+  [Test]
   public void Parse_GivenDimWithInferredInitializer_WhenPb36_ThenInitializerKeptAndTypeNull() {
     var stmt = (DimStmt)Parse("DIM x = 5", Dialect.Pb36).Statements[0];
     Assert.Multiple(() => {

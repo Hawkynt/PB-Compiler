@@ -95,6 +95,38 @@ public sealed class Pb36LanguageFeatureTests {
     Assert.That(Run(source), Is.EqualTo(" 200000\n"));
   }
 
+  [TestCase("PRINT IF(1, 10, 20)", " 10\n")]
+  [TestCase("PRINT IF(0, 10, 20)", " 20\n")]
+  [TestCase("PRINT IF(5 > 3, 99, -1)", " 99\n")]
+  public void Execute_GivenTernaryIf_WhenRun_ThenSelectsBranch(string source, string expected) {
+    Assert.That(Run(source), Is.EqualTo(expected));
+  }
+
+  [Test]
+  public void Execute_GivenTernaryStringBranches_WhenRun_ThenStringResult() {
+    Assert.That(Run("PRINT IF(5 > 3, \"yes\", \"no\")"), Is.EqualTo("yes\n"));
+  }
+
+  [Test]
+  public void Execute_GivenTernaryIf_WhenRun_ThenUntakenBranchNotEvaluated() {
+    // If the false branch (100 \ x%) were evaluated with x% = 0 it would raise the
+    // genuine division-by-zero error 11; short-circuit must skip it and print 42.
+    const string source = """
+      x% = 0
+      PRINT IF(x% = 0, 42, 100 \ x%)
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 42\n"));
+  }
+
+  [Test]
+  public void Execute_GivenDimFromTernary_WhenRun_ThenInferredFromResult() {
+    const string source = """
+      DIM m = IF(7 > 3, 7, 3)
+      PRINT m
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 7\n"));
+  }
+
   [Test]
   public void Execute_GivenDimInitializerInProcedure_WhenRun_ThenLocalInferred() {
     const string source = """

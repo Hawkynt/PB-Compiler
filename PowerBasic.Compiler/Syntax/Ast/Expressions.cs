@@ -64,3 +64,9 @@ public sealed record FileNumberExpr(SourcePosition Position, Expression Number) 
 /// <c>EXTRACT$(s$, ANY set$)</c>: matches any single character of the set.
 /// </summary>
 public sealed record AnyMatchExpr(SourcePosition Position, Expression Value) : Expression(Position);
+
+/// <summary>
+/// PB 3.6 short-circuit ternary: <c>IF(condition, whenTrue, whenFalse)</c> - evaluates
+/// only the selected branch at runtime (VB.NET-style <c>If</c> operator).
+/// </summary>
+public sealed record IfExpr(SourcePosition Position, Expression Condition, Expression WhenTrue, Expression WhenFalse) : Expression(Position);

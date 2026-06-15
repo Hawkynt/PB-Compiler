@@ -1254,6 +1254,9 @@ public sealed class Binder {
       case BinaryExpr b:
         return this.BindBinary(b, scope);
 
+      case IfExpr ternary:
+        return this.BindTernaryIf(ternary, scope);
+
       case CallOrIndexExpr call:
         return this.BindCallOrIndex(call, scope);
 
@@ -1297,6 +1300,27 @@ public sealed class Binder {
     this._model.VariableBindings[m] = symbol;
     return symbol.Type is ArrayType arr ? arr : symbol.Type;
   }
+
+  /// <summary>
+  /// PB 3.6 ternary <c>IF(condition, whenTrue, whenFalse)</c>: the result type is the
+  /// common type of the two branches (both numeric -&gt; the wider; both string -&gt;
+  /// STRING). Mixing a string and a numeric branch is a type error.
+  /// </summary>
+  private PbType BindTernaryIf(IfExpr t, Scope scope) {
+    var conditionType = this.BindExpression(t.Condition, scope);
+    if (IsStringLike(conditionType))
+      this.Error(t.Condition.Position, "ternary IF() condition must be numeric");
+
+    var whenTrue = this.BindExpression(t.WhenTrue, scope);
+    var whenFalse = this.BindExpression(t.WhenFalse, scope);
+    if (IsStringLike(whenTrue) && IsStringLike(whenFalse))
+      return PbType.String;
+    if (IsStringLike(whenTrue) || IsStringLike(whenFalse))
+      return this.ErrorType(t.Position, "ternary IF() branches must be both numeric or both string");
+    return Widest(whenTrue, whenFalse);
+  }
+
+  private static bool IsStringLike(PbType t) => t is StringType or FixedStringType or FlexType or AsciizType;
 
   private PbType BindBinary(BinaryExpr b, Scope scope) {
     var left = this.BindExpression(b.Left, scope);
