@@ -10,6 +10,7 @@ proprietary, so the raw binaries never live in the repository — only an
 |------|---------|----------------|
 | `pb35-toolchain.tar.enc` | `pb35` (default) | PowerBASIC 3.50 `PBC.EXE` |
 | `pb30-toolchain.tar.enc` | `pb30` | PowerBASIC 3.0c `PBC.EXE` |
+| `pb21-toolchain.tar.enc` | `pb21` | PowerBASIC 2.10 `PB.EXE` (IDE, autotype-driven) |
 | `qb45-toolchain.tar.enc` | `qb45` | QuickBASIC 4.5 `BC`/`LINK`/`LIB` + `BCOM45.LIB` |
 | `tb11-toolchain.tar.enc` | `tb11` | Turbo Basic 1.1 `TB.EXE` |
 
