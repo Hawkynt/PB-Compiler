@@ -123,6 +123,19 @@ public sealed class UdtLoweringTests {
   }
 
   [Test]
+  public void FixedStringField_ConvertsAtTheRecordBoundary() {
+    var module = LowerModule("TYPE Person\n  Name AS STRING * 20\n  Age AS INTEGER\nEND TYPE\nDIM p AS Person\np.Name = \"Ada\"\np.Age = 36\nn$ = p.Name\nPRINT n$\nEND", optimize: false);
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var text = LlvmEmitter.Emit(module!);
+    Assert.That(text, Does.Contain("alloca i8, i32 22"));         // 20-byte name + 2-byte age
+    Assert.That(text, Does.Contain("@rt_str_to_fixed(ptr"));      // p.Name = "Ada"
+    Assert.That(text, Does.Contain("@rt_str_from_fixed(ptr"));    // reading p.Name
+    Assert.That(text, Does.Contain("store i16 36"));              // the scalar field still works
+  }
+
+  [Test]
   public void Pipeline_UdtProgram_IsAcceptedByLlvm() {
     var module = LowerModule(Point + "DIM p AS Point\nDIM q AS Point\np.X = 6\np.Y = 7\nq = p\nPRINT q.X * q.Y\nEND");
     Assert.That(module, Is.Not.Null);

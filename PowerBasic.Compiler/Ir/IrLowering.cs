@@ -413,6 +413,14 @@ public sealed class IrLowering {
       return;
     }
     if (a.Target is MemberExpr member) {
+      if (!this._model.VariableBindings.ContainsKey(member)) {
+        var (fieldAddr, field) = this.MemberFieldAddress(member);
+        if (field.Type is FixedStringType ffs) {       // a fixed-string record field: pad/truncate into its bytes
+          this._b.Call(IrType.Void, this.RuntimeFn("rt_str_to_fixed", IrType.Void, IrType.Ptr, IrType.I32, IrType.Ptr),
+            fieldAddr, new IrConstantInt(IrType.I32, ffs.Length), this.LowerStringExpr(a.Value));
+          return;
+        }
+      }
       var (address, fieldType) = this.MemberLValue(member);
       this._b.Store(this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), fieldType), address);
       return;
@@ -476,7 +484,14 @@ public sealed class IrLowering {
         throw new IrLoweringException("non-scalar dotted variable");
       return (this.SlotFor(flat), flat.Type);
     }
-    // the record's base address: a UDT variable, or one element of a UDT array (a(i).field)
+    var (address, field) = this.MemberFieldAddress(m);
+    if (field.Type is not ScalarType || field.ElementCount != 1)
+      throw new IrLoweringException("non-scalar UDT field");
+    return (address, field.Type);
+  }
+
+  /// <summary>The byte address and field descriptor of a real UDT member (variable or array element); not a flat dotted variable.</summary>
+  private (IrValue Address, UdtField Field) MemberFieldAddress(MemberExpr m) {
     IrValue basePtr;
     UdtType udt;
     if (m.Target is NameExpr && this._model.VariableBindings.TryGetValue(m.Target, out var baseSym) && baseSym.Type is UdtType nameUdt) {
@@ -489,10 +504,10 @@ public sealed class IrLowering {
       throw new IrLoweringException("unsupported member access");
 
     var field = udt.FindField(m.Member) ?? throw new IrLoweringException($"unknown field {m.Member}");
-    if (field.Type is not ScalarType || field.ElementCount != 1)
-      throw new IrLoweringException("non-scalar UDT field");
+    if (field.ElementCount != 1)
+      throw new IrLoweringException("UDT array field");
     var address = field.Offset == 0 ? basePtr : this._b.Gep(basePtr, new IrConstantInt(IrType.I32, field.Offset));
-    return (address, field.Type);
+    return (address, field);
   }
 
   private void LowerPrint(PrintStmt p) {
@@ -657,6 +672,9 @@ public sealed class IrLowering {
           this.LowerStringExpr(cat.Left), this.LowerStringExpr(cat.Right));
       case CallOrIndexExpr arrayRead when this._model.VariableBindings.TryGetValue(arrayRead, out var arr) && arr.Type is ArrayType { Element: StringType }:
         return this._b.Load(IrType.Ptr, this.ElementAddress(arrayRead).Address);
+      case MemberExpr fm when !this._model.VariableBindings.ContainsKey(fm) && this.MemberFieldAddress(fm) is { Field.Type: FixedStringType ffs } fa:
+        return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_from_fixed", IrType.Ptr, IrType.Ptr, IrType.I32),
+          fa.Address, new IrConstantInt(IrType.I32, ffs.Length));   // read a fixed-string record field as a handle
       case CallOrIndexExpr ci when this._model.IntrinsicBindings.TryGetValue(ci, out var info):
         return this.LowerStringIntrinsic(ci, info.Name);
       default:

@@ -93,7 +93,9 @@ Supported today:
   (QB-style flat dotted variables resolve to a plain scalar); whole-record assignment
   (`rt_mem_copy`), `=`/`<>` comparison (`rt_mem_compare`), and whole-record `GET`/`PUT`
   all operate on the buffer; **arrays of records** (`a(i).field`, static or dynamic)
-  index the element then offset the field; composes with SWAP and field-level GET/PUT;
+  index the element then offset the field; **fixed-string record fields** (`name AS STRING * n`)
+  convert at the field boundary (`rt_str_to_fixed`/`rt_str_from_fixed`); composes with SWAP
+  and field-level GET/PUT;
 - intrinsics: `ABS`/`SGN`/`FIX`/`INT`/`CDBL`/`CSNG` (branchless/bitcast, no runtime) and
   the math functions `SQR`/`SIN`/`COS`/`EXP`/`LOG`/`TAN`/`ATN` and the `^` power operator
   lowered to the matching **LLVM intrinsics** (`llvm.sqrt.fN`, `llvm.pow.fN`, …) so `llc`
