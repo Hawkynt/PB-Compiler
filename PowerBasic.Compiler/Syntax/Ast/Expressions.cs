@@ -81,3 +81,6 @@ public sealed record IfExpr(SourcePosition Position, Expression Condition, Expre
 /// variable (unlisted fields keep their zero-initialized value).
 /// </summary>
 public sealed record NewExpr(SourcePosition Position, string TypeName, IReadOnlyList<(string Field, Expression Value)> Fields) : Expression(Position);
+
+/// <summary>PB 3.6 named call argument: <c>name := value</c>. The binder reorders these to positional order.</summary>
+public sealed record NamedArgExpr(SourcePosition Position, string Name, Expression Value) : Expression(Position);

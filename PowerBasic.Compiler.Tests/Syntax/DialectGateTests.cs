@@ -212,6 +212,13 @@ public sealed class DialectGateTests {
   #region PB 3.6 gates
 
   [Test]
+  public void Gate_GivenNamedArgument_WhenPb35_ThenRejectedButPb36Accepts() {
+    const string source = "DECLARE FUNCTION Foo&(BYVAL y AS LONG)\nx& = Foo&(y := 5)\nFUNCTION Foo&(BYVAL y AS LONG)\nFoo& = y\nEND FUNCTION";
+    AssertRejected(source, Dialect.Pb35, "3.6");
+    AssertAccepted(source, Dialect.Pb36);
+  }
+
+  [Test]
   public void Gate_GivenDefaultParameter_WhenPb35_ThenRejectedButPb36Accepts() {
     const string source = "SUB Foo(BYVAL x AS INTEGER = 5)\nEND SUB";
     AssertRejected(source, Dialect.Pb35, "3.6");

@@ -160,7 +160,7 @@ public sealed partial class CodeGenerator {
           if (this.EmitPlace(call) is { } place)
             this.EmitLoadPlace(place, ((ArrayType)array.Type).Element, call);
         } else if (model.CallBindings.TryGetValue(call, out var proc))
-          this.EmitCall(proc, call.Arguments, wantResult: true, call.Position);
+          this.EmitCall(proc, model.ReorderedArguments.GetValueOrDefault(call) ?? call.Arguments, wantResult: true, call.Position);
         else
           this.Unsupported(call, $"call or index {call.Name}");
         break;

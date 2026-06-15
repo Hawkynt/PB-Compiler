@@ -369,6 +369,17 @@ public sealed class ParserDeclarationTests {
   }
 
   [Test]
+  public void Parse_GivenNamedArgument_WhenPb36_ThenNamedArgExpr() {
+    var assign = (AssignStmt)Parse("x = Foo(y := 5)", Dialect.Pb36).Statements[0];
+    var call = (CallOrIndexExpr)assign.Value;
+    var named = (NamedArgExpr)call.Arguments[0];
+    Assert.Multiple(() => {
+      Assert.That(named.Name, Is.EqualTo("y"));
+      Assert.That(((IntegerLiteralExpr)named.Value).Value, Is.EqualTo(5));
+    });
+  }
+
+  [Test]
   public void Parse_GivenDefaultParameter_WhenPb36_ThenDefaultValueAndOptionalKept() {
     var unit = Parse("SUB Foo(BYVAL x AS INTEGER, BYVAL y AS INTEGER = 10)\nEND SUB", Dialect.Pb36);
     var sub = (SubDecl)unit.Statements[0];

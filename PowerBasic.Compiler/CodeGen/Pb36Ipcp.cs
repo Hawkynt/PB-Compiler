@@ -38,7 +38,7 @@ public static class Pb36Ipcp {
     foreach (var (key, proc) in model.CallBindings) {
       if (proc.IsExternal || proc.IsCdecl || proc.Body == null)
         continue;
-      var args = ArgsOf(key);
+      var args = model.ReorderedArguments.GetValueOrDefault(key) ?? ArgsOf(key); // PB 3.6 named args already positional
       if (args.Count > proc.Parameters.Count)
         continue;
       // PB 3.6 default parameters: a call that omits trailing defaulted arguments

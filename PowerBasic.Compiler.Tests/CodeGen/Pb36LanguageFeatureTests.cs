@@ -26,6 +26,31 @@ public sealed class Pb36LanguageFeatureTests {
   }
 
   [Test]
+  public void Execute_GivenNamedArguments_WhenRun_ThenReorderedToParameters() {
+    const string source = """
+      DECLARE FUNCTION Box&(BYVAL w AS LONG, BYVAL h AS LONG, BYVAL d AS LONG)
+      PRINT Box&(2, d := 5, h := 3)
+      PRINT Box&(w := 4, h := 4, d := 4)
+      FUNCTION Box&(BYVAL w AS LONG, BYVAL h AS LONG, BYVAL d AS LONG)
+        Box& = w * h * d
+      END FUNCTION
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 30\n 64\n"));
+  }
+
+  [Test]
+  public void Execute_GivenNamedArgumentWithDefault_WhenRun_ThenGapFilledByDefault() {
+    const string source = """
+      DECLARE SUB Show(BYVAL a AS LONG, BYVAL b AS LONG, BYVAL c AS LONG)
+      Show 1, c := 9
+      SUB Show(BYVAL a AS LONG, BYVAL b AS LONG = 5, BYVAL c AS LONG = 0)
+        PRINT a + b + c
+      END SUB
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 15\n"));
+  }
+
+  [Test]
   public void Execute_GivenDefaultParameter_WhenRun_ThenOmittedArgUsesDefault() {
     const string source = """
       DECLARE FUNCTION Inc&(BYVAL x AS LONG, BYVAL by AS LONG)

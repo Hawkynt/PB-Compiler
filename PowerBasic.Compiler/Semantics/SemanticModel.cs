@@ -69,6 +69,9 @@ public sealed class SemanticModel {
   /// </summary>
   public Dictionary<DimStmt, List<AssignStmt>> DimInitializers { get; } = new(ReferenceEqualityComparer.Instance);
 
+  /// <summary>PB 3.6 named arguments: a call site's arguments reordered to positional order (defaults filled); codegen and IPCP use this when present.</summary>
+  public Dictionary<object, IReadOnlyList<Expression>> ReorderedArguments { get; } = new(ReferenceEqualityComparer.Instance);
+
   /// <summary>Procedure symbol behind every user call site (CallStmt / CallOrIndexExpr).</summary>
   public Dictionary<object, ProcedureSymbol> CallBindings { get; } = new(ReferenceEqualityComparer.Instance);
 

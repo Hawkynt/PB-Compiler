@@ -96,6 +96,7 @@ public enum LanguageFeature {
   EnumType,
   WithBlock,
   DefaultParameters,
+  NamedArguments,
 }
 
 /// <summary>
@@ -146,6 +147,7 @@ public static class DialectFacts {
     [LanguageFeature.EnumType] = (Dialect.Pb36, "ENUM declarations"),
     [LanguageFeature.WithBlock] = (Dialect.Pb36, "WITH ... END WITH blocks"),
     [LanguageFeature.DefaultParameters] = (Dialect.Pb36, "default parameter values ('param AS type = value')"),
+    [LanguageFeature.NamedArguments] = (Dialect.Pb36, "named arguments ('name := value')"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

@@ -410,6 +410,14 @@ public sealed partial class Parser {
   /// <c>ANY set$</c> flags a match-any character set (INSTR/EXTRACT$/...).
   /// </summary>
   private Expression ParseArgument() {
+    // named argument (PB 3.6): name := value
+    if (this.Current.Kind == TokenKind.Identifier && this.Peek().Kind == TokenKind.Colon && this.Peek(2).Kind == TokenKind.Equals) {
+      this.Require(LanguageFeature.NamedArguments);
+      var nameToken = this.Advance(); // name
+      this.Advance(); // ':'
+      this.Advance(); // '='
+      return new NamedArgExpr(nameToken.Position, nameToken.Text, this.ParseExpression());
+    }
     if (this.IsKeyword(0, "BYVAL")) {
       var pos = this.Advance().Position;
       return new ByValArgExpr(pos, this.ParseExpression());

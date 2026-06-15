@@ -1211,12 +1211,68 @@ public sealed class Binder {
     // PB allows CALL on a FUNCTION too - the result is discarded
     if (this.ResolveOverload(c.Name, c.Arguments) is { } proc) {
       this._model.CallBindings[c] = proc;
-      if ((c.Arguments.Count < proc.RequiredParameters || c.Arguments.Count > proc.Parameters.Count) && !proc.Parameters.Any(p => Equals(p.Type, PbType.Any)))
+      if (c.Arguments.Any(a => a is NamedArgExpr))
+        this.ReorderNamedArguments(c, proc, c.Arguments, c.Position);
+      else if ((c.Arguments.Count < proc.RequiredParameters || c.Arguments.Count > proc.Parameters.Count) && !proc.Parameters.Any(p => Equals(p.Type, PbType.Any)))
         this.Error(c.Position, $"{(proc.IsFunction ? "FUNCTION" : "SUB")} {c.Name} expects {proc.Parameters.Count} argument(s), got {c.Arguments.Count}");
       return;
     }
 
     this.Error(c.Position, $"unknown SUB {c.Name}");
+  }
+
+  /// <summary>
+  /// PB 3.6 named arguments: reorders a call's arguments into positional order, placing
+  /// each <c>name := value</c> by parameter name and filling omitted parameters with
+  /// their defaults; records the result for codegen/IPCP. Errors on an unknown name,
+  /// a duplicate, a positional argument after a named one, or a missing argument.
+  /// </summary>
+  private void ReorderNamedArguments(object callKey, ProcedureSymbol proc, IReadOnlyList<Expression> args, SourcePosition position) {
+    var slots = new Expression?[proc.Parameters.Count];
+    var seenNamed = false;
+    for (var i = 0; i < args.Count; ++i) {
+      if (args[i] is NamedArgExpr named) {
+        seenNamed = true;
+        var pi = ParamIndex(proc, named.Name);
+        if (pi < 0) {
+          this.Error(named.Position, $"{proc.Name} has no parameter named {named.Name}");
+          return;
+        }
+        if (slots[pi] != null) {
+          this.Error(named.Position, $"argument {named.Name} specified more than once");
+          return;
+        }
+        slots[pi] = named.Value;
+      } else if (seenNamed) {
+        this.Error(args[i].Position, "a positional argument cannot follow a named argument");
+        return;
+      } else if (i < slots.Length) {
+        slots[i] = args[i];
+      } else {
+        this.Error(args[i].Position, $"too many arguments to {proc.Name}");
+        return;
+      }
+    }
+
+    var positional = new List<Expression>(proc.Parameters.Count);
+    for (var i = 0; i < proc.Parameters.Count; ++i) {
+      if (slots[i] is { } provided)
+        positional.Add(provided);
+      else if (proc.Parameters[i].DefaultValue is { } d)
+        positional.Add(d);
+      else {
+        this.Error(position, $"missing argument for parameter {proc.Parameters[i].Name} of {proc.Name}");
+        return;
+      }
+    }
+    this._model.ReorderedArguments[callKey] = positional;
+  }
+
+  private static int ParamIndex(ProcedureSymbol proc, string name) {
+    for (var i = 0; i < proc.Parameters.Count; ++i)
+      if (proc.Parameters[i].Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+        return i;
+    return -1;
   }
 
   private void CheckAssignable(PbType target, PbType value, SourcePosition position) {
@@ -1415,6 +1471,9 @@ public sealed class Binder {
         // a NEW initializer is consumed by BindNewInitializer; reaching here means
         // it was used somewhere other than a DIM initializer.
         return this.ErrorType(neu.Position, "NEW { ... } object initializer is only allowed as a DIM initializer");
+
+      case NamedArgExpr named: // name := value (reordering happens in the call binder)
+        return this.BindExpression(named.Value, scope);
 
       case CallOrIndexExpr call:
         return this.BindCallOrIndex(call, scope);
@@ -1747,7 +1806,9 @@ public sealed class Binder {
         return PbType.Integer;
       }
       this._model.CallBindings[call] = proc;
-      if (call.Arguments.Count < proc.RequiredParameters || call.Arguments.Count > proc.Parameters.Count)
+      if (call.Arguments.Any(a => a is NamedArgExpr))
+        this.ReorderNamedArguments(call, proc, call.Arguments, call.Position);
+      else if (call.Arguments.Count < proc.RequiredParameters || call.Arguments.Count > proc.Parameters.Count)
         this.Error(call.Position, $"FUNCTION {call.Name} expects {proc.Parameters.Count} argument(s), got {call.Arguments.Count}");
       return proc.ReturnType ?? PbType.Integer;
     }

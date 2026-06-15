@@ -171,7 +171,7 @@ public sealed partial class CodeGenerator {
       this.EmitTailSelfCall(proc, c.Arguments);
       return;
     }
-    this.EmitCall(proc, c.Arguments, wantResult: false, c.Position);
+    this.EmitCall(proc, model.ReorderedArguments.GetValueOrDefault(c) ?? c.Arguments, wantResult: false, c.Position);
   }
 
   /// <summary>
