@@ -84,3 +84,6 @@ public sealed record NewExpr(SourcePosition Position, string TypeName, IReadOnly
 
 /// <summary>PB 3.6 named call argument: <c>name := value</c>. The binder reorders these to positional order.</summary>
 public sealed record NamedArgExpr(SourcePosition Position, string Name, Expression Value) : Expression(Position);
+
+/// <summary>PB 3.6 from-end array index: <c>arr(^n)</c> = the n-th element from the end (^1 = last). Valid only as an array index.</summary>
+public sealed record FromEndExpr(SourcePosition Position, Expression Index) : Expression(Position);

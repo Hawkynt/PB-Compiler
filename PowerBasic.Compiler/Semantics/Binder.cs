@@ -1475,6 +1475,10 @@ public sealed class Binder {
       case NamedArgExpr named: // name := value (reordering happens in the call binder)
         return this.BindExpression(named.Value, scope);
 
+      case FromEndExpr fromEnd: // arr(^n) is consumed in the array path; here it is misused
+        this.BindExpression(fromEnd.Index, scope);
+        return this.ErrorType(fromEnd.Position, "'^' from-end index is only valid as an array subscript");
+
       case CallOrIndexExpr call:
         return this.BindCallOrIndex(call, scope);
 
@@ -1717,6 +1721,26 @@ public sealed class Binder {
       : null;
   }
 
+  /// <summary>
+  /// PB 3.6 from-end index <c>arr(^n)</c>: rewrites it to <c>arr(UBOUND(arr[,dim]) - n + 1)</c>
+  /// so <c>^1</c> is the last element. UBOUND folds to a constant for a static array and
+  /// reads the descriptor for a dynamic one. The bound rewrite is recorded for codegen.
+  /// </summary>
+  private void BindFromEndIndex(CallOrIndexExpr arrayCall, ArrayType array, FromEndExpr fromEnd, int dim, Scope scope) {
+    var pos = fromEnd.Position;
+    var arrayName = new NameExpr(pos, arrayCall.Name, arrayCall.Suffix);
+    IReadOnlyList<Expression> uboundArgs = array.Rank > 1
+      ? [arrayName, new IntegerLiteralExpr(pos, dim + 1, TypeSuffix.None)]
+      : [arrayName];
+    var ubound = new CallOrIndexExpr(pos, "UBOUND", TypeSuffix.None, uboundArgs);
+    var rewritten = new BinaryExpr(pos, BinaryOp.Add,
+      new BinaryExpr(pos, BinaryOp.Subtract, ubound, fromEnd.Index),
+      new IntegerLiteralExpr(pos, 1, TypeSuffix.None));
+    this.BindExpression(rewritten, scope);
+    this._model.ExpressionTypes[fromEnd] = PbType.Integer;
+    this._model.RewrittenIndex[fromEnd] = rewritten;
+  }
+
   private PbType BindCallOrIndex(CallOrIndexExpr call, Scope scope) {
     // 1. array indexing (or a whole-array reference like `arr()` in argument lists)
     var symbol = this.LookupArrayVariable(call.Name, call.Suffix, scope);
@@ -1726,8 +1750,11 @@ public sealed class Binder {
         return array;
       if (array.Rank != call.Arguments.Count && array.StaticBounds != null)
         this.Error(call.Position, $"array {call.Name} has rank {array.Rank}, got {call.Arguments.Count} index(es)");
-      foreach (var index in call.Arguments)
-        this.BindExpression(index, scope);
+      for (var d = 0; d < call.Arguments.Count; ++d)
+        if (call.Arguments[d] is FromEndExpr fromEnd)
+          this.BindFromEndIndex(call, array, fromEnd, d, scope);
+        else
+          this.BindExpression(call.Arguments[d], scope);
       return array.Element;
     }
 

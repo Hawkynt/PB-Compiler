@@ -117,6 +117,30 @@ public sealed class Pb36LanguageFeatureTests {
     Assert.That(Run(source), Is.EqualTo(" 1\n 9\n"));
   }
 
+  [Test]
+  public void Execute_GivenFromEndIndexStatic_WhenRun_ThenCountsFromEnd() {
+    const string source = """
+      DIM a%(5)
+      a%(5) = 99
+      a%(4) = 88
+      PRINT a%(^1)
+      PRINT a%(^2)
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 99\n 88\n"));
+  }
+
+  [Test]
+  public void Execute_GivenFromEndIndexAsLValueAndDynamic_WhenRun_ThenWritesAndReadsEnd() {
+    const string source = """
+      DIM DYNAMIC b%(7)
+      b%(^1) = 42
+      b%(^3) = 24
+      PRINT b%(7)
+      PRINT b%(5)
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 42\n 24\n"));
+  }
+
   [TestCase("EMS")]
   [TestCase("XMS")]
   public void Execute_GivenExternalMemoryArray_WhenRun_ThenStoresAndLoads(string kind) {

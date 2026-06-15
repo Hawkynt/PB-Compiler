@@ -856,6 +856,9 @@ public sealed partial class CodeGenerator {
 
   /// <summary>Evaluates an argument and coerces it to a 16-bit integer in AX.</summary>
   private void EmitInt16Argument(Expression e) {
+    // PB 3.6 from-end index arr(^n): emit its bound rewrite UBOUND(arr) - n + 1
+    if (model.RewrittenIndex.TryGetValue(e, out var rewritten))
+      e = rewritten;
     this.EmitExpression(e);
     this.Coerce(model.TypeOf(e), PbType.Integer, e);
   }

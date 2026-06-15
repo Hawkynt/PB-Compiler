@@ -368,6 +368,14 @@ public sealed class ParserDeclarationTests {
     });
   }
 
+  [Test]
+  public void Parse_GivenFromEndIndex_WhenPb36_ThenFromEndExprArgument() {
+    var assign = (AssignStmt)Parse("x = a%(^2)", Dialect.Pb36).Statements[0];
+    var call = (CallOrIndexExpr)assign.Value;
+    var fromEnd = (FromEndExpr)call.Arguments[0];
+    Assert.That(((IntegerLiteralExpr)fromEnd.Index).Value, Is.EqualTo(2));
+  }
+
   [TestCase("DIM EMS a&(10)", ArrayClass.Ems)]
   [TestCase("DIM XMS a&(10)", ArrayClass.Xms)]
   public void Parse_GivenExternalMemoryArray_WhenPb36_ThenArrayClassSet(string source, ArrayClass expected) {

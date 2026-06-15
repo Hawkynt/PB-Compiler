@@ -28,6 +28,7 @@ public static class AstQuery {
     IfExpr t => [t.Condition, t.WhenTrue, t.WhenFalse],
     NewExpr n => [.. n.Fields.Select(f => f.Value)],
     NamedArgExpr na => [na.Value],
+    FromEndExpr fe => [fe.Index],
     // leaves with no child expressions: IntegerLiteralExpr, FloatLiteralExpr,
     // StringLiteralExpr, NamedConstantExpr, NameExpr.
     _ => [],

@@ -410,6 +410,12 @@ public sealed partial class Parser {
   /// <c>ANY set$</c> flags a match-any character set (INSTR/EXTRACT$/...).
   /// </summary>
   private Expression ParseArgument() {
+    // from-end array index (PB 3.6): arr(^n) - the binder validates it is an index
+    if (this.Current.Kind == TokenKind.Caret) {
+      this.Require(LanguageFeature.FromEndIndex);
+      var pos = this.Advance().Position; // '^'
+      return new FromEndExpr(pos, this.ParseExpression());
+    }
     // named argument (PB 3.6): name := value
     if (this.Current.Kind == TokenKind.Identifier && this.Peek().Kind == TokenKind.Colon && this.Peek(2).Kind == TokenKind.Equals) {
       this.Require(LanguageFeature.NamedArguments);

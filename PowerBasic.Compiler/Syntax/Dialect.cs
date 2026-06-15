@@ -98,6 +98,7 @@ public enum LanguageFeature {
   DefaultParameters,
   NamedArguments,
   XmsEmsArrays,
+  FromEndIndex,
 }
 
 /// <summary>
@@ -150,6 +151,7 @@ public static class DialectFacts {
     [LanguageFeature.DefaultParameters] = (Dialect.Pb36, "default parameter values ('param AS type = value')"),
     [LanguageFeature.NamedArguments] = (Dialect.Pb36, "named arguments ('name := value')"),
     [LanguageFeature.XmsEmsArrays] = (Dialect.Pb36, "XMS/EMS arrays ('DIM XMS/EMS a(...)')"),
+    [LanguageFeature.FromEndIndex] = (Dialect.Pb36, "from-end array index ('arr(^n)')"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>
