@@ -429,7 +429,7 @@ public static class Pb36CommonSubexpr {
             this.RunInheriting(elseIfBody, new(this._live, StringComparer.Ordinal));
           if (iff.Else != null)
             this.RunInheriting(iff.Else, new(this._live, StringComparer.Ordinal));
-          this._live.Clear();
+          this.RetainPastMerge(iff);
           return;
 
         default:
@@ -521,6 +521,61 @@ public static class Pb36CommonSubexpr {
         .ToList();
       foreach (var key in stale)
         this._live.Remove(key);
+    }
+
+    /// <summary>
+    /// Broader GVN: flow the inherited cache PAST the IF merge. A value computed
+    /// (and DEFINEd) before the IF stays live afterwards as long as no branch can
+    /// have overwritten its inputs. This is only sound when every branch is a flat,
+    /// call-free straight line — then <see cref="CollectWrites"/> captures the exact
+    /// set of scalars any branch may write; entries reading none of them survive.
+    /// Otherwise (nested control, calls, anything that could write unseen) we clear.
+    /// </summary>
+    private void RetainPastMerge(IfStmt iff) {
+      var branches = new List<IReadOnlyList<Statement>> { iff.Then };
+      foreach (var (_, body) in iff.ElseIfs)
+        branches.Add(body);
+      if (iff.Else != null)
+        branches.Add(iff.Else);
+
+      foreach (var branch in branches)
+        if (!this.IsRetainableBranch(branch)) {
+          this._live.Clear();
+          return;
+        }
+
+      // the merge falls through when no branch (or the implicit empty else) runs,
+      // so a retained value must be untouched on EVERY path; take the union of writes
+      var written = new HashSet<VariableSymbol>(ReferenceEqualityComparer.Instance);
+      foreach (var branch in branches)
+        CollectWrites(branch, written, model);
+      foreach (var symbol in written)
+        this.Invalidate(symbol);
+    }
+
+    /// <summary>
+    /// A branch whose writes are fully captured by <see cref="CollectWrites"/>: only
+    /// flat assignments / incr-decr / prints / metadata, every operand call-free, no
+    /// nested control flow. A call or nested block could write inputs we never see.
+    /// </summary>
+    private bool IsRetainableBranch(IReadOnlyList<Statement> body) {
+      foreach (var s in body)
+        switch (s) {
+          case AssignStmt a when IsBarrierFree(a.Value, model)
+              && (a.Target is NameExpr || IsBarrierFree(a.Target, model)):
+            break;
+          case IncrDecrStmt id when id.Amount == null || IsPure(id.Amount, model):
+            break;
+          case PrintStmt p
+              when (p.FileNumber == null || IsBarrierFree(p.FileNumber, model))
+              && p.Items.All(i => i.Value == null || IsBarrierFree(i.Value, model)):
+            break;
+          case MetaStmt or EquateStmt or DefTypeStmt or DataStmt:
+            break;
+          default:
+            return false;
+        }
+      return true;
     }
 
     private bool IsStraightLineSafe(AssignStmt a) {

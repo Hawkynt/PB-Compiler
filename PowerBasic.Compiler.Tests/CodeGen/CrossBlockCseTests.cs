@@ -31,6 +31,35 @@ public sealed class CrossBlockCseTests {
   }
 
   [Test]
+  public void Analyze_GivenValueReusedAfterIf_FlowsPastTheMerge() {
+    // y%*320+x% computed before the IF and reused AFTER it; the branch writes only b%,
+    // so the value survives the merge and the post-IF recomputation reloads the slot
+    var result = Analyze("y% = 2\nx% = 3\na% = y% * 320 + x%\nIF a% > 100 THEN\n b% = 1\nEND IF\nc% = y% * 320 + x%");
+
+    Assert.That(result.SlotCount, Is.GreaterThanOrEqualTo(1), "the value should flow past the IF merge and reload after it");
+    Assert.That(result.Marks.Values.Any(m => m.IsDefine), Is.True);
+    Assert.That(result.Marks.Values.Any(m => !m.IsDefine), Is.True);
+  }
+
+  [Test]
+  public void Analyze_GivenBranchWritesAnInput_DoesNotFlowPastTheMerge() {
+    // the cached subtree is y%*320 (input y%); the branch writes y%, so the value is
+    // invalidated at the merge and the post-IF recomputation is fresh - no reload
+    var result = Analyze("y% = 2\nx% = 3\na% = y% * 320 + x%\nIF a% > 100 THEN\n y% = 9\nEND IF\nc% = y% * 320 + x%");
+
+    Assert.That(result.SlotCount, Is.EqualTo(0));
+  }
+
+  [Test]
+  public void Analyze_GivenNestedControlInBranch_DoesNotFlowPastTheMerge() {
+    // a nested IF inside the branch could write inputs CollectWrites never sees, so the
+    // conservative merge clears the cache; the post-IF recomputation does not reload
+    var result = Analyze("y% = 2\nx% = 3\na% = y% * 320 + x%\nIF a% > 100 THEN\n IF x% > 0 THEN x% = 9\nEND IF\nc% = y% * 320 + x%");
+
+    Assert.That(result.SlotCount, Is.EqualTo(0));
+  }
+
+  [Test]
   public void Analyze_GivenBarrierInsideIf_DoesNotElide() {
     // a CALL in the branch is a barrier; the recomputation follows it, so no cross-block reuse
     var result = Analyze("DECLARE SUB noop()\ny% = 2\nx% = 3\na% = y% * 320 + x%\nIF a% > 100 THEN\n CALL noop()\n b% = y% * 320 + x%\nEND IF\n\nSUB noop()\nEND SUB");
