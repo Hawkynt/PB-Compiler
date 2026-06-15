@@ -190,6 +190,14 @@ public sealed class SsaForm {
         case FileNumberExpr f:
           Read(f.Number, true);
           break;
+        case IfExpr t:
+          // a ternary only reads (one branch executes, but both read the same
+          // reaching version): track them like any other read so a ternary use does
+          // not globally exclude the variable from SSA/SCCP/DSE.
+          Read(t.Condition, dangerous);
+          Read(t.WhenTrue, dangerous);
+          Read(t.WhenFalse, dangerous);
+          break;
         // literals / named constants: no variable
         default:
           // any expression node this pass does not model explicitly (e.g. a new
@@ -506,6 +514,11 @@ public sealed class SsaForm {
           break;
         case FileNumberExpr f:
           this.RecordUses(f.Number);
+          break;
+        case IfExpr t:
+          this.RecordUses(t.Condition);
+          this.RecordUses(t.WhenTrue);
+          this.RecordUses(t.WhenFalse);
           break;
       }
     }

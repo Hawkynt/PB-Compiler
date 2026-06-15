@@ -154,6 +154,8 @@ public sealed class Sccp {
         return u with { Operand = this.Substitute(u.Operand) };
       case BinaryExpr b:
         return b with { Left = this.Substitute(b.Left), Right = this.Substitute(b.Right) };
+      case IfExpr t:
+        return t with { Condition = this.Substitute(t.Condition), WhenTrue = this.Substitute(t.WhenTrue), WhenFalse = this.Substitute(t.WhenFalse) };
       default:
         return e; // literals, equates, untracked reads, calls - the folder handles or rejects them
     }
@@ -172,6 +174,14 @@ public sealed class Sccp {
         foreach (var r in TrackedReads(b.Left))
           yield return r;
         foreach (var r in TrackedReads(b.Right))
+          yield return r;
+        break;
+      case IfExpr t:
+        foreach (var r in TrackedReads(t.Condition))
+          yield return r;
+        foreach (var r in TrackedReads(t.WhenTrue))
+          yield return r;
+        foreach (var r in TrackedReads(t.WhenFalse))
           yield return r;
         break;
     }

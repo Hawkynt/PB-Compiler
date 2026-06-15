@@ -273,6 +273,8 @@ public static class Pb36CommonSubexpr {
     BinaryExpr b => b.Op is BinaryOp.Add or BinaryOp.Subtract or BinaryOp.Multiply
         or BinaryOp.IntegerDivide or BinaryOp.Modulo
         or BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Eqv or BinaryOp.Imp
+        or BinaryOp.ShiftLeft or BinaryOp.ShiftRightArith or BinaryOp.ShiftRightLogical
+        or BinaryOp.RotateLeft or BinaryOp.RotateRight
       && IsPure(b.Left, model) && IsPure(b.Right, model),
     _ => false,
   };

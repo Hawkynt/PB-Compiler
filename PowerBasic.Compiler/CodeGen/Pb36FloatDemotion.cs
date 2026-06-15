@@ -470,6 +470,8 @@ public static class Pb36FloatDemotion {
           or BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Eqv or BinaryOp.Imp
           or BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
           or BinaryOp.LessEqual or BinaryOp.GreaterEqual
+          or BinaryOp.ShiftLeft or BinaryOp.ShiftRightArith or BinaryOp.ShiftRightLogical
+          or BinaryOp.RotateLeft or BinaryOp.RotateRight
         && this.TreeIsValueExact(b.Left) && this.TreeIsValueExact(b.Right),
       CallOrIndexExpr call when this.BindingOf(call) != null =>
         call.Arguments.All(sub => { this.Safe(sub); return !this.ContainsCandidate(sub) || this.TreeIsValueExact(sub); }),

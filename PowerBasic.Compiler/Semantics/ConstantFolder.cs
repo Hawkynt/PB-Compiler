@@ -53,6 +53,13 @@ public sealed class ConstantFolder(IReadOnlyDictionary<string, ConstantValue> eq
       case BinaryExpr b:
         return this.FoldBinary(b);
 
+      case IfExpr t:
+        // PB 3.6 ternary with a compile-time-constant condition folds to the taken
+        // branch only (the other branch is never evaluated - short-circuit preserved).
+        if (this.TryFold(t.Condition) is not { Integer: { } cond })
+          return null;
+        return cond != 0 ? this.TryFold(t.WhenTrue) : this.TryFold(t.WhenFalse);
+
       default:
         return null;
     }
@@ -89,6 +96,11 @@ public sealed class ConstantFolder(IReadOnlyDictionary<string, ConstantValue> eq
         case BinaryOp.And: return ConstantValue.Of(li & ri);
         case BinaryOp.Or: return ConstantValue.Of(li | ri);
         case BinaryOp.Xor: return ConstantValue.Of(li ^ ri);
+        // shift-left is width/sign-independent in its low bits (the emitter wraps the
+        // result to the bound type). Right shifts and rotates depend on the operand's
+        // width and signedness, which this (type-less) folder does not know - they
+        // stay runtime so the codegen does them at the correct width.
+        case BinaryOp.ShiftLeft when ri is >= 0 and < 64: return ConstantValue.Of(li << (int)ri);
         case BinaryOp.Eqv: return ConstantValue.Of(~(li ^ ri));
         case BinaryOp.Imp: return ConstantValue.Of(~li | ri);
         case BinaryOp.Equal: return Bool(li == ri);

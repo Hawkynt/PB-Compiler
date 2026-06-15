@@ -197,8 +197,9 @@ public sealed partial class CodeGenerator {
         this.Coerce(model.TypeOf(fn.Number), PbType.Integer, fn.Number);
         break;
 
-      case IfExpr ternary:
-        this.EmitTernaryIf(ternary);
+      case IfExpr ternary: // pb36 O1: a constant-condition ternary folds to its taken branch
+        if (!this.TryEmitFolded(ternary))
+          this.EmitTernaryIf(ternary);
         break;
 
       default:

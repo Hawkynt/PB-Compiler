@@ -252,6 +252,44 @@ public sealed class Pb36LanguageFeatureTests {
     Assert.That(Run(source), Is.EqualTo(" 1\n 2\n"));
   }
 
+  // ---- optimizer interaction (the optimizer is on by default under pb36) ----
+
+  [TestCase("PRINT IF(7 > 3, 7, 3)", " 7\n")]       // constant-condition ternary folds to taken branch
+  [TestCase("PRINT IF(2 > 5, 100, 200)", " 200\n")] // constant-condition false folds to the other branch
+  [TestCase("DIM x = 5 << 2 : PRINT x", " 20\n")]   // shift-left constant folds
+  public void Execute_GivenConstantFoldableNewSyntax_WhenOptimized_ThenFoldsCorrectly(string source, string expected) {
+    Assert.That(Run(source), Is.EqualTo(expected));
+  }
+
+  [Test]
+  public void Execute_GivenProvenVarInTernary_WhenOptimized_ThenSsaStaysConsistent() {
+    // x% is SCCP-proven 5 and read inside the ternary; the SSA/SCCP/DSE chain must
+    // stay consistent through the ternary (a stale read or wrongly-dropped store
+    // would print garbage instead of 5).
+    const string source = """
+      x% = 5
+      y% = IF(x% > 0, x%, 0)
+      PRINT y%
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 5\n"));
+  }
+
+  [Test]
+  public void Execute_GivenTernaryOnNonConstantParam_WhenOptimized_ThenRuntimeBranchKept() {
+    // k is a (non-constant) parameter, so the ternary cannot fold; the store it
+    // feeds must survive DSE and the runtime branch must select correctly.
+    const string source = """
+      DECLARE FUNCTION Pick&(BYVAL k AS LONG)
+      PRINT Pick&(0)
+      PRINT Pick&(1)
+      FUNCTION Pick&(BYVAL k AS LONG)
+        DIM r AS LONG = IF(k = 0, 111, 222)
+        Pick& = r
+      END FUNCTION
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 111\n 222\n"));
+  }
+
   [Test]
   public void Execute_GivenObjectInitializer_WhenRun_ThenListedFieldsSetAndOthersZero() {
     // Z is not listed, so it must keep its zero-initialized value.
