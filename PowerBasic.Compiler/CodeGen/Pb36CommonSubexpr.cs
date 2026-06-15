@@ -138,12 +138,19 @@ public static class Pb36CommonSubexpr {
         case AssignStmt a:
           if (ScalarSymbolOfStatic(a.Target, model) is { } sym)
             written.Add(sym);
-          // array-element writes: the array symbol itself is not a scalar input,
-          // so no scalar is invalidated; we don't need to add the array
+          // an array-element write touches a cached array read (redundant-load
+          // elimination), so record the array symbol too - a value reading it must
+          // not be retained across a merge whose branch wrote the array
+          else if (a.Target is CallOrIndexExpr && model.VariableBindings.TryGetValue(a.Target, out var arr)
+              && arr.Type is ArrayType)
+            written.Add(arr);
           break;
         case IncrDecrStmt id:
           if (ScalarSymbolOfStatic(id.Target, model) is { } isym)
             written.Add(isym);
+          else if (id.Target is CallOrIndexExpr && model.VariableBindings.TryGetValue(id.Target, out var iarr)
+              && iarr.Type is ArrayType)
+            written.Add(iarr);
           break;
         // PrintStmt, MetaStmt, EquateStmt, DefTypeStmt, DataStmt: no tracked writes
         default:
@@ -156,6 +163,40 @@ public static class Pb36CommonSubexpr {
     => e is NameExpr && model.VariableBindings.TryGetValue(e, out var s)
        && s.Type is ScalarType && s.Storage is not VariableStorage.Static
        ? s : null;
+
+  /// <summary>A scalar-integer name or integer literal/constant - a leaf index with no nested cacheable subtree.</summary>
+  private static bool IsSimpleIndex(Expression e, SemanticModel model)
+    => e is IntegerLiteralExpr
+       || (e is NamedConstantExpr c && !(model.Equates.TryGetValue(c.Name, out var v) && v.Text != null))
+       || (e is NameExpr && !model.IntrinsicBindings.ContainsKey(e)
+           && model.VariableBindings.TryGetValue(e, out var s)
+           && s.Type is ScalarType { IsFloat: false });
+
+  /// <summary>
+  /// pb36 redundant-load elimination: the array variable whose element <paramref name="e"/>
+  /// reads, when that read is safe to cache as a common subexpression - a CallOrIndexExpr
+  /// bound to a plain (non HUGE/VIRTUAL/ABSOLUTE), static, 2-byte non-float-element array,
+  /// indexed only by simple integer names/literals (so the index has no nested cacheable
+  /// subtree to interact with). null for function calls, intrinsics, strings, dynamic or
+  /// special arrays, or composite indices. The cached value is invalidated by any write to
+  /// the array or to an index name, and by any barrier (call / pointer write / REDIM).
+  /// </summary>
+  private static VariableSymbol? CacheableArrayReadSymbol(Expression e, SemanticModel model) {
+    if (e is not CallOrIndexExpr c || model.IntrinsicBindings.ContainsKey(e))
+      return null;
+    if (!model.VariableBindings.TryGetValue(e, out var sym))
+      return null;
+    if (sym.Type is not ArrayType { Element: ScalarType { IsFloat: false, ByteSize: 2 }, IsDynamic: false })
+      return null;
+    if (sym.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Absolute)
+      return null;
+    if (c.Arguments.Count == 0)
+      return null;
+    foreach (var arg in c.Arguments)
+      if (!IsSimpleIndex(arg, model))
+        return null;
+    return sym;
+  }
 
   /// <summary>
   /// Walks a single statement's expressions for LICM candidates. For each
@@ -484,6 +525,10 @@ public static class Pb36CommonSubexpr {
 
     /// <summary>A composite worth a slot: an integer-typed pure tree, or (modular mode) a float-typed +,-,* tree over 16-bit integral leaves.</summary>
     private bool IsCacheable(Expression e, Mode mode) {
+      // redundant-load elimination: a repeated array-element read is a cacheable leaf
+      // (integer mode only - modular trees never have an array read as a leaf)
+      if (mode == Mode.Integer && CacheableArrayReadSymbol(e, model) != null)
+        return true;
       if (e is not (BinaryExpr or UnaryExpr))
         return false;
       if (mode == Mode.Modular)
@@ -522,11 +567,14 @@ public static class Pb36CommonSubexpr {
     }
 
     private void InvalidateAfterWrite(Expression target) {
-      // scalar target -> invalidate slots reading it; array element write
-      // touches no cached key (arrays are never cached); member/ptr already
-      // routed through the barrier path by IsStraightLineSafe
+      // scalar target -> invalidate slots reading it; an array-element write -> invalidate
+      // every cached read of that array (we can't prove the index differs); member/ptr
+      // already routed through the barrier path by IsStraightLineSafe
       if (this.ScalarSymbolOf(target) is { } symbol)
         this.Invalidate(symbol);
+      else if (target is CallOrIndexExpr && model.VariableBindings.TryGetValue(target, out var arr)
+          && arr.Type is ArrayType)
+        this.Invalidate(arr);
     }
 
     private void Invalidate(VariableSymbol symbol) {
@@ -573,7 +621,9 @@ public static class Pb36CommonSubexpr {
           case AssignStmt a when IsBarrierFree(a.Value, model)
               && (a.Target is NameExpr || IsBarrierFree(a.Target, model)):
             break;
-          case IncrDecrStmt id when id.Amount == null || IsPure(id.Amount, model):
+          case IncrDecrStmt id
+              when (id.Target is NameExpr || (id.Target is CallOrIndexExpr && IsBarrierFree(id.Target, model)))
+              && (id.Amount == null || IsPure(id.Amount, model)):
             break;
           case PrintStmt p
               when (p.FileNumber == null || IsBarrierFree(p.FileNumber, model))
@@ -656,6 +706,12 @@ public static class Pb36CommonSubexpr {
           this.AppendKey(sb, b.Right);
           sb.Append(')');
           break;
+        case CallOrIndexExpr when CacheableArrayReadSymbol(e, model) is { } arr:
+          sb.Append('a').Append(this.IdOf(arr)).Append('[');
+          foreach (var arg in ((CallOrIndexExpr)e).Arguments)
+            this.AppendKey(sb, arg);
+          sb.Append(']');
+          break;
         default:
           sb.Append('?').Append(e.GetHashCode()).Append(';');
           break;
@@ -721,6 +777,10 @@ public static class Pb36CommonSubexpr {
     void Collect(Expression node) {
       if (node is NameExpr && model.VariableBindings.TryGetValue(node, out var sym))
         set.Add(sym);
+      // an array-element read also depends on the array itself, so any write to the
+      // array (any element) invalidates the cached value
+      if (CacheableArrayReadSymbol(node, model) is { } arr)
+        set.Add(arr);
       foreach (var child in Children(node))
         Collect(child);
     }
