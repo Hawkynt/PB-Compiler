@@ -274,6 +274,12 @@ public sealed partial class Parser {
       case TokenKind.NamedConstant:
         return new NamedConstantExpr(this.Advance().Position, token.Text);
       case TokenKind.LParen: {
+        // PB 3.6 concise lambda: (params) => expr. Only an unambiguous parameter
+        // list (empty, or with a top-level comma) is taken as a lambda - a single
+        // parenthesised value followed by '=>' stays a '>=' comparison, since the
+        // lexer maps both arrows to the same token.
+        if (this.IsConciseLambdaAhead())
+          return this.ParseConciseLambda();
         this.Advance();
         var inner = this.ParseExpression();
         this.Expect(TokenKind.RParen, "')'");
@@ -375,6 +381,56 @@ public sealed partial class Parser {
       throw this.Error("expected '=>' in lambda expression");
     this.Advance();
     return new LambdaExpr(pos, parameters, returnType, this.ParseExpression());
+  }
+
+  /// <summary>
+  /// PB 3.6 concise lambda <c>(params) => expr</c>: the <c>FUNCTION</c> keyword and
+  /// the result type are omitted; parameter types may be omitted too and are then
+  /// inferred from the delegate the lambda is assigned to (the binder fills them).
+  /// </summary>
+  private Expression ParseConciseLambda() {
+    this.Require(LanguageFeature.Lambdas);
+    var pos = this.Current.Position;
+    var parameters = this.ParseParameterList();
+    if (this.Current.Kind != TokenKind.GreaterEquals) // '=>' lexes as GreaterEquals
+      throw this.Error("expected '=>' in lambda expression");
+    this.Advance();
+    return new LambdaExpr(pos, parameters, null, this.ParseExpression());
+  }
+
+  /// <summary>
+  /// True when the '(' at the cursor opens a concise-lambda parameter list rather
+  /// than a parenthesised expression: an empty pair or one bearing a top-level
+  /// comma, immediately followed by '=>'. Both are shapes a parenthesised
+  /// expression can never take, so a single '(value) =&gt;' stays a comparison.
+  /// </summary>
+  private bool IsConciseLambdaAhead() {
+    if (!DialectFacts.IsAvailable(LanguageFeature.Lambdas, this._dialect))
+      return false;
+    var depth = 0;
+    var sawTopLevelComma = false;
+    var sawInnerToken = false;
+    for (var i = 0; ; ++i) {
+      switch (this.Peek(i).Kind) {
+        case TokenKind.LParen:
+          ++depth;
+          break;
+        case TokenKind.RParen:
+          if (--depth == 0)
+            return this.Peek(i + 1).Kind == TokenKind.GreaterEquals && (!sawInnerToken || sawTopLevelComma);
+          sawInnerToken = true;
+          break;
+        case TokenKind.Comma when depth == 1:
+          sawTopLevelComma = true;
+          sawInnerToken = true;
+          break;
+        case TokenKind.EndOfLine or TokenKind.Colon or TokenKind.EndOfFile:
+          return false;
+        default:
+          sawInnerToken = true;
+          break;
+      }
+    }
   }
 
   private Expression ParseArrayLiteral() {

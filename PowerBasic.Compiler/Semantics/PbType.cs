@@ -80,6 +80,22 @@ public sealed record PointerType(PbType Target) : PbType {
 /// </summary>
 public sealed record ProcPtrType(IReadOnlyList<PbType> ParameterTypes, PbType? ReturnType) : PbType {
   public override int Size => 4;
+
+  // the parameter list is a reference-typed member, so the record's synthesized
+  // equality would compare it by reference - two structurally identical signatures
+  // (a DECLARE and its definition, two DIMs of the same delegate) must compare equal
+  public bool Equals(ProcPtrType? other)
+    => other is not null
+       && EqualityComparer<PbType?>.Default.Equals(this.ReturnType, other.ReturnType)
+       && this.ParameterTypes.SequenceEqual(other.ParameterTypes);
+
+  public override int GetHashCode() {
+    var hash = new HashCode();
+    hash.Add(this.ReturnType);
+    foreach (var p in this.ParameterTypes)
+      hash.Add(p);
+    return hash.ToHashCode();
+  }
 }
 
 /// <summary>One UDT/UNION field with its resolved offset.</summary>

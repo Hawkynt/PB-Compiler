@@ -35,6 +35,8 @@ public sealed class Binder {
   // PB 3.6 inline lambdas lifted to anonymous procs, to bind (capture-checked) after the main bodies
   private readonly List<(ProcedureSymbol Lifted, ProcedureSymbol? Enclosing, SourcePosition Position)> _pendingLambdas = [];
   private int _lambdaCounter;
+  // PB 3.6: the delegate type an expression is being bound against (assignment/DIM target), so a lambda can infer omitted parameter and result types from it
+  private ProcPtrType? _expectedSignature;
 
   private Binder(CompilationUnit unit, Dialect dialect) {
     this._unit = unit;
@@ -548,10 +550,29 @@ public sealed class Binder {
         return udt;
       if (this._model.EnumTypes.TryGetValue(t.UserTypeName!, out var enumType)) // PB 3.6: an ENUM name aliases its integer type
         return enumType;
+      if (this._model.Overloads.TryGetValue(t.UserTypeName!, out var overloads) && overloads.Count > 0) // PB 3.6: a DECLAREd SUB/FUNCTION name doubles as a named delegate type
+        return this.NamedDelegateType(t, overloads);
       return null;
     }
 
     return MapBuiltin(t.Builtin);
+  }
+
+  /// <summary>
+  /// PB 3.6: a DECLAREd (or defined) SUB/FUNCTION name used in a type position
+  /// (<c>DIM f AS Comparator</c>, <c>... AS Comparator</c>) names a typed procedure
+  /// pointer carrying that prototype's signature - a statically-checked delegate.
+  /// Requires a single (non-overloaded) signature.
+  /// </summary>
+  private PbType NamedDelegateType(TypeName t, List<ProcedureSymbol> overloads) {
+    if (!this.Require(LanguageFeature.NamedDelegates, t.Position))
+      return PbType.Long;
+    if (overloads.Count > 1) {
+      this.Error(t.Position, $"{t.UserTypeName} is overloaded; a delegate type needs a single signature");
+      return PbType.Long;
+    }
+    var sig = overloads[0];
+    return new ProcPtrType([.. sig.Parameters.Select(p => p.Type)], sig.IsFunction ? sig.ReturnType : null);
   }
 
   private PbType TypeFromSuffixOrDefault(string name, TypeSuffix suffix) => suffix switch {
@@ -761,9 +782,11 @@ public sealed class Binder {
     switch (statement) {
       case AssignStmt a: {
         var targetType = this.BindAssignTarget(a.Target, scope);
-        var valueType = this.BindExpression(a.Value, scope);
+        var valueType = this.BindWithExpected(a.Value, targetType as ProcPtrType, scope);
         this.CheckAssignable(targetType, valueType, a.Position);
-        if (targetType is ProcPtrType pp && a.Value is LambdaExpr lam && this._model.LambdaProcs.TryGetValue(lam, out var lifted))
+        if (targetType is ProcPtrType pp
+            && (a.Value as LambdaExpr ?? this._model.ConciseLambdaRewrites.GetValueOrDefault(a.Value)) is { } lam
+            && this._model.LambdaProcs.TryGetValue(lam, out var lifted))
           this.CheckProcPtrCompatible(pp, lifted, a.Position);
         break;
       }
@@ -1258,8 +1281,11 @@ public sealed class Binder {
       return;
     }
 
-    var valueType = this.BindExpression(v.Initializer!, scope);
-    var declaredType = v.Type != null ? this.ResolveTypeName(v.Type) : valueType;
+    // resolve the declared type first, so a lambda initializer can infer its
+    // omitted parameter/result types from a delegate target (DIM f AS Cmp = (a,b) => ...)
+    var declaredType = v.Type != null ? this.ResolveTypeName(v.Type) : null;
+    var valueType = this.BindWithExpected(v.Initializer!, declaredType as ProcPtrType, scope);
+    declaredType ??= valueType;
     if (declaredType == null) {
       this.Error(v.Position, $"unknown type for variable {v.Name}");
       return;
@@ -1420,14 +1446,25 @@ public sealed class Binder {
   /// an outer local is rejected - capturing lambdas need the closure-env stage).
   /// </summary>
   private PbType BindLambda(LambdaExpr lambda, Scope scope) {
+    if (this._model.LambdaProcs.ContainsKey(lambda)) // already lifted (a DIM-initializer lambda is re-bound by its lowered assignment): no-op
+      return PbType.Dword;
+
+    // PB 3.6: when bound against a delegate (DIM/assignment target), a lambda infers
+    // its omitted result and parameter types - and BYVAL - from that signature.
+    var expected = this._expectedSignature;
     var lifted = new ProcedureSymbol($"$lambda${++this._lambdaCounter}", isFunction: true) {
       IsNested = true, // skipped by the main body loop; bound in the lambda phase
       Position = lambda.Position,
       Body = [new AssignStmt(lambda.Position, new NameExpr(lambda.Position, "FUNCTION", TypeSuffix.None), lambda.Body)],
-      ReturnType = lambda.ReturnType != null ? this.ResolveTypeName(lambda.ReturnType) ?? PbType.Long : PbType.Long,
+      ReturnType = lambda.ReturnType != null ? this.ResolveTypeName(lambda.ReturnType) ?? PbType.Long : expected?.ReturnType ?? PbType.Long,
     };
-    foreach (var p in lambda.Parameters)
-      lifted.Parameters.Add(this.BindParameter(p));
+    for (var i = 0; i < lambda.Parameters.Count; ++i) {
+      var p = lambda.Parameters[i];
+      if (expected != null && i < expected.ParameterTypes.Count && p.Type == null && p.Suffix == TypeSuffix.None) // untyped param: infer the delegate's type, passed BYVAL
+        lifted.Parameters.Add(new(p.Name, expected.ParameterTypes[i], VariableStorage.Parameter) { ByVal = true });
+      else
+        lifted.Parameters.Add(this.BindParameter(p));
+    }
     this._model.LambdaProcs[lambda] = lifted;
     this._pendingLambdas.Add((lifted, scope.Proc, lambda.Position)); // added to ProcedureList + bound in BindLambdaBodies
     return PbType.Dword; // the lambda value is a (far) code pointer
@@ -1524,7 +1561,7 @@ public sealed class Binder {
       this.Error(position, $"type mismatch: {vu.Name} cannot be assigned to {tu.Name}");
   }
 
-  /// <summary>PB 3.6: a lambda bound to a typed procedure pointer must match its arity and pass each parameter BYVAL (delegates pass by value over the far call).</summary>
+  /// <summary>PB 3.6: a lambda bound to a typed procedure pointer must match its arity, parameter types and result type, and pass each parameter BYVAL (delegates pass by value over the far call).</summary>
   private void CheckProcPtrCompatible(ProcPtrType sig, ProcedureSymbol lambda, SourcePosition position) {
     if (lambda.Parameters.Count != sig.ParameterTypes.Count) {
       this.Error(position, $"lambda has {lambda.Parameters.Count} parameter(s) but the procedure pointer expects {sig.ParameterTypes.Count}");
@@ -1533,6 +1570,10 @@ public sealed class Binder {
     for (var i = 0; i < sig.ParameterTypes.Count; ++i)
       if (!lambda.Parameters[i].ByVal)
         this.Error(position, $"procedure-pointer parameter {i + 1} must be declared BYVAL");
+      else if (!Equals(lambda.Parameters[i].Type, sig.ParameterTypes[i]))
+        this.Error(position, $"procedure-pointer parameter {i + 1} type does not match the pointer's signature");
+    if (sig.ReturnType != null && lambda.IsFunction && !Equals(lambda.ReturnType, sig.ReturnType))
+      this.Error(position, "lambda result type does not match the procedure pointer's return type");
   }
 
   #endregion
@@ -1543,6 +1584,32 @@ public sealed class Binder {
     var type = this.BindExpressionCore(expression, scope);
     this._model.ExpressionTypes[expression] = type;
     return type;
+  }
+
+  /// <summary>Binds <paramref name="expression"/> with a contextual delegate type in scope, so a lambda value can infer its omitted parameter/result types from it (PB 3.6).</summary>
+  private PbType BindWithExpected(Expression expression, ProcPtrType? expected, Scope scope) {
+    var previous = this._expectedSignature;
+    this._expectedSignature = expected;
+    try {
+      // PB 3.6 no-paren single-parameter lambda: 'x => expr' is token-identical to the
+      // comparison 'x >= expr' (one '=>'/'>=' token), so it parses as a GreaterEqual
+      // tree. A one-parameter delegate target is the only context that disambiguates
+      // it - reinterpret it there as a lambda whose parameter is the left name and
+      // whose body is the right operand.
+      if (expected is { ParameterTypes.Count: 1 }
+          && expression is BinaryExpr { Op: BinaryOp.GreaterEqual, Left: NameExpr param } cmp) {
+        if (!this._model.ConciseLambdaRewrites.TryGetValue(cmp, out var lambda)) {
+          lambda = new(cmp.Position, [new Parameter(param.Position, param.Name, param.Suffix, null, false, false, false)], null, cmp.Right);
+          this._model.ConciseLambdaRewrites[cmp] = lambda;
+        }
+        var lambdaType = this.BindExpression(lambda, scope); // idempotent if already lifted
+        this._model.ExpressionTypes[cmp] = lambdaType;        // the original node carries the lambda's (far-pointer) type
+        return lambdaType;
+      }
+      return this.BindExpression(expression, scope);
+    } finally {
+      this._expectedSignature = previous;
+    }
   }
 
   private PbType BindAssignTarget(Expression target, Scope scope) {

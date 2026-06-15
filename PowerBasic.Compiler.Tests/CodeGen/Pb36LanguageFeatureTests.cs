@@ -657,4 +657,72 @@ public sealed class Pb36LanguageFeatureTests {
       """;
     Assert.That(Run(source), Is.EqualTo(" 27\n"));
   }
+
+  [Test]
+  public void Execute_GivenNamedDelegateFromDeclare_WhenCalled_ThenSignatureReused() {
+    // a DECLAREd FUNCTION prototype doubles as a named delegate type: DIM cmp AS
+    // Comparator declares a typed pointer carrying that prototype's signature.
+    const string source = """
+      DECLARE FUNCTION Comparator(BYVAL a AS LONG, BYVAL b AS LONG) AS LONG
+      DIM cmp AS Comparator
+      cmp = FUNCTION(BYVAL a AS LONG, BYVAL b AS LONG) AS LONG => a - b
+      PRINT cmp(7, 2)
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 5\n"));
+  }
+
+  [Test]
+  public void Execute_GivenNamedDelegateAsParameterType_WhenPassed_ThenHigherOrderCallRuns() {
+    // the named delegate is usable as a parameter type, so a procedure can accept a
+    // proc pointer type-safely and invoke it (a higher-order call).
+    const string source = """
+      DECLARE FUNCTION IntOp(BYVAL a AS LONG, BYVAL b AS LONG) AS LONG
+      DECLARE FUNCTION Apply&(BYVAL f AS IntOp, BYVAL x AS LONG, BYVAL y AS LONG)
+      DIM addOp AS IntOp
+      addOp = FUNCTION(BYVAL a AS LONG, BYVAL b AS LONG) AS LONG => a + b
+      PRINT Apply&(addOp, 8, 5)
+      FUNCTION Apply&(BYVAL f AS IntOp, BYVAL x AS LONG, BYVAL y AS LONG)
+        Apply& = f(x, y)
+      END FUNCTION
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 13\n"));
+  }
+
+  [Test]
+  public void Execute_GivenConciseLambdaInferredFromDelegate_WhenAssigned_ThenTypesInferred() {
+    // (a, b) => expr omits FUNCTION, parameter types and the result type; all are
+    // inferred from the delegate the lambda is assigned to.
+    const string source = """
+      DECLARE FUNCTION Comparator(BYVAL a AS LONG, BYVAL b AS LONG) AS LONG
+      DIM cmp AS Comparator
+      cmp = (a, b) => a - b
+      PRINT cmp(7, 2)
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 5\n"));
+  }
+
+  [Test]
+  public void Execute_GivenConciseLambdaInDimInitializer_WhenInferred_ThenRuns() {
+    // the user's exact shape: a named delegate declared and initialized in one DIM,
+    // the lambda's parameter types inferred from it.
+    const string source = """
+      DECLARE FUNCTION IntOp(BYVAL a AS LONG, BYVAL b AS LONG) AS LONG
+      DIM addOp AS IntOp = (a, b) => a + b
+      PRINT addOp(40, 2)
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 42\n"));
+  }
+
+  [Test]
+  public void Execute_GivenBareSingleParamLambda_WhenInferred_ThenParensOmitted() {
+    // a single-parameter lambda may drop the parentheses entirely: x => 2 * x. It
+    // parses as a '>=' tree and is reinterpreted as a lambda because a one-parameter
+    // delegate is the target.
+    const string source = """
+      DECLARE FUNCTION DoDouble(BYVAL x AS LONG) AS LONG
+      DIM ptr AS DoDouble = x => 2 * x
+      PRINT ptr(21)
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 42\n"));
+  }
 }

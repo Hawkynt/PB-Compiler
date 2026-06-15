@@ -310,6 +310,16 @@ public sealed class DialectGateTests {
   }
 
   [Test]
+  public void Gate_GivenNamedDelegateType_WhenPb35_ThenRejectedButPb36Accepts() {
+    const string source = """
+      DECLARE FUNCTION Cmp(BYVAL a AS LONG) AS LONG
+      DIM f AS Cmp
+      """;
+    AssertRejected(source, Dialect.Pb35, "3.6");
+    AssertAccepted(source, Dialect.Pb36);
+  }
+
+  [Test]
   public void Gate_GivenTernaryIf_WhenPb35_ThenRejectedButPb36Accepts() {
     const string source = "x = IF(1, 2, 3)";
     AssertRejected(source, Dialect.Pb35, "3.6");

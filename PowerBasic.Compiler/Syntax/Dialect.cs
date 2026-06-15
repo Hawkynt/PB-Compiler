@@ -103,6 +103,7 @@ public enum LanguageFeature {
   NestedProcedures,
   Lambdas,
   ProcPointers,
+  NamedDelegates,
 }
 
 /// <summary>
@@ -160,6 +161,7 @@ public static class DialectFacts {
     [LanguageFeature.NestedProcedures] = (Dialect.Pb36, "nested local SUB/FUNCTION (with stack capture of outer locals)"),
     [LanguageFeature.Lambdas] = (Dialect.Pb36, "inline lambdas ('FUNCTION(params) => expr')"),
     [LanguageFeature.ProcPointers] = (Dialect.Pb36, "typed procedure pointers ('DIM f AS FUNCTION(types) AS type')"),
+    [LanguageFeature.NamedDelegates] = (Dialect.Pb36, "named delegate types (a DECLAREd SUB/FUNCTION name reused as a procedure-pointer type)"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

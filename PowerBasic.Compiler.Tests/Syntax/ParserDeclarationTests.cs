@@ -58,6 +58,28 @@ public sealed class ParserDeclarationTests {
   }
 
   [Test]
+  public void Parse_GivenConciseLambda_WhenParsedAsPb36_ThenLambdaWithBareParams() {
+    var unit = Parse("x = (a, b) => a + b", Dialect.Pb36);
+    var value = ((AssignStmt)unit.Statements[0]).Value;
+    Assert.That(value, Is.InstanceOf<LambdaExpr>());
+    var lambda = (LambdaExpr)value;
+    Assert.Multiple(() => {
+      Assert.That(lambda.Parameters, Has.Count.EqualTo(2));
+      Assert.That(lambda.Parameters[0].Name, Is.EqualTo("a"));
+      Assert.That(lambda.Parameters[0].Type, Is.Null); // inferred later from the delegate
+      Assert.That(lambda.ReturnType, Is.Null);
+    });
+  }
+
+  [Test]
+  public void Parse_GivenParenthesisedComparison_WhenParsedAsPb36_ThenNotALambda() {
+    // a single parenthesised value followed by '=>' is the '>=' comparison, not a
+    // lambda - the concise form needs an unambiguous (empty or multi-arg) list.
+    var value = ((AssignStmt)Parse("x = (a) >= b", Dialect.Pb36).Statements[0]).Value;
+    Assert.That(value, Is.InstanceOf<BinaryExpr>());
+  }
+
+  [Test]
   public void Parse_GivenProcPointerType_WhenParsedAsPb36_ThenSignatureIsKept() {
     var unit = Parse("DIM f AS FUNCTION(LONG, INTEGER) AS LONG", Dialect.Pb36);
     var type = ((DimStmt)unit.Statements[0]).Variables[0].Type!;
