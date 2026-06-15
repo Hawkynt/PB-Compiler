@@ -1524,6 +1524,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   }
 
   private void EmitSelect(SelectStmt s) {
+    // pb36: a dense integer SELECT (all single-value constant cases) jumps through a
+    // table instead of a compare chain - O(1) dispatch, same arm runs (output-identical)
+    if (this.Optimize && this.TryEmitSelectJumpTable(s))
+      return;
+
     var asm = this._asm;
     var subjectType = model.TypeOf(s.Subject);
     var kind = KindOf(subjectType);
@@ -1598,6 +1603,72 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     }
     this._exitSelect.Pop();
     this.ReleaseTemp(subjectBytes);
+  }
+
+  /// <summary>
+  /// pb36: a 16-bit SELECT whose arms are all single integer-constant cases (no ranges /
+  /// IS, dense value span) dispatches through a jump table: subtract the minimum, one
+  /// unsigned bounds check, then an indexed indirect JMP - the same arm runs as the
+  /// compare chain, so output is unchanged. Declines (false) to the chain otherwise.
+  /// </summary>
+  private bool TryEmitSelectJumpTable(SelectStmt s) {
+    if (KindOf(model.TypeOf(s.Subject)) != ValueKind.Int16)
+      return false;
+    var byValue = new Dictionary<long, int>();   // case value -> first arm index (first match wins)
+    int? elseArm = null;
+    for (var i = 0; i < s.Arms.Count; ++i) {
+      var arm = s.Arms[i];
+      if (arm.Selectors.Count == 0) {
+        if (elseArm != null)
+          return false;
+        elseArm = i;
+        continue;
+      }
+      foreach (var sel in arm.Selectors) {
+        if (sel.Value == null || sel.RangeUpper != null || sel.IsComparison != null)
+          return false;
+        if (this.Pb36Folder.TryFold(sel.Value) is not { Integer: { } v } || v is < short.MinValue or > short.MaxValue)
+          return false;
+        byValue.TryAdd(v, i);
+      }
+    }
+    if (byValue.Count < 4)
+      return false;                               // below this a compare chain is smaller
+    long min = byValue.Keys.Min(), max = byValue.Keys.Max();
+    var span = max - min + 1;
+    if (span > 256 || span > 4L * byValue.Count)
+      return false;                               // keep the table dense and small
+
+    var asm = this._asm;
+    var end = asm.DefineLabel();
+    var table = asm.DefineLabel();
+    var armLabels = s.Arms.Select(_ => asm.DefineLabel()).ToList();
+    var defaultLabel = elseArm is { } e ? armLabels[e] : end;
+
+    this._exitSelect.Push(end);
+    this.EmitExpression(s.Subject);
+    this.Coerce(model.TypeOf(s.Subject), PbType.Integer, s.Subject);   // subject -> AX
+    if (min != 0)
+      asm.Sub(Reg.AX, (Imm)(int)min);             // AX = index (0..span-1)
+    asm.Cmp(Reg.AX, (Imm)(int)span);
+    asm.Jae(defaultLabel);                         // unsigned: catches below-min (wrapped) and above-max
+    asm.Mov(Reg.BX, Reg.AX);
+    asm.Shl(Reg.BX, 1);                            // word-sized entries
+    asm.Jmp(Mem.Word(Reg.BX, table));              // JMP [table + index*2]
+
+    asm.MarkLabel(table);                          // data: only reached via the indexed jump above
+    for (var v = min; v <= max; ++v)
+      asm.Dw(byValue.TryGetValue(v, out var arm) ? armLabels[arm] : defaultLabel);
+
+    for (var i = 0; i < s.Arms.Count; ++i) {
+      asm.MarkLabel(armLabels[i]);
+      foreach (var statement in s.Arms[i].Body)
+        this.EmitStatement(statement);
+      asm.Jmp(end);
+    }
+    asm.MarkLabel(end);
+    this._exitSelect.Pop();
+    return true;
   }
 
   private void EmitSelectorInt16(SelectStmt s, Mem subject, CaseSelector selector, Label armBody) {
