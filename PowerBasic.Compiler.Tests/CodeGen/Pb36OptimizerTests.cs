@@ -455,6 +455,26 @@ public sealed class Pb36OptimizerTests {
       "$CPU 80386 should fill the array DWORD-wide with REP STOSD");
   }
 
+  [Test]
+  public void Emit_GivenForCounterIndexUnderBoundsOn_WhenPb36_ThenCheckElided() {
+    // a%(i%) with i% the in-bounds FOR counter drops its bounds check; a%(k%) keeps it.
+    // The store value is non-constant so the constant-fill idiom does not confound the count.
+    const string counterIdx = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(1 TO 10)\nFOR i% = 1 TO 10\na%(i%) = i%\nNEXT i%\nEND";
+    const string varIdx = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(1 TO 10)\nk% = 5\nFOR i% = 1 TO 10\na%(k%) = i%\nNEXT i%\nEND";
+    Assert.That(CountRaise9(Compile(counterIdx, Dialect.Pb36)),
+      Is.LessThan(CountRaise9(Compile(varIdx, Dialect.Pb36))),
+      "a FOR-counter index inside the array bounds should drop the Error-9 bounds check");
+  }
+
+  // B8 09 00 = MOV AX, 9 - the Error 9 (subscript) raise set up by EmitRaiseWhen
+  private static int CountRaise9(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 2 < image.Length; ++i)
+      if (image[i] == 0xB8 && image[i + 1] == 0x09 && image[i + 2] == 0x00)
+        ++count;
+    return count;
+  }
+
   // F3 66 AB = REP STOSD (dword store)
   private static int CountRepStosd(byte[] image) {
     var count = 0;

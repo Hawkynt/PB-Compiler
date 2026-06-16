@@ -51,6 +51,92 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private (VariableSymbol Symbol, Reg Reg)? _registerCounter;
   private (VariableSymbol Symbol, Reg Reg)? _registerAccumulator;
 
+  /// <summary>O16: the proven [lo,hi] range of each FOR counter active over the current body
+  /// (constant From/To, counter never written or aliased in the body). Used to drop a bounds
+  /// check whose index is exactly such a counter and whose range lies inside the array bounds.</summary>
+  private readonly Dictionary<VariableSymbol, (long Lo, long Hi)> _forRanges = new(ReferenceEqualityComparer.Instance);
+
+  /// <summary>Registers the counter's proven range for the loop body, removing it on Dispose; null (no scope) when the range is not statically known or the counter could change in the body.</summary>
+  private IDisposable? PushForRange(ForStmt f, VariableSymbol counter) {
+    if (!this.Optimize)
+      return null;
+    if (counter.Type is not ScalarType { IsFloat: false })
+      return null;
+    if (this.Pb36Folder.TryFold(f.From) is not { Integer: { } fromV }
+        || this.Pb36Folder.TryFold(f.To) is not { Integer: { } toV })
+      return null;
+    if (!CounterStableInBody(f.Body, counter, model))
+      return null;
+    this._forRanges[counter] = (Math.Min(fromV, toV), Math.Max(fromV, toV));
+    return new ForRangeScope(this, counter);
+  }
+
+  private sealed class ForRangeScope(CodeGenerator gen, VariableSymbol counter) : IDisposable {
+    public void Dispose() => gen._forRanges.Remove(counter);
+  }
+
+  /// <summary>
+  /// Conservative allow-list: true only when no statement in <paramref name="body"/> can
+  /// change <paramref name="counter"/> - so a constant From/To range holds throughout. Only
+  /// counter-safe statement shapes pass; a call (BYREF aliasing), GOSUB/GOTO, INPUT/READ, a
+  /// write to the counter, or any unrecognised statement makes it decline. Sound by design:
+  /// anything not provably safe is rejected.
+  /// </summary>
+  private static bool CounterStableInBody(IReadOnlyList<Statement> body, VariableSymbol counter, SemanticModel model) {
+    foreach (var s in body)
+      switch (s) {
+        case AssignStmt a:
+          if (WritesCounter(a.Target, counter, model) || !CallFree(a.Value, model)
+              || (a.Target is not NameExpr && !CallFree(a.Target, model)))
+            return false;
+          break;
+        case IncrDecrStmt id:
+          if (WritesCounter(id.Target, counter, model) || (id.Amount != null && !CallFree(id.Amount, model)))
+            return false;
+          break;
+        case PrintStmt p:
+          if ((p.FileNumber != null && !CallFree(p.FileNumber, model))
+              || p.Items.Any(i => i.Value != null && !CallFree(i.Value, model)))
+            return false;
+          break;
+        case IfStmt iff:
+          if (!CallFree(iff.Condition, model) || !CounterStableInBody(iff.Then, counter, model)
+              || iff.ElseIfs.Any(e => !CallFree(e.Condition, model) || !CounterStableInBody(e.Body, counter, model))
+              || (iff.Else != null && !CounterStableInBody(iff.Else, counter, model)))
+            return false;
+          break;
+        case SelectStmt sel:
+          if (!CallFree(sel.Subject, model) || sel.Arms.Any(arm => !CounterStableInBody(arm.Body, counter, model)))
+            return false;
+          break;
+        case MetaStmt or EquateStmt or DefTypeStmt or DataStmt:
+          break;
+        default:
+          return false; // calls, GOSUB/GOTO, INPUT/READ, nested loops, anything unrecognised
+      }
+    return true;
+  }
+
+  private static bool WritesCounter(Expression target, VariableSymbol counter, SemanticModel model)
+    => target is NameExpr && model.VariableBindings.TryGetValue(target, out var s) && ReferenceEquals(s, counter);
+
+  /// <summary>
+  /// True when no user-procedure call appears in the tree - a call could pass the counter
+  /// BYREF and rewrite it. Array reads and intrinsics (which never take a user var BYREF)
+  /// are fine. Sound by design: any unrecognised expression shape returns false.
+  /// </summary>
+  private static bool CallFree(Expression e, SemanticModel model) => e switch {
+    _ when model.CallBindings.ContainsKey(e) || model.ProcPtrCalls.ContainsKey(e) => false,
+    IntegerLiteralExpr or FloatLiteralExpr or StringLiteralExpr or NamedConstantExpr => true,
+    NameExpr => true,
+    UnaryExpr u => CallFree(u.Operand, model),
+    BinaryExpr b => CallFree(b.Left, model) && CallFree(b.Right, model),
+    CallOrIndexExpr c => c.Arguments.All(a => CallFree(a, model)),
+    MemberExpr m => CallFree(m.Target, model),
+    ByValArgExpr v => CallFree(v.Value, model),
+    _ => false,
+  };
+
   /// <summary>The register a variable is currently resident in (O5 FOR counter in SI / accumulator in DI), or null when it lives in memory.</summary>
   private Reg? ResidentRegOf(VariableSymbol symbol) {
     if (this._registerCounter is { } counter && ReferenceEquals(counter.Symbol, symbol))
@@ -1214,6 +1300,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       this.Unsupported(f);
       return;
     }
+
+    // pb36 O16: register the counter's proven [From,To] range for the loop body so a
+    // bounds check whose index is exactly this counter, within the array bounds, drops.
+    // Disposed on every exit path (including the early returns below).
+    using var _forRange = this.PushForRange(f, counter);
 
     // pb36 O20 ($OPTIMIZE SPEED): whole-loop algorithm replacement - empty
     // bodies, constant fills and arithmetic-series sums collapse to their

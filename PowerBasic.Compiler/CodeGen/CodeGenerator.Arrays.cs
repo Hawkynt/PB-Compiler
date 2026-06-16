@@ -472,11 +472,16 @@ public sealed partial class CodeGenerator {
 
       for (var d = 0; d < bounds.Count; ++d) {
         this.EmitInt16Argument(indexes[d]);
-        // pb36 O16: a constant index provably inside the static bounds can
-        // never raise Error 9 - the check is dead and disappears
+        // pb36 O16: an index provably inside the static bounds can never raise Error 9 -
+        // the check is dead and disappears. Two proofs: a compile-time-constant index, or
+        // an index that is exactly a FOR counter whose proven [lo,hi] range lies inside.
         var provablyInRange = this.Optimize
-          && this.Pb36Folder.TryFold(indexes[d]) is { Integer: { } ci }
-          && ci >= bounds[d].Lower && ci <= bounds[d].Upper;
+          && ((this.Pb36Folder.TryFold(indexes[d]) is { Integer: { } ci }
+                && ci >= bounds[d].Lower && ci <= bounds[d].Upper)
+              || (indexes[d] is NameExpr idxName
+                && model.VariableBindings.TryGetValue(idxName, out var idxVar)
+                && this._forRanges.TryGetValue(idxVar, out var range)
+                && range.Lo >= bounds[d].Lower && range.Hi <= bounds[d].Upper));
         if (this.CheckBounds && !provablyInRange) { // $ERROR BOUNDS ON -> Error 9
           asm.Cmp(Reg.AX, bounds[d].Lower);
           this.EmitRaiseWhen(asm.Jge, 9);
