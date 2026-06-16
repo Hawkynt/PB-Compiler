@@ -76,6 +76,32 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   }
 
   /// <summary>
+  /// O16: the proven [lo,hi] range of an array-index expression, or null when unknown.
+  /// Covers a compile-time constant, an active FOR counter, and an affine counter
+  /// expression (counter +/- constant), so neighbour accesses like a(i-1)/a(i+1) prove in
+  /// range. Range arithmetic is exact (the index value is exactly this expression).
+  /// </summary>
+  private (long Lo, long Hi)? IndexRangeOf(Expression idx) {
+    if (this.Pb36Folder.TryFold(idx) is { Integer: { } c })
+      return (c, c);
+    switch (idx) {
+      case NameExpr n when model.VariableBindings.TryGetValue(n, out var v) && this._forRanges.TryGetValue(v, out var r):
+        return r;
+      case BinaryExpr { Op: BinaryOp.Add } b:
+        if (this.IndexRangeOf(b.Left) is { } la && this.Pb36Folder.TryFold(b.Right) is { Integer: { } ra })
+          return (la.Lo + ra, la.Hi + ra);
+        if (this.IndexRangeOf(b.Right) is { } ra2 && this.Pb36Folder.TryFold(b.Left) is { Integer: { } la2 })
+          return (ra2.Lo + la2, ra2.Hi + la2);
+        return null;
+      case BinaryExpr { Op: BinaryOp.Subtract } b
+          when this.IndexRangeOf(b.Left) is { } ls && this.Pb36Folder.TryFold(b.Right) is { Integer: { } rs }:
+        return (ls.Lo - rs, ls.Hi - rs);
+      default:
+        return null;
+    }
+  }
+
+  /// <summary>
   /// Conservative allow-list: true only when no statement in <paramref name="body"/> can
   /// change <paramref name="counter"/> - so a constant From/To range holds throughout. Only
   /// counter-safe statement shapes pass; a call (BYREF aliasing), GOSUB/GOTO, INPUT/READ, a

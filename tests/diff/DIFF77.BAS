@@ -35,5 +35,17 @@ PRINT #1, "sub"; t%
 j% = 4
 PRINT #1, "var"; a%(j%)
 
+' affine counter indices a(i-1)/a(i+1): i in [2,9] -> i-1 in [1,8], i+1 in [3,10],
+' both inside [1,10], so both checks elide (neighbour access)
+DIM c%(1 TO 10)
+FOR i% = 1 TO 10
+  c%(i%) = i% * i%
+NEXT i%
+u% = 0
+FOR i% = 2 TO 9
+  u% = u% + c%(i% - 1) + c%(i% + 1)
+NEXT i%
+PRINT #1, "affine"; u%
+
 CLOSE #1
 END
