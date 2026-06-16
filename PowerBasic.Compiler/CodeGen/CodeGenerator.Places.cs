@@ -56,6 +56,8 @@ public sealed partial class CodeGenerator {
           this.Unsupported(n, $"address of {n.Name}");
           return null;
         }
+        if (symbol.Storage == VariableStorage.Captured)        // pb36 closure: reach the captured local through the env pointer
+          return this.EmitCapturedPlace(symbol);
         if (this.TryDirectCell(symbol) is { } cell)
           return new(cell, false);
         asm.Mov(Reg.BX, Mem.Word(Reg.BP, symbol.Offset));   // BYREF parameter: load the pointer
@@ -96,6 +98,19 @@ public sealed partial class CodeGenerator {
         this.Unsupported(e, "addressable expression");
         return null;
     }
+  }
+
+  /// <summary>
+  /// pb36 closure capture: a captured local is reached through the lambda's far
+  /// environment pointer. Stage 1 (stack closure): the env is the enclosing frame,
+  /// so the variable sits at its enclosing-frame offset under the env segment -
+  /// load the env far pointer into ES:BX and yield an ES-relative place.
+  /// </summary>
+  private Place EmitCapturedPlace(VariableSymbol captured) {
+    var lambda = this._currentProc!;
+    this._asm.Les(Reg.BX, Mem.Dword(Reg.BP, lambda.ClosureEnvPtr!.Offset));   // ES:BX = enclosing frame (env)
+    var enclosingOffset = lambda.Captures[captured.Offset].Offset;            // the capture's displacement in the enclosing frame
+    return new(Mem.At(Reg.BX, enclosingOffset).Seg(Reg.ES), Far: true);
   }
 
   /// <summary>
@@ -163,9 +178,16 @@ public sealed partial class CodeGenerator {
         asm.Fld(Adjust(place.Cell, 0, OperandSize.Tbyte));
         break;
 
-      case ScalarType { IsFloat: false } or PointerType or ProcPtrType:
+      case ScalarType { IsFloat: false } or PointerType:
         asm.Mov(Reg.AX, Adjust(place.Cell, 0, OperandSize.Word));
         asm.Mov(Reg.DX, Adjust(place.Cell, 2, OperandSize.Word));
+        break;
+
+      case ProcPtrType: // fat closure: code far ptr in AX:DX, env far ptr in BX:CX
+        asm.Mov(Reg.AX, Adjust(place.Cell, 0, OperandSize.Word));
+        asm.Mov(Reg.DX, Adjust(place.Cell, 2, OperandSize.Word));
+        asm.Mov(Reg.BX, Adjust(place.Cell, 4, OperandSize.Word));
+        asm.Mov(Reg.CX, Adjust(place.Cell, 6, OperandSize.Word));
         break;
 
       case ScalarType { ByteSize: 4 }:
@@ -236,9 +258,16 @@ public sealed partial class CodeGenerator {
         asm.Fstp(Adjust(place.Cell, 0, OperandSize.Tbyte));
         break;
 
-      case ScalarType { IsFloat: false } or PointerType or ProcPtrType:
+      case ScalarType { IsFloat: false } or PointerType:
         asm.Mov(Adjust(place.Cell, 0, OperandSize.Word), Reg.AX);
         asm.Mov(Adjust(place.Cell, 2, OperandSize.Word), Reg.DX);
+        break;
+
+      case ProcPtrType: // fat closure: code far ptr from AX:DX, env far ptr from BX:CX
+        asm.Mov(Adjust(place.Cell, 0, OperandSize.Word), Reg.AX);
+        asm.Mov(Adjust(place.Cell, 2, OperandSize.Word), Reg.DX);
+        asm.Mov(Adjust(place.Cell, 4, OperandSize.Word), Reg.BX);
+        asm.Mov(Adjust(place.Cell, 6, OperandSize.Word), Reg.CX);
         break;
 
       case ScalarType { ByteSize: 4 }:

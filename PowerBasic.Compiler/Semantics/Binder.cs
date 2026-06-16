@@ -610,10 +610,12 @@ public sealed class Binder {
   #region pass 2 - bodies
 
   /// <summary>Per-procedure (or main) binding context.</summary>
-  private sealed class Scope(ProcedureSymbol? proc, ProcedureSymbol? captureFrom = null) {
+  private sealed class Scope(ProcedureSymbol? proc, ProcedureSymbol? captureFrom = null, bool capturesByEnv = false) {
     public ProcedureSymbol? Proc => proc;
     /// <summary>PB 3.6 nested procedure: the enclosing proc whose locals this one may capture (BYREF).</summary>
     public ProcedureSymbol? CaptureFrom => captureFrom;
+    /// <summary>PB 3.6 lambda: captures become closure-environment entries (reached through the env pointer), not appended BYREF parameters (a lambda is called indirectly, so call sites cannot pass extra arguments).</summary>
+    public bool CapturesByEnv => capturesByEnv;
     public string LabelKey => proc?.Name ?? "";
     public List<(string Target, SourcePosition Position)> PendingLabelRefs { get; } = [];
   }
@@ -1468,12 +1470,16 @@ public sealed class Binder {
     return PbType.Dword; // the lambda value is a (far) code pointer
   }
 
-  /// <summary>Binds each lifted lambda body in its own scope and rejects captures (first stage is non-capturing); adds the lifted procs to the emission list.</summary>
+  /// <summary>
+  /// Binds each lifted lambda body in its own scope. References to the enclosing
+  /// proc's stack locals are captured into the closure environment (stage 1: a
+  /// stack closure whose env is the enclosing frame, reached through the env pointer
+  /// carried in the fat closure value). Adds the lifted procs to the emission list.
+  /// </summary>
   private void BindLambdaBodies() {
-    foreach (var (lifted, enclosing, position) in this._pendingLambdas) {
+    foreach (var (lifted, enclosing, _) in this._pendingLambdas) {
       this._model.ProcedureList.Add(lifted);
-      this._nestedCaptures[lifted] = [];
-      var scope = new Scope(lifted, captureFrom: enclosing);
+      var scope = new Scope(lifted, captureFrom: enclosing, capturesByEnv: true);
       foreach (var p in lifted.Parameters)
         lifted.Variables[VariableKey(p.Name, TypeSuffix.None, p.Type is ArrayType)] = p;
       lifted.Variables.TryAdd(lifted.Name, new(lifted.Name, lifted.ReturnType!, VariableStorage.Local));
@@ -1481,8 +1487,8 @@ public sealed class Binder {
       foreach (var statement in lifted.Body!)
         this.BindStatement(statement, scope);
       this.CheckLabelRefs(scope);
-      if (this._nestedCaptures[lifted].Count > 0)
-        this.Error(position, "a capturing lambda is not yet supported (it references an outer local) - use a nested SUB/FUNCTION, or pass the value as a parameter");
+      if (lifted.ClosureEnvPtr is { } envPtr) // a capturing lambda saves the far env pointer in this hidden local at entry
+        lifted.Variables[VariableKey(envPtr.Name, TypeSuffix.None, isArray: false)] = envPtr;
     }
   }
 
@@ -2235,6 +2241,20 @@ public sealed class Binder {
     // (stack capture). First reference adds the param; later ones find it locally.
     if (found == null && scope is { CaptureFrom: { } outer, Proc: { } nested }
         && (outer.Variables.GetValueOrDefault(key) ?? (suffix == TypeSuffix.None ? null : outer.Variables.GetValueOrDefault(name))) is { Storage: VariableStorage.Local or VariableStorage.Static, IsArray: false } captured) {
+      // PB 3.6 lambda: the captured local becomes a closure-environment entry reached
+      // through the env pointer (a lambda is called indirectly, so the BYREF-parameter
+      // capture used by nested procs cannot work). Stage 1 is stack-based: the env is
+      // the enclosing frame, so only its stack LOCALs are captured this way.
+      if (scope.CapturesByEnv) {
+        if (captured.Storage != VariableStorage.Local)
+          return null; // a STATIC/shared lives in DS and is reachable directly, not captured
+        captured.IsCaptured = true; // its address escapes into the closure: keep it in memory, never fold/elide
+        var capturedSym = new VariableSymbol(name, captured.Type, VariableStorage.Captured) { Offset = nested.Captures.Count };
+        nested.Captures.Add(captured);
+        nested.Variables[key] = capturedSym;
+        nested.ClosureEnvPtr ??= new($"{nested.Name}$env", PbType.Dword, VariableStorage.Local);
+        return capturedSym;
+      }
       var param = new VariableSymbol(name, captured.Type, VariableStorage.Parameter) { ByVal = false };
       nested.Parameters.Add(param);
       nested.Variables[key] = param;

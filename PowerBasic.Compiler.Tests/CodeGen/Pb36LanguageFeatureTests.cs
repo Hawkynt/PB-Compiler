@@ -712,4 +712,67 @@ public sealed class Pb36LanguageFeatureTests {
       """;
     Assert.That(Run(source), Is.EqualTo(" 42\n"));
   }
+
+  [Test]
+  public void Execute_GivenCapturingLambda_WhenCalledInScope_ThenReadsOuterLocal() {
+    // a stage-1 stack closure: the lambda captures the enclosing local 'bonus' by
+    // reference through its environment pointer and reads it when called.
+    const string source = """
+      DECLARE SUB Demo()
+      Demo
+      SUB Demo()
+        DIM bonus AS LONG
+        bonus = 100
+        DIM addBonus AS FUNCTION(LONG) AS LONG
+        addBonus = FUNCTION(BYVAL x AS LONG) AS LONG => x + bonus
+        PRINT addBonus(5)
+      END SUB
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 105\n"));
+  }
+
+  [Test]
+  public void Execute_GivenCapturingLambdaPassedToHigherOrder_WhenCalledThere_ThenEnvTravels() {
+    // the closure is passed to another procedure and invoked there; its environment
+    // (the captured outer local) travels with the fat delegate value, so it still
+    // sees the captured 'factor' while Demo's frame is live.
+    const string source = """
+      DECLARE FUNCTION IntFn(BYVAL x AS LONG) AS LONG
+      DECLARE FUNCTION Apply&(BYVAL f AS IntFn, BYVAL x AS LONG)
+      DECLARE SUB Demo()
+      Demo
+      FUNCTION Apply&(BYVAL f AS IntFn, BYVAL x AS LONG)
+        Apply& = f(x)
+      END FUNCTION
+      SUB Demo()
+        DIM factor AS LONG
+        factor = 6
+        DIM scale AS IntFn
+        scale = FUNCTION(BYVAL x AS LONG) AS LONG => x * factor
+        PRINT Apply&(scale, 7)
+      END SUB
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 42\n"));
+  }
+
+  [Test]
+  public void Execute_GivenCapturingLambdaMutatingOuterLocal_WhenCalled_ThenByRefShared() {
+    // capture is by reference (stage-1 stack env): the closure mutates the enclosing
+    // local, and the change is visible back in the defining scope.
+    const string source = """
+      DECLARE SUB Demo()
+      Demo
+      SUB Demo()
+        DIM total AS LONG
+        total = 0
+        DIM addUp AS FUNCTION(LONG) AS LONG
+        addUp = FUNCTION(BYVAL x AS LONG) AS LONG => total
+        total = total + 10
+        PRINT addUp(0)
+        total = total + 5
+        PRINT addUp(0)
+      END SUB
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 10\n 15\n"));
+  }
 }

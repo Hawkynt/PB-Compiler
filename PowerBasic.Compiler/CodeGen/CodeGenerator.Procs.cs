@@ -84,6 +84,7 @@ public sealed partial class CodeGenerator {
     this._tailEntry = null;
     if (this.Optimize && !this._trackResume
         && !proc.IsCdecl
+        && proc.ClosureEnvPtr == null   // a capturing lambda's env-save must run on every entry
         && proc.Parameters.All(p => p.ByVal && p.Type is ScalarType { IsFloat: false, ByteSize: <= 4 })
         && stackLocals.All(l => l.Type is ScalarType)
         && !ContainsGosub(proc.Body!)) {
@@ -104,6 +105,14 @@ public sealed partial class CodeGenerator {
       foreach (var local in stackLocals)
         if (local.Type is StringType or FlexType)
           asm.Mov(Mem.Word(Reg.BP, local.Offset), (Imm)0);
+
+    // PB 3.6 capturing lambda: save the far environment pointer into its hidden local.
+    // It arrives in BX:CX; BX survives the frame setup, and the stage-1 stack-closure
+    // env segment is SS - so store BX and SS (CX is clobbered by the frame zeroing).
+    if (proc.ClosureEnvPtr is { } envPtr) {
+      asm.Mov(Mem.Word(Reg.BP, envPtr.Offset), Reg.BX);
+      asm.Mov(Mem.Word(Reg.BP, envPtr.Offset + 2), Reg.SS);
+    }
 
     // procedures that arm ON ERROR save and restore the caller's handler state
     Mem? savedHandler = null;
@@ -443,34 +452,56 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
-  /// PB 3.6 typed procedure-pointer call <c>f(args)</c>. Arguments are pushed
-  /// BYVAL, each coerced to the pointer's declared parameter type - delegates
-  /// pass by value, which is also what fixes the width mismatch an untyped
-  /// CALL DWORD suffers. The pointer (a far code address / lambda thunk) is then
-  /// far-called; the lifted target's RET n cleans the arguments, and a FUNCTION
+  /// PB 3.6 typed procedure-pointer / closure call <c>f(args)</c>. The fat closure
+  /// (far code pointer + far environment pointer) is stashed across argument
+  /// evaluation; arguments are pushed BYVAL, each coerced to the pointer's declared
+  /// parameter type (delegates pass by value, which also fixes the width mismatch an
+  /// untyped CALL DWORD suffers); the environment is loaded into BX:CX (a capturing
+  /// lambda reads it at entry, a non-capturing target ignores it) and the code half
+  /// is far-called. The lifted target's RET n cleans the arguments, and a FUNCTION
   /// result is already in the evaluation registers on return.
   /// </summary>
   private void EmitProcPtrCall(CallOrIndexExpr call, ProcPtrType signature) {
     var asm = this._asm;
-    var argc = Math.Min(call.Arguments.Count, signature.ParameterTypes.Count);
-    for (var i = 0; i < argc; ++i)
-      this.EmitByValArgument(call.Arguments[i], model.TypeOf(call.Arguments[i]), signature.ParameterTypes[i]);
 
     if (!model.VariableBindings.TryGetValue(call, out var symbol)) {
       this.Unsupported(call, $"procedure pointer {call.Name}");
       return;
     }
+    // copy the 8-byte closure into a temp first - argument evaluation clobbers registers
     var cell = this.TryDirectCell(symbol) is { } direct
       ? direct
       : this.LoadByRefPointer(symbol);                 // BYREF parameter: [BP+off] -> [BX]
-    asm.Mov(Reg.AX, Adjust(cell, 0, OperandSize.Word));
-    asm.Mov(Reg.DX, Adjust(cell, 2, OperandSize.Word));
+    var closure = this.AllocTemp(8);
+    for (var w = 0; w < 8; w += 2) {
+      asm.Mov(Reg.AX, Adjust(cell, w, OperandSize.Word));
+      asm.Mov(Adjust(closure, w, OperandSize.Word), Reg.AX);
+    }
 
-    var pointer = this.AllocTemp(4);
-    asm.Mov(pointer.WithSize(OperandSize.Word), Reg.AX);
-    asm.Mov(Adjust(pointer, 2, OperandSize.Word), Reg.DX);
-    asm.CallFar(pointer.WithSize(OperandSize.Dword));
-    this.ReleaseTemp(4);
+    var argc = Math.Min(call.Arguments.Count, signature.ParameterTypes.Count);
+    for (var i = 0; i < argc; ++i)
+      this.EmitByValArgument(call.Arguments[i], model.TypeOf(call.Arguments[i]), signature.ParameterTypes[i]);
+
+    asm.Mov(Reg.BX, Adjust(closure, 4, OperandSize.Word));   // env offset -> BX
+    asm.Mov(Reg.CX, Adjust(closure, 6, OperandSize.Word));   // env segment -> CX
+    asm.CallFar(closure.WithSize(OperandSize.Dword));        // far-call the code half (low dword)
+    this.ReleaseTemp(8);
+  }
+
+  /// <summary>
+  /// PB 3.6 closure environment for a lambda value (BX:CX). A non-capturing lambda
+  /// has a null env; a capturing lambda's stage-1 stack env is the enclosing frame
+  /// itself (the captured locals are read at their frame offsets through it).
+  /// </summary>
+  private void EmitClosureEnv(ProcedureSymbol lambda) {
+    var asm = this._asm;
+    if (lambda.ClosureEnvPtr == null) {
+      asm.Xor(Reg.BX, Reg.BX);
+      asm.Xor(Reg.CX, Reg.CX);
+      return;
+    }
+    asm.Mov(Reg.BX, Reg.BP);   // env = enclosing frame offset (this BP)
+    asm.Mov(Reg.CX, Reg.SS);   // env segment (stack)
   }
 
   /// <summary>Loads a BYREF parameter's near pointer into BX and yields a <c>[BX]</c> cell (mirrors EmitPlace's NameExpr fallback).</summary>
@@ -504,6 +535,13 @@ public sealed partial class CodeGenerator {
   private void EmitByValArgument(Expression arg, PbType argType, PbType parameterType) {
     var asm = this._asm;
     this.EmitExpression(arg);
+    if (parameterType is ProcPtrType) {     // fat closure: 8 bytes (code AX:DX + env BX:CX), pushed high word first
+      asm.Push(Reg.CX);
+      asm.Push(Reg.BX);
+      asm.Push(Reg.DX);
+      asm.Push(Reg.AX);
+      return;
+    }
     this.Coerce(argType, parameterType, arg);
     switch (KindOf(parameterType)) {
       case ValueKind.Int16 or ValueKind.Str:

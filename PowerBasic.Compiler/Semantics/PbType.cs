@@ -73,13 +73,17 @@ public sealed record PointerType(PbType Target) : PbType {
 }
 
 /// <summary>
-/// PB 3.6 typed procedure pointer (delegate): a 32-bit far code pointer with a known
-/// signature, so a call through it coerces arguments to <see cref="ParameterTypes"/>
-/// (BYVAL) and yields <see cref="ReturnType"/> (null for a SUB). Assignable from a
-/// lambda or CODEPTR32 of a matching procedure.
+/// PB 3.6 typed procedure pointer / delegate (a "fat" closure value): an 8-byte
+/// cell holding a far code pointer (offset, segment) followed by a far environment
+/// pointer (offset, segment). A call through it coerces arguments to
+/// <see cref="ParameterTypes"/> (BYVAL), passes the environment, and yields
+/// <see cref="ReturnType"/> (null for a SUB). Assignable from a lambda (the env is
+/// null for a non-capturing lambda, or points at the captured locals for a
+/// capturing one) or CODEPTR32 of a matching procedure (null env). Storing one into
+/// a 4-byte DWORD keeps just the code pointer (the CALL DWORD interop path).
 /// </summary>
 public sealed record ProcPtrType(IReadOnlyList<PbType> ParameterTypes, PbType? ReturnType) : PbType {
-  public override int Size => 4;
+  public override int Size => 8;
 
   // the parameter list is a reference-typed member, so the record's synthesized
   // equality would compare it by reference - two structurally identical signatures

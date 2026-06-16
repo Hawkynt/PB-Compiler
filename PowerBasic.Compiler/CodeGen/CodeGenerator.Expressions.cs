@@ -211,7 +211,9 @@ public sealed partial class CodeGenerator {
         break;
 
       case LambdaExpr lambda when model.LambdaProcs.TryGetValue(lambda, out var lambdaProc):
-        // the lambda value is the far code pointer of its lifted proc (like CODEPTR32)
+        // the lambda value is a fat closure: far code pointer (AX:DX) of its lifted
+        // proc (like CODEPTR32) plus a far environment pointer (BX:CX)
+        this.EmitClosureEnv(lambdaProc);                  // BX:CX = env (built when capturing, else null)
         asm.Mov(Reg.AX, Imm.OffsetOf(this.ThunkOf(lambdaProc)));
         asm.Mov(Reg.DX, Reg.CS);
         break;

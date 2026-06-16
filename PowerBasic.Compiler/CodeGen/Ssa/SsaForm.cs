@@ -268,7 +268,8 @@ public sealed class SsaForm {
   private static bool IsTrackableShape(VariableSymbol sym)
     => sym.Type is ScalarType { IsFloat: false, ByteSize: <= 4 }
       && sym.Storage is VariableStorage.Local or VariableStorage.Global
-      && !sym.IsShared;
+      && !sym.IsShared
+      && !sym.IsCaptured;   // a captured local's address escapes into a closure - keep it in memory
 
   /// <summary>All top-level expressions of an opaque statement (for escape scanning); conservative supersets are fine.</summary>
   private static IEnumerable<Expression> StatementExpressions(Statement s) {

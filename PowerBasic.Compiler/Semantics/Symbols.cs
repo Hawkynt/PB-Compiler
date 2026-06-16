@@ -13,6 +13,8 @@ public enum VariableStorage {
   Parameter,
   /// <summary>STATIC procedure variable - data segment slot private to the procedure.</summary>
   Static,
+  /// <summary>PB 3.6 captured variable inside a lambda: reached by double-indirection through the closure's environment pointer; <see cref="VariableSymbol.Offset"/> is the env-record index.</summary>
+  Captured,
 }
 
 /// <summary>A bound variable (scalar or array).</summary>
@@ -32,6 +34,8 @@ public sealed class VariableSymbol(string name, PbType type, VariableStorage sto
   public Expression? DefaultValue { get; set; }
   /// <summary>Assigned by the storage layouter: data-segment offset or BP displacement.</summary>
   public int Offset { get; set; }
+  /// <summary>PB 3.6: this enclosing-frame local is captured by a lambda closure (its address escapes into the closure environment), so the optimizer must keep it in memory - no register residency, constant folding, or dead-store elimination of its writes.</summary>
+  public bool IsCaptured { get; set; }
 
   /// <summary>Allocation class from DIM (HUGE/VIRTUAL/ABSOLUTE are diagnosed by codegen for now).</summary>
   public ArrayClass ArrayClass { get; set; } = ArrayClass.Default;
@@ -58,6 +62,12 @@ public sealed class ProcedureSymbol(string name, bool isFunction) {
   public int OverloadIndex { get; set; }
   /// <summary>PB 3.6: true for a nested local SUB/FUNCTION lifted to top level (bound in a separate capture phase).</summary>
   public bool IsNested { get; set; }
+  /// <summary>PB 3.6 capturing lambda: the outer locals it captures, in environment-record order (the enclosing proc fills the record at closure creation). Empty for a non-capturing lambda.</summary>
+  public List<VariableSymbol> Captures { get; } = [];
+  /// <summary>PB 3.6 capturing lambda: the hidden env-record local allocated in the ENCLOSING procedure (an array of far pointers to the captured locals). Null when the lambda captures nothing.</summary>
+  public VariableSymbol? ClosureEnvRecord { get; set; }
+  /// <summary>PB 3.6 capturing lambda: the hidden local in THIS lambda that holds the far environment pointer (saved from the closure value at entry). Non-null marks a capturing lambda.</summary>
+  public VariableSymbol? ClosureEnvPtr { get; set; }
   /// <summary>Null when only DECLAREd (external - resolved at link time from PBU/PBL).</summary>
   public IReadOnlyList<Statement>? Body { get; set; }
   public SourcePosition Position { get; set; }

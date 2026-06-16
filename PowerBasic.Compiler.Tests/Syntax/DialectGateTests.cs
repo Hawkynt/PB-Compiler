@@ -219,10 +219,12 @@ public sealed class DialectGateTests {
   }
 
   [Test]
-  public void Bind_GivenCapturingLambda_WhenPb36_ThenRejectedWithGuidance() {
-    var tokens = Lexer.Tokenize("SUB Outer()\n  DIM base AS LONG\n  DIM f???\n  f??? = FUNCTION(BYVAL x AS LONG) AS LONG => x + base\nEND SUB", "T.BAS", Dialect.Pb36);
+  public void Bind_GivenCapturingLambdaIntoDelegate_WhenPb36_ThenBindsWithoutError() {
+    // a lambda that references an outer local is now a stack closure (its env is the
+    // enclosing frame, reached through the env pointer of the fat delegate value)
+    var tokens = Lexer.Tokenize("SUB Outer()\n  DIM base AS LONG\n  DIM f AS FUNCTION(LONG) AS LONG\n  f = FUNCTION(BYVAL x AS LONG) AS LONG => x + base\nEND SUB", "T.BAS", Dialect.Pb36);
     var model = Binder.Bind(Parser.Parse(tokens, "T.BAS", Dialect.Pb36), Dialect.Pb36);
-    Assert.That(model.Errors.Select(e => e.Message), Has.Some.Contains("capturing lambda"));
+    Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors.Select(e => e.Message)));
   }
 
   [Test]
