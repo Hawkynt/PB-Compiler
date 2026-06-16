@@ -30,10 +30,11 @@ binaries you can run on actual DOS or in DOSBox:
 Two things make it interesting. First, **fidelity**: for the historic dialects
 it doesn't merely *resemble* the genuine compilers — it is driven against the
 original binaries and produces **byte-identical output**, documented bugs and
-all. Second, **a forward path**: the `pb36` dialect is an optimizing superset
-that bolts a real SSA-based optimization pipeline and lean-output backend onto
-that faithful front end — a hello world drops from a fat always-linked runtime
-to a 25-byte image, with every existing program still byte-identical.
+all. Second, **a forward path**: a real SSA-based optimization pipeline and
+lean-output backend — available in *every* dialect via `--optimize` and on by
+default in the `pb36` language-features superset — that drops a hello world from a
+fat always-linked runtime to a 25-byte image while keeping every existing program
+byte-identical.
 
 ## Why
 
@@ -64,7 +65,7 @@ the Microsoft lineage (QuickBASIC → BASIC PDS).
 | PowerBASIC 3.1 | `pb31` | Borland | Typed radix literals, whole-UDT compare, `ALIAS`, `ANY` parameters. |
 | PowerBASIC 3.2 | `pb32` | Borland | Data and code pointers, `VARPTR32`/`STRPTR32`/`CODEPTR32`, identifier underscores. |
 | **PowerBASIC 3.5** | **`pb35`** | Borland, 1997 | **The reference dialect (default).** ASCIIZ, `&` concat, VIRTUAL arrays, `REDIM PRESERVE`, indexed pointers, STDIN/STDOUT, `TRIM$`, `SIZEOF`, and more. Byte-identical against PBC.EXE 3.50. |
-| **PowerBASIC 3.6** | **`pb36`** | Borland (envisioned) | **The optimizing superset.** A strict superset of `pb35`: every `pb35` program compiles unchanged with byte-identical behavior, but the optimizer is on and new opt-in syntax is unlocked. See below. |
+| **PowerBASIC 3.6** | **`pb36`** | Borland (envisioned) | **The language-features superset.** A strict superset of `pb35`: every `pb35` program compiles unchanged with byte-identical behavior, plus opt-in modern syntax. Defaults the optimizer on (it's available in every dialect — see below). |
 | QuickBASIC 1.0–4.5 | `qb10` `qb20` `qb30` `qb40` `qb45` | Microsoft | QB display model (D exponents), BASCOM runtime heritage (^Z, half-away rounding) through 3.0. Verified byte-identical against the genuine BASCOM/BC/QB toolchains. |
 | BASIC PDS 7.0 / 7.1 | `pds70` `pds71` | Microsoft | "QB Extended"; 15-digit DOUBLE display. Byte-identical against BC.EXE 7.0/7.1. |
 
@@ -78,12 +79,18 @@ both `pbc` and the original and asserts the outputs match byte for byte. See
 ## PowerBASIC 3.6 — what's new
 
 `pb36` answers a simple question: *what if there had been one more DOS release?*
-Its mission is **lean and fast** — same language and observable behavior as
-`pb35`, but an aggressive optimizer, 386/486-aware codegen, and a runtime you pay
-for strictly by use. On top of that, it adds opt-in modern syntax. Every `pb36`
-construct is rejected below 3.6 with a `requires PowerBASIC 3.6` diagnostic, and
-none of it changes the meaning of an existing `pb35` program. Full detail in
-[docs/PB36.md](docs/PB36.md); the highlights:
+It is the **language-features** dialect — a strict superset of `pb35` that adds
+opt-in modern syntax and compiler sugar while keeping the same observable behavior.
+Every `pb36` construct is rejected below 3.6 with a `requires PowerBASIC 3.6`
+diagnostic, and none of it changes the meaning of an existing `pb35` program. Full
+detail in [docs/PB36.md](docs/PB36.md); the highlights:
+
+> **Optimization is a separate, dialect-independent axis.** The full optimization
+> pipeline (below) is always reachable from the command line in *any* dialect via
+> `--optimize`; `pb36` simply turns it on by default. So you can compile faithful
+> `pb35` (or QuickBASIC, or Turbo Basic) source with the optimizer on, or compile
+> `pb36` with `--no-optimize` — syntax level and optimization level are chosen
+> independently.
 
 **Declarations and initialization**
 - **`DIM` with initializer** — `DIM x = value` (type inferred) or
@@ -129,10 +136,7 @@ none of it changes the meaning of an existing `pb35` program. Full detail in
 - **XMS / EMS arrays** — `DIM XMS a(...)` / `DIM EMS a(...)` storage classes
   alongside `VIRTUAL`.
 
-> Despite the name, `pb36` is foremost an *optimizing* dialect. Its
-> optimizer is dialect-agnostic machinery (see below) that `pb36` simply enables
-> by default; the new syntax is the surface where genuinely new language features
-> land. Closures are stack-based for now — a closure that *escapes* its defining
+> Closures are stack-based for now — a closure that *escapes* its defining
 > procedure (e.g. returned to outlive its frame) is roadmap, to be backed by a
 > heap environment (see [docs/PB36.md](docs/PB36.md)).
 
@@ -221,7 +225,7 @@ dosbox -c "mount c ." -c "c:" -c "HELLO.EXE"
 
 ```bash
 pbc HELLO.BAS                 # -> HELLO.EXE (DOS MZ, real mode)
-pbc --dialect pb36 HELLO.BAS  # optimizing dialect: optimizer on + pb36 syntax
+pbc --dialect pb36 HELLO.BAS  # pb36 syntax features (optimizer on by default)
 pbc --dialect qb45 OLD.BAS    # compile a QuickBASIC 4.5 source
 pbc --optimize OLD.BAS        # run the optimizer for any dialect
 pbc --no-optimize APP.BAS     # disable the optimizer (faithful codegen)
@@ -244,8 +248,9 @@ breakdown and [CHANGELOG.md](CHANGELOG.md) for progress. In short: the full
 PowerBASIC 3.5 surface (lexer/preprocessor, parser, semantics, 8086–386 + x87
 assembler, MZ/PBU/PBL emitters and DOS runtime) is in place and exercised against
 the [PB-SvgaLibrary](https://github.com/Hawkynt/PB-SvgaLibrary) corpus; the
-cross-vendor dialects and the `pb36` optimizer are validated by the oracle
-differential harness and DOSBox execution tests.
+cross-vendor dialects, the `pb36` language features, and the optimizer (run across
+every dialect) are validated by the oracle differential harness and DOSBox
+execution tests.
 
 ## Layout
 
