@@ -1,6 +1,10 @@
 REM BASICA interpreter oracle: run the program directly (no compile step).
 REM The oracle toolchain is mounted as D:; the current drive is C: (the test
 REM directory). T.BAS writes RESULT.TXT itself and ends with SYSTEM, returning
-REM to DOS so the harness can finish. Adjust the name to the staged binary
-REM (IBM BASICA ships as BASICA.COM; some distributions use BASICA.EXE).
-D:\BASICA.COM T.BAS
+REM to DOS so the harness can finish.
+REM
+REM Genuine IBM BASICA.COM is only a launcher for the machine's IBM ROM BASIC, so
+REM it cannot run on a clone / under DOSBox. GW-BASIC is IBM BASICA plus Cassette
+REM BASIC in one self-contained interpreter (language-identical), so it is the
+REM runnable BASICA oracle here.
+D:\GWBASIC.EXE T.BAS
