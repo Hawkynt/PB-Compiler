@@ -1,0 +1,6 @@
+REM BASICA interpreter oracle: run the program directly (no compile step).
+REM The oracle toolchain is mounted as D:; the current drive is C: (the test
+REM directory). T.BAS writes RESULT.TXT itself and ends with SYSTEM, returning
+REM to DOS so the harness can finish. Adjust the name to the staged binary
+REM (IBM BASICA ships as BASICA.COM; some distributions use BASICA.EXE).
+D:\BASICA.COM T.BAS

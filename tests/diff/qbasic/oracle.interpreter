@@ -1,0 +1,5 @@
+REM QBasic interpreter oracle: run the program directly (no compile step).
+REM /RUN loads and runs T.BAS, which writes RESULT.TXT itself and ends with
+REM SYSTEM, returning to DOS so the harness can finish. The oracle toolchain
+REM is mounted as D:; the current drive is C: (the test directory).
+D:\QBASIC.EXE /RUN T.BAS

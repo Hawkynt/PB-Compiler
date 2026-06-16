@@ -86,11 +86,19 @@ run_battery() { # $1 = oracle dir, $2 = dialect flag ("" = default pb35), $3.. =
   # tests/diff/<dialect>/oracle.conf: plain DOS commands that turn C:\T.BAS
   # into C:\T.EXE, with the oracle toolchain mounted read-only as D:.
   # Without such a template the classic PBC.EXE invocation is used.
-  local template=""
-  [ -n "$dialect" ] && [ -f "tests/diff/$dialect/oracle.conf" ] && template="tests/diff/$dialect/oracle.conf"
+  #
+  # Interpreter oracles (GW-BASIC / BASICA / QBasic) ship no compiler: their
+  # tests/diff/<dialect>/oracle.interpreter holds the DOS commands that run the
+  # interpreter on C:\T.BAS (the program itself writes RESULT.TXT and ends with
+  # SYSTEM). There is no T.EXE on the real side - the interpreter IS the run.
+  local template="" interp=""
+  if [ -n "$dialect" ]; then
+    [ -f "tests/diff/$dialect/oracle.interpreter" ] && interp="tests/diff/$dialect/oracle.interpreter"
+    [ -z "$interp" ] && [ -f "tests/diff/$dialect/oracle.conf" ] && template="tests/diff/$dialect/oracle.conf"
+  fi
 
   rm -rf "build/diff/$label" && mkdir -p "build/diff/$label/real" "build/diff/$label/ours"
-  [ -z "$template" ] && cp "$oracle/PBC.EXE" "build/diff/$label/real/"
+  [ -z "$template" ] && [ -z "$interp" ] && cp "$oracle/PBC.EXE" "build/diff/$label/real/"
 
   local t name
   for t in "$@"; do
@@ -107,15 +115,20 @@ run_battery() { # $1 = oracle dir, $2 = dialect flag ("" = default pb35), $3.. =
       echo "[dosbox]"; echo "ems=true"
       echo "[autoexec]"
       echo "mount c \"$(winpath "build/diff/$label/real")\""
-      if [ -n "$template" ]; then
+      if [ -n "$interp" ]; then
+        echo "mount d \"$(winpath "$oracle")\""
+        echo "c:"
+        sed -e 's/\r$//' "$interp"   # runs the interpreter on C:\T.BAS; the program writes RESULT.TXT
+      elif [ -n "$template" ]; then
         echo "mount d \"$(winpath "$oracle")\""
         echo "c:"
         sed -e 's/\r$//' "$template"
+        echo "T.EXE"
       else
         echo "c:"
         echo "PBC.EXE -CE T.BAS > PBCOUT.TXT"
+        echo "T.EXE"
       fi
-      echo "T.EXE"
       echo "echo ok > DONE.TXT"
       echo "exit"
     } > "build/diff/$label/real.conf"
@@ -190,7 +203,9 @@ for dir in tests/diff/*/; do
   oracle="${!var:-tools/$dialect}"
   dtests=( "$dir"*.BAS "$dir"*.bas )
   [ ${#dtests[@]} -gt 0 ] || continue
-  if [ -f "$oracle/PBC.EXE" ] || { [ -f "$dir/oracle.conf" ] && [ -d "$oracle" ]; }; then
+  if [ -f "$oracle/PBC.EXE" ] \
+     || { [ -f "$dir/oracle.conf" ] && [ -d "$oracle" ]; } \
+     || { [ -f "$dir/oracle.interpreter" ] && [ -d "$oracle" ] && [ -n "$(ls -A "$oracle" 2>/dev/null)" ]; }; then
     run_battery "$oracle" "$dialect" "${dtests[@]}"
   else
     echo "SKIP  $dialect battery (${#dtests[@]} file(s)) - no oracle in $oracle (stage the toolchain there to activate)"

@@ -1,0 +1,5 @@
+REM GW-BASIC interpreter oracle: run the program directly (no compile step).
+REM The oracle toolchain is mounted as D:; the current drive is C: (the test
+REM directory). T.BAS writes RESULT.TXT itself and ends with SYSTEM, returning
+REM to DOS so the harness can finish. Adjust the EXE name to the staged binary.
+D:\GWBASIC.EXE T.BAS

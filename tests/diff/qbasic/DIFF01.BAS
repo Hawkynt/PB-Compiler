@@ -1,0 +1,11 @@
+OPEN "RESULT.TXT" FOR OUTPUT AS #1
+PRINT #1, 2 + 3 * 4
+PRINT #1, 100 \ 7; 100 MOD 7
+FOR i% = 1 TO 5
+  PRINT #1, i% * i%
+NEXT i%
+a$ = "QBasic"
+PRINT #1, a$
+PRINT #1, LEN(a$); ASC(a$)
+CLOSE #1
+SYSTEM
