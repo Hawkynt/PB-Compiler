@@ -1179,9 +1179,12 @@ public sealed partial class CodeGenerator {
     if (!model.VariableBindings.TryGetValue(idxExpr, out var idxSym) || !ReferenceEquals(idxSym, counter))
       return false;
 
-    // array must be static, rank-1, INTEGER-element, not special
-    if (array.Type is not ArrayType { Element: ScalarType { ByteSize: 2, IsFloat: false }, IsDynamic: false, Rank: 1 } arrayType)
+    // array must be static, rank-1, INTEGER- or signed-LONG-element, not special
+    if (array.Type is not ArrayType { Element: ScalarType { IsFloat: false } element, IsDynamic: false, Rank: 1 } arrayType)
       return false;
+    if (element.ByteSize is not (2 or 4) || (element.ByteSize == 4 && !element.Signed))
+      return false;
+    var elementSize = element.ByteSize;
     if (arrayType.StaticBounds is not { } bounds)
       return false;
     if (array.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Absolute)
@@ -1205,6 +1208,8 @@ public sealed partial class CodeGenerator {
     asm.Mov(counterCell, Reg.AX);          // counter cell = from value
     asm.Sub(Reg.AX, lbound);               // AX = from - lbound
     asm.Shl(Reg.AX, 1);                    // AX = (from-lbound)*2  (byte offset; shift-by-1, 8086-safe)
+    if (elementSize == 4)
+      asm.Shl(Reg.AX, 1);                  // *4 for a LONG element (a second 8086-safe shift-by-1)
     asm.Mov(Reg.BX, Reg.AX);
     asm.Lea(Reg.BX, Mem.At(Reg.BX, arraySlot)); // BX = DS-relative address of first element
 
@@ -1231,12 +1236,14 @@ public sealed partial class CodeGenerator {
     // save BX across the expression evaluation (integer ops may use BX internally)
     asm.Push(Reg.BX);
     this.EmitExpression(expr);
-    this.Coerce(model.TypeOf(expr), PbType.Integer, expr);
+    this.Coerce(model.TypeOf(expr), elementSize == 4 ? PbType.Long : PbType.Integer, expr);
     asm.Pop(Reg.BX);
 
     // store into the stepped element address, then advance the pointer
-    asm.Mov(Mem.Word(Reg.BX), Reg.AX);
-    var stepBytes = (int)step * 2;
+    asm.Mov(Mem.Word(Reg.BX), Reg.AX);     // low word (INTEGER) or low half (LONG)
+    if (elementSize == 4)
+      asm.Mov(Mem.Word(Reg.BX, 2), Reg.DX); // high half of the LONG (DX:AX)
+    var stepBytes = (int)step * elementSize;
     if (stepBytes >= 0)
       asm.Add(Reg.BX, stepBytes);
     else
@@ -1652,20 +1659,23 @@ public sealed partial class CodeGenerator {
       return false;
     if (!model.VariableBindings.TryGetValue(readCall, out var readArr))
       return false;
-    // Static rank-1 array with 2-byte integer element, not HUGE/VIRTUAL/ABSOLUTE
+    // Static rank-1 array with 2-byte integer or signed-4-byte (LONG) element,
+    // not HUGE/VIRTUAL/ABSOLUTE
     if (readArr.Type is not ArrayType { StaticBounds: { } readBounds } readArrType
         || readBounds.Count != 1
         || readArr.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Absolute
-        || readArrType.Element is not ScalarType { ByteSize: 2, IsFloat: false })
+        || readArrType.Element is not ScalarType { IsFloat: false } readElem
+        || readElem.ByteSize is not (2 or 4)
+        || (readElem.ByteSize == 4 && !readElem.Signed))
       return false;
-    // Target must be a writable 2-byte integer scalar (not the counter, not BYREF param)
+    // Target must be a writable scalar of the element's width (not counter, not BYREF param)
     if (assign.Target is not NameExpr tgtExpr)
       return false;
     if (!model.VariableBindings.TryGetValue(tgtExpr, out var tgtSym))
       return false;
     if (ReferenceEquals(tgtSym, counter))
       return false; // writing counter through x% = a%(i%) is pathological - skip
-    if (tgtSym.Type is not ScalarType { ByteSize: 2, IsFloat: false })
+    if (tgtSym.Type is not ScalarType { IsFloat: false } tgtScalar || tgtScalar.ByteSize != readElem.ByteSize)
       return false;
     if (tgtSym.Storage == VariableStorage.Parameter)
       return false; // BYREF parameter pointer: aliasing risk
@@ -1724,6 +1734,10 @@ public sealed partial class CodeGenerator {
     asm.Mov(Reg.BX, addrSlot);
     asm.Mov(Reg.AX, Mem.Word(Reg.BX));
     asm.Mov(tgtCell.WithSize(OperandSize.Word), Reg.AX);
+    if (readElem.ByteSize == 4) {
+      asm.Mov(Reg.DX, Mem.Word(Reg.BX, 2));                  // high half of the LONG element
+      asm.Mov(Adjust(tgtCell, 2, OperandSize.Word), Reg.DX);
+    }
 
     asm.MarkLabel(cont);
     // Advance stepped address and counter
