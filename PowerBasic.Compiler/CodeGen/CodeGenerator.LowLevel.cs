@@ -92,6 +92,30 @@ public sealed partial class CodeGenerator {
       return;
     }
 
+    // pb36 C1 ($CPU 80386): a 64-bit SHIFT (not ROTATE) by a constant count in 1..31
+    // collapses the per-bit loop to a double-precision shift across the two dword halves
+    // (SHLD/SHRD), using only EAX/EDX so an indexed cell's base register is untouched.
+    // Count < 32 keeps both the 386 masking and the SHLD/SHRD semantics exact; counts
+    // >= 32 (which cross the dword boundary) and rotates stay on the loop. SHIFT RIGHT is
+    // logical (SHR high half), matching the loop and genuine PBC.
+    if (size == 8 && !rotate && this.Optimize && this.Cpu386
+        && this.Pb36Folder.TryFold(count) is { Integer: { } cnt8 } && cnt8 is >= 1 and <= 31) {
+      var dwLo = Adjust(place.Cell, 0, OperandSize.Dword);
+      var dwHi = Adjust(place.Cell, 4, OperandSize.Dword);
+      asm.Mov(Reg.EAX, dwLo);
+      asm.Mov(Reg.EDX, dwHi);
+      if (left) {
+        asm.Shld(Reg.EDX, Reg.EAX, (int)cnt8);   // high = (high<<n) | (low>>(32-n))
+        asm.Shl(Reg.EAX, (int)cnt8);             // low  = low<<n
+      } else {
+        asm.Shrd(Reg.EAX, Reg.EDX, (int)cnt8);   // low  = (low>>n) | (high<<(32-n))
+        asm.Shr(Reg.EDX, (int)cnt8);             // high = high>>n (logical)
+      }
+      asm.Mov(dwLo, Reg.EAX);
+      asm.Mov(dwHi, Reg.EDX);
+      return;
+    }
+
     // 32/64-bit: one-bit steps through the word chain, CX times
     var words = size / 2;
     var lo = Adjust(place.Cell, 0, OperandSize.Word);

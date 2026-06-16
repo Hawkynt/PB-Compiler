@@ -44,6 +44,20 @@ public sealed class AssemblerShiftTests {
     => Assert.That(Assemble(a => a.Shl(Reg.AL, 3)), Is.EqualTo(new byte[] { 0xC0, 0xE0, 0x03 }));
 
   [Test]
+  public void Shld_GivenDwordRegisters_WhenAssembled_Then66_0F_A4()
+    // SHLD EDX, EAX, 4: 66 prefix, 0F A4, ModRM mod=11 reg=EAX(0) rm=EDX(2)=C2, imm 04
+    => Assert.That(Assemble(a => a.Shld(Reg.EDX, Reg.EAX, 4)), Is.EqualTo(new byte[] { 0x66, 0x0F, 0xA4, 0xC2, 0x04 }));
+
+  [Test]
+  public void Shrd_GivenDwordRegisters_WhenAssembled_Then66_0F_AC()
+    // SHRD EAX, EDX, 8: 66 prefix, 0F AC, ModRM mod=11 reg=EDX(2) rm=EAX(0)=D0, imm 08
+    => Assert.That(Assemble(a => a.Shrd(Reg.EAX, Reg.EDX, 8)), Is.EqualTo(new byte[] { 0x66, 0x0F, 0xAC, 0xD0, 0x08 }));
+
+  [Test]
+  public void Shld_GivenWordRegisters_WhenAssembled_ThenNo66Prefix()
+    => Assert.That(Assemble(a => a.Shld(Reg.DX, Reg.AX, 1)), Is.EqualTo(new byte[] { 0x0F, 0xA4, 0xC2, 0x01 }));
+
+  [Test]
   public void Shl_GivenClCount_WhenAssembled_ThenD3Form()
     => Assert.That(Assemble(a => a.Shl(Reg.AX, Reg.CL)), Is.EqualTo(new byte[] { 0xD3, 0xE0 }));
 

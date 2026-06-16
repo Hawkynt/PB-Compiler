@@ -416,6 +416,25 @@ public sealed class Pb36OptimizerTests {
     return count;
   }
 
+  [Test]
+  public void Emit_GivenQuadShiftUnderCpu386_WhenPb36_ThenDoublePrecisionShld() {
+    // a constant-count QUAD SHIFT LEFT collapses the per-bit loop to a 66 0F A4 SHLD
+    const string with386 = "$CPU 80386\n$OPTIMIZE SPEED\nx&& = 3\nSHIFT LEFT x&&, 5\nPRINT x&&\nEND";
+    const string no386 = "$OPTIMIZE SPEED\nx&& = 3\nSHIFT LEFT x&&, 5\nPRINT x&&\nEND";
+    Assert.That(CountShld(Compile(with386, Dialect.Pb36)),
+      Is.GreaterThan(CountShld(Compile(no386, Dialect.Pb36))),
+      "$CPU 80386 should add a 66 0F A4 SHLD the per-bit-loop version lacks");
+  }
+
+  // 66 0F A4 = operand-size-prefixed SHLD r/m32, r32, imm8
+  private static int CountShld(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 2 < image.Length; ++i)
+      if (image[i] == 0x66 && image[i + 1] == 0x0F && image[i + 2] == 0xA4)
+        ++count;
+    return count;
+  }
+
   #endregion
 
   #region strength reduction (O4) and zero idiom (O8)

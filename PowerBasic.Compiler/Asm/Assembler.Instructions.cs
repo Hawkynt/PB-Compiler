@@ -494,6 +494,24 @@ public sealed partial class Assembler {
 
   public void Imul(Reg destination, Imm immediate) => this.Imul(destination, destination, immediate);
 
+  /// <summary>386 SHLD r/m16/32, r16/32, imm8 (0F A4): destination shifted left by count, vacated low bits filled from the high bits of source.</summary>
+  public void Shld(Reg destination, Reg source, int count) => this.DoubleShift(0xA4, destination, source, count);
+
+  /// <summary>386 SHRD r/m16/32, r16/32, imm8 (0F AC): destination shifted right by count, vacated high bits filled from the low bits of source.</summary>
+  public void Shrd(Reg destination, Reg source, int count) => this.DoubleShift(0xAC, destination, source, count);
+
+  private void DoubleShift(byte opcode, Reg destination, Reg source, int count) {
+    RequireWordOrDword(destination, nameof(destination));
+    RequireSameSize(destination, source);
+    if (count is < 1 or > 31)
+      throw new ArgumentOutOfRangeException(nameof(count), count, "Double-shift count must be 1..31.");
+    this.EmitOperandSizePrefixIf(destination.IsDword());
+    this.EmitByte(0x0F);
+    this.EmitByte(opcode);
+    this.EmitModRmRegister(source.Index(), destination);   // reg field = source, r/m = destination
+    this.EmitByte((byte)count);
+  }
+
   public void Cbw() => this.EmitByte(0x98);
   public void Cwd() => this.EmitByte(0x99);
 
