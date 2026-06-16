@@ -31,11 +31,17 @@ public enum Dialect {
   /// for now pb36 == optimized pb35.
   /// </summary>
   Pb36 = 36,
+  /// <summary>BASICA - IBM's Advanced BASIC interpreter (Microsoft lineage, pre-QuickBASIC). Line-numbered, Microsoft Binary Format (MBF) floats. Verified against the genuine interpreter by output diff (not byte-identical EXE).</summary>
+  Basica = 100,
+  /// <summary>GW-BASIC - Microsoft's MS-DOS BASIC interpreter, language-identical to <see cref="Basica"/> (MBF floats, line numbers).</summary>
+  Gw = 101,
   Qb10 = 110,
   Qb20 = 120,
   Qb30 = 130,
   Qb40 = 140,
   Qb45 = 145,
+  /// <summary>QBasic - the interpreter shipped with MS-DOS 5.0+ (the QuickBASIC 4.5 environment minus the compiler/linker). Same language surface as <see cref="Qb45"/>, IEEE floats; cannot produce an EXE itself, so it is verified by interpreter output diff.</summary>
+  Qbasic = 146,
   Pds70 = 170,
   Pds71 = 171,
 }
@@ -190,14 +196,27 @@ public static class DialectFacts {
     [LanguageFeature.RedimPreserve] = Dialect.Pds70,   // REDIM with far strings; QB REDIM never preserves
   };
 
-  /// <summary>Human-readable dialect name, e.g. "PB 3.5", "TB 1.1", "QB 4.5", "PDS 7.1".</summary>
+  /// <summary>Human-readable dialect name, e.g. "PB 3.5", "TB 1.1", "QB 4.5", "PDS 7.1", "GW-BASIC".</summary>
   public static string DisplayName(this Dialect dialect) {
+    switch (dialect) {
+      case Dialect.Basica: return "BASICA";
+      case Dialect.Gw: return "GW-BASIC";
+      case Dialect.Qbasic: return "QBasic";
+    }
     var v = (int)dialect % 100;
     var prefix = dialect.Family() == DialectFamily.Microsoft
       ? dialect >= Dialect.Pds70 ? "PDS" : "QB"
       : dialect.IsTurboBasic() ? "TB" : "PB";
     return $"{prefix} {v / 10}.{v % 10}";
   }
+
+  /// <summary>The classic Microsoft BASIC interpreters (BASICA / GW-BASIC / QBasic): they ship no compiler, so they are oracle-verified by output diff rather than a byte-identical EXE.</summary>
+  public static bool IsInterpreter(this Dialect dialect)
+    => dialect is Dialect.Basica or Dialect.Gw or Dialect.Qbasic;
+
+  /// <summary>BASICA / GW-BASIC: the line-numbered MBF-float interpreters (language-identical; pre-QuickBASIC).</summary>
+  public static bool IsGwBasica(this Dialect dialect)
+    => dialect is Dialect.Basica or Dialect.Gw;
 
   /// <summary>Turbo Basic 1.x - Borland's PB predecessor (16-digit double-everything runtime).</summary>
   public static bool IsTurboBasic(this Dialect dialect) => dialect <= Dialect.Tb11;
@@ -210,9 +229,9 @@ public static class DialectFacts {
   public static bool IsBascomRuntime(this Dialect dialect)
     => dialect.Family() == DialectFamily.Microsoft && dialect < Dialect.Qb40;
 
-  /// <summary>Product family - ordinal dialect comparisons are only valid within one family.</summary>
+  /// <summary>Product family - ordinal dialect comparisons are only valid within one family. The Microsoft lineage occupies values &gt;= 100 (the interpreters BASICA/GW-BASIC sit below QB 1.0).</summary>
   public static DialectFamily Family(this Dialect dialect)
-    => dialect >= Dialect.Qb10 ? DialectFamily.Microsoft : DialectFamily.Borland;
+    => (int)dialect >= 100 ? DialectFamily.Microsoft : DialectFamily.Borland;
 
   /// <summary>True for a Borland-lineage dialect of at least <paramref name="min"/> (false for every Microsoft dialect).</summary>
   public static bool IsPbAtLeast(this Dialect dialect, Dialect min)

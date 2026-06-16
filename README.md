@@ -66,7 +66,9 @@ the Microsoft lineage (QuickBASIC → BASIC PDS).
 | PowerBASIC 3.2 | `pb32` | Borland | Data and code pointers, `VARPTR32`/`STRPTR32`/`CODEPTR32`, identifier underscores. |
 | **PowerBASIC 3.5** | **`pb35`** | Borland, 1997 | **The reference dialect (default).** ASCIIZ, `&` concat, VIRTUAL arrays, `REDIM PRESERVE`, indexed pointers, STDIN/STDOUT, `TRIM$`, `SIZEOF`, and more. Byte-identical against PBC.EXE 3.50. |
 | **PowerBASIC 3.6** | **`pb36`** | Borland (envisioned) | **The language-features superset.** A strict superset of `pb35`: every `pb35` program compiles unchanged with byte-identical behavior, plus opt-in modern syntax. |
+| BASICA / GW-BASIC | `basica` `gw` | Microsoft (interpreters) | The classic line-numbered interpreters with Microsoft Binary Format (MBF) floats. Selectable and compiling today; faithful MBF numerics and interpreter-oracle verification are in progress (see roadmap below). |
 | QuickBASIC 1.0–4.5 | `qb10` `qb20` `qb30` `qb40` `qb45` | Microsoft | QB display model (D exponents), BASCOM runtime heritage (^Z, half-away rounding) through 3.0. Verified byte-identical against the genuine BASCOM/BC/QB toolchains. |
+| QBasic | `qbasic` | Microsoft (interpreter) | The MS-DOS 5.0+ interpreter — the QuickBASIC 4.5 language (IEEE floats) minus the compiler. Compiles via the QB 4.5 front end; oracle-verified by interpreter output diff (in progress). |
 | BASIC PDS 7.0 / 7.1 | `pds70` `pds71` | Microsoft | "QB Extended"; 15-digit DOUBLE display. Byte-identical against BC.EXE 7.0/7.1. |
 
 The historic dialects (everything except `pb36`) are validated by an

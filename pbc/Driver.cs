@@ -199,6 +199,9 @@ public static class Driver {
 
   private static bool TryParseDialect(string name, out Dialect dialect) {
     switch (name.ToLowerInvariant()) {
+      case "basica": dialect = Dialect.Basica; return true;
+      case "gw": case "gwbasic": dialect = Dialect.Gw; return true;
+      case "qbasic": dialect = Dialect.Qbasic; return true;
       case "qb10": dialect = Dialect.Qb10; return true;
       case "qb20": dialect = Dialect.Qb20; return true;
       case "qb30": dialect = Dialect.Qb30; return true;
