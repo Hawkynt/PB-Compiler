@@ -54,6 +54,12 @@ bash scripts/pack-toolchains.sh              # all populated tools/<dialect>/
 bash scripts/pack-toolchains.sh tb10 gw      # only these
 ```
 
+Some install media (e.g. BASIC PDS 7.1) ship their files MS-compressed in the old
+SZDD `"SZ "` variant (`.EX$`/`.LI$`/`.OB$`), which neither 7-Zip nor the modern
+Windows `expand.exe` decode. `scripts/expand-szdd.ps1 <srcdir> <dstdir>` expands a
+whole directory (mapping the trailing `$` back to `E`/`B`/`J`) so the files can be
+staged before packing.
+
 `pack-toolchains.sh` is the exact inverse of the harness's decrypt step, so a
 container always round-trips. The raw `tools/<dialect>/` directories are
 git-ignored; only the `.enc` tarballs are tracked. Each tarball's top level holds
