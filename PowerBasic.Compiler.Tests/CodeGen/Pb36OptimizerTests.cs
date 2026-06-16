@@ -397,6 +397,25 @@ public sealed class Pb36OptimizerTests {
     return count;
   }
 
+  [Test]
+  public void Emit_GivenQuadBitwiseUnderCpu386_WhenPb36_ThenInlineDwordOps() {
+    // a QUAD OR runs inline as two 66 0B (OR EAX, m32) halves instead of the QuadOr call
+    const string with386 = "$CPU 80386\n$OPTIMIZE SPEED\nx&& = 1099511627775\ny&& = 76861433640456465\nPRINT x&& OR y&&\nEND";
+    const string no386 = "$OPTIMIZE SPEED\nx&& = 1099511627775\ny&& = 76861433640456465\nPRINT x&& OR y&&\nEND";
+    Assert.That(CountDwordOrEax(Compile(with386, Dialect.Pb36)),
+      Is.GreaterThan(CountDwordOrEax(Compile(no386, Dialect.Pb36))),
+      "$CPU 80386 should add inline 32-bit OR halves the runtime-call version lacks");
+  }
+
+  // 66 0B = operand-size-prefixed OR r32, r/m32
+  private static int CountDwordOrEax(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0x66 && image[i + 1] == 0x0B)
+        ++count;
+    return count;
+  }
+
   #endregion
 
   #region strength reduction (O4) and zero idiom (O8)

@@ -460,11 +460,20 @@ public sealed partial class CodeGenerator {
       case BinaryOp.GreaterEqual: this.EmitFloatCompare(asm => asm.Jae); break;
       case BinaryOp.IntegerDivide: this.EmitQuadMemoryOp(this._rt.QuadDiv); break;
       case BinaryOp.Modulo: this.EmitQuadMemoryOp(this._rt.QuadMod); break;
-      case BinaryOp.And: this.EmitQuadMemoryOp(this._rt.QuadAnd); break;
-      case BinaryOp.Or: this.EmitQuadMemoryOp(this._rt.QuadOr); break;
-      case BinaryOp.Xor: this.EmitQuadMemoryOp(this._rt.QuadXor); break;
-      case BinaryOp.Eqv: this.EmitQuadMemoryOp(this._rt.QuadEqv); break;
-      case BinaryOp.Imp: this.EmitQuadMemoryOp(this._rt.QuadImp); break;
+      case BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Eqv or BinaryOp.Imp:
+        // pb36 C1 ($CPU 80386): a 64-bit bitwise op runs inline as two 32-bit halves
+        // instead of a runtime call - bitwise ops can't trap, so no error path is lost
+        if (this.Optimize && this.Cpu386)
+          this.EmitQuad386Bitwise(b.Op);
+        else
+          this.EmitQuadMemoryOp(b.Op switch {
+            BinaryOp.And => this._rt.QuadAnd,
+            BinaryOp.Or => this._rt.QuadOr,
+            BinaryOp.Xor => this._rt.QuadXor,
+            BinaryOp.Eqv => this._rt.QuadEqv,
+            _ => this._rt.QuadImp,
+          });
+        break;
       default:
         asm.Fstp(St.St0);
         asm.Fstp(St.St0);
@@ -483,6 +492,32 @@ public sealed partial class CodeGenerator {
     asm.Fistp(Mem.Qword(asm.Lbl("rt_q0")));   // left
     asm.Call(routine);
     asm.Fild(Mem.Qword(asm.Lbl("rt_q0")));
+  }
+
+  /// <summary>
+  /// pb36 C1 ($CPU 80386): a 64-bit bitwise op (AND/OR/XOR/EQV/IMP) done inline as two
+  /// 32-bit halves in EAX, replacing the runtime QuadAnd/.. call. The operands are staged
+  /// to rt_q0 (left) / rt_q1 (right) by the same FISTP pops, the result is built into rt_q0
+  /// and loaded back with FILD. EQV = NOT(a XOR b), IMP = (NOT a) OR b - per-half, exactly
+  /// the runtime's whole-word definition.
+  /// </summary>
+  private void EmitQuad386Bitwise(BinaryOp op) {
+    var asm = this._asm;
+    var sc = this._scratch;                 // own 16-byte scratch: [0..8) left, [8..16) right
+    asm.Fistp(Mem.Qword(sc, 8));            // right
+    asm.Fistp(Mem.Qword(sc, 0));            // left
+    for (var off = 0; off <= 4; off += 4) {
+      asm.Mov(Reg.EAX, Mem.Dword(sc, off));
+      switch (op) {
+        case BinaryOp.And: asm.And(Reg.EAX, Mem.Dword(sc, 8 + off)); break;
+        case BinaryOp.Or: asm.Or(Reg.EAX, Mem.Dword(sc, 8 + off)); break;
+        case BinaryOp.Xor: asm.Xor(Reg.EAX, Mem.Dword(sc, 8 + off)); break;
+        case BinaryOp.Eqv: asm.Xor(Reg.EAX, Mem.Dword(sc, 8 + off)); asm.Not(Reg.EAX); break;
+        case BinaryOp.Imp: asm.Not(Reg.EAX); asm.Or(Reg.EAX, Mem.Dword(sc, 8 + off)); break;
+      }
+      asm.Mov(Mem.Dword(sc, off), Reg.EAX);
+    }
+    asm.Fild(Mem.Qword(sc, 0));
   }
 
   /// <summary>

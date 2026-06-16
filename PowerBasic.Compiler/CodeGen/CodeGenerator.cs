@@ -403,7 +403,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     asm.Align(2);
     asm.MarkLabel(this._scratch);
-    asm.Db(new byte[12]);
+    asm.Db(new byte[16]);   // 12 for the 32-bit shuffles + room for two staged QWORDs (C1 quad bitwise)
 
     foreach (var (slot, value) in this._floatConstants) {
       asm.Align(2);
