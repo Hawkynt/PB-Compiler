@@ -106,6 +106,19 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     => this.Pb36Folder.TryFold(e) is { Integer: not null } ? null : this.IndexRangeOf(e);
 
   /// <summary>
+  /// pb36 O16: true when an INTEGER add/subtract <paramref name="b"/> over a FOR-counter
+  /// affine range provably stays inside 16 bits, so it can never raise Error 6 - the
+  /// $ERROR OVERFLOW check is dead and can be dropped. Only affine counter expressions
+  /// (counter +/- const) are range-known, and their single operands are themselves 16-bit,
+  /// so a result inside [-32768,32767] means the operation did not overflow.
+  /// </summary>
+  private bool ProvablyNoOverflow(BinaryExpr b)
+    => this.Optimize
+       && b.Op is BinaryOp.Add or BinaryOp.Subtract
+       && this.IndexRangeOf(b) is { } r
+       && r.Lo >= short.MinValue && r.Hi <= short.MaxValue;
+
+  /// <summary>
   /// pb36 O16 (general branch folding): a signed 16-bit comparison of a range-known FOR
   /// counter expression against a constant whose result is invariant over the range folds
   /// to the constant boolean (-1/0). Fires in ordinary code (no $ERROR needed) - the value

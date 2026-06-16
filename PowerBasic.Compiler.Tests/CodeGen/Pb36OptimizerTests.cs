@@ -466,6 +466,25 @@ public sealed class Pb36OptimizerTests {
       "a FOR-counter index inside the array bounds should drop the Error-9 bounds check");
   }
 
+  [Test]
+  public void Emit_GivenForCounterAddUnderOverflowOn_WhenPb36_ThenCheckElided() {
+    // i% + 1 over an in-range FOR counter drops its Error-6 check; k% + 1 keeps it
+    const string counterAdd = "$ERROR OVERFLOW ON\n$OPTIMIZE SPEED\nFOR i% = 1 TO 100\nx% = i% + 1\nNEXT i%\nEND";
+    const string varAdd = "$ERROR OVERFLOW ON\n$OPTIMIZE SPEED\nk% = 5\nFOR i% = 1 TO 100\nx% = k% + 1\nNEXT i%\nEND";
+    Assert.That(CountRaise6(Compile(counterAdd, Dialect.Pb36)),
+      Is.LessThan(CountRaise6(Compile(varAdd, Dialect.Pb36))),
+      "an in-range FOR-counter add should drop its Error-6 overflow check");
+  }
+
+  // B8 06 00 = MOV AX, 6 - the Error 6 (overflow) raise set up by EmitRaiseWhen
+  private static int CountRaise6(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 2 < image.Length; ++i)
+      if (image[i] == 0xB8 && image[i + 1] == 0x06 && image[i + 2] == 0x00)
+        ++count;
+    return count;
+  }
+
   // B8 09 00 = MOV AX, 9 - the Error 9 (subscript) raise set up by EmitRaiseWhen
   private static int CountRaise9(byte[] image) {
     var count = 0;
