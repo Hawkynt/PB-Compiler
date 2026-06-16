@@ -445,6 +445,16 @@ public sealed class Pb36OptimizerTests {
       "$CPU 80386 should zero-fill the ERASEd array with REP STOSD");
   }
 
+  [Test]
+  public void Emit_GivenConstantArrayFillUnderCpu386_WhenPb36_ThenRepStosd() {
+    // a FOR-loop constant array fill stores two elements per REP STOSD instead of REP STOSW
+    const string with386 = "$CPU 80386\n$OPTIMIZE SPEED\nDIM a%(1 TO 10)\nFOR i% = 1 TO 10\na%(i%) = 1234\nNEXT i%\nPRINT a%(1)\nEND";
+    const string no386 = "$OPTIMIZE SPEED\nDIM a%(1 TO 10)\nFOR i% = 1 TO 10\na%(i%) = 1234\nNEXT i%\nPRINT a%(1)\nEND";
+    Assert.That(CountRepStosd(Compile(with386, Dialect.Pb36)),
+      Is.GreaterThan(CountRepStosd(Compile(no386, Dialect.Pb36))),
+      "$CPU 80386 should fill the array DWORD-wide with REP STOSD");
+  }
+
   // F3 66 AB = REP STOSD (dword store)
   private static int CountRepStosd(byte[] image) {
     var count = 0;

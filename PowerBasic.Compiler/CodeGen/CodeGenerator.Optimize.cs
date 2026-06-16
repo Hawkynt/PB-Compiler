@@ -1478,11 +1478,25 @@ public sealed partial class CodeGenerator {
           asm.Pop(Reg.ES);
         }
         asm.Lea(Reg.DI, firstElement.Cell);
-        asm.Mov(Reg.CX, values.Count);
-        asm.Mov(Reg.AX, (int)(short)fillValue);
-        asm.Cld();
-        asm.Rep();
-        asm.Stosw();
+        // pb36 C1 ($CPU 80386): broadcast the 16-bit fill value into both halves of EAX
+        // and store two elements per REP STOSD, with a trailing STOSW for an odd count -
+        // same words written, about twice as fast.
+        if (this.Optimize && this.Cpu386 && values.Count >= 4) {
+          var word = (ushort)(short)fillValue;
+          asm.Mov(Reg.EAX, (Imm)(((int)word << 16) | word));
+          asm.Mov(Reg.CX, (Imm)(values.Count / 2));
+          asm.Cld();
+          asm.Rep();
+          asm.Stosd();
+          if (values.Count % 2 != 0)
+            asm.Stosw();
+        } else {
+          asm.Mov(Reg.CX, values.Count);
+          asm.Mov(Reg.AX, (int)(short)fillValue);
+          asm.Cld();
+          asm.Rep();
+          asm.Stosw();
+        }
         asm.Pop(Reg.ES);
         asm.Mov(slot, (Imm)(int)current);       // closed-form counter end (wrap included)
         return true;
