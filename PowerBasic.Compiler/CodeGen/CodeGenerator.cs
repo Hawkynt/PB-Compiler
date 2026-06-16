@@ -96,10 +96,20 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       case BinaryExpr { Op: BinaryOp.Subtract } b
           when this.IndexRangeOf(b.Left) is { } ls && this.Pb36Folder.TryFold(b.Right) is { Integer: { } rs }:
         return (ls.Lo - rs, ls.Hi - rs);
+      case BinaryExpr { Op: BinaryOp.Multiply } b:
+        // scaling by a constant (strided access a(i*2)) - the endpoints flip when k < 0
+        if (this.IndexRangeOf(b.Left) is { } lm && this.Pb36Folder.TryFold(b.Right) is { Integer: { } rm })
+          return ScaleRange(lm, rm);
+        if (this.IndexRangeOf(b.Right) is { } rm2 && this.Pb36Folder.TryFold(b.Left) is { Integer: { } lm2 })
+          return ScaleRange(rm2, lm2);
+        return null;
       default:
         return null;
     }
   }
+
+  private static (long Lo, long Hi) ScaleRange((long Lo, long Hi) r, long k)
+    => k >= 0 ? (r.Lo * k, r.Hi * k) : (r.Hi * k, r.Lo * k);
 
   /// <summary>The proven range of <paramref name="e"/> only when it is NOT itself a constant - i.e. a genuine FOR-counter / affine-counter expression (so SCCP keeps the constant-vs-constant cases).</summary>
   private (long Lo, long Hi)? CounterRangeOf(Expression e)
