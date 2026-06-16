@@ -27,5 +27,19 @@ FOR i% = 1 TO 10
 NEXT i%
 PRINT #1, "cmp"; u%
 
+' a leading run of two derived vars j (=i+1, [1,10]) and k (=i*2, [0,18]), both indexing a()
+DIM b%(0 TO 20)
+FOR i% = 0 TO 9
+  j% = i% + 1
+  k% = i% * 2
+  b%(j%) = j%
+  b%(k%) = b%(k%) + k%
+NEXT i%
+t% = 0
+FOR i% = 0 TO 20
+  t% = t% + b%(i%)
+NEXT i%
+PRINT #1, "chain"; t%
+
 CLOSE #1
 END

@@ -70,19 +70,24 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._forRanges[counter] = (Math.Min(fromV, toV), Math.Max(fromV, toV));
     var registered = new List<VariableSymbol> { counter };
 
-    // O16 derived range: when the body's FIRST statement assigns a scalar-INTEGER variable a
-    // range-known counter expression (j = i+1, j = i*2, ...) and that variable is never
-    // modified later in the body, it carries that range for the whole body. Sound because the
-    // assignment precedes every read (it is statement 0) and the body is call-free/stable.
-    if (f.Body.Count > 0 && f.Body[0] is AssignStmt { Target: NameExpr dvt, Value: { } drhs }
-        && model.VariableBindings.TryGetValue(dvt, out var dv)
-        && dv.Type is ScalarType { IsFloat: false, ByteSize: <= 2 }
-        && !ReferenceEquals(dv, counter)
-        && !ReferencesVar(drhs, dv, model)
-        && this.IndexRangeOf(drhs) is { } dvr
-        && !IsModifiedIn(f.Body.Skip(1), dv, model)) {
-      this._forRanges[dv] = dvr;
-      registered.Add(dv);
+    // O16 derived range: a leading run of statements that each assign a scalar-INTEGER
+    // variable a range-known counter expression (j = i+1, k = i*2, ...) - and never modify
+    // it later - carries those ranges for the body. Processing in order is sound: a forward
+    // reference to a not-yet-registered var makes IndexRangeOf fail and ends the run, and the
+    // assignment of each var precedes every read of it (the prefix only assigns other vars).
+    for (var idx = 0; idx < f.Body.Count; ++idx) {
+      if (f.Body[idx] is AssignStmt { Target: NameExpr dvt, Value: { } drhs }
+          && model.VariableBindings.TryGetValue(dvt, out var dv)
+          && dv.Type is ScalarType { IsFloat: false, ByteSize: <= 2 }
+          && !registered.Contains(dv)                       // distinct, and not the counter
+          && !ReferencesVar(drhs, dv, model)
+          && this.IndexRangeOf(drhs) is { } dvr
+          && !IsModifiedIn(f.Body.Skip(idx + 1), dv, model)) {
+        this._forRanges[dv] = dvr;
+        registered.Add(dv);
+        continue;
+      }
+      break;                                                // first non-derived statement ends the run
     }
     return new ForRangeScope(this, registered);
   }
