@@ -127,8 +127,14 @@ public sealed partial class Parser {
       : new(pos, value, null, null);
   }
 
+  private int _foreachCounter;
+
   private Statement ParseFor() {
     var pos = this.Advance().Position;
+    // FOR EACH v IN <collection> (EACH followed by the loop variable, not '=', so a
+    // loop over a variable literally named "each" is unaffected)
+    if (this.IsKeyword(0, "EACH") && this.Peek().Kind != TokenKind.Equals)
+      return this.ParseForEach(pos);
     var variable = this.ParseLValue();
     this.Expect(TokenKind.Equals, "'='");
     var from = this.ParseExpression();
@@ -138,6 +144,42 @@ public sealed partial class Parser {
     var body = this.ParseBody("NEXT");
     this.ConsumeNext();
     return new ForStmt(pos, variable, from, to, step, body);
+  }
+
+  /// <summary>
+  /// PB 3.6 <c>FOR EACH v IN source ... NEXT</c>, desugared to a counted FOR:
+  /// a <c>[lo..hi]</c> range literal becomes <c>FOR v = lo TO hi</c>; an array
+  /// becomes <c>FOR i = LBOUND(a) TO UBOUND(a) : v = a(i) : ...</c> with a hidden
+  /// index whose name (containing '$') can never collide with a source identifier.
+  /// </summary>
+  private Statement ParseForEach(SourcePosition pos) {
+    this.Require(LanguageFeature.ForEach);
+    this.Advance(); // EACH
+    var variable = this.ParseLValue();
+    this.ExpectKeyword("IN");
+    var collection = this.ParseExpression();
+    var body = this.ParseBody("NEXT");
+    this.ConsumeNext();
+
+    // a single [lo..hi] range -> plain counted loop over the user variable
+    if (collection is ArrayLiteralExpr { Elements: [RangeElement range] })
+      return new ForStmt(pos, variable, range.Lo, range.Hi, null, body);
+
+    // an array -> iterate its elements, copying each into the loop variable
+    var (name, suffix) = collection switch {
+      NameExpr n => (n.Name, n.Suffix),
+      CallOrIndexExpr { Arguments.Count: 0 } c => (c.Name, c.Suffix),
+      _ => throw this.Error("FOR EACH expects an array or a '[lo..hi]' range"),
+    };
+    var index = new NameExpr(pos, $"forEach${++this._foreachCounter}", TypeSuffix.Long);
+    var arrayRef = new NameExpr(pos, name, suffix);
+    var element = new CallOrIndexExpr(pos, name, suffix, [index]);
+    var loopBody = new List<Statement> { new AssignStmt(pos, variable, element) };
+    loopBody.AddRange(body);
+    return new ForStmt(pos, index,
+      new CallOrIndexExpr(pos, "LBOUND", TypeSuffix.None, [arrayRef]),
+      new CallOrIndexExpr(pos, "UBOUND", TypeSuffix.None, [arrayRef]),
+      null, loopBody);
   }
 
   /// <summary>Consumes a NEXT terminator; <c>NEXT a, b</c> closes additional enclosing FORs.</summary>

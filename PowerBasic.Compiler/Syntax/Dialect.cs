@@ -104,6 +104,8 @@ public enum LanguageFeature {
   Lambdas,
   ProcPointers,
   NamedDelegates,
+  CollectionLiteral,
+  ForEach,
 }
 
 /// <summary>
@@ -162,6 +164,8 @@ public static class DialectFacts {
     [LanguageFeature.Lambdas] = (Dialect.Pb36, "inline lambdas ('FUNCTION(params) => expr')"),
     [LanguageFeature.ProcPointers] = (Dialect.Pb36, "typed procedure pointers ('DIM f AS FUNCTION(types) AS type')"),
     [LanguageFeature.NamedDelegates] = (Dialect.Pb36, "named delegate types (a DECLAREd SUB/FUNCTION name reused as a procedure-pointer type)"),
+    [LanguageFeature.CollectionLiteral] = (Dialect.Pb36, "bracketed collection/range literal ('[v1, v2, lo..hi, ..arr]')"),
+    [LanguageFeature.ForEach] = (Dialect.Pb36, "FOR EACH ... IN (array or '[lo..hi]' range)"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

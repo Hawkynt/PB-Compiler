@@ -96,7 +96,8 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
 - **`DIM` with initializer** — `DIM x = value` (type inferred) or
   `DIM x AS type = value`.
 - **Array initializer literals** — `DIM a%() = {10, 20, 30}`, with inclusive
-  ranges (`lo..hi`) and spread of a static array (`..arr`).
+  ranges (`lo..hi`) and spread of a static array (`..arr`); the same literal in
+  square brackets — `DIM a%() = [99..105]` — doubles as a range/collection literal.
 - **Object initializers** — `DIM p = NEW Udt { .field = value, ... }`.
 - **`ENUM` blocks** — named compile-time integer constants in their own
   namespace; the enum name aliases its underlying integer type.
@@ -133,6 +134,7 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
 
 **Memory and control flow**
 - **`WITH expr … END WITH`** — leading-dot member access on a subject.
+- **`FOR EACH v IN source`** — iterate an array's elements or a `[lo..hi]` range.
 - **XMS / EMS arrays** — `DIM XMS a(...)` / `DIM EMS a(...)` storage classes
   alongside `VIRTUAL`.
 

@@ -311,6 +311,19 @@ public sealed class DialectGateTests {
     AssertAccepted(source, Dialect.Pb36);
   }
 
+  [TestCase("DIM a%() = [1..4]")]
+  public void Gate_GivenCollectionLiteral_WhenPb35_ThenRejectedButPb36Accepts(string source) {
+    AssertRejected(source, Dialect.Pb35, "3.6");
+    AssertAccepted(source, Dialect.Pb36);
+  }
+
+  [Test]
+  public void Gate_GivenForEach_WhenPb35_ThenRejectedButPb36Accepts() {
+    const string source = "FOR EACH i% IN [1..4]\n  PRINT i%\nNEXT";
+    AssertRejected(source, Dialect.Pb35, "3.6");
+    AssertAccepted(source, Dialect.Pb36);
+  }
+
   [Test]
   public void Gate_GivenNamedDelegateType_WhenPb35_ThenRejectedButPb36Accepts() {
     const string source = """

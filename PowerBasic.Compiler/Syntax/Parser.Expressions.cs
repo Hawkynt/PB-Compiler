@@ -289,7 +289,8 @@ public sealed partial class Parser {
         return new FileNumberExpr(this.Advance().Position, this.ParsePrimary());
       case TokenKind.At:
         return this.ParsePtrDeref();
-      case TokenKind.LBrace: // PB 3.6 array-initializer literal { ... }
+      case TokenKind.LBrace:    // PB 3.6 array-initializer literal { ... }
+      case TokenKind.LBracket:  // PB 3.6 collection/range literal [ ... ] (Require gates it per dialect)
         return this.ParseArrayLiteral();
       // PB 3.6 WITH: a leading '.member' binds to the innermost WITH subject
       case TokenKind.Period when this.Peek().Kind == TokenKind.Identifier && this._withSubjects.Count > 0:
@@ -432,10 +433,14 @@ public sealed partial class Parser {
   }
 
   private Expression ParseArrayLiteral() {
-    this.Require(LanguageFeature.ArrayInitializer);
-    var pos = this.Advance().Position; // '{'
+    // '{ ... }' is the array-initializer literal; '[ ... ]' is the (equivalent)
+    // bracketed collection/range literal (PB 3.6), also usable as a FOR EACH source.
+    var bracketed = this.Current.Kind == TokenKind.LBracket;
+    this.Require(bracketed ? LanguageFeature.CollectionLiteral : LanguageFeature.ArrayInitializer);
+    var close = bracketed ? TokenKind.RBracket : TokenKind.RBrace;
+    var pos = this.Advance().Position; // '{' or '['
     var elements = new List<CollectionElement>();
-    if (this.Current.Kind != TokenKind.RBrace)
+    if (this.Current.Kind != close)
       do {
         if (this.Match(TokenKind.DotDot)) { // ..arr spread
           elements.Add(new SpreadElement(pos, this.ParseExpression()));
@@ -446,7 +451,7 @@ public sealed partial class Parser {
           ? new RangeElement(first.Position, first, this.ParseExpression()) // lo..hi range
           : new ValueElement(first.Position, first));
       } while (this.Match(TokenKind.Comma));
-    this.Expect(TokenKind.RBrace, "'}'");
+    this.Expect(close, bracketed ? "']'" : "'}'");
     return new ArrayLiteralExpr(pos, elements);
   }
 

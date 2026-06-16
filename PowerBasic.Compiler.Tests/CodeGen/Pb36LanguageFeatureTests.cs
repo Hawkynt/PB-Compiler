@@ -797,4 +797,48 @@ public sealed class Pb36LanguageFeatureTests {
       """;
     Assert.That(Run(source), Is.EqualTo(" 10\n 15\n"));
   }
+
+  [Test]
+  public void Execute_GivenCollectionLiteralRangeInDim_WhenRun_ThenArrayFilled() {
+    // [lo..hi] is a bracketed collection/range literal, equivalent to {lo..hi}.
+    const string source = """
+      DIM a%() = [99..102]
+      PRINT a%(0)
+      PRINT a%(3)
+      PRINT UBOUND(a%)
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 99\n 102\n 3\n"));
+  }
+
+  [Test]
+  public void Execute_GivenForEachOverRange_WhenRun_ThenIteratesInclusive() {
+    // FOR EACH v IN [lo..hi] desugars to a counted loop over the inclusive range.
+    const string source = """
+      DIM total AS LONG
+      total = 0
+      FOR EACH i& IN [1..5]
+        total = total + i&
+      NEXT
+      PRINT total
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 15\n"));
+  }
+
+  [Test]
+  public void Execute_GivenForEachOverArray_WhenRun_ThenIteratesElements() {
+    // FOR EACH v IN a() iterates each element (LBOUND..UBOUND), copying it into v.
+    const string source = """
+      DIM a%(1 TO 3)
+      a%(1) = 10
+      a%(2) = 20
+      a%(3) = 30
+      DIM s AS LONG
+      s = 0
+      FOR EACH e% IN a%()
+        s = s + e%
+      NEXT
+      PRINT s
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 60\n"));
+  }
 }
