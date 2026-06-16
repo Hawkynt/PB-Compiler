@@ -351,10 +351,23 @@ public sealed partial class CodeGenerator {
       asm.Push(Reg.DS);
       asm.Pop(Reg.ES);
       asm.Mov(Reg.DI, Imm.OffsetOf(slot));
-      asm.Mov(Reg.CX, (arrayType.Size + 1) / 2);
-      asm.Xor(Reg.AX, Reg.AX);
-      asm.Rep();
-      asm.Stosw();
+      // pb36 C1 ($CPU 80386): zero the (word-rounded) block DWORD-wide with REP STOSD,
+      // a trailing STOSW for the odd leftover word - same byte count as the REP STOSW,
+      // about twice as fast. The result (all zeros) is identical.
+      var fillBytes = ((arrayType.Size + 1) / 2) * 2;   // exactly what REP STOSW covers
+      if (this.Optimize && this.Cpu386 && fillBytes >= 8) {
+        asm.Xor(Reg.EAX, Reg.EAX);
+        asm.Mov(Reg.CX, (Imm)(fillBytes / 4));
+        asm.Rep();
+        asm.Stosd();
+        if (fillBytes % 4 != 0)
+          asm.Stosw();
+      } else {
+        asm.Mov(Reg.CX, (arrayType.Size + 1) / 2);
+        asm.Xor(Reg.AX, Reg.AX);
+        asm.Rep();
+        asm.Stosw();
+      }
     }
   }
 

@@ -435,6 +435,25 @@ public sealed class Pb36OptimizerTests {
     return count;
   }
 
+  [Test]
+  public void Emit_GivenEraseStaticArrayUnderCpu386_WhenPb36_ThenRepStosd() {
+    // ERASE of a static array zeroes it DWORD-wide (F3 66 AB) instead of REP STOSW
+    const string with386 = "$CPU 80386\n$OPTIMIZE SPEED\nDIM a%(1 TO 10)\na%(1) = 5\nERASE a%\nPRINT a%(1)\nEND";
+    const string no386 = "$OPTIMIZE SPEED\nDIM a%(1 TO 10)\na%(1) = 5\nERASE a%\nPRINT a%(1)\nEND";
+    Assert.That(CountRepStosd(Compile(with386, Dialect.Pb36)),
+      Is.GreaterThan(CountRepStosd(Compile(no386, Dialect.Pb36))),
+      "$CPU 80386 should zero-fill the ERASEd array with REP STOSD");
+  }
+
+  // F3 66 AB = REP STOSD (dword store)
+  private static int CountRepStosd(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 2 < image.Length; ++i)
+      if (image[i] == 0xF3 && image[i + 1] == 0x66 && image[i + 2] == 0xAB)
+        ++count;
+    return count;
+  }
+
   #endregion
 
   #region strength reduction (O4) and zero idiom (O8)
