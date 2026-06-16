@@ -65,7 +65,7 @@ the Microsoft lineage (QuickBASIC → BASIC PDS).
 | PowerBASIC 3.1 | `pb31` | Borland | Typed radix literals, whole-UDT compare, `ALIAS`, `ANY` parameters. |
 | PowerBASIC 3.2 | `pb32` | Borland | Data and code pointers, `VARPTR32`/`STRPTR32`/`CODEPTR32`, identifier underscores. |
 | **PowerBASIC 3.5** | **`pb35`** | Borland, 1997 | **The reference dialect (default).** ASCIIZ, `&` concat, VIRTUAL arrays, `REDIM PRESERVE`, indexed pointers, STDIN/STDOUT, `TRIM$`, `SIZEOF`, and more. Byte-identical against PBC.EXE 3.50. |
-| **PowerBASIC 3.6** | **`pb36`** | Borland (envisioned) | **The language-features superset.** A strict superset of `pb35`: every `pb35` program compiles unchanged with byte-identical behavior, plus opt-in modern syntax. Defaults the optimizer on (it's available in every dialect — see below). |
+| **PowerBASIC 3.6** | **`pb36`** | Borland (envisioned) | **The language-features superset.** A strict superset of `pb35`: every `pb35` program compiles unchanged with byte-identical behavior, plus opt-in modern syntax. |
 | QuickBASIC 1.0–4.5 | `qb10` `qb20` `qb30` `qb40` `qb45` | Microsoft | QB display model (D exponents), BASCOM runtime heritage (^Z, half-away rounding) through 3.0. Verified byte-identical against the genuine BASCOM/BC/QB toolchains. |
 | BASIC PDS 7.0 / 7.1 | `pds70` `pds71` | Microsoft | "QB Extended"; 15-digit DOUBLE display. Byte-identical against BC.EXE 7.0/7.1. |
 
@@ -148,10 +148,11 @@ The optimizer sits between the binder and the emitter, working on the bound
 `SemanticModel` — the shared intermediate representation every dialect produces.
 Because it reads each dialect's own types, wrap rules and semantics, it preserves
 observable behavior for *all* dialects, not just PB. It is therefore
-**dialect-agnostic machinery**: `pb36` turns it on by default, any dialect opts in
-with `--optimize`, and `--no-optimize` is the faithful escape hatch that
-reproduces the unoptimized codegen exactly. With the optimizer forced on for
-every dialect, all differential batteries still pass byte-identically.
+**dialect-agnostic machinery** (the *what if there had been one more release?* point
+of `pb36`), driven entirely by the `--optimize` / `--no-optimize` switches described
+above. Even with the optimizer forced on for every historic dialect, all
+differential batteries still pass byte-identically — so optimization never costs
+fidelity.
 
 At its center is a real SSA mid-end (`CodeGen/Ssa/`): control-flow graph →
 dominator tree and dominance frontiers → SSA construction → sparse conditional
@@ -179,9 +180,9 @@ constant propagation → dead-store elimination.
 | O18 | Interprocedural constant propagation | A parameter that is the same constant at every call site and never written reads as that literal inside the callee (`Pb36Ipcp`). |
 | O19 | Definite-assignment zero elision | Drops per-invocation frame zeroing when a straight-line proof shows no local is read before assignment. |
 | O20 | Idiom replacement | Recognizes and replaces common code idioms. |
-| — | Copy propagation | A copy `y = x` redirects reads of `y` to `x` and drops the copy (`Pb36CopyProp`). |
-| — | Loop-invariant code motion | Hoists a pure loop-invariant subexpression to the FOR preheader under `$OPTIMIZE SPEED`. |
-| — | SELECT → jump table | A dense integer `SELECT CASE` dispatches through a word table. |
+| O21 | Copy propagation | A copy `y = x` redirects reads of `y` to `x` and drops the copy (`Pb36CopyProp`). |
+| O22 | Loop-invariant code motion | Hoists a pure loop-invariant subexpression to the FOR preheader under `$OPTIMIZE SPEED`. |
+| O23 | `SELECT CASE` → jump table | A dense integer `SELECT CASE` dispatches through a word jump table instead of a compare chain (`TryEmitSelectJumpTable`). |
 
 Lean-output passes complement them (also gated on the optimizer, not the
 dialect): **P1** runtime trimming (emit only the runtime sections reachable code
@@ -191,7 +192,9 @@ lowering (a PRINT-only program becomes a raw COM-style image). Codegen passes
 **C1/C2** target 386/486 (32-bit value flow, alignment, `BSWAP`) and **R3**
 widens string/block moves to DWORDs under `$CPU 80386`. Several passes are
 implemented as verified subsets with deeper forms on the roadmap — see the method
-coverage matrix in [docs/PB36.md](docs/PB36.md).
+coverage matrix in [docs/PB36.md](docs/PB36.md). Also on the roadmap: collapsing a
+chain of mutually-exclusive `IF x = k` tests (`IF x = 1 … ELSEIF x = 2 …`) into the
+same kind of jump table as `SELECT CASE`.
 
 ## Getting started
 
