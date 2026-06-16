@@ -476,6 +476,27 @@ public sealed class Pb36OptimizerTests {
       "an in-range FOR-counter add should drop its Error-6 overflow check");
   }
 
+  [Test]
+  public void Emit_GivenDivideByForCounter_WhenPb36_ThenZeroGuardElided() {
+    // 100 \ i% with i% a [1,10] counter (excludes 0) drops the TEST BX,BX zero guard;
+    // 100 \ k% keeps it
+    const string counterDiv = "$OPTIMIZE SPEED\nFOR i% = 1 TO 10\nx% = 100 \\ i%\nNEXT i%\nPRINT x%\nEND";
+    // a SUB parameter divisor (differing call args) is non-constant and not range-known
+    const string varDiv = "$OPTIMIZE SPEED\nDECLARE SUB d(BYVAL k AS INTEGER)\nd 3\nd 7\nEND\nSUB d(BYVAL k AS INTEGER)\nPRINT 100 \\ k\nEND SUB";
+    Assert.That(CountTestBxBx(Compile(counterDiv, Dialect.Pb36)),
+      Is.LessThan(CountTestBxBx(Compile(varDiv, Dialect.Pb36))),
+      "a divisor whose counter range excludes zero should drop the divide-by-zero guard");
+  }
+
+  // 85 DB = TEST BX, BX - the divide-by-zero guard set up by EmitInt16DivideGuard
+  private static int CountTestBxBx(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0x85 && image[i + 1] == 0xDB)
+        ++count;
+    return count;
+  }
+
   // B8 06 00 = MOV AX, 6 - the Error 6 (overflow) raise set up by EmitRaiseWhen
   private static int CountRaise6(byte[] image) {
     var count = 0;

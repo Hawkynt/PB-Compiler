@@ -626,12 +626,15 @@ public sealed partial class CodeGenerator {
           this.EmitRaiseWhen(asm.Jno, 6);
         break;
       case BinaryOp.IntegerDivide:
-        this.EmitInt16DivideGuard();
+        // pb36 O16: drop the divide-by-zero guard when the divisor range excludes zero
+        if (!this.DivisorNonZero(b))
+          this.EmitInt16DivideGuard();
         asm.Cwd();
         asm.Idiv(Reg.BX);
         break;
       case BinaryOp.Modulo:
-        this.EmitInt16DivideGuard();
+        if (!this.DivisorNonZero(b))
+          this.EmitInt16DivideGuard();
         asm.Cwd();
         asm.Idiv(Reg.BX);
         asm.Mov(Reg.AX, Reg.DX);

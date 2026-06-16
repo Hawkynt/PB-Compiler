@@ -119,6 +119,17 @@ public sealed partial class CodeGenerator(SemanticModel model) {
        && r.Lo >= short.MinValue && r.Hi <= short.MaxValue;
 
   /// <summary>
+  /// pb36 O16: true when the divisor of <paramref name="b"/> has a FOR-counter range that
+  /// excludes zero, so the integer divide can never raise Error 11 - the divide-by-zero
+  /// guard is dead. (The guard tests only for zero, so the unchanged MININT \ -1 overflow
+  /// behaviour is unaffected.)
+  /// </summary>
+  private bool DivisorNonZero(BinaryExpr b)
+    => this.Optimize
+       && this.IndexRangeOf(b.Right) is { } r
+       && (r.Lo > 0 || r.Hi < 0);
+
+  /// <summary>
   /// pb36 O16 (general branch folding): a signed 16-bit comparison of a range-known FOR
   /// counter expression against a constant whose result is invariant over the range folds
   /// to the constant boolean (-1/0). Fires in ordinary code (no $ERROR needed) - the value
