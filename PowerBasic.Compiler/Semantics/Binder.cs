@@ -555,8 +555,19 @@ public sealed class Binder {
       return null;
     }
 
-    return MapBuiltin(t.Builtin);
+    return this.AsMbfIfInterpreter(MapBuiltin(t.Builtin));
   }
+
+  /// <summary>
+  /// BASICA / GW-BASIC store SINGLE in Microsoft Binary Format, so map the IEEE
+  /// single scalar to <see cref="MbfType"/> in those dialects (QBasic and the rest
+  /// keep IEEE). DOUBLE (MBF 8-byte, 55-bit mantissa) is a later increment - it
+  /// stays IEEE for now.
+  /// </summary>
+  private PbType? AsMbfIfInterpreter(PbType? type)
+    => this._dialect.IsGwBasica() && type is ScalarType { Kind: ScalarKind.Single }
+      ? new MbfType(IsDouble: false)
+      : type;
 
   /// <summary>
   /// PB 3.6: a DECLAREd (or defined) SUB/FUNCTION name used in a type position
@@ -575,7 +586,7 @@ public sealed class Binder {
     return new ProcPtrType([.. sig.Parameters.Select(p => p.Type)], sig.IsFunction ? sig.ReturnType : null);
   }
 
-  private PbType TypeFromSuffixOrDefault(string name, TypeSuffix suffix) => suffix switch {
+  private PbType TypeFromSuffixOrDefault(string name, TypeSuffix suffix) => this.AsMbfIfInterpreter(suffix switch {
     TypeSuffix.Byte => PbType.Byte,
     TypeSuffix.Word => PbType.Word,
     TypeSuffix.Dword => PbType.Dword,
@@ -590,7 +601,7 @@ public sealed class Binder {
     TypeSuffix.String => PbType.String,
     TypeSuffix.Flex => new FlexType(),
     _ => this._defaultTypes.TryGetValue(char.ToUpperInvariant(name[0]), out var def) ? def : PbType.Single,
-  };
+  })!;
 
   private PbType ResolveReturnType(string name, TypeSuffix suffix, TypeName? declared) {
     if (declared != null)

@@ -190,6 +190,10 @@ public sealed partial class CodeGenerator {
         asm.Mov(Reg.CX, Adjust(place.Cell, 6, OperandSize.Word));
         break;
 
+      case MbfType { IsDouble: false }: // BASICA/GW-BASIC SINGLE: convert MBF32 -> IEEE32, then onto the x87
+        this.EmitMbfSingleLoad(place.Cell);
+        break;
+
       case ScalarType { ByteSize: 4 }:
         asm.Fld(Adjust(place.Cell, 0, OperandSize.Dword));
         break;
@@ -270,6 +274,10 @@ public sealed partial class CodeGenerator {
         asm.Mov(Adjust(place.Cell, 6, OperandSize.Word), Reg.CX);
         break;
 
+      case MbfType { IsDouble: false }: // BASICA/GW-BASIC SINGLE: narrow to IEEE32, convert to MBF32, store
+        this.EmitMbfSingleStore(place);
+        break;
+
       case ScalarType { ByteSize: 4 }:
         asm.Fstp(Adjust(place.Cell, 0, OperandSize.Dword));
         break;
@@ -311,6 +319,82 @@ public sealed partial class CodeGenerator {
         this.Unsupported(at, $"store of {type}");
         break;
     }
+  }
+
+  // -------- Microsoft Binary Format single (BASICA / GW-BASIC) --------
+  // MBF32 storage layout (little-endian bytes): [0..1] mantissa low 16, [2] = sign
+  // (bit 7) | mantissa[22:16], [3] = biased-128 exponent (0 means the value is 0).
+  // IEEE32 and MBF32 carry the same 23-bit fraction, so the only differences are the
+  // exponent bias (IEEE_exp = MBF_exp - 2) and where the sign bit sits. The value
+  // computes on the x87 as usual; these convert at the cell boundary. Shifts use CL
+  // (the only 8086 variable shift); the cell is read before BX is reused, and the
+  // store preserves a BX-based cell address across the conversion.
+
+  private void EmitMbfSingleLoad(Mem cell) {
+    var asm = this._asm;
+    asm.Mov(Reg.AX, Adjust(cell, 0, OperandSize.Word));   // mantissa low 16
+    asm.Mov(Reg.DX, Adjust(cell, 2, OperandSize.Word));   // DL = sign|mantissa hi, DH = MBF exponent
+    var nonzero = asm.DefineLabel();
+    var noSign = asm.DefineLabel();
+    var done = asm.DefineLabel();
+    asm.Or(Reg.DH, Reg.DH);                                // exponent 0 -> the value is 0.0
+    asm.Jnz(nonzero);
+    asm.Xor(Reg.AX, Reg.AX);
+    asm.Xor(Reg.DX, Reg.DX);
+    asm.Jmp(done);
+    asm.MarkLabel(nonzero);
+    asm.Mov(Reg.CH, Reg.DL);                               // keep the sign byte
+    asm.And(Reg.DL, (Imm)0x7F);                            // mantissa[22:16]
+    asm.Sub(Reg.DH, (Imm)2);                               // IEEE biased exponent
+    asm.Xor(Reg.BX, Reg.BX);
+    asm.Mov(Reg.BL, Reg.DH);
+    asm.Mov(Reg.CL, (Imm)7);
+    asm.Shl(Reg.BX, Reg.CL);                               // exponent into bits 7..14
+    asm.Or(Reg.BL, Reg.DL);                                // mantissa hi into bits 0..6
+    asm.Test(Reg.CH, (Imm)0x80);
+    asm.Jz(noSign);
+    asm.Or(Reg.BH, (Imm)0x80);                             // sign into bit 15
+    asm.MarkLabel(noSign);
+    asm.Mov(Reg.DX, Reg.BX);                               // IEEE high word (AX still holds the low word)
+    asm.MarkLabel(done);
+    asm.Mov(Mem.Word(this._scratch), Reg.AX);
+    asm.Mov(Mem.Word(this._scratch, 2), Reg.DX);
+    asm.Fld(Mem.Dword(this._scratch));
+  }
+
+  private void EmitMbfSingleStore(Place place) {
+    var asm = this._asm;
+    asm.Fstp(Mem.Dword(this._scratch));                    // narrow the x87 value to IEEE single
+    var bxBased = place.Cell.Base == Reg.BX;               // a computed/byref/far cell holds its address in BX
+    if (bxBased)
+      asm.Push(Reg.BX);                                    // the conversion reuses BX as scratch
+    asm.Mov(Reg.AX, Mem.Word(this._scratch));             // mantissa low 16
+    asm.Mov(Reg.DX, Mem.Word(this._scratch, 2));          // sign | exponent | mantissa hi
+    var zero = asm.DefineLabel();
+    var noSign = asm.DefineLabel();
+    var done = asm.DefineLabel();
+    asm.Mov(Reg.BX, Reg.DX);
+    asm.Mov(Reg.CL, (Imm)7);
+    asm.Shr(Reg.BX, Reg.CL);                               // exponent (bits 7..14) into BL
+    asm.And(Reg.BX, (Imm)0xFF);
+    asm.Or(Reg.BL, Reg.BL);                                // IEEE exponent 0 -> MBF is 0
+    asm.Jz(zero);
+    asm.And(Reg.DL, (Imm)0x7F);                            // mantissa[22:16] (drops the exponent's low bit)
+    asm.Test(Reg.DH, (Imm)0x80);                           // sign
+    asm.Jz(noSign);
+    asm.Or(Reg.DL, (Imm)0x80);
+    asm.MarkLabel(noSign);
+    asm.Add(Reg.BL, (Imm)2);                               // MBF biased exponent
+    asm.Mov(Reg.DH, Reg.BL);                               // exponent into byte 3
+    asm.Jmp(done);
+    asm.MarkLabel(zero);
+    asm.Xor(Reg.AX, Reg.AX);
+    asm.Xor(Reg.DX, Reg.DX);
+    asm.MarkLabel(done);
+    if (bxBased)
+      asm.Pop(Reg.BX);
+    asm.Mov(Adjust(place.Cell, 0, OperandSize.Word), Reg.AX);
+    asm.Mov(Adjust(place.Cell, 2, OperandSize.Word), Reg.DX);
   }
 
   private void EmitAssign(AssignStmt a) {

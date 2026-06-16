@@ -73,6 +73,17 @@ public sealed record PointerType(PbType Target) : PbType {
 }
 
 /// <summary>
+/// Microsoft Binary Format float (BASICA / GW-BASIC): the interpreters store
+/// SINGLE / DOUBLE in MBF, not IEEE - a biased-128 exponent byte with the sign
+/// folded into the mantissa's top bit. The value computes on the x87 as usual;
+/// only the in-memory cell is MBF, with conversion on load/store. Single is
+/// 4 bytes (precision-identical to IEEE single); Double is 8 bytes.
+/// </summary>
+public sealed record MbfType(bool IsDouble) : PbType {
+  public override int Size => this.IsDouble ? 8 : 4;
+}
+
+/// <summary>
 /// PB 3.6 typed procedure pointer / delegate (a "fat" closure value): an 8-byte
 /// cell holding a far code pointer (offset, segment) followed by a far environment
 /// pointer (offset, segment). A call through it coerces arguments to
