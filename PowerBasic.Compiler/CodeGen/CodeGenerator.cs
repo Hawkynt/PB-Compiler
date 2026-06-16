@@ -68,11 +68,57 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (!CounterStableInBody(f.Body, counter, model))
       return null;
     this._forRanges[counter] = (Math.Min(fromV, toV), Math.Max(fromV, toV));
-    return new ForRangeScope(this, counter);
+    var registered = new List<VariableSymbol> { counter };
+
+    // O16 derived range: when the body's FIRST statement assigns a scalar-INTEGER variable a
+    // range-known counter expression (j = i+1, j = i*2, ...) and that variable is never
+    // modified later in the body, it carries that range for the whole body. Sound because the
+    // assignment precedes every read (it is statement 0) and the body is call-free/stable.
+    if (f.Body.Count > 0 && f.Body[0] is AssignStmt { Target: NameExpr dvt, Value: { } drhs }
+        && model.VariableBindings.TryGetValue(dvt, out var dv)
+        && dv.Type is ScalarType { IsFloat: false, ByteSize: <= 2 }
+        && !ReferenceEquals(dv, counter)
+        && !ReferencesVar(drhs, dv, model)
+        && this.IndexRangeOf(drhs) is { } dvr
+        && !IsModifiedIn(f.Body.Skip(1), dv, model)) {
+      this._forRanges[dv] = dvr;
+      registered.Add(dv);
+    }
+    return new ForRangeScope(this, registered);
   }
 
-  private sealed class ForRangeScope(CodeGenerator gen, VariableSymbol counter) : IDisposable {
-    public void Dispose() => gen._forRanges.Remove(counter);
+  private sealed class ForRangeScope(CodeGenerator gen, List<VariableSymbol> symbols) : IDisposable {
+    public void Dispose() { foreach (var s in symbols) gen._forRanges.Remove(s); }
+  }
+
+  /// <summary>True when any name read of <paramref name="v"/> appears in the tree.</summary>
+  private static bool ReferencesVar(Expression e, VariableSymbol v, SemanticModel model) {
+    if (e is NameExpr && model.VariableBindings.TryGetValue(e, out var s) && ReferenceEquals(s, v))
+      return true;
+    return e switch {
+      UnaryExpr u => ReferencesVar(u.Operand, v, model),
+      BinaryExpr b => ReferencesVar(b.Left, v, model) || ReferencesVar(b.Right, v, model),
+      CallOrIndexExpr c => c.Arguments.Any(a => ReferencesVar(a, v, model)),
+      MemberExpr m => ReferencesVar(m.Target, v, model),
+      ByValArgExpr bv => ReferencesVar(bv.Value, v, model),
+      _ => false,
+    };
+  }
+
+  /// <summary>True when any statement assigns or incr/decrs <paramref name="v"/> (recursively).</summary>
+  private static bool IsModifiedIn(IEnumerable<Statement> stmts, VariableSymbol v, SemanticModel model) {
+    bool Writes(Expression t) => t is NameExpr && model.VariableBindings.TryGetValue(t, out var s) && ReferenceEquals(s, v);
+    foreach (var st in stmts)
+      switch (st) {
+        case AssignStmt a when Writes(a.Target): return true;
+        case IncrDecrStmt id when Writes(id.Target): return true;
+        case IfStmt iff when IsModifiedIn(iff.Then, v, model)
+            || iff.ElseIfs.Any(e => IsModifiedIn(e.Body, v, model))
+            || (iff.Else != null && IsModifiedIn(iff.Else, v, model)): return true;
+        case SelectStmt sel when sel.Arms.Any(arm => IsModifiedIn(arm.Body, v, model)): return true;
+        default: break;
+      }
+    return false;
   }
 
   /// <summary>
