@@ -32,6 +32,8 @@ public enum TokenKind {
   Greater,
   LessEquals,
   GreaterEquals,
+  /// <summary>PB 3.6 lambda arrow <c>=&gt;</c>, lexed distinctly from <c>&gt;=</c> (older dialects keep the historical <c>=&gt;</c>-as-<c>&gt;=</c> tolerance).</summary>
+  FatArrow,
   NotEquals,
   LParen,
   RParen,

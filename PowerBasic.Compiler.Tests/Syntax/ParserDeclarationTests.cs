@@ -72,11 +72,19 @@ public sealed class ParserDeclarationTests {
   }
 
   [Test]
-  public void Parse_GivenParenthesisedComparison_WhenParsedAsPb36_ThenNotALambda() {
-    // a single parenthesised value followed by '=>' is the '>=' comparison, not a
-    // lambda - the concise form needs an unambiguous (empty or multi-arg) list.
-    var value = ((AssignStmt)Parse("x = (a) >= b", Dialect.Pb36).Statements[0]).Value;
+  public void Parse_GivenBareSingleParamLambda_WhenParsedAsPb36_ThenLambda() {
+    // 'x => expr' is a lambda: the '=>' arrow is its own token, distinct from '>='.
+    var value = ((AssignStmt)Parse("y = x => x * 2", Dialect.Pb36).Statements[0]).Value;
+    Assert.That(value, Is.InstanceOf<LambdaExpr>());
+    Assert.That(((LambdaExpr)value).Parameters[0].Name, Is.EqualTo("x"));
+  }
+
+  [Test]
+  public void Parse_GivenGreaterEqual_WhenParsedAsPb36_ThenComparisonNotLambda() {
+    // '>=' is the comparison operator, never a lambda arrow - the two tokens differ.
+    var value = ((AssignStmt)Parse("y = x >= x * 2", Dialect.Pb36).Statements[0]).Value;
     Assert.That(value, Is.InstanceOf<BinaryExpr>());
+    Assert.That(((BinaryExpr)value).Op, Is.EqualTo(BinaryOp.GreaterEqual));
   }
 
   [Test]

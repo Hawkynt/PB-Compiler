@@ -347,6 +347,15 @@ public sealed partial class Parser {
     if (this.IsKeyword(0, "FUNCTION") && this.Peek().Kind == TokenKind.LParen)
       return this.ParseLambda();
 
+    // PB 3.6 bare single-parameter lambda: x => expr. The '=>' arrow is its own token
+    // (distinct from the '>=' comparison), so this is unambiguous.
+    if (this.Current.Kind == TokenKind.Identifier && this.Peek().Kind == TokenKind.FatArrow) {
+      this.Require(LanguageFeature.Lambdas);
+      var p = this.Advance();
+      this.Advance(); // '=>'
+      return new LambdaExpr(p.Position, [new Parameter(p.Position, p.Text, p.Suffix, null, false, false, false)], null, this.ParseExpression());
+    }
+
     var token = this.Advance();
     Expression expr = this.Current.Kind == TokenKind.LParen
       ? new CallOrIndexExpr(token.Position, token.Text, token.Suffix, this.ParseArgumentList())
@@ -376,8 +385,7 @@ public sealed partial class Parser {
     var pos = this.Advance().Position; // FUNCTION
     var parameters = this.ParseParameterList();
     var returnType = this.TryMatchKeyword("AS") ? this.ParseTypeName() : null;
-    // the arrow '=>' lexes as GreaterEquals (PB tolerates => for >=)
-    if (this.Current.Kind != TokenKind.GreaterEquals)
+    if (this.Current.Kind != TokenKind.FatArrow)
       throw this.Error("expected '=>' in lambda expression");
     this.Advance();
     return new LambdaExpr(pos, parameters, returnType, this.ParseExpression());
@@ -392,24 +400,22 @@ public sealed partial class Parser {
     this.Require(LanguageFeature.Lambdas);
     var pos = this.Current.Position;
     var parameters = this.ParseParameterList();
-    if (this.Current.Kind != TokenKind.GreaterEquals) // '=>' lexes as GreaterEquals
+    if (this.Current.Kind != TokenKind.FatArrow)
       throw this.Error("expected '=>' in lambda expression");
     this.Advance();
     return new LambdaExpr(pos, parameters, null, this.ParseExpression());
   }
 
   /// <summary>
-  /// True when the '(' at the cursor opens a concise-lambda parameter list rather
-  /// than a parenthesised expression: an empty pair or one bearing a top-level
-  /// comma, immediately followed by '=>'. Both are shapes a parenthesised
-  /// expression can never take, so a single '(value) =&gt;' stays a comparison.
+  /// True when the '(' at the cursor opens a concise-lambda parameter list - a
+  /// balanced parenthesis group immediately followed by the '=>' arrow. The arrow is
+  /// its own token (distinct from '>='), so this never collides with a parenthesised
+  /// comparison.
   /// </summary>
   private bool IsConciseLambdaAhead() {
     if (!DialectFacts.IsAvailable(LanguageFeature.Lambdas, this._dialect))
       return false;
     var depth = 0;
-    var sawTopLevelComma = false;
-    var sawInnerToken = false;
     for (var i = 0; ; ++i) {
       switch (this.Peek(i).Kind) {
         case TokenKind.LParen:
@@ -417,18 +423,10 @@ public sealed partial class Parser {
           break;
         case TokenKind.RParen:
           if (--depth == 0)
-            return this.Peek(i + 1).Kind == TokenKind.GreaterEquals && (!sawInnerToken || sawTopLevelComma);
-          sawInnerToken = true;
-          break;
-        case TokenKind.Comma when depth == 1:
-          sawTopLevelComma = true;
-          sawInnerToken = true;
+            return this.Peek(i + 1).Kind == TokenKind.FatArrow;
           break;
         case TokenKind.EndOfLine or TokenKind.Colon or TokenKind.EndOfFile:
           return false;
-        default:
-          sawInnerToken = true;
-          break;
       }
     }
   }

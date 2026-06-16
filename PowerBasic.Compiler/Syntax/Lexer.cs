@@ -430,7 +430,9 @@ public sealed class Lexer {
       '}' => (TokenKind.RBrace, "}"),
       '=' => this.Current switch {
         '<' => this.AdvanceTo(TokenKind.LessEquals, "=<"),
-        '>' => this.AdvanceTo(TokenKind.GreaterEquals, "=>"),
+        // PB 3.6 lexes '=>' as a distinct lambda arrow; older dialects keep the
+        // historical tolerance of '=>' meaning '>=' (so pb35 stays byte-identical)
+        '>' => this.AdvanceTo(DialectFacts.IsAvailable(LanguageFeature.Lambdas, this._dialect) ? TokenKind.FatArrow : TokenKind.GreaterEquals, "=>"),
         _ => (TokenKind.Equals, "="),
       },
       '<' => this.LexLess(),

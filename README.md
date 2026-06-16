@@ -113,8 +113,9 @@ none of it changes the meaning of an existing `pb35` program. Full detail in
 - **Default and named parameters** — `SUB Foo(x%, y% = 10)` and `Foo(y := 5)`.
 - **Nested local SUB/FUNCTION** — defined inside another proc, with true
   stack capture of the enclosing proc's locals (lifted, captured BYREF).
-- **Lambdas and closures** — `FUNCTION(params) AS T => expr` (and a concise
-  `(a, b) => a + b` form), with parameter/result types inferred from the delegate
+- **Lambdas and closures** — `FUNCTION(params) AS T => expr`, with concise
+  `(a, b) => a + b` and single-parameter `x => 2 * x` forms (the `=>` arrow is a
+  distinct token from `>=`), and parameter/result types inferred from the delegate
   they're bound to. A lambda may **capture** the enclosing proc's locals by
   reference (a stack closure: the environment travels with the delegate value).
 - **Typed procedure pointers (delegates)** — `DIM f AS FUNCTION(types) AS type`,

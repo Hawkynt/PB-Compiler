@@ -714,6 +714,28 @@ public sealed class Pb36LanguageFeatureTests {
   }
 
   [Test]
+  public void Execute_GivenBareSingleParamLambda_WhenInferred_ThenParensOmitted() {
+    // a single-parameter lambda may drop the parentheses entirely: x => 2 * x. The
+    // '=>' arrow is a distinct token from the '>=' comparison, so it is unambiguous.
+    const string source = """
+      DECLARE FUNCTION DoDouble(BYVAL x AS LONG) AS LONG
+      DIM ptr AS DoDouble = x => 2 * x
+      PRINT ptr(21)
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 42\n"));
+  }
+
+  [Test]
+  public void Execute_GivenComparisonAfterDimInitializer_WhenPb36_ThenGreaterEqualStillCompares() {
+    // '>=' remains the comparison operator, distinct from the '=>' lambda arrow.
+    const string source = """
+      DIM a AS LONG = 7
+      IF a >= 2 * 3 THEN PRINT "yes" ELSE PRINT "no"
+      """;
+    Assert.That(Run(source), Is.EqualTo("yes\n"));
+  }
+
+  [Test]
   public void Execute_GivenCapturingLambda_WhenCalledInScope_ThenReadsOuterLocal() {
     // a stage-1 stack closure: the lambda captures the enclosing local 'bonus' by
     // reference through its environment pointer and reads it when called.
