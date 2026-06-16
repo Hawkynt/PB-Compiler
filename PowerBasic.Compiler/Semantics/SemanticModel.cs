@@ -78,9 +78,6 @@ public sealed class SemanticModel {
   /// <summary>PB 3.6 inline lambdas: each LambdaExpr mapped to the anonymous proc it was lifted to; codegen emits the lambda value as that proc's code pointer.</summary>
   public Dictionary<Expression, ProcedureSymbol> LambdaProcs { get; } = new(ReferenceEqualityComparer.Instance);
 
-  /// <summary>PB 3.6 no-paren single-parameter lambda (<c>x =&gt; expr</c>): the '&gt;='-shaped expression the binder reinterpreted as a lambda when a one-parameter delegate was expected; codegen emits the mapped lambda's value in its place.</summary>
-  public Dictionary<Expression, LambdaExpr> ConciseLambdaRewrites { get; } = new(ReferenceEqualityComparer.Instance);
-
   /// <summary>PB 3.6 typed procedure-pointer calls: a call through a FUNCTION/SUB-pointer variable, mapped to its signature (codegen coerces args to it and calls through the pointer).</summary>
   public Dictionary<Expression, ProcPtrType> ProcPtrCalls { get; } = new(ReferenceEqualityComparer.Instance);
 

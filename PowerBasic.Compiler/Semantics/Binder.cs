@@ -784,9 +784,7 @@ public sealed class Binder {
         var targetType = this.BindAssignTarget(a.Target, scope);
         var valueType = this.BindWithExpected(a.Value, targetType as ProcPtrType, scope);
         this.CheckAssignable(targetType, valueType, a.Position);
-        if (targetType is ProcPtrType pp
-            && (a.Value as LambdaExpr ?? this._model.ConciseLambdaRewrites.GetValueOrDefault(a.Value)) is { } lam
-            && this._model.LambdaProcs.TryGetValue(lam, out var lifted))
+        if (targetType is ProcPtrType pp && a.Value is LambdaExpr lam && this._model.LambdaProcs.TryGetValue(lam, out var lifted))
           this.CheckProcPtrCompatible(pp, lifted, a.Position);
         break;
       }
@@ -1591,21 +1589,6 @@ public sealed class Binder {
     var previous = this._expectedSignature;
     this._expectedSignature = expected;
     try {
-      // PB 3.6 no-paren single-parameter lambda: 'x => expr' is token-identical to the
-      // comparison 'x >= expr' (one '=>'/'>=' token), so it parses as a GreaterEqual
-      // tree. A one-parameter delegate target is the only context that disambiguates
-      // it - reinterpret it there as a lambda whose parameter is the left name and
-      // whose body is the right operand.
-      if (expected is { ParameterTypes.Count: 1 }
-          && expression is BinaryExpr { Op: BinaryOp.GreaterEqual, Left: NameExpr param } cmp) {
-        if (!this._model.ConciseLambdaRewrites.TryGetValue(cmp, out var lambda)) {
-          lambda = new(cmp.Position, [new Parameter(param.Position, param.Name, param.Suffix, null, false, false, false)], null, cmp.Right);
-          this._model.ConciseLambdaRewrites[cmp] = lambda;
-        }
-        var lambdaType = this.BindExpression(lambda, scope); // idempotent if already lifted
-        this._model.ExpressionTypes[cmp] = lambdaType;        // the original node carries the lambda's (far-pointer) type
-        return lambdaType;
-      }
       return this.BindExpression(expression, scope);
     } finally {
       this._expectedSignature = previous;

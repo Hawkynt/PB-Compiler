@@ -195,12 +195,6 @@ public sealed partial class CodeGenerator {
           this.EmitUnary(u);
         break;
 
-      case BinaryExpr b when model.ConciseLambdaRewrites.TryGetValue(b, out var conciseLambda):
-        // pb36 no-paren single-param lambda: x => expr was parsed as a '>=' tree and
-        // the binder reinterpreted it as a lambda - emit that lambda's value
-        this.EmitExpression(conciseLambda);
-        break;
-
       case BinaryExpr b:
         if (!this.TryEmitFolded(b))
           this.EmitBinary(b);

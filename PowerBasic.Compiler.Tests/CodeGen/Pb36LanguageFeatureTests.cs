@@ -712,17 +712,4 @@ public sealed class Pb36LanguageFeatureTests {
       """;
     Assert.That(Run(source), Is.EqualTo(" 42\n"));
   }
-
-  [Test]
-  public void Execute_GivenBareSingleParamLambda_WhenInferred_ThenParensOmitted() {
-    // a single-parameter lambda may drop the parentheses entirely: x => 2 * x. It
-    // parses as a '>=' tree and is reinterpreted as a lambda because a one-parameter
-    // delegate is the target.
-    const string source = """
-      DECLARE FUNCTION DoDouble(BYVAL x AS LONG) AS LONG
-      DIM ptr AS DoDouble = x => 2 * x
-      PRINT ptr(21)
-      """;
-    Assert.That(Run(source), Is.EqualTo(" 42\n"));
-  }
 }
