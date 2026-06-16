@@ -316,6 +316,11 @@ public sealed partial class CodeGenerator {
       return;
     }
 
+    // pb36 O16: a comparison of a FOR-counter range against a constant whose result is
+    // invariant over the range folds to the constant boolean
+    if (this.TryEmitRangeComparison(b))
+      return;
+
     // whole-value TYPE/UNION = / <> (PB 3.1): memcmp semantics
     if (leftType is UdtType leftUdt && rightType is UdtType) {
       // pb36 O15: a self-compare folds to its constant truth - memcmp of a

@@ -101,6 +101,67 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     }
   }
 
+  /// <summary>The proven range of <paramref name="e"/> only when it is NOT itself a constant - i.e. a genuine FOR-counter / affine-counter expression (so SCCP keeps the constant-vs-constant cases).</summary>
+  private (long Lo, long Hi)? CounterRangeOf(Expression e)
+    => this.Pb36Folder.TryFold(e) is { Integer: not null } ? null : this.IndexRangeOf(e);
+
+  /// <summary>
+  /// pb36 O16 (general branch folding): a signed 16-bit comparison of a range-known FOR
+  /// counter expression against a constant whose result is invariant over the range folds
+  /// to the constant boolean (-1/0). Fires in ordinary code (no $ERROR needed) - the value
+  /// equals what the runtime compare would produce, so output is byte-identical.
+  /// </summary>
+  private bool TryEmitRangeComparison(BinaryExpr b) {
+    if (!this.Optimize)
+      return false;
+    if (b.Op is not (BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual
+        or BinaryOp.GreaterEqual or BinaryOp.Equal or BinaryOp.NotEqual))
+      return false;
+    // both operands must be signed integers no wider than 16 bits (counter ranges are
+    // signed INTEGER); a DWORD/unsigned side would compare unsigned and break the fold
+    if (model.TypeOf(b.Left) is not ScalarType { IsFloat: false, ByteSize: <= 2, Signed: true }
+        || model.TypeOf(b.Right) is not ScalarType { IsFloat: false, ByteSize: <= 2, Signed: true })
+      return false;
+
+    (long Lo, long Hi) range;
+    long c;
+    BinaryOp op;
+    if (this.Pb36Folder.TryFold(b.Right) is { Integer: { } rc } && this.CounterRangeOf(b.Left) is { } lr) {
+      range = lr; c = rc; op = b.Op;
+    } else if (this.Pb36Folder.TryFold(b.Left) is { Integer: { } lc } && this.CounterRangeOf(b.Right) is { } rr) {
+      range = rr; c = lc; op = SwapComparison(b.Op);   // normalise to "range OP const"
+    } else
+      return false;
+
+    // a 16-bit-overflowing affine range would wrap at runtime, so the proven range is unsafe
+    if (range.Lo < short.MinValue || range.Hi > short.MaxValue)
+      return false;
+
+    if (FoldRangeCompare(range.Lo, range.Hi, op, c) is not { } verdict)
+      return false;
+    this._asm.Mov(Reg.AX, verdict ? -1 : 0);   // PB boolean: TRUE = -1, FALSE = 0
+    return true;
+  }
+
+  private static BinaryOp SwapComparison(BinaryOp op) => op switch {
+    BinaryOp.Less => BinaryOp.Greater,
+    BinaryOp.Greater => BinaryOp.Less,
+    BinaryOp.LessEqual => BinaryOp.GreaterEqual,
+    BinaryOp.GreaterEqual => BinaryOp.LessEqual,
+    _ => op, // Equal / NotEqual are symmetric
+  };
+
+  /// <summary>True/false when "v OP const" is invariant for every v in [lo,hi]; null when it varies.</summary>
+  private static bool? FoldRangeCompare(long lo, long hi, BinaryOp op, long c) => op switch {
+    BinaryOp.Less => hi < c ? true : lo >= c ? false : null,
+    BinaryOp.LessEqual => hi <= c ? true : lo > c ? false : null,
+    BinaryOp.Greater => lo > c ? true : hi <= c ? false : null,
+    BinaryOp.GreaterEqual => lo >= c ? true : hi < c ? false : null,
+    BinaryOp.Equal => lo == c && hi == c ? true : c < lo || c > hi ? false : (bool?)null,
+    BinaryOp.NotEqual => c < lo || c > hi ? true : lo == c && hi == c ? false : (bool?)null,
+    _ => null,
+  };
+
   /// <summary>
   /// Conservative allow-list: true only when no statement in <paramref name="body"/> can
   /// change <paramref name="counter"/> - so a constant From/To range holds throughout. Only
