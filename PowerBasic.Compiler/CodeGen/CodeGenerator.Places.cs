@@ -361,6 +361,32 @@ public sealed partial class CodeGenerator {
       return;
     }
 
+    // pb36 O9 string-temp reuse: a self-append `s$ = s$ + rhs` passes s$'s handle straight
+    // to StrCat - which copies both operands into the result, then frees both - and stores
+    // the result, skipping the redundant StrDup of s$ (StrCat would copy it again anyway) and
+    // the StrAssign free (StrCat already freed the old s$). rhs is a string literal or bare
+    // variable, so it is barrier-free and cannot change s$ before the concat. The resulting
+    // string value is identical, so output is byte-identical.
+    if (this.Optimize && targetType is StringType
+        && a.Target is NameExpr selfTarget
+        && model.VariableBindings.TryGetValue(selfTarget, out var selfSym)
+        && a.Value is BinaryExpr { Op: BinaryOp.Add or BinaryOp.Concat, Left: NameExpr appendLeft, Right: { } appendRhs }
+        && model.VariableBindings.TryGetValue(appendLeft, out var leftSym)
+        && ReferenceEquals(leftSym, selfSym)
+        && appendRhs is StringLiteralExpr or NameExpr
+        && model.TypeOf(appendRhs) is StringType
+        && this.TryDirectCell(selfSym) is { } selfCell) {
+      var asm = this._asm;
+      asm.Mov(Reg.AX, selfCell.WithSize(OperandSize.Word));   // left = s$'s current handle (not duplicated)
+      asm.Push(Reg.AX);
+      this.EmitExpression(appendRhs);                          // right -> a handle in AX (dup'd if a variable)
+      asm.Mov(Reg.DX, Reg.AX);
+      asm.Pop(Reg.AX);
+      asm.Call(this._rt.StrCat);                               // AX = s$ + rhs; frees old s$ and the rhs temp
+      asm.Mov(selfCell.WithSize(OperandSize.Word), Reg.AX);    // store the new handle (old already freed)
+      return;
+    }
+
     // $OPTIMIZE SPEED: v = v +/- const on a direct int16 cell is one ALU op
     if (this.OptimizeSpeed && !this.CheckOverflow && !this.CheckNumeric
         && targetType is ScalarType { IsFloat: false, ByteSize: 2 }

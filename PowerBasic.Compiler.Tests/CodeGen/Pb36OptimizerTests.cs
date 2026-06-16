@@ -488,6 +488,17 @@ public sealed class Pb36OptimizerTests {
       "a divisor whose counter range excludes zero should drop the divide-by-zero guard");
   }
 
+  [Test]
+  public void Emit_GivenStringSelfAppend_WhenPb36_ThenSmallerThanNonSelf() {
+    // s$ = s$ + x$ skips the StrDup of s$ and the StrAssign (StrCat consumes s$ directly),
+    // so it emits less code than the otherwise-identical non-self s$ = t$ + x$
+    const string selfAppend = "$OPTIMIZE SPEED\ns$ = \"a\"\nt$ = \"c\"\nx$ = \"b\"\ns$ = s$ + x$\nPRINT s$; t$\nEND";
+    const string nonSelf = "$OPTIMIZE SPEED\ns$ = \"a\"\nt$ = \"c\"\nx$ = \"b\"\ns$ = t$ + x$\nPRINT s$; t$\nEND";
+    Assert.That(Compile(selfAppend, Dialect.Pb36).Length,
+      Is.LessThan(Compile(nonSelf, Dialect.Pb36).Length),
+      "a string self-append should emit less code than the non-self concat");
+  }
+
   // 85 DB = TEST BX, BX - the divide-by-zero guard set up by EmitInt16DivideGuard
   private static int CountTestBxBx(byte[] image) {
     var count = 0;
