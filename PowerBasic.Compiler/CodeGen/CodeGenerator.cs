@@ -47,6 +47,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private Dictionary<Syntax.Ast.NameExpr, long>? _provenReads;
   private IReadOnlyDictionary<Syntax.Ast.NameExpr, VariableSymbol>? _copyReads;
   private HashSet<Statement>? _deadStatements;
+  // O23 whole-program data tree-shaking: globals nothing reachable reads, and the pure
+  // stores to them - both removed under Optimize for a self-contained main (see Pb36DeadGlobals).
+  private HashSet<VariableSymbol>? _deadGlobals;
+  private HashSet<Statement>? _deadGlobalStores;
   private Dictionary<VariableSymbol, ConstantValue>? _ipcp;
   private (VariableSymbol Symbol, Reg Reg)? _registerCounter;
   private (VariableSymbol Symbol, Reg Reg)? _registerAccumulator;
@@ -448,6 +452,18 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       asm.Mov(Mem.Word(asm.Lbl("rt_strmaxlen")), usable);
     }
 
+    // pb36 O23 whole-program data tree-shaking: solve which module globals nothing reachable
+    // reads (dead), the pure stores to them, and - cascading through CODEPTR - which procedures
+    // a now-dead global pointer kept alive. Self-contained main only (a unit or a foreign-linked
+    // main could export/observe a global), so the pb35/unoptimized golden output is untouched.
+    var dataShake = this.Optimize && !this._isUnit && !this._allowExternalCalls
+      ? Pb36DeadGlobals.Analyze(model, this.IsFullyOwned, this.NumericCheckingPossible())
+      : null;
+    if (dataShake != null) {
+      this._deadGlobals = dataShake.DeadGlobals;
+      this._deadGlobalStores = dataShake.DeadStores;
+    }
+
     this.PrepareCse(model.MainBody);
     this.PrepareSccp(model.MainBody);
     this.BeginFrame(skipZeroing: this.Optimize && !ContainsErrorHandling(model.MainBody));
@@ -467,7 +483,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // unreachable code. Only fully-owned procedures may be dropped: a nested procedure is
     // private to its container, and in a self-contained main every procedure is ours; a
     // procedure that a linked foreign object could call by name is kept regardless.
-    var liveProcs = this.Optimize ? Pb36Reachability.LiveProcedures(model, model.MainBody) : null;
+    // O23 feeds its cascaded live set back here: a procedure kept alive only by a CODEPTR in a
+    // now-dead global's store is dropped too. Without data shaking, plain reachability applies.
+    var liveProcs = dataShake?.LiveProcedures
+      ?? (this.Optimize ? Pb36Reachability.LiveProcedures(model, model.MainBody) : null);
     foreach (var proc in model.ProcedureList)
       if (!proc.IsExternal && (liveProcs is null || liveProcs.Contains(proc) || !this.IsFullyOwned(proc)))
         this.EmitProcedure(proc);
@@ -685,6 +704,20 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// </summary>
   private bool IsFullyOwned(ProcedureSymbol proc) => proc.IsNested || (!this._isUnit && !this._allowExternalCalls);
 
+  /// <summary>
+  /// O23 soundness: true when $ERROR NUMERIC/OVERFLOW/BOUNDS checking is active initially or any
+  /// <c>$ERROR ... ON</c> (or <c>ALL</c>) metastatement could turn it on - the data tree-shaker
+  /// must then treat a trap-capable store RHS (arithmetic, an array read) as side-effecting and
+  /// keep the global, lest it drop a store whose evaluation was meant to raise Error 6/9.
+  /// </summary>
+  private bool NumericCheckingPossible()
+    => this.CheckNumeric || this.CheckOverflow || this.CheckBounds
+       || model.MetaStatements.Any(m =>
+            m.Command.Equals("ERROR", StringComparison.OrdinalIgnoreCase)
+            && m.Arguments.Count >= 2
+            && m.Arguments[0].Text.ToUpperInvariant() is "NUMERIC" or "OVERFLOW" or "BOUNDS" or "ALL"
+            && m.Arguments[^1].Text.Equals("ON", StringComparison.OrdinalIgnoreCase));
+
   private Label ProcLabelOf(ProcedureSymbol proc) {
     if (!this._procLabels.TryGetValue(proc, out var label))
       // DECLAREd-but-undefined procedures resolve at link time by name; overloaded
@@ -725,6 +758,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this.EmitLiteralPool(asm);
 
     foreach (var (symbol, label) in this._variableSlots) {
+      // pb36 O23: a dead global's data slot carries no live value - emit no bytes for it.
+      // (its only stores were skipped, so SlotOf was normally never even called for it.)
+      if (this._deadGlobals != null && this._deadGlobals.Contains(symbol))
+        continue;
       asm.Align(2);
       asm.MarkLabel(label);
       var bytes = symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual
@@ -796,6 +833,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private void EmitStatement(Statement statement) {
     // pb36 O2: a dead store (pure RHS, value never really read) is not emitted
     if (this._deadStatements != null && this._deadStatements.Contains(statement))
+      return;
+    // pb36 O23: a pure store to a dead global (its value is never read anywhere) is not emitted
+    if (this._deadGlobalStores != null && this._deadGlobalStores.Contains(statement))
       return;
     if (!this._trackResume || statement is LabelStmt or DataStmt or MetaStmt or EquateStmt or DefTypeStmt) {
       this.EmitStatementCore(statement);

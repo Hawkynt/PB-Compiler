@@ -582,7 +582,7 @@ public sealed class Pb36OptimizerTests {
   public void Emit_GivenModularMultiplyByThree_WhenPb36Speed_ThenShiftAddReplacesImul() {
     // x% is made opaque (BYREF call) so SCCP cannot fold it - this pins the
     // modular shift-add path, not whole-expression constant folding
-    const string source = "$OPTIMIZE SPEED\nx% = 11\nT x%\ny% = x% * 3\nEND" + _TOUCH_END;
+    const string source = "$OPTIMIZE SPEED\nx% = 11\nT x%\ny% = x% * 3\nT y%\nEND" + _TOUCH_END;
     var pb36 = Compile(_TOUCH + source, Dialect.Pb36);
     Assert.That(CountImulBx(pb36), Is.Zero, "x% * 3 under SPEED should be a shift-add chain, no IMUL BX");
   }
@@ -591,7 +591,7 @@ public sealed class Pb36OptimizerTests {
   public void Emit_GivenModularMultiplyByThirteen_WhenPb36Speed_ThenKeepsCompactImul() {
     // 13 = 1101b: three set bits, not a contiguous run - no cheap shift chain,
     // so the compact IMUL BX is kept
-    const string source = "$OPTIMIZE SPEED\nx% = 11\nT x%\ny% = x% * 13\nEND" + _TOUCH_END;
+    const string source = "$OPTIMIZE SPEED\nx% = 11\nT x%\ny% = x% * 13\nT y%\nEND" + _TOUCH_END;
     var pb36 = Compile(_TOUCH + source, Dialect.Pb36);
     Assert.That(CountImulBx(pb36), Is.EqualTo(1), "x% * 13 has no two-term decomposition, keep IMUL BX");
   }
@@ -600,7 +600,7 @@ public sealed class Pb36OptimizerTests {
   public void Emit_GivenModularMultiplyByThree_WhenPb36Default_ThenKeepsImul() {
     // the shift chains are a SPEED trade (a few bytes for the cycles); SIZE/default
     // keep the 2-byte IMUL
-    const string source = "x% = 11\nT x%\ny% = x% * 3\nEND" + _TOUCH_END;
+    const string source = "x% = 11\nT x%\ny% = x% * 3\nT y%\nEND" + _TOUCH_END;
     var pb36 = Compile(_TOUCH + source, Dialect.Pb36);
     Assert.That(CountImulBx(pb36), Is.EqualTo(1), "without $OPTIMIZE SPEED the compact IMUL BX is kept");
   }
@@ -609,8 +609,8 @@ public sealed class Pb36OptimizerTests {
   public void Emit_GivenModularAddConstant_WhenPb36_ThenFewerBytesThanVariableAdd() {
     // y% = x% + 7 folds to one immediate ADD; y% = x% + z% must load and combine
     // a second operand, so the constant form is strictly smaller (x%/z% opaque)
-    var constAdd = Compile(_TOUCH + "x% = 100\nT x%\ny% = x% + 7\nEND" + _TOUCH_END, Dialect.Pb36);
-    var varAdd = Compile(_TOUCH + "x% = 100\nz% = 7\nT x%\nT z%\ny% = x% + z%\nEND" + _TOUCH_END, Dialect.Pb36);
+    var constAdd = Compile(_TOUCH + "x% = 100\nT x%\ny% = x% + 7\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
+    var varAdd = Compile(_TOUCH + "x% = 100\nz% = 7\nT x%\nT z%\ny% = x% + z%\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
     Assert.That(constAdd.Length, Is.LessThan(varAdd.Length),
       "v% + const should fold to one immediate ALU op, smaller than a two-operand add");
   }
@@ -633,8 +633,8 @@ public sealed class Pb36OptimizerTests {
   [Test]
   public void Emit_GivenBitwiseMaskConstant_WhenPb36_ThenFoldsToImmediateNoRegisterLoad() {
     // y% = x% AND 15 folds the mask into AND AX,imm; the variable form must load BX
-    var constMask = Compile(_TOUCH + "x% = 100\nT x%\ny% = x% AND 15\nEND" + _TOUCH_END, Dialect.Pb36);
-    var varMask = Compile(_TOUCH + "x% = 100\nw% = 15\nT x%\nT w%\ny% = x% AND w%\nEND" + _TOUCH_END, Dialect.Pb36);
+    var constMask = Compile(_TOUCH + "x% = 100\nT x%\ny% = x% AND 15\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
+    var varMask = Compile(_TOUCH + "x% = 100\nw% = 15\nT x%\nT w%\ny% = x% AND w%\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
     Assert.Multiple(() => {
       Assert.That(CountMovBxAx(constMask), Is.Zero, "x% AND 15 should fold to AND AX,imm with no MOV BX,AX");
       Assert.That(CountMovBxAx(varMask), Is.GreaterThanOrEqualTo(1), "x% AND w% must load the second operand into BX");
@@ -644,7 +644,7 @@ public sealed class Pb36OptimizerTests {
   [Test]
   public void Emit_GivenCompareConstant_WhenPb36_ThenFoldsToImmediate() {
     // y% = (x% = 5) compares against an immediate, no constant register load
-    var pb36 = Compile("x% = 100\ny% = (x% = 5)\nEND", Dialect.Pb36);
+    var pb36 = Compile(_TOUCH + "x% = 100\nT x%\ny% = (x% = 5)\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
     Assert.That(CountMovBxAx(pb36), Is.Zero, "comparison against a constant should fold to CMP AX,imm");
   }
 
@@ -660,8 +660,8 @@ public sealed class Pb36OptimizerTests {
   public void Emit_GivenLongBitwiseConstant_WhenPb36_ThenFoldsToImmediatePairNoRegisterLoad() {
     // b& = a& AND 255 folds into AND AX,imm / AND DX,imm; the variable form must
     // load the high word into CX
-    var constMask = Compile(_TOUCHL + "a& = &H1234\nTL a&\nb& = a& AND 255\nEND" + _TOUCHL_END, Dialect.Pb36);
-    var varMask = Compile(_TOUCHL + "a& = &H1234\nm& = 255\nTL a&\nTL m&\nb& = a& AND m&\nEND" + _TOUCHL_END, Dialect.Pb36);
+    var constMask = Compile(_TOUCHL + "a& = &H1234\nTL a&\nb& = a& AND 255\nTL b&\nEND" + _TOUCHL_END, Dialect.Pb36);
+    var varMask = Compile(_TOUCHL + "a& = &H1234\nm& = 255\nTL a&\nTL m&\nb& = a& AND m&\nTL b&\nEND" + _TOUCHL_END, Dialect.Pb36);
     Assert.Multiple(() => {
       Assert.That(CountMovCxDx(constMask), Is.Zero, "a& AND 255 should fold to immediate pair ops, no MOV CX,DX");
       Assert.That(CountMovCxDx(varMask), Is.GreaterThanOrEqualTo(1), "a& AND m& must load the second operand's high word into CX");
@@ -672,8 +672,8 @@ public sealed class Pb36OptimizerTests {
   public void Emit_GivenLongEqualsConstant_WhenPb36_ThenFoldsWithoutRegisterLoad() {
     // y% = (p& = 123456) subtracts the constant halves in place; the variable
     // form must load the comparand into CX
-    var constEq = Compile(_TOUCHL + "p& = 7\nTL p&\ny% = (p& = 123456)\nEND" + _TOUCHL_END, Dialect.Pb36);
-    var varEq = Compile(_TOUCHL + "p& = 7\nq& = 123456\nTL p&\nTL q&\ny% = (p& = q&)\nEND" + _TOUCHL_END, Dialect.Pb36);
+    var constEq = Compile(_TOUCHL + _TOUCH + "p& = 7\nTL p&\ny% = (p& = 123456)\nT y%\nEND" + _TOUCHL_END + _TOUCH_END, Dialect.Pb36);
+    var varEq = Compile(_TOUCHL + _TOUCH + "p& = 7\nq& = 123456\nTL p&\nTL q&\ny% = (p& = q&)\nT y%\nEND" + _TOUCHL_END + _TOUCH_END, Dialect.Pb36);
     Assert.Multiple(() => {
       Assert.That(CountMovCxDx(constEq), Is.Zero, "p& = const should fold the comparand, no MOV CX,DX");
       Assert.That(CountMovCxDx(varEq), Is.GreaterThanOrEqualTo(1), "p& = q& must load the comparand's high word");
@@ -684,14 +684,14 @@ public sealed class Pb36OptimizerTests {
   public void Emit_GivenModularIncrementByOne_WhenPb36_ThenUsesIncNotAddImmediate() {
     // y% = x% + 1 folds to INC AX (one byte); y% = x% + 5 needs ADD AX,imm (three)
     // x% is opaque (BYREF call) so SCCP cannot fold the whole expression away
-    var inc = Compile(_TOUCH + "x% = 100\nT x%\ny% = x% + 1\nEND" + _TOUCH_END, Dialect.Pb36);
-    var add = Compile(_TOUCH + "x% = 100\nT x%\ny% = x% + 5\nEND" + _TOUCH_END, Dialect.Pb36);
+    var inc = Compile(_TOUCH + "x% = 100\nT x%\ny% = x% + 1\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
+    var add = Compile(_TOUCH + "x% = 100\nT x%\ny% = x% + 5\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
     Assert.That(inc.Length, Is.LessThan(add.Length), "+1 should be INC AX, smaller than ADD AX,imm");
   }
 
   [Test]
   public void Emit_GivenCompareAgainstZero_WhenPb36_ThenUsesOrIdiomNotCmpImmediate() {
-    var pb36 = Compile(_TOUCH + "x% = 7\nT x%\ny% = (x% = 0)\nEND" + _TOUCH_END, Dialect.Pb36);
+    var pb36 = Compile(_TOUCH + "x% = 7\nT x%\ny% = (x% = 0)\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
     var hasOrAxAx = false;
     var hasCmpAxZero = false;
     for (var i = 0; i + 2 < pb36.Length; ++i) {
@@ -835,7 +835,7 @@ public sealed class Pb36OptimizerTests {
   public void Emit_GivenConstantDivide_WhenPb36Speed_ThenReciprocalMultiplyReplacesIdiv() {
     // x% \ 10 by a non-power-of-two constant becomes a verified MUL+shift; x% is
     // opaque (BYREF call) so SCCP cannot fold the whole division away
-    var speed = Compile("$OPTIMIZE SPEED\n" + _TOUCH + "x% = 7\nT x%\ny% = x% \\ 10\nz% = x% MOD 10\nEND" + _TOUCH_END, Dialect.Pb36);
+    var speed = Compile("$OPTIMIZE SPEED\n" + _TOUCH + "x% = 7\nT x%\ny% = x% \\ 10\nz% = x% MOD 10\nT y%\nT z%\nEND" + _TOUCH_END, Dialect.Pb36);
     Assert.That(CountIdivBx(speed), Is.Zero, "x% \\ 10 under SPEED should be a reciprocal multiply, no IDIV BX");
   }
 
