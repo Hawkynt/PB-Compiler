@@ -462,8 +462,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this.EndFrame();
     this._trackResume = false;
 
+    // pb36 O22 dead procedure elimination: under optimization, a whole program only
+    // needs the procedures something references (directly, via CODEPTR, or as a lambda);
+    // the rest are unreachable code. A $COMPILE UNIT must keep exporting everything.
+    var liveProcs = this.Optimize && !this._isUnit ? Pb36DeadProc.Live(model) : null;
     foreach (var proc in model.ProcedureList)
-      if (!proc.IsExternal)
+      if (!proc.IsExternal && (liveProcs is null || liveProcs.Contains(proc)))
         this.EmitProcedure(proc);
 
     this.EmitFarThunks();
