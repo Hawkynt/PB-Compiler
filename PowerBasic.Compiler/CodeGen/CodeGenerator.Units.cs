@@ -27,6 +27,17 @@ public sealed partial class CodeGenerator {
     this._scratch = asm.DefineLabel("cg_scratch");
     this._rt.BindExternal(asm);
 
+    // a $COMPILE UNIT/LIB still optimizes its procedures' bodies (flow/data/statements),
+    // but must NOT change calling semantics or drop any procedure - they are exported for
+    // separate compilation. So only the intra-procedure passes run here: dead-statement
+    // pruning and float demotion. The whole-program passes are deliberately excluded -
+    // IPCP needs every call site (external callers are invisible to a unit), register
+    // parameter passing changes the ABI, and dead-procedure elimination removes exports.
+    if (this.Optimize) {
+      Pb36Pruner.Prune(model);
+      Pb36FloatDemotion.Apply(model);
+    }
+
     foreach (var statement in model.MainBody)
       switch (statement) {
         case MetaStmt or EquateStmt or DefTypeStmt or LabelStmt:

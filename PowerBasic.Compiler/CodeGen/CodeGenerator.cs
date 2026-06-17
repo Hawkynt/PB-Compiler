@@ -462,12 +462,14 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this.EndFrame();
     this._trackResume = false;
 
-    // pb36 O22 dead procedure elimination: under optimization, a whole program only
-    // needs the procedures something references (directly, via CODEPTR, or as a lambda);
-    // the rest are unreachable code. A $COMPILE UNIT must keep exporting everything.
-    var liveProcs = this.Optimize && !this._isUnit ? Pb36DeadProc.Live(model) : null;
+    // pb36 O22 dead procedure elimination: under optimization, only emit the procedures
+    // something references (directly, via CODEPTR, or as a lambda) - the rest are
+    // unreachable code. Only fully-owned procedures may be dropped: a nested procedure is
+    // private to its container, and in a self-contained main every procedure is ours; a
+    // procedure that a linked foreign object could call by name is kept regardless.
+    var liveProcs = this.Optimize ? Pb36DeadProc.Live(model) : null;
     foreach (var proc in model.ProcedureList)
-      if (!proc.IsExternal && (liveProcs is null || liveProcs.Contains(proc)))
+      if (!proc.IsExternal && (liveProcs is null || liveProcs.Contains(proc) || !this.IsFullyOwned(proc)))
         this.EmitProcedure(proc);
 
     this.EmitFarThunks();
@@ -673,6 +675,15 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       this._userLabels[name] = label = this._asm.DefineLabel($"l_{name}");
     return label;
   }
+
+  /// <summary>
+  /// True when the compiler sees every caller of <paramref name="proc"/> and nothing
+  /// external can reach it, so it may be freely rewritten or dropped. A nested procedure
+  /// is always private to its container; in a self-contained main every procedure is ours.
+  /// A $COMPILE UNIT's top-level procedures are exported, and a main linked with foreign
+  /// objects could be called by name from them - those are not fully owned.
+  /// </summary>
+  private bool IsFullyOwned(ProcedureSymbol proc) => proc.IsNested || (!this._isUnit && !this._allowExternalCalls);
 
   private Label ProcLabelOf(ProcedureSymbol proc) {
     if (!this._procLabels.TryGetValue(proc, out var label))
