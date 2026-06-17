@@ -461,7 +461,13 @@ public sealed partial class CodeGenerator {
   private void EmitOnError(OnErrorStmt oe) {
     var asm = this._asm;
     if (oe.ResumeNext) {
-      this.Unsupported(oe.Position, "ON ERROR RESUME NEXT");
+      // Inline mode: arm the built-in RESUME NEXT stub as the handler. A fault
+      // restores the armed frame (rt_onerr_sp/bp) and jumps there, which hops to
+      // the latched successor statement - leaving ERR set until the next fault.
+      asm.Mov(Mem.Word(asm.Lbl("rt_onerr")), Imm.OffsetOf(this._rt.ResumeNextHandler));
+      asm.Mov(Mem.Word(asm.Lbl("rt_onerr_bp")), Reg.BP);
+      asm.Mov(Mem.Word(asm.Lbl("rt_onerr_sp")), Reg.SP);
+      asm.Mov(Mem.Word(asm.Lbl("rt_err")), (Imm)0);
       return;
     }
     if (oe.Target is null or "0") {

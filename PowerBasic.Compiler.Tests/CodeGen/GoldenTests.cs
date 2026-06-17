@@ -40,6 +40,7 @@ public sealed class GoldenTests {
   [TestCase("INTREG")]
   [TestCase("DATAREAD")]
   [TestCase("ONERR")]
+  [TestCase("ONERRNXT")]
   [TestCase("RANDFILE")]
   [TestCase("PRTUSING")]
   [TestCase("INPUTS")]

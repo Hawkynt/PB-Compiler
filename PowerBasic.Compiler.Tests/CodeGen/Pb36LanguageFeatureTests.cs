@@ -799,6 +799,54 @@ public sealed class Pb36LanguageFeatureTests {
   }
 
   [Test]
+  public void Execute_GivenEscapingCapturingLambda_WhenCalledAfterProducerExits_ThenHeapEnvSurvives() {
+    // stage-2 ESCAPING closure: MakeAdder builds a capturing lambda and RETURNS it,
+    // so the closure outlives MakeAdder's (dead) frame. Its environment is a heap
+    // snapshot of 'n' taken at creation; calling the returned closure later still
+    // reads the captured value through the heap env.
+    const string source = """
+      DECLARE FUNCTION Adder(BYVAL x AS LONG) AS LONG
+      DECLARE FUNCTION MakeAdder(BYVAL n AS LONG) AS Adder
+      DECLARE SUB Demo()
+      Demo
+      FUNCTION MakeAdder(BYVAL n AS LONG) AS Adder
+        MakeAdder = FUNCTION(BYVAL x AS LONG) AS LONG => x + n
+      END FUNCTION
+      SUB Demo()
+        DIM add10 AS Adder
+        add10 = MakeAdder(10)
+        PRINT add10(5)
+      END SUB
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 15\n"));
+  }
+
+  [Test]
+  public void Execute_GivenTwoEscapingClosures_WhenCalledLater_ThenEachKeepsItsOwnCapture() {
+    // two escaping closures from the same producer get independent heap snapshots:
+    // each remembers the 'n' it was created with, even after both frames are gone.
+    const string source = """
+      DECLARE FUNCTION Adder(BYVAL x AS LONG) AS LONG
+      DECLARE FUNCTION MakeAdder(BYVAL n AS LONG) AS Adder
+      DECLARE SUB Demo()
+      Demo
+      FUNCTION MakeAdder(BYVAL n AS LONG) AS Adder
+        MakeAdder = FUNCTION(BYVAL x AS LONG) AS LONG => x + n
+      END FUNCTION
+      SUB Demo()
+        DIM a AS Adder
+        DIM b AS Adder
+        a = MakeAdder(100)
+        b = MakeAdder(200)
+        PRINT a(1)
+        PRINT b(1)
+        PRINT a(1)
+      END SUB
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 101\n 201\n 101\n"));
+  }
+
+  [Test]
   public void Execute_GivenCollectionLiteralRangeInDim_WhenRun_ThenArrayFilled() {
     // [lo..hi] is a bracketed collection/range literal, equivalent to {lo..hi}.
     const string source = """

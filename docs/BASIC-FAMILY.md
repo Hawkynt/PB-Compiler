@@ -127,10 +127,10 @@ differential battery before the dialect can be claimed:
 | `qb20` | `QB.EXE` 2.00 + `LINK` | `tests/diff/qb20/oracle.conf`: like qb30 with `BCOM20.LIB` | **ACTIVE** - `--dialect qb20`; same battery byte-identical - QB 1.0 through 3.0 share one observable runtime model |
 | `tb11` | `TB.EXE` 1.1 | `tests/diff/tb11/oracle.conf`: AUTOTYPE menu drive (Options→EXE file, Load, Compile, Quit), fully headless | **ACTIVE** - `--dialect tb11` implemented; 3 batteries byte-identical (formatting/typing, strings/math, control flow) |
 | `tb10` | `TB.EXE` 1.0 | same AUTOTYPE drive as tb11 | **ACTIVE** - `--dialect tb10`; the tb11 battery runs byte-identical against the genuine TB 1.0 (1.1 was a bugfix release; no observable language delta in the covered surface) |
-| `qbasic` | `QBASIC.EXE` | `QBASIC /RUN T.BAS` | not yet fetched (DOS 5+ media) |
+| `qbasic` | `QBASIC.EXE` 1.1 | `tests/diff/qbasic/oracle.interpreter`: `QBASIC /RUN T.BAS` (interpreter oracle) | **ACTIVE** - `--dialect qbasic` (reuses the QB 4.5 IEEE runtime); `tools/qbasic-toolchain.tar.enc` staged; `qbasic/DIFF01` byte-identical |
 | `pds71` | `BC.EXE` 7.10 + `LINK` 5.10 | `tests/diff/pds71/oracle.conf`: `BC /O` + `LINK ...,BCL71ENR.LIB;` against the full install in `tools/pds71/bc7/` | **ACTIVE** - `--dialect pds71`; the qb45 battery runs byte-identical; one verified runtime delta vs QB 4.5: DOUBLE display went back to 15 significant digits (`1D15` shows `1D+15`, QB shows `1000000000000000`) |
 | `pds70` | `BC.EXE` 7.00 + `LINK` | `tests/diff/pds70/oracle.conf`: `BC /O` + `BCL70ENR.LIB` from the SETUP /BATCH install (`tools/pds70/bc7/`, binaries in `BIN`, not `BINB`) | **ACTIVE** - `--dialect pds70`; the pds71 battery runs byte-identical (7.0 and 7.1 share the runtime model incl. the 15-digit DOUBLE). The earlier "hang": the 7.0 disks ship SZDD-compressed files under PLAIN names (BC.EXE was really BC.EX$) - UNPACK.EXE fixes them |
-| `gw` | `GWBASIC.EXE` | stdin-scripted interpreter session | not yet fetched |
+| `gw` | `GWBASIC.EXE` | `tests/diff/gw/oracle.interpreter` (interpreter oracle) | **ACTIVE** - `--dialect gw` (MBF floats, line numbers); `gw/DIFF01` byte-identical. `basica` likewise ACTIVE (language-identical) |
 
 `scripts/run-diff-tests.sh` discovers `tests/diff/<dialect>/` batteries
 generically: PB-family oracles activate on `tools/<dialect>/PBC.EXE`, every

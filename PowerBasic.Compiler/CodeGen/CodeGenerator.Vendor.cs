@@ -143,8 +143,10 @@ public sealed partial class CodeGenerator {
       this.Unsupported(at);
       return false;
     }
+    // numeric arrays are routed to the numeric engine before this point; this
+    // string header only ever sees string arrays (defensive guard otherwise)
     if (arrayType.Element is not StringType) {
-      this.Unsupported(at.Position, "ARRAY SORT/SCAN on non-string arrays (comes with a later wave)");
+      this.Unsupported(at.Position, $"ARRAY SORT/SCAN on {arrayType.Element} arrays");
       return false;
     }
 
@@ -202,10 +204,109 @@ public sealed partial class CodeGenerator {
     asm.Call(this._rt.StrFree);
   }
 
+  /// <summary>
+  /// Numeric (non-string) element kinds: (kind code 0 int / 2 float, copy size,
+  /// x87 load width). Unsigned integers load through the next wider signed FILD
+  /// so they stay positive; QUAD is a signed 64-bit FILD; floats load natively.
+  /// Returns null for types ARRAY SORT/SCAN cannot handle.
+  /// </summary>
+  private static (int Kind, int Size, int Load)? NumericArrayElement(PbType element) => element switch {
+    ScalarType { IsFloat: false, Signed: true } s => (0, s.ByteSize, s.ByteSize),
+    ScalarType { IsFloat: false, Signed: false, ByteSize: var b } => (0, b, b == 4 ? 8 : b == 2 ? 4 : 2),
+    ScalarType { IsFloat: true } s => (2, s.ByteSize, s.ByteSize),
+    BcdType => (2, 10, 10),
+    _ => null,
+  };
+
+  /// <summary>
+  /// Fills the numeric ARRAY SORT/SCAN header: rt_arpb descriptor (+0), start
+  /// (+2) and count (+4) plus rt_num_kind/size/load and the optional TAGARRAY
+  /// descriptor (rt_num_tagdesc/tagsize). Returns false (rejecting) for element
+  /// kinds ARRAY SORT/SCAN cannot handle, FROM/TO ranges (string-only) or a tag
+  /// array whose element type is itself unsupported.
+  /// </summary>
+  private bool TryEmitNumericArrayHeader(CallOrIndexExpr array, ArrayType arrayType, VariableSymbol symbol, Expression? count, Expression? fromPos, CallOrIndexExpr? tagArray, Statement at) {
+    var asm = this._asm;
+    if (NumericArrayElement(arrayType.Element) is not var (kind, size, load) || kind == -1) {
+      this.Unsupported(at.Position, $"ARRAY SORT/SCAN on {arrayType.Element} arrays");
+      return false;
+    }
+    if (fromPos != null) {
+      this.Unsupported(at.Position, "FROM/TO range on a non-string ARRAY SORT/SCAN");
+      return false;
+    }
+
+    var arpb = asm.Lbl("rt_arpb");
+    this.EmitArrayDescriptorPush(array, symbol, arrayType);
+    asm.Pop(Reg.AX);
+    asm.Mov(Mem.Word(arpb), Reg.AX);
+
+    asm.Mov(Mem.Byte(asm.Lbl("rt_num_kind")), (Imm)kind);
+    asm.Mov(Mem.Byte(asm.Lbl("rt_num_size")), (Imm)size);
+    asm.Mov(Mem.Byte(asm.Lbl("rt_num_load")), (Imm)load);
+
+    // start index (defaults to the array's lower bound)
+    if (array.Arguments.Count == 1)
+      this.EmitInt16Argument(array.Arguments[0]);
+    else {
+      asm.Mov(Reg.BX, Mem.Word(arpb));
+      asm.Mov(Reg.AX, Mem.Word(Reg.BX, 8));
+    }
+    asm.Mov(Mem.Word(arpb, 2), Reg.AX);
+
+    // count (defaults to lower + extent - start)
+    if (count != null)
+      this.EmitInt16Argument(count);
+    else {
+      asm.Mov(Reg.BX, Mem.Word(arpb));
+      asm.Mov(Reg.AX, Mem.Word(Reg.BX, 8));
+      asm.Add(Reg.AX, Mem.Word(Reg.BX, 10));
+      asm.Sub(Reg.AX, Mem.Word(arpb, 2));
+    }
+    asm.Mov(Mem.Word(arpb, 4), Reg.AX);
+
+    // TAGARRAY: stash its descriptor pointer and element size (0 = none)
+    if (tagArray != null) {
+      if (!model.VariableBindings.TryGetValue(tagArray, out var tagSym) || tagSym.Type is not ArrayType tagType) {
+        this.Unsupported(at.Position, "ARRAY SORT TAGARRAY target");
+        return false;
+      }
+      this.EmitArrayDescriptorPush(tagArray, tagSym, tagType);
+      asm.Pop(Reg.AX);
+      asm.Mov(Mem.Word(asm.Lbl("rt_num_tagdesc")), Reg.AX);
+      asm.Mov(Mem.Word(asm.Lbl("rt_num_tagsize")), Math.Max(tagType.Element.Size, 1));
+    } else
+      asm.Mov(Mem.Word(asm.Lbl("rt_num_tagdesc")), (Imm)0);
+
+    return true;
+  }
+
+  /// <summary>True when the array reference is bound to a non-string array.</summary>
+  private bool IsNumericArray(CallOrIndexExpr array, out ArrayType arrayType, out VariableSymbol symbol) {
+    arrayType = null!;
+    symbol = null!;
+    if (!model.VariableBindings.TryGetValue(array, out var s) || s.Type is not ArrayType a || a.Element is StringType)
+      return false;
+    arrayType = a;
+    symbol = s;
+    return true;
+  }
+
   private void EmitArraySort(ArraySortStmt sort) {
     var asm = this._asm;
+    if (this.IsNumericArray(sort.Array, out var arrayType, out var symbol)) {
+      if (sort.Collate != null) {
+        this.Unsupported(sort.Position, "COLLATE on a non-string ARRAY SORT");
+        return;
+      }
+      if (!this.TryEmitNumericArrayHeader(sort.Array, arrayType, symbol, sort.Count, sort.FromPos, sort.TagArray, sort))
+        return;
+      asm.Mov(Mem.Byte(asm.Lbl("rt_num_desc")), sort.Descend ? (Imm)1 : (Imm)0);
+      asm.Call(this._rt.SortNum);
+      return;
+    }
     if (sort.TagArray != null) {
-      this.Unsupported(sort.Position, "ARRAY SORT TAGARRAY (comes with a later wave)");
+      this.Unsupported(sort.Position, "ARRAY SORT TAGARRAY on a string array");
       return;
     }
     if (!this.TryEmitArrayStatementHeader(sort.Array, sort.Count, sort.FromPos, sort.ToPos, sort.Collate, sort))
@@ -217,6 +318,23 @@ public sealed partial class CodeGenerator {
 
   private void EmitArrayScan(ArrayScanStmt scan) {
     var asm = this._asm;
+    if (this.IsNumericArray(scan.Array, out var arrayType, out var symbol)) {
+      if (scan.Collate != null) {
+        this.Unsupported(scan.Position, "COLLATE on a non-string ARRAY SCAN");
+        return;
+      }
+      if (!this.TryEmitNumericArrayHeader(scan.Array, arrayType, symbol, scan.Count, scan.FromPos, null, scan))
+        return;
+      asm.Mov(Mem.Byte(asm.Lbl("rt_num_relop")), (Imm)ScanRelopCode(scan.Op));
+      // evaluate the match, coerce to the element type, store its raw bytes
+      this.EmitExpression(scan.Match);
+      this.Coerce(model.TypeOf(scan.Match), arrayType.Element, scan.Match);
+      this.EmitStorePlace(new(Mem.Word(asm.Lbl("rt_num_match")), Far: false), arrayType.Element, scan.Match);
+      asm.Call(this._rt.ScanNum);
+      this.EmitScanStore(scan.Target);
+      return;
+    }
+
     if (!this.TryEmitArrayStatementHeader(scan.Array, scan.Count, scan.FromPos, scan.ToPos, scan.Collate, scan))
       return;
     // flags: bit1 = the FROM/TO range clamps the element side only; relop in the high byte
@@ -228,15 +346,20 @@ public sealed partial class CodeGenerator {
     this.EmitFreeArpbHandle(6);
     this.EmitFreeArpbHandle(14);
     asm.Pop(Reg.AX);
+    this.EmitScanStore(scan.Target);
+  }
 
-    var targetType = model.TypeOf(scan.Target);
-    this.Coerce(PbType.Integer, targetType, scan.Target);
+  /// <summary>Stores the ARRAY SCAN result (AX = 1-based position, INTEGER) into the target lvalue.</summary>
+  private void EmitScanStore(Expression target) {
+    var asm = this._asm;
+    var targetType = model.TypeOf(target);
+    this.Coerce(PbType.Integer, targetType, target);
     var kind = KindOf(targetType);
     if (kind == ValueKind.Int32)
       asm.Push(Reg.DX);
     if (kind != ValueKind.Float)
       asm.Push(Reg.AX);
-    if (this.EmitPlace(scan.Target) is not { } place) {
+    if (this.EmitPlace(target) is not { } place) {
       if (kind != ValueKind.Float)
         asm.Pop(Reg.AX);
       if (kind == ValueKind.Int32)
@@ -247,7 +370,7 @@ public sealed partial class CodeGenerator {
       asm.Pop(Reg.AX);
     if (kind == ValueKind.Int32)
       asm.Pop(Reg.DX);
-    this.EmitStorePlace(place, targetType, scan.Target);
+    this.EmitStorePlace(place, targetType, target);
   }
 
   /// <summary>

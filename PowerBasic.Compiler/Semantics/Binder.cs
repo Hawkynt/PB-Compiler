@@ -1501,6 +1501,121 @@ public sealed class Binder {
       if (lifted.ClosureEnvPtr is { } envPtr) // a capturing lambda saves the far env pointer in this hidden local at entry
         lifted.Variables[VariableKey(envPtr.Name, TypeSuffix.None, isArray: false)] = envPtr;
     }
+
+    // Escape analysis (stage 2): a capturing lambda whose value can outlive the
+    // enclosing frame needs a HEAP environment instead of the stack env. Computed
+    // here, once captures are known, so codegen can lay out the heap env record.
+    foreach (var (lambda, lifted) in this._model.LambdaProcs)
+      if (lifted.Captures.Count > 0 && this.LambdaEscapes(lambda, lifted))
+        this.MarkClosureEscaping(lifted);
+  }
+
+  /// <summary>
+  /// PB 3.6 escaping-closure layout: lay out a by-value heap env record over the
+  /// captured locals (each capture's Offset becomes its byte slot in the record) so
+  /// the lambda reads them through the env far pointer at those slot offsets.
+  /// </summary>
+  private void MarkClosureEscaping(ProcedureSymbol lifted) {
+    lifted.IsEscapingClosure = true;
+    var offset = 0;
+    foreach (var captured in lifted.Captures) {
+      // the env-record slot offset is parked on the corresponding Captured symbol;
+      // codegen rewrites EmitCapturedPlace to read at this offset for heap closures
+      foreach (var sym in lifted.Variables.Values)
+        if (sym.Storage == VariableStorage.Captured && ReferenceEquals(lifted.Captures[sym.Offset], captured))
+          sym.EnvSlotOffset = offset;
+      offset += Math.Max(2, (captured.Type.Size + 1) & ~1);
+    }
+    lifted.ClosureEnvSize = offset;
+  }
+
+  /// <summary>
+  /// Conservative escape detection for a capturing lambda: it escapes when its
+  /// closure value can outlive the enclosing frame - assigned (directly, or through a
+  /// local that itself escapes) to the enclosing FUNCTION's result or to a
+  /// SHARED/GLOBAL/STATIC variable. Passing a closure to another procedure as an
+  /// argument does NOT escape (the env travels with the live frame - the stage-1
+  /// stack closure already handles that). When no defining assignment is found, treat
+  /// it as escaping (the safe over-approximation).
+  /// </summary>
+  private bool LambdaEscapes(Expression lambda, ProcedureSymbol lifted) {
+    var enclosing = this._pendingLambdas.First(p => ReferenceEquals(p.Lifted, lifted)).Enclosing;
+    var body = enclosing?.Body ?? this._model.MainBody;
+
+    // find the assignment that defines the closure value
+    AssignStmt? defining = null;
+    foreach (var assign in AssignmentsIn(body))
+      if (ReferenceEquals(assign.Value, lambda)) {
+        defining = assign;
+        break;
+      }
+    if (defining == null)
+      return true; // cannot prove it stays local
+
+    if (this.TargetEscapes(defining.Target, enclosing))
+      return true;
+
+    // one level of local indirection: a local holding the closure that is itself
+    // copied into an escaping location
+    if (defining.Target is NameExpr holderName
+        && this._model.VariableBindings.TryGetValue(holderName, out var holder)
+        && holder.Storage == VariableStorage.Local)
+      foreach (var assign in AssignmentsIn(body))
+        if (assign.Value is NameExpr src
+            && this._model.VariableBindings.TryGetValue(src, out var srcSym)
+            && ReferenceEquals(srcSym, holder)
+            && this.TargetEscapes(assign.Target, enclosing))
+          return true;
+
+    return false;
+  }
+
+  /// <summary>True when storing into <paramref name="target"/> lets a value outlive the enclosing frame (FUNCTION result, or a SHARED/GLOBAL/STATIC location).</summary>
+  private bool TargetEscapes(Expression target, ProcedureSymbol? enclosing) {
+    if (target is not NameExpr name)
+      return true; // member/index target: be conservative
+    if (enclosing is { IsFunction: true } && name.Name.Equals("FUNCTION", StringComparison.OrdinalIgnoreCase))
+      return true;
+    if (this._model.VariableBindings.TryGetValue(name, out var symbol)) {
+      if (enclosing is { IsFunction: true } && symbol.Name.Equals(enclosing.Name, StringComparison.OrdinalIgnoreCase))
+        return true; // assigning the result by its function name
+      return symbol.Storage is VariableStorage.Global or VariableStorage.Static;
+    }
+    return false;
+  }
+
+  /// <summary>Yields every AssignStmt in a body, recursing through nested statement blocks.</summary>
+  private static IEnumerable<AssignStmt> AssignmentsIn(IEnumerable<Statement> body) {
+    foreach (var statement in body) {
+      if (statement is AssignStmt a)
+        yield return a;
+      foreach (var block in StatementBlocksOf(statement))
+        foreach (var nested in AssignmentsIn(block))
+          yield return nested;
+    }
+  }
+
+  /// <summary>Child statement blocks of a control-flow statement (mirrors codegen's ChildStatementBlocks for escape scanning).</summary>
+  private static IEnumerable<IReadOnlyList<Statement>> StatementBlocksOf(Statement s) {
+    switch (s) {
+      case IfStmt i:
+        yield return i.Then;
+        foreach (var (_, arm) in i.ElseIfs)
+          yield return arm;
+        if (i.Else != null)
+          yield return i.Else;
+        break;
+      case SelectStmt sel:
+        foreach (var arm in sel.Arms)
+          yield return arm.Body;
+        break;
+      case ForStmt f:
+        yield return f.Body;
+        break;
+      case DoLoopStmt d:
+        yield return d.Body;
+        break;
+    }
   }
 
   /// <summary>Resolves a call to a nested procedure of the enclosing proc (PB 3.6), recording the site so captures can be appended once known; null when there is no such nested proc.</summary>
@@ -2251,14 +2366,16 @@ public sealed class Binder {
     // is captured - added as a BYREF parameter the call site fills with its address
     // (stack capture). First reference adds the param; later ones find it locally.
     if (found == null && scope is { CaptureFrom: { } outer, Proc: { } nested }
-        && (outer.Variables.GetValueOrDefault(key) ?? (suffix == TypeSuffix.None ? null : outer.Variables.GetValueOrDefault(name))) is { Storage: VariableStorage.Local or VariableStorage.Static, IsArray: false } captured) {
-      // PB 3.6 lambda: the captured local becomes a closure-environment entry reached
-      // through the env pointer (a lambda is called indirectly, so the BYREF-parameter
-      // capture used by nested procs cannot work). Stage 1 is stack-based: the env is
-      // the enclosing frame, so only its stack LOCALs are captured this way.
+        && (outer.Variables.GetValueOrDefault(key) ?? (suffix == TypeSuffix.None ? null : outer.Variables.GetValueOrDefault(name))) is { Storage: VariableStorage.Local or VariableStorage.Static or VariableStorage.Parameter, IsArray: false } captured) {
+      // PB 3.6 lambda: the captured outer variable becomes a closure-environment entry
+      // reached through the env pointer (a lambda is called indirectly, so the
+      // BYREF-parameter capture used by nested procs cannot work). Stage 1 is
+      // stack-based: the env is the enclosing frame, so its stack LOCALs and BYVAL
+      // PARAMETERS (both BP-relative cells) are captured this way.
       if (scope.CapturesByEnv) {
-        if (captured.Storage != VariableStorage.Local)
-          return null; // a STATIC/shared lives in DS and is reachable directly, not captured
+        if (!(captured.Storage == VariableStorage.Local
+              || (captured.Storage == VariableStorage.Parameter && captured.ByVal)))
+          return null; // STATIC/shared lives in DS (reachable directly); a BYREF param holds a pointer, not a value
         captured.IsCaptured = true; // its address escapes into the closure: keep it in memory, never fold/elide
         var capturedSym = new VariableSymbol(name, captured.Type, VariableStorage.Captured) { Offset = nested.Captures.Count };
         nested.Captures.Add(captured);

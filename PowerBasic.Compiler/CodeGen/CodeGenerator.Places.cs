@@ -102,15 +102,19 @@ public sealed partial class CodeGenerator {
 
   /// <summary>
   /// pb36 closure capture: a captured local is reached through the lambda's far
-  /// environment pointer. Stage 1 (stack closure): the env is the enclosing frame,
-  /// so the variable sits at its enclosing-frame offset under the env segment -
-  /// load the env far pointer into ES:BX and yield an ES-relative place.
+  /// environment pointer (ES:BX). Both env kinds share this far access path - only the
+  /// in-env displacement differs. Stack closure (non-escaping): the env IS the
+  /// enclosing frame, so the variable sits at its enclosing-frame displacement (read
+  /// by reference - the live local). Heap closure (escaping): the env is a heap record
+  /// holding a by-value snapshot, so the variable sits at its env-record slot offset.
   /// </summary>
   private Place EmitCapturedPlace(VariableSymbol captured) {
     var lambda = this._currentProc!;
-    this._asm.Les(Reg.BX, Mem.Dword(Reg.BP, lambda.ClosureEnvPtr!.Offset));   // ES:BX = enclosing frame (env)
-    var enclosingOffset = lambda.Captures[captured.Offset].Offset;            // the capture's displacement in the enclosing frame
-    return new(Mem.At(Reg.BX, enclosingOffset).Seg(Reg.ES), Far: true);
+    this._asm.Les(Reg.BX, Mem.Dword(Reg.BP, lambda.ClosureEnvPtr!.Offset));   // ES:BX = env (frame or heap block)
+    var inEnvOffset = lambda.IsEscapingClosure
+      ? captured.EnvSlotOffset                            // heap env: the capture's slot in the snapshot record
+      : lambda.Captures[captured.Offset].Offset;          // stack env: the capture's displacement in the enclosing frame
+    return new(Mem.At(Reg.BX, inEnvOffset).Seg(Reg.ES), Far: true);
   }
 
   /// <summary>

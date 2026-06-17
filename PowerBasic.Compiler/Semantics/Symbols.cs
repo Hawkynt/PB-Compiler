@@ -36,6 +36,8 @@ public sealed class VariableSymbol(string name, PbType type, VariableStorage sto
   public int Offset { get; set; }
   /// <summary>PB 3.6: this enclosing-frame local is captured by a lambda closure (its address escapes into the closure environment), so the optimizer must keep it in memory - no register residency, constant folding, or dead-store elimination of its writes.</summary>
   public bool IsCaptured { get; set; }
+  /// <summary>PB 3.6 escaping-closure capture (Storage == Captured): byte offset of this capture's slot within the lambda's HEAP environment record. Unused for stack closures, where the capture is read at its enclosing-frame displacement instead.</summary>
+  public int EnvSlotOffset { get; set; }
 
   /// <summary>Allocation class from DIM (HUGE/VIRTUAL/ABSOLUTE are diagnosed by codegen for now).</summary>
   public ArrayClass ArrayClass { get; set; } = ArrayClass.Default;
@@ -76,6 +78,19 @@ public sealed class ProcedureSymbol(string name, bool isFunction) {
   public VariableSymbol? ClosureEnvRecord { get; set; }
   /// <summary>PB 3.6 capturing lambda: the hidden local in THIS lambda that holds the far environment pointer (saved from the closure value at entry). Non-null marks a capturing lambda.</summary>
   public VariableSymbol? ClosureEnvPtr { get; set; }
+  /// <summary>
+  /// PB 3.6 ESCAPING capturing lambda: the closure value can outlive the enclosing
+  /// frame (returned as the enclosing FUNCTION's result, or stored in a
+  /// SHARED/GLOBAL/STATIC). Its environment is then a HEAP block holding a by-value
+  /// snapshot of the captured locals taken at closure creation - so each
+  /// <see cref="Captures"/> entry's <see cref="VariableSymbol.Offset"/> doubles as
+  /// the byte offset of its slot within that heap env record. Non-escaping capturing
+  /// lambdas keep the stage-1 stack env (env = enclosing frame, captures read at
+  /// frame displacements, by reference).
+  /// </summary>
+  public bool IsEscapingClosure { get; set; }
+  /// <summary>PB 3.6 escaping capturing lambda: total byte size of the heap env record (sum of the captured locals' slot sizes); 0 for a stack closure.</summary>
+  public int ClosureEnvSize { get; set; }
   /// <summary>Null when only DECLAREd (external - resolved at link time from PBU/PBL).</summary>
   public IReadOnlyList<Statement>? Body { get; set; }
   public SourcePosition Position { get; set; }

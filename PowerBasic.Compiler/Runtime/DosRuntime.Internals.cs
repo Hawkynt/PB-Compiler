@@ -97,6 +97,41 @@ public sealed partial class DosRuntime {
     asm.MarkLabel("rt_arpb");
     asm.Db(new byte[20]);
 
+    // numeric ARRAY SORT/SCAN parameter block (parallel to rt_arpb for non-string
+    // arrays): kind/size of the element, descend flag, scan relop + match value,
+    // and the optional TAGARRAY descriptor. Two 10-byte staging cells let the
+    // comparison load any element width (incl. 80-bit EXT) through the x87.
+    asm.MarkLabel("rt_num_kind");    // 0 integer, 2 float
+    asm.Db(0);
+    asm.MarkLabel("rt_num_size");    // element byte size to copy (1/2/4/8/10)
+    asm.Db(0);
+    asm.MarkLabel("rt_num_load");    // x87 load width: int 2/4/8, float 4/8/10
+    asm.Db(0);
+    asm.MarkLabel("rt_num_desc");    // 0 ascend, 1 descend
+    asm.Db(0);
+    asm.MarkLabel("rt_num_relop");   // scan: 0 = 1 <> 2 < 3 <= 4 > 5 >=
+    asm.Db(0);
+    asm.MarkLabel("rt_num_match");   // scan match value (raw element bytes)
+    asm.Db(new byte[10]);
+    asm.MarkLabel("rt_num_tagdesc"); // TAGARRAY descriptor ptr (0 = none)
+    asm.Dw(0);
+    asm.MarkLabel("rt_num_tagsize"); // TAGARRAY element byte size
+    asm.Dw(0);
+    asm.MarkLabel("rt_num_tagoff");  // TAGARRAY data base offset
+    asm.Dw(0);
+    asm.MarkLabel("rt_num_tagseg");  // TAGARRAY data segment
+    asm.Dw(0);
+    asm.MarkLabel("rt_num_a");       // x87 staging for element a (zero-padded)
+    asm.Db(new byte[10]);
+    asm.MarkLabel("rt_num_b");       // x87 staging for element b (zero-padded)
+    asm.Db(new byte[10]);
+    asm.MarkLabel("rt_num_i");       // sort outer loop index (survives helper calls)
+    asm.Dw(0);
+    asm.MarkLabel("rt_num_j");       // sort inner loop index
+    asm.Dw(0);
+    asm.MarkLabel("rt_num_n");       // element count
+    asm.Dw(0);
+
     // string compare scratch (rt_strcmprange)
     asm.MarkLabel("rt_cmp_loff");
     asm.Dw(0);

@@ -363,6 +363,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       Pb36Pruner.Prune(model);
       Pb36FloatDemotion.Apply(model);
       this._ipcp = Pb36Ipcp.Analyze(model); // O18: constants into callee bodies
+      // $OPTIMIZE SPEED: pass internal parameters in registers (AX,DX,BX,CX) instead of on
+      // the stack when we own every call site. Self-contained programs only (a separately
+      // compiled unit could otherwise call a converted procedure with the stack convention);
+      // pb36 only, so the pb35 golden output is never touched.
+      if (this.OptimizeSpeed && !this._allowExternalCalls && model.Dialect == Dialect.Pb36)
+        Pb36RegParm.Apply(model);
     }
 
     // P7: programs whose only effect is printing compile-time text lower to a

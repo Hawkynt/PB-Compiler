@@ -176,6 +176,7 @@ public sealed partial class DosRuntime {
     ("long_helpers", this.EmitLongHelpers),
     ("strings", this.EmitStringProcedures),
     ("strings2", this.EmitString2Procedures),
+    ("arraynum", this.EmitArrayNum),
     ("files", this.EmitFileProcedures),
     ("arrays", this.EmitArrayProcedures),
     ("lowlevel", this.EmitLowLevelProcedures),

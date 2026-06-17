@@ -444,8 +444,11 @@ public sealed partial class CodeGenerator {
 
   /// <summary>
   /// QUAD arithmetic on the x87 stack (left ST1, right ST0): +, -, * and the
-  /// comparisons are exact within 64-bit range; \, MOD and the bitwise
-  /// operators come with a later wave.
+  /// comparisons are exact within 64-bit range; \, MOD and the bitwise family
+  /// route through the 4-word rt_quad* routines (or the inline pb36 386 path).
+  /// The float-typed operators (/, ^) never reach here - the binder types
+  /// <c>QUAD /</c> as DOUBLE and <c>QUAD ^</c> as EXT, so they run on the float
+  /// path; the default arm is a defensive guard for any future integral op.
   /// </summary>
   private void EmitInt64Op(BinaryExpr b) {
     var asm = this._asm;
@@ -478,7 +481,7 @@ public sealed partial class CodeGenerator {
       default:
         asm.Fstp(St.St0);
         asm.Fstp(St.St0);
-        this.Unsupported(b, $"QUAD {b.Op} (comes with a later wave)");
+        this.Unsupported(b, $"QUAD {b.Op}");
         break;
     }
   }

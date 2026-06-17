@@ -23,6 +23,7 @@ public sealed partial class DosRuntime {
   public Label StrPtr { get; private set; } = null!;
   public Label Raise { get; private set; } = null!;
   public Label Swap { get; private set; } = null!;
+  public Label ResumeNextHandler { get; private set; } = null!;
 
   private void EmitLowLevelProcedures(Assembler asm) {
     var regs = asm.Lbl("rt_regs");
@@ -126,6 +127,13 @@ public sealed partial class DosRuntime {
       asm.Mov(Reg.AL, (Imm)3);
       asm.Jmp(this.Exit);
     }
+
+    // ON ERROR RESUME NEXT (inline mode): rt_onerr points here, so rt_raise
+    // dispatches straight to it after restoring SP/BP. Unlike the RESUME NEXT
+    // statement (which clears ERR), inline mode leaves ERR set until the next
+    // fault or ERRCLEAR - so we just jump to the latched successor offset.
+    this.ResumeNextHandler = asm.MarkLabel("rt_resumenext_handler");
+    asm.Jmp(Mem.Word(asm.Lbl("rt_eresumenext")));
   }
 
   private void EmitLowLevelData(Assembler asm) {

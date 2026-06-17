@@ -124,4 +124,109 @@ public sealed class Pb35FidelityTests {
       """);
     Assert.That(output, Is.EqualTo(" 255\n-1\n 65536\n 511\n 5\n"));
   }
+
+  [Test]
+  public void ArraySort_GivenNumericArray_WhenSorted_ThenAscendingAndDescending() {
+    // GIVEN an unsorted INTEGER array; WHEN ARRAY SORT runs THEN it orders
+    // ascending, and DESCEND reverses it - identical to genuine PBC.
+    var output = RunSource("""
+      DIM a%(1 TO 5)
+      a%(1)=30 : a%(2)=10 : a%(3)=50 : a%(4)=20 : a%(5)=40
+      ARRAY SORT a%(1)
+      FOR i%=1 TO 5 : PRINT a%(i%); : NEXT : PRINT
+      ARRAY SORT a%(1) FOR 5, DESCEND
+      FOR i%=1 TO 5 : PRINT a%(i%); : NEXT : PRINT
+      """);
+    Assert.That(output, Is.EqualTo(" 10  20  30  40  50\n 50  40  30  20  10\n"));
+  }
+
+  [Test]
+  public void ArrayScan_GivenNumericArray_WhenScannedWithRelops_ThenOneBasedPositions() {
+    // GIVEN a sorted INTEGER array; WHEN ARRAY SCAN walks it under each relop
+    // THEN it returns the 1-based position of the first match (0 when none).
+    var output = RunSource("""
+      DIM a%(1 TO 5)
+      a%(1)=10 : a%(2)=20 : a%(3)=30 : a%(4)=40 : a%(5)=50
+      ARRAY SCAN a%(1), = 30, TO p%  : PRINT p%
+      ARRAY SCAN a%(1), > 25, TO p%  : PRINT p%
+      ARRAY SCAN a%(1), <= 10, TO p% : PRINT p%
+      ARRAY SCAN a%(1), > 99, TO p%  : PRINT p%
+      """);
+    Assert.That(output, Is.EqualTo(" 3\n 3\n 1\n 0\n"));
+  }
+
+  [Test]
+  public void ArraySort_GivenTagArray_WhenKeySorted_ThenTagFollowsThePermutation() {
+    // GIVEN a key array and a parallel LONG tag array; WHEN ARRAY SORT ... TAGARRAY
+    // runs THEN the tag array is reordered by the key's permutation.
+    var output = RunSource("""
+      DIM k%(1 TO 4)
+      DIM t&(1 TO 4)
+      k%(1)=30 : k%(2)=10 : k%(3)=20 : k%(4)=40
+      t&(1)=300 : t&(2)=100 : t&(3)=200 : t&(4)=400
+      ARRAY SORT k%(1), TAGARRAY t&()
+      FOR i%=1 TO 4 : PRINT k%(i%); : NEXT : PRINT
+      FOR i%=1 TO 4 : PRINT t&(i%); : NEXT : PRINT
+      """);
+    Assert.That(output, Is.EqualTo(" 10  20  30  40\n 100  200  300  400\n"));
+  }
+
+  [Test]
+  public void ArraySort_GivenUnsignedAndQuadElements_WhenSorted_ThenValueCorrectOrder() {
+    // GIVEN unsigned WORD/DWORD and signed QUAD arrays whose values exceed the
+    // signed range of their width; WHEN sorted THEN ordering is by true value.
+    var output = RunSource("""
+      DIM w??(1 TO 3)
+      w??(1)=50000 : w??(2)=100 : w??(3)=65535
+      ARRAY SORT w??(1)
+      FOR i%=1 TO 3 : PRINT w??(i%); : NEXT : PRINT
+      DIM q&&(1 TO 3)
+      q&&(1)=5000000000 : q&&(2)=-9000000000 : q&&(3)=1
+      ARRAY SORT q&&(1)
+      FOR i%=1 TO 3 : PRINT q&&(i%); : NEXT : PRINT
+      """);
+    Assert.That(output, Is.EqualTo(" 100  50000  65535\n-9000000000  1  5000000000\n"));
+  }
+
+  [Test]
+  public void Quad_GivenEveryOperator_WhenRun_ThenSixtyFourBitResults() {
+    // GIVEN 64-bit QUAD operands; WHEN each operator runs THEN the integral ops
+    // (+ - * \ MOD, the bitwise family, comparisons, unary - and NOT) stay exact
+    // in 64 bits, while the float-typed / and ^ run on the x87 (DOUBLE / EXT).
+    var output = RunSource("""
+      DIM a AS QUAD, b AS QUAD
+      a = 5000000000
+      b = 3
+      PRINT a + b
+      PRINT a * b
+      PRINT a \ b
+      PRINT a MOD b
+      PRINT a AND b
+      PRINT a OR b
+      PRINT a XOR b
+      PRINT (a > b); (a = b)
+      PRINT a / b
+      PRINT a ^ 2
+      PRINT NOT a
+      """);
+    Assert.That(output, Is.EqualTo(
+      " 5000000003\n 15000000000\n 1666666666\n 2\n 0\n 5000000003\n 5000000003\n-1  0\n 1666666666.66667\n 2.5E+19\n-5000000001\n"));
+  }
+
+  [Test]
+  public void OnErrorResumeNext_GivenFaultingStatement_WhenRun_ThenExecutionContinuesAndErrStaysSet() {
+    // GIVEN inline error mode; WHEN a statement faults THEN the next runs, ERR
+    // holds the last code (no auto-clear), a fresh fault overwrites it, ERRCLEAR
+    // resets it to 0, and a clean statement leaves it untouched.
+    var output = RunSource("""
+      ON ERROR RESUME NEXT
+      ERROR 5
+      PRINT "a"; ERR
+      ERROR 7
+      PRINT "b"; ERR
+      ERRCLEAR
+      PRINT "c"; ERR
+      """);
+    Assert.That(output, Is.EqualTo("a 5\nb 7\nc 0\n"));
+  }
 }

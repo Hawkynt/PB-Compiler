@@ -94,8 +94,6 @@ public sealed partial class CodeGenerator {
     var paramBytes = this.LayoutFrame(proc);
     if (HasUnsupportedRegisterParam(proc))
       this.Errors.Add(new(proc.Position, $"{proc.CallConv} {proc.Name}: a register-convention parameter must be word-sized (BYVAL <= 2 bytes or BYREF); LONG/float/UDT/string need the full per-compiler ABI rules"));
-    if (IsRegisterConvention(proc) && this.CheckStack)
-      this.Errors.Add(new(proc.Position, $"{proc.CallConv} {proc.Name}: $ERROR STACK cannot be combined with a register calling convention (it would clobber the argument registers)"));
     this._epilogue = asm.DefineLabel($"p_{proc.Name}_end");
     this._trackResume = ContainsErrorHandling(proc.Body!);
 
@@ -104,6 +102,12 @@ public sealed partial class CodeGenerator {
     if (this.Optimize && this.Cpu486)
       asm.AlignCode(16);
     asm.MarkLabel(this.ProcLabelOf(proc));
+    // PB 3.6 capturing lambda entry: the env far pointer arrives in BX:CX. The frame
+    // zeroing clobbers CX (its word counter) but not DX, so stash the env SEGMENT in
+    // DX now - the save below writes BX (offset) and DX (segment) into the hidden
+    // local. A stack closure's CX is SS; a heap closure's CX is the env block segment.
+    if (proc.ClosureEnvPtr != null)
+      asm.Mov(Reg.DX, Reg.CX);
     if (this.CheckStack) { // $ERROR STACK ON: SP headroom probe -> Error 201 (oracle-verified)
       var roomy = asm.DefineLabel();
       asm.Cmp(Reg.SP, Mem.Word(asm.Lbl("rt_stackmin")));
@@ -155,11 +159,12 @@ public sealed partial class CodeGenerator {
           asm.Mov(Mem.Word(Reg.BP, local.Offset), (Imm)0);
 
     // PB 3.6 capturing lambda: save the far environment pointer into its hidden local.
-    // It arrives in BX:CX; BX survives the frame setup, and the stage-1 stack-closure
-    // env segment is SS - so store BX and SS (CX is clobbered by the frame zeroing).
+    // It arrived in BX:CX; BX survives the frame setup and the segment was parked in DX
+    // at entry (CX is clobbered by the frame zeroing) - so store BX (offset) and DX
+    // (segment, = SS for a stack closure, = the heap block segment for an escaping one).
     if (proc.ClosureEnvPtr is { } envPtr) {
       asm.Mov(Mem.Word(Reg.BP, envPtr.Offset), Reg.BX);
-      asm.Mov(Mem.Word(Reg.BP, envPtr.Offset + 2), Reg.SS);
+      asm.Mov(Mem.Word(Reg.BP, envPtr.Offset + 2), Reg.DX);
     }
 
     // procedures that arm ON ERROR save and restore the caller's handler state
@@ -565,8 +570,11 @@ public sealed partial class CodeGenerator {
 
   /// <summary>
   /// PB 3.6 closure environment for a lambda value (BX:CX). A non-capturing lambda
-  /// has a null env; a capturing lambda's stage-1 stack env is the enclosing frame
-  /// itself (the captured locals are read at their frame offsets through it).
+  /// has a null env. A non-escaping capturing lambda uses the stage-1 STACK env: the
+  /// enclosing frame itself (captured locals read by reference at their frame
+  /// offsets). An ESCAPING capturing lambda allocates a HEAP env record and snapshots
+  /// the captured locals' VALUES into it at creation - so the closure survives the
+  /// dead frame, reading the by-value snapshot through the same env far pointer.
   /// </summary>
   private void EmitClosureEnv(ProcedureSymbol lambda) {
     var asm = this._asm;
@@ -575,8 +583,45 @@ public sealed partial class CodeGenerator {
       asm.Xor(Reg.CX, Reg.CX);
       return;
     }
+    if (lambda.IsEscapingClosure) {
+      this.EmitHeapClosureEnv(lambda);
+      return;
+    }
     asm.Mov(Reg.BX, Reg.BP);   // env = enclosing frame offset (this BP)
     asm.Mov(Reg.CX, Reg.SS);   // env segment (stack)
+  }
+
+  /// <summary>
+  /// PB 3.6 escaping closure: allocate a heap env block (far array heap), copy each
+  /// captured local's current VALUE from the enclosing frame into its slot, and
+  /// return the block as the env far pointer (offset in BX, segment in CX). Captured
+  /// by value at creation - mutations after the closure escapes are NOT shared
+  /// (documented in docs/PB36.md). The block is never freed (no GC).
+  /// </summary>
+  private void EmitHeapClosureEnv(ProcedureSymbol lambda) {
+    var asm = this._asm;
+    asm.Xor(Reg.DX, Reg.DX);
+    asm.Mov(Reg.AX, lambda.ClosureEnvSize);
+    asm.Call(this._rt.ArrAlloc);              // AX = block offset within rt_arrseg (zeroed)
+    var blockOff = this.AllocTemp(2);
+    asm.Mov(blockOff.WithSize(OperandSize.Word), Reg.AX);
+
+    // ES = heap segment for the stores; the captured locals live at [BP+off]
+    asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_arrseg")));
+    asm.Mov(Reg.DI, Reg.AX);                  // DI = running slot address in the block
+    var slot = 0;
+    foreach (var captured in lambda.Captures) {
+      var bytes = Math.Max(2, (captured.Type.Size + 1) & ~1);
+      for (var w = 0; w < bytes; w += 2) {
+        asm.Mov(Reg.AX, Mem.Word(Reg.BP, captured.Offset + w));
+        asm.Mov(Mem.Word(Reg.DI, slot + w).Seg(Reg.ES), Reg.AX);
+      }
+      slot += bytes;
+    }
+
+    asm.Mov(Reg.BX, blockOff.WithSize(OperandSize.Word));   // env offset -> BX
+    asm.Mov(Reg.CX, Mem.Word(asm.Lbl("rt_arrseg")));        // env segment -> CX
+    this.ReleaseTemp(2);
   }
 
   /// <summary>Loads a BYREF parameter's near pointer into BX and yields a <c>[BX]</c> cell (mirrors EmitPlace's NameExpr fallback).</summary>
