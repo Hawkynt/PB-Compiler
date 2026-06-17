@@ -751,6 +751,26 @@ public sealed class OptimizerTests {
       "a DO-loop accumulator should be written in SI (MOV SI, AX) under SPEED");
   }
 
+  [Test]
+  public void Emit_GivenDoLoopTwoAccumulators_WhenPb36Speed_ThenSecondInDi() {
+    // a DO loop has no counter, so both SI and DI are free: two hot accumulators live in
+    // registers. The second is written via MOV DI, AX (89 F8), absent when SPEED is off.
+    const string body = "s% = 0\np% = 1\ni% = 1\nDO\n  s% = s% + i%\n  p% = p% + 2\n  i% = i% + 1\nLOOP UNTIL i% > 8\nPRINT s%; p%\nEND";
+    var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
+    var plain = Compile(body, Dialect.Pb36);
+    Assert.That(CountMovDiAx(speed), Is.GreaterThan(CountMovDiAx(plain)),
+      "a second DO-loop accumulator should live in DI (MOV DI, AX) under SPEED");
+  }
+
+  // 89 F8 = MOV DI, AX - the write of a DI-resident accumulator
+  private static int CountMovDiAx(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0x89 && image[i + 1] == 0xF8)
+        ++count;
+    return count;
+  }
+
   // 89 F0 = MOV SI, AX - the write of an SI-resident accumulator
   private static int CountMovSiAx(byte[] image) {
     var count = 0;

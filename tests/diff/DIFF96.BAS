@@ -54,5 +54,16 @@ DO
 LOOP
 PRINT #1, "exit"; b%; m%
 
+' two accumulators: SI and DI both free in a DO loop (sum in SI, product-ish in DI)
+sum% = 0
+prod% = 1
+g% = 1
+DO
+  sum% = sum% + g%
+  prod% = prod% + g% * 2
+  g% = g% + 1
+LOOP UNTIL g% > 7
+PRINT #1, "two"; sum%; prod%; g%
+
 CLOSE #1
 END

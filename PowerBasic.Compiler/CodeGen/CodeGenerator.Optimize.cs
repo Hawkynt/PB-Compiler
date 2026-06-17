@@ -1167,6 +1167,16 @@ public sealed partial class CodeGenerator {
     asm.Mov(Reg.SI, cell);                       // load the accumulator's pre-loop value
     this._registerAccumulator = (accumulator, Reg.SI);
 
+    // a DO loop has no counter, so DI is free too - keep a SECOND hot accumulator there. The
+    // _registerCounter slot is reused purely as "the DI-resident symbol" (ResidentRegOf checks
+    // both slots); nothing FOR-counter-specific runs in an SI/DI-clean DO body.
+    var accumulator2 = this.FindAccumulator(d.Body, accumulator);
+    var cell2 = accumulator2 != null ? this.TryDirectCell(accumulator2) : null;
+    if (accumulator2 != null && cell2 is { } slot2) {
+      asm.Mov(Reg.DI, slot2.WithSize(OperandSize.Word));
+      this._registerCounter = (accumulator2, Reg.DI);
+    }
+
     var top = asm.DefineLabel();
     var done = asm.DefineLabel();
     var cont = asm.DefineLabel();
@@ -1198,8 +1208,11 @@ public sealed partial class CodeGenerator {
     this._exitDo.Pop();
     this._iterateDo.Pop();
     this._iterateAny.Pop();
-    asm.Mov(cell, Reg.SI);                        // flush the accumulator on exit
+    asm.Mov(cell, Reg.SI);                        // flush the SI accumulator on exit
+    if (this._registerCounter is { } di && cell2 is { } flush2)
+      asm.Mov(flush2.WithSize(OperandSize.Word), di.Reg); // flush the DI accumulator
     this._registerAccumulator = null;
+    this._registerCounter = null;
     return true;
   }
 
