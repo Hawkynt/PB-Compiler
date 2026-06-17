@@ -115,4 +115,43 @@ public sealed class IntervalRangeTests {
     Assert.That(RangeOf("y% = a% + 1\nEND", "y"), Is.Null);
 
   #endregion
+
+  #region per-program-point queries
+
+  private static (PowerBasic.Compiler.Syntax.Ast.CompilationUnit unit, SemanticModel model) BindUnit(string source) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    return (unit, model);
+  }
+
+  private static Interval? At(IReadOnlyDictionary<PowerBasic.Compiler.Syntax.Ast.Statement, IReadOnlyDictionary<VariableSymbol, Interval>> points,
+      PowerBasic.Compiler.Syntax.Ast.Statement stmt, string varName) {
+    if (!points.TryGetValue(stmt, out var env))
+      return null;
+    foreach (var kv in env)
+      if (kv.Key.Name.Equals(varName, System.StringComparison.OrdinalIgnoreCase))
+        return kv.Value;
+    return null;
+  }
+
+  [Test]
+  public void ProgramPoints_GivenUse_ThenEntryEnvHasPriorRange() {
+    var (_, model) = BindUnit("x% = 5\ny% = x% + 1\nEND");
+    var points = IntervalRangeAnalysis.AnalyzeProgramPoints(model.MainBody, model);
+    // before the SECOND statement (y% = x% + 1), x% is proven [5,5]; before the first, nothing
+    Assert.That(At(points, model.MainBody[1], "x"), Is.EqualTo(Interval.Of(5)));
+    Assert.That(At(points, model.MainBody[0], "x"), Is.Null);
+  }
+
+  [Test]
+  public void ProgramPoints_GivenUseInsideIfArm_ThenArmEntryHasRange() {
+    var (_, model) = BindUnit("x% = 5\nIF a% > 0 THEN\nz% = x% \\ 2\nEND IF\nEND");
+    var points = IntervalRangeAnalysis.AnalyzeProgramPoints(model.MainBody, model);
+    var iff = (PowerBasic.Compiler.Syntax.Ast.IfStmt)model.MainBody[1];
+    // x% is [5,5] at the entry of the statement inside the THEN arm
+    Assert.That(At(points, iff.Then[0], "x"), Is.EqualTo(Interval.Of(5)));
+  }
+
+  #endregion
 }

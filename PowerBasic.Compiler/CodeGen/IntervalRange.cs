@@ -87,19 +87,37 @@ public readonly record struct Interval(long Lo, long Hi) {
 /// from the environment means Top (unknown).
 /// </summary>
 public static class IntervalRangeAnalysis {
-  /// <summary>The interval environment after executing <paramref name="body"/> in sequence.</summary>
+  /// <summary>The per-variable interval environment after executing <paramref name="body"/>.</summary>
   public static IReadOnlyDictionary<VariableSymbol, Interval> Analyze(IReadOnlyList<Statement> body, SemanticModel model) {
     var env = new Dictionary<VariableSymbol, Interval>(ReferenceEqualityComparer.Instance);
-    Run(body, env, model);
+    Run(body, env, model, null);
     return env;
   }
 
-  private static void Run(IReadOnlyList<Statement> body, Dictionary<VariableSymbol, Interval> env, SemanticModel model) {
-    foreach (var s in body)
-      Transfer(s, env, model);
+  /// <summary>
+  /// The interval environment at the ENTRY of each statement (keyed by statement reference,
+  /// recursively into IF arms) - so a consumer can read a variable's proven range at a specific
+  /// use site (e.g. to narrow a LONG operation or drop a check). A statement absent from the map
+  /// was unreachable to the analysis; a variable absent from a statement's environment is Top.
+  /// </summary>
+  public static IReadOnlyDictionary<Statement, IReadOnlyDictionary<VariableSymbol, Interval>>
+      AnalyzeProgramPoints(IReadOnlyList<Statement> body, SemanticModel model) {
+    var points = new Dictionary<Statement, IReadOnlyDictionary<VariableSymbol, Interval>>(ReferenceEqualityComparer.Instance);
+    var env = new Dictionary<VariableSymbol, Interval>(ReferenceEqualityComparer.Instance);
+    Run(body, env, model, points);
+    return points;
   }
 
-  private static void Transfer(Statement s, Dictionary<VariableSymbol, Interval> env, SemanticModel model) {
+  private static void Run(IReadOnlyList<Statement> body, Dictionary<VariableSymbol, Interval> env, SemanticModel model,
+      Dictionary<Statement, IReadOnlyDictionary<VariableSymbol, Interval>>? points) {
+    foreach (var s in body) {
+      points?.TryAdd(s, Clone(env));                  // snapshot the entry environment
+      Transfer(s, env, model, points);
+    }
+  }
+
+  private static void Transfer(Statement s, Dictionary<VariableSymbol, Interval> env, SemanticModel model,
+      Dictionary<Statement, IReadOnlyDictionary<VariableSymbol, Interval>>? points) {
     switch (s) {
       case AssignStmt { Target: NameExpr t, Value: { } v }
           when IntVar(t, model) is { } sym && CallFree(v, model):
@@ -115,16 +133,16 @@ public static class IntervalRangeAnalysis {
       case IfStmt iff when CallFree(iff.Condition, model) && iff.ElseIfs.All(e => CallFree(e.Condition, model)): {
         var results = new List<Dictionary<VariableSymbol, Interval>>();
         var thenEnv = Clone(env);
-        Run(iff.Then, thenEnv, model);
+        Run(iff.Then, thenEnv, model, points);
         results.Add(thenEnv);
         foreach (var (_, b) in iff.ElseIfs) {
           var e = Clone(env);
-          Run(b, e, model);
+          Run(b, e, model, points);
           results.Add(e);
         }
         var elseEnv = Clone(env);
         if (iff.Else != null)
-          Run(iff.Else, elseEnv, model);
+          Run(iff.Else, elseEnv, model, points);
         results.Add(elseEnv);                          // Else, or (no Else) the not-taken fallthrough
         Replace(env, JoinAll(results));
         return;
