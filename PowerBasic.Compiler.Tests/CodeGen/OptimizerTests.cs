@@ -730,6 +730,27 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenDoLoopAccumulator_WhenPb36Speed_ThenAccumulatorInSi() {
+    // an SI/DI-clean DO/LOOP keeps its hot accumulator in SI (no FOR counter competes): the
+    // accumulate becomes MOV SI, AX (89 F0), absent when $OPTIMIZE SPEED is off (s% lives in
+    // its memory cell). Generalizes register residency beyond the FOR-loop shape.
+    const string body = "s% = 0\ni% = 1\nDO\n  s% = s% + i%\n  i% = i% + 1\nLOOP UNTIL i% > 10\nPRINT s%\nEND";
+    var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
+    var plain = Compile(body, Dialect.Pb36);
+    Assert.That(CountMovSiAx(speed), Is.GreaterThan(CountMovSiAx(plain)),
+      "a DO-loop accumulator should be written in SI (MOV SI, AX) under SPEED");
+  }
+
+  // 89 F0 = MOV SI, AX - the write of an SI-resident accumulator
+  private static int CountMovSiAx(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0x89 && image[i + 1] == 0xF0)
+        ++count;
+    return count;
+  }
+
+  [Test]
   public void Emit_GivenModularMultiplyByThree_WhenPb36Speed_ThenShiftAddReplacesImul() {
     // x% is made opaque (BYREF call) so SCCP cannot fold it - this pins the
     // modular shift-add path, not whole-expression constant folding

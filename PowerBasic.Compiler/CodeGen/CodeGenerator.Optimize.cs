@@ -1138,12 +1138,78 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
+  /// pb36 O5 (beyond the FOR-loop shape): a DO/LOOP whose body is SI/DI-clean (scalar-integer
+  /// assigns / INCR / clean IFs) and whose loop tests are SI-clean keeps one hot 2-byte INTEGER
+  /// accumulator in SI for the loop - SI is free, a DO loop has no counter. The per-iteration
+  /// cell load/store/reload of the accumulator disappears; it is flushed to the cell once on
+  /// exit so post-loop reads see the final value. (The LICM preheader is skipped on this path -
+  /// both it and the residency are output-preserving, so output stays byte-identical.)
+  /// </summary>
+  private bool TryEmitDoLoopInRegister(DoLoopStmt d) {
+    if (!this.Optimize || !this.OptimizeSpeed)
+      return false;
+    if (this.CheckNumeric || this.CheckOverflow || this._trackResume)
+      return false;
+    if (this._registerCounter != null || this._registerAccumulator != null)
+      return false;
+    if (d.PreCondition != null && !SiCleanExpression(d.PreCondition, model))
+      return false;
+    if (d.PostCondition != null && !SiCleanExpression(d.PostCondition, model))
+      return false;
+    if (!this.BodyIsSiClean(d.Body, null))
+      return false;
+    var accumulator = this.FindAccumulator(d.Body, null);
+    if (accumulator == null || this.TryDirectCell(accumulator) is not { } slot)
+      return false;
+
+    var asm = this._asm;
+    var cell = slot.WithSize(OperandSize.Word);
+    asm.Mov(Reg.SI, cell);                       // load the accumulator's pre-loop value
+    this._registerAccumulator = (accumulator, Reg.SI);
+
+    var top = asm.DefineLabel();
+    var done = asm.DefineLabel();
+    var cont = asm.DefineLabel();
+    this._exitDo.Push(done);
+    this._iterateDo.Push(cont);
+    this._iterateAny.Push(cont);
+
+    asm.MarkLabel(top);
+    if (d.PreCondition != null) {
+      this.EmitCondition(d.PreCondition);
+      if (d.PreTest == LoopTestKind.While)
+        asm.Jz(done);
+      else
+        asm.Jnz(done);
+    }
+    foreach (var s in d.Body)
+      this.EmitStatement(s);
+    asm.MarkLabel(cont);
+    if (d.PostCondition != null) {
+      this.EmitCondition(d.PostCondition);
+      if (d.PostTest == LoopTestKind.While)
+        asm.Jnz(top);
+      else
+        asm.Jz(top);
+    } else
+      asm.Jmp(top);
+    asm.MarkLabel(done);
+
+    this._exitDo.Pop();
+    this._iterateDo.Pop();
+    this._iterateAny.Pop();
+    asm.Mov(cell, Reg.SI);                        // flush the accumulator on exit
+    this._registerAccumulator = null;
+    return true;
+  }
+
+  /// <summary>
   /// The first 2-byte signed-INTEGER scalar local written in an SI-clean loop
   /// body (assignment or INCR target, not the counter, not STATIC, with a direct
   /// frame cell) - a candidate to live in DI for the loop. Its reads/writes all
   /// route through the residency paths, so keeping it in a register is invisible.
   /// </summary>
-  private VariableSymbol? FindAccumulator(IReadOnlyList<Statement> body, VariableSymbol counter) {
+  private VariableSymbol? FindAccumulator(IReadOnlyList<Statement> body, VariableSymbol? counter) {
     foreach (var statement in body) {
       var target = statement switch {
         AssignStmt { Target: NameExpr t } => t,
@@ -1167,7 +1233,7 @@ public sealed partial class CodeGenerator {
   /// <paramref name="allowNested"/> is set, a single level of nested FOR that is itself
   /// DI-residency-eligible (<see cref="IsNestedRegisterableFor"/>) is also clean - its counter
   /// lives in DI and its body touches neither index register, so the outer SI survives it.</summary>
-  private bool BodyIsSiClean(IReadOnlyList<Statement> body, VariableSymbol counter, bool allowNested = false) {
+  private bool BodyIsSiClean(IReadOnlyList<Statement> body, VariableSymbol? counter, bool allowNested = false) {
     foreach (var statement in body)
       switch (statement) {
         case AssignStmt { Target: NameExpr } a

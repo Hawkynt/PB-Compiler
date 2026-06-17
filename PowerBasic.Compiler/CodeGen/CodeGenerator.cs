@@ -1916,6 +1916,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   }
 
   private void EmitDoLoop(DoLoopStmt d) {
+    // pb36 O5 (beyond the FOR shape): an SI/DI-clean DO/LOOP keeps a hot accumulator in SI
+    if (this.TryEmitDoLoopInRegister(d))
+      return;
+
     var asm = this._asm;
     var top = asm.DefineLabel();
     var done = asm.DefineLabel();
