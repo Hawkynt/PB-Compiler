@@ -994,6 +994,89 @@ public sealed class OptimizerTests {
     Assert.That(output, Is.EqualTo(" 12\n"));
   }
 
+  [Test]
+  public void Execute_GivenForwardingTailCall_WhenPb36_ThenReturnsCorrectValue() {
+    // GIVEN a SUB whose last action is CALL B with a DIFFERENT argument count
+    // (na = 2 bytes, nb = 6 bytes) - WHEN compiled pb36 the call becomes a frame
+    // teardown + jmp - THEN B runs with the right arguments and returns to main.
+    const string source = """
+      DECLARE SUB Forward(BYVAL n%)
+      DECLARE SUB Land(BYVAL a%, BYVAL b%, BYVAL c%)
+      Forward 7
+      PRINT "ok"
+      END
+      SUB Forward(BYVAL n%)
+        Land n%, n% * 2, n% + 100
+      END SUB
+      SUB Land(BYVAL a%, BYVAL b%, BYVAL c%)
+        PRINT a%; b%; c%
+      END SUB
+      """;
+    var pb35 = Compile(source, Dialect.Pb35);
+    var pb36 = Compile(source, Dialect.Pb36);
+    var out35 = DosBoxRunner.Normalize(DosBoxRunner.Run(pb35));
+    var out36 = DosBoxRunner.Normalize(DosBoxRunner.Run(pb36));
+    Assert.Multiple(() => {
+      Assert.That(out36, Is.EqualTo(" 7  14  107\nok\n"));
+      Assert.That(out36, Is.EqualTo(out35), "tail-jumped output must equal the genuine call chain");
+    });
+  }
+
+  [Test]
+  public void Execute_GivenDeepMutualTailRecursion_WhenPb36_ThenConstantStack() {
+    // GIVEN two SUBs that tail-call each other 120000 times - WHEN pb36 turns each
+    // tail call into a frame-reusing jump - THEN the chain runs in constant stack
+    // (a real two-frame-per-bounce chain would blow the default 2 KiB DOS stack).
+    var unit = Parser.Parse(Lexer.Tokenize("""
+      DECLARE SUB Ping(BYVAL n&)
+      DECLARE SUB Pong(BYVAL n&)
+      Ping 120000
+      PRINT "DONE"
+      END
+      SUB Ping(BYVAL n&)
+        IF n& > 0 THEN Pong n& - 1
+      END SUB
+      SUB Pong(BYVAL n&)
+        IF n& > 0 THEN Ping n& - 1
+      END SUB
+      """, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty);
+    var generator = new CodeGenerator(model);
+    var exe = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty);
+    var output = DosBoxRunner.Normalize(DosBoxRunner.Run(exe));
+    Assert.That(output, Is.EqualTo("DONE\n"));
+  }
+
+  [Test]
+  public void Execute_GivenWorkAfterCall_WhenPb36_ThenNotConvertedAndRuns() {
+    // GIVEN a call that is NOT in tail position (a PRINT runs after it returns) -
+    // WHEN compiled pb36 - THEN it stays an ordinary CALL and the trailing
+    // statement still executes (a wrong conversion would lose the "after" line).
+    const string source = """
+      DECLARE SUB AfterWork(BYVAL n%)
+      DECLARE SUB Note(BYVAL n%)
+      AfterWork 3
+      END
+      SUB AfterWork(BYVAL n%)
+        Note n%
+        PRINT "after"; n%
+      END SUB
+      SUB Note(BYVAL n%)
+        PRINT "note"; n%
+      END SUB
+      """;
+    var pb35 = Compile(source, Dialect.Pb35);
+    var pb36 = Compile(source, Dialect.Pb36);
+    var out35 = DosBoxRunner.Normalize(DosBoxRunner.Run(pb35));
+    var out36 = DosBoxRunner.Normalize(DosBoxRunner.Run(pb36));
+    Assert.Multiple(() => {
+      Assert.That(out36, Is.EqualTo("note 3\nafter 3\n"));
+      Assert.That(out36, Is.EqualTo(out35));
+    });
+  }
+
   #endregion
 
   #region O6 - single-expression function inlining

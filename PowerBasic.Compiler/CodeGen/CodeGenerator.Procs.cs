@@ -92,6 +92,7 @@ public sealed partial class CodeGenerator {
     var outerLabels = this._userLabels;
     this._userLabels = new(StringComparer.OrdinalIgnoreCase);
     var paramBytes = this.LayoutFrame(proc);
+    this._currentParamBytes = paramBytes;
     if (HasUnsupportedRegisterParam(proc))
       this.Errors.Add(new(proc.Position, $"{proc.CallConv} {proc.Name}: a register-convention parameter must be word-sized (BYVAL <= 2 bytes or BYREF); LONG/float/UDT/string need the full per-compiler ABI rules"));
     this._epilogue = asm.DefineLabel($"p_{proc.Name}_end");
@@ -131,17 +132,34 @@ public sealed partial class CodeGenerator {
     // BYVAL scalar whose slot can be rewritten in place
     this._tailSelfCalls = null;
     this._tailEntry = null;
-    if (this.Optimize && !this._trackResume
+    this._tailGeneralCalls = null;
+    // A is eligible to drop a tail call when nothing in its frame must outlive the
+    // call: no error handler or GOSUB returns, no string/FLEX local pending release
+    // (numeric locals only), a stack (callee-cleans) convention with [BP+] params and
+    // no capturing-lambda env save. The same proof the self-call optimization needs.
+    var tailEligible = this.Optimize && !this._trackResume
         && !proc.IsCdecl
         && !IsRegisterConvention(proc)   // register params live in negative slots; the in-place tail rewrite assumes [BP+] stack params
         && proc.ClosureEnvPtr == null   // a capturing lambda's env-save must run on every entry
         && proc.Parameters.All(p => p.ByVal && p.Type is ScalarType { IsFloat: false, ByteSize: <= 4 })
         && stackLocals.All(l => l.Type is ScalarType)
-        && !ContainsGosub(proc.Body!)) {
+        && !ContainsGosub(proc.Body!);
+    if (tailEligible) {
       var tails = CollectTailSelfCalls(proc.Body!, proc, model);
       if (tails.Count > 0) {
         this._tailSelfCalls = tails;
         this._tailEntry = asm.DefineLabel($"p_{proc.Name}_tail");
+      }
+      // O14 general tail calls: tail-position calls to OTHER in-module procs B that
+      // are themselves stack-convention with small BYVAL-scalar params (so B's frame
+      // can be laid out by plain word pushes and B cleans its own args via RET n).
+      // Restricted to SUBs: a FUNCTION's epilogue loads its result variable into the
+      // return registers, which the tail jump would skip - a bare tail CALL inside a
+      // FUNCTION must still fall through to that epilogue, so leave functions alone.
+      if (!proc.IsFunction) {
+        var general = CollectGeneralTailCalls(proc.Body!, proc, model);
+        if (general.Count > 0)
+          this._tailGeneralCalls = general;
       }
     }
 
@@ -233,6 +251,11 @@ public sealed partial class CodeGenerator {
       this.EmitTailSelfCall(proc, c.Arguments);
       return;
     }
+    if (this._tailGeneralCalls != null && this._tailGeneralCalls.TryGetValue(c, out var tailTarget)
+        && ReferenceEquals(tailTarget, proc) && c.Arguments.Count == proc.Parameters.Count) {
+      this.EmitGeneralTailCall(proc, model.ReorderedArguments.GetValueOrDefault(c) ?? c.Arguments);
+      return;
+    }
     this.EmitCall(proc, model.ReorderedArguments.GetValueOrDefault(c) ?? c.Arguments, wantResult: false, c.Position);
   }
 
@@ -264,6 +287,58 @@ public sealed partial class CodeGenerator {
     asm.Jmp(this._tailEntry!);
   }
 
+  /// <summary>
+  /// pb36 O14 general tail call: A's last action is <c>CALL B(args); RET</c>. Pushes
+  /// B's arguments in their normal call order (so B reads them exactly as from an
+  /// ordinary CALL), then tears down A's frame and slides the freshly-built call frame
+  /// (return address + B's arguments) up so its top sits at A's caller's pre-call SP -
+  /// the same boundary A's own <c>RET na</c> would have restored. Finally it jumps to
+  /// B's entry. B's prologue treats the slid words as a normal call frame and B's
+  /// <c>RET nb</c> pops B's nb argument bytes and returns straight to A's caller.
+  ///
+  /// Stack balance: A's caller pushed na argument bytes then CALLed A (return address
+  /// at [BP+2]). For B to return there with the caller's stack as A's <c>RET na</c>
+  /// would have left it, B's frame top (return address slot) must land at BP+2+(na-nb):
+  /// then B's prologue takes Bbp = BP+(na-nb), and B's <c>RET nb</c> ends at
+  /// Bbp+4+nb = BP+4+na = the caller's pre-call SP. na may differ from nb; this code
+  /// pushes B's nb bytes and discards A's na bytes implicitly via that offset, so the
+  /// net cleanup the caller observes is exactly na - identical to a real CALL A.
+  /// </summary>
+  private void EmitGeneralTailCall(ProcedureSymbol proc, IReadOnlyList<Expression> args) {
+    var asm = this._asm;
+
+    // build B's call frame image on the stack: arguments in B's normal push order, so
+    // [SP+2..] after the return-address word matches B's LayoutFrame exactly.
+    var nb = 0;
+    foreach (var i in PushesRightToLeft(proc) ? Enumerable.Range(0, args.Count).Reverse() : Enumerable.Range(0, args.Count)) {
+      nb += ParamSlotSize(proc.Parameters[i]);
+      var unusedTemp = 0;
+      this.EmitArgumentPush(proc, args, i, ref unusedTemp, []);   // small BYVAL scalars only - no byref temps
+    }
+
+    // push A's caller return address as B's return-address word (it sits just below
+    // the arguments, mirroring the word a real CALL would push). The block to relocate
+    // is now [SP .. SP + nb + 1] = return address (offset 0) + nb argument bytes.
+    var na = this._currentParamBytes;
+    asm.Mov(Reg.AX, Mem.Word(Reg.BP, 2)); // A's caller return address
+    asm.Push(Reg.AX);
+    asm.Mov(Reg.SI, Reg.SP);             // SI = source: top (return-address word) of the built B frame
+
+    // slide the whole block (2 + nb bytes) up to its destination, whose return-address
+    // slot is [BP + 2 + (na - nb)]. Destination is always at a higher address than the
+    // source (the source is below A's torn-down locals), so copy the HIGHEST word first
+    // to stay correct under the overlapping upward move.
+    var dest = 2 + (na - nb);            // BP-relative byte offset of B's return-address slot
+    for (var off = nb; off >= 0; off -= 2) {
+      asm.Mov(Reg.AX, Mem.Word(Reg.SI, off));
+      asm.Mov(Mem.Word(Reg.BP, dest + off), Reg.AX);
+    }
+
+    // SP -> B's return-address slot, then jump: B's "push BP" makes Bbp = BP+(na-nb).
+    asm.Lea(Reg.SP, Mem.Word(Reg.BP, dest));
+    asm.Jmp(this.ProcLabelOf(proc));
+  }
+
   /// <summary>Statements whose CallStmt to <paramref name="proc"/> sits in tail position (last in the body or last in arms of trailing IF/SELECT chains).</summary>
   private static HashSet<Statement> CollectTailSelfCalls(IReadOnlyList<Statement> body, ProcedureSymbol proc, SemanticModel model) {
     var tails = new HashSet<Statement>(ReferenceEqualityComparer.Instance);
@@ -292,6 +367,60 @@ public sealed partial class CodeGenerator {
       }
     }
   }
+
+  /// <summary>
+  /// pb36 O14: tail-position <c>CALL B</c> statements whose target B is a different
+  /// in-module procedure eligible to be jumped to (a known local label, a stack /
+  /// callee-cleans convention, and only small BYVAL-scalar parameters - so B's call
+  /// frame is laid out by plain word pushes and B's own <c>RET n</c> balances the
+  /// stack). Self-calls are handled by the in-place rewrite and excluded here.
+  /// </summary>
+  private static Dictionary<Statement, ProcedureSymbol> CollectGeneralTailCalls(IReadOnlyList<Statement> body, ProcedureSymbol self, SemanticModel model) {
+    var tails = new Dictionary<Statement, ProcedureSymbol>(ReferenceEqualityComparer.Instance);
+    Visit(body);
+    return tails;
+
+    void Visit(IReadOnlyList<Statement> block) {
+      if (block.Count == 0)
+        return;
+      var last = block[^1];
+      switch (last) {
+        case CallStmt c
+            when model.CallBindings.TryGetValue(c, out var target)
+              && !ReferenceEquals(target, self)
+              && IsGeneralTailCallTarget(target)
+              && c.Arguments.Count == target.Parameters.Count:
+          tails.Add(c, target);
+          break;
+        case IfStmt i:
+          Visit(i.Then);
+          foreach (var (_, armBody) in i.ElseIfs)
+            Visit(armBody);
+          if (i.Else != null)
+            Visit(i.Else);
+          break;
+        case SelectStmt s:
+          foreach (var arm in s.Arms)
+            Visit(arm.Body);
+          break;
+      }
+    }
+  }
+
+  /// <summary>
+  /// True when procedure B may be the target of a general tail-call jump: an
+  /// in-module definition (a local <c>p_B</c> label exists), a stack / callee-cleans
+  /// convention (not CDECL, not a register convention - so B cleans its own arguments
+  /// with <c>RET n</c> and they are pushed on the stack), no capturing-lambda env, and
+  /// every parameter a small BYVAL scalar pushed as plain words.
+  /// </summary>
+  private static bool IsGeneralTailCallTarget(ProcedureSymbol proc)
+    => !proc.IsExternal && proc.Body != null
+       && !proc.IsFunction   // a discarded FUNCTION result needs its StrFree / FPU-pop cleanup, which the jump skips
+       && !proc.IsCdecl
+       && !IsRegisterConvention(proc)
+       && proc.ClosureEnvPtr == null
+       && proc.Parameters.All(p => p.ByVal && p.Type is ScalarType { IsFloat: false, ByteSize: <= 4 });
 
   private static bool ContainsGosub(IEnumerable<Statement> statements) {
     foreach (var statement in statements) {
