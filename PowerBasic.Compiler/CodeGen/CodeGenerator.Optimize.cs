@@ -1782,7 +1782,11 @@ public sealed partial class CodeGenerator {
   ///   skipped.</item>
   /// </list>
   /// </summary>
-  private int EmitLicmPreheader(ForStmt f, VariableSymbol counter) {
+  // FOR loops hoist invariants out of the body, excluding the counter.
+  private int EmitLicmPreheader(ForStmt f, VariableSymbol counter) => this.EmitLicmPreheader(f.Body, counter);
+
+  // DO/WHILE loops have no counter (pass null); invariance is just "not written in the body".
+  private int EmitLicmPreheader(IReadOnlyList<Statement> body, VariableSymbol? counter) {
     if (!this.Optimize || !this.OptimizeSpeed)
       return 0;
     if (this.CheckNumeric || this.CheckOverflow)
@@ -1798,7 +1802,7 @@ public sealed partial class CodeGenerator {
       && m.Arguments[^1].Text.Equals("ON", StringComparison.OrdinalIgnoreCase));
 
     var firstSlot = this._cseBytes / 4; // next available slot index
-    var licm = OptCommonSubexpr.AnalyzeLicm(f.Body, counter, firstSlot, checkedArithmetic, model);
+    var licm = OptCommonSubexpr.AnalyzeLicm(body, counter, firstSlot, checkedArithmetic, model);
     if (licm.SlotCount == 0)
       return 0;
 

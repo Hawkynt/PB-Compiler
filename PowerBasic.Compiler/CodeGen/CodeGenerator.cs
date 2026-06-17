@@ -1861,6 +1861,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._iterateDo.Push(continueLabel);
     this._iterateAny.Push(continueLabel);
 
+    // O-LICM: hoist loop-invariant subexpressions of a flat body into the preheader (run
+    // once before the loop). No counter - invariance is "not written in the body". The gate
+    // forbids checked arithmetic, so a zero-trip pre-test loop never traps on the hoist.
+    this.EmitLicmPreheader(d.Body, null);
+
     asm.MarkLabel(top);
     if (d.PreCondition != null) {
       this.EmitCondition(d.PreCondition);

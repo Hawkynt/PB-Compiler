@@ -81,7 +81,7 @@ public static class OptCommonSubexpr {
   /// </summary>
   public static LicmResult AnalyzeLicm(
       IReadOnlyList<Statement> body,
-      VariableSymbol counter,
+      VariableSymbol? counter,
       int firstSlot,
       bool checkedArithmetic,
       SemanticModel model) {
@@ -96,7 +96,8 @@ public static class OptCommonSubexpr {
 
     // collect every variable written anywhere in the body (conservative union)
     var written = new HashSet<VariableSymbol>(ReferenceEqualityComparer.Instance);
-    written.Add(counter); // the counter is always written by the FOR increment
+    if (counter != null)
+      written.Add(counter); // the FOR counter is always written by the increment; a DO loop has none
     CollectWrites(body, written, model);
 
     // track which invariant keys we have already seen (key -> slot), and the
