@@ -1015,8 +1015,11 @@ public sealed partial class CodeGenerator {
       return false;
     if (this._trackResume)
       return false; // an error mid-loop would let a handler read the stale cell
-    if (!this.BodyIsSiClean(f.Body, counter))
+    if (!this.BodyIsSiClean(f.Body, counter, allowNested: true))
       return false;
+    // a nested DI-resident loop claims DI for its counter, so the outer must not also park an
+    // accumulator there (only SI and DI are safe; the inner counter wins DI)
+    var hasNestedLoop = f.Body.Any(s => s is ForStmt);
 
     var asm = this._asm;
     var limit = this.AllocTemp(2);
@@ -1029,8 +1032,9 @@ public sealed partial class CodeGenerator {
 
     this._registerCounter = (counter, Reg.SI);
 
-    // pb36 O5: keep one hot 2-byte INTEGER accumulator in DI for the loop too
-    var accumulator = this.FindAccumulator(f.Body, counter);
+    // pb36 O5: keep one hot 2-byte INTEGER accumulator in DI for the loop too - but only when
+    // no nested loop needs DI for its own counter
+    var accumulator = hasNestedLoop ? null : this.FindAccumulator(f.Body, counter);
     var accCell = accumulator != null ? this.TryDirectCell(accumulator) : null;
     if (accumulator != null && accCell is { } accSlot) {
       asm.Mov(Reg.DI, Adjust(accSlot, 0, OperandSize.Word)); // load its pre-loop value
@@ -1073,6 +1077,67 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
+  /// pb36 O5 (nested): an inner FOR loop running under an SI-resident outer loop keeps its
+  /// counter in DI for the duration - the compare and increment run register-to-register and
+  /// counter reads come from DI, so the inner counter never touches its memory cell per
+  /// iteration. The cell is written once on exit (post-loop reads see the increment-then-test
+  /// end value, exactly like the SI path). Fires only when the outer already holds SI and DI is
+  /// free (no outer accumulator), and the inner loop is <see cref="IsNestedRegisterableFor"/>.
+  /// </summary>
+  private bool TryEmitNestedForCounterInRegister(ForStmt f, VariableSymbol counter, Mem cell, long step) {
+    if (!this.Optimize || !this.OptimizeSpeed)
+      return false;
+    if (this._registerCounter is null || this._registerAccumulator != null)
+      return false; // need the outer SI loop active and DI free
+    if (this.CheckNumeric || this.CheckOverflow || this._trackResume)
+      return false;
+    if (!this.IsNestedRegisterableFor(f, this._registerCounter.Value.Symbol))
+      return false;
+
+    var asm = this._asm;
+    var limit = this.AllocTemp(2);
+    this.EmitExpression(f.To);
+    this.Coerce(model.TypeOf(f.To), PbType.Integer, f.To);
+    asm.Mov(limit, Reg.AX);
+    this.EmitExpression(f.From);                 // From may read the outer counter in SI
+    this.Coerce(model.TypeOf(f.From), PbType.Integer, f.From);
+    asm.Mov(Reg.DI, Reg.AX);
+
+    this._registerAccumulator = (counter, Reg.DI); // the inner counter is now resident in DI
+
+    var top = asm.DefineLabel();
+    var done = asm.DefineLabel();
+    var cont = asm.DefineLabel();
+    this._exitFor.Push(done);
+    this._iterateFor.Push(cont);
+    this._iterateAny.Push(cont);
+
+    asm.MarkLabel(top);
+    asm.Cmp(Reg.DI, limit);
+    if (step >= 0)
+      asm.Jg(done);
+    else
+      asm.Jl(done);
+    foreach (var statement in f.Body)
+      this.EmitStatement(statement);
+    asm.MarkLabel(cont);
+    if (step >= 0)
+      asm.Add(Reg.DI, (Imm)(int)step);
+    else
+      asm.Sub(Reg.DI, (Imm)(int)Math.Abs(step));
+    asm.Jmp(top);
+    asm.MarkLabel(done);
+
+    this._exitFor.Pop();
+    this._iterateFor.Pop();
+    this._iterateAny.Pop();
+    asm.Mov(cell, Reg.DI);       // post-loop reads of the inner counter use the cell again
+    this._registerAccumulator = null;
+    this.ReleaseTemp(2);
+    return true;
+  }
+
+  /// <summary>
   /// The first 2-byte signed-INTEGER scalar local written in an SI-clean loop
   /// body (assignment or INCR target, not the counter, not STATIC, with a direct
   /// frame cell) - a candidate to live in DI for the loop. Its reads/writes all
@@ -1097,8 +1162,12 @@ public sealed partial class CodeGenerator {
     return null;
   }
 
-  /// <summary>True when every body statement is a scalar-integer assignment / INCR (over scalar locals, no counter write) whose emission provably leaves SI untouched.</summary>
-  private bool BodyIsSiClean(IReadOnlyList<Statement> body, VariableSymbol counter) {
+  /// <summary>True when every body statement is a scalar-integer assignment / INCR (over scalar
+  /// locals, no counter write) whose emission provably leaves SI/DI untouched. When
+  /// <paramref name="allowNested"/> is set, a single level of nested FOR that is itself
+  /// DI-residency-eligible (<see cref="IsNestedRegisterableFor"/>) is also clean - its counter
+  /// lives in DI and its body touches neither index register, so the outer SI survives it.</summary>
+  private bool BodyIsSiClean(IReadOnlyList<Statement> body, VariableSymbol counter, bool allowNested = false) {
     foreach (var statement in body)
       switch (statement) {
         case AssignStmt { Target: NameExpr } a
@@ -1109,10 +1178,42 @@ public sealed partial class CodeGenerator {
             when this.ScalarIntTarget(id.Target) is { } target && !ReferenceEquals(target, counter)
               && (id.Amount == null || SiCleanExpression(id.Amount, model)):
           continue;
+        case ForStmt nested when allowNested && this.IsNestedRegisterableFor(nested, counter):
+          continue;
         default:
           return false;
       }
     return true;
+  }
+
+  /// <summary>
+  /// pb36 O5 (nested): true when <paramref name="f"/> can keep its counter in DI under an
+  /// SI-resident outer loop whose counter is <paramref name="outerCounter"/>. Requires a
+  /// signed-INTEGER 2-byte counter (distinct from the outer's) with a direct frame cell, a
+  /// compile-time-constant non-zero step, range bounds that touch no index register, and a
+  /// leaf SI/DI-clean body (no further nesting - only SI and DI are safe, so two levels is the
+  /// limit). An SI-clean body is automatically DI-clean: SiCleanExpression emits through
+  /// AX/BX/CX/DX (+x87) only, never the index registers, so the inner body disturbs neither
+  /// the outer counter in SI nor the inner counter in DI.
+  /// </summary>
+  private bool IsNestedRegisterableFor(ForStmt f, VariableSymbol outerCounter) {
+    if (f.Variable is not NameExpr name || !model.VariableBindings.TryGetValue(name, out var inner))
+      return false;
+    if (ReferenceEquals(inner, outerCounter) || inner.Type is not ScalarType { ByteSize: 2, Signed: true, IsFloat: false })
+      return false;
+    if (this.TryDirectCell(inner) is null)
+      return false;
+    long? step = f.Step switch {
+      null => 1L,
+      IntegerLiteralExpr lit => lit.Value,
+      UnaryExpr { Op: UnaryOp.Negate, Operand: IntegerLiteralExpr neg } => -neg.Value,
+      _ => null,
+    };
+    if (step is null or 0)
+      return false;
+    if (!SiCleanExpression(f.From, model) || !SiCleanExpression(f.To, model))
+      return false;
+    return this.BodyIsSiClean(f.Body, inner); // leaf (allowNested defaults false) - keeps the nest 2 deep
   }
 
   private VariableSymbol? ScalarIntTarget(Expression e)

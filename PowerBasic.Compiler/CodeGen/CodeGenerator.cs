@@ -1632,6 +1632,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       // instead of recomputing (i-lbound)*2 with IMUL on every iteration
       if (this.TryEmitForArrayStore(f, counter, slot.WithSize(OperandSize.Word), fastStep))
         return;
+      // pb36 O5 (nested): an inner FOR under an SI-resident outer loop keeps its
+      // counter in DI - the second (and last) safe index register
+      if (this.TryEmitNestedForCounterInRegister(f, counter, slot.WithSize(OperandSize.Word), fastStep))
+        return;
       // pb36 O5: an SI-clean body keeps the counter in SI - no per-iteration
       // cell traffic for the compare, increment or counter reads
       if (this.TryEmitForCounterInRegister(f, counter, slot.WithSize(OperandSize.Word), fastStep))

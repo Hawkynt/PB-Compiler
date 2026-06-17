@@ -612,6 +612,27 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenNestedIntegerLoops_WhenPb36Speed_ThenInnerCounterInDi() {
+    // a doubly-nested integer loop with SI/DI-clean bodies keeps the outer counter in SI
+    // and the inner counter in DI: the inner increment becomes ADD DI, imm (83 C7), absent
+    // when $OPTIMIZE SPEED is off (both counters then live in memory cells).
+    const string body = "s% = 0\nFOR i% = 1 TO 8\n  FOR j% = 1 TO 8\n    s% = s% + i%\n  NEXT j%\nNEXT i%\nPRINT s%\nEND";
+    var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
+    var plain = Compile(body, Dialect.Pb36);
+    Assert.That(CountAddDiImm(speed), Is.GreaterThan(CountAddDiImm(plain)),
+      "the inner FOR counter should increment in DI (ADD DI, imm) under SPEED");
+  }
+
+  // 83 C7 = ADD DI, imm8 - the increment of a DI-resident (nested) FOR counter
+  private static int CountAddDiImm(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0x83 && image[i + 1] == 0xC7)
+        ++count;
+    return count;
+  }
+
+  [Test]
   public void Emit_GivenModularMultiplyByThree_WhenPb36Speed_ThenShiftAddReplacesImul() {
     // x% is made opaque (BYREF call) so SCCP cannot fold it - this pins the
     // modular shift-add path, not whole-expression constant folding
