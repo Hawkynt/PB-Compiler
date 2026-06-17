@@ -477,6 +477,27 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenLongForCounterAddUnderOverflowOn_WhenPb36_ThenCheckElided() {
+    // a LONG i& + 1& over [1,100] -> [2,101] stays inside 32 bits and drops its Error-6
+    // check; a LONG k& + 1& with an unknown k& keeps the 32-bit ADD/ADC overflow trap
+    const string counterAdd = "$ERROR OVERFLOW ON\n$OPTIMIZE SPEED\nFOR i& = 1 TO 100\nx& = i& + 1&\nNEXT i&\nEND";
+    const string varAdd = "$ERROR OVERFLOW ON\n$OPTIMIZE SPEED\nk& = 5\nFOR i& = 1 TO 100\nx& = k& + 1&\nNEXT i&\nEND";
+    Assert.That(CountRaise6(Compile(counterAdd, Dialect.Pb36)),
+      Is.LessThan(CountRaise6(Compile(varAdd, Dialect.Pb36))),
+      "an in-range LONG FOR-counter add should drop its 32-bit Error-6 overflow check");
+  }
+
+  [Test]
+  public void Emit_GivenLongForCounterSubtractUnderOverflowOn_WhenPb36_ThenCheckElided() {
+    // a LONG i& - 1& over [1,100] -> [0,99] stays inside 32 bits and drops its Error-6 check
+    const string counterSub = "$ERROR OVERFLOW ON\n$OPTIMIZE SPEED\nFOR i& = 1 TO 100\nx& = i& - 1&\nNEXT i&\nEND";
+    const string varSub = "$ERROR OVERFLOW ON\n$OPTIMIZE SPEED\nk& = 5\nFOR i& = 1 TO 100\nx& = k& - 1&\nNEXT i&\nEND";
+    Assert.That(CountRaise6(Compile(counterSub, Dialect.Pb36)),
+      Is.LessThan(CountRaise6(Compile(varSub, Dialect.Pb36))),
+      "an in-range LONG FOR-counter subtract should drop its 32-bit Error-6 overflow check");
+  }
+
+  [Test]
   public void Emit_GivenDivideByForCounter_WhenPb36_ThenZeroGuardElided() {
     // 100 \ i% with i% a [1,10] counter (excludes 0) drops the TEST BX,BX zero guard;
     // 100 \ k% keeps it

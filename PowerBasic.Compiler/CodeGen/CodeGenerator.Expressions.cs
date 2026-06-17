@@ -817,13 +817,14 @@ public sealed partial class CodeGenerator {
       case BinaryOp.Add:
         asm.Add(Reg.AX, lo);
         asm.Adc(Reg.DX, hi);
-        if (this.CheckOverflow)
+        // pb36 O16: drop the Error-6 check when the affine FOR-counter range proves no 32-bit overflow
+        if (this.CheckOverflow && !this.ProvablyNoOverflow32(b))
           this.EmitRaiseWhen(asm.Jno, 6);
         break;
       case BinaryOp.Subtract:
         asm.Sub(Reg.AX, lo);
         asm.Sbb(Reg.DX, hi);
-        if (this.CheckOverflow)
+        if (this.CheckOverflow && !this.ProvablyNoOverflow32(b))
           this.EmitRaiseWhen(asm.Jno, 6);
         break;
       default: { // Equal / NotEqual: difference is zero iff equal, then -1/0
@@ -942,13 +943,14 @@ public sealed partial class CodeGenerator {
       case BinaryOp.Add:
         asm.Add(Reg.AX, Reg.BX);
         asm.Adc(Reg.DX, Reg.CX);
-        if (this.CheckOverflow)
+        // pb36 O16: drop the Error-6 check when the affine FOR-counter range proves no 32-bit overflow
+        if (this.CheckOverflow && !this.ProvablyNoOverflow32(b))
           this.EmitRaiseWhen(asm.Jno, 6);
         break;
       case BinaryOp.Subtract:
         asm.Sub(Reg.AX, Reg.BX);
         asm.Sbb(Reg.DX, Reg.CX);
-        if (this.CheckOverflow)
+        if (this.CheckOverflow && !this.ProvablyNoOverflow32(b))
           this.EmitRaiseWhen(asm.Jno, 6);
         break;
       case BinaryOp.Multiply:
