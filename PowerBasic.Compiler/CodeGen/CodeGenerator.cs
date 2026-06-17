@@ -170,6 +170,21 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         if (this.IndexRangeOf(b.Right) is { } rm2 && this.OptFolder.TryFold(b.Left) is { Integer: { } lm2 })
           return ScaleRange(rm2, lm2);
         return null;
+      case BinaryExpr { Op: BinaryOp.And } b:
+        // x AND m (m a non-negative constant): the result keeps only m's bits, so it is in
+        // [0, m] for ANY x (sign included) - a clean bound for masked wrap-indexing a(h AND mask)
+        if (this.OptFolder.TryFold(b.Right) is { Integer: { } am } && am >= 0)
+          return (0, am);
+        if (this.OptFolder.TryFold(b.Left) is { Integer: { } am2 } && am2 >= 0)
+          return (0, am2);
+        return null;
+      case BinaryExpr { Op: BinaryOp.Modulo } b
+          when this.OptFolder.TryFold(b.Right) is { Integer: { } mk } && mk != 0: {
+        // x MOD k (k constant != 0): |result| < |k| and PB's truncated MOD takes the sign of x,
+        // so the result is in [-(|k|-1), |k|-1], tightening to [0, |k|-1] when x is provably >= 0
+        var bound = Math.Abs(mk) - 1;
+        return this.IndexRangeOf(b.Left) is { Lo: >= 0 } ? (0, bound) : (-bound, bound);
+      }
       default:
         return null;
     }

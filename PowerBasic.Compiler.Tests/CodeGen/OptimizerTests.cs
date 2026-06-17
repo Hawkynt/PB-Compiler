@@ -479,6 +479,19 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenMaskedAndModIndexUnderBoundsOn_WhenPb36_ThenInRangeCheckElided() {
+    // a(x AND 7) is always in [0,7] (the mask keeps only the low bits); a(i% MOD 8) over a
+    // non-negative counter is in [0,7]. Both lie inside a(0 TO 7), so pb36 drops the Error-9
+    // bounds check that pb35 (no range lattice) keeps.
+    const string andIdx = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(0 TO 7)\nFOR i% = 1 TO 50\na%(i% AND 7) = i%\nNEXT i%\nEND";
+    const string modIdx = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(0 TO 7)\nFOR i% = 0 TO 50\na%(i% MOD 8) = i%\nNEXT i%\nEND";
+    Assert.That(CountRaise9(Compile(andIdx, Dialect.Pb36)), Is.LessThan(CountRaise9(Compile(andIdx, Dialect.Pb35))),
+      "x AND 7 is always in [0,7] - the bounds check should drop");
+    Assert.That(CountRaise9(Compile(modIdx, Dialect.Pb36)), Is.LessThan(CountRaise9(Compile(modIdx, Dialect.Pb35))),
+      "i% MOD 8 over a non-negative counter is in [0,7] - the bounds check should drop");
+  }
+
+  [Test]
   public void Emit_GivenForCounterAddUnderOverflowOn_WhenPb36_ThenCheckElided() {
     // i% + 1 over an in-range FOR counter drops its Error-6 check; k% + 1 keeps it
     const string counterAdd = "$ERROR OVERFLOW ON\n$OPTIMIZE SPEED\nFOR i% = 1 TO 100\nx% = i% + 1\nNEXT i%\nEND";
