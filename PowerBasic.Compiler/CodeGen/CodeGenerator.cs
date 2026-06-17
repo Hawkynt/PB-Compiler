@@ -37,6 +37,13 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private ProcedureSymbol? _currentProc;
   private HashSet<Statement>? _tailSelfCalls;
   private Label? _tailEntry;
+  // pb36 O14 general tail calls: a tail-position CALL to ANOTHER in-module proc B
+  // becomes "tear down A's frame, lay out B's call frame at A's caller's boundary,
+  // jmp B" - B returns straight to A's caller. Keyed by the CallStmt -> target B.
+  private Dictionary<Statement, ProcedureSymbol>? _tailGeneralCalls;
+  // byte count of the current procedure's stack parameters ([BP+4..]); the tail-call
+  // teardown discards exactly these before laying out the callee's arguments.
+  private int _currentParamBytes;
   private Dictionary<VariableSymbol, (Mem Cell, PbType Type)>? _inlineParamSlots;
   private Label _epilogue = null!;
   private Label _frameBytesLabel = null!;
