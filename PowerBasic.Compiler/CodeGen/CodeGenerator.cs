@@ -508,6 +508,18 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // now-dead global's store is dropped too. Without data shaking, plain reachability applies.
     var liveProcs = dataShake?.LiveProcedures
       ?? (this.Optimize ? OptReachability.LiveProcedures(model, model.MainBody) : null);
+    // pb36 O6: a procedure inlined at EVERY call site has no surviving real CALL, so it
+    // is purged. FullyInlinedProcedures guarantees every reference inlines (one that does
+    // not poisons it out of the set), and an inlinable leaf makes no calls of its own, so
+    // removing it from the live set cannot strand a still-needed callee. Self-contained
+    // main only (matching O22/O23 ownership), so pb35/unoptimized output is untouched.
+    if (this.Optimize && !this._isUnit && liveProcs != null) {
+      var hasErrorHandling = ContainsErrorHandling(model.MainBody)
+        || model.ProcedureList.Any(p => p.Body is { } b && ContainsErrorHandling(b));
+      var inlinedAway = OptInlining.FullyInlinedProcedures(model, p => this.AnalyzeInlinableLeaf(p) != null, this.IsFullyOwned, hasErrorHandling);
+      foreach (var proc in inlinedAway)
+        liveProcs.Remove(proc);
+    }
     foreach (var proc in model.ProcedureList)
       if (!proc.IsExternal && (liveProcs is null || liveProcs.Contains(proc) || !this.IsFullyOwned(proc)))
         this.EmitProcedure(proc);

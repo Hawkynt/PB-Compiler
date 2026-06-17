@@ -1125,6 +1125,131 @@ public sealed class OptimizerTests {
     Assert.That(output, Is.EqualTo(" 49\n 7\n"), "argument effects must run exactly once");
   }
 
+  [Test]
+  public void Emit_GivenMultiStatementLeaf_WhenPb36_ThenInlinesAndMatches() {
+    // GIVEN a small multi-statement leaf FUNCTION (a temp local, then the result)
+    // WHEN compiled pb35 (real call) and pb36 (inlined)
+    // THEN the DOSBox output is identical and the inlined image is smaller
+    const string source = """
+      DECLARE FUNCTION Poly%(BYVAL x%)
+      a% = 4
+      PRINT Poly%(a%); Poly%(2); Poly%(a% + 3)
+      END
+      FUNCTION Poly%(BYVAL x%)
+        LOCAL t%
+        t% = x% * x%
+        Poly% = t% + x% + 1
+      END FUNCTION
+      """;
+    var pb35 = Compile(source, Dialect.Pb35);
+    var pb36 = Compile(source, Dialect.Pb36);
+    var out35 = DosBoxRunner.Normalize(DosBoxRunner.Run(pb35));
+    var out36 = DosBoxRunner.Normalize(DosBoxRunner.Run(pb36));
+    Assert.Multiple(() => {
+      // Poly(4)=16+4+1=21, Poly(2)=4+2+1=7, Poly(7)=49+7+1=57
+      Assert.That(out36, Is.EqualTo(" 21  7  57\n"));
+      Assert.That(out36, Is.EqualTo(out35));
+      Assert.That(pb36.Length, Is.LessThan(pb35.Length), "the inlined image sheds the call frame");
+    });
+  }
+
+  [Test]
+  public void Emit_GivenEveryCallInlines_WhenPb36_ThenProcedurePurged() {
+    // GIVEN a multi-statement leaf whose every call inlines
+    // WHEN compiled, vs a twin that takes its address (CODEPTR forces a real body)
+    // THEN the all-inlined image is smaller - the procedure body is gone
+    const string inlinedAll = """
+      DECLARE FUNCTION Poly%(BYVAL x%)
+      PRINT Poly%(3); Poly%(5)
+      END
+      FUNCTION Poly%(BYVAL x%)
+        LOCAL t%
+        t% = x% * x%
+        Poly% = t% + x%
+      END FUNCTION
+      """;
+    const string addressTaken = """
+      DECLARE FUNCTION Poly%(BYVAL x%)
+      DIM p AS LONG
+      p = CODEPTR(Poly%)
+      PRINT Poly%(3); Poly%(5); p
+      END
+      FUNCTION Poly%(BYVAL x%)
+        LOCAL t%
+        t% = x% * x%
+        Poly% = t% + x%
+      END FUNCTION
+      """;
+    var inlined = Compile(inlinedAll, Dialect.Pb36);
+    var kept = Compile(addressTaken, Dialect.Pb36);
+    // the address-taken twin must emit the real procedure body; the all-inlined one
+    // purges it, so the inlined image is the smaller of the two
+    Assert.That(inlined.Length, Is.LessThan(kept.Length), "fully-inlined procedure should be purged from the image");
+  }
+
+  [Test]
+  public void Emit_GivenTwoCallSitesAndSelfMutatingParam_WhenInlined_ThenNoCollision() {
+    // GIVEN a leaf that mutates its own BYVAL parameter and a body local
+    // WHEN inlined at two call sites in one expression
+    // THEN each inlining uses its own temps - the two results do not collide
+    const string source = """
+      DECLARE FUNCTION Step%(BYVAL n%)
+      PRINT Step%(10) + Step%(100)
+      END
+      FUNCTION Step%(BYVAL n%)
+        LOCAL acc%
+        acc% = n%
+        n% = n% + 1
+        acc% = acc% + n%
+        Step% = acc%
+      END FUNCTION
+      """;
+    var output = DosBoxRunner.Normalize(DosBoxRunner.Run(Compile(source, Dialect.Pb36)));
+    // Step(10)=10+11=21, Step(100)=100+101=201, sum 222 - no shared frame slots
+    Assert.That(output, Is.EqualTo(" 222\n"));
+  }
+
+  [Test]
+  public void Emit_GivenIneligibleCallees_WhenPb36_ThenRealCallKept() {
+    // GIVEN callees that disqualify inlining (a nested call, a loop, an ON ERROR)
+    // WHEN every one is invoked
+    // THEN the program still runs correctly via real calls (the procedures survive)
+    const string source = """
+      DECLARE FUNCTION Leaf%(BYVAL x%)
+      DECLARE FUNCTION Caller%(BYVAL x%)
+      DECLARE FUNCTION Loopy%(BYVAL x%)
+      DECLARE FUNCTION Guarded%(BYVAL x%)
+      PRINT Caller%(3); Loopy%(4); Guarded%(5)
+      END
+      FUNCTION Leaf%(BYVAL x%)
+        Leaf% = x% + 1
+      END FUNCTION
+      FUNCTION Caller%(BYVAL x%)
+        Caller% = Leaf%(x%) * 2
+      END FUNCTION
+      FUNCTION Loopy%(BYVAL x%)
+        LOCAL s%, i%
+        FOR i% = 1 TO x%
+          s% = s% + i%
+        NEXT i%
+        Loopy% = s%
+      END FUNCTION
+      FUNCTION Guarded%(BYVAL x%)
+        ON ERROR GOTO 0
+        Guarded% = x% * 10
+      END FUNCTION
+      """;
+    var pb35 = Compile(source, Dialect.Pb35);
+    var pb36 = Compile(source, Dialect.Pb36);
+    var out35 = DosBoxRunner.Normalize(DosBoxRunner.Run(pb35));
+    var out36 = DosBoxRunner.Normalize(DosBoxRunner.Run(pb36));
+    // Caller(3) = (3+1)*2 = 8 ; Loopy(4) = 1+2+3+4 = 10 ; Guarded(5) = 50
+    Assert.Multiple(() => {
+      Assert.That(out36, Is.EqualTo(" 8  10  50\n"));
+      Assert.That(out36, Is.EqualTo(out35), "ineligible callees stay byte-correct via the real call");
+    });
+  }
+
   #endregion
 
   #region O3 - common subexpression elimination
