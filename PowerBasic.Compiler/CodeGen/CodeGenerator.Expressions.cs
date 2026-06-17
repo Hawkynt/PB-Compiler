@@ -555,6 +555,33 @@ public sealed partial class CodeGenerator {
       return;
     }
 
+    // pb36 O9 concat-chain dead-temp reuse: in a left-associative chain `a$ + b$ + c$` the left
+    // subexpression (`a$ + b$`) is a freshly-allocated, dead, topmost temp, so the next
+    // barrier-free operand is appended to it IN PLACE (rt_strcatlit / rt_strcatvar) instead of
+    // allocating a fresh StrCat result at every node - O(n) instead of O(n^2). Sound only because
+    // the left is a temp (mutating a live variable would be wrong); the runtime checks topmost and
+    // falls back to a copy otherwise, so the value is identical. Evaluating a literal / a variable's
+    // raw handle allocates nothing, so the left temp stays topmost.
+    if (this.Optimize && b.Op is BinaryOp.Add or BinaryOp.Concat
+        && b.Left is BinaryExpr { Op: BinaryOp.Add or BinaryOp.Concat }) {
+      if (b.Right is StringLiteralExpr { Value: { Length: > 0 } litText }) {
+        this.EmitExpression(b.Left);                          // AX = dead topmost temp
+        asm.Mov(Reg.SI, Imm.OffsetOf(this.LiteralOf(litText)));
+        asm.Mov(Reg.CX, (Imm)litText.Length);
+        asm.Call(this._rt.StrCatLit);
+        return;
+      }
+      if (b.Right is NameExpr rightName
+          && model.VariableBindings.TryGetValue(rightName, out var rightSym)
+          && model.TypeOf(rightName) is StringType
+          && this.TryDirectCell(rightSym) is { } rightCell) {
+        this.EmitExpression(b.Left);                          // AX = dead topmost temp
+        asm.Mov(Reg.DX, rightCell.WithSize(OperandSize.Word)); // DX = right operand's raw handle
+        asm.Call(this._rt.StrCatVar);
+        return;
+      }
+    }
+
     this.EmitExpression(b.Left);
     asm.Push(Reg.AX);
     this.EmitExpression(b.Right);

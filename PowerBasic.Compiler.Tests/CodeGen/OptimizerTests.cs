@@ -599,6 +599,16 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenConcatChain_WhenPb36_ThenTailAppendedInPlace() {
+    // a$ + b$ + c$ = (a$ + b$) + c$: the inner concat's dead, topmost temp has the tail operand
+    // appended in place, so the +c$ node calls rt_strcatvar; a plain two-operand a$ + b$ does not.
+    const string chain = "$OPTIMIZE SPEED\na$ = \"a\"\nb$ = \"b\"\nc$ = \"c\"\ns$ = a$ + b$ + c$\nPRINT s$\nEND";
+    const string pair = "$OPTIMIZE SPEED\na$ = \"a\"\nb$ = \"b\"\ns$ = a$ + b$\nPRINT s$\nEND";
+    Assert.That(CountCallsToStrCatVar(Compile(chain, Dialect.Pb36)), Is.GreaterThan(CountCallsToStrCatVar(Compile(pair, Dialect.Pb36))),
+      "a concat chain should append its tail operand in place via rt_strcatvar");
+  }
+
+  [Test]
   public void Emit_GivenStringSelfAppend_WhenPb36_ThenSmallerThanNonSelf() {
     // s$ = s$ + x$ skips the StrDup of s$ and the StrAssign (StrCat consumes s$ directly),
     // so it emits less code than the otherwise-identical non-self s$ = t$ + x$
