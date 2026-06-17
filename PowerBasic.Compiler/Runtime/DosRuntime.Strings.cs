@@ -55,6 +55,7 @@ public sealed partial class DosRuntime {
   public Label StrMem { get; private set; } = null!;
   public Label StrCat { get; private set; } = null!;
   public Label StrCatLit { get; private set; } = null!;
+  public Label StrCatVar { get; private set; } = null!;
   public Label StrCmp { get; private set; } = null!;
   public Label StrMid { get; private set; } = null!;
   public Label StrLeft { get; private set; } = null!;
@@ -94,6 +95,7 @@ public sealed partial class DosRuntime {
     this.EmitStrDup(asm);
     this.EmitStrCat(asm);
     this.EmitStrCatLit(asm);
+    this.EmitStrCatVar(asm);
     this.EmitStrCmp(asm);
     this.EmitStrMid(asm);
     this.EmitStrLeftRight(asm);
@@ -540,6 +542,101 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.DX);                                  // dx = ds
     asm.Call(this.StrMem);                            // materialize the literal as the result
     asm.Ret();
+  }
+
+  /// <summary>
+  /// O9 in-place self-append of a string VARIABLE. AX = target handle, DX = source handle ->
+  /// AX = result handle. When the target is the topmost heap block (with room, under the
+  /// $STRING cap) the source's bytes are copied straight after the target's data (a heap->heap
+  /// move) and the block grows in place, keeping the SAME handle - the source is NOT freed (a
+  /// variable owns it). This also covers the self-double `s$ = s$ + s$` (source == target): the
+  /// destination begins exactly where the source ends, and REP MOVSB copies forward, so no byte
+  /// is read after being overwritten. Otherwise it falls back to StrDup(source) + StrCat, which
+  /// frees the target and the dup but not the source - the exact result of the old path.
+  /// </summary>
+  private void EmitStrCatVar(Assembler asm) {
+    this.StrCatVar = asm.MarkLabel("rt_strcatvar");
+    var haveRhs = asm.DefineLabel();
+    var fromEmpty = asm.DefineLabel();
+    var retAx = asm.DefineLabel();
+    var fallback = asm.DefineLabel();
+
+    asm.Test(Reg.DX, Reg.DX);
+    asm.Jnz(haveRhs);
+    asm.Ret();                                        // source 0: target unchanged
+    asm.MarkLabel(haveRhs);
+    asm.Test(Reg.AX, Reg.AX);
+    asm.Jz(fromEmpty);                                // empty target: result is a copy of source
+
+    asm.Mov(Reg.BX, Reg.DX);                          // source length & data ptr (DS = program seg)
+    asm.Shl(Reg.BX, 2);
+    asm.Mov(Reg.CX, this.Descriptor(Reg.BX, 2));      // cx = source length
+    asm.Test(Reg.CX, Reg.CX);
+    asm.Jz(retAx);                                    // empty source: target unchanged
+    asm.Mov(Mem.Word(asm.Lbl("rt_st0")), Reg.AX);     // target handle
+    asm.Mov(Mem.Word(asm.Lbl("rt_st1")), Reg.DX);     // source handle
+    asm.Mov(Mem.Word(asm.Lbl("rt_st3")), Reg.CX);     // source length
+    asm.Mov(Reg.SI, this.Descriptor(Reg.BX));         // si = source data ptr
+    asm.Mov(Mem.Word(asm.Lbl("rt_st2")), Reg.SI);     // stash source data ptr
+
+    asm.Mov(Reg.BX, Reg.AX);                          // target descriptor
+    asm.Shl(Reg.BX, 2);
+    asm.Mov(Reg.DI, this.Descriptor(Reg.BX));         // di = target data ptr
+    asm.Mov(Reg.BX, this.Descriptor(Reg.BX, 2));      // bx = target length
+    asm.Mov(Reg.AX, Reg.DI);                          // topmost? di + targetlen == rt_strtop
+    asm.Add(Reg.AX, Reg.BX);
+    asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_strtop")));
+    asm.Jne(fallback);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_strtop")));  // room? rt_strtop + srclen <= 0xFFF0
+    asm.Add(Reg.AX, Reg.CX);
+    asm.Jc(fallback);
+    asm.Cmp(Reg.AX, (Imm)0xFFF0);
+    asm.Ja(fallback);
+    asm.Mov(Reg.AX, Reg.BX);                          // cap? targetlen + srclen <= maxlen
+    asm.Add(Reg.AX, Reg.CX);
+    asm.Jc(fallback);
+    asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_strmaxlen")));
+    asm.Ja(fallback);
+
+    asm.Push(Reg.AX);                                 // newlen
+    asm.Push(Reg.DS);
+    asm.Push(Reg.ES);
+    asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_strseg")));
+    asm.Mov(Reg.DI, Mem.Word(asm.Lbl("rt_strtop")));  // dst (read while DS = program seg)
+    asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_st2")));     // src = source data ptr
+    asm.Mov(Reg.AX, Reg.ES);
+    asm.Mov(Reg.DS, Reg.AX);                          // DS = ES = strseg for the heap->heap copy
+    asm.Rep();
+    asm.Movsb();                                      // ES:DI <- DS:SI (CX bytes); DI -> new end
+    asm.Pop(Reg.ES);
+    asm.Pop(Reg.DS);                                  // DS = program seg again
+    asm.Mov(Mem.Word(asm.Lbl("rt_strtop")), Reg.DI);  // bump top
+    asm.Pop(Reg.AX);                                  // newlen
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_st0")));
+    asm.Shl(Reg.BX, 2);
+    asm.Mov(this.Descriptor(Reg.BX, 2), Reg.AX);      // descriptor length = newlen
+    asm.Mov(Reg.SI, this.Descriptor(Reg.BX));         // target data ptr
+    asm.Push(Reg.ES);
+    asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_strseg")));
+    asm.Mov(Mem.Word(Reg.SI, -2).Es(), Reg.AX);       // block header length word = newlen
+    asm.Pop(Reg.ES);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_st0")));     // return the (unchanged) target handle
+    asm.Ret();
+
+    asm.MarkLabel(retAx);
+    asm.Ret();                                        // empty source: AX = target unchanged
+
+    asm.MarkLabel(fallback);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_st1")));     // dup the source (so StrCat won't free it)
+    asm.Call(this.StrDup);                            // ax = dup of source
+    asm.Mov(Reg.DX, Reg.AX);                          // right = the dup
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_st0")));     // left = target
+    asm.Call(this.StrCat);                            // frees target and dup, ax = result
+    asm.Ret();
+
+    asm.MarkLabel(fromEmpty);
+    asm.Mov(Reg.AX, Reg.DX);                          // empty target: result = a copy of source
+    asm.Jmp(this.StrDup);                             // tail-call StrDup (AX = source) -> AX
   }
 
   private void EmitStrCmp(Assembler asm) {

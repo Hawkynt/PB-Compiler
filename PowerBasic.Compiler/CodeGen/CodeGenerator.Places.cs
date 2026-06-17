@@ -498,6 +498,21 @@ public sealed partial class CodeGenerator {
           asm.Mov(selfCell.WithSize(OperandSize.Word), Reg.AX);
           return;
         }
+        // pb36 O9 in-place: `s$ = s$ + v$` (v$ a bare string variable) appends v$'s bytes
+        // straight after s$'s data when s$ is topmost - the source is read as its RAW handle (no
+        // StrDup temp, so s$ stays topmost) and copied heap-to-heap, then v$ is left intact.
+        // rt_strcatvar also covers self-double `s$ = s$ + s$` and falls back to StrDup+StrCat
+        // when s$ is not topmost, so the result is always identical.
+        if (selfIsLeft && other is NameExpr otherName
+            && model.VariableBindings.TryGetValue(otherName, out var otherSym)
+            && model.TypeOf(otherName) is StringType
+            && this.TryDirectCell(otherSym) is { } otherCell) {
+          asm.Mov(Reg.AX, selfCell.WithSize(OperandSize.Word));  // AX = s$ handle
+          asm.Mov(Reg.DX, otherCell.WithSize(OperandSize.Word)); // DX = v$ raw handle (no dup)
+          asm.Call(this._rt.StrCatVar);
+          asm.Mov(selfCell.WithSize(OperandSize.Word), Reg.AX);
+          return;
+        }
         // emit operands left-to-right (genuine order); s$ is read directly, the other is dup'd
         if (selfIsLeft) {
           asm.Mov(Reg.AX, selfCell.WithSize(OperandSize.Word));   // left = s$ handle

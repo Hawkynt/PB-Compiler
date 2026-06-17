@@ -565,6 +565,40 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenVariableSelfAppend_WhenPb36Speed_ThenCallsInPlaceRoutine() {
+    // s$ = s$ + v$ emits a CALL to the in-place rt_strcatvar routine; a literal self-append
+    // s$ = s$ + "x" calls rt_strcatlit instead, so it makes zero calls to rt_strcatvar.
+    const string withVar = "$OPTIMIZE SPEED\ns$ = \"a\"\nv$ = \"b\"\nFOR i% = 1 TO 3\ns$ = s$ + v$\nNEXT i%\nPRINT s$\nEND";
+    const string literal = "$OPTIMIZE SPEED\ns$ = \"a\"\nFOR i% = 1 TO 3\ns$ = s$ + \"x\"\nNEXT i%\nPRINT s$\nEND";
+    Assert.That(CountCallsToStrCatVar(Compile(withVar, Dialect.Pb36)), Is.GreaterThan(0),
+      "a variable self-append should call rt_strcatvar");
+    Assert.That(CountCallsToStrCatVar(Compile(literal, Dialect.Pb36)), Is.Zero,
+      "a literal self-append should not call rt_strcatvar");
+  }
+
+  // count E8 (near CALL) sites whose signed rel16 target lands on the rt_strcatvar entry. Its
+  // entry is TEST DX,DX / JNZ near +1 / RET / TEST AX,AX = 85 D2 0F 85 01 00 C3 85 C0 (the
+  // conditional jumps are near-encoded). File-relative offsets equal the in-memory rel16.
+  private static readonly byte[] _strCatVarHead = { 0x85, 0xD2, 0x0F, 0x85, 0x01, 0x00, 0xC3, 0x85, 0xC0 };
+  private static int CountCallsToStrCatVar(byte[] image) {
+    var head = -1;
+    for (var i = 0; i + _strCatVarHead.Length <= image.Length && head < 0; ++i) {
+      var match = true;
+      for (var j = 0; j < _strCatVarHead.Length; ++j)
+        if (image[i + j] != _strCatVarHead[j]) { match = false; break; }
+      if (match)
+        head = i;
+    }
+    if (head < 0)
+      return 0;
+    var count = 0;
+    for (var i = 0; i + 2 < image.Length; ++i)
+      if (image[i] == 0xE8 && i + 3 + (short)(image[i + 1] | (image[i + 2] << 8)) == head)
+        ++count;
+    return count;
+  }
+
+  [Test]
   public void Emit_GivenStringSelfAppend_WhenPb36_ThenSmallerThanNonSelf() {
     // s$ = s$ + x$ skips the StrDup of s$ and the StrAssign (StrCat consumes s$ directly),
     // so it emits less code than the otherwise-identical non-self s$ = t$ + x$
