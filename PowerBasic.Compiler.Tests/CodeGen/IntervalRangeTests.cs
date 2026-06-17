@@ -154,4 +154,42 @@ public sealed class IntervalRangeTests {
   }
 
   #endregion
+
+  #region loops (fixpoint + widening)
+
+  [Test]
+  public void Loop_GivenForCounterUseInBody_ThenCounterRangeAvailable() {
+    var (_, model) = BindUnit("FOR i% = 1 TO 10\nx% = i% \\ 2\nNEXT i%\nEND");
+    var points = IntervalRangeAnalysis.AnalyzeProgramPoints(model.MainBody, model);
+    var loop = (PowerBasic.Compiler.Syntax.Ast.ForStmt)model.MainBody[0];
+    // inside the loop body the counter is proven to be in [1,10]
+    Assert.That(At(points, loop.Body[0], "i"), Is.EqualTo(new Interval(1, 10)));
+  }
+
+  [Test]
+  public void Loop_GivenDerivedVarInBody_ThenBounded() {
+    var (_, model) = BindUnit("FOR i% = 1 TO 10\nj% = i% + 5\ny% = j% * 2\nNEXT i%\nEND");
+    var points = IntervalRangeAnalysis.AnalyzeProgramPoints(model.MainBody, model);
+    var loop = (PowerBasic.Compiler.Syntax.Ast.ForStmt)model.MainBody[0];
+    // j% = i% + 5 over i% in [1,10] is [6,15] at the entry of the next statement
+    Assert.That(At(points, loop.Body[1], "j"), Is.EqualTo(new Interval(6, 15)));
+  }
+
+  [Test]
+  public void Loop_GivenAccumulator_ThenWidensToTopAfter() =>
+    // s% accumulates without a static bound, so the lattice widens it to Top (untracked)
+    Assert.That(RangeOf("s% = 0\nFOR i% = 1 TO 10\ns% = s% + i%\nNEXT i%\nPRINT s%\nEND", "s"), Is.Null);
+
+  [Test]
+  public void Loop_GivenCounter_ThenTopAfterLoop() =>
+    // the post-loop counter value (the end value) is not tracked
+    Assert.That(RangeOf("FOR i% = 1 TO 10\nx% = i%\nNEXT i%\nPRINT x%\nEND", "i"), Is.Null);
+
+  [Test]
+  public void Loop_GivenConstAssignBeforeLoop_ThenSurvivesLoopThatDoesNotTouchIt() =>
+    // k% is set before the loop and never written in it, so its range survives the loop
+    Assert.That(RangeOf("k% = 7\nFOR i% = 1 TO 5\nx% = i%\nNEXT i%\nPRINT x%\nEND", "k"),
+      Is.EqualTo(Interval.Of(7)));
+
+  #endregion
 }

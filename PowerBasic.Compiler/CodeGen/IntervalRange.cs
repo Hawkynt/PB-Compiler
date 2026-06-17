@@ -147,6 +147,20 @@ public static class IntervalRangeAnalysis {
         Replace(env, JoinAll(results));
         return;
       }
+      // a FOR loop: the counter is bounded by [From,To]; the body's loop-carried effect is found
+      // by a fixpoint with widening (accumulators widen to Top; values recomputed from the counter
+      // stay bounded). Only fires when the body is itself call-free.
+      case ForStmt f when IntVar(f.Variable, model) is { } ctr
+          && CallFree(f.From, model) && CallFree(f.To, model) && BodyCallFree(f.Body, model): {
+        var range = Eval(f.From, env, model).Join(Eval(f.To, env, model));
+        TransferLoop(f.Body, ctr, range, env, model, points);
+        return;
+      }
+      // a DO/WHILE loop: no counter, so just the fixpoint-with-widening over a call-free body
+      case DoLoopStmt d when (d.PreCondition == null || CallFree(d.PreCondition, model))
+          && (d.PostCondition == null || CallFree(d.PostCondition, model)) && BodyCallFree(d.Body, model):
+        TransferLoop(d.Body, null, Interval.Top, env, model, points);
+        return;
       // a call-free PRINT writes no scalar variable - keep the environment intact
       case PrintStmt p when (p.FileNumber == null || CallFree(p.FileNumber, model))
           && (p.UsingFormat == null || CallFree(p.UsingFormat, model))
@@ -205,6 +219,101 @@ public static class IntervalRangeAnalysis {
     ByValArgExpr v => CallFree(v.Value, model),
     _ => true,
   };
+
+  /// <summary>
+  /// Analyze a loop body: compute the body-entry invariant by a fixpoint with widening (so it
+  /// terminates), record per-program-point environments inside the body using that invariant, and
+  /// leave <paramref name="env"/> as the post-loop state (0 iterations joined with the body's
+  /// effect). A FOR counter is pinned to its <paramref name="counterRange"/> at body entry and
+  /// removed (Top) after the loop; loop-carried accumulators widen to Top, values recomputed each
+  /// iteration from the counter stay bounded.
+  /// </summary>
+  private static void TransferLoop(IReadOnlyList<Statement> body, VariableSymbol? counter, Interval counterRange,
+      Dictionary<VariableSymbol, Interval> env, SemanticModel model,
+      Dictionary<Statement, IReadOnlyDictionary<VariableSymbol, Interval>>? points) {
+    var entry = Clone(env);
+    if (counter != null)
+      Set(entry, counter, counterRange);
+
+    var inv = Clone(entry);
+    for (var iter = 0; iter < 16; ++iter) {
+      var exit = Clone(inv);
+      Run(body, exit, model, null);
+      if (counter != null)
+        Set(exit, counter, counterRange);            // the counter is back in range at re-entry
+      var widened = WidenEnv(inv, JoinAll([entry, exit]));
+      if (EnvEquals(widened, inv))
+        break;
+      inv = widened;
+    }
+
+    if (points != null) {
+      var bodyEnv = Clone(inv);
+      Run(body, bodyEnv, model, points);             // per-point envs inside the body
+    }
+
+    var afterExit = Clone(inv);
+    Run(body, afterExit, model, null);
+    var after = JoinAll([entry, afterExit]);          // 0 iterations, or the body's exit
+    if (counter != null)
+      after.Remove(counter);                          // post-loop counter value is not tracked
+    Replace(env, after);
+  }
+
+  /// <summary>Interval widening: an endpoint that grew jumps to +/-infinity, so the fixpoint
+  /// terminates after a bounded number of rounds.</summary>
+  private static Interval Widen(Interval old, Interval candidate) {
+    if (old.IsTop)
+      return Interval.Top;
+    var lo = candidate.Lo < old.Lo ? long.MinValue : old.Lo;
+    var hi = candidate.Hi > old.Hi ? long.MaxValue : old.Hi;
+    return new(lo, hi);
+  }
+
+  private static Dictionary<VariableSymbol, Interval> WidenEnv(Dictionary<VariableSymbol, Interval> old,
+      Dictionary<VariableSymbol, Interval> candidate) {
+    var result = new Dictionary<VariableSymbol, Interval>(ReferenceEqualityComparer.Instance);
+    foreach (var kv in candidate) {
+      var widened = old.TryGetValue(kv.Key, out var o) ? Widen(o, kv.Value) : kv.Value;
+      if (!widened.IsTop)
+        result[kv.Key] = widened;
+    }
+    return result;
+  }
+
+  private static bool EnvEquals(Dictionary<VariableSymbol, Interval> a, Dictionary<VariableSymbol, Interval> b) {
+    if (a.Count != b.Count)
+      return false;
+    foreach (var kv in a)
+      if (!b.TryGetValue(kv.Key, out var o) || !o.Equals(kv.Value))
+        return false;
+    return true;
+  }
+
+  private static bool BodyCallFree(IReadOnlyList<Statement> body, SemanticModel model) {
+    foreach (var s in body)
+      switch (s) {
+        case AssignStmt a when CallFree(a.Value, model) && (a.Target is NameExpr || CallFree(a.Target, model)):
+          break;
+        case IncrDecrStmt id when id.Amount == null || CallFree(id.Amount, model):
+          break;
+        case IfStmt iff when CallFree(iff.Condition, model)
+            && iff.ElseIfs.All(e => CallFree(e.Condition, model))
+            && BodyCallFree(iff.Then, model) && iff.ElseIfs.All(e => BodyCallFree(e.Body, model))
+            && (iff.Else == null || BodyCallFree(iff.Else, model)):
+          break;
+        case ForStmt f when CallFree(f.From, model) && CallFree(f.To, model) && BodyCallFree(f.Body, model):
+          break;
+        case PrintStmt p when (p.FileNumber == null || CallFree(p.FileNumber, model))
+            && p.Items.All(i => i.Value == null || CallFree(i.Value, model)):
+          break;
+        case MetaStmt or EquateStmt or DefTypeStmt or DataStmt or EndStmt or LabelStmt:
+          break;
+        default:
+          return false;                               // a call / unmodelled statement -> not analyzable
+      }
+    return true;
+  }
 
   /// <summary>Store an interval, or drop the variable when the interval is Top (absence = Top).</summary>
   private static void Set(Dictionary<VariableSymbol, Interval> env, VariableSymbol sym, Interval iv) {
