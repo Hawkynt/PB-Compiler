@@ -309,41 +309,140 @@ public sealed partial class CodeGenerator {
   /// callee), RET n cleans up. Results: AX / DX:AX / ST0 / string handle in AX.
   /// </summary>
   /// <summary>
-  /// pb36 O6 subset: a FUNCTION whose body is exactly one result assignment
-  /// over BYVAL scalar parameters and constants inlines as the expression
-  /// itself - arguments evaluate once into frame temps (caller effects and
-  /// order preserved), the body expression emits with parameter reads mapped
-  /// onto those temps, and the frame/call/return overhead disappears.
+  /// pb36 O6: a small leaf SUB/FUNCTION inlines as its body at the call site -
+  /// the frame, CALL and RET overhead disappear and (when every call inlines) the
+  /// procedure itself is reachability-purged from the image. BYVAL scalar
+  /// arguments evaluate once (caller effects and order preserved) into fresh
+  /// per-inline frame temps; the body's statements emit with every read and write
+  /// of a parameter, local or the result variable remapped onto those temps (so
+  /// two inlinings - or a recursive shape - never collide), and a FUNCTION's
+  /// result is the value left in the result temp. The trivial single-result-
+  /// assignment FUNCTION (which needs no extra local temps) is the fast path.
   /// </summary>
+  /// <summary>The structural inlining analysis of an eligible leaf proc, independent of any call site.</summary>
+  private readonly record struct InlinableLeaf(
+    IReadOnlyList<Statement> Body,
+    VariableSymbol? ResultSymbol,
+    List<VariableSymbol> Locals,
+    Expression Site,
+    AssignStmt? LastResultWrite,
+    int ResultWrites);
+
+  /// <summary>
+  /// Decides whether <paramref name="proc"/> is a small leaf SUB/FUNCTION whose body
+  /// can be substituted at a BASIC-convention call site, returning the body analysis
+  /// (result variable, body locals to give fresh temps, the trivial-result shape).
+  /// Call-site-independent: it gates only on proc properties, so a pre-pass can use it
+  /// to find procedures that inline at every site (then reachability purges them).
+  /// </summary>
+  private InlinableLeaf? AnalyzeInlinableLeaf(ProcedureSymbol proc) {
+    if (proc.Body is not { } body)
+      return null;
+    // BASIC convention only; no STATIC, no error handling, no closures - and a leaf body
+    // of only simple scalar assignments (no calls/loops/labels/GOTO/GOSUB/RETURN/EXIT/
+    // SELECT/nested procs). Anything uncertain falls back to a real call.
+    if (proc.CallConv != CallConvention.Basic || proc.IsStatic
+        || proc.ClosureEnvPtr != null || proc.Captures.Count > 0
+        || ContainsErrorHandling(body))
+      return null;
+    if (proc.IsFunction && proc.ReturnType is not ScalarType)
+      return null; // FIX/BCD are BcdType, strings/UDTs excluded with them
+    foreach (var parameter in proc.Parameters)
+      if (!parameter.ByVal || parameter.Type is not ScalarType)
+        return null;
+
+    // the implicit result variable (FUNCTION only); reads/writes of it map to a temp
+    var resultSymbol = proc.IsFunction && proc.Variables.TryGetValue(proc.Name, out var rv) ? rv : null;
+    if (proc.IsFunction && resultSymbol == null)
+      return null;
+
+    // every body statement must be a scalar assignment whose target is a parameter,
+    // a stack local or the result, and whose value reads only those plus constants
+    const int maxStatements = 8;
+    if (body.Count is 0 or > maxStatements)
+      return null;
+    var locals = new List<VariableSymbol>();
+    Expression? site = null;   // any body expression, for load/coerce diagnostics
+    AssignStmt? lastResultWrite = null;
+    var resultWrites = 0;
+    foreach (var statement in body) {
+      if (statement is MetaStmt or EquateStmt or DefTypeStmt)
+        continue; // inert - no code
+      // a plain scalar LOCAL declaration carries no code (the binder splices any
+      // DIM-initializer out as a separate assignment); register its locals so they
+      // get fresh zeroed temps and reads before the first write resolve to them
+      if (statement is DimStmt dim) {
+        if (dim.Storage != StorageClass.Local || dim.SharedFlag || dim.StaticFlag
+            || dim.AtAddress != null || dim.Class != ArrayClass.Default)
+          return null;
+        foreach (var decl in dim.Variables) {
+          if (decl.ArrayBounds != null)
+            return null;
+          var local = proc.Variables.GetValueOrDefault(KeyOf(decl.Name, decl.Suffix));
+          if (local is not { Storage: VariableStorage.Local, Type: ScalarType } || local.IsArray)
+            return null;
+          if (!locals.Contains(local))
+            locals.Add(local);
+        }
+        continue;
+      }
+      if (statement is not AssignStmt { Target: NameExpr targetName } assign)
+        return null;
+      if (!model.VariableBindings.TryGetValue(targetName, out var targetSymbol)
+          || !this.InlinableTarget(targetSymbol, proc, resultSymbol, locals)
+          || !this.InlinableExpression(assign.Value, proc, resultSymbol, locals))
+        return null;
+      if (model.TypeOf(assign.Target) is not ScalarType || model.TypeOf(assign.Value) is not ScalarType)
+        return null;
+      site ??= assign.Target;
+      if (ReferenceEquals(targetSymbol, resultSymbol)) {
+        lastResultWrite = assign;
+        ++resultWrites;
+      }
+    }
+    if (site == null)
+      return null; // nothing but inert statements - no behaviour to inline
+
+    return new InlinableLeaf(body, resultSymbol, locals, site, lastResultWrite, resultWrites);
+  }
+
   private bool TryEmitInlinedFunction(ProcedureSymbol proc, IReadOnlyList<Expression> args, bool wantResult) {
-    if (!this.Optimize || !wantResult || proc.IsCdecl || proc.IsStatic || proc.Body is not [AssignStmt single])
+    if (!this.Optimize)
+      return false;
+    // do not inline into an error-handling region: a fault inside the inlined body
+    // would re-enter through the wrong RESUME / RESUME NEXT latch (each inlined
+    // statement has its own, a real call has one). The purge pre-pass keeps the
+    // procedure whenever the program has any error handling, so this fallback to a
+    // real call can never strand a reference (the body is still emitted).
+    if (this._trackResume)
       return false;
     if (args.Count != proc.Parameters.Count)
       return false;
-    if (proc.ReturnType is not ScalarType)
-      return false; // FIX/BCD are BcdType, strings/UDTs excluded with them
-    if (single.Target is not NameExpr resultName
-        || !model.VariableBindings.TryGetValue(resultName, out var resultSymbol)
-        || !proc.Variables.TryGetValue(proc.Name, out var expectedResult)
-        || !ReferenceEquals(resultSymbol, expectedResult))
+    // a FUNCTION's result must be consumed (it is the value the inline leaves); a SUB
+    // leaves no value, so it inlines whether or not the (absent) result is wanted
+    if (proc.IsFunction && !wantResult)
       return false;
-    foreach (var parameter in proc.Parameters)
-      if (!parameter.ByVal || parameter.Type is not ScalarType)
-        return false;
-    if (!InlinableExpression(single.Value, proc))
+    if (this.AnalyzeInlinableLeaf(proc) is not { } leaf)
       return false;
+    var (body, resultSymbol, locals, site, lastResultWrite, resultWrites) = leaf;
 
     var asm = this._asm;
     var outer = this._inlineParamSlots;
     var slots = new Dictionary<VariableSymbol, (Mem Cell, PbType Type)>(ReferenceEqualityComparer.Instance);
     var reserved = 0;
+
+    Mem ReserveSlot(PbType type) {
+      var bytes = Math.Max(2, (type.Size + 1) & ~1);
+      reserved += bytes;
+      return this.AllocTemp(bytes);
+    }
+
+    // bind each argument once into the parameter's fresh temp slot
     for (var i = 0; i < args.Count; ++i) {
       var parameter = proc.Parameters[i];
       this.EmitExpression(args[i]);
       this.Coerce(model.TypeOf(args[i]), parameter.Type, args[i]);
-      var bytes = Math.Max(2, (parameter.Type.Size + 1) & ~1);
-      var cell = this.AllocTemp(bytes);
-      reserved += bytes;
+      var cell = ReserveSlot(parameter.Type);
       switch (KindOf(parameter.Type)) {
         case ValueKind.Int16:
           asm.Mov(cell, Reg.AX);
@@ -359,20 +458,83 @@ public sealed partial class CodeGenerator {
       slots[parameter] = (cell, parameter.Type);
     }
 
+    // fast path: a FUNCTION whose only effect is one assignment of an expression to
+    // the result (no locals, the result not read inside it) emits that expression
+    // straight into the evaluation registers - no result temp, no store/reload
+    if (resultSymbol != null && locals.Count == 0 && resultWrites == 1
+        && body.Count(s => s is not (MetaStmt or EquateStmt or DefTypeStmt)) == 1
+        && !ReferencesVar(lastResultWrite!.Value, resultSymbol, model)) {
+      this._inlineParamSlots = slots;
+      this.EmitExpression(lastResultWrite.Value);
+      this.Coerce(model.TypeOf(lastResultWrite.Value), proc.ReturnType!, lastResultWrite.Value);
+      this._inlineParamSlots = outer;
+      this.ReleaseTemp(reserved);
+      return true;
+    }
+
+    // the result and every body local get their own zero-initialised temp - PB
+    // locals read 0 before assignment, so a body that reads a local before writing
+    // it (or a FUNCTION whose result was never assigned) sees 0, exactly as a real call
+    foreach (var local in locals) {
+      var cell = ReserveSlot(local.Type);
+      this.ZeroSlot(cell, local.Type);
+      slots[local] = (cell, local.Type);
+    }
+    if (resultSymbol != null) {
+      var cell = ReserveSlot(resultSymbol.Type);
+      this.ZeroSlot(cell, resultSymbol.Type);
+      slots[resultSymbol] = (cell, resultSymbol.Type);
+    }
+
     this._inlineParamSlots = slots;
-    this.EmitExpression(single.Value);
-    this.Coerce(model.TypeOf(single.Value), proc.ReturnType, single.Value);
+    foreach (var statement in body)
+      this.EmitStatement(statement);
+    // the FUNCTION result is the value left in the result temp (the result variable's
+    // declared type IS the return type, so no coercion is needed - it loads directly)
+    if (resultSymbol != null)
+      this.EmitLoadPlace(new(slots[resultSymbol].Cell, Far: false), proc.ReturnType!, site);
     this._inlineParamSlots = outer;
     this.ReleaseTemp(reserved);
     return true;
   }
 
-  /// <summary>True when the expression reads only the procedure's own parameters, literals and equates through scalar operators.</summary>
-  private bool InlinableExpression(Expression e, ProcedureSymbol proc) => e switch {
+  /// <summary>Zeroes a fresh inline-frame slot (numeric scalar) so an unassigned-before-read local matches a real call's zeroed frame.</summary>
+  private void ZeroSlot(Mem cell, PbType type) {
+    var asm = this._asm;
+    switch (KindOf(type)) {
+      case ValueKind.Int16:
+        asm.Mov(cell.WithSize(OperandSize.Word), (Imm)0);
+        break;
+      case ValueKind.Int32:
+        asm.Mov(cell.WithSize(OperandSize.Word), (Imm)0);
+        asm.Mov(Adjust(cell, 2, OperandSize.Word), (Imm)0);
+        break;
+      default: // float / QUAD: write the whole width as zero words
+        for (var w = 0; w < Math.Max(2, (type.Size + 1) & ~1); w += 2)
+          asm.Mov(Adjust(cell, w, OperandSize.Word), (Imm)0);
+        break;
+    }
+  }
+
+  /// <summary>True when an assignment target is one of the procedure's own remappable scalar cells (parameter, the result, or a stack local that joins <paramref name="locals"/> on first sight).</summary>
+  private bool InlinableTarget(VariableSymbol s, ProcedureSymbol proc, VariableSymbol? resultSymbol, List<VariableSymbol> locals) {
+    if (proc.Parameters.Contains(s) || ReferenceEquals(s, resultSymbol))
+      return true;
+    if (s.Storage != VariableStorage.Local || s.Type is not ScalarType || s.IsArray)
+      return false;
+    if (!locals.Contains(s))
+      locals.Add(s);
+    return true;
+  }
+
+  /// <summary>True when the expression reads only the procedure's own parameters, locals, result, literals and equates through scalar operators - so it can emit against the per-inline temps.</summary>
+  private bool InlinableExpression(Expression e, ProcedureSymbol proc, VariableSymbol? resultSymbol, List<VariableSymbol> locals) => e switch {
     IntegerLiteralExpr or FloatLiteralExpr or NamedConstantExpr => true,
-    NameExpr n => model.VariableBindings.TryGetValue(n, out var s) && proc.Parameters.Contains(s),
-    UnaryExpr u => this.InlinableExpression(u.Operand, proc),
-    BinaryExpr b => this.InlinableExpression(b.Left, proc) && this.InlinableExpression(b.Right, proc),
+    NameExpr n when model.IntrinsicBindings.ContainsKey(n) || model.CallBindings.ContainsKey(n) => false,
+    NameExpr n => model.VariableBindings.TryGetValue(n, out var s)
+      && (proc.Parameters.Contains(s) || ReferenceEquals(s, resultSymbol) || locals.Contains(s)),
+    UnaryExpr u => this.InlinableExpression(u.Operand, proc, resultSymbol, locals),
+    BinaryExpr b => this.InlinableExpression(b.Left, proc, resultSymbol, locals) && this.InlinableExpression(b.Right, proc, resultSymbol, locals),
     _ => false,
   };
 

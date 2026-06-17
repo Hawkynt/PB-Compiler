@@ -15,6 +15,18 @@ public sealed partial class CodeGenerator {
   /// </summary>
   private readonly record struct Place(Mem Cell, bool Far);
 
+  /// <summary>
+  /// The near cell a scalar write should target: an active inline frame slot (O6
+  /// multi-statement inlining) when the symbol is a parameter/local/result of the
+  /// procedure being inlined, otherwise its ordinary direct cell. Null when access
+  /// needs a pointer.
+  /// </summary>
+  private Mem? InlineSlotCellOf(VariableSymbol s) {
+    if (this._inlineParamSlots is { } slots && slots.TryGetValue(s, out var slot))
+      return slot.Cell;
+    return this.TryDirectCell(s);
+  }
+
   /// <summary>Direct cell of a symbol, or null when access needs a pointer (BYREF parameter).</summary>
   private Mem? TryDirectCell(VariableSymbol s) => s.Storage switch {
     VariableStorage.Global or VariableStorage.Static => Mem.At(this.SlotOf(s)),
@@ -56,6 +68,10 @@ public sealed partial class CodeGenerator {
           this.Unsupported(n, $"address of {n.Name}");
           return null;
         }
+        // pb36 O6: inside an inlined body, a write to a parameter/local/result maps to
+        // its per-inline frame slot (the callee has no real frame)
+        if (this._inlineParamSlots is { } inlinedSlots && inlinedSlots.TryGetValue(symbol, out var inlinedSlot))
+          return new(inlinedSlot.Cell, Far: false);
         if (symbol.Storage == VariableStorage.Captured)        // pb36 closure: reach the captured local through the env pointer
           return this.EmitCapturedPlace(symbol);
         if (this.TryDirectCell(symbol) is { } cell)
@@ -480,7 +496,7 @@ public sealed partial class CodeGenerator {
         && targetType is ScalarType { IsFloat: false, ByteSize: 2 }
         && a.Target is NameExpr targetName
         && model.VariableBindings.TryGetValue(targetName, out var tSym)
-        && this.TryDirectCell(tSym) is { } tCell
+        && this.InlineSlotCellOf(tSym) is { } tCell
         && a.Value is BinaryExpr { Op: BinaryOp.Add or BinaryOp.Subtract, Left: NameExpr vLeft, Right: IntegerLiteralExpr { Value: >= short.MinValue and <= short.MaxValue } vConst } vBin
         && model.VariableBindings.TryGetValue(vLeft, out var vSym)
         && ReferenceEquals(vSym, tSym)) {
