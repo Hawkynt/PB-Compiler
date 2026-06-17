@@ -150,14 +150,19 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       case NameExpr n when model.VariableBindings.TryGetValue(n, out var v) && this._forRanges.TryGetValue(v, out var r):
         return r;
       case BinaryExpr { Op: BinaryOp.Add } b:
-        if (this.IndexRangeOf(b.Left) is { } la && this.OptFolder.TryFold(b.Right) is { Integer: { } ra })
-          return (la.Lo + ra, la.Hi + ra);
-        if (this.IndexRangeOf(b.Right) is { } ra2 && this.OptFolder.TryFold(b.Left) is { Integer: { } la2 })
-          return (ra2.Lo + la2, ra2.Hi + la2);
+        // both operands range-known (e.g. a(i+j) over two counters/derived vars): the
+        // endpoints add. Interval arithmetic over independent operands over-approximates a
+        // correlated sum (a(i+i) widens to [2*lo,2*hi]) - always sound for the consumers,
+        // which only fire when the whole (possibly loose) range qualifies. A constant operand
+        // folds to a point range here, so this subsumes the affine counter +/- const cases.
+        if (this.IndexRangeOf(b.Left) is { } la && this.IndexRangeOf(b.Right) is { } ra)
+          return (la.Lo + ra.Lo, la.Hi + ra.Hi);
         return null;
       case BinaryExpr { Op: BinaryOp.Subtract } b
-          when this.IndexRangeOf(b.Left) is { } ls && this.OptFolder.TryFold(b.Right) is { Integer: { } rs }:
-        return (ls.Lo - rs, ls.Hi - rs);
+          when this.IndexRangeOf(b.Left) is { } ls && this.IndexRangeOf(b.Right) is { } rs:
+        // interval subtraction: min = lo(L) - hi(R), max = hi(L) - lo(R) (point range for a
+        // constant subtrahend recovers the affine counter - const case)
+        return (ls.Lo - rs.Hi, ls.Hi - rs.Lo);
       case BinaryExpr { Op: BinaryOp.Multiply } b:
         // scaling by a constant (strided access a(i*2)) - the endpoints flip when k < 0
         if (this.IndexRangeOf(b.Left) is { } lm && this.OptFolder.TryFold(b.Right) is { Integer: { } rm })

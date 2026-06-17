@@ -467,6 +467,18 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenTwoRangeIndexUnderBoundsOn_WhenPb36_ThenCheckElided() {
+    // a%(i% + j%) with i% the [2,9] FOR counter and j% = i% - 1 a derived [1,8] var:
+    // the index range [3,17] lies inside the (0 TO 30) bounds, so the Error-9 check drops.
+    // Modifying j% after the access defeats its range registration, so that variant keeps it.
+    const string twoRange = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(0 TO 30)\nFOR i% = 2 TO 9\nj% = i% - 1\na%(i% + j%) = i%\nNEXT i%\nEND";
+    const string defeated = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(0 TO 30)\nFOR i% = 2 TO 9\nj% = i% - 1\na%(i% + j%) = i%\nj% = 0\nNEXT i%\nEND";
+    Assert.That(CountRaise9(Compile(twoRange, Dialect.Pb36)),
+      Is.LessThan(CountRaise9(Compile(defeated, Dialect.Pb36))),
+      "an index summing two range-known vars, provably in bounds, should drop the Error-9 check");
+  }
+
+  [Test]
   public void Emit_GivenForCounterAddUnderOverflowOn_WhenPb36_ThenCheckElided() {
     // i% + 1 over an in-range FOR counter drops its Error-6 check; k% + 1 keeps it
     const string counterAdd = "$ERROR OVERFLOW ON\n$OPTIMIZE SPEED\nFOR i% = 1 TO 100\nx% = i% + 1\nNEXT i%\nEND";
