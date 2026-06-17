@@ -11,26 +11,67 @@ public sealed partial class CodeGenerator {
   private static int ParamSlotSize(VariableSymbol p) => p.ByVal ? Math.Max(2, (p.Type.Size + 1) & ~1) : 2;
 
   /// <summary>
-  /// Assigns BP-relative offsets: parameters at [BP+4..] (pushed left to right,
-  /// so the last parameter sits at [BP+4]; CDECL pushes right to left, so the
-  /// FIRST parameter sits at [BP+4]), stack locals below BP. STATIC variables
-  /// and arrays use data segment slots instead.
+  /// Registers that carry the leading word-sized arguments, in parameter order, for the
+  /// register conventions (empirically matched to the genuine compilers): Watcom's WATCALL
+  /// uses AX,DX,BX,CX; Microsoft/Borland FASTCALL use AX,DX,BX. Empty for stack conventions.
+  /// </summary>
+  private static Reg[] ConventionRegisters(CallConvention c) => c switch {
+    CallConvention.Watcall => [Reg.AX, Reg.DX, Reg.BX, Reg.CX],
+    CallConvention.Fastcall => [Reg.AX, Reg.DX, Reg.BX],
+    _ => [],
+  };
+
+  /// <summary>True when the convention passes the leading arguments in registers (WATCALL/FASTCALL).</summary>
+  private static bool IsRegisterConvention(ProcedureSymbol proc) => ConventionRegisters(proc.CallConv).Length > 0;
+
+  /// <summary>How many of <paramref name="proc"/>'s parameters arrive in registers (the rest spill to the stack).</summary>
+  private static int RegisterParamCount(ProcedureSymbol proc)
+    => Math.Min(ConventionRegisters(proc.CallConv).Length, proc.Parameters.Count);
+
+  /// <summary>
+  /// True when a register convention is used but a parameter does not fit the common-case
+  /// model (every parameter must be a single word - a BYVAL scalar &lt;= 2 bytes or a BYREF
+  /// near pointer). LONG/float/struct/string-by-value in a register convention need the
+  /// full per-compiler size rules, which we deliberately do not implement; reject them.
+  /// </summary>
+  private static bool HasUnsupportedRegisterParam(ProcedureSymbol proc)
+    => IsRegisterConvention(proc) && proc.Parameters.Any(p => ParamSlotSize(p) != 2);
+
+  /// <summary>True when the convention pushes (stack) arguments right to left: CDECL, STDCALL and WATCALL's overflow; BASIC/PASCAL/FASTCALL push left to right.</summary>
+  private static bool PushesRightToLeft(ProcedureSymbol proc) => proc.CallConv is CallConvention.Cdecl or CallConvention.Stdcall or CallConvention.Watcall;
+
+  /// <summary>True when the caller cleans the stack after the call (CDECL only); BASIC/STDCALL/PASCAL/FASTCALL/WATCALL clean any stack args in the callee via RET n.</summary>
+  private static bool CallerCleansStack(ProcedureSymbol proc) => proc.CallConv == CallConvention.Cdecl;
+
+  /// <summary>
+  /// Assigns BP-relative offsets: parameters at [BP+4..] (pushed left to right -
+  /// BASIC/PASCAL - so the last parameter sits at [BP+4]; CDECL/STDCALL push right
+  /// to left, so the FIRST parameter sits at [BP+4]), stack locals below BP. STATIC
+  /// variables and arrays use data segment slots instead.
   /// </summary>
   private int LayoutFrame(ProcedureSymbol proc) {
+    this._frameLocalBytes = 0;
+
+    // register-convention (WATCALL/FASTCALL) parameters arrive in registers; give them
+    // negative slots at the top of the frame ([BP-2], [BP-4], ...) that the prologue fills
+    // by spilling AX,DX,BX(,CX). Stack conventions take no register params (regCount = 0).
+    var regCount = RegisterParamCount(proc);
+    for (var i = 0; i < regCount; ++i) {
+      this._frameLocalBytes += 2;
+      proc.Parameters[i].Offset = -this._frameLocalBytes;
+    }
+
+    // stack parameters: a register convention's overflow (index >= regCount) or, for a
+    // stack convention, every parameter. Positive [BP+4..] in push order - RTL puts the
+    // first stack parameter at [BP+4], LTR puts the last there.
     var offset = 4;
-    if (proc.IsCdecl)
-      for (var i = 0; i < proc.Parameters.Count; ++i) {
-        proc.Parameters[i].Offset = offset;
-        offset += ParamSlotSize(proc.Parameters[i]);
-      }
-    else
-      for (var i = proc.Parameters.Count - 1; i >= 0; --i) {
-        proc.Parameters[i].Offset = offset;
-        offset += ParamSlotSize(proc.Parameters[i]);
-      }
+    var stackParams = Enumerable.Range(regCount, proc.Parameters.Count - regCount).ToList();
+    foreach (var i in PushesRightToLeft(proc) ? stackParams : Enumerable.Reverse(stackParams)) {
+      proc.Parameters[i].Offset = offset;
+      offset += ParamSlotSize(proc.Parameters[i]);
+    }
     var paramBytes = offset - 4;
 
-    this._frameLocalBytes = 0;
     foreach (var symbol in this.StackLocalsOf(proc)) {
       this._frameLocalBytes += Math.Max(2, (symbol.Type.Size + 1) & ~1);
       symbol.Offset = -this._frameLocalBytes;
@@ -51,6 +92,10 @@ public sealed partial class CodeGenerator {
     var outerLabels = this._userLabels;
     this._userLabels = new(StringComparer.OrdinalIgnoreCase);
     var paramBytes = this.LayoutFrame(proc);
+    if (HasUnsupportedRegisterParam(proc))
+      this.Errors.Add(new(proc.Position, $"{proc.CallConv} {proc.Name}: a register-convention parameter must be word-sized (BYVAL <= 2 bytes or BYREF); LONG/float/UDT/string need the full per-compiler ABI rules"));
+    if (IsRegisterConvention(proc) && this.CheckStack)
+      this.Errors.Add(new(proc.Position, $"{proc.CallConv} {proc.Name}: $ERROR STACK cannot be combined with a register calling convention (it would clobber the argument registers)"));
     this._epilogue = asm.DefineLabel($"p_{proc.Name}_end");
     this._trackResume = ContainsErrorHandling(proc.Body!);
 
@@ -84,6 +129,7 @@ public sealed partial class CodeGenerator {
     this._tailEntry = null;
     if (this.Optimize && !this._trackResume
         && !proc.IsCdecl
+        && !IsRegisterConvention(proc)   // register params live in negative slots; the in-place tail rewrite assumes [BP+] stack params
         && proc.ClosureEnvPtr == null   // a capturing lambda's env-save must run on every entry
         && proc.Parameters.All(p => p.ByVal && p.Type is ScalarType { IsFloat: false, ByteSize: <= 4 })
         && stackLocals.All(l => l.Type is ScalarType)
@@ -100,7 +146,9 @@ public sealed partial class CodeGenerator {
     // pass it as implicitly read so SCCP/DSE never fold or drop its writes
     var resultVar = proc.IsFunction && proc.Variables.TryGetValue(proc.Name, out var rv) ? rv : null;
     this.PrepareSccp(proc.Body!, resultVar);
-    this.BeginFrame(elideZeroing, this._tailEntry);
+    // register-convention entry: spill AX,DX,BX(,CX) into the parameters' negative slots
+    var spillRegs = ConventionRegisters(proc.CallConv)[..RegisterParamCount(proc)];
+    this.BeginFrame(elideZeroing, this._tailEntry, spillRegs);
     if (elideZeroing)
       foreach (var local in stackLocals)
         if (local.Type is StringType or FlexType)
@@ -159,7 +207,7 @@ public sealed partial class CodeGenerator {
 
     asm.Mov(Reg.SP, Reg.BP);
     asm.Pop(Reg.BP);
-    if (paramBytes > 0 && !proc.IsCdecl)   // CDECL: the caller cleans up
+    if (paramBytes > 0 && !CallerCleansStack(proc))   // CDECL: the caller cleans up; BASIC/STDCALL/PASCAL clean here
       asm.Ret((ushort)paramBytes);
     else
       asm.Ret();
@@ -353,66 +401,30 @@ public sealed partial class CodeGenerator {
     var stringTemps = new List<Mem>();
     var pushedBytes = 0;
 
-    // CDECL pushes right to left (the caller cleans up); the default convention left to right
-    foreach (var i in proc.IsCdecl ? Enumerable.Range(0, args.Count).Reverse() : Enumerable.Range(0, args.Count)) {
-      var parameter = proc.Parameters[i];
-      var arg = args[i];
-      var argType = model.TypeOf(arg);
-      pushedBytes += ParamSlotSize(parameter);
-
-      // BYVAL override (PB 3.2): the value itself is passed - against a BYREF
-      // parameter the low word acts as the near address of the target
-      if (arg is ByValArgExpr byValOverride) {
-        var innerType = model.TypeOf(byValOverride.Value);
-        if (parameter.ByVal)
-          this.EmitByValArgument(byValOverride.Value, innerType, parameter.Type);
-        else {
-          this.EmitExpression(byValOverride.Value);
-          asm.Push(Reg.AX); // offset word of the pointer/value
-        }
-        continue;
+    if (IsRegisterConvention(proc)) {
+      // WATCALL/FASTCALL: stack overflow first (this convention's stack order), then the
+      // leading args pushed and popped into AX,DX,BX(,CX) so they survive arg evaluation.
+      var regs = ConventionRegisters(proc.CallConv);
+      var regCount = RegisterParamCount(proc);
+      var overflow = Enumerable.Range(regCount, args.Count - regCount).ToList();
+      foreach (var i in PushesRightToLeft(proc) ? Enumerable.Reverse(overflow) : overflow) {
+        pushedBytes += ParamSlotSize(proc.Parameters[i]);   // callee (RET n) cleans these
+        this.EmitArgumentPush(proc, args, i, ref tempBytesUsed, stringTemps);
       }
-
-      if (parameter.Type is ArrayType || argType is ArrayType) {
-        this.EmitArrayArgument(arg, proc);
-        continue;
+      for (var i = 0; i < regCount; ++i)
+        this.EmitArgumentPush(proc, args, i, ref tempBytesUsed, stringTemps);
+      for (var i = regCount - 1; i >= 0; --i)
+        asm.Pop(regs[i]);
+    } else {
+      // CDECL/STDCALL push right to left; BASIC/PASCAL push left to right
+      foreach (var i in PushesRightToLeft(proc) ? Enumerable.Range(0, args.Count).Reverse() : Enumerable.Range(0, args.Count)) {
+        pushedBytes += ParamSlotSize(proc.Parameters[i]);
+        this.EmitArgumentPush(proc, args, i, ref tempBytesUsed, stringTemps);
       }
-
-      if (parameter.Type is AnyType) {
-        // BYREF ANY: address of whatever storage the argument names - no checks
-        if (this.EmitPlace(arg) is { } anyPlace) {
-          asm.Lea(Reg.BX, anyPlace.Cell);
-          asm.Push(Reg.BX);
-        } else
-          this.Unsupported(arg, $"ANY argument to {proc.Name}");
-        continue;
-      }
-
-      if (parameter.ByVal) {
-        this.EmitByValArgument(arg, argType, parameter.Type);
-        continue;
-      }
-
-      // BYREF: pass the address when the argument is a matching near lvalue,
-      // otherwise copy into a hidden stack temp (copy-in only)
-      if (Equals(argType, parameter.Type) && this.IsNearLValue(arg) && this.EmitPlace(arg) is { } place) {
-        asm.Lea(Reg.BX, place.Cell);
-        asm.Push(Reg.BX);
-        continue;
-      }
-
-      var slotBytes = Math.Max(2, (parameter.Type.Size + 1) & ~1);
-      var temp = this.AllocTemp(slotBytes);
-      tempBytesUsed += slotBytes;
-      this.EmitExpression(arg);
-      this.Coerce(argType, parameter.Type, arg);
-      this.EmitStoreTempArgument(temp, parameter.Type, arg, stringTemps);
-      asm.Lea(Reg.BX, temp);
-      asm.Push(Reg.BX);
     }
 
     asm.Call(this.ProcLabelOf(proc));
-    if (proc.IsCdecl && pushedBytes > 0)
+    if (CallerCleansStack(proc) && pushedBytes > 0)   // CDECL only; others' callee RET n cleans
       asm.Add(Reg.SP, pushedBytes);
 
     var resultKind = proc is { IsFunction: true, ReturnType: { } rt } ? KindOf(rt) : (ValueKind?)null;
@@ -449,6 +461,69 @@ public sealed partial class CodeGenerator {
         asm.Fstp(St.St0);
         break;
     }
+  }
+
+  /// <summary>
+  /// Evaluates argument <paramref name="i"/> of <paramref name="proc"/> and pushes its
+  /// stack slot: a BYVAL value, a BYREF/ANY near pointer, an array descriptor, or a
+  /// hidden copy-in temp's address. Shared by the stack and register call paths (the
+  /// register path pops the leading pushes back into AX,DX,BX(,CX)).
+  /// </summary>
+  private void EmitArgumentPush(ProcedureSymbol proc, IReadOnlyList<Expression> args, int i, ref int tempBytesUsed, List<Mem> stringTemps) {
+    var asm = this._asm;
+    var parameter = proc.Parameters[i];
+    var arg = args[i];
+    var argType = model.TypeOf(arg);
+
+    // BYVAL override (PB 3.2): the value itself is passed - against a BYREF
+    // parameter the low word acts as the near address of the target
+    if (arg is ByValArgExpr byValOverride) {
+      var innerType = model.TypeOf(byValOverride.Value);
+      if (parameter.ByVal)
+        this.EmitByValArgument(byValOverride.Value, innerType, parameter.Type);
+      else {
+        this.EmitExpression(byValOverride.Value);
+        asm.Push(Reg.AX); // offset word of the pointer/value
+      }
+      return;
+    }
+
+    if (parameter.Type is ArrayType || argType is ArrayType) {
+      this.EmitArrayArgument(arg, proc);
+      return;
+    }
+
+    if (parameter.Type is AnyType) {
+      // BYREF ANY: address of whatever storage the argument names - no checks
+      if (this.EmitPlace(arg) is { } anyPlace) {
+        asm.Lea(Reg.BX, anyPlace.Cell);
+        asm.Push(Reg.BX);
+      } else
+        this.Unsupported(arg, $"ANY argument to {proc.Name}");
+      return;
+    }
+
+    if (parameter.ByVal) {
+      this.EmitByValArgument(arg, argType, parameter.Type);
+      return;
+    }
+
+    // BYREF: pass the address when the argument is a matching near lvalue,
+    // otherwise copy into a hidden stack temp (copy-in only)
+    if (Equals(argType, parameter.Type) && this.IsNearLValue(arg) && this.EmitPlace(arg) is { } place) {
+      asm.Lea(Reg.BX, place.Cell);
+      asm.Push(Reg.BX);
+      return;
+    }
+
+    var slotBytes = Math.Max(2, (parameter.Type.Size + 1) & ~1);
+    var temp = this.AllocTemp(slotBytes);
+    tempBytesUsed += slotBytes;
+    this.EmitExpression(arg);
+    this.Coerce(argType, parameter.Type, arg);
+    this.EmitStoreTempArgument(temp, parameter.Type, arg, stringTemps);
+    asm.Lea(Reg.BX, temp);
+    asm.Push(Reg.BX);
   }
 
   /// <summary>

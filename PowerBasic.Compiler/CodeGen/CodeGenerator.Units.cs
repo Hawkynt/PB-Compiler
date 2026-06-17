@@ -75,7 +75,7 @@ public sealed partial class CodeGenerator {
   /// defined procedures plus every bound runtime symbol so unit imports
   /// (rt_*) resolve against the embedded runtime.
   /// </summary>
-  private byte[] LinkImage(IReadOnlyList<PbuFile> units, IReadOnlyList<PblFile> libraries) {
+  private byte[] LinkImage(IReadOnlyList<PbuFile> units, IReadOnlyList<PblFile> libraries, IReadOnlyList<Emit.Omf.OmfLibrary> omfLibraries) {
     var relocatable = this._asm.ToRelocatable();
     var main = new PbuFile { Name = "MAIN", Code = relocatable.Image };
 
@@ -95,6 +95,8 @@ public sealed partial class CodeGenerator {
       linker.AddUnit(unit);
     foreach (var library in libraries)
       linker.AddLibrary(library);
+    foreach (var omf in omfLibraries)
+      linker.AddOmfLibrary(omf);
 
     try {
       var linked = linker.Link(main);
@@ -105,6 +107,10 @@ public sealed partial class CodeGenerator {
       this._linkedSegmentSites = linked.SegmentRelocationSites;
       return [.. linked.Code, .. linked.Data];
     } catch (LinkException e) {
+      this.Errors.Add(new(default, $"link: {e.Message}"));
+      return [];
+    } catch (Emit.Omf.OmfException e) {
+      // a lazily-pulled foreign library member uses an OMF feature the tiny model cannot host
       this.Errors.Add(new(default, $"link: {e.Message}"));
       return [];
     }

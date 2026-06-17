@@ -6,17 +6,33 @@ that dialect, then byte-compares the output. Those vintage compilers are
 proprietary, so the raw binaries never live in the repository — only an
 **AES-256-encrypted tarball per dialect** does:
 
-| File | Dialect | Genuine oracle |
-|------|---------|----------------|
-| `pb35-toolchain.tar.enc` | `pb35` (default) | PowerBASIC 3.50 `PBC.EXE` |
-| `pb30-toolchain.tar.enc` | `pb30` | PowerBASIC 3.0c `PBC.EXE` |
-| `pb21-toolchain.tar.enc` | `pb21` | PowerBASIC 2.10 `PB.EXE` (IDE, autotype-driven) |
-| `qb45-toolchain.tar.enc` | `qb45` | QuickBASIC 4.5 `BC`/`LINK`/`LIB` + `BCOM45.LIB` |
-| `tb10-toolchain.tar.enc` | `tb10` | Turbo Basic 1.0 `TB.EXE` |
-| `tb11-toolchain.tar.enc` | `tb11` | Turbo Basic 1.1 `TB.EXE` |
-| `gw-toolchain.tar.enc` | `gw` | GW-BASIC interpreter `GWBASIC.EXE` |
-| `basica-toolchain.tar.enc` | `basica` | BASICA interpreter `BASICA.COM` |
-| `qbasic-toolchain.tar.enc` | `qbasic` | QBasic interpreter `QBASIC.EXE` (MS-DOS 5.0+) |
+| File                       | Dialect          | Genuine oracle                                  |
+| -------------------------- | ---------------- | ----------------------------------------------- |
+| `pb35-toolchain.tar.enc`   | `pb35` (default) | PowerBASIC 3.50 `PBC.EXE`                       |
+| `pb30-toolchain.tar.enc`   | `pb30`           | PowerBASIC 3.0c `PBC.EXE`                       |
+| `pb21-toolchain.tar.enc`   | `pb21`           | PowerBASIC 2.10 `PB.EXE` (IDE, autotype-driven) |
+| `qb45-toolchain.tar.enc`   | `qb45`           | QuickBASIC 4.5 `BC`/`LINK`/`LIB` + `BCOM45.LIB` |
+| `tb10-toolchain.tar.enc`   | `tb10`           | Turbo Basic 1.0 `TB.EXE`                        |
+| `tb11-toolchain.tar.enc`   | `tb11`           | Turbo Basic 1.1 `TB.EXE`                        |
+| `gw-toolchain.tar.enc`     | `gw`             | GW-BASIC interpreter `GWBASIC.EXE`              |
+| `basica-toolchain.tar.enc` | `basica`         | BASICA interpreter `BASICA.COM`                 |
+| `qbasic-toolchain.tar.enc` | `qbasic`         | QBasic interpreter `QBASIC.EXE` (MS-DOS 5.0+)   |
+
+### C compilers (OMF object interop)
+
+These are not BASIC dialects — they back `CInteropTests` (see `docs/LINKER.md`),
+which proves our OMF object reader + linker integrate genuine foreign C objects.
+Each emits a slightly different OMF flavour, and all four must link cleanly:
+
+| File                      | Slot    | Genuine compiler                                       |
+| ------------------------- | ------- | ----------------------------------------------------- |
+| `bcc31-toolchain.tar.enc` | `bcc31` | Borland C++ 3.1 `BCC.EXE` (DPMI-hosted)               |
+| `tc20-toolchain.tar.enc`  | `tc20`  | Turbo C 2.0 `TCC.EXE`                                 |
+| `wc10-toolchain.tar.enc`  | `wc10`  | Watcom C/C++ 10.0a `WCC.EXE` (16-bit; needs W32RUN)   |
+| `msc6-toolchain.tar.enc`  | `msc6`  | Microsoft C 6.0 `CL.EXE` + `C1`/`C2`/`C3` passes      |
+
+MS C **6.0** is used rather than 7.0: 7.0's `CL.EXE` is a DOSX32 image needing a
+32-bit DPMI host DOSBox does not provide, so it cannot run under the harness.
 
 ## How it works
 

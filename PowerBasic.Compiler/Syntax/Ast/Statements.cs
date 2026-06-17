@@ -29,6 +29,15 @@ public sealed record TypeName(SourcePosition Position, BuiltinType Builtin, stri
 public enum Visibility { Default, Public, Private }
 
 /// <summary>
+/// Calling convention of a SUB/FUNCTION/DECLARE. <see cref="Basic"/> is PB's
+/// default (arguments left to right, BYREF unless BYVAL, callee cleans via RET n);
+/// <see cref="Cdecl"/> pushes right to left and the caller cleans; <see cref="Stdcall"/>
+/// pushes right to left but the callee cleans; <see cref="Pascal"/> pushes left to
+/// right and the callee cleans.
+/// </summary>
+public enum CallConvention { Basic, Cdecl, Stdcall, Pascal, Fastcall, Watcall }
+
+/// <summary>
 /// Formal parameter: <c>BYVAL</c>/<c>SEG</c> modifiers, optional <c>AS</c> type, optional <c>()</c>
 /// array marker (a dimension count inside the parens is accepted: <c>arr(1) AS LONG</c>);
 /// <see cref="Optional"/> marks CDECL bracket parameters (<c>[, BYVAL x]</c>).
@@ -36,13 +45,22 @@ public enum Visibility { Default, Public, Private }
 public sealed record Parameter(SourcePosition Position, string Name, TypeSuffix Suffix, TypeName? Type, bool ByVal, bool Seg, bool IsArray, bool Optional = false, Expression? DefaultValue = null);
 
 /// <summary>SUB definition.</summary>
-public sealed record SubDecl(SourcePosition Position, string Name, IReadOnlyList<Parameter> Parameters, bool IsStatic, Visibility Visibility, string? Alias, bool Cdecl, IReadOnlyList<Statement> Body) : Statement(Position);
+public sealed record SubDecl(SourcePosition Position, string Name, IReadOnlyList<Parameter> Parameters, bool IsStatic, Visibility Visibility, string? Alias, CallConvention Convention, IReadOnlyList<Statement> Body) : Statement(Position) {
+  /// <summary>Back-compat shorthand for the CDECL convention.</summary>
+  public bool Cdecl => this.Convention == CallConvention.Cdecl;
+}
 
 /// <summary>FUNCTION definition; return type from name suffix or <c>AS</c> clause.</summary>
-public sealed record FunctionDecl(SourcePosition Position, string Name, TypeSuffix Suffix, TypeName? ReturnType, IReadOnlyList<Parameter> Parameters, bool IsStatic, Visibility Visibility, string? Alias, bool Cdecl, IReadOnlyList<Statement> Body) : Statement(Position);
+public sealed record FunctionDecl(SourcePosition Position, string Name, TypeSuffix Suffix, TypeName? ReturnType, IReadOnlyList<Parameter> Parameters, bool IsStatic, Visibility Visibility, string? Alias, CallConvention Convention, IReadOnlyList<Statement> Body) : Statement(Position) {
+  /// <summary>Back-compat shorthand for the CDECL convention.</summary>
+  public bool Cdecl => this.Convention == CallConvention.Cdecl;
+}
 
 /// <summary>DECLARE SUB/FUNCTION prototype.</summary>
-public sealed record DeclareStmt(SourcePosition Position, bool IsFunction, string Name, TypeSuffix Suffix, TypeName? ReturnType, IReadOnlyList<Parameter>? Parameters) : Statement(Position);
+public sealed record DeclareStmt(SourcePosition Position, bool IsFunction, string Name, TypeSuffix Suffix, TypeName? ReturnType, IReadOnlyList<Parameter>? Parameters, string? Alias = null, CallConvention Convention = CallConvention.Basic) : Statement(Position) {
+  /// <summary>Back-compat shorthand for the CDECL convention.</summary>
+  public bool Cdecl => this.Convention == CallConvention.Cdecl;
+}
 
 /// <summary>One field inside TYPE/UNION; array fields carry bounds (lower TO upper | upper).</summary>
 public sealed record TypeField(SourcePosition Position, string Name, TypeName Type, IReadOnlyList<(Expression? Lower, Expression Upper)>? ArrayBounds);

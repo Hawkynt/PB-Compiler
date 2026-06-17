@@ -122,7 +122,7 @@ public sealed class BinderTests {
 
   [Test]
   public void Bind_GivenSubWithLocal_WhenBound_ThenLocalNotVisibleAtModuleLevel() {
-    var sub = new SubDecl(_pos, "Work", [], false, Visibility.Default, null, false, [
+    var sub = new SubDecl(_pos, "Work", [], false, Visibility.Default, null, CallConvention.Basic, [
       Assign(Name("temp", TypeSuffix.Integer), Int(1)),
     ]);
     var model = Binder.Bind(Unit(sub));
@@ -134,7 +134,7 @@ public sealed class BinderTests {
   public void Bind_GivenSharedModuleVariable_WhenUsedInSub_ThenBindsToModuleSymbol() {
     var dim = new DimStmt(_pos, StorageClass.Dim, true, [new(_pos, "g", TypeSuffix.None, null, new(_pos, BuiltinType.Word))]);
     var use = Assign(Name("g"), Int(2));
-    var sub = new SubDecl(_pos, "Work", [], false, Visibility.Default, null, false, [use]);
+    var sub = new SubDecl(_pos, "Work", [], false, Visibility.Default, null, CallConvention.Basic, [use]);
     var model = Binder.Bind(Unit(dim, sub));
     Assert.That(model.Success, Is.True, string.Join("; ", model.Errors));
     Assert.That(model.VariableBindings[use.Target], Is.SameAs(model.ModuleVariables["g"]));
@@ -144,7 +144,7 @@ public sealed class BinderTests {
   public void Bind_GivenUnsharedModuleVariable_WhenUsedInSub_ThenNewLocalCreated() {
     var dim = new DimStmt(_pos, StorageClass.Dim, false, [new(_pos, "g", TypeSuffix.None, null, new(_pos, BuiltinType.Word))]);
     var use = Assign(Name("g"), Int(2));
-    var sub = new SubDecl(_pos, "Work", [], false, Visibility.Default, null, false, [use]);
+    var sub = new SubDecl(_pos, "Work", [], false, Visibility.Default, null, CallConvention.Basic, [use]);
     var model = Binder.Bind(Unit(dim, sub));
     Assert.That(model.VariableBindings[use.Target], Is.Not.SameAs(model.ModuleVariables["g"]));
   }
@@ -152,7 +152,7 @@ public sealed class BinderTests {
   [Test]
   public void Bind_GivenByValParameter_WhenBound_ThenParameterSymbolTyped() {
     var sub = new SubDecl(_pos, "P", [new(_pos, "x", TypeSuffix.None, new(_pos, BuiltinType.Word), ByVal: true, Seg: false, IsArray: false)],
-      false, Visibility.Default, null, false, [Assign(Name("x"), Int(1))]);
+      false, Visibility.Default, null, CallConvention.Basic, [Assign(Name("x"), Int(1))]);
     var model = Binder.Bind(Unit(sub));
     Assert.That(model.Success, Is.True, string.Join("; ", model.Errors));
     var p = model.Procedures["P"].Parameters[0];
@@ -163,7 +163,7 @@ public sealed class BinderTests {
   [Test]
   public void Bind_GivenFunction_WhenNameAssigned_ThenBindsToResultVariable() {
     var assign = Assign(Name("Twice", TypeSuffix.Integer), Int(2));
-    var fn = new FunctionDecl(_pos, "Twice", TypeSuffix.Integer, null, [], false, Visibility.Default, null, false, [assign]);
+    var fn = new FunctionDecl(_pos, "Twice", TypeSuffix.Integer, null, [], false, Visibility.Default, null, CallConvention.Basic, [assign]);
     var model = Binder.Bind(Unit(fn));
     Assert.That(model.Success, Is.True, string.Join("; ", model.Errors));
     Assert.That(model.Procedures["Twice"].ReturnType, Is.EqualTo(PbType.Integer));
@@ -171,7 +171,7 @@ public sealed class BinderTests {
 
   [Test]
   public void Bind_GivenFunctionCall_WhenBound_ThenCallBindingAndReturnType() {
-    var fn = new FunctionDecl(_pos, "GetVal", TypeSuffix.Long, null, [], false, Visibility.Default, null, false, []);
+    var fn = new FunctionDecl(_pos, "GetVal", TypeSuffix.Long, null, [], false, Visibility.Default, null, CallConvention.Basic, []);
     var call = new CallOrIndexExpr(_pos, "GetVal", TypeSuffix.None, []);
     var model = Binder.Bind(Unit(fn, Assign(Name("x", TypeSuffix.Long), call)));
     Assert.That(model.TypeOf(call), Is.EqualTo(PbType.Long));
@@ -180,7 +180,7 @@ public sealed class BinderTests {
 
   [Test]
   public void Bind_GivenSubCallWithWrongArity_WhenBound_ThenError() {
-    var sub = new SubDecl(_pos, "P", [new(_pos, "x", TypeSuffix.Integer, null, false, false, false)], false, Visibility.Default, null, false, []);
+    var sub = new SubDecl(_pos, "P", [new(_pos, "x", TypeSuffix.Integer, null, false, false, false)], false, Visibility.Default, null, CallConvention.Basic, []);
     var call = new CallStmt(_pos, "P", [], true);
     var model = Binder.Bind(Unit(sub, call));
     Assert.That(model.Errors, Has.Some.Matches<Diagnostic>(d => d.Message.Contains("argument")));
@@ -288,7 +288,7 @@ public sealed class BinderTests {
 
   [Test]
   public void Bind_GivenLabelInsideSubBody_WhenGotoFromSameSub_ThenResolves() {
-    var sub = new SubDecl(_pos, "P", [], false, Visibility.Default, null, false, [
+    var sub = new SubDecl(_pos, "P", [], false, Visibility.Default, null, CallConvention.Basic, [
       new LabelStmt(_pos, "again"),
       new GotoStmt(_pos, "again"),
     ]);

@@ -246,11 +246,28 @@ public static class Driver {
         return false;
       }
       try {
+        if (path.EndsWith(".OBJ", StringComparison.OrdinalIgnoreCase)) {
+          // external Intel OMF object: lower to a synthetic unit (docs/LINKER.md)
+          units.Add(Emit.Omf.OmfToPbu.Convert(Emit.Omf.OmfReader.ReadObject(File.ReadAllBytes(path))));
+          continue;
+        }
+        if (path.EndsWith(".LIB", StringComparison.OrdinalIgnoreCase)) {
+          // external OMF library: each module becomes a unit in a library so the
+          // linker pulls only the ones that satisfy unresolved symbols
+          var lib = new PblFile();
+          foreach (var module in Emit.Omf.OmfReader.ReadLibrary(File.ReadAllBytes(path)))
+            lib.Units.Add(Emit.Omf.OmfToPbu.Convert(module));
+          libraries.Add(lib);
+          continue;
+        }
         using var stream = File.OpenRead(path);
         if (path.EndsWith(".PBL", StringComparison.OrdinalIgnoreCase))
           libraries.Add(PblFile.Read(stream));
         else
           units.Add(PbuFile.Read(stream));
+      } catch (Emit.Omf.OmfException e) {
+        stderr.WriteLine($"error: {meta.Position}: $LINK '{file.Text}': {e.Message}");
+        return false;
       } catch (InvalidDataException e) {
         stderr.WriteLine($"error: {meta.Position}: $LINK '{file.Text}': {e.Message} (genuine PowerBASIC units are not binary-compatible; rebuild with pbc and point -L at them)");
         return false;

@@ -179,11 +179,11 @@ public sealed class Binder {
           break;
 
         case SubDecl s:
-          this.DefineProcedure(s.Name, isFunction: false, TypeSuffix.None, null, s.Parameters, s.IsStatic, s.Body, s.Position, s.Cdecl);
+          this.DefineProcedure(s.Name, isFunction: false, TypeSuffix.None, null, s.Parameters, s.IsStatic, s.Body, s.Position, s.Convention);
           break;
 
         case FunctionDecl f:
-          this.DefineProcedure(f.Name, isFunction: true, f.Suffix, f.ReturnType, f.Parameters, f.IsStatic, f.Body, f.Position, f.Cdecl);
+          this.DefineProcedure(f.Name, isFunction: true, f.Suffix, f.ReturnType, f.Parameters, f.IsStatic, f.Body, f.Position, f.Convention);
           break;
 
         case DefFnDecl fn: {
@@ -325,7 +325,7 @@ public sealed class Binder {
   }
 
   private void DeclareProcedure(DeclareStmt d) {
-    var proc = new ProcedureSymbol(d.Name, d.IsFunction) { Position = d.Position };
+    var proc = new ProcedureSymbol(d.Name, d.IsFunction) { Position = d.Position, CallConv = d.Convention, Alias = d.Alias };
     if (d.IsFunction)
       proc.ReturnType = this.ResolveReturnType(d.Name, d.Suffix, d.ReturnType);
     if (d.Parameters != null)
@@ -338,8 +338,8 @@ public sealed class Binder {
     this.RegisterProcedure(proc);
   }
 
-  private ProcedureSymbol DefineProcedure(string name, bool isFunction, TypeSuffix suffix, TypeName? returnType, IReadOnlyList<Parameter> parameters, bool isStatic, IReadOnlyList<Statement> body, SourcePosition position, bool isCdecl = false) {
-    var proc = new ProcedureSymbol(name, isFunction) { IsStatic = isStatic, Body = body, Position = position, IsCdecl = isCdecl };
+  private ProcedureSymbol DefineProcedure(string name, bool isFunction, TypeSuffix suffix, TypeName? returnType, IReadOnlyList<Parameter> parameters, bool isStatic, IReadOnlyList<Statement> body, SourcePosition position, CallConvention convention = CallConvention.Basic) {
+    var proc = new ProcedureSymbol(name, isFunction) { IsStatic = isStatic, Body = body, Position = position, CallConv = convention };
     if (isFunction)
       proc.ReturnType = this.ResolveReturnType(name, suffix, returnType);
     foreach (var p in parameters)

@@ -347,13 +347,15 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
   /// <summary>
   /// Emits the program as a DOS MZ executable; <paramref name="units"/> link
-  /// unconditionally, <paramref name="libraries"/> contribute units on demand
-  /// (<c>$LINK</c>). Link failures surface as compile diagnostics.
+  /// unconditionally, <paramref name="libraries"/> and <paramref name="omfLibraries"/>
+  /// contribute units on demand (<c>$LINK</c>) - the foreign OMF .LIBs by lazy,
+  /// dictionary-driven selective extraction. Link failures surface as compile diagnostics.
   /// </summary>
-  public byte[] EmitExecutable(IReadOnlyList<PbuFile> units, IReadOnlyList<PblFile> libraries) {
+  public byte[] EmitExecutable(IReadOnlyList<PbuFile> units, IReadOnlyList<PblFile> libraries, IReadOnlyList<Emit.Omf.OmfLibrary>? omfLibraries = null) {
     ArgumentNullException.ThrowIfNull(units);
     ArgumentNullException.ThrowIfNull(libraries);
-    this._allowExternalCalls = units.Count > 0 || libraries.Count > 0;
+    omfLibraries ??= [];
+    this._allowExternalCalls = units.Count > 0 || libraries.Count > 0 || omfLibraries.Count > 0;
 
     // pb36 O2/O10: drop unreachable statements and redundant DEF SEGs first -
     // dead code also vanishes from the trivial-lowering analysis below
@@ -476,7 +478,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this.EmitDataArea(trimmedSections);
     this._rt.PlaceBss(asm); // pb36 P3: zero blobs live behind the image
 
-    var image = this._allowExternalCalls ? this.LinkImage(units, libraries) : asm.ToArray();
+    var image = this._allowExternalCalls ? this.LinkImage(units, libraries, omfLibraries) : asm.ToArray();
     if (image.Length == 0)
       return []; // link errors already reported
 
@@ -513,7 +515,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// emitted, so the SUB SP immediate is a label whose "position" is patched
   /// to the final byte count by <see cref="EndFrame"/>.
   /// </summary>
-  private void BeginFrame(bool skipZeroing = false, Label? tailEntry = null) {
+  private void BeginFrame(bool skipZeroing = false, Label? tailEntry = null, IReadOnlyList<Reg>? spillRegs = null) {
     var asm = this._asm;
     this._frameBytesLabel = asm.DefineLabel();
     this._frameWordsLabel = asm.DefineLabel();
@@ -525,6 +527,30 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     asm.Push(Reg.BP);
     asm.Mov(Reg.BP, Reg.SP);
+
+    // register-convention (WATCALL/FASTCALL) entry: the leading arguments arrived in
+    // AX,DX,BX(,CX); push them so each occupies its negative parameter slot ([BP-2], ...)
+    // BEFORE the zero-fill clobbers AX/CX, then allocate and zero only the rest of the frame.
+    var spillCount = spillRegs?.Count ?? 0;
+    if (spillCount > 0) {
+      foreach (var reg in spillRegs!)
+        asm.Push(reg);                                       // param 0 -> [BP-2], param 1 -> [BP-4], ...
+      asm.Mov(Reg.CX, Imm.OffsetOf(this._frameBytesLabel));
+      asm.Sub(Reg.CX, spillCount * 2);                       // the spill words are already on the stack
+      asm.Sub(Reg.SP, Reg.CX);
+      if (skipZeroing)
+        return;
+      asm.Push(Reg.DS);
+      asm.Pop(Reg.ES);
+      asm.Mov(Reg.DI, Reg.SP);
+      asm.Mov(Reg.CX, Imm.OffsetOf(this._frameWordsLabel));
+      asm.Sub(Reg.CX, spillCount);                           // do not re-zero the spilled register slots
+      asm.Xor(Reg.AX, Reg.AX);
+      asm.Rep();
+      asm.Stosw();
+      return;
+    }
+
     asm.Mov(Reg.CX, Imm.OffsetOf(this._frameBytesLabel));
     asm.Sub(Reg.SP, Reg.CX);
     // pb36 O14: a tail self-call rewrites its parameter slots and re-enters
@@ -644,7 +670,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       // definitions (PB 3.6) get an index suffix so each has its own label (the
       // first/only one keeps the plain p_<name> for byte-identical output).
       this._procLabels[proc] = label = proc.IsExternal && this._allowExternalCalls
-        ? this._asm.External(proc.Name)
+        ? this._asm.External(proc.Alias ?? proc.Name)   // ALIAS names the external (link) symbol, e.g. a C public "_foo"
         : this._asm.DefineLabel(proc.OverloadIndex == 0 ? $"p_{proc.Name}" : $"p_{proc.Name}__{proc.OverloadIndex}");
     return label;
   }

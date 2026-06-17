@@ -43,6 +43,8 @@ public sealed class PbuFile {
 
   public required string Name { get; init; }
   public PbuCpuFlags CpuFlags { get; init; }
+  /// <summary>In-memory only: this unit was lowered from a foreign OMF object/library, so its symbols are case-sensitive (C/C++/asm publics) and excluded from BASIC's case-insensitive resolution. Never serialized.</summary>
+  public bool Foreign { get; set; }
   public List<PbuExport> Exports { get; } = [];
   public List<PbuImport> Imports { get; } = [];
   public List<PbuCommonBlock> Commons { get; } = [];

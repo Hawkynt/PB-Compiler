@@ -53,8 +53,16 @@ public sealed class ProcedureSymbol(string name, bool isFunction) {
   /// <summary>Locals & statics by name (case-insensitive), including the implicit function-result variable.</summary>
   public Dictionary<string, VariableSymbol> Variables { get; } = new(StringComparer.OrdinalIgnoreCase);
   public bool IsStatic { get; set; }
+  /// <summary>
+  /// Calling convention. BASIC (default): arguments left to right, BYREF, callee
+  /// cleans (RET n). CDECL: right to left, caller cleans. STDCALL: right to left,
+  /// callee cleans. PASCAL: left to right, callee cleans.
+  /// </summary>
+  public CallConvention CallConv { get; set; } = CallConvention.Basic;
   /// <summary>CDECL calling convention: arguments pushed right to left, caller cleans the stack.</summary>
-  public bool IsCdecl { get; set; }
+  public bool IsCdecl => this.CallConv == CallConvention.Cdecl;
+  /// <summary>ALIAS clause: the external (link) symbol this procedure resolves to, when it differs from <see cref="Name"/> (e.g. a C public "_foo"). Null = link by name.</summary>
+  public string? Alias { get; set; }
   /// <summary>
   /// Position of this overload within its same-name set (PB 3.6 overloading). 0 for
   /// the first/only one, so a non-overloaded procedure keeps its plain emitted label.

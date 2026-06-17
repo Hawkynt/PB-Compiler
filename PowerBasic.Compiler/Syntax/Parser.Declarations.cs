@@ -14,20 +14,20 @@ public sealed partial class Parser {
     var isStatic = false;
     var visibility = Visibility.Default;
     string? alias = null;
-    var cdecl = false;
+    var convention = CallConvention.Basic;
     for (;;) {
       if (parameters == null && this.Current.Kind == TokenKind.LParen) {
         parameters = this.ParseParameterList();
         continue;
       }
-      if (!this.TryParseProcedureModifier(ref isStatic, ref visibility, ref alias, ref cdecl))
+      if (!this.TryParseProcedureModifier(ref isStatic, ref visibility, ref alias, ref convention))
         break;
     }
 
     var body = this.ParseBody("END SUB");
     this.Advance();
     this.Advance();
-    return new SubDecl(pos, name.Text, parameters ?? [], isStatic, visibility, alias, cdecl, body);
+    return new SubDecl(pos, name.Text, parameters ?? [], isStatic, visibility, alias, convention, body);
   }
 
   private Statement ParseFunction() {
@@ -39,7 +39,7 @@ public sealed partial class Parser {
     var isStatic = false;
     var visibility = Visibility.Default;
     string? alias = null;
-    var cdecl = false;
+    var convention = CallConvention.Basic;
     for (;;) {
       if (parameters == null && this.Current.Kind == TokenKind.LParen) {
         parameters = this.ParseParameterList();
@@ -49,7 +49,7 @@ public sealed partial class Parser {
         returnType = this.ParseTypeName();
         continue;
       }
-      if (!this.TryParseProcedureModifier(ref isStatic, ref visibility, ref alias, ref cdecl))
+      if (!this.TryParseProcedureModifier(ref isStatic, ref visibility, ref alias, ref convention))
         break;
     }
 
@@ -60,16 +60,16 @@ public sealed partial class Parser {
       var eq = this.Advance();
       var result = new NameExpr(eq.Position, "FUNCTION", TypeSuffix.None);
       IReadOnlyList<Statement> exprBody = [new AssignStmt(eq.Position, result, this.ParseExpression())];
-      return new FunctionDecl(pos, name.Text, name.Suffix, returnType, parameters ?? [], isStatic, visibility, alias, cdecl, exprBody);
+      return new FunctionDecl(pos, name.Text, name.Suffix, returnType, parameters ?? [], isStatic, visibility, alias, convention, exprBody);
     }
 
     var body = this.ParseBody("END FUNCTION");
     this.Advance();
     this.Advance();
-    return new FunctionDecl(pos, name.Text, name.Suffix, returnType, parameters ?? [], isStatic, visibility, alias, cdecl, body);
+    return new FunctionDecl(pos, name.Text, name.Suffix, returnType, parameters ?? [], isStatic, visibility, alias, convention, body);
   }
 
-  private bool TryParseProcedureModifier(ref bool isStatic, ref Visibility visibility, ref string? alias, ref bool cdecl) {
+  private bool TryParseProcedureModifier(ref bool isStatic, ref Visibility visibility, ref string? alias, ref CallConvention convention) {
     if (this.TryMatchKeyword("STATIC")) {
       isStatic = true;
       return true;
@@ -83,7 +83,23 @@ public sealed partial class Parser {
       return true;
     }
     if (this.TryMatchKeyword("CDECL")) {
-      cdecl = true;
+      convention = CallConvention.Cdecl;
+      return true;
+    }
+    if (this.TryMatchKeyword("STDCALL")) {
+      convention = CallConvention.Stdcall;
+      return true;
+    }
+    if (this.TryMatchKeyword("PASCAL")) {
+      convention = CallConvention.Pascal;
+      return true;
+    }
+    if (this.TryMatchKeyword("FASTCALL")) {
+      convention = CallConvention.Fastcall;
+      return true;
+    }
+    if (this.TryMatchKeyword("WATCALL")) {
+      convention = CallConvention.Watcall;
       return true;
     }
     if (this.IsKeyword(0, "ALIAS")) {
@@ -102,16 +118,17 @@ public sealed partial class Parser {
       this.ExpectKeyword("SUB");
     var name = this.Expect(TokenKind.Identifier, "procedure name");
 
-    // CDECL/ALIAS are legal on prototypes but not represented in DeclareStmt - parse and discard
+    // CDECL/ALIAS on a prototype name the external (link) symbol and convention -
+    // carried through so $LINK'd objects/libraries (incl. OMF C/asm) resolve by alias
     var isStatic = false;
     var visibility = Visibility.Default;
     string? alias = null;
-    var cdecl = false;
-    while (this.TryParseProcedureModifier(ref isStatic, ref visibility, ref alias, ref cdecl)) { }
+    var convention = CallConvention.Basic;
+    while (this.TryParseProcedureModifier(ref isStatic, ref visibility, ref alias, ref convention)) { }
 
     IReadOnlyList<Parameter>? parameters = this.Current.Kind == TokenKind.LParen ? this.ParseParameterList() : null;
     TypeName? returnType = this.TryMatchKeyword("AS") ? this.ParseTypeName() : null;
-    return new DeclareStmt(pos, isFunction, name.Text, name.Suffix, returnType, parameters);
+    return new DeclareStmt(pos, isFunction, name.Text, name.Suffix, returnType, parameters, alias, convention);
   }
 
   private List<Parameter> ParseParameterList() {

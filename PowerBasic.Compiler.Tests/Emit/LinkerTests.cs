@@ -34,7 +34,7 @@ public sealed class LinkerTests {
     Assert.That(image.Code.Length, Is.EqualTo(6));
     var displacement = (ushort)(image.Code[1] | (image.Code[2] << 8));
     Assert.That(displacement, Is.EqualTo(4 - 3));
-    Assert.That(image.ResolvedExports["work"], Is.EqualTo(4));
+    Assert.That(image.ResolvedExports["Work"], Is.EqualTo(4)); // ResolvedExports is keyed by exact name (case-sensitive)
   }
 
   [Test]
