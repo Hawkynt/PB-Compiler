@@ -492,6 +492,15 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenDividedIndexUnderBoundsOn_WhenPb36_ThenInRangeCheckElided() {
+    // a(i% \ 2) over i% in [0,30] is in [0,15] (truncated divide is monotonic in the dividend),
+    // inside a(0 TO 15), so pb36 drops the Error-9 bounds check that pb35 keeps.
+    const string idx = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(0 TO 15)\nFOR i% = 0 TO 30\na%(i% \\ 2) = i%\nNEXT i%\nEND";
+    Assert.That(CountRaise9(Compile(idx, Dialect.Pb36)), Is.LessThan(CountRaise9(Compile(idx, Dialect.Pb35))),
+      "i% \\ 2 over [0,30] is in [0,15] - the bounds check should drop");
+  }
+
+  [Test]
   public void Emit_GivenForCounterAddUnderOverflowOn_WhenPb36_ThenCheckElided() {
     // i% + 1 over an in-range FOR counter drops its Error-6 check; k% + 1 keeps it
     const string counterAdd = "$ERROR OVERFLOW ON\n$OPTIMIZE SPEED\nFOR i% = 1 TO 100\nx% = i% + 1\nNEXT i%\nEND";

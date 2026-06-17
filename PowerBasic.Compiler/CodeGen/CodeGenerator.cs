@@ -178,6 +178,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         if (this.OptFolder.TryFold(b.Left) is { Integer: { } am2 } && am2 >= 0)
           return (0, am2);
         return null;
+      case BinaryExpr { Op: BinaryOp.IntegerDivide } b
+          when this.IndexRangeOf(b.Left) is { } ld && this.OptFolder.TryFold(b.Right) is { Integer: { } dk } && dk != 0:
+        // truncated integer divide by a constant is monotonic in the dividend (trunc-toward-zero
+        // preserves order), so the endpoints divide - flipping when the divisor is negative.
+        // C# long division truncates toward zero, matching PB's `\`.
+        return dk > 0 ? (ld.Lo / dk, ld.Hi / dk) : (ld.Hi / dk, ld.Lo / dk);
       case BinaryExpr { Op: BinaryOp.Modulo } b
           when this.OptFolder.TryFold(b.Right) is { Integer: { } mk } && mk != 0: {
         // x MOD k (k constant != 0): |result| < |k| and PB's truncated MOD takes the sign of x,
