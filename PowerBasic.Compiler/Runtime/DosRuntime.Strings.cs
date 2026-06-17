@@ -54,6 +54,7 @@ public sealed partial class DosRuntime {
   public Label StrDup { get; private set; } = null!;
   public Label StrMem { get; private set; } = null!;
   public Label StrCat { get; private set; } = null!;
+  public Label StrCatLit { get; private set; } = null!;
   public Label StrCmp { get; private set; } = null!;
   public Label StrMid { get; private set; } = null!;
   public Label StrLeft { get; private set; } = null!;
@@ -92,6 +93,7 @@ public sealed partial class DosRuntime {
     this.EmitStrMem(asm);
     this.EmitStrDup(asm);
     this.EmitStrCat(asm);
+    this.EmitStrCatLit(asm);
     this.EmitStrCmp(asm);
     this.EmitStrMid(asm);
     this.EmitStrLeftRight(asm);
@@ -454,6 +456,90 @@ public sealed partial class DosRuntime {
     asm.Ret();
     asm.MarkLabel(oom);
     asm.Jmp(asm.Lbl("rt_err_oss"));
+  }
+
+  /// <summary>
+  /// O9 in-place self-append of a string LITERAL. AX = target handle, DS:SI = literal bytes,
+  /// CX = literal length -> AX = result handle. When the target is the topmost heap block and
+  /// there is room (and the $STRING length cap is not exceeded) the literal bytes are appended
+  /// straight after the target's data: the block grows in place keeping the SAME handle, so an
+  /// O(n) `s$ = s$ + "..."` build loop stays O(n) instead of recopying the whole string each
+  /// append. Otherwise it falls back to the exact StrMem+StrCat path. DS is the program data
+  /// segment throughout (the literal and the runtime cells live there); the heap is rt_strseg.
+  /// </summary>
+  private void EmitStrCatLit(Assembler asm) {
+    this.StrCatLit = asm.MarkLabel("rt_strcatlit");
+    var haveLit = asm.DefineLabel();
+    var fromEmpty = asm.DefineLabel();
+    var fallback = asm.DefineLabel();
+
+    asm.Test(Reg.CX, Reg.CX);
+    asm.Jnz(haveLit);
+    asm.Ret();                                        // empty literal: target unchanged
+    asm.MarkLabel(haveLit);
+    asm.Test(Reg.AX, Reg.AX);
+    asm.Jz(fromEmpty);                                // empty target: result is just the literal
+
+    asm.Mov(Mem.Word(asm.Lbl("rt_st0")), Reg.AX);     // stash target handle
+    asm.Mov(Mem.Word(asm.Lbl("rt_st2")), Reg.SI);     // stash literal offset
+    asm.Mov(Mem.Word(asm.Lbl("rt_st3")), Reg.CX);     // stash literal length
+
+    asm.Mov(Reg.BX, Reg.AX);
+    asm.Shl(Reg.BX, 2);
+    asm.Mov(Reg.DI, this.Descriptor(Reg.BX));         // di = target data ptr
+    asm.Mov(Reg.DX, this.Descriptor(Reg.BX, 2));      // dx = target length
+    asm.Mov(Reg.AX, Reg.DI);                          // topmost? di + len == rt_strtop
+    asm.Add(Reg.AX, Reg.DX);
+    asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_strtop")));
+    asm.Jne(fallback);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_strtop")));  // room? rt_strtop + litlen <= 0xFFF0
+    asm.Add(Reg.AX, Reg.CX);
+    asm.Jc(fallback);
+    asm.Cmp(Reg.AX, (Imm)0xFFF0);
+    asm.Ja(fallback);
+    asm.Mov(Reg.AX, Reg.DX);                          // length cap? targetlen + litlen <= maxlen
+    asm.Add(Reg.AX, Reg.CX);
+    asm.Jc(fallback);
+    asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_strmaxlen")));
+    asm.Ja(fallback);
+
+    asm.Push(Reg.AX);                                 // newlen (= targetlen + litlen)
+    asm.Push(Reg.DI);                                 // target data ptr
+    asm.Push(Reg.ES);
+    asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_strseg")));
+    asm.Mov(Reg.DI, Mem.Word(asm.Lbl("rt_strtop")));  // dest = old top = end of target data
+    asm.Rep();
+    asm.Movsb();                                      // DS:SI -> ES:DI (CX bytes); DI -> new top
+    asm.Mov(Mem.Word(asm.Lbl("rt_strtop")), Reg.DI);  // bump top
+    asm.Pop(Reg.ES);
+    asm.Pop(Reg.DI);                                  // di = target data ptr
+    asm.Pop(Reg.AX);                                  // ax = newlen
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_st0")));
+    asm.Shl(Reg.BX, 2);
+    asm.Mov(this.Descriptor(Reg.BX, 2), Reg.AX);      // descriptor length = newlen
+    asm.Push(Reg.ES);
+    asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_strseg")));
+    asm.Mov(Mem.Word(Reg.DI, -2).Es(), Reg.AX);       // block header length word = newlen
+    asm.Pop(Reg.ES);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_st0")));     // return the (unchanged) target handle
+    asm.Ret();
+
+    asm.MarkLabel(fallback);
+    asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_st2")));     // literal offset
+    asm.Mov(Reg.CX, Mem.Word(asm.Lbl("rt_st3")));     // literal length
+    asm.Push(Reg.DS);
+    asm.Pop(Reg.DX);                                  // dx = ds (literal segment) - no MOV DX,DS
+    asm.Call(this.StrMem);                            // ax = literal temp handle
+    asm.Mov(Reg.DX, Reg.AX);                          // right operand = the literal temp
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_st0")));     // left operand = target (read before StrCat)
+    asm.Call(this.StrCat);                            // frees both, ax = result
+    asm.Ret();
+
+    asm.MarkLabel(fromEmpty);
+    asm.Push(Reg.DS);
+    asm.Pop(Reg.DX);                                  // dx = ds
+    asm.Call(this.StrMem);                            // materialize the literal as the result
+    asm.Ret();
   }
 
   private void EmitStrCmp(Assembler asm) {

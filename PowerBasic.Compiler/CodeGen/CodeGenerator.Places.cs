@@ -485,6 +485,19 @@ public sealed partial class CodeGenerator {
       if (selfIsLeft || selfIsRight) {
         var asm = this._asm;
         var other = selfIsLeft ? concatRight : concatLeft;
+        // pb36 O9 in-place: `s$ = s$ + "literal"` appends the literal bytes straight after s$'s
+        // data when s$ is the topmost heap block (rt_strcatlit grows it in place, same handle),
+        // turning an O(n) build loop O(n) total - no per-append realloc/copy of the whole string.
+        // The literal needs no heap temp, so s$ stays topmost across iterations. rt_strcatlit
+        // falls back to StrMem+StrCat when s$ is not topmost, so the result is always identical.
+        if (selfIsLeft && other is StringLiteralExpr { Value: { Length: > 0 } litText }) {
+          asm.Mov(Reg.AX, selfCell.WithSize(OperandSize.Word));  // AX = s$ handle
+          asm.Mov(Reg.SI, Imm.OffsetOf(this.LiteralOf(litText))); // DS:SI = literal bytes
+          asm.Mov(Reg.CX, (Imm)litText.Length);
+          asm.Call(this._rt.StrCatLit);                          // AX = result (grown s$ or new)
+          asm.Mov(selfCell.WithSize(OperandSize.Word), Reg.AX);
+          return;
+        }
         // emit operands left-to-right (genuine order); s$ is read directly, the other is dup'd
         if (selfIsLeft) {
           asm.Mov(Reg.AX, selfCell.WithSize(OperandSize.Word));   // left = s$ handle

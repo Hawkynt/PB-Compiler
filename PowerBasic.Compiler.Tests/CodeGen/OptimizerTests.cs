@@ -544,6 +544,27 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenLiteralSelfAppend_WhenPb36Speed_ThenInPlaceNoLiteralAlloc() {
+    // s$ = s$ + "x" appends the literal in place (rt_strcatlit) - the literal is NOT materialized
+    // via StrMem at the call site, so no MOV DX,DS (8C DA) there. s$ = "x" + s$ (prepend) still
+    // materializes the literal through StrMem, emitting the 8C DA. The init is identical, so the
+    // append image has strictly fewer 8C DA than the prepend image.
+    const string append = "$OPTIMIZE SPEED\ns$ = \"z\"\nFOR i% = 1 TO 3\ns$ = s$ + \"x\"\nNEXT i%\nPRINT s$\nEND";
+    const string prepend = "$OPTIMIZE SPEED\ns$ = \"z\"\nFOR i% = 1 TO 3\ns$ = \"x\" + s$\nNEXT i%\nPRINT s$\nEND";
+    Assert.That(CountMovDxDs(Compile(append, Dialect.Pb36)), Is.LessThan(CountMovDxDs(Compile(prepend, Dialect.Pb36))),
+      "a literal self-append should append in place, not materialize the literal at the call site");
+  }
+
+  // 8C DA = MOV DX, DS - the segment setup emitted before a StrMem literal materialization
+  private static int CountMovDxDs(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0x8C && image[i + 1] == 0xDA)
+        ++count;
+    return count;
+  }
+
+  [Test]
   public void Emit_GivenStringSelfAppend_WhenPb36_ThenSmallerThanNonSelf() {
     // s$ = s$ + x$ skips the StrDup of s$ and the StrAssign (StrCat consumes s$ directly),
     // so it emits less code than the otherwise-identical non-self s$ = t$ + x$
