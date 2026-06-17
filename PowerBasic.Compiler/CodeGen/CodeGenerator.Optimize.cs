@@ -1284,7 +1284,7 @@ public sealed partial class CodeGenerator {
   /// AX/BX/CX/DX (+x87) only, never the index registers, so the inner body disturbs neither
   /// the outer counter in SI nor the inner counter in DI.
   /// </summary>
-  private bool IsNestedRegisterableFor(ForStmt f, VariableSymbol outerCounter) {
+  private bool IsNestedRegisterableFor(ForStmt f, VariableSymbol? outerCounter) {
     if (f.Variable is not NameExpr name || !model.VariableBindings.TryGetValue(name, out var inner))
       return false;
     if (ReferenceEquals(inner, outerCounter) || inner.Type is not ScalarType { ByteSize: 2, Signed: true, IsFloat: false })
