@@ -184,6 +184,20 @@ public sealed partial class CodeGenerator(SemanticModel model) {
        && r.Lo >= short.MinValue && r.Hi <= short.MaxValue;
 
   /// <summary>
+  /// pb36 O16: true when a LONG add/subtract <paramref name="b"/> has an exact value range
+  /// (from FOR-counter / affine-counter operands) that provably stays inside the signed 32-bit
+  /// range, so the 32-bit ADD/SUB can never raise Error 6 - the $ERROR OVERFLOW check is dead.
+  /// IndexRangeOf computes the result range with exact 64-bit arithmetic, so a result inside
+  /// [-2^31, 2^31-1] means the operation produced no 32-bit overflow; when any operand's range
+  /// is unknown IndexRangeOf yields null and the check is kept.
+  /// </summary>
+  private bool ProvablyNoOverflow32(BinaryExpr b)
+    => this.Optimize
+       && b.Op is BinaryOp.Add or BinaryOp.Subtract
+       && this.IndexRangeOf(b) is { } r
+       && r.Lo >= int.MinValue && r.Hi <= int.MaxValue;
+
+  /// <summary>
   /// pb36 O16: true when the divisor of <paramref name="b"/> has a FOR-counter range that
   /// excludes zero, so the integer divide can never raise Error 11 - the divide-by-zero
   /// guard is dead. (The guard tests only for zero, so the unchanged MININT \ -1 overflow
