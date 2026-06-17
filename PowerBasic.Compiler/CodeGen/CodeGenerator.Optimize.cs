@@ -1180,6 +1180,15 @@ public sealed partial class CodeGenerator {
           continue;
         case ForStmt nested when allowNested && this.IsNestedRegisterableFor(nested, counter):
           continue;
+        // a conditional whose test computes through AX/BX/CX/DX (SI-clean) and whose every arm
+        // is itself SI-clean leaves both index registers intact - the branch itself touches no
+        // GP register, so the counter in SI (and any DI resident) survive across the IF
+        case IfStmt iff
+            when SiCleanExpression(iff.Condition, model)
+              && this.BodyIsSiClean(iff.Then, counter, allowNested)
+              && iff.ElseIfs.All(e => SiCleanExpression(e.Condition, model) && this.BodyIsSiClean(e.Body, counter, allowNested))
+              && (iff.Else == null || this.BodyIsSiClean(iff.Else, counter, allowNested)):
+          continue;
         default:
           return false;
       }

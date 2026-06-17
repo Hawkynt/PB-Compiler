@@ -612,6 +612,26 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenConditionalAccumulateLoop_WhenPb36Speed_ThenCounterInSi() {
+    // a FOR loop whose body is a clean IF (SI-clean condition + scalar-assign arm) keeps the
+    // counter in SI: the increment becomes ADD SI, imm (83 C6), which a memory-cell counter lacks.
+    const string body = "s% = 0\nFOR i% = 1 TO 10\n  IF i% > 5 THEN s% = s% + i%\nNEXT i%\nPRINT s%\nEND";
+    var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
+    var plain = Compile(body, Dialect.Pb36);
+    Assert.That(CountAddSiImm(speed), Is.GreaterThan(CountAddSiImm(plain)),
+      "a FOR counter over a clean-IF body should increment in SI (ADD SI, imm)");
+  }
+
+  // 83 C6 = ADD SI, imm8 - the increment of an SI-resident FOR counter
+  private static int CountAddSiImm(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0x83 && image[i + 1] == 0xC6)
+        ++count;
+    return count;
+  }
+
+  [Test]
   public void Emit_GivenNestedIntegerLoops_WhenPb36Speed_ThenInnerCounterInDi() {
     // a doubly-nested integer loop with SI/DI-clean bodies keeps the outer counter in SI
     // and the inner counter in DI: the inner increment becomes ADD DI, imm (83 C7), absent
