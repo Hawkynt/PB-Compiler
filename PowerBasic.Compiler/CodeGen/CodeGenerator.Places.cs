@@ -465,30 +465,43 @@ public sealed partial class CodeGenerator {
       return;
     }
 
-    // pb36 O9 string-temp reuse: a self-append `s$ = s$ + rhs` passes s$'s handle straight
-    // to StrCat - which copies both operands into the result, then frees both - and stores
-    // the result, skipping the redundant StrDup of s$ (StrCat would copy it again anyway) and
-    // the StrAssign free (StrCat already freed the old s$). rhs is a string literal or bare
-    // variable, so it is barrier-free and cannot change s$ before the concat. The resulting
-    // string value is identical, so output is byte-identical.
+    // pb36 O9 string-temp reuse: a self-concat `s$ = s$ + rhs` (append) or `s$ = rhs + s$`
+    // (prepend) passes s$'s handle straight to StrCat - which copies both operands into the
+    // result, then frees both - and stores the result, skipping the redundant StrDup of s$
+    // (StrCat would copy it again anyway) and the StrAssign free (StrCat already freed the old
+    // s$). The other operand is a string literal or bare variable, so it is barrier-free and
+    // cannot change s$ before the concat. The string value is identical -> byte-identical.
     if (this.Optimize && targetType is StringType
         && a.Target is NameExpr selfTarget
         && model.VariableBindings.TryGetValue(selfTarget, out var selfSym)
-        && a.Value is BinaryExpr { Op: BinaryOp.Add or BinaryOp.Concat, Left: NameExpr appendLeft, Right: { } appendRhs }
-        && model.VariableBindings.TryGetValue(appendLeft, out var leftSym)
-        && ReferenceEquals(leftSym, selfSym)
-        && appendRhs is StringLiteralExpr or NameExpr
-        && model.TypeOf(appendRhs) is StringType
+        && a.Value is BinaryExpr { Op: BinaryOp.Add or BinaryOp.Concat, Left: { } concatLeft, Right: { } concatRight }
         && this.TryDirectCell(selfSym) is { } selfCell) {
-      var asm = this._asm;
-      asm.Mov(Reg.AX, selfCell.WithSize(OperandSize.Word));   // left = s$'s current handle (not duplicated)
-      asm.Push(Reg.AX);
-      this.EmitExpression(appendRhs);                          // right -> a handle in AX (dup'd if a variable)
-      asm.Mov(Reg.DX, Reg.AX);
-      asm.Pop(Reg.AX);
-      asm.Call(this._rt.StrCat);                               // AX = s$ + rhs; frees old s$ and the rhs temp
-      asm.Mov(selfCell.WithSize(OperandSize.Word), Reg.AX);    // store the new handle (old already freed)
-      return;
+      bool IsSelf(Expression e) => e is NameExpr && model.VariableBindings.TryGetValue(e, out var s) && ReferenceEquals(s, selfSym);
+      bool IsBarrierFreeStr(Expression e) => e is StringLiteralExpr or NameExpr && model.TypeOf(e) is StringType;
+      // pick the s$ side (passed directly) and the other side (evaluated/dup'd); when both are
+      // s$ (self-double) treat the left as s$ so the right is dup'd before s$ is freed
+      var selfIsLeft = IsSelf(concatLeft) && IsBarrierFreeStr(concatRight);
+      var selfIsRight = !selfIsLeft && IsSelf(concatRight) && IsBarrierFreeStr(concatLeft);
+      if (selfIsLeft || selfIsRight) {
+        var asm = this._asm;
+        var other = selfIsLeft ? concatRight : concatLeft;
+        // emit operands left-to-right (genuine order); s$ is read directly, the other is dup'd
+        if (selfIsLeft) {
+          asm.Mov(Reg.AX, selfCell.WithSize(OperandSize.Word));   // left = s$ handle
+          asm.Push(Reg.AX);
+          this.EmitExpression(other);                            // right -> handle in AX
+          asm.Mov(Reg.DX, Reg.AX);
+          asm.Pop(Reg.AX);
+        } else {
+          this.EmitExpression(other);                            // left -> handle in AX
+          asm.Push(Reg.AX);
+          asm.Mov(Reg.DX, selfCell.WithSize(OperandSize.Word));   // right = s$ handle
+          asm.Pop(Reg.AX);
+        }
+        asm.Call(this._rt.StrCat);                               // AX = result; frees s$ and the other temp
+        asm.Mov(selfCell.WithSize(OperandSize.Word), Reg.AX);    // store the new handle (old already freed)
+        return;
+      }
     }
 
     // $OPTIMIZE SPEED: v = v +/- const on a direct int16 cell is one ALU op

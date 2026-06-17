@@ -36,5 +36,20 @@ FOR i% = 1 TO 6
 NEXT i%
 PRINT #1, "intlv"; v$; " "; w$
 
+' prepend: s$ = rhs + s$ (s$ is the RIGHT operand, passed directly)
+p$ = "."
+FOR i% = 1 TO 8
+  p$ = ">" + p$
+NEXT i%
+PRINT #1, "pre"; p$
+
+' prepend a variable
+q$ = "end"
+g$ = "ab"
+FOR i% = 1 TO 3
+  q$ = g$ + q$
+NEXT i%
+PRINT #1, "prev"; q$
+
 CLOSE #1
 END
