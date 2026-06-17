@@ -467,7 +467,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // unreachable code. Only fully-owned procedures may be dropped: a nested procedure is
     // private to its container, and in a self-contained main every procedure is ours; a
     // procedure that a linked foreign object could call by name is kept regardless.
-    var liveProcs = this.Optimize ? Pb36DeadProc.Live(model) : null;
+    var liveProcs = this.Optimize ? Pb36Reachability.LiveProcedures(model, model.MainBody) : null;
     foreach (var proc in model.ProcedureList)
       if (!proc.IsExternal && (liveProcs is null || liveProcs.Contains(proc) || !this.IsFullyOwned(proc)))
         this.EmitProcedure(proc);
