@@ -16,7 +16,7 @@ namespace PowerBasic.Compiler.CodeGen;
 /// CALL DWORD), since such an indirect call could supply a different argument
 /// the analysis cannot see.
 /// </summary>
-public static class Pb36Ipcp {
+public static class OptIpcp {
 
   public static Dictionary<VariableSymbol, ConstantValue> Analyze(SemanticModel model) {
     var result = new Dictionary<VariableSymbol, ConstantValue>(ReferenceEqualityComparer.Instance);

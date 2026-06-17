@@ -163,8 +163,8 @@ constant propagation → dead-store elimination.
 | # | Optimization | What it does |
 |---|---|---|
 | O1 | Constant folding | Folds pure integral expressions at the emitter, wrapped to the bound type (bit-equal to the runtime ALU). |
-| O2 | Dead-code / dead-store elimination | Drops unreachable statements (`Pb36Pruner`) and, over SSA, removes stores whose value is never really read (`Ssa/DeadStore`). |
-| O3 | Common-subexpression elimination | Block-local CSE, with inheritance into dominated branches and across barrier-free merges (`Pb36CommonSubexpr`). |
+| O2 | Dead-code / dead-store elimination | Drops unreachable statements (`OptPruner`) and, over SSA, removes stores whose value is never really read (`Ssa/DeadStore`). |
+| O3 | Common-subexpression elimination | Block-local CSE, with inheritance into dominated branches and across barrier-free merges (`OptCommonSubexpr`). |
 | O4 | Strength reduction | `x * 2^n`, `x \ 2^n`, `x MOD 2^n` lower to shift/mask sequences (with PB's truncation fix-ups); richer multiplier shapes under `$OPTIMIZE SPEED`. |
 | O5 | Register allocation | Keeps a FOR counter and one hot integer accumulator in SI/DI across a loop; broader allocation is roadmap. |
 | O6 | Inlining | Inlines a single-result-expression FUNCTION at its call sites; induction-variable pointer-stepping for array loops. |
@@ -173,16 +173,16 @@ constant propagation → dead-store elimination.
 | O9 | String-temp / concat folding | Folds pure literal concatenations into one pooled literal. |
 | O10 | Redundant-statement / DEF SEG coalescing | Drops a `DEF SEG` whose window contains only segment-transparent statements. |
 | O11 | Literal overlap pooling | Overlapping/contained string literals share bytes in one pool. |
-| O12 | Float demotion | Re-types accidental SINGLE/DOUBLE loop counters back to INTEGER/LONG when every use is value-exact (`Pb36FloatDemotion`). |
+| O12 | Float demotion | Re-types accidental SINGLE/DOUBLE loop counters back to INTEGER/LONG when every use is value-exact (`OptFloatDemotion`). |
 | O13 | Fixed-point lowering | Integral-promotion trees over 16-bit leaves run on the plain 16-bit ALU instead of round-tripping the x87. |
 | O14 | Tail-call optimization | Self-calls in tail position become a jump to frame entry — recursion in constant stack space. |
 | O15 | UDT zero-cost copy/compare | Word/DWORD-wide block copy & compare; self-copy elided, self-compare folded. |
 | O16 | Range / bounds-check elimination | A FOR-counter range lattice removes provably-safe `$ERROR` BOUNDS/OVERFLOW/divide-by-zero checks and folds invariant comparisons. |
 | O17 | SCCP / branch folding | Sparse conditional constant propagation over SSA folds constant branches and proves zero-initialized reads (`Ssa/Sccp`). |
-| O18 | Interprocedural constant propagation | A parameter that is the same constant at every call site and never written reads as that literal inside the callee (`Pb36Ipcp`). |
+| O18 | Interprocedural constant propagation | A parameter that is the same constant at every call site and never written reads as that literal inside the callee (`OptIpcp`). |
 | O19 | Definite-assignment zero elision | Drops per-invocation frame zeroing when a straight-line proof shows no local is read before assignment. |
 | O20 | Idiom replacement | Recognizes and replaces common code idioms. |
-| O21 | Copy propagation | A copy `y = x` redirects reads of `y` to `x` and drops the copy (`Pb36CopyProp`). |
+| O21 | Copy propagation | A copy `y = x` redirects reads of `y` to `x` and drops the copy (`OptCopyProp`). |
 | O22 | Loop-invariant code motion | Hoists a pure loop-invariant subexpression to the FOR preheader under `$OPTIMIZE SPEED`. |
 | O23 | `SELECT CASE` → jump table | A dense integer `SELECT CASE` dispatches through a word jump table instead of a compare chain (`TryEmitSelectJumpTable`). |
 

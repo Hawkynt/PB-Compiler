@@ -12,7 +12,7 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// pin the size wins, the image shapes and the wrap arithmetic.
 /// </summary>
 [TestFixture]
-public sealed class Pb36OptimizerTests {
+public sealed class OptimizerTests {
 
   private static byte[] Compile(string source, Dialect dialect) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", dialect), "TEST.BAS", dialect);
@@ -167,7 +167,7 @@ public sealed class Pb36OptimizerTests {
   [Test]
   public void Prune_GivenCodeAfterGoto_WhenPruned_ThenDeadStatementsDropUntilLabel() {
     var model = BindModel("GOTO Tail\nPRINT 1\nPRINT 2\nTail:\nPRINT 3\nEND");
-    Pb36Pruner.Prune(model);
+    OptPruner.Prune(model);
     Assert.That(model.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.PrintStmt>().Count(), Is.EqualTo(1),
       "only the labeled tail PRINT survives");
   }
@@ -175,7 +175,7 @@ public sealed class Pb36OptimizerTests {
   [Test]
   public void Prune_GivenDataInDeadRegion_WhenPruned_ThenDataSurvives() {
     var model = BindModel("GOTO Tail\nDATA 1,2,3\nPRINT 9\nTail:\nREAD a%\nPRINT a%\nEND");
-    Pb36Pruner.Prune(model);
+    OptPruner.Prune(model);
     Assert.That(model.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.DataStmt>().Count(), Is.EqualTo(1),
       "DATA acts at compile time and must survive dead regions");
   }
@@ -183,7 +183,7 @@ public sealed class Pb36OptimizerTests {
   [Test]
   public void Prune_GivenRedundantDefSegs_WhenPruned_ThenOnlyLastBeforeObserverSurvives() {
     var model = BindModel("DEF SEG = &H40\nx% = 1\nDEF SEG = &HB800\ny% = PEEK(0)\nDEF SEG\nPRINT y%\nEND");
-    Pb36Pruner.Prune(model);
+    OptPruner.Prune(model);
     Assert.That(model.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.DefSegStmt>().Count(), Is.EqualTo(2),
       "the first DEF SEG is shadowed; the one feeding PEEK and the reset survive");
   }
@@ -191,7 +191,7 @@ public sealed class Pb36OptimizerTests {
   [Test]
   public void Prune_GivenPeekBetweenDefSegs_WhenPruned_ThenBothSurvive() {
     var model = BindModel("DEF SEG = &H40\ny% = PEEK(0)\nDEF SEG = &HB800\nz% = PEEK(0)\nPRINT y%; z%\nEND");
-    Pb36Pruner.Prune(model);
+    OptPruner.Prune(model);
     Assert.That(model.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.DefSegStmt>().Count(), Is.EqualTo(2));
   }
 
@@ -1025,11 +1025,11 @@ public sealed class Pb36OptimizerTests {
 
   #region O3 - common subexpression elimination
 
-  private static (int slots, System.Collections.Generic.Dictionary<PowerBasic.Compiler.Syntax.Ast.Expression, PowerBasic.Compiler.CodeGen.Pb36CommonSubexpr.CseMark> marks) AnalyzeCse(string source) {
+  private static (int slots, System.Collections.Generic.Dictionary<PowerBasic.Compiler.Syntax.Ast.Expression, PowerBasic.Compiler.CodeGen.OptCommonSubexpr.CseMark> marks) AnalyzeCse(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty);
-    var r = PowerBasic.Compiler.CodeGen.Pb36CommonSubexpr.Analyze(model.MainBody, model);
+    var r = PowerBasic.Compiler.CodeGen.OptCommonSubexpr.Analyze(model.MainBody, model);
     return (r.SlotCount, r.Marks);
   }
 
@@ -1092,7 +1092,7 @@ public sealed class Pb36OptimizerTests {
       """;
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
-    var ipcp = PowerBasic.Compiler.CodeGen.Pb36Ipcp.Analyze(model);
+    var ipcp = PowerBasic.Compiler.CodeGen.OptIpcp.Analyze(model);
     var pSub = model.Procedures["P"];
     Assert.Multiple(() => {
       Assert.That(ipcp.ContainsKey(pSub.Parameters[0]), Is.True, "m% is always 1");
@@ -1114,7 +1114,7 @@ public sealed class Pb36OptimizerTests {
       """;
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
-    var ipcp = PowerBasic.Compiler.CodeGen.Pb36Ipcp.Analyze(model);
+    var ipcp = PowerBasic.Compiler.CodeGen.OptIpcp.Analyze(model);
     Assert.That(ipcp, Is.Empty, "a written parameter is not constant-propagated");
   }
 
@@ -1188,7 +1188,7 @@ public sealed class Pb36OptimizerTests {
     Assert.That(loop, Is.Not.Null, "source must contain a FOR loop");
     var name = (PowerBasic.Compiler.Syntax.Ast.NameExpr)loop!.Variable;
     var counter = model.VariableBindings[name];
-    var r = PowerBasic.Compiler.CodeGen.Pb36CommonSubexpr.AnalyzeLicm(loop.Body, counter, 0, checkedArithmetic, model);
+    var r = PowerBasic.Compiler.CodeGen.OptCommonSubexpr.AnalyzeLicm(loop.Body, counter, 0, checkedArithmetic, model);
     return (r.SlotCount, r.Preheader.Count, r.Marks.Values.Count(m => !m.IsDefine));
   }
 

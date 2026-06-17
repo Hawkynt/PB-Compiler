@@ -59,8 +59,8 @@ public sealed partial class CodeGenerator {
     }
 
     bool SameConstIndex(Expression x, Expression y)
-      => this.Pb36Folder.TryFold(x) is { Integer: { } ix }
-        && this.Pb36Folder.TryFold(y) is { Integer: { } iy } && ix == iy;
+      => this.OptFolder.TryFold(x) is { Integer: { } ix }
+        && this.OptFolder.TryFold(y) is { Integer: { } iy } && ix == iy;
   }
 
   private void EmitExpressionCore(Expression expression) {
@@ -977,7 +977,7 @@ public sealed partial class CodeGenerator {
         // \ and MOD. The constant >= 2 gate rules out divide-by-zero (error 11)
         // and the MININT \ -1 overflow, so no trap path is lost.
         if (this.Optimize && this.Cpu386
-            && this.Pb36Folder.TryFold(b.Right) is { Integer: { } divisor } && Math.Abs(divisor) >= 2) {
+            && this.OptFolder.TryFold(b.Right) is { Integer: { } divisor } && Math.Abs(divisor) >= 2) {
           var sc = this._scratch;
           asm.Mov(Mem.Word(sc), Reg.AX);
           asm.Mov(Mem.Word(sc, 2), Reg.DX);

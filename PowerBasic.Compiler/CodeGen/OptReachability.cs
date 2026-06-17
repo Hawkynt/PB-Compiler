@@ -21,7 +21,7 @@ namespace PowerBasic.Compiler.CodeGen;
 /// compiled bodies (a lambda's body and nested SUB/FUNCTION/DEF FN definitions are their own
 /// procedures, reached on their own when referenced).
 /// </summary>
-public static class Pb36Reachability {
+public static class OptReachability {
 
   /// <summary>Procedures reachable from <paramref name="rootBody"/> (the program's top-level code) through the call graph.</summary>
   public static HashSet<ProcedureSymbol> LiveProcedures(SemanticModel model, IReadOnlyList<Statement> rootBody) {

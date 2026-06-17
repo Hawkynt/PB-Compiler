@@ -6,14 +6,14 @@ using PowerBasic.Compiler.Syntax.Ast;
 namespace PowerBasic.Compiler.Tests.CodeGen;
 
 /// <summary>
-/// pb36 O23 data tree-shaking (<see cref="Pb36DeadGlobals"/>): a module scalar global no
+/// pb36 O23 data tree-shaking (<see cref="OptDeadGlobals"/>): a module scalar global no
 /// reachable code reads is dead - its slot and every pure store to it vanish, and a CODEPTR in
 /// such a store no longer keeps its target procedure alive (the cascade). Address-taken
 /// (VARPTR) and read globals are KEPT. The whole feature is gated on Optimize for a
 /// self-contained main, so pb35/unoptimized output is unchanged.
 /// </summary>
 [TestFixture]
-public sealed class Pb36DeadGlobalsTests {
+public sealed class OptDeadGlobalsTests {
 
   private static SemanticModel Bind(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
@@ -32,12 +32,12 @@ public sealed class Pb36DeadGlobalsTests {
 
   // self-contained main: every non-nested procedure is fully owned; checking off unless a test
   // explicitly turns on $ERROR (then NumericCheckingPossible-style behaviour is exercised here).
-  private static Pb36DeadGlobals.Result Shake(SemanticModel model) {
+  private static OptDeadGlobals.Result Shake(SemanticModel model) {
     var checking = model.MetaStatements.Any(m => m.Command.Equals("ERROR", System.StringComparison.OrdinalIgnoreCase)
       && m.Arguments.Count >= 2
       && m.Arguments[0].Text.ToUpperInvariant() is "NUMERIC" or "OVERFLOW" or "BOUNDS" or "ALL"
       && m.Arguments[^1].Text.Equals("ON", System.StringComparison.OrdinalIgnoreCase));
-    return Pb36DeadGlobals.Analyze(model, _ => true, checking);
+    return OptDeadGlobals.Analyze(model, _ => true, checking);
   }
 
   // ---- the live-set analysis -----------------------------------------------

@@ -6,13 +6,13 @@ using PowerBasic.Compiler.Syntax.Ast;
 namespace PowerBasic.Compiler.Tests.CodeGen;
 
 /// <summary>
-/// pb36 O22 reachability (<see cref="Pb36Reachability"/>): transitive dead-procedure
+/// pb36 O22 reachability (<see cref="OptReachability"/>): transitive dead-procedure
 /// elimination rooted at the program's top-level "main". Covers the complete node walker
 /// (the soundness foundation) and the call-graph trace. pb35/unoptimized output is
 /// unchanged (the pass is gated on Optimize).
 /// </summary>
 [TestFixture]
-public sealed class Pb36ReachabilityTests {
+public sealed class OptReachabilityTests {
 
   private static SemanticModel Bind(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
@@ -30,7 +30,7 @@ public sealed class Pb36ReachabilityTests {
   }
 
   private static IReadOnlyList<string> NameRefs(IReadOnlyList<Statement> body)
-    => [.. Pb36Reachability.DescendantNodes(body).OfType<NameExpr>().Select(n => n.Name)];
+    => [.. OptReachability.DescendantNodes(body).OfType<NameExpr>().Select(n => n.Name)];
 
   // ---- the complete node walker (soundness foundation) ----------------------
 
@@ -96,7 +96,7 @@ public sealed class Pb36ReachabilityTests {
       SUB D()
       END SUB
       """);
-    var live = Pb36Reachability.LiveProcedures(model, model.MainBody);
+    var live = OptReachability.LiveProcedures(model, model.MainBody);
     Assert.That(live.Contains(model.Procedures["A"]), Is.True);
     Assert.That(live.Contains(model.Procedures["B"]), Is.True);
     Assert.That(live.Contains(model.Procedures["C"]), Is.False, "C is never called - dead");
@@ -121,7 +121,7 @@ public sealed class Pb36ReachabilityTests {
         END SUB
       END SUB
       """);
-    var live = Pb36Reachability.LiveProcedures(model, model.MainBody);
+    var live = OptReachability.LiveProcedures(model, model.MainBody);
     var inner = model.ProcedureList.First(p => p.IsNested && p.Name.Contains("Inner", StringComparison.OrdinalIgnoreCase));
     Assert.That(live.Contains(model.Procedures["Alive"]), Is.True);
     Assert.That(live.Contains(model.Procedures["Dead"]), Is.False, "Dead is never called");
@@ -138,7 +138,7 @@ public sealed class Pb36ReachabilityTests {
         F% = 7
       END FUNCTION
       """);
-    Assert.That(Pb36Reachability.LiveProcedures(model, model.MainBody).Contains(model.Procedures["F"]), Is.True,
+    Assert.That(OptReachability.LiveProcedures(model, model.MainBody).Contains(model.Procedures["F"]), Is.True,
       "a CODEPTR'd procedure is reachable (its pointer could be called)");
   }
 

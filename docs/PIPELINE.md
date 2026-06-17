@@ -41,11 +41,11 @@ flowchart LR
 flowchart TD
   subgraph T1["TIER 1 — model-level pre-passes (whole-AST, before any bytes)"]
     direction TB
-    P1["Pb36Pruner — O2 dead/unreachable stmts, O10 redundant DEF SEG"]
-    P2["Pb36FloatDemotion — O12 float to fixed/int"]
-    P3["Pb36Ipcp — O18 interprocedural constant propagation"]
-    P4["Pb36RegParm — O21 register params (SPEED only)"]
-    P5["Pb36Reachability — O22 dead-code tree-shake from main"]
+    P1["OptPruner — O2 dead/unreachable stmts, O10 redundant DEF SEG"]
+    P2["OptFloatDemotion — O12 float to fixed/int"]
+    P3["OptIpcp — O18 interprocedural constant propagation"]
+    P4["OptRegParm — O21 register params (SPEED only)"]
+    P5["OptReachability — O22 dead-code tree-shake from main"]
     P1 --> P2 --> P3 --> P4 --> P5
   end
   subgraph T2["TIER 2 — per-statement emission (as 8086 is generated)"]
@@ -68,8 +68,8 @@ flowchart TD
 
 **Tier 1 — model-level pre-passes.** Run once over the whole `SemanticModel`
 *before* emission (`EmitExecutable`, the `if (Optimize && !isUnit)` block), in this
-exact order: `Pb36Pruner` then `Pb36FloatDemotion` then `Pb36Ipcp` then `Pb36RegParm`
-(SPEED), and the live-set from `Pb36Reachability` is consumed at the emission loop.
+exact order: `OptPruner` then `OptFloatDemotion` then `OptIpcp` then `OptRegParm`
+(SPEED), and the live-set from `OptReachability` is consumed at the emission loop.
 They reshape the AST/model so the later tiers see less, simpler code.
 
 **Tier 2 — per-statement emission.** As each statement/expression is lowered to
@@ -127,14 +127,16 @@ flowchart TD
 
 - **Transitive**: a procedure reached only from other dead procedures is dead; a
   nested function inside a dead-end procedure is purged with it.
-- **Sound by construction**: `Pb36Reachability.DescendantNodes` visits *every*
+- **Sound by construction**: `OptReachability.DescendantNodes` visits *every*
   statement and expression (reflection over the AST, flattening lists/tuples), so no
   reference is ever missed — a missed reference would wrongly drop live code.
-- **Data dimension** (in progress): a global that is never *read* is dead → its data
-  slot and its dead-store assignments are removed; and the **CODEPTR cascade** —
+- **Data dimension** (O23, `OptDeadGlobals`): a global that is never *read* is dead → its
+  data slot and its pure-write assignments are removed; and the **CODEPTR cascade** —
   `g = CODEPTR(P)` where `g` is never read → the store is dead → `P` loses its only
-  reference → `P` is purged too. Conservative guards keep any `VARPTR`-aliased /
-  `COMMON` / array / UDT / `AT` global.
+  reference → `P` is purged too. Dead globals, dead stores and live procedures are solved
+  together to a fixpoint. Conservative guards keep any `VARPTR`-aliased / `COMMON` /
+  `SHARED` / array / UDT / `AT` global, or any store whose RHS could trap (a call, a deref,
+  or arithmetic under `$ERROR NUMERIC/OVERFLOW/BOUNDS`).
 
 ## 6. The Linker stage (foreign code)
 

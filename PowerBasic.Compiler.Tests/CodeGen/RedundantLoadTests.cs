@@ -14,11 +14,11 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 [TestFixture]
 public sealed class RedundantLoadTests {
 
-  private static Pb36CommonSubexpr.Result Analyze(string source) {
+  private static OptCommonSubexpr.Result Analyze(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    return Pb36CommonSubexpr.Analyze(model.MainBody, model);
+    return OptCommonSubexpr.Analyze(model.MainBody, model);
   }
 
   [Test]

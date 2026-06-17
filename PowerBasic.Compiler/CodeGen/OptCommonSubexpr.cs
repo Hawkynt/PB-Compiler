@@ -24,7 +24,7 @@ namespace PowerBasic.Compiler.CodeGen;
 /// straight-line assignments / prints over pure scalar-integer arithmetic
 /// keep it alive, invalidating the slots that read a written scalar.
 /// </summary>
-public static class Pb36CommonSubexpr {
+public static class OptCommonSubexpr {
 
   public readonly record struct CseMark(int Slot, bool IsDefine);
 

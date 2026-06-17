@@ -23,7 +23,7 @@ namespace PowerBasic.Compiler.CodeGen;
 /// PRINT stays byte-identical because integral floats already print without
 /// a decimal point at every precision (oracle-verified, QUIRKS.md).
 /// </summary>
-public static class Pb36FloatDemotion {
+public static class OptFloatDemotion {
 
   private const long _SINGLE_EXACT = 1L << 24;       // |v| <= 2^24: SINGLE holds it exactly
   private const long _DOUBLE_EXACT = int.MaxValue;   // LONG range is far below 2^53

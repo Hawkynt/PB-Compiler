@@ -17,7 +17,7 @@ namespace PowerBasic.Compiler.CodeGen;
 /// user calls, no control flow). Anything unrecognized counts as an observer.</item>
 /// </list>
 /// </summary>
-public static class Pb36Pruner {
+public static class OptPruner {
 
   /// <summary>Prunes the main body and every defined procedure of <paramref name="model"/> in place.</summary>
   public static void Prune(SemanticModel model) {

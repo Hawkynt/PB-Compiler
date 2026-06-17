@@ -20,7 +20,7 @@ namespace PowerBasic.Compiler.CodeGen;
 /// Only word-sized BYVAL scalar parameters qualify - the common case that the register
 /// lowering already handles exactly; anything wider keeps the stack convention.
 /// </summary>
-public static class Pb36RegParm {
+public static class OptRegParm {
 
   public static void Apply(SemanticModel model) {
     // a taken procedure address means an opaque indirect call may exist - bail entirely

@@ -81,7 +81,7 @@ public sealed partial class CodeGenerator {
     // masks it to 5 bits (a count >= 32 would differ from the unmasked loop). SHIFT
     // RIGHT here is logical (the loop uses SHR), matching genuine PBC.
     if (size == 4 && this.Optimize && this.Cpu386
-        && this.Pb36Folder.TryFold(count) is { Integer: { } cnt } && cnt is >= 1 and <= 31) {
+        && this.OptFolder.TryFold(count) is { Integer: { } cnt } && cnt is >= 1 and <= 31) {
       var dword = Adjust(place.Cell, 0, OperandSize.Dword);
       switch (rotate, left) {
         case (false, true): asm.Shl(dword, (int)cnt); break;
@@ -99,7 +99,7 @@ public sealed partial class CodeGenerator {
     // >= 32 (which cross the dword boundary) and rotates stay on the loop. SHIFT RIGHT is
     // logical (SHR high half), matching the loop and genuine PBC.
     if (size == 8 && !rotate && this.Optimize && this.Cpu386
-        && this.Pb36Folder.TryFold(count) is { Integer: { } cnt8 } && cnt8 is >= 1 and <= 31) {
+        && this.OptFolder.TryFold(count) is { Integer: { } cnt8 } && cnt8 is >= 1 and <= 31) {
       var dwLo = Adjust(place.Cell, 0, OperandSize.Dword);
       var dwHi = Adjust(place.Cell, 4, OperandSize.Dword);
       asm.Mov(Reg.EAX, dwLo);

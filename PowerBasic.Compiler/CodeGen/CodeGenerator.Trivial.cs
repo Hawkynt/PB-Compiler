@@ -38,7 +38,7 @@ public sealed partial class CodeGenerator {
 
         case EndStmt end: {
           if (end.ExitCode is { } codeExpr) {
-            if (this.Pb36Folder.TryFold(codeExpr) is not { Integer: { } code })
+            if (this.OptFolder.TryFold(codeExpr) is not { Integer: { } code })
               return null;
             exitCode = (byte)code;
           }
@@ -95,7 +95,7 @@ public sealed partial class CodeGenerator {
         // numeric: PB renders "[ |-]digits[ ]" - only exact integral folds qualify
         if (model.TypeOf(value) is not ScalarType { ByteSize: <= 8 } type)
           return false;
-        if (this.Pb36Folder.TryFold(value) is not { Integer: { } raw })
+        if (this.OptFolder.TryFold(value) is not { Integer: { } raw })
           return false;
         long wrapped;
         if (type.IsFloat) {

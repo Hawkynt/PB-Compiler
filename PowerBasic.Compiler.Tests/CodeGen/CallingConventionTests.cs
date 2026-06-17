@@ -90,7 +90,7 @@ public sealed class CallingConventionTests {
     Assert.That(Run(source), Is.EqualTo(" 36\n"));
   }
 
-  // ---- $OPTIMIZE SPEED internal register parameter passing (Pb36RegParm) -----
+  // ---- $OPTIMIZE SPEED internal register parameter passing (OptRegParm) -----
 
   private static SemanticModel BindPb36(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
@@ -108,7 +108,7 @@ public sealed class CallingConventionTests {
         addw = a + b
       END FUNCTION
       """);
-    Pb36RegParm.Apply(model);
+    OptRegParm.Apply(model);
     Assert.That(model.Procedures["addw"].CallConv, Is.EqualTo(CallConvention.Watcall),
       "an in-module word-parameter procedure should be lifted to the register convention");
   }
@@ -122,7 +122,7 @@ public sealed class CallingConventionTests {
         f = x
       END FUNCTION
       """);
-    Pb36RegParm.Apply(model);
+    OptRegParm.Apply(model);
     Assert.That(model.Procedures["f"].CallConv, Is.EqualTo(CallConvention.Basic),
       "a non-word parameter is outside the common-case register model - keep the stack convention");
   }
@@ -138,7 +138,7 @@ public sealed class CallingConventionTests {
         addw = a + b
       END FUNCTION
       """);
-    Pb36RegParm.Apply(model);
+    OptRegParm.Apply(model);
     Assert.That(model.Procedures["addw"].CallConv, Is.EqualTo(CallConvention.Basic),
       "a taken address means an opaque indirect call may exist - register passing must be disabled");
   }
@@ -152,7 +152,7 @@ public sealed class CallingConventionTests {
         g = a + b
       END FUNCTION
       """);
-    Pb36RegParm.Apply(model);
+    OptRegParm.Apply(model);
     Assert.That(model.Procedures["g"].CallConv, Is.EqualTo(CallConvention.Cdecl),
       "an explicitly declared convention must never be overridden");
   }

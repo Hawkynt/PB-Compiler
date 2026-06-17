@@ -34,8 +34,8 @@ public sealed partial class CodeGenerator {
     // IPCP needs every call site (external callers are invisible to a unit), register
     // parameter passing changes the ABI, and dead-procedure elimination removes exports.
     if (this.Optimize) {
-      Pb36Pruner.Prune(model);
-      Pb36FloatDemotion.Apply(model);
+      OptPruner.Prune(model);
+      OptFloatDemotion.Apply(model);
     }
 
     foreach (var statement in model.MainBody)

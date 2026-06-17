@@ -26,7 +26,7 @@ public sealed partial class CodeGenerator {
   public bool Optimize { get; set; } = model.Dialect == Dialect.Pb36;
 
   private ConstantFolder? _pb36Folder;
-  private ConstantFolder Pb36Folder => this._pb36Folder ??= new(model.Equates, model.EnumMembers);
+  private ConstantFolder OptFolder => this._pb36Folder ??= new(model.Equates, model.EnumMembers);
 
   /// <summary>
   /// Wraps a compile-time value to the silent-wrap storage semantics of
@@ -56,7 +56,7 @@ public sealed partial class CodeGenerator {
 
     // O9: literal string concatenation folds into one pooled literal
     if (model.TypeOf(e) is StringType) {
-      if (this.Pb36Folder.TryFold(e) is not { Text: { } text })
+      if (this.OptFolder.TryFold(e) is not { Text: { } text })
         return false;
       this.EmitStringLiteral(text);
       return true;
@@ -64,7 +64,7 @@ public sealed partial class CodeGenerator {
 
     if (model.TypeOf(e) is not ScalarType { IsFloat: false } type)
       return false;
-    if (this.Pb36Folder.TryFold(e) is not { Integer: { } raw })
+    if (this.OptFolder.TryFold(e) is not { Integer: { } raw })
       return false;
 
     this.EmitIntegralConstant(WrapToType(raw, type), KindOf(type));
@@ -93,7 +93,7 @@ public sealed partial class CodeGenerator {
     var substituted = SubstituteProven(e, proven, out var changed);
     if (!changed)
       return false; // no proven read here - leave emission untouched
-    if (this.Pb36Folder.TryFold(substituted) is not { Integer: { } raw })
+    if (this.OptFolder.TryFold(substituted) is not { Integer: { } raw })
       return false; // an untracked read / call / float kept it non-constant
     this.EmitIntegralConstant(WrapToType(raw, type), KindOf(type));
     return true;
@@ -116,7 +116,7 @@ public sealed partial class CodeGenerator {
     var substituted = SubstituteProven(e, proven, out var changed);
     if (!changed)
       return false;
-    if (this.Pb36Folder.TryFold(substituted) is not { Integer: { } raw })
+    if (this.OptFolder.TryFold(substituted) is not { Integer: { } raw })
       return false;
     var value = (short)(raw & 0xFFFF);
     if (value == 0)
@@ -244,12 +244,12 @@ public sealed partial class CodeGenerator {
   private bool TryEmitUnrolledFor(ForStmt f, VariableSymbol counter, Mem slot) {
     if (!this.Optimize || !this.OptimizeSpeed || !Equals(counter.Type, PbType.Integer))
       return false;
-    if (this.Pb36Folder.TryFold(f.From) is not { Integer: { } fromRaw }
-        || this.Pb36Folder.TryFold(f.To) is not { Integer: { } toRaw })
+    if (this.OptFolder.TryFold(f.From) is not { Integer: { } fromRaw }
+        || this.OptFolder.TryFold(f.To) is not { Integer: { } toRaw })
       return false;
     var stepRaw = 1L;
     if (f.Step != null) {
-      if (this.Pb36Folder.TryFold(f.Step) is not { Integer: { } s })
+      if (this.OptFolder.TryFold(f.Step) is not { Integer: { } s })
         return false;
       stepRaw = s;
     }
@@ -561,10 +561,10 @@ public sealed partial class CodeGenerator {
 
     Expression variable;
     long constant;
-    if (this.Pb36Folder.TryFold(b.Right) is { Integer: { } right }) {
+    if (this.OptFolder.TryFold(b.Right) is { Integer: { } right }) {
       variable = b.Left;
       constant = right;
-    } else if (this.Pb36Folder.TryFold(b.Left) is { Integer: { } left }) {
+    } else if (this.OptFolder.TryFold(b.Left) is { Integer: { } left }) {
       variable = b.Right;
       constant = left;
     } else
@@ -619,7 +619,7 @@ public sealed partial class CodeGenerator {
       return false;
     if (opType is not ScalarType { IsFloat: false, ByteSize: 2 or 4 } scalar)
       return false;
-    if (this.Pb36Folder.TryFold(b.Right) is not { Integer: { } divisor })
+    if (this.OptFolder.TryFold(b.Right) is not { Integer: { } divisor })
       return false;
     if (divisor <= 0)
       return false;
@@ -986,7 +986,7 @@ public sealed partial class CodeGenerator {
     value = 0;
     if (this._cseMarks?.ContainsKey(e) == true)
       return false;
-    if (this.Pb36Folder.TryFold(e) is not { Integer: { } v })
+    if (this.OptFolder.TryFold(e) is not { Integer: { } v })
       return false;
     value = v;
     return true;
@@ -1425,12 +1425,12 @@ public sealed partial class CodeGenerator {
   private bool TryEmitForIdiom(ForStmt f, VariableSymbol counter, Mem slot) {
     if (!this.Optimize || !this.OptimizeSpeed || !Equals(counter.Type, PbType.Integer))
       return false;
-    if (this.Pb36Folder.TryFold(f.From) is not { Integer: { } fromRaw }
-        || this.Pb36Folder.TryFold(f.To) is not { Integer: { } toRaw })
+    if (this.OptFolder.TryFold(f.From) is not { Integer: { } fromRaw }
+        || this.OptFolder.TryFold(f.To) is not { Integer: { } toRaw })
       return false;
     var stepRaw = 1L;
     if (f.Step != null) {
-      if (this.Pb36Folder.TryFold(f.Step) is not { Integer: { } s })
+      if (this.OptFolder.TryFold(f.Step) is not { Integer: { } s })
         return false;
       stepRaw = s;
     }
@@ -1473,7 +1473,7 @@ public sealed partial class CodeGenerator {
         && ReferenceEquals(fillCounter, counter)
         && model.VariableBindings.TryGetValue(fill, out var array)
         && array.Type is ArrayType { Element: ScalarType { ByteSize: 2 } }
-        && this.Pb36Folder.TryFold(fillAssign.Value) is { Integer: { } fillValue }) {
+        && this.OptFolder.TryFold(fillAssign.Value) is { Integer: { } fillValue }) {
       asm.Mov(slot, (Imm)from);                 // counter = first index for the address computation
       if (this.EmitPlace(fill) is { } firstElement) {
         asm.Push(Reg.ES);
@@ -1701,7 +1701,7 @@ public sealed partial class CodeGenerator {
     // Compute initial element pointer: OFFSET(array) + (from - lbound) * elementSize.
     // Done directly (no EmitPlace) so no IMUL appears — for elementSize=2, use ADD AX,AX.
     var addrSlot = this.AllocTemp(2);
-    if (this.Pb36Folder.TryFold(f.From) is { Integer: { } fromConst }) {
+    if (this.OptFolder.TryFold(f.From) is { Integer: { } fromConst }) {
       // Compile-time FROM: initial offset is a pure assembler-time constant.
       var byteOffset = checked((int)((fromConst - lbound) * elementSize));
       asm.Mov(addrSlot, Imm.OffsetOf(arrayLabel, byteOffset));
@@ -1790,7 +1790,7 @@ public sealed partial class CodeGenerator {
     if (this._trackResume)
       return 0;
 
-    // checkedArithmetic mirrors the gate in Pb36CommonSubexpr.Analyze
+    // checkedArithmetic mirrors the gate in OptCommonSubexpr.Analyze
     var checkedArithmetic = model.MetaStatements.Any(m =>
       m.Command.Equals("ERROR", StringComparison.OrdinalIgnoreCase)
       && m.Arguments.Count >= 2
@@ -1798,7 +1798,7 @@ public sealed partial class CodeGenerator {
       && m.Arguments[^1].Text.Equals("ON", StringComparison.OrdinalIgnoreCase));
 
     var firstSlot = this._cseBytes / 4; // next available slot index
-    var licm = Pb36CommonSubexpr.AnalyzeLicm(f.Body, counter, firstSlot, checkedArithmetic, model);
+    var licm = OptCommonSubexpr.AnalyzeLicm(f.Body, counter, firstSlot, checkedArithmetic, model);
     if (licm.SlotCount == 0)
       return 0;
 
@@ -1826,7 +1826,7 @@ public sealed partial class CodeGenerator {
         this.EmitExpression(defineNode);   // DEFINE: compute + stash to slot
       // downgrade to USE so the body occurrence (same AST node) reloads the slot
       if (this._cseMarks!.TryGetValue(defineNode, out var defMark))
-        this._cseMarks[defineNode] = new Pb36CommonSubexpr.CseMark(defMark.Slot, IsDefine: false);
+        this._cseMarks[defineNode] = new OptCommonSubexpr.CseMark(defMark.Slot, IsDefine: false);
     }
 
     return licm.SlotCount;

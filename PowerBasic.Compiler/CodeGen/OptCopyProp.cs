@@ -14,7 +14,7 @@ namespace PowerBasic.Compiler.CodeGen;
 /// removed copy never leaves a read pointing at an unwritten cell. Output is unchanged
 /// (the same values flow), so the differential harness stays byte-identical.
 /// </summary>
-public static class Pb36CopyProp {
+public static class OptCopyProp {
 
   public static (IReadOnlyDictionary<NameExpr, VariableSymbol> Reads, IReadOnlySet<Statement> DeadCopies) Analyze(SsaForm ssa) {
     var noReads = new Dictionary<NameExpr, VariableSymbol>(ReferenceEqualityComparer.Instance);

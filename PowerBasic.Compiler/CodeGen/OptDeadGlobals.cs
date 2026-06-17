@@ -25,7 +25,7 @@ namespace PowerBasic.Compiler.CodeGen;
 /// writes has a side-effecting RHS. When unsure the global is KEPT - removing a live global
 /// or its store is a miscompile; keeping a dead one only misses an optimization.
 /// </summary>
-public static class Pb36DeadGlobals {
+public static class OptDeadGlobals {
 
   public sealed record Result(
     HashSet<VariableSymbol> DeadGlobals,
@@ -47,10 +47,10 @@ public static class Pb36DeadGlobals {
       ReferenceEqualityComparer.Instance);
 
     if (candidates.Count == 0)
-      return new([], [], Pb36Reachability.LiveProcedures(model, model.MainBody));
+      return new([], [], OptReachability.LiveProcedures(model, model.MainBody));
 
     // a global declared DIM ... AT is overlaid - drop it from the candidates.
-    foreach (var node in AllBodies(model).SelectMany(Pb36Reachability.DescendantNodes))
+    foreach (var node in AllBodies(model).SelectMany(OptReachability.DescendantNodes))
       if (node is DimStmt { AtAddress: not null } dim)
         foreach (var v in dim.Variables)
           foreach (var key in new[] { v.Name + v.Suffix.KeyText(), v.Name + v.Suffix.KeyText() + "()" })
@@ -128,7 +128,7 @@ public static class Pb36DeadGlobals {
   /// </summary>
   private static HashSet<ProcedureSymbol> LiveProceduresExcluding(SemanticModel model, HashSet<Statement> excluded) {
     if (excluded.Count == 0)
-      return Pb36Reachability.LiveProcedures(model, model.MainBody);
+      return OptReachability.LiveProcedures(model, model.MainBody);
 
     var live = new HashSet<ProcedureSymbol>(ReferenceEqualityComparer.Instance);
     var work = new Queue<IReadOnlyList<Statement>>();
@@ -150,11 +150,11 @@ public static class Pb36DeadGlobals {
     return live;
   }
 
-  /// <summary>Like <see cref="Pb36Reachability.DescendantNodes"/> but never descends into an excluded statement.</summary>
+  /// <summary>Like <see cref="OptReachability.DescendantNodes"/> but never descends into an excluded statement.</summary>
   private static IEnumerable<object> DescendantNodesSkipping(IReadOnlyList<Statement> body, HashSet<Statement> excluded) {
     foreach (var statement in body)
       if (!(statement is Statement s && excluded.Contains(s)))
-        foreach (var node in Pb36Reachability.DescendantNodes(statement))
+        foreach (var node in OptReachability.DescendantNodes(statement))
           yield return node;
   }
 
@@ -193,12 +193,12 @@ public static class Pb36DeadGlobals {
         // target is live, the RHS is real. Mirror that: only scan the RHS for reads when the
         // target is not currently dead.
         if (!dead.Contains(sym))
-          foreach (var node in Pb36Reachability.DescendantNodes(rhs))
+          foreach (var node in OptReachability.DescendantNodes(rhs))
             MarkOccurrence(node, model, candidates, read);
         continue;
       }
 
-      foreach (var node in Pb36Reachability.DescendantNodes(statement))
+      foreach (var node in OptReachability.DescendantNodes(statement))
         MarkOccurrence(node, model, candidates, read);
     }
   }

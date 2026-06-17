@@ -43,12 +43,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private Label _frameWordsLabel = null!;
   private int _frameLocalBytes;
   private int _cseBytes;
-  private Dictionary<Expression, Pb36CommonSubexpr.CseMark>? _cseMarks;
+  private Dictionary<Expression, OptCommonSubexpr.CseMark>? _cseMarks;
   private Dictionary<Syntax.Ast.NameExpr, long>? _provenReads;
   private IReadOnlyDictionary<Syntax.Ast.NameExpr, VariableSymbol>? _copyReads;
   private HashSet<Statement>? _deadStatements;
   // O23 whole-program data tree-shaking: globals nothing reachable reads, and the pure
-  // stores to them - both removed under Optimize for a self-contained main (see Pb36DeadGlobals).
+  // stores to them - both removed under Optimize for a self-contained main (see OptDeadGlobals).
   private HashSet<VariableSymbol>? _deadGlobals;
   private HashSet<Statement>? _deadGlobalStores;
   private Dictionary<VariableSymbol, ConstantValue>? _ipcp;
@@ -66,8 +66,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       return null;
     if (counter.Type is not ScalarType { IsFloat: false })
       return null;
-    if (this.Pb36Folder.TryFold(f.From) is not { Integer: { } fromV }
-        || this.Pb36Folder.TryFold(f.To) is not { Integer: { } toV })
+    if (this.OptFolder.TryFold(f.From) is not { Integer: { } fromV }
+        || this.OptFolder.TryFold(f.To) is not { Integer: { } toV })
       return null;
     if (!CounterStableInBody(f.Body, counter, model))
       return null;
@@ -137,25 +137,25 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// range. Range arithmetic is exact (the index value is exactly this expression).
   /// </summary>
   private (long Lo, long Hi)? IndexRangeOf(Expression idx) {
-    if (this.Pb36Folder.TryFold(idx) is { Integer: { } c })
+    if (this.OptFolder.TryFold(idx) is { Integer: { } c })
       return (c, c);
     switch (idx) {
       case NameExpr n when model.VariableBindings.TryGetValue(n, out var v) && this._forRanges.TryGetValue(v, out var r):
         return r;
       case BinaryExpr { Op: BinaryOp.Add } b:
-        if (this.IndexRangeOf(b.Left) is { } la && this.Pb36Folder.TryFold(b.Right) is { Integer: { } ra })
+        if (this.IndexRangeOf(b.Left) is { } la && this.OptFolder.TryFold(b.Right) is { Integer: { } ra })
           return (la.Lo + ra, la.Hi + ra);
-        if (this.IndexRangeOf(b.Right) is { } ra2 && this.Pb36Folder.TryFold(b.Left) is { Integer: { } la2 })
+        if (this.IndexRangeOf(b.Right) is { } ra2 && this.OptFolder.TryFold(b.Left) is { Integer: { } la2 })
           return (ra2.Lo + la2, ra2.Hi + la2);
         return null;
       case BinaryExpr { Op: BinaryOp.Subtract } b
-          when this.IndexRangeOf(b.Left) is { } ls && this.Pb36Folder.TryFold(b.Right) is { Integer: { } rs }:
+          when this.IndexRangeOf(b.Left) is { } ls && this.OptFolder.TryFold(b.Right) is { Integer: { } rs }:
         return (ls.Lo - rs, ls.Hi - rs);
       case BinaryExpr { Op: BinaryOp.Multiply } b:
         // scaling by a constant (strided access a(i*2)) - the endpoints flip when k < 0
-        if (this.IndexRangeOf(b.Left) is { } lm && this.Pb36Folder.TryFold(b.Right) is { Integer: { } rm })
+        if (this.IndexRangeOf(b.Left) is { } lm && this.OptFolder.TryFold(b.Right) is { Integer: { } rm })
           return ScaleRange(lm, rm);
-        if (this.IndexRangeOf(b.Right) is { } rm2 && this.Pb36Folder.TryFold(b.Left) is { Integer: { } lm2 })
+        if (this.IndexRangeOf(b.Right) is { } rm2 && this.OptFolder.TryFold(b.Left) is { Integer: { } lm2 })
           return ScaleRange(rm2, lm2);
         return null;
       default:
@@ -168,7 +168,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
   /// <summary>The proven range of <paramref name="e"/> only when it is NOT itself a constant - i.e. a genuine FOR-counter / affine-counter expression (so SCCP keeps the constant-vs-constant cases).</summary>
   private (long Lo, long Hi)? CounterRangeOf(Expression e)
-    => this.Pb36Folder.TryFold(e) is { Integer: not null } ? null : this.IndexRangeOf(e);
+    => this.OptFolder.TryFold(e) is { Integer: not null } ? null : this.IndexRangeOf(e);
 
   /// <summary>
   /// pb36 O16: true when an INTEGER add/subtract <paramref name="b"/> over a FOR-counter
@@ -215,9 +215,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     (long Lo, long Hi) range;
     long c;
     BinaryOp op;
-    if (this.Pb36Folder.TryFold(b.Right) is { Integer: { } rc } && this.CounterRangeOf(b.Left) is { } lr) {
+    if (this.OptFolder.TryFold(b.Right) is { Integer: { } rc } && this.CounterRangeOf(b.Left) is { } lr) {
       range = lr; c = rc; op = b.Op;
-    } else if (this.Pb36Folder.TryFold(b.Left) is { Integer: { } lc } && this.CounterRangeOf(b.Right) is { } rr) {
+    } else if (this.OptFolder.TryFold(b.Left) is { Integer: { } lc } && this.CounterRangeOf(b.Right) is { } rr) {
       range = rr; c = lc; op = SwapComparison(b.Op);   // normalise to "range OP const"
     } else
       return false;
@@ -364,15 +364,15 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // pb36 O2/O10: drop unreachable statements and redundant DEF SEGs first -
     // dead code also vanishes from the trivial-lowering analysis below
     if (this.Optimize && !this._isUnit) {
-      Pb36Pruner.Prune(model);
-      Pb36FloatDemotion.Apply(model);
-      this._ipcp = Pb36Ipcp.Analyze(model); // O18: constants into callee bodies
+      OptPruner.Prune(model);
+      OptFloatDemotion.Apply(model);
+      this._ipcp = OptIpcp.Analyze(model); // O18: constants into callee bodies
       // $OPTIMIZE SPEED: pass internal parameters in registers (AX,DX,BX,CX) instead of on
       // the stack when we own every call site. Self-contained programs only (a separately
       // compiled unit could otherwise call a converted procedure with the stack convention);
       // pb36 only, so the pb35 golden output is never touched.
       if (this.OptimizeSpeed && !this._allowExternalCalls && model.Dialect == Dialect.Pb36)
-        Pb36RegParm.Apply(model);
+        OptRegParm.Apply(model);
     }
 
     // P7: programs whose only effect is printing compile-time text lower to a
@@ -457,7 +457,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // a now-dead global pointer kept alive. Self-contained main only (a unit or a foreign-linked
     // main could export/observe a global), so the pb35/unoptimized golden output is untouched.
     var dataShake = this.Optimize && !this._isUnit && !this._allowExternalCalls
-      ? Pb36DeadGlobals.Analyze(model, this.IsFullyOwned, this.NumericCheckingPossible())
+      ? OptDeadGlobals.Analyze(model, this.IsFullyOwned, this.NumericCheckingPossible())
       : null;
     if (dataShake != null) {
       this._deadGlobals = dataShake.DeadGlobals;
@@ -486,7 +486,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // O23 feeds its cascaded live set back here: a procedure kept alive only by a CODEPTR in a
     // now-dead global's store is dropped too. Without data shaking, plain reachability applies.
     var liveProcs = dataShake?.LiveProcedures
-      ?? (this.Optimize ? Pb36Reachability.LiveProcedures(model, model.MainBody) : null);
+      ?? (this.Optimize ? OptReachability.LiveProcedures(model, model.MainBody) : null);
     foreach (var proc in model.ProcedureList)
       if (!proc.IsExternal && (liveProcs is null || liveProcs.Contains(proc) || !this.IsFullyOwned(proc)))
         this.EmitProcedure(proc);
@@ -615,7 +615,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._cseBytes = 0;
     if (!this.Optimize)
       return;
-    var result = Pb36CommonSubexpr.Analyze(body, model);
+    var result = OptCommonSubexpr.Analyze(body, model);
     if (result.SlotCount == 0)
       return;
     this._cseMarks = result.Marks;
@@ -645,7 +645,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // O2: assignments whose result SCCP propagated away (or never read) are dead
     var dead = Ssa.DeadStore.Compute(model, ssa, proven);
     // copy propagation: redirect reads of a copy y = x to x and drop the copy
-    var (copyReads, deadCopies) = Pb36CopyProp.Analyze(ssa);
+    var (copyReads, deadCopies) = OptCopyProp.Analyze(ssa);
     if (copyReads.Count > 0)
       this._copyReads = copyReads;
     foreach (var s in deadCopies)
@@ -1495,7 +1495,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     var folded = condition;
     if (this._provenReads is { Count: > 0 } proven && !this.CheckOverflow && !this.CheckNumeric)
       folded = SubstituteProven(condition, proven, out _);
-    return this.Pb36Folder.TryFold(folded)?.Integer;
+    return this.OptFolder.TryFold(folded)?.Integer;
   }
 
   private void EmitIf(IfStmt i) {
@@ -1996,12 +1996,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         if (sel.Value == null || sel.RangeUpper != null || sel.IsComparison != null)
           return false;
         if (kind == ValueKind.Int16) {
-          if (this.Pb36Folder.TryFold(sel.Value) is not { Integer: { } v } || v is < short.MinValue or > short.MaxValue)
+          if (this.OptFolder.TryFold(sel.Value) is not { Integer: { } v } || v is < short.MinValue or > short.MaxValue)
             return false;
           byValue.TryAdd(v, i);
         } else {
           // Int32: values must be compile-time constants in LONG range
-          if (this.Pb36Folder.TryFold(sel.Value) is not { Integer: { } v } || v is < int.MinValue or > int.MaxValue)
+          if (this.OptFolder.TryFold(sel.Value) is not { Integer: { } v } || v is < int.MinValue or > int.MaxValue)
             return false;
           byValue.TryAdd(v, i);
         }

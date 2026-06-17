@@ -11,13 +11,13 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// tests below).
 /// </summary>
 [TestFixture]
-public sealed class Pb36FloatDemotionTests {
+public sealed class OptFloatDemotionTests {
 
   private static (SemanticModel Model, IReadOnlyList<VariableSymbol> Demoted) Analyze(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    return (model, Pb36FloatDemotion.Apply(model));
+    return (model, OptFloatDemotion.Apply(model));
   }
 
   [Test]
