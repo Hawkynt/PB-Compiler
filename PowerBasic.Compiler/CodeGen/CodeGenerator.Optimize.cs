@@ -1077,6 +1077,72 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
+  /// pb36 O5 / C1 ($CPU 80386): a LONG FOR counter over an SI-clean leaf body lives in the 32-bit
+  /// register ESI for the loop - the compare and increment run as one 32-bit instruction
+  /// (CMP ESI,[limit] / ADD ESI,step) and counter reads split ESI to DX:AX, so the per-iteration
+  /// 4-byte cell load/store/reload disappears. The "true win" of the 386 path: a full LONG local in
+  /// a callee-stable register. The cell is written once on exit for the increment-then-test end
+  /// value. Only fires under $CPU 80386 (genuine PBC 3.50 emits its own correct code for it, so it
+  /// is differentially oracle-verifiable) and never under $ERROR NUMERIC/OVERFLOW (a stale cell
+  /// would be observable to a handler).
+  /// </summary>
+  private bool TryEmitForLongCounterInRegister(ForStmt f, VariableSymbol counter, Mem cell, long step) {
+    if (!this.Optimize || !this.OptimizeSpeed || !this.Cpu386)
+      return false;
+    if (counter.Type is not ScalarType { ByteSize: 4, Signed: true, IsFloat: false })
+      return false;
+    if (this.CheckNumeric || this.CheckOverflow || this._registerCounter != null || this._trackResume)
+      return false;
+    if (f.Body.Any(s => s is ForStmt))
+      return false; // leaf only: ESI holds the one LONG counter (a nested loop has no second 32-bit reg here)
+    if (!this.BodyIsSiClean(f.Body, counter, allowNested: false))
+      return false;
+
+    var asm = this._asm;
+    var sc = this._scratch;
+    var limit = this.AllocTemp(4);
+    this.EmitExpression(f.To);
+    this.Coerce(model.TypeOf(f.To), PbType.Long, f.To);              // DX:AX = limit
+    asm.Mov(limit.WithSize(OperandSize.Word), Reg.AX);
+    asm.Mov(Adjust(limit, 2, OperandSize.Word), Reg.DX);
+    this.EmitExpression(f.From);
+    this.Coerce(model.TypeOf(f.From), PbType.Long, f.From);          // DX:AX = from
+    asm.Mov(Mem.Word(sc), Reg.AX);
+    asm.Mov(Mem.Word(sc, 2), Reg.DX);
+    asm.Mov(Reg.ESI, Mem.Dword(sc));                                 // ESI = from
+
+    this._registerCounter = (counter, Reg.ESI);
+
+    var top = asm.DefineLabel();
+    var done = asm.DefineLabel();
+    var cont = asm.DefineLabel();
+    this._exitFor.Push(done);
+    this._iterateFor.Push(cont);
+    this._iterateAny.Push(cont);
+
+    asm.MarkLabel(top);
+    asm.Cmp(Reg.ESI, limit.WithSize(OperandSize.Dword));             // one 32-bit signed compare
+    if (step >= 0)
+      asm.Jg(done);
+    else
+      asm.Jl(done);
+    foreach (var statement in f.Body)
+      this.EmitStatement(statement);
+    asm.MarkLabel(cont);
+    asm.Add(Reg.ESI, (Imm)(int)step);                               // signed 32-bit increment (imm sign-extends)
+    asm.Jmp(top);
+    asm.MarkLabel(done);
+
+    this._exitFor.Pop();
+    this._iterateFor.Pop();
+    this._iterateAny.Pop();
+    asm.Mov(cell.WithSize(OperandSize.Dword), Reg.ESI);              // post-loop reads use the cell again
+    this._registerCounter = null;
+    this.ReleaseTemp(4);
+    return true;
+  }
+
+  /// <summary>
   /// pb36 O5 (nested): an inner FOR loop running under an SI-resident outer loop keeps its
   /// counter in DI for the duration - the compare and increment run register-to-register and
   /// counter reads come from DI, so the inner counter never touches its memory cell per

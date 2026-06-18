@@ -131,7 +131,13 @@ public sealed partial class CodeGenerator {
         // pb36 O5: a variable resident in a register this loop (FOR counter in
         // SI, accumulator in DI) reads straight from the register
         if (this.ResidentRegOf(symbol) is { } residentReg) {
-          asm.Mov(Reg.AX, residentReg);
+          if (residentReg.IsDword()) {
+            // a LONG counter resident in a 32-bit register (ESI under $CPU 80386): split to DX:AX
+            asm.Mov(Mem.Dword(this._scratch), residentReg);
+            asm.Mov(Reg.AX, Mem.Word(this._scratch));
+            asm.Mov(Reg.DX, Mem.Word(this._scratch, 2));
+          } else
+            asm.Mov(Reg.AX, residentReg);
           break;
         }
         // pb36 O18 (IPCP): a parameter that is the same constant at every call

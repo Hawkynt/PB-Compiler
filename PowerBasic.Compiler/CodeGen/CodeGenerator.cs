@@ -62,9 +62,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private (VariableSymbol Symbol, Reg Reg)? _registerCounter;
   private (VariableSymbol Symbol, Reg Reg)? _registerAccumulator;
 
-  /// <summary>True when a register-resident loop counter or accumulator currently lives in SI, so a code path that overwrites SI (e.g. loading a string-literal pointer) must save and restore it.</summary>
+  /// <summary>True when a register-resident loop counter or accumulator currently lives in SI (or ESI, whose low half is SI), so a code path that overwrites SI (e.g. loading a string-literal pointer) must save and restore it.</summary>
   private bool SiHoldsResident =>
-    this._registerCounter?.Reg == Reg.SI || this._registerAccumulator?.Reg == Reg.SI;
+    this._registerCounter?.Reg is Reg.SI or Reg.ESI || this._registerAccumulator?.Reg is Reg.SI or Reg.ESI;
 
   /// <summary>O16 interval lattice: the per-statement-entry interval environment of the main body
   /// (<see cref="IntervalRangeAnalysis"/>), consulted by <see cref="IndexRangeOf"/> through
@@ -1707,6 +1707,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       UnaryExpr { Op: UnaryOp.Negate, Operand: IntegerLiteralExpr neg } => -neg.Value,
       _ => null,
     };
+
+    // pb36 O5 / C1 ($CPU 80386): a LONG counter over an SI-clean leaf body lives in ESI for the loop
+    if (kind == ValueKind.Int32 && constantStep is { } longStep
+        && this.TryEmitForLongCounterInRegister(f, counter, slot, longStep))
+      return;
 
     if (kind == ValueKind.Int16 && constantStep is { } fastStep) {
       // pb36 O6b: a single-statement array store a%(i%)=expr steps a pointer

@@ -787,6 +787,27 @@ public sealed class OptimizerTests {
       "an integer SELECT body keeps the FOR counter in SI; a string SELECT blocks residency");
   }
 
+  [Test]
+  public void Emit_GivenLongForLoop_WhenCpu386Speed_ThenCounterInEsi() {
+    // a LONG FOR counter over an SI-clean body lives in the 32-bit register ESI under $CPU 80386:
+    // the increment is ADD ESI, imm (66 83 C6), absent without $CPU 80386 (the counter then lives
+    // in its 4-byte memory cell). The "true win" of the 386 path - a full LONG local in a register.
+    const string body = "$OPTIMIZE SPEED\ns& = 0\nFOR i& = 1 TO 10\n  s& = s& + i&\n  PRINT s&\nNEXT i&\nPRINT s&\nEND";
+    var with386 = Compile("$CPU 80386\n" + body, Dialect.Pb36);
+    var no386 = Compile(body, Dialect.Pb36);
+    Assert.That(CountAddEsiImm(with386), Is.GreaterThan(CountAddEsiImm(no386)),
+      "a LONG FOR counter should increment in ESI (66 83 C6) under $CPU 80386");
+  }
+
+  // 66 83 C6 = ADD ESI, imm8 (operand-size-prefixed) - the increment of an ESI-resident LONG counter
+  private static int CountAddEsiImm(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 2 < image.Length; ++i)
+      if (image[i] == 0x66 && image[i + 1] == 0x83 && image[i + 2] == 0xC6)
+        ++count;
+    return count;
+  }
+
   // 83 C6 = ADD SI, imm8 - the increment of an SI-resident FOR counter
   private static int CountAddSiImm(byte[] image) {
     var count = 0;
