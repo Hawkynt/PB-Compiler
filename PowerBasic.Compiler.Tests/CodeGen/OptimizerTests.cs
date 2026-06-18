@@ -756,13 +756,13 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenNumericPrintInLoopBody_WhenPb36Speed_ThenCounterStaysInSi() {
-    // a PRINT of plain numeric items leaves SI/DI intact (every print runtime routine preserves
-    // them), so a FOR counter over a printing body stays in SI (ADD SI, imm). A string-literal
-    // item makes the emitter load SI with the text pointer, so that loop is not residency-eligible.
-    const string numeric = "$OPTIMIZE SPEED\ns% = 0\nFOR i% = 1 TO 10\n  s% = s% + i%\n  PRINT s%\nNEXT i%\nEND";
-    const string stringLit = "$OPTIMIZE SPEED\ns% = 0\nFOR i% = 1 TO 10\n  s% = s% + i%\n  PRINT \"x\"; s%\nNEXT i%\nEND";
-    Assert.That(CountAddSiImm(Compile(numeric, Dialect.Pb36)), Is.GreaterThan(CountAddSiImm(Compile(stringLit, Dialect.Pb36))),
-      "a numeric PRINT in the loop body keeps the FOR counter in SI; a string-literal PRINT blocks residency");
+    // a PRINT of plain numeric items (and string literals, whose SI load is saved/restored) leaves
+    // SI/DI intact, so a FOR counter over a printing body stays in SI (ADD SI, imm). A non-literal
+    // string item (a string variable) prints via a path that may clobber SI, blocking residency.
+    const string numeric = "$OPTIMIZE SPEED\ns% = 0\nFOR i% = 1 TO 10\n  s% = s% + i%\n  PRINT \"v=\"; s%\nNEXT i%\nEND";
+    const string stringVar = "$OPTIMIZE SPEED\nz$ = \"v=\"\ns% = 0\nFOR i% = 1 TO 10\n  s% = s% + i%\n  PRINT z$; s%\nNEXT i%\nEND";
+    Assert.That(CountAddSiImm(Compile(numeric, Dialect.Pb36)), Is.GreaterThan(CountAddSiImm(Compile(stringVar, Dialect.Pb36))),
+      "a numeric/literal PRINT keeps the FOR counter in SI; a string-variable item blocks residency");
   }
 
   // 83 C6 = ADD SI, imm8 - the increment of an SI-resident FOR counter

@@ -1262,8 +1262,10 @@ public sealed partial class CodeGenerator {
     foreach (var item in p.Items) {
       if (item.Value == null)
         continue;
-      if (item.Value is StringLiteralExpr || KindOf(model.TypeOf(item.Value)) == ValueKind.Str)
-        return false;   // a string/literal item makes the emitter load SI with the text pointer
+      if (item.Value is StringLiteralExpr)
+        continue;       // emitted with SI saved/restored when a resident occupies SI (see EmitPrint)
+      if (KindOf(model.TypeOf(item.Value)) == ValueKind.Str)
+        return false;   // a non-literal string item prints via a path that may clobber SI
       if (item.Value is CallOrIndexExpr ci && model.IntrinsicBindings.TryGetValue(ci, out var intr)
           && intr.Name is "SPC" or "TAB")
         return false;   // SPC/TAB take a separate emit path

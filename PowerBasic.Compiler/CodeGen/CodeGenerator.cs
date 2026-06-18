@@ -62,6 +62,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private (VariableSymbol Symbol, Reg Reg)? _registerCounter;
   private (VariableSymbol Symbol, Reg Reg)? _registerAccumulator;
 
+  /// <summary>True when a register-resident loop counter or accumulator currently lives in SI, so a code path that overwrites SI (e.g. loading a string-literal pointer) must save and restore it.</summary>
+  private bool SiHoldsResident =>
+    this._registerCounter?.Reg == Reg.SI || this._registerAccumulator?.Reg == Reg.SI;
+
   /// <summary>O16 interval lattice: the per-statement-entry interval environment of the main body
   /// (<see cref="IntervalRangeAnalysis"/>), consulted by <see cref="IndexRangeOf"/> through
   /// <see cref="_currentStatement"/> to prove a non-FOR-counter variable's range at a use site.</summary>

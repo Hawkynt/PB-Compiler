@@ -40,9 +40,16 @@ public sealed partial class CodeGenerator {
       }
       if (item.Value is StringLiteralExpr lit) {
         if (lit.Value.Length > 0) {
+          // loading the literal pointer overwrites SI; preserve an SI-resident counter/accumulator
+          // (PrintIsSiClean lets a literal item appear in an SI/DI-resident loop body on this basis)
+          var saveSi = this.SiHoldsResident;
+          if (saveSi)
+            asm.Push(Reg.SI);
           asm.Mov(Reg.SI, Imm.OffsetOf(this.LiteralOf(lit.Value)));
           asm.Mov(Reg.CX, lit.Value.Length);
           asm.Call(this._rt.PrintStr);
+          if (saveSi)
+            asm.Pop(Reg.SI);
         }
       } else if (item.Value != null) {
         this.EmitExpression(item.Value);
