@@ -776,6 +776,17 @@ public sealed class OptimizerTests {
       "a numeric/literal PRINT keeps the FOR counter in SI; a string-variable item blocks residency");
   }
 
+  [Test]
+  public void Emit_GivenSelectCaseInLoopBody_WhenPb36Speed_ThenCounterStaysInSi() {
+    // an INTEGER SELECT CASE dispatches through AX/BX/DX (jump table or compare chain), never the
+    // index registers, so a FOR counter over a SELECT body stays in SI (ADD SI, imm). A STRING
+    // SELECT (string compares touch SI) is not SI-clean and blocks residency.
+    const string intSel = "$OPTIMIZE SPEED\ns% = 0\nFOR i% = 1 TO 10\n  SELECT CASE i%\n  CASE 1, 3, 5\n    s% = s% + i%\n  CASE ELSE\n    s% = s% - 1\n  END SELECT\nNEXT i%\nPRINT s%\nEND";
+    const string strSel = "$OPTIMIZE SPEED\nz$ = \"a\"\ns% = 0\nFOR i% = 1 TO 10\n  SELECT CASE z$\n  CASE \"a\"\n    s% = s% + i%\n  END SELECT\nNEXT i%\nPRINT s%\nEND";
+    Assert.That(CountAddSiImm(Compile(intSel, Dialect.Pb36)), Is.GreaterThan(CountAddSiImm(Compile(strSel, Dialect.Pb36))),
+      "an integer SELECT body keeps the FOR counter in SI; a string SELECT blocks residency");
+  }
+
   // 83 C6 = ADD SI, imm8 - the increment of an SI-resident FOR counter
   private static int CountAddSiImm(byte[] image) {
     var count = 0;

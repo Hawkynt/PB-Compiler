@@ -1303,6 +1303,17 @@ public sealed partial class CodeGenerator {
               && iff.ElseIfs.All(e => SiCleanExpression(e.Condition, model) && this.BodyIsSiClean(e.Body, counter, allowNested))
               && (iff.Else == null || this.BodyIsSiClean(iff.Else, counter, allowNested)):
           continue;
+        // an INTEGER SELECT CASE dispatches through AX/BX/DX (the jump table's MOV BX/SHL/indexed
+        // JMP, or the AX/BX compare chain) and never the index registers, so - like a clean IF - the
+        // SI counter and any DI resident survive it when its subject, selectors and arms are SI-clean
+        case SelectStmt sel
+            when KindOf(model.TypeOf(sel.Subject)) == ValueKind.Int16
+              && SiCleanExpression(sel.Subject, model)
+              && sel.Arms.All(arm =>
+                   arm.Selectors.All(c => (c.Value == null || SiCleanExpression(c.Value, model))
+                                          && (c.RangeUpper == null || SiCleanExpression(c.RangeUpper, model)))
+                   && this.BodyIsSiClean(arm.Body, counter, allowNested)):
+          continue;
         default:
           return false;
       }
