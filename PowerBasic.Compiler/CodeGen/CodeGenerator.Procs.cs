@@ -197,9 +197,17 @@ public sealed partial class CodeGenerator {
       asm.Mov(Adjust(savedHandler.Value, 4, OperandSize.Word), Reg.AX);
     }
 
+    // O16: the interval lattice for THIS procedure body (parameters start unknown). Procedures
+    // are emitted after the main body and one at a time, so swapping the cached points here is
+    // safe; restored afterwards for tidiness.
+    var outerPoints = this._intervalPoints;
+    if (this.Optimize)
+      this._intervalPoints = IntervalRangeAnalysis.AnalyzeProgramPoints(proc.Body!, model);
+
     foreach (var statement in proc.Body!)
       this.EmitStatement(statement);
 
+    this._intervalPoints = outerPoints;
     asm.MarkLabel(this._epilogue);
     if (savedHandler is { } saved) {
       asm.Mov(Reg.AX, saved.WithSize(OperandSize.Word));
