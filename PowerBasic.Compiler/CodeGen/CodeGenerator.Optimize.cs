@@ -1246,6 +1246,33 @@ public sealed partial class CodeGenerator {
   /// <paramref name="allowNested"/> is set, a single level of nested FOR that is itself
   /// DI-residency-eligible (<see cref="IsNestedRegisterableFor"/>) is also clean - its counter
   /// lives in DI and its body touches neither index register, so the outer SI survives it.</summary>
+  /// <summary>
+  /// True when a PRINT statement leaves SI and DI untouched, so it may appear in an
+  /// SI/DI-resident loop body. The print runtime preserves both index registers, so the
+  /// only hazard is the emitter loading SI with a text pointer for a string item or the
+  /// SPC/TAB/PRINT USING paths; restrict to plain numeric items (and an SI-clean file
+  /// number, which FSelect consumes without touching SI/DI). A bare separator (null value)
+  /// emits nothing.
+  /// </summary>
+  private bool PrintIsSiClean(PrintStmt p) {
+    if (p.IsLPrint || p.UsingFormat != null)
+      return false;
+    if (p.FileNumber != null && !SiCleanExpression(UnwrapFileNumber(p.FileNumber), model))
+      return false;
+    foreach (var item in p.Items) {
+      if (item.Value == null)
+        continue;
+      if (item.Value is StringLiteralExpr || KindOf(model.TypeOf(item.Value)) == ValueKind.Str)
+        return false;   // a string/literal item makes the emitter load SI with the text pointer
+      if (item.Value is CallOrIndexExpr ci && model.IntrinsicBindings.TryGetValue(ci, out var intr)
+          && intr.Name is "SPC" or "TAB")
+        return false;   // SPC/TAB take a separate emit path
+      if (!SiCleanExpression(item.Value, model))
+        return false;
+    }
+    return true;
+  }
+
   private bool BodyIsSiClean(IReadOnlyList<Statement> body, VariableSymbol? counter, bool allowNested = false) {
     foreach (var statement in body)
       switch (statement) {
@@ -1258,6 +1285,12 @@ public sealed partial class CodeGenerator {
               && (id.Amount == null || SiCleanExpression(id.Amount, model)):
           continue;
         case ForStmt nested when allowNested && this.IsNestedRegisterableFor(nested, counter):
+          continue;
+        // pb36 O5 (beyond the FOR shape): a PRINT of plain numeric items leaves SI/DI intact -
+        // every print runtime routine (rt_print_i16/i32, rt_print_str, newline, zone, FSelect)
+        // preserves SI and DI, and a numeric item is evaluated through AX/BX/CX/DX (+x87). So a
+        // hot accumulator stays resident across `FOR i : s = s + i : PRINT s : NEXT` and the like.
+        case PrintStmt print when this.PrintIsSiClean(print):
           continue;
         // a conditional whose test computes through AX/BX/CX/DX (SI-clean) and whose every arm
         // is itself SI-clean leaves both index registers intact - the branch itself touches no
