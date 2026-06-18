@@ -1710,14 +1710,26 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     var counterPlace = new Place(slot, false);
     var slotBytes = kind switch { ValueKind.Int16 => 2, ValueKind.Int32 => 4, _ => 8 };
-    var limit = this.AllocTemp(slotBytes);
-    var step = this.AllocTemp(slotBytes);
     var limitType = kind switch { ValueKind.Int16 => PbType.Integer, ValueKind.Int32 => PbType.Long, _ => PbType.Double };
 
-    // counter = from; limit and step into per-invocation stack temps
+    // counter = from (the counter is a direct cell, not a temp)
     this.EmitExpression(f.From);
     this.Coerce(model.TypeOf(f.From), counter.Type, f.From);
     this.EmitStorePlace(counterPlace, counter.Type, f.From);
+
+    // pb36 LICM: hoist loop-invariant pure subexpressions into the preheader. This
+    // MUST run before the limit/step temps are allocated: EmitLicmPreheader grows
+    // _cseBytes, and AllocTemp fixes a temp's BP offset from the _cseBytes value at
+    // alloc time (-(frameLocal + cseBytes + tempBytes)). Allocating limit/step first
+    // and growing _cseBytes afterwards would place the new CSE slot exactly on top of
+    // the limit slot, so a hoisted invariant (e.g. a constant divisor) would overwrite
+    // the loop bound - the loop would then never terminate.
+    this.EmitLicmPreheader(f, counter);
+
+    // limit and step into per-invocation stack temps (allocated after LICM so they sit
+    // above the now-final CSE region)
+    var limit = this.AllocTemp(slotBytes);
+    var step = this.AllocTemp(slotBytes);
 
     this.EmitExpression(f.To);
     this.Coerce(model.TypeOf(f.To), limitType, f.To);
@@ -1731,9 +1743,6 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       this.Coerce(PbType.Integer, limitType, f.From);
     }
     this.EmitStorePlace(new(step, false), limitType, f.From);
-
-    // pb36 LICM: hoist loop-invariant pure subexpressions into the preheader
-    this.EmitLicmPreheader(f, counter);
 
     var top = asm.DefineLabel();
     var negative = asm.DefineLabel();
@@ -1887,14 +1896,17 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     else
       asm.Mov(cell, Reg.AX);
 
+    // pb36 LICM: hoist loop-invariant pure subexpressions into the preheader. Must run
+    // before the limit temp is allocated - LICM grows _cseBytes and AllocTemp fixes a
+    // temp's offset from _cseBytes at alloc time, so growing it afterwards would place
+    // the new CSE slot on top of the limit slot (see EmitFor for the full rationale).
+    if (f.Variable is NameExpr nameVar && model.VariableBindings.TryGetValue(nameVar, out var counterSym))
+      this.EmitLicmPreheader(f, counterSym);
+
     var limit = this.AllocTemp(2);
     this.EmitExpression(f.To);
     this.Coerce(model.TypeOf(f.To), counterType, f.To);
     asm.Mov(limit, Reg.AX);
-
-    // pb36 LICM: hoist loop-invariant pure subexpressions into the preheader
-    if (f.Variable is NameExpr nameVar && model.VariableBindings.TryGetValue(nameVar, out var counterSym))
-      this.EmitLicmPreheader(f, counterSym);
 
     var top = asm.DefineLabel();
     var done = asm.DefineLabel();
