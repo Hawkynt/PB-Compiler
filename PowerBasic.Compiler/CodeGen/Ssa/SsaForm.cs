@@ -141,7 +141,7 @@ public sealed class SsaForm {
   /// references is a plain read or whole assignment - never a call/index/member/
   /// pointer argument (BYREF or address escape) and never in an opaque statement.
   /// </summary>
-  private static HashSet<VariableSymbol> FindTrackable(SemanticModel model, ControlFlowGraph cfg, IReadOnlyCollection<VariableSymbol>? implicitlyRead) {
+  internal static HashSet<VariableSymbol> FindTrackable(SemanticModel model, ControlFlowGraph cfg, IReadOnlyCollection<VariableSymbol>? implicitlyRead) {
     var candidates = new HashSet<VariableSymbol>(ReferenceEqualityComparer.Instance);
     var escaped = new HashSet<VariableSymbol>(ReferenceEqualityComparer.Instance);
     if (implicitlyRead != null)
