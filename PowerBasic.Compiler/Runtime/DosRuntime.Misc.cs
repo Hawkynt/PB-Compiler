@@ -373,7 +373,10 @@ public sealed partial class DosRuntime {
       asm.Push(Reg.AX);
       asm.Push(Reg.CX);
       asm.Dec(Reg.CX);
-      asm.Sub(Reg.CX, Mem.Word(asm.Lbl("rt_col")));
+      asm.Push(Reg.BX);                              // TAB targets the ACTIVE column (screen or per-file)
+      asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_colptr")));
+      asm.Sub(Reg.CX, Mem.Word(Reg.BX));
+      asm.Pop(Reg.BX);
       asm.Cmp(Reg.CX, (Imm)0);
       asm.Jle(done);
       asm.Call(this.Spc);

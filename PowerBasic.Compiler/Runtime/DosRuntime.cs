@@ -355,7 +355,10 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.DX);
     asm.Pop(Reg.BX);
     asm.Pop(Reg.AX);
-    asm.Add(Mem.Word(asm.Lbl("rt_col")), Reg.CX);
+    asm.Push(Reg.BX);                              // advance the ACTIVE column (screen or per-file)
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_colptr")));
+    asm.Add(Mem.Word(Reg.BX), Reg.CX);
+    asm.Pop(Reg.BX);
     asm.MarkLabel(done);
     asm.Ret();
 
@@ -389,7 +392,10 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_crlf")));
     asm.Mov(Reg.CX, 2);
     asm.Call(this.PrintStr);
-    asm.Mov(Mem.Word(asm.Lbl("rt_col")), (Imm)0);
+    asm.Push(Reg.BX);                              // reset the ACTIVE column (screen or per-file) to 0
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_colptr")));
+    asm.Mov(Mem.Word(Reg.BX), (Imm)0);
+    asm.Pop(Reg.BX);
     asm.Pop(Reg.AX);
     asm.Pop(Reg.CX);
     asm.Pop(Reg.SI);
@@ -404,7 +410,8 @@ public sealed partial class DosRuntime {
     asm.Push(Reg.CX);
     asm.Push(Reg.DX);
     asm.Push(Reg.SI);
-    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_col")));
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_colptr")));   // the ACTIVE column (screen or per-file)
+    asm.Mov(Reg.AX, Mem.Word(Reg.BX));
     asm.Xor(Reg.DX, Reg.DX);
     asm.Mov(Reg.BX, 14);
     asm.Div(Reg.BX);

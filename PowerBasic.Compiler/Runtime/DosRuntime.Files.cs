@@ -653,6 +653,10 @@ public sealed partial class DosRuntime {
       asm.Test(Reg.AX, Reg.AX);
       asm.Jz(ioError);
       asm.Mov(Mem.Word(asm.Lbl("rt_curout")), Reg.AX);
+      // route the active print column to this file's own column (BX = file number * 2)
+      asm.Mov(Reg.AX, Imm.OffsetOf(asm.Lbl("rt_filecol")));
+      asm.Add(Reg.AX, Reg.BX);
+      asm.Mov(Mem.Word(asm.Lbl("rt_colptr")), Reg.AX);
       asm.Pop(Reg.BX);
       asm.Ret();
     }

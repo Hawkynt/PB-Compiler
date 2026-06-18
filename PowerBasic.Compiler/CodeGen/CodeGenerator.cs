@@ -1572,8 +1572,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     }
 
     asm.Call(this._rt.PrintNewLine);
-    if (write.FileNumber != null)
+    if (write.FileNumber != null) {
       asm.Mov(Mem.Word(asm.Lbl("rt_curout")), 1);
+      asm.Mov(Mem.Word(asm.Lbl("rt_colptr")), Imm.OffsetOf(asm.Lbl("rt_col")));
+    }
   }
 
   private void EmitCondition(Expression condition) {

@@ -103,6 +103,7 @@ public sealed partial class CodeGenerator {
   private void EmitStdOut(StdOutStmt stdOut) {
     var asm = this._asm;
     asm.Mov(Mem.Word(asm.Lbl("rt_curout")), 1);
+    asm.Mov(Mem.Word(asm.Lbl("rt_colptr")), Imm.OffsetOf(asm.Lbl("rt_col")));
     if (stdOut.Value is { } value) {
       this.EmitExpression(value);
       this.EmitPrintValue(value);

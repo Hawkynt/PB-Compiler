@@ -123,8 +123,13 @@ public sealed partial class DosRuntime {
     asm.Dw(0);
     asm.MarkLabel("rt_curout");
     asm.Dw(0);
-    asm.MarkLabel("rt_col");
+    asm.MarkLabel("rt_col");           // the SCREEN print column (POS(0), LOCATE, screen PRINT)
     asm.Dw(0);
+    asm.MarkLabel("rt_colptr");        // offset of the ACTIVE print column; defaults to the screen column
+    asm.Dw(asm.Lbl("rt_col"));
+    asm.MarkLabel("rt_filecol");       // per-file print columns (PB file numbers 1..15; [0] unused)
+    for (var i = 0; i < 16; ++i)
+      asm.Dw(0);
     asm.MarkLabel("rt_caplen");
     asm.Dw(0);
     asm.MarkLabel("rt_capmode");
@@ -1565,7 +1570,8 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.AH, 0x40);
     asm.Int(0x21);
     asm.Pop(Reg.DS);
-    asm.Add(Mem.Word(asm.Lbl("rt_col")), Reg.CX);
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_colptr")));   // advance the ACTIVE column (screen or per-file)
+    asm.Add(Mem.Word(Reg.BX), Reg.CX);
     asm.Jmp(done);
     asm.MarkLabel(capture);
     asm.Mov(Reg.DI, Mem.Word(asm.Lbl("rt_caplen")));

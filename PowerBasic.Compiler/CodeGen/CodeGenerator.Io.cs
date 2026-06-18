@@ -22,8 +22,10 @@ public sealed partial class CodeGenerator {
 
     if (p.UsingFormat != null) {
       this.EmitPrintUsing(p);
-      if (p.FileNumber != null)
+      if (p.FileNumber != null) {
         asm.Mov(Mem.Word(this._asm.Lbl("rt_curout")), 1);
+        asm.Mov(Mem.Word(this._asm.Lbl("rt_colptr")), Imm.OffsetOf(this._asm.Lbl("rt_col")));
+      }
       return;
     }
 
@@ -64,8 +66,10 @@ public sealed partial class CodeGenerator {
     if (lastSeparator == PrintSeparator.Newline)
       asm.Call(this._rt.PrintNewLine);
 
-    if (p.FileNumber != null)
+    if (p.FileNumber != null) {
       asm.Mov(Mem.Word(this._asm.Lbl("rt_curout")), 1);
+      asm.Mov(Mem.Word(this._asm.Lbl("rt_colptr")), Imm.OffsetOf(this._asm.Lbl("rt_col")));
+    }
   }
 
   /// <summary>
