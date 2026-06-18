@@ -644,6 +644,17 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenNonLeftLeaningConcat_WhenPb36_ThenRightTempAppendedInPlace() {
+    // (a$+b$) + (c$+d$): the right operand is itself a dead temp. With pure operands the optimizer
+    // evaluates the right first so the left ends up topmost, then appends in place (rt_strcatvar) and
+    // frees the right temp - instead of a fresh StrCat. A non-reorderable right (UCASE$) cannot.
+    const string balanced = "$OPTIMIZE SPEED\na$=\"a\"\nb$=\"b\"\nc$=\"c\"\nd$=\"d\"\ns$ = (a$ + b$) + (c$ + d$)\nPRINT s$\nEND";
+    const string impure = "$OPTIMIZE SPEED\na$=\"a\"\nb$=\"b\"\nc$=\"c\"\ns$ = (a$ + b$) + UCASE$(c$)\nPRINT s$\nEND";
+    Assert.That(CountCallsToStrCatVar(Compile(balanced, Dialect.Pb36)), Is.GreaterThan(CountCallsToStrCatVar(Compile(impure, Dialect.Pb36))),
+      "a pure right-temp concat appends in place via rt_strcatvar; a non-reorderable right operand does not");
+  }
+
+  [Test]
   public void Emit_GivenConcatChain_WhenPb36_ThenTailAppendedInPlace() {
     // a$ + b$ + c$ = (a$ + b$) + c$: the inner concat's dead, topmost temp has the tail operand
     // appended in place, so the +c$ node calls rt_strcatvar; a plain two-operand a$ + b$ does not.

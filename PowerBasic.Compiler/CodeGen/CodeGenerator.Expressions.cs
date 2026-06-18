@@ -565,6 +565,21 @@ public sealed partial class CodeGenerator {
       && intr.Name is "LEFT$" or "RIGHT$" or "MID$";
   }
 
+  /// <summary>
+  /// True when a string expression is side-effect-free, so the concat optimizer may evaluate it
+  /// before its sibling without changing observable behavior. Conservative: a string literal, a
+  /// plain (non-intrinsic) string variable read, or a concat of such - no function/intrinsic call
+  /// (which could print, read volatile state, or modify a global) and no array/member/pointer.
+  /// </summary>
+  private bool IsReorderableStringExpr(Expression e) => e switch {
+    StringLiteralExpr => true,
+    NameExpr n => !model.IntrinsicBindings.ContainsKey(n)
+      && model.TypeOf(n) is StringType,
+    BinaryExpr { Op: BinaryOp.Add or BinaryOp.Concat } b =>
+      this.IsReorderableStringExpr(b.Left) && this.IsReorderableStringExpr(b.Right),
+    _ => false,
+  };
+
   private void EmitStringBinary(BinaryExpr b) {
     var asm = this._asm;
     if (KindOf(model.TypeOf(b.Left)) != ValueKind.Str || KindOf(model.TypeOf(b.Right)) != ValueKind.Str) {
@@ -595,6 +610,28 @@ public sealed partial class CodeGenerator {
         this.EmitExpression(b.Left);                          // AX = dead topmost temp
         asm.Mov(Reg.DX, rightCell.WithSize(OperandSize.Word)); // DX = right operand's raw handle
         asm.Call(this._rt.StrCatVar);
+        return;
+      }
+      // pb36 O9 (non-left-leaning): the RIGHT operand is itself a dead temp (e.g. (a$+b$)+(c$+d$)).
+      // Evaluating left-then-right would leave the right temp topmost, so the left could not grow in
+      // place. When BOTH operands are pure (side-effect-free), evaluate the RIGHT first, then the
+      // LEFT - now the left dead temp is topmost - append the right temp's bytes in place, and free
+      // the (now buried, dead) right temp. Reordering is sound only for pure operands; mutating the
+      // left in place is sound because it is a dead temp; freeing the right matches what the plain
+      // StrCat would have done. O(n) instead of O(n^2) for a balanced concat tree.
+      if (this.IsDeadStringTemp(b.Right)
+          && this.IsReorderableStringExpr(b.Left) && this.IsReorderableStringExpr(b.Right)) {
+        this.EmitExpression(b.Right);                         // AX = right dead temp
+        asm.Push(Reg.AX);
+        this.EmitExpression(b.Left);                          // AX = left dead temp, now topmost
+        asm.Pop(Reg.DX);
+        asm.Push(Reg.DX);                                     // keep the right temp's handle to free
+        asm.Call(this._rt.StrCatVar);                         // AX = left ++ right (in place)
+        asm.Pop(Reg.DX);
+        asm.Push(Reg.AX);                                     // save the result handle
+        asm.Mov(Reg.AX, Reg.DX);
+        asm.Call(this._rt.StrFree);                           // release the dead right temp
+        asm.Pop(Reg.AX);
         return;
       }
     }
