@@ -548,6 +548,23 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>Concatenation and bytewise comparisons over string temporaries (both operands consumed).</summary>
+  /// <summary>
+  /// True when evaluating <paramref name="e"/> yields a FRESH, DEAD, topmost heap string temp -
+  /// one safe to extend in place (rt_strcatlit/rt_strcatvar reuse its handle). A concat result is
+  /// such a temp, and so is a substring constructor (LEFT$/RIGHT$/MID$ -> StrLeft/StrRight/StrMid
+  /// allocate a fresh result). A bare variable, array element or member is LIVE storage, not a
+  /// dead temp, so it is excluded - mutating it in place would corrupt the program's value.
+  /// (The runtime still checks topmost at run time and falls back to a copy, so this only governs
+  /// which left shapes are eligible, never correctness.)
+  /// </summary>
+  private bool IsDeadStringTemp(Expression e) {
+    if (e is BinaryExpr { Op: BinaryOp.Add or BinaryOp.Concat })
+      return true;
+    return e is CallOrIndexExpr c
+      && model.IntrinsicBindings.TryGetValue(c, out var intr)
+      && intr.Name is "LEFT$" or "RIGHT$" or "MID$";
+  }
+
   private void EmitStringBinary(BinaryExpr b) {
     var asm = this._asm;
     if (KindOf(model.TypeOf(b.Left)) != ValueKind.Str || KindOf(model.TypeOf(b.Right)) != ValueKind.Str) {
@@ -563,7 +580,7 @@ public sealed partial class CodeGenerator {
     // falls back to a copy otherwise, so the value is identical. Evaluating a literal / a variable's
     // raw handle allocates nothing, so the left temp stays topmost.
     if (this.Optimize && b.Op is BinaryOp.Add or BinaryOp.Concat
-        && b.Left is BinaryExpr { Op: BinaryOp.Add or BinaryOp.Concat }) {
+        && this.IsDeadStringTemp(b.Left)) {
       if (b.Right is StringLiteralExpr { Value: { Length: > 0 } litText }) {
         this.EmitExpression(b.Left);                          // AX = dead topmost temp
         asm.Mov(Reg.SI, Imm.OffsetOf(this.LiteralOf(litText)));

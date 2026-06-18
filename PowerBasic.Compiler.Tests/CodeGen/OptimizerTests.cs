@@ -634,6 +634,16 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenSubstringFunctionLeft_WhenPb36_ThenTailAppendedInPlace() {
+    // LEFT$/RIGHT$/MID$ construct a fresh, dead, topmost temp - like a concat - so a tail operand
+    // appends to it in place (rt_strcatvar); a bare-variable left is LIVE storage, so it does not.
+    const string funcLeft = "$OPTIMIZE SPEED\nx$ = \"hello\"\nv$ = \"!\"\ns$ = LEFT$(x$, 3) + v$\nPRINT s$\nEND";
+    const string varLeft = "$OPTIMIZE SPEED\nx$ = \"hello\"\nv$ = \"!\"\ns$ = x$ + v$\nPRINT s$\nEND";
+    Assert.That(CountCallsToStrCatVar(Compile(funcLeft, Dialect.Pb36)), Is.GreaterThan(CountCallsToStrCatVar(Compile(varLeft, Dialect.Pb36))),
+      "a LEFT$/MID$ result is a dead temp whose tail appends in place; a bare-variable left does not");
+  }
+
+  [Test]
   public void Emit_GivenConcatChain_WhenPb36_ThenTailAppendedInPlace() {
     // a$ + b$ + c$ = (a$ + b$) + c$: the inner concat's dead, topmost temp has the tail operand
     // appended in place, so the +c$ node calls rt_strcatvar; a plain two-operand a$ + b$ does not.
