@@ -153,13 +153,13 @@ public static class IntervalRangeAnalysis {
       case ForStmt f when IntVar(f.Variable, model) is { } ctr
           && CallFree(f.From, model) && CallFree(f.To, model) && BodyCallFree(f.Body, model): {
         var range = Eval(f.From, env, model).Join(Eval(f.To, env, model));
-        TransferLoop(f.Body, ctr, range, env, model, points);
+        TransferLoop(f, f.Body, ctr, range, env, model, points);
         return;
       }
       // a DO/WHILE loop: no counter, so just the fixpoint-with-widening over a call-free body
       case DoLoopStmt d when (d.PreCondition == null || CallFree(d.PreCondition, model))
           && (d.PostCondition == null || CallFree(d.PostCondition, model)) && BodyCallFree(d.Body, model):
-        TransferLoop(d.Body, null, Interval.Top, env, model, points);
+        TransferLoop(d, d.Body, null, Interval.Top, env, model, points);
         return;
       // a call-free PRINT writes no scalar variable - keep the environment intact
       case PrintStmt p when (p.FileNumber == null || CallFree(p.FileNumber, model))
@@ -252,8 +252,8 @@ public static class IntervalRangeAnalysis {
   /// removed (Top) after the loop; loop-carried accumulators widen to Top, values recomputed each
   /// iteration from the counter stay bounded.
   /// </summary>
-  private static void TransferLoop(IReadOnlyList<Statement> body, VariableSymbol? counter, Interval counterRange,
-      Dictionary<VariableSymbol, Interval> env, SemanticModel model,
+  private static void TransferLoop(Statement self, IReadOnlyList<Statement> body, VariableSymbol? counter,
+      Interval counterRange, Dictionary<VariableSymbol, Interval> env, SemanticModel model,
       Dictionary<Statement, IReadOnlyDictionary<VariableSymbol, Interval>>? points) {
     var entry = Clone(env);
     if (counter != null)
@@ -272,6 +272,9 @@ public static class IntervalRangeAnalysis {
     }
 
     if (points != null) {
+      // the loop's OWN condition is re-evaluated every iteration with loop-carried values, so it
+      // must see the invariant (widened), NOT the pre-loop entry env that Run recorded.
+      points[self] = Clone(inv);
       var bodyEnv = Clone(inv);
       Run(body, bodyEnv, model, points);             // per-point envs inside the body
     }
