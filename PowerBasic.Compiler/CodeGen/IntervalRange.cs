@@ -133,14 +133,17 @@ public static class IntervalRangeAnalysis {
       case IfStmt iff when CallFree(iff.Condition, model) && iff.ElseIfs.All(e => CallFree(e.Condition, model)): {
         var results = new List<Dictionary<VariableSymbol, Interval>>();
         var thenEnv = Clone(env);
+        RefineForCondition(thenEnv, iff.Condition, whenTrue: true, model);
         Run(iff.Then, thenEnv, model, points);
         results.Add(thenEnv);
-        foreach (var (_, b) in iff.ElseIfs) {
+        foreach (var (cond, b) in iff.ElseIfs) {
           var e = Clone(env);
+          RefineForCondition(e, cond, whenTrue: true, model);
           Run(b, e, model, points);
           results.Add(e);
         }
         var elseEnv = Clone(env);
+        RefineForCondition(elseEnv, iff.Condition, whenTrue: false, model);
         if (iff.Else != null)
           Run(iff.Else, elseEnv, model, points);
         results.Add(elseEnv);                          // Else, or (no Else) the not-taken fallthrough
@@ -204,6 +207,55 @@ public static class IntervalRangeAnalysis {
         return Interval.Top;
     }
   }
+
+  /// <summary>
+  /// Narrow a variable's interval by a comparison condition known to hold (<paramref
+  /// name="whenTrue"/>) or not hold inside an IF arm - "x OP const" or "const OP x" with x a
+  /// tracked integer variable. Sound: the branch guarantees the (possibly negated) comparison, so
+  /// x lies in the intersection of its incoming range and the comparison's implied range.
+  /// </summary>
+  private static void RefineForCondition(Dictionary<VariableSymbol, Interval> env, Expression cond,
+      bool whenTrue, SemanticModel model) {
+    if (cond is not BinaryExpr b)
+      return;
+    VariableSymbol? v;
+    long c;
+    BinaryOp op;
+    if (IntVar(b.Left, model) is { } vl && b.Right is IntegerLiteralExpr rl) { v = vl; c = rl.Value; op = b.Op; }
+    else if (IntVar(b.Right, model) is { } vr && b.Left is IntegerLiteralExpr ll) { v = vr; c = ll.Value; op = SwapCompare(b.Op); }
+    else return;
+    if (!whenTrue)
+      op = NegateCompare(op);
+    var cur = env.TryGetValue(v, out var iv) ? iv : Interval.Top;
+    var refined = op switch {
+      BinaryOp.Less => new Interval(cur.Lo, Math.Min(cur.Hi, c - 1)),
+      BinaryOp.LessEqual => new Interval(cur.Lo, Math.Min(cur.Hi, c)),
+      BinaryOp.Greater => new Interval(Math.Max(cur.Lo, c + 1), cur.Hi),
+      BinaryOp.GreaterEqual => new Interval(Math.Max(cur.Lo, c), cur.Hi),
+      BinaryOp.Equal => new Interval(Math.Max(cur.Lo, c), Math.Min(cur.Hi, c)),
+      _ => cur,                                        // NotEqual is a hole, not an interval
+    };
+    if (!refined.IsEmpty)
+      Set(env, v, refined);
+  }
+
+  private static BinaryOp SwapCompare(BinaryOp op) => op switch {
+    BinaryOp.Less => BinaryOp.Greater,
+    BinaryOp.Greater => BinaryOp.Less,
+    BinaryOp.LessEqual => BinaryOp.GreaterEqual,
+    BinaryOp.GreaterEqual => BinaryOp.LessEqual,
+    _ => op,                                           // Equal / NotEqual are symmetric
+  };
+
+  private static BinaryOp NegateCompare(BinaryOp op) => op switch {
+    BinaryOp.Less => BinaryOp.GreaterEqual,
+    BinaryOp.LessEqual => BinaryOp.Greater,
+    BinaryOp.Greater => BinaryOp.LessEqual,
+    BinaryOp.GreaterEqual => BinaryOp.Less,
+    BinaryOp.Equal => BinaryOp.NotEqual,
+    BinaryOp.NotEqual => BinaryOp.Equal,
+    _ => op,
+  };
 
   /// <summary>The representable range of an integer type; Top for floats, QUAD, or anything else
   /// (so it never clamps a value we cannot bound). Integer arithmetic wraps within this range.</summary>

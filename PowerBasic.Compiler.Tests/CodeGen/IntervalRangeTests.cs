@@ -156,6 +156,24 @@ public sealed class IntervalRangeTests {
   }
 
   [Test]
+  public void Refine_GivenGuardedComparison_ThenArmRangeTightens() {
+    // x% is [0,100] after the first IF; inside `IF x% < 50 THEN` it is refined to [0,49]
+    var (_, model) = BindUnit("x% = 0\nIF c% > 0 THEN x% = 100\nIF x% < 50 THEN\nq% = x%\nEND IF\nEND");
+    var points = IntervalRangeAnalysis.AnalyzeProgramPoints(model.MainBody, model);
+    var guard = (PowerBasic.Compiler.Syntax.Ast.IfStmt)model.MainBody[2];
+    Assert.That(At(points, guard.Then[0], "x"), Is.EqualTo(new Interval(0, 49)));
+  }
+
+  [Test]
+  public void Refine_GivenGuardElse_ThenComplementTightens() {
+    // the ELSE of `IF x% < 50` sees x% >= 50, so [0,100] tightens to [50,100]
+    var (_, model) = BindUnit("x% = 0\nIF c% > 0 THEN x% = 100\nIF x% < 50 THEN\nq% = 1\nELSE\nq% = x%\nEND IF\nEND");
+    var points = IntervalRangeAnalysis.AnalyzeProgramPoints(model.MainBody, model);
+    var guard = (PowerBasic.Compiler.Syntax.Ast.IfStmt)model.MainBody[2];
+    Assert.That(At(points, guard.Else![0], "x"), Is.EqualTo(new Interval(50, 100)));
+  }
+
+  [Test]
   public void ProgramPoints_GivenUseInsideIfArm_ThenArmEntryHasRange() {
     var (_, model) = BindUnit("x% = 5\nIF a% > 0 THEN\nz% = x% \\ 2\nEND IF\nEND");
     var points = IntervalRangeAnalysis.AnalyzeProgramPoints(model.MainBody, model);
