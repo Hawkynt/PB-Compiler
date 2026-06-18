@@ -456,6 +456,18 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenLatticeProvenCondition_WhenPb36_ThenDeadArmNotEmitted() {
+    // p% is [5,8] (IF-join), so `p% < 20` is always true - the ELSE arm is unreachable and its
+    // code (the "DEADXYZ" literal) is not emitted at all; an INPUT-sourced p% keeps both arms.
+    const string folds = "$OPTIMIZE SPEED\np% = 5\nIF q% > 0 THEN p% = 8\nIF p% < 20 THEN\nPRINT \"LIVE\"\nELSE\nPRINT \"DEADXYZ\"\nEND IF\nEND";
+    const string nofold = "$OPTIMIZE SPEED\nINPUT p%\nIF p% < 20 THEN\nPRINT \"LIVE\"\nELSE\nPRINT \"DEADXYZ\"\nEND IF\nEND";
+    Assert.That(Ascii(Compile(folds, Dialect.Pb36)), Does.Not.Contain("DEADXYZ"),
+      "a lattice-proven-false arm should be dead-code-eliminated");
+    Assert.That(Ascii(Compile(nofold, Dialect.Pb36)), Does.Contain("DEADXYZ"),
+      "an unknown condition keeps both arms");
+  }
+
+  [Test]
   public void Emit_GivenLatticeBoundedIndexUnderBoundsOn_WhenPb36_ThenCheckElided() {
     // k% is [5,10] (an IF-join, not a constant and not a FOR counter) - the interval lattice
     // proves it lies inside a%(0 TO 20), so the bounds check drops; an INPUT-sourced k% is unknown

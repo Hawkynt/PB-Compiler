@@ -271,16 +271,29 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// equals what the runtime compare would produce, so output is byte-identical.
   /// </summary>
   private bool TryEmitRangeComparison(BinaryExpr b) {
-    if (!this.Optimize)
+    if (this.FoldComparisonViaRange(b) is not { } value)
       return false;
+    this._asm.Mov(Reg.AX, (int)value);         // PB boolean: TRUE = -1, FALSE = 0
+    return true;
+  }
+
+  /// <summary>
+  /// The PB-boolean value (-1 true / 0 false) of a signed 16-bit comparison "v OP const" whose
+  /// range-known side <paramref name="b"/> makes the result invariant over its proven [lo,hi];
+  /// null when not foldable. Drives both branch folding (emit the constant) and dead-arm
+  /// elimination (skip the unreachable arm).
+  /// </summary>
+  private long? FoldComparisonViaRange(Expression condition) {
+    if (!this.Optimize || condition is not BinaryExpr b)
+      return null;
     if (b.Op is not (BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual
         or BinaryOp.GreaterEqual or BinaryOp.Equal or BinaryOp.NotEqual))
-      return false;
+      return null;
     // both operands must be signed integers no wider than 16 bits (counter ranges are
     // signed INTEGER); a DWORD/unsigned side would compare unsigned and break the fold
     if (model.TypeOf(b.Left) is not ScalarType { IsFloat: false, ByteSize: <= 2, Signed: true }
         || model.TypeOf(b.Right) is not ScalarType { IsFloat: false, ByteSize: <= 2, Signed: true })
-      return false;
+      return null;
 
     (long Lo, long Hi) range;
     long c;
@@ -290,16 +303,13 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     } else if (this.OptFolder.TryFold(b.Left) is { Integer: { } lc } && this.CounterRangeOf(b.Right) is { } rr) {
       range = rr; c = lc; op = SwapComparison(b.Op);   // normalise to "range OP const"
     } else
-      return false;
+      return null;
 
     // a 16-bit-overflowing affine range would wrap at runtime, so the proven range is unsafe
     if (range.Lo < short.MinValue || range.Hi > short.MaxValue)
-      return false;
+      return null;
 
-    if (FoldRangeCompare(range.Lo, range.Hi, op, c) is not { } verdict)
-      return false;
-    this._asm.Mov(Reg.AX, verdict ? -1 : 0);   // PB boolean: TRUE = -1, FALSE = 0
-    return true;
+    return FoldRangeCompare(range.Lo, range.Hi, op, c) is { } verdict ? (verdict ? -1L : 0L) : null;
   }
 
   private static BinaryOp SwapComparison(BinaryOp op) => op switch {
@@ -1581,7 +1591,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     var folded = condition;
     if (this._provenReads is { Count: > 0 } proven && !this.CheckOverflow && !this.CheckNumeric)
       folded = SubstituteProven(condition, proven, out _);
-    return this.OptFolder.TryFold(folded)?.Integer;
+    // O16: a constant from SCCP/proven reads, else the interval lattice may prove the comparison
+    // invariant over a variable's range - then the unreachable arm is not emitted at all
+    return this.OptFolder.TryFold(folded)?.Integer ?? this.FoldComparisonViaRange(condition);
   }
 
   private void EmitIf(IfStmt i) {
