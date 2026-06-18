@@ -999,6 +999,25 @@ public sealed partial class CodeGenerator {
           asm.Call(this._rt.LongMul);
         break;
       case BinaryOp.IntegerDivide or BinaryOp.Modulo:
+        // pb36 O16: a signed LONG \ / MOD by a compile-time-constant divisor of
+        // magnitude 2..32767 whose dividend the interval lattice proves fits int16
+        // runs as ONE 16-bit IDIV (DX:AX / BX -> AX quotient, DX remainder) instead
+        // of the 32-bit LongDiv/LongMod runtime call - no $CPU needed (8086 IDIV).
+        // The dividend is already sign-extended into DX:AX (its value fits int16) and
+        // |quotient| < |dividend| <= 32767 fits int16, so the divide never overflows
+        // (#DE); |divisor| >= 2 also rules out divide-by-zero (error 11) and the
+        // MININT \ -1 trap. x86 truncates toward zero and the remainder takes the
+        // dividend's sign - exactly PB's \ and MOD. CWD re-widens the result to LONG.
+        if (this.Optimize && !unsignedDivide
+            && this.OptFolder.TryFold(b.Right) is { Integer: { } d16 }
+            && d16 is >= -32768 and <= 32767 && Math.Abs(d16) >= 2
+            && this.IndexRangeOf(b.Left) is { Lo: >= -32768, Hi: <= 32767 }) {
+          asm.Idiv(Reg.BX);                    // DX:AX / BX -> AX = quotient, DX = remainder
+          if (b.Op == BinaryOp.Modulo)
+            asm.Mov(Reg.AX, Reg.DX);
+          asm.Cwd();                           // re-widen the 16-bit result to LONG DX:AX
+          break;
+        }
         // pb36 C1 ($CPU 80386): divide by a compile-time-constant divisor of
         // magnitude >= 2 with the exact hardware IDIV/DIV (EAX=quotient, EDX=
         // remainder), dropping the LongDiv/LongMod runtime call. x86 truncates

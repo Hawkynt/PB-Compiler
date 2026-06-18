@@ -398,6 +398,18 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenLongDivideRangeKnown_WhenPb36_ThenNarrowedTo16BitIdiv() {
+    // a signed LONG \ by a small constant whose dividend the interval lattice proves
+    // fits int16 (a FOR counter 0..100) narrows to one 16-bit IDIV BX; an INPUT-sourced
+    // dividend (range unknown) stays on the LongDiv runtime call (no IDIV BX). No $CPU.
+    const string narrowed = "$OPTIMIZE SPEED\nFOR i& = 0 TO 100\nx& = i& \\ 3\nNEXT i&\nPRINT x&\nEND";
+    const string runtime = "$OPTIMIZE SPEED\nINPUT j&\nx& = j& \\ 3\nPRINT x&\nEND";
+    Assert.That(CountIdivBx(Compile(narrowed, Dialect.Pb36)),
+      Is.GreaterThan(CountIdivBx(Compile(runtime, Dialect.Pb36))),
+      "a range-known LONG divide should narrow to a 16-bit IDIV BX the runtime-call version lacks");
+  }
+
+  [Test]
   public void Emit_GivenQuadBitwiseUnderCpu386_WhenPb36_ThenInlineDwordOps() {
     // a QUAD OR runs inline as two 66 0B (OR EAX, m32) halves instead of the QuadOr call
     const string with386 = "$CPU 80386\n$OPTIMIZE SPEED\nx&& = 1099511627775\ny&& = 76861433640456465\nPRINT x&& OR y&&\nEND";
