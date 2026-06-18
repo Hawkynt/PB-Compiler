@@ -799,6 +799,26 @@ public sealed class OptimizerTests {
       "a LONG FOR counter should increment in ESI (66 83 C6) under $CPU 80386");
   }
 
+  [Test]
+  public void Emit_GivenLongAccumulatorLoop_WhenCpu386Speed_ThenAccumulatorInEdi() {
+    // a hot LONG accumulator joins the ESI counter in EDI under $CPU 80386 - two full LONG locals
+    // resident at once. The accumulator is loaded into EDI (66 8B 3E); a loop that only prints the
+    // counter has no LONG accumulator and so no EDI load.
+    const string withAcc = "$CPU 80386\n$OPTIMIZE SPEED\ns& = 0\nFOR i& = 1 TO 10\n  s& = s& + i&\n  PRINT s&\nNEXT i&\nPRINT s&\nEND";
+    const string noAcc = "$CPU 80386\n$OPTIMIZE SPEED\nFOR i& = 1 TO 10\n  PRINT i&\nNEXT i&\nEND";
+    Assert.That(CountMovEdiMem(Compile(withAcc, Dialect.Pb36)), Is.GreaterThan(CountMovEdiMem(Compile(noAcc, Dialect.Pb36))),
+      "a LONG accumulator joins the ESI counter in EDI (66 8B 3E) under $CPU 80386");
+  }
+
+  // 66 8B 3E = MOV EDI, [disp16] (operand-size-prefixed) - loading a LONG accumulator into EDI
+  private static int CountMovEdiMem(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 2 < image.Length; ++i)
+      if (image[i] == 0x66 && image[i + 1] == 0x8B && image[i + 2] == 0x3E)
+        ++count;
+    return count;
+  }
+
   // 66 83 C6 = ADD ESI, imm8 (operand-size-prefixed) - the increment of an ESI-resident LONG counter
   private static int CountAddEsiImm(byte[] image) {
     var count = 0;

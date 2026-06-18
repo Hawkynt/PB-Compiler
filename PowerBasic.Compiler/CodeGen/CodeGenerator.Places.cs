@@ -425,6 +425,15 @@ public sealed partial class CodeGenerator {
     if (a.Target is NameExpr regTarget
         && model.VariableBindings.TryGetValue(regTarget, out var regSym)
         && this.ResidentRegOf(regSym) is { } accReg) {
+      if (accReg.IsDword()) {
+        // a LONG resident in a 32-bit register (EDI under $CPU 80386): compute DX:AX, pack into it
+        this.EmitExpression(a.Value);
+        this.Coerce(model.TypeOf(a.Value), PbType.Long, a.Value);
+        this._asm.Mov(Mem.Word(this._scratch), Reg.AX);
+        this._asm.Mov(Mem.Word(this._scratch, 2), Reg.DX);
+        this._asm.Mov(accReg, Mem.Dword(this._scratch));
+        return;
+      }
       if (model.TypeOf(a.Value) is ScalarType { IsFloat: true } && this.IsModularInt16Tree(a.Value, 0))
         this.EmitModularInt16(a.Value);
       else {

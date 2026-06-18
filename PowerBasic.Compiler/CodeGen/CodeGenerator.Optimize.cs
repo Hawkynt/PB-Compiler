@@ -1113,6 +1113,15 @@ public sealed partial class CodeGenerator {
 
     this._registerCounter = (counter, Reg.ESI);
 
+    // a second 32-bit register (EDI) holds one hot LONG accumulator for the loop - true 386
+    // multi-register residency: two full LONG locals live in callee-stable registers at once
+    var accumulator = this.FindAccumulator(f.Body, counter, byteSize: 4);
+    var accCell = accumulator != null ? this.TryDirectCell(accumulator) : null;
+    if (accumulator != null && accCell is { } accSlot) {
+      asm.Mov(Reg.EDI, accSlot.WithSize(OperandSize.Dword));         // EDI = the accumulator's pre-loop value
+      this._registerAccumulator = (accumulator, Reg.EDI);
+    }
+
     var top = asm.DefineLabel();
     var done = asm.DefineLabel();
     var cont = asm.DefineLabel();
@@ -1137,7 +1146,10 @@ public sealed partial class CodeGenerator {
     this._iterateFor.Pop();
     this._iterateAny.Pop();
     asm.Mov(cell.WithSize(OperandSize.Dword), Reg.ESI);              // post-loop reads use the cell again
+    if (this._registerAccumulator is { } resident && accCell is { } flushSlot)
+      asm.Mov(flushSlot.WithSize(OperandSize.Dword), resident.Reg);  // flush the accumulator to its cell
     this._registerCounter = null;
+    this._registerAccumulator = null;
     this.ReleaseTemp(4);
     return true;
   }
@@ -1288,7 +1300,7 @@ public sealed partial class CodeGenerator {
   /// frame cell) - a candidate to live in DI for the loop. Its reads/writes all
   /// route through the residency paths, so keeping it in a register is invisible.
   /// </summary>
-  private VariableSymbol? FindAccumulator(IReadOnlyList<Statement> body, VariableSymbol? counter) {
+  private VariableSymbol? FindAccumulator(IReadOnlyList<Statement> body, VariableSymbol? counter, int byteSize = 2) {
     foreach (var statement in body) {
       var target = statement switch {
         AssignStmt { Target: NameExpr t } => t,
@@ -1299,7 +1311,7 @@ public sealed partial class CodeGenerator {
         continue;
       if (ReferenceEquals(symbol, counter))
         continue;
-      if (symbol.Type is ScalarType { ByteSize: 2, Signed: true, IsFloat: false }
+      if (symbol.Type is ScalarType { Signed: true, IsFloat: false } accType && accType.ByteSize == byteSize
           && symbol.Storage is not VariableStorage.Static
           && this.TryDirectCell(symbol) != null)
         return symbol;
