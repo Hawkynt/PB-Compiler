@@ -1246,7 +1246,18 @@ public sealed partial class CodeGenerator {
 
       case (ValueKind.Float, ValueKind.Int32):
         this.EmitDialectRounding();
-        asm.Fistp(Mem.Dword(this._scratch));
+        if (this.CheckOverflow) {
+          // $ERROR OVERFLOW: narrowing a wide value into a signed LONG traps error 6
+          // when it is out of range (e.g. the wide product of a& * b&). FISTP of an
+          // out-of-range value stores 8000_0000h and sets the x87 Invalid-Operation
+          // flag (IE, status-word bit 0); clear stale flags first, then test it.
+          asm.Fnclex();
+          asm.Fistp(Mem.Dword(this._scratch));
+          asm.FstswAx();
+          asm.Test(Reg.AL, (Imm)1);            // IE set => the value did not fit a signed LONG
+          this.EmitRaiseWhen(asm.Jz, 6);
+        } else
+          asm.Fistp(Mem.Dword(this._scratch));
         asm.Mov(Reg.AX, Mem.Word(this._scratch));
         asm.Mov(Reg.DX, Mem.Word(this._scratch, 2));
         break;

@@ -736,8 +736,25 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     var proven = Ssa.Sccp.Solve(model, ssa);
     if (proven.Count > 0)
       this._provenReads = proven;
-    // O2: assignments whose result SCCP propagated away (or never read) are dead
-    var dead = Ssa.DeadStore.Compute(model, ssa, proven);
+    // O2: assignments whose result SCCP propagated away (or never read) are dead.
+    // A read that SCCP proved constant only stops keeping its store alive when the
+    // emitter actually folds that read to the constant - which it does NOT do under
+    // $ERROR OVERFLOW/NUMERIC (folding a checked op would skip its trap; see the
+    // `!CheckOverflow && !CheckNumeric` gate on the proven-read fold). When such
+    // checking is enabled anywhere in this body the reads stay as real memory loads,
+    // so a store feeding them is NOT dead - run dead-store analysis against an EMPTY
+    // proven set (remove only genuinely-unread stores) to avoid dropping a store the
+    // un-folded read still loads. The flag form (CheckOverflow/CheckNumeric) is only
+    // set later, when the $ERROR meta is emitted, so test the model directly.
+    var checkedArithmetic = model.MetaStatements.Any(m =>
+      m.Command.Equals("ERROR", StringComparison.OrdinalIgnoreCase)
+      && m.Arguments.Count >= 2
+      && m.Arguments[0].Text.ToUpperInvariant() is "NUMERIC" or "OVERFLOW" or "ALL"
+      && m.Arguments[^1].Text.Equals("ON", StringComparison.OrdinalIgnoreCase));
+    var deadProven = checkedArithmetic
+      ? (IReadOnlyDictionary<Syntax.Ast.NameExpr, long>)new Dictionary<Syntax.Ast.NameExpr, long>()
+      : proven;
+    var dead = Ssa.DeadStore.Compute(model, ssa, deadProven);
     // copy propagation: redirect reads of a copy y = x to x and drop the copy
     var (copyReads, deadCopies) = OptCopyProp.Analyze(ssa);
     if (copyReads.Count > 0)

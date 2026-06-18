@@ -2115,12 +2115,18 @@ public sealed class Binder {
   /// into a narrower integral. TB and the Microsoft family wrap in-place.
   /// </summary>
   private PbType ArithmeticResultType(BinaryExpr b, PbType left, PbType right) {
-    if (this._dialect.IsPbAtLeast(Dialect.Pb20) && !this._checkedArithmetic
+    if (this._dialect.IsPbAtLeast(Dialect.Pb20)
         && left is ScalarType { IsFloat: false, ByteSize: <= 4 }
-        && right is ScalarType { IsFloat: false, ByteSize: <= 4 })
-      return Math.Max(EffectiveDivideWidth(b.Left, left), EffectiveDivideWidth(b.Right, right)) <= 2
+        && right is ScalarType { IsFloat: false, ByteSize: <= 4 }) {
+      var wide = Math.Max(EffectiveDivideWidth(b.Left, left), EffectiveDivideWidth(b.Right, right)) <= 2
         ? PbType.Single
         : PbType.Double;
+      if (!this._checkedArithmetic)
+        return wide;
+      var bothSigned = left is ScalarType { Signed: true } && right is ScalarType { Signed: true };
+      if (b.Op == BinaryOp.Multiply && bothSigned && wide == PbType.Double)
+        return wide;
+    }
     return PromoteUnsigned(Widest(left, right));
   }
 
