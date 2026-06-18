@@ -62,6 +62,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private (VariableSymbol Symbol, Reg Reg)? _registerCounter;
   private (VariableSymbol Symbol, Reg Reg)? _registerAccumulator;
 
+  /// <summary>O16 interval lattice: the per-statement-entry interval environment of the main body
+  /// (<see cref="IntervalRangeAnalysis"/>), consulted by <see cref="IndexRangeOf"/> through
+  /// <see cref="_currentStatement"/> to prove a non-FOR-counter variable's range at a use site.</summary>
+  private IReadOnlyDictionary<Statement, IReadOnlyDictionary<VariableSymbol, Interval>>? _intervalPoints;
+  private Statement? _currentStatement;
+
   /// <summary>O16: the proven [lo,hi] range of each FOR counter active over the current body
   /// (constant From/To, counter never written or aliased in the body). Used to drop a bounds
   /// check whose index is exactly such a counter and whose range lies inside the array bounds.</summary>
@@ -143,12 +149,29 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// expression (counter +/- constant), so neighbour accesses like a(i-1)/a(i+1) prove in
   /// range. Range arithmetic is exact (the index value is exactly this expression).
   /// </summary>
+  /// <summary>
+  /// O16 interval lattice: the proven [lo,hi] of variable <paramref name="v"/> at the statement
+  /// currently being emitted, or null when unknown (Top) or outside the analyzed main body.
+  /// Sound (over-approximation) and wrap-correct - a value that overflowed its type reads as Top,
+  /// never a misleading mathematical range.
+  /// </summary>
+  private (long Lo, long Hi)? LatticeRangeOf(VariableSymbol v) {
+    if (this._intervalPoints is { } points && this._currentStatement is { } s
+        && points.TryGetValue(s, out var env) && env.TryGetValue(v, out var iv) && !iv.IsTop)
+      return (iv.Lo, iv.Hi);
+    return null;
+  }
+
   private (long Lo, long Hi)? IndexRangeOf(Expression idx) {
     if (this.OptFolder.TryFold(idx) is { Integer: { } c })
       return (c, c);
     switch (idx) {
-      case NameExpr n when model.VariableBindings.TryGetValue(n, out var v) && this._forRanges.TryGetValue(v, out var r):
-        return r;
+      case NameExpr n when model.VariableBindings.TryGetValue(n, out var v):
+        // a FOR-counter range wins (it is the exact loop bound); otherwise the interval lattice
+        // may prove a range for an arbitrary variable at this program point
+        if (this._forRanges.TryGetValue(v, out var r))
+          return r;
+        return this.LatticeRangeOf(v);
       case BinaryExpr { Op: BinaryOp.Add } b:
         // both operands range-known (e.g. a(i+j) over two counters/derived vars): the
         // endpoints add. Interval arithmetic over independent operands over-approximates a
@@ -513,6 +536,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     this.PrepareCse(model.MainBody);
     this.PrepareSccp(model.MainBody);
+    if (this.Optimize)
+      this._intervalPoints = IntervalRangeAnalysis.AnalyzeProgramPoints(model.MainBody, model);
     this.BeginFrame(skipZeroing: this.Optimize && !ContainsErrorHandling(model.MainBody));
     this.EmitChainCommonLoad();             // absorb a CHAIN handoff, when present
     this._trackResume = ContainsErrorHandling(model.MainBody);
@@ -890,6 +915,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// RESUME / RESUME NEXT can re-enter after an error unwound the stack.
   /// </summary>
   private void EmitStatement(Statement statement) {
+    // O16: the current program point - lets IndexRangeOf query the interval lattice at this use
+    this._currentStatement = statement;
     // pb36 O2: a dead store (pure RHS, value never really read) is not emitted
     if (this._deadStatements != null && this._deadStatements.Contains(statement))
       return;

@@ -114,6 +114,17 @@ public sealed class IntervalRangeTests {
     // a% is read before any assignment - conservatively unknown, so y% is too (untracked)
     Assert.That(RangeOf("y% = a% + 1\nEND", "y"), Is.Null);
 
+  [Test]
+  public void Analyze_GivenIntegerOverflow_ThenTopNotMathRange() =>
+    // 30000 + 30000 = 60000 overflows INTEGER (wraps to -5536); the lattice must NOT report
+    // [60000,60000] - it drops y% to Top so a consumer never trusts a wrapped value
+    Assert.That(RangeOf("x% = 30000\ny% = x% + 30000\nEND", "y"), Is.Null);
+
+  [Test]
+  public void Analyze_GivenLongHoldsWiderRange_ThenTracked() =>
+    // the same sum fits a LONG, so it is tracked there (no wrap)
+    Assert.That(RangeOf("x& = 30000\ny& = x& + 30000\nEND", "y"), Is.EqualTo(Interval.Of(60000)));
+
   #endregion
 
   #region per-program-point queries

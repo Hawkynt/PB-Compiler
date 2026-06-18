@@ -121,13 +121,13 @@ public static class IntervalRangeAnalysis {
     switch (s) {
       case AssignStmt { Target: NameExpr t, Value: { } v }
           when IntVar(t, model) is { } sym && CallFree(v, model):
-        Set(env, sym, Eval(v, env, model));
+        Set(env, sym, FitOrTop(Eval(v, env, model), sym.Type));
         return;
       case IncrDecrStmt { Target: NameExpr t } id
           when IntVar(t, model) is { } sym && (id.Amount == null || CallFree(id.Amount, model)): {
         var cur = env.TryGetValue(sym, out var iv) ? iv : Interval.Top;
         var amount = id.Amount == null ? Interval.Of(1) : Eval(id.Amount, env, model);
-        Set(env, sym, id.Increment ? cur.Add(amount) : cur.Subtract(amount));
+        Set(env, sym, FitOrTop(id.Increment ? cur.Add(amount) : cur.Subtract(amount), sym.Type));
         return;
       }
       case IfStmt iff when CallFree(iff.Condition, model) && iff.ElseIfs.All(e => CallFree(e.Condition, model)): {
@@ -188,7 +188,7 @@ public static class IntervalRangeAnalysis {
       case BinaryExpr b:
         var l = Eval(b.Left, env, model);
         var r = Eval(b.Right, env, model);
-        return b.Op switch {
+        var raw = b.Op switch {
           BinaryOp.Add => l.Add(r),
           BinaryOp.Subtract => l.Subtract(r),
           BinaryOp.Multiply => l.Multiply(r),
@@ -197,9 +197,33 @@ public static class IntervalRangeAnalysis {
           BinaryOp.And => l.And(r),
           _ => Interval.Top,
         };
+        // the result wraps at its (possibly PB-promoted) result type, so a value that overflows
+        // that type is unpredictable -> Top. A range that fits the type did not wrap and is exact.
+        return FitOrTop(raw, model.TypeOf(b));
       default:
         return Interval.Top;
     }
+  }
+
+  /// <summary>The representable range of an integer type; Top for floats, QUAD, or anything else
+  /// (so it never clamps a value we cannot bound). Integer arithmetic wraps within this range.</summary>
+  private static Interval TypeRange(PbType type) => type switch {
+    ScalarType { IsFloat: false, ByteSize: 1, Signed: true } => new(-128, 127),
+    ScalarType { IsFloat: false, ByteSize: 1, Signed: false } => new(0, 255),
+    ScalarType { IsFloat: false, ByteSize: 2, Signed: true } => new(-32768, 32767),
+    ScalarType { IsFloat: false, ByteSize: 2, Signed: false } => new(0, 65535),
+    ScalarType { IsFloat: false, ByteSize: 4, Signed: true } => new(-2147483648, 2147483647),
+    ScalarType { IsFloat: false, ByteSize: 4, Signed: false } => new(0, 4294967295),
+    _ => Interval.Top,
+  };
+
+  /// <summary>The interval unchanged when it fits the type's representable range; otherwise Top -
+  /// a value that overflows the type wraps to something the lattice cannot predict.</summary>
+  private static Interval FitOrTop(Interval iv, PbType type) {
+    if (iv.IsTop)
+      return Interval.Top;
+    var t = TypeRange(type);
+    return iv.Lo >= t.Lo && iv.Hi <= t.Hi ? iv : Interval.Top;
   }
 
   /// <summary>The bound symbol when <paramref name="e"/> is a scalar non-float integer variable.</summary>

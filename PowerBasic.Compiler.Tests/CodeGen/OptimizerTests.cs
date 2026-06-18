@@ -456,6 +456,17 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenLatticeBoundedIndexUnderBoundsOn_WhenPb36_ThenCheckElided() {
+    // k% is [5,10] (an IF-join, not a constant and not a FOR counter) - the interval lattice
+    // proves it lies inside a%(0 TO 20), so the bounds check drops; an INPUT-sourced k% is unknown
+    // and keeps the check. Exercises the lattice wired into IndexRangeOf for arbitrary variables.
+    const string bounded = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(0 TO 20)\nk% = 5\nIF c% > 0 THEN k% = 10\na%(k%) = k%\nEND";
+    const string unknown = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(0 TO 20)\nINPUT k%\na%(k%) = k%\nEND";
+    Assert.That(CountRaise9(Compile(bounded, Dialect.Pb36)), Is.LessThan(CountRaise9(Compile(unknown, Dialect.Pb36))),
+      "a lattice-bounded variable index inside the array bounds should drop the Error-9 check");
+  }
+
+  [Test]
   public void Emit_GivenForCounterIndexUnderBoundsOn_WhenPb36_ThenCheckElided() {
     // a%(i%) with i% the in-bounds FOR counter drops its bounds check; a%(k%) keeps it.
     // The store value is non-constant so the constant-fill idiom does not confound the count.
@@ -470,9 +481,9 @@ public sealed class OptimizerTests {
   public void Emit_GivenTwoRangeIndexUnderBoundsOn_WhenPb36_ThenCheckElided() {
     // a%(i% + j%) with i% the [2,9] FOR counter and j% = i% - 1 a derived [1,8] var:
     // the index range [3,17] lies inside the (0 TO 30) bounds, so the Error-9 check drops.
-    // Modifying j% after the access defeats its range registration, so that variant keeps it.
+    // An INPUT-sourced j% is unknown, so that variant keeps the check.
     const string twoRange = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(0 TO 30)\nFOR i% = 2 TO 9\nj% = i% - 1\na%(i% + j%) = i%\nNEXT i%\nEND";
-    const string defeated = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(0 TO 30)\nFOR i% = 2 TO 9\nj% = i% - 1\na%(i% + j%) = i%\nj% = 0\nNEXT i%\nEND";
+    const string defeated = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(0 TO 30)\nINPUT j%\nFOR i% = 2 TO 9\na%(i% + j%) = i%\nNEXT i%\nEND";
     Assert.That(CountRaise9(Compile(twoRange, Dialect.Pb36)),
       Is.LessThan(CountRaise9(Compile(defeated, Dialect.Pb36))),
       "an index summing two range-known vars, provably in bounds, should drop the Error-9 check");
@@ -504,7 +515,7 @@ public sealed class OptimizerTests {
   public void Emit_GivenForCounterAddUnderOverflowOn_WhenPb36_ThenCheckElided() {
     // i% + 1 over an in-range FOR counter drops its Error-6 check; k% + 1 keeps it
     const string counterAdd = "$ERROR OVERFLOW ON\n$OPTIMIZE SPEED\nFOR i% = 1 TO 100\nx% = i% + 1\nNEXT i%\nEND";
-    const string varAdd = "$ERROR OVERFLOW ON\n$OPTIMIZE SPEED\nk% = 5\nFOR i% = 1 TO 100\nx% = k% + 1\nNEXT i%\nEND";
+    const string varAdd = "$ERROR OVERFLOW ON\n$OPTIMIZE SPEED\nINPUT k%\nFOR i% = 1 TO 100\nx% = k% + 1\nNEXT i%\nEND";
     Assert.That(CountRaise6(Compile(counterAdd, Dialect.Pb36)),
       Is.LessThan(CountRaise6(Compile(varAdd, Dialect.Pb36))),
       "an in-range FOR-counter add should drop its Error-6 overflow check");
@@ -515,7 +526,7 @@ public sealed class OptimizerTests {
     // a LONG i& + 1& over [1,100] -> [2,101] stays inside 32 bits and drops its Error-6
     // check; a LONG k& + 1& with an unknown k& keeps the 32-bit ADD/ADC overflow trap
     const string counterAdd = "$ERROR OVERFLOW ON\n$OPTIMIZE SPEED\nFOR i& = 1 TO 100\nx& = i& + 1&\nNEXT i&\nEND";
-    const string varAdd = "$ERROR OVERFLOW ON\n$OPTIMIZE SPEED\nk& = 5\nFOR i& = 1 TO 100\nx& = k& + 1&\nNEXT i&\nEND";
+    const string varAdd = "$ERROR OVERFLOW ON\n$OPTIMIZE SPEED\nINPUT k&\nFOR i& = 1 TO 100\nx& = k& + 1&\nNEXT i&\nEND";
     Assert.That(CountRaise6(Compile(counterAdd, Dialect.Pb36)),
       Is.LessThan(CountRaise6(Compile(varAdd, Dialect.Pb36))),
       "an in-range LONG FOR-counter add should drop its 32-bit Error-6 overflow check");
@@ -525,7 +536,7 @@ public sealed class OptimizerTests {
   public void Emit_GivenLongForCounterSubtractUnderOverflowOn_WhenPb36_ThenCheckElided() {
     // a LONG i& - 1& over [1,100] -> [0,99] stays inside 32 bits and drops its Error-6 check
     const string counterSub = "$ERROR OVERFLOW ON\n$OPTIMIZE SPEED\nFOR i& = 1 TO 100\nx& = i& - 1&\nNEXT i&\nEND";
-    const string varSub = "$ERROR OVERFLOW ON\n$OPTIMIZE SPEED\nk& = 5\nFOR i& = 1 TO 100\nx& = k& - 1&\nNEXT i&\nEND";
+    const string varSub = "$ERROR OVERFLOW ON\n$OPTIMIZE SPEED\nINPUT k&\nFOR i& = 1 TO 100\nx& = k& - 1&\nNEXT i&\nEND";
     Assert.That(CountRaise6(Compile(counterSub, Dialect.Pb36)),
       Is.LessThan(CountRaise6(Compile(varSub, Dialect.Pb36))),
       "an in-range LONG FOR-counter subtract should drop its 32-bit Error-6 overflow check");
