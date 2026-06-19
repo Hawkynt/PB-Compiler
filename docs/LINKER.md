@@ -82,9 +82,14 @@ constrains what foreign code can be linked and is the crux of the whole feature.
 
 - **Memory model.** Only objects built for a compatible model link cleanly. Tiny/
   small C (near code, near data in `DGROUP`) maps onto our single segment by
-  relocating `_TEXT`/`_DATA`/`CONST`/`BSS` into it. Compact/large/huge objects use
-  far pointers and multiple segments — supported only if we grow the writer to emit
-  extra segments, or rejected with a clear diagnostic. **M1 targets small/tiny.**
+  relocating `_TEXT`/`_DATA`/`CONST`/`BSS` into it. Compact/large objects that use
+  **far pointers** now link too **as long as the whole image fits 64 KiB**: since
+  everything lives in one combined segment loaded at a single paragraph, a far
+  reference's segment is simply that load segment, so `OmfToPbu` lowers a `Base16`
+  (segment word) to an MZ relocation and a `Pointer32` (seg:off) to an offset half
+  plus that relocation — fixup sites in a data segment included (`PbuFixup.InData`).
+  An image that genuinely needs **more than 64 KiB / multiple paragraphs** is still
+  rejected by the linker's size check (real per-segment layout is future work).
 
 - **cdecl (C).** Caller pushes args right-to-left and cleans the stack; result in
   `AX`/`DX:AX`; publics are decorated with a leading underscore (`_Foo`). We already
@@ -213,9 +218,10 @@ we already apply to our own sections.
   existing `Linker` lays it out and resolves it. `$LINK "x.OBJ"`/`"x.LIB"` is wired in
   the driver; `DECLARE ... CDECL ALIAS "_sym"` names the external public (the codegen
   external label now uses the alias). End-to-end test: a BASIC program links a leaf
-  cdecl object and calls it under DOSBox (`addone(41)` → `42`). Still thin: data-
-  segment fixups and multi-segment objects are minimally handled; verifying against
-  genuine `LINK.EXE` and richer `FIXUPP`/`.LIB` dictionaries is the next hardening.
+  cdecl object and calls it under DOSBox (`addone(41)` → `42`). Far (`Base16`/
+  `Pointer32`) and data-segment fixups are now lowered into the single 64 KiB segment
+  (a far reference's segment becomes the load segment); only genuinely >64 KiB
+  multi-segment objects remain unsupported.
 - **M2 — `.LIB` archives.** Dictionary parse + selective extraction + dead-module
   stripping; multi-module resolution.
 - **M3 — C runtime.** Link a CRT `.LIB`, startup/`DGROUP` init, far-data handling as
@@ -231,8 +237,10 @@ we already apply to our own sections.
   group-relative fixups right is fiddly. Start from the subset MS C/MASM emit for
   small model.
 - `LIDATA` (iterated/repeated data) must be expanded correctly.
-- Tiny-model assumption: far calls/data in a foreign object need either multi-segment
-  output or a hard diagnostic — decide per object via its `SEGDEF`/`GRPDEF`.
+- Tiny-model assumption: far data/pointers in a foreign object are hosted in the single
+  combined segment **while it fits 64 KiB** (a far reference's segment is the load
+  segment); a larger image still needs real multi-segment output and hits the size
+  diagnostic instead.
 - CRT and BASIC-runtime dependencies are transitive; a single `printf` can pull in a
   large dependency graph.
 - Name decoration differs by convention (cdecl `_name`, pascal/stdcall uppercase) —

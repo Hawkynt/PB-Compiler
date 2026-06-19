@@ -121,23 +121,29 @@ public sealed class Linker {
       unit.Data.CopyTo(data, dataBase[unit]);
     }
 
-    // 4. apply fixups (data offsets are relative to the data base which the
-    //    caller appends right after code - data fixup sites get code length added)
+    // 4. apply fixups. A site sits in the code image, or - for a foreign far/data
+    //    initializer (PbuFixup.InData) - in the data image. Data offsets are relative to
+    //    the data base which the caller appends right after code, so a data target (and an
+    //    MZ relocation in the data image) gets the code length added.
     var segmentSites = new List<int>();
     foreach (var unit in participating)
       foreach (var fixup in unit.Fixups) {
-        var site = (int)(codeBase[unit] + fixup.Offset);
+        var inData = fixup.InData;
+        var blob = inData ? data : code;
+        var site = (int)((inData ? dataBase[unit] : codeBase[unit]) + fixup.Offset);
+        // where this site lands in the concatenated [code .. data] image the MZ writer emits
+        var imageOffset = inData ? (int)(codeSize + dataBase[unit] + fixup.Offset) : site;
         switch (fixup.Kind) {
           case PbuFixupKind.NearCode:
-            Patch16(code, site, (ushort)(Read16(code, site) + codeBase[unit]));
+            Patch16(blob, site, (ushort)(Read16(blob, site) + codeBase[unit]));
             break;
 
           case PbuFixupKind.DataOffset:
-            Patch16(code, site, (ushort)(Read16(code, site) + codeSize + dataBase[unit]));
+            Patch16(blob, site, (ushort)(Read16(blob, site) + codeSize + dataBase[unit]));
             break;
 
           case PbuFixupKind.Segment:
-            segmentSites.Add(site);
+            segmentSites.Add(imageOffset);
             break;
 
           case PbuFixupKind.ImportCall or PbuFixupKind.ImportOffset: {
@@ -147,10 +153,10 @@ public sealed class Linker {
             var (providerUnit, export) = Resolve(import.Name)!.Value;
             var target = codeBase[providerUnit] + export.CodeOffset;
             if (fixup.Kind == PbuFixupKind.ImportOffset)
-              Patch16(code, site, (ushort)(Read16(code, site) + target)); // site keeps its addend
+              Patch16(blob, site, (ushort)(Read16(blob, site) + target)); // site keeps its addend
             else
               // near-call displacement is relative to the byte after the 16-bit operand
-              Patch16(code, site, (ushort)(target - (uint)(site + 2)));
+              Patch16(blob, site, (ushort)(target - (uint)(imageOffset + 2)));
             break;
           }
 

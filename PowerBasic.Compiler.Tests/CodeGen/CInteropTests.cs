@@ -306,6 +306,50 @@ public sealed class CInteropTests {
       $"{Bcc31.Display}: linking C++ square(5) via {mangled} should print 25 but got [{files["RESULT.TXT"].Replace("\r", "\\r").Replace("\n", "\\n")}]");
   }
 
+  // ---- linking an object that uses FAR data (compact/large-model fixups) -----
+
+  // A small-model object with an explicitly FAR global: reading its value forces the
+  // compiler to emit a Base16 (segment of g) + Offset16 (offset of g) FIXUPP pair - the
+  // far-reference shape compact/large-model objects use. Our linker hosts the whole program
+  // in one combined segment, so that segment is just the program's load segment (an MZ
+  // relocation) and the offset is g's place in the image - getg() must still read 100.
+  private const string FarGlobalSrc = "int far g = 100;\nint getg(void){ return g; }\n";
+
+  [Test]
+  public void Link_GivenObjectUsingFarData_WhenLinkedByOurs_ThenFarReadReturns100() {
+    // --- given: Borland C++ 3.1 and DOSBox are available ----------------------
+    var slot = EnsureToolchain(Bcc31.Slot);
+    Assume.That(slot, Is.Not.Null, $"{Bcc31.Display}: toolchain unavailable - skipped");
+    Assume.That(DosBoxRunner.Executable, Is.Not.Null, "DOSBox not found - skipped");
+
+    // --- when: build the far-global object; it must really carry a far fixup ---
+    var cc = Bcc31 with { CSource = FarGlobalSrc, CompileCmd = "C:\\BIN\\BCC.EXE -c -ms LEAF.C > CC.LOG" };
+    var module = OmfReader.ReadObject(CompileLeaf(slot!, cc));
+    Assert.That(module.Fixups.Any(f => f.Location is OmfLocation.Base16 or OmfLocation.Pointer32), Is.True,
+      $"{Bcc31.Display}: expected a far fixup from 'int far g' - locations [{string.Join(", ", module.Fixups.Select(f => f.Location))}]");
+    var unit = OmfToPbu.Convert(module);
+
+    const string source = """
+      DECLARE FUNCTION getg CDECL ALIAS "_getg" () AS INTEGER
+      OPEN "RESULT.TXT" FOR OUTPUT AS #1
+      PRINT #1, getg()
+      CLOSE #1
+      END
+      """;
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35), Dialect.Pb35);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model);
+    var exe = generator.EmitExecutable([unit], []);
+    Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+
+    var (_, files) = DosBoxRunner.RunWithFiles(exe, ["RESULT.TXT"]);
+
+    // --- then: the linked far read produced 100 -------------------------------
+    Assert.That(files.ContainsKey("RESULT.TXT"), Is.True, $"{Bcc31.Display}: linked program wrote no RESULT.TXT");
+    Assert.That(files["RESULT.TXT"].Trim(), Is.EqualTo("100"),
+      $"{Bcc31.Display}: a far read of g should print 100 but got [{files["RESULT.TXT"].Replace("\r", "\\r").Replace("\n", "\\n")}]");
+  }
+
   /// <summary>Compiles the leaf C routine with <paramref name="cc"/> under DOSBox and returns the .OBJ bytes.</summary>
   private static byte[] CompileLeaf(string slot, ForeignCc cc) {
     var work = Path.Combine(Path.GetTempPath(), "pbc-cc-" + Guid.NewGuid().ToString("N")[..8]);

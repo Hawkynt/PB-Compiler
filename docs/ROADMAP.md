@@ -15,11 +15,19 @@ Extends the OMF reader/linker + calling-convention work already landed.
   diagnostics) the mangled publics of MSVC, Borland and Watcom — each scheme
   differs. *Touch points:* `Linker.Resolve`, a new `Demangle` helper, `ALIAS`
   surface. This is the original question that opened the interop thread.
-- **Far pointers & non-tiny memory models.** `OmfToPbu` throws
-  `OmfException` on far (`Base16`/`Pointer32`) fixups and on data-segment
-  relocations, so medium/compact/large-model C objects cannot be linked at all.
-  Needs multi-segment layout, far FIXUPP lowering, and MZ relocation emission.
-  *Touch points:* `OmfToPbu`, `Linker`, `MzExeWriter`, `LinkedImage`.
+- **Far pointers & non-tiny memory models.** *Single-segment subset done.*
+  `OmfToPbu` now lowers far (`Base16`/`Pointer32`) fixups and data-segment fixup
+  sites instead of rejecting them: because the whole program lives in one combined
+  segment loaded at a single paragraph, every far reference's segment is just the
+  load segment (an MZ relocation) and its offset is the target's place in the
+  image, so compact/large-model objects that still fit 64 KiB link and run (a far
+  `int far g` read; a far-pointer initializer in data — `OmfTests`, plus the
+  `Link_GivenObjectUsingFarData_…` interop case). *Still TODO:* genuinely
+  multi-segment images **larger than 64 KiB** need real per-segment paragraph
+  layout (each foreign far segment its own paragraph) and far FIXUPP frames that
+  are not the load segment. The linker's existing 64 KiB size check fires the clear
+  diagnostic until then. *Touch points:* `OmfToPbu`, `Linker`, `MzExeWriter`,
+  `LinkedImage`.
 
 ### Should
 - **Full register arg-size rules** for `WATCALL`/`FASTCALL`: LONG/float/pointer

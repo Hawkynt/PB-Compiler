@@ -25,7 +25,14 @@ public sealed record PbuImport(string Name, uint SignatureHash);
 
 public sealed record PbuCommonBlock(string Name, uint Size);
 
-public sealed record PbuFixup(uint Offset, PbuFixupKind Kind, ushort Target);
+/// <summary>
+/// A relocation in a unit's image. <paramref name="Offset"/> is relative to the unit's
+/// code base, or - when <paramref name="InData"/> is set - its data base (a site sitting
+/// in the data image, as a foreign far/data initializer can). <paramref name="InData"/>
+/// is in-memory only: it occurs solely on foreign OMF objects (lowered, never persisted),
+/// since BASIC codegen emits only code-site fixups, so it is not serialized.
+/// </summary>
+public sealed record PbuFixup(uint Offset, PbuFixupKind Kind, ushort Target, bool InData = false);
 
 /// <summary>CPU/feature requirement flags of a unit.</summary>
 [Flags]

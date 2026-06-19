@@ -231,21 +231,86 @@ public sealed class OmfTests {
     });
   }
 
+  // A FIXUPP record: one location of kind <loc> at <siteOff> in the last-written segment,
+  // targeting SEGMENT index <segDatum> (1-based). Absolute unless <selfRel>. An optional
+  // target displacement (e.g. &arr[3]) follows when <disp> is given (P-bit cleared).
+  private static byte[] FixupLoc(int loc, int siteOff, int segDatum, bool selfRel = false, int? disp = null) {
+    var locat = 0x80 | (selfRel ? 0 : 0x40) | (loc << 2) | ((siteOff >> 8) & 0x3);
+    var fixdat = (0 << 4) | (disp is null ? 0x04 : 0) | 0; // frame SEGDEF, P-bit=no-disp unless given, target SEGDEF
+    byte[] tail = disp is null
+      ? [(byte)segDatum, (byte)segDatum]
+      : [(byte)segDatum, (byte)segDatum, .. U16(disp.Value)];
+    return Record(0x9C, B((byte)locat, (byte)siteOff), B((byte)fixdat), tail);
+  }
+
   [Test]
-  public void Convert_GivenFarFixup_ThenThrowsClearOmfException() {
-    // a LOC=2 (16-bit base/segment) fixup cannot live in the tiny single-segment model.
-    var locat = 0x80 | 0x40 | (2 << 2); // F=1, M=1 absolute, LOC=2 (base16), siteOff=0
-    var fixdat = (0 << 4) | (1 << 2) | 0; // frame SEGDEF, no-disp, target SEGDEF
+  public void ConvertAndLink_GivenFarSegmentFixup_ThenHostedAsLoadSegmentRelocation() {
+    // MOV AX,<seg> ; RET - the segment word (at code+1) is a Base16 (LOC=2) fixup. The whole
+    // program is one segment, so it becomes an MZ relocation: the site is zeroed and the DOS
+    // loader adds the load segment. seg 2 (data) is the nominal target.
+    byte[] loadSeg = [0xB8, 0xFF, 0xFF, 0xC3];
     byte[] obj = [
-      .. Record(0x80, Str("FARREF")),
-      .. Record(0x96, Str("_TEXT"), Str("CODE")),
-      .. Record(0x98, B(0x28), U16(_loadFromData.Length), B(1), B(2), B(0)),
-      .. Record(0xA0, B(1), U16(0), _loadFromData),
-      .. Record(0x9C, B((byte)locat, 0), B((byte)fixdat), B(1), B(1)),
+      .. Record(0x80, Str("FARSEG")),
+      .. Record(0x96, Str("_TEXT"), Str("CODE"), Str("_DATA"), Str("DATA")),
+      .. Record(0x98, B(0x28), U16(loadSeg.Length),   B(1), B(2), B(0)), // seg1 _TEXT/CODE
+      .. Record(0x98, B(0x28), U16(_dataBytes.Length), B(3), B(4), B(0)), // seg2 _DATA/DATA
+      .. Record(0xA0, B(2), U16(0), _dataBytes),
+      .. Record(0xA0, B(1), U16(0), loadSeg),     // code last -> FIXUPP binds to seg1
+      .. FixupLoc(2, 1, 2),                        // Base16 at code+1, target = seg 2
       .. Record(0x8A, B(0)),
     ];
-    var m = OmfReader.ReadObject(obj); // reading records the far fixup
-    Assert.That(() => OmfToPbu.Convert(m), Throws.TypeOf<OmfException>());
+    var foreign = OmfToPbu.Convert(OmfReader.ReadObject(obj));
+    Assert.That(foreign.Fixups, Has.Count.EqualTo(1));
+    Assert.That(foreign.Fixups[0].Kind, Is.EqualTo(PbuFixupKind.Segment));
+    Assert.That(foreign.Fixups[0].InData, Is.False);
+    Assert.That(foreign.Code[1] | (foreign.Code[2] << 8), Is.EqualTo(0), "segment word must be zeroed for the loader to fill");
+
+    var linker = new Linker();
+    linker.AddUnit(foreign);
+    var image = linker.Link(new PbuFile { Name = "MAIN", Code = [] });
+    // empty main -> the unit sits at code base 0, so the relocation is at image offset 1
+    Assert.That(image.SegmentRelocationSites, Does.Contain(1));
+  }
+
+  [Test]
+  public void ConvertAndLink_GivenFarPointerInitializerInData_ThenSplitsIntoOffsetAndSegment() {
+    // a far pointer (Pointer32, LOC=3) sitting IN the data segment: it points at a datum 4
+    // bytes further on (the value 42). The far ptr lowers to an offset half (a DataOffset
+    // into the combined image) plus a segment half (an MZ relocation), both data-image sites.
+    byte[] code = [0xC3];                                    // a 1-byte RET
+    byte[] data = [0x00, 0x00, 0x00, 0x00, 0x2A, 0x00, 0x00, 0x00]; // [far ptr][value 42]
+    byte[] obj = [
+      .. Record(0x80, Str("FARPTR")),
+      .. Record(0x96, Str("_TEXT"), Str("CODE"), Str("_DATA"), Str("DATA")),
+      .. Record(0x98, B(0x28), U16(code.Length), B(1), B(2), B(0)), // seg1 _TEXT/CODE
+      .. Record(0x98, B(0x28), U16(data.Length), B(3), B(4), B(0)), // seg2 _DATA/DATA
+      .. Record(0xA0, B(1), U16(0), code),
+      .. Record(0xA0, B(2), U16(0), data),         // data last -> FIXUPP binds to seg2 (the site)
+      .. FixupLoc(3, 0, 2, disp: 4),               // Pointer32 at data+0, target seg2, +4
+      .. Record(0x8A, B(0)),
+    ];
+    var foreign = OmfToPbu.Convert(OmfReader.ReadObject(obj));
+    Assert.Multiple(() => {
+      Assert.That(foreign.Fixups, Has.Count.EqualTo(2));
+      Assert.That(foreign.Fixups[0].Kind, Is.EqualTo(PbuFixupKind.DataOffset)); // offset half
+      Assert.That(foreign.Fixups[1].Kind, Is.EqualTo(PbuFixupKind.Segment));    // segment half
+      Assert.That(foreign.Fixups.All(f => f.InData), Is.True, "both halves live in the data image");
+    });
+
+    var linker = new Linker();
+    linker.AddUnit(foreign);
+    var image = linker.Link(new PbuFile { Name = "MAIN", Code = [] });
+    var off = image.Data[0] | (image.Data[1] << 8);
+    Assert.Multiple(() => {
+      // the far pointer's offset is the target datum's offset in the combined segment:
+      // code occupies [0..codeSize), the value 42 is at data offset 4 -> codeSize + 4.
+      Assert.That(off, Is.EqualTo(image.Code.Length + 4));
+      Assert.That(image.Data[2] | (image.Data[3] << 8), Is.EqualTo(0), "segment half zeroed for the loader");
+      // the segment half is relocated where it sits in the [code .. data] image: codeSize + 2
+      Assert.That(image.SegmentRelocationSites, Does.Contain(image.Code.Length + 2));
+      // the pointed-at value survived unchanged
+      Assert.That(image.Data[4], Is.EqualTo(0x2A));
+    });
   }
 
   // ---- #22: .LIB symbol dictionary ------------------------------------------

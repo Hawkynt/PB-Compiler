@@ -25,19 +25,22 @@ public sealed record OmfPublic(string Name, int SegmentIndex, int Offset);
 public enum OmfTargetKind { Segment, External }
 
 /// <summary>
-/// FIXUPP location type (the LOC field). Only <see cref="Offset16"/> maps onto our tiny
-/// single-segment model; <see cref="Base16"/>/<see cref="Pointer32"/> are far (seg or
-/// seg:off) and cannot be hosted, so the converter rejects them rather than miscompile.
+/// FIXUPP location type (the LOC field). <see cref="Offset16"/> is a near 16-bit offset;
+/// <see cref="Base16"/> is a segment word and <see cref="Pointer32"/> a far seg:off. The
+/// converter hosts all three inside the single combined segment (a far reference's segment
+/// is just the program's load segment - see <see cref="OmfToPbu"/>).
 /// </summary>
 public enum OmfLocation { LoByte = 0, Offset16 = 1, Base16 = 2, Pointer32 = 3, HiByte = 4, LoaderOffset16 = 5, Other = 0xFF }
 
 /// <summary>
 /// A relocation (FIXUPP): patch the location at <see cref="DataOffset"/> inside segment
-/// <see cref="SegmentIndex"/>. <see cref="Location"/> says what kind of location it is
-/// (a 16-bit offset is the only one we relocate). <see cref="SelfRelative"/> = the
-/// location is a self-relative displacement (near call/jmp); otherwise an absolute offset.
+/// <see cref="SegmentIndex"/>. <see cref="Location"/> says what kind of location it is.
+/// <see cref="SelfRelative"/> = the location is a self-relative displacement (near
+/// call/jmp); otherwise an absolute offset. <see cref="Displacement"/> is the target's
+/// additive offset from the FIXUPP record (e.g. <c>&amp;arr[3]</c>) when not carried in the
+/// located bytes.
 /// </summary>
-public sealed record OmfFixup(int SegmentIndex, int DataOffset, bool SelfRelative, OmfTargetKind TargetKind, int TargetIndex, OmfLocation Location = OmfLocation.Offset16);
+public sealed record OmfFixup(int SegmentIndex, int DataOffset, bool SelfRelative, OmfTargetKind TargetKind, int TargetIndex, OmfLocation Location = OmfLocation.Offset16, int Displacement = 0);
 
 /// <summary>A parsed OMF object module (one .OBJ, or one member of a .LIB).</summary>
 public sealed class OmfModule {

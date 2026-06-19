@@ -268,13 +268,14 @@ public sealed class OmfReader {
       int targetDatum;
       if (targetByThread) { var t = targetThread[fixdat & 0x3]; targetMethod = t.Method; targetDatum = t.Datum; }
       else targetDatum = this.Index();
-      if (!noDisp) this.U16();                  // target displacement (carried in the located bytes instead)
+      var disp = noDisp ? 0 : this.U16();       // target displacement (else carried in the located bytes)
       var kind = (targetMethod & 0x3) == 2 ? OmfTargetKind.External : OmfTargetKind.Segment;
       var location = loc is >= 0 and <= 5 ? (OmfLocation)loc : OmfLocation.Other;
       // segment index 1-based for the LEDATA segment is tracked per fixup record start; OMF
       // ties FIXUPP to the preceding LEDATA, whose segment is the last one written. Every
-      // location kind is recorded; OmfToPbu decides which it can host (far ones are rejected).
-      m.Fixups.Add(new OmfFixup(this._lastDataSeg, dataOffset, selfRel, kind, targetDatum, location));
+      // location kind is recorded; OmfToPbu lowers near offsets, far segment/pointer words
+      // and data-segment sites alike into the single-segment model.
+      m.Fixups.Add(new OmfFixup(this._lastDataSeg, dataOffset, selfRel, kind, targetDatum, location, disp));
     }
   }
 
