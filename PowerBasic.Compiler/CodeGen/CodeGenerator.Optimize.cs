@@ -986,10 +986,22 @@ public sealed partial class CodeGenerator {
     value = 0;
     if (this._cseMarks?.ContainsKey(e) == true)
       return false;
-    if (this.OptFolder.TryFold(e) is not { Integer: { } v })
-      return false;
-    value = v;
-    return true;
+    if (this.OptFolder.TryFold(e) is { Integer: { } v }) {
+      value = v;
+      return true;
+    }
+    // pb36 O8/O17: an operand the emitter would fold to an SCCP-proven constant counts as a
+    // constant operand too, so `a% + b%` (b% proven 5) folds the 5 into one immediate ALU op
+    // instead of the push/eval/pop/add sequence. Gated like the proven-read fold: not under
+    // $ERROR OVERFLOW/NUMERIC (where the read stays a real load so a trap can still fire).
+    if (this._provenReads is { Count: > 0 } proven && !this.CheckOverflow && !this.CheckNumeric) {
+      var substituted = SubstituteProven(e, proven, out var changed);
+      if (changed && this.OptFolder.TryFold(substituted) is { Integer: { } pv }) {
+        value = pv;
+        return true;
+      }
+    }
+    return false;
   }
 
   #endregion

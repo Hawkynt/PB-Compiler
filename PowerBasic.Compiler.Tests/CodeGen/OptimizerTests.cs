@@ -766,6 +766,27 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenBinaryWithProvenConstantOperand_WhenPb36_ThenImmediateAlu() {
+    // c% + b% where b% is an SCCP-proven constant folds the constant into one immediate ALU op
+    // (ADD AX, imm8 = 83 C0) instead of push-left / eval-right / pop / add. The same loop over a
+    // runtime-unknown operand (a BYVAL parameter, called with differing args so IPCP cannot prove
+    // it constant either) keeps the register-to-register add - so it has one fewer immediate add.
+    const string proven = "$OPTIMIZE SPEED\nb% = 5\nc% = 0\nFOR i% = 1 TO 10\n  c% = c% + b%\nNEXT i%\nPRINT c%\nEND";
+    const string runtime = "$OPTIMIZE SPEED\nDECLARE SUB t(BYVAL k%)\nt 5\nt 7\nEND\nSUB t(BYVAL k%)\n  c% = 0\n  FOR i% = 1 TO 10\n    c% = c% + k%\n  NEXT i%\n  PRINT c%\nEND SUB";
+    Assert.That(CountAddAxImm(Compile(proven, Dialect.Pb36)), Is.GreaterThan(CountAddAxImm(Compile(runtime, Dialect.Pb36))),
+      "a proven-constant operand should fold into an immediate ALU op (ADD AX, imm); a runtime parameter cannot");
+  }
+
+  // 83 C0 = ADD AX, imm8 - an immediate add (the folded-constant-operand form)
+  private static int CountAddAxImm(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0x83 && image[i + 1] == 0xC0)
+        ++count;
+    return count;
+  }
+
+  [Test]
   public void Emit_GivenNumericPrintInLoopBody_WhenPb36Speed_ThenCounterStaysInSi() {
     // a PRINT of plain numeric items (and string literals, whose SI load is saved/restored) leaves
     // SI/DI intact, so a FOR counter over a printing body stays in SI (ADD SI, imm). A non-literal
