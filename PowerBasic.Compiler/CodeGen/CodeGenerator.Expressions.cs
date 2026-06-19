@@ -405,6 +405,16 @@ public sealed partial class CodeGenerator {
             asm.Shl(Reg.AX, 1);
           break;
         }
+        // pb36 O8: a comparison against a direct-memory right operand reads it straight into the
+        // CMP (CMP AX,[mem]) instead of staging it through BX - then the usual SETcc/branch result.
+        if (isComparison && this.TryInt16MemOperand(b.Right, opType) is { } cmem) {
+          this.EmitExpression(b.Left);
+          this.Coerce(leftType, opType, b.Left);
+          asm.Cmp(Reg.AX, cmem);
+          var (cmpJump, cmpCond) = Int16CompareSelector(b.Op, unsignedCompare);
+          this.EmitInt16CompareResult(cmpJump, cmpCond);
+          break;
+        }
         // pb36 O8: a same-width direct-memory right operand of a commutative/subtractive ALU op
         // is read straight into the instruction (ADD AX,[mem]) instead of being staged through BX
         // (push left / eval right / mov bx / pop) - one memory-operand instruction, no spill.

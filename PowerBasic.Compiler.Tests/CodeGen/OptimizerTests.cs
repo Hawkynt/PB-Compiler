@@ -1095,6 +1095,25 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenCompareWithMemoryRightOperand_WhenPb36_ThenCmpMemoryOperand() {
+    // i% > n% with n% a direct cell compares it as a memory operand (CMP AX,[n%]); an expression
+    // right operand (n% * i%) must be staged through BX first.
+    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%)\n  c% = 0\n  FOR i% = 1 TO 10\n    IF i% > n% THEN c% = c% + 1\n  NEXT i%\n  PRINT c%\nEND SUB";
+    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%)\n  c% = 0\n  FOR i% = 1 TO 10\n    IF i% > (n% * i%) THEN c% = c% + 1\n  NEXT i%\n  PRINT c%\nEND SUB";
+    Assert.That(CountCmpMem(Compile(mem, Dialect.Pb36)), Is.GreaterThan(CountCmpMem(Compile(staged, Dialect.Pb36))),
+      "a direct-cell compare operand is read as a CMP memory operand (CMP AX,[n%]); a staged operand is CMP AX,BX");
+  }
+
+  // 3B /r with a memory mod field (mod != 11) = CMP r16, [mem] - the memory-operand compare form
+  private static int CountCmpMem(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0x3B && (image[i + 1] & 0xC0) != 0xC0)
+        ++count;
+    return count;
+  }
+
+  [Test]
   public void Emit_GivenCompareConstant_WhenPb36_ThenFoldsToImmediate() {
     // y% = (x% = 5) compares against an immediate, no constant register load
     var pb36 = Compile(_TOUCH + "x% = 100\nT x%\ny% = (x% = 5)\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
