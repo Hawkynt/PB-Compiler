@@ -74,7 +74,7 @@ public static class Driver {
         case "--no-optimize":
           optimize = false; // the pb35-faithful escape hatch, even for pb36
           break;
-        case "--dump-tokens" or "--dump-ast" or "--dump-bind" or "--emit-llvm":
+        case "--dump-tokens" or "--dump-ast" or "--dump-bind" or "--emit-llvm" or "--emit-obj":
           dumpStage = args[i];
           break;
         case ['-', ..] when args[i] is not "-": // unknown switches are tolerated like PBC.EXE's
@@ -164,6 +164,24 @@ public static class Driver {
       };
       if (optimize is { } opt)        // --optimize / --no-optimize override the dialect default
         generator.Optimize = opt;
+
+      if (dumpStage == "--emit-obj") {
+        // emit the program's procedures as a linkable Intel OMF object, so C/asm/foreign
+        // linkers can consume PB output - regardless of $COMPILE UNIT (docs/LINKER.md)
+        var unitName = Path.GetFileNameWithoutExtension(source).ToUpperInvariant();
+        var compiledUnit = generator.EmitUnit(unitName);
+        if (generator.Errors.Count > 0) {
+          foreach (var error in generator.Errors)
+            stderr.WriteLine($"error: {error}");
+          return 1;
+        }
+        var obj = Emit.Omf.OmfWriter.WriteObject(compiledUnit);
+        output ??= Path.ChangeExtension(source, ".OBJ");
+        File.WriteAllBytes(output, obj);
+        stdout.WriteLine($"{Path.GetFileName(output)}: {obj.Length} bytes");
+        return 0;
+      }
+
       byte[] artifact;
       if (IsUnitCompile(model)) {
         var unitName = Path.GetFileNameWithoutExtension(source).ToUpperInvariant();
@@ -340,6 +358,7 @@ public static class Driver {
     w.WriteLine("  --dump-tokens  stop after lexing/preprocessing and list tokens");
     w.WriteLine("  --dump-ast     stop after parsing");
     w.WriteLine("  --dump-bind    stop after semantic analysis");
+    w.WriteLine("  --emit-obj     compile to a linkable OMF .OBJ object instead of an EXE");
     w.WriteLine("  -h, --help     show this help");
   }
 }
