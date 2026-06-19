@@ -313,6 +313,85 @@ public sealed class OmfTests {
     });
   }
 
+  // ---- OMF emission (OmfWriter round-trip) ----------------------------------
+
+  private static (PbuFixupKind Kind, uint Offset, ushort Target, bool InData) Key(PbuFixup f)
+    => (f.Kind, f.Offset, f.Target, f.InData);
+
+  [Test]
+  public void WriteThenReadBack_GivenUnitWithEveryFixupKind_ThenRoundTripsThroughOurReader() {
+    // a unit exercising all five fixup kinds (code sites) plus a data-image site. The located
+    // bytes hold each fixup's addend; a Segment site holds 0 (the loader fills the paragraph).
+    var original = new PbuFile {
+      Name = "RT",
+      Code = [0x06, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0xC3, 0x90],
+      Data = [0x01, 0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+    };
+    original.Exports.Add(new PbuExport("_pub", PbuExportKind.Function, 0, 4));
+    original.Imports.Add(new PbuImport("_ext", 0));
+    original.Fixups.Add(new PbuFixup(0, PbuFixupKind.NearCode, 0));
+    original.Fixups.Add(new PbuFixup(2, PbuFixupKind.DataOffset, 0));
+    original.Fixups.Add(new PbuFixup(4, PbuFixupKind.Segment, 0));
+    original.Fixups.Add(new PbuFixup(6, PbuFixupKind.ImportCall, 0));
+    original.Fixups.Add(new PbuFixup(8, PbuFixupKind.ImportOffset, 0));
+    original.Fixups.Add(new PbuFixup(0, PbuFixupKind.DataOffset, 0, InData: true));
+
+    var roundtrip = OmfToPbu.Convert(OmfReader.ReadObject(OmfWriter.WriteObject(original)));
+
+    Assert.Multiple(() => {
+      Assert.That(roundtrip.Code, Is.EqualTo(original.Code), "code bytes (with addends) survive the round trip");
+      Assert.That(roundtrip.Data, Is.EqualTo(original.Data), "data bytes survive the round trip");
+      // OMF carries the public name + its offset (BASIC export kind/signature hash are not OMF concepts)
+      Assert.That(roundtrip.Exports.Select(e => (e.Name, e.CodeOffset)), Is.EquivalentTo(new[] { ("_pub", 4u) }));
+      Assert.That(roundtrip.Imports.Select(i => i.Name), Is.EquivalentTo(new[] { "_ext" }));
+      Assert.That(roundtrip.Fixups.Select(Key), Is.EquivalentTo(original.Fixups.Select(Key)));
+    });
+  }
+
+  [Test]
+  public void WriteThenReadBack_GivenSegmentLargerThanOneLedata_ThenChunkedFixupOffsetsStayCorrect() {
+    // a >1024-byte code segment forces the writer to split it across several LEDATA records;
+    // a fixup in a later chunk only round-trips if the reader folds in each LEDATA's base.
+    var code = new byte[2050];
+    code[10] = 0x06;          // NearCode site in the first chunk
+    code[1500] = 0x0A;        // NearCode site in the second chunk (offset 1024..2047)
+    var original = new PbuFile { Name = "BIG", Code = code };
+    original.Exports.Add(new PbuExport("_big", PbuExportKind.Function, 0, 0));
+    original.Fixups.Add(new PbuFixup(10, PbuFixupKind.NearCode, 0));
+    original.Fixups.Add(new PbuFixup(1500, PbuFixupKind.NearCode, 0));
+
+    var obj = OmfWriter.WriteObject(original);
+    Assert.That(obj.Count(b => b == 0xA0), Is.GreaterThan(1), "a >1024-byte segment must span multiple LEDATA records");
+
+    var roundtrip = OmfToPbu.Convert(OmfReader.ReadObject(obj));
+    Assert.Multiple(() => {
+      Assert.That(roundtrip.Code, Is.EqualTo(original.Code));
+      // the far-chunk fixup keeps its absolute segment offset (1500), not the chunk-relative one
+      Assert.That(roundtrip.Fixups.Select(Key), Is.EquivalentTo(original.Fixups.Select(Key)));
+    });
+  }
+
+  [Test]
+  public void WriteThenLink_GivenEmittedObject_ThenItsPublicLinksAndCallsCorrectly() {
+    // emit a leaf object with OmfWriter, then link it through our own linker behind a near call
+    // - end-to-end proof the emitted OMF is consumable, not merely re-readable.
+    var leaf = new PbuFile { Name = "LEAF", Code = [0xB8, 0x2A, 0x00, 0xC3] }; // MOV AX,42 ; RET
+    leaf.Exports.Add(new PbuExport("_leaf", PbuExportKind.Function, 0, 0));
+    var foreign = OmfToPbu.Convert(OmfReader.ReadObject(OmfWriter.WriteObject(leaf)));
+
+    var main = new PbuFile { Name = "MAIN", Code = [0xE8, 0x00, 0x00] };
+    main.Imports.Add(new PbuImport("_leaf", 0));
+    main.Fixups.Add(new PbuFixup(1, PbuFixupKind.ImportCall, 0));
+
+    var linker = new Linker();
+    linker.AddUnit(foreign);
+    var image = linker.Link(main);
+
+    Assert.That(image.ResolvedExports["_leaf"], Is.EqualTo(4u));        // main (3) -> word-aligned 4
+    Assert.That(image.Code[1] | (image.Code[2] << 8), Is.EqualTo(4 - 3)); // near-call disp
+    Assert.That(image.Code.Skip(4).Take(4), Is.EqualTo(leaf.Code));
+  }
+
   // ---- #22: .LIB symbol dictionary ------------------------------------------
 
   // Builds a single self-contained code module (THEADR..MODEND) exporting one public.

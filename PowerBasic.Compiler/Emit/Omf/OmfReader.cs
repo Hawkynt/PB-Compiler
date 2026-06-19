@@ -204,6 +204,7 @@ public sealed class OmfReader {
   private void LeData(OmfModule m, int bodyEnd) {
     var segIdx = this.Index();
     var dataOffset = this.U16();
+    this._lastDataBase = dataOffset; // a following FIXUPP's offset is relative to this record's start
     var n = bodyEnd - this._pos;
     var seg = this.Seg(m, segIdx);
     EnsureRoom(seg, dataOffset + n);
@@ -214,6 +215,7 @@ public sealed class OmfReader {
   private void LiData(OmfModule m, int bodyEnd) {
     var segIdx = this.Index();
     var dataOffset = this.U16();
+    this._lastDataBase = dataOffset;
     var seg = this.Seg(m, segIdx);
     var block = this.IteratedBlock(bodyEnd);
     EnsureRoom(seg, dataOffset + block.Length);
@@ -271,15 +273,17 @@ public sealed class OmfReader {
       var disp = noDisp ? 0 : this.U16();       // target displacement (else carried in the located bytes)
       var kind = (targetMethod & 0x3) == 2 ? OmfTargetKind.External : OmfTargetKind.Segment;
       var location = loc is >= 0 and <= 5 ? (OmfLocation)loc : OmfLocation.Other;
-      // segment index 1-based for the LEDATA segment is tracked per fixup record start; OMF
-      // ties FIXUPP to the preceding LEDATA, whose segment is the last one written. Every
-      // location kind is recorded; OmfToPbu lowers near offsets, far segment/pointer words
-      // and data-segment sites alike into the single-segment model.
-      m.Fixups.Add(new OmfFixup(this._lastDataSeg, dataOffset, selfRel, kind, targetDatum, location, disp));
+      // OMF ties a FIXUPP to the preceding LEDATA: its segment is the last one written and
+      // its offset is relative to that record's start, so add the LEDATA's own base (a
+      // segment may span several LEDATAs - the offset field is only 10 bits). Every location
+      // kind is recorded; OmfToPbu lowers near offsets, far segment/pointer words and
+      // data-segment sites alike into the single-segment model.
+      m.Fixups.Add(new OmfFixup(this._lastDataSeg, this._lastDataBase + dataOffset, selfRel, kind, targetDatum, location, disp));
     }
   }
 
   private int _lastDataSeg = 1;
+  private int _lastDataBase;
 
   private OmfSegment Seg(OmfModule m, int segIdx) {
     this._lastDataSeg = segIdx;

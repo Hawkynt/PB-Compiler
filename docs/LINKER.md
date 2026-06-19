@@ -19,7 +19,12 @@ routines compiled against the QB/PB runtimes.
   not IR — the optimizer cannot run SSA across it. The realistic link-time win is
   **dead-module elimination** (only pull library modules whose publics are actually
   referenced), which is selective extraction, not optimization of foreign code.
-- Producing OMF output. We emit DOS MZ images directly; OMF is an *input* format.
+- Emitting a full program as OMF for re-linking by a foreign toolchain end to end.
+  A finished *program* is emitted as a DOS MZ image directly. (OMF *objects* can now
+  be produced — `OmfWriter` lowers a `PbuFile` to a `.OBJ` that genuine `LINK.EXE`
+  consumes — but wiring a "compile to object, not executable" CLI mode and the C
+  startup/DGROUP contract for a foreign linker to build the final image is future
+  work.)
 
 ## Where we are today
 

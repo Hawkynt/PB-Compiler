@@ -150,6 +150,24 @@ public sealed class LinkOracleTests {
     Assert.That(reference.Trim(), Is.EqualTo("42"), "sanity: addone(41) must be 42 on the reference side");
   }
 
+  [Test]
+  public void Link_GivenObjectEmittedByOurOmfWriter_ThenGenuineLinkExeConsumesItAndRuns() {
+    // --- given: a genuine LINK.EXE and DOSBox are available -------------------
+    var link = GenuineLinkExe();
+    Assume.That(link, Is.Not.Null, "genuine LINK.EXE unavailable (no toolchain key/openssl) - oracle skipped");
+    Assume.That(DosBoxRunner.Executable, Is.Not.Null, "DOSBox not found - oracle skipped");
+
+    // --- when: re-emit the addone unit with OUR OmfWriter, then let genuine LINK.EXE
+    //     link the hand-built MAIN.OBJ against it (the inverse of every other test - here
+    //     a real linker must consume an object WE produced) ----------------------
+    var emitted = OmfWriter.WriteObject(AddOneUnit());
+    var reference = RunGenuineLink(link!, MainObj(), emitted);
+
+    // --- then: genuine LINK.EXE accepted our object and addone(41) ran as 42 ---
+    Assert.That(reference.Trim(), Is.EqualTo("42"),
+      $"genuine LINK.EXE linking our emitted _addone object should print 42 but produced [{Escape(reference)}]");
+  }
+
   private static string Escape(string s) => s.Replace("\r", "\\r").Replace("\n", "\\n");
 
   // ---- genuine toolchain plumbing -------------------------------------------
