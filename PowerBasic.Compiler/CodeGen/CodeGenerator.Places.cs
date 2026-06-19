@@ -452,6 +452,11 @@ public sealed partial class CodeGenerator {
         && this.IsSameLvalue(a.Target, a.Value))
       return;
 
+    // pb36 O8: target = target OP <const|cell> on a non-resident int16 direct cell becomes a
+    // memory-destination read-modify-write (ADD [target],x / INC [target]) - no load/op/store
+    if (this.TryEmitInt16ReadModifyWrite(a))
+      return;
+
     if (targetType is UdtType udt) {
       this.EmitBlockCopy(a.Target, a.Value, udt.Size, a.Position);
       return;
@@ -772,6 +777,65 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>Evaluates a modular tree into AX with plain 16-bit ALU ops.</summary>
+  /// <summary>
+  /// pb36 O8: <c>target = target OP x</c> (a read-modify-write of a non-resident 2-byte integer
+  /// direct cell, x a constant or another direct cell) compiles to one memory-destination ALU op
+  /// (<c>ADD [target],imm</c>, <c>INC/DEC [target]</c> for +/-1, or <c>MOV AX,[x]; ADD [target],AX</c>)
+  /// instead of loading the target, operating, and storing it back. Modular 16-bit, so it matches
+  /// the generic path bit-for-bit. Gated off under $ERROR OVERFLOW/NUMERIC (the load/op/store path
+  /// carries the trap). SUB only when the target is the minuend; ADD/AND/OR/XOR are commutative.
+  /// </summary>
+  private bool TryEmitInt16ReadModifyWrite(AssignStmt a) {
+    if (!this.Optimize || this.CheckOverflow || this.CheckNumeric)
+      return false;
+    if (a.Target is not NameExpr tn
+        || model.TypeOf(a.Target) is not ScalarType { IsFloat: false, ByteSize: 2 }
+        || !model.VariableBindings.TryGetValue(tn, out var tsym)
+        || this.ResidentRegOf(tsym) != null
+        || this.TryInt16MemOperand(tn, PbType.Integer) is not { } tcell)
+      return false;
+    if (a.Value is not BinaryExpr bin
+        || bin.Op is not (BinaryOp.Add or BinaryOp.Subtract or BinaryOp.And or BinaryOp.Or or BinaryOp.Xor))
+      return false;
+
+    Expression other;
+    if (this.IsSameLvalue(bin.Left, a.Target))
+      other = bin.Right;
+    else if (bin.Op is not BinaryOp.Subtract && this.IsSameLvalue(bin.Right, a.Target))
+      other = bin.Left;
+    else
+      return false;
+
+    var asm = this._asm;
+    if (this.TryModularFoldConst(other, out var raw)) {
+      var imm = (short)(raw & 0xFFFF);
+      switch (bin.Op) {
+        case BinaryOp.Add when imm == 1: asm.Inc(tcell); break;
+        case BinaryOp.Add when imm == -1: asm.Dec(tcell); break;
+        case BinaryOp.Add: asm.Add(tcell, (Imm)imm); break;
+        case BinaryOp.Subtract when imm == 1: asm.Dec(tcell); break;
+        case BinaryOp.Subtract when imm == -1: asm.Inc(tcell); break;
+        case BinaryOp.Subtract: asm.Sub(tcell, (Imm)imm); break;
+        case BinaryOp.And: asm.And(tcell, (Imm)imm); break;
+        case BinaryOp.Or: asm.Or(tcell, (Imm)imm); break;
+        default: asm.Xor(tcell, (Imm)imm); break;
+      }
+      return true;
+    }
+    if (this.TryInt16MemOperand(other, PbType.Integer) is { } ocell) {
+      asm.Mov(Reg.AX, ocell);
+      switch (bin.Op) {
+        case BinaryOp.Add: asm.Add(tcell, Reg.AX); break;
+        case BinaryOp.Subtract: asm.Sub(tcell, Reg.AX); break;
+        case BinaryOp.And: asm.And(tcell, Reg.AX); break;
+        case BinaryOp.Or: asm.Or(tcell, Reg.AX); break;
+        default: asm.Xor(tcell, Reg.AX); break;
+      }
+      return true;
+    }
+    return false;
+  }
+
   private void EmitModularInt16(Expression e) {
     // pb36 O3 (modular context): a marked composite modular subtree defines or
     // reloads its 16-bit slot; the value is always one word in AX

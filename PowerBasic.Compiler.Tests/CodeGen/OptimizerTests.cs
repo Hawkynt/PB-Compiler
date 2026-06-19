@@ -1114,6 +1114,25 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenSelfModifyStore_WhenPb36_ThenMemoryReadModifyWrite() {
+    // a% = a% + 1 on a non-resident direct cell becomes INC [a%] (one instruction); the same
+    // increment of a DIFFERENT target (b% = a% + 1) cannot read-modify-write and uses load/inc/store.
+    const string rmw = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%)\n  a% = n%\n  a% = a% + 1\n  PRINT a%\nEND SUB";
+    const string nonrmw = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%)\n  a% = n%\n  b% = a% + 1\n  PRINT a%; b%\nEND SUB";
+    Assert.That(CountIncMem(Compile(rmw, Dialect.Pb36)), Is.GreaterThan(CountIncMem(Compile(nonrmw, Dialect.Pb36))),
+      "a self-increment of a direct cell becomes INC [mem]; an increment into a different target does not");
+  }
+
+  // FF /0 with a memory mod field = INC word [mem] - the memory read-modify-write increment
+  private static int CountIncMem(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0xFF && (image[i + 1] & 0x38) == 0 && (image[i + 1] & 0xC0) != 0xC0)
+        ++count;
+    return count;
+  }
+
+  [Test]
   public void Emit_GivenCompareConstant_WhenPb36_ThenFoldsToImmediate() {
     // y% = (x% = 5) compares against an immediate, no constant register load
     var pb36 = Compile(_TOUCH + "x% = 100\nT x%\ny% = (x% = 5)\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
