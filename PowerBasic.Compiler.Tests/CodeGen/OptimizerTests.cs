@@ -645,16 +645,18 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenNonLeftLeaningConcat_WhenPb36_ThenSingleAllocMultiConcat() {
-    // (a$+b$) + (c$+d$): a four-leaf tree. O24 (multi-concat) subsumes the older O9 dead-temp reuse
-    // for chains of three or more operands - it flattens the tree to [a$,b$,c$,d$] and builds it with
-    // ONE rt_strcatn allocation (strictly better than the pairwise in-place append). A non-reorderable
-    // right (UCASE$) is just a leaf and does not block flattening - the tree still uses rt_strcatn.
+    // (a$+b$) + (c$+d$): a four-leaf tree of plain string variables. O24 (multi-concat) subsumes the
+    // older O9 dead-temp reuse for chains of three or more operands - it flattens the tree to
+    // [a$,b$,c$,d$] and builds it with ONE rt_strcatn allocation (strictly better than the pairwise
+    // in-place append). A call operand (UCASE$) returns a shared/volatile buffer that a later operand
+    // would clobber, so it is NOT safe to pre-stage: such a chain falls back to the pairwise/O9 path
+    // and does NOT use rt_strcatn (correctness over the allocation win).
     const string balanced = "$OPTIMIZE SPEED\na$=\"a\"\nb$=\"b\"\nc$=\"c\"\nd$=\"d\"\ns$ = (a$ + b$) + (c$ + d$)\nPRINT s$\nEND";
     const string impure = "$OPTIMIZE SPEED\na$=\"a\"\nb$=\"b\"\nc$=\"c\"\ns$ = (a$ + b$) + UCASE$(c$)\nPRINT s$\nEND";
     Assert.That(CountCallsToStrCatN(Compile(balanced, Dialect.Pb36)), Is.EqualTo(1),
-      "a four-leaf concat tree builds with one rt_strcatn allocation");
-    Assert.That(CountCallsToStrCatN(Compile(impure, Dialect.Pb36)), Is.EqualTo(1),
-      "a three-leaf chain whose tail is a call still flattens to one rt_strcatn allocation");
+      "a four-leaf concat tree of plain variables builds with one rt_strcatn allocation");
+    Assert.That(CountCallsToStrCatN(Compile(impure, Dialect.Pb36)), Is.Zero,
+      "a chain whose operand is a call (shared/volatile buffer) is not pre-staged - it falls back off rt_strcatn");
   }
 
   [Test]
@@ -731,15 +733,16 @@ public sealed class OptimizerTests {
   }
 
   [Test]
-  public void Emit_GivenMultiConcatWithBlockingOperand_WhenPb36_ThenStillFlattensSideEffectLeaves() {
-    // a function call returning a string is a leaf, evaluated once left-to-right - it does NOT block
-    // flattening (strict left-to-right staging preserves its side effect order), so a chain mixing a
-    // call still uses the single-allocation builder.
+  public void Emit_GivenMultiConcatWithCallOperand_WhenPb36_ThenFallsBackOffTheSingleAllocBuilder() {
+    // a string-returning function call yields a SHARED/volatile result buffer: a later operand's
+    // evaluation would clobber it, so pre-staging all operands then concatenating (rt_strcatn) would
+    // alias it (e.g. F$()&G$()&H$() -> "HHH"). The multi-concat builder therefore refuses a chain that
+    // contains a call and falls back to the pairwise path, which consumes each operand immediately.
     const string withCall = "DECLARE FUNCTION F$()\n"
       + "a$=\"a\"\nc$=\"c\"\nr$ = a$ & F$() & c$\nPRINT r$\nEND\n"
       + "FUNCTION F$()\nF$ = \"x\"\nEND FUNCTION";
-    Assert.That(CountCallsToStrCatN(Compile(withCall, Dialect.Pb36)), Is.EqualTo(1),
-      "a string-returning call is a leaf and does not block multi-concat flattening");
+    Assert.That(CountCallsToStrCatN(Compile(withCall, Dialect.Pb36)), Is.Zero,
+      "a chain containing a call operand is not pre-staged - it falls back off rt_strcatn for correctness");
   }
 
   // 85 DB = TEST BX, BX - the divide-by-zero guard set up by EmitInt16DivideGuard

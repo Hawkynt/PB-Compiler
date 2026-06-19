@@ -610,7 +610,13 @@ public sealed partial class CodeGenerator {
       if (e is BinaryExpr { Op: BinaryOp.Add or BinaryOp.Concat } node
           && model.TypeOf(node.Left) is StringType && model.TypeOf(node.Right) is StringType)
         return Collect(node.Left) && Collect(node.Right);
-      if (model.TypeOf(e) is not StringType)
+      // A leaf is only safe to pre-stage if evaluating a LATER operand cannot invalidate this one's
+      // handle: a literal or a plain string variable yields a fresh, independent, freeable handle.
+      // A call/intrinsic (function or LEFT$/MID$/...), array element, member or pointer deref reuses a
+      // shared result buffer or borrows storage - staging it up-front then concatenating would alias
+      // or corrupt it (e.g. f$()&g$()&h$() would read "hhh"). Those fall back to the pairwise/O9 path,
+      // which consumes each operand immediately after evaluating it.
+      if (!this.IsReorderableStringExpr(e))
         return false;
       leaves.Add(e);
       return leaves.Count <= Runtime.DosRuntime._STRCATN_MAX;
