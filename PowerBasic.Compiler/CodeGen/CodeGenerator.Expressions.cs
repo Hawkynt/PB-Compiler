@@ -592,10 +592,67 @@ public sealed partial class CodeGenerator {
     _ => false,
   };
 
+  /// <summary>
+  /// O24 multi-concat: flattens a maximal tree of string <c>&amp;</c>/<c>+</c> concatenations into its
+  /// ordered list of leaf operands (left-to-right, in evaluation order). A child node is descended
+  /// only when it is itself a string concat whose own operands are strings; everything else (a
+  /// variable, literal, call, substring, etc.) is a leaf. Returns null when fewer than three leaves
+  /// result (the two-operand StrCat / O9 in-place paths already cover those) or when the chain
+  /// exceeds the runtime operand-list capacity.
+  /// </summary>
+  private List<Expression>? FlattenStringConcat(BinaryExpr root) {
+    var leaves = new List<Expression>();
+    if (!Collect(root))
+      return null;
+    return leaves.Count >= 3 ? leaves : null;
+
+    bool Collect(Expression e) {
+      if (e is BinaryExpr { Op: BinaryOp.Add or BinaryOp.Concat } node
+          && model.TypeOf(node.Left) is StringType && model.TypeOf(node.Right) is StringType)
+        return Collect(node.Left) && Collect(node.Right);
+      if (model.TypeOf(e) is not StringType)
+        return false;
+      leaves.Add(e);
+      return leaves.Count <= Runtime.DosRuntime._STRCATN_MAX;
+    }
+  }
+
+  /// <summary>
+  /// O24 multi-concat single-allocation build. Evaluates every leaf operand of the flattened concat
+  /// chain strictly left-to-right (each yields an owned handle in AX, so PB's evaluation order and
+  /// any operand side effects are preserved exactly and each is evaluated once), stages the handles
+  /// into rt_catlist, then calls rt_strcatn to sum the lengths, allocate the result ONCE and copy
+  /// each operand in order - O(n) bytes and a single allocation instead of the pairwise chain's N-1
+  /// allocations and O(n^2) copying. rt_strcatn consumes (frees) every operand handle, exactly as
+  /// the equivalent StrCat chain would, so the result and the freed temporaries are identical.
+  /// </summary>
+  private void EmitMultiConcat(IReadOnlyList<Expression> leaves) {
+    var asm = this._asm;
+    var catlist = asm.Lbl("rt_catlist");
+    for (var i = 0; i < leaves.Count; ++i) {
+      this.EmitExpression(leaves[i]);                       // AX = owned handle of leaf i
+      asm.Mov(Mem.Word(catlist, i * 2), Reg.AX);            // stage it (handles are stable indices)
+    }
+    asm.Mov(Reg.CX, (Imm)leaves.Count);
+    asm.Call(this._rt.StrCatN);                             // AX = single-alloc concatenation
+  }
+
   private void EmitStringBinary(BinaryExpr b) {
     var asm = this._asm;
     if (KindOf(model.TypeOf(b.Left)) != ValueKind.Str || KindOf(model.TypeOf(b.Right)) != ValueKind.Str) {
       this.Unsupported(b, "mixed string/numeric operands");
+      return;
+    }
+
+    // pb36 O24 multi-concat: a chain/tree of three or more string concatenations builds with a
+    // SINGLE heap allocation and one byte-copy per operand (rt_strcatn) instead of the pairwise
+    // chain's N-1 allocations and O(n^2) copying. Operands are evaluated strictly left-to-right, so
+    // every side effect (e.g. a function call returning a string) happens once, in PB's order. This
+    // subsumes the two-operand O9 in-place paths below for qualifying chains; shorter chains and
+    // shapes it declines still take those paths.
+    if (this.Optimize && b.Op is BinaryOp.Add or BinaryOp.Concat
+        && this.FlattenStringConcat(b) is { } leaves) {
+      this.EmitMultiConcat(leaves);
       return;
     }
 

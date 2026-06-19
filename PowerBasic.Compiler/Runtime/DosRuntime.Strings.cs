@@ -49,6 +49,9 @@ public sealed partial class DosRuntime {
 
   private const int _STRING_HANDLES = 512;
 
+  /// <summary>O24 multi-concat: maximum leaf operands the single-allocation concat builder accepts.</summary>
+  internal const int _STRCATN_MAX = 64;
+
   public Label StrAlloc { get; private set; } = null!;
   public Label StrFree { get; private set; } = null!;
   public Label StrDup { get; private set; } = null!;
@@ -56,6 +59,7 @@ public sealed partial class DosRuntime {
   public Label StrCat { get; private set; } = null!;
   public Label StrCatLit { get; private set; } = null!;
   public Label StrCatVar { get; private set; } = null!;
+  public Label StrCatN { get; private set; } = null!;
   public Label StrCmp { get; private set; } = null!;
   public Label StrMid { get; private set; } = null!;
   public Label StrLeft { get; private set; } = null!;
@@ -96,6 +100,7 @@ public sealed partial class DosRuntime {
     this.EmitStrCat(asm);
     this.EmitStrCatLit(asm);
     this.EmitStrCatVar(asm);
+    this.EmitStrCatN(asm);
     this.EmitStrCmp(asm);
     this.EmitStrMid(asm);
     this.EmitStrLeftRight(asm);
@@ -142,7 +147,11 @@ public sealed partial class DosRuntime {
     asm.Dw(0);
     asm.MarkLabel("rt_st3");
     asm.Dw(0);
+    asm.MarkLabel("rt_st4");           // O24 multi-concat: result handle across the copy/free passes
+    asm.Dw(0);
     this.ZeroBlob(asm, "rt_capbuf", 64);
+    // O24 multi-concat operand list: up to _STRCATN_MAX staged leaf handles (words)
+    this.ZeroBlob(asm, "rt_catlist", _STRCATN_MAX * 2);
   }
 
   /// <summary>The 2 KiB string descriptor table - needed only by the string kernel itself.</summary>
@@ -642,6 +651,102 @@ public sealed partial class DosRuntime {
     asm.MarkLabel(fromEmpty);
     asm.Mov(Reg.AX, Reg.DX);                          // empty target: result = a copy of source
     asm.Jmp(this.StrDup);                             // tail-call StrDup (AX = source) -> AX
+  }
+
+  /// <summary>
+  /// O24 multi-concat single-allocation builder. CX = operand count N (>= 1), N owned string
+  /// handles staged in rt_catlist[0..N-1] (word indices, the same descriptor handles every other
+  /// operand produces) -> AX = result handle. Builds the whole chain with ONE heap allocation and
+  /// one byte-copy per operand: pass 1 sums every operand's length, StrAlloc reserves the result
+  /// once, pass 2 copies each operand's bytes in order (rt_strcopyinto re-reads the descriptor, so
+  /// a compaction during the alloc is harmless - the operands stay live and are relocated with their
+  /// handles intact), pass 3 frees every operand handle. This consumes all operands exactly as the
+  /// equivalent chain of StrCat calls would, so the result string and the freed temporaries are
+  /// identical - only the allocations (1 vs N-1) and the bytes copied (O(n) vs O(n^2)) differ.
+  /// Handle 0 (the empty string) reads length 0, copies nothing and frees nothing, so empty
+  /// operands need no special casing. DS is the program data segment throughout (rt_catlist and the
+  /// runtime cells live there); the heap is rt_strseg.
+  /// </summary>
+  private void EmitStrCatN(Assembler asm) {
+    this.StrCatN = asm.MarkLabel("rt_strcatn");
+    var sumLoop = asm.DefineLabel();
+    var copyLoop = asm.DefineLabel();
+    var copyDone = asm.DefineLabel();
+    var freeLoop = asm.DefineLabel();
+    var oom = asm.DefineLabel();
+
+    asm.Push(Reg.BX);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.DX);
+    asm.Push(Reg.SI);
+    asm.Push(Reg.DI);
+    asm.Push(Reg.ES);
+    asm.Mov(Mem.Word(asm.Lbl("rt_st3")), Reg.CX);     // operand count
+
+    // pass 1: total length = sum of every operand's descriptor length
+    asm.Xor(Reg.DX, Reg.DX);                          // dx = running total length
+    asm.Xor(Reg.SI, Reg.SI);                          // si = operand byte index (2 per operand)
+    asm.MarkLabel(sumLoop);
+    asm.Mov(Reg.BX, Mem.Word(Reg.SI, asm.Lbl("rt_catlist")));  // bx = handle
+    asm.Shl(Reg.BX, 2);
+    asm.Add(Reg.DX, this.Descriptor(Reg.BX, 2));      // += operand length
+    asm.Jc(oom);
+    asm.Inc(Reg.SI);                                  // advance to the next handle word (INC twice,
+    asm.Inc(Reg.SI);                                  // not ADD SI,2 - the O5 residency test keys on that)
+    asm.Dec(Reg.CX);
+    asm.Jnz(sumLoop);
+
+    // allocate the result once (DX = total length); may compact, descriptors survive
+    asm.Mov(Reg.CX, Reg.DX);
+    asm.Call(this.StrAlloc);
+    asm.Mov(Mem.Word(asm.Lbl("rt_st4")), Reg.AX);     // result handle (0 when total length is 0)
+
+    // pass 2: copy each operand's bytes into the result, in order
+    asm.Test(Reg.AX, Reg.AX);
+    asm.Jz(copyDone);                                 // empty result: nothing to copy
+    asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_strseg")));
+    asm.Mov(Reg.BX, Reg.AX);
+    asm.Shl(Reg.BX, 2);
+    asm.Mov(Reg.DI, this.Descriptor(Reg.BX));         // di = result data ptr (heap write cursor)
+    asm.Mov(Reg.CX, Mem.Word(asm.Lbl("rt_st3")));
+    asm.Xor(Reg.SI, Reg.SI);
+    asm.MarkLabel(copyLoop);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.SI);
+    asm.Mov(Reg.BX, Mem.Word(Reg.SI, asm.Lbl("rt_catlist")));  // bx = handle (rt_strcopyinto shifts/clobbers BX)
+    asm.Call(asm.Lbl("rt_strcopyinto"));              // copies the operand, advances DI
+    asm.Pop(Reg.SI);
+    asm.Pop(Reg.CX);
+    asm.Inc(Reg.SI);
+    asm.Inc(Reg.SI);
+    asm.Loop(copyLoop);
+    asm.MarkLabel(copyDone);
+
+    // pass 3: free every operand handle (consumed, like a chain of StrCat would)
+    asm.Mov(Reg.CX, Mem.Word(asm.Lbl("rt_st3")));
+    asm.Xor(Reg.SI, Reg.SI);
+    asm.MarkLabel(freeLoop);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.SI);
+    asm.Mov(Reg.AX, Mem.Word(Reg.SI, asm.Lbl("rt_catlist")));
+    asm.Call(this.StrFree);
+    asm.Pop(Reg.SI);
+    asm.Pop(Reg.CX);
+    asm.Inc(Reg.SI);
+    asm.Inc(Reg.SI);
+    asm.Loop(freeLoop);
+
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_st4")));     // result handle
+    asm.Pop(Reg.ES);
+    asm.Pop(Reg.DI);
+    asm.Pop(Reg.SI);
+    asm.Pop(Reg.DX);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.BX);
+    asm.Ret();
+
+    asm.MarkLabel(oom);
+    asm.Jmp(asm.Lbl("rt_err_oss"));
   }
 
   private void EmitStrCmp(Assembler asm) {

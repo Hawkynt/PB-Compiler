@@ -644,24 +644,29 @@ public sealed class OptimizerTests {
   }
 
   [Test]
-  public void Emit_GivenNonLeftLeaningConcat_WhenPb36_ThenRightTempAppendedInPlace() {
-    // (a$+b$) + (c$+d$): the right operand is itself a dead temp. With pure operands the optimizer
-    // evaluates the right first so the left ends up topmost, then appends in place (rt_strcatvar) and
-    // frees the right temp - instead of a fresh StrCat. A non-reorderable right (UCASE$) cannot.
+  public void Emit_GivenNonLeftLeaningConcat_WhenPb36_ThenSingleAllocMultiConcat() {
+    // (a$+b$) + (c$+d$): a four-leaf tree. O24 (multi-concat) subsumes the older O9 dead-temp reuse
+    // for chains of three or more operands - it flattens the tree to [a$,b$,c$,d$] and builds it with
+    // ONE rt_strcatn allocation (strictly better than the pairwise in-place append). A non-reorderable
+    // right (UCASE$) is just a leaf and does not block flattening - the tree still uses rt_strcatn.
     const string balanced = "$OPTIMIZE SPEED\na$=\"a\"\nb$=\"b\"\nc$=\"c\"\nd$=\"d\"\ns$ = (a$ + b$) + (c$ + d$)\nPRINT s$\nEND";
     const string impure = "$OPTIMIZE SPEED\na$=\"a\"\nb$=\"b\"\nc$=\"c\"\ns$ = (a$ + b$) + UCASE$(c$)\nPRINT s$\nEND";
-    Assert.That(CountCallsToStrCatVar(Compile(balanced, Dialect.Pb36)), Is.GreaterThan(CountCallsToStrCatVar(Compile(impure, Dialect.Pb36))),
-      "a pure right-temp concat appends in place via rt_strcatvar; a non-reorderable right operand does not");
+    Assert.That(CountCallsToStrCatN(Compile(balanced, Dialect.Pb36)), Is.EqualTo(1),
+      "a four-leaf concat tree builds with one rt_strcatn allocation");
+    Assert.That(CountCallsToStrCatN(Compile(impure, Dialect.Pb36)), Is.EqualTo(1),
+      "a three-leaf chain whose tail is a call still flattens to one rt_strcatn allocation");
   }
 
   [Test]
-  public void Emit_GivenConcatChain_WhenPb36_ThenTailAppendedInPlace() {
-    // a$ + b$ + c$ = (a$ + b$) + c$: the inner concat's dead, topmost temp has the tail operand
-    // appended in place, so the +c$ node calls rt_strcatvar; a plain two-operand a$ + b$ does not.
+  public void Emit_GivenConcatChain_WhenPb36_ThenSingleAllocMultiConcat() {
+    // a$ + b$ + c$ is a three-leaf chain: O24 builds it with one rt_strcatn allocation (it subsumes
+    // the older O9 pairwise reuse for >=3 operands). A plain two-operand a$ + b$ stays on StrCat.
     const string chain = "$OPTIMIZE SPEED\na$ = \"a\"\nb$ = \"b\"\nc$ = \"c\"\ns$ = a$ + b$ + c$\nPRINT s$\nEND";
     const string pair = "$OPTIMIZE SPEED\na$ = \"a\"\nb$ = \"b\"\ns$ = a$ + b$\nPRINT s$\nEND";
-    Assert.That(CountCallsToStrCatVar(Compile(chain, Dialect.Pb36)), Is.GreaterThan(CountCallsToStrCatVar(Compile(pair, Dialect.Pb36))),
-      "a concat chain should append its tail operand in place via rt_strcatvar");
+    Assert.That(CountCallsToStrCatN(Compile(chain, Dialect.Pb36)), Is.EqualTo(1),
+      "a three-operand concat chain builds with one rt_strcatn allocation");
+    Assert.That(CountCallsToStrCatN(Compile(pair, Dialect.Pb36)), Is.Zero,
+      "a two-operand concat does not use the multi-concat builder");
   }
 
   [Test]
@@ -673,6 +678,68 @@ public sealed class OptimizerTests {
     Assert.That(Compile(selfAppend, Dialect.Pb36).Length,
       Is.LessThan(Compile(nonSelf, Dialect.Pb36).Length),
       "a string self-append should emit less code than the non-self concat");
+  }
+
+  // O24 multi-concat: the rt_strcatn entry prologue PUSH BX/CX/DX/SI/DI/ES then MOV [rt_st3],CX
+  // = 53 51 52 56 57 06 89 0E. Count E8 (near CALL) sites whose rel16 target lands on that entry.
+  private static readonly byte[] _strCatNHead = { 0x53, 0x51, 0x52, 0x56, 0x57, 0x06, 0x89, 0x0E };
+  private static int CountCallsToStrCatN(byte[] image) {
+    var head = -1;
+    for (var i = 0; i + _strCatNHead.Length <= image.Length && head < 0; ++i) {
+      var match = true;
+      for (var j = 0; j < _strCatNHead.Length; ++j)
+        if (image[i + j] != _strCatNHead[j]) { match = false; break; }
+      if (match)
+        head = i;
+    }
+    if (head < 0)
+      return 0;
+    var count = 0;
+    for (var i = 0; i + 2 < image.Length; ++i)
+      if (image[i] == 0xE8 && i + 3 + (short)(image[i + 1] | (image[i + 2] << 8)) == head)
+        ++count;
+    return count;
+  }
+
+  [Test]
+  public void Emit_GivenFourOperandConcatChain_WhenPb36_ThenSingleAllocMultiConcat() {
+    // r$ = a$ & b$ & c$ & d$ is a 4-leaf chain: it builds with ONE rt_strcatn call (a single heap
+    // allocation) instead of the pairwise StrCat chain. A plain two-operand concat does not qualify.
+    const string chain = "a$=\"a\"\nb$=\"b\"\nc$=\"c\"\nd$=\"d\"\nr$ = a$ & b$ & c$ & d$\nPRINT r$\nEND";
+    const string pair = "a$=\"a\"\nb$=\"b\"\nr$ = a$ & b$\nPRINT r$\nEND";
+    Assert.That(CountCallsToStrCatN(Compile(chain, Dialect.Pb36)), Is.EqualTo(1),
+      "a four-operand concat chain takes the single-allocation rt_strcatn path exactly once");
+    Assert.That(CountCallsToStrCatN(Compile(pair, Dialect.Pb36)), Is.Zero,
+      "a two-operand concat does not use the multi-concat builder");
+  }
+
+  [Test]
+  public void Emit_GivenThreeOperandConcat_WhenPb36_ThenSingleAllocMultiConcat() {
+    // boundary: three leaves is the smallest chain the multi-concat builder fires on (two go to O9).
+    const string three = "a$=\"a\"\nb$=\"b\"\nc$=\"c\"\nr$ = a$ + b$ + c$\nPRINT r$\nEND";
+    Assert.That(CountCallsToStrCatN(Compile(three, Dialect.Pb36)), Is.EqualTo(1),
+      "a three-operand concat is the boundary case that fires the single-allocation builder");
+  }
+
+  [Test]
+  public void Emit_GivenMultiConcat_WhenPb35_ThenNoMultiConcatBuilder() {
+    // the optimization is strictly Optimize-gated: pb35 (unoptimized) never calls rt_strcatn, so its
+    // string concatenation lowering - and thus its observable output - is unchanged.
+    const string chain = "a$=\"a\"\nb$=\"b\"\nc$=\"c\"\nd$=\"d\"\nr$ = a$ & b$ & c$ & d$\nPRINT r$\nEND";
+    Assert.That(CountCallsToStrCatN(Compile(chain, Dialect.Pb35)), Is.Zero,
+      "pb35 must not take the multi-concat path");
+  }
+
+  [Test]
+  public void Emit_GivenMultiConcatWithBlockingOperand_WhenPb36_ThenStillFlattensSideEffectLeaves() {
+    // a function call returning a string is a leaf, evaluated once left-to-right - it does NOT block
+    // flattening (strict left-to-right staging preserves its side effect order), so a chain mixing a
+    // call still uses the single-allocation builder.
+    const string withCall = "DECLARE FUNCTION F$()\n"
+      + "a$=\"a\"\nc$=\"c\"\nr$ = a$ & F$() & c$\nPRINT r$\nEND\n"
+      + "FUNCTION F$()\nF$ = \"x\"\nEND FUNCTION";
+    Assert.That(CountCallsToStrCatN(Compile(withCall, Dialect.Pb36)), Is.EqualTo(1),
+      "a string-returning call is a leaf and does not block multi-concat flattening");
   }
 
   // 85 DB = TEST BX, BX - the divide-by-zero guard set up by EmitInt16DivideGuard
