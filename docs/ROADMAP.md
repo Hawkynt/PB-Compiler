@@ -46,9 +46,12 @@ Extends the OMF reader/linker + calling-convention work already landed.
   THEADR/LNAMES/SEGDEF/PUBDEF/EXTDEF, chunked LEDATA (≤1024 B) and FIXUPP for every
   `PbuFixup` kind, MODEND. `OmfLibraryWriter` archives several such objects into a
   `.LIB` whose **hashed dictionary uses the genuine OMF library hash** (the real
-  MS/Intel/Watcom `omflib_hash` — case-folding both-ends rotate, 37 buckets, validated
-  bit-for-bit against a real MS C 6.0 `SLIBCR.LIB`) so foreign linkers (LINK/Watcom/
-  Borland, and via OMF any C/asm toolchain) resolve PB symbols through it. Both
+  MS/Intel/Watcom `omflib_hash` — case-folding both-ends rotate, 37 buckets) so foreign
+  linkers (LINK/Watcom/Borland, and via OMF any C/asm toolchain) resolve PB symbols
+  through it. Verified to be the *same* hash all four staged toolchains' librarians use:
+  it locates every public in the genuine Borland (`CS`/`MATHS`), Turbo C (`C[CLMS]`),
+  MS C 6.0 (`SLIBCR`) and Watcom (`CLIB*`) runtime libraries (`CInteropTests`
+  `LibHashMatches_*`). Both
   round-trip through our `OmfReader`/`OmfToPbu`/`OmfLibrary`; an independent in-test
   port of the genuine hash+search locates every emitted symbol; and genuine MS
   `LINK.EXE` consumes both an emitted object and an emitted `.LIB` (`OmfTests`,

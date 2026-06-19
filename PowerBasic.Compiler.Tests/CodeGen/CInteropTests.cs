@@ -204,6 +204,100 @@ public sealed class CInteropTests {
       $"{slot}: extracting one symbol should lower exactly one of {lib.MemberCount} members, not {lib.ProvidedCount}");
   }
 
+  // ---- our .LIB dictionary hash matches every vintage toolchain's librarian -----
+
+  // For each genuine C runtime library, our OMF library hash must locate EVERY public via the
+  // dictionary search the foreign linker uses - proving the hash OmfLibraryWriter emits is the
+  // same one MS LIB / Borland TLIB / Turbo C / Watcom WLIB wrote, so those linkers resolve PB
+  // symbols from a .LIB we produce. No DOSBox needed: a pure static cross-check of the hash
+  // against the real librarian's bucket placement. (The end-to-end link is the LinkOracleTests
+  // .LIB oracle, which additionally needs DOSBox.)
+  private static IEnumerable<TestCaseData> RealLibraries() {
+    yield return new TestCaseData("bcc31", "LIB\\CS.LIB").SetName("LibHashMatches_bcc31_CS");
+    yield return new TestCaseData("tc20", "LIB\\CS.LIB").SetName("LibHashMatches_tc20_CS");
+    yield return new TestCaseData("msc6", "LIB\\SLIBCR.LIB").SetName("LibHashMatches_msc6_SLIBCR");
+    yield return new TestCaseData("wc10", "lib286\\dos\\CLIBC.LIB").SetName("LibHashMatches_wc10_CLIBC");
+  }
+
+  [TestCaseSource(nameof(RealLibraries))]
+  public void Library_GivenGenuineRuntimeLib_WhenSearchedWithOurHash_ThenEverySymbolIsLocated(string slot, string libRel) {
+    var dir = EnsureToolchain(slot);
+    Assume.That(dir, Is.Not.Null, $"{slot}: toolchain unavailable - skipped");
+    var libPath = Path.Combine(dir!, libRel.Replace('\\', Path.DirectorySeparatorChar));
+    Assume.That(File.Exists(libPath), Is.True, $"{slot}: {libRel} not staged - skipped");
+
+    var lib = File.ReadAllBytes(libPath);
+    var (located, total) = LocateAllByOurHash(lib);
+    Assert.That(total, Is.GreaterThan(50), $"{slot}: sanity - a real CRT holds many publics");
+    Assert.That(located, Is.EqualTo(total),
+      $"{slot} {libRel}: our omflib_hash located {located}/{total} - it must match the librarian's placement for every symbol");
+  }
+
+  // The genuine OMF library hash (MS/Intel/Watcom omflib_hash) + dictionary search, run against a
+  // real .LIB: parse its blocks, then for every stored public confirm our hash's probe finds it.
+  private static (int Located, int Total) LocateAllByOurHash(byte[] lib) {
+    if (lib.Length < 9 || lib[0] != 0xF0)
+      return (0, 0);
+    var dictOff = lib[3] | (lib[4] << 8) | (lib[5] << 16) | (lib[6] << 24);
+    var blocks = lib[7] | (lib[8] << 8);
+    var names = new List<byte[]>();
+    for (var b = 0; b < blocks; ++b) {
+      var bbase = dictOff + b * 512;
+      if (bbase + 512 > lib.Length) break;
+      for (var bk = 0; bk < 37; ++bk) {
+        var slot = lib[bbase + bk];
+        if (slot == 0) continue;
+        var e = bbase + slot * 2;
+        var ln = lib[e];
+        names.Add(lib[(e + 1)..(e + 1 + ln)]);
+      }
+    }
+    var found = names.Count(nm => DictSearch(lib, dictOff, blocks, nm));
+    return (found, names.Count);
+  }
+
+  private static bool DictSearch(byte[] lib, int dictOff, int blocks, byte[] sym) {
+    var (block, blockd, bucket, bucketd) = OmfHash(sym, blocks);
+    for (var i = 0; i < blocks; ++i) {
+      var bbase = dictOff + block * 512;
+      var bk = bucket;
+      for (var j = 0; j < 37; ++j) {
+        var slot = lib[bbase + bk];
+        if (slot == 0) {
+          if (lib[bbase + 37] == 0) return false;   // empty bucket, page not full -> absent
+          break;
+        }
+        var e = bbase + slot * 2;
+        var ln = lib[e];
+        if (ln == sym.Length && lib.AsSpan(e + 1, ln).SequenceEqual(sym)) return true;
+        bk += bucketd; if (bk >= 37) bk -= 37;
+      }
+      block += blockd; if (block >= blocks) block -= blocks;
+    }
+    return false;
+  }
+
+  private static ushort Rotl(ushort a, int b) => (ushort)((a << b) | (a >> (16 - b)));
+  private static ushort Rotr(ushort a, int b) => (ushort)((a << (16 - b)) | (a >> b));
+
+  private static (int Block, int BlockDelta, int Bucket, int BucketDelta) OmfHash(byte[] name, int numBlocks) {
+    var count = name.Length;
+    int l = 0, r = count;
+    ushort block = (ushort)(count | 0x20), blockd = 0, bucket = 0, bucketd = (ushort)(count | 0x20);
+    for (; ; ) {
+      var curr = name[--r] | 0x20;
+      blockd = (ushort)(curr ^ Rotl(blockd, 2));
+      bucket = (ushort)(curr ^ Rotr(bucket, 2));
+      if (--count == 0) break;
+      curr = name[l++] | 0x20;
+      block = (ushort)(curr ^ Rotl(block, 2));
+      bucketd = (ushort)(curr ^ Rotr(bucketd, 2));
+    }
+    var bkd = bucketd % 37; if (bkd == 0) bkd = 1;
+    var bld = blockd % numBlocks; if (bld == 0) bld = 1;
+    return (block % numBlocks, bld, bucket % 37, bkd);
+  }
+
   // ---- calling real objects through each calling convention -----------------
 
   /// <summary>A foreign object exporting sub2(a,b)=a-b under a convention, and how BASIC declares it.</summary>
