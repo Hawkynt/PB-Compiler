@@ -41,18 +41,20 @@ Extends the OMF reader/linker + calling-convention work already landed.
   (its CRT is register-convention; `_strlen`-style cdecl calls mismatch).
 
 ### Could
-- **Emit OMF `.OBJ` / `.LIB`.** *Done.* `OmfWriter` (`Emit/Omf/OmfWriter.cs`) emits a
-  `PbuFile` as a 16-bit OMF object — THEADR/LNAMES/SEGDEF/PUBDEF/EXTDEF, chunked
-  LEDATA (≤1024 B) and FIXUPP for every `PbuFixup` kind, MODEND. `OmfLibraryWriter`
-  archives several such objects into a `.LIB` (0xF0 header, page-aligned members, 0xF1
-  trailer, hash-dictionary blocks). Both round-trip through our own
-  `OmfReader`/`OmfToPbu`/`OmfLibrary` (incl. multi-LEDATA segments and selective
-  extraction) and genuine MS `LINK.EXE` consumes an emitted object (`OmfTests`,
+- **Emit OMF `.OBJ` / `.LIB`.** *Done — genuine MS-LINK compatible.* `OmfWriter`
+  (`Emit/Omf/OmfWriter.cs`) emits a `PbuFile` as a 16-bit OMF object —
+  THEADR/LNAMES/SEGDEF/PUBDEF/EXTDEF, chunked LEDATA (≤1024 B) and FIXUPP for every
+  `PbuFixup` kind, MODEND. `OmfLibraryWriter` archives several such objects into a
+  `.LIB` whose **hashed dictionary uses the genuine OMF library hash** (the real
+  MS/Intel/Watcom `omflib_hash` — case-folding both-ends rotate, 37 buckets, validated
+  bit-for-bit against a real MS C 6.0 `SLIBCR.LIB`) so foreign linkers (LINK/Watcom/
+  Borland, and via OMF any C/asm toolchain) resolve PB symbols through it. Both
+  round-trip through our `OmfReader`/`OmfToPbu`/`OmfLibrary`; an independent in-test
+  port of the genuine hash+search locates every emitted symbol; and genuine MS
+  `LINK.EXE` consumes both an emitted object and an emitted `.LIB` (`OmfTests`,
   `OmfLibraryWriterTests`, `LinkOracleTests`). The CLI exposes both: `pbc --emit-obj`
-  writes a linkable `.OBJ` instead of an `.EXE`, and `pbc lib build out.LIB ...`
-  writes an OMF archive (`EmitObjTests`, `LibBuildTests`). *Still Could:* make the
-  emitted `.LIB` dictionary hash genuine-MS-LINK-compatible (today the archive is
-  consumed by our own linker; the object form is LINK-validated).
+  writes a linkable `.OBJ`, `pbc lib build out.LIB ...` writes an OMF archive
+  (`EmitObjTests`, `LibBuildTests`).
 - **Per-convention auto name-decoration** (stdcall `_name@N`, fastcall `@name`,
   watcall `name_`, pascal upper) instead of requiring `ALIAS`.
 

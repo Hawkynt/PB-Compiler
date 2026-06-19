@@ -433,7 +433,7 @@ public sealed class OmfTests {
       block[entry] = (byte)members[i].Pub.Length;
       var nb = Encoding.ASCII.GetBytes(members[i].Pub);
       Array.Copy(nb, 0, block, entry + 1, nb.Length);
-      var page = memberPage[i] + 1; // dictionary uses 1-based page numbers
+      var page = memberPage[i]; // dictionary stores the 0-based file page (THEADR offset / pageSize)
       block[entry + 1 + nb.Length] = (byte)page;
       block[entry + 1 + nb.Length + 1] = (byte)(page >> 8);
       block[i] = (byte)(entry / 2); // bucket -> half-paragraph (2-byte) pointer to the entry

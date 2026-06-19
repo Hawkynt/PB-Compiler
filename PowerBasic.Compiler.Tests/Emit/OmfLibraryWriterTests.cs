@@ -7,8 +7,10 @@ namespace PowerBasic.Compiler.Tests.Emit;
 /// The OMF library writer (docs/LINKER.md): emit several units as one .LIB archive and prove the
 /// result is consumable by our own reader (<see cref="OmfReader.ReadLibrary(byte[], out System.Collections.Generic.IReadOnlyDictionary{string, int})"/>),
 /// the lazy <see cref="OmfLibrary"/>, and the <see cref="Linker"/> for selective extraction.
-/// Genuine MS-LINK dictionary-hash compatibility is out of scope (its bucket hash differs and
-/// cannot be validated here) - our-reader round-trip + selective extraction is the acceptance bar.
+/// It is also <b>genuine MS-LINK compatible</b>: <see cref="DictionarySearch_GivenManySymbols_ThenEveryOneIsFoundByTheGenuineOmfSearch"/>
+/// drives an independent port of the real OMF library hash + dictionary search (the algorithm a
+/// genuine LINK/Watcom/Borland linker uses, validated bit-for-bit against a real MS C 6.0 SLIBCR.LIB)
+/// and proves every emitted symbol is located by it.
 /// </summary>
 [TestFixture]
 public sealed class OmfLibraryWriterTests {
@@ -89,6 +91,73 @@ public sealed class OmfLibraryWriterTests {
       Assert.That(image.ResolvedExports["_beta"], Is.EqualTo(4u));
       Assert.That(image.Code[1] | (image.Code[2] << 8), Is.EqualTo(1));
     });
+  }
+
+  // ---- genuine MS-LINK dictionary compatibility ------------------------------
+
+  [Test]
+  public void DictionarySearch_GivenManySymbols_ThenEveryOneIsFoundByTheGenuineOmfSearch() {
+    // Enough symbols to span several 512-byte dictionary blocks with real bucket collisions.
+    var big = new PbuFile { Name = "BIG", Code = [0xC3] };
+    var syms = new List<string>();
+    for (var i = 0; i < 80; ++i) { var s = $"_sym{i:D2}"; syms.Add(s); big.Exports.Add(new PbuExport(s, PbuExportKind.Function, 0, 0)); }
+    // a couple of extra members + mixed-case names (the hash case-folds, as genuine LINK does)
+    var more = new PbuFile { Name = "MORE", Code = [0xC3] };
+    foreach (var s in new[] { "_Strlen", "_MemCpy", "FARPROC", "__chkstk" }) { syms.Add(s); more.Exports.Add(new PbuExport(s, PbuExportKind.Function, 0, 0)); }
+
+    var lib = OmfLibraryWriter.WriteLibrary([big, more]);
+
+    // every emitted symbol must be locatable by the genuine OMF dictionary search...
+    foreach (var s in syms)
+      Assert.That(GenuineDictFind(lib, s), Is.True, $"genuine OMF search failed to find {s}");
+    // ...and a symbol that is not present must not be found (the search terminates correctly)
+    Assert.That(GenuineDictFind(lib, "_does_not_exist"), Is.False);
+  }
+
+  // --- independent port of the genuine OMF library hash + dictionary search (Open Watcom omflib_hash
+  //     + OMFSearchExtLib), used here purely as a reference oracle to validate OmfLibraryWriter's output.
+  private static ushort Rotl(ushort a, int b) => (ushort)((a << b) | (a >> (16 - b)));
+  private static ushort Rotr(ushort a, int b) => (ushort)((a << (16 - b)) | (a >> b));
+
+  private static (int block, int blockd, int bucket, int bucketd) GenuineHash(string sym, int numBlocks) {
+    var name = System.Text.Encoding.ASCII.GetBytes(sym);
+    var count = name.Length;
+    int l = 0, r = count;
+    ushort block = (ushort)(count | 0x20), blockd = 0, bucket = 0, bucketd = (ushort)(count | 0x20);
+    for (; ; ) {
+      var curr = name[--r] | 0x20;
+      blockd = (ushort)(curr ^ Rotl(blockd, 2));
+      bucket = (ushort)(curr ^ Rotr(bucket, 2));
+      if (--count == 0) break;
+      curr = name[l++] | 0x20;
+      block = (ushort)(curr ^ Rotl(block, 2));
+      bucketd = (ushort)(curr ^ Rotr(bucketd, 2));
+    }
+    var bkd = bucketd % 37; if (bkd == 0) bkd = 1;
+    var bld = blockd % numBlocks; if (bld == 0) bld = 1;
+    return (block % numBlocks, bld, bucket % 37, bkd);
+  }
+
+  private static bool GenuineDictFind(byte[] lib, string sym) {
+    var pageSize = (lib[1] | (lib[2] << 8)) + 3;
+    var dictOff = lib[3] | (lib[4] << 8) | (lib[5] << 16) | (lib[6] << 24);
+    var numBlocks = lib[7] | (lib[8] << 8);
+    var (block, blockd, bucket, bucketd) = GenuineHash(sym, numBlocks);
+    for (var i = 0; i < numBlocks; ++i) {
+      var bbase = dictOff + block * 512;
+      var bk = bucket;
+      for (var j = 0; j < 37; ++j) {
+        var slot = lib[bbase + bk];
+        if (slot == 0) return false;                 // empty bucket, page not full -> absent
+        var e = bbase + slot * 2;
+        var ln = lib[e];
+        var name = System.Text.Encoding.ASCII.GetString(lib, e + 1, ln);
+        if (name == sym) return true;
+        bk += bucketd; if (bk >= 37) bk -= 37;
+      }
+      block += blockd; if (block >= numBlocks) block -= numBlocks;
+    }
+    return false;
   }
 
   [Test]

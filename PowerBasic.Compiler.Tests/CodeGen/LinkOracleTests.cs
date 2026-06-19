@@ -168,6 +168,23 @@ public sealed class LinkOracleTests {
       $"genuine LINK.EXE linking our emitted _addone object should print 42 but produced [{Escape(reference)}]");
   }
 
+  [Test]
+  public void Link_GivenLibraryEmittedByOurOmfLibraryWriter_ThenGenuineLinkExePullsTheSymbolViaItsDictionary() {
+    // --- given: a genuine LINK.EXE and DOSBox are available -------------------
+    var link = GenuineLinkExe();
+    Assume.That(link, Is.Not.Null, "genuine LINK.EXE unavailable (no toolchain key/openssl) - oracle skipped");
+    Assume.That(DosBoxRunner.Executable, Is.Not.Null, "DOSBox not found - oracle skipped");
+
+    // --- when: archive the _addone unit into a .LIB with OUR writer, then let genuine LINK.EXE
+    //     resolve the call to _addone by searching that library's hashed dictionary -----------
+    var lib = OmfLibraryWriter.WriteLibrary([AddOneUnit()]);
+    var result = RunGenuineLinkLib(link!, MainObj(), lib);
+
+    // --- then: genuine LINK.EXE found _addone via our dictionary and the program ran to 42 ----
+    Assert.That(result.Trim(), Is.EqualTo("42"),
+      $"genuine LINK.EXE resolving _addone from our emitted .LIB should print 42 but produced [{Escape(result)}]");
+  }
+
   private static string Escape(string s) => s.Replace("\r", "\\r").Replace("\n", "\\n");
 
   // ---- genuine toolchain plumbing -------------------------------------------
@@ -265,6 +282,61 @@ public sealed class LinkOracleTests {
         mount c "{dir}"
         c:
         LINK MAIN.OBJ+ADDONE.OBJ,REF.EXE,,, > LINKOUT.TXT
+        REF.EXE
+        echo ok > DONE.TXT
+        exit
+        """);
+
+      var psi = new ProcessStartInfo(DosBoxRunner.Executable!, $"-conf \"{conf}\"") { UseShellExecute = false };
+      using var process = Process.Start(psi)!;
+      var sentinel = Path.Combine(dir, "DONE.TXT");
+      var deadline = Environment.TickCount64 + 60000;
+      while (!File.Exists(sentinel) && !process.HasExited && Environment.TickCount64 < deadline)
+        Thread.Sleep(50);
+      var finished = File.Exists(sentinel) || process.HasExited;
+      if (!process.HasExited) {
+        if (finished) Thread.Sleep(200);
+        process.Kill(entireProcessTree: true);
+        process.WaitForExit(5000);
+      }
+
+      var result = Path.Combine(dir, "RESULT.TXT");
+      if (!File.Exists(result)) {
+        var linkout = Path.Combine(dir, "LINKOUT.TXT");
+        var diag = File.Exists(linkout) ? File.ReadAllText(linkout) : "(no LINKOUT.TXT)";
+        Assert.Fail("genuine LINK.EXE produced no RESULT.TXT - linker output:\n" + diag);
+      }
+      return File.ReadAllText(result);
+    } finally {
+      try { Directory.Delete(dir, recursive: true); } catch (IOException) { /* best effort */ }
+    }
+  }
+
+  /// <summary>
+  /// Links <paramref name="mainObj"/> against the library <paramref name="lib"/> (passed in LINK's
+  /// library field, so it must find the needed public via the .LIB's hashed dictionary) with the
+  /// genuine LINK.EXE, runs REF.EXE, and returns the RESULT.TXT it writes.
+  /// </summary>
+  private static string RunGenuineLinkLib(string linkExe, byte[] mainObj, byte[] lib) {
+    var dir = Path.Combine(Path.GetTempPath(), "pbc-oracle-" + Guid.NewGuid().ToString("N")[..8]);
+    Directory.CreateDirectory(dir);
+    try {
+      File.Copy(linkExe, Path.Combine(dir, "LINK.EXE"));
+      File.WriteAllBytes(Path.Combine(dir, "MAIN.OBJ"), mainObj);
+      File.WriteAllBytes(Path.Combine(dir, "ADDONE.LIB"), lib);
+      var conf = Path.Combine(dir, "dosbox.conf");
+      File.WriteAllText(conf, $"""
+        [sdl]
+        window_position = 9000,9000
+        [cpu]
+        core=auto
+        cycles=max
+        [dosbox]
+        ems=true
+        [autoexec]
+        mount c "{dir}"
+        c:
+        LINK MAIN.OBJ,REF.EXE,,ADDONE.LIB; > LINKOUT.TXT
         REF.EXE
         echo ok > DONE.TXT
         exit

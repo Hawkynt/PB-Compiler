@@ -94,8 +94,11 @@ public sealed class OmfReader {
           var nameStart = entry + 1;
           if (nameStart + nameLen + 2 > bytes.Length) return false;
           var name = System.Text.Encoding.ASCII.GetString(bytes, nameStart, nameLen);
-          var page = bytes[nameStart + nameLen] | (bytes[nameStart + nameLen + 1] << 8); // 1-based page number
-          if (pageToMember.TryGetValue(page - 1, out var member))
+          // The page number is the member's file page (THEADR offset / pageSize), keyed exactly as
+          // pageToMember records it. (Genuine MS/Watcom .LIBs store it 0-based: a linker resolves the
+          // member at page*pageSize - see OmfLibraryWriter and OMF's dictionary search.)
+          var page = bytes[nameStart + nameLen] | (bytes[nameStart + nameLen + 1] << 8);
+          if (pageToMember.TryGetValue(page, out var member))
             map.TryAdd(name, member);
           // a symbol pointing at a page we didn't parse is ignored (kept robust)
         }

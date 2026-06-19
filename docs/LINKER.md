@@ -22,10 +22,12 @@ routines compiled against the QB/PB runtimes.
 - Building a final *executable* from PB objects via a foreign toolchain end to end.
   A finished *program* is emitted as a DOS MZ image directly. OMF *objects* and `.LIB`
   archives are now produced — `OmfWriter` lowers a `PbuFile` to a `.OBJ` that genuine
-  `LINK.EXE` consumes, `OmfLibraryWriter` archives them, and the CLI exposes both
-  (`pbc --emit-obj`, `pbc lib build out.LIB`). What remains future work is the C
-  startup/DGROUP contract a foreign linker needs to assemble those objects into the
-  final image (and a genuine-LINK-compatible `.LIB` dictionary hash).
+  `LINK.EXE` consumes, `OmfLibraryWriter` archives them into a `.LIB` whose dictionary
+  uses the **genuine OMF library hash** (`omflib_hash`, validated against a real MS C
+  6.0 `SLIBCR.LIB`) so foreign linkers resolve PB symbols through it, and the CLI
+  exposes both (`pbc --emit-obj`, `pbc lib build out.LIB`). What remains future work is
+  the C startup/DGROUP contract a foreign linker needs to assemble those objects into
+  the final image.
 
 ## Where we are today
 
