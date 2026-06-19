@@ -479,6 +479,11 @@ public sealed partial class CodeGenerator {
         // memory operand (FIADD/FISUB/FIMUL/FIDIV m16|m32) - no AX load, no FILD scratch.
         if (this.Optimize && this.TryFloatIntMemOperand(b.Right) is { } imem && this.TryEmitFloatIntMemOp(b.Op, imem))
           break;
+        // pb36: a float op against a float literal reads it from its data-segment QWORD
+        // constant (FADD/FSUB/FMUL/FDIV/FCOMP qword [f_n]) instead of FLD const + pop.
+        // Gated off Power (runtime call); the const is the SAME one the FLD path emits.
+        if (this.Optimize && b.Op is not BinaryOp.Power && this.TryFloatConstMemOperand(b.Right) is { } kmem && this.TryEmitFloatMemOp(b.Op, kmem))
+          break;
         this.EmitExpression(b.Right);
         this.Coerce(rightType, opType, b.Right);
         this.EmitFloatOp(b);
@@ -879,6 +884,19 @@ public sealed partial class CodeGenerator {
       return srcCell.WithSize(size);
     return this.InlineSlotCellOf(sym) is { } cell ? cell.WithSize(size) : null;
   }
+
+  /// <summary>
+  /// The data-segment QWORD constant cell of a float literal operand, usable as an
+  /// x87 memory operand. Mirrors the FLD-const path (EmitExpression's FloatLiteral /
+  /// float-typed integer-literal cases) exactly - same FloatConstOf value and SINGLE
+  /// quantization - so only the FLD+pop is saved. An integer literal coerced into a
+  /// float op (its own type still integral) stays on the FILD path (returns null).
+  /// </summary>
+  private Mem? TryFloatConstMemOperand(Expression e) => e switch {
+    FloatLiteralExpr f => Mem.Qword(this.FloatConstOf(model.TypeOf(f) is ScalarType { Kind: ScalarKind.Single } ? (float)f.Value : f.Value)),
+    IntegerLiteralExpr i when model.TypeOf(i) is ScalarType { IsFloat: true } => Mem.Qword(this.FloatConstOf(i.Value)),
+    _ => null,
+  };
 
   private void EmitInt16Op(BinaryExpr b, bool unsignedCompare = false) {
     var asm = this._asm;

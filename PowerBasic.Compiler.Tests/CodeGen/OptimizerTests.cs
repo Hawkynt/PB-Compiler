@@ -1209,6 +1209,25 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenFloatTimesConstant_WhenPb36_ThenFpuConstantMemoryOperand() {
+    // r! = a! * 1.5 multiplies by the data-segment float constant in place (FMUL qword [f_n]);
+    // an expression right operand (b! + b!) must be FLD-ed and combined with FMULP.
+    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  a! = n%\n  r! = a! * 1.5\n  r! = r! * 2.5\n  PRINT r!\nEND SUB";
+    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  a! = n%\n  b! = n% + 1\n  r! = a! * (b! + b!)\n  r! = r! * (b! + b!)\n  PRINT r!\nEND SUB";
+    Assert.That(CountFmulMem(Compile(mem, Dialect.Pb36)), Is.GreaterThan(CountFmulMem(Compile(staged, Dialect.Pb36))),
+      "a float constant operand multiplies via an FPU memory operand (FMUL qword [f_n]); an expression operand uses FMULP");
+  }
+
+  // D8 /1 (m32) or DC /1 (m64) with a memory mod field = FMUL real [mem] - the x87 multiply memory operand
+  private static int CountFmulMem(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] is 0xD8 or 0xDC && (image[i + 1] & 0x38) == 0x08 && (image[i + 1] & 0xC0) != 0xC0)
+        ++count;
+    return count;
+  }
+
+  [Test]
   public void Emit_GivenCompareConstant_WhenPb36_ThenFoldsToImmediate() {
     // y% = (x% = 5) compares against an immediate, no constant register load
     var pb36 = Compile(_TOUCH + "x% = 100\nT x%\ny% = (x% = 5)\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
