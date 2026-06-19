@@ -2436,6 +2436,31 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     }
     var isByte = targetType.Size == 1;
 
+    // pb36 O8: INCR/DECR of a non-resident 2-byte integer direct cell updates memory in place
+    // without parking the amount across the (empty) address computation - a constant amount folds
+    // into one immediate (INC/DEC for +/-1), a cell amount loads into AX then ADD/SUB [cell],AX.
+    if (this.Optimize && !this.CheckOverflow && !this.CheckNumeric
+        && id.Amount != null && kind == ValueKind.Int16
+        && this.TryInt16MemOperand(id.Target, PbType.Integer) is { } directCell) {
+      if (this.TryModularFoldConst(id.Amount, out var amt)) {
+        var net = (short)((id.Increment ? amt : -amt) & 0xFFFF);
+        if (net == 1)
+          asm.Inc(directCell);
+        else if (net == -1)
+          asm.Dec(directCell);
+        else if (net != 0)
+          asm.Add(directCell, (Imm)net);     // signed immediate: a negative net subtracts (modular)
+        return;
+      }
+      this.EmitExpression(id.Amount);
+      this.Coerce(model.TypeOf(id.Amount), targetType, id.Amount);
+      if (id.Increment)
+        asm.Add(directCell, Reg.AX);
+      else
+        asm.Sub(directCell, Reg.AX);
+      return;
+    }
+
     if (id.Amount != null) {
       this.EmitExpression(id.Amount);
       this.Coerce(model.TypeOf(id.Amount), targetType, id.Amount);

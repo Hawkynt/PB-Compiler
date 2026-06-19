@@ -1133,6 +1133,25 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenIncrWithAmount_WhenPb36_ThenMemoryAddImmediate() {
+    // INCR a%, 5 on a non-resident direct cell becomes ADD [a%],5 (one immediate, no AX park);
+    // INCR of an array element needs an address computation and stages the amount through AX.
+    const string direct = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  a% = n%\n  INCR a%, 5\n  INCR a%, 6\n  PRINT a%\nEND SUB";
+    const string array = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  DIM z%(0 TO 3)\n  z%(1) = n%\n  INCR z%(1), 5\n  INCR z%(1), 6\n  PRINT z%(1)\nEND SUB";
+    Assert.That(CountAddMemImm(Compile(direct, Dialect.Pb36)), Is.GreaterThan(CountAddMemImm(Compile(array, Dialect.Pb36))),
+      "INCR of a direct cell with a constant amount uses ADD [mem],imm; an array element does not");
+  }
+
+  // 83 /0 with a memory mod field = ADD word [mem], imm8 (sign-extended) - the memory add-immediate
+  private static int CountAddMemImm(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0x83 && (image[i + 1] & 0x38) == 0 && (image[i + 1] & 0xC0) != 0xC0)
+        ++count;
+    return count;
+  }
+
+  [Test]
   public void Emit_GivenCompareConstant_WhenPb36_ThenFoldsToImmediate() {
     // y% = (x% = 5) compares against an immediate, no constant register load
     var pb36 = Compile(_TOUCH + "x% = 100\nT x%\ny% = (x% = 5)\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
