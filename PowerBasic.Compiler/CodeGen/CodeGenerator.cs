@@ -604,7 +604,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       this._rt.EmitProcedures(asm, trimmedSections.Contains);
     }
 
+    this._listingCodeLength = asm.Position; // listing: code ends, data area begins here
     this.EmitDataArea(trimmedSections);
+    this._listingDataLength = asm.Position - this._listingCodeLength;
     this._rt.PlaceBss(asm); // pb36 P3: zero blobs live behind the image
 
     var image = this._allowExternalCalls ? this.LinkImage(units, libraries, omfLibraries) : asm.ToArray();

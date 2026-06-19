@@ -158,6 +158,26 @@ the MZ writer emits. See `docs/LINKER.md`.
 
 ---
 
+## 7. Listing output (`--list`)
+
+`pbc --list <source.bas>` compiles the program normally (unit or EXE) and then,
+instead of writing the binary artifact, renders a deterministic human-readable
+map of the emitted image to `<source>.LST` (override with `-O <file>`):
+
+- a header: source name, dialect, target, CPU/feature flags, and code / data /
+  bss sizes;
+- a procedure table: each SUB/FUNCTION (and any link-resolved `EXTERN`) with its
+  code offset, kind and canonical signature;
+- the bound runtime labels (`rt_*`) the program reaches, each with its offset;
+- the module data layout (variable slots with offset and size);
+- for a `$COMPILE UNIT`, the unit's exports and imports.
+
+It is pure reporting: `Listing.Render` (in `PowerBasic.Compiler/Emit/Listing.cs`)
+is a side-effect-free formatter fed by `CodeGenerator.DescribeImage()`, a
+read-only post-emission snapshot. Code generation is never altered.
+
+---
+
 ### Stage cheat-sheet
 
 | Stage | Runs | Gated by | Examples |

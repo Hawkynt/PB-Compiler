@@ -24,6 +24,7 @@ public static class Driver {
     var includePaths = new List<string>();
     var linkPaths = new List<string>();
     var dumpStage = "";
+    var listing = false;
     var dialect = Dialect.Pb35;
     var checkBounds = false;
     var checkNumeric = false;
@@ -76,6 +77,9 @@ public static class Driver {
           break;
         case "--dump-tokens" or "--dump-ast" or "--dump-bind" or "--emit-llvm" or "--emit-obj":
           dumpStage = args[i];
+          break;
+        case "--list":
+          listing = true;
           break;
         case ['-', ..] when args[i] is not "-": // unknown switches are tolerated like PBC.EXE's
           break;
@@ -179,6 +183,32 @@ public static class Driver {
         output ??= Path.ChangeExtension(source, ".OBJ");
         File.WriteAllBytes(output, obj);
         stdout.WriteLine($"{Path.GetFileName(output)}: {obj.Length} bytes");
+        return 0;
+      }
+
+      if (listing) {
+        // compile the program (unit or EXE), then render a human-readable map of the
+        // emitted image - read-only reporting, no artifact is written (docs/PIPELINE.md)
+        PbuFile? listedUnit = null;
+        if (IsUnitCompile(model)) {
+          var unitName = Path.GetFileNameWithoutExtension(source).ToUpperInvariant();
+          listedUnit = generator.EmitUnit(unitName);
+        } else {
+          if (!TryLoadLinkTargets(model, [.. linkPaths, sourceDir], stderr, out var units, out var libraries))
+            return 1;
+          var image = generator.EmitExecutable(units, libraries);
+          if (image.Length == 0 && generator.Errors.Count == 0)
+            return 1; // link errors already reported
+        }
+        if (generator.Errors.Count > 0) {
+          foreach (var error in generator.Errors)
+            stderr.WriteLine($"error: {error}");
+          return 1;
+        }
+        var listText = Listing.Render(Path.GetFileName(source), model, generator.DescribeImage(), listedUnit);
+        output ??= Path.ChangeExtension(source, ".LST");
+        File.WriteAllText(output, listText);
+        stdout.WriteLine($"{Path.GetFileName(output)}: {listText.Length} bytes");
         return 0;
       }
 
@@ -366,6 +396,7 @@ public static class Driver {
     w.WriteLine("  --dump-ast     stop after parsing");
     w.WriteLine("  --dump-bind    stop after semantic analysis");
     w.WriteLine("  --emit-obj     compile to a linkable OMF .OBJ object instead of an EXE");
+    w.WriteLine("  --list         write a human-readable .LST map of the compiled image");
     w.WriteLine("  -h, --help     show this help");
   }
 }

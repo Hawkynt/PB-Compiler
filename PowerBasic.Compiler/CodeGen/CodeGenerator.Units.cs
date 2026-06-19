@@ -14,6 +14,87 @@ public sealed partial class CodeGenerator {
   private bool _allowExternalCalls;
   private IReadOnlyList<int> _linkedSegmentSites = [];
 
+  // listing (--list) bookkeeping: the code/data split captured at emission time
+  // (the data area begins where the code ends). Pure reporting, never affects output.
+  private int _listingCodeLength;
+  private int _listingDataLength;
+
+  /// <summary>One procedure entry in a <see cref="ListingInfo"/>.</summary>
+  public readonly record struct ListingProcedure(string Name, bool IsFunction, string Signature, int CodeOffset, bool IsExternal);
+
+  /// <summary>One named offset (a bound runtime label or a module data slot) in a <see cref="ListingInfo"/>.</summary>
+  public readonly record struct ListingSymbol(string Name, int Offset, int Size);
+
+  /// <summary>
+  /// A read-only, post-emission snapshot of the compiled image for the <c>--list</c>
+  /// front-end path: procedure offsets/signatures, bound runtime labels, module data
+  /// slots and the code/data/bss sizes. Has no effect on code generation.
+  /// </summary>
+  public readonly record struct ListingInfo(
+    int CodeLength,
+    int DataLength,
+    int BssSize,
+    PbuCpuFlags CpuFlags,
+    IReadOnlyList<ListingProcedure> Procedures,
+    IReadOnlyList<ListingSymbol> RuntimeLabels,
+    IReadOnlyList<ListingSymbol> DataSlots);
+
+  /// <summary>
+  /// Builds a <see cref="ListingInfo"/> from the just-emitted image. Call AFTER
+  /// <see cref="EmitExecutable(IReadOnlyList{PbuFile}, IReadOnlyList{PblFile}, IReadOnlyList{Emit.Omf.OmfLibrary})"/>
+  /// or <see cref="EmitUnit"/> - the procedure/data labels are bound to their final
+  /// offsets only then. Pure reporting (read-only), so it never alters output.
+  /// </summary>
+  public ListingInfo DescribeImage() {
+    var relocatable = this._asm.ToRelocatable();
+    var bound = relocatable.BoundLabels;
+
+    var procedures = this._procLabels
+      .Select(kv => new ListingProcedure(
+        kv.Key.Name,
+        kv.Key.IsFunction,
+        SignatureOf(kv.Key),
+        kv.Value.IsBound ? kv.Value.Position : -1,
+        kv.Key.IsExternal))
+      .OrderBy(p => p.IsExternal)        // defined first, then link-resolved
+      .ThenBy(p => p.CodeOffset)
+      .ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+      .ToList();
+
+    // bound rt_* labels are the program's runtime surface (DescribeImage is the only consumer)
+    var runtimeLabels = bound
+      .Where(kv => kv.Key.StartsWith("rt_", StringComparison.Ordinal))
+      .OrderBy(kv => kv.Value)
+      .ThenBy(kv => kv.Key, StringComparer.Ordinal)
+      .Select(kv => new ListingSymbol(kv.Key, kv.Value, 0))
+      .ToList();
+
+    var dataSlots = this._variableSlots
+      .Where(kv => kv.Value.IsBound && (this._deadGlobals is null || !this._deadGlobals.Contains(kv.Key)))
+      .Select(kv => new ListingSymbol(kv.Key.Name, kv.Value.Position, Math.Max(kv.Key.Type.Size, 1)))
+      .OrderBy(s => s.Offset)
+      .ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
+      .ToList();
+
+    // BSS spans rt_bss_off..rt_bss_end when virtual BSS is enabled (pb36 self-contained main)
+    var bssSize = bound.TryGetValue("rt_bss_off", out var bssOff) && bound.TryGetValue("rt_bss_end", out var bssEnd)
+      ? Math.Max(bssEnd - bssOff, 0)
+      : 0;
+
+    var codeLength = this._listingCodeLength > 0 ? this._listingCodeLength : relocatable.Image.Length;
+    return new ListingInfo(codeLength, this._listingDataLength, bssSize, this.CpuRequirementFlags(), procedures, runtimeLabels, dataSlots);
+  }
+
+  /// <summary>The unit-style CPU/feature requirement flags derived from $CPU (listing/header reporting).</summary>
+  private PbuCpuFlags CpuRequirementFlags() {
+    var flags = PbuCpuFlags.None;
+    if (this.Cpu386)
+      flags |= PbuCpuFlags.Needs386;
+    if (this.Cpu486)
+      flags |= PbuCpuFlags.Needs386; // 486 still requires (at least) a 386
+    return flags;
+  }
+
   /// <summary>
   /// Compiles a <c>$COMPILE UNIT</c> module: only procedures (module-level
   /// executable code is an error), every defined SUB/FUNCTION exported, every
@@ -62,8 +143,10 @@ public sealed partial class CodeGenerator {
     this.EmitFarThunks();
     asm.Align(2, 0x90); // word-align so the data area stays aligned wherever the code lands
     var codeLength = asm.Position;
+    this._listingCodeLength = codeLength; // listing: code/data split for DescribeImage
     this.EmitDataArea();
     asm.Align(2);
+    this._listingDataLength = asm.Position - codeLength;
 
     var relocatable = asm.ToRelocatable();
     var unit = new PbuFile { Name = name };
