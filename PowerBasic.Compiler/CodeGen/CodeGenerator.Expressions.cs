@@ -469,20 +469,16 @@ public sealed partial class CodeGenerator {
       case ValueKind.Float:
         this.EmitExpression(b.Left);
         this.Coerce(leftType, opType, b.Left);
-        if (this.Optimize
-            && b.Op is BinaryOp.Add or BinaryOp.Subtract or BinaryOp.Multiply or BinaryOp.Divide
-            && this.TryFloatMemOperand(b.Right) is { } fmem) {
-          // pb36: x87 reads the right float operand from memory (FADD/FSUB/FMUL/FDIV
-          // m32|m64) instead of FLD-ing it and popping. Order is preserved - left is
-          // already in ST0, so FSUB/FDIV [right] = left OP right exactly as FsubP would.
-          switch (b.Op) {
-            case BinaryOp.Add: asm.Fadd(fmem); break;
-            case BinaryOp.Subtract: asm.Fsub(fmem); break;
-            case BinaryOp.Multiply: asm.Fmul(fmem); break;
-            default: asm.Fdiv(fmem); break;
-          }
+        // pb36: x87 reads the right float operand from memory (FADD/FSUB/FMUL/FDIV
+        // or FCOMP m32|m64) instead of FLD-ing it and popping. Order is preserved -
+        // left is already in ST0, so FSUB/FDIV/FCOMP [right] = left OP right exactly
+        // as the FsubP/FCOMPP path would. Power (^) stays on the runtime-call path.
+        if (this.Optimize && this.TryFloatMemOperand(b.Right) is { } fmem && this.TryEmitFloatMemOp(b.Op, fmem))
           break;
-        }
+        // pb36: a float op against a signed integer cell reads it with an x87 integer
+        // memory operand (FIADD/FISUB/FIMUL/FIDIV m16|m32) - no AX load, no FILD scratch.
+        if (this.Optimize && this.TryFloatIntMemOperand(b.Right) is { } imem && this.TryEmitFloatIntMemOp(b.Op, imem))
+          break;
         this.EmitExpression(b.Right);
         this.Coerce(rightType, opType, b.Right);
         this.EmitFloatOp(b);
@@ -811,6 +807,8 @@ public sealed partial class CodeGenerator {
       return null;
     if (e is not NameExpr n || this._cseMarks?.ContainsKey(n) == true)
       return null;
+    if (this._provenReads?.ContainsKey(n) == true)
+      return null;                                  // SCCP-proven constant: the cell may be a dead store - read it as the immediate, not from memory
     if (model.TypeOf(n) is not ScalarType { IsFloat: false, ByteSize: 2 })
       return null;                                  // same width as the op, so no coercion is needed
     if (!model.VariableBindings.TryGetValue(n, out var sym))
@@ -819,9 +817,10 @@ public sealed partial class CodeGenerator {
       return null;                                  // a resident variable lives in a register, not memory
     if (this._ipcp?.ContainsKey(sym) == true || sym.Storage == VariableStorage.Captured)
       return null;
-    if (this._copyReads is { } cr && cr.TryGetValue(n, out var src) && this.TryDirectCell(src) is { } srcCell)
+    if (this._inlineParamSlots is null
+        && this._copyReads is { } cr && cr.TryGetValue(n, out var src) && this.TryDirectCell(src) is { } srcCell)
       return srcCell.WithSize(OperandSize.Word);
-    return this.TryDirectCell(sym) is { } cell ? cell.WithSize(OperandSize.Word) : null;
+    return this.InlineSlotCellOf(sym) is { } cell ? cell.WithSize(OperandSize.Word) : null;
   }
 
   /// <summary>
@@ -836,6 +835,8 @@ public sealed partial class CodeGenerator {
   private Mem? TryFloatMemOperand(Expression e) {
     if (e is not NameExpr n || this._cseMarks?.ContainsKey(n) == true)
       return null;
+    if (this._provenReads?.ContainsKey(n) == true)
+      return null;                                  // SCCP-proven constant: the cell may be a dead store - read it as the immediate, not from memory
     if (model.TypeOf(n) is not ScalarType { IsFloat: true, ByteSize: var bytes } || bytes is not (4 or 8))
       return null;
     if (!model.VariableBindings.TryGetValue(n, out var sym))
@@ -845,9 +846,38 @@ public sealed partial class CodeGenerator {
     if (this._ipcp?.ContainsKey(sym) == true || sym.Storage == VariableStorage.Captured)
       return null;
     var size = bytes == 4 ? OperandSize.Dword : OperandSize.Qword;
-    if (this._copyReads is { } cr && cr.TryGetValue(n, out var src) && this.TryDirectCell(src) is { } srcCell)
+    if (this._inlineParamSlots is null
+        && this._copyReads is { } cr && cr.TryGetValue(n, out var src) && this.TryDirectCell(src) is { } srcCell)
       return srcCell.WithSize(size);
-    return this.TryDirectCell(sym) is { } cell ? cell.WithSize(size) : null;
+    return this.InlineSlotCellOf(sym) is { } cell ? cell.WithSize(size) : null;
+  }
+
+  /// <summary>
+  /// The direct memory cell of a SIGNED INTEGER/LONG scalar usable as an x87
+  /// integer arithmetic memory operand (<c>FIADD/FISUB/FIMUL/FIDIV m16|m32</c>),
+  /// so a float op against an integer reads it straight from memory instead of
+  /// loading it into AX and FILD-ing through a scratch slot. Unsigned WORD/DWORD
+  /// is excluded - FILD/Fi* read the cell as signed; so are register-resident,
+  /// captured/BYREF and IPCP-substituted operands.
+  /// </summary>
+  private Mem? TryFloatIntMemOperand(Expression e) {
+    if (e is not NameExpr n || this._cseMarks?.ContainsKey(n) == true)
+      return null;
+    if (this._provenReads?.ContainsKey(n) == true)
+      return null;                                  // SCCP-proven constant: the cell may be a dead store - read it as the immediate, not from memory
+    if (model.TypeOf(n) is not ScalarType { IsFloat: false, Signed: true, ByteSize: var bytes } || bytes is not (2 or 4))
+      return null;
+    if (!model.VariableBindings.TryGetValue(n, out var sym))
+      return null;
+    if (this.ResidentRegOf(sym) != null)
+      return null;
+    if (this._ipcp?.ContainsKey(sym) == true || sym.Storage == VariableStorage.Captured)
+      return null;
+    var size = bytes == 4 ? OperandSize.Dword : OperandSize.Word;
+    if (this._inlineParamSlots is null
+        && this._copyReads is { } cr && cr.TryGetValue(n, out var src) && this.TryDirectCell(src) is { } srcCell)
+      return srcCell.WithSize(size);
+    return this.InlineSlotCellOf(sym) is { } cell ? cell.WithSize(size) : null;
   }
 
   private void EmitInt16Op(BinaryExpr b, bool unsignedCompare = false) {
@@ -1376,6 +1406,62 @@ public sealed partial class CodeGenerator {
     asm.Fcompp();
     asm.FstswAx();
     asm.Sahf();              // CF/ZF now mirror the (unsigned-style) FPU compare
+    asm.Mov(Reg.AX, -1);
+    jump(asm)(done);
+    asm.Mov(Reg.AX, (Imm)0);
+    asm.MarkLabel(done);
+  }
+
+  /// <summary>
+  /// pb36 float memory-operand emit: left is already in ST0, so the op reads its
+  /// right operand straight from memory. Returns false for Power (^), which keeps
+  /// its runtime call (both operands on the stack).
+  /// </summary>
+  private bool TryEmitFloatMemOp(BinaryOp op, Mem right) {
+    var asm = this._asm;
+    switch (op) {
+      case BinaryOp.Add: asm.Fadd(right); return true;
+      case BinaryOp.Subtract: asm.Fsub(right); return true;
+      case BinaryOp.Multiply: asm.Fmul(right); return true;
+      case BinaryOp.Divide: asm.Fdiv(right); return true;
+      case BinaryOp.Equal: this.EmitFloatCompareMem(right, a => a.Je); return true;
+      case BinaryOp.NotEqual: this.EmitFloatCompareMem(right, a => a.Jne); return true;
+      case BinaryOp.Less: this.EmitFloatCompareMem(right, a => a.Jb); return true;
+      case BinaryOp.Greater: this.EmitFloatCompareMem(right, a => a.Ja); return true;
+      case BinaryOp.LessEqual: this.EmitFloatCompareMem(right, a => a.Jbe); return true;
+      case BinaryOp.GreaterEqual: this.EmitFloatCompareMem(right, a => a.Jae); return true;
+      default: return false;
+    }
+  }
+
+  /// <summary>
+  /// pb36 float op against an integer memory operand: left is already in ST0, so
+  /// the op reads its signed-integer right operand from memory with FIADD/FISUB/
+  /// FIMUL/FIDIV. Compares and Power fall back to the staged path (false) - the
+  /// x87 has no popping integer compare (FICOM keeps both) and Power is a call.
+  /// </summary>
+  private bool TryEmitFloatIntMemOp(BinaryOp op, Mem right) {
+    var asm = this._asm;
+    switch (op) {
+      case BinaryOp.Add: asm.Fiadd(right); return true;
+      case BinaryOp.Subtract: asm.Fisub(right); return true;
+      case BinaryOp.Multiply: asm.Fimul(right); return true;
+      case BinaryOp.Divide: asm.Fidiv(right); return true;
+      default: return false;
+    }
+  }
+
+  /// <summary>
+  /// Float compare against a memory operand: FCOMP [right] compares ST0 (left)
+  /// with the cell and pops, so no second FLD and no FXCH - the C0/C3 flags after
+  /// FSTSW/SAHF mirror left-vs-right exactly as the FXCH;FCOMPP path produces.
+  /// </summary>
+  private void EmitFloatCompareMem(Mem right, Func<Assembler, Action<Label>> jump) {
+    var asm = this._asm;
+    var done = asm.DefineLabel();
+    asm.Fcomp(right);
+    asm.FstswAx();
+    asm.Sahf();
     asm.Mov(Reg.AX, -1);
     jump(asm)(done);
     asm.Mov(Reg.AX, (Imm)0);

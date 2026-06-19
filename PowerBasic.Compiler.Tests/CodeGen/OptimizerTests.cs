@@ -1171,6 +1171,44 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenFloatCompareWithDirectCellOperand_WhenPb36_ThenFcompMemoryOperand() {
+    // IF a! < b! with b! a direct cell compares it as an FPU memory operand (FCOMP m32); an
+    // expression right operand (b! * a!) must be FLD-ed and compared with FXCH;FCOMPP.
+    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  a! = n%\n  b! = n% + 1\n  IF a! < b! THEN PRINT \"lt\"\n  IF a! > b! THEN PRINT \"gt\"\nEND SUB";
+    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  a! = n%\n  b! = n% + 1\n  IF a! < (b! * a!) THEN PRINT \"lt\"\n  IF a! > (b! * a!) THEN PRINT \"gt\"\nEND SUB";
+    Assert.That(CountFcompMem(Compile(mem, Dialect.Pb36)), Is.GreaterThan(CountFcompMem(Compile(staged, Dialect.Pb36))),
+      "a direct-cell float compare operand uses FCOMP m32; a staged operand uses FXCH;FCOMPP");
+  }
+
+  // D8 /3 (m32) or DC /3 (m64) with a memory mod field = FCOMP real [mem] - the x87 compare memory operand
+  private static int CountFcompMem(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] is 0xD8 or 0xDC && (image[i + 1] & 0x38) == 0x18 && (image[i + 1] & 0xC0) != 0xC0)
+        ++count;
+    return count;
+  }
+
+  [Test]
+  public void Emit_GivenFloatTimesIntegerCell_WhenPb36_ThenFpuIntegerMemoryOperand() {
+    // x! = x! + i% with i% a signed-integer direct cell reads it with FIADD m16 (no AX load,
+    // no FILD scratch); an expression right operand (i% + 1) must be loaded and FILD-ed.
+    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  x! = n%\n  i% = n% + 1\n  x! = x! + i%\n  x! = x! + i%\n  PRINT x!\nEND SUB";
+    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  x! = n%\n  i% = n% + 1\n  x! = x! + (i% + 1)\n  x! = x! + (i% + 1)\n  PRINT x!\nEND SUB";
+    Assert.That(CountFiaddMem(Compile(mem, Dialect.Pb36)), Is.GreaterThan(CountFiaddMem(Compile(staged, Dialect.Pb36))),
+      "a signed-integer direct-cell operand is added to a float with FIADD m16; a staged operand uses FILD;FADDP");
+  }
+
+  // DE /0 (m16) or DA /0 (m32) with a memory mod field = FIADD int [mem] - the x87 integer add memory operand
+  private static int CountFiaddMem(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] is 0xDE or 0xDA && (image[i + 1] & 0x38) == 0 && (image[i + 1] & 0xC0) != 0xC0)
+        ++count;
+    return count;
+  }
+
+  [Test]
   public void Emit_GivenCompareConstant_WhenPb36_ThenFoldsToImmediate() {
     // y% = (x% = 5) compares against an immediate, no constant register load
     var pb36 = Compile(_TOUCH + "x% = 100\nT x%\ny% = (x% = 5)\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
