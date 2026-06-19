@@ -389,6 +389,13 @@ public sealed class DialectGateTests {
   }
 
   [Test]
+  public void Gate_GivenYield_WhenPb35_ThenRejectedButPb36Accepts() {
+    const string source = "FUNCTION Gen&()\n  YIELD 1\nEND FUNCTION";
+    AssertRejected(source, Dialect.Pb35, "3.6");
+    AssertAccepted(source, Dialect.Pb36);
+  }
+
+  [Test]
   public void Gate_GivenObjectInitializer_WhenPb35_ThenRejectedButPb36Accepts() {
     const string source = "TYPE Point\n  X AS INTEGER\n  Y AS INTEGER\nEND TYPE\nDIM p = NEW Point { .X = 1, .Y = 2 }";
     AssertRejected(source, Dialect.Pb35, "3.6");

@@ -114,6 +114,7 @@ public enum LanguageFeature {
   ForEach,
   StringInterpolation,
   TryCatch,
+  Coroutines,
 }
 
 /// <summary>
@@ -176,6 +177,7 @@ public static class DialectFacts {
     [LanguageFeature.ForEach] = (Dialect.Pb36, "FOR EACH ... IN (array or '[lo..hi]' range)"),
     [LanguageFeature.StringInterpolation] = (Dialect.Pb36, "interpolated string ('$\"text {expr} {expr:fmt}\"')"),
     [LanguageFeature.TryCatch] = (Dialect.Pb36, "structured exception handling (TRY / CATCH / FINALLY / END TRY)"),
+    [LanguageFeature.Coroutines] = (Dialect.Pb36, "coroutines (YIELD statement)"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

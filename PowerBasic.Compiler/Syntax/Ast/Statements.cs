@@ -233,6 +233,13 @@ public sealed record ChainStmt(SourcePosition Position, Expression Target, bool 
 /// <summary>END / STOP / SYSTEM program termination (END SUB etc. are structural, not this).</summary>
 public sealed record EndStmt(SourcePosition Position, Expression? ExitCode) : Statement(Position);
 
+/// <summary>
+/// PB 3.6 <c>YIELD &lt;expression&gt;</c>: suspends the enclosing coroutine SUB/FUNCTION,
+/// surfacing <see cref="Value"/> to the resumer, and continues from the next statement
+/// when resumed. A pure pb36 extension (no PBC 3.50 equivalent); see docs/PB36-COROUTINES.md.
+/// </summary>
+public sealed record YieldStmt(SourcePosition Position, Expression Value) : Statement(Position);
+
 #endregion
 
 #region error handling & events

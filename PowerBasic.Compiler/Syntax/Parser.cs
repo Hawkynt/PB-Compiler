@@ -312,6 +312,7 @@ public sealed partial class Parser {
         this.ExpectKeyword("IN");
         return new ReplaceStmt(replacePos, find, with, this.ParseLValue());
       }
+      case "YIELD" when this.IsCoroutineYield(): return this.ParseYield();
       case "GOTO": return this.ParseGotoGosub(isGosub: false);
       case "GOSUB": return this.ParseGotoGosub(isGosub: true);
       case "RETURN": return this.ParseReturn();

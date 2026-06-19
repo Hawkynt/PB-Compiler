@@ -1057,6 +1057,11 @@ public sealed class Binder {
       case IterateStmt:
         break;
 
+      // PB 3.6 coroutines: type-check the surfaced value; suspend/resume codegen is future work.
+      case YieldStmt y:
+        this.BindExpression(y.Value, scope);
+        break;
+
       case InputStmt input:
         if (input.FileNumber != null)
           this.BindExpression(input.FileNumber, scope);

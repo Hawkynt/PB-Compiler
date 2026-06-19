@@ -292,6 +292,25 @@ public sealed partial class Parser {
     return new ReturnStmt(pos, this.IsStatementEnd() ? null : this.ParseLabelReference());
   }
 
+  /// <summary>
+  /// True when a leading <c>YIELD</c> is the coroutine statement form (a value follows)
+  /// rather than a bare identifier reference. Assignment (<c>YIELD = x</c>) and suffixed
+  /// (<c>YIELD%</c>) forms are routed away before the keyword switch, so reaching here with
+  /// an expression ahead means the statement form; pre-pb36 it is rejected by
+  /// <see cref="ParseYield"/>'s feature gate (the TRY / FOR EACH convention).
+  /// </summary>
+  private bool IsCoroutineYield() => !this.IsStatementEnd();
+
+  /// <summary>
+  /// <c>YIELD &lt;expression&gt;</c> (PB 3.6 coroutines): gated to pb36; older dialects reject
+  /// it with the standard requirement message, mirroring the shift/rotate operator gate.
+  /// </summary>
+  private Statement ParseYield() {
+    this.Require(LanguageFeature.Coroutines);
+    var pos = this.Advance().Position;
+    return new YieldStmt(pos, this.ParseExpression());
+  }
+
   private Statement ParseOn() {
     var pos = this.Advance().Position;
 
