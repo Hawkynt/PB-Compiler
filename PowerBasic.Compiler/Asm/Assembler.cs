@@ -84,12 +84,14 @@ public sealed partial class Assembler {
     this._buffer.RemoveRange(position, this._buffer.Count - position);
     this._fixups.RemoveAll(fixup => fixup.Position >= position);
     this._segmentRelocations.RemoveAll(offset => offset >= position);
+    this.TrimPeep(position);
   }
 
   #region image generation
 
   /// <summary>Resolves all fixups and returns the assembled image.</summary>
   public byte[] ToArray() {
+    this.RunPeephole();
     var result = this._buffer.ToArray();
     foreach (var fixup in this._fixups) {
       if (!fixup.Target.IsBound)
@@ -108,6 +110,7 @@ public sealed partial class Assembler {
   /// labels count as external too - units import runtime symbols by name).
   /// </summary>
   public RelocatableImage ToRelocatable() {
+    this.RunPeephole();
     var result = this._buffer.ToArray();
     var relocations = new List<AsmRelocation>();
     var registered = new HashSet<Label>(this._namedLabels.Values, ReferenceEqualityComparer.Instance);

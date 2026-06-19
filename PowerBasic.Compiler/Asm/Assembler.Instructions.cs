@@ -5,6 +5,7 @@ public sealed partial class Assembler {
   #region MOV
 
   public void Mov(Reg destination, Reg source) {
+    var start = this.Position;
     if (destination.IsSegment()) {
       if (destination == Reg.CS)
         throw new ArgumentException("MOV CS, r is not encodable.", nameof(destination));
@@ -29,9 +30,12 @@ public sealed partial class Assembler {
     this.EmitOperandSizePrefixIf(destination.IsDword());
     this.EmitByte(destination.IsByte() ? (byte)0x88 : (byte)0x89);
     this.EmitModRmRegister(source.Index(), destination);
+    if (destination.IsWord() && source.IsWord())
+      this.RecordPeep(PeepKind.MovRegReg, start, destination, source, this.Position - 1);
   }
 
   public void Mov(Reg destination, Mem source) {
+    var start = this.Position;
     this.EmitSegmentPrefix(source);
     if (destination.IsSegment()) {
       if (destination == Reg.CS)
@@ -45,7 +49,10 @@ public sealed partial class Assembler {
     RequireMatchingSize(destination, source);
     this.EmitOperandSizePrefixIf(destination.IsDword());
     this.EmitByte(destination.IsByte() ? (byte)0x8A : (byte)0x8B);
+    var modrmAt = this.Position;
     this.EmitModRmMemory(destination.Index(), source);
+    if (destination.IsWord())
+      this.RecordPeep(PeepKind.MovRegMem, start, destination, default, modrmAt);
   }
 
   public void Mov(Mem destination, Reg source) {
@@ -63,10 +70,13 @@ public sealed partial class Assembler {
   }
 
   public void Mov(Reg destination, Imm immediate) {
+    var start = this.Position;
     RequireGeneralPurpose(destination, nameof(destination));
     this.EmitOperandSizePrefixIf(destination.IsDword());
     this.EmitByte((byte)((destination.IsByte() ? 0xB0 : 0xB8) + destination.Index()));
     this.EmitImmediate(destination.Size(), immediate);
+    if (destination.IsWord())
+      this.RecordPeep(PeepKind.MovRegImm, start, destination);
   }
 
   public void Mov(Mem destination, Imm immediate) {
@@ -152,6 +162,7 @@ public sealed partial class Assembler {
   }
 
   public void Pop(Reg register) {
+    var start = this.Position;
     switch (register) {
       case Reg.ES: this.EmitByte(0x07); return;
       case Reg.CS: throw new ArgumentException("POP CS is not encodable.", nameof(register));
@@ -164,6 +175,8 @@ public sealed partial class Assembler {
     RequireWordOrDword(register, nameof(register));
     this.EmitOperandSizePrefixIf(register.IsDword());
     this.EmitByte((byte)(0x58 + register.Index()));
+    if (register.IsWord())
+      this.RecordPeep(PeepKind.PopReg, start, register);
   }
 
   public void Push(Mem memory) {

@@ -467,6 +467,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       return trivial;
 
     var asm = this._asm;
+    // pb36 peephole: record the instruction stream of a standalone program image so the
+    // post-emit pass can coalesce dead register-staging copies (units/libraries keep the
+    // faithful stream - their relocatable output is spliced separately if ever needed).
+    asm.EnablePeephole = this.Optimize && !this._allowExternalCalls && !this._isUnit;
     var userMain = asm.DefineLabel("user_main");
     this._scratch = asm.DefineLabel("cg_scratch");
 
