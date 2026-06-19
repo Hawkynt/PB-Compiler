@@ -469,6 +469,20 @@ public sealed partial class CodeGenerator {
       case ValueKind.Float:
         this.EmitExpression(b.Left);
         this.Coerce(leftType, opType, b.Left);
+        if (this.Optimize
+            && b.Op is BinaryOp.Add or BinaryOp.Subtract or BinaryOp.Multiply or BinaryOp.Divide
+            && this.TryFloatMemOperand(b.Right) is { } fmem) {
+          // pb36: x87 reads the right float operand from memory (FADD/FSUB/FMUL/FDIV
+          // m32|m64) instead of FLD-ing it and popping. Order is preserved - left is
+          // already in ST0, so FSUB/FDIV [right] = left OP right exactly as FsubP would.
+          switch (b.Op) {
+            case BinaryOp.Add: asm.Fadd(fmem); break;
+            case BinaryOp.Subtract: asm.Fsub(fmem); break;
+            case BinaryOp.Multiply: asm.Fmul(fmem); break;
+            default: asm.Fdiv(fmem); break;
+          }
+          break;
+        }
         this.EmitExpression(b.Right);
         this.Coerce(rightType, opType, b.Right);
         this.EmitFloatOp(b);
@@ -808,6 +822,32 @@ public sealed partial class CodeGenerator {
     if (this._copyReads is { } cr && cr.TryGetValue(n, out var src) && this.TryDirectCell(src) is { } srcCell)
       return srcCell.WithSize(OperandSize.Word);
     return this.TryDirectCell(sym) is { } cell ? cell.WithSize(OperandSize.Word) : null;
+  }
+
+  /// <summary>
+  /// The direct memory cell of a SINGLE/DOUBLE scalar usable as an x87
+  /// arithmetic memory operand (<c>FADD/FSUB/FMUL/FDIV m32|m64</c>), so a float
+  /// binary op reads its right operand straight from memory instead of FLD-ing
+  /// it onto the stack and popping. The x87 always computes in 80-bit, so a
+  /// narrower cell (SINGLE under a DOUBLE op) converts on load exactly as the
+  /// FLD path would. EXTENDED (10-byte) is excluded - FADD has no tword form -
+  /// as are register-resident, captured/BYREF and IPCP-substituted operands.
+  /// </summary>
+  private Mem? TryFloatMemOperand(Expression e) {
+    if (e is not NameExpr n || this._cseMarks?.ContainsKey(n) == true)
+      return null;
+    if (model.TypeOf(n) is not ScalarType { IsFloat: true, ByteSize: var bytes } || bytes is not (4 or 8))
+      return null;
+    if (!model.VariableBindings.TryGetValue(n, out var sym))
+      return null;
+    if (this.ResidentRegOf(sym) != null)
+      return null;
+    if (this._ipcp?.ContainsKey(sym) == true || sym.Storage == VariableStorage.Captured)
+      return null;
+    var size = bytes == 4 ? OperandSize.Dword : OperandSize.Qword;
+    if (this._copyReads is { } cr && cr.TryGetValue(n, out var src) && this.TryDirectCell(src) is { } srcCell)
+      return srcCell.WithSize(size);
+    return this.TryDirectCell(sym) is { } cell ? cell.WithSize(size) : null;
   }
 
   private void EmitInt16Op(BinaryExpr b, bool unsignedCompare = false) {

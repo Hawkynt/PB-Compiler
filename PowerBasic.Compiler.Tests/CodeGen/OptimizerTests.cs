@@ -1152,6 +1152,25 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenFloatBinaryWithDirectCellOperand_WhenPb36_ThenFpuMemoryOperand() {
+    // r! = a! + b! with b! a direct cell adds it straight from memory (FADD m32); an expression
+    // right operand (b! * a!) must be FLD-ed onto the stack and combined with FADDP.
+    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  a! = n%\n  b! = n% + 1\n  r! = a! + b!\n  r! = r! + b!\n  PRINT r!\nEND SUB";
+    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  a! = n%\n  b! = n% + 1\n  r! = a! + (b! * a!)\n  r! = r! + (b! * a!)\n  PRINT r!\nEND SUB";
+    Assert.That(CountFaddMem(Compile(mem, Dialect.Pb36)), Is.GreaterThan(CountFaddMem(Compile(staged, Dialect.Pb36))),
+      "a direct-cell float operand is added as an FPU memory operand (FADD m32); a staged operand uses FADDP");
+  }
+
+  // D8 /0 (m32) or DC /0 (m64) with a memory mod field = FADD real [mem] - the x87 add memory operand
+  private static int CountFaddMem(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] is 0xD8 or 0xDC && (image[i + 1] & 0x38) == 0 && (image[i + 1] & 0xC0) != 0xC0)
+        ++count;
+    return count;
+  }
+
+  [Test]
   public void Emit_GivenCompareConstant_WhenPb36_ThenFoldsToImmediate() {
     // y% = (x% = 5) compares against an immediate, no constant register load
     var pb36 = Compile(_TOUCH + "x% = 100\nT x%\ny% = (x% = 5)\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
