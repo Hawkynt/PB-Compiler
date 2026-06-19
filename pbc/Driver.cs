@@ -298,18 +298,25 @@ public static class Driver {
   private static int RunLib(string[] args, TextWriter stdout, TextWriter stderr) {
     switch (args) {
       case ["build", var output, .. var unitFiles] when unitFiles.Length > 0: {
-        var library = new PblFile();
+        var units = new List<PbuFile>();
         foreach (var file in unitFiles) {
           if (!File.Exists(file)) {
             stderr.WriteLine($"pbc lib: unit '{file}' not found");
             return 1;
           }
           using var stream = File.OpenRead(file);
-          library.Units.Add(PbuFile.Read(stream));
+          units.Add(PbuFile.Read(stream));
         }
-        using (var stream = File.Create(output))
+        // a .LIB output is a foreign-consumable Intel OMF archive; anything else is our own .PBL
+        if (output.EndsWith(".LIB", StringComparison.OrdinalIgnoreCase)) {
+          File.WriteAllBytes(output, Emit.Omf.OmfLibraryWriter.WriteLibrary(units));
+        } else {
+          var library = new PblFile();
+          library.Units.AddRange(units);
+          using var stream = File.Create(output);
           library.Write(stream);
-        stdout.WriteLine($"{Path.GetFileName(output)}: {library.Units.Count} unit(s)");
+        }
+        stdout.WriteLine($"{Path.GetFileName(output)}: {units.Count} unit(s)");
         return 0;
       }
 
@@ -325,7 +332,7 @@ public static class Driver {
       }
 
       default:
-        stderr.WriteLine("usage: pbc lib build <out.PBL> <unit.PBU>...");
+        stderr.WriteLine("usage: pbc lib build <out.PBL|out.LIB> <unit.PBU>...");
         stderr.WriteLine("       pbc lib list <file.PBL|file.PBU>");
         return 1;
     }
@@ -343,7 +350,7 @@ public static class Driver {
     w.WriteLine("PB-Compiler - PowerBASIC 3.5 compatible compiler for 16-bit real-mode DOS");
     w.WriteLine();
     w.WriteLine("Usage: pbc [options] <source.BAS>");
-    w.WriteLine("       pbc lib build <out.PBL> <unit.PBU>...");
+    w.WriteLine("       pbc lib build <out.PBL|out.LIB> <unit.PBU>...");
     w.WriteLine("       pbc lib list <file.PBL|file.PBU>");
     w.WriteLine();
     w.WriteLine("A source with $COMPILE UNIT produces a .PBU unit instead of an EXE;");
