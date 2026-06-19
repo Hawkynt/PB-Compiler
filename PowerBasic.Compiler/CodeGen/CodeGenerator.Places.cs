@@ -576,30 +576,57 @@ public sealed partial class CodeGenerator {
       return;
     }
 
-    // evaluate the value first (it may clobber BX/ES), park it, then address the target
+    // evaluate the value first (it may clobber BX/ES), park it, then address the target.
+    // pb36: a direct-cell target needs NO address computation (EmitPlace emits no code for it),
+    // so the value in AX/DX is never disturbed and the park is pure waste - skip it.
     this.EmitExpression(a.Value);
     this.Coerce(model.TypeOf(a.Value), targetType, a.Value);
     var kind = KindOf(targetType);
+    var park = kind != ValueKind.Float && !this.TargetWriteEmitsNoAddressCode(a.Target);
 
-    if (kind == ValueKind.Int32)
-      this._asm.Push(Reg.DX);
-    if (kind != ValueKind.Float)
+    if (park) {
+      if (kind == ValueKind.Int32)
+        this._asm.Push(Reg.DX);
       this._asm.Push(Reg.AX);
+    }
 
     if (this.EmitPlace(a.Target) is not { } place) {
       // diagnostics already produced; rebalance the stack
-      if (kind != ValueKind.Float)
+      if (park) {
         this._asm.Pop(Reg.AX);
-      if (kind == ValueKind.Int32)
-        this._asm.Pop(Reg.DX);
+        if (kind == ValueKind.Int32)
+          this._asm.Pop(Reg.DX);
+      }
       return;
     }
 
-    if (kind != ValueKind.Float)
+    if (park) {
       this._asm.Pop(Reg.AX);
-    if (kind == ValueKind.Int32)
-      this._asm.Pop(Reg.DX);
+      if (kind == ValueKind.Int32)
+        this._asm.Pop(Reg.DX);
+    }
     this.EmitStorePlace(place, targetType, a.Value);
+  }
+
+  /// <summary>
+  /// True when storing to <paramref name="target"/> needs no address computation - EmitPlace
+  /// returns its cell without emitting any instruction (a direct-cell variable, a copy-prop
+  /// remap to a direct cell, or an inlined-frame slot). So the value already in AX/DX survives
+  /// EmitPlace and need not be parked. A captured local (env-pointer load) or a BYREF parameter
+  /// (pointer load) DOES emit address code, as do array/member/pointer targets.
+  /// </summary>
+  private bool TargetWriteEmitsNoAddressCode(Expression target) {
+    if (target is not NameExpr n)
+      return false;
+    if (this._copyReads is { } cr && cr.TryGetValue(n, out var src) && this.TryDirectCell(src) != null)
+      return true;
+    if (!model.VariableBindings.TryGetValue(n, out var symbol))
+      return false;
+    if (this._inlineParamSlots?.ContainsKey(symbol) == true)
+      return true;
+    if (symbol.Storage == VariableStorage.Captured)
+      return false;
+    return this.TryDirectCell(symbol) != null;
   }
 
   /// <summary>UDT-to-UDT assignment / LSET: a flat byte copy between two lvalues.</summary>

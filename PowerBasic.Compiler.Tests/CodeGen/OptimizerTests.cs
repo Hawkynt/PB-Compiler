@@ -787,6 +787,26 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenDirectCellStore_WhenPb36_ThenNoValuePark() {
+    // a store to a direct-cell variable needs no address computation, so the value is no longer
+    // parked (push ax / pop ax) across EmitPlace. The same stores to a BYREF parameter DO need a
+    // pointer load, so the park stays - one extra push per store.
+    const string direct = "$OPTIMIZE SPEED\nDECLARE SUB s(x%)\ns 9\nEND\nSUB s(x%)\n  a% = x%\n  b% = x%\n  d% = x%\n  PRINT a%; b%; d%\nEND SUB";
+    const string byref = "$OPTIMIZE SPEED\nDECLARE SUB s(x%)\ns 9\nEND\nSUB s(x%)\n  x% = x% + 1\n  x% = x% + 1\n  x% = x% + 1\n  PRINT x%\nEND SUB";
+    Assert.That(CountPushAx(Compile(direct, Dialect.Pb36)), Is.LessThan(CountPushAx(Compile(byref, Dialect.Pb36))),
+      "direct-cell stores drop the value park; BYREF stores keep it (one push per store)");
+  }
+
+  // 0x50 = PUSH AX (the value park before an address computation)
+  private static int CountPushAx(byte[] image) {
+    var count = 0;
+    foreach (var b in image)
+      if (b == 0x50)
+        ++count;
+    return count;
+  }
+
+  [Test]
   public void Emit_GivenNumericPrintInLoopBody_WhenPb36Speed_ThenCounterStaysInSi() {
     // a PRINT of plain numeric items (and string literals, whose SI load is saved/restored) leaves
     // SI/DI intact, so a FOR counter over a printing body stays in SI (ADD SI, imm). A non-literal
