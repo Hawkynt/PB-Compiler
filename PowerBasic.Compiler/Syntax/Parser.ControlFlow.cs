@@ -346,6 +346,33 @@ public sealed partial class Parser {
       : new ResumeStmt(pos, ResumeKind.Label, target);
   }
 
+  /// <summary>
+  /// PB 3.6 structured exception handling: TRY &lt;body&gt; [CATCH &lt;handler&gt;]
+  /// [FINALLY &lt;cleanup&gt;] END TRY. At least one of CATCH / FINALLY is required
+  /// (a bare TRY/END TRY would install a trap that does nothing useful).
+  /// </summary>
+  private Statement ParseTry() {
+    this.Require(LanguageFeature.TryCatch);
+    var pos = this.Advance().Position; // TRY
+
+    var body = this.ParseBody("CATCH", "FINALLY", "END TRY");
+
+    List<Statement>? catchBody = null;
+    if (this.TryMatchKeyword("CATCH"))
+      catchBody = this.ParseBody("FINALLY", "END TRY");
+
+    List<Statement>? finallyBody = null;
+    if (this.TryMatchKeyword("FINALLY"))
+      finallyBody = this.ParseBody("END TRY");
+
+    if (catchBody == null && finallyBody == null)
+      throw this.Error("TRY requires a CATCH or FINALLY block");
+
+    this.ExpectKeyword("END");
+    this.ExpectKeyword("TRY");
+    return new TryStmt(pos, body, catchBody, finallyBody);
+  }
+
   private Statement ParseEnd() {
     var token = this.Advance();
     if (this.Current.Kind == TokenKind.Identifier && _structuralEndKeywords.Contains(this.Current.Text))

@@ -777,6 +777,13 @@ public sealed class Binder {
       case DoLoopStmt d:
         yield return d.Body;
         break;
+      case TryStmt t:
+        yield return t.Body;
+        if (t.Catch != null)
+          yield return t.Catch;
+        if (t.Finally != null)
+          yield return t.Finally;
+        break;
     }
   }
 
@@ -923,6 +930,16 @@ public sealed class Binder {
 
       case OnErrorStmt oe when oe.Target is { } target:
         scope.PendingLabelRefs.Add((target, oe.Position));
+        break;
+
+      // PB 3.6 TRY/CATCH/FINALLY: bind each block in the same scope (the front-end
+      // parser already enforced at least one of CATCH/FINALLY and the dialect gate).
+      case TryStmt t:
+        this.BindBlock(t.Body, scope);
+        if (t.Catch != null)
+          this.BindBlock(t.Catch, scope);
+        if (t.Finally != null)
+          this.BindBlock(t.Finally, scope);
         break;
 
       case ResumeStmt rs when rs.Target != null:
@@ -1614,6 +1631,13 @@ public sealed class Binder {
         break;
       case DoLoopStmt d:
         yield return d.Body;
+        break;
+      case TryStmt t:
+        yield return t.Body;
+        if (t.Catch != null)
+          yield return t.Catch;
+        if (t.Finally != null)
+          yield return t.Finally;
         break;
     }
   }

@@ -17,7 +17,7 @@ public sealed partial class Parser {
     "DIM", "LOCAL", "STATIC", "SHARED", "PUBLIC", "EXT", "COMMON", "REDIM", "ERASE",
     "STDOUT", "STDIN", "SETEOF", "ERRCLEAR",
     "IF", "SELECT", "FOR", "DO", "WHILE", "EXIT", "GOTO", "GOSUB", "RETURN",
-    "ON", "RESUME", "ERROR", "END", "STOP", "SYSTEM",
+    "ON", "RESUME", "ERROR", "TRY", "END", "STOP", "SYSTEM",
     "PRINT", "LPRINT", "INPUT", "LINE", "OPEN", "CLOSE", "GET", "PUT", "SEEK", "FIELD", "LSET", "RSET",
     "DATA", "READ", "RESTORE", "INCR", "DECR", "SWAP", "PSET", "PRESET", "CIRCLE",
     "KEY", "TIMER", "COM", "PEN", "STRIG", "PLAY", "VIEW", "PALETTE",
@@ -35,7 +35,7 @@ public sealed partial class Parser {
   };
 
   private static readonly HashSet<string> _structuralEndKeywords = new(StringComparer.OrdinalIgnoreCase)
-    { "IF", "SELECT", "SUB", "FUNCTION", "TYPE", "UNION", "DEF", "ENUM" };
+    { "IF", "SELECT", "SUB", "FUNCTION", "TYPE", "UNION", "DEF", "ENUM", "TRY" };
 
   private static readonly HashSet<string> _eventKinds = new(StringComparer.OrdinalIgnoreCase)
     { "KEY", "TIMER", "COM", "PLAY", "PEN", "STRIG", "UEVENT" };
@@ -285,6 +285,7 @@ public sealed partial class Parser {
       case "ERASE": return this.ParseErase();
       case "IF": return this.ParseIf();
       case "SELECT": return this.ParseSelect();
+      case "TRY": return this.ParseTry();
       case "FOR": return this.ParseFor();
       case "DO": return this.ParseDo();
       case "WHILE": return this.ParseWhile();

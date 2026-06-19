@@ -1166,6 +1166,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         this.EmitError(err);
         break;
 
+      case TryStmt t:
+        this.EmitTry(t);
+        break;
+
       case ReadStmt read:
         this.EmitRead(read);
         break;

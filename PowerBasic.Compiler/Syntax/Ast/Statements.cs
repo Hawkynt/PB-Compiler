@@ -247,6 +247,14 @@ public sealed record ResumeStmt(SourcePosition Position, ResumeKind Kind, string
 /// <summary>ERROR n - raise a runtime error.</summary>
 public sealed record ErrorStmt(SourcePosition Position, Expression Code) : Statement(Position);
 
+/// <summary>
+/// PB 3.6 structured exception handling: TRY / [CATCH] / [FINALLY] / END TRY.
+/// Lowers onto the existing ON ERROR trap machinery (no RESUME semantics): a
+/// fault in <see cref="Body"/> transfers to <see cref="Catch"/> with ERR set;
+/// <see cref="Finally"/> always runs (normal, caught, or pre-propagation path).
+/// </summary>
+public sealed record TryStmt(SourcePosition Position, IReadOnlyList<Statement> Body, IReadOnlyList<Statement>? Catch, IReadOnlyList<Statement>? Finally) : Statement(Position);
+
 /// <summary>ON KEY(n)/TIMER(n)/COM(n)... GOSUB label event registration.</summary>
 public sealed record OnEventStmt(SourcePosition Position, string EventKind, Expression? Index, string Target) : Statement(Position);
 

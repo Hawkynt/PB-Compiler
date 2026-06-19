@@ -425,7 +425,7 @@ public sealed partial class CodeGenerator {
   private static bool ContainsErrorHandling(IEnumerable<Statement> statements) {
     foreach (var statement in statements) {
       switch (statement) {
-        case OnErrorStmt or ResumeStmt:
+        case OnErrorStmt or ResumeStmt or TryStmt:
           return true;
         case SubDecl or FunctionDecl or DefFnDecl:
           continue; // nested procs have their own scope
@@ -455,7 +455,82 @@ public sealed partial class CodeGenerator {
       case DoLoopStmt d:
         yield return d.Body;
         break;
+      case TryStmt t:
+        yield return t.Body;
+        if (t.Catch != null)
+          yield return t.Catch;
+        if (t.Finally != null)
+          yield return t.Finally;
+        break;
     }
+  }
+
+  /// <summary>
+  /// PB 3.6 TRY / CATCH / FINALLY / END TRY (no RESUME). Lowered onto the existing
+  /// ON ERROR trap: the previous handler triple (rt_onerr / rt_onerr_bp /
+  /// rt_onerr_sp) is pushed so it can be restored on every exit (this is what makes
+  /// nesting work - each TRY saves its own frame). A fresh dispatcher is armed over
+  /// the body; rt_raise enters it after restoring SP to the armed value, so the
+  /// saved triple is still on the stack and the dispatcher pops it back.
+  ///
+  /// FINALLY is guaranteed on all paths by emitting it on each exit edge:
+  ///   with CATCH: normal-completion edge and the caught edge both restore the
+  ///     previous handler, run FINALLY, then fall through to the end (CATCH swallows
+  ///     the error, so no propagation);
+  ///   without CATCH: the normal edge restores + runs FINALLY then ends; the fault
+  ///     edge restores + runs FINALLY then re-raises the still-set ERR to the
+  ///     now-restored previous handler (fatal or outer trap per policy).
+  /// </summary>
+  private void EmitTry(TryStmt t) {
+    var asm = this._asm;
+    var dispatch = asm.DefineLabel();
+    var end = asm.DefineLabel();
+
+    // save previous handler (LIFO: rt_onerr ends up on top, matching the pop order)
+    asm.Push(Mem.Word(asm.Lbl("rt_onerr_sp")));
+    asm.Push(Mem.Word(asm.Lbl("rt_onerr_bp")));
+    asm.Push(Mem.Word(asm.Lbl("rt_onerr")));
+    // arm our dispatcher: rt_raise will restore SP/BP to here and jump to it
+    asm.Mov(Mem.Word(asm.Lbl("rt_onerr")), Imm.OffsetOf(dispatch));
+    asm.Mov(Mem.Word(asm.Lbl("rt_onerr_bp")), Reg.BP);
+    asm.Mov(Mem.Word(asm.Lbl("rt_onerr_sp")), Reg.SP);
+
+    foreach (var s in t.Body)
+      this.EmitStatement(s);
+
+    // normal completion: restore the previous handler, run FINALLY, then end
+    this.RestoreErrorHandler();
+    if (t.Finally != null)
+      foreach (var s in t.Finally)
+        this.EmitStatement(s);
+    asm.Jmp(end);
+
+    // fault path: rt_raise jumped here with SP at the armed value and ERR set
+    asm.MarkLabel(dispatch);
+    this.RestoreErrorHandler();
+    if (t.Catch != null) {
+      foreach (var s in t.Catch)
+        this.EmitStatement(s);
+      if (t.Finally != null)
+        foreach (var s in t.Finally)
+          this.EmitStatement(s);
+    } else {
+      // no CATCH: run FINALLY then re-propagate the still-set ERR to the previous handler
+      foreach (var s in t.Finally!)
+        this.EmitStatement(s);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_err")));
+      asm.Call(this._rt.Raise);
+    }
+
+    asm.MarkLabel(end);
+  }
+
+  /// <summary>Pops the previous ON ERROR handler triple saved by <see cref="EmitTry"/> back into the runtime cells (order mirrors the pushes).</summary>
+  private void RestoreErrorHandler() {
+    var asm = this._asm;
+    asm.Pop(Mem.Word(asm.Lbl("rt_onerr")));
+    asm.Pop(Mem.Word(asm.Lbl("rt_onerr_bp")));
+    asm.Pop(Mem.Word(asm.Lbl("rt_onerr_sp")));
   }
 
   private void EmitOnError(OnErrorStmt oe) {
