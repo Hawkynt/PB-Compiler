@@ -405,6 +405,30 @@ public sealed partial class CodeGenerator {
             asm.Shl(Reg.AX, 1);
           break;
         }
+        // pb36 O8: a same-width direct-memory right operand of a commutative/subtractive ALU op
+        // is read straight into the instruction (ADD AX,[mem]) instead of being staged through BX
+        // (push left / eval right / mov bx / pop) - one memory-operand instruction, no spill.
+        if (b.Op is BinaryOp.Add or BinaryOp.Subtract or BinaryOp.And or BinaryOp.Or or BinaryOp.Xor
+            && this.TryInt16MemOperand(b.Right, opType) is { } rmem) {
+          this.EmitExpression(b.Left);
+          this.Coerce(leftType, opType, b.Left);
+          switch (b.Op) {
+            case BinaryOp.Add:
+              asm.Add(Reg.AX, rmem);
+              if (this.CheckOverflow && !this.ProvablyNoOverflow(b))
+                this.EmitRaiseWhen(asm.Jno, 6);
+              break;
+            case BinaryOp.Subtract:
+              asm.Sub(Reg.AX, rmem);
+              if (this.CheckOverflow && !this.ProvablyNoOverflow(b))
+                this.EmitRaiseWhen(asm.Jno, 6);
+              break;
+            case BinaryOp.And: asm.And(Reg.AX, rmem); break;
+            case BinaryOp.Or: asm.Or(Reg.AX, rmem); break;
+            default: asm.Xor(Reg.AX, rmem); break;
+          }
+          break;
+        }
         this.EmitExpression(b.Left);
         this.Coerce(leftType, opType, b.Left);
         asm.Push(Reg.AX);
@@ -749,6 +773,31 @@ public sealed partial class CodeGenerator {
     asm.Call(this._rt.Raise);
     asm.Pop(Reg.AX);
     asm.MarkLabel(ok);
+  }
+
+  /// <summary>
+  /// The word memory cell for an operand that would emit as a plain `mov ax,[cell]` read of a
+  /// same-width (2-byte) integer variable - so an ALU op can take it as a memory operand
+  /// (ADD AX,[cell]) instead of staging it through BX. Returns null for anything that is not such
+  /// a direct read: a register-resident variable, an IPCP/SCCP-folded constant, a CSE-cached node,
+  /// a captured local (env-pointer load), a BYREF parameter (pointer load), or a wider/narrower type.
+  /// </summary>
+  private Mem? TryInt16MemOperand(Expression e, PbType opType) {
+    if (KindOf(opType) != ValueKind.Int16)
+      return null;
+    if (e is not NameExpr n || this._cseMarks?.ContainsKey(n) == true)
+      return null;
+    if (model.TypeOf(n) is not ScalarType { IsFloat: false, ByteSize: 2 })
+      return null;                                  // same width as the op, so no coercion is needed
+    if (!model.VariableBindings.TryGetValue(n, out var sym))
+      return null;
+    if (this.ResidentRegOf(sym) != null)
+      return null;                                  // a resident variable lives in a register, not memory
+    if (this._ipcp?.ContainsKey(sym) == true || sym.Storage == VariableStorage.Captured)
+      return null;
+    if (this._copyReads is { } cr && cr.TryGetValue(n, out var src) && this.TryDirectCell(src) is { } srcCell)
+      return srcCell.WithSize(OperandSize.Word);
+    return this.TryDirectCell(sym) is { } cell ? cell.WithSize(OperandSize.Word) : null;
   }
 
   private void EmitInt16Op(BinaryExpr b, bool unsignedCompare = false) {

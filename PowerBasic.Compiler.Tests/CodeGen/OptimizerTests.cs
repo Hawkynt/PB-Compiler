@@ -1064,13 +1064,34 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenBitwiseMaskConstant_WhenPb36_ThenFoldsToImmediateNoRegisterLoad() {
-    // y% = x% AND 15 folds the mask into AND AX,imm; the variable form must load BX
+    // y% = x% AND 15 folds the mask into AND AX,imm; the variable form y% = x% AND w% reads w%
+    // straight as a memory operand (AND AX,[w%] = 23 06) - neither stages the operand through BX.
     var constMask = Compile(_TOUCH + "x% = 100\nT x%\ny% = x% AND 15\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
     var varMask = Compile(_TOUCH + "x% = 100\nw% = 15\nT x%\nT w%\ny% = x% AND w%\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
     Assert.Multiple(() => {
       Assert.That(CountMovBxAx(constMask), Is.Zero, "x% AND 15 should fold to AND AX,imm with no MOV BX,AX");
-      Assert.That(CountMovBxAx(varMask), Is.GreaterThanOrEqualTo(1), "x% AND w% must load the second operand into BX");
+      Assert.That(CountMovBxAx(varMask), Is.Zero, "x% AND w% reads w% as a memory operand, not via MOV BX,AX");
+      Assert.That(CountAndAxMem(varMask), Is.GreaterThanOrEqualTo(1), "x% AND w% should use AND AX,[w%]");
     });
+  }
+
+  [Test]
+  public void Emit_GivenBinaryWithMemoryRightOperand_WhenPb36_ThenAluMemoryOperand() {
+    // c% + n% with n% a direct-cell operand reads it as an ALU memory operand (ADD AX,[n%]), so it
+    // needs no MOV BX,AX staging; an expression right operand (n% * i%) must still be staged via BX.
+    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%)\n  c% = 0\n  FOR i% = 1 TO 10\n    c% = c% + n%\n  NEXT i%\n  PRINT c%\nEND SUB";
+    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%)\n  c% = 0\n  FOR i% = 1 TO 10\n    c% = c% + (n% * i%)\n  NEXT i%\n  PRINT c%\nEND SUB";
+    Assert.That(CountMovBxAx(Compile(mem, Dialect.Pb36)), Is.LessThan(CountMovBxAx(Compile(staged, Dialect.Pb36))),
+      "a direct-cell right operand is read as an ALU memory operand, not staged through BX");
+  }
+
+  // 23 06 = AND AX, [disp16] - the memory-operand bitwise form
+  private static int CountAndAxMem(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0x23 && image[i + 1] == 0x06)
+        ++count;
+    return count;
   }
 
   [Test]

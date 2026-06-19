@@ -811,6 +811,16 @@ public sealed partial class CodeGenerator {
         // pb36 O8: v +/- const becomes one immediate ALU op (smaller and faster)
         if (b.Op is BinaryOp.Add or BinaryOp.Subtract && this.TryEmitModularConstAddSub(b))
           break;
+        // pb36 O8: a direct-memory right operand reads straight into the ALU op (ADD AX,[mem])
+        // instead of being staged through BX (push left / eval right / mov bx / pop)
+        if (b.Op is BinaryOp.Add or BinaryOp.Subtract && this.TryInt16MemOperand(b.Right, PbType.Integer) is { } rmem) {
+          this.EmitModularInt16(b.Left);
+          if (b.Op == BinaryOp.Add)
+            asm.Add(Reg.AX, rmem);
+          else
+            asm.Sub(Reg.AX, rmem);
+          break;
+        }
         this.EmitModularInt16(b.Left);
         asm.Push(Reg.AX);
         this.EmitModularInt16(b.Right);
