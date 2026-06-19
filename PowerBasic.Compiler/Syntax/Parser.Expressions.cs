@@ -271,6 +271,8 @@ public sealed partial class Parser {
         return new FloatLiteralExpr(this.Advance().Position, token.FloatValue, this.InferFloatSuffix(token));
       case TokenKind.StringLiteral:
         return new StringLiteralExpr(this.Advance().Position, token.StringValue!);
+      case TokenKind.InterpString:
+        return this.ParseInterpString();
       case TokenKind.NamedConstant:
         return new NamedConstantExpr(this.Advance().Position, token.Text);
       case TokenKind.LParen: {
@@ -453,6 +455,102 @@ public sealed partial class Parser {
       } while (this.Match(TokenKind.Comma));
     this.Expect(close, bracketed ? "']'" : "'}'");
     return new ArrayLiteralExpr(pos, elements);
+  }
+
+  /// <summary>
+  /// PB 3.6 interpolated string: splits the raw inner text of the <c>$"..."</c> token into
+  /// literal runs and <c>{expr[:fmt]}</c> holes (with <c>{{</c>/<c>}}</c> de-escaped in the
+  /// literal runs), parsing each hole's expression with the active dialect. The binder
+  /// turns the resulting <see cref="InterpolatedStringExpr"/> into a concatenation.
+  /// </summary>
+  private Expression ParseInterpString() {
+    this.Require(LanguageFeature.StringInterpolation);
+    var token = this.Advance();
+    var raw = token.StringValue!;
+    var parts = new List<InterpolationPart>();
+    var literal = new System.Text.StringBuilder();
+
+    void FlushLiteral() {
+      if (literal.Length == 0)
+        return;
+      parts.Add(new InterpolationPart(token.Position, literal.ToString(), null, null));
+      literal.Clear();
+    }
+
+    for (var i = 0; i < raw.Length;) {
+      var c = raw[i];
+      if (c == '{') {
+        if (i + 1 < raw.Length && raw[i + 1] == '{') { // '{{' -> literal '{'
+          literal.Append('{');
+          i += 2;
+          continue;
+        }
+        FlushLiteral();
+        i = this.ParseInterpHole(raw, i + 1, token.Position, parts);
+        continue;
+      }
+      if (c == '}') {
+        if (i + 1 < raw.Length && raw[i + 1] == '}') { // '}}' -> literal '}'
+          literal.Append('}');
+          i += 2;
+          continue;
+        }
+        throw new ParserException("unmatched '}' in interpolated string (use '}}' for a literal brace)", token.Position);
+      }
+      literal.Append(c);
+      ++i;
+    }
+    FlushLiteral();
+    return new InterpolatedStringExpr(token.Position, parts);
+  }
+
+  /// <summary>
+  /// Scans one <c>{expr[:fmt]}</c> hole starting just past the <c>{</c>; the format is
+  /// everything after the first top-level <c>:</c> up to the matching <c>}</c>. Returns the
+  /// index just past the closing <c>}</c>.
+  /// </summary>
+  private int ParseInterpHole(string raw, int start, SourcePosition position, List<InterpolationPart> parts) {
+    var depth = 0;
+    var colon = -1;
+    var i = start;
+    for (; i < raw.Length; ++i) {
+      var c = raw[i];
+      if (c == '"') { // skip a nested string expression literally
+        for (++i; i < raw.Length && raw[i] != '"'; ++i) { }
+        continue;
+      }
+      if (c is '(' or '[' or '{')
+        ++depth;
+      else if (c is ')' or ']')
+        --depth;
+      else if (c == '}') {
+        if (depth == 0)
+          break;
+        --depth;
+      } else if (c == ':' && depth == 0 && colon < 0)
+        colon = i;
+    }
+    if (i >= raw.Length)
+      throw new ParserException("unterminated '{' in interpolated string", position);
+
+    var exprText = (colon < 0 ? raw[start..i] : raw[start..colon]).Trim();
+    var format = colon < 0 ? null : raw[(colon + 1)..i];
+    if (exprText.Length == 0)
+      throw new ParserException("empty '{}' hole in interpolated string", position);
+
+    var hole = ParseSubExpression(exprText, position, this._dialect);
+    parts.Add(new InterpolationPart(position, null, hole, format));
+    return i + 1; // past '}'
+  }
+
+  /// <summary>Parses a standalone expression from source text (used for interpolation holes).</summary>
+  private static Expression ParseSubExpression(string text, SourcePosition position, Dialect dialect) {
+    var tokens = Lexer.Tokenize(text, position.File, dialect).ToList();
+    var sub = new Parser(tokens, dialect);
+    var expr = sub.ParseExpression();
+    if (sub.Current.Kind is not (TokenKind.EndOfLine or TokenKind.EndOfFile))
+      throw new ParserException($"unexpected '{sub.Current.Text}' in interpolated expression", position);
+    return expr;
   }
 
   private Expression ParseTernaryIf() {

@@ -97,6 +97,11 @@ public sealed class Lexer {
       return this.LexInlineAsm(position);
     }
 
+    // PB 3.6 interpolated string: '$' immediately followed by '"' (never a valid
+    // metacommand or type suffix start), gated to pb36 in LexInterpString.
+    if (c == '$' && this.Peek() == '"')
+      return this.LexInterpString(position);
+
     if (c == '$' && atStatementStart)
       return this.LexMetaCommand(position);
 
@@ -397,6 +402,51 @@ public sealed class Lexer {
     if (this.Current == '"')
       this.Advance();
     return new(TokenKind.StringLiteral, value, position, StringValue: value);
+  }
+
+  /// <summary>
+  /// PB 3.6 interpolated string <c>$"text {expr} {expr:fmt}"</c>: the raw inner text
+  /// (between the quotes) is captured verbatim - holes, <c>{{</c>/<c>}}</c> escapes and
+  /// nested string expressions are all left to the parser. The closing quote is the
+  /// first <c>"</c> at brace depth 0; a <c>"</c> inside a <c>{ ... }</c> hole belongs to a
+  /// nested string expression and is skipped.
+  /// </summary>
+  private Token LexInterpString(SourcePosition position) {
+    this.Require(LanguageFeature.StringInterpolation, position);
+    this.Advance(); // $
+    this.Advance(); // opening quote
+    var start = this._index;
+    var depth = 0;
+    while (!this.AtEnd && this.Current is not ('\r' or '\n')) {
+      var c = this.Current;
+      if (c == '{') {
+        // '{{' is a literal brace, not a hole opener
+        if (this.Peek() == '{') {
+          this.Advance(2);
+          continue;
+        }
+        ++depth;
+      } else if (c == '}') {
+        if (depth == 0 && this.Peek() == '}') { // literal '}}' outside a hole
+          this.Advance(2);
+          continue;
+        }
+        if (depth > 0)
+          --depth;
+      } else if (c == '"') {
+        if (depth == 0)
+          break; // closing quote of the interpolation
+        // a '"' inside a hole opens a nested string expression - skip to its close
+        this.Advance();
+        while (!this.AtEnd && this.Current is not ('"' or '\r' or '\n'))
+          this.Advance();
+      }
+      this.Advance();
+    }
+    var raw = this._source[start..this._index];
+    if (this.Current == '"')
+      this.Advance();
+    return new(TokenKind.InterpString, raw, position, StringValue: raw);
   }
 
   private Token LexPunctuation(SourcePosition position) {

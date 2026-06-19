@@ -1915,6 +1915,9 @@ public sealed class Binder {
       case ArrayLiteralExpr lit: // { ... } is consumed by BindArrayInitializer; here it is misused
         return this.ErrorType(lit.Position, "an array initializer '{ ... }' is only allowed as a DIM array initializer");
 
+      case InterpolatedStringExpr interp:
+        return this.BindInterpolatedString(interp, scope);
+
       case LambdaExpr lambda:
         return this.BindLambda(lambda, scope);
 
@@ -2191,6 +2194,53 @@ public sealed class Binder {
     this._model.ExpressionTypes[fromEnd] = PbType.Integer;
     this._model.RewrittenIndex[fromEnd] = rewritten;
   }
+
+  /// <summary>
+  /// PB 3.6 interpolated string <c>$"text {expr} {expr:fmt}"</c>: desugars to a string
+  /// concatenation reusing the existing runtime - literal parts become string literals, a
+  /// STRING hole stays as-is, a numeric hole becomes <c>STR$(expr)</c>, and a
+  /// <c>{expr:fmt}</c> hole becomes <c>USING$(fmt, expr)</c> (the PRINT USING formatter). The
+  /// bound concatenation is recorded for codegen; a non-string/non-numeric hole is an error.
+  /// </summary>
+  private PbType BindInterpolatedString(InterpolatedStringExpr interp, Scope scope) {
+    var pos = interp.Position;
+    Expression? result = null;
+
+    void Append(Expression piece) =>
+      result = result == null ? piece : new BinaryExpr(pos, BinaryOp.Concat, result, piece);
+
+    foreach (var part in interp.Parts) {
+      if (part.Literal != null) {
+        Append(new StringLiteralExpr(part.Position, part.Literal));
+        continue;
+      }
+
+      var hole = part.Hole!;
+      var holeType = this.BindExpression(hole, scope);
+      Expression piece;
+      if (part.Format != null) {
+        // {expr:fmt} -> USING$(fmt, expr): the PRINT USING formatter (STRING or numeric)
+        piece = new CallOrIndexExpr(part.Position, "USING$", TypeSuffix.None,
+          [new StringLiteralExpr(part.Position, part.Format), hole]);
+      } else if (IsStringType(holeType)) {
+        piece = hole; // a STRING hole concatenates directly
+      } else if (holeType is ScalarType or BcdType) {
+        // a numeric hole -> STR$(expr): exactly the text PRINT/STR$ produces
+        piece = new CallOrIndexExpr(part.Position, "STR$", TypeSuffix.None, [hole]);
+      } else {
+        this.Error(part.Position, "interpolated '{ }' hole must be a STRING or numeric expression");
+        piece = new StringLiteralExpr(part.Position, "");
+      }
+      Append(piece);
+    }
+
+    result ??= new StringLiteralExpr(pos, ""); // $"" is the empty string
+    var type = this.BindExpression(result, scope);
+    this._model.Desugared[interp] = result;
+    return type;
+  }
+
+  private static bool IsStringType(PbType type) => type is StringType or FixedStringType or FlexType or AsciizType;
 
   private PbType BindCallOrIndex(CallOrIndexExpr call, Scope scope) {
     // 1. array indexing (or a whole-array reference like `arr()` in argument lists)

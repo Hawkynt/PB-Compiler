@@ -64,6 +64,12 @@ public sealed partial class CodeGenerator {
   }
 
   private void EmitExpressionCore(Expression expression) {
+    // pb36 interpolated string: emit the bound concatenation the binder desugared it to
+    if (model.Desugared.TryGetValue(expression, out var desugared)) {
+      this.EmitExpression(desugared);
+      return;
+    }
+
     // pb36 ENUM member: the binder resolved this node to a compile-time integer
     if (model.ResolvedConstants.TryGetValue(expression, out var enumConst) && model.TypeOf(expression) is ScalarType enumType) {
       this.EmitIntegralConstant(WrapToType(enumConst, enumType), KindOf(enumType));

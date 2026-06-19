@@ -20,6 +20,8 @@ public enum TokenKind {
   IntegerLiteral,
   FloatLiteral,
   StringLiteral,
+  /// <summary>PB 3.6 interpolated string <c>$"text {expr} {expr:fmt}"</c>; <see cref="Token.StringValue"/> holds the raw inner text (quotes and outer escapes stripped, holes left verbatim).</summary>
+  InterpString,
 
   Plus,
   Minus,

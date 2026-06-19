@@ -381,6 +381,13 @@ public sealed class DialectGateTests {
     AssertAccepted(source, Dialect.Pb36);
   }
 
+  [TestCase("y$ = $\"a {x%} b\"")]
+  [TestCase("y$ = $\"{x%:###.##}\"")]
+  public void Gate_GivenStringInterpolation_WhenPb35_ThenRejectedButPb36Accepts(string source) {
+    AssertRejected(source, Dialect.Pb35, "3.6");
+    AssertAccepted(source, Dialect.Pb36);
+  }
+
   [Test]
   public void Gate_GivenObjectInitializer_WhenPb35_ThenRejectedButPb36Accepts() {
     const string source = "TYPE Point\n  X AS INTEGER\n  Y AS INTEGER\nEND TYPE\nDIM p = NEW Point { .X = 1, .Y = 2 }";

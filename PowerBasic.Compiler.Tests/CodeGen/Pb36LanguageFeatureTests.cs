@@ -889,4 +889,57 @@ public sealed class Pb36LanguageFeatureTests {
       """;
     Assert.That(Run(source), Is.EqualTo(" 60\n"));
   }
+
+  [Test]
+  public void Execute_GivenInterpolationWithNumericHole_WhenRun_ThenMatchesStrDollarConcat() {
+    // $"a {x} b" desugars to "a " & STR$(x) & " b" - same observable output
+    const string interpolated = """
+      DIM x AS LONG
+      x = 7
+      PRINT $"a {x} b"
+      """;
+    const string explicitForm = """
+      DIM x AS LONG
+      x = 7
+      PRINT "a " & STR$(x) & " b"
+      """;
+    Assert.That(Run(interpolated), Is.EqualTo(Run(explicitForm)));
+    Assert.That(Run(interpolated), Is.EqualTo("a  7 b\n")); // STR$ keeps PB's leading space
+  }
+
+  [Test]
+  public void Execute_GivenInterpolationWithStringHole_WhenRun_ThenStringConcatenatedDirectly() {
+    const string source = """
+      DIM s AS STRING
+      s = "world"
+      PRINT $"hello, {s}!"
+      """;
+    Assert.That(Run(source), Is.EqualTo("hello, world!\n"));
+  }
+
+  [Test]
+  public void Execute_GivenInterpolationWithFormatHole_WhenRun_ThenMatchesPrintUsing() {
+    // {x:###.##} reuses the PRINT USING formatter via USING$
+    const string interpolated = """
+      DIM x AS SINGLE
+      x = 3.14159
+      PRINT $"pi={x:###.##}"
+      """;
+    const string usingForm = """
+      DIM x AS SINGLE
+      x = 3.14159
+      PRINT "pi=" & USING$("###.##", x)
+      """;
+    Assert.That(Run(interpolated), Is.EqualTo(Run(usingForm)));
+  }
+
+  [Test]
+  public void Execute_GivenBraceEscapes_WhenRun_ThenLiteralBracesPrinted() {
+    const string source = """
+      DIM x AS LONG
+      x = 5
+      PRINT $"{{{x}}}"
+      """;
+    Assert.That(Run(source), Is.EqualTo("{ 5}\n"));
+  }
 }

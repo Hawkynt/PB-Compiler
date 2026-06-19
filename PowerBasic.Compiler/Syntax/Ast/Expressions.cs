@@ -106,3 +106,18 @@ public sealed record SpreadElement(SourcePosition Position, Expression Source) :
 /// array initializer. The binder lowers it to per-element assignments.
 /// </summary>
 public sealed record ArrayLiteralExpr(SourcePosition Position, IReadOnlyList<CollectionElement> Elements) : Expression(Position);
+
+/// <summary>
+/// One part of a PB 3.6 interpolated string: a literal text run, or a <c>{expr[:fmt]}</c>
+/// hole. Exactly one of <see cref="Literal"/> / <see cref="Hole"/> is set.
+/// </summary>
+public sealed record InterpolationPart(SourcePosition Position, string? Literal, Expression? Hole, string? Format);
+
+/// <summary>
+/// PB 3.6 interpolated string <c>$"text {expr} {expr:fmt}"</c>. The binder desugars it to
+/// ordinary string concatenation: literal parts become string literals, a STRING hole
+/// stays as-is, a numeric hole becomes <c>STR$(expr)</c>, and a <c>{expr:fmt}</c> hole
+/// becomes <c>USING$(fmt, expr)</c> - so it reuses the existing concat / STR$ / PRINT USING
+/// runtime with no new codegen.
+/// </summary>
+public sealed record InterpolatedStringExpr(SourcePosition Position, IReadOnlyList<InterpolationPart> Parts) : Expression(Position);

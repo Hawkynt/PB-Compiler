@@ -36,6 +36,7 @@ public static class AstQuery {
       SpreadElement s => [s.Source],
       _ => [],
     })],
+    InterpolatedStringExpr i => [.. i.Parts.Where(p => p.Hole != null).Select(p => p.Hole!)],
     // leaves with no child expressions: IntegerLiteralExpr, FloatLiteralExpr,
     // StringLiteralExpr, NamedConstantExpr, NameExpr.
     _ => [],

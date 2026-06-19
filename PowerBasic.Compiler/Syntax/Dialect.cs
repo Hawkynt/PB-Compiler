@@ -112,6 +112,7 @@ public enum LanguageFeature {
   NamedDelegates,
   CollectionLiteral,
   ForEach,
+  StringInterpolation,
 }
 
 /// <summary>
@@ -172,6 +173,7 @@ public static class DialectFacts {
     [LanguageFeature.NamedDelegates] = (Dialect.Pb36, "named delegate types (a DECLAREd SUB/FUNCTION name reused as a procedure-pointer type)"),
     [LanguageFeature.CollectionLiteral] = (Dialect.Pb36, "bracketed collection/range literal ('[v1, v2, lo..hi, ..arr]')"),
     [LanguageFeature.ForEach] = (Dialect.Pb36, "FOR EACH ... IN (array or '[lo..hi]' range)"),
+    [LanguageFeature.StringInterpolation] = (Dialect.Pb36, "interpolated string ('$\"text {expr} {expr:fmt}\"')"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

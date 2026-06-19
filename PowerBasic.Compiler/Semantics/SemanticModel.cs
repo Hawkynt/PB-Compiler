@@ -75,6 +75,9 @@ public sealed class SemanticModel {
   /// <summary>PB 3.6 from-end index (<c>arr(^n)</c>): the FromEndExpr node mapped to its bound rewrite <c>UBOUND(arr) - n + 1</c>, which codegen emits in its place.</summary>
   public Dictionary<Expression, Expression> RewrittenIndex { get; } = new(ReferenceEqualityComparer.Instance);
 
+  /// <summary>PB 3.6 interpolated string (<c>$"..."</c>): the InterpolatedStringExpr node mapped to the bound concatenation it desugars to, which codegen emits in its place.</summary>
+  public Dictionary<Expression, Expression> Desugared { get; } = new(ReferenceEqualityComparer.Instance);
+
   /// <summary>PB 3.6 inline lambdas: each LambdaExpr mapped to the anonymous proc it was lifted to; codegen emits the lambda value as that proc's code pointer.</summary>
   public Dictionary<Expression, ProcedureSymbol> LambdaProcs { get; } = new(ReferenceEqualityComparer.Instance);
 
