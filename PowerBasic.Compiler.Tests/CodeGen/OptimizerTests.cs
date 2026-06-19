@@ -1228,17 +1228,30 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenLongOpWithDirectCellOperand_WhenPb36_ThenLoadsRightWithoutStaging() {
+    // a LONG op (AND/OR/XOR) against a BYVAL direct-cell right operand loads it into BX:CX
+    // straight from memory, skipping the push/pop staging of the left (MOV BX,AX); a BYREF
+    // operand is not a direct cell and keeps staging. Two call sites defeat IPCP folding.
+    const string mem = "DECLARE SUB s(BYVAL a AS LONG, BYVAL b AS LONG)\ns 7, 3\ns 100, 200\nEND\nSUB s(BYVAL a AS LONG, BYVAL b AS LONG)\n  r& = a AND b\n  r& = r OR b\n  r& = r XOR b\n  PRINT r&\nEND SUB";
+    const string staged = "DECLARE SUB s(BYVAL a AS LONG, b AS LONG)\nDIM q AS LONG\nq = 3\ns 7, q\nq = 200\ns 100, q\nEND\nSUB s(BYVAL a AS LONG, b AS LONG)\n  r& = a AND b\n  r& = r OR b\n  r& = r XOR b\n  PRINT r&\nEND SUB";
+    Assert.That(CountMovBxAx(Compile(mem, Dialect.Pb36)), Is.LessThan(CountMovBxAx(Compile(staged, Dialect.Pb36))),
+      "a LONG direct-cell right operand loads into BX:CX from memory; a BYREF operand stages through MOV BX,AX");
+  }
+
+  [Test]
   public void Emit_GivenCompareConstant_WhenPb36_ThenFoldsToImmediate() {
     // y% = (x% = 5) compares against an immediate, no constant register load
     var pb36 = Compile(_TOUCH + "x% = 100\nT x%\ny% = (x% = 5)\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
     Assert.That(CountMovBxAx(pb36), Is.Zero, "comparison against a constant should fold to CMP AX,imm");
   }
 
-  private static int CountMovCxDx(byte[] image) {
+  // 8B /1 with a memory mod field = MOV CX, [mem] - the int32 path loading the right
+  // operand's high word straight from its cell (replaces the old MOV CX,DX staging)
+  private static int CountMovCxMem(byte[] image) {
     var count = 0;
     for (var i = 0; i + 1 < image.Length; ++i)
-      if ((image[i] == 0x8B && image[i + 1] == 0xCA) || (image[i] == 0x89 && image[i + 1] == 0xD1))
-        ++count; // MOV CX, DX (the int32 path's high-word constant load)
+      if (image[i] == 0x8B && (image[i + 1] & 0x38) == 0x08 && (image[i + 1] & 0xC0) != 0xC0)
+        ++count;
     return count;
   }
 
@@ -1249,8 +1262,8 @@ public sealed class OptimizerTests {
     var constMask = Compile(_TOUCHL + "a& = &H1234\nTL a&\nb& = a& AND 255\nTL b&\nEND" + _TOUCHL_END, Dialect.Pb36);
     var varMask = Compile(_TOUCHL + "a& = &H1234\nm& = 255\nTL a&\nTL m&\nb& = a& AND m&\nTL b&\nEND" + _TOUCHL_END, Dialect.Pb36);
     Assert.Multiple(() => {
-      Assert.That(CountMovCxDx(constMask), Is.Zero, "a& AND 255 should fold to immediate pair ops, no MOV CX,DX");
-      Assert.That(CountMovCxDx(varMask), Is.GreaterThanOrEqualTo(1), "a& AND m& must load the second operand's high word into CX");
+      Assert.That(CountMovCxMem(constMask), Is.Zero, "a& AND 255 should fold to immediate pair ops, no high-word load into CX");
+      Assert.That(CountMovCxMem(varMask), Is.GreaterThanOrEqualTo(1), "a& AND m& loads the second operand's high word into CX straight from memory (MOV CX,[m&+2])");
     });
   }
 
@@ -1261,8 +1274,8 @@ public sealed class OptimizerTests {
     var constEq = Compile(_TOUCHL + _TOUCH + "p& = 7\nTL p&\ny% = (p& = 123456)\nT y%\nEND" + _TOUCHL_END + _TOUCH_END, Dialect.Pb36);
     var varEq = Compile(_TOUCHL + _TOUCH + "p& = 7\nq& = 123456\nTL p&\nTL q&\ny% = (p& = q&)\nT y%\nEND" + _TOUCHL_END + _TOUCH_END, Dialect.Pb36);
     Assert.Multiple(() => {
-      Assert.That(CountMovCxDx(constEq), Is.Zero, "p& = const should fold the comparand, no MOV CX,DX");
-      Assert.That(CountMovCxDx(varEq), Is.GreaterThanOrEqualTo(1), "p& = q& must load the comparand's high word");
+      Assert.That(CountMovCxMem(constEq), Is.Zero, "p& = const should fold the comparand, no high-word load");
+      Assert.That(CountMovCxMem(varEq), Is.GreaterThanOrEqualTo(1), "p& = q& loads the comparand's high word straight from memory (MOV CX,[q&+2])");
     });
   }
 

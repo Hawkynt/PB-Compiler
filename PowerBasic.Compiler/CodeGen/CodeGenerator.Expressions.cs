@@ -453,6 +453,17 @@ public sealed partial class CodeGenerator {
         // pb36 O8: fold a constant operand into immediate pair ops
         if (this.TryEmitInt32ConstBinary(b, opType))
           break;
+        // pb36: a 4-byte direct-cell right operand loads straight into BX:CX (no
+        // push/pop staging of the left) - EmitInt32Op sees the same AX:DX/BX:CX
+        // state, so it works for every 32-bit op and the output is unchanged.
+        if (this.Optimize && this.TryInt32MemOperand(b.Right) is { } lo32) {
+          this.EmitExpression(b.Left);
+          this.Coerce(leftType, opType, b.Left);
+          asm.Mov(Reg.BX, lo32);
+          asm.Mov(Reg.CX, Adjust(lo32, 2, OperandSize.Word));
+          this.EmitInt32Op(b, unsignedCompare, opType is ScalarType { IsFloat: false, Signed: false });
+          break;
+        }
         this.EmitExpression(b.Left);
         this.Coerce(leftType, opType, b.Left);
         asm.Push(Reg.DX);
@@ -883,6 +894,35 @@ public sealed partial class CodeGenerator {
         && this._copyReads is { } cr && cr.TryGetValue(n, out var src) && this.TryDirectCell(src) is { } srcCell)
       return srcCell.WithSize(size);
     return this.InlineSlotCellOf(sym) is { } cell ? cell.WithSize(size) : null;
+  }
+
+  /// <summary>
+  /// The low-word direct cell of a 4-byte LONG/DWORD scalar whose right-operand
+  /// value can be loaded into BX:CX (low [cell], high [cell+2]) without the
+  /// push/pop staging of the left operand - the cell has no side effects and is
+  /// read after the left exactly as the staged path would, so it is order-safe
+  /// for EVERY 32-bit op (compare/bitwise/div/mod). Sign-agnostic (bitwise is
+  /// bit-identical, the divide variant carries the sign). Same exclusions as the
+  /// other memory-operand helpers (proven-const dead store, register residency,
+  /// inline-frame slots, captured/BYREF, IPCP, CSE marks).
+  /// </summary>
+  private Mem? TryInt32MemOperand(Expression e) {
+    if (e is not NameExpr n || this._cseMarks?.ContainsKey(n) == true)
+      return null;
+    if (this._provenReads?.ContainsKey(n) == true)
+      return null;
+    if (model.TypeOf(n) is not ScalarType { IsFloat: false, ByteSize: 4 })
+      return null;
+    if (!model.VariableBindings.TryGetValue(n, out var sym))
+      return null;
+    if (this.ResidentRegOf(sym) != null)
+      return null;
+    if (this._ipcp?.ContainsKey(sym) == true || sym.Storage == VariableStorage.Captured)
+      return null;
+    if (this._inlineParamSlots is null
+        && this._copyReads is { } cr && cr.TryGetValue(n, out var src) && this.TryDirectCell(src) is { } srcCell)
+      return srcCell.WithSize(OperandSize.Word);
+    return this.InlineSlotCellOf(sym) is { } cell ? cell.WithSize(OperandSize.Word) : null;
   }
 
   /// <summary>
