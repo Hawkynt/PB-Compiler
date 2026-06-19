@@ -16,29 +16,47 @@ namespace PowerBasic.Compiler.Emit.Omf;
 public static class OmfToPbu {
 
   public static PbuFile Convert(OmfModule m) {
-    // 1. lay this module's own segments into combined code / data / bss
+    // 1. lay this module's own segments into combined code / data. The C runtime needs its
+    //    DGROUP (group of _DATA/CONST/BSS) laid out and addressable off DS - which, in this
+    //    single-segment model (CS=DS=SS=load segment), means every data/const/BSS segment is
+    //    relocated into the one combined segment behind the code, exactly like our own data.
+    //    BSS (uninitialised _BSS/STACK) is folded in as trailing ZERO bytes right after the
+    //    initialised data rather than tracked as a separate size: that gives BSS a fixed
+    //    intra-unit offset so a FIXUPP that targets a BSS cell (a CRT global such as printf's
+    //    scratch) resolves through the ordinary DataOffset path, and the zero fill satisfies
+    //    C's zero-initialised-BSS contract without the C startup having to clear it. (A real
+    //    crt0 zeroes _BSS at entry; we never run crt0, so we materialise the zeros at link
+    //    time - see docs/LINKER.md "C runtime".)
     var codeBase = new int[m.Segments.Count + 1];
     var dataBase = new int[m.Segments.Count + 1];
     var inCode = new bool[m.Segments.Count + 1];
-    var codeLen = 0; var dataLen = 0; uint bss = 0;
+    var codeLen = 0; var dataLen = 0;
     for (var i = 0; i < m.Segments.Count; i++) {
       var s = m.Segments[i];
-      if (s.IsBss) { bss += (uint)s.Length; continue; }
       if (s.IsCode) { codeBase[i + 1] = codeLen; inCode[i + 1] = true; codeLen += s.Length; }
-      else { dataBase[i + 1] = dataLen; dataLen += s.Length; }
+    }
+    // initialised data first, then BSS (so a data fixup site never lands inside zero fill)
+    for (var i = 0; i < m.Segments.Count; i++) {
+      var s = m.Segments[i];
+      if (s.IsCode || s.IsBss) continue;
+      dataBase[i + 1] = dataLen; dataLen += s.Length;
+    }
+    for (var i = 0; i < m.Segments.Count; i++) {
+      var s = m.Segments[i];
+      if (!s.IsBss) continue;
+      dataBase[i + 1] = dataLen; dataLen += s.Length;
     }
 
     var code = new byte[codeLen];
     var data = new byte[dataLen];
     for (var i = 0; i < m.Segments.Count; i++) {
       var s = m.Segments[i];
-      if (s.IsBss) continue;
-      var dst = s.IsCode ? code : data;
-      var at = s.IsCode ? codeBase[i + 1] : dataBase[i + 1];
-      Array.Copy(s.Data, 0, dst, at, Math.Min(s.Data.Length, s.Length));
+      if (s.IsCode) Array.Copy(s.Data, 0, code, codeBase[i + 1], Math.Min(s.Data.Length, s.Length));
+      else if (!s.IsBss) Array.Copy(s.Data, 0, data, dataBase[i + 1], Math.Min(s.Data.Length, s.Length));
+      // BSS contributes only its (already-zero) reservation in `data`
     }
 
-    var pbu = new PbuFile { Name = m.Name.Length > 0 ? m.Name : "omf", Code = code, Data = data, BssSize = bss, Foreign = true };
+    var pbu = new PbuFile { Name = m.Name.Length > 0 ? m.Name : "omf", Code = code, Data = data, BssSize = 0, Foreign = true };
 
     // 2. exports (publics) and imports (externals)
     foreach (var p in m.Publics) {
@@ -108,11 +126,11 @@ public static class OmfToPbu {
         // import offset keeps its located addend, plus any FIXUPP target displacement.
         if (!f.SelfRelative && f.Displacement != 0) AddAtSite(blob, site, f.Displacement);
         pbu.Fixups.Add(new PbuFixup(unitOffset, f.SelfRelative ? PbuFixupKind.ImportCall : PbuFixupKind.ImportOffset, (ushort)imp, inData));
-      } else { // segment target inside this module (may be any code/data segment)
+      } else { // segment target inside this module (may be any code/data/BSS segment)
         var tgt = f.TargetIndex;
         if (tgt < 1 || tgt > m.Segments.Count) return;
-        if (m.Segments[tgt - 1].IsBss)
-          throw new OmfException($"module '{pbu.Name}' relocates against a BSS segment, which has no fixed offset in this model");
+        // a BSS target now has a fixed intra-unit offset (its zero-fill was laid behind the
+        // initialised data above), so it relocates through the ordinary DataOffset path.
         if (f.SelfRelative && tgt == f.SegmentIndex && !inData) return; // same-segment self-relative: already correct
         // pre-add the target segment's intra-unit base (and any displacement) so the
         // linker's per-unit base add finishes it

@@ -17,6 +17,7 @@ public sealed class Linker {
   private readonly List<PbuFile> _mandatoryUnits = [];
   private readonly List<PblFile> _libraries = [];
   private readonly List<Omf.OmfLibrary> _omfLibraries = [];
+  private bool _crtSupportPulled;
 
   public void AddUnit(PbuFile unit) => this._mandatoryUnits.Add(unit);
   public void AddLibrary(PblFile library) => this._libraries.Add(library);
@@ -70,6 +71,12 @@ public sealed class Linker {
         if (provider == null)
           foreach (var omf in this._omfLibraries)
             if (omf.Provide(name) is { } pulled) { provider = pulled; break; }
+        // last resort: a C-startup-provided symbol a linked CRT routine references but never
+        // executes on this (integer) path - contribute the safe stub once (docs/LINKER.md).
+        if (provider == null && !this._crtSupportPulled && this._omfLibraries.Count > 0 && Omf.CrtSupport.Provides(name)) {
+          provider = Omf.CrtSupport.Build();
+          this._crtSupportPulled = true;
+        }
         if (provider == null)
           continue; // reported below once the pull set is final
         participating.Add(provider);

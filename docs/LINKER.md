@@ -232,8 +232,45 @@ we already apply to our own sections.
   multi-segment objects remain unsupported.
 - **M2 — `.LIB` archives.** Dictionary parse + selective extraction + dead-module
   stripping; multi-module resolution.
-- **M3 — C runtime.** Link a CRT `.LIB`, startup/`DGROUP` init, far-data handling as
-  needed; enable real C SDK routines.
+- **M3 — C runtime (startup/DGROUP). ✅ Implemented for the no-crt0 subset.** A genuine
+  `printf`-family routine now links and runs: Borland C++ 3.1 / Turbo C 2.0 small-model
+  **`sprintf`** formats an integer into a buffer through the real library's formatting
+  engine (`_VPRINTER` + `_LTOA` + `_memcpy` + the `_REALCVT` trampoline — ~5 members
+  pulled from the 200+-member `CS.LIB`). The enabling work:
+  - **DGROUP laid into the single segment.** The C runtime addresses its
+    `_DATA`/`CONST`/`_BSS` (its DGROUP) off `DS`; in this model `CS = DS = SS = load
+    segment`, so `OmfToPbu` relocates every data/const/BSS segment into the one combined
+    segment behind the code, exactly like our own data. The formatter's format-dispatch
+    tables (in `_DATA`) and a wrapper's own `char buf[]` (`_BSS`) therefore resolve as
+    ordinary `DataOffset` sites.
+  - **BSS folded as zero fill.** A real `crt0` clears `_BSS` at entry; we never run
+    `crt0` (the BASIC main is the program entry), so `OmfToPbu` materialises each
+    module's `_BSS`/`STACK` as **trailing zero bytes right after its initialised data**.
+    That gives every BSS cell a fixed intra-unit offset (so a FIXUPP targeting a BSS
+    global resolves through `DataOffset`) and satisfies C's zero-initialised-BSS contract
+    at link time. (Previously a BSS-targeting fixup threw and BSS was tracked only as an
+    unplaceable size.)
+  - **Startup-provided, never-executed symbols stubbed.** The integer format path still
+    carries a *relocation* to `_REALCVT`'s `__RealCvtVector` (the float-conversion jump
+    vector a real `crt0` would patch), even though `%d` never jumps through it.
+    `Emit/Omf/CrtSupport.cs` contributes a safe, never-taken stub (a `jmp`-vector pointing
+    at a bare `ret`) for exactly that symbol — consulted **lazily and last**, after the
+    real units/libraries, so it never shadows a genuine definition; an unknown CRT
+    external still surfaces as an honest `unresolved symbol` diagnostic.
+
+  **Boundary (documented & tested).** This hosts CRT routines whose graph does **not**
+  require the C startup. MS C 6.0's `sprintf` does (it routes through the buffered-`FILE`
+  stdio table and the near-heap allocator, dragging in `crt0`/`crt0dat` and the
+  linker-defined DGROUP markers `_edata`/`_end` plus the C entry `_main`), so it is **out
+  of scope** and fails cleanly with `unresolved symbol _end/_edata/_main` rather than
+  miscompiling. Hosting the full `crt0` contract (running C startup, DGROUP markers, the
+  near-heap `__nheap_desc`/`__psp` init that `malloc`/buffered I/O need) is the remaining
+  M3 work. Watcom's CRT is its register `watcall` convention and is parsed/trimmed but not
+  called via cdecl. `CInteropTests` covers all three faces: a **static** link of the real
+  `CS.LIB` sprintf graph + the `CrtSupport` stub (`Link_CRuntimeStartup_*`, runs without
+  DOSBox wherever the key is present), an **end-to-end** DOSBox run (`Link_GivenObject…
+  Sprintf…`, formats `12345` and checks `buf[3]='4'=52` via RESULT.TXT), and the
+  **negative** MS C 6.0 boundary (`Link_GivenMsc6Sprintf…NeedsCrt0`).
 - **M4 — PowerBASIC objects.** Map PBC's runtime contract onto ours (most compatible
   ABI); BYREF/string-handle bridging.
 - **M5 — QuickBASIC/PDS subset.** Numeric, runtime-free routines; assess the cost of
@@ -323,8 +360,11 @@ referenced — the rest are never even converted. That is both the "trim" and th
 fix. `EmitExecutable(units, libraries, omfLibraries)` threads them through; a needed member
 that still can't be lowered surfaces as a `link:` diagnostic rather than crashing.
 
-`CInteropTests` exercises this two ways: end-to-end (Borland/Turbo C/MS C compile a
+`CInteropTests` exercises this several ways: end-to-end (Borland/Turbo C/MS C compile a
 `strlen`-calling object, we link their genuine `CS.LIB`/`SLIBCR.LIB` pulling **≤3 of 20+**
-members and the program prints `5`), and at the library level across **all four** runtimes
-incl. Watcom — extracting one symbol lowers exactly one member. Watcom's CRT is its
-register `watcall` convention, so we parse + trim its lib but do not *call* it via cdecl.
+members and the program prints `5`), at the library level across **all four** runtimes
+incl. Watcom — extracting one symbol lowers exactly one member — and, for the M3
+startup/DGROUP path, linking the genuine `sprintf` formatting graph (Borland/Turbo C),
+running it under DOSBox to format an integer, and asserting MS C 6.0's startup-dependent
+`sprintf` fails honestly. Watcom's CRT is its register `watcall` convention, so we parse +
+trim its lib but do not *call* it via cdecl.

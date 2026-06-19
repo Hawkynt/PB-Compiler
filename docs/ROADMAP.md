@@ -34,9 +34,20 @@ Extends the OMF reader/linker + calling-convention work already landed.
   arguments in register *pairs* (deferred from the common-word-case scope).
   *Touch points:* `CodeGenerator.Procs.cs` (`ConventionRegisters`, `EmitCall`,
   `LayoutFrame`, `BeginFrame`).
-- **C-runtime linking (M3).** Leaf `strlen` works; full CRT (objects calling
-  `printf`/`malloc`) needs the C startup object (`c0*.obj`) and `_DATA`/`DGROUP`
-  initialisation. *Touch points:* `Linker` startup handling, DGROUP layout.
+- **C-runtime linking (M3).** *No-crt0 subset done.* Beyond leaf `strlen`, a genuine
+  `printf`-family routine now links and runs: Borland/Turbo C small-model **`sprintf`**
+  formats an integer into a buffer through the real `CS.LIB` formatting engine
+  (`_VPRINTER`/`_LTOA`/`_memcpy`/`_REALCVT`, ~5 members trimmed from 200+). DGROUP is laid
+  into the single segment (every `_DATA`/`CONST`/`_BSS` relocated behind the code, `_BSS`
+  folded as zero fill so its cells get a fixed offset and start zeroed without `crt0`); the
+  one startup-provided symbol the integer path references but never executes
+  (`_REALCVT`'s `__RealCvtVector`) is satisfied by a lazy, last-resort `CrtSupport` stub.
+  *Still TODO:* the routines whose graph genuinely needs the C startup — MS C 6.0
+  `sprintf` (buffered `FILE` + heap) and the `malloc` family — require hosting `crt0`'s
+  DGROUP markers (`_edata`/`_end`/`_main`) and near-heap init (`__nheap_desc`/`__psp`);
+  those fail cleanly with an unresolved-startup diagnostic today.
+  *Touch points (done):* `OmfToPbu` DGROUP/BSS layout, `Emit/Omf/CrtSupport.cs`, `Linker`
+  last-resort provider. *Remaining:* `crt0` hosting / DGROUP-marker synthesis.
 - **Watcom CRT via `WATCALL` declarations** — now feasible since `WATCALL` exists
   (its CRT is register-convention; `_strlen`-style cdecl calls mismatch).
 

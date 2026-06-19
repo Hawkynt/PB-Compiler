@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Emit;
 using PowerBasic.Compiler.Emit.Omf;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
@@ -172,6 +173,148 @@ public sealed class CInteropTests {
     Assert.That(files.ContainsKey("RESULT.TXT"), Is.True, $"{c.Cc.Display}: linked program wrote no RESULT.TXT");
     Assert.That(files["RESULT.TXT"].Trim(), Is.EqualTo("5"),
       $"{c.Cc.Display}: library strlen(\"hello\") should be 5 but got [{files["RESULT.TXT"].Replace("\r", "\\r").Replace("\n", "\\n")}]");
+  }
+
+  // ---- M3: a CRT function that needs the C startup / DGROUP (sprintf) --------
+
+  // The printf family is the canonical "needs the C runtime" case: sprintf drags in the
+  // formatting engine (_VPRINTER), the integer formatter (_LTOA), a memcpy, and the
+  // float-conversion trampoline (_REALCVT) - and that engine reads its format-dispatch
+  // tables out of DGROUP (_DATA), so DS must address the whole program. Our single-segment
+  // model (CS=DS=SS=load segment) satisfies that: OmfToPbu relocates every _DATA/CONST/_BSS
+  // segment into the one combined segment behind the code, folding _BSS in as zero fill (no
+  // crt0 runs to clear it), so the engine's DGROUP reads and the wrapper's own char buf[]
+  // (a _BSS global) both resolve. The only startup-provided symbol the *integer* path
+  // references but never executes is _REALCVT's __RealCvtVector jump vector, which CrtSupport
+  // stubs to a bare RET so the relocation resolves.
+  //
+  // The C wrapper formats a known integer into its static buffer and returns one formatted
+  // digit (buf[3] of "12345" = '4' = 52), so the BASIC side checks a single value through
+  // RESULT.TXT without marshalling a buffer across the cdecl boundary - proving the genuine
+  // library sprintf ran end to end through the DGROUP/formatting path.
+  //
+  // Borland/Turbo C small-model sprintf links *without* crt0 (its sprintf does not route
+  // through the buffered-FILE/heap startup). MS C 6.0's sprintf does (it pulls crt0 via the
+  // stdio FILE table and needs _main/_edata/_end DGROUP markers), so it is out of this M3
+  // scope - see Link_CRuntimeStartup_msc6SprintfNeedsCrt0 which asserts that honest boundary.
+  private const string SprintfSrc = """
+    int sprintf(char *, const char *, ...);
+    char buf[16];
+    int fmt(void){ sprintf(buf, "%d", 12345); return buf[3]; }
+
+    """;
+
+  /// <summary>A compiler whose small-model CRT links sprintf without the c0 startup, and that lib.</summary>
+  public sealed record SprintfCase(ForeignCc Cc, string LibRel) {
+    public override string ToString() => this.Cc.Display;
+  }
+
+  private static IEnumerable<TestCaseData> SprintfRuntimes() {
+    ForeignCc With(ForeignCc baseCc, string cmd) => baseCc with { CompileCmd = cmd, CSource = SprintfSrc };
+    yield return new TestCaseData(new SprintfCase(
+      With(Bcc31, "C:\\BIN\\BCC.EXE -c -ms LEAF.C > CC.LOG"), "LIB\\CS.LIB")).SetName("Link_CRuntimeStartup_bcc31_sprintf");
+    yield return new TestCaseData(new SprintfCase(
+      With(Tc20, "C:\\TCC.EXE -c -ms LEAF.C > CC.LOG"), "LIB\\CS.LIB")).SetName("Link_CRuntimeStartup_tc20_sprintf");
+  }
+
+  // Static (no DOSBox): the genuine library defines _sprintf, our linker pulls its whole
+  // formatting graph plus the CrtSupport stub, the image links and fits 64 KiB. Runs wherever
+  // the toolchain key is present, so M3 has coverage even without DOSBox.
+  [TestCaseSource(nameof(SprintfRuntimes))]
+  public void Library_GivenCRuntimeWithStartupDep_WhenSprintfLinked_ThenWholeGraphResolves(SprintfCase c) {
+    var slot = EnsureToolchain(c.Cc.Slot);
+    Assume.That(slot, Is.Not.Null, $"{c.Cc.Display}: toolchain unavailable - skipped");
+    var libPath = Path.Combine(slot!, c.LibRel.Replace('\\', Path.DirectorySeparatorChar));
+    Assume.That(File.Exists(libPath), Is.True, $"{c.Cc.Display}: {c.LibRel} not staged - skipped");
+
+    var lib = new OmfLibrary(File.ReadAllBytes(libPath));
+    Assume.That(lib.Defines("_sprintf"), Is.True, $"{c.Cc.Display}: {c.LibRel} has no _sprintf - skipped");
+
+    // a synthetic main that just CALLs _sprintf (E8 rel16, then RET) - enough to drive the
+    // linker's transitive pull of the formatting graph and the CrtSupport stub.
+    var main = new PbuFile { Name = "MAIN", Code = [0xE8, 0x00, 0x00, 0xC3] };
+    main.Imports.Add(new PbuImport("_sprintf", 0));
+    main.Fixups.Add(new PbuFixup(1u, PbuFixupKind.ImportCall, 0));
+
+    var linker = new Linker();
+    linker.AddOmfLibrary(lib);
+    var image = linker.Link(main);
+
+    // the whole sprintf graph resolved (the formatting engine + the startup-provided vector)
+    Assert.That(image.ResolvedExports.ContainsKey("_sprintf"), Is.True, "sprintf must resolve");
+    Assert.That(image.ResolvedExports.ContainsKey("_VPRINTER") || image.ResolvedExports.ContainsKey("__VPRINTER"), Is.True,
+      "the printf formatting engine must be pulled");
+    Assert.That(image.ResolvedExports.ContainsKey("__RealCvtVector"), Is.True,
+      "the CrtSupport stub must satisfy the float-conversion vector the integer path never executes");
+    Assert.That(lib.ProvidedCount, Is.InRange(4, 8), $"sprintf pulled {lib.ProvidedCount} members - the lean formatting graph, not the whole CRT");
+    Assert.That(image.Code.Length + image.Data.Length, Is.LessThanOrEqualTo(0x10000), "the graph must fit the single 64 KiB segment");
+  }
+
+  // End-to-end (DOSBox): the compiler builds the sprintf wrapper, we link its genuine CRT,
+  // run it, and the formatted digit comes back through RESULT.TXT.
+  [TestCaseSource(nameof(SprintfRuntimes))]
+  public void Link_GivenObjectNeedingSprintf_WhenCRuntimeLinked_ThenFormatsAnIntegerAndRuns(SprintfCase c) {
+    var slot = EnsureToolchain(c.Cc.Slot);
+    Assume.That(slot, Is.Not.Null, $"{c.Cc.Display}: toolchain unavailable - skipped");
+    Assume.That(DosBoxRunner.Executable, Is.Not.Null, "DOSBox not found - skipped");
+    var libPath = Path.Combine(slot!, c.LibRel.Replace('\\', Path.DirectorySeparatorChar));
+    Assume.That(File.Exists(libPath), Is.True, $"{c.Cc.Display}: {c.LibRel} not staged - skipped");
+
+    var obj = CompileLeaf(slot!, c.Cc);
+    var unit = OmfToPbu.Convert(OmfReader.ReadObject(obj));
+    Assert.That(unit.Imports.Any(i => i.Name == "_sprintf"), Is.True,
+      $"{c.Cc.Display}: object did not import _sprintf - imports [{string.Join(", ", unit.Imports.Select(i => i.Name))}]");
+
+    var lib = new OmfLibrary(File.ReadAllBytes(libPath));
+    Assume.That(lib.Defines("_sprintf"), Is.True, $"{c.Cc.Display}: {c.LibRel} has no _sprintf - skipped");
+
+    const string source = """
+      DECLARE FUNCTION fmt CDECL ALIAS "_fmt" () AS INTEGER
+      OPEN "RESULT.TXT" FOR OUTPUT AS #1
+      PRINT #1, fmt()
+      CLOSE #1
+      END
+      """;
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35), Dialect.Pb35);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model);
+    var exe = generator.EmitExecutable([unit], [], [lib]);
+    Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+
+    var (_, files) = DosBoxRunner.RunWithFiles(exe, ["RESULT.TXT"]);
+    Assert.That(files.ContainsKey("RESULT.TXT"), Is.True, $"{c.Cc.Display}: linked program wrote no RESULT.TXT");
+    // sprintf(buf,"%d",12345) -> buf="12345"; the wrapper returns buf[3] = '4' = 52.
+    Assert.That(files["RESULT.TXT"].Trim(), Is.EqualTo("52"),
+      $"{c.Cc.Display}: sprintf should format 12345 (buf[3]='4'=52) but got [{files["RESULT.TXT"].Replace("\r", "\\r").Replace("\n", "\\n")}]");
+  }
+
+  // The honest M3 boundary: MS C 6.0's sprintf routes through its buffered-FILE/heap startup,
+  // so its graph requires the c0 DGROUP markers (_main/_edata/_end) we do not host. Linking it
+  // must fail cleanly with an unresolved-startup diagnostic rather than miscompile. (Static,
+  // no DOSBox - runs wherever the key is present.)
+  [Test]
+  public void Link_GivenMsc6Sprintf_WhenLinkedWithoutCrt0_ThenFailsWithStartupDiagnostic() {
+    var slot = EnsureToolchain("msc6");
+    Assume.That(slot, Is.Not.Null, "Microsoft C 6.0: toolchain unavailable - skipped");
+    var libPath = Path.Combine(slot!, "LIB", "SLIBCR.LIB");
+    Assume.That(File.Exists(libPath), Is.True, "Microsoft C 6.0: SLIBCR.LIB not staged - skipped");
+
+    var lib = new OmfLibrary(File.ReadAllBytes(libPath));
+    Assume.That(lib.Defines("_sprintf"), Is.True, "Microsoft C 6.0: SLIBCR.LIB has no _sprintf - skipped");
+
+    var main = new PbuFile { Name = "MAIN", Code = [0xE8, 0x00, 0x00, 0xC3] };
+    main.Imports.Add(new PbuImport("_sprintf", 0));
+    main.Fixups.Add(new PbuFixup(1u, PbuFixupKind.ImportCall, 0));
+
+    var linker = new Linker();
+    linker.AddOmfLibrary(lib);
+    // MS C's sprintf pulls crt0, which references the linker-defined DGROUP markers _end/_edata
+    // and the C entry _main - none of which exist without hosting the C startup. The link must
+    // raise that as a clear unresolved-symbol error.
+    var ex = Assert.Throws<LinkException>(() => linker.Link(main));
+    Assert.That(ex!.Message, Does.Contain("unresolved symbol"));
+    Assert.That(ex.Message, Does.Match("_end|_edata|_main"),
+      $"the diagnostic should name the missing C-startup marker, was: {ex.Message}");
   }
 
   // Library-level selective extraction over all four real runtimes (incl. Watcom, whose
