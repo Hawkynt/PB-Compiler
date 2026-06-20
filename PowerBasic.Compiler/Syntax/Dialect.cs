@@ -115,6 +115,7 @@ public enum LanguageFeature {
   StringInterpolation,
   TryCatch,
   Coroutines,
+  TypeMethods,
 }
 
 /// <summary>
@@ -178,6 +179,7 @@ public static class DialectFacts {
     [LanguageFeature.StringInterpolation] = (Dialect.Pb36, "interpolated string ('$\"text {expr} {expr:fmt}\"')"),
     [LanguageFeature.TryCatch] = (Dialect.Pb36, "structured exception handling (TRY / CATCH / FINALLY / END TRY)"),
     [LanguageFeature.Coroutines] = (Dialect.Pb36, "coroutines (YIELD statement)"),
+    [LanguageFeature.TypeMethods] = (Dialect.Pb36, "TYPE methods/properties (SUB / FUNCTION / PROPERTY members)"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

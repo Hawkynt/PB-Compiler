@@ -318,6 +318,7 @@ public sealed partial class Parser {
     var name = this.Expect(TokenKind.Identifier, "type name");
     var end = isUnion ? "END UNION" : "END TYPE";
     var fields = new List<TypeField>();
+    var members = new List<TypeMember>();
     for (;;) {
       this.SkipSeparators();
       if (this.IsAtTerminator(end)) {
@@ -327,9 +328,53 @@ public sealed partial class Parser {
       }
       if (this.Current.Kind == TokenKind.EndOfFile)
         throw this.Error($"unexpected end of file, expected {end}");
+      // pb36: a TYPE block may carry SUB/FUNCTION/PROPERTY members (UNION stays fields-only)
+      if (!isUnion && (this.IsKeyword(0, "SUB") || this.IsKeyword(0, "FUNCTION") || this.IsKeyword(0, "PROPERTY"))) {
+        members.Add(this.ParseTypeMember());
+        continue;
+      }
       fields.Add(this.ParseTypeField());
     }
-    return isUnion ? new UnionDecl(pos, name.Text, fields) : new TypeDecl(pos, name.Text, fields);
+    return isUnion ? new UnionDecl(pos, name.Text, fields) : new TypeDecl(pos, name.Text, fields) { Members = members };
+  }
+
+  /// <summary>
+  /// A member inside a TYPE block (PB 3.6): <c>SUB</c>/<c>FUNCTION</c> method or
+  /// <c>PROPERTY GET</c>/<c>PROPERTY SET</c> accessor. Gated to pb36; the receiver
+  /// is the implicit <c>THIS</c> added when the member is lifted to a procedure.
+  /// </summary>
+  private TypeMember ParseTypeMember() {
+    this.Require(LanguageFeature.TypeMethods);
+    var pos = this.Current.Position;
+    if (this.TryMatchKeyword("SUB")) {
+      var name = this.Expect(TokenKind.Identifier, "method name");
+      var parameters = this.Current.Kind == TokenKind.LParen ? this.ParseParameterList() : [];
+      var body = this.ParseBody("END SUB");
+      this.Advance();
+      this.Advance();
+      return new TypeMember(pos, TypeMemberKind.Sub, name.Text, name.Suffix, parameters, null, body);
+    }
+    if (this.TryMatchKeyword("FUNCTION")) {
+      var name = this.Expect(TokenKind.Identifier, "method name");
+      var parameters = this.Current.Kind == TokenKind.LParen ? this.ParseParameterList() : [];
+      var returnType = this.TryMatchKeyword("AS") ? this.ParseTypeName() : null;
+      var body = this.ParseBody("END FUNCTION");
+      this.Advance();
+      this.Advance();
+      return new TypeMember(pos, TypeMemberKind.Function, name.Text, name.Suffix, parameters, returnType, body);
+    }
+
+    this.ExpectKeyword("PROPERTY");
+    var isGet = this.TryMatchKeyword("GET");
+    if (!isGet)
+      this.ExpectKeyword("SET");
+    var propName = this.Expect(TokenKind.Identifier, "property name");
+    var propParams = this.Current.Kind == TokenKind.LParen ? this.ParseParameterList() : [];
+    var propReturn = isGet && this.TryMatchKeyword("AS") ? this.ParseTypeName() : null;
+    var propBody = this.ParseBody("END PROPERTY");
+    this.Advance();
+    this.Advance();
+    return new TypeMember(pos, isGet ? TypeMemberKind.PropertyGet : TypeMemberKind.PropertySet, propName.Text, propName.Suffix, propParams, propReturn, propBody);
   }
 
   private TypeField ParseTypeField() {

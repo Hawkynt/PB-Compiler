@@ -65,8 +65,22 @@ public sealed record DeclareStmt(SourcePosition Position, bool IsFunction, strin
 /// <summary>One field inside TYPE/UNION; array fields carry bounds (lower TO upper | upper).</summary>
 public sealed record TypeField(SourcePosition Position, string Name, TypeName Type, IReadOnlyList<(Expression? Lower, Expression Upper)>? ArrayBounds);
 
-/// <summary>TYPE ... END TYPE.</summary>
-public sealed record TypeDecl(SourcePosition Position, string Name, IReadOnlyList<TypeField> Fields) : Statement(Position);
+/// <summary>The four member shapes a PB 3.6 TYPE block can declare alongside its fields.</summary>
+public enum TypeMemberKind { Sub, Function, PropertyGet, PropertySet }
+
+/// <summary>
+/// A member declared inside a TYPE block (PB 3.6): a SUB/FUNCTION method or a
+/// PROPERTY GET/SET accessor. Each lifts to an ordinary procedure that takes the
+/// instance BYREF as an implicit first parameter named THIS (the receiver), fully
+/// resolved at compile time from the static type - no inheritance, no virtual
+/// dispatch. <see cref="ReturnType"/> applies to FUNCTION / PROPERTY GET only.
+/// </summary>
+public sealed record TypeMember(SourcePosition Position, TypeMemberKind Kind, string Name, TypeSuffix Suffix, IReadOnlyList<Parameter> Parameters, TypeName? ReturnType, IReadOnlyList<Statement> Body);
+
+/// <summary>TYPE ... END TYPE. <see cref="Members"/> is empty unless the block declares methods/properties (pb36).</summary>
+public sealed record TypeDecl(SourcePosition Position, string Name, IReadOnlyList<TypeField> Fields) : Statement(Position) {
+  public IReadOnlyList<TypeMember> Members { get; init; } = [];
+}
 
 /// <summary>UNION ... END UNION.</summary>
 public sealed record UnionDecl(SourcePosition Position, string Name, IReadOnlyList<TypeField> Fields) : Statement(Position);
