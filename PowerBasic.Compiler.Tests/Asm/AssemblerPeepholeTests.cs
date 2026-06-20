@@ -42,6 +42,26 @@ public sealed class AssemblerPeepholeTests {
   }
 
   [Test]
+  public void Peephole_GivenCompareWordRegisterWithZero_WhenEnabled_ThenBecomesTestRegReg() {
+    // cmp bx, 0 (83 /7, 3 bytes)  ->  test bx, bx (85 /r, 2 bytes) - flag-identical, one byte shorter
+    Assert.That(Assemble(true, a => a.Cmp(Reg.BX, (Imm)0)), Is.EqualTo(new byte[] { 0x85, 0xDB }));
+    Assert.That(Assemble(false, a => a.Cmp(Reg.BX, (Imm)0)), Is.EqualTo(new byte[] { 0x83, 0xFB, 0x00 }),
+      "without the peephole the faithful CMP is preserved");
+  }
+
+  [Test]
+  public void Peephole_GivenCompareAccumulatorWithZero_WhenEnabled_ThenBecomesTestAxAx() {
+    // cmp ax, 0  ->  test ax, ax
+    Assert.That(Assemble(true, a => a.Cmp(Reg.AX, (Imm)0)), Is.EqualTo(new byte[] { 0x85, 0xC0 }));
+  }
+
+  [Test]
+  public void Peephole_GivenCompareByteRegisterWithZero_WhenEnabled_ThenBecomesTestByteRegReg() {
+    // cmp al, 0 (3C 00, 2 bytes) -> test al, al (84 /r, 2 bytes) - same length, still flag-identical
+    Assert.That(Assemble(true, a => a.Cmp(Reg.AL, (Imm)0)), Is.EqualTo(new byte[] { 0x84, 0xC0 }));
+  }
+
+  [Test]
   public void Peephole_GivenLabelOnTheStagingCopy_WhenEnabled_ThenKeepsItReachable() {
     // a branch targets the 'mov bx, ax' - folding it away would strand the jump, so it must stay
     static void Emit(Assembler a) {

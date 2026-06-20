@@ -267,7 +267,12 @@ public sealed partial class Assembler {
   public void Cmp(Reg destination, Reg source) => this.Alu(7, destination, source);
   public void Cmp(Reg destination, Mem source) => this.Alu(7, destination, source);
   public void Cmp(Mem destination, Reg source) => this.Alu(7, destination, source);
-  public void Cmp(Reg destination, Imm immediate) => this.Alu(7, destination, immediate);
+  public void Cmp(Reg destination, Imm immediate) {
+    var start = this.Position;
+    this.Alu(7, destination, immediate);
+    if (immediate is { Label: null, IsSegmentReference: false, Value: 0 } && (destination.IsWord() || destination.IsByte()))
+      this.RecordPeep(PeepKind.CmpRegZero, start, destination);
+  }
   public void Cmp(Mem destination, Imm immediate) => this.Alu(7, destination, immediate);
 
   private void Alu(int operation, Reg destination, Reg source) {

@@ -9,7 +9,7 @@ public sealed partial class Assembler {
   /// </summary>
   public bool EnablePeephole { get; set; }
 
-  private enum PeepKind : byte { MovRegImm, MovRegReg, MovRegMem, PopReg }
+  private enum PeepKind : byte { MovRegImm, MovRegReg, MovRegMem, PopReg, CmpRegZero }
 
   /// <summary>A recorded instruction: its byte range, what it is, and (for register/memory MOVs) the modrm byte to repatch.</summary>
   private readonly record struct PeepInstr(int Start, int Length, PeepKind Kind, Reg Dst, Reg Src, int ModrmPos);
@@ -42,7 +42,7 @@ public sealed partial class Assembler {
       return;
 
     this._peepholeRan = true;
-    if (this._peepInstrs is not { Count: > 1 } recs)
+    if (this._peepInstrs is not { Count: > 0 } recs)
       return;
 
     recs.Sort((left, right) => left.Start.CompareTo(right.Start));
@@ -57,6 +57,18 @@ public sealed partial class Assembler {
 
     for (var i = 0; i < recs.Count; ++i) {
       var a = recs[i];
+
+      // CMP reg, 0 -> TEST reg, reg: flag-identical (both clear CF/OF and set ZF/SF/PF from the
+      // value; AF is unused by the conditional jumps), one byte shorter, self-contained.
+      if (a.Kind == PeepKind.CmpRegZero) {
+        var index = a.Dst.Index();
+        patches.Add((a.Start, a.Dst.IsByte() ? (byte)0x84 : (byte)0x85));
+        patches.Add((a.Start + 1, (byte)(0xC0 | (index << 3) | index)));
+        if (a.Length > 2)
+          removals.Add((a.Start + 2, a.Length - 2));
+        continue;
+      }
+
       if (a.Start < consumedEnd)
         continue;
       if (a.Kind is not (PeepKind.MovRegImm or PeepKind.MovRegReg or PeepKind.MovRegMem))
@@ -104,7 +116,7 @@ public sealed partial class Assembler {
       consumedEnd = c.Start;
     }
 
-    if (removals.Count == 0)
+    if (patches.Count == 0 && removals.Count == 0)
       return;
 
     foreach (var (position, value) in patches)
