@@ -353,9 +353,10 @@ public sealed partial class Parser {
   }
 
   /// <summary>
-  /// PB 3.6 structured exception handling: TRY &lt;body&gt; [CATCH &lt;handler&gt;]
-  /// [FINALLY &lt;cleanup&gt;] END TRY. At least one of CATCH / FINALLY is required
-  /// (a bare TRY/END TRY would install a trap that does nothing useful).
+  /// PB 3.6 structured exception handling: TRY &lt;body&gt; [CATCH [errnum] [WHEN cond] &lt;handler&gt;]...
+  /// [FINALLY &lt;cleanup&gt;] END TRY. At least one of CATCH / FINALLY is required. A CATCH may be
+  /// filtered by an error number and/or a WHEN guard; several filtered CATCH clauses are tried in
+  /// order, and if none matches the error is re-raised to the outer handler (after FINALLY).
   /// </summary>
   private Statement ParseTry() {
     this.Require(LanguageFeature.TryCatch);
@@ -363,20 +364,60 @@ public sealed partial class Parser {
 
     var body = this.ParseBody("CATCH", "FINALLY", "END TRY");
 
-    List<Statement>? catchBody = null;
-    if (this.TryMatchKeyword("CATCH"))
-      catchBody = this.ParseBody("FINALLY", "END TRY");
+    // each clause: optional error-number, optional WHEN guard, body (null filter = catch-all)
+    var clauses = new List<(Expression? ErrNum, Expression? When, List<Statement> Body)>();
+    while (this.TryMatchKeyword("CATCH")) {
+      var errNum = !this.IsStatementEnd() && !this.IsKeyword(0, "WHEN") ? this.ParseExpression() : (Expression?)null;
+      var when = this.TryMatchKeyword("WHEN") ? this.ParseExpression() : null;
+      clauses.Add((errNum, when, this.ParseBody("CATCH", "FINALLY", "END TRY")));
+    }
 
     List<Statement>? finallyBody = null;
     if (this.TryMatchKeyword("FINALLY"))
       finallyBody = this.ParseBody("END TRY");
 
-    if (catchBody == null && finallyBody == null)
+    if (clauses.Count == 0 && finallyBody == null)
       throw this.Error("TRY requires a CATCH or FINALLY block");
 
     this.ExpectKeyword("END");
     this.ExpectKeyword("TRY");
-    return new TryStmt(pos, body, catchBody, finallyBody);
+    return new TryStmt(pos, body, this.FoldCatchClauses(pos, clauses, finallyBody), finallyBody);
+  }
+
+  /// <summary>
+  /// Folds filtered CATCH clauses into a single catch body (the existing TRY machinery runs one
+  /// handler). A clause's filter is <c>ERR = errnum</c>, the <c>WHEN</c> guard, or both (ANDALSO-style,
+  /// the guard is evaluated only when the number matches). Clauses become an IF/ELSEIF chain; an
+  /// unfiltered clause is the catch-all ELSE. If no catch-all is present, the ELSE runs FINALLY and
+  /// re-raises the current ERR to the now-restored outer handler - so an unmatched error propagates.
+  /// A single unfiltered CATCH folds to its bare body (identical to the pre-filter lowering).
+  /// </summary>
+  private List<Statement>? FoldCatchClauses(SourcePosition pos, List<(Expression? ErrNum, Expression? When, List<Statement> Body)> clauses, List<Statement>? finallyBody) {
+    if (clauses.Count == 0)
+      return null;
+    if (clauses is [{ ErrNum: null, When: null, Body: var only }])
+      return only;                       // a plain CATCH - unchanged lowering
+
+    Expression Err() => new NameExpr(pos, "ERR", TypeSuffix.None);
+    Expression? Filter((Expression? ErrNum, Expression? When, List<Statement>) c) {
+      Expression? cond = c.ErrNum is { } e ? new BinaryExpr(pos, BinaryOp.Equal, Err(), e) : null;
+      if (c.When is { } w)
+        cond = cond is null ? w : new IfExpr(pos, cond, w, new IntegerLiteralExpr(pos, 0, TypeSuffix.None));   // short-circuit AND
+      return cond;
+    }
+
+    var arms = new List<(Expression Condition, IReadOnlyList<Statement> Body)>();
+    IReadOnlyList<Statement>? elseBody = null;
+    foreach (var c in clauses) {
+      if (Filter(c) is { } cond)
+        arms.Add((cond, c.Body));
+      else { elseBody = c.Body; break; }   // catch-all - later clauses are unreachable
+    }
+    // no catch-all: an unmatched error runs FINALLY then re-raises ERR to the outer handler
+    elseBody ??= [.. finallyBody ?? [], new ErrorStmt(pos, Err())];
+
+    var first = arms[0];
+    return [new IfStmt(pos, first.Condition, first.Body, arms.Skip(1).ToList(), elseBody)];
   }
 
   private Statement ParseEnd() {

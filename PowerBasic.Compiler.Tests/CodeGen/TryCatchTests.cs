@@ -101,6 +101,58 @@ public sealed class TryCatchTests {
   }
 
   [Test]
+  public void Parse_GivenPlainCatch_WhenParsed_ThenBodyIsUnchangedNotAnIf() {
+    // a single unfiltered CATCH must keep its bare body (byte-identical to the pre-filter lowering)
+    var stmt = ParseTry("""
+      TRY
+        PRINT "body"
+      CATCH
+        PRINT "catch"
+      END TRY
+      """);
+    Assert.That(stmt.Catch![0], Is.Not.InstanceOf<IfStmt>());
+  }
+
+  [Test]
+  public void Parse_GivenFilteredCatches_WhenParsed_ThenFoldToIfChainWithReraiseElse() {
+    // CATCH n / CATCH n WHEN c fold into one catch body: an IF/ELSEIF whose ELSE re-raises ERR
+    var stmt = ParseTry("""
+      TRY
+        PRINT "body"
+      CATCH 5
+        PRINT "five"
+      CATCH 7 WHEN x = 1
+        PRINT "seven"
+      END TRY
+      """);
+    var iff = (IfStmt)stmt.Catch!.Single();
+    Assert.Multiple(() => {
+      Assert.That(iff.Condition, Is.InstanceOf<BinaryExpr>(), "first filter is ERR = 5");
+      Assert.That(iff.ElseIfs, Has.Count.EqualTo(1), "the second filtered CATCH is an ELSEIF");
+      Assert.That(iff.Else, Is.Not.Null);
+      Assert.That(iff.Else!.OfType<ErrorStmt>().Any(), Is.True, "no catch-all -> the ELSE re-raises ERR");
+    });
+  }
+
+  [Test]
+  public void Parse_GivenFilteredThenCatchAll_WhenParsed_ThenCatchAllIsTheElse() {
+    var stmt = ParseTry("""
+      TRY
+        PRINT "body"
+      CATCH 5
+        PRINT "five"
+      CATCH
+        PRINT "rest"
+      END TRY
+      """);
+    var iff = (IfStmt)stmt.Catch!.Single();
+    Assert.Multiple(() => {
+      Assert.That(iff.Else, Is.Not.Null, "the unfiltered CATCH becomes the ELSE");
+      Assert.That(iff.Else!.OfType<ErrorStmt>().Any(), Is.False, "a catch-all swallows - no re-raise");
+    });
+  }
+
+  [Test]
   public void Parse_GivenNestedTry_WhenParsed_ThenInnerTryLivesInOuterBody() {
     var stmt = ParseTry("""
       TRY
