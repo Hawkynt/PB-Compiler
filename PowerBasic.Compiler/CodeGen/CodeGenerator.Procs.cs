@@ -484,8 +484,10 @@ public sealed partial class CodeGenerator {
       return null;
     if (proc.IsFunction && proc.ReturnType is not ScalarType)
       return null; // FIX/BCD are BcdType, strings/UDTs excluded with them
+    // BYVAL parameters must be scalar; a BYREF parameter (a method's THIS receiver is just an
+    // ordinary BYREF arg) may be scalar or a UDT - its slot will hold the argument's near pointer
     foreach (var parameter in proc.Parameters)
-      if (!parameter.ByVal || parameter.Type is not ScalarType)
+      if (parameter.ByVal ? parameter.Type is not ScalarType : (parameter.Type is not (ScalarType or UdtType) || parameter.Seg))
         return null;
 
     // the implicit result variable (FUNCTION only); reads/writes of it map to a temp
@@ -523,16 +525,25 @@ public sealed partial class CodeGenerator {
         }
         continue;
       }
-      if (statement is not AssignStmt { Target: NameExpr targetName } assign)
+      if (statement is not AssignStmt assign)
         return null;
-      if (!model.VariableBindings.TryGetValue(targetName, out var targetSymbol)
-          || !this.InlinableTarget(targetSymbol, proc, resultSymbol, locals)
-          || !this.InlinableExpression(assign.Value, proc, resultSymbol, locals))
+      // target: a remappable scalar (param/local/result), or a scalar field reached through a BYREF
+      // parameter (THIS.field) - a member chain rooted at one of the proc's own BYREF params
+      VariableSymbol? targetSymbol = null;
+      switch (assign.Target) {
+        case NameExpr targetName when model.VariableBindings.TryGetValue(targetName, out targetSymbol) && this.InlinableTarget(targetSymbol, proc, resultSymbol, locals):
+          break;
+        case MemberExpr m when this.IsByRefParamMember(m, proc):
+          break;
+        default:
+          return null;
+      }
+      if (!this.InlinableExpression(assign.Value, proc, resultSymbol, locals))
         return null;
       if (model.TypeOf(assign.Target) is not ScalarType || model.TypeOf(assign.Value) is not ScalarType)
         return null;
       site ??= assign.Target;
-      if (ReferenceEquals(targetSymbol, resultSymbol)) {
+      if (targetSymbol != null && ReferenceEquals(targetSymbol, resultSymbol)) {
         lastResultWrite = assign;
         ++resultWrites;
       }
@@ -561,11 +572,18 @@ public sealed partial class CodeGenerator {
       return false;
     if (this.AnalyzeInlinableLeaf(proc) is not { } leaf)
       return false;
+    // a BYREF argument inlines by passing its address, so it must be a near lvalue; otherwise
+    // (a literal/expression a real call would copy into a temp) decline and emit a real call
+    for (var i = 0; i < args.Count; ++i)
+      if (!proc.Parameters[i].ByVal && !this.IsNearLValue(args[i]))
+        return false;
     var (body, resultSymbol, locals, site, lastResultWrite, resultWrites) = leaf;
 
     var asm = this._asm;
     var outer = this._inlineParamSlots;
+    var outerByRef = this._inlineByRefParams;
     var slots = new Dictionary<VariableSymbol, (Mem Cell, PbType Type)>(ReferenceEqualityComparer.Instance);
+    var byRef = new HashSet<VariableSymbol>(ReferenceEqualityComparer.Instance);
     var reserved = 0;
 
     Mem ReserveSlot(PbType type) {
@@ -577,6 +595,18 @@ public sealed partial class CodeGenerator {
     // bind each argument once into the parameter's fresh temp slot
     for (var i = 0; i < args.Count; ++i) {
       var parameter = proc.Parameters[i];
+      // BYREF (incl. a method's THIS): park the argument's near pointer; the body reaches the
+      // storage - or a field of it - through that pointer (an ordinary BYREF access)
+      if (!parameter.ByVal) {
+        if (this.EmitPlace(args[i]) is not { Far: false } refPlace)
+          return false;
+        asm.Lea(Reg.BX, refPlace.Cell);
+        var ptr = ReserveSlot(PbType.Integer);
+        asm.Mov(ptr, Reg.BX);
+        slots[parameter] = (ptr, parameter.Type);
+        byRef.Add(parameter);
+        continue;
+      }
       this.EmitExpression(args[i]);
       this.Coerce(model.TypeOf(args[i]), parameter.Type, args[i]);
       var cell = ReserveSlot(parameter.Type);
@@ -602,9 +632,11 @@ public sealed partial class CodeGenerator {
         && body.Count(s => s is not (MetaStmt or EquateStmt or DefTypeStmt)) == 1
         && !ReferencesVar(lastResultWrite!.Value, resultSymbol, model)) {
       this._inlineParamSlots = slots;
+      this._inlineByRefParams = byRef;
       this.EmitExpression(lastResultWrite.Value);
       this.Coerce(model.TypeOf(lastResultWrite.Value), proc.ReturnType!, lastResultWrite.Value);
       this._inlineParamSlots = outer;
+      this._inlineByRefParams = outerByRef;
       this.ReleaseTemp(reserved);
       return true;
     }
@@ -624,6 +656,7 @@ public sealed partial class CodeGenerator {
     }
 
     this._inlineParamSlots = slots;
+    this._inlineByRefParams = byRef;
     foreach (var statement in body)
       this.EmitStatement(statement);
     // the FUNCTION result is the value left in the result temp (the result variable's
@@ -631,6 +664,7 @@ public sealed partial class CodeGenerator {
     if (resultSymbol != null)
       this.EmitLoadPlace(new(slots[resultSymbol].Cell, Far: false), proc.ReturnType!, site);
     this._inlineParamSlots = outer;
+    this._inlineByRefParams = outerByRef;
     this.ReleaseTemp(reserved);
     return true;
   }
@@ -664,16 +698,25 @@ public sealed partial class CodeGenerator {
     return true;
   }
 
-  /// <summary>True when the expression reads only the procedure's own parameters, locals, result, literals and equates through scalar operators - so it can emit against the per-inline temps.</summary>
+  /// <summary>True when the expression reads only the procedure's own parameters, locals, result, BYREF-parameter fields, literals and equates through scalar operators - so it can emit against the per-inline temps.</summary>
   private bool InlinableExpression(Expression e, ProcedureSymbol proc, VariableSymbol? resultSymbol, List<VariableSymbol> locals) => e switch {
     IntegerLiteralExpr or FloatLiteralExpr or NamedConstantExpr => true,
     NameExpr n when model.IntrinsicBindings.ContainsKey(n) || model.CallBindings.ContainsKey(n) => false,
     NameExpr n => model.VariableBindings.TryGetValue(n, out var s)
       && (proc.Parameters.Contains(s) || ReferenceEquals(s, resultSymbol) || locals.Contains(s)),
+    MemberExpr m => this.IsByRefParamMember(m, proc),               // THIS.field - a field through a BYREF param
     UnaryExpr u => this.InlinableExpression(u.Operand, proc, resultSymbol, locals),
     BinaryExpr b => this.InlinableExpression(b.Left, proc, resultSymbol, locals) && this.InlinableExpression(b.Right, proc, resultSymbol, locals),
     _ => false,
   };
+
+  /// <summary>True when a member access is a field chain rooted at one of the procedure's own BYREF parameters (e.g. <c>THIS.field</c>) - reachable through the inlined pointer slot.</summary>
+  private bool IsByRefParamMember(MemberExpr m, ProcedureSymbol proc) {
+    Expression root = m;
+    while (root is MemberExpr inner)
+      root = inner.Target;
+    return root is NameExpr n && model.VariableBindings.TryGetValue(n, out var s) && !s.ByVal && proc.Parameters.Contains(s);
+  }
 
   private void EmitCall(ProcedureSymbol proc, IReadOnlyList<Expression> args, bool wantResult, SourcePosition position) {
     var asm = this._asm;

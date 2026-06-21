@@ -45,6 +45,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   // teardown discards exactly these before laying out the callee's arguments.
   private int _currentParamBytes;
   private Dictionary<VariableSymbol, (Mem Cell, PbType Type)>? _inlineParamSlots;
+  // pb36: inlined parameters that are BYREF (the receiver THIS of a member method) - their slot
+  // holds a near pointer to the argument, so a field access THIS.f loads the pointer then [BX+off].
+  private HashSet<VariableSymbol>? _inlineByRefParams;
   private Label _epilogue = null!;
   private Label _frameBytesLabel = null!;
   private Label _frameWordsLabel = null!;
@@ -585,7 +588,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (this.Optimize && !this._isUnit && liveProcs != null) {
       var hasErrorHandling = ContainsErrorHandling(model.MainBody)
         || model.ProcedureList.Any(p => p.Body is { } b && ContainsErrorHandling(b));
-      var inlinedAway = OptInlining.FullyInlinedProcedures(model, p => this.AnalyzeInlinableLeaf(p) != null, this.IsFullyOwned, hasErrorHandling);
+      var inlinedAway = OptInlining.FullyInlinedProcedures(model, p => this.AnalyzeInlinableLeaf(p) != null, this.IsFullyOwned, this.IsNearLValue, hasErrorHandling);
       foreach (var proc in inlinedAway)
         liveProcs.Remove(proc);
     }

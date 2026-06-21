@@ -100,7 +100,9 @@ public sealed class TypeMemberBinderTests {
   }
 
   [Test]
-  public void Bind_GivenAutoProperty_WhenBound_ThenBacksWithFieldAndInlinesAccessAway() {
+  public void Bind_GivenAutoProperty_WhenBound_ThenSynthesizesBackingFieldAndTrivialAccessors() {
+    // an auto property gets a hidden backing field and trivial get_/set_ procedures (the optimizer
+    // inlines those trivial bodies away later - the binder still produces them)
     var model = Bind(
       "TYPE P\n  PROPERTY GET X() AS INTEGER\n  PROPERTY SET X(BYVAL v AS INTEGER)\nEND TYPE\nDIM p AS P\np.X = 7\ny% = p.X\n");
     var udt = model.Udts["P"];
@@ -108,14 +110,8 @@ public sealed class TypeMemberBinderTests {
       Assert.That(udt.FindField("$X"), Is.Not.Null, "an auto property has a hidden backing field");
       Assert.That(udt.FindField("$X")!.Type, Is.EqualTo(PbType.Integer));
       Assert.That(udt.FindField("X"), Is.Null, "the property name is not itself a field");
-      Assert.That(model.Procedures.ContainsKey("P.get_X") || model.Procedures.ContainsKey("P.set_X"), Is.False,
-        "a trivial auto accessor has no procedure - access inlines to the backing field");
-      // p.X read desugars to a field access on the backing field
-      var read = model.ExpressionTypes.Keys.OfType<MemberExpr>().Single(m => m.Member == "X");
-      Assert.That(((MemberExpr)model.Desugared[read]).Member, Is.EqualTo("$X"), "p.X reads the backing field directly");
-      // p.X = 7 desugars to a field store on the backing field
-      Assert.That(model.DesugaredStatements.Values.OfType<AssignStmt>()
-        .Any(s => s.Target is MemberExpr { Member: "$X" }), Is.True, "p.X = ... writes the backing field directly");
+      Assert.That(model.Procedures.ContainsKey("P.get_X") && model.Procedures.ContainsKey("P.set_X"), Is.True,
+        "trivial accessors are ordinary procedures (inlined by the optimizer, not a binder special case)");
     });
   }
 
@@ -127,8 +123,8 @@ public sealed class TypeMemberBinderTests {
     Assert.Multiple(() => {
       Assert.That(udt.FindField("$Count"), Is.Not.Null);
       Assert.That(udt.FindField("$Count")!.Type, Is.EqualTo(PbType.Long));
-      Assert.That(model.DesugaredStatements.Values.OfType<AssignStmt>()
-        .Any(s => s.Target is MemberExpr { Member: "$Count" }), Is.True, "the write inlines to the field");
+      Assert.That(model.Procedures.ContainsKey("Box.get_Count") && model.Procedures.ContainsKey("Box.set_Count"), Is.True,
+        "the anonymous property synthesizes both accessors over the one field");
     });
   }
 

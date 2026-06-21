@@ -25,10 +25,6 @@ public sealed class Binder {
   /// <summary>Inside a generator, a FOR EACH over another generator that itself contains a YIELD: the enumerator field ($fe&lt;n&gt;) in THIS that holds the inner iterator (so its state persists across the outer YIELDs), and the inner generator's name. Keyed by AST node identity, populated before MoveNext lowering.</summary>
   private readonly Dictionary<ForEachStmt, (string Field, string GenName)> _foreachEnumField = new(ReferenceEqualityComparer.Instance);
 
-  /// <summary>Auto-implemented property accessors keyed "Udt.Prop" (case-insensitive) -> backing field: reading / writing such a property binds straight to the field (no accessor call), so a trivial property is exactly a field access.</summary>
-  private readonly Dictionary<string, string> _autoPropGetField = new(StringComparer.OrdinalIgnoreCase);
-  private readonly Dictionary<string, string> _autoPropSetField = new(StringComparer.OrdinalIgnoreCase);
-
   /// <summary>pb36 TYPEs with a constructor (a member SUB named like the TYPE): <c>p = Type(args)</c> calls it with the target as the BYREF THIS, after zeroing the instance.</summary>
   private readonly HashSet<string> _typeConstructors = new(StringComparer.OrdinalIgnoreCase);
 
@@ -415,21 +411,9 @@ public sealed class Binder {
         this._typeConstructors.Add(t.Name);   // a SUB named like the TYPE is its constructor
       backing.TryGetValue(m.Name, out var bk);   // bk is default (Field == null) when there is no backing field
       var hasBacking = isProperty && bk.Field != null;
-
-      // a trivial auto-accessor IS the backing field: record it so o.Prop reads / writes bind straight
-      // to the field (no accessor procedure at all - it would be dead, and an auto-setter body would
-      // even trip READONLY enforcement). The constructor still reaches the field via the same inlining.
-      if (m.IsAuto && hasBacking) {
-        var key = t.Name + "." + m.Name;
-        if (m.Kind == TypeMemberKind.PropertyGet)
-          this._autoPropGetField[key] = bk.Field;
-        else
-          this._autoPropSetField[key] = bk.Field;
-        continue;
-      }
-
       var body = m.Body;
       string? valueParam = null;
+
       if (m.Kind == TypeMemberKind.PropertySet) {
         // the incoming value: the explicit first parameter, or an injected VALUE of the property type
         if (m.Parameters.Count > 0) {
@@ -439,8 +423,14 @@ public sealed class Binder {
           valueParam = "VALUE";
           parameters.Add(new Parameter(m.Position, "VALUE", TypeSuffix.None, hasBacking ? bk.Type : null, ByVal: true, Seg: false, IsArray: false));
         }
+        // an auto setter just stores the value into its backing field (a trivial body the optimizer inlines)
+        if (m.IsAuto && hasBacking)
+          body = [new AssignStmt(m.Position, ThisField(m.Position, bk.Field), new NameExpr(m.Position, valueParam, TypeSuffix.None))];
       } else {
         parameters.AddRange(m.Parameters);
+        // an auto getter just yields its backing field (a trivial body the optimizer inlines)
+        if (m.Kind == TypeMemberKind.PropertyGet && m.IsAuto && hasBacking)
+          body = [new AssignStmt(m.Position, new NameExpr(m.Position, m.Name, m.Suffix), ThisField(m.Position, bk.Field))];
       }
 
       var returnType = m.Kind == TypeMemberKind.PropertySet ? null : m.ReturnType;
@@ -977,32 +967,35 @@ public sealed class Binder {
       return false;
     if (udt.FindField(m.Member) != null)
       return false;
-    // pb36: a trivial auto PROPERTY SET is just the backing field - bind o.Prop = x -> o.$backing = x
-    // (the field-store path also applies READONLY enforcement when the type is readonly)
-    if (this._autoPropSetField.TryGetValue(udt.Name + "." + m.Member, out var setBacking)) {
-      var fieldWrite = new AssignStmt(a.Position, new MemberExpr(a.Position, m.Target, setBacking, TypeSuffix.None), a.Value);
-      this.BindStatement(fieldWrite, scope);
-      this._model.DesugaredStatements[a] = fieldWrite;
-      return true;
-    }
     var setter = $"{udt.Name}.set_{m.Member}";
     if (!this.HasMemberProc(setter))
       return false;
+    // READONLY: a property may be set only while constructing (the setter mutates a write-once field)
+    if (this._readonlyTypes.Contains(udt.Name) && !IsInConstructorOf(udt.Name, scope))
+      this.Error(m.Position, $"property '{m.Member}' of READONLY TYPE {udt.Name} can be set only in its constructor");
     var call = new CallStmt(a.Position, setter, [m.Target, a.Value], UsedCallKeyword: false);
     this.BindCallStatement(call, scope);
     this._model.DesugaredStatements[a] = call;
     return true;
   }
 
-  /// <summary>pb36 READONLY enforcement: a write to a field of a READONLY TYPE is allowed only inside that type's constructor (the lifted <c>Type.Type</c> proc).</summary>
+  /// <summary>True when the current scope is the constructor of <paramref name="udtName"/> (its lifted <c>Type.Type</c> proc).</summary>
+  private static bool IsInConstructorOf(string udtName, Scope scope)
+    => scope.Proc?.Name.Equals(udtName + "." + udtName, StringComparison.OrdinalIgnoreCase) == true;
+
+  /// <summary>
+  /// pb36 READONLY enforcement (compile-time): a write to a field of a READONLY TYPE is allowed only
+  /// inside that type's constructor, or inside one of its property setters (which are themselves
+  /// callable only during construction - see <see cref="TryBindPropertySet"/>). A write anywhere else
+  /// is rejected.
+  /// </summary>
   private void CheckReadonlyFieldWrite(MemberExpr m, Scope scope) {
     if (this.BindExpression(m.Target, scope) is not UdtType udt || !this._readonlyTypes.Contains(udt.Name))
       return;
     if (udt.FindField(m.Member) == null)
       return;                                    // not a real field (e.g. a method name) - leave to normal binding
-    var ctorName = udt.Name + "." + udt.Name;
-    if (scope.Proc?.Name.Equals(ctorName, StringComparison.OrdinalIgnoreCase) == true)
-      return;                                    // inside the constructor - the one place writes are allowed
+    if (IsInConstructorOf(udt.Name, scope) || scope.Proc?.Name.StartsWith(udt.Name + ".set_", StringComparison.OrdinalIgnoreCase) == true)
+      return;                                    // the constructor, or a property setter (gated to ctor scope at its call sites)
     var shown = m.Member.StartsWith(GeneratedPrefix, StringComparison.Ordinal) ? m.Member[GeneratedPrefix.Length..] : m.Member;
     this.Error(m.Position, $"field '{shown}' of READONLY TYPE {udt.Name} can be set only in its constructor");
   }
@@ -2688,13 +2681,6 @@ public sealed class Binder {
         var field = udt.FindField(m.Member);
         if (field != null)
           return field.Type;
-        // pb36: a trivial auto PROPERTY GET is just the backing field - bind o.Prop -> o.$backing
-        if (this._autoPropGetField.TryGetValue(udt.Name + "." + m.Member, out var getBacking)) {
-          var fieldAccess = new MemberExpr(m.Position, m.Target, getBacking, TypeSuffix.None);
-          var type = this.BindExpression(fieldAccess, scope);
-          this._model.Desugared[m] = fieldAccess;
-          return type;
-        }
         // pb36: o.Prop with no such field but a PROPERTY GET -> Type.get_Prop(o)
         var getter = MemberProcName(udt.Name, new TypeMember(m.Position, TypeMemberKind.PropertyGet, m.Member, m.Suffix, [], null, []));
         // ... or a parameterless method called without parens (o.MoveNext) -> Type.MoveNext(o)

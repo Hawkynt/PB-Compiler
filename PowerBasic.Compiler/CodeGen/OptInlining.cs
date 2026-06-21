@@ -24,6 +24,7 @@ public static class OptInlining {
       SemanticModel model,
       Func<ProcedureSymbol, bool> isInlinable,
       Func<ProcedureSymbol, bool> isFullyOwned,
+      Func<Expression, bool> isNearLValue,
       bool programHasErrorHandling) {
     var result = new HashSet<ProcedureSymbol>(ReferenceEqualityComparer.Instance);
 
@@ -45,7 +46,7 @@ public static class OptInlining {
       referenced.Add(proc);
       if (poisoned.Contains(proc))
         continue;
-      if (!isFullyOwned(proc) || !isInlinable(proc) || !CallInlinesHere(node, proc, model))
+      if (!isFullyOwned(proc) || !isInlinable(proc) || !CallInlinesHere(node, proc, model, isNearLValue))
         poisoned.Add(proc);
     }
 
@@ -56,7 +57,7 @@ public static class OptInlining {
   }
 
   /// <summary>True when the reference <paramref name="node"/> to <paramref name="proc"/> is a genuine call the emitter inlines (right arity; a FUNCTION must be in value position).</summary>
-  private static bool CallInlinesHere(object node, ProcedureSymbol proc, SemanticModel model) {
+  private static bool CallInlinesHere(object node, ProcedureSymbol proc, SemanticModel model, Func<Expression, bool> isNearLValue) {
     var args = model.ReorderedArguments.GetValueOrDefault(node) ?? ArgsOf(node);
     if (args.Count != proc.Parameters.Count)
       return false;                 // defaulted / variadic / wrong arity - the inliner declines
@@ -65,6 +66,11 @@ public static class OptInlining {
     // is a CallOrIndexExpr (with args) or a bare NameExpr (parameterless).
     if (proc.IsFunction && node is CallStmt)
       return false;
+    // a BYREF argument inlines only as a near lvalue (its address is passed); otherwise the
+    // emitter falls back to a real call, so the body must survive
+    for (var i = 0; i < args.Count; ++i)
+      if (!proc.Parameters[i].ByVal && !isNearLValue(args[i]))
+        return false;
     return true;
   }
 

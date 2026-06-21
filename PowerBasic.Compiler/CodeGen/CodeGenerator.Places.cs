@@ -22,6 +22,10 @@ public sealed partial class CodeGenerator {
   /// needs a pointer.
   /// </summary>
   private Mem? InlineSlotCellOf(VariableSymbol s) {
+    // a BYREF inlined parameter's slot holds a near pointer, not the value - it has no direct cell,
+    // so the int16 read-modify-write / const-fold fast paths must reach it through EmitPlace instead
+    if (this._inlineByRefParams?.Contains(s) == true)
+      return null;
     if (this._inlineParamSlots is { } slots && slots.TryGetValue(s, out var slot))
       return slot.Cell;
     return this.TryDirectCell(s);
@@ -70,8 +74,14 @@ public sealed partial class CodeGenerator {
         }
         // pb36 O6: inside an inlined body, a write to a parameter/local/result maps to
         // its per-inline frame slot (the callee has no real frame)
-        if (this._inlineParamSlots is { } inlinedSlots && inlinedSlots.TryGetValue(symbol, out var inlinedSlot))
+        if (this._inlineParamSlots is { } inlinedSlots && inlinedSlots.TryGetValue(symbol, out var inlinedSlot)) {
+          // a BYREF receiver (THIS): the slot holds a near pointer, so reach the storage through it
+          if (this._inlineByRefParams?.Contains(symbol) == true) {
+            asm.Mov(Reg.BX, inlinedSlot.Cell);
+            return new(Mem.At(Reg.BX), false);
+          }
           return new(inlinedSlot.Cell, Far: false);
+        }
         if (symbol.Storage == VariableStorage.Captured)        // pb36 closure: reach the captured local through the env pointer
           return this.EmitCapturedPlace(symbol);
         if (this.TryDirectCell(symbol) is { } cell)
@@ -627,6 +637,8 @@ public sealed partial class CodeGenerator {
       return true;
     if (!model.VariableBindings.TryGetValue(n, out var symbol))
       return false;
+    if (this._inlineByRefParams?.Contains(symbol) == true)
+      return false;                              // BYREF receiver: EmitPlace loads the pointer (address code)
     if (this._inlineParamSlots?.ContainsKey(symbol) == true)
       return true;
     if (symbol.Storage == VariableStorage.Captured)

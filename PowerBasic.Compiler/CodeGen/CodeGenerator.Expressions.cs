@@ -131,7 +131,11 @@ public sealed partial class CodeGenerator {
         // pb36 O6: inside an inlined body, parameter reads come from the
         // argument temps instead of a (nonexistent) callee frame
         if (this._inlineParamSlots is { } inlined && inlined.TryGetValue(symbol, out var slot)) {
-          this.EmitLoadPlace(new(slot.Cell, Far: false), slot.Type, n);
+          // a BYREF scalar parameter's slot holds a pointer - read through it (EmitPlace loads it)
+          if (this._inlineByRefParams?.Contains(symbol) == true)
+            this.EmitLoadPlace(this.EmitPlace(n)!.Value, slot.Type, n);
+          else
+            this.EmitLoadPlace(new(slot.Cell, Far: false), slot.Type, n);
           break;
         }
         // pb36 O5: a variable resident in a register this loop (FOR counter in

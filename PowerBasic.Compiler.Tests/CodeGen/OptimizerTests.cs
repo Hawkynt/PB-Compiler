@@ -1766,6 +1766,48 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenTrivialTypeMethod_WhenPb36_ThenInlinedThroughByRefReceiverAndPurged() {
+    // GIVEN a trivial TYPE method (its body reads/writes fields through the BYREF THIS receiver)
+    // WHEN every call inlines, vs a twin where CODEPTR forces all bodies to survive
+    // THEN the all-inlined image is smaller - the lifted method procedure is gone
+    const string inlinedAll = """
+      TYPE Vec
+        x AS LONG
+        y AS LONG
+        FUNCTION Sum() AS LONG
+          Sum = THIS.x + THIS.y
+        END FUNCTION
+      END TYPE
+      DIM v AS Vec
+      v.x = 3 : v.y = 4
+      PRINT v.Sum(); v.Sum()
+      END
+      """;
+    const string addressTaken = """
+      DECLARE FUNCTION Keep%(BYVAL n%)
+      TYPE Vec
+        x AS LONG
+        y AS LONG
+        FUNCTION Sum() AS LONG
+          Sum = THIS.x + THIS.y
+        END FUNCTION
+      END TYPE
+      DIM v AS Vec
+      DIM p AS LONG
+      v.x = 3 : v.y = 4
+      p = CODEPTR(Keep%)
+      PRINT v.Sum(); v.Sum(); p
+      END
+      FUNCTION Keep%(BYVAL n%)
+        Keep% = n%
+      END FUNCTION
+      """;
+    var inlined = Compile(inlinedAll, Dialect.Pb36);
+    var kept = Compile(addressTaken, Dialect.Pb36);
+    Assert.That(inlined.Length, Is.LessThan(kept.Length), "a trivial method inlines through its BYREF receiver and is purged");
+  }
+
+  [Test]
   public void Emit_GivenTwoCallSitesAndSelfMutatingParam_WhenInlined_ThenNoCollision() {
     // GIVEN a leaf that mutates its own BYVAL parameter and a body local
     // WHEN inlined at two call sites in one expression
