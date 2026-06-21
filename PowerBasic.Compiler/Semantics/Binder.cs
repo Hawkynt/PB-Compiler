@@ -18,6 +18,9 @@ public sealed class Binder {
 
   /// <summary>pb36 generators (SUB/FUNCTION with YIELD): names whose call constructs an enumerator instance rather than calling a procedure.</summary>
   private readonly HashSet<string> _generatorNames = new(StringComparer.OrdinalIgnoreCase);
+
+  /// <summary>Each generator's parameter names (in order), so a construction call seeds the enumerator's captured-parameter fields.</summary>
+  private readonly Dictionary<string, IReadOnlyList<string>> _generatorParams = new(StringComparer.OrdinalIgnoreCase);
   private ConstantFolder _folder;
   private bool _dynamicMode;
   private bool _optionSigned;
@@ -502,6 +505,13 @@ public sealed class Binder {
       : [.. fields, .. backing.Select(b => new TypeField(pos, b.Field, b.Type, null))];
     this.DefineUdt(f.Name, allFields, isUnion: false, pos);
     this.DefineTypeMembers(decl, backing.ToDictionary(b => b.Prop, b => b, StringComparer.OrdinalIgnoreCase));
+
+    // the generator's typed parameters are captured into enumerator fields; MoveNext reads them
+    // as THIS.$param so their values persist across resumes, and a construction call seeds them
+    var captured = f.Parameters.Where(p => p.Type != null).Select(p => p.Name).ToList();
+    this._generatorParams[f.Name] = captured;
+    if (this._model.Procedures.TryGetValue(f.Name + ".MoveNext", out var moveNext))
+      moveNext.CoroutineCaptures = captured.ToDictionary(n => n, n => GeneratedPrefix + n, StringComparer.OrdinalIgnoreCase);
   }
 
   /// <summary>
@@ -598,7 +608,7 @@ public sealed class Binder {
   private void BindForEach(ForEachStmt fe, Scope scope) {
     var pos = fe.Position;
     Statement lowered;
-    if (fe.Collection is CallOrIndexExpr { Arguments.Count: 0 } gen && this._generatorNames.Contains(gen.Name)
+    if (fe.Collection is CallOrIndexExpr gen && this._generatorNames.Contains(gen.Name)
         && this._model.Udts.TryGetValue(gen.Name, out var enumType)) {
       // a hidden enumerator variable holds the iterator; register it directly (a synthesized DIM
       // would miss the pre-pass, so the construct could not see it as a UDT-typed variable)
@@ -1136,11 +1146,25 @@ public sealed class Binder {
         break;
 
       case AssignStmt a: {
-        // pb36 coroutine: e = Gen() constructs the enumerator (resets its resume state) instead of calling a function
-        if (a is { Target: NameExpr, Value: CallOrIndexExpr { Arguments.Count: 0 } gen } && this._generatorNames.Contains(gen.Name)) {
-          var construct = new AssignStmt(a.Position, new MemberExpr(a.Position, a.Target, GeneratedPrefix + "state", TypeSuffix.None), new IntegerLiteralExpr(a.Position, 0, TypeSuffix.None));
+        // pb36 coroutine: e = Gen(args) constructs the enumerator - reset its resume state and seed
+        // the captured-parameter fields from the arguments (instead of calling a function)
+        if (a is { Target: NameExpr enumTarget, Value: CallOrIndexExpr gen } && this._generatorNames.Contains(gen.Name)) {
+          var inits = new List<Statement> {
+            new AssignStmt(a.Position, new MemberExpr(a.Position, enumTarget, GeneratedPrefix + "state", TypeSuffix.None), new IntegerLiteralExpr(a.Position, 0, TypeSuffix.None)),
+          };
+          if (this._generatorParams.TryGetValue(gen.Name, out var paramNames))
+            for (var i = 0; i < paramNames.Count && i < gen.Arguments.Count; ++i)
+              inits.Add(new AssignStmt(a.Position, new MemberExpr(a.Position, enumTarget, GeneratedPrefix + paramNames[i], TypeSuffix.None), gen.Arguments[i]));
+          var construct = new IfStmt(a.Position, new IntegerLiteralExpr(a.Position, -1, TypeSuffix.None), inits, [], null);
           this.BindStatement(construct, scope);
           this._model.DesugaredStatements[a] = construct;
+          break;
+        }
+        // pb36 coroutine: inside MoveNext, a write to a captured generator parameter -> THIS.$param
+        if (a.Target is NameExpr { Suffix: TypeSuffix.None } capTarget && scope.Proc?.CoroutineCaptures is { } caps && caps.TryGetValue(capTarget.Name, out var capWrite)) {
+          var lowered = new AssignStmt(a.Position, ThisField(a.Position, capWrite), a.Value);
+          this.BindStatement(lowered, scope);
+          this._model.DesugaredStatements[a] = lowered;
           break;
         }
         // pb36 property accessor: FIELD = expr writes the backing field (THIS.$Prop = expr)
@@ -2173,6 +2197,13 @@ public sealed class Binder {
       }
 
       case NameExpr n: {
+        // pb36 coroutine: inside MoveNext, a captured generator parameter reads as THIS.$param
+        if (scope.Proc?.CoroutineCaptures is { } captures && captures.TryGetValue(n.Name, out var capRead)) {
+          var capAccess = ThisField(n.Position, capRead);
+          var capType = this.BindExpression(capAccess, scope);
+          this._model.Desugared[n] = capAccess;
+          return capType;
+        }
         // pb36 property accessor: FIELD reads the compiler-generated backing field (THIS.$Prop)
         if (n.Suffix == TypeSuffix.None && scope.Proc?.BackingField is { } backingRead && n.Name.Equals("FIELD", StringComparison.OrdinalIgnoreCase)) {
           var access = ThisField(n.Position, backingRead);

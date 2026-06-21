@@ -63,6 +63,8 @@ public sealed class ProcedureSymbol(string name, bool isFunction) {
   public string? BackingField { get; set; }
   /// <summary>For a PROPERTY SET accessor, the name of the incoming-value parameter the <c>VALUE</c> keyword aliases; null otherwise.</summary>
   public string? ValueParamName { get; set; }
+  /// <summary>For a coroutine MoveNext: generator parameter/local names mapped to the enumerator backing field (THIS.$name) they read/write, so the state preserved across resumes lives in the enumerator.</summary>
+  public Dictionary<string, string>? CoroutineCaptures { get; set; }
   public List<VariableSymbol> Parameters { get; } = [];
   /// <summary>Locals & statics by name (case-insensitive), including the implicit function-result variable.</summary>
   public Dictionary<string, VariableSymbol> Variables { get; } = new(StringComparer.OrdinalIgnoreCase);

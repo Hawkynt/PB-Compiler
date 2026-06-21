@@ -46,12 +46,14 @@ public sealed class CoroutineBinderTests {
   }
 
   [Test]
-  public void Bind_GivenGeneratorConstruction_WhenBound_ThenAssignmentDesugarsToStateReset() {
-    var model = Bind(_gen + "DIM e AS Gen\ne = Gen()\n");
+  public void Bind_GivenGeneratorConstruction_WhenBound_ThenResetsStateAndSeedsParameters() {
+    var model = Bind(
+      "FUNCTION Range(BYVAL lo AS INTEGER, BYVAL hi AS INTEGER) AS INTEGER\n  YIELD lo\n  YIELD hi\nEND FUNCTION\n" +
+      "DIM e AS Range\ne = Range(3, 8)\n");
     var assign = model.DesugaredStatements.Keys.OfType<AssignStmt>()
-      .Single(a => a.Value is CallOrIndexExpr { Name: "Gen" });
-    var construct = (AssignStmt)model.DesugaredStatements[assign];
-    Assert.That(construct.Target, Is.InstanceOf<MemberExpr>());
-    Assert.That(((MemberExpr)construct.Target).Member, Is.EqualTo("$state"));
+      .Single(a => a.Value is CallOrIndexExpr { Name: "Range" });
+    var construct = (IfStmt)model.DesugaredStatements[assign];
+    var writes = construct.Then.OfType<AssignStmt>().Select(s => ((MemberExpr)s.Target).Member).ToList();
+    Assert.That(writes, Is.EqualTo(new[] { "$state", "$lo", "$hi" }), "reset state, then seed each captured parameter");
   }
 }
