@@ -162,10 +162,11 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
   `.MoveNext` / `.Current` / `.Reset`, or consume with `FOR EACH`. Parameters and
   locals persist across suspensions as enumerator fields.
 - **`YIELD` anywhere in structured control flow** — inside `FOR`, `WHILE`/`DO`
-  loops, `IF`, `SELECT CASE`, and a `FOR EACH` over *another* generator (the inner
-  iterator's state is preserved across the outer yields); all flattened to a
-  resumable state machine. (`YIELD` inside `TRY`/`CATCH`/`FINALLY` is the one
-  remaining case, rejected with a clear diagnostic.)
+  loops, `IF`, `SELECT CASE`, a `FOR EACH` over *another* generator (the inner
+  iterator's state is preserved across the outer yields), and `TRY`/`CATCH`/`FINALLY`
+  (the ON ERROR handler is saved in enumerator fields and re-armed per resume, since a
+  yield unwinds the frame); all flattened to a resumable state machine. (Only a `TRY`
+  that yields while nested inside another yielding `TRY` is not yet supported.)
 
 **Memory and control flow**
 - **`WITH expr … END WITH`** — leading-dot member access on a subject.

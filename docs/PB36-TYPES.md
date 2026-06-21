@@ -177,16 +177,37 @@ The generator call `G(args)` lowers to: allocate a `G` instance, store `args` in
 parameter fields, set `__state = 0`, return it.
 
 **Supported `YIELD` positions** (all flattened to the resumable state machine, nesting
-freely): top level, inside `FOR` / `WHILE`-`DO`-`LOOP` / `IF` / `SELECT CASE`, and inside
-a `FOR EACH` over *another* generator — where the inner enumerator persists across the
-outer yields as a `$fe<n>` UDT field of the outer enumerator, and the `FOR EACH` loop
-variable persists as its own captured field. Parameters and locals (suffix- or
-`AS`-typed) are captured as enumerator fields and survive suspension; `INCR`/`DECR` of a
-captured variable persists too. A `SELECT CASE` that yields requires a side-effect-free
-subject (it is compared once per arm). The one remaining unsupported position is `YIELD`
-inside `TRY`/`CATCH`/`FINALLY` — rejected with a clear diagnostic, because the handler is
-armed on the stack and a yield unwinds the frame (it needs the handler state persisted in
-enumerator fields and re-armed on resume; a codegen change, tracked for later).
+freely): top level, inside `FOR` / `WHILE`-`DO`-`LOOP` / `IF` / `SELECT CASE`, inside a
+`FOR EACH` over *another* generator (the inner enumerator persists across the outer yields
+as a `$fe<n>` UDT field, and the loop variable persists as its own captured field), and
+inside `TRY` / `CATCH` / `FINALLY`. Parameters and locals (suffix- or `AS`-typed) are
+captured as enumerator fields and survive suspension; `INCR`/`DECR` of a captured variable
+persists too. A `SELECT CASE` that yields requires a side-effect-free subject (it is
+compared once per arm).
+
+### `YIELD` inside `TRY` / `CATCH` / `FINALLY`
+
+The normal `TRY` arms the ON ERROR handler on the **stack** (it pushes the previous
+`rt_onerr` / `_bp` / `_sp` triple and pops it on exit). A `YIELD` does `EXIT FUNCTION`,
+which unwinds that frame — so the stack save can't survive a suspension. The generator
+state machine instead:
+
+- snapshots the **caller's** handler triple into three enumerator fields
+  (`$gonerr` / `$gbp` / `$gsp`) at the top of every `MoveNext` invocation;
+- **arms** its own catch dispatcher (`rt_onerr = OFFSET catch`, `_bp = BP`, `_sp = SP`) on
+  entry to the protected body and again at each resume into it (each `MoveNext` runs in a
+  fresh frame, so the armed SP/BP must be this frame's);
+- **disarms** (restores the caller's triple from the fields) before each in-`TRY` `YIELD`'s
+  `EXIT`, so consumer code between `MoveNext` calls runs under the caller's handler, and on
+  normal completion / at the catch-dispatch label.
+
+A fault in the protected body during a `MoveNext` call lands on the armed dispatcher (SP/BP
+restored to that invocation's frame), runs `CATCH` then `FINALLY`; a `TRY … FINALLY` with no
+`CATCH` re-raises the still-set `ERR` to the now-restored outer handler. Yields in `CATCH`
+and `FINALLY` are ordinary (the handler is already restored there). These are synthesized
+`HandlerSave` / `HandlerArm` / `HandlerRestore` / `HandlerReraise` statements with bespoke
+codegen. **Not yet supported**: a `TRY` that yields while itself nested inside another
+yielding `TRY` (rejected with a clear diagnostic).
 
 ## Generated-name safety
 

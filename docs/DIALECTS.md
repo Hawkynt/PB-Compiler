@@ -114,9 +114,10 @@ a separate axis (`--optimize`, on by default for `pb36`). Full detail in
 - **Generators**: any `SUB`/`FUNCTION` with `YIELD` becomes a first-class generator
   whose call returns an enumerator UDT (`.MoveNext`/`.Current`/`.Reset`, or `FOR
   EACH`); parameters and locals persist across suspensions. `YIELD` is supported in
-  `FOR`/`WHILE`/`DO`/`IF`/`SELECT CASE` and in a `FOR EACH` over another generator
-  (flattened to a resumable state machine); `YIELD` inside `TRY`/`CATCH`/`FINALLY`
-  is not yet supported.
+  `FOR`/`WHILE`/`DO`/`IF`/`SELECT CASE`, a `FOR EACH` over another generator, and
+  `TRY`/`CATCH`/`FINALLY` (the handler is saved in enumerator fields and re-armed per
+  resume) — all flattened to a resumable state machine; only a `TRY` that yields while
+  nested in another yielding `TRY` is not yet supported.
 - Memory/control flow: `WITH … END WITH`, `FOR EACH v IN source` (array, `[lo..hi]`
   range, or a generator), XMS/EMS array storage classes.
 
