@@ -82,6 +82,27 @@ public sealed class GenericsBinderTests {
   }
 
   [Test]
+  public void Bind_GivenExplicitTypeArguments_WhenBound_ThenInstantiatesEvenWhenReturnTypeOnly() {
+    // a type parameter that appears only in the return type is supplied explicitly: Zero OF LONG()
+    var model = Bind(
+      "FUNCTION Zero OF T () AS T\n  Zero = 0\nEND FUNCTION\nDIM x&\nx& = Zero OF LONG ()\n");
+    Assert.That(model.Procedures.ContainsKey("Zero@Long"), Is.True);
+    Assert.That(model.Procedures["Zero@Long"].ReturnType, Is.EqualTo(PbType.Long));
+  }
+
+  [Test]
+  public void Bind_GivenNestedGenericArgument_WhenBound_ThenTypeParameterInferred() {
+    // T inferred from a Box OF T parameter given a Box OF LONG argument
+    var model = Bind(
+      "TYPE Box OF T\n  V AS T\nEND TYPE\nFUNCTION Unwrap OF T (b AS Box OF T) AS T\n  Unwrap = b.V\nEND FUNCTION\n" +
+      "DIM bl AS Box OF LONG\nDIM r&\nr& = Unwrap(bl)\n");
+    Assert.Multiple(() => {
+      Assert.That(model.Procedures.ContainsKey("Unwrap@Long"), Is.True, "T inferred as LONG from Box OF LONG");
+      Assert.That(model.Procedures["Unwrap@Long"].ReturnType, Is.EqualTo(PbType.Long));
+    });
+  }
+
+  [Test]
   public void Bind_GivenUninferrableTypeParameter_WhenBound_ThenRejectedClearly() {
     // T appears only in the return type, so it cannot be inferred from arguments
     var unit = Parser.Parse(Lexer.Tokenize(

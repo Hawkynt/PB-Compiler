@@ -37,7 +37,8 @@ internal static class Monomorphizer {
   /// Expands every generic instantiation in <paramref name="unit"/>. Returns the new statement list
   /// (generic templates removed, concrete instantiations appended) and whether anything was generic.
   /// </summary>
-  public static (IReadOnlyList<Statement> Statements, bool Any) Expand(CompilationUnit unit, Action<SourcePosition, string> error) {
+  public static (IReadOnlyList<Statement> Statements, bool Any, IReadOnlyDictionary<string, (string Template, IReadOnlyList<TypeName> Args)> Instances) Expand(CompilationUnit unit, Action<SourcePosition, string> error) {
+    var instanceArgs = new Dictionary<string, (string, IReadOnlyList<TypeName>)>(StringComparer.OrdinalIgnoreCase);
     var templates = new Dictionary<string, TypeDecl>(StringComparer.OrdinalIgnoreCase);
     var rest = new List<Statement>();
     foreach (var s in unit.Statements)
@@ -46,11 +47,14 @@ internal static class Monomorphizer {
       else
         rest.Add(s);
     if (templates.Count == 0)
-      return (unit.Statements, false);
+      return (unit.Statements, false, instanceArgs);
 
     var concrete = new Dictionary<string, TypeDecl>(StringComparer.OrdinalIgnoreCase);
     var queue = new Queue<TypeName>();
-    foreach (var use in GenericUses(rest, templates))
+    // skip generic PROCEDURE templates: a "Box OF T" in their signature/body uses an abstract type
+    // parameter, not a concrete instantiation (their instances are monomorphized later by the binder)
+    var scannable = rest.Where(s => s is not (SubDecl { TypeParameters.Count: > 0 } or FunctionDecl { TypeParameters.Count: > 0 }));
+    foreach (var use in GenericUses(scannable, templates))
       queue.Enqueue(use);
 
     while (queue.Count > 0) {
@@ -67,6 +71,7 @@ internal static class Monomorphizer {
         map[template.TypeParameters[i]] = use.TypeArguments[i];
       var instance = ((TypeDecl)Clone(template, map)!) with { Name = mangled, TypeParameters = [] };
       concrete[mangled] = instance;
+      instanceArgs[mangled] = (use.UserTypeName!, use.TypeArguments!);   // remember origin for nested inference
       foreach (var inner in GenericUses([instance], templates))   // transitive instantiations
         queue.Enqueue(inner);
     }
@@ -82,7 +87,7 @@ internal static class Monomorphizer {
         insertAt = i + 1;
     var result = new List<Statement>(rest);
     result.InsertRange(insertAt, instances);
-    return (result, true);
+    return (result, true, instanceArgs);
   }
 
   /// <summary>Every generic-use type name (a use of one of <paramref name="templates"/> with arguments) anywhere in the given statements.</summary>

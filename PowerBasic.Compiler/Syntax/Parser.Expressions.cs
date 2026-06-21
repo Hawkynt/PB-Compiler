@@ -360,6 +360,11 @@ public sealed partial class Parser {
     }
 
     var token = this.Advance();
+    // pb36 generics: explicit type arguments on a call, Name OF type(args) / Name OF (T1, T2)(args)
+    if (token.Suffix == TypeSuffix.None && this.IsKeyword(0, "OF")) {
+      var typeArgs = this.TryParseTypeArguments();
+      return this.ParsePostfix(new CallOrIndexExpr(token.Position, token.Text, token.Suffix, this.ParseArgumentList(), typeArgs));
+    }
     Expression expr = this.Current.Kind == TokenKind.LParen
       ? new CallOrIndexExpr(token.Position, token.Text, token.Suffix, this.ParseArgumentList())
       : new NameExpr(token.Position, token.Text, token.Suffix);

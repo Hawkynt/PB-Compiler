@@ -153,7 +153,7 @@ public sealed record AssignStmt(SourcePosition Position, Expression Target, Expr
 public sealed record IncrDecrStmt(SourcePosition Position, bool Increment, Expression Target, Expression? Amount) : Statement(Position);
 
 /// <summary>SUB invocation: <c>CALL Name(args)</c> or bare <c>Name args</c>.</summary>
-public sealed record CallStmt(SourcePosition Position, string Name, IReadOnlyList<Expression> Arguments, bool UsedCallKeyword) : Statement(Position);
+public sealed record CallStmt(SourcePosition Position, string Name, IReadOnlyList<Expression> Arguments, bool UsedCallKeyword, IReadOnlyList<TypeName>? TypeArguments = null) : Statement(Position);
 
 /// <summary>
 /// PB 3.6 statement-form member call: <c>receiver.Member(args)</c> / <c>receiver.Member args</c>.

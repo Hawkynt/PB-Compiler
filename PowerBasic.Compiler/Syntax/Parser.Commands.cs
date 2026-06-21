@@ -51,6 +51,19 @@ public sealed partial class Parser {
   private Statement ParseBareCall() {
     var name = this.Advance();
 
+    // pb36 generics: explicit type arguments on a statement call, Name OF type(args) / Name OF type args
+    if (name.Suffix == TypeSuffix.None && this.IsKeyword(0, "OF")) {
+      var typeArgs = this.TryParseTypeArguments();
+      if (this.Current.Kind == TokenKind.LParen && this.ParenthesesEndStatement())
+        return new CallStmt(name.Position, name.Text, this.ParseArgumentList(), false, typeArgs);
+      var typedArgs = new List<Expression>();
+      if (!this.IsStatementEnd())
+        do
+          typedArgs.Add(this.ParseArgument());
+        while (this.Match(TokenKind.Comma));
+      return new CallStmt(name.Position, name.Text, typedArgs, false, typeArgs);
+    }
+
     // pb36 member-call statement: receiver.Member(args) / receiver.Member args
     if (this.Current.Kind == TokenKind.Period && DialectFacts.IsAvailable(LanguageFeature.TypeMethods, this._dialect)) {
       var chain = this.ParsePostfix(new NameExpr(name.Position, name.Text, name.Suffix));

@@ -22,7 +22,7 @@ public sealed record NameExpr(SourcePosition Position, string Name, TypeSuffix S
 /// <c>name(arg, ...)</c> - array element, intrinsic or user FUNCTION call; the
 /// distinction is semantic. Also used for pseudo-functions with empty args.
 /// </summary>
-public sealed record CallOrIndexExpr(SourcePosition Position, string Name, TypeSuffix Suffix, IReadOnlyList<Expression> Arguments) : Expression(Position);
+public sealed record CallOrIndexExpr(SourcePosition Position, string Name, TypeSuffix Suffix, IReadOnlyList<Expression> Arguments, IReadOnlyList<TypeName>? TypeArguments = null) : Expression(Position);
 
 /// <summary>UDT member access, e.g. <c>ctx.CurrentMode</c>; <see cref="Target"/> is a name, index or another member access.</summary>
 public sealed record MemberExpr(SourcePosition Position, Expression Target, string Member, TypeSuffix Suffix) : Expression(Position);

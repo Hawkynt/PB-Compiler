@@ -176,9 +176,13 @@ public sealed class Binder {
       }
   }
 
+  /// <summary>pb36 generics: each monomorphized TYPE instance mapped to its (template name, concrete type arguments), for inferring a generic procedure's type parameters from a generic-typed argument (s AS Stack OF T).</summary>
+  private IReadOnlyDictionary<string, (string Template, IReadOnlyList<TypeName> Args)> _instanceArgs = new Dictionary<string, (string, IReadOnlyList<TypeName>)>();
+
   /// <summary>pb36 generics: vivify every generic instantiation into a concrete TYPE before binding, so the binder only ever sees concrete types (see <see cref="Monomorphizer"/>).</summary>
   private void ExpandGenerics() {
-    var (statements, any) = Monomorphizer.Expand(this._unit, this.Error);
+    var (statements, any, instances) = Monomorphizer.Expand(this._unit, this.Error);
+    this._instanceArgs = instances;
     if (any)
       this._unit = this._unit with { Statements = statements };
   }
@@ -427,7 +431,7 @@ public sealed class Binder {
   /// symbol. Null when the name is not a generic template; a clear error when a parameter cannot be
   /// inferred. The instance body is queued, bound after the main pass (so the proc list is not mutated mid-iteration).
   /// </summary>
-  private ProcedureSymbol? ResolveGenericCall(string name, IReadOnlyList<Expression> args, SourcePosition position, Scope scope) {
+  private ProcedureSymbol? ResolveGenericCall(string name, IReadOnlyList<Expression> args, SourcePosition position, Scope scope, IReadOnlyList<TypeName>? explicitTypeArgs = null) {
     if (!this._genericProcs.TryGetValue(name, out var template))
       return null;
     foreach (var argument in args)   // bind the arguments so their types drive type-parameter inference
@@ -438,18 +442,27 @@ public sealed class Binder {
       _ => ([], [], false, TypeSuffix.None, null, (IReadOnlyList<Statement>)[]),
     };
 
-    // infer each type parameter from the first parameter declared as the bare parameter type
     var map = new Dictionary<string, TypeName>(StringComparer.OrdinalIgnoreCase);
-    for (var i = 0; i < parameters.Count && i < args.Count; ++i)
-      if (parameters[i].Type is { IsUserDefined: true, IsGenericUse: false, UserTypeName: { } pn }
-          && typeParams.Contains(pn, StringComparer.OrdinalIgnoreCase) && !map.ContainsKey(pn)
-          && TypeNameOf(this._model.TypeOf(args[i]), position) is { } argType)
-        map[pn] = argType;
-    foreach (var tp in typeParams)
-      if (!map.ContainsKey(tp)) {
-        this.Error(position, $"cannot infer type parameter '{tp}' of generic {(isFunction ? "FUNCTION" : "SUB")} {name} from the arguments");
+    if (explicitTypeArgs is { Count: > 0 }) {
+      // explicit type arguments: Name OF (T1, T2)(args) - bind each type parameter directly
+      if (explicitTypeArgs.Count != typeParams.Count) {
+        this.Error(position, $"generic {(isFunction ? "FUNCTION" : "SUB")} {name} takes {typeParams.Count} type argument(s), got {explicitTypeArgs.Count}");
         return null;
       }
+      for (var i = 0; i < typeParams.Count; ++i)
+        map[typeParams[i]] = explicitTypeArgs[i];
+    } else {
+      // infer each type parameter from the first parameter declared as the bare parameter type
+      var typeParamSet = new HashSet<string>(typeParams, StringComparer.OrdinalIgnoreCase);
+      for (var i = 0; i < parameters.Count && i < args.Count; ++i)
+        if (parameters[i].Type is { } pt && this.ArgTypeName(this._model.TypeOf(args[i]), position) is { } at)
+          this.UnifyTypeName(pt, at, typeParamSet, map);   // bare T, or nested e.g. Stack OF T against Stack@Long
+      foreach (var tp in typeParams)
+        if (!map.ContainsKey(tp)) {
+          this.Error(position, $"cannot infer type parameter '{tp}' of generic {(isFunction ? "FUNCTION" : "SUB")} {name} from the arguments (give explicit type arguments: {name} OF <type>)");
+          return null;
+        }
+    }
 
     var mangled = Monomorphizer.MangleName(name, typeParams.Select(tp => map[tp]).ToList());
     if (this._genericProcInstances.TryGetValue(mangled, out var existing))
@@ -475,6 +488,28 @@ public sealed class Binder {
     UdtType u => new TypeName(pos, BuiltinType.None, u.Name),
     _ => null,
   };
+
+  /// <summary>The argument's type as a type name for generic inference: a monomorphized instance (Stack@Long) is reconstructed as the generic use it came from (Stack OF LONG), so a nested pattern can unify against it.</summary>
+  private TypeName? ArgTypeName(PbType type, SourcePosition pos) {
+    if (type is UdtType u && this._instanceArgs.TryGetValue(u.Name, out var origin))
+      return new TypeName(pos, BuiltinType.None, origin.Template) { TypeArguments = origin.Args };
+    return TypeNameOf(type, pos);
+  }
+
+  /// <summary>Unifies a generic parameter type pattern against a concrete argument type name, binding each type parameter: a bare T binds to the whole concrete type; a generic-use pattern (Stack OF T) unifies position-by-position against a matching concrete instance (Stack OF LONG).</summary>
+  private void UnifyTypeName(TypeName pattern, TypeName concrete, HashSet<string> typeParams, Dictionary<string, TypeName> map) {
+    if (pattern is { IsUserDefined: true, IsGenericUse: false, UserTypeName: { } pn } && typeParams.Contains(pn)) {
+      map.TryAdd(pn, concrete);
+      return;
+    }
+    if (pattern.IsGenericUse && concrete.IsGenericUse
+        && string.Equals(pattern.UserTypeName, concrete.UserTypeName, StringComparison.OrdinalIgnoreCase)
+        && pattern.TypeArguments!.Count == concrete.TypeArguments!.Count)
+      for (var i = 0; i < pattern.TypeArguments.Count; ++i)
+        this.UnifyTypeName(pattern.TypeArguments[i], concrete.TypeArguments[i], typeParams, map);
+    if (pattern.IsPointer && concrete.IsPointer)
+      this.UnifyTypeName(pattern.PointerTarget!, concrete.PointerTarget!, typeParams, map);
+  }
 
   /// <summary>
   /// pb36: lifts each TYPE member to an ordinary procedure that takes the instance
@@ -2346,7 +2381,7 @@ public sealed class Binder {
     }
 
     // pb36 generic procedure: infer the type arguments and bind to the monomorphized instance
-    if (this.ResolveGenericCall(c.Name, c.Arguments, c.Position, scope) is { } instance) {
+    if (this.ResolveGenericCall(c.Name, c.Arguments, c.Position, scope, c.TypeArguments) is { } instance) {
       this._model.CallBindings[c] = instance;
       return;
     }
@@ -3200,7 +3235,7 @@ public sealed class Binder {
   private PbType BindCallOrIndex(CallOrIndexExpr call, Scope scope) {
     // 0. pb36 generic function: a user-declared generic template shadows an intrinsic of the same name
     // (e.g. a generic Max), so resolve it before the array/intrinsic checks
-    if (this._genericProcs.ContainsKey(call.Name) && this.ResolveGenericCall(call.Name, call.Arguments, call.Position, scope) is { } genInstance0) {
+    if (this._genericProcs.ContainsKey(call.Name) && this.ResolveGenericCall(call.Name, call.Arguments, call.Position, scope, call.TypeArguments) is { } genInstance0) {
       if (!genInstance0.IsFunction)
         return this.ErrorType(call.Position, $"SUB {call.Name} used as a function");
       this._model.CallBindings[call] = genInstance0;
