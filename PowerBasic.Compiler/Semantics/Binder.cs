@@ -485,21 +485,33 @@ public sealed class Binder {
     var intType = new TypeName(pos, BuiltinType.Integer);
     var elementType = f.ReturnType ?? intType;
 
-    // not yet lowered: a YIELD inside a loop / IF (resume must re-enter the block), or a local
-    // assigned in the body and read across a YIELD (it would not persist). Reject clearly rather
-    // than miscompile silently; both need the full state-machine transform (a later increment).
+    // not yet lowered: a YIELD inside a loop / IF (resume must re-enter the block). Reject clearly
+    // rather than miscompile silently; needs the control-flow state-machine transform (next increment).
     if (ContainsNestedYield(f.Body))
       this.Error(pos, "a YIELD inside a loop or IF is not yet supported in a generator (only top-level YIELDs)");
-    var paramNames = new HashSet<string>(f.Parameters.Select(p => p.Name), StringComparer.OrdinalIgnoreCase);
-    var assigned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    CollectAssignedNames(f.Body, assigned);
-    if (assigned.Any(n => !paramNames.Contains(n)))
-      this.Error(pos, "local variables in a generator are not yet supported (only parameters persist across YIELDs)");
 
+    var paramNames = new HashSet<string>(f.Parameters.Select(p => p.Name), StringComparer.OrdinalIgnoreCase);
+    var captures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     var fields = new List<TypeField> { new(pos, GeneratedPrefix + "state", intType, null) };
     foreach (var p in f.Parameters)
-      if (p.Type is { } paramType)
+      if (p.Type is { } paramType) {
         fields.Add(new(pos, GeneratedPrefix + p.Name, paramType, null));
+        captures[p.Name] = GeneratedPrefix + p.Name;
+      }
+
+    // locals assigned in the body persist across resumes as enumerator fields (type from suffix/DEFtype)
+    var locals = new Dictionary<string, TypeSuffix>(StringComparer.OrdinalIgnoreCase);
+    CollectAssignedNames(f.Body, locals);
+    foreach (var (local, suffix) in locals) {
+      if (paramNames.Contains(local) || captures.ContainsKey(local))
+        continue;
+      if (LocalFieldTypeName(pos, this.TypeFromSuffixOrDefault(local, suffix)) is not { } localType) {
+        this.Error(pos, $"generator local '{local}' has an unsupported type (only scalars and strings persist across YIELDs)");
+        continue;
+      }
+      fields.Add(new(pos, GeneratedPrefix + local, localType, null));
+      captures[local] = GeneratedPrefix + local;
+    }
 
     var members = new List<TypeMember> {
       new(pos, TypeMemberKind.PropertyGet, "Current", f.Suffix, [], elementType, [], IsAuto: true),
@@ -517,12 +529,11 @@ public sealed class Binder {
     this.DefineUdt(f.Name, allFields, isUnion: false, pos);
     this.DefineTypeMembers(decl, backing.ToDictionary(b => b.Prop, b => b, StringComparer.OrdinalIgnoreCase));
 
-    // the generator's typed parameters are captured into enumerator fields; MoveNext reads them
-    // as THIS.$param so their values persist across resumes, and a construction call seeds them
-    var captured = f.Parameters.Where(p => p.Type != null).Select(p => p.Name).ToList();
-    this._generatorParams[f.Name] = captured;
+    // MoveNext reads every captured parameter/local as THIS.$name so state persists across resumes;
+    // a construction call seeds the parameter fields from its arguments (parameters only, in order)
+    this._generatorParams[f.Name] = f.Parameters.Where(p => p.Type != null).Select(p => p.Name).ToList();
     if (this._model.Procedures.TryGetValue(f.Name + ".MoveNext", out var moveNext))
-      moveNext.CoroutineCaptures = captured.ToDictionary(n => n, n => GeneratedPrefix + n, StringComparer.OrdinalIgnoreCase);
+      moveNext.CoroutineCaptures = captures;
   }
 
   /// <summary>
@@ -698,19 +709,36 @@ public sealed class Binder {
     return false;
   }
 
-  /// <summary>Collects the names of scalar variables assigned anywhere in a body (assignment / INCR-DECR target, FOR counter), recursing nested blocks but not nested procedures.</summary>
-  private static void CollectAssignedNames(IReadOnlyList<Statement> body, HashSet<string> names) {
+  /// <summary>Collects the scalar variables assigned anywhere in a body (assignment / INCR-DECR target, FOR counter) with their suffixes, recursing nested blocks but not nested procedures.</summary>
+  private static void CollectAssignedNames(IReadOnlyList<Statement> body, Dictionary<string, TypeSuffix> names) {
     foreach (var s in body) {
       switch (s) {
-        case AssignStmt { Target: NameExpr a }: names.Add(a.Name); break;
-        case IncrDecrStmt { Target: NameExpr d }: names.Add(d.Name); break;
-        case ForStmt { Variable: NameExpr c }: names.Add(c.Name); break;
+        case AssignStmt { Target: NameExpr a }: names.TryAdd(a.Name, a.Suffix); break;
+        case IncrDecrStmt { Target: NameExpr d }: names.TryAdd(d.Name, d.Suffix); break;
+        case ForStmt { Variable: NameExpr c }: names.TryAdd(c.Name, c.Suffix); break;
       }
       if (s is not (SubDecl or FunctionDecl or DefFnDecl))
         foreach (var block in ChildBlocks(s))
           CollectAssignedNames(block, names);
     }
   }
+
+  /// <summary>The AST type name for a captured generator local of resolved scalar/string type (null = unsupported, e.g. a UDT/array local).</summary>
+  private static TypeName? LocalFieldTypeName(SourcePosition pos, PbType type) => type switch {
+    ScalarType s => new TypeName(pos, s.Kind switch {
+      ScalarKind.Byte => BuiltinType.Byte,
+      ScalarKind.Word => BuiltinType.Word,
+      ScalarKind.Dword => BuiltinType.Dword,
+      ScalarKind.Long => BuiltinType.Long,
+      ScalarKind.Quad => BuiltinType.Quad,
+      ScalarKind.Single => BuiltinType.Single,
+      ScalarKind.Double => BuiltinType.Double,
+      ScalarKind.Ext => BuiltinType.Ext,
+      _ => BuiltinType.Integer,
+    }),
+    StringType => new TypeName(pos, BuiltinType.String),
+    _ => null,
+  };
 
   /// <summary>True when a procedure body contains a YIELD (making it a generator); nested SUB/FUNCTION bodies are their own scope and do not count.</summary>
   private static bool ContainsYield(IReadOnlyList<Statement> body) {
@@ -1195,8 +1223,8 @@ public sealed class Binder {
           this._model.DesugaredStatements[a] = construct;
           break;
         }
-        // pb36 coroutine: inside MoveNext, a write to a captured generator parameter -> THIS.$param
-        if (a.Target is NameExpr { Suffix: TypeSuffix.None } capTarget && scope.Proc?.CoroutineCaptures is { } caps && caps.TryGetValue(capTarget.Name, out var capWrite)) {
+        // pb36 coroutine: inside MoveNext, a write to a captured generator parameter/local -> THIS.$name
+        if (a.Target is NameExpr capTarget && scope.Proc?.CoroutineCaptures is { } caps && caps.TryGetValue(capTarget.Name, out var capWrite)) {
           var lowered = new AssignStmt(a.Position, ThisField(a.Position, capWrite), a.Value);
           this.BindStatement(lowered, scope);
           this._model.DesugaredStatements[a] = lowered;
