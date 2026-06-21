@@ -1,6 +1,6 @@
-# PB 3.6 compile-time generics (monomorphization) — design plan
+# PB 3.6 compile-time generics (monomorphization)
 
-**Status: planned (not yet implemented).** A design for generic `TYPE`s and
+**Status: generic TYPEs implemented; generic procedures planned.** A design for generic `TYPE`s and
 procedures that are *fully vivified into concrete implementations at compile time*
 — like C++ templates / Rust / .NET value-type generics: no runtime type info, no
 boxing, no dispatch. Each distinct instantiation becomes an ordinary concrete TYPE
@@ -103,6 +103,28 @@ byte-identical (generics are inert for every existing battery — no template, n
 code). Suggested first slice: a single-parameter generic `TYPE … OF T` with one
 method, instantiated at two concrete types, proving both monomorphize and run; then
 generic procedures with inference; then transitive/fixpoint instantiation.
+
+## Implementation status
+
+**Done — generic TYPEs** (`PowerBasic.Compiler/Semantics/Monomorphizer.cs`): `TYPE Name OF T … END TYPE`
+templates and `AS Name OF <args>` uses parse (the `Generics` feature, pb36-gated); a pre-bind pass
+collects templates, discovers uses (reflection walk over the AST), and runs the work-list fixpoint,
+deep-cloning each template with `T`→argument substitution into a concrete `TypeDecl` named by
+[`Mangle`](#mechanism-a-pre-bind-monomorphization-pass) (`Box@Long`), spliced in just after the user
+type declarations (in dependency order). The binder resolves a generic-use type name to that mangle in
+`ResolveTypeName`, so the object-model machinery (fields, methods, properties, the BYREF `THIS`
+receiver, the trivial-method inliner) all apply per instantiation with no back-end change. Verified by
+execution (`Box OF LONG`/`OF INTEGER`/`OF STRING` distinct instances, fields and methods correct) and
+`GenericsBinderTests`; the full differential harness stays byte-identical (the pass is inert when a
+program declares no generic template).
+
+**Pending — generic procedures** (`FUNCTION Max OF T (…)`): the type-argument *inference* from call
+arguments and the explicit `Max OF LONG (…)` call form are not yet wired (the type-side
+monomorphization infrastructure is in place to build on).
+
+**Known limitation (pre-existing, not generics-specific):** assigning to an *array field element*
+through a method's `THIS` receiver (`THIS.Items(i) = v` inside a member) is rejected ("expression is
+not assignable") in any TYPE, generic or not — tracked separately.
 
 ## Why it fits now
 
