@@ -533,6 +533,59 @@ public sealed partial class CodeGenerator {
     asm.Pop(Mem.Word(asm.Lbl("rt_onerr_sp")));
   }
 
+  // pb36 generator-in-TRY: the handler triple can't live on the stack across a YIELD's EXIT, so it is
+  // saved in / restored from the enumerator fields, and the dispatcher is re-armed for each MoveNext
+  // frame. The three rt cells are WORD-wide; the fields are reached through the BYREF THIS receiver.
+
+  /// <summary>Saves rt_onerr / _bp / _sp into the enumerator's three handler fields (THIS.$gonerr ...).</summary>
+  private void EmitHandlerSave(HandlerSaveStmt s) {
+    this.StoreCellToField("rt_onerr", s.OnerrField);
+    this.StoreCellToField("rt_onerr_bp", s.BpField);
+    this.StoreCellToField("rt_onerr_sp", s.SpField);
+  }
+
+  /// <summary>Restores the enumerator's three handler fields back into rt_onerr / _bp / _sp.</summary>
+  private void EmitHandlerRestore(HandlerRestoreStmt s) {
+    this.LoadFieldToCell(s.OnerrField, "rt_onerr");
+    this.LoadFieldToCell(s.BpField, "rt_onerr_bp");
+    this.LoadFieldToCell(s.SpField, "rt_onerr_sp");
+  }
+
+  /// <summary>Arms the generator's catch dispatcher for the current frame: rt_onerr = OFFSET catch, _bp = BP, _sp = SP.</summary>
+  private void EmitHandlerArm(HandlerArmStmt s) {
+    var asm = this._asm;
+    asm.Mov(Mem.Word(asm.Lbl("rt_onerr")), Imm.OffsetOf(this.UserLabel(s.CatchLabel)));
+    asm.Mov(Mem.Word(asm.Lbl("rt_onerr_bp")), Reg.BP);
+    asm.Mov(Mem.Word(asm.Lbl("rt_onerr_sp")), Reg.SP);
+  }
+
+  /// <summary>Re-raises the still-set ERR to the (already restored) outer handler - the no-CATCH fault edge.</summary>
+  private void EmitHandlerReraise() {
+    var asm = this._asm;
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_err")));
+    asm.Call(this._rt.Raise);
+  }
+
+  private void StoreCellToField(string cell, MemberExpr field) {
+    var asm = this._asm;
+    if (this.EmitPlace(field) is not { Far: false } place) {       // BX = THIS ptr, place = [BX+offset]
+      this.Unsupported(field, "generator handler field");
+      return;
+    }
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl(cell)));
+    asm.Mov(place.Cell.WithSize(OperandSize.Word), Reg.AX);
+  }
+
+  private void LoadFieldToCell(MemberExpr field, string cell) {
+    var asm = this._asm;
+    if (this.EmitPlace(field) is not { Far: false } place) {
+      this.Unsupported(field, "generator handler field");
+      return;
+    }
+    asm.Mov(Reg.AX, place.Cell.WithSize(OperandSize.Word));
+    asm.Mov(Mem.Word(asm.Lbl(cell)), Reg.AX);
+  }
+
   private void EmitOnError(OnErrorStmt oe) {
     var asm = this._asm;
     if (oe.ResumeNext) {

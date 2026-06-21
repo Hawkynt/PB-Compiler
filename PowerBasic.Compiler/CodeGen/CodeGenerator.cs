@@ -1179,6 +1179,20 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         this.EmitTry(t);
         break;
 
+      // pb36 generator-in-TRY handler plumbing (synthesized only)
+      case HandlerSaveStmt hs:
+        this.EmitHandlerSave(hs);
+        break;
+      case HandlerRestoreStmt hr:
+        this.EmitHandlerRestore(hr);
+        break;
+      case HandlerArmStmt ha:
+        this.EmitHandlerArm(ha);
+        break;
+      case HandlerReraiseStmt:
+        this.EmitHandlerReraise();
+        break;
+
       case ReadStmt read:
         this.EmitRead(read);
         break;

@@ -291,6 +291,23 @@ public sealed record ErrorStmt(SourcePosition Position, Expression Code) : State
 /// </summary>
 public sealed record TryStmt(SourcePosition Position, IReadOnlyList<Statement> Body, IReadOnlyList<Statement>? Catch, IReadOnlyList<Statement>? Finally) : Statement(Position);
 
+// pb36 generator-in-TRY support: synthesized-only statements (never written by the user) that let a
+// YIELD inside a TRY body suspend and resume while the ON ERROR handler is correctly armed per
+// MoveNext invocation. The handler triple cannot live on the stack (a YIELD does EXIT FUNCTION and
+// unwinds the frame), so it is saved in enumerator fields and the dispatcher is re-armed on resume.
+
+/// <summary>Saves the current ON ERROR handler triple (rt_onerr / _bp / _sp) into the enumerator fields, so it can be restored after a YIELD suspension.</summary>
+public sealed record HandlerSaveStmt(SourcePosition Position, MemberExpr OnerrField, MemberExpr BpField, MemberExpr SpField) : Statement(Position);
+
+/// <summary>Restores the saved ON ERROR handler triple from the enumerator fields back into rt_onerr / _bp / _sp (disarm before a YIELD's EXIT, and on normal completion / catch entry).</summary>
+public sealed record HandlerRestoreStmt(SourcePosition Position, MemberExpr OnerrField, MemberExpr BpField, MemberExpr SpField) : Statement(Position);
+
+/// <summary>Arms the generator's catch dispatcher for the current MoveNext frame: rt_onerr = OFFSET CatchLabel, rt_onerr_bp = BP, rt_onerr_sp = SP.</summary>
+public sealed record HandlerArmStmt(SourcePosition Position, string CatchLabel) : Statement(Position);
+
+/// <summary>Re-raises the still-set ERR to the (now restored) outer handler - the no-CATCH fault edge of a generator TRY.</summary>
+public sealed record HandlerReraiseStmt(SourcePosition Position) : Statement(Position);
+
 /// <summary>ON KEY(n)/TIMER(n)/COM(n)... GOSUB label event registration.</summary>
 public sealed record OnEventStmt(SourcePosition Position, string EventKind, Expression? Index, string Target) : Statement(Position);
 

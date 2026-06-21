@@ -465,21 +465,65 @@ public sealed class Binder {
   private IReadOnlyList<Statement> BuildMoveNextBody(SourcePosition pos, IReadOnlyList<Statement> genBody, string currentField) {
     Expression Int(long v) => new IntegerLiteralExpr(pos, v, TypeSuffix.None);
     var ctx = new GenLower(pos, currentField);
+    // structured TRY / CATCH / FINALLY is the only error model a generator supports: the inline
+    // ON ERROR / RESUME handler arms a stack frame a YIELD's EXIT would unwind, so reject it
+    if (ContainsOnError(genBody))
+      this.Error(pos, "ON ERROR / RESUME is not supported in a generator (a YIELD unwinds the handler frame) - use TRY / CATCH / FINALLY instead");
+    // a YIELD inside a TRY needs the saved-handler enumerator fields and per-frame re-arming
+    var hasTry = ContainsYieldingTry(genBody);
+    if (hasTry) {
+      ctx.HOnerr = ThisField(pos, GeneratedPrefix + "gonerr");
+      ctx.HBp = ThisField(pos, GeneratedPrefix + "gbp");
+      ctx.HSp = ThisField(pos, GeneratedPrefix + "gsp");
+    }
     this.LowerGenBody(genBody, ctx);
-    if (ContainsYield(ctx.Body))   // a YIELD left un-lowered sits in an unsupported construct (TRY / CATCH / FINALLY)
-      this.Error(pos, "a YIELD here is not yet supported in a generator (FOR / WHILE-DO / IF / SELECT CASE / FOR EACH are; TRY / CATCH / FINALLY is not)");
+    if (ContainsYield(ctx.Body))   // a YIELD that could not be lowered (only a TRY nested in a TRY now)
+      this.Error(pos, "a YIELD here is not yet supported in a generator (it sits in a construct - e.g. a TRY nested in another TRY - the state machine cannot yet re-enter)");
 
     var state = ThisField(pos, GeneratedPrefix + "state");
     var arms = new List<CaseArm> { new(pos, [new CaseSelector(pos, Int(0), null, null)], [new GotoStmt(pos, "$start")]) };
     arms.AddRange(ctx.Dispatch);
     arms.Add(new CaseArm(pos, [], [new GotoStmt(pos, "$done")]));   // exhausted / past the last yield
 
-    var body = new List<Statement> { new SelectStmt(pos, state, arms), new LabelStmt(pos, "$start") };
+    var body = new List<Statement>();
+    // snapshot the caller's ON ERROR handler this invocation, so a YIELD inside a TRY can restore it
+    if (hasTry)
+      body.Add(new HandlerSaveStmt(pos, ctx.HOnerr!, ctx.HBp!, ctx.HSp!));
+    body.Add(new SelectStmt(pos, state, arms));
+    body.Add(new LabelStmt(pos, "$start"));
     body.AddRange(ctx.Body);
     body.Add(new LabelStmt(pos, "$done"));
     body.Add(new AssignStmt(pos, state, Int(-1)));
     body.Add(new AssignStmt(pos, new NameExpr(pos, "MoveNext", TypeSuffix.None), Int(0)));
     return body;
+  }
+
+  /// <summary>True when a body contains an inline ON ERROR / RESUME handler (which a generator cannot host across a YIELD), recursing nested blocks but not nested procedures.</summary>
+  private static bool ContainsOnError(IReadOnlyList<Statement> body) {
+    foreach (var s in body) {
+      if (s is OnErrorStmt or ResumeStmt)
+        return true;
+      if (s is SubDecl or FunctionDecl or DefFnDecl)
+        continue;
+      foreach (var block in ChildBlocks(s))
+        if (ContainsOnError(block))
+          return true;
+    }
+    return false;
+  }
+
+  /// <summary>True when a generator body contains a TRY whose protected region (or catch/finally) yields - it needs the saved-handler fields and per-frame re-arming.</summary>
+  private static bool ContainsYieldingTry(IReadOnlyList<Statement> body) {
+    foreach (var s in body) {
+      if (s is TryStmt && ContainsYield([s]))
+        return true;
+      if (s is SubDecl or FunctionDecl or DefFnDecl)
+        continue;
+      foreach (var block in ChildBlocks(s))
+        if (ContainsYieldingTry(block))
+          return true;
+    }
+    return false;
   }
 
   /// <summary>Mutable state threaded through the generator-body flattening: the linearized output, the SELECT dispatch arms, and the running yield/label counters.</summary>
@@ -490,6 +534,12 @@ public sealed class Binder {
     public readonly List<CaseArm> Dispatch = [];
     public int State;
     public int Label;
+    // generator-in-TRY: the enumerator fields that save the ON ERROR handler triple (null when the
+    // generator has no yielding TRY), and the catch label of the TRY whose body is currently lowering
+    // (non-null only while inside that body, so a YIELD there disarms before EXIT and re-arms on resume).
+    public MemberExpr? HOnerr, HBp, HSp;
+    public string? TryCatchLabel;
+    public HandlerRestoreStmt Restore() => new(this.Pos, this.HOnerr!, this.HBp!, this.HSp!);
   }
 
   /// <summary>
@@ -512,9 +562,13 @@ public sealed class Binder {
           g.Dispatch.Add(new CaseArm(pos, [new CaseSelector(pos, Int(k), null, null)], [new GotoStmt(pos, resume)]));
           g.Body.Add(new AssignStmt(pos, ThisField(pos, g.CurrentField), y.Value));
           g.Body.Add(new AssignStmt(pos, ThisField(pos, GeneratedPrefix + "state"), Int(k)));
+          if (g.TryCatchLabel is not null)
+            g.Body.Add(g.Restore());                          // disarm our dispatcher before the consumer runs
           g.Body.Add(new AssignStmt(pos, new NameExpr(pos, "MoveNext", TypeSuffix.None), Int(-1)));
           g.Body.Add(new ExitStmt(pos, ExitKind.Function));
           g.Body.Add(new LabelStmt(pos, resume));
+          if (g.TryCatchLabel is { } rearm)
+            g.Body.Add(new HandlerArmStmt(pos, rearm));        // re-arm for this fresh MoveNext frame
           break;
         }
 
@@ -617,6 +671,39 @@ public sealed class Binder {
           break;
         }
 
+        case TryStmt tr when ContainsYield([tr]): {
+          // a YIELD inside a TRY: flatten the protected body but keep the ON ERROR handler correct
+          // across the suspension. Arm our dispatcher on entry and on each resume; disarm (restore the
+          // caller's handler) before every YIELD's EXIT and on normal/caught completion.
+          if (g.TryCatchLabel is not null) {
+            this.Error(pos, "a YIELD inside a TRY that is nested in another TRY is not yet supported in a generator");
+            g.Body.Add(s);
+            break;
+          }
+          var catchL = NewLabel();
+          var afterL = NewLabel();
+          g.Body.Add(new HandlerArmStmt(pos, catchL));
+          g.TryCatchLabel = catchL;
+          this.LowerGenBody(tr.Body, g);                 // protected body (its YIELDs disarm / re-arm)
+          g.TryCatchLabel = null;
+          // normal completion: disarm, run FINALLY, skip the catch
+          g.Body.Add(g.Restore());
+          if (tr.Finally != null)
+            this.LowerGenBody(tr.Finally, g);
+          g.Body.Add(new GotoStmt(pos, afterL));
+          // fault path: rt_raise restored SP/BP to the armed frame and jumped here
+          g.Body.Add(new LabelStmt(pos, catchL));
+          g.Body.Add(g.Restore());                       // disarm so a fault in CATCH reaches the outer handler
+          if (tr.Catch != null)
+            this.LowerGenBody(tr.Catch, g);
+          if (tr.Finally != null)
+            this.LowerGenBody(tr.Finally, g);
+          if (tr.Catch == null)
+            g.Body.Add(new HandlerReraiseStmt(pos));      // TRY ... FINALLY (no CATCH): re-propagate ERR
+          g.Body.Add(new LabelStmt(pos, afterL));
+          break;
+        }
+
         default:
           g.Body.Add(s);
           break;
@@ -706,6 +793,12 @@ public sealed class Binder {
       fields.Add(new(pos, field, new TypeName(pos, BuiltinType.None, UserTypeName: innerName), null));
       this._foreachEnumField[fe] = (field, innerName);
     }
+
+    // a YIELD inside a TRY needs three WORD fields to hold the caller's ON ERROR handler triple
+    // across suspensions (the stack-based save the normal TRY uses can't survive a YIELD's EXIT)
+    if (ContainsYieldingTry(f.Body))
+      foreach (var h in new[] { "gonerr", "gbp", "gsp" })
+        fields.Add(new(pos, GeneratedPrefix + h, intType, null));
 
     var members = new List<TypeMember> {
       new(pos, TypeMemberKind.PropertyGet, "Current", f.Suffix, [], elementType, [], IsAuto: true),
@@ -1438,6 +1531,20 @@ public sealed class Binder {
 
       case ForEachStmt fe:
         this.BindForEach(fe, scope);
+        break;
+
+      // pb36 generator-in-TRY (synthesized): bind the handler-save field operands; arm/reraise carry none
+      case HandlerSaveStmt hs:
+        this.BindExpression(hs.OnerrField, scope);
+        this.BindExpression(hs.BpField, scope);
+        this.BindExpression(hs.SpField, scope);
+        break;
+      case HandlerRestoreStmt hr:
+        this.BindExpression(hr.OnerrField, scope);
+        this.BindExpression(hr.BpField, scope);
+        this.BindExpression(hr.SpField, scope);
+        break;
+      case HandlerArmStmt or HandlerReraiseStmt:
         break;
 
       case AssignStmt a: {

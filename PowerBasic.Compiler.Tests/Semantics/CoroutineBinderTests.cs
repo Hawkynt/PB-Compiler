@@ -90,6 +90,37 @@ public sealed class CoroutineBinderTests {
   }
 
   [Test]
+  public void Bind_GivenYieldInsideTryCatch_WhenBound_ThenLowersWithHandlerFields() {
+    // a YIELD inside a TRY body binds (no error) and the enumerator gains the saved-handler fields
+    var model = Bind(
+      "FUNCTION Gen(BYVAL n%) AS INTEGER\n  TRY\n    FOR i% = 1 TO n%\n      YIELD i%\n    NEXT\n  CATCH\n    YIELD 999\n  END TRY\nEND FUNCTION\nDIM e AS Gen\n");
+    Assert.Multiple(() => {
+      Assert.That(model.Procedures.ContainsKey("Gen.MoveNext"), Is.True);
+      Assert.That(model.Udts["Gen"].FindField("$gonerr"), Is.Not.Null, "the caller's ON ERROR handler is saved across suspensions");
+      Assert.That(model.Udts["Gen"].FindField("$gbp"), Is.Not.Null);
+      Assert.That(model.Udts["Gen"].FindField("$gsp"), Is.Not.Null);
+    });
+  }
+
+  [Test]
+  public void Bind_GivenOnErrorInsideGenerator_WhenBound_ThenRejectedClearly() {
+    // the inline ON ERROR / RESUME handler arms a stack frame a YIELD would unwind - only TRY/CATCH is supported
+    var unit = Parser.Parse(Lexer.Tokenize(
+      "FUNCTION Gen() AS INTEGER\n  ON ERROR RESUME NEXT\n  YIELD 1\nEND FUNCTION\n", "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors.Any(e => e.Message.Contains("ON ERROR / RESUME is not supported in a generator")), Is.True);
+  }
+
+  [Test]
+  public void Bind_GivenYieldInsideNestedTry_WhenBound_ThenRejectedClearly() {
+    var unit = Parser.Parse(Lexer.Tokenize(
+      "FUNCTION Gen() AS INTEGER\n  TRY\n    TRY\n      YIELD 1\n    CATCH\n      YIELD 2\n    END TRY\n  CATCH\n    YIELD 3\n  END TRY\nEND FUNCTION\n", "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors.Any(e => e.Message.Contains("nested in another TRY")), Is.True,
+      "a YIELD in a TRY nested inside another TRY is rejected");
+  }
+
+  [Test]
   public void Bind_GivenForEachOverGenerator_WhenBound_ThenLowersToIteratorLoop() {
     var model = Bind(_gen + "FOR EACH v IN Gen()\n  PRINT v\nNEXT\n");
     var foreachStmt = model.DesugaredStatements.Keys.OfType<ForEachStmt>().Single();
