@@ -65,7 +65,7 @@ public sealed class Binder {
   /// declaration-then-assignment pair - no hidden writes.
   /// </summary>
   private void SpliceDimInitializers() {
-    if (this._model.DimInitializers.Count == 0)
+    if (this._model.DimInitializers.Count == 0 && this._model.DesugaredStatements.Count == 0)
       return;
 
     var spliced = this.SpliceBody(this._model.MainBody);
@@ -79,6 +79,13 @@ public sealed class Binder {
   private List<Statement> SpliceBody(IReadOnlyList<Statement> statements) {
     var result = new List<Statement>(statements.Count);
     foreach (var statement in statements) {
+      // pb36: a statement-level desugar (member call/property set, generator construct, FOR EACH)
+      // is spliced into the real AST here so every analysis (reachability, dead-globals, ...) sees
+      // the lowered form, not the opaque surface statement
+      if (this._model.DesugaredStatements.TryGetValue(statement, out var desugared)) {
+        result.AddRange(this.SpliceBody([desugared]));
+        continue;
+      }
       var rewritten = RewriteChildBlocks(statement, b => this.SpliceBody(b));
       result.Add(rewritten);
       if (statement is DimStmt dim && this._model.DimInitializers.TryGetValue(dim, out var inits))
@@ -562,6 +569,66 @@ public sealed class Binder {
     var type = this.BindExpression(call, scope);
     this._model.Desugared[node] = call;
     return type;
+  }
+
+  private int _foreachCounter;
+
+  /// <summary>
+  /// Declares a hidden ($-prefixed, untypeable) compiler variable directly in the current scope
+  /// (local in a procedure, otherwise a module global) and returns a NameExpr referring to it.
+  /// Used for FOR EACH temporaries; registering it directly avoids the create-on-use path, which
+  /// derives a type from the leading letter a $-name does not have.
+  /// </summary>
+  private NameExpr DeclareHidden(Scope scope, SourcePosition pos, string baseName, PbType type) {
+    var name = GeneratedPrefix + baseName;
+    var key = VariableKey(name, TypeSuffix.None);
+    if (scope.Proc is { } proc)
+      proc.Variables[key] = new VariableSymbol(name, type, VariableStorage.Local);
+    else
+      this._model.ModuleVariables[key] = new VariableSymbol(name, type, VariableStorage.Global);
+    return new NameExpr(pos, name, TypeSuffix.None);
+  }
+
+  /// <summary>
+  /// pb36 FOR EACH: lowers per the collection's kind. A generator call becomes the iterator
+  /// loop (DIM $e AS Gen : $e = Gen() : WHILE $e.MoveNext : v = $e.Current : body : WEND, wrapped
+  /// in an always-true IF so it is a single desugared statement); an array/array-call becomes the
+  /// counted loop over LBOUND..UBOUND.
+  /// </summary>
+  private void BindForEach(ForEachStmt fe, Scope scope) {
+    var pos = fe.Position;
+    Statement lowered;
+    if (fe.Collection is CallOrIndexExpr { Arguments.Count: 0 } gen && this._generatorNames.Contains(gen.Name)
+        && this._model.Udts.TryGetValue(gen.Name, out var enumType)) {
+      // a hidden enumerator variable holds the iterator; register it directly (a synthesized DIM
+      // would miss the pre-pass, so the construct could not see it as a UDT-typed variable)
+      var enumVar = this.DeclareHidden(scope, pos, "foreach" + ++this._foreachCounter, enumType);
+      var construct = new AssignStmt(pos, enumVar, gen);
+      var loopBody = new List<Statement> { new AssignStmt(pos, fe.Variable, new MemberExpr(pos, enumVar, "Current", TypeSuffix.None)) };
+      loopBody.AddRange(fe.Body);
+      var loop = new DoLoopStmt(pos, LoopTestKind.While, new MemberExpr(pos, enumVar, "MoveNext", TypeSuffix.None), LoopTestKind.None, null, loopBody);
+      lowered = new IfStmt(pos, new IntegerLiteralExpr(pos, -1, TypeSuffix.None), [construct, loop], [], null);
+    } else {
+      var (name, suffix) = fe.Collection switch {
+        NameExpr n => (n.Name, n.Suffix),
+        CallOrIndexExpr { Arguments.Count: 0 } c => (c.Name, c.Suffix),
+        _ => ((string?)null, TypeSuffix.None),
+      };
+      if (name is null) {
+        this.Error(pos, "FOR EACH expects an array, a generator, or a '[lo..hi]' range");
+        return;
+      }
+      var index = this.DeclareHidden(scope, pos, "foreach" + ++this._foreachCounter, PbType.Long);
+      var arrayRef = new NameExpr(pos, name, suffix);
+      var loopBody = new List<Statement> { new AssignStmt(pos, fe.Variable, new CallOrIndexExpr(pos, name, suffix, [index])) };
+      loopBody.AddRange(fe.Body);
+      lowered = new ForStmt(pos, index,
+        new CallOrIndexExpr(pos, "LBOUND", TypeSuffix.None, [arrayRef]),
+        new CallOrIndexExpr(pos, "UBOUND", TypeSuffix.None, [arrayRef]),
+        null, loopBody);
+    }
+    this.BindStatement(lowered, scope);
+    this._model.DesugaredStatements[fe] = lowered;
   }
 
   /// <summary>pb36 statement-form method call <c>o.M(args)</c>: desugars to <c>Type.M(o, args)</c>.</summary>
@@ -1062,6 +1129,10 @@ public sealed class Binder {
     switch (statement) {
       case MemberCallStmt mc:
         this.BindMemberCallStatement(mc, scope);
+        break;
+
+      case ForEachStmt fe:
+        this.BindForEach(fe, scope);
         break;
 
       case AssignStmt a: {

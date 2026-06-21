@@ -36,6 +36,16 @@ public sealed class CoroutineBinderTests {
   }
 
   [Test]
+  public void Bind_GivenForEachOverGenerator_WhenBound_ThenLowersToIteratorLoop() {
+    var model = Bind(_gen + "FOR EACH v IN Gen()\n  PRINT v\nNEXT\n");
+    var foreachStmt = model.DesugaredStatements.Keys.OfType<ForEachStmt>().Single();
+    // lowered to: IF (-1) THEN <construct> : WHILE $e.MoveNext ... WEND
+    Assert.That(model.DesugaredStatements[foreachStmt], Is.InstanceOf<IfStmt>());
+    Assert.That(((IfStmt)model.DesugaredStatements[foreachStmt]).Then.OfType<DoLoopStmt>().Any(), Is.True,
+      "the generator FOR EACH lowers to a MoveNext WHILE loop");
+  }
+
+  [Test]
   public void Bind_GivenGeneratorConstruction_WhenBound_ThenAssignmentDesugarsToStateReset() {
     var model = Bind(_gen + "DIM e AS Gen\ne = Gen()\n");
     var assign = model.DesugaredStatements.Keys.OfType<AssignStmt>()

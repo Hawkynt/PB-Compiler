@@ -216,6 +216,12 @@ public enum LoopTestKind { None, While, Until }
 /// <summary>DO/LOOP with optional pre- or post-test; also covers WHILE/WEND (pre-test While).</summary>
 public sealed record DoLoopStmt(SourcePosition Position, LoopTestKind PreTest, Expression? PreCondition, LoopTestKind PostTest, Expression? PostCondition, IReadOnlyList<Statement> Body) : Statement(Position);
 
+/// <summary>
+/// FOR EACH variable IN collection (PB 3.6): the binder lowers it per the collection's static
+/// type - an array/range to a counted loop, a generator call to the MoveNext/Current iterator loop.
+/// </summary>
+public sealed record ForEachStmt(SourcePosition Position, Expression Variable, Expression Collection, IReadOnlyList<Statement> Body) : Statement(Position);
+
 public enum ExitKind { For, Do, Loop, Sub, Function, Def, Select, If }
 
 public sealed record ExitStmt(SourcePosition Position, ExitKind Kind) : Statement(Position);

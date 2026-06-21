@@ -165,21 +165,8 @@ public sealed partial class Parser {
     if (collection is ArrayLiteralExpr { Elements: [RangeElement range] })
       return new ForStmt(pos, variable, range.Lo, range.Hi, null, body);
 
-    // an array -> iterate its elements, copying each into the loop variable
-    var (name, suffix) = collection switch {
-      NameExpr n => (n.Name, n.Suffix),
-      CallOrIndexExpr { Arguments.Count: 0 } c => (c.Name, c.Suffix),
-      _ => throw this.Error("FOR EACH expects an array or a '[lo..hi]' range"),
-    };
-    var index = new NameExpr(pos, $"forEach${++this._foreachCounter}", TypeSuffix.Long);
-    var arrayRef = new NameExpr(pos, name, suffix);
-    var element = new CallOrIndexExpr(pos, name, suffix, [index]);
-    var loopBody = new List<Statement> { new AssignStmt(pos, variable, element) };
-    loopBody.AddRange(body);
-    return new ForStmt(pos, index,
-      new CallOrIndexExpr(pos, "LBOUND", TypeSuffix.None, [arrayRef]),
-      new CallOrIndexExpr(pos, "UBOUND", TypeSuffix.None, [arrayRef]),
-      null, loopBody);
+    // array or generator: the binder lowers it once the collection's type is known
+    return new ForEachStmt(pos, variable, collection, body);
   }
 
   /// <summary>Consumes a NEXT terminator; <c>NEXT a, b</c> closes additional enclosing FORs.</summary>
