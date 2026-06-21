@@ -153,6 +153,26 @@ public sealed class TryCatchTests {
   }
 
   [Test]
+  public void Parse_GivenDefer_WhenParsed_ThenWrapsRestOfBlockInTryFinally() {
+    // DEFER lowers to TRY <rest> FINALLY <deferred>; a second DEFER nests inside (LIFO)
+    var unit = Parser.Parse(Lexer.Tokenize(
+      "PRINT \"a\"\nDEFER PRINT \"x\"\nPRINT \"b\"\nDEFER PRINT \"y\"\nPRINT \"c\"\n", "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);
+    Assert.That(unit.Statements[0], Is.InstanceOf<PrintStmt>(), "statements before the first DEFER stay");
+    var outer = unit.Statements.OfType<TryStmt>().Single();
+    Assert.Multiple(() => {
+      Assert.That(outer.Catch, Is.Null);
+      Assert.That(outer.Finally, Has.Count.EqualTo(1), "the first DEFER's body is the FINALLY");
+      Assert.That(outer.Body.OfType<TryStmt>().Any(), Is.True, "the second DEFER nests a TRY/FINALLY inside (LIFO)");
+    });
+  }
+
+  [Test]
+  public void Parse_GivenDeferBelowPb36_WhenParsed_ThenRejected() {
+    Assert.Throws<ParserException>(() =>
+      Parser.Parse(Lexer.Tokenize("DEFER PRINT \"x\"\n", "t.bas", Dialect.Pb35), "t.bas", Dialect.Pb35));
+  }
+
+  [Test]
   public void Parse_GivenNestedTry_WhenParsed_ThenInnerTryLivesInOuterBody() {
     var stmt = ParseTry("""
       TRY

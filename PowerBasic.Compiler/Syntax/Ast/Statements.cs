@@ -317,6 +317,9 @@ public sealed record HandlerArmStmt(SourcePosition Position, string CatchLabel) 
 /// <summary>Re-raises the still-set ERR to the (now restored) outer handler - the no-CATCH fault edge of a generator TRY.</summary>
 public sealed record HandlerReraiseStmt(SourcePosition Position) : Statement(Position);
 
+/// <summary>pb36 DEFER stmt: schedules <see cref="Deferred"/> to run when the enclosing block exits (normally or via a fault). Lowered to a TRY ... FINALLY around the rest of the block (nested DEFERs run last-in-first-out).</summary>
+public sealed record DeferStmt(SourcePosition Position, Statement Deferred) : Statement(Position);
+
 /// <summary>ON KEY(n)/TIMER(n)/COM(n)... GOSUB label event registration.</summary>
 public sealed record OnEventStmt(SourcePosition Position, string EventKind, Expression? Index, string Target) : Statement(Position);
 

@@ -117,6 +117,7 @@ public enum LanguageFeature {
   Coroutines,
   TypeMethods,
   Generics,
+  Defer,
 }
 
 /// <summary>
@@ -182,6 +183,7 @@ public static class DialectFacts {
     [LanguageFeature.Coroutines] = (Dialect.Pb36, "coroutines (YIELD statement)"),
     [LanguageFeature.TypeMethods] = (Dialect.Pb36, "TYPE methods/properties (SUB / FUNCTION / PROPERTY members)"),
     [LanguageFeature.Generics] = (Dialect.Pb36, "compile-time generics ('TYPE Name OF T' / 'AS Name OF type')"),
+    [LanguageFeature.Defer] = (Dialect.Pb36, "DEFER statement (runs on block exit)"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

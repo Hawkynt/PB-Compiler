@@ -152,20 +152,36 @@ public sealed partial class Parser {
     for (;;) {
       this.SkipSeparators();
       if (this._pendingNexts > 0)
-        return result;
+        return LowerDefers(result);
       if (this.Current.Kind == TokenKind.EndOfFile) {
         if (terminators.Length > 0)
           throw this.Error($"unexpected end of file, expected {terminators[0]}");
-        return result;
+        return LowerDefers(result);
       }
       if (this.IsAtAnyTerminator(terminators))
-        return result;
+        return LowerDefers(result);
       // a WITH block desugars to a StatementGroup spliced inline here
       if (this.ParseStatement() is var parsed && parsed is StatementGroup group)
         result.AddRange(group.Statements);
       else
         result.Add(parsed);
     }
+  }
+
+  /// <summary>
+  /// Lowers DEFER in a block: the first DEFER wraps the rest of the block in a TRY ... FINALLY so the
+  /// deferred statement runs on every exit (normal or fault); a later DEFER nests inside, so deferred
+  /// statements run last-in-first-out. Blocks with no DEFER are returned unchanged.
+  /// </summary>
+  private static List<Statement> LowerDefers(List<Statement> body) {
+    var i = body.FindIndex(s => s is DeferStmt);
+    if (i < 0)
+      return body;
+    var defer = (DeferStmt)body[i];
+    var after = LowerDefers(body.GetRange(i + 1, body.Count - i - 1));
+    var result = body.GetRange(0, i);
+    result.Add(new TryStmt(defer.Position, after, null, [defer.Deferred]));
+    return result;
   }
 
   private bool IsAtAnyTerminator(string[] terminators) {
@@ -286,6 +302,7 @@ public sealed partial class Parser {
       case "IF": return this.ParseIf();
       case "SELECT": return this.ParseSelect();
       case "TRY": return this.ParseTry();
+      case "DEFER": return this.ParseDefer();
       case "FOR": return this.ParseFor();
       case "DO": return this.ParseDo();
       case "WHILE": return this.ParseWhile();

@@ -420,6 +420,13 @@ public sealed partial class Parser {
     return [new IfStmt(pos, first.Condition, first.Body, arms.Skip(1).ToList(), elseBody)];
   }
 
+  /// <summary>pb36 DEFER &lt;statement&gt;: schedule a statement to run when the enclosing block exits. Lowered (in ParseBody) to a TRY ... FINALLY wrapping the rest of the block.</summary>
+  private Statement ParseDefer() {
+    this.Require(LanguageFeature.Defer);
+    var pos = this.Advance().Position; // DEFER
+    return new DeferStmt(pos, this.ParseStatement());
+  }
+
   private Statement ParseEnd() {
     var token = this.Advance();
     if (this.Current.Kind == TokenKind.Identifier && _structuralEndKeywords.Contains(this.Current.Text))
