@@ -30,6 +30,15 @@ public sealed class Binder {
 
   /// <summary>pb36 READONLY TYPEs: their fields may be written only inside the type's own constructor.</summary>
   private readonly HashSet<string> _readonlyTypes = new(StringComparer.OrdinalIgnoreCase);
+
+  /// <summary>pb36 generic procedures: name -> the template declaration (SUB/FUNCTION ... OF T). A call infers the type arguments and instantiates a concrete procedure named with the mangle.</summary>
+  private readonly Dictionary<string, Statement> _genericProcs = new(StringComparer.OrdinalIgnoreCase);
+  /// <summary>pb36 generic procedure instantiations already created (mangled name -> symbol), to instantiate each once.</summary>
+  private readonly Dictionary<string, ProcedureSymbol> _genericProcInstances = new(StringComparer.OrdinalIgnoreCase);
+  /// <summary>pb36 generic procedure instances whose bodies still need binding (drained after the main body-binding pass, so adding them never mutates the loop being iterated).</summary>
+  private readonly Queue<ProcedureSymbol> _genericBindQueue = new();
+  /// <summary>Generic-procedure instance symbols (bound only via the drain, skipped by the main proc-body loop).</summary>
+  private readonly HashSet<ProcedureSymbol> _genericInstanceProcs = new(ReferenceEqualityComparer.Instance);
   private ConstantFolder _folder;
   private bool _dynamicMode;
   private bool _optionSigned;
@@ -216,8 +225,16 @@ public sealed class Binder {
           this.DeclareProcedure(d);
           break;
 
+        case SubDecl { TypeParameters.Count: > 0 } gs:
+          this._genericProcs[gs.Name] = gs;   // pb36 generics: a template, instantiated per call (not a callable proc)
+          break;
+
         case SubDecl s:
           this.DefineProcedure(s.Name, isFunction: false, TypeSuffix.None, null, s.Parameters, s.IsStatic, s.Body, s.Position, s.Convention);
+          break;
+
+        case FunctionDecl { TypeParameters.Count: > 0 } gf:
+          this._genericProcs[gf.Name] = gf;   // pb36 generics: a template, instantiated per call
           break;
 
         case FunctionDecl f:
@@ -402,6 +419,62 @@ public sealed class Binder {
     this.RegisterProcedure(proc);
     return proc;
   }
+
+  /// <summary>
+  /// pb36 generic procedures: a call to a generic SUB/FUNCTION template infers its type arguments from
+  /// the (already-bound) argument types - each type parameter is read off the first parameter declared
+  /// as that bare type - then monomorphizes a concrete instance (named with the mangle) and returns its
+  /// symbol. Null when the name is not a generic template; a clear error when a parameter cannot be
+  /// inferred. The instance body is queued, bound after the main pass (so the proc list is not mutated mid-iteration).
+  /// </summary>
+  private ProcedureSymbol? ResolveGenericCall(string name, IReadOnlyList<Expression> args, SourcePosition position, Scope scope) {
+    if (!this._genericProcs.TryGetValue(name, out var template))
+      return null;
+    foreach (var argument in args)   // bind the arguments so their types drive type-parameter inference
+      this.BindExpression(argument, scope);
+    var (typeParams, parameters, isFunction, suffix, returnType, body) = template switch {
+      FunctionDecl f => (f.TypeParameters, f.Parameters, true, f.Suffix, f.ReturnType, f.Body),
+      SubDecl s => (s.TypeParameters, s.Parameters, false, TypeSuffix.None, (TypeName?)null, s.Body),
+      _ => ([], [], false, TypeSuffix.None, null, (IReadOnlyList<Statement>)[]),
+    };
+
+    // infer each type parameter from the first parameter declared as the bare parameter type
+    var map = new Dictionary<string, TypeName>(StringComparer.OrdinalIgnoreCase);
+    for (var i = 0; i < parameters.Count && i < args.Count; ++i)
+      if (parameters[i].Type is { IsUserDefined: true, IsGenericUse: false, UserTypeName: { } pn }
+          && typeParams.Contains(pn, StringComparer.OrdinalIgnoreCase) && !map.ContainsKey(pn)
+          && TypeNameOf(this._model.TypeOf(args[i]), position) is { } argType)
+        map[pn] = argType;
+    foreach (var tp in typeParams)
+      if (!map.ContainsKey(tp)) {
+        this.Error(position, $"cannot infer type parameter '{tp}' of generic {(isFunction ? "FUNCTION" : "SUB")} {name} from the arguments");
+        return null;
+      }
+
+    var mangled = Monomorphizer.MangleName(name, typeParams.Select(tp => map[tp]).ToList());
+    if (this._genericProcInstances.TryGetValue(mangled, out var existing))
+      return existing;
+
+    // monomorphize: clone the template's parameters and body with the type parameters substituted
+    var concreteParams = parameters.Select(p => (Parameter)Monomorphizer.SubstituteClone(p, map)!).ToList();
+    var concreteBody = body.Select(s => (Statement)Monomorphizer.SubstituteClone(s, map)!).ToList();
+    var concreteReturn = returnType is { } rt ? (TypeName)Monomorphizer.SubstituteClone(rt, map)! : null;
+    var proc = this.DefineProcedure(mangled, isFunction, suffix, concreteReturn, concreteParams, isStatic: false, concreteBody, position);
+    if (isFunction)
+      proc.ResultName = name;   // the cloned body assigns the template's simple name (Max = ...) as its result
+    this._genericProcInstances[mangled] = proc;
+    this._genericInstanceProcs.Add(proc);
+    this._genericBindQueue.Enqueue(proc);
+    return proc;
+  }
+
+  /// <summary>The AST type name corresponding to a bound type (for generic type-argument inference / substitution); null for a type that cannot be a type argument.</summary>
+  private TypeName? TypeNameOf(PbType type, SourcePosition pos) => type switch {
+    ScalarType => LocalFieldTypeName(pos, type),
+    StringType => new TypeName(pos, BuiltinType.String),
+    UdtType u => new TypeName(pos, BuiltinType.None, u.Name),
+    _ => null,
+  };
 
   /// <summary>
   /// pb36: lifts each TYPE member to an ordinary procedure that takes the instance
@@ -1366,31 +1439,41 @@ public sealed class Binder {
       this.BindStatement(statement, main);
     this.CheckLabelRefs(main);
 
-    foreach (var proc in this._model.ProcedureList.Where(p => !p.IsExternal && !p.IsNested)) {
-      var scope = new Scope(proc);
-
-      foreach (var p in proc.Parameters)
-        proc.Variables[VariableKey(p.Name, TypeSuffix.None, p.Type is ArrayType)] = p;
-
-      if (proc.IsFunction) { // the function name acts as the result variable
-        var resultVar = new VariableSymbol(proc.Name, proc.ReturnType!, VariableStorage.Local);
-        proc.Variables.TryAdd(proc.Name, resultVar);
-        if (proc.ResultName is { } resultAlias) // a lifted member assigns the simple name (Pop = ...)
-          proc.Variables.TryAdd(resultAlias, resultVar);
-      }
-
-      if (proc.ValueParamName is { } valueName // a PROPERTY SET: VALUE aliases the incoming value parameter
-          && proc.Variables.TryGetValue(VariableKey(valueName, TypeSuffix.None, false), out var valueVar))
-        proc.Variables.TryAdd(VariableKey("VALUE", TypeSuffix.None, false), valueVar);
-
-      this.CollectLabels(proc.Body!, scope);
-      foreach (var statement in proc.Body!)
-        this.BindStatement(statement, scope);
-      this.CheckLabelRefs(scope);
-    }
+    // snapshot: binding a body may instantiate a generic procedure (appended to the proc list); those
+    // are skipped here and bound by the drain below, so the list is never mutated mid-iteration
+    foreach (var proc in this._model.ProcedureList.Where(p => !p.IsExternal && !p.IsNested && !this._genericInstanceProcs.Contains(p)).ToList())
+      this.BindOneProcBody(proc);
 
     this.BindNestedProcedures();
     this.BindLambdaBodies();
+
+    // pb36 generics: bind every monomorphized procedure body (each may itself call further generics)
+    while (this._genericBindQueue.Count > 0)
+      this.BindOneProcBody(this._genericBindQueue.Dequeue());
+  }
+
+  /// <summary>Binds one procedure body: seeds its parameters / result / VALUE alias as locals, then binds the statements.</summary>
+  private void BindOneProcBody(ProcedureSymbol proc) {
+    var scope = new Scope(proc);
+
+    foreach (var p in proc.Parameters)
+      proc.Variables[VariableKey(p.Name, TypeSuffix.None, p.Type is ArrayType)] = p;
+
+    if (proc.IsFunction) { // the function name acts as the result variable
+      var resultVar = new VariableSymbol(proc.Name, proc.ReturnType!, VariableStorage.Local);
+      proc.Variables.TryAdd(proc.Name, resultVar);
+      if (proc.ResultName is { } resultAlias) // a lifted member assigns the simple name (Pop = ...)
+        proc.Variables.TryAdd(resultAlias, resultVar);
+    }
+
+    if (proc.ValueParamName is { } valueName // a PROPERTY SET: VALUE aliases the incoming value parameter
+        && proc.Variables.TryGetValue(VariableKey(valueName, TypeSuffix.None, false), out var valueVar))
+      proc.Variables.TryAdd(VariableKey("VALUE", TypeSuffix.None, false), valueVar);
+
+    this.CollectLabels(proc.Body!, scope);
+    foreach (var statement in proc.Body!)
+      this.BindStatement(statement, scope);
+    this.CheckLabelRefs(scope);
   }
 
   #region PB 3.6 nested procedures (stack capture)
@@ -2262,6 +2345,12 @@ public sealed class Binder {
       return;
     }
 
+    // pb36 generic procedure: infer the type arguments and bind to the monomorphized instance
+    if (this.ResolveGenericCall(c.Name, c.Arguments, c.Position, scope) is { } instance) {
+      this._model.CallBindings[c] = instance;
+      return;
+    }
+
     // PB allows CALL on a FUNCTION too - the result is discarded
     if (this.ResolveOverload(c.Name, c.Arguments) is { } proc) {
       this._model.CallBindings[c] = proc;
@@ -3109,6 +3198,15 @@ public sealed class Binder {
   private static bool IsStringType(PbType type) => type is StringType or FixedStringType or FlexType or AsciizType;
 
   private PbType BindCallOrIndex(CallOrIndexExpr call, Scope scope) {
+    // 0. pb36 generic function: a user-declared generic template shadows an intrinsic of the same name
+    // (e.g. a generic Max), so resolve it before the array/intrinsic checks
+    if (this._genericProcs.ContainsKey(call.Name) && this.ResolveGenericCall(call.Name, call.Arguments, call.Position, scope) is { } genInstance0) {
+      if (!genInstance0.IsFunction)
+        return this.ErrorType(call.Position, $"SUB {call.Name} used as a function");
+      this._model.CallBindings[call] = genInstance0;
+      return genInstance0.ReturnType ?? PbType.Integer;
+    }
+
     // 1. array indexing (or a whole-array reference like `arr()` in argument lists)
     var symbol = this.LookupArrayVariable(call.Name, call.Suffix, scope);
     if (symbol is { Type: ArrayType array }) {

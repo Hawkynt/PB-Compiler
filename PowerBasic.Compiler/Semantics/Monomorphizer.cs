@@ -19,8 +19,14 @@ namespace PowerBasic.Compiler.Semantics;
 internal static class Monomorphizer {
 
   /// <summary>The concrete name a generic use lowers to: <c>Stack OF LONG</c> → <c>Stack@LONG</c>, nesting recursively. The <c>@</c> separators cannot occur in a user identifier, so the name never collides.</summary>
-  public static string Mangle(TypeName use)
-    => use.UserTypeName + string.Concat(use.TypeArguments!.Select(a => "@" + MangleArg(a)));
+  public static string Mangle(TypeName use) => MangleName(use.UserTypeName!, use.TypeArguments!);
+
+  /// <summary>The mangled concrete name for a base name applied to concrete type arguments (shared by generic TYPEs and generic procedures).</summary>
+  public static string MangleName(string baseName, IReadOnlyList<TypeName> args)
+    => baseName + string.Concat(args.Select(a => "@" + MangleArg(a)));
+
+  /// <summary>Deep-clones an AST node, substituting each bare type-parameter type name with its concrete argument and giving every node a fresh identity (so the binder's per-node annotations never collide across instantiations).</summary>
+  public static object? SubstituteClone(object? node, IReadOnlyDictionary<string, TypeName> map) => Clone(node, map);
 
   private static string MangleArg(TypeName a) {
     var core = a.IsGenericUse ? Mangle(a) : a.IsUserDefined ? a.UserTypeName! : a.Builtin.ToString();

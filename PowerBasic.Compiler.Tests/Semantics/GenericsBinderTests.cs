@@ -60,6 +60,37 @@ public sealed class GenericsBinderTests {
   }
 
   [Test]
+  public void Bind_GivenGenericFunctionInferredAtTwoTypes_WhenBound_ThenTwoInstancesWithSubstitutedReturn() {
+    var model = Bind(
+      "FUNCTION Pick OF T (BYVAL a AS T, BYVAL b AS T) AS T\n  Pick = a\nEND FUNCTION\n" +
+      "DIM x&\nx& = Pick(70000, 40000)\nDIM s$\ns$ = Pick(\"a\", \"b\")\n");
+    Assert.Multiple(() => {
+      Assert.That(model.Procedures.ContainsKey("Pick@Long"), Is.True, "inferred LONG instance");
+      Assert.That(model.Procedures.ContainsKey("Pick@String"), Is.True, "inferred STRING instance");
+      Assert.That(model.Procedures["Pick@Long"].ReturnType, Is.EqualTo(PbType.Long), "return type T -> LONG");
+      Assert.That(model.Procedures["Pick@String"].ReturnType, Is.InstanceOf<StringType>());
+      Assert.That(model.Procedures.ContainsKey("Pick"), Is.False, "the template itself is not callable");
+    });
+  }
+
+  [Test]
+  public void Bind_GivenGenericSubWithBodyLocalOfT_WhenBound_ThenInstantiatedPerCall() {
+    var model = Bind(
+      "SUB Keep OF T (a AS T, b AS T)\n  DIM t AS T\n  t = a\n  a = b\n  b = t\nEND SUB\n" +
+      "DIM x&, y&\nKeep(x&, y&)\n");
+    Assert.That(model.Procedures.ContainsKey("Keep@Long"), Is.True);
+  }
+
+  [Test]
+  public void Bind_GivenUninferrableTypeParameter_WhenBound_ThenRejectedClearly() {
+    // T appears only in the return type, so it cannot be inferred from arguments
+    var unit = Parser.Parse(Lexer.Tokenize(
+      "FUNCTION Zero OF T () AS T\nEND FUNCTION\nDIM x&\nx& = Zero()\n", "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors.Any(e => e.Message.Contains("cannot infer type parameter")), Is.True);
+  }
+
+  [Test]
   public void Bind_GivenGenericsBelowPb36_WhenParsed_ThenRejected() {
     Assert.Throws<ParserException>(() =>
       Parser.Parse(Lexer.Tokenize("TYPE Box OF T\n  V AS T\nEND TYPE\n", "t.bas", Dialect.Pb35), "t.bas", Dialect.Pb35));

@@ -51,12 +51,16 @@ public sealed record Parameter(SourcePosition Position, string Name, TypeSuffix 
 public sealed record SubDecl(SourcePosition Position, string Name, IReadOnlyList<Parameter> Parameters, bool IsStatic, Visibility Visibility, string? Alias, CallConvention Convention, IReadOnlyList<Statement> Body) : Statement(Position) {
   /// <summary>Back-compat shorthand for the CDECL convention.</summary>
   public bool Cdecl => this.Convention == CallConvention.Cdecl;
+  /// <summary>pb36 generics: type parameter names of a generic SUB (<c>SUB Swap OF T</c>); empty for an ordinary SUB.</summary>
+  public IReadOnlyList<string> TypeParameters { get; init; } = [];
 }
 
 /// <summary>FUNCTION definition; return type from name suffix or <c>AS</c> clause.</summary>
 public sealed record FunctionDecl(SourcePosition Position, string Name, TypeSuffix Suffix, TypeName? ReturnType, IReadOnlyList<Parameter> Parameters, bool IsStatic, Visibility Visibility, string? Alias, CallConvention Convention, IReadOnlyList<Statement> Body) : Statement(Position) {
   /// <summary>Back-compat shorthand for the CDECL convention.</summary>
   public bool Cdecl => this.Convention == CallConvention.Cdecl;
+  /// <summary>pb36 generics: type parameter names of a generic FUNCTION (<c>FUNCTION Max OF T</c>); empty for an ordinary FUNCTION.</summary>
+  public IReadOnlyList<string> TypeParameters { get; init; } = [];
 }
 
 /// <summary>DECLARE SUB/FUNCTION prototype.</summary>

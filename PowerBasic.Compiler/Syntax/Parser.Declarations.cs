@@ -8,6 +8,7 @@ public sealed partial class Parser {
   private Statement ParseSub() {
     var pos = this.Advance().Position;
     var name = this.Expect(TokenKind.Identifier, "SUB name");
+    var typeParams = this.ParseProcTypeParameters();   // pb36 generics: SUB Name OF T
 
     // modifiers may precede or follow the parameter list (SUB X CDECL (a, b) PUBLIC)
     List<Parameter>? parameters = null;
@@ -27,12 +28,13 @@ public sealed partial class Parser {
     var body = this.ParseBody("END SUB");
     this.Advance();
     this.Advance();
-    return new SubDecl(pos, name.Text, parameters ?? [], isStatic, visibility, alias, convention, body);
+    return new SubDecl(pos, name.Text, parameters ?? [], isStatic, visibility, alias, convention, body) { TypeParameters = typeParams };
   }
 
   private Statement ParseFunction() {
     var pos = this.Advance().Position;
     var name = this.Expect(TokenKind.Identifier, "FUNCTION name");
+    var typeParams = this.ParseProcTypeParameters();   // pb36 generics: FUNCTION Name OF T
 
     List<Parameter>? parameters = null;
     TypeName? returnType = null;
@@ -60,13 +62,31 @@ public sealed partial class Parser {
       var eq = this.Advance();
       var result = new NameExpr(eq.Position, "FUNCTION", TypeSuffix.None);
       IReadOnlyList<Statement> exprBody = [new AssignStmt(eq.Position, result, this.ParseExpression())];
-      return new FunctionDecl(pos, name.Text, name.Suffix, returnType, parameters ?? [], isStatic, visibility, alias, convention, exprBody);
+      return new FunctionDecl(pos, name.Text, name.Suffix, returnType, parameters ?? [], isStatic, visibility, alias, convention, exprBody) { TypeParameters = typeParams };
     }
 
     var body = this.ParseBody("END FUNCTION");
     this.Advance();
     this.Advance();
-    return new FunctionDecl(pos, name.Text, name.Suffix, returnType, parameters ?? [], isStatic, visibility, alias, convention, body);
+    return new FunctionDecl(pos, name.Text, name.Suffix, returnType, parameters ?? [], isStatic, visibility, alias, convention, body) { TypeParameters = typeParams };
+  }
+
+  /// <summary>pb36 generics: an optional <c>OF T</c> / <c>OF (T1, T2)</c> type-parameter list right after a SUB/FUNCTION name. Empty when no <c>OF</c> follows.</summary>
+  private List<string> ParseProcTypeParameters() {
+    var typeParams = new List<string>();
+    if (!this.IsKeyword(0, "OF"))
+      return typeParams;
+    this.Require(LanguageFeature.Generics);
+    this.Advance(); // OF
+    if (this.Match(TokenKind.LParen)) {
+      do
+        typeParams.Add(this.Expect(TokenKind.Identifier, "type parameter").Text);
+      while (this.Match(TokenKind.Comma));
+      this.Expect(TokenKind.RParen, "')'");
+    } else {
+      typeParams.Add(this.Expect(TokenKind.Identifier, "type parameter").Text);
+    }
+    return typeParams;
   }
 
   private bool TryParseProcedureModifier(ref bool isStatic, ref Visibility visibility, ref string? alias, ref CallConvention convention) {
