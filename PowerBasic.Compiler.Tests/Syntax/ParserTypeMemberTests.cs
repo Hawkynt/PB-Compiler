@@ -80,6 +80,18 @@ public sealed class ParserTypeMemberTests {
   }
 
   [Test]
+  public void Parse_GivenDottedStatementCall_WhenPb36_ThenMemberCallStmt() {
+    foreach (var (src, argc) in new[] { ("o.Push 5", 1), ("o.Push(6)", 1), ("o.Clear", 0) }) {
+      var stmt = Parse("DIM o AS T\n" + src, Dialect.Pb36).Statements.OfType<MemberCallStmt>().Single();
+      Assert.Multiple(() => {
+        Assert.That(stmt.Member, Is.EqualTo(src.Contains("Clear") ? "Clear" : "Push"), src);
+        Assert.That(((NameExpr)stmt.Receiver).Name, Is.EqualTo("o"), src);
+        Assert.That(stmt.Arguments, Has.Count.EqualTo(argc), src);
+      });
+    }
+  }
+
+  [Test]
   public void Parse_GivenTypeMember_WhenPb35_ThenRejectedWithRequirementMessage() {
     var ex = Assert.Throws<ParserException>(() => Parse(_stack, Dialect.Pb35));
     Assert.That(ex!.Message, Does.Contain("TYPE methods"));

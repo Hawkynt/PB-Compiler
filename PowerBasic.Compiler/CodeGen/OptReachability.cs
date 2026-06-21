@@ -44,6 +44,8 @@ public static class OptReachability {
         // through its desugared form, not the original surface node
         if (node is Expression e && model.Desugared.TryGetValue(e, out var desugared))
           Visit(desugared);
+        if (node is Statement s && model.DesugaredStatements.TryGetValue(s, out var desugaredStmt))
+          Visit(desugaredStmt);
       }
     }
 

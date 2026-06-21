@@ -416,6 +416,42 @@ public sealed class Binder {
     return type;
   }
 
+  /// <summary>pb36 statement-form method call <c>o.M(args)</c>: desugars to <c>Type.M(o, args)</c>.</summary>
+  private void BindMemberCallStatement(MemberCallStmt mc, Scope scope) {
+    if (this.BindExpression(mc.Receiver, scope) is not UdtType udt) {
+      this.Error(mc.Position, "member call on a non-TYPE value");
+      return;
+    }
+    var procName = $"{udt.Name}.{mc.Member}";
+    if (!this.HasMemberProc(procName)) {
+      this.Error(mc.Position, $"TYPE {udt.Name} has no method {mc.Member}");
+      return;
+    }
+    var args = new List<Expression>(mc.Arguments.Count + 1) { mc.Receiver };
+    args.AddRange(mc.Arguments);
+    var call = new CallStmt(mc.Position, procName, args, UsedCallKeyword: false);
+    this.BindCallStatement(call, scope);
+    this._model.DesugaredStatements[mc] = call;
+  }
+
+  /// <summary>
+  /// pb36 property set <c>o.P = x</c>: when <c>P</c> is not a field but a PROPERTY SET exists,
+  /// desugars the assignment to <c>Type.set_P(o, x)</c>. Returns false for a plain field store.
+  /// </summary>
+  private bool TryBindPropertySet(AssignStmt a, MemberExpr m, Scope scope) {
+    if (this.BindExpression(m.Target, scope) is not UdtType udt)
+      return false;
+    if (udt.FindField(m.Member) != null)
+      return false;
+    var setter = $"{udt.Name}.set_{m.Member}";
+    if (!this.HasMemberProc(setter))
+      return false;
+    var call = new CallStmt(a.Position, setter, [m.Target, a.Value], UsedCallKeyword: false);
+    this.BindCallStatement(call, scope);
+    this._model.DesugaredStatements[a] = call;
+    return true;
+  }
+
   /// <summary>Two procedures share a signature when their parameter lists have equal length and element types.</summary>
   private static bool SameSignature(ProcedureSymbol a, ProcedureSymbol b) {
     if (a.Parameters.Count != b.Parameters.Count)
@@ -858,7 +894,13 @@ public sealed class Binder {
 
   private void BindStatement(Statement statement, Scope scope) {
     switch (statement) {
+      case MemberCallStmt mc:
+        this.BindMemberCallStatement(mc, scope);
+        break;
+
       case AssignStmt a: {
+        if (a.Target is MemberExpr propTarget && this.TryBindPropertySet(a, propTarget, scope))
+          break;
         var targetType = this.BindAssignTarget(a.Target, scope);
         var valueType = this.BindWithExpected(a.Value, targetType as ProcPtrType, scope);
         this.CheckAssignable(targetType, valueType, a.Position);

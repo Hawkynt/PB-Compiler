@@ -952,6 +952,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// RESUME / RESUME NEXT can re-enter after an error unwound the stack.
   /// </summary>
   private void EmitStatement(Statement statement) {
+    // pb36: a member-call statement / property-set assignment is emitted as the bound call it desugars to
+    if (model.DesugaredStatements.TryGetValue(statement, out var desugaredStatement)) {
+      this.EmitStatement(desugaredStatement);
+      return;
+    }
     // O16: the current program point - lets IndexRangeOf query the interval lattice at this use
     this._currentStatement = statement;
     // pb36 O2: a dead store (pure RHS, value never really read) is not emitted

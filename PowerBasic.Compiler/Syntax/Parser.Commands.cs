@@ -50,6 +50,23 @@ public sealed partial class Parser {
   /// <summary>Identifier-led fallback: <c>Name (args)</c> or <c>Name a, b</c> or bare <c>Name</c>.</summary>
   private Statement ParseBareCall() {
     var name = this.Advance();
+
+    // pb36 member-call statement: receiver.Member(args) / receiver.Member args
+    if (this.Current.Kind == TokenKind.Period && DialectFacts.IsAvailable(LanguageFeature.TypeMethods, this._dialect)) {
+      var chain = this.ParsePostfix(new NameExpr(name.Position, name.Text, name.Suffix));
+      if (chain is IndexExpr { Target: MemberExpr parenthesized } indexed)   // receiver.Member(args)
+        return new MemberCallStmt(name.Position, parenthesized.Target, parenthesized.Member, indexed.Arguments);
+      if (chain is MemberExpr bare) {                                        // receiver.Member [args]
+        var bareArgs = new List<Expression>();
+        if (!this.IsStatementEnd())
+          do
+            bareArgs.Add(this.ParseArgument());
+          while (this.Match(TokenKind.Comma));
+        return new MemberCallStmt(name.Position, bare.Target, bare.Member, bareArgs);
+      }
+      throw this.Error("a member statement must be a method call");
+    }
+
     if (this.Current.Kind == TokenKind.LParen && this.ParenthesesEndStatement())
       return new CallStmt(name.Position, name.Text, this.ParseArgumentList(), false);
 

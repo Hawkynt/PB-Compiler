@@ -65,4 +65,37 @@ public sealed class TypeMemberBinderTests {
     Assert.That(model.Desugared.TryGetValue(access, out var desugared), Is.True, "o.Value desugars to a getter call");
     Assert.That(((CallOrIndexExpr)desugared!).Name, Is.EqualTo("Counter.get_Value"));
   }
+
+  private const string _box =
+    "TYPE Box\n" +
+    "  N AS INTEGER\n" +
+    "  SUB Reset()\n" +
+    "    THIS.N = 0\n" +
+    "  END SUB\n" +
+    "  PROPERTY SET Value(BYVAL v AS INTEGER)\n" +
+    "    THIS.N = v\n" +
+    "  END PROPERTY\n" +
+    "END TYPE\n";
+
+  [Test]
+  public void Bind_GivenStatementMethodCall_WhenBound_ThenDesugarsToCallWithReceiver() {
+    var model = Bind(_box + "DIM b AS Box\nb.Reset\n");
+    var stmt = model.DesugaredStatements.Keys.OfType<MemberCallStmt>().Single();
+    var call = (CallStmt)model.DesugaredStatements[stmt];
+    Assert.Multiple(() => {
+      Assert.That(call.Name, Is.EqualTo("Box.Reset"));
+      Assert.That(call.Arguments, Has.Count.EqualTo(1), "the receiver is the only argument");
+    });
+  }
+
+  [Test]
+  public void Bind_GivenPropertySet_WhenBound_ThenDesugarsToSetterCall() {
+    var model = Bind(_box + "DIM b AS Box\nb.Value = 7\n");
+    var assign = model.DesugaredStatements.Keys.OfType<AssignStmt>().Single();
+    var call = (CallStmt)model.DesugaredStatements[assign];
+    Assert.Multiple(() => {
+      Assert.That(call.Name, Is.EqualTo("Box.set_Value"));
+      Assert.That(call.Arguments, Has.Count.EqualTo(2), "receiver and the assigned value");
+    });
+  }
 }

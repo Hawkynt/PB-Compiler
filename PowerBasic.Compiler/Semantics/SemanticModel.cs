@@ -78,6 +78,9 @@ public sealed class SemanticModel {
   /// <summary>PB 3.6 interpolated string (<c>$"..."</c>): the InterpolatedStringExpr node mapped to the bound concatenation it desugars to, which codegen emits in its place.</summary>
   public Dictionary<Expression, Expression> Desugared { get; } = new(ReferenceEqualityComparer.Instance);
 
+  /// <summary>PB 3.6 statement-level desugar (member-call statement, property-set assignment): the surface statement mapped to the bound statement codegen emits in its place.</summary>
+  public Dictionary<Statement, Statement> DesugaredStatements { get; } = new(ReferenceEqualityComparer.Instance);
+
   /// <summary>PB 3.6 inline lambdas: each LambdaExpr mapped to the anonymous proc it was lifted to; codegen emits the lambda value as that proc's code pointer.</summary>
   public Dictionary<Expression, ProcedureSymbol> LambdaProcs { get; } = new(ReferenceEqualityComparer.Instance);
 

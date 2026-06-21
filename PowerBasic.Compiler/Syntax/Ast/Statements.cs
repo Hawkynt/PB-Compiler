@@ -144,6 +144,13 @@ public sealed record IncrDecrStmt(SourcePosition Position, bool Increment, Expre
 /// <summary>SUB invocation: <c>CALL Name(args)</c> or bare <c>Name args</c>.</summary>
 public sealed record CallStmt(SourcePosition Position, string Name, IReadOnlyList<Expression> Arguments, bool UsedCallKeyword) : Statement(Position);
 
+/// <summary>
+/// PB 3.6 statement-form member call: <c>receiver.Member(args)</c> / <c>receiver.Member args</c>.
+/// The binder resolves it against the receiver's static type and desugars it to a call on the
+/// lifted member procedure with the receiver passed as the BYREF THIS first argument.
+/// </summary>
+public sealed record MemberCallStmt(SourcePosition Position, Expression Receiver, string Member, IReadOnlyList<Expression> Arguments) : Statement(Position);
+
 /// <summary>Far call through a 32-bit pointer: <c>CALL DWORD ptr [BDECL|CDECL|SDECL] (args)</c>.</summary>
 public sealed record CallPtrStmt(SourcePosition Position, Expression Pointer, string? Convention, IReadOnlyList<Expression> Arguments) : Statement(Position);
 
