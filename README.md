@@ -118,6 +118,8 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
 
 **Procedures**
 - **Expression-bodied `FUNCTION`** — `FUNCTION F(...) AS T = expression`.
+- **`FUNCTION` returning a TYPE by value** — `FUNCTION MakeP(...) AS Point`; the result
+  is written straight into the assignment target (struct return, no copy).
 - **Overloading** — several SUBs/FUNCTIONs may share a name with different
   signatures; calls resolve to the best match.
 - **Default and named parameters** — `SUB Foo(x%, y% = 10)` and `Foo(y := 5)`.
@@ -179,6 +181,8 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
 **Structured exception handling**
 - **`TRY` / `CATCH` / `FINALLY`** — block-structured error handling lowered onto the
   ON ERROR trap; `FINALLY` runs on every exit path.
+- **`DEFER <statement>`** — scope guard: runs the statement when the enclosing block
+  exits, on normal completion or while a fault unwinds; nested DEFERs run last-in-first-out.
 - **Filtered / typed `CATCH`** — `CATCH <errnum>`, `CATCH WHEN <cond>`, or
   `CATCH <errnum> WHEN <cond>`; several filtered clauses are tried in order (the
   `WHEN` guard is evaluated only when the number matches), an unfiltered `CATCH` is

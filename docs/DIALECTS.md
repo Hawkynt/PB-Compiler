@@ -127,7 +127,10 @@ a separate axis (`--optimize`, on by default for `pb36`). Full detail in
 - Exceptions: `TRY` / `CATCH` / `FINALLY` (FINALLY on every path), with **filtered
   CATCH** — `CATCH <errnum>`, `CATCH WHEN <cond>`, `CATCH <errnum> WHEN <cond>` tried
   in order (the WHEN guard short-circuits on the number), an unfiltered `CATCH` as the
-  catch-all, and re-raise to the outer handler (after FINALLY) when none match.
+  catch-all, and re-raise to the outer handler (after FINALLY) when none match; plus
+  **`DEFER`** (scope guards, LIFO, run on the fault path too).
+- Functions: a `FUNCTION` may **return a TYPE by value** (`AS Point`) — struct return,
+  written straight into the assignment target.
 - Memory/control flow: `WITH … END WITH`, `FOR EACH v IN source` (array, `[lo..hi]`
   range, or a generator), XMS/EMS array storage classes.
 

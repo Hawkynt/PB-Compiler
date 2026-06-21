@@ -9,9 +9,13 @@ fast and lean" mission. Each item notes a rough size (S/M/L) and what it builds 
 Already shipped (for reference): the optimizer pipeline, TYPE methods/properties/auto- &
 anonymous properties/constructors/`READONLY`, **generics** (types + procedures), `YIELD`
 generators, lambdas/closures, nested procedures, typed delegates, `FOR EACH`,
-`TRY/CATCH/FINALLY` incl. filtered `CATCH`, compound assignment, ternary `IF()`,
-short-circuit `ANDALSO/ORELSE`, shift/rotate, `ENUM`, `WITH`, default/named parameters,
-overloading, string interpolation, array-initializer literals.
+`TRY/CATCH/FINALLY` incl. filtered `CATCH`, **`DEFER`**, **FUNCTION returning a TYPE by
+value (struct return)**, compound assignment, ternary `IF()`, short-circuit
+`ANDALSO/ORELSE`, shift/rotate, `ENUM`, `WITH`, default/named parameters, overloading,
+string interpolation, array-initializer literals.
+
+> **Done from this list:** `DEFER` (scope guards) and FUNCTION-returns-TYPE-by-value
+> (the keystone that unblocks **tuples** and UDT-returning **`OPERATOR`** overloads).
 
 ## Type system (non-OOP)
 
