@@ -112,10 +112,11 @@ a separate axis (`--optimize`, on by default for `pb36`). Full detail in
   every call inlines — no property-specific path. **Constructors**: a `SUB` named like the `TYPE`,
   invoked `p = Point(3, 4)`. **`READONLY` types** (`TYPE Point READONLY …`): fields
   settable only inside the constructor.
-- **Compile-time generics** (monomorphized): `TYPE Stack OF T … END TYPE`, used as
-  `DIM s AS Stack OF LONG`; each instantiation is vivified into a concrete TYPE at
-  compile time (no runtime type info), so the object model applies per instantiation.
-  Generic procedures are roadmap. See [PB36-GENERICS.md](PB36-GENERICS.md).
+- **Compile-time generics** (monomorphized): generic types `TYPE Stack OF T …` and
+  generic procedures `FUNCTION Max OF T (…) AS T` (type argument inferred from the
+  call); each instantiation is vivified into concrete code at compile time (no runtime
+  type info), so the object model and inliner apply per instantiation. See
+  [PB36-GENERICS.md](PB36-GENERICS.md).
 - **Generators**: any `SUB`/`FUNCTION` with `YIELD` becomes a first-class generator
   whose call returns an enumerator UDT (`.MoveNext`/`.Current`/`.Reset`, or `FOR
   EACH`); parameters and locals persist across suspensions. `YIELD` is supported in

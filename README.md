@@ -156,11 +156,12 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
 - **`READONLY` types** — `TYPE Point READONLY … END TYPE` makes every field
   write-once: assignable only inside the type's own constructor, rejected
   elsewhere at compile time.
-- **Compile-time generics** — `TYPE Stack OF T … END TYPE`, used as
-  `DIM s AS Stack OF LONG`. Each instantiation is monomorphized into an ordinary
-  concrete TYPE (fully resolved at compile time, no runtime type info or boxing),
-  so methods, properties and the trivial-method inliner all apply per instantiation.
-  (Generic procedures with inference are on the roadmap.)
+- **Compile-time generics** — generic types `TYPE Stack OF T … END TYPE`
+  (`DIM s AS Stack OF LONG`) and generic procedures `FUNCTION Max OF T (…) AS T`
+  (the type argument is **inferred** from the call: `Max(3, 9)`, `Max("a", "b")`).
+  Each instantiation is monomorphized into ordinary concrete code (fully resolved at
+  compile time, no runtime type info or boxing), so methods, properties and the
+  trivial-method inliner all apply per instantiation.
 
 **Generators (`YIELD` coroutines)**
 - **First-class generators** — any `SUB`/`FUNCTION` whose body contains `YIELD` is

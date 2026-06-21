@@ -1,6 +1,7 @@
 # PB 3.6 compile-time generics (monomorphization)
 
-**Status: generic TYPEs implemented; generic procedures planned.** A design for generic `TYPE`s and
+**Status: generic TYPEs and generic procedures implemented (procedure type arguments are inferred;
+explicit `Name OF type(args)` call syntax is the remaining follow-up).** A design for generic `TYPE`s and
 procedures that are *fully vivified into concrete implementations at compile time*
 — like C++ templates / Rust / .NET value-type generics: no runtime type info, no
 boxing, no dispatch. Each distinct instantiation becomes an ordinary concrete TYPE
@@ -118,9 +119,18 @@ execution (`Box OF LONG`/`OF INTEGER`/`OF STRING` distinct instances, fields and
 `GenericsBinderTests`; the full differential harness stays byte-identical (the pass is inert when a
 program declares no generic template).
 
-**Pending — generic procedures** (`FUNCTION Max OF T (…)`): the type-argument *inference* from call
-arguments and the explicit `Max OF LONG (…)` call form are not yet wired (the type-side
-monomorphization infrastructure is in place to build on).
+**Done — generic procedures** (`Binder.ResolveGenericCall`): `SUB`/`FUNCTION … OF T` declares a
+template; a call **infers** each type parameter from the argument types (read off the first parameter
+declared as that bare type), monomorphizes a concrete instance (`Max@Long`) by deep-cloning the
+parameters/return/body with the type parameters substituted, and binds the call to it. A user generic
+template shadows a same-named intrinsic. Instance bodies are bound by a drain after the main pass (so
+instantiating during binding never mutates the procedure list mid-iteration; an instance that itself
+calls a generic is covered). Verified by execution (`Max`/`Exchange` at LONG/INTEGER/STRING, including
+a `DIM t AS T` body local and BYREF write-through) and `GenericsBinderTests`.
+
+**Pending — explicit procedure type arguments** (`Max OF LONG (…)` at the call site) and inference from
+nested positions (a `Stack OF T` parameter); a type parameter appearing only in the return type is
+rejected (it cannot be inferred from arguments).
 
 **Known limitation (pre-existing, not generics-specific):** assigning to an *array field element*
 through a method's `THIS` receiver (`THIS.Items(i) = v` inside a member) is rejected ("expression is
