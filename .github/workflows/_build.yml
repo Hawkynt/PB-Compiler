@@ -53,10 +53,10 @@ jobs:
         run: perl .github/workflows/scripts/version.pl --stamp
 
       - name: Restore
-        run: dotnet restore PB-Compiler.sln
+        run: dotnet restore PB-Compiler.slnx
 
       - name: Build
-        run: dotnet build PB-Compiler.sln --configuration Release --no-restore
+        run: dotnet build PB-Compiler.slnx --configuration Release --no-restore
 
       # ===== APP BINARIES =====================================================
       - name: Publish application

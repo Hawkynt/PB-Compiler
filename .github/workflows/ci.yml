@@ -32,10 +32,10 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore
-        run: dotnet restore PB-Compiler.sln
+        run: dotnet restore PB-Compiler.slnx
 
       - name: Build
-        run: dotnet build PB-Compiler.sln --configuration Release --no-restore
+        run: dotnet build PB-Compiler.slnx --configuration Release --no-restore
 
       # Classic DOSBox runs the execution tests against the generated DOS
       # binaries; installed on Linux only - the tests self-skip wherever it is
