@@ -236,7 +236,7 @@ public sealed partial class Parser {
     }
 
     var result = builtin switch {
-      BuiltinType.None => new TypeName(token.Position, BuiltinType.None, token.Text),
+      BuiltinType.None => new TypeName(token.Position, BuiltinType.None, token.Text) { TypeArguments = this.TryParseTypeArguments() },
       BuiltinType.String when this.Match(TokenKind.Star) => new(token.Position, BuiltinType.FixedString, null, this.ParseExpression()),
       BuiltinType.Asciiz => this.ParseAsciiz(token),
       _ => new(token.Position, builtin),
@@ -249,6 +249,24 @@ public sealed partial class Parser {
       result = new(token.Position, BuiltinType.None, null, null, result);
     }
     return result;
+  }
+
+  /// <summary>pb36 generics use site: an optional <c>OF</c> type-argument list after a user type name - <c>OF LONG</c> (single) or <c>OF (LONG, STRING)</c> (several). Null when no <c>OF</c> follows.</summary>
+  private IReadOnlyList<TypeName>? TryParseTypeArguments() {
+    if (!this.IsKeyword(0, "OF"))
+      return null;
+    this.Require(LanguageFeature.Generics);
+    this.Advance(); // OF
+    var args = new List<TypeName>();
+    if (this.Match(TokenKind.LParen)) {
+      do
+        args.Add(this.ParseTypeName());
+      while (this.Match(TokenKind.Comma));
+      this.Expect(TokenKind.RParen, "')'");
+    } else {
+      args.Add(this.ParseTypeName());
+    }
+    return args;
   }
 
   private TypeName ParseProcPtrType() {
@@ -316,6 +334,20 @@ public sealed partial class Parser {
     this.Require(LanguageFeature.TypeUnion);
     var pos = this.Advance().Position;
     var name = this.Expect(TokenKind.Identifier, "type name");
+    // pb36 generics: TYPE Name OF T (or OF (K, V)) - a template monomorphized per instantiation
+    var typeParams = new List<string>();
+    if (!isUnion && this.IsKeyword(0, "OF")) {
+      this.Require(LanguageFeature.Generics);
+      this.Advance(); // OF
+      if (this.Match(TokenKind.LParen)) {
+        do
+          typeParams.Add(this.Expect(TokenKind.Identifier, "type parameter").Text);
+        while (this.Match(TokenKind.Comma));
+        this.Expect(TokenKind.RParen, "')'");
+      } else {
+        typeParams.Add(this.Expect(TokenKind.Identifier, "type parameter").Text);
+      }
+    }
     // pb36: TYPE Name READONLY - fields are write-once (settable only in the constructor)
     var isReadonly = !isUnion && this.TryMatchKeyword("READONLY");
     if (isReadonly)
@@ -339,7 +371,7 @@ public sealed partial class Parser {
       }
       fields.Add(this.ParseTypeField());
     }
-    return isUnion ? new UnionDecl(pos, name.Text, fields) : new TypeDecl(pos, name.Text, fields) { Members = members, IsReadonly = isReadonly };
+    return isUnion ? new UnionDecl(pos, name.Text, fields) : new TypeDecl(pos, name.Text, fields) { Members = members, IsReadonly = isReadonly, TypeParameters = typeParams };
   }
 
   /// <summary>

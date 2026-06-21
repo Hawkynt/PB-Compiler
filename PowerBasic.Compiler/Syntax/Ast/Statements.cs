@@ -17,9 +17,12 @@ public enum BuiltinType { None, Byte, Word, Dword, Integer, Long, Quad, Single, 
 /// <see cref="PointerTarget"/> is set - a pointer to that type (<c>... PTR</c>).
 /// </summary>
 public sealed record TypeName(SourcePosition Position, BuiltinType Builtin, string? UserTypeName = null, Expression? FixedLength = null, TypeName? PointerTarget = null,
-    IReadOnlyList<TypeName>? ProcParameterTypes = null, TypeName? ProcReturnType = null, bool IsProcPtr = false) {
+    IReadOnlyList<TypeName>? ProcParameterTypes = null, TypeName? ProcReturnType = null, bool IsProcPtr = false,
+    IReadOnlyList<TypeName>? TypeArguments = null) {
   public bool IsUserDefined => this.UserTypeName != null;
   public bool IsPointer => this.PointerTarget != null;
+  /// <summary>pb36 generics: a use of a generic type with concrete arguments, e.g. <c>Stack OF LONG</c> (<see cref="UserTypeName"/> = Stack, args = [LONG]).</summary>
+  public bool IsGenericUse => this.TypeArguments is { Count: > 0 };
 }
 
 #endregion
@@ -82,6 +85,8 @@ public sealed record TypeDecl(SourcePosition Position, string Name, IReadOnlyLis
   public IReadOnlyList<TypeMember> Members { get; init; } = [];
   /// <summary>pb36 READONLY TYPE: fields may be assigned only inside the type's own constructor.</summary>
   public bool IsReadonly { get; init; }
+  /// <summary>pb36 generics: the type parameter names of a generic TYPE (<c>TYPE Stack OF T</c> → ["T"]); empty for an ordinary TYPE. A generic TYPE is a template - it is monomorphized per concrete instantiation, not defined directly.</summary>
+  public IReadOnlyList<string> TypeParameters { get; init; } = [];
 }
 
 /// <summary>UNION ... END UNION.</summary>

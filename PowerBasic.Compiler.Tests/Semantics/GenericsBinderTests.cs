@@ -1,0 +1,67 @@
+using PowerBasic.Compiler.Semantics;
+using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Syntax.Ast;
+
+namespace PowerBasic.Compiler.Tests.Semantics;
+
+/// <summary>
+/// pb36 compile-time generics (monomorphization): a generic <c>TYPE Name OF T</c> is a template
+/// vivified per concrete instantiation into an ordinary TYPE named with an untypeable mangle
+/// (<c>Name@LONG</c>); the binder resolves a generic use to that concrete type.
+/// </summary>
+[TestFixture]
+public sealed class GenericsBinderTests {
+
+  private static SemanticModel Bind(string source) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Success, Is.True, string.Join("; ", model.Errors));
+    return model;
+  }
+
+  private const string _box =
+    "TYPE Box OF T\n  V AS T\n  FUNCTION GetIt() AS T\n    GetIt = THIS.V\n  END FUNCTION\nEND TYPE\n";
+
+  [Test]
+  public void Bind_GivenGenericTypeUsedAtOneType_WhenBound_ThenMonomorphizedUdtWithSubstitutedField() {
+    var model = Bind(_box + "DIM b AS Box OF LONG\n");
+    Assert.Multiple(() => {
+      Assert.That(model.Udts.ContainsKey("Box@Long"), Is.True, "the generic use vivifies a concrete TYPE");
+      Assert.That(model.Udts.ContainsKey("Box"), Is.False, "the template itself is not a concrete TYPE");
+      Assert.That(model.Udts["Box@Long"].FindField("V")!.Type, Is.EqualTo(PbType.Long), "T was substituted with LONG");
+      Assert.That(model.Procedures.ContainsKey("Box@Long.get_GetIt") || model.Procedures.ContainsKey("Box@Long.GetIt"), Is.True,
+        "the member lifts under the mangled concrete type name");
+    });
+  }
+
+  [Test]
+  public void Bind_GivenTwoInstantiations_WhenBound_ThenTwoDistinctUdts() {
+    var model = Bind(_box + "DIM a AS Box OF LONG\nDIM b AS Box OF INTEGER\nDIM c AS Box OF STRING\n");
+    Assert.Multiple(() => {
+      Assert.That(model.Udts["Box@Long"].FindField("V")!.Type, Is.EqualTo(PbType.Long));
+      Assert.That(model.Udts["Box@Integer"].FindField("V")!.Type, Is.EqualTo(PbType.Integer));
+      Assert.That(model.Udts["Box@String"].FindField("V")!.Type, Is.InstanceOf<StringType>());
+    });
+  }
+
+  [Test]
+  public void Bind_GivenInstantiationVariable_WhenBound_ThenTypedAsTheConcreteUdt() {
+    var model = Bind(_box + "DIM b AS Box OF LONG\n");
+    var dim = model.ModuleVariables.Values.Single(v => v.Name.Equals("b", System.StringComparison.OrdinalIgnoreCase));
+    Assert.That(((UdtType)dim.Type).Name, Is.EqualTo("Box@Long"));
+  }
+
+  [Test]
+  public void Bind_GivenWrongTypeArgumentCount_WhenBound_ThenRejectedClearly() {
+    var unit = Parser.Parse(Lexer.Tokenize(
+      "TYPE Box OF T\n  V AS T\nEND TYPE\nDIM x AS Box OF (LONG, INTEGER)\n", "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors.Any(e => e.Message.Contains("takes 1 type argument")), Is.True);
+  }
+
+  [Test]
+  public void Bind_GivenGenericsBelowPb36_WhenParsed_ThenRejected() {
+    Assert.Throws<ParserException>(() =>
+      Parser.Parse(Lexer.Tokenize("TYPE Box OF T\n  V AS T\nEND TYPE\n", "t.bas", Dialect.Pb35), "t.bas", Dialect.Pb35));
+  }
+}

@@ -11,7 +11,7 @@ namespace PowerBasic.Compiler.Semantics;
 public sealed class Binder {
 
   private readonly SemanticModel _model;
-  private readonly CompilationUnit _unit;
+  private CompilationUnit _unit;
   private readonly Dialect _dialect;
   private readonly Dictionary<char, PbType> _defaultTypes = [];
   private readonly HashSet<string> _redimmedArrays = new(StringComparer.OrdinalIgnoreCase);
@@ -62,8 +62,9 @@ public sealed class Binder {
 
   public static SemanticModel Bind(CompilationUnit unit, Dialect dialect = Dialect.Pb35) {
     var binder = new Binder(unit, dialect);
+    binder.ExpandGenerics();
     binder.SeedInternalVariables();
-    binder.CollectRedims(unit.Statements);
+    binder.CollectRedims(binder._unit.Statements);
     binder.ScanModule();
     binder.BindAllBodies();
     binder.SpliceDimInitializers();
@@ -164,6 +165,13 @@ public sealed class Binder {
             this.CollectRedims(block);
           break;
       }
+  }
+
+  /// <summary>pb36 generics: vivify every generic instantiation into a concrete TYPE before binding, so the binder only ever sees concrete types (see <see cref="Monomorphizer"/>).</summary>
+  private void ExpandGenerics() {
+    var (statements, any) = Monomorphizer.Expand(this._unit, this.Error);
+    if (any)
+      this._unit = this._unit with { Statements = statements };
   }
 
   private void Error(SourcePosition position, string message) => this._model.Errors.Add(new(position, message));
@@ -1253,7 +1261,9 @@ public sealed class Binder {
     }
 
     if (t.IsUserDefined) {
-      if (this._model.Udts.TryGetValue(t.UserTypeName!, out var udt))
+      // pb36 generics: a generic use (Stack OF LONG) resolves to its monomorphized concrete TYPE (Stack@LONG)
+      var name = t.IsGenericUse ? Monomorphizer.Mangle(t) : t.UserTypeName!;
+      if (this._model.Udts.TryGetValue(name, out var udt))
         return udt;
       if (this._model.EnumTypes.TryGetValue(t.UserTypeName!, out var enumType)) // PB 3.6: an ENUM name aliases its integer type
         return enumType;

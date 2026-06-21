@@ -116,6 +116,7 @@ public enum LanguageFeature {
   TryCatch,
   Coroutines,
   TypeMethods,
+  Generics,
 }
 
 /// <summary>
@@ -180,6 +181,7 @@ public static class DialectFacts {
     [LanguageFeature.TryCatch] = (Dialect.Pb36, "structured exception handling (TRY / CATCH / FINALLY / END TRY)"),
     [LanguageFeature.Coroutines] = (Dialect.Pb36, "coroutines (YIELD statement)"),
     [LanguageFeature.TypeMethods] = (Dialect.Pb36, "TYPE methods/properties (SUB / FUNCTION / PROPERTY members)"),
+    [LanguageFeature.Generics] = (Dialect.Pb36, "compile-time generics ('TYPE Name OF T' / 'AS Name OF type')"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>
