@@ -57,6 +57,8 @@ public sealed class ProcedureSymbol(string name, bool isFunction) {
   /// mangled <c>Stack.Pop</c>); null for ordinary procedures, where the result is the name.
   /// </summary>
   public string? ResultName { get; set; }
+  /// <summary>pb36 coroutine: true when the body contains a YIELD, so this procedure is a generator whose call yields an enumerator (its body lowers to a MoveNext state machine).</summary>
+  public bool IsGenerator { get; set; }
   /// <summary>For a PROPERTY accessor, the name of the compiler-generated backing field the <c>FIELD</c> keyword refers to (THIS.&lt;backing&gt;); null otherwise.</summary>
   public string? BackingField { get; set; }
   /// <summary>For a PROPERTY SET accessor, the name of the incoming-value parameter the <c>VALUE</c> keyword aliases; null otherwise.</summary>

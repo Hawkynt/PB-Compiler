@@ -345,7 +345,7 @@ public sealed class Binder {
   }
 
   private ProcedureSymbol DefineProcedure(string name, bool isFunction, TypeSuffix suffix, TypeName? returnType, IReadOnlyList<Parameter> parameters, bool isStatic, IReadOnlyList<Statement> body, SourcePosition position, CallConvention convention = CallConvention.Basic) {
-    var proc = new ProcedureSymbol(name, isFunction) { IsStatic = isStatic, Body = body, Position = position, CallConv = convention };
+    var proc = new ProcedureSymbol(name, isFunction) { IsStatic = isStatic, Body = body, Position = position, CallConv = convention, IsGenerator = ContainsYield(body) };
     if (isFunction)
       proc.ReturnType = this.ResolveReturnType(name, suffix, returnType);
     foreach (var p in parameters)
@@ -507,6 +507,20 @@ public sealed class Binder {
     this.BindCallStatement(call, scope);
     this._model.DesugaredStatements[a] = call;
     return true;
+  }
+
+  /// <summary>True when a procedure body contains a YIELD (making it a generator); nested SUB/FUNCTION bodies are their own scope and do not count.</summary>
+  private static bool ContainsYield(IReadOnlyList<Statement> body) {
+    foreach (var s in body) {
+      if (s is YieldStmt)
+        return true;
+      if (s is SubDecl or FunctionDecl or DefFnDecl)
+        continue;
+      foreach (var block in ChildBlocks(s))
+        if (ContainsYield(block))
+          return true;
+    }
+    return false;
   }
 
   /// <summary>Two procedures share a signature when their parameter lists have equal length and element types.</summary>
