@@ -118,6 +118,10 @@ a separate axis (`--optimize`, on by default for `pb36`). Full detail in
   `TRY`/`CATCH`/`FINALLY` (the handler is saved in enumerator fields and re-armed per
   resume) — all flattened to a resumable state machine; only a `TRY` that yields while
   nested in another yielding `TRY` is not yet supported.
+- Exceptions: `TRY` / `CATCH` / `FINALLY` (FINALLY on every path), with **filtered
+  CATCH** — `CATCH <errnum>`, `CATCH WHEN <cond>`, `CATCH <errnum> WHEN <cond>` tried
+  in order (the WHEN guard short-circuits on the number), an unfiltered `CATCH` as the
+  catch-all, and re-raise to the outer handler (after FINALLY) when none match.
 - Memory/control flow: `WITH … END WITH`, `FOR EACH v IN source` (array, `[lo..hi]`
   range, or a generator), XMS/EMS array storage classes.
 

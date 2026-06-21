@@ -168,6 +168,15 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
   yield unwinds the frame); all flattened to a resumable state machine. (Only a `TRY`
   that yields while nested inside another yielding `TRY` is not yet supported.)
 
+**Structured exception handling**
+- **`TRY` / `CATCH` / `FINALLY`** — block-structured error handling lowered onto the
+  ON ERROR trap; `FINALLY` runs on every exit path.
+- **Filtered / typed `CATCH`** — `CATCH <errnum>`, `CATCH WHEN <cond>`, or
+  `CATCH <errnum> WHEN <cond>`; several filtered clauses are tried in order (the
+  `WHEN` guard is evaluated only when the number matches), an unfiltered `CATCH` is
+  the catch-all, and if no clause matches the error re-raises to the outer handler
+  *after* `FINALLY`. It's sugar over the handler switch (an `IF`/`ELSEIF` chain).
+
 **Memory and control flow**
 - **`WITH expr … END WITH`** — leading-dot member access on a subject.
 - **`FOR EACH v IN source`** — iterate an array's elements, a `[lo..hi]` range, or
