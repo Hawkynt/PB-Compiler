@@ -407,6 +407,13 @@ public sealed class Binder {
     foreach (var p in parameters)
       proc.Parameters.Add(this.BindParameter(p));
 
+    // pb36: a FUNCTION returning a UDT by value uses the struct-return convention - a hidden trailing
+    // BYREF result-buffer parameter the body writes through; the result variable aliases it
+    if (isFunction && proc.ReturnType is UdtType sretType) {
+      proc.Parameters.Add(new VariableSymbol(GeneratedPrefix + "sret", sretType, VariableStorage.Parameter) { ByVal = false });
+      proc.HasSretParam = true;
+    }
+
     if (this._model.Overloads.TryGetValue(name, out var set)) {
       var sameSig = set.FirstOrDefault(e => SameSignature(e, proc));
       if (sameSig is { IsExternal: false }) {
@@ -1495,7 +1502,11 @@ public sealed class Binder {
       proc.Variables[VariableKey(p.Name, TypeSuffix.None, p.Type is ArrayType)] = p;
 
     if (proc.IsFunction) { // the function name acts as the result variable
-      var resultVar = new VariableSymbol(proc.Name, proc.ReturnType!, VariableStorage.Local);
+      // a UDT-returning FUNCTION writes its result through the hidden BYREF buffer; the result name
+      // aliases that parameter (so F = ... / F.field = ... store into the caller's target). Otherwise
+      // the result is an ordinary local.
+      var resultVar = proc.HasSretParam ? proc.Parameters[^1]
+        : new VariableSymbol(proc.Name, proc.ReturnType!, VariableStorage.Local);
       proc.Variables.TryAdd(proc.Name, resultVar);
       if (proc.ResultName is { } resultAlias) // a lifted member assigns the simple name (Pop = ...)
         proc.Variables.TryAdd(resultAlias, resultVar);
@@ -1691,6 +1702,21 @@ public sealed class Binder {
           this.BindCallStatement(call, scope);
           this._model.DesugaredStatements[a] = call;
           break;
+        }
+        // pb36 struct return: q = F(args) where F returns a UDT by value passes q as the hidden result
+        // buffer, so F writes its result straight into q (no copy) - lowered to CALL F(args, q). Covers a
+        // generic function too (resolve the instance first - it carries the hidden buffer iff UDT-returning).
+        if (a.Value is CallOrIndexExpr sretCall) {
+          var returnsUdt = this._genericProcs.ContainsKey(sretCall.Name)
+            ? this.ResolveGenericCall(sretCall.Name, sretCall.Arguments, sretCall.Position, scope, sretCall.TypeArguments) is { HasSretParam: true }
+            : this._model.Overloads.TryGetValue(sretCall.Name, out var sretSet) && sretSet.Any(p => p is { IsFunction: true, HasSretParam: true });
+          if (returnsUdt) {
+            var callArgs = new List<Expression>(sretCall.Arguments) { a.Target };
+            var call = new CallStmt(a.Position, sretCall.Name, callArgs, UsedCallKeyword: false, sretCall.TypeArguments);
+            this.BindCallStatement(call, scope);
+            this._model.DesugaredStatements[a] = call;
+            break;
+          }
         }
         // pb36 coroutine: inside MoveNext, a write to a captured generator parameter/local -> THIS.$name
         if (a.Target is NameExpr capTarget && scope.Proc?.CoroutineCaptures is { } caps && caps.TryGetValue(capTarget.Name, out var capWrite)) {
@@ -3354,11 +3380,17 @@ public sealed class Binder {
         this.Error(call.Position, $"SUB {call.Name} used as a function");
         return PbType.Integer;
       }
+      // a UDT-returning FUNCTION returns through a hidden buffer (struct return); its call is valid only
+      // as the right-hand side of an assignment (q = F(args)), which the AssignStmt path rewrites
+      if (proc.HasSretParam) {
+        this.Error(call.Position, $"FUNCTION {call.Name} returns a TYPE by value; assign its result to a variable (q = {call.Name}(...))");
+        return proc.ReturnType ?? PbType.Integer;
+      }
       this._model.CallBindings[call] = proc;
       if (call.Arguments.Any(a => a is NamedArgExpr))
         this.ReorderNamedArguments(call, proc, call.Arguments, call.Position);
-      else if (call.Arguments.Count < proc.RequiredParameters || call.Arguments.Count > proc.Parameters.Count)
-        this.Error(call.Position, $"FUNCTION {call.Name} expects {proc.Parameters.Count} argument(s), got {call.Arguments.Count}");
+      else if (call.Arguments.Count < proc.RequiredParameters || call.Arguments.Count > proc.VisibleParameterCount)
+        this.Error(call.Position, $"FUNCTION {call.Name} expects {proc.VisibleParameterCount} argument(s), got {call.Arguments.Count}");
       return proc.ReturnType ?? PbType.Integer;
     }
 

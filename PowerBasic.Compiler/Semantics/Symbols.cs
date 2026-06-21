@@ -63,6 +63,8 @@ public sealed class ProcedureSymbol(string name, bool isFunction) {
   public string? BackingField { get; set; }
   /// <summary>For a PROPERTY SET accessor, the name of the incoming-value parameter the <c>VALUE</c> keyword aliases; null otherwise.</summary>
   public string? ValueParamName { get; set; }
+  /// <summary>pb36: a FUNCTION returning a UDT by value carries a hidden trailing BYREF result-buffer parameter (struct return). The result variable aliases it, and a call site passes the assignment target as that buffer; this hidden parameter is excluded from the user-visible argument count.</summary>
+  public bool HasSretParam { get; set; }
   /// <summary>For a coroutine MoveNext: generator parameter/local names mapped to the enumerator backing field (THIS.$name) they read/write, so the state preserved across resumes lives in the enumerator.</summary>
   public Dictionary<string, string>? CoroutineCaptures { get; set; }
   public List<VariableSymbol> Parameters { get; } = [];
@@ -110,8 +112,10 @@ public sealed class ProcedureSymbol(string name, bool isFunction) {
   public SourcePosition Position { get; set; }
 
   public bool IsExternal => this.Body == null;
-  /// <summary>Number of parameters a call site must provide (CDECL bracket parameters may be omitted).</summary>
-  public int RequiredParameters => this.Parameters.Count(p => !p.Optional);
+  /// <summary>User-visible parameter count (excludes the hidden struct-return buffer).</summary>
+  public int VisibleParameterCount => this.Parameters.Count - (this.HasSretParam ? 1 : 0);
+  /// <summary>Number of parameters a call site must provide (CDECL bracket parameters may be omitted; the hidden struct-return buffer is excluded).</summary>
+  public int RequiredParameters => this.Parameters.Count(p => !p.Optional) - (this.HasSretParam ? 1 : 0);
   public override string ToString() => $"{(this.IsFunction ? "FUNCTION" : "SUB")} {this.Name}({this.Parameters.Count})";
 }
 

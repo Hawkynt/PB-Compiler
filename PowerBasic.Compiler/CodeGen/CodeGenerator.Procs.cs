@@ -231,7 +231,9 @@ public sealed partial class CodeGenerator {
         asm.Call(this._rt.StrFree);
       }
 
-    if (resultVar != null)
+    if (proc.HasSretParam) {
+      // struct return: the result is already written through the hidden BYREF buffer - nothing to load
+    } else if (resultVar != null)
       this.EmitLoadPlace(new(Mem.At(Reg.BP, resultVar.Offset), false), resultVar.Type, null!);
     else if (proc.IsFunction)
       this.Errors.Add(new(proc.Position, $"FUNCTION {proc.Name} has no result variable"));

@@ -154,6 +154,29 @@ public sealed class TypeMemberBinderTests {
   }
 
   [Test]
+  public void Bind_GivenUdtReturningFunction_WhenBound_ThenStructReturnViaHiddenBufferAndAssignDesugarsToCall() {
+    var model = Bind(
+      "TYPE P\n  x AS LONG\nEND TYPE\nFUNCTION MakeP(BYVAL a AS LONG) AS P\n  MakeP.x = a\nEND FUNCTION\n" +
+      "DIM q AS P\nq = MakeP(5)\n");
+    var proc = model.Procedures["MakeP"];
+    Assert.Multiple(() => {
+      Assert.That(proc.HasSretParam, Is.True, "a UDT-returning FUNCTION carries a hidden result buffer");
+      Assert.That(proc.VisibleParameterCount, Is.EqualTo(1), "the buffer is excluded from the visible arity");
+      var assign = model.DesugaredStatements.Keys.OfType<AssignStmt>().Single(a => a.Value is CallOrIndexExpr { Name: "MakeP" });
+      var call = (CallStmt)model.DesugaredStatements[assign];
+      Assert.That(call.Arguments, Has.Count.EqualTo(2), "q = MakeP(5) -> MakeP(5, q): the target becomes the result buffer");
+    });
+  }
+
+  [Test]
+  public void Bind_GivenUdtReturningFunctionInExpression_WhenBound_ThenRejected() {
+    var unit = Parser.Parse(Lexer.Tokenize(
+      "TYPE P\n  x AS LONG\nEND TYPE\nFUNCTION MakeP() AS P\n  MakeP.x = 1\nEND FUNCTION\nPRINT MakeP().x\n", "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors.Any(e => e.Message.Contains("returns a TYPE by value")), Is.True);
+  }
+
+  [Test]
   public void Bind_GivenReadonlyTypeFieldWriteInsideConstructor_WhenBound_ThenAllowed() {
     var model = Bind(
       "TYPE Point READONLY\n  x AS LONG\n  SUB Point(BYVAL px AS LONG)\n    THIS.x = px\n  END SUB\nEND TYPE\n" +
