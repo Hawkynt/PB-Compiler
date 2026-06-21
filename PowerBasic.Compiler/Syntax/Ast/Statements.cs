@@ -75,7 +75,7 @@ public enum TypeMemberKind { Sub, Function, PropertyGet, PropertySet }
 /// resolved at compile time from the static type - no inheritance, no virtual
 /// dispatch. <see cref="ReturnType"/> applies to FUNCTION / PROPERTY GET only.
 /// </summary>
-public sealed record TypeMember(SourcePosition Position, TypeMemberKind Kind, string Name, TypeSuffix Suffix, IReadOnlyList<Parameter> Parameters, TypeName? ReturnType, IReadOnlyList<Statement> Body);
+public sealed record TypeMember(SourcePosition Position, TypeMemberKind Kind, string Name, TypeSuffix Suffix, IReadOnlyList<Parameter> Parameters, TypeName? ReturnType, IReadOnlyList<Statement> Body, bool IsAuto = false);
 
 /// <summary>TYPE ... END TYPE. <see cref="Members"/> is empty unless the block declares methods/properties (pb36).</summary>
 public sealed record TypeDecl(SourcePosition Position, string Name, IReadOnlyList<TypeField> Fields) : Statement(Position) {

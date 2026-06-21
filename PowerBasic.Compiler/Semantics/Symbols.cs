@@ -57,6 +57,10 @@ public sealed class ProcedureSymbol(string name, bool isFunction) {
   /// mangled <c>Stack.Pop</c>); null for ordinary procedures, where the result is the name.
   /// </summary>
   public string? ResultName { get; set; }
+  /// <summary>For a PROPERTY accessor, the name of the compiler-generated backing field the <c>FIELD</c> keyword refers to (THIS.&lt;backing&gt;); null otherwise.</summary>
+  public string? BackingField { get; set; }
+  /// <summary>For a PROPERTY SET accessor, the name of the incoming-value parameter the <c>VALUE</c> keyword aliases; null otherwise.</summary>
+  public string? ValueParamName { get; set; }
   public List<VariableSymbol> Parameters { get; } = [];
   /// <summary>Locals & statics by name (case-insensitive), including the implicit function-result variable.</summary>
   public Dictionary<string, VariableSymbol> Variables { get; } = new(StringComparer.OrdinalIgnoreCase);

@@ -369,12 +369,35 @@ public sealed partial class Parser {
     if (!isGet)
       this.ExpectKeyword("SET");
     var propName = this.Expect(TokenKind.Identifier, "property name");
+    var kind = isGet ? TypeMemberKind.PropertyGet : TypeMemberKind.PropertySet;
     var propParams = this.Current.Kind == TokenKind.LParen ? this.ParseParameterList() : [];
-    var propReturn = isGet && this.TryMatchKeyword("AS") ? this.ParseTypeName() : null;
+    var propReturn = this.TryMatchKeyword("AS") ? this.ParseTypeName() : null;   // GET: result type; SET: value type
+
+    // expression body: PROPERTY GET P() AS T => expr  /  PROPERTY SET P() => FIELD = expr
+    if (this.Match(TokenKind.FatArrow)) {
+      IReadOnlyList<Statement> arrowBody = isGet
+        ? [new AssignStmt(pos, new NameExpr(propName.Position, propName.Text, propName.Suffix), this.ParseExpression())]
+        : [this.ParseArrowAssignment()];
+      return new TypeMember(pos, kind, propName.Text, propName.Suffix, propParams, propReturn, arrowBody);
+    }
+
+    // auto-implemented property: no body block (the compiler synthesizes a backing field)
+    this.SkipSeparators();
+    if (this.IsKeyword(0, "SUB") || this.IsKeyword(0, "FUNCTION") || this.IsKeyword(0, "PROPERTY")
+        || (this.IsKeyword(0, "END") && this.IsKeyword(1, "TYPE")))
+      return new TypeMember(pos, kind, propName.Text, propName.Suffix, propParams, propReturn, [], IsAuto: true);
+
     var propBody = this.ParseBody("END PROPERTY");
     this.Advance();
     this.Advance();
-    return new TypeMember(pos, isGet ? TypeMemberKind.PropertyGet : TypeMemberKind.PropertySet, propName.Text, propName.Suffix, propParams, propReturn, propBody);
+    return new TypeMember(pos, kind, propName.Text, propName.Suffix, propParams, propReturn, propBody);
+  }
+
+  /// <summary>Parses the <c>lvalue = expr</c> after a PROPERTY SET <c>=&gt;</c> arrow into one assignment.</summary>
+  private Statement ParseArrowAssignment() {
+    var target = this.ParseLValue();
+    var eq = this.Expect(TokenKind.Equals, "'='");
+    return new AssignStmt(eq.Position, target, this.ParseExpression());
   }
 
   private TypeField ParseTypeField() {

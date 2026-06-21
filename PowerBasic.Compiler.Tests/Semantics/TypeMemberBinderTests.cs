@@ -98,4 +98,32 @@ public sealed class TypeMemberBinderTests {
       Assert.That(call.Arguments, Has.Count.EqualTo(2), "receiver and the assigned value");
     });
   }
+
+  [Test]
+  public void Bind_GivenAutoProperty_WhenBound_ThenSynthesizesBackingFieldAndAccessors() {
+    var model = Bind(
+      "TYPE P\n  PROPERTY GET X() AS INTEGER\n  PROPERTY SET X(BYVAL v AS INTEGER)\nEND TYPE\nDIM p AS P\n");
+    var udt = model.Udts["P"];
+    Assert.Multiple(() => {
+      Assert.That(udt.FindField("$X"), Is.Not.Null, "an auto property has a hidden backing field");
+      Assert.That(udt.FindField("$X")!.Type, Is.EqualTo(PbType.Integer));
+      Assert.That(udt.FindField("X"), Is.Null, "the property name is not itself a field");
+      Assert.That(model.Procedures.ContainsKey("P.get_X") && model.Procedures.ContainsKey("P.set_X"), Is.True);
+    });
+  }
+
+  [Test]
+  public void Bind_GivenFieldAndValueKeywords_WhenBound_ThenResolveToBackingFieldAndValueParameter() {
+    // PROPERTY SET Size() => FIELD = 2 * VALUE : FIELD is the backing field, VALUE the injected value param
+    var model = Bind(
+      "TYPE W\n  PROPERTY GET Size() AS INTEGER\n  PROPERTY SET Size() => FIELD = 2 * VALUE\nEND TYPE\nDIM w AS W\n");
+    Assert.Multiple(() => {
+      Assert.That(model.Udts["W"].FindField("$Size"), Is.Not.Null);
+      var setter = model.Procedures["W.set_Size"];
+      Assert.That(setter.Parameters.Select(p => p.Name), Does.Contain("VALUE"), "a value parameter is injected for VALUE");
+      // FIELD on the assignment target desugared the body's store to the backing field
+      Assert.That(model.DesugaredStatements.Values.OfType<AssignStmt>()
+        .Any(s => s.Target is MemberExpr { Member: "$Size" }), Is.True, "FIELD = ... writes the backing field");
+    });
+  }
 }

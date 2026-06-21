@@ -160,10 +160,15 @@ public sealed class Binder {
           this.DefineEnum(e);
           break;
 
-        case TypeDecl t:
-          this.DefineUdt(t.Name, t.Fields, isUnion: false, t.Position);
-          this.DefineTypeMembers(t);
+        case TypeDecl t: {
+          // pb36: each property gets a hidden backing field ($Prop) so FIELD / auto accessors have storage
+          var backing = PropertyBackingFields(t);
+          var fields = backing.Count == 0 ? t.Fields
+            : [.. t.Fields, .. backing.Select(b => new TypeField(t.Position, b.Field, b.Type, null))];
+          this.DefineUdt(t.Name, fields, isUnion: false, t.Position);
+          this.DefineTypeMembers(t, backing.ToDictionary(b => b.Prop, b => b, StringComparer.OrdinalIgnoreCase));
           break;
+        }
 
         case UnionDecl u:
           this.DefineUdt(u.Name, u.Fields, isUnion: true, u.Position);
@@ -369,17 +374,69 @@ public sealed class Binder {
   /// (which a user identifier cannot), so member procs never collide with user names
   /// and call resolution just rebuilds the name from the receiver's static type.
   /// </summary>
-  private void DefineTypeMembers(TypeDecl t) {
+  private void DefineTypeMembers(TypeDecl t, Dictionary<string, (string Prop, string Field, TypeName Type)> backing) {
     foreach (var m in t.Members) {
-      var thisType = new TypeName(m.Position, BuiltinType.None, UserTypeName: t.Name);
-      var thisParam = new Parameter(m.Position, "THIS", TypeSuffix.None, thisType, ByVal: false, Seg: false, IsArray: false);
+      var thisParam = new Parameter(m.Position, "THIS", TypeSuffix.None, new TypeName(m.Position, BuiltinType.None, UserTypeName: t.Name), ByVal: false, Seg: false, IsArray: false);
       var parameters = new List<Parameter>(m.Parameters.Count + 1) { thisParam };
-      parameters.AddRange(m.Parameters);
       var isFunction = m.Kind is TypeMemberKind.Function or TypeMemberKind.PropertyGet;
-      var proc = this.DefineProcedure(MemberProcName(t.Name, m), isFunction, m.Suffix, m.ReturnType, parameters, isStatic: false, m.Body, m.Position);
+      var isProperty = m.Kind is TypeMemberKind.PropertyGet or TypeMemberKind.PropertySet;
+      backing.TryGetValue(m.Name, out var bk);   // bk is default (Field == null) when there is no backing field
+      var hasBacking = isProperty && bk.Field != null;
+      var body = m.Body;
+      string? valueParam = null;
+
+      if (m.Kind == TypeMemberKind.PropertySet) {
+        // the incoming value: the explicit first parameter, or an injected VALUE of the property type
+        if (m.Parameters.Count > 0) {
+          parameters.AddRange(m.Parameters);
+          valueParam = m.Parameters[0].Name;
+        } else {
+          valueParam = "VALUE";
+          parameters.Add(new Parameter(m.Position, "VALUE", TypeSuffix.None, hasBacking ? bk.Type : null, ByVal: true, Seg: false, IsArray: false));
+        }
+        if (m.IsAuto && hasBacking)
+          body = [new AssignStmt(m.Position, ThisField(m.Position, bk.Field), new NameExpr(m.Position, valueParam, TypeSuffix.None))];
+      } else {
+        parameters.AddRange(m.Parameters);
+        if (m.Kind == TypeMemberKind.PropertyGet && m.IsAuto && hasBacking)
+          body = [new AssignStmt(m.Position, new NameExpr(m.Position, m.Name, m.Suffix), ThisField(m.Position, bk.Field))];
+      }
+
+      var returnType = m.Kind == TypeMemberKind.PropertySet ? null : m.ReturnType;
+      var proc = this.DefineProcedure(MemberProcName(t.Name, m), isFunction, m.Suffix, returnType, parameters, isStatic: false, body, m.Position);
       if (isFunction)
         proc.ResultName = m.Name;   // the body assigns the simple member name as its result
+      if (hasBacking)
+        proc.BackingField = bk.Field;   // the FIELD keyword resolves to THIS.<backing> in this accessor
+      proc.ValueParamName = valueParam; // the VALUE keyword aliases the set value parameter
     }
+  }
+
+  private static MemberExpr ThisField(SourcePosition pos, string field)
+    => new(pos, new NameExpr(pos, "THIS", TypeSuffix.None), field, TypeSuffix.None);
+
+  /// <summary>The hidden backing field synthesized for each property: name (<c>$Prop</c>) and type (GET result / SET value type).</summary>
+  private static List<(string Prop, string Field, TypeName Type)> PropertyBackingFields(TypeDecl t) {
+    var result = new List<(string, string, TypeName)>();
+    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    foreach (var m in t.Members) {
+      if (m.Kind is not (TypeMemberKind.PropertyGet or TypeMemberKind.PropertySet) || !seen.Add(m.Name))
+        continue;
+      if (PropertyType(t, m.Name) is { } type)
+        result.Add((m.Name, "$" + m.Name, type));
+    }
+    return result;
+  }
+
+  /// <summary>The declared type of a property: a GET result type, a SET value type (AS), or a SET first parameter type.</summary>
+  private static TypeName? PropertyType(TypeDecl t, string prop) {
+    foreach (var m in t.Members.Where(m => m.Name.Equals(prop, StringComparison.OrdinalIgnoreCase))) {
+      if (m.ReturnType is { } rt)
+        return rt;
+      if (m.Kind == TypeMemberKind.PropertySet && m.Parameters is [{ Type: { } pt }, ..])
+        return pt;
+    }
+    return null;
   }
 
   /// <summary>The lifted-procedure name of a TYPE member: <c>Type.M</c>, <c>Type.get_P</c>, <c>Type.set_P</c>.</summary>
@@ -752,6 +809,10 @@ public sealed class Binder {
           proc.Variables.TryAdd(resultAlias, resultVar);
       }
 
+      if (proc.ValueParamName is { } valueName // a PROPERTY SET: VALUE aliases the incoming value parameter
+          && proc.Variables.TryGetValue(VariableKey(valueName, TypeSuffix.None, false), out var valueVar))
+        proc.Variables.TryAdd(VariableKey("VALUE", TypeSuffix.None, false), valueVar);
+
       this.CollectLabels(proc.Body!, scope);
       foreach (var statement in proc.Body!)
         this.BindStatement(statement, scope);
@@ -899,6 +960,14 @@ public sealed class Binder {
         break;
 
       case AssignStmt a: {
+        // pb36 property accessor: FIELD = expr writes the backing field (THIS.$Prop = expr)
+        if (a.Target is NameExpr { Suffix: TypeSuffix.None } fieldTarget && scope.Proc?.BackingField is { } backingWrite
+            && fieldTarget.Name.Equals("FIELD", StringComparison.OrdinalIgnoreCase)) {
+          var lowered = new AssignStmt(a.Position, ThisField(a.Position, backingWrite), a.Value);
+          this.BindStatement(lowered, scope);
+          this._model.DesugaredStatements[a] = lowered;
+          break;
+        }
         if (a.Target is MemberExpr propTarget && this.TryBindPropertySet(a, propTarget, scope))
           break;
         var targetType = this.BindAssignTarget(a.Target, scope);
@@ -1921,6 +1990,14 @@ public sealed class Binder {
       }
 
       case NameExpr n: {
+        // pb36 property accessor: FIELD reads the compiler-generated backing field (THIS.$Prop)
+        if (n.Suffix == TypeSuffix.None && scope.Proc?.BackingField is { } backingRead && n.Name.Equals("FIELD", StringComparison.OrdinalIgnoreCase)) {
+          var access = ThisField(n.Position, backingRead);
+          var fieldType = this.BindExpression(access, scope);
+          this._model.Desugared[n] = access;
+          return fieldType;
+        }
+
         var symbol = this.ResolveVariable(n.Name, n.Suffix, scope, create: false, n.Position);
 
         // a bare name with no matching variable may be a PB 3.6 ENUM member (its own
