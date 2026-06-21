@@ -54,35 +54,87 @@ constructs the name from the receiver's static type + member and looks it up.
 Member bodies reuse the existing BYREF-UDT-parameter machinery: `THIS.field`
 is an ordinary `MemberExpr` field access through the BYREF param.
 
-### Implementation status / plan
+### Auto-implemented & anonymous properties
 
-- **Phase 1a — DONE** (commit a2ac826): front-end. `TypeMember` AST + `TypeDecl.Members`,
-  `LanguageFeature.TypeMethods` (pb36-gated), parser support inside the TYPE block.
-  Binder/codegen ignore `Members`, so it is inert (no battery declares members).
-- **Phase 1b — next**: bind & lower.
-  - In `ScanModule`'s `TypeDecl` case, after `DefineUdt`, synthesize each member via
-    `DefineProcedure(MemberProcName(...), isFunction, suffix, returnType, [THIS]+params, …, body)`.
-    `THIS` = `Parameter("THIS", TypeName(None, UserTypeName: t.Name), ByVal:false)`.
-  - **Resolve member calls**: `o.M(args)` parses as `IndexExpr(MemberExpr(o,"M"), args)`
-    (rvalue) and, at statement level, as a dotted bare-call. When `o`'s static type is a
-    UDT and a proc `Type.M` exists (vs. a field `M`), rebind to a call with `o` passed
-    BYREF as arg 0. `o.P` rvalue → `Type.get_P(o)`; `o.P = x` → `Type.set_P(o, x)`.
-  - **Subtlety A — FUNCTION/PROPERTY GET result name**: the body assigns `Pop = …` /
-    `Size = …` (the member's simple name) but the proc is `Stack.Pop` / `Stack.get_Size`.
-    The function-result binding (which matches the assignment target to the proc name)
-    must accept the member's *simple* name as the result alias. SUB / PROPERTY SET have
-    no result and are unaffected — build those first.
-  - **Subtlety B — statement member-call**: `ParseBareCall`/`CallStmt(Name,…)` carry a
-    string name, not a target expression, so a dotted `o.Push(v)` statement needs either a
-    new statement shape (a member-call statement) or binder handling of the dotted name.
-  - **Codegen**: passing `THIS` BYREF is the address of `o` — reuse `EmitArgumentPush`'s
-    BYREF path (VARPTR of the lvalue). No new backend.
-- **Phase 1c**: properties as rvalue/lvalue, indexed members, `THIS` inside expressions.
+A `PROPERTY GET`/`SET` with **no body** is auto-implemented over a hidden backing
+field `$Prop`. Inside an explicit body, **`FIELD`** names that backing field and
+**`VALUE`** names the setter's incoming value; `=>` gives an expression body:
 
-Verification: pb36-only feature with **no differential oracle** (PBC 3.50 has no
-TYPE methods), so verify by *execution* (compile + run in DOSBox, compare to a hand
--computed expected) plus unit tests; the full differential harness must stay green
-(the feature is inert for every existing battery).
+```basic
+TYPE Rect
+  PROPERTY Width  AS LONG                       ' anonymous: auto getter + setter + field
+  PROPERTY Height AS LONG
+  PROPERTY GET Area AS LONG => THIS.Width * THIS.Height   ' computed, read-only
+  PROPERTY SET Size() => FIELD = 2 * VALUE               ' FIELD = backing $Size, VALUE = incoming
+END TYPE
+```
+
+`PROPERTY Name AS Type` with no `GET`/`SET` (anonymous form) expands to an auto
+getter **and** an auto setter over one `$Name` field.
+
+**Trivial accessors inline to the field.** A trivial auto-accessor emits *no
+procedure at all*: `o.Prop` (read) binds straight to `o.$Prop`, and `o.Prop = x`
+binds straight to `o.$Prop = x`. So an anonymous property is exactly a field
+access — no call overhead — while a body-carrying accessor (computed `Area`,
+scaling `Size`) still lowers to a `get_`/`set_` call.
+
+### Constructors
+
+A member `SUB` **named like the TYPE** is its constructor; it has `THIS` access and
+runs when an instance is built with `p = TypeName(args)`:
+
+```basic
+TYPE Point
+  x AS LONG
+  y AS LONG
+  SUB Point(BYVAL px AS LONG, BYVAL py AS LONG)   ' constructor (same name as the TYPE)
+    THIS.x = px
+    THIS.y = py
+  END SUB
+END TYPE
+
+DIM p AS Point
+p = Point(3, 4)            ' -> Point.Point(p, 3, 4) with p as the BYREF THIS
+```
+
+`p = Type(args)` desugars to a call of the lifted `Type.Type(THIS, args…)` with the
+assignment target as the BYREF receiver.
+
+### `READONLY` types
+
+`TYPE Name READONLY … END TYPE` makes every field **write-once**: a field store is
+allowed only inside that type's own constructor and rejected everywhere else at
+compile time. This composes with anonymous properties — their setter routes through
+the same field-store path, so `obj.Count = x` outside the constructor is a compile
+error for a readonly type, while the constructor may set it.
+
+```basic
+TYPE Vec2 READONLY
+  x AS LONG
+  y AS LONG
+  SUB Vec2(BYVAL ax AS LONG, BYVAL ay AS LONG)
+    THIS.x = ax : THIS.y = ay     ' OK: inside the constructor
+  END SUB
+END TYPE
+DIM v AS Vec2 : v = Vec2(1, 2)
+v.x = 9                            ' compile error: field 'x' of READONLY TYPE Vec2 …
+```
+
+### Implementation status
+
+**Implemented** (`PowerBasic.Compiler/Semantics/Binder.cs`): methods, properties
+(explicit, auto, anonymous, `=>` / `FIELD` / `VALUE`), trivial-accessor inlining,
+constructors, and `READONLY` enforcement. Members lift in `DefineTypeMembers`; calls
+resolve in the `MemberExpr` / `IndexExpr` / `MemberCallStmt` binding paths via
+`Desugared` / `DesugaredStatements`; the FUNCTION/PROPERTY-GET result alias is the
+member's simple name (`proc.ResultName`); `THIS` BYREF reuses the existing
+BYREF-UDT-parameter backend (no new codegen).
+
+Verification: pb36-only surface with **no differential oracle** (PBC 3.50 has no
+TYPE methods), so each feature is verified by *execution* (compile + run in DOSBox,
+compare to a hand-computed expected) plus unit tests
+(`TypeMemberBinderTests`, `CoroutineBinderTests`); the full differential harness
+stays byte-identical (the feature is inert for every existing battery).
 
 ## 2. `YIELD` → state machine → enumerator
 
@@ -124,9 +176,17 @@ and members (lifted exactly as in §1):
 The generator call `G(args)` lowers to: allocate a `G` instance, store `args` into its
 parameter fields, set `__state = 0`, return it.
 
-**Scope of the first MVP**: yields at the top level and inside a single `FOR`/`WHILE`/`DO`
-loop (the state machine can resume into one loop level). Nested/complex control flow around
-a `YIELD`, or `YIELD` after `GOTO`, are rejected with a clear diagnostic and widened later.
+**Supported `YIELD` positions** (all flattened to the resumable state machine, nesting
+freely): top level, inside `FOR` / `WHILE`-`DO`-`LOOP` / `IF` / `SELECT CASE`, and inside
+a `FOR EACH` over *another* generator — where the inner enumerator persists across the
+outer yields as a `$fe<n>` UDT field of the outer enumerator, and the `FOR EACH` loop
+variable persists as its own captured field. Parameters and locals (suffix- or
+`AS`-typed) are captured as enumerator fields and survive suspension; `INCR`/`DECR` of a
+captured variable persists too. A `SELECT CASE` that yields requires a side-effect-free
+subject (it is compared once per arm). The one remaining unsupported position is `YIELD`
+inside `TRY`/`CATCH`/`FINALLY` — rejected with a clear diagnostic, because the handler is
+armed on the stack and a yield unwinds the frame (it needs the handler state persisted in
+enumerator fields and re-armed on resume; a codegen change, tracked for later).
 
 ## Generated-name safety
 

@@ -134,9 +134,43 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
   procedure-pointer type, usable as a variable type or a parameter type for
   statically-checked higher-order procedures.
 
+**Object model (compile-time, no vtables)**
+- **TYPE methods and properties** — declare `SUB` / `FUNCTION` / `PROPERTY GET` /
+  `PROPERTY SET` *inside* the `TYPE` block; the receiver is the keyword **`THIS`**.
+  Each lifts to a plain procedure with the instance passed BYREF, fully resolved
+  at compile time (no inheritance, no late binding). `o.Method(a)`, `o.Prop`, and
+  `o.Prop = x` desugar to those calls.
+- **Auto-implemented properties** — a `PROPERTY GET`/`SET` with no body gets a
+  hidden backing field; inside a body, **`FIELD`** is that backing field and
+  **`VALUE`** is the setter's incoming value. Expression bodies use `=>`:
+  `PROPERTY GET Area AS LONG => THIS.W * THIS.H`, `PROPERTY SET Size() => FIELD = 2 * VALUE`.
+- **Anonymous full properties** — `PROPERTY Count AS LONG` (no `GET`/`SET`)
+  synthesizes *both* a trivial getter and setter over one backing field.
+- **Trivial accessors inline to a field** — a trivial auto-accessor compiles to a
+  direct field access (no call, no accessor procedure emitted), so `o.Count` is
+  exactly as cheap as touching a field.
+- **Constructors** — a `SUB` named like the `TYPE` is its constructor (with `THIS`
+  access); `p = Point(3, 4)` runs it with the target as the BYREF receiver.
+- **`READONLY` types** — `TYPE Point READONLY … END TYPE` makes every field
+  write-once: assignable only inside the type's own constructor, rejected
+  elsewhere at compile time.
+
+**Generators (`YIELD` coroutines)**
+- **First-class generators** — any `SUB`/`FUNCTION` whose body contains `YIELD` is
+  automatically a generator; calling it returns a synthesized **enumerator** value
+  (a UDT named after it) you can store in a variable and drive with
+  `.MoveNext` / `.Current` / `.Reset`, or consume with `FOR EACH`. Parameters and
+  locals persist across suspensions as enumerator fields.
+- **`YIELD` anywhere in structured control flow** — inside `FOR`, `WHILE`/`DO`
+  loops, `IF`, `SELECT CASE`, and a `FOR EACH` over *another* generator (the inner
+  iterator's state is preserved across the outer yields); all flattened to a
+  resumable state machine. (`YIELD` inside `TRY`/`CATCH`/`FINALLY` is the one
+  remaining case, rejected with a clear diagnostic.)
+
 **Memory and control flow**
 - **`WITH expr … END WITH`** — leading-dot member access on a subject.
-- **`FOR EACH v IN source`** — iterate an array's elements or a `[lo..hi]` range.
+- **`FOR EACH v IN source`** — iterate an array's elements, a `[lo..hi]` range, or
+  a generator's yielded sequence.
 - **XMS / EMS arrays** — `DIM XMS a(...)` / `DIM EMS a(...)` storage classes
   alongside `VIRTUAL`.
 

@@ -85,6 +85,41 @@ unsigned types, no QUAD, no pointers, no UNION, no 80386 codegen.
 - CONSIN / CONSOUT (redirection status, −1/0)
 - SETEOF #n (truncate at current position)
 
+## PB 3.6 (envisioned superset)
+
+`pb36` is a strict superset of `pb35`: every `pb35` program compiles unchanged
+with byte-identical observable behavior, plus opt-in modern syntax (each construct
+is rejected below 3.6 with a `requires PowerBASIC 3.6` diagnostic). Optimization is
+a separate axis (`--optimize`, on by default for `pb36`). Full detail in
+[PB36.md](PB36.md); the object model and generators in
+[PB36-TYPES.md](PB36-TYPES.md). Language highlights beyond 3.5:
+
+- Declarations: `DIM x = v` / `DIM x AS T = v`, array-initializer literals
+  (`{…}`, `lo..hi`, `..arr`), object initializers (`NEW Udt { .f = v }`), `ENUM` blocks.
+- Operators: compound assignment (`+= -= *= /= \= ^= &=`), short-circuit `IF()`
+  ternary, `ANDALSO`/`ORELSE`, shift/rotate/bitwise (`<< >> <<< >>> <<> <>> |`),
+  scaled pointer arithmetic (`+*`/`-*`), from-end index `arr(^1)`.
+- Procedures: expression-bodied `FUNCTION F() AS T = expr`, overloading, default &
+  named parameters, nested local SUB/FUNCTION, lambdas/closures (`(a,b) => a+b`),
+  typed procedure pointers / named delegate types.
+- **Object model** (compile-time, no inheritance/vtables): `SUB`/`FUNCTION`/`PROPERTY
+  GET`/`PROPERTY SET` members declared inside the `TYPE` block with the **`THIS`**
+  receiver, lifted to procedures that take the instance BYREF. Auto-implemented
+  properties (no body → hidden backing field; `FIELD`/`VALUE` keywords; `=>`
+  expression bodies). **Anonymous full properties** `PROPERTY Count AS LONG` →
+  trivial getter + setter over one field. Trivial auto-accessors **inline to a
+  direct field access** (no call). **Constructors**: a `SUB` named like the `TYPE`,
+  invoked `p = Point(3, 4)`. **`READONLY` types** (`TYPE Point READONLY …`): fields
+  settable only inside the constructor.
+- **Generators**: any `SUB`/`FUNCTION` with `YIELD` becomes a first-class generator
+  whose call returns an enumerator UDT (`.MoveNext`/`.Current`/`.Reset`, or `FOR
+  EACH`); parameters and locals persist across suspensions. `YIELD` is supported in
+  `FOR`/`WHILE`/`DO`/`IF`/`SELECT CASE` and in a `FOR EACH` over another generator
+  (flattened to a resumable state machine); `YIELD` inside `TRY`/`CATCH`/`FINALLY`
+  is not yet supported.
+- Memory/control flow: `WITH … END WITH`, `FOR EACH v IN source` (array, `[lo..hi]`
+  range, or a generator), XMS/EMS array storage classes.
+
 ## Data types (PB 3.5 full set)
 
 | Type | Keyword | Suffix | Size | Notes |
