@@ -415,6 +415,15 @@ public sealed class Binder {
   private static MemberExpr ThisField(SourcePosition pos, string field)
     => new(pos, new NameExpr(pos, "THIS", TypeSuffix.None), field, TypeSuffix.None);
 
+  /// <summary>
+  /// Prefix for every compiler-synthesized name that shares the user's variable / field
+  /// namespace (property backing fields, coroutine state-machine fields, ...). A user
+  /// identifier must START with an ASCII letter (see <c>Lexer.IsIdentifierStart</c>), so a
+  /// leading <c>$</c> can never be typed in source - these names cannot clash with user code.
+  /// Procedure names use a different guard (an embedded '.', also non-typeable).
+  /// </summary>
+  internal const string GeneratedPrefix = "$";
+
   /// <summary>The hidden backing field synthesized for each property: name (<c>$Prop</c>) and type (GET result / SET value type).</summary>
   private static List<(string Prop, string Field, TypeName Type)> PropertyBackingFields(TypeDecl t) {
     var result = new List<(string, string, TypeName)>();
@@ -423,7 +432,7 @@ public sealed class Binder {
       if (m.Kind is not (TypeMemberKind.PropertyGet or TypeMemberKind.PropertySet) || !seen.Add(m.Name))
         continue;
       if (PropertyType(t, m.Name) is { } type)
-        result.Add((m.Name, "$" + m.Name, type));
+        result.Add((m.Name, GeneratedPrefix + m.Name, type));
     }
     return result;
   }

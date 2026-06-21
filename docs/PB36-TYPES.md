@@ -128,6 +128,26 @@ parameter fields, set `__state = 0`, return it.
 loop (the state machine can resume into one loop level). Nested/complex control flow around
 a `YIELD`, or `YIELD` after `GOTO`, are rejected with a clear diagnostic and widened later.
 
+## Generated-name safety
+
+Every compiler-synthesized name that shares the user's namespace is prefixed so it can
+never collide with source identifiers. A user identifier must START with an ASCII letter
+(`Lexer.IsIdentifierStart`), so:
+- variable/field-namespace names (property backing fields `$Prop`, coroutine state fields
+  `$state`/`$current`, ...) use the leading `$` prefix (`Binder.GeneratedPrefix`) — untypeable;
+- procedure-namespace names (`Type.Method`, `Type.get_P`) embed a `.` — also untypeable as one
+  identifier.
+
+User-facing keywords inside member/property bodies (`THIS`, `VALUE`, `FIELD`) are deliberately
+ordinary letter identifiers — they are written by the programmer, not hidden sugar.
+
+## Future work: decompiling weaved code
+
+A pretty-printer that re-emits BASIC source from the fully-bound, desugared, optimized AST/IR
+(after member lifting, property/coroutine weaving, and the optimizer passes) would let us read
+what the compiler actually produced "without the magic" — invaluable for debugging the lowerings
+and the optimizer. Tracked as a later task (see memory: pb36-source-writer).
+
 ## 3. `FOR EACH` over a generator
 
 `FOR EACH` is currently parse-time sugar to a counted `ForStmt`, which only fits
