@@ -2573,7 +2573,10 @@ public sealed class Binder {
       return type;
     }
 
-    if (target is not (CallOrIndexExpr or MemberExpr or PtrDerefExpr)) {
+    // IndexExpr targets an array-field element through a receiver (THIS.Items(i) = v); codegen's
+    // EmitPlace addresses it. A method-call IndexExpr (o.M(args)) is not a real lvalue, but that is
+    // caught downstream (no addressable place) rather than here.
+    if (target is not (CallOrIndexExpr or MemberExpr or PtrDerefExpr or IndexExpr)) {
       this.Error(target.Position, "expression is not assignable");
       return PbType.Integer;
     }
