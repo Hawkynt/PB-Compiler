@@ -271,6 +271,31 @@ public sealed partial class Parser {
     return result;
   }
 
+  /// <summary>Consumes an overloadable operator token after OPERATOR and returns its lifted method name (op_Add, op_Eq, ...).</summary>
+  private string ParseOperatorName() {
+    var kind = this.Current.Kind;
+    var byToken = kind switch {
+      TokenKind.Plus => "op_Add", TokenKind.Minus => "op_Sub", TokenKind.Star => "op_Mul",
+      TokenKind.Slash => "op_Div", TokenKind.Backslash => "op_IDiv", TokenKind.Caret => "op_Pow",
+      TokenKind.Equals => "op_Eq", TokenKind.NotEquals => "op_Ne",
+      TokenKind.Less => "op_Lt", TokenKind.Greater => "op_Gt",
+      TokenKind.LessEquals => "op_Le", TokenKind.GreaterEquals => "op_Ge",
+      _ => null,
+    };
+    if (byToken != null) {
+      this.Advance();
+      return byToken;
+    }
+    var byKeyword = this.Current.Kind == TokenKind.Identifier ? this.Current.Text.ToUpperInvariant() switch {
+      "MOD" => "op_Mod", "AND" => "op_And", "OR" => "op_Or", "XOR" => "op_Xor", _ => null,
+    } : null;
+    if (byKeyword != null) {
+      this.Advance();
+      return byKeyword;
+    }
+    throw this.Error("expected an overloadable operator after OPERATOR (+ - * / \\ ^ = <> < > <= >= MOD AND OR XOR)");
+  }
+
   /// <summary>pb36 generics use site: an optional <c>OF</c> type-argument list after a user type name - <c>OF LONG</c> (single) or <c>OF (LONG, STRING)</c> (several). Null when no <c>OF</c> follows.</summary>
   private IReadOnlyList<TypeName>? TryParseTypeArguments() {
     if (!this.IsKeyword(0, "OF"))
@@ -385,7 +410,7 @@ public sealed partial class Parser {
       if (this.Current.Kind == TokenKind.EndOfFile)
         throw this.Error($"unexpected end of file, expected {end}");
       // pb36: a TYPE block may carry SUB/FUNCTION/PROPERTY members (UNION stays fields-only)
-      if (!isUnion && (this.IsKeyword(0, "SUB") || this.IsKeyword(0, "FUNCTION") || this.IsKeyword(0, "PROPERTY"))) {
+      if (!isUnion && (this.IsKeyword(0, "SUB") || this.IsKeyword(0, "FUNCTION") || this.IsKeyword(0, "PROPERTY") || this.IsKeyword(0, "OPERATOR"))) {
         members.AddRange(this.ParseTypeMember());
         continue;
       }
@@ -402,6 +427,18 @@ public sealed partial class Parser {
   private IReadOnlyList<TypeMember> ParseTypeMember() {
     this.Require(LanguageFeature.TypeMethods);
     var pos = this.Current.Position;
+    // pb36 operator overloading: OPERATOR <op> (rhs AS T) AS RetType ... END OPERATOR. THIS is the
+    // left operand; the body assigns the result via the RESULT keyword. Lifts to Type.op_<Name>.
+    if (this.TryMatchKeyword("OPERATOR")) {
+      this.Require(LanguageFeature.OperatorOverloading);
+      var opName = this.ParseOperatorName();
+      var opParams = this.Current.Kind == TokenKind.LParen ? this.ParseParameterList() : [];
+      var opReturn = this.TryMatchKeyword("AS") ? this.ParseTypeName() : null;
+      var opBody = this.ParseBody("END OPERATOR");
+      this.Advance();
+      this.Advance();
+      return [new TypeMember(pos, TypeMemberKind.Operator, opName, TypeSuffix.None, opParams, opReturn, opBody)];
+    }
     if (this.TryMatchKeyword("SUB")) {
       var name = this.Expect(TokenKind.Identifier, "method name");
       var parameters = this.Current.Kind == TokenKind.LParen ? this.ParseParameterList() : [];

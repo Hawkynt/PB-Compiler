@@ -528,7 +528,7 @@ public sealed class Binder {
     foreach (var m in t.Members) {
       var thisParam = new Parameter(m.Position, "THIS", TypeSuffix.None, new TypeName(m.Position, BuiltinType.None, UserTypeName: t.Name), ByVal: false, Seg: false, IsArray: false);
       var parameters = new List<Parameter>(m.Parameters.Count + 1) { thisParam };
-      var isFunction = m.Kind is TypeMemberKind.Function or TypeMemberKind.PropertyGet;
+      var isFunction = m.Kind is TypeMemberKind.Function or TypeMemberKind.PropertyGet or TypeMemberKind.Operator;
       var isProperty = m.Kind is TypeMemberKind.PropertyGet or TypeMemberKind.PropertySet;
       if (m.Kind == TypeMemberKind.Sub && m.Name.Equals(t.Name, StringComparison.OrdinalIgnoreCase))
         this._typeConstructors.Add(t.Name);   // a SUB named like the TYPE is its constructor
@@ -559,7 +559,8 @@ public sealed class Binder {
       var returnType = m.Kind == TypeMemberKind.PropertySet ? null : m.ReturnType;
       var proc = this.DefineProcedure(MemberProcName(t.Name, m), isFunction, m.Suffix, returnType, parameters, isStatic: false, body, m.Position);
       if (isFunction)
-        proc.ResultName = m.Name;   // the body assigns the simple member name as its result
+        // an operator body assigns its result via the RESULT keyword; other members use the member name
+        proc.ResultName = m.Kind == TypeMemberKind.Operator ? "RESULT" : m.Name;
       if (hasBacking)
         proc.BackingField = bk.Field;   // the FIELD keyword resolves to THIS.<backing> in this accessor
       proc.ValueParamName = valueParam; // the VALUE keyword aliases the set value parameter
@@ -979,6 +980,20 @@ public sealed class Binder {
   /// <summary>Whether a lifted member procedure of the given mangled name exists.</summary>
   private bool HasMemberProc(string name)
     => this._model.Procedures.ContainsKey(name) || this._model.Overloads.ContainsKey(name);
+
+  /// <summary>The lifted method name of an overloadable binary operator (op_Add, op_Eq, ...), or null when the operator cannot be overloaded.</summary>
+  private static string? OperatorMethodName(BinaryOp op) => op switch {
+    BinaryOp.Add => "op_Add", BinaryOp.Subtract => "op_Sub", BinaryOp.Multiply => "op_Mul",
+    BinaryOp.Divide => "op_Div", BinaryOp.IntegerDivide => "op_IDiv", BinaryOp.Power => "op_Pow",
+    BinaryOp.Modulo => "op_Mod", BinaryOp.Equal => "op_Eq", BinaryOp.NotEqual => "op_Ne",
+    BinaryOp.Less => "op_Lt", BinaryOp.Greater => "op_Gt", BinaryOp.LessEqual => "op_Le", BinaryOp.GreaterEqual => "op_Ge",
+    BinaryOp.And => "op_And", BinaryOp.Or => "op_Or", BinaryOp.Xor => "op_Xor",
+    _ => null,
+  };
+
+  /// <summary>The lifted operator-method name for a UDT left operand of <paramref name="op"/> when such an operator is defined; null otherwise.</summary>
+  private string? UdtOperatorProc(PbType left, BinaryOp op)
+    => left is UdtType lu && OperatorMethodName(op) is { } n && this.HasMemberProc($"{lu.Name}.{n}") ? $"{lu.Name}.{n}" : null;
 
   /// <summary>
   /// pb36 method call: <c>o.M(args)</c> when <c>o</c> is a UDT whose member <c>M</c> is a
@@ -1717,6 +1732,14 @@ public sealed class Binder {
             this._model.DesugaredStatements[a] = call;
             break;
           }
+        }
+        // pb36 operator overloading returning a TYPE: c = a OP b -> CALL Type.op_X(a, b, c) (struct return)
+        if (a.Value is BinaryExpr opBin && this.UdtOperatorProc(this.BindExpression(opBin.Left, scope), opBin.Op) is { } opCall
+            && this._model.Overloads.TryGetValue(opCall, out var opCallSet) && opCallSet.Any(p => p.HasSretParam)) {
+          var call = new CallStmt(a.Position, opCall, [opBin.Left, opBin.Right, a.Target], UsedCallKeyword: false);
+          this.BindCallStatement(call, scope);
+          this._model.DesugaredStatements[a] = call;
+          break;
         }
         // pb36 coroutine: inside MoveNext, a write to a captured generator parameter/local -> THIS.$name
         if (a.Target is NameExpr capTarget && scope.Proc?.CoroutineCaptures is { } caps && caps.TryGetValue(capTarget.Name, out var capWrite)) {
@@ -3024,6 +3047,18 @@ public sealed class Binder {
     // PB 3.6 scaled pointer arithmetic: ptr +* i / ptr -* i
     if (b.Op is BinaryOp.PointerAdd or BinaryOp.PointerSub)
       return this.BindPointerArith(b, left, right);
+
+    // pb36 operator overloading: a OP b where the left operand's TYPE defines OPERATOR <op>
+    if (this.UdtOperatorProc(left, b.Op) is { } opProcName) {
+      // an operator that returns a TYPE (struct return) is valid only as 'result = a OP b' (the
+      // AssignStmt path rewrites it); here, in expression position, it cannot leave a value
+      if (this._model.Overloads.TryGetValue(opProcName, out var opSet) && opSet.Any(p => p.HasSretParam))
+        return this.ErrorType(b.Position, $"operator '{opProcName}' returns a TYPE; use it as 'result = a <op> b'");
+      var call = new CallOrIndexExpr(b.Position, opProcName, TypeSuffix.None, [b.Left, b.Right]);
+      var type = this.BindExpression(call, scope);
+      this._model.Desugared[b] = call;
+      return type;
+    }
 
     // whole-value TYPE/UNION comparison (PB 3.1): memcmp semantics for = and <>
     if (left is UdtType || right is UdtType) {

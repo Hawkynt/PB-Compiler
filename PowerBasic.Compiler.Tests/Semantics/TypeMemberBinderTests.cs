@@ -169,6 +169,24 @@ public sealed class TypeMemberBinderTests {
   }
 
   [Test]
+  public void Bind_GivenOperatorOverloads_WhenBound_ThenLiftedAndBinaryDesugarsToCall() {
+    var model = Bind(
+      "TYPE Vec\n  x AS LONG\n" +
+      "  OPERATOR + (o AS Vec) AS Vec\n    RESULT.x = THIS.x + o.x\n  END OPERATOR\n" +
+      "  OPERATOR = (o AS Vec) AS INTEGER\n    RESULT = THIS.x = o.x\n  END OPERATOR\nEND TYPE\n" +
+      "DIM a AS Vec, b AS Vec, c AS Vec\nc = a + b\nDIM e%\ne% = (a = b)\n");
+    Assert.Multiple(() => {
+      Assert.That(model.Procedures.ContainsKey("Vec.op_Add"), Is.True, "+ lifts to Vec.op_Add");
+      Assert.That(model.Procedures.ContainsKey("Vec.op_Eq"), Is.True, "= lifts to Vec.op_Eq");
+      Assert.That(model.Procedures["Vec.op_Add"].HasSretParam, Is.True, "a Vec-returning operator uses struct return");
+      // a = b (scalar-returning operator) desugars to a Vec.op_Eq call in expression position
+      var eq = model.Desugared.Keys.OfType<BinaryExpr>().FirstOrDefault(x => x.Op == BinaryOp.Equal);
+      Assert.That(eq, Is.Not.Null);
+      Assert.That(((CallOrIndexExpr)model.Desugared[eq!]).Name, Is.EqualTo("Vec.op_Eq"));
+    });
+  }
+
+  [Test]
   public void Bind_GivenUdtReturningFunctionInExpression_WhenBound_ThenRejected() {
     var unit = Parser.Parse(Lexer.Tokenize(
       "TYPE P\n  x AS LONG\nEND TYPE\nFUNCTION MakeP() AS P\n  MakeP.x = 1\nEND FUNCTION\nPRINT MakeP().x\n", "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);

@@ -118,6 +118,7 @@ public enum LanguageFeature {
   TypeMethods,
   Generics,
   Defer,
+  OperatorOverloading,
 }
 
 /// <summary>
@@ -184,6 +185,7 @@ public static class DialectFacts {
     [LanguageFeature.TypeMethods] = (Dialect.Pb36, "TYPE methods/properties (SUB / FUNCTION / PROPERTY members)"),
     [LanguageFeature.Generics] = (Dialect.Pb36, "compile-time generics ('TYPE Name OF T' / 'AS Name OF type')"),
     [LanguageFeature.Defer] = (Dialect.Pb36, "DEFER statement (runs on block exit)"),
+    [LanguageFeature.OperatorOverloading] = (Dialect.Pb36, "OPERATOR overloading inside a TYPE"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>
