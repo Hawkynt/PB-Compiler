@@ -73,6 +73,23 @@ public sealed class CoroutineBinderTests {
   }
 
   [Test]
+  public void Bind_GivenYieldInsideSelectCase_WhenBound_ThenLowersWithoutError() {
+    // a YIELD inside SELECT CASE (over a simple subject) flattens to per-arm labels, not rejected
+    var model = Bind(
+      "FUNCTION Pick(BYVAL n%) AS INTEGER\n  SELECT CASE n%\n    CASE 1\n      YIELD 10\n    CASE ELSE\n      YIELD 20\n  END SELECT\nEND FUNCTION\nDIM e AS Pick\n");
+    Assert.That(model.Procedures.ContainsKey("Pick.MoveNext"), Is.True);
+  }
+
+  [Test]
+  public void Bind_GivenYieldInsideSelectCaseOnComplexSubject_WhenBound_ThenRejectedClearly() {
+    // a side-effecting SELECT subject would be re-evaluated per arm, so it is rejected
+    var unit = Parser.Parse(Lexer.Tokenize(
+      "FUNCTION F(BYVAL n%) AS INTEGER\n  SELECT CASE n% + Side(n%)\n    CASE 1\n      YIELD 1\n  END SELECT\nEND FUNCTION\nFUNCTION Side(BYVAL x%) AS INTEGER\nEND FUNCTION\n", "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors.Any(e => e.Message.Contains("SELECT CASE needs a simple subject")), Is.True);
+  }
+
+  [Test]
   public void Bind_GivenForEachOverGenerator_WhenBound_ThenLowersToIteratorLoop() {
     var model = Bind(_gen + "FOR EACH v IN Gen()\n  PRINT v\nNEXT\n");
     var foreachStmt = model.DesugaredStatements.Keys.OfType<ForEachStmt>().Single();

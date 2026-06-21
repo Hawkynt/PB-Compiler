@@ -444,8 +444,8 @@ public sealed class Binder {
     Expression Int(long v) => new IntegerLiteralExpr(pos, v, TypeSuffix.None);
     var ctx = new GenLower(pos, currentField);
     this.LowerGenBody(genBody, ctx);
-    if (ContainsYield(ctx.Body))   // a YIELD left un-lowered sits in an unsupported construct (SELECT / TRY)
-      this.Error(pos, "a YIELD here is not yet supported in a generator (FOR / WHILE-DO / IF / FOR EACH are; SELECT CASE and TRY / CATCH / FINALLY are not)");
+    if (ContainsYield(ctx.Body))   // a YIELD left un-lowered sits in an unsupported construct (TRY / CATCH / FINALLY)
+      this.Error(pos, "a YIELD here is not yet supported in a generator (FOR / WHILE-DO / IF / SELECT CASE / FOR EACH are; TRY / CATCH / FINALLY is not)");
 
     var state = ThisField(pos, GeneratedPrefix + "state");
     var arms = new List<CaseArm> { new(pos, [new CaseSelector(pos, Int(0), null, null)], [new GotoStmt(pos, "$start")]) };
@@ -547,6 +547,33 @@ public sealed class Binder {
           break;
         }
 
+        case SelectStmt sel when ContainsYield([sel]): {
+          // SELECT CASE with a YIELD: fan out to per-arm labels (first match wins, CASE ELSE last),
+          // like IF. The subject is compared once per arm, so it must be side-effect-free to repeat;
+          // a plain variable / field / literal is idempotent, anything else is rejected.
+          if (sel.Subject is not (NameExpr or MemberExpr or IntegerLiteralExpr or FloatLiteralExpr or StringLiteralExpr)) {
+            this.Error(pos, "a YIELD inside SELECT CASE needs a simple subject (a variable, field, or literal)");
+            g.Body.Add(s);
+            break;
+          }
+          var valueArms = sel.Arms.Where(a => a.Selectors.Count > 0).ToList();
+          var elseArm = sel.Arms.FirstOrDefault(a => a.Selectors.Count == 0);
+          var end = NewLabel();
+          var labels = valueArms.Select(_ => NewLabel()).ToList();
+          for (var k = 0; k < valueArms.Count; ++k)
+            g.Body.Add(new IfStmt(pos, CaseArmCondition(sel.Subject, valueArms[k].Selectors), [new GotoStmt(pos, labels[k])], [], null));
+          if (elseArm != null)
+            this.LowerGenBody(elseArm.Body, g);
+          g.Body.Add(new GotoStmt(pos, end));
+          for (var k = 0; k < valueArms.Count; ++k) {
+            g.Body.Add(new LabelStmt(pos, labels[k]));
+            this.LowerGenBody(valueArms[k].Body, g);
+            g.Body.Add(new GotoStmt(pos, end));
+          }
+          g.Body.Add(new LabelStmt(pos, end));
+          break;
+        }
+
         case ForEachStmt fe when this._foreachEnumField.TryGetValue(fe, out var feInfo): {
           // iterate an inner generator while yielding: drive its persistent enumerator field
           // (THIS.$feN) by hand so the outer resume re-enters the inner iteration mid-stream
@@ -577,6 +604,30 @@ public sealed class Binder {
   /// <summary>The condition under which a loop EXITs: WHILE c exits on NOT c, UNTIL c exits on c.</summary>
   private static Expression LoopExitCondition(LoopTestKind kind, Expression condition)
     => kind == LoopTestKind.While ? new UnaryExpr(condition.Position, UnaryOp.Not, condition) : condition;
+
+  /// <summary>The boolean condition for a CASE arm: the OR of its selectors against the subject (value -> equal, x TO y -> in range, IS &lt;rel&gt; v -> the relation).</summary>
+  private static Expression CaseArmCondition(Expression subject, IReadOnlyList<CaseSelector> selectors) {
+    Expression? result = null;
+    foreach (var sel in selectors) {
+      var pos = sel.Position;
+      Expression one = sel switch {
+        { IsComparison: { } cmp } => new BinaryExpr(pos, cmp switch {
+          CaseComparison.Equal => BinaryOp.Equal,
+          CaseComparison.NotEqual => BinaryOp.NotEqual,
+          CaseComparison.Less => BinaryOp.Less,
+          CaseComparison.LessEqual => BinaryOp.LessEqual,
+          CaseComparison.Greater => BinaryOp.Greater,
+          _ => BinaryOp.GreaterEqual,
+        }, subject, sel.Value!),
+        { RangeUpper: { } upper } => new BinaryExpr(pos, BinaryOp.And,
+          new BinaryExpr(pos, BinaryOp.GreaterEqual, subject, sel.Value!),
+          new BinaryExpr(pos, BinaryOp.LessEqual, subject, upper)),
+        _ => new BinaryExpr(pos, BinaryOp.Equal, subject, sel.Value!),
+      };
+      result = result == null ? one : new BinaryExpr(pos, BinaryOp.Or, result, one);
+    }
+    return result ?? new IntegerLiteralExpr(subject.Position, 0, TypeSuffix.None);
+  }
 
   /// <summary>
   /// pb36 coroutine: lowers a generator FUNCTION (a body containing YIELD) to a first-class
