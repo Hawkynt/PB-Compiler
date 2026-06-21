@@ -1,29 +1,47 @@
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Syntax.Ast;
 
 namespace PowerBasic.Compiler.Tests.Semantics;
 
 /// <summary>
-/// Binding of PB 3.6 generators: a SUB/FUNCTION whose body contains YIELD is flagged
-/// as a generator (the prerequisite for the MoveNext state-machine lowering).
+/// Binding of PB 3.6 generators: a FUNCTION whose body contains YIELD is lowered to a
+/// first-class enumerator TYPE named after the generator (with MoveNext / Current / Reset),
+/// and calling it (e = Gen()) constructs an instance rather than calling a procedure.
 /// </summary>
 [TestFixture]
 public sealed class CoroutineBinderTests {
 
+  private const string _gen =
+    "FUNCTION Gen() AS INTEGER\n  YIELD 10\n  YIELD 20\nEND FUNCTION\n";
+
   private static SemanticModel Bind(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);
-    return Binder.Bind(unit, Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Success, Is.True, string.Join("; ", model.Errors));
+    return model;
   }
 
   [Test]
-  public void Bind_GivenFunctionWithYield_WhenBound_ThenMarkedGenerator() {
-    var model = Bind("FUNCTION Squares(BYVAL n AS INTEGER) AS LONG\n  FOR i = 1 TO n\n    YIELD i * i\n  NEXT\nEND FUNCTION\n");
-    Assert.That(model.Procedures["Squares"].IsGenerator, Is.True);
+  public void Bind_GivenGenerator_WhenBound_ThenEnumeratorTypeWithMembersSynthesized() {
+    var model = Bind(_gen + "DIM e AS Gen\n");
+    Assert.Multiple(() => {
+      Assert.That(model.Udts.ContainsKey("Gen"), Is.True, "the generator name becomes an enumerator TYPE");
+      Assert.That(model.Procedures.ContainsKey("Gen.MoveNext"), Is.True);
+      Assert.That(model.Procedures.ContainsKey("Gen.get_Current"), Is.True);
+      Assert.That(model.Procedures.ContainsKey("Gen.Reset"), Is.True);
+      Assert.That(model.Udts["Gen"].FindField("$state"), Is.Not.Null, "the enumerator holds resume state");
+      Assert.That(model.Procedures.ContainsKey("Gen"), Is.False, "the generator is not a callable procedure");
+    });
   }
 
   [Test]
-  public void Bind_GivenProcedureWithoutYield_WhenBound_ThenNotGenerator() {
-    var model = Bind("FUNCTION Plain(BYVAL n AS INTEGER) AS LONG\n  Plain = n + 1\nEND FUNCTION\n");
-    Assert.That(model.Procedures["Plain"].IsGenerator, Is.False);
+  public void Bind_GivenGeneratorConstruction_WhenBound_ThenAssignmentDesugarsToStateReset() {
+    var model = Bind(_gen + "DIM e AS Gen\ne = Gen()\n");
+    var assign = model.DesugaredStatements.Keys.OfType<AssignStmt>()
+      .Single(a => a.Value is CallOrIndexExpr { Name: "Gen" });
+    var construct = (AssignStmt)model.DesugaredStatements[assign];
+    Assert.That(construct.Target, Is.InstanceOf<MemberExpr>());
+    Assert.That(((MemberExpr)construct.Target).Member, Is.EqualTo("$state"));
   }
 }

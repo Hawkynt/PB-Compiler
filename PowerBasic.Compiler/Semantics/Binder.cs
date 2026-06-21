@@ -15,6 +15,9 @@ public sealed class Binder {
   private readonly Dialect _dialect;
   private readonly Dictionary<char, PbType> _defaultTypes = [];
   private readonly HashSet<string> _redimmedArrays = new(StringComparer.OrdinalIgnoreCase);
+
+  /// <summary>pb36 generators (SUB/FUNCTION with YIELD): names whose call constructs an enumerator instance rather than calling a procedure.</summary>
+  private readonly HashSet<string> _generatorNames = new(StringComparer.OrdinalIgnoreCase);
   private ConstantFolder _folder;
   private bool _dynamicMode;
   private bool _optionSigned;
@@ -189,7 +192,10 @@ public sealed class Binder {
           break;
 
         case FunctionDecl f:
-          this.DefineProcedure(f.Name, isFunction: true, f.Suffix, f.ReturnType, f.Parameters, f.IsStatic, f.Body, f.Position, f.Convention);
+          if (ContainsYield(f.Body))
+            this.SynthesizeGenerator(f);   // pb36 coroutine: lower to an enumerator TYPE, not a callable function
+          else
+            this.DefineProcedure(f.Name, isFunction: true, f.Suffix, f.ReturnType, f.Parameters, f.IsStatic, f.Body, f.Position, f.Convention);
           break;
 
         case DefFnDecl fn: {
@@ -414,6 +420,82 @@ public sealed class Binder {
 
   private static MemberExpr ThisField(SourcePosition pos, string field)
     => new(pos, new NameExpr(pos, "THIS", TypeSuffix.None), field, TypeSuffix.None);
+
+  /// <summary>
+  /// Builds the MoveNext state machine for a generator body of TOP-LEVEL yields. Each YIELD k
+  /// stores its value into the Current backing field, records resume state k, returns true and
+  /// EXITs; a SELECT CASE on $state dispatches to the label after each yield on the next call,
+  /// and the tail returns false. (Yields inside loops / nested control flow are a later wave.)
+  /// </summary>
+  private static IReadOnlyList<Statement> BuildMoveNextBody(SourcePosition pos, IReadOnlyList<Statement> genBody, string currentField) {
+    Expression Int(long v) => new IntegerLiteralExpr(pos, v, TypeSuffix.None);
+    var result = new NameExpr(pos, "MoveNext", TypeSuffix.None);
+    var state = ThisField(pos, GeneratedPrefix + "state");
+    var current = ThisField(pos, currentField);
+    string Label(string s) => GeneratedPrefix + s;
+
+    var arms = new List<CaseArm> { new(pos, [new CaseSelector(pos, Int(0), null, null)], [new GotoStmt(pos, Label("start"))]) };
+    var lin = new List<Statement> { new LabelStmt(pos, Label("start")) };
+    var k = 0;
+    foreach (var s in genBody) {
+      if (s is YieldStmt y) {
+        ++k;
+        arms.Add(new CaseArm(pos, [new CaseSelector(pos, Int(k), null, null)], [new GotoStmt(pos, Label("r" + k))]));
+        lin.Add(new AssignStmt(pos, current, y.Value));
+        lin.Add(new AssignStmt(pos, state, Int(k)));
+        lin.Add(new AssignStmt(pos, result, Int(-1)));
+        lin.Add(new ExitStmt(pos, ExitKind.Function));
+        lin.Add(new LabelStmt(pos, Label("r" + k)));
+      } else {
+        lin.Add(s);
+      }
+    }
+    arms.Add(new CaseArm(pos, [], [new GotoStmt(pos, Label("done"))]));   // CASE ELSE: exhausted
+
+    var body = new List<Statement> { new SelectStmt(pos, state, arms) };
+    body.AddRange(lin);
+    body.Add(new LabelStmt(pos, Label("done")));
+    body.Add(new AssignStmt(pos, state, Int(-1)));
+    body.Add(new AssignStmt(pos, result, Int(0)));
+    return body;
+  }
+
+  /// <summary>
+  /// pb36 coroutine: lowers a generator FUNCTION (a body containing YIELD) to a first-class
+  /// enumerator TYPE named after the generator. The enumerator holds the resume state ($state)
+  /// and the captured parameters ($param), exposes a Current auto-property (its $Current backing
+  /// holds the last yielded value), and a MoveNext / Reset built on the TYPE-member machinery.
+  /// Calling the generator (e = Gen(args)) constructs an instance (see the AssignStmt path); the
+  /// MoveNext body is the YIELD state machine (currently a stub - empty sequence - pending the
+  /// state-machine transform).
+  /// </summary>
+  private void SynthesizeGenerator(FunctionDecl f) {
+    this._generatorNames.Add(f.Name);
+    var pos = f.Position;
+    var intType = new TypeName(pos, BuiltinType.Integer);
+    var elementType = f.ReturnType ?? intType;
+
+    var fields = new List<TypeField> { new(pos, GeneratedPrefix + "state", intType, null) };
+    foreach (var p in f.Parameters)
+      if (p.Type is { } paramType)
+        fields.Add(new(pos, GeneratedPrefix + p.Name, paramType, null));
+
+    var members = new List<TypeMember> {
+      new(pos, TypeMemberKind.PropertyGet, "Current", f.Suffix, [], elementType, [], IsAuto: true),
+      new(pos, TypeMemberKind.Function, "MoveNext", TypeSuffix.None, [], intType,
+        BuildMoveNextBody(pos, f.Body, GeneratedPrefix + "Current")),
+      new(pos, TypeMemberKind.Sub, "Reset", TypeSuffix.None, [], null,
+        [new AssignStmt(pos, ThisField(pos, GeneratedPrefix + "state"), new IntegerLiteralExpr(pos, 0, TypeSuffix.None))]),
+    };
+
+    var decl = new TypeDecl(pos, f.Name, fields) { Members = members };
+    var backing = PropertyBackingFields(decl);
+    var allFields = backing.Count == 0
+      ? (IReadOnlyList<TypeField>)fields
+      : [.. fields, .. backing.Select(b => new TypeField(pos, b.Field, b.Type, null))];
+    this.DefineUdt(f.Name, allFields, isUnion: false, pos);
+    this.DefineTypeMembers(decl, backing.ToDictionary(b => b.Prop, b => b, StringComparer.OrdinalIgnoreCase));
+  }
 
   /// <summary>
   /// Prefix for every compiler-synthesized name that shares the user's variable / field
@@ -983,6 +1065,13 @@ public sealed class Binder {
         break;
 
       case AssignStmt a: {
+        // pb36 coroutine: e = Gen() constructs the enumerator (resets its resume state) instead of calling a function
+        if (a is { Target: NameExpr, Value: CallOrIndexExpr { Arguments.Count: 0 } gen } && this._generatorNames.Contains(gen.Name)) {
+          var construct = new AssignStmt(a.Position, new MemberExpr(a.Position, a.Target, GeneratedPrefix + "state", TypeSuffix.None), new IntegerLiteralExpr(a.Position, 0, TypeSuffix.None));
+          this.BindStatement(construct, scope);
+          this._model.DesugaredStatements[a] = construct;
+          break;
+        }
         // pb36 property accessor: FIELD = expr writes the backing field (THIS.$Prop = expr)
         if (a.Target is NameExpr { Suffix: TypeSuffix.None } fieldTarget && scope.Proc?.BackingField is { } backingWrite
             && fieldTarget.Name.Equals("FIELD", StringComparison.OrdinalIgnoreCase)) {
@@ -2072,8 +2161,10 @@ public sealed class Binder {
           return field.Type;
         // pb36: o.Prop with no such field but a PROPERTY GET -> Type.get_Prop(o)
         var getter = MemberProcName(udt.Name, new TypeMember(m.Position, TypeMemberKind.PropertyGet, m.Member, m.Suffix, [], null, []));
-        if (this.HasMemberProc(getter)) {
-          var call = new CallOrIndexExpr(m.Position, getter, TypeSuffix.None, [m.Target]);
+        // ... or a parameterless method called without parens (o.MoveNext) -> Type.MoveNext(o)
+        var member = this.HasMemberProc(getter) ? getter : this.HasMemberProc($"{udt.Name}.{m.Member}") ? $"{udt.Name}.{m.Member}" : null;
+        if (member != null) {
+          var call = new CallOrIndexExpr(m.Position, member, TypeSuffix.None, [m.Target]);
           var type = this.BindExpression(call, scope);
           this._model.Desugared[m] = call;
           return type;
