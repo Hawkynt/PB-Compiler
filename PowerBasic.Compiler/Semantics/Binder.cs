@@ -437,38 +437,122 @@ public sealed class Binder {
   /// EXITs; a SELECT CASE on $state dispatches to the label after each yield on the next call,
   /// and the tail returns false. (Yields inside loops / nested control flow are a later wave.)
   /// </summary>
-  private static IReadOnlyList<Statement> BuildMoveNextBody(SourcePosition pos, IReadOnlyList<Statement> genBody, string currentField) {
+  private IReadOnlyList<Statement> BuildMoveNextBody(SourcePosition pos, IReadOnlyList<Statement> genBody, string currentField) {
     Expression Int(long v) => new IntegerLiteralExpr(pos, v, TypeSuffix.None);
-    var result = new NameExpr(pos, "MoveNext", TypeSuffix.None);
+    var ctx = new GenLower(pos, currentField);
+    this.LowerGenBody(genBody, ctx);
+    if (ContainsYield(ctx.Body))   // a YIELD left un-lowered sits in an unsupported construct (SELECT/TRY/FOR EACH)
+      this.Error(pos, "a YIELD here is not yet supported in a generator (loops and IF are; SELECT CASE / TRY / nested FOR EACH are not)");
+
     var state = ThisField(pos, GeneratedPrefix + "state");
-    var current = ThisField(pos, currentField);
-    string Label(string s) => GeneratedPrefix + s;
+    var arms = new List<CaseArm> { new(pos, [new CaseSelector(pos, Int(0), null, null)], [new GotoStmt(pos, "$start")]) };
+    arms.AddRange(ctx.Dispatch);
+    arms.Add(new CaseArm(pos, [], [new GotoStmt(pos, "$done")]));   // exhausted / past the last yield
 
-    var arms = new List<CaseArm> { new(pos, [new CaseSelector(pos, Int(0), null, null)], [new GotoStmt(pos, Label("start"))]) };
-    var lin = new List<Statement> { new LabelStmt(pos, Label("start")) };
-    var k = 0;
-    foreach (var s in genBody) {
-      if (s is YieldStmt y) {
-        ++k;
-        arms.Add(new CaseArm(pos, [new CaseSelector(pos, Int(k), null, null)], [new GotoStmt(pos, Label("r" + k))]));
-        lin.Add(new AssignStmt(pos, current, y.Value));
-        lin.Add(new AssignStmt(pos, state, Int(k)));
-        lin.Add(new AssignStmt(pos, result, Int(-1)));
-        lin.Add(new ExitStmt(pos, ExitKind.Function));
-        lin.Add(new LabelStmt(pos, Label("r" + k)));
-      } else {
-        lin.Add(s);
-      }
-    }
-    arms.Add(new CaseArm(pos, [], [new GotoStmt(pos, Label("done"))]));   // CASE ELSE: exhausted
-
-    var body = new List<Statement> { new SelectStmt(pos, state, arms) };
-    body.AddRange(lin);
-    body.Add(new LabelStmt(pos, Label("done")));
+    var body = new List<Statement> { new SelectStmt(pos, state, arms), new LabelStmt(pos, "$start") };
+    body.AddRange(ctx.Body);
+    body.Add(new LabelStmt(pos, "$done"));
     body.Add(new AssignStmt(pos, state, Int(-1)));
-    body.Add(new AssignStmt(pos, result, Int(0)));
+    body.Add(new AssignStmt(pos, new NameExpr(pos, "MoveNext", TypeSuffix.None), Int(0)));
     return body;
   }
+
+  /// <summary>Mutable state threaded through the generator-body flattening: the linearized output, the SELECT dispatch arms, and the running yield/label counters.</summary>
+  private sealed class GenLower(SourcePosition pos, string currentField) {
+    public readonly SourcePosition Pos = pos;
+    public readonly string CurrentField = currentField;
+    public readonly List<Statement> Body = [];
+    public readonly List<CaseArm> Dispatch = [];
+    public int State;
+    public int Label;
+  }
+
+  /// <summary>
+  /// Flattens a generator body into the MoveNext state machine: each YIELD becomes set-current /
+  /// record-state / return-true / EXIT / resume-label (and a dispatch arm); FOR / WHILE-DO / IF that
+  /// contain a YIELD are lowered to label+GOTO form so the resume can re-enter mid-block; constructs
+  /// with no YIELD (and any other statement) pass through unchanged (their variable references are
+  /// captured to enumerator fields when the body is bound).
+  /// </summary>
+  private void LowerGenBody(IReadOnlyList<Statement> body, GenLower g) {
+    var pos = g.Pos;
+    Expression Int(long v) => new IntegerLiteralExpr(pos, v, TypeSuffix.None);
+    string NewLabel() => GeneratedPrefix + "L" + ++g.Label;
+
+    foreach (var s in body)
+      switch (s) {
+        case YieldStmt y: {
+          var k = ++g.State;
+          var resume = GeneratedPrefix + "r" + k;
+          g.Dispatch.Add(new CaseArm(pos, [new CaseSelector(pos, Int(k), null, null)], [new GotoStmt(pos, resume)]));
+          g.Body.Add(new AssignStmt(pos, ThisField(pos, g.CurrentField), y.Value));
+          g.Body.Add(new AssignStmt(pos, ThisField(pos, GeneratedPrefix + "state"), Int(k)));
+          g.Body.Add(new AssignStmt(pos, new NameExpr(pos, "MoveNext", TypeSuffix.None), Int(-1)));
+          g.Body.Add(new ExitStmt(pos, ExitKind.Function));
+          g.Body.Add(new LabelStmt(pos, resume));
+          break;
+        }
+
+        case ForStmt f when ContainsYield([f]): {
+          var ascending = f.Step switch { null => true, IntegerLiteralExpr { Value: var v } => v >= 0, _ => (bool?)null };
+          if (ascending is null) {
+            this.Error(pos, "a generator FOR loop with a non-constant STEP and a YIELD is not yet supported");
+            ascending = true;
+          }
+          var top = NewLabel();
+          var end = NewLabel();
+          g.Body.Add(new AssignStmt(pos, f.Variable, f.From));
+          g.Body.Add(new LabelStmt(pos, top));
+          g.Body.Add(new IfStmt(pos, new BinaryExpr(pos, ascending.Value ? BinaryOp.Greater : BinaryOp.Less, f.Variable, f.To), [new GotoStmt(pos, end)], [], null));
+          this.LowerGenBody(f.Body, g);
+          g.Body.Add(new AssignStmt(pos, f.Variable, new BinaryExpr(pos, BinaryOp.Add, f.Variable, f.Step ?? Int(1))));
+          g.Body.Add(new GotoStmt(pos, top));
+          g.Body.Add(new LabelStmt(pos, end));
+          break;
+        }
+
+        case DoLoopStmt d when ContainsYield([d]): {
+          var top = NewLabel();
+          var end = NewLabel();
+          g.Body.Add(new LabelStmt(pos, top));
+          if (d.PreTest != LoopTestKind.None)
+            g.Body.Add(new IfStmt(pos, LoopExitCondition(d.PreTest, d.PreCondition!), [new GotoStmt(pos, end)], [], null));
+          this.LowerGenBody(d.Body, g);
+          if (d.PostTest != LoopTestKind.None)
+            g.Body.Add(new IfStmt(pos, LoopExitCondition(d.PostTest, d.PostCondition!), [new GotoStmt(pos, end)], [], null));
+          g.Body.Add(new GotoStmt(pos, top));
+          g.Body.Add(new LabelStmt(pos, end));
+          break;
+        }
+
+        case IfStmt i when ContainsYield([i]): {
+          var end = NewLabel();
+          var arms = new List<(Expression Condition, IReadOnlyList<Statement> Body)> { (i.Condition, i.Then) };
+          arms.AddRange(i.ElseIfs);
+          var labels = arms.Select(_ => NewLabel()).ToList();
+          for (var k = 0; k < arms.Count; ++k)
+            g.Body.Add(new IfStmt(pos, arms[k].Condition, [new GotoStmt(pos, labels[k])], [], null));
+          if (i.Else != null)
+            this.LowerGenBody(i.Else, g);
+          g.Body.Add(new GotoStmt(pos, end));
+          for (var k = 0; k < arms.Count; ++k) {
+            g.Body.Add(new LabelStmt(pos, labels[k]));
+            this.LowerGenBody(arms[k].Body, g);
+            g.Body.Add(new GotoStmt(pos, end));
+          }
+          g.Body.Add(new LabelStmt(pos, end));
+          break;
+        }
+
+        default:
+          g.Body.Add(s);
+          break;
+      }
+  }
+
+  /// <summary>The condition under which a loop EXITs: WHILE c exits on NOT c, UNTIL c exits on c.</summary>
+  private static Expression LoopExitCondition(LoopTestKind kind, Expression condition)
+    => kind == LoopTestKind.While ? new UnaryExpr(condition.Position, UnaryOp.Not, condition) : condition;
 
   /// <summary>
   /// pb36 coroutine: lowers a generator FUNCTION (a body containing YIELD) to a first-class
@@ -485,19 +569,21 @@ public sealed class Binder {
     var intType = new TypeName(pos, BuiltinType.Integer);
     var elementType = f.ReturnType ?? intType;
 
-    // not yet lowered: a YIELD inside a loop / IF (resume must re-enter the block). Reject clearly
-    // rather than miscompile silently; needs the control-flow state-machine transform (next increment).
-    if (ContainsNestedYield(f.Body))
-      this.Error(pos, "a YIELD inside a loop or IF is not yet supported in a generator (only top-level YIELDs)");
-
     var paramNames = new HashSet<string>(f.Parameters.Select(p => p.Name), StringComparer.OrdinalIgnoreCase);
     var captures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    var seededParams = new List<string>();
     var fields = new List<TypeField> { new(pos, GeneratedPrefix + "state", intType, null) };
-    foreach (var p in f.Parameters)
-      if (p.Type is { } paramType) {
-        fields.Add(new(pos, GeneratedPrefix + p.Name, paramType, null));
-        captures[p.Name] = GeneratedPrefix + p.Name;
+    foreach (var p in f.Parameters) {
+      // an explicit AS type, else the scalar/string type implied by the name suffix / DEFtype
+      var paramType = p.Type ?? LocalFieldTypeName(pos, this.TypeFromSuffixOrDefault(p.Name, p.Suffix));
+      if (paramType is null) {
+        this.Error(pos, $"generator parameter '{p.Name}' has an unsupported type (only scalars and strings persist across YIELDs)");
+        continue;
       }
+      fields.Add(new(pos, GeneratedPrefix + p.Name, paramType, null));
+      captures[p.Name] = GeneratedPrefix + p.Name;
+      seededParams.Add(p.Name);
+    }
 
     // locals assigned in the body persist across resumes as enumerator fields (type from suffix/DEFtype)
     var locals = new Dictionary<string, TypeSuffix>(StringComparer.OrdinalIgnoreCase);
@@ -531,7 +617,7 @@ public sealed class Binder {
 
     // MoveNext reads every captured parameter/local as THIS.$name so state persists across resumes;
     // a construction call seeds the parameter fields from its arguments (parameters only, in order)
-    this._generatorParams[f.Name] = f.Parameters.Where(p => p.Type != null).Select(p => p.Name).ToList();
+    this._generatorParams[f.Name] = seededParams;
     if (this._model.Procedures.TryGetValue(f.Name + ".MoveNext", out var moveNext))
       moveNext.CoroutineCaptures = captures;
   }
@@ -1395,11 +1481,22 @@ public sealed class Binder {
         this.BindExpression(ec.Index, scope);
         break;
 
-      case IncrDecrStmt id:
+      case IncrDecrStmt id: {
+        // pb36 coroutine: INCR/DECR of a captured generator parameter/local persists across resumes
+        // as the enumerator field (THIS.$name = THIS.$name +/- amount), so lower it like a write.
+        if (id.Target is NameExpr incrTarget && scope.Proc?.CoroutineCaptures is { } incrCaps && incrCaps.TryGetValue(incrTarget.Name, out var incrField)) {
+          var amount = id.Amount ?? new IntegerLiteralExpr(id.Position, 1, TypeSuffix.None);
+          var lowered = new AssignStmt(id.Position, ThisField(id.Position, incrField),
+            new BinaryExpr(id.Position, id.Increment ? BinaryOp.Add : BinaryOp.Subtract, ThisField(id.Position, incrField), amount));
+          this.BindStatement(lowered, scope);
+          this._model.DesugaredStatements[id] = lowered;
+          break;
+        }
         this.BindAssignTarget(id.Target, scope);
         if (id.Amount != null)
           this.BindExpression(id.Amount, scope);
         break;
+      }
 
       case SwapStmt sw:
         this.BindAssignTarget(sw.Left, scope);

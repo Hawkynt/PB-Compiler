@@ -36,12 +36,25 @@ public sealed class CoroutineBinderTests {
   }
 
   [Test]
-  public void Bind_GivenYieldInsideLoop_WhenBound_ThenRejectedClearly() {
-    var unit = Parser.Parse(Lexer.Tokenize(
-      "FUNCTION Sq(BYVAL n AS INTEGER) AS LONG\n  FOR i = 1 TO n\n    YIELD i\n  NEXT\nEND FUNCTION\n", "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);
-    var model = Binder.Bind(unit, Dialect.Pb36);
-    Assert.That(model.Errors.Any(e => e.Message.Contains("YIELD inside a loop")), Is.True,
-      "a YIELD inside a loop is rejected rather than silently miscompiled");
+  public void Bind_GivenYieldInsideLoop_WhenBound_ThenLowersToStateMachineWithoutError() {
+    // a YIELD inside a FOR is flattened to the MoveNext state machine (goto form), not rejected
+    var model = Bind("FUNCTION Sq(BYVAL n AS INTEGER) AS LONG\n  FOR i = 1 TO n\n    YIELD i * i\n  NEXT\nEND FUNCTION\nDIM e AS Sq\n");
+    Assert.Multiple(() => {
+      Assert.That(model.Procedures.ContainsKey("Sq.MoveNext"), Is.True, "the loop generator still synthesizes MoveNext");
+      Assert.That(model.Udts["Sq"].FindField("$i"), Is.Not.Null, "the loop counter persists across resumes as an enumerator field");
+      Assert.That(model.Udts["Sq"].FindField("$n"), Is.Not.Null, "the parameter persists across resumes as an enumerator field");
+    });
+  }
+
+  [Test]
+  public void Bind_GivenSuffixTypedParameter_WhenBound_ThenSeededAndCaptured() {
+    // a parameter typed by suffix (n%) - not an explicit AS clause - is still captured and seeded
+    var model = Bind("FUNCTION Sq(BYVAL n%) AS LONG\n  YIELD n%\nEND FUNCTION\nDIM e AS Sq\ne = Sq(4)\n");
+    var assign = model.DesugaredStatements.Keys.OfType<AssignStmt>()
+      .Single(a => a.Value is CallOrIndexExpr { Name: "Sq" });
+    var construct = (IfStmt)model.DesugaredStatements[assign];
+    var writes = construct.Then.OfType<AssignStmt>().Select(s => ((MemberExpr)s.Target).Member).ToList();
+    Assert.That(writes, Is.EqualTo(new[] { "$state", "$n" }), "the suffix-typed parameter is seeded from the argument");
   }
 
   [Test]
