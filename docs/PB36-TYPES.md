@@ -72,11 +72,15 @@ END TYPE
 `PROPERTY Name AS Type` with no `GET`/`SET` (anonymous form) expands to an auto
 getter **and** an auto setter over one `$Name` field.
 
-**Trivial accessors inline to the field.** A trivial auto-accessor emits *no
-procedure at all*: `o.Prop` (read) binds straight to `o.$Prop`, and `o.Prop = x`
-binds straight to `o.$Prop = x`. So an anonymous property is exactly a field
-access — no call overhead — while a body-carrying accessor (computed `Area`,
-scaling `Size`) still lowers to a `get_`/`set_` call.
+**Trivial methods inline (optimizer).** Accessors are ordinary lifted procedures
+(`get_P` = `THIS.$P`, `set_P` = `THIS.$P = VALUE`) with no special-casing. The
+general O6 inliner then inlines *any* trivial method body — auto-generated or
+hand-written — by treating the `THIS` receiver as what it is: an ordinary BYREF
+argument. A trivial method whose every call inlines is reachability-purged, so
+`o.Count` (an anonymous property) ends up exactly as cheap as a field access, and a
+hand-written `FUNCTION Sum() = THIS.x + THIS.y` inlines the same way. A method whose
+body is too large, or a call where the receiver is not a near lvalue, falls back to
+a real call.
 
 ### Constructors
 

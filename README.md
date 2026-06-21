@@ -146,9 +146,11 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
   `PROPERTY GET Area AS LONG => THIS.W * THIS.H`, `PROPERTY SET Size() => FIELD = 2 * VALUE`.
 - **Anonymous full properties** — `PROPERTY Count AS LONG` (no `GET`/`SET`)
   synthesizes *both* a trivial getter and setter over one backing field.
-- **Trivial accessors inline to a field** — a trivial auto-accessor compiles to a
-  direct field access (no call, no accessor procedure emitted), so `o.Count` is
-  exactly as cheap as touching a field.
+- **Trivial methods inline** — the optimizer inlines *any* trivial method body
+  (auto-generated accessor or hand-written), treating the `THIS` receiver as the
+  ordinary BYREF argument it is; a method inlined at every call site is purged. So
+  `o.Count` (an anonymous property) is as cheap as a field, and a hand-written
+  `FUNCTION Sum() = THIS.x + THIS.y` inlines the same way — no property-specific path.
 - **Constructors** — a `SUB` named like the `TYPE` is its constructor (with `THIS`
   access); `p = Point(3, 4)` runs it with the target as the BYREF receiver.
 - **`READONLY` types** — `TYPE Point READONLY … END TYPE` makes every field
