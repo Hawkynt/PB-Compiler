@@ -158,6 +158,11 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
 - **`READONLY` types** — `TYPE Point READONLY … END TYPE` makes every field
   write-once: assignable only inside the type's own constructor, rejected
   elsewhere at compile time.
+- **`OPERATOR` overloading** — define `OPERATOR + (other AS Vec) AS Vec` (and `=`, `<`,
+  `MOD`, …) inside a `TYPE`; `THIS` is the left operand, the body sets the `RESULT`. `a + b`
+  resolves to the overload at compile time (a value-type feature, no dispatch). A
+  TYPE-returning operator writes through struct return (`c = a + b`); a scalar-returning
+  one (`a = b`) works in any expression.
 - **Compile-time generics** — generic types `TYPE Stack OF T … END TYPE`
   (`DIM s AS Stack OF LONG`) and generic procedures `FUNCTION Max OF T (…) AS T`
   (the type argument is **inferred** from the call: `Max(3, 9)`, `Max("a", "b")`).

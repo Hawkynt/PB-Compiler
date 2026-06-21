@@ -111,7 +111,8 @@ a separate axis (`--optimize`, on by default for `pb36`). Full detail in
   body** (accessor or hand-written) through the BYREF `THIS` receiver, purging it when
   every call inlines — no property-specific path. **Constructors**: a `SUB` named like the `TYPE`,
   invoked `p = Point(3, 4)`. **`READONLY` types** (`TYPE Point READONLY …`): fields
-  settable only inside the constructor.
+  settable only inside the constructor. **`OPERATOR` overloading** (`OPERATOR + (o AS Vec)
+  AS Vec` with `THIS` the left operand and `RESULT` the result; resolved at compile time).
 - **Compile-time generics** (monomorphized): generic types `TYPE Stack OF T …` and
   generic procedures `FUNCTION Max OF T (…) AS T` (type argument inferred from the
   call); each instantiation is vivified into concrete code at compile time (no runtime

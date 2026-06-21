@@ -27,9 +27,9 @@ string interpolation, array-initializer literals.
   natural complement to generics for modelling data without classes.
 - **Nullable / option types** (M) — `DIM x AS LONG?` (a value + presence flag) with a
   null-coalescing operator. Safer than sentinel values; pure value semantics.
-- **`OPERATOR` overloading for TYPEs** (M) — `OPERATOR + (a AS Vec, b AS Vec) AS Vec`,
-  resolved at compile time like a TYPE method. Value-type feature (no dispatch), makes
-  numeric-ish UDTs (Vec2, Fixed, BigInt) ergonomic.
+- ~~**`OPERATOR` overloading for TYPEs**~~ — **DONE**: `OPERATOR + (other AS Vec) AS Vec`
+  inside a TYPE (`THIS` left operand, `RESULT` the result), resolved at compile time; a
+  TYPE-returning operator uses struct return, a scalar-returning one works in any expression.
 - **Type aliases** (S) — `TYPE Celsius = LONG` / `ALIAS`, distinct-or-transparent, for
   readable signatures (pairs well with generics, e.g. `Stack OF Celsius`).
 - **Bit-field members in TYPE** (M) — `Flags AS BIT * 3`, packed sub-byte fields for
