@@ -100,16 +100,69 @@ public sealed class TypeMemberBinderTests {
   }
 
   [Test]
-  public void Bind_GivenAutoProperty_WhenBound_ThenSynthesizesBackingFieldAndAccessors() {
+  public void Bind_GivenAutoProperty_WhenBound_ThenBacksWithFieldAndInlinesAccessAway() {
     var model = Bind(
-      "TYPE P\n  PROPERTY GET X() AS INTEGER\n  PROPERTY SET X(BYVAL v AS INTEGER)\nEND TYPE\nDIM p AS P\n");
+      "TYPE P\n  PROPERTY GET X() AS INTEGER\n  PROPERTY SET X(BYVAL v AS INTEGER)\nEND TYPE\nDIM p AS P\np.X = 7\ny% = p.X\n");
     var udt = model.Udts["P"];
     Assert.Multiple(() => {
       Assert.That(udt.FindField("$X"), Is.Not.Null, "an auto property has a hidden backing field");
       Assert.That(udt.FindField("$X")!.Type, Is.EqualTo(PbType.Integer));
       Assert.That(udt.FindField("X"), Is.Null, "the property name is not itself a field");
-      Assert.That(model.Procedures.ContainsKey("P.get_X") && model.Procedures.ContainsKey("P.set_X"), Is.True);
+      Assert.That(model.Procedures.ContainsKey("P.get_X") || model.Procedures.ContainsKey("P.set_X"), Is.False,
+        "a trivial auto accessor has no procedure - access inlines to the backing field");
+      // p.X read desugars to a field access on the backing field
+      var read = model.ExpressionTypes.Keys.OfType<MemberExpr>().Single(m => m.Member == "X");
+      Assert.That(((MemberExpr)model.Desugared[read]).Member, Is.EqualTo("$X"), "p.X reads the backing field directly");
+      // p.X = 7 desugars to a field store on the backing field
+      Assert.That(model.DesugaredStatements.Values.OfType<AssignStmt>()
+        .Any(s => s.Target is MemberExpr { Member: "$X" }), Is.True, "p.X = ... writes the backing field directly");
     });
+  }
+
+  [Test]
+  public void Bind_GivenAnonymousProperty_WhenBound_ThenSynthesizesAutoGetAndSetOverOneField() {
+    // PROPERTY Count AS LONG (no GET/SET) -> a backing field with both a trivial getter and setter
+    var model = Bind("TYPE Box\n  PROPERTY Count AS LONG\nEND TYPE\nDIM b AS Box\nb.Count = 3\nz& = b.Count\n");
+    var udt = model.Udts["Box"];
+    Assert.Multiple(() => {
+      Assert.That(udt.FindField("$Count"), Is.Not.Null);
+      Assert.That(udt.FindField("$Count")!.Type, Is.EqualTo(PbType.Long));
+      Assert.That(model.DesugaredStatements.Values.OfType<AssignStmt>()
+        .Any(s => s.Target is MemberExpr { Member: "$Count" }), Is.True, "the write inlines to the field");
+    });
+  }
+
+  [Test]
+  public void Bind_GivenConstructorCall_WhenBound_ThenRunsTypeNamedSubWithReceiver() {
+    // p = Point(3, 4) calls the constructor (a SUB named like the TYPE) with the target as BYREF THIS
+    var model = Bind(
+      "TYPE Point\n  x AS LONG\n  y AS LONG\n  SUB Point(BYVAL px AS LONG, BYVAL py AS LONG)\n    THIS.x = px\n    THIS.y = py\n  END SUB\nEND TYPE\n" +
+      "DIM p AS Point\np = Point(3, 4)\n");
+    Assert.That(model.Procedures.ContainsKey("Point.Point"), Is.True, "the constructor lifts to Point.Point");
+    var assign = model.DesugaredStatements.Keys.OfType<AssignStmt>().Single(a => a.Value is CallOrIndexExpr { Name: "Point" });
+    var call = (CallStmt)model.DesugaredStatements[assign];
+    Assert.Multiple(() => {
+      Assert.That(call.Name, Is.EqualTo("Point.Point"));
+      Assert.That(call.Arguments, Has.Count.EqualTo(3), "receiver THIS plus the two constructor arguments");
+    });
+  }
+
+  [Test]
+  public void Bind_GivenReadonlyTypeFieldWriteOutsideConstructor_WhenBound_ThenRejected() {
+    var unit = Parser.Parse(Lexer.Tokenize(
+      "TYPE Point READONLY\n  x AS LONG\n  SUB Point(BYVAL px AS LONG)\n    THIS.x = px\n  END SUB\nEND TYPE\n" +
+      "DIM p AS Point\np = Point(5)\np.x = 9\n", "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors.Any(e => e.Message.Contains("READONLY TYPE Point")), Is.True,
+      "writing a readonly field outside the constructor is rejected");
+  }
+
+  [Test]
+  public void Bind_GivenReadonlyTypeFieldWriteInsideConstructor_WhenBound_ThenAllowed() {
+    var model = Bind(
+      "TYPE Point READONLY\n  x AS LONG\n  SUB Point(BYVAL px AS LONG)\n    THIS.x = px\n  END SUB\nEND TYPE\n" +
+      "DIM p AS Point\np = Point(5)\n");
+    Assert.That(model.Success, Is.True, "the constructor may set readonly fields");
   }
 
   [Test]

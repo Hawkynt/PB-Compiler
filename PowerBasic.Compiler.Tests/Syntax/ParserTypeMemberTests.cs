@@ -92,6 +92,34 @@ public sealed class ParserTypeMemberTests {
   }
 
   [Test]
+  public void Parse_GivenAnonymousProperty_WhenPb36_ThenExpandsToAutoGetAndSet() {
+    // PROPERTY Count AS LONG (no GET/SET, no body) -> one auto getter + one auto setter
+    var members = ParseType("TYPE Box\n  PROPERTY Count AS LONG\nEND TYPE").Members;
+    Assert.Multiple(() => {
+      Assert.That(members.Select(m => m.Kind),
+        Is.EquivalentTo(new[] { TypeMemberKind.PropertyGet, TypeMemberKind.PropertySet }));
+      Assert.That(members.All(m => m is { Name: "Count", IsAuto: true }), Is.True);
+      Assert.That(members.All(m => m.ReturnType is { Builtin: BuiltinType.Long }), Is.True);
+    });
+  }
+
+  [Test]
+  public void Parse_GivenReadonlyType_WhenPb36_ThenFlagSet() {
+    var decl = ParseType("TYPE Vec READONLY\n  x AS LONG\nEND TYPE");
+    Assert.That(decl.IsReadonly, Is.True);
+  }
+
+  [Test]
+  public void Parse_GivenConstructorSub_WhenPb36_ThenSubMemberNamedLikeType() {
+    var decl = ParseType("TYPE Point\n  x AS LONG\n  SUB Point(BYVAL px AS LONG)\n    THIS.x = px\n  END SUB\nEND TYPE");
+    var ctor = decl.Members.Single();
+    Assert.Multiple(() => {
+      Assert.That(ctor.Kind, Is.EqualTo(TypeMemberKind.Sub));
+      Assert.That(ctor.Name, Is.EqualTo("Point"));
+    });
+  }
+
+  [Test]
   public void Parse_GivenTypeMember_WhenPb35_ThenRejectedWithRequirementMessage() {
     var ex = Assert.Throws<ParserException>(() => Parse(_stack, Dialect.Pb35));
     Assert.That(ex!.Message, Does.Contain("TYPE methods"));

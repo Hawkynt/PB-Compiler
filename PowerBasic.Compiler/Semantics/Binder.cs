@@ -24,6 +24,16 @@ public sealed class Binder {
 
   /// <summary>Inside a generator, a FOR EACH over another generator that itself contains a YIELD: the enumerator field ($fe&lt;n&gt;) in THIS that holds the inner iterator (so its state persists across the outer YIELDs), and the inner generator's name. Keyed by AST node identity, populated before MoveNext lowering.</summary>
   private readonly Dictionary<ForEachStmt, (string Field, string GenName)> _foreachEnumField = new(ReferenceEqualityComparer.Instance);
+
+  /// <summary>Auto-implemented property accessors keyed "Udt.Prop" (case-insensitive) -> backing field: reading / writing such a property binds straight to the field (no accessor call), so a trivial property is exactly a field access.</summary>
+  private readonly Dictionary<string, string> _autoPropGetField = new(StringComparer.OrdinalIgnoreCase);
+  private readonly Dictionary<string, string> _autoPropSetField = new(StringComparer.OrdinalIgnoreCase);
+
+  /// <summary>pb36 TYPEs with a constructor (a member SUB named like the TYPE): <c>p = Type(args)</c> calls it with the target as the BYREF THIS, after zeroing the instance.</summary>
+  private readonly HashSet<string> _typeConstructors = new(StringComparer.OrdinalIgnoreCase);
+
+  /// <summary>pb36 READONLY TYPEs: their fields may be written only inside the type's own constructor.</summary>
+  private readonly HashSet<string> _readonlyTypes = new(StringComparer.OrdinalIgnoreCase);
   private ConstantFolder _folder;
   private bool _dynamicMode;
   private bool _optionSigned;
@@ -181,6 +191,8 @@ public sealed class Binder {
           var backing = PropertyBackingFields(t);
           var fields = backing.Count == 0 ? t.Fields
             : [.. t.Fields, .. backing.Select(b => new TypeField(t.Position, b.Field, b.Type, null))];
+          if (t.IsReadonly)
+            this._readonlyTypes.Add(t.Name);
           this.DefineUdt(t.Name, fields, isUnion: false, t.Position);
           this.DefineTypeMembers(t, backing.ToDictionary(b => b.Prop, b => b, StringComparer.OrdinalIgnoreCase));
           break;
@@ -399,11 +411,25 @@ public sealed class Binder {
       var parameters = new List<Parameter>(m.Parameters.Count + 1) { thisParam };
       var isFunction = m.Kind is TypeMemberKind.Function or TypeMemberKind.PropertyGet;
       var isProperty = m.Kind is TypeMemberKind.PropertyGet or TypeMemberKind.PropertySet;
+      if (m.Kind == TypeMemberKind.Sub && m.Name.Equals(t.Name, StringComparison.OrdinalIgnoreCase))
+        this._typeConstructors.Add(t.Name);   // a SUB named like the TYPE is its constructor
       backing.TryGetValue(m.Name, out var bk);   // bk is default (Field == null) when there is no backing field
       var hasBacking = isProperty && bk.Field != null;
+
+      // a trivial auto-accessor IS the backing field: record it so o.Prop reads / writes bind straight
+      // to the field (no accessor procedure at all - it would be dead, and an auto-setter body would
+      // even trip READONLY enforcement). The constructor still reaches the field via the same inlining.
+      if (m.IsAuto && hasBacking) {
+        var key = t.Name + "." + m.Name;
+        if (m.Kind == TypeMemberKind.PropertyGet)
+          this._autoPropGetField[key] = bk.Field;
+        else
+          this._autoPropSetField[key] = bk.Field;
+        continue;
+      }
+
       var body = m.Body;
       string? valueParam = null;
-
       if (m.Kind == TypeMemberKind.PropertySet) {
         // the incoming value: the explicit first parameter, or an injected VALUE of the property type
         if (m.Parameters.Count > 0) {
@@ -413,12 +439,8 @@ public sealed class Binder {
           valueParam = "VALUE";
           parameters.Add(new Parameter(m.Position, "VALUE", TypeSuffix.None, hasBacking ? bk.Type : null, ByVal: true, Seg: false, IsArray: false));
         }
-        if (m.IsAuto && hasBacking)
-          body = [new AssignStmt(m.Position, ThisField(m.Position, bk.Field), new NameExpr(m.Position, valueParam, TypeSuffix.None))];
       } else {
         parameters.AddRange(m.Parameters);
-        if (m.Kind == TypeMemberKind.PropertyGet && m.IsAuto && hasBacking)
-          body = [new AssignStmt(m.Position, new NameExpr(m.Position, m.Name, m.Suffix), ThisField(m.Position, bk.Field))];
       }
 
       var returnType = m.Kind == TypeMemberKind.PropertySet ? null : m.ReturnType;
@@ -862,6 +884,14 @@ public sealed class Binder {
       return false;
     if (udt.FindField(m.Member) != null)
       return false;
+    // pb36: a trivial auto PROPERTY SET is just the backing field - bind o.Prop = x -> o.$backing = x
+    // (the field-store path also applies READONLY enforcement when the type is readonly)
+    if (this._autoPropSetField.TryGetValue(udt.Name + "." + m.Member, out var setBacking)) {
+      var fieldWrite = new AssignStmt(a.Position, new MemberExpr(a.Position, m.Target, setBacking, TypeSuffix.None), a.Value);
+      this.BindStatement(fieldWrite, scope);
+      this._model.DesugaredStatements[a] = fieldWrite;
+      return true;
+    }
     var setter = $"{udt.Name}.set_{m.Member}";
     if (!this.HasMemberProc(setter))
       return false;
@@ -869,6 +899,19 @@ public sealed class Binder {
     this.BindCallStatement(call, scope);
     this._model.DesugaredStatements[a] = call;
     return true;
+  }
+
+  /// <summary>pb36 READONLY enforcement: a write to a field of a READONLY TYPE is allowed only inside that type's constructor (the lifted <c>Type.Type</c> proc).</summary>
+  private void CheckReadonlyFieldWrite(MemberExpr m, Scope scope) {
+    if (this.BindExpression(m.Target, scope) is not UdtType udt || !this._readonlyTypes.Contains(udt.Name))
+      return;
+    if (udt.FindField(m.Member) == null)
+      return;                                    // not a real field (e.g. a method name) - leave to normal binding
+    var ctorName = udt.Name + "." + udt.Name;
+    if (scope.Proc?.Name.Equals(ctorName, StringComparison.OrdinalIgnoreCase) == true)
+      return;                                    // inside the constructor - the one place writes are allowed
+    var shown = m.Member.StartsWith(GeneratedPrefix, StringComparison.Ordinal) ? m.Member[GeneratedPrefix.Length..] : m.Member;
+    this.Error(m.Position, $"field '{shown}' of READONLY TYPE {udt.Name} can be set only in its constructor");
   }
 
   /// <summary>True when a YIELD appears inside a nested block (loop / IF / SELECT) rather than at the top level of the body.</summary>
@@ -1412,6 +1455,15 @@ public sealed class Binder {
           this._model.DesugaredStatements[a] = construct;
           break;
         }
+        // pb36 constructor: p = Type(args) runs the type's constructor with the target as BYREF THIS
+        if (a.Value is CallOrIndexExpr ctor && this._typeConstructors.Contains(ctor.Name)) {
+          var callArgs = new List<Expression>(ctor.Arguments.Count + 1) { a.Target };
+          callArgs.AddRange(ctor.Arguments);
+          var call = new CallStmt(a.Position, ctor.Name + "." + ctor.Name, callArgs, UsedCallKeyword: false);
+          this.BindCallStatement(call, scope);
+          this._model.DesugaredStatements[a] = call;
+          break;
+        }
         // pb36 coroutine: inside MoveNext, a write to a captured generator parameter/local -> THIS.$name
         if (a.Target is NameExpr capTarget && scope.Proc?.CoroutineCaptures is { } caps && caps.TryGetValue(capTarget.Name, out var capWrite)) {
           var lowered = new AssignStmt(a.Position, ThisField(a.Position, capWrite), a.Value);
@@ -1429,6 +1481,8 @@ public sealed class Binder {
         }
         if (a.Target is MemberExpr propTarget && this.TryBindPropertySet(a, propTarget, scope))
           break;
+        if (a.Target is MemberExpr writeTarget)
+          this.CheckReadonlyFieldWrite(writeTarget, scope);
         var targetType = this.BindAssignTarget(a.Target, scope);
         var valueType = this.BindWithExpected(a.Value, targetType as ProcPtrType, scope);
         this.CheckAssignable(targetType, valueType, a.Position);
@@ -2527,6 +2581,13 @@ public sealed class Binder {
         var field = udt.FindField(m.Member);
         if (field != null)
           return field.Type;
+        // pb36: a trivial auto PROPERTY GET is just the backing field - bind o.Prop -> o.$backing
+        if (this._autoPropGetField.TryGetValue(udt.Name + "." + m.Member, out var getBacking)) {
+          var fieldAccess = new MemberExpr(m.Position, m.Target, getBacking, TypeSuffix.None);
+          var type = this.BindExpression(fieldAccess, scope);
+          this._model.Desugared[m] = fieldAccess;
+          return type;
+        }
         // pb36: o.Prop with no such field but a PROPERTY GET -> Type.get_Prop(o)
         var getter = MemberProcName(udt.Name, new TypeMember(m.Position, TypeMemberKind.PropertyGet, m.Member, m.Suffix, [], null, []));
         // ... or a parameterless method called without parens (o.MoveNext) -> Type.MoveNext(o)

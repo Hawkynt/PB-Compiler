@@ -28,8 +28,8 @@ public sealed class CoroutineBinderTests {
     Assert.Multiple(() => {
       Assert.That(model.Udts.ContainsKey("Gen"), Is.True, "the generator name becomes an enumerator TYPE");
       Assert.That(model.Procedures.ContainsKey("Gen.MoveNext"), Is.True);
-      Assert.That(model.Procedures.ContainsKey("Gen.get_Current"), Is.True);
       Assert.That(model.Procedures.ContainsKey("Gen.Reset"), Is.True);
+      Assert.That(model.Udts["Gen"].FindField("$Current"), Is.Not.Null, "Current is a trivial auto property backed by a field (its accessor inlines away)");
       Assert.That(model.Udts["Gen"].FindField("$state"), Is.Not.Null, "the enumerator holds resume state");
       Assert.That(model.Procedures.ContainsKey("Gen"), Is.False, "the generator is not a callable procedure");
     });

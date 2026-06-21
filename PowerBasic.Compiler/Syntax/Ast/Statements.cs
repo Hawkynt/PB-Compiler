@@ -80,6 +80,8 @@ public sealed record TypeMember(SourcePosition Position, TypeMemberKind Kind, st
 /// <summary>TYPE ... END TYPE. <see cref="Members"/> is empty unless the block declares methods/properties (pb36).</summary>
 public sealed record TypeDecl(SourcePosition Position, string Name, IReadOnlyList<TypeField> Fields) : Statement(Position) {
   public IReadOnlyList<TypeMember> Members { get; init; } = [];
+  /// <summary>pb36 READONLY TYPE: fields may be assigned only inside the type's own constructor.</summary>
+  public bool IsReadonly { get; init; }
 }
 
 /// <summary>UNION ... END UNION.</summary>

@@ -316,6 +316,10 @@ public sealed partial class Parser {
     this.Require(LanguageFeature.TypeUnion);
     var pos = this.Advance().Position;
     var name = this.Expect(TokenKind.Identifier, "type name");
+    // pb36: TYPE Name READONLY - fields are write-once (settable only in the constructor)
+    var isReadonly = !isUnion && this.TryMatchKeyword("READONLY");
+    if (isReadonly)
+      this.Require(LanguageFeature.TypeMethods);
     var end = isUnion ? "END UNION" : "END TYPE";
     var fields = new List<TypeField>();
     var members = new List<TypeMember>();
@@ -330,12 +334,12 @@ public sealed partial class Parser {
         throw this.Error($"unexpected end of file, expected {end}");
       // pb36: a TYPE block may carry SUB/FUNCTION/PROPERTY members (UNION stays fields-only)
       if (!isUnion && (this.IsKeyword(0, "SUB") || this.IsKeyword(0, "FUNCTION") || this.IsKeyword(0, "PROPERTY"))) {
-        members.Add(this.ParseTypeMember());
+        members.AddRange(this.ParseTypeMember());
         continue;
       }
       fields.Add(this.ParseTypeField());
     }
-    return isUnion ? new UnionDecl(pos, name.Text, fields) : new TypeDecl(pos, name.Text, fields) { Members = members };
+    return isUnion ? new UnionDecl(pos, name.Text, fields) : new TypeDecl(pos, name.Text, fields) { Members = members, IsReadonly = isReadonly };
   }
 
   /// <summary>
@@ -343,7 +347,7 @@ public sealed partial class Parser {
   /// <c>PROPERTY GET</c>/<c>PROPERTY SET</c> accessor. Gated to pb36; the receiver
   /// is the implicit <c>THIS</c> added when the member is lifted to a procedure.
   /// </summary>
-  private TypeMember ParseTypeMember() {
+  private IReadOnlyList<TypeMember> ParseTypeMember() {
     this.Require(LanguageFeature.TypeMethods);
     var pos = this.Current.Position;
     if (this.TryMatchKeyword("SUB")) {
@@ -352,7 +356,7 @@ public sealed partial class Parser {
       var body = this.ParseBody("END SUB");
       this.Advance();
       this.Advance();
-      return new TypeMember(pos, TypeMemberKind.Sub, name.Text, name.Suffix, parameters, null, body);
+      return [new TypeMember(pos, TypeMemberKind.Sub, name.Text, name.Suffix, parameters, null, body)];
     }
     if (this.TryMatchKeyword("FUNCTION")) {
       var name = this.Expect(TokenKind.Identifier, "method name");
@@ -361,13 +365,25 @@ public sealed partial class Parser {
       var body = this.ParseBody("END FUNCTION");
       this.Advance();
       this.Advance();
-      return new TypeMember(pos, TypeMemberKind.Function, name.Text, name.Suffix, parameters, returnType, body);
+      return [new TypeMember(pos, TypeMemberKind.Function, name.Text, name.Suffix, parameters, returnType, body)];
     }
 
     this.ExpectKeyword("PROPERTY");
     var isGet = this.TryMatchKeyword("GET");
-    if (!isGet)
-      this.ExpectKeyword("SET");
+    var isSet = !isGet && this.TryMatchKeyword("SET");
+
+    // anonymous full property: PROPERTY Name AS Type (no GET/SET) -> an auto getter AND auto setter
+    // over one synthesized backing field (the trivial accessors bind straight to that field)
+    if (!isGet && !isSet) {
+      var autoName = this.Expect(TokenKind.Identifier, "property name");
+      this.ExpectKeyword("AS");
+      var autoType = this.ParseTypeName();
+      return [
+        new TypeMember(pos, TypeMemberKind.PropertyGet, autoName.Text, autoName.Suffix, [], autoType, [], IsAuto: true),
+        new TypeMember(pos, TypeMemberKind.PropertySet, autoName.Text, autoName.Suffix, [], autoType, [], IsAuto: true),
+      ];
+    }
+
     var propName = this.Expect(TokenKind.Identifier, "property name");
     var kind = isGet ? TypeMemberKind.PropertyGet : TypeMemberKind.PropertySet;
     var propParams = this.Current.Kind == TokenKind.LParen ? this.ParseParameterList() : [];
@@ -378,19 +394,19 @@ public sealed partial class Parser {
       IReadOnlyList<Statement> arrowBody = isGet
         ? [new AssignStmt(pos, new NameExpr(propName.Position, propName.Text, propName.Suffix), this.ParseExpression())]
         : [this.ParseArrowAssignment()];
-      return new TypeMember(pos, kind, propName.Text, propName.Suffix, propParams, propReturn, arrowBody);
+      return [new TypeMember(pos, kind, propName.Text, propName.Suffix, propParams, propReturn, arrowBody)];
     }
 
     // auto-implemented property: no body block (the compiler synthesizes a backing field)
     this.SkipSeparators();
     if (this.IsKeyword(0, "SUB") || this.IsKeyword(0, "FUNCTION") || this.IsKeyword(0, "PROPERTY")
         || (this.IsKeyword(0, "END") && this.IsKeyword(1, "TYPE")))
-      return new TypeMember(pos, kind, propName.Text, propName.Suffix, propParams, propReturn, [], IsAuto: true);
+      return [new TypeMember(pos, kind, propName.Text, propName.Suffix, propParams, propReturn, [], IsAuto: true)];
 
     var propBody = this.ParseBody("END PROPERTY");
     this.Advance();
     this.Advance();
-    return new TypeMember(pos, kind, propName.Text, propName.Suffix, propParams, propReturn, propBody);
+    return [new TypeMember(pos, kind, propName.Text, propName.Suffix, propParams, propReturn, propBody)];
   }
 
   /// <summary>Parses the <c>lvalue = expr</c> after a PROPERTY SET <c>=&gt;</c> arrow into one assignment.</summary>
