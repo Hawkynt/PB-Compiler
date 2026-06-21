@@ -485,6 +485,17 @@ public sealed class Binder {
     var intType = new TypeName(pos, BuiltinType.Integer);
     var elementType = f.ReturnType ?? intType;
 
+    // not yet lowered: a YIELD inside a loop / IF (resume must re-enter the block), or a local
+    // assigned in the body and read across a YIELD (it would not persist). Reject clearly rather
+    // than miscompile silently; both need the full state-machine transform (a later increment).
+    if (ContainsNestedYield(f.Body))
+      this.Error(pos, "a YIELD inside a loop or IF is not yet supported in a generator (only top-level YIELDs)");
+    var paramNames = new HashSet<string>(f.Parameters.Select(p => p.Name), StringComparer.OrdinalIgnoreCase);
+    var assigned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    CollectAssignedNames(f.Body, assigned);
+    if (assigned.Any(n => !paramNames.Contains(n)))
+      this.Error(pos, "local variables in a generator are not yet supported (only parameters persist across YIELDs)");
+
     var fields = new List<TypeField> { new(pos, GeneratedPrefix + "state", intType, null) };
     foreach (var p in f.Parameters)
       if (p.Type is { } paramType)
@@ -675,6 +686,30 @@ public sealed class Binder {
     this.BindCallStatement(call, scope);
     this._model.DesugaredStatements[a] = call;
     return true;
+  }
+
+  /// <summary>True when a YIELD appears inside a nested block (loop / IF / SELECT) rather than at the top level of the body.</summary>
+  private static bool ContainsNestedYield(IReadOnlyList<Statement> body) {
+    foreach (var s in body)
+      if (s is not YieldStmt and not (SubDecl or FunctionDecl or DefFnDecl))
+        foreach (var block in ChildBlocks(s))
+          if (ContainsYield(block))
+            return true;
+    return false;
+  }
+
+  /// <summary>Collects the names of scalar variables assigned anywhere in a body (assignment / INCR-DECR target, FOR counter), recursing nested blocks but not nested procedures.</summary>
+  private static void CollectAssignedNames(IReadOnlyList<Statement> body, HashSet<string> names) {
+    foreach (var s in body) {
+      switch (s) {
+        case AssignStmt { Target: NameExpr a }: names.Add(a.Name); break;
+        case IncrDecrStmt { Target: NameExpr d }: names.Add(d.Name); break;
+        case ForStmt { Variable: NameExpr c }: names.Add(c.Name); break;
+      }
+      if (s is not (SubDecl or FunctionDecl or DefFnDecl))
+        foreach (var block in ChildBlocks(s))
+          CollectAssignedNames(block, names);
+    }
   }
 
   /// <summary>True when a procedure body contains a YIELD (making it a generator); nested SUB/FUNCTION bodies are their own scope and do not count.</summary>

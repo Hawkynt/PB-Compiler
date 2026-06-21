@@ -36,6 +36,15 @@ public sealed class CoroutineBinderTests {
   }
 
   [Test]
+  public void Bind_GivenYieldInsideLoop_WhenBound_ThenRejectedClearly() {
+    var unit = Parser.Parse(Lexer.Tokenize(
+      "FUNCTION Sq(BYVAL n AS INTEGER) AS LONG\n  FOR i = 1 TO n\n    YIELD i\n  NEXT\nEND FUNCTION\n", "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors.Any(e => e.Message.Contains("YIELD inside a loop")), Is.True,
+      "a YIELD inside a loop is rejected rather than silently miscompiled");
+  }
+
+  [Test]
   public void Bind_GivenForEachOverGenerator_WhenBound_ThenLowersToIteratorLoop() {
     var model = Bind(_gen + "FOR EACH v IN Gen()\n  PRINT v\nNEXT\n");
     var foreachStmt = model.DesugaredStatements.Keys.OfType<ForEachStmt>().Single();
