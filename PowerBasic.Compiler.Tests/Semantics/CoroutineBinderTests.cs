@@ -58,6 +58,21 @@ public sealed class CoroutineBinderTests {
   }
 
   [Test]
+  public void Bind_GivenGeneratorYieldingWhileIteratingAnother_WhenBound_ThenInnerEnumeratorPersistsAsField() {
+    // a generator that does FOR EACH over another generator and YIELDs inside the loop keeps the
+    // inner iterator alive across the outer resumes by storing it in a UDT field of the enumerator
+    var model = Bind(
+      "FUNCTION Count(BYVAL n%) AS INTEGER\n  FOR i% = 1 TO n%\n    YIELD i%\n  NEXT\nEND FUNCTION\n" +
+      "FUNCTION Doubled(BYVAL n%) AS INTEGER\n  FOR EACH x% IN Count(n%)\n    YIELD x% * 2\n  NEXT\nEND FUNCTION\n" +
+      "DIM e AS Doubled\n");
+    Assert.Multiple(() => {
+      Assert.That(model.Procedures.ContainsKey("Doubled.MoveNext"), Is.True);
+      Assert.That(model.Udts["Doubled"].FindField("$fe1"), Is.Not.Null, "the inner enumerator persists across resumes as a UDT field");
+      Assert.That(model.Udts["Doubled"].FindField("$x"), Is.Not.Null, "the FOR EACH loop variable persists across resumes");
+    });
+  }
+
+  [Test]
   public void Bind_GivenForEachOverGenerator_WhenBound_ThenLowersToIteratorLoop() {
     var model = Bind(_gen + "FOR EACH v IN Gen()\n  PRINT v\nNEXT\n");
     var foreachStmt = model.DesugaredStatements.Keys.OfType<ForEachStmt>().Single();

@@ -21,6 +21,9 @@ public sealed class Binder {
 
   /// <summary>Each generator's parameter names (in order), so a construction call seeds the enumerator's captured-parameter fields.</summary>
   private readonly Dictionary<string, IReadOnlyList<string>> _generatorParams = new(StringComparer.OrdinalIgnoreCase);
+
+  /// <summary>Inside a generator, a FOR EACH over another generator that itself contains a YIELD: the enumerator field ($fe&lt;n&gt;) in THIS that holds the inner iterator (so its state persists across the outer YIELDs), and the inner generator's name. Keyed by AST node identity, populated before MoveNext lowering.</summary>
+  private readonly Dictionary<ForEachStmt, (string Field, string GenName)> _foreachEnumField = new(ReferenceEqualityComparer.Instance);
   private ConstantFolder _folder;
   private bool _dynamicMode;
   private bool _optionSigned;
@@ -441,8 +444,8 @@ public sealed class Binder {
     Expression Int(long v) => new IntegerLiteralExpr(pos, v, TypeSuffix.None);
     var ctx = new GenLower(pos, currentField);
     this.LowerGenBody(genBody, ctx);
-    if (ContainsYield(ctx.Body))   // a YIELD left un-lowered sits in an unsupported construct (SELECT/TRY/FOR EACH)
-      this.Error(pos, "a YIELD here is not yet supported in a generator (loops and IF are; SELECT CASE / TRY / nested FOR EACH are not)");
+    if (ContainsYield(ctx.Body))   // a YIELD left un-lowered sits in an unsupported construct (SELECT / TRY)
+      this.Error(pos, "a YIELD here is not yet supported in a generator (FOR / WHILE-DO / IF / FOR EACH are; SELECT CASE and TRY / CATCH / FINALLY are not)");
 
     var state = ThisField(pos, GeneratedPrefix + "state");
     var arms = new List<CaseArm> { new(pos, [new CaseSelector(pos, Int(0), null, null)], [new GotoStmt(pos, "$start")]) };
@@ -544,6 +547,27 @@ public sealed class Binder {
           break;
         }
 
+        case ForEachStmt fe when this._foreachEnumField.TryGetValue(fe, out var feInfo): {
+          // iterate an inner generator while yielding: drive its persistent enumerator field
+          // (THIS.$feN) by hand so the outer resume re-enters the inner iteration mid-stream
+          var enumField = ThisField(pos, feInfo.Field);
+          var call = (CallOrIndexExpr)fe.Collection;
+          // construct: reset the inner resume state and seed its captured parameters from the args
+          g.Body.Add(new AssignStmt(pos, new MemberExpr(pos, enumField, GeneratedPrefix + "state", TypeSuffix.None), Int(0)));
+          if (this._generatorParams.TryGetValue(feInfo.GenName, out var pnames))
+            for (var k = 0; k < pnames.Count && k < call.Arguments.Count; ++k)
+              g.Body.Add(new AssignStmt(pos, new MemberExpr(pos, enumField, GeneratedPrefix + pnames[k], TypeSuffix.None), call.Arguments[k]));
+          var top = NewLabel();
+          var end = NewLabel();
+          g.Body.Add(new LabelStmt(pos, top));
+          g.Body.Add(new IfStmt(pos, new UnaryExpr(pos, UnaryOp.Not, new MemberExpr(pos, enumField, "MoveNext", TypeSuffix.None)), [new GotoStmt(pos, end)], [], null));
+          g.Body.Add(new AssignStmt(pos, fe.Variable, new MemberExpr(pos, enumField, "Current", TypeSuffix.None)));
+          this.LowerGenBody(fe.Body, g);
+          g.Body.Add(new GotoStmt(pos, top));
+          g.Body.Add(new LabelStmt(pos, end));
+          break;
+        }
+
         default:
           g.Body.Add(s);
           break;
@@ -597,6 +621,17 @@ public sealed class Binder {
       }
       fields.Add(new(pos, GeneratedPrefix + local, localType, null));
       captures[local] = GeneratedPrefix + local;
+    }
+
+    // a FOR EACH over another generator, when the body yields (so the outer resume must re-enter the
+    // inner iteration), needs the inner enumerator to persist across the outer YIELDs - give it a
+    // UDT-typed field in THIS, recorded by node identity so the MoveNext lowering reuses it
+    var feIndex = 0;
+    foreach (var fe in YieldingForEachOverGenerator(f.Body)) {
+      var innerName = ((CallOrIndexExpr)fe.Collection).Name;
+      var field = GeneratedPrefix + "fe" + ++feIndex;
+      fields.Add(new(pos, field, new TypeName(pos, BuiltinType.None, UserTypeName: innerName), null));
+      this._foreachEnumField[fe] = (field, innerName);
     }
 
     var members = new List<TypeMember> {
@@ -802,10 +837,24 @@ public sealed class Binder {
         case AssignStmt { Target: NameExpr a }: names.TryAdd(a.Name, a.Suffix); break;
         case IncrDecrStmt { Target: NameExpr d }: names.TryAdd(d.Name, d.Suffix); break;
         case ForStmt { Variable: NameExpr c }: names.TryAdd(c.Name, c.Suffix); break;
+        case ForEachStmt { Variable: NameExpr v }: names.TryAdd(v.Name, v.Suffix); break;
       }
       if (s is not (SubDecl or FunctionDecl or DefFnDecl))
         foreach (var block in ChildBlocks(s))
           CollectAssignedNames(block, names);
+    }
+  }
+
+  /// <summary>Every FOR EACH over a (yield-bearing) generator that itself contains a YIELD, anywhere in a generator body (recursing nested blocks but not nested procedures) - these need a persistent inner-enumerator field.</summary>
+  private IEnumerable<ForEachStmt> YieldingForEachOverGenerator(IReadOnlyList<Statement> body) {
+    foreach (var s in body) {
+      if (s is ForEachStmt fe && fe.Collection is CallOrIndexExpr gen && this._generatorNames.Contains(gen.Name) && ContainsYield([fe]))
+        yield return fe;
+      if (s is SubDecl or FunctionDecl or DefFnDecl)
+        continue;
+      foreach (var block in ChildBlocks(s))
+        foreach (var inner in this.YieldingForEachOverGenerator(block))
+          yield return inner;
     }
   }
 
@@ -1262,6 +1311,9 @@ public sealed class Binder {
         break;
       case DoLoopStmt d:
         yield return d.Body;
+        break;
+      case ForEachStmt fe:
+        yield return fe.Body;
         break;
       case TryStmt t:
         yield return t.Body;
@@ -2172,6 +2224,9 @@ public sealed class Binder {
         break;
       case DoLoopStmt d:
         yield return d.Body;
+        break;
+      case ForEachStmt fe:
+        yield return fe.Body;
         break;
       case TryStmt t:
         yield return t.Body;
