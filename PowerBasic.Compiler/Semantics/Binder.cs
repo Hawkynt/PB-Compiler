@@ -162,6 +162,7 @@ public sealed class Binder {
 
         case TypeDecl t:
           this.DefineUdt(t.Name, t.Fields, isUnion: false, t.Position);
+          this.DefineTypeMembers(t);
           break;
 
         case UnionDecl u:
@@ -360,6 +361,59 @@ public sealed class Binder {
     }
     this.RegisterProcedure(proc);
     return proc;
+  }
+
+  /// <summary>
+  /// pb36: lifts each TYPE member to an ordinary procedure that takes the instance
+  /// BYREF as an implicit first parameter named THIS. The mangled name embeds a '.'
+  /// (which a user identifier cannot), so member procs never collide with user names
+  /// and call resolution just rebuilds the name from the receiver's static type.
+  /// </summary>
+  private void DefineTypeMembers(TypeDecl t) {
+    foreach (var m in t.Members) {
+      var thisType = new TypeName(m.Position, BuiltinType.None, UserTypeName: t.Name);
+      var thisParam = new Parameter(m.Position, "THIS", TypeSuffix.None, thisType, ByVal: false, Seg: false, IsArray: false);
+      var parameters = new List<Parameter>(m.Parameters.Count + 1) { thisParam };
+      parameters.AddRange(m.Parameters);
+      var isFunction = m.Kind is TypeMemberKind.Function or TypeMemberKind.PropertyGet;
+      var proc = this.DefineProcedure(MemberProcName(t.Name, m), isFunction, m.Suffix, m.ReturnType, parameters, isStatic: false, m.Body, m.Position);
+      if (isFunction)
+        proc.ResultName = m.Name;   // the body assigns the simple member name as its result
+    }
+  }
+
+  /// <summary>The lifted-procedure name of a TYPE member: <c>Type.M</c>, <c>Type.get_P</c>, <c>Type.set_P</c>.</summary>
+  private static string MemberProcName(string typeName, TypeMember m) => m.Kind switch {
+    TypeMemberKind.PropertyGet => $"{typeName}.get_{m.Name}",
+    TypeMemberKind.PropertySet => $"{typeName}.set_{m.Name}",
+    _ => $"{typeName}.{m.Name}",
+  };
+
+  /// <summary>Whether a lifted member procedure of the given mangled name exists.</summary>
+  private bool HasMemberProc(string name)
+    => this._model.Procedures.ContainsKey(name) || this._model.Overloads.ContainsKey(name);
+
+  /// <summary>
+  /// pb36 method call: <c>o.M(args)</c> when <c>o</c> is a UDT whose member <c>M</c> is a
+  /// lifted method (not an array field). Desugars the node to <c>Type.M(o, args)</c> - the
+  /// receiver is passed as the BYREF THIS first argument (a UDT lvalue passes by address
+  /// naturally) - binds that call, and returns its type. Null when it is not a method call.
+  /// </summary>
+  private PbType? TryBindMemberCall(Expression node, MemberExpr member, IReadOnlyList<Expression> args, Scope scope) {
+    if (this.BindExpression(member.Target, scope) is not UdtType udt)
+      return null;
+    if (udt.FindField(member.Member) != null)
+      return null;                                  // an array-field index, not a method
+    var procName = $"{udt.Name}.{member.Member}";
+    if (!this.HasMemberProc(procName))
+      return null;
+
+    var callArgs = new List<Expression>(args.Count + 1) { member.Target };
+    callArgs.AddRange(args);
+    var call = new CallOrIndexExpr(node.Position, procName, TypeSuffix.None, callArgs);
+    var type = this.BindExpression(call, scope);
+    this._model.Desugared[node] = call;
+    return type;
   }
 
   /// <summary>Two procedures share a signature when their parameter lists have equal length and element types.</summary>
@@ -655,8 +709,12 @@ public sealed class Binder {
       foreach (var p in proc.Parameters)
         proc.Variables[VariableKey(p.Name, TypeSuffix.None, p.Type is ArrayType)] = p;
 
-      if (proc.IsFunction) // the function name acts as the result variable
-        proc.Variables.TryAdd(proc.Name, new(proc.Name, proc.ReturnType!, VariableStorage.Local));
+      if (proc.IsFunction) { // the function name acts as the result variable
+        var resultVar = new VariableSymbol(proc.Name, proc.ReturnType!, VariableStorage.Local);
+        proc.Variables.TryAdd(proc.Name, resultVar);
+        if (proc.ResultName is { } resultAlias) // a lifted member assigns the simple name (Pop = ...)
+          proc.Variables.TryAdd(resultAlias, resultVar);
+      }
 
       this.CollectLabels(proc.Body!, scope);
       foreach (var statement in proc.Body!)
@@ -1868,11 +1926,18 @@ public sealed class Binder {
           return PbType.Integer;
         }
         var field = udt.FindField(m.Member);
-        if (field == null) {
-          this.Error(m.Position, $"TYPE {udt.Name} has no field {m.Member}");
-          return PbType.Integer;
+        if (field != null)
+          return field.Type;
+        // pb36: o.Prop with no such field but a PROPERTY GET -> Type.get_Prop(o)
+        var getter = MemberProcName(udt.Name, new TypeMember(m.Position, TypeMemberKind.PropertyGet, m.Member, m.Suffix, [], null, []));
+        if (this.HasMemberProc(getter)) {
+          var call = new CallOrIndexExpr(m.Position, getter, TypeSuffix.None, [m.Target]);
+          var type = this.BindExpression(call, scope);
+          this._model.Desugared[m] = call;
+          return type;
         }
-        return field.Type;
+        this.Error(m.Position, $"TYPE {udt.Name} has no field {m.Member}");
+        return PbType.Integer;
       }
 
       case AnyMatchExpr any: {
@@ -1883,6 +1948,10 @@ public sealed class Binder {
       }
 
       case IndexExpr ix: {
+        // pb36: o.Method(args) parses as IndexExpr(MemberExpr(o,Method), args); when the
+        // member is a lifted method (not an array field) it desugars to Type.Method(o, args)
+        if (ix.Target is MemberExpr method && this.TryBindMemberCall(ix, method, ix.Arguments, scope) is { } methodType)
+          return methodType;
         // indexing a member-access result: a UDT array field selects one element
         // of the field's element type, so the target's bound type carries through
         var targetType = this.BindExpression(ix.Target, scope);

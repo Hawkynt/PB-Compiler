@@ -34,13 +34,21 @@ public static class OptReachability {
         work.Enqueue(body);
     }
 
-    while (work.Count > 0)
-      foreach (var node in DescendantNodes(work.Dequeue())) {
+    void Visit(object root) {
+      foreach (var node in DescendantNodes(root)) {
         if (model.CallBindings.TryGetValue(node, out var callee))   // direct call or CODEPTR-family reference
           Reach(callee);
         if (node is LambdaExpr lambda && model.LambdaProcs.TryGetValue(lambda, out var lifted))
           Reach(lifted);
+        // a bind-time rewrite (member call/property access, string interpolation) is reached
+        // through its desugared form, not the original surface node
+        if (node is Expression e && model.Desugared.TryGetValue(e, out var desugared))
+          Visit(desugared);
       }
+    }
+
+    while (work.Count > 0)
+      Visit(work.Dequeue());
 
     return live;
   }

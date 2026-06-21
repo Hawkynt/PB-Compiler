@@ -51,6 +51,12 @@ public sealed class ProcedureSymbol(string name, bool isFunction) {
   public string Name { get; } = name;
   public bool IsFunction { get; } = isFunction;
   public PbType? ReturnType { get; set; }
+  /// <summary>
+  /// For a lifted TYPE member (FUNCTION / PROPERTY GET), the simple member name the
+  /// body assigns to as its result (e.g. <c>Pop</c> when <see cref="Name"/> is the
+  /// mangled <c>Stack.Pop</c>); null for ordinary procedures, where the result is the name.
+  /// </summary>
+  public string? ResultName { get; set; }
   public List<VariableSymbol> Parameters { get; } = [];
   /// <summary>Locals & statics by name (case-insensitive), including the implicit function-result variable.</summary>
   public Dictionary<string, VariableSymbol> Variables { get; } = new(StringComparer.OrdinalIgnoreCase);
