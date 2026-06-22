@@ -262,6 +262,10 @@ public sealed partial class Parser {
         case "SEEK": return this.ParseSeek();
       }
 
+    // pb36 tuple destructuring: a, b = expr (a top-level comma before '=')
+    if (keyword is not ("IF" or "WHILE") && this.IsDestructuringAhead())
+      return this.ParseDestructuring();
+
     // IF/WHILE conditions may start with '(' and contain '=', which would look like an assignment
     if (keyword is not ("IF" or "WHILE") && this.IsAssignmentAhead())
       return this.ParseAssignment();
@@ -393,6 +397,16 @@ public sealed partial class Parser {
     var name = this.Advance();
     this.Expect(TokenKind.Equals, "'='");
     return new EquateStmt(name.Position, name.Text, this.ParseExpression());
+  }
+
+  private Statement ParseDestructuring() {
+    this.Require(LanguageFeature.Tuples);
+    var targets = new List<Expression>();
+    do
+      targets.Add(this.ParseLValue());
+    while (this.Match(TokenKind.Comma));
+    var eq = this.Expect(TokenKind.Equals, "'='");
+    return new DestructureStmt(eq.Position, targets, this.ParseExpression());
   }
 
   private Statement ParseAssignment() {

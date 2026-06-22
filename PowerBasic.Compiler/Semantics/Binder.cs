@@ -1019,6 +1019,44 @@ public sealed class Binder {
   }
 
   private int _foreachCounter;
+  private int _destructureCounter;
+
+  /// <summary>
+  /// pb36 tuple destructuring <c>a, b = expr</c>: bind the source tuple (a tuple-returning call writes a
+  /// hidden temp via struct return; a tuple value is read in place) and assign each element to its target.
+  /// </summary>
+  private void BindDestructure(DestructureStmt ds, Scope scope) {
+    var pos = ds.Position;
+    var pre = new List<Statement>();
+    Expression source;
+    UdtType udt;
+
+    if (ds.Value is CallOrIndexExpr vc
+        && (this._genericProcs.ContainsKey(vc.Name)
+              ? this.ResolveGenericCall(vc.Name, vc.Arguments, pos, scope, vc.TypeArguments)
+              : this._model.Overloads.TryGetValue(vc.Name, out var os) ? os.FirstOrDefault(p => p.IsFunction) : null)
+            is { HasSretParam: true, ReturnType: UdtType callUdt }) {
+      // a tuple-returning function writes its result straight into a hidden temp (no copy)
+      udt = callUdt;
+      source = this.DeclareHidden(scope, pos, "destr" + ++this._destructureCounter, udt);
+      pre.Add(new CallStmt(pos, vc.Name, [.. vc.Arguments, source], UsedCallKeyword: false, vc.TypeArguments));
+    } else if (this.BindExpression(ds.Value, scope) is UdtType valueUdt) {
+      udt = valueUdt;
+      source = ds.Value;   // a tuple variable / field - read its elements in place
+    } else {
+      this.Error(pos, "the right-hand side of a destructuring assignment must be a tuple");
+      return;
+    }
+
+    if (udt.Fields.Count < ds.Targets.Count)
+      this.Error(pos, $"destructuring expects {ds.Targets.Count} elements but the tuple has {udt.Fields.Count}");
+    var stmts = new List<Statement>(pre);
+    for (var i = 0; i < ds.Targets.Count; ++i)
+      stmts.Add(new AssignStmt(pos, ds.Targets[i], new MemberExpr(pos, source, "Item" + (i + 1), TypeSuffix.None)));
+    var group = new IfStmt(pos, new IntegerLiteralExpr(pos, -1, TypeSuffix.None), stmts, [], null);
+    this.BindStatement(group, scope);
+    this._model.DesugaredStatements[ds] = group;
+  }
 
   /// <summary>
   /// Declares a hidden ($-prefixed, untypeable) compiler variable directly in the current scope
@@ -1390,6 +1428,10 @@ public sealed class Binder {
       return t.Builtin == BuiltinType.Asciiz ? new AsciizType(1) : new FixedStringType(1);
     }
 
+    // pb36 tuple type (T1, T2): an anonymous UDT with fields Item1..ItemN, synthesized on first use
+    if (t.IsTuple)
+      return this.ResolveTupleType(t);
+
     if (t.IsUserDefined) {
       // pb36 generics: a generic use (Stack OF LONG) resolves to its monomorphized concrete TYPE (Stack@LONG)
       var name = t.IsGenericUse ? Monomorphizer.Mangle(t) : t.UserTypeName!;
@@ -1404,6 +1446,26 @@ public sealed class Binder {
 
     return this.AsMbfIfInterpreter(MapBuiltin(t.Builtin));
   }
+
+  /// <summary>pb36 tuple type: synthesizes (once) an anonymous UDT with fields Item1..ItemN for <c>(T1, T2, ...)</c>, named with an untypeable mangle so identical tuples share the type, and returns it.</summary>
+  private PbType ResolveTupleType(TypeName t) {
+    var name = "$tup" + string.Concat(t.TupleElements!.Select(e => "@" + TupleElementMangle(e)));
+    if (this._model.Udts.TryGetValue(name, out var existing))
+      return existing;
+    var fields = new List<TypeField>();
+    for (var i = 0; i < t.TupleElements.Count; ++i)
+      fields.Add(new TypeField(t.Position, "Item" + (i + 1), t.TupleElements[i], null));
+    this.DefineUdt(name, fields, isUnion: false, t.Position);
+    return this._model.Udts[name];
+  }
+
+  /// <summary>A stable mangle fragment for a tuple element type (so identical tuples map to the same synthesized UDT).</summary>
+  private static string TupleElementMangle(TypeName e) =>
+    e.IsTuple ? "tup" + string.Concat(e.TupleElements!.Select(x => "_" + TupleElementMangle(x)))
+    : e.IsGenericUse ? Monomorphizer.Mangle(e)
+    : e.IsPointer ? TupleElementMangle(e.PointerTarget!) + "Ptr"
+    : e.IsUserDefined ? e.UserTypeName!
+    : e.Builtin.ToString();
 
   /// <summary>
   /// BASICA / GW-BASIC store SINGLE in Microsoft Binary Format, so map the IEEE
@@ -1678,6 +1740,10 @@ public sealed class Binder {
 
       case ForEachStmt fe:
         this.BindForEach(fe, scope);
+        break;
+
+      case DestructureStmt ds:
+        this.BindDestructure(ds, scope);
         break;
 
       // pb36 generator-in-TRY (synthesized): bind the handler-save field operands; arm/reraise carry none

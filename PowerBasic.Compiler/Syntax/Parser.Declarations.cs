@@ -223,6 +223,18 @@ public sealed partial class Parser {
     if ((this.IsKeyword(0, "FUNCTION") || this.IsKeyword(0, "SUB")) && this.Peek().Kind == TokenKind.LParen)
       return this.ParseProcPtrType();
 
+    // pb36 tuple type: (T1, T2, ...) - an anonymous value aggregate
+    if (this.Current.Kind == TokenKind.LParen) {
+      this.Require(LanguageFeature.Tuples);
+      var tuplePos = this.Advance().Position; // (
+      var elements = new List<TypeName>();
+      do
+        elements.Add(this.ParseTypeName());
+      while (this.Match(TokenKind.Comma));
+      this.Expect(TokenKind.RParen, "')'");
+      return new TypeName(tuplePos, BuiltinType.None, TupleElements: elements);
+    }
+
     var token = this.Expect(TokenKind.Identifier, "type name");
     var builtin = token.Text.ToUpperInvariant() switch {
       "BYTE" or "BYT" => BuiltinType.Byte,

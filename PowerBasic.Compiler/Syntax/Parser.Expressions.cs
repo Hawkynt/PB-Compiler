@@ -658,6 +658,40 @@ public sealed partial class Parser {
   #region lookahead
 
   /// <summary>True when the current identifier starts an assignment: name {(args) | .member}* '='.</summary>
+  /// <summary>
+  /// True when the statement is a tuple destructuring <c>a, b = expr</c>: a comma-separated list of two
+  /// or more lvalues (each an identifier with optional <c>()</c> index and <c>.member</c> chains) followed
+  /// by <c>=</c> (pb36). Precise, so a command like <c>PRINT #1, 1 = 1</c> is not mistaken for one.
+  /// </summary>
+  private bool IsDestructuringAhead() {
+    if (!DialectFacts.IsAvailable(LanguageFeature.Tuples, this._dialect))
+      return false;
+    var i = this._pos;
+    var lvalues = 0;
+    for (;;) {
+      if (this.TokenAt(i).Kind != TokenKind.Identifier)
+        return false;                              // each target starts with a name
+      ++i;
+      for (;;) {                                    // optional (index) and .member chains
+        var k = this.TokenAt(i).Kind;
+        if (k == TokenKind.LParen) {
+          if (!this.TrySkipBalancedParens(ref i))
+            return false;
+        } else if (k == TokenKind.Period && this.TokenAt(i + 1).Kind == TokenKind.Identifier) {
+          i += 2;
+        } else {
+          break;
+        }
+      }
+      ++lvalues;
+      switch (this.TokenAt(i).Kind) {
+        case TokenKind.Comma: ++i; continue;        // another target
+        case TokenKind.Equals: return lvalues >= 2; // need at least two targets to be a destructuring
+        default: return false;
+      }
+    }
+  }
+
   private bool IsAssignmentAhead() {
     var i = this._pos + 1;
     for (;;) {

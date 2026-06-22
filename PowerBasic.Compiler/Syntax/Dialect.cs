@@ -119,6 +119,7 @@ public enum LanguageFeature {
   Generics,
   Defer,
   OperatorOverloading,
+  Tuples,
 }
 
 /// <summary>
@@ -186,6 +187,7 @@ public static class DialectFacts {
     [LanguageFeature.Generics] = (Dialect.Pb36, "compile-time generics ('TYPE Name OF T' / 'AS Name OF type')"),
     [LanguageFeature.Defer] = (Dialect.Pb36, "DEFER statement (runs on block exit)"),
     [LanguageFeature.OperatorOverloading] = (Dialect.Pb36, "OPERATOR overloading inside a TYPE"),
+    [LanguageFeature.Tuples] = (Dialect.Pb36, "tuples / multiple return values ('AS (T1, T2)', 'a, b = f()')"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

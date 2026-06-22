@@ -18,11 +18,13 @@ public enum BuiltinType { None, Byte, Word, Dword, Integer, Long, Quad, Single, 
 /// </summary>
 public sealed record TypeName(SourcePosition Position, BuiltinType Builtin, string? UserTypeName = null, Expression? FixedLength = null, TypeName? PointerTarget = null,
     IReadOnlyList<TypeName>? ProcParameterTypes = null, TypeName? ProcReturnType = null, bool IsProcPtr = false,
-    IReadOnlyList<TypeName>? TypeArguments = null) {
+    IReadOnlyList<TypeName>? TypeArguments = null, IReadOnlyList<TypeName>? TupleElements = null) {
   public bool IsUserDefined => this.UserTypeName != null;
   public bool IsPointer => this.PointerTarget != null;
   /// <summary>pb36 generics: a use of a generic type with concrete arguments, e.g. <c>Stack OF LONG</c> (<see cref="UserTypeName"/> = Stack, args = [LONG]).</summary>
   public bool IsGenericUse => this.TypeArguments is { Count: > 0 };
+  /// <summary>pb36 tuple type <c>(T1, T2, ...)</c>: an anonymous value aggregate synthesized to a UDT with fields Item1..ItemN.</summary>
+  public bool IsTuple => this.TupleElements is { Count: > 0 };
 }
 
 #endregion
@@ -319,6 +321,9 @@ public sealed record HandlerReraiseStmt(SourcePosition Position) : Statement(Pos
 
 /// <summary>pb36 DEFER stmt: schedules <see cref="Deferred"/> to run when the enclosing block exits (normally or via a fault). Lowered to a TRY ... FINALLY around the rest of the block (nested DEFERs run last-in-first-out).</summary>
 public sealed record DeferStmt(SourcePosition Position, Statement Deferred) : Statement(Position);
+
+/// <summary>pb36 tuple destructuring: <c>a, b = expr</c> assigns each tuple element of <see cref="Value"/> to the corresponding target. Lowered to a temp tuple plus per-element assignments (a tuple-returning call writes the temp via struct return).</summary>
+public sealed record DestructureStmt(SourcePosition Position, IReadOnlyList<Expression> Targets, Expression Value) : Statement(Position);
 
 /// <summary>ON KEY(n)/TIMER(n)/COM(n)... GOSUB label event registration.</summary>
 public sealed record OnEventStmt(SourcePosition Position, string EventKind, Expression? Index, string Target) : Statement(Position);
