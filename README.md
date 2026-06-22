@@ -165,6 +165,11 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
   consecutive bit-fields into a hidden 16-bit storage word; a read becomes a
   shift-and-mask and a write a read-modify-write that preserves the neighbouring
   fields — pure binder desugar over WORD arithmetic, ideal for register/hardware structs.
+- **Layout control** — `TYPE T PACKED` (the byte-packed default), `TYPE T ALIGN n`
+  (each field on an n-byte boundary capped at its natural alignment, total rounded to n),
+  `TYPE T SIZE n` (fix the total size), and per-field `field AS LONG AT 8` (explicit
+  placement, with gaps or overlapping/union-style views) — for hardware registers and
+  file/wire formats. Pure binder layout, so field access and block copies follow the offsets.
 - **`OPERATOR` overloading** — define `OPERATOR + (other AS Vec) AS Vec` (and `=`, `<`,
   `MOD`, …) inside a `TYPE`; `THIS` is the left operand, the body sets the `RESULT`. `a + b`
   resolves to the overload at compile time (a value-type feature, no dispatch). A

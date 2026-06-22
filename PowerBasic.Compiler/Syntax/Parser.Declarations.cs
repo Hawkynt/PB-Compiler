@@ -409,6 +409,29 @@ public sealed partial class Parser {
     var isReadonly = !isUnion && this.TryMatchKeyword("READONLY");
     if (isReadonly)
       this.Require(LanguageFeature.TypeMethods);
+    // pb36 layout control: TYPE Name [PACKED | ALIGN n] [SIZE n] - explicit field alignment / total size
+    var alignment = 0;
+    Expression? explicitSize = null;
+    if (!isUnion)
+      for (;;) {
+        if (this.IsKeyword(0, "PACKED")) {
+          this.Require(LanguageFeature.TypeLayout);
+          this.Advance();
+          alignment = 1;
+        } else if (this.IsKeyword(0, "ALIGN")) {
+          this.Require(LanguageFeature.TypeLayout);
+          this.Advance();
+          var n = (int)this.Expect(TokenKind.IntegerLiteral, "alignment").IntegerValue;
+          if (n is not (1 or 2 or 4 or 8 or 16))
+            throw this.Error("an ALIGN value must be 1, 2, 4, 8 or 16");
+          alignment = n;
+        } else if (this.IsKeyword(0, "SIZE")) {
+          this.Require(LanguageFeature.TypeLayout);
+          this.Advance();
+          explicitSize = this.ParseExpression();
+        } else
+          break;
+      }
     var end = isUnion ? "END UNION" : "END TYPE";
     var fields = new List<TypeField>();
     var members = new List<TypeMember>();
@@ -428,7 +451,7 @@ public sealed partial class Parser {
       }
       fields.Add(this.ParseTypeField());
     }
-    return isUnion ? new UnionDecl(pos, name.Text, fields) : new TypeDecl(pos, name.Text, fields) { Members = members, IsReadonly = isReadonly, TypeParameters = typeParams };
+    return isUnion ? new UnionDecl(pos, name.Text, fields) : new TypeDecl(pos, name.Text, fields) { Members = members, IsReadonly = isReadonly, TypeParameters = typeParams, Alignment = alignment, ExplicitSize = explicitSize };
   }
 
   /// <summary>
@@ -544,7 +567,14 @@ public sealed partial class Parser {
     var type = this.ParseTypeName();
     if (type is { IsPointer: true, PointerTarget.Builtin: BuiltinType.String })
       this.Require(LanguageFeature.StringPtrInType); // STRING PTR fields arrived only in 3.5
-    return new(name.Position, name.Text, type, bounds);
+    // pb36 layout control: field AS T AT offset - place this field at an explicit byte offset (allows gaps/overlap)
+    Expression? explicitOffset = null;
+    if (this.IsKeyword(0, "AT")) {
+      this.Require(LanguageFeature.TypeLayout);
+      this.Advance();
+      explicitOffset = this.ParseExpression();
+    }
+    return new(name.Position, name.Text, type, bounds, ExplicitOffset: explicitOffset);
   }
 
   private Statement ParseDef() {

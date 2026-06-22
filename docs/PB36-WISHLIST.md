@@ -83,8 +83,12 @@ string interpolation, array-initializer literals.
 
 - **Arena / region allocators** (M) — `WITH ARENA ... END` bulk-frees temporaries; cheap
   scratch memory without per-object frees.
-- **`ALIGN` / `PACKED` TYPE layout control** (S) — explicit field alignment/packing for
-  speed or hardware/file layout.
+- ~~**`ALIGN` / `PACKED` TYPE layout control**~~ — **DONE**: `TYPE Name PACKED` (the
+  byte-packed default, made explicit), `TYPE Name ALIGN n` (each field on an n-byte boundary
+  capped at its natural alignment, total rounded to n), `TYPE Name SIZE n` (fix the total size),
+  and per-field `field AS T AT offset` (explicit placement — gaps or overlapping/union-style
+  views). Pure binder layout (`DefineUdt`), so field access, array strides and block copies all
+  pick up the offsets/size for free; pb36-only (genuine PBC always byte-packs).
 - **SIMD/MMX (586/MMX gate) intrinsics** (L) — wide integer/byte ops behind `$CPU`, the
   next tier after the 386/486 codegen already done.
 - **`FORCEINLINE` / `NOINLINE` hints** (S) — override the trivial-method inliner's

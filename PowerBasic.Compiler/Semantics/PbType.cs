@@ -118,11 +118,17 @@ public sealed record UdtField(string Name, PbType Type, int Offset, int ElementC
   public int TotalSize => this.Type.Size * this.ElementCount;
 }
 
-/// <summary>TYPE ... END TYPE (packed) or UNION ... END UNION (all fields at offset 0).</summary>
-public sealed record UdtType(string Name, IReadOnlyList<UdtField> Fields, bool IsUnion) : PbType {
-  public override int Size => this.IsUnion
-    ? this.Fields.Max(f => f.TotalSize)
-    : this.Fields.Sum(f => f.TotalSize);
+/// <summary>
+/// TYPE ... END TYPE (packed by default) or UNION ... END UNION (all fields at offset 0).
+/// <paramref name="ExplicitTotalSize"/> (pb36 layout control: <c>ALIGN</c> rounding / <c>SIZE n</c>)
+/// overrides the computed size when &gt; 0; the natural size is the highest field end (so explicit
+/// <c>AT</c> offsets with gaps or overlap size correctly).
+/// </summary>
+public sealed record UdtType(string Name, IReadOnlyList<UdtField> Fields, bool IsUnion, int ExplicitTotalSize = 0) : PbType {
+  public override int Size => this.ExplicitTotalSize > 0 ? this.ExplicitTotalSize
+    : this.Fields.Count == 0 ? 0
+    : this.IsUnion ? this.Fields.Max(f => f.TotalSize)
+    : this.Fields.Max(f => f.Offset + f.TotalSize);
 
   public UdtField? FindField(string name) => this.Fields.FirstOrDefault(f => f.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
 }

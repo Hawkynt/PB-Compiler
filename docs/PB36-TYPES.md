@@ -150,11 +150,48 @@ r.Mode = 5 : r.Level = 12 ' each write preserves the neighbouring fields
 Because both desugar to ordinary WORD arithmetic, bit-fields ride the existing
 shift/and/or codegen and the optimizer folds constant masks for free.
 
+### Layout control
+
+By default a `TYPE` is **byte-packed** (no padding) — matching genuine PBC. pb36 adds
+explicit control for hardware registers, file/wire formats and overlays:
+
+```basic
+TYPE Header ALIGN 4      ' each field on its natural boundary (capped at 4); total padded to 4
+  tag    AS BYTE         ' offset 0
+  length AS LONG         ' offset 4 (3 padding bytes after tag)
+  flags  AS INTEGER      ' offset 8        -> LEN(Header) = 12
+END TYPE
+
+TYPE Sector SIZE 512     ' pad the whole record to exactly 512 bytes
+  used AS INTEGER
+END TYPE
+
+TYPE RegView            ' explicit offsets: an overlay / union-style view
+  whole AS LONG          ' offset 0
+  lo    AS INTEGER AT 0  ' overlaps the low word
+  hi    AS INTEGER AT 2  ' overlaps the high word -> LEN(RegView) = 4
+END TYPE
+```
+
+- `PACKED` — the default byte layout, stated explicitly.
+- `ALIGN n` (n = 1/2/4/8/16) — pad each field up to an n-byte boundary, but never past its
+  own natural alignment (a `BYTE` stays contiguous even under `ALIGN 4`), and round the whole
+  type up to a multiple of n.
+- `SIZE n` — pad the whole type to exactly n bytes (must be ≥ its natural size).
+- `field AS T AT offset` — place a field at an explicit byte offset; gaps and overlapping
+  fields are allowed, and the type's size spans to the highest field end.
+
+This is pure binder layout (`DefineUdt` computes each `UdtField.Offset` and the `UdtType`
+size), so member access, array-of-TYPE strides and whole-TYPE block copies all use the
+controlled offsets with no codegen change. pb36-only — genuine PBC has no layout keywords,
+so it is verified by `LEN`/`VARPTR` execution tests, not the differential oracle.
+
 ### Implementation status
 
 **Implemented** (`PowerBasic.Compiler/Semantics/Binder.cs`): methods, properties
 (explicit, auto, anonymous, `=>` / `FIELD` / `VALUE`), trivial-accessor inlining,
-constructors, `READONLY` enforcement, and **bit-field members** (`AS BIT * n`).
+constructors, `READONLY` enforcement, **bit-field members** (`AS BIT * n`), and
+**layout control** (`PACKED` / `ALIGN n` / `SIZE n` / field `AT offset`).
 Members lift in `DefineTypeMembers`; calls
 resolve in the `MemberExpr` / `IndexExpr` / `MemberCallStmt` binding paths via
 `Desugared` / `DesugaredStatements`; the FUNCTION/PROPERTY-GET result alias is the

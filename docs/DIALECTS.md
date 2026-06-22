@@ -115,7 +115,9 @@ a separate axis (`--optimize`, on by default for `pb36`). Full detail in
   AS Vec` with `THIS` the left operand and `RESULT` the result; resolved at compile time).
   **Bit-field members** (`Mode AS BIT * 3`, 1..16 bits): consecutive bit-fields pack into a
   hidden 16-bit word; reads desugar to shift-and-mask, writes to a neighbour-preserving
-  read-modify-write — no new codegen.
+  read-modify-write — no new codegen. **Layout control**: `TYPE T PACKED` / `ALIGN n` /
+  `SIZE n` and per-field `field AS T AT offset` (explicit field alignment, total size and
+  byte-offset placement, with gaps/overlap) — pure binder layout, pb36-only.
 - **Compile-time generics** (monomorphized): generic types `TYPE Stack OF T …` and
   generic procedures `FUNCTION Max OF T (…) AS T` (type argument inferred from the
   call); each instantiation is vivified into concrete code at compile time (no runtime

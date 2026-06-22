@@ -72,7 +72,7 @@ public sealed record DeclareStmt(SourcePosition Position, bool IsFunction, strin
 }
 
 /// <summary>One field inside TYPE/UNION; array fields carry bounds (lower TO upper | upper).</summary>
-public sealed record TypeField(SourcePosition Position, string Name, TypeName Type, IReadOnlyList<(Expression? Lower, Expression Upper)>? ArrayBounds, int BitWidth = 0);
+public sealed record TypeField(SourcePosition Position, string Name, TypeName Type, IReadOnlyList<(Expression? Lower, Expression Upper)>? ArrayBounds, int BitWidth = 0, Expression? ExplicitOffset = null);
 
 /// <summary>The four member shapes a PB 3.6 TYPE block can declare alongside its fields.</summary>
 public enum TypeMemberKind { Sub, Function, PropertyGet, PropertySet, Operator }
@@ -93,6 +93,10 @@ public sealed record TypeDecl(SourcePosition Position, string Name, IReadOnlyLis
   public bool IsReadonly { get; init; }
   /// <summary>pb36 generics: the type parameter names of a generic TYPE (<c>TYPE Stack OF T</c> → ["T"]); empty for an ordinary TYPE. A generic TYPE is a template - it is monomorphized per concrete instantiation, not defined directly.</summary>
   public IReadOnlyList<string> TypeParameters { get; init; } = [];
+  /// <summary>pb36 layout control (<c>TYPE Name ALIGN n</c>): each field is placed on an n-byte (capped at its natural alignment) boundary and the whole type is padded to a multiple of n; 0 (or 1 = <c>PACKED</c>) means the default byte-packed layout.</summary>
+  public int Alignment { get; init; }
+  /// <summary>pb36 layout control (<c>TYPE Name SIZE n</c>): pad the whole type to exactly n bytes (must be ≥ its natural size); null = the natural size.</summary>
+  public Expression? ExplicitSize { get; init; }
 }
 
 /// <summary>UNION ... END UNION.</summary>

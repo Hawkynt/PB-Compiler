@@ -216,7 +216,7 @@ public sealed class Binder {
             : [.. packed, .. backing.Select(b => new TypeField(t.Position, b.Field, b.Type, null))];
           if (t.IsReadonly)
             this._readonlyTypes.Add(t.Name);
-          this.DefineUdt(t.Name, fields, isUnion: false, t.Position);
+          this.DefineUdt(t.Name, fields, isUnion: false, t.Position, t.Alignment, t.ExplicitSize);
           this.DefineTypeMembers(t, backing.ToDictionary(b => b.Prop, b => b, StringComparer.OrdinalIgnoreCase));
           break;
         }
@@ -358,14 +358,15 @@ public sealed class Binder {
     }
   }
 
-  private void DefineUdt(string name, IReadOnlyList<TypeField> fields, bool isUnion, SourcePosition position) {
+  private void DefineUdt(string name, IReadOnlyList<TypeField> fields, bool isUnion, SourcePosition position, int alignment = 0, Expression? explicitSize = null) {
     if (this._model.Udts.ContainsKey(name)) {
       this.Error(position, $"TYPE {name} already defined");
       return;
     }
 
     var resolved = new List<UdtField>();
-    var offset = 0;
+    var offset = 0;       // running pack offset (TYPE only)
+    var naturalEnd = 0;   // highest field end - the natural total size
     foreach (var field in fields) {
       var fieldType = this.ResolveTypeName(field.Type);
       if (fieldType == null) {
@@ -384,13 +385,53 @@ public sealed class Binder {
             this.Error(field.Position, $"field array bound of {name}.{field.Name} is not constant");
         }
 
-      resolved.Add(new(field.Name, fieldType, isUnion ? 0 : offset, count));
-      if (!isUnion)
-        offset += fieldType.Size * count;
+      var size = fieldType.Size * count;
+      int fieldOffset;
+      if (isUnion) {
+        fieldOffset = 0;
+      } else if (field.ExplicitOffset is { } offExpr) {
+        // pb36 layout control: field AS T AT offset - place at an explicit byte offset (gaps/overlap allowed)
+        if (this._folder.TryFold(offExpr)?.Integer is not { } at || at < 0) {
+          this.Error(field.Position, $"field offset of {name}.{field.Name} must be a non-negative constant");
+          at = offset;
+        }
+        fieldOffset = (int)at;
+        offset = fieldOffset + size;
+      } else {
+        // pb36 ALIGN n: round the running offset up to the field's natural alignment (capped at n)
+        if (alignment > 1)
+          offset = RoundUpTo(offset, Math.Min(alignment, NaturalAlignment(fieldType)));
+        fieldOffset = offset;
+        offset += size;
+      }
+
+      resolved.Add(new(field.Name, fieldType, fieldOffset, count));
+      naturalEnd = Math.Max(naturalEnd, fieldOffset + size);
     }
 
-    this._model.Udts[name] = new(name, resolved, isUnion);
+    // pb36 layout control: ALIGN rounds the whole type up to a multiple of n; SIZE n fixes the total
+    var totalSize = 0;
+    if (!isUnion && alignment > 1)
+      totalSize = RoundUpTo(naturalEnd, alignment);
+    if (explicitSize != null) {
+      if (this._folder.TryFold(explicitSize)?.Integer is not { } sz || sz < naturalEnd)
+        this.Error(position, $"TYPE {name} SIZE must be a constant of at least its natural size ({naturalEnd} bytes)");
+      else
+        totalSize = (int)sz;
+    }
+
+    this._model.Udts[name] = new(name, resolved, isUnion, totalSize);
   }
+
+  /// <summary>Natural alignment of a field type: a scalar aligns to its byte size, an array to its element's, an aggregate to its widest member; everything else to 1.</summary>
+  private static int NaturalAlignment(PbType type) => type switch {
+    ScalarType s => s.ByteSize,
+    ArrayType a => NaturalAlignment(a.Element),
+    UdtType u => u.Fields.Count == 0 ? 1 : u.Fields.Max(f => NaturalAlignment(f.Type)),
+    _ => 1,
+  };
+
+  private static int RoundUpTo(int value, int alignment) => alignment <= 1 ? value : (value + alignment - 1) / alignment * alignment;
 
   private void DeclareProcedure(DeclareStmt d) {
     var proc = new ProcedureSymbol(d.Name, d.IsFunction) { Position = d.Position, CallConv = d.Convention, Alias = d.Alias };
