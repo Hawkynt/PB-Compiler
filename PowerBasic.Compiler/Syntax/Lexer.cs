@@ -203,29 +203,43 @@ public sealed class Lexer {
       return this.Next();
     }
 
-    var suffix = this.LexSuffix(position);
+    var suffix = this.LexSuffix(position, allowCoalesce: true);
     return new(TokenKind.Identifier, text, position, suffix);
   }
 
   /// <summary>
   /// Lexes a type suffix directly attached to an identifier/literal tail
   /// (maximal munch: <c>??</c> before <c>?</c>, <c>&amp;&amp;</c> before <c>&amp;</c>, ...).
+  /// When <paramref name="allowCoalesce"/> (identifiers only), a glued run of <c>?</c> that is
+  /// followed by an unambiguous operand keeps a trailing <c>??</c> unconsumed so it lexes as the
+  /// null-coalescing operator - so <c>a??15</c> is <c>a ?? 15</c>, <c>a????5</c> is <c>(a AS WORD) ?? 5</c>,
+  /// while terminal <c>a??</c> stays the WORD suffix. (A coalesce default that begins with an
+  /// identifier/keyword/sign needs a space - <c>a ?? other</c> - so a binary keyword like <c>AND</c>
+  /// after a suffixed value is never mistaken for an operand.)
   /// </summary>
-  private TypeSuffix LexSuffix(SourcePosition position) {
+  private TypeSuffix LexSuffix(SourcePosition position, bool allowCoalesce = false) {
     switch (this.Current) {
       case '%':
         this.Advance();
         return TypeSuffix.Integer;
       case '?': {
         this.Require(LanguageFeature.UnsignedTypes, position);
-        this.Advance();
-        if (this.Current != '?')
-          return TypeSuffix.Byte;
-        this.Advance();
-        if (this.Current != '?')
-          return TypeSuffix.Word;
-        this.Advance();
-        return TypeSuffix.Dword;
+        var run = 0;
+        while (this.Peek(run) == '?')
+          ++run;
+        var after = run;
+        while (this.Peek(after) is ' ' or '\t')
+          ++after;
+        var next = this.Peek(after);
+        // a digit / string / interpolation after '??' is unambiguously an operand -> the trailing '??'
+        // is the coalescing operator. '(' and '.' are NOT split triggers: they are an array subscript or
+        // member on a suffixed variable (w??(i), w??.x); a parenthesised/identifier coalesce default needs a space.
+        var coalesceFollows = allowCoalesce && run >= 2 && (char.IsAsciiDigit(next) || next is '"' or '$');
+        var suffixCount = coalesceFollows ? run - 2 : run;
+        if (suffixCount > 3)
+          throw new LexerException("too many '?' type-suffix marks (use '?' = BYTE, '??' = WORD, '???' = DWORD)", position);
+        this.Advance(suffixCount); // any trailing '??' is left for the null-coalescing operator token
+        return suffixCount switch { 0 => TypeSuffix.None, 1 => TypeSuffix.Byte, 2 => TypeSuffix.Word, _ => TypeSuffix.Dword };
       }
       case '&':
         this.Advance();

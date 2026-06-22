@@ -173,7 +173,7 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
 - **Nullable types** — `DIM x AS LONG?` is a value plus a presence flag; `x = v` sets it,
   `x = NOTHING` empties it, `x ?? d` is null-coalescing (value or fallback), and a nullable
   auto-unwraps to `.Value` in arithmetic / plain assignment (`.HasValue` / `.Value` also
-  explicit). The lexer disambiguates `?`/`??` from the BYTE/WORD suffixes by whitespace.
+  explicit). The lexer disambiguates `?`/`??` from the BYTE/WORD suffixes by context (an operand after `??` makes it the coalescing operator).
 - **`OPERATOR` overloading** — define `OPERATOR + (other AS Vec) AS Vec` (and `=`, `<`,
   `MOD`, …) inside a `TYPE`; `THIS` is the left operand, the body sets the `RESULT`. `a + b`
   resolves to the overload at compile time (a value-type feature, no dispatch). A

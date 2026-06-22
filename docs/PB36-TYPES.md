@@ -209,11 +209,17 @@ IF age.HasValue THEN PRINT age.Value
   plain (non-nullable) variable; `.Value` / `.HasValue` are also directly accessible.
 
 **Syntax note (the `?` collision).** `?` / `??` / `???` are already the BYTE / WORD / DWORD type
-suffixes, so the lexer disambiguates by gluing: `n??` (no space) is a WORD-suffixed variable, while
-`x ?? d` (spaced) is the coalescing operator; in a type position a type keyword carrying a single
-`?` (`LONG?`) is the nullable marker. v1 covers nullable **variables** (a nullable struct field or
-array element is a plain UDT — assign its `.Value`/`.HasValue` explicitly) and integer/string value
-types; floats work as the value too. pb36-only, verified by execution + binder tests.
+suffixes, so the lexer disambiguates a glued `?` run **by context** — what follows it, not
+whitespace: a `??` immediately before an operand is the coalescing operator, otherwise it is the
+type suffix. So `a??15` is `a ?? 15`, `a????5` is `(a AS WORD) ?? 5`, while terminal `a??` (or
+`a?? + 1`) stays the WORD suffix; `a ?? 15` with spaces works too. The split triggers on an
+unambiguous operand — a digit, string or `$"…"` — only; a default that begins with an
+*identifier/keyword/sign/paren* needs a space (`a ?? other`, `a ?? -1`, `a ?? (x+1)`), so a
+binary keyword like `AND` or an array subscript `w??(i)` after a suffixed value is never read as
+an operand. In a type position a type keyword carrying a single `?` (`LONG?`) is the nullable marker. v1 covers nullable **variables**
+(a nullable struct field or array element is a plain UDT — assign its `.Value`/`.HasValue`
+explicitly) and integer/string value types; floats work as the value too. pb36-only, verified by
+execution + binder tests.
 
 ### Implementation status
 

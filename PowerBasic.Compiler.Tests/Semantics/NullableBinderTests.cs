@@ -116,4 +116,24 @@ public sealed class NullableBinderTests {
     var tokens = Lexer.Tokenize("a ?? b\n", "t.bas", Dialect.Pb36);
     Assert.That(tokens.Any(t => t.Kind == TokenKind.QuestionQuestion), Is.True);
   }
+
+  [Test]
+  public void Lex_GivenGluedDoubleQuestionThenOperand_ThenCoalesceByContext() {
+    // a??15 (no space): context (an operand follows) makes ?? the coalescing operator, not a WORD suffix
+    var tokens = Lexer.Tokenize("a??15\n", "t.bas", Dialect.Pb36).ToList();
+    Assert.Multiple(() => {
+      Assert.That(tokens[0].Suffix, Is.EqualTo(TypeSuffix.None), "a takes no suffix - the ?? is the operator");
+      Assert.That(tokens.Any(t => t.Kind == TokenKind.QuestionQuestion), Is.True);
+    });
+  }
+
+  [Test]
+  public void Lex_GivenGluedSuffixThenCoalesce_ThenSplitsByContext() {
+    // a????5: the first ?? is the WORD suffix, the trailing ?? the coalescing operator before operand 5
+    var tokens = Lexer.Tokenize("a????5\n", "t.bas", Dialect.Pb36).ToList();
+    Assert.Multiple(() => {
+      Assert.That(tokens[0].Suffix, Is.EqualTo(TypeSuffix.Word));
+      Assert.That(tokens.Count(t => t.Kind == TokenKind.QuestionQuestion), Is.EqualTo(1));
+    });
+  }
 }

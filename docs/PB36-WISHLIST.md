@@ -31,9 +31,10 @@ string interpolation, array-initializer literals.
   with a `Value` field and a `HasValue` presence flag. `x = v` sets both, `x = NOTHING` clears
   the flag, `x ?? d` is the null-coalescing operator (value when present, else `d`), and a
   nullable auto-unwraps to its `.Value` in arithmetic and when assigned to a plain target.
-  The `?`/`??` collide with the BYTE/WORD type-suffixes, so the lexer disambiguates by
-  whitespace (`n??` glued = WORD suffix; `x ?? d` spaced = coalescing) and a type-keyword
-  carrying a single `?` in type position is the nullable marker.
+  The `?`/`??` collide with the BYTE/WORD type-suffixes, so the lexer disambiguates a glued
+  `?` run by context — a `??` before an operand is the coalescing operator (`a??15`), otherwise
+  the type suffix (`a??`) — and a type-keyword carrying a single `?` in type position is the
+  nullable marker.
 - ~~**`OPERATOR` overloading for TYPEs**~~ — **DONE**: `OPERATOR + (other AS Vec) AS Vec`
   inside a TYPE (`THIS` left operand, `RESULT` the result), resolved at compile time; a
   TYPE-returning operator uses struct return, a scalar-returning one works in any expression.

@@ -120,7 +120,7 @@ a separate axis (`--optimize`, on by default for `pb36`). Full detail in
   byte-offset placement, with gaps/overlap) — pure binder layout, pb36-only.
 - **Nullable types** (pb36): `DIM x AS T?` is a synthesized value + INTEGER `HasValue` flag;
   `x = v` / `x = NOTHING` / `x ?? d` (null-coalescing), with auto-unwrap to `.Value` in value
-  contexts. `?`/`??` are disambiguated from the BYTE/WORD type-suffixes by whitespace.
+  contexts. `?`/`??` are disambiguated from the BYTE/WORD suffixes by context (an operand after `??`).
 - **Compile-time generics** (monomorphized): generic types `TYPE Stack OF T …` and
   generic procedures `FUNCTION Max OF T (…) AS T` (type argument inferred from the
   call); each instantiation is vivified into concrete code at compile time (no runtime
