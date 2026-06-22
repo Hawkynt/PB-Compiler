@@ -113,6 +113,9 @@ a separate axis (`--optimize`, on by default for `pb36`). Full detail in
   invoked `p = Point(3, 4)`. **`READONLY` types** (`TYPE Point READONLY …`): fields
   settable only inside the constructor. **`OPERATOR` overloading** (`OPERATOR + (o AS Vec)
   AS Vec` with `THIS` the left operand and `RESULT` the result; resolved at compile time).
+  **Bit-field members** (`Mode AS BIT * 3`, 1..16 bits): consecutive bit-fields pack into a
+  hidden 16-bit word; reads desugar to shift-and-mask, writes to a neighbour-preserving
+  read-modify-write — no new codegen.
 - **Compile-time generics** (monomorphized): generic types `TYPE Stack OF T …` and
   generic procedures `FUNCTION Max OF T (…) AS T` (type argument inferred from the
   call); each instantiation is vivified into concrete code at compile time (no runtime

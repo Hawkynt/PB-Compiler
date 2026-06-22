@@ -161,6 +161,10 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
 - **`READONLY` types** — `TYPE Point READONLY … END TYPE` makes every field
   write-once: assignable only inside the type's own constructor, rejected
   elsewhere at compile time.
+- **Bit-field members** — `Mode AS BIT * 3` / `Enabled AS BIT` (1..16 bits) packs
+  consecutive bit-fields into a hidden 16-bit storage word; a read becomes a
+  shift-and-mask and a write a read-modify-write that preserves the neighbouring
+  fields — pure binder desugar over WORD arithmetic, ideal for register/hardware structs.
 - **`OPERATOR` overloading** — define `OPERATOR + (other AS Vec) AS Vec` (and `=`, `<`,
   `MOD`, …) inside a `TYPE`; `THIS` is the left operand, the body sets the `RESULT`. `a + b`
   resolves to the overload at compile time (a value-type feature, no dispatch). A

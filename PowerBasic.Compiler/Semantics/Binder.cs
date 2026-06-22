@@ -31,6 +31,9 @@ public sealed class Binder {
   /// <summary>pb36 READONLY TYPEs: their fields may be written only inside the type's own constructor.</summary>
   private readonly HashSet<string> _readonlyTypes = new(StringComparer.OrdinalIgnoreCase);
 
+  /// <summary>pb36 bit-fields: "Udt.field" (case-insensitive) -> the hidden storage word it lives in, its bit offset and width. Member access desugars to shift/mask on the storage word.</summary>
+  private readonly Dictionary<string, (string Storage, int Offset, int Width)> _bitFields = new(StringComparer.OrdinalIgnoreCase);
+
   /// <summary>pb36 generic procedures: name -> the template declaration (SUB/FUNCTION ... OF T). A call infers the type arguments and instantiates a concrete procedure named with the mangle.</summary>
   private readonly Dictionary<string, Statement> _genericProcs = new(StringComparer.OrdinalIgnoreCase);
   /// <summary>pb36 generic procedure instantiations already created (mangled name -> symbol), to instantiate each once.</summary>
@@ -204,10 +207,13 @@ public sealed class Binder {
           break;
 
         case TypeDecl t: {
+          // pb36 bit-fields: pack runs of AS BIT * n fields into hidden $bits<k> WORD storage, recording
+          // each field's (storage, offset, width) so member access desugars to shift/mask on the word
+          var packed = this.PackBitFields(t);
           // pb36: each property gets a hidden backing field ($Prop) so FIELD / auto accessors have storage
           var backing = PropertyBackingFields(t);
-          var fields = backing.Count == 0 ? t.Fields
-            : [.. t.Fields, .. backing.Select(b => new TypeField(t.Position, b.Field, b.Type, null))];
+          var fields = backing.Count == 0 ? packed
+            : [.. packed, .. backing.Select(b => new TypeField(t.Position, b.Field, b.Type, null))];
           if (t.IsReadonly)
             this._readonlyTypes.Add(t.Name);
           this.DefineUdt(t.Name, fields, isUnion: false, t.Position);
@@ -569,6 +575,38 @@ public sealed class Binder {
 
   private static MemberExpr ThisField(SourcePosition pos, string field)
     => new(pos, new NameExpr(pos, "THIS", TypeSuffix.None), field, TypeSuffix.None);
+
+  /// <summary>
+  /// pb36 bit-fields: replaces each run of consecutive <c>AS BIT * n</c> fields with hidden WORD storage
+  /// fields (<c>$bits0</c>, ...) and records each bit-field's (storage, bit offset, width) in
+  /// <see cref="_bitFields"/>; ordinary fields pass through unchanged and break the current run.
+  /// </summary>
+  private IReadOnlyList<TypeField> PackBitFields(TypeDecl t) {
+    if (!t.Fields.Any(f => f.BitWidth > 0))
+      return t.Fields;
+    var result = new List<TypeField>();
+    string? storage = null;
+    int bit = 0, storageIndex = 0;
+    foreach (var f in t.Fields)
+      if (f.BitWidth > 0) {
+        if (storage == null || bit + f.BitWidth > 16) {
+          storage = GeneratedPrefix + "bits" + storageIndex++;
+          result.Add(new TypeField(f.Position, storage, new TypeName(f.Position, BuiltinType.Word), null));
+          bit = 0;
+        }
+        this._bitFields[t.Name + "." + f.Name] = (storage, bit, f.BitWidth);
+        bit += f.BitWidth;
+      } else {
+        storage = null;
+        bit = 0;
+        result.Add(f);
+      }
+    return result;
+  }
+
+  /// <summary>The hidden storage word / bit offset / width of a UDT bit-field <c>o.field</c>, or null when it is not a bit-field.</summary>
+  private (string Storage, int Offset, int Width)? BitFieldOf(PbType udt, string member)
+    => udt is UdtType u && this._bitFields.TryGetValue(u.Name + "." + member, out var info) ? info : null;
 
   /// <summary>
   /// Builds the MoveNext state machine for a generator body of TOP-LEVEL yields. Each YIELD k
@@ -1784,6 +1822,21 @@ public sealed class Binder {
         break;
 
       case AssignStmt a: {
+        // pb36 bit-field write: o.bf = v -> o.$storage = (o.$storage AND clearMask) OR ((v AND mask) << offset)
+        if (a.Target is MemberExpr bfTarget && this.BindExpression(bfTarget.Target, scope) is UdtType bfUdt
+            && this.BitFieldOf(bfUdt, bfTarget.Member) is { } wbf) {
+          var word = new MemberExpr(a.Position, bfTarget.Target, wbf.Storage, TypeSuffix.None);
+          var fieldMask = (1L << wbf.Width) - 1;
+          var clearMask = ~(fieldMask << wbf.Offset) & 0xFFFF;
+          Expression masked = new BinaryExpr(a.Position, BinaryOp.And, a.Value, new IntegerLiteralExpr(a.Position, fieldMask, TypeSuffix.None));
+          if (wbf.Offset > 0)
+            masked = new BinaryExpr(a.Position, BinaryOp.ShiftLeft, masked, new IntegerLiteralExpr(a.Position, wbf.Offset, TypeSuffix.None));
+          var cleared = new BinaryExpr(a.Position, BinaryOp.And, word, new IntegerLiteralExpr(a.Position, clearMask, TypeSuffix.None));
+          var store = new AssignStmt(a.Position, word, new BinaryExpr(a.Position, BinaryOp.Or, cleared, masked));
+          this.BindStatement(store, scope);
+          this._model.DesugaredStatements[a] = store;
+          break;
+        }
         // pb36 tuple literal assigned to a tuple variable: t = (a, b) -> set each Item field (via temps,
         // so a self-referencing build like t = (t.Item2, t.Item1) is correct)
         if (a.Value is TupleExpr tupleLit && a.Target is NameExpr or MemberExpr or IndexExpr
@@ -2972,6 +3025,16 @@ public sealed class Binder {
         if (targetType is not UdtType udt) {
           this.Error(m.Position, "member access on non-TYPE value");
           return PbType.Integer;
+        }
+        // pb36 bit-field read: o.bf -> (o.$storage >>> offset) AND ((1 << width) - 1)
+        if (this.BitFieldOf(udt, m.Member) is { } bf) {
+          Expression word = new MemberExpr(m.Position, m.Target, bf.Storage, TypeSuffix.None);
+          if (bf.Offset > 0)
+            word = new BinaryExpr(m.Position, BinaryOp.ShiftRightLogical, word, new IntegerLiteralExpr(m.Position, bf.Offset, TypeSuffix.None));
+          var read = new BinaryExpr(m.Position, BinaryOp.And, word, new IntegerLiteralExpr(m.Position, (1L << bf.Width) - 1, TypeSuffix.None));
+          var bfType = this.BindExpression(read, scope);
+          this._model.Desugared[m] = read;
+          return bfType;
         }
         var field = udt.FindField(m.Member);
         if (field != null)

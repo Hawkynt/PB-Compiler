@@ -72,7 +72,7 @@ public sealed record DeclareStmt(SourcePosition Position, bool IsFunction, strin
 }
 
 /// <summary>One field inside TYPE/UNION; array fields carry bounds (lower TO upper | upper).</summary>
-public sealed record TypeField(SourcePosition Position, string Name, TypeName Type, IReadOnlyList<(Expression? Lower, Expression Upper)>? ArrayBounds);
+public sealed record TypeField(SourcePosition Position, string Name, TypeName Type, IReadOnlyList<(Expression? Lower, Expression Upper)>? ArrayBounds, int BitWidth = 0);
 
 /// <summary>The four member shapes a PB 3.6 TYPE block can declare alongside its fields.</summary>
 public enum TypeMemberKind { Sub, Function, PropertyGet, PropertySet, Operator }

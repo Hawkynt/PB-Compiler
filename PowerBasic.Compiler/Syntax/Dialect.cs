@@ -120,6 +120,7 @@ public enum LanguageFeature {
   Defer,
   OperatorOverloading,
   Tuples,
+  BitFields,
 }
 
 /// <summary>
@@ -188,6 +189,7 @@ public static class DialectFacts {
     [LanguageFeature.Defer] = (Dialect.Pb36, "DEFER statement (runs on block exit)"),
     [LanguageFeature.OperatorOverloading] = (Dialect.Pb36, "OPERATOR overloading inside a TYPE"),
     [LanguageFeature.Tuples] = (Dialect.Pb36, "tuples / multiple return values ('AS (T1, T2)', 'a, b = f()')"),
+    [LanguageFeature.BitFields] = (Dialect.Pb36, "bit-field TYPE members ('field AS BIT * n')"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

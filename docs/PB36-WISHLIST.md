@@ -34,8 +34,11 @@ string interpolation, array-initializer literals.
   TYPE-returning operator uses struct return, a scalar-returning one works in any expression.
 - **Type aliases** (S) — `TYPE Celsius = LONG` / `ALIAS`, distinct-or-transparent, for
   readable signatures (pairs well with generics, e.g. `Stack OF Celsius`).
-- **Bit-field members in TYPE** (M) — `Flags AS BIT * 3`, packed sub-byte fields for
-  registers/hardware structs.
+- ~~**Bit-field members in TYPE**~~ — **DONE**: `Mode AS BIT * 3` / `Enabled AS BIT` packs
+  consecutive bit-fields into a hidden `$bits` WORD; a read desugars to `(word >> offset) AND
+  mask` and a write to a read-modify-write that preserves the neighbouring fields — pure binder
+  desugar over WORD storage, no new codegen. A run of bit-fields fills 16-bit words in order; a
+  non-bit field breaks the run.
 
 ## Functional / iteration
 

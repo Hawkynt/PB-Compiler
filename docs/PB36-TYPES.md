@@ -124,11 +124,38 @@ DIM v AS Vec2 : v = Vec2(1, 2)
 v.x = 9                            ' compile error: field 'x' of READONLY TYPE Vec2 …
 ```
 
+### Bit-field members
+
+A field declared `Name AS BIT * width` (1..16; `AS BIT` alone is width 1) occupies
+`width` bits rather than a whole storage cell. Consecutive bit-fields are **packed**
+into a hidden 16-bit `$bits` WORD in declaration order; a bit-field that would overflow
+the current word starts a new one, and any non-bit field breaks the run.
+
+```basic
+TYPE StatusReg
+  Mode    AS BIT * 3      ' bits 0..2  of $bits0
+  Enabled AS BIT          ' bit  3     of $bits0
+  Level   AS BIT * 4      ' bits 4..7  of $bits0
+END TYPE
+DIM r AS StatusReg
+r.Mode = 5 : r.Level = 12 ' each write preserves the neighbouring fields
+```
+
+**Lowering** (pure binder desugar, no new codegen — `PackBitFields` + `BitFieldOf`):
+
+- a **read** `r.Mode` → `(r.$bits0 >>> offset) AND ((1 << width) - 1)`
+- a **write** `r.Mode = v` → `r.$bits0 = (r.$bits0 AND clearMask) OR ((v AND mask) << offset)`,
+  a read-modify-write so the other fields in the word are untouched.
+
+Because both desugar to ordinary WORD arithmetic, bit-fields ride the existing
+shift/and/or codegen and the optimizer folds constant masks for free.
+
 ### Implementation status
 
 **Implemented** (`PowerBasic.Compiler/Semantics/Binder.cs`): methods, properties
 (explicit, auto, anonymous, `=>` / `FIELD` / `VALUE`), trivial-accessor inlining,
-constructors, and `READONLY` enforcement. Members lift in `DefineTypeMembers`; calls
+constructors, `READONLY` enforcement, and **bit-field members** (`AS BIT * n`).
+Members lift in `DefineTypeMembers`; calls
 resolve in the `MemberExpr` / `IndexExpr` / `MemberCallStmt` binding paths via
 `Desugared` / `DesugaredStatements`; the FUNCTION/PROPERTY-GET result alias is the
 member's simple name (`proc.ResultName`); `THIS` BYREF reuses the existing

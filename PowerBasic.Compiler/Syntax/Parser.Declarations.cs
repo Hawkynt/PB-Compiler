@@ -528,6 +528,19 @@ public sealed partial class Parser {
       this.Expect(TokenKind.RParen, "')'");
     }
     this.ExpectKeyword("AS");
+    // pb36 bit-field: field AS BIT [* width] - packs into a hidden storage word, accessed by shift/mask
+    if (bounds == null && this.IsKeyword(0, "BIT")) {
+      this.Require(LanguageFeature.BitFields);
+      this.Advance(); // BIT
+      var width = 1;
+      if (this.Match(TokenKind.Star)) {
+        var widthTok = this.Expect(TokenKind.IntegerLiteral, "bit-field width");
+        width = (int)widthTok.IntegerValue;
+        if (width is < 1 or > 16)
+          throw this.Error("a bit-field width must be 1..16");
+      }
+      return new(name.Position, name.Text, new TypeName(name.Position, BuiltinType.Word), null, width);
+    }
     var type = this.ParseTypeName();
     if (type is { IsPointer: true, PointerTarget.Builtin: BuiltinType.String })
       this.Require(LanguageFeature.StringPtrInType); // STRING PTR fields arrived only in 3.5
