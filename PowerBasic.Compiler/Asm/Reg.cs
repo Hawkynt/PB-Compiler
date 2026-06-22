@@ -13,6 +13,8 @@ public enum Reg : byte {
   EAX = 0x20, ECX = 0x21, EDX = 0x22, EBX = 0x23, ESP = 0x24, EBP = 0x25, ESI = 0x26, EDI = 0x27,
   // segment registers (class 3)
   ES = 0x30, CS = 0x31, SS = 0x32, DS = 0x33, FS = 0x34, GS = 0x35,
+  // MMX registers (class 4, Pentium MMX; 64-bit, aliased onto the x87 stack)
+  MM0 = 0x40, MM1 = 0x41, MM2 = 0x42, MM3 = 0x43, MM4 = 0x44, MM5 = 0x45, MM6 = 0x46, MM7 = 0x47,
 }
 
 /// <summary>Classification and encoding helpers for <see cref="Reg"/>.</summary>
@@ -26,6 +28,7 @@ public static class RegExtensions {
   public static bool IsDword(this Reg register) => ((int)register & 0xF0) == 0x20;
   public static bool IsSegment(this Reg register) => ((int)register & 0xF0) == 0x30;
   public static bool IsGeneralPurpose(this Reg register) => (int)register < 0x30;
+  public static bool IsMmx(this Reg register) => ((int)register & 0xF0) == 0x40;
 
   /// <summary>Operand size of a general-purpose register; segment registers report <see cref="OperandSize.Word"/>.</summary>
   public static OperandSize Size(this Reg register) => ((int)register >> 4) switch {

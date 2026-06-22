@@ -392,4 +392,34 @@ public sealed class TextAssemblerTests {
   }
 
   #endregion
+
+  #region MMX intrinsics
+
+  [Test]
+  public void TryParse_GivenEmms_ThenEncodes()
+    => Assert.That(AssembleLine("EMMS"), Is.EqualTo(new byte[] { 0x0F, 0x77 }));
+
+  [Test]
+  public void TryParse_GivenPaddwRegisters_ThenEncodes()
+    => Assert.That(AssembleLine("PADDW MM0, MM1"), Is.EqualTo(new byte[] { 0x0F, 0xFD, 0xC1 }));
+
+  [Test]
+  public void TryParse_GivenMovqRegisters_ThenEncodes()
+    => Assert.That(AssembleLine("MOVQ MM2, MM3"), Is.EqualTo(new byte[] { 0x0F, 0x6F, 0xD3 }));
+
+  [Test]
+  public void TryParse_GivenPsllwImmediate_ThenEncodesGroupForm()
+    => Assert.That(AssembleLine("PSLLW MM0, 3"), Is.EqualTo(new byte[] { 0x0F, 0x71, 0xF0, 0x03 }));
+
+  [Test]
+  public void TryParse_GivenMovdFromMemoryVariable_ThenEncodesLoad() {
+    var resolver = new TestResolver().With("total", AsmSymbol.OfMemory(Mem.At(Reg.BX)));
+    Assert.That(AssembleLine("MOVD MM0, total", resolver), Is.EqualTo(new byte[] { 0x0F, 0x6E, 0x07 }));
+  }
+
+  [Test]
+  public void TryParse_GivenMovdStoreToRegister_ThenEncodesStore()
+    => Assert.That(AssembleLine("MOVD EAX, MM0"), Is.EqualTo(new byte[] { 0x0F, 0x7E, 0xC0 }));
+
+  #endregion
 }

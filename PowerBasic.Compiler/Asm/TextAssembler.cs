@@ -503,6 +503,50 @@ public sealed class TextAssembler(Assembler target) {
           else
             throw new AsmSyntaxException("BSWAP takes a 32-bit register.");
           return;
+        // MMX (Pentium) integer SIMD intrinsics for inline asm
+        case "EMMS": this.NoOperands(mnemonic); this._asm.Emms(); return;
+        case "MOVD": this.BinaryMovd(); return;
+        case "MOVQ": this.BinaryMovq(); return;
+        case "PADDB": this.MmxBinary(this._asm.Paddb, this._asm.Paddb); return;
+        case "PADDW": this.MmxBinary(this._asm.Paddw, this._asm.Paddw); return;
+        case "PADDD": this.MmxBinary(this._asm.Paddd, this._asm.Paddd); return;
+        case "PSUBB": this.MmxBinary(this._asm.Psubb, this._asm.Psubb); return;
+        case "PSUBW": this.MmxBinary(this._asm.Psubw, this._asm.Psubw); return;
+        case "PSUBD": this.MmxBinary(this._asm.Psubd, this._asm.Psubd); return;
+        case "PADDSW": this.MmxBinary(this._asm.Paddsw, this._asm.Paddsw); return;
+        case "PADDUSW": this.MmxBinary(this._asm.Paddusw, this._asm.Paddusw); return;
+        case "PSUBSW": this.MmxBinary(this._asm.Psubsw, this._asm.Psubsw); return;
+        case "PSUBUSW": this.MmxBinary(this._asm.Psubusw, this._asm.Psubusw); return;
+        case "PMULLW": this.MmxBinary(this._asm.Pmullw, this._asm.Pmullw); return;
+        case "PMULHW": this.MmxBinary(this._asm.Pmulhw, this._asm.Pmulhw); return;
+        case "PAND": this.MmxBinary(this._asm.Pand, this._asm.Pand); return;
+        case "PANDN": this.MmxBinary(this._asm.Pandn, this._asm.Pandn); return;
+        case "POR": this.MmxBinary(this._asm.Por, this._asm.Por); return;
+        case "PXOR": this.MmxBinary(this._asm.Pxor, this._asm.Pxor); return;
+        case "PCMPEQB": this.MmxBinary(this._asm.Pcmpeqb, this._asm.Pcmpeqb); return;
+        case "PCMPEQW": this.MmxBinary(this._asm.Pcmpeqw, this._asm.Pcmpeqw); return;
+        case "PCMPEQD": this.MmxBinary(this._asm.Pcmpeqd, this._asm.Pcmpeqd); return;
+        case "PCMPGTB": this.MmxBinary(this._asm.Pcmpgtb, this._asm.Pcmpgtb); return;
+        case "PCMPGTW": this.MmxBinary(this._asm.Pcmpgtw, this._asm.Pcmpgtw); return;
+        case "PCMPGTD": this.MmxBinary(this._asm.Pcmpgtd, this._asm.Pcmpgtd); return;
+        case "PACKSSWB": this.MmxBinary(this._asm.Packsswb, (_, _) => throw new AsmSyntaxException("PACKSSWB needs an MMX source.")); return;
+        case "PACKSSDW": this.MmxBinary(this._asm.Packssdw, (_, _) => throw new AsmSyntaxException("PACKSSDW needs an MMX source.")); return;
+        case "PACKUSWB": this.MmxBinary(this._asm.Packuswb, (_, _) => throw new AsmSyntaxException("PACKUSWB needs an MMX source.")); return;
+        case "PUNPCKLBW": this.MmxBinary(this._asm.Punpcklbw, (_, _) => throw new AsmSyntaxException("PUNPCKLBW needs an MMX source.")); return;
+        case "PUNPCKLWD": this.MmxBinary(this._asm.Punpcklwd, (_, _) => throw new AsmSyntaxException("PUNPCKLWD needs an MMX source.")); return;
+        case "PUNPCKLDQ": this.MmxBinary(this._asm.Punpckldq, (_, _) => throw new AsmSyntaxException("PUNPCKLDQ needs an MMX source.")); return;
+        case "PUNPCKHBW": this.MmxBinary(this._asm.Punpckhbw, (_, _) => throw new AsmSyntaxException("PUNPCKHBW needs an MMX source.")); return;
+        case "PUNPCKHWD": this.MmxBinary(this._asm.Punpckhwd, (_, _) => throw new AsmSyntaxException("PUNPCKHWD needs an MMX source.")); return;
+        case "PUNPCKHDQ": this.MmxBinary(this._asm.Punpckhdq, (_, _) => throw new AsmSyntaxException("PUNPCKHDQ needs an MMX source.")); return;
+        case "PSLLW": this.MmxShift(this._asm.Psllw, this._asm.Psllw); return;
+        case "PSLLD": this.MmxShift(this._asm.Pslld, this._asm.Pslld); return;
+        case "PSLLQ": this.MmxShift(this._asm.Psllq, this._asm.Psllq); return;
+        case "PSRLW": this.MmxShift(this._asm.Psrlw, this._asm.Psrlw); return;
+        case "PSRLD": this.MmxShift(this._asm.Psrld, this._asm.Psrld); return;
+        case "PSRLQ": this.MmxShift(this._asm.Psrlq, this._asm.Psrlq); return;
+        case "PSRAW": this.MmxShift(this._asm.Psraw, this._asm.Psraw); return;
+        case "PSRAD": this.MmxShift(this._asm.Psrad, this._asm.Psrad); return;
+
         case "CBW": this.NoOperands(mnemonic); this._asm.Cbw(); return;
         case "CWD": this.NoOperands(mnemonic); this._asm.Cwd(); return;
         case "CWDE": this.NoOperands(mnemonic); this._asm.Cwde(); return;
@@ -693,6 +737,51 @@ public sealed class TextAssembler(Assembler target) {
         case RegisterOperand s: emitRegister(destination.Register, s.Register); return;
         case MemoryOperand s: emitMemory(destination.Register, s.Memory); return;
         default: throw new AsmSyntaxException("Register or memory source expected.");
+      }
+    }
+
+    // MMX (Pentium) binary op: destination MMX register, source MMX register or 64-bit memory
+    private void MmxBinary(Action<Reg, Reg> rr, Action<Reg, Mem> rm) {
+      var (first, second) = this.TwoOperands();
+      if (first is not RegisterOperand d || !d.Register.IsMmx())
+        throw new AsmSyntaxException("an MMX destination register (MM0..MM7) is expected.");
+      switch (second) {
+        case RegisterOperand s when s.Register.IsMmx(): rr(d.Register, s.Register); return;
+        case MemoryOperand s: rm(d.Register, s.Memory); return;
+        default: throw new AsmSyntaxException("an MMX register or memory source is expected.");
+      }
+    }
+
+    // MMX packed shift: by an MMX register/memory count or an immediate count
+    private void MmxShift(Action<Reg, Reg> rr, Action<Reg, byte> ri) {
+      var (first, second) = this.TwoOperands();
+      if (first is not RegisterOperand d || !d.Register.IsMmx())
+        throw new AsmSyntaxException("an MMX destination register (MM0..MM7) is expected.");
+      switch (second) {
+        case RegisterOperand s when s.Register.IsMmx(): rr(d.Register, s.Register); return;
+        case ImmediateOperand s: ri(d.Register, (byte)s.Value); return;
+        default: throw new AsmSyntaxException("an MMX register or an immediate shift count is expected.");
+      }
+    }
+
+    private void BinaryMovd() {
+      var (first, second) = this.TwoOperands();
+      switch (first, second) {
+        case (RegisterOperand d, RegisterOperand s) when d.Register.IsMmx() && !s.Register.IsMmx(): this._asm.Movd(d.Register, s.Register); return;
+        case (RegisterOperand d, RegisterOperand s) when !d.Register.IsMmx() && s.Register.IsMmx(): this._asm.MovdStore(d.Register, s.Register); return;
+        case (RegisterOperand d, MemoryOperand s) when d.Register.IsMmx(): this._asm.Movd(d.Register, s.Memory); return;
+        case (MemoryOperand d, RegisterOperand s) when s.Register.IsMmx(): this._asm.MovdStore(d.Memory, s.Register); return;
+        default: throw new AsmSyntaxException("Invalid MOVD operand combination.");
+      }
+    }
+
+    private void BinaryMovq() {
+      var (first, second) = this.TwoOperands();
+      switch (first, second) {
+        case (RegisterOperand d, RegisterOperand s) when d.Register.IsMmx() && s.Register.IsMmx(): this._asm.Movq(d.Register, s.Register); return;
+        case (RegisterOperand d, MemoryOperand s) when d.Register.IsMmx(): this._asm.Movq(d.Register, s.Memory); return;
+        case (MemoryOperand d, RegisterOperand s) when s.Register.IsMmx(): this._asm.MovqStore(d.Memory, s.Register); return;
+        default: throw new AsmSyntaxException("Invalid MOVQ operand combination.");
       }
     }
 

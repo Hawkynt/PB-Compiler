@@ -270,7 +270,10 @@ references), **P2** data-on-demand, **P3** BSS instead of image bytes, **P4**
 right-sized memory footprint, **P6** header squeeze, and **P7** trivial-I/O
 lowering (a PRINT-only program becomes a raw COM-style image). Codegen passes
 **C1/C2** target 386/486 (32-bit value flow, alignment, `BSWAP`) and **R3**
-widens string/block moves to DWORDs under `$CPU 80386`. Several passes are
+widens string/block moves to DWORDs under `$CPU 80386`. **R4** adds **MMX**
+integer-SIMD intrinsics to the inline assembler (`! PADDW MM0, MM1`, `MOVQ`,
+packed multiply/compare/shift, `EMMS`) — a variable named in inline asm is kept
+live by the optimizer, and MMX runs under DOSBox. Several passes are
 implemented as verified subsets with deeper forms on the roadmap — see the method
 coverage matrix in [docs/PB36.md](docs/PB36.md). Also on the roadmap: collapsing a
 chain of mutually-exclusive `IF x = k` tests (`IF x = 1 … ELSEIF x = 2 …`) into the

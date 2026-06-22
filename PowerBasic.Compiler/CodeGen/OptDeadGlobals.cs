@@ -174,6 +174,16 @@ public static class OptDeadGlobals {
       Dictionary<VariableSymbol, List<Statement>> stores, bool checkingPossible) {
 
     foreach (var statement in body) {
+      // inline asm is opaque to the analysis: any candidate whose name appears in the asm text
+      // is conservatively read (the asm may load/store/address it - e.g. an MMX intrinsic
+      // `! MOVQ MM0, total`), so its data slot and stores must survive.
+      if (statement is InlineAsmStmt asm) {
+        foreach (var v in candidates)
+          if (AsmTextMentions(asm.Text, v.Name))
+            read.Add(v);
+        continue;
+      }
+
       // a top-level pure write `global = rhs` is the only non-read occurrence of the target.
       if (statement is AssignStmt { Target: NameExpr target, Value: { } rhs }
           && model.VariableBindings.TryGetValue(target, out var sym)
@@ -224,6 +234,20 @@ public static class OptDeadGlobals {
   /// that could call, deref a pointer, or read a volatile intrinsic (VARPTR, PEEK via a name,
   /// a function call) is always rejected -> the global is kept.
   /// </summary>
+  /// <summary>True when <paramref name="name"/> appears as a whole operand identifier in inline-asm text (a trailing BASIC type suffix is allowed), case-insensitively.</summary>
+  private static bool AsmTextMentions(string asmText, string name) {
+    for (var i = asmText.IndexOf(name, StringComparison.OrdinalIgnoreCase); i >= 0; i = asmText.IndexOf(name, i + 1, StringComparison.OrdinalIgnoreCase)) {
+      var before = i == 0 || !IsIdentChar(asmText[i - 1]);
+      var afterIdx = i + name.Length;
+      var after = afterIdx >= asmText.Length || !IsIdentChar(asmText[afterIdx]);
+      if (before && after)
+        return true;
+    }
+    return false;
+  }
+
+  private static bool IsIdentChar(char c) => char.IsLetterOrDigit(c) || c == '_';
+
   private static bool IsSideEffectFreeRhs(Expression e, SemanticModel model, bool checkingPossible) {
     switch (e) {
       case IntegerLiteralExpr or FloatLiteralExpr or StringLiteralExpr or NamedConstantExpr:
