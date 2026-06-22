@@ -87,8 +87,9 @@ string interpolation, array-initializer literals.
 - **The source-writer / decompiler** (M) — already on the list: re-emit BASIC from the
   fully woven, optimized AST/IR to see the program "without the magic" (see memory
   `pb36-source-writer`).
-- **`$IF` with full constant expressions** (S) — richer conditional compilation than the
-  bare-equate condition genuine PBC allows.
+- ~~**`$IF` with full constant expressions**~~ — **already supported**: the preprocessor
+  evaluates a full constant expression (`$IF (%A > %B) AND (%A + %B = 8)`) via its `EvalOr`
+  precedence chain, more lenient than the bare-equate condition genuine PBC allows.
 - **Contracts** (M) — `REQUIRE` / `ENSURE` pre/postconditions, compiled out in release.
 
 ## Suggested near-term order
