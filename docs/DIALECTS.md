@@ -131,7 +131,8 @@ a separate axis (`--optimize`, on by default for `pb36`). Full detail in
   catch-all, and re-raise to the outer handler (after FINALLY) when none match; plus
   **`DEFER`** (scope guards, LIFO, run on the fault path too).
 - Functions: a `FUNCTION` may **return a TYPE by value** (`AS Point`) — struct return,
-  written straight into the assignment target.
+  written straight into the assignment target. **Tuples / multiple return**: `AS (LONG,
+  LONG)` returns an anonymous tuple (fields `Item1`…`ItemN`); `q, r = f()` destructures it.
 - Memory/control flow: `WITH … END WITH`, `FOR EACH v IN source` (array, `[lo..hi]`
   range, or a generator), XMS/EMS array storage classes.
 

@@ -19,9 +19,11 @@ string interpolation, array-initializer literals.
 
 ## Type system (non-OOP)
 
-- **Tuples & multiple return values** (M) — `FUNCTION DivMod(...) AS (LONG, LONG)`,
-  `q, r = DivMod(a, b)`. A small anonymous value-aggregate + destructuring assignment.
-  High ergonomic payoff; rides the existing UDT/value machinery.
+- ~~**Tuples & multiple return values**~~ — **DONE**: `FUNCTION DivMod(...) AS (LONG, LONG)`
+  returns an anonymous tuple via struct return; `q, r = DivMod(a, b)` destructures it. A
+  tuple type `(T1, T2, …)` is a synthesized UDT with fields `Item1`…`ItemN`. (Tuple-literal
+  values `(a, b)` as a general expression are a follow-up; the function sets its result via
+  the `Item` fields.)
 - **Discriminated unions / variant records** (L) — a tagged sum type
   (`TYPE Shape = Circle(r) | Rect(w, h)`) with exhaustive `SELECT CASE` matching. The
   natural complement to generics for modelling data without classes.

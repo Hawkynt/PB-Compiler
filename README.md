@@ -120,6 +120,9 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
 - **Expression-bodied `FUNCTION`** — `FUNCTION F(...) AS T = expression`.
 - **`FUNCTION` returning a TYPE by value** — `FUNCTION MakeP(...) AS Point`; the result
   is written straight into the assignment target (struct return, no copy).
+- **Tuples / multiple return values** — `FUNCTION DivMod(...) AS (LONG, LONG)` returns an
+  anonymous tuple (struct return); `q, r = DivMod(a, b)` destructures it. A tuple type
+  `(T1, T2, …)` is an ordinary value aggregate (fields `Item1`…`ItemN`).
 - **Overloading** — several SUBs/FUNCTIONs may share a name with different
   signatures; calls resolve to the best match.
 - **Default and named parameters** — `SUB Foo(x%, y% = 10)` and `Foo(y := 5)`.
