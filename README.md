@@ -253,6 +253,7 @@ constant propagation → dead-store elimination.
 | O21 | Copy propagation | A copy `y = x` redirects reads of `y` to `x` and drops the copy (`OptCopyProp`). |
 | O22 | Loop-invariant code motion | Hoists a pure loop-invariant subexpression to the FOR preheader under `$OPTIMIZE SPEED`. |
 | O23 | `SELECT CASE` → jump table | A dense integer `SELECT CASE` dispatches through a word jump table instead of a compare chain (`TryEmitSelectJumpTable`). |
+| O25 | Pure-function compile-time evaluation | An inferred-pure integer `FUNCTION` (result depends only on its `BYVAL` args) called with constant arguments is interpreted at compile time and the call replaced by the literal — no `CONSTEXPR` keyword (`OptPureFold`). |
 
 Lean-output passes complement them (also gated on the optimizer, not the
 dialect): **P1** runtime trimming (emit only the runtime sections reachable code

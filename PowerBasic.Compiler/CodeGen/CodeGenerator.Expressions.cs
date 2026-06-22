@@ -166,6 +166,13 @@ public sealed partial class CodeGenerator {
       }
 
       case CallOrIndexExpr call:
+        // pb36 O25: a pure-function call with all-constant arguments was evaluated at
+        // compile time - emit the folded result and skip the call entirely
+        if (this._pureFold is { } pf && pf.TryGetValue(call, out var pureResult)
+            && model.TypeOf(call) is ScalarType { IsFloat: false } pureType) {
+          this.EmitIntegralConstant(WrapToType(pureResult.AsInteger, pureType), KindOf(pureType));
+          break;
+        }
         if (model.ProcPtrCalls.TryGetValue(call, out var ptrSig))
           this.EmitProcPtrCall(call, ptrSig);
         else if (model.IntrinsicBindings.TryGetValue(call, out var intrinsic))

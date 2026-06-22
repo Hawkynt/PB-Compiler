@@ -64,8 +64,14 @@ string interpolation, array-initializer literals.
 
 ## Compile-time / metaprogramming
 
-- **Compile-time function evaluation (`CONSTEXPR`)** (L) — run a pure user `FUNCTION` at
-  compile time to fold constants / size arrays; supercharges the existing constant folder.
+- ~~**Compile-time function evaluation**~~ — **DONE** (no `CONSTEXPR` keyword): the
+  compiler *infers* purity — a `FUNCTION` whose result depends only on its `BYVAL`
+  arguments (no I/O, globals, `BYREF` or side effects) — and when such a function is called
+  with all-constant arguments it is **interpreted at compile time** and the call replaced by
+  the resulting literal (`CodeGen/OptPureFold.cs`). Sound subset v1: integer functions with
+  IF / SELECT / FOR / DO-LOOP / WHILE and recursion; every intermediate is wrapped to its
+  static type so the folded value is bit-identical to the runtime ALU, under a step/recursion
+  budget. Floats, strings, arrays and intrinsics keep the real call (a roadmap extension).
 - **Static assertions** (S) — `$ASSERT cond, "msg"` evaluated at compile time
   (sizes, ranges, feature gates).
 - **Compile-time reflection over TYPEs** (M) — iterate a TYPE's fields at compile time

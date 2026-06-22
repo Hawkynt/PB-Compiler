@@ -62,6 +62,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private HashSet<VariableSymbol>? _deadGlobals;
   private HashSet<Statement>? _deadGlobalStores;
   private Dictionary<VariableSymbol, ConstantValue>? _ipcp;
+  private Dictionary<CallOrIndexExpr, ConstantValue>? _pureFold;
   private (VariableSymbol Symbol, Reg Reg)? _registerCounter;
   private (VariableSymbol Symbol, Reg Reg)? _registerAccumulator;
 
@@ -454,6 +455,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       OptPruner.Prune(model);
       OptFloatDemotion.Apply(model);
       this._ipcp = OptIpcp.Analyze(model); // O18: constants into callee bodies
+      this._pureFold = OptPureFold.Analyze(model); // O25: compile-time-evaluate pure-function calls with constant args
       // $OPTIMIZE SPEED: pass internal parameters in registers (AX,DX,BX,CX) instead of on
       // the stack when we own every call site. Self-contained programs only (a separately
       // compiled unit could otherwise call a converted procedure with the stack convention);
