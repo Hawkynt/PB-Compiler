@@ -95,8 +95,12 @@ string interpolation, array-initializer literals.
   and per-field `field AS T AT offset` (explicit placement — gaps or overlapping/union-style
   views). Pure binder layout (`DefineUdt`), so field access, array strides and block copies all
   pick up the offsets/size for free; pb36-only (genuine PBC always byte-packs).
-- **SIMD/MMX (586/MMX gate) intrinsics** (L) — wide integer/byte ops behind `$CPU`, the
-  next tier after the 386/486 codegen already done.
+- **SIMD/MMX (586/MMX gate)** (L) — **in progress**: MMX integer intrinsics are available in
+  the inline assembler (`! PADDW MM0, MM1`, `MOVQ`, packed multiply/compare/shift, `EMMS`),
+  `$CPU 80586 MMX|SSE|AVX|AVX512|AES` feature flags gate the SIMD width, and the optimizer
+  **auto-vectorises** `FOR i: c(i)=a(i) OP b(i)` integer loops to 4-wide MMX with a scalar tail
+  (execution-verified in DOSBox). Wider widths (SSE/AVX/AVX-512) and wide integer datatypes
+  (128–512-bit, signed/unsigned, emulated on older targets) are the next tiers.
 - **`FORCEINLINE` / `NOINLINE` hints** (S) — override the trivial-method inliner's
   heuristic when the programmer knows better.
 - **Stack arrays / `ALLOCA`** (S) — fixed-size scratch arrays on the frame, no heap.

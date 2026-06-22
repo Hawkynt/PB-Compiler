@@ -1750,6 +1750,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       return;
 
     if (kind == ValueKind.Int16 && constantStep is { } fastStep) {
+      // pb36 R4 auto-vectorisation ($CPU 80586 MMX): c(i)=a(i) OP b(i) runs four lanes/iteration through MMX
+      if (this.TryEmitVectorizedFor(f, counter, slot.WithSize(OperandSize.Word), fastStep))
+        return;
       // pb36 O6b: a single-statement array store a%(i%)=expr steps a pointer
       // instead of recomputing (i-lbound)*2 with IMUL on every iteration
       if (this.TryEmitForArrayStore(f, counter, slot.WithSize(OperandSize.Word), fastStep))

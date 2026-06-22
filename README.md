@@ -273,7 +273,10 @@ lowering (a PRINT-only program becomes a raw COM-style image). Codegen passes
 widens string/block moves to DWORDs under `$CPU 80386`. **R4** adds **MMX**
 integer-SIMD intrinsics to the inline assembler (`! PADDW MM0, MM1`, `MOVQ`,
 packed multiply/compare/shift, `EMMS`) — a variable named in inline asm is kept
-live by the optimizer, and MMX runs under DOSBox. Several passes are
+live by the optimizer, and MMX runs under DOSBox — plus **auto-vectorization**:
+under `$CPU 80586 MMX` + `$OPTIMIZE SPEED` the optimizer rewrites an integer
+`FOR i: c(i)=a(i) OP b(i)` loop into 4-wide MMX with a scalar tail (wrap-correct,
+so byte-identical to the scalar loop). Several passes are
 implemented as verified subsets with deeper forms on the roadmap — see the method
 coverage matrix in [docs/PB36.md](docs/PB36.md). Also on the roadmap: collapsing a
 chain of mutually-exclusive `IF x = k` tests (`IF x = 1 … ELSEIF x = 2 …`) into the

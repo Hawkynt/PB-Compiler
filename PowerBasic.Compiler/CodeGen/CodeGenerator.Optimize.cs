@@ -199,6 +199,24 @@ public sealed partial class CodeGenerator {
     && m.Arguments is [{ } level, ..]
     && level.Text is "80486" or "486");
 
+  /// <summary>True when $CPU 80586/Pentium (or higher) is selected - the floor for the SIMD feature flags.</summary>
+  private bool Cpu586 => model.MetaStatements.Any(m =>
+    m.Command.Equals("CPU", StringComparison.OrdinalIgnoreCase)
+    && m.Arguments is [{ } level, ..]
+    && level.Text is "80586" or "586" or "PENTIUM");
+
+  /// <summary>
+  /// True when a <c>$CPU 80586 &lt;feature&gt; ...</c> metastatement requests the named SIMD
+  /// extension (MMX / SSE / SSE2 / AVX / AVX512 / AES). Auto-vectorisation emits the widest
+  /// requested width and falls back to a narrower one (or scalar) otherwise. Off-by-default, so
+  /// no existing program emits SIMD; genuine PBC 3.50 predates these, so they are not oracle-tested.
+  /// </summary>
+  private bool CpuFeature(string name) => model.MetaStatements.Any(m =>
+    m.Command.Equals("CPU", StringComparison.OrdinalIgnoreCase)
+    && m.Arguments.Skip(1).Any(t => t.Text.Equals(name, StringComparison.OrdinalIgnoreCase)));
+
+  private bool HasMmx => this.Cpu586 && this.CpuFeature("MMX");
+
   /// <summary>
   /// REP-copies CX-free <paramref name="byteCount"/> bytes DS:SI -> ES:DI.
   /// pb35 keeps the byte-wide copy; pb36 widens to words (8086-safe) and to
@@ -1484,6 +1502,113 @@ public sealed partial class CodeGenerator {
   /// references no element of <c>a%</c> (checked conservatively: if the array
   /// symbol appears anywhere in the expression tree we decline).
   /// </summary>
+  /// <summary>
+  /// pb36 auto-vectorisation (R4/MMX): a constant-trip <c>FOR i = lo TO hi : c(i) = a(i) OP b(i) : NEXT</c>
+  /// over rank-1 static 2-byte-element arrays runs four lanes at a time through MMX (MOVQ/MOVQ/Pxxx/MOVQ),
+  /// with a fully-unrolled scalar tail for the last <c>n MOD 4</c> elements. OP is one of + - AND OR XOR *,
+  /// each of which is wrap-correct per 16-bit lane (PADDW/PSUBW/PAND/POR/PXOR/PMULLW), so the result is
+  /// byte-identical to the scalar loop. Gated on <c>$CPU 80586 MMX</c> + $OPTIMIZE SPEED with no $ERROR
+  /// checking; MMX executes under DOSBox, so this is verified by execution (genuine PBC 3.50 has no MMX).
+  /// </summary>
+  private bool TryEmitVectorizedFor(ForStmt f, VariableSymbol counter, Mem counterCell, long step) {
+    if (!this.Optimize || !this.OptimizeSpeed || !this.HasMmx || step != 1)
+      return false;
+    if (this.CheckBounds || this.CheckOverflow || this.CheckNumeric || this._trackResume)
+      return false;
+    if (this._registerCounter is not null || this._registerAccumulator is not null)
+      return false; // SI / DI are the array pointers - must be free
+    if (counter.Type is not ScalarType { ByteSize: 2, IsFloat: false })
+      return false;
+
+    // constant trip count
+    if (this.OptFolder.TryFold(f.From) is not { Integer: { } loRaw } || this.OptFolder.TryFold(f.To) is not { Integer: { } hiRaw })
+      return false;
+    long lo = loRaw, hi = hiRaw, n = hi - lo + 1;
+    if (n < 8)
+      return false; // small loops stay scalar
+
+    // body must be exactly  c(i) = a(i) OP b(i)
+    if (f.Body is not [AssignStmt { Target: { } target, Value: BinaryExpr { Left: { } leftExpr, Right: { } rightExpr } bin }])
+      return false;
+    Action<Reg, Mem>? packed = bin.Op switch {
+      BinaryOp.Add => this._asm.Paddw,
+      BinaryOp.Subtract => this._asm.Psubw,
+      BinaryOp.And => this._asm.Pand,
+      BinaryOp.Or => this._asm.Por,
+      BinaryOp.Xor => this._asm.Pxor,
+      BinaryOp.Multiply => this._asm.Pmullw,
+      _ => null,
+    };
+    if (packed == null)
+      return false;
+    if (this.MatchCounterIndexedArray(target, counter) is not { } c
+        || this.MatchCounterIndexedArray(leftExpr, counter) is not { } a
+        || this.MatchCounterIndexedArray(rightExpr, counter) is not { } b)
+      return false;
+
+    var asm = this._asm;
+    // base addresses: BX -> &a[lo], SI -> &b[lo], DI -> &c[lo]  (DS-relative, element size 2)
+    void LoadBase(Reg reg, (VariableSymbol Sym, int Lbound) arr) {
+      asm.Mov(reg, (int)(lo - arr.Lbound) * 2);
+      asm.Lea(reg, Mem.At(reg, this.SlotOf(arr.Sym)));
+    }
+    LoadBase(Reg.BX, a);
+    LoadBase(Reg.SI, b);
+    LoadBase(Reg.DI, c);
+
+    var groups = (int)(n / 4);
+    var tail = (int)(n % 4);
+
+    if (groups > 0) {
+      asm.Mov(Reg.CX, groups);
+      var top = asm.DefineLabel();
+      asm.MarkLabel(top);
+      asm.Movq(Reg.MM0, Mem.At(Reg.BX));
+      packed(Reg.MM0, Mem.At(Reg.SI));        // MM0 = a OP b  (four 16-bit lanes)
+      asm.MovqStore(Mem.At(Reg.DI), Reg.MM0);
+      asm.Add(Reg.BX, 8);
+      asm.Add(Reg.SI, 8);
+      asm.Add(Reg.DI, 8);
+      asm.Dec(Reg.CX);
+      asm.Jnz(top);
+      asm.Emms();                              // release the MMX/x87 state before any later float use
+    }
+
+    // scalar tail: BX/SI/DI now point at the first un-vectorised element
+    Action<Reg, Mem> scalar = bin.Op switch {
+      BinaryOp.Add => asm.Add,
+      BinaryOp.Subtract => asm.Sub,
+      BinaryOp.And => asm.And,
+      BinaryOp.Or => asm.Or,
+      BinaryOp.Xor => asm.Xor,
+      _ => asm.Imul,
+    };
+    for (var k = 0; k < tail; ++k) {
+      asm.Mov(Reg.AX, Mem.Word(Reg.BX, k * 2));
+      scalar(Reg.AX, Mem.Word(Reg.SI, k * 2));
+      asm.Mov(Mem.Word(Reg.DI, k * 2), Reg.AX);
+    }
+
+    // FOR step-1 post-condition: the counter ends one past the limit (wrapped to INTEGER)
+    asm.Mov(counterCell, (Imm)(short)(hi + 1));
+    return true;
+  }
+
+  /// <summary>Matches <c>arr(i)</c> where <c>i</c> is exactly <paramref name="counter"/> and arr is a static rank-1 2-byte-element array; returns the array symbol and its lower bound.</summary>
+  private (VariableSymbol Sym, int Lbound)? MatchCounterIndexedArray(Expression e, VariableSymbol counter) {
+    if (e is not CallOrIndexExpr { Arguments: [NameExpr idx] } ce)
+      return null;
+    if (!model.VariableBindings.TryGetValue(ce, out var arr))
+      return null;
+    if (!model.VariableBindings.TryGetValue(idx, out var idxSym) || !ReferenceEquals(idxSym, counter))
+      return null;
+    if (arr.Type is not ArrayType { Element: ScalarType { ByteSize: 2, IsFloat: false }, IsDynamic: false, Rank: 1, StaticBounds: [var bound] })
+      return null;
+    if (arr.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Absolute)
+      return null;
+    return (arr, bound.Lower);
+  }
+
   private bool TryEmitForArrayStore(ForStmt f, VariableSymbol counter, Mem counterCell, long step) {
     if (!this.Optimize || !this.OptimizeSpeed)
       return false;
