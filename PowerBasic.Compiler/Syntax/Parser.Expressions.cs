@@ -282,8 +282,17 @@ public sealed partial class Parser {
         // lexer maps both arrows to the same token.
         if (this.IsConciseLambdaAhead())
           return this.ParseConciseLambda();
-        this.Advance();
+        var parenPos = this.Advance().Position;
         var inner = this.ParseExpression();
+        // pb36 tuple literal: (e1, e2, ...) - a comma after the first value makes it a tuple
+        if (this.Current.Kind == TokenKind.Comma) {
+          this.Require(LanguageFeature.Tuples);
+          var elements = new List<Expression> { inner };
+          while (this.Match(TokenKind.Comma))
+            elements.Add(this.ParseExpression());
+          this.Expect(TokenKind.RParen, "')'");
+          return new TupleExpr(parenPos, elements);
+        }
         this.Expect(TokenKind.RParen, "')'");
         return inner;
       }

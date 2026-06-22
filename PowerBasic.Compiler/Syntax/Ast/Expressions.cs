@@ -18,6 +18,9 @@ public sealed record NamedConstantExpr(SourcePosition Position, string Name) : E
 /// <summary>Bare identifier reference (variable, parameter, or parameterless function - resolved semantically).</summary>
 public sealed record NameExpr(SourcePosition Position, string Name, TypeSuffix Suffix) : Expression(Position);
 
+/// <summary>pb36 tuple literal <c>(e1, e2, ...)</c>: an anonymous value aggregate, used to build a tuple value or for parallel/destructuring assignment (a, b = (b, a)).</summary>
+public sealed record TupleExpr(SourcePosition Position, IReadOnlyList<Expression> Elements) : Expression(Position);
+
 /// <summary>
 /// <c>name(arg, ...)</c> - array element, intrinsic or user FUNCTION call; the
 /// distinction is semantic. Also used for pseudo-functions with empty args.

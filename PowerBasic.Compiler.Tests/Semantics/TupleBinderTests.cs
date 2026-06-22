@@ -55,6 +55,23 @@ public sealed class TupleBinderTests {
   }
 
   [Test]
+  public void Bind_GivenTupleLiteralSwap_WhenBound_ThenEvaluatesAllValuesIntoTempsFirst() {
+    // a, b = (b, a) must read both right-hand values into temps before assigning (simultaneous swap)
+    var model = Bind("DIM a&, b&\na& = 1 : b& = 2\na&, b& = (b&, a&)\n");
+    var ds = model.DesugaredStatements.Keys.OfType<DestructureStmt>().Single();
+    var lowered = (IfStmt)model.DesugaredStatements[ds];
+    Assert.That(lowered.Then.OfType<AssignStmt>().Count(), Is.EqualTo(4), "two temp loads then two target stores");
+  }
+
+  [Test]
+  public void Bind_GivenTupleLiteralToTupleVariable_WhenBound_ThenSetsEachItem() {
+    var model = Bind("DIM t AS (LONG, STRING)\nt = (99, \"x\")\n");
+    var assign = model.DesugaredStatements.Keys.OfType<AssignStmt>().Single(a => a.Value is TupleExpr);
+    var lowered = (IfStmt)model.DesugaredStatements[assign];
+    Assert.That(lowered.Then.OfType<AssignStmt>().Any(s => s.Target is MemberExpr { Member: "Item1" }), Is.True);
+  }
+
+  [Test]
   public void Parse_GivenPrintWithCommaAndEquals_WhenPb36_ThenNotMistakenForDestructuring() {
     // PRINT #1, 1 = 1  has a top-level comma before '=', but is a PRINT, not a destructuring
     var unit = Parser.Parse(Lexer.Tokenize("PRINT #1, 1 = 1\n", "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);

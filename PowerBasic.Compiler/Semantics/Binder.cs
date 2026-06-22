@@ -1027,6 +1027,29 @@ public sealed class Binder {
   /// </summary>
   private void BindDestructure(DestructureStmt ds, Scope scope) {
     var pos = ds.Position;
+
+    // pb36 parallel assignment: a, b = (b, a). Evaluate every right-hand value into a fresh temp first,
+    // then assign each target - so a swap (and any aliasing case) is correct (simultaneous semantics).
+    if (ds.Value is TupleExpr lit) {
+      if (lit.Elements.Count != ds.Targets.Count) {
+        this.Error(pos, $"parallel assignment has {ds.Targets.Count} targets but {lit.Elements.Count} values");
+        return;
+      }
+      var parallel = new List<Statement>();
+      var temps = new List<Expression>();
+      foreach (var element in lit.Elements) {
+        var temp = this.DeclareHidden(scope, pos, "destr" + ++this._destructureCounter, this.BindExpression(element, scope));
+        parallel.Add(new AssignStmt(pos, temp, element));
+        temps.Add(temp);
+      }
+      for (var i = 0; i < ds.Targets.Count; ++i)
+        parallel.Add(new AssignStmt(pos, ds.Targets[i], temps[i]));
+      var litGroup = new IfStmt(pos, new IntegerLiteralExpr(pos, -1, TypeSuffix.None), parallel, [], null);
+      this.BindStatement(litGroup, scope);
+      this._model.DesugaredStatements[ds] = litGroup;
+      return;
+    }
+
     var pre = new List<Statement>();
     Expression source;
     UdtType udt;
@@ -1761,6 +1784,26 @@ public sealed class Binder {
         break;
 
       case AssignStmt a: {
+        // pb36 tuple literal assigned to a tuple variable: t = (a, b) -> set each Item field (via temps,
+        // so a self-referencing build like t = (t.Item2, t.Item1) is correct)
+        if (a.Value is TupleExpr tupleLit && a.Target is NameExpr or MemberExpr or IndexExpr
+            && this.BindExpression(a.Target, scope) is UdtType tupleTarget && tupleTarget.Name.StartsWith("$tup@", StringComparison.Ordinal)) {
+          if (tupleLit.Elements.Count != tupleTarget.Fields.Count)
+            this.Error(a.Position, $"tuple has {tupleTarget.Fields.Count} elements but {tupleLit.Elements.Count} values were given");
+          var build = new List<Statement>();
+          var fieldTemps = new List<Expression>();
+          foreach (var element in tupleLit.Elements) {
+            var temp = this.DeclareHidden(scope, a.Position, "tup" + ++this._destructureCounter, this.BindExpression(element, scope));
+            build.Add(new AssignStmt(a.Position, temp, element));
+            fieldTemps.Add(temp);
+          }
+          for (var i = 0; i < tupleLit.Elements.Count && i < tupleTarget.Fields.Count; ++i)
+            build.Add(new AssignStmt(a.Position, new MemberExpr(a.Position, a.Target, "Item" + (i + 1), TypeSuffix.None), fieldTemps[i]));
+          var buildGroup = new IfStmt(a.Position, new IntegerLiteralExpr(a.Position, -1, TypeSuffix.None), build, [], null);
+          this.BindStatement(buildGroup, scope);
+          this._model.DesugaredStatements[a] = buildGroup;
+          break;
+        }
         // pb36 coroutine: e = Gen(args) constructs the enumerator - reset its resume state and seed
         // the captured-parameter fields from the arguments (instead of calling a function)
         if (a is { Target: NameExpr enumTarget, Value: CallOrIndexExpr gen } && this._generatorNames.Contains(gen.Name)) {
@@ -2998,6 +3041,13 @@ public sealed class Binder {
             : PbType.Double;
         return operand;
       }
+
+      case TupleExpr tup:
+        // a tuple literal is only meaningful as an assignment / destructuring right-hand side, which the
+        // statement binder handles before reaching here; anywhere else has no place to store it
+        foreach (var element in tup.Elements)
+          this.BindExpression(element, scope);
+        return this.ErrorType(tup.Position, "a tuple literal '(...)' is only valid as the right-hand side of an assignment (t = (a, b)) or a destructuring (a, b = (...))");
 
       case BinaryExpr b:
         return this.BindBinary(b, scope);
