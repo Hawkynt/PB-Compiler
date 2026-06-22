@@ -471,7 +471,9 @@ public sealed class Lexer {
       '.' => this.Current == '.' ? this.AdvanceTo(TokenKind.DotDot, "..") : (TokenKind.Period, "."), // PB 3.6 '..' range/spread
 
       '#' => (TokenKind.Hash, "#"),
-      '?' => (TokenKind.Question, "?"),
+      // a standalone '?' (not glued to an identifier/literal - those become a BYTE/WORD suffix
+      // in LexSuffix): pb36 null-coalescing '??' / a nullable type marker '?'
+      '?' => this.Current == '?' ? this.AdvanceTo(TokenKind.QuestionQuestion, "??") : (TokenKind.Question, "?"),
       '&' => (TokenKind.Ampersand, "&"),
       '@' => (TokenKind.At, "@"),
       '[' => (TokenKind.LBracket, "["),

@@ -280,6 +280,12 @@ public sealed partial class Parser {
       this.Advance();
       result = new(token.Position, BuiltinType.None, null, null, result);
     }
+    // pb36 nullable type T? - the value type plus a presence flag. The '?' glues to the type
+    // keyword as a lexed BYTE suffix (LONG?), or stands apart as a Question token (LONG ?).
+    if (token.Suffix == TypeSuffix.Byte || this.Match(TokenKind.Question)) {
+      this.Require(LanguageFeature.NullableTypes);
+      result = result with { IsNullable = true };
+    }
     return result;
   }
 

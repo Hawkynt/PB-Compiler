@@ -186,6 +186,35 @@ size), so member access, array-of-TYPE strides and whole-TYPE block copies all u
 controlled offsets with no codegen change. pb36-only — genuine PBC has no layout keywords,
 so it is verified by `LEN`/`VARPTR` execution tests, not the differential oracle.
 
+### Nullable types
+
+`DIM x AS T?` is a **nullable**: a synthesized value-type UDT with a `Value` field of T and an
+INTEGER `HasValue` presence flag (so `$nul@LONG`, etc.). It models "a value, or nothing"
+without sentinel values.
+
+```basic
+DIM age AS INTEGER?
+age = 30              ' Value = 30, HasValue = TRUE
+age = NOTHING         ' HasValue = FALSE (the empty state)
+PRINT age ?? -1       ' 30 here; -1 after NOTHING  (null-coalescing)
+DIM n% : n% = age + 5 ' a nullable auto-unwraps to .Value in arithmetic / plain assignment
+IF age.HasValue THEN PRINT age.Value
+```
+
+- `x = value` sets `Value` and `HasValue = TRUE`; `x = NOTHING` clears the flag; `x = otherNullable`
+  copies both fields.
+- `x ?? d` (null-coalescing) lowers to `IF(x.HasValue, x.Value, d)` — `d` is evaluated only when `x`
+  is empty.
+- A nullable used as a value auto-reads `.Value` in a binary operand position and when assigned to a
+  plain (non-nullable) variable; `.Value` / `.HasValue` are also directly accessible.
+
+**Syntax note (the `?` collision).** `?` / `??` / `???` are already the BYTE / WORD / DWORD type
+suffixes, so the lexer disambiguates by gluing: `n??` (no space) is a WORD-suffixed variable, while
+`x ?? d` (spaced) is the coalescing operator; in a type position a type keyword carrying a single
+`?` (`LONG?`) is the nullable marker. v1 covers nullable **variables** (a nullable struct field or
+array element is a plain UDT — assign its `.Value`/`.HasValue` explicitly) and integer/string value
+types; floats work as the value too. pb36-only, verified by execution + binder tests.
+
 ### Implementation status
 
 **Implemented** (`PowerBasic.Compiler/Semantics/Binder.cs`): methods, properties

@@ -27,8 +27,13 @@ string interpolation, array-initializer literals.
 - **Discriminated unions / variant records** (L) — a tagged sum type
   (`TYPE Shape = Circle(r) | Rect(w, h)`) with exhaustive `SELECT CASE` matching. The
   natural complement to generics for modelling data without classes.
-- **Nullable / option types** (M) — `DIM x AS LONG?` (a value + presence flag) with a
-  null-coalescing operator. Safer than sentinel values; pure value semantics.
+- ~~**Nullable / option types**~~ — **DONE**: `DIM x AS LONG?` synthesizes a value-type UDT
+  with a `Value` field and a `HasValue` presence flag. `x = v` sets both, `x = NOTHING` clears
+  the flag, `x ?? d` is the null-coalescing operator (value when present, else `d`), and a
+  nullable auto-unwraps to its `.Value` in arithmetic and when assigned to a plain target.
+  The `?`/`??` collide with the BYTE/WORD type-suffixes, so the lexer disambiguates by
+  whitespace (`n??` glued = WORD suffix; `x ?? d` spaced = coalescing) and a type-keyword
+  carrying a single `?` in type position is the nullable marker.
 - ~~**`OPERATOR` overloading for TYPEs**~~ — **DONE**: `OPERATOR + (other AS Vec) AS Vec`
   inside a TYPE (`THIS` left operand, `RESULT` the result), resolved at compile time; a
   TYPE-returning operator uses struct return, a scalar-returning one works in any expression.

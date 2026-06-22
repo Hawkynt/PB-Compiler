@@ -1530,6 +1530,10 @@ public sealed class Binder {
       return t.Builtin == BuiltinType.Asciiz ? new AsciizType(1) : new FixedStringType(1);
     }
 
+    // pb36 nullable type T?: a UDT carrying the value plus a presence flag, synthesized on first use
+    if (t.IsNullable)
+      return this.ResolveNullableType(t);
+
     // pb36 tuple type (T1, T2): an anonymous UDT with fields Item1..ItemN, synthesized on first use
     if (t.IsTuple)
       return this.ResolveTupleType(t);
@@ -1548,6 +1552,29 @@ public sealed class Binder {
 
     return this.AsMbfIfInterpreter(MapBuiltin(t.Builtin));
   }
+
+  /// <summary>pb36 nullable type <c>T?</c>: synthesizes (once) a UDT with a <c>Value</c> field of T and an INTEGER <c>HasValue</c> presence flag, recorded in the model's nullable set, and returns it.</summary>
+  private PbType ResolveNullableType(TypeName t) {
+    var inner = t with { IsNullable = false };
+    var valueType = this.ResolveTypeName(inner);
+    if (valueType == null) {
+      this.Error(t.Position, "unknown nullable value type");
+      valueType = PbType.Integer;
+    }
+    var name = "$nul@" + TupleElementMangle(inner);
+    if (!this._model.Udts.ContainsKey(name)) {
+      var fields = new List<TypeField> {
+        new(t.Position, "Value", inner, null),
+        new(t.Position, "HasValue", new TypeName(t.Position, BuiltinType.Integer), null),
+      };
+      this.DefineUdt(name, fields, isUnion: false, t.Position);
+    }
+    this._model.NullableUnderlying[name] = valueType;
+    return this._model.Udts[name];
+  }
+
+  /// <summary>True when <paramref name="type"/> is a synthesized nullable UDT (<c>T?</c>).</summary>
+  private bool IsNullableType(PbType? type) => type is UdtType u && this._model.NullableUnderlying.ContainsKey(u.Name);
 
   /// <summary>pb36 tuple type: synthesizes (once) an anonymous UDT with fields Item1..ItemN for <c>(T1, T2, ...)</c>, named with an untypeable mangle so identical tuples share the type, and returns it.</summary>
   private PbType ResolveTupleType(TypeName t) {
@@ -1863,6 +1890,40 @@ public sealed class Binder {
         break;
 
       case AssignStmt a: {
+        // pb36 nullable assignment: x = value sets Value + HasValue=TRUE; x = NOTHING clears the flag;
+        // x = otherNullable falls through to an ordinary UDT copy. Restricted to a plain NameExpr target
+        // (binding it is side-effect-free, unlike a property/bit-field member) and a simple-lvalue value
+        // probe (so a lambda/tuple/NEW value is never bound out of context). Nullable struct fields and
+        // array elements get normal handling - assign their .Value/.HasValue explicitly.
+        if (a.Target is NameExpr) {
+          var nullTargetType = this.BindExpression(a.Target, scope);
+          bool ValueIsNullableLvalue() => a.Value is NameExpr or MemberExpr or IndexExpr && this.IsNullableType(this.BindExpression(a.Value, scope));
+          if (this.IsNullableType(nullTargetType)) {
+            if (a.Value is NothingExpr) {
+              var clear = new AssignStmt(a.Position, new MemberExpr(a.Position, a.Target, "HasValue", TypeSuffix.None), new IntegerLiteralExpr(a.Position, 0, TypeSuffix.None));
+              this.BindStatement(clear, scope);
+              this._model.DesugaredStatements[a] = clear;
+              break;
+            }
+            if (!ValueIsNullableLvalue()) {
+              var set = new List<Statement> {
+                new AssignStmt(a.Position, new MemberExpr(a.Position, a.Target, "Value", TypeSuffix.None), a.Value),
+                new AssignStmt(a.Position, new MemberExpr(a.Position, a.Target, "HasValue", TypeSuffix.None), new IntegerLiteralExpr(a.Position, -1, TypeSuffix.None)),
+              };
+              var group = new IfStmt(a.Position, new IntegerLiteralExpr(a.Position, -1, TypeSuffix.None), set, [], null);
+              this.BindStatement(group, scope);
+              this._model.DesugaredStatements[a] = group;
+              break;
+            }
+            // value is also a nullable -> a plain struct copy of both fields (handled by the normal path)
+          } else if (ValueIsNullableLvalue()) {
+            // pb36 auto-unwrap: assigning a nullable to a plain target reads its .Value
+            var unwrap = new AssignStmt(a.Position, a.Target, new MemberExpr(a.Position, a.Value, "Value", TypeSuffix.None));
+            this.BindStatement(unwrap, scope);
+            this._model.DesugaredStatements[a] = unwrap;
+            break;
+          }
+        }
         // pb36 bit-field write: o.bf = v -> o.$storage = (o.$storage AND clearMask) OR ((v AND mask) << offset)
         if (a.Target is MemberExpr bfTarget && this.BindExpression(bfTarget.Target, scope) is UdtType bfUdt
             && this.BitFieldOf(bfUdt, bfTarget.Member) is { } wbf) {
@@ -3159,6 +3220,24 @@ public sealed class Binder {
       case IfExpr ternary:
         return this.BindTernaryIf(ternary, scope);
 
+      case NothingExpr nothing:
+        // NOTHING is consumed by the AssignStmt binder when the target is nullable; anywhere else it has no type
+        return this.ErrorType(nothing.Position, "NOTHING is only valid assigned to a nullable (T?) variable");
+
+      case CoalesceExpr coalesce: {
+        // pb36 null-coalescing: v ?? d  ->  IF(v.HasValue, v.Value, d)
+        var valueType = this.BindExpression(coalesce.Value, scope);
+        if (!this.IsNullableType(valueType))
+          return this.ErrorType(coalesce.Position, "the left operand of '??' must be a nullable (T?) value");
+        var ternaryForm = new IfExpr(coalesce.Position,
+          new MemberExpr(coalesce.Position, coalesce.Value, "HasValue", TypeSuffix.None),
+          new MemberExpr(coalesce.Position, coalesce.Value, "Value", TypeSuffix.None),
+          coalesce.Fallback);
+        var coalesceType = this.BindExpression(ternaryForm, scope);
+        this._model.Desugared[coalesce] = ternaryForm;
+        return coalesceType;
+      }
+
       case NewExpr neu:
         // a NEW initializer is consumed by BindNewInitializer; reaching here means
         // it was used somewhere other than a DIM initializer.
@@ -3263,6 +3342,17 @@ public sealed class Binder {
   private PbType BindBinary(BinaryExpr b, Scope scope) {
     var left = this.BindExpression(b.Left, scope);
     var right = this.BindExpression(b.Right, scope);
+
+    // pb36 nullable auto-unwrap: a nullable operand in arithmetic/comparison reads its .Value
+    // (the whole binary is rewritten so the .Value member's target is the original operand - no recursion)
+    if (this.IsNullableType(left) || this.IsNullableType(right)) {
+      var unwrappedLeft = this.IsNullableType(left) ? new MemberExpr(b.Position, b.Left, "Value", TypeSuffix.None) : b.Left;
+      var unwrappedRight = this.IsNullableType(right) ? new MemberExpr(b.Position, b.Right, "Value", TypeSuffix.None) : b.Right;
+      var lowered = new BinaryExpr(b.Position, b.Op, unwrappedLeft, unwrappedRight);
+      var loweredType = this.BindExpression(lowered, scope);
+      this._model.Desugared[b] = lowered;
+      return loweredType;
+    }
 
     // PB 3.6 scaled pointer arithmetic: ptr +* i / ptr -* i
     if (b.Op is BinaryOp.PointerAdd or BinaryOp.PointerSub)

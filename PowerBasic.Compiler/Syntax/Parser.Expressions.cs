@@ -7,7 +7,17 @@ public sealed partial class Parser {
 
   // precedence low -> high: IMP, EQV, XOR, OR, AND, NOT, comparisons, ISTRUE/ISFALSE,
   // + -, MOD, \, * /, unary -, ^, atom
-  private Expression ParseExpression() => this.ParseImp();
+  private Expression ParseExpression() => this.ParseCoalesce();
+
+  // pb36 null-coalescing '??' - lowest precedence (below IMP), left-associative: a ?? b ?? c
+  private Expression ParseCoalesce() {
+    var left = this.ParseImp();
+    while (this.Current.Kind == TokenKind.QuestionQuestion) {
+      this.Require(LanguageFeature.NullableTypes);
+      left = new CoalesceExpr(this.Advance().Position, left, this.ParseImp());
+    }
+    return left;
+  }
 
   private Expression ParseImp() {
     var left = this.ParseEqv();
@@ -306,6 +316,9 @@ public sealed partial class Parser {
       // PB 3.6 WITH: a leading '.member' binds to the innermost WITH subject
       case TokenKind.Period when this.Peek().Kind == TokenKind.Identifier && this._withSubjects.Count > 0:
         return this.ParseImplicitWithMember();
+      // pb36 NOTHING: the empty value of a nullable type (only when the dialect has nullables, so it stays a usable identifier elsewhere)
+      case TokenKind.Identifier when token.Suffix == TypeSuffix.None && token.Text.Equals("NOTHING", StringComparison.OrdinalIgnoreCase) && DialectFacts.IsAvailable(LanguageFeature.NullableTypes, this._dialect):
+        return new NothingExpr(this.Advance().Position);
       case TokenKind.Identifier:
         return this.ParseNameExpression();
       default:

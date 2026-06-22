@@ -45,6 +45,8 @@ public enum TokenKind {
   Period,
   Hash,
   Question,
+  /// <summary>pb36 null-coalescing <c>??</c> (only when not glued to an identifier/literal, which would be the WORD type-suffix); <c>a ?? b</c> = a if it has a value, else b.</summary>
+  QuestionQuestion,
   /// <summary>Standalone <c>&amp;</c>: string concatenation operator (PB 3.5).</summary>
   Ampersand,
   /// <summary>Standalone <c>@</c>: pointer dereference (PB 3.2).</summary>

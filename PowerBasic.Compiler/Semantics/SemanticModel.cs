@@ -33,6 +33,9 @@ public sealed class SemanticModel {
   /// <summary>TYPE/UNION definitions with resolved layout.</summary>
   public Dictionary<string, UdtType> Udts { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+  /// <summary>pb36 nullable types (<c>T?</c>): maps a synthesized nullable UDT's name to its underlying value type. A UDT in this set carries a <c>Value</c> field and a <c>HasValue</c> presence flag.</summary>
+  public Dictionary<string, PbType> NullableUnderlying { get; } = new(StringComparer.OrdinalIgnoreCase);
+
   /// <summary>
   /// First (primary) SUB/FUNCTION of each name - kept for "does a proc named X exist /
   /// is it a function" lookups. With PB 3.6 overloading a name may have several

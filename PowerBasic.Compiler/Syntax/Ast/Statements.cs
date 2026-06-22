@@ -25,6 +25,8 @@ public sealed record TypeName(SourcePosition Position, BuiltinType Builtin, stri
   public bool IsGenericUse => this.TypeArguments is { Count: > 0 };
   /// <summary>pb36 tuple type <c>(T1, T2, ...)</c>: an anonymous value aggregate synthesized to a UDT with fields Item1..ItemN.</summary>
   public bool IsTuple => this.TupleElements is { Count: > 0 };
+  /// <summary>pb36 nullable type <c>T?</c>: synthesized to a UDT with a <c>Value</c> field of T and a <c>HasValue</c> presence flag.</summary>
+  public bool IsNullable { get; init; }
 }
 
 #endregion

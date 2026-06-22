@@ -45,6 +45,12 @@ public sealed record PtrDerefExpr(SourcePosition Position, Expression Pointer, E
 /// <summary>Argument-position <c>BYVAL</c> override: passes the pointer target / forces by-value.</summary>
 public sealed record ByValArgExpr(SourcePosition Position, Expression Value) : Expression(Position);
 
+/// <summary>pb36 <c>NOTHING</c>: the empty value of a nullable type (clears its presence flag on assignment).</summary>
+public sealed record NothingExpr(SourcePosition Position) : Expression(Position);
+
+/// <summary>pb36 null-coalescing <c>value ?? fallback</c>: the nullable's value when present, else the fallback.</summary>
+public sealed record CoalesceExpr(SourcePosition Position, Expression Value, Expression Fallback) : Expression(Position);
+
 public enum BinaryOp {
   Add, Subtract, Multiply, Divide, IntegerDivide, Modulo, Power,
   Equal, NotEqual, Less, Greater, LessEqual, GreaterEqual,
