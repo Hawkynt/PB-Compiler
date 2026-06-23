@@ -552,6 +552,29 @@ public sealed class TextAssembler(Assembler target) {
         case "PSRAW": this.PackedShift(0x71, 4, this._asm.Psraw); return;
         case "PSRAD": this.PackedShift(0x72, 4, this._asm.Psrad); return;
 
+        // AVX (VEX-encoded, 3-operand) packed-integer intrinsics on XMM/YMM
+        case "VMOVDQA": this.VexMove(unaligned: false); return;
+        case "VMOVDQU": this.VexMove(unaligned: true); return;
+        case "VPADDB": this.VexBinary(0xFC); return;
+        case "VPADDW": this.VexBinary(0xFD); return;
+        case "VPADDD": this.VexBinary(0xFE); return;
+        case "VPADDQ": this.VexBinary(0xD4); return;
+        case "VPSUBB": this.VexBinary(0xF8); return;
+        case "VPSUBW": this.VexBinary(0xF9); return;
+        case "VPSUBD": this.VexBinary(0xFA); return;
+        case "VPSUBQ": this.VexBinary(0xFB); return;
+        case "VPMULLW": this.VexBinary(0xD5); return;
+        case "VPAND": this.VexBinary(0xDB); return;
+        case "VPANDN": this.VexBinary(0xDF); return;
+        case "VPOR": this.VexBinary(0xEB); return;
+        case "VPXOR": this.VexBinary(0xEF); return;
+        case "VPCMPEQB": this.VexBinary(0x74); return;
+        case "VPCMPEQW": this.VexBinary(0x75); return;
+        case "VPCMPEQD": this.VexBinary(0x76); return;
+        case "VPCMPGTB": this.VexBinary(0x64); return;
+        case "VPCMPGTW": this.VexBinary(0x65); return;
+        case "VPCMPGTD": this.VexBinary(0x66); return;
+
         case "CBW": this.NoOperands(mnemonic); this._asm.Cbw(); return;
         case "CWD": this.NoOperands(mnemonic); this._asm.Cwd(); return;
         case "CWDE": this.NoOperands(mnemonic); this._asm.Cwde(); return;
@@ -792,6 +815,38 @@ public sealed class TextAssembler(Assembler target) {
         case (RegisterOperand d, MemoryOperand s) when d.Register.IsMmx(): this._asm.Movq(d.Register, s.Memory); return;
         case (MemoryOperand d, RegisterOperand s) when s.Register.IsMmx(): this._asm.MovqStore(d.Memory, s.Register); return;
         default: throw new AsmSyntaxException("Invalid MOVQ operand combination.");
+      }
+    }
+
+    private (Operand First, Operand Second, Operand Third) ThreeOperands() {
+      var operands = this.ParseOperands();
+      if (operands.Count != 3)
+        throw new AsmSyntaxException($"Three operands expected, found {operands.Count}.");
+      return (operands[0], operands[1], operands[2]);
+    }
+
+    // AVX VEX 3-operand packed op: dest = src1 OP src2 (XMM or YMM; src2 a register or memory)
+    private void VexBinary(byte opcode) {
+      var (a, b, c) = this.ThreeOperands();
+      if (a is not RegisterOperand d || !(d.Register.IsXmm() || d.Register.IsYmm()))
+        throw new AsmSyntaxException("an XMM/YMM destination register is expected.");
+      if (b is not RegisterOperand s1 || !(s1.Register.IsXmm() || s1.Register.IsYmm()))
+        throw new AsmSyntaxException("an XMM/YMM first-source register is expected.");
+      switch (c) {
+        case RegisterOperand s2 when s2.Register.IsXmm() || s2.Register.IsYmm(): this._asm.VexPacked(opcode, d.Register, s1.Register, s2.Register); return;
+        case MemoryOperand s2: this._asm.VexPacked(opcode, d.Register, s1.Register, s2.Memory); return;
+        default: throw new AsmSyntaxException("an XMM/YMM register or memory second source is expected.");
+      }
+    }
+
+    private void VexMove(bool unaligned) {
+      var (first, second) = this.TwoOperands();
+      bool Vec(Reg r) => r.IsXmm() || r.IsYmm();
+      switch (first, second) {
+        case (RegisterOperand d, RegisterOperand s) when !unaligned && Vec(d.Register) && Vec(s.Register): this._asm.Vmovdqa(d.Register, s.Register); return;
+        case (RegisterOperand d, MemoryOperand s) when Vec(d.Register): if (unaligned) this._asm.Vmovdqu(d.Register, s.Memory); else this._asm.Vmovdqa(d.Register, s.Memory); return;
+        case (MemoryOperand d, RegisterOperand s) when Vec(s.Register): if (unaligned) this._asm.VmovdquStore(d.Memory, s.Register); else this._asm.VmovdqaStore(d.Memory, s.Register); return;
+        default: throw new AsmSyntaxException($"Invalid {(unaligned ? "VMOVDQU" : "VMOVDQA")} operand combination.");
       }
     }
 

@@ -434,5 +434,14 @@ public sealed class TextAssemblerTests {
   public void TryParse_GivenPslldXmmImmediate_ThenPrefixedGroupForm()
     => Assert.That(AssembleLine("PSLLD XMM0, 5"), Is.EqualTo(new byte[] { 0x66, 0x0F, 0x72, 0xF0, 0x05 }));
 
+  [Test]
+  public void TryParse_GivenVpaddwYmm_ThenVexThreeOperandForm()
+    // AVX 3-operand: dest = src1 OP src2, VEX-encoded
+    => Assert.That(AssembleLine("VPADDW YMM0, YMM1, YMM2"), Is.EqualTo(new byte[] { 0xC5, 0xF5, 0xFD, 0xC2 }));
+
+  [Test]
+  public void TryParse_GivenVmovdquYmm_ThenVexLoad()
+    => Assert.That(AssembleLine("VMOVDQU YMM0, [BX]"), Is.EqualTo(new byte[] { 0xC5, 0x86, 0x6F, 0x07 }));
+
   #endregion
 }

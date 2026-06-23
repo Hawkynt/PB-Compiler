@@ -288,4 +288,67 @@ public sealed partial class Assembler {
   }
 
   #endregion
+
+  #region AVX (VEX-encoded, 3-operand, 128/256-bit)
+
+  /// <summary>
+  /// Emits the 2-byte VEX prefix (<c>C5</c>) for a <c>VEX.&lt;L&gt;.66.0F.WIG</c> packed-integer op.
+  /// Valid for registers 0..7 in 16-bit mode (no REX.R/B/X extension, the <c>0F</c> escape, W ignored).
+  /// <paramref name="src1"/> is the non-destructive first source encoded in VEX.vvvv (use the destination
+  /// itself for a two-operand op, with vvvv = 1111 / "unused").
+  /// </summary>
+  private void VexPrefix(Reg src1OrNone, bool l256, int pp = 0b01) {
+    var vvvv = src1OrNone == Reg.AL ? 0xF : src1OrNone.Index(); // AL sentinel = "no vvvv" (1111)
+    var byte1 = (1 << 7)                         // ~VEX.R (R=0 for reg<8)
+              | ((~vvvv & 0xF) << 3)             // ~vvvv
+              | ((l256 ? 1 : 0) << 2)            // L: 1 = 256-bit, 0 = 128-bit
+              | pp;                              // pp: 01 = 66 prefix
+    this.EmitByte(0xC5);
+    this.EmitByte((byte)byte1);
+  }
+
+  /// <summary>VEX 3-operand packed op: <c>dest = src1 OP src2</c> (src2 an XMM/YMM register).</summary>
+  public void VexPacked(byte op, Reg dest, Reg src1, Reg src2) {
+    this.VexPrefix(src1, dest.IsYmm());
+    this.EmitByte(op);
+    this.EmitModRmRegister(dest.Index(), src2);
+  }
+
+  /// <summary>VEX 3-operand packed op with a memory second source.</summary>
+  public void VexPacked(byte op, Reg dest, Reg src1, Mem src2) {
+    this.VexPrefix(src1, dest.IsYmm());
+    this.EmitByte(op);
+    this.EmitModRmMemory(dest.Index(), src2);
+  }
+
+  /// <summary>VMOVDQA dest, src (VEX.&lt;L&gt;.66.0F.WIG 6F): aligned 128/256-bit move (two-operand, vvvv unused).</summary>
+  public void Vmovdqa(Reg dest, Reg src) {
+    this.VexPrefix(Reg.AL, dest.IsYmm());
+    this.EmitByte(0x6F);
+    this.EmitModRmRegister(dest.Index(), src);
+  }
+  public void Vmovdqa(Reg dest, Mem src) {
+    this.VexPrefix(Reg.AL, dest.IsYmm());
+    this.EmitByte(0x6F);
+    this.EmitModRmMemory(dest.Index(), src);
+  }
+  public void VmovdqaStore(Mem dest, Reg src) {
+    this.VexPrefix(Reg.AL, src.IsYmm());
+    this.EmitByte(0x7F);
+    this.EmitModRmMemory(src.Index(), dest);
+  }
+
+  /// <summary>VMOVDQU dest, src (VEX.&lt;L&gt;.F3.0F.WIG 6F): unaligned 128/256-bit move (pp = 10).</summary>
+  public void Vmovdqu(Reg dest, Mem src) {
+    this.VexPrefix(Reg.AL, dest.IsYmm(), pp: 0b10);
+    this.EmitByte(0x6F);
+    this.EmitModRmMemory(dest.Index(), src);
+  }
+  public void VmovdquStore(Mem dest, Reg src) {
+    this.VexPrefix(Reg.AL, src.IsYmm(), pp: 0b10);
+    this.EmitByte(0x7F);
+    this.EmitModRmMemory(src.Index(), dest);
+  }
+
+  #endregion
 }
