@@ -147,4 +147,145 @@ public sealed partial class Assembler {
   public void Punpckhbw(Reg d, Reg s) => this.MmxRegReg(0x68, d, s);
   public void Punpckhwd(Reg d, Reg s) => this.MmxRegReg(0x69, d, s);
   public void Punpckhdq(Reg d, Reg s) => this.MmxRegReg(0x6A, d, s);
+
+  #region SSE2 packed-integer (128-bit XMM)
+
+  // The SSE2 packed-integer ops are the MMX opcodes with a mandatory 66 prefix and XMM operands.
+  private void Sse2RegReg(byte op, Reg dest, Reg src) {
+    this.EmitByte(0x66);
+    this.EmitByte(0x0F);
+    this.EmitByte(op);
+    this.EmitModRmRegister(dest.Index(), src);
+  }
+
+  private void Sse2RegMem(byte op, Reg dest, Mem src) {
+    this.EmitByte(0x66);
+    this.EmitByte(0x0F);
+    this.EmitByte(op);
+    this.EmitModRmMemory(dest.Index(), src);
+  }
+
+  /// <summary>MOVDQA xmm, xmm/m128 (66 0F 6F): aligned 128-bit move.</summary>
+  public void Movdqa(Reg dst, Reg src) => this.Sse2RegReg(0x6F, dst, src);
+  public void Movdqa(Reg dst, Mem src) => this.Sse2RegMem(0x6F, dst, src);
+  /// <summary>MOVDQA xmm/m128, xmm (66 0F 7F): aligned 128-bit store.</summary>
+  public void MovdqaStore(Mem dst, Reg src) => this.Sse2RegMem(0x7F, src, dst);
+
+  /// <summary>MOVDQU xmm, m128 (F3 0F 6F): unaligned 128-bit load.</summary>
+  public void Movdqu(Reg dst, Mem src) {
+    this.EmitByte(0xF3);
+    this.EmitByte(0x0F);
+    this.EmitByte(0x6F);
+    this.EmitModRmMemory(dst.Index(), src);
+  }
+
+  /// <summary>MOVDQU m128, xmm (F3 0F 7F): unaligned 128-bit store.</summary>
+  public void MovdquStore(Mem dst, Reg src) {
+    this.EmitByte(0xF3);
+    this.EmitByte(0x0F);
+    this.EmitByte(0x7F);
+    this.EmitModRmMemory(src.Index(), dst);
+  }
+
+  /// <summary>MOVD xmm, r/m32 (66 0F 6E).</summary>
+  public void MovdX(Reg dstXmm, Reg srcGp32) {
+    this.EmitByte(0x66);
+    this.EmitByte(0x0F);
+    this.EmitByte(0x6E);
+    this.EmitModRmRegister(dstXmm.Index(), srcGp32);
+  }
+  public void MovdX(Reg dstXmm, Mem src) => this.Sse2RegMem(0x6E, dstXmm, src);
+
+  /// <summary>MOVD r/m32, xmm (66 0F 7E).</summary>
+  public void MovdXStore(Reg dstGp32, Reg srcXmm) {
+    this.EmitByte(0x66);
+    this.EmitByte(0x0F);
+    this.EmitByte(0x7E);
+    this.EmitModRmRegister(srcXmm.Index(), dstGp32);
+  }
+  public void MovdXStore(Mem dst, Reg srcXmm) => this.Sse2RegMem(0x7E, srcXmm, dst);
+
+  // packed add/subtract (byte/word/dword/qword lanes; SSE2 adds the 64-bit-lane PADDQ/PSUBQ)
+  public void PaddbX(Reg d, Reg s) => this.Sse2RegReg(0xFC, d, s);
+  public void PaddbX(Reg d, Mem s) => this.Sse2RegMem(0xFC, d, s);
+  public void PaddwX(Reg d, Reg s) => this.Sse2RegReg(0xFD, d, s);
+  public void PaddwX(Reg d, Mem s) => this.Sse2RegMem(0xFD, d, s);
+  public void PadddX(Reg d, Reg s) => this.Sse2RegReg(0xFE, d, s);
+  public void PadddX(Reg d, Mem s) => this.Sse2RegMem(0xFE, d, s);
+  public void PaddqX(Reg d, Reg s) => this.Sse2RegReg(0xD4, d, s);
+  public void PaddqX(Reg d, Mem s) => this.Sse2RegMem(0xD4, d, s);
+  public void PsubbX(Reg d, Reg s) => this.Sse2RegReg(0xF8, d, s);
+  public void PsubbX(Reg d, Mem s) => this.Sse2RegMem(0xF8, d, s);
+  public void PsubwX(Reg d, Reg s) => this.Sse2RegReg(0xF9, d, s);
+  public void PsubwX(Reg d, Mem s) => this.Sse2RegMem(0xF9, d, s);
+  public void PsubdX(Reg d, Reg s) => this.Sse2RegReg(0xFA, d, s);
+  public void PsubdX(Reg d, Mem s) => this.Sse2RegMem(0xFA, d, s);
+  public void PsubqX(Reg d, Reg s) => this.Sse2RegReg(0xFB, d, s);
+  public void PsubqX(Reg d, Mem s) => this.Sse2RegMem(0xFB, d, s);
+
+  public void PmullwX(Reg d, Reg s) => this.Sse2RegReg(0xD5, d, s);
+  public void PmullwX(Reg d, Mem s) => this.Sse2RegMem(0xD5, d, s);
+
+  public void PandX(Reg d, Reg s) => this.Sse2RegReg(0xDB, d, s);
+  public void PandX(Reg d, Mem s) => this.Sse2RegMem(0xDB, d, s);
+  public void PandnX(Reg d, Reg s) => this.Sse2RegReg(0xDF, d, s);
+  public void PandnX(Reg d, Mem s) => this.Sse2RegMem(0xDF, d, s);
+  public void PorX(Reg d, Reg s) => this.Sse2RegReg(0xEB, d, s);
+  public void PorX(Reg d, Mem s) => this.Sse2RegMem(0xEB, d, s);
+  public void PxorX(Reg d, Reg s) => this.Sse2RegReg(0xEF, d, s);
+  public void PxorX(Reg d, Mem s) => this.Sse2RegMem(0xEF, d, s);
+
+  public void PcmpeqbX(Reg d, Reg s) => this.Sse2RegReg(0x74, d, s);
+  public void PcmpeqwX(Reg d, Reg s) => this.Sse2RegReg(0x75, d, s);
+  public void PcmpeqdX(Reg d, Reg s) => this.Sse2RegReg(0x76, d, s);
+  public void PcmpgtbX(Reg d, Reg s) => this.Sse2RegReg(0x64, d, s);
+  public void PcmpgtwX(Reg d, Reg s) => this.Sse2RegReg(0x65, d, s);
+  public void PcmpgtdX(Reg d, Reg s) => this.Sse2RegReg(0x66, d, s);
+
+  // packed shift by immediate (group 66 0F 71/72/73 with a /digit reg field)
+  public void PsllwX(Reg d, byte n) => this.Sse2ShiftImm(0x71, 6, d, n);
+  public void PslldX(Reg d, byte n) => this.Sse2ShiftImm(0x72, 6, d, n);
+  public void PsllqX(Reg d, byte n) => this.Sse2ShiftImm(0x73, 6, d, n);
+  public void PsrlwX(Reg d, byte n) => this.Sse2ShiftImm(0x71, 2, d, n);
+  public void PsrldX(Reg d, byte n) => this.Sse2ShiftImm(0x72, 2, d, n);
+  public void PsrlqX(Reg d, byte n) => this.Sse2ShiftImm(0x73, 2, d, n);
+  public void PsrawX(Reg d, byte n) => this.Sse2ShiftImm(0x71, 4, d, n);
+  public void PsradX(Reg d, byte n) => this.Sse2ShiftImm(0x72, 4, d, n);
+
+  private void Sse2ShiftImm(byte op, int subOp, Reg dest, byte count) {
+    this.EmitByte(0x66);
+    this.EmitByte(0x0F);
+    this.EmitByte(op);
+    this.EmitByte((byte)(0xC0 | subOp << 3 | dest.Index()));
+    this.EmitByte(count);
+  }
+
+  #endregion
+
+  #region width-dispatched packed ops (inline asm: same mnemonic, MMX or XMM by operand)
+
+  /// <summary>Emits a packed-integer op (<c>0F op /r</c>) as MMX or, for an XMM destination, the 66-prefixed SSE2 form.</summary>
+  public void EmitPacked(byte op, Reg dest, Reg src) {
+    if (dest.IsXmm())
+      this.Sse2RegReg(op, dest, src);
+    else
+      this.MmxRegReg(op, dest, src);
+  }
+
+  public void EmitPacked(byte op, Reg dest, Mem src) {
+    if (dest.IsXmm())
+      this.Sse2RegMem(op, dest, src);
+    else
+      this.MmxRegMem(op, dest, src);
+  }
+
+  /// <summary>Emits a packed shift-by-immediate (group <c>0F op /subOp ib</c>) as MMX or, for XMM, the 66-prefixed SSE2 form.</summary>
+  public void EmitPackedShiftImm(byte op, int subOp, Reg dest, byte count) {
+    if (dest.IsXmm())
+      this.Sse2ShiftImm(op, subOp, dest, count);
+    else
+      this.MmxShiftImm(op, subOp, dest, count);
+  }
+
+  #endregion
 }

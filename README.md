@@ -271,8 +271,10 @@ right-sized memory footprint, **P6** header squeeze, and **P7** trivial-I/O
 lowering (a PRINT-only program becomes a raw COM-style image). Codegen passes
 **C1/C2** target 386/486 (32-bit value flow, alignment, `BSWAP`) and **R3**
 widens string/block moves to DWORDs under `$CPU 80386`. **R4** adds **MMX**
-integer-SIMD intrinsics to the inline assembler (`! PADDW MM0, MM1`, `MOVQ`,
-packed multiply/compare/shift, `EMMS`) — a variable named in inline asm is kept
+(64-bit `MM0..MM7`) and **SSE2** (128-bit `XMM0..XMM7`) integer-SIMD intrinsics to the
+inline assembler (`! PADDW MM0, MM1` / `! PADDW XMM0, XMM1` — the same mnemonic picks the
+MMX or 66-prefixed SSE2 encoding by register class — `MOVQ`/`MOVDQA`, packed
+multiply/compare/shift, `EMMS`) — a variable named in inline asm is kept
 live by the optimizer, and MMX runs under DOSBox — plus **auto-vectorization**:
 under `$CPU 80586 MMX` + `$OPTIMIZE SPEED` the optimizer rewrites an integer
 `FOR i: c(i)=a(i) OP b(i)` loop into 4-wide MMX with a scalar tail (wrap-correct,

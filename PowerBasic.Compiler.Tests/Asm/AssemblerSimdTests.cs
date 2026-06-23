@@ -67,4 +67,38 @@ public sealed class AssemblerSimdTests {
     // PSLLW MM0, MM1: 0F F1 C1 (the by-register form, distinct from the immediate group)
     Assert.That(Assemble(a => a.Psllw(Reg.MM0, Reg.MM1)), Is.EqualTo(new byte[] { 0x0F, 0xF1, 0xC1 }));
   }
+
+  private static IEnumerable<TestCaseData> Sse2Cases() {
+    // SSE2 = the MMX opcodes with a mandatory 66 prefix and XMM operands
+    yield return new((Action<Assembler>)(a => a.PaddwX(Reg.XMM0, Reg.XMM1)), new byte[] { 0x66, 0x0F, 0xFD, 0xC1 }) { TestName = "PADDW xmm" };
+    yield return new((Action<Assembler>)(a => a.PadddX(Reg.XMM0, Reg.XMM1)), new byte[] { 0x66, 0x0F, 0xFE, 0xC1 }) { TestName = "PADDD xmm" };
+    yield return new((Action<Assembler>)(a => a.PaddqX(Reg.XMM2, Reg.XMM3)), new byte[] { 0x66, 0x0F, 0xD4, 0xD3 }) { TestName = "PADDQ xmm2,xmm3" };
+    yield return new((Action<Assembler>)(a => a.PsubwX(Reg.XMM0, Reg.XMM1)), new byte[] { 0x66, 0x0F, 0xF9, 0xC1 }) { TestName = "PSUBW xmm" };
+    yield return new((Action<Assembler>)(a => a.PmullwX(Reg.XMM0, Reg.XMM1)), new byte[] { 0x66, 0x0F, 0xD5, 0xC1 }) { TestName = "PMULLW xmm" };
+    yield return new((Action<Assembler>)(a => a.PxorX(Reg.XMM0, Reg.XMM0)), new byte[] { 0x66, 0x0F, 0xEF, 0xC0 }) { TestName = "PXOR xmm,xmm" };
+    yield return new((Action<Assembler>)(a => a.Movdqa(Reg.XMM0, Reg.XMM1)), new byte[] { 0x66, 0x0F, 0x6F, 0xC1 }) { TestName = "MOVDQA xmm,xmm" };
+    yield return new((Action<Assembler>)(a => a.MovdX(Reg.XMM0, Reg.EAX)), new byte[] { 0x66, 0x0F, 0x6E, 0xC0 }) { TestName = "MOVD xmm0,eax" };
+  }
+
+  [TestCaseSource(nameof(Sse2Cases))]
+  public void Emit_GivenSse2RegisterForm_ThenMatchesPrefixedOpcode(Action<Assembler> emit, byte[] expected)
+    => Assert.That(Assemble(emit), Is.EqualTo(expected));
+
+  [Test]
+  public void Emit_GivenMovdquLoad_ThenF3Prefixed() {
+    // MOVDQU XMM0, [BX]: F3 0F 6F 07
+    Assert.That(Assemble(a => a.Movdqu(Reg.XMM0, Mem.At(Reg.BX))), Is.EqualTo(new byte[] { 0xF3, 0x0F, 0x6F, 0x07 }));
+  }
+
+  [Test]
+  public void Emit_GivenSse2ShiftImmediate_ThenPrefixedGroupEncoding() {
+    // PSLLW XMM0, 4: 66 0F 71 F0 04
+    Assert.That(Assemble(a => a.PsllwX(Reg.XMM0, 4)), Is.EqualTo(new byte[] { 0x66, 0x0F, 0x71, 0xF0, 0x04 }));
+  }
+
+  [Test]
+  public void Emit_GivenPaddwMemoryXmm_ThenAddressesMemory() {
+    // PADDW XMM0, [BX]: 66 0F FD 07
+    Assert.That(Assemble(a => a.PaddwX(Reg.XMM0, Mem.At(Reg.BX))), Is.EqualTo(new byte[] { 0x66, 0x0F, 0xFD, 0x07 }));
+  }
 }

@@ -15,6 +15,8 @@ public enum Reg : byte {
   ES = 0x30, CS = 0x31, SS = 0x32, DS = 0x33, FS = 0x34, GS = 0x35,
   // MMX registers (class 4, Pentium MMX; 64-bit, aliased onto the x87 stack)
   MM0 = 0x40, MM1 = 0x41, MM2 = 0x42, MM3 = 0x43, MM4 = 0x44, MM5 = 0x45, MM6 = 0x46, MM7 = 0x47,
+  // SSE/SSE2 XMM registers (class 5; 128-bit). 16-bit real mode reaches XMM0..XMM7 (no REX).
+  XMM0 = 0x50, XMM1 = 0x51, XMM2 = 0x52, XMM3 = 0x53, XMM4 = 0x54, XMM5 = 0x55, XMM6 = 0x56, XMM7 = 0x57,
 }
 
 /// <summary>Classification and encoding helpers for <see cref="Reg"/>.</summary>
@@ -29,6 +31,7 @@ public static class RegExtensions {
   public static bool IsSegment(this Reg register) => ((int)register & 0xF0) == 0x30;
   public static bool IsGeneralPurpose(this Reg register) => (int)register < 0x30;
   public static bool IsMmx(this Reg register) => ((int)register & 0xF0) == 0x40;
+  public static bool IsXmm(this Reg register) => ((int)register & 0xF0) == 0x50;
 
   /// <summary>Operand size of a general-purpose register; segment registers report <see cref="OperandSize.Word"/>.</summary>
   public static OperandSize Size(this Reg register) => ((int)register >> 4) switch {

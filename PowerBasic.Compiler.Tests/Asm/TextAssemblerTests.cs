@@ -421,5 +421,18 @@ public sealed class TextAssemblerTests {
   public void TryParse_GivenMovdStoreToRegister_ThenEncodesStore()
     => Assert.That(AssembleLine("MOVD EAX, MM0"), Is.EqualTo(new byte[] { 0x0F, 0x7E, 0xC0 }));
 
+  [Test]
+  public void TryParse_GivenPaddwXmm_ThenEmitsSse2PrefixedForm()
+    // same mnemonic, XMM operands -> the 66-prefixed SSE2 encoding is selected by register class
+    => Assert.That(AssembleLine("PADDW XMM0, XMM1"), Is.EqualTo(new byte[] { 0x66, 0x0F, 0xFD, 0xC1 }));
+
+  [Test]
+  public void TryParse_GivenMovdqaXmm_ThenEncodes()
+    => Assert.That(AssembleLine("MOVDQA XMM2, XMM3"), Is.EqualTo(new byte[] { 0x66, 0x0F, 0x6F, 0xD3 }));
+
+  [Test]
+  public void TryParse_GivenPslldXmmImmediate_ThenPrefixedGroupForm()
+    => Assert.That(AssembleLine("PSLLD XMM0, 5"), Is.EqualTo(new byte[] { 0x66, 0x0F, 0x72, 0xF0, 0x05 }));
+
   #endregion
 }
