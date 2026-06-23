@@ -221,6 +221,31 @@ an operand. In a type position a type keyword carrying a single `?` (`LONG?`) is
 explicitly) and integer/string value types; floats work as the value too. pb36-only, verified by
 execution + binder tests.
 
+### Wide integer types (`INT128` … `UINT512`)
+
+pb36 adds fixed-size **wide integers** beyond the native 64-bit `QUAD` — signed `INT128`,
+`INT256`, `INT512` and unsigned `UINT128`, `UINT256`, `UINT512` — for cryptography, checksums
+and bignum-style work. They are **emulated as multi-word values** (`ByteSize / 2` little-endian
+16-bit words in memory: 8 / 16 / 32 words), so they work on any 8086+ target, not just modern CPUs.
+
+```basic
+DIM big AS INT128          ' 16 bytes (LEN(big) = 16), 8 words
+big = -5                   ' the constant is sign-extended across all 8 words
+DIM x&  : x& = SomeLong()
+big = x&                   ' a runtime LONG sign-/zero-extended (by the source's signedness)
+DIM lo& : lo& = big        ' truncate back to the low 32 bits
+```
+
+**Foundation (this increment):** declaration and sizing (`DIM`, `LEN`/`SIZEOF`), and the conversions
+to and from the native scalars — a compile-time constant stores its sign-extended words directly; a
+runtime narrow value is loaded into `AX`/`DX:AX` and the upper words filled with the sign (`CWD`) or
+zero per the source's signedness; `wide = wideVar` copies the common low words and extends; `narrow =
+wideVar` truncates to the low word(s). Verified by execution (extend → truncate round trips match,
+incl. negative sign-extension across 128 bits) + binder/codegen unit tests; pb36-only (genuine PBC
+has no wide integers). **Follow-ups:** multi-word arithmetic (`+`/`-` via ADC/SBB chains, compare,
+bitwise, shift, multiply), decimal `PRINT`, and `>64`-bit literals — wide arithmetic currently
+reports a clear *"not yet supported"* diagnostic rather than miscompiling.
+
 ### Implementation status
 
 **Implemented** (`PowerBasic.Compiler/Semantics/Binder.cs`): methods, properties

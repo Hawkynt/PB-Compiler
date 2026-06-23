@@ -472,6 +472,16 @@ public sealed partial class CodeGenerator {
       return;
     }
 
+    // pb36 wide integers: convert between an emulated multi-word value and the native scalars
+    if (targetType is WideIntType wt) {
+      this.EmitWideStore(wt, a);
+      return;
+    }
+    if (model.TypeOf(a.Value) is WideIntType srcWide && targetType is ScalarType { IsFloat: false } narrowTarget) {
+      this.EmitWideTruncate(srcWide, narrowTarget, a.Target, a.Value);
+      return;
+    }
+
     // FIX literal stores round DECIMALLY at compile time (genuine PBC converts
     // the literal text: 2.555 -> 2.56 even though the binary double is below .555)
     if (targetType is BcdType { IsFixedPoint: true } && TryLiteralValue(a.Value) is { } fixLiteral) {
@@ -621,6 +631,105 @@ public sealed partial class CodeGenerator {
         this._asm.Pop(Reg.DX);
     }
     this.EmitStorePlace(place, targetType, a.Value);
+  }
+
+  /// <summary>
+  /// pb36 wide integers: stores into a multi-word target. <c>wide = wideVar</c> copies the common low
+  /// words and sign-/zero-extends the rest; <c>wide = narrowExpr</c> puts the native value in AX/DX:AX
+  /// and extends. (A wide arithmetic right-hand side is a follow-up - rejected for now.)
+  /// </summary>
+  private void EmitWideStore(WideIntType wt, AssignStmt a) {
+    if (this.EmitPlace(a.Target) is not { } dst) {
+      this.Unsupported(a);
+      return;
+    }
+    var asm = this._asm;
+    var vt = model.TypeOf(a.Value);
+    Mem Word(Mem cell, int w) => Adjust(cell, w * 2, OperandSize.Word);
+
+    // a compile-time integer constant stores its (sign-extended) words directly - covers any
+    // literal/equate value up to 64 bits regardless of how the binder typed the expression
+    if (this.OptFolder.TryFold(a.Value) is { Integer: { } constant }) {
+      var fill = (ushort)(constant < 0 && wt.Signed ? 0xFFFF : 0x0000);
+      for (var k = 0; k < wt.Words; ++k) {
+        var word = k < 4 ? (ushort)(constant >> (16 * k)) : fill;
+        asm.Mov(Word(dst.Cell, k), (Imm)word);
+      }
+      return;
+    }
+
+    if (vt is WideIntType srcW) {
+      if (a.Value is BinaryExpr) {
+        this.Unsupported(a.Value, "wide-integer arithmetic (a follow-up increment)");
+        return;
+      }
+      if (this.EmitPlace(a.Value) is not { } src) {
+        this.Unsupported(a.Value, "wide-integer value without a memory location");
+        return;
+      }
+      var common = Math.Min(wt.Words, srcW.Words);
+      for (var k = 0; k < common; ++k) {
+        asm.Mov(Reg.AX, Word(src.Cell, k));
+        asm.Mov(Word(dst.Cell, k), Reg.AX);
+      }
+      if (wt.Words > common) {
+        if (srcW.Signed) {
+          asm.Mov(Reg.AX, Word(src.Cell, srcW.Words - 1));
+          asm.Cwd();                          // DX = 0xFFFF if the source's top word is negative, else 0
+        } else {
+          asm.Xor(Reg.DX, Reg.DX);
+        }
+        for (var k = common; k < wt.Words; ++k)
+          asm.Mov(Word(dst.Cell, k), Reg.DX);
+      }
+      return;
+    }
+
+    if (vt is ScalarType { IsFloat: false, ByteSize: <= 4 } narrow) {
+      this.EmitExpression(a.Value);
+      this.Coerce(vt, narrow, a.Value);
+      var srcWords = narrow.ByteSize <= 2 ? 1 : 2;   // AX, or DX:AX
+      asm.Mov(Word(dst.Cell, 0), Reg.AX);
+      if (srcWords == 2)
+        asm.Mov(Word(dst.Cell, 1), Reg.DX);
+      if (wt.Words > srcWords) {
+        if (narrow.Signed) {
+          if (srcWords == 2)
+            asm.Mov(Reg.AX, Reg.DX);          // sign of the high word
+          asm.Cwd();                          // DX = sign fill
+        } else {
+          asm.Xor(Reg.DX, Reg.DX);
+        }
+        for (var k = srcWords; k < wt.Words; ++k)
+          asm.Mov(Word(dst.Cell, k), Reg.DX);
+      }
+      return;
+    }
+
+    this.Unsupported(a.Value, "wide-integer assignment from this value (a follow-up increment)");
+  }
+
+  /// <summary>pb36 wide integers: <c>narrow = wideVar</c> truncates the wide value to its low word(s).</summary>
+  private void EmitWideTruncate(WideIntType srcW, ScalarType narrow, Expression target, Expression wideValue) {
+    _ = srcW;
+    if (this.EmitPlace(wideValue) is not { } src) {
+      this.Unsupported(wideValue, "wide-integer value without a memory location");
+      return;
+    }
+    var asm = this._asm;
+    Mem Word(Mem cell, int w) => Adjust(cell, w * 2, OperandSize.Word);
+    asm.Mov(Reg.AX, Word(src.Cell, 0));
+    if (narrow.ByteSize > 2)
+      asm.Mov(Reg.DX, Word(src.Cell, 1));
+    if (this.EmitPlace(target) is { } dst) {
+      if (narrow.ByteSize == 1) {
+        asm.Mov(Adjust(dst.Cell, 0, OperandSize.Byte), Reg.AL);
+      } else {
+        asm.Mov(Word(dst.Cell, 0), Reg.AX);
+        if (narrow.ByteSize > 2)
+          asm.Mov(Word(dst.Cell, 1), Reg.DX);
+      }
+    }
   }
 
   /// <summary>

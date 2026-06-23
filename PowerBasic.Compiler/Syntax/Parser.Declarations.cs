@@ -243,6 +243,12 @@ public sealed partial class Parser {
       "INTEGER" or "INT" => BuiltinType.Integer,
       "LONG" or "LNG" => BuiltinType.Long,
       "QUAD" or "QUD" => BuiltinType.Quad,
+      "INT128" => BuiltinType.Int128,
+      "INT256" => BuiltinType.Int256,
+      "INT512" => BuiltinType.Int512,
+      "UINT128" => BuiltinType.UInt128,
+      "UINT256" => BuiltinType.UInt256,
+      "UINT512" => BuiltinType.UInt512,
       "SINGLE" or "SNG" => BuiltinType.Single,
       "DOUBLE" or "DBL" => BuiltinType.Double,
       "EXT" or "EXTENDED" => BuiltinType.Ext,
@@ -264,6 +270,10 @@ public sealed partial class Parser {
         break;
       case BuiltinType.Any:
         this.Require(LanguageFeature.AnyParameter);
+        break;
+      case BuiltinType.Int128 or BuiltinType.Int256 or BuiltinType.Int512
+        or BuiltinType.UInt128 or BuiltinType.UInt256 or BuiltinType.UInt512:
+        this.Require(LanguageFeature.WideIntegers);
         break;
     }
 

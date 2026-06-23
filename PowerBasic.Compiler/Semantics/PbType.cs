@@ -33,6 +33,18 @@ public sealed record ScalarType(ScalarKind Kind, int ByteSize, bool Signed, bool
 }
 
 /// <summary>
+/// pb36 wide integer (<c>INT128/256/512</c> and the unsigned <c>UINT*</c> forms): a fixed-size
+/// multi-word integer too large for a register, emulated as <see cref="ByteSize"/>/2 16-bit words
+/// (little-endian) in memory. Arithmetic is done word-by-word (ADC/SBB chains); conversions to and
+/// from the native scalars sign-/zero-extend or truncate.
+/// </summary>
+public sealed record WideIntType(int ByteSize, bool Signed) : PbType {
+  public override int Size => this.ByteSize;
+  /// <summary>Number of 16-bit words in the value.</summary>
+  public int Words => this.ByteSize / 2;
+}
+
+/// <summary>
 /// Dynamic string. Stored as a 2-byte handle into the runtime's string handle
 /// table; the character data lives in the far string heap.
 /// </summary>

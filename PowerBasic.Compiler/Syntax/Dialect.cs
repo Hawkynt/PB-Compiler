@@ -123,6 +123,7 @@ public enum LanguageFeature {
   BitFields,
   TypeLayout,
   NullableTypes,
+  WideIntegers,
 }
 
 /// <summary>
@@ -194,6 +195,7 @@ public static class DialectFacts {
     [LanguageFeature.BitFields] = (Dialect.Pb36, "bit-field TYPE members ('field AS BIT * n')"),
     [LanguageFeature.TypeLayout] = (Dialect.Pb36, "TYPE layout control ('TYPE Name PACKED | ALIGN n | SIZE n', 'field AS T AT offset')"),
     [LanguageFeature.NullableTypes] = (Dialect.Pb36, "nullable types ('AS T?', NOTHING, the '??' null-coalescing operator)"),
+    [LanguageFeature.WideIntegers] = (Dialect.Pb36, "wide integer types (INT128/256/512, UINT128/256/512 - emulated multi-word)"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

@@ -1505,6 +1505,12 @@ public sealed class Binder {
     BuiltinType.String => PbType.String,
     BuiltinType.Flex => new FlexType(),
     BuiltinType.Any => PbType.Any,
+    BuiltinType.Int128 => new WideIntType(16, Signed: true),
+    BuiltinType.Int256 => new WideIntType(32, Signed: true),
+    BuiltinType.Int512 => new WideIntType(64, Signed: true),
+    BuiltinType.UInt128 => new WideIntType(16, Signed: false),
+    BuiltinType.UInt256 => new WideIntType(32, Signed: false),
+    BuiltinType.UInt512 => new WideIntType(64, Signed: false),
     _ => null,
   };
 
@@ -3342,6 +3348,10 @@ public sealed class Binder {
   private PbType BindBinary(BinaryExpr b, Scope scope) {
     var left = this.BindExpression(b.Left, scope);
     var right = this.BindExpression(b.Right, scope);
+
+    // pb36 wide integers: arithmetic/comparison on the emulated multi-word types is a follow-up
+    if (left is WideIntType || right is WideIntType)
+      return this.ErrorType(b.Position, "wide-integer arithmetic is not yet supported (assignment, sign-/zero-extension and truncation are)");
 
     // pb36 nullable auto-unwrap: a nullable operand in arithmetic/comparison reads its .Value
     // (the whole binary is rewritten so the .Value member's target is the original operand - no recursion)

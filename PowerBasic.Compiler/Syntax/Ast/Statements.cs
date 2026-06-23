@@ -9,7 +9,9 @@ public sealed record CompilationUnit(string FileName, IReadOnlyList<Statement> S
 #region types
 
 /// <summary>Built-in scalar type names usable in an <c>AS</c> clause.</summary>
-public enum BuiltinType { None, Byte, Word, Dword, Integer, Long, Quad, Single, Double, Ext, Fix, Bcd, String, FixedString, Asciiz, Flex, Any }
+public enum BuiltinType { None, Byte, Word, Dword, Integer, Long, Quad, Single, Double, Ext, Fix, Bcd, String, FixedString, Asciiz, Flex, Any,
+  // pb36 wide integers (emulated multi-word): signed INT128/256/512 and unsigned UINT128/256/512
+  Int128, Int256, Int512, UInt128, UInt256, UInt512 }
 
 /// <summary>
 /// An <c>AS</c>-clause type: builtin, fixed string (<c>STRING * n</c>), ASCIIZ

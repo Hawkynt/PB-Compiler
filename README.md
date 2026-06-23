@@ -174,6 +174,11 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
   `x = NOTHING` empties it, `x ?? d` is null-coalescing (value or fallback), and a nullable
   auto-unwraps to `.Value` in arithmetic / plain assignment (`.HasValue` / `.Value` also
   explicit). The lexer disambiguates `?`/`??` from the BYTE/WORD suffixes by context (an operand after `??` makes it the coalescing operator).
+- **Wide integer types** — `INT128`/`INT256`/`INT512` and unsigned `UINT128/256/512`,
+  emulated as multi-word values (8/16/32 little-endian words) so they run on any 8086+ target.
+  The foundation covers declaration/sizing and conversions to/from the native scalars
+  (constant and runtime sign-/zero-extension, `wide = wideVar` copy, truncation back to a narrower
+  type); multi-word arithmetic and decimal print are follow-ups.
 - **`OPERATOR` overloading** — define `OPERATOR + (other AS Vec) AS Vec` (and `=`, `<`,
   `MOD`, …) inside a `TYPE`; `THIS` is the left operand, the body sets the `RESULT`. `a + b`
   resolves to the overload at compile time (a value-type feature, no dispatch). A
