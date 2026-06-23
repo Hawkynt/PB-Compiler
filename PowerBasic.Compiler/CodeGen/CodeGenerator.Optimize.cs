@@ -199,6 +199,17 @@ public sealed partial class CodeGenerator {
     && m.Arguments is [{ } level, ..]
     && level.Text is "80486" or "486");
 
+  /// <summary>
+  /// pb36 C2 ($CPU 80486 + $OPTIMIZE SPEED): NOP-pad a hot loop top to a 16-byte boundary so the loop's
+  /// instruction fetch is cache-line-aligned (fewer fetch-ahead penalties, better branch-target prefetch).
+  /// The pad executes once on the fall-through entry and is skipped by the back-edge, and NOPs never change
+  /// output - so this is output-invariant (the differential oracle stays byte-identical even though the EXE grows).
+  /// </summary>
+  private void AlignLoopTop() {
+    if (this.Optimize && this.OptimizeSpeed && (this.Cpu486 || this.Cpu586))
+      this._asm.AlignCode(16);
+  }
+
   /// <summary>True when $CPU 80586/Pentium (or higher) is selected - the floor for the SIMD feature flags.</summary>
   private bool Cpu586 => model.MetaStatements.Any(m =>
     m.Command.Equals("CPU", StringComparison.OrdinalIgnoreCase)
@@ -1087,6 +1098,7 @@ public sealed partial class CodeGenerator {
     this._iterateFor.Push(cont);
     this._iterateAny.Push(cont);
 
+    this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
     asm.MarkLabel(top);
     asm.Cmp(Reg.SI, limit);
     if (step >= 0)
@@ -1168,6 +1180,7 @@ public sealed partial class CodeGenerator {
     this._iterateFor.Push(cont);
     this._iterateAny.Push(cont);
 
+    this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
     asm.MarkLabel(top);
     asm.Cmp(Reg.ESI, limit.WithSize(OperandSize.Dword));             // one 32-bit signed compare
     if (step >= 0)
@@ -1229,6 +1242,7 @@ public sealed partial class CodeGenerator {
     this._iterateFor.Push(cont);
     this._iterateAny.Push(cont);
 
+    this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
     asm.MarkLabel(top);
     asm.Cmp(Reg.DI, limit);
     if (step >= 0)
@@ -1301,6 +1315,7 @@ public sealed partial class CodeGenerator {
     this._iterateDo.Push(cont);
     this._iterateAny.Push(cont);
 
+    this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
     asm.MarkLabel(top);
     if (d.PreCondition != null) {
       this.EmitCondition(d.PreCondition);
@@ -1586,6 +1601,7 @@ public sealed partial class CodeGenerator {
     if (groups > 0) {
       asm.Mov(Reg.CX, groups);
       var top = asm.DefineLabel();
+      this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
       asm.MarkLabel(top);
       // load a[i..] -> vec
       if (isAvx512) asm.Vmovdqu512(vecReg, Mem.At(Reg.BX));
@@ -1712,6 +1728,7 @@ public sealed partial class CodeGenerator {
     this._iterateFor.Push(cont);
     this._iterateAny.Push(cont);
 
+    this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
     asm.MarkLabel(top);
     asm.Mov(Reg.AX, counterCell);
     asm.Cmp(Reg.AX, limit);
@@ -1849,6 +1866,7 @@ public sealed partial class CodeGenerator {
     asm.Mov(i16, (Imm)(int)(short)iFrom);
     var top = asm.DefineLabel();
     var end = asm.DefineLabel();
+    this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
     asm.MarkLabel(top);
     asm.Mov(Reg.AX, i16);
     asm.Cmp(Reg.AX, (Imm)(int)(short)iTo);
@@ -2212,6 +2230,7 @@ public sealed partial class CodeGenerator {
     this._iterateFor.Push(cont);
     this._iterateAny.Push(cont);
 
+    this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
     asm.MarkLabel(top);
     asm.Mov(Reg.AX, counterCell.WithSize(OperandSize.Word));
     asm.Cmp(Reg.AX, limitSlot);

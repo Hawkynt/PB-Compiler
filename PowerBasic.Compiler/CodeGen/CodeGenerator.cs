@@ -1817,6 +1817,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._exitFor.Push(done);
     this._iterateFor.Push(continueLabel);
     this._iterateAny.Push(continueLabel);
+    this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
     asm.MarkLabel(top);
 
     switch (kind) {
@@ -1979,6 +1980,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._exitFor.Push(done);
     this._iterateFor.Push(continueLabel);
     this._iterateAny.Push(continueLabel);
+    this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
     asm.MarkLabel(top);
     if (isByte) {
       asm.Mov(Reg.AL, cell);
@@ -2049,6 +2051,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // forbids checked arithmetic, so a zero-trip pre-test loop never traps on the hoist.
     this.EmitLicmPreheader(d.Body, null);
 
+    this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
     asm.MarkLabel(top);
     if (d.PreCondition != null) {
       this.EmitCondition(d.PreCondition);
