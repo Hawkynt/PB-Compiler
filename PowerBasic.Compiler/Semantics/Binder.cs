@@ -3349,9 +3349,15 @@ public sealed class Binder {
     var left = this.BindExpression(b.Left, scope);
     var right = this.BindExpression(b.Right, scope);
 
-    // pb36 wide integers: arithmetic/comparison on the emulated multi-word types is a follow-up
+    // pb36 wide integers: ADD/SUBTRACT of two same-width wide values is the ADC/SBB-chain path; other
+    // ops (compare, bitwise, shift, multiply, decimal print) and mixed widths are still follow-ups
+    if (left is WideIntType lw && right is WideIntType rw) {
+      if (b.Op is BinaryOp.Add or BinaryOp.Subtract && lw.ByteSize == rw.ByteSize)
+        return lw;
+      return this.ErrorType(b.Position, "wide-integer operation not yet supported (only + and - between same-width wide values)");
+    }
     if (left is WideIntType || right is WideIntType)
-      return this.ErrorType(b.Position, "wide-integer arithmetic is not yet supported (assignment, sign-/zero-extension and truncation are)");
+      return this.ErrorType(b.Position, "mixing a wide integer with a narrower value in an expression is not yet supported (convert explicitly)");
 
     // pb36 nullable auto-unwrap: a nullable operand in arithmetic/comparison reads its .Value
     // (the whole binary is rewritten so the .Value member's target is the original operand - no recursion)

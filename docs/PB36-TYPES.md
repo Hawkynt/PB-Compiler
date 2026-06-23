@@ -240,11 +240,15 @@ DIM lo& : lo& = big        ' truncate back to the low 32 bits
 to and from the native scalars — a compile-time constant stores its sign-extended words directly; a
 runtime narrow value is loaded into `AX`/`DX:AX` and the upper words filled with the sign (`CWD`) or
 zero per the source's signedness; `wide = wideVar` copies the common low words and extends; `narrow =
-wideVar` truncates to the low word(s). Verified by execution (extend → truncate round trips match,
-incl. negative sign-extension across 128 bits) + binder/codegen unit tests; pb36-only (genuine PBC
-has no wide integers). **Follow-ups:** multi-word arithmetic (`+`/`-` via ADC/SBB chains, compare,
-bitwise, shift, multiply), decimal `PRINT`, and `>64`-bit literals — wide arithmetic currently
-reports a clear *"not yet supported"* diagnostic rather than miscompiling.
+wideVar` truncates to the low word(s).
+
+**Add / subtract** of two same-width wide values is wired: `c = a + b` / `c = a - b` emits a multi-word
+**ADC / SBB chain** from the low word up, so a carry (or borrow) propagates through every word —
+`3000000000 + 3000000000` correctly carries past the 32-bit boundary, and `0 - (-1) = 1` borrows
+correctly. Verified by execution (round trips and carry/borrow cases match) + binder/codegen unit
+tests; pb36-only (genuine PBC has no wide integers). **Follow-ups:** compare, bitwise, shift and
+multiply, decimal `PRINT`, and `>64`-bit literals — those still report a clear *"not yet supported"*
+diagnostic rather than miscompiling.
 
 ### Implementation status
 

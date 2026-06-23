@@ -659,8 +659,27 @@ public sealed partial class CodeGenerator {
     }
 
     if (vt is WideIntType srcW) {
-      if (a.Value is BinaryExpr) {
-        this.Unsupported(a.Value, "wide-integer arithmetic (a follow-up increment)");
+      // wide = a +/- b : an ADC/SBB chain from the low word up (carry/borrow propagates through the words)
+      if (a.Value is BinaryExpr { Op: BinaryOp.Add or BinaryOp.Subtract, Left: { } bl, Right: { } br } bin
+          && model.TypeOf(bl) is WideIntType && model.TypeOf(br) is WideIntType) {
+        if (this.EmitPlace(bl) is not { } lhs || this.EmitPlace(br) is not { } rhs) {
+          this.Unsupported(a.Value, "wide-integer operand without a memory location");
+          return;
+        }
+        var add = bin.Op == BinaryOp.Add;
+        for (var k = 0; k < wt.Words; ++k) {
+          asm.Mov(Reg.AX, Word(lhs.Cell, k));
+          if (k == 0) {
+            if (add) asm.Add(Reg.AX, Word(rhs.Cell, 0)); else asm.Sub(Reg.AX, Word(rhs.Cell, 0));
+          } else {
+            if (add) asm.Adc(Reg.AX, Word(rhs.Cell, k)); else asm.Sbb(Reg.AX, Word(rhs.Cell, k));
+          }
+          asm.Mov(Word(dst.Cell, k), Reg.AX);
+        }
+        return;
+      }
+      if (a.Value is BinaryExpr or UnaryExpr) {
+        this.Unsupported(a.Value, "this wide-integer operation (a follow-up increment)");
         return;
       }
       if (this.EmitPlace(a.Value) is not { } src) {

@@ -71,10 +71,17 @@ public sealed class WideIntegerTests {
   }
 
   [Test]
-  public void Bind_GivenWideArithmetic_ThenReportsNotYetSupported() {
-    // arithmetic on wide values is a follow-up - it must diagnose at bind time, not miscompile
-    var unit = Parser.Parse(Lexer.Tokenize("DIM a AS INT128, b AS INT128, c AS INT128\nc = a + b\n", "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
+  public void Compile_GivenWideAddAndSubtract_ThenGeneratesAdcSbbChain() {
+    // c = a + b / a - b on same-width wide values is supported (multi-word ADC/SBB chain)
+    var image = Compile("DIM a AS INT128, b AS INT128, c AS INT128\na = 5\nb = 8\nc = a + b\nc = b - a\nDIM lo&\nlo& = c\nPRINT lo&\n");
+    Assert.That(image[0], Is.EqualTo((byte)'M'));
+  }
+
+  [Test]
+  public void Bind_GivenWideMultiply_ThenReportsNotYetSupported() {
+    // only + and - are wired; multiply/compare/etc. still diagnose at bind time rather than miscompile
+    var unit = Parser.Parse(Lexer.Tokenize("DIM a AS INT128, b AS INT128, c AS INT128\nc = a * b\n", "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
-    Assert.That(model.Errors.Any(e => e.Message.Contains("wide-integer arithmetic")), Is.True);
+    Assert.That(model.Errors.Any(e => e.Message.Contains("wide-integer operation not yet supported")), Is.True);
   }
 }
