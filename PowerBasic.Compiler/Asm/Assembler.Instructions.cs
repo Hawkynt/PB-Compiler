@@ -548,6 +548,30 @@ public sealed partial class Assembler {
     this.EmitModRmRegister(0, destination);
   }
 
+  /// <summary>
+  /// 686+ (Pentium Pro) conditional move: <c>destination = source</c> when <paramref name="condition"/>
+  /// holds, otherwise unchanged - branchless (<c>0F 40+cc /r</c>; 0x66-prefixed for a 32-bit operand).
+  /// </summary>
+  public void Cmovcc(Condition condition, Reg destination, Reg source) {
+    if (destination.IsByte() || source.IsByte())
+      throw new ArgumentException("CMOVcc takes 16- or 32-bit operands.", nameof(destination));
+    if (destination.IsDword())
+      this.EmitByte(0x66);
+    this.EmitByte(0x0F);
+    this.EmitByte((byte)(0x40 + (byte)condition));
+    this.EmitModRmRegister(destination.Index(), source);
+  }
+
+  public void Cmovcc(Condition condition, Reg destination, Mem source) {
+    if (destination.IsByte())
+      throw new ArgumentException("CMOVcc takes 16- or 32-bit operands.", nameof(destination));
+    if (destination.IsDword())
+      this.EmitByte(0x66);
+    this.EmitByte(0x0F);
+    this.EmitByte((byte)(0x40 + (byte)condition));
+    this.EmitModRmMemory(destination.Index(), source);
+  }
+
   public void Cdq() {
     this.EmitByte(0x66);
     this.EmitByte(0x99);

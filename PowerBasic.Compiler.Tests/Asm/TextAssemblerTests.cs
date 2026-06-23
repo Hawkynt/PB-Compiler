@@ -449,4 +449,26 @@ public sealed class TextAssemblerTests {
     => Assert.That(AssembleLine("VPADDW ZMM0, ZMM1, ZMM2"), Is.EqualTo(new byte[] { 0x62, 0xF1, 0x75, 0x48, 0xFD, 0xC2 }));
 
   #endregion
+
+  #region CMOVcc (686+ branchless conditional move)
+
+  [Test]
+  public void TryParse_GivenCmovl_ThenEncodes()
+    // CMOVL AX, BX: 0F 4C C3 (cc Less=C, modrm reg=AX rm=BX)
+    => Assert.That(AssembleLine("CMOVL AX, BX"), Is.EqualTo(new byte[] { 0x0F, 0x4C, 0xC3 }));
+
+  [Test]
+  public void TryParse_GivenCmove_ThenEncodes()
+    => Assert.That(AssembleLine("CMOVE AX, BX"), Is.EqualTo(new byte[] { 0x0F, 0x44, 0xC3 }));
+
+  [Test]
+  public void TryParse_GivenCmovneDword_Then66Prefixed()
+    => Assert.That(AssembleLine("CMOVNE EAX, EBX"), Is.EqualTo(new byte[] { 0x66, 0x0F, 0x45, 0xC3 }));
+
+  [Test]
+  public void TryParse_GivenCmovgMemory_ThenAddressesMemory()
+    // CMOVG AX, [BX]: 0F 4F 07
+    => Assert.That(AssembleLine("CMOVG AX, [BX]"), Is.EqualTo(new byte[] { 0x0F, 0x4F, 0x07 }));
+
+  #endregion
 }

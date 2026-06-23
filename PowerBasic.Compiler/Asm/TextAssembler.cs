@@ -575,6 +575,22 @@ public sealed class TextAssembler(Assembler target) {
         case "VPCMPGTW": this.VexBinary(0x65); return;
         case "VPCMPGTD": this.VexBinary(0x66); return;
 
+        // 686+ conditional moves (branchless)
+        case "CMOVE" or "CMOVZ": this.BinaryCmov(Condition.Equal); return;
+        case "CMOVNE" or "CMOVNZ": this.BinaryCmov(Condition.NotEqual); return;
+        case "CMOVL": this.BinaryCmov(Condition.Less); return;
+        case "CMOVLE": this.BinaryCmov(Condition.LessOrEqual); return;
+        case "CMOVG": this.BinaryCmov(Condition.Greater); return;
+        case "CMOVGE": this.BinaryCmov(Condition.GreaterOrEqual); return;
+        case "CMOVB" or "CMOVC": this.BinaryCmov(Condition.Below); return;
+        case "CMOVBE": this.BinaryCmov(Condition.BelowOrEqual); return;
+        case "CMOVA": this.BinaryCmov(Condition.Above); return;
+        case "CMOVAE" or "CMOVNC": this.BinaryCmov(Condition.AboveOrEqual); return;
+        case "CMOVS": this.BinaryCmov(Condition.Sign); return;
+        case "CMOVNS": this.BinaryCmov(Condition.NotSign); return;
+        case "CMOVO": this.BinaryCmov(Condition.Overflow); return;
+        case "CMOVNO": this.BinaryCmov(Condition.NotOverflow); return;
+
         case "CBW": this.NoOperands(mnemonic); this._asm.Cbw(); return;
         case "CWD": this.NoOperands(mnemonic); this._asm.Cwd(); return;
         case "CWDE": this.NoOperands(mnemonic); this._asm.Cwde(); return;
@@ -754,6 +770,18 @@ public sealed class TextAssembler(Assembler target) {
         throw new AsmSyntaxException("Register, memory operands expected.");
 
       emit(register.Register, memory.Memory);
+    }
+
+    // CMOVcc dest, src/mem (686+ conditional move): dest = src when the condition holds
+    private void BinaryCmov(Condition condition) {
+      var (first, second) = this.TwoOperands();
+      if (first is not RegisterOperand d)
+        throw new AsmSyntaxException("CMOVcc takes a register destination.");
+      switch (second) {
+        case RegisterOperand s: this._asm.Cmovcc(condition, d.Register, s.Register); return;
+        case MemoryOperand s: this._asm.Cmovcc(condition, d.Register, SizedLike(s.Memory, d.Register)); return;
+        default: throw new AsmSyntaxException("CMOVcc takes a register or memory source.");
+      }
     }
 
     private void BinaryExtend(Action<Reg, Reg> emitRegister, Action<Reg, Mem> emitMemory) {
