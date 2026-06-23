@@ -54,6 +54,16 @@ public sealed class AutoVectorizeTests {
   }
 
   [Test]
+  public void Compile_GivenAddLoopWithSse2_ThenEmitsWiderXmmPaddw() {
+    // with SSE2 the vectoriser picks the 128-bit XMM width (8 lanes): 66-prefixed PADDW, no MMX/EMMS
+    var image = Compile("$CPU 80586 SSE2\n$OPTIMIZE SPEED\n" + _ADD_LOOP);
+    Assert.Multiple(() => {
+      Assert.That(Count(image, 0x66, 0x0F, 0xFD), Is.GreaterThan(0), "SSE2 emits the 128-bit XMM PADDW");
+      Assert.That(Count(image, 0x0F, 0x77), Is.EqualTo(0), "XMM does not alias x87, so no EMMS");
+    });
+  }
+
+  [Test]
   public void Compile_GivenMultiplyLoop_ThenEmitsPmullw() {
     var image = Compile("$CPU 80586 MMX\n$OPTIMIZE SPEED\nDIM a%(1 TO 100), b%(1 TO 100), c%(1 TO 100)\nDIM i%\nFOR i% = 1 TO 100\n c%(i%) = a%(i%) * b%(i%)\nNEXT\n");
     Assert.That(Count(image, 0x0F, 0xD5), Is.GreaterThan(0), "the multiply loop vectorises to PMULLW");

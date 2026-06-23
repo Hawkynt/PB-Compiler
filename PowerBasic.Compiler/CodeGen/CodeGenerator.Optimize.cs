@@ -217,6 +217,9 @@ public sealed partial class CodeGenerator {
 
   private bool HasMmx => this.Cpu586 && this.CpuFeature("MMX");
 
+  /// <summary>True when SSE2 (128-bit XMM packed integer) is requested - 8 INTEGER lanes per vector. SSE implies SSE2 here for the integer path.</summary>
+  private bool HasSse2 => this.Cpu586 && (this.CpuFeature("SSE2") || this.CpuFeature("SSE"));
+
   /// <summary>
   /// REP-copies CX-free <paramref name="byteCount"/> bytes DS:SI -> ES:DI.
   /// pb35 keeps the byte-wide copy; pb36 widens to words (8086-safe) and to
@@ -1503,15 +1506,17 @@ public sealed partial class CodeGenerator {
   /// symbol appears anywhere in the expression tree we decline).
   /// </summary>
   /// <summary>
-  /// pb36 auto-vectorisation (R4/MMX): a constant-trip <c>FOR i = lo TO hi : c(i) = a(i) OP b(i) : NEXT</c>
-  /// over rank-1 static 2-byte-element arrays runs four lanes at a time through MMX (MOVQ/MOVQ/Pxxx/MOVQ),
-  /// with a fully-unrolled scalar tail for the last <c>n MOD 4</c> elements. OP is one of + - AND OR XOR *,
-  /// each of which is wrap-correct per 16-bit lane (PADDW/PSUBW/PAND/POR/PXOR/PMULLW), so the result is
-  /// byte-identical to the scalar loop. Gated on <c>$CPU 80586 MMX</c> + $OPTIMIZE SPEED with no $ERROR
-  /// checking; MMX executes under DOSBox, so this is verified by execution (genuine PBC 3.50 has no MMX).
+  /// pb36 auto-vectorisation (R4): a constant-trip <c>FOR i = lo TO hi : c(i) = a(i) OP b(i) : NEXT</c>
+  /// over rank-1 static 2-byte-element arrays runs several lanes at a time through SIMD, choosing the
+  /// widest available vector - <b>SSE2</b> (128-bit XMM, 8 lanes, MOVDQU/Pxxx/MOVDQU) when requested,
+  /// else <b>MMX</b> (64-bit, 4 lanes, MOVQ/Pxxx/MOVQ + EMMS) - with a fully-unrolled scalar tail for
+  /// the last <c>n MOD lanes</c> elements. OP is one of + - AND OR XOR *, each wrap-correct per 16-bit
+  /// lane (PADDW/PSUBW/PAND/POR/PXOR/PMULLW), so the result is byte-identical to the scalar loop. Gated on
+  /// <c>$CPU 80586 MMX|SSE2</c> + $OPTIMIZE SPEED with no $ERROR checking. MMX executes under DOSBox (so
+  /// the 4-lane path is verified by execution); the 8-lane XMM path is encoding-verified (DOSBox has no SSE2).
   /// </summary>
   private bool TryEmitVectorizedFor(ForStmt f, VariableSymbol counter, Mem counterCell, long step) {
-    if (!this.Optimize || !this.OptimizeSpeed || !this.HasMmx || step != 1)
+    if (!this.Optimize || !this.OptimizeSpeed || !(this.HasMmx || this.HasSse2) || step != 1)
       return false;
     if (this.CheckBounds || this.CheckOverflow || this.CheckNumeric || this._trackResume)
       return false;
@@ -1527,19 +1532,19 @@ public sealed partial class CodeGenerator {
     if (n < 8)
       return false; // small loops stay scalar
 
-    // body must be exactly  c(i) = a(i) OP b(i)
+    // body must be exactly  c(i) = a(i) OP b(i); the op maps to a packed-integer opcode (0F xx)
     if (f.Body is not [AssignStmt { Target: { } target, Value: BinaryExpr { Left: { } leftExpr, Right: { } rightExpr } bin }])
       return false;
-    Action<Reg, Mem>? packed = bin.Op switch {
-      BinaryOp.Add => this._asm.Paddw,
-      BinaryOp.Subtract => this._asm.Psubw,
-      BinaryOp.And => this._asm.Pand,
-      BinaryOp.Or => this._asm.Por,
-      BinaryOp.Xor => this._asm.Pxor,
-      BinaryOp.Multiply => this._asm.Pmullw,
+    byte? packedOp = bin.Op switch {
+      BinaryOp.Add => (byte)0xFD,        // PADDW
+      BinaryOp.Subtract => (byte)0xF9,   // PSUBW
+      BinaryOp.And => (byte)0xDB,        // PAND
+      BinaryOp.Or => (byte)0xEB,         // POR
+      BinaryOp.Xor => (byte)0xEF,        // PXOR
+      BinaryOp.Multiply => (byte)0xD5,   // PMULLW
       _ => null,
     };
-    if (packed == null)
+    if (packedOp is not { } opcode)
       return false;
     if (this.MatchCounterIndexedArray(target, counter) is not { } c
         || this.MatchCounterIndexedArray(leftExpr, counter) is not { } a
@@ -1547,6 +1552,12 @@ public sealed partial class CodeGenerator {
       return false;
 
     var asm = this._asm;
+    // pick the widest available vector: SSE2 = 8 lanes (128-bit XMM), else MMX = 4 lanes (64-bit)
+    var useSse2 = this.HasSse2;
+    var vecReg = useSse2 ? Reg.XMM0 : Reg.MM0;
+    var laneBytes = useSse2 ? 16 : 8;
+    var lanes = laneBytes / 2;
+
     // base addresses: BX -> &a[lo], SI -> &b[lo], DI -> &c[lo]  (DS-relative, element size 2)
     void LoadBase(Reg reg, (VariableSymbol Sym, int Lbound) arr) {
       asm.Mov(reg, (int)(lo - arr.Lbound) * 2);
@@ -1556,22 +1567,29 @@ public sealed partial class CodeGenerator {
     LoadBase(Reg.SI, b);
     LoadBase(Reg.DI, c);
 
-    var groups = (int)(n / 4);
-    var tail = (int)(n % 4);
+    var groups = (int)(n / lanes);
+    var tail = (int)(n % lanes);
 
     if (groups > 0) {
       asm.Mov(Reg.CX, groups);
       var top = asm.DefineLabel();
       asm.MarkLabel(top);
-      asm.Movq(Reg.MM0, Mem.At(Reg.BX));
-      packed(Reg.MM0, Mem.At(Reg.SI));        // MM0 = a OP b  (four 16-bit lanes)
-      asm.MovqStore(Mem.At(Reg.DI), Reg.MM0);
-      asm.Add(Reg.BX, 8);
-      asm.Add(Reg.SI, 8);
-      asm.Add(Reg.DI, 8);
+      if (useSse2)
+        asm.Movdqu(vecReg, Mem.At(Reg.BX));           // unaligned load (data-segment arrays are not 16-aligned)
+      else
+        asm.Movq(vecReg, Mem.At(Reg.BX));
+      asm.EmitPacked(opcode, vecReg, Mem.At(Reg.SI)); // vec = a OP b  (per-16-bit-lane, wrap-correct)
+      if (useSse2)
+        asm.MovdquStore(Mem.At(Reg.DI), vecReg);
+      else
+        asm.MovqStore(Mem.At(Reg.DI), vecReg);
+      asm.Add(Reg.BX, laneBytes);
+      asm.Add(Reg.SI, laneBytes);
+      asm.Add(Reg.DI, laneBytes);
       asm.Dec(Reg.CX);
       asm.Jnz(top);
-      asm.Emms();                              // release the MMX/x87 state before any later float use
+      if (!useSse2)
+        asm.Emms();                                   // MMX aliases x87 - release it; XMM does not, so SSE2 skips EMMS
     }
 
     // scalar tail: BX/SI/DI now point at the first un-vectorised element
