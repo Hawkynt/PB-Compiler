@@ -473,10 +473,14 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       return trivial;
 
     var asm = this._asm;
-    // pb36 peephole: record the instruction stream of a standalone program image so the
-    // post-emit pass can coalesce dead register-staging copies (units/libraries keep the
-    // faithful stream - their relocatable output is spliced separately if ever needed).
-    asm.EnablePeephole = this.Optimize && !this._allowExternalCalls && !this._isUnit;
+    // pb36 peephole / scheduler: record the instruction stream of a standalone program image so a
+    // post-emit pass can rewrite it (units/libraries keep the faithful stream). The two passes both
+    // rewrite by recorded byte position, so they are mutually exclusive: pb36 + $OPTIMIZE SPEED gets
+    // the instruction scheduler (reorders the FINAL stream - after unrolling/inlining/const-fold - to
+    // group memory/ALU ops), every other optimized standalone keeps the peephole (staging coalesce, CMP->TEST).
+    var standalone = this.Optimize && !this._allowExternalCalls && !this._isUnit;
+    asm.EnableSchedule = standalone && this.OptimizeSpeed && model.Dialect == Dialect.Pb36;
+    asm.EnablePeephole = standalone && !asm.EnableSchedule;
     var userMain = asm.DefineLabel("user_main");
     this._scratch = asm.DefineLabel("cg_scratch");
 

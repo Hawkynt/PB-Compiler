@@ -41,47 +41,60 @@ public static class InlineAsmScheduler {
       instrs[i] = d;
     }
 
-    // dependency edges i -> j (i before j, conflicting); a valid schedule keeps every such pair ordered
-    var n = instrs.Length;
-    var after = new List<int>[n];
-    var indeg = new int[n];
-    for (var i = 0; i < n; ++i)
+    return ScheduleByDependency(instrs.Length, (i, j) => Conflicts(instrs[i], instrs[j]), i => instrs[i].TouchesMemory);
+  }
+
+  /// <summary>
+  /// The reusable dependency-driven list scheduler: given <paramref name="count"/> instructions in
+  /// program order, a <paramref name="conflicts"/>(i, j) predicate for an ordering dependency between
+  /// an earlier i and a later j, and a <paramref name="touchesMemory"/> class predicate, returns a new
+  /// order (a permutation that respects every dependency and groups same-class work) or <c>null</c> when
+  /// the dependency-respecting schedule equals the input. The result is always a valid topological order,
+  /// so applying it never changes semantics. Shared by the inline-asm scheduler and the assembler-level
+  /// post-codegen scheduler (which sees the fully unrolled / inlined / const-folded instruction stream).
+  /// </summary>
+  public static int[]? ScheduleByDependency(int count, System.Func<int, int, bool> conflicts, System.Func<int, bool> touchesMemory) {
+    if (count < 3)
+      return null;
+
+    var after = new List<int>[count];
+    var indeg = new int[count];
+    for (var i = 0; i < count; ++i)
       after[i] = [];
-    for (var j = 0; j < n; ++j)
+    for (var j = 0; j < count; ++j)
       for (var i = 0; i < j; ++i)
-        if (Conflicts(instrs[i], instrs[j])) {
+        if (conflicts(i, j)) {
           after[i].Add(j);
           ++indeg[j];
         }
 
     // list schedule: among ready instructions prefer the same class (memory vs ALU) as the last
     // emitted to cluster the ports, breaking ties by original order (stable -> minimal disturbance)
-    var order = new List<int>(n);
+    var order = new List<int>(count);
     var ready = new List<int>();
-    for (var i = 0; i < n; ++i)
+    for (var i = 0; i < count; ++i)
       if (indeg[i] == 0)
         ready.Add(i);
-    var lastTouchedMemory = false;
+    var lastTouchedMemory = true;   // prefer issuing memory (loads) first to hide their latency, then ALU
     while (ready.Count > 0) {
       var pick = -1;
       foreach (var c in ready)
         if (pick < 0
-            || (instrs[c].TouchesMemory == lastTouchedMemory && instrs[pick].TouchesMemory != lastTouchedMemory)
-            || (instrs[c].TouchesMemory == instrs[pick].TouchesMemory && c < pick))
+            || (touchesMemory(c) == lastTouchedMemory && touchesMemory(pick) != lastTouchedMemory)
+            || (touchesMemory(c) == touchesMemory(pick) && c < pick))
           pick = c;
       ready.Remove(pick);
       order.Add(pick);
-      lastTouchedMemory = instrs[pick].TouchesMemory;
+      lastTouchedMemory = touchesMemory(pick);
       foreach (var k in after[pick])
         if (--indeg[k] == 0)
           ready.Add(k);
     }
 
-    // already in original order? avoid pointless churn
-    var changed = false;
-    for (var i = 0; i < n; ++i)
-      if (order[i] != i) { changed = true; break; }
-    return changed ? [.. order] : null;
+    for (var i = 0; i < count; ++i)
+      if (order[i] != i)
+        return [.. order];
+    return null;
   }
 
   private static bool Conflicts(Instr a, Instr b) {

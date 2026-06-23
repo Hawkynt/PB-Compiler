@@ -32,6 +32,7 @@ public sealed partial class Assembler {
     this.EmitModRmRegister(source.Index(), destination);
     if (destination.IsWord() && source.IsWord())
       this.RecordPeep(PeepKind.MovRegReg, start, destination, source, this.Position - 1);
+    this.RecordSchedReg(start, RegBit(source), RegBit(destination), false, false);
   }
 
   public void Mov(Reg destination, Mem source) {
@@ -53,9 +54,11 @@ public sealed partial class Assembler {
     this.EmitModRmMemory(destination.Index(), source);
     if (destination.IsWord())
       this.RecordPeep(PeepKind.MovRegMem, start, destination, default, modrmAt);
+    this.RecordSchedMem(start, 0, RegBit(destination), false, false, memRead: true, memWrite: false, source);
   }
 
   public void Mov(Mem destination, Reg source) {
+    var start = this.Position;
     this.EmitSegmentPrefix(destination);
     if (source.IsSegment()) {
       this.EmitByte(0x8C);
@@ -67,6 +70,7 @@ public sealed partial class Assembler {
     this.EmitOperandSizePrefixIf(source.IsDword());
     this.EmitByte(source.IsByte() ? (byte)0x88 : (byte)0x89);
     this.EmitModRmMemory(source.Index(), destination);
+    this.RecordSchedMem(start, RegBit(source), 0, false, false, memRead: false, memWrite: true, destination);
   }
 
   public void Mov(Reg destination, Imm immediate) {
@@ -77,15 +81,18 @@ public sealed partial class Assembler {
     this.EmitImmediate(destination.Size(), immediate);
     if (destination.IsWord())
       this.RecordPeep(PeepKind.MovRegImm, start, destination);
+    this.RecordSchedReg(start, 0, RegBit(destination), false, false);
   }
 
   public void Mov(Mem destination, Imm immediate) {
+    var start = this.Position;
     var size = RequireSized(destination);
     this.EmitSegmentPrefix(destination);
     this.EmitOperandSizePrefixIf(size == OperandSize.Dword);
     this.EmitByte(size == OperandSize.Byte ? (byte)0xC6 : (byte)0xC7);
     this.EmitModRmMemory(0, destination);
     this.EmitImmediate(size, immediate);
+    this.RecordSchedMem(start, 0, 0, false, false, memRead: false, memWrite: true, destination);
   }
 
   #endregion
@@ -275,34 +282,48 @@ public sealed partial class Assembler {
   }
   public void Cmp(Mem destination, Imm immediate) => this.Alu(7, destination, immediate);
 
+  // operation 7 is CMP - it reads but does not write its destination; 2/3 are ADC/SBB which read the carry flag
+  private static bool AluWritesDest(int operation) => operation != 7;
+  private static bool AluReadsFlags(int operation) => operation is 2 or 3;
+
   private void Alu(int operation, Reg destination, Reg source) {
+    var start = this.Position;
     RequireGeneralPurpose(destination, nameof(destination));
     RequireGeneralPurpose(source, nameof(source));
     RequireSameSize(destination, source);
     this.EmitOperandSizePrefixIf(destination.IsDword());
     this.EmitByte((byte)(operation << 3 | (destination.IsByte() ? 0x00 : 0x01)));
     this.EmitModRmRegister(source.Index(), destination);
+    this.RecordSchedReg(start, (ushort)(RegBit(destination) | RegBit(source)),
+      (ushort)(AluWritesDest(operation) ? RegBit(destination) : 0), AluReadsFlags(operation), true);
   }
 
   private void Alu(int operation, Reg destination, Mem source) {
+    var start = this.Position;
     RequireGeneralPurpose(destination, nameof(destination));
     RequireMatchingSize(destination, source);
     this.EmitSegmentPrefix(source);
     this.EmitOperandSizePrefixIf(destination.IsDword());
     this.EmitByte((byte)(operation << 3 | (destination.IsByte() ? 0x02 : 0x03)));
     this.EmitModRmMemory(destination.Index(), source);
+    this.RecordSchedMem(start, RegBit(destination), (ushort)(AluWritesDest(operation) ? RegBit(destination) : 0),
+      AluReadsFlags(operation), true, memRead: true, memWrite: false, source);
   }
 
   private void Alu(int operation, Mem destination, Reg source) {
+    var start = this.Position;
     RequireGeneralPurpose(source, nameof(source));
     RequireMatchingSize(source, destination);
     this.EmitSegmentPrefix(destination);
     this.EmitOperandSizePrefixIf(source.IsDword());
     this.EmitByte((byte)(operation << 3 | (source.IsByte() ? 0x00 : 0x01)));
     this.EmitModRmMemory(source.Index(), destination);
+    this.RecordSchedMem(start, RegBit(source), 0, AluReadsFlags(operation), true,
+      memRead: true, memWrite: AluWritesDest(operation), destination);
   }
 
   private void Alu(int operation, Reg destination, Imm immediate) {
+    var start = this.Position;
     RequireGeneralPurpose(destination, nameof(destination));
     var size = destination.Size();
     var isPlainValue = immediate.Label is null && !immediate.IsSegmentReference;
@@ -313,24 +334,23 @@ public sealed partial class Assembler {
       this.EmitByte(0x83);
       this.EmitModRmRegister(operation, destination);
       this.EmitImmediate(OperandSize.Byte, immediate);
-      return;
-    }
-
-    if (destination.Index() == 0) {
+    } else if (destination.Index() == 0) {
       // accumulator short form
       this.EmitOperandSizePrefixIf(destination.IsDword());
       this.EmitByte((byte)(operation << 3 | (size == OperandSize.Byte ? 0x04 : 0x05)));
       this.EmitImmediate(size, immediate);
-      return;
+    } else {
+      this.EmitOperandSizePrefixIf(destination.IsDword());
+      this.EmitByte(size == OperandSize.Byte ? (byte)0x80 : (byte)0x81);
+      this.EmitModRmRegister(operation, destination);
+      this.EmitImmediate(size, immediate);
     }
-
-    this.EmitOperandSizePrefixIf(destination.IsDword());
-    this.EmitByte(size == OperandSize.Byte ? (byte)0x80 : (byte)0x81);
-    this.EmitModRmRegister(operation, destination);
-    this.EmitImmediate(size, immediate);
+    this.RecordSchedReg(start, RegBit(destination),
+      (ushort)(AluWritesDest(operation) ? RegBit(destination) : 0), AluReadsFlags(operation), true);
   }
 
   private void Alu(int operation, Mem destination, Imm immediate) {
+    var start = this.Position;
     var size = RequireSized(destination);
     var isPlainValue = immediate.Label is null && !immediate.IsSegmentReference;
 
@@ -340,12 +360,13 @@ public sealed partial class Assembler {
       this.EmitByte(0x83);
       this.EmitModRmMemory(operation, destination);
       this.EmitImmediate(OperandSize.Byte, immediate);
-      return;
+    } else {
+      this.EmitByte(size == OperandSize.Byte ? (byte)0x80 : (byte)0x81);
+      this.EmitModRmMemory(operation, destination);
+      this.EmitImmediate(size, immediate);
     }
-
-    this.EmitByte(size == OperandSize.Byte ? (byte)0x80 : (byte)0x81);
-    this.EmitModRmMemory(operation, destination);
-    this.EmitImmediate(size, immediate);
+    this.RecordSchedMem(start, 0, 0, AluReadsFlags(operation), true,
+      memRead: true, memWrite: AluWritesDest(operation), destination);
   }
 
   #endregion
