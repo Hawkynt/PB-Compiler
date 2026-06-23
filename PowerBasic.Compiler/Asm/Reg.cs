@@ -19,6 +19,8 @@ public enum Reg : byte {
   XMM0 = 0x50, XMM1 = 0x51, XMM2 = 0x52, XMM3 = 0x53, XMM4 = 0x54, XMM5 = 0x55, XMM6 = 0x56, XMM7 = 0x57,
   // AVX YMM registers (class 6; 256-bit, VEX-encoded). YMM0..YMM7 without a REX/VEX.R extension.
   YMM0 = 0x60, YMM1 = 0x61, YMM2 = 0x62, YMM3 = 0x63, YMM4 = 0x64, YMM5 = 0x65, YMM6 = 0x66, YMM7 = 0x67,
+  // AVX-512 ZMM registers (class 7; 512-bit, EVEX-encoded). ZMM0..ZMM7.
+  ZMM0 = 0x70, ZMM1 = 0x71, ZMM2 = 0x72, ZMM3 = 0x73, ZMM4 = 0x74, ZMM5 = 0x75, ZMM6 = 0x76, ZMM7 = 0x77,
 }
 
 /// <summary>Classification and encoding helpers for <see cref="Reg"/>.</summary>
@@ -35,6 +37,7 @@ public static class RegExtensions {
   public static bool IsMmx(this Reg register) => ((int)register & 0xF0) == 0x40;
   public static bool IsXmm(this Reg register) => ((int)register & 0xF0) == 0x50;
   public static bool IsYmm(this Reg register) => ((int)register & 0xF0) == 0x60;
+  public static bool IsZmm(this Reg register) => ((int)register & 0xF0) == 0x70;
 
   /// <summary>Operand size of a general-purpose register; segment registers report <see cref="OperandSize.Word"/>.</summary>
   public static OperandSize Size(this Reg register) => ((int)register >> 4) switch {

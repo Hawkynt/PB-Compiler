@@ -126,4 +126,23 @@ public sealed class AssemblerSimdTests {
     // VPADDW YMM0, YMM1, [SI]: C5 F5 FD 04
     Assert.That(Assemble(a => a.VexPacked(0xFD, Reg.YMM0, Reg.YMM1, Mem.At(Reg.SI))), Is.EqualTo(new byte[] { 0xC5, 0xF5, 0xFD, 0x04 }));
   }
+
+  private static IEnumerable<TestCaseData> Avx512Cases() {
+    // 4-byte EVEX (62 P0 P1 P2): P0=F1 (low regs, 0F map), P1=W0/vvvv̄/pp, P2=48 (L'L=10=512, V'=1) for a 3-op low src1
+    yield return new((Action<Assembler>)(a => a.EvexPacked(0xFD, Reg.ZMM0, Reg.ZMM1, Reg.ZMM2)), new byte[] { 0x62, 0xF1, 0x75, 0x48, 0xFD, 0xC2 }) { TestName = "VPADDW zmm0,zmm1,zmm2" };
+    yield return new((Action<Assembler>)(a => a.EvexPacked(0xEF, Reg.ZMM0, Reg.ZMM0, Reg.ZMM0)), new byte[] { 0x62, 0xF1, 0x7D, 0x48, 0xEF, 0xC0 }) { TestName = "VPXOR zmm0,zmm0,zmm0" };
+    yield return new((Action<Assembler>)(a => a.EvexPacked(0xFE, Reg.ZMM2, Reg.ZMM3, Reg.ZMM4)), new byte[] { 0x62, 0xF1, 0x65, 0x48, 0xFE, 0xD4 }) { TestName = "VPADDD zmm2,zmm3,zmm4" };
+    // two-operand move: vvvv unused (1111) -> V'=0, so P2 = 0x40
+    yield return new((Action<Assembler>)(a => a.Vmovdqa512(Reg.ZMM0, Reg.ZMM1)), new byte[] { 0x62, 0xF1, 0x05, 0x40, 0x6F, 0xC1 }) { TestName = "VMOVDQA32 zmm0,zmm1" };
+  }
+
+  [TestCaseSource(nameof(Avx512Cases))]
+  public void Emit_GivenAvx512EvexForm_ThenMatchesEvexEncoding(Action<Assembler> emit, byte[] expected)
+    => Assert.That(Assemble(emit), Is.EqualTo(expected));
+
+  [Test]
+  public void Emit_GivenVmovdqu512Load_ThenF3PpAndL512() {
+    // VMOVDQU32 ZMM0, [BX]: EVEX.512.F3.0F.W0 6F -> 62 F1 06 40 6F 07 (W0, vvvv unused, pp=10=F3, P2 V'=0)
+    Assert.That(Assemble(a => a.Vmovdqu512(Reg.ZMM0, Mem.At(Reg.BX))), Is.EqualTo(new byte[] { 0x62, 0xF1, 0x06, 0x40, 0x6F, 0x07 }));
+  }
 }

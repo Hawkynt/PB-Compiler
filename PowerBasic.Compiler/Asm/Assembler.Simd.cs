@@ -351,4 +351,68 @@ public sealed partial class Assembler {
   }
 
   #endregion
+
+  #region AVX-512 (EVEX-encoded, 512-bit ZMM)
+
+  /// <summary>
+  /// Emits the 4-byte EVEX prefix (<c>62 P0 P1 P2</c>) for an <c>EVEX.512.66.0F.W0</c> packed-integer
+  /// op with no mask, broadcast or zeroing - the AVX-512 form of the VEX ops on the 512-bit ZMM
+  /// registers. Valid for ZMM0..ZMM7 (no R/X/B/R'/V' high-register extension in 16-bit mode).
+  /// </summary>
+  private void EvexPrefix(Reg src1OrNone, int pp = 0b01) {
+    var unused = src1OrNone == Reg.AL;
+    var vvvv = unused ? 0xF : src1OrNone.Index();
+    this.EmitByte(0x62);
+    // P0 = R̄ X̄ B̄ R̄' 0 0 mm   (all inverted high bits = 1 for low regs; mm = 01 -> the 0F map)
+    this.EmitByte(0b1111_00_01);
+    // P1 = W vvvv̄ 1 pp          (W = 0; the mandatory bit-2 set; pp = 66 -> 01)
+    this.EmitByte((byte)((0 << 7) | ((~vvvv & 0xF) << 3) | (1 << 2) | pp));
+    // P2 = z L'L b V̄' aaa       (z=0, L'L=10 -> 512-bit, b=0, mask aaa=000). V' is the inverted 5th
+    // vvvv bit: a low-register src1 (v4=0) -> V'=1; the unused (1111) vvvv of a 2-operand move -> V'=0.
+    this.EmitByte((byte)(0b0_10_0_0_000 | ((unused ? 0 : 1) << 3)));
+  }
+
+  /// <summary>EVEX 3-operand packed op on ZMM: <c>dest = src1 OP src2</c> (src2 a ZMM register).</summary>
+  public void EvexPacked(byte op, Reg dest, Reg src1, Reg src2) {
+    this.EvexPrefix(src1);
+    this.EmitByte(op);
+    this.EmitModRmRegister(dest.Index(), src2);
+  }
+
+  public void EvexPacked(byte op, Reg dest, Reg src1, Mem src2) {
+    this.EvexPrefix(src1);
+    this.EmitByte(op);
+    this.EmitModRmMemory(dest.Index(), src2);
+  }
+
+  /// <summary>VMOVDQA32 zmm, zmm/m512 (EVEX.512.66.0F.W0 6F) - the 512-bit aligned move (two-operand).</summary>
+  public void Vmovdqa512(Reg dest, Reg src) {
+    this.EvexPrefix(Reg.AL);
+    this.EmitByte(0x6F);
+    this.EmitModRmRegister(dest.Index(), src);
+  }
+  public void Vmovdqa512(Reg dest, Mem src) {
+    this.EvexPrefix(Reg.AL);
+    this.EmitByte(0x6F);
+    this.EmitModRmMemory(dest.Index(), src);
+  }
+  public void Vmovdqa512Store(Mem dest, Reg src) {
+    this.EvexPrefix(Reg.AL);
+    this.EmitByte(0x7F);
+    this.EmitModRmMemory(src.Index(), dest);
+  }
+
+  /// <summary>VMOVDQU32 zmm, m512 (EVEX.512.F3.0F.W0 6F) - the 512-bit unaligned move (pp = 10).</summary>
+  public void Vmovdqu512(Reg dest, Mem src) {
+    this.EvexPrefix(Reg.AL, pp: 0b10);
+    this.EmitByte(0x6F);
+    this.EmitModRmMemory(dest.Index(), src);
+  }
+  public void Vmovdqu512Store(Mem dest, Reg src) {
+    this.EvexPrefix(Reg.AL, pp: 0b10);
+    this.EmitByte(0x7F);
+    this.EmitModRmMemory(src.Index(), dest);
+  }
+
+  #endregion
 }

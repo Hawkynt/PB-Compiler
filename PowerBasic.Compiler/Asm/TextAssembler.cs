@@ -825,24 +825,35 @@ public sealed class TextAssembler(Assembler target) {
       return (operands[0], operands[1], operands[2]);
     }
 
-    // AVX VEX 3-operand packed op: dest = src1 OP src2 (XMM or YMM; src2 a register or memory)
+    // AVX/AVX-512 VEX/EVEX 3-operand packed op: dest = src1 OP src2 (XMM/YMM = VEX, ZMM = EVEX)
     private void VexBinary(byte opcode) {
       var (a, b, c) = this.ThreeOperands();
-      if (a is not RegisterOperand d || !(d.Register.IsXmm() || d.Register.IsYmm()))
-        throw new AsmSyntaxException("an XMM/YMM destination register is expected.");
-      if (b is not RegisterOperand s1 || !(s1.Register.IsXmm() || s1.Register.IsYmm()))
-        throw new AsmSyntaxException("an XMM/YMM first-source register is expected.");
+      if (a is not RegisterOperand d || !Vec(d.Register))
+        throw new AsmSyntaxException("an XMM/YMM/ZMM destination register is expected.");
+      if (b is not RegisterOperand s1 || !Vec(s1.Register))
+        throw new AsmSyntaxException("an XMM/YMM/ZMM first-source register is expected.");
+      var zmm = d.Register.IsZmm();
       switch (c) {
-        case RegisterOperand s2 when s2.Register.IsXmm() || s2.Register.IsYmm(): this._asm.VexPacked(opcode, d.Register, s1.Register, s2.Register); return;
-        case MemoryOperand s2: this._asm.VexPacked(opcode, d.Register, s1.Register, s2.Memory); return;
-        default: throw new AsmSyntaxException("an XMM/YMM register or memory second source is expected.");
+        case RegisterOperand s2 when Vec(s2.Register):
+          if (zmm) this._asm.EvexPacked(opcode, d.Register, s1.Register, s2.Register);
+          else this._asm.VexPacked(opcode, d.Register, s1.Register, s2.Register);
+          return;
+        case MemoryOperand s2:
+          if (zmm) this._asm.EvexPacked(opcode, d.Register, s1.Register, s2.Memory);
+          else this._asm.VexPacked(opcode, d.Register, s1.Register, s2.Memory);
+          return;
+        default: throw new AsmSyntaxException("an XMM/YMM/ZMM register or memory second source is expected.");
       }
     }
 
+    private static bool Vec(Reg r) => r.IsXmm() || r.IsYmm() || r.IsZmm();
+
     private void VexMove(bool unaligned) {
       var (first, second) = this.TwoOperands();
-      bool Vec(Reg r) => r.IsXmm() || r.IsYmm();
       switch (first, second) {
+        case (RegisterOperand d, RegisterOperand s) when !unaligned && d.Register.IsZmm() && s.Register.IsZmm(): this._asm.Vmovdqa512(d.Register, s.Register); return;
+        case (RegisterOperand d, MemoryOperand s) when d.Register.IsZmm(): if (unaligned) this._asm.Vmovdqu512(d.Register, s.Memory); else this._asm.Vmovdqa512(d.Register, s.Memory); return;
+        case (MemoryOperand d, RegisterOperand s) when s.Register.IsZmm(): if (unaligned) this._asm.Vmovdqu512Store(d.Memory, s.Register); else this._asm.Vmovdqa512Store(d.Memory, s.Register); return;
         case (RegisterOperand d, RegisterOperand s) when !unaligned && Vec(d.Register) && Vec(s.Register): this._asm.Vmovdqa(d.Register, s.Register); return;
         case (RegisterOperand d, MemoryOperand s) when Vec(d.Register): if (unaligned) this._asm.Vmovdqu(d.Register, s.Memory); else this._asm.Vmovdqa(d.Register, s.Memory); return;
         case (MemoryOperand d, RegisterOperand s) when Vec(s.Register): if (unaligned) this._asm.VmovdquStore(d.Memory, s.Register); else this._asm.VmovdqaStore(d.Memory, s.Register); return;

@@ -443,5 +443,10 @@ public sealed class TextAssemblerTests {
   public void TryParse_GivenVmovdquYmm_ThenVexLoad()
     => Assert.That(AssembleLine("VMOVDQU YMM0, [BX]"), Is.EqualTo(new byte[] { 0xC5, 0x86, 0x6F, 0x07 }));
 
+  [Test]
+  public void TryParse_GivenVpaddwZmm_ThenEvexEncoded()
+    // ZMM operands route the same V-mnemonic to the 4-byte EVEX (AVX-512) form
+    => Assert.That(AssembleLine("VPADDW ZMM0, ZMM1, ZMM2"), Is.EqualTo(new byte[] { 0x62, 0xF1, 0x75, 0x48, 0xFD, 0xC2 }));
+
   #endregion
 }
