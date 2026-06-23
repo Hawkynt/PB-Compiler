@@ -16,6 +16,57 @@ public sealed partial class CodeGenerator {
   /// BASIC labels of the enclosing scope to jump targets, %equates to
   /// constants.
   /// </summary>
+  /// <summary>
+  /// pb36 inline-asm scheduling pre-pass: reorders maximal runs of consecutive single-instruction
+  /// <c>!</c> statements in the main body and every procedure body to group memory/ALU operations
+  /// (see <see cref="InlineAsmScheduler"/>) - dependency-preserving and therefore output-identical.
+  /// Gated to $OPTIMIZE SPEED on pb36 with no error handler in scope (the "special environment"
+  /// caveat: reordering must not be observable through a fault's resume point).
+  /// </summary>
+  private void ScheduleInlineAsmBlocks() {
+    if (!this.Optimize || !this.OptimizeSpeed || model.Dialect != Dialect.Pb36)
+      return;
+
+    if (!ContainsErrorHandling(model.MainBody)) {
+      var reordered = ReorderInlineAsmRuns(model.MainBody);
+      if (!ReferenceEquals(reordered, model.MainBody)) {
+        model.MainBody.Clear();
+        model.MainBody.AddRange(reordered);
+      }
+    }
+    foreach (var proc in model.ProcedureList)
+      if (proc.Body is { } body && !ContainsErrorHandling(body))
+        proc.Body = ReorderInlineAsmRuns(body);
+  }
+
+  /// <summary>Returns <paramref name="body"/> with each consecutive inline-asm run reordered by the scheduler (the same list when nothing changed).</summary>
+  private static IReadOnlyList<Statement> ReorderInlineAsmRuns(IReadOnlyList<Statement> body) {
+    List<Statement>? result = null;
+    var i = 0;
+    while (i < body.Count) {
+      if (body[i] is not InlineAsmStmt) {
+        ++i;
+        continue;
+      }
+      var j = i;
+      while (j < body.Count && body[j] is InlineAsmStmt)
+        ++j;
+      var runLength = j - i;
+      if (runLength >= 3) {
+        var lines = new string[runLength];
+        for (var k = 0; k < runLength; ++k)
+          lines[k] = ((InlineAsmStmt)body[i + k]).Text;
+        if (InlineAsmScheduler.Schedule(lines) is { } order) {
+          result ??= [.. body];
+          for (var k = 0; k < runLength; ++k)
+            result[i + k] = body[i + order[k]];
+        }
+      }
+      i = j;
+    }
+    return result ?? body;
+  }
+
   private void EmitInlineAsm(InlineAsmStmt ia) {
     this._textAssembler ??= new(this._asm);
     if (!this._textAssembler.TryParse(ia.Text, new InlineAsmResolver(this), out var error))

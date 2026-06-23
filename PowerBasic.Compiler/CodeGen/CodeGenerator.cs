@@ -456,6 +456,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       OptFloatDemotion.Apply(model);
       this._ipcp = OptIpcp.Analyze(model); // O18: constants into callee bodies
       this._pureFold = OptPureFold.Analyze(model); // O25: compile-time-evaluate pure-function calls with constant args
+      this.ScheduleInlineAsmBlocks(); // reorder inline-asm runs to group memory/ALU ops (dependency-preserving)
       // $OPTIMIZE SPEED: pass internal parameters in registers (AX,DX,BX,CX) instead of on
       // the stack when we own every call site. Self-contained programs only (a separately
       // compiled unit could otherwise call a converted procedure with the stack convention);
