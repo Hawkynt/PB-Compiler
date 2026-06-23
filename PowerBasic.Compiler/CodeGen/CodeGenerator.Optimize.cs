@@ -220,6 +220,12 @@ public sealed partial class CodeGenerator {
   /// <summary>True when SSE2 (128-bit XMM packed integer) is requested - 8 INTEGER lanes per vector. SSE implies SSE2 here for the integer path.</summary>
   private bool HasSse2 => this.Cpu586 && (this.CpuFeature("SSE2") || this.CpuFeature("SSE"));
 
+  /// <summary>True when AVX2 (256-bit YMM packed integer) is requested - 16 INTEGER lanes. AVX implies AVX2 here for the integer path.</summary>
+  private bool HasAvx2 => this.Cpu586 && (this.CpuFeature("AVX2") || this.CpuFeature("AVX"));
+
+  /// <summary>True when AVX-512 (512-bit ZMM packed integer) is requested - 32 INTEGER lanes.</summary>
+  private bool HasAvx512 => this.Cpu586 && (this.CpuFeature("AVX512") || this.CpuFeature("AVX-512"));
+
   /// <summary>
   /// REP-copies CX-free <paramref name="byteCount"/> bytes DS:SI -> ES:DI.
   /// pb35 keeps the byte-wide copy; pb36 widens to words (8086-safe) and to
@@ -1516,7 +1522,7 @@ public sealed partial class CodeGenerator {
   /// the 4-lane path is verified by execution); the 8-lane XMM path is encoding-verified (DOSBox has no SSE2).
   /// </summary>
   private bool TryEmitVectorizedFor(ForStmt f, VariableSymbol counter, Mem counterCell, long step) {
-    if (!this.Optimize || !this.OptimizeSpeed || !(this.HasMmx || this.HasSse2) || step != 1)
+    if (!this.Optimize || !this.OptimizeSpeed || !(this.HasMmx || this.HasSse2 || this.HasAvx2 || this.HasAvx512) || step != 1)
       return false;
     if (this.CheckBounds || this.CheckOverflow || this.CheckNumeric || this._trackResume)
       return false;
@@ -1552,11 +1558,18 @@ public sealed partial class CodeGenerator {
       return false;
 
     var asm = this._asm;
-    // pick the widest available vector: SSE2 = 8 lanes (128-bit XMM), else MMX = 4 lanes (64-bit)
-    var useSse2 = this.HasSse2;
-    var vecReg = useSse2 ? Reg.XMM0 : Reg.MM0;
-    var laneBytes = useSse2 ? 16 : 8;
+    // pick the widest available vector register: ZMM(512,32 lanes) > YMM(256,16) > XMM(128,8) > MMX(64,4)
+    Reg vecReg;
+    int laneBytes;
+    if (this.HasAvx512) { vecReg = Reg.ZMM0; laneBytes = 64; }
+    else if (this.HasAvx2) { vecReg = Reg.YMM0; laneBytes = 32; }
+    else if (this.HasSse2) { vecReg = Reg.XMM0; laneBytes = 16; }
+    else { vecReg = Reg.MM0; laneBytes = 8; }
     var lanes = laneBytes / 2;
+    var isMmx = laneBytes == 8;
+    var isSse = laneBytes == 16;
+    var isAvx = laneBytes == 32;           // YMM (VEX)
+    var isAvx512 = laneBytes == 64;        // ZMM (EVEX)
 
     // base addresses: BX -> &a[lo], SI -> &b[lo], DI -> &c[lo]  (DS-relative, element size 2)
     void LoadBase(Reg reg, (VariableSymbol Sym, int Lbound) arr) {
@@ -1574,22 +1587,28 @@ public sealed partial class CodeGenerator {
       asm.Mov(Reg.CX, groups);
       var top = asm.DefineLabel();
       asm.MarkLabel(top);
-      if (useSse2)
-        asm.Movdqu(vecReg, Mem.At(Reg.BX));           // unaligned load (data-segment arrays are not 16-aligned)
-      else
-        asm.Movq(vecReg, Mem.At(Reg.BX));
-      asm.EmitPacked(opcode, vecReg, Mem.At(Reg.SI)); // vec = a OP b  (per-16-bit-lane, wrap-correct)
-      if (useSse2)
-        asm.MovdquStore(Mem.At(Reg.DI), vecReg);
-      else
-        asm.MovqStore(Mem.At(Reg.DI), vecReg);
+      // load a[i..] -> vec
+      if (isAvx512) asm.Vmovdqu512(vecReg, Mem.At(Reg.BX));
+      else if (isAvx) asm.Vmovdqu(vecReg, Mem.At(Reg.BX));
+      else if (isSse) asm.Movdqu(vecReg, Mem.At(Reg.BX));
+      else asm.Movq(vecReg, Mem.At(Reg.BX));
+      // vec = a OP b[i..]  (per-16-bit-lane, wrap-correct). MMX/SSE2 are 2-operand (dest=dest OP src);
+      // AVX/AVX-512 are 3-operand non-destructive (dest = src1 OP src2), here dest = vec OP [b].
+      if (isAvx512) asm.EvexPacked(opcode, vecReg, vecReg, Mem.At(Reg.SI));
+      else if (isAvx) asm.VexPacked(opcode, vecReg, vecReg, Mem.At(Reg.SI));
+      else asm.EmitPacked(opcode, vecReg, Mem.At(Reg.SI));
+      // store vec -> c[i..]
+      if (isAvx512) asm.Vmovdqu512Store(Mem.At(Reg.DI), vecReg);
+      else if (isAvx) asm.VmovdquStore(Mem.At(Reg.DI), vecReg);
+      else if (isSse) asm.MovdquStore(Mem.At(Reg.DI), vecReg);
+      else asm.MovqStore(Mem.At(Reg.DI), vecReg);
       asm.Add(Reg.BX, laneBytes);
       asm.Add(Reg.SI, laneBytes);
       asm.Add(Reg.DI, laneBytes);
       asm.Dec(Reg.CX);
       asm.Jnz(top);
-      if (!useSse2)
-        asm.Emms();                                   // MMX aliases x87 - release it; XMM does not, so SSE2 skips EMMS
+      if (isMmx)
+        asm.Emms();                                   // MMX aliases x87 - release it; XMM/YMM/ZMM do not
     }
 
     // scalar tail: BX/SI/DI now point at the first un-vectorised element

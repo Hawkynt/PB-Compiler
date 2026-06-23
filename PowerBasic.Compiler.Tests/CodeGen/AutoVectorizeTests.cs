@@ -64,6 +64,20 @@ public sealed class AutoVectorizeTests {
   }
 
   [Test]
+  public void Compile_GivenAddLoopWithAvx2_ThenEmitsVexYmmVpaddw() {
+    // AVX2 picks 256-bit YMM (16 lanes): VEX-encoded VPADDW (C5 .. FD), 3-operand non-destructive
+    var image = Compile("$CPU 80586 AVX2\n$OPTIMIZE SPEED\n" + _ADD_LOOP);
+    Assert.That(Count(image, 0xC5, 0xFD, 0xFD), Is.GreaterThan(0), "AVX2 emits VEX VPADDW on YMM");
+  }
+
+  [Test]
+  public void Compile_GivenAddLoopWithAvx512_ThenEmitsEvexZmmVpaddw() {
+    // AVX-512 picks 512-bit ZMM (32 lanes): EVEX-encoded VPADDW (62 F1 7D 48 FD)
+    var image = Compile("$CPU 80586 AVX512\n$OPTIMIZE SPEED\n" + _ADD_LOOP);
+    Assert.That(Count(image, 0x62, 0xF1, 0x7D, 0x48, 0xFD), Is.GreaterThan(0), "AVX-512 emits EVEX VPADDW on ZMM");
+  }
+
+  [Test]
   public void Compile_GivenMultiplyLoop_ThenEmitsPmullw() {
     var image = Compile("$CPU 80586 MMX\n$OPTIMIZE SPEED\nDIM a%(1 TO 100), b%(1 TO 100), c%(1 TO 100)\nDIM i%\nFOR i% = 1 TO 100\n c%(i%) = a%(i%) * b%(i%)\nNEXT\n");
     Assert.That(Count(image, 0x0F, 0xD5), Is.GreaterThan(0), "the multiply loop vectorises to PMULLW");
