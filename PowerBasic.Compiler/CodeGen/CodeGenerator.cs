@@ -459,9 +459,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       this.ScheduleInlineAsmBlocks(); // reorder inline-asm runs to group memory/ALU ops (dependency-preserving)
       // $OPTIMIZE SPEED: pass internal parameters in registers (AX,DX,BX,CX) instead of on
       // the stack when we own every call site. Self-contained programs only (a separately
-      // compiled unit could otherwise call a converted procedure with the stack convention);
-      // pb36 only, so the pb35 golden output is never touched.
-      if (this.OptimizeSpeed && !this._allowExternalCalls && model.Dialect == Dialect.Pb36)
+      // compiled unit could otherwise call a converted procedure with the stack convention).
+      // Gated on the optimizer flags, not the dialect - the optimizer is dialect-agnostic, so
+      // any dialect compiled with the optimizer + SPEED gets it; it merely defaults on for pb36.
+      if (this.OptimizeSpeed && !this._allowExternalCalls)
         OptRegParm.Apply(model);
     }
 
@@ -473,13 +474,15 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       return trivial;
 
     var asm = this._asm;
-    // pb36 peephole / scheduler: record the instruction stream of a standalone program image so a
+    // peephole / scheduler: record the instruction stream of a standalone program image so a
     // post-emit pass can rewrite it (units/libraries keep the faithful stream). The two passes both
-    // rewrite by recorded byte position, so they are mutually exclusive: pb36 + $OPTIMIZE SPEED gets
-    // the instruction scheduler (reorders the FINAL stream - after unrolling/inlining/const-fold - to
-    // group memory/ALU ops), every other optimized standalone keeps the peephole (staging coalesce, CMP->TEST).
+    // rewrite by recorded byte position, so they are mutually exclusive: an optimized standalone under
+    // $OPTIMIZE SPEED gets the instruction scheduler (reorders the FINAL stream - after
+    // unrolling/inlining/const-fold - to group memory/ALU ops), every other optimized standalone keeps
+    // the peephole (staging coalesce, CMP->TEST). Gated on the optimizer flags, not the dialect (the
+    // optimizer is dialect-agnostic; SPEED merely defaults on for pb36).
     var standalone = this.Optimize && !this._allowExternalCalls && !this._isUnit;
-    asm.EnableSchedule = standalone && this.OptimizeSpeed && model.Dialect == Dialect.Pb36;
+    asm.EnableSchedule = standalone && this.OptimizeSpeed;
     asm.EnablePeephole = standalone && !asm.EnableSchedule;
     var userMain = asm.DefineLabel("user_main");
     this._scratch = asm.DefineLabel("cg_scratch");

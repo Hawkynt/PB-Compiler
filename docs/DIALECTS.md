@@ -4,15 +4,17 @@ Sources: PowerBASIC.GER FAQ (pbhq.de, sections 1.6–1.8), the PB 3.5 README
 ("What's New in PowerBASIC 3.5"), the PB statement reference (manmrk pbs.htm),
 and the original PB 3.5 Reference/User guides. The compiler selects a dialect
 via `--dialect pb20|pb21|pb30|pb31|pb32|pb35|pb36` (default `pb35`; `pb36` is
-the optimizing superset, docs/PB36.md); features below
+the language-extension superset that adds new syntax and presets the optimizer on
+- the optimizer itself is a separate, dialect-agnostic axis, see docs/PB36.md);
+features below
 are rejected with a diagnostic when used under an older dialect, and the
 selected dialect also **re-enables that version's documented bugs**
 (docs/QUIRKS.md - bug compatibility is part of dialect fidelity).
 
 Related documents: docs/BASIC-FAMILY.md (cross-dialect matrix for GW-BASIC,
 QuickBASIC, QBasic, Turbo Basic & friends - groundwork for cross-compiling
-those dialects), docs/PB36.md (an envisioned `pb36` successor dialect with
-optimizer features).
+those dialects), docs/PB36.md (an envisioned `pb36` successor dialect - new
+language features, with the dialect-agnostic optimizer preset on).
 
 ## Baseline (PB 2.0/2.1, Turbo Basic lineage)
 
