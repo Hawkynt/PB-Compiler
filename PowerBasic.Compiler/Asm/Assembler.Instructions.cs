@@ -128,11 +128,15 @@ public sealed partial class Assembler {
   public void Xchg(Mem memory, Reg register) => this.Xchg(register, memory);
 
   public void Lea(Reg destination, Mem source) {
+    var start = this.Position;
     RequireWordOrDword(destination, nameof(destination));
     this.EmitSegmentPrefix(source);
     this.EmitOperandSizePrefixIf(destination.IsDword());
     this.EmitByte(0x8D);
     this.EmitModRmMemory(destination.Index(), source);
+    // LEA computes an address only - it reads the address registers (added by RecordSchedMem) and
+    // writes the destination, but does NOT access memory (memRead/memWrite false) and sets no flags.
+    this.RecordSchedMem(start, 0, RegBit(destination), false, false, false, false, source);
   }
 
   public void Lds(Reg destination, Mem source) => this.LoadFarPointer(0xC5, destination, source);
@@ -374,52 +378,75 @@ public sealed partial class Assembler {
   #region TEST / NOT / NEG
 
   public void Test(Reg first, Reg second) {
+    var start = this.Position;
     RequireGeneralPurpose(first, nameof(first));
     RequireGeneralPurpose(second, nameof(second));
     RequireSameSize(first, second);
     this.EmitOperandSizePrefixIf(first.IsDword());
     this.EmitByte(first.IsByte() ? (byte)0x84 : (byte)0x85);
     this.EmitModRmRegister(second.Index(), first);
+    // TEST reads both operands and writes flags; it writes no register and touches no memory.
+    this.RecordSchedReg(start, (ushort)(RegBit(first) | RegBit(second)), 0, false, true);
   }
 
   public void Test(Mem memory, Reg register) {
+    var start = this.Position;
     RequireGeneralPurpose(register, nameof(register));
     RequireMatchingSize(register, memory);
     this.EmitSegmentPrefix(memory);
     this.EmitOperandSizePrefixIf(register.IsDword());
     this.EmitByte(register.IsByte() ? (byte)0x84 : (byte)0x85);
     this.EmitModRmMemory(register.Index(), memory);
+    // reads the register and the memory cell, writes flags
+    this.RecordSchedMem(start, RegBit(register), 0, false, true, true, false, memory);
   }
 
   public void Test(Reg register, Mem memory) => this.Test(memory, register);
 
   public void Test(Reg register, Imm immediate) {
+    var start = this.Position;
     RequireGeneralPurpose(register, nameof(register));
     var size = register.Size();
     this.EmitOperandSizePrefixIf(register.IsDword());
     if (register.Index() == 0) {
       this.EmitByte(size == OperandSize.Byte ? (byte)0xA8 : (byte)0xA9);
       this.EmitImmediate(size, immediate);
-      return;
+    } else {
+      this.EmitByte(size == OperandSize.Byte ? (byte)0xF6 : (byte)0xF7);
+      this.EmitModRmRegister(0, register);
+      this.EmitImmediate(size, immediate);
     }
 
-    this.EmitByte(size == OperandSize.Byte ? (byte)0xF6 : (byte)0xF7);
-    this.EmitModRmRegister(0, register);
-    this.EmitImmediate(size, immediate);
+    this.RecordSchedReg(start, RegBit(register), 0, false, true);
   }
 
   public void Test(Mem memory, Imm immediate) {
+    var start = this.Position;
     var size = RequireSized(memory);
     this.EmitSegmentPrefix(memory);
     this.EmitOperandSizePrefixIf(size == OperandSize.Dword);
     this.EmitByte(size == OperandSize.Byte ? (byte)0xF6 : (byte)0xF7);
     this.EmitModRmMemory(0, memory);
     this.EmitImmediate(size, immediate);
+    this.RecordSchedMem(start, 0, 0, false, true, true, false, memory);
   }
 
-  public void Not(Reg register) => this.UnaryF6(2, register);
+  public void Not(Reg register) {
+    var start = this.Position;
+    this.UnaryF6(2, register);
+    // NOT reads and writes its operand and sets no flags
+    this.RecordSchedReg(start, RegBit(register), RegBit(register), false, false);
+  }
+
   public void Not(Mem memory) => this.UnaryF6(2, memory);
-  public void Neg(Reg register) => this.UnaryF6(3, register);
+
+  public void Neg(Reg register) {
+    var start = this.Position;
+    this.UnaryF6(3, register);
+    // NEG reads and writes its operand and writes flags
+    this.RecordSchedReg(start, RegBit(register), RegBit(register), false, true);
+  }
+
   public void Neg(Mem memory) => this.UnaryF6(3, memory);
 
   private void UnaryF6(int operation, Reg register) {
@@ -442,38 +469,46 @@ public sealed partial class Assembler {
   #region INC / DEC
 
   public void Inc(Reg register) {
+    var start = this.Position;
     RequireGeneralPurpose(register, nameof(register));
     if (register.IsByte()) {
       this.EmitByte(0xFE);
       this.EmitModRmRegister(0, register);
-      return;
+    } else {
+      this.EmitOperandSizePrefixIf(register.IsDword());
+      this.EmitByte((byte)(0x40 + register.Index()));
     }
 
-    this.EmitOperandSizePrefixIf(register.IsDword());
-    this.EmitByte((byte)(0x40 + register.Index()));
+    // INC reads and writes its operand and writes flags (CF preserved, but conservatively a flag write)
+    this.RecordSchedReg(start, RegBit(register), RegBit(register), false, true);
   }
 
   public void Dec(Reg register) {
+    var start = this.Position;
     RequireGeneralPurpose(register, nameof(register));
     if (register.IsByte()) {
       this.EmitByte(0xFE);
       this.EmitModRmRegister(1, register);
-      return;
+    } else {
+      this.EmitOperandSizePrefixIf(register.IsDword());
+      this.EmitByte((byte)(0x48 + register.Index()));
     }
 
-    this.EmitOperandSizePrefixIf(register.IsDword());
-    this.EmitByte((byte)(0x48 + register.Index()));
+    this.RecordSchedReg(start, RegBit(register), RegBit(register), false, true);
   }
 
   public void Inc(Mem memory) => this.IncDec(0, memory);
   public void Dec(Mem memory) => this.IncDec(1, memory);
 
   private void IncDec(int operation, Mem memory) {
+    var start = this.Position;
     var size = RequireSized(memory);
     this.EmitSegmentPrefix(memory);
     this.EmitOperandSizePrefixIf(size == OperandSize.Dword);
     this.EmitByte(size == OperandSize.Byte ? (byte)0xFE : (byte)0xFF);
     this.EmitModRmMemory(operation, memory);
+    // a memory INC/DEC reads and writes the cell and writes flags
+    this.RecordSchedMem(start, 0, 0, false, true, true, true, memory);
   }
 
   #endregion
@@ -491,15 +526,19 @@ public sealed partial class Assembler {
 
   /// <summary>386 IMUL r16/32, r/m16/32 (0F AF).</summary>
   public void Imul(Reg destination, Reg source) {
+    var start = this.Position;
     RequireWordOrDword(destination, nameof(destination));
     RequireSameSize(destination, source);
     this.EmitOperandSizePrefixIf(destination.IsDword());
     this.EmitByte(0x0F);
     this.EmitByte(0xAF);
     this.EmitModRmRegister(destination.Index(), source);
+    // the two-operand IMUL reads both operands, writes the destination and writes flags
+    this.RecordSchedReg(start, (ushort)(RegBit(destination) | RegBit(source)), RegBit(destination), false, true);
   }
 
   public void Imul(Reg destination, Mem source) {
+    var start = this.Position;
     RequireWordOrDword(destination, nameof(destination));
     RequireMatchingSize(destination, source);
     this.EmitSegmentPrefix(source);
@@ -507,6 +546,7 @@ public sealed partial class Assembler {
     this.EmitByte(0x0F);
     this.EmitByte(0xAF);
     this.EmitModRmMemory(destination.Index(), source);
+    this.RecordSchedMem(start, RegBit(destination), RegBit(destination), false, true, true, false, source);
   }
 
   /// <summary>186 IMUL r16/32, r/m16/32, imm (6B sign-extended byte / 69 full width).</summary>
@@ -638,6 +678,7 @@ public sealed partial class Assembler {
   public void Sar(Mem destination, Reg count) => this.Shift(7, destination, count);
 
   private void Shift(int operation, Reg destination, int count) {
+    var start = this.Position;
     RequireGeneralPurpose(destination, nameof(destination));
     if (count is < 1 or > 31)
       throw new ArgumentOutOfRangeException(nameof(count), count, "Shift count must be 1..31.");
@@ -646,15 +687,18 @@ public sealed partial class Assembler {
     if (count == 1) {
       this.EmitByte(destination.IsByte() ? (byte)0xD0 : (byte)0xD1);
       this.EmitModRmRegister(operation, destination);
-      return;
+    } else {
+      this.EmitByte(destination.IsByte() ? (byte)0xC0 : (byte)0xC1);
+      this.EmitModRmRegister(operation, destination);
+      this.EmitByte((byte)count);
     }
 
-    this.EmitByte(destination.IsByte() ? (byte)0xC0 : (byte)0xC1);
-    this.EmitModRmRegister(operation, destination);
-    this.EmitByte((byte)count);
+    // an immediate-count shift reads and writes the destination and writes flags
+    this.RecordSchedReg(start, RegBit(destination), RegBit(destination), false, true);
   }
 
   private void Shift(int operation, Reg destination, Reg count) {
+    var start = this.Position;
     RequireGeneralPurpose(destination, nameof(destination));
     if (count != Reg.CL)
       throw new ArgumentException("Variable shift counts must be in CL.", nameof(count));
@@ -662,9 +706,12 @@ public sealed partial class Assembler {
     this.EmitOperandSizePrefixIf(destination.IsDword());
     this.EmitByte(destination.IsByte() ? (byte)0xD2 : (byte)0xD3);
     this.EmitModRmRegister(operation, destination);
+    // a CL-count shift additionally reads CL (count register)
+    this.RecordSchedReg(start, (ushort)(RegBit(destination) | RegBit(count)), RegBit(destination), false, true);
   }
 
   private void Shift(int operation, Mem destination, int count) {
+    var start = this.Position;
     var size = RequireSized(destination);
     if (count is < 1 or > 31)
       throw new ArgumentOutOfRangeException(nameof(count), count, "Shift count must be 1..31.");
@@ -674,15 +721,18 @@ public sealed partial class Assembler {
     if (count == 1) {
       this.EmitByte(size == OperandSize.Byte ? (byte)0xD0 : (byte)0xD1);
       this.EmitModRmMemory(operation, destination);
-      return;
+    } else {
+      this.EmitByte(size == OperandSize.Byte ? (byte)0xC0 : (byte)0xC1);
+      this.EmitModRmMemory(operation, destination);
+      this.EmitByte((byte)count);
     }
 
-    this.EmitByte(size == OperandSize.Byte ? (byte)0xC0 : (byte)0xC1);
-    this.EmitModRmMemory(operation, destination);
-    this.EmitByte((byte)count);
+    // a memory shift reads and writes the cell and writes flags
+    this.RecordSchedMem(start, 0, 0, false, true, true, true, destination);
   }
 
   private void Shift(int operation, Mem destination, Reg count) {
+    var start = this.Position;
     var size = RequireSized(destination);
     if (count != Reg.CL)
       throw new ArgumentException("Variable shift counts must be in CL.", nameof(count));
@@ -691,6 +741,8 @@ public sealed partial class Assembler {
     this.EmitOperandSizePrefixIf(size == OperandSize.Dword);
     this.EmitByte(size == OperandSize.Byte ? (byte)0xD2 : (byte)0xD3);
     this.EmitModRmMemory(operation, destination);
+    // additionally reads CL (count register)
+    this.RecordSchedMem(start, RegBit(count), 0, false, true, true, true, destination);
   }
 
   #endregion

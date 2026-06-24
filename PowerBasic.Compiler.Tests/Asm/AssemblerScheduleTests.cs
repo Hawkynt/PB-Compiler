@@ -47,6 +47,41 @@ public sealed class AssemblerScheduleTests {
   }
 
   [Test]
+  public void RunSchedule_GivenIndependentChainsAcrossIncAndShift_ThenInterleaves() {
+    // two independent register chains - a SHL on BX and an INC on DX - sit between two independent
+    // loads. Before coverage was widened SHL/INC were barriers that split the window into singletons
+    // and nothing moved; now the whole run is one window and the independent loads group to the front.
+    var asm = new Assembler { EnableSchedule = true };
+    asm.Mov(Reg.AX, Mem.Word(Reg.BP, 2));   // load -> AX   (memory)
+    asm.Shl(Reg.BX, 1);                     // BX <<= 1     (independent ALU, was a barrier)
+    asm.Inc(Reg.DX);                        // DX++         (independent ALU, was a barrier)
+    asm.Mov(Reg.SI, Mem.Word(Reg.BP, 4));   // load -> SI   (memory, independent)
+    var bytes = asm.ToArray();
+    // the two independent loads are issued first (latency hiding), then the two ALU ops
+    Assert.That(bytes[0], Is.EqualTo(0x8B), "an independent load leads");
+    var firstLoad = IndexOf(bytes, [0x8B, 0x46, 0x02]);
+    var secondLoad = IndexOf(bytes, [0x8B, 0x76, 0x04]);
+    var shl = IndexOf(bytes, [0xD1, 0xE3]);
+    Assert.That(firstLoad, Is.GreaterThanOrEqualTo(0));
+    Assert.That(secondLoad, Is.GreaterThanOrEqualTo(0));
+    Assert.That(System.Math.Max(firstLoad, secondLoad), Is.LessThan(shl), "both loads precede the shift");
+  }
+
+  [Test]
+  public void RunSchedule_GivenShiftThenFlagDependentAdc_ThenOrderPreserved() {
+    // a SHL writes flags and a following ADC reads them - the scheduler must not reorder across the
+    // flag dependency even though the registers are disjoint.
+    var asm = new Assembler { EnableSchedule = true };
+    asm.Mov(Reg.AX, Mem.Word(Reg.BP, 2));   // AX = m
+    asm.Shl(Reg.AX, 1);                     // AX <<= 1   (writes flags)
+    asm.Adc(Reg.BX, Reg.CX);                // BX += CX + CF  (reads flags -> must stay after the SHL)
+    var bytes = asm.ToArray();
+    var shl = IndexOf(bytes, [0xD1, 0xE0]);
+    var adc = IndexOf(bytes, [0x11, 0xCB]);
+    Assert.That(shl, Is.GreaterThanOrEqualTo(0).And.LessThan(adc), "the flag-consuming ADC stays after the SHL");
+  }
+
+  [Test]
   public void RunSchedule_WhenDisabled_ThenStreamUntouched() {
     var asm = new Assembler();   // EnableSchedule = false
     asm.Mov(Reg.AX, Mem.Word(Reg.BP, 2));
