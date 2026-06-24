@@ -216,5 +216,33 @@ selection (handle the FP ops + conversions — substantial), or **(b)** an **int
 that rewrites `fptosi(fadd(fmul(sitofp x, C1), fmul(sitofp y, C2)))` back to integer
 `add(mul(x, C1), mul(y, C2))` whenever the result is stored as an integer — sound for `+`/`-`/`*`
 because the wrapped (mod 2¹⁶) result is identical, and it would let the existing integer selector fire.
-Option (b) is the more tractable next step. The prototype routing (gated, non-firing) was **reverted**;
-the verified machinery is retained.
+Option (b) is the more tractable next step. The prototype routing (gated, non-firing) was reverted at
+the time; the verified machinery was retained.
+
+### Activation — DONE (option b: the integer-recovery pass + frame-ownership routing)
+
+`Ir/Passes/IntegerRecovery.cs` implements option (b): it rewrites `fptosi(float-tree)` back to integer
+`add`/`sub`/`mul` over the original `iN` values (sound — the stored result is mod-2ᴺ either way, exactly
+what the direct codegen already does). With it in the back end's IR pipeline, eligible integer
+functions get genuine integer IR and the selector fires. The routing (`CodeGenerator.Backend.cs`):
+
+- `BackendProcs` — `TryLowerModule` → standard IR passes → `IntegerRecovery` → standard passes →
+  per-eligible-function `TrySelect` + `MachineScheduler.Schedule` + `LinearScanAllocator.Allocate`.
+- Eligible = pure INTEGER (signed-16) function, INTEGER BYVAL params, no error handling, and the IR
+  fully selects + allocates (so calls/division/float are declined automatically). The back end owns the
+  **whole function via SSA** — no shared memory cells, so it never reads an optimizer-stale cell (the
+  blocker the cell-sharing prototype hit).
+- The function is excluded from inlining (`CodeGenerator.cs:601` `isInlinable` predicate) and from the
+  register-parameter convention (an `OptRegParm.Apply` skip predicate), so its emitted stack ABI matches
+  the call sites; `EmitBackendFunction` emits the standard prologue / argument loads / body / `RET n`.
+- Selection fixes for real IR: a register is materialized for an immediate `IMUL` multiplier (`a%*2`);
+  argument vregs are numbered before phi vregs so argument `i` is vreg `i`.
+
+**Verified.** Gated behind `UseExperimentalBackend` (`PBC_X_BACKEND` / `--x-backend`), default off (a new
+path alongside the battle-tested direct codegen). With it **forced on, all 241 differential batteries
+are byte-identical to the genuine compilers** — every eligible integer function across the corpus is
+compiled by the back end (register-allocated and scheduled), output-identical to the oracle — and the
+2135 unit tests pass with it off (no-op). So register reassignment + instruction scheduling now reach
+real programs through the in-house back end, end to end, oracle-verified. Widening eligibility (float/
+x87 results, string/array params, the main body) is future work; the integer-function path is live and
+verified.
