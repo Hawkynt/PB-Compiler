@@ -109,6 +109,14 @@ public sealed class MachineEmitter {
       case MOpcode.Sar: asm.Sar(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
       case MOpcode.Jmp: asm.Jmp(this._labels[((MOperand.LabelRef)ops[0]).Name]); break;
       case MOpcode.Jcc: asm.J(instr.Condition!.Value, this._labels[((MOperand.LabelRef)ops[0]).Name]); break;
+      case MOpcode.Call: asm.Call(asm.Lbl(((MOperand.LabelRef)ops[0]).Name)); break;   // target is an external routine / function label
+      case MOpcode.Push:
+        switch (this.ToSource(ops[0])) {
+          case Reg r: asm.Push(r); break;
+          case Mem m: asm.Push(m); break;
+          case Imm i: asm.Push(i); break;
+        }
+        break;
       case MOpcode.Ret: asm.Ret(); break;
       default: throw new System.NotSupportedException($"machine opcode {instr.Opcode} has no emission yet");
     }

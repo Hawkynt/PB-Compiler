@@ -117,6 +117,26 @@ public sealed class MachineEmitterTests {
     Assert.That(IndexOf(bytes, [0xC2, 0x04, 0x00]), Is.GreaterThanOrEqualTo(0), "RET 4 cleans the two word arguments");
   }
 
+  [Test]
+  public void Emit_GivenPushAndCall_ThenEmitsArgumentPushAndCallOpcode() {
+    // PUSH 7 ; CALL rt  -- a runtime call with one stacked argument
+    var fn = new MFunction("t");
+    var block = new MBlock("entry");
+    block.Instructions.Add(new MInstr(MOpcode.Push, [new MOperand.Immediate(7)],
+      new MInstrEffect([], [], false, false, false, true)));
+    block.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef("rt")], MInstrEffect.None,
+      clobbers: [Reg.AX, Reg.CX, Reg.DX]));
+    fn.Blocks.Add(block);
+
+    var asm = new Assembler();
+    MachineEmitter.Emit(asm, fn, new Dictionary<int, Reg>());
+    asm.MarkLabel(asm.Lbl("rt"));   // define the call target so the fixup resolves
+    var bytes = asm.ToArray();
+
+    Assert.That(bytes, Does.Contain((byte)0xE8), "a near CALL opcode is emitted");
+    Assert.That(bytes[0], Is.AnyOf((byte)0x68, (byte)0x6A), "the argument PUSH leads (PUSH imm16 / imm8)");
+  }
+
   private static int IndexOf(byte[] haystack, byte[] needle) {
     for (var i = 0; i + needle.Length <= haystack.Length; ++i) {
       var hit = true;
