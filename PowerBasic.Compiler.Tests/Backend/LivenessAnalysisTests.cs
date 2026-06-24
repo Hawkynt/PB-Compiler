@@ -36,6 +36,38 @@ public sealed class LivenessAnalysisTests {
   }
 
   [Test]
+  public void Compute_GivenLoopCarriedValue_ThenIntervalSpansTheBackEdge() {
+    // entry: v0 = 5 ; jmp loop      loop: v2 = v0 ; v1 = 7 ; jmp loop (self-loop)
+    // v0 is used at the top of the loop and the loop branches back, so it is live across the whole loop -
+    // its interval must extend past its last LINEAR use (the v2=v0 read) to cover the later v1 definition,
+    // which a single straight scan would miss (and then wrongly let v1 reuse v0's register).
+    MInstr MovImm(int d, long val) => new(MOpcode.Mov, [new MOperand.Register(MReg.Virtual(d)), new MOperand.Immediate(val)],
+      new MInstrEffect([0], [], false, false, false, false));
+    MInstr MovRR(int d, int s) => new(MOpcode.Mov, [new MOperand.Register(MReg.Virtual(d)), new MOperand.Register(MReg.Virtual(s))],
+      new MInstrEffect([0], [1], false, false, false, false));
+    MInstr Jmp(string label) => new(MOpcode.Jmp, [new MOperand.LabelRef(label)], MInstrEffect.None);
+
+    var fn = new MFunction("t");
+    var entry = new MBlock("entry");
+    entry.Instructions.Add(MovImm(0, 5));   // idx 0: def v0
+    entry.Instructions.Add(Jmp("loop"));    // idx 1
+    entry.Successors.Add("loop");
+    var loop = new MBlock("loop");
+    loop.Instructions.Add(MovRR(2, 0));     // idx 2: v2 = v0   (last LINEAR use of v0)
+    loop.Instructions.Add(MovImm(1, 7));    // idx 3: def v1
+    loop.Instructions.Add(Jmp("loop"));     // idx 4: back-edge
+    loop.Successors.Add("loop");
+    fn.Blocks.Add(entry);
+    fn.Blocks.Add(loop);
+
+    var intervals = LivenessAnalysis.Compute(fn);
+    var v0 = intervals.First(i => i.VirtualId == 0);
+
+    // straight-scan would end v0 at index 2; loop-aware liveness keeps it live through the back-edge
+    Assert.That(v0.End, Is.GreaterThanOrEqualTo(3), "the loop-carried value stays live past its last linear use");
+  }
+
+  [Test]
   public void RegistersOf_GivenMemoryOperand_ThenBaseRegisterIsRead() {
     // MOV v1, [v0]  -> v0 (the address) is read, v1 is written
     var load = new MInstr(MOpcode.Mov,
