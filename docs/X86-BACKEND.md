@@ -193,3 +193,28 @@ values in its own registers and never reads a stale cell — but eligible small 
 shapes (control flow, calls, larger bodies); or (b) a real integration with the optimizer's
 residency/propagation/liveness state. Both are substantial. The prototype routing was **reverted**
 (unsafe to ship even gated); the verified machinery above is retained as the foundation.
+
+### Activation finding #2 — PB integer arithmetic is FLOAT in the IR (the frame-ownership blocker)
+
+The frame-ownership path (compile a whole pure-INTEGER function via its SSA IR — no shared cells, so
+no staleness) was then prototyped: `TryLowerModule` → IR passes → `TrySelect` → `Allocate` →
+`EmitFunction`, with the function excluded from inlining and the register-parameter convention so its
+stack ABI matches the call sites. It wired in cleanly (gated, default off) and the build/tests stay
+green — but **0 functions route**, because `TrySelect` declines them. The reason is fundamental:
+`IrLowering` lowers PowerBASIC's integral `+`/`-`/`*` to **floating point** (PB's display semantics —
+`PRINT A%*B%` shows `9E+8`). So `FUNCTION F%(a%,b%) : F% = a%*2 + b%*3` lowers to:
+
+```
+%0 = sitofp i16 %a to float ; %1 = fmul float %0, 2.0
+%2 = sitofp i16 %b to float ; %3 = fmul float %2, 3.0
+%4 = fadd float %1, %3       ; %5 = fptosi float %4 to i16 ; ret i16 %5
+```
+
+The selector handles integers, not `sitofp`/`fmul`/`fadd`/`fptosi`, so it declines. A "pure integer
+function" therefore has **no integer IR**. So activation needs one of: **(a)** float/x87 instruction
+selection (handle the FP ops + conversions — substantial), or **(b)** an **integer-recovery IR pass**
+that rewrites `fptosi(fadd(fmul(sitofp x, C1), fmul(sitofp y, C2)))` back to integer
+`add(mul(x, C1), mul(y, C2))` whenever the result is stored as an integer — sound for `+`/`-`/`*`
+because the wrapped (mod 2¹⁶) result is identical, and it would let the existing integer selector fire.
+Option (b) is the more tractable next step. The prototype routing (gated, non-firing) was **reverted**;
+the verified machinery is retained.
