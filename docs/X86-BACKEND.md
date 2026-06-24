@@ -147,7 +147,21 @@ parity on the full battery, then becomes the default for the programs it can han
 
 ## Status
 
-- Architecture + phase ordering decided; IR foundation mapped; design fixed (this doc).
-- Stages 1-6 unimplemented. Build order: MachineIR → integer isel → liveness →
-  linear-scan → emit (one trivial function end-to-end, oracle-verified) → widen
-  coverage (control flow, calls, casts) → float/x87 → move the scheduler onto it.
+All six stages are implemented and unit-tested (the pipeline runs end to end:
+`SSA IR → InstructionSelector → LivenessAnalysis → LinearScanAllocator →
+MachineScheduler → MachineEmitter → Assembler → machine code`):
+
+- **Stage 1 — MachineIR** (`Backend/MachineIr.cs`). ✅
+- **Stage 2 — instruction selection** (`Backend/InstructionSelector.cs`), straight-line integer core; declines the rest. ✅
+- **Stage 3 — liveness / live intervals** (`Backend/LivenessAnalysis.cs`). ✅
+- **Stage 4 — linear-scan allocation** (`Backend/LinearScanAllocator.cs`), with the BX/SI/DI addressing register class — *this is the register reassignment*. ✅
+- **Stage 5 — emission** (`Backend/MachineEmitter.cs`), virtual→physical rewrite + frame-slot resolution through the `Assembler`. ✅
+- **Stage 6 — machine scheduling** (`Backend/MachineScheduler.cs`), post-allocation interleaving of independent chains. ✅
+
+The backend is still **standalone** — not yet wired into the production codegen — so the
+241-battery harness is untouched. Remaining **productionization**: wire it as the codegen for
+eligible pb36 + `$OPTIMIZE SPEED` programs (whole-program ABI: prologue/epilogue, how arguments
+arrive and the result returns, the entry call), widen instruction-selection coverage beyond the
+straight-line integer core (branches, phis, calls, casts, division, float/x87), add stack spilling to
+the allocator (it currently declines when the live set exceeds six registers), and end-to-end
+oracle-verify against the differential battery.
