@@ -16,6 +16,7 @@ public sealed class MachineEmitter {
   private readonly Assembler _asm;
   private readonly IReadOnlyDictionary<int, Reg> _allocation;
   private readonly int[] _slotDisp;
+  private readonly Dictionary<string, Label> _labels = [];
 
   private MachineEmitter(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation) {
     this._asm = asm;
@@ -27,13 +28,19 @@ public sealed class MachineEmitter {
       running += (function.StackSlots[k] + 1) & ~1;   // round each slot up to an even size
       this._slotDisp[k] = -running;
     }
+    // one assembler label per block, so branches can target them
+    foreach (var block in function.Blocks)
+      this._labels[block.Label] = asm.DefineLabel(block.Label);
   }
 
   /// <summary>Emits the body of <paramref name="function"/> into <paramref name="asm"/> using the given register allocation.</summary>
   public static void Emit(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation) {
     var emitter = new MachineEmitter(asm, function, allocation);
-    foreach (var instr in function.AllInstructions)
-      emitter.EmitInstruction(instr);
+    foreach (var block in function.Blocks) {
+      asm.MarkLabel(emitter._labels[block.Label]);
+      foreach (var instr in block.Instructions)
+        emitter.EmitInstruction(instr);
+    }
   }
 
   private void EmitInstruction(MInstr instr) {
@@ -57,6 +64,8 @@ public sealed class MachineEmitter {
       case MOpcode.Shl: asm.Shl(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
       case MOpcode.Shr: asm.Shr(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
       case MOpcode.Sar: asm.Sar(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
+      case MOpcode.Jmp: asm.Jmp(this._labels[((MOperand.LabelRef)ops[0]).Name]); break;
+      case MOpcode.Jcc: asm.J(instr.Condition!.Value, this._labels[((MOperand.LabelRef)ops[0]).Name]); break;
       case MOpcode.Ret: asm.Ret(); break;
       default: throw new System.NotSupportedException($"machine opcode {instr.Opcode} has no emission yet");
     }

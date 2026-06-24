@@ -67,6 +67,33 @@ public sealed class MachineEmitterTests {
     Assert.That(IndexOf(asm.ToArray(), reference.ToArray()), Is.GreaterThanOrEqualTo(0), "the alloca slot resolves to [BP-2]");
   }
 
+  [Test]
+  public void Emit_GivenBranchingFunction_ThenEmitsCompareAndConditionalJump() {
+    // Sign(a): if a < 0 goto neg else pos ; pos: ret 1 ; neg: ret -1
+    var arg = new IrArgument(IrType.I16, 0);
+    var fn = new IrFunction("Sign", IrType.I16, [arg]);
+    var entry = fn.CreateBlock("entry");
+    var pos = fn.CreateBlock("pos");
+    var neg = fn.CreateBlock("neg");
+    var cmp = entry.Append(new IrCmp(IrCmpPred.Slt, arg, new IrConstantInt(IrType.I16, 0)));
+    entry.Append(new IrCondBr(cmp, neg, pos));
+    pos.Append(new IrRet(new IrConstantInt(IrType.I16, 1)));
+    neg.Append(new IrRet(new IrConstantInt(IrType.I16, -1)));
+
+    var m = InstructionSelector.TrySelect(fn);
+    Assert.That(m, Is.Not.Null);
+    var alloc = LinearScanAllocator.Allocate(m!);
+    Assert.That(alloc, Is.Not.Null);
+
+    var asm = new Assembler();
+    MachineEmitter.Emit(asm, m!, alloc!);
+    var bytes = asm.ToArray();   // resolves the label fixups - throws if a branch target is unbound
+
+    Assert.That(bytes, Is.Not.Empty);
+    // a JL (signed less-than) conditional jump - near form 0F 8C - is present
+    Assert.That(IndexOf(bytes, [0x0F, 0x8C]), Is.GreaterThanOrEqualTo(0), "a JL conditional jump is present");
+  }
+
   private static int IndexOf(byte[] haystack, byte[] needle) {
     for (var i = 0; i + needle.Length <= haystack.Length; ++i) {
       var hit = true;
