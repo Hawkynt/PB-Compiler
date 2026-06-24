@@ -178,6 +178,12 @@ public sealed partial class Parser {
     "FIX", "BCD", "STRING", "ASCIIZ", "FLEX", "ANY",
   };
 
+  /// <summary>The pb36 natural type-name aliases (alternative spellings of existing types); they require <see cref="LanguageFeature.TypeAliases"/>.</summary>
+  private static readonly HashSet<string> _typeAliasSpellings = new(StringComparer.OrdinalIgnoreCase) {
+    "INT16", "SHORT", "INT32", "INT64", "UINT8", "UINT16", "UINT32",
+    "DQUAD", "QQUAD", "OQUAD", "DQWORD", "QQWORD", "OWORD",
+  };
+
   private int _anonymousParameters;
 
   private Parameter ParseParameter(bool optional = false) {
@@ -236,13 +242,29 @@ public sealed partial class Parser {
     }
 
     var token = this.Expect(TokenKind.Identifier, "type name");
-    var builtin = token.Text.ToUpperInvariant() switch {
+    var upper = token.Text.ToUpperInvariant();
+    var builtin = upper switch {
       "BYTE" or "BYT" => BuiltinType.Byte,
       "WORD" or "WRD" => BuiltinType.Word,
       "DWORD" or "DWD" => BuiltinType.Dword,
       "INTEGER" or "INT" => BuiltinType.Integer,
       "LONG" or "LNG" => BuiltinType.Long,
       "QUAD" or "QUD" => BuiltinType.Quad,
+      // pb36 natural type-name aliases (gated below): explicit-width and friendly spellings of the
+      // existing types. INTEGER stays 16-bit and LONG 32-bit (classic), so SHORT/INT16 = INTEGER and
+      // INT32 = LONG. The wide tiers mirror QUAD/QWORD: D(ouble)/Q(uad)/O(cta) prefixes for 128/256/512.
+      "INT16" or "SHORT" => BuiltinType.Integer,
+      "INT32" => BuiltinType.Long,
+      "INT64" => BuiltinType.Quad,
+      "UINT8" => BuiltinType.Byte,
+      "UINT16" => BuiltinType.Word,
+      "UINT32" => BuiltinType.Dword,
+      "DQUAD" => BuiltinType.Int128,
+      "QQUAD" => BuiltinType.Int256,
+      "OQUAD" => BuiltinType.Int512,
+      "DQWORD" => BuiltinType.UInt128,
+      "QQWORD" => BuiltinType.UInt256,
+      "OWORD" => BuiltinType.UInt512,
       "INT128" => BuiltinType.Int128,
       "INT256" => BuiltinType.Int256,
       "INT512" => BuiltinType.Int512,
@@ -260,6 +282,10 @@ public sealed partial class Parser {
       "ANY" => BuiltinType.Any,
       _ => BuiltinType.None,
     };
+
+    // the pb36 alias spellings require the TypeAliases feature (the classic keywords keep their own gates)
+    if (_typeAliasSpellings.Contains(upper))
+      this.Require(LanguageFeature.TypeAliases);
 
     switch (builtin) {
       case BuiltinType.Byte or BuiltinType.Word or BuiltinType.Dword:

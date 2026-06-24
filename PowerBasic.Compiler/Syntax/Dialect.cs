@@ -124,6 +124,7 @@ public enum LanguageFeature {
   TypeLayout,
   NullableTypes,
   WideIntegers,
+  TypeAliases,
 }
 
 /// <summary>
@@ -196,6 +197,7 @@ public static class DialectFacts {
     [LanguageFeature.TypeLayout] = (Dialect.Pb36, "TYPE layout control ('TYPE Name PACKED | ALIGN n | SIZE n', 'field AS T AT offset')"),
     [LanguageFeature.NullableTypes] = (Dialect.Pb36, "nullable types ('AS T?', NOTHING, the '??' null-coalescing operator)"),
     [LanguageFeature.WideIntegers] = (Dialect.Pb36, "wide integer types (INT128/256/512, UINT128/256/512 - emulated multi-word)"),
+    [LanguageFeature.TypeAliases] = (Dialect.Pb36, "natural type-name aliases (INT8/SBYTE, INT16/SHORT, INT32, INT64, UINT8/UINT16/UINT32, DQUAD/QQUAD, DQWORD/QQWORD - alternative spellings of the existing types)"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>
