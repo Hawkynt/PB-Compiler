@@ -165,3 +165,31 @@ arrive and the result returns, the entry call), widen instruction-selection cove
 straight-line integer core (branches, phis, calls, casts, division, float/x87), add stack spilling to
 the allocator (it currently declines when the live set exceeds six registers), and end-to-end
 oracle-verify against the differential battery.
+
+(Since this was written, instruction selection AND emission also cover **branches** — `IrBr`→`JMP`,
+`IrCondBr`+folded compare→`CMP`/`Jcc`/`JMP` — and the emitter produces a complete function with the
+standard stack ABI. Phis, calls, casts, division and float remain.)
+
+### Activation finding (empirical — a routing was prototyped, harness-tested, and reverted)
+
+A statement-level routing was prototyped: eligible INTEGER `+`/`-`/`*` assignments compiled by the
+backend, reading and writing the variables' **existing memory cells** (frame-reuse, so the calling
+convention and result return stay with the unchanged codegen). It produced **correct output in
+isolation** — `c% = a%*2 + b%*3 + a%*5` ran in DOSBox and matched the oracle — but running the whole
+battery with it forced on showed it is **unsafe to activate this way**: in optimized code a variable's
+current value is frequently **not in its memory cell**, so the backend's cell reads go stale. Two
+distinct causes were confirmed by minimal repros:
+
+1. **Register residency (O5).** A loop counter/accumulator kept in `SI`/`DI` (`s% = s% + i%` inside a
+   `FOR`) — the memory cell is stale. Excluding `ResidentRegOf(symbol) != null` fixed those two batteries.
+2. **Constant propagation + dead-store elimination.** `x% = 7` is propagated into later uses and its
+   store elided, so `x%`'s cell stays `0`; the backend read `0` and computed `y%*320 + 0` instead of
+   `+ 7`. No cheap local test exists for this — it needs the optimizer's propagation/DSE state.
+
+**Conclusion:** memory-cell sharing cannot safely activate the backend inside the optimized pipeline.
+Safe activation needs either (a) **frame ownership of a whole region/function** so the backend holds
+values in its own registers and never reads a stale cell — but eligible small functions are
+*inlined/const-folded away* before emission, so this needs the backend to handle the post-inlining
+shapes (control flow, calls, larger bodies); or (b) a real integration with the optimizer's
+residency/propagation/liveness state. Both are substantial. The prototype routing was **reverted**
+(unsafe to ship even gated); the verified machinery above is retained as the foundation.
