@@ -47,10 +47,13 @@ public abstract record MOperand {
 /// <see cref="MOperand.LabelRef"/> operands; the descriptor names which register operands it reads and
 /// writes plus whether it touches flags and memory.
 /// </summary>
-public sealed class MInstr(MOpcode opcode, IReadOnlyList<MOperand> operands, MInstrEffect effect) {
+public sealed class MInstr(MOpcode opcode, IReadOnlyList<MOperand> operands, MInstrEffect effect, Condition? condition = null) {
   public MOpcode Opcode { get; } = opcode;
   public IReadOnlyList<MOperand> Operands { get; } = operands;
   public MInstrEffect Effect { get; } = effect;
+
+  /// <summary>The branch condition for a <see cref="MOpcode.Jcc"/> (null for every other opcode).</summary>
+  public Condition? Condition { get; } = condition;
 
   public bool IsTerminator => this.Opcode is MOpcode.Jmp or MOpcode.Jcc or MOpcode.Ret;
 

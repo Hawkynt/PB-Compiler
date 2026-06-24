@@ -68,13 +68,57 @@ public sealed class InstructionSelectorTests {
   }
 
   [Test]
-  public void TrySelect_GivenBranchTerminator_ThenDeclines() {
-    // a block that does not end in a return is outside this increment -> null (fall back to direct codegen)
+  public void TrySelect_GivenUnconditionalBranch_ThenEmitsJumpWithSuccessor() {
     var fn = new IrFunction("H", IrType.Void);
     var entry = fn.CreateBlock("entry");
     var tail = fn.CreateBlock("tail");
     entry.Append(new IrBr(tail));
     tail.Append(new IrRet());
+
+    var m = InstructionSelector.TrySelect(fn);
+
+    Assert.That(m, Is.Not.Null);
+    Assert.That(m!.Blocks[0].Instructions.Select(i => i.Opcode), Does.Contain(MOpcode.Jmp));
+    Assert.That(m.Blocks[0].Successors, Is.EqualTo(new[] { "tail" }));
+  }
+
+  [Test]
+  public void TrySelect_GivenConditionalBranch_ThenEmitsCompareAndConditionalJump() {
+    // entry: if a < 0 goto neg else pos ; pos: ret 1 ; neg: ret -1  (no phi - each path returns directly)
+    var arg = new IrArgument(IrType.I16, 0);
+    var fn = new IrFunction("Sign", IrType.I16, [arg]);
+    var entry = fn.CreateBlock("entry");
+    var pos = fn.CreateBlock("pos");
+    var neg = fn.CreateBlock("neg");
+    var cmp = entry.Append(new IrCmp(IrCmpPred.Slt, arg, new IrConstantInt(IrType.I16, 0)));
+    entry.Append(new IrCondBr(cmp, neg, pos));
+    pos.Append(new IrRet(new IrConstantInt(IrType.I16, 1)));
+    neg.Append(new IrRet(new IrConstantInt(IrType.I16, -1)));
+
+    var m = InstructionSelector.TrySelect(fn);
+
+    Assert.That(m, Is.Not.Null);
+    Assert.That(m!.Blocks, Has.Count.EqualTo(3));
+    var entryOps = m.Blocks[0].Instructions.Select(i => i.Opcode).ToArray();
+    // the compare folds into the branch: CMP ; Jcc(Less)->neg ; JMP->pos
+    Assert.That(entryOps, Is.EqualTo(new[] { MOpcode.Cmp, MOpcode.Jcc, MOpcode.Jmp }));
+    var jcc = m.Blocks[0].Instructions[1];
+    Assert.That(jcc.Condition, Is.EqualTo(PowerBasic.Compiler.Asm.Condition.Less));
+    Assert.That(m.Blocks[0].Successors, Is.EqualTo(new[] { "neg", "pos" }));
+  }
+
+  [Test]
+  public void TrySelect_GivenPhiNode_ThenDeclines() {
+    // a merge with a phi is a later increment -> decline (fall back to direct codegen)
+    var arg = new IrArgument(IrType.I16, 0);
+    var fn = new IrFunction("P", IrType.I16, [arg]);
+    var entry = fn.CreateBlock("entry");
+    var join = fn.CreateBlock("join");
+    entry.Append(new IrBr(join));
+    var phi = new IrPhi(IrType.I16);
+    join.AppendPhi(phi);
+    phi.AddIncoming(arg, entry);
+    join.Append(new IrRet(phi));
 
     Assert.That(InstructionSelector.TrySelect(fn), Is.Null);
   }

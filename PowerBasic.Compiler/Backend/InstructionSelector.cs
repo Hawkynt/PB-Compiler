@@ -31,24 +31,84 @@ public sealed class InstructionSelector {
   private MFunction? Run(IrFunction fn) {
     this._function = new MFunction(fn.Name);
 
+    // phi nodes (out-of-SSA copies) are a later increment - decline any function that has them
+    foreach (var block in fn.Blocks)
+      if (block.Phis.Any())
+        return null;
+
     // arguments are function live-ins: each gets a dedicated virtual register the ABI binds later
     foreach (var arg in fn.Parameters)
       this._vregs[arg] = this.FreshVreg(arg.Type);
 
     foreach (var block in fn.Blocks) {
-      // this increment is straight-line only: a single block ending in a return
-      if (block.Terminator is not IrRet)
-        return null;
       var mblock = new MBlock(block.Label);
       this._function.Blocks.Add(mblock);
-      foreach (var instr in block.Instructions)
+      var folded = FoldedCompare(block);
+      foreach (var instr in block.Instructions) {
+        if (ReferenceEquals(instr, block.Terminator)) {
+          if (!this.SelectTerminator(block.Terminator, folded, mblock))
+            return null;
+          break;
+        }
+        if (ReferenceEquals(instr, folded))
+          continue;                 // the compare is folded into the conditional branch below
         if (!this.SelectInstruction(instr, mblock))
           return null;
+      }
     }
 
     this._function.VirtualRegisterCount = this._nextVreg;
     return this._function;
   }
+
+  /// <summary>The compare that feeds a block's conditional-branch terminator and nothing else (so it folds into the branch), or null.</summary>
+  private static IrCmp? FoldedCompare(IrBasicBlock block)
+    => block.Terminator is IrCondBr { Condition: IrCmp { Users.Count: 1 } cmp } ? cmp : null;
+
+  private bool SelectTerminator(IrInstruction? terminator, IrCmp? folded, MBlock block) {
+    switch (terminator) {
+      case IrRet ret:
+        return this.SelectRet(ret, block);
+      case IrBr br:
+        block.Instructions.Add(new MInstr(MOpcode.Jmp, [new MOperand.LabelRef(br.Target.Label)], MInstrEffect.None));
+        block.Successors.Add(br.Target.Label);
+        return true;
+      case IrCondBr cond when folded is { } cmp && MapPredicate(cmp.Pred) is { } cc:
+        var lhs = this.Operand(cmp.Lhs);
+        if (lhs is not MOperand.Register)
+          return false;            // CMP needs a register/memory left operand, not an immediate
+        var rhs = this.Operand(cmp.Rhs);
+        block.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
+          new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: false, WritesFlags: true,
+            ReadsMemory: lhs is MOperand.Memory || rhs is MOperand.Memory, WritesMemory: false)));
+        block.Instructions.Add(new MInstr(MOpcode.Jcc, [new MOperand.LabelRef(cond.IfTrue.Label)],
+          new MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, WritesMemory: false), cc));
+        block.Instructions.Add(new MInstr(MOpcode.Jmp, [new MOperand.LabelRef(cond.IfFalse.Label)], MInstrEffect.None));
+        block.Successors.Add(cond.IfTrue.Label);
+        block.Successors.Add(cond.IfFalse.Label);
+        return true;
+      default:
+        return false;              // a non-compare condition, a switch, etc. - not in this increment
+    }
+  }
+
+  /// <summary>The read-operand indices for a two-operand CMP: operand 0 (the left) and operand 1 when it is a register.</summary>
+  private static int[] RegReadIndices(MOperand left, MOperand right)
+    => right is MOperand.Register ? [0, 1] : left is MOperand.Register ? [0] : [];
+
+  private static Condition? MapPredicate(IrCmpPred pred) => pred switch {
+    IrCmpPred.Eq => Condition.Equal,
+    IrCmpPred.Ne => Condition.NotEqual,
+    IrCmpPred.Slt => Condition.Less,
+    IrCmpPred.Sle => Condition.LessOrEqual,
+    IrCmpPred.Sgt => Condition.Greater,
+    IrCmpPred.Sge => Condition.GreaterOrEqual,
+    IrCmpPred.Ult => Condition.Below,
+    IrCmpPred.Ule => Condition.BelowOrEqual,
+    IrCmpPred.Ugt => Condition.Above,
+    IrCmpPred.Uge => Condition.AboveOrEqual,
+    _ => null,                     // float predicates: not in this increment
+  };
 
   private bool SelectInstruction(IrInstruction instr, MBlock block) {
     switch (instr) {
