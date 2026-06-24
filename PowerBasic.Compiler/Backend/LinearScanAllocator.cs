@@ -13,12 +13,16 @@ namespace PowerBasic.Compiler.Backend;
 /// </summary>
 public sealed class LinearScanAllocator {
 
-  /// <summary>The allocatable physical registers, preferred in this order (BP/SP are reserved for the frame).</summary>
-  private static readonly Reg[] _pool = [Reg.AX, Reg.BX, Reg.CX, Reg.DX, Reg.SI, Reg.DI];
+  // Data values take AX/CX/DX first so the scarce addressing registers stay free; an address value (one
+  // used as a memory base/index) must come from BX/SI/DI - in 16-bit mode AX/CX/DX/BP/SP cannot index
+  // memory (BP is reserved for the frame). BP/SP are never allocated.
+  private static readonly Reg[] _pool = [Reg.AX, Reg.CX, Reg.DX, Reg.BX, Reg.SI, Reg.DI];
+  private static readonly Reg[] _addressing = [Reg.BX, Reg.SI, Reg.DI];
 
   /// <summary>Assigns each virtual register a physical register, or returns null when the live set exceeds the register file (a spill is required).</summary>
   public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function) {
     var intervals = LivenessAnalysis.Compute(function);
+    var addressVregs = AddressRegisters(function);   // vregs that ever form a memory address -> need BX/SI/DI
     var assignment = new Dictionary<int, Reg>();
     var free = new List<Reg>(_pool);                 // registers currently available, preferred order preserved
     var active = new List<LivenessAnalysis.LiveInterval>();  // live intervals holding a register, kept sorted by End
@@ -31,17 +35,35 @@ public sealed class LinearScanAllocator {
           active.RemoveAt(a);
         }
 
-      if (free.Count == 0)
-        return null;                                 // register pressure exceeds the file - spill needed
+      // an address value needs an addressing-capable register; a data value takes any free one
+      var slot = addressVregs.Contains(interval.VirtualId)
+        ? free.FindIndex(r => System.Array.IndexOf(_addressing, r) >= 0)
+        : (free.Count > 0 ? 0 : -1);
+      if (slot < 0)
+        return null;                                 // no suitable register free - spill needed
 
-      var reg = free[0];
-      free.RemoveAt(0);
+      var reg = free[slot];
+      free.RemoveAt(slot);
       assignment[interval.VirtualId] = reg;
       active.Add(interval);
       active.Sort((x, y) => x.End.CompareTo(y.End));
     }
 
     return assignment;
+  }
+
+  /// <summary>The virtual registers that appear as a memory operand's base or index (so they must be addressing-capable).</summary>
+  private static HashSet<int> AddressRegisters(MFunction function) {
+    var address = new HashSet<int>();
+    foreach (var instr in function.AllInstructions)
+      foreach (var operand in instr.Operands)
+        if (operand is MOperand.Memory mem) {
+          if (mem.Base is { IsVirtual: true } b)
+            address.Add(b.VirtualId);
+          if (mem.Index is { IsVirtual: true } x)
+            address.Add(x.VirtualId);
+        }
+    return address;
   }
 
   // keep the freed register in the pool's preferred order so allocation is deterministic
