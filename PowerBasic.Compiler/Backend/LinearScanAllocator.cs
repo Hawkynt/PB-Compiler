@@ -23,6 +23,7 @@ public sealed class LinearScanAllocator {
   public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function) {
     var intervals = LivenessAnalysis.Compute(function);
     var addressVregs = AddressRegisters(function);   // vregs that ever form a memory address -> need BX/SI/DI
+    var clobbersAt = ClobbersByIndex(function);       // global instruction index -> registers a CALL there destroys
     var assignment = new Dictionary<int, Reg>();
     var free = new List<Reg>(_pool);                 // registers currently available, preferred order preserved
     var active = new List<LivenessAnalysis.LiveInterval>();  // live intervals holding a register, kept sorted by End
@@ -35,10 +36,11 @@ public sealed class LinearScanAllocator {
           active.RemoveAt(a);
         }
 
-      // an address value needs an addressing-capable register; a data value takes any free one
-      var slot = addressVregs.Contains(interval.VirtualId)
-        ? free.FindIndex(r => System.Array.IndexOf(_addressing, r) >= 0)
-        : (free.Count > 0 ? 0 : -1);
+      // registers destroyed by a CALL anywhere this value is live cannot hold it
+      var unsafeRegs = ClobberedOver(clobbersAt, interval.Start, interval.End);
+      var addressing = addressVregs.Contains(interval.VirtualId);
+      var slot = free.FindIndex(r =>
+        (!addressing || System.Array.IndexOf(_addressing, r) >= 0) && !unsafeRegs.Contains(r));
       if (slot < 0)
         return null;                                 // no suitable register free - spill needed
 
@@ -50,6 +52,28 @@ public sealed class LinearScanAllocator {
     }
 
     return assignment;
+  }
+
+  /// <summary>The set of physical registers any CALL destroys while a value spanning [start, end] is live.</summary>
+  private static HashSet<Reg> ClobberedOver(IReadOnlyDictionary<int, IReadOnlyList<Reg>> clobbersAt, int start, int end) {
+    var clobbered = new HashSet<Reg>();
+    for (var i = start; i <= end; ++i)
+      if (clobbersAt.TryGetValue(i, out var regs))
+        clobbered.UnionWith(regs);
+    return clobbered;
+  }
+
+  /// <summary>Maps each global instruction index (same numbering as the liveness pass) to the registers it clobbers.</summary>
+  private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> ClobbersByIndex(MFunction function) {
+    var map = new Dictionary<int, IReadOnlyList<Reg>>();
+    var index = 0;
+    foreach (var block in function.Blocks)
+      foreach (var instr in block.Instructions) {
+        if (instr.Clobbers.Count > 0)
+          map[index] = instr.Clobbers;
+        ++index;
+      }
+    return map;
   }
 
   /// <summary>The virtual registers that appear as a memory operand's base or index (so they must be addressing-capable).</summary>

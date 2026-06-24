@@ -38,6 +38,27 @@ public sealed class LinearScanAllocatorTests {
   }
 
   [Test]
+  public void Allocate_GivenValueLiveAcrossClobberingCall_ThenAvoidsCallerSavedRegisters() {
+    // v0 = 5 ; CALL (clobbers AX/CX/DX) ; store v0  -- v0 is live across the call, so it must land in
+    // a callee-saved register (BX/SI/DI), never one the call destroys
+    var fn = new MFunction("t");
+    var block = new MBlock("entry");
+    block.Instructions.Add(new MInstr(MOpcode.Mov, [new MOperand.Register(MReg.Virtual(0)), new MOperand.Immediate(5)],
+      new MInstrEffect([0], [], false, false, false, false)));
+    block.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef("rt")], MInstrEffect.None,
+      clobbers: [Reg.AX, Reg.CX, Reg.DX]));
+    block.Instructions.Add(new MInstr(MOpcode.Mov,
+      [new MOperand.Memory(MReg.Physical_(Reg.BP), null, 1, 4, MRegSize.Word), new MOperand.Register(MReg.Virtual(0))],
+      new MInstrEffect([], [1], false, false, false, true)));
+    fn.Blocks.Add(block);
+
+    var alloc = LinearScanAllocator.Allocate(fn);
+
+    Assert.That(alloc, Is.Not.Null);
+    Assert.That(alloc![0], Is.AnyOf(Reg.BX, Reg.SI, Reg.DI), "a value live across a call avoids the caller-saved registers");
+  }
+
+  [Test]
   public void Allocate_GivenDisjointIntervals_ThenRegisterIsReused() {
     // two independent straight-line writes whose values never overlap can share one register
     var fn = new IrFunction("G", IrType.I16);

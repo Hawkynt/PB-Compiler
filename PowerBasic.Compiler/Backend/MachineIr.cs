@@ -47,13 +47,17 @@ public abstract record MOperand {
 /// <see cref="MOperand.LabelRef"/> operands; the descriptor names which register operands it reads and
 /// writes plus whether it touches flags and memory.
 /// </summary>
-public sealed class MInstr(MOpcode opcode, IReadOnlyList<MOperand> operands, MInstrEffect effect, Condition? condition = null) {
+public sealed class MInstr(MOpcode opcode, IReadOnlyList<MOperand> operands, MInstrEffect effect,
+    Condition? condition = null, IReadOnlyList<Reg>? clobbers = null) {
   public MOpcode Opcode { get; } = opcode;
   public IReadOnlyList<MOperand> Operands { get; } = operands;
   public MInstrEffect Effect { get; } = effect;
 
   /// <summary>The branch condition for a <see cref="MOpcode.Jcc"/> (null for every other opcode).</summary>
   public Condition? Condition { get; } = condition;
+
+  /// <summary>Physical registers this instruction destroys (a CALL's caller-saved set); a value live across it must avoid them.</summary>
+  public IReadOnlyList<Reg> Clobbers { get; } = clobbers ?? [];
 
   public bool IsTerminator => this.Opcode is MOpcode.Jmp or MOpcode.Jcc or MOpcode.Ret;
 
