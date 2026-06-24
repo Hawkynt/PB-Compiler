@@ -94,6 +94,29 @@ public sealed class MachineEmitterTests {
     Assert.That(IndexOf(bytes, [0x0F, 0x8C]), Is.GreaterThanOrEqualTo(0), "a JL conditional jump is present");
   }
 
+  [Test]
+  public void EmitFunction_GivenLeafFunction_ThenWrapsBodyInTheStandardStackAbi() {
+    // F(a, b) = a + b : the full function with prologue, argument loads and a RET that cleans 4 bytes
+    var a = new IrArgument(IrType.I16, 0);
+    var b = new IrArgument(IrType.I16, 1);
+    var fn = new IrFunction("F", IrType.I16, [a, b]);
+    var entry = fn.CreateBlock("entry");
+    entry.Append(new IrRet(entry.Append(new IrBinary(IrBinaryOp.Add, a, b))));
+
+    var m = InstructionSelector.TrySelect(fn);
+    Assert.That(m, Is.Not.Null);
+    var alloc = LinearScanAllocator.Allocate(m!);
+    Assert.That(alloc, Is.Not.Null);
+
+    var asm = new Assembler();
+    // the two BYVAL word parameters sit at [BP+4] and [BP+6]; the function cleans 4 bytes on return
+    MachineEmitter.EmitFunction(asm, m!, alloc!, [4, 6], 4);
+    var bytes = asm.ToArray();
+
+    Assert.That(bytes[0], Is.EqualTo((byte)0x55), "PUSH BP opens the frame");
+    Assert.That(IndexOf(bytes, [0xC2, 0x04, 0x00]), Is.GreaterThanOrEqualTo(0), "RET 4 cleans the two word arguments");
+  }
+
   private static int IndexOf(byte[] haystack, byte[] needle) {
     for (var i = 0; i + needle.Length <= haystack.Length; ++i) {
       var hit = true;

@@ -43,6 +43,49 @@ public sealed class MachineEmitter {
     }
   }
 
+  /// <summary>
+  /// Emits a complete function with the standard PowerBASIC stack ABI: a <c>PUSH BP; MOV BP,SP</c>
+  /// prologue (matching the caller's frame view, so <paramref name="paramOffsets"/> - the existing
+  /// codegen's <c>[BP+disp]</c> for each parameter - are valid), the incoming arguments loaded into
+  /// their allocated registers, the body, and an epilogue that returns the result in <c>AX</c> and
+  /// cleans <paramref name="paramBytes"/> of arguments (<c>RET n</c>). The body's IrRet already moved
+  /// the result into AX, so each return site falls into the shared epilogue sequence.
+  /// </summary>
+  public static void EmitFunction(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
+      int[] paramOffsets, int paramBytes) {
+    var emitter = new MachineEmitter(asm, function, allocation);
+
+    asm.Push(Asm.Reg.BP);
+    asm.Mov(Asm.Reg.BP, Asm.Reg.SP);
+    var frame = 0;
+    foreach (var size in function.StackSlots)
+      frame += (size + 1) & ~1;                      // word-aligned space for allocas / spills
+    if (frame > 0)
+      asm.Sub(Asm.Reg.SP, (Imm)frame);
+
+    // the caller pushed the arguments; load each into the register the allocator gave its vreg
+    for (var i = 0; i < paramOffsets.Length; ++i)
+      asm.Mov(allocation[i], Asm.Mem.Word(Asm.Reg.BP, paramOffsets[i]));
+
+    foreach (var block in function.Blocks) {
+      asm.MarkLabel(emitter._labels[block.Label]);
+      foreach (var instr in block.Instructions)
+        if (instr.Opcode == MOpcode.Ret)
+          emitter.EmitEpilogue(paramBytes);          // result already in AX; tear the frame down and RET n
+        else
+          emitter.EmitInstruction(instr);
+    }
+  }
+
+  private void EmitEpilogue(int paramBytes) {
+    this._asm.Mov(Asm.Reg.SP, Asm.Reg.BP);
+    this._asm.Pop(Asm.Reg.BP);
+    if (paramBytes > 0)
+      this._asm.Ret((ushort)paramBytes);
+    else
+      this._asm.Ret();
+  }
+
   private void EmitInstruction(MInstr instr) {
     var asm = this._asm;
     var ops = instr.Operands;
