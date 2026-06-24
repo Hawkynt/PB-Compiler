@@ -31,15 +31,16 @@ public sealed class InstructionSelector {
   private MFunction? Run(IrFunction fn) {
     this._function = new MFunction(fn.Name);
 
-    // each phi gets a virtual register now; the value is materialized by copies on the incoming edges
+    // arguments take the FIRST virtual registers (so argument i is vreg i, which the emitter's ABI
+    // prologue relies on to load argument i into allocation[i]); they are function live-ins
+    foreach (var arg in fn.Parameters)
+      this._vregs[arg] = this.FreshVreg(arg.Type);
+
+    // each phi then gets a virtual register; the value is materialized by copies on the incoming edges
     // (out-of-SSA), so a use of the phi simply reads this register
     foreach (var block in fn.Blocks)
       foreach (var phi in block.Phis)
         this._vregs[phi] = this.FreshVreg(phi.Type);
-
-    // arguments are function live-ins: each gets a dedicated virtual register the ABI binds later
-    foreach (var arg in fn.Parameters)
-      this._vregs[arg] = this.FreshVreg(arg.Type);
 
     var mblocks = new Dictionary<string, MBlock>();
     foreach (var block in fn.Blocks) {
@@ -184,6 +185,12 @@ public sealed class InstructionSelector {
     var lhs = this.Operand(bin.Lhs);
     block.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, lhs], MovEffect(destOp, lhs)));
     var rhs = this.Operand(bin.Rhs);
+    // the two-operand IMUL has no immediate form - materialize an immediate multiplier in a register
+    if (opcode == MOpcode.Imul && rhs is MOperand.Immediate) {
+      var tmp = new MOperand.Register(this.FreshVreg(bin.Type));
+      block.Instructions.Add(new MInstr(MOpcode.Mov, [tmp, rhs], MovEffect(tmp, rhs)));
+      rhs = tmp;
+    }
     block.Instructions.Add(new MInstr(opcode, [destOp, rhs],
       new MInstrEffect(WrittenRegs: [0], ReadRegs: rhs is MOperand.Register ? [0, 1] : [0],
         ReadsFlags: false, WritesFlags: true, ReadsMemory: rhs is MOperand.Memory, WritesMemory: false)));

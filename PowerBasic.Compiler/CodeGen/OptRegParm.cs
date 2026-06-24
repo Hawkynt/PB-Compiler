@@ -22,7 +22,7 @@ namespace PowerBasic.Compiler.CodeGen;
 /// </summary>
 public static class OptRegParm {
 
-  public static void Apply(SemanticModel model) {
+  public static void Apply(SemanticModel model, Func<ProcedureSymbol, bool>? skip = null) {
     // a taken procedure address means an opaque indirect call may exist - bail entirely
     foreach (var (_, intrinsic) in model.IntrinsicBindings)
       if (intrinsic.Name is "CODEPTR" or "CODESEG" or "CODEPTR32")
@@ -36,7 +36,7 @@ public static class OptRegParm {
         procs.Add(p);
 
     foreach (var proc in procs)
-      if (IsEligible(proc))
+      if (IsEligible(proc) && skip?.Invoke(proc) != true)   // the x86-16 back end keeps its functions on the stack convention
         proc.CallConv = CallConvention.Watcall;   // AX,DX,BX,CX then stack overflow; reuses the WATCALL lowering
   }
 

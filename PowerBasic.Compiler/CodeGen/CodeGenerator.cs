@@ -425,6 +425,13 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// <summary>$OPTIMIZE SPEED / -OZF: favor inline code over runtime calls.</summary>
   public bool OptimizeSpeed { get; set; }
 
+  /// <summary>
+  /// Opt-in: compile eligible pure-INTEGER functions through the in-house x86-16 back end
+  /// (docs/X86-BACKEND.md) - it owns the whole function via its SSA IR (no shared cells), so it never
+  /// reads an optimizer-stale cell. Default off; enabled for verification via PBC_X_BACKEND / --x-backend.
+  /// </summary>
+  public bool UseExperimentalBackend { get; set; } = System.Environment.GetEnvironmentVariable("PBC_X_BACKEND") != null;
+
   /// <summary>Raises trappable runtime error <paramref name="code"/> when the preceding Jcc falls through.</summary>
   private void EmitRaiseWhen(Action<Label> skipJump, int code) {
     var asm = this._asm;
@@ -463,7 +470,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       // Gated on the optimizer flags, not the dialect - the optimizer is dialect-agnostic, so
       // any dialect compiled with the optimizer + SPEED gets it; it merely defaults on for pb36.
       if (this.OptimizeSpeed && !this._allowExternalCalls)
-        OptRegParm.Apply(model);
+        OptRegParm.Apply(model, this.IsBackendRouted);   // back-end functions stay on the stack convention
     }
 
     // P7: programs whose only effect is printing compile-time text lower to a
@@ -598,13 +605,17 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (this.Optimize && !this._isUnit && liveProcs != null) {
       var hasErrorHandling = ContainsErrorHandling(model.MainBody)
         || model.ProcedureList.Any(p => p.Body is { } b && ContainsErrorHandling(b));
-      var inlinedAway = OptInlining.FullyInlinedProcedures(model, p => this.AnalyzeInlinableLeaf(p) != null, this.IsFullyOwned, this.IsNearLValue, hasErrorHandling);
+      var inlinedAway = OptInlining.FullyInlinedProcedures(model, p => this.AnalyzeInlinableLeaf(p) != null && !this.IsBackendRouted(p), this.IsFullyOwned, this.IsNearLValue, hasErrorHandling);
       foreach (var proc in inlinedAway)
         liveProcs.Remove(proc);
     }
     foreach (var proc in model.ProcedureList)
-      if (!proc.IsExternal && (liveProcs is null || liveProcs.Contains(proc) || !this.IsFullyOwned(proc)))
-        this.EmitProcedure(proc);
+      if (!proc.IsExternal && (liveProcs is null || liveProcs.Contains(proc) || !this.IsFullyOwned(proc))) {
+        if (this.IsBackendRouted(proc))
+          this.EmitBackendFunction(proc);   // x86-16 back end owns this whole function (docs/X86-BACKEND.md)
+        else
+          this.EmitProcedure(proc);
+      }
 
     this.EmitFarThunks();
 
