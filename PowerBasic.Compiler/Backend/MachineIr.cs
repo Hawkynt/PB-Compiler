@@ -94,7 +94,9 @@ public sealed class MFunction(string name) {
   public string Name { get; } = name;
   public List<MBlock> Blocks { get; } = [];
   public int VirtualRegisterCount { get; set; }
-  public List<MRegSize> StackSlots { get; } = [];
+
+  /// <summary>The frame stack slots (allocas + register spills), as byte sizes; frame offsets are assigned at emission.</summary>
+  public List<int> StackSlots { get; } = [];
 
   public IEnumerable<MInstr> AllInstructions {
     get {
