@@ -108,8 +108,8 @@ public sealed class InstructionSelectorTests {
   }
 
   [Test]
-  public void TrySelect_GivenPhiNode_ThenDeclines() {
-    // a merge with a phi is a later increment -> decline (fall back to direct codegen)
+  public void TrySelect_GivenPhiNode_ThenLowersToEdgeCopy() {
+    // entry -> join ; join: x = phi [arg from entry] ; ret x  -- the phi becomes a copy in entry
     var arg = new IrArgument(IrType.I16, 0);
     var fn = new IrFunction("P", IrType.I16, [arg]);
     var entry = fn.CreateBlock("entry");
@@ -120,7 +120,41 @@ public sealed class InstructionSelectorTests {
     phi.AddIncoming(arg, entry);
     join.Append(new IrRet(phi));
 
-    Assert.That(InstructionSelector.TrySelect(fn), Is.Null);
+    var m = InstructionSelector.TrySelect(fn);
+
+    Assert.That(m, Is.Not.Null);
+    // the entry block gains a MOV (the phi's incoming copy) before its JMP terminator
+    var entryOps = m!.Blocks[0].Instructions.Select(i => i.Opcode).ToArray();
+    Assert.That(entryOps, Is.EqualTo(new[] { MOpcode.Mov, MOpcode.Jmp }));
+  }
+
+  [Test]
+  public void TrySelect_GivenDiamondMergePhi_ThenCopiesOnBothEdges() {
+    // entry: if arg<0 goto neg else pos ; pos->join (phi=1) ; neg->join (phi=2) ; join: ret phi
+    var arg = new IrArgument(IrType.I16, 0);
+    var fn = new IrFunction("D", IrType.I16, [arg]);
+    var entry = fn.CreateBlock("entry");
+    var pos = fn.CreateBlock("pos");
+    var neg = fn.CreateBlock("neg");
+    var join = fn.CreateBlock("join");
+    var cmp = entry.Append(new IrCmp(IrCmpPred.Slt, arg, new IrConstantInt(IrType.I16, 0)));
+    entry.Append(new IrCondBr(cmp, neg, pos));
+    pos.Append(new IrBr(join));
+    neg.Append(new IrBr(join));
+    var phi = new IrPhi(IrType.I16);
+    join.AppendPhi(phi);
+    phi.AddIncoming(new IrConstantInt(IrType.I16, 1), pos);
+    phi.AddIncoming(new IrConstantInt(IrType.I16, 2), neg);
+    join.Append(new IrRet(phi));
+
+    var m = InstructionSelector.TrySelect(fn);
+
+    Assert.That(m, Is.Not.Null);
+    // both the pos and neg blocks get a MOV (their incoming phi copy) before their JMP to join
+    foreach (var label in new[] { "pos", "neg" }) {
+      var b = m!.Blocks.First(x => x.Label == label);
+      Assert.That(b.Instructions.Select(i => i.Opcode), Is.EqualTo(new[] { MOpcode.Mov, MOpcode.Jmp }), $"{label} copies its phi value before the jump");
+    }
   }
 
   [Test]

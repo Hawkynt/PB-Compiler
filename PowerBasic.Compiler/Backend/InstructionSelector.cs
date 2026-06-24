@@ -31,20 +31,25 @@ public sealed class InstructionSelector {
   private MFunction? Run(IrFunction fn) {
     this._function = new MFunction(fn.Name);
 
-    // phi nodes (out-of-SSA copies) are a later increment - decline any function that has them
+    // each phi gets a virtual register now; the value is materialized by copies on the incoming edges
+    // (out-of-SSA), so a use of the phi simply reads this register
     foreach (var block in fn.Blocks)
-      if (block.Phis.Any())
-        return null;
+      foreach (var phi in block.Phis)
+        this._vregs[phi] = this.FreshVreg(phi.Type);
 
     // arguments are function live-ins: each gets a dedicated virtual register the ABI binds later
     foreach (var arg in fn.Parameters)
       this._vregs[arg] = this.FreshVreg(arg.Type);
 
+    var mblocks = new Dictionary<string, MBlock>();
     foreach (var block in fn.Blocks) {
       var mblock = new MBlock(block.Label);
+      mblocks[block.Label] = mblock;
       this._function.Blocks.Add(mblock);
       var folded = FoldedCompare(block);
       foreach (var instr in block.Instructions) {
+        if (instr is IrPhi)
+          continue;                 // phis emit no instruction - their edge copies are inserted below
         if (ReferenceEquals(instr, block.Terminator)) {
           if (!this.SelectTerminator(block.Terminator, folded, mblock))
             return null;
@@ -57,8 +62,47 @@ public sealed class InstructionSelector {
       }
     }
 
+    if (!this.InsertPhiCopies(fn, mblocks))
+      return null;
+
     this._function.VirtualRegisterCount = this._nextVreg;
     return this._function;
+  }
+
+  /// <summary>
+  /// Out-of-SSA: for every phi, copy each incoming value into the phi's register at the end of the
+  /// corresponding predecessor block (before its terminator). Conservatively declines when the copies
+  /// on one edge form a cycle (a copy reads a register another copy on the same edge overwrites) - the
+  /// swap would need a temporary, a later refinement.
+  /// </summary>
+  private bool InsertPhiCopies(IrFunction fn, Dictionary<string, MBlock> mblocks) {
+    foreach (var predBlock in fn.Blocks) {
+      var copies = new List<(MReg Dest, MOperand Source)>();
+      foreach (var block in fn.Blocks)
+        foreach (var phi in block.Phis)
+          if (phi.IncomingFrom(predBlock) is { } value)
+            copies.Add((this._vregs[phi], this.Operand(value)));
+      if (copies.Count == 0)
+        continue;
+
+      // a cycle on this edge (one copy's source is another copy's destination) needs a temporary - decline
+      var destinations = copies.Select(c => c.Dest).ToHashSet();
+      if (copies.Any(c => c.Source is MOperand.Register r && destinations.Contains(r.Reg) && !r.Reg.Equals(c.Dest)))
+        return false;
+
+      var mblock = mblocks[predBlock.Label];
+      var insertAt = mblock.Instructions.FindIndex(i => i.IsTerminator);
+      if (insertAt < 0)
+        insertAt = mblock.Instructions.Count;
+      foreach (var (dest, source) in copies) {
+        var copy = new MInstr(MOpcode.Mov, [new MOperand.Register(dest), source],
+          new MInstrEffect(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [1] : [],
+            ReadsFlags: false, WritesFlags: false, ReadsMemory: source is MOperand.Memory, WritesMemory: false));
+        mblock.Instructions.Insert(insertAt++, copy);
+      }
+    }
+
+    return true;
   }
 
   /// <summary>The compare that feeds a block's conditional-branch terminator and nothing else (so it folds into the branch), or null.</summary>
