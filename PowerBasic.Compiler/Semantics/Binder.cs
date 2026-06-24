@@ -1327,6 +1327,8 @@ public sealed class Binder {
       ScalarKind.Single => BuiltinType.Single,
       ScalarKind.Double => BuiltinType.Double,
       ScalarKind.Ext => BuiltinType.Ext,
+      ScalarKind.SByte => BuiltinType.SByte,
+      ScalarKind.QWord => BuiltinType.QWord,
       _ => BuiltinType.Integer,
     }),
     StringType => new TypeName(pos, BuiltinType.String),
@@ -1511,6 +1513,8 @@ public sealed class Binder {
     BuiltinType.UInt128 => new WideIntType(16, Signed: false),
     BuiltinType.UInt256 => new WideIntType(32, Signed: false),
     BuiltinType.UInt512 => new WideIntType(64, Signed: false),
+    BuiltinType.SByte => PbType.SByte,
+    BuiltinType.QWord => PbType.QWord,
     _ => null,
   };
 
@@ -3527,6 +3531,10 @@ public sealed class Binder {
       return sa.Size >= sb.Size ? sa : sb;
     var unsigned = sa.Signed ? sb : sa;
     var signed = sa.Signed ? sa : sb;
+    // QWORD (8-byte unsigned) has no signed type holding its full range, so it dominates any
+    // same-or-narrower signed operand, keeping 64-bit (unsigned) arithmetic
+    if (unsigned.Size >= 8)
+      return unsigned;
     // DWORD has no 32-bit signed type that holds its full range, so it dominates a
     // same-or-narrower signed operand (genuine PBC keeps the result DWORD:
     // 4000000000 + 5 = 4000000005, d??? > 100 compares unsigned) - BYTE/WORD instead

@@ -1,7 +1,7 @@
 namespace PowerBasic.Compiler.Semantics;
 
-/// <summary>Discriminates the PB 3.5 scalar kinds.</summary>
-public enum ScalarKind { Byte, Word, Dword, Integer, Long, Quad, Single, Double, Ext }
+/// <summary>Discriminates the scalar kinds (the PB 3.5 set plus the pb36 SByte / QWord additions).</summary>
+public enum ScalarKind { Byte, Word, Dword, Integer, Long, Quad, Single, Double, Ext, SByte, QWord }
 
 /// <summary>
 /// A resolved PowerBASIC type. Sizes are the on-target (16-bit real mode) byte
@@ -17,6 +17,9 @@ public abstract record PbType {
   public static readonly ScalarType Integer = new(ScalarKind.Integer, 2, true, false);
   public static readonly ScalarType Long = new(ScalarKind.Long, 4, true, false);
   public static readonly ScalarType Quad = new(ScalarKind.Quad, 8, true, false);
+  // pb36 additions: a signed 8-bit (SByte/INT8) and an unsigned 64-bit (QWord/UINT64) scalar
+  public static readonly ScalarType SByte = new(ScalarKind.SByte, 1, true, false);
+  public static readonly ScalarType QWord = new(ScalarKind.QWord, 8, false, false);
   public static readonly ScalarType Single = new(ScalarKind.Single, 4, true, true);
   public static readonly ScalarType Double = new(ScalarKind.Double, 8, true, true);
   public static readonly ScalarType Ext = new(ScalarKind.Ext, 10, true, true);

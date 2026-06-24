@@ -34,6 +34,7 @@ public sealed partial class CodeGenerator {
   /// the runtime ALU would have produced (QUIRKS: PB wraps without $ERROR NUMERIC).
   /// </summary>
   public static long WrapToType(long value, ScalarType type) => type switch {
+    { ByteSize: 1, Signed: true } => (sbyte)value,
     { ByteSize: 1 } => (byte)value,
     { ByteSize: 2, Signed: true } => (short)value,
     { ByteSize: 2 } => (ushort)value,

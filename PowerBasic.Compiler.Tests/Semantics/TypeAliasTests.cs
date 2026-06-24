@@ -49,6 +49,22 @@ public sealed class TypeAliasTests {
     });
   }
 
+  [TestCase("INT8", 1, true)]
+  [TestCase("SBYTE", 1, true)]
+  [TestCase("UINT64", 8, false)]
+  [TestCase("QWORD", 8, false)]
+  public void Bind_GivenNewScalarType_ThenResolvesToScalarWithSizeAndSign(string alias, int bytes, bool signed) {
+    // SBYTE/INT8 (signed 8-bit) and QWORD/UINT64 (unsigned 64-bit) are genuinely new scalars
+    var type = BindVarType(alias);
+    Assert.That(type, Is.InstanceOf<ScalarType>());
+    var s = (ScalarType)type;
+    Assert.Multiple(() => {
+      Assert.That(s.ByteSize, Is.EqualTo(bytes));
+      Assert.That(s.Signed, Is.EqualTo(signed));
+      Assert.That(s.IsFloat, Is.False);
+    });
+  }
+
   [Test]
   public void Bind_GivenAliasBelowPb36_ThenRejected() {
     Assert.Throws<ParserException>(() =>

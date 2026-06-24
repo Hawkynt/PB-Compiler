@@ -180,7 +180,7 @@ public sealed partial class Parser {
 
   /// <summary>The pb36 natural type-name aliases (alternative spellings of existing types); they require <see cref="LanguageFeature.TypeAliases"/>.</summary>
   private static readonly HashSet<string> _typeAliasSpellings = new(StringComparer.OrdinalIgnoreCase) {
-    "INT16", "SHORT", "INT32", "INT64", "UINT8", "UINT16", "UINT32",
+    "INT8", "SBYTE", "INT16", "SHORT", "INT32", "INT64", "UINT8", "UINT16", "UINT32", "UINT64", "QWORD",
     "DQUAD", "QQUAD", "OQUAD", "DQWORD", "QQWORD", "OWORD",
   };
 
@@ -253,12 +253,14 @@ public sealed partial class Parser {
       // pb36 natural type-name aliases (gated below): explicit-width and friendly spellings of the
       // existing types. INTEGER stays 16-bit and LONG 32-bit (classic), so SHORT/INT16 = INTEGER and
       // INT32 = LONG. The wide tiers mirror QUAD/QWORD: D(ouble)/Q(uad)/O(cta) prefixes for 128/256/512.
+      "INT8" or "SBYTE" => BuiltinType.SByte,
       "INT16" or "SHORT" => BuiltinType.Integer,
       "INT32" => BuiltinType.Long,
       "INT64" => BuiltinType.Quad,
       "UINT8" => BuiltinType.Byte,
       "UINT16" => BuiltinType.Word,
       "UINT32" => BuiltinType.Dword,
+      "UINT64" or "QWORD" => BuiltinType.QWord,
       "DQUAD" => BuiltinType.Int128,
       "QQUAD" => BuiltinType.Int256,
       "OQUAD" => BuiltinType.Int512,

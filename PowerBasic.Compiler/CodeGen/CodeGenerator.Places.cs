@@ -186,9 +186,12 @@ public sealed partial class CodeGenerator {
   private void EmitLoadPlace(Place place, PbType type, Expression at) {
     var asm = this._asm;
     switch (type) {
-      case ScalarType { ByteSize: 1 }:
+      case ScalarType { ByteSize: 1 } b1:
         asm.Mov(Reg.AL, Adjust(place.Cell, 0, OperandSize.Byte));
-        asm.Xor(Reg.AH, Reg.AH);
+        if (b1.Signed)
+          asm.Cbw();               // SByte: sign-extend AL -> AX
+        else
+          asm.Xor(Reg.AH, Reg.AH);  // BYTE: zero-extend AL -> AX
         break;
 
       case ScalarType { IsFloat: false, ByteSize: 2 }:

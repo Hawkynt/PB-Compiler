@@ -11,7 +11,9 @@ public sealed record CompilationUnit(string FileName, IReadOnlyList<Statement> S
 /// <summary>Built-in scalar type names usable in an <c>AS</c> clause.</summary>
 public enum BuiltinType { None, Byte, Word, Dword, Integer, Long, Quad, Single, Double, Ext, Fix, Bcd, String, FixedString, Asciiz, Flex, Any,
   // pb36 wide integers (emulated multi-word): signed INT128/256/512 and unsigned UINT128/256/512
-  Int128, Int256, Int512, UInt128, UInt256, UInt512 }
+  Int128, Int256, Int512, UInt128, UInt256, UInt512,
+  // pb36 additions: a signed 8-bit (SByte/INT8) and an unsigned 64-bit (QWord/UINT64) scalar
+  SByte, QWord }
 
 /// <summary>
 /// An <c>AS</c>-clause type: builtin, fixed string (<c>STRING * n</c>), ASCIIZ
