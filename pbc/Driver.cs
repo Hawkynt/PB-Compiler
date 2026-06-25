@@ -75,7 +75,7 @@ public static class Driver {
         case "--no-optimize":
           optimize = false; // the pb35-faithful escape hatch, even for pb36
           break;
-        case "--dump-tokens" or "--dump-ast" or "--dump-bind" or "--emit-llvm" or "--emit-obj":
+        case "--dump-tokens" or "--dump-ast" or "--dump-bind" or "--emit-llvm" or "--emit-obj" or "--emit-basic":
           dumpStage = args[i];
           break;
         case "--list":
@@ -129,6 +129,23 @@ public static class Driver {
       }
       if (dumpStage == "--dump-bind") {
         stdout.WriteLine($"{model.Procedures.Count} procedures, {model.ModuleVariables.Count} module variables, {model.Equates.Count} equates");
+        return 0;
+      }
+
+      if (dumpStage == "--emit-basic") {
+        // back-emitter: un-parse the bound (post-weaving) tree to readable PowerBASIC, so the
+        // result of the front end and the AST-level optimizer is visible as source. When the
+        // optimizer is in effect (its dialect default, unless --no-optimize), run the statement
+        // pruner first so dead-code elimination shows in the output.
+        if (optimize ?? (dialect == Dialect.Pb36))
+          CodeGen.OptPruner.Prune(model);
+        var basic = Emit.BasicWriter.Render(model);
+        if (output != null) {
+          File.WriteAllText(output, basic);
+          stdout.WriteLine($"{Path.GetFileName(output)}: {basic.Length} bytes of PowerBASIC");
+        } else {
+          stdout.Write(basic);
+        }
         return 0;
       }
 
@@ -397,6 +414,7 @@ public static class Driver {
     w.WriteLine("  --dump-ast     stop after parsing");
     w.WriteLine("  --dump-bind    stop after semantic analysis");
     w.WriteLine("  --emit-obj     compile to a linkable OMF .OBJ object instead of an EXE");
+    w.WriteLine("  --emit-basic   un-parse the bound (optimized) tree back to readable PowerBASIC");
     w.WriteLine("  --list         write a human-readable .LST map of the compiled image");
     w.WriteLine("  -h, --help     show this help");
   }
