@@ -1029,6 +1029,16 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenDataNeverRead_WhenPb36_ThenDataBytesOmitted() {
+    // DATA bytes nobody READs are dead - the pool labels stay (the runtime references rt_dataptr) but
+    // the bytes are omitted, so the same program with a live READ (which keeps the bytes) is larger.
+    const string withRead = "DIM q%\nREAD q%\nDATA 1111, 2222, 3333, 4444, 5555, 6666, 7777, 8888\nPRINT q%\nEND";
+    const string noRead = "DATA 1111, 2222, 3333, 4444, 5555, 6666, 7777, 8888\nPRINT \"hi\"\nEND";
+    Assert.That(Compile(noRead, Dialect.Pb36).Length, Is.LessThan(Compile(withRead, Dialect.Pb36).Length),
+      "DATA that is never read should not emit its bytes");
+  }
+
+  [Test]
   public void Emit_GivenModularMultiplyByVariable_WhenPb36Speed_ThenReadsMemoryOperandNoImulBx() {
     // x% * z% (variable * variable): the right operand is a direct cell, so the modular path reads it
     // straight into the one-operand IMUL [mem] (DX:AX = AX*[mem]) instead of staging it through BX
