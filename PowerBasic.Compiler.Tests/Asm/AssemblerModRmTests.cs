@@ -12,6 +12,15 @@ public sealed class AssemblerModRmTests {
     return asm.ToArray();
   }
 
+  [Test]
+  public void Mov_GivenAccumulatorToDirectAddress_ThenUsesShortForm() {
+    // MOV [addr], AX/AL -> A3/A2 moffs (one byte shorter than the 89/88 mod=00 rm=110 form)
+    Assert.That(Assemble(a => a.Mov(Mem.At(0x1234), Reg.AX)), Is.EqualTo(new byte[] { 0xA3, 0x34, 0x12 }));
+    Assert.That(Assemble(a => a.Mov(Mem.At(0x1234), Reg.AL)), Is.EqualTo(new byte[] { 0xA2, 0x34, 0x12 }));
+    // a non-accumulator register (or a based/indexed address) keeps the modrm direct form
+    Assert.That(Assemble(a => a.Mov(Mem.At(0x1234), Reg.BX)), Is.EqualTo(new byte[] { 0x89, 0x1E, 0x34, 0x12 }));
+  }
+
   private static IEnumerable<TestCaseData> AddressingModeCases() {
     // mod=00 register forms
     yield return new(Mem.At(Reg.BX, Reg.SI), new byte[] { 0x8B, 0x00 }) { TestName = "BxSi" };

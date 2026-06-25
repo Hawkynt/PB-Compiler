@@ -68,6 +68,15 @@ public sealed partial class Assembler {
 
     RequireMatchingSize(source, destination);
     this.EmitOperandSizePrefixIf(source.IsDword());
+    // accumulator short form: MOV [addr], AL/AX/EAX -> A2/A3 moffs (one byte shorter than 88/89 mod=00
+    // rm=110). Stores are not peephole-recorded, so this is unconditionally safe; the scheduler permutes
+    // whole instruction blocks, so the shorter encoding rides along unchanged.
+    if (source.Index() == 0 && destination is { Base: null, Index: null }) {
+      this.EmitByte(source.IsByte() ? (byte)0xA2 : (byte)0xA3);
+      this.EmitDisp16(destination);
+      this.RecordSchedMem(start, RegBit(source), 0, false, false, memRead: false, memWrite: true, destination);
+      return;
+    }
     this.EmitByte(source.IsByte() ? (byte)0x88 : (byte)0x89);
     this.EmitModRmMemory(source.Index(), destination);
     this.RecordSchedMem(start, RegBit(source), 0, false, false, memRead: false, memWrite: true, destination);
