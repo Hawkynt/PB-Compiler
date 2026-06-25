@@ -1029,6 +1029,16 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenModularMultiplyByVariable_WhenPb36Speed_ThenReadsMemoryOperandNoImulBx() {
+    // x% * z% (variable * variable): the right operand is a direct cell, so the modular path reads it
+    // straight into the one-operand IMUL [mem] (DX:AX = AX*[mem]) instead of staging it through BX
+    // (push left / eval right / mov bx / pop / IMUL BX) - smaller and faster, same low-16 product.
+    const string source = "$OPTIMIZE SPEED\nx% = 11\nz% = 7\nT x%\nT z%\ny% = x% * z%\nT y%\nEND" + _TOUCH_END;
+    var pb36 = Compile(_TOUCH + source, Dialect.Pb36);
+    Assert.That(CountImulBx(pb36), Is.Zero, "a variable*variable multiply should IMUL the direct-memory right operand, not stage it through BX");
+  }
+
+  [Test]
   public void Emit_GivenModularMultiplyByThree_WhenPb36Default_ThenKeepsImul() {
     // the shift chains are a SPEED trade (a few bytes for the cycles); SIZE/default
     // keep the 2-byte IMUL

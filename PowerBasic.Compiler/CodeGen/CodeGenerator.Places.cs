@@ -1028,6 +1028,15 @@ public sealed partial class CodeGenerator {
             asm.Sub(Reg.AX, rmem);
           break;
         }
+        // pb36 O8: a direct-memory right operand of a multiply reads straight into the one-operand
+        // IMUL (DX:AX = AX * [mem]; the low word in AX is the modular int16 product) instead of being
+        // staged through BX (push left / eval right / mov bx / pop). The modular path carries no
+        // overflow check, so the low 16 bits are all that matter - identical to the staged IMUL BX.
+        if (b.Op == BinaryOp.Multiply && this.TryInt16MemOperand(b.Right, PbType.Integer) is { } mmem) {
+          this.EmitModularInt16(b.Left);
+          asm.Imul(mmem);
+          break;
+        }
         this.EmitModularInt16(b.Left);
         asm.Push(Reg.AX);
         this.EmitModularInt16(b.Right);
