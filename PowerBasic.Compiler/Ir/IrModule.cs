@@ -26,6 +26,12 @@ public sealed class IrModule(string name) {
     return global;
   }
 
+  /// <summary>Removes a function from the module (global dead-code elimination); returns whether it was present.</summary>
+  public bool RemoveFunction(IrFunction function) => this._functions.Remove(function);
+
+  /// <summary>Removes a global variable from the module (global dead-code elimination); returns whether it was present.</summary>
+  public bool RemoveGlobal(IrGlobalVariable global) => this._globals.Remove(global);
+
   /// <summary>Adds (or reuses) a private byte-array constant for a string literal; identical literals are interned to one global.</summary>
   public IrGlobalVariable AddStringConstant(byte[] bytes) {
     var key = Convert.ToBase64String(bytes);

@@ -142,6 +142,7 @@ public static class Driver {
         pipeline.RunOnModule(module);
         Inliner.Run(module);
         pipeline.RunOnModule(module);              // re-optimize the inlined bodies
+        GlobalDce.Run(module);                     // drop functions/globals left unreferenced by inlining + DCE
         var verifyErrors = IrVerifier.Verify(module);
         if (verifyErrors.Count > 0) {
           stderr.WriteLine("pbc: --emit-llvm: internal error, optimized IR failed verification:");
