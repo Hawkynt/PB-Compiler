@@ -37,6 +37,13 @@ public sealed class BasicWriter {
   }
 
   private void EmitProgram(CompilationUnit unit) {
+    // When the source dialect formats PRINTed floats differently from pb35 (the Microsoft and Turbo
+    // families - distinct E/D exponent marker, pad width, significant digits, fixed/scientific
+    // threshold; the PB family matches pb35), emit a $COMPAT directive so the pb35 recompile
+    // replicates that formatting and the output stays byte-identical.
+    if (this._model.Dialect.Family() == DialectFamily.Microsoft || this._model.Dialect.IsTurboBasic())
+      this.Line($"$COMPAT {this._model.Dialect.CanonicalName()}");
+
     // Declarations come from the surface unit (faithful), executable code from the bound model.
     var procDecls = new Dictionary<string, Statement>(StringComparer.OrdinalIgnoreCase);
     foreach (var statement in unit.Statements)

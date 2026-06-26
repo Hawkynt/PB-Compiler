@@ -236,6 +236,40 @@ public static class DialectFacts {
     return $"{prefix} {v / 10}.{v % 10}";
   }
 
+  /// <summary>The canonical lowercase token for a dialect (the <c>--dialect</c> / <c>$COMPAT</c> spelling); the inverse of <see cref="TryParse"/>.</summary>
+  public static string CanonicalName(this Dialect dialect) => dialect switch {
+    Dialect.Basica => "basica", Dialect.Gw => "gw", Dialect.Qbasic => "qbasic",
+    _ => (dialect.Family() == DialectFamily.Microsoft
+        ? dialect >= Dialect.Pds70 ? "pds" : "qb"
+        : dialect.IsTurboBasic() ? "tb" : "pb") + ((int)dialect % 100),
+  };
+
+  /// <summary>Parses a dialect token (<c>tb11</c>, <c>qb45</c>, <c>pds70</c>, <c>pb35</c>, ...); the inverse of <see cref="CanonicalName"/>.</summary>
+  public static bool TryParse(string name, out Dialect dialect) {
+    switch (name.Trim().ToLowerInvariant()) {
+      case "basica": dialect = Dialect.Basica; return true;
+      case "gw": case "gwbasic": dialect = Dialect.Gw; return true;
+      case "qbasic": dialect = Dialect.Qbasic; return true;
+      case "qb10": dialect = Dialect.Qb10; return true;
+      case "qb20": dialect = Dialect.Qb20; return true;
+      case "qb30": dialect = Dialect.Qb30; return true;
+      case "qb40": dialect = Dialect.Qb40; return true;
+      case "qb45": dialect = Dialect.Qb45; return true;
+      case "pds70": dialect = Dialect.Pds70; return true;
+      case "pds71": dialect = Dialect.Pds71; return true;
+      case "tb10": dialect = Dialect.Tb10; return true;
+      case "tb11": dialect = Dialect.Tb11; return true;
+      case "pb20": dialect = Dialect.Pb20; return true;
+      case "pb21": dialect = Dialect.Pb21; return true;
+      case "pb30": dialect = Dialect.Pb30; return true;
+      case "pb31": dialect = Dialect.Pb31; return true;
+      case "pb32": dialect = Dialect.Pb32; return true;
+      case "pb35": dialect = Dialect.Pb35; return true;
+      case "pb36": dialect = Dialect.Pb36; return true;
+      default: dialect = Dialect.Pb35; return false;
+    }
+  }
+
   /// <summary>The classic Microsoft BASIC interpreters (BASICA / GW-BASIC / QBasic): they ship no compiler, so they are oracle-verified by output diff rather than a byte-identical EXE.</summary>
   public static bool IsInterpreter(this Dialect dialect)
     => dialect is Dialect.Basica or Dialect.Gw or Dialect.Qbasic;

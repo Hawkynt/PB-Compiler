@@ -15,6 +15,14 @@ public sealed class SemanticModel {
   /// <summary>Dialect the unit was bound under; code generation gates quirk emulation on it.</summary>
   public Dialect Dialect { get; set; } = Dialect.Pb35;
 
+  /// <summary>
+  /// <c>$COMPAT &lt;dialect&gt;</c> override: the dialect whose numeric PRINT formatting the runtime
+  /// should replicate, independent of the compile <see cref="Dialect"/>. Set by the back-emitter so a
+  /// transpiled-to-pb35 program still prints floats the way its source dialect did (exponent style,
+  /// significant digits, fixed/scientific threshold). Null = format like <see cref="Dialect"/>.
+  /// </summary>
+  public Dialect? FormatDialect { get; set; }
+
   /// <summary>Folded named constants (%equates).</summary>
   public Dictionary<string, ConstantValue> Equates { get; } = new(StringComparer.OrdinalIgnoreCase);
 

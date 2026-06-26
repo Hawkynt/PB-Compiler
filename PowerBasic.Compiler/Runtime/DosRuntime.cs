@@ -36,6 +36,18 @@ public sealed partial class DosRuntime {
   /// </summary>
   public Syntax.Dialect Dialect { get; set; } = Syntax.Dialect.Pb35;
 
+  /// <summary>
+  /// <c>$COMPAT &lt;dialect&gt;</c> override: the dialect whose numeric PRINT formatting (significant
+  /// digits, exponent <c>E</c>/<c>D</c> marker, exponent pad width, fixed/scientific threshold) the
+  /// float formatter replicates, independent of <see cref="Dialect"/>. Null = format like
+  /// <see cref="Dialect"/>. Set by codegen from <c>$COMPAT</c>, which the back-emitter emits so a
+  /// transpiled-to-pb35 program still prints floats the way its source dialect did.
+  /// </summary>
+  public Syntax.Dialect? FormatDialect { get; set; }
+
+  /// <summary>The dialect that governs numeric PRINT formatting: the <c>$COMPAT</c> override when set, else the compile dialect.</summary>
+  private Syntax.Dialect PrintFormatDialect => this.FormatDialect ?? this.Dialect;
+
   /// <summary>pb36 P3 gate: virtual BSS only applies to directly written images (the $LINK path lays out its own image).</summary>
   public bool EnableBss { get; set; }
 
@@ -513,8 +525,9 @@ public sealed partial class DosRuntime {
   /// otherwise exponent notation. PB-style sign/space prefix and trailing space.
   /// </summary>
   private void EmitPrintFloat(Assembler asm) {
-    var turbo = this.Dialect.IsTurboBasic();
-    var microsoft = this.Dialect.Family() == DialectFamily.Microsoft;
+    var fmt = this.PrintFormatDialect;
+    var turbo = fmt.IsTurboBasic();
+    var microsoft = fmt.Family() == DialectFamily.Microsoft;
     this.PrintSingle = asm.MarkLabel("rt_print_f32");
     asm.Mov(Reg.BX, turbo ? 16 : 7);
     asm.Jmp(asm.Lbl("rt_print_flt"));
@@ -522,7 +535,7 @@ public sealed partial class DosRuntime {
     this.PrintDouble = asm.MarkLabel("rt_print_f64");
     // QB 4.x renders DOUBLE with 16 significant digits; BASIC PDS 7.x went
     // back to 15 (oracle-verified: PDS prints A&/3 as .333333333333333)
-    asm.Mov(Reg.BX, turbo || microsoft && this.Dialect < Dialect.Pds70 ? 16 : 15);
+    asm.Mov(Reg.BX, turbo || microsoft && fmt < Dialect.Pds70 ? 16 : 15);
 
     asm.MarkLabel("rt_print_flt");
     // The number is decomposed in C-helper style entirely on the FPU:
@@ -746,12 +759,12 @@ public sealed partial class DosRuntime {
     asm.Jmp(asm.Lbl("rt_fd_exp"));
 
     asm.MarkLabel("rt_fd_fracmaybe");
-    if (this.Dialect.IsTurboBasic()) {
+    if (this.PrintFormatDialect.IsTurboBasic()) {
       // TB shows fractions plainly only down to 0.1 (pointpos 0); below that
       // it always switches to exponent notation (0.01 prints as "1E-002")
       asm.Cmp(Reg.DX, (Imm)0);
       asm.Jl(asm.Lbl("rt_fd_exp"));
-    } else if (this.Dialect.Family() == DialectFamily.Microsoft) {
+    } else if (this.PrintFormatDialect.Family() == DialectFamily.Microsoft) {
       // QB: SINGLE expands at most six leading zeros (1E-8 prints "1E-08"),
       // DOUBLE keeps the digit-count bound (1D-8 prints ".00000001")
       asm.Cmp(Reg.BX, (Imm)7);
@@ -861,7 +874,7 @@ public sealed partial class DosRuntime {
     asm.Je(asm.Lbl("rt_fd_exptrimmed"));
     asm.Inc(Reg.SI);
     asm.MarkLabel("rt_fd_exptrimmed");
-    if (this.Dialect.Family() == DialectFamily.Microsoft) {
+    if (this.PrintFormatDialect.Family() == DialectFamily.Microsoft) {
       // QB renders SINGLE exponents with 'E' and DOUBLE ones with 'D'
       // (1E+08 vs 1D+16); BX still holds the entry's digit count
       asm.Mov(Reg.AL, 'E');
@@ -898,7 +911,7 @@ public sealed partial class DosRuntime {
     asm.Test(Reg.AX, Reg.AX);
     asm.Jnz(asm.Lbl("rt_fd_expdiv"));
     // TB zero-pads exponents to three digits ("1E+016"), QB to two ("1E+07")
-    var padWidth = this.Dialect.IsTurboBasic() ? 3 : this.Dialect.Family() == DialectFamily.Microsoft ? 2 : 0;
+    var padWidth = this.PrintFormatDialect.IsTurboBasic() ? 3 : this.PrintFormatDialect.Family() == DialectFamily.Microsoft ? 2 : 0;
     if (padWidth > 0) {
       asm.Xor(Reg.DX, Reg.DX);
       asm.MarkLabel("rt_fd_exppad");

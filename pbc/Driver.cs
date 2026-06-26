@@ -46,7 +46,7 @@ public static class Driver {
           break;
         case "--dialect" when i + 1 < args.Length: {
           var name = args[++i];
-          if (!TryParseDialect(name, out dialect)) {
+          if (!DialectFacts.TryParse(name, out dialect)) {
             stderr.WriteLine($"pbc: unknown dialect '{name}' (use tb10|tb11|pb20|..|pb36|qb10|..|qb45|pds70|pds71)");
             return 1;
           }
@@ -263,30 +263,6 @@ public static class Driver {
     }
   }
 
-  private static bool TryParseDialect(string name, out Dialect dialect) {
-    switch (name.ToLowerInvariant()) {
-      case "basica": dialect = Dialect.Basica; return true;
-      case "gw": case "gwbasic": dialect = Dialect.Gw; return true;
-      case "qbasic": dialect = Dialect.Qbasic; return true;
-      case "qb10": dialect = Dialect.Qb10; return true;
-      case "qb20": dialect = Dialect.Qb20; return true;
-      case "qb30": dialect = Dialect.Qb30; return true;
-      case "qb40": dialect = Dialect.Qb40; return true;
-      case "qb45": dialect = Dialect.Qb45; return true;
-      case "pds70": dialect = Dialect.Pds70; return true;
-      case "pds71": dialect = Dialect.Pds71; return true;
-      case "tb10": dialect = Dialect.Tb10; return true;
-      case "tb11": dialect = Dialect.Tb11; return true;
-      case "pb20": dialect = Dialect.Pb20; return true;
-      case "pb21": dialect = Dialect.Pb21; return true;
-      case "pb30": dialect = Dialect.Pb30; return true;
-      case "pb31": dialect = Dialect.Pb31; return true;
-      case "pb32": dialect = Dialect.Pb32; return true;
-      case "pb35": dialect = Dialect.Pb35; return true;
-      case "pb36": dialect = Dialect.Pb36; return true;
-      default: dialect = Dialect.Pb35; return false;
-    }
-  }
 
   /// <summary>$COMPILE UNIT selects unit emission; $COMPILE EXE (the default) is a no-op.</summary>
   private static bool IsUnitCompile(SemanticModel model)

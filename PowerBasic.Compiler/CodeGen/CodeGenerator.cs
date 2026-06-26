@@ -19,7 +19,7 @@ namespace PowerBasic.Compiler.CodeGen;
 public sealed partial class CodeGenerator(SemanticModel model) {
 
   private readonly Assembler _asm = new();
-  private readonly DosRuntime _rt = new() { Dialect = model.Dialect };
+  private readonly DosRuntime _rt = new() { Dialect = model.Dialect, FormatDialect = model.FormatDialect };
   private readonly Dictionary<VariableSymbol, Label> _variableSlots = new(ReferenceEqualityComparer.Instance);
   private readonly Dictionary<string, Label> _stringLiterals = new(StringComparer.Ordinal);
   private readonly Dictionary<ProcedureSymbol, Label> _procLabels = new(ReferenceEqualityComparer.Instance);
