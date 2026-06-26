@@ -1478,9 +1478,10 @@ public sealed partial class DosRuntime {
     asm.Jmp(radixLoop);
 
     asm.MarkLabel(radixFix);
-    if (this.Dialect <= Dialect.Pb21) {
+    if (this.EffectiveDialect <= Dialect.Pb21) {
       // TB and PB 2.x wrap radix values to 16 bits (VAL("&H10000") = 0,
-      // VAL("&HFFFF") = -1); the literal-style wider windows arrived with PB 3.x
+      // VAL("&HFFFF") = -1); the literal-style wider windows arrived with PB 3.x.
+      // EffectiveDialect honours $COMPAT so a transpiled-to-pb35 program wraps the same way.
       asm.Fld(Mem.Qword(asm.Lbl("rt_const_65536")));
       asm.Fxch();
       asm.MarkLabel("rt_val_tbwrap");

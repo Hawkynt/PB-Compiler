@@ -13,6 +13,14 @@ public sealed class Binder {
   private readonly SemanticModel _model;
   private CompilationUnit _unit;
   private readonly Dialect _dialect;
+
+  /// <summary>
+  /// The dialect that governs runtime-observable numeric SEMANTICS (integer-arithmetic width and
+  /// promotion, VAL radix wrapping): the <c>$COMPAT</c> override when set, else the compile dialect.
+  /// Distinct from <see cref="_dialect"/>, which keeps gating syntax/feature availability - a
+  /// transpiled-to-pb35 program is written in pb35 syntax but must compute like its source dialect.
+  /// </summary>
+  private Dialect EffectiveDialect => this._model.CompatDialect ?? this._dialect;
   private readonly Dictionary<char, PbType> _defaultTypes = [];
   private readonly HashSet<string> _redimmedArrays = new(StringComparer.OrdinalIgnoreCase);
 
@@ -3505,7 +3513,10 @@ public sealed class Binder {
   /// into a narrower integral. TB and the Microsoft family wrap in-place.
   /// </summary>
   private PbType ArithmeticResultType(BinaryExpr b, PbType left, PbType right) {
-    if (this._dialect.IsPbAtLeast(Dialect.Pb20)
+    // EffectiveDialect: the PB 2.0+ float-promotion of integer +/-/* (32767+1 = 32768, not a 16-bit
+    // wrap to -32768) is a runtime semantic, so a $COMPAT override makes a transpiled-to-pb35 program
+    // wrap in-place the way its source dialect (TB / Microsoft / pb20) did.
+    if (this.EffectiveDialect.IsPbAtLeast(Dialect.Pb20)
         && left is ScalarType { IsFloat: false, ByteSize: <= 4 }
         && right is ScalarType { IsFloat: false, ByteSize: <= 4 }) {
       var wide = Math.Max(EffectiveDivideWidth(b.Left, left), EffectiveDivideWidth(b.Right, right)) <= 2

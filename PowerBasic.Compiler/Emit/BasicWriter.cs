@@ -45,11 +45,11 @@ public sealed class BasicWriter {
   }
 
   private void EmitProgram(CompilationUnit unit) {
-    // When the source dialect formats PRINTed floats differently from pb35 (the Microsoft and Turbo
-    // families - distinct E/D exponent marker, pad width, significant digits, fixed/scientific
-    // threshold; the PB family matches pb35), emit a $COMPAT directive so the pb35 recompile
-    // replicates that formatting and the output stays byte-identical.
-    if (this._model.Dialect.Family() == DialectFamily.Microsoft || this._model.Dialect.IsTurboBasic())
+    // Emit a $COMPAT directive for every dialect whose runtime differs from pb35 (everything but the
+    // pb35 family itself), so the pb35 recompile replicates that dialect's PRINT float formatting,
+    // float-to-integer rounding, ^Z-on-close, 16-bit integer arithmetic and VAL radix wrapping - and
+    // the executed output stays byte-identical. pb35/pb36 are the identity target, so they emit nothing.
+    if (this._model.Dialect is not (Dialect.Pb35 or Dialect.Pb36))
       this.Line($"$COMPAT {this._model.Dialect.CanonicalName()}");
 
     // Declarations come from the surface unit (faithful), executable code from the bound model.
@@ -59,7 +59,7 @@ public sealed class BasicWriter {
         case TypeDecl t: this.WriteTypeDecl(t); break;
         case UnionDecl u: this.WriteUnionDecl(u); break;
         case EnumDecl e: this.WriteEnumDecl(e); break;
-        case EquateStmt eq: this.Line($"%{eq.Name} = {this.Expr(eq.Value)}"); break;   // %equates: folded out of MainBody, re-emit here
+        case EquateStmt eq: this.WriteEquate(eq); break;   // %equates: folded out of MainBody, re-emit here
         case DefTypeStmt dt: this.WriteDefType(dt); break;                              // DEFINT/DEFQUD/...: consumed by the binder, re-emit here (affects default typing)
         case DeclareStmt d: this.WriteDeclare(d); break;
         case SubDecl s: procDecls[s.Name] = s; break;
@@ -117,6 +117,21 @@ public sealed class BasicWriter {
     foreach (var (name, _) in e.Members)
       if (this._model.EnumMembers.TryGetValue(name, out var value))
         this.Line($"%{name} = {value}");
+  }
+
+  private void WriteEquate(EquateStmt eq) {
+    // Emit the binder's FOLDED value rather than re-parsing the expression: it is the constant the
+    // source dialect actually used, so it reproduces dialect-specific constant-folding quirks (PB 3.0
+    // folds %K = -20-4 to -16, not -24) and is exact under the pb35 recompile.
+    if (this._model.Equates.TryGetValue(eq.Name, out var value)) {
+      var text = value.Text is { } s ? "\"" + s.Replace("\"", "\"\"") + "\""
+        : value.Float is { } f ? FormatFloat(f)
+        : value.Integer is { } i ? i.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        : this.Expr(eq.Value);
+      this.Line($"%{eq.Name} = {text}");
+      return;
+    }
+    this.Line($"%{eq.Name} = {this.Expr(eq.Value)}");
   }
 
   private void WriteDeclare(DeclareStmt d) {
@@ -526,6 +541,10 @@ public sealed class BasicWriter {
   /// </summary>
   private string CoerceFloat(Expression e) {
     var text = this.Expr(e);
+    // The QB/PDS/TB families compute SINGLE-typed float expressions in single precision throughout;
+    // pb35 keeps a double/extended intermediate. CSNG forces single at the observable point so the
+    // pb35 recompile prints the same value (SQR(2) -> 1.414214, SIN(1)^2+COS(1)^2 -> 1). DOUBLE-typed
+    // values narrow via the binder's $COMPAT intrinsic typing (EffectiveDialect), not here.
     if (this._singleFloatRuntime && this.LoweredType(e) is ScalarType { Kind: ScalarKind.Single })
       return $"CSNG({text})";
     return text;
