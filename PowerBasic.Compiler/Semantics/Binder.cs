@@ -278,9 +278,10 @@ public sealed class Binder {
               this._optionSigned = m.Arguments is [_] || !m.Arguments[^1].Text.Equals("OFF", StringComparison.OrdinalIgnoreCase);
               break;
             case "COMPAT" when m.Arguments is [{ } compat, ..] && DialectFacts.TryParse(compat.Text, out var fmt):
-              // $COMPAT <dialect>: replicate that dialect's numeric PRINT formatting (emitted by the
-              // back-emitter so a transpiled-to-pb35 program prints floats like its source dialect)
-              this._model.FormatDialect = fmt;
+              // $COMPAT <dialect>: replicate that dialect's runtime quirks (numeric PRINT formatting,
+              // float-to-integer rounding) - emitted by the back-emitter so a transpiled-to-pb35
+              // program prints and rounds like its source dialect
+              this._model.CompatDialect = fmt;
               break;
           }
           this._model.MainBody.Add(m);

@@ -1545,7 +1545,9 @@ public sealed partial class CodeGenerator {
   /// following FISTP (nearest-even of an integral value) is exact.
   /// </summary>
   private void EmitDialectRounding() {
-    if (!model.Dialect.IsBascomRuntime())
+    // EffectiveDialect honours a $COMPAT override, so a transpiled-to-pb35 program rounds
+    // float-to-integer the way its source dialect did (BASCOM rounds half away from zero).
+    if (!model.EffectiveDialect.IsBascomRuntime())
       return;
     var asm = this._asm;
     var negative = asm.DefineLabel();

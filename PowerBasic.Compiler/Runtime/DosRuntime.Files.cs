@@ -592,9 +592,10 @@ public sealed partial class DosRuntime {
       asm.Mov(Reg.AX, Mem.Word(Reg.BX, files));
       asm.Test(Reg.AX, Reg.AX);
       asm.Jz(done);
-      if (this.Dialect.IsBascomRuntime()) {
+      if (this.EffectiveDialect.IsBascomRuntime()) {
         // the BASCOM lineage (QB 1.0-3.0) ends sequential OUTPUT/APPEND files
-        // with a CP/M-style ^Z marker (oracle-verified; QB 4.x dropped the habit)
+        // with a CP/M-style ^Z marker (oracle-verified; QB 4.x dropped the habit).
+        // EffectiveDialect honours $COMPAT so a transpiled-to-pb35 program writes it too.
         var noEof = asm.DefineLabel();
         var writeEof = asm.DefineLabel();
         asm.Cmp(Mem.Word(Reg.BX, asm.Lbl("rt_fmode")), (Imm)1);
