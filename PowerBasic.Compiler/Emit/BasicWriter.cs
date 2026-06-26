@@ -25,9 +25,17 @@ public sealed class BasicWriter {
 
   private readonly StringBuilder _sb = new();
   private readonly SemanticModel _model;
+  private readonly bool _singleFloatRuntime;
   private int _indent;
 
-  private BasicWriter(SemanticModel model) => this._model = model;
+  private BasicWriter(SemanticModel model) {
+    this._model = model;
+    // The QB/PDS/TB families evaluate SINGLE-typed float expressions in single precision throughout;
+    // pb35 keeps double/extended intermediates. When transpiling those dialects, narrow SINGLE-typed
+    // observable values (CSNG) so the pb35 recompile prints the same precision. The PB family matches
+    // pb35 already, so it gets no coercion (keeping pb35/pb36 round-trips exact).
+    this._singleFloatRuntime = model.Dialect.Family() == DialectFamily.Microsoft || model.Dialect.IsTurboBasic();
+  }
 
   /// <summary>Un-parses the whole program (declarations, main body, procedures) to PB 3.5 source.</summary>
   public static string Render(SemanticModel model, CompilationUnit unit) {
@@ -190,7 +198,7 @@ public sealed class BasicWriter {
       case MemberCallStmt s: this.Line($"{this.Expr(s.Receiver)}.{s.Member}({this.JoinArgs(s.Arguments)})"); break;
       case CallPtrStmt s: this.Line($"CALL DWORD {this.Expr(s.Pointer)}{(s.Convention is { } c ? " " + c : "")}({this.JoinArgs(s.Arguments)})"); break;
       case PrintStmt s: this.WritePrint(s); break;
-      case WriteStmt s: this.Line($"WRITE {FilesPrefix(s.FileNumber, this)}{this.JoinArgs(s.Items)}"); break;
+      case WriteStmt s: this.Line($"WRITE {FilesPrefix(s.FileNumber, this)}{string.Join(", ", s.Items.Select(this.CoerceFloat))}"); break;
       case InputStmt s: this.WriteInput(s); break;
       case OpenStmt s: this.WriteOpen(s); break;
       case CloseStmt s: this.Line(s.FileNumbers.Count == 0 ? "CLOSE" : $"CLOSE {string.Join(", ", s.FileNumbers.Select(this.FileRef))}"); break;
@@ -281,7 +289,7 @@ public sealed class BasicWriter {
       sb.Append("USING ").Append(this.Expr(u)).Append("; ");
     foreach (var item in s.Items) {
       if (item.Value is { } v)
-        sb.Append(this.Expr(v));
+        sb.Append(this.CoerceFloat(v));
       sb.Append(item.Separator switch { PrintSeparator.Comma => ", ", PrintSeparator.Semicolon => "; ", _ => "" });
     }
     this.Line(sb.ToString().TrimEnd());
@@ -507,6 +515,30 @@ public sealed class BasicWriter {
   }
 
   private static string Paren(int parentPrec, int prec, string text) => prec < parentPrec ? $"({text})" : text;
+
+  /// <summary>
+  /// Narrows a SINGLE-typed expression to single precision (CSNG) when the source dialect computes
+  /// floats in single throughout (the QB/PDS/TB families) but pb35 would keep a double/extended
+  /// intermediate. This reproduces, at the observable point (PRINT/WRITE), the source dialect's
+  /// single-precision result - the math intrinsics' SINGLE return type and single-precision arithmetic
+  /// (e.g. <c>SIN(1)^2+COS(1)^2</c> = 1 in QB, .9999999999999999 as a pb35 double). The PB family
+  /// keeps pb35's exact behavior (no coercion), so pb35/pb36 round-trips are untouched.
+  /// </summary>
+  private string CoerceFloat(Expression e) {
+    var text = this.Expr(e);
+    if (this._singleFloatRuntime && this.LoweredType(e) is ScalarType { Kind: ScalarKind.Single })
+      return $"CSNG({text})";
+    return text;
+  }
+
+  /// <summary>Bound type of an expression, following the binder's desugar/rewrite substitution the writer also emits.</summary>
+  private PbType LoweredType(Expression e) {
+    if (this._model.Desugared.TryGetValue(e, out var d))
+      return this.LoweredType(d);
+    if (this._model.RewrittenIndex.TryGetValue(e, out var r))
+      return this.LoweredType(r);
+    return this._model.TypeOf(e);
+  }
 
   /// <summary>Call arguments, reordered to positional form when the binder recorded named-argument reordering.</summary>
   private IReadOnlyList<Expression> CallArguments(object callSite, IReadOnlyList<Expression> original)
