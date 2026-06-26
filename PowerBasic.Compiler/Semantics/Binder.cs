@@ -3792,8 +3792,11 @@ public sealed class Binder {
 
   private PbType ReturnTypeOf(IntrinsicInfo intrinsic, PbType? firstArg) => intrinsic.Returns switch {
     // QB math functions return their argument's precision: SQR(2) prints the
-    // SINGLE "1.414214", LOG(e#) the DOUBLE-rounded " 1 " (oracle-verified)
-    IntrinsicReturn.Ext when this._dialect.Family() == DialectFamily.Microsoft && _argTypedMath.Contains(intrinsic.Name)
+    // SINGLE "1.414214", LOG(e#) the DOUBLE-rounded " 1 " (oracle-verified). The DOUBLE/SINGLE
+    // return type makes codegen NARROW the extended FYL2X result to that precision before PRINT
+    // (pb35 keeps it extended, printing 1 ULP off at 16 digits). EffectiveDialect honours $COMPAT so
+    // a transpiled-to-pb35 program narrows identically to its source dialect.
+    IntrinsicReturn.Ext when this.EffectiveDialect.Family() == DialectFamily.Microsoft && _argTypedMath.Contains(intrinsic.Name)
       => firstArg is ScalarType { IsFloat: true, ByteSize: >= 8 } ? PbType.Double : PbType.Single,
     IntrinsicReturn.Integer => PbType.Integer,
     IntrinsicReturn.Quad => PbType.Quad,

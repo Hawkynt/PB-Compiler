@@ -211,22 +211,24 @@ digits, fixed/scientific threshold), 16-bit integer arithmetic (`32767+1` wraps 
 a **`$COMPAT <dialect>`** directive (for every non-pb35 dialect) that makes the pb35
 recompile reproduce exactly those behaviours: `SemanticModel.CompatDialect` drives an
 `EffectiveDialect` (the `$COMPAT` override else the compile dialect) consulted by the
-runtime float formatter and `^Z`/`VAL` paths and by the binder's integer-arithmetic
-promotion — while the binder's compile dialect still gates *syntax* (the emitted source
-is pb35). The back-emitter also narrows single-precision observables with `CSNG` (those
-families compute `SINGLE` expressions in single throughout) and re-emits equates by their
-folded value (reproducing folding quirks).
+runtime float formatter and `^Z`/`VAL` paths, by the binder's integer-arithmetic promotion
+and intrinsic return typing, and by codegen's math-intrinsic result narrowing
+(`RoundFpuToIntrinsicType` — the Microsoft family has no 80-bit extended type, so it narrows
+the extended `FYL2X` result to its declared 64-/32-bit precision; without it `LOG(e#)` prints
+the extended `.9999999999999999` instead of `1`) — while the binder's compile dialect still
+gates *syntax* (the emitted source is pb35). The back-emitter also narrows single-precision
+observables with `CSNG` (those families compute `SINGLE` expressions in single throughout)
+and re-emits equates by their folded value (reproducing folding quirks).
 
 **What round-trips, and how far.** The back-emitter always produces *compile-clean* pb35
 for every dialect (the `scripts/roundtrip-check.sh` gate recompiles every corpus program's
 emitted source under the pb35 dialect — 246/246 batteries, zero fallback markers, run in
 CI). *Runtime-identical* output — the emitted source recompiled under pb35 **with
 `--optimize`**, executed, and diffed against the genuine oracle — holds for the whole pb35
-battery and pb36 (same programs, optimizer on), and, via `$COMPAT`, for the cross-family
-batteries: **24 of 26** dialect programs reproduce the oracle byte-for-byte (up from 4
-before the compatibility work). The residual two are a single QB transcendental edge
-(`LOG(2.718281828459045#)`) that differs in the 16th significant digit — a sub-ULP x87
-evaluation difference between the pb35 and QB code paths, the floating-point floor.
+battery and pb36 (same programs, optimizer on), and, via `$COMPAT`, for **every** cross-family
+battery: all **26 of 26** dialect programs (BASICA/GW/QB 1.0–4.5/QBasic/PDS 7.0–7.1/TB 1.0–1.1
+and the older PB versions) reproduce the genuine oracle byte-for-byte — up from 4 before the
+compatibility work.
 
 This is the dual of the optimizer axis: every dialect *may be fully optimized*
 (`--optimize`, on by default only for pb36 but valid for all — see the

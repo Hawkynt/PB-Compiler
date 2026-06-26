@@ -880,7 +880,11 @@ public sealed partial class CodeGenerator {
   /// so the 80-bit FPU value must lose precision exactly like the original.
   /// </summary>
   private void RoundFpuToIntrinsicType(Expression call) {
-    if (model.Dialect.Family() != DialectFamily.Microsoft)
+    // The Microsoft family has no 80-bit extended type: a math intrinsic's result is narrowed to its
+    // declared precision (FSTP/FLD round-trip through memory), so PRINT sees the 64-/32-bit value
+    // (LOG(e#) prints 1, not the 1-ULP-off extended .9999999999999999). EffectiveDialect honours
+    // $COMPAT so a transpiled-to-pb35 program narrows identically to its source dialect.
+    if (model.EffectiveDialect.Family() != DialectFamily.Microsoft)
       return;
     var asm = this._asm;
     if (model.TypeOf(call) is ScalarType { Kind: ScalarKind.Single }) {
