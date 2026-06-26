@@ -176,6 +176,51 @@ It is pure reporting: `Listing.Render` (in `PowerBasic.Compiler/Emit/Listing.cs`
 is a side-effect-free formatter fed by `CodeGenerator.DescribeImage()`, a
 read-only post-emission snapshot. Code generation is never altered.
 
+## 8. Back-emitter (`--emit-basic`) — turning any dialect back into PB 3.5
+
+`pbc --emit-basic <source.bas>` un-parses the bound program back to readable,
+**PB 3.5-compatible** PowerBASIC source (to `-O <file>` or stdout).
+`BasicWriter.Render` (in `PowerBasic.Compiler/Emit/BasicWriter.cs`) draws from two
+inputs so the result is both faithful and complete:
+
+- **Declarations and procedure signatures** come from the surface `CompilationUnit`
+  — the binder routes `TYPE`/`UNION`/`ENUM`/`DECLARE`/`DEF FN`/`SUB`/`FUNCTION`,
+  `%`-equates and `DEF`-type statements out of the executable body, so they have to
+  be re-emitted from the unit (with the return-type suffix preserved — `FUNCTION F%`,
+  not `FUNCTION F`).
+- **Executable statements** come from the bound model's `MainBody` / procedure bodies
+  — the post-splice surface tree that carries the binder's own **pb36 → pb35 lowering**
+  in its side-tables. Consulting `Desugared`, `DesugaredStatements`, `RewrittenIndex`,
+  `ResolvedConstants` and `ReorderedArguments` emits the desugared core form: an
+  interpolated string comes back as concatenation, `arr(^1)` as `UBOUND(arr)-1+1`, an
+  enum reference as its literal, a member-call statement as a plain call, named
+  arguments in positional order. Integer literals are spelled so they round-trip
+  exactly — a magnitude beyond `LONG` keeps a `&&` suffix (so it is not promoted to a
+  float), and a boundary negative such as `INTEGER -32768` is emitted as the
+  two's-complement `&H8000` pattern (the only way PB can spell it).
+
+Anything not yet modelled degrades to a `' [unsupported: ...]` comment, never a
+dropped statement.
+
+**What round-trips, and how far.** The back-emitter always produces *compile-clean*
+pb35 for every dialect (the `scripts/roundtrip-check.sh` gate recompiles every corpus
+program's emitted source under the pb35 dialect — 246/246 batteries, zero fallback
+markers, run in CI). *Runtime-identical* output is guaranteed where the target shares
+pb35's runtime: the whole pb35 battery (and pb36, the same programs with the optimizer
+on) round-trips to byte-identical output, verified by recompiling the emitted source
+under pb35 **with `--optimize`** and diffing the executed `RESULT.TXT` against the
+genuine oracle (the round-trip lane in `scripts/run-diff-tests.sh`). Cross-family
+dialects (QB/PDS/BASICA/GW/TB and the older PB quirk dialects) have a *different*
+runtime — MBF floats, 16-bit arithmetic, distinct `PRINT` formatting — so a pb35
+recompile legitimately rounds/formats differently; reproducing their output would
+require emulating each runtime in pb35 source, which is out of scope. The
+transpilation itself stays faithful for them (compile-clean); only the target runtime
+differs.
+
+This is the dual of the optimizer axis: every dialect *may be fully optimized*
+(`--optimize`, on by default only for pb36 but valid for all — see the
+`OptimizeAllDialectsTests` matrix), and every dialect *can be turned back into pb35*.
+
 ---
 
 ### Stage cheat-sheet

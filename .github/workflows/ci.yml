@@ -85,6 +85,14 @@ jobs:
                       message = ' '.join(m.text.split())[:600]
                   print(f"::error::FAILED {r.get('testName')}: {message}")
 
+      # REQUIRED, DOSBox-free: every corpus program (pb35 + pb36 + all dialect
+      # batteries) is emit-basic'd back to pb35 source and recompiled under the
+      # pb35 dialect - proving the back-emitter always produces compile-clean,
+      # PB 3.5-compatible output. Deterministic (no emulator/oracle), so it gates.
+      - name: Round-trip back-emitter gate
+        if: matrix.os == 'ubuntu-latest'
+        run: bash scripts/roundtrip-check.sh
+
       # Advisory tier: the full golden-output battery through the pbc CLI and
       # headless DOSBox (compile every tests/*.BAS on the host, run the EXE in
       # the emulator, diff against tests/*.expected).

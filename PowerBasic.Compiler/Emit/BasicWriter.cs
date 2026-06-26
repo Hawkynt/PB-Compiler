@@ -45,6 +45,7 @@ public sealed class BasicWriter {
         case UnionDecl u: this.WriteUnionDecl(u); break;
         case EnumDecl e: this.WriteEnumDecl(e); break;
         case EquateStmt eq: this.Line($"%{eq.Name} = {this.Expr(eq.Value)}"); break;   // %equates: folded out of MainBody, re-emit here
+        case DefTypeStmt dt: this.WriteDefType(dt); break;                              // DEFINT/DEFQUD/...: consumed by the binder, re-emit here (affects default typing)
         case DeclareStmt d: this.WriteDeclare(d); break;
         case SubDecl s: procDecls[s.Name] = s; break;
         case FunctionDecl f: procDecls[f.Name] = f; break;
@@ -106,7 +107,7 @@ public sealed class BasicWriter {
   private void WriteDeclare(DeclareStmt d) {
     var ret = d.ReturnType is { } rt ? $" AS {this.TypeNameText(rt)}" : "";
     var pars = d.Parameters is { } ps ? "(" + string.Join(", ", ps.Select(this.FormatParam)) + ")" : "";
-    this.Line($"DECLARE {(d.IsFunction ? "FUNCTION" : "SUB")} {d.Name}{pars}{ret}");
+    this.Line($"DECLARE {(d.IsFunction ? "FUNCTION" : "SUB")} {d.Name}{Suffix(d.Suffix)}{pars}{ret}");
   }
 
   private void WriteDefFn(DefFnDecl df) {
@@ -130,7 +131,7 @@ public sealed class BasicWriter {
     var kind = proc.IsFunction ? "FUNCTION" : "SUB";
     string header = decl switch {
       SubDecl s => $"SUB {s.Name}({string.Join(", ", s.Parameters.Select(this.FormatParam))})",
-      FunctionDecl f => $"FUNCTION {f.Name}({string.Join(", ", f.Parameters.Select(this.FormatParam))})" + (f.ReturnType is { } rt ? $" AS {this.TypeNameText(rt)}" : ""),
+      FunctionDecl f => $"FUNCTION {f.Name}{Suffix(f.Suffix)}({string.Join(", ", f.Parameters.Select(this.FormatParam))})" + (f.ReturnType is { } rt ? $" AS {this.TypeNameText(rt)}" : ""),
       _ => this.HeaderFromSymbol(proc),   // synthesized procs (lambdas, generics, lifted members) have no unit decl
     };
     this.Line(header);
@@ -236,8 +237,7 @@ public sealed class BasicWriter {
       case DestructureStmt s: this.Line($"{string.Join(", ", s.Targets.Select(t => this.Expr(t)))} = {this.Expr(s.Value)}"); break;
       case DeferStmt s: this.Line("' DEFER:"); this.WriteStatement(s.Deferred); break;
       case MetaStmt s: this.WriteMeta(s); break;
-      case DefTypeStmt s: this.WriteDefType(s); break;
-      case TypeDecl or UnionDecl or EnumDecl or DeclareStmt or SubDecl or FunctionDecl or DefFnDecl: break; // emitted from the unit
+      case TypeDecl or UnionDecl or EnumDecl or DeclareStmt or SubDecl or FunctionDecl or DefFnDecl or DefTypeStmt: break; // emitted from the unit declaration pass
       case HandlerSaveStmt or HandlerRestoreStmt or HandlerArmStmt or HandlerReraiseStmt: break;            // synthesized coroutine plumbing
       default: this.Line($"' [unsupported: {statement.GetType().Name}]"); break;
     }
@@ -349,7 +349,11 @@ public sealed class BasicWriter {
   }
 
   private void WriteDefType(DefTypeStmt s) {
-    var kw = "DEF" + s.Type.ToString().ToUpperInvariant()[..3];
+    var kw = s.Type switch {
+      BuiltinType.Integer => "DEFINT", BuiltinType.Long => "DEFLNG", BuiltinType.Single => "DEFSNG",
+      BuiltinType.Double => "DEFDBL", BuiltinType.Ext => "DEFEXT", BuiltinType.String => "DEFSTR",
+      BuiltinType.Quad => "DEFQUD", _ => "DEFINT",
+    };
     this.Line($"{kw} {string.Join(", ", s.Ranges.Select(r => r.From == r.To ? r.From.ToString() : $"{r.From}-{r.To}"))}");
   }
 
@@ -437,7 +441,7 @@ public sealed class BasicWriter {
       return constant.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     return e switch {
-      IntegerLiteralExpr x => FormatInt(x) + Suffix(x.Suffix),
+      IntegerLiteralExpr x => this.FormatInt(x),
       FloatLiteralExpr x => FormatFloat(x.Value) + Suffix(x.Suffix),
       StringLiteralExpr x => "\"" + x.Value.Replace("\"", "\"\"") + "\"",
       NamedConstantExpr x => "%" + x.Name,
@@ -521,7 +525,40 @@ public sealed class BasicWriter {
   private void Line(string text) => this._sb.Append(new string(' ', this._indent * 2)).Append(text).Append('\n');
   private void LineNoIndent(string text) => this._sb.Append(text).Append('\n');
 
-  private static string FormatInt(IntegerLiteralExpr x) => x.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+  /// <summary>
+  /// Renders an integer literal so re-parsing yields the same value AND keeps it integral:
+  /// a magnitude beyond LONG gets a <c>&amp;&amp;</c> (QUAD) suffix so it is not promoted to a float,
+  /// and a negative value at its type's boundary (e.g. INTEGER -32768, which cannot be written as
+  /// <c>-(32768)</c>) is emitted as a two's-complement <c>&amp;H</c> hex pattern - the only way PB can
+  /// spell it.
+  /// </summary>
+  private string FormatInt(IntegerLiteralExpr x) {
+    var inv = System.Globalization.CultureInfo.InvariantCulture;
+    var v = x.Value;
+    var suf = Suffix(x.Suffix);
+    var bits = x.Suffix switch {
+      TypeSuffix.Byte => 8, TypeSuffix.Integer or TypeSuffix.Word => 16,
+      TypeSuffix.Long or TypeSuffix.Dword => 32, TypeSuffix.Quad => 64,
+      _ => this._model.TypeOf(x) is ScalarType st ? st.ByteSize * 8 : 32,
+    };
+    if (x.Suffix == TypeSuffix.None && (v > int.MaxValue || v < int.MinValue)) {   // beyond LONG: force QUAD, else it re-parses as a float
+      suf = "&&";
+      bits = 64;
+    }
+    if (v >= 0)
+      return v.ToString(inv) + suf;
+
+    var signedMax = bits switch { 8 => 127L, 16 => 32767L, 32 => 2147483647L, _ => long.MaxValue };
+    if (-v <= signedMax)
+      return "-" + (-v).ToString(inv) + suf;
+
+    // boundary negative (type MinValue): spell the two's-complement bit pattern as hex
+    return bits switch {
+      16 => "&H" + ((ushort)v).ToString("X4") + suf,
+      32 => "&H" + ((uint)v).ToString("X8") + suf,
+      _ => "&H" + ((ulong)v).ToString("X16") + (suf.Length > 0 ? suf : "&&"),
+    };
+  }
 
   private static string FormatFloat(double v) {
     var s = v.ToString("R", System.Globalization.CultureInfo.InvariantCulture);

@@ -5,7 +5,13 @@
 # output non-faithful). This is the fast local proxy for "turned back into pb35".
 set -uo pipefail
 cd "$(dirname "$0")/.."
-PBC="pbc/bin/Release/net8.0/pbc.dll"
+PBC="$(find pbc/bin/Release -name pbc.dll 2>/dev/null | head -1)"
+if [ -z "$PBC" ]; then
+  echo "building pbc ..."
+  dotnet build pbc -c Release -v q --nologo
+  PBC="$(find pbc/bin/Release -name pbc.dll 2>/dev/null | head -1)"
+fi
+[ -n "$PBC" ] || { echo "::error::pbc.dll not found under pbc/bin/Release"; exit 1; }
 TMP="${TMPDIR:-/tmp}/rt-check.$$"
 mkdir -p "$TMP"
 run() { DOTNET_ROLL_FORWARD=Major dotnet "$PBC" "$@"; }

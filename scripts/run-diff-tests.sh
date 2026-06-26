@@ -171,6 +171,36 @@ run_battery() { # $1 = oracle dir, $2 = dialect flag ("" = default pb35), $3.. =
       { diff <(tr -d '\r' < "build/diff/$label/real/RESULT.TXT") <(tr -d '\r' < "build/diff/$label/ours/RESULT.TXT") || true; } | head -20 | sed 's/^/      /'
       fail=1
     fi
+
+    # --- round-trip lane: dialect program -> pb35 source -> OPTIMIZED pb35 EXE -------------
+    # Proves the back-emitter turns the program back into PB 3.5 source that, recompiled under the
+    # pb35 dialect WITH the optimizer on, still produces the genuine oracle's output - i.e. "fully
+    # optimized and fully turned back into pb35, yielding the same output". Reuses the real
+    # RESULT.TXT already computed above. Gated to the pb35/pb36 batteries: those share pb35's
+    # runtime, so identical output is the bar. Other families (QB/PDS/BASICA/GW/TB and the older PB
+    # quirk dialects) have a DIFFERENT runtime (MBF floats, 16-bit arithmetic, distinct PRINT
+    # formatting), so a pb35 recompile legitimately formats/rounds differently - the host-side
+    # roundtrip-check.sh still proves those emit compile-clean pb35. Disable entirely with RT=0.
+    if [ "${RT:-1}" = "1" ] && { [ -z "$dialect" ] || [ "$dialect" = "pb36" ]; }; then
+      local od="build/diff/$label/ours"
+      rm -f "$od/RESULT.TXT" "$od/T.EXE" "$od/RT.BAS"
+      if ! $PBC_OURS ${flags[@]+"${flags[@]}"} --emit-basic "$od/T.BAS" -O "$od/RT.BAS" > "$od/rtemit.txt" 2>&1; then
+        echo "FAIL  $label/$name (round-trip emit-basic)"; sed 's/^/      /' "$od/rtemit.txt"; fail=1; continue
+      fi
+      if ! $PBC_OURS --dialect pb35 --optimize "$od/RT.BAS" -O "$od/T.EXE" > "$od/rtcomp.txt" 2>&1; then
+        echo "FAIL  $label/$name (round-trip pb35 recompile)"; sed 's/^/      /' "$od/rtcomp.txt"; fail=1; continue
+      fi
+      if ! run_dosbox "build/diff/$label/ours.conf" "$od" || [ ! -f "$od/RESULT.TXT" ]; then
+        echo "FAIL  $label/$name (round-trip EXE produced no RESULT.TXT)"; fail=1; continue
+      fi
+      if diff -q <(tr -d '\r' < "build/diff/$label/real/RESULT.TXT") <(tr -d '\r' < "$od/RESULT.TXT") >/dev/null; then
+        echo "PASS  $label/$name (round-trip pb35 identical to genuine $label)"
+      else
+        echo "FAIL  $label/$name (round-trip pb35 output differs from genuine $label)"
+        { diff <(tr -d '\r' < "build/diff/$label/real/RESULT.TXT") <(tr -d '\r' < "$od/RESULT.TXT") || true; } | head -20 | sed 's/^/      /'
+        fail=1
+      fi
+    fi
   done
 }
 
