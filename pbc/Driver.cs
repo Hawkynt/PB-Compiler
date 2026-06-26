@@ -133,13 +133,13 @@ public static class Driver {
       }
 
       if (dumpStage == "--emit-basic") {
-        // back-emitter: un-parse the bound (post-weaving) tree to readable PowerBASIC, so the
-        // result of the front end and the AST-level optimizer is visible as source. When the
-        // optimizer is in effect (its dialect default, unless --no-optimize), run the statement
-        // pruner first so dead-code elimination shows in the output.
+        // back-emitter: turn the program back into PB 3.5-compatible PowerBASIC - declarations and
+        // signatures from the surface unit, executable bodies (with the binder's pb36->pb35 lowering)
+        // from the bound model. When the optimizer is in effect (its dialect default, unless
+        // --no-optimize), run the statement pruner first so dead-code elimination shows in the output.
         if (optimize ?? (dialect == Dialect.Pb36))
           CodeGen.OptPruner.Prune(model);
-        var basic = Emit.BasicWriter.Render(model);
+        var basic = Emit.BasicWriter.Render(model, unit);
         if (output != null) {
           File.WriteAllText(output, basic);
           stdout.WriteLine($"{Path.GetFileName(output)}: {basic.Length} bytes of PowerBASIC");
