@@ -202,24 +202,36 @@ inputs so the result is both faithful and complete:
 Anything not yet modelled degrades to a `' [unsupported: ...]` comment, never a
 dropped statement.
 
-**What round-trips, and how far.** The back-emitter always produces *compile-clean*
-pb35 for every dialect (the `scripts/roundtrip-check.sh` gate recompiles every corpus
-program's emitted source under the pb35 dialect — 246/246 batteries, zero fallback
-markers, run in CI). *Runtime-identical* output is guaranteed where the target shares
-pb35's runtime: the whole pb35 battery (and pb36, the same programs with the optimizer
-on) round-trips to byte-identical output, verified by recompiling the emitted source
-under pb35 **with `--optimize`** and diffing the executed `RESULT.TXT` against the
-genuine oracle (the round-trip lane in `scripts/run-diff-tests.sh`). Cross-family
-dialects (QB/PDS/BASICA/GW/TB and the older PB quirk dialects) have a *different*
-runtime — MBF floats, 16-bit arithmetic, distinct `PRINT` formatting — so a pb35
-recompile legitimately rounds/formats differently; reproducing their output would
-require emulating each runtime in pb35 source, which is out of scope. The
-transpilation itself stays faithful for them (compile-clean); only the target runtime
-differs.
+**`$COMPAT` — replicating a dialect's runtime under pb35.** Cross-family dialects
+(QB/PDS/BASICA/GW/TB and the older PB versions) have a *different* runtime than pb35 —
+distinct `PRINT` float formatting (exponent `E`/`D` marker and pad width, significant
+digits, fixed/scientific threshold), 16-bit integer arithmetic (`32767+1` wraps to
+`-32768`), `CINT` round-half-away, `VAL` radix wrapping (`VAL("&H10000")=0`), a
+`^Z`-on-close EOF marker, and dialect constant-folding quirks. So the back-emitter emits
+a **`$COMPAT <dialect>`** directive (for every non-pb35 dialect) that makes the pb35
+recompile reproduce exactly those behaviours: `SemanticModel.CompatDialect` drives an
+`EffectiveDialect` (the `$COMPAT` override else the compile dialect) consulted by the
+runtime float formatter and `^Z`/`VAL` paths and by the binder's integer-arithmetic
+promotion — while the binder's compile dialect still gates *syntax* (the emitted source
+is pb35). The back-emitter also narrows single-precision observables with `CSNG` (those
+families compute `SINGLE` expressions in single throughout) and re-emits equates by their
+folded value (reproducing folding quirks).
+
+**What round-trips, and how far.** The back-emitter always produces *compile-clean* pb35
+for every dialect (the `scripts/roundtrip-check.sh` gate recompiles every corpus program's
+emitted source under the pb35 dialect — 246/246 batteries, zero fallback markers, run in
+CI). *Runtime-identical* output — the emitted source recompiled under pb35 **with
+`--optimize`**, executed, and diffed against the genuine oracle — holds for the whole pb35
+battery and pb36 (same programs, optimizer on), and, via `$COMPAT`, for the cross-family
+batteries: **24 of 26** dialect programs reproduce the oracle byte-for-byte (up from 4
+before the compatibility work). The residual two are a single QB transcendental edge
+(`LOG(2.718281828459045#)`) that differs in the 16th significant digit — a sub-ULP x87
+evaluation difference between the pb35 and QB code paths, the floating-point floor.
 
 This is the dual of the optimizer axis: every dialect *may be fully optimized*
 (`--optimize`, on by default only for pb36 but valid for all — see the
-`OptimizeAllDialectsTests` matrix), and every dialect *can be turned back into pb35*.
+`OptimizeAllDialectsTests` matrix), and every dialect *can be turned back into pb35*
+that runs the same.
 
 ---
 

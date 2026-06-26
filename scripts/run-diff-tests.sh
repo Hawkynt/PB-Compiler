@@ -176,12 +176,13 @@ run_battery() { # $1 = oracle dir, $2 = dialect flag ("" = default pb35), $3.. =
     # Proves the back-emitter turns the program back into PB 3.5 source that, recompiled under the
     # pb35 dialect WITH the optimizer on, still produces the genuine oracle's output - i.e. "fully
     # optimized and fully turned back into pb35, yielding the same output". Reuses the real
-    # RESULT.TXT already computed above. Gated to the pb35/pb36 batteries: those share pb35's
-    # runtime, so identical output is the bar. Other families (QB/PDS/BASICA/GW/TB and the older PB
-    # quirk dialects) have a DIFFERENT runtime (MBF floats, 16-bit arithmetic, distinct PRINT
-    # formatting), so a pb35 recompile legitimately formats/rounds differently - the host-side
-    # roundtrip-check.sh still proves those emit compile-clean pb35. Disable entirely with RT=0.
-    if [ "${RT:-1}" = "1" ] && { [ -z "$dialect" ] || [ "$dialect" = "pb36" ]; }; then
+    # RESULT.TXT already computed above. Runs for EVERY battery: the back-emitter emits a $COMPAT
+    # directive that makes the pb35 recompile replicate the source dialect's runtime quirks (PRINT
+    # float formatting, 16-bit integer arithmetic, float-to-integer rounding, VAL radix wrapping,
+    # ^Z-on-close, constant-folding), so cross-family programs reproduce the oracle byte-for-byte.
+    # Known residual: a few QB transcendental edges (LOG(e#)) differ in the 16th significant digit -
+    # a sub-ULP x87 difference between the pb35 and QB codegen paths. Disable entirely with RT=0.
+    if [ "${RT:-1}" = "1" ]; then
       local od="build/diff/$label/ours"
       rm -f "$od/RESULT.TXT" "$od/T.EXE" "$od/RT.BAS"
       if ! $PBC_OURS ${flags[@]+"${flags[@]}"} --emit-basic "$od/T.BAS" -O "$od/RT.BAS" > "$od/rtemit.txt" 2>&1; then

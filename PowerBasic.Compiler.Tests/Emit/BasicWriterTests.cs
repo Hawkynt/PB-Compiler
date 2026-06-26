@@ -116,6 +116,30 @@ public sealed class BasicWriterTests {
   }
 
   [Test]
+  public void Render_NonPb35Dialect_EmitsCompatDirective_AndReboundUnderPb35SetsCompatDialect() {
+    // A non-pb35 program is transpiled with a $COMPAT directive so the pb35 recompile replicates the
+    // source dialect's runtime quirks (formatting, 16-bit arithmetic, rounding, VAL, ^Z, folding).
+    var unit = Parser.Parse(Lexer.Tokenize("A% = 1\nPRINT A%\n", "T.BAS", Dialect.Qb45), "T.BAS", Dialect.Qb45);
+    var model = Binder.Bind(unit, Dialect.Qb45);
+    var basic = BasicWriter.Render(model, unit);
+    Assert.That(basic, Does.StartWith("$COMPAT qb45"), "the source dialect is recorded for the pb35 recompile");
+
+    var unit2 = Parser.Parse(Lexer.Tokenize(basic, "RT.BAS", Dialect.Pb35), "RT.BAS", Dialect.Pb35);
+    var model2 = Binder.Bind(unit2, Dialect.Pb35);
+    Assert.Multiple(() => {
+      Assert.That(model2.Errors, Is.Empty, "the $COMPAT program binds clean under pb35");
+      Assert.That(model2.CompatDialect, Is.EqualTo(Dialect.Qb45), "$COMPAT qb45 sets the compatibility dialect");
+      Assert.That(model2.EffectiveDialect, Is.EqualTo(Dialect.Qb45), "runtime quirk emulation follows the $COMPAT dialect");
+    });
+  }
+
+  [Test]
+  public void Render_Pb35Source_EmitsNoCompatDirective() {
+    var basic = RenderAndRebind("A% = 1\nPRINT A%\n", Dialect.Pb35);
+    Assert.That(basic, Does.Not.Contain("$COMPAT"), "pb35 is the identity target - no compatibility directive");
+  }
+
+  [Test]
   public void Render_NeverDropsAStatement_NoFallbackComment() {
     var basic = RenderAndRebind("PRINT \"hi\"\n");
     Assert.That(basic, Does.Contain("PRINT \"hi\""));
