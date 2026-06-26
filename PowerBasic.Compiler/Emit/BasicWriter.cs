@@ -53,7 +53,10 @@ public sealed class BasicWriter {
       this.Line($"$COMPAT {this._model.Dialect.CanonicalName()}");
 
     // Declarations come from the surface unit (faithful), executable code from the bound model.
-    var procDecls = new Dictionary<string, Statement>(StringComparer.OrdinalIgnoreCase);
+    // A name may have several definitions (pb36 overloading), so the decls are queued per name and
+    // dequeued in source order - each overload's emitted body gets its own faithful signature.
+    var procDecls = new Dictionary<string, Queue<Statement>>(StringComparer.OrdinalIgnoreCase);
+    void Record(string name, Statement decl) => (procDecls.TryGetValue(name, out var q) ? q : procDecls[name] = new()).Enqueue(decl);
     foreach (var statement in unit.Statements)
       switch (statement) {
         case TypeDecl t: this.WriteTypeDecl(t); break;
@@ -62,9 +65,9 @@ public sealed class BasicWriter {
         case EquateStmt eq: this.WriteEquate(eq); break;   // %equates: folded out of MainBody, re-emit here
         case DefTypeStmt dt: this.WriteDefType(dt); break;                              // DEFINT/DEFQUD/...: consumed by the binder, re-emit here (affects default typing)
         case DeclareStmt d: this.WriteDeclare(d); break;
-        case SubDecl s: procDecls[s.Name] = s; break;
-        case FunctionDecl f: procDecls[f.Name] = f; break;
-        case DefFnDecl df: procDecls[df.Name] = df; break;
+        case SubDecl s: Record(s.Name, s); break;
+        case FunctionDecl f: Record(f.Name, f); break;
+        case DefFnDecl df: Record(df.Name, df); break;
         default: break;   // executable / DIM / meta come from model.MainBody below
       }
 
@@ -74,11 +77,12 @@ public sealed class BasicWriter {
     foreach (var proc in this._model.ProcedureList) {
       if (proc.IsExternal)
         continue;
-      if (procDecls.TryGetValue(proc.Name, out var decl) && decl is DefFnDecl df) {
+      var decl = procDecls.TryGetValue(proc.Name, out var q) && q.Count > 0 ? q.Dequeue() : null;
+      if (decl is DefFnDecl df) {
         this.WriteDefFn(df);
         continue;
       }
-      this.WriteProcedure(proc, procDecls.GetValueOrDefault(proc.Name));
+      this.WriteProcedure(proc, decl);
     }
   }
 
@@ -668,6 +672,10 @@ public sealed class BasicWriter {
 
   /// <summary>Renders an <c>AS</c>-clause type from the syntax tree (a <see cref="TypeName"/>).</summary>
   private string TypeNameText(TypeName t) {
+    if (t.IsProcPtr) {   // a typed procedure pointer / delegate: FUNCTION(types) AS ret | SUB(types)
+      var pars = t.ProcParameterTypes is { } ps ? string.Join(", ", ps.Select(this.TypeNameText)) : "";
+      return t.ProcReturnType is { } pr ? $"FUNCTION({pars}) AS {this.TypeNameText(pr)}" : $"SUB({pars})";
+    }
     if (t.IsPointer)
       return $"{this.TypeNameText(t.PointerTarget!)} PTR";
     if (t.UserTypeName is { } udt)
