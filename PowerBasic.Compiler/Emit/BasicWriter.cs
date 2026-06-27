@@ -35,12 +35,19 @@ public sealed class BasicWriter {
     => this._scopeVars is { } v && v.TryGetValue(name, out var s) ? s
       : this._model.ModuleVariables.TryGetValue(name, out var m) ? m : null;
 
-  /// <summary>Maps the compiler's internal name characters ($ namespace, @ generic, . member-mangle) to a pb35-valid identifier (letters/digits/underscore, letter-leading).</summary>
+  /// <summary>
+  /// Maps the compiler's internal name characters ($ namespace, @ generic, . member-mangle) to a
+  /// pb35-valid identifier (letters/digits/underscore, letter-leading). A trailing $/@ is a
+  /// type-suffix-style marker that is part of the name (STR$, HEX$, a string variable Foo$), so it is
+  /// preserved - only $/@/. used as a prefix or infix (the synthesized names) are rewritten.
+  /// </summary>
   private static string Id(string name) {
-    if (name.IndexOfAny(['$', '@', '.']) < 0)
+    var tail = name.Length > 0 && name[^1] is '$' or '@' ? name[^1].ToString() : "";
+    var core = name[..(name.Length - tail.Length)];
+    if (core.IndexOfAny(['$', '@', '.']) < 0)
       return name;
-    var s = name.Replace('$', '_').Replace('@', '_').Replace('.', '_');
-    return char.IsLetter(s[0]) ? s : "S" + s;   // pb35 identifiers must start with a letter
+    var s = core.Replace('$', '_').Replace('@', '_').Replace('.', '_');
+    return (char.IsLetter(s[0]) ? s : "S" + s) + tail;   // pb35 identifiers must start with a letter
   }
 
   private BasicWriter(SemanticModel model) {
@@ -72,10 +79,12 @@ public sealed class BasicWriter {
     // dequeued in source order - each overload's emitted body gets its own faithful signature.
     var procDecls = new Dictionary<string, Queue<Statement>>(StringComparer.OrdinalIgnoreCase);
     void Record(string name, Statement decl) => (procDecls.TryGetValue(name, out var q) ? q : procDecls[name] = new()).Enqueue(decl);
+    var emittedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     foreach (var statement in unit.Statements)
       switch (statement) {
-        case TypeDecl t: this.WriteTypeDecl(t); break;
-        case UnionDecl u: this.WriteUnionDecl(u); break;
+        case TypeDecl { TypeParameters.Count: > 0 }: break;   // generic template - the monomorphized instances are emitted from model.Udts below
+        case TypeDecl t: this.WriteTypeDecl(t); emittedTypes.Add(t.Name); break;
+        case UnionDecl u: this.WriteUnionDecl(u); emittedTypes.Add(u.Name); break;
         case EnumDecl e: this.WriteEnumDecl(e); break;
         case EquateStmt eq: this.WriteEquate(eq); break;   // %equates: folded out of MainBody, re-emit here
         case DefTypeStmt dt: this.WriteDefType(dt); break;                              // DEFINT/DEFQUD/...: consumed by the binder, re-emit here (affects default typing)
@@ -85,6 +94,17 @@ public sealed class BasicWriter {
         case DefFnDecl df: Record(df.Name, df); break;
         default: break;   // executable / DIM / meta come from model.MainBody below
       }
+
+    // Types the binder synthesized (monomorphized generics, coroutine enumerators, nullable/tuple
+    // UDTs) have no surface declaration; emit them from the resolved type table so DIMs and lifted
+    // bodies that reference them compile. Their fields include compiler backing fields ($state, ...).
+    foreach (var (name, udt) in this._model.Udts)
+      if (emittedTypes.Add(name))
+        this.WriteUdtType(udt);
+
+    // Synthesized UDT-typed locals (a FOR EACH enumerator $foreach1 : Squares) are created implicitly
+    // by the binder with no surface DIM; declare them so member accesses bind to a real instance.
+    this.EmitSynthesizedDims(this._model.ModuleVariables);
 
     foreach (var statement in this._model.MainBody)
       this.WriteStatement(statement);
@@ -111,6 +131,24 @@ public sealed class BasicWriter {
       this.Line(this.FormatTypeField(f));
     --this._indent;
     this.Line("END TYPE");
+  }
+
+  /// <summary>Declares synthesized (compiler-named) UDT-typed locals that have no surface DIM, so they bind to a real instance under pb35.</summary>
+  private void EmitSynthesizedDims(IEnumerable<KeyValuePair<string, VariableSymbol>> vars) {
+    foreach (var (name, sym) in vars)
+      if (name.IndexOfAny(['$', '@', '.']) >= 0 && sym.Storage != VariableStorage.Parameter && sym.Type is UdtType u)
+        this.Line($"DIM {Id(name)} AS {Id(u.Name)}");
+  }
+
+  /// <summary>Emits a resolved (synthesized or monomorphized) UDT as a pb35 TYPE block, with sanitized field names.</summary>
+  private void WriteUdtType(UdtType u) {
+    this._sb.Append('\n');
+    this.Line($"{(u.IsUnion ? "UNION" : "TYPE")} {Id(u.Name)}");
+    ++this._indent;
+    foreach (var fld in u.Fields)
+      this.Line($"{Id(fld.Name)}{(fld.ElementCount > 1 ? $"({fld.ElementCount - 1})" : "")} AS {TypeText(fld.Type)}");
+    --this._indent;
+    this.Line(u.IsUnion ? "END UNION" : "END TYPE");
   }
 
   private void WriteUnionDecl(UnionDecl u) {
@@ -189,9 +227,18 @@ public sealed class BasicWriter {
     var savedScope = this._scopeVars;
     var savedRemap = this._nameRemap;
     this._scopeVars = proc.Variables;
-    // a renamed overload's result is still assigned through the original function name in the body;
-    // remap it to the renamed function so the result store hits the right name under pb35.
-    this._nameRemap = proc.IsFunction && name != Id(proc.Name) ? new(StringComparer.OrdinalIgnoreCase) { [proc.Name] = name } : null;
+    this.EmitSynthesizedDims(proc.Variables);   // synthesized UDT-typed locals need an explicit pb35 DIM
+    // The function result is assigned in the body through the function name (or, for a lifted TYPE
+    // member, through its ResultName - e.g. a PROPERTY GET assigns "Size"). When the emitted function
+    // name differs (sanitized "." names, renamed overloads), remap those result references so the
+    // store hits the emitted function, not a stray local.
+    this._nameRemap = null;
+    if (proc.IsFunction) {
+      Dictionary<string, string> remap = new(StringComparer.OrdinalIgnoreCase);
+      if (name != proc.Name) remap[proc.Name] = name;
+      if (proc.ResultName is { } resultName && resultName != name) remap[resultName] = name;
+      if (remap.Count > 0) this._nameRemap = remap;
+    }
     foreach (var statement in proc.Body!)
       this.WriteStatement(statement);
     this._nameRemap = savedRemap;
@@ -204,7 +251,7 @@ public sealed class BasicWriter {
     var visible = proc.VisibleParameterCount;
     var pars = string.Join(", ", proc.Parameters.Take(visible).Select(this.FormatParamSymbol));
     var ret = proc.IsFunction && proc.ReturnType is { } rt ? $" AS {TypeText(rt)}" : "";
-    return $"{(proc.IsFunction ? "FUNCTION" : "SUB")} {proc.Name}({pars}){ret}";
+    return $"{(proc.IsFunction ? "FUNCTION" : "SUB")} {Id(proc.Name)}({pars}){ret}";   // lifted members / lambdas have $/. names
   }
 
   private string FormatParam(Parameter p) {
@@ -318,13 +365,13 @@ public sealed class BasicWriter {
       case StdInStmt s: this.Line($"STDIN {(s.Line ? "LINE" : this.Expr(s.Count!))}, {this.Expr(s.Target)}"); break;
       case ArraySortStmt s: this.WriteArraySort(s); break;
       case ArrayScanStmt s: this.WriteArrayScan(s); break;
-      case LabelStmt s: this.LineNoIndent($"{s.Name}:"); break;
-      case GotoStmt s: this.Line($"GOTO {s.Target}"); break;
-      case GosubStmt s: this.Line($"GOSUB {s.Target}"); break;
+      case LabelStmt s: this.LineNoIndent($"{Id(s.Name)}:"); break;
+      case GotoStmt s: this.Line($"GOTO {Id(s.Target)}"); break;
+      case GosubStmt s: this.Line($"GOSUB {Id(s.Target)}"); break;
       case GotoPtrStmt s: this.Line($"GOTO DWORD {this.Expr(s.Pointer)}"); break;
       case GosubPtrStmt s: this.Line($"GOSUB DWORD {this.Expr(s.Pointer)}"); break;
-      case ReturnStmt s: this.Line(s.Target is { } rt ? $"RETURN {rt}" : "RETURN"); break;
-      case OnGotoStmt s: this.Line($"ON {this.Expr(s.Selector)} {(s.IsGosub ? "GOSUB" : "GOTO")} {string.Join(", ", s.Targets)}"); break;
+      case ReturnStmt s: this.Line(s.Target is { } rt ? $"RETURN {Id(rt)}" : "RETURN"); break;
+      case OnGotoStmt s: this.Line($"ON {this.Expr(s.Selector)} {(s.IsGosub ? "GOSUB" : "GOTO")} {string.Join(", ", s.Targets.Select(Id))}"); break;
       case ChainStmt s: this.Line($"{(s.IsRun ? "RUN" : "CHAIN")} {this.Expr(s.Target)}"); break;
       case ExitStmt s: this.Line($"EXIT {s.Kind.ToString().ToUpperInvariant()}"); break;
       case ExitFarStmt s: this.Line($"EXIT FAR{(s.AtLabel is { } xl ? " AT " + xl : "")}"); break;
@@ -373,10 +420,17 @@ public sealed class BasicWriter {
   /// <summary>The distinct pb35 name for an overload: the primary keeps its name, later overloads get a __N suffix.</summary>
   private string OverloadName(ProcedureSymbol p) => p.OverloadIndex > 0 && this.IsOverloaded(p.Name) ? $"{Id(p.Name)}__{p.OverloadIndex}" : Id(p.Name);
 
-  /// <summary>The name to emit at a call site - the resolved overload's distinct pb35 name, else the surface name.</summary>
-  private string CallName(object callSite, string surfaceName)
-    => this._model.CallBindings.TryGetValue(callSite, out var p) && p.OverloadIndex > 0 && this.IsOverloaded(p.Name)
-      ? this.OverloadName(p) : surfaceName;
+  /// <summary>
+  /// The name to emit at a call site. When the call resolves to a procedure whose emitted name differs
+  /// from the surface name - a renamed overload, a sanitized lifted member (Counter.Bump), or a nested
+  /// SUB called unqualified (Bump -> Outer_Bump) - use the resolved name so it matches the definition.
+  /// Otherwise keep the (sanitized) surface name with its type suffix (intrinsics, arrays, plain calls).
+  /// </summary>
+  private string CallName(object callSite, string bareName, TypeSuffix suffix = TypeSuffix.None) {
+    if (this._model.CallBindings.TryGetValue(callSite, out var p) && this.OverloadName(p) is var resolved && resolved != bareName)
+      return resolved;
+    return Id(bareName) + Suffix(suffix);
+  }
 
   private void WriteDim(DimStmt s) {
     var keyword = s.Storage switch {
@@ -406,7 +460,10 @@ public sealed class BasicWriter {
       return $"{v.Name}{Suffix(v.Suffix)}{(declared is null ? "" : " AS " + declared)}";
     }
     var bounds = v.ArrayBounds is { Count: > 0 } ? "(" + this.FormatBounds(v.ArrayBounds) + ")" : "";
-    var type = v.Type is { } t2 ? $" AS {this.TypeNameText(t2)}" : "";
+    // Prefer the bound symbol's resolved UDT name so a generic use (Box OF LONG) / nullable (T?) DIM
+    // names its monomorphized/synthesized type, which TypeNameText (surface) cannot produce.
+    var type = this.ScopeSymbol(v.Name)?.Type is UdtType udt ? $" AS {Id(udt.Name)}"
+      : v.Type is { } t2 ? $" AS {this.TypeNameText(t2)}" : "";
     return $"{v.Name}{Suffix(v.Suffix)}{bounds}{type}";
   }
 
@@ -571,17 +628,29 @@ public sealed class BasicWriter {
   }
 
   private void WriteTry(TryStmt s) {
-    this.Line("TRY");
-    this.Block(s.Body);
+    // Lower TRY/CATCH/FINALLY onto pb35 ON ERROR (the same machinery the binder uses, no RESUME):
+    // a fault in the body jumps to the catch label with ERR set; FINALLY runs on both the normal and
+    // the caught path. (A no-CATCH TRY runs body then finally; full fault-propagation of an uncaught
+    // error is beyond what a source-level reconstruction expresses, so this covers the CATCH form.)
+    var id = ++this._tempCounter;
+    var catchLabel = $"Strycatch{id}";
+    var finallyLabel = $"Stryfinally{id}";
     if (s.Catch is { } c) {
-      this.Line("CATCH");
+      this.Line($"ON ERROR GOTO {catchLabel}");
+      this.Block(s.Body);
+      this.Line("ON ERROR GOTO 0");
+      this.Line($"GOTO {finallyLabel}");
+      this.LineNoIndent($"{catchLabel}:");
+      this.Line("ON ERROR GOTO 0");
       this.Block(c);
+      this.LineNoIndent($"{finallyLabel}:");
+      if (s.Finally is { } f1)
+        this.Block(f1);
+    } else {
+      this.Block(s.Body);
+      if (s.Finally is { } f2)
+        this.Block(f2);
     }
-    if (s.Finally is { } f) {
-      this.Line("FINALLY");
-      this.Block(f);
-    }
-    this.Line("END TRY");
   }
 
   private string FormatSelector(CaseSelector c) {
@@ -612,8 +681,8 @@ public sealed class BasicWriter {
       StringLiteralExpr x => "\"" + x.Value.Replace("\"", "\"\"") + "\"",
       NamedConstantExpr x => "%" + x.Name,
       NameExpr x => (this._nameRemap is { } m && m.TryGetValue(x.Name, out var rn) ? rn : Id(x.Name)) + Suffix(x.Suffix),   // remap a renamed overload's result; Id() maps synthesized locals
-      CallOrIndexExpr x => $"{this.CallName(x, x.Name + Suffix(x.Suffix))}({this.JoinExprs(this.CallArguments(x, x.Arguments))})",
-      MemberExpr x => $"{this.Expr(x.Target, 99)}.{x.Member}{Suffix(x.Suffix)}",
+      CallOrIndexExpr x => $"{this.CallName(x, x.Name, x.Suffix)}({this.JoinExprs(this.CallArguments(x, x.Arguments))})",
+      MemberExpr x => $"{this.Expr(x.Target, 99)}.{Id(x.Member)}{Suffix(x.Suffix)}",   // synthesized backing fields ($Current/$state) -> pb35-valid
       IndexExpr x => $"{this.Expr(x.Target, 99)}({this.JoinArgs(x.Arguments)})",
       PtrDerefExpr x => $"@{this.Expr(x.Pointer, 99)}{(x.Index is { } i ? $"[{this.Expr(i)}]" : "")}",
       ByValArgExpr x => $"BYVAL {this.Expr(x.Value)}",
@@ -856,7 +925,7 @@ public sealed class BasicWriter {
     AsciizType a => $"ASCIIZ * {a.Length}",
     WideIntType => "QUAD",
     PointerType p => $"{TypeText(p.Target)} PTR",
-    UdtType u => u.Name,
+    UdtType u => Id(u.Name),   // monomorphized generics carry @ in the name (Box@Long)
     _ => "INTEGER",
   };
 }

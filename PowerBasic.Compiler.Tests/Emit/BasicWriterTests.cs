@@ -64,6 +64,40 @@ public sealed class BasicWriterTests {
   }
 
   [Test]
+  public void Render_Pb36TryCatchFinally_LowersToOnErrorAndRecompiles() {
+    var basic = RenderAndRebind("DIM X AS INTEGER\nTRY\n  X = 1 \\ 0\nCATCH\n  PRINT \"caught\"\nFINALLY\n  PRINT \"done\"\nEND TRY\n", Dialect.Pb36);
+    Assert.That(basic, Does.Not.Contain("TRY").And.Not.Contain("CATCH"), "TRY/CATCH/FINALLY is lowered to ON ERROR machinery");
+    Assert.That(basic, Does.Contain("ON ERROR GOTO"), "a fault routes to the catch label via ON ERROR");
+  }
+
+  [Test]
+  public void Render_Pb36TypeMethod_LiftsToSanitizedProcedureAndRecompiles() {
+    var basic = RenderAndRebind("TYPE Counter\n  Value AS LONG\n  SUB Bump(BYVAL by AS LONG)\n    THIS.Value = THIS.Value + by\n  END SUB\nEND TYPE\nDIM c AS Counter\nc.Value = 10\nc.Bump(5)\nPRINT c.Value\n", Dialect.Pb36);
+    Assert.That(basic, Does.Contain("SUB Counter_Bump(THIS AS Counter"), "the method lifts to a THIS-receiver SUB with a pb35-valid name");
+    Assert.That(basic, Does.Contain("Counter_Bump c, 5"), "the call resolves to the lifted name with the receiver passed first");
+  }
+
+  [Test]
+  public void Render_Pb36GenericType_MonomorphizesAndRecompiles() {
+    var basic = RenderAndRebind("TYPE Box OF T\n  Item AS T\n  SUB Put(BYVAL v AS T)\n    THIS.Item = v\n  END SUB\nEND TYPE\nDIM b AS Box OF LONG\nb.Put(42)\nPRINT b.Item\n", Dialect.Pb36);
+    Assert.That(basic, Does.Contain("TYPE Box_Long"), "the generic monomorphizes to a concrete TYPE");
+    Assert.That(basic, Does.Not.Contain(" AS T"), "the type parameter T is replaced by the concrete type");
+  }
+
+  [Test]
+  public void Render_Pb36Coroutine_EmitsEnumeratorTypeStateMachineAndRecompiles() {
+    var basic = RenderAndRebind("FUNCTION Squares(BYVAL n AS INTEGER) AS LONG\n  DIM i AS INTEGER\n  FOR i = 1 TO n\n    YIELD i * i\n  NEXT\nEND FUNCTION\nDIM v AS LONG\nFOR EACH v IN Squares(4)\n  PRINT v\nNEXT\n", Dialect.Pb36);
+    Assert.That(basic, Does.Contain("FUNCTION Squares_MoveNext"), "the generator lowers to a MoveNext state machine");
+    Assert.That(basic, Does.Match(@"DIM \w+ AS Squares"), "the enumerator local is declared as the synthesized enumerator TYPE");
+  }
+
+  [Test]
+  public void Render_Pb36NestedProcedure_CallResolvesToLiftedName() {
+    var basic = RenderAndRebind("FUNCTION Outer(n AS INTEGER) AS INTEGER\n  DIM total AS INTEGER\n  SUB Bump\n    total = total + n\n  END SUB\n  Bump\n  Bump\n  Outer = total\nEND FUNCTION\nPRINT Outer(7)\n", Dialect.Pb36);
+    Assert.That(basic, Does.Contain("Outer_Bump"), "the nested SUB lifts to a qualified pb35 name used at both the call and the definition");
+  }
+
+  [Test]
   public void Render_Assignment_RoundTripsExpressionWithMinimalParens() {
     var basic = RenderAndRebind("A% = 2 + 3 * 4\nPRINT A%\n");
     Assert.That(basic, Does.Contain("A% = 2 + 3 * 4"), "multiply binds tighter than add - no parens needed");

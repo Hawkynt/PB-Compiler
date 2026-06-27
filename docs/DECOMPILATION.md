@@ -30,7 +30,7 @@ FUNCTION Square%(BYVAL N%) = N% * N%
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -58,7 +58,7 @@ PRINT X; Y
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -85,7 +85,7 @@ PRINT IF(X = 0, 42, 100 \ X)
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -119,7 +119,7 @@ PRINT (B <> 0) ORELSE (B \ A = 0)
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -162,7 +162,7 @@ PRINT P.X; P.Y
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -197,7 +197,7 @@ PRINT Area(4); Area(3, 5)
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -230,7 +230,7 @@ PRINT &H1 <<> 1; &H1 <>> 1
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Illustrative decompilation:** recompiles under `--dialect pb35` but the runtime result diverges - PB 3.5 has no faithful equivalent for this construct (e.g. rotate operators, far-pointer offset arithmetic). The form below shows the lowering structure.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -262,7 +262,7 @@ PRINT @p
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Illustrative decompilation:** recompiles under `--dialect pb35` but the runtime result diverges - PB 3.5 has no faithful equivalent for this construct (e.g. rotate operators, far-pointer offset arithmetic). The form below shows the lowering structure.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -299,7 +299,7 @@ PRINT N; S
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -332,7 +332,7 @@ PRINT Red; Green; Blue
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -361,7 +361,7 @@ PRINT Pay(5); Pay(5, 20)
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -389,7 +389,7 @@ Show(Y := 2, X := 1)
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -416,7 +416,7 @@ PRINT A(^1)
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -442,7 +442,7 @@ PRINT A%(0); A%(1); A%(2)
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -468,7 +468,7 @@ PRINT A%(0); A%(6)
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -502,7 +502,7 @@ NEXT
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -535,7 +535,7 @@ PRINT S
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -569,9 +569,7 @@ PRINT Outer(7)
 ```
 </details>
 
-> **Illustrative decompilation:** this feature lowers in code generation, so the form below
-> shows the *structure* of the lowering but uses compiler-internal names / constructs that are
-> not yet re-spellable as compilable PB 3.5 (it does not recompile under `--dialect pb35`).
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -580,12 +578,12 @@ PRINT Outer(7)
 
 FUNCTION Outer(n AS INTEGER) AS INTEGER
   DIM total AS INTEGER
-  Bump total, n
-  Bump total, n
+  Outer_Bump total, n
+  Outer_Bump total, n
   Outer = total
 END FUNCTION
 
-SUB Outer$Bump(total AS INTEGER, n AS INTEGER)
+SUB Outer_Bump(total AS INTEGER, n AS INTEGER)
   total = total + n
 END SUB
 ```
@@ -605,9 +603,7 @@ PRINT square(9)
 ```
 </details>
 
-> **Illustrative decompilation:** this feature lowers in code generation, so the form below
-> shows the *structure* of the lowering but uses compiler-internal names / constructs that are
-> not yet re-spellable as compilable PB 3.5 (it does not recompile under `--dialect pb35`).
+> **Illustrative decompilation:** PB 3.5 cannot express this construct (e.g. a function pointer that returns a value), so it lowers in code generation via compiler-internal types/names. The form below shows the lowering *structure*, not compilable PB 3.5.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -616,7 +612,7 @@ DIM square AS FUNCTION(LONG) AS LONG
 square = FUNCTION(BYVAL x AS LONG) AS LONG => x * x
 PRINT square(9)
 
-FUNCTION $lambda$1(BYVAL x AS LONG) AS LONG
+FUNCTION S_lambda_1(BYVAL x AS LONG) AS LONG
   FUNCTION = x * x
 END FUNCTION
 ```
@@ -640,9 +636,7 @@ END FUNCTION
 ```
 </details>
 
-> **Illustrative decompilation:** this feature lowers in code generation, so the form below
-> shows the *structure* of the lowering but uses compiler-internal names / constructs that are
-> not yet re-spellable as compilable PB 3.5 (it does not recompile under `--dialect pb35`).
+> **Illustrative decompilation:** PB 3.5 cannot express this construct (e.g. a function pointer that returns a value), so it lowers in code generation via compiler-internal types/names. The form below shows the lowering *structure*, not compilable PB 3.5.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -673,9 +667,7 @@ PRINT cmp(9, 4)
 ```
 </details>
 
-> **Illustrative decompilation:** this feature lowers in code generation, so the form below
-> shows the *structure* of the lowering but uses compiler-internal names / constructs that are
-> not yet re-spellable as compilable PB 3.5 (it does not recompile under `--dialect pb35`).
+> **Illustrative decompilation:** PB 3.5 cannot express this construct (e.g. a function pointer that returns a value), so it lowers in code generation via compiler-internal types/names. The form below shows the lowering *structure*, not compilable PB 3.5.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -685,7 +677,7 @@ DIM cmp AS Comparator
 cmp = FUNCTION(a, b) => a - b
 PRINT cmp(9, 4)
 
-FUNCTION $lambda$1(BYVAL a AS LONG, BYVAL b AS LONG) AS LONG
+FUNCTION S_lambda_1(BYVAL a AS LONG, BYVAL b AS LONG) AS LONG
   FUNCTION = a - b
 END FUNCTION
 ```
@@ -710,21 +702,21 @@ END TRY
 ```
 </details>
 
-> **Illustrative decompilation:** this feature lowers in code generation, so the form below
-> shows the *structure* of the lowering but uses compiler-internal names / constructs that are
-> not yet re-spellable as compilable PB 3.5 (it does not recompile under `--dialect pb35`).
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
 ```basic
 DIM x AS INTEGER
-TRY
+ON ERROR GOTO Strycatch1
   x = 1 \ 0
-CATCH
+ON ERROR GOTO 0
+GOTO Stryfinally1
+Strycatch1:
+ON ERROR GOTO 0
   PRINT "caught"; ERR
-FINALLY
+Stryfinally1:
   PRINT "done"
-END TRY
 ```
 
 _With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
@@ -749,7 +741,7 @@ PRINT P.X; P.Y
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -784,7 +776,7 @@ PRINT b; i; d
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -820,9 +812,7 @@ PRINT c.Value
 ```
 </details>
 
-> **Illustrative decompilation:** this feature lowers in code generation, so the form below
-> shows the *structure* of the lowering but uses compiler-internal names / constructs that are
-> not yet re-spellable as compilable PB 3.5 (it does not recompile under `--dialect pb35`).
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -833,10 +823,10 @@ TYPE Counter
 END TYPE
 DIM c AS Counter
 c.Value = 10
-Counter.Bump c, 5
+Counter_Bump c, 5
 PRINT c.Value
 
-SUB Counter.Bump(THIS AS Counter, BYVAL by AS LONG)
+SUB Counter_Bump(THIS AS Counter, BYVAL by AS LONG)
   THIS.Value = THIS.Value + by
 END SUB
 ```
@@ -865,9 +855,7 @@ PRINT x.Size
 ```
 </details>
 
-> **Illustrative decompilation:** this feature lowers in code generation, so the form below
-> shows the *structure* of the lowering but uses compiler-internal names / constructs that are
-> not yet re-spellable as compilable PB 3.5 (it does not recompile under `--dialect pb35`).
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -877,14 +865,14 @@ TYPE Box
   Count AS INTEGER
 END TYPE
 DIM x AS Box
-Box.set_Size x, 7
-PRINT Box.get_Size(x)
+Box_set_Size x, 7
+PRINT Box_get_Size(x)
 
-FUNCTION Box.get_Size(THIS AS Box) AS INTEGER
-  Size = THIS.Count
+FUNCTION Box_get_Size(THIS AS Box) AS INTEGER
+  Box_get_Size = THIS.Count
 END FUNCTION
 
-SUB Box.set_Size(THIS AS Box, BYVAL n AS INTEGER)
+SUB Box_set_Size(THIS AS Box, BYVAL n AS INTEGER)
   THIS.Count = n
 END SUB
 ```
@@ -911,9 +899,7 @@ PRINT s.X
 ```
 </details>
 
-> **Illustrative decompilation:** this feature lowers in code generation, so the form below
-> shows the *structure* of the lowering but uses compiler-internal names / constructs that are
-> not yet re-spellable as compilable PB 3.5 (it does not recompile under `--dialect pb35`).
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -925,11 +911,11 @@ END TYPE
 DIM p AS Vec, q AS Vec, s AS Vec
 p.X = 3
 q.X = 4
-Vec.op_Add p, q, s
+Vec_op_Add p, q, s
 PRINT s.X
 
-FUNCTION Vec.op_Add(THIS AS Vec, o AS Vec) AS Vec
-  RESULT.X = THIS.X + o.X
+FUNCTION Vec_op_Add(THIS AS Vec, o AS Vec) AS Vec
+  Vec_op_Add.X = THIS.X + o.X
 END FUNCTION
 ```
 
@@ -954,22 +940,20 @@ PRINT b.Item
 ```
 </details>
 
-> **Illustrative decompilation:** this feature lowers in code generation, so the form below
-> shows the *structure* of the lowering but uses compiler-internal names / constructs that are
-> not yet re-spellable as compilable PB 3.5 (it does not recompile under `--dialect pb35`).
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
 ```basic
 
-TYPE Box
-  Item AS T
+TYPE Box_Long
+  Item AS LONG
 END TYPE
-DIM b AS Box
-Box@Long.Put b, 42
+DIM b AS Box_Long
+Box_Long_Put b, 42
 PRINT b.Item
 
-SUB Box@Long.Put(THIS AS Box@Long, BYVAL v AS LONG)
+SUB Box_Long_Put(THIS AS Box_Long, BYVAL v AS LONG)
   THIS.Item = v
 END SUB
 ```
@@ -996,60 +980,66 @@ NEXT
 ```
 </details>
 
-> **Illustrative decompilation:** this feature lowers in code generation, so the form below
-> shows the *structure* of the lowering but uses compiler-internal names / constructs that are
-> not yet re-spellable as compilable PB 3.5 (it does not recompile under `--dialect pb35`).
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
 ```basic
+
+TYPE Squares
+  S_state AS INTEGER
+  S_n AS INTEGER
+  S_i AS SINGLE
+  S_Current AS LONG
+END TYPE
+DIM S_foreach1 AS Squares
 DIM v AS LONG
 IF -1 THEN
   IF -1 THEN
-    S_foreach1.$state = 0
-    S_foreach1.$n = 4
+    S_foreach1.S_state = 0
+    S_foreach1.S_n = 4
   END IF
-  DO WHILE Squares.MoveNext(S_foreach1)
-    v = Squares.get_Current(S_foreach1)
+  DO WHILE Squares_MoveNext(S_foreach1)
+    v = Squares_get_Current(S_foreach1)
     PRINT v
   LOOP
 END IF
 
-FUNCTION Squares.get_Current(THIS AS Squares) AS LONG
-  Current = THIS.$Current
+FUNCTION Squares_get_Current(THIS AS Squares) AS LONG
+  Squares_get_Current = THIS.S_Current
 END FUNCTION
 
-FUNCTION Squares.MoveNext(THIS AS Squares) AS INTEGER
-  SELECT CASE THIS.$state
+FUNCTION Squares_MoveNext(THIS AS Squares) AS INTEGER
+  SELECT CASE THIS.S_state
     CASE 0
-      GOTO $start
+      GOTO S_start
     CASE 1
-      GOTO $r1
+      GOTO S_r1
     CASE ELSE
-      GOTO $done
+      GOTO S_done
   END SELECT
-$start:
+S_start:
   DIM i AS INTEGER
-  THIS.$i = 1
-$L1:
-  IF THIS.$i > THIS.$n THEN
-    GOTO $L2
+  THIS.S_i = 1
+S_L1:
+  IF THIS.S_i > THIS.S_n THEN
+    GOTO S_L2
   END IF
-  THIS.$Current = THIS.$i * THIS.$i
-  THIS.$state = 1
-  MoveNext = -1
+  THIS.S_Current = THIS.S_i * THIS.S_i
+  THIS.S_state = 1
+  Squares_MoveNext = -1
   EXIT FUNCTION
-$r1:
-  THIS.$i = THIS.$i + 1
-  GOTO $L1
-$L2:
-$done:
-  THIS.$state = -1
-  MoveNext = 0
+S_r1:
+  THIS.S_i = THIS.S_i + 1
+  GOTO S_L1
+S_L2:
+S_done:
+  THIS.S_state = -1
+  Squares_MoveNext = 0
 END FUNCTION
 
-SUB Squares.Reset(THIS AS Squares)
-  THIS.$state = 0
+SUB Squares_Reset(THIS AS Squares)
+  THIS.S_state = 0
 END SUB
 ```
 
@@ -1070,12 +1060,17 @@ PRINT age ?? -1
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
 ```basic
-DIM age AS INTEGER
+
+TYPE S_nul_Integer
+  Value AS INTEGER
+  HasValue AS INTEGER
+END TYPE
+DIM age AS S_nul_Integer
 IF -1 THEN
   age.Value = 30
   age.HasValue = -1
@@ -1122,7 +1117,7 @@ PRINT X
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -1161,7 +1156,7 @@ POKE 0, 65
 ```
 </details>
 
-> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 

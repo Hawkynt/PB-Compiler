@@ -13,7 +13,34 @@ PBC="$(find pbc/bin/Release -name pbc.dll 2>/dev/null | head -1)"
 if [ -z "$PBC" ]; then dotnet build pbc -c Release -v q --nologo; PBC="$(find pbc/bin/Release -name pbc.dll 2>/dev/null | head -1)"; fi
 run() { DOTNET_ROLL_FORWARD=Major dotnet "$PBC" "$@"; }
 OUT="docs/DECOMPILATION.md"
-TMP="${TMPDIR:-/tmp}/gendc.$$"; mkdir -p "$TMP"
+TMP="${TMPDIR:-/tmp}/gendc.$$"; mkdir -p "$TMP/a" "$TMP/b"
+
+# Optional DOSBox: when present, the annotation reflects OUTPUT equivalence (run the program both ways
+# and diff), not just whether the decompilation recompiles. Without it, falls back to a compile check.
+DOSBOX="${DOSBOX_EXE:-}"
+[ -z "$DOSBOX" ] && for c in tools/dosbox/dosbox dosbox-staging dosbox; do command -v "$c" >/dev/null 2>&1 && { DOSBOX=$c; break; }; [ -x "$c" ] && { DOSBOX=$c; break; }; done
+winpath() { cd "$1" && pwd; }
+run_dosbox() { rm -f "$2/DONE.TXT" "$2/RESULT.TXT"; "$DOSBOX" -conf "$1" >/dev/null 2>&1 & local pid=$!
+  for _ in $(seq 1 250); do { [ -f "$2/DONE.TXT" ] || ! kill -0 "$pid" 2>/dev/null; } && break; sleep 0.2; done
+  kill -0 "$pid" 2>/dev/null && { sleep 0.3; kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; }; [ -f "$2/RESULT.TXT" ]; }
+mkconf() { printf '[sdl]\nwindow_position=-10000,-10000\n[cpu]\ncore=auto\ncycles=max\n[dosbox]\nems=true\n[autoexec]\nmount c "%s"\nc:\nT.EXE\necho ok>DONE.TXT\nexit\n' "$(winpath "$1")"; }
+
+# Decides the round-trip status of one example: SAME (recompiles + identical output), DIFFERS
+# (recompiles but the runtime output diverges), NOCOMPILE (the decompilation is not valid pb35), or
+# COMPILES (no DOSBox: recompiled but output not re-verified). Echoes the status word.
+roundtrip_status() { # $1 = .bas file
+  run --dialect pb36 --emit-basic "$1" -O "$TMP/rt.bas" >/dev/null 2>&1 || { echo NOCOMPILE; return; }
+  run --dialect pb35 "$TMP/rt.bas" -O "$TMP/rt.exe" >/dev/null 2>&1 || { echo NOCOMPILE; return; }
+  [ -z "$DOSBOX" ] && { echo COMPILES; return; }
+  # output equivalence: wrap PRINT -> RESULT.TXT, run the pb36 original and the pb35 decompilation
+  { echo 'OPEN "RESULT.TXT" FOR OUTPUT AS #1'; body "$1" | sed 's/PRINT \([^#]\)/PRINT #1, \1/g'; echo 'CLOSE #1'; } > "$TMP/a/T.BAS"
+  run --dialect pb36 "$TMP/a/T.BAS" -O "$TMP/a/T.EXE" >/dev/null 2>&1 || { echo COMPILES; return; }
+  mkconf "$TMP/a" > "$TMP/a.conf"; run_dosbox "$TMP/a.conf" "$TMP/a" || { echo COMPILES; return; }
+  run --dialect pb36 --emit-basic "$TMP/a/T.BAS" -O "$TMP/b/T.BAS" >/dev/null 2>&1 || { echo NOCOMPILE; return; }
+  run --dialect pb35 "$TMP/b/T.BAS" -O "$TMP/b/T.EXE" >/dev/null 2>&1 || { echo NOCOMPILE; return; }
+  mkconf "$TMP/b" > "$TMP/b.conf"; run_dosbox "$TMP/b.conf" "$TMP/b" || { echo DIFFERS; return; }
+  diff -q <(tr -d '\r' < "$TMP/a/RESULT.TXT") <(tr -d '\r' < "$TMP/b/RESULT.TXT") >/dev/null 2>&1 && echo SAME || echo DIFFERS
+}
 
 meta() { sed -n "s/^' @$1:[[:space:]]*//p" "$2" | head -1; }
 # the program body without the @-metadata header comments
@@ -44,14 +71,13 @@ emit_section() { # $1 = .bas file
   # decompilation with the optimizer (lowering + OptPruner dead-code/DEF SEG cleanup)
   run --dialect pb36 --optimize --emit-basic "$f" > "$TMP/opt.bas" 2>/dev/null
 
-  # does the decompiled source actually recompile under the pb35 dialect?
-  if run --dialect pb35 "$TMP/no.bas" -O "$TMP/rt.exe" >/dev/null 2>&1; then
-    echo '> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.'
-  else
-    echo '> **Illustrative decompilation:** this feature lowers in code generation, so the form below'
-    echo '> shows the *structure* of the lowering but uses compiler-internal names / constructs that are'
-    echo '> not yet re-spellable as compilable PB 3.5 (it does not recompile under `--dialect pb35`).'
-  fi
+  # round-trip status: does the decompilation recompile under pb35 and run the same?
+  case "$(roundtrip_status "$f")" in
+    SAME)      echo '> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.';;
+    COMPILES)  echo '> **Round-trips to PB 3.5:** the decompilation recompiles under `--dialect pb35` (runtime output not re-verified in this environment).';;
+    DIFFERS)   echo '> **Illustrative decompilation:** recompiles under `--dialect pb35` but the runtime result diverges - PB 3.5 has no faithful equivalent for this construct (e.g. rotate operators, far-pointer offset arithmetic). The form below shows the lowering structure.';;
+    *)         echo '> **Illustrative decompilation:** PB 3.5 cannot express this construct (e.g. a function pointer that returns a value), so it lowers in code generation via compiler-internal types/names. The form below shows the lowering *structure*, not compilable PB 3.5.';;
+  esac
   echo
 
   echo '**Decompiled (lowered to PB 3.5):**'
