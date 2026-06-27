@@ -27,6 +27,21 @@ public sealed class BasicWriter {
   private readonly SemanticModel _model;
   private readonly bool _singleFloatRuntime;
   private int _indent;
+  private IReadOnlyDictionary<string, VariableSymbol>? _scopeVars;   // current scope's locals (a proc) for inferred-type lookup
+  private Dictionary<string, string>? _nameRemap;                    // in-scope name rewrites (a renamed overload's result variable)
+
+  /// <summary>The bound variable symbol for a name in the current scope (proc locals first, then module vars).</summary>
+  private VariableSymbol? ScopeSymbol(string name)
+    => this._scopeVars is { } v && v.TryGetValue(name, out var s) ? s
+      : this._model.ModuleVariables.TryGetValue(name, out var m) ? m : null;
+
+  /// <summary>Maps the compiler's internal name characters ($ namespace, @ generic, . member-mangle) to a pb35-valid identifier (letters/digits/underscore, letter-leading).</summary>
+  private static string Id(string name) {
+    if (name.IndexOfAny(['$', '@', '.']) < 0)
+      return name;
+    var s = name.Replace('$', '_').Replace('@', '_').Replace('.', '_');
+    return char.IsLetter(s[0]) ? s : "S" + s;   // pb35 identifiers must start with a letter
+  }
 
   private BasicWriter(SemanticModel model) {
     this._model = model;
@@ -163,15 +178,24 @@ public sealed class BasicWriter {
   private void WriteProcedure(ProcedureSymbol proc, Statement? decl) {
     this._sb.Append('\n');
     var kind = proc.IsFunction ? "FUNCTION" : "SUB";
+    var name = this.OverloadName(proc);   // overloaded definitions get distinct pb35 names
     string header = decl switch {
-      SubDecl s => $"SUB {s.Name}({string.Join(", ", s.Parameters.Select(this.FormatParam))})",
-      FunctionDecl f => $"FUNCTION {f.Name}{Suffix(f.Suffix)}({string.Join(", ", f.Parameters.Select(this.FormatParam))})" + (f.ReturnType is { } rt ? $" AS {this.TypeNameText(rt)}" : ""),
+      SubDecl s => $"SUB {name}({string.Join(", ", s.Parameters.Select(this.FormatParam))})",
+      FunctionDecl f => $"FUNCTION {name}{Suffix(f.Suffix)}({string.Join(", ", f.Parameters.Select(this.FormatParam))})" + (f.ReturnType is { } rt ? $" AS {this.TypeNameText(rt)}" : ""),
       _ => this.HeaderFromSymbol(proc),   // synthesized procs (lambdas, generics, lifted members) have no unit decl
     };
     this.Line(header);
     ++this._indent;
+    var savedScope = this._scopeVars;
+    var savedRemap = this._nameRemap;
+    this._scopeVars = proc.Variables;
+    // a renamed overload's result is still assigned through the original function name in the body;
+    // remap it to the renamed function so the result store hits the right name under pb35.
+    this._nameRemap = proc.IsFunction && name != Id(proc.Name) ? new(StringComparer.OrdinalIgnoreCase) { [proc.Name] = name } : null;
     foreach (var statement in proc.Body!)
       this.WriteStatement(statement);
+    this._nameRemap = savedRemap;
+    this._scopeVars = savedScope;
     --this._indent;
     this.Line($"END {kind}");
   }
@@ -200,12 +224,72 @@ public sealed class BasicWriter {
 
   // ---- statements -------------------------------------------------------------------------------
 
+  private readonly Dictionary<Expression, string> _exprSubst = new(ReferenceEqualityComparer.Instance);
+  private int _tempCounter;
+
   private void WriteStatement(Statement statement) {
     // statement-level desugar (member-call statement, property-set assignment): emit the core form
     if (this._model.DesugaredStatements.TryGetValue(statement, out var lowered)) {
       this.WriteStatement(lowered);
       return;
     }
+    // value-position ternaries (IfExpr) have no pb35 expression form: hoist each to a temp computed by
+    // an IF/ELSE block emitted before this statement, then substitute the temp at its use site.
+    var hoisted = this.HoistConditionals(statement);
+    if (hoisted is { Count: > 0 }) {
+      this.WriteStatementCore(statement);
+      foreach (var h in hoisted)
+        this._exprSubst.Remove(h);
+      return;
+    }
+    this.WriteStatementCore(statement);
+  }
+
+  /// <summary>Hoists value-position ternaries out of a statement's own expressions; returns the substituted nodes (to clear afterward).</summary>
+  private List<Expression>? HoistConditionals(Statement statement) {
+    List<Expression>? top = null;
+    foreach (var e in DirectExpressions(statement))
+      this.CollectTopTernaries(e, ref top);
+    if (top is null)
+      return null;
+    foreach (var node in top) {
+      var ife = (IfExpr)node;
+      var temp = "pbtmp" + (++this._tempCounter);
+      this.Line($"DIM {temp} AS {TypeText(this._model.TypeOf(ife))}");
+      this.Line($"IF {this.Expr(ife.Condition)} THEN");
+      ++this._indent; this.Line($"{temp} = {this.Expr(ife.WhenTrue)}"); --this._indent;
+      this.Line("ELSE");
+      ++this._indent; this.Line($"{temp} = {this.Expr(ife.WhenFalse)}"); --this._indent;
+      this.Line("END IF");
+      this._exprSubst[node] = temp;
+    }
+    return top;
+  }
+
+  /// <summary>Collects the topmost ternaries (IfExpr) in an expression - not descending into a ternary's own branches (preserving short-circuit).</summary>
+  private void CollectTopTernaries(Expression e, ref List<Expression>? acc) {
+    var r = this._model.Desugared.TryGetValue(e, out var d) ? d
+      : this._model.RewrittenIndex.TryGetValue(e, out var w) ? w : e;
+    if (r is IfExpr) {
+      (acc ??= []).Add(r);
+      return;   // do not recurse into branches - they only run conditionally
+    }
+    foreach (var c in AstQuery.Subexpressions(r))
+      this.CollectTopTernaries(c, ref acc);
+  }
+
+  /// <summary>The expressions a statement evaluates at its own level (not inside nested blocks).</summary>
+  private static IEnumerable<Expression> DirectExpressions(Statement s) => s switch {
+    AssignStmt a => [a.Value],
+    PrintStmt p => p.Items.Where(i => i.Value is not null).Select(i => i.Value!),
+    WriteStmt w => w.Items,
+    CallStmt c => c.Arguments,
+    IncrDecrStmt d when d.Amount is { } amt => [amt],
+    ReturnStmt or GotoStmt or LabelStmt => [],
+    _ => [],
+  };
+
+  private void WriteStatementCore(Statement statement) {
     switch (statement) {
       case AssignStmt s: this.Line($"{this.Expr(s.Target)} = {this.Expr(s.Value)}"); break;
       case IncrDecrStmt s: this.Line($"{(s.Increment ? "INCR" : "DECR")} {this.Expr(s.Target)}{(s.Amount is { } a ? ", " + this.Expr(a) : "")}"); break;
@@ -279,8 +363,20 @@ public sealed class BasicWriter {
 
   private void WriteCall(CallStmt s) {
     var args = this.CallArguments(s, s.Arguments);
-    this.Line(s.UsedCallKeyword ? $"CALL {s.Name}({this.JoinExprs(args)})" : args.Count == 0 ? s.Name : $"{s.Name} {this.JoinExprs(args)}");
+    var name = this.CallName(s, s.Name);
+    this.Line(s.UsedCallKeyword ? $"CALL {name}({this.JoinExprs(args)})" : args.Count == 0 ? name : $"{name} {this.JoinExprs(args)}");
   }
+
+  /// <summary>True when several SUB/FUNCTION definitions share <paramref name="name"/> (pb36 overloading).</summary>
+  private bool IsOverloaded(string name) => this._model.Overloads.TryGetValue(name, out var set) && set.Count > 1;
+
+  /// <summary>The distinct pb35 name for an overload: the primary keeps its name, later overloads get a __N suffix.</summary>
+  private string OverloadName(ProcedureSymbol p) => p.OverloadIndex > 0 && this.IsOverloaded(p.Name) ? $"{Id(p.Name)}__{p.OverloadIndex}" : Id(p.Name);
+
+  /// <summary>The name to emit at a call site - the resolved overload's distinct pb35 name, else the surface name.</summary>
+  private string CallName(object callSite, string surfaceName)
+    => this._model.CallBindings.TryGetValue(callSite, out var p) && p.OverloadIndex > 0 && this.IsOverloaded(p.Name)
+      ? this.OverloadName(p) : surfaceName;
 
   private void WriteDim(DimStmt s) {
     var keyword = s.Storage switch {
@@ -293,14 +389,47 @@ public sealed class BasicWriter {
   }
 
   private string FormatVarDecl(VariableDecl v) {
+    // A pb36 DIM-with-initializer (DIM x = v / DIM x AS T = v / NEW object / { array } literal) lowers
+    // to a plain declaration plus the binder's spliced assignment(s), which follow this DIM in the
+    // stream. Emit just the declaration (with the inferred type from the bound symbol when none was
+    // written, and array bounds from the symbol), so the result is compilable PB 3.5.
+    if (v.Initializer is not null) {
+      if (this.ScopeSymbol(v.Name)?.Type is ArrayType arr && arr.StaticBounds is { } sb)
+        return $"{v.Name}{Suffix(v.Suffix)}({string.Join(", ", sb.Select(b => b.Lower == 0 ? b.Upper.ToString() : $"{b.Lower} TO {b.Upper}"))}) AS {TypeText(arr.Element)}";
+      // an array-initializer literal ({ v1, v2, lo TO hi }) is spliced to per-element stores at indices
+      // 0..N-1, so size the array to its element count.
+      if (v.Initializer is ArrayLiteralExpr lit && this.CountLiteralElements(lit) is { } n) {
+        var et = v.Type is { } at ? $" AS {this.TypeNameText(at)}" : "";
+        return $"{v.Name}{Suffix(v.Suffix)}({n - 1}){et}";
+      }
+      var declared = v.Type is { } t ? this.TypeNameText(t) : this.ScopeSymbol(v.Name) is { } s ? TypeText(s.Type) : null;
+      return $"{v.Name}{Suffix(v.Suffix)}{(declared is null ? "" : " AS " + declared)}";
+    }
     var bounds = v.ArrayBounds is { Count: > 0 } ? "(" + this.FormatBounds(v.ArrayBounds) + ")" : "";
-    var type = v.Type is { } t ? $" AS {this.TypeNameText(t)}" : "";
-    var init = v.Initializer is { } i ? $" = {this.Expr(i)}" : "";
-    return $"{v.Name}{Suffix(v.Suffix)}{bounds}{type}{init}";
+    var type = v.Type is { } t2 ? $" AS {this.TypeNameText(t2)}" : "";
+    return $"{v.Name}{Suffix(v.Suffix)}{bounds}{type}";
   }
 
   private string FormatBounds(IReadOnlyList<(Expression? Lower, Expression Upper)> bounds)
     => string.Join(", ", bounds.Select(b => b.Lower is { } lo ? $"{this.Expr(lo)} TO {this.Expr(b.Upper)}" : this.Expr(b.Upper)));
+
+  /// <summary>Compile-time element count of an array-initializer literal (values count 1, an integer range hi-lo+1); null if a non-constant range or spread makes it unknowable.</summary>
+  private int? CountLiteralElements(ArrayLiteralExpr lit) {
+    var n = 0;
+    foreach (var el in lit.Elements)
+      switch (el) {
+        case ValueElement: n++; break;
+        case RangeElement r when this.ConstInt(r.Lo) is { } lo && this.ConstInt(r.Hi) is { } hi: n += (int)(hi - lo + 1); break;
+        default: return null;
+      }
+    return n;
+  }
+
+  /// <summary>A compile-time integer value of an expression (a literal or a folded constant), else null.</summary>
+  private long? ConstInt(Expression e)
+    => this._model.ResolvedConstants.TryGetValue(e, out var c) ? c
+      : e is IntegerLiteralExpr i ? i.Value
+      : e is UnaryExpr { Op: UnaryOp.Negate, Operand: IntegerLiteralExpr n } ? -n.Value : null;
 
   private void WritePrint(PrintStmt s) {
     var sb = new StringBuilder((s.IsLPrint ? "LPRINT " : "PRINT ") + FilesPrefix(s.FileNumber, this));
@@ -471,6 +600,9 @@ public sealed class BasicWriter {
       return this.Expr(desugared, parentPrec);
     if (this._model.RewrittenIndex.TryGetValue(e, out var rewritten))
       return this.Expr(rewritten, parentPrec);
+    // a value-position ternary hoisted to a temp (see HoistConditionals): emit the temp's name
+    if (this._exprSubst.TryGetValue(e, out var temp))
+      return temp;
     if (this._model.ResolvedConstants.TryGetValue(e, out var constant))
       return constant.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
@@ -479,8 +611,8 @@ public sealed class BasicWriter {
       FloatLiteralExpr x => FormatFloat(x.Value) + Suffix(x.Suffix),
       StringLiteralExpr x => "\"" + x.Value.Replace("\"", "\"\"") + "\"",
       NamedConstantExpr x => "%" + x.Name,
-      NameExpr x => x.Name + Suffix(x.Suffix),
-      CallOrIndexExpr x => $"{x.Name}{Suffix(x.Suffix)}({this.JoinExprs(this.CallArguments(x, x.Arguments))})",
+      NameExpr x => (this._nameRemap is { } m && m.TryGetValue(x.Name, out var rn) ? rn : Id(x.Name)) + Suffix(x.Suffix),   // remap a renamed overload's result; Id() maps synthesized locals
+      CallOrIndexExpr x => $"{this.CallName(x, x.Name + Suffix(x.Suffix))}({this.JoinExprs(this.CallArguments(x, x.Arguments))})",
       MemberExpr x => $"{this.Expr(x.Target, 99)}.{x.Member}{Suffix(x.Suffix)}",
       IndexExpr x => $"{this.Expr(x.Target, 99)}({this.JoinArgs(x.Arguments)})",
       PtrDerefExpr x => $"@{this.Expr(x.Pointer, 99)}{(x.Index is { } i ? $"[{this.Expr(i)}]" : "")}",
@@ -527,6 +659,12 @@ public sealed class BasicWriter {
   }
 
   private string Binary(BinaryExpr x, int parentPrec) {
+    // Scaled pointer arithmetic ptr +* i / ptr -* i has no pb35 operator; lower it to the equivalent
+    // unscaled byte arithmetic ptr +/- i * sizeof(target), the same scaling @p[i] uses.
+    if (x.Op is BinaryOp.PointerAdd or BinaryOp.PointerSub && this.LoweredType(x.Left) is PointerType pt) {
+      var op = x.Op == BinaryOp.PointerAdd ? "+" : "-";
+      return Paren(parentPrec, 4, $"{this.Expr(x.Left, 4)} {op} {this.Expr(x.Right, 8)} * {pt.Target.Size}");
+    }
     var prec = Precedence(x.Op);
     // left-associative: the left child at the same precedence needs no parens, the right child does
     var text = $"{this.Expr(x.Left, prec)} {OperatorText(x.Op)} {this.Expr(x.Right, prec + 1)}";
@@ -563,9 +701,22 @@ public sealed class BasicWriter {
     return this._model.TypeOf(e);
   }
 
-  /// <summary>Call arguments, reordered to positional form when the binder recorded named-argument reordering.</summary>
-  private IReadOnlyList<Expression> CallArguments(object callSite, IReadOnlyList<Expression> original)
-    => this._model.ReorderedArguments.TryGetValue(callSite, out var reordered) ? reordered : original;
+  /// <summary>
+  /// Call arguments, reordered to positional form when the binder recorded named-argument reordering,
+  /// and with omitted trailing default parameters filled in from the resolved procedure's signature -
+  /// pb35 has no defaults, so the call site must pass every argument explicitly.
+  /// </summary>
+  private IReadOnlyList<Expression> CallArguments(object callSite, IReadOnlyList<Expression> original) {
+    var args = this._model.ReorderedArguments.TryGetValue(callSite, out var reordered) ? reordered : original;
+    if (this._model.CallBindings.TryGetValue(callSite, out var proc) && args.Count < proc.VisibleParameterCount) {
+      var filled = args.ToList();
+      for (var i = args.Count; i < proc.VisibleParameterCount; i++)
+        if (proc.Parameters[i].DefaultValue is { } d)
+          filled.Add(d);
+      return filled;
+    }
+    return args;
+  }
 
   // ---- helpers ----------------------------------------------------------------------------------
 

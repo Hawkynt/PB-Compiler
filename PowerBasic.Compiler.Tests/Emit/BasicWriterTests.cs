@@ -30,6 +30,40 @@ public sealed class BasicWriterTests {
   }
 
   [Test]
+  public void Render_Pb36Ternary_HoistsToTempAndRecompilesUnderPb35() {
+    var basic = RenderAndRebind("DIM X AS INTEGER\nX = 0\nDIM Y AS INTEGER\nY = IF(X = 0, 42, 100 \\ X)\nPRINT Y\n", Dialect.Pb36);
+    Assert.That(basic, Does.Not.Contain("IIF").And.Not.Contain("IF("), "the value-position ternary is hoisted, not emitted as an inline IIF");
+    Assert.That(basic, Does.Contain("IF X = 0 THEN"), "hoisted into a real IF/ELSE block (preserving short-circuit)");
+  }
+
+  [Test]
+  public void Render_Pb36DimInitializer_EmitsPlainTypedDimPlusAssignment() {
+    var basic = RenderAndRebind("DIM N = 100000\nPRINT N\n", Dialect.Pb36);
+    Assert.That(basic, Does.Contain("DIM N AS LONG"), "the fused DIM splits into a typed declaration (LONG inferred for the wide literal)");
+    Assert.That(basic, Does.Contain("N = 100000"), "plus the spliced assignment");
+  }
+
+  [Test]
+  public void Render_Pb36DefaultParameter_FillsOmittedArgAtCallSite() {
+    var basic = RenderAndRebind("DECLARE FUNCTION Pay%(BYVAL X%, BYVAL Y%)\nPRINT Pay%(5)\nFUNCTION Pay%(BYVAL X%, BYVAL Y% = 10)\n  Pay% = X% + Y%\nEND FUNCTION\n", Dialect.Pb36);
+    Assert.That(basic, Does.Contain("Pay%(5, 10)").Or.Contain("Pay(5, 10)"), "pb35 has no defaults, so the omitted trailing argument is filled in at the call");
+  }
+
+  [Test]
+  public void Render_Pb36Overloading_RenamesToDistinctNamesAndRecompiles() {
+    var basic = RenderAndRebind("DECLARE FUNCTION Area%(BYVAL S%)\nDECLARE FUNCTION Area%(BYVAL W%, BYVAL H%)\nPRINT Area%(4); Area%(3, 5)\nFUNCTION Area%(BYVAL S%)\n  Area% = S% * S%\nEND FUNCTION\nFUNCTION Area%(BYVAL W%, BYVAL H%)\n  Area% = W% * H%\nEND FUNCTION\n", Dialect.Pb36);
+    Assert.That(basic, Does.Contain("FUNCTION Area__1"), "the second overload gets a distinct pb35 name");
+    Assert.That(basic, Does.Contain("Area__1% = W% * H%"), "and its result is assigned through the renamed function, not a stray local");
+  }
+
+  [Test]
+  public void Render_Pb36ScaledPointer_LowersToByteArithmetic() {
+    var basic = RenderAndRebind("DIM A(2) AS INTEGER\nDIM P AS INTEGER PTR\nP = VARPTR(A(0))\nP = P +* 2\nPRINT @P\n", Dialect.Pb36);
+    Assert.That(basic, Does.Not.Contain("+*"), "scaled pointer arithmetic is lowered to unscaled byte arithmetic");
+    Assert.That(basic, Does.Contain("* 2"), "index scaled by the 2-byte element size");
+  }
+
+  [Test]
   public void Render_Assignment_RoundTripsExpressionWithMinimalParens() {
     var basic = RenderAndRebind("A% = 2 + 3 * 4\nPRINT A%\n");
     Assert.That(basic, Does.Contain("A% = 2 + 3 * 4"), "multiply binds tighter than add - no parens needed");

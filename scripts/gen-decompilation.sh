@@ -44,6 +44,16 @@ emit_section() { # $1 = .bas file
   # decompilation with the optimizer (lowering + OptPruner dead-code/DEF SEG cleanup)
   run --dialect pb36 --optimize --emit-basic "$f" > "$TMP/opt.bas" 2>/dev/null
 
+  # does the decompiled source actually recompile under the pb35 dialect?
+  if run --dialect pb35 "$TMP/no.bas" -O "$TMP/rt.exe" >/dev/null 2>&1; then
+    echo '> **Round-trips to PB 3.5:** ✅ the decompilation below recompiles under `--dialect pb35`.'
+  else
+    echo '> **Illustrative decompilation:** this feature lowers in code generation, so the form below'
+    echo '> shows the *structure* of the lowering but uses compiler-internal names / constructs that are'
+    echo '> not yet re-spellable as compilable PB 3.5 (it does not recompile under `--dialect pb35`).'
+  fi
+  echo
+
   echo '**Decompiled (lowered to PB 3.5):**'
   echo
   echo '```basic'
