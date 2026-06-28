@@ -98,6 +98,28 @@ public sealed class BasicWriterTests {
   }
 
   [Test]
+  public void Render_Pb36TypedProcPointer_LowersToDwordThunkAndCallDword() {
+    var basic = RenderAndRebind("DECLARE FUNCTION Triple&(BYVAL n AS LONG)\nDIM f AS FUNCTION(LONG) AS LONG\nf = CODEPTR32(Triple&)\nPRINT f(8)\nFUNCTION Triple&(BYVAL n AS LONG)\n  Triple& = n * 3\nEND FUNCTION\n", Dialect.Pb36);
+    Assert.That(basic, Does.Contain("DIM f AS DWORD"), "a typed proc pointer is a 32-bit code pointer in pb35");
+    Assert.That(basic, Does.Contain("CALL DWORD (f)"), "the call goes through CALL DWORD");
+    Assert.That(basic, Does.Match(@"SUB Sthunk\d+\(Sp0 AS LONG, Sresult AS LONG\)"), "a thunk adapts the function to a BYREF result");
+  }
+
+  [Test]
+  public void Render_Pb36InlineLambda_LiftsToThunkedCodePointer() {
+    var basic = RenderAndRebind("DIM square AS FUNCTION(LONG) AS LONG\nsquare = FUNCTION(BYVAL x AS LONG) AS LONG => x * x\nPRINT square(9)\n", Dialect.Pb36);
+    Assert.That(basic, Does.Not.Contain("=>"), "the lambda is lifted, not emitted as pb36 arrow syntax");
+    Assert.That(basic, Does.Match(@"square = CODEPTR32\(Sthunk\d+\)"), "its delegate value is a thunk's code pointer");
+  }
+
+  [Test]
+  public void Render_Pb36NamedDelegate_RecompilesViaThunk() {
+    var basic = RenderAndRebind("DECLARE FUNCTION Comparator(BYVAL a AS LONG, BYVAL b AS LONG) AS LONG\nDIM cmp AS Comparator\ncmp = (a, b) => a - b\nPRINT cmp(9, 4)\n", Dialect.Pb36);
+    Assert.That(basic, Does.Contain("DIM cmp AS DWORD"), "a named-delegate-typed variable is a DWORD code pointer");
+    Assert.That(basic, Does.Contain("CALL DWORD (cmp)"), "calls dispatch through the pointer");
+  }
+
+  [Test]
   public void Render_Assignment_RoundTripsExpressionWithMinimalParens() {
     var basic = RenderAndRebind("A% = 2 + 3 * 4\nPRINT A%\n");
     Assert.That(basic, Does.Contain("A% = 2 + 3 * 4"), "multiply binds tighter than add - no parens needed");

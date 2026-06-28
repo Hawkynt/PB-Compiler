@@ -603,18 +603,26 @@ PRINT square(9)
 ```
 </details>
 
-> **Illustrative decompilation:** PB 3.5 cannot express this construct (e.g. a function pointer that returns a value), so it lowers in code generation via compiler-internal types/names. The form below shows the lowering *structure*, not compilable PB 3.5.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
 ```basic
-DIM square AS FUNCTION(LONG) AS LONG
-square = FUNCTION(BYVAL x AS LONG) AS LONG => x * x
-PRINT square(9)
+DIM square AS DWORD
+square = CODEPTR32(Sthunk1)
+DIM pbtmp2 AS LONG
+pbtmp2 = 9
+DIM pbtmp1 AS LONG
+CALL DWORD (square)(pbtmp2, pbtmp1)
+PRINT pbtmp1
 
 FUNCTION S_lambda_1(BYVAL x AS LONG) AS LONG
   FUNCTION = x * x
 END FUNCTION
+
+SUB Sthunk1(Sp0 AS LONG, Sresult AS LONG)
+  Sresult = S_lambda_1(Sp0)
+END SUB
 ```
 
 _With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
@@ -636,19 +644,27 @@ END FUNCTION
 ```
 </details>
 
-> **Illustrative decompilation:** PB 3.5 cannot express this construct (e.g. a function pointer that returns a value), so it lowers in code generation via compiler-internal types/names. The form below shows the lowering *structure*, not compilable PB 3.5.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
 ```basic
 DECLARE FUNCTION Triple&(BYVAL n AS LONG)
-DIM f AS FUNCTION(LONG) AS LONG
-f = CODEPTR32(Triple&)
-PRINT f(8)
+DIM f AS DWORD
+f = CODEPTR32(Sthunk1)
+DIM pbtmp2 AS LONG
+pbtmp2 = 8
+DIM pbtmp1 AS LONG
+CALL DWORD (f)(pbtmp2, pbtmp1)
+PRINT pbtmp1
 
 FUNCTION Triple&(BYVAL n AS LONG)
   Triple& = n * 3
 END FUNCTION
+
+SUB Sthunk1(Sp0 AS LONG, Sresult AS LONG)
+  Sresult = Triple(Sp0)
+END SUB
 ```
 
 _With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
@@ -667,19 +683,29 @@ PRINT cmp(9, 4)
 ```
 </details>
 
-> **Illustrative decompilation:** PB 3.5 cannot express this construct (e.g. a function pointer that returns a value), so it lowers in code generation via compiler-internal types/names. The form below shows the lowering *structure*, not compilable PB 3.5.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
 ```basic
 DECLARE FUNCTION Comparator(BYVAL a AS LONG, BYVAL b AS LONG) AS LONG
-DIM cmp AS Comparator
-cmp = FUNCTION(a, b) => a - b
-PRINT cmp(9, 4)
+DIM cmp AS DWORD
+cmp = CODEPTR32(Sthunk1)
+DIM pbtmp2 AS LONG
+pbtmp2 = 9
+DIM pbtmp3 AS LONG
+pbtmp3 = 4
+DIM pbtmp1 AS LONG
+CALL DWORD (cmp)(pbtmp2, pbtmp3, pbtmp1)
+PRINT pbtmp1
 
 FUNCTION S_lambda_1(BYVAL a AS LONG, BYVAL b AS LONG) AS LONG
   FUNCTION = a - b
 END FUNCTION
+
+SUB Sthunk1(Sp0 AS LONG, Sp1 AS LONG, Sresult AS LONG)
+  Sresult = S_lambda_1(Sp0, Sp1)
+END SUB
 ```
 
 _With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._

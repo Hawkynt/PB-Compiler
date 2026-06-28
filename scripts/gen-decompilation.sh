@@ -19,6 +19,15 @@ TMP="${TMPDIR:-/tmp}/gendc.$$"; mkdir -p "$TMP/a" "$TMP/b"
 # and diff), not just whether the decompilation recompiles. Without it, falls back to a compile check.
 DOSBOX="${DOSBOX_EXE:-}"
 [ -z "$DOSBOX" ] && for c in tools/dosbox/dosbox dosbox-staging dosbox; do command -v "$c" >/dev/null 2>&1 && { DOSBOX=$c; break; }; [ -x "$c" ] && { DOSBOX=$c; break; }; done
+# Run DOSBox headless on a single shared Xvfb display so no window pops up and there is no per-call
+# xvfb-run startup cost (dosbox-staging needs a real display - SDL_VIDEODRIVER=dummy exits without
+# running). Without Xvfb, DOSBox runs on the real display (a window appears); install xvfb to silence it.
+if [ -z "${DISPLAY:-}" ] && command -v Xvfb >/dev/null 2>&1; then
+  Xvfb :99 -screen 0 640x480x8 >/dev/null 2>&1 & _XVFB_PID=$!
+  export DISPLAY=:99
+  trap '[ -n "${_XVFB_PID:-}" ] && kill "$_XVFB_PID" 2>/dev/null' EXIT
+  sleep 1
+fi
 winpath() { cd "$1" && pwd; }
 run_dosbox() { rm -f "$2/DONE.TXT" "$2/RESULT.TXT"; "$DOSBOX" -conf "$1" >/dev/null 2>&1 & local pid=$!
   for _ in $(seq 1 250); do { [ -f "$2/DONE.TXT" ] || ! kill -0 "$pid" 2>/dev/null; } && break; sleep 0.2; done

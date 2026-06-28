@@ -119,6 +119,33 @@ public sealed class BasicWriter {
       }
       this.WriteProcedure(proc, decl);
     }
+
+    // Delegate thunks discovered while emitting the bodies (a function called through a code pointer
+    // is wrapped in a SUB with a trailing BYREF result, so it goes through pb35's CALL DWORD).
+    for (var i = 0; i < this._thunkTargets.Count; i++)
+      this.WriteThunk(this._thunkTargets[i]);
+  }
+
+  /// <summary>Emits a thunk SUB that adapts a function to the BYREF-result calling convention CALL DWORD uses.</summary>
+  private void WriteThunk(ProcedureSymbol target) {
+    var thunk = this._thunks[target.Name];
+    var ps = target.Parameters.Take(target.VisibleParameterCount).ToList();
+    var pars = ps.Select((p, i) => $"Sp{i} AS {TypeText(p.Type)}").ToList();
+    var args = string.Join(", ", ps.Select((_, i) => $"Sp{i}"));
+    this._sb.Append('\n');
+    if (target.ReturnType is { } ret) {
+      pars.Add($"Sresult AS {TypeText(ret)}");
+      this.Line($"SUB {thunk}({string.Join(", ", pars)})");
+      ++this._indent;
+      this.Line($"Sresult = {Id(target.Name)}({args})");
+      --this._indent;
+    } else {
+      this.Line($"SUB {thunk}({string.Join(", ", pars)})");
+      ++this._indent;
+      this.Line(args.Length > 0 ? $"{Id(target.Name)} {args}" : Id(target.Name));
+      --this._indent;
+    }
+    this.Line("END SUB");
   }
 
   // ---- declarations -----------------------------------------------------------------------------
@@ -273,6 +300,11 @@ public sealed class BasicWriter {
 
   private readonly Dictionary<Expression, string> _exprSubst = new(ReferenceEqualityComparer.Instance);
   private int _tempCounter;
+  // code-pointer / delegate thunks: a function called through a pointer is wrapped in a SUB that takes
+  // its arguments and a trailing BYREF result, so the call can go through pb35's CALL DWORD (which has
+  // no function-result form). Keyed by target procedure name; emitted after the procedures.
+  private readonly Dictionary<string, string> _thunks = new(StringComparer.OrdinalIgnoreCase);
+  private readonly List<ProcedureSymbol> _thunkTargets = [];
 
   private void WriteStatement(Statement statement) {
     // statement-level desugar (member-call statement, property-set assignment): emit the core form
@@ -280,9 +312,10 @@ public sealed class BasicWriter {
       this.WriteStatement(lowered);
       return;
     }
-    // value-position ternaries (IfExpr) have no pb35 expression form: hoist each to a temp computed by
-    // an IF/ELSE block emitted before this statement, then substitute the temp at its use site.
-    var hoisted = this.HoistConditionals(statement);
+    // Value-position constructs with no pb35 expression form (a ternary IfExpr, a function called
+    // through a code pointer) are hoisted to a temp computed before this statement, then substituted
+    // at their use site.
+    var hoisted = this.HoistComplex(statement);
     if (hoisted is { Count: > 0 }) {
       this.WriteStatementCore(statement);
       foreach (var h in hoisted)
@@ -292,37 +325,69 @@ public sealed class BasicWriter {
     this.WriteStatementCore(statement);
   }
 
-  /// <summary>Hoists value-position ternaries out of a statement's own expressions; returns the substituted nodes (to clear afterward).</summary>
-  private List<Expression>? HoistConditionals(Statement statement) {
+  /// <summary>Hoists value-position ternaries and code-pointer calls out of a statement's own expressions; returns the substituted nodes (to clear afterward).</summary>
+  private List<Expression>? HoistComplex(Statement statement) {
     List<Expression>? top = null;
     foreach (var e in DirectExpressions(statement))
-      this.CollectTopTernaries(e, ref top);
+      this.CollectHoistable(e, ref top);
     if (top is null)
       return null;
     foreach (var node in top) {
-      var ife = (IfExpr)node;
       var temp = "pbtmp" + (++this._tempCounter);
-      this.Line($"DIM {temp} AS {TypeText(this._model.TypeOf(ife))}");
-      this.Line($"IF {this.Expr(ife.Condition)} THEN");
-      ++this._indent; this.Line($"{temp} = {this.Expr(ife.WhenTrue)}"); --this._indent;
-      this.Line("ELSE");
-      ++this._indent; this.Line($"{temp} = {this.Expr(ife.WhenFalse)}"); --this._indent;
-      this.Line("END IF");
+      if (node is IfExpr ife) {
+        this.Line($"DIM {temp} AS {TypeText(this._model.TypeOf(ife))}");
+        this.Line($"IF {this.Expr(ife.Condition)} THEN");
+        ++this._indent; this.Line($"{temp} = {this.Expr(ife.WhenTrue)}"); --this._indent;
+        this.Line("ELSE");
+        ++this._indent; this.Line($"{temp} = {this.Expr(ife.WhenFalse)}"); --this._indent;
+        this.Line("END IF");
+      } else {   // a code-pointer call: materialize args into BYREF temps and a result temp, CALL DWORD
+        var call = (CallOrIndexExpr)node;
+        var sig = this._model.ProcPtrCalls[call];
+        var argTemps = new List<string>();
+        for (var i = 0; i < call.Arguments.Count; i++) {
+          var at = "pbtmp" + (++this._tempCounter);
+          this.Line($"DIM {at} AS {TypeText(i < sig.ParameterTypes.Count ? sig.ParameterTypes[i] : PbType.Long)}");
+          this.Line($"{at} = {this.Expr(call.Arguments[i])}");
+          argTemps.Add(at);
+        }
+        this.Line($"DIM {temp} AS {TypeText(sig.ReturnType ?? PbType.Long)}");
+        argTemps.Add(temp);
+        this.Line($"CALL DWORD ({Id(call.Name)})({string.Join(", ", argTemps)})");   // result written into the trailing BYREF temp
+      }
       this._exprSubst[node] = temp;
     }
     return top;
   }
 
-  /// <summary>Collects the topmost ternaries (IfExpr) in an expression - not descending into a ternary's own branches (preserving short-circuit).</summary>
-  private void CollectTopTernaries(Expression e, ref List<Expression>? acc) {
+  /// <summary>Collects the topmost hoistable nodes (a ternary IfExpr, a code-pointer call) - not descending into a ternary's branches (preserving short-circuit).</summary>
+  private void CollectHoistable(Expression e, ref List<Expression>? acc) {
     var r = this._model.Desugared.TryGetValue(e, out var d) ? d
       : this._model.RewrittenIndex.TryGetValue(e, out var w) ? w : e;
-    if (r is IfExpr) {
+    if (r is IfExpr || (r is CallOrIndexExpr && this._model.ProcPtrCalls.ContainsKey(r))) {
       (acc ??= []).Add(r);
-      return;   // do not recurse into branches - they only run conditionally
+      return;   // a leaf to hoist; its branches/args are emitted at hoist time
     }
     foreach (var c in AstQuery.Subexpressions(r))
-      this.CollectTopTernaries(c, ref acc);
+      this.CollectHoistable(c, ref acc);
+  }
+
+  /// <summary>Returns the thunk SUB name wrapping a procedure as a BYREF-result delegate target, creating it on first use.</summary>
+  private string GetThunk(ProcedureSymbol target) {
+    if (this._thunks.TryGetValue(target.Name, out var existing))
+      return existing;
+    var name = $"Sthunk{this._thunks.Count + 1}";
+    this._thunks[target.Name] = name;
+    this._thunkTargets.Add(target);
+    return name;
+  }
+
+  /// <summary>The user function a CODEPTR32(...) delegate value points at (so it can be wrapped in a thunk), else null.</summary>
+  private ProcedureSymbol? DelegateTarget(CallOrIndexExpr codeptr) {
+    if (codeptr.Arguments is not [var arg])
+      return null;
+    var name = arg switch { NameExpr n => n.Name, CallOrIndexExpr c => c.Name, _ => null };
+    return name is not null && this._model.Procedures.TryGetValue(name, out var p) && p.IsFunction ? p : null;
   }
 
   /// <summary>The expressions a statement evaluates at its own level (not inside nested blocks).</summary>
@@ -460,10 +525,13 @@ public sealed class BasicWriter {
       return $"{v.Name}{Suffix(v.Suffix)}{(declared is null ? "" : " AS " + declared)}";
     }
     var bounds = v.ArrayBounds is { Count: > 0 } ? "(" + this.FormatBounds(v.ArrayBounds) + ")" : "";
-    // Prefer the bound symbol's resolved UDT name so a generic use (Box OF LONG) / nullable (T?) DIM
-    // names its monomorphized/synthesized type, which TypeNameText (surface) cannot produce.
-    var type = this.ScopeSymbol(v.Name)?.Type is UdtType udt ? $" AS {Id(udt.Name)}"
-      : v.Type is { } t2 ? $" AS {this.TypeNameText(t2)}" : "";
+    // Prefer the bound symbol's resolved type so a generic use (Box OF LONG) names its monomorphized
+    // type and a proc-pointer / named delegate becomes a DWORD - which the surface TypeName cannot.
+    var type = this.ScopeSymbol(v.Name)?.Type switch {
+      UdtType udt => $" AS {Id(udt.Name)}",
+      ProcPtrType => " AS DWORD",
+      _ => v.Type is { } t2 ? $" AS {this.TypeNameText(t2)}" : "",
+    };
     return $"{v.Name}{Suffix(v.Suffix)}{bounds}{type}";
   }
 
@@ -681,6 +749,8 @@ public sealed class BasicWriter {
       StringLiteralExpr x => "\"" + x.Value.Replace("\"", "\"\"") + "\"",
       NamedConstantExpr x => "%" + x.Name,
       NameExpr x => (this._nameRemap is { } m && m.TryGetValue(x.Name, out var rn) ? rn : Id(x.Name)) + Suffix(x.Suffix),   // remap a renamed overload's result; Id() maps synthesized locals
+      // CODEPTR32(func) used as a delegate value points at a BYREF-result thunk wrapping the function
+      CallOrIndexExpr x when x.Name.Equals("CODEPTR32", StringComparison.OrdinalIgnoreCase) && this.DelegateTarget(x) is { } tgt => $"CODEPTR32({this.GetThunk(tgt)})",
       CallOrIndexExpr x => $"{this.CallName(x, x.Name, x.Suffix)}({this.JoinExprs(this.CallArguments(x, x.Arguments))})",
       MemberExpr x => $"{this.Expr(x.Target, 99)}.{Id(x.Member)}{Suffix(x.Suffix)}",   // synthesized backing fields ($Current/$state) -> pb35-valid
       IndexExpr x => $"{this.Expr(x.Target, 99)}({this.JoinArgs(x.Arguments)})",
@@ -695,6 +765,8 @@ public sealed class BasicWriter {
       IfExpr x => $"IIF({this.Expr(x.Condition)}, {this.Expr(x.WhenTrue)}, {this.Expr(x.WhenFalse)})",
       NewExpr x => $"{x.TypeName}({string.Join(", ", x.Fields.Select(f => $"{f.Field} := {this.Expr(f.Value)}"))})",
       NamedArgExpr x => $"{x.Name} := {this.Expr(x.Value)}",
+      // an inline lambda lifts to a top-level FUNCTION; its delegate value is a thunk's code pointer
+      LambdaExpr x when this._model.LambdaProcs.TryGetValue(x, out var lifted) => $"CODEPTR32({this.GetThunk(lifted)})",
       LambdaExpr x => $"FUNCTION({string.Join(", ", x.Parameters.Select(this.FormatParam))})" + (x.ReturnType is { } rt ? $" AS {this.TypeNameText(rt)}" : "") + $" => {this.Expr(x.Body)}",
       ArrayLiteralExpr x => "{" + string.Join(", ", x.Elements.Select(this.FormatElement)) + "}",
       InterpolatedStringExpr x => this.FormatInterpolation(x),
@@ -892,10 +964,8 @@ public sealed class BasicWriter {
 
   /// <summary>Renders an <c>AS</c>-clause type from the syntax tree (a <see cref="TypeName"/>).</summary>
   private string TypeNameText(TypeName t) {
-    if (t.IsProcPtr) {   // a typed procedure pointer / delegate: FUNCTION(types) AS ret | SUB(types)
-      var pars = t.ProcParameterTypes is { } ps ? string.Join(", ", ps.Select(this.TypeNameText)) : "";
-      return t.ProcReturnType is { } pr ? $"FUNCTION({pars}) AS {this.TypeNameText(pr)}" : $"SUB({pars})";
-    }
+    if (t.IsProcPtr)   // a typed procedure pointer / delegate is a 32-bit code pointer in pb35
+      return "DWORD";
     if (t.IsPointer)
       return $"{this.TypeNameText(t.PointerTarget!)} PTR";
     if (t.UserTypeName is { } udt)
@@ -925,6 +995,7 @@ public sealed class BasicWriter {
     AsciizType a => $"ASCIIZ * {a.Length}",
     WideIntType => "QUAD",
     PointerType p => $"{TypeText(p.Target)} PTR",
+    ProcPtrType => "DWORD",    // a code pointer / fat delegate is a 32-bit value in pb35
     UdtType u => Id(u.Name),   // monomorphized generics carry @ in the name (Box@Long)
     _ => "INTEGER",
   };
