@@ -63,14 +63,6 @@ emit_section() { # $1 = .bas file
   echo
   [ -n "$desc" ] && { echo "$desc"; echo; }
 
-  echo "<details><summary>pb36 source</summary>"
-  echo
-  echo '```basic'
-  body "$f"
-  echo '```'
-  echo "</details>"
-  echo
-
   # decompilation without the optimizer (pure feature lowering)
   if run --dialect pb36 --no-optimize --emit-basic "$f" > "$TMP/no.bas" 2>"$TMP/err"; then
     : # ok
@@ -89,6 +81,13 @@ emit_section() { # $1 = .bas file
   esac
   echo
 
+  # source and decompilation shown together so the lowering is visible at a glance
+  echo '**pb3.6 source:**'
+  echo
+  echo '```basic'
+  body "$f"
+  echo '```'
+  echo
   echo '**Decompiled (lowered to PB 3.5):**'
   echo
   echo '```basic'

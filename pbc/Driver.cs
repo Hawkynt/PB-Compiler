@@ -136,10 +136,15 @@ public static class Driver {
         // back-emitter: turn the program back into PB 3.5-compatible PowerBASIC - declarations and
         // signatures from the surface unit, executable bodies (with the binder's pb36->pb35 lowering)
         // from the bound model. When the optimizer is in effect (its dialect default, unless
-        // --no-optimize), run the statement pruner first so dead-code elimination shows in the output.
-        if (optimize ?? (dialect == Dialect.Pb36))
+        // --no-optimize), run the AST-level passes whose effect is visible at the source level: the
+        // statement pruner (dead-code / DEF SEG) mutates the tree, and pure-function folding produces
+        // a call->constant map the back-emitter substitutes, so the output shows what the optimizer yields.
+        Dictionary<Syntax.Ast.CallOrIndexExpr, Semantics.ConstantValue>? folds = null;
+        if (optimize ?? (dialect == Dialect.Pb36)) {
           CodeGen.OptPruner.Prune(model);
-        var basic = Emit.BasicWriter.Render(model, unit);
+          folds = CodeGen.OptPureFold.Analyze(model);
+        }
+        var basic = Emit.BasicWriter.Render(model, unit, folds);
         if (output != null) {
           File.WriteAllText(output, basic);
           stdout.WriteLine($"{Path.GetFileName(output)}: {basic.Length} bytes of PowerBASIC");

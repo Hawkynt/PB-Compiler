@@ -120,6 +120,22 @@ public sealed class BasicWriterTests {
   }
 
   [Test]
+  public void Render_PureFunctionFold_EmitsComputedLiteralWhenFoldsSupplied() {
+    var src = "FUNCTION Cube&(BYVAL n AS LONG)\n  Cube& = n * n * n\nEND FUNCTION\nPRINT Cube&(4)\n";
+    var unit = Parser.Parse(Lexer.Tokenize(src, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty);
+
+    var plain = BasicWriter.Render(model, unit);
+    Assert.That(plain, Does.Contain("Cube&(4)"), "without the fold map the call is emitted verbatim");
+
+    var folds = PowerBasic.Compiler.CodeGen.OptPureFold.Analyze(model);
+    var optimized = BasicWriter.Render(model, unit, folds);
+    Assert.That(optimized, Does.Contain("PRINT 64"), "with the fold map the pure call folds to its computed literal");
+    Assert.That(optimized, Does.Not.Contain("Cube&(4)"), "the call is gone");
+  }
+
+  [Test]
   public void Render_Assignment_RoundTripsExpressionWithMinimalParens() {
     var basic = RenderAndRebind("A% = 2 + 3 * 4\nPRINT A%\n");
     Assert.That(basic, Does.Contain("A% = 2 + 3 * 4"), "multiply binds tighter than add - no parens needed");

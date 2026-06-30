@@ -50,8 +50,14 @@ public sealed class BasicWriter {
     return (char.IsLetter(s[0]) ? s : "S" + s) + tail;   // pb35 identifiers must start with a letter
   }
 
-  private BasicWriter(SemanticModel model) {
+  // O25 pure-function folding: a foldable constant-argument call mapped to its computed result. When
+  // supplied (the optimized decompilation), the call is emitted as the folded literal, so the source
+  // shows what the optimizer yields (PRINT Cube(4) -> PRINT 64).
+  private readonly IReadOnlyDictionary<CallOrIndexExpr, ConstantValue>? _folds;
+
+  private BasicWriter(SemanticModel model, IReadOnlyDictionary<CallOrIndexExpr, ConstantValue>? folds) {
     this._model = model;
+    this._folds = folds;
     // The QB/PDS/TB families evaluate SINGLE-typed float expressions in single precision throughout;
     // pb35 keeps double/extended intermediates. When transpiling those dialects, narrow SINGLE-typed
     // observable values (CSNG) so the pb35 recompile prints the same precision. The PB family matches
@@ -59,9 +65,13 @@ public sealed class BasicWriter {
     this._singleFloatRuntime = model.Dialect.Family() == DialectFamily.Microsoft || model.Dialect.IsTurboBasic();
   }
 
-  /// <summary>Un-parses the whole program (declarations, main body, procedures) to PB 3.5 source.</summary>
-  public static string Render(SemanticModel model, CompilationUnit unit) {
-    var writer = new BasicWriter(model);
+  /// <summary>
+  /// Un-parses the whole program (declarations, main body, procedures) to PB 3.5 source. Pass
+  /// <paramref name="folds"/> (from <c>OptPureFold.Analyze</c>) to show pure-function folding -
+  /// foldable constant-argument calls are emitted as their computed literal.
+  /// </summary>
+  public static string Render(SemanticModel model, CompilationUnit unit, IReadOnlyDictionary<CallOrIndexExpr, ConstantValue>? folds = null) {
+    var writer = new BasicWriter(model, folds);
     writer.EmitProgram(unit);
     return writer._sb.ToString();
   }
@@ -83,6 +93,11 @@ public sealed class BasicWriter {
     foreach (var statement in unit.Statements)
       switch (statement) {
         case TypeDecl { TypeParameters.Count: > 0 }: break;   // generic template - the monomorphized instances are emitted from model.Udts below
+        // A layout-transformed TYPE (bit-fields, ALIGN, SIZE, explicit AT) does not match its surface
+        // fields under pb35: emit the resolved layout (packed $bits words, padding for the offsets)
+        // so member access binds and LEN() agrees. Falls back to the surface form if it cannot be
+        // expressed sequentially (overlapping AT offsets need union semantics).
+        case TypeDecl t when IsLayoutTransformed(t) && this._model.Udts.TryGetValue(t.Name, out var rt) && this.WriteUdtTypeWithLayout(rt): emittedTypes.Add(t.Name); break;
         case TypeDecl t: this.WriteTypeDecl(t); emittedTypes.Add(t.Name); break;
         case UnionDecl u: this.WriteUnionDecl(u); emittedTypes.Add(u.Name); break;
         case EnumDecl e: this.WriteEnumDecl(e); break;
@@ -178,6 +193,42 @@ public sealed class BasicWriter {
     this.Line(u.IsUnion ? "END UNION" : "END TYPE");
   }
 
+  /// <summary>A TYPE whose pb35 layout differs from its surface fields: bit-fields, ALIGN/SIZE padding, or explicit AT offsets.</summary>
+  private static bool IsLayoutTransformed(TypeDecl t)
+    => t.Alignment > 0 || t.ExplicitSize != null || t.Fields.Any(f => f.BitWidth > 0 || f.ExplicitOffset != null);
+
+  /// <summary>
+  /// Emits a layout-transformed TYPE as its RESOLVED layout: fields placed by their resolved byte
+  /// offset with explicit <c>STRING * n</c> padding for the gaps (so bit-field <c>$bits</c> words,
+  /// ALIGN padding and AT offsets all reproduce under pb35's sequential packing, and LEN() agrees).
+  /// Returns false when fields overlap (an AT-overlay union view, which needs union semantics) so the
+  /// caller falls back to the surface form.
+  /// </summary>
+  private bool WriteUdtTypeWithLayout(UdtType u) {
+    var fields = u.Fields.OrderBy(f => f.Offset).ToList();
+    var cursor = 0; var pad = 0;
+    var lines = new List<string>();
+    foreach (var fld in fields) {
+      if (fld.Offset < cursor)
+        return false;   // overlapping fields - not expressible as a sequential pb35 TYPE
+      if (fld.Offset > cursor)
+        lines.Add($"Spad{++pad} AS STRING * {fld.Offset - cursor}");
+      lines.Add($"{Id(fld.Name)}{(fld.ElementCount > 1 ? $"({fld.ElementCount - 1})" : "")} AS {TypeText(fld.Type)}");
+      cursor = fld.Offset + fld.TotalSize;
+    }
+    if (u.Size > cursor)
+      lines.Add($"Spad{++pad} AS STRING * {u.Size - cursor}");
+
+    this._sb.Append('\n');
+    this.Line($"TYPE {Id(u.Name)}");
+    ++this._indent;
+    foreach (var line in lines)
+      this.Line(line);
+    --this._indent;
+    this.Line("END TYPE");
+    return true;
+  }
+
   private void WriteUnionDecl(UnionDecl u) {
     this._sb.Append('\n');
     this.Line($"UNION {u.Name}");
@@ -242,13 +293,26 @@ public sealed class BasicWriter {
 
   private void WriteProcedure(ProcedureSymbol proc, Statement? decl) {
     this._sb.Append('\n');
-    var kind = proc.IsFunction ? "FUNCTION" : "SUB";
     var name = this.OverloadName(proc);   // overloaded definitions get distinct pb35 names
-    string header = decl switch {
-      SubDecl s => $"SUB {name}({string.Join(", ", s.Parameters.Select(this.FormatParam))})",
-      FunctionDecl f => $"FUNCTION {name}{Suffix(f.Suffix)}({string.Join(", ", f.Parameters.Select(this.FormatParam))})" + (f.ReturnType is { } rt ? $" AS {this.TypeNameText(rt)}" : ""),
-      _ => this.HeaderFromSymbol(proc),   // synthesized procs (lambdas, generics, lifted members) have no unit decl
-    };
+
+    // A function returning a UDT/tuple by value is lowered to a SUB taking the result buffer as a
+    // trailing BYREF parameter (pb35 has no by-value UDT return); the call site already passes the
+    // buffer. The body assigns the result through the function name, so remap that to the buffer.
+    string? sretRemap = null;
+    string kind, header;
+    if (proc.HasSretParam) {
+      var sret = proc.Parameters[^1];
+      sretRemap = Id(sret.Name);
+      kind = "SUB";
+      header = $"SUB {name}({string.Join(", ", proc.Parameters.Select(this.FormatParamSymbol))})";
+    } else {
+      kind = proc.IsFunction ? "FUNCTION" : "SUB";
+      header = decl switch {
+        SubDecl s => $"SUB {name}({string.Join(", ", s.Parameters.Select(this.FormatParam))})",
+        FunctionDecl f => $"FUNCTION {name}{Suffix(f.Suffix)}({string.Join(", ", f.Parameters.Select(this.FormatParam))})" + (f.ReturnType is { } rt ? $" AS {this.TypeNameText(rt)}" : ""),
+        _ => this.HeaderFromSymbol(proc),   // synthesized procs (lambdas, generics, lifted members) have no unit decl
+      };
+    }
     this.Line(header);
     ++this._indent;
     var savedScope = this._scopeVars;
@@ -256,16 +320,15 @@ public sealed class BasicWriter {
     this._scopeVars = proc.Variables;
     this.EmitSynthesizedDims(proc.Variables);   // synthesized UDT-typed locals need an explicit pb35 DIM
     // The function result is assigned in the body through the function name (or, for a lifted TYPE
-    // member, through its ResultName - e.g. a PROPERTY GET assigns "Size"). When the emitted function
-    // name differs (sanitized "." names, renamed overloads), remap those result references so the
-    // store hits the emitted function, not a stray local.
+    // member, through its ResultName - e.g. a PROPERTY GET assigns "Size"; or, for an sret function,
+    // through the result buffer). When the emitted name differs (sanitized "." names, renamed
+    // overloads, the sret buffer), remap those result references so the store hits the right target.
     this._nameRemap = null;
-    if (proc.IsFunction) {
-      Dictionary<string, string> remap = new(StringComparer.OrdinalIgnoreCase);
-      if (name != proc.Name) remap[proc.Name] = name;
-      if (proc.ResultName is { } resultName && resultName != name) remap[resultName] = name;
-      if (remap.Count > 0) this._nameRemap = remap;
-    }
+    Dictionary<string, string> remap = new(StringComparer.OrdinalIgnoreCase);
+    var resultTarget = sretRemap ?? name;
+    if (resultTarget != proc.Name) remap[proc.Name] = resultTarget;
+    if (proc.ResultName is { } rn && rn != resultTarget) remap[rn] = resultTarget;
+    if (remap.Count > 0 && (proc.IsFunction || proc.HasSretParam)) this._nameRemap = remap;
     foreach (var statement in proc.Body!)
       this.WriteStatement(statement);
     this._nameRemap = savedRemap;
@@ -292,8 +355,8 @@ public sealed class BasicWriter {
   private string FormatParamSymbol(VariableSymbol p) {
     var prefix = p.ByVal ? "BYVAL " : "";
     return p.Type is ArrayType a
-      ? $"{prefix}{p.Name}() AS {TypeText(a.Element)}"
-      : $"{prefix}{p.Name} AS {TypeText(p.Type)}";
+      ? $"{prefix}{Id(p.Name)}() AS {TypeText(a.Element)}"
+      : $"{prefix}{Id(p.Name)} AS {TypeText(p.Type)}";
   }
 
   // ---- statements -------------------------------------------------------------------------------
@@ -749,6 +812,8 @@ public sealed class BasicWriter {
       StringLiteralExpr x => "\"" + x.Value.Replace("\"", "\"\"") + "\"",
       NamedConstantExpr x => "%" + x.Name,
       NameExpr x => (this._nameRemap is { } m && m.TryGetValue(x.Name, out var rn) ? rn : Id(x.Name)) + Suffix(x.Suffix),   // remap a renamed overload's result; Id() maps synthesized locals
+      // O25 pure-function folding: a foldable constant-argument call becomes its computed literal
+      CallOrIndexExpr x when this._folds is { } folds && folds.TryGetValue(x, out var folded) => FormatConstant(folded),
       // CODEPTR32(func) used as a delegate value points at a BYREF-result thunk wrapping the function
       CallOrIndexExpr x when x.Name.Equals("CODEPTR32", StringComparison.OrdinalIgnoreCase) && this.DelegateTarget(x) is { } tgt => $"CODEPTR32({this.GetThunk(tgt)})",
       CallOrIndexExpr x => $"{this.CallName(x, x.Name, x.Suffix)}({this.JoinExprs(this.CallArguments(x, x.Arguments))})",
@@ -805,6 +870,16 @@ public sealed class BasicWriter {
     if (x.Op is BinaryOp.PointerAdd or BinaryOp.PointerSub && this.LoweredType(x.Left) is PointerType pt) {
       var op = x.Op == BinaryOp.PointerAdd ? "+" : "-";
       return Paren(parentPrec, 4, $"{this.Expr(x.Left, 4)} {op} {this.Expr(x.Right, 8)} * {pt.Target.Size}");
+    }
+    // A constant-amount logical shift has no pb35 operator usable in expression position (SHL/SHR
+    // parse only inside PRINT), so lower it to the equivalent multiply/integer-divide by 2^k - exact
+    // for the unsigned/masked values bit-fields use, and recompilable everywhere. Arithmetic shift
+    // and rotates have no such equivalent and keep their operator (illustrative only).
+    if (x.Op is BinaryOp.ShiftLeft or BinaryOp.ShiftRightLogical && this.ConstInt(x.Right) is { } k && k is >= 0 and < 31) {
+      var factor = 1L << (int)k;
+      return x.Op == BinaryOp.ShiftLeft
+        ? Paren(parentPrec, 7, $"{this.Expr(x.Left, 7)} * {factor}")
+        : Paren(parentPrec, 6, $"{this.Expr(x.Left, 6)} \\ {factor}");
     }
     var prec = Precedence(x.Op);
     // left-associative: the left child at the same precedence needs no parens, the right child does
@@ -918,6 +993,12 @@ public sealed class BasicWriter {
     var s = v.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
     return s.Contains('.') || s.Contains('E') || s.Contains('e') ? s : s + ".0";   // keep it a float literal
   }
+
+  /// <summary>Renders a folded constant value as a pb35 literal (the O25 pure-fold result).</summary>
+  private static string FormatConstant(ConstantValue c)
+    => c.Text is { } t ? "\"" + t.Replace("\"", "\"\"") + "\""
+      : c.Integer is { } i ? i.ToString(System.Globalization.CultureInfo.InvariantCulture)
+      : FormatFloat(c.Float ?? 0);
 
   private static string Suffix(TypeSuffix s) => s switch {
     TypeSuffix.Integer => "%", TypeSuffix.Long => "&", TypeSuffix.Quad => "&&",

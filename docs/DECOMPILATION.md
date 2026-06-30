@@ -21,16 +21,15 @@ rendered in the nearest readable PB 3.5 form; their full machine lowering lives 
 
 `FUNCTION F(...) [AS T] = expr` desugars to a single result-assignment body.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 DECLARE FUNCTION Square%(BYVAL N%)
 PRINT Square%(7)
 FUNCTION Square%(BYVAL N%) = N% * N%
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -43,22 +42,30 @@ FUNCTION Square%(BYVAL N%)
 END FUNCTION
 ```
 
-_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+**With the optimizer (`--optimize`, e.g. dead-code / `DEF SEG` cleanup):**
+
+```basic
+DECLARE FUNCTION Square%(BYVAL N%)
+PRINT 49
+
+FUNCTION Square%(BYVAL N%)
+  FUNCTION = N% * N%
+END FUNCTION
+```
 
 ### DIM with initializer
 
 `DIM x = value` (type inferred) / `DIM y AS LONG = value` splice a DIM then an assignment.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 DIM X = 42
 DIM Y AS LONG = 100000
 PRINT X; Y
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -76,16 +83,15 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 `IF(cond, whenTrue, whenFalse)` lowers to a real branch; the untaken arm is skipped.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 DIM X AS INTEGER
 X = 0
 PRINT IF(X = 0, 42, 100 \ X)
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -107,7 +113,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 `a ANDALSO b` -> `IF(a, b<>0, 0)`, `a ORELSE b` -> `IF(a, -1, b<>0)`; b is skipped when known.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 DIM A AS INTEGER
@@ -117,9 +125,6 @@ B = 5
 PRINT (A <> 0) ANDALSO (B \ A = 0)
 PRINT (B <> 0) ORELSE (B \ A = 0)
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -150,7 +155,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 `DIM p = NEW Udt { .f = v }` lowers to a DIM plus one field assignment per listed field.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 TYPE Point
@@ -160,9 +167,6 @@ END TYPE
 DIM P = NEW Point { .X = 3, .Y = 4 }
 PRINT P.X; P.Y
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -184,7 +188,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 Same name with different parameter signatures; each call resolves to the best match.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 FUNCTION Area(s AS INTEGER) AS INTEGER
@@ -195,9 +201,6 @@ FUNCTION Area(w AS INTEGER, h AS INTEGER) AS INTEGER
 END FUNCTION
 PRINT Area(4); Area(3, 5)
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -219,7 +222,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 << >> >>> rotate <<> <>> and bitwise | operate at the left operand's integral width.
 
-<details><summary>pb36 source</summary>
+> **Illustrative decompilation:** recompiles under `--dialect pb35` but the runtime result diverges - PB 3.5 has no faithful equivalent for this construct (e.g. rotate operators, far-pointer offset arithmetic). The form below shows the lowering structure.
+
+**pb3.6 source:**
 
 ```basic
 DIM n AS INTEGER
@@ -228,17 +233,14 @@ PRINT n << 3; n | 4
 PRINT &H8000 >> 4; &H8000 >>> 4
 PRINT &H1 <<> 1; &H1 <>> 1
 ```
-</details>
-
-> **Illustrative decompilation:** recompiles under `--dialect pb35` but the runtime result diverges - PB 3.5 has no faithful equivalent for this construct (e.g. rotate operators, far-pointer offset arithmetic). The form below shows the lowering structure.
 
 **Decompiled (lowered to PB 3.5):**
 
 ```basic
 DIM n AS INTEGER
 n = 1
-PRINT n SHL 3; n OR 4
-PRINT &H8000% SHR 4; &H8000% SHR 4
+PRINT n * 8; n OR 4
+PRINT &H8000% SHR 4; &H8000% \ 16
 PRINT 1% ROL 1; 1% ROR 1
 ```
 
@@ -248,7 +250,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 ptr +* index / ptr -* index move a typed pointer by index * sizeof(target).
 
-<details><summary>pb36 source</summary>
+> **Illustrative decompilation:** recompiles under `--dialect pb35` but the runtime result diverges - PB 3.5 has no faithful equivalent for this construct (e.g. rotate operators, far-pointer offset arithmetic). The form below shows the lowering structure.
+
+**pb3.6 source:**
 
 ```basic
 DIM a(2) AS INTEGER
@@ -260,9 +264,6 @@ PRINT @p
 p = p -* 1
 PRINT @p
 ```
-</details>
-
-> **Illustrative decompilation:** recompiles under `--dialect pb35` but the runtime result diverges - PB 3.5 has no faithful equivalent for this construct (e.g. rotate operators, far-pointer offset arithmetic). The form below shows the lowering structure.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -285,7 +286,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 `target OP= value` desugars in the parser to `target = target OP value`.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 DIM N AS INTEGER
@@ -297,9 +300,6 @@ S = "a"
 S &= "bc"
 PRINT N; S
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -320,7 +320,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 ENUM members fold to integer-constant literals at their use sites.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 ENUM Color
@@ -330,9 +332,6 @@ ENUM Color
 END ENUM
 PRINT Red; Green; Blue
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -351,7 +350,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 A trailing parameter with a default may be omitted at the call site.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 FUNCTION Pay(x AS INTEGER, y AS INTEGER = 10) AS INTEGER
@@ -359,9 +360,6 @@ FUNCTION Pay(x AS INTEGER, y AS INTEGER = 10) AS INTEGER
 END FUNCTION
 PRINT Pay(5); Pay(5, 20)
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -379,7 +377,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 Foo(y := 2, x := 1) is reordered by the binder into positional order.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 SUB Show(X AS INTEGER, Y AS INTEGER)
@@ -387,9 +387,6 @@ SUB Show(X AS INTEGER, Y AS INTEGER)
 END SUB
 Show(Y := 2, X := 1)
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -403,20 +400,47 @@ END SUB
 
 _With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
 
+### XMS / EMS arrays
+
+DIM EMS routes array storage to the EMS-paged heap; access reads as a normal array.
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+DIM EMS a(1 TO 100) AS LONG
+a(1) = 111
+a(100) = 999
+PRINT a(1)
+PRINT a(100)
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+DIM a(1 TO 100) AS LONG
+a(1) = 111
+a(100) = 999
+PRINT a(1)
+PRINT a(100)
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
 ### From-end array index
 
 arr(^1) is the last element; the binder rewrites it to UBOUND(arr) - n + 1.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 DIM A(1 TO 3) AS INTEGER
 A(1) = 10 : A(2) = 20 : A(3) = 30
 PRINT A(^1)
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -434,15 +458,14 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 DIM a%() = {10, 20, 30} auto-sizes the array and stores each element.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 DIM A%() = {10, 20, 30}
 PRINT A%(0); A%(1); A%(2)
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -460,15 +483,14 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 [99..105] is a bracketed range literal that fills the array like {99..105}.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 DIM A%() = [99..105]
 PRINT A%(0); A%(6)
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -490,7 +512,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 FOR EACH v IN array lowers to a counted index loop copying each element into v.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 DIM A(1 TO 3) AS INTEGER
@@ -500,9 +524,6 @@ FOR EACH V IN A
   PRINT V
 NEXT
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -520,11 +541,39 @@ NEXT
 
 _With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
 
+### FOR EACH over a bracketed range
+
+FOR EACH v IN [lo..hi] desugars straight to a counted FOR v = lo TO hi (no array, no index temp).
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+DIM v AS INTEGER
+FOR EACH v IN [10..13]
+  PRINT v
+NEXT
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+DIM v AS INTEGER
+FOR v = 10 TO 13
+  PRINT v
+NEXT
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
 ### Interpolated strings
 
 `$"...{expr}..."` lowers to literal + STR$/USING$ concatenation.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 DIM N AS INTEGER
@@ -533,9 +582,6 @@ DIM S AS STRING
 S = $"n={N} hex={HEX$(N)}"
 PRINT S
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -553,7 +599,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 A nested proc references an enclosing local; the capture is a hidden BYREF parameter.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 FUNCTION Outer(n AS INTEGER) AS INTEGER
@@ -567,9 +615,6 @@ FUNCTION Outer(n AS INTEGER) AS INTEGER
 END FUNCTION
 PRINT Outer(7)
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -594,16 +639,15 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 A lambda lifts to an anonymous top-level FUNCTION; its value is a code pointer.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 DIM square AS FUNCTION(LONG) AS LONG
 square = FUNCTION(BYVAL x AS LONG) AS LONG => x * x
 PRINT square(9)
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -631,7 +675,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 DIM a FUNCTION-pointer variable, assign a named procedure's address, call through it.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 DECLARE FUNCTION Triple&(BYVAL n AS LONG)
@@ -642,9 +688,6 @@ FUNCTION Triple&(BYVAL n AS LONG)
   Triple& = n * 3
 END FUNCTION
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -673,7 +716,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 A DECLAREd prototype name doubles as a procedure-pointer type used to DIM a variable.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 DECLARE FUNCTION Comparator(BYVAL a AS LONG, BYVAL b AS LONG) AS LONG
@@ -681,9 +726,6 @@ DIM cmp AS Comparator
 cmp = (a, b) => a - b
 PRINT cmp(9, 4)
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -714,7 +756,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 Structured exception handling lowered onto ON ERROR; FINALLY runs on every path.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 DIM x AS INTEGER
@@ -726,9 +770,6 @@ FINALLY
   PRINT "done"
 END TRY
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -747,11 +788,206 @@ Stryfinally1:
 
 _With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
 
+### DEFER scope guard
+
+DEFER lowers to a TRY/FINALLY so the deferred statement runs on scope exit.
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+SUB Work
+  DEFER PRINT "cleanup"
+  PRINT "working"
+END SUB
+CALL Work
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+CALL Work()
+
+SUB Work()
+    PRINT "working"
+    PRINT "cleanup"
+END SUB
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
+### Wide integer (INT128)
+
+128-bit integer declaration with addition/subtraction; result narrowed to LONG to print.
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+DIM a AS INT128
+DIM b AS INT128
+DIM c AS INT128
+DIM lo&
+a = 100
+b = 23
+c = 3
+a = a + b
+a = a - c
+lo& = a
+PRINT lo&
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+DIM a AS QUAD
+DIM b AS QUAD
+DIM c AS QUAD
+DIM lo&
+a = 100
+b = 23
+c = 3
+a = a + b
+a = a - c
+lo& = a
+PRINT lo&
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
+### Tuple return + destructuring
+
+A FUNCTION AS (LONG, LONG) returns an anonymous tuple by struct return; q&, r& = DivMod(...) destructures its Item1/Item2 fields.
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+FUNCTION DivMod(BYVAL a AS LONG, BYVAL b AS LONG) AS (LONG, LONG)
+  DivMod.Item1 = a \ b
+  DivMod.Item2 = a MOD b
+END FUNCTION
+DIM q&, r&
+q&, r& = DivMod(17, 5)
+PRINT q&; r&
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+
+TYPE S_tup_Long_Long
+  Item1 AS LONG
+  Item2 AS LONG
+END TYPE
+DIM S_destr1 AS S_tup_Long_Long
+DIM q&, r&
+IF -1 THEN
+  DivMod 17, 5, S_destr1
+  q& = S_destr1.Item1
+  r& = S_destr1.Item2
+END IF
+PRINT q&; r&
+
+SUB DivMod(BYVAL a AS LONG, BYVAL b AS LONG, S_sret AS S_tup_Long_Long)
+  S_sret.Item1 = a \ b
+  S_sret.Item2 = a MOD b
+END SUB
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
+### Tuple literal parallel assignment (swap)
+
+a&, b& = (b&, a&) reads every right-hand value into a temp first, giving a simultaneous swap.
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+DIM a&, b&
+a& = 1 : b& = 2
+PRINT a&; b&
+a&, b& = (b&, a&)
+PRINT a&; b&
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+DIM a&, b&
+a& = 1
+b& = 2
+PRINT a&; b&
+IF -1 THEN
+  S_destr1 = b&
+  S_destr2 = a&
+  a& = S_destr1
+  b& = S_destr2
+END IF
+PRINT a&; b&
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
+### Capturing lambda (stack closure)
+
+A lambda references an outer local; the capture is reached by reference through the closure env pointer.
+
+> **Illustrative decompilation:** recompiles under `--dialect pb35` but the runtime result diverges - PB 3.5 has no faithful equivalent for this construct (e.g. rotate operators, far-pointer offset arithmetic). The form below shows the lowering structure.
+
+**pb3.6 source:**
+
+```basic
+SUB Demo
+  DIM base AS LONG
+  base = 10
+  DIM add AS FUNCTION(LONG) AS LONG
+  add = FUNCTION(BYVAL x AS LONG) AS LONG => x + base
+  PRINT add(5)
+END SUB
+Demo
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+Demo
+
+SUB Demo()
+  DIM base AS LONG
+  base = 10
+  DIM add AS DWORD
+  add = CODEPTR32(Sthunk1)
+  DIM pbtmp2 AS LONG
+  pbtmp2 = 5
+  DIM pbtmp1 AS LONG
+  CALL DWORD (add)(pbtmp2, pbtmp1)
+  PRINT pbtmp1
+END SUB
+
+FUNCTION S_lambda_1(BYVAL x AS LONG) AS LONG
+  FUNCTION = x + base
+END FUNCTION
+
+SUB Sthunk1(Sp0 AS LONG, Sresult AS LONG)
+  Sresult = S_lambda_1(Sp0)
+END SUB
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
 ### WITH block
 
 Leading `.member` inside WITH rewrites to member access on the subject.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 TYPE Point
@@ -765,9 +1001,6 @@ WITH P
 END WITH
 PRINT P.X; P.Y
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -789,7 +1022,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 Modern explicit-width spellings (uint8/int16/uint32) alias the classic scalar types.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 DIM b AS uint8
@@ -800,9 +1035,6 @@ i = -1000
 d = 4000000000
 PRINT b; i; d
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -822,7 +1054,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 A TYPE method lifts to a procedure taking the instance BYREF as THIS.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 TYPE Counter
@@ -836,9 +1070,6 @@ c.Value = 10
 c.Bump(5)
 PRINT c.Value
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -863,7 +1094,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 PROPERTY GET/SET lift to get_/set_ procedures over a backing field.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 TYPE Box
@@ -879,9 +1112,6 @@ DIM x AS Box
 x.Size = 7
 PRINT x.Size
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -909,7 +1139,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 OPERATOR + (rhs) lifts to op_Add; THIS is the left operand, RESULT holds the result.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 TYPE Vec
@@ -923,9 +1155,6 @@ p.X = 3 : q.X = 4
 s = p + q
 PRINT s.X
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -940,9 +1169,166 @@ q.X = 4
 Vec_op_Add p, q, s
 PRINT s.X
 
-FUNCTION Vec_op_Add(THIS AS Vec, o AS Vec) AS Vec
-  Vec_op_Add.X = THIS.X + o.X
-END FUNCTION
+SUB Vec_op_Add(THIS AS Vec, o AS Vec, S_sret AS Vec)
+  S_sret.X = THIS.X + o.X
+END SUB
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
+### TYPE bit-field members
+
+AS BIT * n packs fields into a hidden $bits WORD; each write is a mask-preserving read-modify-write.
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+TYPE StatusReg
+  Mode    AS BIT * 3
+  Enabled AS BIT
+  Level   AS BIT * 4
+END TYPE
+DIM r AS StatusReg
+r.Mode = 5
+r.Level = 12
+PRINT r.Mode
+PRINT r.Level
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+
+TYPE StatusReg
+  S_bits0 AS WORD
+END TYPE
+DIM r AS StatusReg
+r.S_bits0 = r.S_bits0 AND 65528 OR 5 AND 7
+r.S_bits0 = r.S_bits0 AND 65295 OR (12 AND 15) * 16
+PRINT r.S_bits0 AND 7
+PRINT r.S_bits0 \ 16 AND 15
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
+### TYPE layout ALIGN
+
+ALIGN n pads each field to its natural boundary and rounds the record up; LEN shows the padded size.
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+TYPE Header ALIGN 4
+  tag    AS BYTE
+  length AS LONG
+  flags  AS INTEGER
+END TYPE
+DIM h AS Header
+h.length = 99
+PRINT LEN(h)
+PRINT h.length
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+
+TYPE Header
+  tag AS BYTE
+  Spad1 AS STRING * 3
+  length AS LONG
+  flags AS INTEGER
+  Spad2 AS STRING * 2
+END TYPE
+DIM h AS Header
+h.length = 99
+PRINT LEN(h)
+PRINT h.length
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
+### TYPE explicit AT overlay
+
+field AS T AT offset overlays fields to form a union view; setting the whole exposes its parts.
+
+> **Illustrative decompilation:** recompiles under `--dialect pb35` but the runtime result diverges - PB 3.5 has no faithful equivalent for this construct (e.g. rotate operators, far-pointer offset arithmetic). The form below shows the lowering structure.
+
+**pb3.6 source:**
+
+```basic
+TYPE RegView
+  whole AS LONG
+  lo    AS INTEGER AT 0
+  hi    AS INTEGER AT 2
+END TYPE
+DIM v AS RegView
+v.whole = &H00050003
+PRINT v.lo
+PRINT v.hi
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+
+TYPE RegView
+  whole AS LONG
+  lo AS INTEGER
+  hi AS INTEGER
+END TYPE
+DIM v AS RegView
+v.whole = 327683&
+PRINT v.lo
+PRINT v.hi
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
+### TYPE constructor
+
+A SUB named like the TYPE is its constructor; p = TypeName(args) calls it with p as BYREF THIS.
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+TYPE Point
+  x AS LONG
+  y AS LONG
+  SUB Point(BYVAL px AS LONG, BYVAL py AS LONG)
+    THIS.x = px
+    THIS.y = py
+  END SUB
+END TYPE
+DIM p AS Point
+p = Point(3, 4)
+PRINT p.x
+PRINT p.y
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+
+TYPE Point
+  x AS LONG
+  y AS LONG
+END TYPE
+DIM p AS Point
+Point_Point p, 3, 4
+PRINT p.x
+PRINT p.y
+
+SUB Point_Point(THIS AS Point, BYVAL px AS LONG, BYVAL py AS LONG)
+  THIS.x = px
+  THIS.y = py
+END SUB
 ```
 
 _With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
@@ -951,7 +1337,9 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 TYPE Box OF T monomorphizes to a concrete TYPE per concrete instantiation.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 TYPE Box OF T
@@ -964,9 +1352,6 @@ DIM b AS Box OF LONG
 b.Put(42)
 PRINT b.Item
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -986,11 +1371,63 @@ END SUB
 
 _With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
 
+### Generic procedure (type inferred from arguments)
+
+FUNCTION Max OF T monomorphizes to a concrete Max@Long; T is inferred from the LONG arguments at the call.
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+FUNCTION Max OF T (BYVAL a AS T, BYVAL b AS T) AS T
+  Max = a
+  IF b > a THEN
+    Max = b
+  END IF
+END FUNCTION
+DIM r&
+r& = Max(3&, 9&)
+PRINT r&
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+DIM r&
+r& = Max_Long(3&, 9&)
+PRINT r&
+
+FUNCTION Max_Long(BYVAL a AS LONG, BYVAL b AS LONG) AS LONG
+  Max_Long = a
+  IF b > a THEN
+    Max_Long = b
+  END IF
+END FUNCTION
+```
+
+**With the optimizer (`--optimize`, e.g. dead-code / `DEF SEG` cleanup):**
+
+```basic
+DIM r&
+r& = 9
+PRINT r&
+
+FUNCTION Max_Long(BYVAL a AS LONG, BYVAL b AS LONG) AS LONG
+  Max_Long = a
+  IF b > a THEN
+    Max_Long = b
+  END IF
+END FUNCTION
+```
+
 ### YIELD generator
 
 A FUNCTION containing YIELD becomes a generator consumed by FOR EACH.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 FUNCTION Squares(BYVAL n AS INTEGER) AS LONG
@@ -1004,9 +1441,6 @@ FOR EACH v IN Squares(4)
   PRINT v
 NEXT
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -1071,11 +1505,94 @@ END SUB
 
 _With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
 
+### Manual coroutine driver
+
+A generator call returns its synthesized enumerator; .MoveNext / .Current drive it by hand instead of FOR EACH.
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+FUNCTION Squares(BYVAL n AS INTEGER) AS LONG
+  DIM i AS INTEGER
+  FOR i = 1 TO n
+    YIELD i * i
+  NEXT
+END FUNCTION
+DIM e AS Squares
+e = Squares(5)
+DO WHILE e.MoveNext
+  PRINT e.Current
+LOOP
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+
+TYPE Squares
+  S_state AS INTEGER
+  S_n AS INTEGER
+  S_i AS SINGLE
+  S_Current AS LONG
+END TYPE
+DIM e AS Squares
+IF -1 THEN
+  e.S_state = 0
+  e.S_n = 5
+END IF
+DO WHILE Squares_MoveNext(e)
+  PRINT Squares_get_Current(e)
+LOOP
+
+FUNCTION Squares_get_Current(THIS AS Squares) AS LONG
+  Squares_get_Current = THIS.S_Current
+END FUNCTION
+
+FUNCTION Squares_MoveNext(THIS AS Squares) AS INTEGER
+  SELECT CASE THIS.S_state
+    CASE 0
+      GOTO S_start
+    CASE 1
+      GOTO S_r1
+    CASE ELSE
+      GOTO S_done
+  END SELECT
+S_start:
+  DIM i AS INTEGER
+  THIS.S_i = 1
+S_L1:
+  IF THIS.S_i > THIS.S_n THEN
+    GOTO S_L2
+  END IF
+  THIS.S_Current = THIS.S_i * THIS.S_i
+  THIS.S_state = 1
+  Squares_MoveNext = -1
+  EXIT FUNCTION
+S_r1:
+  THIS.S_i = THIS.S_i + 1
+  GOTO S_L1
+S_L2:
+S_done:
+  THIS.S_state = -1
+  Squares_MoveNext = 0
+END FUNCTION
+
+SUB Squares_Reset(THIS AS Squares)
+  THIS.S_state = 0
+END SUB
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
 ### Nullable type
 
 T? holds a value or NOTHING; ?? coalesces to a default when empty.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 DIM age AS INTEGER?
@@ -1084,9 +1601,6 @@ PRINT age ?? -1
 age = NOTHING
 PRINT age ?? -1
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -1130,7 +1644,9 @@ passes the back-emitter can render). Compile with `--optimize` (the pb36 default
 
 Statements after an unconditional GOTO (until the next label) are unreachable; the optimizer drops them.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 DIM X AS INTEGER
@@ -1141,9 +1657,6 @@ PRINT "never runs"
 Finish:
 PRINT X
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -1171,7 +1684,9 @@ PRINT X
 
 A DEF SEG with only segment-transparent statements before the next DEF SEG is redundant and dropped.
 
-<details><summary>pb36 source</summary>
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
 
 ```basic
 DIM X AS INTEGER
@@ -1180,9 +1695,6 @@ X = 5
 DEF SEG = &HA000
 POKE 0, 65
 ```
-</details>
-
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **Decompiled (lowered to PB 3.5):**
 
@@ -1201,6 +1713,41 @@ DIM X AS INTEGER
 X = 5
 DEF SEG = -24576%
 POKE 0, 65
+```
+
+### Pure-function folding (O25)
+
+A pure FUNCTION called with constant arguments is evaluated at compile time; the call becomes its result literal.
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+FUNCTION Cube&(BYVAL n AS LONG)
+  Cube& = n * n * n
+END FUNCTION
+PRINT Cube&(4)
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+PRINT Cube&(4)
+
+FUNCTION Cube&(BYVAL n AS LONG)
+  Cube& = n * n * n
+END FUNCTION
+```
+
+**With the optimizer (`--optimize`, e.g. dead-code / `DEF SEG` cleanup):**
+
+```basic
+PRINT 64
+
+FUNCTION Cube&(BYVAL n AS LONG)
+  Cube& = n * n * n
+END FUNCTION
 ```
 
 ## Optimizations below the source level
