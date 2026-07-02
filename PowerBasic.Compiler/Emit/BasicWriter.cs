@@ -244,14 +244,16 @@ public sealed class BasicWriter {
     return $"{f.Name}{bounds} AS {this.TypeNameText(f.Type)}";
   }
 
-  // ENUM has no pb35 equivalent; the binder folds members to literals (ResolvedConstants) and the
-  // enum name to an integer type (EnumTypes). Emit a comment banner so the source stays self-describing.
+  // ENUM has no pb35 equivalent; the binder folds member references to literals (ResolvedConstants)
+  // and the enum name to an integer type (EnumTypes), so the equates below are documentary only. They
+  // are prefixed with the enum name (%Color_Red, not %Red) so two enums that share a member name do
+  // not collide as duplicate equates under pb35.
   private void WriteEnumDecl(EnumDecl e) {
     this._sb.Append('\n');
     this.Line($"' ENUM {e.Name} (folded to integer constants below)");
     foreach (var (name, _) in e.Members)
       if (this._model.EnumMembers.TryGetValue(name, out var value))
-        this.Line($"%{name} = {value}");
+        this.Line($"%{e.Name}_{name} = {value}");
   }
 
   private void WriteEquate(EquateStmt eq) {
@@ -397,6 +399,14 @@ public sealed class BasicWriter {
       return null;
     foreach (var node in top) {
       var temp = "pbtmp" + (++this._tempCounter);
+      if (IsSegmentedPeek(node)) {
+        // PEEK(seg:offset) has no inline pb35 form: set DEF SEG = seg before the statement and render
+        // the read as a plain PEEK(offset). Substitutes in place (no result temp needed).
+        var peek = (CallOrIndexExpr)node;
+        this.Line($"DEF SEG = {this.Expr(peek.Arguments[0])}");
+        this._exprSubst[node] = $"{peek.Name}{Suffix(peek.Suffix)}({this.Expr(peek.Arguments[1])})";
+        continue;
+      }
       if (node is IfExpr ife) {
         this.Line($"DIM {temp} AS {TypeText(this._model.TypeOf(ife))}");
         this.Line($"IF {this.Expr(ife.Condition)} THEN");
@@ -427,13 +437,17 @@ public sealed class BasicWriter {
   private void CollectHoistable(Expression e, ref List<Expression>? acc) {
     var r = this._model.Desugared.TryGetValue(e, out var d) ? d
       : this._model.RewrittenIndex.TryGetValue(e, out var w) ? w : e;
-    if (r is IfExpr || (r is CallOrIndexExpr && this._model.ProcPtrCalls.ContainsKey(r))) {
+    if (r is IfExpr || (r is CallOrIndexExpr && this._model.ProcPtrCalls.ContainsKey(r)) || IsSegmentedPeek(r)) {
       (acc ??= []).Add(r);
       return;   // a leaf to hoist; its branches/args are emitted at hoist time
     }
     foreach (var c in AstQuery.Subexpressions(r))
       this.CollectHoistable(c, ref acc);
   }
+
+  /// <summary>A segmented PEEK[I|L](seg, offset) call, which the back-emitter hoists to DEF SEG = seg + PEEK(offset).</summary>
+  private static bool IsSegmentedPeek(Expression e)
+    => e is CallOrIndexExpr { Arguments.Count: 2 } c && c.Name.ToUpperInvariant() is "PEEK" or "PEEKI" or "PEEKL";
 
   /// <summary>Returns the thunk SUB name wrapping a procedure as a BYREF-result delegate target, creating it on first use.</summary>
   private string GetThunk(ProcedureSymbol target) {
@@ -666,6 +680,13 @@ public sealed class BasicWriter {
   }
 
   private void WriteCommand(CommandStmt s) {
+    // Segmented POKE (3-arg [seg, offset, value]) lowers to the classic DEF SEG = seg : POKE off, val
+    // pair - exactly its runtime semantics - so it round-trips to pb35.
+    if (s.Keyword is "POKE" or "POKEI" or "POKEL" && s.Arguments is [{ } seg, { } off, { } val]) {
+      this.Line($"DEF SEG = {this.Expr(seg)}");
+      this.Line($"{s.Keyword} {this.Expr(off)}, {this.Expr(val)}");
+      return;
+    }
     var args = s.Arguments.Select(a => a is null ? "" : this.Expr(a));
     var joined = string.Join(", ", args);
     this.Line(joined.Length == 0 ? s.Keyword : $"{s.Keyword} {joined}");

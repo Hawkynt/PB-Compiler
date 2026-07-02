@@ -100,6 +100,9 @@ public sealed partial class Parser {
 
   private Expression ParseComparison() {
     var left = this.ParseTruth();
+    var chained = DialectFacts.IsAvailable(LanguageFeature.ChainedComparison, this._dialect);
+    Expression? prevRight = null;   // the last comparison's right operand, reused as the next link's left when chaining
+    var links = 0;
     for (;;) {
       var op = this.Current.Kind switch {
         TokenKind.Equals => BinaryOp.Equal,
@@ -124,7 +127,15 @@ public sealed partial class Parser {
       if (op is BinaryOp.GreaterEqual or BinaryOp.LessEqual or BinaryOp.NotEqual && this.Current.Kind is TokenKind.Equals or TokenKind.Greater)
         this.Advance();
 
-      left = new BinaryExpr(position, op.Value, left, this.ParseTruth());
+      var right = this.ParseTruth();
+      // pb36 chained comparison: a < b < c is (a < b) AND (b < c), reusing the middle operand as the
+      // next link's left. The first comparison is emitted as usual; each subsequent one ANDs a new
+      // link. (The reused middle operand should be side-effect-free - it is read once per link.)
+      if (chained && ++links >= 2)
+        left = new BinaryExpr(position, BinaryOp.And, left, new BinaryExpr(position, op.Value, prevRight!, right));
+      else
+        left = new BinaryExpr(position, op.Value, left, right);
+      prevRight = right;
     }
   }
 
@@ -382,6 +393,21 @@ public sealed partial class Parser {
     }
 
     var token = this.Advance();
+    // pb36 segmented PEEK[I|L]: PEEK(seg:offset) reads at seg:off (sets DEF SEG = seg first), emitted
+    // as a 2-argument [seg, offset] intrinsic call. The ':' is only special inside a PEEK argument.
+    if (token.Suffix == TypeSuffix.None && token.Text.ToUpperInvariant() is "PEEK" or "PEEKI" or "PEEKL" && this.Current.Kind == TokenKind.LParen) {
+      this.Advance(); // '('
+      var first = this.ParseExpression();
+      if (this.Current.Kind == TokenKind.Colon) {
+        this.Require(LanguageFeature.SegmentedPeekPoke);
+        this.Advance();
+        var off = this.ParseExpression();
+        this.Expect(TokenKind.RParen, "')'");
+        return this.ParsePostfix(new CallOrIndexExpr(token.Position, token.Text, token.Suffix, [first, off]));
+      }
+      this.Expect(TokenKind.RParen, "')'");
+      return this.ParsePostfix(new CallOrIndexExpr(token.Position, token.Text, token.Suffix, [first]));
+    }
     // pb36 generics: explicit type arguments on a call, Name OF type(args) / Name OF (T1, T2)(args)
     if (token.Suffix == TypeSuffix.None && this.IsKeyword(0, "OF")) {
       var typeArgs = this.TryParseTypeArguments();
@@ -595,6 +621,23 @@ public sealed partial class Parser {
 
   private Expression ParsePostfix(Expression expr) {
     for (;;) {
+      // pb36 null-conditional access: expr?.member / expr?[index] (the '?' lexes as its own token here,
+      // the lexer having declined to glue it as a BYTE suffix before '.'/'[').
+      if (this.Current.Kind == TokenKind.Question && this.Peek().Kind is TokenKind.Period or TokenKind.LBracket) {
+        this.Require(LanguageFeature.NullConditional);
+        var qpos = this.Advance().Position; // '?'
+        if (this.Match(TokenKind.Period)) {
+          var member = this.Expect(TokenKind.Identifier, "member name");
+          expr = new NullConditionalExpr(qpos, expr, member.Text, null);
+        } else {
+          this.Advance(); // '['
+          var index = this.ParseExpression();
+          this.Expect(TokenKind.RBracket, "']'");
+          expr = new NullConditionalExpr(qpos, expr, null, index);
+        }
+        continue;
+      }
+
       if (this.Current.Kind == TokenKind.Period && this.Peek().Kind == TokenKind.Identifier) {
         this.Advance();
         var member = this.Advance();

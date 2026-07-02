@@ -169,10 +169,16 @@ public sealed partial class CodeGenerator {
     asm.Mov(Mem.Word(asm.Lbl("rt_defseg")), Reg.AX);
   }
 
-  /// <summary>PEEK/PEEKI/PEEKL - read from rt_defseg:offset.</summary>
+  /// <summary>PEEK/PEEKI/PEEKL - read from rt_defseg:offset. The 2-argument (seg, offset) form sets DEF SEG = seg first (pb36 segmented PEEK).</summary>
   private void EmitPeek(IReadOnlyList<Expression> args, int bytes) {
     var asm = this._asm;
-    this.EmitInt16Argument(args[0]);
+    var offset = args[0];
+    if (args.Count >= 2) {   // segmented: PEEK(seg:offset) sets DEF SEG = seg like the classic pair
+      this.EmitInt16Argument(args[0]);
+      asm.Mov(Mem.Word(asm.Lbl("rt_defseg")), Reg.AX);
+      offset = args[1];
+    }
+    this.EmitInt16Argument(offset);
     asm.Mov(Reg.BX, Reg.AX);
     asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_defseg")));
     switch (bytes) {
@@ -192,7 +198,17 @@ public sealed partial class CodeGenerator {
 
   private void EmitPoke(CommandStmt cmd) {
     var asm = this._asm;
-    if (cmd.Arguments is not [{ } address, { } value]) {
+    // POKE offset, value  |  POKE seg:offset, value (3-arg segmented form sets DEF SEG = seg first)
+    Expression address, value;
+    if (cmd.Arguments is [{ } seg, { } off, { } segVal]) {
+      this.EmitInt16Argument(seg);
+      asm.Mov(Mem.Word(asm.Lbl("rt_defseg")), Reg.AX);
+      address = off;
+      value = segVal;
+    } else if (cmd.Arguments is [{ } a, { } v]) {
+      address = a;
+      value = v;
+    } else {
       this.Unsupported(cmd);
       return;
     }

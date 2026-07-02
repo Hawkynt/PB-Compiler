@@ -28,6 +28,7 @@ public static class AstQuery {
     IfExpr t => [t.Condition, t.WhenTrue, t.WhenFalse],
     NewExpr n => [.. n.Fields.Select(f => f.Value)],
     NamedArgExpr na => [na.Value],
+    NullConditionalExpr nc => nc.Index == null ? [nc.Target] : [nc.Target, nc.Index],
     FromEndExpr fe => [fe.Index],
     LambdaExpr => [], // the lambda body is compiled as a separate proc, not the enclosing scope
     ArrayLiteralExpr al => [.. al.Elements.SelectMany(e => e switch {

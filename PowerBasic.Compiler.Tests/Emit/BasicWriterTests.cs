@@ -136,6 +136,35 @@ public sealed class BasicWriterTests {
   }
 
   [Test]
+  public void Render_SegmentedPokePeek_LowersToDefSegPlusPlainAccess() {
+    var basic = RenderAndRebind("POKE &H4000:100, 65\nDIM v AS INTEGER\nv = PEEK(&H4000:100)\nPRINT v\n", Dialect.Pb36);
+    Assert.That(basic, Does.Contain("DEF SEG = 16384"), "the explicit segment lowers to a DEF SEG");
+    Assert.That(basic, Does.Contain("POKE 100, 65"), "the poke keeps just the offset");
+    Assert.That(basic, Does.Contain("v = PEEK(100)"), "the segmented peek is hoisted to DEF SEG + PEEK(offset)");
+  }
+
+  [Test]
+  public void Render_ChainedComparison_DesugarsToAndedRange() {
+    var basic = RenderAndRebind("DIM i AS INTEGER\ni = 5\nDIM n AS INTEGER\nn = 10\nIF 0 <= i < n THEN\n  PRINT \"ok\"\nEND IF\n", Dialect.Pb36);
+    Assert.That(basic, Does.Contain("0 <= i AND i < n"), "the chain becomes (0<=i) AND (i<n), reusing the middle operand");
+  }
+
+  [Test]
+  public void Render_ChainedComparison_Pb35KeepsLeftAssociative() {
+    // gated: under pb35 'a < b < c' stays the classic left-associative (a<b)<c - no behavior change
+    var basic = Render("DIM a AS INTEGER\nDIM b AS INTEGER\nDIM c AS INTEGER\nDIM r AS INTEGER\nr = a < b < c\n", Dialect.Pb35);
+    Assert.That(basic, Does.Not.Contain(" AND "), "pb35 does not chain - it keeps left-associative comparison");
+  }
+
+  [Test]
+  public void Render_NullConditional_LowersToHasValueTernary() {
+    var basic = RenderAndRebind("TYPE Point\n  X AS LONG\n  Y AS LONG\nEND TYPE\nDIM p AS Point?\np.HasValue = -1\np.Value.Y = 7\nDIM r AS LONG\nr = p?.Y ?? -1\nPRINT r\n", Dialect.Pb36);
+    Assert.That(basic, Does.Not.Contain("?."), "the null-conditional operator is lowered, not emitted verbatim");
+    Assert.That(basic, Does.Contain("IF p.HasValue THEN"), "it short-circuits on HasValue");
+    Assert.That(basic, Does.Contain("p.Value.Y"), "reading the value's member when present");
+  }
+
+  [Test]
   public void Render_Assignment_RoundTripsExpressionWithMinimalParens() {
     var basic = RenderAndRebind("A% = 2 + 3 * 4\nPRINT A%\n");
     Assert.That(basic, Does.Contain("A% = 2 + 3 * 4"), "multiply binds tighter than add - no parens needed");

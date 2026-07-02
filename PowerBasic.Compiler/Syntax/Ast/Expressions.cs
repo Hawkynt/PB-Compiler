@@ -51,6 +51,13 @@ public sealed record NothingExpr(SourcePosition Position) : Expression(Position)
 /// <summary>pb36 null-coalescing <c>value ?? fallback</c>: the nullable's value when present, else the fallback.</summary>
 public sealed record CoalesceExpr(SourcePosition Position, Expression Value, Expression Fallback) : Expression(Position);
 
+/// <summary>
+/// pb36 null-conditional access on a nullable target: <c>target?.Member</c> (<see cref="Member"/> set)
+/// or <c>target?[Index]</c> (<see cref="Index"/> set). Reads the member/element of the target's value
+/// when it has one, else short-circuits to a fallback (the <c>??</c> default, or zero standalone).
+/// </summary>
+public sealed record NullConditionalExpr(SourcePosition Position, Expression Target, string? Member, Expression? Index) : Expression(Position);
+
 public enum BinaryOp {
   Add, Subtract, Multiply, Divide, IntegerDivide, Modulo, Power,
   Equal, NotEqual, Less, Greater, LessEqual, GreaterEqual,

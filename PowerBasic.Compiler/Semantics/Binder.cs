@@ -1600,6 +1600,23 @@ public sealed class Binder {
   /// <summary>True when <paramref name="type"/> is a synthesized nullable UDT (<c>T?</c>).</summary>
   private bool IsNullableType(PbType? type) => type is UdtType u && this._model.NullableUnderlying.ContainsKey(u.Name);
 
+  /// <summary>
+  /// Desugars a null-conditional access <c>target?.member</c> / <c>target?[i]</c> to
+  /// <c>IF(target.HasValue, target.Value.member, fallback)</c> - the fallback is the <c>??</c> default
+  /// when present, else a type-matched zero (0 / "").
+  /// </summary>
+  private Expression DesugarNullConditional(NullConditionalExpr nc, Expression? fallback, Scope scope) {
+    var value = new MemberExpr(nc.Position, nc.Target, "Value", TypeSuffix.None);
+    Expression access = nc.Member is { } m
+      ? new MemberExpr(nc.Position, value, m, TypeSuffix.None)
+      : new IndexExpr(nc.Position, value, [nc.Index!]);
+    var hasValue = new MemberExpr(nc.Position, nc.Target, "HasValue", TypeSuffix.None);
+    var elseExpr = fallback ?? (this.BindExpression(access, scope) is StringType or FlexType
+      ? new StringLiteralExpr(nc.Position, "")
+      : new IntegerLiteralExpr(nc.Position, 0, TypeSuffix.None));
+    return new IfExpr(nc.Position, hasValue, access, elseExpr);
+  }
+
   /// <summary>pb36 tuple type: synthesizes (once) an anonymous UDT with fields Item1..ItemN for <c>(T1, T2, ...)</c>, named with an untypeable mangle so identical tuples share the type, and returns it.</summary>
   private PbType ResolveTupleType(TypeName t) {
     var name = "$tup" + string.Concat(t.TupleElements!.Select(e => "@" + TupleElementMangle(e)));
@@ -3249,7 +3266,14 @@ public sealed class Binder {
         return this.ErrorType(nothing.Position, "NOTHING is only valid assigned to a nullable (T?) variable");
 
       case CoalesceExpr coalesce: {
-        // pb36 null-coalescing: v ?? d  ->  IF(v.HasValue, v.Value, d)
+        // pb36 null-coalescing: v ?? d  ->  IF(v.HasValue, v.Value, d). A null-conditional access on the
+        // left (a?.m ?? d) is desugared together so the ?? default is the short-circuit fallback.
+        if (coalesce.Value is NullConditionalExpr ncLeft) {
+          var form = this.DesugarNullConditional(ncLeft, coalesce.Fallback, scope);
+          var t = this.BindExpression(form, scope);
+          this._model.Desugared[coalesce] = form;
+          return t;
+        }
         var valueType = this.BindExpression(coalesce.Value, scope);
         if (!this.IsNullableType(valueType))
           return this.ErrorType(coalesce.Position, "the left operand of '??' must be a nullable (T?) value");
@@ -3260,6 +3284,15 @@ public sealed class Binder {
         var coalesceType = this.BindExpression(ternaryForm, scope);
         this._model.Desugared[coalesce] = ternaryForm;
         return coalesceType;
+      }
+
+      case NullConditionalExpr nc: {
+        // pb36 null-conditional access standalone (no '??'): a?.m -> IF(a.HasValue, a.Value.m, 0).
+        // The zero fallback matches the accessed member's type (numeric 0 or "").
+        var probe = this.DesugarNullConditional(nc, null, scope);
+        var t = this.BindExpression(probe, scope);
+        this._model.Desugared[nc] = probe;
+        return t;
       }
 
       case NewExpr neu:

@@ -125,6 +125,10 @@ public enum LanguageFeature {
   NullableTypes,
   WideIntegers,
   TypeAliases,
+  SegmentedPeekPoke,
+  ChainedComparison,
+  NullConditional,
+  Events,
 }
 
 /// <summary>
@@ -198,6 +202,10 @@ public static class DialectFacts {
     [LanguageFeature.NullableTypes] = (Dialect.Pb36, "nullable types ('AS T?', NOTHING, the '??' null-coalescing operator)"),
     [LanguageFeature.WideIntegers] = (Dialect.Pb36, "wide integer types (INT128/256/512, UINT128/256/512 - emulated multi-word)"),
     [LanguageFeature.TypeAliases] = (Dialect.Pb36, "natural type-name aliases (INT8/SBYTE, INT16/SHORT, INT32, INT64, UINT8/UINT16/UINT32, DQUAD/QQUAD, DQWORD/QQWORD - alternative spellings of the existing types)"),
+    [LanguageFeature.SegmentedPeekPoke] = (Dialect.Pb36, "segmented PEEK/POKE ('POKE seg:offset, val' / 'PEEK(seg:offset)')"),
+    [LanguageFeature.ChainedComparison] = (Dialect.Pb36, "chained comparison ('lo <= x < hi')"),
+    [LanguageFeature.NullConditional] = (Dialect.Pb36, "null-conditional access ('obj?.field', 'arr?[i]')"),
+    [LanguageFeature.Events] = (Dialect.Pb36, "events ('EVENT name AS delegate', 'name += handler', 'RAISE name(args)')"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

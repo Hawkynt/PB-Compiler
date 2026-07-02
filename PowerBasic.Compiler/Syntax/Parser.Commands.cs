@@ -359,6 +359,22 @@ public sealed partial class Parser {
       return new CommandStmt(pos, keyword, [oldName, this.ParseExpression()]);
     }
 
+    // POKE[I|L] [seg:]offset, value - the pb36 seg:offset form carries the segment inline (a 3-arg
+    // CommandStmt [seg, offset, value]); it sets DEF SEG = seg before the write, like the classic
+    // DEF SEG / POKE pair. The ':' is only special here, so it never clashes with the statement ':'.
+    if (keyword is "POKE" or "POKEI" or "POKEL") {
+      var addr = this.ParseExpression();
+      if (this.Current.Kind == TokenKind.Colon) {
+        this.Require(LanguageFeature.SegmentedPeekPoke);
+        this.Advance();
+        var off = this.ParseExpression();
+        this.Expect(TokenKind.Comma, "','");
+        return new CommandStmt(pos, keyword, [addr, off, this.ParseExpression()]);
+      }
+      this.Expect(TokenKind.Comma, "','");
+      return new CommandStmt(pos, keyword, [addr, this.ParseExpression()]);
+    }
+
     if (keyword == "VIEW" && this.TryMatchKeyword("SCREEN"))
       keyword = "VIEW SCREEN";
     else if (keyword == "VIEW" && this.TryMatchKeyword("TEXT"))

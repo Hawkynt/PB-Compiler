@@ -223,10 +223,14 @@ public sealed class Lexer {
         this.Advance();
         return TypeSuffix.Integer;
       case '?': {
-        this.Require(LanguageFeature.UnsignedTypes, position);
         var run = 0;
         while (this.Peek(run) == '?')
           ++run;
+        // pb36 null-conditional operator: a single '?' glued before '.' or '[' is the '?.'/'?[' access,
+        // not a BYTE suffix (a scalar has no members/elements, so this removes no valid pb35 meaning).
+        if (allowCoalesce && run == 1 && this.Peek(run) is '.' or '[' && DialectFacts.IsAvailable(LanguageFeature.NullConditional, this._dialect))
+          return TypeSuffix.None;   // leave the '?' for the parser
+        this.Require(LanguageFeature.UnsignedTypes, position);
         var after = run;
         while (this.Peek(after) is ' ' or '\t')
           ++after;
