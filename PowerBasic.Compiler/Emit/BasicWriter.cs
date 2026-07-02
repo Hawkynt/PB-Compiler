@@ -30,10 +30,10 @@ public sealed class BasicWriter {
   private IReadOnlyDictionary<string, VariableSymbol>? _scopeVars;   // current scope's locals (a proc) for inferred-type lookup
   private Dictionary<string, string>? _nameRemap;                    // in-scope name rewrites (a renamed overload's result variable)
 
-  /// <summary>The bound variable symbol for a name in the current scope (proc locals first, then module vars).</summary>
+  /// <summary>The bound variable symbol for a name in the current scope (proc locals first, then module vars); arrays are keyed with a "()" suffix, so both keys are probed.</summary>
   private VariableSymbol? ScopeSymbol(string name)
-    => this._scopeVars is { } v && v.TryGetValue(name, out var s) ? s
-      : this._model.ModuleVariables.TryGetValue(name, out var m) ? m : null;
+    => this._scopeVars is { } v && (v.TryGetValue(name, out var s) || v.TryGetValue(name + "()", out s)) ? s
+      : this._model.ModuleVariables.TryGetValue(name, out var m) || this._model.ModuleVariables.TryGetValue(name + "()", out m) ? m : null;
 
   /// <summary>
   /// Maps the compiler's internal name characters ($ namespace, @ generic, . member-mangle) to a
@@ -551,6 +551,27 @@ public sealed class BasicWriter {
   }
 
   private void WriteCall(CallStmt s) {
+    // a first-class delegate invocation in statement position lowers like the expression form:
+    // BYVAL arg temps + CALL DWORD through the pointer (plus a discarded result temp for a FUNCTION
+    // delegate, whose thunk takes the trailing BYREF result).
+    if (this._model.ProcPtrStatementCalls.TryGetValue(s, out var invoke)) {
+      var sig = this._model.ProcPtrCalls[invoke];
+      var argTemps = new List<string>();
+      for (var i = 0; i < invoke.Arguments.Count; i++) {
+        var at = "pbtmp" + (++this._tempCounter);
+        this.Line($"DIM {at} AS {TypeText(i < sig.ParameterTypes.Count ? sig.ParameterTypes[i] : PbType.Long)}");
+        this.Line($"{at} = {this.Expr(invoke.Arguments[i])}");
+        argTemps.Add(at);
+      }
+      if (sig.ReturnType is { } ret) {
+        var rt = "pbtmp" + (++this._tempCounter);
+        this.Line($"DIM {rt} AS {TypeText(ret)}");
+        argTemps.Add(rt);
+      }
+      this.Line($"CALL DWORD ({Id(s.Name)})({string.Join(", ", argTemps)})");
+      return;
+    }
+
     var args = this.CallArguments(s, s.Arguments);
     var name = this.CallName(s, s.Name);
     this.Line(s.UsedCallKeyword ? $"CALL {name}({this.JoinExprs(args)})" : args.Count == 0 ? name : $"{name} {this.JoinExprs(args)}");
@@ -865,6 +886,7 @@ public sealed class BasicWriter {
   private string FormatElement(CollectionElement el) => el switch {
     ValueElement v => this.Expr(v.Value),
     RangeElement r => $"{this.Expr(r.Lo)} TO {this.Expr(r.Hi)}",
+    SpreadElement { IsSlice: true } s => $"..{this.Expr(s.Source)}({(s.SliceLo is { } lo ? this.Expr(lo) : "")} TO {(s.SliceHi is { } hi ? this.Expr(hi) : "")})",
     SpreadElement s => $"..{this.Expr(s.Source)}",
     _ => "",
   };

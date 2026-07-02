@@ -174,6 +174,36 @@ public sealed class BasicWriterTests {
   }
 
   [Test]
+  public void Render_FirstClassEventRaise_AllCallSyntaxesLowerToRaiseLoop() {
+    var basic = RenderAndRebind("DECLARE SUB P(BYVAL x AS LONG)\nDECLARE SUB H(BYVAL x AS LONG)\nEVENT E AS P\nE += H\nE(1)\nE 2\nCALL E(3)\nSUB H(BYVAL x AS LONG)\n  PRINT x\nEND SUB\n", Dialect.Pb36);
+    Assert.That(basic, Does.Contain("E__evh(E__evn) = CODEPTR32(H)"), "+= with a bare name takes the address implicitly");
+    Assert.That(System.Text.RegularExpressions.Regex.Matches(basic, @"CALL DWORD \(E__evh\(").Count, Is.EqualTo(3), "E(1), E 2 and CALL E(3) each raise");
+  }
+
+  [Test]
+  public void Render_SubLambda_AndDirectDelegateInvocation_RoundTrips() {
+    var basic = RenderAndRebind("DIM x = SUB(y AS INTEGER) PRINT y * 2\nx 15\nCALL x(20)\n", Dialect.Pb36);
+    Assert.That(basic, Does.Match(@"SUB S_lambda_1\(BYVAL y AS INTEGER\)"), "the SUB lambda lifts to an anonymous SUB with BYVAL params");
+    Assert.That(basic, Does.Contain("x = CODEPTR32(Sthunk1)"), "its value is a thunk code pointer");
+    Assert.That(System.Text.RegularExpressions.Regex.Matches(basic, @"CALL DWORD \(x\)").Count, Is.EqualTo(2), "x 15 and CALL x(20) both invoke through the pointer");
+  }
+
+  [Test]
+  public void Render_ImplicitCodePtr_OnDelegateAssignment() {
+    var basic = RenderAndRebind("DECLARE FUNCTION Triple(BYVAL n AS LONG) AS LONG\nDIM f AS FUNCTION(LONG) AS LONG\nf = Triple\nPRINT f(8)\nFUNCTION Triple(BYVAL n AS LONG) AS LONG\n  Triple = n * 3\nEND FUNCTION\n", Dialect.Pb36);
+    Assert.That(basic, Does.Match(@"f = CODEPTR32\(Sthunk\d+\)"), "a bare procedure name assigned to a delegate takes its address implicitly");
+  }
+
+  [Test]
+  public void Render_ArraySliceSpread_ExpandsToElementReads() {
+    var basic = RenderAndRebind("DIM b(4) AS INTEGER\nb(3) = 33\nDIM a = {1, ..b(2 TO 3), ..b(TO ^5), ..b(^2 TO)}\nPRINT a(2)\n", Dialect.Pb36);
+    Assert.That(basic, Does.Contain("DIM a(5)"), "1 + slice(2) + slice(1) + slice(2) = 6 elements, sized at compile time");
+    Assert.That(basic, Does.Contain("a(1) = b(2)"), "..b(2 TO 3) reads elements 2..3");
+    Assert.That(basic, Does.Contain("a(3) = b(0)"), "..b(TO ^5) is element 0 (from-end resolved against UBOUND 4)");
+    Assert.That(basic, Does.Contain("a(4) = b(3)"), "..b(^2 TO) starts at UBOUND-2+1 = 3");
+  }
+
+  [Test]
   public void Render_Assignment_RoundTripsExpressionWithMinimalParens() {
     var basic = RenderAndRebind("A% = 2 + 3 * 4\nPRINT A%\n");
     Assert.That(basic, Does.Contain("A% = 2 + 3 * 4"), "multiply binds tighter than add - no parens needed");

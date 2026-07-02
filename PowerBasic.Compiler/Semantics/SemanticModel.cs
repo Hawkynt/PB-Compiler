@@ -101,6 +101,14 @@ public sealed class SemanticModel {
   /// <summary>PB 3.6 typed procedure-pointer calls: a call through a FUNCTION/SUB-pointer variable, mapped to its signature (codegen coerces args to it and calls through the pointer).</summary>
   public Dictionary<Expression, ProcPtrType> ProcPtrCalls { get; } = new(ReferenceEqualityComparer.Instance);
 
+  /// <summary>
+  /// PB 3.6 first-class invocation of a delegate variable in STATEMENT position (<c>x 15</c>,
+  /// <c>CALL x(15)</c>): the CallStmt mapped to a synthesized, fully-bound call expression (which is
+  /// in <see cref="ProcPtrCalls"/>); codegen emits it through the typed pointer-call path and
+  /// discards any result.
+  /// </summary>
+  public Dictionary<Statement, CallOrIndexExpr> ProcPtrStatementCalls { get; } = new(ReferenceEqualityComparer.Instance);
+
   /// <summary>Procedure symbol behind every user call site (CallStmt / CallOrIndexExpr).</summary>
   public Dictionary<object, ProcedureSymbol> CallBindings { get; } = new(ReferenceEqualityComparer.Instance);
 

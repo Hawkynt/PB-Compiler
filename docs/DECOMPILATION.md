@@ -1810,6 +1810,124 @@ END SUB
 
 _With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
 
+### First-class functions (implicit address, direct invocation, event-call)
+
+Bare proc names become CODEPTR32 where a pointer is expected; delegates and events invoke like SUBs.
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+DECLARE SUB ClickProc(BYVAL x AS LONG)
+DECLARE SUB Log1(BYVAL x AS LONG)
+EVENT OnClick AS ClickProc
+OnClick += Log1
+OnClick(1)
+OnClick 2
+CALL OnClick(3)
+DIM x = SUB(y AS INTEGER) PRINT y * 2
+x 15
+CALL x(20)
+SUB Log1(BYVAL x AS LONG)
+  PRINT x
+END SUB
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+DECLARE SUB ClickProc(BYVAL x AS LONG)
+DECLARE SUB Log1(BYVAL x AS LONG)
+DIM OnClick__evh(31) AS DWORD
+DIM OnClick__evn AS INTEGER
+IF -1 THEN
+  OnClick__evh(OnClick__evn) = CODEPTR32(Log1)
+  OnClick__evn = OnClick__evn + 1
+END IF
+IF -1 THEN
+  FOR OnClick__evh__r1% = 0 TO OnClick__evn - 1
+    CALL DWORD (OnClick__evh(OnClick__evh__r1%))(BYVAL CLNG(1))
+  NEXT
+END IF
+IF -1 THEN
+  FOR OnClick__evh__r2% = 0 TO OnClick__evn - 1
+    CALL DWORD (OnClick__evh(OnClick__evh__r2%))(BYVAL CLNG(2))
+  NEXT
+END IF
+IF -1 THEN
+  FOR OnClick__evh__r3% = 0 TO OnClick__evn - 1
+    CALL DWORD (OnClick__evh(OnClick__evh__r3%))(BYVAL CLNG(3))
+  NEXT
+END IF
+DIM x AS DWORD
+x = CODEPTR32(Sthunk1)
+DIM pbtmp1 AS INTEGER
+pbtmp1 = 15
+CALL DWORD (x)(pbtmp1)
+DIM pbtmp2 AS INTEGER
+pbtmp2 = 20
+CALL DWORD (x)(pbtmp2)
+
+SUB Log1(BYVAL x AS LONG)
+  PRINT x
+END SUB
+
+SUB S_lambda_1(BYVAL y AS INTEGER)
+  PRINT y * 2
+END SUB
+
+SUB Sthunk1(Sp0 AS INTEGER)
+  S_lambda_1 Sp0
+END SUB
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
+### Array construction with slice spreads
+
+..b(lo TO hi) spreads a slice; bounds may be omitted (LBOUND/UBOUND) or from-end (^n).
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+DIM b(4) AS INTEGER
+DIM i AS INTEGER
+FOR i = 0 TO 4
+  b(i) = 10 + i
+NEXT
+DIM a = {1, ..b(1 TO 2), 5..7, ..b(^2 TO)}
+FOR i = LBOUND(a) TO UBOUND(a)
+  PRINT a(i);
+NEXT
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+DIM b(4) AS INTEGER
+DIM i AS INTEGER
+FOR i = 0 TO 4
+  b(i) = 10 + i
+NEXT
+DIM a(7) AS SINGLE
+a(0) = 1
+a(1) = b(1)
+a(2) = b(2)
+a(3) = 5
+a(4) = 6
+a(5) = 7
+a(6) = b(3)
+a(7) = b(4)
+FOR i = LBOUND(a) TO UBOUND(a)
+  PRINT a(i);
+NEXT
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
 ## Optimizations
 
 These are the optimizer passes whose effect is visible at the source level (the AST-level

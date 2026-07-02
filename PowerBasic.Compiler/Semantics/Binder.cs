@@ -1479,6 +1479,23 @@ public sealed class Binder {
     this._events[ev.Name] = (arr, cnt, dparams);
   }
 
+  /// <summary>
+  /// pb36 first-class procedures: where a code pointer is expected (an event <c>+=</c>/<c>-=</c>
+  /// handler, a delegate-typed assignment), a bare procedure name stands for its address - the
+  /// explicit <c>CODEPTR32(name)</c> may be omitted. Returns the wrapped form when
+  /// <paramref name="value"/> is a name that refers to a procedure (and not to a variable, which
+  /// would already hold a pointer value); else null.
+  /// </summary>
+  private Expression? TryImplicitCodePtr(Expression value, Scope scope) {
+    if (value is not NameExpr n)
+      return null;
+    if (this.ResolveVariable(n.Name, n.Suffix, scope, create: false) is not null)
+      return null;   // a variable (DWORD/delegate) already IS a pointer value
+    if (!this._model.Procedures.ContainsKey(n.Name))
+      return null;
+    return new CallOrIndexExpr(n.Position, "CODEPTR32", TypeSuffix.None, [value]);
+  }
+
   /// <summary>The conversion intrinsic (CINT/CLNG/...) that forces a value to a scalar type, so a RAISE argument is pushed at the delegate parameter's width; null for non-scalar / string (passed as-is).</summary>
   private static string? ConversionIntrinsic(PbType t) => t switch {
     ScalarType { Kind: ScalarKind.Integer } => "CINT", ScalarType { Kind: ScalarKind.Long } => "CLNG",
@@ -1497,7 +1514,8 @@ public sealed class Binder {
       return;
     }
     var pos = a.Position;
-    var handler = be.Right;
+    // first-class procedures: 'event += HandlerName' takes the handler's address implicitly
+    var handler = this.TryImplicitCodePtr(be.Right, scope) ?? be.Right;
     Expression Cnt() => new NameExpr(pos, ev.Count, TypeSuffix.None);
     Expression Elem(Expression i) => new CallOrIndexExpr(pos, ev.Array, TypeSuffix.None, [i]);
     Expression Int(long v) => new IntegerLiteralExpr(pos, v, TypeSuffix.None);
@@ -1537,13 +1555,20 @@ public sealed class Binder {
       this.Error(r.Position, $"'{r.Name}' is not an event");
       return;
     }
-    var pos = r.Position;
+    this._model.DesugaredStatements[r] = this.BuildRaiseGroup(ev, r.Arguments, r.Position, scope);
+  }
+
+  /// <summary>
+  /// Builds and binds the raise-invocation group for an event - shared by <c>RAISE name(args)</c> and
+  /// the first-class call forms (<c>name(args)</c> / <c>name args</c> / <c>CALL name(args)</c>).
+  /// </summary>
+  private Statement BuildRaiseGroup((string Array, string Count, IReadOnlyList<VariableSymbol> Params) ev, IReadOnlyList<Expression> arguments, SourcePosition pos, Scope scope) {
     var i = new NameExpr(pos, $"{ev.Array}__r{++this._eventTemp}", TypeSuffix.Integer);
     // pass each argument the way the delegate declares its parameter: a BYVAL parameter takes the
     // value (coerced to the parameter's type so CALL DWORD pushes it at the right width - a bare
     // INTEGER 42 into a LONG parameter would otherwise arrive as garbage), a BYREF parameter takes
     // the argument as-is (its address).
-    var args = r.Arguments.Select((arg, idx) => {
+    var args = arguments.Select((arg, idx) => {
       if (idx >= ev.Params.Count)
         return arg;
       var p = ev.Params[idx];
@@ -1556,7 +1581,7 @@ public sealed class Binder {
       [new CallPtrStmt(pos, new CallOrIndexExpr(pos, ev.Array, TypeSuffix.None, [i]), null, args)]);
     var group = new IfStmt(pos, new IntegerLiteralExpr(pos, -1, TypeSuffix.None), [loop], [], null);
     this.BindStatement(group, scope);
-    this._model.DesugaredStatements[r] = group;
+    return group;
   }
 
   private void DeclareModuleVariables(DimStmt dim) {
@@ -2192,6 +2217,14 @@ public sealed class Binder {
         if (a.Target is MemberExpr writeTarget)
           this.CheckReadonlyFieldWrite(writeTarget, scope);
         var targetType = this.BindAssignTarget(a.Target, scope);
+        // first-class procedures: assigning a bare procedure name to a delegate/DWORD-pointer target
+        // takes its address implicitly - x = Handler == x = CODEPTR32(Handler)
+        if (targetType is ProcPtrType or ScalarType { Kind: ScalarKind.Dword } && this.TryImplicitCodePtr(a.Value, scope) is { } implicitPtr) {
+          var wrapped = new AssignStmt(a.Position, a.Target, implicitPtr);
+          this.BindStatement(wrapped, scope);
+          this._model.DesugaredStatements[a] = wrapped;
+          break;
+        }
         var valueType = this.BindWithExpected(a.Value, targetType as ProcPtrType, scope);
         this.CheckAssignable(targetType, valueType, a.Position);
         if (targetType is ProcPtrType pp && a.Value is LambdaExpr lam && this._model.LambdaProcs.TryGetValue(lam, out var lifted))
@@ -2719,6 +2752,10 @@ public sealed class Binder {
     // omitted parameter/result types from a delegate target (DIM f AS Cmp = (a,b) => ...)
     var declaredType = v.Type != null ? this.ResolveTypeName(v.Type) : null;
     var valueType = this.BindWithExpected(v.Initializer!, declaredType as ProcPtrType, scope);
+    // a lambda initializer with no declared type infers a full delegate type from the lifted proc's
+    // signature (not a bare DWORD), so the variable is directly callable (x 15 / CALL x(15) / x(15))
+    if (declaredType == null && v.Initializer is LambdaExpr dimLam && this._model.LambdaProcs.TryGetValue(dimLam, out var dimLifted))
+      declaredType = new ProcPtrType([.. dimLifted.Parameters.Select(p => p.Type)], dimLifted.IsFunction ? dimLifted.ReturnType : null);
     declaredType ??= valueType;
     if (declaredType == null) {
       this.Error(v.Position, $"unknown type for variable {v.Name}");
@@ -2765,18 +2802,39 @@ public sealed class Binder {
           for (var k = lo; lo <= hi ? k <= hi : k >= hi; k += lo <= hi ? 1 : -1)
             values.Add(new IntegerLiteralExpr(re.Position, k, TypeSuffix.None));
           break;
-        case SpreadElement se:
+        case SpreadElement se: {
           if (se.Source is not NameExpr src
               || this.LookupArrayVariable(src.Name, src.Suffix, scope) is not { Type: ArrayType { StaticBounds: [var dimBound] } }) {
             this.Error(se.Position, "spread (..arr) requires a 1-D static array");
             return;
           }
-          for (var j = dimBound.Item1; j <= dimBound.Item2; ++j) {
+          // slice bounds: constant expressions, a from-end ^n (= UBOUND - n + 1), or omitted
+          // (= the source's LBOUND/UBOUND) - so ..b(0 TO 2), ..b(TO ^5), ..c(^7 TO) all resolve
+          // to a compile-time index window
+          long? ResolveBound(Expression? bound, long fallback) {
+            if (bound == null)
+              return fallback;
+            if (bound is FromEndExpr fe)
+              return this._folder.TryFold(fe.Index)?.Integer is { } n ? dimBound.Item2 - n + 1 : null;
+            return this._folder.TryFold(bound)?.Integer;
+          }
+          var sliceLo = ResolveBound(se.SliceLo, dimBound.Item1);
+          var sliceHi = ResolveBound(se.SliceHi, dimBound.Item2);
+          if (sliceLo is not { } lo2 || sliceHi is not { } hi2) {
+            this.Error(se.Position, "slice bounds must be compile-time constants (a literal, %equate or ^n from-end)");
+            return;
+          }
+          if (lo2 < dimBound.Item1 || hi2 > dimBound.Item2 || lo2 > hi2) {
+            this.Error(se.Position, $"slice ({lo2} TO {hi2}) is outside {src.Name}({dimBound.Item1} TO {dimBound.Item2})");
+            return;
+          }
+          for (var j = lo2; j <= hi2; ++j) {
             var read = new CallOrIndexExpr(se.Position, src.Name, src.Suffix, [new IntegerLiteralExpr(se.Position, j, TypeSuffix.None)]);
             this.BindExpression(read, scope);
             values.Add(read);
           }
           break;
+        }
       }
 
     // explicit DIM size (a(n)) or auto-size (a()) from the element count
@@ -2850,6 +2908,28 @@ public sealed class Binder {
     => this._model.DimInitializers.TryGetValue(dim, out var list) ? list : this._model.DimInitializers[dim] = [];
 
   private void BindCallStatement(CallStmt c, Scope scope) {
+    // pb36 first-class events: raising is just invoking - OnClick(42) / OnClick 42 / CALL OnClick(42)
+    // are all equivalent to RAISE OnClick(42)
+    if (this._events.TryGetValue(c.Name, out var ev)) {
+      this._model.DesugaredStatements[c] = this.BuildRaiseGroup(ev, c.Arguments, c.Position, scope);
+      return;
+    }
+
+    // pb36 first-class delegates: a delegate-typed variable is invoked like a SUB - x 15 / CALL x(15)
+    // / x(15). Routed through the typed pointer-call path (which loads the closure environment); a
+    // FUNCTION delegate's result is discarded, like CALL of a FUNCTION.
+    if (this.ResolveVariable(c.Name, TypeSuffix.None, scope, create: false) is { Type: ProcPtrType sig } ptrVar) {
+      var invoke = new CallOrIndexExpr(c.Position, c.Name, TypeSuffix.None, c.Arguments);
+      this._model.VariableBindings[invoke] = ptrVar;
+      this._model.ProcPtrCalls[invoke] = sig;
+      if (c.Arguments.Count != sig.ParameterTypes.Count)
+        this.Error(c.Position, $"procedure pointer {c.Name} expects {sig.ParameterTypes.Count} argument(s), got {c.Arguments.Count}");
+      foreach (var argument in c.Arguments)
+        this.BindExpression(argument, scope);
+      this._model.ProcPtrStatementCalls[c] = invoke;
+      return;
+    }
+
     // bind arguments first so their types can pick the overload (PB 3.6)
     foreach (var argument in c.Arguments)
       this.BindExpression(argument, scope);
@@ -2891,19 +2971,27 @@ public sealed class Binder {
 
     // PB 3.6: when bound against a delegate (DIM/assignment target), a lambda infers
     // its omitted result and parameter types - and BYVAL - from that signature.
+    // A statement-bodied SUB lambda (SUB(params) statement) lifts to an anonymous SUB instead.
     var expected = this._expectedSignature;
-    var lifted = new ProcedureSymbol($"$lambda${++this._lambdaCounter}", isFunction: true) {
+    var isSubLambda = lambda.StatementBody != null;
+    var lifted = new ProcedureSymbol($"$lambda${++this._lambdaCounter}", isFunction: !isSubLambda) {
       IsNested = true, // skipped by the main body loop; bound in the lambda phase
       Position = lambda.Position,
-      Body = [new AssignStmt(lambda.Position, new NameExpr(lambda.Position, "FUNCTION", TypeSuffix.None), lambda.Body)],
-      ReturnType = lambda.ReturnType != null ? this.ResolveTypeName(lambda.ReturnType) ?? PbType.Long : expected?.ReturnType ?? PbType.Long,
+      Body = isSubLambda
+        ? [lambda.StatementBody!]
+        : [new AssignStmt(lambda.Position, new NameExpr(lambda.Position, "FUNCTION", TypeSuffix.None), lambda.Body)],
+      ReturnType = isSubLambda ? null
+        : lambda.ReturnType != null ? this.ResolveTypeName(lambda.ReturnType) ?? PbType.Long : expected?.ReturnType ?? PbType.Long,
     };
     for (var i = 0; i < lambda.Parameters.Count; ++i) {
       var p = lambda.Parameters[i];
-      if (expected != null && i < expected.ParameterTypes.Count && p.Type == null && p.Suffix == TypeSuffix.None) // untyped param: infer the delegate's type, passed BYVAL
+      if (expected != null && i < expected.ParameterTypes.Count && p.Type == null && p.Suffix == TypeSuffix.None) { // untyped param: infer the delegate's type, passed BYVAL
         lifted.Parameters.Add(new(p.Name, expected.ParameterTypes[i], VariableStorage.Parameter) { ByVal = true });
-      else
-        lifted.Parameters.Add(this.BindParameter(p));
+      } else {
+        var bound = this.BindParameter(p);
+        bound.ByVal = bound.Type is ScalarType;   // lambda parameters are BYVAL by default (a delegate's params are values; pb36-only, no legacy BYREF expectation)
+        lifted.Parameters.Add(bound);
+      }
     }
     this._model.LambdaProcs[lambda] = lifted;
     this._pendingLambdas.Add((lifted, scope.Proc, lambda.Position)); // added to ProcedureList + bound in BindLambdaBodies
@@ -2922,7 +3010,8 @@ public sealed class Binder {
       var scope = new Scope(lifted, captureFrom: enclosing, capturesByEnv: true);
       foreach (var p in lifted.Parameters)
         lifted.Variables[VariableKey(p.Name, TypeSuffix.None, p.Type is ArrayType)] = p;
-      lifted.Variables.TryAdd(lifted.Name, new(lifted.Name, lifted.ReturnType!, VariableStorage.Local));
+      if (lifted.IsFunction)   // a SUB lambda has no result variable
+        lifted.Variables.TryAdd(lifted.Name, new(lifted.Name, lifted.ReturnType!, VariableStorage.Local));
       this.CollectLabels(lifted.Body!, scope);
       foreach (var statement in lifted.Body!)
         this.BindStatement(statement, scope);

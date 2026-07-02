@@ -383,6 +383,10 @@ public sealed partial class Parser {
     if (this.IsKeyword(0, "FUNCTION") && this.Peek().Kind == TokenKind.LParen)
       return this.ParseLambda();
 
+    // PB 3.6 statement-bodied SUB lambda: SUB(params) statement (in expression position)
+    if (this.IsKeyword(0, "SUB") && this.Peek().Kind == TokenKind.LParen)
+      return this.ParseSubLambda();
+
     // PB 3.6 bare single-parameter lambda: x => expr. The '=>' arrow is its own token
     // (distinct from the '>=' comparison), so this is unambiguous.
     if (this.Current.Kind == TokenKind.Identifier && this.Peek().Kind == TokenKind.FatArrow) {
@@ -448,6 +452,20 @@ public sealed partial class Parser {
   }
 
   /// <summary>
+  /// PB 3.6 statement-bodied SUB lambda: <c>SUB(params) statement</c> in expression position - the
+  /// body is one statement (ending at ':' or end of line), optionally introduced by '=>'. The value
+  /// is the lifted anonymous SUB's code pointer.
+  /// </summary>
+  private Expression ParseSubLambda() {
+    this.Require(LanguageFeature.Lambdas);
+    var pos = this.Advance().Position; // SUB
+    var parameters = this.ParseParameterList();
+    this.Match(TokenKind.FatArrow);    // optional '=>' for symmetry with the FUNCTION form
+    var body = this.ParseStatement();
+    return new LambdaExpr(pos, parameters, null, new IntegerLiteralExpr(pos, 0, TypeSuffix.None)) { StatementBody = body };
+  }
+
+  /// <summary>
   /// PB 3.6 concise lambda <c>(params) => expr</c>: the <c>FUNCTION</c> keyword and
   /// the result type are omitted; parameter types may be omitted too and are then
   /// inferred from the delegate the lambda is assigned to (the binder fills them).
@@ -497,8 +515,25 @@ public sealed partial class Parser {
     var elements = new List<CollectionElement>();
     if (this.Current.Kind != close)
       do {
-        if (this.Match(TokenKind.DotDot)) { // ..arr spread
-          elements.Add(new SpreadElement(pos, this.ParseExpression()));
+        if (this.Match(TokenKind.DotDot)) { // ..arr spread | ..arr(lo TO hi) slice spread
+          var srcName = this.Expect(TokenKind.Identifier, "array name");
+          var source = new NameExpr(srcName.Position, srcName.Text, srcName.Suffix);
+          if (this.Current.Kind == TokenKind.LParen) {
+            this.Advance(); // '('
+            Expression? ParseSliceBound() {
+              if (this.IsKeyword(0, "TO") || this.Current.Kind == TokenKind.RParen)
+                return null;   // omitted bound = the source's LBOUND/UBOUND
+              if (this.Match(TokenKind.Caret))
+                return new FromEndExpr(srcName.Position, this.ParseExpression());
+              return this.ParseExpression();
+            }
+            var lo = ParseSliceBound();
+            this.ExpectKeyword("TO");
+            var hi = ParseSliceBound();
+            this.Expect(TokenKind.RParen, "')'");
+            elements.Add(new SpreadElement(pos, source) { SliceLo = lo, SliceHi = hi, IsSlice = true });
+          } else
+            elements.Add(new SpreadElement(pos, source));
           continue;
         }
         var first = this.ParseExpression();

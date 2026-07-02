@@ -252,6 +252,19 @@ public sealed partial class CodeGenerator {
   }
 
   private void EmitCallStatement(CallStmt c) {
+    // pb36 first-class delegate invocation in statement position (x 15 / CALL x(15) / x(15)):
+    // routed through the typed pointer-call path; a FUNCTION delegate's result is discarded
+    // (an ignored float result is popped so the FPU stack stays balanced).
+    if (model.ProcPtrStatementCalls.TryGetValue(c, out var invoke)) {
+      var sig = model.ProcPtrCalls[invoke];
+      this.EmitProcPtrCall(invoke, sig);
+      if (sig.ReturnType is ScalarType { IsFloat: true })
+        this._asm.Fstp(St.St0);
+      else if (sig.ReturnType is StringType or FlexType)
+        this._asm.Call(this._rt.StrFree);   // discard an owned string result (handle in AX)
+      return;
+    }
+
     if (!model.CallBindings.TryGetValue(c, out var proc)) {
       this.Unsupported(c);
       return;

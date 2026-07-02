@@ -105,17 +105,33 @@ public sealed record NamedArgExpr(SourcePosition Position, string Name, Expressi
 public sealed record FromEndExpr(SourcePosition Position, Expression Index) : Expression(Position);
 
 /// <summary>
-/// PB 3.6 inline lambda: <c>FUNCTION(params) [AS type] =&gt; expr</c>. Lifted to an
-/// anonymous top-level FUNCTION; the expression's value is its code pointer (callable
-/// via <c>CALL DWORD</c>). First stage: non-capturing (no reference to outer locals).
+/// PB 3.6 inline lambda: <c>FUNCTION(params) [AS type] =&gt; expr</c>, or the statement-bodied SUB form
+/// <c>SUB(params) statement</c> (<see cref="StatementBody"/> set, <see cref="Body"/> unused). Lifted
+/// to an anonymous top-level FUNCTION/SUB; the expression's value is its code pointer (callable
+/// via <c>CALL DWORD</c> or directly through a delegate-typed variable).
 /// </summary>
-public sealed record LambdaExpr(SourcePosition Position, IReadOnlyList<Parameter> Parameters, TypeName? ReturnType, Expression Body) : Expression(Position);
+public sealed record LambdaExpr(SourcePosition Position, IReadOnlyList<Parameter> Parameters, TypeName? ReturnType, Expression Body) : Expression(Position) {
+  /// <summary>The single statement a <c>SUB(params) statement</c> lambda executes; null for expression (FUNCTION) lambdas.</summary>
+  public Statement? StatementBody { get; init; }
+}
 
 /// <summary>One element of a PB 3.6 collection literal: a single value, an inclusive integer range, or a spread of another array.</summary>
 public abstract record CollectionElement(SourcePosition Position);
 public sealed record ValueElement(SourcePosition Position, Expression Value) : CollectionElement(Position);
 public sealed record RangeElement(SourcePosition Position, Expression Lo, Expression Hi) : CollectionElement(Position);
-public sealed record SpreadElement(SourcePosition Position, Expression Source) : CollectionElement(Position);
+/// <summary>
+/// Spread of another array: <c>..arr</c> (all elements) or the slice form <c>..arr(lo TO hi)</c> -
+/// either bound may be omitted (defaults to the source's LBOUND/UBOUND) or be a from-end
+/// <see cref="FromEndExpr"/> (<c>^1</c> = last), e.g. <c>..b(0 TO 2)</c>, <c>..b(TO ^5)</c>, <c>..c(^7 TO)</c>.
+/// </summary>
+public sealed record SpreadElement(SourcePosition Position, Expression Source) : CollectionElement(Position) {
+  /// <summary>Slice lower bound (null = the source's LBOUND); may be a <see cref="FromEndExpr"/>.</summary>
+  public Expression? SliceLo { get; init; }
+  /// <summary>Slice upper bound (null = the source's UBOUND); may be a <see cref="FromEndExpr"/>.</summary>
+  public Expression? SliceHi { get; init; }
+  /// <summary>True when the spread was written with a slice (parens), even if both bounds were omitted.</summary>
+  public bool IsSlice { get; init; }
+}
 
 /// <summary>
 /// PB 3.6 array-initializer literal: <c>{ v1, v2, lo..hi, ..arr }</c>, used as a DIM
