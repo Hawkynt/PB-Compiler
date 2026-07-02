@@ -44,6 +44,12 @@ public sealed class Binder {
 
   /// <summary>pb36 generic procedures: name -> the template declaration (SUB/FUNCTION ... OF T). A call infers the type arguments and instantiates a concrete procedure named with the mangle.</summary>
   private readonly Dictionary<string, Statement> _genericProcs = new(StringComparer.OrdinalIgnoreCase);
+
+  /// <summary>pb36 events: name -> the backing handler-array/count module-variable names and the delegate's parameters (types + BYVAL flags, used to pass RAISE arguments correctly). <c>+=</c>/<c>-=</c>/RAISE desugar against these.</summary>
+  private readonly Dictionary<string, (string Array, string Count, IReadOnlyList<VariableSymbol> Params)> _events = new(StringComparer.OrdinalIgnoreCase);
+  /// <summary>Fixed handler capacity per event (a resizable list is a later increment).</summary>
+  private const int EventCapacity = 32;
+  private int _eventTemp;
   /// <summary>pb36 generic procedure instantiations already created (mangled name -> symbol), to instantiate each once.</summary>
   private readonly Dictionary<string, ProcedureSymbol> _genericProcInstances = new(StringComparer.OrdinalIgnoreCase);
   /// <summary>pb36 generic procedure instances whose bodies still need binding (drained after the main body-binding pass, so adding them never mutates the loop being iterated).</summary>
@@ -298,6 +304,10 @@ public sealed class Binder {
         case DimStmt dim:
           this.DeclareModuleVariables(dim);
           this._model.MainBody.Add(dim); // dynamic arrays allocate at run time
+          break;
+
+        case EventDeclStmt ev:
+          this.SynthesizeEvent(ev);
           break;
 
         case CommandStmt { Keyword: "OPTION BASE" } ob when ob.Arguments is [IntegerLiteralExpr { Value: 0 or 1 } b]:
@@ -1441,6 +1451,114 @@ public sealed class Binder {
     return new(p.Name, type, VariableStorage.Parameter) { ByVal = p.ByVal, Seg = p.Seg, Optional = p.Optional, DefaultValue = p.DefaultValue };
   }
 
+  /// <summary>
+  /// pb36 event: synthesizes the backing storage for <c>EVENT name AS delegate</c> - a fixed-capacity
+  /// DWORD handler array and an INTEGER count, declared as module variables. <c>+=</c>/<c>-=</c> and
+  /// RAISE desugar against these (see <see cref="BindEventAddRemove"/> / <see cref="BindRaise"/>).
+  /// </summary>
+  private void SynthesizeEvent(EventDeclStmt ev) {
+    if (!this.Require(LanguageFeature.Events, ev.Position))
+      return;
+    var pos = ev.Position;
+    var arr = ev.Name + "__evh";
+    var cnt = ev.Name + "__evn";
+    var arrDim = new DimStmt(pos, StorageClass.Dim, false, [
+      new VariableDecl(pos, arr, TypeSuffix.None, [(null, new IntegerLiteralExpr(pos, EventCapacity - 1, TypeSuffix.None))], new TypeName(pos, BuiltinType.Dword)),
+    ]);
+    var cntDim = new DimStmt(pos, StorageClass.Dim, false, [
+      new VariableDecl(pos, cnt, TypeSuffix.None, null, new TypeName(pos, BuiltinType.Integer)),
+    ]);
+    this.DeclareModuleVariables(arrDim);
+    this.DeclareModuleVariables(cntDim);
+    this._model.MainBody.Add(arrDim);
+    this._model.MainBody.Add(cntDim);
+    // the delegate's parameters (types + BYVAL flags) drive how RAISE passes each argument
+    var dparams = ev.Delegate.UserTypeName is { } dn && this._model.Procedures.TryGetValue(dn, out var dproc)
+      ? dproc.Parameters.ToList()
+      : new List<VariableSymbol>();
+    this._events[ev.Name] = (arr, cnt, dparams);
+  }
+
+  /// <summary>The conversion intrinsic (CINT/CLNG/...) that forces a value to a scalar type, so a RAISE argument is pushed at the delegate parameter's width; null for non-scalar / string (passed as-is).</summary>
+  private static string? ConversionIntrinsic(PbType t) => t switch {
+    ScalarType { Kind: ScalarKind.Integer } => "CINT", ScalarType { Kind: ScalarKind.Long } => "CLNG",
+    ScalarType { Kind: ScalarKind.Single } => "CSNG", ScalarType { Kind: ScalarKind.Double } => "CDBL",
+    ScalarType { Kind: ScalarKind.Ext } => "CEXT", ScalarType { Kind: ScalarKind.Byte } => "CBYT",
+    ScalarType { Kind: ScalarKind.Word } => "CWRD", ScalarType { Kind: ScalarKind.Dword } => "CDWD",
+    ScalarType { Kind: ScalarKind.Quad } => "CQUD",
+    _ => null,
+  };
+
+  /// <summary>Desugars <c>event += handler</c> / <c>event -= handler</c> into a handler-list append / compacting removal.</summary>
+  private void BindEventAddRemove(AssignStmt a, string name, (string Array, string Count, IReadOnlyList<VariableSymbol> Params) ev, Scope scope) {
+    // the parser lowered 'event += h' to 'event = event + h'; recover the handler and the direction
+    if (a.Value is not BinaryExpr { Op: BinaryOp.Add or BinaryOp.Subtract } be) {
+      this.Error(a.Position, $"event '{name}' supports only '+= handler' and '-= handler'");
+      return;
+    }
+    var pos = a.Position;
+    var handler = be.Right;
+    Expression Cnt() => new NameExpr(pos, ev.Count, TypeSuffix.None);
+    Expression Elem(Expression i) => new CallOrIndexExpr(pos, ev.Array, TypeSuffix.None, [i]);
+    Expression Int(long v) => new IntegerLiteralExpr(pos, v, TypeSuffix.None);
+
+    List<Statement> body;
+    if (be.Op == BinaryOp.Add) {
+      // handlers(count) = handler : count = count + 1
+      body = [
+        new AssignStmt(pos, Elem(Cnt()), handler),
+        new AssignStmt(pos, Cnt(), new BinaryExpr(pos, BinaryOp.Add, Cnt(), Int(1))),
+      ];
+    } else {
+      // FOR i = 0 TO count-1 : IF handlers(i) = handler THEN {shift tail down; count--; EXIT FOR} : NEXT
+      var i = new NameExpr(pos, $"{ev.Array}__i{++this._eventTemp}", TypeSuffix.Integer);
+      var j = new NameExpr(pos, $"{ev.Array}__j{this._eventTemp}", TypeSuffix.Integer);
+      var shift = new ForStmt(pos, j, i, new BinaryExpr(pos, BinaryOp.Subtract, Cnt(), Int(2)), null, [
+        new AssignStmt(pos, Elem(j), Elem(new BinaryExpr(pos, BinaryOp.Add, j, Int(1)))),
+      ]);
+      var found = new List<Statement> {
+        shift,
+        new AssignStmt(pos, Cnt(), new BinaryExpr(pos, BinaryOp.Subtract, Cnt(), Int(1))),
+        new ExitStmt(pos, ExitKind.For),
+      };
+      var loopBody = new List<Statement> {
+        new IfStmt(pos, new BinaryExpr(pos, BinaryOp.Equal, Elem(i), handler), found, [], null),
+      };
+      body = [new ForStmt(pos, i, Int(0), new BinaryExpr(pos, BinaryOp.Subtract, Cnt(), Int(1)), null, loopBody)];
+    }
+    var group = new IfStmt(pos, new IntegerLiteralExpr(pos, -1, TypeSuffix.None), body, [], null);
+    this.BindStatement(group, scope);
+    this._model.DesugaredStatements[a] = group;
+  }
+
+  /// <summary>Desugars <c>RAISE event(args)</c> into a loop that calls every registered handler through its code pointer.</summary>
+  private void BindRaise(RaiseStmt r, Scope scope) {
+    if (!this._events.TryGetValue(r.Name, out var ev)) {
+      this.Error(r.Position, $"'{r.Name}' is not an event");
+      return;
+    }
+    var pos = r.Position;
+    var i = new NameExpr(pos, $"{ev.Array}__r{++this._eventTemp}", TypeSuffix.Integer);
+    // pass each argument the way the delegate declares its parameter: a BYVAL parameter takes the
+    // value (coerced to the parameter's type so CALL DWORD pushes it at the right width - a bare
+    // INTEGER 42 into a LONG parameter would otherwise arrive as garbage), a BYREF parameter takes
+    // the argument as-is (its address).
+    var args = r.Arguments.Select((arg, idx) => {
+      if (idx >= ev.Params.Count)
+        return arg;
+      var p = ev.Params[idx];
+      var coerced = ConversionIntrinsic(p.Type) is { } conv ? (Expression)new CallOrIndexExpr(pos, conv, TypeSuffix.None, [arg]) : arg;
+      return p.ByVal ? new ByValArgExpr(pos, coerced) : coerced;
+    }).ToList();
+    // FOR i = 0 TO count-1 : CALL DWORD (handlers(i))(args) : NEXT
+    var loop = new ForStmt(pos, i, new IntegerLiteralExpr(pos, 0, TypeSuffix.None),
+      new BinaryExpr(pos, BinaryOp.Subtract, new NameExpr(pos, ev.Count, TypeSuffix.None), new IntegerLiteralExpr(pos, 1, TypeSuffix.None)), null,
+      [new CallPtrStmt(pos, new CallOrIndexExpr(pos, ev.Array, TypeSuffix.None, [i]), null, args)]);
+    var group = new IfStmt(pos, new IntegerLiteralExpr(pos, -1, TypeSuffix.None), [loop], [], null);
+    this.BindStatement(group, scope);
+    this._model.DesugaredStatements[r] = group;
+  }
+
   private void DeclareModuleVariables(DimStmt dim) {
     foreach (var v in dim.Variables) {
       if (v.Initializer != null)
@@ -1908,6 +2026,10 @@ public sealed class Binder {
         this.BindMemberCallStatement(mc, scope);
         break;
 
+      case RaiseStmt raise:
+        this.BindRaise(raise, scope);
+        break;
+
       case ForEachStmt fe:
         this.BindForEach(fe, scope);
         break;
@@ -1928,6 +2050,10 @@ public sealed class Binder {
         this.BindExpression(hr.SpField, scope);
         break;
       case HandlerArmStmt or HandlerReraiseStmt:
+        break;
+
+      case AssignStmt a when a.Target is NameExpr et && this._events.TryGetValue(et.Name, out var evInfo):
+        this.BindEventAddRemove(a, et.Name, evInfo, scope);
         break;
 
       case AssignStmt a: {

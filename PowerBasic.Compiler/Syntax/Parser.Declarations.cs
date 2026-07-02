@@ -408,6 +408,24 @@ public sealed partial class Parser {
     return new StatementGroup(pos, body);
   }
 
+  /// <summary>EVENT name AS delegate - declares a multicast event (pb36).</summary>
+  private Statement ParseEventDecl() {
+    this.Require(LanguageFeature.Events);
+    var pos = this.Advance().Position; // EVENT
+    var name = this.Expect(TokenKind.Identifier, "event name");
+    this.ExpectKeyword("AS");
+    return new EventDeclStmt(pos, name.Text, this.ParseTypeName());
+  }
+
+  /// <summary>RAISE name(args) - invokes every registered handler of an event (pb36).</summary>
+  private Statement ParseRaise() {
+    this.Require(LanguageFeature.Events);
+    var pos = this.Advance().Position; // RAISE
+    var name = this.Expect(TokenKind.Identifier, "event name");
+    var args = this.Current.Kind == TokenKind.LParen ? this.ParseArgumentList() : new List<Expression>();
+    return new RaiseStmt(pos, name.Text, args);
+  }
+
   private Statement ParseEnum() {
     this.Require(LanguageFeature.EnumType);
     var pos = this.Advance().Position; // ENUM

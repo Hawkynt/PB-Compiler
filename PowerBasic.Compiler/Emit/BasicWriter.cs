@@ -488,7 +488,7 @@ public sealed class BasicWriter {
       case EquateStmt: break;   // emitted from the unit's declaration pass (folded equates aren't in MainBody)
       case CallStmt s: this.WriteCall(s); break;
       case MemberCallStmt s: this.Line($"{this.Expr(s.Receiver)}.{s.Member}({this.JoinArgs(s.Arguments)})"); break;
-      case CallPtrStmt s: this.Line($"CALL DWORD {this.Expr(s.Pointer)}{(s.Convention is { } c ? " " + c : "")}({this.JoinArgs(s.Arguments)})"); break;
+      case CallPtrStmt s: this.Line($"CALL DWORD ({this.Expr(s.Pointer)}){(s.Convention is { } c ? " " + c : "")}({this.JoinArgs(s.Arguments)})"); break;   // parenthesize the pointer so (ptr)(args) parses
       case PrintStmt s: this.WritePrint(s); break;
       case WriteStmt s: this.Line($"WRITE {FilesPrefix(s.FileNumber, this)}{string.Join(", ", s.Items.Select(this.CoerceFloat))}"); break;
       case InputStmt s: this.WriteInput(s); break;

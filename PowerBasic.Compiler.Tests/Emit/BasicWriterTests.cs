@@ -165,6 +165,15 @@ public sealed class BasicWriterTests {
   }
 
   [Test]
+  public void Render_Events_LowerToHandlerArrayAddRemoveAndCallDwordLoop() {
+    var basic = RenderAndRebind("DECLARE SUB ClickProc(BYVAL x AS LONG)\nDECLARE SUB Log1(BYVAL x AS LONG)\nEVENT OnClick AS ClickProc\nOnClick += CODEPTR32(Log1)\nRAISE OnClick(42)\nOnClick -= CODEPTR32(Log1)\nSUB Log1(BYVAL x AS LONG)\n  PRINT x\nEND SUB\n", Dialect.Pb36);
+    Assert.That(basic, Does.Contain("DIM OnClick__evh(31) AS DWORD"), "the event lowers to a fixed DWORD handler array");
+    Assert.That(basic, Does.Contain("OnClick__evh(OnClick__evn) = CODEPTR32(Log1)"), "+= appends the handler pointer");
+    Assert.That(basic, Does.Contain("CALL DWORD (OnClick__evh("), "RAISE invokes each handler via CALL DWORD through the array element");
+    Assert.That(basic, Does.Contain("BYVAL CLNG(42)"), "RAISE args are coerced to the delegate parameter type and passed BYVAL");
+  }
+
+  [Test]
   public void Render_Assignment_RoundTripsExpressionWithMinimalParens() {
     var basic = RenderAndRebind("A% = 2 + 3 * 4\nPRINT A%\n");
     Assert.That(basic, Does.Contain("A% = 2 + 3 * 4"), "multiply binds tighter than add - no parens needed");

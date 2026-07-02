@@ -338,9 +338,9 @@ PRINT Red; Green; Blue
 ```basic
 
 ' ENUM Color (folded to integer constants below)
-%Red = 0
-%Green = 5
-%Blue = 6
+%Color_Red = 0
+%Color_Green = 5
+%Color_Blue = 6
 PRINT 0; 5; 6
 ```
 
@@ -1634,6 +1634,182 @@ PRINT pbtmp2
 
 _With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
 
+### Segmented PEEK / POKE
+
+POKE seg:offset / PEEK(seg:offset) lower to DEF SEG = seg followed by the plain PEEK/POKE.
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+POKE &H4000:100, 65
+DIM v AS INTEGER
+v = PEEK(&H4000:100)
+PRINT v
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+DEF SEG = 16384%
+POKE 100, 65
+DIM v AS INTEGER
+DEF SEG = 16384%
+v = PEEK(100)
+PRINT v
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
+### Chained comparison
+
+lo <= x < hi desugars to (lo <= x) AND (x < hi), reusing the middle operand.
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+DIM i AS INTEGER
+i = 5
+DIM n AS INTEGER
+n = 10
+IF 0 <= i < n THEN
+  PRINT "in range"
+END IF
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+DIM i AS INTEGER
+i = 5
+DIM n AS INTEGER
+n = 10
+IF 0 <= i AND i < n THEN
+  PRINT "in range"
+END IF
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
+### Null-conditional access ?. and ??
+
+obj?.field ?? fallback lowers to IIF(obj.HasValue, obj.Value.field, fallback).
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+TYPE Point
+  X AS LONG
+  Y AS LONG
+END TYPE
+DIM p AS Point?
+p.HasValue = -1
+p.Value.Y = 7
+DIM r AS LONG
+r = p?.Y ?? -1
+PRINT r
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+
+TYPE Point
+  X AS LONG
+  Y AS LONG
+END TYPE
+
+TYPE S_nul_Point
+  Value AS Point
+  HasValue AS INTEGER
+END TYPE
+DIM p AS S_nul_Point
+p.HasValue = -1
+p.Value.Y = 7
+DIM r AS LONG
+DIM pbtmp1 AS DOUBLE
+IF p.HasValue THEN
+  pbtmp1 = p.Value.Y
+ELSE
+  pbtmp1 = -1
+END IF
+r = pbtmp1
+PRINT r
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
+### Events (EVENT / RAISE with += / -=)
+
+EVENT lowers to a DWORD handler array + count; += appends, -= compacts, RAISE loops CALL DWORD.
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+DECLARE SUB ClickProc(BYVAL x AS LONG)
+DECLARE SUB Log1(BYVAL x AS LONG)
+EVENT OnClick AS ClickProc
+OnClick += CODEPTR32(Log1)
+OnClick += CODEPTR32(Log1)
+RAISE OnClick(42)
+OnClick -= CODEPTR32(Log1)
+RAISE OnClick(7)
+SUB Log1(BYVAL x AS LONG)
+  PRINT x
+END SUB
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+DECLARE SUB ClickProc(BYVAL x AS LONG)
+DECLARE SUB Log1(BYVAL x AS LONG)
+DIM OnClick__evh(31) AS DWORD
+DIM OnClick__evn AS INTEGER
+IF -1 THEN
+  OnClick__evh(OnClick__evn) = CODEPTR32(Log1)
+  OnClick__evn = OnClick__evn + 1
+END IF
+IF -1 THEN
+  OnClick__evh(OnClick__evn) = CODEPTR32(Log1)
+  OnClick__evn = OnClick__evn + 1
+END IF
+IF -1 THEN
+  FOR OnClick__evh__r1% = 0 TO OnClick__evn - 1
+    CALL DWORD (OnClick__evh(OnClick__evh__r1%))(BYVAL CLNG(42))
+  NEXT
+END IF
+IF -1 THEN
+  FOR OnClick__evh__i2% = 0 TO OnClick__evn - 1
+    IF OnClick__evh(OnClick__evh__i2%) = CODEPTR32(Log1) THEN
+      FOR OnClick__evh__j2% = OnClick__evh__i2% TO OnClick__evn - 2
+        OnClick__evh(OnClick__evh__j2%) = OnClick__evh(OnClick__evh__j2% + 1)
+      NEXT
+      OnClick__evn = OnClick__evn - 1
+      EXIT FOR
+    END IF
+  NEXT
+END IF
+IF -1 THEN
+  FOR OnClick__evh__r3% = 0 TO OnClick__evn - 1
+    CALL DWORD (OnClick__evh(OnClick__evh__r3%))(BYVAL CLNG(7))
+  NEXT
+END IF
+
+SUB Log1(BYVAL x AS LONG)
+  PRINT x
+END SUB
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
 ## Optimizations
 
 These are the optimizer passes whose effect is visible at the source level (the AST-level
@@ -1684,7 +1860,7 @@ PRINT X
 
 A DEF SEG with only segment-transparent statements before the next DEF SEG is redundant and dropped.
 
-> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+> **Round-trips to PB 3.5:** the decompilation recompiles under `--dialect pb35` (runtime output not re-verified in this environment).
 
 **pb3.6 source:**
 

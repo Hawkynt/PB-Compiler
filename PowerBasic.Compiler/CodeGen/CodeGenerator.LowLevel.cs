@@ -368,6 +368,14 @@ public sealed partial class CodeGenerator {
 
     foreach (var arg in cp.Arguments) {
       var argType = model.TypeOf(arg);
+      // BYVAL argument: push the value itself (a BYVAL callee - e.g. an event handler declared
+      // BYVAL - reads the value directly, not through a near pointer). The value's own type sets its
+      // pushed width, so it must already be the parameter's type (the RAISE desugar coerces it).
+      if (arg is ByValArgExpr bv) {
+        var innerType = model.TypeOf(bv.Value);
+        this.EmitByValArgument(bv.Value, innerType, innerType);
+        continue;
+      }
       if (this.IsNearLValue(arg) && this.EmitPlace(arg) is { } place) {
         asm.Lea(Reg.BX, place.Cell);
         asm.Push(Reg.BX);

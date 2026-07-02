@@ -19,9 +19,10 @@ TMP="${TMPDIR:-/tmp}/gendc.$$"; mkdir -p "$TMP/a" "$TMP/b"
 # and diff), not just whether the decompilation recompiles. Without it, falls back to a compile check.
 DOSBOX="${DOSBOX_EXE:-}"
 [ -z "$DOSBOX" ] && for c in tools/dosbox/dosbox dosbox-staging dosbox; do command -v "$c" >/dev/null 2>&1 && { DOSBOX=$c; break; }; [ -x "$c" ] && { DOSBOX=$c; break; }; done
-# Run DOSBox headless on a single shared Xvfb display so no window pops up and there is no per-call
-# xvfb-run startup cost (dosbox-staging needs a real display - SDL_VIDEODRIVER=dummy exits without
-# running). Without Xvfb, DOSBox runs on the real display (a window appears); install xvfb to silence it.
+# Run DOSBox headless on a single shared Xvfb display (dosbox-staging needs a real display -
+# SDL_VIDEODRIVER=dummy exits without running). One shared display avoids per-call startup cost and
+# orphaned-Xvfb leaks; the run_dosbox_retry wrapper re-runs a rare flaky empty result. Without Xvfb,
+# DOSBox runs on the real display (a window appears); install xvfb (pacman -S xorg-server-xvfb) to silence it.
 if [ -z "${DISPLAY:-}" ] && command -v Xvfb >/dev/null 2>&1; then
   Xvfb :99 -screen 0 640x480x8 >/dev/null 2>&1 & _XVFB_PID=$!
   export DISPLAY=:99
@@ -30,13 +31,22 @@ if [ -z "${DISPLAY:-}" ] && command -v Xvfb >/dev/null 2>&1; then
 fi
 winpath() { cd "$1" && pwd; }
 run_dosbox() { rm -f "$2/DONE.TXT" "$2/RESULT.TXT"; "$DOSBOX" -conf "$1" >/dev/null 2>&1 & local pid=$!
-  for _ in $(seq 1 250); do { [ -f "$2/DONE.TXT" ] || ! kill -0 "$pid" 2>/dev/null; } && break; sleep 0.2; done
+  for _ in $(seq 1 300); do { [ -f "$2/DONE.TXT" ] || ! kill -0 "$pid" 2>/dev/null; } && break; sleep 0.2; done
   kill -0 "$pid" 2>/dev/null && { sleep 0.3; kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; }; [ -f "$2/RESULT.TXT" ]; }
 mkconf() { printf '[sdl]\nwindow_position=-10000,-10000\n[cpu]\ncore=auto\ncycles=max\n[dosbox]\nems=true\n[autoexec]\nmount c "%s"\nc:\nT.EXE\necho ok>DONE.TXT\nexit\n' "$(winpath "$1")"; }
 
 # Decides the round-trip status of one example: SAME (recompiles + identical output), DIFFERS
 # (recompiles but the runtime output diverges), NOCOMPILE (the decompilation is not valid pb35), or
 # COMPILES (no DOSBox: recompiled but output not re-verified). Echoes the status word.
+# Runs a compiled T.EXE under DOSBox, retrying a flaky empty run a couple of times (the shared Xvfb
+# occasionally drops one under load) so a transient miss is not mislabelled as a divergence.
+run_dosbox_retry() { # $1 = conf, $2 = dir
+  for _ in 1 2 3; do
+    run_dosbox "$1" "$2" && [ -s "$2/RESULT.TXT" ] && return 0
+  done
+  return 1
+}
+
 roundtrip_status() { # $1 = .bas file
   run --dialect pb36 --emit-basic "$1" -O "$TMP/rt.bas" >/dev/null 2>&1 || { echo NOCOMPILE; return; }
   run --dialect pb35 "$TMP/rt.bas" -O "$TMP/rt.exe" >/dev/null 2>&1 || { echo NOCOMPILE; return; }
@@ -44,10 +54,10 @@ roundtrip_status() { # $1 = .bas file
   # output equivalence: wrap PRINT -> RESULT.TXT, run the pb36 original and the pb35 decompilation
   { echo 'OPEN "RESULT.TXT" FOR OUTPUT AS #1'; body "$1" | sed 's/PRINT \([^#]\)/PRINT #1, \1/g'; echo 'CLOSE #1'; } > "$TMP/a/T.BAS"
   run --dialect pb36 "$TMP/a/T.BAS" -O "$TMP/a/T.EXE" >/dev/null 2>&1 || { echo COMPILES; return; }
-  mkconf "$TMP/a" > "$TMP/a.conf"; run_dosbox "$TMP/a.conf" "$TMP/a" || { echo COMPILES; return; }
+  mkconf "$TMP/a" > "$TMP/a.conf"; run_dosbox_retry "$TMP/a.conf" "$TMP/a" || { echo COMPILES; return; }
   run --dialect pb36 --emit-basic "$TMP/a/T.BAS" -O "$TMP/b/T.BAS" >/dev/null 2>&1 || { echo NOCOMPILE; return; }
   run --dialect pb35 "$TMP/b/T.BAS" -O "$TMP/b/T.EXE" >/dev/null 2>&1 || { echo NOCOMPILE; return; }
-  mkconf "$TMP/b" > "$TMP/b.conf"; run_dosbox "$TMP/b.conf" "$TMP/b" || { echo DIFFERS; return; }
+  mkconf "$TMP/b" > "$TMP/b.conf"; run_dosbox_retry "$TMP/b.conf" "$TMP/b" || { echo DIFFERS; return; }
   diff -q <(tr -d '\r' < "$TMP/a/RESULT.TXT") <(tr -d '\r' < "$TMP/b/RESULT.TXT") >/dev/null 2>&1 && echo SAME || echo DIFFERS
 }
 

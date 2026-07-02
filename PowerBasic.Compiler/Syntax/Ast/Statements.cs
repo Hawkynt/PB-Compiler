@@ -124,6 +124,17 @@ public sealed record EquateStmt(SourcePosition Position, string Name, Expression
 /// </summary>
 public sealed record EnumDecl(SourcePosition Position, string Name, TypeName? UnderlyingType, IReadOnlyList<(string Name, Expression? Value)> Members) : Statement(Position);
 
+/// <summary>
+/// pb36 <c>EVENT name AS delegate</c>: declares a multicast event whose handlers match the delegate
+/// signature. The binder synthesizes a resizable DWORD handler list plus add/remove/raise helper
+/// procedures; <c>name += handler</c> / <c>name -= handler</c> add/remove a handler and
+/// <c>RAISE name(args)</c> invokes every handler in turn.
+/// </summary>
+public sealed record EventDeclStmt(SourcePosition Position, string Name, TypeName Delegate) : Statement(Position);
+
+/// <summary>pb36 <c>RAISE name(args)</c>: invokes every registered handler of the event with the given arguments.</summary>
+public sealed record RaiseStmt(SourcePosition Position, string Name, IReadOnlyList<Expression> Arguments) : Statement(Position);
+
 #endregion
 
 #region variable declarations
