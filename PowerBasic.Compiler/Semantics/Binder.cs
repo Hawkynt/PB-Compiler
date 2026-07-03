@@ -2179,17 +2179,32 @@ public sealed class Binder {
             break;
           }
         }
-        // pb36 bit-field write: o.bf = v -> o.$storage = (o.$storage AND clearMask) OR ((v AND mask) << offset)
+        // pb36 bit-field write: o.bf = v -> o.$storage = (o.$storage AND clearMask) OR ((v AND mask) << offset),
+        // minimized: a constant v folds its masked/shifted value to one literal; a field covering the
+        // whole container skips the read-modify-write (the member store truncates); a fold to 0 drops the OR.
         if (a.Target is MemberExpr bfTarget && this.BindExpression(bfTarget.Target, scope) is UdtType bfUdt
             && this.BitFieldOf(bfUdt, bfTarget.Member) is { } wbf) {
           var word = new MemberExpr(a.Position, bfTarget.Target, wbf.Storage, TypeSuffix.None);
           var fieldMask = (1L << wbf.Width) - 1;
           var clearMask = ~(fieldMask << wbf.Offset) & ((1L << wbf.ContainerBits) - 1);   // mask to the container's size (BYTE or WORD)
-          Expression masked = new BinaryExpr(a.Position, BinaryOp.And, a.Value, new IntegerLiteralExpr(a.Position, fieldMask, TypeSuffix.None));
-          if (wbf.Offset > 0)
-            masked = new BinaryExpr(a.Position, BinaryOp.ShiftLeft, masked, new IntegerLiteralExpr(a.Position, wbf.Offset, TypeSuffix.None));
-          var cleared = new BinaryExpr(a.Position, BinaryOp.And, word, new IntegerLiteralExpr(a.Position, clearMask, TypeSuffix.None));
-          var store = new AssignStmt(a.Position, word, new BinaryExpr(a.Position, BinaryOp.Or, cleared, masked));
+
+          Expression rhs;
+          if (clearMask == 0) {
+            // the field IS the container: plain store (the BYTE/WORD member truncates the value itself)
+            rhs = a.Value;
+          } else if (this._folder.TryFold(a.Value)?.Integer is { } constVal) {
+            // constant value: (v AND mask) << offset folds to a single literal; 0 drops the OR entirely
+            var folded = (constVal & fieldMask) << wbf.Offset;
+            Expression cleared = new BinaryExpr(a.Position, BinaryOp.And, word, new IntegerLiteralExpr(a.Position, clearMask, TypeSuffix.None));
+            rhs = folded == 0 ? cleared : new BinaryExpr(a.Position, BinaryOp.Or, cleared, new IntegerLiteralExpr(a.Position, folded, TypeSuffix.None));
+          } else {
+            Expression masked = new BinaryExpr(a.Position, BinaryOp.And, a.Value, new IntegerLiteralExpr(a.Position, fieldMask, TypeSuffix.None));
+            if (wbf.Offset > 0)
+              masked = new BinaryExpr(a.Position, BinaryOp.ShiftLeft, masked, new IntegerLiteralExpr(a.Position, wbf.Offset, TypeSuffix.None));
+            var cleared = new BinaryExpr(a.Position, BinaryOp.And, word, new IntegerLiteralExpr(a.Position, clearMask, TypeSuffix.None));
+            rhs = new BinaryExpr(a.Position, BinaryOp.Or, cleared, masked);
+          }
+          var store = new AssignStmt(a.Position, word, rhs);
           this.BindStatement(store, scope);
           this._model.DesugaredStatements[a] = store;
           break;
@@ -3466,12 +3481,15 @@ public sealed class Binder {
           this.Error(m.Position, "member access on non-TYPE value");
           return PbType.Integer;
         }
-        // pb36 bit-field read: o.bf -> (o.$storage >>> offset) AND ((1 << width) - 1)
+        // pb36 bit-field read: o.bf -> (o.$storage >>> offset) AND ((1 << width) - 1), minimized: no
+        // shift at offset 0, and no mask when the field reaches the container's top bit (the logical
+        // shift of the unsigned container already discarded everything below).
         if (this.BitFieldOf(udt, m.Member) is { } bf) {
-          Expression word = new MemberExpr(m.Position, m.Target, bf.Storage, TypeSuffix.None);
+          Expression read = new MemberExpr(m.Position, m.Target, bf.Storage, TypeSuffix.None);
           if (bf.Offset > 0)
-            word = new BinaryExpr(m.Position, BinaryOp.ShiftRightLogical, word, new IntegerLiteralExpr(m.Position, bf.Offset, TypeSuffix.None));
-          var read = new BinaryExpr(m.Position, BinaryOp.And, word, new IntegerLiteralExpr(m.Position, (1L << bf.Width) - 1, TypeSuffix.None));
+            read = new BinaryExpr(m.Position, BinaryOp.ShiftRightLogical, read, new IntegerLiteralExpr(m.Position, bf.Offset, TypeSuffix.None));
+          if (bf.Offset + bf.Width < bf.ContainerBits)   // mask only when bits remain above the field
+            read = new BinaryExpr(m.Position, BinaryOp.And, read, new IntegerLiteralExpr(m.Position, (1L << bf.Width) - 1, TypeSuffix.None));
           var bfType = this.BindExpression(read, scope);
           this._model.Desugared[m] = read;
           return bfType;

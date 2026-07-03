@@ -1209,10 +1209,10 @@ TYPE StatusReg
   S_bits0 AS BYTE
 END TYPE
 DIM r AS StatusReg
-r.S_bits0 = r.S_bits0 AND 248 OR 5 AND 7
-r.S_bits0 = r.S_bits0 AND 15 OR (12 AND 15) * 16
+r.S_bits0 = r.S_bits0 AND 248 OR 5
+r.S_bits0 = r.S_bits0 AND 15 OR 192
 PRINT r.S_bits0 AND 7
-PRINT r.S_bits0 \ 16 AND 15
+PRINT r.S_bits0 \ 16
 ```
 
 _With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._

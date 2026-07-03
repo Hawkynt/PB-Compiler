@@ -59,6 +59,51 @@ public sealed class BitFieldBinderTests {
   }
 
   [Test]
+  public void Bind_GivenConstantBitFieldWrite_WhenBound_ThenMaskedShiftedValueFoldsToOneLiteral() {
+    var model = Bind("TYPE R\n  Mode AS BIT * 3\n  Level AS BIT * 4\nEND TYPE\nDIM r AS R\nr.Level = 12\n");
+    var write = model.DesugaredStatements.Keys.OfType<AssignStmt>().Single(a => a.Target is MemberExpr { Member: "Level" });
+    var store = (AssignStmt)model.DesugaredStatements[write];
+    var or = (BinaryExpr)store.Value;
+    Assert.Multiple(() => {
+      Assert.That(or.Op, Is.EqualTo(BinaryOp.Or));
+      Assert.That(or.Right, Is.InstanceOf<IntegerLiteralExpr>(), "the constant value's mask+shift folds at desugar time");
+      Assert.That(((IntegerLiteralExpr)or.Right).Value, Is.EqualTo((12L & 0xF) << 3), "(12 AND &HF) << 3 = 96 as one literal");
+    });
+  }
+
+  [Test]
+  public void Bind_GivenConstantZeroBitFieldWrite_WhenBound_ThenOrIsDropped() {
+    var model = Bind("TYPE R\n  Mode AS BIT * 3\n  Level AS BIT * 4\nEND TYPE\nDIM r AS R\nr.Level = 0\n");
+    var write = model.DesugaredStatements.Keys.OfType<AssignStmt>().Single(a => a.Target is MemberExpr { Member: "Level" });
+    var store = (AssignStmt)model.DesugaredStatements[write];
+    var cleared = (BinaryExpr)store.Value;
+    Assert.Multiple(() => {
+      Assert.That(cleared.Op, Is.EqualTo(BinaryOp.And), "writing 0 only needs the clear step - no OR");
+      Assert.That(((IntegerLiteralExpr)cleared.Right).Value, Is.EqualTo(~(0xFL << 3) & 0xFF));
+    });
+  }
+
+  [Test]
+  public void Bind_GivenFullContainerBitFieldWrite_WhenBound_ThenReadModifyWriteIsSkipped() {
+    var model = Bind("TYPE R\n  All AS BIT * 8\nEND TYPE\nDIM r AS R\nDIM v%\nr.All = v%\n");
+    var write = model.DesugaredStatements.Keys.OfType<AssignStmt>().Single(a => a.Target is MemberExpr { Member: "All" });
+    var store = (AssignStmt)model.DesugaredStatements[write];
+    Assert.That(store.Value, Is.Not.InstanceOf<BinaryExpr>(), "a field covering its whole container stores plainly - the BYTE member truncates");
+  }
+
+  [Test]
+  public void Bind_GivenTopOfContainerBitFieldRead_WhenBound_ThenRedundantMaskIsDropped() {
+    // Mode 3 + Enabled 1 + Level 4 = 8 bits: Level occupies the BYTE container's top nibble
+    var model = Bind("TYPE R\n  Mode AS BIT * 3\n  Enabled AS BIT\n  Level AS BIT * 4\nEND TYPE\nDIM r AS R\nDIM x&\nx& = r.Level\n");
+    var read = model.Desugared.Keys.OfType<MemberExpr>().Single(m => m.Member.Equals("Level", System.StringComparison.OrdinalIgnoreCase));
+    var lowered = (BinaryExpr)model.Desugared[read];
+    Assert.Multiple(() => {
+      Assert.That(lowered.Op, Is.EqualTo(BinaryOp.ShiftRightLogical), "the logical shift already cleared everything - no mask needed");
+      Assert.That(((IntegerLiteralExpr)lowered.Right).Value, Is.EqualTo(4));
+    });
+  }
+
+  [Test]
   public void Bind_GivenBitFieldWidthOutOfRange_WhenParsed_ThenRejected() {
     Assert.Throws<ParserException>(() =>
       Parser.Parse(Lexer.Tokenize("TYPE R\n  X AS BIT * 17\nEND TYPE\n", "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36));
