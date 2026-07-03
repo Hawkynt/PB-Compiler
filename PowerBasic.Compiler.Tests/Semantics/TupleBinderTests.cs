@@ -46,11 +46,11 @@ public sealed class TupleBinderTests {
   public void Bind_GivenDestructuring_WhenBound_ThenAssignsEachElement() {
     var model = Bind("FUNCTION P() AS (LONG, LONG)\n  P.Item1 = 1\n  P.Item2 = 2\nEND FUNCTION\nDIM x&, y&\nx&, y& = P()\n");
     var ds = model.DesugaredStatements.Keys.OfType<DestructureStmt>().Single();
-    var lowered = (IfStmt)model.DesugaredStatements[ds];
+    var lowered = (GroupStmt)model.DesugaredStatements[ds];
     // one CALL P(buffer) plus two element assignments
     Assert.Multiple(() => {
-      Assert.That(lowered.Then.OfType<CallStmt>().Any(c => c.Name == "P"), Is.True, "the tuple call fills the buffer");
-      Assert.That(lowered.Then.OfType<AssignStmt>().Count(), Is.EqualTo(2), "each element assigned to a target");
+      Assert.That(lowered.Body.OfType<CallStmt>().Any(c => c.Name == "P"), Is.True, "the tuple call fills the buffer");
+      Assert.That(lowered.Body.OfType<AssignStmt>().Count(), Is.EqualTo(2), "each element assigned to a target");
     });
   }
 
@@ -59,16 +59,16 @@ public sealed class TupleBinderTests {
     // a, b = (b, a) must read both right-hand values into temps before assigning (simultaneous swap)
     var model = Bind("DIM a&, b&\na& = 1 : b& = 2\na&, b& = (b&, a&)\n");
     var ds = model.DesugaredStatements.Keys.OfType<DestructureStmt>().Single();
-    var lowered = (IfStmt)model.DesugaredStatements[ds];
-    Assert.That(lowered.Then.OfType<AssignStmt>().Count(), Is.EqualTo(4), "two temp loads then two target stores");
+    var lowered = (GroupStmt)model.DesugaredStatements[ds];
+    Assert.That(lowered.Body.OfType<AssignStmt>().Count(), Is.EqualTo(4), "two temp loads then two target stores");
   }
 
   [Test]
   public void Bind_GivenTupleLiteralToTupleVariable_WhenBound_ThenSetsEachItem() {
     var model = Bind("DIM t AS (LONG, STRING)\nt = (99, \"x\")\n");
     var assign = model.DesugaredStatements.Keys.OfType<AssignStmt>().Single(a => a.Value is TupleExpr);
-    var lowered = (IfStmt)model.DesugaredStatements[assign];
-    Assert.That(lowered.Then.OfType<AssignStmt>().Any(s => s.Target is MemberExpr { Member: "Item1" }), Is.True);
+    var lowered = (GroupStmt)model.DesugaredStatements[assign];
+    Assert.That(lowered.Body.OfType<AssignStmt>().Any(s => s.Target is MemberExpr { Member: "Item1" }), Is.True);
   }
 
   [Test]

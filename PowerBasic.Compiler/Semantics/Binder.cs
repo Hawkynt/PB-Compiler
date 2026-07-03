@@ -40,7 +40,7 @@ public sealed class Binder {
   private readonly HashSet<string> _readonlyTypes = new(StringComparer.OrdinalIgnoreCase);
 
   /// <summary>pb36 bit-fields: "Udt.field" (case-insensitive) -> the hidden storage word it lives in, its bit offset and width. Member access desugars to shift/mask on the storage word.</summary>
-  private readonly Dictionary<string, (string Storage, int Offset, int Width)> _bitFields = new(StringComparer.OrdinalIgnoreCase);
+  private readonly Dictionary<string, (string Storage, int Offset, int Width, int ContainerBits)> _bitFields = new(StringComparer.OrdinalIgnoreCase);
 
   /// <summary>pb36 generic procedures: name -> the template declaration (SUB/FUNCTION ... OF T). A call infers the type arguments and instantiates a concrete procedure named with the mangle.</summary>
   private readonly Dictionary<string, Statement> _genericProcs = new(StringComparer.OrdinalIgnoreCase);
@@ -123,6 +123,11 @@ public sealed class Binder {
       // the lowered form, not the opaque surface statement
       if (this._model.DesugaredStatements.TryGetValue(statement, out var desugared)) {
         result.AddRange(this.SpliceBody([desugared]));
+        continue;
+      }
+      // a synthesized statement group flattens inline - codegen and the back-emitter see plain statements
+      if (statement is GroupStmt group) {
+        result.AddRange(this.SpliceBody(group.Body));
         continue;
       }
       var rewritten = RewriteChildBlocks(statement, b => this.SpliceBody(b));
@@ -642,35 +647,62 @@ public sealed class Binder {
     => new(pos, new NameExpr(pos, "THIS", TypeSuffix.None), field, TypeSuffix.None);
 
   /// <summary>
-  /// pb36 bit-fields: replaces each run of consecutive <c>AS BIT * n</c> fields with hidden WORD storage
-  /// fields (<c>$bits0</c>, ...) and records each bit-field's (storage, bit offset, width) in
-  /// <see cref="_bitFields"/>; ordinary fields pass through unchanged and break the current run.
+  /// pb36 bit-fields: replaces each run of consecutive <c>AS BIT * n</c> fields with hidden storage
+  /// fields (<c>$bits0</c>, ...) and records each bit-field's (storage, bit offset, width, container
+  /// bits) in <see cref="_bitFields"/>. Packing is DENSE: fields fill a container greedily (a field
+  /// never straddles containers), and each container takes the smallest size holding its bits - up to
+  /// 8 used bits a BYTE, else a WORD. So one flag costs 1 byte, 17 bits cost a WORD plus a BYTE.
+  /// Ordinary fields pass through unchanged and break the current run.
   /// </summary>
   private IReadOnlyList<TypeField> PackBitFields(TypeDecl t) {
     if (!t.Fields.Any(f => f.BitWidth > 0))
       return t.Fields;
     var result = new List<TypeField>();
-    string? storage = null;
-    int bit = 0, storageIndex = 0;
-    foreach (var f in t.Fields)
-      if (f.BitWidth > 0) {
-        if (storage == null || bit + f.BitWidth > 16) {
-          storage = GeneratedPrefix + "bits" + storageIndex++;
-          result.Add(new TypeField(f.Position, storage, new TypeName(f.Position, BuiltinType.Word), null));
+    var run = new List<TypeField>();
+    var storageIndex = 0;
+
+    void FlushRun() {
+      if (run.Count == 0)
+        return;
+      // assign fields to containers greedily (capacity 16 bits, no straddling)
+      var containers = new List<List<TypeField>>();
+      var bit = 17;   // force a new container for the first field
+      foreach (var f in run) {
+        if (bit + f.BitWidth > 16) {
+          containers.Add([]);
           bit = 0;
         }
-        this._bitFields[t.Name + "." + f.Name] = (storage, bit, f.BitWidth);
+        containers[^1].Add(f);
         bit += f.BitWidth;
+      }
+      // size each container by its used bits and record every member's placement
+      foreach (var container in containers) {
+        var used = container.Sum(f => f.BitWidth);
+        var containerBits = used <= 8 ? 8 : 16;
+        var storage = GeneratedPrefix + "bits" + storageIndex++;
+        result.Add(new TypeField(container[0].Position, storage, new TypeName(container[0].Position, containerBits == 8 ? BuiltinType.Byte : BuiltinType.Word), null));
+        var offset = 0;
+        foreach (var f in container) {
+          this._bitFields[t.Name + "." + f.Name] = (storage, offset, f.BitWidth, containerBits);
+          offset += f.BitWidth;
+        }
+      }
+      run.Clear();
+    }
+
+    foreach (var f in t.Fields)
+      if (f.BitWidth > 0) {
+        run.Add(f);
       } else {
-        storage = null;
-        bit = 0;
+        FlushRun();
         result.Add(f);
       }
+    FlushRun();
     return result;
   }
 
-  /// <summary>The hidden storage word / bit offset / width of a UDT bit-field <c>o.field</c>, or null when it is not a bit-field.</summary>
-  private (string Storage, int Offset, int Width)? BitFieldOf(PbType udt, string member)
+  /// <summary>The hidden storage cell / bit offset / width / container size of a UDT bit-field <c>o.field</c>, or null when it is not a bit-field.</summary>
+  private (string Storage, int Offset, int Width, int ContainerBits)? BitFieldOf(PbType udt, string member)
     => udt is UdtType u && this._bitFields.TryGetValue(u.Name + "." + member, out var info) ? info : null;
 
   /// <summary>
@@ -1147,7 +1179,7 @@ public sealed class Binder {
       }
       for (var i = 0; i < ds.Targets.Count; ++i)
         parallel.Add(new AssignStmt(pos, ds.Targets[i], temps[i]));
-      var litGroup = new IfStmt(pos, new IntegerLiteralExpr(pos, -1, TypeSuffix.None), parallel, [], null);
+      var litGroup = new GroupStmt(pos, parallel);
       this.BindStatement(litGroup, scope);
       this._model.DesugaredStatements[ds] = litGroup;
       return;
@@ -1179,7 +1211,7 @@ public sealed class Binder {
     var stmts = new List<Statement>(pre);
     for (var i = 0; i < ds.Targets.Count; ++i)
       stmts.Add(new AssignStmt(pos, ds.Targets[i], new MemberExpr(pos, source, "Item" + (i + 1), TypeSuffix.None)));
-    var group = new IfStmt(pos, new IntegerLiteralExpr(pos, -1, TypeSuffix.None), stmts, [], null);
+    var group = new GroupStmt(pos, stmts);
     this.BindStatement(group, scope);
     this._model.DesugaredStatements[ds] = group;
   }
@@ -1218,7 +1250,7 @@ public sealed class Binder {
       var loopBody = new List<Statement> { new AssignStmt(pos, fe.Variable, new MemberExpr(pos, enumVar, "Current", TypeSuffix.None)) };
       loopBody.AddRange(fe.Body);
       var loop = new DoLoopStmt(pos, LoopTestKind.While, new MemberExpr(pos, enumVar, "MoveNext", TypeSuffix.None), LoopTestKind.None, null, loopBody);
-      lowered = new IfStmt(pos, new IntegerLiteralExpr(pos, -1, TypeSuffix.None), [construct, loop], [], null);
+      lowered = new GroupStmt(pos, [construct, loop]);
     } else {
       var (name, suffix) = fe.Collection switch {
         NameExpr n => (n.Name, n.Suffix),
@@ -1528,9 +1560,13 @@ public sealed class Binder {
         new AssignStmt(pos, Cnt(), new BinaryExpr(pos, BinaryOp.Add, Cnt(), Int(1))),
       ];
     } else {
-      // FOR i = 0 TO count-1 : IF handlers(i) = handler THEN {shift tail down; count--; EXIT FOR} : NEXT
-      var i = new NameExpr(pos, $"{ev.Array}__i{++this._eventTemp}", TypeSuffix.Integer);
-      var j = new NameExpr(pos, $"{ev.Array}__j{this._eventTemp}", TypeSuffix.Integer);
+      // the handler pointer is computed ONCE into a DWORD temp (self-declaring ??? suffix), not
+      // re-evaluated per comparison iteration
+      var n = ++this._eventTemp;
+      var h = new NameExpr(pos, $"{ev.Array}__h{n}", TypeSuffix.Dword);
+      // FOR i = 0 TO count-1 : IF handlers(i) = h THEN {shift tail down; count--; EXIT FOR} : NEXT
+      var i = new NameExpr(pos, $"{ev.Array}__i{n}", TypeSuffix.Integer);
+      var j = new NameExpr(pos, $"{ev.Array}__j{n}", TypeSuffix.Integer);
       var shift = new ForStmt(pos, j, i, new BinaryExpr(pos, BinaryOp.Subtract, Cnt(), Int(2)), null, [
         new AssignStmt(pos, Elem(j), Elem(new BinaryExpr(pos, BinaryOp.Add, j, Int(1)))),
       ]);
@@ -1540,46 +1576,59 @@ public sealed class Binder {
         new ExitStmt(pos, ExitKind.For),
       };
       var loopBody = new List<Statement> {
-        new IfStmt(pos, new BinaryExpr(pos, BinaryOp.Equal, Elem(i), handler), found, [], null),
+        new IfStmt(pos, new BinaryExpr(pos, BinaryOp.Equal, Elem(i), h), found, [], null),
       };
-      body = [new ForStmt(pos, i, Int(0), new BinaryExpr(pos, BinaryOp.Subtract, Cnt(), Int(1)), null, loopBody)];
+      body = [
+        new AssignStmt(pos, h, handler),
+        new ForStmt(pos, i, Int(0), new BinaryExpr(pos, BinaryOp.Subtract, Cnt(), Int(1)), null, loopBody),
+      ];
     }
-    var group = new IfStmt(pos, new IntegerLiteralExpr(pos, -1, TypeSuffix.None), body, [], null);
+    var group = new GroupStmt(pos, body);
     this.BindStatement(group, scope);
     this._model.DesugaredStatements[a] = group;
   }
 
-  /// <summary>Desugars <c>RAISE event(args)</c> into a loop that calls every registered handler through its code pointer.</summary>
-  private void BindRaise(RaiseStmt r, Scope scope) {
-    if (!this._events.TryGetValue(r.Name, out var ev)) {
-      this.Error(r.Position, $"'{r.Name}' is not an event");
-      return;
-    }
-    this._model.DesugaredStatements[r] = this.BuildRaiseGroup(ev, r.Arguments, r.Position, scope);
-  }
+  /// <summary>The self-declaring type suffix matching a scalar type, so a synthesized temp needs no DIM; null when the type has no suffix (pass unbuffered).</summary>
+  private static TypeSuffix? SuffixOf(PbType t) => t switch {
+    ScalarType { Kind: ScalarKind.Integer } => TypeSuffix.Integer, ScalarType { Kind: ScalarKind.Long } => TypeSuffix.Long,
+    ScalarType { Kind: ScalarKind.Single } => TypeSuffix.Single, ScalarType { Kind: ScalarKind.Double } => TypeSuffix.Double,
+    ScalarType { Kind: ScalarKind.Byte } => TypeSuffix.Byte, ScalarType { Kind: ScalarKind.Word } => TypeSuffix.Word,
+    ScalarType { Kind: ScalarKind.Dword } => TypeSuffix.Dword, ScalarType { Kind: ScalarKind.Quad } => TypeSuffix.Quad,
+    ScalarType { Kind: ScalarKind.Ext } => TypeSuffix.Ext, StringType => TypeSuffix.String,
+    _ => null,
+  };
 
   /// <summary>
-  /// Builds and binds the raise-invocation group for an event - shared by <c>RAISE name(args)</c> and
-  /// the first-class call forms (<c>name(args)</c> / <c>name args</c> / <c>CALL name(args)</c>).
+  /// Builds and binds the raise-invocation group for an event: each argument is evaluated ONCE into a
+  /// typed temp (coerced to the delegate parameter's type - a bare INTEGER 42 into a LONG parameter
+  /// would otherwise be pushed at the wrong width), then a loop invokes every handler through its
+  /// code pointer. Raising is the first-class call form: <c>name(args)</c> / <c>name args</c> /
+  /// <c>CALL name(args)</c>.
   /// </summary>
   private Statement BuildRaiseGroup((string Array, string Count, IReadOnlyList<VariableSymbol> Params) ev, IReadOnlyList<Expression> arguments, SourcePosition pos, Scope scope) {
-    var i = new NameExpr(pos, $"{ev.Array}__r{++this._eventTemp}", TypeSuffix.Integer);
-    // pass each argument the way the delegate declares its parameter: a BYVAL parameter takes the
-    // value (coerced to the parameter's type so CALL DWORD pushes it at the right width - a bare
-    // INTEGER 42 into a LONG parameter would otherwise arrive as garbage), a BYREF parameter takes
-    // the argument as-is (its address).
-    var args = arguments.Select((arg, idx) => {
-      if (idx >= ev.Params.Count)
-        return arg;
-      var p = ev.Params[idx];
-      var coerced = ConversionIntrinsic(p.Type) is { } conv ? (Expression)new CallOrIndexExpr(pos, conv, TypeSuffix.None, [arg]) : arg;
-      return p.ByVal ? new ByValArgExpr(pos, coerced) : coerced;
-    }).ToList();
+    var n = ++this._eventTemp;
+    var body = new List<Statement>();
+    // hoist each argument into a self-declaring suffixed temp - evaluated once, at the right width,
+    // instead of re-evaluating (and re-coercing) per handler iteration
+    var args = new List<Expression>();
+    for (var idx = 0; idx < arguments.Count; ++idx) {
+      var p = idx < ev.Params.Count ? ev.Params[idx] : null;
+      if (p is { ByVal: true } && SuffixOf(p.Type) is { } suffix) {
+        var temp = new NameExpr(pos, $"{ev.Array}__a{n}_{idx}", suffix);
+        body.Add(new AssignStmt(pos, temp, arguments[idx]));
+        args.Add(new ByValArgExpr(pos, temp));
+      } else if (p is { ByVal: true }) {
+        args.Add(new ByValArgExpr(pos, arguments[idx]));
+      } else {
+        args.Add(arguments[idx]);   // BYREF (or extra) argument: pass its address as-is
+      }
+    }
     // FOR i = 0 TO count-1 : CALL DWORD (handlers(i))(args) : NEXT
-    var loop = new ForStmt(pos, i, new IntegerLiteralExpr(pos, 0, TypeSuffix.None),
+    var i = new NameExpr(pos, $"{ev.Array}__r{n}", TypeSuffix.Integer);
+    body.Add(new ForStmt(pos, i, new IntegerLiteralExpr(pos, 0, TypeSuffix.None),
       new BinaryExpr(pos, BinaryOp.Subtract, new NameExpr(pos, ev.Count, TypeSuffix.None), new IntegerLiteralExpr(pos, 1, TypeSuffix.None)), null,
-      [new CallPtrStmt(pos, new CallOrIndexExpr(pos, ev.Array, TypeSuffix.None, [i]), null, args)]);
-    var group = new IfStmt(pos, new IntegerLiteralExpr(pos, -1, TypeSuffix.None), [loop], [], null);
+      [new CallPtrStmt(pos, new CallOrIndexExpr(pos, ev.Array, TypeSuffix.None, [i]), null, args)]));
+    var group = new GroupStmt(pos, body);
     this.BindStatement(group, scope);
     return group;
   }
@@ -1771,6 +1820,19 @@ public sealed class Binder {
     this.DefineUdt(name, fields, isUnion: false, t.Position);
     return this._model.Udts[name];
   }
+
+  /// <summary>The <c>AS</c>-clause spelling of a bound scalar/string type (for synthesizing anonymous-type fields); null when the type has no simple spelling.</summary>
+  private TypeName? PbTypeToTypeName(PbType t, SourcePosition pos) => t switch {
+    ScalarType s => new TypeName(pos, s.Kind switch {
+      ScalarKind.Byte => BuiltinType.Byte, ScalarKind.Word => BuiltinType.Word, ScalarKind.Dword => BuiltinType.Dword,
+      ScalarKind.Integer => BuiltinType.Integer, ScalarKind.Long => BuiltinType.Long, ScalarKind.Quad => BuiltinType.Quad,
+      ScalarKind.Single => BuiltinType.Single, ScalarKind.Double => BuiltinType.Double, ScalarKind.Ext => BuiltinType.Ext,
+      ScalarKind.SByte => BuiltinType.SByte, _ => BuiltinType.QWord,
+    }),
+    StringType => new TypeName(pos, BuiltinType.String),
+    UdtType u => new TypeName(pos, BuiltinType.None, u.Name),
+    _ => null,
+  };
 
   /// <summary>A stable mangle fragment for a tuple element type (so identical tuples map to the same synthesized UDT).</summary>
   private static string TupleElementMangle(TypeName e) =>
@@ -2047,12 +2109,13 @@ public sealed class Binder {
 
   private void BindStatement(Statement statement, Scope scope) {
     switch (statement) {
-      case MemberCallStmt mc:
-        this.BindMemberCallStatement(mc, scope);
+      case GroupStmt group:   // a synthesized multi-statement desugar; flattened inline by the splice pass
+        foreach (var member in group.Body)
+          this.BindStatement(member, scope);
         break;
 
-      case RaiseStmt raise:
-        this.BindRaise(raise, scope);
+      case MemberCallStmt mc:
+        this.BindMemberCallStatement(mc, scope);
         break;
 
       case ForEachStmt fe:
@@ -2102,7 +2165,7 @@ public sealed class Binder {
                 new AssignStmt(a.Position, new MemberExpr(a.Position, a.Target, "Value", TypeSuffix.None), a.Value),
                 new AssignStmt(a.Position, new MemberExpr(a.Position, a.Target, "HasValue", TypeSuffix.None), new IntegerLiteralExpr(a.Position, -1, TypeSuffix.None)),
               };
-              var group = new IfStmt(a.Position, new IntegerLiteralExpr(a.Position, -1, TypeSuffix.None), set, [], null);
+              var group = new GroupStmt(a.Position, set);
               this.BindStatement(group, scope);
               this._model.DesugaredStatements[a] = group;
               break;
@@ -2121,7 +2184,7 @@ public sealed class Binder {
             && this.BitFieldOf(bfUdt, bfTarget.Member) is { } wbf) {
           var word = new MemberExpr(a.Position, bfTarget.Target, wbf.Storage, TypeSuffix.None);
           var fieldMask = (1L << wbf.Width) - 1;
-          var clearMask = ~(fieldMask << wbf.Offset) & 0xFFFF;
+          var clearMask = ~(fieldMask << wbf.Offset) & ((1L << wbf.ContainerBits) - 1);   // mask to the container's size (BYTE or WORD)
           Expression masked = new BinaryExpr(a.Position, BinaryOp.And, a.Value, new IntegerLiteralExpr(a.Position, fieldMask, TypeSuffix.None));
           if (wbf.Offset > 0)
             masked = new BinaryExpr(a.Position, BinaryOp.ShiftLeft, masked, new IntegerLiteralExpr(a.Position, wbf.Offset, TypeSuffix.None));
@@ -2146,7 +2209,7 @@ public sealed class Binder {
           }
           for (var i = 0; i < tupleLit.Elements.Count && i < tupleTarget.Fields.Count; ++i)
             build.Add(new AssignStmt(a.Position, new MemberExpr(a.Position, a.Target, "Item" + (i + 1), TypeSuffix.None), fieldTemps[i]));
-          var buildGroup = new IfStmt(a.Position, new IntegerLiteralExpr(a.Position, -1, TypeSuffix.None), build, [], null);
+          var buildGroup = new GroupStmt(a.Position, build);
           this.BindStatement(buildGroup, scope);
           this._model.DesugaredStatements[a] = buildGroup;
           break;
@@ -2160,7 +2223,7 @@ public sealed class Binder {
           if (this._generatorParams.TryGetValue(gen.Name, out var paramNames))
             for (var i = 0; i < paramNames.Count && i < gen.Arguments.Count; ++i)
               inits.Add(new AssignStmt(a.Position, new MemberExpr(a.Position, enumTarget, GeneratedPrefix + paramNames[i], TypeSuffix.None), gen.Arguments[i]));
-          var construct = new IfStmt(a.Position, new IntegerLiteralExpr(a.Position, -1, TypeSuffix.None), inits, [], null);
+          var construct = new GroupStmt(a.Position, inits);
           this.BindStatement(construct, scope);
           this._model.DesugaredStatements[a] = construct;
           break;
@@ -2869,7 +2932,26 @@ public sealed class Binder {
   }
 
   private void BindNewInitializer(DimStmt dim, VariableDecl v, NewExpr nu, Scope scope) {
-    if (!this._model.Udts.TryGetValue(nu.TypeName, out var udt)) {
+    // pb36 anonymous type: NEW { .field = value, ... } with no type name synthesizes a UDT from the
+    // field names and their inferred value types; two literals with the same shape share the type.
+    UdtType? udt;
+    if (nu.TypeName.Length == 0) {
+      var fields = new List<TypeField>();
+      var mangle = new System.Text.StringBuilder("$anon");
+      foreach (var (fieldName, value) in nu.Fields) {
+        var valueType = this.BindExpression(value, scope);
+        if (this.PbTypeToTypeName(valueType, nu.Position) is not { } tn) {
+          this.Error(nu.Position, $"cannot infer a field type for .{fieldName} in an anonymous type");
+          return;
+        }
+        fields.Add(new TypeField(nu.Position, fieldName, tn, null));
+        mangle.Append('@').Append(fieldName).Append('_').Append(valueType is ScalarType sk ? sk.Kind.ToString() : valueType is UdtType uu ? uu.Name : "Str");
+      }
+      var anonName = mangle.ToString();
+      if (!this._model.Udts.ContainsKey(anonName))
+        this.DefineUdt(anonName, fields, isUnion: false, nu.Position);
+      udt = this._model.Udts[anonName];
+    } else if (!this._model.Udts.TryGetValue(nu.TypeName, out udt)) {
       this.Error(nu.Position, $"unknown type {nu.TypeName}");
       return;
     }

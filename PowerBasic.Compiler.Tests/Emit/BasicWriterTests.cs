@@ -73,7 +73,7 @@ public sealed class BasicWriterTests {
   [Test]
   public void Render_Pb36TypeMethod_LiftsToSanitizedProcedureAndRecompiles() {
     var basic = RenderAndRebind("TYPE Counter\n  Value AS LONG\n  SUB Bump(BYVAL by AS LONG)\n    THIS.Value = THIS.Value + by\n  END SUB\nEND TYPE\nDIM c AS Counter\nc.Value = 10\nc.Bump(5)\nPRINT c.Value\n", Dialect.Pb36);
-    Assert.That(basic, Does.Contain("SUB Counter_Bump(THIS AS Counter"), "the method lifts to a THIS-receiver SUB with a pb35-valid name");
+    Assert.That(basic, Does.Contain("SUB Counter_Bump(BYREF THIS AS Counter"), "the method lifts to a THIS-receiver SUB with a pb35-valid name and an explicit passing mode");
     Assert.That(basic, Does.Contain("Counter_Bump c, 5"), "the call resolves to the lifted name with the receiver passed first");
   }
 
@@ -166,11 +166,12 @@ public sealed class BasicWriterTests {
 
   [Test]
   public void Render_Events_LowerToHandlerArrayAddRemoveAndCallDwordLoop() {
-    var basic = RenderAndRebind("DECLARE SUB ClickProc(BYVAL x AS LONG)\nDECLARE SUB Log1(BYVAL x AS LONG)\nEVENT OnClick AS ClickProc\nOnClick += CODEPTR32(Log1)\nRAISE OnClick(42)\nOnClick -= CODEPTR32(Log1)\nSUB Log1(BYVAL x AS LONG)\n  PRINT x\nEND SUB\n", Dialect.Pb36);
+    var basic = RenderAndRebind("DECLARE SUB ClickProc(BYVAL x AS LONG)\nDECLARE SUB Log1(BYVAL x AS LONG)\nEVENT OnClick AS ClickProc\nOnClick += CODEPTR32(Log1)\nOnClick(42)\nOnClick -= CODEPTR32(Log1)\nSUB Log1(BYVAL x AS LONG)\n  PRINT x\nEND SUB\n", Dialect.Pb36);
     Assert.That(basic, Does.Contain("DIM OnClick__evh(31) AS DWORD"), "the event lowers to a fixed DWORD handler array");
     Assert.That(basic, Does.Contain("OnClick__evh(OnClick__evn) = CODEPTR32(Log1)"), "+= appends the handler pointer");
-    Assert.That(basic, Does.Contain("CALL DWORD (OnClick__evh("), "RAISE invokes each handler via CALL DWORD through the array element");
-    Assert.That(basic, Does.Contain("BYVAL CLNG(42)"), "RAISE args are coerced to the delegate parameter type and passed BYVAL");
+    Assert.That(basic, Does.Contain("CALL DWORD (OnClick__evh("), "invoking the event calls each handler via CALL DWORD through the array element");
+    Assert.That(basic, Does.Match(@"OnClick__evh__a\d+_0& = 42"), "the raise argument is hoisted once into a typed temp (assignment-coerced to the delegate parameter type)");
+    Assert.That(basic, Does.Not.Contain("IF -1"), "no artificial IF -1 grouping wrapper survives");
   }
 
   [Test]

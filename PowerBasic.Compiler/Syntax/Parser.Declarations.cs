@@ -188,6 +188,8 @@ public sealed partial class Parser {
 
   private Parameter ParseParameter(bool optional = false) {
     var byVal = this.TryMatchKeyword("BYVAL");
+    if (!byVal)
+      this.TryMatchKeyword("BYREF");   // explicit spelling of the default (the back-emitter always writes one of the two)
     var seg = this.TryMatchKeyword("SEG");
 
     // anonymous type-only parameter (DECLARE prototypes): BYVAL STRING / INTEGER / STRING * 4
@@ -417,13 +419,26 @@ public sealed partial class Parser {
     return new EventDeclStmt(pos, name.Text, this.ParseTypeName());
   }
 
-  /// <summary>RAISE name(args) - invokes every registered handler of an event (pb36).</summary>
-  private Statement ParseRaise() {
-    this.Require(LanguageFeature.Events);
-    var pos = this.Advance().Position; // RAISE
-    var name = this.Expect(TokenKind.Identifier, "event name");
-    var args = this.Current.Kind == TokenKind.LParen ? this.ParseArgumentList() : new List<Expression>();
-    return new RaiseStmt(pos, name.Text, args);
+  /// <summary>
+  /// <c>USING v AS Type[(ctor args)]</c> (pb36): declares <paramref name="v"/>, optionally runs the
+  /// TYPE's constructor, and schedules <c>v.Dispose()</c> for scope exit via DEFER - which the block
+  /// close wraps in TRY ... FINALLY, so disposal runs on the fault path too. The TYPE must expose a
+  /// <c>Dispose</c> method (binding the deferred call fails otherwise).
+  /// </summary>
+  private Statement ParseUsing() {
+    this.Require(LanguageFeature.UsingStatement);
+    var pos = this.Advance().Position; // USING
+    var name = this.Expect(TokenKind.Identifier, "variable name");
+    this.ExpectKeyword("AS");
+    var typeToken = this.Expect(TokenKind.Identifier, "TYPE name");
+    var statements = new List<Statement> {
+      new DimStmt(pos, StorageClass.Dim, false, [new VariableDecl(name.Position, name.Text, name.Suffix, null, new TypeName(typeToken.Position, BuiltinType.None, typeToken.Text))]),
+    };
+    if (this.Current.Kind == TokenKind.LParen)   // constructor arguments: v = Type(args)
+      statements.Add(new AssignStmt(pos, new NameExpr(name.Position, name.Text, name.Suffix),
+        new CallOrIndexExpr(typeToken.Position, typeToken.Text, TypeSuffix.None, this.ParseArgumentList())));
+    statements.Add(new DeferStmt(pos, new MemberCallStmt(pos, new NameExpr(name.Position, name.Text, name.Suffix), "Dispose", [])));
+    return new StatementGroup(pos, statements);
   }
 
   private Statement ParseEnum() {

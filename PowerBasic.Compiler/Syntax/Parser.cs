@@ -12,7 +12,7 @@ public sealed partial class Parser {
 
   /// <summary>Reserved statement keywords - these can never be labels.</summary>
   private static readonly HashSet<string> _statementKeywords = new(StringComparer.OrdinalIgnoreCase) {
-    "LET", "CALL", "SUB", "FUNCTION", "DECLARE", "TYPE", "UNION", "ENUM", "WITH", "EVENT", "RAISE",
+    "LET", "CALL", "SUB", "FUNCTION", "DECLARE", "TYPE", "UNION", "ENUM", "WITH", "EVENT", "USING",
     "DEF", "DEFINT", "DEFLNG", "DEFQUD", "DEFSNG", "DEFDBL", "DEFEXT", "DEFFIX", "DEFBCD", "DEFSTR", "DEFFLX",
     "DIM", "LOCAL", "STATIC", "SHARED", "PUBLIC", "EXT", "COMMON", "REDIM", "ERASE",
     "STDOUT", "STDIN", "SETEOF", "ERRCLEAR",
@@ -283,7 +283,7 @@ public sealed partial class Parser {
       case "UNION": return this.ParseTypeDecl(isUnion: true);
       case "ENUM": return this.ParseEnum();
       case "EVENT": return this.ParseEventDecl();
-      case "RAISE": return this.ParseRaise();
+      case "USING": return this.ParseUsing();
       case "WITH": return this.ParseWith();
       case "DEF": return this.ParseDef();
       case "DEFINT": return this.ParseDefType(BuiltinType.Integer);

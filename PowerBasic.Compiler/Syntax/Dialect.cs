@@ -129,6 +129,7 @@ public enum LanguageFeature {
   ChainedComparison,
   NullConditional,
   Events,
+  UsingStatement,
 }
 
 /// <summary>
@@ -205,7 +206,8 @@ public static class DialectFacts {
     [LanguageFeature.SegmentedPeekPoke] = (Dialect.Pb36, "segmented PEEK/POKE ('POKE seg:offset, val' / 'PEEK(seg:offset)')"),
     [LanguageFeature.ChainedComparison] = (Dialect.Pb36, "chained comparison ('lo <= x < hi')"),
     [LanguageFeature.NullConditional] = (Dialect.Pb36, "null-conditional access ('obj?.field', 'arr?[i]')"),
-    [LanguageFeature.Events] = (Dialect.Pb36, "events ('EVENT name AS delegate', 'name += handler', 'RAISE name(args)')"),
+    [LanguageFeature.Events] = (Dialect.Pb36, "events ('EVENT name AS delegate', 'name += handler', raised by invoking 'name(args)')"),
+    [LanguageFeature.UsingStatement] = (Dialect.Pb36, "USING statement ('USING v AS Type' - Dispose runs on scope exit)"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

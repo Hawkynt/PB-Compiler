@@ -376,7 +376,8 @@ public sealed partial class Parser {
       return this.ParseTernaryIf();
 
     // PB 3.6 object initializer: NEW type { .field = value, ... }
-    if (this.IsKeyword(0, "NEW") && this.Peek().Kind == TokenKind.Identifier && this.Peek(2).Kind == TokenKind.LBrace)
+    // PB 3.6 object initializer: NEW type { .field = value, ... }; NEW { ... } is an anonymous type
+    if (this.IsKeyword(0, "NEW") && (this.Peek().Kind == TokenKind.Identifier && this.Peek(2).Kind == TokenKind.LBrace || this.Peek().Kind == TokenKind.LBrace))
       return this.ParseNewExpr();
 
     // PB 3.6 inline lambda: FUNCTION(params) [AS type] => expr (in expression position)
@@ -426,7 +427,8 @@ public sealed partial class Parser {
   private Expression ParseNewExpr() {
     this.Require(LanguageFeature.ObjectInitializer);
     var pos = this.Advance().Position; // NEW
-    var typeName = this.Expect(TokenKind.Identifier, "type name").Text;
+    // NEW { ... } with no type name is an anonymous type - the binder synthesizes a UDT from the fields
+    var typeName = this.Current.Kind == TokenKind.Identifier ? this.Advance().Text : "";
     this.Expect(TokenKind.LBrace, "'{'");
     var fields = new List<(string Field, Expression Value)>();
     if (this.Current.Kind != TokenKind.RBrace)

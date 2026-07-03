@@ -132,8 +132,12 @@ public sealed record EnumDecl(SourcePosition Position, string Name, TypeName? Un
 /// </summary>
 public sealed record EventDeclStmt(SourcePosition Position, string Name, TypeName Delegate) : Statement(Position);
 
-/// <summary>pb36 <c>RAISE name(args)</c>: invokes every registered handler of the event with the given arguments.</summary>
-public sealed record RaiseStmt(SourcePosition Position, string Name, IReadOnlyList<Expression> Arguments) : Statement(Position);
+/// <summary>
+/// Synthesized statement group: a desugar that expands one surface statement into several. The
+/// post-bind splice pass flattens the members inline (codegen and the back-emitter never see the
+/// group), so a multi-statement lowering needs no artificial <c>IF -1 THEN</c> wrapper.
+/// </summary>
+public sealed record GroupStmt(SourcePosition Position, IReadOnlyList<Statement> Body) : Statement(Position);
 
 #endregion
 

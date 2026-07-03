@@ -197,36 +197,81 @@ public sealed class BasicWriter {
   private static bool IsLayoutTransformed(TypeDecl t)
     => t.Alignment > 0 || t.ExplicitSize != null || t.Fields.Any(f => f.BitWidth > 0 || f.ExplicitOffset != null);
 
+  // AT-overlay member paths: (udtName, member) -> the rewritten access path through the union view
+  // (v.lo -> v.Sv1.lo), filled when an overlapping layout is emitted as a UNION of view TYPEs.
+  private readonly Dictionary<(string Udt, string Member), string> _memberPaths = new();
+
   /// <summary>
-  /// Emits a layout-transformed TYPE as its RESOLVED layout: fields placed by their resolved byte
-  /// offset with explicit <c>STRING * n</c> padding for the gaps (so bit-field <c>$bits</c> words,
-  /// ALIGN padding and AT offsets all reproduce under pb35's sequential packing, and LEN() agrees).
-  /// Returns false when fields overlap (an AT-overlay union view, which needs union semantics) so the
-  /// caller falls back to the surface form.
+  /// Emits a layout-transformed TYPE as its RESOLVED layout. Non-overlapping fields are placed by
+  /// their resolved byte offset with explicit <c>STRING * n</c> padding for the gaps (bit-field
+  /// containers, ALIGN padding, non-overlapping AT). OVERLAPPING fields (an AT-overlay view) emit a
+  /// UNION whose branches are helper view TYPEs - each branch a maximal non-overlapping run, padded
+  /// to its offsets - and member accesses are rewritten through the view (<c>v.lo</c> becomes
+  /// <c>v.Sv1.lo</c>), reproducing the exact byte layout under pb35.
   /// </summary>
   private bool WriteUdtTypeWithLayout(UdtType u) {
     var fields = u.Fields.OrderBy(f => f.Offset).ToList();
+    var overlaps = false;
+    for (var i = 1; i < fields.Count && !overlaps; ++i)
+      overlaps = fields[i].Offset < fields[i - 1].Offset + fields[i - 1].TotalSize;
+    if (!overlaps) {
+      this.EmitSequentialLayout(Id(u.Name), fields, u.Size);
+      return true;
+    }
+
+    // partition the fields into non-overlapping branches (greedy: first branch that has room)
+    var branches = new List<(List<UdtField> Fields, int End)>();
+    foreach (var fld in fields) {
+      var idx = branches.FindIndex(b => fld.Offset >= b.End);
+      if (idx < 0) {
+        branches.Add(([fld], fld.Offset + fld.TotalSize));
+      } else {
+        branches[idx].Fields.Add(fld);
+        branches[idx] = (branches[idx].Fields, fld.Offset + fld.TotalSize);
+      }
+    }
+
+    // each branch becomes a view TYPE; the union then holds one member per view
+    var unionMembers = new List<string>();
+    for (var b = 0; b < branches.Count; ++b) {
+      var view = $"{Id(u.Name)}__v{b + 1}";
+      var member = $"Sv{b + 1}";
+      this.EmitSequentialLayout(view, branches[b].Fields, branches[b].End);
+      unionMembers.Add($"{member} AS {view}");
+      foreach (var fld in branches[b].Fields)
+        this._memberPaths[(u.Name, fld.Name)] = $"{member}.{Id(fld.Name)}";
+    }
+
+    this._sb.Append('\n');
+    this.Line($"UNION {Id(u.Name)}");
+    ++this._indent;
+    foreach (var member in unionMembers)
+      this.Line(member);
+    --this._indent;
+    this.Line("END UNION");
+    return true;
+  }
+
+  /// <summary>Emits one sequential TYPE with STRING*n padding so each field lands at its resolved offset.</summary>
+  private void EmitSequentialLayout(string name, IReadOnlyList<UdtField> fields, int totalSize) {
     var cursor = 0; var pad = 0;
     var lines = new List<string>();
     foreach (var fld in fields) {
-      if (fld.Offset < cursor)
-        return false;   // overlapping fields - not expressible as a sequential pb35 TYPE
       if (fld.Offset > cursor)
         lines.Add($"Spad{++pad} AS STRING * {fld.Offset - cursor}");
       lines.Add($"{Id(fld.Name)}{(fld.ElementCount > 1 ? $"({fld.ElementCount - 1})" : "")} AS {TypeText(fld.Type)}");
       cursor = fld.Offset + fld.TotalSize;
     }
-    if (u.Size > cursor)
-      lines.Add($"Spad{++pad} AS STRING * {u.Size - cursor}");
+    if (totalSize > cursor)
+      lines.Add($"Spad{++pad} AS STRING * {totalSize - cursor}");
 
     this._sb.Append('\n');
-    this.Line($"TYPE {Id(u.Name)}");
+    this.Line($"TYPE {name}");
     ++this._indent;
     foreach (var line in lines)
       this.Line(line);
     --this._indent;
     this.Line("END TYPE");
-    return true;
   }
 
   private void WriteUnionDecl(UnionDecl u) {
@@ -346,8 +391,10 @@ public sealed class BasicWriter {
     return $"{(proc.IsFunction ? "FUNCTION" : "SUB")} {Id(proc.Name)}({pars}){ret}";   // lifted members / lambdas have $/. names
   }
 
+  // Passing mode is always written explicitly (BYVAL / BYREF / SEG) so the emitted code is
+  // self-documenting - the reader never has to remember that the default is by-reference.
   private string FormatParam(Parameter p) {
-    var prefix = p.ByVal ? "BYVAL " : p.Seg ? "SEG " : "";
+    var prefix = p.ByVal ? "BYVAL " : p.Seg ? "SEG " : "BYREF ";
     var arr = p.IsArray ? "()" : "";
     return p.Type is { } t
       ? $"{prefix}{p.Name}{arr} AS {this.TypeNameText(t)}"
@@ -355,7 +402,7 @@ public sealed class BasicWriter {
   }
 
   private string FormatParamSymbol(VariableSymbol p) {
-    var prefix = p.ByVal ? "BYVAL " : "";
+    var prefix = p.ByVal ? "BYVAL " : p.Seg ? "SEG " : "BYREF ";
     return p.Type is ArrayType a
       ? $"{prefix}{Id(p.Name)}() AS {TypeText(a.Element)}"
       : $"{prefix}{Id(p.Name)} AS {TypeText(p.Type)}";
@@ -819,10 +866,25 @@ public sealed class BasicWriter {
       this.LineNoIndent($"{finallyLabel}:");
       if (s.Finally is { } f1)
         this.Block(f1);
+    } else if (s.Finally is { } fin) {
+      // no CATCH but a FINALLY (the DEFER shape): the cleanup must run on the fault path too, so arm
+      // a handler over the body; the fault edge runs the FINALLY and re-raises the still-set ERR to
+      // the outer handler (ERROR ERR), the normal edge disarms and runs it once.
+      var fid = ++this._tempCounter;
+      var faultLabel = $"Stryfault{fid}";
+      var doneLabel = $"Strydone{fid}";
+      this.Line($"ON ERROR GOTO {faultLabel}");
+      this.Block(s.Body);
+      this.Line("ON ERROR GOTO 0");
+      this.Block(fin);
+      this.Line($"GOTO {doneLabel}");
+      this.LineNoIndent($"{faultLabel}:");
+      this.Line("ON ERROR GOTO 0");
+      this.Block(fin);
+      this.Line("ERROR ERR");
+      this.LineNoIndent($"{doneLabel}:");
     } else {
       this.Block(s.Body);
-      if (s.Finally is { } f2)
-        this.Block(f2);
     }
   }
 
@@ -859,6 +921,8 @@ public sealed class BasicWriter {
       // CODEPTR32(func) used as a delegate value points at a BYREF-result thunk wrapping the function
       CallOrIndexExpr x when x.Name.Equals("CODEPTR32", StringComparison.OrdinalIgnoreCase) && this.DelegateTarget(x) is { } tgt => $"CODEPTR32({this.GetThunk(tgt)})",
       CallOrIndexExpr x => $"{this.CallName(x, x.Name, x.Suffix)}({this.JoinExprs(this.CallArguments(x, x.Arguments))})",
+      // an AT-overlay member routes through its union view (v.lo -> v.Sv1.lo)
+      MemberExpr x when this.LoweredType(x.Target) is UdtType mu && this._memberPaths.TryGetValue((mu.Name, x.Member), out var path) => $"{this.Expr(x.Target, 99)}.{path}{Suffix(x.Suffix)}",
       MemberExpr x => $"{this.Expr(x.Target, 99)}.{Id(x.Member)}{Suffix(x.Suffix)}",   // synthesized backing fields ($Current/$state) -> pb35-valid
       IndexExpr x => $"{this.Expr(x.Target, 99)}({this.JoinArgs(x.Arguments)})",
       PtrDerefExpr x => $"@{this.Expr(x.Pointer, 99)}{(x.Index is { } i ? $"[{this.Expr(i)}]" : "")}",

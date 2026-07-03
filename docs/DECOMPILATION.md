@@ -207,11 +207,11 @@ PRINT Area(4); Area(3, 5)
 ```basic
 PRINT Area(4); Area__1(3, 5)
 
-FUNCTION Area(s AS INTEGER) AS INTEGER
+FUNCTION Area(BYREF s AS INTEGER) AS INTEGER
   Area = s * s
 END FUNCTION
 
-FUNCTION Area__1(w AS INTEGER, h AS INTEGER) AS INTEGER
+FUNCTION Area__1(BYREF w AS INTEGER, BYREF h AS INTEGER) AS INTEGER
   Area__1 = w * h
 END FUNCTION
 ```
@@ -366,7 +366,7 @@ PRINT Pay(5); Pay(5, 20)
 ```basic
 PRINT Pay(5, 10); Pay(5, 20)
 
-FUNCTION Pay(x AS INTEGER, y AS INTEGER) AS INTEGER
+FUNCTION Pay(BYREF x AS INTEGER, BYREF y AS INTEGER) AS INTEGER
   Pay = x + y
 END FUNCTION
 ```
@@ -393,7 +393,7 @@ Show(Y := 2, X := 1)
 ```basic
 Show 1, 2
 
-SUB Show(X AS INTEGER, Y AS INTEGER)
+SUB Show(BYREF X AS INTEGER, BYREF Y AS INTEGER)
   PRINT X; Y
 END SUB
 ```
@@ -621,14 +621,14 @@ PRINT Outer(7)
 ```basic
 PRINT Outer(7)
 
-FUNCTION Outer(n AS INTEGER) AS INTEGER
+FUNCTION Outer(BYREF n AS INTEGER) AS INTEGER
   DIM total AS INTEGER
   Outer_Bump total, n
   Outer_Bump total, n
   Outer = total
 END FUNCTION
 
-SUB Outer_Bump(total AS INTEGER, n AS INTEGER)
+SUB Outer_Bump(BYREF total AS INTEGER, BYREF n AS INTEGER)
   total = total + n
 END SUB
 ```
@@ -810,8 +810,16 @@ CALL Work
 CALL Work()
 
 SUB Work()
+  ON ERROR GOTO Stryfault2
     PRINT "working"
+  ON ERROR GOTO 0
     PRINT "cleanup"
+  GOTO Strydone2
+Stryfault2:
+  ON ERROR GOTO 0
+    PRINT "cleanup"
+  ERROR ERR
+Strydone2:
 END SUB
 ```
 
@@ -885,14 +893,12 @@ TYPE S_tup_Long_Long
 END TYPE
 DIM S_destr1 AS S_tup_Long_Long
 DIM q&, r&
-IF -1 THEN
-  DivMod 17, 5, S_destr1
-  q& = S_destr1.Item1
-  r& = S_destr1.Item2
-END IF
+DivMod 17, 5, S_destr1
+q& = S_destr1.Item1
+r& = S_destr1.Item2
 PRINT q&; r&
 
-SUB DivMod(BYVAL a AS LONG, BYVAL b AS LONG, S_sret AS S_tup_Long_Long)
+SUB DivMod(BYVAL a AS LONG, BYVAL b AS LONG, BYREF S_sret AS S_tup_Long_Long)
   S_sret.Item1 = a \ b
   S_sret.Item2 = a MOD b
 END SUB
@@ -923,12 +929,10 @@ DIM a&, b&
 a& = 1
 b& = 2
 PRINT a&; b&
-IF -1 THEN
-  S_destr1 = b&
-  S_destr2 = a&
-  a& = S_destr1
-  b& = S_destr2
-END IF
+S_destr1 = b&
+S_destr2 = a&
+a& = S_destr1
+b& = S_destr2
 PRINT a&; b&
 ```
 
@@ -1083,7 +1087,7 @@ c.Value = 10
 Counter_Bump c, 5
 PRINT c.Value
 
-SUB Counter_Bump(THIS AS Counter, BYVAL by AS LONG)
+SUB Counter_Bump(BYREF THIS AS Counter, BYVAL by AS LONG)
   THIS.Value = THIS.Value + by
 END SUB
 ```
@@ -1124,11 +1128,11 @@ DIM x AS Box
 Box_set_Size x, 7
 PRINT Box_get_Size(x)
 
-FUNCTION Box_get_Size(THIS AS Box) AS INTEGER
+FUNCTION Box_get_Size(BYREF THIS AS Box) AS INTEGER
   Box_get_Size = THIS.Count
 END FUNCTION
 
-SUB Box_set_Size(THIS AS Box, BYVAL n AS INTEGER)
+SUB Box_set_Size(BYREF THIS AS Box, BYVAL n AS INTEGER)
   THIS.Count = n
 END SUB
 ```
@@ -1169,7 +1173,7 @@ q.X = 4
 Vec_op_Add p, q, s
 PRINT s.X
 
-SUB Vec_op_Add(THIS AS Vec, o AS Vec, S_sret AS Vec)
+SUB Vec_op_Add(BYREF THIS AS Vec, BYREF o AS Vec, BYREF S_sret AS Vec)
   S_sret.X = THIS.X + o.X
 END SUB
 ```
@@ -1202,11 +1206,11 @@ PRINT r.Level
 ```basic
 
 TYPE StatusReg
-  S_bits0 AS WORD
+  S_bits0 AS BYTE
 END TYPE
 DIM r AS StatusReg
-r.S_bits0 = r.S_bits0 AND 65528 OR 5 AND 7
-r.S_bits0 = r.S_bits0 AND 65295 OR (12 AND 15) * 16
+r.S_bits0 = r.S_bits0 AND 248 OR 5 AND 7
+r.S_bits0 = r.S_bits0 AND 15 OR (12 AND 15) * 16
 PRINT r.S_bits0 AND 7
 PRINT r.S_bits0 \ 16 AND 15
 ```
@@ -1256,7 +1260,7 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 field AS T AT offset overlays fields to form a union view; setting the whole exposes its parts.
 
-> **Illustrative decompilation:** recompiles under `--dialect pb35` but the runtime result diverges - PB 3.5 has no faithful equivalent for this construct (e.g. rotate operators, far-pointer offset arithmetic). The form below shows the lowering structure.
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **pb3.6 source:**
 
@@ -1276,15 +1280,23 @@ PRINT v.hi
 
 ```basic
 
-TYPE RegView
+TYPE RegView__v1
   whole AS LONG
+END TYPE
+
+TYPE RegView__v2
   lo AS INTEGER
   hi AS INTEGER
 END TYPE
+
+UNION RegView
+  Sv1 AS RegView__v1
+  Sv2 AS RegView__v2
+END UNION
 DIM v AS RegView
-v.whole = 327683&
-PRINT v.lo
-PRINT v.hi
+v.Sv1.whole = 327683&
+PRINT v.Sv2.lo
+PRINT v.Sv2.hi
 ```
 
 _With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
@@ -1325,7 +1337,7 @@ Point_Point p, 3, 4
 PRINT p.x
 PRINT p.y
 
-SUB Point_Point(THIS AS Point, BYVAL px AS LONG, BYVAL py AS LONG)
+SUB Point_Point(BYREF THIS AS Point, BYVAL px AS LONG, BYVAL py AS LONG)
   THIS.x = px
   THIS.y = py
 END SUB
@@ -1364,7 +1376,7 @@ DIM b AS Box_Long
 Box_Long_Put b, 42
 PRINT b.Item
 
-SUB Box_Long_Put(THIS AS Box_Long, BYVAL v AS LONG)
+SUB Box_Long_Put(BYREF THIS AS Box_Long, BYVAL v AS LONG)
   THIS.Item = v
 END SUB
 ```
@@ -1454,22 +1466,18 @@ TYPE Squares
 END TYPE
 DIM S_foreach1 AS Squares
 DIM v AS LONG
-IF -1 THEN
-  IF -1 THEN
-    S_foreach1.S_state = 0
-    S_foreach1.S_n = 4
-  END IF
-  DO WHILE Squares_MoveNext(S_foreach1)
-    v = Squares_get_Current(S_foreach1)
-    PRINT v
-  LOOP
-END IF
+S_foreach1.S_state = 0
+S_foreach1.S_n = 4
+DO WHILE Squares_MoveNext(S_foreach1)
+  v = Squares_get_Current(S_foreach1)
+  PRINT v
+LOOP
 
-FUNCTION Squares_get_Current(THIS AS Squares) AS LONG
+FUNCTION Squares_get_Current(BYREF THIS AS Squares) AS LONG
   Squares_get_Current = THIS.S_Current
 END FUNCTION
 
-FUNCTION Squares_MoveNext(THIS AS Squares) AS INTEGER
+FUNCTION Squares_MoveNext(BYREF THIS AS Squares) AS INTEGER
   SELECT CASE THIS.S_state
     CASE 0
       GOTO S_start
@@ -1498,7 +1506,7 @@ S_done:
   Squares_MoveNext = 0
 END FUNCTION
 
-SUB Squares_Reset(THIS AS Squares)
+SUB Squares_Reset(BYREF THIS AS Squares)
   THIS.S_state = 0
 END SUB
 ```
@@ -1538,19 +1546,17 @@ TYPE Squares
   S_Current AS LONG
 END TYPE
 DIM e AS Squares
-IF -1 THEN
-  e.S_state = 0
-  e.S_n = 5
-END IF
+e.S_state = 0
+e.S_n = 5
 DO WHILE Squares_MoveNext(e)
   PRINT Squares_get_Current(e)
 LOOP
 
-FUNCTION Squares_get_Current(THIS AS Squares) AS LONG
+FUNCTION Squares_get_Current(BYREF THIS AS Squares) AS LONG
   Squares_get_Current = THIS.S_Current
 END FUNCTION
 
-FUNCTION Squares_MoveNext(THIS AS Squares) AS INTEGER
+FUNCTION Squares_MoveNext(BYREF THIS AS Squares) AS INTEGER
   SELECT CASE THIS.S_state
     CASE 0
       GOTO S_start
@@ -1579,7 +1585,7 @@ S_done:
   Squares_MoveNext = 0
 END FUNCTION
 
-SUB Squares_Reset(THIS AS Squares)
+SUB Squares_Reset(BYREF THIS AS Squares)
   THIS.S_state = 0
 END SUB
 ```
@@ -1611,10 +1617,8 @@ TYPE S_nul_Integer
   HasValue AS INTEGER
 END TYPE
 DIM age AS S_nul_Integer
-IF -1 THEN
-  age.Value = 30
-  age.HasValue = -1
-END IF
+age.Value = 30
+age.HasValue = -1
 DIM pbtmp1 AS DOUBLE
 IF age.HasValue THEN
   pbtmp1 = age.Value
@@ -1758,9 +1762,9 @@ DECLARE SUB Log1(BYVAL x AS LONG)
 EVENT OnClick AS ClickProc
 OnClick += CODEPTR32(Log1)
 OnClick += CODEPTR32(Log1)
-RAISE OnClick(42)
+OnClick(42)
 OnClick -= CODEPTR32(Log1)
-RAISE OnClick(7)
+OnClick(7)
 SUB Log1(BYVAL x AS LONG)
   PRINT x
 END SUB
@@ -1773,35 +1777,28 @@ DECLARE SUB ClickProc(BYVAL x AS LONG)
 DECLARE SUB Log1(BYVAL x AS LONG)
 DIM OnClick__evh(31) AS DWORD
 DIM OnClick__evn AS INTEGER
-IF -1 THEN
-  OnClick__evh(OnClick__evn) = CODEPTR32(Log1)
-  OnClick__evn = OnClick__evn + 1
-END IF
-IF -1 THEN
-  OnClick__evh(OnClick__evn) = CODEPTR32(Log1)
-  OnClick__evn = OnClick__evn + 1
-END IF
-IF -1 THEN
-  FOR OnClick__evh__r1% = 0 TO OnClick__evn - 1
-    CALL DWORD (OnClick__evh(OnClick__evh__r1%))(BYVAL CLNG(42))
-  NEXT
-END IF
-IF -1 THEN
-  FOR OnClick__evh__i2% = 0 TO OnClick__evn - 1
-    IF OnClick__evh(OnClick__evh__i2%) = CODEPTR32(Log1) THEN
-      FOR OnClick__evh__j2% = OnClick__evh__i2% TO OnClick__evn - 2
-        OnClick__evh(OnClick__evh__j2%) = OnClick__evh(OnClick__evh__j2% + 1)
-      NEXT
-      OnClick__evn = OnClick__evn - 1
-      EXIT FOR
-    END IF
-  NEXT
-END IF
-IF -1 THEN
-  FOR OnClick__evh__r3% = 0 TO OnClick__evn - 1
-    CALL DWORD (OnClick__evh(OnClick__evh__r3%))(BYVAL CLNG(7))
-  NEXT
-END IF
+OnClick__evh(OnClick__evn) = CODEPTR32(Log1)
+OnClick__evn = OnClick__evn + 1
+OnClick__evh(OnClick__evn) = CODEPTR32(Log1)
+OnClick__evn = OnClick__evn + 1
+OnClick__evh__a1_0& = 42
+FOR OnClick__evh__r1% = 0 TO OnClick__evn - 1
+  CALL DWORD (OnClick__evh(OnClick__evh__r1%))(BYVAL OnClick__evh__a1_0&)
+NEXT
+OnClick__evh__h2??? = CODEPTR32(Log1)
+FOR OnClick__evh__i2% = 0 TO OnClick__evn - 1
+  IF OnClick__evh(OnClick__evh__i2%) = OnClick__evh__h2??? THEN
+    FOR OnClick__evh__j2% = OnClick__evh__i2% TO OnClick__evn - 2
+      OnClick__evh(OnClick__evh__j2%) = OnClick__evh(OnClick__evh__j2% + 1)
+    NEXT
+    OnClick__evn = OnClick__evn - 1
+    EXIT FOR
+  END IF
+NEXT
+OnClick__evh__a3_0& = 7
+FOR OnClick__evh__r3% = 0 TO OnClick__evn - 1
+  CALL DWORD (OnClick__evh(OnClick__evh__r3%))(BYVAL OnClick__evh__a3_0&)
+NEXT
 
 SUB Log1(BYVAL x AS LONG)
   PRINT x
@@ -1841,25 +1838,20 @@ DECLARE SUB ClickProc(BYVAL x AS LONG)
 DECLARE SUB Log1(BYVAL x AS LONG)
 DIM OnClick__evh(31) AS DWORD
 DIM OnClick__evn AS INTEGER
-IF -1 THEN
-  OnClick__evh(OnClick__evn) = CODEPTR32(Log1)
-  OnClick__evn = OnClick__evn + 1
-END IF
-IF -1 THEN
-  FOR OnClick__evh__r1% = 0 TO OnClick__evn - 1
-    CALL DWORD (OnClick__evh(OnClick__evh__r1%))(BYVAL CLNG(1))
-  NEXT
-END IF
-IF -1 THEN
-  FOR OnClick__evh__r2% = 0 TO OnClick__evn - 1
-    CALL DWORD (OnClick__evh(OnClick__evh__r2%))(BYVAL CLNG(2))
-  NEXT
-END IF
-IF -1 THEN
-  FOR OnClick__evh__r3% = 0 TO OnClick__evn - 1
-    CALL DWORD (OnClick__evh(OnClick__evh__r3%))(BYVAL CLNG(3))
-  NEXT
-END IF
+OnClick__evh(OnClick__evn) = CODEPTR32(Log1)
+OnClick__evn = OnClick__evn + 1
+OnClick__evh__a1_0& = 1
+FOR OnClick__evh__r1% = 0 TO OnClick__evn - 1
+  CALL DWORD (OnClick__evh(OnClick__evh__r1%))(BYVAL OnClick__evh__a1_0&)
+NEXT
+OnClick__evh__a2_0& = 2
+FOR OnClick__evh__r2% = 0 TO OnClick__evn - 1
+  CALL DWORD (OnClick__evh(OnClick__evh__r2%))(BYVAL OnClick__evh__a2_0&)
+NEXT
+OnClick__evh__a3_0& = 3
+FOR OnClick__evh__r3% = 0 TO OnClick__evn - 1
+  CALL DWORD (OnClick__evh(OnClick__evh__r3%))(BYVAL OnClick__evh__a3_0&)
+NEXT
 DIM x AS DWORD
 x = CODEPTR32(Sthunk1)
 DIM pbtmp1 AS INTEGER
@@ -1924,6 +1916,95 @@ a(7) = b(4)
 FOR i = LBOUND(a) TO UBOUND(a)
   PRINT a(i);
 NEXT
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
+### USING (scope-guaranteed Dispose)
+
+USING v AS Type(args) constructs and schedules v.Dispose() via DEFER - TRY/FINALLY guarantees it on the fault path too.
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+TYPE Res
+  Handle AS LONG
+  SUB Res(BYVAL h AS LONG)
+    THIS.Handle = h
+  END SUB
+  SUB Dispose()
+    PRINT "disposed"; THIS.Handle
+  END SUB
+END TYPE
+SUB Work()
+  USING r AS Res(42)
+  PRINT "using"; r.Handle
+END SUB
+Work
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+
+TYPE Res
+  Handle AS LONG
+END TYPE
+Work
+
+SUB Res_Res(BYREF THIS AS Res, BYVAL h AS LONG)
+  THIS.Handle = h
+END SUB
+
+SUB Res_Dispose(BYREF THIS AS Res)
+  PRINT "disposed"; THIS.Handle
+END SUB
+
+SUB Work()
+  DIM r AS Res
+  Res_Res r, 42
+  ON ERROR GOTO Stryfault2
+    PRINT "using"; r.Handle
+  ON ERROR GOTO 0
+    Res_Dispose r
+  GOTO Strydone2
+Stryfault2:
+  ON ERROR GOTO 0
+    Res_Dispose r
+  ERROR ERR
+Strydone2:
+END SUB
+```
+
+_With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._
+
+### Anonymous types
+
+NEW { .field = value, ... } with no type name synthesizes a UDT from the fields; same shape = same type.
+
+> **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
+
+**pb3.6 source:**
+
+```basic
+DIM p = NEW { .X = 3, .Y = 4& }
+PRINT p.X; p.Y
+```
+
+**Decompiled (lowered to PB 3.5):**
+
+```basic
+
+TYPE S_anon_X_Integer_Y_Long
+  X AS INTEGER
+  Y AS LONG
+END TYPE
+DIM p AS S_anon_X_Integer_Y_Long
+p.X = 3
+p.Y = 4&
+PRINT p.X; p.Y
 ```
 
 _With the optimizer: identical — this feature lowers entirely in the binder; the optimizer changes nothing at the source level._

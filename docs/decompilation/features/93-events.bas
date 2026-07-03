@@ -5,9 +5,9 @@ DECLARE SUB Log1(BYVAL x AS LONG)
 EVENT OnClick AS ClickProc
 OnClick += CODEPTR32(Log1)
 OnClick += CODEPTR32(Log1)
-RAISE OnClick(42)
+OnClick(42)
 OnClick -= CODEPTR32(Log1)
-RAISE OnClick(7)
+OnClick(7)
 SUB Log1(BYVAL x AS LONG)
   PRINT x
 END SUB

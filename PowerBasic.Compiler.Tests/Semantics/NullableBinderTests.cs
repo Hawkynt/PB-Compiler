@@ -44,10 +44,10 @@ public sealed class NullableBinderTests {
   public void Bind_GivenValueAssignment_ThenSetsValueAndFlag() {
     var model = Bind("DIM x AS LONG?\nx = 5\n");
     var assign = model.DesugaredStatements.Keys.OfType<AssignStmt>().Single(a => a.Target is NameExpr { Name: "x" } && a.Value is IntegerLiteralExpr);
-    var group = (IfStmt)model.DesugaredStatements[assign];
+    var group = (GroupStmt)model.DesugaredStatements[assign];
     Assert.Multiple(() => {
-      Assert.That(group.Then.OfType<AssignStmt>().Any(s => s.Target is MemberExpr { Member: "Value" }), Is.True);
-      Assert.That(group.Then.OfType<AssignStmt>().Any(s => s.Target is MemberExpr { Member: "HasValue" }), Is.True);
+      Assert.That(group.Body.OfType<AssignStmt>().Any(s => s.Target is MemberExpr { Member: "Value" }), Is.True);
+      Assert.That(group.Body.OfType<AssignStmt>().Any(s => s.Target is MemberExpr { Member: "HasValue" }), Is.True);
     });
   }
 

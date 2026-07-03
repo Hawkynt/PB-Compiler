@@ -20,14 +20,14 @@ public sealed class BitFieldBinderTests {
   }
 
   [Test]
-  public void Bind_GivenBitFieldType_WhenBound_ThenFieldsPackIntoHiddenWordStorage() {
+  public void Bind_GivenBitFieldType_WhenBound_ThenFieldsPackDenselyIntoSmallestStorage() {
     var model = Bind("TYPE R\n  Mode AS BIT * 3\n  Enabled AS BIT\n  Level AS BIT * 4\nEND TYPE\nDIM r AS R\n");
     var udt = (UdtType)model.ModuleVariables.Values.Single(v => v.Name.Equals("r", System.StringComparison.OrdinalIgnoreCase)).Type;
     Assert.Multiple(() => {
       // the public bit-field names are not real storage fields
       Assert.That(udt.FindField("Mode"), Is.Null, "a bit-field is not a storage field");
-      Assert.That(udt.Fields.Count, Is.EqualTo(1), "all three bit-fields pack into one WORD");
-      Assert.That(udt.Fields.Single().Type, Is.EqualTo(PbType.Word));
+      Assert.That(udt.Fields.Count, Is.EqualTo(1), "all three bit-fields (8 bits) pack into one container");
+      Assert.That(udt.Fields.Single().Type, Is.EqualTo(PbType.Byte), "8 used bits pack densely into a BYTE, not a WORD");
     });
   }
 
@@ -54,7 +54,7 @@ public sealed class BitFieldBinderTests {
       Assert.That(or.Op, Is.EqualTo(BinaryOp.Or), "cleared bits OR'd with the new value");
       var cleared = (BinaryExpr)or.Left;
       Assert.That(cleared.Op, Is.EqualTo(BinaryOp.And), "the existing word is cleared at the field position");
-      Assert.That(((IntegerLiteralExpr)cleared.Right).Value, Is.EqualTo(~0x7L & 0xFFFF), "3-bit field at offset 0 clears with ~&H7");
+      Assert.That(((IntegerLiteralExpr)cleared.Right).Value, Is.EqualTo(~0x7L & 0xFF), "3-bit field at offset 0 clears with ~&H7 masked to its BYTE container");
     });
   }
 

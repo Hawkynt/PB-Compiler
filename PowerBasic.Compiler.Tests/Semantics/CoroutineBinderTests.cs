@@ -53,8 +53,8 @@ public sealed class CoroutineBinderTests {
     var model = Bind("FUNCTION Sq(BYVAL n%) AS LONG\n  YIELD n%\nEND FUNCTION\nDIM e AS Sq\ne = Sq(4)\n");
     var assign = model.DesugaredStatements.Keys.OfType<AssignStmt>()
       .Single(a => a.Value is CallOrIndexExpr { Name: "Sq" });
-    var construct = (IfStmt)model.DesugaredStatements[assign];
-    var writes = construct.Then.OfType<AssignStmt>().Select(s => ((MemberExpr)s.Target).Member).ToList();
+    var construct = (GroupStmt)model.DesugaredStatements[assign];
+    var writes = construct.Body.OfType<AssignStmt>().Select(s => ((MemberExpr)s.Target).Member).ToList();
     Assert.That(writes, Is.EqualTo(new[] { "$state", "$n" }), "the suffix-typed parameter is seeded from the argument");
   }
 
@@ -126,8 +126,8 @@ public sealed class CoroutineBinderTests {
     var model = Bind(_gen + "FOR EACH v IN Gen()\n  PRINT v\nNEXT\n");
     var foreachStmt = model.DesugaredStatements.Keys.OfType<ForEachStmt>().Single();
     // lowered to: IF (-1) THEN <construct> : WHILE $e.MoveNext ... WEND
-    Assert.That(model.DesugaredStatements[foreachStmt], Is.InstanceOf<IfStmt>());
-    Assert.That(((IfStmt)model.DesugaredStatements[foreachStmt]).Then.OfType<DoLoopStmt>().Any(), Is.True,
+    Assert.That(model.DesugaredStatements[foreachStmt], Is.InstanceOf<GroupStmt>());
+    Assert.That(((GroupStmt)model.DesugaredStatements[foreachStmt]).Body.OfType<DoLoopStmt>().Any(), Is.True,
       "the generator FOR EACH lowers to a MoveNext WHILE loop");
   }
 
@@ -138,8 +138,8 @@ public sealed class CoroutineBinderTests {
       "DIM e AS Range\ne = Range(3, 8)\n");
     var assign = model.DesugaredStatements.Keys.OfType<AssignStmt>()
       .Single(a => a.Value is CallOrIndexExpr { Name: "Range" });
-    var construct = (IfStmt)model.DesugaredStatements[assign];
-    var writes = construct.Then.OfType<AssignStmt>().Select(s => ((MemberExpr)s.Target).Member).ToList();
+    var construct = (GroupStmt)model.DesugaredStatements[assign];
+    var writes = construct.Body.OfType<AssignStmt>().Select(s => ((MemberExpr)s.Target).Member).ToList();
     Assert.That(writes, Is.EqualTo(new[] { "$state", "$lo", "$hi" }), "reset state, then seed each captured parameter");
   }
 }
