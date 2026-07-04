@@ -571,7 +571,9 @@ public sealed class BasicWriter {
       case ChainStmt s: this.Line($"{(s.IsRun ? "RUN" : "CHAIN")} {this.Expr(s.Target)}"); break;
       case ExitStmt s: this.Line($"EXIT {s.Kind.ToString().ToUpperInvariant()}"); break;
       case ExitFarStmt s: this.Line($"EXIT FAR{(s.AtLabel is { } xl ? " AT " + xl : "")}"); break;
-      case IterateStmt s: this.Line($"ITERATE {s.Kind.ToString().ToUpperInvariant()}"); break;
+      // bare ITERATE (Kind = Loop, innermost loop of ANY kind) must stay bare: "ITERATE LOOP"
+      // would re-parse as the DO form and rebind to the wrong loop inside a FOR
+      case IterateStmt s: this.Line(s.Kind switch { ExitKind.For => "ITERATE FOR", ExitKind.Do => "ITERATE DO", _ => "ITERATE" }); break;
       case EndStmt s: this.Line(s.ExitCode is { } ec ? $"END {this.Expr(ec)}" : "END"); break;
       case YieldStmt s: this.Line($"YIELD {this.Expr(s.Value)}"); break;
       case DataStmt s: this.Line($"DATA {string.Join(", ", s.Items)}"); break;
