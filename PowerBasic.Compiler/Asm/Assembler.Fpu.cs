@@ -265,14 +265,25 @@ public sealed partial class Assembler {
   #region encoding helpers
 
   private void FpuMemory(byte opcode, int regField, Mem memory) {
+    var start = this.Position;
     this.EmitSegmentPrefix(memory);
     this.EmitByte(opcode);
     this.EmitModRmMemory(regField, memory);
+    // C3 x87 scheduling: record with the FPU-stack pseudo-resource so all FPU instructions
+    // keep their exact relative order (RAW+WAW on the pseudo-slot) while independent integer
+    // work schedules around them. The memory cell is recorded conservatively as read AND
+    // written (covers FLD reads, FST/FSTP/FIST writes and read-modify arithmetic alike).
+    // Segment-overridden operands stay unrecorded - they remain scheduling barriers.
+    if (memory.Segment is null)
+      this.RecordSchedMem(start, _FPUSTACK, _FPUSTACK, false, false, memRead: true, memWrite: true, memory);
   }
 
   private void FpuStack(byte opcode, byte modRmBase, St register) {
+    var start = this.Position;
     this.EmitByte(opcode);
     this.EmitByte((byte)(modRmBase + register.Index));
+    // pure stack manipulation: ordered against every other FPU op, transparent to integers
+    this.RecordSchedReg(start, _FPUSTACK, _FPUSTACK, false, false);
   }
 
   #endregion

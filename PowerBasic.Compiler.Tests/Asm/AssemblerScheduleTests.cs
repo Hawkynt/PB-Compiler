@@ -82,6 +82,46 @@ public sealed class AssemblerScheduleTests {
   }
 
   [Test]
+  public void RunSchedule_GivenFpuPairInsideWindow_ThenIntegerWorkSchedulesAcrossIt() {
+    // C3: FLD/FSTP are recorded (FPU pseudo-resource) instead of splitting the window, so
+    // the memory-first policy can move an independent integer ALU op from BEFORE the pair
+    // to after the loads - it crosses the x87 instructions, which a barrier would forbid
+    var asm = new Assembler { EnableSchedule = true };
+    asm.Add(Reg.BX, Reg.CX);                    // ALU, independent of everything
+    asm.Fld(Mem.Dword(Reg.BP, 8));              // FPU load
+    asm.Fstp(Mem.Dword(Reg.BP, 12));            // FPU store (independent cell)
+    asm.Mov(Reg.DX, Mem.Word(Reg.BP, 4));       // integer load, independent
+    var bytes = asm.ToArray();
+    var alu = IndexOf(bytes, [0x01, 0xCB]);
+    var fld = IndexOf(bytes, [0xD9, 0x46, 0x08]);
+    var fstp = IndexOf(bytes, [0xD9, 0x5E, 0x0C]);
+    var load = IndexOf(bytes, [0x8B, 0x56, 0x04]);
+    Assert.Multiple(() => {
+      Assert.That(fld, Is.LessThan(fstp), "x87 order pinned");
+      Assert.That(alu, Is.GreaterThan(load), "the ALU op moved behind the integer load - across the FPU pair");
+      Assert.That(alu, Is.GreaterThan(fstp), "and behind the x87 pair itself");
+    });
+  }
+
+  [Test]
+  public void RunSchedule_GivenTwoFpuOps_ThenTheirRelativeOrderIsPinned() {
+    // FSTP writes the cell FLD2 then reads - but even independent FPU ops must keep order
+    // (the x87 stack is one shared resource): FLD a / FLD b / FSTP c / FSTP d stays put
+    var asm = new Assembler { EnableSchedule = true };
+    asm.Fld(Mem.Dword(Reg.BP, 4));
+    asm.Fld(Mem.Dword(Reg.BP, 8));
+    asm.Fstp(Mem.Dword(Reg.BP, 12));
+    asm.Fstp(Mem.Dword(Reg.BP, 16));
+    var bytes = asm.ToArray();
+    Assert.Multiple(() => {
+      Assert.That(IndexOf(bytes, [0xD9, 0x46, 0x04]), Is.EqualTo(0));
+      Assert.That(IndexOf(bytes, [0xD9, 0x46, 0x08]), Is.EqualTo(3));
+      Assert.That(IndexOf(bytes, [0xD9, 0x5E, 0x0C]), Is.EqualTo(6));
+      Assert.That(IndexOf(bytes, [0xD9, 0x5E, 0x10]), Is.EqualTo(9));
+    });
+  }
+
+  [Test]
   public void RunSchedule_WhenDisabled_ThenStreamUntouched() {
     var asm = new Assembler();   // EnableSchedule = false
     asm.Mov(Reg.AX, Mem.Word(Reg.BP, 2));

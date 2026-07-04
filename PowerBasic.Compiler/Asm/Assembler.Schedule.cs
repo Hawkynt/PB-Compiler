@@ -24,6 +24,10 @@ public sealed partial class Assembler {
   private List<SchedInstr>? _schedInstrs;
   private bool _scheduleRan;
 
+  // C3: pseudo-resource bit (beyond the 8 register slots) serializing all x87 instructions
+  // among themselves while letting integer work interleave around them
+  private const ushort _FPUSTACK = 0x8000;
+
   // word-register slot 0..7 (AX..DI); a byte half maps to its word slot, a 32-bit name to the same slot
   private static int RegSlot(Reg r) => r.IsByte() ? (r.Index() & 3) : r.Index();
   private static ushort RegBit(Reg r) => (ushort)(1 << RegSlot(r));
