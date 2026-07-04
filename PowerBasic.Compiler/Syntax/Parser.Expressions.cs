@@ -160,21 +160,25 @@ public sealed partial class Parser {
     }
   }
 
-  /// <summary>An optional IS-pattern payload binding (IS Case v): records DIM v AS Union_Case + v = subject.$Case for the enclosing IF to hoist.</summary>
+  /// <summary>An optional IS-pattern payload binding (IS Case v): records DIM v AS Union_Case + v = subject.$Case for the enclosing statement to hoist.</summary>
   private void CollectPatternBinding(SourcePosition pos, Expression subject, DuCase duCase) {
     if (this.Current.Kind != TokenKind.Identifier || _patternStopWords.Contains(this.Current.Text))
       return;
-    var bindVar = this.Advance();
+    this._patternBindings.AddRange(this.BuildPatternBinding(this.Advance(), subject, duCase));
+  }
+
+  /// <summary>The two hoisted statements of a payload binding: DIM v AS Union_Case and the unconditional payload copy v = subject.$Case.</summary>
+  private IEnumerable<Statement> BuildPatternBinding(Token bindVar, Expression subject, DuCase duCase) {
     if (!this._patternBindingAllowed)
-      throw this.Error("an IS payload binding is only allowed in an IF condition");
+      throw this.Error("an IS payload binding is not allowed in a loop condition (the copy would be taken once, not per pass)");
     if (duCase.Fields.Count == 0)
       throw this.Error($"union case {duCase.CaseName} carries no payload to bind");
     var viewName = $"{duCase.UnionName}_{duCase.CaseName}";
-    this._patternBindings.Add(new DimStmt(bindVar.Position, StorageClass.Dim, false,
-      [new VariableDecl(bindVar.Position, bindVar.Text, TypeSuffix.None, null, new TypeName(bindVar.Position, BuiltinType.None, viewName))]));
-    this._patternBindings.Add(new AssignStmt(bindVar.Position,
+    yield return new DimStmt(bindVar.Position, StorageClass.Dim, false,
+      [new VariableDecl(bindVar.Position, bindVar.Text, TypeSuffix.None, null, new TypeName(bindVar.Position, BuiltinType.None, viewName))]);
+    yield return new AssignStmt(bindVar.Position,
       new NameExpr(bindVar.Position, bindVar.Text, TypeSuffix.None),
-      new MemberExpr(bindVar.Position, subject, "$" + duCase.CaseName, TypeSuffix.None)));
+      new MemberExpr(bindVar.Position, subject, "$" + duCase.CaseName, TypeSuffix.None));
   }
 
   private static readonly HashSet<string> _patternStopWords = new(StringComparer.OrdinalIgnoreCase)
@@ -535,6 +539,8 @@ public sealed partial class Parser {
     var parameters = this.ParseParameterList();
     this.Match(TokenKind.FatArrow);    // optional '=>' for symmetry with the FUNCTION form
     var body = this.ParseStatement();
+    if (body is StatementGroup)
+      throw this.Error("an IS payload binding is not allowed in a lambda body statement");
     return new LambdaExpr(pos, parameters, null, new IntegerLiteralExpr(pos, 0, TypeSuffix.None)) { StatementBody = body };
   }
 

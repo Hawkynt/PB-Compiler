@@ -7,22 +7,26 @@ public sealed partial class Parser {
 
   private Statement ParseIf() {
     var pos = this.Advance().Position;
-    var condition = this.ParseIfCondition();
+    var condition = this.ParseExpression();
+    // IS payload bindings from the condition are taken NOW - the body statements parsed below
+    // must not adopt them - and hoisted as DIM + unconditional payload copy before the IF
+    var bindings = this.TakePatternBindings();
 
     if (this.TryMatchKeyword("GOTO")) {
       var target = this.ParseLabelReference();
       var elseBody = this.TryMatchKeyword("ELSE") ? this.ParseInlineBody() : null;
-      return this.HoistPatternBindings(new IfStmt(pos, condition, [new GotoStmt(pos, target)], [], elseBody));
+      return WrapBindings(bindings, new IfStmt(pos, condition, [new GotoStmt(pos, target)], [], elseBody));
     }
 
     this.ExpectKeyword("THEN");
     if (this.Current.Kind is not (TokenKind.EndOfLine or TokenKind.EndOfFile))
-      return this.HoistPatternBindings((IfStmt)this.ParseSingleLineIf(pos, condition));
+      return WrapBindings(bindings, this.ParseSingleLineIf(pos, condition));
 
     var then = this.ParseBody("ELSEIF", "ELSE", "END IF");
     var elseIfs = new List<(Expression Condition, IReadOnlyList<Statement> Body)>();
     while (this.TryMatchKeyword("ELSEIF")) {
-      var elseIfCondition = this.ParseIfCondition();
+      var elseIfCondition = this.ParseExpression();
+      bindings.AddRange(this.TakePatternBindings());
       this.ExpectKeyword("THEN");
       elseIfs.Add((elseIfCondition, this.ParseBody("ELSEIF", "ELSE", "END IF")));
     }
@@ -33,27 +37,7 @@ public sealed partial class Parser {
 
     this.ExpectKeyword("END");
     this.ExpectKeyword("IF");
-    return this.HoistPatternBindings(new IfStmt(pos, condition, then, elseIfs, elseBlock));
-  }
-
-  /// <summary>Parses an IF/ELSEIF condition with IS payload bindings allowed; collected bindings stay pending until <see cref="HoistPatternBindings"/>.</summary>
-  private Expression ParseIfCondition() {
-    var saved = this._patternBindingAllowed;
-    this._patternBindingAllowed = true;
-    try {
-      return this.ParseExpression();
-    } finally {
-      this._patternBindingAllowed = saved;
-    }
-  }
-
-  /// <summary>Prepends the pending IS payload bindings (DIM + unconditional payload copy - harmless when the tag mismatches) before the IF that owns them.</summary>
-  private Statement HoistPatternBindings(IfStmt ifStmt) {
-    if (this._patternBindings.Count == 0)
-      return ifStmt;
-    var group = new List<Statement>(this._patternBindings) { ifStmt };
-    this._patternBindings.Clear();
-    return new StatementGroup(ifStmt.Position, group);
+    return WrapBindings(bindings, new IfStmt(pos, condition, then, elseIfs, elseBlock));
   }
 
   private Statement ParseSingleLineIf(SourcePosition pos, Expression condition) {
@@ -78,7 +62,10 @@ public sealed partial class Parser {
         continue;
       }
 
-      result.Add(this.ParseStatement());
+      if (this.ParseStatement() is var parsed && parsed is StatementGroup group)   // hoisted IS bindings splice inline
+        result.AddRange(group.Statements);
+      else
+        result.Add(parsed);
     }
   }
 
@@ -86,7 +73,13 @@ public sealed partial class Parser {
     var pos = this.Advance().Position;
     this.ExpectKeyword("CASE");
     var subject = this.ParseExpression();
+    var bindings = this.TakePatternBindings();   // a ternary in the subject may have bound already
 
+    // pb36 discriminated-union matching: CASE Tag [bindVar] arms compare the hidden tag; the
+    // subject rewrites to subject.$tag and each binding hoists as DIM + payload copy before
+    // the SELECT (unconditional copies - harmless for the arms not taken)
+    var patternArms = 0;
+    var plainArms = 0;
     var arms = new List<CaseArm>();
     for (;;) {
       this.SkipSeparators();
@@ -102,12 +95,27 @@ public sealed partial class Parser {
       this.ExpectKeyword("CASE");
       var selectors = new List<CaseSelector>();
       if (!this.TryMatchKeyword("ELSE"))
-        do
-          selectors.Add(this.ParseCaseSelector());
-        while (this.Match(TokenKind.Comma));
+        do {
+          if (this.Current.Kind == TokenKind.Identifier && this._duCases.TryGetValue(this.Current.Text, out var duCase)) {
+            this.Require(LanguageFeature.DiscriminatedUnions);
+            var caseTok = this.Advance();
+            selectors.Add(new(caseTok.Position, new IntegerLiteralExpr(caseTok.Position, duCase.Index, TypeSuffix.None), null, null));
+            if (this.Current.Kind == TokenKind.Identifier && !this.IsKeyword(0, "TO"))
+              bindings.AddRange(this.BuildPatternBinding(this.Advance(), subject, duCase));
+            ++patternArms;
+          } else {
+            selectors.Add(this.ParseCaseSelector());
+            ++plainArms;
+          }
+        } while (this.Match(TokenKind.Comma));
       arms.Add(new(armPos, selectors, this.ParseBody("CASE", "END SELECT")));
     }
-    return new SelectStmt(pos, subject, arms);
+
+    if (patternArms > 0 && plainArms > 0)
+      throw this.Error("a SELECT CASE cannot mix union-case patterns with ordinary selectors");
+    if (patternArms > 0)
+      subject = new MemberExpr(pos, subject, "$tag", TypeSuffix.None);
+    return WrapBindings(bindings, new SelectStmt(pos, subject, arms));
   }
 
   private CaseSelector ParseCaseSelector() {
@@ -157,10 +165,10 @@ public sealed partial class Parser {
       return this.ParseForEach(pos);
     var variable = this.ParseLValue();
     this.Expect(TokenKind.Equals, "'='");
-    var from = this.ParseExpression();
+    var from = this.WithoutPatternBindings(this.ParseExpression);
     this.ExpectKeyword("TO");
-    var to = this.ParseExpression();
-    var step = this.TryMatchKeyword("STEP") ? this.ParseExpression() : null;
+    var to = this.WithoutPatternBindings(this.ParseExpression);
+    var step = this.TryMatchKeyword("STEP") ? this.WithoutPatternBindings(this.ParseExpression) : null;
     var body = this.ParseBody("NEXT");
     this.ConsumeNext();
     return new ForStmt(pos, variable, from, to, step, body);
@@ -177,13 +185,13 @@ public sealed partial class Parser {
     this.Advance(); // EACH
     var variable = this.ParseLValue();
     this.ExpectKeyword("IN");
-    var collection = this.ParseExpression();
+    var collection = this.WithoutPatternBindings(this.ParseExpression);
     // a bare range source (FOR EACH v IN lo TO hi [STEP s]) - no brackets needed
     Expression? rangeHi = null, rangeStep = null;
     if (this.TryMatchKeyword("TO")) {
-      rangeHi = this.ParseExpression();
+      rangeHi = this.WithoutPatternBindings(this.ParseExpression);
       if (this.TryMatchKeyword("STEP"))
-        rangeStep = this.ParseExpression();
+        rangeStep = this.WithoutPatternBindings(this.ParseExpression);
     }
     var body = this.ParseBody("NEXT");
     this.ConsumeNext();
@@ -228,15 +236,15 @@ public sealed partial class Parser {
 
   private (LoopTestKind Kind, Expression? Condition) ParseLoopTest() {
     if (this.TryMatchKeyword("WHILE"))
-      return (LoopTestKind.While, this.ParseExpression());
+      return (LoopTestKind.While, this.WithoutPatternBindings(this.ParseExpression));
     if (this.TryMatchKeyword("UNTIL"))
-      return (LoopTestKind.Until, this.ParseExpression());
+      return (LoopTestKind.Until, this.WithoutPatternBindings(this.ParseExpression));
     return (LoopTestKind.None, null);
   }
 
   private Statement ParseWhile() {
     var pos = this.Advance().Position;
-    var condition = this.ParseExpression();
+    var condition = this.WithoutPatternBindings(this.ParseExpression);
     var body = this.ParseBody("WEND");
     this.ExpectKeyword("WEND");
     return new DoLoopStmt(pos, LoopTestKind.While, condition, LoopTestKind.None, null, body);
@@ -454,7 +462,10 @@ public sealed partial class Parser {
   private Statement ParseDefer() {
     this.Require(LanguageFeature.Defer);
     var pos = this.Advance().Position; // DEFER
-    return new DeferStmt(pos, this.ParseStatement());
+    var deferred = this.ParseStatement();
+    if (deferred is StatementGroup)
+      throw this.Error("an IS payload binding is not allowed in a DEFER statement");
+    return new DeferStmt(pos, deferred);
   }
 
   private Statement ParseEnd() {

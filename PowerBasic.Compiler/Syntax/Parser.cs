@@ -115,8 +115,31 @@ public sealed partial class Parser {
   private sealed record DuCase(string UnionName, int Index, string CaseName, IReadOnlyList<TypeField> Fields);
   /// <summary>Payload bindings collected while parsing an IF condition (IS Case var): hoisted as DIM + copy before the IF.</summary>
   private readonly List<Statement> _patternBindings = [];
-  /// <summary>True only while an IF condition is being parsed - an IS binding anywhere else is an error.</summary>
-  private bool _patternBindingAllowed;
+  /// <summary>False while a loop test / FOR bound is being parsed - an IS binding there would be copied once instead of per iteration, so it is rejected.</summary>
+  private bool _patternBindingAllowed = true;
+
+  /// <summary>Takes (and clears) the pattern bindings collected so far.</summary>
+  private List<Statement> TakePatternBindings() {
+    if (this._patternBindings.Count == 0)
+      return [];
+    var taken = new List<Statement>(this._patternBindings);
+    this._patternBindings.Clear();
+    return taken;
+  }
+
+  private static Statement WrapBindings(List<Statement> bindings, Statement statement)
+    => bindings.Count == 0 ? statement : new StatementGroup(statement.Position, [.. bindings, statement]);
+
+  /// <summary>Runs <paramref name="parse"/> with IS payload bindings rejected (loop tests: the hoisted copy would run once, not per iteration).</summary>
+  private T WithoutPatternBindings<T>(Func<T> parse) {
+    var saved = this._patternBindingAllowed;
+    this._patternBindingAllowed = false;
+    try {
+      return parse();
+    } finally {
+      this._patternBindingAllowed = saved;
+    }
+  }
 
   private bool TryMatchKeyword(string keyword) {
     if (!this.IsKeyword(0, keyword))
@@ -214,6 +237,16 @@ public sealed partial class Parser {
   #region statement dispatch
 
   private Statement ParseStatement() {
+    var statement = this.ParseStatementCore();
+    // IS payload bindings collected inside this statement's expressions (ternary conditions,
+    // SELECT subjects, ...) hoist as DIM + copy right before it; ParseIf/ParseSelect have
+    // already taken their own, so anything left here belongs to this statement
+    return this._patternBindings.Count == 0 || statement is StatementGroup
+      ? statement
+      : WrapBindings(this.TakePatternBindings(), statement);
+  }
+
+  private Statement ParseStatementCore() {
     var atLineStart = this._atLineStart;
     this._atLineStart = false;
 

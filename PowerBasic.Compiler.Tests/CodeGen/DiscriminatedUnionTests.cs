@@ -125,6 +125,72 @@ public sealed class DiscriminatedUnionTests {
   }
 
   [Test]
+  public void Execute_GivenIsBindingInTernary_WhenRun_ThenBindingHoistsBeforeStatement() {
+    const string source = _SHAPE + """
+      DIM s AS Shape
+      DIM r AS SINGLE
+      s = Circle(2.5)
+      r = IF(s IS Circle c, c.Radius, 0!)
+      PRINT r
+      s = Dot
+      r = IF(s IS Circle c2, c2.Radius, 0!)
+      PRINT r
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 2.5\n 0\n"));
+  }
+
+  [Test]
+  public void Parse_GivenIsBindingInLoopTest_WhenParsed_ThenRejected() {
+    // the hoisted copy would run once before the loop, not per pass - stale binding
+    Assert.Throws<ParserException>(() =>
+      Parse(_SHAPE + "DIM s AS Shape\nDO WHILE s IS Circle c\n  PRINT c.Radius\nLOOP\n"));
+  }
+
+  [Test]
+  public void Execute_GivenSelectCasePatternArms_WhenRun_ThenDispatchesOnTagWithBindings() {
+    const string source = _SHAPE + """
+      DECLARE SUB Show(BYREF s AS Shape)
+      DIM s AS Shape
+      s = Circle(2.5)
+      Show s
+      s = Rect(3, 4)
+      Show s
+      s = Dot
+      Show s
+
+      SUB Show(BYREF s AS Shape)
+        SELECT CASE s
+          CASE Circle c
+            PRINT "circle"; c.Radius
+          CASE Rect r
+            PRINT "rect"; r.W * r.H
+          CASE ELSE
+            PRINT "other"
+        END SELECT
+      END SUB
+      """;
+    Assert.That(Run(source), Is.EqualTo("circle 2.5\nrect 12\nother\n"));
+  }
+
+  [Test]
+  public void Parse_GivenSelectCaseMixingPatternAndPlainSelectors_WhenParsed_ThenRejected() {
+    Assert.Throws<ParserException>(() =>
+      Parse(_SHAPE + "DIM s AS Shape\nSELECT CASE s\n  CASE Circle\n    PRINT 1\n  CASE 5\n    PRINT 2\nEND SELECT\n"));
+  }
+
+  [Test]
+  public void Render_GivenSelectCasePatterns_WhenDecompiled_ThenTagSelectRecompilesUnderPb35() {
+    var source = _SHAPE + "DIM s AS Shape\ns = Rect(3, 4)\nSELECT CASE s\n  CASE Circle c\n    PRINT c.Radius\n  CASE Rect r\n    PRINT r.W\nEND SELECT\n";
+    var unit = Parse(source);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
+    var basic = PowerBasic.Compiler.Emit.BasicWriter.Render(model, unit);
+    Assert.That(basic, Does.Contain("SELECT CASE").And.Not.Contain("$tag"), $"tag select with sanitized member:\n{basic}");
+    var model2 = Binder.Bind(Parse(basic, Dialect.Pb35), Dialect.Pb35);
+    Assert.That(model2.Errors, Is.Empty, $"pb35 re-bind of:\n{basic}\nerrors: " + string.Join("; ", model2.Errors));
+  }
+
+  [Test]
   public void Render_GivenDiscriminatedUnion_WhenDecompiled_ThenPlainTypesRecompileUnderPb35() {
     var source = _SHAPE + "DIM s AS Shape\ns = Circle(1.5)\nIF s IS Circle c THEN PRINT c.Radius\n";
     var unit = Parse(source);
