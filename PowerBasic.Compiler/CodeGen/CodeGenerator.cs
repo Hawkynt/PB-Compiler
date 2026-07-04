@@ -425,6 +425,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// <summary>$OPTIMIZE SPEED / -OZF: favor inline code over runtime calls.</summary>
   public bool OptimizeSpeed { get; set; }
 
+  /// <summary>S1 $OPTIMIZE SIZE: bias for image size - short-jump relaxation on, inlining off (unrolling/alignment/scheduler are SPEED-only anyway).</summary>
+  public bool OptimizeSize { get; set; }
+
   /// <summary>
   /// Opt-in: compile eligible pure-INTEGER functions through the in-house x86-16 back end
   /// (docs/X86-BACKEND.md) - it owns the whole function via its SSA IR (no shared cells), so it never
@@ -488,12 +491,24 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // unrolling/inlining/const-fold - to group memory/ALU ops), every other optimized standalone keeps
     // the peephole (staging coalesce, CMP->TEST). Gated on the optimizer flags, not the dialect (the
     // optimizer is dialect-agnostic; SPEED merely defaults on for pb36).
+    // $OPTIMIZE SIZE|SPEED - one per module (PBC -OZF preselects SPEED). Resolved BEFORE the
+    // post-emit pass gates below so a metastatement (not just the CLI flag) arms them.
+    var optimizeMetas = model.MetaStatements.Where(m => m.Command.Equals("OPTIMIZE", StringComparison.OrdinalIgnoreCase)).ToList();
+    if (optimizeMetas.Count > 1)
+      this.Errors.Add(new(optimizeMetas[1].Position, "only one $OPTIMIZE per module"));
+    if (optimizeMetas.Count > 0 && optimizeMetas[0].Arguments is [{ } optMode, ..]) {
+      this.OptimizeSpeed = optMode.Text.Equals("SPEED", StringComparison.OrdinalIgnoreCase);
+      this.OptimizeSize = optMode.Text.Equals("SIZE", StringComparison.OrdinalIgnoreCase);
+    }
+
     var standalone = this.Optimize && !this._allowExternalCalls && !this._isUnit;
     asm.EnableSchedule = standalone && this.OptimizeSpeed;
     asm.EnablePeephole = standalone && !asm.EnableSchedule;
     // jump threading composes with either pass: a pure fixup rewrite over the final stream,
     // collapsing ITERATE -> loop-end -> loop-head and GOTO -> GOTO cascades to one hop
     asm.EnableJumpThreading = standalone;
+    // S1 SIZE: short-jump relaxation shrinks every in-range near jump to the 2-byte form
+    asm.EnableJumpRelaxation = standalone && this.OptimizeSize;
     var userMain = asm.DefineLabel("user_main");
     this._scratch = asm.DefineLabel("cg_scratch");
 
@@ -508,13 +523,6 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       this._rt.EmitProcedures(asm);
     else
       this._rt.BindDeferred(asm); // labels exist now, the trimmed bodies follow the user code
-
-    // $OPTIMIZE SIZE|SPEED - one per module (PBC -OZF preselects SPEED)
-    var optimizeMetas = model.MetaStatements.Where(m => m.Command.Equals("OPTIMIZE", StringComparison.OrdinalIgnoreCase)).ToList();
-    if (optimizeMetas.Count > 1)
-      this.Errors.Add(new(optimizeMetas[1].Position, "only one $OPTIMIZE per module"));
-    if (optimizeMetas.Count > 0 && optimizeMetas[0].Arguments is [{ } optMode, ..])
-      this.OptimizeSpeed = optMode.Text.Equals("SPEED", StringComparison.OrdinalIgnoreCase);
 
     asm.MarkLabel(userMain);
 

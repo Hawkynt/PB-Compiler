@@ -173,6 +173,35 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenOptimizeSize_WhenCompiled_ThenSmallerImageSameBehavior() {
+    // S1 $OPTIMIZE SIZE: short-jump relaxation + no inlining must shrink a branchy
+    // program's image; the differential batteries prove behavior elsewhere
+    static byte[] Compile(string source) {
+      var model = BindModel(source);
+      var generator = new CodeGenerator(model);
+      var exe = generator.EmitExecutable();
+      Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+      return exe;
+    }
+    const string body = """
+      DIM i AS INTEGER, total AS LONG
+      FOR i = 1 TO 50
+        IF i MOD 3 = 0 THEN
+          total = total + i
+        ELSEIF i MOD 5 = 0 THEN
+          total = total - i
+        ELSE
+          total = total + 1
+        END IF
+      NEXT
+      PRINT total
+      """;
+    var sized = Compile("$OPTIMIZE SIZE\n" + body);
+    var plain = Compile(body);
+    Assert.That(sized.Length, Is.LessThan(plain.Length), $"SIZE image ({sized.Length}) must undercut the default ({plain.Length})");
+  }
+
+  [Test]
   public void Prune_GivenGotoChain_WhenPruned_ThenGotoThreadsToFinalLabel() {
     // GOTO Hop lands on a label whose next executable statement is another GOTO - the
     // decompiled (and generated) control flow should jump straight to the final label

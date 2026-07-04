@@ -573,6 +573,8 @@ public sealed partial class CodeGenerator {
   private bool TryEmitInlinedFunction(ProcedureSymbol proc, IReadOnlyList<Expression> args, bool wantResult) {
     if (!this.Optimize)
       return false;
+    if (this.OptimizeSize)
+      return false;   // S1 SIZE: inlining duplicates bodies at call sites - a CALL is smaller
     // do not inline into an error-handling region: a fault inside the inlined body
     // would re-enter through the wrong RESUME / RESUME NEXT latch (each inlined
     // statement has its own, a real call has one). The purge pre-pass keeps the

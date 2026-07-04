@@ -95,6 +95,7 @@ public sealed partial class Assembler {
     this.RunSchedule();
     this.RunPeephole();
     this.RunJumpThreading();
+    this.RunJumpRelaxation();
     var result = this._buffer.ToArray();
     foreach (var fixup in this._fixups) {
       if (!fixup.Target.IsBound)
@@ -116,6 +117,7 @@ public sealed partial class Assembler {
     this.RunSchedule();
     this.RunPeephole();
     this.RunJumpThreading();
+    this.RunJumpRelaxation();
     var result = this._buffer.ToArray();
     var relocations = new List<AsmRelocation>();
     var registered = new HashSet<Label>(this._namedLabels.Values, ReferenceEqualityComparer.Instance);
@@ -217,6 +219,52 @@ public sealed partial class Assembler {
         continue;   // the short encoding cannot reach the final destination - keep the hop
       this._fixups[i] = f with { Target = target, Addend = addend };
     }
+  }
+
+  /// <summary>
+  /// When set, near jumps whose displacement fits a signed byte are rewritten to the short
+  /// form before fixup resolution (S1 $OPTIMIZE SIZE): E9 rel16 (3 bytes) becomes EB rel8
+  /// (2), 0F 8x rel16 (4) becomes 7x rel8 (2). Off by default.
+  /// </summary>
+  public bool EnableJumpRelaxation { get; set; }
+  private bool _jumpRelaxationRan;
+
+  /// <summary>
+  /// Short-jump relaxation over the finished stream, iterated to fixpoint (each shrink can
+  /// bring further jumps into short range). Every cut goes through the peephole's
+  /// RemoveBytes, which slides all labels/fixups/relocations past it, so downstream offsets
+  /// stay consistent. Only bound, internal targets relax; externals keep the near form.
+  /// </summary>
+  public void RunJumpRelaxation() {
+    if (!this.EnableJumpRelaxation || this._jumpRelaxationRan)
+      return;
+    this._jumpRelaxationRan = true;
+
+    bool changed;
+    do {
+      changed = false;
+      for (var i = 0; i < this._fixups.Count; ++i) {
+        var f = this._fixups[i];
+        if (f.Kind != FixupKind.Rel16 || !f.Target.IsBound || f.Target.IsExternal || f.Position < 1)
+          continue;
+        var op = this._buffer[f.Position - 1];
+        var isJmp = op == 0xE9;
+        var isJcc = !isJmp && f.Position >= 2 && this._buffer[f.Position - 2] == 0x0F && op is >= 0x80 and <= 0x8F;
+        if (!isJmp && !isJcc)
+          continue;
+        var start = isJmp ? f.Position - 1 : f.Position - 2;   // instruction start
+        var surplus = isJmp ? 1 : 2;                           // bytes the short form saves
+        var target = f.Target.Position + f.Addend;
+        var effective = target > start + 2 ? target - surplus : target;   // a forward target slides with the cut
+        var rel = effective - (start + 2);                     // displacement from the SHORT encoding's end
+        if (rel is < sbyte.MinValue or > sbyte.MaxValue)
+          continue;
+        this._buffer[start] = isJmp ? (byte)0xEB : (byte)(0x70 | (op & 0x0F));
+        this._fixups[i] = new(start + 1, FixupKind.Rel8, f.Target, f.Addend);
+        this.RemoveBytes(start + 2, surplus);                  // cut the tail; our new fixup sits before it
+        changed = true;
+      }
+    } while (changed);
   }
 
   private static void ApplyFixup(byte[] result, Fixup fixup) {
