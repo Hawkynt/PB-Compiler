@@ -81,6 +81,15 @@ public sealed class BasicWriterTests {
   }
 
   [Test]
+  public void Render_Pb36TypeAlias_SubstitutesUnderlyingTypeEverywhere() {
+    var basic = RenderAndRebind("TYPE Handle AS DWORD\nDIM h AS Handle\nh = 42\nSUB Take(BYVAL x AS Handle)\n  PRINT x\nEND SUB\nTake(h)\n", Dialect.Pb36);
+    Assert.Multiple(() => {
+      Assert.That(basic, Does.Not.Contain("Handle"), "the alias is fully resolved away - pb35 never sees the name");
+      Assert.That(basic, Does.Contain("AS DWORD"), "declarations carry the underlying type");
+    });
+  }
+
+  [Test]
   public void Render_Pb36TypeMethod_LiftsToSanitizedProcedureAndRecompiles() {
     var basic = RenderAndRebind("TYPE Counter\n  Value AS LONG\n  SUB Bump(BYVAL by AS LONG)\n    THIS.Value = THIS.Value + by\n  END SUB\nEND TYPE\nDIM c AS Counter\nc.Value = 10\nc.Bump(5)\nPRINT c.Value\n", Dialect.Pb36);
     Assert.That(basic, Does.Contain("SUB Counter_Bump(BYREF THIS AS Counter"), "the method lifts to a THIS-receiver SUB with a pb35-valid name and an explicit passing mode");

@@ -468,6 +468,12 @@ public sealed partial class Parser {
     this.Require(LanguageFeature.TypeUnion);
     var pos = this.Advance().Position;
     var name = this.Expect(TokenKind.Identifier, "type name");
+    // pb36 type alias: TYPE Name AS type (single line, no END TYPE)
+    if (!isUnion && this.IsKeyword(0, "AS")) {
+      this.Require(LanguageFeature.TypeAlias);
+      this.Advance(); // AS
+      return new TypeAliasDecl(pos, name.Text, this.ParseTypeName());
+    }
     // pb36 generics: TYPE Name OF T (or OF (K, V)) - a template monomorphized per instantiation
     var typeParams = new List<string>();
     if (!isUnion && this.IsKeyword(0, "OF")) {

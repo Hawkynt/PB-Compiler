@@ -108,6 +108,9 @@ public sealed record TypeDecl(SourcePosition Position, string Name, IReadOnlyLis
 /// <summary>UNION ... END UNION.</summary>
 public sealed record UnionDecl(SourcePosition Position, string Name, IReadOnlyList<TypeField> Fields) : Statement(Position);
 
+/// <summary>pb36 type alias: <c>TYPE Name AS type</c> (single line, no END TYPE) - a bind-time name for an existing type.</summary>
+public sealed record TypeAliasDecl(SourcePosition Position, string Name, TypeName Target) : Statement(Position);
+
 /// <summary>DEF FN single-line or block form.</summary>
 public sealed record DefFnDecl(SourcePosition Position, string Name, TypeSuffix Suffix, IReadOnlyList<Parameter> Parameters, Expression? Body, IReadOnlyList<Statement>? BlockBody) : Statement(Position);
 

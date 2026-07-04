@@ -604,7 +604,7 @@ public sealed class BasicWriter {
       case DestructureStmt s: this.Line($"{string.Join(", ", s.Targets.Select(t => this.Expr(t)))} = {this.Expr(s.Value)}"); break;
       case DeferStmt s: this.Line("' DEFER:"); this.WriteStatement(s.Deferred); break;
       case MetaStmt s: this.WriteMeta(s); break;
-      case TypeDecl or UnionDecl or EnumDecl or DeclareStmt or SubDecl or FunctionDecl or DefFnDecl or DefTypeStmt: break; // emitted from the unit declaration pass
+      case TypeDecl or UnionDecl or TypeAliasDecl or EnumDecl or DeclareStmt or SubDecl or FunctionDecl or DefFnDecl or DefTypeStmt: break; // emitted from the unit declaration pass (a type alias is resolved away entirely)
       case HandlerSaveStmt or HandlerRestoreStmt or HandlerArmStmt or HandlerReraiseStmt: break;            // synthesized coroutine plumbing
       default: this.Line($"' [unsupported: {statement.GetType().Name}]"); break;
     }
@@ -1187,8 +1187,11 @@ public sealed class BasicWriter {
       return "DWORD";
     if (t.IsPointer)
       return $"{this.TypeNameText(t.PointerTarget!)} PTR";
-    if (t.UserTypeName is { } udt)
+    if (t.UserTypeName is { } udt) {
+      if (this._model.TypeAliases.TryGetValue(udt, out var aliased))
+        return this.TypeNameText(aliased);   // pb36 type alias: substitute the underlying type (chains resolve recursively)
       return this._model.EnumTypes.ContainsKey(udt) ? "INTEGER" : udt;   // ENUM names alias an integer in pb35
+    }
     if (t.Builtin == BuiltinType.FixedString && t.FixedLength is { } len)
       return $"STRING * {this.Expr(len)}";
     if (t.Builtin == BuiltinType.Asciiz && t.FixedLength is { } alen)

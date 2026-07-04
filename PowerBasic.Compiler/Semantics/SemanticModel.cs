@@ -44,6 +44,9 @@ public sealed class SemanticModel {
   /// <summary>TYPE/UNION definitions with resolved layout.</summary>
   public Dictionary<string, UdtType> Udts { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+  /// <summary>pb36 type aliases (<c>TYPE Name AS type</c>): alias name → aliased surface type. The binder resolves them away; the back-emitter substitutes the target wherever a surface type name is printed.</summary>
+  public Dictionary<string, TypeName> TypeAliases { get; } = new(StringComparer.OrdinalIgnoreCase);
+
   /// <summary>pb36 nullable types (<c>T?</c>): maps a synthesized nullable UDT's name to its underlying value type. A UDT in this set carries a <c>Value</c> field and a <c>HasValue</c> presence flag.</summary>
   public Dictionary<string, PbType> NullableUnderlying { get; } = new(StringComparer.OrdinalIgnoreCase);
 

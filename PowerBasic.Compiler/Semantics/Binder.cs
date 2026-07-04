@@ -38,6 +38,9 @@ public sealed class Binder {
 
   /// <summary>pb36 READONLY TYPEs: their fields may be written only inside the type's own constructor.</summary>
   private readonly HashSet<string> _readonlyTypes = new(StringComparer.OrdinalIgnoreCase);
+  // pb36 type aliases (TYPE Name AS type): resolved lazily by ResolveTypeName; the stack detects cycles
+  private readonly Dictionary<string, TypeName> _typeAliases = new(StringComparer.OrdinalIgnoreCase);
+  private readonly HashSet<string> _aliasResolutionStack = new(StringComparer.OrdinalIgnoreCase);
 
   /// <summary>pb36 bit-fields: "Udt.field" (case-insensitive) -> the hidden storage word it lives in, its bit offset and width. Member access desugars to shift/mask on the storage word.</summary>
   private readonly Dictionary<string, (string Storage, int Offset, int Width, int ContainerBits)> _bitFields = new(StringComparer.OrdinalIgnoreCase);
@@ -239,6 +242,13 @@ public sealed class Binder {
           this.DefineTypeMembers(t, backing.ToDictionary(b => b.Prop, b => b, StringComparer.OrdinalIgnoreCase));
           break;
         }
+
+        case TypeAliasDecl a:
+          if (this._model.Udts.ContainsKey(a.Name) || this._model.EnumTypes.ContainsKey(a.Name) || !this._typeAliases.TryAdd(a.Name, a.Target))
+            this.Error(a.Position, $"duplicate type name '{a.Name}'");
+          else
+            this._model.TypeAliases[a.Name] = a.Target;
+          break;
 
         case UnionDecl u:
           this.DefineUdt(u.Name, u.Fields, isUnion: true, u.Position);
@@ -1761,6 +1771,17 @@ public sealed class Binder {
         return udt;
       if (this._model.EnumTypes.TryGetValue(t.UserTypeName!, out var enumType)) // PB 3.6: an ENUM name aliases its integer type
         return enumType;
+      if (this._typeAliases.TryGetValue(t.UserTypeName!, out var aliasTarget)) { // pb36 type alias: fully transparent at bind time
+        if (!this._aliasResolutionStack.Add(t.UserTypeName!)) {
+          this.Error(t.Position, $"type alias '{t.UserTypeName}' is circular");
+          return PbType.Integer;
+        }
+        var aliased = this.ResolveTypeName(aliasTarget);
+        this._aliasResolutionStack.Remove(t.UserTypeName!);
+        if (aliased == null)
+          this.Error(aliasTarget.Position, $"type alias '{t.UserTypeName}' names unknown type");
+        return aliased ?? PbType.Integer;
+      }
       if (this._model.Overloads.TryGetValue(t.UserTypeName!, out var overloads) && overloads.Count > 0) // PB 3.6: a DECLAREd SUB/FUNCTION name doubles as a named delegate type
         return this.NamedDelegateType(t, overloads);
       return null;
@@ -2698,7 +2719,7 @@ public sealed class Binder {
           this.Error(statement.Position, "declaration not allowed inside SUB/FUNCTION");
         break;
 
-      case TypeDecl or UnionDecl or DeclareStmt or SubDecl or FunctionDecl or DefFnDecl:
+      case TypeDecl or UnionDecl or TypeAliasDecl or DeclareStmt or SubDecl or FunctionDecl or DefFnDecl:
         if (scope.Proc != null)
           this.Error(statement.Position, "declaration not allowed inside SUB/FUNCTION");
         break;
