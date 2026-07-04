@@ -309,7 +309,7 @@ public sealed record EndStmt(SourcePosition Position, Expression? ExitCode) : St
 /// <summary>
 /// PB 3.6 <c>YIELD &lt;expression&gt;</c>: suspends the enclosing coroutine SUB/FUNCTION,
 /// surfacing <see cref="Value"/> to the resumer, and continues from the next statement
-/// when resumed. A pure pb36 extension (no PBC 3.50 equivalent); see docs/PB36-COROUTINES.md.
+/// when resumed. A pure pb36 extension (no PBC 3.50 equivalent); see docs/PB36.md (coroutines section).
 /// </summary>
 public sealed record YieldStmt(SourcePosition Position, Expression Value) : Statement(Position);
 

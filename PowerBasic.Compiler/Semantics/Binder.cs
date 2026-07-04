@@ -4056,34 +4056,47 @@ public sealed class Binder {
       case "TYPEOF$" when call.Arguments.Count == 1: {
         this.Require(LanguageFeature.CompileTimeReflection, call.Position);
         var t = this.ReflectionSubjectType(call.Arguments[0], scope);
-        this._model.Desugared[call] = new StringLiteralExpr(call.Position, t is null ? "" : TypeDisplayName(t));
-        return PbType.String;
+        var nameLit = new StringLiteralExpr(call.Position, t is null ? "" : TypeDisplayName(t));
+        this._model.Desugared[call] = nameLit;
+        return this.BindExpression(nameLit, scope);
       }
 
       case "SIZEOF" when call.Arguments is [NameExpr tn] && this.ResolveReflectedTypeName(tn, scope) is { } ty: {
         this.Require(LanguageFeature.CompileTimeReflection, call.Position);
-        this._model.Desugared[call] = new IntegerLiteralExpr(call.Position, ty.Size, TypeSuffix.None);
-        return PbType.Long;
+        // the literal is Long-suffixed AND bound: a 32-bit consumer (PRINT of a LONG) must
+        // see a LONG-typed literal, else it reads a stale high word
+        var sizeLit = new IntegerLiteralExpr(call.Position, ty.Size, TypeSuffix.Long);
+        this._model.Desugared[call] = sizeLit;
+        return this.BindExpression(sizeLit, scope);
       }
 
       case "FIELDCOUNT" when call.Arguments.Count == 1: {
         this.Require(LanguageFeature.CompileTimeReflection, call.Position);
-        if (this.ReflectedUdt(call.Arguments[0], scope) is { } udt)
-          this._model.Desugared[call] = new IntegerLiteralExpr(call.Position, udt.Fields.Count, TypeSuffix.None);
+        if (this.ReflectedUdt(call.Arguments[0], scope) is { } udt) {
+          var countLit = new IntegerLiteralExpr(call.Position, udt.Fields.Count, TypeSuffix.None);
+          this._model.Desugared[call] = countLit;
+          this.BindExpression(countLit, scope);
+        }
         return PbType.Integer;
       }
 
       case "FIELDNAME$" when call.Arguments.Count == 2: {
         this.Require(LanguageFeature.CompileTimeReflection, call.Position);
-        if (this.ReflectedUdt(call.Arguments[0], scope) is { } udt && this.ReflectedField(udt, call.Arguments[1]) is { } f)
-          this._model.Desugared[call] = new StringLiteralExpr(call.Position, f.Name);
+        if (this.ReflectedUdt(call.Arguments[0], scope) is { } udt && this.ReflectedField(udt, call.Arguments[1]) is { } f) {
+          var fieldLit = new StringLiteralExpr(call.Position, f.Name);
+          this._model.Desugared[call] = fieldLit;
+          this.BindExpression(fieldLit, scope);
+        }
         return PbType.String;
       }
 
       case "FIELDOFFSET" or "FIELDSIZE" when call.Arguments.Count == 2: {
         this.Require(LanguageFeature.CompileTimeReflection, call.Position);
-        if (this.ReflectedUdt(call.Arguments[0], scope) is { } udt && this.ReflectedField(udt, call.Arguments[1]) is { } f)
-          this._model.Desugared[call] = new IntegerLiteralExpr(call.Position, name == "FIELDOFFSET" ? f.Offset : f.TotalSize, TypeSuffix.None);
+        if (this.ReflectedUdt(call.Arguments[0], scope) is { } udt && this.ReflectedField(udt, call.Arguments[1]) is { } f) {
+          var offLit = new IntegerLiteralExpr(call.Position, name == "FIELDOFFSET" ? f.Offset : f.TotalSize, TypeSuffix.None);
+          this._model.Desugared[call] = offLit;
+          this.BindExpression(offLit, scope);
+        }
         return PbType.Integer;
       }
 

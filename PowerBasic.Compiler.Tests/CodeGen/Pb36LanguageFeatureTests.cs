@@ -129,6 +129,23 @@ public sealed class Pb36LanguageFeatureTests {
   }
 
   [Test]
+  public void Execute_GivenReflectionInPrint_WhenRun_ThenFoldedLiteralsCarryTheirStaticType() {
+    // SIZEOF reflects as LONG - the folded literal must be LONG-typed too, else the 32-bit
+    // print path reads a stale high word (regression: printed 0x01A30006 instead of 6)
+    const string source = """
+      TYPE Point
+        X AS INTEGER
+        Y AS LONG
+      END TYPE
+      DIM p AS Point
+      PRINT SIZEOF(Point)
+      PRINT TYPEOF$(p)
+      PRINT FIELDCOUNT(Point); FIELDOFFSET(Point, Y); FIELDSIZE(Point, Y)
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 6\nPoint\n 2  2  4\n"));
+  }
+
+  [Test]
   public void Execute_GivenArrayInitializerRange_WhenRun_ThenRangeExpands() {
     const string source = """
       DIM r%() = {5 TO 8}

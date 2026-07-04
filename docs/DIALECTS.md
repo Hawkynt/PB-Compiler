@@ -94,7 +94,7 @@ with byte-identical observable behavior, plus opt-in modern syntax (each constru
 is rejected below 3.6 with a `requires PowerBASIC 3.6` diagnostic). Optimization is
 a separate axis (`--optimize`, on by default for `pb36`). Full detail in
 [PB36.md](PB36.md); the object model and generators in
-[PB36-TYPES.md](PB36-TYPES.md). Language highlights beyond 3.5:
+[PB36.md](PB36.md). Language highlights beyond 3.5:
 
 - Declarations: `DIM x = v` / `DIM x AS T = v`, array-initializer literals
   (`{…}`, `lo..hi`, `..arr`), object initializers (`NEW Udt { .f = v }`), `ENUM` blocks.
@@ -127,7 +127,7 @@ a separate axis (`--optimize`, on by default for `pb36`). Full detail in
   generic procedures `FUNCTION Max OF T (…) AS T` (type argument inferred from the
   call); each instantiation is vivified into concrete code at compile time (no runtime
   type info), so the object model and inliner apply per instantiation. See
-  [PB36-GENERICS.md](PB36-GENERICS.md).
+  [PB36.md](PB36.md).
 - **Generators**: any `SUB`/`FUNCTION` with `YIELD` becomes a first-class generator
   whose call returns an enumerator UDT (`.MoveNext`/`.Current`/`.Reset`, or `FOR
   EACH`); parameters and locals persist across suspensions. `YIELD` is supported in
