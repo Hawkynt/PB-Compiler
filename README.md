@@ -376,6 +376,17 @@ If this project saves you time or money, consider supporting its development:
 [![GitHub Sponsors](https://img.shields.io/badge/GitHub-Sponsor-EA4AAA?logo=githubsponsors)](https://github.com/sponsors/Hawkynt)
 [![PayPal](https://img.shields.io/badge/PayPal-Donate-00457C?logo=paypal)](https://www.paypal.me/hawkynt)
 
+## Keywords
+
+PowerBASIC compiler · PB 3.5 · PowerBASIC 3.x · Turbo Basic · QuickBASIC · QBasic ·
+GW-BASIC · BASICA · Microsoft BASIC PDS 7.1 · BASIC compiler · retro BASIC ·
+16-bit DOS compiler · MS-DOS executable · MZ EXE · real mode x86 · 8086 assembler ·
+DOSBox · retrocomputing · vintage programming languages · BASIC dialects ·
+transpiler / decompiler back to BASIC · optimizing compiler (SSA, GVN, LICM, SCCP,
+peephole, instruction scheduling) · written in C# / .NET · cross-platform DOS
+toolchain · OMF object files · PBU units · PBL libraries · EMS/XMS memory ·
+coroutines, generics and pattern matching for BASIC (the pb3.6 dialect).
+
 ## License
 
 Licensed under LGPL-3.0-or-later — see [LICENSE](LICENSE).
