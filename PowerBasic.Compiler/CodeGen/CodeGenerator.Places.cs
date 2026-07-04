@@ -188,6 +188,14 @@ public sealed partial class CodeGenerator {
     var asm = this._asm;
     switch (type) {
       case ScalarType { ByteSize: 1 } b1:
+        // pb36 C1 ($CPU 80386): one MOVZX/MOVSX load replaces the MOV+extend pair
+        if (this.Optimize && this.Cpu386) {
+          if (b1.Signed)
+            asm.Movsx(Reg.AX, Adjust(place.Cell, 0, OperandSize.Byte));
+          else
+            asm.Movzx(Reg.AX, Adjust(place.Cell, 0, OperandSize.Byte));
+          break;
+        }
         asm.Mov(Reg.AL, Adjust(place.Cell, 0, OperandSize.Byte));
         if (b1.Signed)
           asm.Cbw();               // SByte: sign-extend AL -> AX
