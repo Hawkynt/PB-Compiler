@@ -95,6 +95,21 @@ public sealed class XmsEmsArrayTests {
   }
 
   [Test]
+  public void Execute_GivenCpu386SpeedBuild_WhenZeroFillsWiden_ThenFreshArraysReadZeroAndValuesSurvive() {
+    // R3: the BSS entry zero and the EMS zero-fill store DWORDs under $CPU 80386 -
+    // fresh elements must still read 0 and stored values survive across pages
+    const string source = """
+      $CPU 80386
+      $OPTIMIZE SPEED
+      DIM XMS a&(1 TO 5000)
+      DIM untouched AS LONG
+      a&(4999) = 123456
+      PRINT untouched; a&(1); a&(4999)
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 0  0  123456\n"));
+  }
+
+  [Test]
   public void Execute_GivenEmsUdtArray_WhenMemberWritten_ThenReadsBack() {
     const string source = """
       TYPE Pair

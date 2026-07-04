@@ -103,9 +103,7 @@ public sealed partial class DosRuntime {
       asm.Xor(Reg.DI, Reg.DI);
       asm.Mov(Reg.CX, Reg.AX);
       asm.Shr(Reg.CX, 1);
-      asm.Xor(Reg.AX, Reg.AX);
-      asm.Rep();
-      asm.Stosw();
+      this.EmitRepStoswZeroWidened(asm);          // R3: DWORD-wide under $CPU 80386
       asm.Pop(Reg.CX);
       asm.Add(Reg.DX, 0x800);                     // advance 32 KiB (0x800 paragraphs)
       asm.Jmp(loop);
@@ -286,9 +284,7 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.CX, Reg.AX);
     asm.Inc(Reg.CX);                              // odd chunks round up one word
     asm.Shr(Reg.CX, 1);
-    asm.Xor(Reg.AX, Reg.AX);
-    asm.Rep();
-    asm.Stosw();
+    this.EmitRepStoswZeroWidened(asm);            // R3: DWORD-wide under $CPU 80386
     asm.Pop(Reg.CX);
     asm.Inc(Reg.SI);
     asm.Jmp(loop);

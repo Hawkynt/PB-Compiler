@@ -76,6 +76,28 @@ public sealed partial class DosRuntime {
     asm.Movsb();
   }
 
+  /// <summary>
+  /// pb36 R3: zero-fills CX words at ES:DI (DF clear). Under $CPU 80386 it stores DWORDs
+  /// (SHR CX,1 leaves the odd word in CF; REP STOS does not touch flags, so a JNC picks up
+  /// the tail); otherwise the classic REP STOSW. AX (and EAX under 386) end zeroed.
+  /// </summary>
+  private void EmitRepStoswZeroWidened(Assembler asm) {
+    if (!this.Cpu386) {
+      asm.Xor(Reg.AX, Reg.AX);
+      asm.Rep();
+      asm.Stosw();
+      return;
+    }
+    var even = asm.DefineLabel();
+    asm.Xor(Reg.EAX, Reg.EAX);   // STOSD stores the full register - zero all 32 bits
+    asm.Shr(Reg.CX, 1);
+    asm.Rep();
+    asm.Stosd();
+    asm.Jnc(even);
+    asm.Stosw();
+    asm.MarkLabel(even);
+  }
+
   public Label PrintStr { get; private set; } = null!;
   public Label PrintInt16 { get; private set; } = null!;
   public Label PrintInt32 { get; private set; } = null!;
@@ -151,9 +173,7 @@ public sealed partial class DosRuntime {
       // of as zero bytes in the EXE); must precede every runtime store
       asm.Mov(Reg.DI, Imm.OffsetOf(asm.Lbl("rt_bss_off")));
       asm.Mov(Reg.CX, Imm.OffsetOf(asm.Lbl("rt_bss_words")));
-      asm.Xor(Reg.AX, Reg.AX);
-      asm.Rep();
-      asm.Stosw();
+      this.EmitRepStoswZeroWidened(asm);   // R3: DWORD-wide under $CPU 80386
     }
     asm.Pop(Reg.AX);
     asm.Mov(Mem.Word(asm.Lbl("rt_pspseg")), Reg.AX);
