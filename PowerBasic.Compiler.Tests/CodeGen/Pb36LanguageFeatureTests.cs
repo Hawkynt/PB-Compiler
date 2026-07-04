@@ -131,7 +131,7 @@ public sealed class Pb36LanguageFeatureTests {
   [Test]
   public void Execute_GivenArrayInitializerRange_WhenRun_ThenRangeExpands() {
     const string source = """
-      DIM r%() = {5..8}
+      DIM r%() = {5 TO 8}
       PRINT r%(0)
       PRINT r%(3)
       """;
@@ -848,9 +848,9 @@ public sealed class Pb36LanguageFeatureTests {
 
   [Test]
   public void Execute_GivenCollectionLiteralRangeInDim_WhenRun_ThenArrayFilled() {
-    // [lo..hi] is a bracketed collection/range literal, equivalent to {lo..hi}.
+    // [lo TO hi] is a bracketed collection/range literal, equivalent to {lo TO hi}.
     const string source = """
-      DIM a%() = [99..102]
+      DIM a%() = [99 TO 102]
       PRINT a%(0)
       PRINT a%(3)
       PRINT UBOUND(a%)
@@ -860,11 +860,11 @@ public sealed class Pb36LanguageFeatureTests {
 
   [Test]
   public void Execute_GivenForEachOverRange_WhenRun_ThenIteratesInclusive() {
-    // FOR EACH v IN [lo..hi] desugars to a counted loop over the inclusive range.
+    // FOR EACH v IN [lo TO hi] desugars to a counted loop over the inclusive range.
     const string source = """
       DIM total AS LONG
       total = 0
-      FOR EACH i& IN [1..5]
+      FOR EACH i& IN [1 TO 5]
         total = total + i&
       NEXT
       PRINT total

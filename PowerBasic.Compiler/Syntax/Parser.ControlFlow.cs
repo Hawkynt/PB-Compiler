@@ -148,7 +148,7 @@ public sealed partial class Parser {
 
   /// <summary>
   /// PB 3.6 <c>FOR EACH v IN source ... NEXT</c>, desugared to a counted FOR:
-  /// a <c>[lo..hi]</c> range literal becomes <c>FOR v = lo TO hi</c>; an array
+  /// a <c>[lo TO hi]</c> range literal becomes <c>FOR v = lo TO hi</c>; an array
   /// becomes <c>FOR i = LBOUND(a) TO UBOUND(a) : v = a(i) : ...</c> with a hidden
   /// index whose name (containing '$') can never collide with a source identifier.
   /// </summary>
@@ -161,7 +161,7 @@ public sealed partial class Parser {
     var body = this.ParseBody("NEXT");
     this.ConsumeNext();
 
-    // a single [lo..hi] range -> plain counted loop over the user variable
+    // a single [lo TO hi] range -> plain counted loop over the user variable
     if (collection is ArrayLiteralExpr { Elements: [RangeElement range] })
       return new ForStmt(pos, variable, range.Lo, range.Hi, null, body);
 

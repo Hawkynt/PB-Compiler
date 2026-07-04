@@ -481,14 +481,14 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 ### Bracketed collection / range literal
 
-[99..105] is a bracketed range literal that fills the array like {99..105}.
+[99 TO 105] is a bracketed range literal that fills the array like {99 TO 105}.
 
 > **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
 **pb3.6 source:**
 
 ```basic
-DIM A%() = [99..105]
+DIM A%() = [99 TO 105]
 PRINT A%(0); A%(6)
 ```
 
@@ -543,7 +543,7 @@ _With the optimizer: identical — this feature lowers entirely in the binder; t
 
 ### FOR EACH over a bracketed range
 
-FOR EACH v IN [lo..hi] desugars straight to a counted FOR v = lo TO hi (no array, no index temp).
+FOR EACH v IN [lo TO hi] desugars straight to a counted FOR v = lo TO hi (no array, no index temp).
 
 > **Round-trips to PB 3.5:** ✅ the decompilation recompiles under `--dialect pb35` and runs with identical output.
 
@@ -551,7 +551,7 @@ FOR EACH v IN [lo..hi] desugars straight to a counted FOR v = lo TO hi (no array
 
 ```basic
 DIM v AS INTEGER
-FOR EACH v IN [10..13]
+FOR EACH v IN [10 TO 13]
   PRINT v
 NEXT
 ```
@@ -1891,7 +1891,7 @@ DIM i AS INTEGER
 FOR i = 0 TO 4
   b(i) = 10 + i
 NEXT
-DIM a = {1, ..b(1 TO 2), 5..7, ..b(^2 TO)}
+DIM a = {1, ..b(1 TO 2), 5 TO 7, ..b(^2 TO)}
 FOR i = LBOUND(a) TO UBOUND(a)
   PRINT a(i);
 NEXT

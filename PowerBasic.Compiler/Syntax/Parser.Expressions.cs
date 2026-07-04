@@ -539,8 +539,10 @@ public sealed partial class Parser {
           continue;
         }
         var first = this.ParseExpression();
-        elements.Add(this.Match(TokenKind.DotDot)
-          ? new RangeElement(first.Position, first, this.ParseExpression()) // lo..hi range
+        if (this.Current.Kind == TokenKind.DotDot)
+          throw this.Error("a range element is written 'lo TO hi'");   // the terse 'lo..hi' form was dropped for the wordy BASIC spelling
+        elements.Add(this.TryMatchKeyword("TO")
+          ? new RangeElement(first.Position, first, this.ParseExpression()) // lo TO hi range
           : new ValueElement(first.Position, first));
       } while (this.Match(TokenKind.Comma));
     this.Expect(close, bracketed ? "']'" : "'}'");

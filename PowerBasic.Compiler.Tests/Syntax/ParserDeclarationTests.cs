@@ -442,13 +442,20 @@ public sealed class ParserDeclarationTests {
 
   [Test]
   public void Parse_GivenArrayInitializer_WhenPb36_ThenElementKindsCaptured() {
-    var stmt = (DimStmt)Parse("DIM a%() = {1, 2..4, ..b%}", Dialect.Pb36).Statements[0];
+    var stmt = (DimStmt)Parse("DIM a%() = {1, 2 TO 4, ..b%}", Dialect.Pb36).Statements[0];
     var lit = (ArrayLiteralExpr)stmt.Variables[0].Initializer!;
     Assert.Multiple(() => {
       Assert.That(lit.Elements[0], Is.InstanceOf<ValueElement>());
       Assert.That(lit.Elements[1], Is.InstanceOf<RangeElement>());
       Assert.That(lit.Elements[2], Is.InstanceOf<SpreadElement>());
     });
+  }
+
+  [Test]
+  public void Parse_GivenDotDotRangeElement_WhenPb36_ThenRejectedWithToHint() {
+    // ranges are the wordy BASIC 'lo TO hi' everywhere; the terse 'lo..hi' form is gone
+    var ex = Assert.Throws<ParserException>(() => Parse("DIM a%() = {1..4}", Dialect.Pb36));
+    Assert.That(ex!.Message, Does.Contain("TO"), "the error points the user at the TO form");
   }
 
   [Test]
