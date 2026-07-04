@@ -468,6 +468,17 @@ public sealed partial class Parser {
     this.Require(LanguageFeature.TypeUnion);
     var pos = this.Advance().Position;
     var name = this.Expect(TokenKind.Identifier, "type name");
+    // pb36 discriminated union: UNION Name / CASE Tag / payload fields / END UNION
+    if (isUnion && DialectFacts.IsAvailable(LanguageFeature.DiscriminatedUnions, this._dialect)) {
+      var save = this._pos;
+      this.SkipSeparators();
+      var discriminated = this.IsKeyword(0, "CASE") && this.Peek(1).Kind == TokenKind.Identifier
+        && !this.Peek(1).Text.Equals("AS", StringComparison.OrdinalIgnoreCase);
+      if (discriminated)
+        return this.ParseDiscriminatedUnion(pos, name.Text);
+      this._pos = save;
+    }
+
     // pb36 type alias: TYPE Name AS type (single line, no END TYPE)
     if (!isUnion && this.IsKeyword(0, "AS")) {
       this.Require(LanguageFeature.TypeAlias);
@@ -658,6 +669,52 @@ public sealed partial class Parser {
       explicitOffset = this.ParseExpression();
     }
     return new(name.Position, name.Text, type, bounds, ExplicitOffset: explicitOffset);
+  }
+
+  /// <summary>
+  /// pb36 discriminated union, lowered right here onto existing machinery: each payload case
+  /// becomes a view TYPE <c>Union_Case</c>; the union itself becomes a TYPE with a hidden
+  /// <c>$tag</c> INTEGER and one view-typed slot per payload case, all placed AT offset 2 so
+  /// they overlap. Case names register module-wide for constructors and IS pattern tests.
+  /// </summary>
+  private Statement ParseDiscriminatedUnion(SourcePosition pos, string unionName) {
+    this.Require(LanguageFeature.DiscriminatedUnions);
+    var statements = new List<Statement>();
+    var carrierFields = new List<TypeField> { new(pos, "$tag", new TypeName(pos, BuiltinType.Integer), null) };
+    var index = 0;
+    for (;;) {
+      this.SkipSeparators();
+      if (this.IsAtTerminator("END UNION")) {
+        this.Advance();
+        this.Advance();
+        break;
+      }
+      if (this.Current.Kind == TokenKind.EndOfFile)
+        throw this.Error("unexpected end of file, expected END UNION");
+      this.ExpectKeyword("CASE");
+      var caseName = this.Expect(TokenKind.Identifier, "union case name");
+      var fields = new List<TypeField>();
+      for (;;) {
+        this.SkipSeparators();
+        if (this.IsKeyword(0, "CASE") || this.IsAtTerminator("END UNION") || this.Current.Kind == TokenKind.EndOfFile)
+          break;
+        fields.Add(this.ParseTypeField());
+      }
+      if (fields.Count > 0) {
+        var viewName = $"{unionName}_{caseName.Text}";
+        statements.Add(new TypeDecl(caseName.Position, viewName, fields));
+        carrierFields.Add(new TypeField(caseName.Position, "$" + caseName.Text,
+          new TypeName(caseName.Position, BuiltinType.None, viewName), null,
+          ExplicitOffset: new IntegerLiteralExpr(caseName.Position, 2, TypeSuffix.None)));
+      }
+      if (!this._duCases.TryAdd(caseName.Text, new(unionName, index, caseName.Text, fields)))
+        throw this.Error($"duplicate union case '{caseName.Text}'");
+      ++index;
+    }
+    if (index == 0)
+      throw this.Error($"discriminated union {unionName} needs at least one CASE");
+    statements.Add(new TypeDecl(pos, unionName, carrierFields));
+    return new StatementGroup(pos, statements);
   }
 
   private Statement ParseDef() {

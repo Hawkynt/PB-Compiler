@@ -110,6 +110,14 @@ public sealed partial class Parser {
   /// <summary>True while parsing the expression parts of a statement that uses IN as its own delimiter (REPLACE), so the membership operator stays out of the way.</summary>
   private bool _suppressInOperator;
 
+  /// <summary>pb36 discriminated unions: case name → (union, tag index, payload fields); filled while parsing UNION ... CASE declarations, consulted by constructors and IS tests.</summary>
+  private readonly Dictionary<string, DuCase> _duCases = new(StringComparer.OrdinalIgnoreCase);
+  private sealed record DuCase(string UnionName, int Index, string CaseName, IReadOnlyList<TypeField> Fields);
+  /// <summary>Payload bindings collected while parsing an IF condition (IS Case var): hoisted as DIM + copy before the IF.</summary>
+  private readonly List<Statement> _patternBindings = [];
+  /// <summary>True only while an IF condition is being parsed - an IS binding anywhere else is an error.</summary>
+  private bool _patternBindingAllowed;
+
   private bool TryMatchKeyword(string keyword) {
     if (!this.IsKeyword(0, keyword))
       return false;
@@ -448,7 +456,31 @@ public sealed partial class Parser {
     }
 
     this.Expect(TokenKind.Equals, "'='");
-    return new AssignStmt(target.Position, target, this.ParseExpression());
+    var assigned = this.ParseExpression();
+    // pb36 discriminated-union constructor: s = Case(args) / s = Case lowers to the tag store
+    // plus one payload-field store each - the case name acts as a module-wide constructor
+    if (this._duCases.Count > 0) {
+      var (caseName, args) = assigned switch {
+        CallOrIndexExpr c when c.Suffix == TypeSuffix.None && this._duCases.ContainsKey(c.Name) => (c.Name, c.Arguments),
+        NameExpr n when n.Suffix == TypeSuffix.None && this._duCases.ContainsKey(n.Name) => (n.Name, (IReadOnlyList<Expression>)[]),
+        _ => (null, []),
+      };
+      if (caseName != null) {
+        var duCase = this._duCases[caseName];
+        if (args.Count != duCase.Fields.Count)
+          throw this.Error($"union case {duCase.CaseName} takes {duCase.Fields.Count} value(s), got {args.Count}");
+        var group = new List<Statement> {
+          new AssignStmt(target.Position, new MemberExpr(target.Position, target, "$tag", TypeSuffix.None),
+            new IntegerLiteralExpr(target.Position, duCase.Index, TypeSuffix.None)),
+        };
+        for (var i = 0; i < args.Count; ++i)
+          group.Add(new AssignStmt(target.Position,
+            new MemberExpr(target.Position, new MemberExpr(target.Position, target, "$" + duCase.CaseName, TypeSuffix.None), duCase.Fields[i].Name, TypeSuffix.None),
+            args[i]));
+        return new StatementGroup(target.Position, group);
+      }
+    }
+    return new AssignStmt(target.Position, target, assigned);
   }
 
   /// <summary>Binary operator behind a compound-assignment token (when followed by '='), else null.</summary>

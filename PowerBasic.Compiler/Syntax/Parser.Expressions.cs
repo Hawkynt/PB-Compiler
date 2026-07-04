@@ -104,6 +104,19 @@ public sealed partial class Parser {
     Expression? prevRight = null;   // the last comparison's right operand, reused as the next link's left when chaining
     var links = 0;
     for (;;) {
+      // pb36 discriminated-union pattern test: subject IS Case [bindVar] - a tag comparison,
+      // plus an optional payload binding the enclosing IF hoists as a DIM + copy
+      if (this.IsKeyword(0, "IS") && this.Peek(1).Kind == TokenKind.Identifier && this._duCases.TryGetValue(this.Peek(1).Text, out var duCase)) {
+        this.Require(LanguageFeature.DiscriminatedUnions);
+        var isPos = this.Advance().Position; // IS
+        this.Advance();                      // case name
+        this.CollectPatternBinding(isPos, left, duCase);
+        left = new BinaryExpr(isPos, BinaryOp.Equal,
+          new MemberExpr(isPos, left, "$tag", TypeSuffix.None),
+          new IntegerLiteralExpr(isPos, duCase.Index, TypeSuffix.None));
+        continue;
+      }
+
       // pb36 membership test: x IN lo TO hi / x IN {a, b, lo TO hi} - desugared right here
       // to plain comparisons (like chained comparison), so nothing downstream ever sees IN
       if (!this._suppressInOperator && this.IsKeyword(0, "IN")) {
@@ -146,6 +159,26 @@ public sealed partial class Parser {
       prevRight = right;
     }
   }
+
+  /// <summary>An optional IS-pattern payload binding (IS Case v): records DIM v AS Union_Case + v = subject.$Case for the enclosing IF to hoist.</summary>
+  private void CollectPatternBinding(SourcePosition pos, Expression subject, DuCase duCase) {
+    if (this.Current.Kind != TokenKind.Identifier || _patternStopWords.Contains(this.Current.Text))
+      return;
+    var bindVar = this.Advance();
+    if (!this._patternBindingAllowed)
+      throw this.Error("an IS payload binding is only allowed in an IF condition");
+    if (duCase.Fields.Count == 0)
+      throw this.Error($"union case {duCase.CaseName} carries no payload to bind");
+    var viewName = $"{duCase.UnionName}_{duCase.CaseName}";
+    this._patternBindings.Add(new DimStmt(bindVar.Position, StorageClass.Dim, false,
+      [new VariableDecl(bindVar.Position, bindVar.Text, TypeSuffix.None, null, new TypeName(bindVar.Position, BuiltinType.None, viewName))]));
+    this._patternBindings.Add(new AssignStmt(bindVar.Position,
+      new NameExpr(bindVar.Position, bindVar.Text, TypeSuffix.None),
+      new MemberExpr(bindVar.Position, subject, "$" + duCase.CaseName, TypeSuffix.None)));
+  }
+
+  private static readonly HashSet<string> _patternStopWords = new(StringComparer.OrdinalIgnoreCase)
+    { "THEN", "GOTO", "AND", "OR", "XOR", "EQV", "IMP", "ELSE" };
 
   /// <summary>
   /// The right side of a membership test: a collection literal (OR chain of per-element tests,

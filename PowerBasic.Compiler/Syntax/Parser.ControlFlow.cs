@@ -7,22 +7,22 @@ public sealed partial class Parser {
 
   private Statement ParseIf() {
     var pos = this.Advance().Position;
-    var condition = this.ParseExpression();
+    var condition = this.ParseIfCondition();
 
     if (this.TryMatchKeyword("GOTO")) {
       var target = this.ParseLabelReference();
       var elseBody = this.TryMatchKeyword("ELSE") ? this.ParseInlineBody() : null;
-      return new IfStmt(pos, condition, [new GotoStmt(pos, target)], [], elseBody);
+      return this.HoistPatternBindings(new IfStmt(pos, condition, [new GotoStmt(pos, target)], [], elseBody));
     }
 
     this.ExpectKeyword("THEN");
     if (this.Current.Kind is not (TokenKind.EndOfLine or TokenKind.EndOfFile))
-      return this.ParseSingleLineIf(pos, condition);
+      return this.HoistPatternBindings((IfStmt)this.ParseSingleLineIf(pos, condition));
 
     var then = this.ParseBody("ELSEIF", "ELSE", "END IF");
     var elseIfs = new List<(Expression Condition, IReadOnlyList<Statement> Body)>();
     while (this.TryMatchKeyword("ELSEIF")) {
-      var elseIfCondition = this.ParseExpression();
+      var elseIfCondition = this.ParseIfCondition();
       this.ExpectKeyword("THEN");
       elseIfs.Add((elseIfCondition, this.ParseBody("ELSEIF", "ELSE", "END IF")));
     }
@@ -33,7 +33,27 @@ public sealed partial class Parser {
 
     this.ExpectKeyword("END");
     this.ExpectKeyword("IF");
-    return new IfStmt(pos, condition, then, elseIfs, elseBlock);
+    return this.HoistPatternBindings(new IfStmt(pos, condition, then, elseIfs, elseBlock));
+  }
+
+  /// <summary>Parses an IF/ELSEIF condition with IS payload bindings allowed; collected bindings stay pending until <see cref="HoistPatternBindings"/>.</summary>
+  private Expression ParseIfCondition() {
+    var saved = this._patternBindingAllowed;
+    this._patternBindingAllowed = true;
+    try {
+      return this.ParseExpression();
+    } finally {
+      this._patternBindingAllowed = saved;
+    }
+  }
+
+  /// <summary>Prepends the pending IS payload bindings (DIM + unconditional payload copy - harmless when the tag mismatches) before the IF that owns them.</summary>
+  private Statement HoistPatternBindings(IfStmt ifStmt) {
+    if (this._patternBindings.Count == 0)
+      return ifStmt;
+    var group = new List<Statement>(this._patternBindings) { ifStmt };
+    this._patternBindings.Clear();
+    return new StatementGroup(ifStmt.Position, group);
   }
 
   private Statement ParseSingleLineIf(SourcePosition pos, Expression condition) {
