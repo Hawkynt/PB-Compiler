@@ -114,6 +114,12 @@ public sealed record TypeAliasDecl(SourcePosition Position, string Name, TypeNam
 /// <summary>pb36 <c>$ASSERT cond [, "message"]</c>: a compile-time assertion checked by the binder; emits no code.</summary>
 public sealed record StaticAssertStmt(SourcePosition Position, Expression Condition, string? Message) : Statement(Position);
 
+/// <summary>pb36 <c>$RESOURCE name, "file"</c>: bakes the file's bytes into the image as a static BYTE array <c>name(0 TO size-1)</c>.</summary>
+public sealed record ResourceStmt(SourcePosition Position, string Name, string FileName) : Statement(Position);
+
+/// <summary>pb36 contract check: <c>REQUIRE cond [, "msg"]</c> / <c>ENSURE cond [, "msg"]</c> - raises error 5 when violated; compiled out under --optimize.</summary>
+public sealed record RequireStmt(SourcePosition Position, Expression Condition, string? Message, bool IsEnsure) : Statement(Position);
+
 /// <summary>DEF FN single-line or block form.</summary>
 public sealed record DefFnDecl(SourcePosition Position, string Name, TypeSuffix Suffix, IReadOnlyList<Parameter> Parameters, Expression? Body, IReadOnlyList<Statement>? BlockBody) : Statement(Position);
 

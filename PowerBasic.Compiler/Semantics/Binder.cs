@@ -247,6 +247,37 @@ public sealed class Binder {
           break;
         }
 
+        case ResourceStmt res: {
+          // $RESOURCE name, "file": read the bytes now (relative to the source file) and declare
+          // the static BYTE array; codegen bakes the bytes into the array's data slot
+          var dir = System.IO.Path.GetDirectoryName(this._unit.FileName) ?? "";
+          var path = System.IO.Path.Combine(dir, res.FileName);
+          byte[] bytes;
+          try {
+            bytes = System.IO.File.ReadAllBytes(path);
+          } catch (System.IO.IOException) {
+            this.Error(res.Position, $"$RESOURCE: cannot read '{res.FileName}'");
+            break;
+          } catch (UnauthorizedAccessException) {
+            this.Error(res.Position, $"$RESOURCE: cannot read '{res.FileName}'");
+            break;
+          }
+          if (bytes.Length == 0) {
+            this.Error(res.Position, $"$RESOURCE: '{res.FileName}' is empty");
+            break;
+          }
+          var resKey = VariableKey(res.Name, TypeSuffix.None, isArray: true);
+          if (this._model.ModuleVariables.ContainsKey(resKey)) {
+            this.Error(res.Position, $"duplicate variable {res.Name}");
+            break;
+          }
+          var resSymbol = new VariableSymbol(res.Name, new ArrayType(PbType.Byte, [(0, bytes.Length - 1)], 1), VariableStorage.Global);
+          this._model.ModuleVariables[resKey] = resSymbol;
+          this._model.ResourceData[resSymbol] = bytes;
+          this._model.MainBody.Add(res);   // codegen skips it (data-only); the back-emitter renders the DATA reconstruction
+          break;
+        }
+
         case TypeAliasDecl a:
           if (this._model.Udts.ContainsKey(a.Name) || this._model.EnumTypes.ContainsKey(a.Name) || !this._typeAliases.TryAdd(a.Name, a.Target))
             this.Error(a.Position, $"duplicate type name '{a.Name}'");
@@ -2721,6 +2752,16 @@ public sealed class Binder {
       case SubDecl or FunctionDecl when scope.Proc != null:
         if (!DialectFacts.IsAvailable(LanguageFeature.NestedProcedures, this._dialect))
           this.Error(statement.Position, "declaration not allowed inside SUB/FUNCTION");
+        break;
+
+      // pb36 contracts: the condition must be boolean-ish; checked at run time (debug), pruned in release
+      case RequireStmt rq:
+        this.BindExpression(rq.Condition, scope);
+        break;
+
+      case ResourceStmt:
+        if (scope.Proc != null)
+          this.Error(statement.Position, "$RESOURCE is module-level only");
         break;
 
       // pb36 $ASSERT: evaluated right here at bind time; emits no code at all

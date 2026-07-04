@@ -47,6 +47,9 @@ public sealed class SemanticModel {
   /// <summary>pb36 type aliases (<c>TYPE Name AS type</c>): alias name → aliased surface type. The binder resolves them away; the back-emitter substitutes the target wherever a surface type name is printed.</summary>
   public Dictionary<string, TypeName> TypeAliases { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+  /// <summary>pb36 $RESOURCE: embedded file bytes per resource array symbol; codegen emits them as the array's initialized data.</summary>
+  public Dictionary<VariableSymbol, byte[]> ResourceData { get; } = new(ReferenceEqualityComparer.Instance);
+
   /// <summary>pb36 nullable types (<c>T?</c>): maps a synthesized nullable UDT's name to its underlying value type. A UDT in this set carries a <c>Value</c> field and a <c>HasValue</c> presence flag.</summary>
   public Dictionary<string, PbType> NullableUnderlying { get; } = new(StringComparer.OrdinalIgnoreCase);
 

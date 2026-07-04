@@ -358,6 +358,15 @@ public sealed partial class Parser {
       case "WHILE": return this.ParseWhile();
       case "EXIT": return this.ParseExit();
       case "ITERATE": return this.ParseIterate();
+      case "REQUIRE" or "ENSURE" when DialectFacts.IsAvailable(LanguageFeature.Contracts, this._dialect): {
+        // pb36 contracts: a checked condition (error 5 on violation), compiled out under --optimize
+        var kw = this.Advance();
+        var cond = this.ParseExpression();
+        string? msg = null;
+        if (this.Match(TokenKind.Comma))
+          msg = this.Expect(TokenKind.StringLiteral, "contract message").StringValue;
+        return new RequireStmt(kw.Position, cond, msg, kw.Text.Equals("ENSURE", StringComparison.OrdinalIgnoreCase));
+      }
       case "WRITE": return this.ParseWrite();
       case "CHAIN": {
         var chainPos = this.Advance().Position;
@@ -449,6 +458,14 @@ public sealed partial class Parser {
       if (this.Match(TokenKind.Comma))
         message = this.Expect(TokenKind.StringLiteral, "assertion message").StringValue;
       return new StaticAssertStmt(token.Position, condition, message);
+    }
+    // pb36 $RESOURCE name, "file": bake a file into the image as a BYTE array
+    if (token.Text.Equals("RESOURCE", StringComparison.OrdinalIgnoreCase)) {
+      this.Require(LanguageFeature.ResourceEmbed);
+      var name = this.Expect(TokenKind.Identifier, "resource array name");
+      this.Expect(TokenKind.Comma, "','");
+      var file = this.Expect(TokenKind.StringLiteral, "resource file name");
+      return new ResourceStmt(token.Position, name.Text, file.StringValue!);
     }
     var arguments = new List<Token>();
     while (this.Current.Kind is not (TokenKind.EndOfLine or TokenKind.EndOfFile))

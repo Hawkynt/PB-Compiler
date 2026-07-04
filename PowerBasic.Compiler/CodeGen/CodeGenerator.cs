@@ -919,6 +919,13 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       var bytes = symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms
         ? HvDescriptorBytes                       // dword bounds + EMS handle + page cache (EMS/XMS ride the same paged descriptor)
         : Math.Max(symbol.Type.Size, 1);
+      // pb36 $RESOURCE: the array's slot IS the embedded file (padded to the slot size)
+      if (model.ResourceData.TryGetValue(symbol, out var resource)) {
+        asm.Db(resource);
+        if (bytes > resource.Length)
+          asm.Db(new byte[bytes - resource.Length]);
+        continue;
+      }
       asm.Db(new byte[bytes]);
     }
 
@@ -1247,8 +1254,29 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         this.ApplyMeta(meta);
         break;
 
-      case EquateStmt or DefTypeStmt or DataStmt or StaticAssertStmt:
-        break; // declarations & module bookkeeping - nothing to execute ($ASSERT was checked by the binder)
+      case EquateStmt or DefTypeStmt or DataStmt or StaticAssertStmt or ResourceStmt:
+        break; // declarations & module bookkeeping - nothing to execute ($ASSERT bound, $RESOURCE baked into data)
+
+      // pb36 contract: violation prints the message (when given) and raises error 5.
+      // $OPTIMIZE SPEED is the release mode - it compiles the checks out entirely.
+      case RequireStmt rq: {
+        if (this.OptimizeSpeed)
+          break;
+        var asm2 = this._asm;
+        var ok = asm2.DefineLabel();
+        this.EmitCondition(rq.Condition);   // truth in AX / ZF
+        asm2.Jnz(ok);
+        if (rq.Message is { Length: > 0 } msg) {
+          asm2.Mov(Reg.SI, Imm.OffsetOf(this.LiteralOf(msg)));
+          asm2.Mov(Reg.CX, msg.Length);
+          asm2.Call(this._rt.PrintStr);
+          asm2.Call(this._rt.PrintNewLine);
+        }
+        asm2.Mov(Reg.AX, 5);
+        asm2.Call(this._rt.Raise);
+        asm2.MarkLabel(ok);
+        break;
+      }
 
       default:
         this.Unsupported(statement);

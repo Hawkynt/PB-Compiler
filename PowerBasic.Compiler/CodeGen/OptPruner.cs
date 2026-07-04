@@ -15,7 +15,7 @@ namespace PowerBasic.Compiler.CodeGen;
 /// DEF SEG follows with only provably segment-transparent statements between
 /// them (no PEEK/POKE family, no BLOAD/BSAVE/interrupts, no inline asm, no
 /// user calls, no control flow). Anything unrecognized counts as an observer.</item>
-/// <item><b>GOTO threading (O26)</b>: a GOTO whose target label's next executable
+/// <item><b>GOTO threading (O27)</b>: a GOTO whose target label's next executable
 /// statement is another GOTO retargets to the final label of the chain (cycle-guarded),
 /// so a jump cascade collapses to one hop already at the source level.</item>
 /// </list>

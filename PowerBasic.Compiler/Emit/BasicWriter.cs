@@ -605,6 +605,14 @@ public sealed class BasicWriter {
       case DeferStmt s: this.Line("' DEFER:"); this.WriteStatement(s.Deferred); break;
       case MetaStmt s: this.WriteMeta(s); break;
       case StaticAssertStmt: break;   // checked at bind time - nothing to emit, pb35 never sees it
+      case RequireStmt rq:
+        // pb36 contract: checked builds raise error 5 (message printed first); the codegen
+        // compiles the check out under $OPTIMIZE SPEED, the decompile always shows it
+        this.Line(rq.Message is { Length: > 0 } cmsg
+          ? $"IF NOT ({this.Expr(rq.Condition)}) THEN PRINT {Quote(cmsg)} : ERROR 5"
+          : $"IF NOT ({this.Expr(rq.Condition)}) THEN ERROR 5");
+        break;
+      case ResourceStmt res: this.WriteResource(res); break;
       case TypeDecl or UnionDecl or TypeAliasDecl or EnumDecl or DeclareStmt or SubDecl or FunctionDecl or DefFnDecl or DefTypeStmt: break; // emitted from the unit declaration pass (a type alias is resolved away entirely)
       case HandlerSaveStmt or HandlerRestoreStmt or HandlerArmStmt or HandlerReraiseStmt: break;            // synthesized coroutine plumbing
       default: this.Line($"' [unsupported: {statement.GetType().Name}]"); break;
@@ -860,6 +868,26 @@ public sealed class BasicWriter {
     --this._indent;
     this.Line("END SELECT");
   }
+
+  /// <summary>pb36 $RESOURCE: pb35 gets the same bytes as DIM + READ loop over labeled DATA lines.</summary>
+  private void WriteResource(ResourceStmt res) {
+    var key = res.Name + "()";
+    if (!this._model.ModuleVariables.TryGetValue(key, out var symbol) || !this._model.ResourceData.TryGetValue(symbol, out var bytes))
+      return;   // binder already reported the unreadable file
+    var id = ++this._tempCounter;
+    var dataLabel = $"Sres{id}";
+    var counter = $"Sresi{id}%";
+    this.Line($"DIM {res.Name}(0 TO {bytes.Length - 1}) AS BYTE");
+    this.Line($"RESTORE {dataLabel}");
+    this.Line($"FOR {counter} = 0 TO {bytes.Length - 1}");
+    this.Line($"  READ {res.Name}({counter})");
+    this.Line("NEXT");
+    this.LineNoIndent($"{dataLabel}:");
+    for (var i = 0; i < bytes.Length; i += 16)
+      this.Line("DATA " + string.Join(", ", bytes.Skip(i).Take(16)));
+  }
+
+  private static string Quote(string text) => "\"" + text.Replace("\"", "\"\"") + "\"";
 
   private void WriteTry(TryStmt s) {
     // Lower TRY/CATCH/FINALLY onto pb35 ON ERROR (the same machinery the binder uses, no RESUME):
