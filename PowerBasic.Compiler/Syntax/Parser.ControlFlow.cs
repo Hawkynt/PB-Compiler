@@ -158,8 +158,18 @@ public sealed partial class Parser {
     var variable = this.ParseLValue();
     this.ExpectKeyword("IN");
     var collection = this.ParseExpression();
+    // a bare range source (FOR EACH v IN lo TO hi [STEP s]) - no brackets needed
+    Expression? rangeHi = null, rangeStep = null;
+    if (this.TryMatchKeyword("TO")) {
+      rangeHi = this.ParseExpression();
+      if (this.TryMatchKeyword("STEP"))
+        rangeStep = this.ParseExpression();
+    }
     var body = this.ParseBody("NEXT");
     this.ConsumeNext();
+
+    if (rangeHi != null)
+      return new ForStmt(pos, variable, collection, rangeHi, rangeStep, body);
 
     // a single [lo TO hi] range -> plain counted loop over the user variable
     if (collection is ArrayLiteralExpr { Elements: [RangeElement range] })

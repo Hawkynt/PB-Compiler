@@ -104,6 +104,14 @@ public sealed partial class Parser {
     Expression? prevRight = null;   // the last comparison's right operand, reused as the next link's left when chaining
     var links = 0;
     for (;;) {
+      // pb36 membership test: x IN lo TO hi / x IN {a, b, lo TO hi} - desugared right here
+      // to plain comparisons (like chained comparison), so nothing downstream ever sees IN
+      if (!this._suppressInOperator && this.IsKeyword(0, "IN")) {
+        this.Require(LanguageFeature.InOperator);
+        var inPos = this.Advance().Position;
+        left = this.ParseMembership(inPos, left);
+        continue;
+      }
       var op = this.Current.Kind switch {
         TokenKind.Equals => BinaryOp.Equal,
         TokenKind.NotEquals => BinaryOp.NotEqual,
@@ -137,6 +145,36 @@ public sealed partial class Parser {
         left = new BinaryExpr(position, op.Value, left, right);
       prevRight = right;
     }
+  }
+
+  /// <summary>
+  /// The right side of a membership test: a collection literal (OR chain of per-element tests,
+  /// a range element testing its bounds) or a bare <c>lo TO hi</c> range (bounds AND). The tested
+  /// value is reused per element - like chained comparison it should be side-effect-free.
+  /// </summary>
+  private Expression ParseMembership(SourcePosition pos, Expression value) {
+    if (this.Current.Kind is TokenKind.LBrace or TokenKind.LBracket) {
+      var literal = (ArrayLiteralExpr)this.ParseArrayLiteral();
+      Expression? result = null;
+      foreach (var element in literal.Elements) {
+        var test = element switch {
+          ValueElement v => new BinaryExpr(pos, BinaryOp.Equal, value, v.Value),
+          RangeElement r => new BinaryExpr(pos, BinaryOp.And,
+            new BinaryExpr(pos, BinaryOp.GreaterEqual, value, r.Lo),
+            new BinaryExpr(pos, BinaryOp.LessEqual, value, r.Hi)),
+          _ => throw this.Error("a spread cannot appear in a membership test"),
+        };
+        result = result == null ? test : new BinaryExpr(pos, BinaryOp.Or, result, test);
+      }
+      return result ?? throw this.Error("a membership list cannot be empty");
+    }
+
+    var lo = this.ParseTruth();
+    this.ExpectKeyword("TO");
+    var hi = this.ParseTruth();
+    return new BinaryExpr(pos, BinaryOp.And,
+      new BinaryExpr(pos, BinaryOp.GreaterEqual, value, lo),
+      new BinaryExpr(pos, BinaryOp.LessEqual, value, hi));
   }
 
   private Expression ParseTruth() {

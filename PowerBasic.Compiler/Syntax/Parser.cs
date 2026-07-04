@@ -107,6 +107,9 @@ public sealed partial class Parser {
       && token.Text.Equals(keyword, StringComparison.OrdinalIgnoreCase);
   }
 
+  /// <summary>True while parsing the expression parts of a statement that uses IN as its own delimiter (REPLACE), so the membership operator stays out of the way.</summary>
+  private bool _suppressInOperator;
+
   private bool TryMatchKeyword(string keyword) {
     if (!this.IsKeyword(0, keyword))
       return false;
@@ -328,10 +331,18 @@ public sealed partial class Parser {
         return new CommandStmt(execPos, "EXECUTE", [this.ParseExpression()]);
       }
       case "REPLACE": {
+        // REPLACE find WITH with IN target: IN is this statement's delimiter, so the pb36
+        // membership operator is suppressed while parsing the find/with expressions
         var replacePos = this.Advance().Position;
-        var find = this.ParseExpression();
-        this.ExpectKeyword("WITH");
-        var with = this.ParseExpression();
+        this._suppressInOperator = true;
+        Expression find, with;
+        try {
+          find = this.ParseExpression();
+          this.ExpectKeyword("WITH");
+          with = this.ParseExpression();
+        } finally {
+          this._suppressInOperator = false;
+        }
         this.ExpectKeyword("IN");
         return new ReplaceStmt(replacePos, find, with, this.ParseLValue());
       }
