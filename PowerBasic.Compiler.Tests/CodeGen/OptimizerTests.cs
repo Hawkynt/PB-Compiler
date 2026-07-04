@@ -202,6 +202,29 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Execute_GivenNonLeftLeaningConcatShapes_WhenOptimized_ThenSingleAllocPathBuildsCorrectly() {
+    // O9 closure: right-nested and mixed concat trees flatten into the O24 single-allocation
+    // builder (FlattenStringConcat collects BOTH sides recursively); barrier operands
+    // (function results sharing a buffer) stay on the pairwise consume-immediately path by
+    // design - staging them would alias. This pins the non-left-leaning shapes' behavior.
+    const string source = """
+      $OPTIMIZE SPEED
+      a$ = "aa"
+      b$ = "bb"
+      c$ = "cc"
+      d$ = a$ + (b$ + c$)
+      e$ = (a$ + b$) + (c$ + a$)
+      f$ = a$ + (b$ + (c$ + "zz"))
+      PRINT d$; "|"; e$; "|"; f$
+      """;
+    var model = BindModel(source);
+    var generator = new CodeGenerator(model);
+    var exe = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(DosBoxRunner.Normalize(DosBoxRunner.Run(exe)), Is.EqualTo("aabbcc|aabbccaa|aabbcczz\n"));
+  }
+
+  [Test]
   public void Emit_GivenLatticeProvedComparison_WhenOptimized_ThenDeadArmVanishes() {
     // O16 completed: the interval lattice (not just FOR-counter ranges) feeds comparison
     // folding - x% is provably 200 at the IF, so x% < 300 is decidable and the dead ELSE
