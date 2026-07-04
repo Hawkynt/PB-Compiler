@@ -491,6 +491,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     var standalone = this.Optimize && !this._allowExternalCalls && !this._isUnit;
     asm.EnableSchedule = standalone && this.OptimizeSpeed;
     asm.EnablePeephole = standalone && !asm.EnableSchedule;
+    // jump threading composes with either pass: a pure fixup rewrite over the final stream,
+    // collapsing ITERATE -> loop-end -> loop-head and GOTO -> GOTO cascades to one hop
+    asm.EnableJumpThreading = standalone;
     var userMain = asm.DefineLabel("user_main");
     this._scratch = asm.DefineLabel("cg_scratch");
 

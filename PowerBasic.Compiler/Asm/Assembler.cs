@@ -94,6 +94,7 @@ public sealed partial class Assembler {
   public byte[] ToArray() {
     this.RunSchedule();
     this.RunPeephole();
+    this.RunJumpThreading();
     var result = this._buffer.ToArray();
     foreach (var fixup in this._fixups) {
       if (!fixup.Target.IsBound)
@@ -114,6 +115,7 @@ public sealed partial class Assembler {
   public RelocatableImage ToRelocatable() {
     this.RunSchedule();
     this.RunPeephole();
+    this.RunJumpThreading();
     var result = this._buffer.ToArray();
     var relocations = new List<AsmRelocation>();
     var registered = new HashSet<Label>(this._namedLabels.Values, ReferenceEqualityComparer.Instance);
@@ -150,6 +152,71 @@ public sealed partial class Assembler {
       .Where(pair => pair.Value.IsBound)
       .ToDictionary(pair => pair.Key, pair => pair.Value.Position, StringComparer.OrdinalIgnoreCase);
     return new(result, relocations, bound);
+  }
+
+  /// <summary>
+  /// When set, jump fixups whose bound target lands on an unconditional JMP are retargeted to
+  /// that jump's final destination before resolution (the cascade an ITERATE creates - jump to
+  /// the loop end, which jumps back to the loop head - collapses to one hop; GOTO -> GOTO chains
+  /// likewise). Off by default; the optimizer turns it on for the program image.
+  /// </summary>
+  public bool EnableJumpThreading { get; set; }
+  private bool _jumpThreadingRan;
+
+  /// <summary>
+  /// Jump threading over the finished stream: a pure fixup rewrite (byte-length-preserving, no
+  /// instruction moves), run after the scheduler/peephole so every position is final. Only real
+  /// jump instructions thread (short/near JMP and Jcc - identified by the opcode byte in front of
+  /// their displacement fixup); CALL keeps its target. Chains are followed with a hop budget so a
+  /// jump cycle (an intentional endless loop) terminates; a short jump only retargets while the
+  /// new displacement still fits in a byte.
+  /// </summary>
+  public void RunJumpThreading() {
+    if (!this.EnableJumpThreading || this._jumpThreadingRan)
+      return;
+    this._jumpThreadingRan = true;
+
+    // unconditional JMPs by instruction start: E9 rel16 / EB rel8, displacement fixup right after
+    var jmpAt = new Dictionary<int, int>();
+    for (var i = 0; i < this._fixups.Count; ++i) {
+      var f = this._fixups[i];
+      if (f.Position < 1)
+        continue;
+      var op = this._buffer[f.Position - 1];
+      if ((f.Kind == FixupKind.Rel16 && op == 0xE9) || (f.Kind == FixupKind.Rel8 && op == 0xEB))
+        jmpAt[f.Position - 1] = i;
+    }
+    if (jmpAt.Count == 0)
+      return;
+
+    for (var i = 0; i < this._fixups.Count; ++i) {
+      var f = this._fixups[i];
+      if (f.Position < 1 || !f.Target.IsBound)
+        continue;
+      var op = this._buffer[f.Position - 1];
+      var isJump = f.Kind switch {
+        FixupKind.Rel8 => op is 0xEB or (>= 0x70 and <= 0x7F),
+        FixupKind.Rel16 => op == 0xE9 || (f.Position >= 2 && this._buffer[f.Position - 2] == 0x0F && op is >= 0x80 and <= 0x8F),
+        _ => false,
+      };
+      if (!isJump)
+        continue;
+
+      var (target, addend) = (f.Target, f.Addend);
+      for (var hops = 0; hops < 8 && target.IsBound; ++hops) {
+        if (!jmpAt.TryGetValue(target.Position + addend, out var j) || j == i)
+          break;
+        var next = this._fixups[j];
+        if (!next.Target.IsBound || (ReferenceEquals(next.Target, target) && next.Addend == addend))
+          break;
+        (target, addend) = (next.Target, next.Addend);
+      }
+      if (ReferenceEquals(target, f.Target) && addend == f.Addend)
+        continue;
+      if (f.Kind == FixupKind.Rel8 && target.Position + addend - (f.Position + 1) is < sbyte.MinValue or > sbyte.MaxValue)
+        continue;   // the short encoding cannot reach the final destination - keep the hop
+      this._fixups[i] = f with { Target = target, Addend = addend };
+    }
   }
 
   private static void ApplyFixup(byte[] result, Fixup fixup) {

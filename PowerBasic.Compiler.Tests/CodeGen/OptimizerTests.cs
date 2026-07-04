@@ -173,6 +173,38 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Prune_GivenGotoChain_WhenPruned_ThenGotoThreadsToFinalLabel() {
+    // GOTO Hop lands on a label whose next executable statement is another GOTO - the
+    // decompiled (and generated) control flow should jump straight to the final label
+    var model = BindModel("i% = 1\nIF i% = 1 THEN GOTO Hop\nPRINT 0\nHop:\nGOTO Final\nPRINT 1\nFinal:\nPRINT 2\nEND");
+    OptPruner.Prune(model);
+    var gotos = AllGotos(model.MainBody);
+    Assert.That(gotos.Any(g => g.Target.Equals("Final", StringComparison.OrdinalIgnoreCase) )
+      && gotos.Count(g => g.Target.Equals("Hop", StringComparison.OrdinalIgnoreCase)) == 0,
+      "the conditional GOTO threads through Hop straight to Final");
+  }
+
+  [Test]
+  public void Prune_GivenGotoCycle_WhenPruned_ThenTerminatesUnchanged() {
+    var model = BindModel("GOTO A\nA:\nGOTO B\nB:\nGOTO A\n");
+    Assert.DoesNotThrow(() => OptPruner.Prune(model), "a GOTO cycle must not hang the threader");
+  }
+
+  private static List<PowerBasic.Compiler.Syntax.Ast.GotoStmt> AllGotos(IEnumerable<PowerBasic.Compiler.Syntax.Ast.Statement> body) {
+    var result = new List<PowerBasic.Compiler.Syntax.Ast.GotoStmt>();
+    foreach (var s in body)
+      switch (s) {
+        case PowerBasic.Compiler.Syntax.Ast.GotoStmt g: result.Add(g); break;
+        case PowerBasic.Compiler.Syntax.Ast.IfStmt i:
+          result.AddRange(AllGotos(i.Then));
+          foreach (var (_, b) in i.ElseIfs) result.AddRange(AllGotos(b));
+          if (i.Else != null) result.AddRange(AllGotos(i.Else));
+          break;
+      }
+    return result;
+  }
+
+  [Test]
   public void Prune_GivenDataInDeadRegion_WhenPruned_ThenDataSurvives() {
     var model = BindModel("GOTO Tail\nDATA 1,2,3\nPRINT 9\nTail:\nREAD a%\nPRINT a%\nEND");
     OptPruner.Prune(model);
