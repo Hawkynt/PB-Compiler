@@ -2123,6 +2123,66 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Licm_GivenBodyWithIfBlock_WhenAnalyzed_ThenUnconditionalInvariantsStillHoist() {
+    // an IF in the body previously disabled LICM wholesale; the invariant k%*m% in the
+    // UNCONDITIONAL statement and in the IF condition must still hoist, while the write
+    // to a% inside the branch is honored by the write-set
+    const string source = """
+      k% = 7
+      m% = 13
+      FOR i% = 1 TO 10
+        b% = k% * m% + i%
+        IF k% * m% > i% THEN
+          a% = a% + 1
+        END IF
+      NEXT i%
+      END
+      """;
+    var (slots, preheader, uses) = RunLicmAnalysis(source);
+    Assert.Multiple(() => {
+      Assert.That(slots, Is.EqualTo(1), "k%*m% is invariant and unconditionally evaluated (statement + condition)");
+      Assert.That(preheader, Is.EqualTo(1));
+      Assert.That(uses, Is.EqualTo(1), "the IF-condition occurrence reloads the slot");
+    });
+  }
+
+  [Test]
+  public void Licm_GivenInvariantOnlyInsideBranch_WhenAnalyzed_ThenNotHoisted() {
+    // a value computed ONLY under the IF must not run unconditionally in the preheader
+    const string source = """
+      k% = 7
+      m% = 13
+      FOR i% = 1 TO 10
+        IF i% > 5 THEN
+          a% = k% * m% + a%
+        END IF
+      NEXT i%
+      END
+      """;
+    var (slots, _, _) = RunLicmAnalysis(source);
+    Assert.That(slots, Is.EqualTo(0), "branch-only expressions stay conditional");
+  }
+
+  [Test]
+  public void Licm_GivenBranchWritingOperand_WhenAnalyzed_ThenInvariantKilled() {
+    // k% is written inside the branch - k%*m% is NOT invariant even though the
+    // unconditional statement uses it
+    const string source = """
+      k% = 7
+      m% = 13
+      FOR i% = 1 TO 10
+        b% = k% * m% + i%
+        IF i% > 5 THEN
+          k% = k% + 1
+        END IF
+      NEXT i%
+      END
+      """;
+    var (slots, _, _) = RunLicmAnalysis(source);
+    Assert.That(slots, Is.EqualTo(0), "a conditional write to an operand kills the invariant");
+  }
+
+  [Test]
   public void Licm_GivenInvariantMultiply_WhenAnalyzed_ThenOneSlotWithOnePreheaderAndOneUse() {
     // k%*m% appears twice in the body; both k% and m% are not written in the body.
     // Expected: 1 LICM slot, 1 preheader DEFINE (first occurrence), 1 USE (second).

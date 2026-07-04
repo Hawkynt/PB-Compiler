@@ -126,9 +126,22 @@ public static class OptCommonSubexpr {
   /// </summary>
   private static bool IsBodyFlatStraightLine(IReadOnlyList<Statement> body) {
     foreach (var s in body)
-      if (s is not (AssignStmt or IncrDecrStmt or PrintStmt
-          or MetaStmt or EquateStmt or DefTypeStmt or DataStmt))
-        return false;
+      switch (s) {
+        case AssignStmt or IncrDecrStmt or PrintStmt
+            or MetaStmt or EquateStmt or DefTypeStmt or DataStmt:
+          break;
+        // an IF/SELECT is analyzable when every nested block is - its writes are
+        // conditional but the write-set scan unions them, which is conservative;
+        // hoisting stays restricted to unconditionally-evaluated expressions
+        case IfStmt i when IsBodyFlatStraightLine(i.Then)
+            && i.ElseIfs.All(e => IsBodyFlatStraightLine(e.Body))
+            && (i.Else == null || IsBodyFlatStraightLine(i.Else)):
+          break;
+        case SelectStmt sel when sel.Arms.All(a => IsBodyFlatStraightLine(a.Body)):
+          break;
+        default:
+          return false;
+      }
     return true;
   }
 
@@ -152,6 +165,17 @@ public static class OptCommonSubexpr {
           else if (id.Target is CallOrIndexExpr && model.VariableBindings.TryGetValue(id.Target, out var iarr)
               && iarr.Type is ArrayType)
             written.Add(iarr);
+          break;
+        case IfStmt i:
+          CollectWrites(i.Then, written, model);
+          foreach (var (_, elseBody) in i.ElseIfs)
+            CollectWrites(elseBody, written, model);
+          if (i.Else != null)
+            CollectWrites(i.Else, written, model);
+          break;
+        case SelectStmt sel:
+          foreach (var arm in sel.Arms)
+            CollectWrites(arm.Body, written, model);
           break;
         // PrintStmt, MetaStmt, EquateStmt, DefTypeStmt, DataStmt: no tracked writes
         default:
@@ -233,6 +257,16 @@ public static class OptCommonSubexpr {
         foreach (var item in p.Items)
           if (item.Value is { } v && IsBarrierFree(v, model))
             FindLicmIn(v, written, firstSlot, slotOfKey, varId, result, model);
+        break;
+      // an IF's FIRST condition is evaluated on every pass (unconditionally), so its
+      // invariant subexpressions hoist; ELSEIF conditions and all branch bodies run
+      // conditionally and are left alone (only their writes were unioned above).
+      case IfStmt i when IsBarrierFree(i.Condition, model):
+        FindLicmIn(i.Condition, written, firstSlot, slotOfKey, varId, result, model);
+        break;
+      // likewise a SELECT's subject is evaluated unconditionally
+      case SelectStmt sel when IsBarrierFree(sel.Subject, model):
+        FindLicmIn(sel.Subject, written, firstSlot, slotOfKey, varId, result, model);
         break;
     }
     // MetaStmt, EquateStmt, DefTypeStmt, DataStmt: inert, no expressions to scan
