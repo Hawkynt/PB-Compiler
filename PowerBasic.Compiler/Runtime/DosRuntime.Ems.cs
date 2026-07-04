@@ -246,6 +246,7 @@ public sealed partial class DosRuntime {
   /// <summary>EmsZero: DX = handle, CX:BX = byte count - zero-fills the allocation page by page.</summary>
   private void EmitEmsZero(Assembler asm) {
     this.EmsZero = asm.MarkLabel("rt_emszero");
+    asm.Mov(Mem.Word(asm.Lbl("rt_ems_curhnd")), 0xFFFF);   // the zero fill remaps the frame
     var loop = asm.DefineLabel();
     var small = asm.DefineLabel();
     var done = asm.DefineLabel();

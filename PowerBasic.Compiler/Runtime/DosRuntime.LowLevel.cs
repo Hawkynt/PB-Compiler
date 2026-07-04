@@ -157,5 +157,12 @@ public sealed partial class DosRuntime {
     asm.Dw(0);
     asm.MarkLabel("rt_eresumenext");
     asm.Dw(0);
+    // EMS page-frame mapping cache: which handle/logical-page pair is mapped at physical 0/1.
+    // GLOBAL, not per-array - every EMS/XMS array shares the one frame, so a remap by any of
+    // them must invalidate the others' idea of the window. 0xFFFF = nothing mapped.
+    asm.MarkLabel("rt_ems_curhnd");
+    asm.Dw(0xFFFF);
+    asm.MarkLabel("rt_ems_curpage");
+    asm.Dw(0xFFFF);
   }
 }

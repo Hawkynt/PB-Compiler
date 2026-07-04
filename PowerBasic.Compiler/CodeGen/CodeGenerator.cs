@@ -916,8 +916,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         continue;
       asm.Align(2);
       asm.MarkLabel(label);
-      var bytes = symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual
-        ? HvDescriptorBytes                       // dword bounds + EMS handle + page cache
+      var bytes = symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms
+        ? HvDescriptorBytes                       // dword bounds + EMS handle + page cache (EMS/XMS ride the same paged descriptor)
         : Math.Max(symbol.Type.Size, 1);
       asm.Db(new byte[bytes]);
     }

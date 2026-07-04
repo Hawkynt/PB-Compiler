@@ -197,7 +197,7 @@ public sealed partial class CodeGenerator {
   private void EmitRedimPreserve(VariableSymbol symbol, IReadOnlyList<(Expression? Lower, Expression Upper)> bounds, SourcePosition position) {
     var asm = this._asm;
     var arrayType = (ArrayType)symbol.Type;
-    if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Absolute) {
+    if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Absolute or ArrayClass.Ems or ArrayClass.Xms) {
       this.Unsupported(position, $"REDIM PRESERVE on {symbol.ArrayClass} arrays");
       return;
     }
@@ -401,7 +401,7 @@ public sealed partial class CodeGenerator {
       return;
     }
 
-    if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual) {
+    if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
       var hv = this.SlotOf(symbol);
       asm.Mov(Reg.AX, Mem.Word(hv, 8));
       asm.Mov(Reg.DX, Mem.Word(hv, 10));
@@ -454,8 +454,8 @@ public sealed partial class CodeGenerator {
       return null;
     }
 
-    if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual)
-      return this.EmitHugeOrVirtualElementPlace(indexes, symbol, arrayType, at);
+    if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms)
+      return this.EmitHugeOrVirtualElementPlace(indexes, symbol, arrayType, at);   // EMS/XMS ride the paged (VIRTUAL) machinery
     var elementSize = Math.Max(arrayType.Element.Size, 1);
 
     if (arrayType.StaticBounds is { } bounds) {
@@ -568,7 +568,10 @@ public sealed partial class CodeGenerator {
       return new(Mem.At(Reg.BX).Es(), Far: true);
     }
 
-    // VIRTUAL: logical page = offset >> 14; in-page offset = offset & 0x3FFF
+    // VIRTUAL/EMS/XMS: logical page = offset >> 14; in-page offset = offset & 0x3FFF.
+    // The mapping cache is GLOBAL (rt_ems_curhnd/curpage): all paged arrays share the one
+    // page frame, so the check must cover both which handle and which page is in the window.
+    var remap = asm.DefineLabel();
     var mapped = asm.DefineLabel();
     asm.Mov(Reg.BX, Reg.AX);
     asm.And(Reg.BX, 0x3FFF);
@@ -577,12 +580,16 @@ public sealed partial class CodeGenerator {
     asm.Mov(Reg.CL, (Imm)2);
     asm.Shl(Reg.DX, Reg.CL);
     asm.Or(Reg.AX, Reg.DX);                       // AX = logical page
-    asm.Cmp(Reg.AX, Mem.Word(descriptor, 18));
+    asm.Mov(Reg.DX, Mem.Word(descriptor, 16));    // EMS handle
+    asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_ems_curpage")));
+    asm.Jne(remap);
+    asm.Cmp(Reg.DX, Mem.Word(asm.Lbl("rt_ems_curhnd")));
     asm.Je(mapped);
-    asm.Mov(Mem.Word(descriptor, 18), Reg.AX);
+    asm.MarkLabel(remap);
+    asm.Mov(Mem.Word(asm.Lbl("rt_ems_curpage")), Reg.AX);
+    asm.Mov(Mem.Word(asm.Lbl("rt_ems_curhnd")), Reg.DX);
     asm.Push(Reg.BX);
     asm.Mov(Reg.BX, Reg.AX);
-    asm.Mov(Reg.DX, Mem.Word(descriptor, 16));    // EMS handle
     asm.Call(this._rt.EmsMap2);                   // page pair -> physical 0/1
     asm.Pop(Reg.BX);
     asm.MarkLabel(mapped);
