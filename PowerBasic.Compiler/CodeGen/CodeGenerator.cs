@@ -1240,8 +1240,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         this.ApplyMeta(meta);
         break;
 
-      case EquateStmt or DefTypeStmt or DataStmt:
-        break; // declarations & module bookkeeping - nothing to execute
+      case EquateStmt or DefTypeStmt or DataStmt or StaticAssertStmt:
+        break; // declarations & module bookkeeping - nothing to execute ($ASSERT was checked by the binder)
 
       default:
         this.Unsupported(statement);

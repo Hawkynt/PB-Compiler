@@ -18,7 +18,7 @@ public readonly record struct ConstantValue(long? Integer, double? Float, string
 /// Evaluates constant expressions at compile time: equate definitions, array
 /// bounds, CASE ranges, DATA limits. Equates resolve through the supplied table.
 /// </summary>
-public sealed class ConstantFolder(IReadOnlyDictionary<string, ConstantValue> equates, IReadOnlyDictionary<string, long>? enumMembers = null) {
+public sealed class ConstantFolder(IReadOnlyDictionary<string, ConstantValue> equates, IReadOnlyDictionary<string, long>? enumMembers = null, Func<Expression, ConstantValue?>? resolve = null) {
 
   private static readonly IReadOnlyDictionary<string, ConstantValue> _empty = new Dictionary<string, ConstantValue>();
 
@@ -64,7 +64,9 @@ public sealed class ConstantFolder(IReadOnlyDictionary<string, ConstantValue> eq
         return cond != 0 ? this.TryFold(t.WhenTrue) : this.TryFold(t.WhenFalse);
 
       default:
-        return null;
+        // a caller-supplied resolver folds what the surface tree alone cannot
+        // (e.g. bind-time-desugared reflection calls recorded in the semantic model)
+        return resolve?.Invoke(expression);
     }
   }
 

@@ -111,6 +111,9 @@ public sealed record UnionDecl(SourcePosition Position, string Name, IReadOnlyLi
 /// <summary>pb36 type alias: <c>TYPE Name AS type</c> (single line, no END TYPE) - a bind-time name for an existing type.</summary>
 public sealed record TypeAliasDecl(SourcePosition Position, string Name, TypeName Target) : Statement(Position);
 
+/// <summary>pb36 <c>$ASSERT cond [, "message"]</c>: a compile-time assertion checked by the binder; emits no code.</summary>
+public sealed record StaticAssertStmt(SourcePosition Position, Expression Condition, string? Message) : Statement(Position);
+
 /// <summary>DEF FN single-line or block form.</summary>
 public sealed record DefFnDecl(SourcePosition Position, string Name, TypeSuffix Suffix, IReadOnlyList<Parameter> Parameters, Expression? Body, IReadOnlyList<Statement>? BlockBody) : Statement(Position);
 

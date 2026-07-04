@@ -604,6 +604,7 @@ public sealed class BasicWriter {
       case DestructureStmt s: this.Line($"{string.Join(", ", s.Targets.Select(t => this.Expr(t)))} = {this.Expr(s.Value)}"); break;
       case DeferStmt s: this.Line("' DEFER:"); this.WriteStatement(s.Deferred); break;
       case MetaStmt s: this.WriteMeta(s); break;
+      case StaticAssertStmt: break;   // checked at bind time - nothing to emit, pb35 never sees it
       case TypeDecl or UnionDecl or TypeAliasDecl or EnumDecl or DeclareStmt or SubDecl or FunctionDecl or DefFnDecl or DefTypeStmt: break; // emitted from the unit declaration pass (a type alias is resolved away entirely)
       case HandlerSaveStmt or HandlerRestoreStmt or HandlerArmStmt or HandlerReraiseStmt: break;            // synthesized coroutine plumbing
       default: this.Line($"' [unsupported: {statement.GetType().Name}]"); break;

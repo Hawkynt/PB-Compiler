@@ -86,7 +86,7 @@ public sealed class Binder {
     this._unit = unit;
     this._dialect = dialect;
     this._model = new() { FileName = unit.FileName, Dialect = dialect };
-    this._folder = new(this._model.Equates, this._model.EnumMembers);
+    this._folder = new(this._model.Equates, this._model.EnumMembers, this.FoldDesugared);
   }
 
   public static SemanticModel Bind(CompilationUnit unit, Dialect dialect = Dialect.Pb35) {
@@ -214,6 +214,10 @@ public sealed class Binder {
 
   private void Error(SourcePosition position, string message) => this._model.Errors.Add(new(position, message));
   private void Warn(SourcePosition position, string message) => this._model.Warnings.Add(new(position, message));
+
+  /// <summary>Folder hook: folds what the surface tree alone cannot - bind-time desugars recorded in the model (e.g. compile-time reflection calls already replaced by literals).</summary>
+  private ConstantValue? FoldDesugared(Expression e)
+    => this._model.Desugared.TryGetValue(e, out var d) ? this._folder.TryFold(d) : null;
 
   #region pass 1 - module scan
 
@@ -1937,7 +1941,7 @@ public sealed class Binder {
   }
 
   private void BindAllBodies() {
-    this._folder = new(this._model.Equates, this._model.EnumMembers);
+    this._folder = new(this._model.Equates, this._model.EnumMembers, this.FoldDesugared);
     this.PreScanNestedProcedures();
 
     var main = new Scope(null);
@@ -2718,6 +2722,16 @@ public sealed class Binder {
         if (!DialectFacts.IsAvailable(LanguageFeature.NestedProcedures, this._dialect))
           this.Error(statement.Position, "declaration not allowed inside SUB/FUNCTION");
         break;
+
+      // pb36 $ASSERT: evaluated right here at bind time; emits no code at all
+      case StaticAssertStmt sa: {
+        this.BindExpression(sa.Condition, scope);   // resolves reflection subexpressions into foldable desugars
+        if (this._folder.TryFold(sa.Condition)?.Integer is not { } truth)
+          this.Error(sa.Position, "$ASSERT condition must be a compile-time constant");
+        else if (truth == 0)
+          this.Error(sa.Position, sa.Message is { } m ? $"$ASSERT failed: {m}" : "$ASSERT failed");
+        break;
+      }
 
       case TypeDecl or UnionDecl or TypeAliasDecl or DeclareStmt or SubDecl or FunctionDecl or DefFnDecl:
         if (scope.Proc != null)
@@ -4013,6 +4027,110 @@ public sealed class Binder {
 
   private static bool IsStringType(PbType type) => type is StringType or FixedStringType or FlexType or AsciizType;
 
+
+  #region pb36 compile-time reflection
+
+  /// <summary>
+  /// Binds the compile-time reflection pseudo-functions. Every one of them folds to a literal at
+  /// bind time (recorded in <see cref="SemanticModel.Desugared"/>): TYPEOF$(x) - the display name of
+  /// x's type (x may be a TYPE name or any expression); SIZEOF(T) - storage size of a TYPE name (the
+  /// variable form stays with the regular intrinsic); FIELDCOUNT(T); FIELDNAME$(T, i) (1-based);
+  /// FIELDOFFSET(T, f) and FIELDSIZE(T, f) where f is a field name or a 1-based constant index.
+  /// Returns null when the call is not a reflection form (fall through to intrinsics/procedures).
+  /// </summary>
+  private PbType? TryBindReflection(CallOrIndexExpr call, Scope scope) {
+    var name = call.Suffix == TypeSuffix.String ? call.Name.ToUpperInvariant() + "$" : call.Name.ToUpperInvariant();
+    switch (name) {
+      case "TYPEOF$" when call.Arguments.Count == 1: {
+        this.Require(LanguageFeature.CompileTimeReflection, call.Position);
+        var t = this.ReflectionSubjectType(call.Arguments[0], scope);
+        this._model.Desugared[call] = new StringLiteralExpr(call.Position, t is null ? "" : TypeDisplayName(t));
+        return PbType.String;
+      }
+
+      case "SIZEOF" when call.Arguments is [NameExpr tn] && this.ResolveReflectedTypeName(tn, scope) is { } ty: {
+        this.Require(LanguageFeature.CompileTimeReflection, call.Position);
+        this._model.Desugared[call] = new IntegerLiteralExpr(call.Position, ty.Size, TypeSuffix.None);
+        return PbType.Long;
+      }
+
+      case "FIELDCOUNT" when call.Arguments.Count == 1: {
+        this.Require(LanguageFeature.CompileTimeReflection, call.Position);
+        if (this.ReflectedUdt(call.Arguments[0], scope) is { } udt)
+          this._model.Desugared[call] = new IntegerLiteralExpr(call.Position, udt.Fields.Count, TypeSuffix.None);
+        return PbType.Integer;
+      }
+
+      case "FIELDNAME$" when call.Arguments.Count == 2: {
+        this.Require(LanguageFeature.CompileTimeReflection, call.Position);
+        if (this.ReflectedUdt(call.Arguments[0], scope) is { } udt && this.ReflectedField(udt, call.Arguments[1]) is { } f)
+          this._model.Desugared[call] = new StringLiteralExpr(call.Position, f.Name);
+        return PbType.String;
+      }
+
+      case "FIELDOFFSET" or "FIELDSIZE" when call.Arguments.Count == 2: {
+        this.Require(LanguageFeature.CompileTimeReflection, call.Position);
+        if (this.ReflectedUdt(call.Arguments[0], scope) is { } udt && this.ReflectedField(udt, call.Arguments[1]) is { } f)
+          this._model.Desugared[call] = new IntegerLiteralExpr(call.Position, name == "FIELDOFFSET" ? f.Offset : f.TotalSize, TypeSuffix.None);
+        return PbType.Integer;
+      }
+
+      default:
+        return null;
+    }
+  }
+
+  /// <summary>The type a reflection subject denotes: a TYPE/alias name directly, otherwise the expression's static type.</summary>
+  private PbType? ReflectionSubjectType(Expression e, Scope scope)
+    => e is NameExpr n && this.ResolveReflectedTypeName(n, scope) is { } named ? named : this.BindExpression(e, scope);
+
+  /// <summary>Resolves a bare unsuffixed name to a TYPE/alias when it is NOT shadowed by a variable (variables win, so SIZEOF(x) stays the variable's storage size).</summary>
+  private PbType? ResolveReflectedTypeName(NameExpr n, Scope scope) {
+    if (n.Suffix != TypeSuffix.None || this.ResolveVariable(n.Name, n.Suffix, scope, create: false) != null)
+      return null;
+    return this.ResolveTypeName(new TypeName(n.Position, BuiltinType.None, n.Name));
+  }
+
+  private UdtType? ReflectedUdt(Expression e, Scope scope) {
+    if (this.ReflectionSubjectType(e, scope) is UdtType udt)
+      return udt;
+    this.Error(e.Position, "the reflection subject must be a TYPE (or a variable of one)");
+    return null;
+  }
+
+  /// <summary>A field selector: a bare field name, a string literal, or a 1-based constant index.</summary>
+  private UdtField? ReflectedField(UdtType udt, Expression selector) {
+    switch (selector) {
+      case NameExpr n when udt.FindField(n.Name) is { } f:
+        return f;
+      case StringLiteralExpr s when udt.FindField(s.Value) is { } f:
+        return f;
+      default:
+        if (this._folder.TryFold(selector)?.Integer is { } i && i >= 1 && i <= udt.Fields.Count)
+          return udt.Fields[(int)(i - 1)];
+        this.Error(selector.Position, $"'{udt.Name}' has no such field");
+        return null;
+    }
+  }
+
+  /// <summary>The PB spelling of a type, as TYPEOF$ reports it.</summary>
+  private static string TypeDisplayName(PbType t) => t switch {
+    ScalarType s => s.Kind switch {
+      ScalarKind.SByte => "SBYTE", ScalarKind.QWord => "QWORD",
+      _ => s.Kind.ToString().ToUpperInvariant(),
+    },
+    StringType => "STRING",
+    FixedStringType f => $"STRING * {f.Length}",
+    AsciizType a => $"ASCIIZ * {a.Length}",
+    UdtType u => u.Name,
+    ArrayType a => TypeDisplayName(a.Element) + "()",
+    PointerType p => TypeDisplayName(p.Target) + " PTR",
+    ProcPtrType => "DWORD",
+    _ => t.GetType().Name.ToUpperInvariant(),
+  };
+
+  #endregion
+
   private PbType BindCallOrIndex(CallOrIndexExpr call, Scope scope) {
     // 0. pb36 generic function: a user-declared generic template shadows an intrinsic of the same name
     // (e.g. a generic Max), so resolve it before the array/intrinsic checks
@@ -4049,6 +4167,12 @@ public sealed class Binder {
         this.BindExpression(argument, scope);
       return procPtr.ReturnType ?? this.ErrorType(call.Position, $"SUB-pointer {call.Name} has no result; call it with CALL");
     }
+
+    // pb36 compile-time reflection: TYPEOF$/FIELDCOUNT/FIELDNAME$/FIELDOFFSET/FIELDSIZE (and SIZEOF
+    // of a TYPE name) fold to literals right here - zero runtime footprint, the decompilation and the
+    // codegen only ever see the constant
+    if (this.TryBindReflection(call, scope) is { } reflected)
+      return reflected;
 
     // 2. intrinsic
     var lookupName = call.Suffix == TypeSuffix.String ? call.Name + "$" : call.Name;

@@ -90,6 +90,17 @@ public sealed class BasicWriterTests {
   }
 
   [Test]
+  public void Render_Pb36ReflectionAndAssert_EmitFoldedLiteralsOnly() {
+    var basic = RenderAndRebind("TYPE Point\n  X AS INTEGER\n  Y AS LONG\nEND TYPE\n$ASSERT SIZEOF(Point) = 6\nDIM p AS Point\nPRINT SIZEOF(Point)\nPRINT TYPEOF$(p)\nPRINT FIELDNAME$(Point, 2); FIELDOFFSET(Point, Y)\n", Dialect.Pb36);
+    Assert.Multiple(() => {
+      Assert.That(basic, Does.Not.Contain("SIZEOF").And.Not.Contain("TYPEOF").And.Not.Contain("FIELDNAME").And.Not.Contain("$ASSERT"), "reflection and assertions leave no trace");
+      Assert.That(basic, Does.Contain("PRINT 6"), "SIZEOF folded");
+      Assert.That(basic, Does.Contain("\"Point\""), "TYPEOF$ folded to the type name literal");
+      Assert.That(basic, Does.Contain("\"Y\"; 2"), "FIELDNAME$/FIELDOFFSET folded");
+    });
+  }
+
+  [Test]
   public void Render_Pb36TypeMethod_LiftsToSanitizedProcedureAndRecompiles() {
     var basic = RenderAndRebind("TYPE Counter\n  Value AS LONG\n  SUB Bump(BYVAL by AS LONG)\n    THIS.Value = THIS.Value + by\n  END SUB\nEND TYPE\nDIM c AS Counter\nc.Value = 10\nc.Bump(5)\nPRINT c.Value\n", Dialect.Pb36);
     Assert.That(basic, Does.Contain("SUB Counter_Bump(BYREF THIS AS Counter"), "the method lifts to a THIS-receiver SUB with a pb35-valid name and an explicit passing mode");

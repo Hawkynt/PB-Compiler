@@ -389,6 +389,15 @@ public sealed partial class Parser {
 
   private Statement ParseMeta() {
     var token = this.Advance();
+    // pb36 $ASSERT cond [, "message"]: a real expression, checked at compile time by the binder
+    if (token.Text.Equals("ASSERT", StringComparison.OrdinalIgnoreCase)) {
+      this.Require(LanguageFeature.StaticAssert);
+      var condition = this.ParseExpression();
+      string? message = null;
+      if (this.Match(TokenKind.Comma))
+        message = this.Expect(TokenKind.StringLiteral, "assertion message").StringValue;
+      return new StaticAssertStmt(token.Position, condition, message);
+    }
     var arguments = new List<Token>();
     while (this.Current.Kind is not (TokenKind.EndOfLine or TokenKind.EndOfFile))
       arguments.Add(this.Advance());
