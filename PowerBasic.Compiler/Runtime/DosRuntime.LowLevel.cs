@@ -164,5 +164,13 @@ public sealed partial class DosRuntime {
     asm.Dw(0xFFFF);
     asm.MarkLabel("rt_ems_curpage");
     asm.Dw(0xFFFF);
+    // C6 UMB bookkeeping: saved DOS UMB-link state and allocation strategy + an
+    // "we changed it" latch consulted by the exit restore
+    asm.MarkLabel("rt_umb_oldlink");
+    asm.Dw(0);
+    asm.MarkLabel("rt_umb_oldstrat");
+    asm.Dw(0);
+    asm.MarkLabel("rt_umb_active");
+    asm.Dw(0);
   }
 }

@@ -54,6 +54,9 @@ public sealed partial class DosRuntime {
   /// <summary>pb36 C1 gate: $CPU 80386 selected - runtime helpers may use 32-bit instructions.</summary>
   public bool Cpu386 { get; set; }
 
+  /// <summary>C6: on DOS 5+, link UMBs and allocate high-then-low so DOS 48h blocks (HUGE arrays) land in upper memory, freeing conventional; the previous link/strategy are restored at exit. Off by default; the optimizer turns it on for pb36 standalone images.</summary>
+  public bool EnableUmb { get; set; }
+
   /// <summary>
   /// pb36 R3: a forward byte copy of CX bytes (DS:SI -&gt; ES:DI, DF clear).
   /// Under $CPU 80386 it moves DWORDs then the &lt;=3-byte tail (~4x on long
@@ -174,6 +177,33 @@ public sealed partial class DosRuntime {
       asm.Mov(Reg.DI, Imm.OffsetOf(asm.Lbl("rt_bss_off")));
       asm.Mov(Reg.CX, Imm.OffsetOf(asm.Lbl("rt_bss_words")));
       this.EmitRepStoswZeroWidened(asm);   // R3: DWORD-wide under $CPU 80386
+    }
+    if (this.EnableUmb) {
+      // C6: DOS 5+ only - link UMBs into the arena chain and prefer high memory for
+      // allocations, saving the previous link/strategy for the exit restore (the
+      // strategy is a GLOBAL DOS setting, not per-process)
+      var noUmb = asm.DefineLabel();
+      asm.Mov(Reg.AH, 0x30);                      // DOS version
+      asm.Int(0x21);
+      asm.Cmp(Reg.AL, (Imm)5);
+      asm.Jb(noUmb);
+      asm.Mov(Reg.AX, 0x5802);                    // get UMB link state -> AL
+      asm.Int(0x21);
+      asm.Jc(noUmb);
+      asm.Xor(Reg.AH, Reg.AH);
+      asm.Mov(Mem.Word(asm.Lbl("rt_umb_oldlink")), Reg.AX);
+      asm.Mov(Reg.AX, 0x5800);                    // get allocation strategy -> AX
+      asm.Int(0x21);
+      asm.Jc(noUmb);
+      asm.Mov(Mem.Word(asm.Lbl("rt_umb_oldstrat")), Reg.AX);
+      asm.Mov(Reg.AX, 0x5803);                    // link UMBs
+      asm.Mov(Reg.BX, 1);
+      asm.Int(0x21);
+      asm.Mov(Reg.AX, 0x5801);                    // strategy: first fit, high then low
+      asm.Mov(Reg.BX, 0x0080);
+      asm.Int(0x21);
+      asm.Mov(Mem.Word(asm.Lbl("rt_umb_active")), 1);
+      asm.MarkLabel(noUmb);
     }
     asm.Pop(Reg.AX);
     asm.Mov(Mem.Word(asm.Lbl("rt_pspseg")), Reg.AX);
@@ -332,6 +362,19 @@ public sealed partial class DosRuntime {
 
   private void EmitExit(Assembler asm) {
     this.Exit = asm.MarkLabel("rt_exit");
+    if (this.EnableUmb) {
+      // C6: the allocation strategy / UMB link are global DOS state - restore what we saved
+      var noRestore = asm.DefineLabel();
+      asm.Cmp(Mem.Word(asm.Lbl("rt_umb_active")), (Imm)0);
+      asm.Je(noRestore);
+      asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_umb_oldstrat")));
+      asm.Mov(Reg.AX, 0x5801);
+      asm.Int(0x21);
+      asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_umb_oldlink")));
+      asm.Mov(Reg.AX, 0x5803);
+      asm.Int(0x21);
+      asm.MarkLabel(noRestore);
+    }
     asm.Mov(Reg.AH, 0x4C);
     asm.Int(0x21);
   }

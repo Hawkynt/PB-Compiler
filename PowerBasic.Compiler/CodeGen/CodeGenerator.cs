@@ -513,6 +513,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._scratch = asm.DefineLabel("cg_scratch");
 
     this._rt.EnableBss = this.Optimize && !this._allowExternalCalls && !this._isUnit;
+    this._rt.EnableUmb = this.Optimize && !this._allowExternalCalls && !this._isUnit;   // C6: HUGE-array heap prefers upper memory
     this._rt.Cpu386 = this.Optimize && this.Cpu386;
     this._rt.EmitEntry(asm, userMain);
 

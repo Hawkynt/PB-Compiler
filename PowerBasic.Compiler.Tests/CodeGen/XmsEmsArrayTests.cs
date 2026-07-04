@@ -110,6 +110,22 @@ public sealed class XmsEmsArrayTests {
   }
 
   [Test]
+  public void Execute_GivenOptimizedHugeArray_WhenUmbAvailable_ThenAllocatesHighWithCorrectValues() {
+    // C6: on DOS 5+ the entry stub links UMBs and prefers high memory, so a HUGE
+    // array that fits lands above 0x9FFF (DOSBox provides UMBs by default) while
+    // element access stays correct; too-large blocks fall back to conventional
+    const string source = """
+      $OPTIMIZE SPEED
+      DIM HUGE h(1 TO 20000) AS LONG
+      h(1) = 42
+      h(20000) = 77
+      PRINT h(1); h(20000)
+      IF VARSEG(h(1)) > &H9FFF THEN PRINT "HIGH" ELSE PRINT "LOW"
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 42  77\nHIGH\n"));
+  }
+
+  [Test]
   public void Execute_GivenEmsUdtArray_WhenMemberWritten_ThenReadsBack() {
     const string source = """
       TYPE Pair
