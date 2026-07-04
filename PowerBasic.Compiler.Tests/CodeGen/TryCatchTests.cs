@@ -323,6 +323,60 @@ public sealed class TryCatchTests {
   }
 
   [Test]
+  public void Execute_GivenFinallyHandlingItsOwnError_WhenBodyFaults_ThenOriginalErrReRaised() {
+    // the FINALLY body catches an unrelated error (overwriting the runtime error cell); the
+    // re-raise after FINALLY must still propagate the ORIGINAL code to the outer trap
+    const string source = """
+      ON ERROR GOTO Trap
+      TRY
+        ERROR 11
+      FINALLY
+        TRY
+          ERROR 5
+        CATCH
+          PRINT "inner"; ERR
+        END TRY
+        PRINT "fin"
+      END TRY
+      PRINT "unreached"
+      GOTO Done
+      Trap:
+        PRINT "trap"; ERR
+      Done:
+      PRINT "done"
+      """;
+    Assert.That(Run(source), Is.EqualTo("inner 5\nfin\ntrap 11\ndone\n"));
+  }
+
+  [Test]
+  public void Emit_GivenTryWithFinally_WhenCompiled_ThenFinallyBodyEmittedOnce() {
+    // the FINALLY body is shared via jumps between the normal and fault/catch edges,
+    // not duplicated per edge; pinned by counting the distinctive constant store
+    // MOV word [X], 19229 (C7 06 addr 1D 4B) in the final image
+    static int CountFinallyStore(string source) {
+      var tokens = Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36);
+      var unit = Parser.Parse(tokens, "TEST.BAS", Dialect.Pb36);
+      var model = Binder.Bind(unit, Dialect.Pb36);
+      Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+      var generator = new CodeGenerator(model);
+      var exe = generator.EmitExecutable();
+      Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+      var count = 0;
+      for (var i = 0; i + 1 < exe.Length; ++i)
+        if (exe[i] == 0x1D && exe[i + 1] == 0x4B)
+          ++count;
+      return count;
+    }
+
+    Assert.Multiple(() => {
+      Assert.That(CountFinallyStore("DIM X AS INTEGER\nTRY\n  PRINT \"b\"\nFINALLY\n  X = 19229\nEND TRY\nPRINT X\n"),
+        Is.EqualTo(1), "finally-only TRY: one emission shared by the normal and fault edges");
+      Assert.That(CountFinallyStore("DIM X AS INTEGER\nTRY\n  PRINT \"b\"\nCATCH\n  PRINT \"c\"\nFINALLY\n  X = 19229\nEND TRY\nPRINT X\n"),
+        Is.EqualTo(1), "TRY/CATCH/FINALLY: one emission shared by the normal and caught edges");
+    });
+  }
+
+  [Test]
   public void Execute_GivenOnErrorHandlerThenTry_WhenErrorAfterEndTry_ThenPriorHandlerRestored() {
     // Arms an ON ERROR handler, runs a clean TRY, then faults after END TRY:
     // the fault must reach the original ON ERROR handler (proving the TRY

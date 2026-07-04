@@ -376,8 +376,11 @@ public sealed class BasicWriter {
     if (resultTarget != proc.Name) remap[proc.Name] = resultTarget;
     if (proc.ResultName is { } rn && rn != resultTarget) remap[rn] = resultTarget;
     if (remap.Count > 0 && (proc.IsFunction || proc.HasSretParam)) this._nameRemap = remap;
+    var savedOnError = this._currentOnError;
+    this._currentOnError = "0";   // error handlers are per-procedure - a module-level trap is not in scope here
     foreach (var statement in proc.Body!)
       this.WriteStatement(statement);
+    this._currentOnError = savedOnError;
     this._nameRemap = savedRemap;
     this._scopeVars = savedScope;
     --this._indent;
@@ -412,6 +415,10 @@ public sealed class BasicWriter {
 
   private readonly Dictionary<Expression, string> _exprSubst = new(ReferenceEqualityComparer.Instance);
   private int _tempCounter;
+  // the lexically current ON ERROR target ("0" = none): TRY reconstructions restore THIS handler on
+  // their exit edges (mirroring the codegen, which saves and re-arms the handler active at TRY entry)
+  // so a re-raise after FINALLY still reaches a previously armed trap instead of turning fatal.
+  private string _currentOnError = "0";
   // code-pointer / delegate thunks: a function called through a pointer is wrapped in a SUB that takes
   // its arguments and a trailing BYREF result, so the call can go through pb35's CALL DWORD (which has
   // no function-result form). Keyed by target procedure name; emitted after the procedures.
@@ -570,7 +577,11 @@ public sealed class BasicWriter {
       case DataStmt s: this.Line($"DATA {string.Join(", ", s.Items)}"); break;
       case ReadStmt s: this.Line($"READ {string.Join(", ", s.Targets.Select(t => this.Expr(t)))}"); break;
       case RestoreStmt s: this.Line(s.Target is { } t ? $"RESTORE {t}" : "RESTORE"); break;
-      case OnErrorStmt s: this.Line(s.ResumeNext ? "ON ERROR RESUME NEXT" : $"ON ERROR GOTO {s.Target ?? "0"}"); break;   // null target = disable (GOTO 0)
+      case OnErrorStmt s:
+        this.Line(s.ResumeNext ? "ON ERROR RESUME NEXT" : $"ON ERROR GOTO {s.Target ?? "0"}");   // null target = disable (GOTO 0)
+        if (!s.ResumeNext)
+          this._currentOnError = s.Target ?? "0";
+        break;
       case ResumeStmt s: this.Line("RESUME" + (s.Kind switch { ResumeKind.Next => " NEXT", ResumeKind.Label => " " + s.Target, _ => "" })); break;
       case ErrorStmt s: this.Line($"ERROR {this.Expr(s.Code)}"); break;
       case OnEventStmt s: this.Line($"ON {s.EventKind}{(s.Index is { } oi ? $"({this.Expr(oi)})" : "")} GOSUB {s.Target}"); break;
@@ -855,37 +866,55 @@ public sealed class BasicWriter {
     var id = ++this._tempCounter;
     var catchLabel = $"Strycatch{id}";
     var finallyLabel = $"Stryfinally{id}";
+    // The exit edges disarm with ON ERROR GOTO 0 (which leaves ERR readable - arming a real target
+    // clears the error cell), and the handler lexically armed at TRY entry is re-armed once at the
+    // shared exit, mirroring the codegen's restore of the entry handler. "0" when none - then the
+    // re-arm is omitted and an uncaught re-raise is fatal exactly like the compiled form.
+    var previous = this._currentOnError;
     if (s.Catch is { } c) {
       this.Line($"ON ERROR GOTO {catchLabel}");
+      this._currentOnError = catchLabel;
       this.Block(s.Body);
       this.Line("ON ERROR GOTO 0");
       this.Line($"GOTO {finallyLabel}");
       this.LineNoIndent($"{catchLabel}:");
-      this.Line("ON ERROR GOTO 0");
+      this.Line("ON ERROR GOTO 0");   // disarm only - the catch body still reads the faulting ERR
+      this._currentOnError = "0";
       this.Block(c);
       this.LineNoIndent($"{finallyLabel}:");
       if (s.Finally is { } f1)
         this.Block(f1);
+      if (previous != "0")
+        this.Line($"ON ERROR GOTO {previous}");
     } else if (s.Finally is { } fin) {
       // no CATCH but a FINALLY (the DEFER shape): the cleanup must run on the fault path too, so arm
-      // a handler over the body; the fault edge runs the FINALLY and re-raises the still-set ERR to
-      // the outer handler (ERROR ERR), the normal edge disarms and runs it once.
+      // a handler over the body. The FINALLY body is emitted ONCE and shared by both edges via GOTO;
+      // the fault edge saves ERR into a variable FIRST (the FINALLY statements may raise/handle
+      // errors of their own and change ERR) and a nonzero saved code is re-raised after the cleanup,
+      // reaching the re-armed previous handler.
       var fid = ++this._tempCounter;
       var faultLabel = $"Stryfault{fid}";
-      var doneLabel = $"Strydone{fid}";
+      var finLabel = $"Stryfin{fid}";
+      var errVar = $"Stryerr{fid}%";
+      this.Line($"{errVar} = 0");
       this.Line($"ON ERROR GOTO {faultLabel}");
+      this._currentOnError = faultLabel;
       this.Block(s.Body);
       this.Line("ON ERROR GOTO 0");
-      this.Block(fin);
-      this.Line($"GOTO {doneLabel}");
+      this.Line($"GOTO {finLabel}");
       this.LineNoIndent($"{faultLabel}:");
+      this.Line($"{errVar} = ERR");
       this.Line("ON ERROR GOTO 0");
+      this._currentOnError = "0";
+      this.LineNoIndent($"{finLabel}:");
       this.Block(fin);
-      this.Line("ERROR ERR");
-      this.LineNoIndent($"{doneLabel}:");
+      if (previous != "0")
+        this.Line($"ON ERROR GOTO {previous}");
+      this.Line($"IF {errVar} <> 0 THEN ERROR {errVar}");
     } else {
       this.Block(s.Body);
     }
+    this._currentOnError = previous;
   }
 
   private string FormatSelector(CaseSelector c) {

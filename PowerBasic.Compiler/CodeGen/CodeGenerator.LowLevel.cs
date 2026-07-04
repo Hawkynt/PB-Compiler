@@ -497,13 +497,15 @@ public sealed partial class CodeGenerator {
   /// the body; rt_raise enters it after restoring SP to the armed value, so the
   /// saved triple is still on the stack and the dispatcher pops it back.
   ///
-  /// FINALLY is guaranteed on all paths by emitting it on each exit edge:
-  ///   with CATCH: normal-completion edge and the caught edge both restore the
-  ///     previous handler, run FINALLY, then fall through to the end (CATCH swallows
-  ///     the error, so no propagation);
-  ///   without CATCH: the normal edge restores + runs FINALLY then ends; the fault
-  ///     edge restores + runs FINALLY then re-raises the still-set ERR to the
-  ///     now-restored previous handler (fatal or outer trap per policy).
+  /// FINALLY is guaranteed on all paths but emitted only ONCE - the exit edges jump
+  /// to the shared block instead of each carrying a copy:
+  ///   with CATCH: the normal edge jumps over the dispatcher to the FINALLY; the
+  ///     caught edge runs CATCH and falls into it (CATCH swallows, no propagation);
+  ///   without CATCH: each edge pushes the pending error code before entering the
+  ///     shared FINALLY - 0 on the normal edge, the SAVED rt_err on the fault edge
+  ///     (saved BEFORE the FINALLY runs, because its statements may themselves
+  ///     raise/handle errors and overwrite the cell) - and afterwards a nonzero
+  ///     popped code is re-raised to the already-restored previous handler.
   /// </summary>
   private void EmitTry(TryStmt t) {
     var asm = this._asm;
@@ -522,27 +524,36 @@ public sealed partial class CodeGenerator {
     foreach (var s in t.Body)
       this.EmitStatement(s);
 
-    // normal completion: restore the previous handler, run FINALLY, then end
+    // normal completion: restore the previous handler, then head for the shared exit
     this.RestoreErrorHandler();
-    if (t.Finally != null)
-      foreach (var s in t.Finally)
-        this.EmitStatement(s);
-    asm.Jmp(end);
 
-    // fault path: rt_raise jumped here with SP at the armed value and ERR set
-    asm.MarkLabel(dispatch);
-    this.RestoreErrorHandler();
     if (t.Catch != null) {
+      var fin = asm.DefineLabel();
+      asm.Jmp(fin);
+      // caught edge: rt_raise jumped here with SP at the armed value and ERR set
+      asm.MarkLabel(dispatch);
+      this.RestoreErrorHandler();
       foreach (var s in t.Catch)
         this.EmitStatement(s);
+      asm.MarkLabel(fin);
       if (t.Finally != null)
         foreach (var s in t.Finally)
           this.EmitStatement(s);
     } else {
-      // no CATCH: run FINALLY then re-propagate the still-set ERR to the previous handler
+      // no CATCH: both edges deposit the pending error code (0 = none) and share the FINALLY
+      var fin = asm.DefineLabel();
+      asm.Xor(Reg.AX, Reg.AX);
+      asm.Push(Reg.AX);
+      asm.Jmp(fin);
+      asm.MarkLabel(dispatch);
+      this.RestoreErrorHandler();
+      asm.Push(Mem.Word(asm.Lbl("rt_err")));
+      asm.MarkLabel(fin);
       foreach (var s in t.Finally!)
         this.EmitStatement(s);
-      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_err")));
+      asm.Pop(Reg.AX);
+      asm.Test(Reg.AX, Reg.AX);
+      asm.Jz(end);
       asm.Call(this._rt.Raise);
     }
 

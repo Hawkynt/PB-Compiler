@@ -71,6 +71,16 @@ public sealed class BasicWriterTests {
   }
 
   [Test]
+  public void Render_Pb36TryFinallyOnly_SavesErrAndSharesOneFinallyBody() {
+    var basic = RenderAndRebind("TRY\n  PRINT \"b\"\nFINALLY\n  PRINT \"fin\"\nEND TRY\n", Dialect.Pb36);
+    Assert.Multiple(() => {
+      Assert.That(basic, Does.Not.Contain("ERROR ERR"), "the fault edge re-raises the SAVED code - the finally body could change ERR before the re-raise");
+      Assert.That(System.Text.RegularExpressions.Regex.Matches(basic, System.Text.RegularExpressions.Regex.Escape("PRINT \"fin\"")).Count,
+        Is.EqualTo(1), "the FINALLY body appears once, shared between the normal and fault edges via GOTO");
+    });
+  }
+
+  [Test]
   public void Render_Pb36TypeMethod_LiftsToSanitizedProcedureAndRecompiles() {
     var basic = RenderAndRebind("TYPE Counter\n  Value AS LONG\n  SUB Bump(BYVAL by AS LONG)\n    THIS.Value = THIS.Value + by\n  END SUB\nEND TYPE\nDIM c AS Counter\nc.Value = 10\nc.Bump(5)\nPRINT c.Value\n", Dialect.Pb36);
     Assert.That(basic, Does.Contain("SUB Counter_Bump(BYREF THIS AS Counter"), "the method lifts to a THIS-receiver SUB with a pb35-valid name and an explicit passing mode");

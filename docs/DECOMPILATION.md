@@ -810,16 +810,17 @@ CALL Work
 CALL Work()
 
 SUB Work()
+  Stryerr2% = 0
   ON ERROR GOTO Stryfault2
     PRINT "working"
   ON ERROR GOTO 0
-    PRINT "cleanup"
-  GOTO Strydone2
+  GOTO Stryfin2
 Stryfault2:
+  Stryerr2% = ERR
   ON ERROR GOTO 0
+Stryfin2:
     PRINT "cleanup"
-  ERROR ERR
-Strydone2:
+  IF Stryerr2% <> 0 THEN ERROR Stryerr2%
 END SUB
 ```
 
@@ -1965,16 +1966,17 @@ END SUB
 SUB Work()
   DIM r AS Res
   Res_Res r, 42
+  Stryerr2% = 0
   ON ERROR GOTO Stryfault2
     PRINT "using"; r.Handle
   ON ERROR GOTO 0
-    Res_Dispose r
-  GOTO Strydone2
+  GOTO Stryfin2
 Stryfault2:
+  Stryerr2% = ERR
   ON ERROR GOTO 0
+Stryfin2:
     Res_Dispose r
-  ERROR ERR
-Strydone2:
+  IF Stryerr2% <> 0 THEN ERROR Stryerr2%
 END SUB
 ```
 
