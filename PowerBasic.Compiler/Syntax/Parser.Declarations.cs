@@ -749,6 +749,10 @@ public sealed partial class Parser {
       case "ABSOLUTE":
         this.Advance();
         return ArrayClass.Absolute;
+      case "STACK": // pb36: frame-resident local array
+        this.Require(LanguageFeature.StackArrays);
+        this.Advance();
+        return ArrayClass.Stack;
       case "EMS": // PB 3.6 external-memory arrays
         this.Require(LanguageFeature.XmsEmsArrays);
         this.Advance();

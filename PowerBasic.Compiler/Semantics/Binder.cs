@@ -2771,6 +2771,8 @@ public sealed class Binder {
       this.BindDimInitializer(dim, v, scope);
 
     if (scope.Proc == null) {
+      if (dim.Class == ArrayClass.Stack)
+        this.Error(dim.Position, "a STACK array lives in a procedure's stack frame - not at module level");
       // module DIMs were declared in pass 1 - but dynamic bounds are runtime
       // expressions that still need binding (DIM a(n) with a variable bound)
       foreach (var v in dim.Variables)
@@ -2812,6 +2814,8 @@ public sealed class Binder {
         }
 
         case StorageClass.Static: {
+          if (dim.Class == ArrayClass.Stack)
+            this.Error(dim.Position, $"STACK array {v.Name} cannot be STATIC");
           var symbol = this.CreateVariable(v, VariableStorage.Static, dim.Position);
           if (symbol != null)
             scope.Proc.Variables[key] = symbol;
@@ -2820,9 +2824,17 @@ public sealed class Binder {
 
         default: {
           var storage = scope.Proc.IsStatic ? VariableStorage.Static : VariableStorage.Local;
-          var symbol = this.CreateVariable(v, storage, dim.Position);
+          var symbol = this.CreateVariable(v, storage, dim.Position, dim.Class);
           if (symbol == null)
             continue;
+          // pb36 STACK array: frame-resident, so it needs a real frame (Local, not STATIC)
+          // and compile-time bounds (the frame is laid out before the first instruction)
+          if (dim.Class == ArrayClass.Stack) {
+            if (storage != VariableStorage.Local)
+              this.Error(dim.Position, $"STACK array {v.Name} cannot live in a STATIC procedure's frame");
+            else if (symbol.Type is not ArrayType { StaticBounds: not null })
+              this.Error(dim.Position, $"STACK array {v.Name} needs compile-time bounds");
+          }
           if (scope.Proc.Variables.TryGetValue(key, out var existing) && !Equals(existing.Type, symbol.Type))
             this.Error(dim.Position, $"variable {v.Name} already declared with a different type");
           else

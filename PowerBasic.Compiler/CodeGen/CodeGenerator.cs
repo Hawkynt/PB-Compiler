@@ -814,6 +814,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   #region slots, literals & labels
 
   private Label SlotOf(VariableSymbol symbol) {
+    // a pb36 STACK array has no data-segment slot - any use that lands here (whole-array pass,
+    // ERASE, VARPTR of the array, ...) is outside the supported element/LBOUND/UBOUND surface
+    if (symbol is { IsArray: true, ArrayClass: ArrayClass.Stack })
+      this.Errors.Add(new(new("", 0, 0), $"STACK array {symbol.Name}: only element access and LBOUND/UBOUND are supported"));
     // PB internal variables (pbvScrnCols, ...) live in runtime data cells
     if (symbol.Storage == VariableStorage.Global && DosRuntime.InternalVariableLabel(symbol.Name) is { } internalCell)
       return this._asm.Lbl(internalCell);

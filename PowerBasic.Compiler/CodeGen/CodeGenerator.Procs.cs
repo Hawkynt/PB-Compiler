@@ -82,8 +82,8 @@ public sealed partial class CodeGenerator {
   private IEnumerable<VariableSymbol> StackLocalsOf(ProcedureSymbol proc) {
     var seen = new HashSet<VariableSymbol>(ReferenceEqualityComparer.Instance);
     foreach (var symbol in proc.Variables.Values)
-      if (symbol.Storage == VariableStorage.Local && !symbol.IsArray && seen.Add(symbol))
-        yield return symbol;
+      if (symbol.Storage == VariableStorage.Local && (!symbol.IsArray || symbol.ArrayClass == ArrayClass.Stack) && seen.Add(symbol))
+        yield return symbol;   // pb36 STACK arrays are frame-resident like scalars
   }
 
   private void EmitProcedure(ProcedureSymbol proc) {
@@ -124,6 +124,7 @@ public sealed partial class CodeGenerator {
     // (those must stay 0 for the first StrAssign and the epilogue StrFree)
     var stackLocals = this.StackLocalsOf(proc).ToList();
     var elideZeroing = this.Optimize && !this._trackResume
+      && stackLocals.All(l => !l.IsArray)   // a STACK array's elements are not tracked by definite assignment
       && CanElideFrameZeroing(model, proc.Body!, stackLocals);
 
     // pb36 O14: self-calls in tail position become frame-reusing jumps when

@@ -40,12 +40,13 @@ public sealed partial class CodeGenerator {
     _ => null,
   };
 
-  /// <summary>Rebuilds a memory operand with an extra displacement and explicit size.</summary>
+  /// <summary>Rebuilds a memory operand with an extra displacement and explicit size (a base+index pair - e.g. a stack array's [BP+DI] - is preserved).</summary>
   private static Mem Adjust(Mem m, int delta, OperandSize size) {
-    var result = (m.Base, m.Label) switch {
-      ({ } b, { } l) => Mem.At(b, l, m.Displacement + delta),
-      ({ } b, null) => Mem.At(b, m.Displacement + delta),
-      (null, { } l) => Mem.At(l, m.Displacement + delta),
+    var result = (m.Base, m.Index, m.Label) switch {
+      ({ } b, { } i, null) => Mem.At(b, i, m.Displacement + delta),
+      ({ } b, _, { } l) => Mem.At(b, l, m.Displacement + delta),
+      ({ } b, null, null) => Mem.At(b, m.Displacement + delta),
+      (null, _, { } l) => Mem.At(l, m.Displacement + delta),
       _ => Mem.At(m.Displacement + delta),
     };
     if (m.Segment is { } seg)

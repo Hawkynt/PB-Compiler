@@ -495,6 +495,12 @@ public sealed partial class CodeGenerator {
       }
       if (elementSize != 1)
         asm.Imul(Reg.AX, Reg.AX, elementSize);
+      // pb36 STACK array: the data lives in the frame, so the element is [BP+DI+disp]
+      // (BP pairs only with SI/DI in 16-bit addressing; DI is free here)
+      if (symbol.ArrayClass == ArrayClass.Stack) {
+        asm.Mov(Reg.DI, Reg.AX);
+        return new(Mem.At(Reg.BP, Reg.DI, symbol.Offset - bias * elementSize), false);
+      }
       asm.Mov(Reg.BX, Reg.AX);
       return new(Mem.At(Reg.BX, this.SlotOf(symbol), -bias * elementSize), false);
     }
