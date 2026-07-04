@@ -54,6 +54,9 @@ public sealed partial class DosRuntime {
   /// <summary>pb36 C1 gate: $CPU 80386 selected - runtime helpers may use 32-bit instructions.</summary>
   public bool Cpu386 { get; set; }
 
+  /// <summary>R1 ($OPTION VIDEO): console PRINT writes glyphs straight into B800 text memory - the classic direct-video speedup. The fast path handles the common straight text run (printables only, no line wrap); control characters, wraps and non-console handles keep the exact DOS path, and the BIOS cursor is resynced so mixed output stays coherent.</summary>
+  public bool EnableFastVideo { get; set; }
+
   /// <summary>C6: on DOS 5+, link UMBs and allocate high-then-low so DOS 48h blocks (HUGE arrays) land in upper memory, freeing conventional; the previous link/strategy are restored at exit. Off by default; the optimizer turns it on for pb36 standalone images.</summary>
   public bool EnableUmb { get; set; }
 
@@ -417,9 +420,89 @@ public sealed partial class DosRuntime {
     this.PrintStr = asm.MarkLabel("rt_print_str");
     var done = asm.DefineLabel("rt_print_str_done");
     var capture = asm.DefineLabel("rt_print_str_cap");
-    asm.Jcxz(done);
+    // near-form zero test: the R1 fast path can push 'done' beyond JCXZ's short reach
+    asm.Or(Reg.CX, Reg.CX);
+    asm.Jz(done);
     asm.Cmp(Mem.Byte(asm.Lbl("rt_capmode")), (Imm)0);
     asm.Jne(capture);
+    if (this.EnableFastVideo) {
+      // R1 direct-video fast path: console handle, printable-only run that fits the current
+      // line - write CHAR+attr 07 words straight at the BIOS cursor and resync the cursor
+      // once via INT 10h. Anything else (files, control chars, wraps) takes the DOS path,
+      // which also keeps scrolling/teletype semantics with the BIOS.
+      var dos = asm.DefineLabel();
+      var scanFail = asm.DefineLabel();
+      var scan = asm.DefineLabel();
+      var blit = asm.DefineLabel();
+      asm.Cmp(Mem.Word(asm.Lbl("rt_curout")), 1);
+      asm.Jne(dos);                                  // only the console handle
+      asm.Cmp(Reg.CX, 80);
+      asm.Ja(dos);                                   // longer than a line can never fit
+      asm.Push(Reg.SI);
+      asm.Push(Reg.CX);
+      asm.MarkLabel(scan);                           // printables only - no CR/LF/TAB/BEL
+      asm.Lodsb();
+      asm.Cmp(Reg.AL, 0x20);
+      asm.Jb(scanFail);
+      asm.Loop(scan);
+      asm.Pop(Reg.CX);
+      asm.Pop(Reg.SI);
+
+      asm.Push(Reg.AX);
+      asm.Push(Reg.BX);
+      asm.Push(Reg.DX);
+      asm.Push(Reg.DI);
+      asm.Push(Reg.ES);
+      asm.Mov(Reg.AX, 0x0040);                       // BIOS data area: cursor page 0
+      asm.Mov(Reg.ES, Reg.AX);
+      asm.Mov(Reg.DX, Mem.Word(0x50).Seg(Reg.ES));   // DL = col, DH = row
+      asm.Mov(Reg.AL, Reg.DL);
+      asm.Add(Reg.AL, Reg.CL);
+      asm.Cmp(Reg.AL, 80);
+      asm.Ja(asm.Lbl("rt_fv_unfit"));                // would wrap - DOS handles it
+      asm.Mov(Reg.AL, Reg.DH);                       // DI = (row*80 + col)*2
+      asm.Mov(Reg.AH, 80);
+      asm.Mul(Reg.AH);
+      asm.Mov(Reg.BL, Reg.DL);
+      asm.Xor(Reg.BH, Reg.BH);
+      asm.Add(Reg.AX, Reg.BX);
+      asm.Shl(Reg.AX, 1);
+      asm.Mov(Reg.DI, Reg.AX);
+      asm.Mov(Reg.AX, 0xB800);
+      asm.Mov(Reg.ES, Reg.AX);
+      asm.Push(Reg.CX);
+      asm.Push(Reg.SI);
+      asm.MarkLabel(blit);
+      asm.Lodsb();
+      asm.Mov(Reg.AH, 0x07);
+      asm.Stosw();
+      asm.Loop(blit);
+      asm.Pop(Reg.SI);
+      asm.Pop(Reg.CX);
+      asm.Add(Reg.DL, Reg.CL);                       // resync the BIOS/hardware cursor
+      asm.Mov(Reg.AH, 0x02);
+      asm.Mov(Reg.BH, (Imm)0);
+      asm.Int(0x10);
+      asm.Pop(Reg.ES);
+      asm.Pop(Reg.DI);
+      asm.Pop(Reg.DX);
+      asm.Pop(Reg.BX);
+      asm.Pop(Reg.AX);
+      asm.Jmp(asm.Lbl("rt_fv_advance"));             // column bookkeeping shared with the DOS path
+
+      asm.MarkLabel("rt_fv_unfit");
+      asm.Pop(Reg.ES);
+      asm.Pop(Reg.DI);
+      asm.Pop(Reg.DX);
+      asm.Pop(Reg.BX);
+      asm.Pop(Reg.AX);
+      asm.Jmp(dos);
+
+      asm.MarkLabel(scanFail);
+      asm.Pop(Reg.CX);
+      asm.Pop(Reg.SI);
+      asm.MarkLabel(dos);
+    }
     asm.Push(Reg.AX);
     asm.Push(Reg.BX);
     asm.Push(Reg.DX);
@@ -430,6 +513,7 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.DX);
     asm.Pop(Reg.BX);
     asm.Pop(Reg.AX);
+    asm.MarkLabel("rt_fv_advance");
     asm.Push(Reg.BX);                              // advance the ACTIVE column (screen or per-file)
     asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_colptr")));
     asm.Add(Mem.Word(Reg.BX), Reg.CX);

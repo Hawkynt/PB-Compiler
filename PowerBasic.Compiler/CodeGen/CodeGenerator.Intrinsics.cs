@@ -396,6 +396,16 @@ public sealed partial class CodeGenerator {
         this.EmitBound(call, args, intrinsic.Name == "UBOUND");
         break;
 
+      // R2 direct-video pixel read (mode 13h): POINT(x, y) -> LONG color
+      case "POINT":
+        this.EmitInt16Argument(args[0]);
+        asm.Push(Reg.AX);
+        this.EmitInt16Argument(args[1]);
+        asm.Mov(Reg.BX, Reg.AX);
+        asm.Pop(Reg.AX);
+        asm.Call(this._rt.Point);
+        break;
+
       case "ABS":
         this.EmitExpression(args[0]);
         switch (KindOf(model.TypeOf(args[0]))) {

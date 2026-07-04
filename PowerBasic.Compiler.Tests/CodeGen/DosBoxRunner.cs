@@ -31,6 +31,63 @@ public static class DosBoxRunner {
     => RunWithFiles(exeBytes, [], timeoutMs).Output;
 
   /// <summary>
+  /// R1/R2 screen-capture oracle: runs <paramref name="exeBytes"/> WITHOUT stdout redirection
+  /// (so console output actually reaches the BIOS/video path), then runs the supplied capture
+  /// program (a compiled BASIC helper that PEEKs B800 text memory into SCREEN.TXT) and returns
+  /// that file's content - the observable screen, comparable across build variants.
+  /// </summary>
+  public static string RunWithScreenCapture(byte[] exeBytes, byte[] captureExe, int timeoutMs = 60000) {
+    Assume.That(Executable, Is.Not.Null, "DOSBox not found - execution test skipped");
+    var dir = Path.Combine(Path.GetTempPath(), "pbc-scr-" + Guid.NewGuid().ToString("N")[..8]);
+    Directory.CreateDirectory(dir);
+    try {
+      File.WriteAllBytes(Path.Combine(dir, "T.EXE"), exeBytes);
+      File.WriteAllBytes(Path.Combine(dir, "CAP.EXE"), captureExe);
+      var conf = Path.Combine(dir, "dosbox.conf");
+      File.WriteAllText(conf, $"""
+        [sdl]
+        window_position = 9000,9000
+        [dosbox]
+        ems=true
+        [autoexec]
+        mount c "{dir}"
+        c:
+        cls
+        T.EXE
+        CAP.EXE
+        echo ok > DONE.TXT
+        exit
+        """);
+      var psi = new ProcessStartInfo(Executable!, $"-conf \"{conf}\"") { UseShellExecute = false };
+      using var process = Process.Start(psi)!;
+      var sentinel = Path.Combine(dir, "DONE.TXT");
+      var deadline = Environment.TickCount64 + timeoutMs;
+      var minimized = false;
+      while (!File.Exists(sentinel) && !process.HasExited && Environment.TickCount64 < deadline) {
+        if (!minimized)
+          minimized = TryHideWindow(process);
+        Thread.Sleep(50);
+      }
+      var finished = File.Exists(sentinel) || process.HasExited;
+      if (!process.HasExited) {
+        if (finished)
+          Thread.Sleep(200);
+        process.Kill(entireProcessTree: true);
+        process.WaitForExit(5000);
+      }
+      if (!finished)
+        Assert.Fail("DOSBox screen-capture run timed out");
+      var screen = Path.Combine(dir, "SCREEN.TXT");
+      return File.Exists(screen) ? File.ReadAllText(screen) : "";
+    } finally {
+      try {
+        Directory.Delete(dir, recursive: true);
+      } catch (IOException) {
+      }
+    }
+  }
+
+  /// <summary>
   /// Runs <paramref name="exeBytes"/> in DOSBox and additionally retrieves the
   /// named files the program created in its working directory (e.g. UNITTEST.LOG).
   /// Optional <paramref name="stdinText"/> is redirected into the program;

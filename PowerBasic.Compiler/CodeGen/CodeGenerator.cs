@@ -503,6 +503,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     this._rt.EnableBss = this.Optimize && !this._allowExternalCalls && !this._isUnit;
     this._rt.EnableUmb = this.Optimize && !this._allowExternalCalls && !this._isUnit;   // C6: HUGE-array heap prefers upper memory
+    this._rt.EnableFastVideo = model.FastVideo;   // R1: $OPTION VIDEO direct-video console PRINT
     this._rt.Cpu386 = this.Optimize && this.Cpu386;
     this._rt.EmitEntry(asm, userMain);
 
@@ -1251,6 +1252,24 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       case MetaStmt meta:
         this.ApplyMeta(meta);
         break;
+
+      // R2 direct-video pixel write (mode 13h): PSET (x,y)[,c] / PRESET (x,y)[,c]
+      case PsetStmt ps: {
+        var asm3 = this._asm;
+        this.EmitInt16Argument(ps.Point.X);
+        asm3.Push(Reg.AX);
+        this.EmitInt16Argument(ps.Point.Y);
+        asm3.Push(Reg.AX);
+        if (ps.Color is { } col)
+          this.EmitInt16Argument(col);
+        else
+          asm3.Mov(Reg.AX, ps.IsPreset ? 0 : 15);   // PRESET erases (background), PSET defaults to white
+        asm3.Mov(Reg.DX, Reg.AX);
+        asm3.Pop(Reg.BX);                            // y
+        asm3.Pop(Reg.AX);                            // x
+        asm3.Call(this._rt.Pset);
+        break;
+      }
 
       case EquateStmt or DefTypeStmt or DataStmt or StaticAssertStmt or ResourceStmt:
         break; // declarations & module bookkeeping - nothing to execute ($ASSERT bound, $RESOURCE baked into data)

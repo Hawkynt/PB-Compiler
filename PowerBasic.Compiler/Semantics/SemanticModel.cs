@@ -50,6 +50,9 @@ public sealed class SemanticModel {
   /// <summary>pb36 $RESOURCE: embedded file bytes per resource array symbol; codegen emits them as the array's initialized data.</summary>
   public Dictionary<VariableSymbol, byte[]> ResourceData { get; } = new(ReferenceEqualityComparer.Instance);
 
+  /// <summary>R1 $OPTION VIDEO: console PRINT writes glyphs straight into B800 text memory (fast path in the runtime); explicit opt-in - direct video ignores DOS handle redirection, like genuine PB screen writes.</summary>
+  public bool FastVideo { get; set; }
+
   /// <summary>pb36 nullable types (<c>T?</c>): maps a synthesized nullable UDT's name to its underlying value type. A UDT in this set carries a <c>Value</c> field and a <c>HasValue</c> presence flag.</summary>
   public Dictionary<string, PbType> NullableUnderlying { get; } = new(StringComparer.OrdinalIgnoreCase);
 
