@@ -230,10 +230,6 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private static (long Lo, long Hi) ScaleRange((long Lo, long Hi) r, long k)
     => k >= 0 ? (r.Lo * k, r.Hi * k) : (r.Hi * k, r.Lo * k);
 
-  /// <summary>The proven range of <paramref name="e"/> only when it is NOT itself a constant - i.e. a genuine FOR-counter / affine-counter expression (so SCCP keeps the constant-vs-constant cases).</summary>
-  private (long Lo, long Hi)? CounterRangeOf(Expression e)
-    => this.OptFolder.TryFold(e) is { Integer: not null } ? null : this.IndexRangeOf(e);
-
   /// <summary>
   /// pb36 O16: true when an INTEGER add/subtract <paramref name="b"/> over a FOR-counter
   /// affine range provably stays inside 16 bits, so it can never raise Error 6 - the
@@ -303,41 +299,32 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         || model.TypeOf(b.Right) is not ScalarType { IsFloat: false, ByteSize: <= 2, Signed: true })
       return null;
 
-    (long Lo, long Hi) range;
-    long c;
-    BinaryOp op;
-    if (this.OptFolder.TryFold(b.Right) is { Integer: { } rc } && this.CounterRangeOf(b.Left) is { } lr) {
-      range = lr; c = rc; op = b.Op;
-    } else if (this.OptFolder.TryFold(b.Left) is { Integer: { } lc } && this.CounterRangeOf(b.Right) is { } rr) {
-      range = rr; c = lc; op = SwapComparison(b.Op);   // normalise to "range OP const"
-    } else
+    // O16 completed: both sides go through the full range oracle (constants, FOR-counter
+    // ranges, the per-program-point interval lattice, affine counter expressions), so the
+    // fold fires for interval-vs-interval too - IF x% < 300 with x% proven in [0,255]
+    // outside any loop folds just like a counter comparison
+    // constant-vs-constant stays with SCCP/const-fold (their existing, byte-pinned path)
+    if (this.OptFolder.TryFold(b.Left) is { Integer: not null } && this.OptFolder.TryFold(b.Right) is { Integer: not null })
       return null;
 
-    // a 16-bit-overflowing affine range would wrap at runtime, so the proven range is unsafe
-    if (range.Lo < short.MinValue || range.Hi > short.MaxValue)
+    if (this.IndexRangeOf(b.Left) is not { } l || this.IndexRangeOf(b.Right) is not { } r)
       return null;
 
-    return FoldRangeCompare(range.Lo, range.Hi, op, c) is { } verdict ? (verdict ? -1L : 0L) : null;
+    // a 16-bit-overflowing range would wrap at runtime, so the proven range is unsafe
+    if (l.Lo < short.MinValue || l.Hi > short.MaxValue || r.Lo < short.MinValue || r.Hi > short.MaxValue)
+      return null;
+
+    bool? verdict = b.Op switch {
+      BinaryOp.Less => l.Hi < r.Lo ? true : l.Lo >= r.Hi ? false : null,
+      BinaryOp.LessEqual => l.Hi <= r.Lo ? true : l.Lo > r.Hi ? false : null,
+      BinaryOp.Greater => l.Lo > r.Hi ? true : l.Hi <= r.Lo ? false : null,
+      BinaryOp.GreaterEqual => l.Lo >= r.Hi ? true : l.Hi < r.Lo ? false : null,
+      BinaryOp.Equal => l.Lo == l.Hi && r.Lo == r.Hi && l.Lo == r.Lo ? true : l.Hi < r.Lo || l.Lo > r.Hi ? false : (bool?)null,
+      BinaryOp.NotEqual => l.Hi < r.Lo || l.Lo > r.Hi ? true : l.Lo == l.Hi && r.Lo == r.Hi && l.Lo == r.Lo ? false : (bool?)null,
+      _ => null,
+    };
+    return verdict is { } v ? (v ? -1L : 0L) : null;
   }
-
-  private static BinaryOp SwapComparison(BinaryOp op) => op switch {
-    BinaryOp.Less => BinaryOp.Greater,
-    BinaryOp.Greater => BinaryOp.Less,
-    BinaryOp.LessEqual => BinaryOp.GreaterEqual,
-    BinaryOp.GreaterEqual => BinaryOp.LessEqual,
-    _ => op, // Equal / NotEqual are symmetric
-  };
-
-  /// <summary>True/false when "v OP const" is invariant for every v in [lo,hi]; null when it varies.</summary>
-  private static bool? FoldRangeCompare(long lo, long hi, BinaryOp op, long c) => op switch {
-    BinaryOp.Less => hi < c ? true : lo >= c ? false : null,
-    BinaryOp.LessEqual => hi <= c ? true : lo > c ? false : null,
-    BinaryOp.Greater => lo > c ? true : hi <= c ? false : null,
-    BinaryOp.GreaterEqual => lo >= c ? true : hi < c ? false : null,
-    BinaryOp.Equal => lo == c && hi == c ? true : c < lo || c > hi ? false : (bool?)null,
-    BinaryOp.NotEqual => c < lo || c > hi ? true : lo == c && hi == c ? false : (bool?)null,
-    _ => null,
-  };
 
   /// <summary>
   /// Conservative allow-list: true only when no statement in <paramref name="body"/> can

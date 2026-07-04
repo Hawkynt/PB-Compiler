@@ -202,6 +202,37 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenLatticeProvedComparison_WhenOptimized_ThenDeadArmVanishes() {
+    // O16 completed: the interval lattice (not just FOR-counter ranges) feeds comparison
+    // folding - x% is provably 200 at the IF, so x% < 300 is decidable and the dead ELSE
+    // arm (with its marker literal) never reaches the image
+    static bool HasMarker(string source, bool optimize) {
+      var model = BindModel(source);
+      var generator = new CodeGenerator(model) { Optimize = optimize };
+      var exe = generator.EmitExecutable();
+      Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+      var marker = System.Text.Encoding.ASCII.GetBytes("XDEADX");
+      for (var i = 0; i + marker.Length <= exe.Length; ++i)
+        if (exe.AsSpan(i, marker.Length).SequenceEqual(marker))
+          return true;
+      return false;
+    }
+    const string source = """
+      DIM x AS INTEGER
+      x = 200
+      IF x < 300 THEN
+        PRINT "live"
+      ELSE
+        PRINT "XDEADX"
+      END IF
+      """;
+    Assert.Multiple(() => {
+      Assert.That(HasMarker(source, optimize: false), Is.True, "unoptimized keeps both arms");
+      Assert.That(HasMarker(source, optimize: true), Is.False, "the lattice proves x in [200,200], so the ELSE arm is dead");
+    });
+  }
+
+  [Test]
   public void Prune_GivenGotoChain_WhenPruned_ThenGotoThreadsToFinalLabel() {
     // GOTO Hop lands on a label whose next executable statement is another GOTO - the
     // decompiled (and generated) control flow should jump straight to the final label
