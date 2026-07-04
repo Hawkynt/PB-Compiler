@@ -523,6 +523,36 @@ public static class OptCommonSubexpr {
           this.RetainPastMerge(sel.Arms.Select(a => a.Body).ToList());
           return;
 
+        // cross-block CSE through a loop pre-header: entries whose inputs the body never
+        // writes stay live INTO the body (every iteration reloads the pre-loop slot - the
+        // slot is written once, before the loop) and PAST the loop (the zero-trip path
+        // falls through with the same survivors). The body's writes are invalidated
+        // UP-FRONT (not incrementally): an invalidation in pass N must also kill the
+        // value for pass N+1's start, so only never-written entries may be inherited.
+        case ForStmt f when this.IsRetainableBranch(f.Body)
+            && IsBarrierFree(f.From, model) && IsBarrierFree(f.To, model)
+            && (f.Step == null || IsBarrierFree(f.Step, model)): {
+          var loopWrites = new HashSet<VariableSymbol>(ReferenceEqualityComparer.Instance);
+          CollectWrites(f.Body, loopWrites, model);
+          if (model.VariableBindings.TryGetValue(f.Variable, out var counterSym))
+            loopWrites.Add(counterSym);   // the counter changes every pass
+          foreach (var symbol in loopWrites)
+            this.Invalidate(symbol);
+          this.RunInheriting(f.Body, new(this._live, StringComparer.Ordinal));
+          return;
+        }
+
+        case DoLoopStmt d when this.IsRetainableBranch(d.Body)
+            && (d.PreCondition == null || IsBarrierFree(d.PreCondition, model))
+            && (d.PostCondition == null || IsBarrierFree(d.PostCondition, model)): {
+          var loopWrites = new HashSet<VariableSymbol>(ReferenceEqualityComparer.Instance);
+          CollectWrites(d.Body, loopWrites, model);
+          foreach (var symbol in loopWrites)
+            this.Invalidate(symbol);
+          this.RunInheriting(d.Body, new(this._live, StringComparer.Ordinal));
+          return;
+        }
+
         default:
           // a barrier ends the run; sub-blocks are their own runs
           this._live.Clear();

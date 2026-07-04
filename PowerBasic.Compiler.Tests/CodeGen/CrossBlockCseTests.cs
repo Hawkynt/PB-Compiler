@@ -51,6 +51,34 @@ public sealed class CrossBlockCseTests {
   }
 
   [Test]
+  public void Analyze_GivenValueReusedInsideForLoop_ReloadsThroughThePreheader() {
+    // y%*320+x% computed before the FOR; the body writes only b% (and the counter), so
+    // every iteration reloads the pre-loop slot instead of recomputing
+    var result = Analyze("y% = 2\nx% = 3\na% = y% * 320 + x%\nFOR i% = 1 TO 10\n b% = y% * 320 + x%\nNEXT");
+    Assert.That(result.SlotCount, Is.GreaterThanOrEqualTo(1), "the loop-body recomputation should reload the pre-loop slot");
+    Assert.That(result.Marks.Values.Any(m => !m.IsDefine), Is.True);
+  }
+
+  [Test]
+  public void Analyze_GivenValueReusedAfterLoop_SurvivesTheLoop() {
+    var result = Analyze("y% = 2\nx% = 3\na% = y% * 320 + x%\nFOR i% = 1 TO 10\n b% = i%\nNEXT\nc% = y% * 320 + x%");
+    Assert.That(result.SlotCount, Is.GreaterThanOrEqualTo(1), "an untouched value survives past the loop");
+  }
+
+  [Test]
+  public void Analyze_GivenLoopWritesAnInput_DoesNotReuse() {
+    var result = Analyze("y% = 2\nx% = 3\na% = y% * 320 + x%\nFOR i% = 1 TO 10\n y% = y% + 1\nNEXT\nc% = y% * 320 + x%");
+    Assert.That(result.SlotCount, Is.EqualTo(0), "a body write to an input kills the value for the body AND past the loop");
+  }
+
+  [Test]
+  public void Analyze_GivenCounterIsAnInput_DoesNotReuseInsideLoop() {
+    // the cached tree reads i%, which the loop increments - no reuse
+    var result = Analyze("i% = 2\nx% = 3\na% = i% * 320 + x%\nFOR i% = 1 TO 10\n b% = i% * 320 + x%\nNEXT");
+    Assert.That(result.SlotCount, Is.EqualTo(0));
+  }
+
+  [Test]
   public void Analyze_GivenNestedControlInBranch_DoesNotFlowPastTheMerge() {
     // a nested IF inside the branch could write inputs CollectWrites never sees, so the
     // conservative merge clears the cache; the post-IF recomputation does not reload
