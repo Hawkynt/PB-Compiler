@@ -496,6 +496,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     asm.EnableJumpThreading = standalone;
     // S1 SIZE: short-jump relaxation shrinks every in-range near jump to the 2-byte form
     asm.EnableJumpRelaxation = standalone && this.OptimizeSize;
+    // S3 SIZE: identical procedures fold to one copy (entry labels re-bound to the survivor)
+    asm.EnableTailMerge = standalone && this.OptimizeSize;
     var userMain = asm.DefineLabel("user_main");
     this._scratch = asm.DefineLabel("cg_scratch");
 

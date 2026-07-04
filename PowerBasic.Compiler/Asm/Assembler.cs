@@ -95,6 +95,7 @@ public sealed partial class Assembler {
     this.RunSchedule();
     this.RunPeephole();
     this.RunJumpThreading();
+    this.RunTailMerge();
     this.RunJumpRelaxation();
     var result = this._buffer.ToArray();
     foreach (var fixup in this._fixups) {
@@ -117,6 +118,7 @@ public sealed partial class Assembler {
     this.RunSchedule();
     this.RunPeephole();
     this.RunJumpThreading();
+    this.RunTailMerge();
     this.RunJumpRelaxation();
     var result = this._buffer.ToArray();
     var relocations = new List<AsmRelocation>();

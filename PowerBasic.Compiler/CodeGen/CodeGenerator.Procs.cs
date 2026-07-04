@@ -102,6 +102,7 @@ public sealed partial class CodeGenerator {
     // line - reached only by CALL, so the NOP pad never executes
     if (this.Optimize && this.Cpu486)
       asm.AlignCode(16);
+    asm.BeginFoldRegion(this.ProcLabelOf(proc));   // S3: identical procedures fold under $OPTIMIZE SIZE
     asm.MarkLabel(this.ProcLabelOf(proc));
     // PB 3.6 capturing lambda entry: the env far pointer arrives in BX:CX. The frame
     // zeroing clobbers CX (its word counter) but not DX, so stash the env SEGMENT in
@@ -246,6 +247,7 @@ public sealed partial class CodeGenerator {
     else
       asm.Ret();
 
+    asm.EndFoldRegion();
     this.EndFrame();
     this._userLabels = outerLabels;
     this._currentProc = null;
