@@ -104,6 +104,9 @@ public sealed record NamedArgExpr(SourcePosition Position, string Name, Expressi
 /// <summary>PB 3.6 from-end array index: <c>arr(^n)</c> = the n-th element from the end (^1 = last). Valid only as an array index.</summary>
 public sealed record FromEndExpr(SourcePosition Position, Expression Index) : Expression(Position);
 
+/// <summary>pb36 array slice argument <c>a(lo TO hi)</c>: either bound may be null (the source's LBOUND/UBOUND) or a <see cref="FromEndExpr"/>. Valid as a whole assignment source and as a FOR EACH collection.</summary>
+public sealed record RangeArgExpr(SourcePosition Position, Expression? Lo, Expression? Hi) : Expression(Position);
+
 /// <summary>
 /// PB 3.6 inline lambda: <c>FUNCTION(params) [AS type] =&gt; expr</c>, or the statement-bodied SUB form
 /// <c>SUB(params) statement</c> (<see cref="StatementBody"/> set, <see cref="Body"/> unused). Lifted

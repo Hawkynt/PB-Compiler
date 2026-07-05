@@ -790,11 +790,23 @@ public sealed partial class Parser {
   /// <c>ANY set$</c> flags a match-any character set (INSTR/EXTRACT$/...).
   /// </summary>
   private Expression ParseArgument() {
-    // from-end array index (PB 3.6): arr(^n) - the binder validates it is an index
+    // from-end array index (PB 3.6): arr(^n) - the binder validates it is an index;
+    // followed by TO it opens a slice instead: a(^3 TO), a(^5 TO ^2)
     if (this.Current.Kind == TokenKind.Caret) {
       this.Require(LanguageFeature.FromEndIndex);
       var pos = this.Advance().Position; // '^'
-      return new FromEndExpr(pos, this.ParseExpression());
+      var fromEnd = new FromEndExpr(pos, this.ParseExpression());
+      if (this.IsKeyword(0, "IS") || !this.IsKeyword(0, "TO"))
+        return fromEnd;
+      this.Require(LanguageFeature.ArraySlices);
+      this.Advance(); // TO
+      return new RangeArgExpr(pos, fromEnd, this.ParseSliceUpperBound());
+    }
+    // slice with omitted lower bound: a(TO hi)
+    if (this.IsKeyword(0, "TO")) {
+      this.Require(LanguageFeature.ArraySlices);
+      var pos = this.Advance().Position;
+      return new RangeArgExpr(pos, null, this.ParseSliceUpperBound());
     }
     // named argument (PB 3.6): name := value
     if (this.Current.Kind == TokenKind.Identifier && this.Peek().Kind == TokenKind.Colon && this.Peek(2).Kind == TokenKind.Equals) {
@@ -811,6 +823,24 @@ public sealed partial class Parser {
     if (this.IsKeyword(0, "ANY") && !this.IsStatementEnd() && this.Peek().Kind is not (TokenKind.Comma or TokenKind.RParen)) {
       var pos = this.Advance().Position;
       return new AnyMatchExpr(pos, this.ParseExpression());
+    }
+    var argument = this.ParseExpression();
+    // pb36 slice: a(lo TO hi) / a(lo TO) - the binder validates the context
+    if (this.IsKeyword(0, "TO")) {
+      this.Require(LanguageFeature.ArraySlices);
+      this.Advance();
+      return new RangeArgExpr(argument.Position, argument, this.ParseSliceUpperBound());
+    }
+    return argument;
+  }
+
+  /// <summary>A slice's upper bound: omitted (UBOUND), a from-end ^n, or an expression.</summary>
+  private Expression? ParseSliceUpperBound() {
+    if (this.Current.Kind is TokenKind.RParen or TokenKind.Comma)
+      return null;
+    if (this.Current.Kind == TokenKind.Caret) {
+      var pos = this.Advance().Position;
+      return new FromEndExpr(pos, this.ParseExpression());
     }
     return this.ParseExpression();
   }

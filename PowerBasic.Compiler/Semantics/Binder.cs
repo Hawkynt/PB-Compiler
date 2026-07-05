@@ -40,6 +40,7 @@ public sealed class Binder {
   private readonly HashSet<string> _readonlyTypes = new(StringComparer.OrdinalIgnoreCase);
   // pb36 type aliases (TYPE Name AS type): resolved lazily by ResolveTypeName; the stack detects cycles
   private readonly Dictionary<string, TypeName> _typeAliases = new(StringComparer.OrdinalIgnoreCase);
+  private int _sliceCounter;
   private readonly HashSet<string> _aliasResolutionStack = new(StringComparer.OrdinalIgnoreCase);
 
   /// <summary>pb36 bit-fields: "Udt.field" (case-insensitive) -> the hidden storage word it lives in, its bit offset and width. Member access desugars to shift/mask on the storage word.</summary>
@@ -1299,6 +1300,24 @@ public sealed class Binder {
       loopBody.AddRange(fe.Body);
       var loop = new DoLoopStmt(pos, LoopTestKind.While, new MemberExpr(pos, enumVar, "MoveNext", TypeSuffix.None), LoopTestKind.None, null, loopBody);
       lowered = new GroupStmt(pos, [construct, loop]);
+    } else if (fe.Collection is CallOrIndexExpr { Arguments: [RangeArgExpr feRange] } feSrc
+        && this.LookupArrayVariable(feSrc.Name, feSrc.Suffix, scope) is { Type: ArrayType { Rank: 1 } }) {
+      // pb36 slice iteration: FOR EACH v IN a(lo TO hi) - a counted loop over the slice
+      var n = ++this._sliceCounter;
+      var srcRef = new NameExpr(pos, feSrc.Name, feSrc.Suffix);
+      Expression Bound(Expression? bound, bool isLower) {
+        var ubound = new CallOrIndexExpr(pos, "UBOUND", TypeSuffix.None, [srcRef]);
+        return bound switch {
+          null => isLower ? new CallOrIndexExpr(pos, "LBOUND", TypeSuffix.None, [srcRef]) : ubound,
+          FromEndExpr fe2 => new BinaryExpr(pos, BinaryOp.Subtract, ubound,
+            new BinaryExpr(pos, BinaryOp.Subtract, fe2.Index, new IntegerLiteralExpr(pos, 1, TypeSuffix.None))),
+          _ => bound,
+        };
+      }
+      var index = this.DeclareHidden(scope, pos, "foreach" + ++this._foreachCounter, PbType.Long);
+      var body = new List<Statement> { new AssignStmt(pos, fe.Variable, new CallOrIndexExpr(pos, feSrc.Name, feSrc.Suffix, [index])) };
+      body.AddRange(fe.Body);
+      lowered = new ForStmt(pos, index, Bound(feRange.Lo, isLower: true), Bound(feRange.Hi, isLower: false), null, body);
     } else {
       var (name, suffix) = fe.Collection switch {
         NameExpr n => (n.Name, n.Suffix),
@@ -2238,6 +2257,52 @@ public sealed class Binder {
             break;
           }
         }
+        // pb36 array slice copy: b() = a(lo TO hi) -> REDIM b(0 TO hi-lo) + element copy loop.
+        // Bounds may be omitted (the source's LBOUND/UBOUND) or from-end (^n); they are hoisted
+        // into LONG temps so runtime expressions evaluate once.
+        if (a.Value is CallOrIndexExpr { Arguments: [RangeArgExpr sliceRange] } sliceSrc
+            && this.LookupArrayVariable(sliceSrc.Name, sliceSrc.Suffix, scope) is { Type: ArrayType { Rank: 1 } } srcArray) {
+          var (targetName, targetSuffix) = a.Target switch {
+            NameExpr tn => (tn.Name, tn.Suffix),
+            CallOrIndexExpr { Arguments.Count: 0 } tc => (tc.Name, tc.Suffix),
+            _ => (null, TypeSuffix.None),
+          };
+          if (targetName is null
+              || this.LookupArrayVariable(targetName, targetSuffix, scope) is not { Type: ArrayType { IsDynamic: true, Rank: 1 } }) {
+            this.Error(a.Position, "a slice copies into a dynamic rank-1 array (b() = a(lo TO hi))");
+            break;
+          }
+          var pos = a.Position;
+          var n = ++this._sliceCounter;
+          var srcRef = new NameExpr(pos, sliceSrc.Name, sliceSrc.Suffix);
+          Expression Bound(Expression? bound, bool isLower) {
+            var ubound = new CallOrIndexExpr(pos, "UBOUND", TypeSuffix.None, [srcRef]);
+            return bound switch {
+              null => isLower ? new CallOrIndexExpr(pos, "LBOUND", TypeSuffix.None, [srcRef]) : ubound,
+              FromEndExpr fe => new BinaryExpr(pos, BinaryOp.Subtract, ubound,
+                new BinaryExpr(pos, BinaryOp.Subtract, fe.Index, new IntegerLiteralExpr(pos, 1, TypeSuffix.None))),
+              _ => bound,
+            };
+          }
+          var lo = new NameExpr(pos, $"slice{n}_lo", TypeSuffix.Long);
+          var hi = new NameExpr(pos, $"slice{n}_hi", TypeSuffix.Long);
+          var i = new NameExpr(pos, $"slice{n}_i", TypeSuffix.Long);
+          var group = new GroupStmt(pos, [
+            new AssignStmt(pos, lo, Bound(sliceRange.Lo, isLower: true)),
+            new AssignStmt(pos, hi, Bound(sliceRange.Hi, isLower: false)),
+            new RedimStmt(pos, [new VariableDecl(pos, targetName, targetSuffix,
+              [(new IntegerLiteralExpr(pos, 0, TypeSuffix.None), new BinaryExpr(pos, BinaryOp.Subtract, hi, lo))], null)]),
+            new ForStmt(pos, i, lo, hi, null, [
+              new AssignStmt(pos,
+                new CallOrIndexExpr(pos, targetName, targetSuffix, [new BinaryExpr(pos, BinaryOp.Subtract, i, lo)]),
+                new CallOrIndexExpr(pos, sliceSrc.Name, sliceSrc.Suffix, [i])),
+            ]),
+          ]);
+          this.BindStatement(group, scope);
+          this._model.DesugaredStatements[a] = group;
+          break;
+        }
+
         // pb36 bit-field write: o.bf = v -> o.$storage = (o.$storage AND clearMask) OR ((v AND mask) << offset),
         // minimized: a constant v folds its masked/shifted value to one literal; a field covering the
         // whole container skips the read-modify-write (the member store truncates); a fold to 0 drops the OR.
@@ -4201,6 +4266,11 @@ public sealed class Binder {
   #endregion
 
   private PbType BindCallOrIndex(CallOrIndexExpr call, Scope scope) {
+    // pb36 slices are handled by the assignment / FOR EACH desugars; anywhere else is an error
+    if (call.Arguments.Any(arg => arg is RangeArgExpr)) {
+      this.Error(call.Position, "a slice (lo TO hi) is only valid as a whole assignment source or a FOR EACH collection");
+      return PbType.Integer;
+    }
     // 0. pb36 generic function: a user-declared generic template shadows an intrinsic of the same name
     // (e.g. a generic Max), so resolve it before the array/intrinsic checks
     if (this._genericProcs.ContainsKey(call.Name) && this.ResolveGenericCall(call.Name, call.Arguments, call.Position, scope, call.TypeArguments) is { } genInstance0) {
