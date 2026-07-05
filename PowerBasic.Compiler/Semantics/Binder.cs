@@ -4151,6 +4151,97 @@ public sealed class Binder {
 
   #region pb36 compile-time reflection
 
+  private int _bindThunkCounter;
+
+  /// <summary>
+  /// pb36 partial application and composition, lowered to synthesized top-level thunk FUNCTIONs
+  /// (delegates by CODEPTR32, exactly like lambdas): <c>BIND(f, c1, ...)</c> pre-fills f's leading
+  /// parameters with compile-time constants and yields a delegate over the remaining ones;
+  /// <c>COMPOSE(f, g)</c> yields <c>h</c> with <c>h(x) = g(f(x))</c> (apply f first). Both names
+  /// stay available as ordinary identifiers - the forms only fire when no user procedure or
+  /// variable shadows them.
+  /// </summary>
+  private PbType? TryBindPartialApplication(CallOrIndexExpr call, Scope scope) {
+    if (call.Suffix != TypeSuffix.None || this._model.Procedures.ContainsKey(call.Name)
+        || this.ResolveVariable(call.Name, call.Suffix, scope, create: false) != null)
+      return null;
+    var pos = call.Position;
+
+    Parameter[]? ParamsOf(ProcedureSymbol target, int skip) {
+      var result = new List<Parameter>();
+      for (var k = skip; k < target.VisibleParameterCount; ++k) {
+        var p = target.Parameters[k];
+        var tn = this.TypeNameOf(p.Type, pos);
+        if (tn == null)
+          return null;
+        result.Add(new Parameter(pos, p.Name, TypeSuffix.None, tn, ByVal: true, Seg: false, IsArray: false));
+      }
+      return [.. result];
+    }
+
+    PbType BuildThunk(string kind, ProcedureSymbol target, Parameter[] pars, Expression resultValue) {
+      var thunkName = $"${kind}{++this._bindThunkCounter}@{target.Name}";
+      var returnTn = target.ReturnType is { } rt ? this.TypeNameOf(rt, pos) : null;
+      var body = new List<Statement> { new AssignStmt(pos, new NameExpr(pos, thunkName, TypeSuffix.None), resultValue) };
+      var proc = this.DefineProcedure(thunkName, isFunction: true, TypeSuffix.None, returnTn, pars, isStatic: false, body, pos);
+      this._genericBindQueue.Enqueue(proc);
+      var pointer = new CallOrIndexExpr(pos, "CODEPTR32", TypeSuffix.None, [new NameExpr(pos, thunkName, TypeSuffix.None)]);
+      this.BindExpression(pointer, scope);
+      this._model.Desugared[call] = pointer;
+      return new ProcPtrType([.. pars.Select(p => this.ResolveTypeName(p.Type!) ?? PbType.Integer)], target.ReturnType);
+    }
+
+    switch (call.Name.ToUpperInvariant()) {
+      case "BIND" when call.Arguments.Count >= 2 && call.Arguments[0] is NameExpr bt
+          && this._model.Procedures.TryGetValue(bt.Name, out var target) && target.IsFunction: {
+        this.Require(LanguageFeature.PartialApplication, pos);
+        var bound = call.Arguments.Skip(1).ToList();
+        if (bound.Count >= target.VisibleParameterCount) {
+          this.Error(pos, $"BIND pre-fills fewer arguments than {bt.Name} takes ({target.VisibleParameterCount})");
+          return PbType.Dword;
+        }
+        var boundLiterals = new List<Expression>();
+        foreach (var b in bound) {
+          if (this._folder.TryFold(b) is not { } cv) {
+            this.Error(b.Position, "BIND arguments must be compile-time constants (the delegate snapshots them)");
+            return PbType.Dword;
+          }
+          boundLiterals.Add(cv.Text is { } txt
+            ? new StringLiteralExpr(b.Position, txt)
+            : cv.Integer is { } iv ? new IntegerLiteralExpr(b.Position, iv, TypeSuffix.None)
+            : new FloatLiteralExpr(b.Position, cv.AsFloat, TypeSuffix.None));
+        }
+        var pars = ParamsOf(target, bound.Count);
+        if (pars == null) {
+          this.Error(pos, $"BIND cannot forward {bt.Name}'s parameter types");
+          return PbType.Dword;
+        }
+        var forwarded = boundLiterals.Concat(pars.Select(Expression (p) => new NameExpr(pos, p.Name, TypeSuffix.None))).ToList();
+        return BuildThunk("bind", target, pars, new CallOrIndexExpr(pos, bt.Name, TypeSuffix.None, forwarded));
+      }
+
+      case "COMPOSE" when call.Arguments is [NameExpr fe, NameExpr ge]
+          && this._model.Procedures.TryGetValue(fe.Name, out var f) && f.IsFunction
+          && this._model.Procedures.TryGetValue(ge.Name, out var g) && g.IsFunction: {
+        this.Require(LanguageFeature.PartialApplication, pos);
+        if (f.VisibleParameterCount != 1 || g.VisibleParameterCount != 1) {
+          this.Error(pos, "COMPOSE takes two single-parameter FUNCTIONs");
+          return PbType.Dword;
+        }
+        var pars = ParamsOf(f, 0);
+        if (pars == null) {
+          this.Error(pos, $"COMPOSE cannot forward {fe.Name}'s parameter type");
+          return PbType.Dword;
+        }
+        var inner = new CallOrIndexExpr(pos, fe.Name, TypeSuffix.None, [new NameExpr(pos, pars[0].Name, TypeSuffix.None)]);
+        return BuildThunk("compose", g, pars, new CallOrIndexExpr(pos, ge.Name, TypeSuffix.None, [inner]));
+      }
+
+      default:
+        return null;
+    }
+  }
+
   /// <summary>
   /// Binds the compile-time reflection pseudo-functions. Every one of them folds to a literal at
   /// bind time (recorded in <see cref="SemanticModel.Desugared"/>): TYPEOF$(x) - the display name of
@@ -4312,6 +4403,11 @@ public sealed class Binder {
     // codegen only ever see the constant
     if (this.TryBindReflection(call, scope) is { } reflected)
       return reflected;
+
+    // pb36 partial application / composition: BIND(f, consts...) / COMPOSE(f, g) synthesize a
+    // delegate thunk FUNCTION (bound through the late-proc queue, like generic instances)
+    if (this.TryBindPartialApplication(call, scope) is { } partial)
+      return partial;
 
     // 2. intrinsic
     var lookupName = call.Suffix == TypeSuffix.String ? call.Name + "$" : call.Name;
