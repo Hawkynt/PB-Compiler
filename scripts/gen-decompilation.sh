@@ -55,6 +55,8 @@ roundtrip_status() { # $1 = .bas file
   [ -z "$DOSBOX" ] && { echo COMPILES; return; }
   # output equivalence: wrap PRINT -> RESULT.TXT, run the pb36 original and the pb35 decompilation
   { echo 'OPEN "RESULT.TXT" FOR OUTPUT AS #1'; body "$1" | sed 's/PRINT \([^#]\)/PRINT #1, \1/g'; echo 'CLOSE #1'; } > "$TMP/a/T.BAS"
+  cp "$(dirname "$1")"/*.bin "$TMP/a/" 2>/dev/null || true   # sibling resources ($RESOURCE payloads)
+  cp "$(dirname "$1")"/*.bin "$TMP/b/" 2>/dev/null || true
   run --dialect pb36 "$TMP/a/T.BAS" -O "$TMP/a/T.EXE" >/dev/null 2>&1 || { echo COMPILES; return; }
   mkconf "$TMP/a" > "$TMP/a.conf"; run_dosbox_retry "$TMP/a.conf" "$TMP/a" || { echo COMPILES; return; }
   run --dialect pb36 --emit-basic "$TMP/a/T.BAS" -O "$TMP/b/T.BAS" >/dev/null 2>&1 || { echo NOCOMPILE; return; }
