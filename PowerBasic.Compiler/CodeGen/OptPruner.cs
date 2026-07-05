@@ -15,6 +15,10 @@ namespace PowerBasic.Compiler.CodeGen;
 /// DEF SEG follows with only provably segment-transparent statements between
 /// them (no PEEK/POKE family, no BLOAD/BSAVE/interrupts, no inline asm, no
 /// user calls, no control flow). Anything unrecognized counts as an observer.</item>
+/// <item><b>Console-setter coalescing (O10 extension)</b>: an earlier LOCATE whose
+/// argument mask the next LOCATE covers (or that a CLS re-homes) is dropped when nothing
+/// between them outputs or reads the cursor; a CLS directly re-cleared by another CLS
+/// likewise.</item>
 /// <item><b>GOTO threading (O27)</b>: a GOTO whose target label's next executable
 /// statement is another GOTO retargets to the final label of the chain (cycle-guarded),
 /// so a jump cascade collapses to one hop already at the source level.</item>
@@ -130,6 +134,7 @@ public static class OptPruner {
 
     EliminateUnreachable(result);
     CoalesceDefSegs(result, model);
+    CoalesceConsoleSetters(result, model);
     return result;
   }
 
@@ -233,6 +238,87 @@ public static class OptPruner {
       // an unmodeled node observes the segment if any nested expression does.
       _ => AstQuery.Subexpressions(e).Any(c => ObservesSegment(c, model)),
     };
+  }
+
+  /// <summary>
+  /// O10 extension: folds redundant console-state setters. An earlier <c>LOCATE</c> is dead when
+  /// the next setter covers everything it set - a later LOCATE whose argument-present mask is a
+  /// superset, or a CLS (clears and homes the cursor) - and nothing between them outputs or reads
+  /// the cursor. A CLS directly re-cleared by another CLS is likewise dead. Earlier LOCATEs with
+  /// cursor-shape arguments (3+) never fold; all argument expressions must be console-pure.
+  /// </summary>
+  private static void CoalesceConsoleSetters(List<Statement> body, SemanticModel model) {
+    var pendingLocate = -1;   // a coverable LOCATE with no observer behind it
+    var pendingCls = -1;      // a CLS with no observer behind it
+
+    void Drop(ref int index, ref int other, int i, List<Statement> list, ref int cursor) {
+      list.RemoveAt(index);
+      if (other > index)
+        --other;
+      --cursor;
+      index = -1;
+    }
+
+    for (var i = 0; i < body.Count; ++i) {
+      switch (body[i]) {
+        case CommandStmt { Keyword: "LOCATE" } loc when loc.Arguments.All(a => a == null || !ObservesConsole(a, model)): {
+          if (pendingLocate >= 0 && Covers(loc, (CommandStmt)body[pendingLocate]))
+            Drop(ref pendingLocate, ref pendingCls, i, body, ref i);
+          // only a plain row/column LOCATE is a fold candidate (3+ args set the cursor shape)
+          pendingLocate = loc.Arguments.Count <= 2 ? i : -1;
+          continue;   // LOCATE itself neither observes the screen nor the cursor
+        }
+
+        case CommandStmt { Keyword: "CLS", Arguments.Count: 0 }: {
+          if (pendingCls >= 0)
+            Drop(ref pendingCls, ref pendingLocate, i, body, ref i);
+          if (pendingLocate >= 0)
+            Drop(ref pendingLocate, ref pendingCls, i, body, ref i);   // CLS homes the cursor
+          pendingCls = i;
+          pendingLocate = -1;
+          continue;
+        }
+
+        default:
+          if (!IsConsoleTransparent(body[i], model)) {
+            pendingLocate = -1;
+            pendingCls = -1;
+          }
+          continue;
+      }
+    }
+  }
+
+  /// <summary>True when the later LOCATE re-sets every position component the earlier one set (argument-present superset over row/column).</summary>
+  private static bool Covers(CommandStmt later, CommandStmt earlier) {
+    for (var k = 0; k < 2; ++k) {
+      var earlierSets = k < earlier.Arguments.Count && earlier.Arguments[k] != null;
+      var laterSets = k < later.Arguments.Count && later.Arguments[k] != null;
+      if (earlierSets && !laterSets)
+        return false;
+    }
+    return true;
+  }
+
+  /// <summary>True when the statement provably neither writes console output nor reads cursor state.</summary>
+  private static bool IsConsoleTransparent(Statement statement, SemanticModel model) => statement switch {
+    EquateStmt or DefTypeStmt or DataStmt or MetaStmt or DimStmt => true,
+    AssignStmt a => !ObservesConsole(a.Target, model) && !ObservesConsole(a.Value, model),
+    IncrDecrStmt id => !ObservesConsole(id.Target, model) && (id.Amount == null || !ObservesConsole(id.Amount, model)),
+    // PRINT writes at (and moves) the cursor - never transparent here, not even to a file
+    // (PRINT# still tracks a column); everything unrecognized is conservatively opaque
+    _ => false,
+  };
+
+  /// <summary>True when evaluating <paramref name="e"/> could read cursor/screen state (or do anything opaque).</summary>
+  private static bool ObservesConsole(Expression e, SemanticModel model) {
+    if (model.CallBindings.ContainsKey(e))
+      return true; // user procedures are opaque
+    if (model.IntrinsicBindings.TryGetValue(e, out var intrinsic)
+        && intrinsic.Name is "CSRLIN" or "POS" or "SCREEN")
+      return true;
+
+    return AstQuery.Subexpressions(e).Any(c => ObservesConsole(c, model));
   }
 
   #endregion

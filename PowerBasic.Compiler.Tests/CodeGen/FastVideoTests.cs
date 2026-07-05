@@ -63,6 +63,28 @@ public sealed class FastVideoTests {
   }
 
   [Test]
+  public void Capture_GivenFoldedLocates_WhenOptimized_ThenScreenIdenticalToUnoptimized() {
+    // O10 console-setter coalescing drops the shadowed LOCATEs/CLS - the observable
+    // screen must stay exactly the same
+    const string subject = """
+      CLS
+      CLS
+      LOCATE 1, 1
+      LOCATE 3, 5
+      PRINT "PLACED"
+      LOCATE , 2
+      LOCATE 5, 1
+      PRINT "SECOND"
+      """;
+    var plain = DosBoxRunner.RunWithScreenCapture(Compile("$OPTIMIZE OFF\n" + subject, Dialect.Pb36), _capture);
+    var optimized = DosBoxRunner.RunWithScreenCapture(Compile(subject, Dialect.Pb36), _capture);
+    Assert.Multiple(() => {
+      Assert.That(optimized, Does.Contain("PLACED").And.Contain("SECOND"));
+      Assert.That(optimized, Is.EqualTo(plain), "folding shadowed console setters must not move a single glyph");
+    });
+  }
+
+  [Test]
   public void Execute_GivenScreen13PixelPrimitives_WhenRun_ThenPointReadsBackPsetColors() {
     // R2: PSET/POINT are direct A000 stores/loads (mode 13h linear addressing) - no BIOS
     // per-pixel path exists at all, so 'fast graphics' holds by construction; verified by

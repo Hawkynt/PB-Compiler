@@ -256,6 +256,46 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Prune_GivenConsecutiveLocates_WhenPruned_ThenOnlyTheLastSurvives() {
+    var model = BindModel("LOCATE 1, 1\nLOCATE 2, 3\nPRINT \"x\"\nEND");
+    OptPruner.Prune(model);
+    Assert.That(model.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.CommandStmt>().Count(c => c.Keyword == "LOCATE"), Is.EqualTo(1));
+  }
+
+  [Test]
+  public void Prune_GivenOutputOrCursorReadBetweenLocates_WhenPruned_ThenBothSurvive() {
+    var model = BindModel("LOCATE 1, 1\nPRINT \"x\"\nLOCATE 2, 3\nEND");
+    OptPruner.Prune(model);
+    Assert.That(model.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.CommandStmt>().Count(c => c.Keyword == "LOCATE"), Is.EqualTo(2), "PRINT observes the cursor");
+    var model2 = BindModel("LOCATE 1, 1\nr% = CSRLIN\nLOCATE 2, 3\nPRINT r%\nEND");
+    OptPruner.Prune(model2);
+    Assert.That(model2.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.CommandStmt>().Count(c => c.Keyword == "LOCATE"), Is.EqualTo(2), "CSRLIN reads the cursor");
+  }
+
+  [Test]
+  public void Prune_GivenPartialLocateMasks_WhenPruned_ThenOnlyCoveredFolds() {
+    // LOCATE ,5 sets only the column; LOCATE 1,1 covers it -> earlier folds
+    var model = BindModel("LOCATE , 5\nLOCATE 1, 1\nPRINT \"x\"\nEND");
+    OptPruner.Prune(model);
+    Assert.That(model.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.CommandStmt>().Count(c => c.Keyword == "LOCATE"), Is.EqualTo(1));
+    // LOCATE 1,1 then LOCATE ,5: the later sets only the column - the earlier row survives
+    var model2 = BindModel("LOCATE 1, 1\nLOCATE , 5\nPRINT \"x\"\nEND");
+    OptPruner.Prune(model2);
+    Assert.That(model2.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.CommandStmt>().Count(c => c.Keyword == "LOCATE"), Is.EqualTo(2));
+  }
+
+  [Test]
+  public void Prune_GivenClsChains_WhenPruned_ThenRedundantWorkFolds() {
+    // CLS re-clears and homes: an earlier CLS and an earlier (unobserved) LOCATE are dead
+    var model = BindModel("CLS\nCLS\nPRINT \"x\"\nEND");
+    OptPruner.Prune(model);
+    Assert.That(model.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.CommandStmt>().Count(c => c.Keyword == "CLS"), Is.EqualTo(1));
+    var model2 = BindModel("LOCATE 5, 5\nCLS\nPRINT \"x\"\nEND");
+    OptPruner.Prune(model2);
+    Assert.That(model2.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.CommandStmt>().Count(c => c.Keyword == "LOCATE"), Is.EqualTo(0), "CLS homes the cursor - the unobserved LOCATE is dead");
+  }
+
+  [Test]
   public void Prune_GivenGotoChain_WhenPruned_ThenGotoThreadsToFinalLabel() {
     // GOTO Hop lands on a label whose next executable statement is another GOTO - the
     // decompiled (and generated) control flow should jump straight to the final label
