@@ -19,9 +19,15 @@ public sealed class IrConstantInt(IrType type, long value) : IrConstant(type) {
   public bool IsZero => (this.Value & (this.Type.Bits >= 64 ? -1L : (1L << this.Type.Bits) - 1)) == 0;
 }
 
-/// <summary>A floating-point constant.</summary>
+/// <summary>
+/// A floating-point constant. An <c>f32</c> constant is rounded to single precision on
+/// construction: PB types an unsuffixed decimal literal SINGLE, so <c>d# = 3.14159</c> must widen
+/// the single value (3.1415901184082) rather than the full-precision one - keeping the wider
+/// payload would make the IR disagree with the direct emitter, and would not even be a legal
+/// LLVM <c>float</c> literal.
+/// </summary>
 public sealed class IrConstantFloat(IrType type, double value) : IrConstant(type) {
-  public double Value { get; } = value;
+  public double Value { get; } = type.Bits == 32 ? (float)value : value;
 }
 
 /// <summary>The <c>null</c> pointer constant.</summary>

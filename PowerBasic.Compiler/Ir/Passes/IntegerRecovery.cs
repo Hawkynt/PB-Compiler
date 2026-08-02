@@ -33,6 +33,14 @@ public static class IntegerRecovery {
       case IrCast { Op: IrCastOp.SIToFP } widen when widen.Value.Type.Equals(intType):
         return widen.Value;                                // sitofp(x : iN) -> x
 
+      // a float-precision cast is transparent to the integer value underneath it: PB widens a
+      // SINGLE subtree to DOUBLE before combining it with a wider operand (`a%*a% + b%` computes
+      // the product in SINGLE, extends to DOUBLE for the add). Recurse straight through - the
+      // leaf-width check still forces every leaf to the target integer type, so this never crosses
+      // into a mixed-width tree the direct back end would (correctly) leave on the FPU.
+      case IrCast { Op: IrCastOp.FPExt or IrCastOp.FPTrunc } precision:
+        return TryRecover(precision.Value, intType, block, at);
+
       case IrConstantFloat c when IsExactInteger(c.Value, intType):
         return new IrConstantInt(intType, (long)c.Value);  // a float constant that is an exact integer
 

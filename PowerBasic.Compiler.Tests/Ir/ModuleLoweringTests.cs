@@ -93,9 +93,9 @@ public sealed class ModuleLoweringTests {
   }
 
   [Test]
-  public void Module_DeclinesWhenAProcedureTakesAStringParameter() {
-    // strings are not in the subset, so a procedure taking one cannot be modelled and,
-    // since main calls it, the whole module declines
+  public void Module_GivenProcedureTakingAString_ThenItIsAHandleParameter() {
+    // a string is a runtime handle, so it travels as an opaque pointer: BYREF passes a pointer
+    // to the caller's handle slot, which is what makes the procedure able to write it back
     var module = LowerModule(
       "DECLARE SUB greet(s$)\n" +
       "CALL greet(\"hi\")\n" +
@@ -105,7 +105,81 @@ public sealed class ModuleLoweringTests {
       "  n% = LEN(s$)\n" +
       "END SUB");
 
-    Assert.That(module, Is.Null);
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var sub = module!.Functions.First(f => f.Name == "greet");
+    Assert.That(sub.IsDeclaration, Is.False, "the body is in the subset now");
+    Assert.That(sub.Parameters[0].Type, Is.EqualTo(IrType.Ptr));
+  }
+
+  [Test]
+  public void Module_GivenStringReturningFunction_ThenTheResultIsAHandle() {
+    var module = LowerModule(
+      "DECLARE FUNCTION wrap$(s$)\n" +
+      "DIM t AS STRING\n" +
+      "t = wrap$(\"x\")\n" +
+      "\n" +
+      "FUNCTION wrap$(s$)\n" +
+      "  wrap$ = \"[\" + s$ + \"]\"\n" +
+      "END FUNCTION");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var fn = module!.Functions.First(f => f.Name == "wrap");
+    Assert.That(fn.ReturnType, Is.EqualTo(IrType.Ptr));
+    Assert.That(fn.IsDeclaration, Is.False);
+  }
+
+  [Test]
+  public void Module_GivenSharedVariableUsedByAProcedure_ThenItBecomesOneGlobal() {
+    // main and the procedure must see the SAME cell - a frame slot each would silently diverge
+    var module = LowerModule(
+      "DECLARE SUB bump()\n" +
+      "DIM g AS SHARED INTEGER\n" +
+      "g = 1\n" +
+      "CALL bump()\n" +
+      "\n" +
+      "SUB bump()\n" +
+      "  g = g + 1\n" +
+      "END SUB");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(module!.Globals.Any(g => g.Name == "g.g"), Is.True, "the shared variable needs module storage");
+  }
+
+  [Test]
+  public void Module_GivenModuleVariableOnlyMainUses_ThenItStaysAFrameSlot() {
+    // ... but a module variable no procedure touches stays an alloca, so mem2reg can still
+    // promote it to an SSA register - correctness must not cost the optimizer its best case
+    var module = LowerModule(
+      "DECLARE SUB noop()\n" +
+      "DIM m AS INTEGER\n" +
+      "m = 1\n" +
+      "CALL noop()\n" +
+      "\n" +
+      "SUB noop()\n" +
+      "  DIM k%\n" +
+      "  k% = 2\n" +
+      "END SUB");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(module!.Globals.Any(g => g.Name.StartsWith("g.")), Is.False);
+  }
+
+  [Test]
+  public void Module_GivenStaticLocal_ThenItSurvivesTheCallAsAGlobal() {
+    var module = LowerModule(
+      "DECLARE FUNCTION ticks%()\n" +
+      "r% = ticks%\n" +
+      "\n" +
+      "FUNCTION ticks%()\n" +
+      "  STATIC seen AS INTEGER\n" +
+      "  seen = seen + 1\n" +
+      "  ticks% = seen\n" +
+      "END FUNCTION");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(module!.Globals.Any(g => g.Name == "static.seen"), Is.True, "a STATIC local cannot live in the frame");
   }
 
   [Test]

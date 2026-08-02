@@ -20,6 +20,17 @@ public sealed class IrLowering {
   private readonly IReadOnlyDictionary<ProcedureSymbol, IrFunction>? _procMap;
   private readonly IrModule? _module;
   private readonly Dictionary<VariableSymbol, IrValue> _addr = new(ReferenceEqualityComparer.Instance);
+
+  /// <summary>
+  /// Symbols whose storage must be ONE location for the whole program rather than a frame slot:
+  /// a STATIC local (it has to survive the call) and any module-level variable a procedure can
+  /// reach (main and that procedure must see the same cell). Shared across the per-procedure
+  /// lowering instances, so every function resolves such a symbol to the same global.
+  /// </summary>
+  private readonly Dictionary<VariableSymbol, IrGlobalVariable>? _sharedStorage;
+
+  /// <summary>Module-level symbols some PROCEDURE reads or writes, so main cannot keep them in its frame.</summary>
+  private readonly HashSet<VariableSymbol>? _escapesToProcedures;
   private readonly Stack<LoopContext> _loops = new();
   private readonly Dictionary<string, IrBasicBlock> _labels = new(StringComparer.OrdinalIgnoreCase);
   private readonly ConstantFolder _folder;
@@ -50,7 +61,10 @@ public sealed class IrLowering {
 
   private readonly record struct LoopContext(ExitKind Kind, IrBasicBlock Exit, IrBasicBlock Continue);
 
-  private IrLowering(SemanticModel model, IReadOnlyDictionary<ProcedureSymbol, IrFunction>? procMap, IrModule? module) {
+  private IrLowering(SemanticModel model, IReadOnlyDictionary<ProcedureSymbol, IrFunction>? procMap, IrModule? module,
+      Dictionary<VariableSymbol, IrGlobalVariable>? sharedStorage = null, HashSet<VariableSymbol>? escapesToProcedures = null) {
+    this._sharedStorage = sharedStorage;
+    this._escapesToProcedures = escapesToProcedures;
     this._model = model;
     this._procMap = procMap;
     this._module = module;
@@ -70,7 +84,16 @@ public sealed class IrLowering {
   }
 
   /// <summary>Lowers the whole program into a module; declines (null) only if the main body is unsupported.</summary>
-  public static IrModule? TryLowerModule(SemanticModel model) {
+  public static IrModule? TryLowerModule(SemanticModel model) => TryLowerModule(model, out _);
+
+  /// <summary>
+  /// As <see cref="TryLowerModule(SemanticModel)"/>, but also reports WHY the lowering declined -
+  /// the construct that fell outside the modelled subset. A caller can put that in a diagnostic
+  /// instead of a generic "unsupported", which is the difference between a usable message and a
+  /// shrug.
+  /// </summary>
+  public static IrModule? TryLowerModule(SemanticModel model, out string? declinedBecause) {
+    declinedBecause = null;
     var module = new IrModule(model.FileName);
     var procMap = new Dictionary<ProcedureSymbol, IrFunction>(ReferenceEqualityComparer.Instance);
 
@@ -80,17 +103,20 @@ public sealed class IrLowering {
         module.AddFunction(irfn!);
       }
 
+    var shared = new Dictionary<VariableSymbol, IrGlobalVariable>(ReferenceEqualityComparer.Instance);
+    var escapes = ModuleVariablesUsedByProcedures(model);
     var main = new IrFunction("main", IrType.Void);
     module.AddFunction(main);
     try {
-      new IrLowering(model, procMap, module).LowerBodyInto(main, model.MainBody, null);
-    } catch (IrLoweringException) {
+      new IrLowering(model, procMap, module, shared, escapes).LowerBodyInto(main, model.MainBody, null);
+    } catch (IrLoweringException e) {
+      declinedBecause = e.Message;
       return null;
     }
 
     foreach (var (proc, irfn) in procMap) {
       try {
-        new IrLowering(model, procMap, module).LowerProcedure(proc, irfn);
+        new IrLowering(model, procMap, module, shared, escapes).LowerProcedure(proc, irfn);
       } catch (IrLoweringException) {
         irfn.ClearBody();                              // leave it a declaration; callers can still call it
       }
@@ -98,12 +124,33 @@ public sealed class IrLowering {
     return module;
   }
 
+  /// <summary>
+  /// The module-level variables at least one procedure touches. Only those need one shared cell;
+  /// a module variable used solely by the main body stays an alloca there, which mem2reg promotes
+  /// to an SSA register - so keeping the analysis precise is what stops "correct globals" from
+  /// costing the optimizer its best case.
+  /// </summary>
+  private static HashSet<VariableSymbol> ModuleVariablesUsedByProcedures(SemanticModel model) {
+    var used = new HashSet<VariableSymbol>(ReferenceEqualityComparer.Instance);
+    foreach (var proc in model.Procedures.Values) {
+      if (proc.Body is not { } body)
+        continue;
+      foreach (var node in CodeGen.OptReachability.DescendantNodes(body))
+        if (node is Expression e && model.VariableBindings.TryGetValue(e, out var symbol)
+            && symbol.Storage == VariableStorage.Global)
+          used.Add(symbol);
+    }
+    return used;
+  }
+
   /// <summary>Builds an IR signature for a procedure, or false if it is outside the supported subset.</summary>
   private static bool TrySignature(ProcedureSymbol proc, out IrFunction? fn) {
     fn = null;
     var ret = IrType.Void;
     if (proc.IsFunction) {
-      if (proc.ReturnType is null || !IrTypeMapper.TryMap(proc.ReturnType, out ret))
+      if (proc.ReturnType is StringType)
+        ret = IrType.Ptr;                              // a string result IS its runtime handle
+      else if (proc.ReturnType is null || !IrTypeMapper.TryMap(proc.ReturnType, out ret))
         return false;
     }
     var args = new List<IrArgument>();
@@ -112,6 +159,13 @@ public sealed class IrLowering {
         return false;                                  // SEG / CDECL-optional excluded
       if (p.Type is UdtType) {
         args.Add(new IrArgument(IrType.Ptr, args.Count, p.Name));   // a record is passed as a pointer (BYVAL = callee copies on entry)
+        continue;
+      }
+      if (p.Type is StringType) {
+        // BYVAL passes the handle itself, BYREF a pointer to the caller's handle slot - both
+        // are pointers to the IR, and the existing parameter binding already does the right
+        // thing with each (store the value / adopt the address)
+        args.Add(new IrArgument(IrType.Ptr, args.Count, p.Name));
         continue;
       }
       if (!IrTypeMapper.TryMap(p.Type, out var pty))
@@ -243,7 +297,8 @@ public sealed class IrLowering {
 
   private void ReturnFromFunction() {
     if (this._resultVar is not null)
-      this._b.Ret(this._b.Load(IrTypeMapper.Map(this._resultVar.Type), this.SlotFor(this._resultVar)));
+      this._b.Ret(this._b.Load(this._resultVar.Type is StringType ? IrType.Ptr : IrTypeMapper.Map(this._resultVar.Type),
+        this.SlotFor(this._resultVar)));
     else
       this._b.Ret();
   }
@@ -251,6 +306,8 @@ public sealed class IrLowering {
   private IrValue SlotFor(VariableSymbol symbol) {
     if (this._addr.TryGetValue(symbol, out var existing))
       return existing;
+    if (this.NeedsSharedStorage(symbol))
+      return this.GlobalFor(symbol);
     IrAlloca alloca;
     if (symbol.Type is StringType) {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.Ptr) { Name = symbol.Name });  // holds a string handle
@@ -277,6 +334,43 @@ public sealed class IrLowering {
     }
     this._addr[symbol] = alloca;
     return alloca;
+  }
+
+  /// <summary>
+  /// True when a frame slot would be the wrong storage: a STATIC local must outlive the call, and
+  /// a module-level variable is one cell the whole program shares. Everything else stays an
+  /// alloca, which mem2reg can promote to SSA - so ordinary locals lose no optimization.
+  /// </summary>
+  private bool NeedsSharedStorage(VariableSymbol symbol) =>
+    this._sharedStorage is not null && this._module is not null
+    && (symbol.Storage == VariableStorage.Static
+        || (symbol.Storage == VariableStorage.Global && this._escapesToProcedures?.Contains(symbol) == true));
+
+  /// <summary>The one module global backing <paramref name="symbol"/>, created on first use.</summary>
+  private IrValue GlobalFor(VariableSymbol symbol) {
+    if (this._sharedStorage!.TryGetValue(symbol, out var existing))
+      return existing;
+    var (valueType, count) = symbol.Type switch {
+      StringType => (IrType.Ptr, 1),
+      FixedStringType fs => (IrType.I8, fs.Length),
+      UdtType udt => (IrType.I8, udt.Size),
+      ArrayType { IsDynamic: false } arr => arr.Element switch {
+        StringType => (IrType.Ptr, arr.ElementCount),
+        UdtType ue => (IrType.I8, arr.ElementCount * ue.Size),
+        _ => (IrTypeMapper.Map(arr.Element), arr.ElementCount),
+      },
+      ArrayType => throw new IrLoweringException("dynamic array with shared storage"),
+      _ => (IrTypeMapper.Map(symbol.Type), 1),
+    };
+    // the name is qualified so a STATIC local cannot collide with a module variable of the
+    // same spelling, and the IR stays readable
+    var name = symbol.Storage == VariableStorage.Static ? $"static.{symbol.Name}" : $"g.{symbol.Name}";
+    var suffix = 0;
+    while (this._module!.FindGlobal(name) is not null)
+      name = $"{name}.{++suffix}";
+    var global = this._module.AddGlobal(new IrGlobalVariable(name, valueType) { Count = count });
+    this._sharedStorage[symbol] = global;
+    return global;
   }
 
   /// <summary>The address of one array element, by row-major flattening of the index list.</summary>
@@ -560,8 +654,11 @@ public sealed class IrLowering {
       throw new IrLoweringException("INPUT requires whole-module lowering");
     var file = input.FileNumber is { } fn ? this.FileNum(fn) : null;
 
-    if (input.Prompt is { } prompt && file is null) {
-      var bytes = System.Text.Encoding.ASCII.GetBytes(prompt);
+    // A console INPUT prompts once per STATEMENT, not once per variable it reads: with the
+    // program's own prompt string when it has one, else PB's bare "? " - which LINE INPUT does
+    // not print (it prompts only when told to).
+    if (file is null && (input.Prompt is not null || !input.IsLineInput)) {
+      var bytes = System.Text.Encoding.ASCII.GetBytes(input.Prompt ?? "? ");
       var global = this._module.AddStringConstant(bytes);
       this.EmitIo(null, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], global, new IrConstantInt(IrType.I32, bytes.Length));
     }
@@ -678,7 +775,9 @@ public sealed class IrLowering {
       case NameExpr when this._model.VariableBindings.TryGetValue(expr, out var fsym) && fsym.Type is FixedStringType fixedStr:
         return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_from_fixed", IrType.Ptr, IrType.Ptr, IrType.I32),
           this.SlotFor(fsym), new IrConstantInt(IrType.I32, fixedStr.Length));   // the inline N bytes as a handle
-      case BinaryExpr { Op: BinaryOp.Concat } cat:
+      // '+' between strings is concatenation too - the original BASIC spelling, and still the
+      // common one; '&' (PB 3.5) is the unambiguous form of the same operation
+      case BinaryExpr { Op: BinaryOp.Concat or BinaryOp.Add } cat:
         return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_concat", IrType.Ptr, IrType.Ptr, IrType.Ptr),
           this.LowerStringExpr(cat.Left), this.LowerStringExpr(cat.Right));
       case CallOrIndexExpr arrayRead when this._model.VariableBindings.TryGetValue(arrayRead, out var arr) && arr.Type is ArrayType { Element: StringType }:
@@ -688,6 +787,15 @@ public sealed class IrLowering {
           fa.Address, new IrConstantInt(IrType.I32, ffs.Length));   // read a fixed-string record field as a handle
       case CallOrIndexExpr ci when this._model.IntrinsicBindings.TryGetValue(ci, out var info):
         return this.LowerStringIntrinsic(ci, info.Name);
+      // a user FUNCTION whose result is a string - its IR result already IS the handle
+      case CallOrIndexExpr uc when this._model.CallBindings.TryGetValue(uc, out var proc) && proc.IsFunction:
+        return this._procMap is not null && this._procMap.TryGetValue(proc, out var callee)
+          ? this.EmitCall(callee, proc, uc.Arguments)
+          : throw new IrLoweringException($"call to {proc.Name} outside the modelled subset");
+      case NameExpr bare when this._model.CallBindings.TryGetValue(bare, out var bareProc) && bareProc.IsFunction:
+        return this._procMap is not null && this._procMap.TryGetValue(bareProc, out var bareCallee)
+          ? this.EmitCall(bareCallee, bareProc, [])
+          : throw new IrLoweringException($"call to {bareProc.Name} outside the modelled subset");
       default:
         throw new IrLoweringException($"unsupported string expression: {expr.GetType().Name}");
     }
@@ -1206,6 +1314,14 @@ public sealed class IrLowering {
   }
 
   private IrValue LowerNameRead(NameExpr name) {
+    // a parameterless FUNCTION is called by naming it - "PRINT Counter%" is a call, not a read
+    if (this._model.CallBindings.TryGetValue(name, out var proc)) {
+      if (this._procMap is null || !this._procMap.TryGetValue(proc, out var callee))
+        throw new IrLoweringException($"call to {proc.Name} outside the modelled subset");
+      if (!proc.IsFunction)
+        throw new IrLoweringException("SUB used in expression position");
+      return this.EmitCall(callee, proc, []);
+    }
     if (!this._model.VariableBindings.TryGetValue(name, out var symbol))
       throw new IrLoweringException($"unbound name {name.Name}");
     return this._b.Load(IrTypeMapper.Map(symbol.Type), this.SlotFor(symbol));
@@ -1465,6 +1581,23 @@ public sealed class IrLowering {
     return this.EmitCall(callee, proc, call.Arguments);
   }
 
+  /// <summary>
+  /// A string argument: BYVAL hands over the handle, BYREF a pointer to the slot holding it. A
+  /// BYREF argument that is not a plain variable (a literal or an expression) gets a temporary
+  /// slot, exactly as PB materializes one - the callee may write through it, but nothing outside
+  /// can observe that write.
+  /// </summary>
+  private IrValue StringArgument(Expression argument, bool byVal) {
+    var handle = this.LowerStringExpr(argument);
+    if (byVal)
+      return handle;
+    if (argument is NameExpr && this._model.VariableBindings.TryGetValue(argument, out var sym) && sym.Type is StringType)
+      return this.SlotFor(sym);
+    var temp = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.Ptr) { Name = "str.arg" });
+    this._b.Store(handle, temp);
+    return temp;
+  }
+
   private IrValue EmitCall(IrFunction callee, ProcedureSymbol proc, IReadOnlyList<Expression> arguments) {
     if (arguments.Count != proc.Parameters.Count)
       throw new IrLoweringException("argument count mismatch (optional/CDECL not modelled)");
@@ -1473,6 +1606,8 @@ public sealed class IrLowering {
       var p = proc.Parameters[i];
       args.Add(p.Type is UdtType
         ? this.UdtAddress(arguments[i])                 // a record argument passes its address (BYVAL callee copies, BYREF uses it)
+        : p.Type is StringType
+          ? this.StringArgument(arguments[i], p.ByVal)
         : p.ByVal
           ? this.Coerce(this.LowerExpr(arguments[i]), this._model.TypeOf(arguments[i]), p.Type)
           : this.AddressOfArgument(arguments[i], p.Type));

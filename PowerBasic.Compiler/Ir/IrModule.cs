@@ -10,6 +10,9 @@ public sealed class IrModule(string name) {
   private readonly List<IrGlobalVariable> _globals = [];
   private readonly Dictionary<string, IrGlobalVariable> _internedStrings = new(StringComparer.Ordinal);
 
+  /// <summary>Monotonic, so a literal's name can never collide with one whose global was removed.</summary>
+  private int _stringOrdinal;
+
   /// <summary>A name for the module (typically the source file).</summary>
   public string Name { get; } = name;
 
@@ -37,7 +40,7 @@ public sealed class IrModule(string name) {
     var key = Convert.ToBase64String(bytes);
     if (this._internedStrings.TryGetValue(key, out var existing))
       return existing;
-    var global = new IrGlobalVariable($".str{this._globals.Count}", IrType.I8) { Bytes = bytes, IsZeroInitialized = false };
+    var global = new IrGlobalVariable($".str{this._stringOrdinal++}", IrType.I8) { Bytes = bytes, IsZeroInitialized = false };
     this._globals.Add(global);
     this._internedStrings[key] = global;
     return global;

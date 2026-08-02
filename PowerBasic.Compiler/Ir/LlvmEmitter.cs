@@ -29,7 +29,8 @@ public sealed class LlvmEmitter {
         sb.Append('@').Append(g.Name).Append(" = private constant [").Append(bytes.Length).Append(" x i8] c\"")
           .Append(EscapeBytes(bytes)).Append("\"\n");
       else
-        sb.Append('@').Append(g.Name).Append(" = global ").Append(Ty(g.ValueType))
+        sb.Append('@').Append(g.Name).Append(" = global ")
+          .Append(g.Count > 1 ? $"[{g.Count} x {Ty(g.ValueType)}]" : Ty(g.ValueType))
           .Append(g.IsZeroInitialized ? " zeroinitializer" : "").Append('\n');
     if (module.Globals.Count > 0)
       sb.Append('\n');

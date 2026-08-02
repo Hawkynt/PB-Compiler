@@ -100,10 +100,17 @@ Supported today:
   the math functions `SQR`/`SIN`/`COS`/`EXP`/`LOG`/`TAN`/`ATN` and the `^` power operator
   lowered to the matching **LLVM intrinsics** (`llvm.sqrt.fN`, `llvm.pow.fN`, …) so `llc`
   optimizes them natively;
-- whole modules: user `SUB`/`FUNCTION` with scalar **BYVAL and BYREF** parameters and
+- whole modules: user `SUB`/`FUNCTION` with scalar **BYVAL and BYREF** parameters,
   **`TYPE` record** parameters (passed as a pointer; BYREF accesses the caller's storage,
-  BYVAL `llvm.memcpy`s a private copy on entry) and direct calls; a procedure with an
-  unsupported body is kept as a declaration.
+  BYVAL `llvm.memcpy`s a private copy on entry) and **string** parameters and results
+  (a string is its runtime handle - BYVAL passes the handle, BYREF a pointer to the
+  caller's handle slot); direct calls, and a parameterless FUNCTION called by naming it
+  (`PRINT Counter%`). A procedure with an unsupported body is kept as a declaration.
+- **storage that outlives a frame**: a `STATIC` local and any module-level variable a
+  procedure touches become module globals, so every function reaches the same cell. A
+  module variable only the main body uses deliberately stays an alloca, which mem2reg
+  promotes to an SSA register - precision here is what keeps correctness from costing
+  the optimizer its best case.
 
 The computation in a program is fully optimized; runtime-ABI calls (I/O, strings) stay
 opaque but their inputs are optimized. Hello world, numeric/string compute-and-report,
@@ -158,8 +165,11 @@ path off 16-bit DOS.
 
 ## Roadmap
 
-- lower strings (a representation decision: the DOS string-handle model vs. an
-  LLVM `ptr`+`len` model), dynamic arrays, `GOTO`/`GOSUB`, I/O and intrinsics;
+- the constructs that still decline: `ON ERROR`, `PRINT USING`/`LPRINT`, the
+  `CommandStmt` family (`KILL`, `CLS`, `LOCATE`, `POKE`, ...), `BIN$`, UDT-typed
+  array elements, and inline assembly (target-specific by definition - it will never
+  lower). `TryLowerModule(model, out var reason)` reports which one a program hit, and
+  `pbc --emit-c` / `--emit-llvm` print it;
 - a native IR → x86-16 back end that reproduces byte-identical output for a
   subset (the fidelity proof that would let the IR augment the direct emitter);
 - wire the IR into the production pipeline behind the byte-identical harness.

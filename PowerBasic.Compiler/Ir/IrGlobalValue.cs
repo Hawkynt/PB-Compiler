@@ -25,4 +25,7 @@ public sealed class IrGlobalVariable(string name, IrType valueType) : IrGlobalVa
 
   /// <summary>Constant initializer bytes (a string literal / data blob), or null for a plain global.</summary>
   public byte[]? Bytes { get; init; }
+
+  /// <summary>Element count: greater than one for an array global (a module-level <c>DIM</c>).</summary>
+  public int Count { get; init; } = 1;
 }

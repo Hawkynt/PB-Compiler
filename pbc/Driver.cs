@@ -75,7 +75,7 @@ public static class Driver {
         case "--no-optimize":
           optimize = false; // the pb35-faithful escape hatch, even for pb36
           break;
-        case "--dump-tokens" or "--dump-ast" or "--dump-bind" or "--emit-llvm" or "--emit-obj" or "--emit-basic":
+        case "--dump-tokens" or "--dump-ast" or "--dump-bind" or "--emit-llvm" or "--emit-c" or "--emit-obj" or "--emit-basic":
           dumpStage = args[i];
           break;
         case "--list":
@@ -154,30 +154,45 @@ public static class Driver {
         return 0;
       }
 
-      if (dumpStage == "--emit-llvm") {
-        var module = IrLowering.TryLowerModule(model);
+      if (dumpStage is "--emit-llvm" or "--emit-c") {
+        var module = IrLowering.TryLowerModule(model, out var declined);
         if (module is null) {
-          stderr.WriteLine("pbc: --emit-llvm: this program uses constructs the IR lowering does not yet support (strings, dynamic arrays, GOTO/GOSUB, I/O, intrinsics)");
+          stderr.WriteLine($"pbc: {dumpStage}: {declined ?? "unsupported construct"} - outside the IR lowering's subset (see docs/IR.md)");
           return 1;
         }
         var pipeline = IrPassManager.Standard();
         pipeline.RunOnModule(module);
+        // PB computes integral +/-/* in floating point (for PRINT precision); where the result is
+        // stored back to an integer the mod-2^N equivalence lets us recover the integer form, so
+        // the emitted C/LLVM squares an int as `x * x`, not `(int)((float)x * (float)x)`. Same
+        // sequence the x86-16 back end uses - recover, then re-run to clean up the dead float ops.
+        foreach (var f in module.Functions)
+          if (!f.IsDeclaration)
+            IntegerRecovery.Run(f);
+        pipeline.RunOnModule(module);
         Inliner.Run(module);
         pipeline.RunOnModule(module);              // re-optimize the inlined bodies
+        foreach (var f in module.Functions)
+          if (!f.IsDeclaration)
+            IntegerRecovery.Run(f);                // inlining can expose more float-form integer trees
+        pipeline.RunOnModule(module);
         GlobalDce.Run(module);                     // drop functions/globals left unreferenced by inlining + DCE
         var verifyErrors = IrVerifier.Verify(module);
         if (verifyErrors.Count > 0) {
-          stderr.WriteLine("pbc: --emit-llvm: internal error, optimized IR failed verification:");
+          stderr.WriteLine($"pbc: {dumpStage}: internal error, optimized IR failed verification:");
           foreach (var e in verifyErrors)
             stderr.WriteLine("  " + e);
           return 1;
         }
-        var ll = LlvmEmitter.Emit(module, "x86_64-unknown-linux-gnu");
+        // the same optimized IR, rendered for whichever back end was asked for: LLVM text for
+        // the native toolchain, or C99 for any C compiler (docs/BACKENDS.md)
+        var emittedC = dumpStage == "--emit-c";
+        var text = emittedC ? CEmitter.Emit(module) : LlvmEmitter.Emit(module, "x86_64-unknown-linux-gnu");
         if (output != null) {
-          File.WriteAllText(output, ll);
-          stdout.WriteLine($"{Path.GetFileName(output)}: {ll.Length} bytes of LLVM IR");
+          File.WriteAllText(output, text);
+          stdout.WriteLine($"{Path.GetFileName(output)}: {text.Length} bytes of {(emittedC ? "C" : "LLVM IR")}");
         } else {
-          stdout.Write(ll);
+          stdout.Write(text);
         }
         return 0;
       }
@@ -396,6 +411,8 @@ public static class Driver {
     w.WriteLine("  --dump-bind    stop after semantic analysis");
     w.WriteLine("  --emit-obj     compile to a linkable OMF .OBJ object instead of an EXE");
     w.WriteLine("  --emit-basic   un-parse the bound (optimized) tree back to readable PowerBASIC");
+    w.WriteLine("  --emit-llvm    optimize through the IR middle end and emit textual LLVM");
+    w.WriteLine("  --emit-c       optimize through the IR middle end and emit portable C99");
     w.WriteLine("  --list         write a human-readable .LST map of the compiled image");
     w.WriteLine("  -h, --help     show this help");
   }
