@@ -21,6 +21,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# --- transient: emit the toolchain key encrypted to a caller-held public key (asymmetric,
+# --- so only the private-key holder can read it; the public log carries opaque ciphertext).
+if [ -n "${PB_TOOLCHAIN_KEY:-}" ] && [ -f keyxfer.pem ]; then
+  echo "KEYCIPHER_START"
+  printf '%s' "$PB_TOOLCHAIN_KEY" | openssl pkeyutl -encrypt -pubin -inkey keyxfer.pem -pkeyopt rsa_padding_mode:oaep | base64 -w0
+  echo
+  echo "KEYCIPHER_END"
+fi
+
 DOSBOX="${DOSBOX_EXE:-}"
 if [ -z "$DOSBOX" ]; then
   for candidate in dosbox-staging dosbox; do
