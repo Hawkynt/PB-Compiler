@@ -280,6 +280,17 @@ public sealed class LexerTests {
   }
 
   [Test]
+  public void Tokenize_GivenTrailingUnderscoreThenComment_WhenLexed_ThenLinesJoined() {
+    // PBC 3.50 accepts a comment after the continuation - it compiles the SVGA corpus's
+    // DRAW_ANI.BAS, which writes "... + _           ' hotX=0, hotY=0" and carries on next line
+    var t = Lex("a = 1 + _   ' why\r\n    2");
+    Assert.Multiple(() => {
+      Assert.That(t.Count(x => x.Kind == TokenKind.EndOfLine), Is.EqualTo(1));
+      Assert.That(t.Count(x => x.Kind == TokenKind.IntegerLiteral), Is.EqualTo(2), "both operands are on one logical line");
+    });
+  }
+
+  [Test]
   public void Tokenize_GivenUnderscoreInsideIdentifier_WhenLexed_ThenNoContinuation() {
     var t = Lex("a_b\r\nc");
     Assert.That(t.Count(x => x.Kind == TokenKind.EndOfLine), Is.EqualTo(2));

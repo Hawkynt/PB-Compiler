@@ -138,6 +138,11 @@ public sealed class Lexer {
         var look = this._index + 1;
         while (look < this._source.Length && this._source[look] is ' ' or '\t')
           ++look;
+        // a comment may follow the continuation - `... + _    ' hotX=0, hotY=0` still joins the
+        // next line (verified against the oracle: PBC 3.50 compiles DRAW_ANI.BAS, which does this)
+        if (look < this._source.Length && this._source[look] == '\'')
+          while (look < this._source.Length && this._source[look] is not ('\r' or '\n'))
+            ++look;
         if (look >= this._source.Length || this._source[look] is '\r' or '\n') {
           this.Advance(look - this._index);
           this.ConsumeNewline();
