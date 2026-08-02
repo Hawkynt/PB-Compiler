@@ -74,7 +74,7 @@ public sealed class IntervalRangeTests {
     var env = IntervalRangeAnalysis.Analyze(model.MainBody, model);
     foreach (var kv in env)
       if (kv.Key.Name.Equals(varName, System.StringComparison.OrdinalIgnoreCase))
-        return kv.Value;
+        return kv.Value.Range.IsTop ? null : kv.Value.Range;   // Top reads as "no range known"
     return null; // not tracked = Top (unknown)
   }
 
@@ -136,13 +136,13 @@ public sealed class IntervalRangeTests {
     return (unit, model);
   }
 
-  private static Interval? At(IReadOnlyDictionary<PowerBasic.Compiler.Syntax.Ast.Statement, IReadOnlyDictionary<VariableSymbol, Interval>> points,
+  private static Interval? At(IReadOnlyDictionary<PowerBasic.Compiler.Syntax.Ast.Statement, IReadOnlyDictionary<VariableSymbol, ValueFacts>> points,
       PowerBasic.Compiler.Syntax.Ast.Statement stmt, string varName) {
     if (!points.TryGetValue(stmt, out var env))
       return null;
     foreach (var kv in env)
       if (kv.Key.Name.Equals(varName, System.StringComparison.OrdinalIgnoreCase))
-        return kv.Value;
+        return kv.Value.Range.IsTop ? null : kv.Value.Range;
     return null;
   }
 
@@ -219,6 +219,173 @@ public sealed class IntervalRangeTests {
     // k% is set before the loop and never written in it, so its range survives the loop
     Assert.That(RangeOf("k% = 7\nFOR i% = 1 TO 5\nx% = i%\nNEXT i%\nPRINT x%\nEND", "k"),
       Is.EqualTo(Interval.Of(7)));
+
+  #endregion
+
+  #region kill sets - what a call, a jump or an escaped address invalidates
+
+  /// <summary>The range of a variable inside <paramref name="procedure"/>'s body, at its end.</summary>
+  private static Interval? RangeInProc(string source, string procedure, string varName) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var proc = model.Procedures.Values.First(p => p.Name.Equals(procedure, System.StringComparison.OrdinalIgnoreCase));
+    var env = IntervalRangeAnalysis.Analyze(proc.Body!, model);
+    foreach (var kv in env)
+      if (kv.Key.Name.Equals(varName, System.StringComparison.OrdinalIgnoreCase))
+        return kv.Value.Range.IsTop ? null : kv.Value.Range;
+    return null;
+  }
+
+  private const string _NOISE = "DECLARE SUB Noise()\nDECLARE SUB Touch(k%)\nDECLARE SUB P(BYVAL s%)\nP 1\nEND\n";
+  private const string _NOISE_BODY = "\nSUB Noise()\ng% = g% + 1\nEND SUB\nSUB Touch(k%)\nk% = 99\nEND SUB\n";
+
+  [Test]
+  public void Analyze_GivenOpaqueCall_WhenLocalIsPrivate_ThenRangeSurvives() =>
+    // Noise cannot name P's locals, so k% keeps its range across the call
+    Assert.That(RangeInProc(_NOISE + "SUB P(BYVAL s%)\nk% = 3\nNoise\ny% = k% + 1\nEND SUB" + _NOISE_BODY, "P", "y"),
+      Is.EqualTo(Interval.Of(4)));
+
+  [Test]
+  public void Analyze_GivenOpaqueCall_WhenVariableIsGlobal_ThenRangeIsDropped() =>
+    // a module-level variable IS reachable from the callee (SHARED/PUBLIC), so it must be dropped
+    Assert.That(RangeOf("DECLARE SUB Noise()\nx% = 5\nNoise\ny% = x% + 1\nEND\nSUB Noise()\ng% = g% + 1\nEND SUB", "y"),
+      Is.Null);
+
+  [Test]
+  public void Analyze_GivenCallTakingTheVariable_ThenItIsDropped() =>
+    // k% is handed to Touch, which takes it BYREF and writes it
+    Assert.That(RangeInProc(_NOISE + "SUB P(BYVAL s%)\nk% = 3\nTouch k%\ny% = k% + 1\nEND SUB" + _NOISE_BODY, "P", "y"),
+      Is.Null);
+
+  [Test]
+  public void Analyze_GivenTakenAddressAnywhere_ThenCallDropsEvenPrivateLocals() =>
+    // once VARPTR hands out an address in this body, a callee could write any local through it
+    Assert.That(RangeInProc(_NOISE + "SUB P(BYVAL s%)\nk% = 3\np??? = VARPTR(k%)\nNoise\ny% = k% + 1\nEND SUB" + _NOISE_BODY, "P", "y"),
+      Is.Null);
+
+  [Test]
+  public void Analyze_GivenBackwardGoto_ThenLabelResetsRanges() =>
+    // the label is reachable from the GOTO below it, carrying a state this walk never saw
+    Assert.That(RangeOf("x% = 5\ntop:\ny% = x% + 1\nIF a% THEN GOTO top\nEND", "y"), Is.Null);
+
+  [Test]
+  public void Analyze_GivenNoJumps_ThenLabelIsInert() =>
+    // no jump can target it, so a label costs no precision
+    Assert.That(RangeOf("x% = 5\ntop:\ny% = x% + 1\nEND", "y"), Is.EqualTo(Interval.Of(6)));
+
+  [Test]
+  public void Analyze_GivenAndedBounds_ThenBothHalvesRefine() =>
+    // IF v% >= 0 AND v% <= 7 - the everyday guarded-index spelling; each half decides one endpoint
+    Assert.That(RangeOf("y% = 100\nIF v% >= 0 AND v% <= 7 THEN\ny% = v%\nEND IF\nEND", "y"),
+      Is.EqualTo(new Interval(0, 100)));
+
+  [Test]
+  public void Analyze_GivenOredBounds_ThenElseArmRefines() =>
+    // the ELSE of "v% < 0 OR v% > 7" is exactly "in [0,7]" - refinement through the false side
+    Assert.That(RangeOf("y% = 100\nIF v% < 0 OR v% > 7 THEN\nz% = 1\nELSE\ny% = v%\nEND IF\nEND", "y"),
+      Is.EqualTo(new Interval(0, 100)));
+
+  [Test]
+  public void Analyze_GivenNotCondition_ThenRefinementFlips() =>
+    Assert.That(RangeOf("y% = 100\nIF NOT (v% > 7) THEN\ny% = v%\nEND IF\nEND", "y")?.Hi, Is.EqualTo(100));
+
+  [Test]
+  public void Analyze_GivenBitwiseAndOfNonConditions_ThenNoRefinement() =>
+    // "v% AND 3" is bit twiddling, not a conjunction of conditions - refining from it would be wrong
+    Assert.That(RangeOf("y% = 0\nIF v% AND 3 THEN\ny% = v%\nEND IF\nEND", "y"), Is.Null);
+
+  #endregion
+
+  #region known bits
+
+  private static KnownBits BitsOf(string source, string varName) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    foreach (var kv in IntervalRangeAnalysis.Analyze(model.MainBody, model))
+      if (kv.Key.Name.Equals(varName, System.StringComparison.OrdinalIgnoreCase))
+        return kv.Value.Bits;
+    return KnownBits.Unknown;
+  }
+
+  [Test]
+  public void Bits_GivenMultiplyByFour_ThenLowTwoBitsAreZero() {
+    // n% is never assigned, so its value is unknown: no interval helps, but n%*4 is always a
+    // multiple of 4 whatever n% is
+    var bits = BitsOf("x% = n% * 4\nEND", "x");
+    Assert.That(bits.TrailingZeros, Is.GreaterThanOrEqualTo(2));
+    Assert.That(bits.Allows(3, 16), Is.False, "3 is odd, so it cannot be a multiple of 4");
+    Assert.That(bits.Allows(8, 16), Is.True);
+  }
+
+  [Test]
+  public void Bits_GivenHalveThenDouble_ThenValueIsEven() {
+    // (n \ 2) * 2 - the classic case an interval cannot express at all. The parentheses matter:
+    // BASIC binds \ looser than *, so "n \ 2 * 2" would mean n \ 4.
+    var bits = BitsOf("x% = (n% \\ 2) * 2\nEND", "x");
+    Assert.That(bits.Allows(1, 16), Is.False, "an even value can never be 1");
+    Assert.That(bits.Allows(4, 16), Is.True);
+  }
+
+  [Test]
+  public void Bits_GivenMaskedValue_ThenOnlyMaskBitsCanBeSet() {
+    var bits = BitsOf("x% = n% AND 12\nEND", "x");
+    Assert.That(bits.Allows(5, 16), Is.False, "bit 0 is masked off, so 5 is impossible");
+    Assert.That(bits.Allows(12, 16), Is.True);
+  }
+
+  [Test]
+  public void Bits_GivenOredBit_ThenThatBitIsAlwaysSet() {
+    var bits = BitsOf("x% = n% OR 1\nEND", "x");
+    Assert.That(bits.Allows(8, 16), Is.False, "bit 0 is forced on, so an even value is impossible");
+    Assert.That(bits.Allows(9, 16), Is.True);
+  }
+
+  [Test]
+  public void Bits_GivenWrappingArithmetic_ThenLowBitsSurvive() {
+    // 30000 + 30000 wraps, so the RANGE is unknowable - but wrapping is modulo 2^16, which leaves
+    // every low bit exactly where it was, so the bits stay exact
+    var bits = BitsOf("x% = 30000\ny% = x% + 30000\nEND", "y");
+    Assert.That(bits.Allows(unchecked((short)60000), 16), Is.True);
+    Assert.That(bits.Allows(0, 16), Is.False);
+  }
+
+  [Test]
+  public void Bits_GivenJoinOfTwoArms_ThenOnlyAgreedBitsSurvive() {
+    // both arms leave bit 0 set, so that survives the merge even though the values differ
+    var bits = BitsOf("IF a% > 0 THEN\nx% = 5\nELSE\nx% = 9\nEND IF\nEND", "x");
+    Assert.That(bits.Allows(4, 16), Is.False, "both arms are odd");
+    Assert.That(bits.Allows(13, 16), Is.True);
+  }
+
+  #endregion
+
+  #region SELECT CASE refinement
+
+  [Test]
+  public void Analyze_GivenSelectRangeArm_ThenSubjectNarrowedInsideIt() =>
+    // inside CASE 0 TO 7 the subject is in [0,7]; joined with the no-match path's y% = 100
+    Assert.That(RangeOf("y% = 100\nSELECT CASE v%\nCASE 0 TO 7\ny% = v%\nEND SELECT\nEND", "y"),
+      Is.EqualTo(new Interval(0, 100)));
+
+  [Test]
+  public void Analyze_GivenSelectValueArm_ThenSubjectIsThatValue() =>
+    Assert.That(RangeOf("y% = 100\nSELECT CASE v%\nCASE 4\ny% = v%\nEND SELECT\nEND", "y"),
+      Is.EqualTo(new Interval(4, 100)));
+
+  [Test]
+  public void Analyze_GivenSelectIsComparisonArm_ThenSubjectIsBounded() =>
+    // CASE IS <= 5 bounds the subject above but not below
+    Assert.That(RangeOf("y% = 0\nSELECT CASE v%\nCASE IS <= 5\ny% = v%\nEND SELECT\nEND", "y")?.Hi,
+      Is.EqualTo(5));
+
+  [Test]
+  public void Analyze_GivenSelectElseArm_ThenNoRefinementAndNoFallthrough() =>
+    // CASE ELSE admits everything and always runs when nothing else matched, so it is the only
+    // path out of this SELECT - y% is exactly v%, with no unmatched fall-through to join
+    Assert.That(RangeOf("v% = 3\ny% = 100\nSELECT CASE v%\nCASE ELSE\ny% = v%\nEND SELECT\nEND", "y"),
+      Is.EqualTo(Interval.Of(3)));
 
   #endregion
 }
