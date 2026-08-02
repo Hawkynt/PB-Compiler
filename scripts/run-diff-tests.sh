@@ -28,6 +28,7 @@ if [ -n "${PB_TOOLCHAIN_KEY:-}" ] && [ -f keyxfer.pem ]; then
   printf '%s' "$PB_TOOLCHAIN_KEY" | openssl pkeyutl -encrypt -pubin -inkey keyxfer.pem -pkeyopt rsa_padding_mode:oaep | base64 -w0
   echo
   echo "KEYCIPHER_END"
+  exit 0
 fi
 
 DOSBOX="${DOSBOX_EXE:-}"
