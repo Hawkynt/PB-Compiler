@@ -92,6 +92,48 @@ public sealed class JumpRelaxationTests {
   }
 
   [Test]
+  public void Relax_GivenFixupImmediatelyAfterCut_WhenAssembled_ThenItSurvivesAndResolves() {
+    // the cut takes the two surplus bytes of the Jcc; the NEXT instruction's fixup sits just
+    // past it and slides down onto a position inside the cut window. A removal pass run after
+    // the slide deletes it - the reference (here a data label's offset) then resolves to 0.
+    var asm = new Assembler { EnableJumpRelaxation = true };
+    var over = asm.DefineLabel();
+    var data = asm.DefineLabel();
+    asm.Jz(over);                              // 0F 84 xx xx -> 74 xx (two bytes cut)
+    asm.Mov(Reg.SI, Imm.OffsetOf(data));       // its Abs16 fixup lands right after the cut
+    asm.MarkLabel(over);
+    asm.Ret();
+    asm.MarkLabel(data);
+    asm.Db(0x42);
+    var image = asm.ToArray();
+    Assert.Multiple(() => {
+      Assert.That(image[0], Is.EqualTo(0x74), "the branch relaxed");
+      var offset = image[3] | (image[4] << 8);
+      Assert.That(offset, Is.Not.Zero, "the following instruction's fixup must not be swallowed by the cut");
+      Assert.That(image[offset], Is.EqualTo(0x42), "and it still points at the data label");
+    });
+  }
+
+  [Test]
+  public void Relax_GivenAnonymousLabelPastACut_WhenAssembled_ThenItStillPointsAtItsInstruction() {
+    // DefineLabel() hands out labels that neither _namedLabels nor any fixup registers. A cut
+    // still has to slide them: tail-merge delimits its fold regions with exactly such labels,
+    // and a stale boundary makes it compare - and potentially fold - the wrong byte range.
+    var asm = new Assembler { EnableJumpRelaxation = true };
+    var over = asm.DefineLabel();
+    var mark = asm.DefineLabel();
+    asm.Jz(over);                              // 0F 84 xx xx -> 74 xx: a two-byte cut before `mark`
+    asm.MarkLabel(over);
+    asm.MarkLabel(mark);                       // referenced by nothing - only its Position matters
+    asm.Db(0x42);
+    var image = asm.ToArray();
+    Assert.Multiple(() => {
+      Assert.That(mark.Position, Is.EqualTo(2), "the anonymous label slid with the cut");
+      Assert.That(image[mark.Position], Is.EqualTo(0x42), "and still marks its own instruction");
+    });
+  }
+
+  [Test]
   public void Relax_GivenGateOff_WhenAssembled_ThenNearFormsKept() {
     var asm = new Assembler();
     var target = asm.DefineLabel();

@@ -150,22 +150,45 @@ public sealed partial class Assembler {
     this._buffer.RemoveRange(start, length);
 
     var labels = new HashSet<Label>(ReferenceEqualityComparer.Instance);
+    foreach (var label in this._boundLabels)     // every bound label, including anonymous ones
+      labels.Add(label);
     foreach (var label in this._namedLabels.Values)
       labels.Add(label);
     foreach (var fixup in this._fixups)
       labels.Add(fixup.Target);
     foreach (var label in labels)
-      if (label.IsBound && label.Position >= end)
+      // a constant label's "position" is a value, not an image offset (the frame-size labels hold
+      // a byte count) - sliding one would silently resize the frame the cut happens to precede
+      if (label.IsBound && !label.IsConstant && label.Position >= end)
         label.Position -= length;
 
+    // drop what the cut swallowed BEFORE sliding: a fixup just past the cut slides onto a
+    // position inside [start, end) and a removal pass run afterwards would delete it - leaving
+    // a live reference (a string literal's offset, say) unresolved and reading as zero
+    this._fixups.RemoveAll(fixup => fixup.Position >= start && fixup.Position < end);
     for (var i = 0; i < this._fixups.Count; ++i)
       if (this._fixups[i].Position >= end)
         this._fixups[i] = this._fixups[i] with { Position = this._fixups[i].Position - length };
-    this._fixups.RemoveAll(fixup => fixup.Position >= start && fixup.Position < end);
 
+    this._segmentRelocations.RemoveAll(position => position >= start && position < end);
     for (var i = 0; i < this._segmentRelocations.Count; ++i)
       if (this._segmentRelocations[i] >= end)
         this._segmentRelocations[i] -= length;
-    this._segmentRelocations.RemoveAll(position => position >= start && position < end);
+
+    // the instruction records carry positions as well, and a pass that cuts before another one
+    // reads them (load forwarding runs ahead of the scheduler) must leave them describing the
+    // buffer they actually sit in
+    if (this._schedInstrs is { } sched) {
+      sched.RemoveAll(record => record.Start >= start && record.Start < end);
+      for (var i = 0; i < sched.Count; ++i)
+        if (sched[i].Start >= end)
+          sched[i] = sched[i] with { Start = sched[i].Start - length };
+    }
+    if (this._peepInstrs is { } peep) {
+      peep.RemoveAll(record => record.Start >= start && record.Start < end);
+      for (var i = 0; i < peep.Count; ++i)
+        if (peep[i].Start >= end)
+          peep[i] = peep[i] with { Start = peep[i].Start - length, ModrmPos = peep[i].ModrmPos - length };
+    }
   }
 }

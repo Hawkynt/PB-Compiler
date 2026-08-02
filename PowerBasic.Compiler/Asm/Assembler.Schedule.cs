@@ -32,13 +32,16 @@ public sealed partial class Assembler {
   private static int RegSlot(Reg r) => r.IsByte() ? (r.Index() & 3) : r.Index();
   private static ushort RegBit(Reg r) => (ushort)(1 << RegSlot(r));
 
+  /// <summary>True when an instruction stream consumer needs the def/use records.</summary>
+  private bool RecordingSched => this.EnableSchedule || this.EnableLoadForwarding;
+
   private void RecordSchedReg(int start, ushort reads, ushort writes, bool readsFlags, bool writesFlags) {
-    if (this.EnableSchedule)
+    if (this.RecordingSched)
       (this._schedInstrs ??= []).Add(new(start, this.Position - start, reads, writes, readsFlags, writesFlags, false, false, null, 0));
   }
 
   private void RecordSchedMem(int start, ushort reads, ushort writes, bool readsFlags, bool writesFlags, bool memRead, bool memWrite, Mem mem) {
-    if (!this.EnableSchedule)
+    if (!this.RecordingSched)
       return;
     // address registers are read to form the effective address
     if (mem.Base is { } b)
@@ -53,6 +56,16 @@ public sealed partial class Assembler {
       memBase = null;        // [BX]/[SI]/[DI] without a label: unknown
     (this._schedInstrs ??= []).Add(new(start, this.Position - start, reads, writes, readsFlags, writesFlags, memRead, memWrite, memBase, mem.Displacement));
   }
+
+  /// <summary>
+  /// Records a conditional jump: it reads the flags and clobbers nothing at all. That makes it
+  /// transparent to <see cref="RunLoadForwarding"/>, which may then look across it - reaching the
+  /// load in a branch's fall-through path is still reaching it from the store, because that pass
+  /// separately requires no bound label in between, so nothing can enter the range from anywhere
+  /// else. The scheduler never sees these: a jump carries a fixup, which excludes it from every
+  /// permutation window.
+  /// </summary>
+  private void RecordSchedJump(int start) => this.RecordSchedReg(start, 0, 0, readsFlags: true, writesFlags: false);
 
   private void TrimSched(int position) => this._schedInstrs?.RemoveAll(r => r.Start >= position);
 
@@ -107,7 +120,17 @@ public sealed partial class Assembler {
     return false;
   }
 
+  // moving SP changes which stack memory is safe: everything below SP belongs to whatever
+  // interrupt lands next, whose pushed frame overwrites it. So no memory access may be reordered
+  // across an SP update - a frame store hoisted above its own SUB SP is one timer tick from
+  // being overwritten. (PUSH/POP both move SP and touch memory, so this also keeps them ordered.)
+  private static readonly ushort _SPBIT = RegBit(Reg.SP);
+
   private static bool Conflicts(SchedInstr a, SchedInstr b) {
+    if ((a.Writes & _SPBIT) != 0 && b.TouchesMemory)
+      return true;
+    if ((b.Writes & _SPBIT) != 0 && a.TouchesMemory)
+      return true;
     if ((a.Writes & (b.Reads | b.Writes)) != 0 || (a.Reads & b.Writes) != 0)
       return true;
     if ((a.WritesFlags && (b.ReadsFlags || b.WritesFlags)) || (a.ReadsFlags && b.WritesFlags))

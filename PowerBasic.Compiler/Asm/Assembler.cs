@@ -20,6 +20,14 @@ public sealed partial class Assembler {
   private readonly List<int> _segmentRelocations = [];
   private readonly Dictionary<string, Label> _namedLabels = new(StringComparer.OrdinalIgnoreCase);
 
+  /// <summary>
+  /// Every label bound into the image, named or not. A shrinking pass has to slide all of them,
+  /// and the named/referenced ones are not all of them: <see cref="DefineLabel"/> hands out
+  /// anonymous labels that nothing registers, and tail-merge's fold regions are delimited by
+  /// exactly those - a stale boundary there makes it compare the wrong bytes.
+  /// </summary>
+  private readonly List<Label> _boundLabels = [];
+
   /// <summary>Current emit offset within the image.</summary>
   public int Position => this._buffer.Count;
 
@@ -55,6 +63,7 @@ public sealed partial class Assembler {
       throw new InvalidOperationException($"Label {label} is external and cannot be bound.");
 
     label.Position = this.Position;
+    this._boundLabels.Add(label);
   }
 
   /// <summary>Gets or creates the named label and binds it to the current position.</summary>
@@ -92,6 +101,7 @@ public sealed partial class Assembler {
 
   /// <summary>Resolves all fixups and returns the assembled image.</summary>
   public byte[] ToArray() {
+    this.RunLoadForwarding();
     this.RunSchedule();
     this.RunPeephole();
     this.RunJumpThreading();
@@ -115,6 +125,7 @@ public sealed partial class Assembler {
   /// labels count as external too - units import runtime symbols by name).
   /// </summary>
   public RelocatableImage ToRelocatable() {
+    this.RunLoadForwarding();
     this.RunSchedule();
     this.RunPeephole();
     this.RunJumpThreading();
@@ -247,6 +258,15 @@ public sealed partial class Assembler {
       changed = false;
       for (var i = 0; i < this._fixups.Count; ++i) {
         var f = this._fixups[i];
+        // a JMP to the very next instruction is a no-op: the arm-closing jump of an IF with no
+        // ELSE, an ITERATE at the loop's last statement. Removing it leaves any label bound on
+        // the jump sitting on its own destination, so nothing that branched here changes.
+        if (f.Kind == FixupKind.Rel8 && f.Target.IsBound && !f.Target.IsExternal && f.Position >= 1
+            && this._buffer[f.Position - 1] == 0xEB && f.Target.Position + f.Addend == f.Position + 1) {
+          this.RemoveBytes(f.Position - 1, 2);
+          changed = true;
+          continue;
+        }
         if (f.Kind != FixupKind.Rel16 || !f.Target.IsBound || f.Target.IsExternal || f.Position < 1)
           continue;
         var op = this._buffer[f.Position - 1];

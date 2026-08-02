@@ -801,16 +801,20 @@ public sealed partial class Assembler {
       return;
     }
 
+    var start = this.Position;
     this.EmitByte(0x0F);
     this.EmitByte((byte)(0x80 + (int)condition));
     this.EmitRel16(target);
+    this.RecordSchedJump(start);
   }
 
   /// <summary>Forced short Jcc (8086-safe); throws at <see cref="ToArray"/> when out of range.</summary>
   public void JShort(Condition condition, Label target) {
     ArgumentNullException.ThrowIfNull(target);
+    var start = this.Position;
     this.EmitByte((byte)(0x70 + (int)condition));
     this.EmitRel8(target);
+    this.RecordSchedJump(start);
   }
 
   public void Jo(Label target) => this.J(Condition.Overflow, target);
