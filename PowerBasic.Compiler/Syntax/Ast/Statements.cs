@@ -61,6 +61,8 @@ public sealed record SubDecl(SourcePosition Position, string Name, IReadOnlyList
   public bool Cdecl => this.Convention == CallConvention.Cdecl;
   /// <summary>pb36 generics: type parameter names of a generic SUB (<c>SUB Swap OF T</c>); empty for an ordinary SUB.</summary>
   public IReadOnlyList<string> TypeParameters { get; init; } = [];
+  /// <summary>pb36 <c>NOINLINE</c>: the optimizer may not substitute this body at call sites.</summary>
+  public bool NoInline { get; init; }
 }
 
 /// <summary>FUNCTION definition; return type from name suffix or <c>AS</c> clause.</summary>
@@ -69,6 +71,8 @@ public sealed record FunctionDecl(SourcePosition Position, string Name, TypeSuff
   public bool Cdecl => this.Convention == CallConvention.Cdecl;
   /// <summary>pb36 generics: type parameter names of a generic FUNCTION (<c>FUNCTION Max OF T</c>); empty for an ordinary FUNCTION.</summary>
   public IReadOnlyList<string> TypeParameters { get; init; } = [];
+  /// <summary>pb36 <c>NOINLINE</c>: the optimizer may not substitute this body at call sites.</summary>
+  public bool NoInline { get; init; }
 }
 
 /// <summary>DECLARE SUB/FUNCTION prototype.</summary>

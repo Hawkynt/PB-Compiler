@@ -13,6 +13,7 @@ public sealed partial class Parser {
     // modifiers may precede or follow the parameter list (SUB X CDECL (a, b) PUBLIC)
     List<Parameter>? parameters = null;
     var isStatic = false;
+    var noInline = false;
     var visibility = Visibility.Default;
     string? alias = null;
     var convention = CallConvention.Basic;
@@ -21,14 +22,14 @@ public sealed partial class Parser {
         parameters = this.ParseParameterList();
         continue;
       }
-      if (!this.TryParseProcedureModifier(ref isStatic, ref visibility, ref alias, ref convention))
+      if (!this.TryParseProcedureModifier(ref isStatic, ref visibility, ref alias, ref convention, ref noInline))
         break;
     }
 
     var body = this.ParseBody("END SUB");
     this.Advance();
     this.Advance();
-    return new SubDecl(pos, name.Text, parameters ?? [], isStatic, visibility, alias, convention, body) { TypeParameters = typeParams };
+    return new SubDecl(pos, name.Text, parameters ?? [], isStatic, visibility, alias, convention, body) { TypeParameters = typeParams, NoInline = noInline };
   }
 
   private Statement ParseFunction() {
@@ -39,6 +40,7 @@ public sealed partial class Parser {
     List<Parameter>? parameters = null;
     TypeName? returnType = null;
     var isStatic = false;
+    var noInline = false;
     var visibility = Visibility.Default;
     string? alias = null;
     var convention = CallConvention.Basic;
@@ -51,7 +53,7 @@ public sealed partial class Parser {
         returnType = this.ParseTypeName();
         continue;
       }
-      if (!this.TryParseProcedureModifier(ref isStatic, ref visibility, ref alias, ref convention))
+      if (!this.TryParseProcedureModifier(ref isStatic, ref visibility, ref alias, ref convention, ref noInline))
         break;
     }
 
@@ -62,13 +64,13 @@ public sealed partial class Parser {
       var eq = this.Advance();
       var result = new NameExpr(eq.Position, "FUNCTION", TypeSuffix.None);
       IReadOnlyList<Statement> exprBody = [new AssignStmt(eq.Position, result, this.ParseExpression())];
-      return new FunctionDecl(pos, name.Text, name.Suffix, returnType, parameters ?? [], isStatic, visibility, alias, convention, exprBody) { TypeParameters = typeParams };
+      return new FunctionDecl(pos, name.Text, name.Suffix, returnType, parameters ?? [], isStatic, visibility, alias, convention, exprBody) { TypeParameters = typeParams, NoInline = noInline };
     }
 
     var body = this.ParseBody("END FUNCTION");
     this.Advance();
     this.Advance();
-    return new FunctionDecl(pos, name.Text, name.Suffix, returnType, parameters ?? [], isStatic, visibility, alias, convention, body) { TypeParameters = typeParams };
+    return new FunctionDecl(pos, name.Text, name.Suffix, returnType, parameters ?? [], isStatic, visibility, alias, convention, body) { TypeParameters = typeParams, NoInline = noInline };
   }
 
   /// <summary>pb36 generics: an optional <c>OF T</c> / <c>OF (T1, T2)</c> type-parameter list right after a SUB/FUNCTION name. Empty when no <c>OF</c> follows.</summary>
@@ -89,7 +91,15 @@ public sealed partial class Parser {
     return typeParams;
   }
 
-  private bool TryParseProcedureModifier(ref bool isStatic, ref Visibility visibility, ref string? alias, ref CallConvention convention) {
+  private bool TryParseProcedureModifier(ref bool isStatic, ref Visibility visibility, ref string? alias, ref CallConvention convention, ref bool noInline) {
+    // pb36: NOINLINE pins the procedure as a real call - the optimizer may not substitute
+    // its body at call sites (so it stays inspectable, e.g. by the optimization battery)
+    if (this.IsKeyword(0, "NOINLINE")) {
+      this.Require(LanguageFeature.NoInline);
+      this.Advance();
+      noInline = true;
+      return true;
+    }
     if (this.TryMatchKeyword("STATIC")) {
       isStatic = true;
       return true;
@@ -141,10 +151,11 @@ public sealed partial class Parser {
     // CDECL/ALIAS on a prototype name the external (link) symbol and convention -
     // carried through so $LINK'd objects/libraries (incl. OMF C/asm) resolve by alias
     var isStatic = false;
+    var noInline = false;   // accepted on a prototype for symmetry; the definition is what pins it
     var visibility = Visibility.Default;
     string? alias = null;
     var convention = CallConvention.Basic;
-    while (this.TryParseProcedureModifier(ref isStatic, ref visibility, ref alias, ref convention)) { }
+    while (this.TryParseProcedureModifier(ref isStatic, ref visibility, ref alias, ref convention, ref noInline)) { }
 
     IReadOnlyList<Parameter>? parameters = this.Current.Kind == TokenKind.LParen ? this.ParseParameterList() : null;
     TypeName? returnType = this.TryMatchKeyword("AS") ? this.ParseTypeName() : null;

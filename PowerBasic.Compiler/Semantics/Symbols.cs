@@ -71,6 +71,8 @@ public sealed class ProcedureSymbol(string name, bool isFunction) {
   /// <summary>Locals & statics by name (case-insensitive), including the implicit function-result variable.</summary>
   public Dictionary<string, VariableSymbol> Variables { get; } = new(StringComparer.OrdinalIgnoreCase);
   public bool IsStatic { get; set; }
+  /// <summary>pb36 <c>NOINLINE</c>: the optimizer must keep this procedure a real call (never substitute its body at a call site), so its emitted code stays inspectable.</summary>
+  public bool NoInline { get; set; }
   /// <summary>
   /// Calling convention. BASIC (default): arguments left to right, BYREF, callee
   /// cleans (RET n). CDECL: right to left, caller cleans. STDCALL: right to left,
