@@ -4,7 +4,12 @@
 ' full product with no trap; an in-range store is fine; a DWORD multiply wraps and never
 ' traps. (Also pins the prerequisite fix: under $ERROR OVERFLOW the SCCP-proven constant
 ' stores a&/b& are NOT folded into their reads, so dead-store elimination must keep them -
-' the un-folded multiply reads them from memory.) Byte-identical under pb35 and pb36.
+' the un-folded multiply reads them from memory.)
+'
+' KNOWN OPEN DIVERGENCE (see docs/QUIRKS.md): this expectation is oracle-correct, but
+' PB-Compiler currently stores the x87 sentinel (8000_0000h) on the narrowing-multiply
+' overflow instead of raising Error 6 - the float->LONG store needs an overflow check. The
+' LONG +/- half of the same model is fixed and byte-identical (see DIFF113).
 $ERROR OVERFLOW ON
 ON ERROR GOTO trap
 OPEN "RESULT.TXT" FOR OUTPUT AS #1

@@ -39,6 +39,20 @@ Unit coverage for the emulated rows: `PowerBasic.Compiler.Tests/Syntax/QuirkEmul
 
 ## Discoveries from the differential harness (verified against genuine PBC 3.50)
 
+- **LONG `+`/`-` overflow wraps; LONG `*` overflow traps.** PB's float-promotion of
+  integer `+ - *` is NOT uniform across widths. A 2-byte sum promotes to SINGLE (`32767+1`
+  prints `32768`, not `-32768`), and a 4-byte *product* uses the FPU because it can exceed
+  32 bits — but a 4-byte **add or subtract runs in the native 32-bit ALU and wraps**:
+  genuine PBC prints `2147483000 + 1000` as `-2147483296` (mod 2³²), not the x87
+  integer-indefinite sentinel a promoted `FISTP` store would give. (Fixed in
+  `Binder.ArithmeticResultType`: Double-wide `+`/`-` stays integral; only `*` promotes.
+  Battery `DIFF113`, now byte-identical.) A LONG **multiply** whose product is narrowed into
+  a LONG store, by contrast, **raises Error 6** — it goes to the handler under
+  `ON ERROR`, and halts the program without one; a *wide use* of the same product
+  (`PRINT a& * b&`) shows the full value with no trap, and a DWORD multiply wraps silently.
+  **Open item:** PB-Compiler currently stores the sentinel there instead of trapping
+  (`DIFF105`, a known divergence — the float→LONG store needs an overflow-check that raises
+  Error 6). DWORD multiply already matches (wraps, never traps).
 - **Radix sizing is by value bit length, not digit count**: `&O177777` (6 octal
   digits, but a 16-bit value) is `-1` INTEGER, exactly like `&HFFFF`. A leading
   zero *digit* switches to unsigned interpretation and widens as needed
