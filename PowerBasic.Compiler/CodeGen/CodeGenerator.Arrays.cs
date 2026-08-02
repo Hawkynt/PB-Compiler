@@ -7,6 +7,22 @@ namespace PowerBasic.Compiler.CodeGen;
 
 public sealed partial class CodeGenerator {
 
+  /// <summary>
+  /// Scales AX by an element size or stride. A power of two becomes shifts, which is what a hand
+  /// written version would do: <c>IMUL AX, AX, imm</c> costs about 21 cycles where <c>SHL AX,1</c>
+  /// costs two, and it is an 80186 instruction - so on the 8086 this is not merely slower but
+  /// outside the declared target. Anything else keeps the multiply (the faithful path keeps it
+  /// unconditionally, so the golden gate is untouched).
+  /// </summary>
+  private void EmitIndexScale(int factor) {
+    var asm = this._asm;
+    if (this.Optimize && factor > 0 && (factor & (factor - 1)) == 0) {
+      this.EmitShiftLeft(Reg.AX, System.Numerics.BitOperations.TrailingZeroCount((uint)factor));
+      return;
+    }
+    asm.Imul(Reg.AX, Reg.AX, factor);
+  }
+
   // Dynamic array descriptor layout (in the data segment, ArrayType.Size = 8 + rank*4):
   //   +0 segment (0 = unallocated)   +2 data offset
   //   +4 element size                +6 rank
@@ -215,7 +231,7 @@ public sealed partial class CodeGenerator {
     asm.Mov(Reg.AX, Mem.Word(descriptor, 8 + 2));
     for (var d = 1; d < arrayType.Rank; ++d)
       asm.Imul(Reg.AX, Mem.Word(descriptor, 8 + d * 4 + 2));
-    asm.Imul(Reg.AX, Reg.AX, elementSize);
+    this.EmitIndexScale(elementSize);
     asm.Jmp(measured);
     asm.MarkLabel(unallocated);
     asm.Xor(Reg.AX, Reg.AX);
@@ -234,7 +250,7 @@ public sealed partial class CodeGenerator {
     asm.Mov(Reg.AX, Mem.Word(descriptor, 8 + 2)); // new byte count
     for (var d = 1; d < arrayType.Rank; ++d)
       asm.Imul(Reg.AX, Mem.Word(descriptor, 8 + d * 4 + 2));
-    asm.Imul(Reg.AX, Reg.AX, elementSize);
+    this.EmitIndexScale(elementSize);
     asm.Cmp(Reg.CX, Reg.AX);
     asm.Jbe(sizeOk);
     asm.Mov(Reg.CX, Reg.AX);
@@ -445,6 +461,58 @@ public sealed partial class CodeGenerator {
   /// size. Static arrays resolve to [BX + label - bias]; dynamic arrays load ES
   /// from the descriptor and resolve to ES:[BX + offset].
   /// </summary>
+  /// <summary>
+  /// pb36 O6: folds an all-constant subscript list into the flattened element index, so its
+  /// address becomes a compile-time displacement. Every subscript must fold AND lie inside the
+  /// declared bounds - an out-of-range constant keeps the ordinary path, which is where
+  /// <c>$ERROR BOUNDS</c> raises Error 9 and where the unchecked 16-bit address arithmetic
+  /// (which may wrap) is reproduced exactly.
+  /// </summary>
+  private bool TryFoldSubscripts(
+    IReadOnlyList<Expression> indexes, IReadOnlyList<(int Lower, int Upper)> bounds, out int flat) {
+    var strides = StridesOf(bounds);
+    flat = 0;
+    for (var d = 0; d < bounds.Count; ++d) {
+      if (this.OptFolder.TryFold(indexes[d]) is not { Integer: { } index })
+        return false;
+      if (index < bounds[d].Lower || index > bounds[d].Upper)
+        return false;
+      flat += (int)index * strides[d];
+    }
+    return true;
+  }
+
+  /// <summary>The element stride of each dimension, row-major - the multipliers of the flattened index.</summary>
+  private static int[] StridesOf(IReadOnlyList<(int Lower, int Upper)> bounds) {
+    var strides = new int[bounds.Count];
+    var stride = 1;
+    for (var d = bounds.Count - 1; d >= 0; --d) {
+      strides[d] = stride;
+      stride *= bounds[d].Upper - bounds[d].Lower + 1;
+    }
+    return strides;
+  }
+
+  /// <summary>
+  /// True when <paramref name="e"/> is a static-array element whose every subscript is a constant
+  /// inside the bounds - so <see cref="EmitArrayElementPlace"/> answers with a bare displacement
+  /// and emits nothing. Stores then need no PUSH/POP staging around the address.
+  /// </summary>
+  private bool FoldsToConstantElement(Expression e) {
+    var (indexes, symbol) = e switch {
+      CallOrIndexExpr call when model.VariableBindings.TryGetValue(call, out var array) => (call.Arguments, array),
+      IndexExpr { Target: MemberExpr mt } ix when model.VariableBindings.TryGetValue(mt, out var dotted)
+        && dotted.Type is ArrayType => (ix.Arguments, dotted),
+      _ => (null, null),
+    };
+    return this.Optimize
+      && indexes != null && symbol != null
+      && symbol.ArrayClass is not (ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms)
+      && symbol.Type is ArrayType { StaticBounds: { } bounds } arrayType
+      && indexes.Count == arrayType.Rank
+      && this.TryFoldSubscripts(indexes, bounds, out _);
+  }
+
   private Place? EmitArrayElementPlace(IReadOnlyList<Expression> indexes, VariableSymbol symbol, Expression at) {
     var asm = this._asm;
     // dynamic arrays may be re-DIMed with a different rank (the descriptor is
@@ -460,15 +528,21 @@ public sealed partial class CodeGenerator {
 
     if (arrayType.StaticBounds is { } bounds) {
       // strides and the lower-bound bias fold at compile time
-      var strides = new int[bounds.Count];
-      var stride = 1;
-      for (var d = bounds.Count - 1; d >= 0; --d) {
-        strides[d] = stride;
-        stride *= bounds[d].Upper - bounds[d].Lower + 1;
-      }
+      var strides = StridesOf(bounds);
       var bias = 0;
       for (var d = 0; d < bounds.Count; ++d)
         bias += bounds[d].Lower * strides[d];
+
+      // pb36 O6: every subscript is a compile-time constant, so the element's address is one too.
+      // The whole scale-and-add sequence (MOV AX,k / SHL AX,1 / MOV BX,AX, plus a PUSH/POP pair
+      // per extra dimension) collapses into the displacement of a direct memory operand - what
+      // anyone writing this by hand would use, and it leaves BX free.
+      if (this.Optimize && this.TryFoldSubscripts(indexes, bounds, out var flat)) {
+        var offset = unchecked((short)((flat - bias) * elementSize));
+        return symbol.ArrayClass == ArrayClass.Stack
+          ? new(Mem.At(Reg.BP, symbol.Offset + offset), false)
+          : new(Mem.At(this.SlotOf(symbol), offset), false);
+      }
 
       for (var d = 0; d < bounds.Count; ++d) {
         this.EmitInt16Argument(indexes[d]);
@@ -485,7 +559,7 @@ public sealed partial class CodeGenerator {
           this.EmitRaiseWhen(asm.Jle, 9);
         }
         if (strides[d] != 1)
-          asm.Imul(Reg.AX, Reg.AX, strides[d]);
+          this.EmitIndexScale(strides[d]);
         if (d > 0) {
           asm.Pop(Reg.BX);
           asm.Add(Reg.AX, Reg.BX);
@@ -494,7 +568,7 @@ public sealed partial class CodeGenerator {
           asm.Push(Reg.AX);
       }
       if (elementSize != 1)
-        asm.Imul(Reg.AX, Reg.AX, elementSize);
+        this.EmitIndexScale(elementSize);
       // pb36 STACK array: the data lives in the frame, so the element is [BP+DI+disp]
       // (BP pairs only with SI/DI in 16-bit addressing; DI is free here)
       if (symbol.ArrayClass == ArrayClass.Stack) {
@@ -524,7 +598,7 @@ public sealed partial class CodeGenerator {
         asm.Push(Reg.AX);
     }
     if (elementSize != 1)
-      asm.Imul(Reg.AX, Reg.AX, elementSize);
+      this.EmitIndexScale(elementSize);
     asm.Add(Reg.AX, descriptor(2));
     asm.Mov(Reg.BX, Reg.AX);
     asm.Mov(Reg.ES, descriptor(0));
@@ -616,7 +690,7 @@ public sealed partial class CodeGenerator {
     } else
       this.EmitInt16Argument(ix.Arguments[0]);
     if (elementSize != 1)
-      asm.Imul(Reg.AX, Reg.AX, elementSize);
+      this.EmitIndexScale(elementSize);
     asm.Pop(Reg.BX);
 
     // fold the computed index into the base cell: needs a BX-based cell

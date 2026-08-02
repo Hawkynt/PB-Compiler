@@ -60,6 +60,17 @@ public sealed partial class CodeGenerator {
   /// the value around this call. Returns null (with a diagnostic) when the
   /// expression is not addressable.
   /// </summary>
+  /// <summary>
+  /// True when computing the target's address needs no code at all - a plain variable with a
+  /// direct cell. The value being stored can then stay in the accumulator across it; only a
+  /// subscripted or indirect target has to be staged around, and staging a value that nothing
+  /// touches is a PUSH/POP pair a hand-written version would never contain.
+  /// </summary>
+  private bool TargetNeedsNoAddressCode(Expression target) =>
+    target is NameExpr && model.VariableBindings.TryGetValue(target, out var symbol)
+      ? !symbol.IsArray && this.TryDirectCell(symbol) is not null && this.ResidentRegOf(symbol) is null
+      : this.FoldsToConstantElement(target);   // a(7) on a static array is a displacement, not code
+
   private Place? EmitPlace(Expression e) {
     var asm = this._asm;
     switch (e) {
@@ -439,6 +450,96 @@ public sealed partial class CodeGenerator {
     asm.Mov(Adjust(place.Cell, 2, OperandSize.Word), Reg.DX);
   }
 
+  /// <summary>
+  /// pb36 O5/O8: <c>acc = acc OP rhs</c> where <c>acc</c> is a register-resident 16-bit variable
+  /// and <c>rhs</c> reaches memory in one operand - a direct cell or a static array element. The
+  /// ALU op then targets the resident register itself, so the value never travels through AX:
+  /// <c>ADD DI,[BX+disp]</c> rather than <c>MOV AX,DI / ADD AX,[BX+disp] / MOV DI,AX</c>.
+  ///
+  /// Only the unchecked path qualifies. Under <c>$ERROR OVERFLOW</c> the trap belongs to the
+  /// operation, and the JNO guard would have to be threaded through here too; the ordinary
+  /// load/op/store path already carries it.
+  /// </summary>
+  private bool TryEmitResidentReadModifyWrite(AssignStmt a, VariableSymbol target, Reg accumulator) {
+    if (!this.Optimize || this.CheckOverflow || this.CheckNumeric || accumulator.IsDword())
+      return false;
+    if (model.TypeOf(a.Target) is not ScalarType { IsFloat: false, ByteSize: 2 })
+      return false;
+    if (a.Value is not BinaryExpr { Op: BinaryOp.Add or BinaryOp.Subtract
+        or BinaryOp.And or BinaryOp.Or or BinaryOp.Xor } bin)
+      return false;
+    // the accumulator must be the LEFT operand: these ops are read-modify-write on it, and
+    // subtraction is not commutative
+    if (bin.Left is not NameExpr leftName
+        || !model.VariableBindings.TryGetValue(leftName, out var leftSym)
+        || !ReferenceEquals(leftSym, target))
+      return false;
+
+    var rhs = this.TryInt16MemOperand(bin.Right, PbType.Integer)
+      ?? this.FuseArrayElementOperand(bin.Right, bin.Left, PbType.Integer);
+    if (rhs is not { } operand)
+      return false;
+
+    var asm = this._asm;
+    switch (bin.Op) {
+      case BinaryOp.Add: asm.Add(accumulator, operand); break;
+      case BinaryOp.Subtract: asm.Sub(accumulator, operand); break;
+      case BinaryOp.And: asm.And(accumulator, operand); break;
+      case BinaryOp.Or: asm.Or(accumulator, operand); break;
+      default: asm.Xor(accumulator, operand); break;
+    }
+    return true;
+  }
+
+  /// <summary>
+  /// pb36 O8: <c>target = &lt;integral constant&gt;</c> where the target's address costs no code -
+  /// the constant is written as an immediate instead of being staged through the accumulator.
+  ///
+  /// The constant is the very one <see cref="TryEmitFolded"/> would have loaded (same folder, same
+  /// <see cref="WrapToType"/>), and the value's kind must already match the target's, so the
+  /// <see cref="Coerce"/> the ordinary path would run is a no-op. Under those two conditions the
+  /// bytes reaching memory are identical to the load-then-store sequence.
+  /// </summary>
+  private bool TryEmitConstantStore(AssignStmt a, PbType targetType) {
+    if (!this.Optimize)
+      return false;
+    if (targetType is not ScalarType { IsFloat: false, ByteSize: 1 or 2 or 4 } target)
+      return false;
+    if (model.TypeOf(a.Value) is not ScalarType valueType)
+      return false;
+    if (this._cseMarks?.ContainsKey(a.Value) == true)
+      return false;                                // the value comes out of a CSE slot, not a literal
+    if (this.OptFolder.TryFold(a.Value) is not { Integer: { } raw } || !this.FoldsWithoutWrap(a.Value))
+      return false;
+    // a wider or float-promoted constant reaches the cell through a conversion; that conversion can
+    // trap under $ERROR NUMERIC/OVERFLOW, so only the unchecked build may pre-compute it
+    var direct = !valueType.IsFloat && KindOf(valueType) == KindOf(target);
+    if (!direct && (this.CheckNumeric || this.CheckOverflow))
+      return false;
+    if (!this.TargetWriteEmitsNoAddressCode(a.Target))
+      return false;
+    if (this.EmitPlace(a.Target) is not { Far: false } place)
+      return false;
+
+    var asm = this._asm;
+    // exactly what the load-convert-store path would leave in the cell: a 1/2-byte target wraps,
+    // a 4-byte signed one takes the x87's integer-indefinite pattern when the value cannot fit
+    var value = StoreFoldedPromoted(raw, target, valueType.IsFloat);
+    switch (target.ByteSize) {
+      case 1:
+        asm.Mov(Adjust(place.Cell, 0, OperandSize.Byte), (Imm)(byte)value);
+        break;
+      case 2:
+        asm.Mov(Adjust(place.Cell, 0, OperandSize.Word), (Imm)(ushort)value);
+        break;
+      default:
+        asm.Mov(Adjust(place.Cell, 0, OperandSize.Word), (Imm)(ushort)value);
+        asm.Mov(Adjust(place.Cell, 2, OperandSize.Word), (Imm)(ushort)(value >> 16));
+        break;
+    }
+    return true;
+  }
+
   private void EmitAssign(AssignStmt a) {
     var targetType = model.TypeOf(a.Target);
 
@@ -456,6 +557,12 @@ public sealed partial class CodeGenerator {
         this._asm.Mov(accReg, Mem.Dword(this._scratch));
         return;
       }
+      // "acc = acc OP <memory>" writes the resident register directly: ADD DI,[BX+disp] instead
+      // of loading the register into AX, operating there and copying it back. This is the last
+      // step of the accumulate-over-an-array loop, and the difference between what the compiler
+      // emits and what a person would write by hand.
+      if (this.TryEmitResidentReadModifyWrite(a, regSym, accReg))
+        return;
       if (model.TypeOf(a.Value) is ScalarType { IsFloat: true } && this.IsModularInt16Tree(a.Value, 0))
         this.EmitModularInt16(a.Value);
       else {
@@ -477,6 +584,11 @@ public sealed partial class CodeGenerator {
     // pb36 O8: target = target OP <const|cell> on a non-resident int16 direct cell becomes a
     // memory-destination read-modify-write (ADD [target],x / INC [target]) - no load/op/store
     if (this.TryEmitInt16ReadModifyWrite(a))
+      return;
+
+    // pb36 O8: a constant into a cell is one store of an immediate - MOV WORD PTR [x],7 rather
+    // than MOV AX,7 / MOV [x],AX. It is shorter, one instruction fewer, and leaves AX alone
+    if (this.TryEmitConstantStore(a, targetType))
       return;
 
     if (targetType is UdtType udt) {
@@ -604,12 +716,45 @@ public sealed partial class CodeGenerator {
         && model.TypeOf(a.Value) is ScalarType { IsFloat: true }
         && this.IsModularInt16Tree(a.Value, 0)) {
       this.EmitModularInt16(a.Value);
-      this._asm.Push(Reg.AX);                // the target's subscripts may clobber AX
+      var simple16 = this.TargetNeedsNoAddressCode(a.Target);
+      if (!simple16)
+        this._asm.Push(Reg.AX);              // a subscripted target's address code may clobber AX
       if (this.EmitPlace(a.Target) is { } modularPlace) {
-        this._asm.Pop(Reg.AX);
+        if (!simple16)
+          this._asm.Pop(Reg.AX);
         this.EmitStorePlace(modularPlace, targetType, a.Target);
-      } else
+      } else if (!simple16)
         this._asm.Pop(Reg.AX);
+      return;
+    }
+
+    // ... and the same for a 32-bit target: PB promotes LONG arithmetic to DOUBLE, so without
+    // this every "l& = l& + k&" pays FILD / the x87 op / FISTP plus a memory staging cell at
+    // each end for what the integer ALU does in two instructions
+    if (this.Optimize && !this.CheckOverflow && !this.CheckNumeric
+        && targetType is ScalarType { IsFloat: false, ByteSize: 4 } int32Target
+        && model.TypeOf(a.Value) is ScalarType { IsFloat: true }
+        && (this.IsModularInt32Tree(a.Value, int32Target.Signed)
+            || this.IsGuardedInt32AddSub(a.Value, int32Target.Signed))) {
+      var needsSaturationGuard = !this.IsModularInt32Tree(a.Value, int32Target.Signed);
+      this.EmitModularInt32(a.Value);
+      if (needsSaturationGuard)
+        this.EmitInt32SaturationGuard();
+      var simple32 = this.TargetNeedsNoAddressCode(a.Target);
+      if (!simple32) {
+        this._asm.Push(Reg.DX);              // a subscripted target's address code may clobber the pair
+        this._asm.Push(Reg.AX);
+      }
+      if (this.EmitPlace(a.Target) is { } modular32Place) {
+        if (!simple32) {
+          this._asm.Pop(Reg.AX);
+          this._asm.Pop(Reg.DX);
+        }
+        this.EmitStorePlace(modular32Place, targetType, a.Target);
+      } else if (!simple32) {
+        this._asm.Pop(Reg.AX);
+        this._asm.Pop(Reg.DX);
+      }
       return;
     }
 
@@ -772,7 +917,7 @@ public sealed partial class CodeGenerator {
   /// </summary>
   private bool TargetWriteEmitsNoAddressCode(Expression target) {
     if (target is not NameExpr n)
-      return false;
+      return this.FoldsToConstantElement(target);  // a(7) on a static array folds to a displacement
     if (this._copyReads is { } cr && cr.TryGetValue(n, out var src) && this.TryDirectCell(src) != null)
       return true;
     if (!model.VariableBindings.TryGetValue(n, out var symbol))
@@ -911,22 +1056,106 @@ public sealed partial class CodeGenerator {
   #endregion
 
   /// <summary>
-  /// True for a +,-,* (and unary negate) tree whose leaves are all 16-bit-or-
-  /// narrower integral expressions - the float-promoted result's low 16 bits
-  /// equal the modular 16-bit ALU result at every depth.
+  /// The exactness budget for a float-promoted integer tree: the x87 computes with a 64-bit
+  /// mantissa, so an integer of magnitude below 2^63 travels through it EXACTLY - and the low
+  /// bits of an exact value are precisely what the modular integer ALU would have produced.
+  /// Past that the FPU rounds and the low bits are no longer the modular result, so the tree
+  /// must stay on the promoted path.
   /// </summary>
-  private bool IsModularInt16Tree(Expression e, int depth) {
-    if (depth > 16)
-      return false;
-    if (model.TypeOf(e) is ScalarType { IsFloat: false, ByteSize: <= 2 })
-      return true; // integral leaf of any shape - evaluated through the normal emitter
-    return e switch {
-      UnaryExpr { Op: UnaryOp.Negate } u => this.IsModularInt16Tree(u.Operand, depth + 1),
-      BinaryExpr { Op: BinaryOp.Add or BinaryOp.Subtract or BinaryOp.Multiply } b =>
-        this.IsModularInt16Tree(b.Left, depth + 1) && this.IsModularInt16Tree(b.Right, depth + 1),
-      _ => false,
-    };
+  private const int ModularMantissaBits = 63;
+
+  /// <summary>
+  /// The smallest bit count <c>b</c> in the modular tree's signed convention (a value fits
+  /// <c>b</c> bits when it lies in <c>[-2^b, 2^b - 1]</c>) that holds every value of
+  /// <c>[lo, hi]</c>. Matches the leaf convention exactly - a full signed 16-bit range gives 15,
+  /// a full WORD range gives 16 - so substituting it for a tighter proven range never over-claims.
+  /// </summary>
+  private static int RangeBits(long lo, long hi) {
+    var b = 0;
+    while (b < 63 && !(lo >= -(1L << b) && hi <= (1L << b) - 1))
+      ++b;
+    return b;
   }
+
+  /// <summary>
+  /// A conservative bound, in bits, on the magnitude any value in a <c>+ - *</c> (and unary
+  /// negate) tree of integral leaves can reach - or null when the tree is not of that shape.
+  /// Leaves contribute their type's width, an add/subtract one carry bit over the wider side,
+  /// and a multiply the sum of both. Bounds are monotone up the tree, so checking the root
+  /// against <see cref="ModularMantissaBits"/> proves exactness at every node.
+  /// </summary>
+  private int? ModularTreeBits(Expression e, int maxLeafBytes, int depth) {
+    if (depth > 16)
+      return null;
+    if (model.TypeOf(e) is ScalarType { IsFloat: false, ByteSize: var size, Signed: var signed } && size <= maxLeafBytes) {
+      // The leaf occupies at most its type's width - but a PROVEN range needs fewer bits, and
+      // that is what lets a multiply of two small-ranged operands demote to a native IMUL instead
+      // of the FPU round-trip. E.g. (i% AND 255) * (j% AND 255) is <= 65025, so its product fits
+      // int32 with room to spare; without the range it counts 31+31 bits and stays on the x87.
+      // Sound because RangeBits is an over-approximation and we take the tighter of the two - the
+      // demotion still only fires when the whole tree provably fits the target (the <=31 gate).
+      var typeBits = signed ? size * 8 - 1 : size * 8;
+      // Only tighten in the int32 context (maxLeafBytes == 4). There the tree promotes to DOUBLE
+      // and the demotion gate is <= 31 bits, so a newly-qualifying result is < 2^31, exact in the
+      // 2^53 mantissa - unconditionally safe. The int16 context promotes to SINGLE (2^24 mantissa)
+      // and accepts up to the mantissa-bit bound, where a range-widened deep product could round;
+      // leaving those leaves at their type width keeps that path exactly as it was.
+      return maxLeafBytes >= 4 && this.IndexRangeOf(e) is { } r
+        ? Math.Min(typeBits, RangeBits(r.Lo, r.Hi))
+        : typeBits;
+    }
+    switch (e) {
+      case UnaryExpr { Op: UnaryOp.Negate } u:
+        return this.ModularTreeBits(u.Operand, maxLeafBytes, depth + 1);
+      case BinaryExpr { Op: BinaryOp.Add or BinaryOp.Subtract or BinaryOp.Multiply } b: {
+        if (this.ModularTreeBits(b.Left, maxLeafBytes, depth + 1) is not { } l
+            || this.ModularTreeBits(b.Right, maxLeafBytes, depth + 1) is not { } r)
+          return null;
+        var bits = b.Op == BinaryOp.Multiply ? l + r : Math.Max(l, r) + 1;
+        return bits > ModularMantissaBits ? null : bits;
+      }
+      default:
+        return null;
+    }
+  }
+
+  /// <summary>
+  /// True for a +,-,* (and unary negate) tree whose leaves are all 16-bit-or-narrower integral
+  /// expressions AND whose values provably stay inside the x87's exact-integer range - the
+  /// float-promoted result's low 16 bits then equal the modular 16-bit ALU result at every depth.
+  /// </summary>
+  private bool IsModularInt16Tree(Expression e, int depth) => this.ModularTreeBits(e, 2, depth) is not null;
+
+  /// <summary>
+  /// The 32-bit form: a +,-,* tree over 32-bit-or-narrower integral leaves, stored into a 32-bit
+  /// integral target. PB promotes such a tree to DOUBLE, so without this it round-trips through
+  /// the x87 - <c>FILD</c>, the operation, <c>FISTP</c>, and a memory staging cell at each end -
+  /// where the plain 32-bit ALU would do.
+  ///
+  /// The budget is much tighter than the 16-bit form's, and for a different reason. Storing a
+  /// float to a 2-byte integral WRAPS, so there the only question is whether the x87 held the
+  /// value exactly. Storing one to a 4-byte integral does NOT wrap: an out-of-range value comes
+  /// back as the x87's integer-indefinite sentinel (8000_0000h), which no amount of modular
+  /// arithmetic reproduces. So the tree only qualifies when its value provably cannot leave the
+  /// destination's range - then exact, modular and stored all coincide. That still covers the
+  /// everyday shapes (narrow leaves widened into a LONG, anything the interval lattice bounds);
+  /// a genuinely 32-bit-wide sum keeps the promoted path and its saturation.
+  /// </summary>
+  private bool IsModularInt32Tree(Expression e, bool targetSigned) =>
+    this.ModularTreeBits(e, 4, 0) is { } bits && bits <= (targetSigned ? 31 : 32);
+
+  /// <summary>
+  /// The one shape worth rescuing from the promoted path even though it CAN leave the
+  /// destination's range: a single <c>+</c> or <c>-</c> whose operands are each exactly
+  /// representable (their own bound fits int32). The true result then needs exactly 33 bits, so
+  /// the ALU's overflow flag says precisely whether it left int32 - and the emitter reproduces
+  /// the x87's integer-indefinite sentinel in three instructions rather than paying the whole
+  /// FILD/op/FISTP round-trip. This is the everyday <c>total&amp; = total&amp; + delta&amp;</c>.
+  /// </summary>
+  private bool IsGuardedInt32AddSub(Expression e, bool targetSigned) =>
+    targetSigned && e is BinaryExpr { Op: BinaryOp.Add or BinaryOp.Subtract } b
+    && this.ModularTreeBits(b.Left, 4, 1) is <= 31
+    && this.ModularTreeBits(b.Right, 4, 1) is <= 31;
 
   /// <summary>Evaluates a modular tree into AX with plain 16-bit ALU ops.</summary>
   /// <summary>
@@ -1004,6 +1233,64 @@ public sealed partial class CodeGenerator {
     this.EmitModularInt16Core(e);
   }
 
+  /// <summary>
+  /// Evaluates a modular 32-bit tree into DX:AX with the plain integer ALU. Leaves fall back to
+  /// the ordinary emitter; every operator goes through <see cref="EmitInt32Op"/>, so this path
+  /// inherits the whole 32-bit repertoire - the $CPU 80386 register forms, the O16 narrowing to
+  /// a 16-bit multiply, the immediate folding - instead of duplicating any of it.
+  /// </summary>
+  private void EmitModularInt32(Expression e) {
+    var asm = this._asm;
+    if (model.TypeOf(e) is ScalarType { IsFloat: false, ByteSize: <= 4 } leafType) {
+      this.EmitExpression(e);
+      this.Coerce(leafType, PbType.Long, e);
+      return;
+    }
+    switch (e) {
+      case UnaryExpr u:
+        this.EmitModularInt32(u.Operand);
+        asm.Not(Reg.DX);
+        asm.Neg(Reg.AX);
+        asm.Sbb(Reg.DX, -1);
+        break;
+
+      case BinaryExpr b:
+        // a 4-byte direct cell on the right loads straight into BX:CX - no push/pop staging
+        if (this.TryInt32MemOperand(b.Right) is { } rmem) {
+          this.EmitModularInt32(b.Left);
+          asm.Mov(Reg.BX, rmem);
+          asm.Mov(Reg.CX, Adjust(rmem, 2, OperandSize.Word));
+          this.EmitInt32Op(b);
+          break;
+        }
+        this.EmitModularInt32(b.Left);
+        asm.Push(Reg.DX);
+        asm.Push(Reg.AX);
+        this.EmitModularInt32(b.Right);
+        asm.Mov(Reg.BX, Reg.AX);
+        asm.Mov(Reg.CX, Reg.DX);
+        asm.Pop(Reg.AX);
+        asm.Pop(Reg.DX);
+        this.EmitInt32Op(b);
+        break;
+    }
+  }
+
+  /// <summary>
+  /// Reproduces what an out-of-range float-to-LONG store does: the x87 writes its
+  /// integer-indefinite value (8000_0000h) rather than wrapping. The preceding 32-bit ADD/ADC
+  /// (or SUB/SBB) leaves OF set exactly when the true 33-bit result left the signed 32-bit
+  /// range, so one branch decides it.
+  /// </summary>
+  private void EmitInt32SaturationGuard() {
+    var asm = this._asm;
+    var inRange = asm.DefineLabel();
+    asm.Jno(inRange);
+    asm.Xor(Reg.AX, Reg.AX);
+    asm.Mov(Reg.DX, unchecked((short)0x8000));
+    asm.MarkLabel(inRange);
+  }
+
   private void EmitModularInt16Core(Expression e) {
     // pb36 O17: a modular tree that SCCP proved constant collapses to one load
     if (this.TryEmitModularProvenConstant(e))
@@ -1028,8 +1315,12 @@ public sealed partial class CodeGenerator {
         if (b.Op is BinaryOp.Add or BinaryOp.Subtract && this.TryEmitModularConstAddSub(b))
           break;
         // pb36 O8: a direct-memory right operand reads straight into the ALU op (ADD AX,[mem])
-        // instead of being staged through BX (push left / eval right / mov bx / pop)
-        if (b.Op is BinaryOp.Add or BinaryOp.Subtract && this.TryInt16MemOperand(b.Right, PbType.Integer) is { } rmem) {
+        // instead of being staged through BX (push left / eval right / mov bx / pop). An array
+        // element fuses the same way - its address goes into BX first, then the left is loaded -
+        // which is what turns "acc = acc + a(i)" into a load and an add.
+        if (b.Op is BinaryOp.Add or BinaryOp.Subtract
+            && (this.TryInt16MemOperand(b.Right, PbType.Integer)
+                ?? this.FuseArrayElementOperand(b.Right, b.Left, PbType.Integer)) is { } rmem) {
           this.EmitModularInt16(b.Left);
           if (b.Op == BinaryOp.Add)
             asm.Add(Reg.AX, rmem);

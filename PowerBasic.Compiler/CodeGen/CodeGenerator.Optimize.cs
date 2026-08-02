@@ -33,6 +33,19 @@ public sealed partial class CodeGenerator {
   /// <paramref name="type"/> - folded arithmetic must land on exactly the bits
   /// the runtime ALU would have produced (QUIRKS: PB wraps without $ERROR NUMERIC).
   /// </summary>
+  /// <summary>
+  /// The value a compile-time fold must store when the expression was float-PROMOTED - which
+  /// every <c>+</c>, <c>-</c> and <c>*</c> over integral operands is in PB 2.0+. Storing such a
+  /// value into a 1- or 2-byte integral wraps, exactly like integral arithmetic; storing it into
+  /// a 4-byte signed one does NOT, because the x87 writes its integer-indefinite pattern
+  /// (8000_0000h) for anything outside the destination's range. Folding must reproduce that or
+  /// the optimizer changes the program's output - the one thing it may never do.
+  /// </summary>
+  public static long StoreFoldedPromoted(long exact, ScalarType type, bool promoted) =>
+    promoted && type is { ByteSize: 4, Signed: true } && (exact < int.MinValue || exact > int.MaxValue)
+      ? unchecked((int)0x80000000)
+      : WrapToType(exact, type);
+
   public static long WrapToType(long value, ScalarType type) => type switch {
     { ByteSize: 1, Signed: true } => (sbyte)value,
     { ByteSize: 1 } => (byte)value,
@@ -42,6 +55,42 @@ public sealed partial class CodeGenerator {
     { ByteSize: 4 } => (uint)value,
     _ => value,
   };
+
+  /// <summary>
+  /// The 16-bit value a constant loop bound coerces to, or null when it is not a constant. Same
+  /// folder and same wrap as <see cref="TryEmitFolded"/>, then the truncation
+  /// <c>Coerce(..., PbType.Integer)</c> would apply - so the bits are those of the ordinary path.
+  /// </summary>
+  private int? TryFoldInt16(Expression e) =>
+    this.Optimize && this.OptFolder.TryFold(e) is { Integer: { } raw } && this.FoldsWithoutWrap(e)
+      ? (ushort)(short)raw
+      : null;
+
+  /// <summary>
+  /// Materializes a 16-bit loop bound into a register. A constant is the immediate itself
+  /// (<c>MOV SI,0</c>), not a value computed in AX and copied over - the staging a hand-written
+  /// loop prologue would not contain.
+  /// </summary>
+  private void EmitInt16BoundInto(Expression e, Reg destination) {
+    if (this.TryFoldInt16(e) is { } value) {
+      this._asm.Mov(destination, value);
+      return;
+    }
+    this.EmitExpression(e);
+    this.Coerce(model.TypeOf(e), PbType.Integer, e);
+    this._asm.Mov(destination, Reg.AX);
+  }
+
+  /// <summary>The same for a bound that lives in a frame cell (the loop limit).</summary>
+  private void EmitInt16BoundInto(Expression e, Mem destination) {
+    if (this.TryFoldInt16(e) is { } value) {
+      this._asm.Mov(destination, value);
+      return;
+    }
+    this.EmitExpression(e);
+    this.Coerce(model.TypeOf(e), PbType.Integer, e);
+    this._asm.Mov(destination, Reg.AX);
+  }
 
   #region O1 - constant folding (integral, wrap-correct)
 
@@ -67,9 +116,40 @@ public sealed partial class CodeGenerator {
       return false;
     if (this.OptFolder.TryFold(e) is not { Integer: { } raw })
       return false;
+    if (!this.FoldsWithoutWrap(e))
+      return false;
 
     this.EmitIntegralConstant(WrapToType(raw, type), KindOf(type));
     return true;
+  }
+
+  /// <summary>
+  /// True when every node of a constant expression folds to a value its own type can hold - so the
+  /// mathematical fold IS what the runtime would have computed step by step.
+  ///
+  /// Whether that needs checking is a dialect property. PB 2.0+ computes integral <c>+ - *</c> in
+  /// floating point, so its intermediates never wrap and this expression never reaches here (the
+  /// caller declines a float-typed tree). The Microsoft lineage, Turbo Basic, and anything under
+  /// <c>$COMPAT</c> keep the arithmetic integral and wrap it in place - and there
+  /// <c>32767 + 18</c> is 32785 folded but -32751 at run time. When any node leaves its type the
+  /// fold is abandoned and the real arithmetic emitted, which wraps correctly by construction.
+  /// </summary>
+  private bool FoldsWithoutWrap(Expression e) {
+    // Only a COMPUTED node can wrap: an operation's result is stored back into its own type,
+    // whereas a literal carries whatever the source wrote and is coerced by its consumer (a
+    // literal's recorded type can be narrower than its value, which says nothing about wrapping).
+    // A float-promoted intermediate cannot wrap either, and a non-constant node is not folded at
+    // all - both are left alone rather than assumed guilty.
+    if (e is BinaryExpr or UnaryExpr
+        && model.TypeOf(e) is ScalarType { IsFloat: false } type
+        && this.OptFolder.TryFold(e) is { Integer: { } value }
+        && WrapToType(value, type) != value)
+      return false;
+    return e switch {
+      BinaryExpr b => this.FoldsWithoutWrap(b.Left) && this.FoldsWithoutWrap(b.Right),
+      UnaryExpr u => this.FoldsWithoutWrap(u.Operand),
+      _ => true,
+    };
   }
 
   /// <summary>
@@ -96,6 +176,8 @@ public sealed partial class CodeGenerator {
       return false; // no proven read here - leave emission untouched
     if (this.OptFolder.TryFold(substituted) is not { Integer: { } raw })
       return false; // an untracked read / call / float kept it non-constant
+    if (!this.FoldsWithoutWrap(substituted))
+      return false; // an intermediate would have wrapped at run time - let the real arithmetic do it
     this.EmitIntegralConstant(WrapToType(raw, type), KindOf(type));
     return true;
   }
@@ -1074,12 +1156,8 @@ public sealed partial class CodeGenerator {
 
     var asm = this._asm;
     var limit = this.AllocTemp(2);
-    this.EmitExpression(f.To);
-    this.Coerce(model.TypeOf(f.To), PbType.Integer, f.To);
-    asm.Mov(limit, Reg.AX);
-    this.EmitExpression(f.From);                 // From may read the accumulator's cell - keep DI free until now
-    this.Coerce(model.TypeOf(f.From), PbType.Integer, f.From);
-    asm.Mov(Reg.SI, Reg.AX);
+    this.EmitInt16BoundInto(f.To, limit);
+    this.EmitInt16BoundInto(f.From, Reg.SI);     // From may read the accumulator's cell - keep DI free until now
 
     this._registerCounter = (counter, Reg.SI);
 
@@ -1090,6 +1168,28 @@ public sealed partial class CodeGenerator {
     if (accumulator != null && accCell is { } accSlot) {
       asm.Mov(Reg.DI, Adjust(accSlot, 0, OperandSize.Word)); // load its pre-loop value
       this._registerAccumulator = (accumulator, Reg.DI);
+    }
+
+    // pb36 O6b: "acc = acc OP a(i)" reads one element per iteration and nothing else in the body
+    // uses BX, so the element address lives there for the whole loop and steps by the element
+    // size - the per-iteration address computation disappears entirely, which is what a person
+    // writing this by hand would do.
+    var walk = this._registerAccumulator is { } resident
+      ? this.MatchSteppedAccumulateBody(f, counter, resident.Symbol)
+      : null;
+    if (walk is { } stepped) {
+      var arraySlot = this.SlotOf(stepped.Array);
+      if (this.OptFolder.TryFold(f.From) is { Integer: { } fromConst })
+        asm.Mov(Reg.BX, Imm.OffsetOf(arraySlot, checked((int)((fromConst - stepped.Lbound) * 2))));
+      else {
+        asm.Mov(Reg.AX, Reg.SI);                               // SI still holds the FROM value
+        if (stepped.Lbound != 0)
+          asm.Sub(Reg.AX, stepped.Lbound);
+        asm.Shl(Reg.AX, 1);                                    // *2: the element size (8086-safe shift-by-1)
+        asm.Mov(Reg.BX, Reg.AX);
+        asm.Lea(Reg.BX, Mem.At(Reg.BX, arraySlot));
+      }
+      this._residentElementPtr = (stepped.Array, counter);
     }
 
     var top = asm.DefineLabel();
@@ -1109,6 +1209,11 @@ public sealed partial class CodeGenerator {
     foreach (var statement in f.Body)
       this.EmitStatement(statement);
     asm.MarkLabel(cont);
+    if (this._residentElementPtr != null)
+      if (step >= 0)
+        asm.Add(Reg.BX, (int)step * 2);
+      else
+        asm.Sub(Reg.BX, (int)Math.Abs(step) * 2);
     if (step >= 0)
       asm.Add(Reg.SI, (Imm)(int)step);
     else
@@ -1120,10 +1225,11 @@ public sealed partial class CodeGenerator {
     this._iterateFor.Pop();
     this._iterateAny.Pop();
     asm.Mov(cell, Reg.SI);      // post-loop reads use the cell again
-    if (this._registerAccumulator is { } resident && accCell is { } slot)
-      asm.Mov(Adjust(slot, 0, OperandSize.Word), resident.Reg); // flush the accumulator
+    if (this._registerAccumulator is { } live && accCell is { } slot)
+      asm.Mov(Adjust(slot, 0, OperandSize.Word), live.Reg); // flush the accumulator
     this._registerCounter = null;
     this._registerAccumulator = null;
+    this._residentElementPtr = null;
     this.ReleaseTemp(2);
     return true;
   }
@@ -1319,21 +1425,15 @@ public sealed partial class CodeGenerator {
     this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
     asm.MarkLabel(top);
     if (d.PreCondition != null) {
-      this.EmitCondition(d.PreCondition);
-      if (d.PreTest == LoopTestKind.While)
-        asm.Jz(done);
-      else
-        asm.Jnz(done);
+      // While: leave when false; Until: leave when true
+      this.EmitConditionalBranch(d.PreCondition, done, whenFalse: d.PreTest == LoopTestKind.While);
     }
     foreach (var s in d.Body)
       this.EmitStatement(s);
     asm.MarkLabel(cont);
     if (d.PostCondition != null) {
-      this.EmitCondition(d.PostCondition);
-      if (d.PostTest == LoopTestKind.While)
-        asm.Jnz(top);
-      else
-        asm.Jz(top);
+      // While: repeat while true; Until: repeat while false
+      this.EmitConditionalBranch(d.PostCondition, top, whenFalse: d.PostTest != LoopTestKind.While);
     } else
       asm.Jmp(top);
     asm.MarkLabel(done);
@@ -1356,23 +1456,47 @@ public sealed partial class CodeGenerator {
   /// route through the residency paths, so keeping it in a register is invisible.
   /// </summary>
   private VariableSymbol? FindAccumulator(IReadOnlyList<Statement> body, VariableSymbol? counter, int byteSize = 2) {
+    // The register is worth most to a value carried ACROSS iterations - a true accumulator
+    // (`acc = acc OP x`, or INCR/DECR), read and written every pass. A variable merely assigned
+    // each iteration (`scratch = i AND 7`) is recomputed and dies; parking it in DI while the hot
+    // accumulator stays in memory is the residency spent on the wrong value. So take the first
+    // self-referential candidate, and only fall back to a plain write target when there is none.
+    VariableSymbol? Candidate(NameExpr? target) {
+      if (target == null || !model.VariableBindings.TryGetValue(target, out var symbol)
+          || ReferenceEquals(symbol, counter)
+          || symbol.Type is not ScalarType { Signed: true, IsFloat: false } accType || accType.ByteSize != byteSize
+          || symbol.Storage is VariableStorage.Static
+          || this.TryDirectCell(symbol) is null)
+        return null;
+      return symbol;
+    }
+
+    VariableSymbol? fallback = null;
     foreach (var statement in body) {
       var target = statement switch {
         AssignStmt { Target: NameExpr t } => t,
         IncrDecrStmt { Target: NameExpr t } => t,
         _ => (NameExpr?)null,
       };
-      if (target == null || !model.VariableBindings.TryGetValue(target, out var symbol))
+      if (Candidate(target) is not { } symbol)
         continue;
-      if (ReferenceEquals(symbol, counter))
-        continue;
-      if (symbol.Type is ScalarType { Signed: true, IsFloat: false } accType && accType.ByteSize == byteSize
-          && symbol.Storage is not VariableStorage.Static
-          && this.TryDirectCell(symbol) != null)
-        return symbol;
+      var selfReferential = statement is IncrDecrStmt
+        || (statement is AssignStmt { Value: { } value } && ExpressionReadsVariable(value, symbol));
+      if (selfReferential)
+        return symbol;            // a genuine accumulator - the hottest value in the loop
+      fallback ??= symbol;        // remember the first write target in case nothing accumulates
     }
-    return null;
+    return fallback;
   }
+
+  /// <summary>True when <paramref name="e"/> contains a read of <paramref name="symbol"/> (a plain scalar name).</summary>
+  private bool ExpressionReadsVariable(Expression e, VariableSymbol symbol) => e switch {
+    NameExpr n => model.VariableBindings.TryGetValue(n, out var s) && ReferenceEquals(s, symbol),
+    UnaryExpr u => this.ExpressionReadsVariable(u.Operand, symbol),
+    BinaryExpr b => this.ExpressionReadsVariable(b.Left, symbol) || this.ExpressionReadsVariable(b.Right, symbol),
+    CallOrIndexExpr c => c.Arguments.Any(a => this.ExpressionReadsVariable(a, symbol)),
+    _ => false,
+  };
 
   /// <summary>True when every body statement is a scalar-integer assignment / INCR (over scalar
   /// locals, no counter write) whose emission provably leaves SI/DI untouched. When
@@ -1496,6 +1620,15 @@ public sealed partial class CodeGenerator {
       && model.VariableBindings.TryGetValue(n, out var s)
       && s.Type is ScalarType { IsFloat: false },
     UnaryExpr { Op: UnaryOp.Negate or UnaryOp.Not } u => SiCleanExpression(u.Operand, model),
+    // An element read from a plain static array computes its address through AX and BX only
+    // (evaluate the index, scale it, MOV BX,AX), so both index registers survive it - which is
+    // what lets a counter stay in SI across "s = s + a(i)", the commonest loop there is. A STACK
+    // array addresses through DI and a dynamic one through its descriptor, so both stay out.
+    CallOrIndexExpr c when model.VariableBindings.TryGetValue(c, out var arraySymbol)
+        && arraySymbol.Type is ArrayType { IsDynamic: false, Element: ScalarType { IsFloat: false } }
+        && arraySymbol.ArrayClass == ArrayClass.Default
+        && c.Arguments.Count > 0
+        && c.Arguments.All(a => SiCleanExpression(a, model)) => true,
     BinaryExpr b => b.Op is BinaryOp.Add or BinaryOp.Subtract or BinaryOp.Multiply
         or BinaryOp.IntegerDivide or BinaryOp.Modulo
         or BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Eqv or BinaryOp.Imp
@@ -1646,6 +1779,45 @@ public sealed partial class CodeGenerator {
     // FOR step-1 post-condition: the counter ends one past the limit (wrapped to INTEGER)
     asm.Mov(counterCell, (Imm)(short)(hi + 1));
     return true;
+  }
+
+  /// <summary>
+  /// pb36 O6b for the accumulate loop: matches a body that is exactly
+  /// <c>acc = acc OP arr(i)</c> - the shape whose emission is guaranteed to fetch the element
+  /// through <see cref="CodeGenerator.FuseArrayElementOperand"/> as the ALU op's memory operand,
+  /// and therefore to touch BX for nothing else. That is what makes it safe to park the element
+  /// address in BX for the whole loop and step it, rather than rebuilding it from the counter
+  /// (<c>MOV AX,SI / SHL AX,1 / MOV BX,AX</c>) on every iteration.
+  ///
+  /// The gates mirror <see cref="CodeGenerator.TryEmitResidentReadModifyWrite"/> and the operand
+  /// fuse exactly: if this matches, that path cannot decline, so BX stays the element pointer.
+  /// </summary>
+  private (VariableSymbol Array, int Lbound)? MatchSteppedAccumulateBody(
+    ForStmt f, VariableSymbol counter, VariableSymbol accumulator) {
+    if (!this.Optimize || this.CheckOverflow || this.CheckNumeric || this.CheckBounds)
+      return null;
+    if (f.Body is not [AssignStmt { Target: NameExpr target, Value: BinaryExpr {
+          Op: BinaryOp.Add or BinaryOp.Subtract or BinaryOp.And or BinaryOp.Or or BinaryOp.Xor } bin }])
+      return null;
+    if (!model.VariableBindings.TryGetValue(target, out var targetSym) || !ReferenceEquals(targetSym, accumulator))
+      return null;
+    if (model.TypeOf(target) is not ScalarType { IsFloat: false, ByteSize: 2 })
+      return null;
+    // read-modify-write on the accumulator: it must be the LEFT operand (subtraction is not commutative)
+    if (bin.Left is not NameExpr left
+        || !model.VariableBindings.TryGetValue(left, out var leftSym)
+        || !ReferenceEquals(leftSym, accumulator))
+      return null;
+    if (this._cseMarks?.ContainsKey(bin.Right) == true)
+      return null;                                   // a CSE slot supplies the value instead
+    if (this.MatchCounterIndexedArray(bin.Right, counter) is not { } element)
+      return null;
+    if (element.Sym.ArrayClass != ArrayClass.Default
+        || element.Sym.IsShared && element.Sym.Storage == VariableStorage.Captured)
+      return null;
+    if (model.TypeOf(bin.Right) is not ScalarType { IsFloat: false, ByteSize: 2 })
+      return null;
+    return (element.Sym, element.Lbound);
   }
 
   /// <summary>Matches <c>arr(i)</c> where <c>i</c> is exactly <paramref name="counter"/> and arr is a static rank-1 2-byte-element array; returns the array symbol and its lower bound.</summary>

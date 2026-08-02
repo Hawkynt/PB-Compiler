@@ -500,6 +500,12 @@ public static class OptCommonSubexpr {
           // inputs. Branch computations do not survive the merge, so the cache is cleared
           // afterwards. Branches emit through the mark-aware EmitExpression, so a reload
           // pairs with the unconditional pre-IF DEFINE.
+          //
+          // The condition itself is evaluated unconditionally and dominates every arm, so its
+          // subexpressions cache like any others - that is what makes the max-scan idiom
+          // "IF a(i) > m THEN m = a(i)" read the element once instead of twice. Only the first
+          // condition qualifies: an ELSEIF's runs only when the preceding ones were false.
+          this.Register(iff.Condition, Mode.Integer);
           this.RunInheriting(iff.Then, new(this._live, StringComparer.Ordinal));
           foreach (var (_, elseIfBody) in iff.ElseIfs)
             this.RunInheriting(elseIfBody, new(this._live, StringComparer.Ordinal));
@@ -596,11 +602,27 @@ public static class OptCommonSubexpr {
         return true;
       if (e is not (BinaryExpr or UnaryExpr))
         return false;
+      // A subtree the emitter will constant-fold must never take a slot. It would never be
+      // WORTH one (a literal load beats a memory reload), and it would be actively wrong: the
+      // fold means the defining occurrence emits no code at all, so a later reload would read a
+      // slot nothing ever wrote. "-100" is such a subtree - a negate over a literal - and two of
+      // them in one statement run is all it takes.
+      if (this.FoldsToConstant(e))
+        return false;
       if (mode == Mode.Modular)
         return model.TypeOf(e) is ScalarType { IsFloat: true }
           && this.IsModularInt16Tree(e);
       return model.TypeOf(e) is ScalarType { IsFloat: false, ByteSize: <= 4 } && IsPure(e, model);
     }
+
+    /// <summary>True when every leaf is a compile-time constant, so the emitter folds the whole subtree away.</summary>
+    private bool FoldsToConstant(Expression e) => e switch {
+      IntegerLiteralExpr => true,
+      NamedConstantExpr c => model.Equates.TryGetValue(c.Name, out var v) && v.Text is null,
+      UnaryExpr u => this.FoldsToConstant(u.Operand),
+      BinaryExpr b => this.FoldsToConstant(b.Left) && this.FoldsToConstant(b.Right),
+      _ => false,
+    };
 
     /// <summary>Replicates CodeGenerator.IsModularInt16Tree: a +,-,* (and unary negate) tree over 16-bit-or-narrower integral leaves.</summary>
     private bool IsModularInt16Tree(Expression e, int depth = 0) {

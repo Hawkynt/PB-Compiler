@@ -174,8 +174,10 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenOptimizeSize_WhenCompiled_ThenSmallerImageSameBehavior() {
-    // S1 $OPTIMIZE SIZE: short-jump relaxation + no inlining must shrink a branchy
-    // program's image; the differential batteries prove behavior elsewhere
+    // $OPTIMIZE SIZE: no inlining plus S3 procedure tail-merging must shrink a branchy program
+    // with duplicate procedures; the differential batteries prove behavior elsewhere. (S1
+    // short-jump relaxation is no longer a SIZE lever - it runs on every optimized image, since
+    // the short form is smaller AND the near form it replaces is an 80386 encoding.)
     static byte[] Compile(string source) {
       var model = BindModel(source);
       var generator = new CodeGenerator(model);
@@ -184,21 +186,48 @@ public sealed class OptimizerTests {
       return exe;
     }
     const string body = """
+      DECLARE FUNCTION Mix%(BYVAL a%, BYVAL b%)
       DIM i AS INTEGER, total AS LONG
       FOR i = 1 TO 50
         IF i MOD 3 = 0 THEN
-          total = total + i
+          total = total + Mix%(i, 3)
         ELSEIF i MOD 5 = 0 THEN
-          total = total - i
+          total = total - Mix%(i, 5)
         ELSE
-          total = total + 1
+          total = total + Mix%(i, 7)
         END IF
       NEXT
       PRINT total
+      END
+      FUNCTION Mix%(BYVAL a%, BYVAL b%)
+        Mix% = a% * b% + a% - b%
+      END FUNCTION
       """;
     var sized = Compile("$OPTIMIZE SIZE\n" + body);
     var plain = Compile(body);
     Assert.That(sized.Length, Is.LessThan(plain.Length), $"SIZE image ({sized.Length}) must undercut the default ({plain.Length})");
+  }
+
+  [Test]
+  public void Execute_GivenOptimizeSizeAndCallInLoop_WhenRun_ThenBodySurvivesAndMatchesDefault() {
+    // O6's purge drops a procedure it expects to inline at EVERY call site - but $OPTIMIZE SIZE
+    // never inlines, so the body must stay. Purging it left each call referencing a label
+    // nothing binds, and the compiler threw at fixup resolution.
+    const string body = """
+      DECLARE FUNCTION F%(BYVAL a%)
+      DIM i AS INTEGER, t AS LONG
+      FOR i = 1 TO 5
+        t = t + F%(i)
+      NEXT
+      PRINT t
+      END
+      FUNCTION F%(BYVAL a%)
+        F% = a% + 1
+      END FUNCTION
+      """;
+    var sized = DosBoxRunner.Normalize(DosBoxRunner.Run(Compile("$OPTIMIZE SIZE\n" + body, Dialect.Pb36)));
+    Assert.That(sized, Is.EqualTo(DosBoxRunner.Normalize(DosBoxRunner.Run(Compile(body, Dialect.Pb36)))),
+      "$OPTIMIZE SIZE must compile and behave exactly like the default build");
   }
 
   [Test]
@@ -564,6 +593,118 @@ public sealed class OptimizerTests {
       "a range-known LONG divide should narrow to a 16-bit IDIV BX the runtime-call version lacks");
   }
 
+  // 39 D8 = CMP AX, BX - the whole comparison once it has been narrowed to 16 bits
+  private static int CountCmpAxBx(byte[] image) => CountPair(image, 0x39, 0xD8);
+
+  // 19 CA = SBB DX, CX - the second instruction of every 32-bit compare sequence
+  private static int CountSbbDxCx(byte[] image) => CountPair(image, 0x19, 0xCA);
+
+  // F7 E3 = MUL BX (group 3 /4) - the narrowed unsigned 16x16 -> 32 multiply
+  private static int CountMulBx(byte[] image) => CountPair(image, 0xF7, 0xE3);
+
+  private static int CountPair(byte[] image, byte first, byte second) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == first && image[i + 1] == second)
+        ++count;
+    return count;
+  }
+
+  [Test]
+  public void Emit_GivenNoInlineFunction_WhenPb36_ThenSurvivesAsARealProcedure() {
+    // a one-expression FUNCTION is the inliner's bread and butter: without NOINLINE it is
+    // substituted at the only call site and then purged, with it the procedure stays
+    const string body = "DECLARE FUNCTION Twice&(BYVAL x&)\nPRINT Twice(21)\nEND\nFUNCTION Twice&(BYVAL x&)__\nTwice = x& + x&\nEND FUNCTION";
+    Assert.That(Procedures(body.Replace("__", " NOINLINE")), Does.Contain("Twice"), "NOINLINE must keep the procedure");
+    Assert.That(Procedures(body.Replace("__", "")), Does.Not.Contain("Twice"), "without it the inliner should absorb it");
+  }
+
+  /// <summary>The names of the procedures that survive to the emitted image.</summary>
+  private static IEnumerable<string> Procedures(string source) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model);
+    generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+    return generator.DescribeImage().Procedures.Select(p => p.Name);
+  }
+
+  [Test]
+  public void Emit_GivenLongCompareRangeKnown_WhenPb36_ThenNarrowedTo16BitCompare() {
+    // both operands of the LONG compare are range-known (a FOR counter 1..100 against a
+    // constant), so the nine-instruction 32-bit sequence collapses to one CMP AX, BX. The
+    // INPUT-sourced variant has the identical shape but an unknown range, so it keeps the
+    // wide compare (SBB DX, CX).
+    const string narrowed = "$OPTIMIZE SPEED\nDIM n AS LONG\nFOR i& = 1 TO 100\nIF i& < 50& THEN n = n + 1\nNEXT i&\nPRINT n\nEND";
+    const string wide = "$OPTIMIZE SPEED\nDIM n AS LONG\nINPUT k&\nFOR i& = 1 TO 100\nIF k& < 50& THEN n = n + 1\nNEXT i&\nPRINT n\nEND";
+    Assert.That(CountSbbDxCx(Compile(narrowed, Dialect.Pb36)), Is.Zero, "a range-known LONG compare should not emit the 32-bit sequence");
+    Assert.That(CountCmpAxBx(Compile(narrowed, Dialect.Pb36)), Is.GreaterThan(0), "it should compare in 16 bits instead");
+    Assert.That(CountSbbDxCx(Compile(wide, Dialect.Pb36)), Is.GreaterThan(0), "an unknown-range LONG compare must keep the 32-bit sequence");
+  }
+
+  [Test]
+  public void Emit_GivenLongCompareRangeKnown_WhenOptimizerOff_ThenWideCompareKept() {
+    // the narrowing is gated on Optimize, so the faithful build is untouched (golden gate)
+    const string source = "DIM n AS LONG\nFOR i& = 1 TO 100\nIF i& < 50& THEN n = n + 1\nNEXT i&\nPRINT n\nEND";
+    Assert.That(CountSbbDxCx(Compile(source, Dialect.Pb35)), Is.GreaterThan(0));
+  }
+
+  [Test]
+  public void Emit_GivenDwordMultiplyRangeKnown_WhenPb36_ThenNarrowedTo16BitMul() {
+    // $ERROR NUMERIC ON keeps an unsigned multiply integral (no float promotion), so it
+    // reaches the 32-bit path; both operands are range-known, so it becomes one MUL BX
+    // instead of the three-MUL rt_lmul call. The INPUT-sourced variant keeps the call.
+    const string narrowed = "$ERROR NUMERIC ON\n$OPTIMIZE SPEED\nDIM c AS DWORD\nFOR i& = 1 TO 100\na??? = i&\nb??? = 3\nc = a??? * b???\nNEXT i&\nPRINT c\nEND";
+    const string wide = "$ERROR NUMERIC ON\n$OPTIMIZE SPEED\nDIM c AS DWORD\nINPUT k&\nFOR i& = 1 TO 100\na??? = k&\nb??? = 3\nc = a??? * b???\nNEXT i&\nPRINT c\nEND";
+    Assert.That(CountMulBx(Compile(narrowed, Dialect.Pb36)),
+      Is.GreaterThan(CountMulBx(Compile(wide, Dialect.Pb36))),
+      "a range-known DWORD multiply should add a 16-bit MUL BX the runtime-call version lacks");
+  }
+
+  [Test]
+  public void Execute_GivenLongCompareRangeKnown_WhenPb36_ThenSameResultsAsWide() {
+    // the narrowed compare must decide exactly like the 32-bit one across the sign
+    // boundary: negative counters, both int16 endpoints, and the equality forms
+    const string source = """
+      $OPTIMIZE SPEED
+      DIM lo AS LONG, hi AS LONG, eq AS LONG
+      FOR i& = -32768 TO -32760
+        IF i& < -32764& THEN lo = lo + 1
+        IF i& >= -32764& THEN hi = hi + 1
+        IF i& = -32768& THEN eq = eq + 1
+      NEXT i&
+      FOR j& = 32760 TO 32767
+        IF j& > 32764& THEN hi = hi + 1
+        IF j& <= 32764& THEN lo = lo + 1
+      NEXT j&
+      PRINT lo; hi; eq
+      END
+      """;
+    var output = DosBoxRunner.Normalize(DosBoxRunner.Run(Compile(source, Dialect.Pb36)));
+    Assert.That(output, Is.EqualTo(" 9  8  1\n"));
+  }
+
+  [Test]
+  public void Execute_GivenDwordMultiplyRangeKnown_WhenPb36_ThenSameProductAsWide() {
+    // the narrowed MUL must produce the full 32-bit product, including the upper word
+    const string source = """
+      $ERROR NUMERIC ON
+      $OPTIMIZE SPEED
+      DIM c AS DWORD, t AS DWORD
+      FOR i& = 65530 TO 65535
+        a??? = i&
+        b??? = 65535
+        c = a??? * b???
+        t = t + (c AND 1023)
+      NEXT i&
+      PRINT c; t
+      END
+      """;
+    var output = DosBoxRunner.Normalize(DosBoxRunner.Run(Compile(source, Dialect.Pb36)));
+    Assert.That(output, Is.EqualTo(" 4294836225  21\n"));
+  }
+
   [Test]
   public void Emit_GivenQuadBitwiseUnderCpu386_WhenPb36_ThenInlineDwordOps() {
     // a QUAD OR runs inline as two 66 0B (OR EAX, m32) halves instead of the QuadOr call
@@ -767,9 +908,9 @@ public sealed class OptimizerTests {
   }
 
   // count E8 (near CALL) sites whose signed rel16 target lands on the rt_strcatvar entry. Its
-  // entry is TEST DX,DX / JNZ near +1 / RET / TEST AX,AX = 85 D2 0F 85 01 00 C3 85 C0 (the
-  // conditional jumps are near-encoded). File-relative offsets equal the in-memory rel16.
-  private static readonly byte[] _strCatVarHead = { 0x85, 0xD2, 0x0F, 0x85, 0x01, 0x00, 0xC3, 0x85, 0xC0 };
+  // entry is TEST DX,DX / JNZ +1 / RET / TEST AX,AX = 85 D2 75 01 C3 85 C0 (short-form branch:
+  // relaxation runs on every optimized image). File-relative offsets equal the in-memory rel16.
+  private static readonly byte[] _strCatVarHead = { 0x85, 0xD2, 0x75, 0x01, 0xC3, 0x85, 0xC0 };
   private static int CountCallsToStrCatVar(byte[] image) {
     var head = -1;
     for (var i = 0; i + _strCatVarHead.Length <= image.Length && head < 0; ++i) {
@@ -1491,12 +1632,11 @@ public sealed class OptimizerTests {
 
   #region O6b - induction-variable array store ($OPTIMIZE SPEED)
 
-  private static int CountImulAx2(byte[] image) {
-    // 3-operand 186+ IMUL AX, AX, 2 (sign-extended immediate): 6B C0 02
-    // used by EmitArrayElementPlace to scale a flat index by element size 2
+  /// <summary>ADD BX,2 - the induction-variable pointer step over 2-byte elements.</summary>
+  private static int CountPointerStepByTwo(byte[] image) {
     var count = 0;
     for (var i = 0; i + 2 < image.Length; ++i)
-      if (image[i] == 0x6B && image[i + 1] == 0xC0 && image[i + 2] == 0x02)
+      if (image[i] == 0x83 && image[i + 1] == 0xC3 && image[i + 2] == 0x02)
         ++count;
     return count;
   }
@@ -1519,8 +1659,12 @@ public sealed class OptimizerTests {
       """;
     var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
     var plain = Compile(body, Dialect.Pb36);
-    Assert.That(CountImulAx2(speed), Is.LessThan(CountImulAx2(plain)),
-      "O6b should reduce IMUL AX,AX,2 count: the per-iteration element-size multiply becomes a pointer step");
+    // the pointer step itself is the signature of IVSR: ADD BX,2 walks the elements, and it
+    // appears only when the per-iteration address computation has been replaced by stepping.
+    // (Counting the subscript scale no longer discriminates - IVSR's one-time setup scales the
+    // base address with the same instruction the per-iteration path used to.)
+    Assert.That(CountPointerStepByTwo(speed), Is.GreaterThan(0), "O6b should step a pointer through the elements");
+    Assert.That(CountPointerStepByTwo(plain), Is.Zero, "without $OPTIMIZE SPEED each element address is recomputed");
   }
 
   [Test]
@@ -1570,10 +1714,11 @@ public sealed class OptimizerTests {
       """;
     var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
     var plain = Compile(body, Dialect.Pb36);
-    // when O6b declines, the loop body still uses the standard IMUL AX,AX,2 path;
-    // the IMUL count should NOT be fewer in the speed version (no optimization fired)
-    Assert.That(CountImulAx2(speed), Is.GreaterThanOrEqualTo(CountImulAx2(plain)),
-      "when expr references a%, O6b declines and the IMUL count does not drop");
+    // when O6b declines, each element address is still computed per iteration - no pointer step
+    Assert.That(CountPointerStepByTwo(speed), Is.Zero,
+      "when expr references a%, O6b declines and no pointer stepping appears");
+    Assert.That(CountElementScaleByTwo(speed), Is.GreaterThanOrEqualTo(CountElementScaleByTwo(plain)),
+      "the per-iteration subscript scale is still there");
   }
 
   [Test]
@@ -1589,8 +1734,8 @@ public sealed class OptimizerTests {
       """;
     var checked_ = Compile("$OPTIMIZE SPEED\n$ERROR BOUNDS ON\n" + body, Dialect.Pb36);
     var plain = Compile(body, Dialect.Pb36);
-    Assert.That(CountImulAx2(checked_), Is.GreaterThanOrEqualTo(CountImulAx2(plain)),
-      "O6b must not fire under $ERROR BOUNDS ON - IMUL count must not drop");
+    Assert.That(CountPointerStepByTwo(checked_), Is.Zero,
+      "O6b must not fire under $ERROR BOUNDS ON - every element keeps its own checked address");
   }
 
   #endregion
@@ -1647,11 +1792,19 @@ public sealed class OptimizerTests {
 
   #region O6b - array element address induction-variable strength reduction ($OPTIMIZE SPEED)
 
-  private static int CountImulAxAx2(byte[] image) {
-    // IMUL AX, AX, 2: 6B C0 02  (sign-extended 8-bit immediate form)
+  /// <summary>
+  /// Per-iteration subscript scaling for a 2-byte element, in either encoding: the optimizer
+  /// lowers the scale to SHL AX,1 (the 8086-safe, ~10x cheaper form of IMUL AX,AX,2 - which is an
+  /// 80186 instruction), so a test that means "the scale is still computed each iteration" has to
+  /// accept both. IVSR removes it entirely, whichever form it took.
+  /// </summary>
+  private static int CountElementScaleByTwo(byte[] image) {
     var count = 0;
     for (var i = 0; i + 2 < image.Length; ++i)
-      if (image[i] == 0x6B && image[i + 1] == 0xC0 && image[i + 2] == 0x02)
+      if (image[i] == 0x6B && image[i + 1] == 0xC0 && image[i + 2] == 0x02)   // IMUL AX,AX,2
+        ++count;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0xD1 && image[i + 1] == 0xE0)                            // SHL AX,1
         ++count;
     return count;
   }
@@ -1666,11 +1819,11 @@ public sealed class OptimizerTests {
     var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
     Assert.Multiple(() => {
       // the optimized loop must not contain the per-iteration element-scale IMUL
-      Assert.That(CountImulAxAx2(speed), Is.Zero,
-        "IVSR should eliminate the per-iteration IMUL AX,AX,2 inside the x%=a%(i%) loop");
+      Assert.That(CountElementScaleByTwo(speed), Is.Zero,
+        "IVSR should eliminate the per-iteration subscript scale inside the x%=a%(i%) loop");
       // without $OPTIMIZE SPEED the scaling IMUL must be present
-      Assert.That(CountImulAxAx2(plain), Is.GreaterThanOrEqualTo(1),
-        "without $OPTIMIZE SPEED the scaling IMUL must be present");
+      Assert.That(CountElementScaleByTwo(plain), Is.GreaterThanOrEqualTo(1),
+        "without $OPTIMIZE SPEED the subscript scale must still be computed per iteration");
     });
   }
 
@@ -1683,7 +1836,7 @@ public sealed class OptimizerTests {
     // bounds-checked: every subscript must still go through the real address path with range checks
     // (the IMUL may be folded away but the bounds-check emitter must still be there - we just
     // confirm the optimization does NOT fire by checking that the image is not suspiciously tiny)
-    Assert.That(CountImulAxAx2(checked_), Is.GreaterThanOrEqualTo(1),
+    Assert.That(CountElementScaleByTwo(checked_), Is.GreaterThanOrEqualTo(1),
       "$ERROR BOUNDS ON must keep the address recomputation path (with the range check), not step a blind pointer");
   }
 
@@ -1693,7 +1846,7 @@ public sealed class OptimizerTests {
     // Two-statement body: x% = a%(i%) followed by PRINT x%.
     const string body = "$OPTIMIZE SPEED\nDIM a%(1 TO 3)\nDIM x%\nFOR i% = 1 TO 3\n  x% = a%(i%)\n  PRINT x%\nNEXT i%\nEND";
     var image = Compile(body, Dialect.Pb36);
-    Assert.That(CountImulAxAx2(image), Is.GreaterThanOrEqualTo(1),
+    Assert.That(CountElementScaleByTwo(image), Is.GreaterThanOrEqualTo(1),
       "two-statement body must not trigger IVSR; the address IMUL must still appear per-iteration");
   }
 

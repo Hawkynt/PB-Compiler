@@ -1,0 +1,21 @@
+counter 18
+unknown 7
+derived 10
+masked 3
+modulo 95
+scaled 39
+overflow 101
+divguard 10
+narrowcmp 49
+invariant 10
+ifarm 1
+andguard 6
+acrosscall 2
+selectarm 4
+zerotrip 7
+bits 17
+congruence 70
+reachable-even
+reachable-mul10
+possible 88
+redundant 9  0  1  0  9  1

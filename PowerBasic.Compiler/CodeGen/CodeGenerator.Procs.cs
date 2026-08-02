@@ -496,7 +496,7 @@ public sealed partial class CodeGenerator {
     // BASIC convention only; no STATIC, no error handling, no closures - and a leaf body
     // of only simple scalar assignments (no calls/loops/labels/GOTO/GOSUB/RETURN/EXIT/
     // SELECT/nested procs). Anything uncertain falls back to a real call.
-    if (proc.CallConv != CallConvention.Basic || proc.IsStatic
+    if (proc.CallConv != CallConvention.Basic || proc.IsStatic || proc.NoInline
         || proc.ClosureEnvPtr != null || proc.Captures.Count > 0
         || ContainsErrorHandling(body))
       return null;

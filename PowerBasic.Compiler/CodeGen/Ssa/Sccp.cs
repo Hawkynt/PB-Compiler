@@ -108,6 +108,7 @@ public sealed class Sccp {
         if (amount is not { } step)
           return value.IncrAmount != null && this.HasPendingInput(value.IncrAmount) ? Lat.Top : Lat.Bottom;
         var raw = value.IncrUp ? baseLat.Value + step : baseLat.Value - step;
+        // INCR/DECR is integral arithmetic (no promotion), so it wraps
         return Lat.Of(CodeGenerator.WrapToType(raw, (ScalarType)value.Variable.Type));
       }
 
@@ -115,9 +116,12 @@ public sealed class Sccp {
         if (this.InputState(value.DefExpr!) is { } pending)
           return pending; // a tracked input is still Top or already Bottom
         var folded = this.Fold(value.DefExpr, defaultWhenNull: 0);
-        return folded is { } v
-          ? Lat.Of(CodeGenerator.WrapToType(v, (ScalarType)value.Variable.Type))
-          : Lat.Bottom;
+        if (folded is not { } v)
+          return Lat.Bottom;
+        // PB promotes +,-,* over integral operands to floating point, and an out-of-range
+        // float-to-LONG store saturates instead of wrapping - the fold has to agree
+        var promoted = value.DefExpr is not null && this._model.TypeOf(value.DefExpr) is ScalarType { IsFloat: true };
+        return Lat.Of(CodeGenerator.StoreFoldedPromoted(v, (ScalarType)value.Variable.Type, promoted));
       }
     }
   }
@@ -148,7 +152,33 @@ public sealed class Sccp {
         && (this.IsUnsignedDword(cmp.Left) || this.IsUnsignedDword(cmp.Right)))
       return null;
     var folded = this._folder.TryFold(this.Substitute(e));
-    return folded?.Integer;
+    if (folded?.Integer is not { } value)
+      return null;
+    return this.FoldsWithoutWrap(e) ? value : null;
+  }
+
+  /// <summary>
+  /// True when no node of <paramref name="e"/> folds to a value its own type cannot hold. The
+  /// folder computes in full precision, which is what PB does (it promotes integral <c>+ - *</c>
+  /// to floating point), but the Microsoft lineage, Turbo Basic and anything under <c>$COMPAT</c>
+  /// keep the arithmetic integral and wrap it in place: there <c>32767 + 18</c> folds to 32785
+  /// and runs as -32751. Propagating the folded value would then hand every later use a number
+  /// the program never computes, so the fold is abandoned instead.
+  ///
+  /// Only a COMPUTED node is checked - a literal carries what the source wrote and is coerced by
+  /// its consumer, so its recorded type being narrower than its value proves nothing.
+  /// </summary>
+  private bool FoldsWithoutWrap(Expression e) {
+    if (e is BinaryExpr or UnaryExpr
+        && this._model.TypeOf(e) is ScalarType { IsFloat: false } type
+        && this._folder.TryFold(this.Substitute(e)) is { Integer: { } value }
+        && CodeGenerator.WrapToType(value, type) != value)
+      return false;
+    return e switch {
+      BinaryExpr b => this.FoldsWithoutWrap(b.Left) && this.FoldsWithoutWrap(b.Right),
+      UnaryExpr u => this.FoldsWithoutWrap(u.Operand),
+      _ => true,
+    };
   }
 
   private bool IsUnsignedDword(Expression e) =>

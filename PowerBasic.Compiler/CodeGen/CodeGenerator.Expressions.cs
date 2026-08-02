@@ -258,8 +258,7 @@ public sealed partial class CodeGenerator {
     var elseLabel = asm.DefineLabel();
     var endLabel = asm.DefineLabel();
 
-    this.EmitCondition(t.Condition);
-    asm.Jz(elseLabel);
+    this.EmitConditionalBranch(t.Condition, elseLabel, whenFalse: true);
     this.EmitExpression(t.WhenTrue);
     this.Coerce(model.TypeOf(t.WhenTrue), resultType, t.WhenTrue);
     asm.Jmp(endLabel);
@@ -394,6 +393,10 @@ public sealed partial class CodeGenerator {
       unsignedCompare = false;
     }
 
+    // pb36 O16: an operation the value facts prove does nothing (or produces a constant)
+    if (this.TryEmitFactRedundantOp(b, opType))
+      return;
+
     // pb36 O4: x * 2^n as shifts (wrap-identical to the product's low bits)
     if (this.TryEmitStrengthReducedMultiply(b, opType))
       return;
@@ -423,14 +426,19 @@ public sealed partial class CodeGenerator {
           this.Coerce(leftType, opType, b.Left);
           asm.Cmp(Reg.AX, cmem);
           var (cmpJump, cmpCond) = Int16CompareSelector(b.Op, unsignedCompare);
-          this.EmitInt16CompareResult(cmpJump, cmpCond);
+          if (!this.TryEmitCompareAsBranch(b, cmpCond))
+            this.EmitInt16CompareResult(cmpJump, cmpCond);
           break;
         }
         // pb36 O8: a same-width direct-memory right operand of a commutative/subtractive ALU op
         // is read straight into the instruction (ADD AX,[mem]) instead of being staged through BX
         // (push left / eval right / mov bx / pop) - one memory-operand instruction, no spill.
+        // An ARRAY ELEMENT right operand fuses the same way: its address goes into BX first (which
+        // needs AX), then the left operand is loaded, then one ADD AX,[BX+disp] does the work.
+        // "acc = acc + a(i)" is the loop this exists for.
         if (b.Op is BinaryOp.Add or BinaryOp.Subtract or BinaryOp.And or BinaryOp.Or or BinaryOp.Xor
-            && this.TryInt16MemOperand(b.Right, opType) is { } rmem) {
+            && (this.TryInt16MemOperand(b.Right, opType)
+                ?? this.FuseArrayElementOperand(b.Right, b.Left, opType)) is { } rmem) {
           this.EmitExpression(b.Left);
           this.Coerce(leftType, opType, b.Left);
           switch (b.Op) {
@@ -796,12 +804,12 @@ public sealed partial class CodeGenerator {
     asm.Call(this._rt.StrCmp);
     asm.Xor(Reg.BX, Reg.BX);
     switch (b.Op) {
-      case BinaryOp.Equal: this.EmitInt16Compare(asm => asm.Je, Condition.Equal); break;
-      case BinaryOp.NotEqual: this.EmitInt16Compare(asm => asm.Jne, Condition.NotEqual); break;
-      case BinaryOp.Less: this.EmitInt16Compare(asm => asm.Jl, Condition.Less); break;
-      case BinaryOp.Greater: this.EmitInt16Compare(asm => asm.Jg, Condition.Greater); break;
-      case BinaryOp.LessEqual: this.EmitInt16Compare(asm => asm.Jle, Condition.LessOrEqual); break;
-      case BinaryOp.GreaterEqual: this.EmitInt16Compare(asm => asm.Jge, Condition.GreaterOrEqual); break;
+      case BinaryOp.Equal: this.EmitInt16Compare(b, asm => asm.Je, Condition.Equal); break;
+      case BinaryOp.NotEqual: this.EmitInt16Compare(b, asm => asm.Jne, Condition.NotEqual); break;
+      case BinaryOp.Less: this.EmitInt16Compare(b, asm => asm.Jl, Condition.Less); break;
+      case BinaryOp.Greater: this.EmitInt16Compare(b, asm => asm.Jg, Condition.Greater); break;
+      case BinaryOp.LessEqual: this.EmitInt16Compare(b, asm => asm.Jle, Condition.LessOrEqual); break;
+      case BinaryOp.GreaterEqual: this.EmitInt16Compare(b, asm => asm.Jge, Condition.GreaterOrEqual); break;
       default:
         this.Unsupported(b, $"string {b.Op}");
         break;
@@ -829,6 +837,49 @@ public sealed partial class CodeGenerator {
   /// a direct read: a register-resident variable, an IPCP/SCCP-folded constant, a CSE-cached node,
   /// a captured local (env-pointer load), a BYREF parameter (pointer load), or a wider/narrower type.
   /// </summary>
+  /// <summary>
+  /// pb36 O8: emits the address of a static array element into BX and hands back the
+  /// <c>[BX+disp]</c> operand, so an ALU op can read the element directly. Evaluating the LEFT
+  /// operand afterwards is unobservable - it is a constant or a plain variable read, so it cannot
+  /// trap and nothing in an address computation writes it - and any bounds check the element needs
+  /// is emitted here, before either. Restricted to a plain static array of 2-byte elements: that
+  /// is the shape whose place is a near <c>[BX+disp]</c> by construction.
+  /// </summary>
+  private Mem? FuseArrayElementOperand(Expression right, Expression left, PbType opType) {
+    if (!this.Optimize || KindOf(opType) != ValueKind.Int16)
+      return null;
+    if (right is not CallOrIndexExpr || this._cseMarks?.ContainsKey(right) == true)
+      return null;
+    if (!model.VariableBindings.TryGetValue(right, out var symbol) || symbol.Type is not ArrayType array)
+      return null;
+    // O6b: this loop already walks the array with a pointer in BX - the element is simply [BX],
+    // with no address code at all (the gate that parked the pointer verified this exact shape)
+    if (this._residentElementPtr is { } walk
+        && ReferenceEquals(walk.Array, symbol)
+        && right is CallOrIndexExpr { Arguments: [NameExpr walkIdx] }
+        && model.VariableBindings.TryGetValue(walkIdx, out var walkSym)
+        && ReferenceEquals(walkSym, walk.Counter))
+      return Mem.Word(Reg.BX);
+    if (array.IsDynamic || symbol.ArrayClass != ArrayClass.Default || symbol.IsShared && symbol.Storage == VariableStorage.Captured)
+      return null;
+    if (array.Element is not ScalarType { IsFloat: false, ByteSize: 2 }
+        || model.TypeOf(right) is not ScalarType { IsFloat: false, ByteSize: 2 })
+      return null;
+    if (!this.IsReloadableAfterAddressCode(left))
+      return null;
+    return this.EmitPlace(right) is { Far: false } place ? place.Cell.WithSize(OperandSize.Word) : null;
+  }
+
+  /// <summary>
+  /// True when an operand can be evaluated AFTER an address computation without changing what the
+  /// program does: a compile-time constant, or a scalar variable read (a register or a memory
+  /// cell - neither of which an address computation writes, and neither of which can trap).
+  /// </summary>
+  private bool IsReloadableAfterAddressCode(Expression e) =>
+    this.OptFolder.TryFold(e) is { Integer: not null }
+    || (e is NameExpr && model.VariableBindings.TryGetValue(e, out var symbol)
+        && symbol.Type is ScalarType && !symbol.IsArray);
+
   private Mem? TryInt16MemOperand(Expression e, PbType opType) {
     if (KindOf(opType) != ValueKind.Int16)
       return null;
@@ -953,12 +1004,12 @@ public sealed partial class CodeGenerator {
     var asm = this._asm;
     if (unsignedCompare) {
       switch (b.Op) {
-        case BinaryOp.Equal: this.EmitInt16Compare(asm => asm.Je, Condition.Equal); return;
-        case BinaryOp.NotEqual: this.EmitInt16Compare(asm => asm.Jne, Condition.NotEqual); return;
-        case BinaryOp.Less: this.EmitInt16Compare(asm => asm.Jb, Condition.Below); return;
-        case BinaryOp.Greater: this.EmitInt16Compare(asm => asm.Ja, Condition.Above); return;
-        case BinaryOp.LessEqual: this.EmitInt16Compare(asm => asm.Jbe, Condition.BelowOrEqual); return;
-        case BinaryOp.GreaterEqual: this.EmitInt16Compare(asm => asm.Jae, Condition.AboveOrEqual); return;
+        case BinaryOp.Equal: this.EmitInt16Compare(b, asm => asm.Je, Condition.Equal); return;
+        case BinaryOp.NotEqual: this.EmitInt16Compare(b, asm => asm.Jne, Condition.NotEqual); return;
+        case BinaryOp.Less: this.EmitInt16Compare(b, asm => asm.Jb, Condition.Below); return;
+        case BinaryOp.Greater: this.EmitInt16Compare(b, asm => asm.Ja, Condition.Above); return;
+        case BinaryOp.LessEqual: this.EmitInt16Compare(b, asm => asm.Jbe, Condition.BelowOrEqual); return;
+        case BinaryOp.GreaterEqual: this.EmitInt16Compare(b, asm => asm.Jae, Condition.AboveOrEqual); return;
       }
     }
     switch (b.Op) {
@@ -1009,21 +1060,42 @@ public sealed partial class CodeGenerator {
       case BinaryOp.ShiftRightLogical: asm.Mov(Reg.CL, Reg.BL); asm.Shr(Reg.AX, Reg.CL); break;
       case BinaryOp.RotateLeft: asm.Mov(Reg.CL, Reg.BL); asm.Rol(Reg.AX, Reg.CL); break;
       case BinaryOp.RotateRight: asm.Mov(Reg.CL, Reg.BL); asm.Ror(Reg.AX, Reg.CL); break;
-      case BinaryOp.Equal: this.EmitInt16Compare(asm => asm.Je, Condition.Equal); break;
-      case BinaryOp.NotEqual: this.EmitInt16Compare(asm => asm.Jne, Condition.NotEqual); break;
-      case BinaryOp.Less: this.EmitInt16Compare(asm => asm.Jl, Condition.Less); break;
-      case BinaryOp.Greater: this.EmitInt16Compare(asm => asm.Jg, Condition.Greater); break;
-      case BinaryOp.LessEqual: this.EmitInt16Compare(asm => asm.Jle, Condition.LessOrEqual); break;
-      case BinaryOp.GreaterEqual: this.EmitInt16Compare(asm => asm.Jge, Condition.GreaterOrEqual); break;
+      case BinaryOp.Equal: this.EmitInt16Compare(b, asm => asm.Je, Condition.Equal); break;
+      case BinaryOp.NotEqual: this.EmitInt16Compare(b, asm => asm.Jne, Condition.NotEqual); break;
+      case BinaryOp.Less: this.EmitInt16Compare(b, asm => asm.Jl, Condition.Less); break;
+      case BinaryOp.Greater: this.EmitInt16Compare(b, asm => asm.Jg, Condition.Greater); break;
+      case BinaryOp.LessEqual: this.EmitInt16Compare(b, asm => asm.Jle, Condition.LessOrEqual); break;
+      case BinaryOp.GreaterEqual: this.EmitInt16Compare(b, asm => asm.Jge, Condition.GreaterOrEqual); break;
       default:
         this.Unsupported(b, $"int16 {b.Op}");
         break;
     }
   }
 
-  private void EmitInt16Compare(Func<Assembler, Action<Label>> jump, Condition condition) {
+  private void EmitInt16Compare(BinaryExpr b, Func<Assembler, Action<Label>> jump, Condition condition) {
     this._asm.Cmp(Reg.AX, Reg.BX);
-    this.EmitInt16CompareResult(jump, condition);
+    if (!this.TryEmitCompareAsBranch(b, condition))
+      this.EmitInt16CompareResult(jump, condition);
+  }
+
+  /// <summary>
+  /// pb36 O8: the flags of a 16-bit CMP drive a branch directly when the comparison IS the whole
+  /// condition of an IF/WHILE/UNTIL. Both the -1/0 truth value the expression path materializes
+  /// (<c>MOV AX,-1 / Jcc / MOV AX,0</c>) and the <c>TEST AX,AX</c> that immediately consumes it
+  /// are then dead - five instructions per conditional, in the shape almost every conditional has.
+  ///
+  /// Matched by node identity, so a comparison nested inside a larger expression (or emitted from
+  /// an inlined callee body) can never be mistaken for the condition itself; the arming site falls
+  /// back to the value path whenever this did not fire.
+  /// </summary>
+  private bool TryEmitCompareAsBranch(BinaryExpr b, Condition condition) {
+    if (this._compareBranch is not { } branch || !ReferenceEquals(branch.Node, b))
+      return false;
+    this._compareBranch = null;
+    this._compareBranchTaken = true;
+    // the x86 condition encoding pairs each condition with its negation in the low bit
+    this._asm.J(branch.WhenFalse ? (Condition)((byte)condition ^ 1) : condition, branch.Target);
+    return true;
   }
 
   /// <summary>Turns the flags of a preceding 16-bit CMP into AX = -1/0 (the PB truth value).</summary>
@@ -1122,7 +1194,8 @@ public sealed partial class CodeGenerator {
         else
           asm.Cmp(Reg.AX, Imm16(c));
         var (jump, condition) = Int16CompareSelector(op, unsignedCompare);
-        this.EmitInt16CompareResult(jump, condition);
+        if (!this.TryEmitCompareAsBranch(b, condition))
+          this.EmitInt16CompareResult(jump, condition);
         return true;
       }
 
@@ -1255,8 +1328,31 @@ public sealed partial class CodeGenerator {
     asm.MarkLabel(done);
   }
 
-  private void EmitInt32Op(BinaryExpr b, bool unsignedCompare = false, bool unsignedDivide = false) {
+  /// <summary>
+  /// left DX:AX, right CX:BX -> result DX:AX. <paramref name="unsignedType"/> is the operation
+  /// type's unsignedness (DWORD): it selects the unsigned divide helpers and the unsigned 16-bit
+  /// narrowing forms.
+  /// </summary>
+  private void EmitInt32Op(BinaryExpr b, bool unsignedCompare = false, bool unsignedType = false) {
     var asm = this._asm;
+
+    // pb36 O16 type narrowing: a comparison whose operands the interval lattice proves both fit
+    // one 16-bit word is decided entirely by the low words - the high halves are only their sign
+    // (or zero) extension, so they compare equal and cannot change the ordering. One CMP AX,BX
+    // plus the ordinary -1/0 materialization replaces the nine-instruction 32-bit sequence; CWD
+    // re-widens the result to DX:AX exactly as the wide paths do.
+    if (b.Op is BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
+            or BinaryOp.LessEqual or BinaryOp.GreaterEqual
+        && this.BothOperandsNarrow16(b, unsignedCompare)) {
+      var (narrowJump, narrowCondition) = Int16CompareSelector(b.Op, unsignedCompare);
+      var pending = this._compareBranch;
+      this._compareBranch = null;   // this path still owes the caller a CWD-widened value
+      this.EmitInt16Compare(b, narrowJump, narrowCondition);
+      this._compareBranch = pending;
+      asm.Cwd();
+      return;
+    }
+
     if (unsignedCompare && b.Op is BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual or BinaryOp.GreaterEqual) {
       // borrow of (left - right) decides; zero via OR of the difference
       var done = asm.DefineLabel();
@@ -1308,6 +1404,18 @@ public sealed partial class CodeGenerator {
           this.EmitRaiseWhen(asm.Jno, 6);
         break;
       case BinaryOp.Multiply:
+        // pb36 O16 type narrowing: when both operands provably fit one 16-bit word, the 8086's
+        // own 16x16->32 multiply already produces the whole product in DX:AX - one IMUL/MUL BX
+        // instead of the three-MUL rt_lmul call (or the 386 register shuffle below). It can
+        // never overflow the result type: |int16 * int16| <= 2^30 and uint16 * uint16 < 2^32,
+        // so the narrowed product is bit-identical to the wide one.
+        if (this.BothOperandsNarrow16(b, unsignedType)) {
+          if (unsignedType)
+            asm.Mul(Reg.BX);
+          else
+            asm.Imul(Reg.BX);
+          break;
+        }
         // pb36 C1 ($CPU 80386): low-32-bit product via one IMUL EAX, EBX -
         // identical to rt_lmul's result, dropping the runtime helper
         if (this.Optimize && this.Cpu386) {
@@ -1335,10 +1443,14 @@ public sealed partial class CodeGenerator {
         // (#DE); |divisor| >= 2 also rules out divide-by-zero (error 11) and the
         // MININT \ -1 trap. x86 truncates toward zero and the remainder takes the
         // dividend's sign - exactly PB's \ and MOD. CWD re-widens the result to LONG.
-        if (this.Optimize && !unsignedDivide
+        // The dividend's range is taken from NarrowRangeOf, not IndexRangeOf: replacing a
+        // 32-bit operation needs every intermediate to have stayed inside a word, otherwise
+        // a subexpression that wrapped at 32 bits would make the range a fiction and the
+        // 16-bit quotient wrong (bounding an index only needs the composed range).
+        if (this.Optimize && !unsignedType
             && this.OptFolder.TryFold(b.Right) is { Integer: { } d16 }
             && d16 is >= -32768 and <= 32767 && Math.Abs(d16) >= 2
-            && this.IndexRangeOf(b.Left) is { Lo: >= -32768, Hi: <= 32767 }) {
+            && this.NarrowRangeOf(b.Left, unsigned: false) != null) {
           asm.Idiv(Reg.BX);                    // DX:AX / BX -> AX = quotient, DX = remainder
           if (b.Op == BinaryOp.Modulo)
             asm.Mov(Reg.AX, Reg.DX);
@@ -1360,7 +1472,7 @@ public sealed partial class CodeGenerator {
           asm.Mov(Mem.Word(sc), Reg.BX);
           asm.Mov(Mem.Word(sc, 2), Reg.CX);
           asm.Mov(Reg.EBX, Mem.Dword(sc));      // EBX = divisor
-          if (unsignedDivide) {
+          if (unsignedType) {
             asm.Xor(Reg.EDX, Reg.EDX);
             asm.Div(Reg.EBX);
           } else {
@@ -1371,9 +1483,9 @@ public sealed partial class CodeGenerator {
           asm.Mov(Reg.AX, Mem.Word(sc));
           asm.Mov(Reg.DX, Mem.Word(sc, 2));
         } else if (b.Op == BinaryOp.IntegerDivide)
-          asm.Call(unsignedDivide ? this._rt.LongDivU : this._rt.LongDiv);
+          asm.Call(unsignedType ? this._rt.LongDivU : this._rt.LongDiv);
         else
-          asm.Call(unsignedDivide ? this._rt.LongModU : this._rt.LongMod);
+          asm.Call(unsignedType ? this._rt.LongModU : this._rt.LongMod);
         break;
       case BinaryOp.And:
         asm.And(Reg.AX, Reg.BX);

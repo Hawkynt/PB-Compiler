@@ -63,8 +63,25 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private HashSet<Statement>? _deadGlobalStores;
   private Dictionary<VariableSymbol, ConstantValue>? _ipcp;
   private Dictionary<CallOrIndexExpr, ConstantValue>? _pureFold;
+  /// <summary>
+  /// O8 branch fusion: the comparison node whose CMP flags may drive a branch directly instead of
+  /// materializing PB's -1/0 truth value, together with where to jump and on which outcome. Armed
+  /// by <see cref="EmitConditionalBranch"/> for one node only and matched by identity.
+  /// </summary>
+  private (BinaryExpr Node, Label Target, bool WhenFalse)? _compareBranch;
+  private bool _compareBranchTaken;
+
   private (VariableSymbol Symbol, Reg Reg)? _registerCounter;
   private (VariableSymbol Symbol, Reg Reg)? _registerAccumulator;
+
+  /// <summary>
+  /// O6b: the array whose current element address is parked in BX for the loop being emitted,
+  /// together with the counter that indexes it. Only an accumulate-over-an-array body establishes
+  /// it (see <c>MatchSteppedAccumulateBody</c>), and that body's single read is the only thing
+  /// that touches BX - so the address steps by the element size per iteration instead of being
+  /// recomputed from the counter.
+  /// </summary>
+  private (VariableSymbol Array, VariableSymbol Counter)? _residentElementPtr;
 
   /// <summary>True when a register-resident loop counter or accumulator currently lives in SI (or ESI, whose low half is SI), so a code path that overwrites SI (e.g. loading a string-literal pointer) must save and restore it.</summary>
   private bool SiHoldsResident =>
@@ -73,7 +90,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// <summary>O16 interval lattice: the per-statement-entry interval environment of the main body
   /// (<see cref="IntervalRangeAnalysis"/>), consulted by <see cref="IndexRangeOf"/> through
   /// <see cref="_currentStatement"/> to prove a non-FOR-counter variable's range at a use site.</summary>
-  private IReadOnlyDictionary<Statement, IReadOnlyDictionary<VariableSymbol, Interval>>? _intervalPoints;
+  private IReadOnlyDictionary<Statement, IReadOnlyDictionary<VariableSymbol, ValueFacts>>? _intervalPoints;
   private Statement? _currentStatement;
 
   /// <summary>O16: the proven [lo,hi] range of each FOR counter active over the current body
@@ -164,9 +181,19 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// never a misleading mathematical range.
   /// </summary>
   private (long Lo, long Hi)? LatticeRangeOf(VariableSymbol v) {
+    if (this.LatticeFactsOf(v) is { Range: { IsTop: false } r })
+      return (r.Lo, r.Hi);
+    return null;
+  }
+
+  /// <summary>
+  /// O16: everything the lattice proved about <paramref name="v"/> at the statement being emitted
+  /// - its range and its bits - or null when the variable is not tracked here.
+  /// </summary>
+  private ValueFacts? LatticeFactsOf(VariableSymbol v) {
     if (this._intervalPoints is { } points && this._currentStatement is { } s
-        && points.TryGetValue(s, out var env) && env.TryGetValue(v, out var iv) && !iv.IsTop)
-      return (iv.Lo, iv.Hi);
+        && points.TryGetValue(s, out var env) && env.TryGetValue(v, out var facts) && !facts.IsUnknown)
+      return facts;
     return null;
   }
 
@@ -183,23 +210,23 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       case BinaryExpr { Op: BinaryOp.Add } b:
         // both operands range-known (e.g. a(i+j) over two counters/derived vars): the
         // endpoints add. Interval arithmetic over independent operands over-approximates a
-        // correlated sum (a(i+i) widens to [2*lo,2*hi]) - always sound for the consumers,
-        // which only fire when the whole (possibly loose) range qualifies. A constant operand
-        // folds to a point range here, so this subsumes the affine counter +/- const cases.
+        // correlated sum (a(i+i) widens to [2*lo,2*hi]) - sound for every consumer, which only
+        // fires when the whole (possibly loose) range qualifies. A constant operand folds to a
+        // point range here, so this subsumes the affine counter +/- const cases.
         if (this.IndexRangeOf(b.Left) is { } la && this.IndexRangeOf(b.Right) is { } ra)
-          return (la.Lo + ra.Lo, la.Hi + ra.Hi);
+          return this.Compose(b, () => (checked(la.Lo + ra.Lo), checked(la.Hi + ra.Hi)));
         return null;
       case BinaryExpr { Op: BinaryOp.Subtract } b
           when this.IndexRangeOf(b.Left) is { } ls && this.IndexRangeOf(b.Right) is { } rs:
         // interval subtraction: min = lo(L) - hi(R), max = hi(L) - lo(R) (point range for a
         // constant subtrahend recovers the affine counter - const case)
-        return (ls.Lo - rs.Hi, ls.Hi - rs.Lo);
+        return this.Compose(b, () => (checked(ls.Lo - rs.Hi), checked(ls.Hi - rs.Lo)));
       case BinaryExpr { Op: BinaryOp.Multiply } b:
         // scaling by a constant (strided access a(i*2)) - the endpoints flip when k < 0
         if (this.IndexRangeOf(b.Left) is { } lm && this.OptFolder.TryFold(b.Right) is { Integer: { } rm })
-          return ScaleRange(lm, rm);
+          return this.Compose(b, () => ScaleRange(lm, rm));
         if (this.IndexRangeOf(b.Right) is { } rm2 && this.OptFolder.TryFold(b.Left) is { Integer: { } lm2 })
-          return ScaleRange(rm2, lm2);
+          return this.Compose(b, () => ScaleRange(rm2, lm2));
         return null;
       case BinaryExpr { Op: BinaryOp.And } b:
         // x AND m (m a non-negative constant): the result keeps only m's bits, so it is in
@@ -214,7 +241,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         // truncated integer divide by a constant is monotonic in the dividend (trunc-toward-zero
         // preserves order), so the endpoints divide - flipping when the divisor is negative.
         // C# long division truncates toward zero, matching PB's `\`.
-        return dk > 0 ? (ld.Lo / dk, ld.Hi / dk) : (ld.Hi / dk, ld.Lo / dk);
+        // the quotient's magnitude never exceeds the dividend's, except for MIN \ -1 - which the
+        // Exact check catches like any other value that left the type
+        return this.Compose(b, () => dk > 0 ? (ld.Lo / dk, ld.Hi / dk) : (ld.Hi / dk, ld.Lo / dk));
       case BinaryExpr { Op: BinaryOp.Modulo } b
           when this.OptFolder.TryFold(b.Right) is { Integer: { } mk } && mk != 0: {
         // x MOD k (k constant != 0): |result| < |k| and PB's truncated MOD takes the sign of x,
@@ -228,7 +257,139 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   }
 
   private static (long Lo, long Hi) ScaleRange((long Lo, long Hi) r, long k)
-    => k >= 0 ? (r.Lo * k, r.Hi * k) : (r.Hi * k, r.Lo * k);
+    => k >= 0 ? (checked(r.Lo * k), checked(r.Hi * k)) : (checked(r.Hi * k), checked(r.Lo * k));
+
+  /// <summary>
+  /// Composes a node's range and keeps it only if it is the truth: the arithmetic must not have
+  /// overflowed the 64-bit composition itself (a QUAD-sized constant can do that), and the result
+  /// must fit the node's own type (see <see cref="Exact"/>).
+  /// </summary>
+  private (long Lo, long Hi)? Compose(Expression node, Func<(long Lo, long Hi)> compute) {
+    try {
+      return this.Exact(node, compute());
+    } catch (OverflowException) {
+      return null;                                     // beyond what this lattice can represent
+    }
+  }
+
+  /// <summary>
+  /// The composed range of <paramref name="node"/>, or null when the node's own type cannot hold
+  /// it - in which case the operation WRAPPED at run time and the mathematical range is a fiction
+  /// no consumer may act on.
+  ///
+  /// This matters because whether an integral <c>+ - *</c> wraps is a dialect property. PB 2.0+
+  /// computes them in floating point, so they do not wrap and the composed range is the truth;
+  /// the Microsoft family, Turbo Basic, and any dialect under <c>$COMPAT</c> or checked arithmetic
+  /// wrap in place, and there a range that has left the type says nothing at all. A promoted
+  /// (float-typed) node is exact while it stays inside the x87's 64-bit mantissa.
+  /// </summary>
+  private (long Lo, long Hi)? Exact(Expression node, (long Lo, long Hi) range) => model.TypeOf(node) switch {
+    ScalarType { IsFloat: false } t => TypeRangeOf(t) is { } limit
+      ? range.Lo >= limit.Lo && range.Hi <= limit.Hi ? range : null
+      : range,                                                  // QUAD and wider: the 64-bit composition itself would have to overflow
+    ScalarType { IsFloat: true } =>
+      range.Lo >= -MantissaExactBound && range.Hi <= MantissaExactBound ? range : null,
+    _ => null,
+  };
+
+  /// <summary>Integers of this magnitude and below travel through the x87's 64-bit mantissa exactly.</summary>
+  private const long MantissaExactBound = 1L << 62;
+
+  /// <summary>
+  /// pb36 O16 type narrowing: the proven [lo,hi] of <paramref name="e"/> when EVERY arithmetic
+  /// node inside it provably stays within one 16-bit word - signed [-32768,32767], or [0,65535]
+  /// for an <paramref name="unsigned"/> operation. Null when any node's range is unknown or can
+  /// leave the word.
+  ///
+  /// Deliberately stricter than <see cref="IndexRangeOf"/>: that one composes mathematical ranges
+  /// without re-checking the intermediates, which is enough for a consumer that only needs a
+  /// bound, but not for REPLACING a 32-bit operation with a 16-bit one - there an intermediate
+  /// that wrapped at 32 bits would make the mathematical range a fiction and the narrowed result
+  /// wrong. Requiring every node to fit one word makes the two coincide: nothing wrapped (16- and
+  /// 32-bit types both hold the value), so the mathematical range IS the runtime value range.
+  ///
+  /// Nodes whose result is bounded regardless of the operand's value (<c>x AND mask</c>,
+  /// <c>x MOD k</c>) need no proof about that operand - the bound holds for a wrapped value too.
+  /// </summary>
+  private (long Lo, long Hi)? NarrowRangeOf(Expression e, bool unsigned) {
+    var floor = unsigned ? 0L : short.MinValue;
+    var ceiling = unsigned ? ushort.MaxValue : (long)short.MaxValue;
+    (long Lo, long Hi)? Fits((long Lo, long Hi) r) => r.Lo >= floor && r.Hi <= ceiling ? r : null;
+
+    if (this.OptFolder.TryFold(e) is { Integer: { } c })
+      return Fits((c, c));
+
+    switch (e) {
+      case NameExpr when this.IndexRangeOf(e) is { } named:
+        return Fits(named);
+
+      // even with nothing proven about its value, a variable never leaves its own type: an
+      // INTEGER/WORD/BYTE operand of a 32-bit operation always fits one word, which is the whole
+      // question here
+      case NameExpr when model.VariableBindings.TryGetValue(e, out var typed) && TypeRangeOf(typed.Type) is { } bound:
+        return Fits(bound);
+
+      case UnaryExpr { Op: UnaryOp.Negate, Operand: { } operand } when this.NarrowRangeOf(operand, unsigned) is { } u:
+        return Fits((-u.Hi, -u.Lo));
+
+      case BinaryExpr { Op: BinaryOp.Add } b
+          when this.NarrowRangeOf(b.Left, unsigned) is { } al && this.NarrowRangeOf(b.Right, unsigned) is { } ar:
+        return Fits((al.Lo + ar.Lo, al.Hi + ar.Hi));
+
+      case BinaryExpr { Op: BinaryOp.Subtract } b
+          when this.NarrowRangeOf(b.Left, unsigned) is { } sl && this.NarrowRangeOf(b.Right, unsigned) is { } sr:
+        return Fits((sl.Lo - sr.Hi, sl.Hi - sr.Lo));
+
+      case BinaryExpr { Op: BinaryOp.Multiply } b
+          when this.NarrowRangeOf(b.Left, unsigned) is { } ml && this.NarrowRangeOf(b.Right, unsigned) is { } mr: {
+        // both operands fit a word, so every corner product fits a long - the hull is exact
+        long[] corners = [ml.Lo * mr.Lo, ml.Lo * mr.Hi, ml.Hi * mr.Lo, ml.Hi * mr.Hi];
+        return Fits((corners.Min(), corners.Max()));
+      }
+
+      // truncated divide by a constant is monotonic in the dividend (endpoints divide, flipping
+      // for a negative divisor); the dividend itself must be proven, or its range is a fiction
+      case BinaryExpr { Op: BinaryOp.IntegerDivide } b
+          when this.OptFolder.TryFold(b.Right) is { Integer: { } dk } && dk != 0
+            && this.NarrowRangeOf(b.Left, unsigned) is { } dl:
+        return Fits(dk > 0 ? (dl.Lo / dk, dl.Hi / dk) : (dl.Hi / dk, dl.Lo / dk));
+
+      // |x MOD k| < |k| for ANY dividend value, so no proof about the left is needed; a provably
+      // non-negative dividend tightens the result to [0,|k|-1] (PB's MOD takes the dividend's sign)
+      case BinaryExpr { Op: BinaryOp.Modulo } b when this.OptFolder.TryFold(b.Right) is { Integer: { } mk } && mk != 0: {
+        var bound = Math.Abs(mk) - 1;
+        return Fits(this.NarrowRangeOf(b.Left, unsigned) is { Lo: >= 0 } ? (0, bound) : (-bound, bound));
+      }
+
+      // x AND m (m a non-negative constant) keeps only m's bits whatever x is
+      case BinaryExpr { Op: BinaryOp.And } b when this.OptFolder.TryFold(b.Right) is { Integer: >= 0 and { } am }:
+        return Fits((0, am));
+      case BinaryExpr { Op: BinaryOp.And } b when this.OptFolder.TryFold(b.Left) is { Integer: >= 0 and { } am2 }:
+        return Fits((0, am2));
+
+      default:
+        return null;
+    }
+  }
+
+  /// <summary>The values an integer type can hold; null for a width this cannot bound (QUAD and up).</summary>
+  private static (long Lo, long Hi)? TypeRangeOf(PbType type) => type switch {
+    ScalarType { IsFloat: false, ByteSize: 1, Signed: true } => (-128, 127),
+    ScalarType { IsFloat: false, ByteSize: 1, Signed: false } => (0, 255),
+    ScalarType { IsFloat: false, ByteSize: 2, Signed: true } => (short.MinValue, short.MaxValue),
+    ScalarType { IsFloat: false, ByteSize: 2, Signed: false } => (0, ushort.MaxValue),
+    ScalarType { IsFloat: false, ByteSize: 4, Signed: true } => (int.MinValue, int.MaxValue),
+    ScalarType { IsFloat: false, ByteSize: 4, Signed: false } => (0, uint.MaxValue),
+    _ => null,
+  };
+
+  /// <summary>
+  /// pb36 O16 type narrowing: true when BOTH operands of a 32-bit <paramref name="b"/> provably
+  /// fit one 16-bit word, so the operation can run on the 16-bit ALU (see
+  /// <see cref="NarrowRangeOf"/> for why the proof has to hold at every node).
+  /// </summary>
+  private bool BothOperandsNarrow16(BinaryExpr b, bool unsigned)
+    => this.Optimize && this.NarrowRangeOf(b.Left, unsigned) != null && this.NarrowRangeOf(b.Right, unsigned) != null;
 
   /// <summary>
   /// pb36 O16: true when an INTEGER add/subtract <paramref name="b"/> over a FOR-counter
@@ -307,6 +468,13 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (this.OptFolder.TryFold(b.Left) is { Integer: not null } && this.OptFolder.TryFold(b.Right) is { Integer: not null })
       return null;
 
+    // An equality against a constant is decidable from ANY domain, so it is asked first and does
+    // not need a range at all: the bits rule out "(x \ 2) * 2 = 1" (an even value is never odd),
+    // the congruence rules out "x * 10 = 25" (a multiple of ten is never 25). Neither fact is
+    // expressible as an interval, which is exactly why all three domains are kept.
+    if (b.Op is BinaryOp.Equal or BinaryOp.NotEqual && this.ImpossibleEquality(b))
+      return b.Op == BinaryOp.Equal ? 0L : -1L;
+
     if (this.IndexRangeOf(b.Left) is not { } l || this.IndexRangeOf(b.Right) is not { } r)
       return null;
 
@@ -323,7 +491,169 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       BinaryOp.NotEqual => l.Hi < r.Lo || l.Lo > r.Hi ? true : l.Lo == l.Hi && r.Lo == r.Hi && l.Lo == r.Lo ? false : (bool?)null,
       _ => null,
     };
+
     return verdict is { } v ? (v ? -1L : 0L) : null;
+  }
+
+  /// <summary>
+  /// pb36 O16: an operation whose result the value facts already know. Two shapes pay:
+  /// <list type="bullet">
+  ///   <item>the operation is the IDENTITY on this operand - <c>x AND 255</c> when the bits
+  ///     already prove the high byte clear, <c>x OR 1</c> when bit 0 is already set,
+  ///     <c>x MOD k</c> when x is already inside [0,k) - so only the operand is emitted;</item>
+  ///   <item>the result is a CONSTANT regardless of the operand - <c>(x * 10) MOD 5</c> is always
+  ///     zero because the congruence proves x*10 is a multiple of five, and <c>(x * 4) AND 3</c>
+  ///     is always zero because the low two bits are. Only the operand's side effects remain.</item>
+  /// </list>
+  /// The operand is still evaluated in both cases: it may call a FUNCTION, and PB evaluates it.
+  /// </summary>
+  private bool TryEmitFactRedundantOp(BinaryExpr b, PbType opType) {
+    if (!this.Optimize || opType is not ScalarType { IsFloat: false, ByteSize: <= 4 } scalar)
+      return false;
+    if (b.Op is not (BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Modulo or BinaryOp.IntegerDivide))
+      return false;
+    var width = scalar.ByteSize * 8;
+    var mask = MaskOf(width);
+
+    // A bitwise operation is symmetric, so either side may be the redundant one - "mask% AND x%"
+    // is the same question as "x% AND mask%". The side that disappears must be discardable: its
+    // value is not emitted at all, so it may not be something whose evaluation is observable.
+    if (b.Op is BinaryOp.And or BinaryOp.Or or BinaryOp.Xor) {
+      var left = this.FactsOf(b.Left);
+      var right = this.FactsOf(b.Right);
+      if (this.IsDiscardable(b.Right) && IsBitwiseIdentity(b.Op, left, right, mask))
+        return this.EmitOperandOnly(b.Left, opType);
+      if (this.IsDiscardable(b.Left) && IsBitwiseIdentity(b.Op, right, left, mask))
+        return this.EmitOperandOnly(b.Right, opType);
+      // every bit is provably clear on one side or the other, so the AND is just zero
+      if (b.Op == BinaryOp.And && (~left.Bits.Zeros & ~right.Bits.Zeros & mask) == 0
+          && this.IsDiscardable(b.Right))
+        return this.EmitConstantAfterOperand(b.Left, opType, 0, scalar);
+      return false;
+    }
+
+    // MOD and \ keep the constant-divisor form: a variable divisor carries the Error-11 guard,
+    // and dropping the operation would drop the trap with it
+    if (this.OptFolder.TryFold(b.Right) is not { Integer: { } k } || k == 0)
+      return false;
+    var facts = this.FactsOf(b.Left);
+
+    // a value already inside [0,|k|) is its own remainder
+    if (b.Op == BinaryOp.Modulo && facts.Range is { Lo: >= 0 } r && r.Hi < Math.Abs(k))
+      return this.EmitOperandOnly(b.Left, opType);
+    // a multiple of k has no remainder; a value smaller than k has no quotient
+    if (b.Op == BinaryOp.Modulo && facts.Mod.IsMultipleOf(k))
+      return this.EmitConstantAfterOperand(b.Left, opType, 0, scalar);
+    if (b.Op == BinaryOp.IntegerDivide && facts.Range is { } dr
+        && dr.Lo > -Math.Abs(k) && dr.Hi < Math.Abs(k))
+      return this.EmitConstantAfterOperand(b.Left, opType, 0, scalar);
+    return false;
+  }
+
+  /// <summary>
+  /// True when <paramref name="other"/> cannot change <paramref name="mine"/> under this operation:
+  /// an AND only clears bits, so it is the identity when every bit it could clear is already 0; an
+  /// OR only sets them, so it is the identity when every bit it could set is already 1; an XOR
+  /// changes nothing only against a provable zero.
+  /// </summary>
+  private static bool IsBitwiseIdentity(BinaryOp op, ValueFacts mine, ValueFacts other, ulong mask) => op switch {
+    BinaryOp.And => (~other.Bits.Ones & mask & ~mine.Bits.Zeros) == 0,
+    BinaryOp.Or => (~other.Bits.Zeros & mask & ~mine.Bits.Ones) == 0,
+    _ => (other.Bits.Zeros & mask) == mask,
+  };
+
+  /// <summary>
+  /// True when an operand may simply not be emitted. Only a plain variable read or a compile-time
+  /// constant qualifies: anything else could call a FUNCTION, or index an array whose bounds check
+  /// is part of the program's observable behaviour under <c>$ERROR BOUNDS</c>.
+  /// </summary>
+  private bool IsDiscardable(Expression e) =>
+    this.OptFolder.TryFold(e) is { Integer: not null }
+    || (e is NameExpr && model.VariableBindings.ContainsKey(e));
+
+  /// <summary>Emits just one operand of a redundant operation, coerced to what the operation would have produced.</summary>
+  private bool EmitOperandOnly(Expression operand, PbType opType) {
+    this.EmitExpression(operand);
+    this.Coerce(model.TypeOf(operand), opType, operand);
+    return true;
+  }
+
+  /// <summary>
+  /// Emits an operand for its side effects and then the constant the facts prove the operation
+  /// yields. The operand is still evaluated because PB evaluates it - it may call a FUNCTION.
+  /// </summary>
+  private bool EmitConstantAfterOperand(Expression operand, PbType opType, long value, ScalarType scalar) {
+    this.EmitExpression(operand);
+    this.Coerce(model.TypeOf(operand), opType, operand);
+    this._asm.Mov(Reg.AX, (int)value);
+    if (scalar.ByteSize == 4)
+      this._asm.Cwd();
+    return true;
+  }
+
+  private static ulong MaskOf(int width) => width >= 64 ? ulong.MaxValue : (1UL << width) - 1;
+
+  /// <summary>
+  /// True when one side is a constant the other side's proven facts exclude - so the two can
+  /// never be equal. Sound because every domain over-approximates: a value it rejects is one the
+  /// expression provably cannot produce.
+  /// </summary>
+  private bool ImpossibleEquality(BinaryExpr b) {
+    if (this.OptFolder.TryFold(b.Right) is { Integer: { } rc })
+      return !this.FactsOf(b.Left).Allows(rc, this.WidthOfExpr(b.Left));
+    if (this.OptFolder.TryFold(b.Left) is { Integer: { } lc })
+      return !this.FactsOf(b.Right).Allows(lc, this.WidthOfExpr(b.Right));
+    return false;
+  }
+
+  private int WidthOfExpr(Expression e) => model.TypeOf(e) is ScalarType { IsFloat: false, ByteSize: var n } ? n * 8 : 0;
+
+  /// <summary>
+  /// Everything proven about an expression: a variable's facts come from the lattice, a composite
+  /// is recomposed here from its operands so a fact holds even when the value was never stored -
+  /// <c>IF n% * 10 = 25</c> is decidable without <c>n% * 10</c> ever being a variable.
+  /// </summary>
+  /// <summary>
+  /// Everything proven about an expression. Never fails: an operand nothing is known about simply
+  /// yields <see cref="ValueFacts.Unknown"/>, the lattice's top element, which allows every value.
+  /// That matters because an operation can create a fact its operands do not have - <c>x AND 15</c>
+  /// is bounded to the low nibble however unknown x is - so an unknown leaf must not sink the
+  /// whole query.
+  /// </summary>
+  private ValueFacts FactsOf(Expression e) {
+    if (this.OptFolder.TryFold(e) is { Integer: { } c })
+      return ValueFacts.Of(c, this.WidthOfExpr(e));
+    switch (e) {
+      case NameExpr when model.VariableBindings.TryGetValue(e, out var v):
+        return this.LatticeFactsOf(v) ?? ValueFacts.Unknown;
+      case BinaryExpr { Op: BinaryOp.Add or BinaryOp.Subtract or BinaryOp.Multiply
+          or BinaryOp.And or BinaryOp.Or or BinaryOp.Xor } b: {
+        var l = this.FactsOf(b.Left);
+        var r = this.FactsOf(b.Right);
+        var width = this.WidthOfExpr(e);
+        var bits = b.Op switch {
+          BinaryOp.And => l.Bits.And(r.Bits),
+          BinaryOp.Or => l.Bits.Or(r.Bits),
+          BinaryOp.Xor => l.Bits.Xor(r.Bits),
+          BinaryOp.Add => l.Bits.AddSub(r.Bits, subtract: false),
+          BinaryOp.Subtract => l.Bits.AddSub(r.Bits, subtract: true),
+          _ => l.Bits.Multiply(r.Bits, width),
+        };
+        var mod = b.Op switch {
+          BinaryOp.Add => l.Mod.Add(r.Mod),
+          BinaryOp.Subtract => l.Mod.Subtract(r.Mod),
+          BinaryOp.Multiply => l.Mod.Multiply(r.Mod),
+          _ => Congruence.Unknown,
+        };
+        // the range half stays with IndexRangeOf, which already refuses a composition that wrapped
+        var range = this.IndexRangeOf(e) is { } ir ? new Interval(ir.Lo, ir.Hi) : Interval.Top;
+        return new ValueFacts(range, bits.Narrow(width), mod);
+      }
+      default:
+        return this.IndexRangeOf(e) is { } other
+          ? new ValueFacts(new Interval(other.Lo, other.Hi), KnownBits.Unknown, Congruence.Unknown)
+          : ValueFacts.Unknown;
+    }
   }
 
   /// <summary>
@@ -494,8 +824,20 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // jump threading composes with either pass: a pure fixup rewrite over the final stream,
     // collapsing ITERATE -> loop-end -> loop-head and GOTO -> GOTO cascades to one hop
     asm.EnableJumpThreading = standalone;
-    // S1 SIZE: short-jump relaxation shrinks every in-range near jump to the 2-byte form
-    asm.EnableJumpRelaxation = standalone && this.OptimizeSize;
+    // a reload of a frame cell the register still holds is dead; composes with either pass
+    // (it runs first, on records the scheduler's permutation would otherwise invalidate)
+    asm.EnableLoadForwarding = standalone;
+    // S1: short-jump relaxation shrinks every in-range near jump to the 2-byte form. A forward
+    // branch is emitted near only because its target was still unbound when it was encoded, and
+    // the short form is both smaller and easier on the 8086's 4-byte prefetch queue.
+    //
+    // This runs for the FAITHFUL path too, because that is what the oracle does: a genuine
+    // PB 3.5 image (PowerBASIC Compiler 3.50, Robert S. Zale) contains ~1600 conditional jumps
+    // of which 7 use the near 0F 8x form, and 373 short JMPs against 186 near ones - it picks
+    // the short encoding whenever the displacement fits, forward branches included. Always
+    // emitting near for a forward branch is therefore a deviation FROM the oracle, not fidelity
+    // to it. Units and external-call modules keep the near forms (their targets are relocated).
+    asm.EnableJumpRelaxation = !this._allowExternalCalls && !this._isUnit;
     // S3 SIZE: identical procedures fold to one copy (entry labels re-bound to the survivor)
     asm.EnableTailMerge = standalone && this.OptimizeSize;
     var userMain = asm.DefineLabel("user_main");
@@ -604,7 +946,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // not poisons it out of the set), and an inlinable leaf makes no calls of its own, so
     // removing it from the live set cannot strand a still-needed callee. Self-contained
     // main only (matching O22/O23 ownership), so pb35/unoptimized output is untouched.
-    if (this.Optimize && !this._isUnit && liveProcs != null) {
+    // $OPTIMIZE SIZE keeps every body: it emits a real CALL at each site instead of inlining
+    // (see TryEmitInlinedFunction), so purging on the strength of "it would inline everywhere"
+    // strands those calls on a label nothing ever binds.
+    if (this.Optimize && !this.OptimizeSize && !this._isUnit && liveProcs != null) {
       var hasErrorHandling = ContainsErrorHandling(model.MainBody)
         || model.ProcedureList.Any(p => p.Body is { } b && ContainsErrorHandling(b));
       var inlinedAway = OptInlining.FullyInlinedProcedures(model, p => this.AnalyzeInlinableLeaf(p) != null && !this.IsBackendRouted(p), this.IsFullyOwned, this.IsNearLValue, hasErrorHandling);
@@ -1683,10 +2028,44 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     }
   }
 
+  /// <summary>
+  /// Emits <paramref name="condition"/> and branches to <paramref name="target"/> on the wanted
+  /// truth value. A comparison that IS the whole condition branches on the CMP's own flags (see
+  /// <see cref="TryEmitCompareAsBranch"/>); anything else keeps the value path and tests it.
+  /// </summary>
+  private void EmitConditionalBranch(Expression condition, Label target, bool whenFalse) {
+    var asm = this._asm;
+    if (this.Optimize && condition is BinaryExpr {
+          Op: BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
+            or BinaryOp.LessEqual or BinaryOp.GreaterEqual } comparison
+        && KindOf(model.TypeOf(condition)) == ValueKind.Int16
+        && this._cseMarks?.ContainsKey(condition) != true) {   // a CSE slot still wants the value
+      this._compareBranch = (comparison, target, whenFalse);
+      this._compareBranchTaken = false;
+      this.EmitExpression(condition);
+      var fused = this._compareBranchTaken;
+      this._compareBranch = null;
+      this._compareBranchTaken = false;
+      if (fused)
+        return;                          // the branch IS the comparison - nothing else to emit
+      this.EmitTruthTest(condition);     // a folded/strength-reduced comparison left its value in AX
+    } else
+      this.EmitCondition(condition);
+    if (whenFalse)
+      asm.Jz(target);
+    else
+      asm.Jnz(target);
+  }
+
   private void EmitCondition(Expression condition) {
     // leaves truth in AX (0 / nonzero) and sets ZF accordingly
-    var asm = this._asm;
     this.EmitExpression(condition);
+    this.EmitTruthTest(condition);
+  }
+
+  /// <summary>Sets ZF from the value in AX (or DX:AX, or st(0)) according to its type.</summary>
+  private void EmitTruthTest(Expression condition) {
+    var asm = this._asm;
     switch (KindOf(model.TypeOf(condition))) {
       case ValueKind.Int16:
         asm.Test(Reg.AX, Reg.AX);
@@ -1751,8 +2130,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     var elseLabel = asm.DefineLabel();
     var endLabel = asm.DefineLabel();
 
-    this.EmitCondition(i.Condition);
-    asm.Jz(elseLabel);
+    this.EmitConditionalBranch(i.Condition, elseLabel, whenFalse: true);
     foreach (var s in i.Then)
       this.EmitStatement(s);
     asm.Jmp(endLabel);
@@ -1760,8 +2138,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     asm.MarkLabel(elseLabel);
     foreach (var (condition, body) in i.ElseIfs) {
       var next = asm.DefineLabel();
-      this.EmitCondition(condition);
-      asm.Jz(next);
+      this.EmitConditionalBranch(condition, next, whenFalse: true);
       foreach (var s in body)
         this.EmitStatement(s);
       asm.Jmp(endLabel);
@@ -1828,6 +2205,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       // instead of recomputing (i-lbound)*2 with IMUL on every iteration
       if (this.TryEmitForArrayStore(f, counter, slot.WithSize(OperandSize.Word), fastStep))
         return;
+      // pb36 O6b: a single-statement a%(i%) read replaces the per-iteration subscript scale
+      // with a stepped pointer. It is tried BEFORE register residency because it is strictly
+      // better for that shape - stepping a pointer removes the scale entirely, where a resident
+      // counter still has to compute the address from it every iteration.
+      if (this.TryEmitForArrayIvsr(f, counter, slot, fastStep))
+        return;
       // pb36 O5 (nested): an inner FOR under an SI-resident outer loop keeps its
       // counter in DI - the second (and last) safe index register
       if (this.TryEmitNestedForCounterInRegister(f, counter, slot.WithSize(OperandSize.Word), fastStep))
@@ -1835,10 +2218,6 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       // pb36 O5: an SI-clean body keeps the counter in SI - no per-iteration
       // cell traffic for the compare, increment or counter reads
       if (this.TryEmitForCounterInRegister(f, counter, slot.WithSize(OperandSize.Word), fastStep))
-        return;
-      // pb36 O6b: a single-statement a%(i%) read replaces the per-iteration IMUL
-      // with a stepped frame-slot pointer
-      if (this.TryEmitForArrayIvsr(f, counter, slot, fastStep))
         return;
       this.EmitForInt16Fast(f, slot.WithSize(OperandSize.Word), fastStep);
       return;
@@ -2125,11 +2504,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
     asm.MarkLabel(top);
     if (d.PreCondition != null) {
-      this.EmitCondition(d.PreCondition);
-      if (d.PreTest == LoopTestKind.While)
-        asm.Jz(done);
-      else
-        asm.Jnz(done);
+      // While: leave when false; Until: leave when true
+      this.EmitConditionalBranch(d.PreCondition, done, whenFalse: d.PreTest == LoopTestKind.While);
     }
 
     foreach (var s in d.Body)
@@ -2137,11 +2513,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     asm.MarkLabel(continueLabel);
     if (d.PostCondition != null) {
-      this.EmitCondition(d.PostCondition);
-      if (d.PostTest == LoopTestKind.While)
-        asm.Jnz(top);
-      else
-        asm.Jz(top);
+      // While: repeat while true; Until: repeat while false
+      this.EmitConditionalBranch(d.PostCondition, top, whenFalse: d.PostTest != LoopTestKind.While);
     } else
       asm.Jmp(top);
 
