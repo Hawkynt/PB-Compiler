@@ -74,6 +74,17 @@ Extends the OMF reader/linker + calling-convention work already landed.
 
 ## B. BASIC language features codegen still rejects
 
+### Oracle-confirmed fidelity gap (found once the pb35 differential battery could run locally)
+- **LONG multiply overflow should trap Error 6, not store the sentinel.** Genuine PBC 3.50 raises
+  Error 6 when an overflowing signed-LONG product is narrowed into a LONG store (goes to the
+  `ON ERROR` handler; halts the program without one) - a *wide use* like `PRINT a& * b&` shows the
+  full product with no trap, and a DWORD multiply wraps silently. PB-Compiler currently stores the
+  x87 integer-indefinite sentinel (`8000_0000h`) instead of trapping: the float->LONG store needs
+  an overflow check that raises Error 6 under checked arithmetic (and by default). Marker: the
+  advisory differential test `DIFF105`. The sibling LONG `+`/`-` overflow bug (should wrap, was
+  storing the sentinel) is already fixed and byte-identical (`DIFF113`). See docs/QUIRKS.md.
+
+
 Straight from the `Unsupported(...)` survey.
 
 ### Should
@@ -82,6 +93,22 @@ Straight from the `Unsupported(...)` survey.
 - ~~Finish `QUAD` (64-bit integer) operators~~ - done: every `QUAD` operator (`+ - * \ MOD AND OR XOR EQV IMP`, comparisons, unary `- NOT`, and the float-typed `/` and `^`) is byte-identical vs PBC 3.50 (battery `DIFF85`). The remaining `Unsupported` arm in `EmitInt64Op` is an unreachable guard: the binder types `QUAD /` as DOUBLE and `QUAD ^` as EXT, so both run on the float path, never reaching the integral op switch.
 
 ### Could
+- **Graphics statements (`LINE`/`PSET`/`PRESET`/`CIRCLE`/`PAINT`/`DRAW`)** - parsed and bound,
+  but codegen answers `not yet generated: LineStmt`. Two oracle-verified notes for whoever
+  implements them: the parser also rejects the relative-coordinate form
+  `LINE (x,y)-STEP(dx,dy), c, BF` (`expected '(', found 'STEP'`), which PBC 3.50 accepts - it
+  compiles PB-VGAEditor's SPRITE.SUB, which uses it; and `STEP`'s base differs by position (the
+  cursor for a first/only point, the first point for a LINE's endpoint), so it belongs in
+  `ParsePoint` as a flag on the point, not as a statement-level switch.
+- **Constant-propagate the counter into unrolled loop bodies.** O7 fully unrolls a tiny
+  constant-trip FOR (`TryEmitUnrolledFor`), but each copy still reads the counter cell and
+  recomputes: `FOR i%=0 TO 3: a%(i%) = i%*i%` emits an `IMUL` and an address computation per
+  iteration where the counter is a known constant (0,1,2,3), so `i%*i%` and the `a%(i%)` index
+  should fold to `a%(0)=0, a%(1)=1, …`. The blocker is architectural: the emitter is keyed by
+  original-AST-node identity (`VariableBindings`, `TypeOf`, `ResolvedConstants`), so substituting
+  the counter with a literal per iteration would need every semantic side-table repopulated for
+  the cloned nodes. A per-iteration constant-override consulted by the folder and
+  `IndexRangeOf`/`TryFoldSubscripts` is the smaller path.
 - Multi-dimensional arrays (rank > 1) for the memory array classes (EMS/XMS/...)
   and multi-dimensional UDT field arrays.
 - `REDIM PRESERVE` on more array classes.

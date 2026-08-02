@@ -138,6 +138,9 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
 - **Named delegate types** — a `DECLARE`d SUB/FUNCTION name doubles as a
   procedure-pointer type, usable as a variable type or a parameter type for
   statically-checked higher-order procedures.
+- **`NOINLINE`** — a procedure modifier (next to `STATIC`/`PUBLIC`/`CDECL`) that
+  keeps the optimizer from substituting the body at call sites, so the procedure
+  survives as its own inspectable code.
 
 **Object model (compile-time, no vtables)**
 - **TYPE methods and properties** — declare `SUB` / `FUNCTION` / `PROPERTY GET` /
@@ -248,7 +251,7 @@ constant propagation → dead-store elimination.
 | O1 | Constant folding | Folds pure integral expressions at the emitter, wrapped to the bound type (bit-equal to the runtime ALU). |
 | O2 | Dead-code / dead-store elimination | Drops unreachable statements (`OptPruner`) and, over SSA, removes stores whose value is never really read (`Ssa/DeadStore`). |
 | O3 | Common-subexpression elimination | Block-local CSE, with inheritance into dominated branches and across barrier-free merges (`OptCommonSubexpr`). |
-| O4 | Strength reduction | `x * 2^n`, `x \ 2^n`, `x MOD 2^n` lower to shift/mask sequences (with PB's truncation fix-ups); richer multiplier shapes under `$OPTIMIZE SPEED`. |
+| O4 | Strength reduction | `x * 2^n`, `x \ 2^n`, `x MOD 2^n` lower to shift/mask sequences (with PB's truncation fix-ups); richer multiplier shapes under `$OPTIMIZE SPEED`. Array subscript scaling by a power-of-two element size becomes shifts rather than `IMUL r,r,imm` — which is ~10× slower and an 80186 instruction the declared 8086 target does not have. |
 | O5 | Register allocation | Keeps a FOR counter and one hot integer accumulator in SI/DI across a loop; broader allocation is roadmap. |
 | O6 | Inlining | Inlines a single-result-expression FUNCTION at its call sites; induction-variable pointer-stepping for array loops. |
 | O7 | Loop unrolling | Fully unrolls small constant-trip INTEGER FOR loops under `$OPTIMIZE SPEED`. |
@@ -257,10 +260,10 @@ constant propagation → dead-store elimination.
 | O10 | Redundant-statement / DEF SEG coalescing | Drops a `DEF SEG` whose window contains only segment-transparent statements. |
 | O11 | Literal overlap pooling | Overlapping/contained string literals share bytes in one pool. |
 | O12 | Float demotion | Re-types accidental SINGLE/DOUBLE loop counters back to INTEGER/LONG when every use is value-exact (`OptFloatDemotion`). |
-| O13 | Fixed-point lowering | Integral-promotion trees over 16-bit leaves run on the plain 16-bit ALU instead of round-tripping the x87. |
+| O13 | Promotion lowering | PB computes `+ - *` over integral operands in floating point, so integral trees round-trip through the x87. They run on the plain 16- or 32-bit ALU instead whenever that is bit-identical — including a single LONG add/subtract, where one branch reproduces the out-of-range store's x87 sentinel. |
 | O14 | Tail-call optimization | Self-calls in tail position become a jump to frame entry — recursion in constant stack space. |
 | O15 | UDT zero-cost copy/compare | Word/DWORD-wide block copy & compare; self-copy elided, self-compare folded. |
-| O16 | Range / bounds-check elimination | A FOR-counter range lattice removes provably-safe `$ERROR` BOUNDS/OVERFLOW/divide-by-zero checks and folds invariant comparisons. |
+| O16 | Value-fact analysis (ranges, bits, congruences) | Three domains per value — an interval, which bits are always 0/1, and `v ≡ r (mod m)`. Together they remove provably-safe `$ERROR` BOUNDS/OVERFLOW/divide-by-zero checks, fold comparisons no domain can satisfy (`(x\2)*2 = 1`, `x AND 12 = 5`, `x*10 = 25`), and run a 32-bit compare or multiply on the 16-bit ALU when both operands provably fit a word. |
 | O17 | SCCP / branch folding | Sparse conditional constant propagation over SSA folds constant branches and proves zero-initialized reads (`Ssa/Sccp`). |
 | O18 | Interprocedural constant propagation | A parameter that is the same constant at every call site and never written reads as that literal inside the callee (`OptIpcp`). |
 | O19 | Definite-assignment zero elision | Drops per-invocation frame zeroing when a straight-line proof shows no local is read before assignment. |
@@ -331,6 +334,8 @@ pbc --no-optimize APP.BAS     # disable the optimizer (faithful codegen)
 pbc -G386 TEST.BAS            # allow 80386 instructions ($CPU 80386)
 pbc UNIT.BAS                  # $COMPILE UNIT inside -> UNIT.PBU
 pbc MAIN.BAS                  # $LINK "UNIT.PBU" / "MY.PBL" inside -> linked EXE
+pbc --emit-c PROG.BAS         # optimize through the IR and emit portable C99
+pbc --emit-llvm PROG.BAS      # ... or textual LLVM for the native toolchain
 pbc lib build MY.PBL *.PBU    # bundle units into a library
 pbc lib list MY.PBL           # show exports/imports of a library or unit
 ```
