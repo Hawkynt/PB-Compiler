@@ -28,21 +28,34 @@ public sealed class CorpusCompileTests {
     }
   }
 
+  /// <summary>
+  /// Corpus suites the GENUINE compiler rejects too, so "compiles clean" is not a property they
+  /// have. VESA.BAS includes VESA.SUB but not VGA.SUB, and PBC 3.50 answers its
+  /// <c>CALL Vga_InitMode13h</c> with <c>VESA.SUB(28:13): Error 462: Undefined SUB/FUNCTION
+  /// reference</c> - the same call at the same line our binder rejects. Agreeing with the oracle
+  /// is the correct behaviour; asserting the suite is clean would be asserting a corpus bug away.
+  /// </summary>
+  private static readonly HashSet<string> _rejectedByTheOracle =
+    new(["VESA"], StringComparer.OrdinalIgnoreCase);
+
   public static IEnumerable<TestCaseData> Suites() {
     var testsDir = Path.Combine(_corpusRoot, "tests");
     if (!Directory.Exists(testsDir))
       yield break;
-    foreach (var suite in Directory.EnumerateFiles(testsDir, "*.BAS").OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
+    foreach (var suite in Directory.EnumerateFiles(testsDir, "*.BAS").OrderBy(f => f, StringComparer.OrdinalIgnoreCase)) {
+      if (_rejectedByTheOracle.Contains(Path.GetFileNameWithoutExtension(suite)))
+        continue;
       yield return new(suite) { TestName = $"Compile_GivenSuite_{Path.GetFileNameWithoutExtension(suite)}_WhenGenerated_ThenNoErrors" };
+    }
   }
 
-  internal static byte[] CompileSuite(string suite, out List<Diagnostic> errors) {
+  internal static byte[] CompileSuite(string suite, out List<Diagnostic> errors, bool optimize = false) {
     var testsDir = Path.Combine(_corpusRoot, "tests");
     var tokens = Preprocessor.Expand(suite, new SvgaBuildDirProvider(testsDir, _corpusRoot));
     var unit = Parser.Parse(tokens, suite);
     var model = Binder.Bind(unit);
     Assert.That(model.Errors, Is.Empty, string.Join("\n", model.Errors.Take(10)));
-    var generator = new CodeGenerator(model);
+    var generator = new CodeGenerator(model) { Optimize = optimize };
     var exe = generator.EmitExecutable();
     errors = generator.Errors;
     return exe;
@@ -60,7 +73,9 @@ public sealed class CorpusCompileTests {
     foreach (var data in Suites()) {
       var suite = (string)data.Arguments[0]!;
       var exe = CompileSuite(suite, out var errors);
-      TestContext.Out.WriteLine($"size {exe.Length,7}  {Path.GetFileNameWithoutExtension(suite)}");
+      var optimized = CompileSuite(suite, out _, optimize: true);
+      TestContext.Out.WriteLine(
+        $"size {exe.Length,7} plain {optimized.Length,7} optimized  {Path.GetFileNameWithoutExtension(suite)}");
       foreach (var e in errors) {
         var key = e.Message + " @" + Path.GetFileNameWithoutExtension(suite);
         counts[key] = counts.GetValueOrDefault(key) + 1;

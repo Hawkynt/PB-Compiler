@@ -97,6 +97,41 @@ public sealed class StackArrayTests {
   }
 
   [Test]
+  public void Emit_GivenStackArrayFrame_WhenOptimized_ThenAllocationAndZeroFillAgree() {
+    // the frame size reaches the image as a "constant label" - a pseudo-label whose position IS
+    // the byte count. An image-shrinking pass (short-jump relaxation, the peephole) that slid it
+    // like a real offset would allocate fewer bytes than the REP STOSW then zeroes, and the SUB
+    // would run on a corrupted stack. The two counts must always agree: SUB SP,n / ... / REP
+    // STOSW of n/2 words.
+    const string source = """
+      SUB Grid
+        DIM STACK g(1 TO 3, 1 TO 4) AS INTEGER
+        g(1, 1) = 5
+        PRINT g(1, 1)
+      END SUB
+      Grid
+      """;
+    var unit = Parser.Parse(Lexer.Tokenize(source, "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);
+    var image = new CodeGenerator(Binder.Bind(unit, Dialect.Pb36)).EmitExecutable();
+
+    // MOV CX,bytes / SUB SP,CX / PUSH DS / POP ES / MOV DI,SP / MOV CX,words / XOR AX,AX / REP STOSW
+    var frames = 0;
+    for (var i = 3; i + 12 < image.Length; ++i) {
+      if (image[i - 3] != 0xB9 || image[i] != 0x29 || image[i + 1] != 0xCC)
+        continue;
+      if (image[i + 2] != 0x1E || image[i + 3] != 0x07 || image[i + 4] != 0x89 || image[i + 5] != 0xE7
+          || image[i + 6] != 0xB9 || image[i + 9] != 0x31 || image[i + 10] != 0xC0
+          || image[i + 11] != 0xF3 || image[i + 12] != 0xAB)
+        continue;
+      var bytes = image[i - 2] | (image[i - 1] << 8);
+      var words = image[i + 7] | (image[i + 8] << 8);
+      Assert.That(bytes, Is.EqualTo(words * 2), $"frame at {i:X4}: allocates {bytes} bytes but zeroes {words} words");
+      ++frames;
+    }
+    Assert.That(frames, Is.GreaterThan(0), "the zero-filled frame prologue must be present to be checked");
+  }
+
+  [Test]
   public void Execute_GivenRank2StackArray_WhenRun_ThenLinearizationCorrect() {
     const string source = """
       SUB Grid

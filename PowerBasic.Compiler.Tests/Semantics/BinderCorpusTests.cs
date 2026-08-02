@@ -31,8 +31,12 @@ public sealed class BinderCorpusTests {
     var testsDir = Path.Combine(_corpusRoot, "tests");
     if (!Directory.Exists(testsDir))
       yield break;
-    foreach (var suite in Directory.EnumerateFiles(testsDir, "*.BAS").OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
+    foreach (var suite in Directory.EnumerateFiles(testsDir, "*.BAS").OrderBy(f => f, StringComparer.OrdinalIgnoreCase)) {
+      // the genuine compiler rejects these too - see CorpusCompileTests._rejectedByTheOracle
+      if (Path.GetFileNameWithoutExtension(suite).Equals("VESA", StringComparison.OrdinalIgnoreCase))
+        continue;
       yield return new(suite) { TestName = $"Bind_GivenSuite_{Path.GetFileNameWithoutExtension(suite)}_WhenBound_ThenNoErrors" };
+    }
   }
 
   [TestCaseSource(nameof(Suites))]
