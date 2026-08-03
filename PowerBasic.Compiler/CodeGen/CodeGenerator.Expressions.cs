@@ -339,6 +339,13 @@ public sealed partial class CodeGenerator {
     if (this.TryEmitRangeComparison(b))
       return;
 
+    // pb36 O4: (x MOD 2^j) = 0 tests only whether the low j bits are zero, which x AND (2^j-1)
+    // answers directly - the signed-modulo fixup (CWD / AND / ADD / AND / SUB, correcting the
+    // sign for a negative dividend) does not change the zero-ness of the result, so it is dead
+    // when the modulo is only compared to zero. The everyday even/odd test.
+    if (this.TryEmitModuloZeroTest(b))
+      return;
+
     // whole-value TYPE/UNION = / <> (PB 3.1): memcmp semantics
     if (leftType is UdtType leftUdt && rightType is UdtType) {
       // pb36 O15: a self-compare folds to its constant truth - memcmp of a
@@ -1070,6 +1077,41 @@ public sealed partial class CodeGenerator {
         this.Unsupported(b, $"int16 {b.Op}");
         break;
     }
+  }
+
+  /// <summary>
+  /// pb36 O4: <c>(x MOD 2^j) = 0</c> / <c>&lt;&gt; 0</c> becomes <c>(x AND (2^j-1)) = 0</c>. Sound for
+  /// every sign - the modulo's sign fixup changes the result's value but not whether it is zero,
+  /// which is exactly the low j bits either way. int16 only (the common even/odd test); the
+  /// masked AND sets ZF just like a CMP against zero, so the ordinary compare-result / branch-fusion
+  /// path drives the outcome. Off under checked arithmetic, whose divide-by-zero-less MOD by a
+  /// constant still cannot trap here but where the plain path already carries the sign fixup.
+  /// </summary>
+  private bool TryEmitModuloZeroTest(BinaryExpr b) {
+    if (!this.Optimize || b.Op is not (BinaryOp.Equal or BinaryOp.NotEqual))
+      return false;
+    // one side is a modulo by a power of two, the other folds to zero
+    var (modExpr, other) = b.Left is BinaryExpr { Op: BinaryOp.Modulo } ? (b.Left, b.Right)
+      : b.Right is BinaryExpr { Op: BinaryOp.Modulo } ? (b.Right, b.Left)
+      : (null, null);
+    if (modExpr is not BinaryExpr { Op: BinaryOp.Modulo, Left: { } dividend, Right: { } divisor })
+      return false;
+    if (this.OptFolder.TryFold(other) is not { Integer: 0 })
+      return false;
+    if (this.OptFolder.TryFold(divisor) is not { Integer: { } m } || m <= 0 || (m & (m - 1)) != 0)
+      return false;
+    if (KindOf(model.TypeOf(modExpr)) != ValueKind.Int16 || KindOf(model.TypeOf(dividend)) != ValueKind.Int16)
+      return false;
+
+    this.EmitExpression(dividend);
+    this.Coerce(model.TypeOf(dividend), PbType.Integer, dividend);
+    this._asm.And(Reg.AX, (Imm)(int)(m - 1));   // sets ZF from the low j bits, exactly like CMP AX,0
+    var (jump, condition) = b.Op == BinaryOp.Equal
+      ? ((Func<Assembler, Action<Label>>)(a => a.Je), Condition.Equal)
+      : (a => a.Jne, Condition.NotEqual);
+    if (!this.TryEmitCompareAsBranch(b, condition))
+      this.EmitInt16CompareResult(jump, condition);
+    return true;
   }
 
   private void EmitInt16Compare(BinaryExpr b, Func<Assembler, Action<Label>> jump, Condition condition) {

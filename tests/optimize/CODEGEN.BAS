@@ -35,6 +35,7 @@ DECLARE SUB MaxScanReadsEachElementOnce()
 DECLARE SUB BoundedMultiplyStaysOffTheFpu(BYVAL n%)
 DECLARE SUB HotAccumulatorWinsTheRegister(BYVAL n%)
 DECLARE SUB AndOrConditionShortCircuits(BYVAL n%)
+DECLARE SUB ParityTestIsAMask(BYVAL n%)
 DECLARE SUB Callee(BYVAL fixed%, BYVAL varying%)
 DECLARE FUNCTION Doubled%(BYVAL v%)
 DECLARE FUNCTION PureSquare%(BYVAL v%)
@@ -66,6 +67,7 @@ MaxScanReadsEachElementOnce
 BoundedMultiplyStaysOffTheFpu 9
 HotAccumulatorWinsTheRegister 7
 AndOrConditionShortCircuits 42
+ParityTestIsAMask -7
 END
 
 ' ---------------------------------------------------------------------------
@@ -546,4 +548,26 @@ SUB AndOrConditionShortCircuits(BYVAL n%) NOINLINE
   IF n% > 0 AND n% < 100 THEN r% = r% + 1
   IF n% = 5 OR n% = 42 THEN r% = r% + 10
   PRINT "shortcircuit"; r%
+END SUB
+
+' ---------------------------------------------------------------------------
+' @scenario ParityTestIsAMask
+' @what     n MOD 2^j compared to zero (the even/odd test)
+' @expect   n MOD 2 = 0 tests only whether the low bit is zero, which n AND 1
+'           answers directly - the signed-modulo fixup (CWD then a five-op sign
+'           correction for a negative dividend) never changes whether the result
+'           is zero, so it is dead here. The condition becomes AND ax,1 driving
+'           the branch on its own flags, not a full IDIV-style modulo followed by
+'           a compare
+' @assert   absent cwd
+' @assert   absent idiv-bx
+' @assert   smaller-than-unoptimized
+' @status   done
+' ---------------------------------------------------------------------------
+SUB ParityTestIsAMask(BYVAL n%) NOINLINE
+  DIM r%
+  r% = 0
+  IF n% MOD 2 = 0 THEN r% = r% + 1
+  IF n% MOD 4 <> 0 THEN r% = r% + 10
+  PRINT "parity"; r%
 END SUB
