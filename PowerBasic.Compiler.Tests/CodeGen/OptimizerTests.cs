@@ -603,6 +603,17 @@ public sealed class OptimizerTests {
   private static int CountMulBx(byte[] image) => CountPair(image, 0xF7, 0xE3);
 
   [Test]
+  public void Emit_GivenEmptyStringComparison_WhenPb36_ThenHandleTestNotStrCmp() {
+    // O0181: s = "" is emptiness - a handle test - so rt_strcmp is not called (and, being the only
+    // string comparison, is trimmed from the image). The same shape against a non-empty literal
+    // keeps the StrCmp call, so its image is larger; comparing the two isolates the win.
+    var empty = Compile("DIM s AS STRING\nLINE INPUT s\nIF s = \"\" THEN PRINT 1\nEND", Dialect.Pb36);
+    var nonEmpty = Compile("DIM s AS STRING\nLINE INPUT s\nIF s = \"x\" THEN PRINT 1\nEND", Dialect.Pb36);
+    Assert.That(empty.Length, Is.LessThan(nonEmpty.Length),
+      "s = \"\" tests the handle (rt_strcmp trimmed); s = \"x\" keeps the StrCmp call");
+  }
+
+  [Test]
   public void Emit_GivenUnsignedComparisonAsValue_WhenPb36_ThenBranchlessSbb() {
     // O0088: f = (a < b) over WORD operands used as a value tests the carry the CMP already set,
     // so SBB AX,AX (19 C0) turns it into PB's -1/0 in two bytes rather than MOV -1 / Jcc / MOV 0.

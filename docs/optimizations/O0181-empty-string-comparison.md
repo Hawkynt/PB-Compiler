@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Done |
 | **Stage** | Emitter |
 | **Related** | [O0178](O0178-empty-string-simplification.md), [O0180](O0180-string-length-caching.md), [O0031](O0031-branch-fusion.md) |
 
@@ -34,23 +34,41 @@ LOOP UNTIL s$ = ""
     jnz     Continue
 ```
 
-## Planned
+## Now
 
 ```asm
-    cmp     word ptr [s], 0000h     ; an unassigned/empty handle
+    mov     ax, [s]
+    or      ax, ax                  ; ZF set iff the handle is 0 - the empty string
     jne     Continue
 ```
 
-— and with [O0031](O0031-branch-fusion.md) the flags drive the loop's branch
-directly.
+— and with [O0031](O0031-branch-fusion.md) the `OR`'s flags drive the loop's
+branch directly (`TryEmitCompareAsBranch`), so no truth value is materialized.
+When the comparison is used as a value instead of a branch, the ZF is turned
+into `0`/`-1` by the ordinary [O0088](O0088-branchless-boolean.md) path.
 
-## What it needs
+## What made it safe
 
-- The **representation invariant**: an empty string must be *exactly* handle 0,
-  or the test needs the length instead (a one-indirection read, still far
-  cheaper than `StrCmp`). The runtime's rules for a freshly zeroed slot versus
-  an explicitly emptied one have to agree — which is also why
+- The **representation invariant** holds unconditionally: `rt_stralloc`
+  returns handle **0** for length 0, and every empty-producing path
+  (`MID$(x,i,0)`, `""`, `LEFT$(x,0)`, a freshly zeroed slot) yields the same
+  0 handle — verified against the genuine 3.50 oracle (a loop mixing `s = ""`,
+  `s <> ""` and `MID$(...,0) = ""` is byte-identical). This is also why
   [O0019](O0019-zero-elision.md) keeps string handle slots zeroed even when it
   elides the rest of the frame fill.
-- Fixed-length and ASCIIZ strings compare differently (padding), so the rewrite
-  applies to dynamic strings only.
+- Restricted to a dynamic-string **variable** against the empty literal
+  (`NameExpr` vs `""`): a concat temporary would need freeing, and fixed-length
+  / ASCIIZ strings compare with padding, so neither is folded.
+- Being the program's only string comparison, the rewrite lets the runtime
+  trimmer drop `rt_strcmp` entirely — the regression test
+  (`Emit_GivenEmptyStringComparison…`) asserts the `""` image is smaller than
+  the otherwise-identical non-empty-literal image that keeps the call.
+
+## Targets
+
+Native x86-16 only, in `CodeGenerator.EmitStringBinary`. The IR back ends
+(`--emit-c` / `--emit-llvm`) model strings through the `rt_*` ABI and lower a
+`= ""` comparison to a `rt_strcmp(...) == 0` call; on those targets the host C
+compiler already reduces `strcmp(s,"")` (or the length check) to an emptiness
+test, so a dedicated IR pass would be redundant. Should IR string comparisons
+ever be lowered structurally, the same handle/length test applies.

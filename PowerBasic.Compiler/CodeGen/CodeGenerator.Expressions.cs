@@ -797,6 +797,28 @@ public sealed partial class CodeGenerator {
       }
     }
 
+    // O0181: s$ = "" / s$ <> "" is emptiness, and a PB string is empty exactly when its handle is
+    // zero (rt_stralloc returns 0 for length 0, so every empty string normalizes to handle 0). A
+    // handle test replaces the whole rt_strcmp call - the commonest string comparison in DOS-era
+    // code (every INPUT loop ends with one). Restricted to a string VARIABLE against the empty
+    // literal: a variable read is just its handle with nothing to free, unlike a concat temp.
+    if (this.Optimize && b.Op is BinaryOp.Equal or BinaryOp.NotEqual) {
+      // dynamic StringType only - a FixedStringType/AsciizType is space/NUL-padded to its declared
+      // length, so it compares by content (never handle-0) and must keep the StrCmp path
+      var variable = b.Left is StringLiteralExpr { Value.Length: 0 } && b.Right is NameExpr && model.TypeOf(b.Right) is StringType ? b.Right
+        : b.Right is StringLiteralExpr { Value.Length: 0 } && b.Left is NameExpr && model.TypeOf(b.Left) is StringType ? b.Left : null;
+      if (variable != null) {
+        this.EmitExpression(variable);           // AX = the string's handle
+        asm.Or(Reg.AX, Reg.AX);                  // ZF set iff the handle is 0, i.e. the string is empty
+        var (jump, condition) = b.Op == BinaryOp.Equal
+          ? ((Func<Assembler, Action<Label>>)(a => a.Je), Condition.Equal)
+          : (a => a.Jne, Condition.NotEqual);
+        if (!this.TryEmitCompareAsBranch(b, condition))
+          this.EmitInt16CompareResult(jump, condition);
+        return;
+      }
+    }
+
     this.EmitExpression(b.Left);
     asm.Push(Reg.AX);
     this.EmitExpression(b.Right);
