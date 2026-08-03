@@ -603,6 +603,16 @@ public sealed class OptimizerTests {
   private static int CountMulBx(byte[] image) => CountPair(image, 0xF7, 0xE3);
 
   [Test]
+  public void Emit_GivenZeroLengthLeftDollar_WhenPb36_ThenFoldedToEmptyNoCall() {
+    // O0266: LEFT$(a$, 0) is provably the empty string, so no rt_strleft call (folded to xor ax,ax).
+    // The same shape with a non-zero length keeps the call, so its image is larger.
+    var zero = Compile("DIM a AS STRING, t AS STRING\nLINE INPUT a\nt = LEFT$(a, 0)\nPRINT t\nEND", Dialect.Pb36);
+    var nonZero = Compile("DIM a AS STRING, t AS STRING\nLINE INPUT a\nt = LEFT$(a, 2)\nPRINT t\nEND", Dialect.Pb36);
+    Assert.That(zero.Length, Is.LessThan(nonZero.Length),
+      "LEFT$(a$, 0) folds to the empty string (no StrLeft); LEFT$(a$, 2) keeps the call");
+  }
+
+  [Test]
   public void Emit_GivenConcatWithEmptyLiteral_WhenPb36_ThenNoStrCatCall() {
     // O0178: t = a$ + "" is just t = a$ (reading a$ already yields an owned copy), so no StrCat.
     // The same shape with a non-empty literal keeps the concat, so its image is larger.

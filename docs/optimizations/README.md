@@ -308,7 +308,7 @@ Conventions used on every page:
 | ⬜ | [O0263](O0263-allocation-site-alias.md) | Allocation-site alias analysis |
 | ⬜ | [O0264](O0264-live-range-splitting.md) | Live-range splitting around calls |
 | ⬜ | [O0265](O0265-vector-lane-coalescing.md) | Vector lane register coalescing |
-| ⬜ | [O0266](O0266-zero-length-intrinsic-folding.md) | Zero-length string intrinsic folding |
+| ✅ | [O0266](O0266-zero-length-intrinsic-folding.md) | Zero-length string intrinsic folding |
 | ⬜ | [O0267](O0267-modulo-scheduling.md) | Modulo scheduling |
 
 ### O — profile-guided optimization

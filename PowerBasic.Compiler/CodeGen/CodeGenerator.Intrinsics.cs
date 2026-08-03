@@ -7,8 +7,42 @@ namespace PowerBasic.Compiler.CodeGen;
 
 public sealed partial class CodeGenerator {
 
+  /// <summary>
+  /// O0266: is this a string-producing intrinsic whose result is provably the empty string - a
+  /// zero length argument - with every other operand side-effect-free? The length is zero either as
+  /// a literal or by the value-fact lattice (a provably-zero variable); the source string and any
+  /// index are required side-effect-free so that folding away the call skips nothing observable.
+  /// MID$(s$, i, 0) is "" for ANY start i (out-of-range included), matching rt_strmid.
+  /// </summary>
+  private bool IsZeroLengthStringIntrinsic(string name, IReadOnlyList<Expression> args) => name switch {
+    "LEFT$" or "RIGHT$" => args.Count == 2 && this.IsProvablyZero(args[1]) && IsEffectFreeArg(args[0]),
+    "MID$" => args.Count == 3 && this.IsProvablyZero(args[2]) && IsEffectFreeArg(args[0]) && IsEffectFreeArg(args[1]),
+    "SPACE$" => args.Count == 1 && this.IsProvablyZero(args[0]),
+    "STRING$" => args.Count == 2 && this.IsProvablyZero(args[0]) && IsEffectFreeArg(args[1]),
+    _ => false,
+  };
+
+  /// <summary>The value-fact range pins the expression to exactly zero (a literal or a proven-0 variable).</summary>
+  private bool IsProvablyZero(Expression e) => this.FactsOf(e).Range is { Lo: 0, Hi: 0 };
+
+  /// <summary>A read that cannot trap or observe: a literal, a named constant, or a plain variable.</summary>
+  private bool IsEffectFreeArg(Expression e) => e switch {
+    IntegerLiteralExpr or FloatLiteralExpr or StringLiteralExpr or NamedConstantExpr => true,
+    NameExpr n => model.VariableBindings.ContainsKey(n),
+    _ => false,
+  };
+
   private void EmitIntrinsic(Expression call, IReadOnlyList<Expression> args, IntrinsicInfo intrinsic) {
     var asm = this._asm;
+
+    // O0266: a string intrinsic whose length is provably zero yields the empty string (handle 0),
+    // with no runtime call - the same xor ax,ax an "" literal emits, so it composes with every
+    // empty-handle path (assignment, concat, O0181 comparison). Folded only when the source/index
+    // operands are side-effect-free, so nothing observable is skipped by not calling the intrinsic.
+    if (this.Optimize && this.IsZeroLengthStringIntrinsic(intrinsic.Name, args)) {
+      asm.Xor(Reg.AX, Reg.AX);
+      return;
+    }
 
     switch (intrinsic.Name) {
       case "LEN": {
