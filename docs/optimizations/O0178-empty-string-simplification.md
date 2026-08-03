@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — the `+ ""` concat identities are done; `s$ = ""` assignment and the zero-length intrinsics ([O0266](O0266-zero-length-intrinsic-folding.md)) remain |
+| **Status** | ✅ Done — the `+ ""` concat identities fold and `s$ = ""` is already allocation-free; the zero-length intrinsics are split out as [O0266](O0266-zero-length-intrinsic-folding.md) |
 | **Stage** | Emitter |
 | **Related** | [O0009](O0009-string-temp-economy.md), [O0024](O0024-multi-concat.md), [O0076](O0076-algebraic-identities.md), [O0181](O0181-empty-string-comparison.md) |
 | **Split into** | [O0266](O0266-zero-length-intrinsic-folding.md) |
@@ -68,17 +68,24 @@ Native-only, in `CodeGenerator.EmitStringBinary` / `FlattenStringConcat`. The IR
 back ends lower concatenation to `rt_strcat`/`rt_strcatn` calls whose empty
 operand the host C compiler folds away, so no dedicated IR pass is needed.
 
-## Still planned
+## `s$ = ""` assignment — already allocation-free
 
 ```asm
     ; s$ = ""
-    call    StrFree
-    mov     word ptr [s], 0000h
+    xor     ax, ax           ; the empty literal IS handle 0 - no StrMem
+    lea     bx, [s]
+    call    StrAssign        ; frees the old handle, stores 0
 ```
 
-- **`s$ = ""` assignment**: free the old handle and store 0 directly, instead of
-  allocating a zero-length temp and `StrAssign`ing it. This lives on the store
-  path (`EmitAssign`), not here.
+No temp is ever allocated: `EmitStringLiteral("")` emits `xor ax, ax`, and the
+store path hands that 0 to `StrAssign`, whose free-old-then-store *is* the
+`StrFree` + `mov [s],0` the "planned" sketch above wanted — releasing the old
+handle is necessary work, not overhead. (Skipping even that `StrAssign` when the
+slot is *provably* already empty is a known-empty value-fact refinement, not part
+of this identity.)
+
+## Split off
+
 - **Zero-length intrinsics** (`LEFT$(s$,0)`, `MID$(s$,i,0)`, `SPACE$(0)`,
-  `STRING$(0,c)` → the empty string, no call) — tracked as
+  `STRING$(0,c)` → the empty string, no call) — tracked separately as
   [O0266](O0266-zero-length-intrinsic-folding.md).
