@@ -34,6 +34,7 @@ DECLARE SUB ConstantStoredAsImmediate(BYVAL n%)
 DECLARE SUB MaxScanReadsEachElementOnce()
 DECLARE SUB BoundedMultiplyStaysOffTheFpu(BYVAL n%)
 DECLARE SUB HotAccumulatorWinsTheRegister(BYVAL n%)
+DECLARE SUB AndOrConditionShortCircuits(BYVAL n%)
 DECLARE SUB Callee(BYVAL fixed%, BYVAL varying%)
 DECLARE FUNCTION Doubled%(BYVAL v%)
 DECLARE FUNCTION PureSquare%(BYVAL v%)
@@ -64,6 +65,7 @@ ConstantStoredAsImmediate 4
 MaxScanReadsEachElementOnce
 BoundedMultiplyStaysOffTheFpu 9
 HotAccumulatorWinsTheRegister 7
+AndOrConditionShortCircuits 42
 END
 
 ' ---------------------------------------------------------------------------
@@ -521,4 +523,27 @@ SUB HotAccumulatorWinsTheRegister(BYVAL n%) NOINLINE
     acc% = acc% + scratch%
   NEXT i%
   PRINT "hotacc"; acc%
+END SUB
+
+' ---------------------------------------------------------------------------
+' @scenario AndOrConditionShortCircuits
+' @what     IF <cmp> AND <cmp> (and OR) as the whole condition
+' @expect   the comparisons short-circuit into conditional branches, the way a
+'           person writes IF x>0 AND x<100 by hand: CMP / JLE skip / CMP / JGE
+'           skip. PB's AND/OR are bitwise, but over comparison results (-1/0)
+'           they equal the logical operators, and pure operands have no side
+'           effect to skip - so materializing each comparison as -1/0, bitwise-
+'           ANDing them and testing the result (four instructions of truth-value
+'           machinery per operand, plus a PUSH/POP to stage the two) is all dead
+' @assert   absent mov-ax-minus1
+' @assert   absent push-ax-pop-ax
+' @assert   smaller-than-unoptimized
+' @status   done
+' ---------------------------------------------------------------------------
+SUB AndOrConditionShortCircuits(BYVAL n%) NOINLINE
+  DIM r%
+  r% = 0
+  IF n% > 0 AND n% < 100 THEN r% = r% + 1
+  IF n% = 5 OR n% = 42 THEN r% = r% + 10
+  PRINT "shortcircuit"; r%
 END SUB

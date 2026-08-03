@@ -817,6 +817,9 @@ public static class OptCommonSubexpr {
   // ---- pure static predicates shared with the (identical) emission walk ----
 
   /// <summary>True for an expression built only from scalar integer reads, literals, equates and integer operators.</summary>
+  /// <summary>A comparison operand a branch may skip on a short circuit: side-effect free, no call, no array index that could trap, no volatile intrinsic (shares <see cref="IsPure"/>).</summary>
+  internal static bool IsConditionOperandPure(Expression e, SemanticModel model) => IsPure(e, model);
+
   private static bool IsPure(Expression e, SemanticModel model) => e switch {
     IntegerLiteralExpr => true,
     NamedConstantExpr c => !(model.Equates.TryGetValue(c.Name, out var v) && v.Text != null),

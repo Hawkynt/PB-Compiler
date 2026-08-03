@@ -2035,6 +2035,25 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// </summary>
   private void EmitConditionalBranch(Expression condition, Label target, bool whenFalse) {
     var asm = this._asm;
+
+    // NOT flips the sense of the branch rather than materializing a truth value to invert
+    if (this.Optimize && condition is UnaryExpr { Op: UnaryOp.Not, Operand: { } inner }
+        && this.IsShortCircuitBoolean(inner)) {
+      this.EmitConditionalBranch(inner, target, !whenFalse);
+      return;
+    }
+
+    // Short-circuit a condition that is an AND/OR of pure comparisons into conditional branches,
+    // instead of materializing each comparison as -1/0, bitwise-combining them and testing. PB's
+    // AND/OR are bitwise, but over comparison results (always -1 or 0) that equals the logical
+    // operator, and pure operands have no side effect or trap to skip - so `IF x>0 AND x<100` is
+    // `CMP x,0 / JLE else / CMP x,100 / JGE else`, exactly what a person writes by hand.
+    if (this.Optimize && condition is BinaryExpr { Op: BinaryOp.And or BinaryOp.Or } logic
+        && this.IsShortCircuitBoolean(logic)) {
+      this.EmitShortCircuitBranch(logic, target, whenFalse);
+      return;
+    }
+
     if (this.Optimize && condition is BinaryExpr {
           Op: BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
             or BinaryOp.LessEqual or BinaryOp.GreaterEqual } comparison
@@ -2061,6 +2080,41 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // leaves truth in AX (0 / nonzero) and sets ZF accordingly
     this.EmitExpression(condition);
     this.EmitTruthTest(condition);
+  }
+
+  /// <summary>
+  /// True when a condition is an AND/OR/NOT tree of comparisons whose operands are all side-effect
+  /// free and cannot trap - the shape a branch may short-circuit. Both sides must be comparisons
+  /// (PB's AND/OR are bitwise; only over -1/0 comparison results do they equal logical operators),
+  /// and IsPure excludes calls, array indexing (a bounds trap the skipped side would raise) and
+  /// intrinsics, so skipping the second operand is observationally invisible.
+  /// </summary>
+  private bool IsShortCircuitBoolean(Expression e) => e switch {
+    BinaryExpr { Op: BinaryOp.And or BinaryOp.Or } b => this.IsShortCircuitBoolean(b.Left) && this.IsShortCircuitBoolean(b.Right),
+    UnaryExpr { Op: UnaryOp.Not } u => this.IsShortCircuitBoolean(u.Operand),
+    BinaryExpr { Op: BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
+      or BinaryOp.LessEqual or BinaryOp.GreaterEqual } c => OptCommonSubexpr.IsConditionOperandPure(c.Left, model)
+        && OptCommonSubexpr.IsConditionOperandPure(c.Right, model),
+    _ => false,
+  };
+
+  /// <summary>Emits short-circuit branches for an AND/OR of pure comparisons: jump to <paramref name="target"/> when the whole expression's truth value is <c>!whenFalse</c>.</summary>
+  private void EmitShortCircuitBranch(BinaryExpr logic, Label target, bool whenFalse) {
+    var asm = this._asm;
+    var isAnd = logic.Op == BinaryOp.And;
+    // AND is false as soon as one side is false; OR is true as soon as one side is true. When the
+    // wanted outcome matches that "decides early" polarity, both sides branch to the target; when
+    // it is the opposite, the first side jumps PAST the second (to a fall-through skip) on an early
+    // decision and the second side carries the branch.
+    if (isAnd == whenFalse) {   // AND-when-false, or OR-when-true: each side branches to target
+      this.EmitConditionalBranch(logic.Left, target, whenFalse);
+      this.EmitConditionalBranch(logic.Right, target, whenFalse);
+    } else {
+      var skip = asm.DefineLabel();
+      this.EmitConditionalBranch(logic.Left, skip, !whenFalse);   // early decision: skip the second side
+      this.EmitConditionalBranch(logic.Right, target, whenFalse);
+      asm.MarkLabel(skip);
+    }
   }
 
   /// <summary>Sets ZF from the value in AX (or DX:AX, or st(0)) according to its type.</summary>

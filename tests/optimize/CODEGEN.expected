@@ -25,3 +25,4 @@ constimm-32767  32767
 maxscan 22
 boundedmul 7380
 hotacc 346
+shortcircuit 11
