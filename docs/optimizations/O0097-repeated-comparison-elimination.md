@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Implemented via the range lattice — testing the same condition twice on one path folds. Inside `IF x < 10 THEN`, the lattice refines `x` to `[..,9]`, so a nested `IF x < 10` is proven always-true (its compare eliminated) and `IF x >= 10` always-false (its arm dropped). Verified in the emitted x86 (one `CMP` where the source has three) |
 | **Stage** | Mid-end (dominator-scoped) |
 | **Related** | [O0016](O0016-value-fact-analysis.md), [O0045](O0045-ir-correlated-value-propagation.md), [O0081](O0081-flag-reuse.md) |
 

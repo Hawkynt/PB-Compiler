@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned (the flat `AND`/`OR` tree case is done — [O0032](O0032-short-circuit-conditions.md)) |
+| **Status** | ✅ Implemented — the nested form already collapses. `IF a>0 THEN IF b>0 THEN body` compiles to `CMP a,0 / JLE end / CMP b,0 / JLE end / body` with both arms targeting the one exit label (no intermediate block, no arm-closing jump), because branch fusion, fall-through and jump threading merge the nest just as [O0032](O0032-short-circuit-conditions.md) merges the operator form. Verified in the emitted x86 |
 | **Stage** | Emitter |
 | **Related** | [O0032](O0032-short-circuit-conditions.md), [O0031](O0031-branch-fusion.md), [O0097](O0097-repeated-comparison-elimination.md) |
 

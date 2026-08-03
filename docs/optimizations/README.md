@@ -120,7 +120,7 @@ Conventions used on every page:
 | ⬜ | [O0085](O0085-copy-coalescing.md) | Register copy coalescing |
 | ⬜ | [O0086](O0086-spill-slot-reuse.md) | Spill-slot reuse |
 | ⬜ | [O0087](O0087-rematerialization.md) | Rematerialization |
-| ⬜ | [O0088](O0088-boolean-materialization-sbb.md) | Branchless truth values |
+| ✅ | [O0088](O0088-boolean-materialization-sbb.md) | Branchless truth values |
 | ⬜ | [O0089](O0089-extension-elimination.md) | Extension elimination |
 | ⬜ | [O0090](O0090-demanded-bits.md) | Demanded bits |
 | ⬜ | [O0091](O0091-partial-register-hazards.md) | Partial-register hazards |
@@ -128,8 +128,8 @@ Conventions used on every page:
 | ⬜ | [O0093](O0093-jump-threading.md) | Jump threading |
 | ⬜ | [O0094](O0094-branch-inversion.md) | Branch inversion |
 | ⬜ | [O0095](O0095-branch-tail-merging.md) | Branch-tail merging |
-| ⬜ | [O0096](O0096-condition-combining.md) | Nested condition combining |
-| ⬜ | [O0097](O0097-repeated-comparison-elimination.md) | Repeated comparison elimination |
+| ✅ | [O0096](O0096-condition-combining.md) | Nested condition combining |
+| ✅ | [O0097](O0097-repeated-comparison-elimination.md) | Repeated comparison elimination |
 | ⬜ | [O0098](O0098-balanced-decision-tree.md) | Balanced decision tree |
 | ⬜ | [O0099](O0099-bit-test-dispatch.md) | Bit-test dispatch |
 | ⬜ | [O0100](O0100-perfect-hash-dispatch.md) | Perfect-hash dispatch |

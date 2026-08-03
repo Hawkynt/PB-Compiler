@@ -602,6 +602,23 @@ public sealed class OptimizerTests {
   // F7 E3 = MUL BX (group 3 /4) - the narrowed unsigned 16x16 -> 32 multiply
   private static int CountMulBx(byte[] image) => CountPair(image, 0xF7, 0xE3);
 
+  [Test]
+  public void Emit_GivenUnsignedComparisonAsValue_WhenPb36_ThenBranchlessSbb() {
+    // O0088: f = (a < b) over WORD operands used as a value tests the carry the CMP already set,
+    // so SBB AX,AX (19 C0) turns it into PB's -1/0 in two bytes rather than MOV -1 / Jcc / MOV 0.
+    // Module WORDs (not params) so nothing is IPCP-folded; INPUT makes them genuinely runtime.
+    const string source = "DIM a AS WORD, b AS WORD, f AS INTEGER\nINPUT a\nINPUT b\nf = (a < b)\nPRINT f\nEND";
+    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    var optimized = new CodeGenerator(model).EmitExecutable();
+    var plain = new CodeGenerator(model) { Optimize = false }.EmitExecutable();
+    Assert.Multiple(() => {
+      Assert.That(CountPair(optimized, 0x19, 0xC0), Is.GreaterThan(0), "SBB AX,AX materializes the unsigned-< truth value");
+      Assert.That(CountPair(plain, 0x19, 0xC0), Is.Zero, "the unoptimized path keeps the MOV -1 / Jcc / MOV 0 branch");
+      Assert.That(CountPair(plain, 0xB8, 0xFF), Is.GreaterThan(0), "...which materializes -1 with MOV AX,-1");
+    });
+  }
+
   private static int CountPair(byte[] image, byte first, byte second) {
     var count = 0;
     for (var i = 0; i + 1 < image.Length; ++i)

@@ -1150,6 +1150,16 @@ public sealed partial class CodeGenerator {
       asm.Neg(Reg.AX);
       return;
     }
+    // O0088 8086 branchless truth for the carry-only conditions: SBB AX,AX = -CF, so an unsigned
+    // < materializes as two bytes (SBB) instead of eight (MOV -1 / Jcc / MOV 0); the >= complement
+    // negates it. SBB reads AX but AX-AX cancels, leaving just -CF, so the prior value is irrelevant.
+    // Only unsigned </>= are pure-carry; the signed and ZF-dependent conditions keep the branch form.
+    if (this.Optimize && condition is Condition.Below or Condition.AboveOrEqual) {
+      asm.Sbb(Reg.AX, Reg.AX);                 // AX = -1 when CF (below), 0 when above-or-equal
+      if (condition == Condition.AboveOrEqual)
+        asm.Not(Reg.AX);                       // invert: -1 iff >=
+      return;
+    }
     var done = asm.DefineLabel();
     asm.Mov(Reg.AX, -1);    // MOV leaves flags intact
     jump(asm)(done);

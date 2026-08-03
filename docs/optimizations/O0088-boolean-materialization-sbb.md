@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned for the 8086 `SBB` idiom (`SETcc` is already used under [C0001](C0001-386-codegen.md)) |
+| **Status** | ✅ Implemented for the 8086 `SBB` idiom (`EmitInt16CompareResult`): an unsigned `<`/`>=` used as a value materializes `CMP; SBB AX,AX` (two bytes, plus a `NOT` for `>=`) instead of the eight-byte `MOV -1 / Jcc / MOV 0`. **Target-specific**: the signed and ZF-dependent conditions keep the branch form; `$CPU 80386`+ uses the `SETcc` sequence already; the C/LLVM back ends express the comparison natively so their downstream compiler selects the branchless form. Oracle-verified byte-identical vs PBC 3.50 |
 | **Stage** | Emitter |
 | **Related** | [O0031](O0031-branch-fusion.md), [O0032](O0032-short-circuit-conditions.md), [C0001](C0001-386-codegen.md) |
 
