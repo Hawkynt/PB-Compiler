@@ -696,6 +696,10 @@ public sealed partial class CodeGenerator {
       if (e is BinaryExpr { Op: BinaryOp.Add or BinaryOp.Concat } node
           && model.TypeOf(node.Left) is StringType && model.TypeOf(node.Right) is StringType)
         return Collect(node.Left) && Collect(node.Right);
+      // O0178: an empty-literal operand contributes nothing - drop it from the chain (it has no
+      // side effect) rather than staging a zero-length handle into rt_strcatn
+      if (e is StringLiteralExpr { Value.Length: 0 })
+        return true;
       // A leaf is only safe to pre-stage if evaluating a LATER operand cannot invalidate this one's
       // handle: a literal or a plain string variable yields a fresh, independent, freeable handle.
       // A call/intrinsic (function or LEFT$/MID$/...), array element, member or pointer deref reuses a
@@ -734,6 +738,19 @@ public sealed partial class CodeGenerator {
     if (KindOf(model.TypeOf(b.Left)) != ValueKind.Str || KindOf(model.TypeOf(b.Right)) != ValueKind.Str) {
       this.Unsupported(b, "mixed string/numeric operands");
       return;
+    }
+
+    // O0178 empty-concat identity: x$ + "" and "" + x$ are x$. Reading any string expression yields
+    // an OWNED handle (a variable StrDup's, a literal/call/temp is already owned) - exactly what
+    // StrCat(x$, "") produces, but without the extra copy-and-free of a zero-length operand. The
+    // empty literal has no side effect, so dropping it preserves PB's evaluation order either way.
+    if (this.Optimize && b.Op is BinaryOp.Add or BinaryOp.Concat) {
+      var other = b.Right is StringLiteralExpr { Value.Length: 0 } ? b.Left
+        : b.Left is StringLiteralExpr { Value.Length: 0 } ? b.Right : null;
+      if (other != null && model.TypeOf(other) is StringType) {
+        this.EmitExpression(other);
+        return;
+      }
     }
 
     // pb36 O24 multi-concat: a chain/tree of three or more string concatenations builds with a

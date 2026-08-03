@@ -6,6 +6,8 @@ the equivalent BASIC the transformed program behaves like.
 
 - ✅ **implemented** — in the compiler today and covered by the differential
   oracle, a DOSBox execution test, or an assembler unit test.
+- 🟡 **partial** — part of the pass ships (and is tested); the header table says
+  which cases are done and which remain.
 - ⬜ **planned** — a roadmap idea. The "after" code on those pages is what the
   pass *would* emit; the compiler does not do it yet.
 
@@ -210,7 +212,7 @@ Conventions used on every page:
 | ⬜ | [O0175](O0175-critical-path-scheduling.md) | Latency & port scheduling |
 | ⬜ | [O0176](O0176-register-pressure-scheduling.md) | Pressure-aware scheduling |
 | ⬜ | [O0177](O0177-cycle-estimate-battery.md) | Cycle-estimate assertions (tests) |
-| ⬜ | [O0178](O0178-empty-string-simplification.md) | Empty-string identities |
+| 🟡 | [O0178](O0178-empty-string-simplification.md) | Empty-string identities |
 | ⬜ | [O0179](O0179-string-self-assignment.md) | String self-assignment |
 | ⬜ | [O0180](O0180-string-length-caching.md) | `LEN` caching |
 | ✅ | [O0181](O0181-empty-string-comparison.md) | Empty-string comparison |

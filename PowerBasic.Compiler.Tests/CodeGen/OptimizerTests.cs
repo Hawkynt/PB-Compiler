@@ -603,6 +603,16 @@ public sealed class OptimizerTests {
   private static int CountMulBx(byte[] image) => CountPair(image, 0xF7, 0xE3);
 
   [Test]
+  public void Emit_GivenConcatWithEmptyLiteral_WhenPb36_ThenNoStrCatCall() {
+    // O0178: t = a$ + "" is just t = a$ (reading a$ already yields an owned copy), so no StrCat.
+    // The same shape with a non-empty literal keeps the concat, so its image is larger.
+    var empty = Compile("DIM a AS STRING, t AS STRING\nLINE INPUT a\nt = a + \"\"\nPRINT t\nEND", Dialect.Pb36);
+    var nonEmpty = Compile("DIM a AS STRING, t AS STRING\nLINE INPUT a\nt = a + \"x\"\nPRINT t\nEND", Dialect.Pb36);
+    Assert.That(empty.Length, Is.LessThan(nonEmpty.Length),
+      "a$ + \"\" drops to a plain copy (no StrCat); a$ + \"x\" keeps the concat");
+  }
+
+  [Test]
   public void Emit_GivenEmptyStringComparison_WhenPb36_ThenHandleTestNotStrCmp() {
     // O0181: s = "" is emptiness - a handle test - so rt_strcmp is not called (and, being the only
     // string comparison, is trimmed from the image). The same shape against a non-empty literal
