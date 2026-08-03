@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Done |
 | **Stage** | Emitter |
 | **Related** | [O0003](O0003-common-subexpression-elimination.md), [O0181](O0181-empty-string-comparison.md), [R0003](R0003-string-engine.md) |
 
@@ -27,23 +27,40 @@ NEXT
 IF LEN(s$) > 0 AND LEN(s$) < 100 THEN PRINT "ok"    ' twice
 ```
 
-## Today
+## Now
 
-Each `LEN` is a call into the string manager.
+The first `LEN(s$)` defines a CSE slot; every later read of the *same,
+unmodified* string reloads it. `LEN(s) + LEN(s) + LEN(s)` calls `rt_len` **once**
+instead of three times.
 
-## Planned
+`CacheableLenSymbol` (in `OptCommonSubexpr`) classifies `LEN(bareStringVar)` over
+a plain, non-static dynamic string as a cacheable integer leaf — keyed by the
+string symbol, exactly the treatment the array-element read gets
+(`CacheableArrayReadSymbol`). `LEN` is also made **barrier-free** so a condition
+or statement holding it is scanned. The `LEN` result is a `LONG`, so it reuses
+the existing wide (4-byte) CSE slot machinery — no emitter change was needed.
 
-The first `LEN(s$)` defines a CSE slot; the second reloads it. Any write to
-`s$`, any call that could touch it, or a heap compaction invalidates the slot.
+### Invalidation
 
-## What it needs
+- A **write to the string** (`s$ = …`) drops the slot: `InvalidateAfterWrite`
+  and `CollectWrites` (for cross-block / loop retention) both recognize a
+  dynamic-string target now, so a length cached before a reassignment — or one
+  inherited into a loop body that reassigns the string — recomputes.
+- Any **barrier** (a call, `INPUT`/`LINE INPUT`, `MID$`/`LSET` statement, pointer
+  write) ends the straight-line run and clears the cache, so nothing that could
+  change a length survives unseen.
+- **Heap compaction is not a hazard**: it moves a string's data but never its
+  *length*, which is what makes the length safe to cache where the address would
+  not be.
 
-- `LEN` over a **bare string variable** classified as a cacheable pure leaf,
-  keyed by the variable — the same treatment the array-element read got
-  (`CacheableArrayReadSymbol`, `DIFF69.BAS`).
-- Invalidation on every write to the string, on any barrier, and on anything
-  that can move the heap — the string runtime's compaction does not change a
-  *length*, which is what makes the length safe to cache where the *address*
-  would not be.
-- `LEN` over a fixed-length or ASCIIZ buffer is a compile-time constant and
-  should fold outright ([O0001](O0001-constant-folding.md)).
+Verified by a self-differential run (optimized == the golden-faithful
+unoptimized build) over the tricky cases — cache-then-reassign, a branch that
+rewrites the string past an `IF` merge, and a loop body that grows the string
+each pass — plus a regression test asserting the repeated-`LEN` image shrinks.
+
+`LEN` over a **fixed-length or ASCIIZ** buffer is already a compile-time constant
+(`EmitIntrinsic` emits `mov ax, <size>`), so it never reaches this path.
+
+Native-only, in the `CodeGen` CSE. The IR back ends lower `LEN` to an `rt_len`
+call the host C compiler's own CSE/GVN collapses when the string is provably
+unchanged, so no dedicated IR pass is needed.

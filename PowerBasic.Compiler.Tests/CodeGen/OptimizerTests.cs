@@ -603,6 +603,19 @@ public sealed class OptimizerTests {
   private static int CountMulBx(byte[] image) => CountPair(image, 0xF7, 0xE3);
 
   [Test]
+  public void Emit_GivenRepeatedLenOfSameString_WhenPb36_ThenCachedSmallerImage() {
+    // O0180: LEN(s$) + LEN(s$) + LEN(s$) reads the descriptor once and reloads a slot for the rest,
+    // so the optimized image is smaller than reading a fresh LEN each time (which the unoptimized
+    // build does). A single LEN can't cache, so its optimized/unoptimized sizes are the baseline.
+    const string three = "DIM s AS STRING, n AS LONG\nLINE INPUT s\nn = LEN(s) + LEN(s) + LEN(s)\nPRINT n\nEND";
+    var unit = Parser.Parse(Lexer.Tokenize(three, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    var opt = new CodeGenerator(model).EmitExecutable();
+    var noOpt = new CodeGenerator(model) { Optimize = false }.EmitExecutable();
+    Assert.That(opt.Length, Is.LessThan(noOpt.Length), "repeated LEN(s$) caches to one descriptor read");
+  }
+
+  [Test]
   public void Emit_GivenZeroLengthLeftDollar_WhenPb36_ThenFoldedToEmptyNoCall() {
     // O0266: LEFT$(a$, 0) is provably the empty string, so no rt_strleft call (folded to xor ax,ax).
     // The same shape with a non-zero length keeps the call, so its image is larger.

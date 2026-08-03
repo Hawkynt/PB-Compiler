@@ -152,6 +152,10 @@ public static class OptCommonSubexpr {
         case AssignStmt a:
           if (ScalarSymbolOfStatic(a.Target, model) is { } sym)
             written.Add(sym);
+          // O0180: reassigning a string changes its LEN, so a retained length cache reading it
+          // must be invalidated across a merge / into a loop body whose branch wrote the string
+          else if (StringVarSymbol(a.Target, model) is { } strSym)
+            written.Add(strSym);
           // an array-element write touches a cached array read (redundant-load
           // elimination), so record the array symbol too - a value reading it must
           // not be retained across a merge whose branch wrote the array
@@ -222,6 +226,35 @@ public static class OptCommonSubexpr {
         return null;
     return sym;
   }
+
+  /// <summary>
+  /// O0180: the dynamic-string variable whose LEN <paramref name="e"/> reads, when that read is
+  /// safe to cache as a common subexpression - <c>LEN(bareStringVar)</c> over a plain, non-static
+  /// StringType/FlexType. null for a fixed-length/ASCIIZ buffer (LEN there is a compile-time
+  /// constant the emitter already folds), a static-storage string (its writes are not tracked by
+  /// the invalidation set), an indexed / member / expression argument, or any other intrinsic. The
+  /// cached length is invalidated by any write to the string and by any barrier; the string
+  /// runtime's heap compaction moves the data but never changes a length, which is exactly what
+  /// makes the length safe to cache where the address would not be.
+  /// </summary>
+  private static VariableSymbol? CacheableLenSymbol(Expression e, SemanticModel model) {
+    if (e is not CallOrIndexExpr c
+        || !model.IntrinsicBindings.TryGetValue(e, out var info)
+        || !info.Name.Equals("LEN", StringComparison.OrdinalIgnoreCase)
+        || c.Arguments.Count != 1)
+      return null;
+    var arg = c.Arguments[0];
+    if (arg is not NameExpr || model.IntrinsicBindings.ContainsKey(arg)
+        || !model.VariableBindings.TryGetValue(arg, out var sym))
+      return null;
+    return sym.Type is (StringType or FlexType) && sym.Storage is not VariableStorage.Static ? sym : null;
+  }
+
+  /// <summary>The dynamic-string variable a bare NameExpr target designates (non-static), else null - a write to it changes its LEN.</summary>
+  private static VariableSymbol? StringVarSymbol(Expression e, SemanticModel model)
+    => e is NameExpr && model.VariableBindings.TryGetValue(e, out var s)
+       && s.Type is StringType or FlexType && s.Storage is not VariableStorage.Static
+       ? s : null;
 
   /// <summary>
   /// Walks a single statement's expressions for LICM candidates. For each
@@ -600,6 +633,10 @@ public static class OptCommonSubexpr {
       // (integer mode only - modular trees never have an array read as a leaf)
       if (mode == Mode.Integer && CacheableArrayReadSymbol(e, model) != null)
         return true;
+      // O0180: a repeated LEN over an unmodified dynamic string is likewise a cacheable leaf -
+      // the descriptor read (LEN result is LONG) reloads from its slot instead of recomputing
+      if (mode == Mode.Integer && CacheableLenSymbol(e, model) != null)
+        return true;
       if (e is not (BinaryExpr or UnaryExpr))
         return false;
       // A subtree the emitter will constant-fold must never take a slot. It would never be
@@ -659,6 +696,8 @@ public static class OptCommonSubexpr {
       // already routed through the barrier path by IsStraightLineSafe
       if (this.ScalarSymbolOf(target) is { } symbol)
         this.Invalidate(symbol);
+      else if (StringVarSymbol(target, model) is { } strSym)   // O0180: reassigning s$ changes LEN(s$)
+        this.Invalidate(strSym);
       else if (target is CallOrIndexExpr && model.VariableBindings.TryGetValue(target, out var arr)
           && arr.Type is ArrayType)
         this.Invalidate(arr);
@@ -799,6 +838,10 @@ public static class OptCommonSubexpr {
             this.AppendKey(sb, arg);
           sb.Append(']');
           break;
+        // O0180: LEN(strVar) keyed by the string symbol - two reads of the same unmodified string match
+        case CallOrIndexExpr when CacheableLenSymbol(e, model) is { } str:
+          sb.Append('L').Append(this.IdOf(str)).Append(';');
+          break;
         default:
           sb.Append('?').Append(e.GetHashCode()).Append(';');
           break;
@@ -854,6 +897,10 @@ public static class OptCommonSubexpr {
       case CallOrIndexExpr call when model.VariableBindings.ContainsKey(call):
         // a variable array read - barrier-free iff its indices are
         return call.Arguments.All(a => IsBarrierFree(a, model));
+      case CallOrIndexExpr when CacheableLenSymbol(e, model) != null:
+        // O0180: LEN of a bare dynamic string reads only the descriptor - no call into user code,
+        // no aliasing store; treat it as barrier-free so a condition/statement holding it is scanned
+        return true;
       default:
         return false; // function/intrinsic calls, pointer deref, member access
     }

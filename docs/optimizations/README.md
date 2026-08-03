@@ -212,7 +212,7 @@ Conventions used on every page:
 | ⬜ | [O0177](O0177-cycle-estimate-battery.md) | Cycle-estimate assertions (tests) |
 | ✅ | [O0178](O0178-empty-string-simplification.md) | Empty-string identities |
 | ⬜ | [O0179](O0179-string-self-assignment.md) | String self-assignment |
-| ⬜ | [O0180](O0180-string-length-caching.md) | `LEN` caching |
+| ✅ | [O0180](O0180-string-length-caching.md) | `LEN` caching |
 | ✅ | [O0181](O0181-empty-string-comparison.md) | Empty-string comparison |
 | ⬜ | [O0182](O0182-small-array-scalar-replacement.md) | Small array scalar replacement |
 
