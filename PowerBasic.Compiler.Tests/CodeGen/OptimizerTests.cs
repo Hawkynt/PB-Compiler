@@ -603,6 +603,24 @@ public sealed class OptimizerTests {
   private static int CountMulBx(byte[] image) => CountPair(image, 0xF7, 0xE3);
 
   [Test]
+  public void Emit_GivenPreTestedDoLoop_WhenPb36Speed_ThenRotatedConditionAtBothEnds() {
+    // O0062: under $OPTIMIZE SPEED a pre-tested DO WHILE is rotated to an entry guard plus a bottom
+    // test, so the loop bound is compared at BOTH ends (twice) and the per-iteration JMP disappears.
+    // A PRINT body keeps the loop off the register-counter path, so only rotation differs.
+    static int CmpBound(byte[] img) {   // cmp ax, 03E8h = 3D E8 03
+      var n = 0;
+      for (var i = 0; i < img.Length - 2; ++i)
+        if (img[i] == 0x3D && img[i + 1] == 0xE8 && img[i + 2] == 0x03)
+          ++n;
+      return n;
+    }
+    const string loop = "DIM i AS INTEGER\nLINE INPUT z$\ni = VAL(z$)\nDO WHILE i < 1000\nPRINT i\ni = i + 1\nLOOP\nEND";
+    var speed = Compile("$OPTIMIZE SPEED\n" + loop, Dialect.Pb36);
+    var plain = Compile(loop, Dialect.Pb36);
+    Assert.That(CmpBound(speed), Is.GreaterThan(CmpBound(plain)), "the rotated loop compares its bound at entry and at the bottom");
+  }
+
+  [Test]
   public void Emit_GivenCoveredArrayFill_WhenPb36_ThenAllocatesWithoutZeroFill() {
     // O0068: DIM a(1 TO n) immediately followed by FOR i=1 TO n : a(i)=expr writes every element
     // before any read, so the allocation skips its zero-fill (rt_arr_alloc_nz, whose distinctive

@@ -2715,6 +2715,36 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // forbids checked arithmetic, so a zero-trip pre-test loop never traps on the hoist.
     this.EmitLicmPreheader(d.Body, null);
 
+    this.EmitDoLoopControl(d, top, continueLabel, done);
+    this._exitDo.Pop();
+    this._iterateDo.Pop();
+    this._iterateAny.Pop();
+  }
+
+  /// <summary>
+  /// Emits a DO loop's test/body/test control flow between the given labels (shared by the plain and
+  /// the SI/DI-register-resident paths). O0062 loop rotation: under $OPTIMIZE SPEED a pre-tested loop
+  /// (a PreCondition, no PostCondition) becomes one entry guard plus a bottom test, dropping the
+  /// per-iteration unconditional JMP. The condition is evaluated the same N+1 times - one entry plus
+  /// one after each body pass - so any side effect is preserved exactly; only the jump disappears.
+  /// Every other shape keeps the top test and the jump-back.
+  /// </summary>
+  private void EmitDoLoopControl(DoLoopStmt d, Label top, Label cont, Label done) {
+    var asm = this._asm;
+    if (this.Optimize && this.OptimizeSpeed && d.PreCondition != null && d.PostCondition == null) {
+      // enter the loop only if the condition holds (While: skip when false; Until: skip when true)
+      this.EmitConditionalBranch(d.PreCondition, done, whenFalse: d.PreTest == LoopTestKind.While);
+      this.AlignLoopTop();
+      asm.MarkLabel(top);
+      foreach (var s in d.Body)
+        this.EmitStatement(s);
+      asm.MarkLabel(cont);
+      // repeat while the condition still holds (While: loop when true; Until: loop when false)
+      this.EmitConditionalBranch(d.PreCondition, top, whenFalse: d.PreTest != LoopTestKind.While);
+      asm.MarkLabel(done);
+      return;
+    }
+
     this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
     asm.MarkLabel(top);
     if (d.PreCondition != null) {
@@ -2725,7 +2755,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     foreach (var s in d.Body)
       this.EmitStatement(s);
 
-    asm.MarkLabel(continueLabel);
+    asm.MarkLabel(cont);
     if (d.PostCondition != null) {
       // While: repeat while true; Until: repeat while false
       this.EmitConditionalBranch(d.PostCondition, top, whenFalse: d.PostTest != LoopTestKind.While);
@@ -2733,9 +2763,6 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       asm.Jmp(top);
 
     asm.MarkLabel(done);
-    this._exitDo.Pop();
-    this._iterateDo.Pop();
-    this._iterateAny.Pop();
   }
 
   private void EmitSelect(SelectStmt s) {

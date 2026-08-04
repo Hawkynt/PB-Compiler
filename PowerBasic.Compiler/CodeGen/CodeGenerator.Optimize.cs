@@ -1470,21 +1470,7 @@ public sealed partial class CodeGenerator {
     this._iterateDo.Push(cont);
     this._iterateAny.Push(cont);
 
-    this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
-    asm.MarkLabel(top);
-    if (d.PreCondition != null) {
-      // While: leave when false; Until: leave when true
-      this.EmitConditionalBranch(d.PreCondition, done, whenFalse: d.PreTest == LoopTestKind.While);
-    }
-    foreach (var s in d.Body)
-      this.EmitStatement(s);
-    asm.MarkLabel(cont);
-    if (d.PostCondition != null) {
-      // While: repeat while true; Until: repeat while false
-      this.EmitConditionalBranch(d.PostCondition, top, whenFalse: d.PostTest != LoopTestKind.While);
-    } else
-      asm.Jmp(top);
-    asm.MarkLabel(done);
+    this.EmitDoLoopControl(d, top, cont, done);   // O0062: shared control (rotates a pre-tested loop)
 
     this._exitDo.Pop();
     this._iterateDo.Pop();
