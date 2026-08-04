@@ -158,12 +158,14 @@ public sealed class InstructionSelectorTests {
   }
 
   [Test]
-  public void TrySelect_GivenFloatOrDivision_ThenDeclines() {
-    var fn = new IrFunction("D", IrType.I16, [new IrArgument(IrType.I16, 0)]);
+  public void TrySelect_GivenDivisionByARuntimeValue_ThenDeclines() {
+    // a constant divisor cannot be zero and so needs no Error-11 guard; a runtime one does, and the
+    // guard needs the runtime's error label
+    var fn = new IrFunction("D", IrType.I16, [new IrArgument(IrType.I16, 0), new IrArgument(IrType.I16, 1)]);
     var entry = fn.CreateBlock("entry");
-    var div = entry.Append(new IrBinary(IrBinaryOp.SDiv, fn.Parameters[0], new IrConstantInt(IrType.I16, 2)));
+    var div = entry.Append(new IrBinary(IrBinaryOp.SDiv, fn.Parameters[0], fn.Parameters[1]));
     entry.Append(new IrRet(div));
 
-    Assert.That(InstructionSelector.TrySelect(fn), Is.Null, "SDiv is not in this increment");
+    Assert.That(InstructionSelector.TrySelect(fn), Is.Null, "a runtime divisor may be zero");
   }
 }

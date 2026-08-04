@@ -258,8 +258,10 @@ public sealed class InstructionSelector {
   private bool SelectBinary(IrBinary bin, MBlock block) {
     if (bin.IsFloatOp)
       return this.Decline($"binary: float {bin.Op}");
+    if (bin.Op is IrBinaryOp.SDiv or IrBinaryOp.SRem)
+      return this.SelectDivide(bin, block);
     if (!TryMapBinary(bin.Op, out var opcode))
-      return this.Decline($"binary: {bin.Op}");   // division / remainder - not in this increment
+      return this.Decline($"binary: {bin.Op}");   // unsigned divide / remainder - not in this increment
     if (IsWide(bin.Type))
       return this.SelectWideBinary(bin, opcode, block);
 
@@ -343,6 +345,55 @@ public sealed class InstructionSelector {
         new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: true, WritesFlags: true,
           ReadsMemory: false, WritesMemory: false)));
     }
+    return true;
+  }
+
+  /// <summary>
+  /// A signed 16-bit divide or remainder. <c>IDIV</c> is fixed to <c>DX:AX</c>: the dividend is
+  /// sign-extended into the pair by <c>CWD</c>, the quotient comes back in <c>AX</c> and the
+  /// remainder in <c>DX</c>.
+  ///
+  /// PowerBASIC raises Error 11 on a zero divisor, and that guard is part of the language rather than
+  /// an <c>$ERROR</c> option - so only a <b>non-zero compile-time constant</b> divisor is selected
+  /// here, which is precisely the case where the direct emitter also drops the guard (O0220): a
+  /// constant that cannot be zero cannot trap. A runtime divisor needs the guard, and the guard needs
+  /// the runtime's error label, so it waits for that bridge rather than emitting a divide that would
+  /// fault where the program should report.
+  /// </summary>
+  private bool SelectDivide(IrBinary bin, MBlock block) {
+    if (IsWide(bin.Type) || bin.Type.Bits != 16)
+      return this.Decline($"binary: {bin.Op} on {bin.Type} (16-bit only)");
+    if (bin.Rhs is not IrConstantInt { Value: var divisor } || divisor == 0)
+      return this.Decline($"binary: {bin.Op} by a runtime divisor (needs the Error-11 guard)");
+    if (divisor == -1)
+      return this.Decline($"binary: {bin.Op} by -1 (MININT / -1 overflows IDIV)");
+    if (!this.TryOperand(bin.Lhs, out var dividend))
+      return false;
+
+    // the divisor must be a register or memory - IDIV has no immediate form
+    var divisorReg = new MOperand.Register(this.FreshVreg(bin.Type));
+    var divisorImm = new MOperand.Immediate(divisor);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [divisorReg, divisorImm], MovEffect(divisorReg, divisorImm)));
+
+    // AX is written here, not by an allocated vreg - so it is declared a clobber too, which is what
+    // keeps the allocator from parking some other live value (or the dividend itself) in AX
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [ax, dividend], MovEffect(ax, dividend),
+      condition: null, clobbers: [Reg.AX, Reg.DX]));
+    this._current.Instructions.Add(new MInstr(MOpcode.Cwd, [],
+      new MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: false),
+      condition: null, clobbers: [Reg.AX, Reg.DX]));
+    this._current.Instructions.Add(new MInstr(MOpcode.Idiv, [divisorReg],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false),
+      condition: null, clobbers: [Reg.AX, Reg.DX]));
+
+    // quotient in AX, remainder in DX
+    var dest = this.FreshVreg(bin.Type);
+    this._vregs[bin] = dest;
+    var destOp = new MOperand.Register(dest);
+    var result = new MOperand.Register(MReg.Physical_(bin.Op == IrBinaryOp.SDiv ? Reg.AX : Reg.DX, MRegSize.Word));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, result], MovEffect(destOp, result)));
     return true;
   }
 

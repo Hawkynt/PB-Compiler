@@ -24,8 +24,9 @@ public sealed class BackendCoverageTests {
   private static readonly string _repoRoot =
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 
-  private sealed record Census(int Functions, int Selected, Dictionary<string, int> Declines,
-    int ProgramsLowered, int ProgramsTotal, Dictionary<string, int> LoweringDeclines);
+  private sealed record Census(int Functions, int Selected, int Allocated, Dictionary<string, int> Declines,
+    int ProgramsLowered, int ProgramsTotal, Dictionary<string, int> LoweringDeclines,
+    Dictionary<string, int> ProcedureDeclines);
 
   /// <summary>
   /// Runs the back end's own pipeline over every battery program and tallies what selects.
@@ -36,10 +37,13 @@ public sealed class BackendCoverageTests {
   private static Census Measure() {
     var declines = new Dictionary<string, int>(StringComparer.Ordinal);
     var loweringDeclines = new Dictionary<string, int>(StringComparer.Ordinal);
-    int functions = 0, selected = 0, lowered = 0, total = 0;
+    // the same tally restricted to named procedures: routing a module body (main) additionally needs
+    // the whole startup/exit sequence, so what blocks a PROCEDURE is the cheaper next increment
+    var procedureDeclines = new Dictionary<string, int>(StringComparer.Ordinal);
+    int functions = 0, selected = 0, allocated = 0, lowered = 0, total = 0;
     var dir = Path.Combine(_repoRoot, "tests");
     if (!Directory.Exists(dir))
-      return new(0, 0, declines, 0, 0, loweringDeclines);
+      return new(0, 0, 0, declines, 0, 0, loweringDeclines, procedureDeclines);
 
     // the whole corpus: the golden battery plus tests/diff, the 100+ differential programs
     foreach (var file in Directory.EnumerateFiles(dir, "*.BAS", SearchOption.AllDirectories)
@@ -86,14 +90,24 @@ public sealed class BackendCoverageTests {
         if (fn.IsDeclaration)
           continue;
         ++functions;
-        if (InstructionSelector.TrySelect(fn, out var reason) is not null)
+        if (InstructionSelector.TrySelect(fn, out var reason) is { } machine) {
           ++selected;
-        else
+          // selection is not routing: the whole-program codegen also schedules and allocates, and a
+          // value live across a CALL has no register while there is no spilling - so this is the
+          // number of functions the back end would really take
+          MachineScheduler.Schedule(machine);
+          if (LinearScanAllocator.Allocate(machine) is not null)
+            ++allocated;
+        }
+        else {
           declines[reason ?? "unknown"] = declines.GetValueOrDefault(reason ?? "unknown") + 1;
+          if (!fn.Name.Equals("main", StringComparison.OrdinalIgnoreCase))
+            procedureDeclines[reason ?? "unknown"] = procedureDeclines.GetValueOrDefault(reason ?? "unknown") + 1;
+        }
       }
     }
 
-    return new(functions, selected, declines, lowered, total, loweringDeclines);
+    return new(functions, selected, allocated, declines, lowered, total, loweringDeclines, procedureDeclines);
   }
 
   /// <summary>Collapses a decline message to its cause, so names/labels do not fragment the histogram.</summary>
@@ -111,11 +125,15 @@ public sealed class BackendCoverageTests {
     var report = new StringBuilder()
       .AppendLine($"programs           : {census.ProgramsLowered}/{census.ProgramsTotal} lowered to IR")
       .AppendLine($"functions selected : {census.Selected}/{census.Functions}")
+      .AppendLine($"functions routed   : {census.Allocated}/{census.Functions} (selected AND allocated)")
       .AppendLine("lowering declines - what keeps a program off the IR path entirely:");
     foreach (var (reason, count) in census.LoweringDeclines.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal).Take(12))
       report.AppendLine($"  {count,5}  {reason}");
     report.AppendLine("selection declines - what keeps a lowered function off the x86-16 back end:");
     foreach (var (reason, count) in census.Declines.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal))
+      report.AppendLine($"  {count,5}  {reason}");
+    report.AppendLine($"of those, {census.ProcedureDeclines.Values.Sum()} are named procedures (main excluded):");
+    foreach (var (reason, count) in census.ProcedureDeclines.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal))
       report.AppendLine($"  {count,5}  {reason}");
     TestContext.Out.Write(report.ToString());
 

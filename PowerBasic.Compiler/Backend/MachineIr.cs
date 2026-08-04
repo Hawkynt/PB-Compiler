@@ -94,6 +94,8 @@ public enum MOpcode {
   Adc, Sbb,
   Imul, Mul, Idiv, Div,
   Neg, Not, Inc, Dec,
+  /// <summary>Sign-extend AX into DX:AX - the dividend a 16-bit IDIV consumes.</summary>
+  Cwd,
   Shl, Shr, Sar,
   /// <summary>Rotate-through-carry, the second half of a 32-bit shift on a register pair.</summary>
   Rcl, Rcr,

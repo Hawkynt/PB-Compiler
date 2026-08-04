@@ -367,3 +367,36 @@ and both are properties of the existing code rather than assumptions:
 Only a *module* variable is bridged. A `STATIC` local and a synthesized IR global (`.data_cursor`, a
 string literal) have no `ModuleVariables` symbol to map back to, so they decline — the emitter throws
 rather than guesses if the routing ever admits one it cannot address.
+
+### Signed division, and the first physically-pinned instruction
+
+`IDIV` is the first selected instruction that is **fixed to physical registers**: it divides `DX:AX`
+and answers with the quotient in `AX` and the remainder in `DX`. Everything else in the machine IR
+names its registers in its operands, so this is where two mechanisms have to carry the pin.
+
+- **Allocation.** The `MOV AX,<dividend>`, `CWD` and `IDIV` all declare `Clobbers = [AX, DX]`, which
+  is what keeps a live value (or the dividend itself) out of the pair. The result-reading
+  `MOV <dest>, AX|DX` deliberately declares none, so the quotient may be allocated to `AX` again and
+  the copy costs nothing.
+- **Scheduling.** `MachineScheduler` used to build its dependency keys from the operands alone, so a
+  clobberer and the `MOV` that reads its result out of `AX` had *no edge between them* and the list
+  scheduler was free to hoist the read above the divide. A clobber now counts as a write, which also
+  closes the same latent hole for `CALL`.
+
+Only a **non-zero compile-time constant** divisor is selected. PowerBASIC raises Error 11 on a zero
+divisor, and that guard belongs to the language rather than to an `$ERROR` option — but a constant
+that is not zero cannot trap, which is exactly the case where the direct emitter also drops the guard
+(`O0220`). A `-1` divisor declines as well, because `MININT \ -1` overflows `IDIV` into a hardware
+divide fault where PowerBASIC reports Error 6. A runtime divisor waits for the runtime-label bridge,
+since the guard it needs is a jump to the runtime's error entry.
+
+### Selection is not routing
+
+The census reports two numbers, because the first overstates the second: `BackendProcs` also
+**schedules and allocates**, and a value live across a `CALL` has no register while there is no
+spilling. `functions routed` counts the functions that survive both, and is the honest coverage
+figure. It also splits the decline histogram into all functions versus *named procedures only* -
+routing a module body (`main`) additionally needs the whole startup/exit sequence, so what blocks a
+procedure is always the cheaper next increment. That split corrected a wrong reading of the earlier
+histogram: the `rt_*` declines are **not** all `main`. 38 of the 47 procedure declines are calls to
+runtime declarations, which makes the runtime-label bridge the ranking's next target.

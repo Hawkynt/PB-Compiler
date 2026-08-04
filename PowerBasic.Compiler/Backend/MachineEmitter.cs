@@ -128,6 +128,8 @@ public sealed class MachineEmitter {
           asm.Imul(this.Reg(ops[0]), this.Reg(ops[1]));
         break;
       case MOpcode.Lea: asm.Lea(this.Reg(ops[0]), this.Mem(ops[1])); break;
+      case MOpcode.Cwd: asm.Cwd(); break;
+      case MOpcode.Idiv: asm.Idiv(this.Reg(ops[0])); break;
       case MOpcode.Shl: asm.Shl(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
       case MOpcode.Shr: asm.Shr(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
       case MOpcode.Sar: asm.Sar(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;

@@ -71,6 +71,11 @@ public static class MachineScheduler {
     foreach (var i in instr.Effect.WrittenRegs)
       if (instr.Operands[i] is MOperand.Register w)
         writes.Add(Key(w.Reg));
+    // a clobber is a write the operands do not name - a CALL destroying the caller-saved set, an IDIV
+    // overwriting DX:AX. Without it the scheduler sees no dependency at all between the clobberer and
+    // the MOV that reads the result out of AX, and is free to hoist that MOV above it.
+    foreach (var clobbered in instr.Clobbers)
+      writes.Add(Key(MReg.Physical_(clobbered)));
     foreach (var operand in instr.Operands)
       if (operand is MOperand.Memory mem) {
         if (mem.Base is { } b)
