@@ -22,6 +22,9 @@ og1
 og3
 og0
 Hi#
+b4 set
+b0 set
+b1 clr
 dmax 8
 dmin 3
 dclamp 3

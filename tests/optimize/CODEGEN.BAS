@@ -20,6 +20,7 @@ DECLARE SUB SwapIsInline(BYVAL a%, BYVAL b%)
 DECLARE SUB LenZeroIsHandleTest(BYVAL n%)
 DECLARE SUB OnGotoIsJumpTable(BYVAL n%)
 DECLARE SUB PrintChrIsDirect(BYVAL n%)
+DECLARE SUB BitTestUsesTest(BYVAL x%)
 DECLARE SUB MinMaxDiamondFolds(BYVAL a%, BYVAL b%)
 DECLARE SUB LongMaxFoldsWithoutFpu(BYVAL a&, BYVAL b&)
 DECLARE SUB DivideByPowerOfTwoIsShifts(BYVAL n%)
@@ -64,6 +65,7 @@ OnGotoIsJumpTable 1
 OnGotoIsJumpTable 3
 OnGotoIsJumpTable 5
 PrintChrIsDirect 2
+BitTestUsesTest 5
 MinMaxDiamondFolds 3, 8
 LongMaxFoldsWithoutFpu 100000, 70000
 DivideByPowerOfTwoIsShifts 64
@@ -222,6 +224,20 @@ END SUB
 ' @assert   absent-call rt_str_print
 ' @status   done
 ' ---------------------------------------------------------------------------
+' ---------------------------------------------------------------------------
+' @scenario BitTestUsesTest
+' @what     IF x% AND mask - bit-flag conditions
+' @expect   O0081 emits TEST ax,mask instead of AND ax,mask + a separate test, so
+'           no AND-with-immediate materializes the masked value
+' @assert   absent and-ax-imm8
+' @status   done
+' ---------------------------------------------------------------------------
+SUB BitTestUsesTest(BYVAL x%) NOINLINE
+  IF x% AND 4 THEN PRINT "b4 set" ELSE PRINT "b4 clr"
+  IF x% AND 1 THEN PRINT "b0 set" ELSE PRINT "b0 clr"
+  IF x% AND 2 THEN PRINT "b1 set" ELSE PRINT "b1 clr"
+END SUB
+
 SUB PrintChrIsDirect(BYVAL n%) NOINLINE
   PRINT CHR$(72); CHR$(105);
   PRINT CHR$(n% + 33)

@@ -2370,7 +2370,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       return;
     }
 
-    if (this.Optimize && condition is BinaryExpr {
+    if (this.Optimize && this.TryEmitBitTestBranch(condition)) {
+      // O0081: `IF x AND mask` is a bit test - `test ax, mask` set ZF directly; fall to the jz/jnz below.
+    } else if (this.Optimize && condition is BinaryExpr {
           Op: BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
             or BinaryOp.LessEqual or BinaryOp.GreaterEqual } comparison
         && KindOf(model.TypeOf(condition)) == ValueKind.Int16
@@ -2396,6 +2398,33 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // leaves truth in AX (0 / nonzero) and sets ZF accordingly
     this.EmitExpression(condition);
     this.EmitTruthTest(condition);
+  }
+
+  /// <summary>
+  /// O0081: an <c>x AND mask</c> subexpression used as a branch condition is a bit test - the AND's truth is
+  /// only its zero-ness, which <c>TEST ax, mask</c> answers directly, without materializing the AND result and
+  /// separately testing it. Only for an int16 AND whose other operand folds to a constant, and only when the
+  /// value is not also wanted for CSE. The non-constant operand is left evaluated in AX (unmodified), and the
+  /// caller's jz/jnz reads the ZF this sets. Runtime-identical to <c>and ax,mask; test ax,ax</c>.
+  /// </summary>
+  private bool TryEmitBitTestBranch(Expression condition) {
+    if (condition is not BinaryExpr { Op: BinaryOp.And, Left: { } l, Right: { } r })
+      return false;
+    if (KindOf(model.TypeOf(condition)) != ValueKind.Int16 || this._cseMarks?.ContainsKey(condition) == true)
+      return false;
+    Expression variable;
+    long mask;
+    if (this.OptFolder.TryFold(r) is { Integer: { } rc }) { variable = l; mask = rc; }
+    else if (this.OptFolder.TryFold(l) is { Integer: { } lc }) { variable = r; mask = lc; }
+    else
+      return false;
+    if (KindOf(model.TypeOf(variable)) != ValueKind.Int16)
+      return false;
+
+    this.EmitExpression(variable);
+    this.Coerce(model.TypeOf(variable), PbType.Integer, variable);
+    this._asm.Test(Reg.AX, (Imm)(int)(short)(mask & 0xFFFF));   // ZF = (AX AND mask) == 0
+    return true;
   }
 
   /// <summary>

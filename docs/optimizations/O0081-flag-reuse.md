@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — `CMP reg,0 → TEST reg,reg` ships (`Assembler.Peephole.cs`); reusing the ZF/SF a preceding `ADD/SUB/AND/OR/XOR/INC/DEC/NEG` already set (drop the following `OR reg,reg`) does not |
-| **Stage** | Assembler peephole |
+| **Status** | 🟡 Partial — `CMP reg,0 → TEST reg,reg` ships (`Assembler.Peephole.cs`), and `IF x AND mask` emits `TEST ax, mask` in codegen rather than `AND` + a separate test; the general "reuse the ZF a preceding `ADD/SUB/OR/XOR/INC/DEC/NEG` already set" peephole does not |
+| **Stage** | Assembler peephole + codegen |
 | **Related** | [O0008](O0008-peephole-zero-idiom.md), [O0031](O0031-branch-fusion.md), [O0038](O0038-instruction-scheduling.md) |
 
 ## The idea
@@ -35,6 +35,25 @@ IF n% = 0 THEN PRINT "done"
     or      ax, ax           ; the flags DEC already set
     jnz     Skip
 ```
+
+## Now — bit-test conditions
+
+`IF x AND mask THEN …` is a bit test whose truth is only the AND's zero-ness, so the
+code generator emits it as one `TEST` rather than materializing the masked value and
+testing it separately:
+
+```asm
+    mov     ax, [x]
+    test    ax, mask         ; ZF = (x AND mask) == 0 - no `and ax,mask` + `test ax,ax`
+    jz      Else
+```
+
+Runtime-identical to `and ax,mask; test ax,ax` (the branch reads the same ZF; the AND
+result is never stored), and it leaves `AX` holding `x` unmodified. Applies to an
+int16 `AND` whose other operand folds to a constant and whose value is not also wanted
+for CSE; recognized in `EmitConditionalBranch` before the comparison-fusion path, so it
+survives into the `$OPTIMIZE SPEED` scheduler's stream (unlike the peephole below).
+Verified by a DOSBox self-diff over several masks and an `absent and-ax-imm8` assertion.
 
 ## Planned
 

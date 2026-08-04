@@ -782,6 +782,22 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenBitTestCondition_WhenPb36_ThenTestNotAndPlusTest() {
+    // O0081: IF x AND mask emits `test ax, mask` (A9 iw), not `and ax, mask` (83 E0 ib) + `test ax,ax`.
+    static bool Has(byte[] img, params byte[] seq) {
+      for (var i = 0; i <= img.Length - seq.Length; ++i) {
+        var ok = true;
+        for (var j = 0; j < seq.Length; ++j) if (img[i + j] != seq[j]) { ok = false; break; }
+        if (ok) return true;
+      }
+      return false;
+    }
+    var img = Compile("$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL x%)\nS 5\nEND\nSUB S(BYVAL x%) NOINLINE\nIF x% AND 4 THEN PRINT \"y\"\nEND SUB", Dialect.Pb36);
+    Assert.That(Has(img, 0xA9, 0x04, 0x00), Is.True, "test ax, 4 - the bit test");
+    Assert.That(Has(img, 0x83, 0xE0, 0x04), Is.False, "no and ax, 4 - the mask is not materialized");
+  }
+
+  [Test]
   public void Emit_GivenOnGoto_WhenPb36_ThenJumpTableForFourTargetsChainForThree() {
     // O0029: four+ targets dispatch through a jump table (a `cmp ax, count` bounds check); three keep the
     // linear dec/JNZ chain, which has no such compare.

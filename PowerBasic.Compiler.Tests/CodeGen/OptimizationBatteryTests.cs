@@ -56,6 +56,7 @@ public sealed class OptimizationBatteryTests {
     ["cmp-ax-bx"] = [0x39, 0xD8],        // CMP AX,BX - a 16-bit comparison
     ["cmp-dx-cx"] = [0x39, 0xCA],        // CMP DX,CX - the high-word compare of a signed 32-bit fold
     ["cmp-ax-imm"] = [0x83, 0xF8],       // CMP AX,imm8 - a comparison against a small constant
+    ["and-ax-imm8"] = [0x83, 0xE0],      // AND AX,imm8 - a bit mask materialized (the bit test avoids it)
     ["sub-ax-bx"] = [0x29, 0xD8],        // SUB AX,BX
     ["sbb-dx-cx"] = [0x19, 0xCA],        // SBB DX,CX - the 2nd instruction of every 32-bit compare/subtract
     ["adc-dx-cx"] = [0x11, 0xCA],        // ADC DX,CX - the 2nd instruction of a 32-bit add
