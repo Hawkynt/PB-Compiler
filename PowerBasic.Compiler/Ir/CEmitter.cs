@@ -450,6 +450,13 @@ public sealed class CEmitter {
     IrConstantFloat f => FloatLiteral(f),
     IrNullPtr => "((void *)0)",
     IrUndef u => u.Type.Kind == IrTypeKind.Ptr ? "((void *)0)" : "(" + Ty(u.Type) + ")0",
+    // The address of a basic block - what ON ERROR arms its handler with. Standard C has no such
+    // value (GCC's '&&label' is an extension, and even with it the non-local jump ON ERROR performs
+    // needs setjmp/longjmp rather than a computed goto), so this declines instead of naming the
+    // block and emitting something that compiles but does not handle errors.
+    IrBlockAddress => throw new NotSupportedException(
+      "C emission: the address of a basic block (ON ERROR arms a handler with one). "
+      + "A non-local jump from an arbitrary fault point needs setjmp/longjmp, which this emitter does not model yet."),
     // a global's IR value is its ADDRESS: a byte blob is an array (which decays), a scalar
     // global is a plain object whose address has to be taken
     // a global's IR value is its ADDRESS: an array (byte blob or element array) decays, a
