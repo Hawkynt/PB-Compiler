@@ -249,6 +249,21 @@ public sealed class InstructionSelector {
       // whatever follows, so that one still declines.
       case IrUnreachable when this._current.Instructions is [.., { IsTerminator: true }]:
         return true;
+      // A branch whose condition is a VALUE rather than a compare it can fold - PB's -1/0 truth value
+      // arriving from a materialized comparison, a logical operator, or a 32-bit compare that had to
+      // build its answer in a register. Testing it against zero is what the direct emitter does too.
+      case IrCondBr valued: {
+        if (!this.TryOperand(valued.Condition, out var condition))
+          return false;
+        if (condition is not MOperand.Register)
+          return this.Decline("terminator: IrCondBr on a non-register condition");
+        this.EmitCompare(condition, new MOperand.Immediate(0));
+        this.EmitBranch(Condition.NotEqual, valued.IfTrue.Label);
+        this._current.Instructions.Add(new MInstr(MOpcode.Jmp, [new MOperand.LabelRef(valued.IfFalse.Label)], MInstrEffect.None));
+        this._current.Successors.Add(valued.IfTrue.Label);
+        this._current.Successors.Add(valued.IfFalse.Label);
+        return true;
+      }
       default:
         return this.Decline($"terminator: {terminator?.GetType().Name ?? "none"}"
           + (terminator is IrCondBr ? " (condition is not a folded compare)" : ""));
@@ -657,11 +672,115 @@ public sealed class InstructionSelector {
   /// the machine block in three, which is why appends go through the block cursor and the phi copies
   /// for this IR block land in whichever machine block control finally leaves from.
   /// </summary>
+  /// <summary>
+  /// The three conditions a 32-bit comparison decomposes into: after comparing the HIGH words, one
+  /// branch settles it true, another settles it false, and if neither fires the words were equal and
+  /// the LOW words decide - always UNSIGNED, whatever the predicate's signedness, because the sign
+  /// lives entirely in the high half.
+  ///
+  /// <c>Eq</c> and <c>Ne</c> have no ordering, so each leaves one of the high branches unused: equality
+  /// can only be refuted by the high words, inequality can only be confirmed by them.
+  /// </summary>
+  private static (Condition? HighTrue, Condition? HighFalse, Condition Low)? WideConditions(IrCmpPred pred) => pred switch {
+    IrCmpPred.Eq => (null, Condition.NotEqual, Condition.Equal),
+    IrCmpPred.Ne => (Condition.NotEqual, null, Condition.NotEqual),
+    IrCmpPred.Slt => (Condition.Less, Condition.Greater, Condition.Below),
+    IrCmpPred.Sle => (Condition.Less, Condition.Greater, Condition.BelowOrEqual),
+    IrCmpPred.Sgt => (Condition.Greater, Condition.Less, Condition.Above),
+    IrCmpPred.Sge => (Condition.Greater, Condition.Less, Condition.AboveOrEqual),
+    IrCmpPred.Ult => (Condition.Below, Condition.Above, Condition.Below),
+    IrCmpPred.Ule => (Condition.Below, Condition.Above, Condition.BelowOrEqual),
+    IrCmpPred.Ugt => (Condition.Above, Condition.Below, Condition.Above),
+    IrCmpPred.Uge => (Condition.Above, Condition.Below, Condition.AboveOrEqual),
+    _ => null,
+  };
+
+  /// <summary>
+  /// A 32-bit comparison materialized as PowerBASIC's -1/0 truth value. There is no 32-bit CMP on this
+  /// target, so it becomes a compare of the high words, then - only when those are equal - a compare of
+  /// the low ones:
+  /// <code>
+  ///   CMP hiL, hiR
+  ///   Jcc  true          ; the high words already settle it
+  ///   Jcc  false
+  ///   CMP loL, loR       ; equal so far: the low words decide, unsigned
+  ///   Jcc  true
+  /// false: MOV dest, 0 ; JMP done
+  /// true:  MOV dest, -1
+  /// done:
+  /// </code>
+  /// The low compare is unsigned for every predicate including the signed ones, because a signed
+  /// 32-bit order is decided by the high half and the low half is only a magnitude.
+  /// </summary>
+  private bool SelectWideCmpValue(IrCmp cmp) {
+    if (WideConditions(cmp.Pred) is not { } conditions)
+      return this.Decline($"compare as a value: 32-bit {cmp.Pred}");
+    if (!this.TryOperandPair(cmp.Lhs, out var lhsLo, out var lhsHi)
+        || !this.TryOperandPair(cmp.Rhs, out var rhsLo, out var rhsHi))
+      return false;
+    if (lhsHi is not MOperand.Register || lhsLo is not MOperand.Register)
+      return this.Decline("compare as a value: 32-bit with an immediate left operand");
+
+    var dest = MReg.Virtual(this._nextVreg++, MRegSize.Word);
+    this._vregs[cmp] = dest;
+    var destOp = new MOperand.Register(dest);
+
+    var lowBlock = new MBlock($"{this._current.Label}.cmplo{this._splitCount}");
+    var trueBlock = new MBlock($"{this._current.Label}.cmptrue{this._splitCount}");
+    var falseBlock = new MBlock($"{this._current.Label}.cmpfalse{this._splitCount}");
+    var doneBlock = new MBlock($"{this._current.Label}.cmpdone{this._splitCount}");
+    ++this._splitCount;
+
+    this.EmitCompare(lhsHi, rhsHi);
+    if (conditions.HighTrue is { } highTrue) {
+      this.EmitBranch(highTrue, trueBlock.Label);
+      this._current.Successors.Add(trueBlock.Label);
+    }
+    if (conditions.HighFalse is { } highFalse) {
+      this.EmitBranch(highFalse, falseBlock.Label);
+      this._current.Successors.Add(falseBlock.Label);
+    }
+    this._current.Instructions.Add(new MInstr(MOpcode.Jmp, [new MOperand.LabelRef(lowBlock.Label)], MInstrEffect.None));
+    this._current.Successors.Add(lowBlock.Label);
+
+    this._current = lowBlock;
+    this.EmitCompare(lhsLo, rhsLo);
+    this.EmitBranch(conditions.Low, trueBlock.Label);
+    lowBlock.Instructions.Add(new MInstr(MOpcode.Jmp, [new MOperand.LabelRef(falseBlock.Label)], MInstrEffect.None));
+    lowBlock.Successors.Add(trueBlock.Label);
+    lowBlock.Successors.Add(falseBlock.Label);
+
+    var minusOne = new MOperand.Immediate(-1);
+    trueBlock.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, minusOne], MovEffect(destOp, minusOne)));
+    trueBlock.Instructions.Add(new MInstr(MOpcode.Jmp, [new MOperand.LabelRef(doneBlock.Label)], MInstrEffect.None));
+    trueBlock.Successors.Add(doneBlock.Label);
+
+    var zero = new MOperand.Immediate(0);
+    falseBlock.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, zero], MovEffect(destOp, zero)));
+    falseBlock.Successors.Add(doneBlock.Label);
+
+    this._function.Blocks.Add(lowBlock);
+    this._function.Blocks.Add(trueBlock);
+    this._function.Blocks.Add(falseBlock);
+    this._function.Blocks.Add(doneBlock);
+    this._current = doneBlock;
+    return true;
+  }
+
+  private void EmitCompare(MOperand left, MOperand right)
+    => this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [left, right],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(left, right), ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: left is MOperand.Memory || right is MOperand.Memory, WritesMemory: false)));
+
+  private void EmitBranch(Condition condition, string target)
+    => this._current.Instructions.Add(new MInstr(MOpcode.Jcc, [new MOperand.LabelRef(target)],
+      new MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, WritesMemory: false), condition));
+
   private bool SelectCmpValue(IrCmp cmp) {
     if (cmp.Lhs.Type.IsFloat)
       return this.Decline($"compare as a value: float {cmp.Pred}");
     if (IsWide(cmp.Lhs.Type))
-      return this.Decline($"compare as a value: 32-bit {cmp.Pred} (needs a two-word compare)");
+      return this.SelectWideCmpValue(cmp);
     if (MapPredicate(cmp.Pred) is not { } cc)
       return this.Decline($"compare as a value: {cmp.Pred}");
     if (!this.TryOperand(cmp.Lhs, out var lhs) || !this.TryOperand(cmp.Rhs, out var rhs))
