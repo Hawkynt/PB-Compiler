@@ -40,6 +40,12 @@ public sealed class IrPassObservableEquivalenceTests {
     ("simplifycfg", SimplifyCfg.Run),
     ("unroll", LoopUnroll.Run),
     ("sroa", ScalarReplaceArrays.Run),
+    ("reassociate", Reassociate.Run),
+  ];
+
+  /// <summary>The interprocedural passes, which need the whole module rather than one function.</summary>
+  private static readonly (string Name, Func<IrModule, int> Run)[] _modulePasses = [
+    ("ipconstprop", IpConstantProp.Run),
   ];
 
   /// <summary>
@@ -176,6 +182,34 @@ public sealed class IrPassObservableEquivalenceTests {
     }
 
     Assert.That(failures.ToString(), Is.Empty, "an optimization pass changed what a program prints:\n" + failures);
+  }
+
+  /// <summary>
+  /// The same contract for the passes that reason across the call graph. They are checked separately
+  /// because a per-function harness would never give them a second function to look at.
+  /// </summary>
+  [Test]
+  public void ModulePass_GivenEachInterproceduralPass_ThenTheProgramStillPrintsTheSame() {
+    var failures = new StringBuilder();
+    foreach (var (program, source) in _programs) {
+      var expected = Run(source);
+      foreach (var (pass, run) in _modulePasses) {
+        string got;
+        try {
+          got = RunThrough(source, m => {
+            RunOnEveryFunction(m, Mem2Reg.Run);
+            run(m);
+          });
+        } catch (Exception e) {
+          failures.AppendLine($"  {pass,-12} on '{program}': threw {e.GetType().Name}: {e.Message}");
+          continue;
+        }
+        if (got != expected)
+          failures.AppendLine($"  {pass,-12} on '{program}': expected <{expected}> got <{got}>");
+      }
+    }
+
+    Assert.That(failures.ToString(), Is.Empty, "an interprocedural pass changed what a program prints:\n" + failures);
   }
 
   [Test]

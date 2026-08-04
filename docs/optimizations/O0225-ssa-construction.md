@@ -7,6 +7,7 @@
 | **Source** | `CodeGen/Ssa/ControlFlowGraph.cs`, `DominatorTree.cs`, `SsaForm.cs`, `ScalarLiveness.cs` |
 | **Gate** | `--optimize` |
 | **Verified by** | `PowerBasic.Compiler.Tests/CodeGen/SsaTests.cs` (CFG, dominators/frontiers, renaming) |
+| **IR** | ✅ `Ir/IrDominators.cs` + `Ir/Passes/Mem2Reg.cs` — the same Cytron construction on the IR: dominance frontiers place the phis, a dominator-tree walk renames. PB zero-initializes, so a slot with no reaching store reads as its type's zero rather than undef. Verified by `Mem2RegTests` and, end to end, by every pass downstream that requires SSA |
 | **Split from** | [O0017](O0017-sccp.md) (which is now the SCCP solve itself) |
 
 ## What it is

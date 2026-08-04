@@ -89,7 +89,8 @@ public sealed class BackendFloatTests {
       END FUNCTION
 
       PRINT Half!(7)
-      """, "Half");
+      PRINT Half!(9)
+      """, "Half");                              // two constants, so n% stays a parameter (see BackendSpillTests)
 
     var opcodes = m.AllInstructions.Select(i => i.Opcode).ToList();
     Assert.That(opcodes, Does.Contain(MOpcode.Fild));

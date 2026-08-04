@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | ⬜ Planned (a fully-interpretable pure call already folds — [O0025](O0025-pure-function-folding.md)) |
 | **Stage** | Whole-program analysis |
+| **IR** | ✅ `Ir/Passes/IpConstantProp.cs` — `PropagateResult`: when every `ret` in a fully-visible function returns the same constant, each call's RESULT is replaced by it. The call itself stays, because the body may still print or write; removing it is [O0022](O0022-dead-procedure-elimination.md)'s job once nothing needs it. Runs to a fixpoint with the argument direction, so a constant returned by an inner call travels out through its caller; verified by `IpConstantPropTests` |
 | **Related** | [O0025](O0025-pure-function-folding.md), [O0158](O0158-interprocedural-range-propagation.md), [O0161](O0161-function-summaries.md) |
 
 ## The idea

@@ -7,6 +7,7 @@
 | **Source** | `CodeGen/OptIpcp.cs` |
 | **Gate** | `--optimize`; disabled wholesale when any procedure address is taken |
 | **Verified by** | `tests/diff/DIFF38.BAS` |
+| **IR** | ✅ `Ir/Passes/IpConstantProp.cs` — `PropagateArguments`: when every visible call passes the same constant for a parameter, the parameter becomes that constant. Registered with `IrPassManager.AddModulePass`, so `RunOnModule` runs the function pipeline, then this, then the function pipeline again for what it exposed. Soundness rests on `IsFullyVisible`, which declines `main` and any function whose address appears anywhere but a callee operand; verified by `IpConstantPropTests` and `IrPassObservableEquivalenceTests` |
 | **Related** | [O0017](O0017-sccp.md), [O0025](O0025-pure-function-folding.md), [O0069](O0069-dead-parameter-elimination.md) |
 
 ## What it is

@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | 🟡 Partial — the IR tier reassociates constant chains (`op(op(x,c1),c2) → op(x, c1∘c2)`), `x - C → x + (-C)`, and orders constants to the right; canonical *variable* operand ordering by SSA id (so `x+y+1` and `1+y+x` align for GVN) is not done |
 | **Stage** | Mid-end, before CSE/GVN |
+| **IR** | ✅ `Ir/Passes/Reassociate.cs` — completes exactly the piece the Status line calls missing: the non-constant leaves are ordered by a stable per-function id, so `x+y+1` and `1+y+x` become the same tree and GVN numbers them as one value. Integer `+ * AND OR XOR` only — floating point is excluded because reassociating it changes the answer ([O0344](O0344-fp-reassociation.md)). In `IrPassManager.Standard()` between mem2reg2 and GVN; verified by `ReassociateTests` and `IrPassObservableEquivalenceTests` |
 | **Related** | [O0003](O0003-common-subexpression-elimination.md), [O0046](O0046-ir-gvn.md), [O0064](O0064-lea-fusion.md) |
 
 ## The idea

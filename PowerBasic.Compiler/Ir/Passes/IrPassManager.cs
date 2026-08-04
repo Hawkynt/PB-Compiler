@@ -17,12 +17,19 @@ public sealed class IrVerificationException(string pass, IReadOnlyList<string> e
 public sealed class IrPassManager {
 
   private readonly List<(string Name, Func<IrFunction, int> Run)> _passes = [];
+  private readonly List<(string Name, Func<IrModule, int> Run)> _modulePasses = [];
 
   /// <summary>When true, verifies the function after each pass and throws on any error.</summary>
   public bool VerifyEachPass { get; set; }
 
   public IrPassManager Add(string name, Func<IrFunction, int> pass) {
     this._passes.Add((name, pass));
+    return this;
+  }
+
+  /// <summary>Adds an interprocedural pass, run by <see cref="RunOnModule"/> around the function pipeline.</summary>
+  public IrPassManager AddModulePass(string name, Func<IrModule, int> pass) {
+    this._modulePasses.Add((name, pass));
     return this;
   }
 
@@ -56,11 +63,28 @@ public sealed class IrPassManager {
     return total;
   }
 
-  /// <summary>Runs the pipeline over every defined function in a module.</summary>
+  /// <summary>
+  /// Runs the pipeline over a module: the interprocedural passes first, then the function pipeline
+  /// over each body, then the interprocedural passes once more.
+  ///
+  /// The order is the point. A pass that reasons across the call graph wants the bodies simplified —
+  /// a return is only recognisably constant after the body's arithmetic has folded — while the
+  /// function passes want the call-graph facts, because a parameter that turns out to be a literal is
+  /// what makes a branch inside the body foldable. Neither can go first and be right, so both run,
+  /// and the second interprocedural sweep is followed by another function sweep for what it exposed.
+  /// </summary>
   public void RunOnModule(IrModule module) {
-    foreach (var fn in module.Functions)
-      if (!fn.IsDeclaration)
-        this.RunToFixpoint(fn);
+    RunFunctions();
+    foreach (var (_, run) in this._modulePasses)
+      if (run(module) > 0)
+        RunFunctions();
+    return;
+
+    void RunFunctions() {
+      foreach (var fn in module.Functions)
+        if (!fn.IsDeclaration)
+          this.RunToFixpoint(fn);
+    }
   }
 
   /// <summary>
@@ -80,11 +104,16 @@ public sealed class IrPassManager {
     // before the value passes, so the elements it exposes get propagated like any other value
     .Add("sroa", ScalarReplaceArrays.Run)
     .Add("mem2reg2", Mem2Reg.Run)
+    // canonicalizes associative chains so GVN hashes two equal expressions the same way; it must
+    // come after SCCP (which supplies the constants it folds together) and before GVN (which is the
+    // pass that benefits)
+    .Add("reassociate", Reassociate.Run)
     .Add("gvn", Gvn.Run)
     .Add("memopt", RedundantMemory.Run)
     .Add("dse", DeadStoreElim.Run)
     .Add("licm", Licm.Run)
     .Add("dce", Dce.Run)
     .Add("ifconv", IfConversion.Run)
-    .Add("simplifycfg", SimplifyCfg.Run);
+    .Add("simplifycfg", SimplifyCfg.Run)
+    .AddModulePass("ipconstprop", IpConstantProp.Run);
 }

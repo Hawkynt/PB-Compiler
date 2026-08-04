@@ -167,7 +167,7 @@ Measured by `OptimizationPortingLedgerTests`, which reads the Stage of every doc
 | machine-level (not IR work at all) | **290** |
 | portable to the IR | **130** |
 | …already expressed on the IR | 20 |
-| …still to port | **110** |
+| …still to port | **110**, of which **14** now carry an `IR` row |
 
 So the target is 110, not 420 — and the bulk of it is one category, *Mid-end* (52). The ledger is a
 test with floors, so the portable share cannot shrink by reclassification instead of movement.
@@ -188,15 +188,44 @@ A ported optimization records an **IR** row in its own document, which is what t
   unrolling composing with the constant propagation and dead-code elimination already there.
   `FOR i = 1 TO 5 / s = s + i / NEXT / PRINT s` becomes `PRINT 15`.
 
+- **O0018 interprocedural constant propagation** and **O0159 return-value propagation** —
+  `Ir/Passes/IpConstantProp.cs`, the two directions of the same fixpoint. In: a parameter every
+  visible call passes the same literal for *is* that literal. Out: a function whose every `ret`
+  returns the same constant hands that constant to its call sites. Both stand on `IsFullyVisible`,
+  which declines `main` and any function whose address appears anywhere but a callee operand —
+  because "every call site passes 1" is a statement about the *visible* calls, and is worthless if
+  the module cannot enumerate them all. Registered with the new `AddModulePass`, so `RunOnModule`
+  runs the function pipeline, then the interprocedural pass, then the function pipeline again.
+- **O0027 copy propagation** — falls out of SSA: mem2reg leaves no copies to propagate.
+- **O0028 loop-invariant code motion** — `Ir/Passes/Licm.cs`.
+- **O0061 reassociation** — `Ir/Passes/Reassociate.cs`. The direct tier already merged adjacent
+  constants; what it could not do, and this does, is order the *variable* leaves by a stable id, so
+  `x+y+1` and `1+y+x` become the same tree and GVN numbers them as one value. Integer `+ * AND OR
+  XOR` only: reassociating floating point changes the answer, which is why that is a separate,
+  opt-in optimization and not this one.
+- **O0097 repeated comparison elimination** — `Gvn` keys `IrCmp` by predicate and operands under
+  dominator scoping, so a comparison recomputed where the first one dominates is reused.
+- **O0132 whole-loop compile-time evaluation** — nobody wrote a pass for it; it falls out of
+  unrolling composing with the constant propagation and dead-code elimination already there.
+  `FOR i = 1 TO 5 / s = s + i / NEXT / PRINT s` becomes `PRINT 15`.
 - **O0182 small local array scalar replacement** — `Ir/Passes/ScalarReplaceArrays.cs`. A tiny
   non-escaping array indexed only by constants is N variables wearing one name; split, mem2reg
   promotes each element into SSA and the rest of the pipeline can see through it. It sits *after*
   SCCP, because a subscript is not constant in the raw lowering — it is `index * sizeof(element)`
   with the index still an expression.
+- **O0225 SSA construction** — `Ir/IrDominators.cs` + `Ir/Passes/Mem2Reg.cs`, the same Cytron
+  construction the direct tier has.
 
-That second one is the argument for the whole exercise: a ported optimization that *enables* another
-without further work is the compounding the retargetable path was supposed to get, and it is the
-first evidence of it.
+O0132 is the argument for the whole exercise: a ported optimization that *enables* another without
+further work is the compounding the retargetable path was supposed to get.
+
+The porting also pays back the other way, which was not expected. Interprocedural propagation made
+three corpus functions **stop** being selectable — it turned a parameter into a literal, and a
+`select` with a constant condition reached the back end with an immediate where a register was
+required. `InstCombine` had no `select` rule at all. Adding one (`select true, a, b → a`, and a
+select whose arms match) recovered those three and 16 more: functions routed went 93 → 109. A gap
+that had been sitting in the peephole tier since it was written was only visible once something
+upstream started producing the shape that hits it.
 
 The runtime traps and the error handler are **done**. `$ERROR BOUNDS / OVERFLOW / NUMERIC ON` now emit
 their checks rather than merely accepting the metastatement, over dynamic arrays as well as static

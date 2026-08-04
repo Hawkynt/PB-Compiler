@@ -22,7 +22,11 @@ namespace PowerBasic.Compiler.Tests.Backend;
 public sealed class BackendSpillTests {
 
   // v% is loaded in the prologue and used AFTER the print - so it is live across a call that
-  // destroys every allocatable register
+  // destroys every allocatable register.
+  //
+  // Two call sites passing DIFFERENT constants, deliberately: with one constant call site,
+  // interprocedural constant propagation replaces v% with the literal and the function no longer has
+  // a parameter to spill - a correct optimization that would quietly turn this into a test of nothing.
   private const string _liveAcrossACall = """
     FUNCTION Twice%(BYVAL v%)
       PRINT "X"
@@ -30,6 +34,7 @@ public sealed class BackendSpillTests {
     END FUNCTION
 
     PRINT Twice%(21)
+    PRINT Twice%(22)
     """;
 
   private static SemanticModel Bind(string source) {

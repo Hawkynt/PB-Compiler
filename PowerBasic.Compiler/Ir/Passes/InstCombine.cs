@@ -45,8 +45,25 @@ public static class InstCombine {
       IrCmp c => SimplifyCmp(c),
       IrGep g => SimplifyGep(g),
       IrCast cast => SimplifyCast(cast),
+      IrSelect s => SimplifySelect(s),
       _ => null,
     };
+  }
+
+  /// <summary>
+  /// <c>select true, a, b</c> is <c>a</c>, <c>select false, a, b</c> is <c>b</c>, and a select whose
+  /// arms are the same value is that value however the condition turns out.
+  ///
+  /// A constant condition looks like something the front end would never produce, and on its own it
+  /// is - but interprocedural constant propagation turns a parameter into a literal, and a flag
+  /// tested by a select is exactly the kind of parameter that happens to. Without this rule the
+  /// select survives to instruction selection with an immediate where a register is required, and the
+  /// function is declined for a condition the compiler already knew the answer to.
+  /// </summary>
+  private static IrValue? SimplifySelect(IrSelect s) {
+    if (ReferenceEquals(s.IfTrue, s.IfFalse))
+      return s.IfTrue;
+    return s.Condition is IrConstantInt c ? c.Value != 0 ? s.IfTrue : s.IfFalse : null;
   }
 
   private static IrValue? SimplifyBinary(IrBinary b) {
