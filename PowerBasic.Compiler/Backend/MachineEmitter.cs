@@ -202,6 +202,7 @@ public sealed class MachineEmitter {
       case MOpcode.Fmulp: asm.Fmulp(); break;
       case MOpcode.Fdivp: asm.Fdivp(); break;
       case MOpcode.Fsqrt: asm.Fsqrt(); break;
+      case MOpcode.InlineAsm: this.EmitInlineAsm(asm, instr); break;
       default: throw new System.NotSupportedException($"machine opcode {instr.Opcode} has no emission yet");
     }
   }
@@ -266,6 +267,38 @@ public sealed class MachineEmitter {
     => this._resolveData?.Invoke(name)
        ?? throw new System.InvalidOperationException(
          $"no data cell for global '{name}' - the routing admitted a reference it cannot address");
+
+  /// <summary>
+  /// Assembles an inline-assembly block, answering the assembler's identifier questions from THIS
+  /// frame: operand <c>i + 1</c> is the cell the name at index <c>i</c> denotes.
+  ///
+  /// The pairing was made by the lowering against the semantic model, so nothing here has to know what
+  /// a BASIC variable is - only where this back end put it, which is the one thing the direct
+  /// emitter's resolver could never answer for a frame it did not lay out.
+  /// </summary>
+  private void EmitInlineAsm(Assembler asm, MInstr instr) {
+    if (instr.Operands.Count == 0 || instr.Operands[0] is not MOperand.InlineAsmText descriptor)
+      throw new System.NotSupportedException("inline asm without its descriptor");
+
+    var bound = new Dictionary<string, Mem>(StringComparer.OrdinalIgnoreCase);
+    for (var i = 0; i < descriptor.Names.Count && i + 1 < instr.Operands.Count; ++i)
+      bound[descriptor.Names[i]] = this.Mem(instr.Operands[i + 1]);
+
+    if (!new TextAssembler(asm).TryParse(descriptor.Text, new FrameResolver(bound), out var error))
+      throw new System.NotSupportedException($"inline asm '{descriptor.Text.Trim()}': {error}");
+  }
+
+  /// <summary>Answers inline-asm identifiers from the cells the selector paired with them.</summary>
+  private sealed class FrameResolver(Dictionary<string, Mem> bound) : IAsmSymbolResolver {
+    public bool TryResolve(string name, out AsmSymbol symbol) {
+      if (bound.TryGetValue(name, out var cell)) {
+        symbol = AsmSymbol.OfMemory(cell);
+        return true;
+      }
+      symbol = default;
+      return false;
+    }
+  }
 
   private Reg Resolve(MReg reg) => reg.IsVirtual ? this._allocation[reg.VirtualId] : reg.Physical;
 

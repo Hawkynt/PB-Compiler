@@ -19,6 +19,9 @@ public sealed class IrLowering {
 
   private readonly SemanticModel _model;
   private readonly IReadOnlyDictionary<ProcedureSymbol, IrFunction>? _procMap;
+
+  /// <summary>The procedure being lowered, or null in the main body - needed to resolve inline-asm names.</summary>
+  private ProcedureSymbol? _proc;
   private readonly IrModule? _module;
   private readonly Dictionary<VariableSymbol, IrValue> _addr = new(ReferenceEqualityComparer.Instance);
 
@@ -184,6 +187,7 @@ public sealed class IrLowering {
 
   private void LowerBodyInto(IrFunction fn, IReadOnlyList<Statement> body, ProcedureSymbol? proc) {
     this._fn = fn;
+    this._proc = proc;
     this._isMain = proc is null;
     this._entry = fn.CreateBlock("entry");
     this._b = new IrBuilder(this._entry);
@@ -326,6 +330,69 @@ public sealed class IrLowering {
     else
       this._b.Ret();
   }
+
+  /// <summary>
+  /// Lowers one <c>!</c> statement, binding every BASIC identifier it mentions to the storage that
+  /// identifier names.
+  ///
+  /// The names are collected by ASSEMBLING the text against a throwaway target with a resolver that
+  /// records what it is asked for. That is precise where a lexical scan would not be: the real parser
+  /// knows which tokens are registers, which are mnemonics and which are operands, and asks about
+  /// exactly the last group. Guessing that set is the failure mode this whole node exists to avoid.
+  ///
+  /// A name that does not bind to a variable leaves the block un-routable. It might be a BASIC label,
+  /// an equate, or something the model does not know at all; the direct emitter resolves all of those,
+  /// and until a back end can too, emitting a partly-resolved block would put a name on the wrong cell
+  /// without saying so.
+  /// </summary>
+  private void LowerInlineAsm(InlineAsmStmt stmt) {
+    var node = new IrInlineAsm(stmt.Text);
+    var seen = new AsmNames();
+    var parsed = new Asm.TextAssembler(new Asm.Assembler()).TryParse(stmt.Text, seen, out _);
+
+    var routable = parsed;
+    foreach (var name in seen.Collected)
+      if (this.AsmVariable(name) is { } symbol)
+        node.Bind(name, this.SlotFor(symbol));
+      else
+        routable = false;
+
+    node.Routable = routable;
+    this._b.InlineAsm(node);
+    this._fn.HasInlineAsm = true;
+  }
+
+  /// <summary>Records every identifier the assembler asks about, answering so that parsing continues.</summary>
+  private sealed class AsmNames : Asm.IAsmSymbolResolver {
+    public List<string> Collected { get; } = [];
+
+    public bool TryResolve(string name, out Asm.AsmSymbol symbol) {
+      if (!this.Collected.Contains(name, StringComparer.OrdinalIgnoreCase))
+        this.Collected.Add(name);
+      // The stand-in has to be MEMORY, not a constant. The parse must reach the same conclusions the
+      // real one will, and "MOV n, AX" with n a constant is not an instruction - answering with a
+      // constant made every write-to-a-variable block report itself unbindable.
+      symbol = Asm.AsmSymbol.OfMemory(Asm.Mem.Word(Asm.Reg.BP, 0));
+      return true;
+    }
+  }
+
+  /// <summary>The variable an inline-asm identifier names, trying the suffix spellings PB allows.</summary>
+  private VariableSymbol? AsmVariable(string name) {
+    foreach (var suffix in _ASM_SUFFIXES) {
+      var key = name + suffix.KeyText();
+      if (this._proc?.Variables.TryGetValue(key, out var local) == true)
+        return local;
+      if (this._model.ModuleVariables.TryGetValue(key, out var global))
+        return global;
+    }
+    return null;
+  }
+
+  /// <summary>Suffix spellings tried when an inline-asm name carries none, as the direct emitter tries them.</summary>
+  private static readonly TypeSuffix[] _ASM_SUFFIXES = [
+    TypeSuffix.None, TypeSuffix.Integer, TypeSuffix.Long, TypeSuffix.Single, TypeSuffix.Double, TypeSuffix.Ext, TypeSuffix.String,
+  ];
 
   private IrValue SlotFor(VariableSymbol symbol) {
     if (this._addr.TryGetValue(symbol, out var existing))
@@ -581,10 +648,7 @@ public sealed class IrLowering {
       // function out of the optimizer. That is enough to stop it being a wall - a program with one
       // "!" line used to keep EVERY one of its procedures off the IR path, and now only the procedure
       // that contains it is unoptimized.
-      case InlineAsmStmt asm:
-        this._b.InlineAsm(asm.Text);
-        this._fn.HasInlineAsm = true;
-        break;
+      case InlineAsmStmt asm: this.LowerInlineAsm(asm); break;
       case DataStmt: break;                          // DATA is gathered once into a module blob; the statement itself emits nothing
       case ReadStmt rd: this.LowerRead(rd); break;
       case RestoreStmt rs: this.LowerRestore(rs); break;

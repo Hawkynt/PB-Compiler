@@ -276,12 +276,8 @@ public sealed class InstructionSelector {
         return this.SelectStore(store, block);
       case IrGep gep:
         return this.SelectGep(gep, block);
-      // The text reaches BASIC variables by NAME, and a name resolves against a frame layout - which
-      // this back end has not decided yet at selection time, and which is not the direct emitter's
-      // anyway. Emitting it needs a resolver that answers from the routed frame; until there is one,
-      // declining is the only honest thing, because a name bound to the wrong cell is silent.
-      case IrInlineAsm:
-        return this.Decline("inline asm: no resolver for the routed frame layout yet");
+      case IrInlineAsm asm:
+        return this.SelectInlineAsm(asm);
       case IrRet ret:
         return this.SelectRet(ret, block);
       case IrCall call:
@@ -520,6 +516,37 @@ public sealed class InstructionSelector {
       return false;
     this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, mem],
       new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false, ReadsMemory: true, WritesMemory: false)));
+    return true;
+  }
+
+  /// <summary>
+  /// An inline-assembly block, carried to emission with every name it mentions already paired with the
+  /// cell that name denotes IN THIS FRAME.
+  ///
+  /// The lowering did the binding, which is what makes this possible at all: names were resolved
+  /// against the semantic model, not against whichever frame layout happened to be current. Here each
+  /// bound pointer becomes the machine location it addresses, so the emitter can answer the assembler
+  /// without knowing anything about BASIC.
+  ///
+  /// It declares every register clobbered and memory both read and written. That is not a guess about
+  /// what the text does - it is a refusal to guess: the allocator keeps nothing live across it and the
+  /// scheduler moves nothing over it.
+  /// </summary>
+  private bool SelectInlineAsm(IrInlineAsm asm) {
+    if (!asm.Routable)
+      return this.Decline("inline asm: a name in it is not a variable this pass could bind");
+
+    var operands = new List<MOperand> { new MOperand.InlineAsmText(asm.Text, asm.Names) };
+    foreach (var pointer in asm.Operands) {
+      if (this.PointerMemory(pointer, MRegSize.Word) is not { } cell)
+        return false;
+      operands.Add(cell);
+    }
+
+    this._current.Instructions.Add(new MInstr(MOpcode.InlineAsm, operands,
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: true, WritesFlags: true,
+        ReadsMemory: true, WritesMemory: true),
+      condition: null, clobbers: _callClobbers));
     return true;
   }
 

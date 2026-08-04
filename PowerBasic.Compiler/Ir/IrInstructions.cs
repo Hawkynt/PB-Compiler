@@ -128,6 +128,29 @@ public sealed class IrInlineAsm(string text) : IrInstruction(IrType.Void) {
 
   /// <summary>The assembly source, exactly as it was written after the <c>!</c>.</summary>
   public string Text { get; } = text;
+
+  /// <summary>
+  /// The BASIC identifiers the text refers to, in the same order as this instruction's operands: the
+  /// name at index <c>i</c> is the storage that operand <c>i</c> points at.
+  ///
+  /// Binding them at LOWERING time is what makes the text emittable by a back end that lays out its
+  /// frame differently from the direct emitter. The alternative - resolving names against whatever
+  /// frame happens to be current at emission - is how a name silently ends up on the wrong cell.
+  /// </summary>
+  public List<string> Names { get; } = [];
+
+  /// <summary>
+  /// True when every identifier the assembler asked about was bound to storage this instruction now
+  /// carries. False means something was left unresolved - a BASIC label, an equate, a name the model
+  /// does not know - and a back end must decline rather than emit text it cannot fully resolve.
+  /// </summary>
+  public bool Routable { get; set; }
+
+  /// <summary>Records that <paramref name="name"/> denotes the storage <paramref name="pointer"/> addresses.</summary>
+  public void Bind(string name, IrValue pointer) {
+    this.Names.Add(name);
+    this.AddOperand(pointer);
+  }
 }
 
 /// <summary>

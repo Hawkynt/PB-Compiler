@@ -188,11 +188,23 @@ its siblings promote, fold and route normally. The IR-to-BASIC writer renders it
 is exact rather than approximate - the writer's target is PowerBASIC, so the faithful rendering of `!`
 text is that text.
 
-**Still to do**: the x86-16 back end declines it, and the decline names why. The text reaches BASIC
-variables by NAME, a name resolves against a frame layout, and the routed path decides that layout
-differently from the direct emitter. Emitting it needs an `IAsmSymbolResolver` that answers from the
-routed frame; a name bound to the wrong cell would be silent. That is the remaining piece before an
-asm-containing procedure can route.
+**The frame resolver is done.** Names are bound at LOWERING, against the semantic model, and travel on
+the instruction: `IrInlineAsm.Names[i]` is the identifier that operand `i` addresses. The selector
+turns each bound pointer into the machine cell it denotes, and `MachineEmitter.FrameResolver` answers
+the assembler from those cells - so the emitter never has to know what a BASIC variable is, only where
+this back end put it. That is the question the direct emitter's resolver could not answer for a frame
+it did not lay out.
+
+Collecting the names is done by ASSEMBLING the text against a throwaway target with a recording
+resolver, not by scanning it: the real parser knows which tokens are registers, which are mnemonics
+and which are operands. (The stand-in it answers with has to be MEMORY - a constant makes `MOV n, AX`
+not an instruction, and every write-to-a-variable block reported itself unbindable.)
+
+**Still to do**: an asm-containing function SELECTS but does not yet ALLOCATE. The block clobbers every
+register, so anything live across it must spill, and the linear-scan allocator cannot yet place these
+even after spilling to a fixpoint. That is now the only thing between inline asm and routing, and it is
+an allocator limitation rather than an inline-asm one. `BackendInlineAsmTests` asserts the current
+failure explicitly, so the day it starts succeeding, the test says so.
 
 ### Wider integers and SIMD as IR operations - not started
 

@@ -66,6 +66,13 @@ public abstract record MOperand {
   public sealed record DataOffset(string Name, int Disp) : MOperand;
 
   /// <summary>
+  /// An inline-assembly block: the source text plus the BASIC names it refers to. The instruction's
+  /// remaining operands are those names' machine locations in the SAME order, which is what lets the
+  /// emitter build a resolver that answers from the ROUTED frame rather than the direct emitter's.
+  /// </summary>
+  public sealed record InlineAsmText(string Text, IReadOnlyList<string> Names) : MOperand;
+
+  /// <summary>
   /// The OFFSET of a basic block's own label - the machine form of the IR's <c>blockaddress</c>.
   /// PB needs it for exactly one thing: <c>ON ERROR GOTO</c> writes a code address into a runtime
   /// cell, and a fault anywhere afterwards jumps through it. No other operand names a point in this
@@ -153,6 +160,9 @@ public enum MOpcode {
 
   /// <summary>Square root of ST(0), in place - no operand, because the x87 answers where it was asked.</summary>
   Fsqrt,
+
+  /// <summary>A block of inline assembly, assembled verbatim at emission (see <see cref="MOperand.InlineAsmText"/>).</summary>
+  InlineAsm,
 }
 
 /// <summary>A machine basic block: a label, its instructions in order, and its successor labels.</summary>

@@ -52,7 +52,7 @@ public sealed class IrBuilder {
   public IrStore Store(IrValue value, IrValue pointer) => this.Emit(new IrStore(value, pointer));
 
   /// <summary>Appends an opaque inline-assembly barrier (see <see cref="IrInlineAsm"/>).</summary>
-  public IrInlineAsm InlineAsm(string text) => this.Emit(new IrInlineAsm(text));
+  public IrInlineAsm InlineAsm(IrInlineAsm node) => this.Emit(node);
   public IrGep Gep(IrValue basePtr, IrValue byteOffset) => this.Emit(new IrGep(basePtr, byteOffset));
   public IrGep Gep(IrValue basePtr, IrValue index, IrType elementType) => this.Emit(new IrGep(basePtr, index, elementType));
 
