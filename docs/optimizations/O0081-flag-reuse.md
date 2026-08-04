@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned (the `OR AX,AX` form of the zero compare exists — [O0008](O0008-peephole-zero-idiom.md); reusing *earlier* flags does not) |
+| **Status** | 🟡 Partial — `CMP reg,0 → TEST reg,reg` ships (`Assembler.Peephole.cs`); reusing the ZF/SF a preceding `ADD/SUB/AND/OR/XOR/INC/DEC/NEG` already set (drop the following `OR reg,reg`) does not |
 | **Stage** | Assembler peephole |
 | **Related** | [O0008](O0008-peephole-zero-idiom.md), [O0031](O0031-branch-fusion.md), [O0038](O0038-instruction-scheduling.md) |
 

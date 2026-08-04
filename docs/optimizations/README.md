@@ -95,7 +95,7 @@ Conventions used on every page:
 | ⬜ | [O0058](O0058-386-register-allocation.md) | 386/486 register allocation |
 | ⬜ | [O0059](O0059-scalar-replacement.md) | Scalar replacement of aggregates |
 | ⬜ | [O0060](O0060-memory-ssa.md) | Memory SSA / alias analysis |
-| ⬜ | [O0061](O0061-reassociation.md) | Reassociation |
+| 🟡 | [O0061](O0061-reassociation.md) | Reassociation |
 | ⬜ | [O0062](O0062-loop-restructuring.md) | Loop rotation, IV simplification, fusion |
 | ⬜ | [O0063](O0063-duff-unrolling.md) | Duff's-device unrolling |
 | ⬜ | [O0064](O0064-lea-fusion.md) | `LEA` multiply-add fusion |
@@ -115,8 +115,8 @@ Conventions used on every page:
 | 🟡 | [O0078](O0078-multiply-decomposition.md) | General multiply decomposition |
 | ✅ | [O0079](O0079-shared-divide.md) | Shared divide (quotient + remainder) |
 | 🟡 | [O0080](O0080-division-special-cases.md) | Division special cases |
-| ⬜ | [O0081](O0081-flag-reuse.md) | Flag reuse / `TEST` for zero compare |
-| ⬜ | [O0082](O0082-memory-operand-folding.md) | Memory operand folding |
+| 🟡 | [O0081](O0081-flag-reuse.md) | Flag reuse / `TEST` for zero compare |
+| ✅ | [O0082](O0082-memory-operand-folding.md) | Memory operand folding |
 | ⬜ | [O0083](O0083-store-to-load-forwarding.md) | Store-to-load forwarding |
 | ⬜ | [O0084](O0084-cross-statement-register-caching.md) | Cross-statement register caching |
 | ⬜ | [O0085](O0085-copy-coalescing.md) | Register copy coalescing |
