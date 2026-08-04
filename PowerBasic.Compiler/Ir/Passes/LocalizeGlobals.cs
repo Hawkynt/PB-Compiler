@@ -27,6 +27,8 @@ public static class LocalizeGlobals {
     foreach (var global in module.Globals.ToList()) {
       if (global.Bytes is not null || global.Count != 1 || global.HasNoUsers)
         continue;                                  // a blob or an array is not one scalar
+      if (global.Name.StartsWith("rt_", System.StringComparison.Ordinal))
+        continue;                                  // a runtime cell is shared with code the IR cannot see
       if (SoleUser(global) is not { } fn || fn.HasErrorHandler || fn.HasInlineAsm)
         continue;
       if (fn.Entry is null || !WritesBeforeReading(global, fn.Entry))

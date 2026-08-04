@@ -88,4 +88,41 @@ public sealed class ReadOnlyGlobalsTests {
     Assert.That(ReadOnlyGlobals.Run(module), Is.Zero,
       "a fault enters where the CFG shows no edge, so a store on that path would be missed");
   }
+
+  /// <summary>
+  /// A RUNTIME cell is written by hand-written assembly the IR cannot see, so "no stores" says nothing
+  /// about it. <c>rt_col</c> is the print column and <c>rt_err</c> the last error code: the IR only
+  /// ever reads them, which makes them look like constants and they are the opposite - they are the
+  /// part of the program state that changes without the IR touching it.
+  ///
+  /// This is a regression test for a measured miscompile. Folding <c>rt_col</c> to zero made
+  /// <c>POS(0)</c> answer 1 forever, which DIFF111 caught the moment it started routing.
+  /// </summary>
+  [Test]
+  public void Global_GivenARuntimeCell_ThenItIsNeverFoldedHoweverFewStoresAreVisible() {
+    var module = new IrModule("t");
+    var column = module.AddGlobal(new IrGlobalVariable("rt_col", IrType.I16));
+    var main = module.AddFunction(new IrFunction("main", IrType.Void));
+    var entry = main.AddBlock(new IrBasicBlock("entry"));
+    var read = entry.Append(new IrLoad(IrType.I16, column));
+    entry.Append(new IrRet());
+
+    Assert.That(ReadOnlyGlobals.Run(module), Is.Zero);
+    Assert.That(read.Parent, Is.Not.Null, "the runtime writes it; this pass simply cannot see that");
+  }
+
+  [Test]
+  public void Global_GivenARuntimeCell_ThenLocalizationLeavesItAloneToo() {
+    var module = new IrModule("t");
+    var column = module.AddGlobal(new IrGlobalVariable("rt_col", IrType.I16));
+    var main = module.AddFunction(new IrFunction("Work", IrType.Void));
+    var entry = main.AddBlock(new IrBasicBlock("entry"));
+    entry.Append(new IrStore(new IrConstantInt(IrType.I16, 0), column));
+    entry.Append(new IrLoad(IrType.I16, column));
+    entry.Append(new IrRet());
+
+    Assert.That(LocalizeGlobals.Run(module), Is.Zero,
+      "a cell the runtime shares cannot become one procedure's local");
+    Assert.That(module.Globals, Does.Contain(column));
+  }
 }

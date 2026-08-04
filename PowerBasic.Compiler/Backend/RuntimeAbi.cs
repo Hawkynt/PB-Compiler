@@ -307,7 +307,7 @@ internal static class RuntimeAbi {
     //   rt_print_i64 - a QUAD is routed through the 15-digit FLOAT formatter (genuine PBC does this,
     //     so large values appear in E notation). The IR types the value i64, which this back end has
     //     no representation for at all - it is a wider gap than a table row
-    //   rt_print_tab  - TAB(n) is column arithmetic against rt_col, not a call with a convention
+    //   (nothing else in the print family)
 
     // deliberately NO rt_str_from_u16 entry: rt_str_i16 opens with a CWD, so routing an unsigned
     // WORD through it would render 65535 as -1

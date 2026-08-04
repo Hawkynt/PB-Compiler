@@ -52,6 +52,12 @@ public static class ReadOnlyGlobals {
   /// </summary>
   private static bool ReadOnly(IrGlobalVariable global, out List<IrLoad> loads) {
     loads = [];
+    // A RUNTIME cell is written by hand-written assembly this pass cannot see. rt_col is the print
+    // column, rt_err the last error code: the IR only ever reads them, which makes them look like
+    // constants and they are the opposite - they are the parts of the program state that change
+    // without the IR touching them. Folding rt_col to zero made POS(0) answer 1 forever.
+    if (global.Name.StartsWith("rt_", StringComparison.Ordinal))
+      return false;
     foreach (var user in global.Users) {
       // a function whose body armed an error handler is not analysed at all: a fault can enter it at
       // a point the CFG does not show, and a store on that path is a store this pass would miss

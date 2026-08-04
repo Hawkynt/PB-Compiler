@@ -210,6 +210,20 @@ selected and never allocated.
 
 The `LEA` is still emitted and is now dead for scalars, which is worth cleaning up but costs only size.
 
+### TAB / SPC in the runtime ABI table - blocked on the INT/FIX question
+
+`rt_tab` and `rt_spc` are one-word conventions (`CX` = the target column or the count) and the entries
+for them are written and measured. They are NOT listed, because listing them routes ten more corpus
+compilations of which **two agree and eight do not** - and all eight are the same open INT/FIX
+constant-folding divergence that `DIFF01` and `DIFF55` already sit on. Trading two agreements for
+eight disagreements is the wrong way round.
+
+So settling INT/FIX is the prerequisite, and it is a single well-defined question: the direct emitter
+folds `INT(2.7)` to 3 and `FIX(-2.7)` to -3, the IR gives 2 and -2. The language definition agrees with
+the IR - INT floors, FIX truncates toward zero - but the direct emitter is the side that has been run
+against genuine PBC 3.50, which is the only authority that settles it. Until it can be asked, neither
+side is changed, and TAB/SPC waits behind it.
+
 ### Wider integers and SIMD as IR operations - not started
 
 The IR has no integer tier above the dialects' own widths and no vector type; `MRegSize` reads
