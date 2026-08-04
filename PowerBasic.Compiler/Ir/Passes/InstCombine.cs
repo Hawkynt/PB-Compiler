@@ -218,7 +218,7 @@ public static class InstCombine {
   };
 
   private static bool HasSideEffects(IrInstruction inst) =>
-    inst is IrStore or IrCall || inst.IsTerminator;
+    inst is IrStore or IrCall or IrInlineAsm || inst.IsTerminator;
 
   /// <summary>
   /// Reassociates a constant through a same-opcode chain: op(op(x, c1), c2) -> op(x, c1∘c2)

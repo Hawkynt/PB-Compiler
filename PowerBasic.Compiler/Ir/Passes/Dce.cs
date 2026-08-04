@@ -27,5 +27,5 @@ public static class Dce {
   }
 
   private static bool HasSideEffects(IrInstruction inst) =>
-    inst is IrStore or IrCall || inst.IsTerminator;
+    inst is IrStore or IrCall or IrInlineAsm || inst.IsTerminator;
 }

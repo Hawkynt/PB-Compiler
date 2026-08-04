@@ -317,6 +317,11 @@ public sealed class IrBasicWriter {
       case IrStore store:
         this.Line($"  {this.Ref(this.ScalarSlot(store.Pointer, store.Value.Type))} = {this.Ref(store.Value)}");
         return;
+      // inline asm renders as the "!" statement it came from - the one construct whose faithful
+      // rendering is its own text, since the writer's target IS PowerBASIC
+      case IrInlineAsm asm:
+        this.Line($"  ! {asm.Text.Trim()}");
+        return;
       case IrSwitch sw: this.Switch(sw); return;
       default:
         throw new IrBasicWriterException($"the instruction {instruction.GetType().Name}");

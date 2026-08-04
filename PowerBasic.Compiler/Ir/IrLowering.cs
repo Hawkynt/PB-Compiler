@@ -577,6 +577,14 @@ public sealed class IrLowering {
       case OpenStmt op: this.LowerOpen(op); break;
       case CloseStmt cl: this.LowerClose(cl); break;
       case GetPutFileStmt gp: this.LowerGetPut(gp); break;
+      // Inline asm is carried, not understood: an opaque barrier plus a flag that takes the whole
+      // function out of the optimizer. That is enough to stop it being a wall - a program with one
+      // "!" line used to keep EVERY one of its procedures off the IR path, and now only the procedure
+      // that contains it is unoptimized.
+      case InlineAsmStmt asm:
+        this._b.InlineAsm(asm.Text);
+        this._fn.HasInlineAsm = true;
+        break;
       case DataStmt: break;                          // DATA is gathered once into a module blob; the statement itself emits nothing
       case ReadStmt rd: this.LowerRead(rd); break;
       case RestoreStmt rs: this.LowerRestore(rs); break;

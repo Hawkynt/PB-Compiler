@@ -276,6 +276,12 @@ public sealed class InstructionSelector {
         return this.SelectStore(store, block);
       case IrGep gep:
         return this.SelectGep(gep, block);
+      // The text reaches BASIC variables by NAME, and a name resolves against a frame layout - which
+      // this back end has not decided yet at selection time, and which is not the direct emitter's
+      // anyway. Emitting it needs a resolver that answers from the routed frame; until there is one,
+      // declining is the only honest thing, because a name bound to the wrong cell is silent.
+      case IrInlineAsm:
+        return this.Decline("inline asm: no resolver for the routed frame layout yet");
       case IrRet ret:
         return this.SelectRet(ret, block);
       case IrCall call:

@@ -107,6 +107,30 @@ public sealed class IrStore : IrInstruction {
 }
 
 /// <summary>
+/// A block of inline assembly, carried through the IR as an opaque barrier.
+///
+/// The text is not parsed here. What the IR needs to know about it is not what it says but what it
+/// can do: PowerBASIC's <c>!</c> statements reach local variables and module globals by NAME, jump to
+/// BASIC labels in the enclosing scope, and may touch any register - so from the middle end's point of
+/// view this reads and writes everything, and nothing may be moved across it, folded through it, or
+/// deleted because it looked unused.
+///
+/// <para>
+/// It is deliberately a BARRIER rather than a modelled instruction. A modelled one would need every
+/// operand, result and clobber the text implies, and a list that is one entry short miscompiles
+/// silently - the same failure as an under-declared machine effect, which is exactly how an FSQRT
+/// ended up scheduled past the store that captured its answer. The function carrying it is marked
+/// <see cref="IrFunction.HasInlineAsm"/> and the optimizer skips it whole, which is the trade the
+/// direct emitter already makes.
+/// </para>
+/// </summary>
+public sealed class IrInlineAsm(string text) : IrInstruction(IrType.Void) {
+
+  /// <summary>The assembly source, exactly as it was written after the <c>!</c>.</summary>
+  public string Text { get; } = text;
+}
+
+/// <summary>
 /// Pointer displacement. In the default (byte) mode it adds a byte count to a pointer —
 /// the flattened form used for fixed-size scalar arrays. When <see cref="ElementType"/>
 /// is set it is an element-indexed GEP (LLVM scales the index by the element's target

@@ -37,7 +37,7 @@ public sealed class IrPassManager {
   public int Run(IrFunction fn) {
     // a function with an armed error handler has control-flow edges the CFG does not show, so every
     // pass here would be reasoning from an incomplete graph - see IrFunction.HasErrorHandler
-    if (fn.HasErrorHandler)
+    if (fn.HasErrorHandler || fn.HasInlineAsm)
       return 0;
     var total = 0;
     foreach (var (name, run) in this._passes) {

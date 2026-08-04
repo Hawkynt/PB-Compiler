@@ -75,6 +75,7 @@ public sealed class IrPrinter {
       IrAlloca a => a.Count > 1 ? $"alloca {a.Allocated}, i32 {a.Count}" : $"alloca {a.Allocated}",
       IrLoad l => $"load {l.Type}, ptr {this.Ref(l.Pointer)}",
       IrStore s => $"store {s.Value.Type} {this.Ref(s.Value)}, ptr {this.Ref(s.Pointer)}",
+      IrInlineAsm a => $"asm \"{a.Text.Trim()}\"",
       IrGep g => $"gep {g.ElementType?.ToString() ?? "i8"} {this.Ref(g.BasePtr)}, {g.ByteOffset.Type} {this.Ref(g.ByteOffset)}",
       IrPhi p => $"phi {p.Type} {this.PrintPhiInputs(p)}",
       IrSelect sel => $"select i1 {this.Ref(sel.Condition)}, {sel.Type} {this.Ref(sel.IfTrue)}, {sel.Type} {this.Ref(sel.IfFalse)}",

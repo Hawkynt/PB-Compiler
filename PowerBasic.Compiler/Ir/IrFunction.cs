@@ -46,6 +46,17 @@ public sealed class IrFunction : IrGlobalValue {
   /// </summary>
   public bool HasErrorHandler { get; set; }
 
+  /// <summary>
+  /// True when the body contains an <see cref="Passes.IrPassManager"/>-opaque block of inline assembly.
+  ///
+  /// Inline asm reaches BASIC variables by name, jumps to BASIC labels and may touch any register, so
+  /// every fact a pass would derive about this function - which values are live, which stores are
+  /// dead, which slots can be promoted - is a fact about the part of the function the IR can see.
+  /// The optimizer skips it whole rather than each pass carrying a guard, which is the same trade
+  /// made for <see cref="HasErrorHandler"/> and the one the direct emitter makes.
+  /// </summary>
+  public bool HasInlineAsm { get; set; }
+
   public IrArgument AddParameter(IrArgument argument) {
     argument.Parent = this;
     this._parameters.Add(argument);
