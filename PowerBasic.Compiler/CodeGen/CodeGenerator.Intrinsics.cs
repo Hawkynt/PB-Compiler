@@ -78,6 +78,32 @@ public sealed partial class CodeGenerator {
     asm.Call(this._rt.CharAt);
   }
 
+  /// <summary>
+  /// O0108/O0248: an all-INTEGER MIN/MAX (or MIN%/MAX%) folds with signed integer compares instead of the x87
+  /// round-trip. The accumulator lives in AX; each further argument is loaded into BX and a `cmp`/conditional
+  /// keeps the larger (MAX) or smaller (MIN). On a tie the accumulator is kept, matching the FPU fold (Ja/Jb are
+  /// strict). Preserves the accumulator across each argument's evaluation via the stack, since evaluating an
+  /// argument may itself call a FUNCTION and clobber AX/BX.
+  /// </summary>
+  private void EmitIntegerMinMaxFold(IReadOnlyList<Expression> args, bool wantMax) {
+    var asm = this._asm;
+    this.EmitInt16Argument(args[0]);                   // accumulator in AX
+    for (var i = 1; i < args.Count; ++i) {
+      asm.Push(Reg.AX);
+      this.EmitInt16Argument(args[i]);                 // candidate in AX
+      asm.Mov(Reg.BX, Reg.AX);                         // candidate -> BX
+      asm.Pop(Reg.AX);                                 // accumulator -> AX
+      var keep = asm.DefineLabel();
+      asm.Cmp(Reg.AX, Reg.BX);
+      if (wantMax)
+        asm.Jge(keep);                                 // acc >= cand: keep acc (tie keeps acc)
+      else
+        asm.Jle(keep);                                 // acc <= cand: keep acc (tie keeps acc)
+      asm.Mov(Reg.AX, Reg.BX);                          // candidate wins
+      asm.MarkLabel(keep);
+    }
+  }
+
   /// <summary>O0302: the byte of a single-character constant needle - a 1-char string literal or CHR$(const). Any byte, 0 included.</summary>
   private int? SingleCharNeedleByte(Expression e) {
     if (e is StringLiteralExpr { Value: { Length: 1 } text } && text[0] <= (char)255)
@@ -620,6 +646,14 @@ public sealed partial class CodeGenerator {
       case "MIN" or "MAX" or "MIN%" or "MAX%": {
         // fold on the FPU: accumulator in ST1, candidate in ST0
         var wantMax = intrinsic.Name.StartsWith("MAX", StringComparison.Ordinal);
+        // O0108/O0248: when every argument and the result are INTEGER, fold with an integer compare instead of
+        // the x87 round-trip (coerce-to-double, FCOM, coerce-back). The signed compare reproduces the FPU
+        // fold's result exactly over the int16 range, ties included (both keep the earlier accumulator).
+        if (this.Optimize && KindOf(model.TypeOf(call)) == ValueKind.Int16
+            && args.All(a => KindOf(model.TypeOf(a)) == ValueKind.Int16)) {
+          this.EmitIntegerMinMaxFold(args, wantMax);
+          break;
+        }
         this.EmitExpression(args[0]);
         this.Coerce(model.TypeOf(args[0]), PbType.Double, args[0]);
         for (var i = 1; i < args.Count; ++i) {

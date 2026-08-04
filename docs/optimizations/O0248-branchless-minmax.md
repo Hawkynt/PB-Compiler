@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial — the `MIN`/`MAX`/`MIN%`/`MAX%` intrinsics with all-INTEGER arguments now fold with a signed integer `CMP` (of any arity) instead of the x87 round-trip; the branch-diamond recognizer and the true branchless (`CMOV`/mask) forms remain |
 | **Stage** | Emitter |
 | **Related** | [O0108](O0108-branchless-select.md), [O0119](O0119-reduction-recognition.md), [O0257](O0257-vector-minmax.md) |
 | **Split from** | [O0108](O0108-branchless-select.md) |
@@ -24,6 +24,31 @@ implement directly.
 DIM a%, b%, m%
 IF a% > b% THEN m% = a% ELSE m% = b%
 ```
+
+## Now
+
+The `MIN`/`MAX`/`MIN%`/`MAX%` intrinsics, when every argument and the result are
+`INTEGER`, fold with a signed integer compare rather than the x87 path they used
+to take (each argument coerced to `DOUBLE`, `FCOM`/`FSTSW`/`SAHF`, the result
+coerced back). The accumulator stays in `AX`; each further argument is compared in
+`BX` and a `CMP`/`JGE`(max)/`JLE`(min) keeps the winner — any arity, ties keeping
+the earlier accumulator exactly as the strict `Ja`/`Jb` FPU fold did. Optimize-gated,
+so the faithful build keeps the x87 fold byte-for-byte (golden gate 250/250); the
+optimization battery folds `MAX%`/`MIN%` over positives, negatives and a tie and
+self-diffs under DOSBox with the optimizer on and off (identical output). This is
+the integer reduction shape [O0119](O0119-reduction-recognition.md) carries, now
+off the FPU.
+
+## Still planned
+
+- A recognizer over the `IF`/`SELECT`/ternary spellings of the same idiom (so a
+  hand-written `IF a% > b%` diamond folds like the intrinsic does).
+- The **true branchless** forms: `CMOVcc` on a 686 (encoding-verified only — DOSBox
+  has no `CMOV`) and the 8086 carry-mask blend, chosen by the
+  [O0174](O0174-target-cost-models.md) cost model (`PreferBranchless`), which keeps
+  the compare-and-branch on the predictor-less early parts where it already wins.
+- The `LONG`/`SINGLE`/`DOUBLE` argument forms, and packed `PMAXSW`/`PMINSW` in a
+  vector loop ([O0257](O0257-vector-minmax.md)).
 
 ## What it needs
 

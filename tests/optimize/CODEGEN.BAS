@@ -14,6 +14,7 @@ DECLARE SUB UnreachableCodeDropped(BYVAL n%)
 DECLARE SUB CommonSubexpressionReused(BYVAL y%, BYVAL x%)
 DECLARE SUB MultiplyByPowerOfTwoIsShifts(BYVAL n%)
 DECLARE SUB MultiplyByFourBitConstIsShifts(BYVAL n%)
+DECLARE SUB IntegerMaxFoldsWithoutFpu(BYVAL a%, BYVAL b%)
 DECLARE SUB DivideByPowerOfTwoIsShifts(BYVAL n%)
 DECLARE SUB DivideByConstantIsReciprocal(BYVAL n%)
 DECLARE SUB TrivialFunctionInlined(BYVAL n%)
@@ -47,6 +48,7 @@ UnreachableCodeDropped 4
 CommonSubexpressionReused 5, 6
 MultiplyByPowerOfTwoIsShifts 7
 MultiplyByFourBitConstIsShifts 3
+IntegerMaxFoldsWithoutFpu 3, 8
 DivideByPowerOfTwoIsShifts 64
 DivideByConstantIsReciprocal 250
 TrivialFunctionInlined 8
@@ -148,6 +150,20 @@ END SUB
 ' ---------------------------------------------------------------------------
 SUB MultiplyByFourBitConstIsShifts(BYVAL n%) NOINLINE
   PRINT "mul85"; n% * 85
+END SUB
+
+' ---------------------------------------------------------------------------
+' @scenario IntegerMaxFoldsWithoutFpu
+' @what     MAX% over two INTEGER arguments
+' @expect   O0108/O0248 fold it with a signed integer compare - no x87 round-trip
+' @assert   absent fild-dword
+' @assert   present cmp-ax-bx
+' @status   done
+' ---------------------------------------------------------------------------
+SUB IntegerMaxFoldsWithoutFpu(BYVAL a%, BYVAL b%) NOINLINE
+  PRINT "imax"; MAX%(a%, b%)
+  PRINT "imin"; MIN%(-5, a%)
+  PRINT "itie"; MAX%(a%, a%)
 END SUB
 
 ' ---------------------------------------------------------------------------
