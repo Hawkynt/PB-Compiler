@@ -283,6 +283,16 @@ public sealed partial class CodeGenerator {
 
   private void EmitUnary(UnaryExpr u) {
     var asm = this._asm;
+    // O0077: -(-x) is x - the two sign flips cancel exactly (FCHS then FCHS for floats, NEG then NEG
+    // for integers, wrap-identical even at -32768). Guarded on both negations producing the same
+    // type, so there is no rounding step between them; emit the inner value coerced to that type.
+    if (this.Optimize && u.Op == UnaryOp.Negate
+        && u.Operand is UnaryExpr { Op: UnaryOp.Negate, Operand: { } inner }
+        && model.TypeOf(u).Equals(model.TypeOf(u.Operand))) {
+      this.EmitExpression(inner);
+      this.Coerce(model.TypeOf(inner), model.TypeOf(u), inner);
+      return;
+    }
     this.EmitExpression(u.Operand);
     var kind = KindOf(model.TypeOf(u.Operand));
     switch (u.Op, kind) {

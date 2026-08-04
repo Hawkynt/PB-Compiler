@@ -519,6 +519,17 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // is the same question as "x% AND mask%". The side that disappears must be discardable: its
     // value is not emitted at all, so it may not be something whose evaluation is observable.
     if (b.Op is BinaryOp.And or BinaryOp.Or or BinaryOp.Xor) {
+      // O0076 self-operand identities: x AND x = x, x OR x = x, x XOR x = 0. Sound only over a
+      // discardable operand (a pure variable/constant read) so the shared value is evaluated once
+      // with no side effect to duplicate or drop; bitwise ops stay integral, so this holds for any
+      // value of x. x XOR x collapses to 0 without even reading x (it has no observable effect).
+      if (this.IsDiscardable(b.Left) && this.IsSameLvalue(b.Left, b.Right)) {
+        if (b.Op == BinaryOp.Xor) {
+          this.EmitIntegralConstant(0, KindOf(opType));
+          return true;
+        }
+        return this.EmitOperandOnly(b.Left, opType);   // AND / OR: the operand itself
+      }
       var left = this.FactsOf(b.Left);
       var right = this.FactsOf(b.Right);
       if (this.IsDiscardable(b.Right) && IsBitwiseIdentity(b.Op, left, right, mask))

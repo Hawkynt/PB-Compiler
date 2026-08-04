@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial — `-(-x)` folds; `0 - x` / `x * -1` await the float-promotion routing |
 | **Stage** | Emitter |
 | **Related** | [O0076](O0076-algebraic-identities.md), [O0004](O0004-strength-reduction.md), [O0033](O0033-constant-store.md) |
 
@@ -31,24 +31,34 @@ c% = -(-x%)
 under `$OPTIMIZE SPEED`, a shift chain with a trailing `NEG`); the double
 negation emits two negations.
 
-## Planned
+## Now — `-(-x)` folds
 
 ```asm
-    mov     ax, [x]
-    neg     ax
-    mov     [a], ax
-    mov     ax, [x]
-    neg     ax
-    mov     [b], ax
+    ; c% = -(-x%)   ->   c% = x%
     mov     ax, [x]
     mov     [c], ax
 ```
 
-## What it needs
+`EmitUnary` collapses `-(-x)` to the inner value: two sign flips cancel exactly
+(`FCHS` then `FCHS` for the float-promoted forms, `NEG` then `NEG` for the
+integral `LONG`), guarded on both negations producing the **same** type so no
+rounding step sits between them. This is bit-exact even at `-32768`
+(`NEG(NEG(8000h)) = 8000h`) and the whole `LONG` `80000000h` case — verified
+byte-identical against the genuine oracle (`-(-x%)`, `-(-y&)`, `-(-(-32768))`).
 
-- **`-32768` is the whole problem.** `NEG` of `8000h` yields `8000h` and sets
-  OF. PB's own negation is float-promoted, so `m% = -32768` stores `8000h`
-  ([O0033](O0033-constant-store.md) already reproduces that); the rewrite must
-  land on the same bits and must keep the Error-6 trap under `$ERROR OVERFLOW`.
-- The same review for `LONG` (`80000000h`) and for the unsigned types, where
-  `NEG` is a modular complement rather than an arithmetic negation.
+## Still planned — `0 - x`, `x * -1`
+
+```asm
+    ; a% = 0 - x%   ->   neg ax
+```
+
+Both are blocked on the same routing as [O0076](O0076-algebraic-identities.md):
+PB computes integral `-` and `*` in floating point, so `0 - x%` and `x% * -1`
+reach the emitter as *float*-typed subtract/multiply trees rather than integer
+ALU ops. Recognizing them as an `FCHS` (or an integer `NEG` in the modular-int
+lowering) is the remaining work, together with the `-32768` / `LONG 80000000h`
+Error-6 trap review under `$ERROR OVERFLOW` and the unsigned modular-complement
+case.
+
+Native-only, in `CodeGenerator.EmitUnary`. The IR back ends emit a `0 - x` /
+`-1 * x` the host C compiler folds to a negate itself.

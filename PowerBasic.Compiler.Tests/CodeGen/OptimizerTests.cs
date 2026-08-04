@@ -603,6 +603,15 @@ public sealed class OptimizerTests {
   private static int CountMulBx(byte[] image) => CountPair(image, 0xF7, 0xE3);
 
   [Test]
+  public void Emit_GivenSelfXor_WhenPb36_ThenFoldedToZeroSmallerImage() {
+    // O0076: x XOR x is 0 (and x AND x / x OR x is x), folded without a second operand or the XOR,
+    // so the optimized image is smaller than xor-ing two distinct variables.
+    var self = Compile("DIM x AS INTEGER, r AS INTEGER\nLINE INPUT x$\nx = VAL(x$)\nr = x XOR x\nPRINT r\nEND", Dialect.Pb36);
+    var distinct = Compile("DIM x AS INTEGER, y AS INTEGER, r AS INTEGER\nLINE INPUT x$\nx = VAL(x$)\ny = 3\nr = x XOR y\nPRINT r\nEND", Dialect.Pb36);
+    Assert.That(self.Length, Is.LessThan(distinct.Length), "x XOR x folds to 0; x XOR y keeps the XOR");
+  }
+
+  [Test]
   public void Emit_GivenRepeatedLenOfSameString_WhenPb36_ThenCachedSmallerImage() {
     // O0180: LEN(s$) + LEN(s$) + LEN(s$) reads the descriptor once and reloads a slot for the rest,
     // so the optimized image is smaller than reading a fresh LEN each time (which the unoptimized
