@@ -137,6 +137,39 @@ front-ends:
 ## Won't (for now)
 - Win16 / protected-mode targets; 32-bit OMF.
 
+## The IR path towards output parity with the direct emitter
+
+The retargetable path (`Ir/` -> `Backend/`, gated behind `--x-backend`) is meant to eventually
+produce what the direct emitter produces. Measured by `BackendCoverageTests` over the 162-program
+battery, it currently reaches:
+
+| | |
+|---|---|
+| programs reaching the IR at all | 107 / 162 |
+| functions selected | 94 / 171 |
+| functions routed (selected **and** allocated) | 68 / 171 |
+| whole module bodies the back end can own | 25 / 107 |
+
+Ranked by the census, what stands between that and full coverage:
+
+1. **`$ERROR BOUNDS / OVERFLOW / NUMERIC ON`** (19 programs) - the lowering has to emit the checks
+   themselves, not just accept the metastatement. Bounds is a comparison per subscript against the
+   static bounds branching to the runtime's raise entry (`rt_raise`, `AX` = code), which is what
+   `CodeGenerator.Arrays` does when `CheckBounds` is set.
+2. **`ON ERROR`** (4 programs) - the handler machinery is emitted around the body by the direct path.
+3. A tail of statements: `ArraySortStmt`, `DIM AT`, `ERASE` of a static array, `ROTATE`.
+4. **26 functions that select but fail allocation** - each needs a memory operand in a position the
+   emitter has no form for; `Spiller` names the position it could not move.
+
+### The blocker that is not code
+
+None of the routed output has ever been **executed**. The differential oracle needs DOSBox
+(`tools/dosbox`, or `DOSBOX_EXE`) and the vintage toolchains; without them every correctness claim
+about the back end rests on matching the direct emitter's documented register conventions and on
+static invariants (selection declines, allocation, images that assemble and link). Coverage added
+without that is a larger body of unexecuted code, not parity - so an execution oracle should come
+before, or alongside, the items above rather than after them.
+
 ---
 *Optimizations are owned by the separate optimizer instance; ABI/interop items
 above are front-end/linker work for this instance unless noted.*
