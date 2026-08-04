@@ -180,7 +180,9 @@ public sealed class BackendCoverageTests {
     // was what stood in front of almost every module body
     // then 66 -> 69 with string concatenation (rt_strcat) and the 32-bit multiply helper (rt_lmul)
     // then 69 -> 81 with x87: floats live in frame cells bracketed by FLD/FSTP
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(81),
+    // then 81 -> 88 (of a larger denominator, since 14 more programs now lower at all): CINT and the
+    // rounding float-to-integer conversion it is spelled from
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(88),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
   }
 }

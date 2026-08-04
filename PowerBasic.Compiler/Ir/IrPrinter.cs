@@ -137,6 +137,7 @@ public sealed class IrPrinter {
   private static string Mnemonic(IrCastOp op) => op switch {
     IrCastOp.Trunc => "trunc", IrCastOp.ZExt => "zext", IrCastOp.SExt => "sext",
     IrCastOp.FPToSI => "fptosi", IrCastOp.FPToUI => "fptoui", IrCastOp.SIToFP => "sitofp", IrCastOp.UIToFP => "uitofp",
+    IrCastOp.FPToSIRound => "fptosi.round",
     IrCastOp.FPTrunc => "fptrunc", IrCastOp.FPExt => "fpext",
     IrCastOp.IntToPtr => "inttoptr", IrCastOp.PtrToInt => "ptrtoint", IrCastOp.BitCast => "bitcast",
     _ => op.ToString().ToLowerInvariant(),

@@ -19,7 +19,10 @@ public static class IntegerRecovery {
     var recovered = 0;
     foreach (var block in fn.Blocks)
       foreach (var instr in block.Instructions.ToList())   // snapshot - we insert while iterating
-        if (instr is IrCast { Op: IrCastOp.FPToSI } cast && cast.Type.IsInteger
+        // both spellings close a float-shaped integer tree: the rounding one because that is what an
+        // assignment to an integer variable emits, the truncating one because FIX/INT do. Whether the
+        // conversion rounds or truncates cannot matter here - the recovered tree is integer-valued
+        if (instr is IrCast { Op: IrCastOp.FPToSI or IrCastOp.FPToSIRound } cast && cast.Type.IsInteger
             && TryRecover(cast.Value, cast.Type, block, cast) is { } intValue) {
           cast.ReplaceAllUsesWith(intValue);
           ++recovered;

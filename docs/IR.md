@@ -217,3 +217,23 @@ behaviour this lowering does not emit — so a program that turns a check **on**
 dropping its traps would be a miscompile, not a missing optimization. Anything unrecognized declines
 as well, so a directive that gains semantics later is refused by default rather than ignored by
 accident.
+
+## Float to integer: two conversions, not one
+
+BASIC **rounds** a real on its way into an integer variable — `n% = 2.7` is 3 — while a C cast and
+LLVM's `fptosi` both truncate. The IR therefore has to say which it means, and
+`IrCastOp.FPToSIRound` is a separate operation from `FPToSI`:
+
+| operation | meaning | emitted by | native | C | LLVM |
+|---|---|---|---|---|---|
+| `FPToSI` | truncate toward zero | `FIX`, `INT` | (declines) | `(int)x` | `fptosi` |
+| `FPToSIRound` | round to nearest, ties to even | assignment to an integer variable, `CINT`/`CLNG`/`CWRD`/`CBYT`/`CDWD` | `FISTP` through a dword cell | `(int)llrint(x)` | `llvm.rint` then `fptosi` |
+
+The two disagree on every value with a fraction, which is the kind of difference that shows up as a
+wrong number in program output rather than as a crash — the IR path used to emit the truncating one
+for both. Nothing names a rounding *mode*: nearest-ties-to-even is where the runtime leaves the x87
+control word, and it is what `llvm.rint` follows under the default mode, so the paths agree without
+having to be told.
+
+`IntegerRecovery` accepts both spellings as the closing conversion of a float-shaped integer tree.
+Whether it rounds or truncates cannot matter there — the recovered tree is integer-valued either way.

@@ -38,7 +38,9 @@ public sealed class IrLoweringTests {
       "  %2 = load i16, ptr %y\n" +
       "  %3 = sitofp i16 %2 to f32\n" +
       "  %4 = fadd f32 %1, %3\n" +
-      "  %5 = fptosi f32 %4 to i16\n" +
+      // the ROUNDING conversion, not a truncating one: BASIC rounds a real on its way into an
+      // integer variable, so z% = x% + y% closes with fptosi.round
+      "  %5 = fptosi.round f32 %4 to i16\n" +
       "  store i16 %5, ptr %z\n" +
       "  ret void\n" +
       "}\n"));

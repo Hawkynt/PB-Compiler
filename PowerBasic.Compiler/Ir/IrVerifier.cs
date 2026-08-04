@@ -183,7 +183,7 @@ public sealed class IrVerifier {
       IrCastOp.FPTrunc => from.IsIeeeFloat && to.IsIeeeFloat && from.Bits > to.Bits,
       IrCastOp.FPExt => from.IsIeeeFloat && to.IsIeeeFloat && from.Bits < to.Bits,
       IrCastOp.SIToFP or IrCastOp.UIToFP => from.IsInteger && to.IsIeeeFloat,
-      IrCastOp.FPToSI or IrCastOp.FPToUI => from.IsIeeeFloat && to.IsInteger,
+      IrCastOp.FPToSI or IrCastOp.FPToUI or IrCastOp.FPToSIRound => from.IsIeeeFloat && to.IsInteger,
       IrCastOp.MbfToFP => from.IsMbf && to.IsIeeeFloat,
       IrCastOp.FPToMbf => from.IsIeeeFloat && to.IsMbf,
       IrCastOp.IntToPtr => from.IsInteger && to.IsPointer,

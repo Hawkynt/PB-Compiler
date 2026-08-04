@@ -483,7 +483,11 @@ public sealed class IrLowering {
       case RestoreStmt rs: this.LowerRestore(rs); break;
       case EndStmt: this.LowerEnd(); break;
       case MetaStmt meta: LowerMeta(meta); break;
-      default: throw new IrLoweringException($"unsupported statement: {statement.GetType().Name}");
+      // CommandStmt is a catch-all for a dozen unrelated statements (KILL, POKE, OUT, RANDOMIZE...),
+      // so it names the keyword: "unsupported statement: CommandStmt" ranks nothing
+      default: throw new IrLoweringException(statement is CommandStmt command
+        ? $"unsupported statement: {command.Keyword}"
+        : $"unsupported statement: {statement.GetType().Name}");
     }
   }
 
@@ -1341,7 +1345,10 @@ public sealed class IrLowering {
       "SGN" => this.LowerSgn(call),
       "FIX" => this.LowerFix(call),
       "INT" => this.LowerInt(call),
-      "CDBL" or "CSNG" => this.LowerConvert(call),
+      "CDBL" or "CSNG" or "CEXT" => this.LowerConvert(call),
+      // CINT/CLNG and the unsigned spellings are the ordinary assignment conversion written out: the
+      // result type carries the width, and Coerce rounds into it
+      "CINT" or "CBYT" or "CWRD" or "CLNG" or "CDWD" => this.LowerConvert(call),
       "LEN" => this.LowerLen(call),
       "ASC" => this.LowerAsc(call),
       "VAL" => this.LowerVal(call),
@@ -1779,6 +1786,8 @@ public sealed class IrLowering {
       return this._b.Cast(toTy.Bits > value.Type.Bits ? IrCastOp.FPExt : IrCastOp.FPTrunc, value, toTy);
     if (!sf.IsFloat && st.IsFloat)
       return this._b.Cast(sf.Signed ? IrCastOp.SIToFP : IrCastOp.UIToFP, value, toTy);
-    return this._b.Cast(st.Signed ? IrCastOp.FPToSI : IrCastOp.FPToUI, value, toTy);
+    // BASIC ROUNDS a real on its way into an integer variable - n% = 2.7 is 3, not 2 - so this is
+    // the rounding conversion, not the truncating one FIX/INT ask for
+    return this._b.Cast(st.Signed ? IrCastOp.FPToSIRound : IrCastOp.FPToUI, value, toTy);
   }
 }

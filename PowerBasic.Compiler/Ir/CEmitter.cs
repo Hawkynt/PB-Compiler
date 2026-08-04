@@ -428,6 +428,9 @@ public sealed class CEmitter {
       IrCastOp.Trunc or IrCastOp.SExt => $"({Ty(c.Type)}){v}",
       IrCastOp.ZExt => $"({Ty(c.Type)})({UTy(from)}){v}",
       IrCastOp.SIToFP or IrCastOp.FPTrunc or IrCastOp.FPExt or IrCastOp.FPToSI => $"({Ty(c.Type)}){v}",
+      // a C cast truncates, so the rounding conversion has to say so: llrint rounds to nearest with
+      // ties to even under the default rounding mode, which is the one BASIC assignment uses
+      IrCastOp.FPToSIRound => $"({Ty(c.Type)})llrint({v})",
       IrCastOp.UIToFP => $"({Ty(c.Type)})({UTy(from)}){v}",
       IrCastOp.FPToUI => $"({Ty(c.Type)})({UTy(c.Type)}){v}",
       IrCastOp.IntToPtr => $"(void *)(intptr_t){v}",

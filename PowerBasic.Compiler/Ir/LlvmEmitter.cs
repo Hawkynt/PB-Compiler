@@ -78,6 +78,15 @@ public sealed class LlvmEmitter {
   }
 
   private string EmitInstruction(IrInstruction inst) {
+    // BASIC's assignment conversion ROUNDS a real into an integer, and `fptosi` truncates - so the
+    // rounding has to be done first and explicitly. llvm.rint rounds by the current mode, which is
+    // nearest-ties-to-even, the same rule the x87 default applies on the native path.
+    if (inst is IrCast { Op: IrCastOp.FPToSIRound } round) {
+      var floatType = Ty(round.Value.Type);
+      var rounded = "%rint." + this._slot++.ToString(CultureInfo.InvariantCulture);
+      return $"{rounded} = call {floatType} @llvm.rint.{Suffix(round.Value.Type)}({floatType} {this.Ref(round.Value)})"
+        + "\n  " + $"{this.Ref(round)} = fptosi {floatType} {rounded} to {Ty(round.Type)}";
+    }
     var lhs = inst.Type.IsVoid ? "" : this.Ref(inst) + " = ";
     return lhs + inst switch {
       IrBinary b => $"{Mnemonic(b.Op)} {Ty(b.Type)} {this.Ref(b.Lhs)}, {this.Ref(b.Rhs)}",
@@ -125,6 +134,9 @@ public sealed class LlvmEmitter {
   /// which is exactly how it reaches this emitter. Microsoft Binary Format has no LLVM spelling at
   /// all and must be converted to IEEE before it gets here (<see cref="IrCastOp.MbfToFP"/>).
   /// </summary>
+  /// <summary>The type suffix an LLVM intrinsic name carries (<c>llvm.rint.f64</c>).</summary>
+  private static string Suffix(IrType t) => "f" + t.Bits;
+
   private static string Ty(IrType t) => t.Kind switch {
     IrTypeKind.Void => "void",
     IrTypeKind.Int => "i" + t.Bits,

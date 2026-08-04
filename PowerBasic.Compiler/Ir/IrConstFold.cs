@@ -147,6 +147,9 @@ public static class IrConstFold {
         return new IrConstantFloat(to, NarrowFloat(c.Value, to));
       case IrCastOp.FPToSI when cast.Value is IrConstantFloat c && InLongRange(c.Value):
         return new IrConstantInt(to, Wrap((long)c.Value, to));
+      // the rounding conversion folds by the same rule the hardware applies: nearest, ties to even
+      case IrCastOp.FPToSIRound when cast.Value is IrConstantFloat c && InLongRange(c.Value):
+        return new IrConstantInt(to, Wrap((long)Math.Round(c.Value, MidpointRounding.ToEven), to));
       // bitcast reinterprets the bit pattern between same-width int and float
       case IrCastOp.BitCast when cast.Value is IrConstantFloat cf && to.IsInteger && to.Bits == 32:
         return new IrConstantInt(to, BitConverter.SingleToInt32Bits((float)cf.Value));

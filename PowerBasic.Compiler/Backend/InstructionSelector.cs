@@ -701,6 +701,8 @@ public sealed class InstructionSelector {
       }
       case IrCastOp.SIToFP when to.IsIeeeFloat:
         return this.SelectIntToFloat(cast);
+      case IrCastOp.FPToSIRound when from.IsIeeeFloat && to.IsInteger && to.Bits is 16 or 32:
+        return this.SelectFloatToInt(cast);
       case IrCastOp.FPExt or IrCastOp.FPTrunc when from.IsIeeeFloat && to.IsIeeeFloat:
         return this.SelectFloatResize(cast);
       default:
@@ -1030,6 +1032,42 @@ public sealed class InstructionSelector {
     this.EmitX87(MOpcode.Fstp, this.FloatCell(cast), reads: false);
     return true;
   }
+
+  /// <summary>
+  /// A float rounded into an integer, which is what BASIC does on assignment (<c>n% = 2.7</c> is 3).
+  /// <c>FISTP</c> rounds by the x87 control word, and the runtime leaves it at its default of nearest
+  /// with ties to even - so the instruction IS the semantics, no bias sequence needed.
+  ///
+  /// It stores through a <b>dword</b> even for an INTEGER and then keeps the low word, which is what
+  /// the direct emitter does and for the same reason: an out-of-range value then wraps like a genuine
+  /// 16-bit store rather than becoming FISTP's 8000h indefinite.
+  /// </summary>
+  private bool SelectFloatToInt(IrCast cast) {
+    if (!this.TryFloatOperand(cast.Value, out var source))
+      return false;
+    var slot = this._function.StackSlots.Count;
+    this._function.StackSlots.Add(4);
+    var cell = new MOperand.StackSlot(slot, MRegSize.Word);
+
+    this.EmitX87(MOpcode.Fld, source, reads: true);
+    this.EmitX87(MOpcode.Fistp, new MOperand.StackSlot(slot, MRegSize.Dword), reads: false);
+
+    if (IsWide(cast.Type)) {
+      var (lo, hi) = this.FreshPair(cast);
+      this.LoadWord(lo, cell);
+      this.LoadWord(hi, Shifted(cell, 2));
+      return true;
+    }
+    var dest = this.FreshVreg(cast.Type);
+    this._vregs[cast] = dest;
+    this.LoadWord(new MOperand.Register(dest), cell);
+    return true;
+  }
+
+  private void LoadWord(MOperand.Register dest, MOperand cell)
+    => this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, cell],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+        ReadsMemory: true, WritesMemory: false)));
 
   /// <summary>A float widened or narrowed to the other float format: the load and the store do it.</summary>
   private bool SelectFloatResize(IrCast cast) {

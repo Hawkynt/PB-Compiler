@@ -19,6 +19,15 @@ public enum IrCmpPred {
 public enum IrCastOp {
   Trunc, ZExt, SExt,
   FPToSI, FPToUI, SIToFP, UIToFP,
+
+  /// <summary>
+  /// Float to integer with ROUNDING, not truncation - what BASIC does when a real is assigned to an
+  /// integer variable, and what CINT/CLNG spell explicitly. It is a separate operation from
+  /// <see cref="FPToSI"/> because the two disagree on every value with a fraction: PowerBASIC's
+  /// <c>n% = 2.7</c> is 3, a C cast is 2. The rounding is to nearest, ties to even - the x87's own
+  /// default, which is what the runtime leaves the control word set to.
+  /// </summary>
+  FPToSIRound,
   FPTrunc, FPExt,
   IntToPtr, PtrToInt, BitCast,
   /// <summary>Microsoft Binary Format → IEEE, the conversion a load of an MBF cell performs.</summary>
