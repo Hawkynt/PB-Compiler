@@ -483,6 +483,7 @@ public sealed class IrLowering {
       case RestoreStmt rs: this.LowerRestore(rs); break;
       case EndStmt: this.LowerEnd(); break;
       case MetaStmt meta: LowerMeta(meta); break;
+      case CommandStmt { Keyword: "SHIFT LEFT" or "SHIFT RIGHT" } shift: this.LowerShift(shift); break;
       // CommandStmt is a catch-all for a dozen unrelated statements (KILL, POKE, OUT, RANDOMIZE...),
       // so it names the keyword: "unsupported statement: CommandStmt" ranks nothing
       default: throw new IrLoweringException(statement is CommandStmt command
@@ -1025,6 +1026,28 @@ public sealed class IrLowering {
       ? new IrConstantInt(ty, 1)
       : this.Coerce(this.LowerExpr(id.Amount), this._model.TypeOf(id.Amount), symbol.Type);
     this._b.Store(this._b.Binary(id.Increment ? IrBinaryOp.Add : IrBinaryOp.Sub, current, amount), slot);
+  }
+
+  /// <summary>
+  /// <c>SHIFT LEFT v, n</c> / <c>SHIFT RIGHT v, n</c>: a shift written as a statement, updating the
+  /// variable in place. The right shift is <b>logical</b> - the direct emitter uses <c>SHR</c>
+  /// whatever the variable's signedness, so a negative INTEGER shifts its sign bit along like any
+  /// other bit rather than smearing it. ROTATE is not this: it would need the bits that fall off the
+  /// end put back at the other, which no IR operation carries, so it still declines.
+  /// </summary>
+  private void LowerShift(CommandStmt cmd) {
+    if (cmd.Arguments is not [{ } target, { } count])
+      throw new IrLoweringException($"{cmd.Keyword} with {cmd.Arguments.Count} arguments");
+    if (target is not NameExpr || this._model.TypeOf(target) is not ScalarType { IsFloat: false } scalar)
+      throw new IrLoweringException($"{cmd.Keyword} of a non-scalar target");
+
+    var symbol = this.SymbolOf(target);
+    var ty = MapType(symbol.Type);
+    var slot = this.SlotFor(symbol);
+    var amount = this.Coerce(this.LowerExpr(count), this._model.TypeOf(count), scalar);
+    var value = this._b.Load(ty, slot);
+    var op = cmd.Keyword.EndsWith("LEFT", StringComparison.Ordinal) ? IrBinaryOp.Shl : IrBinaryOp.LShr;
+    this._b.Store(this._b.Binary(op, value, amount), slot);
   }
 
   private void LowerIf(IfStmt stmt) {
