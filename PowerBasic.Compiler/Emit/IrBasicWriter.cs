@@ -131,10 +131,37 @@ public sealed class IrBasicWriter {
     foreach (var phi in function.Blocks.SelectMany(b => b.Instructions).OfType<IrPhi>())
       this.Declare(phi);
 
-    foreach (var block in function.Blocks) {
+    foreach (var block in Ordered(function)) {
       this.Line($"{BlockLabel(block)}:");
       foreach (var instruction in block.Instructions)
         this.Instruction(instruction, function);
+    }
+  }
+
+  /// <summary>
+  /// The blocks in reverse post-order, so a value is named before it is used. Names are minted as
+  /// definitions are reached, and the list order a function happens to hold is not dominance order -
+  /// a pass that appends blocks (unrolling appends every copy it makes) leaves definitions sitting
+  /// after the blocks that read them. Reverse post-order fixes that for everything except a phi's
+  /// back-edge input, which is why phis are named up front instead.
+  ///
+  /// Unreachable blocks keep their original relative order at the end: they cannot be ordered by a
+  /// walk that never reaches them, and dropping them would silently lose code.
+  /// </summary>
+  private static IEnumerable<IrBasicBlock> Ordered(IrFunction function) {
+    var visited = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance);
+    var post = new List<IrBasicBlock>();
+    if (function.Entry is { } entry)
+      Walk(entry);
+    post.Reverse();
+    return post.Concat(function.Blocks.Where(b => !visited.Contains(b)));
+
+    void Walk(IrBasicBlock block) {
+      if (!visited.Add(block))
+        return;
+      foreach (var successor in block.Terminator?.Successors ?? [])
+        Walk(successor);
+      post.Add(block);
     }
   }
 
