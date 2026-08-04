@@ -210,6 +210,22 @@ selected and never allocated.
 
 The `LEA` is still emitted and is now dead for scalars, which is worth cleaning up but costs only size.
 
+### Float comparison as a value - written, reverted, and what it found
+
+`FLD lhs; FLD rhs; FXCH; FCOMPP; FSTSW AX; SAHF` then the usual -1/0 diamond, with the UNSIGNED
+conditions because SAHF puts C3 in the ZF and C0 in the CF and the x87 never sets the sign flag. It is
+implemented and it works.
+
+It is not in the tree, because it routes sixteen more corpus compilations and fourteen of them
+disagree - and not on the comparison. `DIFF02` prints `1.20000000447035` where the direct emitter
+prints `1.20000004023314`: a float VALUE differing in its low digits, which a comparison cannot
+produce. The compare is a key that opens a door onto the float-precision gap in a larger set of
+programs.
+
+That gap is the same one behind the five known IR-to-BASIC writer gaps (`pb36/DIFF35`, `qb40`, `qb45`,
+`pds70`, `pds71` DIFF02): a SINGLE value and the width it is carried at. Settling it is the
+prerequisite, and it is worth roughly seven selection declines plus whatever the writer gaps are worth.
+
 ### Wider integers and SIMD as IR operations - not started
 
 The IR has no integer tier above the dialects' own widths and no vector type; `MRegSize` reads
