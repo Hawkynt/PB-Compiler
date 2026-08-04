@@ -33,6 +33,16 @@ internal static class RuntimeAbi {
 
     /// <summary>A float pushed on the x87 stack, which the routine pops (the print entries take ST(0)).</summary>
     St0,
+
+    /// <summary>
+    /// A 16-bit value ZERO-extended into a register pair: the word goes in
+    /// <see cref="RuntimeArg.Register"/> and <see cref="RuntimeArg.High"/> is cleared.
+    ///
+    /// This is how an unsigned WORD prints its full range. Sent through the 16-bit printer it would
+    /// come out signed - 65535 as -1 - so the direct emitter writes <c>XOR DX,DX</c> and calls the
+    /// 32-bit one instead, which is exactly this.
+    /// </summary>
+    ZeroPair,
   }
 
   internal sealed record RuntimeArg(ArgKind Kind, Reg Register, Reg High = default);
@@ -205,6 +215,53 @@ internal static class RuntimeAbi {
     // - and rt_str_f32 is the SINGLE entry beside it, differing only in the digit count it sets,
     // which is the rendering the fidelity tests compare
     ["rt_str_from_i16"] = new("rt_str_i16", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    // PRINT of the remaining numeric widths, transcribed from CodeGenerator.Io.cs's EmitPrintValue -
+    // the direct emitter's own dispatch, which is the only thing that says which formatter a PB type
+    // is supposed to reach.
+    //
+    // NOT rt_print_ext / rt_fprint_ext, though the mapping itself is right (EXTENDED goes through the
+    // DOUBLE formatter - there is no rt_print_f80 and there should not be one). They were listed,
+    // measured, and BACKED OUT: they routed four more corpus compilations and two of them disagreed.
+    //
+    // What they exposed is not a mistake in the mapping but a gap underneath it. The back end has no
+    // 80-bit frame cell: MRegSize stops at Qword, and RegSize() calls anything wider than a word a
+    // Dword - so an f80 temporary gets a 10-byte slot that FSTP writes 4 bytes of. The visible symptom
+    // in DIFF24.BAS was subtler than that suggests: PRINT of H?/3 came out 66.66666 where the direct
+    // emitter (byte-verified against PBC 3.50) gives 66.66667, because the routed path rounds the
+    // quotient to its nominal width before printing while genuine PB keeps x87 precision all the way
+    // into the formatter. Listing these again needs a real Tbyte cell first.
+
+    // a BYTE is 0..255, so the signed 16-bit printer renders it correctly - the emitter falls into
+    // the same case for it
+    ["rt_print_u8"] = new("rt_print_i16", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_fprint_u8"] = new("rt_print_i16",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.AX)], _callerSaved, FileSelect: true),
+
+    // a WORD needs the zero-extension: "XOR DX,DX / CALL PrintInt32", or 65535 prints as -1
+    ["rt_print_u16"] = new("rt_print_i32", [new(ArgKind.ZeroPair, Reg.AX, Reg.DX)], _callerSaved),
+    ["rt_fprint_u16"] = new("rt_print_i32",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.ZeroPair, Reg.AX, Reg.DX)], _callerSaved, FileSelect: true),
+
+    // "ST(1)^ST(0) -> ST(0) (both operands popped, result pushed)". Two St0 arguments arrive in
+    // exactly that order - the base is pushed first, so it ends up in ST(1) with the exponent on top,
+    // which is the convention verbatim. The routine touches no general register at all (it is twenty
+    // x87 instructions and a RET), but the clobber set stays the full caller-saved file: over-claiming
+    // costs the allocator a spill, under-claiming miscompiles.
+    ["llvm.pow.f32"] = new("rt_pow", [new(ArgKind.St0, default), new(ArgKind.St0, default)],
+      _callerSaved, Answer: ResultKind.St0),
+    ["llvm.pow.f64"] = new("rt_pow", [new(ArgKind.St0, default), new(ArgKind.St0, default)],
+      _callerSaved, Answer: ResultKind.St0),
+    // and NOT llvm.pow.f80, for the same missing Tbyte cell: its ST0 answer would be stored into a
+    // 10-byte slot four bytes at a time. That it happens not to disagree on today's corpus is not a
+    // reason to claim it
+
+    // NOT listed, and each for a stated reason:
+    //   rt_print_u32 - a DWORD is staged through scratch memory as a qword and FILDed into the
+    //     64-bit printer; that needs an argument kind that allocates a spill cell, not a register
+    //   rt_print_i64 - a QUAD is routed through the 15-digit FLOAT formatter (genuine PBC does this,
+    //     so large values appear in E notation), which again arrives via memory rather than a pair
+    //   rt_print_tab  - TAB(n) is column arithmetic against rt_col, not a call with a convention
+
     // deliberately NO rt_str_from_u16 entry: rt_str_i16 opens with a CWD, so routing an unsigned
     // WORD through it would render 65535 as -1
     ["rt_str_from_i32"] = new("rt_str_i32", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),

@@ -280,4 +280,31 @@ public sealed class BackendRuntimeCallTests {
     Assert.That(reason, Does.Contain("rt_str_from_u16"),
       "STR$ of a WORD must decline by name, not be routed through the signed entry");
   }
+
+  /// <summary>
+  /// The back end has no 80-bit frame cell - <c>MRegSize</c> stops at <c>Qword</c> - so an EXTENDED
+  /// value cannot be spilled and reloaded without losing what makes it EXTENDED. Printing one must
+  /// therefore DECLINE, not route.
+  ///
+  /// This is a regression test for a measured miscompile, not a hypothetical. Listing
+  /// <c>rt_print_ext</c> against the DOUBLE formatter (which is the correct mapping - there is no
+  /// rt_print_f80) routed four more corpus compilations and made two of them disagree: DIFF24.BAS
+  /// printed <c>66.66666</c> where the direct emitter, byte-verified against PBC 3.50, gives
+  /// <c>66.66667</c>. The mapping was right and the ground underneath it was not. When a real Tbyte
+  /// cell exists, this test is the one to delete.
+  /// </summary>
+  [Test]
+  public void Select_GivenAnExtendedPrint_ThenDeclinesUntilThereIsAnEightyBitCell() {
+    var module = Optimized("""
+      DIM e AS EXT
+      e = 1
+      PRINT e / 3
+      """);
+    var main = module.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
+
+    InstructionSelector.TrySelect(main, out var reason);
+
+    Assert.That(reason, Is.Not.Null.And.Contain("ext"),
+      "printing an EXTENDED must decline while its frame cell would be written four bytes at a time");
+  }
 }

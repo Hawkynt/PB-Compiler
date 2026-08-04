@@ -1,3 +1,20 @@
+
+### The 80-bit frame cell
+
+The x86-16 back end cannot spill an EXTENDED. `MRegSize` stops at `Qword`, and `RegSize()` calls
+anything wider than a word a `Dword`, so an f80 temporary is given a 10-byte slot that `FSTP` writes
+four bytes of. Until that is fixed, `rt_print_ext` / `rt_fprint_ext` and `llvm.pow.f80` stay out of
+the runtime ABI table even though their mappings are known to be right (EXTENDED prints through the
+DOUBLE formatter; there is no `rt_print_f80` and there should not be one).
+
+This was measured, not predicted. Listing them routed four more corpus compilations and made two of
+them disagree: `DIFF24.BAS` printed `66.66666` where the direct emitter - byte-verified against PBC
+3.50 - gives `66.66667`, because the routed path rounds a quotient to its nominal width before
+printing while genuine PB keeps x87 precision all the way into the formatter. The entries were backed
+out and `BackendRuntimeCallTests` now asserts the decline, so re-listing them without the cell fails.
+
+It is worth about 11 selection declines, and it is the largest single mechanical blocker left.
+
 # Roadmap — missing features from the oracle compilers
 
 Prioritised backlog (IREPB MoSCoW) of capabilities the genuine oracle compilers

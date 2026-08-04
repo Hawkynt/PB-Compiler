@@ -895,7 +895,8 @@ public sealed class InstructionSelector {
   }
 
   private bool SelectRuntimeCall(IrCall call, IrFunction callee, RuntimeAbi.Routine routine) {
-    if (!call.Type.IsVoid && routine.Result is null)
+    // an x87 answer arrives on the stack rather than in a named register, so it needs no Result
+    if (!call.Type.IsVoid && routine.Result is null && routine.Answer != RuntimeAbi.ResultKind.St0)
       return this.Decline($"call: {callee.Name} returns a value the runtime ABI table does not place");
     if (!call.Type.IsVoid && !this.ResultShapeAgrees(call, callee, routine))
       return false;
@@ -959,6 +960,21 @@ public sealed class InstructionSelector {
           var dest = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));
           this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, source], MovEffect(dest, source),
             condition: null, clobbers: [slot.Register]));
+          break;
+        }
+        case RuntimeAbi.ArgKind.ZeroPair: {
+          // the word into the low register, the high one cleared - "XOR DX,DX" in the direct emitter
+          if (IsWide(arg.Type))
+            return this.Decline($"call: {callee.Name} zero-extends a word, got {arg.Type}");
+          if (!this.TryOperand(arg, out var word))
+            return false;
+          var low = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));
+          var high = new MOperand.Register(MReg.Physical_(slot.High, MRegSize.Word));
+          var zero = new MOperand.Immediate(0);
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [low, word], MovEffect(low, word),
+            condition: null, clobbers: [slot.Register, slot.High]));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [high, zero], MovEffect(high, zero),
+            condition: null, clobbers: [slot.Register, slot.High]));
           break;
         }
         case RuntimeAbi.ArgKind.Pair: {
