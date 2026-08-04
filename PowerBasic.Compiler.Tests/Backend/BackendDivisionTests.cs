@@ -120,9 +120,6 @@ public sealed class BackendDivisionTests {
 
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(image, Is.Not.Empty);
-    var plain = new CodeGenerator(
-      Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36))
-      { Optimize = false, UseExperimentalBackend = false };
-    Assert.That(image, Is.Not.EqualTo(plain.EmitExecutable()), "the back end did not take the dividing function");
+    Assert.That(routed.BackendRoutedNames, Does.Contain("Tenth"), "the back end did not take the dividing function");
   }
 }

@@ -431,3 +431,32 @@ That conservatism is now the binding constraint, and the census says so plainly:
 allocation, because a parameter is live from the prologue and a value live across a `CALL` has no
 register while there is no spilling. Spilling to the frame — not more selection — is what the ranking
 points at next.
+
+### Spilling — and why it costs nothing here
+
+The allocation failure that matters on this target is not "six registers ran out". It is a `CALL`: it
+destroys the whole caller-saved file, so a value live across one may sit in *none* of the six. Before
+spilling existed, those functions were selected and then silently dropped — which is exactly what the
+`selected` / `routed` split in the census was added to expose.
+
+x86 is a memory-operand machine, so a spilled value needs no reload code at all: it simply **is** its
+frame cell, and every instruction that named the register now names the cell. `Backend/Spiller.cs`
+has two cells, cheaper first:
+
+- an incoming **parameter** is already in the frame where the caller pushed it, and an IR argument is
+  an SSA value nothing writes — so the spill is free: the prologue copy disappears and the uses
+  address `[BP+6]` directly (`MOperand.ParamCell`);
+- any other value gets a fresh stack slot, and its defining instruction writes there.
+
+It is conservative about legality: only the instruction forms the emitter really has (the two-operand
+ALU family, `PUSH`, `IMUL`'s source), never two memory operands in one instruction, and never a value
+used as an address base or index. What it cannot move stays in a register, and if that leaves no
+allocation the function declines.
+
+**The scheduler was manufacturing the pressure it then failed on.** Scheduling runs before allocation,
+and a list scheduler with no reason to care about live ranges will happily hoist a value's definition
+above a `CALL` — stretching it across the caller-saved file. A `CALL` is now a scheduling barrier:
+nothing is gained by moving work across one on a target with no register renaming to hide a latency
+behind, and this is what is lost. With the barrier, routing went 22 → 32.
+
+Together the two took routing from **14 to 32 of 139** corpus functions this round (38 select).

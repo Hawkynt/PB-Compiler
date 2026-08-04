@@ -138,6 +138,13 @@ public sealed partial class CodeGenerator {
         .Where(f => !f.IsDeclaration)   // a runtime routine has a fixed ABI of its own - it is not converted
         .Select(f => f.Name);
 
+  /// <summary>
+  /// The procedures the x86-16 back end compiled, by name. This is what a test asks instead of
+  /// inferring routing from "the image changed" - the honest question is whether the back end took
+  /// the function, and the answer must not depend on its output happening to differ.
+  /// </summary>
+  public IEnumerable<string> BackendRoutedNames => this.BackendProcs().Keys.Select(p => p.Name);
+
   /// <summary>True when <paramref name="proc"/> is compiled by the x86-16 back end (so it is excluded from inlining and the register-parameter convention, and emitted via the back end).</summary>
   private bool IsBackendRouted(ProcedureSymbol proc) => this.UseExperimentalBackend && this.BackendProcs().ContainsKey(proc);
 

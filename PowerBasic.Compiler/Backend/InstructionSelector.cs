@@ -72,7 +72,7 @@ public sealed class InstructionSelector {
   }
 
   private MFunction? Run(IrFunction fn) {
-    this._function = new MFunction(fn.Name);
+    this._function = new MFunction(fn.Name) { HasArgumentPlan = true };
 
     // arguments take the FIRST virtual registers (so argument i is vreg i, which the emitter's ABI
     // prologue relies on to load argument i into allocation[i]); they are function live-ins

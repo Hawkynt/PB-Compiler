@@ -55,6 +55,15 @@ public abstract record MOperand {
   /// very label the direct emitter would have used.
   /// </summary>
   public sealed record DataOffset(string Name, int Disp) : MOperand;
+
+  /// <summary>
+  /// An incoming argument read straight out of the cell the caller pushed it into - <c>[BP+6]</c>.
+  /// This is where a spilled parameter lives: it is already in the frame, it is never written (an IR
+  /// argument is an SSA value), so the cheapest possible spill is to stop copying it into a register
+  /// at all and address the caller's word instead. The emitter resolves the index through the same
+  /// parameter offsets the prologue uses.
+  /// </summary>
+  public sealed record ParamCell(int ArgumentIndex, int ByteDelta) : MOperand;
 }
 
 /// <summary>
@@ -134,6 +143,14 @@ public sealed class MFunction(string name) {
   /// the positional "argument i is virtual register i" the emitter used to assume.
   /// </summary>
   public List<(int VirtualId, int ArgumentIndex, int ByteDelta)> ArgumentLoads { get; } = [];
+
+  /// <summary>
+  /// Whether <see cref="ArgumentLoads"/> is the authoritative plan. Selection always builds one, so an
+  /// EMPTY table means every parameter was spilled into its own incoming cell and the prologue loads
+  /// nothing - which is not the same as a hand-built function that never had a table, where the
+  /// emitter falls back to "argument i is virtual register i".
+  /// </summary>
+  public bool HasArgumentPlan { get; set; }
 
   public IEnumerable<MInstr> AllInstructions {
     get {

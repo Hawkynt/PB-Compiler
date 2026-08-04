@@ -95,9 +95,9 @@ public sealed class BackendGlobalAccessTests {
     Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(routedImage, Is.Not.Empty);
-    // an unresolved data reference would have thrown while the fixups resolved; a differing image
-    // proves the back end really compiled the function rather than falling back
-    Assert.That(routedImage, Is.Not.EqualTo(directImage),
+    // an unresolved data reference would have thrown while the fixups resolved
+    Assert.That(routed.BackendRoutedNames, Does.Contain("AddG"),
       "the back end did not take the global-reading function");
+    Assert.That(directImage, Is.Not.Empty);
   }
 }

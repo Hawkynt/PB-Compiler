@@ -19,8 +19,26 @@ public sealed class LinearScanAllocator {
   private static readonly Reg[] _pool = [Reg.AX, Reg.CX, Reg.DX, Reg.BX, Reg.SI, Reg.DI];
   private static readonly Reg[] _addressing = [Reg.BX, Reg.SI, Reg.DI];
 
-  /// <summary>Assigns each virtual register a physical register, or returns null when the live set exceeds the register file (a spill is required).</summary>
+  /// <summary>
+  /// Assigns each virtual register a physical register, or returns null when the live set still
+  /// exceeds the register file after spilling what it can.
+  ///
+  /// Spilling is <see cref="Spiller"/>: x86 is a memory-operand machine, so a spilled value simply
+  /// becomes its frame cell and needs no reload code - a parameter becomes the caller's own word, any
+  /// other value a fresh stack slot. This mutates <paramref name="function"/>, which is why it lives
+  /// here: the allocator owns the function's register story.
+  /// </summary>
   public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function) {
+    for (;;) {
+      if (TryAllocate(function) is { } assignment)
+        return assignment;
+      if (!Spiller.SpillOne(function))
+        return null;                                 // nothing left that can move to memory
+    }
+  }
+
+  /// <summary>One linear-scan sweep, with no spilling: null when some interval finds no register.</summary>
+  private static IReadOnlyDictionary<int, Reg>? TryAllocate(MFunction function) {
     var intervals = LivenessAnalysis.Compute(function);
     var addressVregs = AddressRegisters(function);   // vregs that ever form a memory address -> need BX/SI/DI
     var clobbersAt = ClobbersByIndex(function);       // global instruction index -> registers a CALL there destroys

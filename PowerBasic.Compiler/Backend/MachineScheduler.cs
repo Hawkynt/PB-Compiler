@@ -49,6 +49,13 @@ public static class MachineScheduler {
   // a < b in program order: does b depend on a (so their order must be preserved)?
   private static bool Conflicts(MInstr a, (HashSet<int> Reads, HashSet<int> Writes) ka,
                                 MInstr b, (HashSet<int> Reads, HashSet<int> Writes) kb) {
+    // A CALL is a barrier. Nothing is gained by moving work across one on this target - there is no
+    // renaming to hide a latency behind - and something is lost: hoisting a value's definition above a
+    // call stretches its live range across the whole caller-saved file, which is precisely what the
+    // allocator cannot satisfy. Scheduling ran before allocation and was making the pressure it then
+    // failed on.
+    if (a.Opcode == MOpcode.Call || b.Opcode == MOpcode.Call)
+      return true;
     // register RAW / WAR / WAW
     if (ka.Writes.Overlaps(kb.Reads) || ka.Writes.Overlaps(kb.Writes) || ka.Reads.Overlaps(kb.Writes))
       return true;

@@ -19,13 +19,16 @@ public sealed class MachineEmitter {
   private readonly Dictionary<string, Label> _labels = [];
   private readonly Func<string, Label?>? _resolveCallee;
   private readonly Func<string, Mem?>? _resolveData;
+  private readonly int[] _paramOffsets;
 
   private MachineEmitter(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
-      Func<string, Label?>? resolveCallee = null, Func<string, Mem?>? resolveData = null) {
+      Func<string, Label?>? resolveCallee = null, Func<string, Mem?>? resolveData = null,
+      int[]? paramOffsets = null) {
     this._asm = asm;
     this._allocation = allocation;
     this._resolveCallee = resolveCallee;
     this._resolveData = resolveData;
+    this._paramOffsets = paramOffsets ?? [];
     // lay the stack slots out below BP: slot k lives at [BP - offset], word-aligned
     this._slotDisp = new int[function.StackSlots.Count];
     var running = 0;
@@ -66,7 +69,7 @@ public sealed class MachineEmitter {
   public static void EmitFunction(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
       int[] paramOffsets, int paramBytes, Func<string, Label?>? resolveCallee = null,
       Func<string, Mem?>? resolveData = null) {
-    var emitter = new MachineEmitter(asm, function, allocation, resolveCallee, resolveData);
+    var emitter = new MachineEmitter(asm, function, allocation, resolveCallee, resolveData, paramOffsets);
 
     asm.Push(Asm.Reg.BP);
     asm.Mov(Asm.Reg.BP, Asm.Reg.SP);
@@ -79,7 +82,7 @@ public sealed class MachineEmitter {
     // the caller pushed the arguments; load each into the register the allocator gave its vreg.
     // A 32-bit argument is two words, so the selector supplies an explicit table; a function selected
     // before that existed (or built by hand in a test) keeps the positional one-word-per-argument form.
-    if (function.ArgumentLoads.Count > 0)
+    if (function.HasArgumentPlan)
       foreach (var (virtualId, argumentIndex, byteDelta) in function.ArgumentLoads) {
         if (allocation.TryGetValue(virtualId, out var reg))
           asm.Mov(reg, Asm.Mem.Word(Asm.Reg.BP, paramOffsets[argumentIndex] + byteDelta));
@@ -185,7 +188,7 @@ public sealed class MachineEmitter {
   private object ToSource(MOperand operand) => operand switch {
     MOperand.Register r => (object)this.Resolve(r.Reg),
     MOperand.Immediate i => (Imm)(int)i.Value,
-    MOperand.Memory or MOperand.StackSlot or MOperand.DataCell => this.Mem(operand),
+    MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell => this.Mem(operand),
     MOperand.DataOffset o => Imm.OffsetOf(this.DataLabel(o.Name), o.Disp),
     _ => throw new System.NotSupportedException($"operand {operand} is not a source"),
   };
@@ -215,6 +218,7 @@ public sealed class MachineEmitter {
 
   private Mem Mem(MOperand operand) => operand switch {
     MOperand.StackSlot slot => Asm.Mem.Word(Asm.Reg.BP, this._slotDisp[slot.Index]),
+    MOperand.ParamCell p => Asm.Mem.Word(Asm.Reg.BP, this._paramOffsets[p.ArgumentIndex] + p.ByteDelta),
     MOperand.DataCell cell => this.DataCell(cell),
     MOperand.Memory m when m.Index is { } x => Asm.Mem.Word(this.Resolve(m.Base!.Value), this.Resolve(x), m.Disp),
     MOperand.Memory m when m.Base is { } b => Asm.Mem.Word(this.Resolve(b), m.Disp),

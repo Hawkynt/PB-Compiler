@@ -14,7 +14,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// The two sides describe the same routines differently. The IR lowering declares them C-style -
 /// <c>rt_print_str(ptr, i32)</c> - because the same IR feeds the C and LLVM back ends; the DOS runtime
 /// the direct emitter calls is register-based (<c>SI</c> = address, <c>CX</c> = length, nothing pushed).
-/// <see cref="RuntimeAbi"/> is the explicit per-routine mapping, and these are the tests that hold it to
+/// <c>Backend/RuntimeAbi.cs</c> is the explicit per-routine mapping, and these are the tests that hold it to
 /// the shape the direct emitter actually uses - because a wrong entry miscompiles silently.
 /// </summary>
 [TestFixture]
@@ -124,7 +124,7 @@ public sealed class BackendRuntimeCallTests {
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     // an unresolved runtime label or literal would have thrown while the fixups resolved
     Assert.That(routedImage, Is.Not.Empty);
-    Assert.That(routedImage, Is.Not.EqualTo(directImage), "the back end did not take the printing function");
+    Assert.That(routed.BackendRoutedNames, Does.Contain("Announce"), "the back end did not take the printing function");
   }
 
   [Test]
