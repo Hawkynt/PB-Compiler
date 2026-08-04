@@ -137,7 +137,7 @@ public sealed class BackendCorpusDifferentialTests {
     foreach (var (reason, count) in reasons.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal).Take(12))
       report.AppendLine($"  {count,5}  {reason}");
     foreach (var d in disagreements.Take(5))
-      report.AppendLine($"DISAGREEMENT {d.Program}:\n  direct: {Escape(d.Direct)}\n  routed: {Escape(d.Routed)}");
+      report.AppendLine($"DISAGREEMENT {d.Program}:{Difference(d.Direct, d.Routed)}");
     TestContext.Out.Write(report.ToString());
 
     // A baseline, not a blanket pass. Each entry is a KNOWN defect with a diagnosis; anything else
@@ -152,6 +152,28 @@ public sealed class BackendCorpusDifferentialTests {
     foreach (var (program, diagnosis) in _known)
       if (disagreements.All(d => d.Program != program))
         TestContext.Out.WriteLine($"NOTE {program} no longer disagrees - check whether this was fixed: {diagnosis}");
+  }
+
+  /// <summary>
+  /// Where two runs first parted, with a window either side. A whole-output dump is unreadable for a
+  /// program that prints thousands of numbers, and the useful question is always "which one first".
+  /// </summary>
+  private static string Difference(Behaviour direct, Behaviour routed) {
+    static string Window(string a, string b, string what) {
+      if (a == b)
+        return "";
+      var at = 0;
+      while (at < a.Length && at < b.Length && a[at] == b[at])
+        ++at;
+      var from = Math.Max(0, at - 40);
+      static string Show(string text, int from, int at) =>
+        (from < text.Length ? text[from..Math.Min(text.Length, at + 40)] : "")
+          .Replace((char)13, '|').Replace((char)10, '/');
+      return $"\n  {what} differs at {at}:\n    direct: {Show(a, from, at)}\n    routed: {Show(b, from, at)}";
+    }
+    return Window(direct.Output, routed.Output, "output")
+      + Window(direct.Files, routed.Files, "files")
+      + (direct.ExitCode == routed.ExitCode ? "" : $"\n  exit code {direct.ExitCode} against {routed.ExitCode}");
   }
 
   private static string Escape(Behaviour behaviour) {

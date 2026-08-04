@@ -67,6 +67,10 @@ public sealed partial class CodeGenerator {
           || !proc.Parameters.All(p => p.ByVal && p.Type is ScalarType { ByteSize: 2, IsFloat: false })
           || proc.Body is null || ContainsErrorHandling(proc.Body))
         continue;
+      // ! widening this shape is the next coverage step and it is NOT free: admitting LONG and real
+      // returns plus SUBs made CODEGEN.BAS print "accumulate-32283" where the direct emitter prints
+      // "accumulate 3", so something in the wider ABI is wrong. The differential gate caught it; the
+      // widening waits until that is understood rather than shipping on the strength of "it selects".
       if (!byName.TryGetValue(proc.Name, out var irFn) || InstructionSelector.TrySelect(irFn) is not { } mfn)
         continue;
       candidates.Add((proc, irFn, mfn));
