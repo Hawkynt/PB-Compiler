@@ -400,7 +400,17 @@ public sealed class IrBasicWriter {
       IrCastOp.SIToFP or IrCastOp.UIToFP => source,             // assignment to a real widens
       IrCastOp.FPToSIRound => $"CLNG({source})",                // BASIC rounds when a real meets an integer
       IrCastOp.FPToSI => $"FIX({source})",                      // FIX truncates toward zero
-      IrCastOp.FPExt or IrCastOp.FPTrunc => source,
+      // Widening loses nothing, so it really is the identity. NARROWING is not: it is the rounding PB
+      // performs when a value meets a narrower declared type, and dropping it here renders a program
+      // that keeps precision the original discards. DIFF35 accumulates `s! = s! + x!`, where the sum
+      // is computed at the x87's width and rounded to SINGLE on every store - rendered without the
+      // CSNG, the total came out different.
+      IrCastOp.FPExt => source,
+      IrCastOp.FPTrunc => cast.Type.Bits switch {
+        32 => $"CSNG({source})",
+        64 => $"CDBL({source})",
+        _ => throw new IrBasicWriterException($"a narrowing to {cast.Type.Bits}-bit float"),
+      },
       // pb35 has no Microsoft Binary Format, so the conversions to and from it are the identity here
       // and the STORAGE simply becomes IEEE. That is a real loss of fidelity, so it is stated rather
       // than performed quietly - see DeclaredType.

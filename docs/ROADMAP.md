@@ -1,26 +1,30 @@
 
-### Float precision: the declared type should pick the formatter, not round the value
+### Float precision: the declared type picks the formatter, it does not round the value
 
-PowerBASIC computes a float expression at x87 precision and lets the static type choose only the
-**formatter** - a SINGLE prints 7 significant digits, a DOUBLE 15. It does not round the value on the
-way there. The IR types the expression at its declared width instead, so `H?/3` with `H? = 200` is an
-f32 value, 66.666664, and prints `66.66666` where genuine PBC 3.50 prints `66.66667` from the
-unrounded register. It is visible in the emitted LLVM as `float 0x4050AAAAA0000000` - the rounding is
-already in the IR before any back end sees it.
+**Done.** PowerBASIC computes a float expression at the x87's own width and lets the static type
+choose only the formatter - a SINGLE prints 7 significant digits, a DOUBLE 15. `LowerArithmetic` now
+models that: a floating expression is computed in f80 and narrows where PB actually narrows, on the
+store into a declared variable, which the `Coerce` at that use site emits because Coerce measures the
+value's own width rather than trusting the PB type it is told. `LowerPrintItem` hands the formatter an
+f80 and lets the routine's NAME pick the digit count - which is the runtime's own model, where
+`rt_print_f32` and `rt_print_f64` share a body and differ only in the digits they set.
 
-This is what keeps `rt_print_ext` / `rt_fprint_ext` out of the runtime ABI table, worth about 11
-selection declines. The mapping itself is right (EXTENDED prints through the DOUBLE formatter; there
-is no `rt_print_f80` and there should not be one), but listing it routes `DIFF24.BAS` and that program
-then disagrees. Fixing it means changing how the lowering types PB float arithmetic - and that reaches
-the C and LLVM back ends too, which today receive well-typed f32/f64 arithmetic.
+It took three attempts and two wrong diagnoses. `PRINT H?/3` with `H? = 200` came out `66.66666`
+against PBC 3.50's `66.66667`; the cause was blamed first on the runtime ABI table, then on the
+missing 80-bit frame cell. The cell was a genuine bug and is fixed (`MRegSize.Tbyte`, floats sized by
+their own width instead of everything wider than a word being called a `Dword` - a DOUBLE was being
+addressed through a dword reference - and float temporaries parked at x87 width), but it was not this
+one: with all of it fixed the disagreement was unchanged, because the rounding was already in the IR
+before any back end saw it, visible in the emitted LLVM as `float 0x4050AAAAA0000000`.
 
-It was first diagnosed here as a missing 80-bit frame cell. **That was wrong.** The cell was a genuine
-bug and is now fixed - `MRegSize` has a `Tbyte`, `RegSize()` sizes a float by its own width instead of
-calling everything wider than a word a `Dword` (a DOUBLE was being addressed through a dword
-reference: half a value, latent only because no routed corpus program had yet spilled one), and float
-temporaries park at the x87's own width so nothing is rounded passing through the frame. With all of
-that fixed, listing the entries still disagreed on the same two compilations, which is how the real
-cause was found.
+With it modelled, `rt_print_ext` / `rt_fprint_ext` are in the runtime ABI table and DIFF24.BAS agrees.
+Differential: 102 compilations, 100 agreeing, 0 disagreeing.
+
+One consequence is recorded rather than fixed. The IR-to-BASIC writer materializes every SSA value
+into a declared BASIC variable, and BASIC source cannot separate "format as SINGLE" from "the value is
+SINGLE" - giving the temporary a SINGLE type rounds it, giving it an EXT type changes the digit count.
+Only rendering the arithmetic inline, so PB types the expression from its operands as the original
+does, would be faithful. `pb36/DIFF35.BAS` is a known writer gap for that reason.
 
 ## A. Foreign-object interop / ABI (the active frontier)
 

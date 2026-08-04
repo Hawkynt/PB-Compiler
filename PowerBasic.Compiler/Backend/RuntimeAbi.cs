@@ -219,18 +219,13 @@ internal static class RuntimeAbi {
     // the direct emitter's own dispatch, which is the only thing that says which formatter a PB type
     // is supposed to reach.
     //
-    // NOT rt_print_ext / rt_fprint_ext, though the mapping is right (EXTENDED prints through the
-    // DOUBLE formatter - there is no rt_print_f80 and there should not be one). Listing them routes
-    // four more corpus compilations and two of them disagree, and the cause is NOT in this back end:
-    //
-    // PowerBASIC computes a float expression at x87 precision and lets the static type choose only
-    // the FORMATTER. The IR types the expression at its declared width instead, so `H?/3` with
-    // H? = 200 is an f32 value - 66.666664 - and prints as 66.66666, where genuine PBC (and the
-    // direct emitter, byte-verified against it) print 66.66667 from the unrounded register.
-    //
-    // The rounding is visible in the emitted LLVM as `float 0x4050AAAAA0000000`, i.e. it is already
-    // in the IR before any back end sees it. Fixing it means changing how the lowering types PB float
-    // arithmetic, not adding a table row - see docs/ROADMAP.md.
+    // EXTENDED goes through the DOUBLE formatter: the runtime's print entries share a body and
+    // differ only in the significant digits they set, so the NAME picks the rendering while the value
+    // arrives on ST(0) at the x87's own width either way. There is no rt_print_f80 and there should
+    // not be one.
+    ["rt_print_ext"] = new("rt_print_f64", [new(ArgKind.St0, default)], _callerSaved),
+    ["rt_fprint_ext"] = new("rt_print_f64",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.St0, default)], _callerSaved, FileSelect: true),
 
     // a BYTE is 0..255, so the signed 16-bit printer renders it correctly - the emitter falls into
     // the same case for it

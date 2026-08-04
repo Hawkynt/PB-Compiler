@@ -282,31 +282,32 @@ public sealed class BackendRuntimeCallTests {
   }
 
   /// <summary>
-  /// Printing an EXTENDED must DECLINE, and the reason is not in this back end.
+  /// Printing an EXTENDED routes, which took three attempts and two wrong diagnoses to reach.
   ///
-  /// PowerBASIC computes a float expression at x87 precision and lets the static type choose only the
-  /// FORMATTER. The IR types the expression at its declared width instead, so <c>H?/3</c> with
-  /// <c>H? = 200</c> becomes an f32 value - 66.666664 - and prints 66.66666 where genuine PBC 3.50
-  /// prints 66.66667 from the unrounded register. It is visible in the emitted LLVM as
-  /// <c>float 0x4050AAAAA0000000</c>: the rounding is in the IR before any back end sees it.
+  /// PowerBASIC computes a float expression at the x87's width and lets the declared type pick only
+  /// the FORMATTER - the runtime's print entries share a body and differ only in the significant
+  /// digits they set. Modelling the value at its declared width instead made <c>H?/3</c> with
+  /// <c>H? = 200</c> print 66.66666 where PBC 3.50 prints 66.66667, and no amount of care in the back
+  /// end could recover a digit the IR had already rounded away.
   ///
-  /// This was first diagnosed as a missing 80-bit frame cell. That was wrong - the cell was a real
-  /// bug and is fixed (<see cref="MRegSize.Tbyte"/>, and float temporaries now spill at x87 width),
-  /// and listing the entries still disagreed on the same two compilations. Fixing this one means
-  /// changing how the lowering types PB float arithmetic, not adding a table row.
+  /// It was blamed first on the runtime ABI table and then on the missing 80-bit frame cell. The cell
+  /// was a real bug and is fixed; it was not this one. The fix is in the lowering
+  /// (<c>LowerArithmetic</c>), and with it DIFF24.BAS agrees.
   /// </summary>
   [Test]
-  public void Select_GivenAnExtendedPrint_ThenDeclinesWhileTheIrRoundsToTheDeclaredWidth() {
-    var module = Optimized("""
+  public void Select_GivenAnExtendedPrint_ThenItRoutes() {
+    var m = Select("""
       DIM e AS EXT
-      e = 1
-      PRINT e / 3
-      """);
-    var main = module.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
+      DIM i AS INTEGER
+      FOR i = 1 TO 50
+        e = i / 3
+        PRINT e
+      NEXT i
+      """, "main");
 
-    InstructionSelector.TrySelect(main, out var reason);
-
-    Assert.That(reason, Is.Not.Null.And.Contain("ext"));
+    Assert.That(m.AllInstructions.Any(i => i.Opcode == MOpcode.Call
+      && i.Operands is [MOperand.LabelRef { Name: "rt_print_f64" }]),
+      "an EXTENDED prints through the DOUBLE formatter - there is no rt_print_f80");
   }
 
   /// <summary>

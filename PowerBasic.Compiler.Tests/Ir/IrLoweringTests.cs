@@ -34,13 +34,15 @@ public sealed class IrLoweringTests {
       "  store i16 1, ptr %x\n" +
       "  store i16 2, ptr %y\n" +
       "  %0 = load i16, ptr %x\n" +
-      "  %1 = sitofp i16 %0 to f32\n" +
+      "  %1 = sitofp i16 %0 to f80\n" +
       "  %2 = load i16, ptr %y\n" +
-      "  %3 = sitofp i16 %2 to f32\n" +
-      "  %4 = fadd f32 %1, %3\n" +
-      // the ROUNDING conversion, not a truncating one: BASIC rounds a real on its way into an
-      // integer variable, so z% = x% + y% closes with fptosi.round
-      "  %5 = fptosi.round f32 %4 to i16\n" +
+      "  %3 = sitofp i16 %2 to f80\n" +
+      "  %4 = fadd f80 %1, %3\n" +
+      // The add runs at the x87's own width - PB computes a float expression in the register and
+      // lets the declared type pick only the formatter. And the close is the ROUNDING conversion,
+      // not a truncating one: BASIC rounds a real on its way into an integer variable, so
+      // z% = x% + y% ends with fptosi.round
+      "  %5 = fptosi.round f80 %4 to i16\n" +
       "  store i16 %5, ptr %z\n" +
       "  ret void\n" +
       "}\n"));
@@ -104,12 +106,19 @@ public sealed class IrLoweringTests {
   }
 
   [Test]
-  public void Lower_GivenFloatArithmetic_UsesFloatOps() {
+  /// <summary>
+  /// Float arithmetic runs at the x87's own width and narrows on the STORE, which is PowerBASIC's own
+  /// rule: the declared type picks the formatter, it does not round the value. So <c>x! * 2.0</c>
+  /// multiplies in f80 and the <c>fptrunc</c> appears where the result meets <c>y!</c>.
+  /// </summary>
+  public void Lower_GivenFloatArithmetic_UsesFloatOpsAtRegisterWidth() {
     var fn = Lower("x! = 1.5\ny! = x! * 2.0");
 
     Assert.That(fn, Is.Not.Null);
     Assert.That(IrVerifier.Verify(fn!), Is.Empty);
-    Assert.That(IrPrinter.Print(fn!), Does.Contain("fmul f32"));
+    var ir = IrPrinter.Print(fn!);
+    Assert.That(ir, Does.Contain("fmul f80"), "the multiply happens at the register's width");
+    Assert.That(ir, Does.Contain("fptrunc f80"), "and rounds where it is stored into a SINGLE");
   }
 
   [Test]

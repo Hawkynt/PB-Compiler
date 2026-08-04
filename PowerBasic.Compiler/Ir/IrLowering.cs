@@ -767,9 +767,14 @@ public sealed class IrLowering {
       printed = IeeeFormOf(mbf);
     if (printed is not ScalarType s)
       throw new IrLoweringException("PRINT of a non-numeric, non-literal item");
+    // A float is handed to the formatter at the x87's own width whatever its declared type, and the
+    // NAME picks the digit count - which is the runtime's own model: rt_print_f32 and rt_print_f64
+    // share a body and differ only in the significant digits they set. Narrowing here would undo
+    // exactly the precision LowerArithmetic keeps.
     var (suffix, ty) = NumericSuffix(s);
-    this.EmitIo(file, "print", suffix, IrType.Void, [ty],
-      this.Coerce(this.LowerExpr(expr), this._model.TypeOf(expr), s));
+    var printedAt = s.IsFloat ? PbType.Ext : s;
+    this.EmitIo(file, "print", suffix, IrType.Void, [s.IsFloat ? IrType.F80 : ty],
+      this.Coerce(this.LowerExpr(expr), this._model.TypeOf(expr), printedAt));
   }
 
   private void LowerInput(InputStmt input) {
@@ -2076,10 +2081,19 @@ public sealed class IrLowering {
   }
 
   private IrValue LowerArithmetic(BinaryExpr expr, PbType leftPb, PbType rightPb, PbType resultPb) {
-    var resultTy = MapType(resultPb);
+    // A FLOATING expression is computed at the x87's own width, not at the width its declared type
+    // names. That is PowerBASIC's rule and not a liberty: the type of `H?/3` is SINGLE, and genuine
+    // PBC still divides in the register and prints 66.66667, where rounding to SINGLE first would
+    // give 66.66666. The declared type chooses the FORMATTER; it does not round the value.
+    //
+    // Narrowing happens where PB actually narrows - storing into a declared variable - which the
+    // Coerce at that use site emits, because Coerce measures the value's OWN width rather than
+    // trusting the PB type it is told.
+    var arithPb = resultPb is ScalarType { IsFloat: true } ? PbType.Ext : resultPb;
+    var resultTy = MapType(arithPb);
     var signed = resultPb is ScalarType { Signed: true };
-    var l = this.Coerce(this.LowerExpr(expr.Left), leftPb, resultPb);
-    var r = this.Coerce(this.LowerExpr(expr.Right), rightPb, resultPb);
+    var l = this.Coerce(this.LowerExpr(expr.Left), leftPb, arithPb);
+    var r = this.Coerce(this.LowerExpr(expr.Right), rightPb, arithPb);
 
     switch (expr.Op) {
       case BinaryOp.Eqv:

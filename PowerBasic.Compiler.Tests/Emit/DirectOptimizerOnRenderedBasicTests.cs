@@ -186,6 +186,15 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
     // pb35 renders 1E+15, and .000001 where pb35 renders 1E-006. The rendered program IS pb35 and
     // formats the pb35 way, which is correct for what it is - the dialect's formatter is a front-end
     // property the IR does not carry.
+    // The writer materializes every SSA value into a declared BASIC variable, and that is what this
+    // one runs into. PowerBASIC computes a float expression at the x87's width and lets the DECLARED
+    // type of the expression pick the formatter - which the IR now models (LowerArithmetic) and the
+    // x86 back end reproduces exactly. BASIC source cannot separate the two: giving the temporary a
+    // SINGLE type rounds the value, giving it an EXT type changes the digit count. Only rendering the
+    // arithmetic INLINE, so PB types the expression from its operands as the original does, would be
+    // faithful - which the writer does for pure expressions but not across a materialized temporary.
+    ["pb36/DIFF35.BAS"] = "a float temporary is materialized into a declared variable, so PB picks its "
+      + "formatter from the temporary's type rather than the expression's - see LowerArithmetic.",
     ["tb10/DIFF01.BAS"] = "float PRINT formatting differs between TB 1.0 and pb35 (1E+15 against 1000000000000000).",
     ["tb11/DIFF01.BAS"] = "float PRINT formatting differs between TB 1.1 and pb35.",
     ["pb21/DIFF01.BAS"] = "float PRINT formatting differs between PB 2.1 and pb35.",
