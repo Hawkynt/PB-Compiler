@@ -1328,6 +1328,16 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenSingleCharInstr_WhenPb36_ThenScansBytesNotSubstring() {
+    // O0302: INSTR(s$, "c") with a single-char constant needle and no start scans the byte
+    // (rt_scanchar / REPNE SCASB), a different code path than a multi-char needle which uses the
+    // general substring probe (rt_instr). The two therefore compile to different images.
+    var scan = Compile("$OPTIMIZE SPEED\nDIM s$, p%\nLINE INPUT s$\np% = INSTR(s$, \",\")\nPRINT p%\nEND", Dialect.Pb36);
+    var probe = Compile("$OPTIMIZE SPEED\nDIM s$, p%\nLINE INPUT s$\np% = INSTR(s$, \",;\")\nPRINT p%\nEND", Dialect.Pb36);
+    Assert.That(scan.SequenceEqual(probe), Is.False, "a single-char INSTR scans bytes; a multi-char one keeps the substring probe");
+  }
+
+  [Test]
   public void Emit_GivenSingleCharMidCompare_WhenPb36_ThenComparesByteNotSubstring() {
     // O0297: `MID$(s$, i, 1) = "c"` compares a byte read directly (rt_charat) against the literal's
     // byte - no substring / StrDup / literal / StrCmp allocations. A two-character literal cannot use

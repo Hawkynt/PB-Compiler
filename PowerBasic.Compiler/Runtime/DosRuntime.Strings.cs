@@ -63,6 +63,7 @@ public sealed partial class DosRuntime {
   public Label StrCmp { get; private set; } = null!;
   public Label StrCmpEq { get; private set; } = null!;
   public Label CharAt { get; private set; } = null!;
+  public Label ScanChar { get; private set; } = null!;
   public Label StrMid { get; private set; } = null!;
   public Label StrLeft { get; private set; } = null!;
   public Label StrRight { get; private set; } = null!;
@@ -929,6 +930,57 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.AX);                                // restore the byte
     asm.Pop(Reg.ES);
     asm.Pop(Reg.SI);
+    asm.Pop(Reg.BX);
+    asm.Ret();
+  }
+
+  /// <summary>
+  /// O0302: INSTR of a single-character needle, <c>INSTR(s$, "c")</c>, as a hardware byte scan
+  /// (<c>REPNE SCASB</c>) rather than the general per-position substring probe. AX = haystack handle,
+  /// DX = the needle byte (DL); returns AX = the 1-based position of the first occurrence, or 0.
+  /// Consumes (frees) the haystack like <see cref="EmitInstr"/>; the one-byte needle is passed as a
+  /// value, so it never allocates. Emitted only when referenced, which the emitter does under --optimize.
+  /// </summary>
+  private void EmitScanChar(Assembler asm) {
+    this.ScanChar = asm.MarkLabel("rt_scanchar");
+    var zero = asm.DefineLabel();
+    var output = asm.DefineLabel();
+
+    asm.Push(Reg.BX);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.SI);
+    asm.Push(Reg.DI);
+    asm.Push(Reg.ES);
+    asm.Push(Reg.AX);                              // save the handle for the free
+    asm.Test(Reg.AX, Reg.AX);
+    asm.Jz(zero);                                  // null handle -> 0
+    asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_strseg")));
+    asm.Mov(Reg.BX, Reg.AX);
+    asm.Shl(Reg.BX, 2);
+    asm.Mov(Reg.CX, this.Descriptor(Reg.BX, 2));  // CX = length (scan count)
+    asm.Jcxz(zero);                                // empty haystack -> 0
+    asm.Mov(Reg.SI, this.Descriptor(Reg.BX));     // SI = buffer base (for the position calc)
+    asm.Mov(Reg.DI, Reg.SI);                       // DI = scan pointer
+    asm.Mov(Reg.AX, Reg.DX);                        // AL = byte to find
+    asm.Cld();
+    asm.Repne();
+    asm.Scasb();                                    // ES:DI scan for AL, CX times; ZF set on a match
+    asm.Jne(zero);                                  // not found -> 0
+    asm.Mov(Reg.AX, Reg.DI);
+    asm.Sub(Reg.AX, Reg.SI);                        // DI is one past the match, so DI - base = 1-based pos
+    asm.Jmp(output);
+    asm.MarkLabel(zero);
+    asm.Xor(Reg.AX, Reg.AX);
+    asm.MarkLabel(output);
+    asm.Pop(Reg.BX);                                // BX = handle
+    asm.Push(Reg.AX);                               // save the position
+    asm.Mov(Reg.AX, Reg.BX);
+    asm.Call(this.StrFree);
+    asm.Pop(Reg.AX);                                // restore the position
+    asm.Pop(Reg.ES);
+    asm.Pop(Reg.DI);
+    asm.Pop(Reg.SI);
+    asm.Pop(Reg.CX);
     asm.Pop(Reg.BX);
     asm.Ret();
   }

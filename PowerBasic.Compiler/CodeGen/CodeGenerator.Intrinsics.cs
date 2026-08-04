@@ -32,6 +32,17 @@ public sealed partial class CodeGenerator {
     _ => false,
   };
 
+  /// <summary>O0302: the byte of a single-character constant needle - a 1-char string literal or CHR$(const). Any byte, 0 included.</summary>
+  private int? SingleCharNeedleByte(Expression e) {
+    if (e is StringLiteralExpr { Value: { Length: 1 } text } && text[0] <= (char)255)
+      return (byte)text[0];
+    if (e is CallOrIndexExpr c && model.IntrinsicBindings.TryGetValue(c, out var info)
+        && info.Name.Equals("CHR$", StringComparison.OrdinalIgnoreCase) && c.Arguments.Count == 1
+        && this.OptFolder.TryFold(c.Arguments[0]) is { Integer: { } n })
+      return (int)(n & 0xFF);
+    return null;
+  }
+
   private void EmitIntrinsic(Expression call, IReadOnlyList<Expression> args, IntrinsicInfo intrinsic) {
     var asm = this._asm;
 
@@ -132,6 +143,17 @@ public sealed partial class CodeGenerator {
       case "INSTR" or "VERIFY": {
         var hasStart = args.Count > 2;
         var needle = args[hasStart ? 2 : 1];
+        // O0302: INSTR(s$, "c") with a single-character constant needle and no start position scans
+        // for the byte (rt_scanchar / REPNE SCASB) instead of the general substring probe, and never
+        // allocates the one-byte needle. Any byte value is valid here (unlike the char compare).
+        if (this.Optimize && intrinsic.Name == "INSTR" && !hasStart && needle is not AnyMatchExpr
+            && this.SingleCharNeedleByte(needle) is { } scanByte && model.TypeOf(args[0]) is StringType or FlexType) {
+          this.EmitExpression(args[0]);           // haystack handle -> AX
+          asm.Mov(Reg.DX, (Imm)scanByte);
+          asm.Call(this._rt.ScanChar);
+          asm.Cwd();
+          break;
+        }
         if (hasStart) {
           this.EmitInt16Argument(args[0]);
           asm.Push(Reg.AX);
