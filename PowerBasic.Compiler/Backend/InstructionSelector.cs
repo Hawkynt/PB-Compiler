@@ -80,18 +80,16 @@ public sealed class InstructionSelector {
   }
 
   private MFunction? Run(IrFunction fn) {
-    // A float parameter or a float PHI has no home yet: floats live in frame cells here, and both of
-    // those would need one assigned before the body is walked. Everything else floating point is
-    // selected instruction by instruction (SelectFloat*), and the scalar paths refuse a float type
-    // outright - without that refusal a SINGLE load would mint one Dword virtual register and emit a
-    // single WORD-sized MOV, carrying half the value.
+    // A float PARAMETER still has no home: it arrives on the caller's stack in a layout this back end
+    // does not yet describe. A float PHI does now - it gets a frame cell like any other intermediate,
+    // and its edge copies are FLD/FSTP through it rather than register moves (see InsertPhiCopies).
+    //
+    // Everything else floating point is selected instruction by instruction (SelectFloat*), and the
+    // scalar paths refuse a float type outright - without that refusal a SINGLE load would mint one
+    // Dword virtual register and emit a single WORD-sized MOV, carrying half the value.
     foreach (var parameter in fn.Parameters)
       if (parameter.Type.IsFloat)
         return this.DeclineNull($"floating point: a {parameter.Type} parameter has no frame cell yet");
-    foreach (var block in fn.Blocks)
-      foreach (var phi in block.Phis)
-        if (phi.Type.IsFloat)
-          return this.DeclineNull($"floating point: a {phi.Type} phi has no frame cell yet");
 
     this._function = new MFunction(fn.Name) { HasArgumentPlan = true };
 
@@ -116,7 +114,10 @@ public sealed class InstructionSelector {
     // (out-of-SSA), so a use of the phi simply reads this register
     foreach (var block in fn.Blocks)
       foreach (var phi in block.Phis)
-        if (IsWide(phi.Type))
+        if (phi.Type.IsFloat)
+          this.FloatCell(phi);                 // a float lives in a frame cell, never a register: the
+                                               // edge copies below are FLD/FSTP through it
+        else if (IsWide(phi.Type))
           this.FreshPair(phi);                 // a 32-bit phi needs both halves, like any other LONG value
         else
           this._vregs[phi] = this.FreshVreg(phi.Type);
@@ -161,9 +162,19 @@ public sealed class InstructionSelector {
   private bool InsertPhiCopies(IrFunction fn, Dictionary<string, MBlock> mblocks) {
     foreach (var predBlock in fn.Blocks) {
       var copies = new List<(MReg Dest, MOperand Source)>();
+      var floatCopies = new List<(MOperand Destination, MOperand Source)>();
       foreach (var block in fn.Blocks)
         foreach (var phi in block.Phis)
           if (phi.IncomingFrom(predBlock) is { } value) {
+            if (phi.Type.IsFloat) {
+              // a float edge copy goes through the x87, not a register: load the incoming cell, store
+              // the phi's. There is no copy CYCLE to worry about the way there is for registers -
+              // each pair is a complete load-and-store, so nothing is half-overwritten in between
+              if (!this.TryFloatOperand(value, out var incoming))
+                return false;
+              floatCopies.Add((this.FloatCell(phi), incoming));
+              continue;
+            }
             if (IsWide(phi.Type)) {
               // both halves of a 32-bit phi are copied on the edge, low then high
               if (!this.TryOperandPair(value, out var lowSource, out var highSource))
@@ -176,7 +187,7 @@ public sealed class InstructionSelector {
               return false;
             copies.Add((this._vregs[phi], source));
           }
-      if (copies.Count == 0)
+      if (copies.Count == 0 && floatCopies.Count == 0)
         continue;
 
       // a cycle on this edge (one copy's source is another copy's destination) needs a temporary - decline
@@ -193,6 +204,12 @@ public sealed class InstructionSelector {
           new MInstrEffect(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [1] : [],
             ReadsFlags: false, WritesFlags: false, ReadsMemory: source is MOperand.Memory, WritesMemory: false));
         mblock.Instructions.Insert(insertAt++, copy);
+      }
+      foreach (var (destination, source) in floatCopies) {
+        mblock.Instructions.Insert(insertAt++, new MInstr(MOpcode.Fld, [source],
+          new MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: true, WritesMemory: false)));
+        mblock.Instructions.Insert(insertAt++, new MInstr(MOpcode.Fstp, [destination],
+          new MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: true)));
       }
     }
 
@@ -1266,7 +1283,13 @@ public sealed class InstructionSelector {
 
     this.EmitX87(MOpcode.Fld, lhs, reads: true);
     this.EmitX87(MOpcode.Fld, rhs, reads: true);
-    this._current.Instructions.Add(new MInstr(opcode, [], MInstrEffect.None));
+    // Declared to read AND write memory, which is a lie about what FADDP touches and the only honest
+    // thing to say when the machine IR has no x87 stack to name. With MInstrEffect.None the scheduler
+    // sees an instruction depending on nothing and may move it out from between the FLDs that set up
+    // its operands - which is exactly what an under-declared FSQRT did, and what this did once a block
+    // held enough x87 to give the scheduler a choice.
+    this._current.Instructions.Add(new MInstr(opcode, [],
+      new MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: true, WritesMemory: true)));
     this.EmitX87(MOpcode.Fstp, this.FloatCell(bin), reads: false);
     return true;
   }
