@@ -258,9 +258,16 @@ Rendering and re-binding are counted apart on purpose: a module the writer *refu
 while one it renders into text pb35 *rejects* is a bug, and one number would let the second hide
 behind the first.
 
-What `BasicWriter` still does that the IR writer cannot: it renders `TYPE` declarations and procedure
-signatures from the original `CompilationUnit`, which the lowering has flattened into offsets and
-GEPs. Those are additions, not a swap.
+A `TYPE` variable needs no `TYPE` declaration to be rendered. It lowers to one byte blob written and
+read at constant offsets with each field's own width, and the writer gives **each field its own
+variable** — scalar replacement, exact as long as the fields do not overlap and the blob's address
+never leaves it. What a reader of the rendered program needs is a program that computes the same
+thing, not the record layout it came from.
+
+What `BasicWriter` still does that the IR writer cannot: reproduce *runtime* dialect quirks that pb35
+source has no way to express — the CP/M `^Z` QuickBASIC 1.0–3.0 write at the end of a sequential
+`OUTPUT` file is the clearest one. Those are not lost in lowering; they are simply not expressible in
+the target language.
 
 `IrBasicWriterCensusTests` reports how much of the corpus renders (currently **173 of 218**
 functions) and ranks what does not, which is the distance still to go before `BasicWriter` can be

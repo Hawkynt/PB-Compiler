@@ -54,6 +54,9 @@ public sealed class IrBasicWriter {
   private readonly List<string> _warnings = [];
   private readonly List<(string Name, IrType Element, int Count)> _arrays = [];
   private readonly Dictionary<IrAlloca, string> _arrayNames = new(ReferenceEqualityComparer.Instance);
+
+  /// <summary>One variable per (byte blob, field offset) - see <see cref="BlobField"/>.</summary>
+  private readonly Dictionary<(IrAlloca Blob, long Offset), (string Name, IrType Type)> _blobFields = [];
   private int _seq;
 
   /// <summary>Renders a whole module: its globals, then each defined function.</summary>
@@ -120,6 +123,7 @@ public sealed class IrBasicWriter {
     this._locals.Clear();
     this._arrays.Clear();
     this._arrayNames.Clear();
+    this._blobFields.Clear();
     this._seq = 0;
 
     var isMain = function.Name.Equals("main", StringComparison.OrdinalIgnoreCase);
@@ -304,14 +308,14 @@ public sealed class IrBasicWriter {
       case IrAlloca alloca:
         // a multi-element slot is declared by the first subscript that names it (ArrayElement), so
         // the alloca itself contributes nothing here
-        if (alloca.Count <= 1)
+        if (alloca.Count <= 1 && !this.IsByteBlob(alloca))
           this.ScalarSlot(alloca);
         return;
       case IrLoad load:
-        this.Line($"  {this.Define(load)} = {this.Ref(this.ScalarSlot(load.Pointer))}");
+        this.Line($"  {this.Define(load)} = {this.Ref(this.ScalarSlot(load.Pointer, load.Type))}");
         return;
       case IrStore store:
-        this.Line($"  {this.Ref(this.ScalarSlot(store.Pointer))} = {this.Ref(store.Value)}");
+        this.Line($"  {this.Ref(this.ScalarSlot(store.Pointer, store.Value.Type))} = {this.Ref(store.Value)}");
         return;
       case IrSwitch sw: this.Switch(sw); return;
       default:
@@ -462,10 +466,15 @@ public sealed class IrBasicWriter {
   /// is a local variable that mem2reg simply did not get to (an escaping one, or one the pass left
   /// alone). Anything else is real storage and needs pointers this writer does not emit.
   /// </summary>
-  private IrValue ScalarSlot(IrValue pointer) {
+  private IrValue ScalarSlot(IrValue pointer, IrType? width = null) {
     // a GEP into an array slot is a subscript, and the element it names is what is read or written
-    if (pointer is IrGep gep)
+    if (pointer is IrGep gep) {
+      if (gep.BasePtr is IrAlloca gepBlob && this.IsByteBlob(gepBlob))
+        return gep.ByteOffset is IrConstantInt at
+          ? this.BlobField(gepBlob, at.Value, width ?? IrType.I16, gep)
+          : throw new IrBasicWriterException("a TYPE field at a computed offset");
       return this.ArrayElement(gep);
+    }
     // A module-level variable is a name, and reading or writing it through its address is just using
     // that name. The DIM belongs to the module render; a function rendered on its own therefore
     // refers to a variable it does not declare, which is correct - a single function was never a
@@ -475,6 +484,8 @@ public sealed class IrBasicWriter {
         this._names[global] = Sanitize(global.Name);
       return global;
     }
+    if (pointer is IrAlloca blob && this.IsByteBlob(blob))
+      return this.BlobField(blob, 0, width ?? blob.Allocated, blob);
     if (pointer is not IrAlloca alloca)
       throw new IrBasicWriterException($"a load or store through {pointer.GetType().Name} rather than a local slot");
     // a zero byte offset folds away, so a load or store through the array itself is element zero -
@@ -661,6 +672,41 @@ public sealed class IrBasicWriter {
   /// what lets the access be written as <c>a(i)</c>; emitting the byte arithmetic instead would need
   /// pointers, and would render as something no reader could check against the original.
   /// </summary>
+  /// <summary>
+  /// A byte blob - what a <c>TYPE</c> variable or a fixed string lowers to: one alloca of N bytes,
+  /// written and read at constant offsets with the WIDTH of whatever field lives there. It is not an
+  /// array of anything, so rendering it as one is wrong twice over: the element type is a byte while
+  /// the accesses are words and longs, and a GEP's displacement is in BYTES while a BASIC subscript
+  /// counts elements.
+  ///
+  /// It is rendered by giving each field its own variable - scalar replacement, which is exact as
+  /// long as the fields do not overlap and the blob's address never leaves it. That drops the TYPE
+  /// declaration, which no reader of the rendered program needs: what they need is a program that
+  /// computes the same thing.
+  /// </summary>
+  private bool IsByteBlob(IrAlloca alloca) => alloca.Count > 1 && alloca.Allocated.Bits == 8;
+
+  /// <summary>The variable standing for the field at a byte offset, or a refusal.</summary>
+  private IrValue BlobField(IrAlloca blob, long offset, IrType type, IrValue place) {
+    foreach (var user in blob.Users)
+      if (user is not (IrLoad or IrStore or IrGep))
+        throw new IrBasicWriterException($"a TYPE variable whose address escapes into {user.GetType().Name}");
+
+    var key = (blob, offset);
+    if (!this._blobFields.TryGetValue(key, out var field)) {
+      // a second access at the same offset must agree on the width, or the two are aliasing bytes
+      // and separate variables would silently stop tracking each other
+      field = ($"{(blob.Name is { Length: > 0 } n ? Sanitize(n) : "rec")}_{offset}_{this._seq++}", type);
+      this._blobFields[key] = field;
+      this._locals.Add(field);
+    }
+    if (field.Type != type)
+      throw new IrBasicWriterException(
+        $"a TYPE field read at two widths ({field.Type} and {type}) - overlapping fields cannot be split");
+    this._names[place] = field.Name;
+    return place;
+  }
+
   private IrValue ArrayElement(IrGep gep) {
     // a module-level array is declared by the module render and named by its own identifier
     if (gep.BasePtr is IrGlobalVariable { Bytes: null } global) {

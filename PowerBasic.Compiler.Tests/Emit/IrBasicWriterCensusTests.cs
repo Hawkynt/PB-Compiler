@@ -131,7 +131,7 @@ public sealed class IrBasicWriterCensusTests {
     Assert.That(rebound, Is.GreaterThanOrEqualTo(_reboundFloor), "fewer modules re-bind than used to");
   }
 
-  private const int _reboundFloor = 94;   // 79 at first measurement; 80 with SHARED globals, 94 once every
+  private const int _reboundFloor = 95;   // 79 at first measurement; 80 with SHARED globals, 94 once every
                                         // dialect was lowered in its own rather than all as pb36
 
   private const int _floor = 173;   // 13 at the first measurement; +scalar slots, +PRINT, +file I/O, +arrays,

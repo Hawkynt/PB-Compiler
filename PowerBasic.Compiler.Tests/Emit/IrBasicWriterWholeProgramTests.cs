@@ -198,6 +198,45 @@ public sealed class IrBasicWriterWholeProgramTests {
       END
       """);
 
+  /// <summary>
+  /// A TYPE variable is one byte blob in the IR, written and read at constant offsets with each
+  /// field's own width. Rendering it as an array of anything is wrong twice - the element type is a
+  /// byte while the accesses are words and longs, and a GEP counts BYTES while a BASIC subscript
+  /// counts elements. Each field gets its own variable instead.
+  /// </summary>
+  [Test]
+  public void RoundTrip_GivenAUserDefinedType_ThenEveryFieldKeepsItsOwnWidth() =>
+    RoundTrips("""
+      TYPE Point
+        X AS INTEGER
+        Y AS LONG
+      END TYPE
+      DIM p AS Point
+      p.X = 3
+      p.Y = 400000
+      PRINT p.X; p.Y
+      p.X = p.X + 1
+      PRINT p.X
+      END
+      """);
+
+  [Test]
+  public void RoundTrip_GivenTwoRecordsOfTheSameType_ThenTheirFieldsStayApart() =>
+    RoundTrips("""
+      TYPE Pair
+        A AS INTEGER
+        B AS INTEGER
+      END TYPE
+      DIM p AS Pair
+      DIM q AS Pair
+      p.A = 1
+      p.B = 2
+      q.A = 30
+      q.B = 40
+      PRINT p.A; p.B; q.A; q.B
+      END
+      """);
+
   [Test]
   public void RoundTrip_GivenLongArithmetic_ThenTheWidthIsPreserved() =>
     RoundTrips("""
