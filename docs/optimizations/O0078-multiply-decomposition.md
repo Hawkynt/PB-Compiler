@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — one-, two- and three-set-bit multipliers (and contiguous runs) decompose on the modular int16 path; four-plus-bit and a per-target cost model remain |
+| **Status** | 🟡 Partial — one-, two-, three- and four-set-bit multipliers (and contiguous runs) decompose on the modular int16 path; the four-bit chain is gated by the [O0174](O0174-target-cost-models.md) cost model (it fires only where the multiply is slow — the 8086 tier — and keeps the compact IMUL on a 386+); five-plus-bit remains |
 | **Stage** | Emitter |
 | **Related** | [O0004](O0004-strength-reduction.md), [O0064](O0064-lea-fusion.md), [O0174](O0174-target-cost-models.md) |
 
@@ -50,18 +50,25 @@ through one register — no memory temp:
 
 `11`, `13`, `25`, `44`, … now emit shifts and adds instead of `IMUL`, verified
 byte-identical against the genuine oracle across the sign range and the modular
-wrap (`30000 * 11` → `2320`); a regression test confirms `x% * 11` decomposes
-while `x% * 23` (four bits) keeps `IMUL`.
+wrap (`30000 * 11` → `2320`); a regression test confirms `x% * 11` decomposes.
 
-## Still planned — four-plus bits and the cost model
+**Four set bits** (`23`, `85`, `105`, …) generalise the same BX-threaded chain —
+one (shift, add) per extra term — but at ~8 instructions they are no longer a
+win on every target, so they are the first decomposition gated by the
+[O0174](O0174-target-cost-models.md) **cost model**: `x% * 23` decomposes at the
+default 8086 tier (where the ~124-cycle `MUL` dwarfs the chain) and keeps the
+compact `IMUL` under `$CPU 80386` (where the multiply is ten-ish cycles and the
+chain would lose). A regression test pins both directions, and the optimization
+battery runs `n% * 85` under DOSBox with the optimizer on and off for the
+runtime cross-check.
 
-- **Four-or-more set bits** (`23`, `105`, …) still keep the compact `IMUL`; a
-  general decomposition search would cover them.
-- A **cost model** ([O0174](O0174-target-cost-models.md)) is what makes the
-  general case target-dependent: a shift/add chain is substantially faster than
-  `IMUL` on an 8086 while being larger, and on a Pentium the `IMUL` wins back, so
-  the decomposition depth must be chosen per target. The three-bit chain is a
-  clear 8086 win at any depth, which is why it ships unconditionally under SPEED.
+## Still planned — five-plus bits
+
+- **Five-or-more set bits** still keep the compact `IMUL`; the chain length now
+  outweighs even the 8086 multiply, and the cost model would decline them anyway.
+- The two- and three-bit chains ship unconditionally under SPEED — a clear win on
+  every `$CPU`-reachable target — while the four-bit chain asks the cost model;
+  wiring the two/three-bit forms through the same query is a mechanical follow-up.
 - Soundness is [O0004](O0004-strength-reduction.md)'s: only on the unchecked,
   modular path, where every chain reproduces the product's low bits exactly.
   Under `$ERROR OVERFLOW` the real `IMUL` and its `JNO` guard survive.

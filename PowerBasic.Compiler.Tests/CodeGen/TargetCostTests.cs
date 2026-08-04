@@ -81,6 +81,17 @@ public sealed class TargetCostTests {
   }
 
   [Test]
+  public void PreferShiftAddMultiply_GivenSetBitsAndTier_WhenAsked_ThenDecomposesWhereTheMultiplyIsSlow() {
+    // A four-set-bit chain (~8 instructions) only beats IMUL where the multiply is genuinely expensive:
+    // the 8086's microcoded MUL. From the 386 up the compact IMUL is a handful of cycles and wins.
+    Assert.That(Cost(CpuTier.I8086).PreferShiftAddMultiply(4), Is.True, "8086 MUL is ~124 cycles");
+    Assert.That(Cost(CpuTier.I80386).PreferShiftAddMultiply(4), Is.False);
+    Assert.That(Cost(CpuTier.Pentium).PreferShiftAddMultiply(4), Is.False);
+    // A single shift (power of two) wins everywhere.
+    Assert.That(Cost(CpuTier.Pentium).PreferShiftAddMultiply(1), Is.True);
+  }
+
+  [Test]
   public void PreferLoopInstruction_GivenTierAndObjective_WhenAsked_ThenAvoidsMicrocodedLoopOn486PlusUnlessSize() {
     Assert.That(Cost(CpuTier.I80386, CostObjective.Speed).PreferLoopInstruction, Is.True, "LOOP is still fast <=386");
     Assert.That(Cost(CpuTier.I80486, CostObjective.Speed).PreferLoopInstruction, Is.False, "microcoded from the 486");

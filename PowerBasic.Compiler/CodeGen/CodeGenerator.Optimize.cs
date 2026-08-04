@@ -1079,7 +1079,31 @@ public sealed partial class CodeGenerator {
       return true;
     }
 
-    return false; // four-or-more-term multipliers keep the compact IMUL
+    // O0078 + O0174: a four-set-bit multiplier m = 2^a + 2^b + 2^c + 2^d generalises the three-bit chain -
+    // factor out 2^lo and thread the running x<<k through BX, one (shift, add) per extra term. Four terms is
+    // ~8 instructions, so unlike the two/three-bit forms (which win on every reachable target) it only beats
+    // the compact IMUL where the multiply is genuinely slow: the cost model gates it, and at the tier figures
+    // above that means the 8086's ~124-cycle MUL, not the 386+'s ten-ish. Beyond four terms the byte cost
+    // outweighs even the 8086 multiply, so the compact IMUL stays.
+    if (BitOperations.PopCount(mag) == 4 && this.Cost.PreferShiftAddMultiply(4)) {
+      var bits = new List<int>(4);
+      for (var t = mag; t != 0; t &= t - 1)
+        bits.Add(BitOperations.TrailingZeroCount(t)); // ascending set-bit positions; bits[0] == lo
+      this.EmitModularInt16(variable);
+      asm.Mov(Reg.BX, Reg.AX);                        // bx = x (the offset-0 term)
+      var prev = bits[0];
+      for (var i = 1; i < bits.Count; ++i) {
+        this.EmitShiftLeft(Reg.BX, bits[i] - prev);   // bx = x << (bits[i] - lo)
+        asm.Add(Reg.AX, Reg.BX);
+        prev = bits[i];
+      }
+      this.EmitShiftLeft(Reg.AX, lo);                 // ax = x * m
+      if (neg)
+        asm.Neg(Reg.AX);
+      return true;
+    }
+
+    return false; // five-or-more-term multipliers keep the compact IMUL
   }
 
   /// <summary>

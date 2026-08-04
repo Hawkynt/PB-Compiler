@@ -737,8 +737,7 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenThreeBitMultiplier_WhenPb36Speed_ThenDecomposedNoImul() {
-    // O0078: under $OPTIMIZE SPEED, a three-set-bit multiplier (11 = 8+2+1) decomposes into shifts
-    // and adds - no IMUL - while a four-bit multiplier (23 = 16+4+2+1) keeps the compact IMUL.
+    // O0078: under $OPTIMIZE SPEED, a three-set-bit multiplier (11 = 8+2+1) decomposes into shifts and adds.
     static int Imuls(byte[] img) {
       var n = 0;
       for (var i = 0; i < img.Length - 1; ++i)
@@ -746,9 +745,30 @@ public sealed class OptimizerTests {
           ++n;
       return n;
     }
+    // Baseline-robust: the program carries an IMUL unrelated to the multiplier (integer formatting), so
+    // compare a decomposing multiplier (11 = 8+2+1) against one that keeps IMUL (341 = five set bits).
     var three = Compile("$OPTIMIZE SPEED\nDIM x AS INTEGER, y AS INTEGER\nLINE INPUT z$\nx = VAL(z$)\ny = x * 11\nPRINT y\nEND", Dialect.Pb36);
-    var four = Compile("$OPTIMIZE SPEED\nDIM x AS INTEGER, y AS INTEGER\nLINE INPUT z$\nx = VAL(z$)\ny = x * 23\nPRINT y\nEND", Dialect.Pb36);
-    Assert.That(Imuls(three), Is.LessThan(Imuls(four)), "x * 11 decomposes to shifts/adds; x * 23 keeps IMUL");
+    var keep = Compile("$OPTIMIZE SPEED\nDIM x AS INTEGER, y AS INTEGER\nLINE INPUT z$\nx = VAL(z$)\ny = x * 341\nPRINT y\nEND", Dialect.Pb36);
+    Assert.That(Imuls(three), Is.LessThan(Imuls(keep)), "x * 11 decomposes to shifts/adds; x * 341 (five bits) keeps IMUL");
+  }
+
+  [Test]
+  public void Emit_GivenFourBitMultiplier_WhenPb36Speed_ThenCostModelDecomposesOn8086ButKeepsImulOn386() {
+    // O0078 + O0174: a four-set-bit multiplier (23 = 16+4+2+1) is ~8 instructions - a win over the 8086's
+    // ~124-cycle IMUL, a loss against the 386+'s ten-ish. The cost model decides per target: decompose at
+    // the default 8086 tier, keep the compact IMUL under $CPU 80386.
+    static int Imuls(byte[] img) {
+      var n = 0;
+      for (var i = 0; i < img.Length - 1; ++i)
+        if (img[i] == 0xF7 && img[i + 1] is >= 0xE8 and <= 0xEF)
+          ++n;
+      return n;
+    }
+    var i8086 = Compile("$OPTIMIZE SPEED\nDIM x AS INTEGER, y AS INTEGER\nLINE INPUT z$\nx = VAL(z$)\ny = x * 23\nPRINT y\nEND", Dialect.Pb36);
+    var i386 = Compile("$CPU 80386\n$OPTIMIZE SPEED\nDIM x AS INTEGER, y AS INTEGER\nLINE INPUT z$\nx = VAL(z$)\ny = x * 23\nPRINT y\nEND", Dialect.Pb36);
+    // Baseline-robust across tiers: the only difference is the multiply, so the 386 image carries exactly
+    // one more IMUL (the kept multiply) than the 8086 image (which decomposed it).
+    Assert.That(Imuls(i8086), Is.LessThan(Imuls(i386)), "8086 decomposes the slow MUL; 386+ keeps the compact IMUL");
   }
 
   [Test]

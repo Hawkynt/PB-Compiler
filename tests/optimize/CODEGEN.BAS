@@ -13,6 +13,7 @@ DECLARE SUB DeadStoreRemoved(BYVAL n%)
 DECLARE SUB UnreachableCodeDropped(BYVAL n%)
 DECLARE SUB CommonSubexpressionReused(BYVAL y%, BYVAL x%)
 DECLARE SUB MultiplyByPowerOfTwoIsShifts(BYVAL n%)
+DECLARE SUB MultiplyByFourBitConstIsShifts(BYVAL n%)
 DECLARE SUB DivideByPowerOfTwoIsShifts(BYVAL n%)
 DECLARE SUB DivideByConstantIsReciprocal(BYVAL n%)
 DECLARE SUB TrivialFunctionInlined(BYVAL n%)
@@ -45,6 +46,7 @@ DeadStoreRemoved 3
 UnreachableCodeDropped 4
 CommonSubexpressionReused 5, 6
 MultiplyByPowerOfTwoIsShifts 7
+MultiplyByFourBitConstIsShifts 3
 DivideByPowerOfTwoIsShifts 64
 DivideByConstantIsReciprocal 250
 TrivialFunctionInlined 8
@@ -133,6 +135,19 @@ END SUB
 ' ---------------------------------------------------------------------------
 SUB MultiplyByPowerOfTwoIsShifts(BYVAL n%) NOINLINE
   PRINT "mulshift"; n% * 8
+END SUB
+
+' ---------------------------------------------------------------------------
+' @scenario MultiplyByFourBitConstIsShifts
+' @what     n% * 85 - a four-set-bit multiplier (85 = 1010101b)
+' @expect   O0078 threads x<<k through BX for one (shift, add) per term; the
+'           O0174 cost model fires it only where the multiply is slow (the
+'           default 8086 tier here), keeping the compact IMUL on a Pentium
+' @assert   absent imul-bx
+' @status   done
+' ---------------------------------------------------------------------------
+SUB MultiplyByFourBitConstIsShifts(BYVAL n%) NOINLINE
+  PRINT "mul85"; n% * 85
 END SUB
 
 ' ---------------------------------------------------------------------------

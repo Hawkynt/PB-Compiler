@@ -3,6 +3,7 @@ deadstore 225
 unreach 4
 cse 3212
 mulshift 56
+mul85 255
 divshift 8
 recip 25
 inline 16

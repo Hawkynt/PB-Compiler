@@ -98,6 +98,15 @@ public sealed class TargetCost {
   /// several cycles, but still an order below its multiply.</summary>
   public int ShiftAddCycles => this.Tier <= CpuTier.I80286 ? 4 : 2;
 
+  /// <summary>True when a constant multiplier with <paramref name="setBits"/> one-bits is cheaper as a
+  /// shift/add chain than a hardware <c>IMUL</c> on this tier (O0078). The chain emits roughly a shift and an
+  /// add per set bit, so it wins where the multiply is expensive (the 8086's ~124-cycle microcoded <c>MUL</c>)
+  /// and loses where the multiply is a handful of cycles (Pentium/P6) - the decomposition should back off to
+  /// the compact single <c>IMUL</c> there. A pure power of two (one set bit) is a single shift and always wins;
+  /// this prices the multi-term chains.</summary>
+  public bool PreferShiftAddMultiply(int setBits) =>
+    setBits >= 1 && 2 * setBits * this.ShiftAddCycles < this.Mul16Cycles;
+
   /// <summary>True when writing an 8-bit sub-register (packing two BYTE locals into <c>AL</c>/<c>AH</c>,
   /// O0058) is a net win: on the byte-starved early parts it saves real bytes and a full-width move, but on a
   /// P6 the partial-register write introduces a false dependency / merge stall that costs more than it saves.</summary>
