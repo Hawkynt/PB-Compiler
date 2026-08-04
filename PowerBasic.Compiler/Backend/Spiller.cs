@@ -17,8 +17,9 @@ namespace PowerBasic.Compiler.Backend;
 ///   into a register.
 ///
 /// It is conservative about where a memory operand is legal: only the forms the emitter really has
-/// (the two-operand ALU family, <c>PUSH</c>, <c>IMUL</c>'s source), never two memory operands in one
-/// instruction, and never a value used as an address base or index. A value it cannot move stays in a
+/// (the two-operand ALU family, <c>PUSH</c>, <c>IMUL</c>'s source, <c>IDIV</c>'s divisor, a shift's
+/// destination), never two memory operands in one instruction, and never a value used as an address
+/// base or index. A value it cannot move stays in a
 /// register, and if that leaves no allocation the function declines - the back end is an opt-in path
 /// that falls back.
 /// </summary>
@@ -91,6 +92,8 @@ internal static class Spiller {
         var op when _memoryCapable.Contains(op) => true,
         MOpcode.Push => at == 0,
         MOpcode.Imul => at == 1,             // the destination of IMUL r16, r/m16 must be a register
+        MOpcode.Idiv => at == 0,             // IDIV takes its divisor from memory as readily
+        MOpcode.Shl or MOpcode.Shr or MOpcode.Sar => at == 0,   // shift a frame cell in place
         _ => false,
       };
       if (!legal || instr.Operands.Where((o, i) => i != at).Any(IsMemory))

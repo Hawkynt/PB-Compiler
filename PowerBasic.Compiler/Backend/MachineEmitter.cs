@@ -140,10 +140,17 @@ public sealed class MachineEmitter {
         break;
       case MOpcode.Lea: asm.Lea(this.Reg(ops[0]), this.Mem(ops[1])); break;
       case MOpcode.Cwd: asm.Cwd(); break;
-      case MOpcode.Idiv: asm.Idiv(this.Reg(ops[0])); break;
-      case MOpcode.Shl: asm.Shl(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
-      case MOpcode.Shr: asm.Shr(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
-      case MOpcode.Sar: asm.Sar(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
+      case MOpcode.Idiv:
+        if (this.ToSource(ops[0]) is Mem divisor)
+          asm.Idiv(divisor);
+        else
+          asm.Idiv(this.Reg(ops[0]));
+        break;
+      // the shifts take a memory destination too, which is what lets a spilled value be shifted in
+      // place instead of blocking the whole function's allocation
+      case MOpcode.Shl: this.Shift(ops, asm.Shl, asm.Shl); break;
+      case MOpcode.Shr: this.Shift(ops, asm.Shr, asm.Shr); break;
+      case MOpcode.Sar: this.Shift(ops, asm.Sar, asm.Sar); break;
       // the carry the neighbouring SHL/SHR left is rotated into the other half of a 32-bit shift
       case MOpcode.Rcl: asm.Rcl(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
       case MOpcode.Rcr: asm.Rcr(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
@@ -178,6 +185,15 @@ public sealed class MachineEmitter {
       case MOpcode.Fdivp: asm.Fdivp(); break;
       default: throw new System.NotSupportedException($"machine opcode {instr.Opcode} has no emission yet");
     }
+  }
+
+  /// <summary>A shift by a constant count, against a register or a frame cell.</summary>
+  private void Shift(IReadOnlyList<MOperand> ops, Action<Reg, int> onRegister, Action<Mem, int> onMemory) {
+    var count = (int)((MOperand.Immediate)ops[1]).Value;
+    if (ops[0] is MOperand.Register register)
+      onRegister(this.Resolve(register.Reg), count);
+    else
+      onMemory(this.Mem(ops[0]), count);
   }
 
   /// <summary>Dispatches a two-operand instruction to the right Assembler overload by the operand shapes.</summary>

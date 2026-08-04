@@ -189,5 +189,15 @@ public sealed class BackendCoverageTests {
     // rounding float-to-integer conversion it is spelled from
     Assert.That(census.Selected, Is.GreaterThanOrEqualTo(94),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
+
+    // selection is not routing: the whole-program codegen also schedules and allocates, and a value
+    // live across a CALL has no register unless the spiller can move it to the frame
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(69),
+      "fewer selected functions survive register allocation than they used to:\n" + report);
+
+    // the figure that matters for whole-program ownership: module bodies the back end compiles end to
+    // end. It was zero until main became routable at all
+    Assert.That(census.MainBodies, Is.GreaterThanOrEqualTo(25),
+      "fewer whole module bodies are compilable than they used to be:\n" + report);
   }
 }
