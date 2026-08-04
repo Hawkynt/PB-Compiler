@@ -108,6 +108,9 @@ public sealed class IrPassManager {
     // come after SCCP (which supplies the constants it folds together) and before GVN (which is the
     // pass that benefits)
     .Add("reassociate", Reassociate.Run)
+    // GVN cannot number a phi - a loop phi's operands include the value coming back round the latch,
+    // which is derived from the phi itself - so congruent induction variables survive it untouched
+    .Add("phicong", PhiCongruence.Run)
     .Add("gvn", Gvn.Run)
     .Add("memopt", RedundantMemory.Run)
     .Add("dse", DeadStoreElim.Run)

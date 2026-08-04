@@ -84,7 +84,7 @@ public sealed class OptimizationPortingLedgerTests {
     // Floors, not exact counts. The catalogue grows; what must not happen is the PORTABLE share
     // shrinking because a mid-end optimization was reclassified rather than moved, or the ported
     // count going backwards.
-    Assert.That(ported.Count, Is.GreaterThanOrEqualTo(18),
+    Assert.That(ported.Count, Is.GreaterThanOrEqualTo(19),
       "fewer optimizations are recorded as ported:" + Environment.NewLine + report);
     Assert.That(portable.Count, Is.GreaterThanOrEqualTo(120), "fewer optimizations look portable than before:\n" + report);
     Assert.That(alreadyIr.Count, Is.GreaterThanOrEqualTo(20), "fewer optimizations are on the IR than before:\n" + report);

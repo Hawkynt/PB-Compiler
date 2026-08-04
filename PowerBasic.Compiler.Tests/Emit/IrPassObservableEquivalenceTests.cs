@@ -41,6 +41,7 @@ public sealed class IrPassObservableEquivalenceTests {
     ("unroll", LoopUnroll.Run),
     ("sroa", ScalarReplaceArrays.Run),
     ("reassociate", Reassociate.Run),
+    ("phicong", PhiCongruence.Run),
   ];
 
   /// <summary>The interprocedural passes, which need the whole module rather than one function.</summary>

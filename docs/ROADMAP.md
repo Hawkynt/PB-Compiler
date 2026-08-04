@@ -256,7 +256,7 @@ Measured by `OptimizationPortingLedgerTests`, which reads the Stage of every doc
 | machine-level (not IR work at all) | **290** |
 | portable to the IR | **130** |
 | …already expressed on the IR | 20 |
-| …still to port | **110**, of which **18** now carry an `IR` row |
+| …still to port | **110**, of which **19** now carry an `IR` row |
 
 So the target is 110, not 420 — and the bulk of it is one category, *Mid-end* (52). The ledger is a
 test with floors, so the portable share cannot shrink by reclassification instead of movement.
@@ -314,6 +314,10 @@ A ported optimization records an **IR** row in its own document, which is what t
   user is one function becomes an alloca there. "Only one user" is NOT the whole condition: a global
   keeps its value between calls and a local does not, so it also requires a store in the entry block
   with no load before it, which makes the incoming value unobservable.
+- **O0111 redundant induction-variable elimination** — `Ir/Passes/PhiCongruence.cs`. Two loop-carried
+  values advancing in lockstep are one value written twice. It has to start OPTIMISTICALLY, because a
+  loop phi's latch value is derived from the phi itself and a pessimistic proof of that cycle is
+  circular - which is also why GVN skips phis entirely and leaves these untouched.
 - **O0225 SSA construction** — `Ir/IrDominators.cs` + `Ir/Passes/Mem2Reg.cs`, the same Cytron
   construction the direct tier has.
 

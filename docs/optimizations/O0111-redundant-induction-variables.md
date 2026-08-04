@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | ⬜ Planned |
 | **Stage** | Mid-end |
+| **IR** | ✅ `Ir/Passes/PhiCongruence.cs` — two loop-carried values advancing in lockstep are merged. It is GVN for phis, which GVN cannot do: GVN numbers an instruction from its operands, and a loop phi's operands include the value coming back round the latch, which is derived from the phi itself. So this starts OPTIMISTICALLY - every phi of a type is congruent until some predecessor disagrees - because a pessimistic proof of a cycle is circular and concludes nothing. Two counters do not carry each other directly (each carries its own `i + 1`), so `SameValue` compares derived values structurally, which is what makes it an induction-variable pass rather than a duplicate-phi one. In `IrPassManager.Standard()` before GVN; verified by `PhiCongruenceTests` and `IrPassObservableEquivalenceTests` |
 | **Related** | [O0110](O0110-general-induction-variables.md), [O0112](O0112-countdown-loop.md), [O0027](O0027-copy-propagation.md) |
 
 ## The idea
