@@ -40,6 +40,28 @@ public sealed partial class CodeGenerator {
           asm.Call(this._rt.PrintZone);
         continue;
       }
+      // O0286: PRINT CHR$(n) prints the single byte directly through the same rt_print_str the string-literal
+      // path uses, on a one-byte scratch buffer - no 1-char string is allocated and freed just to print it (the
+      // control-code idiom, PRINT CHR$(13); CHR$(10) / CHR$(27) / CHR$(7)). The byte is n AND 255 in AL, exactly
+      // what CHR$ stores. Optimize-gated, so the faithful build keeps the rt_chr allocation + rt_str_print.
+      if (this.Optimize && item.Value is CallOrIndexExpr chrCall
+          && model.IntrinsicBindings.TryGetValue(chrCall, out var chrInfo)
+          && chrInfo.Name.Equals("CHR$", StringComparison.OrdinalIgnoreCase)
+          && chrCall.Arguments.Count == 1) {
+        var saveSi = this.SiHoldsResident;
+        if (saveSi)
+          asm.Push(Reg.SI);
+        this.EmitInt16Argument(chrCall.Arguments[0]);          // AX = n
+        asm.Mov(Mem.Byte(this.RtScratch), Reg.AL);             // scratch byte = n AND 255, the CHR$ byte
+        asm.Mov(Reg.SI, Imm.OffsetOf(this.RtScratch));
+        asm.Mov(Reg.CX, (Imm)1);
+        asm.Call(this._rt.PrintStr);
+        if (saveSi)
+          asm.Pop(Reg.SI);
+        if (item.Separator == PrintSeparator.Comma)
+          asm.Call(this._rt.PrintZone);
+        continue;
+      }
       if (item.Value is StringLiteralExpr lit) {
         if (lit.Value.Length > 0) {
           // loading the literal pointer overwrites SI; preserve an SI-resident counter/accumulator

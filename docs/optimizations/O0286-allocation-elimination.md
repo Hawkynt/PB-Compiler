@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial (targeted cases: `ASC(MID$/LEFT$/RIGHT$)` reads the byte with no substring — [O0297](O0297-substring-view.md); `PRINT CHR$(n)` prints the byte with no 1-char string) |
 | **Stage** | Mid-end |
 | **Related** | [O0260](O0260-escape-analysis.md), [O0059](O0059-scalar-replacement.md), [O0287](O0287-stack-promotion.md), [O0009](O0009-string-temp-economy.md) |
 
@@ -21,6 +21,22 @@ n% = LEN(LEFT$(s$, 3))       ' the substring is allocated, measured, and freed
 ```
 
 The temporary exists only to have its length taken.
+
+## Now
+
+The general escape-analysis-driven elimination is not built yet, but two of its most
+common instances ship as targeted rewrites in the emitter:
+
+- **`PRINT CHR$(n)`** prints the single byte (`n AND 255`) directly through the same
+  `rt_print_str` the string-literal path uses, on a one-byte scratch cell — no
+  1-char string is allocated and freed just to print it. This is the control-code
+  idiom (`PRINT CHR$(13); CHR$(10)`, `CHR$(27)` escape sequences, `CHR$(7)` bell).
+  Optimize-gated, so the faithful build keeps the `rt_chr` allocation and
+  `rt_str_print`; verified by a DOSBox self-diff (printable and computed bytes,
+  optimizer on and off) and an `absent-call rt_str_print` byte assertion.
+- **`ASC(MID$(s$, i, 1))`** and its `LEFT$`/`RIGHT$`/two-argument siblings read the
+  byte straight from the source buffer with no substring allocation — see
+  [O0297](O0297-substring-view.md).
 
 ## What it needs
 

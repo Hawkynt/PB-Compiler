@@ -345,7 +345,7 @@ Conventions used on every page:
 
 | | # | Optimization |
 |---|---|---|
-| ⬜ | [O0286](O0286-allocation-elimination.md) | Allocation elimination |
+| 🟡 | [O0286](O0286-allocation-elimination.md) | Allocation elimination |
 | ⬜ | [O0287](O0287-stack-promotion.md) | Stack promotion |
 | ⬜ | [O0288](O0288-allocation-sinking.md) | Allocation sinking |
 | ⬜ | [O0289](O0289-allocation-coalescing.md) | Allocation coalescing |

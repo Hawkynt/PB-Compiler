@@ -19,6 +19,7 @@ DECLARE SUB IntegerSignIsBranchless(BYVAL a%)
 DECLARE SUB SwapIsInline(BYVAL a%, BYVAL b%)
 DECLARE SUB LenZeroIsHandleTest(BYVAL n%)
 DECLARE SUB OnGotoIsJumpTable(BYVAL n%)
+DECLARE SUB PrintChrIsDirect(BYVAL n%)
 DECLARE SUB MinMaxDiamondFolds(BYVAL a%, BYVAL b%)
 DECLARE SUB LongMaxFoldsWithoutFpu(BYVAL a&, BYVAL b&)
 DECLARE SUB DivideByPowerOfTwoIsShifts(BYVAL n%)
@@ -62,6 +63,7 @@ OnGotoIsJumpTable 0
 OnGotoIsJumpTable 1
 OnGotoIsJumpTable 3
 OnGotoIsJumpTable 5
+PrintChrIsDirect 2
 MinMaxDiamondFolds 3, 8
 LongMaxFoldsWithoutFpu 100000, 70000
 DivideByPowerOfTwoIsShifts 64
@@ -212,6 +214,19 @@ END SUB
 ' @assert   absent-call rt_len
 ' @status   done
 ' ---------------------------------------------------------------------------
+' ---------------------------------------------------------------------------
+' @scenario PrintChrIsDirect
+' @what     PRINT CHR$(n) for printable and computed byte values
+' @expect   O0286 prints the byte through rt_print_str on a scratch cell - no
+'           1-char string is allocated (rt_str_print, the handle path, is gone)
+' @assert   absent-call rt_str_print
+' @status   done
+' ---------------------------------------------------------------------------
+SUB PrintChrIsDirect(BYVAL n%) NOINLINE
+  PRINT CHR$(72); CHR$(105);
+  PRINT CHR$(n% + 33)
+END SUB
+
 ' ---------------------------------------------------------------------------
 ' @scenario OnGotoIsJumpTable
 ' @what     ON n% GOTO with four targets, in-range and out-of-range selectors
