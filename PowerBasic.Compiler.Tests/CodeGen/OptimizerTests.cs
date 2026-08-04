@@ -619,6 +619,25 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenAbsIntrinsic_WhenPb36_ThenBranchless() {
+    // O0249: ABS on a 16-bit value is emitted branchless (cwd; xor ax,dx; sub ax,dx = 99 31 D0 29 D0)
+    // under --optimize, bit-identical to the faithful test/JNS/NEG which the unoptimized build keeps.
+    static bool HasBranchlessAbs(byte[] img) {
+      for (var i = 0; i < img.Length - 4; ++i)
+        if (img[i] == 0x99 && img[i + 1] == 0x31 && img[i + 2] == 0xD0 && img[i + 3] == 0x29 && img[i + 4] == 0xD0)
+          return true;
+      return false;
+    }
+    var src = "DIM x AS INTEGER, y AS INTEGER\nLINE INPUT z$\ny = VAL(z$)\nx = ABS(y)\nPRINT x\nEND";
+    var unit = Parser.Parse(Lexer.Tokenize(src, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    var opt = new CodeGenerator(model).EmitExecutable();
+    var noOpt = new CodeGenerator(model) { Optimize = false }.EmitExecutable();
+    Assert.That(HasBranchlessAbs(opt), Is.True, "optimized ABS is branchless cwd/xor/sub");
+    Assert.That(HasBranchlessAbs(noOpt), Is.False, "the faithful build keeps the test/JNS/NEG form");
+  }
+
+  [Test]
   public void Emit_GivenCountOnlyFor_WhenPb36Speed_ThenCountsDownNoLimitCompare() {
     // O0112: a fixed-trip FOR whose counter is never read counts SI down to zero (DEC/JNZ), so no
     // limit compare (cmp si, r/m: 3B with modrm reg field 110b) is emitted. A loop that reads the

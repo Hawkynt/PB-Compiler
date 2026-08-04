@@ -444,6 +444,17 @@ public sealed partial class CodeGenerator {
         this.EmitExpression(args[0]);
         switch (KindOf(model.TypeOf(args[0]))) {
           case ValueKind.Int16: {
+            // O0249 branchless abs: y = (x XOR mask) - mask where mask = CWD (all-ones iff negative),
+            // three instructions and no branch - bit-identical to the test/JNS/NEG form, MININT
+            // wrap included (ABS(-32768) stays -32768, matching the branch form). Optimize-gated so
+            // the faithful path stays byte-identical; and never under $ERROR OVERFLOW, where the
+            // negation's trap must survive on the branching path.
+            if (this.Optimize && !this.CheckOverflow) {
+              asm.Cwd();
+              asm.Xor(Reg.AX, Reg.DX);
+              asm.Sub(Reg.AX, Reg.DX);
+              break;
+            }
             var done = asm.DefineLabel();
             asm.Test(Reg.AX, Reg.AX);
             asm.Jns(done);

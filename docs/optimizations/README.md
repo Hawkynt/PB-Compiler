@@ -293,7 +293,7 @@ Conventions used on every page:
 | ⬜ | [O0246](O0246-move-elimination-aware.md) | Move-elimination-aware allocation |
 | ⬜ | [O0247](O0247-jump-table-entry-compression.md) | Jump-table entry compression |
 | ⬜ | [O0248](O0248-branchless-minmax.md) | Branchless min/max |
-| ⬜ | [O0249](O0249-branchless-abs.md) | Branchless absolute value |
+| ✅ | [O0249](O0249-branchless-abs.md) | Branchless absolute value |
 | ⬜ | [O0250](O0250-adjacent-store-merging.md) | Adjacent store merging |
 | ⬜ | [O0251](O0251-misaligned-versioning.md) | Misaligned access versioning |
 | ⬜ | [O0252](O0252-safe-overread-versioning.md) | Safe over-read versioning |

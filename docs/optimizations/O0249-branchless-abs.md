@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Done (the `ABS()` intrinsic on a 16-bit value; the `IF x < 0 THEN x = -x` spelling remains) |
 | **Stage** | Emitter |
 | **Related** | [O0108](O0108-branchless-select.md), [O0077](O0077-negation-idioms.md), [O0258](O0258-vector-abs.md) |
 | **Split from** | [O0108](O0108-branchless-select.md) |
@@ -26,10 +26,24 @@ IF x% < 0 THEN x% = -x%
 PRINT ABS(x%)
 ```
 
-## What it needs
+## Now
 
-- The `-32768` case: its absolute value is not representable, and the branchless
-  sequence returns `-32768` — which is what the branching form does too, so the
-  rewrite is exact. Under `$ERROR OVERFLOW` the negation's trap must be
-  preserved, which the mask form does **not** raise; that path keeps the branch.
-- A recognizer for both spellings (the explicit `IF` and the intrinsic).
+`CodeGenerator.EmitIntrinsic` emits the `ABS()` intrinsic on a 16-bit value as the
+branchless `cwd; xor ax,dx; sub ax,dx` under `--optimize` (three bytes, no
+branch, faster on average than the taken `JNS`). It is **bit-identical** to the
+`test; jns; neg` form for every input — the `-32768` case returns `-32768` in
+both, since its absolute value is not representable — verified by a
+self-differential run and a differential checksum over `-30000…30000` byte for
+byte against the genuine oracle, plus a regression test for the emitted sequence.
+
+Gated on `--optimize` (the faithful path keeps `test/jns/neg`, byte-identical to
+genuine) and on **not** `$ERROR OVERFLOW` — there the negation's overflow trap
+must survive, which the mask form cannot raise, so the branching path stays.
+
+Native-only. The IR back ends emit an `abs`/`select` the host C compiler and LLVM
+lower to their target's branchless idiom.
+
+## Still planned
+
+- The explicit `IF x% < 0 THEN x% = -x%` spelling (recognizing the diamond as an
+  abs and emitting the same sequence), and the 32-bit `LONG` branchless form.
