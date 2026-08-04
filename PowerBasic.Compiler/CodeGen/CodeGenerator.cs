@@ -1118,6 +1118,18 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private HashSet<AssignStmt>? _remainderReuse;
 
   /// <summary>
+  /// O0079, separated form: the divide whose remainder must be kept, and the MOD that later reads it,
+  /// both mapped to the frame slot holding it. DX only survives to the next statement, but the VALUE
+  /// survives anything - so when the two are apart the remainder is stashed instead of re-divided.
+  /// The slot comes from the CSE area, which exists precisely to hold a value computed once and
+  /// reloaded at a later statement; a temp from <see cref="AllocTemp"/> would not do, being released
+  /// at the end of the expression that took it.
+  /// </summary>
+  private Dictionary<AssignStmt, int>? _remainderStash;
+
+  private Dictionary<AssignStmt, int>? _remainderLoad;
+
+  /// <summary>
   /// O0079 shared divide: marks the MOD statement of a strictly-adjacent <c>q = n\d : m = n MOD d</c>
   /// pair so it reuses the remainder the divide left in DX. Only sound when the two are consecutive
   /// (LabelStmt is its own statement, so adjacency proves no branch lands on the MOD and DX is live),
@@ -1129,9 +1141,117 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// </summary>
   private void PrepareDivMod(IReadOnlyList<Statement> body) {
     this._remainderReuse = null;
+    this._remainderStash = null;
+    this._remainderLoad = null;
     if (!this.Optimize || this.CheckOverflow || this.CheckNumeric)
       return; // checked arithmetic keeps every operation and its own traps
     this.ScanDivMod(body);
+    if (!ContainsErrorHandling(body))
+      this.ScanSeparatedDivMod(body);   // a RESUME can re-enter between the two points
+  }
+
+  /// <summary>
+  /// The separated form of O0079: <c>q = n \ d</c> and a LATER <c>m = n MOD d</c> in the same
+  /// statement list, with anything at all between them - statements, loops, calls. The remainder is
+  /// the same value however far apart they sit; it is stashed in a frame slot at the divide and
+  /// loaded at the MOD, so the second IDIV (100-180 cycles on an 8086) disappears.
+  ///
+  /// What has to hold, beyond everything the adjacent form already checks:
+  /// <list type="bullet">
+  ///   <item>the divide DOMINATES the MOD - guaranteed by being earlier in the same list, which is
+  ///     why a divide nested in an IF does not qualify for a MOD after it;</item>
+  ///   <item>nothing between writes <c>n</c> or <c>d</c>, nested blocks included;</item>
+  ///   <item>no label between: a GOTO landing there would reach the MOD without the divide having
+  ///     run, and the slot would hold whatever was last in it;</item>
+  ///   <item>a call between is only harmless when both operands are out of its reach - a local that
+  ///     is not SHARED or STATIC and is never handed to a call anywhere in the body (a conservative
+  ///     stand-in for "never passed BYREF"). Otherwise the call may have rewritten them.</item>
+  /// </list>
+  /// </summary>
+  private void ScanSeparatedDivMod(IReadOnlyList<Statement> body) {
+    for (var i = 0; i + 1 < body.Count; ++i) {
+      if (body[i] is not AssignStmt { Value: BinaryExpr { Op: BinaryOp.IntegerDivide } } divide)
+        continue;
+      for (var j = i + 1; j < body.Count; ++j) {
+        if (body[j] is LabelStmt)
+          break;                                    // control could arrive here without the divide
+        if (body[j] is not AssignStmt { Value: BinaryExpr { Op: BinaryOp.Modulo } } candidate) {
+          if (this.DivModRegionDisturbs(body[i], body[j]))
+            break;
+          continue;
+        }
+        if (this._remainderReuse?.Contains(candidate) == true)
+          break;                                    // the adjacent form already has this one
+        if (!this.IsSharedDivModPair(divide, candidate))
+          break;
+        var slot = this._cseBytes / 4;              // one more CSE slot, as LICM also takes them
+        this._cseBytes += 4;
+        (this._remainderStash ??= new(ReferenceEqualityComparer.Instance))[divide] = slot;
+        (this._remainderLoad ??= new(ReferenceEqualityComparer.Instance))[candidate] = slot;
+        break;
+      }
+    }
+    foreach (var s in body)
+      foreach (var block in ChildStatementBlocks(s))
+        this.ScanSeparatedDivMod(block);
+  }
+
+  /// <summary>True when <paramref name="between"/> could invalidate the remainder <paramref name="divide"/> produced.</summary>
+  private bool DivModRegionDisturbs(Statement divide, Statement between) {
+    if (divide is not AssignStmt { Value: BinaryExpr { Left: { } n, Right: { } d } })
+      return true;
+    foreach (var operand in new[] { n, d }) {
+      if (operand is not NameExpr name || !model.VariableBindings.TryGetValue(name, out var symbol))
+        continue;                                   // a constant operand cannot be disturbed
+      if (StatementWrites(between, symbol, model))
+        return true;
+      if (this.ContainsUserCall(between) && !this.IsUnreachableByCall(symbol))
+        return true;
+    }
+    return false;
+  }
+
+  /// <summary>A local a call cannot see: not SHARED, not STATIC, and never handed to a call in this body.</summary>
+  private bool IsUnreachableByCall(VariableSymbol symbol)
+    => symbol is { IsShared: false, Storage: VariableStorage.Local } && !this._callArguments.Contains(symbol);
+
+  private readonly HashSet<VariableSymbol> _callArguments = new(ReferenceEqualityComparer.Instance);
+
+  private static bool StatementWrites(Statement s, VariableSymbol symbol, SemanticModel model) {
+    if (s is AssignStmt { Target: NameExpr target }
+        && model.VariableBindings.TryGetValue(target, out var written) && ReferenceEquals(written, symbol))
+      return true;
+    if (s is ForStmt f && model.VariableBindings.TryGetValue(f.Variable, out var counter) && ReferenceEquals(counter, symbol))
+      return true;
+    if (s is AssignStmt or PrintStmt or CallStmt)
+      return ChildStatementBlocks(s).Any(b => b.Any(x => StatementWrites(x, symbol, model)));
+    return ChildStatementBlocks(s).Any(b => b.Any(x => StatementWrites(x, symbol, model)))
+      || s is InputStmt or ReadStmt or SwapStmt;    // these write through targets this scan does not model
+  }
+
+  /// <summary>
+  /// Whether a statement can reach USER code, which is the only thing that could rewrite a variable
+  /// behind the optimizer's back. A PRINT is a call, but into the DOS runtime, and the runtime does
+  /// not write the program's variables - so it is not one of these. Anything not modelled here counts
+  /// as a call, because guessing the other way is how a stale value gets reused.
+  /// </summary>
+  private bool ContainsUserCall(Statement s) {
+    if (ChildStatementBlocks(s).Any(b => b.Any(this.ContainsUserCall)))
+      return true;
+    return s switch {
+      CallStmt => true,
+      AssignStmt a => !CallFree(a.Value, model)
+                      || (a.Target is not NameExpr && !CallFree(a.Target, model)),
+      PrintStmt p => p.Items.Any(i => i.Value is { } v && !CallFree(v, model)),
+      ForStmt f => !CallFree(f.From, model) || !CallFree(f.To, model)
+                   || (f.Step is { } step && !CallFree(step, model)),
+      IfStmt i => !CallFree(i.Condition, model) || i.ElseIfs.Any(e => !CallFree(e.Condition, model)),
+      DoLoopStmt d => (d.PreCondition is { } pre && !CallFree(pre, model))
+                      || (d.PostCondition is { } post && !CallFree(post, model)),
+      SelectStmt sel => !CallFree(sel.Subject, model),
+      LabelStmt or ExitStmt or IterateStmt => false,
+      _ => true,
+    };
   }
 
   private void ScanDivMod(IReadOnlyList<Statement> body) {
@@ -1474,6 +1594,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
       case AssignStmt a:
         this.EmitAssign(a);
+        // O0079 separated form: the IDIV just left the remainder in DX and a later MOD wants it.
+        // The quotient store is a plain-scalar move (the pair test insists on it), so DX is intact.
+        if (this._remainderStash?.TryGetValue(a, out var stashSlot) == true)
+          this._asm.Mov(this.CseSlot(stashSlot), Reg.DX);
         break;
 
       case PrintStmt p:

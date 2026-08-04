@@ -93,14 +93,11 @@ Native-only, in `CodeGenerator`. The IR back ends emit both a `/` and a `%` over
 the same operands, which LLVM's GVN and the host C compiler already CSE into a
 single `divmod`, so the C/LLVM output shares the divide without a dedicated pass.
 
-## Not yet: separated by other statements
+## Separated by other statements — done
 
-The pair above must be **strictly adjacent**, because the reuse is `DX` itself — the register the
-`IDIV` left the remainder in — and anything between could clobber it.
-
-That is narrower than the optimization really is. The remainder is still the same value however far
-apart the two statements sit, across intervening statements, loops and calls; what is needed is
-somewhere to *keep* it:
+The pair above reuses `DX` itself, which only works while the two statements are **adjacent**. The
+remainder is the same value however far apart they sit, so when they are separated it is stashed in a
+frame slot at the divide and loaded at the MOD — statements, loops and calls in between:
 
 ```basic
 q% = n% \ d%
@@ -110,14 +107,14 @@ NEXT i%
 r% = n% MOD d%            ' still the remainder that IDIV already computed
 ```
 
-**Where to keep it.** Not `AllocTemp` — that is a bump allocator with `ReleaseTemp`, scoped to one
+**Where it is kept.** Not `AllocTemp` — that is a bump allocator with `ReleaseTemp`, scoped to one
 expression's evaluation, so a slot taken at the divide can be handed to something else before the MOD
 reads it. The right vehicle is the **CSE slot area** (`_cseBytes`), which already exists to hold a
 value computed once and reloaded at a later statement. Framed that way this is not a new mechanism at
 all: it is CSE with one extra rule — *`n MOD d` is available wherever `n \ d` has been computed, and
 vice versa* — with the divide defining both slots.
 
-**What has to be proved before it fires**, beyond the conditions the adjacent form already checks:
+**What is proved before it fires**, beyond the conditions the adjacent form already checks:
 
 - the divide **dominates** the MOD. Same statement list and earlier in it is sufficient; a divide
   inside an `IF` with the MOD after it is not, because the divide may not have run;
@@ -127,6 +124,10 @@ vice versa* — with the divide defining both slots.
   `STATIC`, never passed `BYREF`, address never taken. Otherwise the call may have rewritten them and
   the stored remainder is stale;
 - `ON ERROR`/`RESUME` in the body disqualifies it, since a resume can re-enter between the two points.
+
+A `PRINT` between the two is **not** a call for this purpose: it enters the DOS runtime, and the
+runtime does not write the program's variables. A call to a user `SUB`/`FUNCTION` is, and so is any
+statement kind the analysis does not model - guessing the other way is how a stale value gets reused.
 
 The payoff is worth the analysis: a 16-bit `IDIV` is ~100-180 cycles on an 8086, so the second divide
 is by far the most expensive redundancy in the statement - and the separated form is the one real
