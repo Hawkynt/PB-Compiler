@@ -13,6 +13,11 @@ public sealed partial class CodeGenerator {
   // register allocation (computed once); null until first queried. Empty unless UseExperimentalBackend.
   private Dictionary<ProcedureSymbol, (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)>? _backendProcs;
 
+  /// <summary>The module body compiled by the x86-16 back end, when the whole of it selects and allocates.</summary>
+  private (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)? _backendMain;
+
+  private bool _backendMainKnown;
+
   // the IR module the routed functions came from - a back-end reference to a string literal names the
   // IR's global (".str0"), and the bytes behind it are what map it onto this codegen's literal pool
   private IrModule? _backendModule;
@@ -99,6 +104,50 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
+  /// <summary>
+  /// The module body, compiled by the x86-16 back end - the step from "the back end compiles some
+  /// functions" to "the back end compiles a whole program". It is the same pipeline every routed
+  /// procedure goes through, with three differences that all follow from main not being a procedure:
+  /// it takes no arguments, it has no caller to RET to (it falls into the runtime's exit), and it is
+  /// not in <c>ProcedureList</c>, so the routing has to look it up by name.
+  ///
+  /// Everything it calls must itself be routed, for the ABI reason the procedure fixpoint already
+  /// covers: <c>OptRegParm</c> may convert a directly-emitted procedure to the register convention,
+  /// and the back end emits the stack one. Error handling and CHAIN disqualify it outright - both are
+  /// emitted around the body by the direct path, not inside it.
+  /// </summary>
+  private (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)? BackendMain() {
+    if (this._backendMainKnown)
+      return this._backendMain;
+    this._backendMainKnown = true;
+    var routed = this.BackendProcs();               // also lowers the module and fills _backendModule
+    if (!this.UseExperimentalBackend || this._isUnit || this._allowExternalCalls
+        || this._backendModule is null
+        || ContainsErrorHandling(model.MainBody)
+        || model.MainBody.Any(s => s is Syntax.Ast.ChainStmt))
+      return null;
+    if (this._backendModule.FindFunction("main") is not { IsDeclaration: false } main)
+      return null;
+    if (!CalleeNames(main).All(n => routed.Keys.Any(p => p.Name.Equals(n, System.StringComparison.OrdinalIgnoreCase))))
+      return null;
+    if (InstructionSelector.TrySelect(main) is not { } machine)
+      return null;
+    MachineScheduler.Schedule(machine);
+    if (LinearScanAllocator.Allocate(machine) is not { } alloc)
+      return null;
+    return this._backendMain = (machine, alloc);
+  }
+
+  /// <summary>Emits the module body from the back end, ending in the implicit END the direct path also emits.</summary>
+  private void EmitBackendMain() {
+    var (machine, alloc) = this._backendMain!.Value;
+    MachineEmitter.EmitFunction(this._asm, machine, alloc, [], 0, this.CalleeLabel, this.DataCellOf,
+      asm => {
+        asm.Mov(Asm.Reg.AL, (Asm.Imm)0);
+        asm.Jmp(this._rt.Exit);
+      });
+  }
+
   /// The label a back-end-emitted CALL targets. A user procedure's label is the one the whole-program
   /// codegen bound for it; a runtime routine's is the named label the runtime marks, which is also
   /// what seeds the pb36 runtime trimmer - so a section only the routed function calls is kept.
@@ -153,7 +202,8 @@ public sealed partial class CodeGenerator {
   /// inferring routing from "the image changed" - the honest question is whether the back end took
   /// the function, and the answer must not depend on its output happening to differ.
   /// </summary>
-  public IEnumerable<string> BackendRoutedNames => this.BackendProcs().Keys.Select(p => p.Name);
+  public IEnumerable<string> BackendRoutedNames =>
+    this.BackendProcs().Keys.Select(p => p.Name).Concat(this.BackendMain() is null ? [] : ["main"]);
 
   /// <summary>True when <paramref name="proc"/> is compiled by the x86-16 back end (so it is excluded from inlining and the register-parameter convention, and emitted via the back end).</summary>
   private bool IsBackendRouted(ProcedureSymbol proc) => this.UseExperimentalBackend && this.BackendProcs().ContainsKey(proc);

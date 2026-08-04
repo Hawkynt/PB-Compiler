@@ -66,9 +66,14 @@ public sealed class MachineEmitter {
   /// up there would create a fresh, never-bound label. The code generator owns the mapping and
   /// supplies it here; a name it does not know is a bug in the routing, not in this emitter.
   /// </param>
+  /// <param name="onReturn">
+  /// Emitted in place of the epilogue at every return site. The module body needs this: it does not
+  /// RET to a caller, it falls into the runtime's exit - so the frame teardown and <c>RET n</c> would
+  /// be both wrong and unreachable.
+  /// </param>
   public static void EmitFunction(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
       int[] paramOffsets, int paramBytes, Func<string, Label?>? resolveCallee = null,
-      Func<string, Mem?>? resolveData = null) {
+      Func<string, Mem?>? resolveData = null, Action<Assembler>? onReturn = null) {
     var emitter = new MachineEmitter(asm, function, allocation, resolveCallee, resolveData, paramOffsets);
 
     asm.Push(Asm.Reg.BP);
@@ -95,7 +100,10 @@ public sealed class MachineEmitter {
       asm.MarkLabel(emitter._labels[block.Label]);
       foreach (var instr in block.Instructions)
         if (instr.Opcode == MOpcode.Ret)
-          emitter.EmitEpilogue(paramBytes);          // result already in AX; tear the frame down and RET n
+          if (onReturn is not null)
+            onReturn(asm);                           // the module body leaves through the runtime's exit
+          else
+            emitter.EmitEpilogue(paramBytes);        // result already in AX; tear the frame down and RET n
         else
           emitter.EmitInstruction(instr);
     }

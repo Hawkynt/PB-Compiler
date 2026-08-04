@@ -938,17 +938,23 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this.PrepareArrayFill(model.MainBody);
     if (this.Optimize)
       this._intervalPoints = IntervalRangeAnalysis.AnalyzeProgramPoints(model.MainBody, model);
-    this.BeginFrame(skipZeroing: this.Optimize && !ContainsErrorHandling(model.MainBody));
-    this.EmitChainCommonLoad();             // absorb a CHAIN handoff, when present
-    this._trackResume = ContainsErrorHandling(model.MainBody);
-    foreach (var statement in model.MainBody)
-      this.EmitStatement(statement);
+    if (this.BackendMain() is not null) {
+      // the x86-16 back end owns the whole module body: its own prologue, its own frame, and the
+      // implicit END emitted at its return sites (docs/X86-BACKEND.md)
+      this.EmitBackendMain();
+    } else {
+      this.BeginFrame(skipZeroing: this.Optimize && !ContainsErrorHandling(model.MainBody));
+      this.EmitChainCommonLoad();             // absorb a CHAIN handoff, when present
+      this._trackResume = ContainsErrorHandling(model.MainBody);
+      foreach (var statement in model.MainBody)
+        this.EmitStatement(statement);
 
-    // implicit END
-    asm.Mov(Reg.AL, (Imm)0);
-    asm.Jmp(this._rt.Exit);
-    this.EndFrame();
-    this._trackResume = false;
+      // implicit END
+      asm.Mov(Reg.AL, (Imm)0);
+      asm.Jmp(this._rt.Exit);
+      this.EndFrame();
+      this._trackResume = false;
+    }
 
     // pb36 O22 dead procedure elimination: under optimization, only emit the procedures
     // something references (directly, via CODEPTR, or as a lambda) - the rest are

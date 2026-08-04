@@ -24,7 +24,7 @@ public sealed class BackendCoverageTests {
   private static readonly string _repoRoot =
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 
-  private sealed record Census(int Functions, int Selected, int Allocated, Dictionary<string, int> Declines,
+  private sealed record Census(int Functions, int Selected, int Allocated, int MainBodies, Dictionary<string, int> Declines,
     int ProgramsLowered, int ProgramsTotal, Dictionary<string, int> LoweringDeclines,
     Dictionary<string, int> ProcedureDeclines);
 
@@ -40,10 +40,10 @@ public sealed class BackendCoverageTests {
     // the same tally restricted to named procedures: routing a module body (main) additionally needs
     // the whole startup/exit sequence, so what blocks a PROCEDURE is the cheaper next increment
     var procedureDeclines = new Dictionary<string, int>(StringComparer.Ordinal);
-    int functions = 0, selected = 0, allocated = 0, lowered = 0, total = 0;
+    int functions = 0, selected = 0, allocated = 0, mainBodies = 0, lowered = 0, total = 0;
     var dir = Path.Combine(_repoRoot, "tests");
     if (!Directory.Exists(dir))
-      return new(0, 0, 0, declines, 0, 0, loweringDeclines, procedureDeclines);
+      return new(0, 0, 0, 0, declines, 0, 0, loweringDeclines, procedureDeclines);
 
     // the whole corpus: the golden battery plus tests/diff, the 100+ differential programs
     foreach (var file in Directory.EnumerateFiles(dir, "*.BAS", SearchOption.AllDirectories)
@@ -96,8 +96,12 @@ public sealed class BackendCoverageTests {
           // value live across a CALL has no register while there is no spilling - so this is the
           // number of functions the back end would really take
           MachineScheduler.Schedule(machine);
-          if (LinearScanAllocator.Allocate(machine) is not null)
+          if (LinearScanAllocator.Allocate(machine) is not null) {
             ++allocated;
+            // a module body that selects AND allocates is a whole program the back end can own
+            if (fn.Name.Equals("main", StringComparison.OrdinalIgnoreCase))
+              ++mainBodies;
+          }
         }
         else {
           declines[reason ?? "unknown"] = declines.GetValueOrDefault(reason ?? "unknown") + 1;
@@ -107,7 +111,7 @@ public sealed class BackendCoverageTests {
       }
     }
 
-    return new(functions, selected, allocated, declines, lowered, total, loweringDeclines, procedureDeclines);
+    return new(functions, selected, allocated, mainBodies, declines, lowered, total, loweringDeclines, procedureDeclines);
   }
 
   /// <summary>Collapses a decline message to its cause, so names/labels do not fragment the histogram.</summary>
@@ -151,6 +155,7 @@ public sealed class BackendCoverageTests {
       .AppendLine($"programs           : {census.ProgramsLowered}/{census.ProgramsTotal} lowered to IR")
       .AppendLine($"functions selected : {census.Selected}/{census.Functions}")
       .AppendLine($"functions routed   : {census.Allocated}/{census.Functions} (selected AND allocated)")
+      .AppendLine($"module bodies      : {census.MainBodies}/{census.ProgramsLowered} whole programs the back end can own")
       .AppendLine("lowering declines - what keeps a program off the IR path entirely:");
     foreach (var (reason, count) in census.LoweringDeclines.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal).Take(12))
       report.AppendLine($"  {count,5}  {reason}");

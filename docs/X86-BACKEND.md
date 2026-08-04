@@ -543,3 +543,23 @@ between operations, so the two paths agree on the representation.
 load or store needs and what a word-sized reference would have silently halved.
 
 Selection 69 → 81 of 139, routing 52 → 57.
+
+### Routing the module body
+
+`BackendProcs` only ever looked at `model.ProcedureList`, so a `main` that selected and allocated was
+still emitted by the direct path — the back end compiled *functions*, never a program. It now routes
+the module body too. Three things follow from `main` not being a procedure:
+
+- it takes no arguments, so the prologue loads none;
+- it has no caller to `RET` to. `MachineEmitter.EmitFunction` takes an `onReturn` hook, and for the
+  module body that emits the implicit `END` (`MOV AL,0` / `JMP rt_exit`) the direct path emits — the
+  frame teardown and `RET n` would be both wrong and unreachable;
+- it is not in `ProcedureList`, so the routing looks it up by name in the IR module.
+
+Everything it calls must itself be routed, for the ABI reason the procedure fixpoint already covers.
+`ON ERROR` and `CHAIN` disqualify it outright: both are emitted *around* the body by the direct path,
+not inside it, so a routed body would silently lose them.
+
+The census reports this as its own figure, because it is the one that matters for the goal: **25 of
+the 106 lowered programs** are module bodies the back end can own end to end. That is the first time
+the number has been anything but zero.
