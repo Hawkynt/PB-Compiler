@@ -219,6 +219,11 @@ internal static class RuntimeAbi {
     ["rt_str_bin"] = new("rt_radix", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved,
       Result: Reg.AX, Constants: [(Reg.CX, (1 << 8) | 1)]),
 
+    // "StrFill: CX=count, DL=char -> AX" - STRING$(n, code). The IR names (count, char) and the
+    // runtime wants the char in DL, which is the low byte of the word this puts in DX
+    ["rt_str_string"] = new("rt_strfill",
+      [new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
+
     // "Chr: DL=char -> AX". The IR types the code point i32; only the low byte is read, so the word
     // narrowing that puts it in DX puts it in DL
     ["rt_str_chr"] = new("rt_chr", [new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),

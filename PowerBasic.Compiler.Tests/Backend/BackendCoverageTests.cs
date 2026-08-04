@@ -193,7 +193,7 @@ public sealed class BackendCoverageTests {
     // then 69 -> 81 with x87: floats live in frame cells bracketed by FLD/FSTP
     // then 81 -> 88 (of a larger denominator, since 14 more programs now lower at all): CINT and the
     // rounding float-to-integer conversion it is spelled from
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(160),
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(164),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
 
     // How many programs reach the IR at all - the figure the runtime-trap and error-handling work

@@ -92,23 +92,27 @@ public sealed class BackendRuntimeCallTests {
       "PRINT of one item is the text then the newline, in that order");
   }
 
+  /// <summary>
+  /// A routine the table does not cover must DECLINE rather than have a convention guessed for it.
+  ///
+  /// The callee is deliberately fictitious. This test was written three times against a real routine -
+  /// LEN, then HEX$, then STRING$ - and each time the routine was listed and the test started failing
+  /// for the best possible reason. What is under test is the RULE, not any routine, so the rule gets a
+  /// name no runtime will ever have.
+  /// </summary>
   [Test]
   public void Select_GivenARoutineOutsideTheTable_ThenDeclinesNamingIt() {
-    // A routine the table does not cover must decline rather than have a convention guessed for it.
-    // LEN was the original example and then HEX$; both are listed now. STRING$ takes its turn - it has
-    // no single runtime entry, so it will stay unlisted longer than most.
-    var module = Optimized("""
-      FUNCTION Padded$
-        Padded$ = STRING$(3, "x")
-      END FUNCTION
-
-      PRINT Padded$
-      """);
-    var fn = module.Functions.First(f => f.Name.Equals("Padded", StringComparison.OrdinalIgnoreCase));
+    var module = new IrModule("t");
+    var unknown = module.AddFunction(new IrFunction("rt_no_such_routine", IrType.Void, [new IrArgument(IrType.I16, 0)]));
+    var fn = module.AddFunction(new IrFunction("main", IrType.Void));
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    entry.Append(new IrCall(IrType.Void, unknown, [new IrConstantInt(IrType.I16, 1)]));
+    entry.Append(new IrRet());
 
     InstructionSelector.TrySelect(fn, out var reason);
 
     Assert.That(reason, Does.Contain("not in the runtime ABI table"));
+    Assert.That(reason, Does.Contain("rt_no_such_routine"), "and it names which one");
   }
 
   [Test]

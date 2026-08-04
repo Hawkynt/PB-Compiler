@@ -218,7 +218,15 @@ public sealed class InstructionSelector {
 
   /// <summary>The compare that feeds a block's conditional-branch terminator and nothing else (so it folds into the branch), or null.</summary>
   private static IrCmp? FoldedCompare(IrBasicBlock block)
-    => block.Terminator is IrCondBr { Condition: IrCmp { Users.Count: 1 } cmp } ? cmp : null;
+    // A compare only folds if the branch can actually USE it: one user, and a predicate that maps to
+    // a condition code. Marking one folded makes the block loop skip it, so a compare marked folded
+    // and then not consumed by the terminator has no register at all - which is what the branch's
+    // value path then reported as "IrCmp has no register".
+    => block.Terminator is IrCondBr { Condition: IrCmp { Users.Count: 1 } cmp }
+       && MapPredicate(cmp.Pred) is not null
+       && !IsWide(cmp.Lhs.Type)
+       && !cmp.Lhs.Type.IsFloat
+      ? cmp : null;
 
   private bool SelectTerminator(IrInstruction? terminator, IrCmp? folded, MBlock block) {
     switch (terminator) {
@@ -1134,25 +1142,7 @@ public sealed class InstructionSelector {
           break;
         }
         case RuntimeAbi.ArgKind.Word: {
-          // The IR types several of these i32 where the routine wants a word - a byte count, a PB
-          // file number, an error code. Passing the low half is only sound when the high half is
-          // known to carry nothing, which is exactly two cases: a constant that fits, and a value
-          // that was WIDENED from 16 bits in the first place, where the narrowing simply undoes the
-          // extension. Anything else still declines rather than silently dropping the top word.
-          MOperand source;
-          if (IsWide(arg.Type)) {
-            var narrowed = arg switch {
-              IrConstantInt { Value: >= short.MinValue and <= ushort.MaxValue } c => (IrValue)c,
-              IrCast { Op: IrCastOp.SExt or IrCastOp.ZExt } cast when !IsWide(cast.Value.Type) => cast.Value,
-              _ => null,
-            };
-            if (narrowed is null)
-              return this.Decline($"call: {callee.Name} takes a 32-bit value in a word register");
-            if (narrowed is IrConstantInt fits)
-              source = new MOperand.Immediate(fits.Value);
-            else if (!this.TryOperand(narrowed, out source!))
-              return false;
-          } else if (!this.TryOperand(arg, out source!))
+          if (!this.TryWordOperand(arg, $"{callee.Name} takes a 32-bit value in a word register", out var source))
             return false;
           var dest = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));
           this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, source], MovEffect(dest, source),
@@ -1291,14 +1281,41 @@ public sealed class InstructionSelector {
     return true;
   }
 
+  /// <summary>
+  /// A value as a WORD operand, narrowing a 32-bit one where that is sound.
+  ///
+  /// The IR types several things i32 that the runtime wants in a word register - a byte count, a PB
+  /// file number, an error code. Taking the low half is only sound when the high half is known to
+  /// carry nothing, which is exactly two cases: a constant that fits, and a value that was WIDENED
+  /// from 16 bits in the first place, where the narrowing simply undoes the extension. Anything else
+  /// declines rather than silently dropping the top word.
+  /// </summary>
+  private bool TryWordOperand(IrValue value, string what, out MOperand operand) {
+    operand = null!;
+    if (!IsWide(value.Type))
+      return this.TryOperand(value, out operand);
+
+    var narrowed = value switch {
+      IrConstantInt { Value: >= short.MinValue and <= ushort.MaxValue } c => (IrValue)c,
+      IrCast { Op: IrCastOp.SExt or IrCastOp.ZExt } cast when !IsWide(cast.Value.Type) => cast.Value,
+      _ => null,
+    };
+    if (narrowed is null)
+      return this.Decline($"call: {what} (the IR types it 32-bit)");
+    if (narrowed is IrConstantInt fits) {
+      operand = new MOperand.Immediate(fits.Value);
+      return true;
+    }
+    return this.TryOperand(narrowed, out operand);
+  }
+
   /// <summary>Routes the console print routines at a PB file number (<c>rt_fselect</c>).</summary>
   private bool SelectFileRouting(IrValue file, RuntimeAbi.RuntimeArg slot) {
-    MOperand source;
-    if (IsWide(file.Type)) {
-      if (file is not IrConstantInt { Value: >= 0 and <= 15 } number)
-        return this.Decline("call: PRINT # to a runtime file number (the IR types it 32-bit)");
-      source = new MOperand.Immediate(number.Value);
-    } else if (!this.TryOperand(file, out source!))
+    // The IR types a PB file number 32-bit, and rt_fselect wants a word. Narrowing is sound in exactly
+    // the cases the ordinary Word argument path allows - a constant that fits, or a value that was
+    // WIDENED from 16 bits, where taking the low half only undoes the extension. It used to accept
+    // the constant alone, which declined every `PRINT #n` whose n came from a variable.
+    if (!this.TryWordOperand(file, "PRINT # to a runtime file number", out var source))
       return false;
 
     var ax = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));

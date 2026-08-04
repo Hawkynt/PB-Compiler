@@ -88,23 +88,25 @@ public sealed class BackendCallRoutingTests {
       $"self-recursive function declined: {reason}");
   }
 
+  /// <summary>
+  /// An rt_* helper is a declaration: its label lives in the runtime, and the only thing that says
+  /// where its arguments go is RuntimeAbi's table. Anything not in that table must DECLINE rather than
+  /// be guessed at - a wrong register claim miscompiles silently.
+  ///
+  /// The callee is deliberately fictitious, for the reason recorded in BackendRuntimeCallTests: this
+  /// was written against LEN, then HEX$, then STRING$, and each time the routine got listed and the
+  /// test failed for the best possible reason. The rule is what is under test.
+  /// </summary>
   [Test]
   public void Select_GivenAnUnlistedRuntimeCall_ThenDeclinesWithTheReason() {
-    // An rt_* helper is a declaration: its label lives in the runtime, and the only thing that says
-    // where its arguments go is RuntimeAbi's table. Anything not in that table must DECLINE rather
-    // than be guessed at - a wrong register claim miscompiles silently.
-    //
-    // The example keeps moving as routines get listed - LEN first, then HEX$. STRING$ takes its turn:
-    // it is a runtime routine with no single entry (the count comes from one call and the character
-    // from ASC of another), so it will stay unlisted longer than most. Unlisted is the whole point -
-    // the rule under test is "not in the table means decline", not anything about a routine.
-    var module = Optimized(Bind("""
-      DIM s AS STRING
-      s = STRING$(3, "x")
-      PRINT s
-      """));
+    var module = new IrModule("t");
+    var unknown = module.AddFunction(new IrFunction("rt_no_such_routine", IrType.Void, [new IrArgument(IrType.I16, 0)]));
+    var fn = module.AddFunction(new IrFunction("main", IrType.Void));
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    entry.Append(new IrCall(IrType.Void, unknown, [new IrConstantInt(IrType.I16, 1)]));
+    entry.Append(new IrRet());
 
-    Assert.That(InstructionSelector.TrySelect(FunctionNamed(module, "main"), out var reason), Is.Null);
+    Assert.That(InstructionSelector.TrySelect(fn, out var reason), Is.Null);
     Assert.That(reason, Does.Contain("runtime declaration"));
   }
 
