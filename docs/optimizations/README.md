@@ -208,7 +208,7 @@ Conventions used on every page:
 | ⬜ | [O0171](O0171-alias-analysis.md) | Alias analysis |
 | ⬜ | [O0172](O0172-loop-dependence-analysis.md) | Loop dependence analysis |
 | ⬜ | [O0173](O0173-speculative-load-hoisting.md) | Speculative load hoisting |
-| ⬜ | [O0174](O0174-target-cost-models.md) | Per-target cost models |
+| 🟡 | [O0174](O0174-target-cost-models.md) | Per-target cost models |
 | ⬜ | [O0175](O0175-critical-path-scheduling.md) | Latency & port scheduling |
 | ⬜ | [O0176](O0176-register-pressure-scheduling.md) | Pressure-aware scheduling |
 | ⬜ | [O0177](O0177-cycle-estimate-battery.md) | Cycle-estimate assertions (tests) |

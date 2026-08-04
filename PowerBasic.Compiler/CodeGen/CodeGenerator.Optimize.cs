@@ -301,7 +301,7 @@ public sealed partial class CodeGenerator {
   /// output - so this is output-invariant (the differential oracle stays byte-identical even though the EXE grows).
   /// </summary>
   private void AlignLoopTop() {
-    if (this.Optimize && this.OptimizeSpeed && (this.Cpu486 || this.Cpu586))
+    if (this.Optimize && this.Cost.AlignHotLoops)   // O0174: speed objective on a 486+ cache line
       this._asm.AlignCode(16);
   }
 
@@ -310,6 +310,12 @@ public sealed partial class CodeGenerator {
     m.Command.Equals("CPU", StringComparison.OrdinalIgnoreCase)
     && m.Arguments is [{ } level, ..]
     && level.Text is "80586" or "586" or "PENTIUM");
+
+  /// <summary>O0174 the per-target cost model for the current <c>$CPU</c> floor and <c>$OPTIMIZE</c>
+  /// objective. Profitability-gated passes query this instead of hard-coding a tier threshold; it emits
+  /// nothing, so reading it never affects output (only a pass acting on an answer does, and each is
+  /// <see cref="Optimize"/>-gated).</summary>
+  private TargetCost Cost => TargetCost.For(this.Cpu386, this.Cpu486, this.Cpu586, this.OptimizeSpeed, this.OptimizeSize);
 
   /// <summary>
   /// True when a <c>$CPU 80586 &lt;feature&gt; ...</c> metastatement requests the named SIMD
