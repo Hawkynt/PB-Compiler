@@ -146,6 +146,36 @@ a separate axis (`--optimize`, on by default for `pb36`). Full detail in
 - Memory/control flow: `WITH … END WITH`, `FOR EACH v IN source` (array, `[lo..hi]`
   range, or a generator), XMS/EMS array storage classes.
 
+## Family gates: what the Microsoft lineage never had
+
+The two lineages share the `Dialect` value space without sharing an order, so availability is gated
+per family (`DialectFacts._gates` for Borland, `_microsoftGates` for Microsoft; a feature listed in the
+first and absent from the second is unavailable in *every* Microsoft dialect). These are the
+statement-level ones, all of them found by `StatementSurfaceCensusTests` compiling every form under
+every dialect and comparing against the researched matrix:
+
+| Feature | Borland from | Microsoft |
+|---|---|---|
+| `INCR` / `DECR` | TB 1.0 | never |
+| `DELAY` | TB 1.0 | never (Microsoft has only `SLEEP`) |
+| `SHARED` / `STATIC` in a DIM type clause (`DIM x AS SHARED t`) | TB 1.0 | never - Microsoft spells it `DIM SHARED x` |
+| `PUBLIC` / `EXT` storage | TB 1.0 | never |
+| the extended numeric DEFtypes (`DEFEXT`/`DEFFIX`/`DEFBCD`/`DEFFLX`) | TB 1.0 | never - EXT/FIX/BCD/FLEX are PowerBASIC's alone |
+| `REG` | PB 3.0 | never |
+| `SHIFT` / `ROTATE` **statements** | PB 3.0 | never |
+| `UNION` | PB 3.0 | never - QB 4.0 brought `TYPE` but not the overlapping variant |
+| `ERRCLEAR` | PB 3.5 | never |
+| `QUAD` (`DEFQUD`) | PB 3.0 | never |
+| `LONG` (`DEFLNG`) | TB 1.0 | **QB 1.0** - BASICA and GW-BASIC have only INTEGER/SINGLE/DOUBLE/STRING |
+| `REDIM PRESERVE` | PB 3.5 | **PDS 7.0** - plain QuickBASIC `REDIM` never preserved |
+| `TYPE ... END TYPE` | PB 3.0 | **QB 4.0** |
+
+`DIM SHARED x` (the Microsoft spelling) is accepted in both, since nothing establishes that
+PowerBASIC rejects it and refusing a real QuickBASIC program would be the worse error.
+
+Note that the `SHIFT`/`ROTATE` **statements** (PB 3.0) and the `<<` / `>>` **operators** (PB 3.6) are
+different features that spell the same idea fifteen years apart.
+
 ## Data types (PB 3.5 full set)
 
 | Type | Keyword | Suffix | Size | Notes |

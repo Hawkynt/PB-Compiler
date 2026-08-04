@@ -112,7 +112,7 @@ public sealed class StatementSurfaceCensusTests {
       "fewer statement forms compile than used to:\n" + report);
   }
 
-  private const int _pb36Floor = 172;   // 129 at first measurement; +LINE, +CIRCLE, +MKDIR/RMDIR/CHDIR, then 28 more forms added to the table
+  private const int _pb36Floor = 211;   // 129 at first measurement; +LINE, +CIRCLE, +MKDIR/RMDIR/CHDIR, then the table grew from 155 forms to 223
 
   /// <summary>
   /// The same surface across every dialect the compiler claims. A form must be accepted by the

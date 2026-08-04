@@ -120,6 +120,12 @@ internal static class StatementSurface {
     new("gosub.return", "GOSUB Sub1\nGOTO Past\nSub1:\nRETURN\nPast:"),
     new("on.goto", "ON x% GOTO L1, L2\nL1:\nL2:"),
     new("on.gosub", "ON x% GOSUB L1, L2\nGOTO Past\nL1:\nRETURN\nL2:\nRETURN\nPast:"),
+    new("for.nested.next.list", "FOR i% = 1 TO 2\n  FOR j% = 1 TO 2\n  NEXT j%, i%"),
+    new("select.case.is.list", "SELECT CASE x%\n  CASE IS < 0, IS > 9\n    y% = 1\nEND SELECT"),
+    new("select.case.range.and.value", "SELECT CASE x%\n  CASE 1 TO 5, 9\n    y% = 1\nEND SELECT"),
+    new("do.bare.exit", "DO\n  EXIT DO\nLOOP"),
+    new("if.then.goto", "IF x% = 1 THEN GOTO Skip\nSkip:"),
+    new("on.goto.single", "ON x% GOTO L9\nL9:"),
     new("stop", "STOP"),
     new("end.bare", "END"),
     new("system", "SYSTEM"),
@@ -177,6 +183,37 @@ internal static class StatementSurface {
     new("seek", "SEEK #1, 1", Preamble: "OPEN \"T.DAT\" FOR BINARY AS #1"),
     new("data.read", "DATA 1, 2\nREAD x%, y%"),
     new("data.read.restore", "DATA 1, 2\nREAD x%\nRESTORE\nREAD y%"),
+    // OPEN's optional clauses, one at a time and together. ACCESS and LOCK may appear in either
+    // order and repeat, LEN attaches to any mode, and the shorthand and legacy spellings are whole
+    // grammars of their own rather than variations
+    new("open.access.read", "OPEN \"T.TXT\" FOR INPUT ACCESS READ AS #1"),
+    new("open.access.write", "OPEN \"T.TXT\" FOR OUTPUT ACCESS WRITE AS #1"),
+    new("open.access.readwrite", "OPEN \"T.DAT\" FOR RANDOM ACCESS READ WRITE AS #1 LEN = 8"),
+    new("open.lock.shared", "OPEN \"T.TXT\" FOR INPUT SHARED AS #1"),
+    new("open.lock.read", "OPEN \"T.TXT\" FOR INPUT LOCK READ AS #1"),
+    new("open.access.and.lock", "OPEN \"T.DAT\" FOR BINARY ACCESS READ WRITE LOCK SHARED AS #1"),
+    new("open.output.len", "OPEN \"T.TXT\" FOR OUTPUT AS #1 LEN = 128"),
+    new("open.shorthand.as", "OPEN \"T.DAT\" AS #1"),
+    new("open.shorthand.as.len", "OPEN \"T.DAT\" AS #1 LEN = 32"),
+    new("open.legacy", "OPEN \"O\", #1, \"T.TXT\""),
+    new("open.legacy.reclen", "OPEN \"R\", #1, \"T.DAT\", 16"),
+    new("open.filenumber.bare", "OPEN \"T.TXT\" FOR OUTPUT AS 1"),
+    // GET / PUT: the record number and the variable are each elidable, including the shape where the
+    // record is dropped but the variable is present
+    new("get.bare", "GET #1", Preamble: "OPEN \"T.DAT\" FOR RANDOM AS #1 LEN = 2"),
+    new("get.record.variable", "GET #1, 1, v%", Preamble: "OPEN \"T.DAT\" FOR RANDOM AS #1 LEN = 2"),
+    new("get.elided.record", "GET #1, , v%", Preamble: "OPEN \"T.DAT\" FOR RANDOM AS #1 LEN = 2"),
+    new("put.bare", "PUT #1", Preamble: "OPEN \"T.DAT\" FOR RANDOM AS #1 LEN = 2"),
+    new("put.record.variable", "PUT #1, 1, v%", Preamble: "OPEN \"T.DAT\" FOR RANDOM AS #1 LEN = 2"),
+    new("put.elided.record", "PUT #1, , v%", Preamble: "OPEN \"T.DAT\" FOR RANDOM AS #1 LEN = 2"),
+    // WIDTH takes a device or a file as well as a plain column count
+    new("width.file", "WIDTH #1, 132", Preamble: "OPEN \"T.TXT\" FOR OUTPUT AS #1"),
+    // PRINT's separators in the combinations that decide column behaviour
+    new("print.semicolon.trailing.comma", "PRINT x%; y%,"),
+    new("print.empty.string", "PRINT \"\""),
+    new("print.mixed", "PRINT \"n=\"; x%, \"m=\"; y%"),
+    new("print.file.trailing.semicolon", "PRINT #1, x%;", Preamble: "OPEN \"T.TXT\" FOR OUTPUT AS #1"),
+    new("write.file.many", "WRITE #1, x%, y%", Preamble: "OPEN \"T.TXT\" FOR OUTPUT AS #1"),
     new("lprint", "LPRINT x%"),
   ];
 
@@ -211,6 +248,17 @@ internal static class StatementSurface {
     new("circle.aspect", "CIRCLE (10, 10), 5, 15, 0.0, 1.5, 0.5"),
     new("circle.elided.color", "CIRCLE (10, 10), 5, , 0.0, 1.5"),
     new("paint", "PAINT (10, 10), 15"),
+    new("locate.row.col.cursor.start", "LOCATE 1, 1, 1, 0"),
+    new("locate.row.col.cursor.start.stop", "LOCATE 1, 1, 1, 0, 7"),
+    new("locate.elided.row", "LOCATE , 5"),
+    new("color.elided.fg", "COLOR , 1"),
+    new("screen.mode.switch.apage", "SCREEN 13, 0, 0"),
+    new("screen.mode.switch.apage.vpage", "SCREEN 13, 0, 0, 0"),
+    new("paint.border", "PAINT (10, 10), 15, 4"),
+    new("sound.bare", "SOUND 440, 1"),
+    new("palette.bare", "PALETTE"),
+    new("pset.step.free", "PSET (0, 0)"),
+
     new("draw", "DRAW \"U10 R10 D10 L10\""),
     new("view", "VIEW (0, 0)-(319, 199)"),
     new("window", "WINDOW (0, 0)-(319, 199)"),
