@@ -227,9 +227,15 @@ END SUB
 ' @status   done
 ' ---------------------------------------------------------------------------
 SUB LongMaxFoldsWithoutFpu(BYVAL a&, BYVAL b&) NOINLINE
+  DIM m AS LONG
   PRINT "lmax"; MAX(a&, b&)
   PRINT "lmin"; MIN(a&, -100000)
   PRINT "llow"; MAX(a&, a& - 1)
+  IF a& > b& THEN m = a& ELSE m = b&
+  PRINT "ldia"; m
+  m = a&
+  IF m > 50000 THEN m = 50000
+  PRINT "lclamp"; m
 END SUB
 
 ' ---------------------------------------------------------------------------

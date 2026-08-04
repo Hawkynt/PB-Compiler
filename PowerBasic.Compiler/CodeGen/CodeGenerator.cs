@@ -2724,11 +2724,13 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       return false;
     if (i.Then is not [AssignStmt { Target: { } thenTarget, Value: { } thenValue }])
       return false;
-    if (thenTarget is not NameExpr m || model.TypeOf(m) is not ScalarType { IsFloat: false, ByteSize: 2 })
+    if (thenTarget is not NameExpr m || model.TypeOf(m) is not ScalarType { IsFloat: false, ByteSize: 2 or 4 } mType)
       return false;
+    var kind = KindOf(mType);   // Int16 or Int32 - the fold and store follow the width
 
-    bool IsPureInt16(Expression e) =>
-      model.TypeOf(e) is ScalarType { IsFloat: false, ByteSize: 2 }
+    // an operand is foldable to this width when it is a pure read (a variable, or a constant) of the same kind
+    bool IsPure(Expression e) =>
+      KindOf(model.TypeOf(e)) == kind
       && (this.OptFolder.TryFold(e) is { Integer: not null }
           || (e is NameExpr && model.VariableBindings.ContainsKey(e) && !model.IntrinsicBindings.ContainsKey(e)));
     bool SameOperand(Expression a, Expression b) {
@@ -2736,7 +2738,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         return av == bv;
       return a is NameExpr && b is NameExpr && this.IsSameLvalue(a, b);
     }
-    if (!IsPureInt16(left) || !IsPureInt16(right))
+    if (!IsPure(left) || !IsPure(right))
       return false;
 
     var relationKeepsLarger = op is BinaryOp.Greater or BinaryOp.GreaterEqual;
@@ -2772,8 +2774,14 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         || this.TryDirectCell(sym) is not { } cell)
       return false;
 
-    this.EmitIntegerMinMaxFold([left, right], wantMax);   // result in AX
-    this._asm.Mov(cell.WithSize(OperandSize.Word), Reg.AX);
+    if (kind == ValueKind.Int16) {
+      this.EmitIntegerMinMaxFold([left, right], wantMax);   // result in AX
+      this._asm.Mov(cell.WithSize(OperandSize.Word), Reg.AX);
+    } else {
+      this.EmitLongMinMaxFold([left, right], wantMax);       // result in DX:AX
+      this._asm.Mov(Adjust(cell, 0, OperandSize.Word), Reg.AX);
+      this._asm.Mov(Adjust(cell, 2, OperandSize.Word), Reg.DX);
+    }
     return true;
   }
 

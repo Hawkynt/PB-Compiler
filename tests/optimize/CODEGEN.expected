@@ -20,6 +20,8 @@ chi2 5
 lmax 100000
 lmin-100000
 llow 100000
+ldia 100000
+lclamp 50000
 divshift 8
 recip 25
 inline 16

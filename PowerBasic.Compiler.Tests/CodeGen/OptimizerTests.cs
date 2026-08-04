@@ -834,6 +834,15 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenLongDiamond_WhenPb36_ThenFoldsToTheSameCodeAsTheLongMaxIntrinsic() {
+    // O0248: the LONG min/max diamond folds to exactly the 32-bit MAX(a&, b&) intrinsic code.
+    const string head = "$OPTIMIZE SPEED\nDIM a AS LONG, b AS LONG, m AS LONG\nLINE INPUT z$\na = VAL(z$)\nb = 5\n";
+    var diamond = Compile(head + "IF a > b THEN m = a ELSE m = b\nPRINT m\nEND", Dialect.Pb36);
+    var intrinsic = Compile(head + "m = MAX(a, b)\nPRINT m\nEND", Dialect.Pb36);
+    Assert.That(diamond, Is.EqualTo(intrinsic), "the LONG max diamond lowers to the LONG MAX fold");
+  }
+
+  [Test]
   public void Emit_GivenDiamondWithSideEffectingOperand_WhenPb36_ThenKeepsTheBranch() {
     // The fold evaluates each operand once; the branch re-evaluates the taken arm. A call operand would run
     // a different number of times, so the recognizer must decline it (the diamond must differ from the MAX fold).

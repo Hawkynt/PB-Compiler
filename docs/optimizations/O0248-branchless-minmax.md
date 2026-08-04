@@ -57,7 +57,11 @@ arm. The **one-armed clamp** — `IF x > hi THEN x = hi` (no ELSE, a MIN) and
 constant or a variable bound — folds the same way: when the assigned variable is one
 compared operand and the assigned value is the other, the store becomes
 `x = MIN(x, bound)` / `MAX(x, bound)`. Both spellings are unit-tested byte-identical
-to the `MIN%`/`MAX%` intrinsic and self-diffed under DOSBox (`chi`/`clo`/`chi2`). The operands must be pure (a variable read or a constant), since the branch
+to the `MIN%`/`MAX%` intrinsic and self-diffed under DOSBox (`chi`/`clo`/`chi2`).
+The diamond and the clamp both fold at **LONG** width too — the recognizer keys off
+the assigned variable's width (2 or 4 bytes) and folds to the 32-bit `DX:AX` compare,
+storing the pair; byte-identical to the LONG `MAX` intrinsic and self-diffed under
+DOSBox (`ldia`/`lclamp`). The operands must be pure (a variable read or a constant), since the branch
 form evaluates the taken operand a second time in its assignment and the fold once;
 a call operand keeps the branch (a regression test pins that the diamond then no
 longer matches the intrinsic image). A numeric tie is a non-issue — the two operands
