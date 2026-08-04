@@ -6,6 +6,8 @@ the equivalent BASIC the transformed program behaves like.
 
 - ✅ **implemented** — in the compiler today and covered by the differential
   oracle, a DOSBox execution test, or an assembler unit test.
+- 🟡 **partial** — part of the pass ships (and is tested); the page's header
+  table says which cases are done and which remain.
 - ⬜ **planned** — a roadmap idea. The "after" code on those pages is what the
   pass *would* emit; the compiler does not do it yet.
 
@@ -112,7 +114,7 @@ Conventions used on every page:
 | ✅ | [O0077](O0077-negation-idioms.md) | Negation idioms |
 | ⬜ | [O0078](O0078-multiply-decomposition.md) | General multiply decomposition |
 | ⬜ | [O0079](O0079-shared-divide.md) | Shared divide (quotient + remainder) |
-| ⬜ | [O0080](O0080-division-special-cases.md) | Division special cases |
+| 🟡 | [O0080](O0080-division-special-cases.md) | Division special cases |
 | ⬜ | [O0081](O0081-flag-reuse.md) | Flag reuse / `TEST` for zero compare |
 | ⬜ | [O0082](O0082-memory-operand-folding.md) | Memory operand folding |
 | ⬜ | [O0083](O0083-store-to-load-forwarding.md) | Store-to-load forwarding |

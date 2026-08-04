@@ -549,6 +549,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       return false;
     var facts = this.FactsOf(b.Left);
 
+    // O0080: x \ 1 is x. Integer division by 1 is the identity and never traps (unlike x \ -1,
+    // whose MININT case would overflow IDIV), so this folds unconditionally for any value of x.
+    if (b.Op == BinaryOp.IntegerDivide && k == 1)
+      return this.EmitOperandOnly(b.Left, opType);
+
     // a value already inside [0,|k|) is its own remainder
     if (b.Op == BinaryOp.Modulo && facts.Range is { Lo: >= 0 } r && r.Hi < Math.Abs(k))
       return this.EmitOperandOnly(b.Left, opType);

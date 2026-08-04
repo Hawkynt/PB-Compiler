@@ -603,6 +603,15 @@ public sealed class OptimizerTests {
   private static int CountMulBx(byte[] image) => CountPair(image, 0xF7, 0xE3);
 
   [Test]
+  public void Emit_GivenIntegerDivideByOne_WhenPb36_ThenFoldedNoIdiv() {
+    // O0080: x \ 1 is x - division by 1 is the identity and never traps - so no IDIV is emitted;
+    // the image is smaller than x \ 3, which keeps the divide.
+    var one = Compile("DIM x AS INTEGER, y AS INTEGER\nLINE INPUT z$\nx = VAL(z$)\ny = x \\ 1\nPRINT y\nEND", Dialect.Pb36);
+    var three = Compile("DIM x AS INTEGER, y AS INTEGER\nLINE INPUT z$\nx = VAL(z$)\ny = x \\ 3\nPRINT y\nEND", Dialect.Pb36);
+    Assert.That(one.Length, Is.LessThan(three.Length), "x \\ 1 folds to x; x \\ 3 keeps the IDIV");
+  }
+
+  [Test]
   public void Emit_GivenEqualityIfChain_WhenPb36_ThenSameJumpTableAsSelect() {
     // O0067: an IF/ELSEIF chain of equality tests on one integer variable against >= 4 dense
     // constants lowers through the very same jump-table path as the equivalent SELECT CASE, so the
