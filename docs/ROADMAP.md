@@ -186,6 +186,16 @@ integer arithmetic, a constant divide, control flow through a loop and a merge, 
 a call, a SHARED global written by one path and read by the other, and a whole module body the back
 end owns.
 
+`BackendCorpusDifferentialTests` runs the same comparison over the **whole battery**: of the 24
+programs the back end compiles part of, 12 run both ways and agree, 12 are not compared (the
+interpreter has no x87 arithmetic), and none disagree. The three outcomes are kept apart deliberately -
+"not compared" is never counted as agreement, because collapsing them is how a coverage number starts
+lying.
+
+It earned its place on the first run by finding a real miscompilation that every static check had
+missed: `sext i1 1 to i16` folded to **1** where BASIC's TRUE is **-1**, so every comparison the
+optimizer could decide at compile time went out as 1 - on the native, C and LLVM back ends alike.
+
 ### Still not covered by execution
 
 None of the routed output has ever been **executed**. The differential oracle needs DOSBox

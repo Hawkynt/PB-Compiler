@@ -138,7 +138,10 @@ public static class IrConstFold {
       case IrCastOp.ZExt when cast.Value is IrConstantInt c:
         return new IrConstantInt(to, Wrap((long)c.ZeroExtended, to));
       case IrCastOp.SExt when cast.Value is IrConstantInt c:
-        return new IrConstantInt(to, Wrap(c.Value, to));
+        // sign-extend from the SOURCE width before wrapping to the target. An i1 constant holds its
+        // raw 1, so folding straight to the target gave 1 where BASIC's TRUE is -1 - and every
+        // comparison the optimizer could decide at compile time went out as 1 on all three back ends
+        return new IrConstantInt(to, Wrap(Wrap(c.Value, cast.Value.Type), to));
       case IrCastOp.SIToFP when cast.Value is IrConstantInt c:
         return new IrConstantFloat(to, NarrowFloat(Wrap(c.Value, cast.Value.Type), to));
       case IrCastOp.UIToFP when cast.Value is IrConstantInt c:

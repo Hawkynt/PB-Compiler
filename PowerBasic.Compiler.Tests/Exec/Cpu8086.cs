@@ -66,8 +66,14 @@ public sealed class Cpu8086 {
   }
 
   private void Load(byte[] exe) {
-    if (exe.Length < 0x1C || exe[0] != 'M' || exe[1] != 'Z')
-      throw new Cpu8086Exception("not an MZ executable");
+    if (exe.Length < 0x1C || exe[0] != 'M' || exe[1] != 'Z') {
+      // a COM-style image: no header, no relocations, everything in one segment at offset 0x100
+      Array.Copy(exe, 0, this._memory, _PSP_SEGMENT * 16 + 0x100, exe.Length);
+      this._cs = this._ds = this._es = this._ss = _PSP_SEGMENT;
+      this._ip = 0x100;
+      this._r[_SP] = 0xFFFE;
+      return;
+    }
     var headerParagraphs = Word(exe, 0x08);
     var headerSize = headerParagraphs * 16;
     var relocations = Word(exe, 0x06);
@@ -553,6 +559,7 @@ public sealed class Cpu8086 {
       case 0xFC: this._df = false; return;
       case 0xFD: this._df = true; return;
 
+      case 0x0F: this.TwoByte(); return;
       case 0xF6 or 0xF7: this.Group3(opcode, repeat); return;
       case 0xFE or 0xFF: this.Group45(opcode); return;
 
@@ -587,6 +594,57 @@ public sealed class Cpu8086 {
     }
     throw new Cpu8086Exception($"x87 instruction {opcode:X2} {modrm:X2} at {this._cs:X4}:{at - 1:X4} - "
       + "floating point arithmetic is deliberately not interpreted");
+  }
+
+  /// <summary>
+  /// The 386 two-byte opcodes the optimizer emits under <c>$CPU 80386</c>: near conditional jumps
+  /// (an 8-bit displacement does not always reach), <c>SETcc</c>, <c>MOVZX</c>/<c>MOVSX</c> and the
+  /// three-operand <c>IMUL</c>. Anything else in the space throws rather than being guessed at.
+  /// </summary>
+  private void TwoByte() {
+    var opcode = this.Fetch();
+    switch (opcode) {
+      case >= 0x80 and <= 0x8F: {                       // Jcc rel16
+        var delta = (short)this.FetchWord();
+        if (this.Condition(opcode - 0x80))
+          this._ip = (ushort)(this._ip + delta);
+        return;
+      }
+      case >= 0x90 and <= 0x9F: {                       // SETcc r/m8
+        var (mode, _, address) = this.ModRm();
+        this.SetRm8(mode, address, (byte)(this.Condition(opcode - 0x90) ? 1 : 0));
+        return;
+      }
+      case 0xAF: {                                      // IMUL r16, r/m16
+        var (mode, reg, address) = this.ModRm();
+        var product = (short)this._r[reg] * (short)this.GetRm16(mode, address);
+        this._r[reg] = (ushort)product;
+        this._cf = this._of = (short)this._r[reg] != product;
+        return;
+      }
+      case 0xB6: { var (m, r, a) = this.ModRm(); this._r[r] = this.GetRm8(m, a); return; }                    // MOVZX r16, r/m8
+      case 0xB7: { var (m, r, a) = this.ModRm(); this._r[r] = this.GetRm16(m, a); return; }
+      case 0xBE: { var (m, r, a) = this.ModRm(); this._r[r] = (ushort)(sbyte)this.GetRm8(m, a); return; }      // MOVSX r16, r/m8
+      case 0xBF: { var (m, r, a) = this.ModRm(); this._r[r] = this.GetRm16(m, a); return; }
+      case 0xA4 or 0xAC: {                              // SHLD / SHRD r/m16, r16, imm8
+        var (mode, reg, address) = this.ModRm();
+        var count = this.Fetch() & 0x1F;
+        var value = this.GetRm16(mode, address);
+        var other = this._r[reg];
+        if (count != 0) {
+          var pair = opcode == 0xA4
+            ? (uint)((value << 16) | other) << count
+            : (uint)((other << 16) | value) >> count;
+          value = (ushort)(opcode == 0xA4 ? pair >> 16 : pair);
+          this.SetRm16(mode, address, value);
+          this._zf = value == 0;
+          this._sf = (value & 0x8000) != 0;
+        }
+        return;
+      }
+      default:
+        throw new Cpu8086Exception($"unimplemented 0F {opcode:X2} at {this._cs:X4}:{this._ip - 2:X4}");
+    }
   }
 
   private ushort Segment(int index) => index switch { 0 => this._es, 1 => this._cs, 2 => this._ss, _ => this._ds };
