@@ -165,6 +165,11 @@ public enum MOpcode {
   /// <summary>Square root of ST(0), in place - no operand, because the x87 answers where it was asked.</summary>
   Fsqrt,
 
+  // The transcendental family: each is a bare x87 instruction the direct emitter also writes inline.
+  // They take no operand for the same reason FSQRT does not - the stack is where the answer goes.
+  Fsin, Fcos, Fptan, Fpatan, Fyl2x, Fxch, FstpSt0,
+  Fld1, Fldln2, Fldlg2, Fldl2e, Fldl2t,
+
   /// <summary>A block of inline assembly, assembled verbatim at emission (see <see cref="MOperand.InlineAsmText"/>).</summary>
   InlineAsm,
 }
@@ -190,7 +195,10 @@ public static class MOpcodes {
   public static bool UsesX87(MOpcode opcode) => opcode is
     MOpcode.Fld or MOpcode.Fstp or MOpcode.Fild or MOpcode.Fistp
     or MOpcode.Faddp or MOpcode.Fsubp or MOpcode.Fmulp or MOpcode.Fdivp
-    or MOpcode.Fsqrt;
+    or MOpcode.Fsqrt
+    or MOpcode.Fsin or MOpcode.Fcos or MOpcode.Fptan or MOpcode.Fpatan or MOpcode.Fyl2x
+    or MOpcode.Fxch or MOpcode.FstpSt0
+    or MOpcode.Fld1 or MOpcode.Fldln2 or MOpcode.Fldlg2 or MOpcode.Fldl2e or MOpcode.Fldl2t;
 }
 
 /// <summary>A machine basic block: a label, its instructions in order, and its successor labels.</summary>

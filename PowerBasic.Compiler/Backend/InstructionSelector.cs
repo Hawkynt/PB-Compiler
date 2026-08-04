@@ -962,8 +962,8 @@ public sealed class InstructionSelector {
     if (callee.IsDeclaration)
       return ErrorHandlerIntrinsics.Contains(callee.Name)
         ? this.SelectErrorHandlerIntrinsic(call, callee)
-        : callee.Name.StartsWith("llvm.sqrt.f", StringComparison.Ordinal)
-          ? this.SelectSquareRoot(call, callee)
+        : MathSequence(callee.Name) is { } sequence
+          ? this.SelectMathIntrinsic(call, callee, sequence)
           : RuntimeAbi.For(callee.Name) is { } routine
             ? this.SelectRuntimeCall(call, callee, routine)
             : this.Decline($"call: {callee.Name} (runtime declaration - not in the runtime ABI table)");
@@ -1278,22 +1278,53 @@ public sealed class InstructionSelector {
   }
 
   /// <summary>
-  /// <c>SQR</c> is an INSTRUCTION, not a runtime routine - the x87 has FSQRT and the direct emitter
-  /// writes it inline. The IR spells it as a call because that is how the C and LLVM back ends want it
-  /// (<c>sqrt</c>, <c>llvm.sqrt.*</c>), so the name is recognised here and turned back into the one
-  /// instruction it always was, with no call and no clobbered registers.
+  /// The transcendental intrinsics are INSTRUCTIONS, not runtime routines: the x87 has FSQRT, FSIN,
+  /// FCOS, FPTAN, FPATAN and FYL2X, and the direct emitter writes each inline. The IR spells them as
+  /// calls because that is how the C and LLVM back ends want them, so the names are recognised here and
+  /// turned back into the sequences they always were.
+  ///
+  /// Each sequence is transcribed from CodeGenerator.Intrinsics.cs rather than derived. The three
+  /// logarithms differ only in the constant loaded before FYL2X, and the three exponentials only in the
+  /// constant multiplied in before <c>rt_pow2</c> - which is the one entry here that IS a call, because
+  /// 2^x is a routine and not an instruction.
   /// </summary>
-  private bool SelectSquareRoot(IrCall call, IrFunction callee) {
+  private static (MOpcode[] Before, string? Call)? MathSequence(string name) {
+    var bare = name.StartsWith("llvm.", StringComparison.Ordinal) ? name[5..] : name;
+    var cut = bare.IndexOf(".f", StringComparison.Ordinal);
+    return (cut > 0 ? bare[..cut] : bare) switch {
+      "sqrt" => ([MOpcode.Fsqrt], null),
+      "sin" => ([MOpcode.Fsin], null),
+      "cos" => ([MOpcode.Fcos], null),
+      "tan" => ([MOpcode.Fptan, MOpcode.FstpSt0], null),          // FPTAN pushes a 1.0 to discard
+      "atan" => ([MOpcode.Fld1, MOpcode.Fpatan], null),
+      "log" => ([MOpcode.Fldln2, MOpcode.Fxch, MOpcode.Fyl2x], null),
+      "log2" => ([MOpcode.Fld1, MOpcode.Fxch, MOpcode.Fyl2x], null),
+      "log10" => ([MOpcode.Fldlg2, MOpcode.Fxch, MOpcode.Fyl2x], null),
+      "exp" => ([MOpcode.Fldl2e, MOpcode.Fmulp], "rt_pow2"),
+      "exp2" => ([], "rt_pow2"),
+      "exp10" => ([MOpcode.Fldl2t, MOpcode.Fmulp], "rt_pow2"),
+      _ => null,
+    };
+  }
+
+  private bool SelectMathIntrinsic(IrCall call, IrFunction callee, (MOpcode[] Before, string? Call) sequence) {
     if (call.Args.ToList() is not [{ } operand])
       return this.Decline($"call: {callee.Name} takes one operand");
     if (!call.Type.IsIeeeFloat || !operand.Type.IsIeeeFloat)
       return this.Decline($"call: {callee.Name} is not floating point");
     if (!this.TryFloatOperand(operand, out var cell))
       return false;
+
     this.EmitX87(MOpcode.Fld, cell, reads: true);
     // No memory, no registers, no flags - which is the truth, and is safe because the scheduler orders
     // x87 instructions against each other by opcode (MOpcodes.UsesX87) rather than by their effects.
-    this._current.Instructions.Add(new MInstr(MOpcode.Fsqrt, [], MInstrEffect.None));
+    foreach (var opcode in sequence.Before)
+      this._current.Instructions.Add(new MInstr(opcode, [], MInstrEffect.None));
+    if (sequence.Call is { } label)
+      this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef(label)],
+        new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
+          ReadsMemory: true, WritesMemory: true),
+        condition: null, clobbers: _callClobbers));
     this.EmitX87(MOpcode.Fstp, this.FloatCell(call), reads: false);
     return true;
   }
@@ -1311,6 +1342,17 @@ public sealed class InstructionSelector {
     operand = null!;
     if (!IsWide(value.Type))
       return this.TryOperand(value, out operand);
+
+    // A runtime routine whose answer is a WIDENED word has a high half that is nothing but the sign
+    // extension of the low one, so the low half IS the value. ASC is the case that matters: the IR
+    // types it i32 because the same declaration feeds the C back end, and STRING$(n, s$) then hands
+    // that i32 to a routine wanting a character in DL.
+    if (value is IrCall { Callee: IrFunction { IsDeclaration: true } widened }
+        && RuntimeAbi.For(widened.Name) is { Answer: RuntimeAbi.ResultKind.WidenedWord }
+        && this.TryOperandPair(value, out var low, out _)) {
+      operand = low;
+      return true;
+    }
 
     var narrowed = value switch {
       IrConstantInt { Value: >= short.MinValue and <= ushort.MaxValue } c => (IrValue)c,

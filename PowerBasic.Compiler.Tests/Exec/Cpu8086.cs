@@ -686,6 +686,11 @@ public sealed class Cpu8086 {
       case (0xD9, 0xEC): this.FPush(Math.Log10(2)); return;                   // FLDLG2
       case (0xD9, 0xED): this.FPush(Math.Log(2)); return;                     // FLDLN2
       case (0xD9, 0xFA): this.SetSt(0, Math.Sqrt(this.St(0))); return;        // FSQRT
+      case (0xD9, 0xFE): this.SetSt(0, Math.Sin(this.St(0))); return;         // FSIN
+      case (0xD9, 0xFF): this.SetSt(0, Math.Cos(this.St(0))); return;         // FCOS
+      // FPTAN replaces ST(0) with its tangent and then PUSHES 1.0 - the extra push is why every
+      // caller follows it with an FSTP that throws the 1.0 away
+      case (0xD9, 0xF2): this.SetSt(0, Math.Tan(this.St(0))); this.FPush(1); return;
       case (0xD9, 0xFC): this.SetSt(0, RoundToInteger(this.St(0))); return;   // FRNDINT
       case (0xD9, 0xF0): this.SetSt(0, Math.Pow(2, this.St(0)) - 1); return;  // F2XM1
       case (0xD9, 0xF1): {                                                    // FYL2X

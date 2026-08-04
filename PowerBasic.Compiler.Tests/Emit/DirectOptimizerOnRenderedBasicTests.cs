@@ -232,6 +232,16 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
       + "the end of a sequential OUTPUT file and pb35 does not. Every value matches.",
     ["qb20/DIFF02.BAS"] = "as qb10/DIFF02: the trailing ^Z.",
     ["qb30/DIFF02.BAS"] = "as qb10/DIFF02: the trailing ^Z.",
+    // These four are pb36/DIFF35's gap reached by another program: SQR(2) is a SINGLE in QB 4.x and
+    // PDS, so it prints 7 significant digits (1.414214), and the rendering prints 15 (1.41421356237731).
+    // The writer materializes the float temporary into a declared variable and PB picks the formatter
+    // from THAT variable's type rather than from the expression's. They became visible only when the
+    // test CPU learned FSIN/FCOS and these dialects started running at all.
+    ["qb40/DIFF02.BAS"] = "as pb36/DIFF35: a materialized float temporary takes the formatter with it, "
+      + "so a SINGLE result prints 15 digits instead of 7.",
+    ["qb45/DIFF02.BAS"] = "as qb40/DIFF02.",
+    ["pds70/DIFF02.BAS"] = "as qb40/DIFF02.",
+    ["pds71/DIFF02.BAS"] = "as qb40/DIFF02.",
   };
 
   private const int _floor = 80;   // 83 across every dialect

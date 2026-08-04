@@ -174,7 +174,7 @@ public sealed class BackendCorpusDifferentialTests {
     // counter into a constant, which makes bodies selectable that were not before.
     // 78 once inlining joined the production pipeline - a call inlined is a callee body the caller's
     // optimizer can see, which makes module bodies selectable that were not.
-    Assert.That(agreed, Is.GreaterThanOrEqualTo(124), "fewer programs were compared than used to be:\n" + report);
+    Assert.That(agreed, Is.GreaterThanOrEqualTo(134), "fewer programs were compared than used to be:\n" + report);
 
     // and a known defect that quietly starts agreeing is worth knowing about too - it means either it
     // was fixed (delete the entry) or the comparison stopped reaching it (a worse problem)

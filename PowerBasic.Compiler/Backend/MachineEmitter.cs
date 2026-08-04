@@ -202,6 +202,18 @@ public sealed class MachineEmitter {
       case MOpcode.Fmulp: asm.Fmulp(); break;
       case MOpcode.Fdivp: asm.Fdivp(); break;
       case MOpcode.Fsqrt: asm.Fsqrt(); break;
+      case MOpcode.Fsin: asm.Fsin(); break;
+      case MOpcode.Fcos: asm.Fcos(); break;
+      case MOpcode.Fptan: asm.Fptan(); break;
+      case MOpcode.Fpatan: asm.Fpatan(); break;
+      case MOpcode.Fyl2x: asm.Fyl2x(); break;
+      case MOpcode.Fxch: asm.Fxch(); break;
+      case MOpcode.FstpSt0: asm.Fstp(St.St0); break;
+      case MOpcode.Fld1: asm.Fld1(); break;
+      case MOpcode.Fldln2: asm.Fldln2(); break;
+      case MOpcode.Fldlg2: asm.Fldlg2(); break;
+      case MOpcode.Fldl2e: asm.Fldl2e(); break;
+      case MOpcode.Fldl2t: asm.Fldl2t(); break;
       case MOpcode.InlineAsm: this.EmitInlineAsm(asm, instr); break;
       default: throw new System.NotSupportedException($"machine opcode {instr.Opcode} has no emission yet");
     }
