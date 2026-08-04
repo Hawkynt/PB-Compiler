@@ -265,6 +265,21 @@ were, and both show *only* on an array, because a scalar is one slot and is writ
 With both fixed the exclusion is gone, and the corpus differential agrees on every routed program in
 both optimization modes.
 
+### String ownership - who is allowed to free a handle
+
+`DosRuntime.Strings.cs` states the rule its routines are written to: **every string value in generated
+code is an owned temporary**, and a routine documented as "consumes" frees what it is handed.
+`rt_strcat` consumes both operands; `rt_str_print` consumes what it prints.
+
+Reading a string *variable* is therefore the case that needs care, because the handle in the cell
+belongs to the cell. The lowering used to hand it straight on, and nothing noticed while no
+string-printing function was routed. The moment `rt_print_strvar` got an ABI entry, `PRINT a$` twice
+printed `hello` and then nothing, and `a$ + b$` emptied both operands - a use-after-free that does not
+fault, because freeing a handle only marks its descriptor free and the next read finds a zero-length
+string and prints it happily. `IrLowering.BorrowString` now copies (`rt_strdup`) on every read of a
+string variable or array element, which is what the direct emitter does and what makes the consuming
+entries safe to list at all.
+
 ### Coverage, measured (`BackendCoverageTests`)
 
 Widening the selector is only worth doing in the order the corpus demands, so the census runs the

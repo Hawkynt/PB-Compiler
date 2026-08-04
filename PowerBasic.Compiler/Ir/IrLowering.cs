@@ -886,8 +886,14 @@ public sealed class IrLowering {
         var global = this._module!.AddStringConstant(bytes);
         return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_const", IrType.Ptr, IrType.Ptr, IrType.I32), global, new IrConstantInt(IrType.I32, bytes.Length));
       }
+      // Reading a string VARIABLE yields a copy, not the variable's own handle. PB's runtime works on
+      // the rule that every string value in generated code is an owned temporary, and the routines
+      // that say "consumes" free what they are given - rt_strcat consumes both operands, rt_str_print
+      // consumes what it prints. Handing them the variable's handle destroys the variable: PRINT a$
+      // twice printed "hello" and then nothing, and a$ + b$ emptied both. The direct emitter
+      // duplicates here for the same reason.
       case NameExpr when this._model.VariableBindings.TryGetValue(expr, out var sym) && sym.Type is StringType:
-        return this._b.Load(IrType.Ptr, this.SlotFor(sym));
+        return this.BorrowString(this._b.Load(IrType.Ptr, this.SlotFor(sym)));
       case NameExpr when this._model.VariableBindings.TryGetValue(expr, out var fsym) && fsym.Type is FixedStringType fixedStr:
         return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_from_fixed", IrType.Ptr, IrType.Ptr, IrType.I32),
           this.SlotFor(fsym), new IrConstantInt(IrType.I32, fixedStr.Length));   // the inline N bytes as a handle
@@ -897,7 +903,7 @@ public sealed class IrLowering {
         return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_concat", IrType.Ptr, IrType.Ptr, IrType.Ptr),
           this.LowerStringExpr(cat.Left), this.LowerStringExpr(cat.Right));
       case CallOrIndexExpr arrayRead when this._model.VariableBindings.TryGetValue(arrayRead, out var arr) && arr.Type is ArrayType { Element: StringType }:
-        return this._b.Load(IrType.Ptr, this.ElementAddress(arrayRead).Address);
+        return this.BorrowString(this._b.Load(IrType.Ptr, this.ElementAddress(arrayRead).Address));   // an element is storage too
       case MemberExpr fm when !this._model.VariableBindings.ContainsKey(fm) && this.MemberFieldAddress(fm) is { Field.Type: FixedStringType ffs } fa:
         return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_from_fixed", IrType.Ptr, IrType.Ptr, IrType.I32),
           fa.Address, new IrConstantInt(IrType.I32, ffs.Length));   // read a fixed-string record field as a handle
@@ -916,6 +922,16 @@ public sealed class IrLowering {
         throw new IrLoweringException($"unsupported string expression: {expr.GetType().Name}");
     }
   }
+
+  /// <summary>
+  /// A copy of a string that lives in STORAGE, so the value handed on is an owned temporary the
+  /// consuming runtime routines may free. Everything else in the lowering already produces one: a
+  /// literal comes from rt_str_const, a concatenation from rt_str_concat, an intrinsic from its own
+  /// allocation. Only a read of a variable or an array element does not, because the handle it finds
+  /// belongs to that cell.
+  /// </summary>
+  private IrValue BorrowString(IrValue stored)
+    => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_dup", IrType.Ptr, IrType.Ptr), stored);
 
   private void LowerLabel(LabelStmt label) {
     var block = this._labels[label.Name];

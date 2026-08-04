@@ -146,9 +146,9 @@ battery, it currently reaches:
 | | |
 |---|---|
 | programs reaching the IR at all | 132 / 162 |
-| functions selected | 120 / 218 |
-| functions routed (selected **and** allocated) | 79 / 218 |
-| whole module bodies the back end can own | 28 / 132 |
+| functions selected | 124 / 218 |
+| functions routed (selected **and** allocated) | 82 / 218 |
+| whole module bodies the back end can own | 30 / 132 |
 
 The runtime traps and the error handler are **done**. `$ERROR BOUNDS / OVERFLOW / NUMERIC ON` now emit
 their checks rather than merely accepting the metastatement, over dynamic arrays as well as static
@@ -167,11 +167,14 @@ Ranked by the census, what stands between that and full coverage:
 2. A tail of statements: `ArraySortStmt`, `PUT$`, `DIM AT`, `ERASE` of a static array, `HEX$` with a
    digit count, `PRINT USING` / `LPRINT`, `CODEPTR32`, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
    metastatements.
-3. **41 functions that select but fail allocation** - each needs a memory operand in a position the
+3. **42 functions that select but fail allocation** - each needs a memory operand in a position the
    emitter has no form for; `Spiller` names the position it could not move.
-4. The largest selection declines are runtime routines with no entry in the ABI table
-   (`rt_fprint_strvar`, `rt_str_val`, `rt_fprint_i64`, ...), a 32-bit compare used as a value, and a
-   float phi with no frame cell.
+4. The largest selection declines are runtime routines with no entry in the ABI table, a 32-bit
+   compare used as a value, and a float phi with no frame cell. The table grows one routine at a time
+   and only after its emitter has been read - see [X86-BACKEND.md](X86-BACKEND.md). Several of the
+   remaining ones need the bridge to grow first, not just an entry: `rt_str_val` answers on `ST(0)`
+   and the table can only name a register result; `rt_str_len` answers in a word where the IR declares
+   a LONG; `rt_str_hex` needs immediate presets (`CL` = bits per digit) rather than register moves.
 
 ### Differential execution without the vintage oracle - DONE
 

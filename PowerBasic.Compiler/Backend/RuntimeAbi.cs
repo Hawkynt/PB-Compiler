@@ -100,6 +100,19 @@ internal static class RuntimeAbi {
     ["rt_str_concat"] = new("rt_strcat",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
 
+    // rt_str_dup(ptr) -> ptr is StrDup: "AX=handle -> AX=copy". The lowering puts one of these on
+    // every read of a string variable or array element, which is what makes the consuming routines
+    // above safe to call - see IrLowering.BorrowString
+    ["rt_str_dup"] = new("rt_strdup", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+
+    // rt_print_strvar(ptr handle) is the runtime's StrPrint: "AX=handle - writes to current output
+    // (consumes)". PRINT of a string VARIABLE goes through this rather than through rt_print_str,
+    // which takes literal bytes at DS:SI and has no handle to release. Consuming is what the IR wants
+    // anyway: every string value in generated code is an owned temporary.
+    ["rt_print_strvar"] = new("rt_str_print", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_fprint_strvar"] = new("rt_str_print",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.AX)], _callerSaved, FileSelect: true),
+
     // files. The runtime documents these conventions at the head of DosRuntime.Files.cs:
     // FOpen AX=filename handle, BX=PB file number, CX=mode, SI=reclen; FClose AX=file number.
     // The IR names the file number first, the runtime puts it in BX - hence the per-position table

@@ -89,17 +89,36 @@ public sealed class BackendCallRoutingTests {
   }
 
   [Test]
-  public void Select_GivenRuntimeCall_ThenDeclinesWithTheReason() {
-    // rt_* helpers are declarations: their labels live in the runtime, not in the procedure table,
-    // so the emitter cannot bind them yet - declining is correct, and the reason has to say why
+  public void Select_GivenAnUnlistedRuntimeCall_ThenDeclinesWithTheReason() {
+    // An rt_* helper is a declaration: its label lives in the runtime, and the only thing that says
+    // where its arguments go is RuntimeAbi's table. Anything not in that table must DECLINE rather
+    // than be guessed at - a wrong register claim miscompiles silently. LEN is one of the routines
+    // still missing an entry (its runtime answer is a word where the IR declares a LONG result).
+    var module = Optimized(Bind("""
+      DIM s AS STRING
+      s = "x"
+      PRINT LEN(s)
+      """));
+
+    Assert.That(InstructionSelector.TrySelect(FunctionNamed(module, "main"), out var reason), Is.Null);
+    Assert.That(reason, Does.Contain("runtime declaration"));
+  }
+
+  /// <summary>
+  /// The other half of the same rule: a routine that IS in the table selects. PRINT of a string
+  /// variable is the one that moved - it maps to the runtime's StrPrint, and it was the single
+  /// largest selection decline in the corpus census before it was listed.
+  /// </summary>
+  [Test]
+  public void Select_GivenAListedRuntimeCall_ThenItSelects() {
     var module = Optimized(Bind("""
       DIM s AS STRING
       s = "x"
       PRINT s
       """));
 
-    Assert.That(InstructionSelector.TrySelect(FunctionNamed(module, "main"), out var reason), Is.Null);
-    Assert.That(reason, Does.Contain("runtime declaration"));
+    Assert.That(InstructionSelector.TrySelect(FunctionNamed(module, "main"), out var reason), Is.Not.Null,
+      $"declined: {reason}");
   }
 
   [Test]
