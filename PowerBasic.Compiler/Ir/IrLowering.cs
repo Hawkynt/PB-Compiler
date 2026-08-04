@@ -1511,8 +1511,14 @@ public sealed class IrLowering {
       "LCASE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_lcase", IrType.Ptr, IrType.Ptr), Str(0)),
       "LTRIM$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_ltrim", IrType.Ptr, IrType.Ptr), Str(0)),
       "RTRIM$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_rtrim", IrType.Ptr, IrType.Ptr), Str(0)),
+      // the radix conversions. Their two-argument form fixes the digit count (HEX$(n, 4) pads or
+      // truncates to four) - it is a different result, not a formatting nicety, so it declines rather
+      // than quietly dropping the count the way taking argument 0 alone would
+      "HEX$" or "OCT$" or "BIN$" when ci.Arguments.Count > 1 =>
+        throw new IrLoweringException($"{name} with a digit count"),
       "HEX$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_hex", IrType.Ptr, IrType.I32), Num(0)),
       "OCT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_oct", IrType.Ptr, IrType.I32), Num(0)),
+      "BIN$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_bin", IrType.Ptr, IrType.I32), Num(0)),
       _ => throw new IrLoweringException($"string intrinsic {name}"),
     };
   }
