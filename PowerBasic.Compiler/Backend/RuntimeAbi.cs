@@ -35,6 +35,14 @@ internal static class RuntimeAbi {
     St0,
 
     /// <summary>
+    /// A 32-bit UNSIGNED value staged as a zero-extended qword in the frame and FILDed onto the x87
+    /// stack. There is no unsigned 32-bit printer: <c>rt_print_i32</c> would render 4294967295 as -1,
+    /// so a DWORD goes through the 64-bit one, where the zeroed high half makes it positive. It is the
+    /// four MOVs and the FILD the direct emitter writes for exactly this case.
+    /// </summary>
+    ZeroExtendedQwordSt0,
+
+    /// <summary>
     /// A 16-bit value ZERO-extended into a register pair: the word goes in
     /// <see cref="RuntimeArg.Register"/> and <see cref="RuntimeArg.High"/> is cleared.
     ///
@@ -289,11 +297,16 @@ internal static class RuntimeAbi {
     ["llvm.pow.f80"] = new("rt_pow", [new(ArgKind.St0, default), new(ArgKind.St0, default)],
       _callerSaved, Answer: ResultKind.St0),
 
+    // "PrintInt64: ST0 = integral value (popped)". A DWORD reaches it zero-extended through the frame,
+    // which is how it prints its full unsigned range
+    ["rt_print_u32"] = new("rt_print_i64", [new(ArgKind.ZeroExtendedQwordSt0, default)], _callerSaved),
+    ["rt_fprint_u32"] = new("rt_print_i64",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.ZeroExtendedQwordSt0, default)], _callerSaved, FileSelect: true),
+
     // NOT listed, and each for a stated reason:
-    //   rt_print_u32 - a DWORD is staged through scratch memory as a qword and FILDed into the
-    //     64-bit printer; that needs an argument kind that allocates a spill cell, not a register
     //   rt_print_i64 - a QUAD is routed through the 15-digit FLOAT formatter (genuine PBC does this,
-    //     so large values appear in E notation), which again arrives via memory rather than a pair
+    //     so large values appear in E notation). The IR types the value i64, which this back end has
+    //     no representation for at all - it is a wider gap than a table row
     //   rt_print_tab  - TAB(n) is column arithmetic against rt_col, not a call with a convention
 
     // deliberately NO rt_str_from_u16 entry: rt_str_i16 opens with a CWD, so routing an unsigned

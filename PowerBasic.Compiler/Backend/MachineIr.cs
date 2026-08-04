@@ -46,8 +46,12 @@ public abstract record MOperand {
   /// <summary>A code label (branch target) or a data/global symbol address.</summary>
   public sealed record LabelRef(string Name) : MOperand;
 
-  /// <summary>A frame stack slot - allocas and register spills resolve to <c>[BP + Offset]</c> at emission.</summary>
-  public sealed record StackSlot(int Index, MRegSize Size) : MOperand;
+  /// <summary>
+  /// A frame stack slot - allocas and register spills resolve to <c>[BP + Offset]</c> at emission.
+  /// <paramref name="Disp"/> reaches INSIDE a multi-byte slot: the words of a qword staged for FILD are
+  /// the same slot at 0, 2, 4 and 6.
+  /// </summary>
+  public sealed record StackSlot(int Index, MRegSize Size, int Disp = 0) : MOperand;
 
   /// <summary>
   /// A module-level variable's data cell, named as the IR names it (<c>g.total</c>, <c>static.c</c>).

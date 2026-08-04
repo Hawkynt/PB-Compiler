@@ -1149,6 +1149,23 @@ public sealed class InstructionSelector {
             condition: null, clobbers: [slot.Register]));
           break;
         }
+        case RuntimeAbi.ArgKind.ZeroExtendedQwordSt0: {
+          // four words into one qword cell - the value's own two, then two zeroes - and FILD it. The
+          // zeroes are what make the 64-bit printer render the DWORD unsigned.
+          if (!IsWide(arg.Type))
+            return this.Decline($"call: {callee.Name} wants a 32-bit value to widen, got {arg.Type}");
+          if (!this.TryOperandPair(arg, out var low, out var high))
+            return false;
+          var staged = this._function.StackSlots.Count;
+          this._function.StackSlots.Add(8);
+          var cell = new MOperand.StackSlot(staged, MRegSize.Word);
+          this.StoreWord(cell, low);
+          this.StoreWord(Shifted(cell, 2), high);
+          this.StoreWord(Shifted(cell, 4), new MOperand.Immediate(0));
+          this.StoreWord(Shifted(cell, 6), new MOperand.Immediate(0));
+          this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(staged, MRegSize.Qword), reads: true);
+          break;
+        }
         case RuntimeAbi.ArgKind.ZeroPair: {
           // the word into the low register, the high one cleared - "XOR DX,DX" in the direct emitter
           if (IsWide(arg.Type))
@@ -1675,6 +1692,7 @@ public sealed class InstructionSelector {
   private static MOperand Shifted(MOperand cell, int delta) => cell switch {
     MOperand.Memory m => m with { Disp = m.Disp + delta },
     MOperand.DataCell d => d with { Disp = d.Disp + delta },
+    MOperand.StackSlot s => s with { Disp = s.Disp + delta },
     _ => cell,
   };
 

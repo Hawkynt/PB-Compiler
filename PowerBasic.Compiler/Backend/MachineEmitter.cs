@@ -303,7 +303,7 @@ public sealed class MachineEmitter {
   private Reg Resolve(MReg reg) => reg.IsVirtual ? this._allocation[reg.VirtualId] : reg.Physical;
 
   private Mem Mem(MOperand operand) => operand switch {
-    MOperand.StackSlot slot => Sized(Asm.Mem.At(Asm.Reg.BP, this._slotDisp[slot.Index]), slot.Size),
+    MOperand.StackSlot slot => Sized(Asm.Mem.At(Asm.Reg.BP, this._slotDisp[slot.Index] + slot.Disp), slot.Size),
     MOperand.ParamCell p => Asm.Mem.Word(Asm.Reg.BP, this._paramOffsets[p.ArgumentIndex] + p.ByteDelta),
     MOperand.DataCell cell => this.DataCell(cell),
     MOperand.Memory m when m.Index is { } x => Sized(Asm.Mem.At(this.Resolve(m.Base!.Value), this.Resolve(x), m.Disp), m.Size),
