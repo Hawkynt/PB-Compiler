@@ -1297,6 +1297,33 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenStringEquality_WhenPb36_ThenUsesLengthGuardedCompare() {
+    // O0298: `=` / `<>` use rt_strcmpeq under --optimize, which after loading the two string
+    // descriptors does a length guard `cmp ax,dx / jne` (39 D0 75) - unequal lengths skip the byte
+    // scan. The full rt_strcmp instead computes the min `cmp cx,dx / jbe` (39 D1 76). Both share the
+    // push-heavy prologue (53 51 52 56 57 06), so the routine is located by that and the next bytes
+    // inspected. An ordering compare (`<`) keeps the full StrCmp, so it shows the min, not the guard.
+    static bool WindowAfterPrologue(byte[] img, params byte[] marker) {
+      var head = new byte[] { 0x53, 0x51, 0x52, 0x56, 0x57, 0x06 };
+      for (var i = 0; i + head.Length < img.Length; ++i) {
+        var atHead = true;
+        for (var j = 0; j < head.Length; ++j) if (img[i + j] != head[j]) { atHead = false; break; }
+        if (!atHead) continue;
+        for (var k = i; k < i + 64 && k + marker.Length <= img.Length; ++k) {
+          var m = true;
+          for (var j = 0; j < marker.Length; ++j) if (img[k + j] != marker[j]) { m = false; break; }
+          if (m) return true;
+        }
+      }
+      return false;
+    }
+    var eq = Compile("DIM a$, b$\nLINE INPUT a$\nLINE INPUT b$\nIF a$ = b$ THEN PRINT 1 ELSE PRINT 0\nEND", Dialect.Pb36);
+    var lt = Compile("DIM a$, b$\nLINE INPUT a$\nLINE INPUT b$\nIF a$ < b$ THEN PRINT 1 ELSE PRINT 0\nEND", Dialect.Pb36);
+    Assert.That(WindowAfterPrologue(eq, 0x39, 0xD0, 0x75), Is.True, "`=` uses the length-guarded compare (StrCmpEq)");
+    Assert.That(WindowAfterPrologue(lt, 0x39, 0xD1, 0x76), Is.True, "`<` keeps the full StrCmp with its min computation");
+  }
+
+  [Test]
   public void Emit_GivenSingleExitFunction_WhenPb36_ThenResultForwardedNotReloaded() {
     // O0102: a single-exit function whose last statement assigns the integer result leaves that value
     // in AX, so the epilogue's reload from the result slot (MOV AX,[BP+d] = 8B 46 dd immediately

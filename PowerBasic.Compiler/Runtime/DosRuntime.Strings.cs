@@ -61,6 +61,7 @@ public sealed partial class DosRuntime {
   public Label StrCatVar { get; private set; } = null!;
   public Label StrCatN { get; private set; } = null!;
   public Label StrCmp { get; private set; } = null!;
+  public Label StrCmpEq { get; private set; } = null!;
   public Label StrMid { get; private set; } = null!;
   public Label StrLeft { get; private set; } = null!;
   public Label StrRight { get; private set; } = null!;
@@ -804,6 +805,68 @@ public sealed partial class DosRuntime {
     asm.Jmp(output);
     asm.MarkLabel(equal);
     asm.Xor(Reg.AX, Reg.AX);
+    asm.MarkLabel(output);
+    asm.Push(Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_st0")));
+    asm.Call(this.StrFree);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_st1")));
+    asm.Call(this.StrFree);
+    asm.Pop(Reg.AX);
+    asm.Pop(Reg.ES);
+    asm.Pop(Reg.DI);
+    asm.Pop(Reg.SI);
+    asm.Pop(Reg.DX);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.BX);
+    asm.Ret();
+  }
+
+  /// <summary>
+  /// O0298: equality-only string compare with a length short-circuit. For <c>=</c> / <c>&lt;&gt;</c> two
+  /// strings of different lengths are unequal, so no byte needs examining - the common negative case
+  /// becomes two descriptor reads and one compare. Returns AX = 0 (equal) or 1 (unequal); consumes
+  /// (frees) both operands exactly like <see cref="EmitStrCmp"/>. Emitted only when referenced, which
+  /// the emitter does solely under <c>--optimize</c>, so the faithful build keeps the full compare.
+  /// </summary>
+  private void EmitStrCmpEq(Assembler asm) {
+    this.StrCmpEq = asm.MarkLabel("rt_strcmpeq");
+    var unequal = asm.DefineLabel();
+    var equal = asm.DefineLabel();
+    var output = asm.DefineLabel();
+
+    asm.Push(Reg.BX);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.DX);
+    asm.Push(Reg.SI);
+    asm.Push(Reg.DI);
+    asm.Push(Reg.ES);
+    asm.Mov(Mem.Word(asm.Lbl("rt_st0")), Reg.AX);
+    asm.Mov(Mem.Word(asm.Lbl("rt_st1")), Reg.DX);
+    asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_strseg")));
+    asm.Mov(Reg.BX, Reg.AX);
+    asm.Shl(Reg.BX, 2);
+    asm.Mov(Reg.AX, this.Descriptor(Reg.BX, 2));   // left length
+    asm.Mov(Reg.SI, this.Descriptor(Reg.BX));      // left pointer
+    asm.Mov(Reg.BX, Reg.DX);
+    asm.Shl(Reg.BX, 2);
+    asm.Mov(Reg.DX, this.Descriptor(Reg.BX, 2));   // right length
+    asm.Mov(Reg.DI, this.Descriptor(Reg.BX));      // right pointer
+    asm.Cmp(Reg.AX, Reg.DX);
+    asm.Jne(unequal);                               // different lengths -> unequal, no byte scan
+    asm.Mov(Reg.CX, Reg.AX);
+    asm.Jcxz(equal);                                // equal lengths, both empty -> equal
+    asm.Push(Reg.DS);
+    asm.Mov(Reg.BX, Reg.ES);
+    asm.Mov(Reg.DS, Reg.BX);
+    asm.Repe();
+    asm.Cmpsb();
+    asm.Pop(Reg.DS);
+    asm.Jne(unequal);
+    asm.MarkLabel(equal);
+    asm.Xor(Reg.AX, Reg.AX);                         // 0 = equal
+    asm.Jmp(output);
+    asm.MarkLabel(unequal);
+    asm.Mov(Reg.AX, 1);                             // nonzero = unequal
     asm.MarkLabel(output);
     asm.Push(Reg.AX);
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_st0")));

@@ -241,6 +241,8 @@ public sealed partial class DosRuntime {
     ("long_helpers", this.EmitLongHelpers),
     ("strings", this.EmitStringProcedures),
     ("strings2", this.EmitString2Procedures),
+    ("strcmpeq", this.EmitStrCmpEq),   // O0298: only referenced under --optimize, so trimmed from the faithful build
+
     ("arraynum", this.EmitArrayNum),
     ("files", this.EmitFileProcedures),
     ("arrays", this.EmitArrayProcedures),

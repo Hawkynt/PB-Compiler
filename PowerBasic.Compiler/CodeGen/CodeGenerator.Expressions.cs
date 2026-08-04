@@ -857,7 +857,10 @@ public sealed partial class CodeGenerator {
       return;
     }
 
-    asm.Call(this._rt.StrCmp);
+    // O0298: `=` / `<>` only need equality, so under --optimize use the length-guarded compare that
+    // skips the byte scan when the lengths differ. It returns 0 (equal) / 1 (unequal), which the same
+    // xor bx,bx / je-jne test reads. Ordering forms keep the full three-way StrCmp.
+    asm.Call(this.Optimize && b.Op is BinaryOp.Equal or BinaryOp.NotEqual ? this._rt.StrCmpEq : this._rt.StrCmp);
     asm.Xor(Reg.BX, Reg.BX);
     switch (b.Op) {
       case BinaryOp.Equal: this.EmitInt16Compare(b, asm => asm.Je, Condition.Equal); break;
