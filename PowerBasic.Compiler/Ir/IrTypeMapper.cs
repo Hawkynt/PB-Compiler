@@ -10,14 +10,25 @@ namespace PowerBasic.Compiler.Ir;
 /// </summary>
 public static class IrTypeMapper {
 
-  /// <summary>Maps a scalar numeric PB type to its IR type; returns false for anything else.</summary>
+  /// <summary>
+  /// Maps a scalar numeric PB type to its IR type; returns false for anything else.
+  /// Both distinctions the BASIC family makes and LLVM does not are preserved:
+  /// <b>signedness</b> (<c>WORD</c> → <c>u16</c> where <c>INTEGER</c> → <c>i16</c>) and the
+  /// <b>Microsoft Binary Format</b> floats of BASICA/GW-BASIC (<c>mbf32</c>/<c>mbf64</c>, a storage
+  /// encoding the x87 cannot compute on - see <see cref="IrFloatFormat"/>).
+  /// </summary>
   public static bool TryMap(PbType type, out IrType ir) {
-    if (type is ScalarType s) {
-      ir = s.IsFloat ? IrType.Floating(s.ByteSize * 8) : IrType.Integer(s.ByteSize * 8);
-      return true;
+    switch (type) {
+      case ScalarType s:
+        ir = s.IsFloat ? IrType.Floating(s.ByteSize * 8) : IrType.Integer(s.ByteSize * 8, s.Signed);
+        return true;
+      case MbfType m:
+        ir = m.IsDouble ? IrType.Mbf64 : IrType.Mbf32;
+        return true;
+      default:
+        ir = IrType.Void;
+        return false;
     }
-    ir = IrType.Void;
-    return false;
   }
 
   /// <summary>Maps a scalar type or throws if unsupported.</summary>

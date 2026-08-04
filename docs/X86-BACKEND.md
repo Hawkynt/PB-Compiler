@@ -238,6 +238,53 @@ functions get genuine integer IR and the selector fires. The routing (`CodeGener
 - Selection fixes for real IR: a register is materialized for an immediate `IMUL` multiplier (`a%*2`);
   argument vregs are numbered before phi vregs so argument `i` is vreg `i`.
 
+### Coverage, measured (`BackendCoverageTests`)
+
+Widening the selector is only worth doing in the order the corpus demands, so the census runs the
+back end's own pipeline over all 162 battery programs and prints a histogram of **why** each
+function declines. That measurement immediately paid for itself twice:
+
+- **a crash, not a decline.** `PointerMemory`/`Operand` looked a value up in the vreg map with the
+  indexer, so a function loading a module-level global threw `KeyNotFoundException` *out of the
+  compiler*. Every operand now goes through a guarded `TryOperand`, which declines - the whole
+  point of the back end being an opt-in path is that it falls back, never fails.
+- **a pointer is a word.** `RegSize` mapped `ptr` (which carries no bit width - it is a target
+  property) to a *byte*, disagreeing with `SizeOf`'s 2 bytes, so a pointer-typed load would have
+  been sized wrongly.
+
+The ranking it produced was unambiguous: **`IrCall` was 87 % of all declines** (52 of 60), and of
+those, 47 were calls to `rt_*` runtime declarations from the un-routed `main` body while 5 were
+calls to defined procedures from exactly the functions the routing does take.
+
+### Calls (the widening that ranking bought)
+
+`SelectCall` handles a direct call to a **defined** procedure in the convention the direct codegen
+emits — arguments pushed **left to right**, `CALL`, callee cleans with `RET n` — so a back-end
+function and a directly-emitted one call each other unchanged. The result arrives in `AX` and is
+copied into the call's own virtual register, which costs nothing when the allocator puts it back in
+`AX`.
+
+Two soundness rules make that safe:
+
+- **The call clobbers the whole register file.** This ABI preserves nothing: a callee owns `AX`-`DX`
+  as scratch and may use `SI`/`DI` for loop residency without saving them. The `MInstr` declares all
+  six, so the allocator refuses to keep any value in a register across the call and — having no
+  spilling yet — declines the function instead of letting a value be destroyed.
+- **A routed function may only call routed functions.** The two sides must agree on the ABI, and
+  `OptRegParm` may convert a directly-emitted procedure to the register convention — a decision it
+  makes *after* this set is known, since it skips exactly the routed procedures. Requiring callees to
+  be routed makes both sides stack-convention by construction. Dropping one invalidates its callers,
+  so the routing iterates to a fixpoint.
+
+A `CALL` also needs the callee's real `Label`: procedure labels are minted with `DefineLabel`, a
+different registry from `Assembler.Lbl`, so looking the name up there would create a fresh,
+never-bound label and the image would not assemble. `MachineEmitter` takes a resolver from the code
+generator (`CalleeLabel`) and throws if the routing ever admits a call it cannot bind.
+
+Self- and mutual recursion route as a result (`Down%(n%-1)` selects); the remaining defined-procedure
+declines are now precise and each names its own next increment — a `LONG` result needs `DX:AX` pair
+handling, a `BYREF` parameter arrives as a `ptr` the eligibility gate does not admit.
+
 **Verified.** Gated behind `UseExperimentalBackend` (`PBC_X_BACKEND` / `--x-backend`), default off (a new
 path alongside the battle-tested direct codegen). With it **forced on, all 241 differential batteries
 are byte-identical to the genuine compilers** — every eligible integer function across the corpus is

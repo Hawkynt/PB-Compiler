@@ -19,13 +19,33 @@ public sealed class InstructionSelector {
   private readonly Dictionary<IrAlloca, int> _slots = new(ReferenceEqualityComparer.Instance);
   private MFunction _function = null!;
   private int _nextVreg;
+  private string? _decline;
 
   /// <summary>Selects a function into machine IR, or null if it contains a construct this stage cannot model.</summary>
-  public static MFunction? TrySelect(IrFunction fn) {
-    if (fn.IsDeclaration || fn.Entry is null)
+  public static MFunction? TrySelect(IrFunction fn) => TrySelect(fn, out _);
+
+  /// <summary>
+  /// Selects a function into machine IR, reporting <paramref name="declineReason"/> - the construct that
+  /// stopped it - when the result is null. The reason is what the coverage census reads to rank which
+  /// widening buys the most eligible functions, so it names the IR construct, not the failing routine.
+  /// </summary>
+  public static MFunction? TrySelect(IrFunction fn, out string? declineReason) {
+    declineReason = null;
+    if (fn.IsDeclaration || fn.Entry is null) {
+      declineReason = "declaration";
       return null;
+    }
     var selector = new InstructionSelector();
-    return selector.Run(fn);
+    var selected = selector.Run(fn);
+    if (selected is null)
+      declineReason = selector._decline ?? "unknown";
+    return selected;
+  }
+
+  /// <summary>Records why selection stopped (the first reason wins - it is the one that fired).</summary>
+  private bool Decline(string reason) {
+    this._decline ??= reason;
+    return false;
   }
 
   private MFunction? Run(IrFunction fn) {
@@ -81,15 +101,18 @@ public sealed class InstructionSelector {
       var copies = new List<(MReg Dest, MOperand Source)>();
       foreach (var block in fn.Blocks)
         foreach (var phi in block.Phis)
-          if (phi.IncomingFrom(predBlock) is { } value)
-            copies.Add((this._vregs[phi], this.Operand(value)));
+          if (phi.IncomingFrom(predBlock) is { } value) {
+            if (!this.TryOperand(value, out var source))
+              return false;
+            copies.Add((this._vregs[phi], source));
+          }
       if (copies.Count == 0)
         continue;
 
       // a cycle on this edge (one copy's source is another copy's destination) needs a temporary - decline
       var destinations = copies.Select(c => c.Dest).ToHashSet();
       if (copies.Any(c => c.Source is MOperand.Register r && destinations.Contains(r.Reg) && !r.Reg.Equals(c.Dest)))
-        return false;
+        return this.Decline("phi: copy cycle on an edge (a swap needs a temporary)");
 
       var mblock = mblocks[predBlock.Label];
       var insertAt = mblock.Instructions.FindIndex(i => i.IsTerminator);
@@ -119,10 +142,10 @@ public sealed class InstructionSelector {
         block.Successors.Add(br.Target.Label);
         return true;
       case IrCondBr cond when folded is { } cmp && MapPredicate(cmp.Pred) is { } cc:
-        var lhs = this.Operand(cmp.Lhs);
+        if (!this.TryOperand(cmp.Lhs, out var lhs) || !this.TryOperand(cmp.Rhs, out var rhs))
+          return false;
         if (lhs is not MOperand.Register)
-          return false;            // CMP needs a register/memory left operand, not an immediate
-        var rhs = this.Operand(cmp.Rhs);
+          return this.Decline("compare: immediate left operand");   // CMP needs a register/memory left operand
         block.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
           new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: false, WritesFlags: true,
             ReadsMemory: lhs is MOperand.Memory || rhs is MOperand.Memory, WritesMemory: false)));
@@ -133,7 +156,8 @@ public sealed class InstructionSelector {
         block.Successors.Add(cond.IfFalse.Label);
         return true;
       default:
-        return false;              // a non-compare condition, a switch, etc. - not in this increment
+        return this.Decline($"terminator: {terminator?.GetType().Name ?? "none"}"
+          + (terminator is IrCondBr ? " (condition is not a folded compare)" : ""));
     }
   }
 
@@ -169,22 +193,26 @@ public sealed class InstructionSelector {
         return this.SelectGep(gep, block);
       case IrRet ret:
         return this.SelectRet(ret, block);
+      case IrCall call:
+        return this.SelectCall(call, block);
       default:
-        return false;   // unsupported construct - decline the whole function
+        return this.Decline($"instruction: {instr.GetType().Name}");   // unsupported construct - decline the whole function
     }
   }
 
   private bool SelectBinary(IrBinary bin, MBlock block) {
-    if (bin.IsFloatOp || !TryMapBinary(bin.Op, out var opcode))
-      return false;   // float / division / remainder - not in this increment
+    if (bin.IsFloatOp)
+      return this.Decline($"binary: float {bin.Op}");
+    if (!TryMapBinary(bin.Op, out var opcode))
+      return this.Decline($"binary: {bin.Op}");   // division / remainder - not in this increment
 
     // two-address form: dest = lhs; dest <op>= rhs
     var dest = this.FreshVreg(bin.Type);
     this._vregs[bin] = dest;
     var destOp = new MOperand.Register(dest);
-    var lhs = this.Operand(bin.Lhs);
+    if (!this.TryOperand(bin.Lhs, out var lhs) || !this.TryOperand(bin.Rhs, out var rhs))
+      return false;
     block.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, lhs], MovEffect(destOp, lhs)));
-    var rhs = this.Operand(bin.Rhs);
     // the two-operand IMUL has no immediate form - materialize an immediate multiplier in a register
     if (opcode == MOpcode.Imul && rhs is MOperand.Immediate) {
       var tmp = new MOperand.Register(this.FreshVreg(bin.Type));
@@ -216,15 +244,18 @@ public sealed class InstructionSelector {
     var dest = this.FreshVreg(load.Type);
     this._vregs[load] = dest;
     var destOp = new MOperand.Register(dest);
-    var mem = this.PointerMemory(load.Pointer, RegSize(load.Type));
+    if (this.PointerMemory(load.Pointer, RegSize(load.Type)) is not { } mem)
+      return false;
     block.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, mem],
       new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false, ReadsMemory: true, WritesMemory: false)));
     return true;
   }
 
   private bool SelectStore(IrStore store, MBlock block) {
-    var mem = this.PointerMemory(store.Pointer, RegSize(store.Value.Type));
-    var value = this.Operand(store.Value);
+    if (this.PointerMemory(store.Pointer, RegSize(store.Value.Type)) is not { } mem)
+      return false;
+    if (!this.TryOperand(store.Value, out var value))
+      return false;
     block.Instructions.Add(new MInstr(MOpcode.Mov, [mem, value],
       new MInstrEffect(WrittenRegs: [], ReadRegs: value is MOperand.Register ? [1] : [],
         ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: true)));
@@ -233,31 +264,85 @@ public sealed class InstructionSelector {
 
   private bool SelectGep(IrGep gep, MBlock block) {
     if (gep.ElementType is not null)
-      return false;   // element-indexed (target-scaled) GEP - byte-offset only in this increment
+      return this.Decline("gep: element-indexed");   // byte-offset only in this increment
 
     var dest = this.FreshVreg(IrType.Ptr);
     this._vregs[gep] = dest;
     var destOp = new MOperand.Register(dest);
-    var baseOp = this.Operand(gep.BasePtr);
-    if (baseOp is not MOperand.Register baseReg)
+    if (!this.TryOperand(gep.BasePtr, out var baseOp))
       return false;
+    if (baseOp is not MOperand.Register baseReg)
+      return this.Decline("gep: non-register base");
     // LEA dest, [base + offset]: a constant offset folds into the displacement, a register offset becomes the index
     MOperand.Memory mem = gep.ByteOffset is IrConstantInt c
       ? new(baseReg.Reg, null, 1, (int)c.Value, MRegSize.Word)
-      : this.Operand(gep.ByteOffset) is MOperand.Register idx ? new(baseReg.Reg, idx.Reg, 1, 0, MRegSize.Word) : null!;
+      : this.TryOperand(gep.ByteOffset, out var offset) && offset is MOperand.Register idx
+        ? new(baseReg.Reg, idx.Reg, 1, 0, MRegSize.Word)
+        : null!;
     if (mem is null)
-      return false;
+      return this.Decline("gep: offset is neither a constant nor a register");
     block.Instructions.Add(new MInstr(MOpcode.Lea, [destOp, mem],
       new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: false)));
     return true;
   }
+
+  /// <summary>
+  /// A direct call to a defined procedure, in the BASIC/PASCAL convention the direct codegen emits:
+  /// arguments pushed <b>left to right</b>, <c>CALL</c>, and the callee cleaning them with its
+  /// <c>RET n</c> - so a back-end function and a directly-emitted one call each other unchanged.
+  /// The result arrives in <c>AX</c>.
+  ///
+  /// The call is marked as clobbering every allocatable register, which is the truth on this ABI
+  /// (a callee owns AX-DX as scratch and may use SI/DI for loop residency without saving them).
+  /// Allocation therefore refuses to keep any value in a register across the call, and - having no
+  /// spilling yet - declines such a function rather than miscompiling it.
+  /// </summary>
+  private bool SelectCall(IrCall call, MBlock block) {
+    if (call.Callee is not IrFunction callee)
+      return this.Decline("call: indirect (through a procedure pointer)");
+    if (callee.IsDeclaration)
+      return this.Decline($"call: {callee.Name} (runtime declaration - needs the runtime-label bridge)");
+    if (!call.Type.IsVoid && RegSize(call.Type) != MRegSize.Word)
+      return this.Decline($"call: {callee.Name} returns {call.Type} (word results only)");
+
+    foreach (var arg in call.Args) {
+      if (arg.Type.IsFloat || RegSize(arg.Type) != MRegSize.Word)
+        return this.Decline($"call: {callee.Name} takes {arg.Type} (word arguments only)");
+      if (!this.TryOperand(arg, out var pushed))
+        return false;
+      block.Instructions.Add(new MInstr(MOpcode.Push, [pushed],
+        new MInstrEffect(WrittenRegs: [], ReadRegs: pushed is MOperand.Register ? [0] : [],
+          ReadsFlags: false, WritesFlags: false, ReadsMemory: pushed is MOperand.Memory, WritesMemory: true)));
+    }
+
+    block.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef(callee.Name)],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: true, WritesMemory: true),
+      condition: null, clobbers: _callClobbers));
+
+    if (call.Type.IsVoid)
+      return true;
+
+    // the result is in AX; copy it into the call's own virtual register so the allocator may place
+    // the value anywhere (the copy is free when it lands in AX again)
+    var dest = this.FreshVreg(call.Type);
+    this._vregs[call] = dest;
+    var destOp = new MOperand.Register(dest);
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX, RegSize(call.Type)));
+    block.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ax], MovEffect(destOp, ax)));
+    return true;
+  }
+
+  /// <summary>Every allocatable register a CALL destroys under this ABI - the callee saves none of them.</summary>
+  private static readonly Reg[] _callClobbers = [Reg.AX, Reg.BX, Reg.CX, Reg.DX, Reg.SI, Reg.DI];
 
   private bool SelectRet(IrRet ret, MBlock block) {
     if (ret.HasValue && ret.Value is { } value) {
       // the result is returned in AX (word) - a physical pin the allocator must honour
       var ax = MReg.Physical_(Reg.AX, RegSize(value.Type));
       var axOp = new MOperand.Register(ax);
-      var src = this.Operand(value);
+      if (!this.TryOperand(value, out var src))
+        return false;
       block.Instructions.Add(new MInstr(MOpcode.Mov, [axOp, src], MovEffect(axOp, src)));
     }
 
@@ -273,9 +358,41 @@ public sealed class InstructionSelector {
   private MOperand Operand(IrValue value)
     => value is IrConstantInt c ? new MOperand.Immediate(c.Value) : new MOperand.Register(this._vregs[value]);
 
-  /// <summary>A pointer value as a memory operand <c>[ptrReg]</c> of the given access size.</summary>
-  private MOperand.Memory PointerMemory(IrValue pointer, MRegSize size)
-    => new(this._vregs[pointer], null, 1, 0, size);
+  /// <summary>
+  /// An SSA value as a machine operand, declining instead of throwing when it has no virtual
+  /// register. Not every operand is one: an <see cref="IrGlobalVariable"/> is a data label (a
+  /// module-level or SHARED variable), an <see cref="IrConstantFloat"/> needs an x87 constant, and
+  /// <see cref="IrUndef"/> has no value at all. None of those are selectable yet, and a back end
+  /// that throws on them would crash the compiler where falling back to the direct codegen is
+  /// correct - so every operand goes through here.
+  /// </summary>
+  private bool TryOperand(IrValue value, out MOperand operand) {
+    switch (value) {
+      case IrConstantInt c:
+        operand = new MOperand.Immediate(c.Value);
+        return true;
+      case IrGlobalVariable g:
+        operand = null!;
+        return this.Decline($"operand: global '{g.Name}' (needs the data-layout bridge)");
+      default:
+        if (this._vregs.TryGetValue(value, out var reg)) {
+          operand = new MOperand.Register(reg);
+          return true;
+        }
+        operand = null!;
+        return this.Decline($"operand: {value.GetType().Name} has no register");
+    }
+  }
+
+  /// <summary>A pointer value as a memory operand <c>[ptrReg]</c> of the given access size, or null when it has no register.</summary>
+  private MOperand.Memory? PointerMemory(IrValue pointer, MRegSize size) {
+    if (this._vregs.TryGetValue(pointer, out var reg))
+      return new(reg, null, 1, 0, size);
+    _ = pointer is IrGlobalVariable g
+      ? this.Decline($"pointer: global '{g.Name}' (needs the data-layout bridge)")
+      : this.Decline($"pointer: {pointer.GetType().Name} has no register");
+    return null;
+  }
 
   private static MInstrEffect MovEffect(MOperand.Register dest, MOperand src)
     => new(WrittenRegs: [0], ReadRegs: src is MOperand.Register ? [1] : [],
@@ -297,7 +414,12 @@ public sealed class InstructionSelector {
     return opcode != MOpcode.Ret;
   }
 
-  private static MRegSize RegSize(IrType type) => type.Bits switch {
+  /// <summary>
+  /// The machine register size a value of this type occupies. A pointer carries no bit width in the
+  /// IR (it is a target property), and on x86-16 it is a 2-byte near offset - so it is a word, not
+  /// the byte a naive width test would give it, which would size its loads and stores wrongly.
+  /// </summary>
+  private static MRegSize RegSize(IrType type) => type.IsPointer ? MRegSize.Word : type.Bits switch {
     <= 8 => MRegSize.Byte,
     <= 16 => MRegSize.Word,
     _ => MRegSize.Dword,

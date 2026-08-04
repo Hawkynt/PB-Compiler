@@ -112,10 +112,18 @@ public sealed class CEmitter {
   /// <summary>True for a function the C library already provides, so no prototype is emitted for it.</summary>
   private static bool IsCLibrary(IrFunction f) => CLibraryName(f.Name) is not null;
 
-  /// <summary>Maps an IR type to its C spelling; a pointer is opaque, as in the IR.</summary>
+  /// <summary>
+  /// Maps an IR type to its C spelling; a pointer is opaque, as in the IR. Integers declare in their
+  /// signed C form and each operation casts to <see cref="UTy"/> where it needs wrap-around or an
+  /// unsigned reading, so an unsigned IR type needs no separate declaration spelling. Microsoft
+  /// Binary Format is a DOS storage encoding with no C equivalent - it must be converted to IEEE
+  /// before emission (<see cref="IrCastOp.MbfToFP"/>).
+  /// </summary>
   private static string Ty(IrType t) => t.Kind switch {
     IrTypeKind.Void => "void",
     IrTypeKind.Ptr => "void *",
+    IrTypeKind.Float when t.IsMbf => throw new NotSupportedException(
+      $"Microsoft Binary Format ({t}) has no C type - convert to IEEE with MbfToFP before emission"),
     IrTypeKind.Float => t.Bits switch { 32 => "float", 64 => "double", _ => "long double" },
     _ => t.Bits switch { 1 => "int8_t", 8 => "int8_t", 16 => "int16_t", 32 => "int32_t", _ => "int64_t" },
   };

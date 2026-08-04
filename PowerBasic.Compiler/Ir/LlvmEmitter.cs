@@ -119,10 +119,17 @@ public sealed class LlvmEmitter {
     _ => this._names.TryGetValue(value, out var n) ? n : "%undef",
   };
 
-  /// <summary>LLVM type spelling.</summary>
+  /// <summary>
+  /// LLVM type spelling. LLVM integers are signless, so an unsigned IR type renders as the same
+  /// <c>iN</c> - the signedness travels on the instruction (<c>udiv</c>, <c>ult</c>, <c>zext</c>),
+  /// which is exactly how it reaches this emitter. Microsoft Binary Format has no LLVM spelling at
+  /// all and must be converted to IEEE before it gets here (<see cref="IrCastOp.MbfToFP"/>).
+  /// </summary>
   private static string Ty(IrType t) => t.Kind switch {
     IrTypeKind.Void => "void",
     IrTypeKind.Int => "i" + t.Bits,
+    IrTypeKind.Float when t.IsMbf => throw new NotSupportedException(
+      $"Microsoft Binary Format ({t}) has no LLVM type - convert to IEEE with MbfToFP before emission"),
     IrTypeKind.Float => t.Bits switch { 32 => "float", 64 => "double", 80 => "x86_fp80", _ => "fp" + t.Bits },
     IrTypeKind.Ptr => "ptr",
     _ => "void",

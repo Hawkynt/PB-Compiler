@@ -87,7 +87,7 @@ public sealed class IrVerifier {
       this.Error($"phi in block '{block.Label}' incoming blocks do not match its predecessors");
 
     for (var i = 0; i < phi.IncomingBlocks.Count; ++i)
-      if (!phi.GetOperand(i).Type.Equals(phi.Type))
+      if (!phi.GetOperand(i).Type.SameStorage(phi.Type))
         this.Error($"phi in block '{block.Label}' incoming value #{i} has type {phi.GetOperand(i).Type}, expected {phi.Type}");
   }
 
@@ -118,19 +118,25 @@ public sealed class IrVerifier {
 
   private void VerifyTypes(IrInstruction inst) {
     switch (inst) {
+      // operand agreement is a STORAGE question, so signedness may differ (the op carries it:
+      // sdiv/udiv, slt/ult) but an MBF float never mixes with an IEEE one - the encodings differ
       case IrBinary b:
-        if (!b.Lhs.Type.Equals(b.Rhs.Type) || !b.Type.Equals(b.Lhs.Type))
+        if (!b.Lhs.Type.SameStorage(b.Rhs.Type) || !b.Type.SameStorage(b.Lhs.Type))
           this.Error($"binary '{b.Op}' operand/result types disagree ({b.Lhs.Type}, {b.Rhs.Type} -> {b.Type})");
         if (b.IsFloatOp && !b.Type.IsFloat)
           this.Error($"float op '{b.Op}' on non-float type {b.Type}");
+        if (b.IsFloatOp && b.Type.IsMbf)
+          this.Error($"float op '{b.Op}' on Microsoft Binary Format {b.Type} - MBF is storage only, convert with MbfToFP first");
         if (!b.IsFloatOp && !b.Type.IsInteger)
           this.Error($"integer op '{b.Op}' on non-integer type {b.Type}");
         break;
       case IrCmp c:
-        if (!c.Lhs.Type.Equals(c.Rhs.Type))
+        if (!c.Lhs.Type.SameStorage(c.Rhs.Type))
           this.Error($"comparison operands disagree ({c.Lhs.Type} vs {c.Rhs.Type})");
         if (IsFloatPred(c.Pred) && !c.Lhs.Type.IsFloat)
           this.Error("float comparison on non-float operands");
+        if (IsFloatPred(c.Pred) && c.Lhs.Type.IsMbf)
+          this.Error("float comparison on Microsoft Binary Format operands - convert with MbfToFP first");
         if (!IsFloatPred(c.Pred) && c.Lhs.Type.IsFloat)
           this.Error("integer comparison on float operands");
         break;
@@ -149,7 +155,7 @@ public sealed class IrVerifier {
       case IrRet r:
         var expected = this._fn.ReturnType;
         var actual = r.Value?.Type ?? IrType.Void;
-        if (!actual.Equals(expected))
+        if (!actual.SameStorage(expected))
           this.Error($"ret type {actual} does not match function return type {expected}");
         break;
       case IrCondBr cb when !cb.Condition.Type.IsBool:
@@ -158,7 +164,7 @@ public sealed class IrVerifier {
       case IrSelect sel:
         if (!sel.Condition.Type.IsBool)
           this.Error($"select condition must be i1, got {sel.Condition.Type}");
-        if (!sel.IfTrue.Type.Equals(sel.IfFalse.Type) || !sel.Type.Equals(sel.IfTrue.Type))
+        if (!sel.IfTrue.Type.SameStorage(sel.IfFalse.Type) || !sel.Type.SameStorage(sel.IfTrue.Type))
           this.Error($"select arms/result types disagree ({sel.IfTrue.Type}, {sel.IfFalse.Type} -> {sel.Type})");
         break;
       case IrCall call when !call.Callee.Type.IsPointer:
@@ -173,10 +179,13 @@ public sealed class IrVerifier {
     var ok = cast.Op switch {
       IrCastOp.Trunc => from.IsInteger && to.IsInteger && from.Bits > to.Bits,
       IrCastOp.ZExt or IrCastOp.SExt => from.IsInteger && to.IsInteger && from.Bits < to.Bits,
-      IrCastOp.FPTrunc => from.IsFloat && to.IsFloat && from.Bits > to.Bits,
-      IrCastOp.FPExt => from.IsFloat && to.IsFloat && from.Bits < to.Bits,
-      IrCastOp.SIToFP or IrCastOp.UIToFP => from.IsInteger && to.IsFloat,
-      IrCastOp.FPToSI or IrCastOp.FPToUI => from.IsFloat && to.IsInteger,
+      // the IEEE float ops never take MBF storage - it converts through MbfToFP/FPToMbf first
+      IrCastOp.FPTrunc => from.IsIeeeFloat && to.IsIeeeFloat && from.Bits > to.Bits,
+      IrCastOp.FPExt => from.IsIeeeFloat && to.IsIeeeFloat && from.Bits < to.Bits,
+      IrCastOp.SIToFP or IrCastOp.UIToFP => from.IsInteger && to.IsIeeeFloat,
+      IrCastOp.FPToSI or IrCastOp.FPToUI => from.IsIeeeFloat && to.IsInteger,
+      IrCastOp.MbfToFP => from.IsMbf && to.IsIeeeFloat,
+      IrCastOp.FPToMbf => from.IsIeeeFloat && to.IsMbf,
       IrCastOp.IntToPtr => from.IsInteger && to.IsPointer,
       IrCastOp.PtrToInt => from.IsPointer && to.IsInteger,
       IrCastOp.BitCast => true,

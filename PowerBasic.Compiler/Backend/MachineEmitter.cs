@@ -17,10 +17,13 @@ public sealed class MachineEmitter {
   private readonly IReadOnlyDictionary<int, Reg> _allocation;
   private readonly int[] _slotDisp;
   private readonly Dictionary<string, Label> _labels = [];
+  private readonly Func<string, Label?>? _resolveCallee;
 
-  private MachineEmitter(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation) {
+  private MachineEmitter(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
+      Func<string, Label?>? resolveCallee = null) {
     this._asm = asm;
     this._allocation = allocation;
+    this._resolveCallee = resolveCallee;
     // lay the stack slots out below BP: slot k lives at [BP - offset], word-aligned
     this._slotDisp = new int[function.StackSlots.Count];
     var running = 0;
@@ -51,9 +54,16 @@ public sealed class MachineEmitter {
   /// cleans <paramref name="paramBytes"/> of arguments (<c>RET n</c>). The body's IrRet already moved
   /// the result into AX, so each return site falls into the shared epilogue sequence.
   /// </summary>
+  /// <param name="resolveCallee">
+  /// Maps a called function's name to the <see cref="Label"/> the whole-program codegen bound for it.
+  /// A call cannot go through <see cref="Assembler.Lbl"/>: procedure labels are minted with
+  /// <see cref="Assembler.DefineLabel(string?)"/>, which is a different registry, so looking the name
+  /// up there would create a fresh, never-bound label. The code generator owns the mapping and
+  /// supplies it here; a name it does not know is a bug in the routing, not in this emitter.
+  /// </param>
   public static void EmitFunction(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
-      int[] paramOffsets, int paramBytes) {
-    var emitter = new MachineEmitter(asm, function, allocation);
+      int[] paramOffsets, int paramBytes, Func<string, Label?>? resolveCallee = null) {
+    var emitter = new MachineEmitter(asm, function, allocation, resolveCallee);
 
     asm.Push(Asm.Reg.BP);
     asm.Mov(Asm.Reg.BP, Asm.Reg.SP);
@@ -109,7 +119,16 @@ public sealed class MachineEmitter {
       case MOpcode.Sar: asm.Sar(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
       case MOpcode.Jmp: asm.Jmp(this._labels[((MOperand.LabelRef)ops[0]).Name]); break;
       case MOpcode.Jcc: asm.J(instr.Condition!.Value, this._labels[((MOperand.LabelRef)ops[0]).Name]); break;
-      case MOpcode.Call: asm.Call(asm.Lbl(((MOperand.LabelRef)ops[0]).Name)); break;   // target is an external routine / function label
+      case MOpcode.Call: {
+        // with a resolver (the whole-program routing) the callee MUST be one it bound - anything else
+        // is a routing bug; without one, the name is an external/runtime symbol resolved by name
+        var callee = ((MOperand.LabelRef)ops[0]).Name;
+        asm.Call(this._resolveCallee is { } resolve
+          ? resolve(callee) ?? throw new System.InvalidOperationException(
+              $"no label for callee '{callee}' - the routing admitted a call it cannot bind")
+          : asm.Lbl(callee));
+        break;
+      }
       case MOpcode.Push:
         switch (this.ToSource(ops[0])) {
           case Reg r: asm.Push(r); break;

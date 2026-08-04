@@ -15,16 +15,45 @@ construction. Nothing in the production pipeline depends on this IR yet.
 
 A small, target-independent first-class type lattice (`IrType`):
 
-| Kind  | Spelling          | Notes                                   |
-|-------|-------------------|-----------------------------------------|
-| Void  | `void`            | stores, void calls, `ret void`          |
-| Int   | `i1 i8 i16 i32 i64` | width in bits; signedness lives on ops |
-| Float | `f32 f64 f80`     | IEEE / x87 extended                     |
-| Ptr   | `ptr`             | opaque; pointee travels on the mem op   |
+| Kind  | Spelling                        | Notes                                        |
+|-------|---------------------------------|----------------------------------------------|
+| Void  | `void`                          | stores, void calls, `ret void`               |
+| Int   | `i1 i8 i16 i32 i64` / `u8 u16 u32 u64` | width in bits **and** signedness      |
+| Float | `f32 f64 f80` / `mbf32 mbf64`   | IEEE / x87 extended, or Microsoft Binary Format |
+| Ptr   | `ptr`                           | opaque; pointee travels on the mem op        |
 
-PB scalar types map directly (`IrTypeMapper`): BYTE/WORD/INTEGER→`i16`-class by
-byte size, LONG/DWORD→`i32`, QUAD→`i64`, SINGLE/DOUBLE/EXT→`f32/f64/f80`.
-Non-scalars (strings, UDTs, dynamic arrays) are not yet mapped.
+PB scalar types map directly (`IrTypeMapper`): INTEGER→`i16` and WORD→`u16`,
+LONG→`i32` and DWORD→`u32`, QUAD→`i64` and QWORD→`u64`, BYTE→`u8` and SBYTE→`i8`,
+SINGLE/DOUBLE/EXT→`f32/f64/f80`. Non-scalars (strings, UDTs, dynamic arrays) are
+not yet mapped.
+
+### Two distinctions LLVM does not make
+
+LLVM's integers are signless and its floats are IEEE. Neither holds for the BASIC
+family, and a back end reading *only* the IR has to be able to tell:
+
+- **Signedness.** PB has a signed and an unsigned scalar at every width. Which one
+  a value is decides how it widens (`CBW` versus `XOR AH,AH`), which divide it
+  uses (`IDIV` versus `DIV`), which condition a comparison takes and how it
+  prints. It is an *interpretation* of the same bits, so `IrType.SameStorage`
+  deliberately ignores it: `u16` and `i16` mix freely in a phi, a store or a
+  binary operand pair, and the instruction carries the reading (`sdiv`/`udiv`,
+  `slt`/`ult`, `sext`/`zext`). The verifier checks agreement by storage, not by
+  exact type.
+- **Microsoft Binary Format.** BASICA, GW-BASIC and the BASCOM-heritage
+  QuickBASIC releases store SINGLE and DOUBLE in MBF — a different exponent bias
+  and layout, with no infinities or NaNs. MBF is *storage only*: the x87 cannot
+  compute on it, so a load converts to IEEE and a store converts back, through the
+  `MbfToFP`/`FPToMbf` casts. The verifier rejects arithmetic or a comparison on an
+  MBF operand, and `SameStorage` treats `mbf32` and `f32` as different encodings —
+  moving between them is a conversion, never a reinterpretation.
+
+The `LlvmEmitter` and `CEmitter` render an unsigned type as the same integer
+(correct: the signedness is on the op by the time it reaches them) and **refuse**
+an MBF type rather than silently emitting it as IEEE. `IrLowering` maps MBF
+storage but declines a program that uses it until it emits the load/store
+conversions — the DOS emitter's `EmitMbfSingleLoad`/`EmitMbfSingleStore` are the
+model.
 
 ## Core data model
 

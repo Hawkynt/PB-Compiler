@@ -42,6 +42,7 @@ public sealed partial class CodeGenerator {
       if (!f.IsDeclaration)
         byName[f.Name] = f;
 
+    var candidates = new List<(ProcedureSymbol Proc, IrFunction Fn, MFunction Machine)>();
     foreach (var proc in model.ProcedureList) {
       if (!proc.IsFunction || proc.IsExternal
           || proc.ReturnType is not ScalarType { ByteSize: 2, Signed: true, IsFloat: false }
@@ -50,14 +51,62 @@ public sealed partial class CodeGenerator {
         continue;
       if (!byName.TryGetValue(proc.Name, out var irFn) || InstructionSelector.TrySelect(irFn) is not { } mfn)
         continue;
+      candidates.Add((proc, irFn, mfn));
+    }
+
+    // A selected function may CALL another procedure, and the two sides have to agree on the ABI.
+    // The back end emits (and expects) the stack convention, while OptRegParm may convert a
+    // directly-emitted procedure to the register convention - and it decides that AFTER this set is
+    // known (it skips exactly the routed procedures). The sound rule is therefore that a routed
+    // function may only call routed functions: both are then excluded from the conversion by
+    // construction. Dropping one can invalidate its callers, so it iterates to a fixpoint.
+    var routable = candidates.Select(c => c.Proc.Name).ToHashSet(System.StringComparer.OrdinalIgnoreCase);
+    for (var changed = true; changed;) {
+      changed = false;
+      for (var i = candidates.Count - 1; i >= 0; --i) {
+        if (CalleeNames(candidates[i].Fn).All(routable.Contains))
+          continue;
+        routable.Remove(candidates[i].Proc.Name);
+        candidates.RemoveAt(i);
+        changed = true;
+      }
+    }
+
+    foreach (var (proc, _, mfn) in candidates) {
       MachineScheduler.Schedule(mfn);             // schedule first, then allocate the final order
       if (LinearScanAllocator.Allocate(mfn) is not { } alloc)
-        continue;
+        continue;                                 // a value live across a CALL has no register - decline
       this._backendProcs[proc] = (mfn, alloc);
+    }
+
+    // an allocation failure can strand a caller whose callee is no longer routed - re-check
+    for (var changed = true; changed;) {
+      changed = false;
+      foreach (var (proc, fn, _) in candidates)
+        if (this._backendProcs.ContainsKey(proc)
+            && !CalleeNames(fn).All(n => this._backendProcs.Keys.Any(p => p.Name.Equals(n, System.StringComparison.OrdinalIgnoreCase)))) {
+          this._backendProcs.Remove(proc);
+          changed = true;
+        }
     }
 
     return this._backendProcs;
   }
+
+  /// <summary>The label a back-end-emitted CALL targets: the one the whole-program codegen bound for that procedure.</summary>
+  private Asm.Label? CalleeLabel(string name) {
+    var proc = model.ProcedureList.FirstOrDefault(p =>
+      p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase) && this.BackendProcs().ContainsKey(p));
+    return proc is null ? null : this.ProcLabelOf(proc);
+  }
+
+  /// <summary>The names of the defined functions <paramref name="fn"/> calls directly (its ABI partners).</summary>
+  private static IEnumerable<string> CalleeNames(IrFunction fn)
+    => fn.Blocks.SelectMany(b => b.Instructions)
+        .OfType<IrCall>()
+        .Select(c => c.Callee)
+        .OfType<IrFunction>()
+        .Select(f => f.Name);
 
   /// <summary>True when <paramref name="proc"/> is compiled by the x86-16 back end (so it is excluded from inlining and the register-parameter convention, and emitted via the back end).</summary>
   private bool IsBackendRouted(ProcedureSymbol proc) => this.UseExperimentalBackend && this.BackendProcs().ContainsKey(proc);
@@ -71,6 +120,8 @@ public sealed partial class CodeGenerator {
       asm.AlignCode(16);
     asm.MarkLabel(this.ProcLabelOf(proc));
     var paramOffsets = proc.Parameters.Select(p => p.Offset).ToArray();
-    MachineEmitter.EmitFunction(asm, mfn, alloc, paramOffsets, paramBytes);
+    // a CALL needs the label the whole-program codegen bound for the callee (procedure labels live in
+    // a different registry than Assembler.Lbl); the routing guarantees every callee is itself routed
+    MachineEmitter.EmitFunction(asm, mfn, alloc, paramOffsets, paramBytes, this.CalleeLabel);
   }
 }

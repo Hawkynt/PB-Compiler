@@ -21,6 +21,10 @@ public enum IrCastOp {
   FPToSI, FPToUI, SIToFP, UIToFP,
   FPTrunc, FPExt,
   IntToPtr, PtrToInt, BitCast,
+  /// <summary>Microsoft Binary Format → IEEE, the conversion a load of an MBF cell performs.</summary>
+  MbfToFP,
+  /// <summary>IEEE → Microsoft Binary Format, the conversion a store into an MBF cell performs.</summary>
+  FPToMbf,
 }
 
 /// <summary>A binary arithmetic or bitwise instruction: <c>result = op lhs, rhs</c>.</summary>

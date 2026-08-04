@@ -150,7 +150,7 @@ public sealed class IrLowering {
     if (proc.IsFunction) {
       if (proc.ReturnType is StringType)
         ret = IrType.Ptr;                              // a string result IS its runtime handle
-      else if (proc.ReturnType is null || !IrTypeMapper.TryMap(proc.ReturnType, out ret))
+      else if (proc.ReturnType is null || !IrTypeMapper.TryMap(proc.ReturnType, out ret) || ret.IsMbf)
         return false;
     }
     var args = new List<IrArgument>();
@@ -168,7 +168,7 @@ public sealed class IrLowering {
         args.Add(new IrArgument(IrType.Ptr, args.Count, p.Name));
         continue;
       }
-      if (!IrTypeMapper.TryMap(p.Type, out var pty))
+      if (!IrTypeMapper.TryMap(p.Type, out var pty) || pty.IsMbf)
         return false;                                  // scalar parameters only
       args.Add(new IrArgument(p.ByVal ? pty : IrType.Ptr, args.Count, p.Name));  // BYREF parameters arrive as pointers
     }
@@ -297,7 +297,7 @@ public sealed class IrLowering {
 
   private void ReturnFromFunction() {
     if (this._resultVar is not null)
-      this._b.Ret(this._b.Load(this._resultVar.Type is StringType ? IrType.Ptr : IrTypeMapper.Map(this._resultVar.Type),
+      this._b.Ret(this._b.Load(this._resultVar.Type is StringType ? IrType.Ptr : MapType(this._resultVar.Type),
         this.SlotFor(this._resultVar)));
     else
       this._b.Ret();
@@ -322,7 +322,7 @@ public sealed class IrLowering {
         elem = IrType.Ptr; count = arr.ElementCount;   // an array of string handles
       } else if (arr.Element is UdtType ue) {
         elem = IrType.I8; count = arr.ElementCount * ue.Size;   // a packed buffer of records
-      } else if (IrTypeMapper.TryMap(arr.Element, out elem)) {
+      } else if (IrTypeMapper.TryMap(arr.Element, out elem) && !elem.IsMbf) {
         count = arr.ElementCount;
       } else
         throw new IrLoweringException("non-scalar array element");
@@ -330,7 +330,7 @@ public sealed class IrLowering {
     } else if (symbol.Type is UdtType udt) {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I8) { Count = udt.Size, Name = symbol.Name });   // a packed record buffer
     } else {
-      alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrTypeMapper.Map(symbol.Type)) { Name = symbol.Name });
+      alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(MapType(symbol.Type)) { Name = symbol.Name });
     }
     this._addr[symbol] = alloca;
     return alloca;
@@ -357,10 +357,10 @@ public sealed class IrLowering {
       ArrayType { IsDynamic: false } arr => arr.Element switch {
         StringType => (IrType.Ptr, arr.ElementCount),
         UdtType ue => (IrType.I8, arr.ElementCount * ue.Size),
-        _ => (IrTypeMapper.Map(arr.Element), arr.ElementCount),
+        _ => (MapType(arr.Element), arr.ElementCount),
       },
       ArrayType => throw new IrLoweringException("dynamic array with shared storage"),
-      _ => (IrTypeMapper.Map(symbol.Type), 1),
+      _ => (MapType(symbol.Type), 1),
     };
     // the name is qualified so a STATIC local cannot collide with a module variable of the
     // same spelling, and the IR stays readable
@@ -558,7 +558,7 @@ public sealed class IrLowering {
     var (rightAddr, rightType) = this.LValue(sw.Right);
     if (!leftType.Equals(rightType))
       throw new IrLoweringException("SWAP of differently-typed operands");
-    var ty = IrTypeMapper.Map(leftType);
+    var ty = MapType(leftType);
     var leftVal = this._b.Load(ty, leftAddr);
     var rightVal = this._b.Load(ty, rightAddr);
     this._b.Store(rightVal, leftAddr);
@@ -1012,7 +1012,7 @@ public sealed class IrLowering {
   private void LowerIncrDecr(IncrDecrStmt id) {
     var symbol = this.SymbolOf(id.Target);
     var slot = this.SlotFor(symbol);
-    var ty = IrTypeMapper.Map(symbol.Type);
+    var ty = MapType(symbol.Type);
     if (ty.IsFloat)
       throw new IrLoweringException("INCR/DECR on float");
     var current = this._b.Load(ty, slot);
@@ -1047,7 +1047,7 @@ public sealed class IrLowering {
 
   private void LowerFor(ForStmt f) {
     var symbol = this.SymbolOf(f.Variable);
-    var ty = IrTypeMapper.Map(symbol.Type);
+    var ty = MapType(symbol.Type);
     if (!ty.IsInteger)
       throw new IrLoweringException("FOR over a non-integer counter");
     var signed = ((ScalarType)symbol.Type).Signed;
@@ -1276,9 +1276,9 @@ public sealed class IrLowering {
   private IrValue LowerExpr(Expression expr) {
     switch (expr) {
       case IntegerLiteralExpr lit:
-        return new IrConstantInt(IrTypeMapper.Map(this._model.TypeOf(lit)), lit.Value);
+        return new IrConstantInt(MapType(this._model.TypeOf(lit)), lit.Value);
       case FloatLiteralExpr lit:
-        return new IrConstantFloat(IrTypeMapper.Map(this._model.TypeOf(lit)), lit.Value);
+        return new IrConstantFloat(MapType(this._model.TypeOf(lit)), lit.Value);
       case NamedConstantExpr nc:
         return this.LowerNamedConstant(nc);
       case NameExpr name:
@@ -1289,14 +1289,14 @@ public sealed class IrLowering {
         return this.LowerBinary(b);
       case CallOrIndexExpr indexed when this._model.VariableBindings.TryGetValue(indexed, out var s) && s.Type is ArrayType:
         var (address, element) = this.ElementAddress(indexed);
-        return this._b.Load(IrTypeMapper.Map(element), address);
+        return this._b.Load(MapType(element), address);
       case CallOrIndexExpr intr when this._model.IntrinsicBindings.TryGetValue(intr, out var info):
         return this.LowerIntrinsic(intr, info.Name);
       case CallOrIndexExpr call:
         return this.LowerCallExpr(call);
       case MemberExpr member:
         var (memberAddr, memberType) = this.MemberLValue(member);
-        return this._b.Load(IrTypeMapper.Map(memberType), memberAddr);
+        return this._b.Load(MapType(memberType), memberAddr);
       default:
         throw new IrLoweringException($"unsupported expression: {expr.GetType().Name}");
     }
@@ -1305,7 +1305,7 @@ public sealed class IrLowering {
   private IrValue LowerNamedConstant(NamedConstantExpr nc) {
     if (!this._model.Equates.TryGetValue(nc.Name, out var value))
       throw new IrLoweringException($"unknown equate {nc.Name}");
-    var ty = IrTypeMapper.Map(this._model.TypeOf(nc));
+    var ty = MapType(this._model.TypeOf(nc));
     if (value.Integer is { } n)
       return new IrConstantInt(ty, n);
     if (value.Float is { } f)
@@ -1324,7 +1324,7 @@ public sealed class IrLowering {
     }
     if (!this._model.VariableBindings.TryGetValue(name, out var symbol))
       throw new IrLoweringException($"unbound name {name.Name}");
-    return this._b.Load(IrTypeMapper.Map(symbol.Type), this.SlotFor(symbol));
+    return this._b.Load(MapType(symbol.Type), this.SlotFor(symbol));
   }
 
   /// <summary>Lowers a pure numeric intrinsic that needs no runtime (ABS, SGN); declines the rest.</summary>
@@ -1453,7 +1453,7 @@ public sealed class IrLowering {
   /// <summary>Lowers a floating-point math intrinsic to the matching LLVM intrinsic (llvm.sqrt.fN, etc.).</summary>
   private IrValue LowerMath(CallOrIndexExpr call, string fn) {
     var resultPb = this._model.TypeOf(call);
-    var ty = IrTypeMapper.Map(resultPb);
+    var ty = MapType(resultPb);
     if (!ty.IsFloat)
       throw new IrLoweringException($"{fn} on a non-float result");
     var arg = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
@@ -1484,7 +1484,7 @@ public sealed class IrLowering {
       BinaryOp.GreaterEqual => IrCmpPred.Sge,
       _ => throw new IrLoweringException($"string comparison {expr.Op}"),
     };
-    return this._b.SExt(this._b.Cmp(pred, cmp, new IrConstantInt(IrType.I32, 0)), IrTypeMapper.Map(resultPb));
+    return this._b.SExt(this._b.Cmp(pred, cmp, new IrConstantInt(IrType.I32, 0)), MapType(resultPb));
   }
 
   private IrValue LowerUdtComparison(BinaryExpr expr, PbType resultPb) {
@@ -1497,7 +1497,7 @@ public sealed class IrLowering {
     };
     var cmp = this._b.Call(IrType.I32, this.RuntimeFn("rt_mem_compare", IrType.I32, IrType.Ptr, IrType.Ptr, IrType.I32),
       this.UdtAddress(expr.Left), this.UdtAddress(expr.Right), new IrConstantInt(IrType.I32, udt.Size));
-    return this._b.SExt(this._b.Cmp(pred, cmp, new IrConstantInt(IrType.I32, 0)), IrTypeMapper.Map(resultPb));
+    return this._b.SExt(this._b.Cmp(pred, cmp, new IrConstantInt(IrType.I32, 0)), MapType(resultPb));
   }
 
   /// <summary>The base address of a whole UDT value (a UDT variable).</summary>
@@ -1515,7 +1515,7 @@ public sealed class IrLowering {
 
   private IrValue LowerFix(CallOrIndexExpr call) {
     var resultPb = this._model.TypeOf(call);
-    var ty = IrTypeMapper.Map(resultPb);
+    var ty = MapType(resultPb);
     var v = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
     if (ty.IsInteger)
       return v;                                       // integers have no fractional part
@@ -1525,7 +1525,7 @@ public sealed class IrLowering {
 
   private IrValue LowerInt(CallOrIndexExpr call) {
     var resultPb = this._model.TypeOf(call);
-    var ty = IrTypeMapper.Map(resultPb);
+    var ty = MapType(resultPb);
     var v = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
     if (ty.IsInteger)
       return v;
@@ -1538,7 +1538,7 @@ public sealed class IrLowering {
 
   private IrValue LowerAbs(CallOrIndexExpr call) {
     var resultPb = this._model.TypeOf(call);
-    var ty = IrTypeMapper.Map(resultPb);
+    var ty = MapType(resultPb);
     var v = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
     if (ty.IsInteger) {
       // branchless two's-complement abs: m = v >>s (bits-1); (v ^ m) - m
@@ -1559,7 +1559,7 @@ public sealed class IrLowering {
 
   private IrValue LowerSgn(CallOrIndexExpr call) {
     var argPb = this._model.TypeOf(call.Arguments[0]);
-    var resultTy = IrTypeMapper.Map(this._model.TypeOf(call));   // INTEGER (-1/0/1)
+    var resultTy = MapType(this._model.TypeOf(call));   // INTEGER (-1/0/1)
     var v = this.LowerExpr(call.Arguments[0]);
     IrValue pos, neg;
     if (argPb is ScalarType { IsFloat: true }) {
@@ -1625,14 +1625,14 @@ public sealed class IrLowering {
         return address;
     }
     // a constant / expression / type-mismatched lvalue: materialize a temporary
-    var temp = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrTypeMapper.Map(paramType)) { Name = "byref.tmp" });
+    var temp = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(MapType(paramType)) { Name = "byref.tmp" });
     this._b.Store(this.Coerce(this.LowerExpr(arg), this._model.TypeOf(arg), paramType), temp);
     return temp;
   }
 
   private IrValue LowerUnary(UnaryExpr u) {
     var pb = this._model.TypeOf(u);
-    var ty = IrTypeMapper.Map(pb);
+    var ty = MapType(pb);
     var operand = this.Coerce(this.LowerExpr(u.Operand), this._model.TypeOf(u.Operand), pb);
     return u.Op switch {
       UnaryOp.Negate when ty.IsFloat => this._b.Binary(IrBinaryOp.FSub, new IrConstantFloat(ty, 0.0), operand),
@@ -1658,7 +1658,7 @@ public sealed class IrLowering {
   }
 
   private IrValue LowerArithmetic(BinaryExpr expr, PbType leftPb, PbType rightPb, PbType resultPb) {
-    var resultTy = IrTypeMapper.Map(resultPb);
+    var resultTy = MapType(resultPb);
     var signed = resultPb is ScalarType { Signed: true };
     var l = this.Coerce(this.LowerExpr(expr.Left), leftPb, resultPb);
     var r = this.Coerce(this.LowerExpr(expr.Right), rightPb, resultPb);
@@ -1702,7 +1702,21 @@ public sealed class IrLowering {
       BinaryOp.GreaterEqual => isFloat ? IrCmpPred.Foge : signed ? IrCmpPred.Sge : IrCmpPred.Uge,
       _ => throw new IrLoweringException($"comparison {expr.Op}"),
     };
-    return this._b.SExt(this._b.Cmp(pred, l, r), IrTypeMapper.Map(resultPb));
+    return this._b.SExt(this._b.Cmp(pred, l, r), MapType(resultPb));
+  }
+
+  /// <summary>
+  /// Maps a PB type for a lowered value. The IR type system can express Microsoft Binary Format
+  /// (<c>mbf32</c>/<c>mbf64</c> - the SINGLE/DOUBLE storage of BASICA, GW-BASIC and the
+  /// BASCOM-heritage QuickBASIC releases), but the lowering does not yet emit the
+  /// <see cref="IrCastOp.MbfToFP"/>/<see cref="IrCastOp.FPToMbf"/> conversions a load and a store of
+  /// such a cell perform, so it declines rather than treat the bits as IEEE - which would be a
+  /// miscompile, the two encodings disagreeing on exponent bias and layout.
+  /// </summary>
+  private static IrType MapType(PbType type) {
+    var ir = IrTypeMapper.Map(type);
+    return !ir.IsMbf ? ir : throw new IrLoweringException(
+      $"Microsoft Binary Format storage ({ir}) needs the MbfToFP/FPToMbf load-store conversion, which the lowering does not emit yet");
   }
 
   private static (PbType Type, bool IsFloat, bool Signed) CommonCompareType(PbType a, PbType b) {
@@ -1720,7 +1734,7 @@ public sealed class IrLowering {
   private IrValue Coerce(IrValue value, PbType from, PbType to) {
     if (from is not ScalarType sf || to is not ScalarType st)
       throw new IrLoweringException("coercion between non-scalar types");
-    var toTy = IrTypeMapper.Map(to);
+    var toTy = MapType(to);
     if (value.Type.Equals(toTy))
       return value;
 

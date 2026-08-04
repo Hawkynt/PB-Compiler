@@ -113,6 +113,7 @@ cross-checking:
 | `CBackendTests` | the IR path's C output matches the DOS goldens |
 | `EmitLlvmTests` | the IR path's LLVM output is accepted by `llvm-as` and lowered by `llc` |
 | `IrVerifier` | every pass leaves structurally valid, well-typed SSA |
+| `BackendCoverageTests` | how much of the corpus the in-house x86-16 back end takes, and what blocks the rest |
 
 Any new back end should add one row to that table. The cross-check has already earned
 its keep. Running the DOS battery through both paths found five real defects that a
@@ -140,7 +141,13 @@ Beyond widening that subset, the two items that would most change the picture:
 
 - **A native IR → x86-16 back end** that reproduces byte-identical output for a
   subset. That is the fidelity proof that would let the IR path augment, and
-  eventually replace, the direct emitter.
+  eventually replace, the direct emitter. It exists and is live behind
+  `--x-backend` for integer functions (docs/X86-BACKEND.md); what it still
+  declines is now *measured* rather than guessed — `BackendCoverageTests` ranks
+  the blockers over the whole corpus, and the top one at any time is the next
+  increment. The two standing gaps are the runtime-label bridge (a call to an
+  `rt_*` helper, which is what the un-routed `main` body is full of) and the
+  data-layout bridge (a load of a module-level global).
 - **Feeding the direct path's range facts into the IR.** The interval lattice
   (`CodeGen/IntervalRange.cs`) proves things — bounds are in range, a divisor is
   non-zero, a 32-bit operation fits 16 bits — that the IR currently rediscovers only
