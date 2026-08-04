@@ -44,8 +44,9 @@ NEXT
 ## Now — `DO` and `FOR` rotation
 
 `FOR` loops rotate the same way: the register-resident SI-counter path
-(`TryEmitForCounterInRegister`, which claims most SPEED loops) and the fast Int16
-fallback (`EmitForInt16Fast`) both emit an entry guard plus a bottom test that
+(`TryEmitForCounterInRegister`, which claims most SPEED loops), its 386 `LONG`
+sibling (`TryEmitForLongCounterInRegister`, counter in ESI), and the fast Int16
+fallback (`EmitForInt16Fast`) all emit an entry guard plus a bottom test that
 re-tests the just-incremented counter in place with the inverse condition
 (`stop-if-past` → `continue-if-not-past`). The compare runs the same N+1 times and
 the counter wraps identically, so the increment-then-test end value (QUIRK 2.28)
@@ -80,9 +81,11 @@ zero-trip cases; a regression test confirms the bound is compared at both ends.
 
 ## Still planned
 
-- **Wider-counter FOR rotation** — the `LONG`/float and runtime-step `FOR` shapes,
-  whose multi-branch bound test (step-sign dispatch, 32-bit/x87 compares) would
-  each need its inverse form at the bottom.
+- **The remaining FOR shapes** — the memory-counter `LONG`/float paths and the
+  runtime-step loops, whose multi-branch bound test (step-sign dispatch, 32-bit /
+  x87 compares) would each need its inverse form at the bottom. The
+  constant-step, register-resident Int16 and `LONG` counters (the common cases)
+  already rotate.
 - **Induction-variable simplification** — derived IVs (`j = 2*i + 3`) rewritten as
   their own incrementally-updated variables and redundant ones coalesced.
 - **Fusion** needs a dependence test: the second loop may not read an element of

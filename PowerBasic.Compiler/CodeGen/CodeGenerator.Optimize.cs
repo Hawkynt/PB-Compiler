@@ -1344,18 +1344,24 @@ public sealed partial class CodeGenerator {
     this._iterateFor.Push(cont);
     this._iterateAny.Push(cont);
 
-    this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
-    asm.MarkLabel(top);
+    // O0062 loop rotation: entry guard + bottom test, dropping the per-iteration JMP; ESI holds the
+    // counter and wraps identically, so the 32-bit increment-then-test end value is unchanged.
     asm.Cmp(Reg.ESI, limit.WithSize(OperandSize.Dword));             // one 32-bit signed compare
     if (step >= 0)
-      asm.Jg(done);
+      asm.Jg(done);                                                 // enter only if not already past
     else
       asm.Jl(done);
+    this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
+    asm.MarkLabel(top);
     foreach (var statement in f.Body)
       this.EmitStatement(statement);
     asm.MarkLabel(cont);
     asm.Add(Reg.ESI, (Imm)(int)step);                               // signed 32-bit increment (imm sign-extends)
-    asm.Jmp(top);
+    asm.Cmp(Reg.ESI, limit.WithSize(OperandSize.Dword));
+    if (step >= 0)
+      asm.Jle(top);                                                 // repeat while not past
+    else
+      asm.Jge(top);
     asm.MarkLabel(done);
 
     this._exitFor.Pop();
