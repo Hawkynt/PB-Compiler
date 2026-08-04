@@ -66,7 +66,10 @@ Conservative and syntactic, so it can never keep a live zero:
 - the very next statement is `FOR i = <lower> TO <upper>` matching the array's
   **explicit** bounds with step 1 (so element *i* is written on pass *i*, every
   element exactly once);
-- the body is the lone assignment `a(i) = expr` subscripted by the counter;
+- the body has exactly one top-level array-element write `a(i) = expr`
+  subscripted by the counter; any other statement is array-free scalar work (a
+  scalar assign / incr, no array touch, no call, no control flow) so it neither
+  observes the half-filled array nor can skip the coverage write;
 - `expr` calls nothing and reads no element of `a` itself (`IsSafeFillValue`) —
   so it cannot observe a not-yet-written element; a read of a **different** array
   (`a(i) = b(i)`, distinct storage, no alias) is allowed, so array copies qualify;
@@ -86,8 +89,8 @@ byte-for-byte unchanged.
   different mechanism ([O0019](O0019-zero-elision.md)'s territory), so the doc's
   `DIM a%(0 TO 9999)` constant-bound example is not yet covered; only dynamic
   (`$DYNAMIC` / runtime-bound / `REDIM`-class) arrays are.
-- **Multi-statement fills** and from-both-ends or strided coverage — each a
-  widening of the proof.
+- **From-both-ends or strided coverage**, and a fill guarded by control flow —
+  each a widening of the proof.
 
 Native-only. On the IR back ends the array is a heap buffer the C/LLVM optimizer
 already sees fully overwritten, so it elides the fill (or the `calloc`→`malloc`

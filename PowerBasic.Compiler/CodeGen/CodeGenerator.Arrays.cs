@@ -97,12 +97,27 @@ public sealed partial class CodeGenerator {
     if (!this.SameDivOperand(loop.From, lower) || !this.SameDivOperand(loop.To, upper))
       return false;   // the counter must span exactly [lower, upper]
 
-    if (loop.Body is not [AssignStmt { Target: CallOrIndexExpr target, Value: { } fill }])
-      return false;   // the lone statement writes an array element
+    // exactly one top-level array-element write (the coverage store); it must not sit inside an IF
+    // or nested loop, or some pass could skip element i. Any other body statement is scanned below.
+    AssignStmt? coverWrite = null;
+    foreach (var st in loop.Body) {
+      if (st is AssignStmt { Target: CallOrIndexExpr } arrayWrite) {
+        if (coverWrite != null)
+          return false;   // two array writes - keep the coverage argument simple
+        coverWrite = arrayWrite;
+      }
+    }
+    if (coverWrite is not { Target: CallOrIndexExpr target, Value: { } fill })
+      return false;
     if (!model.VariableBindings.TryGetValue(target, out var arrSym)
         || arrSym.Type is not ArrayType { IsDynamic: true, Rank: 1, Element: { } elem }
         || arrSym.ArrayClass != ArrayClass.Default)
       return false;
+    // every other statement must be a-free scalar work (no read/write of the array, no call, no
+    // control flow), so nothing observes a half-filled array and the coverage write always runs
+    foreach (var st in loop.Body)
+      if (!ReferenceEquals(st, coverWrite) && !this.IsArrayFreeScalarStatement(st, arrSym))
+        return false;
     if (elem is StringType or FlexType || EmbedsStringHandle(elem))
       return false;   // a garbage embedded string handle would corrupt the string heap
     if (!decl.Name.Equals(arrSym.Name, StringComparison.OrdinalIgnoreCase))
@@ -112,6 +127,34 @@ public sealed partial class CodeGenerator {
       return false;   // subscripted by exactly the counter, so element i is the one written on pass i
     return this.IsSafeFillValue(fill, arrSym);
   }
+
+  /// <summary>
+  /// An auxiliary fill-loop statement that touches no array and calls nothing: a scalar assignment
+  /// or incr/decr whose value is itself array-free and call-free (<see cref="IsSafeFillValue"/> with
+  /// no other-array reads permitted). So it can neither observe the target's half-filled state nor
+  /// have a side effect that reads it, and (being a plain store) it always runs, never skipping the
+  /// coverage write. Anything else - a print, a call, control flow, an array write - declines.
+  /// </summary>
+  private bool IsArrayFreeScalarStatement(Statement st, VariableSymbol targetArr) {
+    switch (st) {
+      case AssignStmt { Target: NameExpr t, Value: { } v }
+          when model.VariableBindings.TryGetValue(t, out var ts) && ts.Type is ScalarType:
+        return this.IsSafeFillValue(v, targetArr) && !this.ReadsAnyArray(v);
+      case IncrDecrStmt { Target: NameExpr t } id
+          when model.VariableBindings.TryGetValue(t, out var ts) && ts.Type is ScalarType:
+        return id.Amount == null || (this.IsSafeFillValue(id.Amount, targetArr) && !this.ReadsAnyArray(id.Amount));
+      default:
+        return false;
+    }
+  }
+
+  /// <summary>True if the expression reads any array element - auxiliary statements must be wholly array-free (even of other arrays).</summary>
+  private bool ReadsAnyArray(Expression e) => e switch {
+    CallOrIndexExpr c => model.VariableBindings.TryGetValue(c, out var s) && s.Type is ArrayType || c.Arguments.Any(this.ReadsAnyArray),
+    UnaryExpr u => this.ReadsAnyArray(u.Operand),
+    BinaryExpr b => this.ReadsAnyArray(b.Left) || this.ReadsAnyArray(b.Right),
+    _ => false,
+  };
 
   /// <summary>
   /// A fill value that neither reads the target array <paramref name="targetArr"/> (so it cannot
