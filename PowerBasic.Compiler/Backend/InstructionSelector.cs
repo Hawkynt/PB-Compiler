@@ -648,7 +648,9 @@ public sealed class InstructionSelector {
     if (call.Callee is not IrFunction callee)
       return this.Decline("call: indirect (through a procedure pointer)");
     if (callee.IsDeclaration)
-      return this.Decline($"call: {callee.Name} (runtime declaration - needs the runtime-label bridge)");
+      return RuntimeAbi.For(callee.Name) is { } routine
+        ? this.SelectRuntimeCall(call, callee, routine)
+        : this.Decline($"call: {callee.Name} (runtime declaration - not in the runtime ABI table)");
     if (!call.Type.IsVoid && !IsWide(call.Type) && RegSize(call.Type) != MRegSize.Word)
       return this.Decline($"call: {callee.Name} returns {call.Type} (word or 32-bit results only)");
 
@@ -696,6 +698,75 @@ public sealed class InstructionSelector {
     var destOp = new MOperand.Register(dest);
     var ax = new MOperand.Register(MReg.Physical_(Reg.AX, RegSize(call.Type)));
     this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ax], MovEffect(destOp, ax)));
+    return true;
+  }
+
+  /// <summary>
+  /// A call to a runtime routine, in the DOS runtime's own register convention rather than the
+  /// stack one (<see cref="RuntimeAbi"/>): each IR argument is moved into the register that routine
+  /// reads it from, then <c>CALL rt_...</c>, and nothing is cleaned because nothing was pushed.
+  ///
+  /// Every argument MOV declares the register it writes as a clobber, because no allocated value
+  /// names it - that is what stops the allocator from parking a live value (or the argument's own
+  /// source) in a register the sequence is about to overwrite.
+  /// </summary>
+  private bool SelectRuntimeCall(IrCall call, IrFunction callee, RuntimeAbi.Routine routine) {
+    if (!call.Type.IsVoid)
+      return this.Decline($"call: {callee.Name} returns a value (the bridge covers void routines)");
+    var args = call.Args.ToList();
+    if (args.Count != routine.Args.Length)
+      return this.Decline($"call: {callee.Name} arity disagrees with the runtime ABI table");
+
+    for (var i = 0; i < args.Count; ++i) {
+      var arg = args[i];
+      var slot = routine.Args[i];
+      switch (slot.Kind) {
+        case RuntimeAbi.ArgKind.Offset: {
+          // the address of the data object, not its contents - a string literal the codegen pools
+          if (arg is not IrGlobalVariable global)
+            return this.Decline($"call: {callee.Name} wants the address of a global, not {arg.GetType().Name}");
+          var dest = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));
+          var address = new MOperand.DataOffset(global.Name, 0);
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, address], MovEffect(dest, address),
+            condition: null, clobbers: [slot.Register]));
+          break;
+        }
+        case RuntimeAbi.ArgKind.Word: {
+          // the IR types a byte count i32; a constant that fits a word is the same value in CX
+          MOperand source;
+          if (IsWide(arg.Type)) {
+            if (arg is not IrConstantInt { Value: >= short.MinValue and <= ushort.MaxValue } narrow)
+              return this.Decline($"call: {callee.Name} takes a 32-bit value in a word register");
+            source = new MOperand.Immediate(narrow.Value);
+          } else if (!this.TryOperand(arg, out source!))
+            return false;
+          var dest = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, source], MovEffect(dest, source),
+            condition: null, clobbers: [slot.Register]));
+          break;
+        }
+        case RuntimeAbi.ArgKind.Pair: {
+          if (!IsWide(arg.Type))
+            return this.Decline($"call: {callee.Name} wants a 32-bit argument, got {arg.Type}");
+          if (!this.TryOperandPair(arg, out var lo, out var hi))
+            return false;
+          var destLo = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));
+          var destHi = new MOperand.Register(MReg.Physical_(slot.High, MRegSize.Word));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destLo, lo], MovEffect(destLo, lo),
+            condition: null, clobbers: [slot.Register, slot.High]));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destHi, hi], MovEffect(destHi, hi),
+            condition: null, clobbers: [slot.Register, slot.High]));
+          break;
+        }
+        default:
+          return this.Decline($"call: {callee.Name} argument kind {slot.Kind}");
+      }
+    }
+
+    this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef(routine.Label)],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: true, WritesMemory: true),
+      condition: null, clobbers: routine.Clobbers));
     return true;
   }
 

@@ -186,6 +186,7 @@ public sealed class MachineEmitter {
     MOperand.Register r => (object)this.Resolve(r.Reg),
     MOperand.Immediate i => (Imm)(int)i.Value,
     MOperand.Memory or MOperand.StackSlot or MOperand.DataCell => this.Mem(operand),
+    MOperand.DataOffset o => Imm.OffsetOf(this.DataLabel(o.Name), o.Disp),
     _ => throw new System.NotSupportedException($"operand {operand} is not a source"),
   };
 
@@ -193,11 +194,22 @@ public sealed class MachineEmitter {
 
   /// <summary>A module variable's cell, as the whole-program codegen lays it out (plus any word offset).</summary>
   private Mem DataCell(MOperand.DataCell cell) {
-    var resolved = this._resolveData?.Invoke(cell.Name)
-      ?? throw new System.InvalidOperationException(
-        $"no data cell for global '{cell.Name}' - the routing admitted a reference it cannot address");
+    var resolved = this.ResolveData(cell.Name);
     return Asm.Mem.Word(resolved.Label!, resolved.Displacement + cell.Disp);
   }
+
+  /// <summary>The label a named data object was laid out at - the address form, for <c>MOV SI, OFFSET .str0</c>.</summary>
+  private Label DataLabel(string name) {
+    var resolved = this.ResolveData(name);
+    return resolved.Displacement == 0
+      ? resolved.Label!
+      : throw new System.NotSupportedException($"data object '{name}' is not at its label's own offset");
+  }
+
+  private Mem ResolveData(string name)
+    => this._resolveData?.Invoke(name)
+       ?? throw new System.InvalidOperationException(
+         $"no data cell for global '{name}' - the routing admitted a reference it cannot address");
 
   private Reg Resolve(MReg reg) => reg.IsVirtual ? this._allocation[reg.VirtualId] : reg.Physical;
 

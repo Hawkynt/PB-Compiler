@@ -148,7 +148,9 @@ public sealed class BackendCoverageTests {
     // A coverage number is only worth defending when every function under it is actually right.
     // Then 13 -> 15 as the 32-bit forms landed for real: constant shifts, parameters, call arguments
     // and results, and a module variable addressed through the codegen's own data cell.
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(15),
+    // 15 -> 38 with the runtime-label bridge: a call to rt_print_str/i16/i32/nl now selects in the DOS
+    // runtime's own register convention instead of declining
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(38),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
   }
 }

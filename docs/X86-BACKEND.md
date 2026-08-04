@@ -400,3 +400,34 @@ routing a module body (`main`) additionally needs the whole startup/exit sequenc
 procedure is always the cheaper next increment. That split corrected a wrong reading of the earlier
 histogram: the `rt_*` declines are **not** all `main`. 38 of the 47 procedure declines are calls to
 runtime declarations, which makes the runtime-label bridge the ranking's next target.
+
+### The runtime-label bridge
+
+The IR declares the runtime C-style — `rt_print_str(ptr, i32)` — because the same IR also feeds the C
+and LLVM back ends, where a runtime call really is a C call. `DosRuntime`, which the direct emitter
+calls, is register-based and vintage-shaped: the string entry wants its address in `SI` and its length
+in `CX`, and **nothing is pushed at all**. `Backend/RuntimeAbi.cs` is the mapping — one entry per
+routine giving the label to call, where each IR argument goes (`Word`, `Pair` for `DX:AX`, or `Offset`
+for the address of a literal), and what the routine destroys.
+
+It is deliberately a short explicit table rather than a convention: each entry is a claim about a
+specific hand-written assembly routine, and a wrong claim miscompiles silently. Everything unlisted
+declines by name, so the census keeps ranking what to add next. Two supporting pieces came with it:
+
+- **`MOperand.DataOffset`** — the *address* of a data object rather than its contents. It resolves
+  through the same codegen-owned data resolver as `DataCell`, so a routed `PRINT "HI"` takes the
+  offset of the identical pooled literal a directly-emitted one would.
+- **the trimmer needs no change.** `RuntimeTrimmer` seeds from the named labels emitted user code
+  references and no user code bound — and a back-end `CALL` references that very label, so a section
+  only a routed function needs survives trimming by construction.
+
+The clobber set is the full caller-saved file. The print routines do in fact save and restore
+everything they touch, but "in fact" is not "provably", and a claim one register too small
+miscompiles a value that is never recomputed; narrowing it needs a mechanical check of each routine's
+push/pop discipline standing behind it.
+
+That conservatism is now the binding constraint, and the census says so plainly: selection went
+**15 → 38** functions, while routing went only **14 → 18**. The other 20 select and then lose their
+allocation, because a parameter is live from the prologue and a value live across a `CALL` has no
+register while there is no spilling. Spilling to the frame — not more selection — is what the ranking
+points at next.

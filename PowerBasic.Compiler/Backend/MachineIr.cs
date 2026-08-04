@@ -47,6 +47,14 @@ public abstract record MOperand {
   /// the two paths addressing the same storage.
   /// </summary>
   public sealed record DataCell(string Name, int Disp, MRegSize Size) : MOperand;
+
+  /// <summary>
+  /// The <b>address</b> of a data object rather than its contents - <c>MOV SI, OFFSET .str0</c>, the
+  /// form the DOS runtime's string entries take their argument in. Same naming and same resolution as
+  /// <see cref="DataCell"/>: the codegen owns the layout, so this becomes an <c>Imm.OffsetOf</c> of the
+  /// very label the direct emitter would have used.
+  /// </summary>
+  public sealed record DataOffset(string Name, int Disp) : MOperand;
 }
 
 /// <summary>

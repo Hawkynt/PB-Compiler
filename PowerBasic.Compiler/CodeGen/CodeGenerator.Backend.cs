@@ -13,6 +13,10 @@ public sealed partial class CodeGenerator {
   // register allocation (computed once); null until first queried. Empty unless UseExperimentalBackend.
   private Dictionary<ProcedureSymbol, (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)>? _backendProcs;
 
+  // the IR module the routed functions came from - a back-end reference to a string literal names the
+  // IR's global (".str0"), and the bytes behind it are what map it onto this codegen's literal pool
+  private IrModule? _backendModule;
+
   /// <summary>
   /// The functions the x86-16 back end will compile in place of the direct codegen (docs/X86-BACKEND.md).
   /// A function qualifies when it is a pure INTEGER (signed-16) function with INTEGER BYVAL parameters
@@ -32,6 +36,7 @@ public sealed partial class CodeGenerator {
     var module = IrLowering.TryLowerModule(model);
     if (module is null)
       return this._backendProcs;
+    this._backendModule = module;
     IrPassManager.Standard().RunOnModule(module);
     foreach (var f in module.Functions)
       if (!f.IsDeclaration)
@@ -93,8 +98,14 @@ public sealed partial class CodeGenerator {
     return this._backendProcs;
   }
 
-  /// <summary>The label a back-end-emitted CALL targets: the one the whole-program codegen bound for that procedure.</summary>
+  /// <summary>
+  /// The label a back-end-emitted CALL targets. A user procedure's label is the one the whole-program
+  /// codegen bound for it; a runtime routine's is the named label the runtime marks, which is also
+  /// what seeds the pb36 runtime trimmer - so a section only the routed function calls is kept.
+  /// </summary>
   private Asm.Label? CalleeLabel(string name) {
+    if (name.StartsWith("rt_", System.StringComparison.Ordinal))
+      return this._asm.Lbl(name);
     var proc = model.ProcedureList.FirstOrDefault(p =>
       p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase) && this.BackendProcs().ContainsKey(p));
     return proc is null ? null : this.ProcLabelOf(proc);
@@ -105,11 +116,18 @@ public sealed partial class CodeGenerator {
   /// emitter uses for that symbol, so the two paths address the same storage. The IR names a global
   /// <c>g.&lt;name&gt;</c> and a STATIC local <c>static.&lt;name&gt;</c>.
   /// </summary>
-  private Asm.Mem? DataCellOf(string name)
-    => name.StartsWith("g.", System.StringComparison.Ordinal)
-       && model.ModuleVariables.TryGetValue(name[2..], out var symbol)
-      ? this.TryDirectCell(symbol)
-      : null;   // a STATIC local, or a synthesized IR global like .data_cursor - not addressable here yet
+  private Asm.Mem? DataCellOf(string name) {
+    if (name.StartsWith("g.", System.StringComparison.Ordinal))
+      return model.ModuleVariables.TryGetValue(name[2..], out var symbol)
+        ? this.TryDirectCell(symbol)
+        : null;
+    // a string constant the IR interned (".str0"): its bytes go through this codegen's own literal
+    // pool, so the routed PRINT and a directly-emitted one share the identical pooled bytes
+    if (name.StartsWith(".str", System.StringComparison.Ordinal)
+        && this._backendModule?.FindGlobal(name) is { Bytes: { } bytes })
+      return Asm.Mem.Word(this.LiteralOf(System.Text.Encoding.ASCII.GetString(bytes)));
+    return null;   // a STATIC local, or a synthesized IR global like .data_cursor - not addressable here yet
+  }
 
   /// <summary>The names of the defined functions <paramref name="fn"/> calls directly (its ABI partners).</summary>
   private static IEnumerable<string> CalleeNames(IrFunction fn)
@@ -117,6 +135,7 @@ public sealed partial class CodeGenerator {
         .OfType<IrCall>()
         .Select(c => c.Callee)
         .OfType<IrFunction>()
+        .Where(f => !f.IsDeclaration)   // a runtime routine has a fixed ABI of its own - it is not converted
         .Select(f => f.Name);
 
   /// <summary>True when <paramref name="proc"/> is compiled by the x86-16 back end (so it is excluded from inlining and the register-parameter convention, and emitted via the back end).</summary>
