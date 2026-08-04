@@ -71,5 +71,5 @@ public sealed class IrBasicWriterCensusTests {
     Assert.That(rendered, Is.GreaterThanOrEqualTo(_floor), "fewer IR functions render than used to:\n" + report);
   }
 
-  private const int _floor = 100;   // 13 at the first measurement; +scalar slots, +PRINT, +file I/O
+  private const int _floor = 128;   // 13 at the first measurement; +scalar slots, +PRINT, +file I/O, +arrays, +globals
 }

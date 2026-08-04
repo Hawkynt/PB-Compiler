@@ -114,6 +114,48 @@ public sealed class IrBasicWriterWholeProgramTests {
       END
       """);
 
+  /// <summary>
+  /// An array: the writer has to recover the DIM from the alloca and the subscript from the byte
+  /// offset the lowering multiplied out. Getting the stride wrong reads the wrong element, which is
+  /// the kind of thing that looks plausible and is not.
+  /// </summary>
+  [Test]
+  public void RoundTrip_GivenAnArray_ThenTheSubscriptsAddressTheSameElements() =>
+    RoundTrips("""
+      DIM a(0 TO 9) AS INTEGER
+      DIM i AS INTEGER
+      FOR i = 0 TO 9
+        a(i) = i * i
+      NEXT i
+      FOR i = 0 TO 9
+        PRINT a(i);
+      NEXT i
+      PRINT
+      END
+      """);
+
+  [Test]
+  public void RoundTrip_GivenAnArrayWithALowerBound_ThenTheOffsetIsPreserved() =>
+    RoundTrips("""
+      DIM a(5 TO 8) AS INTEGER
+      a(5) = 50
+      a(8) = 80
+      PRINT a(5); a(8)
+      END
+      """);
+
+  [Test]
+  public void RoundTrip_GivenALongArray_ThenTheWiderStrideIsRecovered() =>
+    RoundTrips("""
+      DIM a(0 TO 4) AS LONG
+      DIM i AS INTEGER
+      FOR i = 0 TO 4
+        a(i) = i * 100000
+      NEXT i
+      PRINT a(0); a(3); a(4)
+      END
+      """);
+
   [Test]
   public void RoundTrip_GivenLongArithmetic_ThenTheWidthIsPreserved() =>
     RoundTrips("""

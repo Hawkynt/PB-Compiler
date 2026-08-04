@@ -43,6 +43,8 @@ public sealed class IrBasicWriter {
   private readonly Dictionary<IrValue, string> _names = new(ReferenceEqualityComparer.Instance);
   private readonly Dictionary<IrType, string> _declared = [];
   private readonly List<(string Name, IrType Type)> _locals = [];
+  private readonly List<(string Name, IrType Element, int Count)> _arrays = [];
+  private readonly Dictionary<IrAlloca, string> _arrayNames = new(ReferenceEqualityComparer.Instance);
   private int _seq;
 
   /// <summary>Renders a whole module: its globals, then each defined function.</summary>
@@ -91,6 +93,8 @@ public sealed class IrBasicWriter {
   private void Function(IrFunction function) {
     this._names.Clear();
     this._locals.Clear();
+    this._arrays.Clear();
+    this._arrayNames.Clear();
     this._seq = 0;
 
     var isMain = function.Name.Equals("main", StringComparison.OrdinalIgnoreCase);
@@ -109,6 +113,8 @@ public sealed class IrBasicWriter {
 
     foreach (var (name, type) in body._locals)
       this.Line($"  DIM {name} AS {TypeName(type)}");
+    foreach (var (name, element, count) in body._arrays)
+      this.Line($"  DIM {name}(0 TO {count - 1}) AS {TypeName(element)}");
     this._out.Append(body._out);
 
     if (!isMain)
@@ -205,6 +211,7 @@ public sealed class IrBasicWriter {
       case IrCondBr cond: this.CondBr(cond); return;
       case IrRet ret: this.Ret(ret, function); return;
       case IrPhi: return;                       // materialized on the incoming edges, not here
+      case IrGep gep: this.ArrayElement(gep); return;   // a place, not a value: named for its uses
       case IrUnreachable: this.Line("  END"); return;
       case IrCall call: this.Call(call); return;
 
@@ -213,7 +220,10 @@ public sealed class IrBasicWriter {
       // store a write. The moment the address is taken by anything else (a GEP into an array, a call
       // that receives it) this stops being true, so ScalarSlot refuses those.
       case IrAlloca alloca:
-        this.ScalarSlot(alloca);
+        // a multi-element slot is declared by the first subscript that names it (ArrayElement), so
+        // the alloca itself contributes nothing here
+        if (alloca.Count <= 1)
+          this.ScalarSlot(alloca);
         return;
       case IrLoad load:
         this.Line($"  {this.Define(load)} = {this.Ref(this.ScalarSlot(load.Pointer))}");
@@ -337,15 +347,33 @@ public sealed class IrBasicWriter {
   /// alone). Anything else is real storage and needs pointers this writer does not emit.
   /// </summary>
   private IrValue ScalarSlot(IrValue pointer) {
+    // a GEP into an array slot is a subscript, and the element it names is what is read or written
+    if (pointer is IrGep gep)
+      return this.ArrayElement(gep);
+    // A module-level variable is a name, and reading or writing it through its address is just using
+    // that name. The DIM belongs to the module render; a function rendered on its own therefore
+    // refers to a variable it does not declare, which is correct - a single function was never a
+    // whole program.
+    if (pointer is IrGlobalVariable { Bytes: null, Count: 1 } global) {
+      if (!this._names.ContainsKey(global))
+        this._names[global] = Sanitize(global.Name);
+      return global;
+    }
     if (pointer is not IrAlloca alloca)
       throw new IrBasicWriterException($"a load or store through {pointer.GetType().Name} rather than a local slot");
-    if (alloca.Count > 1)
-      throw new IrBasicWriterException("an alloca holding more than one element (an array)");
+    // a zero byte offset folds away, so a load or store through the array itself is element zero -
+    // which is what a(lo) compiles to, the subscript having been made relative to the lower bound
+    if (alloca.Count > 1) {
+      this._names[alloca] = $"{this.ArrayName(alloca, alloca.Allocated)}(0)";
+      return alloca;
+    }
     if (alloca.Allocated.Kind is IrTypeKind.Ptr)
       throw new IrBasicWriterException("an alloca holding a pointer (a string handle or array descriptor)");
     foreach (var user in alloca.Users)
       if (user is not (IrLoad or IrStore))
         throw new IrBasicWriterException($"an alloca whose address escapes into {user.GetType().Name}");
+    if (alloca.Count > 1)
+      throw new IrBasicWriterException("an alloca holding more than one element used without a subscript");
     // a store's pointer operand is a use too, so only the VALUE position counts as an escape
     foreach (var user in alloca.Users)
       if (user is IrStore stored && ReferenceEquals(stored.Value, alloca))
@@ -436,6 +464,53 @@ public sealed class IrBasicWriter {
 
   /// <summary>A BASIC string literal, with the doubled quotes BASIC escapes with.</summary>
   private static string Quote(string text) => "\"" + text.Replace("\"", "\"\"") + "\"";
+
+  /// <summary>
+  /// The BASIC array element a GEP names. The lowering builds a byte offset as
+  /// <c>index * sizeof(element)</c>, so the index is recovered by undoing that multiply - which the
+  /// optimizer may have turned into a shift, since element sizes are powers of two. Recovering it is
+  /// what lets the access be written as <c>a(i)</c>; emitting the byte arithmetic instead would need
+  /// pointers, and would render as something no reader could check against the original.
+  /// </summary>
+  private IrValue ArrayElement(IrGep gep) {
+    if (gep.BasePtr is not IrAlloca array)
+      throw new IrBasicWriterException($"a subscript of {gep.BasePtr.GetType().Name} rather than a local array");
+    foreach (var user in array.Users)
+      if (user is not (IrGep or IrLoad or IrStore))
+        throw new IrBasicWriterException($"an array whose address escapes into {user.GetType().Name}");
+
+    var element = gep.ElementType ?? array.Allocated;
+    var stride = gep.ElementType is not null ? 1 : SizeOf(element);
+    var index = stride == 1 ? gep.ByteOffset : Undo(gep.ByteOffset, stride);
+
+    // an element is not a value of its own - it is a PLACE, named by its subscript expression
+    this._names[gep] = $"{this.ArrayName(array, element)}({this.Ref(index)})";
+    return gep;
+  }
+
+  /// <summary>The identifier an array slot is declared under, minted (and DIMmed) on first use.</summary>
+  private string ArrayName(IrAlloca array, IrType element) {
+    if (this._arrayNames.TryGetValue(array, out var existing))
+      return existing;
+    var name = array.Name is { Length: > 0 } n ? Sanitize(n) + "_" + this._seq++ : $"a{this._seq++}";
+    this._arrayNames[array] = name;
+    this._arrays.Add((name, element, array.Count));
+    return name;
+  }
+
+  /// <summary>The index behind a byte offset of <paramref name="stride"/>, or a refusal.</summary>
+  private static IrValue Undo(IrValue byteOffset, int stride) => byteOffset switch {
+    IrBinary { Op: IrBinaryOp.Mul } m when m.Rhs is IrConstantInt c && c.Value == stride => m.Lhs,
+    IrBinary { Op: IrBinaryOp.Mul } m when m.Lhs is IrConstantInt c && c.Value == stride => m.Rhs,
+    IrBinary { Op: IrBinaryOp.Shl } sh when sh.Rhs is IrConstantInt s && 1L << (int)s.Value == stride => sh.Lhs,
+    IrConstantInt k when k.Value % stride == 0 => new IrConstantInt(k.Type, k.Value / stride),
+    _ => throw new IrBasicWriterException($"a subscript whose byte offset is not a multiple of {stride}"),
+  };
+
+  private static int SizeOf(IrType type) => type.Kind switch {
+    IrTypeKind.Int or IrTypeKind.Float => Math.Max(1, type.Bits / 8),
+    _ => throw new IrBasicWriterException($"the element type {type}"),
+  };
 
   private void Call(IrCall call) {
     if (call.Callee is not IrFunction callee)

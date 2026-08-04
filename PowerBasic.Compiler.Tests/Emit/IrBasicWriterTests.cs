@@ -152,12 +152,11 @@ public sealed class IrBasicWriterTests {
   /// </summary>
   [Test]
   public void Write_GivenAConstructItCannotRender_ThenItSaysSoRatherThanGuessing() {
-    // an array is real storage: BASIC can name it, but recovering the DIM and the subscripts from
-    // alloca-plus-GEP is work this writer has not done yet, so it says so
+    // INPUT reads through a runtime routine this writer has no statement for yet
     var module = Optimized("""
-      DIM a%(0 TO 9)
-      a%(3) = 7
-      PRINT a%(3)
+      DIM n AS INTEGER
+      INPUT n
+      PRINT n
       END
       """);
 
