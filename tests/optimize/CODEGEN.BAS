@@ -17,6 +17,7 @@ DECLARE SUB MultiplyByFourBitConstIsShifts(BYVAL n%)
 DECLARE SUB IntegerMaxFoldsWithoutFpu(BYVAL a%, BYVAL b%)
 DECLARE SUB IntegerSignIsBranchless(BYVAL a%)
 DECLARE SUB SwapIsInline(BYVAL a%, BYVAL b%)
+DECLARE SUB LenZeroIsHandleTest(BYVAL n%)
 DECLARE SUB MinMaxDiamondFolds(BYVAL a%, BYVAL b%)
 DECLARE SUB LongMaxFoldsWithoutFpu(BYVAL a&, BYVAL b&)
 DECLARE SUB DivideByPowerOfTwoIsShifts(BYVAL n%)
@@ -55,6 +56,7 @@ MultiplyByFourBitConstIsShifts 3
 IntegerMaxFoldsWithoutFpu 3, 8
 IntegerSignIsBranchless 3
 SwapIsInline 3, 8
+LenZeroIsHandleTest 2
 MinMaxDiamondFolds 3, 8
 LongMaxFoldsWithoutFpu 100000, 70000
 DivideByPowerOfTwoIsShifts 64
@@ -198,6 +200,22 @@ END SUB
 ' @assert   absent-call rt_swap
 ' @status   done
 ' ---------------------------------------------------------------------------
+' ---------------------------------------------------------------------------
+' @scenario LenZeroIsHandleTest
+' @what     LEN(s$) = 0 / <> 0 for a dynamic-string variable
+' @expect   O0181 lowers it to the handle test (OR AX,AX) - no rt_len call
+' @assert   absent-call rt_len
+' @status   done
+' ---------------------------------------------------------------------------
+SUB LenZeroIsHandleTest(BYVAL n%) NOINLINE
+  DIM s$, e$
+  s$ = MID$("hi", 1, n%)
+  e$ = MID$(s$, 9, 1)
+  IF LEN(e$) = 0 THEN PRINT "lz1 ok" ELSE PRINT "lz1 FAIL"
+  IF LEN(s$) <> 0 THEN PRINT "lz2 ok" ELSE PRINT "lz2 FAIL"
+  IF LEN(s$) = 0 THEN PRINT "lz3 FAIL" ELSE PRINT "lz3 ok"
+END SUB
+
 SUB SwapIsInline(BYVAL a%, BYVAL b%) NOINLINE
   DIM x%, y%
   x% = a% : y% = b%

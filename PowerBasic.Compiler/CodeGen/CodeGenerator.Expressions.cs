@@ -332,6 +332,39 @@ public sealed partial class CodeGenerator {
     }
   }
 
+  /// <summary>
+  /// O0181: <c>LEN(s$) = 0</c> / <c>LEN(s$) &lt;&gt; 0</c> for a plain dynamic-string VARIABLE is emptiness -
+  /// a PB string is empty exactly when its handle is 0 - so the whole rt_len call and the compare collapse to
+  /// the handle test <c>OR AX,AX</c>, the same the <c>s$ = ""</c> spelling uses. Restricted to `=`/`<>` against
+  /// a literal 0: those are exact regardless of how a length past 32767 would represent as a signed compare,
+  /// where the relational forms would not be. A variable read is just its handle with nothing to free.
+  /// </summary>
+  private bool TryEmitLenEmptyTest(BinaryExpr b) {
+    if (!this.Optimize || b.Op is not (BinaryOp.Equal or BinaryOp.NotEqual))
+      return false;
+    Expression? LenVarOf(Expression e) =>
+      e is CallOrIndexExpr c && model.IntrinsicBindings.TryGetValue(c, out var info)
+        && info.Name.Equals("LEN", StringComparison.OrdinalIgnoreCase)
+        && c.Arguments.Count == 1 && c.Arguments[0] is NameExpr n
+        && model.TypeOf(n) is StringType && model.VariableBindings.ContainsKey(n)
+        ? c.Arguments[0] : null;
+    bool IsZero(Expression e) => this.OptFolder.TryFold(e) is { Integer: 0 };
+    var strv = IsZero(b.Right) ? LenVarOf(b.Left) : IsZero(b.Left) ? LenVarOf(b.Right) : null;
+    if (strv == null)
+      return false;
+
+    var asm = this._asm;
+    this.EmitExpression(strv);                 // AX = the string's handle (plain variable, nothing to free)
+    asm.Or(Reg.AX, Reg.AX);                    // ZF set iff the handle is 0, i.e. the string is empty
+    var wantEmpty = b.Op == BinaryOp.Equal;    // LEN = 0 tests empty; LEN <> 0 tests non-empty
+    var (jump, condition) = wantEmpty
+      ? ((Func<Assembler, Action<Label>>)(a => a.Je), Condition.Equal)
+      : (a => a.Jne, Condition.NotEqual);
+    if (!this.TryEmitCompareAsBranch(b, condition))
+      this.EmitInt16CompareResult(jump, condition);
+    return true;
+  }
+
   private void EmitBinary(BinaryExpr b) {
     var asm = this._asm;
     var leftType = model.TypeOf(b.Left);
@@ -354,6 +387,11 @@ public sealed partial class CodeGenerator {
     // sign for a negative dividend) does not change the zero-ness of the result, so it is dead
     // when the modulo is only compared to zero. The everyday even/odd test.
     if (this.TryEmitModuloZeroTest(b))
+      return;
+
+    // O0181: LEN(s$) = 0 / <> 0 is an emptiness test - a PB string is empty exactly when its handle is 0.
+    // The handle test replaces the rt_len call and the compare, the check that ends every INPUT/parse loop.
+    if (this.TryEmitLenEmptyTest(b))
       return;
 
     // whole-value TYPE/UNION = / <> (PB 3.1): memcmp semantics

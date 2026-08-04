@@ -782,6 +782,15 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenLenEqualsZero_WhenPb36_ThenSameHandleTestAsEmptyCompare() {
+    // O0181: LEN(s$) = 0 is the emptiness handle test, identical to the s$ = "" spelling.
+    const string head = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL n%)\nS 1\nEND\nSUB S(BYVAL n%) NOINLINE\nDIM s$\ns$ = MID$(\"hi\", 1, n%)\n";
+    var lenForm = Compile(head + "IF LEN(s$) = 0 THEN PRINT \"a\" ELSE PRINT \"b\"\nEND SUB", Dialect.Pb36);
+    var eqForm = Compile(head + "IF s$ = \"\" THEN PRINT \"a\" ELSE PRINT \"b\"\nEND SUB", Dialect.Pb36);
+    Assert.That(lenForm, Is.EqualTo(eqForm), "LEN(s$) = 0 lowers to the same handle test as s$ = \"\"");
+  }
+
+  [Test]
   public void Emit_GivenScalarSwap_WhenPb36_ThenInlineXchgNotRuntimeCall() {
     // O0020: SWAP of two direct scalar cells exchanges them inline (mov/xchg/mov), so the image carries an
     // xchg r16,r/m16 (0x87) and the rt_swap byte-loop routine is trimmed. The faithful build keeps rt_swap.
