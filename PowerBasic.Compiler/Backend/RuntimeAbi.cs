@@ -297,6 +297,14 @@ internal static class RuntimeAbi {
     ["llvm.pow.f80"] = new("rt_pow", [new(ArgKind.St0, default), new(ArgKind.St0, default)],
       _callerSaved, Answer: ResultKind.St0),
 
+    // "rt_tab: CX = 1-based target column; spaces forward only", and rt_spc the same shape for a count
+    ["rt_print_tab"] = new("rt_tab", [new(ArgKind.Word, Reg.CX)], _callerSaved),
+    ["rt_fprint_tab"] = new("rt_tab",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, FileSelect: true),
+    ["rt_print_spc"] = new("rt_spc", [new(ArgKind.Word, Reg.CX)], _callerSaved),
+    ["rt_fprint_spc"] = new("rt_spc",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, FileSelect: true),
+
     // "PrintInt64: ST0 = integral value (popped)". A DWORD reaches it zero-extended through the frame,
     // which is how it prints its full unsigned range
     ["rt_print_u32"] = new("rt_print_i64", [new(ArgKind.ZeroExtendedQwordSt0, default)], _callerSaved),

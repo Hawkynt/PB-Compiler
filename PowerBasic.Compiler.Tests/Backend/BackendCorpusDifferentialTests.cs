@@ -65,23 +65,15 @@ public sealed class BackendCorpusDifferentialTests {
   /// is that a NEW one fails the build.
   /// </summary>
   /// <summary>
-  /// Programs where the two back ends genuinely disagree, each with a diagnosis. Empty is the goal;
-  /// an entry here is a defect that has been located, not one that has been excused.
+  /// Programs where the two back ends genuinely disagree, each with a diagnosis. EMPTY, and it should
+  /// stay that way: an entry here is a defect that has been located, not one that has been excused.
+  ///
+  /// It had two, DIFF01 and DIFF55, on INT/FIX. Neither was a compiler defect - the TEST CPU ignored
+  /// FLDCW, and INT and FIX are implemented by setting the x87 rounding mode and calling FRNDINT, so
+  /// a CPU that always rounds to nearest turned INT(2.7) into 3. Both back ends were being judged by
+  /// a reference that was wrong.
   /// </summary>
-  private static readonly Dictionary<string, string> _known = new(StringComparer.OrdinalIgnoreCase) {
-    // Both of these are the SAME open question, and neither is caused by the back end: the direct
-    // emitter's constant folder gives INT(2.7) = 3 and FIX(-2.7) = -3, where the IR path gives 2 and
-    // -2. The language definition says 2 and -2 - INT floors, FIX truncates toward zero - so the
-    // ROUTED side is the one that matches the definition here.
-    //
-    // docs/optimizations and the IR-writer gap table already record this as unsettled: neither side is
-    // changed until genuine PBC 3.50 can be asked which it does. They only became visible in this
-    // harness when SQR started selecting, because until then both programs declined and were never
-    // compared - the divergence is older than the change that exposed it.
-    ["DIFF01.BAS"] = "INT/FIX of a constant: the direct emitter rounds (3, -3) where the IR truncates "
-      + "(2, -2). The language definition agrees with the IR; the oracle has not been asked.",
-    ["DIFF55.BAS"] = "the same INT/FIX constant-folding difference as DIFF01.",
-  };
+  private static readonly Dictionary<string, string> _known = new(StringComparer.OrdinalIgnoreCase);
 
   private static string Summarize(string reason) {
     var cut = reason.IndexOf(" at ", StringComparison.Ordinal);
@@ -182,7 +174,7 @@ public sealed class BackendCorpusDifferentialTests {
     // counter into a constant, which makes bodies selectable that were not before.
     // 78 once inlining joined the production pipeline - a call inlined is a callee body the caller's
     // optimizer can see, which makes module bodies selectable that were not.
-    Assert.That(agreed, Is.GreaterThanOrEqualTo(110), "fewer programs were compared than used to be:\n" + report);
+    Assert.That(agreed, Is.GreaterThanOrEqualTo(124), "fewer programs were compared than used to be:\n" + report);
 
     // and a known defect that quietly starts agreeing is worth knowing about too - it means either it
     // was fixed (delete the entry) or the comparison stopped reaching it (a worse problem)

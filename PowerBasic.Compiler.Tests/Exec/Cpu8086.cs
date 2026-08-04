@@ -626,8 +626,12 @@ public sealed class Cpu8086 {
         this.WriteDword(address, (uint)BitConverter.SingleToInt32Bits((float)this.St(0)));
         if (reg == 3) this.FPop();
         return;
-      case 0xD9 when reg == 5: return;                                        // FLDCW - the mode is FINIT's
-      case 0xD9 when reg == 7: this.WriteWord(address, 0x037F); return;       // FSTCW
+      // FLDCW. Ignoring this used to be harmless-looking and was not: INT and FIX are implemented by
+      // setting the ROUNDING MODE and calling FRNDINT, so a CPU that always rounds to nearest turns
+      // INT(2.7) into 3. The direct emitter was right on real hardware the whole time and this said
+      // otherwise, which is exactly backwards for a reference implementation.
+      case 0xD9 when reg == 5: this._controlWord = this.ReadWord(address); return;
+      case 0xD9 when reg == 7: this.WriteWord(address, this._controlWord); return;  // FSTCW/FNSTCW
       case 0xDD when reg == 0: this.FPush(BitConverter.Int64BitsToDouble((long)this.ReadQword(address))); return;
       case 0xDD when reg is 2 or 3:
         this.WriteQword(address, (ulong)BitConverter.DoubleToInt64Bits(this.St(0)));
@@ -778,7 +782,19 @@ public sealed class Cpu8086 {
   };
 
   /// <summary>FISTP stores by the control word, which FINIT leaves at nearest-ties-to-even.</summary>
-  private static double RoundToInteger(double value) => Math.Round(value, MidpointRounding.ToEven);
+  /// <summary>The x87 control word; only its rounding-control field (bits 11-10) is modelled.</summary>
+  private ushort _controlWord = 0x037F;
+
+  /// <summary>
+  /// FRNDINT and the integer stores round by the control word's RC field, not always to nearest:
+  /// 00 nearest-even, 01 toward -infinity (BASIC's INT), 10 toward +infinity, 11 toward zero (FIX).
+  /// </summary>
+  private double RoundToInteger(double value) => (this._controlWord & 0x0C00) switch {
+    0x0400 => Math.Floor(value),
+    0x0800 => Math.Ceiling(value),
+    0x0C00 => Math.Truncate(value),
+    _ => Math.Round(value, MidpointRounding.ToEven),
+  };
 
   /// <summary>The comparison condition codes, in the status-word bits FSTSW hands to SAHF (C3 -> ZF, C0 -> CF).</summary>
   private void Compare(double a, double b) {
