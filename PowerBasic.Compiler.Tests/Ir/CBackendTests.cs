@@ -28,13 +28,23 @@ public sealed class CBackendTests {
 
   private static readonly string? _cc = Locate("cc", "gcc", "clang");
 
+  /// <summary>
+  /// Finds a C compiler on PATH. Windows names executables <c>gcc.exe</c>, so probing the bare name
+  /// alone would never find one there - and this check silently skipping is exactly how a back end
+  /// stops being verified without anyone noticing.
+  /// </summary>
   private static string? Locate(params string[] names) {
     var paths = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator);
+    var extensions = OperatingSystem.IsWindows() ? new[] { ".exe", ".cmd", ".bat", "" } : [""];
     foreach (var name in names)
       foreach (var dir in paths) {
-        var candidate = Path.Combine(dir, name);
-        if (File.Exists(candidate))
-          return candidate;
+        if (string.IsNullOrWhiteSpace(dir))
+          continue;
+        foreach (var extension in extensions) {
+          var candidate = Path.Combine(dir, name + extension);
+          if (File.Exists(candidate))
+            return candidate;
+        }
       }
     return null;
   }

@@ -202,3 +202,18 @@ path off 16-bit DOS.
 - a native IR → x86-16 back end that reproduces byte-identical output for a
   subset (the fidelity proof that would let the IR augment the direct emitter);
 - wire the IR into the production pipeline behind the byte-identical harness.
+
+## Metastatements
+
+A metastatement is a compile-time directive, and most carry no runtime semantics for a
+target-independent IR — they steer the *direct* emitter's policy or its target, which each IR back
+end decides for itself. `$OPTIMIZE` and `$CPU` are therefore ignored by the lowering. Declining on
+them was costing the IR path most of the corpus for no reason: they are the majority of every
+metastatement in the battery, and accepting the two of them took the corpus from **40 to 78 of 162
+programs** lowering.
+
+`$ERROR <kind> ON` is the one that is not policy. It arms the Error 6/9/11 traps — observable
+behaviour this lowering does not emit — so a program that turns a check **on** declines. Silently
+dropping its traps would be a miscompile, not a missing optimization. Anything unrecognized declines
+as well, so a directive that gains semantics later is refused by default rather than ignored by
+accident.

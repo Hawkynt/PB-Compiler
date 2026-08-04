@@ -24,7 +24,8 @@ public sealed class BackendCoverageTests {
   private static readonly string _repoRoot =
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 
-  private sealed record Census(int Functions, int Selected, Dictionary<string, int> Declines, int ProgramsLowered, int ProgramsTotal);
+  private sealed record Census(int Functions, int Selected, Dictionary<string, int> Declines,
+    int ProgramsLowered, int ProgramsTotal, Dictionary<string, int> LoweringDeclines);
 
   /// <summary>
   /// Runs the back end's own pipeline over every battery program and tallies what selects.
@@ -34,10 +35,11 @@ public sealed class BackendCoverageTests {
   /// </summary>
   private static Census Measure() {
     var declines = new Dictionary<string, int>(StringComparer.Ordinal);
+    var loweringDeclines = new Dictionary<string, int>(StringComparer.Ordinal);
     int functions = 0, selected = 0, lowered = 0, total = 0;
     var dir = Path.Combine(_repoRoot, "tests");
     if (!Directory.Exists(dir))
-      return new(0, 0, declines, 0, 0);
+      return new(0, 0, declines, 0, 0, loweringDeclines);
 
     // the whole corpus: the golden battery plus tests/diff, the 100+ differential programs
     foreach (var file in Directory.EnumerateFiles(dir, "*.BAS", SearchOption.AllDirectories)
@@ -55,13 +57,19 @@ public sealed class BackendCoverageTests {
       }
 
       IrModule? module;
+      string? why;
       try {
-        module = IrLowering.TryLowerModule(model);
-      } catch (Exception) {
-        module = null;
+        module = IrLowering.TryLowerModule(model, out why);
+      } catch (Exception e) {
+        (module, why) = (null, e.Message);
       }
-      if (module is null)
-        continue;                               // outside the lowering's subset (docs/IR.md) - counted below
+      if (module is null) {
+        // the IR path stops one level earlier than the selector for most of the corpus, so the
+        // lowering's own reasons rank what would widen it
+        var reason = Summarize(why ?? "unknown");
+        loweringDeclines[reason] = loweringDeclines.GetValueOrDefault(reason) + 1;
+        continue;
+      }
       ++lowered;
 
       try {
@@ -85,7 +93,14 @@ public sealed class BackendCoverageTests {
       }
     }
 
-    return new(functions, selected, declines, lowered, total);
+    return new(functions, selected, declines, lowered, total, loweringDeclines);
+  }
+
+  /// <summary>Collapses a decline message to its cause, so names/labels do not fragment the histogram.</summary>
+  private static string Summarize(string reason) {
+    var cut = reason.IndexOf(" '", StringComparison.Ordinal);
+    var head = cut > 0 ? reason[..cut] : reason;
+    return head.Length > 70 ? head[..70] : head;
   }
 
   [Test]
@@ -96,7 +111,10 @@ public sealed class BackendCoverageTests {
     var report = new StringBuilder()
       .AppendLine($"programs           : {census.ProgramsLowered}/{census.ProgramsTotal} lowered to IR")
       .AppendLine($"functions selected : {census.Selected}/{census.Functions}")
-      .AppendLine("declines by cause (most blocking first):");
+      .AppendLine("lowering declines - what keeps a program off the IR path entirely:");
+    foreach (var (reason, count) in census.LoweringDeclines.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal).Take(12))
+      report.AppendLine($"  {count,5}  {reason}");
+    report.AppendLine("selection declines - what keeps a lowered function off the x86-16 back end:");
     foreach (var (reason, count) in census.Declines.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal))
       report.AppendLine($"  {count,5}  {reason}");
     TestContext.Out.Write(report.ToString());

@@ -482,6 +482,7 @@ public sealed class IrLowering {
       case ReadStmt rd: this.LowerRead(rd); break;
       case RestoreStmt rs: this.LowerRestore(rs); break;
       case EndStmt: this.LowerEnd(); break;
+      case MetaStmt meta: LowerMeta(meta); break;
       default: throw new IrLoweringException($"unsupported statement: {statement.GetType().Name}");
     }
   }
@@ -1703,6 +1704,35 @@ public sealed class IrLowering {
       _ => throw new IrLoweringException($"comparison {expr.Op}"),
     };
     return this._b.SExt(this._b.Cmp(pred, l, r), MapType(resultPb));
+  }
+
+  /// <summary>
+  /// A metastatement is a compile-time directive, and most carry no runtime semantics at all for a
+  /// target-independent IR - they steer the direct emitter's policy or its target, which each IR back
+  /// end decides for itself. Those are ignored, because declining on them kept most of the corpus off
+  /// the IR path for no reason: <c>$OPTIMIZE</c> and <c>$CPU</c> alone account for the majority of
+  /// every metastatement in the battery.
+  ///
+  /// <c>$ERROR … ON</c> is the one that is not policy: it arms the Error 6/9/11 traps, which are
+  /// observable behaviour this lowering does not emit. A program that turns a check <b>on</b>
+  /// therefore declines - silently dropping its traps would be a miscompile, not a missing
+  /// optimization. Anything unrecognized declines too, so a metastatement with semantics added later
+  /// is refused by default rather than ignored by accident.
+  /// </summary>
+  private static void LowerMeta(MetaStmt meta) {
+    switch (meta.Command.ToUpperInvariant()) {
+      case "OPTIMIZE":   // optimizer policy - the IR path runs its own pipeline
+      case "CPU":        // the instruction-set floor of the DOS emitter; an IR back end picks its own
+        return;
+      case "ERROR" when meta.Arguments.Count >= 2
+                        && !meta.Arguments[^1].Text.Equals("ON", StringComparison.OrdinalIgnoreCase):
+        return;          // turning a check OFF is exactly what this lowering already assumes
+      case "ERROR":
+        throw new IrLoweringException(
+          $"$ERROR {(meta.Arguments.Count > 0 ? meta.Arguments[0].Text : "")} ON arms a runtime trap the IR lowering does not emit");
+      default:
+        throw new IrLoweringException($"metastatement ${meta.Command}");
+    }
   }
 
   /// <summary>
