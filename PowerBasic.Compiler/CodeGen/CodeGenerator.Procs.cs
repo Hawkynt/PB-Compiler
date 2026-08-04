@@ -86,6 +86,48 @@ public sealed partial class CodeGenerator {
         yield return symbol;   // pb36 STACK arrays are frame-resident like scalars
   }
 
+  /// <summary>
+  /// O0102: true when a FUNCTION's result is already in the return register at the epilogue, so the
+  /// reload from its frame slot is redundant. Requires an integer/LONG result (AX/DX:AX - a float
+  /// lives on the x87 stack, a string is an owned handle), no ON ERROR restore and no string teardown
+  /// between the last store and the reload (both would clobber AX), a single exit (any EXIT
+  /// SUB/FUNCTION/DEF jumps to the epilogue from a point where AX need not hold the result), and a
+  /// final top-level statement that assigns the result (so its RHS, computed straight into AX, is the
+  /// returned value). Optimize-gated: the faithful epilogue keeps its reload, byte-identical to genuine.
+  /// </summary>
+  private bool ResultForwardable(ProcedureSymbol proc, VariableSymbol? resultVar, Mem? savedHandler) {
+    if (!this.Optimize || resultVar == null || proc.HasSretParam)
+      return false;
+    if (resultVar.Type is not ScalarType { IsFloat: false, ByteSize: 2 or 4 })
+      return false;
+    if (savedHandler != null)
+      return false;
+    if (this.StackLocalsOf(proc).Any(sy => sy.Type is StringType or FlexType && !ReferenceEquals(sy, resultVar))
+        || proc.Parameters.Any(p => p is { ByVal: true, Type: StringType or FlexType }))
+      return false;
+    if (ContainsProcExit(proc.Body!))
+      return false;
+    return proc.Body is { Count: > 0 } body
+      && body[^1] is AssignStmt { Target: { } target }
+      && model.VariableBindings.TryGetValue(target, out var sym)
+      && ReferenceEquals(sym, resultVar);
+  }
+
+  /// <summary>True when the body contains an <c>EXIT SUB/FUNCTION/DEF</c> anywhere (a second path to the epilogue).</summary>
+  private static bool ContainsProcExit(IEnumerable<Statement> statements) {
+    foreach (var statement in statements) {
+      switch (statement) {
+        case ExitStmt { Kind: ExitKind.Sub or ExitKind.Function or ExitKind.Def }:
+          return true;
+        case SubDecl or FunctionDecl or DefFnDecl:
+          continue;   // a nested procedure's EXIT belongs to it, not this one
+      }
+      if (ChildStatementBlocks(statement).Any(ContainsProcExit))
+        return true;
+    }
+    return false;
+  }
+
   private void EmitProcedure(ProcedureSymbol proc) {
     var asm = this._asm;
     this._currentProc = proc;
@@ -208,8 +250,24 @@ public sealed partial class CodeGenerator {
     if (this.Optimize)
       this._intervalPoints = IntervalRangeAnalysis.AnalyzeProgramPoints(proc.Body!, model);
 
-    foreach (var statement in proc.Body!)
-      this.EmitStatement(statement);
+    // O0102 return-value forwarding: when the function has a single exit, no ON ERROR restore and no
+    // string teardown between the last store and the epilogue, and its final statement assigns the
+    // (integer/LONG) result, compute that final value straight into the return register and skip both
+    // the slot store and the epilogue reload - nothing reads the slot afterward. Emitting the RHS
+    // expression directly (rather than the assignment) sidesteps the in-place / remainder-reuse
+    // EmitAssign paths that would leave the value somewhere other than AX.
+    var forwardResult = this.ResultForwardable(proc, resultVar, savedHandler);
+    if (forwardResult) {
+      var body = proc.Body!;
+      for (var index = 0; index < body.Count - 1; ++index)
+        this.EmitStatement(body[index]);
+      var last = (AssignStmt)body[^1];
+      this._currentStatement = last;                                  // keep interval facts at the right point
+      this.EmitExpression(last.Value);
+      this.Coerce(model.TypeOf(last.Value), resultVar!.Type, last.Value);   // value now in AX / DX:AX
+    } else
+      foreach (var statement in proc.Body!)
+        this.EmitStatement(statement);
 
     this._intervalPoints = outerPoints;
     asm.MarkLabel(this._epilogue);
@@ -237,9 +295,10 @@ public sealed partial class CodeGenerator {
 
     if (proc.HasSretParam) {
       // struct return: the result is already written through the hidden BYREF buffer - nothing to load
-    } else if (resultVar != null)
-      this.EmitLoadPlace(new(Mem.At(Reg.BP, resultVar.Offset), false), resultVar.Type, null!);
-    else if (proc.IsFunction)
+    } else if (resultVar != null) {
+      if (!forwardResult)                                            // O0102: the value is already in the return register
+        this.EmitLoadPlace(new(Mem.At(Reg.BP, resultVar.Offset), false), resultVar.Type, null!);
+    } else if (proc.IsFunction)
       this.Errors.Add(new(proc.Position, $"FUNCTION {proc.Name} has no result variable"));
 
     asm.Mov(Reg.SP, Reg.BP);

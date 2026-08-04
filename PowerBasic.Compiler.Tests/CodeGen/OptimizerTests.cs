@@ -1297,6 +1297,26 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenSingleExitFunction_WhenPb36_ThenResultForwardedNotReloaded() {
+    // O0102: a single-exit function whose last statement assigns the integer result leaves that value
+    // in AX, so the epilogue's reload from the result slot (MOV AX,[BP+d] = 8B 46 dd immediately
+    // before the teardown MOV SP,BP = 89 EC) is elided. A multi-exit variant (EXIT FUNCTION) can reach
+    // the epilogue with AX unset, so it must keep the reload.
+    static bool HasResultReload(byte[] img) {
+      for (var i = 0; i + 4 < img.Length; ++i)
+        if (img[i] == 0x8B && img[i + 1] == 0x46 && img[i + 3] == 0x89 && img[i + 4] == 0xEC)
+          return true;
+      return false;
+    }
+    var forwarded = Compile("$OPTIMIZE SPEED\nDECLARE FUNCTION a%(x%)\nq% = a%(5)\nPRINT q%\nEND\n"
+      + "FUNCTION a%(x%)\n a% = x% + 3\nEND FUNCTION", Dialect.Pb36);
+    var reloaded = Compile("$OPTIMIZE SPEED\nDECLARE FUNCTION a%(x%)\nq% = a%(5)\nPRINT q%\nEND\n"
+      + "FUNCTION a%(x%)\n IF x% > 99 THEN a% = 0 : EXIT FUNCTION\n a% = x% + 3\nEND FUNCTION", Dialect.Pb36);
+    Assert.That(HasResultReload(forwarded), Is.False, "a single-exit function forwards its result (no epilogue reload)");
+    Assert.That(HasResultReload(reloaded), Is.True, "a multi-exit function keeps the epilogue reload");
+  }
+
+  [Test]
   public void Emit_GivenConstantForLimit_WhenPb36_ThenComparedAgainstImmediate() {
     // O0113: a constant FOR limit folds into the SI-resident compare as `cmp si, imm` (83 FE 64 for
     // 100) - no temp cell, no per-iteration `cmp si, [bp+disp]` memory read. A variable limit keeps
