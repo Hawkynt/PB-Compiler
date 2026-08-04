@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned (the jump-to-next case is done — [O0035](O0035-jump-relaxation.md)) |
+| **Status** | 🟡 Partial (the threading itself is done and wired under `--optimize`; deleting the now-orphaned intermediate jump is the remaining piece) |
 | **Stage** | Assembler |
+| **Source** | `Asm/Assembler.cs` (`RunJumpThreading`) |
 | **Related** | [O0035](O0035-jump-relaxation.md), [O0094](O0094-branch-inversion.md), [O0107](O0107-branch-folding-through-phi.md) |
 
 ## The idea
@@ -55,13 +56,25 @@ L2: ...
 L3:
 ```
 
-## What it needs
+## Now
 
-- Label reference counts in the assembler (it owns every label and fixup
-  already), so an orphaned intermediate block can be deleted rather than merely
-  bypassed.
-- Care with the short-form relaxation ([O0035](O0035-jump-relaxation.md)): a
-  threaded target may be farther away, so relaxation must run **after**
-  threading, not before.
-- On an 8086 the win is real but modest per site (a taken jump flushes the
-  prefetch queue); the size saving is unconditional.
+`RunJumpThreading` (in `Asm/Assembler.cs`) rewrites every real jump — short/near
+`JMP` (`EB`/`E9`) and near `Jcc` (`0F 8x`) — whose destination is itself an
+unconditional `JMP` to point straight at the final target, following chains with
+an 8-hop budget so an intentional jump cycle (an endless loop) terminates. `CALL`
+keeps its target; a short jump only retargets while the byte displacement still
+reaches. It is a pure fixup rewrite (byte-length-preserving) run after the
+peephole/scheduler and **before** relaxation, so a threaded-farther target is
+still handled correctly by the short-form pass. Wired on for every standalone
+module under `--optimize` (`EnableJumpThreading = standalone`); it collapses the
+`ITERATE → loop-end → loop-head` and `GOTO → GOTO` cascades that nested control
+flow routinely emits. Covered by `JumpThreadingTests` (jmp-to-jmp, `Jcc`,
+transitive chains, and the CALL-is-never-threaded guard).
+
+## Still planned
+
+- **Deleting the orphaned intermediate block.** Threading only *bypasses* the
+  `A: JMP B` hop; when nothing else targets `A` any more it is now dead code,
+  but the assembler does not yet reference-count labels to prove that and remove
+  the bytes. The taken-jump saving (the actual runtime win, and the harder-on-the
+  8086 prefetch flush) is already realized; this is the remaining size saving.

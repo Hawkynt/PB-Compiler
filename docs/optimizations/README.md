@@ -127,7 +127,7 @@ Conventions used on every page:
 | ⬜ | [O0090](O0090-demanded-bits.md) | Demanded bits |
 | ⬜ | [O0091](O0091-partial-register-hazards.md) | Partial-register hazards |
 | ⬜ | [O0092](O0092-encoding-selection.md) | Encoding selection |
-| ⬜ | [O0093](O0093-jump-threading.md) | Jump threading |
+| 🟡 | [O0093](O0093-jump-threading.md) | Jump threading |
 | ⬜ | [O0094](O0094-branch-inversion.md) | Branch inversion |
 | ⬜ | [O0095](O0095-branch-tail-merging.md) | Branch-tail merging |
 | ✅ | [O0096](O0096-condition-combining.md) | Nested condition combining |
