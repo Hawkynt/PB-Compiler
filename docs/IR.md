@@ -192,6 +192,44 @@ literals, optional target triple). The test suite feeds it to the real toolchain
 `llvm-as` accepts it and `llc` lowers it to native x86-64. That is the working
 path off 16-bit DOS.
 
+## Rendering the IR back to BASIC
+
+`Emit/IrBasicWriter.cs` renders an `IrModule` as PowerBASIC source. The older `Emit/BasicWriter.cs`
+renders the bound **AST**, so it can only ever show a program as it was *written*; this one renders
+the **IR**, so it shows a program as it will be *compiled* — after lowering, and after whatever the
+optimizer did to it.
+
+Control flow is emitted as labels and `GOTO`s rather than recovered into `IF`/`FOR` blocks: a basic
+block **is** a label and a branch **is** a `GOTO`, so the translation is exact and needs no
+structuring analysis that could be subtly wrong. SSA is destroyed the standard way, with each phi
+copied on its incoming edges. An alloca whose address never escapes is recognised as the variable it
+is; one holding several elements is an array, its subscript recovered by undoing the byte-offset
+multiply the lowering built (which the optimizer may have turned into a shift). Anything it cannot
+render **exactly** throws by name — approximate BASIC would make a round-trip failure ambiguous
+between a bad pass and a bad rendering.
+
+### What it is for: the observable contract
+
+Byte-identity is the direct emitter's contract and always will be. Once the IR optimizer rewrites a
+program, the only statement left worth making is that the rewritten program still *does* the same
+thing — and rendering the IR back to BASIC is what makes that checkable, because it gives a pass a
+before and an after that are both runnable programs.
+
+`IrPassObservableEquivalenceTests` is that check: every pass in the standard pipeline is run **on its
+own** (on top of mem2reg, without which most see nothing to do) over a set of ordinary programs, each
+rendered and executed, and its output compared against the program compiled directly. A failure names
+the pass rather than the pipeline. The whole pipeline and its idempotence are checked as well.
+
+This found a real miscompile the first time it ran — not in a pass, but in the *direct* emitter: an
+`ELSEIF` condition was being folded against the value lattice of the `THEN` arm it followed. See
+`CodeGen/CodeGenerator.cs` `EmitIf` and `Tests/CodeGen/ElseIfProgramPointTests.cs`.
+
+`IrBasicWriterCensusTests` reports how much of the corpus renders (currently **128 of 218**
+functions) and ranks what does not, which is the distance still to go before `BasicWriter` can be
+retired. It cannot be retired yet: it also renders declarations, `TYPE`s and procedure signatures
+from the original `CompilationUnit`, and carries the binder's pb36→pb35 desugaring, none of which the
+IR writer has.
+
 ## Roadmap
 
 - the constructs that still decline: `PRINT USING`/`LPRINT`, `ArraySortStmt`, `PUT$`,
