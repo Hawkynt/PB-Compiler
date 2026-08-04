@@ -643,6 +643,16 @@ public sealed partial class CodeGenerator {
       case "SGN": {
         this.EmitExpression(args[0]);
         var type = model.TypeOf(args[0]);
+        // O0108/O0249: branchless integer sign. cwd puts the sign mask (0 / -1) in DX; neg sets CF iff x != 0;
+        // adc dx,dx forms 2*mask + CF = -1 (x<0) / 0 (x=0) / +1 (x>0) - no branch and no x87 round-trip, exact
+        // for every int16 including MININT (cwd gives -1, neg wraps to itself with CF set, adc yields -1).
+        if (this.Optimize && KindOf(type) == ValueKind.Int16) {
+          asm.Cwd();
+          asm.Neg(Reg.AX);
+          asm.Adc(Reg.DX, Reg.DX);
+          asm.Mov(Reg.AX, Reg.DX);
+          break;
+        }
         var onFpu = KindOf(type) is ValueKind.Float or ValueKind.Int64;
         this.Coerce(type, onFpu ? PbType.Double : PbType.Long, args[0]);
         if (onFpu) {

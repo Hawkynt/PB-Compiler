@@ -7,6 +7,10 @@ mul85 255
 imax 8
 imin-5
 itie 3
+spos 1
+sneg-1
+szero 0
+smin-1
 dmax 8
 dmin 3
 dclamp 3

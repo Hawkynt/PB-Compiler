@@ -782,6 +782,26 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenIntegerSgn_WhenPb36_ThenBranchlessCwdNegAdcNoFpu() {
+    // O0249: SGN over an INTEGER folds to cwd/neg/adc dx,dx/mov ax,dx - branchless and off the x87.
+    static bool Has(byte[] img, params byte[] seq) {
+      for (var i = 0; i <= img.Length - seq.Length; ++i) {
+        var ok = true;
+        for (var j = 0; j < seq.Length; ++j) if (img[i + j] != seq[j]) { ok = false; break; }
+        if (ok) return true;
+      }
+      return false;
+    }
+    // A BYVAL parameter feeds SGN a runtime int16 without VAL (which would pull in the FPU on its own).
+    var img = Compile("$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL x%)\nS 3\nEND\nSUB S(BYVAL x%) NOINLINE\nPRINT SGN(x%)\nEND SUB", Dialect.Pb36);
+    Assert.Multiple(() => {
+      Assert.That(Has(img, 0x99, 0xF7, 0xD8), Is.True, "cwd; neg ax");
+      Assert.That(Has(img, 0x11, 0xD2), Is.True, "adc dx,dx");
+      Assert.That(Has(img, 0xD9, 0xE4), Is.False, "no FTST - the FPU path is gone");
+    });
+  }
+
+  [Test]
   public void Emit_GivenClampIf_WhenPb36_ThenFoldsToTheMinOrMaxIntrinsic() {
     // O0248: the one-armed clamp `IF x > hi THEN x = hi` (no ELSE) is a MIN, and `IF x < lo THEN x = lo` a MAX -
     // each folds to exactly the integer keep the intrinsic emits, so the clamp and the intrinsic assignment

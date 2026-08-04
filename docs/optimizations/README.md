@@ -142,7 +142,7 @@ Conventions used on every page:
 | ⬜ | [O0105](O0105-hot-cold-splitting.md) | Hot/cold splitting |
 | ⬜ | [O0106](O0106-trace-formation.md) | Trace formation |
 | ⬜ | [O0107](O0107-branch-folding-through-phi.md) | Branch folding through phi |
-| ⬜ | [O0108](O0108-branchless-select.md) | Branchless select / min / max / abs |
+| 🟡 | [O0108](O0108-branchless-select.md) | Branchless select / min / max / abs |
 | ⬜ | [O0109](O0109-macro-fusion-placement.md) | Macro-fusion placement |
 | ⬜ | [O0110](O0110-general-induction-variables.md) | General induction variables |
 | ⬜ | [O0111](O0111-redundant-induction-variables.md) | Redundant IV elimination |

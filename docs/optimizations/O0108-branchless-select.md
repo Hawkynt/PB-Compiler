@@ -2,10 +2,21 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned (`SETcc` results exist under [C0001](C0001-386-codegen.md); `CMOVcc` is available to inline asm — [R0004](R0004-asm-intrinsics.md) — but the compiler never selects it) |
+| **Status** | 🟡 Partial — the branchless **abs** ([O0249](O0249-branchless-abs.md)), integer/LONG **min/max** ([O0248](O0248-branchless-minmax.md)) and now integer **sign** (`SGN`, `cwd`/`neg`/`adc`, no branch and no x87) all ship; the general `IF c THEN x = k1 ELSE x = k2` **select** (via `SETcc`/`CMOVcc` under the [O0174](O0174-target-cost-models.md) cost model) remains |
 | **Stage** | Emitter |
 | **Related** | [O0051](O0051-ir-if-conversion.md), [O0088](O0088-boolean-materialization-sbb.md), [C0001](C0001-386-codegen.md) |
 | **Split into** | [O0248](O0248-branchless-minmax.md), [O0249](O0249-branchless-abs.md) |
+
+## Now
+
+`SGN` over an INTEGER argument emits the branchless sign `cwd; neg ax; adc dx,dx;
+mov ax,dx` — `cwd` puts the sign mask (0 / -1) in `DX`, `neg` sets the carry iff the
+value is non-zero, and `adc dx,dx` forms `2·mask + carry` = -1 / 0 / +1. Four
+instructions, no branch, no x87 round-trip (the old path coerced to `DOUBLE` and
+`FTST`/`FSTSW`/`SAHF`-branched, or sign-tested `DX:AX` with three branches). Exact
+for every int16 including MININT. Optimize-gated, so the faithful build keeps the
+branching form (golden gate 250/250); battery-verified over positive, negative, zero
+and a MININT variable, self-diffed under DOSBox with the optimizer on and off.
 
 ## The idea
 

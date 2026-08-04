@@ -15,6 +15,7 @@ DECLARE SUB CommonSubexpressionReused(BYVAL y%, BYVAL x%)
 DECLARE SUB MultiplyByPowerOfTwoIsShifts(BYVAL n%)
 DECLARE SUB MultiplyByFourBitConstIsShifts(BYVAL n%)
 DECLARE SUB IntegerMaxFoldsWithoutFpu(BYVAL a%, BYVAL b%)
+DECLARE SUB IntegerSignIsBranchless(BYVAL a%)
 DECLARE SUB MinMaxDiamondFolds(BYVAL a%, BYVAL b%)
 DECLARE SUB LongMaxFoldsWithoutFpu(BYVAL a&, BYVAL b&)
 DECLARE SUB DivideByPowerOfTwoIsShifts(BYVAL n%)
@@ -51,6 +52,7 @@ CommonSubexpressionReused 5, 6
 MultiplyByPowerOfTwoIsShifts 7
 MultiplyByFourBitConstIsShifts 3
 IntegerMaxFoldsWithoutFpu 3, 8
+IntegerSignIsBranchless 3
 MinMaxDiamondFolds 3, 8
 LongMaxFoldsWithoutFpu 100000, 70000
 DivideByPowerOfTwoIsShifts 64
@@ -168,6 +170,23 @@ SUB IntegerMaxFoldsWithoutFpu(BYVAL a%, BYVAL b%) NOINLINE
   PRINT "imax"; MAX%(a%, b%)
   PRINT "imin"; MIN%(-5, a%)
   PRINT "itie"; MAX%(a%, a%)
+END SUB
+
+' ---------------------------------------------------------------------------
+' @scenario IntegerSignIsBranchless
+' @what     SGN over an INTEGER argument
+' @expect   O0249 emits the branchless cwd/neg/adc sign - no x87 round-trip, no branch
+' @assert   absent fild-dword
+' @assert   present cwd
+' @status   done
+' ---------------------------------------------------------------------------
+SUB IntegerSignIsBranchless(BYVAL a%) NOINLINE
+  DIM mn AS INTEGER
+  mn = -32768
+  PRINT "spos"; SGN(a%)
+  PRINT "sneg"; SGN(-a%)
+  PRINT "szero"; SGN(a% - a%)
+  PRINT "smin"; SGN(mn)
 END SUB
 
 ' ---------------------------------------------------------------------------
