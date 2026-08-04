@@ -150,6 +150,28 @@ battery, it currently reaches:
 | functions routed (selected **and** allocated) | 90 / 218 |
 | whole module bodies the back end can own | 37 / 132 |
 
+### Porting the optimization catalogue to the IR — the real denominator
+
+"Port the 421 optimizations to the IR" needs a denominator before it means anything, and 421 is the
+wrong one. Every document in `docs/optimizations/` carries a **Stage**, and most of them say
+*Emitter*, *Assembler*, *Register allocation*, *Layout*, *Linker* or *Scheduler*. Those are not IR
+work by any reading — they are decisions about which instruction, which register, which encoding,
+which address. The retargetable path needs its **own** versions in its own back end; it cannot
+inherit them.
+
+Measured by `OptimizationPortingLedgerTests`, which reads the Stage of every document:
+
+| | |
+|---|---|
+| documented optimizations with a Stage | 420 |
+| machine-level (not IR work at all) | **290** |
+| portable to the IR | **130** |
+| …already expressed on the IR | 20 |
+| …still to port | **110** |
+
+So the target is 110, not 420 — and the bulk of it is one category, *Mid-end* (52). The ledger is a
+test with floors, so the portable share cannot shrink by reclassification instead of movement.
+
 The runtime traps and the error handler are **done**. `$ERROR BOUNDS / OVERFLOW / NUMERIC ON` now emit
 their checks rather than merely accepting the metastatement, over dynamic arrays as well as static
 ones; `ON ERROR` / `RESUME` / `ERROR n` / `ERRCLEAR` lower, along with the `ERR` / `ERL` / `ERADR`
