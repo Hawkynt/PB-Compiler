@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Done (the `ABS()` intrinsic on a 16-bit value; the `IF x < 0 THEN x = -x` spelling remains) |
+| **Status** | ✅ Done (the `ABS()` intrinsic and the `IF x < 0 THEN x = -x` spelling, on a 16-bit value) |
 | **Stage** | Emitter |
 | **Related** | [O0108](O0108-branchless-select.md), [O0077](O0077-negation-idioms.md), [O0258](O0258-vector-abs.md) |
 | **Split from** | [O0108](O0108-branchless-select.md) |
@@ -28,8 +28,10 @@ PRINT ABS(x%)
 
 ## Now
 
-`CodeGenerator.EmitIntrinsic` emits the `ABS()` intrinsic on a 16-bit value as the
-branchless `cwd; xor ax,dx; sub ax,dx` under `--optimize` (three bytes, no
+Both the `ABS()` intrinsic (`EmitIntrinsic`) and the explicit
+`IF x < 0 THEN x = -x` diamond — either operand order, no `ELSE`, over a 16-bit
+signed variable (`TryEmitBranchlessAbsIf` in `EmitIf`; declines a register-resident
+`x`) — emit the branchless `cwd; xor ax,dx; sub ax,dx` under `--optimize` (three bytes, no
 branch, faster on average than the taken `JNS`). It is **bit-identical** to the
 `test; jns; neg` form for every input — the `-32768` case returns `-32768` in
 both, since its absolute value is not representable — verified by a
@@ -45,5 +47,6 @@ lower to their target's branchless idiom.
 
 ## Still planned
 
-- The explicit `IF x% < 0 THEN x% = -x%` spelling (recognizing the diamond as an
-  abs and emitting the same sequence), and the 32-bit `LONG` branchless form.
+- The 32-bit `LONG` branchless form (a `SAR`-mask blend across `DX:AX`), and the
+  register-resident `x` case (abs in place on the SI/DI resident rather than the
+  cell).

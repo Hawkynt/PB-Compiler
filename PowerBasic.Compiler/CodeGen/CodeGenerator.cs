@@ -2470,6 +2470,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (this.Optimize && this.TryEmitIfChainJumpTable(i))
       return;
 
+    // O0249: the explicit abs idiom `IF x < 0 THEN x = -x` is the branchless cwd/xor/sub, same as
+    // the ABS() intrinsic - no branch and one store.
+    if (this.Optimize && this.TryEmitBranchlessAbsIf(i))
+      return;
+
     var elseLabel = asm.DefineLabel();
     var endLabel = asm.DefineLabel();
 
@@ -2541,6 +2546,40 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       arms.Add(new CaseArm(i.Position, [], i.Else));   // the trailing ELSE is CASE ELSE
 
     return this.TryEmitSelectJumpTable(new SelectStmt(i.Position, subjectExpr!, arms));
+  }
+
+  /// <summary>
+  /// O0249: recognizes <c>IF x &lt; 0 THEN x = -x</c> (equivalently <c>0 &gt; x</c>, no ELSE) over a
+  /// 16-bit signed variable and emits the branchless <c>cwd; xor ax,dx; sub ax,dx</c> - the same
+  /// sequence as the ABS() intrinsic, bit-identical to the branch for every input (MININT included).
+  /// Off under <c>$ERROR OVERFLOW</c> (the negation trap must survive) and declines a register-resident x.
+  /// </summary>
+  private bool TryEmitBranchlessAbsIf(IfStmt i) {
+    if (this.CheckOverflow || i.ElseIfs.Count > 0 || i.Else is { Count: > 0 })
+      return false;
+    var subject = i.Condition switch {
+      BinaryExpr { Op: BinaryOp.Less, Left: { } l, Right: { } r } when this.OptFolder.TryFold(r) is { Integer: 0 } => l,
+      BinaryExpr { Op: BinaryOp.Greater, Left: { } l, Right: { } r } when this.OptFolder.TryFold(l) is { Integer: 0 } => r,
+      _ => (Expression?)null,
+    };
+    if (subject is not NameExpr x || model.TypeOf(x) is not ScalarType { IsFloat: false, ByteSize: 2, Signed: true })
+      return false;
+    if (i.Then is not [AssignStmt { Target: { } t, Value: UnaryExpr { Op: UnaryOp.Negate, Operand: { } neg } }])
+      return false;
+    if (!this.IsSameLvalue(x, t) || !this.IsSameLvalue(x, neg))
+      return false;
+    if (!model.VariableBindings.TryGetValue(x, out var sym) || this.ResidentRegOf(sym) != null
+        || this.TryDirectCell(sym) is not { } cell)
+      return false;
+
+    var asm = this._asm;
+    var word = cell.WithSize(OperandSize.Word);
+    asm.Mov(Reg.AX, word);
+    asm.Cwd();
+    asm.Xor(Reg.AX, Reg.DX);
+    asm.Sub(Reg.AX, Reg.DX);
+    asm.Mov(word, Reg.AX);
+    return true;
   }
 
   private void EmitFor(ForStmt f) {

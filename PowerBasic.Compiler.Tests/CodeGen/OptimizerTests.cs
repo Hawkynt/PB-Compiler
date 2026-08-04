@@ -635,6 +635,10 @@ public sealed class OptimizerTests {
     var noOpt = new CodeGenerator(model) { Optimize = false }.EmitExecutable();
     Assert.That(HasBranchlessAbs(opt), Is.True, "optimized ABS is branchless cwd/xor/sub");
     Assert.That(HasBranchlessAbs(noOpt), Is.False, "the faithful build keeps the test/JNS/NEG form");
+
+    // the explicit `IF x < 0 THEN x = -x` spelling lowers to the same branchless sequence
+    var ifForm = Compile("DIM a AS INTEGER\nLINE INPUT z$\na = VAL(z$)\nIF a < 0 THEN a = -a\nPRINT a\nEND", Dialect.Pb36);
+    Assert.That(HasBranchlessAbs(ifForm), Is.True, "IF a<0 THEN a=-a is branchless abs too");
   }
 
   [Test]
