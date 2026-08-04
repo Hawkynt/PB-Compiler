@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — pre-tested `DO` loops and `FOR` loops both rotate (the register-resident and the fast Int16 paths); IV simplification and fusion remain |
+| **Status** | 🟡 Partial — `DO`/`FOR` rotation and adjacent-`FOR` fusion are done; induction-variable simplification and the wider-counter/runtime-step `FOR` rotation remain |
 | **Stage** | Mid-end / emitter |
 | **Related** | [O0028](O0028-loop-invariant-code-motion.md), [O0030](O0030-induction-variable-strength-reduction.md), [O0007](O0007-loop-unrolling.md) |
 
@@ -32,7 +32,7 @@ FOR i% = 0 TO 99 : b%(i%) = a%(i%) * 2 : NEXT
 
 Two loops, 200 iterations of loop overhead, and `a%()` is walked twice.
 
-## Planned (fusion)
+## Now — fusion
 
 ```basic
 FOR i% = 0 TO 99
@@ -41,7 +41,21 @@ FOR i% = 0 TO 99
 NEXT
 ```
 
-## Now — `DO` and `FOR` rotation
+`OptLoopFusion` (a Tier-1 pre-pass, after `OptPruner` makes loops adjacent) merges
+two adjacent `FOR` loops over the **same counter with identical bounds** whose
+bodies are fusion-simple — only scalar or **counter-indexed**-array assignments,
+no I/O, calls, control flow or non-counter subscripts. Because every array
+subscript is exactly the counter, a value the first loop writes and the second
+reads is the same element the fused iteration just produced, so the `b(i)=a(i)*2`
+chain is legal; a run of such loops collapses into one (verified: three loops —
+fill, derive, sum — fuse, oracle byte-identical). The **only** rejected shape is a
+scalar carry — the second body reading a scalar the first writes, or the first
+reading one the second writes — which also drops the non-associative
+shared-accumulator case. A regression test confirms the merge fires and the carry
+case does not. Runs under `--optimize` (the golden gate, being `--no-optimize`,
+never fuses).
+
+## `DO` and `FOR` rotation
 
 `FOR` loops rotate the same way: the register-resident SI-counter path
 (`TryEmitForCounterInRegister`, which claims most SPEED loops), its 386 `LONG`
@@ -88,9 +102,8 @@ zero-trip cases; a regression test confirms the bound is compared at both ends.
   already rotate.
 - **Induction-variable simplification** — derived IVs (`j = 2*i + 3`) rewritten as
   their own incrementally-updated variables and redundant ones coalesced.
-- **Fusion** needs a dependence test: the second loop may not read an element of
-  `a%()` that the first writes at a *later* index (a backward dependence),
-  and neither loop may have side effects that observe the interleaving (`PRINT`,
-  file I/O, `TIMER`).
-- The counter's post-loop value must be preserved in every case
-  (increment-then-test, QUIRK 2.28).
+- **Wider fusion** — the current pass rejects a subscript that is not exactly the
+  counter (`a(i-1)`, `a(2*i)`) and any non-counter-indexed access, so a
+  cross-iteration or affine-index dependence declines rather than being proven
+  safe; loops with differing-but-compatible bounds (one a sub-range of the other)
+  are also not yet handled.

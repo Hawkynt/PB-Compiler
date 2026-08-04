@@ -796,6 +796,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // dead code also vanishes from the trivial-lowering analysis below
     if (this.Optimize && !this._isUnit) {
       OptPruner.Prune(model);
+      OptLoopFusion.Fuse(model);   // O0062: merge adjacent same-bound FOR loops (after pruning makes them adjacent)
       OptFloatDemotion.Apply(model);
       this._ipcp = OptIpcp.Analyze(model); // O18: constants into callee bodies
       this._pureFold = OptPureFold.Analyze(model); // O25: compile-time-evaluate pure-function calls with constant args

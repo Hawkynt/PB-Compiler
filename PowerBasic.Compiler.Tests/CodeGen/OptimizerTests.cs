@@ -603,6 +603,22 @@ public sealed class OptimizerTests {
   private static int CountMulBx(byte[] image) => CountPair(image, 0xF7, 0xE3);
 
   [Test]
+  public void Fuse_GivenAdjacentSameBoundForLoops_ThenMergedUnlessScalarCarry() {
+    // O0062 loop fusion: two adjacent FOR loops over the same counter and bounds, whose bodies are
+    // simple counter-indexed work, merge into one - even the b(i) = a(i)*2 same-index chain. A
+    // scalar carry (the second reads a scalar the first writes) blocks it.
+    static int Loops(SemanticModel m) => m.MainBody.Count(s => s is global::PowerBasic.Compiler.Syntax.Ast.ForStmt);
+    static SemanticModel Bound(string src) =>
+      Binder.Bind(Parser.Parse(Lexer.Tokenize(src, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    var fusible = Bound("DIM i AS INTEGER\nDIM a(0 TO 9) AS INTEGER, b(0 TO 9) AS INTEGER\nFOR i = 0 TO 9\na(i) = i\nNEXT i\nFOR i = 0 TO 9\nb(i) = a(i) * 2\nNEXT i\nEND");
+    var carry = Bound("DIM i AS INTEGER, s AS INTEGER\nDIM a(0 TO 9) AS INTEGER\nFOR i = 0 TO 9\ns = s + i\nNEXT i\nFOR i = 0 TO 9\na(i) = s + i\nNEXT i\nEND");
+    OptLoopFusion.Fuse(fusible);
+    OptLoopFusion.Fuse(carry);
+    Assert.That(Loops(fusible), Is.EqualTo(1), "two same-index-dependent FOR loops fuse into one");
+    Assert.That(Loops(carry), Is.EqualTo(2), "a scalar carry blocks fusion");
+  }
+
+  [Test]
   public void Emit_GivenRegisterCounterFor_WhenPb36Speed_ThenRotatedTestedAtBothEnds() {
     // O0062: a register-resident FOR counter (SI) is rotated - an entry guard plus a bottom test -
     // so the counter is compared (cmp si, r/m: 3B with modrm reg field = 110b) at BOTH ends. A PRINT
