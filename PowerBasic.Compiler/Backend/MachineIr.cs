@@ -39,6 +39,14 @@ public abstract record MOperand {
 
   /// <summary>A frame stack slot - allocas and register spills resolve to <c>[BP + Offset]</c> at emission.</summary>
   public sealed record StackSlot(int Index, MRegSize Size) : MOperand;
+
+  /// <summary>
+  /// A module-level variable's data cell, named as the IR names it (<c>g.total</c>, <c>static.c</c>).
+  /// The back end does not lay data out - the whole-program codegen does - so this resolves at
+  /// emission to exactly the <c>Mem</c> the direct emitter uses for that symbol, which is what keeps
+  /// the two paths addressing the same storage.
+  /// </summary>
+  public sealed record DataCell(string Name, int Disp, MRegSize Size) : MOperand;
 }
 
 /// <summary>
@@ -87,6 +95,8 @@ public enum MOpcode {
   Imul, Mul, Idiv, Div,
   Neg, Not, Inc, Dec,
   Shl, Shr, Sar,
+  /// <summary>Rotate-through-carry, the second half of a 32-bit shift on a register pair.</summary>
+  Rcl, Rcr,
   Push, Pop,
   Jmp, Jcc, Call, Ret,
 }
@@ -106,6 +116,14 @@ public sealed class MFunction(string name) {
 
   /// <summary>The frame stack slots (allocas + register spills), as byte sizes; frame offsets are assigned at emission.</summary>
   public List<int> StackSlots { get; } = [];
+
+  /// <summary>
+  /// How the prologue loads the incoming arguments: which virtual register takes which word of which
+  /// argument. A 16-bit argument contributes one entry, a 32-bit one contributes two (its low word at
+  /// the parameter's own offset and its high word at +2) - which is why this is a table rather than
+  /// the positional "argument i is virtual register i" the emitter used to assume.
+  /// </summary>
+  public List<(int VirtualId, int ArgumentIndex, int ByteDelta)> ArgumentLoads { get; } = [];
 
   public IEnumerable<MInstr> AllInstructions {
     get {

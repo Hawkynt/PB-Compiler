@@ -345,3 +345,25 @@ compiled by the back end (register-allocated and scheduled), output-identical to
 real programs through the in-house back end, end to end, oracle-verified. Widening eligibility (float/
 x87 results, string/array params, the main body) is future work; the integer-function path is live and
 verified.
+
+### The data-layout bridge: a routed function reading a module variable
+
+The back end lays out no data of its own — the whole-program codegen does — so a global access
+becomes a named `MOperand.DataCell` that resolves at emission to exactly the `Mem` the direct emitter
+uses for that symbol (`TryDirectCell`). Both paths then address the same storage, which is what lets
+routed and directly-emitted code share state at all.
+
+The question that had to be settled first was whether that cell can be **stale**, since the
+cell-sharing prototype was reverted for exactly that reason. It cannot, for two independent reasons,
+and both are properties of the existing code rather than assumptions:
+
+- a global a *procedure* can see is `SHARED`, and `SsaForm.IsTrackableShape` excludes `IsShared`
+  variables from SSA tracking — so no store to one is ever elided by dead-store elimination and no
+  read of one is ever folded to a constant;
+- register residency, which could otherwise hold the value in `SI`/`DI` while the cell went stale,
+  requires an `SI`/`DI`-clean region — and a call is not clean, so a loop containing a call to the
+  routed function cannot keep the global in a register.
+
+Only a *module* variable is bridged. A `STATIC` local and a synthesized IR global (`.data_cursor`, a
+string literal) have no `ModuleVariables` symbol to map back to, so they decline — the emitter throws
+rather than guesses if the routing ever admits one it cannot address.

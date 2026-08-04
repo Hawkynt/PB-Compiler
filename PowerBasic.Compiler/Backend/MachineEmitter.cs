@@ -18,12 +18,14 @@ public sealed class MachineEmitter {
   private readonly int[] _slotDisp;
   private readonly Dictionary<string, Label> _labels = [];
   private readonly Func<string, Label?>? _resolveCallee;
+  private readonly Func<string, Mem?>? _resolveData;
 
   private MachineEmitter(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
-      Func<string, Label?>? resolveCallee = null) {
+      Func<string, Label?>? resolveCallee = null, Func<string, Mem?>? resolveData = null) {
     this._asm = asm;
     this._allocation = allocation;
     this._resolveCallee = resolveCallee;
+    this._resolveData = resolveData;
     // lay the stack slots out below BP: slot k lives at [BP - offset], word-aligned
     this._slotDisp = new int[function.StackSlots.Count];
     var running = 0;
@@ -62,8 +64,9 @@ public sealed class MachineEmitter {
   /// supplies it here; a name it does not know is a bug in the routing, not in this emitter.
   /// </param>
   public static void EmitFunction(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
-      int[] paramOffsets, int paramBytes, Func<string, Label?>? resolveCallee = null) {
-    var emitter = new MachineEmitter(asm, function, allocation, resolveCallee);
+      int[] paramOffsets, int paramBytes, Func<string, Label?>? resolveCallee = null,
+      Func<string, Mem?>? resolveData = null) {
+    var emitter = new MachineEmitter(asm, function, allocation, resolveCallee, resolveData);
 
     asm.Push(Asm.Reg.BP);
     asm.Mov(Asm.Reg.BP, Asm.Reg.SP);
@@ -73,9 +76,17 @@ public sealed class MachineEmitter {
     if (frame > 0)
       asm.Sub(Asm.Reg.SP, (Imm)frame);
 
-    // the caller pushed the arguments; load each into the register the allocator gave its vreg
-    for (var i = 0; i < paramOffsets.Length; ++i)
-      asm.Mov(allocation[i], Asm.Mem.Word(Asm.Reg.BP, paramOffsets[i]));
+    // the caller pushed the arguments; load each into the register the allocator gave its vreg.
+    // A 32-bit argument is two words, so the selector supplies an explicit table; a function selected
+    // before that existed (or built by hand in a test) keeps the positional one-word-per-argument form.
+    if (function.ArgumentLoads.Count > 0)
+      foreach (var (virtualId, argumentIndex, byteDelta) in function.ArgumentLoads) {
+        if (allocation.TryGetValue(virtualId, out var reg))
+          asm.Mov(reg, Asm.Mem.Word(Asm.Reg.BP, paramOffsets[argumentIndex] + byteDelta));
+      }
+    else
+      for (var i = 0; i < paramOffsets.Length; ++i)
+        asm.Mov(allocation[i], Asm.Mem.Word(Asm.Reg.BP, paramOffsets[i]));
 
     foreach (var block in function.Blocks) {
       asm.MarkLabel(emitter._labels[block.Label]);
@@ -120,6 +131,9 @@ public sealed class MachineEmitter {
       case MOpcode.Shl: asm.Shl(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
       case MOpcode.Shr: asm.Shr(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
       case MOpcode.Sar: asm.Sar(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
+      // the carry the neighbouring SHL/SHR left is rotated into the other half of a 32-bit shift
+      case MOpcode.Rcl: asm.Rcl(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
+      case MOpcode.Rcr: asm.Rcr(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
       case MOpcode.Jmp: asm.Jmp(this._labels[((MOperand.LabelRef)ops[0]).Name]); break;
       case MOpcode.Jcc: asm.J(instr.Condition!.Value, this._labels[((MOperand.LabelRef)ops[0]).Name]); break;
       case MOpcode.Call: {
@@ -169,16 +183,25 @@ public sealed class MachineEmitter {
   private object ToSource(MOperand operand) => operand switch {
     MOperand.Register r => (object)this.Resolve(r.Reg),
     MOperand.Immediate i => (Imm)(int)i.Value,
-    MOperand.Memory or MOperand.StackSlot => this.Mem(operand),
+    MOperand.Memory or MOperand.StackSlot or MOperand.DataCell => this.Mem(operand),
     _ => throw new System.NotSupportedException($"operand {operand} is not a source"),
   };
 
   private Reg Reg(MOperand operand) => this.Resolve(((MOperand.Register)operand).Reg);
 
+  /// <summary>A module variable's cell, as the whole-program codegen lays it out (plus any word offset).</summary>
+  private Mem DataCell(MOperand.DataCell cell) {
+    var resolved = this._resolveData?.Invoke(cell.Name)
+      ?? throw new System.InvalidOperationException(
+        $"no data cell for global '{cell.Name}' - the routing admitted a reference it cannot address");
+    return Asm.Mem.Word(resolved.Label!, resolved.Displacement + cell.Disp);
+  }
+
   private Reg Resolve(MReg reg) => reg.IsVirtual ? this._allocation[reg.VirtualId] : reg.Physical;
 
   private Mem Mem(MOperand operand) => operand switch {
     MOperand.StackSlot slot => Asm.Mem.Word(Asm.Reg.BP, this._slotDisp[slot.Index]),
+    MOperand.DataCell cell => this.DataCell(cell),
     MOperand.Memory m when m.Index is { } x => Asm.Mem.Word(this.Resolve(m.Base!.Value), this.Resolve(x), m.Disp),
     MOperand.Memory m when m.Base is { } b => Asm.Mem.Word(this.Resolve(b), m.Disp),
     MOperand.Memory m => Asm.Mem.Word(m.Disp),

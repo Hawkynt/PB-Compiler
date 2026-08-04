@@ -126,10 +126,11 @@ public sealed class BackendCoverageTests {
     // procedures became selectable, 9 -> 15 when metastatements stopped blocking the lowering, then
     // 15 -> 13 when 32-bit values became register PAIRS. Those two lost functions were never really
     // compiled correctly - a LONG used to mint one Dword-sized register and emit a single word-sized
-    // MOV, silently carrying the low 16 bits as the whole value - so they now decline honestly at the
-    // 32-bit shift/multiply that needs a runtime helper. A coverage number is only worth defending
-    // when every function under it is actually right.
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(13),
+    // MOV, silently carrying the low 16 bits as the whole value - so they declined honestly instead.
+    // A coverage number is only worth defending when every function under it is actually right.
+    // Then 13 -> 15 as the 32-bit forms landed for real: constant shifts, parameters, call arguments
+    // and results, and a module variable addressed through the codegen's own data cell.
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(15),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
   }
 }

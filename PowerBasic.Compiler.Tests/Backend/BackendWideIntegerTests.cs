@@ -130,15 +130,46 @@ public sealed class BackendWideIntegerTests {
   }
 
   [Test]
-  public void Select_GivenLongParameter_ThenDeclinesRatherThanLoadHalfOfIt() {
-    // the prologue loads one word per argument into allocation[i], which a pair breaks - declining
-    // is correct until it can load both halves
-    var fn = new IrFunction("F", IrType.I32, [new IrArgument(IrType.I32, 0)]);
+  public void Select_GivenLongParameter_ThenTheProloguePlanLoadsBothWords() {
+    // the prologue used to assume "argument i is virtual register i" and load one word each, which a
+    // pair breaks; the selector now hands it an explicit table of which register takes which word
+    var fn = new IrFunction("F", IrType.I32, [new IrArgument(IrType.I32, 0), new IrArgument(IrType.I16, 1)]);
     var entry = fn.CreateBlock("entry");
     new IrBuilder(entry).Ret(fn.Parameters[0]);
 
-    Assert.That(InstructionSelector.TrySelect(fn, out var reason), Is.Null);
-    Assert.That(reason, Does.Contain("32-bit"));
+    var m = InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(m, Is.Not.Null, reason);
+    var wide = m!.ArgumentLoads.Where(l => l.ArgumentIndex == 0).ToList();
+    Assert.That(wide, Has.Count.EqualTo(2), "a 32-bit argument arrives as two words");
+    Assert.That(wide.Select(l => l.ByteDelta), Is.EquivalentTo(new[] { 0, 2 }), "low at its own offset, high at +2");
+    Assert.That(m.ArgumentLoads.Count(l => l.ArgumentIndex == 1), Is.EqualTo(1), "a 16-bit argument is one word");
+  }
+
+  [Test]
+  public void EmitFunction_GivenLongParameter_ThenBothHalvesAreLoadedFromTheFrame() {
+    var fn = new IrFunction("F", IrType.I32, [new IrArgument(IrType.I32, 0)]);
+    var entry = fn.CreateBlock("entry");
+    var b = new IrBuilder(entry);
+    b.Ret(b.Add(fn.Parameters[0], new IrConstantInt(IrType.I32, 1)));
+    var m = InstructionSelector.TrySelect(fn, out var reason);
+    Assert.That(m, Is.Not.Null, reason);
+    var alloc = LinearScanAllocator.Allocate(m!);
+    Assert.That(alloc, Is.Not.Null);
+
+    var asm = new Assembler();
+    MachineEmitter.EmitFunction(asm, m!, alloc!, [6], 4);   // one 4-byte argument at [BP+6]
+
+    // both halves must be loaded, so the prologue reads [BP+6] and [BP+8]
+    var reference = new Assembler();
+    reference.Mov(alloc![m!.ArgumentLoads[0].VirtualId], Mem.Word(Reg.BP, 6));
+    reference.Mov(alloc[m.ArgumentLoads[1].VirtualId], Mem.Word(Reg.BP, 8));
+    var expected = reference.ToArray();
+    var actual = asm.ToArray();
+
+    Assert.That(actual.Length, Is.GreaterThan(expected.Length));
+    // the argument loads sit right after PUSH BP / MOV BP,SP (3 bytes)
+    Assert.That(actual.Skip(3).Take(expected.Length), Is.EqualTo(expected));
   }
 
   [Test]

@@ -100,6 +100,17 @@ public sealed partial class CodeGenerator {
     return proc is null ? null : this.ProcLabelOf(proc);
   }
 
+  /// <summary>
+  /// The cell a back-end-emitted access to a module variable resolves to: exactly the one the direct
+  /// emitter uses for that symbol, so the two paths address the same storage. The IR names a global
+  /// <c>g.&lt;name&gt;</c> and a STATIC local <c>static.&lt;name&gt;</c>.
+  /// </summary>
+  private Asm.Mem? DataCellOf(string name)
+    => name.StartsWith("g.", System.StringComparison.Ordinal)
+       && model.ModuleVariables.TryGetValue(name[2..], out var symbol)
+      ? this.TryDirectCell(symbol)
+      : null;   // a STATIC local, or a synthesized IR global like .data_cursor - not addressable here yet
+
   /// <summary>The names of the defined functions <paramref name="fn"/> calls directly (its ABI partners).</summary>
   private static IEnumerable<string> CalleeNames(IrFunction fn)
     => fn.Blocks.SelectMany(b => b.Instructions)
@@ -122,6 +133,6 @@ public sealed partial class CodeGenerator {
     var paramOffsets = proc.Parameters.Select(p => p.Offset).ToArray();
     // a CALL needs the label the whole-program codegen bound for the callee (procedure labels live in
     // a different registry than Assembler.Lbl); the routing guarantees every callee is itself routed
-    MachineEmitter.EmitFunction(asm, mfn, alloc, paramOffsets, paramBytes, this.CalleeLabel);
+    MachineEmitter.EmitFunction(asm, mfn, alloc, paramOffsets, paramBytes, this.CalleeLabel, this.DataCellOf);
   }
 }

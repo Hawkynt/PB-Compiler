@@ -76,12 +76,19 @@ public sealed class InstructionSelector {
 
     // arguments take the FIRST virtual registers (so argument i is vreg i, which the emitter's ABI
     // prologue relies on to load argument i into allocation[i]); they are function live-ins
-    foreach (var arg in fn.Parameters) {
-      // a 32-bit parameter would need a register PAIR, which breaks that argument-i-is-vreg-i
-      // correspondence the prologue loads by - so decline until the prologue can load both halves
-      if (IsWide(arg.Type))
-        return this.DeclineNull($"parameter: 32-bit {arg.Type} (the ABI prologue loads one word per argument)");
-      this._vregs[arg] = this.FreshVreg(arg.Type);
+    for (var index = 0; index < fn.Parameters.Count; ++index) {
+      var arg = fn.Parameters[index];
+      if (IsWide(arg.Type)) {
+        // a 32-bit argument arrives as two words: its low half at the parameter's own offset and its
+        // high half at +2, each into its own register
+        var (lo, hi) = this.FreshPair(arg);
+        this._function.ArgumentLoads.Add((lo.Reg.VirtualId, index, 0));
+        this._function.ArgumentLoads.Add((hi.Reg.VirtualId, index, 2));
+        continue;
+      }
+      var vreg = this.FreshVreg(arg.Type);
+      this._vregs[arg] = vreg;
+      this._function.ArgumentLoads.Add((vreg.VirtualId, index, 0));
     }
 
     // each phi then gets a virtual register; the value is materialized by copies on the incoming edges
@@ -281,6 +288,8 @@ public sealed class InstructionSelector {
   /// divide and the shifts need a runtime helper or a CL count and are declined.
   /// </summary>
   private bool SelectWideBinary(IrBinary bin, MOpcode opcode, MBlock block) {
+    if (opcode is MOpcode.Shl or MOpcode.Shr or MOpcode.Sar)
+      return this.SelectWideShift(bin, opcode, block);
     var high = opcode switch {
       MOpcode.Add => MOpcode.Adc,
       MOpcode.Sub => MOpcode.Sbb,
@@ -300,6 +309,40 @@ public sealed class InstructionSelector {
     // ADC/SBB read the carry the low half just wrote, so the two must stay adjacent - the effect
     // descriptor says so, which is what keeps the scheduler from separating them
     this._current.Instructions.Add(new MInstr(high, [destHi, rhsHi], PairEffect(rhsHi, readsFlags: high != opcode, writesFlags: true)));
+    return true;
+  }
+
+  /// <summary>
+  /// A 32-bit shift by a compile-time count, one bit at a time across the pair: each step shifts one
+  /// half and rotates the bit that fell out of it through the carry into the other
+  /// (<c>SHL lo,1 / RCL hi,1</c> going left, <c>SAR|SHR hi,1 / RCR lo,1</c> going right). The 386's
+  /// <c>SHLD</c>/<c>SHRD</c> would do it in one instruction, but this target is an 8086; a variable
+  /// count would need a loop, so it is declined, and a large count is left to the runtime rather than
+  /// unrolled into a wall of instructions.
+  /// </summary>
+  private bool SelectWideShift(IrBinary bin, MOpcode opcode, MBlock block) {
+    if (bin.Rhs is not IrConstantInt { Value: var count } || count is < 0 or > 8)
+      return this.Decline($"32-bit binary: {bin.Op} (only a small constant count, not {bin.Rhs})");
+    if (!this.TryOperandPair(bin.Lhs, out var lhsLo, out var lhsHi))
+      return false;
+
+    var (destLo, destHi) = this.FreshPair(bin);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destLo, lhsLo], MovEffect(destLo, lhsLo)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destHi, lhsHi], MovEffect(destHi, lhsHi)));
+
+    var one = new MOperand.Immediate(1);
+    for (var step = 0; step < count; ++step) {
+      // left: the low half shifts first and its carry rotates into the high half; right: the mirror
+      var (first, firstOp, second, secondOp) = opcode == MOpcode.Shl
+        ? (destLo, MOpcode.Shl, destHi, MOpcode.Rcl)
+        : (destHi, opcode, destLo, MOpcode.Rcr);
+      this._current.Instructions.Add(new MInstr(firstOp, [first, one],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+          ReadsMemory: false, WritesMemory: false)));
+      this._current.Instructions.Add(new MInstr(secondOp, [second, one],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: true, WritesFlags: true,
+          ReadsMemory: false, WritesMemory: false)));
+    }
     return true;
   }
 
@@ -323,7 +366,7 @@ public sealed class InstructionSelector {
       if (this.PointerMemory(load.Pointer, MRegSize.Word) is not { } lowCell)
         return false;
       var (lo, hi) = this.FreshPair(load);
-      var highCell = lowCell with { Disp = lowCell.Disp + 2 };   // little-endian: the high word follows
+      var highCell = Shifted(lowCell, 2);   // little-endian: the high word follows
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lo, lowCell], MovEffect(lo, lowCell)));
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [hi, highCell], MovEffect(hi, highCell)));
       return true;
@@ -344,7 +387,7 @@ public sealed class InstructionSelector {
         return false;
       if (!this.TryOperandPair(store.Value, out var lo, out var hi))
         return false;
-      var highCell = lowCell with { Disp = lowCell.Disp + 2 };
+      var highCell = Shifted(lowCell, 2);
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lowCell, lo],
         new MInstrEffect([], lo is MOperand.Register ? [1] : [], false, false, false, WritesMemory: true)));
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [highCell, hi],
@@ -555,17 +598,26 @@ public sealed class InstructionSelector {
       return this.Decline("call: indirect (through a procedure pointer)");
     if (callee.IsDeclaration)
       return this.Decline($"call: {callee.Name} (runtime declaration - needs the runtime-label bridge)");
-    if (!call.Type.IsVoid && RegSize(call.Type) != MRegSize.Word)
-      return this.Decline($"call: {callee.Name} returns {call.Type} (word results only)");
+    if (!call.Type.IsVoid && !IsWide(call.Type) && RegSize(call.Type) != MRegSize.Word)
+      return this.Decline($"call: {callee.Name} returns {call.Type} (word or 32-bit results only)");
 
     foreach (var arg in call.Args) {
-      if (arg.Type.IsFloat || RegSize(arg.Type) != MRegSize.Word)
+      if (arg.Type.IsFloat)
+        return this.Decline($"call: {callee.Name} takes {arg.Type} (no float arguments yet)");
+      if (IsWide(arg.Type)) {
+        // a 32-bit argument occupies two stack words, and the callee reads its LOW half at the
+        // parameter's own offset - the stack grows down, so the high half is pushed first
+        if (!this.TryOperandPair(arg, out var argLo, out var argHi))
+          return false;
+        this._current.Instructions.Add(PushOf(argHi));
+        this._current.Instructions.Add(PushOf(argLo));
+        continue;
+      }
+      if (RegSize(arg.Type) != MRegSize.Word)
         return this.Decline($"call: {callee.Name} takes {arg.Type} (word arguments only)");
       if (!this.TryOperand(arg, out var pushed))
         return false;
-      this._current.Instructions.Add(new MInstr(MOpcode.Push, [pushed],
-        new MInstrEffect(WrittenRegs: [], ReadRegs: pushed is MOperand.Register ? [0] : [],
-          ReadsFlags: false, WritesFlags: false, ReadsMemory: pushed is MOperand.Memory, WritesMemory: true)));
+      this._current.Instructions.Add(PushOf(pushed));
     }
 
     this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef(callee.Name)],
@@ -576,6 +628,16 @@ public sealed class InstructionSelector {
     if (call.Type.IsVoid)
       return true;
 
+    if (IsWide(call.Type)) {
+      // a 32-bit result comes back in DX:AX, the convention the direct codegen documents
+      var (lo, hi) = this.FreshPair(call);
+      var axResult = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+      var dxResult = new MOperand.Register(MReg.Physical_(Reg.DX, MRegSize.Word));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lo, axResult], MovEffect(lo, axResult)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [hi, dxResult], MovEffect(hi, dxResult)));
+      return true;
+    }
+
     // the result is in AX; copy it into the call's own virtual register so the allocator may place
     // the value anywhere (the copy is free when it lands in AX again)
     var dest = this.FreshVreg(call.Type);
@@ -585,6 +647,11 @@ public sealed class InstructionSelector {
     this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ax], MovEffect(destOp, ax)));
     return true;
   }
+
+  /// <summary>A PUSH of one argument word, with the effect descriptor that keeps it ordered against the call.</summary>
+  private static MInstr PushOf(MOperand operand) => new(MOpcode.Push, [operand],
+    new MInstrEffect(WrittenRegs: [], ReadRegs: operand is MOperand.Register ? [0] : [],
+      ReadsFlags: false, WritesFlags: false, ReadsMemory: operand is MOperand.Memory, WritesMemory: true));
 
   /// <summary>Every allocatable register a CALL destroys under this ABI - the callee saves none of them.</summary>
   private static readonly Reg[] _callClobbers = [Reg.AX, Reg.BX, Reg.CX, Reg.DX, Reg.SI, Reg.DI];
@@ -679,15 +746,38 @@ public sealed class InstructionSelector {
     }
   }
 
-  /// <summary>A pointer value as a memory operand <c>[ptrReg]</c> of the given access size, or null when it has no register.</summary>
-  private MOperand.Memory? PointerMemory(IrValue pointer, MRegSize size) {
+  /// <summary>
+  /// A pointer value as a memory operand: <c>[ptrReg]</c> for an address held in a register, or the
+  /// named data cell for a module-level variable - which the whole-program codegen resolves to the
+  /// very <c>Mem</c> the direct emitter uses, so both paths address the same storage.
+  ///
+  /// Reading that cell is sound because a global a procedure can see is <c>SHARED</c>, and
+  /// <c>SsaForm.IsTrackableShape</c> excludes SHARED variables from SSA tracking - so no store to it
+  /// is ever elided and no read is ever folded away. Register residency cannot strand a value there
+  /// either: it requires an SI/DI-clean region, and a call is not clean.
+  /// </summary>
+  private MOperand? PointerMemory(IrValue pointer, MRegSize size) {
     if (this._vregs.TryGetValue(pointer, out var reg))
-      return new(reg, null, 1, 0, size);
-    _ = pointer is IrGlobalVariable g
-      ? this.Decline($"pointer: global '{g.Name}' (needs the data-layout bridge)")
-      : this.Decline($"pointer: {pointer.GetType().Name} has no register");
+      return new MOperand.Memory(reg, null, 1, 0, size);
+    if (pointer is IrGlobalVariable g) {
+      // only a module variable maps back to a symbol the codegen laid out; a STATIC local or a
+      // synthesized IR global (.data_cursor, a string literal) has no cell to borrow yet
+      if (!g.Name.StartsWith("g.", System.StringComparison.Ordinal)) {
+        this.Decline($"pointer: global '{g.Name}' (no module symbol to address)");
+        return null;
+      }
+      return new MOperand.DataCell(g.Name, 0, size);
+    }
+    this.Decline($"pointer: {pointer.GetType().Name} has no register");
     return null;
   }
+
+  /// <summary>The same cell shifted by <paramref name="delta"/> bytes - the high word of a 32-bit access.</summary>
+  private static MOperand Shifted(MOperand cell, int delta) => cell switch {
+    MOperand.Memory m => m with { Disp = m.Disp + delta },
+    MOperand.DataCell d => d with { Disp = d.Disp + delta },
+    _ => cell,
+  };
 
   private static MInstrEffect MovEffect(MOperand.Register dest, MOperand src)
     => new(WrittenRegs: [0], ReadRegs: src is MOperand.Register ? [1] : [],
