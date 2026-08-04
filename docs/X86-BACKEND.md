@@ -85,11 +85,26 @@ machine IR).
   comparison/cast/intrinsic expressions, strings as handle pointers. **Unsupported (throws
   `IrLoweringException`):** dynamic arrays, UDT-array fields, non-scalar params, inline
   asm, unlisted intrinsics. A program either fully lowers or the backend declines it.
-  Error handling (ON ERROR/RESUME) DOES lower - see the error-handler section in
-  [IR.md](IR.md) - but such a function is not routed: arming a handler captures the
-  current BP/SP and so must be expanded inline rather than called, which the selector
-  does not do yet, and it declines the `rt_onerr_arm` / `rt_resume_mark` intrinsics on
-  the ordinary "not in the runtime ABI table" rule.
+  Error handling (ON ERROR/RESUME) lowers AND routes for a module body - see "Emitting the
+  error handler" below. A PROCEDURE that arms one is still excluded, because the direct
+  path saves and restores the caller's handler triple around such a body.
+
+### Emitting the error handler
+
+`ON ERROR` is the one construct that cannot be a runtime call. Arming a handler captures the
+**current** frame - the `BP` and `SP` that `rt_raise` restores before it jumps - so a `CALL` would
+capture its own. The lowering therefore emits intrinsics (`rt_onerr_arm`, `rt_onerr_disarm`,
+`rt_onerr_resume_next`, `rt_err_clear`, `rt_resume_mark`, `rt_resume_same`, `rt_resume_next`) and
+`InstructionSelector.SelectErrorHandlerIntrinsic` expands each into the same few `MOV`s the direct
+emitter writes inline. Three pieces of machinery make that possible:
+
+- `MOperand.BlockOffset` - the offset of a basic block's own label, the machine form of the IR's
+  `blockaddress`. No other operand names a point in this function's own code, because every other
+  transfer of control *is* an instruction.
+- `MOpcode.JmpIndirect` - `RESUME` and `RESUME NEXT` go back to a statement the *fault* chose, so the
+  destination is a value the runtime latched rather than a label anything here can name.
+- `IrUnreachable` as a terminator, accepted only when the block already ends in one - which it does
+  after the indirect jump that never returns.
 - **Wiring** (`pbc/Driver.cs` `--emit-llvm`): `TryLowerModule` → `IrPassManager.Standard()`
   `.RunOnModule` → `Inliner.Run` → re-run → `IrVerifier.Verify` → emit. The new backend
   slots a lowering pass in the same spot, after optimisation, before emission.

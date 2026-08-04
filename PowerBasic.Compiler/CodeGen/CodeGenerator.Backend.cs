@@ -146,9 +146,13 @@ public sealed partial class CodeGenerator {
       return this._backendMain;
     this._backendMainKnown = true;
     var routed = this.BackendProcs();               // also lowers the module and fills _backendModule
+    // Error handling used to disqualify the module body outright. It no longer does: the selector
+    // expands the ON ERROR intrinsics inline (arming captures the CURRENT BP/SP, so a CALL would
+    // capture its own), and a handler is named by its block's offset. A PROCEDURE that arms one is
+    // still excluded - the direct path additionally saves and restores the caller's handler triple
+    // around such a body, and that bookkeeping has no equivalent here yet.
     if (!this.UseExperimentalBackend || this._isUnit || this._allowExternalCalls
         || this._backendModule is null
-        || ContainsErrorHandling(model.MainBody)
         || model.MainBody.Any(s => s is Syntax.Ast.ChainStmt))
       return null;
     if (this._backendModule.FindFunction("main") is not { IsDeclaration: false } main)

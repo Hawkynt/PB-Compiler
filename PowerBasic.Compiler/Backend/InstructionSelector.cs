@@ -225,6 +225,13 @@ public sealed class InstructionSelector {
         this._current.Successors.Add(cond.IfTrue.Label);
         this._current.Successors.Add(cond.IfFalse.Label);
         return true;
+      // Control does not get here, and the block already says so: RESUME jumps through a runtime cell
+      // and never comes back, so the intrinsic has left a JmpIndirect behind. The IR still needs a
+      // terminator on such a block, which is what this is - it emits nothing, and only when the block
+      // really is closed already. An unreachable with no terminator in front of it would fall into
+      // whatever follows, so that one still declines.
+      case IrUnreachable when this._current.Instructions is [.., { IsTerminator: true }]:
+        return true;
       default:
         return this.Decline($"terminator: {terminator?.GetType().Name ?? "none"}"
           + (terminator is IrCondBr ? " (condition is not a folded compare)" : ""));
@@ -732,9 +739,11 @@ public sealed class InstructionSelector {
     if (call.Callee is not IrFunction callee)
       return this.Decline("call: indirect (through a procedure pointer)");
     if (callee.IsDeclaration)
-      return RuntimeAbi.For(callee.Name) is { } routine
-        ? this.SelectRuntimeCall(call, callee, routine)
-        : this.Decline($"call: {callee.Name} (runtime declaration - not in the runtime ABI table)");
+      return ErrorHandlerIntrinsics.Contains(callee.Name)
+        ? this.SelectErrorHandlerIntrinsic(call, callee)
+        : RuntimeAbi.For(callee.Name) is { } routine
+          ? this.SelectRuntimeCall(call, callee, routine)
+          : this.Decline($"call: {callee.Name} (runtime declaration - not in the runtime ABI table)");
     if (!call.Type.IsVoid && !IsWide(call.Type) && RegSize(call.Type) != MRegSize.Word)
       return this.Decline($"call: {callee.Name} returns {call.Type} (word or 32-bit results only)");
 
@@ -794,6 +803,79 @@ public sealed class InstructionSelector {
   /// names it - that is what stops the allocator from parking a live value (or the argument's own
   /// source) in a register the sequence is about to overwrite.
   /// </summary>
+  /// <summary>
+  /// The ON ERROR intrinsics the lowering emits. They are NOT runtime calls and cannot be: arming a
+  /// handler captures the CURRENT frame - the BP and SP that <c>rt_raise</c> will restore before it
+  /// jumps - and a CALL would capture its own. So they expand to the same few MOVs the direct emitter
+  /// writes inline, which is why they live here rather than in the runtime ABI table.
+  /// </summary>
+  private static readonly HashSet<string> ErrorHandlerIntrinsics = new(StringComparer.Ordinal) {
+    "rt_onerr_arm", "rt_onerr_disarm", "rt_onerr_resume_next",
+    "rt_err_clear", "rt_resume_mark", "rt_resume_same", "rt_resume_next",
+  };
+
+  /// <summary>A word store into a named runtime cell.</summary>
+  private void StoreCell(string cell, MOperand source) =>
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov,
+      [new MOperand.DataCell(cell, 0, MRegSize.Word), source],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: source is MOperand.Register ? [1] : [],
+        ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: true)));
+
+  /// <summary>Arms the handler triple: where to jump, and the frame to restore before jumping there.</summary>
+  private void ArmHandler(MOperand target) {
+    this.StoreCell("rt_onerr", target);
+    this.StoreCell("rt_onerr_bp", new MOperand.Register(MReg.Physical_(Reg.BP)));
+    this.StoreCell("rt_onerr_sp", new MOperand.Register(MReg.Physical_(Reg.SP)));
+    this.StoreCell("rt_err", new MOperand.Immediate(0));
+  }
+
+  private bool SelectErrorHandlerIntrinsic(IrCall call, IrFunction callee) {
+    switch (callee.Name) {
+      case "rt_onerr_arm":
+        if (call.Args.FirstOrDefault() is not IrBlockAddress handler)
+          return this.Decline("ON ERROR: the handler is not a block address");
+        this.ArmHandler(new MOperand.BlockOffset(handler.Block.Label));
+        return true;
+
+      // ON ERROR RESUME NEXT arms the runtime's own stub, which hops to the latched successor
+      case "rt_onerr_resume_next":
+        this.ArmHandler(new MOperand.DataOffset("rt_resumenext_handler", 0));
+        return true;
+
+      case "rt_onerr_disarm":
+        this.StoreCell("rt_onerr", new MOperand.Immediate(0));
+        return true;
+
+      case "rt_err_clear":
+        this.StoreCell("rt_err", new MOperand.Immediate(0));
+        return true;
+
+      // every statement publishes where it begins and where the next one does, so a fault can latch
+      // whichever the resume will jump through
+      case "rt_resume_mark": {
+        if (call.Args.ToList() is not [IrBlockAddress start, IrBlockAddress next])
+          return this.Decline("RESUME: a statement boundary is not a pair of block addresses");
+        this.StoreCell("rt_resume", new MOperand.BlockOffset(start.Block.Label));
+        this.StoreCell("rt_resumenext", new MOperand.BlockOffset(next.Block.Label));
+        return true;
+      }
+
+      // RESUME / RESUME NEXT jump through the cell the fault latched - an indirect jump whose target
+      // is not known here, so the runtime performs it and never comes back
+      case "rt_resume_same":
+      case "rt_resume_next":
+        this.StoreCell("rt_err", new MOperand.Immediate(0));
+        this._current.Instructions.Add(new MInstr(MOpcode.JmpIndirect,
+          [new MOperand.DataCell(callee.Name == "rt_resume_same" ? "rt_eresume" : "rt_eresumenext", 0, MRegSize.Word)],
+          new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+            ReadsMemory: true, WritesMemory: false)));
+        return true;
+
+      default:
+        return this.Decline($"call: {callee.Name} (unhandled error-handler intrinsic)");
+    }
+  }
+
   private bool SelectRuntimeCall(IrCall call, IrFunction callee, RuntimeAbi.Routine routine) {
     if (!call.Type.IsVoid && routine.Result is null)
       return this.Decline($"call: {callee.Name} returns a value the runtime ABI table does not place");
@@ -836,12 +918,24 @@ public sealed class InstructionSelector {
           break;
         }
         case RuntimeAbi.ArgKind.Word: {
-          // the IR types a byte count i32; a constant that fits a word is the same value in CX
+          // The IR types several of these i32 where the routine wants a word - a byte count, a PB
+          // file number, an error code. Passing the low half is only sound when the high half is
+          // known to carry nothing, which is exactly two cases: a constant that fits, and a value
+          // that was WIDENED from 16 bits in the first place, where the narrowing simply undoes the
+          // extension. Anything else still declines rather than silently dropping the top word.
           MOperand source;
           if (IsWide(arg.Type)) {
-            if (arg is not IrConstantInt { Value: >= short.MinValue and <= ushort.MaxValue } narrow)
+            var narrowed = arg switch {
+              IrConstantInt { Value: >= short.MinValue and <= ushort.MaxValue } c => (IrValue)c,
+              IrCast { Op: IrCastOp.SExt or IrCastOp.ZExt } cast when !IsWide(cast.Value.Type) => cast.Value,
+              _ => null,
+            };
+            if (narrowed is null)
               return this.Decline($"call: {callee.Name} takes a 32-bit value in a word register");
-            source = new MOperand.Immediate(narrow.Value);
+            if (narrowed is IrConstantInt fits)
+              source = new MOperand.Immediate(fits.Value);
+            else if (!this.TryOperand(narrowed, out source!))
+              return false;
           } else if (!this.TryOperand(arg, out source!))
             return false;
           var dest = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));
@@ -1217,9 +1311,12 @@ public sealed class InstructionSelector {
     if (this._vregs.TryGetValue(pointer, out var reg))
       return new MOperand.Memory(reg, null, 1, 0, size);
     if (pointer is IrGlobalVariable g) {
-      // only a module variable maps back to a symbol the codegen laid out; a STATIC local or a
-      // synthesized IR global (.data_cursor, a string literal) has no cell to borrow yet
-      if (!g.Name.StartsWith("g.", System.StringComparison.Ordinal)) {
+      // A module variable maps back to a symbol the codegen laid out, and an rt_ global IS the
+      // runtime's own named cell - rt_err, rt_erl, rt_col - which the data bridge resolves to the very
+      // storage the direct emitter reads. A STATIC local or a synthesized IR global (.data_cursor, a
+      // string literal) still has no cell to borrow.
+      if (!g.Name.StartsWith("g.", System.StringComparison.Ordinal)
+          && !g.Name.StartsWith("rt_", System.StringComparison.Ordinal)) {
         this.Decline($"pointer: global '{g.Name}' (no module symbol to address)");
         return null;
       }

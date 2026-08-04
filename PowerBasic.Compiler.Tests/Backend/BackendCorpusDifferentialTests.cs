@@ -158,9 +158,10 @@ public sealed class BackendCorpusDifferentialTests {
     // A floor, so a change that quietly stops routing things fails instead of passing with less
     // compared. 55 when the harness first ran both optimization modes, 57 once procedures with local
     // arrays became routable - the alloca layout and frame zeroing that had kept them out are fixed -
-    // and 61 once PRINT of a string variable had a runtime ABI entry (and the string-ownership copy
-    // that entry needs to be safe).
-    Assert.That(agreed, Is.GreaterThanOrEqualTo(61), "fewer programs were compared than used to be:\n" + report);
+    // 61 once PRINT of a string variable had a runtime ABI entry (and the string-ownership copy that
+    // entry needs to be safe), and 65 once the back end could EMIT the ON ERROR handler rather than
+    // only lower it.
+    Assert.That(agreed, Is.GreaterThanOrEqualTo(65), "fewer programs were compared than used to be:\n" + report);
 
     // and a known defect that quietly starts agreeing is worth knowing about too - it means either it
     // was fixed (delete the entry) or the comparison stopped reaching it (a worse problem)

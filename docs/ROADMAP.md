@@ -146,9 +146,9 @@ battery, it currently reaches:
 | | |
 |---|---|
 | programs reaching the IR at all | 132 / 162 |
-| functions selected | 124 / 218 |
-| functions routed (selected **and** allocated) | 82 / 218 |
-| whole module bodies the back end can own | 30 / 132 |
+| functions selected | 126 / 218 |
+| functions routed (selected **and** allocated) | 84 / 218 |
+| whole module bodies the back end can own | 32 / 132 |
 
 The runtime traps and the error handler are **done**. `$ERROR BOUNDS / OVERFLOW / NUMERIC ON` now emit
 their checks rather than merely accepting the metastatement, over dynamic arrays as well as static
@@ -159,11 +159,9 @@ function out of the optimizer, the same trade the direct emitter makes with `_tr
 
 Ranked by the census, what stands between that and full coverage:
 
-1. **The routed path cannot yet EMIT the traps or the handler.** The lowering builds them, but the
-   selector declines `rt_onerr_arm` / `rt_resume_mark` and the rest, because arming captures the
-   current `BP`/`SP` and so has to be expanded inline rather than called - and a block address has to
-   reach the emitter as a label offset. Until then these programs reach the IR but stay on the direct
-   path, which is safe (an unknown `rt_` call declines) but is not yet parity.
+1. **A PROCEDURE that arms a handler is still not routed** (the module body now is). The direct path
+   saves the caller's handler triple on entry and restores it on every exit; the routed prologue has
+   no equivalent, and routing without it would lose the caller's handler silently.
 2. A tail of statements: `ArraySortStmt`, `PUT$`, `DIM AT`, `ERASE` of a static array, `HEX$` with a
    digit count, `PRINT USING` / `LPRINT`, `CODEPTR32`, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
    metastatements.

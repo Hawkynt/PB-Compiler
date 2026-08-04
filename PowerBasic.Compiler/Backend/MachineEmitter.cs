@@ -172,6 +172,7 @@ public sealed class MachineEmitter {
       case MOpcode.Rcl: asm.Rcl(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
       case MOpcode.Rcr: asm.Rcr(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
       case MOpcode.Jmp: asm.Jmp(this._labels[((MOperand.LabelRef)ops[0]).Name]); break;
+      case MOpcode.JmpIndirect: asm.Jmp(this.Mem(ops[0])); break;
       case MOpcode.Jcc: asm.J(instr.Condition!.Value, this._labels[((MOperand.LabelRef)ops[0]).Name]); break;
       case MOpcode.Call: {
         // with a resolver (the whole-program routing) the callee MUST be one it bound - anything else
@@ -240,6 +241,7 @@ public sealed class MachineEmitter {
     MOperand.Immediate i => (Imm)(int)i.Value,
     MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell => this.Mem(operand),
     MOperand.DataOffset o => Imm.OffsetOf(this.DataLabel(o.Name), o.Disp),
+    MOperand.BlockOffset b => Imm.OffsetOf(this._labels[b.Block]),
     _ => throw new System.NotSupportedException($"operand {operand} is not a source"),
   };
 

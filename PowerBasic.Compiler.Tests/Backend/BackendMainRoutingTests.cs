@@ -47,10 +47,16 @@ public sealed class BackendMainRoutingTests {
     Assert.That(direct.BackendRoutedNames, Is.Empty, "the back end is opt-in");
   }
 
+  /// <summary>
+  /// A module body that arms an error handler is now routed. It used to be excluded on the grounds
+  /// that ON ERROR is emitted AROUND the body by the direct path - true of a PROCEDURE, which saves
+  /// and restores the caller's handler triple, but never true of main, which has no caller to
+  /// restore for. What the back end really needed was the ability to EMIT the arming: it captures
+  /// the current BP and SP, so it expands inline rather than becoming a call, and the handler is
+  /// named by the offset of its own block.
+  /// </summary>
   [Test]
-  public void Emit_GivenErrorHandling_ThenMainStaysWithTheDirectPath() {
-    // ON ERROR is emitted AROUND the body by the direct path, not inside it - a routed body would
-    // silently lose the handler
+  public void Emit_GivenErrorHandlingInTheModuleBody_ThenTheBackEndTakesIt() {
     var routed = new CodeGenerator(Bind("""
       ON ERROR GOTO oops
       DIM n AS INTEGER
@@ -63,6 +69,32 @@ public sealed class BackendMainRoutingTests {
 
     routed.EmitExecutable();
 
-    Assert.That(routed.BackendRoutedNames, Does.Not.Contain("main"));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
+  }
+
+  /// <summary>
+  /// A PROCEDURE that arms one is still excluded, and for the reason the module body never had: the
+  /// direct path saves the caller's handler triple on entry and restores it on every exit, and that
+  /// bookkeeping has no equivalent in the routed prologue yet. Routing it would lose the caller's
+  /// handler silently.
+  /// </summary>
+  [Test]
+  public void Emit_GivenErrorHandlingInAProcedure_ThenItStaysWithTheDirectPath() {
+    var routed = new CodeGenerator(Bind("""
+      CALL Risky
+      END
+      SUB Risky
+        ON ERROR GOTO oops
+        ERROR 5
+        EXIT SUB
+        oops:
+        RESUME NEXT
+      END SUB
+      """)) { Optimize = true, UseExperimentalBackend = true };
+
+    routed.EmitExecutable();
+
+    Assert.That(routed.BackendRoutedNames, Does.Not.Contain("Risky"));
   }
 }

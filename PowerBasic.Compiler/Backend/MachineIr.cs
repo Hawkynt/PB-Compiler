@@ -61,6 +61,14 @@ public abstract record MOperand {
   public sealed record DataOffset(string Name, int Disp) : MOperand;
 
   /// <summary>
+  /// The OFFSET of a basic block's own label - the machine form of the IR's <c>blockaddress</c>.
+  /// PB needs it for exactly one thing: <c>ON ERROR GOTO</c> writes a code address into a runtime
+  /// cell, and a fault anywhere afterwards jumps through it. No other operand names a point in this
+  /// function's own code, because every other transfer of control IS an instruction.
+  /// </summary>
+  public sealed record BlockOffset(string Block) : MOperand;
+
+  /// <summary>
   /// An incoming argument read straight out of the cell the caller pushed it into - <c>[BP+6]</c>.
   /// This is where a spilled parameter lives: it is already in the frame, it is never written (an IR
   /// argument is an SSA value), so the cheapest possible spill is to stop copying it into a register
@@ -88,7 +96,7 @@ public sealed class MInstr(MOpcode opcode, IReadOnlyList<MOperand> operands, MIn
   /// <summary>Physical registers this instruction destroys (a CALL's caller-saved set); a value live across it must avoid them.</summary>
   public IReadOnlyList<Reg> Clobbers { get; } = clobbers ?? [];
 
-  public bool IsTerminator => this.Opcode is MOpcode.Jmp or MOpcode.Jcc or MOpcode.Ret;
+  public bool IsTerminator => this.Opcode is MOpcode.Jmp or MOpcode.Jcc or MOpcode.Ret or MOpcode.JmpIndirect;
 
   public override string ToString() => $"{this.Opcode} {string.Join(", ", this.Operands)}";
 }
@@ -122,6 +130,12 @@ public enum MOpcode {
   Rcl, Rcr,
   Push, Pop,
   Jmp, Jcc, Call, Ret,
+  /// <summary>
+  /// A jump THROUGH a memory cell - the only indirect transfer this back end emits. RESUME and
+  /// RESUME NEXT go back to a statement the FAULT chose, so the destination is a value the runtime
+  /// latched rather than a label anything here can name.
+  /// </summary>
+  JmpIndirect,
   /// <summary>
   /// x87. Floating point is computed on a stack, not in the register file, so these carry at most one
   /// MEMORY operand and the arithmetic forms carry none at all - they consume the two values the
