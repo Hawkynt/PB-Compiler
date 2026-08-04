@@ -3105,26 +3105,30 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       if (arm.Selectors.Count == 0)
         asm.Jmp(armBody); // CASE ELSE
       else {
-        foreach (var selector in arm.Selectors) {
-          if (selector.Value == null) {
-            this.Unsupported(s);
-            continue;
+        // O0099: an arm listing several point values in a <=16-wide window (CASE 1, 3, 5, 9) tests
+        // membership with one shift + bit-0 test instead of a compare per value; declines otherwise.
+        if (!(kind == ValueKind.Int16 && this.Optimize && this.OptimizeSpeed
+              && this.TryEmitArmBitMask(arm, subject, armBody)))
+          foreach (var selector in arm.Selectors) {
+            if (selector.Value == null) {
+              this.Unsupported(s);
+              continue;
+            }
+            switch (kind) {
+              case ValueKind.Int16:
+                this.EmitSelectorInt16(s, subject, selector, armBody);
+                break;
+              case ValueKind.Int32:
+                this.EmitSelectorInt32(s, subject, selector, armBody);
+                break;
+              case ValueKind.Float:
+                this.EmitSelectorFloat(subject, selector, armBody);
+                break;
+              default:
+                this.EmitSelectorString(s, subject, selector, armBody);
+                break;
+            }
           }
-          switch (kind) {
-            case ValueKind.Int16:
-              this.EmitSelectorInt16(s, subject, selector, armBody);
-              break;
-            case ValueKind.Int32:
-              this.EmitSelectorInt32(s, subject, selector, armBody);
-              break;
-            case ValueKind.Float:
-              this.EmitSelectorFloat(subject, selector, armBody);
-              break;
-            default:
-              this.EmitSelectorString(s, subject, selector, armBody);
-              break;
-          }
-        }
         asm.Jmp(nextArm);
       }
 
@@ -3314,6 +3318,50 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     }
     asm.MarkLabel(end);
     this._exitSelect.Pop();
+    return true;
+  }
+
+  /// <summary>
+  /// pb36 O0099: a SELECT arm listing several single-constant point values whose span fits a 16-bit
+  /// mask (max-min &lt;= 15) tests set membership with one unsigned range guard, one variable shift and
+  /// one bit-0 test - constant time, no per-value compare. The values are normalized to the minimum
+  /// (so a window not starting at zero, or with negative values, still fits), a mask with a bit per
+  /// value is built at compile time, and `SHR mask, CL` brings the subject's bit to position 0.
+  /// Jumps to <paramref name="armBody"/> on membership and falls through otherwise; declines (false)
+  /// for ranges, IS-relations, fewer than 3 values, or a span wider than 15.
+  /// </summary>
+  private bool TryEmitArmBitMask(CaseArm arm, Mem subject, Label armBody) {
+    if (arm.Selectors.Count < 3)
+      return false;                                 // below three values the compare chain is already small
+    var values = new List<int>();
+    foreach (var sel in arm.Selectors) {
+      if (sel.Value == null || sel.RangeUpper != null || sel.IsComparison != null)
+        return false;
+      if (this.OptFolder.TryFold(sel.Value) is not { Integer: { } v } || v is < short.MinValue or > short.MaxValue)
+        return false;
+      values.Add((int)v);
+    }
+    int min = values.Min(), max = values.Max();
+    if (max - min > 15)
+      return false;                                 // will not fit a 16-bit mask
+
+    var mask = 0;
+    foreach (var v in values)
+      mask |= 1 << (v - min);
+
+    var asm = this._asm;
+    var skip = asm.DefineLabel();
+    asm.Mov(Reg.AX, subject.WithSize(OperandSize.Word));
+    if (min != 0)
+      asm.Sub(Reg.AX, (Imm)min);                    // normalize to 0-based (min<0 subtracts a negative = adds)
+    asm.Cmp(Reg.AX, (Imm)(max - min));
+    asm.Ja(skip);                                   // unsigned: below min (wrapped) or above max -> not a member
+    asm.Mov(Reg.CX, Reg.AX);                        // CL = the bit index (0..15)
+    asm.Mov(Reg.AX, (Imm)mask);
+    asm.Shr(Reg.AX, Reg.CL);                        // bring the tested bit to position 0
+    asm.Test(Reg.AX, (Imm)1);
+    asm.Jnz(armBody);                               // bit set -> the subject is in the set
+    asm.MarkLabel(skip);
     return true;
   }
 

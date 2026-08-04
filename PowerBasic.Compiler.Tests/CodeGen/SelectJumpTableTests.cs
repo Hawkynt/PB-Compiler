@@ -114,6 +114,24 @@ public sealed class SelectJumpTableTests {
   }
 
   [Test]
+  public void Emit_GivenSparseValueListArm_WhenPb36Speed_ThenTestsMembershipWithABitMask() {
+    // O0099: an arm listing >=3 point values in a <=16-wide window that the jump table declined
+    // (CASE 1, 8, 15 - only 3 values, so below the table's count>=4 gate) tests membership with a
+    // bit mask: MOV AX, 4081h (bits 0,7,14 for 1,8,15 normalized to min 1) then SHR AX, CL (D3 E8)
+    // and a bit-0 test - no per-value compare.
+    var img = Compile("$OPTIMIZE SPEED\nDIM x%\n x% = 8\nSELECT CASE x%\nCASE 1, 8, 15\n PRINT \"a\"\nCASE ELSE\n PRINT \"z\"\nEND SELECT\nEND", Dialect.Pb36);
+    Assert.That(Contains(img, 0xB8, 0x81, 0x40), Is.True, "the compile-time membership mask 4081h is loaded (MOV AX, 4081h)");
+    Assert.That(Contains(img, 0xD3, 0xE8), Is.True, "the mask is shifted by the subject (SHR AX, CL)");
+  }
+
+  [Test]
+  public void Emit_GivenTwoValueArm_WhenPb36Speed_ThenKeepsTheCompareChain() {
+    // below three values the bit mask declines and the compare chain stays (no SHR AX, CL dispatch).
+    var img = Compile("$OPTIMIZE SPEED\nDIM x%\n x% = 8\nSELECT CASE x%\nCASE 1, 15\n PRINT \"a\"\nCASE ELSE\n PRINT \"z\"\nEND SELECT\nEND", Dialect.Pb36);
+    Assert.That(Contains(img, 0xB8, 0x81, 0x40), Is.False, "a two-value arm does not build a membership mask");
+  }
+
+  [Test]
   public void Emit_GivenFewCaseSparseSelect_WhenPb36Speed_ThenKeepsTheCompareChain() {
     // below the 8-distinct-value threshold the tree declines and the linear compare chain stays:
     // it loads each case value into AX (MOV AX, 012Ch = B8 2C 01) and compares against the subject

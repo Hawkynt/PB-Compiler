@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial (a `SELECT` arm's value list lowers to a mask test; the `IF … OR …` equality-chain spelling does not yet) |
 | **Stage** | Emitter |
 | **Related** | [O0029](O0029-select-jump-table.md), [O0098](O0098-balanced-decision-tree.md), [O0032](O0032-short-circuit-conditions.md) |
 
@@ -49,12 +49,28 @@ IF k% >= 0 AND k% <= 15 THEN
 END IF
 ```
 
-## What it needs
+## Now
 
-- The set must fit the mask width (16 bits natively, 32 under
-  `$CPU 80386`), plus a range guard for values outside it.
-- Recognition on both spellings: a `SELECT CASE` arm list and an `OR` chain of
-  equality tests (the same recognizer
-  [O0067](O0067-if-chain-jump-table.md) needs).
-- A cost model call against the jump table: the mask needs no table bytes at
-  all, so on a size-constrained target it wins even where a table would fit.
+`TryEmitArmBitMask` (`CodeGenerator.cs`) fires for a `SELECT CASE` arm that lists
+**≥ 3** single-constant point values (no ranges, no `IS`) whose window fits a
+16-bit mask (`max − min ≤ 15`), once the dense jump table ([O0029](O0029-select-jump-table.md))
+and the balanced tree ([O0098](O0098-balanced-decision-tree.md)) have declined —
+i.e. exactly the sparse-small-window shape neither of those covers. It normalizes
+the subject to the minimum (so a window not starting at zero, or with negatives,
+still fits), emits one unsigned range guard, loads the compile-time mask, and does
+`SHR AX, CL` + a bit-0 `TEST` to decide membership, jumping to the arm on a set
+bit. Gated on `$OPTIMIZE SPEED` (INTEGER subjects). The same arm runs as the
+compare chain — verified by a self-differential DOSBox run over the whole subject
+range (members `1, 8, 15`, non-members, negatives, boundaries) identical to
+`$OPTIMIZE OFF`, plus a regression test pinning the `MOV AX, 4081h` / `SHR AX, CL`
+shape (and its decline below three values). Golden gate 250/250.
+
+## Still planned
+
+- The `IF k% = 1 OR k% = 3 OR k% = 5 THEN` **equality-chain** spelling — the same
+  membership recognizer applied to an `OR` tree of `=` tests
+  ([O0067](O0067-if-chain-jump-table.md) has the OR-chain recognizer to reuse).
+- The 32-bit mask under `$CPU 80386` for windows up to 31 wide, and `LONG`
+  subjects.
+- A cost-model call against the jump table where both apply (the mask needs no
+  table bytes, so it wins on a size-constrained target even where a table fits).
