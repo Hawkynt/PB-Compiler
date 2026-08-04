@@ -141,6 +141,14 @@ public enum LanguageFeature {
   Events,
   UsingStatement,
   NoInline,
+
+  // Statements the Borland line has always had and the Microsoft line never did. They are gated at
+  // the OLDEST Borland dialect, so within that family they are simply always available; what the gate
+  // buys is the other half - a feature absent from the Microsoft table is unavailable in every
+  // Microsoft dialect, which is exactly the truth about these.
+  IncrDecrStatements,
+  DelayStatement,
+  SharedTypeClause,
 }
 
 /// <summary>
@@ -230,6 +238,9 @@ public static class DialectFacts {
     [LanguageFeature.Events] = (Dialect.Pb36, "events ('EVENT name AS delegate', 'name += handler', raised by invoking 'name(args)')"),
     [LanguageFeature.UsingStatement] = (Dialect.Pb36, "USING statement ('USING v AS Type' - Dispose runs on scope exit)"),
     [LanguageFeature.NoInline] = (Dialect.Pb36, "NOINLINE procedure modifier ('SUB Name(...) NOINLINE' - the optimizer keeps a real call)"),
+    [LanguageFeature.IncrDecrStatements] = (Dialect.Tb10, "INCR / DECR"),
+    [LanguageFeature.DelayStatement] = (Dialect.Tb10, "DELAY"),
+    [LanguageFeature.SharedTypeClause] = (Dialect.Tb10, "SHARED / STATIC inside a DIM type clause ('DIM x AS SHARED type')"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

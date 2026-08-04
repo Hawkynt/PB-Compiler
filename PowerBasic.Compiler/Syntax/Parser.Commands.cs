@@ -92,6 +92,7 @@ public sealed partial class Parser {
   }
 
   private Statement ParseIncrDecr(bool increment) {
+    this.Require(LanguageFeature.IncrDecrStatements);   // Bob Zale's; no Microsoft BASIC has it
     var pos = this.Advance().Position;
     var target = this.ParseLValue();
     var amount = this.Match(TokenKind.Comma) ? this.ParseExpression() : null;
@@ -351,6 +352,8 @@ public sealed partial class Parser {
   /// between pairs is treated as a separator (VIEW/WINDOW box syntax).
   /// </summary>
   private Statement ParseCommand(string keyword) {
+    if (keyword == "DELAY")
+      this.Require(LanguageFeature.DelayStatement);   // Turbo Basic's; Microsoft BASIC has only SLEEP
     var pos = this.Advance().Position;
 
     if (keyword == "NAME") { // NAME old$ AS new$

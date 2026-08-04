@@ -775,6 +775,12 @@ public sealed partial class Parser {
         commonBlock = this.Expect(TokenKind.Identifier, "COMMON block name").Text;
         this.Expect(TokenKind.Slash, "'/'");
       }
+    } else if (this.IsKeyword(0, "SHARED") && this.Peek() is { Kind: TokenKind.Identifier }) {
+      // DIM SHARED x - the Microsoft spelling of module-shared storage, where PowerBASIC writes
+      // DIM x AS SHARED type. The lookahead is what keeps 'DIM shared AS INTEGER' (a variable that
+      // happens to be called SHARED) working: the prefix form is only taken when a NAME follows.
+      this.Advance();
+      shared = true;
     }
 
     var arrayClass = this.ParseArrayClass(storage);
@@ -887,10 +893,12 @@ public sealed partial class Parser {
     if (this.TryMatchKeyword("AS")) {
       for (;;) { // AS [SHARED|STATIC] type
         if (this.TryMatchKeyword("SHARED")) {
+          this.Require(LanguageFeature.SharedTypeClause);   // Microsoft spells this DIM SHARED x
           shared = true;
           continue;
         }
         if (this.TryMatchKeyword("STATIC")) {
+          this.Require(LanguageFeature.SharedTypeClause);
           statik = true;
           continue;
         }
