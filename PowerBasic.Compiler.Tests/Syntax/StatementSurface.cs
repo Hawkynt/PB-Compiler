@@ -69,6 +69,23 @@ internal static class StatementSurface {
     // PRESERVE is PB 3.5 in Bob Zale's line and BASIC PDS 7.0 in Microsoft's; plain QuickBASIC REDIM
     // never preserved anything
     new("redim.preserve", "REDIM f(1 TO 4) AS LONG\nREDIM PRESERVE f(1 TO 8) AS LONG", Dialect.Pb35, Dialect.Pds70),
+    new("common", "COMMON c%"),
+    new("public", "PUBLIC p%", MinMicrosoft: _noMicrosoft),
+    new("ext", "EXT e%", MinMicrosoft: _noMicrosoft),
+    // DEFINT / DEFSNG / DEFDBL / DEFSTR are in every BASIC there has ever been
+    new("deftype.int", "DEFINT A-C\nav = 1"),
+    new("deftype.sng", "DEFSNG D-F\ndv = 1"),
+    new("deftype.dbl", "DEFDBL G-I\ngv = 1"),
+    new("deftype.str", "DEFSTR J-L\njv = \"x\""),
+    // LONG arrived with Turbo Basic on one side and QuickBASIC on the other; GW-BASIC and BASICA
+    // have no such type, so they have no DEFLNG either
+    new("deftype.lng", "DEFLNG M-O\nmv = 1", Dialect.Tb10, Dialect.Qb10),
+    // the extended numeric types (QUAD, EXT, FIX, BCD, FLEX) are PowerBASIC's alone
+    new("deftype.qud", "DEFQUD P-R\npv = 1", Dialect.Pb30, _noMicrosoft),   // QUAD is PB 3.0
+    new("deftype.ext", "DEFEXT S-T\nsv = 1", MinMicrosoft: _noMicrosoft),
+    new("deftype.fix", "DEFFIX U-V\nuv = 1", MinMicrosoft: _noMicrosoft),
+    new("deftype.bcd", "DEFBCD W-X\nwv = 1", MinMicrosoft: _noMicrosoft),
+    new("deftype.flx", "DEFFLX Y-Z\nyv = \"x\"", MinMicrosoft: _noMicrosoft),
     new("swap", "SWAP x%, y%", Preamble: "x% = 1 : y% = 2"),
     // INCR / DECR are Bob Zale's; no Microsoft BASIC ever had them
     new("incr.bare", "INCR x%", MinMicrosoft: _noMicrosoft),
@@ -227,6 +244,20 @@ internal static class StatementSurface {
     new("bsave", "BSAVE \"T.BIN\", 0, 16"),
     new("timer.on", "ON TIMER(1) GOSUB Tick\nTIMER ON\nGOTO Past\nTick:\nRETURN\nPast:"),
     new("key.off", "KEY OFF"),
+    new("com.on", "COM(1) ON"),
+    new("pen.on", "PEN ON"),
+    new("strig.on", "STRIG(0) ON"),
+    new("reg", "REG 1, 0", Dialect.Pb30, _noMicrosoft),
+    // PB 3.5 additions: DOS-handle I/O and truncation
+    new("stdout", "STDOUT \"text\"", Dialect.Pb35, _noMicrosoft),
+    new("stdin", "STDIN LINE, s$", Dialect.Pb35, _noMicrosoft),
+    new("seteof", "SETEOF #1", Dialect.Pb35, _noMicrosoft,
+      Preamble: "OPEN \"T.DAT\" FOR BINARY AS #1"),
+    // the SHIFT / ROTATE STATEMENTS are PB 3.0's machine-level wave, alongside REG and BIT - not to
+    // be confused with the '<<' / '>>' operators, which are PB 3.6
+    new("shift.left", "SHIFT LEFT x%, 1", Dialect.Pb30, _noMicrosoft),
+    new("rotate.left", "ROTATE LEFT x%, 1", Dialect.Pb30, _noMicrosoft),
+
   ];
 
   // ---- procedures and types ---------------------------------------------------------------------
@@ -247,6 +278,14 @@ internal static class StatementSurface {
     new("local.decl", "CALL S5\nEND\nSUB S5\n  LOCAL l%\n  l% = 1\nEND SUB"),
     // TYPE ... END TYPE is PB 3.0 in one line and QuickBASIC 4.0 in the other
     new("type.decl", "TYPE Pt\n  X AS INTEGER\n  Y AS INTEGER\nEND TYPE\nDIM p AS Pt\np.X = 1", Dialect.Pb30, Dialect.Qb40),
+    // UNION is PowerBASIC's; QuickBASIC's TYPE has no overlapping variant
+    new("union.decl", "UNION U\n  I AS INTEGER\n  L AS LONG\nEND UNION\nDIM u AS U\nu.I = 1", Dialect.Pb30, _noMicrosoft),
+    new("enum.decl", "ENUM Colour\n  Red\n  Green\nEND ENUM\nc% = Red", Dialect.Pb36, _noMicrosoft),
+    new("with.block", "TYPE Pt2\n  X AS INTEGER\nEND TYPE\nDIM q AS Pt2\nWITH q\n  .X = 1\nEND WITH", Dialect.Pb36, _noMicrosoft),
+    new("try.catch", "TRY\n  ERROR 5\nCATCH\n  PRINT \"caught\"\nEND TRY", Dialect.Pb36, _noMicrosoft),
+    // USING calls Dispose on the way out, so the type has to have one - that IS the contract
+    new("using.block", "TYPE Res\n  H AS INTEGER\n  SUB Dispose()\n  END SUB\nEND TYPE\nUSING r AS Res\n  r.H = 1\nEND USING", Dialect.Pb36, _noMicrosoft),
+    new("event.decl", "EVENT Fired AS SUB()", Dialect.Pb36, _noMicrosoft),
     new("deftype", "DEFINT A-Z\nn = 1"),
     new("def.fn", "DEF FnDouble%(n%) = n% * 2\nx% = FnDouble%(3)"),
   ];

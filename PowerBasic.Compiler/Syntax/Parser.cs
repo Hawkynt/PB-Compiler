@@ -27,6 +27,14 @@ public sealed partial class Parser {
     "POKE", "OUT", "WAIT", "REG", "FILES", "BLOAD", "BSAVE", "DRAW", "PCOPY", "SHIFT", "ROTATE",
   };
 
+  /// <summary>
+  /// Every keyword that can begin a statement. Exposed because "the compiler handles every statement"
+  /// is a claim worth checking mechanically rather than believing: the statement-surface tests assert
+  /// that each of these is exercised by at least one form, so a keyword added to the parser without a
+  /// test is a failure rather than a quiet hole.
+  /// </summary>
+  public static IReadOnlyCollection<string> StatementKeywords => _statementKeywords;
+
   /// <summary>Soft command statements parsed as <see cref="CommandStmt"/> with positional arguments.</summary>
   private static readonly HashSet<string> _commandKeywords = new(StringComparer.OrdinalIgnoreCase) {
     "BEEP", "CLS", "SCREEN", "COLOR", "LOCATE", "WINDOW", "PAINT", "SOUND", "RANDOMIZE",
@@ -331,21 +339,21 @@ public sealed partial class Parser {
       case "WITH": return this.ParseWith();
       case "DEF": return this.ParseDef();
       case "DEFINT": return this.ParseDefType(BuiltinType.Integer);
-      case "DEFLNG": return this.ParseDefType(BuiltinType.Long);
+      case "DEFLNG": this.Require(LanguageFeature.LongType); return this.ParseDefType(BuiltinType.Long);
       case "DEFQUD": this.Require(LanguageFeature.QuadType); return this.ParseDefType(BuiltinType.Quad);
       case "DEFSNG": return this.ParseDefType(BuiltinType.Single);
       case "DEFDBL": return this.ParseDefType(BuiltinType.Double);
-      case "DEFEXT": return this.ParseDefType(BuiltinType.Ext);
-      case "DEFFIX": return this.ParseDefType(BuiltinType.Fix);
-      case "DEFBCD": return this.ParseDefType(BuiltinType.Bcd);
+      case "DEFEXT": this.Require(LanguageFeature.ExtendedNumericTypes); return this.ParseDefType(BuiltinType.Ext);
+      case "DEFFIX": this.Require(LanguageFeature.ExtendedNumericTypes); return this.ParseDefType(BuiltinType.Fix);
+      case "DEFBCD": this.Require(LanguageFeature.ExtendedNumericTypes); return this.ParseDefType(BuiltinType.Bcd);
       case "DEFSTR": return this.ParseDefType(BuiltinType.String);
-      case "DEFFLX": return this.ParseDefType(BuiltinType.Flex);
+      case "DEFFLX": this.Require(LanguageFeature.ExtendedNumericTypes); return this.ParseDefType(BuiltinType.Flex);
       case "DIM": return this.ParseDim(StorageClass.Dim);
       case "LOCAL": return this.ParseDim(StorageClass.Local);
       case "STATIC": return this.ParseDim(StorageClass.Static);
       case "SHARED": return this.ParseDim(StorageClass.Shared);
-      case "PUBLIC": return this.ParseDim(StorageClass.Public);
-      case "EXT": return this.ParseDim(StorageClass.Ext);
+      case "PUBLIC": this.Require(LanguageFeature.PublicStorage); return this.ParseDim(StorageClass.Public);
+      case "EXT": this.Require(LanguageFeature.PublicStorage); return this.ParseDim(StorageClass.Ext);
       case "COMMON": return this.ParseDim(StorageClass.Common);
       case "REDIM": return this.ParseRedim();
       case "ERASE": return this.ParseErase();

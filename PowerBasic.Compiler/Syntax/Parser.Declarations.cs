@@ -477,6 +477,8 @@ public sealed partial class Parser {
 
   private Statement ParseTypeDecl(bool isUnion) {
     this.Require(LanguageFeature.TypeUnion);
+    if (isUnion)
+      this.Require(LanguageFeature.UnionType);   // QuickBASIC got TYPE in 4.0 but never UNION
     var pos = this.Advance().Position;
     var name = this.Expect(TokenKind.Identifier, "type name");
     // pb36 discriminated union: UNION Name / CASE Tag / payload fields / END UNION

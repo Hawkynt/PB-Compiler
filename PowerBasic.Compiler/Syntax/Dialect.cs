@@ -149,6 +149,31 @@ public enum LanguageFeature {
   IncrDecrStatements,
   DelayStatement,
   SharedTypeClause,
+  ExtendedNumericTypes,
+  PublicStorage,
+
+  /// <summary>
+  /// The PB 3.0 machine-level wave: REG, and the SHIFT / ROTATE STATEMENTS. Not to be confused with
+  /// <see cref="ShiftRotateOps"/>, which is the PB 3.6 operator spelling of the same idea
+  /// (<c>x &lt;&lt; 1</c>) - the statement came fifteen years earlier.
+  /// </summary>
+  RegStatement,
+  ShiftRotateStatements,
+
+  /// <summary>
+  /// <c>UNION</c> specifically. QuickBASIC 4.0 brought TYPE to the Microsoft line but never the
+  /// overlapping variant, so the two share <see cref="TypeUnion"/> for the TYPE half and part company
+  /// here - which is why the gate exists at all rather than TYPE and UNION being one feature.
+  /// </summary>
+  UnionType,
+
+  /// <summary>
+  /// The 32-bit LONG. This one is genuinely in both lineages but not from the beginning of either:
+  /// Turbo Basic brought it to Bob Zale's line and carried it into PowerBASIC, and QuickBASIC brought
+  /// it to Microsoft's - but BASICA and GW-BASIC have only INTEGER, SINGLE, DOUBLE and STRING, so
+  /// DEFLNG is meaningless there.
+  /// </summary>
+  LongType,
 }
 
 /// <summary>
@@ -241,6 +266,12 @@ public static class DialectFacts {
     [LanguageFeature.IncrDecrStatements] = (Dialect.Tb10, "INCR / DECR"),
     [LanguageFeature.DelayStatement] = (Dialect.Tb10, "DELAY"),
     [LanguageFeature.SharedTypeClause] = (Dialect.Tb10, "SHARED / STATIC inside a DIM type clause ('DIM x AS SHARED type')"),
+    [LanguageFeature.ExtendedNumericTypes] = (Dialect.Tb10, "the extended numeric types (EXT / FIX / BCD / FLEX)"),
+    [LanguageFeature.PublicStorage] = (Dialect.Tb10, "PUBLIC / EXT storage declarations"),
+    [LanguageFeature.RegStatement] = (Dialect.Pb30, "the REG statement"),
+    [LanguageFeature.ShiftRotateStatements] = (Dialect.Pb30, "the SHIFT / ROTATE statements"),
+    [LanguageFeature.UnionType] = (Dialect.Pb30, "UNION (the overlapping variant of TYPE)"),
+    [LanguageFeature.LongType] = (Dialect.Tb10, "LONG (32-bit) type"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>
@@ -263,6 +294,7 @@ public static class DialectFacts {
   private static readonly Dictionary<LanguageFeature, Dialect> _microsoftGates = new() {
     [LanguageFeature.TypeUnion] = Dialect.Qb40,        // TYPE...END TYPE (QB has no UNION; the binder rejects UNION separately)
     [LanguageFeature.RedimPreserve] = Dialect.Pds70,   // REDIM with far strings; QB REDIM never preserves
+    [LanguageFeature.LongType] = Dialect.Qb10,        // QuickBASIC has LONG; BASICA and GW-BASIC do not
   };
 
   /// <summary>Human-readable dialect name, e.g. "PB 3.5", "TB 1.1", "QB 4.5", "PDS 7.1", "GW-BASIC".</summary>

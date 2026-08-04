@@ -260,6 +260,7 @@ public sealed partial class Parser {
 
   /// <summary>SHIFT/ROTATE LEFT|RIGHT lvalue, count - kept as a CommandStmt with the direction in the keyword.</summary>
   private Statement ParseShiftRotate(string keyword) {
+    this.Require(LanguageFeature.ShiftRotateStatements);
     var pos = this.Advance().Position;
     var direction = this.Expect(TokenKind.Identifier, "LEFT or RIGHT").Text.ToUpperInvariant();
     if (direction is not ("LEFT" or "RIGHT"))
@@ -354,6 +355,8 @@ public sealed partial class Parser {
   private Statement ParseCommand(string keyword) {
     if (keyword == "DELAY")
       this.Require(LanguageFeature.DelayStatement);   // Turbo Basic's; Microsoft BASIC has only SLEEP
+    if (keyword == "REG")
+      this.Require(LanguageFeature.RegStatement);     // PowerBASIC's register-block accessor
     var pos = this.Advance().Position;
 
     if (keyword == "NAME") { // NAME old$ AS new$
