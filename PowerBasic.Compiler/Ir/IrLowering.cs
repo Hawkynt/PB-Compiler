@@ -1053,8 +1053,12 @@ public sealed class IrLowering {
   private void LowerFor(ForStmt f) {
     var symbol = this.SymbolOf(f.Variable);
     var ty = MapType(symbol.Type);
+    if (ty.IsIeeeFloat) {
+      this.LowerFloatFor(f, symbol, ty);
+      return;
+    }
     if (!ty.IsInteger)
-      throw new IrLoweringException("FOR over a non-integer counter");
+      throw new IrLoweringException($"FOR over a {ty} counter");
     var signed = ((ScalarType)symbol.Type).Signed;
     var constStep = this.TryConstStep(f.Step);
     var slot = this.SlotFor(symbol);
@@ -1105,6 +1109,68 @@ public sealed class IrLowering {
     var iv = this._b.Load(ty, slot);
     var increment = constStep is { } c2 ? (IrValue)new IrConstantInt(ty, c2) : stepValue!;
     this._b.Store(this._b.Binary(IrBinaryOp.Add, iv, increment), slot);
+    this._b.Br(header);
+
+    this._b.Position(exit);
+  }
+
+  /// <summary>
+  /// <c>FOR x! = a TO b STEP c</c> over a SINGLE/DOUBLE counter. The block structure is the integer
+  /// loop's, with float operations in place of integer ones: an ordered compare for the test and
+  /// <c>FAdd</c> for the step.
+  ///
+  /// Two things are deliberately NOT done here. The counter is not turned into an integer loop even
+  /// when the bounds look whole - a float counter accumulates its step, and <c>FOR x! = 0 TO 1 STEP
+  /// .1</c> famously runs nine times, not ten, because a tenth is not representable. Reproducing that
+  /// is the point. And the ordered predicates mean a NaN bound exits the loop rather than looping
+  /// forever, which is what comparing on the x87 does.
+  /// </summary>
+  private void LowerFloatFor(ForStmt f, VariableSymbol symbol, IrType ty) {
+    var slot = this.SlotFor(symbol);
+    var limitSlot = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(ty) { Name = symbol.Name + ".limit" });
+
+    this._b.Store(this.Coerce(this.LowerExpr(f.From), this._model.TypeOf(f.From), symbol.Type), slot);
+    this._b.Store(this.Coerce(this.LowerExpr(f.To), this._model.TypeOf(f.To), symbol.Type), limitSlot);
+
+    // a step whose sign is known at compile time picks the test outright; otherwise the direction is
+    // a loop-invariant value the test asks about each time round (LICM hoists it)
+    double? constStep = f.Step is null ? 1 : this._folder.TryFold(f.Step) is { IsNumeric: true } folded ? folded.AsFloat : null;
+    IrValue? stepValue = null;
+    if (constStep is null or 0)
+      stepValue = this.Coerce(this.LowerExpr(f.Step!), this._model.TypeOf(f.Step!), symbol.Type);
+
+    var header = this.NewBlock("for.head");
+    var body = this.NewBlock("for.body");
+    var inc = this.NewBlock("for.inc");
+    var exit = this.NewBlock("for.exit");
+    this._b.Br(header);
+
+    this._b.Position(header);
+    var i = this._b.Load(ty, slot);
+    var limit = this._b.Load(ty, limitSlot);
+    IrValue cond;
+    if (constStep is { } cs and not 0) {
+      cond = this._b.Cmp(cs > 0 ? IrCmpPred.Fole : IrCmpPred.Foge, i, limit);
+    } else {
+      var ascending = this._b.Cmp(IrCmpPred.Foge, stepValue!, new IrConstantFloat(ty, 0));
+      var inAsc = this._b.And(ascending, this._b.Cmp(IrCmpPred.Fole, i, limit));
+      var notAsc = this._b.Xor(ascending, new IrConstantInt(IrType.I1, 1));
+      var inDesc = this._b.And(notAsc, this._b.Cmp(IrCmpPred.Foge, i, limit));
+      cond = this._b.Or(inAsc, inDesc);
+    }
+    this._b.CondBr(cond, body, exit);
+
+    this._b.Position(body);
+    this._loops.Push(new LoopContext(ExitKind.For, exit, inc));
+    this.LowerStatements(f.Body);
+    this._loops.Pop();
+    if (!this.Terminated)
+      this._b.Br(inc);
+
+    this._b.Position(inc);
+    var iv = this._b.Load(ty, slot);
+    var increment = constStep is { } c2 and not 0 ? (IrValue)new IrConstantFloat(ty, c2) : stepValue!;
+    this._b.Store(this._b.Binary(IrBinaryOp.FAdd, iv, increment), slot);
     this._b.Br(header);
 
     this._b.Position(exit);

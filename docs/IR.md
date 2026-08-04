@@ -237,3 +237,15 @@ having to be told.
 
 `IntegerRecovery` accepts both spellings as the closing conversion of a float-shaped integer tree.
 Whether it rounds or truncates cannot matter there — the recovered tree is integer-valued either way.
+
+## FOR over a float counter
+
+`FOR x! = a TO b STEP c` lowers to the integer loop's block structure with float operations in place
+of the integer ones: an ordered compare (`Fole` ascending, `Foge` descending, both when the step's
+sign is only known at run time) and `FAdd` for the step.
+
+Two things are deliberately not done. The loop is **not** rewritten into an integer one when the
+bounds look whole — a float counter *accumulates* its step, which is why `FOR x! = 0 TO 1 STEP .1`
+runs nine times rather than ten, and reproducing that is the point of a fidelity compiler. And the
+predicates are the *ordered* ones, so a NaN bound exits the loop instead of spinning — which is what
+comparing on the x87 does.
