@@ -23,10 +23,11 @@ PRINT LEFT$(s$, 10)                    ' allocates 10 bytes to print them
 
 ## Now
 
-The most common **single-character** view ships: `ASC(MID$(s$, i, 1))` and the
-two-argument `ASC(s$, i)` — a one-character substring immediately consumed by `ASC`
-— read the byte straight from the source buffer (`rt_charat`, `EmitCharAt`) instead
-of allocating a one-character string and reading its head. In a character-scan loop
+The most common **single-character** view ships: `ASC(MID$(s$, i, 1))`,
+`ASC(LEFT$(s$, 1))` (the first character), and the two-argument `ASC(s$, i)` — a
+one-character substring immediately consumed by `ASC` — read the byte straight from
+the source buffer (`rt_charat`, `EmitCharAt`) instead of allocating a one-character
+string and reading its head. In a character-scan loop
 that removes one heap allocation *per character*. It reproduces `MID$`'s edge
 behaviour exactly (start clamps to 1, a start past the end yields 0), and consumes
 (frees) the operand like the substring path it replaces. `rt_charat` lives in its
@@ -35,9 +36,10 @@ keeps the substring form byte-for-byte (golden gate 250/250). Verified by a
 self-differential DOSBox run over every edge — `i` in range, `i < 1` (clamped),
 `i > LEN`, an empty string, first and last character — identical to `$OPTIMIZE OFF`.
 
-The **single-character compare** view ships too: `MID$(s$, i, 1) = "c"` / `<> "c"`
-(character matching in parsers — the most common substring compare) reads the byte
-with `rt_charat` and compares it to the literal's byte, with *no* substring, `StrDup`,
+The **single-character compare** view ships too: `MID$(s$, i, 1) = "c"` (and
+`LEFT$(s$, 1) = "c"`) / `<> "c"` — character matching in parsers, the most common
+substring compare — reads the byte with `rt_charat` and compares it to the literal's
+byte, with *no* substring, `StrDup`,
 literal, or `StrCmp` allocation — three heap operations become one byte read and a
 compare. Exact for a single **non-NUL** character comparand — a one-char string literal *or*
 `CHR$(const)` (`MID$(s$, i, 1) = CHR$(13)`) — because a past-the-end `MID$` is `""`

@@ -1338,6 +1338,16 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenLeftOneCompare_WhenPb36_ThenReadsFirstByteDirectly() {
+    // O0297: LEFT$(s$, 1) is the first character - ASC(LEFT$(s$,1)) and LEFT$(s$,1) = "c" read it
+    // directly (rt_charat, index 1) like MID$(s$, 1, 1). LEFT$(s$, 2) is a real substring, so the two
+    // compile to different images.
+    var direct = Compile("$OPTIMIZE SPEED\nDIM s$, r%\nLINE INPUT s$\nIF LEFT$(s$, 1) = \"-\" THEN r% = 1\nPRINT r%\nEND", Dialect.Pb36);
+    var substr = Compile("$OPTIMIZE SPEED\nDIM s$, r%\nLINE INPUT s$\nIF LEFT$(s$, 2) = \"-x\" THEN r% = 1\nPRINT r%\nEND", Dialect.Pb36);
+    Assert.That(direct.SequenceEqual(substr), Is.False, "LEFT$(s$,1) reads the first byte directly; LEFT$(s$,2) keeps the substring compare");
+  }
+
+  [Test]
   public void Emit_GivenSingleCharMidCompare_WhenPb36_ThenComparesByteNotSubstring() {
     // O0297: `MID$(s$, i, 1) = "c"` compares a byte read directly (rt_charat) against the literal's
     // byte - no substring / StrDup / literal / StrCmp allocations. A two-character literal cannot use

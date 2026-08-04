@@ -32,6 +32,28 @@ public sealed partial class CodeGenerator {
     _ => false,
   };
 
+  /// <summary>
+  /// O0297: a one-character substring of a string, either <c>MID$(s$, i, 1)</c> (index <c>i</c>) or
+  /// <c>LEFT$(s$, 1)</c> (index 1, signalled by a null <paramref name="idx"/>). Used to route the read
+  /// (ASC) and the compare through the direct byte path rt_charat.
+  /// </summary>
+  private bool SingleCharSource(Expression e, out Expression str, out Expression? idx) {
+    str = null!; idx = null;
+    if (e is not CallOrIndexExpr c || !model.IntrinsicBindings.TryGetValue(c, out var info))
+      return false;
+    if (info.Name.Equals("MID$", StringComparison.OrdinalIgnoreCase) && c.Arguments.Count == 3
+        && this.OptFolder.TryFold(c.Arguments[2]) is { Integer: 1 }) {
+      str = c.Arguments[0]; idx = c.Arguments[1];
+      return model.TypeOf(str) is StringType or FlexType;
+    }
+    if (info.Name.Equals("LEFT$", StringComparison.OrdinalIgnoreCase) && c.Arguments.Count == 2
+        && this.OptFolder.TryFold(c.Arguments[1]) is { Integer: 1 }) {
+      str = c.Arguments[0]; idx = null;             // LEFT$(s$, 1) is the character at index 1
+      return model.TypeOf(str) is StringType or FlexType;
+    }
+    return false;
+  }
+
   /// <summary>O0302: the byte of a single-character constant needle - a 1-char string literal or CHR$(const). Any byte, 0 included.</summary>
   private int? SingleCharNeedleByte(Expression e) {
     if (e is StringLiteralExpr { Value: { Length: 1 } text } && text[0] <= (char)255)
@@ -344,23 +366,25 @@ public sealed partial class CodeGenerator {
         break;
 
       case "ASC" or "ASCII": {
-        // O0297: ASC(s$, i) and ASC(MID$(s$, i, 1)) read the i-th byte directly (rt_charat) instead of
-        // allocating a one-character substring - same clamp-to-1 / 0-past-the-end result, one fewer
-        // heap allocation per character in a scan loop. Gated on --optimize.
+        // O0297: ASC(s$, i), ASC(MID$(s$, i, 1)) and ASC(LEFT$(s$, 1)) read the byte directly
+        // (rt_charat) instead of allocating a one-character substring - same clamp-to-1 / 0-past-the-end
+        // result, one fewer heap allocation per character in a scan loop. Gated on --optimize.
         Expression? strExpr = null, idxExpr = null;
+        var haveSource = false;
         if (this.Optimize) {
           if (args.Count == 2) {
-            strExpr = args[0]; idxExpr = args[1];
-          } else if (args.Count == 1 && args[0] is CallOrIndexExpr mid && model.IntrinsicBindings.TryGetValue(mid, out var midInfo)
-              && midInfo.Name.Equals("MID$", StringComparison.OrdinalIgnoreCase) && mid.Arguments.Count == 3
-              && this.OptFolder.TryFold(mid.Arguments[2]) is { Integer: 1 }) {
-            strExpr = mid.Arguments[0]; idxExpr = mid.Arguments[1];
+            strExpr = args[0]; idxExpr = args[1]; haveSource = model.TypeOf(strExpr) is StringType or FlexType;
+          } else if (args.Count == 1 && this.SingleCharSource(args[0], out var src, out var idx)) {
+            strExpr = src; idxExpr = idx; haveSource = true;   // idxExpr null => LEFT$(s$, 1): index 1
           }
         }
-        if (strExpr != null && idxExpr != null && model.TypeOf(strExpr) is StringType or FlexType) {
-          this.EmitExpression(strExpr);            // owned string handle in AX
+        if (haveSource) {
+          this.EmitExpression(strExpr!);           // owned string handle in AX
           asm.Push(Reg.AX);
-          this.EmitInt16Argument(idxExpr);
+          if (idxExpr != null)
+            this.EmitInt16Argument(idxExpr);
+          else
+            asm.Mov(Reg.AX, 1);                    // LEFT$(s$, 1): the index is 1
           asm.Mov(Reg.CX, Reg.AX);
           asm.Pop(Reg.AX);
           asm.Call(this._rt.CharAt);

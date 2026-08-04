@@ -853,7 +853,10 @@ public sealed partial class CodeGenerator {
         && this.TryCharCompareOperands(b, out var chStr, out var chIdx, out var chByte)) {
       this.EmitExpression(chStr);
       asm.Push(Reg.AX);
-      this.EmitInt16Argument(chIdx);
+      if (chIdx != null)
+        this.EmitInt16Argument(chIdx);
+      else
+        asm.Mov(Reg.AX, 1);                       // LEFT$(s$, 1): the index is 1
       asm.Mov(Reg.CX, Reg.AX);
       asm.Pop(Reg.AX);
       asm.Call(this._rt.CharAt);                 // AX = the i-th byte (0 past the end)
@@ -896,22 +899,16 @@ public sealed partial class CodeGenerator {
   /// MID$ is "" whose byte reads as 0, which a non-zero literal byte never matches, and an in-range
   /// byte matches iff the characters are equal. A NUL literal is excluded (it would alias that 0).
   /// </summary>
-  private bool TryCharCompareOperands(BinaryExpr b, out Expression strExpr, out Expression idxExpr, out int literalByte) {
-    strExpr = null!; idxExpr = null!; literalByte = 0;
-    Expression? mid = null;
+  private bool TryCharCompareOperands(BinaryExpr b, out Expression strExpr, out Expression? idxExpr, out int literalByte) {
+    strExpr = null!; idxExpr = null; literalByte = 0;
+    var matched = false;
     int? litByte = null;
-    if (IsSingleCharMid(b.Left) && ByteOf(b.Right) is { } rb) { mid = b.Left; litByte = rb; }
-    else if (IsSingleCharMid(b.Right) && ByteOf(b.Left) is { } lb) { mid = b.Right; litByte = lb; }
-    if (mid is not CallOrIndexExpr midCall || litByte is not { } theByte)
+    if (this.SingleCharSource(b.Left, out var ls, out var li) && ByteOf(b.Right) is { } rb) { matched = true; strExpr = ls; idxExpr = li; litByte = rb; }
+    else if (this.SingleCharSource(b.Right, out var rs, out var ri) && ByteOf(b.Left) is { } lb) { matched = true; strExpr = rs; idxExpr = ri; litByte = lb; }
+    if (!matched || litByte is not { } theByte)
       return false;
-    strExpr = midCall.Arguments[0];
-    idxExpr = midCall.Arguments[1];
     literalByte = theByte;
-    return model.TypeOf(strExpr) is StringType or FlexType;
-
-    bool IsSingleCharMid(Expression e) => e is CallOrIndexExpr c && model.IntrinsicBindings.TryGetValue(c, out var info)
-      && info.Name.Equals("MID$", StringComparison.OrdinalIgnoreCase) && c.Arguments.Count == 3
-      && this.OptFolder.TryFold(c.Arguments[2]) is { Integer: 1 };
+    return true;                                    // SingleCharSource already checked the string type
 
     // the constant byte of a one-character comparand: a single-char string literal, or CHR$(const).
     // A zero byte is excluded either way - it would alias the 0 a past-the-end MID$ reads as.
