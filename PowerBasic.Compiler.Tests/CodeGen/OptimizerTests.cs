@@ -616,8 +616,11 @@ public sealed class OptimizerTests {
     }
     var covered = Compile("DIM n AS INTEGER, i AS INTEGER\nn = 6\nDIM a(1 TO n) AS INTEGER\nFOR i = 1 TO n\na(i) = i\nNEXT i\nPRINT a(1)\nEND", Dialect.Pb36);
     var reads = Compile("DIM n AS INTEGER, i AS INTEGER\nn = 6\nDIM a(1 TO n) AS INTEGER\nFOR i = 1 TO n\na(i) = a(1)\nNEXT i\nPRINT a(1)\nEND", Dialect.Pb36);
+    // a multi-statement body qualifies when the extra statement is array-free scalar work
+    var multi = Compile("DIM n AS INTEGER, i AS INTEGER, t AS LONG\nn = 6\nt = 0\nDIM a(1 TO n) AS INTEGER\nFOR i = 1 TO n\na(i) = i\nt = t + i\nNEXT i\nPRINT t; a(1)\nEND", Dialect.Pb36);
     Assert.That(HasNoZeroAlloc(covered), Is.True, "the covered fill allocates without the zero-fill");
     Assert.That(HasNoZeroAlloc(reads), Is.False, "a fill that reads the array keeps the zero-filling allocation");
+    Assert.That(HasNoZeroAlloc(multi), Is.True, "a fill with array-free scalar work alongside the write still qualifies");
   }
 
   [Test]
