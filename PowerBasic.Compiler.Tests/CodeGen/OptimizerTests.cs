@@ -1308,6 +1308,15 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenOutOfRangeCheck_WhenPb36_ThenSingleUnsignedCompare() {
+    // O0032 range fold, OR/outside form: `x < 0 OR x > 15` is the complement of [0,15] and folds to
+    // one unsigned compare too. For `IF (...) THEN` the branch to the ELSE arm fires when the value is
+    // INSIDE the window, so it is `cmp ax, 15 / jbe` (83 F8 0F 76), the mirror of the AND form's `ja`.
+    var img = Compile("$OPTIMIZE SPEED\nDIM x%\nINPUT x%\nIF x% < 0 OR x% > 15 THEN PRINT \"o\" ELSE PRINT \"i\"\nEND", Dialect.Pb36);
+    Assert.That(ContainsSeq(img, 0x83, 0xF8, 0x0F, 0x76), Is.True, "the out-of-range OR folds to one unsigned compare (cmp ax, 15 / jbe)");
+  }
+
+  [Test]
   public void Emit_GivenStringEquality_WhenPb36_ThenUsesLengthGuardedCompare() {
     // O0298: `=` / `<>` use rt_strcmpeq under --optimize, which after loading the two string
     // descriptors does a length guard `cmp ax,dx / jne` (39 D0 75) - unequal lengths skip the byte

@@ -94,7 +94,10 @@ EndIf:
 
 `(x - lo)` read as unsigned is in `[0, hi-lo]` exactly when `x ∈ [lo, hi]`: a value
 below `lo` wraps to a large unsigned number and a value above `hi` exceeds the
-window, so one `JA`/`JBE` decides both bounds. `x` is evaluated once. One subtract
+window, so one `JA`/`JBE` decides both bounds. The **complement form**
+`x < lo OR x > hi` (out-of-range validation) folds the same way — its window is the
+inside interval and the branch is simply inverted (`JBE` where the `AND` form used
+`JA`). `x` is evaluated once. One subtract
 and one branch replace two signed compares and two branches. The **same fold applies
 to a constant `SELECT CASE lo TO hi` arm** (`EmitSelectorInt16`): `CASE 0 TO 9`
 becomes `cmp ax, 9 / jbe arm` rather than the `cmp/jl` + `cmp/jle` pair. Gated on

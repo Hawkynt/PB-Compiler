@@ -2469,30 +2469,36 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// variable, the bounds are out of range, or the range is empty.
   /// </summary>
   private bool TryEmitRangeCheckBranch(Expression condition, Label target, bool whenFalse) {
-    if (condition is not BinaryExpr { Op: BinaryOp.And, Left: { } left, Right: { } right }
-        || this.BoundOf(left) is not { } a || this.BoundOf(right) is not { } b
+    if (condition is not BinaryExpr { Op: BinaryOp.And or BinaryOp.Or } logic
+        || this.BoundOf(logic.Left) is not { } a || this.BoundOf(logic.Right) is not { } b
         || a.IsLower == b.IsLower)                    // need exactly one lower and one upper bound
       return false;
-    var lower = a.IsLower ? a : b;
-    var upper = a.IsLower ? b : a;
+    var lower = a.IsLower ? a : b;                    // x >= lower.Value
+    var upper = a.IsLower ? b : a;                    // x <= upper.Value
     if (lower.Var is not NameExpr lv || upper.Var is not NameExpr uv
         || !model.VariableBindings.TryGetValue(lv, out var lsym) || !model.VariableBindings.TryGetValue(uv, out var usym)
         || !ReferenceEquals(lsym, usym)
         || model.TypeOf(lv) is not ScalarType { IsFloat: false, ByteSize: 2, Signed: true })
       return false;
-    int lo = lower.Value, hi = upper.Value;
-    if (lo > hi || lo < short.MinValue || hi > short.MaxValue)
-      return false;                                   // empty or out-of-range window
+
+    // AND (x >= L AND x <= U) is true INSIDE [L, U]; OR (x >= L OR x <= U) is true OUTSIDE the gap
+    // (U, L), i.e. outside [U+1, L-1]. Either way the region is one contiguous window [lo, hi].
+    var isAnd = logic.Op == BinaryOp.And;
+    int lo = isAnd ? lower.Value : upper.Value + 1;
+    int hi = isAnd ? upper.Value : lower.Value - 1;
+    if (lo > hi || lo is < short.MinValue or > short.MaxValue || hi is < short.MinValue or > short.MaxValue)
+      return false;                                   // empty window, or a tautology / contradiction
 
     var asm = this._asm;
     this.EmitExpression(lower.Var);                   // x -> AX (evaluated once)
     if (lo != 0)
-      asm.Sub(Reg.AX, (Imm)lo);                       // normalize: 0 <= x-lo <= hi-lo when in range
+      asm.Sub(Reg.AX, (Imm)lo);                       // normalize: 0 <= x-lo <= hi-lo when inside
     asm.Cmp(Reg.AX, (Imm)(hi - lo));
-    if (whenFalse)
-      asm.Ja(target);                                 // unsigned above the window -> NOT in range
+    // AND is true inside the window, OR is true outside it
+    if (isAnd ? !whenFalse : whenFalse)
+      asm.Jbe(target);                                // within [lo, hi]
     else
-      asm.Jbe(target);                                // within the window -> in range
+      asm.Ja(target);                                 // unsigned above the window -> outside [lo, hi]
     return true;
   }
 
