@@ -163,7 +163,7 @@ Conventions used on every page:
 | ⬜ | [O0126](O0126-unroll-and-jam.md) | Unroll and jam |
 | ⬜ | [O0127](O0127-loop-interleaving.md) | Loop interleaving |
 | ⬜ | [O0128](O0128-software-pipelining.md) | Software pipelining |
-| ⬜ | [O0129](O0129-unroll-factor-cost-model.md) | Unroll factor by cost model |
+| 🟡 | [O0129](O0129-unroll-factor-cost-model.md) | Unroll factor by cost model |
 | ⬜ | [O0130](O0130-trip-count-versioning.md) | Trip-count versioning |
 | ⬜ | [O0131](O0131-exact-trip-count.md) | Exact trip count |
 | ⬜ | [O0132](O0132-compile-time-loop-evaluation.md) | Compile-time loop evaluation |

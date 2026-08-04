@@ -398,17 +398,22 @@ public sealed partial class CodeGenerator {
     if (step == 0)
       return false;
 
+    // O0174: how many copies are worth fully unrolling is a per-target call - a fetch-bound 8086 keeps four,
+    // a 486+ with an instruction cache tolerates more (deleting more per-iteration compare/branch). Default
+    // 8086 stays at four, so this loop's output is byte-identical there.
+    var maxTrips = this.Cost.MaxFullUnrollTrips;
+
     // simulate the loop exactly as the generic engine runs it (signed compares,
     // silent 16-bit wrap on the increment)
     var values = new List<short>();
     var current = from;
-    for (; values.Count <= 4; current = unchecked((short)(current + step))) {
+    for (; values.Count <= maxTrips; current = unchecked((short)(current + step))) {
       var continues = step > 0 ? current <= to : current >= to;
       if (!continues)
         break;
       values.Add(current);
     }
-    if (values.Count > 4)
+    if (values.Count > maxTrips)
       return false; // too many iterations (or a wrapping endless loop)
 
     if (CountUnrollableStatements(f.Body, model, counter) is not { } bodySize || bodySize > 8)

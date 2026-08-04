@@ -117,6 +117,14 @@ public sealed class TargetCostTests {
   }
 
   [Test]
+  public void MaxFullUnrollTrips_GivenTier_WhenAsked_ThenWidensOn486Plus() {
+    Assert.That(Cost(CpuTier.I8086).MaxFullUnrollTrips, Is.EqualTo(4), "fetch-bound: conservative");
+    Assert.That(Cost(CpuTier.I80386).MaxFullUnrollTrips, Is.EqualTo(4));
+    Assert.That(Cost(CpuTier.I80486).MaxFullUnrollTrips, Is.EqualTo(8), "an instruction cache tolerates a wider unroll");
+    Assert.That(Cost(CpuTier.Pentium).MaxFullUnrollTrips, Is.EqualTo(8));
+  }
+
+  [Test]
   public void AlignHotLoops_GivenTierAndObjective_WhenAsked_ThenOnlySpeedOn486Plus() {
     Assert.That(Cost(CpuTier.I80386, CostObjective.Speed).AlignHotLoops, Is.False);
     Assert.That(Cost(CpuTier.I80486, CostObjective.Speed).AlignHotLoops, Is.True);

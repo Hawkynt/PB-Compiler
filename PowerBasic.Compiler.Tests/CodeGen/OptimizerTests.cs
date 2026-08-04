@@ -772,6 +772,18 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenSixTripLoop_WhenPb36Speed_ThenCostModelUnrollsOn486ButLoopsOn8086() {
+    // O7 + O0174: a six-iteration tiny FOR loop is above the fetch-bound 8086's four-copy budget (it keeps the
+    // compact loop) but inside a 486's wider one (it fully unrolls the six copies). The two builds differ only
+    // in that loop, so the unrolled 486 image is strictly larger than the still-looped 8086 image.
+    const string body = "$OPTIMIZE SPEED\nDIM s AS INTEGER, i AS INTEGER\ns = 0\nFOR i = 1 TO 6\ns = s + i\nNEXT\nPRINT s\nEND";
+    var i8086 = Compile(body, Dialect.Pb36);
+    var i486 = Compile("$CPU 80486\n" + body, Dialect.Pb36);
+    Assert.That(i486.Length, Is.GreaterThan(i8086.Length),
+      "8086 keeps the compact loop; the 486's wider budget unrolls the six copies");
+  }
+
+  [Test]
   public void Emit_GivenAdjacentDivAndMod_WhenPb36_ThenSharedSingleIdiv() {
     // O0079: q = n\d immediately followed by m = n MOD d over the same runtime operands reuses the
     // remainder the divide already left in DX, so the optimized image runs one IDIV where the

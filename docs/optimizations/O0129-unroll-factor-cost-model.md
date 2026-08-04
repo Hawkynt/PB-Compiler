@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial — the full-unroll trip budget is now a per-target call through the [O0174](O0174-target-cost-models.md) cost model (`Cost.MaxFullUnrollTrips`): the fetch-bound 8086/286/386 keep four copies, a 486+ takes eight. The register/latency-driven *partial* unroll factor for larger loops remains |
 | **Stage** | Mid-end policy |
 | **Related** | [O0007](O0007-loop-unrolling.md), [O0063](O0063-duff-unrolling.md), [O0174](O0174-target-cost-models.md) |
 
@@ -26,10 +26,20 @@ Every unrolling decision, including the vector loops
 ([O0026](O0026-auto-vectorization.md)) and unroll-and-jam
 ([O0126](O0126-unroll-and-jam.md)).
 
-## Today
+## Now
+
+The full-unroll trip budget is no longer the bare constant 4 — it is
+`Cost.MaxFullUnrollTrips`, which the [O0174](O0174-target-cost-models.md) model
+answers per target: four on the fetch-bound 8086/286/386 (more instruction bytes
+throttle the prefetch queue that is their bottleneck), eight on a 486 or later
+whose instruction cache absorbs the wider body and profits more from deleting the
+per-iteration compare/branch. The default 8086 tier keeps four, so faithful output
+is byte-identical; a `$CPU 80486`+ speed build unrolls a six- or eight-trip tiny
+loop the 8086 leaves rolled (a cross-tier regression test pins the size split, and
+the ≤4-copy path stays DOSBox-verified on and off).
 
 ```
-if (trip count is constant && trips <= 4 && body is small) unroll fully
+if (trip count is constant && trips <= Cost.MaxFullUnrollTrips && body is small) unroll fully
 ```
 
 ## Planned

@@ -144,6 +144,13 @@ public sealed class TargetCost {
     return armInstrBytes <= this.BranchMispredictPenalty;
   }
 
+  /// <summary>The largest constant trip count a tiny FOR loop is worth *fully* unrolling (O7/O0129). A
+  /// fetch-bound early part (≤386) keeps the conservative four copies - more instruction bytes throttle the
+  /// prefetch queue that is its bottleneck; a 486 or later, with a real instruction cache, tolerates a wider
+  /// unroll that deletes more of the per-iteration compare/branch. Only consulted under a speed objective (the
+  /// unroller is speed-gated), so it is never a size regression.</summary>
+  public int MaxFullUnrollTrips => this.Tier >= CpuTier.I80486 ? 8 : 4;
+
   /// <summary>
   /// The loop-unroll factor O0129 should apply to a body of <paramref name="bodyInstrBytes"/> bytes with the
   /// given <paramref name="tripCount"/> (0 = unknown at compile time). A size objective never unrolls; a
