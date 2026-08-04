@@ -145,6 +145,36 @@ public sealed class LoopUnrollTests {
       END
       """);
 
+  /// <summary>
+  /// O0132, whole-loop compile-time evaluation - which nobody wrote a pass for. It falls out of
+  /// unrolling composing with the constant propagation and dead-code elimination that were already
+  /// there: the counter becomes a constant in each copy, the arithmetic folds, and the copies go. A
+  /// ported optimization that ENABLES another is the compounding the IR path was supposed to get, so
+  /// it is worth pinning rather than noticing once.
+  /// </summary>
+  [Test]
+  public void Unroll_GivenAConstantLoop_ThenThePipelineEvaluatesTheWholeThingAtCompileTime() {
+    var module = IrLowering.TryLowerModule(Bind("""
+      DIM i AS INTEGER
+      DIM s AS INTEGER
+      s = 0
+      FOR i = 1 TO 5
+        s = s + i
+      NEXT i
+      PRINT s
+      END
+      """), out var why);
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+    IrPassManager.Standard().RunOnModule(module!);
+
+    var main = module!.FindFunction("main")!;
+    Assert.That(main.Blocks.SelectMany(b => b.Instructions).OfType<IrBinary>(), Is.Empty,
+      "the whole loop folds - no arithmetic should be left");
+    var printed = main.Blocks.SelectMany(b => b.Instructions).OfType<IrCall>()
+      .First(c => (c.Callee as IrFunction)?.Name == "rt_print_i16");
+    Assert.That(((IrConstantInt)printed.Args.First()).Value, Is.EqualTo(15), "1+2+3+4+5");
+  }
+
   /// <summary>A loop whose trip count is not known must be left alone rather than guessed at.</summary>
   [Test]
   public void Unroll_GivenARuntimeBound_ThenItDeclines() {

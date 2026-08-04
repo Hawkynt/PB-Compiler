@@ -6,6 +6,7 @@
 | **Stage** | Emitter |
 | **Source** | `CodeGen/CodeGenerator.Optimize.cs` — `#region O7`, `TryEmitUnrolledFor`, `CountUnrollableStatements` |
 | **Gate** | `--optimize` + `$OPTIMIZE SPEED` |
+| **IR** | ✅ `Ir/Passes/LoopUnroll.cs` — full unroll of a constant-trip counted loop, in `IrPassManager.Standard()`; verified by `IrPassObservableEquivalenceTests` (render to BASIC, run, compare) |
 | **Verified by** | `tests/diff/DIFF26.BAS` |
 | **Related** | [O0020](O0020-idiom-replacement.md), [O0063](O0063-duff-unrolling.md), [O0066](O0066-unrolled-counter-propagation.md) |
 

@@ -172,6 +172,19 @@ Measured by `OptimizationPortingLedgerTests`, which reads the Stage of every doc
 So the target is 110, not 420 — and the bulk of it is one category, *Mid-end* (52). The ledger is a
 test with floors, so the portable share cannot shrink by reclassification instead of movement.
 
+A ported optimization records an **IR** row in its own document, which is what the ledger counts.
+`Stage` says where an optimization was *first* written and never changes; the `IR` row says where it
+*also* lives now, and only grows. Ported so far:
+
+- **O0007 loop unrolling** — `Ir/Passes/LoopUnroll.cs`, in the standard pipeline.
+- **O0132 whole-loop compile-time evaluation** — nobody wrote a pass for it; it falls out of
+  unrolling composing with the constant propagation and dead-code elimination already there.
+  `FOR i = 1 TO 5 / s = s + i / NEXT / PRINT s` becomes `PRINT 15`.
+
+That second one is the argument for the whole exercise: a ported optimization that *enables* another
+without further work is the compounding the retargetable path was supposed to get, and it is the
+first evidence of it.
+
 The runtime traps and the error handler are **done**. `$ERROR BOUNDS / OVERFLOW / NUMERIC ON` now emit
 their checks rather than merely accepting the metastatement, over dynamic arrays as well as static
 ones; `ON ERROR` / `RESUME` / `ERROR n` / `ERRCLEAR` lower, along with the `ERR` / `ERL` / `ERADR`

@@ -31,6 +31,18 @@ public sealed class OptimizationPortingLedgerTests {
   /// <summary>Stages already expressed on the IR.</summary>
   private static readonly Regex _alreadyIr = new("^(IR|SSA)", RegexOptions.IgnoreCase);
 
+  /// <summary>
+  /// Documents carrying an <c>**IR**</c> row - an optimization actually ported, as opposed to one
+  /// whose original Stage happened to be a mid-end. This is the ratchet: the Stage field describes
+  /// where an optimization was FIRST written, and never changes; the IR row records where it now
+  /// also lives, and only ever grows.
+  /// </summary>
+  private static IEnumerable<string> Ported() =>
+    Directory.EnumerateFiles(_docs, "*.md")
+      .Where(f => File.ReadLines(f).Any(l => Regex.IsMatch(l, @"^\|\s*\*\*IR\*\*\s*\|")))
+      .Select(Path.GetFileNameWithoutExtension)
+      .OrderBy(n => n, StringComparer.Ordinal)!;
+
   private static IEnumerable<(string Name, string Stage)> Stages() {
     foreach (var file in Directory.EnumerateFiles(_docs, "*.md").OrderBy(f => f, StringComparer.Ordinal)) {
       var stage = File.ReadLines(file)
@@ -64,8 +76,16 @@ public sealed class OptimizationPortingLedgerTests {
       report.AppendLine($"  {count,4}  {stage}");
     TestContext.Out.Write(report.ToString());
 
+    var ported = Ported().ToList();
+    report.AppendLine($"explicitly ported to the IR (an **IR** row in the doc): {ported.Count}");
+    foreach (var name in ported)
+      report.AppendLine($"    {name}");
+
     // Floors, not exact counts. The catalogue grows; what must not happen is the PORTABLE share
-    // shrinking because a mid-end optimization was reclassified rather than moved.
+    // shrinking because a mid-end optimization was reclassified rather than moved, or the ported
+    // count going backwards.
+    Assert.That(ported.Count, Is.GreaterThanOrEqualTo(2),
+      "fewer optimizations are recorded as ported:" + Environment.NewLine + report);
     Assert.That(portable.Count, Is.GreaterThanOrEqualTo(120), "fewer optimizations look portable than before:\n" + report);
     Assert.That(alreadyIr.Count, Is.GreaterThanOrEqualTo(20), "fewer optimizations are on the IR than before:\n" + report);
   }
