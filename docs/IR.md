@@ -248,7 +248,11 @@ This found a real miscompile the first time it ran — not in a pass, but in the
 that the rendered text is a program *the pb35 front end accepts*. That is the bar the IR writer has
 to clear, and it is now measured: `Write_GivenTheCorpus_ThenWhatItRendersRebindsUnderPb35` renders
 every corpus module, re-parses and re-binds the output under pb35, and requires zero errors.
-Currently **80 modules re-bind, 0 rejected**.
+Currently **94 modules re-bind, 0 rejected** — and each program is lowered in the dialect it was
+*written* in, not all as pb36. That is the IR earning its keep as more than a code generator: a
+GW-BASIC, QuickBASIC, PDS or Turbo Basic program goes in, and PowerBASIC 3.5 the front end accepts
+comes out. Compiling a qb45 program *as* pb36 would compare two different languages; lowering it as
+qb45 and rendering pb35 is a translation.
 
 Rendering and re-binding are counted apart on purpose: a module the writer *refuses* is a known gap,
 while one it renders into text pb35 *rejects* is a bug, and one number would let the second hide

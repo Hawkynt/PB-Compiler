@@ -88,14 +88,17 @@ public sealed class IrBasicWriterCensusTests {
     var rejected = new List<string>();
     var rebound = 0;
 
-    foreach (var file in new[] { dir, Path.Combine(dir, "diff"), Path.Combine(dir, "optimize") }
-               .Where(Directory.Exists)
-               .SelectMany(d => Directory.EnumerateFiles(d, "*.BAS", SearchOption.TopDirectoryOnly))
+    // every dialect, each program lowered in the one it was WRITTEN in - a GW-BASIC or QuickBASIC
+    // program goes in and pb35 comes out, which is the point of rendering from the IR rather than
+    // from the tree the front end happened to parse
+    foreach (var file in Directory.EnumerateFiles(dir, "*.BAS", SearchOption.AllDirectories)
                .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)) {
       var name = Path.GetFileName(file);
+      var folder = Path.GetFileName(Path.GetDirectoryName(file)) ?? "";
+      var dialect = DialectFacts.TryParse(folder, out var parsed) ? parsed : Dialect.Pb36;
       string rendered;
       try {
-        var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(File.ReadAllText(file), name, Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
+        var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(File.ReadAllText(file), name, dialect), name, dialect), dialect);
         if (model.Errors.Count > 0)
           continue;
         var module = IrLowering.TryLowerModule(model, out _);
@@ -110,11 +113,11 @@ public sealed class IrBasicWriterCensusTests {
       try {
         var back = Binder.Bind(Parser.Parse(Lexer.Tokenize(rendered, "RT.BAS", Dialect.Pb35), "RT.BAS", Dialect.Pb35), Dialect.Pb35);
         if (back.Errors.Count > 0)
-          rejected.Add($"{name}: {back.Errors[0].Message}");
+          rejected.Add($"{dialect.CanonicalName()}/{name}: {back.Errors[0].Message}");
         else
           ++rebound;
       } catch (Exception e) {
-        rejected.Add($"{name}: {e.Message}");
+        rejected.Add($"{dialect.CanonicalName()}/{name}: {e.Message}");
       }
     }
 
@@ -128,7 +131,8 @@ public sealed class IrBasicWriterCensusTests {
     Assert.That(rebound, Is.GreaterThanOrEqualTo(_reboundFloor), "fewer modules re-bind than used to");
   }
 
-  private const int _reboundFloor = 80;   // 79 at the first measurement, before globals were SHARED
+  private const int _reboundFloor = 94;   // 79 at first measurement; 80 with SHARED globals, 94 once every
+                                        // dialect was lowered in its own rather than all as pb36
 
   private const int _floor = 173;   // 13 at the first measurement; +scalar slots, +PRINT, +file I/O, +arrays,
                                    // +globals, +string and math intrinsics, +exact truncation

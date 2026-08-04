@@ -39,15 +39,26 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
   private static readonly string _repoRoot =
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 
-  private static SemanticModel Bind(string source, string name) =>
-    Binder.Bind(Parser.Parse(Lexer.Tokenize(source, name, Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
+  private static SemanticModel Bind(string source, string name, Dialect dialect) =>
+    Binder.Bind(Parser.Parse(Lexer.Tokenize(source, name, dialect), name, dialect), dialect);
+
+  /// <summary>
+  /// The dialect a corpus program is written IN, from the directory it lives in - tests/diff/gw holds
+  /// GW-BASIC, tests/diff/qb45 QuickBASIC 4.5. Compiling those as pb36 would compare two different
+  /// languages; lowering each in its own dialect is the whole point of having an IR, and what comes
+  /// out the other side is pb35 whichever one went in.
+  /// </summary>
+  private static Dialect DialectOf(string file) {
+    var folder = Path.GetFileName(Path.GetDirectoryName(file)) ?? "";
+    return DialectFacts.TryParse(folder, out var dialect) ? dialect : Dialect.Pb36;
+  }
 
   private readonly record struct Behaviour(string Output, string? File, int ExitCode);
 
   /// <summary>Compiles and runs, or null when the program cannot be built or executed here.</summary>
-  private static Behaviour? Run(string source, string name, bool optimize) {
+  private static Behaviour? Run(string source, string name, Dialect dialect, bool optimize) {
     try {
-      var model = Bind(source, name);
+      var model = Bind(source, name, dialect);
       if (model.Errors.Count > 0)
         return null;
       var cg = new CodeGenerator(model) { Optimize = optimize };
@@ -62,9 +73,9 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
   }
 
   /// <summary>The BASIC the IR writes for a program, or null when either step declines.</summary>
-  private static string? Render(string source, string name) {
+  private static string? Render(string source, string name, Dialect dialect) {
     try {
-      var model = Bind(source, name);
+      var model = Bind(source, name, dialect);
       if (model.Errors.Count > 0)
         return null;
       var module = IrLowering.TryLowerModule(model, out _);
@@ -87,37 +98,41 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
     var dir = Path.Combine(_repoRoot, "tests");
     Assume.That(Directory.Exists(dir), "no tests/*.BAS corpus present");
 
-    // Only the PowerBASIC corpus. tests/diff/<dialect>/ holds programs written FOR another dialect -
-    // gw, qb45, pds71 - and compiling those as pb36 compares two different languages, which would
-    // report the front end's job as this harness's finding.
-    foreach (var file in PowerBasicCorpus(dir)) {
+    // Every dialect in the corpus, each lowered in the one it was WRITTEN in. The rendered output is
+    // pb35 whichever went in, which is the IR earning its keep: a GW-BASIC program comes back out as
+    // PowerBASIC that behaves the same.
+    foreach (var file in Corpus(dir)) {
       var name = Path.GetFileName(file);
       var source = File.ReadAllText(file);
+      var dialect = DialectOf(file);
 
-      if (Render(source, name) is not { } rendered) {
+      if (Render(source, name, dialect) is not { } rendered) {
         ++renderFailed;
         continue;
       }
       // the original has to run here at all, or there is nothing to compare against
-      if (Run(source, name, optimize: true) is not { } original) {
+      if (Run(source, name, dialect, optimize: true) is not { } original) {
         ++notRunnable;
         continue;
       }
-      if (Run(rendered, name, optimize: false) is not { } plain) {
+      // the rendered text is pb35 by construction, whatever the original dialect was
+      if (Run(rendered, name, Dialect.Pb35, optimize: false) is not { } plain) {
         ++notRunnable;
         continue;
       }
-      if (Run(rendered, name, optimize: true) is not { } optimized) {
+      if (Run(rendered, name, Dialect.Pb35, optimize: true) is not { } optimized) {
         ++notRunnable;
         continue;
       }
 
       ++compared;
+      // the same file name appears once per dialect, so the label carries both
+      var label = $"{dialect.CanonicalName()}/{name}";
       // a rendering that already disagrees unoptimized is the WRITER's fault, not the optimizer's
       if (plain != original)
-        badRendering.Add(name);
+        badRendering.Add(label);
       else if (optimized != plain)
-        badOptimization.Add(name);
+        badOptimization.Add(label);
     }
 
     report.AppendLine($"programs compared          : {compared}")
@@ -139,11 +154,9 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
     Assert.That(compared, Is.GreaterThanOrEqualTo(_floor), "fewer programs were compared than used to be:\n" + report);
   }
 
-  /// <summary>The pb35/pb36 programs: the battery, the differential set and the optimizer suite.</summary>
-  private static IEnumerable<string> PowerBasicCorpus(string root) =>
-    new[] { root, Path.Combine(root, "diff"), Path.Combine(root, "optimize") }
-      .Where(Directory.Exists)
-      .SelectMany(d => Directory.EnumerateFiles(d, "*.BAS", SearchOption.TopDirectoryOnly))
+  /// <summary>Every corpus program, of every dialect.</summary>
+  private static IEnumerable<string> Corpus(string root) =>
+    Directory.EnumerateFiles(root, "*.BAS", SearchOption.AllDirectories)
       .OrderBy(f => f, StringComparer.OrdinalIgnoreCase);
 
   /// <summary>
@@ -152,21 +165,32 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
   /// mystery; they are the parts of the language the writer has not modelled.
   /// </summary>
   private static readonly Dictionary<string, string> _knownRenderingGaps = new(StringComparer.OrdinalIgnoreCase) {
-    ["DIFF01.BAS"] = "INT/FIX of a float: the writer truncates where the direct emitter rounds. Which is right "
-      + "needs the genuine compiler to settle - INT(2.7) is 2 by the language definition and 3 here - so "
-      + "neither side is changed until the oracle can say.",
-    ["DIFF04.BAS"] = "an unsigned DWORD prints as signed (-1 for 4294967295): the writer loses the "
+    ["pb36/DIFF01.BAS"] = "INT/FIX of a float: the writer truncates where the direct emitter rounds. Which is "
+      + "right needs the genuine compiler to settle - INT(2.7) is 2 by the language definition and 3 here - "
+      + "so neither side is changed until the oracle can say.",
+    ["tb10/DIFF01.BAS"] = "as pb36/DIFF01: INT/FIX rounding.",
+    ["tb11/DIFF01.BAS"] = "as pb36/DIFF01: INT/FIX rounding.",
+    ["pb21/DIFF01.BAS"] = "as pb36/DIFF01: INT/FIX rounding.",
+    ["gw/DIFF01.BAS"] = "as pb36/DIFF01, plus GW-BASIC's MBF floats: the IR types them IEEE, so the "
+      + "rendered arithmetic is done at a different precision than the source dialect's.",
+    ["pb36/DIFF04.BAS"] = "an unsigned DWORD prints as signed (-1 for 4294967295): the writer loses the "
       + "unsignedness when the value passes through a temporary.",
-    ["DIFF06.BAS"] = "the same unsigned width loss on a DWORD literal (4000000000 renders as -294967296).",
-    ["DIFF15.BAS"] = "a QUAD product is one off (73300775184 against ...85) - 64-bit arithmetic the rendered "
-      + "BASIC computes at a different width.",
-    ["DIFF18.BAS"] = "a BYTE FOR counter must WRAP past 255 (QUIRK 2.28); the rendered loop does not, so the "
-      + "trip count differs.",
-    ["DIFF24.BAS"] = "unsigned width loss, as DIFF04.",
-    ["DIFF25.BAS"] = "unsigned width loss, as DIFF04.",
-    ["DIFF47.BAS"] = "unsigned width loss, as DIFF04.",
-    ["DIFF55.BAS"] = "unsigned width loss, as DIFF04.",
+    ["pb36/DIFF06.BAS"] = "the same unsigned width loss on a DWORD literal (4000000000 renders as -294967296).",
+    ["pb36/DIFF24.BAS"] = "unsigned width loss, as DIFF04.",
+    ["pb36/DIFF25.BAS"] = "unsigned width loss, as DIFF04.",
+    ["pb36/DIFF47.BAS"] = "unsigned width loss, as DIFF04.",
+    ["pb36/DIFF55.BAS"] = "unsigned width loss, as DIFF04.",
+    ["pb36/DIFF15.BAS"] = "a QUAD product is one off (73300775184 against ...85) - 64-bit arithmetic the "
+      + "rendered BASIC computes at a different width.",
+    ["pb36/DIFF18.BAS"] = "a BYTE FOR counter must WRAP past 255 (QUIRK 2.28); the rendered loop does not, "
+      + "so the trip count differs.",
+    ["pb30/QUIRK30.BAS"] = "a PB 3.0 quirk the IR does not carry: the rendered pb35 program does not "
+      + "reproduce the older dialect's behaviour, which is the front end's job and is lost by lowering.",
+    ["qb10/DIFF02.BAS"] = "QuickBASIC 1.0 rounds half AWAY from zero where pb35 does not; the rendered "
+      + "program is pb35 and rounds the pb35 way.",
+    ["qb20/DIFF02.BAS"] = "as qb10/DIFF02: the BASCOM-heritage rounding.",
+    ["qb30/DIFF02.BAS"] = "as qb10/DIFF02: the BASCOM-heritage rounding.",
   };
 
-  private const int _floor = 70;   // 73 at the first measurement
+  private const int _floor = 80;   // 83 across every dialect
 }
