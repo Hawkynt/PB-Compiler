@@ -82,6 +82,8 @@ public readonly record struct MInstrEffect(
 public enum MOpcode {
   Mov, Lea,
   Add, Sub, And, Or, Xor, Cmp, Test,
+  /// <summary>The carry-chain halves of 32-bit add/subtract: a LONG lives in a register pair on this target.</summary>
+  Adc, Sbb,
   Imul, Mul, Idiv, Div,
   Neg, Not, Inc, Dec,
   Shl, Shr, Sar,

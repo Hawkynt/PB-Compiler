@@ -119,11 +119,17 @@ public sealed class BackendCoverageTests {
       report.AppendLine($"  {count,5}  {reason}");
     TestContext.Out.Write(report.ToString());
 
-    // A floor, not an exact count: widening the selector may only raise it, and a change that
-    // lowers it has taken coverage away from the retargetable path - which is the thing this whole
-    // back end exists to grow. The number moved 8 -> 9 when calls to defined procedures became
-    // selectable; raise it with the next widening.
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(9),
+    // A floor, not an exact count: widening the selector may only raise it, and a change that lowers
+    // it has taken coverage away from the retargetable path - the thing this back end exists to grow.
+    //
+    // The history is worth keeping, because one step DOWN was a fix: 8 -> 9 when calls to defined
+    // procedures became selectable, 9 -> 15 when metastatements stopped blocking the lowering, then
+    // 15 -> 13 when 32-bit values became register PAIRS. Those two lost functions were never really
+    // compiled correctly - a LONG used to mint one Dword-sized register and emit a single word-sized
+    // MOV, silently carrying the low 16 bits as the whole value - so they now decline honestly at the
+    // 32-bit shift/multiply that needs a runtime helper. A coverage number is only worth defending
+    // when every function under it is actually right.
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(13),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
   }
 }

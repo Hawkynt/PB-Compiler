@@ -106,6 +106,9 @@ public sealed class MachineEmitter {
       case MOpcode.And: this.Emit2(ops[0], ops[1], asm.And, asm.And, asm.And, asm.And, asm.And); break;
       case MOpcode.Or: this.Emit2(ops[0], ops[1], asm.Or, asm.Or, asm.Or, asm.Or, asm.Or); break;
       case MOpcode.Xor: this.Emit2(ops[0], ops[1], asm.Xor, asm.Xor, asm.Xor, asm.Xor, asm.Xor); break;
+      // the high half of a 32-bit add/subtract - it reads the carry the low half left
+      case MOpcode.Adc: this.Emit2(ops[0], ops[1], asm.Adc, asm.Adc, asm.Adc, asm.Adc, asm.Adc); break;
+      case MOpcode.Sbb: this.Emit2(ops[0], ops[1], asm.Sbb, asm.Sbb, asm.Sbb, asm.Sbb, asm.Sbb); break;
       case MOpcode.Cmp: this.Emit2(ops[0], ops[1], asm.Cmp, asm.Cmp, asm.Cmp, asm.Cmp, asm.Cmp); break;
       case MOpcode.Imul:
         if (this.ToSource(ops[1]) is Mem im)

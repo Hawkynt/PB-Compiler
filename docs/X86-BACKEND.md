@@ -282,8 +282,35 @@ never-bound label and the image would not assemble. `MachineEmitter` takes a res
 generator (`CalleeLabel`) and throws if the routing ever admits a call it cannot bind.
 
 Self- and mutual recursion route as a result (`Down%(n%-1)` selects); the remaining defined-procedure
-declines are now precise and each names its own next increment — a `LONG` result needs `DX:AX` pair
-handling, a `BYREF` parameter arrives as a `ptr` the eligibility gate does not admit.
+declines are now precise and each names its own next increment — a `BYREF` parameter arrives as a
+`ptr` the eligibility gate does not admit.
+
+### 32-bit values are register pairs — and were silently truncated before
+
+x86-16 has no 32-bit register, so a `LONG`/`DWORD` lives in a **pair**. The selector mints two
+ordinary virtual registers per value (low in `_vregs`, high in `_hiVregs`), which keeps the allocator
+free of any pairing concept: it places and spills the halves like anything else, and only the
+ABI-pinned spots name physical registers — a `LONG` result goes back in `DX:AX`, as the direct
+codegen's convention says (*"Results: AX / DX:AX / ST0 / string handle in AX"*).
+
+What the pair lowering replaced was a **latent miscompile**. A 32-bit load used to mint a single
+`Dword`-sized virtual register and emit one `MOV` — and because the emitter resolves every memory
+operand as `Mem.Word` and every register by identity regardless of size, that read the **low 16 bits
+only** and carried them as the whole value. Such functions selected. They now either lower correctly
+or decline honestly, which is why the measured coverage moved *down* from 15 to 13: a coverage number
+is only worth defending when every function under it is actually right.
+
+Selected today: `add`/`sub` with the carry threaded through `ADC`/`SBB`, the bitwise ops half by half,
+`sext`/`zext` from a word (the sign smeared with `SAR 15`, or the high word cleared), `trunc` to a
+word (free — the low half is already its own register), loads and stores as two word accesses at
+`+0`/`+2`, and the `DX:AX` return. Declined: multiply, divide and the shifts, which need a runtime
+helper; and a 32-bit **parameter**, because the prologue loads one word per argument into
+`allocation[i]` and a pair breaks that correspondence.
+
+The `ADC` must not be separated from the `ADD` whose carry it reads. It is safe by the scheduler's
+own model rather than by luck: flags are ordered RAW, WAR *and* WAW, so every flag-touching
+instruction is totally ordered and none can be placed between the two halves — while a `MOV`, which
+touches no flags, may freely move through.
 
 **Verified.** Gated behind `UseExperimentalBackend` (`PBC_X_BACKEND` / `--x-backend`), default off (a new
 path alongside the battle-tested direct codegen). With it **forced on, all 241 differential batteries

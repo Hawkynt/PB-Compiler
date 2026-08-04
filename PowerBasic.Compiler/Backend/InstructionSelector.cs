@@ -16,6 +16,15 @@ namespace PowerBasic.Compiler.Backend;
 public sealed class InstructionSelector {
 
   private readonly Dictionary<IrValue, MReg> _vregs = new(ReferenceEqualityComparer.Instance);
+
+  /// <summary>
+  /// The HIGH word of a 32-bit value. x86-16 has no 32-bit register, so a LONG/DWORD lives in a
+  /// register <b>pair</b>: <see cref="_vregs"/> holds its low word and this its high one. Keeping the
+  /// halves as two ordinary virtual registers means the allocator needs no notion of pairing - it
+  /// allocates and spills them independently, and only the ABI-pinned spots (a LONG result in DX:AX)
+  /// name physical registers.
+  /// </summary>
+  private readonly Dictionary<IrValue, MReg> _hiVregs = new(ReferenceEqualityComparer.Instance);
   private readonly Dictionary<IrAlloca, int> _slots = new(ReferenceEqualityComparer.Instance);
   private MFunction _function = null!;
   private int _nextVreg;
@@ -48,19 +57,33 @@ public sealed class InstructionSelector {
     return false;
   }
 
+  /// <summary>As <see cref="Decline"/>, for the paths that return a null <see cref="MFunction"/>.</summary>
+  private MFunction? DeclineNull(string reason) {
+    this._decline ??= reason;
+    return null;
+  }
+
   private MFunction? Run(IrFunction fn) {
     this._function = new MFunction(fn.Name);
 
     // arguments take the FIRST virtual registers (so argument i is vreg i, which the emitter's ABI
     // prologue relies on to load argument i into allocation[i]); they are function live-ins
-    foreach (var arg in fn.Parameters)
+    foreach (var arg in fn.Parameters) {
+      // a 32-bit parameter would need a register PAIR, which breaks that argument-i-is-vreg-i
+      // correspondence the prologue loads by - so decline until the prologue can load both halves
+      if (IsWide(arg.Type))
+        return this.DeclineNull($"parameter: 32-bit {arg.Type} (the ABI prologue loads one word per argument)");
       this._vregs[arg] = this.FreshVreg(arg.Type);
+    }
 
     // each phi then gets a virtual register; the value is materialized by copies on the incoming edges
     // (out-of-SSA), so a use of the phi simply reads this register
     foreach (var block in fn.Blocks)
       foreach (var phi in block.Phis)
-        this._vregs[phi] = this.FreshVreg(phi.Type);
+        if (IsWide(phi.Type))
+          this.FreshPair(phi);                 // a 32-bit phi needs both halves, like any other LONG value
+        else
+          this._vregs[phi] = this.FreshVreg(phi.Type);
 
     var mblocks = new Dictionary<string, MBlock>();
     foreach (var block in fn.Blocks) {
@@ -102,6 +125,14 @@ public sealed class InstructionSelector {
       foreach (var block in fn.Blocks)
         foreach (var phi in block.Phis)
           if (phi.IncomingFrom(predBlock) is { } value) {
+            if (IsWide(phi.Type)) {
+              // both halves of a 32-bit phi are copied on the edge, low then high
+              if (!this.TryOperandPair(value, out var lowSource, out var highSource))
+                return false;
+              copies.Add((this._vregs[phi], lowSource));
+              copies.Add((this._hiVregs[phi], highSource));
+              continue;
+            }
             if (!this.TryOperand(value, out var source))
               return false;
             copies.Add((this._vregs[phi], source));
@@ -195,6 +226,10 @@ public sealed class InstructionSelector {
         return this.SelectRet(ret, block);
       case IrCall call:
         return this.SelectCall(call, block);
+      case IrCast cast:
+        return this.SelectCast(cast, block);
+      case IrCmp cmp:
+        return this.Decline($"compare as a value: {cmp.Pred} {cmp.Lhs.Type} (not folded into a branch)");
       default:
         return this.Decline($"instruction: {instr.GetType().Name}");   // unsupported construct - decline the whole function
     }
@@ -205,6 +240,8 @@ public sealed class InstructionSelector {
       return this.Decline($"binary: float {bin.Op}");
     if (!TryMapBinary(bin.Op, out var opcode))
       return this.Decline($"binary: {bin.Op}");   // division / remainder - not in this increment
+    if (IsWide(bin.Type))
+      return this.SelectWideBinary(bin, opcode, block);
 
     // two-address form: dest = lhs; dest <op>= rhs
     var dest = this.FreshVreg(bin.Type);
@@ -225,6 +262,34 @@ public sealed class InstructionSelector {
     return true;
   }
 
+  /// <summary>
+  /// A 32-bit add/subtract/bitwise op over register pairs: the low halves combine first and the high
+  /// halves follow, with <c>ADC</c>/<c>SBB</c> threading the carry for add and subtract. Multiply,
+  /// divide and the shifts need a runtime helper or a CL count and are declined.
+  /// </summary>
+  private bool SelectWideBinary(IrBinary bin, MOpcode opcode, MBlock block) {
+    var high = opcode switch {
+      MOpcode.Add => MOpcode.Adc,
+      MOpcode.Sub => MOpcode.Sbb,
+      MOpcode.And or MOpcode.Or or MOpcode.Xor => opcode,   // bitwise: the halves are independent
+      _ => MOpcode.Ret,                                     // sentinel: no 32-bit form here
+    };
+    if (high == MOpcode.Ret)
+      return this.Decline($"32-bit binary: {bin.Op} (needs a runtime helper)");
+    if (!this.TryOperandPair(bin.Lhs, out var lhsLo, out var lhsHi)
+        || !this.TryOperandPair(bin.Rhs, out var rhsLo, out var rhsHi))
+      return false;
+
+    var (destLo, destHi) = this.FreshPair(bin);
+    block.Instructions.Add(new MInstr(MOpcode.Mov, [destLo, lhsLo], MovEffect(destLo, lhsLo)));
+    block.Instructions.Add(new MInstr(MOpcode.Mov, [destHi, lhsHi], MovEffect(destHi, lhsHi)));
+    block.Instructions.Add(new MInstr(opcode, [destLo, rhsLo], PairEffect(rhsLo, readsFlags: false, writesFlags: true)));
+    // ADC/SBB read the carry the low half just wrote, so the two must stay adjacent - the effect
+    // descriptor says so, which is what keeps the scheduler from separating them
+    block.Instructions.Add(new MInstr(high, [destHi, rhsHi], PairEffect(rhsHi, readsFlags: high != opcode, writesFlags: true)));
+    return true;
+  }
+
   private bool SelectAlloca(IrAlloca alloca, MBlock block) {
     var byteSize = SizeOf(alloca.Allocated);
     var slot = this._function.StackSlots.Count;
@@ -241,6 +306,15 @@ public sealed class InstructionSelector {
   }
 
   private bool SelectLoad(IrLoad load, MBlock block) {
+    if (IsWide(load.Type)) {
+      if (this.PointerMemory(load.Pointer, MRegSize.Word) is not { } lowCell)
+        return false;
+      var (lo, hi) = this.FreshPair(load);
+      var highCell = lowCell with { Disp = lowCell.Disp + 2 };   // little-endian: the high word follows
+      block.Instructions.Add(new MInstr(MOpcode.Mov, [lo, lowCell], MovEffect(lo, lowCell)));
+      block.Instructions.Add(new MInstr(MOpcode.Mov, [hi, highCell], MovEffect(hi, highCell)));
+      return true;
+    }
     var dest = this.FreshVreg(load.Type);
     this._vregs[load] = dest;
     var destOp = new MOperand.Register(dest);
@@ -252,6 +326,18 @@ public sealed class InstructionSelector {
   }
 
   private bool SelectStore(IrStore store, MBlock block) {
+    if (IsWide(store.Value.Type)) {
+      if (this.PointerMemory(store.Pointer, MRegSize.Word) is not { } lowCell)
+        return false;
+      if (!this.TryOperandPair(store.Value, out var lo, out var hi))
+        return false;
+      var highCell = lowCell with { Disp = lowCell.Disp + 2 };
+      block.Instructions.Add(new MInstr(MOpcode.Mov, [lowCell, lo],
+        new MInstrEffect([], lo is MOperand.Register ? [1] : [], false, false, false, WritesMemory: true)));
+      block.Instructions.Add(new MInstr(MOpcode.Mov, [highCell, hi],
+        new MInstrEffect([], hi is MOperand.Register ? [1] : [], false, false, false, WritesMemory: true)));
+      return true;
+    }
     if (this.PointerMemory(store.Pointer, RegSize(store.Value.Type)) is not { } mem)
       return false;
     if (!this.TryOperand(store.Value, out var value))
@@ -284,6 +370,46 @@ public sealed class InstructionSelector {
     block.Instructions.Add(new MInstr(MOpcode.Lea, [destOp, mem],
       new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: false)));
     return true;
+  }
+
+  /// <summary>
+  /// Width changes between the two integer sizes this target has registers for. Widening a word to a
+  /// pair sets the high half from the source's sign (<c>SAR 15</c> smears the sign bit across it) or
+  /// from zero; narrowing a pair to a word is just its low half, which is already a register of its
+  /// own - so a truncation costs no instruction at all.
+  /// </summary>
+  private bool SelectCast(IrCast cast, MBlock block) {
+    var from = cast.Value.Type;
+    var to = cast.Type;
+    switch (cast.Op) {
+      case IrCastOp.SExt or IrCastOp.ZExt when IsWide(to) && from.IsInteger && from.Bits == 16: {
+        if (!this.TryOperand(cast.Value, out var source))
+          return false;
+        var (lo, hi) = this.FreshPair(cast);
+        block.Instructions.Add(new MInstr(MOpcode.Mov, [lo, source], MovEffect(lo, source)));
+        if (cast.Op == IrCastOp.ZExt) {
+          var zero = new MOperand.Immediate(0);
+          block.Instructions.Add(new MInstr(MOpcode.Mov, [hi, zero], MovEffect(hi, zero)));
+          return true;
+        }
+        // sign-extend: copy the value and smear its sign bit over the whole high word
+        block.Instructions.Add(new MInstr(MOpcode.Mov, [hi, source], MovEffect(hi, source)));
+        block.Instructions.Add(new MInstr(MOpcode.Sar, [hi, new MOperand.Immediate(15)],
+          new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+            ReadsMemory: false, WritesMemory: false)));
+        return true;
+      }
+      case IrCastOp.Trunc when IsWide(from) && to.IsInteger && to.Bits == 16: {
+        if (!this.TryOperandPair(cast.Value, out var lo, out _))
+          return false;
+        if (lo is not MOperand.Register low)
+          return this.Decline("cast: truncation of a constant pair");
+        this._vregs[cast] = low.Reg;      // the low half IS the narrowed value - no instruction needed
+        return true;
+      }
+      default:
+        return this.Decline($"cast: {cast.Op} {from} -> {to}");
+    }
   }
 
   /// <summary>
@@ -337,6 +463,17 @@ public sealed class InstructionSelector {
   private static readonly Reg[] _callClobbers = [Reg.AX, Reg.BX, Reg.CX, Reg.DX, Reg.SI, Reg.DI];
 
   private bool SelectRet(IrRet ret, MBlock block) {
+    if (ret.HasValue && ret.Value is { } wide && IsWide(wide.Type)) {
+      // the PB convention returns a LONG in DX:AX (docs: "Results: AX / DX:AX / ST0 / string handle in AX")
+      if (!this.TryOperandPair(wide, out var lo, out var hi))
+        return false;
+      var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+      var dx = new MOperand.Register(MReg.Physical_(Reg.DX, MRegSize.Word));
+      block.Instructions.Add(new MInstr(MOpcode.Mov, [ax, lo], MovEffect(ax, lo)));
+      block.Instructions.Add(new MInstr(MOpcode.Mov, [dx, hi], MovEffect(dx, hi)));
+      block.Instructions.Add(new MInstr(MOpcode.Ret, [], MInstrEffect.None));
+      return true;
+    }
     if (ret.HasValue && ret.Value is { } value) {
       // the result is returned in AX (word) - a physical pin the allocator must honour
       var ax = MReg.Physical_(Reg.AX, RegSize(value.Type));
@@ -353,6 +490,37 @@ public sealed class InstructionSelector {
   // ---- operand / vreg helpers -------------------------------------------------------------------
 
   private MReg FreshVreg(IrType type) => MReg.Virtual(this._nextVreg++, RegSize(type));
+
+  /// <summary>True for a 32-bit integer, which this target holds in a register pair.</summary>
+  private static bool IsWide(IrType type) => type.IsInteger && type.Bits == 32;
+
+  /// <summary>Mints the low/high register pair for a 32-bit value and records both halves.</summary>
+  private (MOperand.Register Lo, MOperand.Register Hi) FreshPair(IrValue value) {
+    var lo = MReg.Virtual(this._nextVreg++, MRegSize.Word);
+    var hi = MReg.Virtual(this._nextVreg++, MRegSize.Word);
+    this._vregs[value] = lo;
+    this._hiVregs[value] = hi;
+    return (new MOperand.Register(lo), new MOperand.Register(hi));
+  }
+
+  /// <summary>Both halves of a 32-bit value as operands, declining when it has no register pair.</summary>
+  private bool TryOperandPair(IrValue value, out MOperand lo, out MOperand hi) {
+    if (value is IrConstantInt c) {
+      lo = new MOperand.Immediate((short)(c.Value & 0xFFFF));
+      hi = new MOperand.Immediate((short)((c.Value >> 16) & 0xFFFF));
+      return true;
+    }
+    lo = hi = null!;
+    if (!this._vregs.TryGetValue(value, out var loReg) || !this._hiVregs.TryGetValue(value, out var hiReg))
+      return this.Decline($"32-bit operand: {value.GetType().Name} has no register pair");
+    lo = new MOperand.Register(loReg);
+    hi = new MOperand.Register(hiReg);
+    return true;
+  }
+
+  private static MInstrEffect PairEffect(MOperand rhs, bool readsFlags, bool writesFlags) =>
+    new(WrittenRegs: [0], ReadRegs: rhs is MOperand.Register ? [0, 1] : [0],
+      ReadsFlags: readsFlags, WritesFlags: writesFlags, ReadsMemory: rhs is MOperand.Memory, WritesMemory: false);
 
   /// <summary>An SSA value as a machine operand: a constant is an immediate, anything else its virtual register.</summary>
   private MOperand Operand(IrValue value)
