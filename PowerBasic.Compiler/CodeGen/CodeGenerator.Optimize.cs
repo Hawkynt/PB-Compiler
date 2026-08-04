@@ -1468,10 +1468,16 @@ public sealed partial class CodeGenerator {
       return false;
 
     var asm = this._asm;
-    var limit = this.AllocTemp(2);
-    this.EmitExpression(f.To);
-    this.Coerce(model.TypeOf(f.To), PbType.Integer, f.To);
-    asm.Mov(limit, Reg.AX);
+    // O0113: a constant inner limit folds into the compare as an immediate (cmp di, imm) - no temp cell.
+    short? constLimit = this.OptFolder.TryFold(f.To) is { Integer: { } toVal } && toVal is >= short.MinValue and <= short.MaxValue
+      ? (short)toVal : null;
+    Mem? limit = null;
+    if (constLimit is null) {
+      limit = this.AllocTemp(2);
+      this.EmitExpression(f.To);
+      this.Coerce(model.TypeOf(f.To), PbType.Integer, f.To);
+      asm.Mov(limit.Value, Reg.AX);
+    }
     this.EmitExpression(f.From);                 // From may read the outer counter in SI
     this.Coerce(model.TypeOf(f.From), PbType.Integer, f.From);
     asm.Mov(Reg.DI, Reg.AX);
@@ -1487,7 +1493,10 @@ public sealed partial class CodeGenerator {
 
     this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
     asm.MarkLabel(top);
-    asm.Cmp(Reg.DI, limit);
+    if (constLimit is { } cl)
+      asm.Cmp(Reg.DI, (Imm)(int)cl);
+    else
+      asm.Cmp(Reg.DI, limit!.Value);
     if (step >= 0)
       asm.Jg(done);
     else
@@ -1507,7 +1516,7 @@ public sealed partial class CodeGenerator {
     this._iterateAny.Pop();
     asm.Mov(cell, Reg.DI);       // post-loop reads of the inner counter use the cell again
     this._registerAccumulator = null;
-    this.ReleaseTemp(2);
+    if (limit != null) this.ReleaseTemp(2);
     return true;
   }
 

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial (a constant limit folds into the compare as an immediate on the SI-resident, the memory-counter and the 386 LONG-counter paths; a variable limit still reloads its cell) |
+| **Status** | 🟡 Partial (a constant limit folds into the compare as an immediate on every FOR path — SI-resident, memory-counter, nested DI-resident and 386 LONG; a variable limit still reloads its cell) |
 | **Stage** | Emitter |
 | **Related** | [O0028](O0028-loop-invariant-code-motion.md), [O0005](O0005-register-residency.md), [O0112](O0112-countdown-loop.md), [O0131](O0131-exact-trip-count.md) |
 
@@ -62,6 +62,10 @@ same way: `cmp ax, 64h` against the just-loaded counter, both ends. That path is
 not itself `--optimize`-gated (it emits the faithful loop for every dialect), so
 the immediate fold there is explicitly gated on the `Optimize` flag; with the
 optimizer off it keeps `cmp ax, [bp+disp]`, byte-identical to genuine.
+
+The **nested DI-resident inner loop** (`TryEmitNestedForCounterInRegister`, an
+inner FOR under an SI-resident outer) folds its inner limit the same way:
+`cmp di, 0Ah`.
 
 The **386 LONG-counter path** (`TryEmitForLongCounterInRegister`, `$CPU 80386`)
 folds the same way: the `ESI`-resident counter compares against `cmp esi, 64h`

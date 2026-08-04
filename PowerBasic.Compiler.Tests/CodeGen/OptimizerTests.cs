@@ -1310,6 +1310,16 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenConstantForLimitOnNestedCounter_WhenPb36_ThenComparedAgainstImmediate() {
+    // O0113: the fold also fires on the nested DI-resident inner-loop path
+    // (TryEmitNestedForCounterInRegister) - the inner counter is compared `cmp di, 0Ah` (83 FF 0A).
+    // XOR keeps the inner loop off the arithmetic-series closed form; the outer keeps DI free for it.
+    var img = Compile("$OPTIMIZE SPEED\nDIM i%, j%, s%\ns% = 0\nFOR i% = 1 TO 20\nFOR j% = 1 TO 10\ns% = s% XOR j%\nNEXT\nNEXT\nPRINT s%\nEND", Dialect.Pb36);
+    Assert.That(ContainsSeq(img, 0x83, 0xFF, 0x0A), Is.True,
+      "a constant inner limit compares DI against the immediate 10");
+  }
+
+  [Test]
   public void Emit_GivenConstantForLimitOn386LongCounter_WhenPb36_ThenComparedAgainstImmediate() {
     // O0113: the fold also fires on the 386 LONG-counter path (TryEmitForLongCounterInRegister) - the
     // ESI-resident counter compares against the immediate `cmp esi, 64h` (66 83 FE 64, the 66 prefix
