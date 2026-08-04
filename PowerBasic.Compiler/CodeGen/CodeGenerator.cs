@@ -935,6 +935,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this.PrepareCse(model.MainBody);
     this.PrepareSccp(model.MainBody);
     this.PrepareDivMod(model.MainBody);
+    this.PrepareArrayFill(model.MainBody);
     if (this.Optimize)
       this._intervalPoints = IntervalRangeAnalysis.AnalyzeProgramPoints(model.MainBody, model);
     this.BeginFrame(skipZeroing: this.Optimize && !ContainsErrorHandling(model.MainBody));
@@ -1100,6 +1101,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._cseBytes = 0;
     this._cseMarks = null;
     this._remainderReuse = null;
+    this._coveredArrayDims = null;
   }
 
   /// <summary>

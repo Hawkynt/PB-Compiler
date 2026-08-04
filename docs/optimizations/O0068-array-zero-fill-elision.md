@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned (needs the loop-fill pattern proof from [O0016](O0016-value-fact-analysis.md)) |
+| **Status** | 🟡 Partial — a dynamic rank-1 array a directly-following FOR fills in full allocates without the zero-fill; static arrays and non-adjacent / partial fills remain |
 | **Stage** | Emitter (array allocation) |
 | **Related** | [O0019](O0019-zero-elision.md), [O0016](O0016-value-fact-analysis.md), [O0020](O0020-idiom-replacement.md) |
 
@@ -40,19 +40,52 @@ PRINT a%(500)
     ...                      ; ...and then immediately overwritten
 ```
 
-## Planned
+## Now
 
-The allocation reserves the storage without the fill, because the loop that
-follows writes every element before anything reads one.
+```asm
+    ; DIM a(1 TO n) covered by FOR i = 1 TO n : a(i) = i*i
+    ...                          ; bounds + byte count as usual
+    call    rt_arr_alloc_nz      ; bump-allocate, NO rep stosb
+```
 
-## What it needs
+`PrepareArrayFill` (per body, gated on no error handler) marks a `DIM`
+immediately followed by a covering `FOR`; `EmitDim` then calls `rt_arr_alloc_nz`
+— the same bump allocator minus the `REP STOSB` — instead of `rt_arr_alloc`. For
+a `DIM a(0 TO 32000)` that skips a 64 KB fill the program's own loop is about to
+overwrite.
 
-- A **coverage proof**: the fill loop's counter range must equal the array's
-  bounds, its store must target every element exactly once, and it must
-  dominate every read of the array. That is the same interval reasoning
-  [O0016](O0016-value-fact-analysis.md) already does for bounds checks, applied
-  to a different question.
-- Safety rails mirroring [O0019](O0019-zero-elision.md): arrays of dynamic
-  strings or types embedding string handles never qualify (a non-zero handle
-  would be treated as a live allocation), and an `ON ERROR` handler that can
-  re-enter before the fill completes blocks the proof.
+### The coverage proof (`IsCoveredArrayFill`)
+
+Conservative and syntactic, so it can never keep a live zero:
+
+- the array is a single **conventional dynamic rank-1** non-string array (a type
+  embedding a string handle never qualifies — a garbage handle would corrupt the
+  string heap);
+- the very next statement is `FOR i = <lower> TO <upper>` matching the array's
+  **explicit** bounds with step 1 (so element *i* is written on pass *i*, every
+  element exactly once);
+- the body is the lone assignment `a(i) = expr` subscripted by the counter;
+- `expr` reads no array and calls nothing (`IsSafeFillValue`) — so it cannot
+  alias `a`, and nothing observes a half-filled array;
+- **no error handler** in the body — a trapping fill could otherwise re-enter a
+  handler that reads the array before the loop finishes.
+
+Verified byte-identical against the genuine oracle (fill then sum every element),
+self-differential (optimized == the golden-faithful build), and a regression test
+that the covered fill emits the no-zero allocator while a fill that *reads* the
+array keeps the zero-filling one. The no-zero routine lives in its own trimmer
+section, so under `$OPTIMIZE OFF` nothing references it and the faithful image is
+byte-for-byte unchanged.
+
+## Still planned
+
+- **Static arrays** (constant bounds) — zeroed via the frame/data fill, a
+  different mechanism ([O0019](O0019-zero-elision.md)'s territory), so the doc's
+  `DIM a%(0 TO 9999)` constant-bound example is not yet covered; only dynamic
+  (`$DYNAMIC` / runtime-bound / `REDIM`-class) arrays are.
+- **`REDIM`**, multi-statement fills, `a(i) = b(i)` copies (a non-aliasing array
+  read), and from-both-ends or strided coverage — each a widening of the proof.
+
+Native-only. On the IR back ends the array is a heap buffer the C/LLVM optimizer
+already sees fully overwritten, so it elides the fill (or the `calloc`→`malloc`
+rewrite) itself.

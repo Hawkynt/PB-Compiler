@@ -29,15 +29,94 @@ public sealed partial class CodeGenerator {
   //   +8 + d*4: lower bound (word), extent (word) per dimension
 
   private void EmitDim(DimStmt dim) {
+    var skipZero = this._coveredArrayDims?.Contains(dim) == true;   // O0068: fill loop covers it
     foreach (var v in dim.Variables) {
       if (v.ArrayBounds == null)
         continue;
       var symbol = this.LookupVariable(v.Name, v.Suffix, isArray: true) ?? this.LookupVariable(v.Name, TypeSuffix.None, isArray: true);
       if (symbol?.Type is not ArrayType { IsDynamic: true })
         continue;   // static arrays and scalars are laid out at compile time
-      this.EmitClassedAllocation(symbol, v.ArrayBounds, dim.AtAddress, dim.Position);
+      this.EmitClassedAllocation(symbol, v.ArrayBounds, dim.AtAddress, dim.Position, skipZero);
     }
   }
+
+  /// <summary>
+  /// O0068: the DIM statements whose array a directly-following FOR provably fills in full before
+  /// anything reads it, so the allocation can skip its zero-fill. Rebuilt per body; null clears it.
+  /// </summary>
+  private HashSet<DimStmt>? _coveredArrayDims;
+
+  /// <summary>Marks each covered <c>DIM a(lo TO hi) : FOR i = lo TO hi : a(i) = expr : NEXT</c> pair (O0068).</summary>
+  private void PrepareArrayFill(IReadOnlyList<Statement> body) {
+    this._coveredArrayDims = null;
+    // an error handler could run mid-fill (a trapping fill expression) and observe the array before
+    // the loop finishes - where the genuine zero-fill shows 0 and the elided one shows garbage
+    if (!this.Optimize || ContainsErrorHandling(body))
+      return;
+    this.ScanArrayFill(body);
+  }
+
+  private void ScanArrayFill(IReadOnlyList<Statement> body) {
+    for (var i = 0; i + 1 < body.Count; ++i)
+      if (body[i] is DimStmt dim && body[i + 1] is ForStmt loop && this.IsCoveredArrayFill(dim, loop))
+        (this._coveredArrayDims ??= new(ReferenceEqualityComparer.Instance)).Add(dim);
+    foreach (var s in body)
+      foreach (var block in ChildStatementBlocks(s))
+        this.ScanArrayFill(block);
+  }
+
+  /// <summary>
+  /// True when <paramref name="loop"/> writes every element of the single conventional dynamic
+  /// rank-1 non-string array <paramref name="dim"/> declares, exactly once, before any read: the
+  /// counter spans the array's explicit bounds with step 1, the body is the lone assignment
+  /// <c>a(i) = expr</c> with <c>i</c> the subscript, and <c>expr</c> neither reads an array nor calls
+  /// anything (so it cannot alias <c>a</c> or trap into a read of it). Then the zero-fill is dead.
+  /// </summary>
+  private bool IsCoveredArrayFill(DimStmt dim, ForStmt loop) {
+    if (dim.Class != ArrayClass.Default || dim.Variables.Count != 1)
+      return false;
+    if (dim.Variables[0] is not { ArrayBounds: { Count: 1 } bounds } decl)
+      return false;
+    var (lower, upper) = bounds[0];
+    if (lower == null)               // require an explicit lower bound (side-steps OPTION BASE)
+      return false;
+
+    if (loop.Variable is not NameExpr ctr
+        || !model.VariableBindings.TryGetValue(ctr, out var ctrSym))
+      return false;
+    if (loop.Step != null && this.OptFolder.TryFold(loop.Step) is not { Integer: 1 })
+      return false;
+    if (!this.SameDivOperand(loop.From, lower) || !this.SameDivOperand(loop.To, upper))
+      return false;   // the counter must span exactly [lower, upper]
+
+    if (loop.Body is not [AssignStmt { Target: CallOrIndexExpr target, Value: { } fill }])
+      return false;   // the lone statement writes an array element
+    if (!model.VariableBindings.TryGetValue(target, out var arrSym)
+        || arrSym.Type is not ArrayType { IsDynamic: true, Rank: 1, Element: { } elem }
+        || arrSym.ArrayClass != ArrayClass.Default)
+      return false;
+    if (elem is StringType or FlexType || EmbedsStringHandle(elem))
+      return false;   // a garbage embedded string handle would corrupt the string heap
+    if (!decl.Name.Equals(arrSym.Name, StringComparison.OrdinalIgnoreCase))
+      return false;   // the DIM declares this very array (one symbol per name in scope)
+    if (target.Arguments is not [NameExpr sub]
+        || !model.VariableBindings.TryGetValue(sub, out var subSym) || !ReferenceEquals(subSym, ctrSym))
+      return false;   // subscripted by exactly the counter, so element i is the one written on pass i
+    return this.IsSafeFillValue(fill);
+  }
+
+  /// <summary>A fill value built only from the counter, constants, plain scalars and non-trapping arithmetic - it reads no array (cannot alias the target) and calls nothing.</summary>
+  private bool IsSafeFillValue(Expression e) => e switch {
+    IntegerLiteralExpr or FloatLiteralExpr or NamedConstantExpr => true,
+    NameExpr n => !model.IntrinsicBindings.ContainsKey(n)
+      && model.VariableBindings.TryGetValue(n, out var s) && s.Type is ScalarType,
+    UnaryExpr { Op: UnaryOp.Negate or UnaryOp.Not } u => this.IsSafeFillValue(u.Operand),
+    BinaryExpr { Op: BinaryOp.Add or BinaryOp.Subtract or BinaryOp.Multiply
+        or BinaryOp.And or BinaryOp.Or or BinaryOp.Xor
+        or BinaryOp.ShiftLeft or BinaryOp.ShiftRightArith } b
+      => this.IsSafeFillValue(b.Left) && this.IsSafeFillValue(b.Right),
+    _ => false,
+  };
 
   private void EmitRedim(RedimStmt redim) {
     foreach (var v in redim.Variables) {
@@ -55,7 +134,7 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>Dispatches DIM/REDIM allocation by array class (conventional / HUGE / VIRTUAL / ABSOLUTE).</summary>
-  private void EmitClassedAllocation(VariableSymbol symbol, IReadOnlyList<(Expression? Lower, Expression Upper)> bounds, Expression? atAddress, SourcePosition position) {
+  private void EmitClassedAllocation(VariableSymbol symbol, IReadOnlyList<(Expression? Lower, Expression Upper)> bounds, Expression? atAddress, SourcePosition position, bool skipZero = false) {
     switch (symbol.ArrayClass) {
       case ArrayClass.Huge:
         this.EmitHugeAllocation(symbol, bounds, position);
@@ -70,7 +149,7 @@ public sealed partial class CodeGenerator {
         this.EmitAbsoluteMapping(symbol, bounds, atAddress, position);
         break;
       default:
-        this.EmitArrayAllocation(symbol, bounds, position);
+        this.EmitArrayAllocation(symbol, bounds, position, skipZeroFill: skipZero);
         break;
     }
   }
@@ -271,7 +350,7 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>Fills the descriptor and allocates zeroed storage from the far array heap.</summary>
-  private void EmitArrayAllocation(VariableSymbol symbol, IReadOnlyList<(Expression? Lower, Expression Upper)> bounds, SourcePosition position, bool reclaimOld = true) {
+  private void EmitArrayAllocation(VariableSymbol symbol, IReadOnlyList<(Expression? Lower, Expression Upper)> bounds, SourcePosition position, bool reclaimOld = true, bool skipZeroFill = false) {
     var asm = this._asm;
     var arrayType = (ArrayType)symbol.Type;
     var descriptor = this.SlotOf(symbol);
@@ -303,7 +382,7 @@ public sealed partial class CodeGenerator {
       asm.Imul(Reg.AX, Mem.Word(descriptor, 8 + d * 4 + 2));
     asm.Mov(Reg.CX, elementSize);
     asm.Mul(Reg.CX);
-    asm.Call(this._rt.ArrAlloc);
+    asm.Call(skipZeroFill ? this._rt.ArrAllocNoZero : this._rt.ArrAlloc);   // O0068: elide the fill when the covering loop follows
     asm.Mov(Mem.Word(descriptor, 2), Reg.AX);
     asm.Mov(Reg.AX, Mem.Word(this._asm.Lbl("rt_arrseg")));
     asm.Mov(Mem.Word(descriptor), Reg.AX);

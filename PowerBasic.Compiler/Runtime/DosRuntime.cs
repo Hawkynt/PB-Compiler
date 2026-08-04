@@ -244,6 +244,7 @@ public sealed partial class DosRuntime {
     ("arraynum", this.EmitArrayNum),
     ("files", this.EmitFileProcedures),
     ("arrays", this.EmitArrayProcedures),
+    ("array_alloc_nz", this.EmitArrayAllocNoZero),
     ("lowlevel", this.EmitLowLevelProcedures),
     ("misc", this.EmitMiscProcedures),
     ("misc2", this.EmitMiscProcedures2),
