@@ -114,6 +114,10 @@ differential battery before the dialect can be claimed:
 
 ## Oracles & harness
 
+"Byte-identical" below always means the **program's output** — the `RESULT.TXT` the harness diffs
+after running both executables. It never means the executable image: `run-diff-tests.sh` compares
+output files, and nothing in this repository compares compiled bytes.
+
 | Dialect | Oracle binary | Harness invocation | Status |
 |---|---|---|---|
 | `pb35` | `PBC.EXE` 3.50 | harness default battery | **ACTIVE** (`tools/pb35/`), 23 batteries byte-identical |

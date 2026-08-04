@@ -13,7 +13,7 @@ flowchart TD
   OPT --> LLVM["Ir/LlvmEmitter → .ll"]
   OPT --> CEM["Ir/CEmitter → .c"]
   OPT --> NEXT["a native ARM/68k/… back end<br/>(the seam this is built for)"]
-  DIRECT --> EXE[".EXE — byte-identical to genuine PBC"]
+  DIRECT --> EXE[".EXE — oracle-checked: same OUTPUT as genuine PBC"]
   LLVM --> NATIVE["llc → native object"]
   CEM --> CC["any C compiler"]
 ```
@@ -68,13 +68,17 @@ the IR path is held to is **observable equivalence**, which is measured continuo
 
 ---
 
-byte-identical to the genuine vintage compilers with the optimizer off, and to
+observably identical to the genuine vintage compilers with the optimizer off, and to
 optimize aggressively with it on while *staying* observably identical. Its
 optimizations are interleaved with emission on purpose — many of them are decisions
 about 8086 encodings (which register stays resident, whether a `CMP AX,BX` can stand
 in for a 32-bit compare). That interleaving is not a design flaw to be refactored
-away; it is what makes byte-identical output achievable. This path is not
+away; it is what lets encoding-level decisions be made at all. This path is not
 retargetable and is not meant to be.
+
+Note on wording: throughout this repository "byte-identical" describes the **output** a program
+produces — the `RESULT.TXT` an oracle battery diffs — not the executable image. No test compares
+executables; see "What the fidelity gates actually enforce" above.
 
 **The IR path** (`Ir/`) is the retargeting path. `IrLowering` turns the bound model
 into a target-independent typed SSA IR; the pass pipeline optimizes it; a back end
@@ -186,7 +190,7 @@ are `ON ERROR`, `PRINT USING`, the FIELD form of random I/O and inline assembly
 
 Beyond widening that subset, the two items that would most change the picture:
 
-- **A native IR → x86-16 back end** that reproduces byte-identical output for a
+- **A native IR → x86-16 back end** that reproduces the same program output for a
   subset. That is the fidelity proof that would let the IR path augment, and
   eventually replace, the direct emitter. It exists and is live behind
   `--x-backend` for integer functions (docs/X86-BACKEND.md); what it still

@@ -33,8 +33,12 @@ original binaries and produces **byte-identical output**, documented bugs and
 all. Second, **a forward path**: a real SSA-based optimization pipeline and
 lean-output backend — available in *every* dialect via `--optimize` and on by
 default in the `pb36` language-features superset — that drops a hello world from a
-fat always-linked runtime to a 25-byte image while keeping every existing program
-byte-identical.
+fat always-linked runtime to a 25-byte image while every existing program keeps
+behaving exactly as it did.
+
+("Byte-identical" here and below always means the program's **output**, which the oracle harness
+diffs after running both executables. Nothing compares compiled images; the contract is that a
+program behaves the same and its artefacts are usable the same way.)
 
 ## Why
 
@@ -59,17 +63,17 @@ the Microsoft lineage (QuickBASIC → BASIC PDS).
 
 | Dialect | Flag | Family / era | Notes |
 |---|---|---|---|
-| Turbo Basic 1.0 / 1.1 | `tb10` `tb11` | Borland, 1987 | PowerBASIC's direct ancestor; 16-significant-digit "double-everything" runtime, three-digit exponents. Byte-identical to genuine TB.EXE. |
-| PowerBASIC 2.0 / 2.1 | `pb20` `pb21` | Borland | Core BASIC baseline (no inline `!` asm, no QUAD, no pointers). `pb21` verified byte-identical against PB.EXE 2.10. |
-| PowerBASIC 3.0 | `pb30` | Borland, 1993 | Inline assembler, 80386 codegen, unsigned types, QUAD, TYPE/UNION, HUGE arrays. Byte-identical against PBC.EXE 3.0c. |
+| Turbo Basic 1.0 / 1.1 | `tb10` `tb11` | Borland, 1987 | PowerBASIC's direct ancestor; 16-significant-digit "double-everything" runtime, three-digit exponents. Output verified against genuine TB.EXE. |
+| PowerBASIC 2.0 / 2.1 | `pb20` `pb21` | Borland | Core BASIC baseline (no inline `!` asm, no QUAD, no pointers). `pb21` output verified against PB.EXE 2.10. |
+| PowerBASIC 3.0 | `pb30` | Borland, 1993 | Inline assembler, 80386 codegen, unsigned types, QUAD, TYPE/UNION, HUGE arrays. Output verified against PBC.EXE 3.0c. |
 | PowerBASIC 3.1 | `pb31` | Borland | Typed radix literals, whole-UDT compare, `ALIAS`, `ANY` parameters. |
 | PowerBASIC 3.2 | `pb32` | Borland | Data and code pointers, `VARPTR32`/`STRPTR32`/`CODEPTR32`, identifier underscores. |
-| **PowerBASIC 3.5** | **`pb35`** | Borland, 1997 | **The reference dialect (default).** ASCIIZ, `&` concat, VIRTUAL arrays, `REDIM PRESERVE`, indexed pointers, STDIN/STDOUT, `TRIM$`, `SIZEOF`, and more. Byte-identical against PBC.EXE 3.50. |
-| **PowerBASIC 3.6** | **`pb36`** | Hawkynt | **The language-features superset.** A strict superset of `pb35`: every `pb35` program compiles unchanged with byte-identical behavior, plus opt-in modern syntax. |
+| **PowerBASIC 3.5** | **`pb35`** | Borland, 1997 | **The reference dialect (default).** ASCIIZ, `&` concat, VIRTUAL arrays, `REDIM PRESERVE`, indexed pointers, STDIN/STDOUT, `TRIM$`, `SIZEOF`, and more. Output verified against PBC.EXE 3.50. |
+| **PowerBASIC 3.6** | **`pb36`** | Hawkynt | **The language-features superset.** A strict superset of `pb35`: every `pb35` program compiles unchanged and behaves identically, plus opt-in modern syntax. |
 | BASICA / GW-BASIC | `basica` `gw` | Microsoft (interpreters) | The classic line-numbered interpreters. SINGLE is stored in genuine Microsoft Binary Format (MBF) with x87 conversion on load/store; DOUBLE (MBF 8-byte) and the interpreter-oracle harness are in progress (see roadmap below). |
-| QuickBASIC 1.0–4.5 | `qb10` `qb20` `qb30` `qb40` `qb45` | Microsoft | QB display model (D exponents), BASCOM runtime heritage (^Z, half-away rounding) through 3.0. Verified byte-identical against the genuine BASCOM/BC/QB toolchains. |
+| QuickBASIC 1.0–4.5 | `qb10` `qb20` `qb30` `qb40` `qb45` | Microsoft | QB display model (D exponents), BASCOM runtime heritage (^Z, half-away rounding) through 3.0. Output verified against the genuine BASCOM/BC/QB toolchains. |
 | QBasic | `qbasic` | Microsoft (interpreter) | The MS-DOS 5.0+ interpreter — the QuickBASIC 4.5 language (IEEE floats) minus the compiler. Compiles via the QB 4.5 front end; oracle-verified by interpreter output diff (in progress). |
-| BASIC PDS 7.0 / 7.1 | `pds70` `pds71` | Microsoft | "QB Extended"; 15-digit DOUBLE display. Byte-identical against BC.EXE 7.0/7.1. |
+| BASIC PDS 7.0 / 7.1 | `pds70` `pds71` | Microsoft | "QB Extended"; 15-digit DOUBLE display. Output verified against BC.EXE 7.0/7.1. |
 
 The historic dialects (everything except `pb36`) are validated by an
 oracle-driven **differential harness**: when the genuine compiler is dropped into
