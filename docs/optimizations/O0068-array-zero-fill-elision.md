@@ -48,8 +48,10 @@ PRINT a%(500)
     call    rt_arr_alloc_nz      ; bump-allocate, NO rep stosb
 ```
 
-`PrepareArrayFill` (per body, gated on no error handler) marks a `DIM`
-immediately followed by a covering `FOR`; `EmitDim` then calls `rt_arr_alloc_nz`
+`PrepareArrayFill` (per body, gated on no error handler) marks a `DIM` — or a
+`REDIM` without `PRESERVE`, which also allocates a fresh zero-filled block —
+immediately followed by a covering `FOR`; the allocation then calls
+`rt_arr_alloc_nz`
 — the same bump allocator minus the `REP STOSB` — instead of `rt_arr_alloc`. For
 a `DIM a(0 TO 32000)` that skips a 64 KB fill the program's own loop is about to
 overwrite.
@@ -84,8 +86,8 @@ byte-for-byte unchanged.
   different mechanism ([O0019](O0019-zero-elision.md)'s territory), so the doc's
   `DIM a%(0 TO 9999)` constant-bound example is not yet covered; only dynamic
   (`$DYNAMIC` / runtime-bound / `REDIM`-class) arrays are.
-- **`REDIM`**, multi-statement fills, and from-both-ends or strided coverage —
-  each a widening of the proof.
+- **Multi-statement fills** and from-both-ends or strided coverage — each a
+  widening of the proof.
 
 Native-only. On the IR back ends the array is a heap buffer the C/LLVM optimizer
 already sees fully overwritten, so it elides the fill (or the `calloc`→`malloc`

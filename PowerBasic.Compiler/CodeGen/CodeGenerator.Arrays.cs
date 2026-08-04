@@ -41,12 +41,13 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
-  /// O0068: the DIM statements whose array a directly-following FOR provably fills in full before
-  /// anything reads it, so the allocation can skip its zero-fill. Rebuilt per body; null clears it.
+  /// O0068: the DIM / REDIM statements whose array a directly-following FOR provably fills in full
+  /// before anything reads it, so the allocation can skip its zero-fill. Rebuilt per body; null
+  /// clears it.
   /// </summary>
-  private HashSet<DimStmt>? _coveredArrayDims;
+  private HashSet<Statement>? _coveredArrayDims;
 
-  /// <summary>Marks each covered <c>DIM a(lo TO hi) : FOR i = lo TO hi : a(i) = expr : NEXT</c> pair (O0068).</summary>
+  /// <summary>Marks each covered <c>DIM/REDIM a(lo TO hi) : FOR i = lo TO hi : a(i) = expr : NEXT</c> pair (O0068).</summary>
   private void PrepareArrayFill(IReadOnlyList<Statement> body) {
     this._coveredArrayDims = null;
     // an error handler could run mid-fill (a trapping fill expression) and observe the array before
@@ -57,9 +58,18 @@ public sealed partial class CodeGenerator {
   }
 
   private void ScanArrayFill(IReadOnlyList<Statement> body) {
-    for (var i = 0; i + 1 < body.Count; ++i)
-      if (body[i] is DimStmt dim && body[i + 1] is ForStmt loop && this.IsCoveredArrayFill(dim, loop))
-        (this._coveredArrayDims ??= new(ReferenceEqualityComparer.Instance)).Add(dim);
+    for (var i = 0; i + 1 < body.Count; ++i) {
+      if (body[i + 1] is not ForStmt loop)
+        continue;
+      // DIM (conventional) or REDIM without PRESERVE - both allocate a fresh zero-filled block
+      var decl = body[i] switch {
+        DimStmt { Class: ArrayClass.Default, Variables: [{ } d] } => d,
+        RedimStmt { Preserve: false, Variables: [{ } d] } => d,
+        _ => null,
+      };
+      if (decl != null && this.IsCoveredArrayFill(decl, loop))
+        (this._coveredArrayDims ??= new(ReferenceEqualityComparer.Instance)).Add(body[i]);
+    }
     foreach (var s in body)
       foreach (var block in ChildStatementBlocks(s))
         this.ScanArrayFill(block);
@@ -67,15 +77,13 @@ public sealed partial class CodeGenerator {
 
   /// <summary>
   /// True when <paramref name="loop"/> writes every element of the single conventional dynamic
-  /// rank-1 non-string array <paramref name="dim"/> declares, exactly once, before any read: the
+  /// rank-1 non-string array <paramref name="decl"/> declares, exactly once, before any read: the
   /// counter spans the array's explicit bounds with step 1, the body is the lone assignment
-  /// <c>a(i) = expr</c> with <c>i</c> the subscript, and <c>expr</c> neither reads an array nor calls
-  /// anything (so it cannot alias <c>a</c> or trap into a read of it). Then the zero-fill is dead.
+  /// <c>a(i) = expr</c> with <c>i</c> the subscript, and <c>expr</c> neither reads <c>a</c> nor calls
+  /// anything (so it cannot observe a not-yet-written element). Then the zero-fill is dead.
   /// </summary>
-  private bool IsCoveredArrayFill(DimStmt dim, ForStmt loop) {
-    if (dim.Class != ArrayClass.Default || dim.Variables.Count != 1)
-      return false;
-    if (dim.Variables[0] is not { ArrayBounds: { Count: 1 } bounds } decl)
+  private bool IsCoveredArrayFill(VariableDecl decl, ForStmt loop) {
+    if (decl is not { ArrayBounds: { Count: 1 } bounds })
       return false;
     var (lower, upper) = bounds[0];
     if (lower == null)               // require an explicit lower bound (side-steps OPTION BASE)
@@ -129,6 +137,7 @@ public sealed partial class CodeGenerator {
   };
 
   private void EmitRedim(RedimStmt redim) {
+    var skipZero = this._coveredArrayDims?.Contains(redim) == true;   // O0068: fill loop covers it
     foreach (var v in redim.Variables) {
       var symbol = this.LookupVariable(v.Name, v.Suffix, isArray: true) ?? this.LookupVariable(v.Name, TypeSuffix.None, isArray: true);
       if (symbol?.Type is not ArrayType { IsDynamic: true } || v.ArrayBounds == null) {
@@ -139,7 +148,7 @@ public sealed partial class CodeGenerator {
         this.EmitRedimPreserve(symbol, v.ArrayBounds, redim.Position);
         continue;
       }
-      this.EmitClassedAllocation(symbol, v.ArrayBounds, null, redim.Position);
+      this.EmitClassedAllocation(symbol, v.ArrayBounds, null, redim.Position, skipZero);
     }
   }
 
