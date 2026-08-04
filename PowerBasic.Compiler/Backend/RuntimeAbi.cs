@@ -87,6 +87,12 @@ internal static class RuntimeAbi {
     ["rt_fprint_double"] = new("rt_print_f64",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.St0, default)], _callerSaved, FileSelect: true),
 
+    // rt_locate(row, col) -> AX = row, CX = column, a zero meaning "keep the current one"
+    ["rt_locate"] = new("rt_locate",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved),
+    // rt_kill(handle) -> AX = filename handle, consumed
+    ["rt_kill"] = new("rt_kill", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+
     // rt_str_concat(ptr,ptr) -> ptr is the runtime's StrCat: AX=left, DX=right -> AX, consuming both
     ["rt_str_concat"] = new("rt_strcat",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),

@@ -484,6 +484,10 @@ public sealed class IrLowering {
       case EndStmt: this.LowerEnd(); break;
       case MetaStmt meta: LowerMeta(meta); break;
       case CommandStmt { Keyword: "SHIFT LEFT" or "SHIFT RIGHT" } shift: this.LowerShift(shift); break;
+      case CommandStmt { Keyword: "LOCATE" } locate: this.LowerLocate(locate); break;
+      case CommandStmt { Keyword: "KILL", Arguments: [{ } file] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_kill", IrType.Void, IrType.Ptr), this.LowerStringExpr(file));
+        break;
       // CommandStmt is a catch-all for a dozen unrelated statements (KILL, POKE, OUT, RANDOMIZE...),
       // so it names the keyword: "unsupported statement: CommandStmt" ranks nothing
       default: throw new IrLoweringException(statement is CommandStmt command
@@ -1048,6 +1052,22 @@ public sealed class IrLowering {
     var value = this._b.Load(ty, slot);
     var op = cmd.Keyword.EndsWith("LEFT", StringComparison.Ordinal) ? IrBinaryOp.Shl : IrBinaryOp.LShr;
     this._b.Store(this._b.Binary(op, value, amount), slot);
+  }
+
+  /// <summary>
+  /// <c>LOCATE row, col</c>. Either argument may be omitted (<c>LOCATE , 40</c> moves the column and
+  /// leaves the row alone), and the runtime reads a zero as "keep the current one" - so an absent
+  /// argument lowers to a literal zero rather than to a read of the cursor.
+  /// </summary>
+  private void LowerLocate(CommandStmt cmd) {
+    IrValue Argument(int index) =>
+      cmd.Arguments.Count > index && cmd.Arguments[index] is { } e
+        ? this.Coerce(this.LowerExpr(e), this._model.TypeOf(e), PbType.Long)
+        : new IrConstantInt(IrType.I32, 0);
+    if (cmd.Arguments.Count > 2)
+      throw new IrLoweringException("LOCATE with a cursor-shape argument");
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_locate", IrType.Void, IrType.I32, IrType.I32),
+      Argument(0), Argument(1));
   }
 
   private void LowerIf(IfStmt stmt) {
