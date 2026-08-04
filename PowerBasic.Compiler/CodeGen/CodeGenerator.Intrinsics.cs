@@ -311,7 +311,29 @@ public sealed partial class CodeGenerator {
         asm.Cwd();
         break;
 
-      case "ASC" or "ASCII":
+      case "ASC" or "ASCII": {
+        // O0297: ASC(s$, i) and ASC(MID$(s$, i, 1)) read the i-th byte directly (rt_charat) instead of
+        // allocating a one-character substring - same clamp-to-1 / 0-past-the-end result, one fewer
+        // heap allocation per character in a scan loop. Gated on --optimize.
+        Expression? strExpr = null, idxExpr = null;
+        if (this.Optimize) {
+          if (args.Count == 2) {
+            strExpr = args[0]; idxExpr = args[1];
+          } else if (args.Count == 1 && args[0] is CallOrIndexExpr mid && model.IntrinsicBindings.TryGetValue(mid, out var midInfo)
+              && midInfo.Name.Equals("MID$", StringComparison.OrdinalIgnoreCase) && mid.Arguments.Count == 3
+              && this.OptFolder.TryFold(mid.Arguments[2]) is { Integer: 1 }) {
+            strExpr = mid.Arguments[0]; idxExpr = mid.Arguments[1];
+          }
+        }
+        if (strExpr != null && idxExpr != null && model.TypeOf(strExpr) is StringType or FlexType) {
+          this.EmitExpression(strExpr);            // owned string handle in AX
+          asm.Push(Reg.AX);
+          this.EmitInt16Argument(idxExpr);
+          asm.Mov(Reg.CX, Reg.AX);
+          asm.Pop(Reg.AX);
+          asm.Call(this._rt.CharAt);
+          break;
+        }
         this.EmitExpression(args[0]);
         if (args.Count > 1) {
           asm.Push(Reg.AX);
@@ -323,6 +345,7 @@ public sealed partial class CodeGenerator {
         }
         asm.Call(this._rt.Asc);
         break;
+      }
 
       case "STR$":
         this.EmitExpression(args[0]);

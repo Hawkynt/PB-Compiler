@@ -62,6 +62,7 @@ public sealed partial class DosRuntime {
   public Label StrCatN { get; private set; } = null!;
   public Label StrCmp { get; private set; } = null!;
   public Label StrCmpEq { get; private set; } = null!;
+  public Label CharAt { get; private set; } = null!;
   public Label StrMid { get; private set; } = null!;
   public Label StrLeft { get; private set; } = null!;
   public Label StrRight { get; private set; } = null!;
@@ -879,6 +880,55 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.SI);
     asm.Pop(Reg.DX);
     asm.Pop(Reg.CX);
+    asm.Pop(Reg.BX);
+    asm.Ret();
+  }
+
+  /// <summary>
+  /// O0297: the i-th byte of a string, the value of <c>ASC(MID$(s$, i, 1))</c> / <c>ASC(s$, i)</c>,
+  /// read directly from the source buffer instead of allocating a one-character substring and reading
+  /// its head. AX = handle, CX = index (1-based); returns AX = the byte, or 0 when the string is empty
+  /// or i is past its end. The start clamps to 1 exactly like <see cref="EmitStrMid"/>, so a value of
+  /// i &lt; 1 reads the first character. Consumes (frees) the handle like the substring path it replaces.
+  /// Emitted only when referenced, which the emitter does solely under <c>--optimize</c>.
+  /// </summary>
+  private void EmitCharAt(Assembler asm) {
+    this.CharAt = asm.MarkLabel("rt_charat");
+    var idxOk = asm.DefineLabel();
+    var zero = asm.DefineLabel();
+    var output = asm.DefineLabel();
+
+    asm.Push(Reg.BX);
+    asm.Push(Reg.SI);
+    asm.Push(Reg.ES);
+    asm.Push(Reg.AX);                               // save the handle for the free below
+    asm.Test(Reg.AX, Reg.AX);
+    asm.Jz(zero);                                   // null handle -> 0
+    asm.Cmp(Reg.CX, 1);
+    asm.Jge(idxOk);
+    asm.Mov(Reg.CX, 1);                             // MID$ clamps start to 1
+    asm.MarkLabel(idxOk);
+    asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_strseg")));
+    asm.Mov(Reg.BX, Reg.AX);
+    asm.Shl(Reg.BX, 2);
+    asm.Cmp(Reg.CX, this.Descriptor(Reg.BX, 2));    // i > length -> past the end -> 0
+    asm.Jg(zero);
+    asm.Mov(Reg.SI, this.Descriptor(Reg.BX));       // buffer pointer
+    asm.Add(Reg.SI, Reg.CX);
+    asm.Dec(Reg.SI);                                // SI = ptr + i - 1
+    asm.Mov(Reg.AL, Mem.Byte(Reg.SI).Es());
+    asm.Xor(Reg.AH, Reg.AH);
+    asm.Jmp(output);
+    asm.MarkLabel(zero);
+    asm.Xor(Reg.AX, Reg.AX);
+    asm.MarkLabel(output);
+    asm.Pop(Reg.BX);                                // BX = handle
+    asm.Push(Reg.AX);                               // save the byte
+    asm.Mov(Reg.AX, Reg.BX);
+    asm.Call(this.StrFree);
+    asm.Pop(Reg.AX);                                // restore the byte
+    asm.Pop(Reg.ES);
+    asm.Pop(Reg.SI);
     asm.Pop(Reg.BX);
     asm.Ret();
   }

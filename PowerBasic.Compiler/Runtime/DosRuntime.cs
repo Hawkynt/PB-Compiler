@@ -242,6 +242,8 @@ public sealed partial class DosRuntime {
     ("strings", this.EmitStringProcedures),
     ("strings2", this.EmitString2Procedures),
     ("strcmpeq", this.EmitStrCmpEq),   // O0298: only referenced under --optimize, so trimmed from the faithful build
+    ("charat", this.EmitCharAt),       // O0297: ASC(MID$(s$, i, 1)) direct read - only under --optimize
+
 
     ("arraynum", this.EmitArrayNum),
     ("files", this.EmitFileProcedures),

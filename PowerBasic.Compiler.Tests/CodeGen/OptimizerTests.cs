@@ -1317,6 +1317,17 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenAscOfSingleCharMid_WhenPb36_ThenReadsDirectlyNotViaSubstring() {
+    // O0290: ASC(MID$(s$, i, 1)) with a compile-time length of 1 reads the byte directly (rt_charat),
+    // a different code path than a runtime length which must allocate the substring (rt_strmid + rt_asc).
+    // The two therefore compile to different images. Correctness of the direct read (including the MID$
+    // clamp-to-1 / 0-past-the-end behaviour) is pinned by the differential DOSBox suite.
+    var direct = Compile("$OPTIMIZE SPEED\nDIM s$, n%, c%\nLINE INPUT s$\nn% = 1\nc% = ASC(MID$(s$, 1, 1))\nPRINT c%\nEND", Dialect.Pb36);
+    var runtime = Compile("$OPTIMIZE SPEED\nDIM s$, n%, c%\nLINE INPUT s$\nn% = 1\nc% = ASC(MID$(s$, 1, n%))\nPRINT c%\nEND", Dialect.Pb36);
+    Assert.That(direct.SequenceEqual(runtime), Is.False, "a constant length-1 ASC(MID$) takes the direct-read path, a runtime length does not");
+  }
+
+  [Test]
   public void Emit_GivenStringEquality_WhenPb36_ThenUsesLengthGuardedCompare() {
     // O0298: `=` / `<>` use rt_strcmpeq under --optimize, which after loading the two string
     // descriptors does a length guard `cmp ax,dx / jne` (39 D0 75) - unequal lengths skip the byte
