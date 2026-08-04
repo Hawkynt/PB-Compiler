@@ -67,10 +67,26 @@ public sealed partial class CodeGenerator {
           || !proc.Parameters.All(p => p.ByVal && p.Type is ScalarType { ByteSize: 2, IsFloat: false })
           || proc.Body is null || ContainsErrorHandling(proc.Body))
         continue;
-      // ! widening this shape is the next coverage step and it is NOT free: admitting LONG and real
-      // returns plus SUBs made CODEGEN.BAS print "accumulate-32283" where the direct emitter prints
-      // "accumulate 3", so something in the wider ABI is wrong. The differential gate caught it; the
-      // widening waits until that is understood rather than shipping on the strength of "it selects".
+      // ! Widening this shape is the next coverage step, and the differential gate has already shown
+      // it is not free. Admitting SUBs and LONG/real returns made CODEGEN.BAS print
+      // "accumulate-32283" where the direct emitter prints "accumulate 3", and the procedure it went
+      // wrong in is narrowed down:
+      //
+      //     SUB AccumulateOverArrayIsHandQuality(BYVAL n%) NOINLINE
+      //       DIM a%(0 TO 49)          ' a LOCAL ARRAY
+      //       a%(7) = n%
+      //       s% = 0
+      //       FOR i% = 0 TO 49 : s% = s% + a%(i%) : NEXT i%
+      //
+      // So the suspect is not the return convention at all - it is a procedure whose locals include an
+      // ARRAY. The back end gives a routed function its own frame (MachineEmitter's stack slots) while
+      // the direct path lays local storage out through LayoutFrame, and only module variables are
+      // bridged (DataCellOf handles "g." and string constants). A routed body computing over an alloca
+      // array where the surrounding layout expects the frame one is exactly the shape that reads
+      // plausible garbage rather than failing loudly.
+      //
+      // The next attempt should widen the shape AND exclude procedures with array locals until the
+      // frame bridge exists - not ship on the strength of "it selects".
       if (!byName.TryGetValue(proc.Name, out var irFn) || InstructionSelector.TrySelect(irFn) is not { } mfn)
         continue;
       candidates.Add((proc, irFn, mfn));
