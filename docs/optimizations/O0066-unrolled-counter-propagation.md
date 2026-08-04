@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned (blocked on AST-node keying) |
+| **Status** | ✅ Done |
 | **Stage** | Emitter |
 | **Related** | [O0007](O0007-loop-unrolling.md), [O0036](O0036-constant-subscript-folding.md), [O0016](O0016-value-fact-analysis.md) |
 
@@ -58,16 +58,29 @@ a%(0) = 0 : a%(1) = 1 : a%(2) = 4 : a%(3) = 9
 i% = 4
 ```
 
-## Why it is blocked
+## How it works
 
-The blocker is architectural, not semantic. The emitter is keyed by **original
-AST-node identity** (`VariableBindings`, `TypeOf`, `ResolvedConstants`), so
-substituting the counter with a literal per iteration would mean repopulating
-every semantic side table for the cloned nodes.
+The per-iteration constant override the "what it needs" section anticipated: no
+cloning, no side-table duplication. `ConstantFolder` already takes an optional
+`resolve` callback, so `OptFolder` is given one (`ResolveUnrollCounter`) that
+returns the counter's current value. `TryEmitUnrolledFor` sets `_unrollCounter =
+(counter, value)` around each copy's body; every fold site downstream —
+`TryFold`, and through it `FactsOf`, `IndexRangeOf`, constant-subscript folding —
+then reads the literal for `i%`. Outside unrolling the field is null, so the
+resolver is inert on every other path (the golden gate never sees it).
 
-## What it needs
+`i%`-derived arithmetic and subscripts collapse: `s = s + i% * i%` over `1…4`
+emits four `add`-immediates with **no runtime multiply**, and `a%(i%) = i%*i%`
+becomes four constant stores. Verified byte-identical against the genuine oracle,
+and a regression test confirms the unrolled `i% * i%` leaves no `IMUL`.
 
-The smaller path is a **per-iteration constant override** consulted by the
-constant folder and by `IndexRangeOf`/`TryFoldSubscripts` — no cloning, no
-side-table duplication: the unroller simply announces "for this copy, `i%` is 2"
-and the existing folding machinery does the rest.
+### Safety
+
+The override is set **only when the body cannot reassign the counter**
+(`IsModifiedIn`), so a later read can never fold to a stale value. Since the copy
+still writes the counter cell (`mov [i], value`), any read the folder does *not*
+collapse — a by-ref pass, say — still sees the correct runtime value.
+
+Native-only, in `CodeGenerator`. The IR back ends emit the unrolled body (from
+LLVM's own full-unroll) with the counter as an SSA constant, so their folders
+propagate it without this hook.

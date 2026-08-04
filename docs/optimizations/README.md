@@ -90,7 +90,7 @@ Conventions used on every page:
 | ✅ | [O0053](O0053-ir-inliner.md) | IR: function inlining |
 | ✅ | [O0054](O0054-ir-global-dce.md) | IR: global DCE |
 | ✅ | [O0055](O0055-ir-integer-recovery.md) | IR: integer recovery |
-| ⬜ | [O0056](O0056-reciprocal-division.md) | Reciprocal-multiply division |
+| 🟡 | [O0056](O0056-reciprocal-division.md) | Reciprocal-multiply division |
 | ⬜ | [O0057](O0057-storage-narrowing.md) | Storage narrowing |
 | ⬜ | [O0058](O0058-386-register-allocation.md) | 386/486 register allocation |
 | ⬜ | [O0059](O0059-scalar-replacement.md) | Scalar replacement of aggregates |
@@ -100,7 +100,7 @@ Conventions used on every page:
 | ⬜ | [O0063](O0063-duff-unrolling.md) | Duff's-device unrolling |
 | ⬜ | [O0064](O0064-lea-fusion.md) | `LEA` multiply-add fusion |
 | ⬜ | [O0065](O0065-dead-frame-store-elimination.md) | Dead frame-store elimination |
-| ⬜ | [O0066](O0066-unrolled-counter-propagation.md) | Unrolled-counter propagation |
+| ✅ | [O0066](O0066-unrolled-counter-propagation.md) | Unrolled-counter propagation |
 | ✅ | [O0067](O0067-if-chain-jump-table.md) | `IF`-chain → jump table |
 | ⬜ | [O0068](O0068-array-zero-fill-elision.md) | Array zero-fill elision |
 | ⬜ | [O0069](O0069-dead-parameter-elimination.md) | Dead parameters & call-shape cloning |

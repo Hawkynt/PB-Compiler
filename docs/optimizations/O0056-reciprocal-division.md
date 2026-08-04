@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
-| **Stage** | Emitter (would extend [O0004](O0004-strength-reduction.md)) |
+| **Status** | 🟡 Partial — 16-bit signed `\`/`MOD` by a constant (under `$OPTIMIZE SPEED`) reciprocal-multiplies; 32-bit `LONG` and unsigned remain |
+| **Stage** | Emitter (extends [O0004](O0004-strength-reduction.md)) |
 | **Related** | [O0004](O0004-strength-reduction.md), [R0003](R0003-string-engine.md) |
 
 ## The idea
@@ -38,31 +38,35 @@ r% = n% MOD 10
     mov     [d], ax
 ```
 
-## Planned
+## Now — 16-bit signed
 
-```asm
-    mov     ax, [n]
-    mov     dx, 6667h        ; magic reciprocal for 10
-    imul    dx               ; DX:AX = n * magic
-    sar     dx, 2
-    mov     ax, [n]
-    sar     ax, 15           ; the sign correction
-    sub     dx, ax
-    mov     [d], dx
-```
+`TryEmitStrengthReducedDivMod` routes a non-power-of-two constant divisor to
+`TryMagicSigned16` + `EmitReciprocalDivMod16`: a signed high multiply (`IMUL`),
+an arithmetic shift, and the sign add-back, replacing the ~100+-cycle `IDIV`. The
+`MOD` form multiplies the quotient back and subtracts. `n% \ 10` / `n% MOD 10`
+and every other 16-bit signed constant divide compile to a `MUL`+shift under
+`$OPTIMIZE SPEED`.
 
-## Equivalent BASIC
+### Why it is exact
 
-```basic
-d% = (n% * 26215&) \ 262144 - SGN_CORRECTION
-```
+The `(multiplier, shift)` pair is **brute-force-checked at compile time against
+every one of the 65 536 `int16` dividends** — if any value would disagree with
+`IDIV`, the magic is rejected and the genuine `IDIV` stays. So the rewrite is
+exact by construction, matching PB's truncate-toward-zero `\` and dividend-signed
+`MOD`. Confirmed by a differential checksum over the whole range `-32760…32760`
+(mixed `\10`, `\7`, `MOD 10`, `MOD 100`) that is byte-identical to the genuine
+oracle, plus a dedicated unit test. The `$ERROR` interaction is settled by
+[O0004](O0004-strength-reduction.md): a non-zero constant divisor raises neither
+Error 11 nor a quotient overflow.
 
-## What it needs
+## Still planned
 
-- Magic-number selection per divisor and per width (16- and 32-bit, signed and
-  unsigned), with the standard proof that the chosen (multiplier, shift) pair is
-  exact over the whole input range.
-- Agreement with PB's truncate-toward-zero `\` and dividend-signed `MOD`.
-- The `$ERROR` interaction is already settled by
-  [O0004](O0004-strength-reduction.md): a non-zero constant divisor can raise
-  neither Error 11 nor a quotient overflow.
+- **32-bit `LONG`** constant division (`l& \ 10`) — needs a 32×32→64 magic and
+  the wider shift sequence.
+- **Unsigned** (`WORD`/`DWORD`) — the unsigned magic variant; today a `WORD`
+  operand promotes to `LONG`, so it takes the `LONG` `IDIV` path.
+- The `$OPTIMIZE SPEED` gate, since the `MUL`+shift is larger than `IDIV` while
+  being faster; a size-tuned build keeps the compact divide.
+
+Native-only. The IR back ends leave `/ constant` for LLVM / the host C compiler,
+which apply their own reciprocal-multiply against the real target's cost model.

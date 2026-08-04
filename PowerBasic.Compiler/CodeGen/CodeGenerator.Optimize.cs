@@ -26,7 +26,19 @@ public sealed partial class CodeGenerator {
   public bool Optimize { get; set; } = model.Dialect == Dialect.Pb36;
 
   private ConstantFolder? _pb36Folder;
-  private ConstantFolder OptFolder => this._pb36Folder ??= new(model.Equates, model.EnumMembers);
+  private ConstantFolder OptFolder => this._pb36Folder ??= new(model.Equates, model.EnumMembers, this.ResolveUnrollCounter);
+
+  /// <summary>
+  /// O0066: during a fully-unrolled FOR copy the counter is a compile-time constant, recorded here
+  /// so <see cref="ConstantFolder"/> (and everything downstream of it) reads that literal for the
+  /// counter variable. Null outside unrolling, so the resolver is inert on every other path.
+  /// </summary>
+  private (VariableSymbol Sym, long Value)? _unrollCounter;
+
+  private ConstantValue? ResolveUnrollCounter(Expression e)
+    => this._unrollCounter is { } uc && e is NameExpr n
+       && model.VariableBindings.TryGetValue(n, out var s) && ReferenceEquals(s, uc.Sym)
+       ? ConstantValue.Of(uc.Value) : null;
 
   /// <summary>
   /// Wraps a compile-time value to the silent-wrap storage semantics of
@@ -402,10 +414,18 @@ public sealed partial class CodeGenerator {
       return true;
     }
 
+    // O0066: in each copy the counter is a known constant, so announce it - the folder (and the
+    // subscript / fact machinery it feeds) then reduces i%-derived reads to literals. Only when the
+    // body cannot reassign the counter, else a later read would fold to the wrong value.
+    var foldCounter = !IsModifiedIn(f.Body, counter, model);
     foreach (var value in values) {
       asm.Mov(slot, (Imm)value);
+      var savedUnroll = this._unrollCounter;
+      if (foldCounter)
+        this._unrollCounter = (counter, value);
       foreach (var statement in f.Body)
         this.EmitStatement(statement);
+      this._unrollCounter = savedUnroll;
     }
     asm.Mov(slot, (Imm)(int)current); // first failing value, wrap included
     return true;
