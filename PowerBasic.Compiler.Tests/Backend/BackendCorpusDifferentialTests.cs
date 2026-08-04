@@ -89,28 +89,36 @@ public sealed class BackendCorpusDifferentialTests {
         return Binder.Bind(Parser.Parse(Lexer.Tokenize(text, name, Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
       }
 
+      foreach (var optimize in new[] { true, false })
+        Compare(optimize);
+      continue;
+
+      // Both optimization settings, because they are different emitters: with the optimizer off there
+      // is no CSE, no SCCP, no register residency, and the direct path emits the plain AX-serial form.
+      // A routed function has to agree with BOTH, and the shapes it must agree with are not the same.
+      void Compare(bool optimize) {
       byte[] directImage, routedImage;
       IEnumerable<string> routedNames;
       try {
         var bound = Bind();
         if (bound.Errors.Count > 0)
-          continue;                                   // a program the front end rejects is not this test's business
-        var direct = new CodeGenerator(Bind()) { Optimize = true, UseExperimentalBackend = false };
-        var routed = new CodeGenerator(Bind()) { Optimize = true, UseExperimentalBackend = true };
+          return;                                     // a program the front end rejects is not this test's business
+        var direct = new CodeGenerator(Bind()) { Optimize = optimize, UseExperimentalBackend = false };
+        var routed = new CodeGenerator(Bind()) { Optimize = optimize, UseExperimentalBackend = true };
         directImage = direct.EmitExecutable();
         routedImage = routed.EmitExecutable();
         routedNames = routed.BackendRoutedNames.ToList();
         if (direct.Errors.Count > 0 || routed.Errors.Count > 0)
-          continue;
+          return;
       } catch (Exception e) {
         reasons[Summarize("compile: " + e.GetType().Name)] = reasons.GetValueOrDefault(Summarize("compile: " + e.GetType().Name)) + 1;
-        continue;
+        return;
       }
 
       // a program the back end takes nothing of compares the direct emitter with itself - true, but
       // it measures nothing, so it is not counted as agreement
       if (!routedNames.Any())
-        continue;
+        return;
       ++routedSomething;
 
       var directRun = Observe(directImage, out var directWhy);
@@ -119,17 +127,19 @@ public sealed class BackendCorpusDifferentialTests {
         ++notCompared;
         var reason = Summarize(directRun is null ? "direct: " + directWhy : "routed: " + routedWhy);
         reasons[reason] = reasons.GetValueOrDefault(reason) + 1;
-        continue;
+        return;
       }
 
       if (directRun == routedRun)
         ++agreed;
       else
-        disagreements.Add(new(name, directRun, routedRun, Convert.ToBase64String(routedImage)[..16]));
+        disagreements.Add(new(name + (optimize ? " (optimized)" : " (unoptimized)"),
+          directRun, routedRun, Convert.ToBase64String(routedImage)[..16]));
+      }
     }
 
     var report = new StringBuilder()
-      .AppendLine($"programs the back end compiled part of : {routedSomething}")
+      .AppendLine($"compilations the back end took part in  : {routedSomething} (each program is tried optimized AND unoptimized)")
       .AppendLine($"  ran both ways and AGREED             : {agreed}")
       .AppendLine($"  not compared (nothing ran)           : {notCompared}")
       .AppendLine($"  ran both ways and DISAGREED          : {disagreements.Count}")
