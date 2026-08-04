@@ -497,3 +497,20 @@ both), and a 32-bit `Mul` — which x86-16 simply does not have — is `rt_lmul`
 all: `SelectWideBinary` emits the call itself when the pair form has no instruction. Each of the four
 pinned loads declares the whole pinned set as its clobbers, so nothing live is parked in a register
 the sequence is about to overwrite; the call then spills whatever else was live, like any other.
+
+### Floating point declines up front — a latent half-load, closed
+
+Selection sizes a scalar value from its bit width, and nothing in the scalar path asked whether the
+value was a float. A `SINGLE` load therefore minted **one Dword virtual register and emitted a single
+word-sized `MOV`** — half the value, carried on as if it were the whole one. Nothing reached it,
+because float *arithmetic* declined earlier, but a plain `a! = b!` copy would have.
+
+That is exactly the silent truncation 32-bit integers were found to have, and the lesson from that
+one was that a coverage number is only worth having when every function under it is right. So the
+guard is up front and blunt: any function mentioning a floating-point type anywhere declines with the
+type named. It costs nothing today (the selected count did not move) and it is the single place to
+relax when x87 lands.
+
+With it in place, the census ranks honestly: **38 of the 70 remaining declines are floating point**
+(25 × `f32`, 13 × `f64`) — the x87 stack, which is not a register file the linear-scan allocator
+models, is now the largest single thing between this back end and the corpus.

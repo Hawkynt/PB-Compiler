@@ -72,6 +72,15 @@ public sealed class InstructionSelector {
   }
 
   private MFunction? Run(IrFunction fn) {
+    // Floating point has no selection at all yet: this target computes it on the x87 stack, which is
+    // not a register file the linear-scan allocator models. The guard is up front and blunt on
+    // purpose - without it a float LOAD would quietly mint one Dword virtual register and emit a
+    // single WORD-sized MOV, carrying half a SINGLE as the whole value. That is the same silent
+    // truncation 32-bit integers were found to have, and the lesson from it was that a coverage
+    // number is only worth having when every function under it is actually right.
+    if (FloatValue(fn) is { } floating)
+      return this.DeclineNull($"floating point: {floating} (the x87 stack is not modelled)");
+
     this._function = new MFunction(fn.Name) { HasArgumentPlan = true };
 
     // arguments take the FIRST virtual registers (so argument i is vreg i, which the emitter's ABI
@@ -913,6 +922,22 @@ public sealed class InstructionSelector {
   private MReg FreshVreg(IrType type) => MReg.Virtual(this._nextVreg++, RegSize(type));
 
   /// <summary>True for a 32-bit integer, which this target holds in a register pair.</summary>
+  /// <summary>The first floating-point type appearing anywhere in the function, or null when it has none.</summary>
+  private static IrType? FloatValue(IrFunction fn) {
+    foreach (var parameter in fn.Parameters)
+      if (parameter.Type.IsFloat)
+        return parameter.Type;
+    foreach (var block in fn.Blocks)
+      foreach (var instr in block.Instructions) {
+        if (instr.Type.IsFloat)
+          return instr.Type;
+        foreach (var operand in instr.Operands)
+          if (operand.Type.IsFloat)
+            return operand.Type;
+      }
+    return null;
+  }
+
   private static bool IsWide(IrType type) => type.IsInteger && type.Bits == 32;
 
   /// <summary>Mints the low/high register pair for a 32-bit value and records both halves.</summary>

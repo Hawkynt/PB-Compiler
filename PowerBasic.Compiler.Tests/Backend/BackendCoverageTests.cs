@@ -117,6 +117,26 @@ public sealed class BackendCoverageTests {
     return head.Length > 70 ? head[..70] : head;
   }
 
+  /// <summary>
+  /// A float value must never merely "select". The scalar path sizes a value from its bit width, so a
+  /// SINGLE load would mint one Dword virtual register and emit a single WORD-sized MOV - half the
+  /// value, silently. The same silent truncation was found for 32-bit integers once; the guard exists
+  /// so it cannot be found a second time.
+  /// </summary>
+  [Test]
+  public void Selector_GivenAFloatValue_ThenDeclinesRatherThanHalfLoadIt() {
+    var fn = new IrFunction("F", IrType.Void, []);
+    var entry = fn.CreateBlock("entry");
+    var slot = entry.Append(new IrAlloca(IrType.F32));
+    var value = entry.Append(new IrLoad(IrType.F32, slot));
+    entry.Append(new IrStore(value, slot));
+    entry.Append(new IrRet(null));
+
+    InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(reason, Does.Contain("floating point"));
+  }
+
   [Test]
   public void Selector_GivenTheBattery_ThenReportsWhatBlocksCoverage() {
     var census = Measure();
