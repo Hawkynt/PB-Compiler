@@ -176,6 +176,10 @@ A ported optimization records an **IR** row in its own document, which is what t
 `Stage` says where an optimization was *first* written and never changes; the `IR` row says where it
 *also* lives now, and only grows. Ported so far:
 
+- **O0001 constant folding** — `Sccp` + `InstCombine` + `IrConstFold`.
+- **O0002 dead-code elimination** — `Dce` + `DeadStoreElim`.
+- **O0003 common subexpression elimination** — `Gvn`, and *global* where the emitter's is
+  block-local: a subexpression shared across two blocks is still computed once.
 - **O0007 loop unrolling** — `Ir/Passes/LoopUnroll.cs`, in the standard pipeline.
 - **O0132 whole-loop compile-time evaluation** — nobody wrote a pass for it; it falls out of
   unrolling composing with the constant propagation and dead-code elimination already there.

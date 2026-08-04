@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | ✅ Implemented (block-local, cross-branch, past merges, through loop preheaders, plus redundant array loads) |
 | **Stage** | Pre-emission analysis + emitter |
+| **IR** | ✅ `Ir/Passes/Gvn.cs` - and GLOBAL where the emitter's is block-local, so a subexpression shared across two blocks is still computed once; verified by `PortedMidEndOptimizationsTests` |
 | **Source** | `CodeGen/OptCommonSubexpr.cs`, `CodeGen/CodeGenerator.Expressions.cs` |
 | **Gate** | `--optimize`; modular-int16 caching disabled under `$ERROR NUMERIC/OVERFLOW/ALL` |
 | **Verified by** | `tests/diff/DIFF33.BAS`, `DIFF67.BAS` (past merge), `DIFF68.BAS` (`SELECT`), `DIFF69.BAS` (array loads) |

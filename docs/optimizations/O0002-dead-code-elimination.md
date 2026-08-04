@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | ✅ Implemented |
 | **Stage** | Pre-emission pruner (statements) + SSA mid-end (stores) |
+| **IR** | ✅ `Ir/Passes/Dce.cs` + `DeadStoreElim` in `IrPassManager.Standard()`; verified by `PortedMidEndOptimizationsTests` |
 | **Source** | `CodeGen/OptPruner.cs`, `CodeGen/Ssa/DeadStore.cs` |
 | **Gate** | `--optimize` |
 | **Verified by** | `tests/diff/DIFF50.BAS` (dead stores), the full differential battery |

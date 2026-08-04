@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | ✅ Implemented |
 | **Stage** | Emitter, over the bound AST |
+| **IR** | ✅ `Sccp` + `InstCombine` + `IrConstFold` in `IrPassManager.Standard()`; verified by `PortedMidEndOptimizationsTests` |
 | **Source** | `CodeGen/CodeGenerator.Optimize.cs` — `#region O1`, `TryEmitFolded`, `FoldsWithoutWrap` |
 | **Gate** | `--optimize` (on by default for `pb36`) |
 | **Related** | [O0017](O0017-sccp.md) (cross-block constants), [O0025](O0025-pure-function-folding.md), [O0033](O0033-constant-store.md), [O0043](O0043-ir-instcombine.md) |
