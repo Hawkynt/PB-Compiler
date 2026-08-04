@@ -34,6 +34,24 @@ public sealed class IrConstantFloat(IrType type, double value) : IrConstant(type
 public sealed class IrNullPtr() : IrConstant(IrType.Ptr);
 
 /// <summary>
+/// The address of a basic block - LLVM's <c>blockaddress</c>. PB needs one for exactly one reason:
+/// <c>ON ERROR GOTO</c> arms a handler by writing its code address into a runtime cell, and a fault
+/// anywhere afterwards - including inside a runtime routine - resumes there. That control-flow edge
+/// exists at run time but has no representation as a CFG edge, because its source is "any point in
+/// the armed region".
+///
+/// A function holding one of these is therefore <see cref="IrFunction.HasErrorHandler"/>, and the
+/// optimizer is required to leave it alone: a pass reasoning from the CFG alone would conclude the
+/// handler is unreachable, or that a variable's value at handler entry is the one that reaches its
+/// only visible predecessor. Both conclusions are wrong, and both are silent. The direct emitter
+/// takes the identical discipline - <c>_trackResume</c> switches its optimizations off.
+/// </summary>
+public sealed class IrBlockAddress(IrBasicBlock block) : IrConstant(IrType.Ptr) {
+  /// <summary>The block whose address this is.</summary>
+  public IrBasicBlock Block { get; } = block;
+}
+
+/// <summary>
 /// An undefined value of a given type. Reading it yields an arbitrary bit pattern;
 /// it marks "any value is acceptable here" so later passes are free to choose one.
 /// </summary>

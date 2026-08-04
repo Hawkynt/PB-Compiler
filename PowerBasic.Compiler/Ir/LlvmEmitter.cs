@@ -124,6 +124,9 @@ public sealed class LlvmEmitter {
     IrConstantFloat cf => cf.Type.Bits == 80 ? FormatFp80(cf.Value) : FormatFloat(cf.Value),
     IrNullPtr => "null",
     IrUndef => "undef",
+    // an ON ERROR handler's address; the enclosing function is never optimized, so LLVM's
+    // requirement that a blockaddress-taken block stay intact is met by construction
+    IrBlockAddress ba => $"blockaddress(@{ba.Block.Parent?.Name}, %{ba.Block.Label})",
     IrGlobalValue gv => "@" + gv.Name,
     _ => this._names.TryGetValue(value, out var n) ? n : "%undef",
   };

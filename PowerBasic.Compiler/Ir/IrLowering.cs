@@ -212,6 +212,10 @@ public sealed class IrLowering {
     if (ContainsGosub(body))
       this.SetupGosub();
 
+    // whether statements must publish their boundaries has to be known BEFORE the first one is
+    // lowered: RESUME NEXT can name a statement that ran long before the handler was armed
+    this._resumeTracking = ContainsResume(body);
+
     this.LowerStatements(body);
 
     if (this._gosubSwitch is not null)              // wire each GOSUB's continuation into the shared dispatch
@@ -274,6 +278,25 @@ public sealed class IrLowering {
             foreach (var n in CollectLabels(arm.Body)) yield return n;
           break;
       }
+  }
+
+  /// <summary>
+  /// Whether the body resumes at a statement boundary the fault picks - <c>ON ERROR RESUME NEXT</c>,
+  /// or a bare <c>RESUME</c> / <c>RESUME NEXT</c> in a handler. <c>RESUME &lt;label&gt;</c> does not
+  /// count: it names its destination, so it is an ordinary branch and costs no bookkeeping.
+  /// </summary>
+  private static bool ContainsResume(IReadOnlyList<Statement> statements) {
+    foreach (var s in statements)
+      switch (s) {
+        case OnErrorStmt { ResumeNext: true }: return true;
+        case ResumeStmt { Kind: not ResumeKind.Label }: return true;
+        case IfStmt i when ContainsResume(i.Then) || i.ElseIfs.Any(e => ContainsResume(e.Body)) || (i.Else is { } el && ContainsResume(el)):
+          return true;
+        case ForStmt f when ContainsResume(f.Body): return true;
+        case DoLoopStmt d when ContainsResume(d.Body): return true;
+        case SelectStmt sel when sel.Arms.Any(a => ContainsResume(a.Body)): return true;
+      }
+    return false;
   }
 
   private static bool ContainsGosub(IReadOnlyList<Statement> statements) {
@@ -373,32 +396,42 @@ public sealed class IrLowering {
     return global;
   }
 
-  /// <summary>The address of one array element, by row-major flattening of the index list.</summary>
   /// <summary>
-  /// One subscript checked against its dimension, raising Error 9 when it falls outside. The raise
-  /// does not return - the runtime dispatches it through ON ERROR or ends the program - but the IR
-  /// still needs a terminator on that block, so it branches to the continuation it never reaches.
+  /// Raises a PB runtime error when <paramref name="condition"/> holds - the shape every
+  /// <c>$ERROR … ON</c> trap takes in the IR. The direct emitter spells this as a conditional jump
+  /// over a call; with no flags register in a target-independent IR it is an ordinary branch instead.
+  ///
+  /// <c>rt_raise</c> does not come back - it dispatches through the armed ON ERROR handler or ends the
+  /// program - but the IR still needs a terminator on the block that called it, so that block branches
+  /// to the continuation it never actually reaches.
   /// </summary>
-  private void EmitBoundsCheck(IrValue index, long lower, long upper) {
-    var bad = this.NewBlock("bounds.bad");
-    var ok = this.NewBlock("bounds.ok");
-    var tooLow = this._b.Cmp(IrCmpPred.Slt, index, new IrConstantInt(IrType.I32, lower));
-    var tooHigh = this._b.Cmp(IrCmpPred.Sgt, index, new IrConstantInt(IrType.I32, upper));
-    this._b.CondBr(this._b.Or(tooLow, tooHigh), bad, ok);
+  private void RaiseWhen(IrValue condition, int code, string what) {
+    var bad = this.NewBlock(what + ".trap");
+    var ok = this.NewBlock(what + ".ok");
+    this._b.CondBr(condition, bad, ok);
 
     this._b.Position(bad);
-    this._b.Call(IrType.Void, this.RuntimeFn("rt_error", IrType.Void, IrType.I32), new IrConstantInt(IrType.I32, 9));
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_error", IrType.Void, IrType.I32), new IrConstantInt(IrType.I32, code));
     this._b.Br(ok);
     this._b.Position(ok);
   }
 
+  /// <summary>
+  /// One subscript checked against its dimension, raising Error 9 when it falls outside. The bounds
+  /// are values rather than constants because a dynamic array carries its own: a REDIM writes the
+  /// lower bound and the size into the descriptor slots, so the check reads them back the same way
+  /// the address arithmetic does.
+  /// </summary>
+  private void EmitBoundsCheck(IrValue index, IrValue lower, IrValue upper)
+    => this.RaiseWhen(this._b.Or(this._b.Cmp(IrCmpPred.Slt, index, lower),
+                                 this._b.Cmp(IrCmpPred.Sgt, index, upper)), 9, "bounds");
+
+  /// <summary>The address of one array element, by row-major flattening of the index list.</summary>
   private (IrValue Address, PbType Element) ElementAddress(CallOrIndexExpr expr) {
     if (!this._model.VariableBindings.TryGetValue(expr, out var symbol) || symbol.Type is not ArrayType arr)
       throw new IrLoweringException($"not an array element: {expr.Name}");
     if (arr.IsDynamic)
-      return this._checkBounds
-        ? throw new IrLoweringException("$ERROR BOUNDS ON over a dynamic array (its bounds live in the descriptor)")
-        : this.DynamicElementAddress(expr, symbol, arr);
+      return this.DynamicElementAddress(expr, symbol, arr);
     if (arr.StaticBounds is not { } bounds || bounds.Count != expr.Arguments.Count)
       throw new IrLoweringException("rank mismatch");
     var basePtr = this.SlotFor(symbol);
@@ -407,7 +440,7 @@ public sealed class IrLowering {
     for (var k = 0; k < bounds.Count; ++k) {
       var idx = this.Coerce(this.LowerExpr(expr.Arguments[k]), this._model.TypeOf(expr.Arguments[k]), PbType.Long);
       if (this._checkBounds)
-        this.EmitBoundsCheck(idx, bounds[k].Lower, bounds[k].Upper);
+        this.EmitBoundsCheck(idx, new IrConstantInt(IrType.I32, bounds[k].Lower), new IrConstantInt(IrType.I32, bounds[k].Upper));
       var rel = this._b.Sub(idx, new IrConstantInt(IrType.I32, bounds[k].Lower));
       var size = bounds[k].Upper - bounds[k].Lower + 1;
       flat = flat is null ? rel : this._b.Add(this._b.Mul(flat, new IrConstantInt(IrType.I32, size)), rel);
@@ -427,6 +460,12 @@ public sealed class IrLowering {
 
   /// <summary>$ERROR BOUNDS ON: subscripts are checked and Error 9 raised when one is out of range.</summary>
   private bool _checkBounds;
+
+  /// <summary>$ERROR OVERFLOW ON: integer +, - and * are checked and Error 6 raised when they wrap.</summary>
+  private bool _checkOverflow;
+
+  /// <summary>$ERROR NUMERIC ON: a FOR counter that wraps past its own range raises Error 6.</summary>
+  private bool _checkNumeric;
 
   private DynArr DynDescriptor(VariableSymbol symbol, int rank) {
     if (this._dynArrays.TryGetValue(symbol, out var existing))
@@ -453,7 +492,14 @@ public sealed class IrLowering {
     IrValue? flat = null;
     for (var k = 0; k < arr.Rank; ++k) {
       var idx = this.Coerce(this.LowerExpr(expr.Arguments[k]), this._model.TypeOf(expr.Arguments[k]), PbType.Long);
-      var rel = this._b.Sub(idx, this._b.Load(IrType.I32, descriptor.Lo[k]));
+      var lo = this._b.Load(IrType.I32, descriptor.Lo[k]);
+      // $ERROR BOUNDS ON over a dynamic array: the dimension is not a compile-time constant, so the
+      // upper bound is reconstructed from the descriptor the REDIM filled in - lo + size - 1
+      if (this._checkBounds) {
+        var size = this._b.Load(IrType.I32, descriptor.Size[k]);
+        this.EmitBoundsCheck(idx, lo, this._b.Sub(this._b.Add(lo, size), new IrConstantInt(IrType.I32, 1)));
+      }
+      var rel = this._b.Sub(idx, lo);
       flat = flat is null ? rel : this._b.Add(this._b.Mul(flat, this._b.Load(IrType.I32, descriptor.Size[k])), rel);
     }
 
@@ -473,8 +519,35 @@ public sealed class IrLowering {
     foreach (var statement in statements) {
       if (this.Terminated && statement is not LabelStmt)
         continue;                                      // code unreachable until the next label
-      this.LowerStatement(statement);
+      if (this._resumeTracking && statement is not (LabelStmt or DataStmt or MetaStmt))
+        this.LowerStatementWithResumeBoundary(statement);
+      else
+        this.LowerStatement(statement);
     }
+  }
+
+  /// <summary>
+  /// One statement, bracketed by the two addresses RESUME and RESUME NEXT resume at. The direct
+  /// emitter writes the same pair into rt_resume / rt_resumenext in front of every statement; rt_raise
+  /// latches whichever one is current when the fault happens, and the resume then jumps through it.
+  ///
+  /// Giving each statement its own block is what makes those two points addressable at all - "the
+  /// start of this statement" is not a thing an SSA instruction list has otherwise. It costs nothing:
+  /// a function that gets here is already out of the optimizer's hands.
+  /// </summary>
+  private void LowerStatementWithResumeBoundary(Statement statement) {
+    var start = this.NewBlock("stmt");
+    var after = this.NewBlock("stmt.next");
+    this._b.Br(start);
+    this._b.Position(start);
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_resume_mark", IrType.Void, IrType.Ptr, IrType.Ptr),
+      new IrBlockAddress(start), new IrBlockAddress(after));
+
+    this.LowerStatement(statement);
+
+    if (!this.Terminated)
+      this._b.Br(after);
+    this._b.Position(after);
   }
 
   private void LowerStatement(Statement statement) {
@@ -507,10 +580,17 @@ public sealed class IrLowering {
       case ReadStmt rd: this.LowerRead(rd); break;
       case RestoreStmt rs: this.LowerRestore(rs); break;
       case EndStmt: this.LowerEnd(); break;
+      case OnErrorStmt oe: this.LowerOnError(oe); break;
+      case ResumeStmt rs2: this.LowerResume(rs2); break;
+      case ErrorStmt err: this.LowerErrorStatement(err); break;
       case MetaStmt meta: this.LowerMeta(meta); break;
       case CommandStmt { Keyword: "SHIFT LEFT" or "SHIFT RIGHT" } shift: this.LowerShift(shift); break;
       case CommandStmt { Keyword: "ROTATE LEFT" or "ROTATE RIGHT" } rotate: this.LowerRotate(rotate); break;
       case CommandStmt { Keyword: "LOCATE" } locate: this.LowerLocate(locate); break;
+      // ERRCLEAR: forget the last fault, so a later ERR read sees zero rather than a stale code
+      case CommandStmt { Keyword: "ERRCLEAR" }:
+        this._b.Store(new IrConstantInt(IrType.I16, 0), this.ErrorCell("rt_err", IrType.I16));
+        break;
       case CommandStmt { Keyword: "KILL", Arguments: [{ } file] }:
         this._b.Call(IrType.Void, this.RuntimeFn("rt_kill", IrType.Void, IrType.Ptr), this.LowerStringExpr(file));
         break;
@@ -849,6 +929,69 @@ public sealed class IrLowering {
       throw new IrLoweringException($"GOTO to unknown label {g.Target}");
     this._b.Br(target);
   }
+
+  // ---- ON ERROR / RESUME ---------------------------------------------------
+  //
+  // PB's error handling is a non-local jump the CFG cannot express: ON ERROR GOTO writes a code
+  // address into a runtime cell, and a fault ANYWHERE afterwards - including deep inside a runtime
+  // routine, where the compiler emitted nothing at all - restores the armed frame and lands on it.
+  //
+  // Two consequences run through everything below. First, arming has to be inline code rather than a
+  // call, because it captures the CURRENT frame (BP and SP); a call would capture its own. It is
+  // written here as a call to an rt_ intrinsic the back end expands in place - the IR's way of saying
+  // "target-specific sequence", not "transfer control". Second, the function is marked
+  // HasErrorHandler, which takes it out of the optimizer entirely: no CFG-based pass can be trusted
+  // on a graph that is missing its most important edge.
+
+  private void LowerOnError(OnErrorStmt oe) {
+    this._fn.HasErrorHandler = true;
+    if (oe.ResumeNext) {
+      // inline mode: the runtime's own RESUME NEXT stub becomes the handler, so a faulting statement
+      // is skipped and the next one runs. Every statement has already published where it starts and
+      // where it ends - ContainsResume saw this coming before the first one was lowered
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_onerr_resume_next", IrType.Void));
+      return;
+    }
+    if (oe.Target is null or "0") {
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_onerr_disarm", IrType.Void));
+      return;
+    }
+    if (!this._labels.TryGetValue(oe.Target, out var handler))
+      throw new IrLoweringException($"ON ERROR GOTO unknown label {oe.Target}");
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_onerr_arm", IrType.Void, IrType.Ptr), new IrBlockAddress(handler));
+  }
+
+  private void LowerResume(ResumeStmt rs) {
+    this._fn.HasErrorHandler = true;
+    switch (rs.Kind) {
+      case ResumeKind.Label when rs.Target is { } target:
+        if (!this._labels.TryGetValue(target, out var block))
+          throw new IrLoweringException($"RESUME to unknown label {target}");
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_err_clear", IrType.Void));
+        this._b.Br(block);
+        return;
+      // RESUME and RESUME NEXT go back to a statement the FAULT chose, not one this code names, so
+      // the destination is only known at run time. It is a jump through a runtime cell, which the
+      // runtime routine performs itself - hence a call that never returns rather than a terminator
+      // with an unknown target
+      default:
+        this._b.Call(IrType.Void, this.RuntimeFn(
+          rs.Kind == ResumeKind.SameStatement ? "rt_resume_same" : "rt_resume_next", IrType.Void));
+        this._b.Unreachable();
+        return;
+    }
+  }
+
+  private void LowerErrorStatement(ErrorStmt err)
+    => this._b.Call(IrType.Void, this.RuntimeFn("rt_error", IrType.Void, IrType.I32),
+         this.Coerce(this.LowerExpr(err.Code), this._model.TypeOf(err.Code), PbType.Long));
+
+  /// <summary>
+  /// True once the body has used RESUME or RESUME NEXT, which resume at a statement boundary chosen
+  /// by the fault. Each statement then has to publish its own start and successor addresses, exactly
+  /// as the direct emitter's <c>_trackResume</c> does.
+  /// </summary>
+  private bool _resumeTracking;
 
   private void LowerGosub(GosubStmt g) {
     if (this._gosubSp is null)
@@ -1209,7 +1352,12 @@ public sealed class IrLowering {
     this._b.Position(inc);
     var iv = this._b.Load(ty, slot);
     var increment = constStep is { } c2 ? (IrValue)new IrConstantInt(ty, c2) : stepValue!;
-    this._b.Store(this._b.Binary(IrBinaryOp.Add, iv, increment), slot);
+    // $ERROR NUMERIC ON traps the counter's own wrap (QUIRK 2.28/2.29: a BYTE counter FOR b? = 1 TO
+    // 255 wraps past 255 and loops forever without it). It is the ONLY thing NUMERIC raises, so the
+    // check goes here and nowhere else - the direct emitter puts its JNO/JNC on this same increment
+    this._b.Store(this._checkNumeric
+      ? this.CheckedArithmetic(IrBinaryOp.Add, iv, increment, ty, ty.Signed)
+      : this._b.Binary(IrBinaryOp.Add, iv, increment), slot);
     this._b.Br(header);
 
     this._b.Position(exit);
@@ -1502,8 +1650,44 @@ public sealed class IrLowering {
       return this.EmitCall(callee, proc, []);
     }
     if (!this._model.VariableBindings.TryGetValue(name, out var symbol))
-      throw new IrLoweringException($"unbound name {name.Name}");
+      return this.LowerErrorPseudoVariable(name.Name)
+        ?? throw new IrLoweringException($"unbound name {name.Name}");
     return this._b.Load(MapType(symbol.Type), this.SlotFor(symbol));
+  }
+
+  /// <summary>
+  /// The parameterless error intrinsics, which are reads of runtime cells rather than calls: ERR is
+  /// the code of the last fault, ERL the last numeric line label to run, ERADR its address. They bind
+  /// to no variable, so a handler naming one arrives here as an unbound name.
+  ///
+  /// ERDEV / ERDEV$ are deliberately absent: the direct emitter answers both with zero (there is no
+  /// device-error reporting), and a stub that silently agrees is not worth having on this path.
+  /// </summary>
+  private IrValue? LowerErrorPseudoVariable(string name) {
+    if (this._module is null)
+      return null;
+    var (cell, type) = name.ToUpperInvariant() switch {
+      "ERR" => ("rt_err", IrType.I16),
+      "ERL" => ("rt_erl", IrType.I16),
+      "ERADR" => ("rt_eresume", IrType.I16),
+      _ => (null, IrType.I16),
+    };
+    if (cell is null)
+      return null;
+    var read = this._b.Load(type, this.ErrorCell(cell, type));
+    // ERL is a LONG in PB even though the runtime keeps a word - the direct emitter widens with CWD
+    return name.Equals("ERL", StringComparison.OrdinalIgnoreCase) ? this._b.SExt(read, IrType.I32) : read;
+  }
+
+  /// <summary>
+  /// One of the runtime's error cells as an IR global, named exactly as the runtime labels it so the
+  /// back end's data-cell bridge resolves it to the very storage the direct emitter uses.
+  /// </summary>
+  private IrGlobalVariable ErrorCell(string name, IrType type) {
+    if (this._module is null)
+      throw new IrLoweringException($"{name} requires whole-module lowering");
+    return this._module.FindGlobal(name)
+      ?? this._module.AddGlobal(new IrGlobalVariable(name, type) { IsZeroInitialized = true });
   }
 
   /// <summary>Lowers a pure numeric intrinsic that needs no runtime (ABS, SGN); declines the rest.</summary>
@@ -1891,7 +2075,67 @@ public sealed class IrLowering {
       BinaryOp.Xor => IrBinaryOp.Xor,
       _ => throw new IrLoweringException($"unsupported binary op {expr.Op}"),
     };
-    return this._b.Binary(op, l, r);
+    return this._checkOverflow && op is IrBinaryOp.Add or IrBinaryOp.Sub or IrBinaryOp.Mul
+      ? this.CheckedArithmetic(op, l, r, resultTy, signed)
+      : this._b.Binary(op, l, r);
+  }
+
+  /// <summary>
+  /// The Error 6 trap <c>$ERROR OVERFLOW ON</c> arms, asked without a flags register. The direct
+  /// emitter reads OF straight off the ADD/SUB/IMUL it has just emitted (a JNO over the raise); a
+  /// target-independent IR has no such thing, so the identical question is put in arithmetic every
+  /// back end already has.
+  ///
+  /// For + and - that is the textbook sign rule, exact in the operand's own width: an addition
+  /// overflows exactly when both operands share a sign the sum does not, and a subtraction exactly
+  /// when the operands differ in sign and the difference takes the subtrahend's. Unsigned types have
+  /// no OF to read either - their wrap is a carry, which is one unsigned compare.
+  ///
+  /// A multiply has no such rule, so it is done one width up, where the product is exact, and range
+  /// checked before being truncated back.
+  /// </summary>
+  private IrValue CheckedArithmetic(IrBinaryOp op, IrValue l, IrValue r, IrType ty, bool signed) {
+    if (op == IrBinaryOp.Mul)
+      return this.CheckedMultiply(l, r, ty, signed);
+
+    var sum = this._b.Binary(op, l, r);
+    IrValue overflowed;
+    if (!signed)
+      // an unsigned + carries exactly when the sum comes out below an operand, and an unsigned -
+      // borrows exactly when the minuend was below the subtrahend
+      overflowed = op == IrBinaryOp.Add
+        ? this._b.Cmp(IrCmpPred.Ult, sum, l)
+        : this._b.Cmp(IrCmpPred.Ult, l, r);
+    else {
+      var operandSigns = this._b.Xor(l, r);
+      // + wants the operands to have AGREED in sign (~(l^r)); - wants them to have differed
+      var interesting = op == IrBinaryOp.Add
+        ? this._b.Xor(operandSigns, new IrConstantInt(ty, -1))
+        : (IrValue)operandSigns;
+      var movedAway = this._b.Xor(sum, l);           // ... and the result to disagree with the left one
+      overflowed = this._b.Cmp(IrCmpPred.Slt, this._b.And(interesting, movedAway), new IrConstantInt(ty, 0));
+    }
+    this.RaiseWhen(overflowed, 6, "overflow");
+    return sum;
+  }
+
+  /// <summary>The checked multiply: exact one width up, then range-checked back down.</summary>
+  private IrValue CheckedMultiply(IrValue l, IrValue r, IrType ty, bool signed) {
+    if (ty.Bits >= 64)
+      throw new IrLoweringException(
+        "$ERROR OVERFLOW ON over a 64-bit multiply (there is no wider integer to hold the exact product)");
+    var wide = IrType.Integer(ty.Bits * 2, signed);
+    var product = this._b.Binary(IrBinaryOp.Mul,
+      signed ? this._b.SExt(l, wide) : this._b.ZExt(l, wide),
+      signed ? this._b.SExt(r, wide) : this._b.ZExt(r, wide));
+
+    var highest = signed ? (1L << (ty.Bits - 1)) - 1 : (1L << ty.Bits) - 1;
+    var outside = signed
+      ? this._b.Or(this._b.Cmp(IrCmpPred.Slt, product, new IrConstantInt(wide, -(1L << (ty.Bits - 1)))),
+                   this._b.Cmp(IrCmpPred.Sgt, product, new IrConstantInt(wide, highest)))
+      : (IrValue)this._b.Cmp(IrCmpPred.Ugt, product, new IrConstantInt(wide, highest));
+    this.RaiseWhen(outside, 6, "overflow");
+    return this._b.Trunc(product, ty);
   }
 
   private IrValue LowerComparison(BinaryExpr expr, PbType leftPb, PbType rightPb, PbType resultPb) {
@@ -1931,10 +2175,17 @@ public sealed class IrLowering {
       case "CPU":        // the instruction-set floor of the DOS emitter; an IR back end picks its own
         return;
       // $ERROR BOUNDS ON: every subscript is checked against its dimension and Error 9 raised when it
-      // falls outside - the same guard CodeGenerator.Arrays emits when CheckBounds is set. The other
-      // arms trap on arithmetic rather than on an index and still decline.
+      // falls outside - the same guard CodeGenerator.Arrays emits when CheckBounds is set
       case "ERROR" when arm.Equals("BOUNDS", StringComparison.OrdinalIgnoreCase):
         this._checkBounds = on;
+        return;
+      // $ERROR OVERFLOW ON: integer +, - and * raise Error 6 when they wrap (see CheckedArithmetic)
+      case "ERROR" when arm.Equals("OVERFLOW", StringComparison.OrdinalIgnoreCase):
+        this._checkOverflow = on;
+        return;
+      // $ERROR NUMERIC ON: the FOR counter increment is the one place this raises - see LowerFor
+      case "ERROR" when arm.Equals("NUMERIC", StringComparison.OrdinalIgnoreCase):
+        this._checkNumeric = on;
         return;
       case "ERROR" when meta.Arguments.Count >= 2 && !on:
         return;          // turning a check OFF is exactly what this lowering already assumes

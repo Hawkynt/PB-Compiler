@@ -16,6 +16,10 @@ public static class IntegerRecovery {
 
   /// <summary>Rewrites integer-typed fptosi(float-tree) chains to integer arithmetic; returns how many were recovered.</summary>
   public static int Run(IrFunction fn) {
+    // this one is called directly by the routing rather than through IrPassManager, so it carries the
+    // hands-off rule itself - see IrFunction.HasErrorHandler
+    if (fn.HasErrorHandler)
+      return 0;
     var recovered = 0;
     foreach (var block in fn.Blocks)
       foreach (var instr in block.Instructions.ToList())   // snapshot - we insert while iterating

@@ -28,6 +28,10 @@ public sealed class IrPassManager {
 
   /// <summary>Runs every pass once over the function; returns the total number of changes.</summary>
   public int Run(IrFunction fn) {
+    // a function with an armed error handler has control-flow edges the CFG does not show, so every
+    // pass here would be reasoning from an incomplete graph - see IrFunction.HasErrorHandler
+    if (fn.HasErrorHandler)
+      return 0;
     var total = 0;
     foreach (var (name, run) in this._passes) {
       total += run(fn);

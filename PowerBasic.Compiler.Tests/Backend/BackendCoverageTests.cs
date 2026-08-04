@@ -187,17 +187,25 @@ public sealed class BackendCoverageTests {
     // then 69 -> 81 with x87: floats live in frame cells bracketed by FLD/FSTP
     // then 81 -> 88 (of a larger denominator, since 14 more programs now lower at all): CINT and the
     // rounding float-to-integer conversion it is spelled from
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(99),
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(120),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
+
+    // How many programs reach the IR at all - the figure the runtime-trap and error-handling work
+    // moves, since a program that declines at the lowering never reaches the selector to be counted
+    // above. 119 -> 122 with $ERROR OVERFLOW ON and dynamic-array bounds checking, 122 -> 129 with
+    // ON ERROR / RESUME and the ERR / ERL cells their handlers read, 129 -> 132 with $ERROR NUMERIC
+    // ON and ERRCLEAR.
+    Assert.That(census.ProgramsLowered, Is.GreaterThanOrEqualTo(132),
+      "fewer corpus programs reach the IR than used to:\n" + report);
 
     // selection is not routing: the whole-program codegen also schedules and allocates, and a value
     // live across a CALL has no register unless the spiller can move it to the frame
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(73),
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(79),
       "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // the figure that matters for whole-program ownership: module bodies the back end compiles end to
     // end. It was zero until main became routable at all
-    Assert.That(census.MainBodies, Is.GreaterThanOrEqualTo(27),
+    Assert.That(census.MainBodies, Is.GreaterThanOrEqualTo(28),
       "fewer whole module bodies are compilable than they used to be:\n" + report);
   }
 }

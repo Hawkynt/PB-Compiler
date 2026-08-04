@@ -33,6 +33,19 @@ public sealed class IrFunction : IrGlobalValue {
   /// <summary>True when the function has no body (an external/imported symbol).</summary>
   public bool IsDeclaration => this._blocks.Count == 0;
 
+  /// <summary>
+  /// True when the body arms a PB error handler (<c>ON ERROR</c> / <c>RESUME</c>), which the
+  /// optimizer must not touch. A raise transfers control from an arbitrary point - including from
+  /// inside a runtime routine - to a block the CFG shows no edge to, so every CFG-based conclusion
+  /// about this function is unsound: the handler looks unreachable, values look like they can only
+  /// arrive along the visible predecessors, and a store the handler reads looks dead.
+  ///
+  /// <see cref="Passes.IrPassManager"/> skips such a function outright rather than each pass carrying
+  /// its own guard - one place to be right instead of a dozen. It is the same trade the direct
+  /// emitter makes, where <c>_trackResume</c> disables the optimizations wholesale.
+  /// </summary>
+  public bool HasErrorHandler { get; set; }
+
   public IrArgument AddParameter(IrArgument argument) {
     argument.Parent = this;
     this._parameters.Add(argument);

@@ -105,6 +105,7 @@ public sealed class IrPrinter {
     IrConstantFloat cf => FormatFloat(cf.Value),
     IrNullPtr => "null",
     IrUndef => "undef",
+    IrBlockAddress ba => $"blockaddress(%{ba.Block.Label})",
     IrGlobalValue gv => "@" + gv.Name,
     _ => this._names.TryGetValue(value, out var n) ? n : "%<?>",
   };
