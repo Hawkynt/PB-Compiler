@@ -171,6 +171,42 @@ battery, it currently reaches:
 | functions routed (selected **and** allocated) | 90 / 218 |
 | whole module bodies the back end can own | 37 / 132 |
 
+### Inline assembly
+
+Carried, not understood. `IrInlineAsm` holds the text of a `!` statement as an opaque barrier, and the
+function containing one is flagged `HasInlineAsm` so `IrPassManager` skips it whole - the same trade
+made for `HasErrorHandler`, and the one the direct emitter already makes.
+
+It is a barrier rather than a modelled instruction deliberately. A modelled one needs every operand,
+result and clobber the text implies, and a list that is one entry short miscompiles silently: the same
+failure as an under-declared machine effect, which is how an `FSQRT` ended up scheduled past the store
+that captured its answer. Guessing is worse than declining.
+
+What it buys today is that inline asm stops being a **wall**. A program with one `!` line used to keep
+every one of its procedures off the IR path; now only the procedure containing it is unoptimized, and
+its siblings promote, fold and route normally. The IR-to-BASIC writer renders it back verbatim, which
+is exact rather than approximate - the writer's target is PowerBASIC, so the faithful rendering of `!`
+text is that text.
+
+**Still to do**: the x86-16 back end declines it, and the decline names why. The text reaches BASIC
+variables by NAME, a name resolves against a frame layout, and the routed path decides that layout
+differently from the direct emitter. Emitting it needs an `IAsmSymbolResolver` that answers from the
+routed frame; a name bound to the wrong cell would be silent. That is the remaining piece before an
+asm-containing procedure can route.
+
+### Wider integers and SIMD as IR operations - not started
+
+The IR has no integer tier above the dialects' own widths and no vector type; `MRegSize` reads
+`Byte, Word, Dword, Qword, Tbyte`, which is a 16-bit machine's operand set. Making 64/128/256/512-bit
+integers and MMX/SSE/AVX-shaped operations IR nodes would let each back end choose how to realise
+them - a loop on an 8086, register pairs on a 386, one instruction on an MMX or SSE target - without
+the front end knowing which. That is the difference between one emitter per target and one emitter
+with a target parameter.
+
+Ordering note: the existing back end is x86-**16** and still declines 32-bit compares and division
+(`compare as a value: 32-bit Slt`, `SDiv on i32 (16-bit only)` are live census entries), so widening
+the integer tier and parameterizing the selector comes before vectors.
+
 ### Porting the optimization catalogue to the IR — the real denominator
 
 "Port the 421 optimizations to the IR" needs a denominator before it means anything, and 421 is the
