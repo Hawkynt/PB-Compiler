@@ -83,9 +83,12 @@ public sealed class IrBasicWriter {
       return;
     var name = Sanitize(global.Name);
     this._names[global] = name;
+    // SHARED, always: an IR global IS storage every function can see, and a module-level DIM without
+    // it is visible only to the main body - a procedure reading one would not even compile. The
+    // rendered program has procedures, so this is not a detail that could be left for later.
     this.Line(global.Count > 1
-      ? $"DIM {name}(0 TO {global.Count - 1}) AS {TypeName(global.ValueType)}"
-      : $"DIM {name} AS {TypeName(global.ValueType)}");
+      ? $"DIM {name}(0 TO {global.Count - 1}) AS SHARED {TypeName(global.ValueType)}"
+      : $"DIM {name} AS SHARED {TypeName(global.ValueType)}");
   }
 
   // ---- functions --------------------------------------------------------------------------------

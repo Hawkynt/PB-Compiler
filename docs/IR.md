@@ -242,6 +242,22 @@ This found a real miscompile the first time it ran — not in a pass, but in the
 `ELSEIF` condition was being folded against the value lattice of the `THEN` arm it followed. See
 `CodeGen/CodeGenerator.cs` `EmitIf` and `Tests/CodeGen/ElseIfProgramPointTests.cs`.
 
+### The bar for retiring `BasicWriter`
+
+`BasicWriter` is not a pretty-printer — it is a **pb36 → pb35 down-translator**, and its contract is
+that the rendered text is a program *the pb35 front end accepts*. That is the bar the IR writer has
+to clear, and it is now measured: `Write_GivenTheCorpus_ThenWhatItRendersRebindsUnderPb35` renders
+every corpus module, re-parses and re-binds the output under pb35, and requires zero errors.
+Currently **80 modules re-bind, 0 rejected**.
+
+Rendering and re-binding are counted apart on purpose: a module the writer *refuses* is a known gap,
+while one it renders into text pb35 *rejects* is a bug, and one number would let the second hide
+behind the first.
+
+What `BasicWriter` still does that the IR writer cannot: it renders `TYPE` declarations and procedure
+signatures from the original `CompilationUnit`, which the lowering has flattened into offsets and
+GEPs. Those are additions, not a swap.
+
 `IrBasicWriterCensusTests` reports how much of the corpus renders (currently **173 of 218**
 functions) and ranks what does not, which is the distance still to go before `BasicWriter` can be
 retired. It cannot be retired yet: it also renders declarations, `TYPE`s and procedure signatures

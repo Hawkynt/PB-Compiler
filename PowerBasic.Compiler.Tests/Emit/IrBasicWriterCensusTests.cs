@@ -71,6 +71,65 @@ public sealed class IrBasicWriterCensusTests {
     Assert.That(rendered, Is.GreaterThanOrEqualTo(_floor), "fewer IR functions render than used to:\n" + report);
   }
 
+  /// <summary>
+  /// The contract <see cref="BasicWriter"/> is held to, applied to the IR writer: the rendered text
+  /// must be a program the <b>pb35 front end accepts</b>, not merely plausible source. That is the
+  /// actual bar for replacing it - the back-emitter's job is down-translation to a dialect, and
+  /// output that does not re-bind is not a translation of anything.
+  ///
+  /// Rendering and re-binding are counted separately on purpose. A module the writer refuses is a
+  /// known gap; one it renders into text pb35 rejects is a BUG, and pinning them at one number would
+  /// let the second hide behind the first.
+  /// </summary>
+  [Test]
+  public void Write_GivenTheCorpus_ThenWhatItRendersRebindsUnderPb35() {
+    var dir = Path.Combine(_repoRoot, "tests");
+    Assume.That(Directory.Exists(dir), "no tests/*.BAS corpus present");
+    var rejected = new List<string>();
+    var rebound = 0;
+
+    foreach (var file in new[] { dir, Path.Combine(dir, "diff"), Path.Combine(dir, "optimize") }
+               .Where(Directory.Exists)
+               .SelectMany(d => Directory.EnumerateFiles(d, "*.BAS", SearchOption.TopDirectoryOnly))
+               .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)) {
+      var name = Path.GetFileName(file);
+      string rendered;
+      try {
+        var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(File.ReadAllText(file), name, Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
+        if (model.Errors.Count > 0)
+          continue;
+        var module = IrLowering.TryLowerModule(model, out _);
+        if (module is null)
+          continue;
+        IrPassManager.Standard().RunOnModule(module);
+        rendered = IrBasicWriter.Write(module);
+      } catch (Exception) {
+        continue;                                  // a module the writer declines is measured above
+      }
+
+      try {
+        var back = Binder.Bind(Parser.Parse(Lexer.Tokenize(rendered, "RT.BAS", Dialect.Pb35), "RT.BAS", Dialect.Pb35), Dialect.Pb35);
+        if (back.Errors.Count > 0)
+          rejected.Add($"{name}: {back.Errors[0].Message}");
+        else
+          ++rebound;
+      } catch (Exception e) {
+        rejected.Add($"{name}: {e.Message}");
+      }
+    }
+
+    TestContext.Out.WriteLine($"modules rendered and re-bound under pb35: {rebound}, rejected: {rejected.Count}");
+    foreach (var r in rejected.Take(20))
+      TestContext.Out.WriteLine("  " + r);
+
+    Assert.That(rejected, Is.Empty,
+      "the IR writer produced text the pb35 front end rejects:" + Environment.NewLine
+      + string.Join(Environment.NewLine, rejected));
+    Assert.That(rebound, Is.GreaterThanOrEqualTo(_reboundFloor), "fewer modules re-bind than used to");
+  }
+
+  private const int _reboundFloor = 80;   // 79 at the first measurement, before globals were SHARED
+
   private const int _floor = 173;   // 13 at the first measurement; +scalar slots, +PRINT, +file I/O, +arrays,
                                    // +globals, +string and math intrinsics, +exact truncation
 }
