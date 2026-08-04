@@ -430,6 +430,15 @@ public sealed class Cpu8086 {
       case 0x1F: this._ds = this.Pop(); return;
 
       case 0x68: this.Push(this.FetchWord()); return;   // 186, but the emitter uses it
+      case 0x69 or 0x6B: {                              // IMUL r16, r/m16, imm (186)
+        var (mode, reg, address) = this.ModRm();
+        var multiplicand = (short)this.GetRm16(mode, address);
+        var multiplier = opcode == 0x69 ? (short)this.FetchWord() : (sbyte)this.Fetch();
+        var product = multiplicand * multiplier;
+        this._r[reg] = (ushort)product;
+        this._cf = this._of = (short)this._r[reg] != product;
+        return;
+      }
       case 0x6A: this.Push((ushort)(sbyte)this.Fetch()); return;
 
       case >= 0x70 and <= 0x7F: {                       // Jcc rel8

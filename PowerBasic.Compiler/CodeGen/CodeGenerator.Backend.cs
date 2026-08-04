@@ -62,31 +62,27 @@ public sealed partial class CodeGenerator {
 
     var candidates = new List<(ProcedureSymbol Proc, IrFunction Fn, MFunction Machine)>();
     foreach (var proc in model.ProcedureList) {
-      if (!proc.IsFunction || proc.IsExternal
-          || proc.ReturnType is not ScalarType { ByteSize: 2, Signed: true, IsFloat: false }
-          || !proc.Parameters.All(p => p.ByVal && p.Type is ScalarType { ByteSize: 2, IsFloat: false })
-          || proc.Body is null || ContainsErrorHandling(proc.Body))
-        continue;
-      // ! Widening this shape is the next coverage step, and the differential gate has already shown
-      // it is not free. Admitting SUBs and LONG/real returns made CODEGEN.BAS print
-      // "accumulate-32283" where the direct emitter prints "accumulate 3", and the procedure it went
-      // wrong in is narrowed down:
+      // The filter admits a SHAPE the ABI can express; whether the body can be compiled at all is the
+      // selector's question, and it declines what it cannot do. It used to demand a signed 16-bit
+      // function with signed 16-bit parameters - the truth when the back end knew only integers. It
+      // now returns LONGs in DX:AX and reals on ST(0), and a SUB returns nothing.
       //
-      //     SUB AccumulateOverArrayIsHandQuality(BYVAL n%) NOINLINE
-      //       DIM a%(0 TO 49)          ' a LOCAL ARRAY
-      //       a%(7) = n%
-      //       s% = 0
-      //       FOR i% = 0 TO 49 : s% = s% + a%(i%) : NEXT i%
-      //
-      // So the suspect is not the return convention at all - it is a procedure whose locals include an
-      // ARRAY. The back end gives a routed function its own frame (MachineEmitter's stack slots) while
+      // A local ARRAY keeps a procedure out, and that exclusion was bought the hard way: admitting
+      // them made CODEGEN.BAS print "accumulate-32283" where the direct emitter prints
+      // "accumulate 3". A routed function gets its own frame from MachineEmitter's stack slots while
       // the direct path lays local storage out through LayoutFrame, and only module variables are
-      // bridged (DataCellOf handles "g." and string constants). A routed body computing over an alloca
-      // array where the surrounding layout expects the frame one is exactly the shape that reads
-      // plausible garbage rather than failing loudly.
-      //
-      // The next attempt should widen the shape AND exclude procedures with array locals until the
-      // frame bridge exists - not ship on the strength of "it selects".
+      // bridged - a body computing over an alloca array where the surrounding layout expects the
+      // frame one reads plausible garbage instead of failing loudly. Strings stay out for the same
+      // kind of reason: they are runtime handles with ownership rules the back end does not model.
+      if (proc.IsExternal || proc.Body is null || ContainsErrorHandling(proc.Body))
+        continue;
+      if (proc.IsFunction && proc.ReturnType is not ScalarType { IsFloat: false, ByteSize: 2 or 4 }
+                          and not ScalarType { IsFloat: true, ByteSize: 4 or 8 })
+        continue;
+      if (!proc.Parameters.All(p => p.ByVal && p.Type is ScalarType { IsFloat: false, ByteSize: 2 or 4 }))
+        continue;
+      if (DeclaresAnArray(proc.Body))
+        continue;
       if (!byName.TryGetValue(proc.Name, out var irFn) || InstructionSelector.TrySelect(irFn) is not { } mfn)
         continue;
       candidates.Add((proc, irFn, mfn));
@@ -214,6 +210,22 @@ public sealed partial class CodeGenerator {
     if (name.StartsWith("rt_", System.StringComparison.Ordinal))
       return Asm.Mem.Word(this._asm.Lbl(name));
     return null;   // a STATIC local, or a synthesized IR global like .data_cursor - not addressable here yet
+  }
+
+  /// <summary>
+  /// Whether a body DIMs or REDIMs an array. Such a procedure is kept off the back end until routed
+  /// code and the direct frame layout agree on where local storage lives.
+  /// </summary>
+  private static bool DeclaresAnArray(IEnumerable<Syntax.Ast.Statement> body) {
+    foreach (var statement in body) {
+      if (statement is Syntax.Ast.DimStmt dim && dim.Variables.Any(v => v.ArrayBounds is { Count: > 0 }))
+        return true;
+      if (statement is Syntax.Ast.RedimStmt)
+        return true;
+      if (ChildStatementBlocks(statement).Any(DeclaresAnArray))
+        return true;
+    }
+    return false;
   }
 
   /// <summary>The names of the defined functions <paramref name="fn"/> calls directly (its ABI partners).</summary>
