@@ -1,0 +1,907 @@
+using System.Text;
+
+namespace PowerBasic.Compiler.Tests.Exec;
+
+/// <summary>
+/// A real-mode 8086 interpreter, enough of one to <b>run</b> the executables this compiler emits.
+///
+/// It exists to answer one question the rest of the test suite cannot: does the retargetable IR path
+/// produce the same OBSERVABLE behaviour as the direct emitter? Byte-identity with PBC 3.50 is the
+/// direct emitter's job and the IR path will never match those bytes - it is a different code
+/// generator. What it must match is what the program PRINTS, and until something executes the image
+/// nobody can say whether it does. Every claim about the back end has rested on matched register
+/// conventions and static invariants; this turns them into a measurement
+/// (<see cref="Tests.Backend.BackendDifferentialTests"/>).
+///
+/// The design rule that matters more than coverage: <b>it fails loudly</b>. An unimplemented opcode,
+/// an unhandled DOS call, a runaway loop - all throw <see cref="Cpu8086Exception"/> naming what was
+/// hit and where. An interpreter that quietly does the wrong thing would prove the opposite of what it
+/// is for, so a program it cannot run is a skipped test, never a passing one. x87 is deliberately not
+/// implemented for that reason: floating point would need the whole 80-bit stack to be faithful, and a
+/// half-faithful one would silently disagree with the hardware the fidelity tests describe.
+/// </summary>
+public sealed class Cpu8086 {
+
+  private const int _MEMORY = 1 << 20;                 // one megabyte, the real-mode address space
+  private const ushort _PSP_SEGMENT = 0x0100;
+  private const ushort _LOAD_SEGMENT = 0x0110;         // DOS loads the image one PSP (16 paragraphs) up
+
+  private readonly byte[] _memory = new byte[_MEMORY];
+  private readonly StringBuilder _output = new();
+  private readonly Dictionary<int, MemoryFile> _files = [];
+  private readonly Dictionary<string, MemoryFile> _byName = new(StringComparer.OrdinalIgnoreCase);
+  private int _nextHandle = 5;                          // 0..4 are the standard handles
+  private ushort _nextFreeSegment = 0x2000;             // where INT 21h/48h hands out blocks
+
+  private sealed class MemoryFile {
+    public string Name = "";
+    public List<byte> Bytes = [];
+    public int Position;
+  }
+
+  // registers, in the encoding order the ModRM byte uses
+  private readonly ushort[] _r = new ushort[8];         // AX CX DX BX SP BP SI DI
+  private ushort _cs, _ds, _es, _ss, _ip;
+  private bool _cf, _zf, _sf, _of, _pf, _af, _df;
+  private bool _halted;
+
+  private const int _AX = 0, _CX = 1, _DX = 2, _BX = 3, _SP = 4, _BP = 5, _SI = 6, _DI = 7;
+
+  /// <summary>Everything the program wrote to stdout/stderr, in order.</summary>
+  public string Output => this._output.ToString();
+
+  /// <summary>The exit code the program terminated with.</summary>
+  public int ExitCode { get; private set; }
+
+  /// <summary>The contents of a file the program created, or null if it made no such file.</summary>
+  public string? FileContent(string name)
+    => this._byName.TryGetValue(name, out var file) ? Encoding.ASCII.GetString([.. file.Bytes]) : null;
+
+  /// <summary>Loads an MZ executable and runs it to termination (or until <paramref name="maxSteps"/> instructions).</summary>
+  public static Cpu8086 Run(byte[] exe, int maxSteps = 20_000_000) {
+    var cpu = new Cpu8086();
+    cpu.Load(exe);
+    cpu.Execute(maxSteps);
+    return cpu;
+  }
+
+  private void Load(byte[] exe) {
+    if (exe.Length < 0x1C || exe[0] != 'M' || exe[1] != 'Z')
+      throw new Cpu8086Exception("not an MZ executable");
+    var headerParagraphs = Word(exe, 0x08);
+    var headerSize = headerParagraphs * 16;
+    var relocations = Word(exe, 0x06);
+    var relocationTable = Word(exe, 0x18);
+    var pages = Word(exe, 0x04);
+    var lastPage = Word(exe, 0x02);
+    var imageSize = pages * 512 - headerSize - (lastPage == 0 ? 0 : 512 - lastPage);
+
+    var loadAddress = _LOAD_SEGMENT * 16;
+    Array.Copy(exe, headerSize, this._memory, loadAddress, Math.Min(imageSize, exe.Length - headerSize));
+
+    // every relocation names a word holding a segment, which the loader biases by where it landed
+    for (var i = 0; i < relocations; ++i) {
+      var offset = Word(exe, relocationTable + i * 4);
+      var segment = Word(exe, relocationTable + i * 4 + 2);
+      var at = (_LOAD_SEGMENT + segment) * 16 + offset;
+      WriteWord(at, (ushort)(ReadWord(at) + _LOAD_SEGMENT));
+    }
+
+    this._cs = (ushort)(_LOAD_SEGMENT + Word(exe, 0x16));
+    this._ip = Word(exe, 0x14);
+    this._ss = (ushort)(_LOAD_SEGMENT + Word(exe, 0x0E));
+    this._r[_SP] = Word(exe, 0x10);
+    this._ds = this._es = _PSP_SEGMENT;
+  }
+
+  private static ushort Word(byte[] bytes, int at) => (ushort)(bytes[at] | (bytes[at + 1] << 8));
+
+  private void Execute(int maxSteps) {
+    for (var step = 0; step < maxSteps; ++step) {
+      if (this._halted)
+        return;
+      this.Step();
+    }
+    throw new Cpu8086Exception($"ran {maxSteps} instructions without terminating (runaway program?)");
+  }
+
+  // ---- memory ---------------------------------------------------------------------------------
+
+  private static int Linear(ushort segment, ushort offset) => (segment * 16 + offset) & (_MEMORY - 1);
+  private byte ReadByte(int at) => this._memory[at & (_MEMORY - 1)];
+  private void WriteByte(int at, byte value) => this._memory[at & (_MEMORY - 1)] = value;
+  private ushort ReadWord(int at) => (ushort)(this.ReadByte(at) | (this.ReadByte(at + 1) << 8));
+
+  private void WriteWord(int at, ushort value) {
+    this.WriteByte(at, (byte)value);
+    this.WriteByte(at + 1, (byte)(value >> 8));
+  }
+
+  private byte Fetch() {
+    var value = this.ReadByte(Linear(this._cs, this._ip));
+    ++this._ip;
+    return value;
+  }
+
+  private ushort FetchWord() {
+    var lo = this.Fetch();
+    return (ushort)(lo | (this.Fetch() << 8));
+  }
+
+  private void Push(ushort value) {
+    this._r[_SP] -= 2;
+    this.WriteWord(Linear(this._ss, this._r[_SP]), value);
+  }
+
+  private ushort Pop() {
+    var value = this.ReadWord(Linear(this._ss, this._r[_SP]));
+    this._r[_SP] += 2;
+    return value;
+  }
+
+  // ---- 8-bit register halves ------------------------------------------------------------------
+
+  private byte Reg8(int index) => (byte)(index < 4 ? this._r[index] : this._r[index - 4] >> 8);
+
+  private void SetReg8(int index, byte value) {
+    if (index < 4)
+      this._r[index] = (ushort)((this._r[index] & 0xFF00) | value);
+    else
+      this._r[index - 4] = (ushort)((this._r[index - 4] & 0x00FF) | (value << 8));
+  }
+
+  // ---- ModRM ----------------------------------------------------------------------------------
+
+  private ushort? _segmentOverride;
+
+  private ushort DataSegment => this._segmentOverride ?? this._ds;
+
+  private (int Mode, int Reg, int Address) ModRm() {
+    var modrm = this.Fetch();
+    var mode = modrm >> 6;
+    var reg = (modrm >> 3) & 7;
+    var rm = modrm & 7;
+    if (mode == 3)
+      return (3, reg, rm);                              // the operand IS a register
+
+    ushort offset;
+    var segment = this.DataSegment;
+    if (mode == 0 && rm == 6) {
+      offset = this.FetchWord();
+    } else {
+      offset = rm switch {
+        0 => (ushort)(this._r[_BX] + this._r[_SI]),
+        1 => (ushort)(this._r[_BX] + this._r[_DI]),
+        2 => (ushort)(this._r[_BP] + this._r[_SI]),
+        3 => (ushort)(this._r[_BP] + this._r[_DI]),
+        4 => this._r[_SI],
+        5 => this._r[_DI],
+        6 => this._r[_BP],
+        _ => this._r[_BX],
+      };
+      if (rm is 2 or 3 or 6 && this._segmentOverride is null)
+        segment = this._ss;                             // BP-relative addressing defaults to the stack
+      if (mode == 1)
+        offset = (ushort)(offset + (sbyte)this.Fetch());
+      else if (mode == 2)
+        offset = (ushort)(offset + this.FetchWord());
+    }
+    return (mode, reg, Linear(segment, offset));
+  }
+
+  private ushort GetRm16(int mode, int address) => mode == 3 ? this._r[address] : this.ReadWord(address);
+
+  private void SetRm16(int mode, int address, ushort value) {
+    if (mode == 3)
+      this._r[address] = value;
+    else
+      this.WriteWord(address, value);
+  }
+
+  private byte GetRm8(int mode, int address) => mode == 3 ? this.Reg8(address) : this.ReadByte(address);
+
+  private void SetRm8(int mode, int address, byte value) {
+    if (mode == 3)
+      this.SetReg8(address, value);
+    else
+      this.WriteByte(address, value);
+  }
+
+  // ---- flags ----------------------------------------------------------------------------------
+
+  private void SetLogicFlags16(ushort value) {
+    this._cf = this._of = false;
+    this._zf = value == 0;
+    this._sf = (value & 0x8000) != 0;
+    this._pf = Parity((byte)value);
+  }
+
+  private void SetLogicFlags8(byte value) {
+    this._cf = this._of = false;
+    this._zf = value == 0;
+    this._sf = (value & 0x80) != 0;
+    this._pf = Parity(value);
+  }
+
+  private static bool Parity(byte value) {
+    var bits = 0;
+    for (var i = 0; i < 8; ++i)
+      bits += (value >> i) & 1;
+    return (bits & 1) == 0;
+  }
+
+  private ushort Add16(ushort a, ushort b, bool carry) {
+    var sum = a + b + (carry ? 1 : 0);
+    var result = (ushort)sum;
+    this._cf = sum > 0xFFFF;
+    this._af = (((a ^ b ^ result) & 0x10) != 0);
+    this._of = ((~(a ^ b) & (a ^ result) & 0x8000) != 0);
+    this._zf = result == 0;
+    this._sf = (result & 0x8000) != 0;
+    this._pf = Parity((byte)result);
+    return result;
+  }
+
+  private ushort Sub16(ushort a, ushort b, bool borrow) {
+    var difference = a - b - (borrow ? 1 : 0);
+    var result = (ushort)difference;
+    this._cf = difference < 0;
+    this._af = (((a ^ b ^ result) & 0x10) != 0);
+    this._of = (((a ^ b) & (a ^ result) & 0x8000) != 0);
+    this._zf = result == 0;
+    this._sf = (result & 0x8000) != 0;
+    this._pf = Parity((byte)result);
+    return result;
+  }
+
+  private byte Add8(byte a, byte b, bool carry) {
+    var sum = a + b + (carry ? 1 : 0);
+    var result = (byte)sum;
+    this._cf = sum > 0xFF;
+    this._of = ((~(a ^ b) & (a ^ result) & 0x80) != 0);
+    this._zf = result == 0;
+    this._sf = (result & 0x80) != 0;
+    this._pf = Parity(result);
+    return result;
+  }
+
+  private byte Sub8(byte a, byte b, bool borrow) {
+    var difference = a - b - (borrow ? 1 : 0);
+    var result = (byte)difference;
+    this._cf = difference < 0;
+    this._of = (((a ^ b) & (a ^ result) & 0x80) != 0);
+    this._zf = result == 0;
+    this._sf = (result & 0x80) != 0;
+    this._pf = Parity(result);
+    return result;
+  }
+
+  private ushort Alu16(int op, ushort a, ushort b) => op switch {
+    0 => this.Add16(a, b, false),
+    1 => Logic16(this, (ushort)(a | b)),
+    2 => this.Add16(a, b, this._cf),
+    3 => this.Sub16(a, b, this._cf),
+    4 => Logic16(this, (ushort)(a & b)),
+    5 => this.Sub16(a, b, false),
+    6 => Logic16(this, (ushort)(a ^ b)),
+    _ => this.Sub16(a, b, false),                      // CMP: flags only, result discarded
+  };
+
+  private static ushort Logic16(Cpu8086 cpu, ushort value) {
+    cpu.SetLogicFlags16(value);
+    return value;
+  }
+
+  private byte Alu8(int op, byte a, byte b) => op switch {
+    0 => this.Add8(a, b, false),
+    1 => Logic8(this, (byte)(a | b)),
+    2 => this.Add8(a, b, this._cf),
+    3 => this.Sub8(a, b, this._cf),
+    4 => Logic8(this, (byte)(a & b)),
+    5 => this.Sub8(a, b, false),
+    6 => Logic8(this, (byte)(a ^ b)),
+    _ => this.Sub8(a, b, false),
+  };
+
+  private static byte Logic8(Cpu8086 cpu, byte value) {
+    cpu.SetLogicFlags8(value);
+    return value;
+  }
+
+  private ushort Flags {
+    get {
+      ushort flags = 0x0002;
+      if (this._cf) flags |= 0x0001;
+      if (this._pf) flags |= 0x0004;
+      if (this._af) flags |= 0x0010;
+      if (this._zf) flags |= 0x0040;
+      if (this._sf) flags |= 0x0080;
+      if (this._df) flags |= 0x0400;
+      if (this._of) flags |= 0x0800;
+      return flags;
+    }
+    set {
+      this._cf = (value & 0x0001) != 0;
+      this._pf = (value & 0x0004) != 0;
+      this._af = (value & 0x0010) != 0;
+      this._zf = (value & 0x0040) != 0;
+      this._sf = (value & 0x0080) != 0;
+      this._df = (value & 0x0400) != 0;
+      this._of = (value & 0x0800) != 0;
+    }
+  }
+
+  private bool Condition(int code) => (code >> 1) switch {
+    0 => this._of,
+    1 => this._cf,
+    2 => this._zf,
+    3 => this._cf || this._zf,
+    4 => this._sf,
+    5 => this._pf,
+    6 => this._sf != this._of,
+    _ => this._zf || this._sf != this._of,
+  } ^ ((code & 1) != 0);
+
+  // ---- the instruction loop --------------------------------------------------------------------
+
+  private void Step() {
+    this._segmentOverride = null;
+    var repeat = 0;                                     // 0 none, 1 REPNZ, 2 REPZ
+    byte opcode;
+    for (;;) {
+      opcode = this.Fetch();
+      switch (opcode) {
+        case 0x26: this._segmentOverride = this._es; continue;
+        case 0x2E: this._segmentOverride = this._cs; continue;
+        case 0x36: this._segmentOverride = this._ss; continue;
+        case 0x3E: this._segmentOverride = this._ds; continue;
+        case 0xF2: repeat = 1; continue;
+        case 0xF3: repeat = 2; continue;
+      }
+      break;
+    }
+
+    switch (opcode) {
+      // ---- ALU r/m,r and r,r/m ----
+      case >= 0x00 and <= 0x3B when (opcode & 7) <= 3: {
+        var op = opcode >> 3;
+        var (mode, reg, address) = this.ModRm();
+        var wide = (opcode & 1) != 0;
+        var toReg = (opcode & 2) != 0;
+        if (wide) {
+          var a = toReg ? this._r[reg] : this.GetRm16(mode, address);
+          var b = toReg ? this.GetRm16(mode, address) : this._r[reg];
+          var result = this.Alu16(op, a, b);
+          if (op != 7) {
+            if (toReg) this._r[reg] = result; else this.SetRm16(mode, address, result);
+          }
+        } else {
+          var a = toReg ? this.Reg8(reg) : this.GetRm8(mode, address);
+          var b = toReg ? this.GetRm8(mode, address) : this.Reg8(reg);
+          var result = this.Alu8(op, a, b);
+          if (op != 7) {
+            if (toReg) this.SetReg8(reg, result); else this.SetRm8(mode, address, result);
+          }
+        }
+        return;
+      }
+      // ---- ALU AL/AX,imm ----
+      case >= 0x04 and <= 0x3D when (opcode & 7) is 4 or 5: {
+        var op = opcode >> 3;
+        if ((opcode & 1) != 0) {
+          var result = this.Alu16(op, this._r[_AX], this.FetchWord());
+          if (op != 7)
+            this._r[_AX] = result;
+        } else {
+          var result = this.Alu8(op, this.Reg8(_AX), this.Fetch());
+          if (op != 7)
+            this.SetReg8(_AX, result);
+        }
+        return;
+      }
+
+      case >= 0x40 and <= 0x47: {                       // INC r16 (CF untouched)
+        var carry = this._cf;
+        this._r[opcode - 0x40] = this.Add16(this._r[opcode - 0x40], 1, false);
+        this._cf = carry;
+        return;
+      }
+      case >= 0x48 and <= 0x4F: {                       // DEC r16
+        var carry = this._cf;
+        this._r[opcode - 0x48] = this.Sub16(this._r[opcode - 0x48], 1, false);
+        this._cf = carry;
+        return;
+      }
+      case >= 0x50 and <= 0x57: this.Push(this._r[opcode - 0x50]); return;
+      case >= 0x58 and <= 0x5F: this._r[opcode - 0x58] = this.Pop(); return;
+
+      case 0x06: this.Push(this._es); return;
+      case 0x07: this._es = this.Pop(); return;
+      case 0x0E: this.Push(this._cs); return;
+      case 0x16: this.Push(this._ss); return;
+      case 0x17: this._ss = this.Pop(); return;
+      case 0x1E: this.Push(this._ds); return;
+      case 0x1F: this._ds = this.Pop(); return;
+
+      case 0x68: this.Push(this.FetchWord()); return;   // 186, but the emitter uses it
+      case 0x6A: this.Push((ushort)(sbyte)this.Fetch()); return;
+
+      case >= 0x70 and <= 0x7F: {                       // Jcc rel8
+        var delta = (sbyte)this.Fetch();
+        if (this.Condition(opcode - 0x70))
+          this._ip = (ushort)(this._ip + delta);
+        return;
+      }
+
+      case 0x80 or 0x81 or 0x83: {                      // group 1: ALU r/m,imm
+        var (mode, op, address) = this.ModRm();
+        if (opcode == 0x80) {
+          var result = this.Alu8(op, this.GetRm8(mode, address), this.Fetch());
+          if (op != 7)
+            this.SetRm8(mode, address, result);
+        } else {
+          var immediate = opcode == 0x81 ? this.FetchWord() : (ushort)(sbyte)this.Fetch();
+          var result = this.Alu16(op, this.GetRm16(mode, address), immediate);
+          if (op != 7)
+            this.SetRm16(mode, address, result);
+        }
+        return;
+      }
+
+      case 0x84: { var (m, r, a) = this.ModRm(); this.SetLogicFlags8((byte)(this.GetRm8(m, a) & this.Reg8(r))); return; }
+      case 0x85: { var (m, r, a) = this.ModRm(); this.SetLogicFlags16((ushort)(this.GetRm16(m, a) & this._r[r])); return; }
+      case 0x86: { var (m, r, a) = this.ModRm(); var t = this.GetRm8(m, a); this.SetRm8(m, a, this.Reg8(r)); this.SetReg8(r, t); return; }
+      case 0x87: { var (m, r, a) = this.ModRm(); var t = this.GetRm16(m, a); this.SetRm16(m, a, this._r[r]); this._r[r] = t; return; }
+
+      case 0x88: { var (m, r, a) = this.ModRm(); this.SetRm8(m, a, this.Reg8(r)); return; }
+      case 0x89: { var (m, r, a) = this.ModRm(); this.SetRm16(m, a, this._r[r]); return; }
+      case 0x8A: { var (m, r, a) = this.ModRm(); this.SetReg8(r, this.GetRm8(m, a)); return; }
+      case 0x8B: { var (m, r, a) = this.ModRm(); this._r[r] = this.GetRm16(m, a); return; }
+      case 0x8C: { var (m, r, a) = this.ModRm(); this.SetRm16(m, a, this.Segment(r)); return; }
+      case 0x8E: { var (m, r, a) = this.ModRm(); this.SetSegment(r, this.GetRm16(m, a)); return; }
+      case 0x8D: {                                      // LEA: the ADDRESS, not the contents
+        var (mode, reg, address) = this.ModRm();
+        if (mode == 3)
+          throw new Cpu8086Exception("LEA with a register operand");
+        this._r[reg] = (ushort)(address - Linear(this.DataSegment, 0));
+        return;
+      }
+
+      case 0x90: return;                                // NOP
+      case >= 0x91 and <= 0x97: {
+        var index = opcode - 0x90;
+        (this._r[_AX], this._r[index]) = (this._r[index], this._r[_AX]);
+        return;
+      }
+      case 0x98: this._r[_AX] = (ushort)(sbyte)this.Reg8(_AX); return;                     // CBW
+      case 0x99: this._r[_DX] = (ushort)((this._r[_AX] & 0x8000) != 0 ? 0xFFFF : 0); return; // CWD
+      case 0x9C: this.Push(this.Flags); return;
+      case 0x9D: this.Flags = this.Pop(); return;
+      case 0x9E: {                                      // SAHF
+        var ah = this.Reg8(4);
+        this._cf = (ah & 0x01) != 0; this._pf = (ah & 0x04) != 0; this._af = (ah & 0x10) != 0;
+        this._zf = (ah & 0x40) != 0; this._sf = (ah & 0x80) != 0;
+        return;
+      }
+      case 0x9F: this.SetReg8(4, (byte)(this.Flags & 0xD5)); return;                        // LAHF
+
+      case 0xA0: this.SetReg8(_AX, this.ReadByte(Linear(this.DataSegment, this.FetchWord()))); return;
+      case 0xA1: this._r[_AX] = this.ReadWord(Linear(this.DataSegment, this.FetchWord())); return;
+      case 0xA2: this.WriteByte(Linear(this.DataSegment, this.FetchWord()), this.Reg8(_AX)); return;
+      case 0xA3: this.WriteWord(Linear(this.DataSegment, this.FetchWord()), this._r[_AX]); return;
+
+      case 0xA4 or 0xA5 or 0xAA or 0xAB or 0xAC or 0xAD or 0xAE or 0xAF or 0xA6 or 0xA7:
+        this.StringOp(opcode, repeat);
+        return;
+
+      case 0xA8: this.SetLogicFlags8((byte)(this.Reg8(_AX) & this.Fetch())); return;
+      case 0xA9: this.SetLogicFlags16((ushort)(this._r[_AX] & this.FetchWord())); return;
+
+      case >= 0xB0 and <= 0xB7: this.SetReg8(opcode - 0xB0, this.Fetch()); return;
+      case >= 0xB8 and <= 0xBF: this._r[opcode - 0xB8] = this.FetchWord(); return;
+
+      case 0xC0 or 0xC1: {                              // 186 shift by immediate
+        var (mode, op, address) = this.ModRm();
+        var count = this.Fetch();
+        if (opcode == 0xC0)
+          this.SetRm8(mode, address, this.Shift8(op, this.GetRm8(mode, address), count));
+        else
+          this.SetRm16(mode, address, this.Shift16(op, this.GetRm16(mode, address), count));
+        return;
+      }
+      case 0xC2: { var pop = this.FetchWord(); this._ip = this.Pop(); this._r[_SP] += pop; return; }
+      case 0xC3: this._ip = this.Pop(); return;
+      case 0xC6: { var (m, _, a) = this.ModRm(); this.SetRm8(m, a, this.Fetch()); return; }
+      case 0xC7: { var (m, _, a) = this.ModRm(); this.SetRm16(m, a, this.FetchWord()); return; }
+      case 0xCB: { this._ip = this.Pop(); this._cs = this.Pop(); return; }
+      case 0xCD: this.Interrupt(this.Fetch()); return;
+      case 0xCF: { this._ip = this.Pop(); this._cs = this.Pop(); this.Flags = this.Pop(); return; }
+
+      case >= 0xD0 and <= 0xD3: {
+        var (mode, op, address) = this.ModRm();
+        var count = (opcode & 2) != 0 ? this.Reg8(_CX) : (byte)1;
+        if ((opcode & 1) == 0)
+          this.SetRm8(mode, address, this.Shift8(op, this.GetRm8(mode, address), count));
+        else
+          this.SetRm16(mode, address, this.Shift16(op, this.GetRm16(mode, address), count));
+        return;
+      }
+
+      case 0x9B: return;                                // FWAIT - nothing to synchronise with here
+      case >= 0xD8 and <= 0xDF: this.X87(opcode); return;
+
+      case 0xE0 or 0xE1 or 0xE2: {                      // LOOPNZ / LOOPZ / LOOP
+        var delta = (sbyte)this.Fetch();
+        var taken = --this._r[_CX] != 0
+          && (opcode == 0xE2 || (opcode == 0xE1 ? this._zf : !this._zf));
+        if (taken)
+          this._ip = (ushort)(this._ip + delta);
+        return;
+      }
+      case 0xE3: { var delta = (sbyte)this.Fetch(); if (this._r[_CX] == 0) this._ip = (ushort)(this._ip + delta); return; }
+      case 0xE8: { var delta = (short)this.FetchWord(); this.Push(this._ip); this._ip = (ushort)(this._ip + delta); return; }
+      case 0xE9: { var delta = (short)this.FetchWord(); this._ip = (ushort)(this._ip + delta); return; }
+      case 0xEA: { var offset = this.FetchWord(); this._cs = this.FetchWord(); this._ip = offset; return; }
+      case 0xEB: { var delta = (sbyte)this.Fetch(); this._ip = (ushort)(this._ip + delta); return; }
+      case 0x9A: { var offset = this.FetchWord(); var segment = this.FetchWord(); this.Push(this._cs); this.Push(this._ip); this._cs = segment; this._ip = offset; return; }
+
+      case 0xF4: this._halted = true; return;
+      case 0xF5: this._cf = !this._cf; return;
+      case 0xF8: this._cf = false; return;
+      case 0xF9: this._cf = true; return;
+      case 0xFA or 0xFB: return;                        // CLI/STI - no interrupts are delivered here
+      case 0xFC: this._df = false; return;
+      case 0xFD: this._df = true; return;
+
+      case 0xF6 or 0xF7: this.Group3(opcode, repeat); return;
+      case 0xFE or 0xFF: this.Group45(opcode); return;
+
+      default:
+        throw new Cpu8086Exception($"unimplemented opcode {opcode:X2} at {this._cs:X4}:{this._ip - 1:X4}");
+    }
+  }
+
+  /// <summary>
+  /// x87, of which only the <b>control</b> instructions are honoured: the runtime's entry stub runs
+  /// FINIT before anything else, and a program that never computes with the FPU is still a program
+  /// worth running. Anything that touches the register stack throws - reproducing 80-bit arithmetic
+  /// approximately would let a float test pass while disagreeing with the hardware, which is the one
+  /// outcome an execution oracle must never produce.
+  /// </summary>
+  private void X87(byte opcode) {
+    var at = this._ip;
+    var modrm = this.Fetch();
+    switch (opcode, modrm) {
+      case (0xDB, 0xE3):                                // FINIT / FNINIT
+      case (0xDB, 0xE2):                                // FNCLEX
+        return;
+    }
+    if (opcode == 0xD9 && modrm < 0xC0 && ((modrm >> 3) & 7) is 5 or 7) {
+      // FLDCW / FSTCW: the control word is not modelled, but the rounding mode it carries does not
+      // change any integer result, and the stub reads it back before setting it
+      this._ip = at;
+      var (mode, reg, address) = this.ModRm();
+      if (reg == 7 && mode != 3)
+        this.WriteWord(address, 0x037F);                // the mode FINIT leaves: nearest, 64-bit, masked
+      return;
+    }
+    throw new Cpu8086Exception($"x87 instruction {opcode:X2} {modrm:X2} at {this._cs:X4}:{at - 1:X4} - "
+      + "floating point arithmetic is deliberately not interpreted");
+  }
+
+  private ushort Segment(int index) => index switch { 0 => this._es, 1 => this._cs, 2 => this._ss, _ => this._ds };
+
+  private void SetSegment(int index, ushort value) {
+    switch (index) {
+      case 0: this._es = value; break;
+      case 1: this._cs = value; break;
+      case 2: this._ss = value; break;
+      default: this._ds = value; break;
+    }
+  }
+
+  private ushort Shift16(int op, ushort value, int count) {
+    for (var i = 0; i < (count & 0x1F); ++i)
+      switch (op) {
+        case 0: this._cf = (value & 0x8000) != 0; value = (ushort)((value << 1) | (this._cf ? 1 : 0)); break;   // ROL
+        case 1: this._cf = (value & 1) != 0; value = (ushort)((value >> 1) | (this._cf ? 0x8000 : 0)); break;   // ROR
+        case 2: { var carry = this._cf; this._cf = (value & 0x8000) != 0; value = (ushort)((value << 1) | (carry ? 1 : 0)); break; }
+        case 3: { var carry = this._cf; this._cf = (value & 1) != 0; value = (ushort)((value >> 1) | (carry ? 0x8000 : 0)); break; }
+        case 4 or 6: this._cf = (value & 0x8000) != 0; value = (ushort)(value << 1); break;
+        case 5: this._cf = (value & 1) != 0; value = (ushort)(value >> 1); break;
+        default: this._cf = (value & 1) != 0; value = (ushort)((short)value >> 1); break;                        // SAR
+      }
+    if ((count & 0x1F) != 0 && op >= 4) {
+      this._zf = value == 0;
+      this._sf = (value & 0x8000) != 0;
+      this._pf = Parity((byte)value);
+    }
+    return value;
+  }
+
+  private byte Shift8(int op, byte value, int count) {
+    for (var i = 0; i < (count & 0x1F); ++i)
+      switch (op) {
+        case 0: this._cf = (value & 0x80) != 0; value = (byte)((value << 1) | (this._cf ? 1 : 0)); break;
+        case 1: this._cf = (value & 1) != 0; value = (byte)((value >> 1) | (this._cf ? 0x80 : 0)); break;
+        case 2: { var carry = this._cf; this._cf = (value & 0x80) != 0; value = (byte)((value << 1) | (carry ? 1 : 0)); break; }
+        case 3: { var carry = this._cf; this._cf = (value & 1) != 0; value = (byte)((value >> 1) | (carry ? 0x80 : 0)); break; }
+        case 4 or 6: this._cf = (value & 0x80) != 0; value = (byte)(value << 1); break;
+        case 5: this._cf = (value & 1) != 0; value = (byte)(value >> 1); break;
+        default: this._cf = (value & 1) != 0; value = (byte)((sbyte)value >> 1); break;
+      }
+    if ((count & 0x1F) != 0 && op >= 4) {
+      this._zf = value == 0;
+      this._sf = (value & 0x80) != 0;
+      this._pf = Parity(value);
+    }
+    return value;
+  }
+
+  private void Group3(byte opcode, int repeat) {
+    var (mode, op, address) = this.ModRm();
+    var wide = (opcode & 1) != 0;
+    switch (op) {
+      case 0 or 1:                                      // TEST r/m,imm
+        if (wide)
+          this.SetLogicFlags16((ushort)(this.GetRm16(mode, address) & this.FetchWord()));
+        else
+          this.SetLogicFlags8((byte)(this.GetRm8(mode, address) & this.Fetch()));
+        return;
+      case 2:                                           // NOT (flags untouched)
+        if (wide) this.SetRm16(mode, address, (ushort)~this.GetRm16(mode, address));
+        else this.SetRm8(mode, address, (byte)~this.GetRm8(mode, address));
+        return;
+      case 3:                                           // NEG
+        if (wide) this.SetRm16(mode, address, this.Sub16(0, this.GetRm16(mode, address), false));
+        else this.SetRm8(mode, address, this.Sub8(0, this.GetRm8(mode, address), false));
+        return;
+      case 4: {                                         // MUL (unsigned)
+        if (wide) {
+          var product = (uint)this._r[_AX] * this.GetRm16(mode, address);
+          this._r[_AX] = (ushort)product;
+          this._r[_DX] = (ushort)(product >> 16);
+          this._cf = this._of = this._r[_DX] != 0;
+        } else {
+          var product = (ushort)(this.Reg8(_AX) * this.GetRm8(mode, address));
+          this._r[_AX] = product;
+          this._cf = this._of = (product >> 8) != 0;
+        }
+        return;
+      }
+      case 5: {                                         // IMUL (signed)
+        if (wide) {
+          var product = (short)this._r[_AX] * (short)this.GetRm16(mode, address);
+          this._r[_AX] = (ushort)product;
+          this._r[_DX] = (ushort)(product >> 16);
+          this._cf = this._of = (short)this._r[_AX] != product;
+        } else {
+          var product = (sbyte)this.Reg8(_AX) * (sbyte)this.GetRm8(mode, address);
+          this._r[_AX] = (ushort)product;
+          this._cf = this._of = (sbyte)(product & 0xFF) != product;
+        }
+        return;
+      }
+      case 6: {                                         // DIV
+        if (wide) {
+          var divisor = this.GetRm16(mode, address);
+          if (divisor == 0) throw new Cpu8086Exception("divide by zero (DIV)");
+          var dividend = ((uint)this._r[_DX] << 16) | this._r[_AX];
+          this._r[_AX] = (ushort)(dividend / divisor);
+          this._r[_DX] = (ushort)(dividend % divisor);
+        } else {
+          var divisor = this.GetRm8(mode, address);
+          if (divisor == 0) throw new Cpu8086Exception("divide by zero (DIV)");
+          this.SetReg8(_AX, (byte)(this._r[_AX] / divisor));
+          this.SetReg8(4, (byte)(this._r[_AX] % divisor));
+        }
+        return;
+      }
+      default: {                                        // IDIV
+        if (wide) {
+          var divisor = (short)this.GetRm16(mode, address);
+          if (divisor == 0) throw new Cpu8086Exception("divide by zero (IDIV)");
+          var dividend = (int)(((uint)this._r[_DX] << 16) | this._r[_AX]);
+          this._r[_AX] = (ushort)(dividend / divisor);
+          this._r[_DX] = (ushort)(dividend % divisor);
+        } else {
+          var divisor = (sbyte)this.GetRm8(mode, address);
+          if (divisor == 0) throw new Cpu8086Exception("divide by zero (IDIV)");
+          var dividend = (short)this._r[_AX];
+          this.SetReg8(_AX, (byte)(dividend / divisor));
+          this.SetReg8(4, (byte)(dividend % divisor));
+        }
+        return;
+      }
+    }
+    _ = repeat;
+  }
+
+  private void Group45(byte opcode) {
+    var (mode, op, address) = this.ModRm();
+    if (opcode == 0xFE) {
+      var carry = this._cf;
+      this.SetRm8(mode, address, op == 0
+        ? this.Add8(this.GetRm8(mode, address), 1, false)
+        : this.Sub8(this.GetRm8(mode, address), 1, false));
+      this._cf = carry;
+      return;
+    }
+    switch (op) {
+      case 0 or 1: {
+        var carry = this._cf;
+        this.SetRm16(mode, address, op == 0
+          ? this.Add16(this.GetRm16(mode, address), 1, false)
+          : this.Sub16(this.GetRm16(mode, address), 1, false));
+        this._cf = carry;
+        return;
+      }
+      case 2: { this.Push(this._ip); this._ip = this.GetRm16(mode, address); return; }        // CALL r/m
+      case 3: {                                                                               // CALL FAR [m]
+        var offset = this.ReadWord(address);
+        var segment = this.ReadWord(address + 2);
+        this.Push(this._cs);
+        this.Push(this._ip);
+        this._cs = segment;
+        this._ip = offset;
+        return;
+      }
+      case 4: this._ip = this.GetRm16(mode, address); return;                                 // JMP r/m
+      case 5: { this._ip = this.ReadWord(address); this._cs = this.ReadWord(address + 2); return; }
+      case 6: this.Push(this.GetRm16(mode, address)); return;                                 // PUSH r/m
+      default: throw new Cpu8086Exception($"unimplemented group 5 operation {op}");
+    }
+  }
+
+  private void StringOp(byte opcode, int repeat) {
+    var wide = (opcode & 1) != 0;
+    var step = (ushort)(this._df ? (wide ? -2 : -1) : (wide ? 2 : 1));
+    var count = repeat == 0 ? 1 : this._r[_CX];
+    var compares = opcode is 0xA6 or 0xA7 or 0xAE or 0xAF;
+
+    while (count-- > 0) {
+      var source = Linear(this.DataSegment, this._r[_SI]);
+      var destination = Linear(this._es, this._r[_DI]);
+      switch (opcode) {
+        case 0xA4: this.WriteByte(destination, this.ReadByte(source)); this._r[_SI] += step; this._r[_DI] += step; break;
+        case 0xA5: this.WriteWord(destination, this.ReadWord(source)); this._r[_SI] += step; this._r[_DI] += step; break;
+        case 0xAA: this.WriteByte(destination, this.Reg8(_AX)); this._r[_DI] += step; break;
+        case 0xAB: this.WriteWord(destination, this._r[_AX]); this._r[_DI] += step; break;
+        case 0xAC: this.SetReg8(_AX, this.ReadByte(source)); this._r[_SI] += step; break;
+        case 0xAD: this._r[_AX] = this.ReadWord(source); this._r[_SI] += step; break;
+        case 0xA6: this.Sub8(this.ReadByte(source), this.ReadByte(destination), false); this._r[_SI] += step; this._r[_DI] += step; break;
+        case 0xA7: this.Sub16(this.ReadWord(source), this.ReadWord(destination), false); this._r[_SI] += step; this._r[_DI] += step; break;
+        case 0xAE: this.Sub8(this.Reg8(_AX), this.ReadByte(destination), false); this._r[_DI] += step; break;
+        default: this.Sub16(this._r[_AX], this.ReadWord(destination), false); this._r[_DI] += step; break;
+      }
+      if (repeat != 0) {
+        --this._r[_CX];
+        if (compares && this._zf != (repeat == 2))
+          break;
+      }
+    }
+  }
+
+  // ---- DOS / BIOS -------------------------------------------------------------------------------
+
+  private void Interrupt(byte number) {
+    switch (number) {
+      case 0x21: this.Dos(); return;
+      case 0x10: this.Bios10(); return;
+      case 0x20: this._halted = true; return;
+      case 0x1A: this._r[_CX] = this._r[_DX] = 0; return;      // clock ticks - a fixed zero time
+      default: throw new Cpu8086Exception($"unhandled INT {number:X2}h (AX={this._r[_AX]:X4})");
+    }
+  }
+
+  private void Dos() {
+    var ah = this.Reg8(4);
+    switch (ah) {
+      case 0x30: this._r[_AX] = 0x0006; return;                // DOS 6.0
+      case 0x25 or 0x35: return;                               // set/get interrupt vector - nothing to do here
+      case 0x4C: this.ExitCode = this.Reg8(_AX); this._halted = true; return;
+      case 0x40: {                                             // write BX=handle, CX=count, DS:DX=buffer
+        var handle = this._r[_BX];
+        var count = this._r[_CX];
+        var at = Linear(this._ds, this._r[_DX]);
+        if (handle is 1 or 2)
+          for (var i = 0; i < count; ++i)
+            this._output.Append((char)this.ReadByte(at + i));
+        else if (this._files.TryGetValue(handle, out var file))
+          for (var i = 0; i < count; ++i)
+            file.Bytes.Add(this.ReadByte(at + i));
+        this._r[_AX] = count;
+        this._cf = false;
+        return;
+      }
+      case 0x3C or 0x5B: {                                     // create file
+        var name = this.CString(Linear(this._ds, this._r[_DX]));
+        var file = new MemoryFile { Name = name };
+        this._byName[name] = file;
+        this._files[this._nextHandle] = file;
+        this._r[_AX] = (ushort)this._nextHandle++;
+        this._cf = false;
+        return;
+      }
+      case 0x3D: {                                             // open file
+        var name = this.CString(Linear(this._ds, this._r[_DX]));
+        if (!this._byName.TryGetValue(name, out var file)) {
+          this._cf = true;
+          this._r[_AX] = 2;                                    // file not found
+          return;
+        }
+        file.Position = 0;
+        this._files[this._nextHandle] = file;
+        this._r[_AX] = (ushort)this._nextHandle++;
+        this._cf = false;
+        return;
+      }
+      case 0x3E: this._files.Remove(this._r[_BX]); this._cf = false; return;
+      case 0x3F: {                                             // read
+        if (!this._files.TryGetValue(this._r[_BX], out var file)) { this._cf = true; this._r[_AX] = 6; return; }
+        var at = Linear(this._ds, this._r[_DX]);
+        var wanted = Math.Min(this._r[_CX], file.Bytes.Count - file.Position);
+        for (var i = 0; i < wanted; ++i)
+          this.WriteByte(at + i, file.Bytes[file.Position + i]);
+        file.Position += wanted;
+        this._r[_AX] = (ushort)wanted;
+        this._cf = false;
+        return;
+      }
+      case 0x42: {                                             // seek
+        if (!this._files.TryGetValue(this._r[_BX], out var file)) { this._cf = true; this._r[_AX] = 6; return; }
+        var offset = (this._r[_CX] << 16) | this._r[_DX];
+        file.Position = this.Reg8(_AX) switch {
+          0 => offset,
+          1 => file.Position + offset,
+          _ => file.Bytes.Count + offset,
+        };
+        this._r[_DX] = (ushort)(file.Position >> 16);
+        this._r[_AX] = (ushort)file.Position;
+        this._cf = false;
+        return;
+      }
+      case 0x41: {                                             // delete
+        this._byName.Remove(this.CString(Linear(this._ds, this._r[_DX])));
+        this._cf = false;
+        return;
+      }
+      case 0x48: {                                             // allocate paragraphs
+        this._r[_AX] = this._nextFreeSegment;
+        this._nextFreeSegment += this._r[_BX] == 0 ? (ushort)1 : this._r[_BX];
+        this._cf = false;
+        return;
+      }
+      case 0x49 or 0x4A: this._cf = false; return;             // free / resize - the arena is never exhausted here
+      case 0x58: this._cf = true; return;                      // UMB link/strategy: report unsupported
+      case 0x09: {                                             // print '$'-terminated string
+        var at = Linear(this._ds, this._r[_DX]);
+        for (var i = 0; this.ReadByte(at + i) != (byte)'$'; ++i)
+          this._output.Append((char)this.ReadByte(at + i));
+        return;
+      }
+      default:
+        throw new Cpu8086Exception($"unhandled DOS call AH={ah:X2}h (AX={this._r[_AX]:X4})");
+    }
+  }
+
+  private void Bios10() {
+    switch (this.Reg8(4)) {
+      case 0x02 or 0x01 or 0x05 or 0x06 or 0x09 or 0x0A: return;   // cursor / scroll / attribute writes
+      case 0x03: this._r[_CX] = 0x0607; this._r[_DX] = 0; return;   // cursor at 0,0
+      case 0x0E: this._output.Append((char)this.Reg8(_AX)); return; // teletype
+      case 0x0F: this._r[_AX] = 0x5003; this.SetReg8(7, 0); return; // 80x25 colour text, page 0
+      default: throw new Cpu8086Exception($"unhandled BIOS video call AH={this.Reg8(4):X2}h");
+    }
+  }
+
+  private string CString(int at) {
+    var text = new StringBuilder();
+    for (var i = 0; this.ReadByte(at + i) != 0; ++i)
+      text.Append((char)this.ReadByte(at + i));
+    return text.ToString();
+  }
+}
+
+/// <summary>Something the interpreter will not guess at: an unimplemented opcode, an unhandled DOS call, a runaway program.</summary>
+public sealed class Cpu8086Exception(string message) : Exception(message);

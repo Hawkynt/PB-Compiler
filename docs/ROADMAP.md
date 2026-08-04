@@ -161,23 +161,32 @@ Ranked by the census, what stands between that and full coverage:
 4. **26 functions that select but fail allocation** - each needs a memory operand in a position the
    emitter has no form for; `Spiller` names the position it could not move.
 
-### Differential execution without the vintage oracle
+### Differential execution without the vintage oracle - DONE
 
-The parity question the IR path actually has to answer is narrower than the one the golden battery
-answers. Byte-identity with PBC 3.50 is the *direct* emitter's job and always will be - the IR path
-is a different code generator and will never match those bytes. What it must match is the direct
-emitter's **observable behaviour**: the same program, compiled both ways, printing the same thing.
+The parity question the IR path has to answer is narrower than the one the golden battery answers.
+Byte-identity with PBC 3.50 is the *direct* emitter's job and always will be - the IR path is a
+different code generator and will never match those bytes. What it must match is the direct emitter's
+**observable behaviour**: the same program, compiled both ways, printing the same thing. And the
+direct emitter is a sound reference for exactly that, because the golden battery holds *it* to the
+genuine compiler.
 
-That comparison needs an executor, but not a vintage one. An in-repo 8086 interpreter over the
-emitted MZ image - real mode, the single-segment model the runtime documents, and the INT 21h subset
-the runtime calls (40h write, 4Ch exit, the memory and file entries) - would let the battery run each
-program through both back ends and diff the captured output. It is a substantial piece of work and it
-must be written to fail loudly on any opcode it does not implement, because an interpreter that
-quietly mis-executes proves the opposite of what it is for; but it is ordinary work, it needs nothing
-this repository does not already have, and it converts every claim below from an argument about
-matching register conventions into a measurement.
+`PowerBasic.Compiler.Tests/Exec/Cpu8086.cs` is that executor: a real-mode 8086 interpreter over the
+emitted MZ image (loader, relocations, the single-segment model the runtime documents, and the INT
+21h/10h subset the runtime calls). `BackendDifferentialTests` compiles a program both ways, runs both
+images, and compares the captured output. It needs no DOSBox and no vintage toolchain.
 
-### The blocker that is not code
+The rule that makes it worth trusting is that it **fails loudly**: an unimplemented opcode, an
+unhandled DOS call or a runaway program throws, and the test is skipped rather than passed. x87
+arithmetic is deliberately not interpreted - only the control instructions the entry stub runs - since
+an approximate 80-bit stack would let a float test pass while disagreeing with the hardware, which is
+the one outcome an execution oracle must never produce.
+
+What it already proves, on programs it can run end to end: routed and directly-emitted code agree on
+integer arithmetic, a constant divide, control flow through a loop and a merge, a value spilled across
+a call, a SHARED global written by one path and read by the other, and a whole module body the back
+end owns.
+
+### Still not covered by execution
 
 None of the routed output has ever been **executed**. The differential oracle needs DOSBox
 (`tools/dosbox`, or `DOSBOX_EXE`) and the vintage toolchains; without them every correctness claim
