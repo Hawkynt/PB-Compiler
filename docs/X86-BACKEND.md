@@ -312,6 +312,31 @@ own model rather than by luck: flags are ordered RAW, WAR *and* WAW, so every fl
 instruction is totally ordered and none can be placed between the two halves — while a `MOV`, which
 touches no flags, may freely move through.
 
+### Truth values, and why selection splits blocks
+
+BASIC's comparison result is `-1`/`0`, not `1`/`0`, and the 8086 has no `SETcc`. So a comparison
+whose **result is used** — assigned, combined, passed — rather than folded into a branch is
+materialized by branching around it, and the `select` that the IR's if-conversion pass leaves behind
+goes back to a branch for the same reason (no `CMOV` before the Pentium Pro):
+
+```
+    CMP  lhs, rhs            CMP  cond, 0
+    MOV  dest, -1            MOV  dest, ifTrue
+    Jcc  done                Jne  done
+    MOV  dest, 0             MOV  dest, ifFalse
+done:                     done:
+```
+
+`MOV` does not disturb flags, which is what lets it sit between the compare and the branch.
+
+Structurally this is the larger change: selection can no longer assume **one machine block per IR
+block**. Appends go through a block cursor, and the out-of-SSA phi copies for an IR block must be
+inserted in whichever machine block control finally *leaves* from — not the one it entered. Getting
+that wrong would put a loop-carried copy on an unreachable path, so it has its own regression test.
+
+A later `sext` of such a comparison costs nothing: the value is already a full word of `-1`/`0`,
+which is exactly what the widening would have produced.
+
 **Verified.** Gated behind `UseExperimentalBackend` (`PBC_X_BACKEND` / `--x-backend`), default off (a new
 path alongside the battle-tested direct codegen). With it **forced on, all 241 differential batteries
 are byte-identical to the genuine compilers** — every eligible integer function across the corpus is

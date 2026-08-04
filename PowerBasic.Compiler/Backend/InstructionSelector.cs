@@ -27,7 +27,15 @@ public sealed class InstructionSelector {
   private readonly Dictionary<IrValue, MReg> _hiVregs = new(ReferenceEqualityComparer.Instance);
   private readonly Dictionary<IrAlloca, int> _slots = new(ReferenceEqualityComparer.Instance);
   private MFunction _function = null!;
+
+  /// <summary>
+  /// The block instructions are appended to. Most selections stay inside one machine block, but
+  /// materializing a comparison's value needs a branch - and therefore a split - so the cursor may
+  /// move on while one IR block is being selected.
+  /// </summary>
+  private MBlock _current = null!;
   private int _nextVreg;
+  private int _splitCount;
   private string? _decline;
 
   /// <summary>Selects a function into machine IR, or null if it contains a construct this stage cannot model.</summary>
@@ -88,8 +96,8 @@ public sealed class InstructionSelector {
     var mblocks = new Dictionary<string, MBlock>();
     foreach (var block in fn.Blocks) {
       var mblock = new MBlock(block.Label);
-      mblocks[block.Label] = mblock;
       this._function.Blocks.Add(mblock);
+      this._current = mblock;
       var folded = FoldedCompare(block);
       foreach (var instr in block.Instructions) {
         if (instr is IrPhi)
@@ -104,6 +112,9 @@ public sealed class InstructionSelector {
         if (!this.SelectInstruction(instr, mblock))
           return null;
       }
+      // a split leaves the cursor on a later block; the phi copies for this predecessor must be
+      // inserted there, since that is the block control actually leaves from
+      mblocks[block.Label] = this._current;
     }
 
     if (!this.InsertPhiCopies(fn, mblocks))
@@ -169,22 +180,22 @@ public sealed class InstructionSelector {
       case IrRet ret:
         return this.SelectRet(ret, block);
       case IrBr br:
-        block.Instructions.Add(new MInstr(MOpcode.Jmp, [new MOperand.LabelRef(br.Target.Label)], MInstrEffect.None));
-        block.Successors.Add(br.Target.Label);
+        this._current.Instructions.Add(new MInstr(MOpcode.Jmp, [new MOperand.LabelRef(br.Target.Label)], MInstrEffect.None));
+        this._current.Successors.Add(br.Target.Label);
         return true;
       case IrCondBr cond when folded is { } cmp && MapPredicate(cmp.Pred) is { } cc:
         if (!this.TryOperand(cmp.Lhs, out var lhs) || !this.TryOperand(cmp.Rhs, out var rhs))
           return false;
         if (lhs is not MOperand.Register)
           return this.Decline("compare: immediate left operand");   // CMP needs a register/memory left operand
-        block.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
+        this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
           new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: false, WritesFlags: true,
             ReadsMemory: lhs is MOperand.Memory || rhs is MOperand.Memory, WritesMemory: false)));
-        block.Instructions.Add(new MInstr(MOpcode.Jcc, [new MOperand.LabelRef(cond.IfTrue.Label)],
+        this._current.Instructions.Add(new MInstr(MOpcode.Jcc, [new MOperand.LabelRef(cond.IfTrue.Label)],
           new MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, WritesMemory: false), cc));
-        block.Instructions.Add(new MInstr(MOpcode.Jmp, [new MOperand.LabelRef(cond.IfFalse.Label)], MInstrEffect.None));
-        block.Successors.Add(cond.IfTrue.Label);
-        block.Successors.Add(cond.IfFalse.Label);
+        this._current.Instructions.Add(new MInstr(MOpcode.Jmp, [new MOperand.LabelRef(cond.IfFalse.Label)], MInstrEffect.None));
+        this._current.Successors.Add(cond.IfTrue.Label);
+        this._current.Successors.Add(cond.IfFalse.Label);
         return true;
       default:
         return this.Decline($"terminator: {terminator?.GetType().Name ?? "none"}"
@@ -229,7 +240,9 @@ public sealed class InstructionSelector {
       case IrCast cast:
         return this.SelectCast(cast, block);
       case IrCmp cmp:
-        return this.Decline($"compare as a value: {cmp.Pred} {cmp.Lhs.Type} (not folded into a branch)");
+        return this.SelectCmpValue(cmp);
+      case IrSelect sel:
+        return this.SelectSelect(sel);
       default:
         return this.Decline($"instruction: {instr.GetType().Name}");   // unsupported construct - decline the whole function
     }
@@ -249,14 +262,14 @@ public sealed class InstructionSelector {
     var destOp = new MOperand.Register(dest);
     if (!this.TryOperand(bin.Lhs, out var lhs) || !this.TryOperand(bin.Rhs, out var rhs))
       return false;
-    block.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, lhs], MovEffect(destOp, lhs)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, lhs], MovEffect(destOp, lhs)));
     // the two-operand IMUL has no immediate form - materialize an immediate multiplier in a register
     if (opcode == MOpcode.Imul && rhs is MOperand.Immediate) {
       var tmp = new MOperand.Register(this.FreshVreg(bin.Type));
-      block.Instructions.Add(new MInstr(MOpcode.Mov, [tmp, rhs], MovEffect(tmp, rhs)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [tmp, rhs], MovEffect(tmp, rhs)));
       rhs = tmp;
     }
-    block.Instructions.Add(new MInstr(opcode, [destOp, rhs],
+    this._current.Instructions.Add(new MInstr(opcode, [destOp, rhs],
       new MInstrEffect(WrittenRegs: [0], ReadRegs: rhs is MOperand.Register ? [0, 1] : [0],
         ReadsFlags: false, WritesFlags: true, ReadsMemory: rhs is MOperand.Memory, WritesMemory: false)));
     return true;
@@ -281,12 +294,12 @@ public sealed class InstructionSelector {
       return false;
 
     var (destLo, destHi) = this.FreshPair(bin);
-    block.Instructions.Add(new MInstr(MOpcode.Mov, [destLo, lhsLo], MovEffect(destLo, lhsLo)));
-    block.Instructions.Add(new MInstr(MOpcode.Mov, [destHi, lhsHi], MovEffect(destHi, lhsHi)));
-    block.Instructions.Add(new MInstr(opcode, [destLo, rhsLo], PairEffect(rhsLo, readsFlags: false, writesFlags: true)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destLo, lhsLo], MovEffect(destLo, lhsLo)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destHi, lhsHi], MovEffect(destHi, lhsHi)));
+    this._current.Instructions.Add(new MInstr(opcode, [destLo, rhsLo], PairEffect(rhsLo, readsFlags: false, writesFlags: true)));
     // ADC/SBB read the carry the low half just wrote, so the two must stay adjacent - the effect
     // descriptor says so, which is what keeps the scheduler from separating them
-    block.Instructions.Add(new MInstr(high, [destHi, rhsHi], PairEffect(rhsHi, readsFlags: high != opcode, writesFlags: true)));
+    this._current.Instructions.Add(new MInstr(high, [destHi, rhsHi], PairEffect(rhsHi, readsFlags: high != opcode, writesFlags: true)));
     return true;
   }
 
@@ -300,7 +313,7 @@ public sealed class InstructionSelector {
     var dest = this.FreshVreg(IrType.Ptr);
     this._vregs[alloca] = dest;
     var destOp = new MOperand.Register(dest);
-    block.Instructions.Add(new MInstr(MOpcode.Lea, [destOp, new MOperand.StackSlot(slot, MRegSize.Word)],
+    this._current.Instructions.Add(new MInstr(MOpcode.Lea, [destOp, new MOperand.StackSlot(slot, MRegSize.Word)],
       new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: false)));
     return true;
   }
@@ -311,8 +324,8 @@ public sealed class InstructionSelector {
         return false;
       var (lo, hi) = this.FreshPair(load);
       var highCell = lowCell with { Disp = lowCell.Disp + 2 };   // little-endian: the high word follows
-      block.Instructions.Add(new MInstr(MOpcode.Mov, [lo, lowCell], MovEffect(lo, lowCell)));
-      block.Instructions.Add(new MInstr(MOpcode.Mov, [hi, highCell], MovEffect(hi, highCell)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lo, lowCell], MovEffect(lo, lowCell)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [hi, highCell], MovEffect(hi, highCell)));
       return true;
     }
     var dest = this.FreshVreg(load.Type);
@@ -320,7 +333,7 @@ public sealed class InstructionSelector {
     var destOp = new MOperand.Register(dest);
     if (this.PointerMemory(load.Pointer, RegSize(load.Type)) is not { } mem)
       return false;
-    block.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, mem],
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, mem],
       new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false, ReadsMemory: true, WritesMemory: false)));
     return true;
   }
@@ -332,9 +345,9 @@ public sealed class InstructionSelector {
       if (!this.TryOperandPair(store.Value, out var lo, out var hi))
         return false;
       var highCell = lowCell with { Disp = lowCell.Disp + 2 };
-      block.Instructions.Add(new MInstr(MOpcode.Mov, [lowCell, lo],
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lowCell, lo],
         new MInstrEffect([], lo is MOperand.Register ? [1] : [], false, false, false, WritesMemory: true)));
-      block.Instructions.Add(new MInstr(MOpcode.Mov, [highCell, hi],
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [highCell, hi],
         new MInstrEffect([], hi is MOperand.Register ? [1] : [], false, false, false, WritesMemory: true)));
       return true;
     }
@@ -342,7 +355,7 @@ public sealed class InstructionSelector {
       return false;
     if (!this.TryOperand(store.Value, out var value))
       return false;
-    block.Instructions.Add(new MInstr(MOpcode.Mov, [mem, value],
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [mem, value],
       new MInstrEffect(WrittenRegs: [], ReadRegs: value is MOperand.Register ? [1] : [],
         ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: true)));
     return true;
@@ -367,8 +380,117 @@ public sealed class InstructionSelector {
         : null!;
     if (mem is null)
       return this.Decline("gep: offset is neither a constant nor a register");
-    block.Instructions.Add(new MInstr(MOpcode.Lea, [destOp, mem],
+    this._current.Instructions.Add(new MInstr(MOpcode.Lea, [destOp, mem],
       new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: false)));
+    return true;
+  }
+
+  /// <summary>
+  /// A comparison whose RESULT is used - assigned, combined, passed - rather than folded into a
+  /// branch. BASIC's truth value is -1/0 (not 1/0), and the 8086 has no <c>SETcc</c>, so the value is
+  /// materialized by branching around it:
+  /// <code>
+  ///   CMP lhs, rhs
+  ///   MOV dest, -1
+  ///   Jcc  done          ; predicate holds - keep -1
+  ///   MOV dest, 0
+  /// done:
+  /// </code>
+  /// <c>MOV</c> does not disturb flags, so it may sit between the compare and the branch. This splits
+  /// the machine block in three, which is why appends go through the block cursor and the phi copies
+  /// for this IR block land in whichever machine block control finally leaves from.
+  /// </summary>
+  private bool SelectCmpValue(IrCmp cmp) {
+    if (cmp.Lhs.Type.IsFloat)
+      return this.Decline($"compare as a value: float {cmp.Pred}");
+    if (IsWide(cmp.Lhs.Type))
+      return this.Decline($"compare as a value: 32-bit {cmp.Pred} (needs a two-word compare)");
+    if (MapPredicate(cmp.Pred) is not { } cc)
+      return this.Decline($"compare as a value: {cmp.Pred}");
+    if (!this.TryOperand(cmp.Lhs, out var lhs) || !this.TryOperand(cmp.Rhs, out var rhs))
+      return false;
+    if (lhs is not MOperand.Register)
+      return this.Decline("compare as a value: immediate left operand");
+
+    // the result is i1 in the IR, but it is materialized in a word register - a later sext to i16
+    // finds it already sign-extended, which is exactly what -1/0 means
+    var dest = MReg.Virtual(this._nextVreg++, MRegSize.Word);
+    this._vregs[cmp] = dest;
+    var destOp = new MOperand.Register(dest);
+
+    var falseBlock = new MBlock($"{this._current.Label}.cmpfalse{this._splitCount}");
+    var doneBlock = new MBlock($"{this._current.Label}.cmpdone{this._splitCount}");
+    ++this._splitCount;
+
+    this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: lhs is MOperand.Memory || rhs is MOperand.Memory, WritesMemory: false)));
+    var minusOne = new MOperand.Immediate(-1);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, minusOne], MovEffect(destOp, minusOne)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Jcc, [new MOperand.LabelRef(doneBlock.Label)],
+      new MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, WritesMemory: false), cc));
+    this._current.Successors.Add(doneBlock.Label);
+    this._current.Successors.Add(falseBlock.Label);
+
+    var zero = new MOperand.Immediate(0);
+    falseBlock.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, zero], MovEffect(destOp, zero)));
+    falseBlock.Successors.Add(doneBlock.Label);
+
+    this._function.Blocks.Add(falseBlock);
+    this._function.Blocks.Add(doneBlock);
+    this._current = doneBlock;                 // selection continues after the diamond
+    return true;
+  }
+
+  /// <summary>
+  /// A <c>select</c> - what the IR's if-conversion pass leaves where the source had
+  /// <c>IF c THEN x = a ELSE x = b</c>. There is no <c>CMOV</c> before the Pentium Pro, so on this
+  /// target it goes back to a branch over the two values:
+  /// <code>
+  ///   CMP cond, 0
+  ///   MOV dest, ifTrue
+  ///   Jne  done
+  ///   MOV dest, ifFalse
+  /// done:
+  /// </code>
+  /// Both arms are plain values by construction (the pass only forms a select from an empty diamond),
+  /// so nothing is evaluated that the original would not have evaluated.
+  /// </summary>
+  private bool SelectSelect(IrSelect sel) {
+    if (IsWide(sel.Type) || sel.Type.IsFloat)
+      return this.Decline($"select: {sel.Type} result");
+    if (!this.TryOperand(sel.Condition, out var cond)
+        || !this.TryOperand(sel.IfTrue, out var ifTrue)
+        || !this.TryOperand(sel.IfFalse, out var ifFalse))
+      return false;
+    if (cond is not MOperand.Register)
+      return this.Decline("select: condition is not in a register");
+
+    var dest = this.FreshVreg(sel.Type);
+    this._vregs[sel] = dest;
+    var destOp = new MOperand.Register(dest);
+
+    var falseBlock = new MBlock($"{this._current.Label}.selfalse{this._splitCount}");
+    var doneBlock = new MBlock($"{this._current.Label}.seldone{this._splitCount}");
+    ++this._splitCount;
+
+    var zero = new MOperand.Immediate(0);
+    this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [cond, zero],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ifTrue], MovEffect(destOp, ifTrue)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Jcc, [new MOperand.LabelRef(doneBlock.Label)],
+      new MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, WritesMemory: false),
+      Condition.NotEqual));
+    this._current.Successors.Add(doneBlock.Label);
+    this._current.Successors.Add(falseBlock.Label);
+
+    falseBlock.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ifFalse], MovEffect(destOp, ifFalse)));
+    falseBlock.Successors.Add(doneBlock.Label);
+
+    this._function.Blocks.Add(falseBlock);
+    this._function.Blocks.Add(doneBlock);
+    this._current = doneBlock;
     return true;
   }
 
@@ -382,19 +504,24 @@ public sealed class InstructionSelector {
     var from = cast.Value.Type;
     var to = cast.Type;
     switch (cast.Op) {
+      // BASIC's comparison result is already -1/0 in a full word, so widening it to i16 is nothing
+      case IrCastOp.SExt when from.IsBool && to.IsInteger && to.Bits == 16 && this._vregs.TryGetValue(cast.Value, out var truth): {
+        this._vregs[cast] = truth;
+        return true;
+      }
       case IrCastOp.SExt or IrCastOp.ZExt when IsWide(to) && from.IsInteger && from.Bits == 16: {
         if (!this.TryOperand(cast.Value, out var source))
           return false;
         var (lo, hi) = this.FreshPair(cast);
-        block.Instructions.Add(new MInstr(MOpcode.Mov, [lo, source], MovEffect(lo, source)));
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lo, source], MovEffect(lo, source)));
         if (cast.Op == IrCastOp.ZExt) {
           var zero = new MOperand.Immediate(0);
-          block.Instructions.Add(new MInstr(MOpcode.Mov, [hi, zero], MovEffect(hi, zero)));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [hi, zero], MovEffect(hi, zero)));
           return true;
         }
         // sign-extend: copy the value and smear its sign bit over the whole high word
-        block.Instructions.Add(new MInstr(MOpcode.Mov, [hi, source], MovEffect(hi, source)));
-        block.Instructions.Add(new MInstr(MOpcode.Sar, [hi, new MOperand.Immediate(15)],
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [hi, source], MovEffect(hi, source)));
+        this._current.Instructions.Add(new MInstr(MOpcode.Sar, [hi, new MOperand.Immediate(15)],
           new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
             ReadsMemory: false, WritesMemory: false)));
         return true;
@@ -436,12 +563,12 @@ public sealed class InstructionSelector {
         return this.Decline($"call: {callee.Name} takes {arg.Type} (word arguments only)");
       if (!this.TryOperand(arg, out var pushed))
         return false;
-      block.Instructions.Add(new MInstr(MOpcode.Push, [pushed],
+      this._current.Instructions.Add(new MInstr(MOpcode.Push, [pushed],
         new MInstrEffect(WrittenRegs: [], ReadRegs: pushed is MOperand.Register ? [0] : [],
           ReadsFlags: false, WritesFlags: false, ReadsMemory: pushed is MOperand.Memory, WritesMemory: true)));
     }
 
-    block.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef(callee.Name)],
+    this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef(callee.Name)],
       new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
         ReadsMemory: true, WritesMemory: true),
       condition: null, clobbers: _callClobbers));
@@ -455,7 +582,7 @@ public sealed class InstructionSelector {
     this._vregs[call] = dest;
     var destOp = new MOperand.Register(dest);
     var ax = new MOperand.Register(MReg.Physical_(Reg.AX, RegSize(call.Type)));
-    block.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ax], MovEffect(destOp, ax)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ax], MovEffect(destOp, ax)));
     return true;
   }
 
@@ -469,9 +596,9 @@ public sealed class InstructionSelector {
         return false;
       var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
       var dx = new MOperand.Register(MReg.Physical_(Reg.DX, MRegSize.Word));
-      block.Instructions.Add(new MInstr(MOpcode.Mov, [ax, lo], MovEffect(ax, lo)));
-      block.Instructions.Add(new MInstr(MOpcode.Mov, [dx, hi], MovEffect(dx, hi)));
-      block.Instructions.Add(new MInstr(MOpcode.Ret, [], MInstrEffect.None));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [ax, lo], MovEffect(ax, lo)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dx, hi], MovEffect(dx, hi)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Ret, [], MInstrEffect.None));
       return true;
     }
     if (ret.HasValue && ret.Value is { } value) {
@@ -480,10 +607,10 @@ public sealed class InstructionSelector {
       var axOp = new MOperand.Register(ax);
       if (!this.TryOperand(value, out var src))
         return false;
-      block.Instructions.Add(new MInstr(MOpcode.Mov, [axOp, src], MovEffect(axOp, src)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [axOp, src], MovEffect(axOp, src)));
     }
 
-    block.Instructions.Add(new MInstr(MOpcode.Ret, [], MInstrEffect.None));
+    this._current.Instructions.Add(new MInstr(MOpcode.Ret, [], MInstrEffect.None));
     return true;
   }
 
