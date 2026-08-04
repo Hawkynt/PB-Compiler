@@ -140,6 +140,18 @@ public sealed class SelectJumpTableTests {
   }
 
   [Test]
+  public void Emit_GivenWideWindowArm_WhenCpu386Speed_ThenUsesA32BitMask() {
+    // O0099: a value list whose window is 16..31 wide (0, 5, 11, 17, 20 spans 20) needs a 32-bit mask,
+    // so it lowers to the mask only under $CPU 80386 - SHR EAX, CL (66 D3 E8). Without 386 the window
+    // is too wide for a native 16-bit mask, so the mask declines and the compare chain stays.
+    const string sel = "DIM x%\nINPUT x%\nSELECT CASE x%\nCASE 0, 5, 11, 17, 20\n PRINT \"a\"\nCASE ELSE\n PRINT \"z\"\nEND SELECT\nEND";
+    var with386 = Compile("$CPU 80386\n$OPTIMIZE SPEED\n" + sel, Dialect.Pb36);
+    var no386 = Compile("$OPTIMIZE SPEED\n" + sel, Dialect.Pb36);
+    Assert.That(Contains(with386, 0x66, 0xD3, 0xE8), Is.True, "the 386 path shifts a 32-bit mask (SHR EAX, CL)");
+    Assert.That(Contains(no386, 0x66, 0xD3, 0xE8), Is.False, "without 386 a 16..31 window is too wide for the mask");
+  }
+
+  [Test]
   public void Emit_GivenTwoValueArm_WhenPb36Speed_ThenKeepsTheCompareChain() {
     // below three values the bit mask declines and the compare chain stays (no SHR AX, CL dispatch).
     var img = Compile("$OPTIMIZE SPEED\nDIM x%\n x% = 8\nSELECT CASE x%\nCASE 1, 15\n PRINT \"a\"\nCASE ELSE\n PRINT \"z\"\nEND SELECT\nEND", Dialect.Pb36);

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial (both spellings — a `SELECT` arm value list and an `IF … OR …` equality chain — lower to a 16-bit mask test; the 32-bit/386 mask and `LONG` subjects remain) |
+| **Status** | 🟡 Partial (both spellings lower to a mask — 16-bit natively, 32-bit under `$CPU 80386` for windows up to 31; `LONG` subjects remain) |
 | **Stage** | Emitter |
 | **Related** | [O0029](O0029-select-jump-table.md), [O0098](O0098-balanced-decision-tree.md), [O0032](O0032-short-circuit-conditions.md) |
 
@@ -70,8 +70,12 @@ INTEGER subjects:
 
 Each normalizes the subject to the minimum (so a window not starting at zero, or
 with negatives, still fits), emits one unsigned range guard, loads the compile-time
-mask, and does `SHR AX, CL` + a bit-0 `TEST`. The same arm/branch runs as the
-compare chain — verified by self-differential DOSBox runs over the whole subject
+mask, and does `SHR CL` + a bit-0 `TEST` (shared `MaskFor` / `EmitMaskMembership`
+helpers). A window ≤ 15 uses a native 16-bit mask; a window of 16..31 uses a 32-bit
+mask in `EAX` and so requires `$CPU 80386` (`SHR EAX, CL`) — verified by a
+self-differential run of a span-20 arm and a span-23 `OR` chain under `$CPU 80386`
+identical to `$OPTIMIZE OFF`, and a regression test that the 32-bit shift appears
+only with 386. The same arm/branch runs as the compare chain — verified by self-differential DOSBox runs over the whole subject
 range (members `1, 8, 15`, non-members, negatives, boundaries, and an `OR` chain
 nested in an `AND`) identical to `$OPTIMIZE OFF`, plus regression tests pinning the
 `MOV AX, 4081h` / `SHR AX, CL` shape for both spellings (and its decline below
@@ -79,7 +83,7 @@ three values, and for a mixed-variable chain). Golden gate 250/250.
 
 ## Still planned
 
-- The 32-bit mask under `$CPU 80386` for windows up to 31 wide, and `LONG`
-  subjects.
+- `LONG` subjects (the current path is `INTEGER`; a 32-bit-typed subject would
+  extend the same mask machinery to a 32-bit key).
 - A cost-model call against the jump table where both apply (the mask needs no
   table bytes, so it wins on a size-constrained target even where a table fits).

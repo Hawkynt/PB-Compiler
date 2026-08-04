@@ -3475,28 +3475,57 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         return false;
       values.Add((int)v);
     }
-    int min = values.Min(), max = values.Max();
-    if (max - min > 15)
-      return false;                                 // will not fit a 16-bit mask
-
-    var mask = 0;
-    foreach (var v in values)
-      mask |= 1 << (v - min);
+    if (this.MaskFor(values) is not { } m)
+      return false;
 
     var asm = this._asm;
     var skip = asm.DefineLabel();
     asm.Mov(Reg.AX, subject.WithSize(OperandSize.Word));
-    if (min != 0)
-      asm.Sub(Reg.AX, (Imm)min);                    // normalize to 0-based (min<0 subtracts a negative = adds)
-    asm.Cmp(Reg.AX, (Imm)(max - min));
-    asm.Ja(skip);                                   // unsigned: below min (wrapped) or above max -> not a member
-    asm.Mov(Reg.CX, Reg.AX);                        // CL = the bit index (0..15)
-    asm.Mov(Reg.AX, (Imm)mask);
-    asm.Shr(Reg.AX, Reg.CL);                        // bring the tested bit to position 0
-    asm.Test(Reg.AX, (Imm)1);
+    this.EmitMaskMembership(m, skip);               // sets ZF: bit clear (not a member) or the range guard jumped
     asm.Jnz(armBody);                               // bit set -> the subject is in the set
     asm.MarkLabel(skip);
     return true;
+  }
+
+  /// <summary>
+  /// The membership window for a value set (O0099): the minimum, the span, the compile-time bit mask
+  /// (one bit per value, normalized to the minimum) and whether a 32-bit mask is needed. A span up to
+  /// 15 fits a native 16-bit mask; 16..31 needs the 32-bit form and so <c>$CPU 80386</c>. Returns null
+  /// for a wider span or when 386 is not available.
+  /// </summary>
+  private (int Min, int Span, long Mask, bool Wide)? MaskFor(List<int> values) {
+    int min = values.Min(), max = values.Max();
+    var span = max - min;
+    if (span > 31 || (span > 15 && !this.Cpu386))
+      return null;
+    long mask = 0;
+    foreach (var v in values)
+      mask |= 1L << (v - min);
+    return (min, span, mask, span > 15);
+  }
+
+  /// <summary>
+  /// Emits the O0099 membership test for a subject already in AX: normalize to the window minimum, an
+  /// unsigned range guard to <paramref name="notMember"/>, then <c>SHR mask, CL</c> and a bit-0 <c>TEST</c>.
+  /// On return ZF is set iff the subject is NOT in the set (bit 0 clear), so the caller finishes with a
+  /// single JZ/JNZ. The 32-bit form (386, span 16..31) shifts a dword mask in EAX.
+  /// </summary>
+  private void EmitMaskMembership((int Min, int Span, long Mask, bool Wide) m, Label notMember) {
+    var asm = this._asm;
+    if (m.Min != 0)
+      asm.Sub(Reg.AX, (Imm)m.Min);                  // normalize to 0-based (min<0 subtracts a negative = adds)
+    asm.Cmp(Reg.AX, (Imm)m.Span);
+    asm.Ja(notMember);                              // unsigned: below min (wrapped) or above max -> not a member
+    asm.Mov(Reg.CX, Reg.AX);                        // CL = the bit index (0..31)
+    if (m.Wide) {
+      asm.Mov(Reg.EAX, (Imm)unchecked((int)m.Mask));
+      asm.Shr(Reg.EAX, Reg.CL);
+      asm.Test(Reg.EAX, (Imm)1);
+    } else {
+      asm.Mov(Reg.AX, (Imm)(int)(short)m.Mask);
+      asm.Shr(Reg.AX, Reg.CL);
+      asm.Test(Reg.AX, (Imm)1);
+    }
   }
 
   /// <summary>
@@ -3538,36 +3567,19 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       }
     }
 
-    if (!Collect(condition) || keyVar == null || values.Count < 3)
+    if (!Collect(condition) || keyVar == null || values.Count < 3 || this.MaskFor(values) is not { } m)
       return false;
-    int min = values.Min(), max = values.Max();
-    if (max - min > 15)
-      return false;
-    var mask = 0;
-    foreach (var v in values)
-      mask |= 1 << (v - min);
 
     var asm = this._asm;
     this.EmitExpression(keyVar);                      // k -> AX (bare 16-bit variable read)
-    if (min != 0)
-      asm.Sub(Reg.AX, (Imm)min);
-    asm.Cmp(Reg.AX, (Imm)(max - min));
     if (whenFalse) {
       // branch to target when the condition is FALSE (k not in the set): out of range, or bit clear
-      asm.Ja(target);
-      asm.Mov(Reg.CX, Reg.AX);
-      asm.Mov(Reg.AX, (Imm)mask);
-      asm.Shr(Reg.AX, Reg.CL);
-      asm.Test(Reg.AX, (Imm)1);
+      this.EmitMaskMembership(m, target);
       asm.Jz(target);
     } else {
       // branch to target when the condition is TRUE (k in the set)
       var skip = asm.DefineLabel();
-      asm.Ja(skip);
-      asm.Mov(Reg.CX, Reg.AX);
-      asm.Mov(Reg.AX, (Imm)mask);
-      asm.Shr(Reg.AX, Reg.CL);
-      asm.Test(Reg.AX, (Imm)1);
+      this.EmitMaskMembership(m, skip);
       asm.Jnz(target);
       asm.MarkLabel(skip);
     }
