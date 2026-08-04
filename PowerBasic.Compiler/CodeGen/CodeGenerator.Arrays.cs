@@ -102,19 +102,29 @@ public sealed partial class CodeGenerator {
     if (target.Arguments is not [NameExpr sub]
         || !model.VariableBindings.TryGetValue(sub, out var subSym) || !ReferenceEquals(subSym, ctrSym))
       return false;   // subscripted by exactly the counter, so element i is the one written on pass i
-    return this.IsSafeFillValue(fill);
+    return this.IsSafeFillValue(fill, arrSym);
   }
 
-  /// <summary>A fill value built only from the counter, constants, plain scalars and non-trapping arithmetic - it reads no array (cannot alias the target) and calls nothing.</summary>
-  private bool IsSafeFillValue(Expression e) => e switch {
+  /// <summary>
+  /// A fill value that neither reads the target array <paramref name="targetArr"/> (so it cannot
+  /// observe a not-yet-written element) nor calls anything (which could read the array elsewhere or
+  /// have a side effect): the counter, constants, plain scalars, non-trapping arithmetic, and an
+  /// element read of a DIFFERENT array (a copy like <c>a(i) = b(i)</c>, distinct storage - no alias).
+  /// </summary>
+  private bool IsSafeFillValue(Expression e, VariableSymbol targetArr) => e switch {
     IntegerLiteralExpr or FloatLiteralExpr or NamedConstantExpr => true,
     NameExpr n => !model.IntrinsicBindings.ContainsKey(n)
       && model.VariableBindings.TryGetValue(n, out var s) && s.Type is ScalarType,
-    UnaryExpr { Op: UnaryOp.Negate or UnaryOp.Not } u => this.IsSafeFillValue(u.Operand),
+    UnaryExpr { Op: UnaryOp.Negate or UnaryOp.Not } u => this.IsSafeFillValue(u.Operand, targetArr),
     BinaryExpr { Op: BinaryOp.Add or BinaryOp.Subtract or BinaryOp.Multiply
         or BinaryOp.And or BinaryOp.Or or BinaryOp.Xor
         or BinaryOp.ShiftLeft or BinaryOp.ShiftRightArith } b
-      => this.IsSafeFillValue(b.Left) && this.IsSafeFillValue(b.Right),
+      => this.IsSafeFillValue(b.Left, targetArr) && this.IsSafeFillValue(b.Right, targetArr),
+    // an element read of another array (not a function call, not the target): its distinct storage
+    // cannot alias the target, and its own subscript must be equally safe
+    CallOrIndexExpr c when model.VariableBindings.TryGetValue(c, out var other)
+      && other.Type is ArrayType && !ReferenceEquals(other, targetArr)
+      => c.Arguments.All(a => this.IsSafeFillValue(a, targetArr)),
     _ => false,
   };
 
