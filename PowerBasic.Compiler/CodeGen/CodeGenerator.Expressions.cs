@@ -898,19 +898,32 @@ public sealed partial class CodeGenerator {
   /// </summary>
   private bool TryCharCompareOperands(BinaryExpr b, out Expression strExpr, out Expression idxExpr, out int literalByte) {
     strExpr = null!; idxExpr = null!; literalByte = 0;
-    var (mid, lit) = IsSingleCharMid(b.Left) && b.Right is StringLiteralExpr ? (b.Left, b.Right)
-      : IsSingleCharMid(b.Right) && b.Left is StringLiteralExpr ? (b.Right, b.Left)
-      : ((Expression?)null, (Expression?)null);
-    if (mid is not CallOrIndexExpr midCall || lit is not StringLiteralExpr { Value: { Length: 1 } text } || text[0] is '\0' or > (char)255)
+    Expression? mid = null;
+    int? litByte = null;
+    if (IsSingleCharMid(b.Left) && ByteOf(b.Right) is { } rb) { mid = b.Left; litByte = rb; }
+    else if (IsSingleCharMid(b.Right) && ByteOf(b.Left) is { } lb) { mid = b.Right; litByte = lb; }
+    if (mid is not CallOrIndexExpr midCall || litByte is not { } theByte)
       return false;
     strExpr = midCall.Arguments[0];
     idxExpr = midCall.Arguments[1];
-    literalByte = (byte)text[0];
+    literalByte = theByte;
     return model.TypeOf(strExpr) is StringType or FlexType;
 
     bool IsSingleCharMid(Expression e) => e is CallOrIndexExpr c && model.IntrinsicBindings.TryGetValue(c, out var info)
       && info.Name.Equals("MID$", StringComparison.OrdinalIgnoreCase) && c.Arguments.Count == 3
       && this.OptFolder.TryFold(c.Arguments[2]) is { Integer: 1 };
+
+    // the constant byte of a one-character comparand: a single-char string literal, or CHR$(const).
+    // A zero byte is excluded either way - it would alias the 0 a past-the-end MID$ reads as.
+    int? ByteOf(Expression e) {
+      if (e is StringLiteralExpr { Value: { Length: 1 } text } && text[0] is not '\0' and <= (char)255)
+        return (byte)text[0];
+      if (e is CallOrIndexExpr chr && model.IntrinsicBindings.TryGetValue(chr, out var chrInfo)
+          && chrInfo.Name.Equals("CHR$", StringComparison.OrdinalIgnoreCase) && chr.Arguments.Count == 1
+          && this.OptFolder.TryFold(chr.Arguments[0]) is { Integer: { } n } && (n & 0xFF) != 0)
+        return (int)(n & 0xFF);
+      return null;
+    }
   }
 
   /// <summary>left AX, right BX -> result AX.</summary>

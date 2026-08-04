@@ -39,9 +39,10 @@ The **single-character compare** view ships too: `MID$(s$, i, 1) = "c"` / `<> "c
 (character matching in parsers — the most common substring compare) reads the byte
 with `rt_charat` and compares it to the literal's byte, with *no* substring, `StrDup`,
 literal, or `StrCmp` allocation — three heap operations become one byte read and a
-compare. Exact for a single **non-NUL** character literal (a past-the-end `MID$` is
-`""` whose byte reads as 0, which a non-zero literal never matches; a NUL literal is
-excluded because it would alias that 0), operands in either order. Verified by a
+compare. Exact for a single **non-NUL** character comparand — a one-char string literal *or*
+`CHR$(const)` (`MID$(s$, i, 1) = CHR$(13)`) — because a past-the-end `MID$` is `""`
+whose byte reads as 0, which a non-zero byte never matches; a zero byte (`CHR$(0)` /
+a NUL literal) is excluded because it would alias that 0. Operands in either order. Verified by a
 self-differential DOSBox run over a match, a mismatch, a clamped and a past-the-end
 index, an empty string, and the swapped-operand and `<>` spellings — all identical to
 `$OPTIMIZE OFF`.
