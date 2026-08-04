@@ -26,10 +26,121 @@ public sealed partial class DosRuntime {
   /// <summary>The solid rectangle the two points span (LINE ... , BF).</summary>
   public Label LineFill { get; private set; } = null!;
 
+  /// <summary>The full circle of radius rt_gr about (rt_gx1, rt_gy1) - the midpoint algorithm.</summary>
+  public Label Circle { get; private set; } = null!;
+
   private void EmitGraphicsProcedures(Assembler asm) {
     this.EmitLine(asm);
     this.EmitLineBox(asm);
     this.EmitLineFill(asm);
+    this.EmitCircle(asm);
+  }
+
+  /// <summary>
+  /// <c>rt_circle</c>: the midpoint circle algorithm, which needs no trigonometry and no division -
+  /// one decision variable and a walk of the first octant, mirrored into the other seven.
+  ///
+  /// Unlike <c>rt_pset</c>, which trusts its caller, this one CLIPS. A circle is the first graphics
+  /// primitive whose plotted points are computed rather than given, so a centre near an edge produces
+  /// coordinates the caller never wrote and could not have checked; without the clip those wrap round
+  /// the frame buffer and scribble on the opposite side of the screen, or outside it.
+  /// </summary>
+  private void EmitCircle(Assembler asm) {
+    // rt_gcx / rt_gcy hold the centre, rt_gr the radius, rt_gx1/rt_gy1 the point being plotted
+    var plot = asm.DefineLabel("rt_circle_plot");
+    var clipped = asm.DefineLabel();
+    {
+      // plot: AX = x, BX = y, drawn only when both are on screen
+      asm.MarkLabel(plot);
+      asm.Cmp(Reg.AX, (Imm)0);
+      asm.Jl(clipped);
+      asm.Cmp(Reg.AX, 320);
+      asm.Jge(clipped);
+      asm.Cmp(Reg.BX, (Imm)0);
+      asm.Jl(clipped);
+      asm.Cmp(Reg.BX, 200);
+      asm.Jge(clipped);
+      asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_gcolor")));
+      asm.Call(this.Pset);
+      asm.MarkLabel(clipped);
+      asm.Ret();
+    }
+
+    this.Circle = asm.MarkLabel("rt_circle");
+    var loop = asm.DefineLabel();
+    var done = asm.DefineLabel();
+    var noShrink = asm.DefineLabel();
+
+    asm.Push(Reg.AX);
+    asm.Push(Reg.BX);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.DX);
+    asm.Push(Reg.SI);
+    asm.Push(Reg.DI);
+
+    asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_gr")));     // SI = x, starts at the radius
+    asm.Xor(Reg.DI, Reg.DI);                          // DI = y, starts at zero
+    asm.Mov(Reg.AX, 1);
+    asm.Sub(Reg.AX, Reg.SI);
+    asm.Mov(Mem.Word(asm.Lbl("rt_gerr")), Reg.AX);    // err = 1 - r
+
+    asm.MarkLabel(loop);
+    asm.Cmp(Reg.SI, Reg.DI);
+    asm.Jl(done);                                     // the octant is walked while x >= y
+
+    // the eight mirror points of (x, y) about the centre
+    void Point(bool negateFirst, bool negateSecond, bool swap) {
+      asm.Mov(Reg.AX, swap ? Reg.DI : Reg.SI);
+      if (negateFirst)
+        asm.Neg(Reg.AX);
+      asm.Add(Reg.AX, Mem.Word(asm.Lbl("rt_gcx")));
+      asm.Mov(Reg.BX, swap ? Reg.SI : Reg.DI);
+      if (negateSecond)
+        asm.Neg(Reg.BX);
+      asm.Add(Reg.BX, Mem.Word(asm.Lbl("rt_gcy")));
+      asm.Call(plot);
+    }
+
+    Point(false, false, false);   // ( x,  y)
+    Point(true, false, false);    // (-x,  y)
+    Point(false, true, false);    // ( x, -y)
+    Point(true, true, false);     // (-x, -y)
+    Point(false, false, true);    // ( y,  x)
+    Point(true, false, true);     // (-y,  x)
+    Point(false, true, true);     // ( y, -x)
+    Point(true, true, true);      // (-y, -x)
+
+    // y++; err += 2y + 1; and when the decision variable turns positive, x--
+    asm.Inc(Reg.DI);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gerr")));
+    asm.Mov(Reg.CX, Reg.DI);
+    asm.Add(Reg.CX, Reg.CX);
+    asm.Add(Reg.AX, Reg.CX);
+    asm.Inc(Reg.AX);
+    asm.Cmp(Reg.AX, (Imm)0);
+    asm.Jle(noShrink);
+    asm.Dec(Reg.SI);
+    asm.Mov(Reg.CX, Reg.SI);
+    asm.Add(Reg.CX, Reg.CX);
+    asm.Sub(Reg.AX, Reg.CX);
+    asm.MarkLabel(noShrink);
+    asm.Mov(Mem.Word(asm.Lbl("rt_gerr")), Reg.AX);
+    asm.Jmp(loop);
+
+    asm.MarkLabel(done);
+    // PB leaves the last point referenced at the centre after a CIRCLE
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcx")));
+    asm.Mov(Mem.Word(asm.Lbl("rt_gx1")), Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcy")));
+    asm.Mov(Mem.Word(asm.Lbl("rt_gy1")), Reg.AX);
+
+    asm.Pop(Reg.DI);
+    asm.Pop(Reg.SI);
+    asm.Pop(Reg.DX);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.BX);
+    asm.Pop(Reg.AX);
+    asm.Ret();
   }
 
   /// <summary>

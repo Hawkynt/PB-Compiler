@@ -39,6 +39,11 @@ public sealed partial class DosRuntime {
   public Label FreeFile { get; private set; } = null!;
   public Label Eof { get; private set; } = null!;
   public Label Kill { get; private set; } = null!;
+
+  /// <summary>MKDIR / RMDIR / CHDIR: AX = path string handle (consumed), INT 21h AH=39h/3Ah/3Bh.</summary>
+  public Label MkDir { get; private set; } = null!;
+  public Label RmDir { get; private set; } = null!;
+  public Label ChDir { get; private set; } = null!;
   public Label LInput { get; private set; } = null!;
   public Label FHandle { get; private set; } = null!;
   public Label Lof { get; private set; } = null!;
@@ -742,6 +747,26 @@ public sealed partial class DosRuntime {
       asm.Call(asm.Lbl("rt_name_z"));
       asm.Mov(Reg.DX, Imm.OffsetOf(asm.Lbl("rt_namebuf")));
       asm.Mov(Reg.AH, 0x41);
+      asm.Int(0x21);
+      asm.Pop(Reg.DX);
+      asm.Pop(Reg.AX);
+      asm.Ret();
+    }
+
+    // MKDIR / RMDIR / CHDIR are rt_kill's shape with a different DOS function: the path arrives as a
+    // string handle, rt_name_z turns it into the ASCIIZ buffer INT 21h wants, and that is the whole
+    // routine. PB reports no result for any of them - a failed CHDIR is simply not an error here,
+    // which is what the genuine compiler does too.
+    foreach (var (label, function) in new[] { ("rt_mkdir", 0x39), ("rt_rmdir", 0x3A), ("rt_chdir", 0x3B) }) {
+      var entry = asm.MarkLabel(label);
+      if (label == "rt_mkdir") this.MkDir = entry;
+      else if (label == "rt_rmdir") this.RmDir = entry;
+      else this.ChDir = entry;
+      asm.Push(Reg.AX);
+      asm.Push(Reg.DX);
+      asm.Call(asm.Lbl("rt_name_z"));
+      asm.Mov(Reg.DX, Imm.OffsetOf(asm.Lbl("rt_namebuf")));
+      asm.Mov(Reg.AH, (Imm)function);
       asm.Int(0x21);
       asm.Pop(Reg.DX);
       asm.Pop(Reg.AX);

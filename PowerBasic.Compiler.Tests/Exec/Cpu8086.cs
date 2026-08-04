@@ -33,6 +33,9 @@ public sealed class Cpu8086 {
   private readonly StringBuilder _output = new();
   private readonly Dictionary<int, MemoryFile> _files = [];
   private readonly Dictionary<string, MemoryFile> _byName = new(StringComparer.OrdinalIgnoreCase);
+
+  /// <summary>Directories the program has created; there is no host file system behind this.</summary>
+  private readonly HashSet<string> _directories = new(StringComparer.OrdinalIgnoreCase);
   private int _nextHandle = 5;                          // 0..4 are the standard handles
   private ushort _nextFreeSegment = 0x2000;             // where INT 21h/48h hands out blocks
 
@@ -55,6 +58,9 @@ public sealed class Cpu8086 {
 
   /// <summary>The exit code the program terminated with.</summary>
   public int ExitCode { get; private set; }
+
+  /// <summary>Whether the program created (and did not remove) the named directory.</summary>
+  public bool DirectoryExists(string name) => this._directories.Contains(name);
 
   /// <summary>The contents of a file the program created, or null if it made no such file.</summary>
   public string? FileContent(string name)
@@ -1161,6 +1167,26 @@ public sealed class Cpu8086 {
         return;
       }
       case 0x49 or 0x4A: this._cf = false; return;             // free / resize - the arena is never exhausted here
+      // directory calls. There is no real file system behind this interpreter, only the in-memory
+      // file map, so a directory is just a name that has been created - enough for a program to make
+      // one, remove it, and be told which of those succeeded.
+      case 0x39: {                                             // create directory
+        var name = this.CString(Linear(this._ds, this._r[_DX]));
+        this._cf = !this._directories.Add(name);
+        if (this._cf) this._r[_AX] = 5;                        // access denied: it already exists
+        return;
+      }
+      case 0x3A: {                                             // remove directory
+        this._cf = !this._directories.Remove(this.CString(Linear(this._ds, this._r[_DX])));
+        if (this._cf) this._r[_AX] = 3;                        // path not found
+        return;
+      }
+      case 0x3B: {                                             // set current directory
+        var name = this.CString(Linear(this._ds, this._r[_DX]));
+        this._cf = name != "\\" && name != "." && !this._directories.Contains(name);
+        if (this._cf) this._r[_AX] = 3;
+        return;
+      }
       case 0x58: this._cf = true; return;                      // UMB link/strategy: report unsupported
       case 0x09: {                                             // print '$'-terminated string
         var at = Linear(this._ds, this._r[_DX]);

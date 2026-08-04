@@ -1883,6 +1883,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         this.EmitLineStatement(ln);
         break;
 
+      case CircleStmt ci:
+        this.EmitCircleStatement(ci);
+        break;
+
       // R2 direct-video pixel write (mode 13h): PSET (x,y)[,c] / PRESET (x,y)[,c]
       case PsetStmt ps: {
         var asm3 = this._asm;
@@ -2054,6 +2058,21 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       case "KILL" when cmd.Arguments is [{ } name]:
         this.EmitExpression(name);
         asm.Call(this._rt.Kill);
+        break;
+
+      case "MKDIR" when cmd.Arguments is [{ } path]:
+        this.EmitExpression(path);
+        asm.Call(this._rt.MkDir);
+        break;
+
+      case "RMDIR" when cmd.Arguments is [{ } path]:
+        this.EmitExpression(path);
+        asm.Call(this._rt.RmDir);
+        break;
+
+      case "CHDIR" when cmd.Arguments is [{ } path]:
+        this.EmitExpression(path);
+        asm.Call(this._rt.ChDir);
         break;
 
       case "NAME" when cmd.Arguments is [{ } oldName, { } newName]:

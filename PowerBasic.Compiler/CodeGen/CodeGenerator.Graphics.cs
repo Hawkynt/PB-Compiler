@@ -50,4 +50,35 @@ public sealed partial class CodeGenerator {
       _ => this._rt.Line,
     });
   }
+
+  /// <summary>
+  /// <c>CIRCLE (x,y), r [,colour] [,start] [,end] [,aspect]</c>, in the full-circle forms.
+  ///
+  /// The arc and aspect arguments are declined rather than ignored. They are angles in radians, so
+  /// drawing one needs the x87 - and the interpreter the graphics tests run on deliberately does not
+  /// emulate x87, because a half-faithful 80-bit stack would let a float test pass while disagreeing
+  /// with the hardware. Emitting an arc nobody could execute would mean shipping the one thing worse
+  /// than a missing feature: a CIRCLE that quietly draws all 360 degrees when the program asked for a
+  /// quarter of them.
+  /// </summary>
+  private void EmitCircleStatement(CircleStmt circle) {
+    if (circle.Start is not null || circle.End is not null || circle.Aspect is not null) {
+      this.Unsupported(circle.Position, "CIRCLE with a start/end angle or aspect ratio (the arc needs x87 trigonometry)");
+      return;
+    }
+    var asm = this._asm;
+    this.EmitInt16Argument(circle.Center.X);
+    asm.Mov(Mem.Word(asm.Lbl("rt_gcx")), Reg.AX);
+    this.EmitInt16Argument(circle.Center.Y);
+    asm.Mov(Mem.Word(asm.Lbl("rt_gcy")), Reg.AX);
+    this.EmitInt16Argument(circle.Radius);
+    asm.Mov(Mem.Word(asm.Lbl("rt_gr")), Reg.AX);
+
+    if (circle.Color is { } color)
+      this.EmitInt16Argument(color);
+    else
+      asm.Mov(Reg.AX, 15);
+    asm.Mov(Mem.Word(asm.Lbl("rt_gcolor")), Reg.AX);
+    asm.Call(this._rt.Circle);
+  }
 }

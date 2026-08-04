@@ -164,6 +164,7 @@ public sealed partial class DosRuntime {
       "rt_gx1", "rt_gy1", "rt_gx2", "rt_gy2", "rt_gcolor", "rt_gstyle",
       "rt_gerr", "rt_gsx", "rt_gsy", "rt_gdx", "rt_gdy",
       "rt_gbx1", "rt_gby1", "rt_gbx2", "rt_gby2",
+      "rt_gcx", "rt_gcy", "rt_gr",
     }) {
       asm.MarkLabel(cell);
       asm.Dw(0);
