@@ -2821,53 +2821,78 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._exitFor.Push(done);
     this._iterateFor.Push(continueLabel);
     this._iterateAny.Push(continueLabel);
-    this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
-    asm.MarkLabel(top);
-    if (isByte) {
-      asm.Mov(Reg.AL, cell);
-      asm.Cmp(Reg.AL, limit.WithSize(OperandSize.Byte));
-    } else {
-      asm.Mov(Reg.AX, cell);
-      asm.Cmp(Reg.AX, limit);
-    }
-    if (step >= 0) {
-      if (unsigned)
-        asm.Ja(done);
-      else
-        asm.Jg(done);
-    } else {
-      if (unsigned)
-        asm.Jb(done);
-      else
-        asm.Jl(done);
-    }
-
-    foreach (var s in f.Body)
-      this.EmitStatement(s);
-
-    asm.MarkLabel(continueLabel);
     var magnitude = (int)Math.Abs(step);
-    if (isByte) {
-      asm.Mov(Reg.AL, cell);
-      if (step >= 0)
-        asm.Add(Reg.AL, (Imm)magnitude);
-      else
-        asm.Sub(Reg.AL, (Imm)magnitude);
-      if (this.CheckNumeric)
-        this.EmitRaiseWhen(asm.Jnc, 6);     // byte counters are unsigned: carry = wrap
-      asm.Mov(cell, Reg.AL);
-    } else {
-      asm.Mov(Reg.AX, cell);
-      if (step >= 0)
-        asm.Add(Reg.AX, magnitude);
-      else
-        asm.Sub(Reg.AX, magnitude);
-      if (this.CheckNumeric)
-        this.EmitRaiseWhen(unsigned ? asm.Jnc : asm.Jno, 6);
-      asm.Mov(cell, Reg.AX);
+
+    // load the counter into AL/AX and compare it to the limit
+    void Compare() {
+      if (isByte) {
+        asm.Mov(Reg.AL, cell);
+        asm.Cmp(Reg.AL, limit.WithSize(OperandSize.Byte));
+      } else {
+        asm.Mov(Reg.AX, cell);
+        asm.Cmp(Reg.AX, limit);
+      }
     }
-    asm.Jmp(top);
-    asm.MarkLabel(done);
+    // jump when the counter is PAST the limit (loop should stop)
+    void JumpIfPast(Label t) {
+      if (step >= 0)
+        (unsigned ? (Action<Label>)asm.Ja : asm.Jg)(t);
+      else
+        (unsigned ? (Action<Label>)asm.Jb : asm.Jl)(t);
+    }
+    // increment the counter (leaving the new value in AL/AX), with the checked-wrap trap
+    void Increment() {
+      if (isByte) {
+        asm.Mov(Reg.AL, cell);
+        if (step >= 0) asm.Add(Reg.AL, (Imm)magnitude); else asm.Sub(Reg.AL, (Imm)magnitude);
+        if (this.CheckNumeric)
+          this.EmitRaiseWhen(asm.Jnc, 6);     // byte counters are unsigned: carry = wrap
+        asm.Mov(cell, Reg.AL);
+      } else {
+        asm.Mov(Reg.AX, cell);
+        if (step >= 0) asm.Add(Reg.AX, magnitude); else asm.Sub(Reg.AX, magnitude);
+        if (this.CheckNumeric)
+          this.EmitRaiseWhen(unsigned ? asm.Jnc : asm.Jno, 6);
+        asm.Mov(cell, Reg.AX);
+      }
+    }
+
+    // O0062 loop rotation ($OPTIMIZE SPEED): one entry guard plus a bottom test, dropping the
+    // per-iteration JMP. The increment leaves the new counter in AL/AX, so the bottom re-tests it
+    // in place with the inverse condition (stop-if-past becomes continue-if-not-past). The compare
+    // runs the same N+1 times and the counter wraps identically, so the increment-then-test end
+    // value (QUIRK 2.28) and every trip count are unchanged.
+    if (this.Optimize && this.OptimizeSpeed) {
+      Compare();
+      JumpIfPast(done);                       // enter only if not already past
+      this.AlignLoopTop();
+      asm.MarkLabel(top);
+      foreach (var s in f.Body)
+        this.EmitStatement(s);
+      asm.MarkLabel(continueLabel);
+      Increment();
+      if (isByte)
+        asm.Cmp(Reg.AL, limit.WithSize(OperandSize.Byte));
+      else
+        asm.Cmp(Reg.AX, limit);               // AL/AX already holds the incremented counter
+      if (step >= 0)
+        (unsigned ? (Action<Label>)asm.Jbe : asm.Jle)(top);   // repeat while not past
+      else
+        (unsigned ? (Action<Label>)asm.Jae : asm.Jge)(top);
+      asm.MarkLabel(done);
+    } else {
+      this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
+      asm.MarkLabel(top);
+      Compare();
+      JumpIfPast(done);
+      foreach (var s in f.Body)
+        this.EmitStatement(s);
+      asm.MarkLabel(continueLabel);
+      Increment();
+      asm.Jmp(top);
+      asm.MarkLabel(done);
+    }
+
     this._exitFor.Pop();
     this._iterateFor.Pop();
     this._iterateAny.Pop();

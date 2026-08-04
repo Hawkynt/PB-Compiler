@@ -1247,13 +1247,18 @@ public sealed partial class CodeGenerator {
     this._iterateFor.Push(cont);
     this._iterateAny.Push(cont);
 
-    this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
-    asm.MarkLabel(top);
+    // O0062 loop rotation: an entry guard plus a bottom test drops the per-iteration JMP. The
+    // counter lives in SI, so the bottom re-tests the just-incremented value with the inverse
+    // condition (ascending: continue while SI <= limit; descending: while SI >= limit). The compare
+    // runs the same N+1 times and SI wraps identically to the top-tested form, so an overflowing FOR
+    // cycles exactly as before - behaviour-identical, one jump lighter.
     asm.Cmp(Reg.SI, limit);
     if (step >= 0)
-      asm.Jg(done);
+      asm.Jg(done);                       // enter only if not already past the limit
     else
       asm.Jl(done);
+    this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
+    asm.MarkLabel(top);
     foreach (var statement in f.Body)
       this.EmitStatement(statement);
     asm.MarkLabel(cont);
@@ -1266,7 +1271,11 @@ public sealed partial class CodeGenerator {
       asm.Add(Reg.SI, (Imm)(int)step);
     else
       asm.Sub(Reg.SI, (Imm)(int)Math.Abs(step));
-    asm.Jmp(top);
+    asm.Cmp(Reg.SI, limit);
+    if (step >= 0)
+      asm.Jle(top);                       // repeat while not past
+    else
+      asm.Jge(top);
     asm.MarkLabel(done);
 
     this._exitFor.Pop();
@@ -1335,18 +1344,24 @@ public sealed partial class CodeGenerator {
     this._iterateFor.Push(cont);
     this._iterateAny.Push(cont);
 
-    this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
-    asm.MarkLabel(top);
+    // O0062 loop rotation: entry guard + bottom test, dropping the per-iteration JMP; ESI holds the
+    // counter and wraps identically, so the 32-bit increment-then-test end value is unchanged.
     asm.Cmp(Reg.ESI, limit.WithSize(OperandSize.Dword));             // one 32-bit signed compare
     if (step >= 0)
-      asm.Jg(done);
+      asm.Jg(done);                                                 // enter only if not already past
     else
       asm.Jl(done);
+    this.AlignLoopTop();   // C2: cache-line-align the loop top (fetch-ahead win; output-invariant)
+    asm.MarkLabel(top);
     foreach (var statement in f.Body)
       this.EmitStatement(statement);
     asm.MarkLabel(cont);
     asm.Add(Reg.ESI, (Imm)(int)step);                               // signed 32-bit increment (imm sign-extends)
-    asm.Jmp(top);
+    asm.Cmp(Reg.ESI, limit.WithSize(OperandSize.Dword));
+    if (step >= 0)
+      asm.Jle(top);                                                 // repeat while not past
+    else
+      asm.Jge(top);
     asm.MarkLabel(done);
 
     this._exitFor.Pop();
