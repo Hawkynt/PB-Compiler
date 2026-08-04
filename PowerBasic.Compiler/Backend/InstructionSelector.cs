@@ -538,7 +538,7 @@ public sealed class InstructionSelector {
 
     var operands = new List<MOperand> { new MOperand.InlineAsmText(asm.Text, asm.Names) };
     foreach (var pointer in asm.Operands) {
-      if (this.PointerMemory(pointer, MRegSize.Word) is not { } cell)
+      if (this.AsmCell(pointer) is not { } cell)
         return false;
       operands.Add(cell);
     }
@@ -548,6 +548,32 @@ public sealed class InstructionSelector {
         ReadsMemory: true, WritesMemory: true),
       condition: null, clobbers: _callClobbers));
     return true;
+  }
+
+  /// <summary>
+  /// The frame cell an inline-asm name denotes, addressed DIRECTLY rather than through a register.
+  ///
+  /// <see cref="PointerMemory"/> would answer <c>[v0]</c> for a local, because an alloca whose address
+  /// is taken materializes that address with an <c>LEA</c> into a virtual register. That is fatal here
+  /// for a reason that has nothing to do with addressing: the block clobbers every register, so a base
+  /// register live across it can go nowhere - and a value used as a memory base is precisely the one
+  /// thing the spiller cannot move. The function then selected and never allocated.
+  ///
+  /// Naming the slot itself removes the register entirely, and is what the asm meant anyway: <c>MOV n,
+  /// AX</c> names a cell, not a computed address.
+  /// </summary>
+  private MOperand? AsmCell(IrValue pointer) => pointer switch {
+    IrAlloca alloca when this._slots.TryGetValue(alloca, out var slot)
+      => new MOperand.StackSlot(slot, MRegSize.Word),
+    IrGlobalVariable g when g.Name.StartsWith("g.", System.StringComparison.Ordinal)
+                            || g.Name.StartsWith("rt_", System.StringComparison.Ordinal)
+      => new MOperand.DataCell(g.Name, 0, MRegSize.Word),
+    _ => this.DeclineCell(pointer),
+  };
+
+  private MOperand? DeclineCell(IrValue pointer) {
+    this.Decline($"inline asm: '{pointer.Name ?? pointer.GetType().Name}' has no frame cell to name");
+    return null;
   }
 
   private bool SelectStore(IrStore store, MBlock block) {
@@ -1469,6 +1495,13 @@ public sealed class InstructionSelector {
   /// either: it requires an SI/DI-clean region, and a call is not clean.
   /// </summary>
   private MOperand? PointerMemory(IrValue pointer, MRegSize size) {
+    // A SINGLE-slot alloca is addressed as the slot itself rather than through the register its LEA
+    // put the address in. Nothing indexes it - only a multi-slot block needs a base to walk from - and
+    // the register costs real allocations: it is live wherever the variable is used, a value used as a
+    // memory BASE is the one thing the spiller cannot move, and any instruction clobbering the whole
+    // register file in between then has nowhere to put it. Inline asm is exactly such an instruction.
+    if (pointer is IrAlloca { Count: 1 } scalar && this._slots.TryGetValue(scalar, out var own))
+      return new MOperand.StackSlot(own, size);
     if (this._vregs.TryGetValue(pointer, out var reg))
       return new MOperand.Memory(reg, null, 1, 0, size);
     if (pointer is IrGlobalVariable g) {

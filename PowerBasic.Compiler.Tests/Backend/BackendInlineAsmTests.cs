@@ -60,19 +60,10 @@ public sealed class BackendInlineAsmTests {
       o => o is MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell or MOperand.Memory));
     Assert.That(writesN.Operands, Has.Count.EqualTo(2), "the descriptor plus n's own cell");
 
-    // Allocation is a separate, still-open constraint: the block clobbers every register, so anything
-    // live across it has to spill, and the allocator cannot yet place these. That is why the
-    // behaviour tests below still exercise the FALLBACK rather than the routed path.
-    Assert.That(LinearScanAllocator.Allocate(m), Is.Null,
-      "when this starts succeeding, the tests below become routing tests and this line should go");
+    Assert.That(LinearScanAllocator.Allocate(m), Is.Not.Null, "and it allocates, so the function routes");
   }
 
-  /// <summary>
-  /// The asm writes a BASIC local and BASIC reads what it wrote. NOTE: this currently compares the
-  /// direct emitter with itself, because the asm-containing function selects but does not yet
-  /// allocate and so falls back - see the assertion above. It is kept because it is a real regression
-  /// test either way, and it becomes a routing test for free once allocation lands.
-  /// </summary>
+  /// <summary>The asm writes a BASIC local, and BASIC reads what it wrote - through the routed path.</summary>
   [Test]
   public void InlineAsm_GivenItWritesALocal_ThenTheRoutedProgramBehavesLikeTheDirectOne() {
     const string source = """

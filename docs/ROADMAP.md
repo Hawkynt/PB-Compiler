@@ -200,11 +200,15 @@ resolver, not by scanning it: the real parser knows which tokens are registers, 
 and which are operands. (The stand-in it answers with has to be MEMORY - a constant makes `MOV n, AX`
 not an instruction, and every write-to-a-variable block reported itself unbindable.)
 
-**Still to do**: an asm-containing function SELECTS but does not yet ALLOCATE. The block clobbers every
-register, so anything live across it must spill, and the linear-scan allocator cannot yet place these
-even after spilling to a fixpoint. That is now the only thing between inline asm and routing, and it is
-an allocator limitation rather than an inline-asm one. `BackendInlineAsmTests` asserts the current
-failure explicitly, so the day it starts succeeding, the test says so.
+**Inline asm routes.** Getting there needed one more thing, and it was not in the asm path at all: a
+single-slot alloca is now addressed AS its slot rather than through the register its `LEA` put the
+address in. Nothing indexes a scalar - only a multi-slot block needs a base to walk from - and that
+register was costing real allocations, because a value used as a memory BASE is the one thing the
+spiller cannot move, so any instruction clobbering the whole register file in between left it nowhere
+to go. Inline asm is exactly such an instruction; the register file it clobbers is why the function
+selected and never allocated.
+
+The `LEA` is still emitted and is now dead for scalars, which is worth cleaning up but costs only size.
 
 ### Wider integers and SIMD as IR operations - not started
 

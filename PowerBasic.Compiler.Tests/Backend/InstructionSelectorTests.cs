@@ -56,14 +56,16 @@ public sealed class InstructionSelectorTests {
 
     Assert.That(m, Is.Not.Null);
     var ops = m!.AllInstructions.Select(i => i.Opcode).ToArray();
-    // LEA slot-addr ; MOV [p],7 ; MOV x,[p] ; MOV AX,x ; RET
+    // LEA slot-addr ; MOV [p],7 ; MOV x,[p] ; MOV AX,x ; RET - the LEA is still emitted, and is now
+    // dead: a single-slot alloca is addressed AS its slot, so nothing reads the register
     Assert.That(ops, Is.EqualTo(new[] { MOpcode.Lea, MOpcode.Mov, MOpcode.Mov, MOpcode.Mov, MOpcode.Ret }));
     Assert.That(m.StackSlots, Has.Count.EqualTo(1));
 
     var lea = m.AllInstructions.First(i => i.Opcode == MOpcode.Lea);
     Assert.That(lea.Operands[1], Is.InstanceOf<MOperand.StackSlot>());
     var store = m.Blocks[0].Instructions[1];
-    Assert.That(store.Operands[0], Is.InstanceOf<MOperand.Memory>());
+    Assert.That(store.Operands[0], Is.InstanceOf<MOperand.StackSlot>(),
+      "a scalar local is its slot, not [base] - which is what keeps its address out of a register");
     Assert.That(store.Effect.WritesMemory, Is.True);
   }
 
