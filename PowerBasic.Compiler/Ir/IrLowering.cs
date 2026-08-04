@@ -1222,7 +1222,9 @@ public sealed class IrLowering {
         return;
       default:
         foreach (var loop in this._loops)
-          if (loop.Kind == e.Kind || e.Kind is ExitKind.Loop) {
+          // a bare EXIT LOOP means the nearest real loop - a SELECT sits on the same stack but is
+          // not one, so it is stepped over rather than jumped out of
+          if (loop.Kind == e.Kind || (e.Kind is ExitKind.Loop && loop.Kind is not ExitKind.Select)) {
             this._b.Br(loop.Exit);
             return;
           }
@@ -1232,7 +1234,7 @@ public sealed class IrLowering {
 
   private void LowerIterate(IterateStmt it) {
     foreach (var loop in this._loops)
-      if (loop.Kind == it.Kind || it.Kind is ExitKind.Loop) {
+      if (loop.Kind == it.Kind || (it.Kind is ExitKind.Loop && loop.Kind is not ExitKind.Select)) {
         this._b.Br(loop.Continue);
         return;
       }
@@ -1261,6 +1263,10 @@ public sealed class IrLowering {
         arms.Add(arm);
     }
 
+    // EXIT SELECT jumps to the end of the block, so the arms are lowered with the SELECT on the exit
+    // stack - the same mechanism the loops use. It is NOT a loop, so it carries no continue target
+    // and EXIT LOOP steps over it.
+    this._loops.Push(new LoopContext(ExitKind.Select, endsel, endsel));
     foreach (var arm in arms) {
       var body = this.NewBlock("sel.case");
       var next = this.NewBlock("sel.next");
@@ -1279,6 +1285,7 @@ public sealed class IrLowering {
 
     if (elseArm is not null)
       this.LowerStatements(elseArm.Body);
+    this._loops.Pop();
     if (!this.Terminated)
       this._b.Br(endsel);
     this._b.Position(endsel);
