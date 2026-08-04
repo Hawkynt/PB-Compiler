@@ -26,7 +26,7 @@ public sealed class BackendCoverageTests {
 
   private sealed record Census(int Functions, int Selected, int Allocated, int MainBodies, Dictionary<string, int> Declines,
     int ProgramsLowered, int ProgramsTotal, Dictionary<string, int> LoweringDeclines,
-    Dictionary<string, int> ProcedureDeclines);
+    Dictionary<string, int> ProcedureDeclines, Dictionary<string, int> AllocationDeclines);
 
   /// <summary>
   /// Runs the back end's own pipeline over every battery program and tallies what selects.
@@ -40,10 +40,12 @@ public sealed class BackendCoverageTests {
     // the same tally restricted to named procedures: routing a module body (main) additionally needs
     // the whole startup/exit sequence, so what blocks a PROCEDURE is the cheaper next increment
     var procedureDeclines = new Dictionary<string, int>(StringComparer.Ordinal);
+    // why a function that DID select still does not route - the row that used to read only as a count
+    var allocationDeclines = new Dictionary<string, int>(StringComparer.Ordinal);
     int functions = 0, selected = 0, allocated = 0, mainBodies = 0, lowered = 0, total = 0;
     var dir = Path.Combine(_repoRoot, "tests");
     if (!Directory.Exists(dir))
-      return new(0, 0, 0, 0, declines, 0, 0, loweringDeclines, procedureDeclines);
+      return new(0, 0, 0, 0, declines, 0, 0, loweringDeclines, procedureDeclines, allocationDeclines);
 
     // the whole corpus: the golden battery plus tests/diff, the 100+ differential programs
     foreach (var file in Directory.EnumerateFiles(dir, "*.BAS", SearchOption.AllDirectories)
@@ -96,12 +98,13 @@ public sealed class BackendCoverageTests {
           // value live across a CALL has no register while there is no spilling - so this is the
           // number of functions the back end would really take
           MachineScheduler.Schedule(machine);
-          if (LinearScanAllocator.Allocate(machine) is not null) {
+          if (LinearScanAllocator.Allocate(machine, out var noRegisters) is not null) {
             ++allocated;
             // a module body that selects AND allocates is a whole program the back end can own
             if (fn.Name.Equals("main", StringComparison.OrdinalIgnoreCase))
               ++mainBodies;
-          }
+          } else
+            allocationDeclines[noRegisters ?? "unknown"] = allocationDeclines.GetValueOrDefault(noRegisters ?? "unknown") + 1;
         }
         else {
           declines[reason ?? "unknown"] = declines.GetValueOrDefault(reason ?? "unknown") + 1;
@@ -111,7 +114,7 @@ public sealed class BackendCoverageTests {
       }
     }
 
-    return new(functions, selected, allocated, mainBodies, declines, lowered, total, loweringDeclines, procedureDeclines);
+    return new(functions, selected, allocated, mainBodies, declines, lowered, total, loweringDeclines, procedureDeclines, allocationDeclines);
   }
 
   /// <summary>Collapses a decline message to its cause, so names/labels do not fragment the histogram.</summary>
@@ -165,6 +168,9 @@ public sealed class BackendCoverageTests {
     report.AppendLine($"of those, {census.ProcedureDeclines.Values.Sum()} are named procedures (main excluded):");
     foreach (var (reason, count) in census.ProcedureDeclines.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal))
       report.AppendLine($"  {count,5}  {reason}");
+    report.AppendLine($"allocation declines - selected but not routed ({census.Selected - census.Allocated}):");
+    foreach (var (reason, count) in census.AllocationDeclines.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal))
+      report.AppendLine($"  {count,5}  {reason}");
     TestContext.Out.Write(report.ToString());
 
     // A floor, not an exact count: widening the selector may only raise it, and a change that lowers
@@ -200,12 +206,12 @@ public sealed class BackendCoverageTests {
 
     // selection is not routing: the whole-program codegen also schedules and allocates, and a value
     // live across a CALL has no register unless the spiller can move it to the frame
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(123),
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(125),
       "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // the figure that matters for whole-program ownership: module bodies the back end compiles end to
     // end. It was zero until main became routable at all
-    Assert.That(census.MainBodies, Is.GreaterThanOrEqualTo(51),
+    Assert.That(census.MainBodies, Is.GreaterThanOrEqualTo(53),
       "fewer whole module bodies are compilable than they used to be:\n" + report);
   }
 }

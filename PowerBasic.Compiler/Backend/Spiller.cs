@@ -36,6 +36,94 @@ internal static class Spiller {
   /// first because their cell is free; among equals the longest live range goes first, being the one
   /// most likely to have blocked the allocation.
   /// </summary>
+  /// <summary>
+  /// Shortens one value's live range by RECOMPUTING it at each use instead of keeping it in a
+  /// register, and returns whether it moved anything.
+  ///
+  /// This is the answer for the case spilling cannot touch. A frame address - the <c>LEA</c> that puts
+  /// an array's base where a GEP can index from it - is used as a memory BASE, and a base has to be in
+  /// a register, so the spiller refuses it. If a call or an inline-asm block sits between the LEA and
+  /// the use, the value is live across a clobber of the whole register file with nowhere to go, and
+  /// the function selects but never routes. It was 25 of the 37 such functions in the corpus.
+  ///
+  /// Recomputing is free of that problem because the LEA depends on nothing but BP: putting a fresh
+  /// copy immediately before each use makes every live range one instruction long, so no clobber can
+  /// fall inside one. It costs an instruction per use and saves nothing when there is only one use,
+  /// which is why the single-use case is left alone.
+  /// </summary>
+  internal static bool RematerializeOne(MFunction function) {
+    foreach (var block in function.Blocks)
+      foreach (var instr in block.Instructions.ToList()) {
+        if (instr.Opcode != MOpcode.Lea
+            || instr.Operands is not [MOperand.Register { Reg: { IsVirtual: true } target }, MOperand.StackSlot or MOperand.DataOffset])
+          continue;
+        if (DefinitionCount(function, target.VirtualId) != 1 || UseCount(function, target.VirtualId) == 0)
+          continue;
+        if (AlreadyBesideItsUses(function, instr, target.VirtualId))
+          continue;                              // nothing to gain, and re-doing it would never settle
+        Rematerialize(function, instr, target.VirtualId);
+        return true;
+      }
+    return false;
+  }
+
+  /// <summary>
+  /// Whether every use is already immediately preceded by the definition, so recomputing would produce
+  /// the identical instruction list. Without this the allocator's retry loop would call this forever.
+  /// </summary>
+  private static bool AlreadyBesideItsUses(MFunction function, MInstr definition, int virtualId) {
+    foreach (var block in function.Blocks)
+      for (var i = 0; i < block.Instructions.Count; ++i) {
+        var instr = block.Instructions[i];
+        if (ReferenceEquals(instr, definition) || !Mentions(instr, virtualId))
+          continue;
+        if (LivenessAnalysis.RegistersOf(instr).Writes.Contains(virtualId))
+          continue;
+        if (i == 0 || !ReferenceEquals(block.Instructions[i - 1], definition))
+          return false;
+      }
+    return true;
+  }
+
+  private static int DefinitionCount(MFunction function, int virtualId)
+    => function.AllInstructions.Count(i => LivenessAnalysis.RegistersOf(i).Writes.Contains(virtualId));
+
+  private static int UseCount(MFunction function, int virtualId)
+    => function.AllInstructions.Count(i => !LivenessAnalysis.RegistersOf(i).Writes.Contains(virtualId)
+                                           && Mentions(i, virtualId));
+
+  /// <summary>Whether the instruction names the value anywhere - as an operand or inside a memory address.</summary>
+  private static bool Mentions(MInstr instr, int virtualId) {
+    foreach (var operand in instr.Operands)
+      switch (operand) {
+        case MOperand.Register { Reg: { IsVirtual: true } r } when r.VirtualId == virtualId:
+        case MOperand.Memory { Base: { IsVirtual: true } b } when b.VirtualId == virtualId:
+        case MOperand.Memory { Index: { IsVirtual: true } x } when x.VirtualId == virtualId:
+          return true;
+      }
+    return false;
+  }
+
+  /// <summary>Copies the defining instruction in front of every use, then drops the original.</summary>
+  private static void Rematerialize(MFunction function, MInstr definition, int virtualId) {
+    foreach (var block in function.Blocks)
+      for (var i = block.Instructions.Count - 1; i >= 0; --i) {
+        var instr = block.Instructions[i];
+        if (ReferenceEquals(instr, definition) || !Mentions(instr, virtualId))
+          continue;
+        if (LivenessAnalysis.RegistersOf(instr).Writes.Contains(virtualId))
+          continue;
+        block.Instructions.Insert(i, definition);
+      }
+
+    foreach (var block in function.Blocks)
+      for (var i = 0; i < block.Instructions.Count; ++i)
+        if (ReferenceEquals(block.Instructions[i], definition)) {
+          block.Instructions.RemoveAt(i);          // the ORIGINAL, ahead of every copy inserted above
+          return;
+        }
+  }
+
   internal static bool SpillOne(MFunction function) {
     var length = new Dictionary<int, int>();
     foreach (var interval in LivenessAnalysis.Compute(function))

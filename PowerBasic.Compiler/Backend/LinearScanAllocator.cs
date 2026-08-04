@@ -17,7 +17,17 @@ public sealed class LinearScanAllocator {
   // used as a memory base/index) must come from BX/SI/DI - in 16-bit mode AX/CX/DX/BP/SP cannot index
   // memory (BP is reserved for the frame). BP/SP are never allocated.
   private static readonly Reg[] _pool = [Reg.AX, Reg.CX, Reg.DX, Reg.BX, Reg.SI, Reg.DI];
+  /// <summary>Registers that may be a memory BASE on this target.</summary>
   private static readonly Reg[] _addressing = [Reg.BX, Reg.SI, Reg.DI];
+
+  /// <summary>
+  /// Registers that may be a memory INDEX, which is a strictly smaller set: 16-bit addressing allows
+  /// <c>[BX+SI]</c> and <c>[BP+DI]</c> but has no encoding with BX in the index position. Treating the
+  /// two roles as one set let a value that is only ever an index be given BX, which the assembler then
+  /// refuses outright - it surfaced the moment rematerialization changed the pressure enough to make
+  /// BX the first free choice.
+  /// </summary>
+  private static readonly Reg[] _indexing = [Reg.SI, Reg.DI];
 
   /// <summary>
   /// Assigns each virtual register a physical register, or returns null when the live set still
@@ -28,13 +38,55 @@ public sealed class LinearScanAllocator {
   /// other value a fresh stack slot. This mutates <paramref name="function"/>, which is why it lives
   /// here: the allocator owns the function's register story.
   /// </summary>
-  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function) {
+  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function) => Allocate(function, out _);
+
+  /// <summary>
+  /// The same, reporting WHY it gave up. Selection says why it declines a function; allocation used to
+  /// just answer null, which left "register pressure" as the whole diagnosis for every function that
+  /// selected and did not route - a black box in the middle of the coverage census.
+  /// </summary>
+  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function, out string? reason) {
     for (;;) {
-      if (TryAllocate(function) is { } assignment)
+      if (TryAllocate(function) is { } assignment) {
+        reason = null;
         return assignment;
-      if (!Spiller.SpillOne(function))
-        return null;                                 // nothing left that can move to memory
+      }
+      // recomputing a frame address is tried BEFORE spilling: it is the only move available for a
+      // value used as a memory base, which cannot go to memory itself
+      if (Spiller.RematerializeOne(function))
+        continue;
+      if (!Spiller.SpillOne(function)) {
+        reason = Blocker(function);
+        return null;
+      }
     }
+  }
+
+  /// <summary>
+  /// What stopped the last sweep: the first interval that found no register, and the reason the
+  /// spiller then refused to move it to memory.
+  /// </summary>
+  private static string Blocker(MFunction function) {
+    var addressing = AddressRegisters(function);
+    var clobbersAt = ClobbersByIndex(function);
+    var free = new List<Reg>(_pool);
+    var active = new List<LivenessAnalysis.LiveInterval>();
+
+    foreach (var interval in LivenessAnalysis.Compute(function)) {
+      for (var a = active.Count - 1; a >= 0; --a)
+        if (active[a].End < interval.Start)
+          active.RemoveAt(a);
+      var unsafeRegs = ClobberedOver(clobbersAt, interval.Start, interval.End);
+      var legal = LegalFor(interval.VirtualId, addressing);
+      if (free.Count > active.Count && legal.Any(r => !unsafeRegs.Contains(r)))
+        continue;
+      return legal != _pool
+        ? "a value used as a memory base or index is live across a full-register clobber (it cannot spill)"
+        : unsafeRegs.Count >= _pool.Length
+          ? "a value is live across an instruction that clobbers every register, and cannot move to memory"
+          : "no register is free where the value is live, and none of the candidates can move to memory";
+    }
+    return "no register assignment, and nothing left that can move to memory";
   }
 
   /// <summary>One linear-scan sweep, with no spilling: null when some interval finds no register.</summary>
@@ -56,9 +108,8 @@ public sealed class LinearScanAllocator {
 
       // registers destroyed by a CALL anywhere this value is live cannot hold it
       var unsafeRegs = ClobberedOver(clobbersAt, interval.Start, interval.End);
-      var addressing = addressVregs.Contains(interval.VirtualId);
-      var slot = free.FindIndex(r =>
-        (!addressing || System.Array.IndexOf(_addressing, r) >= 0) && !unsafeRegs.Contains(r));
+      var legal = LegalFor(interval.VirtualId, addressVregs);
+      var slot = free.FindIndex(r => System.Array.IndexOf(legal, r) >= 0 && !unsafeRegs.Contains(r));
       if (slot < 0)
         return null;                                 // no suitable register free - spill needed
 
@@ -95,18 +146,25 @@ public sealed class LinearScanAllocator {
   }
 
   /// <summary>The virtual registers that appear as a memory operand's base or index (so they must be addressing-capable).</summary>
-  private static HashSet<int> AddressRegisters(MFunction function) {
-    var address = new HashSet<int>();
+  private static (HashSet<int> Base, HashSet<int> Index) AddressRegisters(MFunction function) {
+    var bases = new HashSet<int>();
+    var indices = new HashSet<int>();
     foreach (var instr in function.AllInstructions)
       foreach (var operand in instr.Operands)
         if (operand is MOperand.Memory mem) {
           if (mem.Base is { IsVirtual: true } b)
-            address.Add(b.VirtualId);
+            bases.Add(b.VirtualId);
           if (mem.Index is { IsVirtual: true } x)
-            address.Add(x.VirtualId);
+            indices.Add(x.VirtualId);
         }
-    return address;
+    return (bases, indices);
   }
+
+  /// <summary>The registers a value may occupy given how it is used to address memory.</summary>
+  private static Reg[] LegalFor(int virtualId, (HashSet<int> Base, HashSet<int> Index) addressing)
+    => addressing.Index.Contains(virtualId) ? _indexing
+      : addressing.Base.Contains(virtualId) ? _addressing
+      : _pool;
 
   // keep the freed register in the pool's preferred order so allocation is deterministic
   private static void ReturnToPool(List<Reg> free, Reg reg) {
