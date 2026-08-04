@@ -119,7 +119,7 @@ Conventions used on every page:
 | ✅ | [O0082](O0082-memory-operand-folding.md) | Memory operand folding |
 | ⬜ | [O0083](O0083-store-to-load-forwarding.md) | Store-to-load forwarding |
 | ⬜ | [O0084](O0084-cross-statement-register-caching.md) | Cross-statement register caching |
-| ⬜ | [O0085](O0085-copy-coalescing.md) | Register copy coalescing |
+| 🟡 | [O0085](O0085-copy-coalescing.md) | Register copy coalescing |
 | ⬜ | [O0086](O0086-spill-slot-reuse.md) | Spill-slot reuse |
 | ⬜ | [O0087](O0087-rematerialization.md) | Rematerialization |
 | ✅ | [O0088](O0088-boolean-materialization-sbb.md) | Branchless truth values |

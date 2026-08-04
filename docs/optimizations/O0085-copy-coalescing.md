@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
-| **Stage** | Register allocation |
+| **Status** | 🟡 Partial (a peephole coalesces the ABI-staging copy when the intermediate register dies immediately; the allocator-driven coalescing over interference info is not wired) |
+| **Stage** | Register allocation / assembler peephole |
 | **Related** | [O0027](O0027-copy-propagation.md), [O0058](O0058-386-register-allocation.md), [O0072](O0072-register-reassignment.md) |
 
 ## The idea
@@ -41,6 +41,28 @@ or the next operation wants them:
 ## Planned
 
 The consumer is allocated AX directly, so no copy is emitted.
+
+## Now
+
+The common shape the doc's "Today" pictures — a value staged through a register
+that is then copied to its real home and never read again (`MOV R,SRC … MOV R2,R`
+where `R` dies at the copy) — is coalesced to `MOV R2,SRC` by the assembler
+peephole (`RunPeephole` in `Asm/Assembler.Peephole.cs`, the copy-forwarding
+triple), removing the ABI-staging move. Gated `standalone && !EnableSchedule`
+(`CodeGenerator.cs`); covered by `AssemblerPeepholeTests`
+(`Peephole_GivenRegisterStagedThenRegisterDies_…`, and the `…IntermediateStillLive…`
+decline). This achieves the doc's observable *effect* for the local case without
+an allocator.
+
+## Still planned
+
+The doc's actual *mechanism* — the consumer allocated `AX` (or its target) directly
+by an allocator coalescing over live-range interference — is not wired. The
+graph-colouring allocator (`CodeGen/Ssa/RegisterAllocation.cs`) and `ScalarLiveness`
+interference exist and are unit-tested, but `RegisterAllocation.Compute` is
+analysis-only and not consumed by the emitter, so coalescing beyond the peephole's
+straight-line window (across branches, or a value produced far from its consumer)
+does not happen yet.
 
 ## What it needs
 

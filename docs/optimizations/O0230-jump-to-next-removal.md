@@ -4,8 +4,8 @@
 |---|---|
 | **Status** | ✅ Implemented |
 | **Stage** | Assembler |
-| **Source** | `Asm/Assembler.Peephole.cs` |
-| **Gate** | `--optimize` |
+| **Source** | `Asm/Assembler.cs` (`RunJumpRelaxation`) |
+| **Gate** | standalone non-unit image (`EnableJumpRelaxation`, runs on the faithful path too by design) |
 | **Split from** | [O0035](O0035-jump-relaxation.md) (which is now short-form relaxation) |
 
 ## What it is
