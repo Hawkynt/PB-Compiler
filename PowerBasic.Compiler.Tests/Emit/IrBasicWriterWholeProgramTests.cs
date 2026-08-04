@@ -156,6 +156,48 @@ public sealed class IrBasicWriterWholeProgramTests {
       END
       """);
 
+  /// <summary>
+  /// The string intrinsics render back as themselves - LEN, LEFT$, MID$ - rather than as the runtime
+  /// routines they lowered to. If any of them mapped to the wrong function the output changes, which
+  /// is the only way to tell a right mapping from a plausible one.
+  /// </summary>
+  [Test]
+  public void RoundTrip_GivenStringIntrinsics_ThenTheyComputeTheSame() =>
+    RoundTrips("""
+      a$ = "Hello"
+      b$ = "World"
+      PRINT a$ + " " + b$
+      PRINT LEN(a$); LEN(a$ + b$)
+      PRINT LEFT$(a$, 3); "|"; RIGHT$(b$, 3)
+      PRINT MID$(a$, 2, 3)
+      PRINT UCASE$(a$); LCASE$(b$)
+      PRINT CHR$(65); STRING$(3, 42)
+      PRINT ASC(a$)
+      END
+      """);
+
+  [Test]
+  public void RoundTrip_GivenTheMathIntrinsics_ThenTheyRenderAsTheirOperators() =>
+    RoundTrips("""
+      DIM x AS SINGLE
+      x = 2.0
+      PRINT SQR(x)
+      PRINT x ^ 3.0
+      PRINT ABS(0.0 - x)
+      END
+      """);
+
+  [Test]
+  public void RoundTrip_GivenStrDollarAndVal_ThenTheTextRoundTripsToo() =>
+    RoundTrips("""
+      DIM n AS INTEGER
+      n = 42
+      s$ = STR$(n)
+      PRINT s$; "|"; LEN(s$)
+      PRINT VAL("17") + 1
+      END
+      """);
+
   [Test]
   public void RoundTrip_GivenLongArithmetic_ThenTheWidthIsPreserved() =>
     RoundTrips("""

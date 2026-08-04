@@ -224,7 +224,7 @@ This found a real miscompile the first time it ran — not in a pass, but in the
 `ELSEIF` condition was being folded against the value lattice of the `THEN` arm it followed. See
 `CodeGen/CodeGenerator.cs` `EmitIf` and `Tests/CodeGen/ElseIfProgramPointTests.cs`.
 
-`IrBasicWriterCensusTests` reports how much of the corpus renders (currently **128 of 218**
+`IrBasicWriterCensusTests` reports how much of the corpus renders (currently **173 of 218**
 functions) and ranks what does not, which is the distance still to go before `BasicWriter` can be
 retired. It cannot be retired yet: it also renders declarations, `TYPE`s and procedure signatures
 from the original `CompilationUnit`, and carries the binder's pb36→pb35 desugaring, none of which the

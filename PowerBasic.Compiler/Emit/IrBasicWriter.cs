@@ -196,6 +196,7 @@ public sealed class IrBasicWriter {
     IrConstantFloat f => f.Value.ToString("R", CultureInfo.InvariantCulture) is var s
       && !s.Contains('.') && !s.Contains('E') ? s + ".0" : f.Value.ToString("R", CultureInfo.InvariantCulture),
     IrUndef => "0",
+    IrNullPtr => "\"\"",   // the null string handle IS the empty string
     _ => this._names.TryGetValue(value, out var name)
       ? name
       : throw new IrBasicWriterException($"a value with no BASIC name ({value.GetType().Name})"),
@@ -219,6 +220,9 @@ public sealed class IrBasicWriter {
       _ => throw new IrBasicWriterException($"an integer of {type.Bits} bits"),
     },
     IrTypeKind.Float when type.IsIeeeFloat => type.Bits == 32 ? "SINGLE" : "DOUBLE",
+    // every pointer this lowering produces for a VALUE is a string handle; storage pointers are
+    // allocas and arrays, which are declared from what they hold rather than from the pointer
+    IrTypeKind.Ptr => "STRING",
     _ => throw new IrBasicWriterException($"the type {type}"),
   };
 
@@ -299,8 +303,38 @@ public sealed class IrBasicWriter {
     _ => throw new IrBasicWriterException($"the predicate {pred}"),
   };
 
+  /// <summary>A fresh variable of the given type, for an intermediate the BASIC form needs.</summary>
+  private string Temp(IrType type) {
+    var name = $"t{this._seq++}";
+    this._locals.Add((name, type));
+    return name;
+  }
+
+  /// <summary>
+  /// Narrowing to <paramref name="bits"/>, spelled exactly. BASIC has no truncating conversion - an
+  /// out-of-range assignment is an error, not a wrap - so the two's-complement result is computed:
+  /// mask to the width, then fold the values above the signed maximum back down by 2^bits. The
+  /// intermediate has to be wider than the target, which is why it needs a temporary of its own.
+  /// </summary>
+  private void Truncate(IrCast cast, string source, int bits) {
+    var wide = cast.Value.Type;
+    var temp = this.Temp(wide);
+    var mask = (1L << bits) - 1;
+    var signBit = 1L << (bits - 1);
+    var suffix = wide.Bits > 16 ? "&" : "";
+    this.Line($"  {temp} = {source} AND {mask}{suffix}");
+    this.Line($"  IF {temp} > {signBit - 1}{suffix} THEN {temp} = {temp} - {mask + 1}{suffix}");
+    this.Line($"  {this.Define(cast)} = {temp}");
+  }
+
   private void Cast(IrCast cast) {
     var source = this.Ref(cast.Value);
+    if (cast.Op == IrCastOp.Trunc) {
+      if (cast.Type.Bits is not (8 or 16) || cast.Value.Type.Bits <= cast.Type.Bits)
+        throw new IrBasicWriterException($"a truncation to {cast.Type.Bits} bits");
+      this.Truncate(cast, source, cast.Type.Bits);
+      return;
+    }
     var text = cast.Op switch {
       // a compare's i1 is 1/0 here (see IrCmp above), so widening it signed is a negation and
       // widening it unsigned is the identity - which is exactly BASIC's -1/0 truth value either way
@@ -422,11 +456,70 @@ public sealed class IrBasicWriter {
   /// </summary>
   private static readonly HashSet<string> _printItem = new(StringComparer.Ordinal) {
     "rt_print_i16", "rt_print_i32", "rt_print_u16", "rt_print_u32", "rt_print_u8", "rt_print_i8",
-    "rt_print_single", "rt_print_double", "rt_print_strvar",
+    "rt_print_single", "rt_print_double", "rt_print_ext", "rt_print_i64", "rt_print_u64",
+    "rt_print_strvar",
+  };
+
+  /// <summary>
+  /// The runtime routines that ARE a BASIC intrinsic, mapped back to the spelling they were lowered
+  /// from. Each is a pure expression, so it renders in place at every use rather than as a statement.
+  /// The names are the intrinsic's own - LEN, VAL, LEFT$ - which is what makes the rendered program
+  /// readable next to the original instead of a transcript of the runtime.
+  /// </summary>
+  private static readonly Dictionary<string, string> _intrinsics = new(StringComparer.Ordinal) {
+    ["rt_str_len"] = "LEN", ["rt_str_val"] = "VAL", ["rt_str_asc"] = "ASC",
+    ["rt_str_left"] = "LEFT$", ["rt_str_right"] = "RIGHT$",
+    ["rt_str_mid"] = "MID$", ["rt_str_mid2"] = "MID$",
+    ["rt_str_chr"] = "CHR$", ["rt_str_space"] = "SPACE$",
+    ["rt_str_string"] = "STRING$", ["rt_str_string_s"] = "STRING$",
+    ["rt_str_hex"] = "HEX$", ["rt_str_oct"] = "OCT$", ["rt_str_bin"] = "BIN$",
+    ["rt_str_ucase"] = "UCASE$", ["rt_str_lcase"] = "LCASE$",
+    ["rt_str_ltrim"] = "LTRIM$", ["rt_str_rtrim"] = "RTRIM$",
+    ["rt_str_instr"] = "INSTR", ["rt_str_instr_start"] = "INSTR",
+    ["rt_str_mki"] = "MKI$", ["rt_str_mkl"] = "MKL$", ["rt_str_mks"] = "MKS$",
+    ["rt_str_mkd"] = "MKD$", ["rt_str_mkdwd"] = "MKDWD$",
+    // STR$ of every width lowers to its own routine; they all came from the one intrinsic
+    ["rt_str_from_i8"] = "STR$", ["rt_str_from_i16"] = "STR$", ["rt_str_from_i32"] = "STR$",
+    ["rt_str_from_i64"] = "STR$", ["rt_str_from_u8"] = "STR$", ["rt_str_from_u16"] = "STR$",
+    ["rt_str_from_u32"] = "STR$", ["rt_str_from_u64"] = "STR$",
+    ["rt_str_from_single"] = "STR$", ["rt_str_from_double"] = "STR$",
   };
 
   /// <summary>Runtime routines that PRODUCE a string; each renders as a BASIC expression, not a statement.</summary>
+  /// <summary>
+  /// The LLVM math intrinsics, back to the BASIC functions they came from. The lowering appends the
+  /// result width to the name (llvm.sqrt.f32, llvm.sqrt.f64, llvm.sqrt.f80 are one intrinsic at three
+  /// precisions), so the width is stripped before the lookup rather than tripled in the table.
+  /// </summary>
+  private static readonly Dictionary<string, string> _mathIntrinsics = new(StringComparer.Ordinal) {
+    ["sqrt"] = "SQR", ["sin"] = "SIN", ["cos"] = "COS", ["tan"] = "TAN",
+    ["log"] = "LOG", ["exp"] = "EXP", ["fabs"] = "ABS", ["atan"] = "ATN",
+  };
+
+  /// <summary>The intrinsic behind an <c>llvm.NAME.fN</c> declaration, or null.</summary>
+  private static string? MathName(string runtime) {
+    if (!runtime.StartsWith("llvm.", StringComparison.Ordinal))
+      return null;
+    var parts = runtime.Split('.');
+    return parts.Length == 3 ? parts[1] : null;
+  }
+
   private bool TryStringExpression(IrCall call, IrFunction callee) {
+    if (MathName(callee.Name) is { } math) {
+      // exponentiation is an operator in BASIC, not a function - it is what '^' lowered to
+      if (math == "pow" && call.Args.Count() == 2) {
+        this._names[call] = $"({this.Ref(call.Args.ElementAt(0))} ^ {this.Ref(call.Args.ElementAt(1))})";
+        return true;
+      }
+      if (_mathIntrinsics.TryGetValue(math, out var fn) && call.Args.Count() == 1) {
+        this._names[call] = $"{fn}({this.Ref(call.Args.First())})";
+        return true;
+      }
+    }
+    if (_intrinsics.TryGetValue(callee.Name, out var intrinsic)) {
+      this._names[call] = $"{intrinsic}({string.Join(", ", call.Args.Select(this.Ref))})";
+      return true;
+    }
     switch (callee.Name) {
       // rt_str_const(bytes, length) IS a string literal - it is what one lowers to
       case "rt_str_const" when call.Args.FirstOrDefault() is IrGlobalVariable { Bytes: { } bytes }:
@@ -440,6 +533,7 @@ public sealed class IrBasicWriter {
       case "rt_str_dup":
         this._names[call] = this.Ref(call.Args.First());
         return true;
+
       default:
         return false;
     }
@@ -479,8 +573,9 @@ public sealed class IrBasicWriter {
       case "rt_fprint_str" when args is [{ } number, IrGlobalVariable { Bytes: { } bytes }, _]:
         this.Line($"  PRINT #{this.Ref(number)}, {Quote(System.Text.Encoding.ASCII.GetString(bytes))};");
         return true;
-      case "rt_fprint_i16" or "rt_fprint_i32" or "rt_fprint_u16" or "rt_fprint_u32"
-        or "rt_fprint_u8" or "rt_fprint_single" or "rt_fprint_double" or "rt_fprint_strvar"
+      case "rt_fprint_i16" or "rt_fprint_i32" or "rt_fprint_i64" or "rt_fprint_u8" or "rt_fprint_u16"
+        or "rt_fprint_u32" or "rt_fprint_u64" or "rt_fprint_single" or "rt_fprint_double"
+        or "rt_fprint_ext" or "rt_fprint_strvar"
         when args.Count == 2:
         this.Line($"  PRINT #{this.Ref(args[0])}, {this.Ref(args[1])};");
         return true;
@@ -500,6 +595,16 @@ public sealed class IrBasicWriter {
   /// pointers, and would render as something no reader could check against the original.
   /// </summary>
   private IrValue ArrayElement(IrGep gep) {
+    // a module-level array is declared by the module render and named by its own identifier
+    if (gep.BasePtr is IrGlobalVariable { Bytes: null } global) {
+      var globalElement = gep.ElementType ?? global.ValueType;
+      var globalStride = gep.ElementType is not null ? 1 : SizeOf(globalElement);
+      var globalIndex = globalStride == 1 ? gep.ByteOffset : Undo(gep.ByteOffset, globalStride);
+      if (!this._names.ContainsKey(global))
+        this._names[global] = Sanitize(global.Name);
+      this._names[gep] = $"{this._names[global]}({this.Ref(globalIndex)})";
+      return gep;
+    }
     if (gep.BasePtr is not IrAlloca array)
       throw new IrBasicWriterException($"a subscript of {gep.BasePtr.GetType().Name} rather than a local array");
     foreach (var user in array.Users)
@@ -545,6 +650,15 @@ public sealed class IrBasicWriter {
     if (callee.IsDeclaration) {
       if (this.TryStringExpression(call, callee))
         return;
+      // ERROR n: the statement that raises, spelled as itself
+      if (callee.Name == "rt_error") {
+        this.Line($"  ERROR {this.Ref(call.Args.First())}");
+        return;
+      }
+      if (callee.Name == "rt_locate" && call.Args.Count() == 2) {
+        this.Line($"  LOCATE {this.Ref(call.Args.ElementAt(0))}, {this.Ref(call.Args.ElementAt(1))}");
+        return;
+      }
       if (callee.Name == "rt_print_nl") {
         this.Line("  PRINT");
         return;
