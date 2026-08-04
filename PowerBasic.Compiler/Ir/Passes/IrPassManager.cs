@@ -118,6 +118,13 @@ public sealed class IrPassManager {
     .Add("dce", Dce.Run)
     .Add("ifconv", IfConversion.Run)
     .Add("simplifycfg", SimplifyCfg.Run)
+    // FunctionSummaries.RemoveDeadPureCalls deliberately does NOT run here. The analysis is right and
+    // the removal is sound - a call to a body that writes nothing, whose result nothing reads, is not
+    // observable - but DIFF113 declares `SUB Opaque(v&)` with an EMPTY body precisely to be an
+    // optimization barrier, and dropping the call hands the direct emitter's own optimizer code it
+    // could not previously see through. What it then does with it differs from the original, which is
+    // a finding about that optimizer and not about this pass. Until that is chased down, the summaries
+    // are available to callers and this consumer is off.
     .AddModulePass("readonly-globals", ReadOnlyGlobals.Run)
     .AddModulePass("localize-globals", LocalizeGlobals.Run)
     .AddModulePass("ipconstprop", IpConstantProp.Run);

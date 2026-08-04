@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | ⬜ Planned (purity is already a whole-call-graph fixpoint — [O0025](O0025-pure-function-folding.md)) |
 | **Stage** | Whole-program analysis infrastructure |
+| **IR** | 🟡 `Ir/Passes/FunctionSummaries.cs` — the mod/ref half: two bits per procedure, reads and writes, as a fixpoint over the call graph. It starts from PURE and only ever adds impurity, which is what makes a recursive pure function come out pure - starting from impure would need a proof about the cycle before entering it. Anything it cannot see through is maximally impure: an external declaration, an indirect call, an armed error handler, inline asm. `RemoveDeadPureCalls` is the first consumer and is deliberately NOT in the standard pipeline - see the note there and in ROADMAP. Verified by `FunctionSummariesTests` |
 | **Related** | [O0025](O0025-pure-function-folding.md), [O0016](O0016-value-fact-analysis.md), [O0159](O0159-return-value-propagation.md), [O0171](O0171-alias-analysis.md) |
 | **Split into** | [O0260](O0260-escape-analysis.md), [O0261](O0261-termination-analysis.md) |
 

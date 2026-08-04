@@ -256,7 +256,7 @@ Measured by `OptimizationPortingLedgerTests`, which reads the Stage of every doc
 | machine-level (not IR work at all) | **290** |
 | portable to the IR | **130** |
 | …already expressed on the IR | 20 |
-| …still to port | **110**, of which **19** now carry an `IR` row |
+| …still to port | **110**, of which **20** now carry an `IR` row |
 
 So the target is 110, not 420 — and the bulk of it is one category, *Mid-end* (52). The ledger is a
 test with floors, so the portable share cannot shrink by reclassification instead of movement.
@@ -318,6 +318,13 @@ A ported optimization records an **IR** row in its own document, which is what t
   values advancing in lockstep are one value written twice. It has to start OPTIMISTICALLY, because a
   loop phi's latch value is derived from the phi itself and a pessimistic proof of that cycle is
   circular - which is also why GVN skips phis entirely and leaves these untouched.
+- **O0161 function summaries (mod/ref)** — `Ir/Passes/FunctionSummaries.cs`. Two bits per procedure,
+  computed as a fixpoint over the call graph that starts from PURE and only ever adds impurity - which
+  is what makes a recursive pure function come out pure. Its first consumer, `RemoveDeadPureCalls`, is
+  NOT in the standard pipeline: `DIFF113` declares `SUB Opaque(v&)` with an empty body precisely to be
+  an optimization barrier, and dropping the call hands the DIRECT emitter's optimizer code it could not
+  previously see through. What it then does with it differs from the original - a finding about that
+  optimizer rather than about this pass, and one that needs chasing before the consumer is turned on.
 - **O0225 SSA construction** — `Ir/IrDominators.cs` + `Ir/Passes/Mem2Reg.cs`, the same Cytron
   construction the direct tier has.
 
