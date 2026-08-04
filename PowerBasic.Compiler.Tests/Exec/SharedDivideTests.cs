@@ -80,6 +80,45 @@ public sealed class SharedDivideTests {
     Assert.That(Compile(_twoDivides).Output.Trim(), Is.EqualTo("1  2  3  9  2"));
   }
 
+  private const string _modFirst = """
+    DATA 5
+    n% = 47
+    READ d%
+    r% = n% MOD d%
+    FOR i% = 1 TO 3
+      PRINT i%;
+    NEXT i%
+    q% = n% \ d%
+    PRINT q%; r%
+    """;
+
+  [Test]
+  public void Emit_GivenTheModFirst_ThenTheLaterDivideReusesItsQuotient() {
+    // one IDIV answers both questions, so the order they are asked in cannot matter: a MOD that runs
+    // first leaves the QUOTIENT in AX, and the next instruction is about to overwrite it
+    var shared = Compile(_modFirst);
+    var separate = Compile(_twoDivides);
+
+    Assert.That(shared.Divides, Is.LessThan(separate.Divides));
+  }
+
+  [Test]
+  public void Run_GivenTheModFirst_ThenTheAnswersAreStillRight() {
+    Assert.That(Compile(_modFirst).Output.Trim(), Is.EqualTo("1  2  3  9  2"));
+  }
+
+  [Test]
+  public void Run_GivenTheAdjacentModThenDivide_ThenTheAnswersAreStillRight() {
+    Assert.That(Compile("""
+      DATA 5
+      n% = 47
+      READ d%
+      r% = n% MOD d%
+      q% = n% \ d%
+      PRINT q%; r%
+      """).Output.Trim(), Is.EqualTo("9  2"));
+  }
+
   [Test]
   public void Run_GivenTheAdjacentPair_ThenItStillWorks() {
     Assert.That(Compile("""

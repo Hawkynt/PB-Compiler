@@ -1130,6 +1130,18 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private Dictionary<AssignStmt, int>? _remainderLoad;
 
   /// <summary>
+  /// The mirror image: a MOD that runs first, whose IDIV also produced the QUOTIENT a later divide
+  /// wants. It has to be stashed between the IDIV and the <c>MOV AX,DX</c> that overwrites it with
+  /// the remainder, so the emitter is told through <see cref="_stashQuotientSlot"/> rather than after
+  /// the statement as the remainder is.
+  /// </summary>
+  private Dictionary<AssignStmt, int>? _quotientStash;
+
+  private Dictionary<AssignStmt, int>? _quotientLoad;
+
+  private int? _stashQuotientSlot;
+
+  /// <summary>
   /// O0079 shared divide: marks the MOD statement of a strictly-adjacent <c>q = n\d : m = n MOD d</c>
   /// pair so it reuses the remainder the divide left in DX. Only sound when the two are consecutive
   /// (LabelStmt is its own statement, so adjacency proves no branch lands on the MOD and DX is live),
@@ -1143,6 +1155,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._remainderReuse = null;
     this._remainderStash = null;
     this._remainderLoad = null;
+    this._quotientStash = null;
+    this._quotientLoad = null;
     if (!this.Optimize || this.CheckOverflow || this.CheckNumeric)
       return; // checked arithmetic keeps every operation and its own traps
     this.ScanDivMod(body);
@@ -1170,24 +1184,33 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// </summary>
   private void ScanSeparatedDivMod(IReadOnlyList<Statement> body) {
     for (var i = 0; i + 1 < body.Count; ++i) {
-      if (body[i] is not AssignStmt { Value: BinaryExpr { Op: BinaryOp.IntegerDivide } } divide)
+      if (body[i] is not AssignStmt { Value: BinaryExpr { Op: BinaryOp.IntegerDivide or BinaryOp.Modulo } } producer)
         continue;
+      var wantedOp = ((BinaryExpr)producer.Value).Op == BinaryOp.IntegerDivide
+        ? BinaryOp.Modulo
+        : BinaryOp.IntegerDivide;
       for (var j = i + 1; j < body.Count; ++j) {
         if (body[j] is LabelStmt)
           break;                                    // control could arrive here without the divide
-        if (body[j] is not AssignStmt { Value: BinaryExpr { Op: BinaryOp.Modulo } } candidate) {
+        if (body[j] is not AssignStmt { Value: BinaryExpr { Op: { } op } } candidate || op != wantedOp) {
           if (this.DivModRegionDisturbs(body[i], body[j]))
             break;
           continue;
         }
         if (this._remainderReuse?.Contains(candidate) == true)
           break;                                    // the adjacent form already has this one
-        if (!this.IsSharedDivModPair(divide, candidate))
+        if (!this.IsSharedDivModPair(producer, candidate, out var divideIsFirst))
           break;
         var slot = this._cseBytes / 4;              // one more CSE slot, as LICM also takes them
         this._cseBytes += 4;
-        (this._remainderStash ??= new(ReferenceEqualityComparer.Instance))[divide] = slot;
-        (this._remainderLoad ??= new(ReferenceEqualityComparer.Instance))[candidate] = slot;
+        if (divideIsFirst) {
+          (this._remainderStash ??= new(ReferenceEqualityComparer.Instance))[producer] = slot;
+          (this._remainderLoad ??= new(ReferenceEqualityComparer.Instance))[candidate] = slot;
+        } else {
+          // the MOD ran first: its IDIV left the QUOTIENT in AX, which the later divide wants
+          (this._quotientStash ??= new(ReferenceEqualityComparer.Instance))[producer] = slot;
+          (this._quotientLoad ??= new(ReferenceEqualityComparer.Instance))[candidate] = slot;
+        }
         break;
       }
     }
@@ -1256,18 +1279,43 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
   private void ScanDivMod(IReadOnlyList<Statement> body) {
     for (var i = 0; i + 1 < body.Count; ++i)
-      if (this.IsSharedDivModPair(body[i], body[i + 1]))
+      // DIVIDE first only: this form reuses DX, which holds the remainder - a MOD that ran first
+      // leaves the QUOTIENT in AX instead, and that pair is handled by the stashing scan below
+      if (this.IsSharedDivModPair(body[i], body[i + 1], out var divideIsFirst) && divideIsFirst)
         (this._remainderReuse ??= new(ReferenceEqualityComparer.Instance)).Add((AssignStmt)body[i + 1]);
     foreach (var s in body)
       foreach (var block in ChildStatementBlocks(s))
         this.ScanDivMod(block);
   }
 
-  private bool IsSharedDivModPair(Statement first, Statement second) {
-    if (first is not AssignStmt { Target: NameExpr qName, Value: BinaryExpr { Op: BinaryOp.IntegerDivide, Left: { } n1, Right: { } d1 } divValue } divStmt)
+  /// <summary>
+  /// The two statements of a shared divide, in EITHER order. One IDIV produces both answers, so it
+  /// does not matter which of them the program asks for first: <c>q = n \ d</c> then <c>m = n MOD d</c>
+  /// keeps the remainder out of DX, and <c>m = n MOD d</c> then <c>q = n \ d</c> keeps the quotient
+  /// out of AX. The conditions either way are the same.
+  /// </summary>
+  private bool IsSharedDivModPair(Statement first, Statement second) => this.IsSharedDivModPair(first, second, out _);
+
+  private bool IsSharedDivModPair(Statement first, Statement second, out bool divideIsFirst) {
+    divideIsFirst = true;
+    if (first is not AssignStmt { Target: NameExpr firstTarget, Value: BinaryExpr { Left: { } firstN, Right: { } firstD } firstValue } firstAssign)
       return false;
-    if (second is not AssignStmt { Target: NameExpr mName, Value: BinaryExpr { Op: BinaryOp.Modulo, Left: { } n2, Right: { } d2 } modValue } modStmt)
+    if (second is not AssignStmt { Target: NameExpr secondTarget, Value: BinaryExpr { Left: { } secondN, Right: { } secondD } secondValue } secondAssign)
       return false;
+    var firstOp = ((BinaryExpr)firstAssign.Value).Op;
+    var secondOp = ((BinaryExpr)secondAssign.Value).Op;
+    if (firstOp == BinaryOp.IntegerDivide && secondOp == BinaryOp.Modulo)
+      divideIsFirst = true;
+    else if (firstOp == BinaryOp.Modulo && secondOp == BinaryOp.IntegerDivide)
+      divideIsFirst = false;
+    else
+      return false;
+
+    var (qName, mName) = divideIsFirst ? (firstTarget, secondTarget) : (secondTarget, firstTarget);
+    var (divStmt, modStmt) = divideIsFirst ? (firstAssign, secondAssign) : (secondAssign, firstAssign);
+    var (divValue, modValue) = divideIsFirst ? (firstValue, secondValue) : (secondValue, firstValue);
+    var (n1, d1) = divideIsFirst ? (firstN, firstD) : (secondN, secondD);
+    var (n2, d2) = divideIsFirst ? (secondN, secondD) : (firstN, firstD);
     // neither statement may be SCCP-dead (a skipped divide would leave DX undefined) nor CSE-shared
     // (whose slot define/reload the direct DX reuse would bypass)
     if (this._deadStatements?.Contains(divStmt) == true || this._deadStatements?.Contains(modStmt) == true)
@@ -1290,9 +1338,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (!model.VariableBindings.TryGetValue(qName, out var qSym) || this.TryDirectCell(qSym) is null
         || !model.VariableBindings.TryGetValue(mName, out var mSym) || this.TryDirectCell(mSym) is null)
       return false;
-    // the quotient store must not overwrite an operand the remainder was computed from
+    // whichever statement runs first, its store must not overwrite an operand the other one needs
     foreach (var operand in new[] { n1, d1 })
-      if (operand is NameExpr on && model.VariableBindings.TryGetValue(on, out var os) && ReferenceEquals(os, qSym))
+      if (operand is NameExpr on && model.VariableBindings.TryGetValue(on, out var os)
+          && (ReferenceEquals(os, qSym) || ReferenceEquals(os, mSym)))
         return false;
     return true;
   }
@@ -1593,7 +1642,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         break;
 
       case AssignStmt a:
+        // a MOD whose quotient a later divide wants must stash AX between the IDIV and the MOV AX,DX
+        // that replaces it with the remainder - so the emitter is told before the statement, not after
+        this._stashQuotientSlot = this._quotientStash?.TryGetValue(a, out var quotientSlot) == true ? quotientSlot : null;
         this.EmitAssign(a);
+        this._stashQuotientSlot = null;
         // O0079 separated form: the IDIV just left the remainder in DX and a later MOD wants it.
         // The quotient store is a plain-scalar move (the pair test insists on it), so DX is intact.
         if (this._remainderStash?.TryGetValue(a, out var stashSlot) == true)

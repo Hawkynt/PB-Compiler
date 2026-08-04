@@ -1097,6 +1097,10 @@ public sealed partial class CodeGenerator {
           this.EmitInt16DivideGuard();
         asm.Cwd();
         asm.Idiv(Reg.BX);
+        // O0079 reversed: this IDIV produced a quotient a later q = n \ d wants, and the next
+        // instruction is about to overwrite AX with the remainder
+        if (this._stashQuotientSlot is { } quotientSlot)
+          asm.Mov(this.CseSlot(quotientSlot), Reg.AX);
         asm.Mov(Reg.AX, Reg.DX);
         break;
       case BinaryOp.And: asm.And(Reg.AX, Reg.BX); break;

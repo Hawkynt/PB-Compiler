@@ -543,6 +543,16 @@ public sealed partial class CodeGenerator {
   private void EmitAssign(AssignStmt a) {
     // O0079: this MOD statement immediately follows a q = n\d over the same operands, whose IDIV
     // already left the remainder in DX - store it straight out instead of running a second divide.
+    // O0079 reversed: an earlier MOD over the same operands already divided, and its quotient was
+    // stashed out of AX before the remainder replaced it
+    if (this._quotientLoad?.TryGetValue(a, out var quotientSlot) == true
+        && a.Target is NameExpr quotientName && model.VariableBindings.TryGetValue(quotientName, out var quotientSym)
+        && this.TryDirectCell(quotientSym) is { } quotientCell) {
+      this._asm.Mov(Reg.AX, this.CseSlot(quotientSlot));
+      this._asm.Mov(quotientCell.WithSize(OperandSize.Word), Reg.AX);
+      return;
+    }
+
     // O0079 separated form: the remainder was stashed at the divide, however many statements, loops
     // or calls ago - load it instead of dividing again
     if (this._remainderLoad?.TryGetValue(a, out var loadSlot) == true

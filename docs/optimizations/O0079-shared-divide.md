@@ -93,6 +93,22 @@ Native-only, in `CodeGenerator`. The IR back ends emit both a `/` and a `%` over
 the same operands, which LLVM's GVN and the host C compiler already CSE into a
 single `divmod`, so the C/LLVM output shares the divide without a dedicated pass.
 
+## Either order — done
+
+One `IDIV` answers both questions, so it does not matter which the program asks for first:
+
+```basic
+r% = n% MOD d%            ' this IDIV also produced the quotient
+FOR i% = 1 TO 3 : PRINT i% : NEXT i%
+q% = n% \ d%              ' which is reused here
+```
+
+The two directions stash different registers, and the reversed one needs a different moment. A MOD
+emits `IDIV` and then `MOV AX,DX` to bring the remainder into the result register - so the quotient
+has to be taken out of `AX` *between those two instructions*, not after the statement the way the
+remainder is. The emitter is told through `_stashQuotientSlot` before the statement is emitted, and
+the `Modulo` case writes the slot at exactly that point.
+
 ## Separated by other statements — done
 
 The pair above reuses `DX` itself, which only works while the two statements are **adjacent**. The
