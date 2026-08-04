@@ -603,6 +603,21 @@ public sealed class OptimizerTests {
   private static int CountMulBx(byte[] image) => CountPair(image, 0xF7, 0xE3);
 
   [Test]
+  public void Emit_GivenUnrolledCounterMultiply_WhenPb36Speed_ThenFoldedNoImul() {
+    // O0066: a fully-unrolled FOR sees its counter as a constant per copy, so i * i folds to a
+    // literal in each copy - no runtime multiply survives the unrolled body.
+    static int Imuls(byte[] img) {
+      var n = 0;
+      for (var i = 0; i < img.Length - 1; ++i)
+        if (img[i] == 0xF7 && img[i + 1] is >= 0xE8 and <= 0xEF)
+          ++n;
+      return n;
+    }
+    var img = Compile("$OPTIMIZE SPEED\nDIM i AS INTEGER, s AS INTEGER\ns = 0\nFOR i = 1 TO 4\ns = s + i * i\nNEXT i\nPRINT s\nEND", Dialect.Pb36);
+    Assert.That(Imuls(img), Is.Zero, "the unrolled counter folds, so i * i becomes a constant per copy");
+  }
+
+  [Test]
   public void Emit_GivenThreeBitMultiplier_WhenPb36Speed_ThenDecomposedNoImul() {
     // O0078: under $OPTIMIZE SPEED, a three-set-bit multiplier (11 = 8+2+1) decomposes into shifts
     // and adds - no IMUL - while a four-bit multiplier (23 = 16+4+2+1) keeps the compact IMUL.
@@ -1979,8 +1994,10 @@ public sealed class OptimizerTests {
   [Test]
   public void Emit_GivenArrayReadLoop_WhenMultiStatementBody_ThenNoIvsr() {
     // A body with more than one statement does not qualify - the optimization must not fire.
-    // Two-statement body: x% = a%(i%) followed by PRINT x%.
-    const string body = "$OPTIMIZE SPEED\nDIM a%(1 TO 3)\nDIM x%\nFOR i% = 1 TO 3\n  x% = a%(i%)\n  PRINT x%\nNEXT i%\nEND";
+    // Two-statement body: x% = a%(i%) followed by PRINT x%. Five iterations keep it above the
+    // unroll threshold (O0066 would otherwise fold the subscripts to constants), so the generic
+    // loop runs and the per-iteration address IMUL is the thing under test.
+    const string body = "$OPTIMIZE SPEED\nDIM a%(1 TO 5)\nDIM x%\nFOR i% = 1 TO 5\n  x% = a%(i%)\n  PRINT x%\nNEXT i%\nEND";
     var image = Compile(body, Dialect.Pb36);
     Assert.That(CountElementScaleByTwo(image), Is.GreaterThanOrEqualTo(1),
       "two-statement body must not trigger IVSR; the address IMUL must still appear per-iteration");

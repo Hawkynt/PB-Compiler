@@ -100,7 +100,7 @@ Conventions used on every page:
 | ⬜ | [O0063](O0063-duff-unrolling.md) | Duff's-device unrolling |
 | ⬜ | [O0064](O0064-lea-fusion.md) | `LEA` multiply-add fusion |
 | ⬜ | [O0065](O0065-dead-frame-store-elimination.md) | Dead frame-store elimination |
-| ⬜ | [O0066](O0066-unrolled-counter-propagation.md) | Unrolled-counter propagation |
+| ✅ | [O0066](O0066-unrolled-counter-propagation.md) | Unrolled-counter propagation |
 | ✅ | [O0067](O0067-if-chain-jump-table.md) | `IF`-chain → jump table |
 | ⬜ | [O0068](O0068-array-zero-fill-elision.md) | Array zero-fill elision |
 | ⬜ | [O0069](O0069-dead-parameter-elimination.md) | Dead parameters & call-shape cloning |
