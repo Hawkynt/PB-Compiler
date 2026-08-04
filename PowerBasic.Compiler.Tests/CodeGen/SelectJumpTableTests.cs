@@ -85,4 +85,40 @@ public sealed class SelectJumpTableTests {
     var pb35 = Compile(_DenseLongSelect, Dialect.Pb35);
     Assert.That(Contains(pb35, 0xFF, 0xA7), Is.False, "pb35 must not emit a jump table");
   }
+
+  private const string _SparseTreeSelect =
+    "$OPTIMIZE SPEED\n" +
+    "DIM x%\n x% = 300\n" +
+    "SELECT CASE x%\n" +
+    "CASE 1\n PRINT \"a\"\n" +
+    "CASE 100\n PRINT \"b\"\n" +
+    "CASE 200\n PRINT \"c\"\n" +
+    "CASE 300\n PRINT \"d\"\n" +
+    "CASE 400\n PRINT \"e\"\n" +
+    "CASE 500\n PRINT \"f\"\n" +
+    "CASE 600\n PRINT \"g\"\n" +
+    "CASE 700\n PRINT \"h\"\n" +
+    "CASE ELSE\n PRINT \"z\"\n" +
+    "END SELECT\nEND";
+
+  [Test]
+  public void Emit_GivenSparseManyCaseSelect_WhenPb36Speed_ThenDispatchesThroughDecisionTree() {
+    // O0098: 8 single-constant cases spanning 700 - too sparse for a dense jump table, so under
+    // $OPTIMIZE SPEED a balanced binary decision tree dispatches. The subject stays in AX and is
+    // compared against the case constants directly (CMP AX, 012Ch = 3D 2C 01 for the root median
+    // 300), which the linear chain never emits (it loads each case value into AX and compares
+    // against the subject cell). No jump table either.
+    var img = Compile(_SparseTreeSelect, Dialect.Pb36);
+    Assert.That(Contains(img, 0xFF, 0xA7), Is.False, "a sparse SELECT does not use a dense jump table");
+    Assert.That(Contains(img, 0x3D, 0x2C, 0x01), Is.True, "the tree compares the AX-resident subject against 300 (CMP AX, 012Ch)");
+  }
+
+  [Test]
+  public void Emit_GivenFewCaseSparseSelect_WhenPb36Speed_ThenKeepsTheCompareChain() {
+    // below the 8-distinct-value threshold the tree declines and the linear compare chain stays:
+    // it loads each case value into AX (MOV AX, 012Ch = B8 2C 01) and compares against the subject
+    // cell, so the CMP AX, 012Ch tree signature is absent.
+    var img = Compile("$OPTIMIZE SPEED\nDIM x%\n x% = 300\nSELECT CASE x%\nCASE 1\n PRINT \"a\"\nCASE 100\n PRINT \"b\"\nCASE 200\n PRINT \"c\"\nCASE 300\n PRINT \"d\"\nEND SELECT\nEND", Dialect.Pb36);
+    Assert.That(Contains(img, 0x3D, 0x2C, 0x01), Is.False, "a few-case sparse SELECT keeps the compare chain, not the tree");
+  }
 }

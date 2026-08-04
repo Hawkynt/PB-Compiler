@@ -132,7 +132,7 @@ Conventions used on every page:
 | ⬜ | [O0095](O0095-branch-tail-merging.md) | Branch-tail merging |
 | ✅ | [O0096](O0096-condition-combining.md) | Nested condition combining |
 | ✅ | [O0097](O0097-repeated-comparison-elimination.md) | Repeated comparison elimination |
-| ⬜ | [O0098](O0098-balanced-decision-tree.md) | Balanced decision tree |
+| 🟡 | [O0098](O0098-balanced-decision-tree.md) | Balanced decision tree |
 | ⬜ | [O0099](O0099-bit-test-dispatch.md) | Bit-test dispatch |
 | ⬜ | [O0100](O0100-perfect-hash-dispatch.md) | Perfect-hash dispatch |
 | ⬜ | [O0101](O0101-jump-table-compression.md) | Jump-table sharing & compression |

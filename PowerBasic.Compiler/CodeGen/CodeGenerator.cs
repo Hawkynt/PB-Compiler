@@ -3061,6 +3061,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // table instead of a compare chain - O(1) dispatch, same arm runs (output-identical)
     if (this.Optimize && this.TryEmitSelectJumpTable(s))
       return;
+    // pb36 O0098: a SPARSE integer SELECT the table declined (span too wide for a dense table) but
+    // with many single-constant cases dispatches through a balanced binary decision tree - O(log n)
+    // signed compares instead of the linear chain's O(n). The same arm runs, so output is identical.
+    if (this.Optimize && this.OptimizeSpeed && this.TryEmitSelectDecisionTree(s))
+      return;
 
     var asm = this._asm;
     var subjectType = model.TypeOf(s.Subject);
@@ -3221,6 +3226,85 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     asm.MarkLabel(table);                          // data: only reached via the indexed jump above
     for (var v = min; v <= max; ++v)
       asm.Dw(byValue.TryGetValue(v, out var arm) ? armLabels[arm] : defaultLabel);
+
+    for (var i = 0; i < s.Arms.Count; ++i) {
+      asm.MarkLabel(armLabels[i]);
+      foreach (var statement in s.Arms[i].Body)
+        this.EmitStatement(statement);
+      asm.Jmp(end);
+    }
+    asm.MarkLabel(end);
+    this._exitSelect.Pop();
+    return true;
+  }
+
+  /// <summary>
+  /// pb36 O0098: a sparse INTEGER SELECT (all single-constant point cases, no ranges / IS, that the
+  /// dense jump table declined) dispatches through a balanced binary search tree over the sorted case
+  /// values - each internal node is one signed CMP against the median, so a match is found in
+  /// O(log n) compares instead of the linear chain's O(n). First-match-wins is preserved by mapping
+  /// each value to its FIRST arm; a value in no arm falls to CASE ELSE (or the end). The same arm body
+  /// runs for every subject, so runtime output is identical to the chain. Gated on $OPTIMIZE SPEED
+  /// (the tree's extra JL/JG branches can be larger than the chain) and INTEGER subjects only.
+  /// </summary>
+  private bool TryEmitSelectDecisionTree(SelectStmt s) {
+    if (KindOf(model.TypeOf(s.Subject)) != ValueKind.Int16)
+      return false;
+    var byValue = new Dictionary<short, int>();   // case value -> first matching arm (first match wins)
+    int? elseArm = null;
+    for (var i = 0; i < s.Arms.Count; ++i) {
+      var arm = s.Arms[i];
+      if (arm.Selectors.Count == 0) {
+        if (elseArm != null)
+          return false;
+        elseArm = i;
+        continue;
+      }
+      foreach (var sel in arm.Selectors) {
+        if (sel.Value == null || sel.RangeUpper != null || sel.IsComparison != null)
+          return false;                             // a range / IS arm cannot be a tree point
+        if (this.OptFolder.TryFold(sel.Value) is not { Integer: { } v } || v is < short.MinValue or > short.MaxValue)
+          return false;
+        byValue.TryAdd((short)v, i);                // first arm to name this value wins
+      }
+    }
+    if (byValue.Count < 8)
+      return false;                                 // below this the linear chain is as fast and smaller
+
+    var asm = this._asm;
+    var end = asm.DefineLabel();
+    var armLabels = s.Arms.Select(_ => asm.DefineLabel()).ToList();
+    var defaultLabel = elseArm is { } e ? armLabels[e] : end;
+    var points = byValue.Select(kv => (Value: kv.Key, Arm: kv.Value)).OrderBy(p => p.Value).ToList();
+
+    this._exitSelect.Push(end);
+    this.EmitExpression(s.Subject);
+    this.Coerce(model.TypeOf(s.Subject), PbType.Integer, s.Subject);   // subject -> AX, held for every compare
+
+    void Tree(int lo, int hi) {
+      var mid = (lo + hi) / 2;
+      var (value, arm) = points[mid];
+      asm.Cmp(Reg.AX, (Imm)(int)value);
+      asm.Je(armLabels[arm]);
+      var hasLeft = lo <= mid - 1;                  // values < value (sorted below mid)
+      var hasRight = mid + 1 <= hi;                 // values > value (sorted above mid)
+      if (hasLeft && hasRight) {
+        var right = asm.DefineLabel();
+        asm.Jg(right);                              // signed: AX > value -> right subtree
+        Tree(lo, mid - 1);                          // AX < value -> left subtree (fall through)
+        asm.MarkLabel(right);
+        Tree(mid + 1, hi);
+      } else if (hasLeft) {
+        asm.Jg(defaultLabel);                       // AX > value but nothing larger matches
+        Tree(lo, mid - 1);
+      } else if (hasRight) {
+        asm.Jl(defaultLabel);                       // AX < value but nothing smaller matches
+        Tree(mid + 1, hi);
+      } else {
+        asm.Jmp(defaultLabel);                      // leaf, not equal -> no match
+      }
+    }
+    Tree(0, points.Count - 1);
 
     for (var i = 0; i < s.Arms.Count; ++i) {
       asm.MarkLabel(armLabels[i]);

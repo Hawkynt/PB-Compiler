@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial (the balanced tree is emitted for sparse single-constant INTEGER `SELECT`s; the cluster analysis that makes dense sub-ranges tables within the tree is not) |
 | **Stage** | Emitter |
 | **Related** | [O0029](O0029-select-jump-table.md), [O0099](O0099-bit-test-dispatch.md), [O0100](O0100-perfect-hash-dispatch.md) |
 
@@ -55,12 +55,30 @@ High:
 
 Three compares worst case instead of five, and it scales logarithmically.
 
-## What it needs
+## Now
+
+`TryEmitSelectDecisionTree` (`CodeGenerator.cs`) fires when the dense jump table
+([O0029](O0029-select-jump-table.md)) has declined, the subject is `INTEGER`,
+every arm is a single-constant point case (no ranges, no `IS`), and there are at
+least **8 distinct values** (below that the linear chain is as fast and smaller).
+It sorts the values, keeps the subject in `AX`, and emits exactly the tree the
+"Planned" listing shows: a signed `CMP AX, median` / `JE arm` / `JG right` at each
+node, recursing into the half that can hold the value; a value in no arm falls to
+`CASE ELSE` (or the end). First-match-wins is preserved by routing each value to
+its **first** arm, so the same arm runs as the compare chain — verified by a
+self-differential DOSBox run over the whole subject range (every match, the
+boundaries, negatives and non-matches) being identical to `$OPTIMIZE OFF`, plus a
+regression test pinning the `CMP AX, imm` tree shape (and its absence below the
+threshold). Gated on `$OPTIMIZE SPEED` (the tree's extra `JL`/`JG` branches can be
+larger than the chain) so non-optimized output is byte-identical to genuine
+(golden gate 250/250).
+
+## Still planned
 
 - A **cluster analysis**: dense sub-ranges should still become jump tables and
   only the sparse remainder a tree, so the two lowerings compose (a tree whose
   leaves are small tables).
-- A cost comparison against the compare chain for very small `n` — below about
-  four arms the chain is already optimal.
+- `LONG` subjects (the current path is `INTEGER`-only; a 32-bit subject needs a
+  two-word compare at each node).
 - The same arm emission and default routing [O0029](O0029-select-jump-table.md)
   already uses, so the arms themselves are untouched.
