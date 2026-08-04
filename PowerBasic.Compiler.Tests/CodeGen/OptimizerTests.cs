@@ -603,6 +603,22 @@ public sealed class OptimizerTests {
   private static int CountMulBx(byte[] image) => CountPair(image, 0xF7, 0xE3);
 
   [Test]
+  public void Emit_GivenRegisterCounterFor_WhenPb36Speed_ThenRotatedTestedAtBothEnds() {
+    // O0062: a register-resident FOR counter (SI) is rotated - an entry guard plus a bottom test -
+    // so the counter is compared (cmp si, r/m: 3B with modrm reg field = 110b) at BOTH ends. A PRINT
+    // body keeps the loop (nothing to collapse) while still qualifying for the SI-counter path.
+    static int CmpSi(byte[] img) {
+      var n = 0;
+      for (var i = 0; i < img.Length - 1; ++i)
+        if (img[i] == 0x3B && ((img[i + 1] >> 3) & 7) == 6)
+          ++n;
+      return n;
+    }
+    var img = Compile("$OPTIMIZE SPEED\nDIM i AS INTEGER\nFOR i = 1 TO 1000\nPRINT i\nNEXT i\nEND", Dialect.Pb36);
+    Assert.That(CmpSi(img), Is.EqualTo(2), "the rotated FOR tests its SI counter at the entry guard and at the bottom");
+  }
+
+  [Test]
   public void Emit_GivenPreTestedDoLoop_WhenPb36Speed_ThenRotatedConditionAtBothEnds() {
     // O0062: under $OPTIMIZE SPEED a pre-tested DO WHILE is rotated to an entry guard plus a bottom
     // test, so the loop bound is compared at BOTH ends (twice) and the per-iteration JMP disappears.

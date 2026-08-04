@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — pre-tested `DO WHILE`/`DO UNTIL` loops rotate (both the plain and the register-resident paths); FOR-loop rotation, IV simplification and fusion remain |
+| **Status** | 🟡 Partial — pre-tested `DO` loops and `FOR` loops both rotate (the register-resident and the fast Int16 paths); IV simplification and fusion remain |
 | **Stage** | Mid-end / emitter |
 | **Related** | [O0028](O0028-loop-invariant-code-motion.md), [O0030](O0030-induction-variable-strength-reduction.md), [O0007](O0007-loop-unrolling.md) |
 
@@ -41,7 +41,21 @@ FOR i% = 0 TO 99
 NEXT
 ```
 
-## Now — `DO` rotation
+## Now — `DO` and `FOR` rotation
+
+`FOR` loops rotate the same way: the register-resident SI-counter path
+(`TryEmitForCounterInRegister`, which claims most SPEED loops) and the fast Int16
+fallback (`EmitForInt16Fast`) both emit an entry guard plus a bottom test that
+re-tests the just-incremented counter in place with the inverse condition
+(`stop-if-past` → `continue-if-not-past`). The compare runs the same N+1 times and
+the counter wraps identically, so the increment-then-test end value (QUIRK 2.28)
+and every trip count are unchanged — verified byte-identical against the genuine
+oracle over ascending / descending / zero-trip / `STEP` / negative-start and the
+`BYTE`/`WORD` (unsigned, wrapping) counters; a regression test confirms the SI
+counter is compared at both ends. The wider-counter (`LONG`/float, runtime-step)
+`FOR` shapes still take the top-tested path.
+
+## `DO` rotation
 
 Under `$OPTIMIZE SPEED`, a pre-tested `DO WHILE`/`DO UNTIL … LOOP` (a pre-condition,
 no post-condition) is emitted as one entry guard plus a bottom test:
@@ -66,10 +80,9 @@ zero-trip cases; a regression test confirms the bound is compared at both ends.
 
 ## Still planned
 
-- **FOR-loop rotation** — the same win for `FOR`, deferred because the FOR
-  termination (step-sign, silent 16-bit wrap, the post-loop counter value —
-  QUIRK 2.28) is evaluated inside the top test, so rotating it must reproduce that
-  exactly at the new bottom-test site.
+- **Wider-counter FOR rotation** — the `LONG`/float and runtime-step `FOR` shapes,
+  whose multi-branch bound test (step-sign dispatch, 32-bit/x87 compares) would
+  each need its inverse form at the bottom.
 - **Induction-variable simplification** — derived IVs (`j = 2*i + 3`) rewritten as
   their own incrementally-updated variables and redundant ones coalesced.
 - **Fusion** needs a dependence test: the second loop may not read an element of
