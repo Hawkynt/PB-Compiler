@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | ✅ Implemented (FOR and DO/WHILE loops, including bodies with `IF`/`SELECT` blocks) |
 | **Stage** | Pre-emission analysis + emitter preheader |
+| **IR** | ✅ `Ir/Passes/Licm.cs` in `IrPassManager.Standard()`; verified by `PortedMidEndOptimizationsTests` over a runtime-bounded loop (a constant-trip one is unrolled away first, leaving nothing to hoist out of) |
 | **Source** | `CodeGen/OptCommonSubexpr.cs` — `AnalyzeLicm`; `CodeGen/CodeGenerator.cs` — `EmitLicmPreheader` |
 | **Gate** | `--optimize` + `$OPTIMIZE SPEED`, no checked arithmetic, no error handler |
 | **Verified by** | `tests/diff/DIFF66.BAS`, `DoLoopLicmTests` |

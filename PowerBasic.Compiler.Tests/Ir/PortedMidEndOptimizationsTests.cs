@@ -93,6 +93,53 @@ public sealed class PortedMidEndOptimizationsTests {
     Assert.That(Multiplies(main), Is.EqualTo(1));
   }
 
+  /// <summary>
+  /// O0028 — loop-invariant code motion. A computation that does not change across iterations is
+  /// evaluated once before the loop, not once per trip. The bound is read at run time on purpose:
+  /// a constant-trip loop is unrolled away, and then there is no loop to hoist out of.
+  /// </summary>
+  [Test]
+  public void O0028_GivenALoopInvariantComputation_ThenItIsEvaluatedOnce() {
+    var main = Optimized("""
+      DIM i AS INTEGER, n AS INTEGER, k AS INTEGER, t AS INTEGER
+      INPUT n
+      INPUT k
+      t = 0
+      FOR i = 1 TO n
+        t = t + k * 7
+      NEXT i
+      PRINT t
+      END
+      """);
+
+    // k * 7 does not depend on i, so it is computed before the loop rather than in it
+    var loopBlocks = main.Blocks.Where(b => b.Label.Contains("body", StringComparison.Ordinal)).ToList();
+    Assert.That(loopBlocks, Is.Not.Empty, "the loop has to survive for this to mean anything");
+    Assert.That(loopBlocks.SelectMany(b => b.Instructions).OfType<IrBinary>()
+      .Count(i => i.Op is IrBinaryOp.Mul or IrBinaryOp.FMul), Is.Zero,
+      "the invariant multiply should have been hoisted out of the body");
+  }
+
+  /// <summary>
+  /// O0027 — copy propagation. A chain of assignments collapses to its source; nothing should be
+  /// left holding a value on the way from one variable to another.
+  /// </summary>
+  [Test]
+  public void O0027_GivenAChainOfCopies_ThenTheyCollapseToTheSource() {
+    var main = Optimized("""
+      DIM a AS INTEGER, b AS INTEGER, c AS INTEGER
+      INPUT a
+      b = a
+      c = b
+      PRINT c
+      END
+      """);
+
+    // the printed value is whatever INPUT produced, with no intervening loads or stores of copies
+    Assert.That(Body(main).OfType<IrStore>(), Is.Empty, "the copies should not survive as stores");
+    Assert.That(Body(main).OfType<IrLoad>(), Is.Empty, "nor as loads");
+  }
+
   /// <summary>O0002 — dead code elimination: a value nothing reads is not computed.</summary>
   [Test]
   public void O0002_GivenAnUnreadComputation_ThenItIsNotComputed() {

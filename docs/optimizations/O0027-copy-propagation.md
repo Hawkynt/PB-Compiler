@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | ✅ Implemented |
 | **Stage** | Pre-emission analysis over tracked scalars |
+| **IR** | ✅ `Mem2Reg` + `Gvn` + `Dce` in `IrPassManager.Standard()` - a copy chain does not survive SSA construction at all; verified by `PortedMidEndOptimizationsTests` |
 | **Source** | `CodeGen/OptCopyProp.cs` |
 | **Gate** | `--optimize` |
 | **Related** | [O0002](O0002-dead-code-elimination.md), [O0017](O0017-sccp.md), [O0046](O0046-ir-gvn.md) |

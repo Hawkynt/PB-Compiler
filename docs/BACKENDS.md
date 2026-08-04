@@ -21,6 +21,29 @@ flowchart TD
 ## The two paths, and why both exist
 
 **The direct path** (`CodeGen/`) is the fidelity path. Its job is to be
+### What the fidelity gates actually enforce
+
+Worth stating plainly, because the phrase "byte-identical" appears throughout this repository and
+**no test here compares bytes**:
+
+- `GoldenTests` compiles every `tests/NAME.BAS` and compares its **DOSBox stdout** against
+  `tests/NAME.expected`.
+- `scripts/run-diff-tests.sh` compiles each `tests/diff/*.BAS` twice — once with the genuine
+  `PBC.EXE`, once with ours — **runs both**, and diffs `RESULT.TXT`.
+
+Both are observational. The contract this compiler is actually held to is: *the same program behaves
+the same way*, and the artefacts it produces (`.EXE`, `.PBU`, `.LIB`) are usable the same way. Byte
+identity with PBC 3.50 was an aim and is a useful discipline, but it is not a gate, and it is not
+what stands between the IR path and retiring the direct emitter.
+
+### Retiring the direct emitter — the actual checklist
+
+| | now |
+|---|---|
+| every program compiles through the IR | 132 / 162 lower; **37 / 132** module bodies fully owned |
+| observable behaviour identical | **0 disagreements** over 80 compilations |
+| units and libraries (`.PBU`, `.LIB`) route | **no** — `_isUnit` excludes them outright |
+
 ### Could the IR path be byte-identical unoptimized?
 
 Measured, not assumed (`UnoptimizedByteCompatibilityTests`). Over the 33 corpus programs the back end

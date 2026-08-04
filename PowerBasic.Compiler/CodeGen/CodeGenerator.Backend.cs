@@ -67,6 +67,12 @@ public sealed partial class CodeGenerator {
           IntegerRecovery.Run(f);
       IrPassManager.Standard().RunOnModule(module);
     }
+    // GlobalDce deliberately does NOT run here, though inlining leaves callees unreferenced and it
+    // is the obvious next step. In this pipeline the IR module is not the whole program: anything
+    // not routed is still emitted by the direct path, so deleting an inlined-away function from the
+    // IR does not delete it from the image - it only stops it being ROUTED. Measured, it cost six
+    // corpus comparisons and saved nothing. It belongs where the IR IS the program, which is what
+    // pbc --emit-c and --emit-llvm are, and that is where it runs.
     var byName = new Dictionary<string, IrFunction>(System.StringComparer.OrdinalIgnoreCase);
     foreach (var f in module.Functions)
       if (!f.IsDeclaration)
