@@ -171,6 +171,7 @@ public sealed partial class CodeGenerator {
     var resultVar = proc.IsFunction && proc.Variables.TryGetValue(proc.Name, out var rv) ? rv : null;
     this.PrepareSccp(proc.Body!, resultVar);
     this.PrepareDivMod(proc.Body!);
+    this.PrepareArrayFill(proc.Body!);
     // register-convention entry: spill AX,DX,BX(,CX) into the parameters' negative slots
     var spillRegs = ConventionRegisters(proc.CallConv)[..RegisterParamCount(proc)];
     this.BeginFrame(elideZeroing, this._tailEntry, spillRegs);

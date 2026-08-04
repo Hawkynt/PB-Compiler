@@ -603,6 +603,24 @@ public sealed class OptimizerTests {
   private static int CountMulBx(byte[] image) => CountPair(image, 0xF7, 0xE3);
 
   [Test]
+  public void Emit_GivenCoveredArrayFill_WhenPb36_ThenAllocatesWithoutZeroFill() {
+    // O0068: DIM a(1 TO n) immediately followed by FOR i=1 TO n : a(i)=expr writes every element
+    // before any read, so the allocation skips its zero-fill (rt_arr_alloc_nz, whose distinctive
+    // tail is `mov ax,bx; pop bx; ret` = 89 D8 5B C3). A fill that READS the array disqualifies the
+    // proof, so it keeps the zero-filling rt_arr_alloc and that signature is absent.
+    static bool HasNoZeroAlloc(byte[] img) {
+      for (var i = 0; i < img.Length - 3; ++i)
+        if (img[i] == 0x89 && img[i + 1] == 0xD8 && img[i + 2] == 0x5B && img[i + 3] == 0xC3)
+          return true;
+      return false;
+    }
+    var covered = Compile("DIM n AS INTEGER, i AS INTEGER\nn = 6\nDIM a(1 TO n) AS INTEGER\nFOR i = 1 TO n\na(i) = i\nNEXT i\nPRINT a(1)\nEND", Dialect.Pb36);
+    var reads = Compile("DIM n AS INTEGER, i AS INTEGER\nn = 6\nDIM a(1 TO n) AS INTEGER\nFOR i = 1 TO n\na(i) = a(1)\nNEXT i\nPRINT a(1)\nEND", Dialect.Pb36);
+    Assert.That(HasNoZeroAlloc(covered), Is.True, "the covered fill allocates without the zero-fill");
+    Assert.That(HasNoZeroAlloc(reads), Is.False, "a fill that reads the array keeps the zero-filling allocation");
+  }
+
+  [Test]
   public void Emit_GivenUnrolledCounterMultiply_WhenPb36Speed_ThenFoldedNoImul() {
     // O0066: a fully-unrolled FOR sees its counter as a constant per copy, so i * i folds to a
     // literal in each copy - no runtime multiply survives the unrolled body.
