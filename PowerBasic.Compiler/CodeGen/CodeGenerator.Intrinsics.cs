@@ -143,13 +143,23 @@ public sealed partial class CodeGenerator {
       case "INSTR" or "VERIFY": {
         var hasStart = args.Count > 2;
         var needle = args[hasStart ? 2 : 1];
-        // O0302: INSTR(s$, "c") with a single-character constant needle and no start position scans
-        // for the byte (rt_scanchar / REPNE SCASB) instead of the general substring probe, and never
-        // allocates the one-byte needle. Any byte value is valid here (unlike the char compare).
-        if (this.Optimize && intrinsic.Name == "INSTR" && !hasStart && needle is not AnyMatchExpr
-            && this.SingleCharNeedleByte(needle) is { } scanByte && model.TypeOf(args[0]) is StringType or FlexType) {
-          this.EmitExpression(args[0]);           // haystack handle -> AX
+        // O0302: INSTR([k,] s$, "c") with a single-character constant needle scans for the byte
+        // (rt_scanchar / REPNE SCASB) instead of the general substring probe, and never allocates the
+        // one-byte needle. The optional 1-based start is passed through. Any byte value is valid here
+        // (unlike the char compare); the start-position form is the tokenizing loop's hot path.
+        if (this.Optimize && intrinsic.Name == "INSTR" && needle is not AnyMatchExpr
+            && this.SingleCharNeedleByte(needle) is { } scanByte
+            && model.TypeOf(args[hasStart ? 1 : 0]) is StringType or FlexType) {
+          if (hasStart) {
+            this.EmitInt16Argument(args[0]);       // start -> AX
+            asm.Push(Reg.AX);
+          }
+          this.EmitExpression(args[hasStart ? 1 : 0]);   // haystack handle -> AX
           asm.Mov(Reg.DX, (Imm)scanByte);
+          if (hasStart)
+            asm.Pop(Reg.CX);                       // CX = start
+          else
+            asm.Mov(Reg.CX, 1);
           asm.Call(this._rt.ScanChar);
           asm.Cwd();
           break;

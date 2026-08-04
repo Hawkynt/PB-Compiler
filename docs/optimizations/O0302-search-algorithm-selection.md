@@ -31,11 +31,13 @@ p% = INSTR(s$, "BEGIN")      ' short constant
 
 ## Now
 
-The **one-byte** row of the table ships. `INSTR(s$, "c")` (and `INSTR(s$, CHR$(n))`)
-with a single-character constant needle and no start position dispatches to
+The **one-byte** row of the table ships. `INSTR(s$, "c")`, `INSTR(s$, CHR$(n))`, and
+the **start-position form** `INSTR(k, s$, "c")` (the hot path of a tokenizing loop
+that finds the *next* delimiter) with a single-character constant needle dispatch to
 `rt_scanchar` (`EmitScanChar`), a `REPNE SCASB` hardware byte scan, instead of the
 general per-position `REPE CMPSB` probe — and the one-byte needle is passed as a
-value, so it is never allocated. It preserves `INSTR`'s exact semantics: the 1-based
+value, so it is never allocated. The 1-based start clamps to 1 and a start past the
+end yields 0, matching `rt_instr`. It preserves `INSTR`'s exact semantics: the 1-based
 position of the first occurrence, 0 when not found, 0 for an empty haystack, and any
 byte value (a `CHR$(0)` needle searches for a NUL). `rt_scanchar` lives in its own
 trimmed section referenced only by the optimized emitter, so the faithful build keeps
@@ -49,7 +51,6 @@ existing paths.
 
 - The **short/long constant** rows: SWAR first-byte compare + verify, and
   Boyer-Moore-Horspool with a compile-time skip table (data, not built per call).
-- The one-byte scan for the **start-position** form `INSTR(k, s$, "c")`.
 
 ## What it needs
 

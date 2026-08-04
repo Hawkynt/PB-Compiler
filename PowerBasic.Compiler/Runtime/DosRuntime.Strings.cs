@@ -943,24 +943,32 @@ public sealed partial class DosRuntime {
   /// </summary>
   private void EmitScanChar(Assembler asm) {
     this.ScanChar = asm.MarkLabel("rt_scanchar");
+    var startOk = asm.DefineLabel();
     var zero = asm.DefineLabel();
     var output = asm.DefineLabel();
 
     asm.Push(Reg.BX);
-    asm.Push(Reg.CX);
     asm.Push(Reg.SI);
     asm.Push(Reg.DI);
     asm.Push(Reg.ES);
     asm.Push(Reg.AX);                              // save the handle for the free
+    asm.Cmp(Reg.CX, 1);                            // clamp the 1-based start to >= 1 (INSTR semantics)
+    asm.Jge(startOk);
+    asm.Mov(Reg.CX, 1);
+    asm.MarkLabel(startOk);
     asm.Test(Reg.AX, Reg.AX);
     asm.Jz(zero);                                  // null handle -> 0
     asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_strseg")));
     asm.Mov(Reg.BX, Reg.AX);
     asm.Shl(Reg.BX, 2);
-    asm.Mov(Reg.CX, this.Descriptor(Reg.BX, 2));  // CX = length (scan count)
-    asm.Jcxz(zero);                                // empty haystack -> 0
-    asm.Mov(Reg.SI, this.Descriptor(Reg.BX));     // SI = buffer base (for the position calc)
-    asm.Mov(Reg.DI, Reg.SI);                       // DI = scan pointer
+    asm.Mov(Reg.SI, this.Descriptor(Reg.BX));      // SI = buffer base (for the position calc)
+    asm.Mov(Reg.AX, this.Descriptor(Reg.BX, 2));   // AX = length
+    asm.Dec(Reg.CX);                               // CX = start - 1 (0-based offset)
+    asm.Sub(Reg.AX, Reg.CX);                        // AX = chars remaining from the start
+    asm.Jle(zero);                                  // start past the end (or empty) -> 0
+    asm.Mov(Reg.DI, Reg.SI);
+    asm.Add(Reg.DI, Reg.CX);                        // DI = base + (start - 1)
+    asm.Mov(Reg.CX, Reg.AX);                        // CX = scan count
     asm.Mov(Reg.AX, Reg.DX);                        // AL = byte to find
     asm.Cld();
     asm.Repne();
@@ -980,7 +988,6 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.ES);
     asm.Pop(Reg.DI);
     asm.Pop(Reg.SI);
-    asm.Pop(Reg.CX);
     asm.Pop(Reg.BX);
     asm.Ret();
   }
