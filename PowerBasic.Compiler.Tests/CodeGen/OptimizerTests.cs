@@ -782,6 +782,25 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenOnGoto_WhenPb36_ThenJumpTableForFourTargetsChainForThree() {
+    // O0029: four+ targets dispatch through a jump table (a `cmp ax, count` bounds check); three keep the
+    // linear dec/JNZ chain, which has no such compare.
+    static bool Has(byte[] img, params byte[] seq) {
+      for (var i = 0; i <= img.Length - seq.Length; ++i) {
+        var ok = true;
+        for (var j = 0; j < seq.Length; ++j) if (img[i + j] != seq[j]) { ok = false; break; }
+        if (ok) return true;
+      }
+      return false;
+    }
+    const string head = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL n%)\nS 1\nEND\nSUB S(BYVAL n%) NOINLINE\n";
+    var four = Compile(head + "ON n% GOTO a, b, c, d\nEXIT SUB\na: EXIT SUB\nb: EXIT SUB\nc: EXIT SUB\nd: EXIT SUB\nEND SUB", Dialect.Pb36);
+    var three = Compile(head + "ON n% GOTO a, b, c\nEXIT SUB\na: EXIT SUB\nb: EXIT SUB\nc: EXIT SUB\nEND SUB", Dialect.Pb36);
+    Assert.That(Has(four, 0x83, 0xF8, 0x04), Is.True, "four targets: cmp ax,4 bounds check of the jump table");
+    Assert.That(Has(three, 0x83, 0xF8, 0x03), Is.False, "three targets: the dec/JNZ chain has no bounds compare");
+  }
+
+  [Test]
   public void Emit_GivenLenEqualsZero_WhenPb36_ThenSameHandleTestAsEmptyCompare() {
     // O0181: LEN(s$) = 0 is the emptiness handle test, identical to the s$ = "" spelling.
     const string head = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL n%)\nS 1\nEND\nSUB S(BYVAL n%) NOINLINE\nDIM s$\ns$ = MID$(\"hi\", 1, n%)\n";

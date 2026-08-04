@@ -78,6 +78,19 @@ handles both ends at once — a subject below the minimum wraps to a large
 unsigned value and lands in the default. `CASE ELSE` (or the absence of a match)
 targets the default label exactly as the compare chain did.
 
+## `ON n GOTO` / `ON n GOSUB`
+
+The same jump table serves computed transfers. `ON n GOTO l1, l2, …` with **four
+or more** targets replaces the linear `dec ax; jnz` chain (one decrement and branch
+per label) with a single unsigned bounds check and an indexed jump into a word table
+of the label offsets: `dec ax` (1-based → 0-based), `cmp ax, count`, `jae` past the
+table on out-of-range (PB's fall-through — selector 0 wraps to `0xFFFF ≥ count`, and
+anything beyond the list is `≥ count` too), then `jmp [table + ax*2]`. `ON n GOSUB`
+uses an indirect `call` through the same table and continues behind it. Smaller and
+faster past three targets; three or fewer keep the compact chain. Optimize-gated, so
+the faithful build keeps the chain byte-for-byte; verified by a DOSBox self-diff over
+in-range and out-of-range selectors.
+
 ## Limits
 
 Ranges (`CASE 1 TO 9`), `CASE IS` relations, string subjects and sparse value

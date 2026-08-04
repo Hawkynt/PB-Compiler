@@ -18,6 +18,7 @@ DECLARE SUB IntegerMaxFoldsWithoutFpu(BYVAL a%, BYVAL b%)
 DECLARE SUB IntegerSignIsBranchless(BYVAL a%)
 DECLARE SUB SwapIsInline(BYVAL a%, BYVAL b%)
 DECLARE SUB LenZeroIsHandleTest(BYVAL n%)
+DECLARE SUB OnGotoIsJumpTable(BYVAL n%)
 DECLARE SUB MinMaxDiamondFolds(BYVAL a%, BYVAL b%)
 DECLARE SUB LongMaxFoldsWithoutFpu(BYVAL a&, BYVAL b&)
 DECLARE SUB DivideByPowerOfTwoIsShifts(BYVAL n%)
@@ -57,6 +58,10 @@ IntegerMaxFoldsWithoutFpu 3, 8
 IntegerSignIsBranchless 3
 SwapIsInline 3, 8
 LenZeroIsHandleTest 2
+OnGotoIsJumpTable 0
+OnGotoIsJumpTable 1
+OnGotoIsJumpTable 3
+OnGotoIsJumpTable 5
 MinMaxDiamondFolds 3, 8
 LongMaxFoldsWithoutFpu 100000, 70000
 DivideByPowerOfTwoIsShifts 64
@@ -207,6 +212,24 @@ END SUB
 ' @assert   absent-call rt_len
 ' @status   done
 ' ---------------------------------------------------------------------------
+' ---------------------------------------------------------------------------
+' @scenario OnGotoIsJumpTable
+' @what     ON n% GOTO with four targets, in-range and out-of-range selectors
+' @expect   O0029 dispatches through a jump table (present cmp-ax-imm bounds check)
+'           instead of the linear dec/JNZ chain; out-of-range falls through
+' @assert   present cmp-ax-imm
+' @status   done
+' ---------------------------------------------------------------------------
+SUB OnGotoIsJumpTable(BYVAL n%) NOINLINE
+  ON n% GOTO t1, t2, t3, t4
+  PRINT "og0"
+  EXIT SUB
+  t1: PRINT "og1" : EXIT SUB
+  t2: PRINT "og2" : EXIT SUB
+  t3: PRINT "og3" : EXIT SUB
+  t4: PRINT "og4" : EXIT SUB
+END SUB
+
 SUB LenZeroIsHandleTest(BYVAL n%) NOINLINE
   DIM s$, e$
   s$ = MID$("hi", 1, n%)
