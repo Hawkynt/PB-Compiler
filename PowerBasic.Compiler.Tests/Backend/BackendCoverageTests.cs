@@ -187,7 +187,7 @@ public sealed class BackendCoverageTests {
     // then 69 -> 81 with x87: floats live in frame cells bracketed by FLD/FSTP
     // then 81 -> 88 (of a larger denominator, since 14 more programs now lower at all): CINT and the
     // rounding float-to-integer conversion it is spelled from
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(98),
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(99),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
 
     // selection is not routing: the whole-program codegen also schedules and allocates, and a value

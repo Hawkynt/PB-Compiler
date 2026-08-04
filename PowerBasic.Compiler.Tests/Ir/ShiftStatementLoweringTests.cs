@@ -37,16 +37,40 @@ public sealed class ShiftStatementLoweringTests {
     Assert.That(ops, Does.Not.Contain(IrBinaryOp.AShr), "the right shift is logical, not arithmetic");
   }
 
-  [Test]
-  public void Lower_GivenRotate_ThenStillDeclines() {
-    // a rotate puts the bits that fall off one end back at the other, which no IR operation carries
-    Lower("""
+  [TestCase("LEFT")]
+  [TestCase("RIGHT")]
+  public void Lower_GivenRotateByAConstant_ThenWritesItAsTwoShiftsOred(string direction) {
+    // no IR operation carries a rotate, so it becomes the two shifts that make one - exact, because
+    // both halves are modular in the variable's own width
+    var module = Lower($"""
       DIM n AS INTEGER
       n = 40
-      ROTATE LEFT n, 2
+      ROTATE {direction} n, 2
       PRINT n
       """, out var why);
 
-    Assert.That(why, Does.Contain("ROTATE LEFT"));
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+    var ops = module!.Functions.SelectMany(f => f.Blocks).SelectMany(b => b.Instructions)
+      .OfType<IrBinary>().Select(b => b.Op).ToList();
+    Assert.That(ops, Does.Contain(IrBinaryOp.Shl));
+    Assert.That(ops, Does.Contain(IrBinaryOp.LShr));
+    Assert.That(ops, Does.Contain(IrBinaryOp.Or));
+  }
+
+  [Test]
+  public void Lower_GivenRotateByARuntimeCount_ThenDeclines() {
+    // the complementary shift would be by the whole width, which is undefined in the IR - and on the
+    // hardware differs between the 8086 (no masking) and later parts (masked to five bits)
+    Lower("""
+      DIM n AS INTEGER
+      DIM k AS INTEGER
+      n = 40
+      READ k
+      DATA 2
+      ROTATE LEFT n, k
+      PRINT n
+      """, out var why);
+
+    Assert.That(why, Does.Contain("runtime count"));
   }
 }

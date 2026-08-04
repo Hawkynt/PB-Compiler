@@ -509,6 +509,7 @@ public sealed class IrLowering {
       case EndStmt: this.LowerEnd(); break;
       case MetaStmt meta: this.LowerMeta(meta); break;
       case CommandStmt { Keyword: "SHIFT LEFT" or "SHIFT RIGHT" } shift: this.LowerShift(shift); break;
+      case CommandStmt { Keyword: "ROTATE LEFT" or "ROTATE RIGHT" } rotate: this.LowerRotate(rotate); break;
       case CommandStmt { Keyword: "LOCATE" } locate: this.LowerLocate(locate); break;
       case CommandStmt { Keyword: "KILL", Arguments: [{ } file] }:
         this._b.Call(IrType.Void, this.RuntimeFn("rt_kill", IrType.Void, IrType.Ptr), this.LowerStringExpr(file));
@@ -1093,6 +1094,38 @@ public sealed class IrLowering {
       throw new IrLoweringException("LOCATE with a cursor-shape argument");
     this._b.Call(IrType.Void, this.RuntimeFn("rt_locate", IrType.Void, IrType.I32, IrType.I32),
       Argument(0), Argument(1));
+  }
+
+  /// <summary>
+  /// <c>ROTATE LEFT v, n</c> / <c>ROTATE RIGHT v, n</c>: the bits that fall off one end come back at
+  /// the other. No IR operation carries that, so it is written out as the two shifts that make it -
+  /// <c>(v &lt;&lt; n) OR (v &gt;&gt;u (width - n))</c> - which is exact because both halves are
+  /// modular in the variable's own width.
+  ///
+  /// Only a compile-time count in <c>1 .. width-1</c> qualifies. Zero and width are the cases where
+  /// the complementary shift is a shift by the whole width, which is undefined in the IR (and on the
+  /// hardware differs between the 8086, which does not mask the count, and later parts, which mask it
+  /// to five bits) - so a runtime count declines rather than pick one of those behaviours.
+  /// </summary>
+  private void LowerRotate(CommandStmt cmd) {
+    if (cmd.Arguments is not [{ } target, { } count])
+      throw new IrLoweringException($"{cmd.Keyword} with {cmd.Arguments.Count} arguments");
+    if (target is not NameExpr || this._model.TypeOf(target) is not ScalarType { IsFloat: false } scalar)
+      throw new IrLoweringException($"{cmd.Keyword} of a non-scalar target");
+    if (this._folder.TryFold(count) is not { Integer: { } n })
+      throw new IrLoweringException($"{cmd.Keyword} by a runtime count");
+
+    var ty = MapType(scalar);
+    var width = ty.Bits;
+    if (n <= 0 || n >= width)
+      throw new IrLoweringException($"{cmd.Keyword} by {n} over a {width}-bit value");
+
+    var slot = this.SlotFor(this.SymbolOf(target));
+    var value = this._b.Load(ty, slot);
+    var left = cmd.Keyword.EndsWith("LEFT", StringComparison.Ordinal);
+    var up = this._b.Binary(IrBinaryOp.Shl, value, new IrConstantInt(ty, left ? n : width - n));
+    var down = this._b.Binary(IrBinaryOp.LShr, value, new IrConstantInt(ty, left ? width - n : n));
+    this._b.Store(this._b.Or(up, down), slot);
   }
 
   private void LowerIf(IfStmt stmt) {
