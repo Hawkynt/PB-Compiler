@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial (the byte-index-into-address-table compression is emitted under `$OPTIMIZE SIZE`; the shared range check and the byte-*offset* table are not) |
 | **Stage** | Emitter |
 | **Related** | [O0029](O0029-select-jump-table.md), [O0067](O0067-if-chain-jump-table.md), [P0006](P0006-header-squeeze.md) |
 | **Split into** | [O0247](O0247-jump-table-entry-compression.md) |
@@ -60,11 +60,29 @@ Table:
     db      Arm0-Base, Arm1-Base, ...
 ```
 
-## What it needs
+## Now
 
-- The **range fact** for the guard sharing comes from
-  [O0016](O0016-value-fact-analysis.md), which already narrows a `SELECT`
-  subject per arm — this is a new consumer of an existing refinement.
-- Byte-offset tables need the arm span to be known before the table is written,
-  which means a second layout pass (or a conservative estimate plus relaxation,
-  like [O0035](O0035-jump-relaxation.md)).
+The **few-distinct-targets** compression ships (`TryEmitSelectJumpTable`,
+`CodeGenerator.cs`). The dispatch builds the span→target map as usual, but when the
+distinct targets `K` are few enough that a byte index table plus a `K`-entry address
+table is smaller than the word table (`span + 2K < 2·span`, i.e. `span > 2K`) and
+`$OPTIMIZE SIZE` is on, it emits `MOV BL, [ByteTable+BX]` (the byte slot, `BH`
+stays 0 since the span is ≤ 256) then `JMP [AddrTable+BX*2]`. The byte table is one
+byte per span slot; the address table one word per distinct arm (plus the default).
+Under `$OPTIMIZE SPEED` (or no size pressure) the plain word table stays — the extra
+per-dispatch load is not worth the bytes. The word-table path is byte-for-byte the
+same as before (the golden gate and `DIFF62.BAS` differential are unmoved), so only
+the size-directed output changes; verified by a self-differential DOSBox run of a
+wide-span, three-arm SELECT identical to `$OPTIMIZE OFF`, plus a regression test
+that the byte-index load appears under SIZE and not under SPEED.
+
+## Still planned
+
+- **Shared range checks.** Adjacent or nested dispatches over the same subject each
+  emit their own `SUB`/`CMP`/`JA` guard; the range fact from
+  [O0016](O0016-value-fact-analysis.md) (which already narrows a `SELECT` subject
+  per arm) would let a dominated second guard drop.
+- **Byte-offset tables** (targets all within 256 bytes of a base → a `db` of
+  offsets), which need the arm span known before the table is written — a second
+  layout pass, or a conservative estimate plus relaxation like
+  [O0035](O0035-jump-relaxation.md).

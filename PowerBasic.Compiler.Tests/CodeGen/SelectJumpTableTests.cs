@@ -59,6 +59,21 @@ public sealed class SelectJumpTableTests {
     Assert.That(Contains(pb36, 0xFF, 0xA7), Is.False);
   }
 
+  [Test]
+  public void Emit_GivenWideSpanFewArmSelect_WhenPb36Size_ThenCompressesToAByteIndexTable() {
+    // O0101: a dense SELECT with a wide span but few distinct arms (12 values -> 3 arms + default)
+    // uses, under $OPTIMIZE SIZE, a byte index table into a small address table (MOV BL, [BX+table]
+    // = 8A 9F) instead of a word entry per value - span + 2*K bytes rather than 2*span. Under
+    // $OPTIMIZE SPEED the plain word table stays (one extra load per dispatch is not worth the bytes).
+    const string sel = "DIM x%\nINPUT x%\nSELECT CASE x%\n" +
+      "CASE 0, 4, 8, 12\n PRINT \"a\"\nCASE 1, 5, 9, 13\n PRINT \"b\"\nCASE 2, 6, 10, 14\n PRINT \"c\"\n" +
+      "CASE ELSE\n PRINT \"z\"\nEND SELECT\nEND";
+    var size = Compile("$OPTIMIZE SIZE\n" + sel, Dialect.Pb36);
+    var speed = Compile("$OPTIMIZE SPEED\n" + sel, Dialect.Pb36);
+    Assert.That(Contains(size, 0x8A, 0x9F), Is.True, "SIZE compresses to a byte index table (MOV BL, [BX+table])");
+    Assert.That(Contains(speed, 0x8A, 0x9F), Is.False, "SPEED keeps the plain word table");
+  }
+
   private const string _DenseLongSelect =
     "DIM x AS LONG\n" +
     "x = 100000\n" +

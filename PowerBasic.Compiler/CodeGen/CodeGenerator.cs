@@ -3204,7 +3204,6 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     var asm = this._asm;
     var end = asm.DefineLabel();
-    var table = asm.DefineLabel();
     var armLabels = s.Arms.Select(_ => asm.DefineLabel()).ToList();
     var defaultLabel = elseArm is { } e ? armLabels[e] : end;
 
@@ -3235,13 +3234,44 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       asm.Jae(defaultLabel);                       // AX >= span (unsigned): below min or above max
     }
 
-    asm.Mov(Reg.BX, Reg.AX);
-    asm.Shl(Reg.BX, 1);                            // word-sized entries
-    asm.Jmp(Mem.Word(Reg.BX, table));              // JMP [table + index*2]
+    // O0101: the general table is one word per span entry. When the span is wide but the distinct
+    // targets are few, a byte index table into a small address table is smaller (span + 2*K bytes vs
+    // 2*span). Build the compressed form and use it under $OPTIMIZE SIZE when it actually shrinks;
+    // otherwise emit the plain word table. (The index fits a byte because the span is <= 256.)
+    var slotOf = new Dictionary<Label, int>();
+    var targets = new List<Label>();
+    var indexBytes = new byte[span];
+    for (var v = min; v <= max; ++v) {
+      var lbl = byValue.TryGetValue(v, out var arm) ? armLabels[arm] : defaultLabel;
+      if (!slotOf.TryGetValue(lbl, out var slot)) {
+        slot = targets.Count;
+        slotOf[lbl] = slot;
+        targets.Add(lbl);
+      }
+      indexBytes[v - min] = (byte)slot;
+    }
 
-    asm.MarkLabel(table);                          // data: only reached via the indexed jump above
-    for (var v = min; v <= max; ++v)
-      asm.Dw(byValue.TryGetValue(v, out var arm) ? armLabels[arm] : defaultLabel);
+    if (this.OptimizeSize && targets.Count <= 256 && span > 2L * targets.Count) {
+      var byteTable = asm.DefineLabel();
+      var addrTable = asm.DefineLabel();
+      asm.Mov(Reg.BX, Reg.AX);                      // BX = 0-based index (<= 255, the span is <= 256)
+      asm.Mov(Reg.BL, Mem.Byte(Reg.BX, byteTable)); // BL = the target slot; BH stays 0 (index <= 255)
+      asm.Shl(Reg.BX, 1);
+      asm.Jmp(Mem.Word(Reg.BX, addrTable));         // JMP [addrTable + slot*2]
+      asm.MarkLabel(byteTable);
+      asm.Db(indexBytes);
+      asm.MarkLabel(addrTable);
+      foreach (var t in targets)
+        asm.Dw(t);
+    } else {
+      var table = asm.DefineLabel();
+      asm.Mov(Reg.BX, Reg.AX);
+      asm.Shl(Reg.BX, 1);                           // word-sized entries
+      asm.Jmp(Mem.Word(Reg.BX, table));             // JMP [table + index*2]
+      asm.MarkLabel(table);                          // data: only reached via the indexed jump above
+      foreach (var t in indexBytes)
+        asm.Dw(targets[t]);
+    }
 
     for (var i = 0; i < s.Arms.Count; ++i) {
       asm.MarkLabel(armLabels[i]);
