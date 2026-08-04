@@ -14,8 +14,10 @@ loads both descriptors and, when the lengths differ, returns "unequal" immediate
 turning the common negative case into two loads and a compare, where the full
 `rt_strcmp` still `REPE CMPSB`s the common prefix before comparing lengths. The
 emitter routes a `=` / `<>` string comparison to it under `--optimize`
-(`CodeGenerator.Expressions.cs`); it returns 0 (equal) / 1 (unequal), which the same
-`je`/`jne` test reads, and consumes (frees) both operands exactly like `rt_strcmp`.
+(`CodeGenerator.Expressions.cs`), and likewise an equality `SELECT CASE` arm over a
+string subject (`CASE "quit"`, in `EmitSelectorString`); it returns 0 (equal) /
+1 (unequal), which the same `je`/`jne` test reads, and consumes (frees) both operands
+exactly like `rt_strcmp`. Ordering arms (`CASE IS < …`) keep the full compare.
 
 `rt_strcmpeq` lives in its **own trimmed section**, referenced only by the optimized
 emitter, so the faithful build keeps the full three-way compare byte-for-byte (golden

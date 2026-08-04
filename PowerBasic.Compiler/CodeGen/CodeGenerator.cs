@@ -3740,15 +3740,18 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       this.Unsupported(s); // string ranges are not used by the corpus
       return;
     }
+    var relation = selector.IsComparison ?? CaseComparison.Equal;
     asm.Mov(Reg.AX, subject.WithSize(OperandSize.Word));
     asm.Call(this._rt.StrDup);                  // compare consumes - keep the subject alive
     asm.Push(Reg.AX);
     this.EmitExpression(selector.Value!);
     asm.Mov(Reg.DX, Reg.AX);
     asm.Pop(Reg.AX);
-    asm.Call(this._rt.StrCmp);                  // AX = -1/0/1
+    // O0298: an equality arm (CASE "quit") only needs the length-guarded compare; ordering arms
+    // (CASE IS < ...) need the three-way StrCmp.
+    asm.Call(this.Optimize && relation is CaseComparison.Equal or CaseComparison.NotEqual ? this._rt.StrCmpEq : this._rt.StrCmp);
     asm.Test(Reg.AX, Reg.AX);
-    switch (selector.IsComparison ?? CaseComparison.Equal) {
+    switch (relation) {
       case CaseComparison.Equal: asm.Jz(armBody); break;
       case CaseComparison.NotEqual: asm.Jnz(armBody); break;
       case CaseComparison.Less: asm.Js(armBody); break;
