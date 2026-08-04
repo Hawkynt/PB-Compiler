@@ -772,6 +772,27 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenMaxDiamond_WhenPb36_ThenFoldsToTheSameCodeAsTheMaxIntrinsic() {
+    // O0248: `IF a > b THEN m = a ELSE m = b` is a MAX, and folds to exactly the integer CMP/keep the MAX%
+    // intrinsic emits - so the diamond and the intrinsic produce byte-identical images.
+    const string head = "$OPTIMIZE SPEED\nDIM a AS INTEGER, b AS INTEGER, m AS INTEGER\nLINE INPUT z$\na = VAL(z$)\nb = 7\n";
+    var diamond = Compile(head + "IF a > b THEN m = a ELSE m = b\nPRINT m\nEND", Dialect.Pb36);
+    var intrinsic = Compile(head + "m = MAX%(a, b)\nPRINT m\nEND", Dialect.Pb36);
+    Assert.That(diamond, Is.EqualTo(intrinsic), "the max diamond lowers to the MAX% integer fold");
+  }
+
+  [Test]
+  public void Emit_GivenDiamondWithSideEffectingOperand_WhenPb36_ThenKeepsTheBranch() {
+    // The fold evaluates each operand once; the branch re-evaluates the taken arm. A call operand would run
+    // a different number of times, so the recognizer must decline it (the diamond must differ from the MAX fold).
+    const string head = "$OPTIMIZE SPEED\nDECLARE FUNCTION F%(BYVAL x%)\nDIM a AS INTEGER, b AS INTEGER, m AS INTEGER\nLINE INPUT z$\na = VAL(z$)\nb = 7\n";
+    const string tail = "\nPRINT m\nEND\nFUNCTION F%(BYVAL x%)\nF% = x% + 1\nEND FUNCTION";
+    var callDiamond = Compile(head + "IF F%(a) > b THEN m = F%(a) ELSE m = b" + tail, Dialect.Pb36);
+    var pureFold = Compile(head + "m = MAX%(a, b)" + tail, Dialect.Pb36);
+    Assert.That(callDiamond, Is.Not.EqualTo(pureFold), "a call operand is not folded to the branchless integer keep");
+  }
+
+  [Test]
   public void Emit_GivenSixTripLoop_WhenPb36Speed_ThenCostModelUnrollsOn486ButLoopsOn8086() {
     // O7 + O0174: a six-iteration tiny FOR loop is above the fetch-bound 8086's four-copy budget (it keeps the
     // compact loop) but inside a 486's wider one (it fully unrolls the six copies). The two builds differ only

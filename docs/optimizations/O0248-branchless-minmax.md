@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — the `MIN`/`MAX`/`MIN%`/`MAX%` intrinsics with all-INTEGER arguments now fold with a signed integer `CMP` (of any arity) instead of the x87 round-trip; the branch-diamond recognizer and the true branchless (`CMOV`/mask) forms remain |
+| **Status** | 🟡 Partial — the `MIN`/`MAX`/`MIN%`/`MAX%` intrinsics with all-INTEGER arguments fold with a signed integer `CMP` (of any arity), and a hand-written `IF a > b THEN m = a ELSE m = b` diamond is recognized and folded to the same code; the true branchless (`CMOV`/mask) forms remain |
 | **Stage** | Emitter |
 | **Related** | [O0108](O0108-branchless-select.md), [O0119](O0119-reduction-recognition.md), [O0257](O0257-vector-minmax.md) |
 | **Split from** | [O0108](O0108-branchless-select.md) |
@@ -39,10 +39,21 @@ self-diffs under DOSBox with the optimizer on and off (identical output). This i
 the integer reduction shape [O0119](O0119-reduction-recognition.md) carries, now
 off the FPU.
 
+The **hand-written diamond** folds too: `IF a REL b THEN m = a ELSE m = b`
+(`>`, `>=`, `<`, `<=`, either arm order, a constant in place of an operand for the
+clamp form `IF a >= -9 THEN m = a ELSE m = -9`) is recognized in `EmitIf` and
+lowered to exactly the intrinsic's integer `CMP`/keep — one store, no re-evaluated
+arm. The operands must be pure (a variable read or a constant), since the branch
+form evaluates the taken operand a second time in its assignment and the fold once;
+a call operand keeps the branch (a regression test pins that the diamond then no
+longer matches the intrinsic image). A numeric tie is a non-issue — the two operands
+hold the same value, so either choice stores it. Verified byte-identical to the
+`MAX%` intrinsic and self-diffed under DOSBox (`dmax`/`dmin`/`dclamp`, optimizer on
+and off) in the battery.
+
 ## Still planned
 
-- A recognizer over the `IF`/`SELECT`/ternary spellings of the same idiom (so a
-  hand-written `IF a% > b%` diamond folds like the intrinsic does).
+- The `SELECT`/ternary spellings of the same idiom.
 - The **true branchless** forms: `CMOVcc` on a 686 (encoding-verified only — DOSBox
   has no `CMOV`) and the 8086 carry-mask blend, chosen by the
   [O0174](O0174-target-cost-models.md) cost model (`PreferBranchless`), which keeps

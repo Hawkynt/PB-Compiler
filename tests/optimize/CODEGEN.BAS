@@ -15,6 +15,7 @@ DECLARE SUB CommonSubexpressionReused(BYVAL y%, BYVAL x%)
 DECLARE SUB MultiplyByPowerOfTwoIsShifts(BYVAL n%)
 DECLARE SUB MultiplyByFourBitConstIsShifts(BYVAL n%)
 DECLARE SUB IntegerMaxFoldsWithoutFpu(BYVAL a%, BYVAL b%)
+DECLARE SUB MinMaxDiamondFolds(BYVAL a%, BYVAL b%)
 DECLARE SUB DivideByPowerOfTwoIsShifts(BYVAL n%)
 DECLARE SUB DivideByConstantIsReciprocal(BYVAL n%)
 DECLARE SUB TrivialFunctionInlined(BYVAL n%)
@@ -49,6 +50,7 @@ CommonSubexpressionReused 5, 6
 MultiplyByPowerOfTwoIsShifts 7
 MultiplyByFourBitConstIsShifts 3
 IntegerMaxFoldsWithoutFpu 3, 8
+MinMaxDiamondFolds 3, 8
 DivideByPowerOfTwoIsShifts 64
 DivideByConstantIsReciprocal 250
 TrivialFunctionInlined 8
@@ -164,6 +166,23 @@ SUB IntegerMaxFoldsWithoutFpu(BYVAL a%, BYVAL b%) NOINLINE
   PRINT "imax"; MAX%(a%, b%)
   PRINT "imin"; MIN%(-5, a%)
   PRINT "itie"; MAX%(a%, a%)
+END SUB
+
+' ---------------------------------------------------------------------------
+' @scenario MinMaxDiamondFolds
+' @what     IF a% > b% THEN m% = a% ELSE m% = b% - the hand-written max diamond
+' @expect   O0248 folds it to the integer CMP/keep the MAX% intrinsic emits
+' @assert   present cmp-ax-bx
+' @status   done
+' ---------------------------------------------------------------------------
+SUB MinMaxDiamondFolds(BYVAL a%, BYVAL b%) NOINLINE
+  DIM m%
+  IF a% > b% THEN m% = a% ELSE m% = b%
+  PRINT "dmax"; m%
+  IF a% < b% THEN m% = a% ELSE m% = b%
+  PRINT "dmin"; m%
+  IF a% >= -9 THEN m% = a% ELSE m% = -9
+  PRINT "dclamp"; m%
 END SUB
 
 ' ---------------------------------------------------------------------------

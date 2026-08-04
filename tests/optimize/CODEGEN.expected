@@ -7,6 +7,9 @@ mul85 255
 imax 8
 imin-5
 itie 3
+dmax 8
+dmin 3
+dclamp 3
 divshift 8
 recip 25
 inline 16

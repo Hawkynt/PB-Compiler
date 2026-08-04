@@ -2579,6 +2579,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (this.Optimize && this.TryEmitBranchlessAbsIf(i))
       return;
 
+    // O0248/O0108: the min/max diamond `IF a > b THEN m = a ELSE m = b` folds to the same integer
+    // CMP/keep-larger the MAX% intrinsic emits - one store, no re-evaluated arm.
+    if (this.Optimize && this.TryEmitMinMaxIf(i))
+      return;
+
     var elseLabel = asm.DefineLabel();
     var endLabel = asm.DefineLabel();
 
@@ -2694,6 +2699,65 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     asm.Xor(Reg.AX, Reg.DX);
     asm.Sub(Reg.AX, Reg.DX);
     asm.Mov(word, Reg.AX);
+    return true;
+  }
+
+  /// <summary>
+  /// O0248/O0108: recognizes the min/max diamond <c>IF a REL b THEN m = X ELSE m = Y</c> - no ELSEIF, a single
+  /// assignment in each arm to the same INTEGER lvalue, the compared operands being exactly the two assigned
+  /// values - and folds it to the integer <c>CMP</c>/keep sequence the <c>MAX%</c>/<c>MIN%</c> intrinsic emits,
+  /// storing the result once. The operands must be pure (a variable read or a constant): the branch form
+  /// evaluates the taken operand a second time in its assignment, the fold once, so a side effect would differ.
+  /// A numeric tie is irrelevant here - the two operands hold the same value, so either choice stores it.
+  /// Declines a register-resident target. Off under nothing special: it only ever replaces a branch that
+  /// computes the same integer, so it is sound under every $ERROR mode.
+  /// </summary>
+  private bool TryEmitMinMaxIf(IfStmt i) {
+    if (i.ElseIfs.Count > 0)
+      return false;
+    if (i.Condition is not BinaryExpr { Op: var op, Left: { } left, Right: { } right }
+        || op is not (BinaryOp.Greater or BinaryOp.GreaterEqual or BinaryOp.Less or BinaryOp.LessEqual))
+      return false;
+    if (i.Then is not [AssignStmt { Target: { } thenTarget, Value: { } thenValue }]
+        || i.Else is not [AssignStmt { Target: { } elseTarget, Value: { } elseValue }])
+      return false;
+
+    // both arms assign the same INTEGER lvalue
+    if (thenTarget is not NameExpr m || !this.IsSameLvalue(thenTarget, elseTarget)
+        || model.TypeOf(m) is not ScalarType { IsFloat: false, ByteSize: 2 })
+      return false;
+
+    // the two compared operands must be pure int16 reads/constants, and be exactly the two assigned values
+    bool IsPureInt16(Expression e) =>
+      model.TypeOf(e) is ScalarType { IsFloat: false, ByteSize: 2 }
+      && (this.OptFolder.TryFold(e) is { Integer: not null }
+          || (e is NameExpr && model.VariableBindings.ContainsKey(e) && !model.IntrinsicBindings.ContainsKey(e)));
+    bool SameOperand(Expression a, Expression b) {
+      if (this.OptFolder.TryFold(a) is { Integer: { } av } && this.OptFolder.TryFold(b) is { Integer: { } bv })
+        return av == bv;
+      return a is NameExpr && b is NameExpr && this.IsSameLvalue(a, b);
+    }
+    if (!IsPureInt16(left) || !IsPureInt16(right))
+      return false;
+
+    // classify: with L REL R, taking L when the relation holds keeps the larger (>, >=) or smaller (<, <=)
+    bool thenIsLeft;
+    if (SameOperand(thenValue, left) && SameOperand(elseValue, right))
+      thenIsLeft = true;
+    else if (SameOperand(thenValue, right) && SameOperand(elseValue, left))
+      thenIsLeft = false;
+    else
+      return false;
+    var relationKeepsLarger = op is BinaryOp.Greater or BinaryOp.GreaterEqual;
+    var wantMax = thenIsLeft == relationKeepsLarger;
+
+    // the target must be an addressable, non-resident cell (mirrors the abs idiom)
+    if (!model.VariableBindings.TryGetValue(m, out var sym) || this.ResidentRegOf(sym) != null
+        || this.TryDirectCell(sym) is not { } cell)
+      return false;
+
+    this.EmitIntegerMinMaxFold([left, right], wantMax);   // result in AX
+    this._asm.Mov(cell.WithSize(OperandSize.Word), Reg.AX);
     return true;
   }
 
