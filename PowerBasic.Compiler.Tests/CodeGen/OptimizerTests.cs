@@ -619,6 +619,24 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenCountOnlyFor_WhenPb36Speed_ThenCountsDownNoLimitCompare() {
+    // O0112: a fixed-trip FOR whose counter is never read counts SI down to zero (DEC/JNZ), so no
+    // limit compare (cmp si, r/m: 3B with modrm reg field 110b) is emitted. A loop that reads the
+    // counter keeps its compare.
+    static int CmpSi(byte[] img) {
+      var n = 0;
+      for (var i = 0; i < img.Length - 1; ++i)
+        if (img[i] == 0x3B && ((img[i + 1] >> 3) & 7) == 6)
+          ++n;
+      return n;
+    }
+    var countOnly = Compile("$OPTIMIZE SPEED\nDIM i AS INTEGER\nFOR i = 1 TO 1000\nPRINT \"x\"\nNEXT i\nEND", Dialect.Pb36);
+    var readsI = Compile("$OPTIMIZE SPEED\nDIM i AS INTEGER\nFOR i = 1 TO 1000\nPRINT i\nNEXT i\nEND", Dialect.Pb36);
+    Assert.That(CmpSi(countOnly), Is.Zero, "a count-only FOR counts down with DEC/JNZ, no limit compare");
+    Assert.That(CmpSi(readsI), Is.GreaterThan(0), "a FOR that reads its counter keeps the compare");
+  }
+
+  [Test]
   public void Emit_GivenRegisterCounterFor_WhenPb36Speed_ThenRotatedTestedAtBothEnds() {
     // O0062: a register-resident FOR counter (SI) is rotated - an entry guard plus a bottom test -
     // so the counter is compared (cmp si, r/m: 3B with modrm reg field = 110b) at BOTH ends. A PRINT

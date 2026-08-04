@@ -1247,6 +1247,51 @@ public sealed partial class CodeGenerator {
     this._iterateFor.Push(cont);
     this._iterateAny.Push(cont);
 
+    // O0112 countdown: when the counter is never read and no stepped pointer needs its progression,
+    // only the trip count matters - count SI DOWN to zero (DEC sets ZF, so the limit compare
+    // disappears) and store the observable increment-then-test end value on exit. Constant bounds
+    // only, and never when the true end value would fall outside INTEGER range: that is exactly the
+    // wrapping FOR (e.g. i% = 1 TO 32767 STEP 1) which loops forever in PB - the top-tested path
+    // below reproduces that, so countdown must decline. The DI accumulator (if any) is unaffected.
+    long? countdownTrips = null;
+    short countdownEnd = 0;
+    if (this._residentElementPtr == null && !this.BodyReadsVariable(f.Body, counter)
+        && this.OptFolder.TryFold(f.From) is { Integer: { } cf } && this.OptFolder.TryFold(f.To) is { Integer: { } ctf }
+        && cf is >= short.MinValue and <= short.MaxValue && ctf is >= short.MinValue and <= short.MaxValue) {
+      long from = (short)cf, to = (short)ctf;
+      var trips = step > 0 ? (to >= from ? (to - from) / step + 1 : 0)
+                           : (from >= to ? (from - to) / -step + 1 : 0);
+      var trueEnd = from + trips * step;
+      if (trips >= 0 && trips <= 0xFFFF && trueEnd is >= short.MinValue and <= short.MaxValue) {
+        countdownTrips = trips;
+        countdownEnd = (short)trueEnd;
+      }
+    }
+    if (countdownTrips is { } tripCount) {
+      if (tripCount != 0) {
+        asm.Mov(Reg.SI, (Imm)(int)(short)tripCount);   // SI is the down-counter (0xFFFF encodes 65535)
+        this.AlignLoopTop();
+        asm.MarkLabel(top);
+        foreach (var statement in f.Body)
+          this.EmitStatement(statement);
+        asm.MarkLabel(cont);
+        asm.Dec(Reg.SI);
+        asm.Jnz(top);
+      }
+      asm.MarkLabel(done);
+      this._exitFor.Pop();
+      this._iterateFor.Pop();
+      this._iterateAny.Pop();
+      asm.Mov(cell, (Imm)(int)countdownEnd);           // the observable increment-then-test end value
+      if (this._registerAccumulator is { } acc && accCell is { } accExit)
+        asm.Mov(Adjust(accExit, 0, OperandSize.Word), acc.Reg);
+      this._registerCounter = null;
+      this._registerAccumulator = null;
+      this._residentElementPtr = null;
+      this.ReleaseTemp(2);
+      return true;
+    }
+
     // O0062 loop rotation: an entry guard plus a bottom test drops the per-iteration JMP. The
     // counter lives in SI, so the bottom re-tests the just-incremented value with the inverse
     // condition (ascending: continue while SI <= limit; descending: while SI >= limit). The compare
@@ -1536,6 +1581,35 @@ public sealed partial class CodeGenerator {
       fallback ??= symbol;        // remember the first write target in case nothing accumulates
     }
     return fallback;
+  }
+
+  /// <summary>
+  /// O0112: true when any statement in <paramref name="body"/> reads <paramref name="v"/> - as a
+  /// value or as an array subscript. An unmodelled statement counts as a read (conservative), so a
+  /// countdown only fires when the counter is provably unobserved.
+  /// </summary>
+  private bool BodyReadsVariable(IReadOnlyList<Statement> body, VariableSymbol v) {
+    foreach (var s in body)
+      if (this.StatementReadsVariable(s, v))
+        return true;
+    return false;
+  }
+
+  private bool StatementReadsVariable(Statement s, VariableSymbol v) {
+    bool Idx(Expression? t) => t is CallOrIndexExpr c && c.Arguments.Any(a => this.ExpressionReadsVariable(a, v));
+    return s switch {
+      AssignStmt a => this.ExpressionReadsVariable(a.Value, v) || Idx(a.Target),
+      IncrDecrStmt id => Idx(id.Target) || (id.Amount != null && this.ExpressionReadsVariable(id.Amount, v)),
+      PrintStmt p => (p.FileNumber != null && this.ExpressionReadsVariable(p.FileNumber, v))
+        || p.Items.Any(it => it.Value != null && this.ExpressionReadsVariable(it.Value, v)),
+      ForStmt f => this.ExpressionReadsVariable(f.From, v) || this.ExpressionReadsVariable(f.To, v)
+        || (f.Step != null && this.ExpressionReadsVariable(f.Step, v)) || f.Body.Any(x => this.StatementReadsVariable(x, v)),
+      IfStmt iff => this.ExpressionReadsVariable(iff.Condition, v)
+        || iff.Then.Any(x => this.StatementReadsVariable(x, v))
+        || iff.ElseIfs.Any(e => this.ExpressionReadsVariable(e.Condition, v) || e.Body.Any(x => this.StatementReadsVariable(x, v)))
+        || (iff.Else != null && iff.Else.Any(x => this.StatementReadsVariable(x, v))),
+      _ => true,   // an unmodelled statement: assume it reads the counter
+    };
   }
 
   /// <summary>True when <paramref name="e"/> contains a read of <paramref name="symbol"/> (a plain scalar name).</summary>

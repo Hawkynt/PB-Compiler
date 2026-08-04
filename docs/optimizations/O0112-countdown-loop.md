@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Done (constant-bound Int16 register-counter loops; the DI accumulator is kept) |
 | **Stage** | Emitter |
 | **Related** | [O0005](O0005-register-residency.md), [O0111](O0111-redundant-induction-variables.md), [O0113](O0113-loop-bounds-hoisted.md) |
 
@@ -50,13 +50,29 @@ Top:
 Four instructions per iteration become three, and one of them is no longer a
 compare.
 
-## What it needs
+## How it works
 
-- Proof that the counter is **not read** in the body (or that every read can be
-  rewritten in terms of the countdown value) — and that the loop's trip count is
-  computable, which [O0131](O0131-exact-trip-count.md) formalizes.
-- PB's **increment-then-test end value** (QUIRK 2.28, wrap included) must still
-  be stored to the counter cell on exit — that is what makes this a rewrite of
-  the *mechanism* rather than of the semantics.
-- `LOOP CX` is not the answer on a 486+, where `DEC`/`JNZ` is faster than the
-  microcoded `LOOP` ([C0002](C0002-486-codegen.md)).
+Inside the SI-counter path (`TryEmitForCounterInRegister`), when the counter is
+**not read** anywhere in the body (`BodyReadsVariable` — as a value *or* an array
+subscript), there is no stepped element pointer, and the bounds are compile-time
+constants, SI is loaded with the **trip count** and counted down (`DEC SI`/`JNZ`).
+The DI accumulator (if any) is untouched — it does not depend on the counter — so
+the hot `acc = acc + …` loop keeps its register residency and *also* loses the
+compare. On exit the observable **increment-then-test end value** (QUIRK 2.28) is
+stored to the counter cell as a single immediate.
+
+### The wrap edge
+
+The rewrite fires only when the true end value `from + trips*step` lands **inside**
+INTEGER range. That is exactly the guard against the wrapping FOR: `i% = 1 TO
+32767 STEP 1` reaches `32768`, which overflows and, in PB, wraps back below the
+limit and loops **forever** — computing a finite trip count there would be wrong.
+When the end value is out of range the countdown declines and the ordinary
+top-tested compare path reproduces PB's behaviour exactly (confirmed: that loop
+keeps its `CMP SI` compare).
+
+Verified byte-identical against the genuine oracle over ascending, descending
+`STEP`, and zero-trip loops (end values `101`, `2`, `5` all correct); a regression
+test confirms a count-only loop emits no limit compare while an `i`-reading loop
+keeps it. Constant bounds only for now — a runtime trip count would need a divide
+for `STEP > 1`.
