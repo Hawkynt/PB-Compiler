@@ -161,6 +161,22 @@ Ranked by the census, what stands between that and full coverage:
 4. **26 functions that select but fail allocation** - each needs a memory operand in a position the
    emitter has no form for; `Spiller` names the position it could not move.
 
+### Differential execution without the vintage oracle
+
+The parity question the IR path actually has to answer is narrower than the one the golden battery
+answers. Byte-identity with PBC 3.50 is the *direct* emitter's job and always will be - the IR path
+is a different code generator and will never match those bytes. What it must match is the direct
+emitter's **observable behaviour**: the same program, compiled both ways, printing the same thing.
+
+That comparison needs an executor, but not a vintage one. An in-repo 8086 interpreter over the
+emitted MZ image - real mode, the single-segment model the runtime documents, and the INT 21h subset
+the runtime calls (40h write, 4Ch exit, the memory and file entries) - would let the battery run each
+program through both back ends and diff the captured output. It is a substantial piece of work and it
+must be written to fail loudly on any opcode it does not implement, because an interpreter that
+quietly mis-executes proves the opposite of what it is for; but it is ordinary work, it needs nothing
+this repository does not already have, and it converts every claim below from an argument about
+matching register conventions into a measurement.
+
 ### The blocker that is not code
 
 None of the routed output has ever been **executed**. The differential oracle needs DOSBox
