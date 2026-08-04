@@ -220,6 +220,24 @@ own** (on top of mem2reg, without which most see nothing to do) over a set of or
 rendered and executed, and its output compared against the program compiled directly. A failure names
 the pass rather than the pipeline. The whole pipeline and its idempotence are checked as well.
 
+### Checking the OTHER four hundred optimizations
+
+`IrPassObservableEquivalenceTests` covers the IR passes. `DirectOptimizerOnRenderedBasicTests` covers
+the ones in `CodeGen/CodeGenerator.Optimize*.cs` — the optimizations that rewrite the program on its
+way to machine code, and the ones the user's phrase "weave the BASIC code" names.
+
+The lever is that the writer produces BASIC no person would write: every value in its own variable,
+control flow as a mesh of labels and `GOTO`s, loops unrolled into straight lines, subscripts rebuilt
+from byte offsets. Feeding that back through the front end and out through the direct emitter — once
+with the optimizer **off**, once **on** — exercises those optimizations on shapes the hand-written
+corpus never produces.
+
+Three outputs must agree per program: the original compiled, the rendered BASIC unoptimized, and the
+rendered BASIC optimized. The first pair catches a bad *rendering*; the second a bad *optimization*.
+Keeping them apart is what makes a failure diagnosable. Currently **73 programs compared, 0
+optimization disagreements**; the nine rendering disagreements are the writer's own gaps and are
+listed by name with a diagnosis, so the list cannot grow unnoticed.
+
 This found a real miscompile the first time it ran — not in a pass, but in the *direct* emitter: an
 `ELSEIF` condition was being folded against the value lattice of the `THEN` arm it followed. See
 `CodeGen/CodeGenerator.cs` `EmitIf` and `Tests/CodeGen/ElseIfProgramPointTests.cs`.
