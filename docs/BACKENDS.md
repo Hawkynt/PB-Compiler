@@ -21,6 +21,30 @@ flowchart TD
 ## The two paths, and why both exist
 
 **The direct path** (`CodeGen/`) is the fidelity path. Its job is to be
+### Could the IR path be byte-identical unoptimized?
+
+Measured, not assumed (`UnoptimizedByteCompatibilityTests`). Over the 33 corpus programs the back end
+takes part in with `--no-optimize`:
+
+| | |
+|---|---|
+| byte-identical to the direct emitter | **0** |
+| routed image shorter | 21 |
+| routed image longer | 12 |
+
+The images differ in **length**, in both directions — which is what rules out "the same instructions
+with different registers chosen". Both directions have a cause, and each is deliberate: shorter
+because the IR path does real register allocation where the direct emitter is AX-serial by
+construction; longer because the IR pipeline runs transformations of its own (loop unrolling trades
+size for speed) and the routed prologue zeroes its frame unconditionally.
+
+So byte-identity is not a near-miss to be closed by tidying. It would require the IR back end to
+reproduce the direct emitter's instruction selection — the opposite of why it exists. The contract
+the IR path is held to is **observable equivalence**, which is measured continuously by
+`BackendCorpusDifferentialTests`.
+
+---
+
 byte-identical to the genuine vintage compilers with the optimizer off, and to
 optimize aggressively with it on while *staying* observably identical. Its
 optimizations are interleaved with emission on purpose — many of them are decisions
