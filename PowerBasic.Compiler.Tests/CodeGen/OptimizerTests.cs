@@ -1310,6 +1310,17 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenConstantForLimitOnMemoryCounter_WhenPb36_ThenComparedAgainstImmediate() {
+    // O0113: the constant-limit immediate fold also fires on the memory-counter fallback path
+    // (EmitForInt16Fast) - reached here because the string-concat body clobbers SI/DI, so the loop
+    // does not qualify for SI residency. The compare against the folded limit 100 is `cmp ax, 64h`
+    // (83 F8 64) at both the entry guard and the rotated bottom test.
+    var img = Compile("$OPTIMIZE SPEED\nDIM i%, t$\nt$ = \"\"\nFOR i% = 1 TO 100\nt$ = t$ + \"x\"\nNEXT\nPRINT LEN(t$)\nEND", Dialect.Pb36);
+    Assert.That(ContainsSeq(img, 0x83, 0xF8, 0x64), Is.True,
+      "a constant limit on the memory-counter path compares AX against the immediate 100");
+  }
+
+  [Test]
   public void Emit_GivenLoopInvariantLen_WhenPb36_ThenHoistedToOneDescriptorRead() {
     // O0180/LICM: LEN(s$) in a WHILE condition (re-evaluated every iteration) and again in the body is
     // loop-invariant when the body never writes s$ - it hoists into the preheader as a single descriptor

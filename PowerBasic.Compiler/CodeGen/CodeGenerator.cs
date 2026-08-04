@@ -2884,10 +2884,21 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (f.Variable is NameExpr nameVar && model.VariableBindings.TryGetValue(nameVar, out var counterSym))
       this.EmitLicmPreheader(f, counterSym);
 
-    var limit = this.AllocTemp(2);
-    this.EmitExpression(f.To);
-    this.Coerce(model.TypeOf(f.To), counterType, f.To);
-    asm.Mov(limit, Reg.AX);
+    // O0113: a constant word limit folds into the compare as an immediate under --optimize - no temp
+    // cell, no per-iteration memory read. Gated on Optimize so the faithful path keeps the cmp-against-
+    // memory form byte-identical to genuine. Byte counters and non-constant / out-of-range limits keep
+    // the temp. (TryFold only folds pure constants, so skipping the To evaluation drops no side effect.)
+    int? constLimit = this.Optimize && !isByte
+        && this.OptFolder.TryFold(f.To) is { Integer: { } toVal }
+        && (unsigned ? toVal is >= 0 and <= 0xFFFF : toVal is >= short.MinValue and <= short.MaxValue)
+      ? (int)toVal : null;
+    Mem? limit = null;
+    if (constLimit is null) {
+      limit = this.AllocTemp(2);
+      this.EmitExpression(f.To);
+      this.Coerce(model.TypeOf(f.To), counterType, f.To);
+      asm.Mov(limit.Value, Reg.AX);
+    }
 
     var top = asm.DefineLabel();
     var done = asm.DefineLabel();
@@ -2897,15 +2908,19 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._iterateAny.Push(continueLabel);
     var magnitude = (int)Math.Abs(step);
 
+    // compare the just-loaded (or resident) counter against the limit - immediate when constant-folded
+    void CmpAgainstLimit() {
+      if (isByte)
+        asm.Cmp(Reg.AL, limit!.Value.WithSize(OperandSize.Byte));
+      else if (constLimit is { } cl)
+        asm.Cmp(Reg.AX, (Imm)cl);
+      else
+        asm.Cmp(Reg.AX, limit!.Value);
+    }
     // load the counter into AL/AX and compare it to the limit
     void Compare() {
-      if (isByte) {
-        asm.Mov(Reg.AL, cell);
-        asm.Cmp(Reg.AL, limit.WithSize(OperandSize.Byte));
-      } else {
-        asm.Mov(Reg.AX, cell);
-        asm.Cmp(Reg.AX, limit);
-      }
+      asm.Mov(isByte ? Reg.AL : Reg.AX, cell);
+      CmpAgainstLimit();
     }
     // jump when the counter is PAST the limit (loop should stop)
     void JumpIfPast(Label t) {
@@ -2945,10 +2960,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         this.EmitStatement(s);
       asm.MarkLabel(continueLabel);
       Increment();
-      if (isByte)
-        asm.Cmp(Reg.AL, limit.WithSize(OperandSize.Byte));
-      else
-        asm.Cmp(Reg.AX, limit);               // AL/AX already holds the incremented counter
+      CmpAgainstLimit();                       // AL/AX already holds the incremented counter
       if (step >= 0)
         (unsigned ? (Action<Label>)asm.Jbe : asm.Jle)(top);   // repeat while not past
       else
@@ -2970,7 +2982,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._exitFor.Pop();
     this._iterateFor.Pop();
     this._iterateAny.Pop();
-    this.ReleaseTemp(2);
+    if (limit != null) this.ReleaseTemp(2);
   }
 
   private void EmitDoLoop(DoLoopStmt d) {
