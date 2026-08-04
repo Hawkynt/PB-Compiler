@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial (the shared epilogue with a no-jump fall-through is produced today; the per-exit duplicate-vs-share cost choice is not) |
 | **Stage** | Emitter |
-| **Related** | [O0095](O0095-branch-tail-merging.md), [O0102](O0102-return-value-forwarding.md), [O0070](O0070-leaf-frame-elision.md) |
+| **Related** | [O0095](O0095-branch-tail-merging.md), [O0102](O0102-return-value-forwarding.md), [O0070](O0070-leaf-frame-elision.md), [O0230](O0230-jump-to-next-removal.md) |
 
 ## The idea
 
@@ -41,10 +41,24 @@ Epilogue:                    ; the fall-through path needs no jump at all
     ret     2
 ```
 
-## What it needs
+## Now
 
-- Exit-block **placement**, so that the exit which can fall through does; this
-  is the same layout question as [O0104](O0104-block-placement.md).
-- Interaction with string/FLEX cleanup: an epilogue that frees local handles is
-  large enough that sharing is clearly right; a bare `RET` is small enough that
-  duplication can be cheaper than a jump on a fetch-bound target.
+The **sharing** half — the doc's "Planned" example — is what the emitter produces
+today, and it falls out of the baseline design rather than a dedicated pass. Each
+procedure has one `_epilogue` label (`CodeGenerator.Procs.cs`), marked once; every
+`EXIT SUB`/`EXIT FUNCTION`/`EXIT DEF` jumps to it (`EmitExit`), and the natural end
+of the body falls through into it. When an `EXIT` sits physically last, its
+`JMP`-to-next is deleted by [O0230](O0230-jump-to-next-removal.md)
+(`RunJumpRelaxation`), so the fall-through path carries no jump at all. Verified:
+the doc's three-exit `Process` example emits exactly **one** frame teardown
+(`MOV SP,BP` / `POP BP` / `RET 2`), shared by both `EXIT SUB`s and the
+fall-through, not three copies.
+
+## Still planned
+
+- The per-exit **duplicate-vs-share** cost choice. The doc's "the right answer is
+  both, chosen per exit" — duplicating a small teardown at some exits to save the
+  jump on a fetch-bound target, sharing a large (string/FLEX-freeing) one — has no
+  code; every exit shares unconditionally. This is coupled to exit-block
+  **placement** ([O0104](O0104-block-placement.md)): choosing *which* exit falls
+  through is the same layout question.
