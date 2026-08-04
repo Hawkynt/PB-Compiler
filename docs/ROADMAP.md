@@ -192,15 +192,17 @@ interpreter has no x87 arithmetic), and none disagree. The three outcomes are ke
 "not compared" is never counted as agreement, because collapsing them is how a coverage number starts
 lying.
 
-**It is a gate.** Of the 24 programs the back end compiles part of, **23 run both ways and agree,
-none are uncompared, and one disagrees** - and that one is listed as a known defect with its
-diagnosis, so a NEW disagreement fails the build.
+**It is a gate, and it is clean.** Of the 24 programs the back end compiles part of, **all 24 run
+both ways and behave identically** - none uncompared, none disagreeing. The known-defect list is
+empty; an entry in it would be a diagnosed bug, and a new disagreement fails the build outright.
 
-The open one: `L& = A2% * B2%` with both operands 32767 gives 1073676288 on the IR path and
-1073676289 - the exact answer - on the direct one. PowerBASIC's integral arithmetic is float-shaped,
-and `IntegerRecovery` does not recover a 16x16 multiply widening into a LONG, so the IR keeps the
-product in an `f32` whose 24-bit mantissa cannot hold 2^30; the direct emitter computes it on the x87
-where the temporary carries 64 bits. The fix belongs in `IntegerRecovery`.
+Getting the last one took two fixes, both real. `L& = A2% * B2%` with both operands 32767 answered
+1073676288 against the exact 1073676289: PowerBASIC's integral arithmetic is float-shaped in the IR,
+and (a) `IntegerRecovery` refused a leaf narrower than the target, so a 16x16 multiply widening into a
+LONG was never recovered, and (b) it ran only AFTER the optimizer, so constant folding had already
+collapsed the product in an `f32` whose 24-bit mantissa cannot hold 2^30. Recovery now widens narrow
+leaves and runs before the optimizer as well as after - which is what lets the folding happen in
+integers, exactly as the direct emitter's 64-bit x87 temporary computes it.
 
 Getting here needed the interpreter to be checked against the one path already known to be right
 (`InterpreterSanityTests`, against the direct emitter). It failed that check at first - a subtraction

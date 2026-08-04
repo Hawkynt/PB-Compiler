@@ -36,6 +36,17 @@ public static class IntegerRecovery {
       case IrCast { Op: IrCastOp.SIToFP } widen when widen.Value.Type.Equals(intType):
         return widen.Value;                                // sitofp(x : iN) -> x
 
+      // a NARROWER leaf widens into the target instead of blocking recovery. L& = A2% * B2% is the
+      // case that matters: the leaves are INTEGERs and the target a LONG, and 32767 * 32767 is
+      // 1073676289 - which an f32's 24-bit mantissa cannot hold, so leaving the product on the float
+      // path answered 1073676288. Widening first and multiplying in 32 bits is exact, and it is what
+      // the direct emitter effectively does by keeping the product in an x87 temporary with 64 bits
+      // of mantissa. A 16x16 product cannot overflow 32 bits, so nothing is lost the other way.
+      case IrCast { Op: IrCastOp.SIToFP } narrow
+          when narrow.Value.Type.IsInteger && narrow.Value.Type.Bits < intType.Bits:
+        return block.InsertBefore(
+          new IrCast(narrow.Value.Type.Signed ? IrCastOp.SExt : IrCastOp.ZExt, narrow.Value, intType), at);
+
       // a float-precision cast is transparent to the integer value underneath it: PB widens a
       // SINGLE subtree to DOUBLE before combining it with a wider operand (`a%*a% + b%` computes
       // the product in SINGLE, extends to DOUBLE for the add). Recurse straight through - the

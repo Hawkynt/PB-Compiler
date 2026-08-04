@@ -60,18 +60,11 @@ public sealed class BackendCorpusDifferentialTests {
     ["OUT.TXT", "RESULT.TXT", "T.TXT", "TEST.TXT", "TMP.TXT", "DATA.TXT", "O.TXT", "SCREEN.TXT"];
 
   /// <summary>
-  /// Disagreements that are understood and open. They are listed rather than tolerated silently,
-  /// because the value of this fixture is that a NEW one fails the build.
+  /// Disagreements that are understood and open. Empty is the goal and currently the fact; an entry
+  /// here is a known defect with a diagnosis, never a tolerated one, because the value of this fixture
+  /// is that a NEW one fails the build.
   /// </summary>
-  private static readonly Dictionary<string, string> _known = new(StringComparer.OrdinalIgnoreCase) {
-    ["DIFF25.BAS"] =
-      "L& = A2% * B2% with both operands 32767 gives 1073676288 on the IR path and 1073676289 - the "
-      + "exact answer - on the direct one. PowerBASIC's integral arithmetic is float-shaped, and "
-      + "IntegerRecovery does not recover a 16x16 multiply widening into a LONG, so the IR keeps the "
-      + "product in an f32 whose 24-bit mantissa cannot hold 2^30; the direct emitter computes it on "
-      + "the x87 where the temporary has 64 bits of mantissa. The fix belongs in IntegerRecovery: a "
-      + "multiply of two INTEGER values assigned to a LONG is exact as a 32-bit integer multiply.",
-  };
+  private static readonly Dictionary<string, string> _known = new(StringComparer.OrdinalIgnoreCase);
 
   private static string Summarize(string reason) {
     var cut = reason.IndexOf(" at ", StringComparison.Ordinal);

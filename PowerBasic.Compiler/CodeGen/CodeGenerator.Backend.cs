@@ -42,10 +42,18 @@ public sealed partial class CodeGenerator {
     if (module is null)
       return this._backendProcs;
     this._backendModule = module;
+    // Recovery runs BEFORE the optimizer as well as after. PB's integral arithmetic is float-shaped
+    // in the IR, and constant folding on a float tree is lossy where the integer answer is not:
+    // 32767 * 32767 is 1073676289, which an f32's 24-bit mantissa cannot hold, so folding it as a
+    // float answered 1073676288. Recovering first lets the folding happen in integers, exactly as the
+    // direct emitter's x87 temporary (64 bits of mantissa) computes it.
+    foreach (var f in module.Functions)
+      if (!f.IsDeclaration)
+        IntegerRecovery.Run(f);
     IrPassManager.Standard().RunOnModule(module);
     foreach (var f in module.Functions)
       if (!f.IsDeclaration)
-        IntegerRecovery.Run(f);                  // PB integral +/-/* are float in the IR; recover the integer form
+        IntegerRecovery.Run(f);                  // again: the optimizer can expose trees the first pass could not see
     IrPassManager.Standard().RunOnModule(module);  // clean up the now-dead float ops
     var byName = new Dictionary<string, IrFunction>(System.StringComparer.OrdinalIgnoreCase);
     foreach (var f in module.Functions)
