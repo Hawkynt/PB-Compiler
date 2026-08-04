@@ -12,6 +12,28 @@ public sealed partial class CodeGenerator {
   private void EmitSwap(SwapStmt sw) {
     var asm = this._asm;
     var type = model.TypeOf(sw.Left);
+
+    // O0020: SWAP of two direct scalar cells (1/2/4 bytes - the common sort case, and a dynamic string's
+    // 2-byte handle) exchanges them inline with `mov ax,[a] / xchg ax,[b] / mov [a],ax` per word instead of
+    // the LEA/segment-setup/CX/rt_swap byte loop - byte-identical effect. Only AX is touched (residency lives
+    // in SI/DI), and TryDirectCell yields only near, same-segment scalar cells (arrays and BYREF params fall
+    // through to the runtime path). Optimize-gated, so the faithful build keeps rt_swap.
+    if (this.Optimize
+        && sw.Left is NameExpr ln && sw.Right is NameExpr rn
+        && model.VariableBindings.TryGetValue(ln, out var lsym) && this.ResidentRegOf(lsym) == null
+        && model.VariableBindings.TryGetValue(rn, out var rsym) && this.ResidentRegOf(rsym) == null
+        && !ReferenceEquals(lsym, rsym)
+        && type.Size == model.TypeOf(sw.Right).Size && type.Size is 1 or 2 or 4
+        && this.TryDirectCell(lsym) is { } lcell && this.TryDirectCell(rsym) is { } rcell) {
+      var (reg, size) = type.Size == 1 ? (Reg.AL, OperandSize.Byte) : (Reg.AX, OperandSize.Word);
+      for (var off = 0; off < type.Size; off += 2) {
+        asm.Mov(reg, Adjust(lcell, off, size));
+        asm.Xchg(reg, Adjust(rcell, off, size));
+        asm.Mov(Adjust(lcell, off, size), reg);
+      }
+      return;
+    }
+
     if (this.EmitPlace(sw.Left) is not { } left) {
       this.Unsupported(sw);
       return;

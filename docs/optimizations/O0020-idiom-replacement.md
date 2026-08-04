@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (empty loop, constant fill, arithmetic series, array copy loop) |
+| **Status** | ✅ Implemented (empty loop, constant fill, arithmetic series, array copy loop, inline `SWAP` of scalar cells) |
 | **Stage** | Emitter, before unrolling is considered |
 | **Source** | `CodeGen/CodeGenerator.Optimize.cs` — `#region O20`, `TryEmitForIdiom` |
 | **Gate** | `--optimize` + `$OPTIMIZE SPEED` |
@@ -22,6 +22,18 @@ entry (see *Split into* above).
 
 The counter cell always ends on the value the rolled loop would have left
 (increment-then-test, 16-bit wrap included).
+
+**Inline `SWAP`** is a non-loop idiom in the same spirit: `SWAP a, b` of two
+direct scalar cells — 1/2/4-byte INTEGER/LONG/BYTE, or a dynamic string's 2-byte
+handle — exchanges them inline as `mov ax,[a]; xchg ax,[b]; mov [a],ax` per word
+instead of the runtime `rt_swap` (which loads both far addresses, sets up the
+segment registers and byte-loops `CX` bytes). The commonest use is a sort inner
+loop. Only `AX` is touched (residency lives in `SI`/`DI`), and it applies only to
+`TryDirectCell` operands — near, same-segment scalars — so array elements and
+`BYREF` parameters keep the runtime path. Byte-identical effect; the faithful
+build keeps `rt_swap` (which the optimized build then trims). Verified by a
+DOSBox self-diff over INTEGER, LONG and string swaps and an `absent-call rt_swap`
+byte assertion.
 
 ## Sample
 

@@ -11,6 +11,9 @@ spos 1
 sneg-1
 szero 0
 smin-1
+swi ok
+swl ok
+sws ok
 dmax 8
 dmin 3
 dclamp 3

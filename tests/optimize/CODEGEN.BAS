@@ -16,6 +16,7 @@ DECLARE SUB MultiplyByPowerOfTwoIsShifts(BYVAL n%)
 DECLARE SUB MultiplyByFourBitConstIsShifts(BYVAL n%)
 DECLARE SUB IntegerMaxFoldsWithoutFpu(BYVAL a%, BYVAL b%)
 DECLARE SUB IntegerSignIsBranchless(BYVAL a%)
+DECLARE SUB SwapIsInline(BYVAL a%, BYVAL b%)
 DECLARE SUB MinMaxDiamondFolds(BYVAL a%, BYVAL b%)
 DECLARE SUB LongMaxFoldsWithoutFpu(BYVAL a&, BYVAL b&)
 DECLARE SUB DivideByPowerOfTwoIsShifts(BYVAL n%)
@@ -53,6 +54,7 @@ MultiplyByPowerOfTwoIsShifts 7
 MultiplyByFourBitConstIsShifts 3
 IntegerMaxFoldsWithoutFpu 3, 8
 IntegerSignIsBranchless 3
+SwapIsInline 3, 8
 MinMaxDiamondFolds 3, 8
 LongMaxFoldsWithoutFpu 100000, 70000
 DivideByPowerOfTwoIsShifts 64
@@ -187,6 +189,28 @@ SUB IntegerSignIsBranchless(BYVAL a%) NOINLINE
   PRINT "sneg"; SGN(-a%)
   PRINT "szero"; SGN(a% - a%)
   PRINT "smin"; SGN(mn)
+END SUB
+
+' ---------------------------------------------------------------------------
+' @scenario SwapIsInline
+' @what     SWAP of two direct scalar cells (INTEGER, LONG, dynamic string)
+' @expect   O0020 exchanges them inline (mov/xchg/mov per word) - no rt_swap call
+' @assert   absent-call rt_swap
+' @status   done
+' ---------------------------------------------------------------------------
+SUB SwapIsInline(BYVAL a%, BYVAL b%) NOINLINE
+  DIM x%, y%
+  x% = a% : y% = b%
+  SWAP x%, y%
+  IF x% = 8 AND y% = 3 THEN PRINT "swi ok" ELSE PRINT "swi FAIL"
+  DIM p AS LONG, q AS LONG
+  p = 100000 : q = 200000
+  SWAP p, q
+  IF p = 200000 AND q = 100000 THEN PRINT "swl ok" ELSE PRINT "swl FAIL"
+  DIM s$, t$
+  s$ = "aa" : t$ = "bb"
+  SWAP s$, t$
+  IF s$ = "bb" AND t$ = "aa" THEN PRINT "sws ok" ELSE PRINT "sws FAIL"
 END SUB
 
 ' ---------------------------------------------------------------------------

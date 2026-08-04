@@ -782,6 +782,22 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenScalarSwap_WhenPb36_ThenInlineXchgNotRuntimeCall() {
+    // O0020: SWAP of two direct scalar cells exchanges them inline (mov/xchg/mov), so the image carries an
+    // xchg r16,r/m16 (0x87) and the rt_swap byte-loop routine is trimmed. The faithful build keeps rt_swap.
+    static bool Has(byte[] img, params byte[] seq) {
+      for (var i = 0; i <= img.Length - seq.Length; ++i) {
+        var ok = true;
+        for (var j = 0; j < seq.Length; ++j) if (img[i + j] != seq[j]) { ok = false; break; }
+        if (ok) return true;
+      }
+      return false;
+    }
+    var img = Compile("$OPTIMIZE SPEED\nDECLARE SUB S()\nS\nEND\nSUB S() NOINLINE\nDIM x AS INTEGER, y AS INTEGER\nx = 1 : y = 2\nSWAP x, y\nPRINT x; y\nEND SUB", Dialect.Pb36);
+    Assert.That(Has(img, 0x87), Is.True, "an inline xchg r16,r/m16 replaces the rt_swap call");
+  }
+
+  [Test]
   public void Emit_GivenIntegerSgn_WhenPb36_ThenBranchlessCwdNegAdcNoFpu() {
     // O0249: SGN over an INTEGER folds to cwd/neg/adc dx,dx/mov ax,dx - branchless and off the x87.
     static bool Has(byte[] img, params byte[] seq) {
