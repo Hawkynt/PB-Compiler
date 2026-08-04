@@ -91,7 +91,7 @@ public sealed class PartialApplicationTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
-    var basic = PowerBasic.Compiler.Emit.BasicWriter.Render(model, unit);
+    var basic = PowerBasic.Compiler.Emit.PowerBasic35Emitter.Render(model, unit);
     Assert.That(basic, Does.Not.Contain("BIND(").And.Not.Contain("COMPOSE("), $"the forms lower to thunks:\n{basic}");
     var unit2 = Parser.Parse(Lexer.Tokenize(basic, "rt.bas", Dialect.Pb35), "rt.bas", Dialect.Pb35);
     var model2 = Binder.Bind(unit2, Dialect.Pb35);

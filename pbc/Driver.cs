@@ -144,7 +144,7 @@ public static class Driver {
           CodeGen.OptPruner.Prune(model);
           folds = CodeGen.OptPureFold.Analyze(model);
         }
-        var basic = Emit.BasicWriter.Render(model, unit, folds);
+        var basic = Emit.PowerBasic35Emitter.Render(model, unit, folds);
         if (output != null) {
           File.WriteAllText(output, basic);
           stdout.WriteLine($"{Path.GetFileName(output)}: {basic.Length} bytes of PowerBASIC");

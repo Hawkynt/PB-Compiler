@@ -155,7 +155,7 @@ public sealed class StackArrayTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty);
-    var basic = PowerBasic.Compiler.Emit.BasicWriter.Render(model, unit);
+    var basic = PowerBasic.Compiler.Emit.PowerBasic35Emitter.Render(model, unit);
     Assert.That(basic, Does.Not.Contain("STACK"), "pb35 knows no STACK class - the array decompiles as a plain static DIM");
     var unit2 = Parser.Parse(Lexer.Tokenize(basic, "rt.bas", Dialect.Pb35), "rt.bas", Dialect.Pb35);
     var model2 = Binder.Bind(unit2, Dialect.Pb35);

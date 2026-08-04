@@ -87,7 +87,7 @@ public sealed class IterateTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty);
-    var basic = BasicWriter.Render(model, unit);
+    var basic = PowerBasic35Emitter.Render(model, unit);
     Assert.That(Run(basic), Is.EqualTo(direct), $"decompiled:\n{basic}");
   }
 }

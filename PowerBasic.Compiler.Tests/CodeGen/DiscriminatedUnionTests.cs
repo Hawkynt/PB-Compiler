@@ -184,7 +184,7 @@ public sealed class DiscriminatedUnionTests {
     var unit = Parse(source);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
-    var basic = PowerBasic.Compiler.Emit.BasicWriter.Render(model, unit);
+    var basic = PowerBasic.Compiler.Emit.PowerBasic35Emitter.Render(model, unit);
     Assert.That(basic, Does.Contain("SELECT CASE").And.Not.Contain("$tag"), $"tag select with sanitized member:\n{basic}");
     var model2 = Binder.Bind(Parse(basic, Dialect.Pb35), Dialect.Pb35);
     Assert.That(model2.Errors, Is.Empty, $"pb35 re-bind of:\n{basic}\nerrors: " + string.Join("; ", model2.Errors));
@@ -196,7 +196,7 @@ public sealed class DiscriminatedUnionTests {
     var unit = Parse(source);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
-    var basic = PowerBasic.Compiler.Emit.BasicWriter.Render(model, unit);
+    var basic = PowerBasic.Compiler.Emit.PowerBasic35Emitter.Render(model, unit);
     Assert.That(basic, Does.Not.Contain("$tag").And.Not.Contain(" IS "), $"hidden names sanitized, IS lowered:\n{basic}");
     var model2 = Binder.Bind(Parse(basic, Dialect.Pb35), Dialect.Pb35);
     Assert.That(model2.Errors, Is.Empty, $"pb35 re-bind of:\n{basic}\nerrors: " + string.Join("; ", model2.Errors));

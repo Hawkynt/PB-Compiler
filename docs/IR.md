@@ -194,7 +194,7 @@ path off 16-bit DOS.
 
 ## Rendering the IR back to BASIC
 
-`Emit/IrBasicWriter.cs` renders an `IrModule` as PowerBASIC source. The older `Emit/BasicWriter.cs`
+`Emit/IrBasicWriter.cs` renders an `IrModule` as PowerBASIC source. The older `Emit/PowerBasic35Emitter.cs`
 renders the bound **AST**, so it can only ever show a program as it was *written*; this one renders
 the **IR**, so it shows a program as it will be *compiled* — after lowering, and after whatever the
 optimizer did to it.
@@ -242,9 +242,9 @@ This found a real miscompile the first time it ran — not in a pass, but in the
 `ELSEIF` condition was being folded against the value lattice of the `THEN` arm it followed. See
 `CodeGen/CodeGenerator.cs` `EmitIf` and `Tests/CodeGen/ElseIfProgramPointTests.cs`.
 
-### The bar for retiring `BasicWriter`
+### The bar for retiring `PowerBasic35Emitter`
 
-`BasicWriter` is not a pretty-printer — it is a **pb36 → pb35 down-translator**, and its contract is
+`PowerBasic35Emitter` is not a pretty-printer — it is a **pb36 → pb35 down-translator**, and its contract is
 that the rendered text is a program *the pb35 front end accepts*. That is the bar the IR writer has
 to clear, and it is now measured: `Write_GivenTheCorpus_ThenWhatItRendersRebindsUnderPb35` renders
 every corpus module, re-parses and re-binds the output under pb35, and requires zero errors.
@@ -264,13 +264,13 @@ variable** — scalar replacement, exact as long as the fields do not overlap an
 never leaves it. What a reader of the rendered program needs is a program that computes the same
 thing, not the record layout it came from.
 
-What `BasicWriter` still does that the IR writer cannot: reproduce *runtime* dialect quirks that pb35
+What `PowerBasic35Emitter` still does that the IR writer cannot: reproduce *runtime* dialect quirks that pb35
 source has no way to express — the CP/M `^Z` QuickBASIC 1.0–3.0 write at the end of a sequential
 `OUTPUT` file is the clearest one. Those are not lost in lowering; they are simply not expressible in
 the target language.
 
 `IrBasicWriterCensusTests` reports how much of the corpus renders (currently **173 of 218**
-functions) and ranks what does not, which is the distance still to go before `BasicWriter` can be
+functions) and ranks what does not, which is the distance still to go before `PowerBasic35Emitter` can be
 retired. It cannot be retired yet: it also renders declarations, `TYPE`s and procedure signatures
 from the original `CompilationUnit`, and carries the binder's pb36→pb35 desugaring, none of which the
 IR writer has.

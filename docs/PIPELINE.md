@@ -180,7 +180,7 @@ read-only post-emission snapshot. Code generation is never altered.
 
 `pbc --emit-basic <source.bas>` un-parses the bound program back to readable,
 **PB 3.5-compatible** PowerBASIC source (to `-O <file>` or stdout).
-`BasicWriter.Render` (in `PowerBasic.Compiler/Emit/BasicWriter.cs`) draws from two
+`PowerBasic35Emitter.Render` (in `PowerBasic.Compiler/Emit/PowerBasic35Emitter.cs`) draws from two
 inputs so the result is both faithful and complete:
 
 - **Declarations and procedure signatures** come from the surface `CompilationUnit`

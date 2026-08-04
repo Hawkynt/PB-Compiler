@@ -5,19 +5,19 @@ using PowerBasic.Compiler.Syntax;
 namespace PowerBasic.Compiler.Tests.Emit;
 
 /// <summary>
-/// The back-emitter (<see cref="BasicWriter"/>): turns a bound program back into PB 3.5-compatible
+/// The back-emitter (<see cref="PowerBasic35Emitter"/>): turns a bound program back into PB 3.5-compatible
 /// PowerBASIC source. Each test binds a snippet, renders it, and (the round-trip contract) re-parses
 /// and re-binds the rendered text under the pb35 dialect with zero errors - proving the output is
 /// not just plausible text but a program the pb35 front end accepts.
 /// </summary>
 [TestFixture]
-public sealed class BasicWriterTests {
+public sealed class PowerBasic35EmitterTests {
 
   private static string Render(string source, Dialect dialect = Dialect.Pb36) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", dialect), "TEST.BAS", dialect);
     var model = Binder.Bind(unit, dialect);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    return BasicWriter.Render(model, unit);
+    return PowerBasic35Emitter.Render(model, unit);
   }
 
   /// <summary>Renders the source, then re-binds the rendered text under pb35; asserts no errors.</summary>
@@ -156,11 +156,11 @@ public sealed class BasicWriterTests {
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty);
 
-    var plain = BasicWriter.Render(model, unit);
+    var plain = PowerBasic35Emitter.Render(model, unit);
     Assert.That(plain, Does.Contain("Cube&(4)"), "without the fold map the call is emitted verbatim");
 
     var folds = PowerBasic.Compiler.CodeGen.OptPureFold.Analyze(model);
-    var optimized = BasicWriter.Render(model, unit, folds);
+    var optimized = PowerBasic35Emitter.Render(model, unit, folds);
     Assert.That(optimized, Does.Contain("PRINT 64"), "with the fold map the pure call folds to its computed literal");
     Assert.That(optimized, Does.Not.Contain("Cube&(4)"), "the call is gone");
   }
@@ -326,7 +326,7 @@ public sealed class BasicWriterTests {
     // source dialect's runtime quirks (formatting, 16-bit arithmetic, rounding, VAL, ^Z, folding).
     var unit = Parser.Parse(Lexer.Tokenize("A% = 1\nPRINT A%\n", "T.BAS", Dialect.Qb45), "T.BAS", Dialect.Qb45);
     var model = Binder.Bind(unit, Dialect.Qb45);
-    var basic = BasicWriter.Render(model, unit);
+    var basic = PowerBasic35Emitter.Render(model, unit);
     Assert.That(basic, Does.StartWith("$COMPAT qb45"), "the source dialect is recorded for the pb35 recompile");
 
     var unit2 = Parser.Parse(Lexer.Tokenize(basic, "RT.BAS", Dialect.Pb35), "RT.BAS", Dialect.Pb35);

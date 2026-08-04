@@ -127,7 +127,7 @@ public sealed class ResourceContractTests {
       var unit = Parser.Parse(Lexer.Tokenize(source, fileName, Dialect.Pb36), fileName, Dialect.Pb36);
       var model = Binder.Bind(unit, Dialect.Pb36);
       Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
-      var basic = PowerBasic.Compiler.Emit.BasicWriter.Render(model, unit);
+      var basic = PowerBasic.Compiler.Emit.PowerBasic35Emitter.Render(model, unit);
       Assert.Multiple(() => {
         Assert.That(basic, Does.Contain("DATA 1, 2, 3"), "the resource bytes become labeled DATA");
         Assert.That(basic, Does.Contain("ERROR 5"), "the contract becomes an IF-check");

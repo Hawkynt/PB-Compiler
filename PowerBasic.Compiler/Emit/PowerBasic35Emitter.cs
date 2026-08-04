@@ -21,7 +21,7 @@ namespace PowerBasic.Compiler.Emit;
 /// always complete.
 /// </para>
 /// </summary>
-public sealed class BasicWriter {
+public sealed class PowerBasic35Emitter {
 
   private readonly StringBuilder _sb = new();
   private readonly SemanticModel _model;
@@ -55,7 +55,7 @@ public sealed class BasicWriter {
   // shows what the optimizer yields (PRINT Cube(4) -> PRINT 64).
   private readonly IReadOnlyDictionary<CallOrIndexExpr, ConstantValue>? _folds;
 
-  private BasicWriter(SemanticModel model, IReadOnlyDictionary<CallOrIndexExpr, ConstantValue>? folds) {
+  private PowerBasic35Emitter(SemanticModel model, IReadOnlyDictionary<CallOrIndexExpr, ConstantValue>? folds) {
     this._model = model;
     this._folds = folds;
     // The QB/PDS/TB families evaluate SINGLE-typed float expressions in single precision throughout;
@@ -71,7 +71,7 @@ public sealed class BasicWriter {
   /// foldable constant-argument calls are emitted as their computed literal.
   /// </summary>
   public static string Render(SemanticModel model, CompilationUnit unit, IReadOnlyDictionary<CallOrIndexExpr, ConstantValue>? folds = null) {
-    var writer = new BasicWriter(model, folds);
+    var writer = new PowerBasic35Emitter(model, folds);
     writer.EmitProgram(unit);
     return writer._sb.ToString();
   }
@@ -1106,7 +1106,7 @@ public sealed class BasicWriter {
   private string JoinArgs(IReadOnlyList<Expression> args) => string.Join(", ", args.Select(a => this.Expr(a)));
   private string JoinExprs(IReadOnlyList<Expression> args) => string.Join(", ", args.Select(a => this.Expr(a)));
 
-  private static string FilesPrefix(Expression? fileNumber, BasicWriter w) => fileNumber is { } f ? $"{w.FileRef(f)}, " : "";
+  private static string FilesPrefix(Expression? fileNumber, PowerBasic35Emitter w) => fileNumber is { } f ? $"{w.FileRef(f)}, " : "";
 
   /// <summary>A file number with its <c>#</c> sigil (the canonical PB form). Expr() renders a FileNumberExpr as its bare number, so a single sigil is always correct.</summary>
   private string FileRef(Expression fileNumber) => "#" + this.Expr(fileNumber);

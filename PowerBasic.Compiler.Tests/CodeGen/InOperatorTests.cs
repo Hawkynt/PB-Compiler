@@ -100,7 +100,7 @@ public sealed class InOperatorTests {
     var unit = Parse(source);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty);
-    var basic = PowerBasic.Compiler.Emit.BasicWriter.Render(model, unit);
+    var basic = PowerBasic.Compiler.Emit.PowerBasic35Emitter.Render(model, unit);
     Assert.That(basic, Does.Not.Contain(" IN "), "membership is lowered to comparisons");
     var model2 = Binder.Bind(Parse(basic, Dialect.Pb35), Dialect.Pb35);
     Assert.That(model2.Errors, Is.Empty, $"pb35 re-bind of:\n{basic}\nerrors: " + string.Join("; ", model2.Errors));
