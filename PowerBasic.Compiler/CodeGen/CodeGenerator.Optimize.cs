@@ -1203,9 +1203,23 @@ public sealed partial class CodeGenerator {
     var hasNestedLoop = f.Body.Any(s => s is ForStmt);
 
     var asm = this._asm;
-    var limit = this.AllocTemp(2);
-    this.EmitInt16BoundInto(f.To, limit);
+    // O0113: a constant limit folds into the compare as an immediate (cmp SI, imm) - no temp cell and
+    // no per-iteration memory read. Same in-range integer fold the countdown guard below uses; a
+    // non-constant (or out-of-range/float) limit keeps the temp and the cmp-against-memory form.
+    short? constLimit = this.OptFolder.TryFold(f.To) is { Integer: { } toVal } && toVal is >= short.MinValue and <= short.MaxValue
+      ? (short)toVal : null;
+    Mem? limit = null;
+    if (constLimit is null) {
+      limit = this.AllocTemp(2);
+      this.EmitInt16BoundInto(f.To, limit.Value);
+    }
     this.EmitInt16BoundInto(f.From, Reg.SI);     // From may read the accumulator's cell - keep DI free until now
+    void CmpLimit() {
+      if (constLimit is { } cl)
+        asm.Cmp(Reg.SI, (Imm)(int)cl);
+      else
+        asm.Cmp(Reg.SI, limit!.Value);
+    }
 
     this._registerCounter = (counter, Reg.SI);
 
@@ -1288,7 +1302,7 @@ public sealed partial class CodeGenerator {
       this._registerCounter = null;
       this._registerAccumulator = null;
       this._residentElementPtr = null;
-      this.ReleaseTemp(2);
+      if (limit != null) this.ReleaseTemp(2);
       return true;
     }
 
@@ -1297,7 +1311,7 @@ public sealed partial class CodeGenerator {
     // condition (ascending: continue while SI <= limit; descending: while SI >= limit). The compare
     // runs the same N+1 times and SI wraps identically to the top-tested form, so an overflowing FOR
     // cycles exactly as before - behaviour-identical, one jump lighter.
-    asm.Cmp(Reg.SI, limit);
+    CmpLimit();
     if (step >= 0)
       asm.Jg(done);                       // enter only if not already past the limit
     else
@@ -1316,7 +1330,7 @@ public sealed partial class CodeGenerator {
       asm.Add(Reg.SI, (Imm)(int)step);
     else
       asm.Sub(Reg.SI, (Imm)(int)Math.Abs(step));
-    asm.Cmp(Reg.SI, limit);
+    CmpLimit();
     if (step >= 0)
       asm.Jle(top);                       // repeat while not past
     else
@@ -1332,7 +1346,7 @@ public sealed partial class CodeGenerator {
     this._registerCounter = null;
     this._registerAccumulator = null;
     this._residentElementPtr = null;
-    this.ReleaseTemp(2);
+    if (limit != null) this.ReleaseTemp(2);
     return true;
   }
 

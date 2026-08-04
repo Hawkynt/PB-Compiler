@@ -649,7 +649,10 @@ public sealed class OptimizerTests {
     static int CmpSi(byte[] img) {
       var n = 0;
       for (var i = 0; i < img.Length - 1; ++i)
-        if (img[i] == 0x3B && ((img[i + 1] >> 3) & 7) == 6)
+        // cmp si, r/m16 (3B, modrm reg field = 110b) OR cmp si, imm (81/83 FE): O0113 folds a
+        // constant limit to the immediate form, so both count as "the SI counter is compared here"
+        if ((img[i] == 0x3B && ((img[i + 1] >> 3) & 7) == 6)
+            || ((img[i] == 0x81 || img[i] == 0x83) && img[i + 1] == 0xFE))
           ++n;
       return n;
     }
@@ -667,7 +670,10 @@ public sealed class OptimizerTests {
     static int CmpSi(byte[] img) {
       var n = 0;
       for (var i = 0; i < img.Length - 1; ++i)
-        if (img[i] == 0x3B && ((img[i + 1] >> 3) & 7) == 6)
+        // cmp si, r/m16 (3B, modrm reg field = 110b) OR cmp si, imm (81/83 FE): O0113 folds a
+        // constant limit to the immediate form, so both count as "the SI counter is compared here"
+        if ((img[i] == 0x3B && ((img[i + 1] >> 3) & 7) == 6)
+            || ((img[i] == 0x81 || img[i] == 0x83) && img[i + 1] == 0xFE))
           ++n;
       return n;
     }
@@ -1277,6 +1283,30 @@ public sealed class OptimizerTests {
       if (image[i] == 0xE8 && i + 3 + (short)(image[i + 1] | (image[i + 2] << 8)) == head)
         ++count;
     return count;
+  }
+
+  private static bool ContainsSeq(byte[] image, params byte[] seq) {
+    for (var i = 0; i + seq.Length <= image.Length; ++i) {
+      var match = true;
+      for (var j = 0; j < seq.Length; ++j)
+        if (image[i + j] != seq[j]) { match = false; break; }
+      if (match)
+        return true;
+    }
+    return false;
+  }
+
+  [Test]
+  public void Emit_GivenConstantForLimit_WhenPb36_ThenComparedAgainstImmediate() {
+    // O0113: a constant FOR limit folds into the SI-resident compare as `cmp si, imm` (83 FE 64 for
+    // 100) - no temp cell, no per-iteration `cmp si, [bp+disp]` memory read. A variable limit keeps
+    // the cell and the memory compare. XOR accumulation reads the counter, so the countdown path
+    // declines and the rotation compare is reached (a plain sum would fold to its closed form).
+    var constLim = Compile("$OPTIMIZE SPEED\nDIM i%, s%\nFOR i% = 1 TO 100\ns% = s% XOR i%\nNEXT\nPRINT s%\nEND", Dialect.Pb36);
+    var varLim = Compile("$OPTIMIZE SPEED\nDIM i%, s%, n%\nn% = 100\nFOR i% = 1 TO n%\ns% = s% XOR i%\nNEXT\nPRINT s%\nEND", Dialect.Pb36);
+    Assert.That(ContainsSeq(constLim, 0x83, 0xFE, 0x64), Is.True, "a constant limit compares SI against the immediate 100");
+    Assert.That(ContainsSeq(constLim, 0x3B, 0xB6) || ContainsSeq(constLim, 0x3B, 0x76), Is.False, "no per-iteration memory limit read");
+    Assert.That(ContainsSeq(varLim, 0x3B, 0xB6) || ContainsSeq(varLim, 0x3B, 0x76), Is.True, "a variable limit still reads the limit cell each iteration");
   }
 
   [Test]

@@ -147,7 +147,7 @@ Conventions used on every page:
 | ⬜ | [O0110](O0110-general-induction-variables.md) | General induction variables |
 | ⬜ | [O0111](O0111-redundant-induction-variables.md) | Redundant IV elimination |
 | ✅ | [O0112](O0112-countdown-loop.md) | Countdown loops |
-| ⬜ | [O0113](O0113-loop-bounds-hoisted.md) | Loop bounds in registers |
+| 🟡 | [O0113](O0113-loop-bounds-hoisted.md) | Loop bounds in registers |
 | ⬜ | [O0114](O0114-loop-unswitching.md) | Loop unswitching |
 | ⬜ | [O0115](O0115-loop-peeling.md) | Loop peeling |
 | ⬜ | [O0116](O0116-loop-guard-hoisting.md) | Loop guard hoisting |
