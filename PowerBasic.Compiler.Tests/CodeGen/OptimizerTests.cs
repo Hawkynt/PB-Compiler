@@ -782,6 +782,23 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenLongMinMax_WhenPb36_ThenFoldsWithA32BitCompareNotTheFpu() {
+    // O0248: MAX/MIN over LONG arguments fold with a signed 32-bit compare (high word `cmp dx,cx`, low word
+    // `cmp ax,bx`) rather than the x87 round-trip. The high-word compare is the fold's signature.
+    static bool Has(byte[] img, params byte[] seq) {
+      for (var i = 0; i <= img.Length - seq.Length; ++i) {
+        var ok = true;
+        for (var j = 0; j < seq.Length; ++j) if (img[i + j] != seq[j]) { ok = false; break; }
+        if (ok) return true;
+      }
+      return false;
+    }
+    var img = Compile("$OPTIMIZE SPEED\nDIM a AS LONG, b AS LONG, m AS LONG\nLINE INPUT z$\na = VAL(z$)\nb = 5\nm = MAX(a, b)\nPRINT m\nEND", Dialect.Pb36);
+    Assert.That(Has(img, 0x39, 0xCA), Is.True, "cmp dx,cx - the 32-bit fold's high-word compare");
+    Assert.That(Has(img, 0x39, 0xD8), Is.True, "cmp ax,bx - the low-word compare");
+  }
+
+  [Test]
   public void Emit_GivenDiamondWithSideEffectingOperand_WhenPb36_ThenKeepsTheBranch() {
     // The fold evaluates each operand once; the branch re-evaluates the taken arm. A call operand would run
     // a different number of times, so the recognizer must decline it (the diamond must differ from the MAX fold).

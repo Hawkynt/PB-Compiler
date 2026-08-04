@@ -104,6 +104,46 @@ public sealed partial class CodeGenerator {
     }
   }
 
+  /// <summary>
+  /// O0108/O0248: the LONG counterpart of <see cref="EmitIntegerMinMaxFold"/>. The accumulator lives in DX:AX,
+  /// each candidate is brought into CX:BX, and a signed 32-bit compare (high word signed, low word unsigned on
+  /// the tie) keeps the larger (MAX) or smaller (MIN). A numeric tie keeps the accumulator, matching the strict
+  /// FPU fold. The 4-byte accumulator is preserved across each argument's evaluation on the stack.
+  /// </summary>
+  private void EmitLongMinMaxFold(IReadOnlyList<Expression> args, bool wantMax) {
+    var asm = this._asm;
+    this.EmitExpression(args[0]);
+    this.Coerce(model.TypeOf(args[0]), PbType.Long, args[0]);     // accumulator in DX:AX
+    for (var i = 1; i < args.Count; ++i) {
+      asm.Push(Reg.DX);
+      asm.Push(Reg.AX);
+      this.EmitExpression(args[i]);
+      this.Coerce(model.TypeOf(args[i]), PbType.Long, args[i]);   // candidate in DX:AX
+      asm.Mov(Reg.CX, Reg.DX);                                     // candidate -> CX:BX
+      asm.Mov(Reg.BX, Reg.AX);
+      asm.Pop(Reg.AX);                                             // accumulator -> DX:AX
+      asm.Pop(Reg.DX);
+      var keep = asm.DefineLabel();
+      var take = asm.DefineLabel();
+      asm.Cmp(Reg.DX, Reg.CX);                                     // signed compare of the high words
+      if (wantMax) {
+        asm.Jg(keep);                                             // acc_hi > cand_hi: keep acc
+        asm.Jl(take);                                             // acc_hi < cand_hi: take cand
+        asm.Cmp(Reg.AX, Reg.BX);                                   // high words equal: low words unsigned
+        asm.Jae(keep);                                            // acc_lo >= cand_lo: keep acc (tie keeps acc)
+      } else {
+        asm.Jl(keep);
+        asm.Jg(take);
+        asm.Cmp(Reg.AX, Reg.BX);
+        asm.Jbe(keep);                                           // acc_lo <= cand_lo: keep acc (tie keeps acc)
+      }
+      asm.MarkLabel(take);
+      asm.Mov(Reg.AX, Reg.BX);                                    // candidate wins
+      asm.Mov(Reg.DX, Reg.CX);
+      asm.MarkLabel(keep);
+    }
+  }
+
   /// <summary>O0302: the byte of a single-character constant needle - a 1-char string literal or CHR$(const). Any byte, 0 included.</summary>
   private int? SingleCharNeedleByte(Expression e) {
     if (e is StringLiteralExpr { Value: { Length: 1 } text } && text[0] <= (char)255)
@@ -652,6 +692,12 @@ public sealed partial class CodeGenerator {
         if (this.Optimize && KindOf(model.TypeOf(call)) == ValueKind.Int16
             && args.All(a => KindOf(model.TypeOf(a)) == ValueKind.Int16)) {
           this.EmitIntegerMinMaxFold(args, wantMax);
+          break;
+        }
+        // O0108/O0248: the same fold for all-LONG arguments, over DX:AX with a 32-bit signed compare.
+        if (this.Optimize && KindOf(model.TypeOf(call)) == ValueKind.Int32
+            && args.All(a => KindOf(model.TypeOf(a)) == ValueKind.Int32)) {
+          this.EmitLongMinMaxFold(args, wantMax);
           break;
         }
         this.EmitExpression(args[0]);

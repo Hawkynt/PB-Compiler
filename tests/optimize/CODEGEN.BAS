@@ -16,6 +16,7 @@ DECLARE SUB MultiplyByPowerOfTwoIsShifts(BYVAL n%)
 DECLARE SUB MultiplyByFourBitConstIsShifts(BYVAL n%)
 DECLARE SUB IntegerMaxFoldsWithoutFpu(BYVAL a%, BYVAL b%)
 DECLARE SUB MinMaxDiamondFolds(BYVAL a%, BYVAL b%)
+DECLARE SUB LongMaxFoldsWithoutFpu(BYVAL a&, BYVAL b&)
 DECLARE SUB DivideByPowerOfTwoIsShifts(BYVAL n%)
 DECLARE SUB DivideByConstantIsReciprocal(BYVAL n%)
 DECLARE SUB TrivialFunctionInlined(BYVAL n%)
@@ -51,6 +52,7 @@ MultiplyByPowerOfTwoIsShifts 7
 MultiplyByFourBitConstIsShifts 3
 IntegerMaxFoldsWithoutFpu 3, 8
 MinMaxDiamondFolds 3, 8
+LongMaxFoldsWithoutFpu 100000, 70000
 DivideByPowerOfTwoIsShifts 64
 DivideByConstantIsReciprocal 250
 TrivialFunctionInlined 8
@@ -183,6 +185,22 @@ SUB MinMaxDiamondFolds(BYVAL a%, BYVAL b%) NOINLINE
   PRINT "dmin"; m%
   IF a% >= -9 THEN m% = a% ELSE m% = -9
   PRINT "dclamp"; m%
+END SUB
+
+' ---------------------------------------------------------------------------
+' @scenario LongMaxFoldsWithoutFpu
+' @what     MAX/MIN over LONG arguments
+' @expect   O0248 folds it with a signed 32-bit compare (cmp dx,cx / cmp ax,bx)
+'           instead of the x87 min/max round-trip; the LONG PRINT still uses the
+'           FPU to format, so the self-diff (optimizer on and off) is the fold's
+'           real correctness proof here
+' @assert   present cmp-ax-bx
+' @status   done
+' ---------------------------------------------------------------------------
+SUB LongMaxFoldsWithoutFpu(BYVAL a&, BYVAL b&) NOINLINE
+  PRINT "lmax"; MAX(a&, b&)
+  PRINT "lmin"; MIN(a&, -100000)
+  PRINT "llow"; MAX(a&, a& - 1)
 END SUB
 
 ' ---------------------------------------------------------------------------

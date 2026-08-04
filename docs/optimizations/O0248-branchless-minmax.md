@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — the `MIN`/`MAX`/`MIN%`/`MAX%` intrinsics with all-INTEGER arguments fold with a signed integer `CMP` (of any arity), and a hand-written `IF a > b THEN m = a ELSE m = b` diamond is recognized and folded to the same code; the true branchless (`CMOV`/mask) forms remain |
+| **Status** | 🟡 Partial — the `MIN`/`MAX`/`MIN%`/`MAX%` intrinsics with all-INTEGER **or** all-LONG arguments fold with a signed compare (16-bit over AX, 32-bit over DX:AX) of any arity, and a hand-written `IF a > b THEN m = a ELSE m = b` diamond is recognized and folded to the same integer code; the true branchless (`CMOV`/mask) forms remain |
 | **Stage** | Emitter |
 | **Related** | [O0108](O0108-branchless-select.md), [O0119](O0119-reduction-recognition.md), [O0257](O0257-vector-minmax.md) |
 | **Split from** | [O0108](O0108-branchless-select.md) |
@@ -38,6 +38,15 @@ optimization battery folds `MAX%`/`MIN%` over positives, negatives and a tie and
 self-diffs under DOSBox with the optimizer on and off (identical output). This is
 the integer reduction shape [O0119](O0119-reduction-recognition.md) carries, now
 off the FPU.
+
+All-**LONG** arguments fold the same way over `DX:AX`, with the candidate in
+`CX:BX` and a signed 32-bit compare — the high words signed (`CMP DX,CX`), the low
+words unsigned on the tie (`CMP AX,BX`) — keeping the larger or smaller, ties
+keeping the accumulator. The 4-byte accumulator is preserved across each argument's
+evaluation on the stack. Battery-verified (positive `MAX`, negative `MIN` across the
+high-word sign boundary, and a same-high-word pair where the low word decides), self-
+diffed under DOSBox on and off; the LONG `PRINT` still formats through the FPU, so
+the self-diff is the correctness proof there rather than a `FILD`-absence assertion.
 
 The **hand-written diamond** folds too: `IF a REL b THEN m = a ELSE m = b`
 (`>`, `>=`, `<`, `<=`, either arm order, a constant in place of an operand for the

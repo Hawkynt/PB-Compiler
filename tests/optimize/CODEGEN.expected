@@ -10,6 +10,9 @@ itie 3
 dmax 8
 dmin 3
 dclamp 3
+lmax 100000
+lmin-100000
+llow 100000
 divshift 8
 recip 25
 inline 16
