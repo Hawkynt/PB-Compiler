@@ -87,6 +87,9 @@ internal static class RuntimeAbi {
     ["rt_fprint_double"] = new("rt_print_f64",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.St0, default)], _callerSaved, FileSelect: true),
 
+    // rt_error(code) -> AX = the error number; rt_raise dispatches it through ON ERROR and does not
+    // return, which is why nothing after the call is reachable
+    ["rt_error"] = new("rt_raise", [new(ArgKind.Word, Reg.AX)], _callerSaved),
     // rt_locate(row, col) -> AX = row, CX = column, a zero meaning "keep the current one"
     ["rt_locate"] = new("rt_locate",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved),

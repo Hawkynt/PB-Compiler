@@ -374,11 +374,31 @@ public sealed class IrLowering {
   }
 
   /// <summary>The address of one array element, by row-major flattening of the index list.</summary>
+  /// <summary>
+  /// One subscript checked against its dimension, raising Error 9 when it falls outside. The raise
+  /// does not return - the runtime dispatches it through ON ERROR or ends the program - but the IR
+  /// still needs a terminator on that block, so it branches to the continuation it never reaches.
+  /// </summary>
+  private void EmitBoundsCheck(IrValue index, long lower, long upper) {
+    var bad = this.NewBlock("bounds.bad");
+    var ok = this.NewBlock("bounds.ok");
+    var tooLow = this._b.Cmp(IrCmpPred.Slt, index, new IrConstantInt(IrType.I32, lower));
+    var tooHigh = this._b.Cmp(IrCmpPred.Sgt, index, new IrConstantInt(IrType.I32, upper));
+    this._b.CondBr(this._b.Or(tooLow, tooHigh), bad, ok);
+
+    this._b.Position(bad);
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_error", IrType.Void, IrType.I32), new IrConstantInt(IrType.I32, 9));
+    this._b.Br(ok);
+    this._b.Position(ok);
+  }
+
   private (IrValue Address, PbType Element) ElementAddress(CallOrIndexExpr expr) {
     if (!this._model.VariableBindings.TryGetValue(expr, out var symbol) || symbol.Type is not ArrayType arr)
       throw new IrLoweringException($"not an array element: {expr.Name}");
     if (arr.IsDynamic)
-      return this.DynamicElementAddress(expr, symbol, arr);
+      return this._checkBounds
+        ? throw new IrLoweringException("$ERROR BOUNDS ON over a dynamic array (its bounds live in the descriptor)")
+        : this.DynamicElementAddress(expr, symbol, arr);
     if (arr.StaticBounds is not { } bounds || bounds.Count != expr.Arguments.Count)
       throw new IrLoweringException("rank mismatch");
     var basePtr = this.SlotFor(symbol);
@@ -386,6 +406,8 @@ public sealed class IrLowering {
     IrValue? flat = null;
     for (var k = 0; k < bounds.Count; ++k) {
       var idx = this.Coerce(this.LowerExpr(expr.Arguments[k]), this._model.TypeOf(expr.Arguments[k]), PbType.Long);
+      if (this._checkBounds)
+        this.EmitBoundsCheck(idx, bounds[k].Lower, bounds[k].Upper);
       var rel = this._b.Sub(idx, new IrConstantInt(IrType.I32, bounds[k].Lower));
       var size = bounds[k].Upper - bounds[k].Lower + 1;
       flat = flat is null ? rel : this._b.Add(this._b.Mul(flat, new IrConstantInt(IrType.I32, size)), rel);
@@ -402,6 +424,9 @@ public sealed class IrLowering {
   // promotable scalar slot. Sizes feed row-major flattening and the allocation count.
   private readonly record struct DynArr(IrValue Data, IrValue[] Lo, IrValue[] Size);
   private readonly Dictionary<VariableSymbol, DynArr> _dynArrays = new(ReferenceEqualityComparer.Instance);
+
+  /// <summary>$ERROR BOUNDS ON: subscripts are checked and Error 9 raised when one is out of range.</summary>
+  private bool _checkBounds;
 
   private DynArr DynDescriptor(VariableSymbol symbol, int rank) {
     if (this._dynArrays.TryGetValue(symbol, out var existing))
@@ -482,7 +507,7 @@ public sealed class IrLowering {
       case ReadStmt rd: this.LowerRead(rd); break;
       case RestoreStmt rs: this.LowerRestore(rs); break;
       case EndStmt: this.LowerEnd(); break;
-      case MetaStmt meta: LowerMeta(meta); break;
+      case MetaStmt meta: this.LowerMeta(meta); break;
       case CommandStmt { Keyword: "SHIFT LEFT" or "SHIFT RIGHT" } shift: this.LowerShift(shift); break;
       case CommandStmt { Keyword: "LOCATE" } locate: this.LowerLocate(locate); break;
       case CommandStmt { Keyword: "KILL", Arguments: [{ } file] }:
@@ -1848,17 +1873,23 @@ public sealed class IrLowering {
   /// optimization. Anything unrecognized declines too, so a metastatement with semantics added later
   /// is refused by default rather than ignored by accident.
   /// </summary>
-  private static void LowerMeta(MetaStmt meta) {
+  private void LowerMeta(MetaStmt meta) {
+    var arm = meta.Arguments.Count > 0 ? meta.Arguments[0].Text : "";
+    var on = meta.Arguments.Count >= 2 && meta.Arguments[^1].Text.Equals("ON", StringComparison.OrdinalIgnoreCase);
     switch (meta.Command.ToUpperInvariant()) {
       case "OPTIMIZE":   // optimizer policy - the IR path runs its own pipeline
       case "CPU":        // the instruction-set floor of the DOS emitter; an IR back end picks its own
         return;
-      case "ERROR" when meta.Arguments.Count >= 2
-                        && !meta.Arguments[^1].Text.Equals("ON", StringComparison.OrdinalIgnoreCase):
+      // $ERROR BOUNDS ON: every subscript is checked against its dimension and Error 9 raised when it
+      // falls outside - the same guard CodeGenerator.Arrays emits when CheckBounds is set. The other
+      // arms trap on arithmetic rather than on an index and still decline.
+      case "ERROR" when arm.Equals("BOUNDS", StringComparison.OrdinalIgnoreCase):
+        this._checkBounds = on;
+        return;
+      case "ERROR" when meta.Arguments.Count >= 2 && !on:
         return;          // turning a check OFF is exactly what this lowering already assumes
       case "ERROR":
-        throw new IrLoweringException(
-          $"$ERROR {(meta.Arguments.Count > 0 ? meta.Arguments[0].Text : "")} ON arms a runtime trap the IR lowering does not emit");
+        throw new IrLoweringException($"$ERROR {arm} ON arms a runtime trap the IR lowering does not emit");
       default:
         throw new IrLoweringException($"metastatement ${meta.Command}");
     }
