@@ -150,7 +150,7 @@ Conventions used on every page:
 | 🟡 | [O0113](O0113-loop-bounds-hoisted.md) | Loop bounds in registers |
 | ⬜ | [O0114](O0114-loop-unswitching.md) | Loop unswitching |
 | ⬜ | [O0115](O0115-loop-peeling.md) | Loop peeling |
-| ⬜ | [O0116](O0116-loop-guard-hoisting.md) | Loop guard hoisting |
+| ✅ | [O0116](O0116-loop-guard-hoisting.md) | Loop guard hoisting |
 | ⬜ | [O0117](O0117-bounds-check-merging.md) | Bounds-check merging & hoisting |
 | ⬜ | [O0118](O0118-loop-dead-store-elimination.md) | Loop dead stores |
 | ⬜ | [O0119](O0119-reduction-recognition.md) | Reduction recognition |

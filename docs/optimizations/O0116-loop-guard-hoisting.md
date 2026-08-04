@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Done (this is the emitter view of the [O0062](O0062-loop-restructuring.md) rotation, implemented on every FOR path) |
 | **Stage** | Emitter |
 | **Related** | [O0062](O0062-loop-restructuring.md) (rotation), [O0112](O0112-countdown-loop.md), [O0131](O0131-exact-trip-count.md) |
 
@@ -59,12 +59,24 @@ Top:
 Done:
 ```
 
-## What it needs
+## Now
 
-- The counter's **end value** must still be exactly what the pre-test loop
-  leaves — the increment-then-test value including the 16-bit wrap
-  (QUIRK 2.28). Rotation changes where the test happens, never that value.
-- The SSA CFG builder currently **bails on post-test loops**, so rotating one
-  would take it out of SSA range unless the builder is taught the bottom-tested
-  shape first. That dependency is worth calling out: this transform must not
-  silently disable [O0017](O0017-sccp.md) for the loop it improves.
+The rotation ships under `$OPTIMIZE SPEED` on **every** FOR emission path — the
+SI-resident counter (`TryEmitForCounterInRegister`), the memory-counter fallback
+(`EmitForInt16Fast`), the 386 LONG counter (`TryEmitForLongCounterInRegister`),
+the nested DI-resident inner loop, and the pre-tested `DO`/`WHILE`
+(`EmitDoLoopControl`). Each emits the zero-trip guard once, then a bottom-tested
+loop whose conditional back-edge replaces the unconditional `JMP`. The doc's exact
+example (`FOR i% = 1 TO n%`, a variable limit) emits the two compares — the entry
+guard and the bottom test — with no separate jump; a differential checksum and the
+`Emit_GivenRegisterCounterFor` / `Emit_GivenPreTestedDoLoop` regression tests pin
+the two-ended shape.
+
+### Correctness held
+
+- The counter's **end value** stays exactly what the pre-test loop leaves — the
+  increment-then-test value including the 16-bit wrap (QUIRK 2.28). Rotation
+  changes where the test happens, never that value; the compare still runs the
+  same N+1 times.
+- Gated on `--optimize`, so the faithful build keeps the top-tested form
+  byte-identical to genuine (golden gate 250/250).
