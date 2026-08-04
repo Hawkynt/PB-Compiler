@@ -77,6 +77,31 @@ END IF
 
 or, in `pb36`, `IF x% > 0 ANDALSO x% < 100 THEN …`.
 
+## Refinement: bounded-range fold
+
+When the two sides are a **lower and an upper bound on the same 16-bit signed
+variable against constants** — `x% >= 0 AND x% <= 15`, in any order and with the
+constant on either side — the pair collapses to a single **unsigned** compare
+(`TryEmitRangeCheckBranch`):
+
+```asm
+    mov     ax, [x]
+    cmp     ax, 000Fh        ; (x - lo) <=u (hi - lo); lo = 0 here so no subtract
+    ja      EndIf            ; unsigned above the window -> out of range
+    ...                      ; PRINT "in range"
+EndIf:
+```
+
+`(x - lo)` read as unsigned is in `[0, hi-lo]` exactly when `x ∈ [lo, hi]`: a value
+below `lo` wraps to a large unsigned number and a value above `hi` exceeds the
+window, so one `JA`/`JBE` decides both bounds. `x` is evaluated once. One subtract
+and one branch replace two signed compares and two branches. Gated on `--optimize`
+(the faithful build keeps the two-compare chain byte-for-byte); verified by a
+self-differential DOSBox run of four range forms — `>=0 AND <=15`, a non-zero low
+bound, a negative low bound, and the constant-on-the-left spelling — over the whole
+input range, identical to `$OPTIMIZE OFF`, plus a regression test that the window
+compare takes the unsigned `JA` rather than the signed `JG`.
+
 ## Why it is safe
 
 Over comparison results — which are always exactly −1 or 0 — the bitwise

@@ -1297,6 +1297,17 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenBoundedRangeCheck_WhenPb36_ThenSingleUnsignedCompare() {
+    // O0032 refinement: `x >= lo AND x <= hi` over a 16-bit signed variable folds to one unsigned
+    // compare (x - lo) <=u (hi - lo) instead of two signed compares. For `>= 0 AND <= 15` the window
+    // compare is `cmp ax, 15` (83 F8 0F) followed by an UNSIGNED branch (JA = 77), where the two-compare
+    // short-circuit would use the SIGNED JG (7F) for the upper bound.
+    var img = Compile("$OPTIMIZE SPEED\nDIM x%\nINPUT x%\nIF x% >= 0 AND x% <= 15 THEN PRINT \"y\" ELSE PRINT \"n\"\nEND", Dialect.Pb36);
+    Assert.That(ContainsSeq(img, 0x83, 0xF8, 0x0F, 0x77), Is.True, "the range check compares AX against the window with an unsigned branch");
+    Assert.That(ContainsSeq(img, 0x83, 0xF8, 0x0F, 0x7F), Is.False, "and does not emit the signed two-compare short-circuit");
+  }
+
+  [Test]
   public void Emit_GivenStringEquality_WhenPb36_ThenUsesLengthGuardedCompare() {
     // O0298: `=` / `<>` use rt_strcmpeq under --optimize, which after loading the two string
     // descriptors does a length guard `cmp ax,dx / jne` (39 D0 75) - unequal lengths skip the byte

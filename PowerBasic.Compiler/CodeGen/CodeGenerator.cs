@@ -2353,6 +2353,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (this.Optimize && this.OptimizeSpeed && this.TryEmitOrChainBitMask(condition, target, whenFalse))
       return;
 
+    // range check: `x >= lo AND x <= hi` over a 16-bit signed variable and constant bounds is one
+    // unsigned compare (x - lo) <=u (hi - lo) - one branch and one subtract instead of two signed
+    // compares. Also tried before the short-circuit lowering.
+    if (this.Optimize && this.TryEmitRangeCheckBranch(condition, target, whenFalse))
+      return;
+
     // Short-circuit a condition that is an AND/OR of pure comparisons into conditional branches,
     // instead of materializing each comparison as -1/0, bitwise-combining them and testing. PB's
     // AND/OR are bitwise, but over comparison results (always -1 or 0) that equals the logical
@@ -2425,6 +2431,69 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       this.EmitConditionalBranch(logic.Right, target, whenFalse);
       asm.MarkLabel(skip);
     }
+  }
+
+  /// <summary>
+  /// A one-sided bound `v OP const` on a 16-bit variable, normalized to a lower (<c>v &gt;= Value</c>) or
+  /// upper (<c>v &lt;= Value</c>) inclusive bound. Accepts the constant on either side (flipping the
+  /// operator for `const OP v`). Null for anything else.
+  /// </summary>
+  private (Expression Var, int Value, bool IsLower)? BoundOf(Expression e) {
+    if (e is not BinaryExpr { Op: { } op, Left: { } l, Right: { } r })
+      return null;
+    Expression varE;
+    int c;
+    if (this.OptFolder.TryFold(r) is { Integer: { } rc } && rc is >= short.MinValue and <= short.MaxValue) {
+      varE = l; c = (int)rc;
+    } else if (this.OptFolder.TryFold(l) is { Integer: { } lc } && lc is >= short.MinValue and <= short.MaxValue) {
+      varE = r; c = (int)lc;
+      op = op switch {                                // `const OP v` -> `v FLIP(OP) const`
+        BinaryOp.Less => BinaryOp.Greater, BinaryOp.Greater => BinaryOp.Less,
+        BinaryOp.LessEqual => BinaryOp.GreaterEqual, BinaryOp.GreaterEqual => BinaryOp.LessEqual, _ => op };
+    } else
+      return null;
+    return op switch {
+      BinaryOp.GreaterEqual => (varE, c, true),       // v >= c
+      BinaryOp.Greater => (varE, c + 1, true),        // v > c  ==  v >= c+1
+      BinaryOp.LessEqual => (varE, c, false),         // v <= c
+      BinaryOp.Less => (varE, c - 1, false),          // v < c  ==  v <= c-1
+      _ => ((Expression, int, bool)?)null,
+    };
+  }
+
+  /// <summary>
+  /// Range check: <c>x &gt;= lo AND x &lt;= hi</c> over a 16-bit signed variable becomes the single
+  /// unsigned test <c>(x - lo) &lt;=u (hi - lo)</c> - one subtract and one compare instead of two signed
+  /// compares and two branches. x is evaluated once. Branches to <paramref name="target"/> on the
+  /// requested truth value. Declines when the two sides are not a lower+upper bound on the same
+  /// variable, the bounds are out of range, or the range is empty.
+  /// </summary>
+  private bool TryEmitRangeCheckBranch(Expression condition, Label target, bool whenFalse) {
+    if (condition is not BinaryExpr { Op: BinaryOp.And, Left: { } left, Right: { } right }
+        || this.BoundOf(left) is not { } a || this.BoundOf(right) is not { } b
+        || a.IsLower == b.IsLower)                    // need exactly one lower and one upper bound
+      return false;
+    var lower = a.IsLower ? a : b;
+    var upper = a.IsLower ? b : a;
+    if (lower.Var is not NameExpr lv || upper.Var is not NameExpr uv
+        || !model.VariableBindings.TryGetValue(lv, out var lsym) || !model.VariableBindings.TryGetValue(uv, out var usym)
+        || !ReferenceEquals(lsym, usym)
+        || model.TypeOf(lv) is not ScalarType { IsFloat: false, ByteSize: 2, Signed: true })
+      return false;
+    int lo = lower.Value, hi = upper.Value;
+    if (lo > hi || lo < short.MinValue || hi > short.MaxValue)
+      return false;                                   // empty or out-of-range window
+
+    var asm = this._asm;
+    this.EmitExpression(lower.Var);                   // x -> AX (evaluated once)
+    if (lo != 0)
+      asm.Sub(Reg.AX, (Imm)lo);                       // normalize: 0 <= x-lo <= hi-lo when in range
+    asm.Cmp(Reg.AX, (Imm)(hi - lo));
+    if (whenFalse)
+      asm.Ja(target);                                 // unsigned above the window -> NOT in range
+    else
+      asm.Jbe(target);                                // within the window -> in range
+    return true;
   }
 
   /// <summary>Sets ZF from the value in AX (or DX:AX, or st(0)) according to its type.</summary>
