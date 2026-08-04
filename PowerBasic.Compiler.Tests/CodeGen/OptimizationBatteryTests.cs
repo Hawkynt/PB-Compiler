@@ -54,6 +54,7 @@ public sealed class OptimizationBatteryTests {
     ["idiv-bx"] = [0xF7, 0xFB],          // IDIV BX   - signed 32/16 divide
     ["div-bx"] = [0xF7, 0xF3],           // DIV BX    - unsigned 32/16 divide
     ["cmp-ax-bx"] = [0x39, 0xD8],        // CMP AX,BX - a 16-bit comparison
+    ["cmp-dx-cx"] = [0x39, 0xCA],        // CMP DX,CX - the high-word compare of a signed 32-bit fold
     ["cmp-ax-imm"] = [0x83, 0xF8],       // CMP AX,imm8 - a comparison against a small constant
     ["sub-ax-bx"] = [0x29, 0xD8],        // SUB AX,BX
     ["sbb-dx-cx"] = [0x19, 0xCA],        // SBB DX,CX - the 2nd instruction of every 32-bit compare/subtract

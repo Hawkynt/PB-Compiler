@@ -10,6 +10,9 @@ itie 3
 dmax 8
 dmin 3
 dclamp 3
+chi 3
+clo 4
+chi2 5
 lmax 100000
 lmin-100000
 llow 100000

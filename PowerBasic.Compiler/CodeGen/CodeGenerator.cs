@@ -2703,14 +2703,18 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   }
 
   /// <summary>
-  /// O0248/O0108: recognizes the min/max diamond <c>IF a REL b THEN m = X ELSE m = Y</c> - no ELSEIF, a single
-  /// assignment in each arm to the same INTEGER lvalue, the compared operands being exactly the two assigned
-  /// values - and folds it to the integer <c>CMP</c>/keep sequence the <c>MAX%</c>/<c>MIN%</c> intrinsic emits,
-  /// storing the result once. The operands must be pure (a variable read or a constant): the branch form
-  /// evaluates the taken operand a second time in its assignment, the fold once, so a side effect would differ.
-  /// A numeric tie is irrelevant here - the two operands hold the same value, so either choice stores it.
-  /// Declines a register-resident target. Off under nothing special: it only ever replaces a branch that
-  /// computes the same integer, so it is sound under every $ERROR mode.
+  /// O0248/O0108: recognizes the INTEGER min/max idioms and folds them to the integer <c>CMP</c>/keep the
+  /// <c>MAX%</c>/<c>MIN%</c> intrinsic emits, storing the result once. Two shapes:
+  /// <list type="bullet">
+  /// <item>the diamond <c>IF a REL b THEN m = X ELSE m = Y</c>, where the compared operands are exactly the two
+  ///   assigned values;</item>
+  /// <item>the one-armed clamp <c>IF x REL bound THEN x = bound</c> (no ELSE), where the assigned variable is one
+  ///   compared operand and the assigned value is the other - the saturating form real code writes most.</item>
+  /// </list>
+  /// The compared operands must be pure (a variable read or a constant): the branch form evaluates the taken
+  /// operand a second time in its assignment, the fold once, so a side effect would differ. A numeric tie is
+  /// irrelevant - the operands hold the same value, so either choice stores it. Declines a register-resident
+  /// target. Sound under every $ERROR mode: it only ever replaces a branch computing the same integer.
   /// </summary>
   private bool TryEmitMinMaxIf(IfStmt i) {
     if (i.ElseIfs.Count > 0)
@@ -2718,16 +2722,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (i.Condition is not BinaryExpr { Op: var op, Left: { } left, Right: { } right }
         || op is not (BinaryOp.Greater or BinaryOp.GreaterEqual or BinaryOp.Less or BinaryOp.LessEqual))
       return false;
-    if (i.Then is not [AssignStmt { Target: { } thenTarget, Value: { } thenValue }]
-        || i.Else is not [AssignStmt { Target: { } elseTarget, Value: { } elseValue }])
+    if (i.Then is not [AssignStmt { Target: { } thenTarget, Value: { } thenValue }])
+      return false;
+    if (thenTarget is not NameExpr m || model.TypeOf(m) is not ScalarType { IsFloat: false, ByteSize: 2 })
       return false;
 
-    // both arms assign the same INTEGER lvalue
-    if (thenTarget is not NameExpr m || !this.IsSameLvalue(thenTarget, elseTarget)
-        || model.TypeOf(m) is not ScalarType { IsFloat: false, ByteSize: 2 })
-      return false;
-
-    // the two compared operands must be pure int16 reads/constants, and be exactly the two assigned values
     bool IsPureInt16(Expression e) =>
       model.TypeOf(e) is ScalarType { IsFloat: false, ByteSize: 2 }
       && (this.OptFolder.TryFold(e) is { Integer: not null }
@@ -2740,16 +2739,33 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (!IsPureInt16(left) || !IsPureInt16(right))
       return false;
 
-    // classify: with L REL R, taking L when the relation holds keeps the larger (>, >=) or smaller (<, <=)
-    bool thenIsLeft;
-    if (SameOperand(thenValue, left) && SameOperand(elseValue, right))
-      thenIsLeft = true;
-    else if (SameOperand(thenValue, right) && SameOperand(elseValue, left))
-      thenIsLeft = false;
-    else
-      return false;
     var relationKeepsLarger = op is BinaryOp.Greater or BinaryOp.GreaterEqual;
-    var wantMax = thenIsLeft == relationKeepsLarger;
+    bool wantMax;
+    if (i.Else is [AssignStmt { Target: { } elseTarget, Value: { } elseValue }]) {
+      // diamond: both arms assign m, the two assigned values being the two operands
+      if (!this.IsSameLvalue(m, elseTarget))
+        return false;
+      bool thenIsLeft;
+      if (SameOperand(thenValue, left) && SameOperand(elseValue, right))
+        thenIsLeft = true;              // IF L REL R THEN m = L ELSE m = R : keep L when relation holds
+      else if (SameOperand(thenValue, right) && SameOperand(elseValue, left))
+        thenIsLeft = false;
+      else
+        return false;
+      wantMax = thenIsLeft == relationKeepsLarger;
+    } else if (i.Else is null or { Count: 0 }) {
+      // clamp: IF this REL other THEN this = other - when the relation holds, m takes the OTHER operand
+      bool mIsLeft;
+      if (SameOperand(m, left) && SameOperand(thenValue, right))
+        mIsLeft = true;
+      else if (SameOperand(m, right) && SameOperand(thenValue, left))
+        mIsLeft = false;
+      else
+        return false;
+      // assigning the other operand when the relation holds keeps the opposite extreme from the diamond
+      wantMax = mIsLeft ? !relationKeepsLarger : relationKeepsLarger;
+    } else
+      return false;
 
     // the target must be an addressable, non-resident cell (mirrors the abs idiom)
     if (!model.VariableBindings.TryGetValue(m, out var sym) || this.ResidentRegOf(sym) != null

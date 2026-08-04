@@ -50,9 +50,14 @@ the self-diff is the correctness proof there rather than a `FILD`-absence assert
 
 The **hand-written diamond** folds too: `IF a REL b THEN m = a ELSE m = b`
 (`>`, `>=`, `<`, `<=`, either arm order, a constant in place of an operand for the
-clamp form `IF a >= -9 THEN m = a ELSE m = -9`) is recognized in `EmitIf` and
+select form `IF a >= -9 THEN m = a ELSE m = -9`) is recognized in `EmitIf` and
 lowered to exactly the intrinsic's integer `CMP`/keep — one store, no re-evaluated
-arm. The operands must be pure (a variable read or a constant), since the branch
+arm. The **one-armed clamp** — `IF x > hi THEN x = hi` (no ELSE, a MIN) and
+`IF x < lo THEN x = lo` (a MAX), the saturating form real code writes most, with a
+constant or a variable bound — folds the same way: when the assigned variable is one
+compared operand and the assigned value is the other, the store becomes
+`x = MIN(x, bound)` / `MAX(x, bound)`. Both spellings are unit-tested byte-identical
+to the `MIN%`/`MAX%` intrinsic and self-diffed under DOSBox (`chi`/`clo`/`chi2`). The operands must be pure (a variable read or a constant), since the branch
 form evaluates the taken operand a second time in its assignment and the fold once;
 a call operand keeps the branch (a regression test pins that the diamond then no
 longer matches the intrinsic image). A numeric tie is a non-issue — the two operands

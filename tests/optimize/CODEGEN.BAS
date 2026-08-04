@@ -185,16 +185,26 @@ SUB MinMaxDiamondFolds(BYVAL a%, BYVAL b%) NOINLINE
   PRINT "dmin"; m%
   IF a% >= -9 THEN m% = a% ELSE m% = -9
   PRINT "dclamp"; m%
+  m% = a%
+  IF m% > 5 THEN m% = 5
+  PRINT "chi"; m%
+  m% = a%
+  IF m% < 4 THEN m% = 4
+  PRINT "clo"; m%
+  m% = b%
+  IF m% > 5 THEN m% = 5
+  PRINT "chi2"; m%
 END SUB
 
 ' ---------------------------------------------------------------------------
 ' @scenario LongMaxFoldsWithoutFpu
 ' @what     MAX/MIN over LONG arguments
-' @expect   O0248 folds it with a signed 32-bit compare (cmp dx,cx / cmp ax,bx)
-'           instead of the x87 min/max round-trip; the LONG PRINT still uses the
-'           FPU to format, so the self-diff (optimizer on and off) is the fold's
-'           real correctness proof here
-' @assert   present cmp-ax-bx
+' @expect   O0248 folds it with a signed 32-bit compare instead of the x87 min/max
+'           round-trip. Correctness is proven by this file's DOSBox self-diff
+'           (optimizer on and off both match the expected output); the emitted
+'           cmp dx,cx / cmp ax,bx signature is pinned in isolation by the
+'           Emit_GivenLongMinMax unit test, because the LONG PRINT's runtime
+'           formatting makes the per-SUB byte extraction here unreliable
 ' @status   done
 ' ---------------------------------------------------------------------------
 SUB LongMaxFoldsWithoutFpu(BYVAL a&, BYVAL b&) NOINLINE

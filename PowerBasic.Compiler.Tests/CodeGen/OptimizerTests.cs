@@ -782,6 +782,21 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenClampIf_WhenPb36_ThenFoldsToTheMinOrMaxIntrinsic() {
+    // O0248: the one-armed clamp `IF x > hi THEN x = hi` (no ELSE) is a MIN, and `IF x < lo THEN x = lo` a MAX -
+    // each folds to exactly the integer keep the intrinsic emits, so the clamp and the intrinsic assignment
+    // produce byte-identical images.
+    const string head = "$OPTIMIZE SPEED\nDIM x AS INTEGER, hi AS INTEGER\nLINE INPUT z$\nx = VAL(z$)\nhi = 5\n";
+    var clampHi = Compile(head + "IF x > hi THEN x = hi\nPRINT x\nEND", Dialect.Pb36);
+    var minInt = Compile(head + "x = MIN%(x, hi)\nPRINT x\nEND", Dialect.Pb36);
+    Assert.That(clampHi, Is.EqualTo(minInt), "IF x > hi THEN x = hi is MIN%(x, hi)");
+
+    var clampLo = Compile(head + "IF x < hi THEN x = hi\nPRINT x\nEND", Dialect.Pb36);
+    var maxInt = Compile(head + "x = MAX%(x, hi)\nPRINT x\nEND", Dialect.Pb36);
+    Assert.That(clampLo, Is.EqualTo(maxInt), "IF x < hi THEN x = hi is MAX%(x, hi)");
+  }
+
+  [Test]
   public void Emit_GivenLongMinMax_WhenPb36_ThenFoldsWithA32BitCompareNotTheFpu() {
     // O0248: MAX/MIN over LONG arguments fold with a signed 32-bit compare (high word `cmp dx,cx`, low word
     // `cmp ax,bx`) rather than the x87 round-trip. The high-word compare is the fold's signature.
