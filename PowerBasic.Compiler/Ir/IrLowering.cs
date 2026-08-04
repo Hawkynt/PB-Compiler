@@ -1836,6 +1836,12 @@ public sealed class IrLowering {
       "LCASE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_lcase", IrType.Ptr, IrType.Ptr), Str(0)),
       "LTRIM$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_ltrim", IrType.Ptr, IrType.Ptr), Str(0)),
       "RTRIM$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_rtrim", IrType.Ptr, IrType.Ptr), Str(0)),
+      // TRIM$ is both ends, which is how the direct emitter spells it too - there is no single
+      // runtime entry, and composing the two is exactly what the one-sided trims mean
+      "TRIM$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_rtrim", IrType.Ptr, IrType.Ptr),
+        this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_ltrim", IrType.Ptr, IrType.Ptr), Str(0))),
+      "REPEAT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_repeat", IrType.Ptr, IrType.I32, IrType.Ptr),
+        Num(0), Str(1)),
       // the radix conversions. Their two-argument form fixes the digit count (HEX$(n, 4) pads or
       // truncates to four) - it is a different result, not a formatting nicety, so it declines rather
       // than quietly dropping the count the way taking argument 0 alone would
@@ -2200,6 +2206,19 @@ public sealed class IrLowering {
       // semantics: the procedures in a unit mean exactly what they would in a program, and refusing
       // it kept every unit off the IR path over a directive that describes the file being written.
       case "COMPILE":
+      // $IF / $ELSEIF / $ELSE / $ENDIF are resolved by the preprocessor; whatever survives to here is
+      // the directive itself, with the branch it selected already spliced in
+      case "IF":
+      case "ELSEIF":
+      case "ELSE":
+      case "ENDIF":
+      // $LINK names another source to compile alongside - also preprocessor-time
+      case "LINK":
+      // $STRING sizes the string heap, and the emitter reads it from model.MetaStatements in a
+      // pre-pass rather than when it reaches the statement. That matters: a routed module body never
+      // executes the statement list, so a directive applied DURING emission would be silently lost -
+      // this one is not, which is why it is safe to ignore here
+      case "STRING":
         return;
       // $ERROR BOUNDS ON: every subscript is checked against its dimension and Error 9 raised when it
       // falls outside - the same guard CodeGenerator.Arrays emits when CheckBounds is set

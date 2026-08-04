@@ -40,8 +40,8 @@ what stands between the IR path and retiring the direct emitter.
 
 | | now |
 |---|---|
-| every program compiles through the IR | 132 / 162 lower; **37 / 132** module bodies fully owned |
-| observable behaviour identical | **0 disagreements** over 80 compilations |
+| every program compiles through the IR | 135 / 162 lower; **38 / 135** module bodies fully owned |
+| observable behaviour identical | **0 disagreements** over 82 compilations |
 | units and libraries (`.PBU`, `.LIB`) route | **yes** — a routed `.PBU` links against an ordinarily-built main module and behaves identically (`RoutedUnitTests`) |
 
 ### Could the IR path be byte-identical unoptimized?
