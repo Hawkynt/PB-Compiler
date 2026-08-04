@@ -97,7 +97,7 @@ public sealed class SelectJumpTableTests {
     "CASE 400\n PRINT \"e\"\n" +
     "CASE 500\n PRINT \"f\"\n" +
     "CASE 600\n PRINT \"g\"\n" +
-    "CASE 700\n PRINT \"h\"\n" +
+    "CASE 556\n PRINT \"h\"\n" +   // 556 and 300 share a low byte (2Ch) -> no perfect low-bit hash, forcing the tree
     "CASE ELSE\n PRINT \"z\"\n" +
     "END SELECT\nEND";
 
@@ -146,6 +146,22 @@ public sealed class SelectJumpTableTests {
     // the mask requires ONE variable across the chain; mixed variables (k OR j) are not a set test.
     var img = Compile("$OPTIMIZE SPEED\nDIM k%, j%\nINPUT k%\nINPUT j%\nIF k% = 1 OR j% = 8 OR k% = 15 THEN PRINT \"a\"\nEND", Dialect.Pb36);
     Assert.That(Contains(img, 0xB8, 0x81, 0x40), Is.False, "a mixed-variable OR chain is not a membership mask");
+  }
+
+  [Test]
+  public void Emit_GivenSparseSelectWithPerfectHash_WhenPb36Speed_ThenDispatchesThroughAMaskedTable() {
+    // O0100: 8 sparse values (16, 33, ... 135) whose low 3 bits are all distinct - too wide for a
+    // dense table, but AND 7 is a collision-free perfect hash. The dispatch masks the subject
+    // (AND AX, 7 = 83 E0 07), indexes a key+jump table pair, verifies the key and takes the indexed
+    // jump (FF A7) - constant time, no compare per value. The AND-mask is unique to this path (the
+    // jump table normalizes with SUB, the tree compares, the chain loads each value).
+    var img = Compile(
+      "$OPTIMIZE SPEED\nDIM x%\nINPUT x%\nSELECT CASE x%\n" +
+      "CASE 16\n PRINT \"a\"\nCASE 33\n PRINT \"b\"\nCASE 50\n PRINT \"c\"\nCASE 67\n PRINT \"d\"\n" +
+      "CASE 84\n PRINT \"e\"\nCASE 101\n PRINT \"f\"\nCASE 118\n PRINT \"g\"\nCASE 135\n PRINT \"h\"\n" +
+      "CASE ELSE\n PRINT \"z\"\nEND SELECT\nEND", Dialect.Pb36);
+    Assert.That(Contains(img, 0x83, 0xE0, 0x07), Is.True, "the perfect hash masks the subject (AND AX, 7)");
+    Assert.That(Contains(img, 0xFF, 0xA7), Is.True, "and takes an indexed indirect jump through the table");
   }
 
   [Test]

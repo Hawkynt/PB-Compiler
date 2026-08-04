@@ -3067,6 +3067,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // table instead of a compare chain - O(1) dispatch, same arm runs (output-identical)
     if (this.Optimize && this.TryEmitSelectJumpTable(s))
       return;
+    // pb36 O0100: a sparse integer SELECT whose values have distinct low bits under some mask width
+    // dispatches through a perfect hash - AND the subject, index a key+jump table pair, verify the
+    // key (the hash is injective only on the case values) and jump. O(1), no compares. Tried before
+    // the tree because it is constant time where the tree is O(log n); declines when no mask works.
+    if (this.Optimize && this.OptimizeSpeed && this.TryEmitSelectPerfectHash(s))
+      return;
     // pb36 O0098: a SPARSE integer SELECT the table declined (span too wide for a dense table) but
     // with many single-constant cases dispatches through a balanced binary decision tree - O(log n)
     // signed compares instead of the linear chain's O(n). The same arm runs, so output is identical.
@@ -3236,6 +3242,98 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     asm.MarkLabel(table);                          // data: only reached via the indexed jump above
     for (var v = min; v <= max; ++v)
       asm.Dw(byValue.TryGetValue(v, out var arm) ? armLabels[arm] : defaultLabel);
+
+    for (var i = 0; i < s.Arms.Count; ++i) {
+      asm.MarkLabel(armLabels[i]);
+      foreach (var statement in s.Arms[i].Body)
+        this.EmitStatement(statement);
+      asm.Jmp(end);
+    }
+    asm.MarkLabel(end);
+    this._exitSelect.Pop();
+    return true;
+  }
+
+  /// <summary>
+  /// pb36 O0100: a sparse INTEGER SELECT whose case values become collision-free under some low-bit
+  /// mask (<c>value AND (2^k - 1)</c> distinct for all values, k &lt;= 8) dispatches through a perfect
+  /// hash: mask the subject to an index into a key table and a parallel jump table, verify the key
+  /// (the hash is injective only on the case values, so any other input must be rejected) and take the
+  /// indexed jump - constant time, no compare per value and no bounds guard (the mask bounds the
+  /// index). Empty slots route to the default regardless of the verify, so a colliding non-member is
+  /// safe. First-match-wins is preserved by keying each value to its first arm. Same arm runs as the
+  /// chain (output-identical). Tried before the tree (O(1) beats O(log n)); INTEGER subjects, gated on
+  /// $OPTIMIZE SPEED. Declines when no mask within 8 bits separates the values.
+  /// </summary>
+  private bool TryEmitSelectPerfectHash(SelectStmt s) {
+    if (KindOf(model.TypeOf(s.Subject)) != ValueKind.Int16)
+      return false;
+    var byValue = new Dictionary<int, int>();     // case value -> first matching arm
+    int? elseArm = null;
+    for (var i = 0; i < s.Arms.Count; ++i) {
+      var arm = s.Arms[i];
+      if (arm.Selectors.Count == 0) {
+        if (elseArm != null)
+          return false;
+        elseArm = i;
+        continue;
+      }
+      foreach (var sel in arm.Selectors) {
+        if (sel.Value == null || sel.RangeUpper != null || sel.IsComparison != null)
+          return false;
+        if (this.OptFolder.TryFold(sel.Value) is not { Integer: { } v } || v is < short.MinValue or > short.MaxValue)
+          return false;
+        byValue.TryAdd((short)v, i);
+      }
+    }
+    if (byValue.Count < 8)
+      return false;                               // below this the tree/chain is smaller and fast enough
+
+    var values = byValue.Keys.ToList();
+    var k = -1;
+    for (var w = 3; w <= 8; ++w) {                // smallest table 2^w whose low w bits separate the values
+      var mask = (1 << w) - 1;
+      var seen = new HashSet<int>();
+      var distinct = true;
+      foreach (var v in values)
+        if (!seen.Add(v & mask)) { distinct = false; break; }
+      if (distinct) { k = w; break; }
+    }
+    if (k < 0)
+      return false;                               // no perfect AND-mask within 8 bits: fall to the tree
+
+    var maskVal = (1 << k) - 1;
+    var size = 1 << k;
+    var slotValue = new int?[size];
+    foreach (var v in values)
+      slotValue[v & maskVal] = v;
+
+    var asm = this._asm;
+    var end = asm.DefineLabel();
+    var keyTable = asm.DefineLabel();
+    var jumpTable = asm.DefineLabel();
+    var armLabels = s.Arms.Select(_ => asm.DefineLabel()).ToList();
+    var defaultLabel = elseArm is { } e ? armLabels[e] : end;
+
+    this._exitSelect.Push(end);
+    this.EmitExpression(s.Subject);
+    this.Coerce(model.TypeOf(s.Subject), PbType.Integer, s.Subject);   // subject -> AX
+    // SELECT dispatch must preserve SI/DI (a resident FOR counter / accumulator); it may use AX, BX,
+    // CX, DX - so the index lives in BX (as the jump table does) and the original in CX for the verify.
+    asm.Mov(Reg.CX, Reg.AX);                      // CX keeps the original value for the verify
+    asm.And(Reg.AX, (Imm)maskVal);                // AX = perfect hash
+    asm.Shl(Reg.AX, 1);                           // word index
+    asm.Mov(Reg.BX, Reg.AX);
+    asm.Cmp(Reg.CX, Mem.Word(Reg.BX, keyTable));  // verify: is this actually the value keyed at the slot?
+    asm.Jne(defaultLabel);
+    asm.Jmp(Mem.Word(Reg.BX, jumpTable));         // indexed indirect jump to the arm
+
+    asm.MarkLabel(keyTable);                       // data: the value keyed at each slot (0 for an empty slot)
+    for (var i = 0; i < size; ++i)
+      asm.Dw((ushort)(slotValue[i] ?? 0));
+    asm.MarkLabel(jumpTable);                      // data: the arm for each slot, default for empties
+    for (var i = 0; i < size; ++i)
+      asm.Dw(slotValue[i] is { } sv ? armLabels[byValue[sv]] : defaultLabel);
 
     for (var i = 0; i < s.Arms.Count; ++i) {
       asm.MarkLabel(armLabels[i]);

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial (the low-bit `AND`-mask perfect hash is emitted; the multiply/shift and modulus families in the hash search are not) |
 | **Stage** | Emitter |
 | **Related** | [O0029](O0029-select-jump-table.md), [O0098](O0098-balanced-decision-tree.md), [O0099](O0099-bit-test-dispatch.md) |
 
@@ -45,13 +45,31 @@ extended keys (`&H4700`, `&H4B00`, …) is not.
     jmp     word ptr [JumpTable+si]
 ```
 
-## What it needs
+## Now
 
-- A **hash search** at compile time over a small parameter space
-  (mask/multiply/shift, or modulus), with a guaranteed fallback when none is
-  found within the budget.
-- The **verification compare** is not optional: the hash is perfect only on the
-  case values, so any other input must be rejected before the jump.
-- A cost model decision against the tree and the table — three lowerings for one
-  construct means the choice has to be principled
-  ([O0174](O0174-target-cost-models.md)).
+`TryEmitSelectPerfectHash` (`CodeGenerator.cs`) fires when the dense jump table
+declined, the subject is `INTEGER`, every arm is a single-constant point case, and
+there are ≥ 8 distinct values. It searches for the smallest table width `k ≤ 8`
+whose low `k` bits (`value AND (2^k − 1)`) are **distinct across all values** — a
+collision-free hash into a `2^k`-entry table. The subject is masked (`AND AX, m`),
+scaled, and used to index a **key table** and a parallel **jump table**; the key is
+verified (`CMP CX, [KeyTable+BX]` — the hash is perfect only on the case values, so
+every other input must be rejected) and the indexed jump taken. Empty slots point
+their jump entry at the default, so a non-member that collides into one is routed
+correctly regardless of the verify. It is tried **before** the balanced tree
+([O0098](O0098-balanced-decision-tree.md)) because it is O(1) where the tree is
+O(log n); if no mask within 8 bits separates the values it declines and the tree
+takes over. The dispatch keeps to `AX`/`BX`/`CX` so a resident `SI`/`DI` loop
+counter or accumulator survives. Gated on `$OPTIMIZE SPEED`; the same arm runs as
+the compare chain — verified by a self-differential DOSBox run over the whole
+subject range (all 8 members, low-bit-**colliding** non-members that exercise the
+verify, and plain non-members) identical to `$OPTIMIZE OFF`, plus a regression test
+pinning the `AND AX, 7` masked-table shape. Golden gate 250/250.
+
+## Still planned
+
+- The rest of the **hash search**: multiply-shift (`(k * a) >> s`) and modulus
+  (`k MOD p`) families for value sets whose low bits collide at every width — the
+  current search is the `AND`-mask family only.
+- `LONG` subjects, and a cost-model decision against the tree and the table where
+  more than one applies ([O0174](O0174-target-cost-models.md)).
