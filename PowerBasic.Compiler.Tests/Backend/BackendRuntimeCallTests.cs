@@ -94,18 +94,19 @@ public sealed class BackendRuntimeCallTests {
 
   [Test]
   public void Select_GivenARoutineOutsideTheTable_ThenDeclinesNamingIt() {
-    // a string-valued expression goes through rt_str_const, which returns a HANDLE - a representation
-    // the back end has no model for yet, so it must decline rather than guess a convention
+    // A routine the table does not cover must decline rather than have a convention guessed for it.
+    // LEN was the original example here and is now listed; HEX$ is not, and being unlisted is the
+    // whole point of the test.
     var module = Optimized("""
-      FUNCTION Length%
-        DIM s AS STRING
-        s = "abc"
-        Length% = LEN(s)
+      FUNCTION Digits$
+        DIM n AS LONG
+        n = 255
+        Digits$ = HEX$(n)
       END FUNCTION
 
-      PRINT Length%
+      PRINT Digits$
       """);
-    var fn = module.Functions.First(f => f.Name.Equals("Length", StringComparison.OrdinalIgnoreCase));
+    var fn = module.Functions.First(f => f.Name.Equals("Digits", StringComparison.OrdinalIgnoreCase));
 
     InstructionSelector.TrySelect(fn, out var reason);
 
@@ -208,5 +209,75 @@ public sealed class BackendRuntimeCallTests {
 
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(image, Is.Not.Empty);
+  }
+
+  /// <summary>
+  /// <c>LEN</c> is the shape <see cref="RuntimeAbi.ResultKind.WidenedWord"/> exists for: the runtime's
+  /// <c>rt_len</c> answers a word in AX, the IR declares <c>rt_str_len(ptr) -&gt; i32</c> because the
+  /// same declaration also feeds the C back end. The bridge is a <c>CWD</c> - the exact instruction
+  /// the direct emitter writes after the call - and without it the high half of the LONG is whatever
+  /// happened to be in DX.
+  /// </summary>
+  private const string _lenProgram = """
+    DIM s AS STRING
+    s = "abc"
+    PRINT LEN(s)
+    """;
+
+  [Test]
+  public void Select_GivenAWordAnswerWidenedToALong_ThenSignExtendsWithCwd() {
+    var m = Select(_lenProgram, "main");
+
+    var opcodes = m!.AllInstructions.Select(i => i.Opcode).ToList();
+    var call = m.AllInstructions
+      .Select((instruction, index) => (instruction, index))
+      .First(p => p.instruction.Opcode == MOpcode.Call
+                  && p.instruction.Operands is [MOperand.LabelRef { Name: "rt_len" }]).index;
+    Assert.That(opcodes.Skip(call).Take(2), Does.Contain(MOpcode.Cwd),
+      "the CWD must follow the call immediately, before anything can disturb DX");
+  }
+
+  /// <summary>
+  /// <c>VAL</c> is the other new shape: the routine leaves its answer on the x87 stack rather than in
+  /// a register, so the transfer is an <c>FSTP</c> into the call's own frame cell.
+  /// </summary>
+  [Test]
+  public void Select_GivenAnAnswerOnTheX87Stack_ThenPopsItIntoTheCallsCell() {
+    var m = Select("""
+      DIM s AS STRING
+      DIM d AS DOUBLE
+      s = "1.5"
+      d = VAL(s)
+      PRINT d
+      """, "main");
+
+    var call = m!.AllInstructions
+      .Select((instruction, index) => (instruction, index))
+      .First(p => p.instruction.Opcode == MOpcode.Call
+                  && p.instruction.Operands is [MOperand.LabelRef { Name: "rt_val" }]).index;
+    var after = m.AllInstructions.Skip(call + 1).First();
+    Assert.That(after.Opcode, Is.EqualTo(MOpcode.Fstp), "the answer is popped straight off ST(0)");
+    Assert.That(after.Operands[0], Is.InstanceOf<MOperand.StackSlot>());
+  }
+
+  /// <summary>
+  /// The table must not claim a routine it would render wrongly. <c>rt_str_i16</c> opens with a
+  /// <c>CWD</c>, so an unsigned WORD routed through it would print 65535 as -1 - so there is
+  /// deliberately no <c>rt_str_from_u16</c> entry, and STR$ of a WORD must DECLINE rather than reach
+  /// the signed routine. Declining costs coverage; the alternative costs correctness.
+  /// </summary>
+  [Test]
+  public void Select_GivenStrOfAnUnsignedWord_ThenDeclinesRatherThanSignExtend() {
+    var module = Optimized("""
+      DIM w AS WORD
+      w = 65535
+      PRINT STR$(w)
+      """);
+    var main = module.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
+
+    InstructionSelector.TrySelect(main, out var reason);
+
+    Assert.That(reason, Does.Contain("rt_str_from_u16"),
+      "STR$ of a WORD must decline by name, not be routed through the signed entry");
   }
 }

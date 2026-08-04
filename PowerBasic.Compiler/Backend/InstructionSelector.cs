@@ -897,8 +897,8 @@ public sealed class InstructionSelector {
   private bool SelectRuntimeCall(IrCall call, IrFunction callee, RuntimeAbi.Routine routine) {
     if (!call.Type.IsVoid && routine.Result is null)
       return this.Decline($"call: {callee.Name} returns a value the runtime ABI table does not place");
-    if (!call.Type.IsVoid && (IsWide(call.Type) || RegSize(call.Type) != MRegSize.Word))
-      return this.Decline($"call: {callee.Name} returns {call.Type} (word results only)");
+    if (!call.Type.IsVoid && !this.ResultShapeAgrees(call, callee, routine))
+      return false;
     var args = call.Args.ToList();
     if (args.Count != routine.Args.Length)
       return this.Decline($"call: {callee.Name} arity disagrees with the runtime ABI table");
@@ -998,13 +998,53 @@ public sealed class InstructionSelector {
     if (call.Type.IsVoid)
       return true;
 
-    // the result is in the routine's own register; copy it into the call's virtual one so the
-    // allocator may place the value anywhere
-    var dest2 = this.FreshVreg(call.Type);
-    this._vregs[call] = dest2;
-    var destOp = new MOperand.Register(dest2);
+    return this.PlaceRuntimeResult(call, routine);
+  }
+
+  /// <summary>Whether the call's IR result type is one this table entry knows how to hand back.</summary>
+  private bool ResultShapeAgrees(IrCall call, IrFunction callee, RuntimeAbi.Routine routine) => routine.Answer switch {
+    RuntimeAbi.ResultKind.WidenedWord when !IsWide(call.Type)
+      => this.Decline($"call: {callee.Name} widens a word result, but the call is typed {call.Type}"),
+    RuntimeAbi.ResultKind.St0 when !call.Type.IsIeeeFloat
+      => this.Decline($"call: {callee.Name} answers on the x87 stack, but the call is typed {call.Type}"),
+    RuntimeAbi.ResultKind.Word when IsWide(call.Type) || RegSize(call.Type) != MRegSize.Word
+      => this.Decline($"call: {callee.Name} returns {call.Type} (word results only)"),
+    _ => true,
+  };
+
+  /// <summary>
+  /// Moves the routine's answer out of the fixed register it arrives in and into the call's own
+  /// virtual register (or frame cell), so the allocator may place the value wherever it likes.
+  /// </summary>
+  private bool PlaceRuntimeResult(IrCall call, RuntimeAbi.Routine routine) {
+    // the x87 answer is already on the stack; popping it into the call's cell is the whole transfer
+    if (routine.Answer == RuntimeAbi.ResultKind.St0) {
+      this.EmitX87(MOpcode.Fstp, this.FloatCell(call), reads: false);
+      return true;
+    }
+
     var resultReg = new MOperand.Register(MReg.Physical_(routine.Result!.Value, MRegSize.Word));
-    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, resultReg], MovEffect(destOp, resultReg)));
+    if (routine.Answer == RuntimeAbi.ResultKind.Word) {
+      var dest = this.FreshVreg(call.Type);
+      this._vregs[call] = dest;
+      var destOp = new MOperand.Register(dest);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, resultReg], MovEffect(destOp, resultReg)));
+      return true;
+    }
+
+    // WidenedWord: CWD sign-extends AX into DX:AX, which is exactly what the direct emitter writes
+    // after rt_len and rt_asc. It reads AX and writes DX, so both are declared clobbered - otherwise
+    // the allocator could park some other live value in DX across it and lose it.
+    if (routine.Result!.Value != Reg.AX)
+      return this.Decline($"call: {routine.Label} widens from {routine.Result.Value}, but CWD only extends AX");
+    this._current.Instructions.Add(new MInstr(MOpcode.Cwd, [],
+      new MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: false),
+      condition: null, clobbers: [Reg.AX, Reg.DX]));
+
+    var (lo, hi) = this.FreshPair(call);
+    var dxOperand = new MOperand.Register(MReg.Physical_(Reg.DX, MRegSize.Word));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lo, resultReg], MovEffect(lo, resultReg)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [hi, dxOperand], MovEffect(hi, dxOperand)));
     return true;
   }
 

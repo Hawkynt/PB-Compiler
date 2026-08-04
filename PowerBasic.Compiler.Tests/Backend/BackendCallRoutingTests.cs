@@ -92,12 +92,15 @@ public sealed class BackendCallRoutingTests {
   public void Select_GivenAnUnlistedRuntimeCall_ThenDeclinesWithTheReason() {
     // An rt_* helper is a declaration: its label lives in the runtime, and the only thing that says
     // where its arguments go is RuntimeAbi's table. Anything not in that table must DECLINE rather
-    // than be guessed at - a wrong register claim miscompiles silently. LEN is one of the routines
-    // still missing an entry (its runtime answer is a word where the IR declares a LONG result).
+    // than be guessed at - a wrong register claim miscompiles silently.
+    //
+    // This used to be spelled with LEN, which has since been listed (the word/LONG mismatch it named
+    // is now ResultKind.WidenedWord). HEX$ takes its place: still unlisted, and unlisted is the point
+    // - the rule under test is "not in the table means decline", not anything about a routine.
     var module = Optimized(Bind("""
-      DIM s AS STRING
-      s = "x"
-      PRINT LEN(s)
+      DIM n AS LONG
+      n = 255
+      PRINT HEX$(n)
       """));
 
     Assert.That(InstructionSelector.TrySelect(FunctionNamed(module, "main"), out var reason), Is.Null);

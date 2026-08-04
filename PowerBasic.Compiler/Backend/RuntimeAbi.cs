@@ -37,6 +37,24 @@ internal static class RuntimeAbi {
 
   internal sealed record RuntimeArg(ArgKind Kind, Reg Register, Reg High = default);
 
+  /// <summary>How a routine hands its answer back, when the IR's result type is not simply the register.</summary>
+  internal enum ResultKind {
+
+    /// <summary>A 16-bit value in <see cref="Routine.Result"/> - a handle, a count, a code.</summary>
+    Word,
+
+    /// <summary>
+    /// The routine answers a 16-bit value but the IR types the call 32-bit, so the word is
+    /// SIGN-EXTENDED into the pair. <c>LEN</c> is the example: the runtime's <c>rt_len</c> gives a
+    /// word, the IR declares <c>rt_str_len(ptr) -&gt; i32</c> because the same declaration also feeds
+    /// the C back end, and the direct emitter writes exactly this <c>CWD</c> after the call.
+    /// </summary>
+    WidenedWord,
+
+    /// <summary>The routine leaves its answer on the x87 stack (<c>VAL</c>), which is stored to the call's frame cell.</summary>
+    St0,
+  }
+
   /// <summary>
   /// One runtime routine: the label the direct emitter calls, where its arguments go, what it
   /// destroys, and - for the routines that answer with a value - the register the result comes back in.
@@ -45,7 +63,8 @@ internal static class RuntimeAbi {
   /// the literal bytes live in.
   /// </summary>
   internal sealed record Routine(string Label, RuntimeArg[] Args, IReadOnlyList<Reg> Clobbers,
-    Reg? Result = null, (Reg Dest, Reg Source)[]? Presets = null, bool FileSelect = false);
+    Reg? Result = null, (Reg Dest, Reg Source)[]? Presets = null, bool FileSelect = false,
+    ResultKind Answer = ResultKind.Word);
 
   // The print routines all save and restore every register they touch, so they are in fact
   // register-transparent - but "in fact" is not the same as "provably", and a clobber claim that is
@@ -139,6 +158,58 @@ internal static class RuntimeAbi {
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, FileSelect: true),
     ["rt_fprint_nl"] = new("rt_print_nl", [new(ArgKind.Word, Reg.AX)], _callerSaved, FileSelect: true),
     ["rt_fprint_comma"] = new("rt_print_zone", [new(ArgKind.Word, Reg.AX)], _callerSaved, FileSelect: true),
+
+    // The string routines below are transcribed from the ABI block at the head of
+    // DosRuntime.Strings.cs, which states each one's registers and whether it consumes its handles.
+    // Consuming is what the IR wants: every string value in generated code is an owned temporary,
+    // and the lowering puts an rt_str_dup on every read of a variable precisely so these are safe.
+
+    // "Len: AX=handle -> AX=length (consumes)". The IR declares the result i32 - see
+    // ResultKind.WidenedWord for why, and why the CWD is not optional
+    ["rt_str_len"] = new("rt_len", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.WidenedWord),
+
+    // "Val: AX=handle -> ST0 (consumes)". The only runtime entry so far that answers on the x87 stack
+    ["rt_str_val"] = new("rt_val", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.St0),
+
+    // "StrLeft/StrRight: AX=handle, CX=count -> AX (consumes)"
+    ["rt_str_left"] = new("rt_strleft",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_right"] = new("rt_strright",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
+
+    // "StrMid: AX=handle, CX=start(1-based), DX=length -> AX (consumes; clamps)"
+    ["rt_str_mid"] = new("rt_strmid",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.DX)],
+      _callerSaved, Result: Reg.AX),
+
+    // "StrUpr/StrLwr: AX=handle -> AX (transforms in place)"
+    ["rt_str_ucase"] = new("rt_strupr", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_lcase"] = new("rt_strlwr", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    // "LTrim/RTrim: AX=handle -> AX (consumes)" - and they clobber CX/DX beyond the usual, which the
+    // full caller-saved set already covers
+    ["rt_str_ltrim"] = new("rt_ltrim", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_rtrim"] = new("rt_rtrim", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+
+    // "Asc: AX=handle -> AX=first byte or 0 (consumes)"; the IR types the result i32
+    ["rt_str_asc"] = new("rt_asc", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.WidenedWord),
+
+    // "Repeat: AX=handle, CX=count -> AX (consumes)". The IR declares it (count, text), the runtime
+    // wants the text in AX - hence the per-position table rather than a convention
+    ["rt_str_repeat"] = new("rt_repeat",
+      [new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+
+    // STR$ of a number. "StrI16: AX=value (clobbers DX); StrI32: DX:AX=value; StrF64: ST0 (popped)"
+    // - and rt_str_f32 is the SINGLE entry beside it, differing only in the digit count it sets,
+    // which is the rendering the fidelity tests compare
+    ["rt_str_from_i16"] = new("rt_str_i16", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    // deliberately NO rt_str_from_u16 entry: rt_str_i16 opens with a CWD, so routing an unsigned
+    // WORD through it would render 65535 as -1
+    ["rt_str_from_i32"] = new("rt_str_i32", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_from_single"] = new("rt_str_f32", [new(ArgKind.St0, default)], _callerSaved, Result: Reg.AX),
+    ["rt_str_from_double"] = new("rt_str_f64", [new(ArgKind.St0, default)], _callerSaved, Result: Reg.AX),
   };
 
   /// <summary>The routine that routes console output at a file, and the cells the caller resets afterwards.</summary>
