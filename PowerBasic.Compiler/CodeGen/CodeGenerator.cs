@@ -3613,33 +3613,37 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// (false) for any non-conforming leaf, a mixed variable, a wide window or fewer than 3 values.
   /// </summary>
   private bool TryEmitOrChainBitMask(Expression condition, Label target, bool whenFalse) {
-    if (condition is not BinaryExpr { Op: BinaryOp.Or })
+    // Two complementary spellings of small-set membership: `k = a OR k = b OR …` is TRUE when k is IN
+    // the set; its De Morgan complement `k <> a AND k <> b AND …` is TRUE when k is NOT in it.
+    bool member;
+    BinaryOp treeOp, leafOp;
+    if (condition is BinaryExpr { Op: BinaryOp.Or }) { member = true; treeOp = BinaryOp.Or; leafOp = BinaryOp.Equal; }
+    else if (condition is BinaryExpr { Op: BinaryOp.And }) { member = false; treeOp = BinaryOp.And; leafOp = BinaryOp.NotEqual; }
+    else
       return false;
+
     NameExpr? keyVar = null;
     var values = new List<int>();
 
     bool Collect(Expression e) {
-      switch (e) {
-        case BinaryExpr { Op: BinaryOp.Or, Left: { } l, Right: { } r }:
-          return Collect(l) && Collect(r);
-        case BinaryExpr { Op: BinaryOp.Equal, Left: { } el, Right: { } er }: {
-          var (name, valueExpr) = el is NameExpr ? (el, er) : er is NameExpr ? (er, el) : (null, null);
-          if (name is not NameExpr n || model.IntrinsicBindings.ContainsKey(n)
-              || model.TypeOf(n) is not ScalarType { IsFloat: false, ByteSize: 2 }
-              || !model.VariableBindings.TryGetValue(n, out var nsym))
-            return false;
-          if (keyVar == null)
-            keyVar = n;
-          else if (!model.VariableBindings.TryGetValue(keyVar, out var ksym) || !ReferenceEquals(ksym, nsym))
-            return false;                             // a different variable: not one set membership
-          if (this.OptFolder.TryFold(valueExpr) is not { Integer: { } v } || v is < short.MinValue or > short.MaxValue)
-            return false;
-          values.Add((int)v);
-          return true;
-        }
-        default:
+      if (e is BinaryExpr eb && eb.Op == treeOp)
+        return Collect(eb.Left) && Collect(eb.Right);
+      if (e is BinaryExpr leaf && leaf.Op == leafOp) {
+        var (name, valueExpr) = leaf.Left is NameExpr ? (leaf.Left, leaf.Right) : leaf.Right is NameExpr ? (leaf.Right, leaf.Left) : (null, null);
+        if (name is not NameExpr n || model.IntrinsicBindings.ContainsKey(n)
+            || model.TypeOf(n) is not ScalarType { IsFloat: false, ByteSize: 2 }
+            || !model.VariableBindings.TryGetValue(n, out var nsym))
           return false;
+        if (keyVar == null)
+          keyVar = n;
+        else if (!model.VariableBindings.TryGetValue(keyVar, out var ksym) || !ReferenceEquals(ksym, nsym))
+          return false;                               // a different variable: not one set membership
+        if (this.OptFolder.TryFold(valueExpr) is not { Integer: { } v } || v is < short.MinValue or > short.MaxValue)
+          return false;
+        values.Add((int)v);
+        return true;
       }
+      return false;
     }
 
     if (!Collect(condition) || keyVar == null || values.Count < 3 || this.MaskFor(values) is not { } m)
@@ -3647,15 +3651,16 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     var asm = this._asm;
     this.EmitExpression(keyVar);                      // k -> AX (bare 16-bit variable read)
-    if (whenFalse) {
-      // branch to target when the condition is FALSE (k not in the set): out of range, or bit clear
-      this.EmitMaskMembership(m, target);
-      asm.Jz(target);
+    // The condition is TRUE when (k in set) == member. Jump to target when the condition's truth is
+    // !whenFalse; EmitMaskMembership sets ZF (bit clear = NOT in set) and jumps to notMember when out
+    // of range. `member == whenFalse` is exactly when we must branch on the NOT-in-set outcome.
+    if (member == whenFalse) {
+      this.EmitMaskMembership(m, target);             // out of range -> target
+      asm.Jz(target);                                 // bit clear (not in set) -> target
     } else {
-      // branch to target when the condition is TRUE (k in the set)
       var skip = asm.DefineLabel();
-      this.EmitMaskMembership(m, skip);
-      asm.Jnz(target);
+      this.EmitMaskMembership(m, skip);               // out of range -> skip (in-set outcome not reached)
+      asm.Jnz(target);                                // bit set (in set) -> target
       asm.MarkLabel(skip);
     }
     return true;

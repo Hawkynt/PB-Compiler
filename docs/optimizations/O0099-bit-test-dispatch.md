@@ -66,7 +66,10 @@ INTEGER subjects:
   `k` **once** (a bare variable, no side effect), so it is equivalent to the
   short-circuited compare chain, and branches to the `THEN`/`ELSE` target on the
   requested truth value — both `whenFalse` polarities, so it composes inside an
-  outer `AND`/`OR`.
+  outer `AND`/`OR`. The **De Morgan complement** `k <> 1 AND k <> 8 AND k <> 15`
+  (exclusion) is recognized by the same routine — an `AND` tree of `<>` leaves —
+  and branches on the NOT-in-set outcome, so `if k in {…}` and `if k not in {…}`
+  both cost one masked test.
 
 Each normalizes the subject to the minimum (so a window not starting at zero, or
 with negatives, still fits), emits one unsigned range guard, loads the compile-time

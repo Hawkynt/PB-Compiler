@@ -178,6 +178,15 @@ public sealed class SelectJumpTableTests {
   }
 
   [Test]
+  public void Emit_GivenAndChainOfInequalities_WhenPb36Speed_ThenTestsMembershipWithABitMask() {
+    // O0099: the De Morgan complement `k <> 2 AND k <> 5 AND k <> 11` (exclusion) is the same small-set
+    // membership as the OR-of-equalities, just branched on the NOT-in-set outcome - it lowers to the
+    // mask test (MOV AX, mask / SHR AX, CL) too. Values 2,5,11 span 9 (<=15), so the mask fires.
+    var img = Compile("$OPTIMIZE SPEED\nDIM k%\nINPUT k%\nIF k% <> 2 AND k% <> 5 AND k% <> 11 THEN PRINT \"y\" ELSE PRINT \"n\"\nEND", Dialect.Pb36);
+    Assert.That(Contains(img, 0xD3, 0xE8), Is.True, "the AND-of-inequalities exclusion builds and shifts a membership mask (SHR AX, CL)");
+  }
+
+  [Test]
   public void Emit_GivenOrChainOfDifferentVariables_WhenPb36Speed_ThenNoBitMask() {
     // the mask requires ONE variable across the chain; mixed variables (k OR j) are not a set test.
     var img = Compile("$OPTIMIZE SPEED\nDIM k%, j%\nINPUT k%\nINPUT j%\nIF k% = 1 OR j% = 8 OR k% = 15 THEN PRINT \"a\"\nEND", Dialect.Pb36);
