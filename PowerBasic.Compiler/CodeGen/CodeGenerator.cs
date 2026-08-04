@@ -3657,6 +3657,19 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
   private void EmitSelectorInt16(SelectStmt s, Mem subject, CaseSelector selector, Label armBody) {
     var asm = this._asm;
+    // O0032 range fold: a constant `CASE lo TO hi` is one unsigned compare (subject - lo) <=u (hi - lo)
+    // instead of two signed compares. Jumps to the arm when in range and falls through otherwise.
+    if (selector.RangeUpper != null && this.Optimize
+        && this.OptFolder.TryFold(selector.Value!) is { Integer: { } loV } && loV is >= short.MinValue and <= short.MaxValue
+        && this.OptFolder.TryFold(selector.RangeUpper) is { Integer: { } hiV } && hiV is >= short.MinValue and <= short.MaxValue
+        && loV <= hiV) {
+      asm.Mov(Reg.AX, subject.WithSize(OperandSize.Word));
+      if (loV != 0)
+        asm.Sub(Reg.AX, (Imm)(int)loV);
+      asm.Cmp(Reg.AX, (Imm)(int)(hiV - loV));
+      asm.Jbe(armBody);
+      return;
+    }
     this.EmitExpression(selector.Value!);
     this.Coerce(model.TypeOf(selector.Value!), PbType.Integer, selector.Value!);
 

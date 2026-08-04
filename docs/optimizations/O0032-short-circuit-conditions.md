@@ -95,12 +95,15 @@ EndIf:
 `(x - lo)` read as unsigned is in `[0, hi-lo]` exactly when `x ∈ [lo, hi]`: a value
 below `lo` wraps to a large unsigned number and a value above `hi` exceeds the
 window, so one `JA`/`JBE` decides both bounds. `x` is evaluated once. One subtract
-and one branch replace two signed compares and two branches. Gated on `--optimize`
-(the faithful build keeps the two-compare chain byte-for-byte); verified by a
-self-differential DOSBox run of four range forms — `>=0 AND <=15`, a non-zero low
-bound, a negative low bound, and the constant-on-the-left spelling — over the whole
-input range, identical to `$OPTIMIZE OFF`, plus a regression test that the window
-compare takes the unsigned `JA` rather than the signed `JG`.
+and one branch replace two signed compares and two branches. The **same fold applies
+to a constant `SELECT CASE lo TO hi` arm** (`EmitSelectorInt16`): `CASE 0 TO 9`
+becomes `cmp ax, 9 / jbe arm` rather than the `cmp/jl` + `cmp/jle` pair. Gated on
+`--optimize` (the faithful build keeps the two-compare chain byte-for-byte); verified
+by self-differential DOSBox runs of four `IF` range forms — `>=0 AND <=15`, a
+non-zero low bound, a negative low bound, and the constant-on-the-left spelling — and
+a mixed `SELECT CASE` of five ranges plus a point over the whole input range, all
+identical to `$OPTIMIZE OFF`, plus regression tests that both the `IF` and the `CASE`
+window compare take the unsigned branch.
 
 ## Why it is safe
 
