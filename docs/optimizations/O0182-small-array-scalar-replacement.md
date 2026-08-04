@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | ⬜ Planned |
 | **Stage** | Mid-end |
+| **IR** | ✅ `Ir/Passes/ScalarReplaceArrays.cs` — in `IrPassManager.Standard()` after SCCP (a subscript is only constant once the index arithmetic has folded) and before the value passes; verified by `IrPassObservableEquivalenceTests` |
 | **Related** | [O0059](O0059-scalar-replacement.md), [O0036](O0036-constant-subscript-folding.md), [O0002](O0002-dead-code-elimination.md) |
 
 ## The idea

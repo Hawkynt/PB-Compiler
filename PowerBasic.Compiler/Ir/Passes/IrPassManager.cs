@@ -76,6 +76,10 @@ public sealed class IrPassManager {
     .Add("instcombine", InstCombine.Run)
     .Add("sccp", Sccp.Run)
     .Add("correlate", CorrelatedValueProp.Run)
+    // after SCCP, because a subscript is only constant once the index arithmetic has folded - and
+    // before the value passes, so the elements it exposes get propagated like any other value
+    .Add("sroa", ScalarReplaceArrays.Run)
+    .Add("mem2reg2", Mem2Reg.Run)
     .Add("gvn", Gvn.Run)
     .Add("memopt", RedundantMemory.Run)
     .Add("dse", DeadStoreElim.Run)

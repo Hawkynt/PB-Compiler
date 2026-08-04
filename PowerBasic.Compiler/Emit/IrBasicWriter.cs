@@ -496,8 +496,10 @@ public sealed class IrBasicWriter {
     }
     if (alloca.Allocated.Kind is IrTypeKind.Ptr)
       throw new IrBasicWriterException("an alloca holding a pointer (a string handle or array descriptor)");
+    // a GEP is not an escape - it names an element, and the array and blob paths above render it.
+    // Anything else taking the address (a call, a phi, a store OF the pointer) is.
     foreach (var user in alloca.Users)
-      if (user is not (IrLoad or IrStore))
+      if (user is not (IrLoad or IrStore or IrGep))
         throw new IrBasicWriterException($"an alloca whose address escapes into {user.GetType().Name}");
     if (alloca.Count > 1)
       throw new IrBasicWriterException("an alloca holding more than one element used without a subscript");

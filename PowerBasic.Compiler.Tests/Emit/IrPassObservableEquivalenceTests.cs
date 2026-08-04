@@ -39,6 +39,7 @@ public sealed class IrPassObservableEquivalenceTests {
     ("ifconv", IfConversion.Run),
     ("simplifycfg", SimplifyCfg.Run),
     ("unroll", LoopUnroll.Run),
+    ("sroa", ScalarReplaceArrays.Run),
   ];
 
   /// <summary>

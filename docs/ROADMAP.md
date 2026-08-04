@@ -181,6 +181,12 @@ A ported optimization records an **IR** row in its own document, which is what t
   unrolling composing with the constant propagation and dead-code elimination already there.
   `FOR i = 1 TO 5 / s = s + i / NEXT / PRINT s` becomes `PRINT 15`.
 
+- **O0182 small local array scalar replacement** — `Ir/Passes/ScalarReplaceArrays.cs`. A tiny
+  non-escaping array indexed only by constants is N variables wearing one name; split, mem2reg
+  promotes each element into SSA and the rest of the pipeline can see through it. It sits *after*
+  SCCP, because a subscript is not constant in the raw lowering — it is `index * sizeof(element)`
+  with the index still an expression.
+
 That second one is the argument for the whole exercise: a ported optimization that *enables* another
 without further work is the compounding the retargetable path was supposed to get, and it is the
 first evidence of it.
