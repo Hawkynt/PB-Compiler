@@ -56,6 +56,10 @@ public static class MachineScheduler {
     // failed on.
     if (a.Opcode == MOpcode.Call || b.Opcode == MOpcode.Call)
       return true;
+    // the x87 stack is a resource no effect descriptor names, so two instructions that use it are
+    // ordered against each other whatever their operands say - see MOpcodes.UsesX87
+    if (MOpcodes.UsesX87(a.Opcode) && MOpcodes.UsesX87(b.Opcode))
+      return true;
     // register RAW / WAR / WAW
     if (ka.Writes.Overlaps(kb.Reads) || ka.Writes.Overlaps(kb.Writes) || ka.Reads.Overlaps(kb.Writes))
       return true;

@@ -1165,13 +1165,9 @@ public sealed class InstructionSelector {
     if (!this.TryFloatOperand(operand, out var cell))
       return false;
     this.EmitX87(MOpcode.Fld, cell, reads: true);
-    // Declared to read AND write memory, which is a lie about what FSQRT touches and the only honest
-    // thing to say here: it operates on ST(0), and the machine IR has no x87 register to name. With no
-    // effect at all the scheduler is free to move it past the FSTP that captures its answer - which is
-    // exactly what happened, and only showed up when a call landed between the two, because otherwise
-    // there was nothing to reorder against.
-    this._current.Instructions.Add(new MInstr(MOpcode.Fsqrt, [],
-      new MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: true, WritesMemory: true)));
+    // No memory, no registers, no flags - which is the truth, and is safe because the scheduler orders
+    // x87 instructions against each other by opcode (MOpcodes.UsesX87) rather than by their effects.
+    this._current.Instructions.Add(new MInstr(MOpcode.Fsqrt, [], MInstrEffect.None));
     this.EmitX87(MOpcode.Fstp, this.FloatCell(call), reads: false);
     return true;
   }
@@ -1283,13 +1279,9 @@ public sealed class InstructionSelector {
 
     this.EmitX87(MOpcode.Fld, lhs, reads: true);
     this.EmitX87(MOpcode.Fld, rhs, reads: true);
-    // Declared to read AND write memory, which is a lie about what FADDP touches and the only honest
-    // thing to say when the machine IR has no x87 stack to name. With MInstrEffect.None the scheduler
-    // sees an instruction depending on nothing and may move it out from between the FLDs that set up
-    // its operands - which is exactly what an under-declared FSQRT did, and what this did once a block
-    // held enough x87 to give the scheduler a choice.
-    this._current.Instructions.Add(new MInstr(opcode, [],
-      new MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: true, WritesMemory: true)));
+    // The op itself touches neither memory nor registers; what it touches is the x87 stack, which the
+    // scheduler orders by opcode (MOpcodes.UsesX87) because no effect descriptor can name it.
+    this._current.Instructions.Add(new MInstr(opcode, [], MInstrEffect.None));
     this.EmitX87(MOpcode.Fstp, this.FloatCell(bin), reads: false);
     return true;
   }

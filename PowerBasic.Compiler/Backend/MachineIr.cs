@@ -165,6 +165,30 @@ public enum MOpcode {
   InlineAsm,
 }
 
+/// <summary>Facts about opcodes that the scheduler and the selector both need to agree on.</summary>
+public static class MOpcodes {
+
+  /// <summary>
+  /// Whether the opcode operates on the x87 stack.
+  ///
+  /// This exists because the machine IR models registers and memory and has NO name for the x87
+  /// stack, so nothing an x87 instruction does to it appears in its effect descriptor. Two of them in
+  /// a row therefore look independent, and a scheduler is free to swap them - which it did, twice:
+  /// an FSQRT moved past the FSTP that captured its answer, and later a FADDP moved out from between
+  /// the FLDs that set up its operands, so a DOUBLE accumulated round a loop printed the addend
+  /// instead of the sum.
+  ///
+  /// Both were patched by claiming the instruction touched memory. That worked and was a lie, and it
+  /// over-ordered as well: it pinned unrelated integer loads and stores against every x87 operation.
+  /// Naming the real resource is both truthful and narrower - x87 instructions are ordered against
+  /// each OTHER and against nothing else.
+  /// </summary>
+  public static bool UsesX87(MOpcode opcode) => opcode is
+    MOpcode.Fld or MOpcode.Fstp or MOpcode.Fild or MOpcode.Fistp
+    or MOpcode.Faddp or MOpcode.Fsubp or MOpcode.Fmulp or MOpcode.Fdivp
+    or MOpcode.Fsqrt;
+}
+
 /// <summary>A machine basic block: a label, its instructions in order, and its successor labels.</summary>
 public sealed class MBlock(string label) {
   public string Label { get; } = label;

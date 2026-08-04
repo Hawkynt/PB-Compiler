@@ -620,3 +620,24 @@ not inside it, so a routed body would silently lose them.
 The census reports this as its own figure, because it is the one that matters for the goal: **25 of
 the 106 lowered programs** are module bodies the back end can own end to end. That is the first time
 the number has been anything but zero.
+
+## The x87 stack is not in the machine IR
+
+`MInstrEffect` names registers, flags and memory. It has no name for the x87 stack, so nothing an x87
+instruction does to it appears in its descriptor: `FADDP` and `FSQRT` take no operands and touch no
+memory, and to a scheduler reading effects they depend on nothing at all.
+
+That produced two miscompiles. An `FSQRT` was moved past the `FSTP` that captured its answer, so
+`SQR(16)` printed 16 - visible only once a call landed between the two, because until then there was
+nothing to reorder against. Later a `FADDP` was moved out from between the `FLD`s that set up its
+operands, so a DOUBLE accumulated round a loop printed the addend instead of the sum; that one was
+latent in the float binary path from the start and surfaced when float phis put enough x87 in one
+block to give the scheduler a choice.
+
+Both were first patched by declaring the instruction to read and write memory. That worked, was untrue,
+and over-ordered: it pinned every unrelated integer load and store against every x87 operation. The fix
+in place now names the real resource - `MOpcodes.UsesX87`, and `MachineScheduler` orders any two x87
+instructions against each other and against nothing else. The effects are truthful again.
+
+Anything added to the x87 opcode set must be added to `UsesX87` at the same time; `MachineSchedulerX87Tests`
+covers the current set.
