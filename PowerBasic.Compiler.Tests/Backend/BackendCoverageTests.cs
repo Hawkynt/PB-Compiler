@@ -150,7 +150,10 @@ public sealed class BackendCoverageTests {
     // and results, and a module variable addressed through the codegen's own data cell.
     // 15 -> 38 with the runtime-label bridge: a call to rt_print_str/i16/i32/nl now selects in the DOS
     // runtime's own register convention instead of declining
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(38),
+    // then 38 -> 66 as the bridge grew string constants (rt_strmem) and files (rt_fopen/rt_fclose plus
+    // the rt_fselect routing PRINT # needs) - the battery writes its results to a file, so file I/O
+    // was what stood in front of almost every module body
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(66),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
   }
 }

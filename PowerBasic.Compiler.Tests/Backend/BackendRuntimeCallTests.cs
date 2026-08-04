@@ -113,6 +113,77 @@ public sealed class BackendRuntimeCallTests {
   }
 
   [Test]
+  public void Select_GivenAStringConstant_ThenBuildsTheHandleThroughRtStrmem() {
+    // rt_str_const(ptr,len) -> a string handle; the runtime spells it rt_strmem and wants the bytes
+    // as DS:SI with the length in CX, which is why the segment preset exists
+    var m = Select("""
+      FUNCTION Tagged%
+        DIM s AS STRING
+        s = "ab"
+        Tagged% = 1
+      END FUNCTION
+
+      PRINT Tagged%
+      """, "Tagged");
+
+    var call = m.AllInstructions.First(i => i.Opcode == MOpcode.Call);
+    Assert.That(((MOperand.LabelRef)call.Operands[0]).Name, Is.EqualTo("rt_strmem"));
+    var preset = m.AllInstructions.TakeWhile(i => i != call)
+      .Any(i => i.Opcode == MOpcode.Mov
+                && i.Operands[0] is MOperand.Register { Reg.Physical: Reg.DX }
+                && i.Operands[1] is MOperand.Register { Reg.Physical: Reg.DS });
+    Assert.That(preset, Is.True, "MOV DX, DS names the segment the literal bytes live in");
+  }
+
+  [Test]
+  public void Select_GivenPrintToAFile_ThenSelectsTheFileAndRestoresStdoutAround() {
+    // the runtime has no per-file print entries: rt_fselect routes the console routines at a file,
+    // and the caller resets rt_curout/rt_colptr afterwards - exactly what the direct emitter does
+    var m = Select("""
+      FUNCTION Log%
+        PRINT #1, "hi"
+        Log% = 0
+      END FUNCTION
+
+      OPEN "O.TXT" FOR OUTPUT AS #1
+      PRINT Log%
+      CLOSE #1
+      """, "Log");
+
+    var callees = m.AllInstructions
+      .Where(i => i.Opcode == MOpcode.Call)
+      .Select(i => ((MOperand.LabelRef)i.Operands[0]).Name)
+      .ToList();
+    Assert.That(callees.Take(2), Is.EqualTo(new[] { "rt_fselect", "rt_print_str" }),
+      "the file is selected before the console routine runs");
+    var restored = m.AllInstructions.Where(i =>
+      i.Opcode == MOpcode.Mov && i.Operands[0] is MOperand.DataCell { Name: "rt_curout" or "rt_colptr" });
+    Assert.That(restored.Count(), Is.EqualTo(callees.Count(c => c == "rt_fselect") * 2),
+      "every select is paired with a reset of both output cells");
+  }
+
+  [Test]
+  public void Emit_GivenAFileWritingProgram_ThenTheImageAssembles() {
+    const string source = """
+      FUNCTION Log%(BYVAL v%)
+        PRINT #1, v%
+        Log% = v%
+      END FUNCTION
+
+      OPEN "O.TXT" FOR OUTPUT AS #1
+      PRINT Log%(3)
+      CLOSE #1
+      """;
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+
+    var image = routed.EmitExecutable();
+
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(image, Is.Not.Empty);
+    Assert.That(routed.BackendRoutedNames, Does.Contain("Log"), "the back end did not take the file-writing function");
+  }
+
+  [Test]
   public void Emit_GivenARoutedPrintingFunction_ThenTheImageAssemblesAndDiffersFromTheDirectPath() {
     var direct = new CodeGenerator(Bind(_printingFunction)) { Optimize = true, UseExperimentalBackend = false };
     var routed = new CodeGenerator(Bind(_printingFunction)) { Optimize = true, UseExperimentalBackend = true };

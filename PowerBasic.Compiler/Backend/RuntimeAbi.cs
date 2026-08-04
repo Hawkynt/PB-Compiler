@@ -34,8 +34,15 @@ internal static class RuntimeAbi {
 
   internal sealed record RuntimeArg(ArgKind Kind, Reg Register, Reg High = default);
 
-  /// <summary>One runtime routine: the label the direct emitter calls, its argument registers, and the registers it destroys.</summary>
-  internal sealed record Routine(string Label, RuntimeArg[] Args, IReadOnlyList<Reg> Clobbers);
+  /// <summary>
+  /// One runtime routine: the label the direct emitter calls, where its arguments go, what it
+  /// destroys, and - for the routines that answer with a value - the register the result comes back in.
+  /// <paramref name="Presets"/> are the register-to-register moves the convention requires beyond the
+  /// arguments themselves, such as the <c>MOV DX, DS</c> that tells the string kernel which segment
+  /// the literal bytes live in.
+  /// </summary>
+  internal sealed record Routine(string Label, RuntimeArg[] Args, IReadOnlyList<Reg> Clobbers,
+    Reg? Result = null, (Reg Dest, Reg Source)[]? Presets = null, bool FileSelect = false);
 
   // The print routines all save and restore every register they touch, so they are in fact
   // register-transparent - but "in fact" is not the same as "provably", and a clobber claim that is
@@ -58,7 +65,43 @@ internal static class RuntimeAbi {
     // a comma separator advances to the next 14-column zone; the IR spells it after the source
     // syntax, the runtime after what it does
     ["rt_print_comma"] = new("rt_print_zone", [], _callerSaved),
+    // rt_str_const(ptr text, i32 length) -> a string HANDLE. The runtime spells it rt_strmem and takes
+    // the bytes as DS:SI with the length in CX, answering in AX (DosRuntime.EmitStrMem) - the same
+    // three instructions the direct emitter writes before the call, MOV DX,DS included
+    ["rt_str_const"] = new("rt_strmem",
+      [new(ArgKind.Offset, Reg.SI), new(ArgKind.Word, Reg.CX)], _callerSaved,
+      Result: Reg.AX, Presets: [(Reg.DX, Reg.DS)]),
+
+    // files. The runtime documents these conventions at the head of DosRuntime.Files.cs:
+    // FOpen AX=filename handle, BX=PB file number, CX=mode, SI=reclen; FClose AX=file number.
+    // The IR names the file number first, the runtime puts it in BX - hence the per-position table
+    ["rt_file_open"] = new("rt_fopen", [
+      new(ArgKind.Word, Reg.BX),      // PB file number
+      new(ArgKind.Word, Reg.AX),      // filename string handle (consumed)
+      new(ArgKind.Word, Reg.CX),      // mode: 0 INPUT, 1 OUTPUT, 2 APPEND, 3 RANDOM, 4 BINARY
+      new(ArgKind.Word, Reg.SI),      // record length (RANDOM)
+    ], _callerSaved),
+    ["rt_file_close"] = new("rt_fclose", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_file_close_all"] = new("rt_fcloseall", [], _callerSaved),
+
+    // PRINT #n. The runtime has no per-file print entries: FSelect routes the console routines at a
+    // file (rt_curout plus that file's own print column), and the caller resets it to stdout after.
+    // The IR models one call per printed item, so the select/restore pair wraps each one - the same
+    // instructions the direct emitter writes once per statement, and the same observable column
+    // accounting, since nothing else runs between the items
+    ["rt_fprint_str"] = new("rt_print_str",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Offset, Reg.SI), new(ArgKind.Word, Reg.CX)],
+      _callerSaved, FileSelect: true),
+    ["rt_fprint_i16"] = new("rt_print_i16",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.AX)], _callerSaved, FileSelect: true),
+    ["rt_fprint_i32"] = new("rt_print_i32",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, FileSelect: true),
+    ["rt_fprint_nl"] = new("rt_print_nl", [new(ArgKind.Word, Reg.AX)], _callerSaved, FileSelect: true),
+    ["rt_fprint_comma"] = new("rt_print_zone", [new(ArgKind.Word, Reg.AX)], _callerSaved, FileSelect: true),
   };
+
+  /// <summary>The routine that routes console output at a file, and the cells the caller resets afterwards.</summary>
+  internal const string FileSelectLabel = "rt_fselect";
 
   /// <summary>The convention for the named runtime declaration, or null when the bridge does not cover it.</summary>
   internal static Routine? For(string name) => _routines.GetValueOrDefault(name);

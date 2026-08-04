@@ -126,6 +126,10 @@ public sealed partial class CodeGenerator {
     if (name.StartsWith(".str", System.StringComparison.Ordinal)
         && this._backendModule?.FindGlobal(name) is { Bytes: { } bytes })
       return Asm.Mem.Word(this.LiteralOf(System.Text.Encoding.ASCII.GetString(bytes)));
+    // a runtime data cell (rt_curout, rt_col, rt_colptr): the runtime binds these named labels, and
+    // the back end addresses the very same ones the direct emitter does
+    if (name.StartsWith("rt_", System.StringComparison.Ordinal))
+      return Asm.Mem.Word(this._asm.Lbl(name));
     return null;   // a STATIC local, or a synthesized IR global like .data_cursor - not addressable here yet
   }
 

@@ -711,13 +711,24 @@ public sealed class InstructionSelector {
   /// source) in a register the sequence is about to overwrite.
   /// </summary>
   private bool SelectRuntimeCall(IrCall call, IrFunction callee, RuntimeAbi.Routine routine) {
-    if (!call.Type.IsVoid)
-      return this.Decline($"call: {callee.Name} returns a value (the bridge covers void routines)");
+    if (!call.Type.IsVoid && routine.Result is null)
+      return this.Decline($"call: {callee.Name} returns a value the runtime ABI table does not place");
+    if (!call.Type.IsVoid && (IsWide(call.Type) || RegSize(call.Type) != MRegSize.Word))
+      return this.Decline($"call: {callee.Name} returns {call.Type} (word results only)");
     var args = call.Args.ToList();
     if (args.Count != routine.Args.Length)
       return this.Decline($"call: {callee.Name} arity disagrees with the runtime ABI table");
 
-    for (var i = 0; i < args.Count; ++i) {
+    // PRINT #n: route the console routines at the file first. The select destroys the caller-saved
+    // file, so it goes BEFORE the remaining arguments are moved into place
+    var first = 0;
+    if (routine.FileSelect) {
+      if (!this.SelectFileRouting(args[0], routine.Args[0]))
+        return false;
+      first = 1;
+    }
+
+    for (var i = first; i < args.Count; ++i) {
       var arg = args[i];
       var slot = routine.Args[i];
       switch (slot.Kind) {
@@ -763,11 +774,65 @@ public sealed class InstructionSelector {
       }
     }
 
+    // whatever else the convention fixes: the string kernel wants the literal's segment in DX
+    foreach (var (dest, source) in routine.Presets ?? []) {
+      var to = new MOperand.Register(MReg.Physical_(dest, MRegSize.Word));
+      var from = new MOperand.Register(MReg.Physical_(source, MRegSize.Word));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [to, from], MovEffect(to, from),
+        condition: null, clobbers: [dest]));
+    }
+
     this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef(routine.Label)],
       new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
         ReadsMemory: true, WritesMemory: true),
       condition: null, clobbers: routine.Clobbers));
+
+    if (routine.FileSelect)
+      this.RestoreConsoleOutput();
+
+    if (call.Type.IsVoid)
+      return true;
+
+    // the result is in the routine's own register; copy it into the call's virtual one so the
+    // allocator may place the value anywhere
+    var dest2 = this.FreshVreg(call.Type);
+    this._vregs[call] = dest2;
+    var destOp = new MOperand.Register(dest2);
+    var resultReg = new MOperand.Register(MReg.Physical_(routine.Result!.Value, MRegSize.Word));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, resultReg], MovEffect(destOp, resultReg)));
     return true;
+  }
+
+  /// <summary>Routes the console print routines at a PB file number (<c>rt_fselect</c>).</summary>
+  private bool SelectFileRouting(IrValue file, RuntimeAbi.RuntimeArg slot) {
+    MOperand source;
+    if (IsWide(file.Type)) {
+      if (file is not IrConstantInt { Value: >= 0 and <= 15 } number)
+        return this.Decline("call: PRINT # to a runtime file number (the IR types it 32-bit)");
+      source = new MOperand.Immediate(number.Value);
+    } else if (!this.TryOperand(file, out source!))
+      return false;
+
+    var ax = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [ax, source], MovEffect(ax, source),
+      condition: null, clobbers: [slot.Register]));
+    this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef(RuntimeAbi.FileSelectLabel)],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: true, WritesMemory: true),
+      condition: null, clobbers: _callClobbers));
+    return true;
+  }
+
+  /// <summary>Points the console routines back at stdout and its own print column, as the direct emitter does after a PRINT #.</summary>
+  private void RestoreConsoleOutput() {
+    var curout = new MOperand.DataCell("rt_curout", 0, MRegSize.Word);
+    var stdout = new MOperand.Immediate(1);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [curout, stdout],
+      new MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: true)));
+    var colptr = new MOperand.DataCell("rt_colptr", 0, MRegSize.Word);
+    var col = new MOperand.DataOffset("rt_col", 0);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [colptr, col],
+      new MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: true)));
   }
 
   /// <summary>A PUSH of one argument word, with the effect descriptor that keeps it ordered against the call.</summary>

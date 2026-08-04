@@ -460,3 +460,30 @@ nothing is gained by moving work across one on a target with no register renamin
 behind, and this is what is lost. With the barrier, routing went 22 → 32.
 
 Together the two took routing from **14 to 32 of 139** corpus functions this round (38 select).
+
+### Strings and files on the bridge — and what the census was really measuring
+
+Two more families joined `RuntimeAbi`, and between them they moved selection 38 → 66 and
+allocation 32 → 51 of the corpus's 139 functions:
+
+- **string constants.** The IR's `rt_str_const(ptr, i32) -> ptr` is the runtime's `rt_strmem`, which
+  takes the bytes as `DS:SI` with the length in `CX` and answers with a handle in `AX`. That needed
+  two additions to the table: a **result register**, and **presets** — the register-to-register moves
+  a convention requires beyond the arguments, here the `MOV DX, DS` naming the segment the literal
+  lives in.
+- **files.** `rt_fopen` (`AX` = filename handle, `BX` = file number, `CX` = mode, `SI` = record
+  length), `rt_fclose`, `rt_fcloseall`. `PRINT #n` has no per-file entries at all: `rt_fselect` routes
+  the *console* routines at a file, and the caller resets `rt_curout`/`rt_colptr` afterwards. The IR
+  models one call per printed item, so the select/restore pair wraps each item rather than the whole
+  statement — the same observable column accounting, since nothing else runs between items. Runtime
+  data cells (`rt_curout`, `rt_col`, `rt_colptr`) resolve through the same data resolver as module
+  variables, so both paths write the identical words.
+
+File I/O turned out to stand in front of almost every module body: 115 of the 136 battery programs
+`OPEN` a file, because that is how the differential harness records its results. It was the single
+blocker hiding behind the earlier `rt_str_const` count.
+
+One caveat the numbers deserve: the census measures the back end's **capability** — what selects and
+allocates. `CodeGenerator.BackendProcs` routes only entries of `model.ProcedureList`, so a `main` body
+that now selects and allocates is still emitted by the direct path. Routing it needs the module
+frame and the startup/exit sequence, and is the next structural step rather than another table entry.
