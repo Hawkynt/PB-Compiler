@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Done |
 | **Stage** | Emitter |
 | **Related** | [O0029](O0029-select-jump-table.md), [O0032](O0032-short-circuit-conditions.md) |
 
@@ -48,9 +48,10 @@ Up to four compares and four branches before the last arm runs:
     jmp     Default
 ```
 
-## Planned
+## Now
 
-The same shape [O0029](O0029-select-jump-table.md) already emits:
+The same jump table [O0029](O0029-select-jump-table.md) emits — in fact the
+*identical* code:
 
 ```asm
     mov     ax, [k]
@@ -61,6 +62,29 @@ The same shape [O0029](O0029-select-jump-table.md) already emits:
     mov     bx, ax
     jmp     word ptr [Table+bx]
 ```
+
+`EmitIf` calls `TryEmitIfChainJumpTable`, which recognizes a chain whose every
+condition is `<same integer variable> = <foldable constant>` (either operand
+order), synthesizes the equivalent `SelectStmt` — **reusing the original subject
+and constant expression nodes**, so the model's type and constant-fold queries
+still resolve — and hands it to `TryEmitSelectJumpTable`. The two forms then
+share every rule and emit byte-for-byte identical code (a regression test
+compiles an equality `IF`-chain and the matching `SELECT CASE` and asserts the
+images are equal).
+
+### Why it is sound
+
+- **Same dispatch semantics.** First-match-wins: a value appearing in two arms
+  keeps the earlier one (`byValue.TryAdd`), exactly as the top-to-bottom chain
+  would. Verified byte-identical against the genuine oracle, including a
+  reversed-operand test (`5 = i`) and a duplicate-constant arm.
+- **Subject read once.** The recognizer requires a bare variable (a pure read),
+  so evaluating it a single time in the table dispatch matches the chain, which
+  re-reads the same unchanging value at each `ELSEIF`.
+- **Conservative decline.** Any non-equality condition, a range/comparison
+  selector, a different variable, or a set too small or sparse (`< 4` values, or
+  not dense enough for `TryEmitSelectJumpTable`) makes the helper return with
+  nothing emitted, and `EmitIf` falls back to the ordinary compare chain.
 
 ## Equivalent BASIC
 
@@ -74,12 +98,7 @@ SELECT CASE k%
 END SELECT
 ```
 
-## What it needs
-
-- A recognizer over `IF`/`ELSEIF` chains: every condition must be
-  `<same pure lvalue> = <integer constant>` with distinct constants, and the
-  subject must be provably unmodified by the arms.
-- The **density test** and the table emission are already there — this is
-  recognition work, not codegen work.
-- Care with `$ERROR BOUNDS`/side effects: a subject expression that could trap
-  must be evaluated exactly once, which the table form does anyway.
+Native-only, in `CodeGenerator.EmitIf`. The IR back ends lower an `IF`-chain to a
+sequence of compares-and-branches that LLVM's own `simplifycfg`/switch-formation
+(and the C compiler's) turn into a jump table, so the C/LLVM output tabulates
+without a dedicated IR pass.

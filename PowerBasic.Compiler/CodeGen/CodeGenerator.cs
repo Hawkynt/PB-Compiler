@@ -2192,6 +2192,14 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       return;
     }
 
+    // O0067: an IF/ELSEIF chain testing one pure integer variable against >= 4 dense compile-time
+    // constants IS the SELECT CASE dispatch - synthesize the equivalent SelectStmt and reuse the
+    // jump-table fast path (O(1) dispatch, first-match-wins identical to the top-to-bottom chain).
+    // Declines (falling back to the compare chain below, nothing emitted) for any non-equality
+    // condition, a mixed or side-effecting subject, or a value set too small/sparse to tabulate.
+    if (this.Optimize && this.TryEmitIfChainJumpTable(i))
+      return;
+
     var elseLabel = asm.DefineLabel();
     var endLabel = asm.DefineLabel();
 
@@ -2214,6 +2222,55 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         this.EmitStatement(s);
 
     asm.MarkLabel(endLabel);
+  }
+
+  /// <summary>
+  /// O0067: recognizes an IF/ELSEIF (+ optional ELSE) chain that is nothing but equality tests of a
+  /// single pure integer variable against compile-time constants - <c>IF x = 1 … ELSEIF x = 2 …</c> -
+  /// and hands the equivalent SELECT to <see cref="TryEmitSelectJumpTable"/>. The subject and
+  /// constant nodes are reused from the original conditions, so the model's type/fold queries still
+  /// resolve; only the CaseArm/SelectStmt wrappers are synthetic. Returns false (emitting nothing)
+  /// whenever any condition is not such an equality, references a different variable, or the
+  /// jump-table path itself declines - the caller then emits the ordinary compare chain.
+  /// </summary>
+  private bool TryEmitIfChainJumpTable(IfStmt i) {
+    VariableSymbol? subjectSym = null;
+    Expression? subjectExpr = null;
+    var arms = new List<CaseArm>();
+
+    // one side of an equality is the subject variable (a pure read), the other a foldable constant
+    bool TryEquality(Expression cond, out Expression subj, out Expression konst) {
+      subj = konst = null!;
+      if (cond is not BinaryExpr { Op: BinaryOp.Equal, Left: { } l, Right: { } r })
+        return false;
+      bool IsSubject(Expression e) => e is NameExpr && model.VariableBindings.ContainsKey(e) && !model.IntrinsicBindings.ContainsKey(e);
+      bool IsConst(Expression e) => this.OptFolder.TryFold(e) is { Integer: not null };
+      if (IsSubject(l) && IsConst(r)) { subj = l; konst = r; return true; }
+      if (IsSubject(r) && IsConst(l)) { subj = r; konst = l; return true; }
+      return false;
+    }
+
+    bool AddArm(Expression cond, IReadOnlyList<Statement> body) {
+      if (!TryEquality(cond, out var subj, out var konst) || !model.VariableBindings.TryGetValue(subj, out var sym))
+        return false;
+      if (subjectSym == null) {
+        subjectSym = sym;
+        subjectExpr = subj;
+      } else if (!ReferenceEquals(sym, subjectSym))
+        return false;   // a different variable: not a single-subject dispatch
+      arms.Add(new CaseArm(cond.Position, [new CaseSelector(cond.Position, konst, null, null)], body));
+      return true;
+    }
+
+    if (!AddArm(i.Condition, i.Then))
+      return false;
+    foreach (var (cond, body) in i.ElseIfs)
+      if (!AddArm(cond, body))
+        return false;
+    if (i.Else != null)
+      arms.Add(new CaseArm(i.Position, [], i.Else));   // the trailing ELSE is CASE ELSE
+
+    return this.TryEmitSelectJumpTable(new SelectStmt(i.Position, subjectExpr!, arms));
   }
 
   private void EmitFor(ForStmt f) {

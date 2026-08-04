@@ -603,6 +603,17 @@ public sealed class OptimizerTests {
   private static int CountMulBx(byte[] image) => CountPair(image, 0xF7, 0xE3);
 
   [Test]
+  public void Emit_GivenEqualityIfChain_WhenPb36_ThenSameJumpTableAsSelect() {
+    // O0067: an IF/ELSEIF chain of equality tests on one integer variable against >= 4 dense
+    // constants lowers through the very same jump-table path as the equivalent SELECT CASE, so the
+    // two emit byte-identical code - the strongest proof the chain is tabulated, not compared.
+    const string body = "\n  r = 100\nELSEIF x = 11 THEN\n  r = 110\nELSEIF x = 12 THEN\n  r = 120\nELSEIF x = 13 THEN\n  r = 130\nELSEIF x = 14 THEN\n  r = 140\nELSE\n  r = 0\nEND IF\nPRINT r\nEND";
+    var ifChain = Compile("DIM x AS INTEGER, r AS INTEGER\nLINE INPUT z$\nx = VAL(z$)\nIF x = 10 THEN" + body, Dialect.Pb36);
+    var select = Compile("DIM x AS INTEGER, r AS INTEGER\nLINE INPUT z$\nx = VAL(z$)\nSELECT CASE x\nCASE 10\n r = 100\nCASE 11\n r = 110\nCASE 12\n r = 120\nCASE 13\n r = 130\nCASE 14\n r = 140\nCASE ELSE\n r = 0\nEND SELECT\nPRINT r\nEND", Dialect.Pb36);
+    Assert.That(ifChain, Is.EqualTo(select), "equality IF-chain compiles to the same jump table as SELECT CASE");
+  }
+
+  [Test]
   public void Emit_GivenMultiplyByOne_WhenPb36PlainOptimize_ThenNoImul() {
     // O0076/O0077: x * 1 / x * -1 / x * 0 fold to nothing / neg / xor under PLAIN --optimize (they
     // are strictly smaller than IMUL, not a SPEED trade), so the image is smaller than x * 3 which
