@@ -541,6 +541,15 @@ public sealed partial class CodeGenerator {
   }
 
   private void EmitAssign(AssignStmt a) {
+    // O0079: this MOD statement immediately follows a q = n\d over the same operands, whose IDIV
+    // already left the remainder in DX - store it straight out instead of running a second divide.
+    if (this._remainderReuse?.Contains(a) == true
+        && a.Target is NameExpr modName && model.VariableBindings.TryGetValue(modName, out var modSym)
+        && this.TryDirectCell(modSym) is { } modCell) {
+      this._asm.Mov(modCell.WithSize(OperandSize.Word), Reg.DX);
+      return;
+    }
+
     var targetType = model.TypeOf(a.Target);
 
     // pb36 O5: the loop accumulator lives in a register - compute the value into

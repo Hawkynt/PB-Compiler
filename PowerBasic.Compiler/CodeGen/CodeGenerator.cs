@@ -934,6 +934,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     this.PrepareCse(model.MainBody);
     this.PrepareSccp(model.MainBody);
+    this.PrepareDivMod(model.MainBody);
     if (this.Optimize)
       this._intervalPoints = IntervalRangeAnalysis.AnalyzeProgramPoints(model.MainBody, model);
     this.BeginFrame(skipZeroing: this.Optimize && !ContainsErrorHandling(model.MainBody));
@@ -1098,7 +1099,85 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._frameLocalBytes = 0;
     this._cseBytes = 0;
     this._cseMarks = null;
+    this._remainderReuse = null;
   }
+
+  /// <summary>
+  /// O0079: the MOD statements whose remainder a directly preceding <c>q = n\d</c> already computed,
+  /// so their emission reuses DX instead of a second IDIV. Rebuilt per body (after CSE/SCCP, whose
+  /// marks it consults); null clears it, exactly like <see cref="_cseMarks"/>.
+  /// </summary>
+  private HashSet<AssignStmt>? _remainderReuse;
+
+  /// <summary>
+  /// O0079 shared divide: marks the MOD statement of a strictly-adjacent <c>q = n\d : m = n MOD d</c>
+  /// pair so it reuses the remainder the divide left in DX. Only sound when the two are consecutive
+  /// (LabelStmt is its own statement, so adjacency proves no branch lands on the MOD and DX is live),
+  /// the operands are the same side-effect-free INTEGER values (the divide computed exactly this
+  /// remainder and nothing re-evaluates them), the divisor is a genuine runtime value (a constant
+  /// could strength-reduce or fact-fold the divide away, leaving no IDIV), the quotient target is
+  /// neither operand (its store must not change n or d), both targets are plain scalars (their stores
+  /// are <c>mov [cell],reg</c> and never clobber DX), and neither value is CSE- or SCCP-touched.
+  /// </summary>
+  private void PrepareDivMod(IReadOnlyList<Statement> body) {
+    this._remainderReuse = null;
+    if (!this.Optimize || this.CheckOverflow || this.CheckNumeric)
+      return; // checked arithmetic keeps every operation and its own traps
+    this.ScanDivMod(body);
+  }
+
+  private void ScanDivMod(IReadOnlyList<Statement> body) {
+    for (var i = 0; i + 1 < body.Count; ++i)
+      if (this.IsSharedDivModPair(body[i], body[i + 1]))
+        (this._remainderReuse ??= new(ReferenceEqualityComparer.Instance)).Add((AssignStmt)body[i + 1]);
+    foreach (var s in body)
+      foreach (var block in ChildStatementBlocks(s))
+        this.ScanDivMod(block);
+  }
+
+  private bool IsSharedDivModPair(Statement first, Statement second) {
+    if (first is not AssignStmt { Target: NameExpr qName, Value: BinaryExpr { Op: BinaryOp.IntegerDivide, Left: { } n1, Right: { } d1 } divValue } divStmt)
+      return false;
+    if (second is not AssignStmt { Target: NameExpr mName, Value: BinaryExpr { Op: BinaryOp.Modulo, Left: { } n2, Right: { } d2 } modValue } modStmt)
+      return false;
+    // neither statement may be SCCP-dead (a skipped divide would leave DX undefined) nor CSE-shared
+    // (whose slot define/reload the direct DX reuse would bypass)
+    if (this._deadStatements?.Contains(divStmt) == true || this._deadStatements?.Contains(modStmt) == true)
+      return false;
+    if (this._cseMarks?.ContainsKey(divValue) == true || this._cseMarks?.ContainsKey(modValue) == true)
+      return false;
+    // 16-bit signed INTEGER throughout: the 16-bit IDIV leaves a 16-bit remainder in DX
+    bool IsInt16(Expression e) => model.TypeOf(e) is ScalarType { IsFloat: false, ByteSize: 2, Signed: true };
+    if (!IsInt16(qName) || !IsInt16(mName) || !IsInt16(n1) || !IsInt16(d1))
+      return false;
+    // the same, side-effect-free operands - so the divide computed this exact remainder and nothing
+    // (a call) is dropped by not re-evaluating them
+    if (!this.SameDivOperand(n1, n2) || !this.SameDivOperand(d1, d2)
+        || !this.IsPureDivOperand(n1) || !this.IsPureDivOperand(d1))
+      return false;
+    // a runtime divisor guarantees a real IDIV (a constant could fold / strength-reduce it away)
+    if (this.OptFolder.TryFold(d1) is { Integer: not null })
+      return false;
+    // plain-scalar targets: their stores never emit address code that could clobber DX
+    if (!model.VariableBindings.TryGetValue(qName, out var qSym) || this.TryDirectCell(qSym) is null
+        || !model.VariableBindings.TryGetValue(mName, out var mSym) || this.TryDirectCell(mSym) is null)
+      return false;
+    // the quotient store must not overwrite an operand the remainder was computed from
+    foreach (var operand in new[] { n1, d1 })
+      if (operand is NameExpr on && model.VariableBindings.TryGetValue(on, out var os) && ReferenceEquals(os, qSym))
+        return false;
+    return true;
+  }
+
+  /// <summary>Two divide operands that name the same storage or fold to the same constant.</summary>
+  private bool SameDivOperand(Expression a, Expression b)
+    => (this.OptFolder.TryFold(a) is { Integer: { } ka } && this.OptFolder.TryFold(b) is { Integer: { } kb } && ka == kb)
+       || this.IsSameLvalue(a, b);
+
+  /// <summary>A divide operand with no observable evaluation: a compile-time constant or a plain variable read.</summary>
+  private bool IsPureDivOperand(Expression e)
+    => this.OptFolder.TryFold(e) is { Integer: not null }
+       || (e is NameExpr && model.VariableBindings.ContainsKey(e) && !model.IntrinsicBindings.ContainsKey(e));
 
   /// <summary>pb36 O3: runs the common-subexpression analysis for a body and reserves its frame slots; call right before <see cref="BeginFrame"/>.</summary>
   private void PrepareCse(IReadOnlyList<Statement> body) {

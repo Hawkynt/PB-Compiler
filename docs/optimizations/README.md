@@ -113,7 +113,7 @@ Conventions used on every page:
 | ✅ | [O0076](O0076-algebraic-identities.md) | Algebraic identities & annihilators |
 | ✅ | [O0077](O0077-negation-idioms.md) | Negation idioms |
 | ⬜ | [O0078](O0078-multiply-decomposition.md) | General multiply decomposition |
-| ⬜ | [O0079](O0079-shared-divide.md) | Shared divide (quotient + remainder) |
+| ✅ | [O0079](O0079-shared-divide.md) | Shared divide (quotient + remainder) |
 | 🟡 | [O0080](O0080-division-special-cases.md) | Division special cases |
 | ⬜ | [O0081](O0081-flag-reuse.md) | Flag reuse / `TEST` for zero compare |
 | ⬜ | [O0082](O0082-memory-operand-folding.md) | Memory operand folding |

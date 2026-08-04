@@ -603,6 +603,26 @@ public sealed class OptimizerTests {
   private static int CountMulBx(byte[] image) => CountPair(image, 0xF7, 0xE3);
 
   [Test]
+  public void Emit_GivenAdjacentDivAndMod_WhenPb36_ThenSharedSingleIdiv() {
+    // O0079: q = n\d immediately followed by m = n MOD d over the same runtime operands reuses the
+    // remainder the divide already left in DX, so the optimized image runs one IDIV where the
+    // unoptimized build runs two.
+    const string src = "DIM n AS INTEGER, d AS INTEGER, q AS INTEGER, m AS INTEGER\nLINE INPUT a$\nn = VAL(a$)\nLINE INPUT b$\nd = VAL(b$)\nq = n \\ d\nm = n MOD d\nPRINT q; m\nEND";
+    var unit = Parser.Parse(Lexer.Tokenize(src, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    var opt = new CodeGenerator(model).EmitExecutable();
+    var noOpt = new CodeGenerator(model) { Optimize = false }.EmitExecutable();
+    static int Idivs(byte[] img) {
+      var n = 0;
+      for (var i = 0; i < img.Length - 1; ++i)
+        if (img[i] == 0xF7 && img[i + 1] is >= 0xF8 and <= 0xFF)   // IDIV r16 (modrm reg field 7)
+          ++n;
+      return n;
+    }
+    Assert.That(Idivs(opt), Is.LessThan(Idivs(noOpt)), "the shared divide emits one IDIV, not two");
+  }
+
+  [Test]
   public void Emit_GivenIntegerDivideByOne_WhenPb36_ThenFoldedNoIdiv() {
     // O0080: x \ 1 is x - division by 1 is the identity and never traps - so no IDIV is emitted;
     // the image is smaller than x \ 3, which keeps the divide.
