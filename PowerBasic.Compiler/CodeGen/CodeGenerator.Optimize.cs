@@ -1032,7 +1032,28 @@ public sealed partial class CodeGenerator {
       return true;
     }
 
-    return false; // three-or-more-term multipliers keep the compact IMUL
+    // O0078: a three-set-bit multiplier m = 2^a + 2^b + 2^c (a>b>c) decomposes into shifts and adds
+    // with no memory temp - factor out 2^c and build x*(1 + 2^mid + 2^hi) by keeping the running
+    // x<<k in BX: after `shl bx,mid` BX holds x<<mid, and a further `shl bx,hi-mid` turns it into
+    // x<<hi, so one register threads both shifted terms. Faster than the ~120-cycle IMUL on the 8086.
+    if (BitOperations.PopCount(mag) == 3) {
+      var hiBit = 31 - BitOperations.LeadingZeroCount(mag);            // a
+      var midBit = 31 - BitOperations.LeadingZeroCount(mag & ~(1u << hiBit)); // b
+      var hi = hiBit - lo;                                             // a - c
+      var mid = midBit - lo;                                           // b - c
+      this.EmitModularInt16(variable);
+      asm.Mov(Reg.BX, Reg.AX);              // bx = x
+      this.EmitShiftLeft(Reg.BX, mid);      // bx = x<<mid
+      asm.Add(Reg.AX, Reg.BX);              // ax = x + x<<mid
+      this.EmitShiftLeft(Reg.BX, hi - mid); // bx = x<<hi
+      asm.Add(Reg.AX, Reg.BX);              // ax = x*(1 + 2^mid + 2^hi)
+      this.EmitShiftLeft(Reg.AX, lo);       // ax = x*m
+      if (neg)
+        asm.Neg(Reg.AX);
+      return true;
+    }
+
+    return false; // four-or-more-term multipliers keep the compact IMUL
   }
 
   /// <summary>

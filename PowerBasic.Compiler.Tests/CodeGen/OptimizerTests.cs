@@ -603,6 +603,22 @@ public sealed class OptimizerTests {
   private static int CountMulBx(byte[] image) => CountPair(image, 0xF7, 0xE3);
 
   [Test]
+  public void Emit_GivenThreeBitMultiplier_WhenPb36Speed_ThenDecomposedNoImul() {
+    // O0078: under $OPTIMIZE SPEED, a three-set-bit multiplier (11 = 8+2+1) decomposes into shifts
+    // and adds - no IMUL - while a four-bit multiplier (23 = 16+4+2+1) keeps the compact IMUL.
+    static int Imuls(byte[] img) {
+      var n = 0;
+      for (var i = 0; i < img.Length - 1; ++i)
+        if (img[i] == 0xF7 && img[i + 1] is >= 0xE8 and <= 0xEF)   // IMUL r16 (modrm reg field 5)
+          ++n;
+      return n;
+    }
+    var three = Compile("$OPTIMIZE SPEED\nDIM x AS INTEGER, y AS INTEGER\nLINE INPUT z$\nx = VAL(z$)\ny = x * 11\nPRINT y\nEND", Dialect.Pb36);
+    var four = Compile("$OPTIMIZE SPEED\nDIM x AS INTEGER, y AS INTEGER\nLINE INPUT z$\nx = VAL(z$)\ny = x * 23\nPRINT y\nEND", Dialect.Pb36);
+    Assert.That(Imuls(three), Is.LessThan(Imuls(four)), "x * 11 decomposes to shifts/adds; x * 23 keeps IMUL");
+  }
+
+  [Test]
   public void Emit_GivenAdjacentDivAndMod_WhenPb36_ThenSharedSingleIdiv() {
     // O0079: q = n\d immediately followed by m = n MOD d over the same runtime operands reuses the
     // remainder the divide already left in DX, so the optimized image runs one IDIV where the
@@ -1436,12 +1452,12 @@ public sealed class OptimizerTests {
   }
 
   [Test]
-  public void Emit_GivenModularMultiplyByThirteen_WhenPb36Speed_ThenKeepsCompactImul() {
-    // 13 = 1101b: three set bits, not a contiguous run - no cheap shift chain,
-    // so the compact IMUL BX is kept
+  public void Emit_GivenModularMultiplyByThirteen_WhenPb36Speed_ThenThreeTermDecomposition() {
+    // O0078: 13 = 1101b (8+4+1) is a three-set-bit multiplier, so it decomposes into a shift-add
+    // chain (x + x<<2 + x<<3) with no IMUL. A four-set-bit multiplier keeps the compact IMUL BX.
     const string source = "$OPTIMIZE SPEED\nx% = 11\nT x%\ny% = x% * 13\nT y%\nEND" + _TOUCH_END;
     var pb36 = Compile(_TOUCH + source, Dialect.Pb36);
-    Assert.That(CountImulBx(pb36), Is.EqualTo(1), "x% * 13 has no two-term decomposition, keep IMUL BX");
+    Assert.That(CountImulBx(pb36), Is.Zero, "x% * 13 decomposes into three shift-add terms, no IMUL BX");
   }
 
   [Test]
