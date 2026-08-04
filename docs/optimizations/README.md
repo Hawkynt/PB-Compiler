@@ -96,7 +96,7 @@ Conventions used on every page:
 | ⬜ | [O0059](O0059-scalar-replacement.md) | Scalar replacement of aggregates |
 | ⬜ | [O0060](O0060-memory-ssa.md) | Memory SSA / alias analysis |
 | 🟡 | [O0061](O0061-reassociation.md) | Reassociation |
-| ⬜ | [O0062](O0062-loop-restructuring.md) | Loop rotation, IV simplification, fusion |
+| 🟡 | [O0062](O0062-loop-restructuring.md) | Loop rotation, IV simplification, fusion |
 | ⬜ | [O0063](O0063-duff-unrolling.md) | Duff's-device unrolling |
 | ⬜ | [O0064](O0064-lea-fusion.md) | `LEA` multiply-add fusion |
 | ⬜ | [O0065](O0065-dead-frame-store-elimination.md) | Dead frame-store elimination |
