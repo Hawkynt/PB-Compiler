@@ -192,7 +192,16 @@ interpreter has no x87 arithmetic), and none disagree. The three outcomes are ke
 "not compared" is never counted as agreement, because collapsing them is how a coverage number starts
 lying.
 
-It earned its place on the first run by finding a real miscompilation that every static check had
+**It is not a gate yet.** `InterpreterSanityTests` checks the interpreter against the one path already
+known to be right - the direct emitter, whose bytes the golden battery holds to PBC 3.50 - and two of
+those checks fail: a subtraction of two VARIABLES comes out negated, while `PRINT x%` and every
+constant-folded case are right. So the fault is in the interpreter's execution of the direct emitter's
+two-operand subtract, and the three corpus disagreements it currently reports are the interpreter's,
+not the back end's. The corpus fixture is therefore `[Explicit]` and the failing sanity cases carry the
+diagnosis: a harness whose reference is wrong is worse than no harness. Finding that subtract is the
+next step, and it is a bounded one.
+
+It still earned its place on the first run by finding a real miscompilation that every static check had
 missed: `sext i1 1 to i16` folded to **1** where BASIC's TRUE is **-1**, so every comparison the
 optimizer could decide at compile time went out as 1 - on the native, C and LLVM back ends alike.
 

@@ -568,38 +568,248 @@ public sealed class Cpu8086 {
     }
   }
 
+  // ---- x87 ---------------------------------------------------------------------------------------
+
+  private readonly double[] _st = new double[8];
+  private int _top = 8;                                 // the stack grows DOWN; 8 means empty
+  private ushort _status;                               // only the condition-code bits are modelled
+
+  private double St(int index) => this._st[(this._top + index) & 7];
+  private void SetSt(int index, double value) => this._st[(this._top + index) & 7] = value;
+
+  private void FPush(double value) {
+    this._top = (this._top - 1) & 7;
+    this._st[this._top & 7] = value;
+  }
+
+  private void FPop() => this._top = (this._top + 1) & 7;
+
   /// <summary>
-  /// x87, of which only the <b>control</b> instructions are honoured: the runtime's entry stub runs
-  /// FINIT before anything else, and a program that never computes with the FPU is still a program
-  /// worth running. Anything that touches the register stack throws - reproducing 80-bit arithmetic
-  /// approximately would let a float test pass while disagreeing with the hardware, which is the one
-  /// outcome an execution oracle must never produce.
+  /// x87, on a <b>double</b> stack rather than the hardware's 80-bit one.
+  ///
+  /// That approximation is deliberate and it bounds what this interpreter may be used for. Both
+  /// images in a differential comparison run on the SAME approximation, so a difference in what they
+  /// print still means a real difference in the emitted code - which is the question being asked. It
+  /// is NOT a statement about matching real hardware: a program whose output turned on the extra
+  /// eleven bits of an 80-bit temporary would agree here and differ on a real 8087. Judging fidelity
+  /// to the genuine compiler stays the golden battery's job, on real bytes.
   /// </summary>
   private void X87(byte opcode) {
-    var at = this._ip;
-    var modrm = this.Fetch();
-    switch (opcode, modrm) {
-      case (0xDB, 0xE3):                                // FINIT / FNINIT
-      case (0xDB, 0xE2):                                // FNCLEX
-        return;
-    }
-    if (opcode == 0xD9 && modrm < 0xC0 && ((modrm >> 3) & 7) is 5 or 7) {
-      // FLDCW / FSTCW: the control word is not modelled, but the rounding mode it carries does not
-      // change any integer result, and the stub reads it back before setting it
-      this._ip = at;
-      var (mode, reg, address) = this.ModRm();
-      if (reg == 7 && mode != 3)
-        this.WriteWord(address, 0x037F);                // the mode FINIT leaves: nearest, 64-bit, masked
+    var start = this._ip - 1;
+    if (this.ReadByte(Linear(this._cs, this._ip)) >= 0xC0) {
+      this.X87Register(opcode, this.Fetch(), start);
       return;
     }
-    throw new Cpu8086Exception($"x87 instruction {opcode:X2} {modrm:X2} at {this._cs:X4}:{at - 1:X4} - "
-      + "floating point arithmetic is deliberately not interpreted");
+
+    var (_, reg, address) = this.ModRm();
+    switch (opcode) {
+      case 0xD9 when reg == 0: this.FPush(BitConverter.Int32BitsToSingle((int)this.ReadDword(address))); return;
+      case 0xD9 when reg is 2 or 3:
+        this.WriteDword(address, (uint)BitConverter.SingleToInt32Bits((float)this.St(0)));
+        if (reg == 3) this.FPop();
+        return;
+      case 0xD9 when reg == 5: return;                                        // FLDCW - the mode is FINIT's
+      case 0xD9 when reg == 7: this.WriteWord(address, 0x037F); return;       // FSTCW
+      case 0xDD when reg == 0: this.FPush(BitConverter.Int64BitsToDouble((long)this.ReadQword(address))); return;
+      case 0xDD when reg is 2 or 3:
+        this.WriteQword(address, (ulong)BitConverter.DoubleToInt64Bits(this.St(0)));
+        if (reg == 3) this.FPop();
+        return;
+      case 0xDB when reg == 0: this.FPush((int)this.ReadDword(address)); return;
+      case 0xDB when reg is 2 or 3:
+        this.WriteDword(address, (uint)(int)RoundToInteger(this.St(0)));
+        if (reg == 3) this.FPop();
+        return;
+      case 0xDB when reg == 5: this.FPush(this.ReadExtended(address)); return;
+      case 0xDB when reg == 7: this.WriteExtended(address, this.St(0)); this.FPop(); return;
+      case 0xDF when reg == 0: this.FPush((short)this.ReadWord(address)); return;
+      case 0xDF when reg is 2 or 3:
+        this.WriteWord(address, (ushort)(short)RoundToInteger(this.St(0)));
+        if (reg == 3) this.FPop();
+        return;
+      case 0xDF when reg == 5: this.FPush((long)this.ReadQword(address)); return;
+      case 0xDF when reg == 7: this.WriteQword(address, (ulong)(long)RoundToInteger(this.St(0))); this.FPop(); return;
+      case 0xD8: this.MemoryArithmetic(reg, BitConverter.Int32BitsToSingle((int)this.ReadDword(address))); return;
+      case 0xDC: this.MemoryArithmetic(reg, BitConverter.Int64BitsToDouble((long)this.ReadQword(address))); return;
+      case 0xDA: this.MemoryArithmetic(reg, (int)this.ReadDword(address)); return;
+      case 0xDE: this.MemoryArithmetic(reg, (short)this.ReadWord(address)); return;
+      default:
+        throw new Cpu8086Exception($"unimplemented x87 {opcode:X2} /{reg} at {this._cs:X4}:{start:X4}");
+    }
+  }
+
+  private void MemoryArithmetic(int reg, double operand) {
+    if (reg is 2 or 3) {                                // FCOM / FCOMP
+      this.Compare(this.St(0), operand);
+      if (reg == 3)
+        this.FPop();
+      return;
+    }
+    this.SetSt(0, Arithmetic(reg, this.St(0), operand));
+  }
+
+  private void X87Register(byte opcode, byte modrm, int start) {
+    var index = modrm & 7;
+    switch (opcode, modrm) {
+      case (0xDB, 0xE3): this._top = 8; this._status = 0; return;             // FINIT / FNINIT
+      case (0xDB, 0xE2): this._status = 0; return;                            // FNCLEX
+      case (0xD9, 0xE0): this.SetSt(0, -this.St(0)); return;                  // FCHS
+      case (0xD9, 0xE1): this.SetSt(0, Math.Abs(this.St(0))); return;         // FABS
+      case (0xD9, 0xE4): this.Compare(this.St(0), 0); return;                 // FTST
+      case (0xD9, 0xE8): this.FPush(1); return;                               // FLD1
+      case (0xD9, 0xEE): this.FPush(0); return;                               // FLDZ
+      case (0xD9, 0xEB): this.FPush(Math.PI); return;                         // FLDPI
+      case (0xD9, 0xE9): this.FPush(Math.Log2(10)); return;                   // FLDL2T
+      case (0xD9, 0xEA): this.FPush(Math.Log2(Math.E)); return;               // FLDL2E
+      case (0xD9, 0xEC): this.FPush(Math.Log10(2)); return;                   // FLDLG2
+      case (0xD9, 0xED): this.FPush(Math.Log(2)); return;                     // FLDLN2
+      case (0xD9, 0xFA): this.SetSt(0, Math.Sqrt(this.St(0))); return;        // FSQRT
+      case (0xD9, 0xFC): this.SetSt(0, RoundToInteger(this.St(0))); return;   // FRNDINT
+      case (0xD9, 0xF0): this.SetSt(0, Math.Pow(2, this.St(0)) - 1); return;  // F2XM1
+      case (0xD9, 0xF1): {                                                    // FYL2X
+        var y = this.St(1);
+        var x = this.St(0);
+        this.FPop();
+        this.SetSt(0, y * Math.Log2(x));
+        return;
+      }
+      case (0xD9, 0xF3): {                                                    // FPATAN
+        var y = this.St(1);
+        var x = this.St(0);
+        this.FPop();
+        this.SetSt(0, Math.Atan2(y, x));
+        return;
+      }
+      case (0xD9, 0xFD): {                                                    // FSCALE
+        this.SetSt(0, this.St(0) * Math.Pow(2, Math.Truncate(this.St(1))));
+        return;
+      }
+      case (0xD9, 0xF8): {                                                    // FPREM
+        var a = this.St(0);
+        var b = this.St(1);
+        this.SetSt(0, b == 0 ? double.NaN : a - b * Math.Truncate(a / b));
+        this._status &= 0xFBFF;                                               // C2 clear: the reduction completed
+        return;
+      }
+      case (0xDE, 0xD9): {                                                    // FCOMPP
+        this.Compare(this.St(0), this.St(1));
+        this.FPop();
+        this.FPop();
+        return;
+      }
+      case (0xDF, 0xE0):                                                      // FSTSW AX
+        this._r[_AX] = (ushort)((this._r[_AX] & 0x00FF) | (this._status & 0xFF00));
+        return;
+    }
+
+    switch (opcode) {
+      case 0xD9 when modrm is >= 0xC0 and <= 0xC7: this.FPush(this.St(index)); return;      // FLD st(i)
+      case 0xD9 when modrm is >= 0xC8 and <= 0xCF: {                                        // FXCH
+        var swapped = this.St(0);
+        this.SetSt(0, this.St(index));
+        this.SetSt(index, swapped);
+        return;
+      }
+      case 0xDD when modrm is >= 0xC0 and <= 0xC7: return;                                  // FFREE
+      case 0xDD when modrm is >= 0xD0 and <= 0xD7: this.SetSt(index, this.St(0)); return;   // FST st(i)
+      case 0xDD when modrm is >= 0xD8 and <= 0xDF:                                          // FSTP st(i)
+        this.SetSt(index, this.St(0));
+        this.FPop();
+        return;
+      case 0xD8 when modrm is >= 0xD0 and <= 0xDF:                                          // FCOM / FCOMP st(i)
+        this.Compare(this.St(0), this.St(index));
+        if (modrm >= 0xD8)
+          this.FPop();
+        return;
+      case 0xD8 or 0xDC or 0xDE: {
+        // D8 computes into ST(0); DC and DE compute into ST(i), and DE pops afterwards
+        var op = (modrm >> 3) & 7;
+        var intoStack0 = opcode == 0xD8;
+        var result = intoStack0
+          ? Arithmetic(op, this.St(0), this.St(index))
+          : Arithmetic(op, this.St(index), this.St(0));
+        if (intoStack0)
+          this.SetSt(0, result);
+        else
+          this.SetSt(index, result);
+        if (opcode == 0xDE)
+          this.FPop();
+        return;
+      }
+      default:
+        throw new Cpu8086Exception($"unimplemented x87 {opcode:X2} {modrm:X2} at {this._cs:X4}:{start:X4}");
+    }
+  }
+
+  private static double Arithmetic(int op, double a, double b) => op switch {
+    0 => a + b,
+    1 => a * b,
+    4 => a - b,
+    5 => b - a,                                        // the R forms reverse the operands
+    6 => a / b,
+    7 => b / a,
+    _ => throw new Cpu8086Exception($"unimplemented x87 arithmetic {op}"),
+  };
+
+  /// <summary>FISTP stores by the control word, which FINIT leaves at nearest-ties-to-even.</summary>
+  private static double RoundToInteger(double value) => Math.Round(value, MidpointRounding.ToEven);
+
+  /// <summary>The comparison condition codes, in the status-word bits FSTSW hands to SAHF (C3 -> ZF, C0 -> CF).</summary>
+  private void Compare(double a, double b) {
+    this._status = (ushort)(this._status & ~0x4700);
+    if (double.IsNaN(a) || double.IsNaN(b))
+      this._status |= 0x4500;                          // unordered: C3 C2 C0
+    else if (a < b)
+      this._status |= 0x0100;                          // C0
+    else if (a == b)
+      this._status |= 0x4000;                          // C3
+  }
+
+  private uint ReadDword(int at) => (uint)(this.ReadWord(at) | (this.ReadWord(at + 2) << 16));
+
+  private void WriteDword(int at, uint value) {
+    this.WriteWord(at, (ushort)value);
+    this.WriteWord(at + 2, (ushort)(value >> 16));
+  }
+
+  private ulong ReadQword(int at) => this.ReadDword(at) | ((ulong)this.ReadDword(at + 4) << 32);
+
+  private void WriteQword(int at, ulong value) {
+    this.WriteDword(at, (uint)value);
+    this.WriteDword(at + 4, (uint)(value >> 32));
+  }
+
+  // an 80-bit extended value read into (and written from) a double - the mantissa bits that do not
+  // fit are exactly the approximation this interpreter is explicit about
+  private double ReadExtended(int at) {
+    var mantissa = this.ReadQword(at);
+    var signExponent = this.ReadWord(at + 8);
+    var exponent = signExponent & 0x7FFF;
+    var negative = (signExponent & 0x8000) != 0;
+    if (exponent == 0 && mantissa == 0)
+      return negative ? -0.0 : 0.0;
+    var value = mantissa * Math.Pow(2, exponent - 16383 - 63);
+    return negative ? -value : value;
+  }
+
+  private void WriteExtended(int at, double value) {
+    if (value == 0) {
+      this.WriteQword(at, 0);
+      this.WriteWord(at + 8, (ushort)(double.IsNegative(value) ? 0x8000 : 0));
+      return;
+    }
+    var negative = value < 0;
+    var magnitude = Math.Abs(value);
+    var exponent = (int)Math.Floor(Math.Log2(magnitude));
+    var mantissa = (ulong)Math.Round(magnitude * Math.Pow(2, 63 - exponent));
+    this.WriteQword(at, mantissa);
+    this.WriteWord(at + 8, (ushort)((negative ? 0x8000 : 0) | (exponent + 16383)));
   }
 
   /// <summary>
   /// The 386 two-byte opcodes the optimizer emits under <c>$CPU 80386</c>: near conditional jumps
-  /// (an 8-bit displacement does not always reach), <c>SETcc</c>, <c>MOVZX</c>/<c>MOVSX</c> and the
-  /// three-operand <c>IMUL</c>. Anything else in the space throws rather than being guessed at.
+  /// (an 8-bit displacement does not always reach), <c>SETcc</c>, <c>MOVZX</c>/<c>MOVSX</c>, the
+  /// two-operand <c>IMUL</c> and the double shifts. Anything else in the space throws.
   /// </summary>
   private void TwoByte() {
     var opcode = this.Fetch();
@@ -622,24 +832,24 @@ public sealed class Cpu8086 {
         this._cf = this._of = (short)this._r[reg] != product;
         return;
       }
-      case 0xB6: { var (m, r, a) = this.ModRm(); this._r[r] = this.GetRm8(m, a); return; }                    // MOVZX r16, r/m8
+      case 0xB6: { var (m, r, a) = this.ModRm(); this._r[r] = this.GetRm8(m, a); return; }               // MOVZX r16, r/m8
       case 0xB7: { var (m, r, a) = this.ModRm(); this._r[r] = this.GetRm16(m, a); return; }
-      case 0xBE: { var (m, r, a) = this.ModRm(); this._r[r] = (ushort)(sbyte)this.GetRm8(m, a); return; }      // MOVSX r16, r/m8
+      case 0xBE: { var (m, r, a) = this.ModRm(); this._r[r] = (ushort)(sbyte)this.GetRm8(m, a); return; } // MOVSX r16, r/m8
       case 0xBF: { var (m, r, a) = this.ModRm(); this._r[r] = this.GetRm16(m, a); return; }
       case 0xA4 or 0xAC: {                              // SHLD / SHRD r/m16, r16, imm8
         var (mode, reg, address) = this.ModRm();
         var count = this.Fetch() & 0x1F;
+        if (count == 0)
+          return;
         var value = this.GetRm16(mode, address);
         var other = this._r[reg];
-        if (count != 0) {
-          var pair = opcode == 0xA4
-            ? (uint)((value << 16) | other) << count
-            : (uint)((other << 16) | value) >> count;
-          value = (ushort)(opcode == 0xA4 ? pair >> 16 : pair);
-          this.SetRm16(mode, address, value);
-          this._zf = value == 0;
-          this._sf = (value & 0x8000) != 0;
-        }
+        var pair = opcode == 0xA4
+          ? ((uint)value << 16 | other) << count
+          : ((uint)other << 16 | value) >> count;
+        value = (ushort)(opcode == 0xA4 ? pair >> 16 : pair);
+        this.SetRm16(mode, address, value);
+        this._zf = value == 0;
+        this._sf = (value & 0x8000) != 0;
         return;
       }
       default:
