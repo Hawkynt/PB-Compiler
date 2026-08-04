@@ -603,6 +603,16 @@ public sealed class OptimizerTests {
   private static int CountMulBx(byte[] image) => CountPair(image, 0xF7, 0xE3);
 
   [Test]
+  public void Emit_GivenMultiplyByOne_WhenPb36PlainOptimize_ThenNoImul() {
+    // O0076/O0077: x * 1 / x * -1 / x * 0 fold to nothing / neg / xor under PLAIN --optimize (they
+    // are strictly smaller than IMUL, not a SPEED trade), so the image is smaller than x * 3 which
+    // keeps the multiply. $OPTIMIZE SPEED is NOT set here - that is the point of the test.
+    var one = Compile("DIM x AS INTEGER, y AS INTEGER\nLINE INPUT z$\nx = VAL(z$)\ny = x * 1\nPRINT y\nEND", Dialect.Pb36);
+    var three = Compile("DIM x AS INTEGER, y AS INTEGER\nLINE INPUT z$\nx = VAL(z$)\ny = x * 3\nPRINT y\nEND", Dialect.Pb36);
+    Assert.That(one.Length, Is.LessThan(three.Length), "x * 1 folds away without $OPTIMIZE SPEED; x * 3 keeps IMUL");
+  }
+
+  [Test]
   public void Emit_GivenSelfXor_WhenPb36_ThenFoldedToZeroSmallerImage() {
     // O0076: x XOR x is 0 (and x AND x / x OR x is x), folded without a second operand or the XOR,
     // so the optimized image is smaller than xor-ing two distinct variables.

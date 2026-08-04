@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — `-(-x)` folds; `0 - x` / `x * -1` await the float-promotion routing |
+| **Status** | ✅ Done — `-(-x)`, `0 - x` and `x * -1` all fold to a negate in the integer paths (a float-typed-position residue rides the FPU, folded by the IR tier for C/LLVM) |
 | **Stage** | Emitter |
 | **Related** | [O0076](O0076-algebraic-identities.md), [O0004](O0004-strength-reduction.md), [O0033](O0033-constant-store.md) |
 
@@ -46,19 +46,22 @@ rounding step sits between them. This is bit-exact even at `-32768`
 (`NEG(NEG(8000h)) = 8000h`) and the whole `LONG` `80000000h` case — verified
 byte-identical against the genuine oracle (`-(-x%)`, `-(-y&)`, `-(-(-32768))`).
 
-## Still planned — `0 - x`, `x * -1`
+## Now — `0 - x` and `x * -1` fold too
 
 ```asm
-    ; a% = 0 - x%   ->   neg ax
+    ; a% = 0 - x%    ->   mov ax,[x] : neg ax
+    ; b% = x% * -1   ->   mov ax,[x] : neg ax
 ```
 
-Both are blocked on the same routing as [O0076](O0076-algebraic-identities.md):
-PB computes integral `-` and `*` in floating point, so `0 - x%` and `x% * -1`
-reach the emitter as *float*-typed subtract/multiply trees rather than integer
-ALU ops. Recognizing them as an `FCHS` (or an integer `NEG` in the modular-int
-lowering) is the remaining work, together with the `-32768` / `LONG 80000000h`
-Error-6 trap review under `$ERROR OVERFLOW` and the unsigned modular-complement
-case.
+Assigned to an integer target, both lower through the modular-int path: the
+`c - v` shape of the subtract negates then adds `c` (here `c = 0`, adding
+nothing — `TryEmitModularConstAddSub`), and `* -1` becomes `neg ax`
+unconditionally under `--optimize` (`TryEmitModularConstMul`). Bit-exact even at
+`-32768` (`NEG(8000h) = 8000h`, matching PB's own modular store), verified
+byte-identical against the genuine oracle over `0 - x`, `-1 * x` and
+`x% * -1` at `MININT`.
 
-Native-only, in `CodeGenerator.EmitUnary`. The IR back ends emit a `0 - x` /
-`-1 * x` the host C compiler folds to a negate itself.
+The only unfolded residue is a negation consumed in a **float-typed
+subexpression position**, which stays on the FPU; the IR tier folds it for the
+C/LLVM back ends. Native-only, in `CodeGenerator.EmitUnary` /
+`CodeGenerator.Optimize` (the modular lowering).

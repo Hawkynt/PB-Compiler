@@ -6,8 +6,6 @@ the equivalent BASIC the transformed program behaves like.
 
 - ✅ **implemented** — in the compiler today and covered by the differential
   oracle, a DOSBox execution test, or an assembler unit test.
-- 🟡 **partial** — part of the pass ships (and is tested); the page's header
-  table says which cases are done and which remain.
 - ⬜ **planned** — a roadmap idea. The "after" code on those pages is what the
   pass *would* emit; the compiler does not do it yet.
 
@@ -110,8 +108,8 @@ Conventions used on every page:
 | ⬜ | [O0073](O0073-algorithmic-idiom-catalog.md) | Wider idiom catalog |
 | ⬜ | [O0074](O0074-wider-vectorization.md) | Wider auto-vectorization |
 | ⬜ | [O0075](O0075-silent-fixed-point.md) | Silent fixed-point arithmetic |
-| 🟡 | [O0076](O0076-algebraic-identities.md) | Algebraic identities & annihilators |
-| 🟡 | [O0077](O0077-negation-idioms.md) | Negation idioms |
+| ✅ | [O0076](O0076-algebraic-identities.md) | Algebraic identities & annihilators |
+| ✅ | [O0077](O0077-negation-idioms.md) | Negation idioms |
 | ⬜ | [O0078](O0078-multiply-decomposition.md) | General multiply decomposition |
 | ⬜ | [O0079](O0079-shared-divide.md) | Shared divide (quotient + remainder) |
 | ⬜ | [O0080](O0080-division-special-cases.md) | Division special cases |

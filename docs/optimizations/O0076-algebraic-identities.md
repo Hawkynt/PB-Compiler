@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — the integral bitwise identities fold (fact-based and self-operand); the float-promoted arithmetic ones (`x + 0`, `x * 1`, …) remain |
+| **Status** | ✅ Done — folds in the integer-materializing paths (assignments, bitwise, self-operand); a `+ 0` buried in a float-typed subexpression rides the FPU (and is folded by the IR tier for C/LLVM) |
 | **Stage** | Emitter |
 | **Related** | [O0043](O0043-ir-instcombine.md), [O0001](O0001-constant-folding.md), [O0016](O0016-value-fact-analysis.md), [O0077](O0077-negation-idioms.md) |
 
@@ -51,21 +51,31 @@ side effect to duplicate — `x XOR x` needs no read at all. Verified byte-ident
 against the genuine oracle over INTEGER and LONG (`x XOR x`, `y AND y`, and
 `(x XOR x)+7`).
 
-## Still planned — the arithmetic identities
+## Now — the arithmetic identities fold in the integer path
 
 ```asm
-    ; y% = x% + 0   ->   mov ax,[x]      (x + 0 is x)
-    ; x% * 1, x% \ 1, x% - 0 likewise
+    ; y% = x% + 0   ->   mov ax,[x]       (nothing added)
+    ; z% = x% * 0   ->   xor ax,ax
+    ; y% = x% * 1   ->   mov ax,[x]       (no IMUL)
 ```
 
-`x + 0`, `x - 0`, `x * 1`, `x \ 1` are **not** folded yet: PB computes integral
-`+ - *` in floating point, so they reach the emitter as float-typed trees (the
-same routing that gates [O0077](O0077-negation-idioms.md)). Folding them means
-recognizing the identity inside the modular-int lowering (where the tree is
-brought back to the integer ALU), plus the per-identity trap review — `x * 0`
-cannot overflow, but `x \ 1` on `MININT` must keep its semantics under
-`$ERROR OVERFLOW`.
+An arithmetic tree assigned to an integer target is lowered back to the integer
+ALU (the modular-int lowering — PB computes integral `+ - *` in floating point,
+but the low bits of the exact result *are* the modular value). There:
 
-Native-only. The IR tier already folds all of these
-([O0043](O0043-ir-instcombine.md) instruction combining), so the C/LLVM back
-ends emit the reduced form regardless.
+- `x + 0`, `x - 0` add a zero immediate, which `EmitModularAddImm` emits as
+  **nothing** (`TryEmitModularConstAddSub`).
+- `x * 0` → `xor ax,ax`, `x * 1` → the operand unchanged, `x * -1` → `neg ax`
+  (`TryEmitModularConstMul`). These three are strictly smaller than `IMUL`, so
+  they fold under plain `--optimize` — not only `$OPTIMIZE SPEED`, which the
+  shift/add multiply decompositions still require.
+
+Each is bit-exact against the modular result the generic `IMUL`/`ADD` would give
+(`x * 0 = 0`, `x * -1 = NEG x` even at `-32768`), verified byte-identical against
+the genuine oracle.
+
+The one residue: an identity in a **float-typed subexpression position** (say
+`PRINT (x% + 0) * 1.5`, where `x% + 0` is consumed as a `SINGLE`) still rides the
+FPU. The IR tier folds those too ([O0043](O0043-ir-instcombine.md) instruction
+combining), so the C/LLVM back ends emit the reduced form regardless; only the
+native-x86 float path leaves that rare shape unfolded.

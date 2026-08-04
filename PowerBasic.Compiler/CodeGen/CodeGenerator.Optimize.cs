@@ -958,7 +958,7 @@ public sealed partial class CodeGenerator {
   /// shapes fall back to IMUL.
   /// </summary>
   private bool TryEmitModularConstMul(BinaryExpr b) {
-    if (!this.Optimize || !this.OptimizeSpeed)
+    if (!this.Optimize)
       return false;
 
     Expression variable;
@@ -973,6 +973,10 @@ public sealed partial class CodeGenerator {
     var asm = this._asm;
     var m = (int)(short)(raw & 0xFFFF); // the multiplier reduced to its 16-bit modular value
 
+    // O0076/O0077: * 0 / * 1 / * -1 collapse the multiply to something strictly smaller AND faster
+    // than IMUL - a pure identity/annihilator/negation, not a size-for-speed trade - so they fold
+    // unconditionally, matching the +/- immediate folds. (The shift/add decompositions below DO
+    // trade code size for speed, so they stay behind $OPTIMIZE SPEED.)
     if (m == 0) {                       // v * 0 - evaluate v for its side effects, result 0
       this.EmitModularInt16(variable);
       asm.Xor(Reg.AX, Reg.AX);
@@ -987,6 +991,9 @@ public sealed partial class CodeGenerator {
       asm.Neg(Reg.AX);
       return true;
     }
+
+    if (!this.OptimizeSpeed)
+      return false;
 
     var neg = m < 0;
     var mag = (uint)Math.Abs(m);        // |m| <= 32768, fits a power-of-two probe
