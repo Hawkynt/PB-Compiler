@@ -2501,6 +2501,16 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     var elseLabel = asm.DefineLabel();
     var endLabel = asm.DefineLabel();
 
+    // O16 soundness: every condition in this chain is judged at the IF's OWN program point. Emitting
+    // the THEN arm moves _currentStatement to the last statement inside it, whose interval
+    // environment was refined by this condition being TRUE - and an ELSEIF condition folded against
+    // that environment is answering a different question. `IF i < 0 ... ELSEIF i = 0` folded the
+    // second test to false for every i, because inside the first arm i is proven negative, so the
+    // arm was never taken and i = 0 fell through to the ELSE. The IF's own entry environment is the
+    // sound point: the real one is that refined by the earlier conditions being FALSE, and this is a
+    // superset of it.
+    var atIf = this._currentStatement;
+
     this.EmitConditionalBranch(i.Condition, elseLabel, whenFalse: true);
     foreach (var s in i.Then)
       this.EmitStatement(s);
@@ -2509,6 +2519,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     asm.MarkLabel(elseLabel);
     foreach (var (condition, body) in i.ElseIfs) {
       var next = asm.DefineLabel();
+      this._currentStatement = atIf;
       this.EmitConditionalBranch(condition, next, whenFalse: true);
       foreach (var s in body)
         this.EmitStatement(s);
