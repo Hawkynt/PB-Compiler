@@ -1310,6 +1310,17 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenConstantForLimitOn386LongCounter_WhenPb36_ThenComparedAgainstImmediate() {
+    // O0113: the fold also fires on the 386 LONG-counter path (TryEmitForLongCounterInRegister) - the
+    // ESI-resident counter compares against the immediate `cmp esi, 64h` (66 83 FE 64, the 66 prefix
+    // selecting the 32-bit operand in 16-bit mode) rather than a 32-bit memory reload. XOR accumulation
+    // keeps the loop off the arithmetic-series closed form.
+    var img = Compile("$CPU 80386\n$OPTIMIZE SPEED\nDIM i&, s&\ns& = 0\nFOR i& = 1 TO 100\ns& = s& XOR i&\nNEXT\nPRINT s&\nEND", Dialect.Pb36);
+    Assert.That(ContainsSeq(img, 0x66, 0x83, 0xFE, 0x64), Is.True,
+      "a constant LONG limit compares ESI against the immediate 100");
+  }
+
+  [Test]
   public void Emit_GivenConstantForLimitOnMemoryCounter_WhenPb36_ThenComparedAgainstImmediate() {
     // O0113: the constant-limit immediate fold also fires on the memory-counter fallback path
     // (EmitForInt16Fast) - reached here because the string-concat body clobbers SI/DI, so the loop

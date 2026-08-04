@@ -1374,11 +1374,25 @@ public sealed partial class CodeGenerator {
 
     var asm = this._asm;
     var sc = this._scratch;
-    var limit = this.AllocTemp(4);
-    this.EmitExpression(f.To);
-    this.Coerce(model.TypeOf(f.To), PbType.Long, f.To);              // DX:AX = limit
-    asm.Mov(limit.WithSize(OperandSize.Word), Reg.AX);
-    asm.Mov(Adjust(limit, 2, OperandSize.Word), Reg.DX);
+    // O0113: a constant LONG limit folds into the 32-bit compare as an immediate (cmp esi, imm32) -
+    // no temp cell, no per-iteration memory read. Gated with the whole 386 path on --optimize, so the
+    // faithful build is unaffected; genuine PBC emits its own 386 code, so this is oracle-verifiable.
+    int? constLimit = this.OptFolder.TryFold(f.To) is { Integer: { } toVal } && toVal is >= int.MinValue and <= int.MaxValue
+      ? (int)toVal : null;
+    Mem? limit = null;
+    if (constLimit is null) {
+      limit = this.AllocTemp(4);
+      this.EmitExpression(f.To);
+      this.Coerce(model.TypeOf(f.To), PbType.Long, f.To);            // DX:AX = limit
+      asm.Mov(limit.Value.WithSize(OperandSize.Word), Reg.AX);
+      asm.Mov(Adjust(limit.Value, 2, OperandSize.Word), Reg.DX);
+    }
+    void CmpLimit() {
+      if (constLimit is { } cl)
+        asm.Cmp(Reg.ESI, (Imm)cl);
+      else
+        asm.Cmp(Reg.ESI, limit!.Value.WithSize(OperandSize.Dword));
+    }
     this.EmitExpression(f.From);
     this.Coerce(model.TypeOf(f.From), PbType.Long, f.From);          // DX:AX = from
     asm.Mov(Mem.Word(sc), Reg.AX);
@@ -1405,7 +1419,7 @@ public sealed partial class CodeGenerator {
 
     // O0062 loop rotation: entry guard + bottom test, dropping the per-iteration JMP; ESI holds the
     // counter and wraps identically, so the 32-bit increment-then-test end value is unchanged.
-    asm.Cmp(Reg.ESI, limit.WithSize(OperandSize.Dword));             // one 32-bit signed compare
+    CmpLimit();                                                     // one 32-bit signed compare
     if (step >= 0)
       asm.Jg(done);                                                 // enter only if not already past
     else
@@ -1416,7 +1430,7 @@ public sealed partial class CodeGenerator {
       this.EmitStatement(statement);
     asm.MarkLabel(cont);
     asm.Add(Reg.ESI, (Imm)(int)step);                               // signed 32-bit increment (imm sign-extends)
-    asm.Cmp(Reg.ESI, limit.WithSize(OperandSize.Dword));
+    CmpLimit();
     if (step >= 0)
       asm.Jle(top);                                                 // repeat while not past
     else
@@ -1431,7 +1445,7 @@ public sealed partial class CodeGenerator {
       asm.Mov(flushSlot.WithSize(OperandSize.Dword), resident.Reg);  // flush the accumulator to its cell
     this._registerCounter = null;
     this._registerAccumulator = null;
-    this.ReleaseTemp(4);
+    if (limit != null) this.ReleaseTemp(4);
     return true;
   }
 

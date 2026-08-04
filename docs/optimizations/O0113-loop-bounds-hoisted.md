@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial (a constant limit folds into the compare as an immediate on both the SI-resident and the memory-counter path; a variable limit still reloads its cell) |
+| **Status** | 🟡 Partial (a constant limit folds into the compare as an immediate on the SI-resident, the memory-counter and the 386 LONG-counter paths; a variable limit still reloads its cell) |
 | **Stage** | Emitter |
 | **Related** | [O0028](O0028-loop-invariant-code-motion.md), [O0005](O0005-register-residency.md), [O0112](O0112-countdown-loop.md), [O0131](O0131-exact-trip-count.md) |
 
@@ -63,11 +63,17 @@ not itself `--optimize`-gated (it emits the faithful loop for every dialect), so
 the immediate fold there is explicitly gated on the `Optimize` flag; with the
 optimizer off it keeps `cmp ax, [bp+disp]`, byte-identical to genuine.
 
+The **386 LONG-counter path** (`TryEmitForLongCounterInRegister`, `$CPU 80386`)
+folds the same way: the `ESI`-resident counter compares against `cmp esi, 64h`
+(`66 83 FE 64` — the `66` prefix selecting the 32-bit operand in 16-bit mode)
+rather than a 32-bit memory reload.
+
 Gated on `--optimize` throughout (golden gate 250/250). Verified by self-differential
 DOSBox runs — an ascending constant limit and a descending loop with a constant
-`TO` on the SI path, and a string-concat loop on the memory-counter path — all
-identical to `$OPTIMIZE OFF`, plus regression tests asserting each path emits
-`cmp reg, imm` with no memory limit read while a variable limit keeps the cell.
+`TO` on the SI path, a string-concat loop on the memory-counter path, and a LONG
+loop on the 386 path — all identical to `$OPTIMIZE OFF`, plus regression tests
+asserting each path emits `cmp reg, imm` with no memory limit read while a variable
+limit keeps the cell.
 
 ## Still planned
 
