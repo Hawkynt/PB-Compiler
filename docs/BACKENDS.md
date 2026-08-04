@@ -145,9 +145,13 @@ Beyond widening that subset, the two items that would most change the picture:
   `--x-backend` for integer functions (docs/X86-BACKEND.md); what it still
   declines is now *measured* rather than guessed — `BackendCoverageTests` ranks
   the blockers over the whole corpus, and the top one at any time is the next
-  increment. The two standing gaps are the runtime-label bridge (a call to an
-  `rt_*` helper, which is what the un-routed `main` body is full of) and the
-  data-layout bridge (a load of a module-level global).
+  increment. Both standing gaps are now closed - the data-layout bridge (a load
+  of a module-level global) and the runtime-label bridge (a call to an `rt_*`
+  helper, mapped per routine onto the DOS runtime's register convention in
+  `Backend/RuntimeAbi.cs`) - alongside signed division and spilling, which took
+  the corpus from 14 to 32 routed functions of 139. What ranks next is floating
+  point (the x87 stack), strings (the runtime's handle representation), and the
+  `main` body, which additionally needs the startup/exit sequence.
 - **Feeding the direct path's range facts into the IR.** The interval lattice
   (`CodeGen/IntervalRange.cs`) proves things — bounds are in range, a divisor is
   non-zero, a 32-bit operation fits 16 bits — that the IR currently rediscovers only
