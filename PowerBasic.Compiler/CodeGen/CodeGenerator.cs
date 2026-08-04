@@ -1879,6 +1879,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         this.ApplyMeta(meta);
         break;
 
+      case LineStmt ln:
+        this.EmitLineStatement(ln);
+        break;
+
       // R2 direct-video pixel write (mode 13h): PSET (x,y)[,c] / PRESET (x,y)[,c]
       case PsetStmt ps: {
         var asm3 = this._asm;

@@ -27,6 +27,9 @@ public sealed class Cpu8086 {
   private const ushort _LOAD_SEGMENT = 0x0110;         // DOS loads the image one PSP (16 paragraphs) up
 
   private readonly byte[] _memory = new byte[_MEMORY];
+
+  /// <summary>The BIOS video mode last set through INT 10h AH=00h; 03h (80x25 colour text) at reset.</summary>
+  private byte _videoMode = 0x03;
   private readonly StringBuilder _output = new();
   private readonly Dictionary<int, MemoryFile> _files = [];
   private readonly Dictionary<string, MemoryFile> _byName = new(StringComparer.OrdinalIgnoreCase);
@@ -1172,10 +1175,20 @@ public sealed class Cpu8086 {
 
   private void Bios10() {
     switch (this.Reg8(4)) {
+      // set video mode. Nothing here draws, so the mode itself only has to be remembered for AH=0Fh;
+      // what matters is that a real BIOS CLEARS the frame buffer on a mode set, and a graphics test
+      // that read a stale pixel from a previous run would pass or fail for the wrong reason.
+      case 0x00: {
+        this._videoMode = this.Reg8(_AX);
+        if (this._videoMode == 0x13)
+          Array.Clear(this._memory, 0xA0000, 320 * 200);
+        return;
+      }
       case 0x02 or 0x01 or 0x05 or 0x06 or 0x09 or 0x0A: return;   // cursor / scroll / attribute writes
       case 0x03: this._r[_CX] = 0x0607; this._r[_DX] = 0; return;   // cursor at 0,0
       case 0x0E: this._output.Append((char)this.Reg8(_AX)); return; // teletype
-      case 0x0F: this._r[_AX] = 0x5003; this.SetReg8(7, 0); return; // 80x25 colour text, page 0
+      // report the mode that was actually set, with the 80-column text default before any mode set
+      case 0x0F: this._r[_AX] = (ushort)((80 << 8) | this._videoMode); this.SetReg8(7, 0); return;
       default: throw new Cpu8086Exception($"unhandled BIOS video call AH={this.Reg8(4):X2}h");
     }
   }

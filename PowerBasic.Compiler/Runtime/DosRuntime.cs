@@ -248,6 +248,7 @@ public sealed partial class DosRuntime {
     ("lowlevel", this.EmitLowLevelProcedures),
     ("misc", this.EmitMiscProcedures),
     ("misc2", this.EmitMiscProcedures2),
+    ("graphics", this.EmitGraphicsProcedures),
     ("extras", this.EmitExtraProcedures),
     ("using_dyn", this.EmitUsingDyn),   // needs UseFmt (misc) and the string kernel
     ("quad", this.EmitQuadProcedures),

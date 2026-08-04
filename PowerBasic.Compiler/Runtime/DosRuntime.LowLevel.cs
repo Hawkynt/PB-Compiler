@@ -157,6 +157,17 @@ public sealed partial class DosRuntime {
     asm.Dw(0);
     asm.MarkLabel("rt_eresumenext");
     asm.Dw(0);
+    // LINE parameter block (DosRuntime.Graphics.cs). rt_gx1/rt_gy1 is also PB's "last point
+    // referenced", which is what makes LINE -(x, y) mean anything - with no start point the segment
+    // begins wherever the previous graphics statement finished.
+    foreach (var cell in new[] {
+      "rt_gx1", "rt_gy1", "rt_gx2", "rt_gy2", "rt_gcolor", "rt_gstyle",
+      "rt_gerr", "rt_gsx", "rt_gsy", "rt_gdx", "rt_gdy",
+      "rt_gbx1", "rt_gby1", "rt_gbx2", "rt_gby2",
+    }) {
+      asm.MarkLabel(cell);
+      asm.Dw(0);
+    }
     // EMS page-frame mapping cache: which handle/logical-page pair is mapped at physical 0/1.
     // GLOBAL, not per-array - every EMS/XMS array shares the one frame, so a remap by any of
     // them must invalidate the others' idea of the window. 0xFFFF = nothing mapped.
