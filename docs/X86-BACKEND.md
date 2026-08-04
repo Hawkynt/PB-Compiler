@@ -514,3 +514,32 @@ relax when x87 lands.
 With it in place, the census ranks honestly: **38 of the 70 remaining declines are floating point**
 (25 × `f32`, 13 × `f64`) — the x87 stack, which is not a register file the linear-scan allocator
 models, is now the largest single thing between this back end and the corpus.
+
+### x87 — the values that do not live in registers
+
+Floating point was the largest single blocker (38 of 70 declines), and it does not fit the machine
+model at all: x87 computes on a **stack**, not in a register file the linear-scan allocator can hand
+out. The answer is not to make it fit. Every float SSA value lives in a **frame cell**, and each
+operation is bracketed `FLD ... FSTP`, so the x87 stack is empty again at every instruction boundary
+and nothing the allocator models is involved. That is also where the direct emitter keeps a float
+between operations, so the two paths agree on the representation.
+
+- `FLD lhs; FLD rhs; F<op>P; FSTP result`. Pushing the **left** operand first leaves it in `ST(1)`,
+  and the popping arithmetic computes `ST(1) op ST(0)` — so `FSUBP`/`FDIVP` come out the right way
+  round. Getting that backwards is silent and wrong, which is why it has its own test.
+- **Literals** resolve through the code generator's own float pool, which stores every constant as a
+  qword double whatever its source precision — so a `SINGLE` literal is loaded from the identical
+  cell the direct emitter loads.
+- **`SIToFP`** parks the integer in a cell first (x87 reads integers from memory only), a word for an
+  `INTEGER` and both halves of the pair for a `LONG`, then `FILD`s it at that width.
+- **A float result** is left on `ST(0)` and deliberately *not* popped — "Results: AX / DX:AX / ST0 /
+  string handle in AX".
+- **Printing** goes to `rt_print_f32` or `rt_print_f64` by the **source type**. They share a body but
+  set different significant-digit counts (7 against 15/16, and the dialect moves it), which is
+  precisely the rendering the fidelity tests compare — by the time the value is on the stack the
+  format is gone, so the entry has to be chosen from the IR type.
+
+`MRegSize` grew a `Qword` that never names a register: it names a memory width, which is what an x87
+load or store needs and what a word-sized reference would have silently halved.
+
+Selection 69 → 81 of 139, routing 52 → 57.

@@ -118,13 +118,13 @@ public sealed class BackendCoverageTests {
   }
 
   /// <summary>
-  /// A float value must never merely "select". The scalar path sizes a value from its bit width, so a
-  /// SINGLE load would mint one Dword virtual register and emit a single WORD-sized MOV - half the
-  /// value, silently. The same silent truncation was found for 32-bit integers once; the guard exists
-  /// so it cannot be found a second time.
+  /// A float value must never go through the scalar path. That path sizes a value from its bit width,
+  /// so a SINGLE load would mint one Dword virtual register and emit a single WORD-sized MOV - half
+  /// the value, silently. The same truncation was found for 32-bit integers once; a float now takes
+  /// the x87 path (a frame cell bracketed by FLD/FSTP) and never a register.
   /// </summary>
   [Test]
-  public void Selector_GivenAFloatValue_ThenDeclinesRatherThanHalfLoadIt() {
+  public void Selector_GivenAFloatValue_ThenUsesTheX87PathAndNoRegister() {
     var fn = new IrFunction("F", IrType.Void, []);
     var entry = fn.CreateBlock("entry");
     var slot = entry.Append(new IrAlloca(IrType.F32));
@@ -132,9 +132,14 @@ public sealed class BackendCoverageTests {
     entry.Append(new IrStore(value, slot));
     entry.Append(new IrRet(null));
 
-    InstructionSelector.TrySelect(fn, out var reason);
+    var m = InstructionSelector.TrySelect(fn, out var reason);
 
-    Assert.That(reason, Does.Contain("floating point"));
+    Assert.That(m, Is.Not.Null, $"declined: {reason}");
+    var opcodes = m!.AllInstructions.Select(i => i.Opcode).ToList();
+    Assert.That(opcodes, Does.Contain(MOpcode.Fld));
+    Assert.That(opcodes, Does.Contain(MOpcode.Fstp));
+    Assert.That(m.AllInstructions.SelectMany(i => i.Operands).OfType<MOperand.Register>()
+      .Where(r => r.Reg.Size == MRegSize.Dword), Is.Empty, "no float ever lands in a register");
   }
 
   [Test]
@@ -174,7 +179,8 @@ public sealed class BackendCoverageTests {
     // the rt_fselect routing PRINT # needs) - the battery writes its results to a file, so file I/O
     // was what stood in front of almost every module body
     // then 66 -> 69 with string concatenation (rt_strcat) and the 32-bit multiply helper (rt_lmul)
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(69),
+    // then 69 -> 81 with x87: floats live in frame cells bracketed by FLD/FSTP
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(81),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
   }
 }

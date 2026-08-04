@@ -126,6 +126,12 @@ public sealed partial class CodeGenerator {
     if (name.StartsWith(".str", System.StringComparison.Ordinal)
         && this._backendModule?.FindGlobal(name) is { Bytes: { } bytes })
       return Asm.Mem.Word(this.LiteralOf(System.Text.Encoding.ASCII.GetString(bytes)));
+    // a float literal: the back end names it by its bits, and it resolves through this codegen's own
+    // constant pool - which stores every float as a qword double, whatever its source precision
+    if (name.StartsWith(".fc.", System.StringComparison.Ordinal)
+        && long.TryParse(name[4..], System.Globalization.NumberStyles.HexNumber,
+             System.Globalization.CultureInfo.InvariantCulture, out var bits))
+      return Asm.Mem.Qword(this.FloatConstOf(System.BitConverter.Int64BitsToDouble(bits)));
     // a runtime data cell (rt_curout, rt_col, rt_colptr): the runtime binds these named labels, and
     // the back end addresses the very same ones the direct emitter does
     if (name.StartsWith("rt_", System.StringComparison.Ordinal))

@@ -159,6 +159,15 @@ public sealed class MachineEmitter {
         }
         break;
       case MOpcode.Ret: asm.Ret(); break;
+      // x87: one memory operand, or none for the arithmetic that consumes the loaded pair
+      case MOpcode.Fld: asm.Fld(this.Mem(ops[0])); break;
+      case MOpcode.Fstp: asm.Fstp(this.Mem(ops[0])); break;
+      case MOpcode.Fild: asm.Fild(this.Mem(ops[0])); break;
+      case MOpcode.Fistp: asm.Fistp(this.Mem(ops[0])); break;
+      case MOpcode.Faddp: asm.Faddp(); break;
+      case MOpcode.Fsubp: asm.Fsubp(); break;
+      case MOpcode.Fmulp: asm.Fmulp(); break;
+      case MOpcode.Fdivp: asm.Fdivp(); break;
       default: throw new System.NotSupportedException($"machine opcode {instr.Opcode} has no emission yet");
     }
   }
@@ -198,7 +207,7 @@ public sealed class MachineEmitter {
   /// <summary>A module variable's cell, as the whole-program codegen lays it out (plus any word offset).</summary>
   private Mem DataCell(MOperand.DataCell cell) {
     var resolved = this.ResolveData(cell.Name);
-    return Asm.Mem.Word(resolved.Label!, resolved.Displacement + cell.Disp);
+    return Sized(Asm.Mem.At(resolved.Label!, resolved.Displacement + cell.Disp), cell.Size);
   }
 
   /// <summary>The label a named data object was laid out at - the address form, for <c>MOV SI, OFFSET .str0</c>.</summary>
@@ -217,12 +226,24 @@ public sealed class MachineEmitter {
   private Reg Resolve(MReg reg) => reg.IsVirtual ? this._allocation[reg.VirtualId] : reg.Physical;
 
   private Mem Mem(MOperand operand) => operand switch {
-    MOperand.StackSlot slot => Asm.Mem.Word(Asm.Reg.BP, this._slotDisp[slot.Index]),
+    MOperand.StackSlot slot => Sized(Asm.Mem.At(Asm.Reg.BP, this._slotDisp[slot.Index]), slot.Size),
     MOperand.ParamCell p => Asm.Mem.Word(Asm.Reg.BP, this._paramOffsets[p.ArgumentIndex] + p.ByteDelta),
     MOperand.DataCell cell => this.DataCell(cell),
-    MOperand.Memory m when m.Index is { } x => Asm.Mem.Word(this.Resolve(m.Base!.Value), this.Resolve(x), m.Disp),
-    MOperand.Memory m when m.Base is { } b => Asm.Mem.Word(this.Resolve(b), m.Disp),
-    MOperand.Memory m => Asm.Mem.Word(m.Disp),
+    MOperand.Memory m when m.Index is { } x => Sized(Asm.Mem.At(this.Resolve(m.Base!.Value), this.Resolve(x), m.Disp), m.Size),
+    MOperand.Memory m when m.Base is { } b => Sized(Asm.Mem.At(this.Resolve(b), m.Disp), m.Size),
+    MOperand.Memory m => Sized(Asm.Mem.At(m.Disp), m.Size),
     _ => throw new System.NotSupportedException($"operand {operand} is not a memory reference"),
+  };
+
+  /// <summary>
+  /// Stamps the operand width onto a memory reference. Everything integer here is a word, but an x87
+  /// load or store is a dword or a qword and the encoding differs - a SINGLE written through a word
+  /// reference would be half a value.
+  /// </summary>
+  private static Mem Sized(Mem memory, MRegSize size) => size switch {
+    MRegSize.Byte => memory.WithSize(OperandSize.Byte),
+    MRegSize.Dword => memory.WithSize(OperandSize.Dword),
+    MRegSize.Qword => memory.WithSize(OperandSize.Qword),
+    _ => memory.WithSize(OperandSize.Word),
   };
 }

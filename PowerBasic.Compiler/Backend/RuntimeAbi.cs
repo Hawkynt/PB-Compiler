@@ -30,6 +30,9 @@ internal static class RuntimeAbi {
 
     /// <summary>The OFFSET of the global the pointer argument names (a string literal), as an immediate.</summary>
     Offset,
+
+    /// <summary>A float pushed on the x87 stack, which the routine pops (the print entries take ST(0)).</summary>
+    St0,
   }
 
   internal sealed record RuntimeArg(ArgKind Kind, Reg Register, Reg High = default);
@@ -71,6 +74,18 @@ internal static class RuntimeAbi {
     ["rt_str_const"] = new("rt_strmem",
       [new(ArgKind.Offset, Reg.SI), new(ArgKind.Word, Reg.CX)], _callerSaved,
       Result: Reg.AX, Presets: [(Reg.DX, Reg.DS)]),
+
+    // "PrintSingle/PrintDouble: value on ST(0), popped". SINGLE and DOUBLE have SEPARATE entries even
+    // though both share the body: rt_print_f32 and rt_print_f64 differ only in the significant-digit
+    // count they set (7 against 15/16, and the dialect moves it), which is exactly the rendering the
+    // fidelity tests compare - so the source type must pick the entry rather than the format on the
+    // stack, which is one and the same by then
+    ["rt_print_single"] = new("rt_print_f32", [new(ArgKind.St0, default)], _callerSaved),
+    ["rt_print_double"] = new("rt_print_f64", [new(ArgKind.St0, default)], _callerSaved),
+    ["rt_fprint_single"] = new("rt_print_f32",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.St0, default)], _callerSaved, FileSelect: true),
+    ["rt_fprint_double"] = new("rt_print_f64",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.St0, default)], _callerSaved, FileSelect: true),
 
     // rt_str_concat(ptr,ptr) -> ptr is the runtime's StrCat: AX=left, DX=right -> AX, consuming both
     ["rt_str_concat"] = new("rt_strcat",

@@ -26,6 +26,14 @@ public sealed class InstructionSelector {
   /// </summary>
   private readonly Dictionary<IrValue, MReg> _hiVregs = new(ReferenceEqualityComparer.Instance);
   private readonly Dictionary<IrAlloca, int> _slots = new(ReferenceEqualityComparer.Instance);
+
+  /// <summary>
+  /// Where each floating-point SSA value lives: a frame cell, not a register. x87 computes on a stack
+  /// the linear-scan allocator does not model, so selection brackets every float operation with
+  /// FLD/FSTP - the stack is empty again at each instruction boundary, and the value in between is
+  /// simply its cell. That is also what the direct emitter does with ST0.
+  /// </summary>
+  private readonly Dictionary<IrValue, int> _fslots = new(ReferenceEqualityComparer.Instance);
   private MFunction _function = null!;
 
   /// <summary>
@@ -72,14 +80,18 @@ public sealed class InstructionSelector {
   }
 
   private MFunction? Run(IrFunction fn) {
-    // Floating point has no selection at all yet: this target computes it on the x87 stack, which is
-    // not a register file the linear-scan allocator models. The guard is up front and blunt on
-    // purpose - without it a float LOAD would quietly mint one Dword virtual register and emit a
-    // single WORD-sized MOV, carrying half a SINGLE as the whole value. That is the same silent
-    // truncation 32-bit integers were found to have, and the lesson from it was that a coverage
-    // number is only worth having when every function under it is actually right.
-    if (FloatValue(fn) is { } floating)
-      return this.DeclineNull($"floating point: {floating} (the x87 stack is not modelled)");
+    // A float parameter or a float PHI has no home yet: floats live in frame cells here, and both of
+    // those would need one assigned before the body is walked. Everything else floating point is
+    // selected instruction by instruction (SelectFloat*), and the scalar paths refuse a float type
+    // outright - without that refusal a SINGLE load would mint one Dword virtual register and emit a
+    // single WORD-sized MOV, carrying half the value.
+    foreach (var parameter in fn.Parameters)
+      if (parameter.Type.IsFloat)
+        return this.DeclineNull($"floating point: a {parameter.Type} parameter has no frame cell yet");
+    foreach (var block in fn.Blocks)
+      foreach (var phi in block.Phis)
+        if (phi.Type.IsFloat)
+          return this.DeclineNull($"floating point: a {phi.Type} phi has no frame cell yet");
 
     this._function = new MFunction(fn.Name) { HasArgumentPlan = true };
 
@@ -239,6 +251,12 @@ public sealed class InstructionSelector {
 
   private bool SelectInstruction(IrInstruction instr, MBlock block) {
     switch (instr) {
+      case IrBinary bin when bin.Type.IsFloat:
+        return this.SelectFloatBinary(bin);
+      case IrLoad load when load.Type.IsFloat:
+        return this.SelectFloatLoad(load);
+      case IrStore store when store.Value.Type.IsFloat:
+        return this.SelectFloatStore(store);
       case IrBinary bin:
         return this.SelectBinary(bin, block);
       case IrAlloca alloca:
@@ -462,6 +480,8 @@ public sealed class InstructionSelector {
   }
 
   private bool SelectLoad(IrLoad load, MBlock block) {
+    if (load.Type.IsFloat)
+      return this.Decline($"floating point: {load.Type} through the scalar path");
     if (IsWide(load.Type)) {
       if (this.PointerMemory(load.Pointer, MRegSize.Word) is not { } lowCell)
         return false;
@@ -482,6 +502,8 @@ public sealed class InstructionSelector {
   }
 
   private bool SelectStore(IrStore store, MBlock block) {
+    if (store.Value.Type.IsFloat)
+      return this.Decline($"floating point: {store.Value.Type} through the scalar path");
     if (IsWide(store.Value.Type)) {
       if (this.PointerMemory(store.Pointer, MRegSize.Word) is not { } lowCell)
         return false;
@@ -677,6 +699,10 @@ public sealed class InstructionSelector {
         this._vregs[cast] = low.Reg;      // the low half IS the narrowed value - no instruction needed
         return true;
       }
+      case IrCastOp.SIToFP when to.IsIeeeFloat:
+        return this.SelectIntToFloat(cast);
+      case IrCastOp.FPExt or IrCastOp.FPTrunc when from.IsIeeeFloat && to.IsIeeeFloat:
+        return this.SelectFloatResize(cast);
       default:
         return this.Decline($"cast: {cast.Op} {from} -> {to}");
     }
@@ -781,6 +807,15 @@ public sealed class InstructionSelector {
       var arg = args[i];
       var slot = routine.Args[i];
       switch (slot.Kind) {
+        case RuntimeAbi.ArgKind.St0: {
+          // the print routines take a float on ST(0) and pop it themselves
+          if (!arg.Type.IsIeeeFloat)
+            return this.Decline($"call: {callee.Name} wants a float on the x87 stack, got {arg.Type}");
+          if (!this.TryFloatOperand(arg, out var loaded))
+            return false;
+          this.EmitX87(MOpcode.Fld, loaded, reads: true);
+          break;
+        }
         case RuntimeAbi.ArgKind.Offset: {
           // the address of the data object, not its contents - a string literal the codegen pools
           if (arg is not IrGlobalVariable global)
@@ -884,6 +919,138 @@ public sealed class InstructionSelector {
       new MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: true)));
   }
 
+  #region x87
+
+  /// <summary>The frame cell a floating-point value lives in, minting one on first use.</summary>
+  private MOperand FloatCell(IrValue value) {
+    if (!this._fslots.TryGetValue(value, out var slot)) {
+      slot = this._function.StackSlots.Count;
+      this._function.StackSlots.Add(SizeOf(value.Type));
+      this._fslots[value] = slot;
+    }
+    return new MOperand.StackSlot(slot, RegSize(value.Type));
+  }
+
+  /// <summary>
+  /// A float value as something x87 can load: its own frame cell, or - for a literal - the code
+  /// generator's float constant pool, which stores every one as a qword double. Loading a SINGLE
+  /// literal from the qword form is the same value: x87 widens to its internal format either way,
+  /// and it is the very cell the direct emitter loads too.
+  /// </summary>
+  private bool TryFloatOperand(IrValue value, out MOperand cell) {
+    if (this._fslots.ContainsKey(value)) {
+      cell = this.FloatCell(value);
+      return true;
+    }
+    if (value is IrConstantFloat constant) {
+      cell = new MOperand.DataCell(FloatConstantName(constant.Value), 0, MRegSize.Qword);
+      return true;
+    }
+    cell = null!;
+    return this.Decline($"floating point: {value.GetType().Name} has no cell");
+  }
+
+  /// <summary>The pool name a float literal resolves through - its bits, so equal values share a cell.</summary>
+  internal static string FloatConstantName(double value)
+    => ".fc." + System.BitConverter.DoubleToInt64Bits(value).ToString("x16");
+
+  private static readonly Dictionary<IrBinaryOp, MOpcode> _floatOps = new() {
+    [IrBinaryOp.FAdd] = MOpcode.Faddp,
+    [IrBinaryOp.FSub] = MOpcode.Fsubp,
+    [IrBinaryOp.FMul] = MOpcode.Fmulp,
+    [IrBinaryOp.FDiv] = MOpcode.Fdivp,
+  };
+
+  /// <summary>
+  /// <c>FLD lhs; FLD rhs; F&lt;op&gt;P; FSTP result</c> - the textbook stack form. Pushing the left
+  /// operand first leaves it in ST(1), which is the order the popping arithmetic computes
+  /// (<c>FSUBP</c> is ST(1) - ST(0)), so subtraction and division come out the right way round.
+  /// </summary>
+  private bool SelectFloatBinary(IrBinary bin) {
+    if (bin.Type.IsMbf)
+      return this.Decline("floating point: MBF is not an x87 format");
+    if (!_floatOps.TryGetValue(bin.Op, out var opcode))
+      return this.Decline($"floating point: {bin.Op}");
+    if (!this.TryFloatOperand(bin.Lhs, out var lhs) || !this.TryFloatOperand(bin.Rhs, out var rhs))
+      return false;
+
+    this.EmitX87(MOpcode.Fld, lhs, reads: true);
+    this.EmitX87(MOpcode.Fld, rhs, reads: true);
+    this._current.Instructions.Add(new MInstr(opcode, [], MInstrEffect.None));
+    this.EmitX87(MOpcode.Fstp, this.FloatCell(bin), reads: false);
+    return true;
+  }
+
+  private bool SelectFloatLoad(IrLoad load) {
+    if (this.PointerMemory(load.Pointer, RegSize(load.Type)) is not { } source)
+      return false;
+    this.EmitX87(MOpcode.Fld, source, reads: true);
+    this.EmitX87(MOpcode.Fstp, this.FloatCell(load), reads: false);
+    return true;
+  }
+
+  private bool SelectFloatStore(IrStore store) {
+    if (this.PointerMemory(store.Pointer, RegSize(store.Value.Type)) is not { } destination)
+      return false;
+    if (!this.TryFloatOperand(store.Value, out var source))
+      return false;
+    this.EmitX87(MOpcode.Fld, source, reads: true);
+    this.EmitX87(MOpcode.Fstp, destination, reads: false);
+    return true;
+  }
+
+  /// <summary>
+  /// An integer widened to a float. x87 reads its integers from memory, so the value is parked in a
+  /// frame cell first - a word for an INTEGER, both halves of the pair for a LONG - and <c>FILD</c>
+  /// reads it back at that width.
+  /// </summary>
+  private bool SelectIntToFloat(IrCast cast) {
+    var from = cast.Value.Type;
+    if (!from.IsInteger || from.Bits is not (16 or 32))
+      return this.Decline($"floating point: {cast.Op} from {from}");
+    if (!from.Signed)
+      return this.Decline($"floating point: {cast.Op} from unsigned {from} (FILD is signed)");
+
+    var slot = this._function.StackSlots.Count;
+    var wide = IsWide(from);
+    this._function.StackSlots.Add(wide ? 4 : 2);
+    var cell = new MOperand.StackSlot(slot, MRegSize.Word);
+    if (wide) {
+      if (!this.TryOperandPair(cast.Value, out var lo, out var hi))
+        return false;
+      this.StoreWord(cell, lo);
+      this.StoreWord(Shifted(cell, 2), hi);
+    } else {
+      if (!this.TryOperand(cast.Value, out var value))
+        return false;
+      this.StoreWord(cell, value);
+    }
+
+    this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(slot, wide ? MRegSize.Dword : MRegSize.Word), reads: true);
+    this.EmitX87(MOpcode.Fstp, this.FloatCell(cast), reads: false);
+    return true;
+  }
+
+  /// <summary>A float widened or narrowed to the other float format: the load and the store do it.</summary>
+  private bool SelectFloatResize(IrCast cast) {
+    if (!this.TryFloatOperand(cast.Value, out var source))
+      return false;
+    this.EmitX87(MOpcode.Fld, source, reads: true);
+    this.EmitX87(MOpcode.Fstp, this.FloatCell(cast), reads: false);
+    return true;
+  }
+
+  private void StoreWord(MOperand cell, MOperand value)
+    => this._current.Instructions.Add(new MInstr(MOpcode.Mov, [cell, value],
+      new MInstrEffect([], value is MOperand.Register ? [1] : [], false, false, false, WritesMemory: true)));
+
+  /// <summary>An x87 instruction with a single memory operand it either reads or writes.</summary>
+  private void EmitX87(MOpcode opcode, MOperand cell, bool reads)
+    => this._current.Instructions.Add(new MInstr(opcode, [cell],
+      new MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: reads, WritesMemory: !reads)));
+
+  #endregion
+
   /// <summary>A PUSH of one argument word, with the effect descriptor that keeps it ordered against the call.</summary>
   private static MInstr PushOf(MOperand operand) => new(MOpcode.Push, [operand],
     new MInstrEffect(WrittenRegs: [], ReadRegs: operand is MOperand.Register ? [0] : [],
@@ -901,6 +1068,15 @@ public sealed class InstructionSelector {
       var dx = new MOperand.Register(MReg.Physical_(Reg.DX, MRegSize.Word));
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [ax, lo], MovEffect(ax, lo)));
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dx, hi], MovEffect(dx, hi)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Ret, [], MInstrEffect.None));
+      return true;
+    }
+    if (ret.HasValue && ret.Value is { Type.IsFloat: true } floating) {
+      // "Results: AX / DX:AX / ST0 / string handle in AX" - a float goes back on the x87 stack, so
+      // the value is loaded and deliberately NOT popped: the caller pops it
+      if (!this.TryFloatOperand(floating, out var cell))
+        return false;
+      this.EmitX87(MOpcode.Fld, cell, reads: true);
       this._current.Instructions.Add(new MInstr(MOpcode.Ret, [], MInstrEffect.None));
       return true;
     }
@@ -922,22 +1098,6 @@ public sealed class InstructionSelector {
   private MReg FreshVreg(IrType type) => MReg.Virtual(this._nextVreg++, RegSize(type));
 
   /// <summary>True for a 32-bit integer, which this target holds in a register pair.</summary>
-  /// <summary>The first floating-point type appearing anywhere in the function, or null when it has none.</summary>
-  private static IrType? FloatValue(IrFunction fn) {
-    foreach (var parameter in fn.Parameters)
-      if (parameter.Type.IsFloat)
-        return parameter.Type;
-    foreach (var block in fn.Blocks)
-      foreach (var instr in block.Instructions) {
-        if (instr.Type.IsFloat)
-          return instr.Type;
-        foreach (var operand in instr.Operands)
-          if (operand.Type.IsFloat)
-            return operand.Type;
-      }
-    return null;
-  }
-
   private static bool IsWide(IrType type) => type.IsInteger && type.Bits == 32;
 
   /// <summary>Mints the low/high register pair for a 32-bit value and records both halves.</summary>

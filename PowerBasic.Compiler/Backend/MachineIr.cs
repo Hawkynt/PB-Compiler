@@ -10,7 +10,11 @@ namespace PowerBasic.Compiler.Backend;
 /// handled there - the byte-level renaming walls never arise). This file is just the data model;
 /// instruction selection, liveness, linear-scan allocation, emission and scheduling build on it.
 /// </summary>
-public enum MRegSize { Byte, Word, Dword }
+/// <summary>
+/// An operand's width. <c>Qword</c> never names a register on this target - x86-16 has none - but it
+/// does name a memory cell: a DOUBLE, and the qword form of an x87 load or store.
+/// </summary>
+public enum MRegSize { Byte, Word, Dword, Qword }
 
 /// <summary>A register operand: a virtual id until allocation binds it to a physical register.</summary>
 public readonly record struct MReg(int VirtualId, Reg Physical, MRegSize Size, bool IsVirtual) {
@@ -118,6 +122,15 @@ public enum MOpcode {
   Rcl, Rcr,
   Push, Pop,
   Jmp, Jcc, Call, Ret,
+  /// <summary>
+  /// x87. Floating point is computed on a stack, not in the register file, so these carry at most one
+  /// MEMORY operand and the arithmetic forms carry none at all - they consume the two values the
+  /// preceding loads pushed. Selection keeps every float value in a frame cell and brackets each
+  /// operation with FLD/FSTP, so the stack is empty again at every instruction boundary and nothing
+  /// the allocator models is involved.
+  /// </summary>
+  Fld, Fstp, Fild, Fistp,
+  Faddp, Fsubp, Fmulp, Fdivp,
 }
 
 /// <summary>A machine basic block: a label, its instructions in order, and its successor labels.</summary>
