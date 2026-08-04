@@ -128,11 +128,13 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
       ++compared;
       // the same file name appears once per dialect, so the label carries both
       var label = $"{dialect.CanonicalName()}/{name}";
-      // a rendering that already disagrees unoptimized is the WRITER's fault, not the optimizer's
+      // a rendering that already disagrees unoptimized is the WRITER's fault, not the optimizer's.
+      // Naming WHICH part differs matters: "the program behaves differently" and "it exits with a
+      // different code" are separate findings, and a bare inequality reports them as one.
       if (plain != original)
-        badRendering.Add(label);
+        badRendering.Add($"{label} [{Differs(original, plain)}]");
       else if (optimized != plain)
-        badOptimization.Add(label);
+        badOptimization.Add($"{label} [{Differs(plain, optimized)}]");
     }
 
     report.AppendLine($"programs compared          : {compared}")
@@ -148,10 +150,22 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
       "the direct emitter's optimizer changed what a program prints, on BASIC the IR wrote:\n" + report);
     // Rendering disagreements are the WRITER's gaps, diagnosed by name below. They are listed rather
     // than fixed because each needs its own work, and a bare count would let the list grow unnoticed.
-    Assert.That(badRendering.Where(bad => !_knownRenderingGaps.ContainsKey(bad)), Is.Empty,
+    Assert.That(badRendering.Where(bad => !_knownRenderingGaps.ContainsKey(bad.Split(' ')[0])), Is.Empty,
       "the IR writer produced BASIC that does not behave like the program it came from:\n" + report);
     // a floor, so a regression that makes the writer decline everything cannot pass this quietly
     Assert.That(compared, Is.GreaterThanOrEqualTo(_floor), "fewer programs were compared than used to be:\n" + report);
+  }
+
+  /// <summary>Which observable component the two runs disagree on.</summary>
+  private static string Differs(Behaviour a, Behaviour b) {
+    var parts = new List<string>();
+    if (a.Output != b.Output)
+      parts.Add("output");
+    if (a.File != b.File)
+      parts.Add("file");
+    if (a.ExitCode != b.ExitCode)
+      parts.Add($"exit {a.ExitCode}->{b.ExitCode}");
+    return string.Join("+", parts);
   }
 
   /// <summary>Every corpus program, of every dialect.</summary>
@@ -200,10 +214,15 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
       + "so the trip count differs.",
     ["pb30/QUIRK30.BAS"] = "the unsigned width loss again (40000 renders as -25536), not a PB 3.0 "
       + "quirk - the same defect as DIFF04, reached through a different program.",
-    ["qb10/DIFF02.BAS"] = "QuickBASIC 1.0 rounds half AWAY from zero where pb35 does not; the rendered "
-      + "program is pb35 and rounds the pb35 way.",
-    ["qb20/DIFF02.BAS"] = "as qb10/DIFF02: the BASCOM-heritage rounding.",
-    ["qb30/DIFF02.BAS"] = "as qb10/DIFF02: the BASCOM-heritage rounding.",
+    // The ROUNDING that used to be the cause here is fixed - the IR carries the mode and the writer
+    // expands it, and every value now matches byte for byte. What is left is one byte: the QuickBASIC
+    // 1.0-3.0 runtime terminates a sequential OUTPUT file with a CP/M ^Z (0x1A) and pb35 does not, so
+    // the file is 35 bytes against 34. That is a RUNTIME dialect quirk, not anything the IR or the
+    // writer could express in pb35 source.
+    ["qb10/DIFF02.BAS"] = "the file differs by one trailing byte: QB 1.0-3.0 write a CP/M ^Z (0x1A) at "
+      + "the end of a sequential OUTPUT file and pb35 does not. Every value matches.",
+    ["qb20/DIFF02.BAS"] = "as qb10/DIFF02: the trailing ^Z.",
+    ["qb30/DIFF02.BAS"] = "as qb10/DIFF02: the trailing ^Z.",
   };
 
   private const int _floor = 80;   // 83 across every dialect

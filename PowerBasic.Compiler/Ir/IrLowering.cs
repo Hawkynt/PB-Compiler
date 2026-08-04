@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Semantics;
+using PowerBasic.Compiler.Syntax;
 using PowerBasic.Compiler.Syntax.Ast;
 
 namespace PowerBasic.Compiler.Ir;
@@ -2290,7 +2291,19 @@ public sealed class IrLowering {
     if (!sf.IsFloat && st.IsFloat)
       return this._b.Cast(sf.Signed ? IrCastOp.SIToFP : IrCastOp.UIToFP, value, toTy);
     // BASIC ROUNDS a real on its way into an integer variable - n% = 2.7 is 3, not 2 - so this is
-    // the rounding conversion, not the truncating one FIX/INT ask for
+    // the rounding conversion, not the truncating one FIX/INT ask for.
+    //
+    // WHICH rounding is a dialect fact, and the IR carries it rather than flattening both to one
+    // opcode. The BASCOM lineage (QuickBASIC 1.0 to 3.0) rounds half AWAY from zero - CINT(2.5) is 3
+    // and CINT(-2.5) is -3, oracle-verified - where QB 4.x and PowerBASIC take the FPU's
+    // round-half-to-even. Flattening them made every QB 1-3 program round the pb35 way on this path,
+    // which the rendered-BASIC harness caught as a disagreement on qb10/qb20/qb30 DIFF02.
+    //
+    // It is spelled as a named runtime call, not a second cast opcode, because that is what lets each
+    // back end decide: the pb35 writer expands it into the arithmetic that reproduces it, and a back
+    // end with no such entry declines instead of rounding the other way.
+    if (st.Signed && this._model.EffectiveDialect.IsBascomRuntime())
+      return this._b.Call(toTy, this.RuntimeFn("rt_round_half_away", toTy, value.Type), value);
     return this._b.Cast(st.Signed ? IrCastOp.FPToSIRound : IrCastOp.FPToUI, value, toTy);
   }
 }

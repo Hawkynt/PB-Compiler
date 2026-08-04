@@ -76,6 +76,52 @@ public sealed class IrDialectCarryTests {
     Assert.That(back.Errors, Is.Empty, "rendered: " + rendered);
   }
 
+  private const string _rounding = """
+    10 A% = CINT(2.5)
+    20 B% = CINT(-2.5)
+    30 C% = CINT(3.5)
+    40 PRINT A%; B%; C%
+    50 END
+    """;
+
+  /// <summary>
+  /// WHICH rounding is a dialect fact. QuickBASIC 1.0 to 3.0 round half AWAY from zero - CINT(2.5) is
+  /// 3 - where QB 4.x and PowerBASIC take the FPU's round-half-to-even, which gives 2. Flattening both
+  /// into one cast made every QB 1-3 program round the pb35 way once it went through the IR.
+  /// </summary>
+  [Test]
+  public void Lower_GivenABascomDialect_ThenTheRoundingModeIsCarriedAsItsOwnCall() {
+    var calls = Lower(_rounding, Dialect.Qb10).Functions.SelectMany(f => f.Blocks)
+      .SelectMany(b => b.Instructions).OfType<IrCall>()
+      .Select(c => (c.Callee as IrFunction)?.Name).ToList();
+
+    Assert.That(calls, Does.Contain("rt_round_half_away"));
+  }
+
+  /// <summary>A dialect that rounds half to even keeps the plain cast - no call, no extra code.</summary>
+  [Test]
+  public void Lower_GivenPowerBasic_ThenTheOrdinaryRoundingCastIsUsed() {
+    var module = Lower("a% = CINT(2.5)\nPRINT a%\nEND\n", Dialect.Pb36);
+    var body = module.Functions.SelectMany(f => f.Blocks).SelectMany(b => b.Instructions).ToList();
+
+    Assert.That(body.OfType<IrCall>().Select(c => (c.Callee as IrFunction)?.Name),
+      Does.Not.Contain("rt_round_half_away"));
+  }
+
+  /// <summary>
+  /// pb35 has no half-away rounding, so reproducing the source dialect means WRITING IT OUT rather
+  /// than adopting the target's rule - which is the whole reason the mode is carried as a call.
+  /// </summary>
+  [Test]
+  public void Write_GivenBascomRounding_ThenItIsExpandedIntoArithmeticThatReproducesIt() {
+    var rendered = IrBasicWriter.Write(Lower(_rounding, Dialect.Qb10), out var warnings);
+
+    Assert.That(rendered, Does.Contain("SGN(").And.Contain("INT("), "the half-away rule is written out");
+    Assert.That(warnings, Has.Some.Contains("half away from zero"));
+    var back = Binder.Bind(Parser.Parse(Lexer.Tokenize(rendered, "RT.BAS", Dialect.Pb35), "RT.BAS", Dialect.Pb35), Dialect.Pb35);
+    Assert.That(back.Errors, Is.Empty, "rendered: " + rendered);
+  }
+
   /// <summary>
   /// The x86-16 back end must REFUSE the MBF value rather than compute on it: the x87 cannot read
   /// those bits, and treating mbf32 as f32 reads a different number entirely.

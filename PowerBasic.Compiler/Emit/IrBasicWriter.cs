@@ -136,6 +136,11 @@ public sealed class IrBasicWriter {
         : $"FUNCTION {Sanitize(function.Name)}({parameters}) AS {this.DeclaredType(function.ReturnType)}");
     }
 
+    // the body is rendered by a nested writer, so anything it had to say about the translation has to
+    // come back with it - a warning recorded and then dropped is worse than none
+    foreach (var warning in body._warnings)
+      this.Note(warning);
+
     foreach (var (name, type) in body._locals)
       this.Line($"  DIM {name} AS {this.DeclaredType(type)}");
     foreach (var (name, element, count) in body._arrays)
@@ -583,6 +588,18 @@ public sealed class IrBasicWriter {
       case "rt_str_dup":
         this._names[call] = this.Ref(call.Args.First());
         return true;
+      // Rounding half AWAY from zero, which is what QuickBASIC 1.0 to 3.0 do and pb35 does not.
+      // pb35's own CINT rounds half to EVEN, so reproducing the source dialect means writing the
+      // arithmetic out: move away from zero by a half and truncate. That is the point of carrying the
+      // rounding as its own call - the renderer can emit the extra code rather than silently adopt
+      // the target's rule.
+      case "rt_round_half_away": {
+        var x = this.Ref(call.Args.First());
+        this.Note("rounding half away from zero (QuickBASIC 1.0-3.0) is written out as "
+          + "SGN(x) * INT(ABS(x) + 0.5): pb35's own CINT rounds half to even.");
+        this._names[call] = $"(SGN({x}) * INT(ABS({x}) + 0.5))";
+        return true;
+      }
 
       default:
         return false;
