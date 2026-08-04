@@ -282,19 +282,21 @@ public sealed class BackendRuntimeCallTests {
   }
 
   /// <summary>
-  /// The back end has no 80-bit frame cell - <c>MRegSize</c> stops at <c>Qword</c> - so an EXTENDED
-  /// value cannot be spilled and reloaded without losing what makes it EXTENDED. Printing one must
-  /// therefore DECLINE, not route.
+  /// Printing an EXTENDED must DECLINE, and the reason is not in this back end.
   ///
-  /// This is a regression test for a measured miscompile, not a hypothetical. Listing
-  /// <c>rt_print_ext</c> against the DOUBLE formatter (which is the correct mapping - there is no
-  /// rt_print_f80) routed four more corpus compilations and made two of them disagree: DIFF24.BAS
-  /// printed <c>66.66666</c> where the direct emitter, byte-verified against PBC 3.50, gives
-  /// <c>66.66667</c>. The mapping was right and the ground underneath it was not. When a real Tbyte
-  /// cell exists, this test is the one to delete.
+  /// PowerBASIC computes a float expression at x87 precision and lets the static type choose only the
+  /// FORMATTER. The IR types the expression at its declared width instead, so <c>H?/3</c> with
+  /// <c>H? = 200</c> becomes an f32 value - 66.666664 - and prints 66.66666 where genuine PBC 3.50
+  /// prints 66.66667 from the unrounded register. It is visible in the emitted LLVM as
+  /// <c>float 0x4050AAAAA0000000</c>: the rounding is in the IR before any back end sees it.
+  ///
+  /// This was first diagnosed as a missing 80-bit frame cell. That was wrong - the cell was a real
+  /// bug and is fixed (<see cref="MRegSize.Tbyte"/>, and float temporaries now spill at x87 width),
+  /// and listing the entries still disagreed on the same two compilations. Fixing this one means
+  /// changing how the lowering types PB float arithmetic, not adding a table row.
   /// </summary>
   [Test]
-  public void Select_GivenAnExtendedPrint_ThenDeclinesUntilThereIsAnEightyBitCell() {
+  public void Select_GivenAnExtendedPrint_ThenDeclinesWhileTheIrRoundsToTheDeclaredWidth() {
     var module = Optimized("""
       DIM e AS EXT
       e = 1
@@ -304,7 +306,35 @@ public sealed class BackendRuntimeCallTests {
 
     InstructionSelector.TrySelect(main, out var reason);
 
-    Assert.That(reason, Is.Not.Null.And.Contain("ext"),
-      "printing an EXTENDED must decline while its frame cell would be written four bytes at a time");
+    Assert.That(reason, Is.Not.Null.And.Contain("ext"));
+  }
+
+  /// <summary>
+  /// The cell itself, which WAS broken: a float temporary is parked at the x87's own width, so
+  /// nothing is rounded on the way through the frame. Sizing it by the IR type would have written a
+  /// DOUBLE through a dword reference - half a value - which nothing had caught because no routed
+  /// corpus program had yet spilled one.
+  /// </summary>
+  [Test]
+  public void Select_GivenAFloatTemporary_ThenItsFrameCellIsTenBytesWide() {
+    // The counter drives the arithmetic, so nothing folds; and it is the INTEGER that is
+    // loop-carried, not the DOUBLE - a f64 phi is still a selection decline of its own.
+    var m = Select("""
+      DIM t AS DOUBLE
+      DIM i AS INTEGER
+      FOR i = 1 TO 50
+        t = i / 3 + i * 7
+        PRINT t
+      NEXT i
+      """, "main");
+
+    var cells = m.AllInstructions
+      .Where(i => i.Opcode is MOpcode.Fstp or MOpcode.Fld)
+      .SelectMany(i => i.Operands)
+      .OfType<MOperand.StackSlot>()
+      .ToList();
+    Assert.That(cells, Is.Not.Empty, "the expression should spill at least one intermediate");
+    Assert.That(cells.Select(c => c.Size), Has.Some.EqualTo(MRegSize.Tbyte),
+      "an intermediate is stored at the x87's own width, not the declared type's");
   }
 }

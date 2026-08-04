@@ -14,7 +14,12 @@ namespace PowerBasic.Compiler.Backend;
 /// An operand's width. <c>Qword</c> never names a register on this target - x86-16 has none - but it
 /// does name a memory cell: a DOUBLE, and the qword form of an x87 load or store.
 /// </summary>
-public enum MRegSize { Byte, Word, Dword, Qword }
+/// <summary>
+/// The width of an operand. The three wide ones never name a REGISTER on a 16-bit machine - they
+/// only ever describe a memory reference an x87 instruction reaches: a SINGLE is a dword, a DOUBLE a
+/// qword, and an EXTENDED a tbyte. Writing one through a narrower reference stores part of a value.
+/// </summary>
+public enum MRegSize { Byte, Word, Dword, Qword, Tbyte }
 
 /// <summary>A register operand: a virtual id until allocation binds it to a physical register.</summary>
 public readonly record struct MReg(int VirtualId, Reg Physical, MRegSize Size, bool IsVirtual) {

@@ -219,17 +219,18 @@ internal static class RuntimeAbi {
     // the direct emitter's own dispatch, which is the only thing that says which formatter a PB type
     // is supposed to reach.
     //
-    // NOT rt_print_ext / rt_fprint_ext, though the mapping itself is right (EXTENDED goes through the
-    // DOUBLE formatter - there is no rt_print_f80 and there should not be one). They were listed,
-    // measured, and BACKED OUT: they routed four more corpus compilations and two of them disagreed.
+    // NOT rt_print_ext / rt_fprint_ext, though the mapping is right (EXTENDED prints through the
+    // DOUBLE formatter - there is no rt_print_f80 and there should not be one). Listing them routes
+    // four more corpus compilations and two of them disagree, and the cause is NOT in this back end:
     //
-    // What they exposed is not a mistake in the mapping but a gap underneath it. The back end has no
-    // 80-bit frame cell: MRegSize stops at Qword, and RegSize() calls anything wider than a word a
-    // Dword - so an f80 temporary gets a 10-byte slot that FSTP writes 4 bytes of. The visible symptom
-    // in DIFF24.BAS was subtler than that suggests: PRINT of H?/3 came out 66.66666 where the direct
-    // emitter (byte-verified against PBC 3.50) gives 66.66667, because the routed path rounds the
-    // quotient to its nominal width before printing while genuine PB keeps x87 precision all the way
-    // into the formatter. Listing these again needs a real Tbyte cell first.
+    // PowerBASIC computes a float expression at x87 precision and lets the static type choose only
+    // the FORMATTER. The IR types the expression at its declared width instead, so `H?/3` with
+    // H? = 200 is an f32 value - 66.666664 - and prints as 66.66666, where genuine PBC (and the
+    // direct emitter, byte-verified against it) print 66.66667 from the unrounded register.
+    //
+    // The rounding is visible in the emitted LLVM as `float 0x4050AAAAA0000000`, i.e. it is already
+    // in the IR before any back end sees it. Fixing it means changing how the lowering types PB float
+    // arithmetic, not adding a table row - see docs/ROADMAP.md.
 
     // a BYTE is 0..255, so the signed 16-bit printer renders it correctly - the emitter falls into
     // the same case for it
@@ -251,9 +252,8 @@ internal static class RuntimeAbi {
       _callerSaved, Answer: ResultKind.St0),
     ["llvm.pow.f64"] = new("rt_pow", [new(ArgKind.St0, default), new(ArgKind.St0, default)],
       _callerSaved, Answer: ResultKind.St0),
-    // and NOT llvm.pow.f80, for the same missing Tbyte cell: its ST0 answer would be stored into a
-    // 10-byte slot four bytes at a time. That it happens not to disagree on today's corpus is not a
-    // reason to claim it
+    ["llvm.pow.f80"] = new("rt_pow", [new(ArgKind.St0, default), new(ArgKind.St0, default)],
+      _callerSaved, Answer: ResultKind.St0),
 
     // NOT listed, and each for a stated reason:
     //   rt_print_u32 - a DWORD is staged through scratch memory as a qword and FILDed into the

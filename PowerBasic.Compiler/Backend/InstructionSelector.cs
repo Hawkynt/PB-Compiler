@@ -1099,14 +1099,32 @@ public sealed class InstructionSelector {
   #region x87
 
   /// <summary>The frame cell a floating-point value lives in, minting one on first use.</summary>
+  /// <summary>
+  /// The frame cell an intermediate float value is parked in - always a TBYTE, whatever the IR types
+  /// the value.
+  ///
+  /// This is not a rounding decision, it is the absence of one. In PowerBASIC an expression's type
+  /// selects the FORMATTER (a SINGLE prints 7 significant digits, a DOUBLE 15) but does not round the
+  /// value on the way there: genuine PBC computes in the x87 and prints what the register holds.
+  /// <c>PRINT H?/3</c> with <c>H? = 200</c> gives <c>66.66667</c> for exactly that reason - rounded to
+  /// SINGLE first it would be <c>66.66666</c>, which is what this back end produced until the cell
+  /// stopped being four bytes wide.
+  ///
+  /// Only TEMPORARIES come through here. A store to a declared variable writes through the variable's
+  /// own cell at the variable's own width, so <c>D! = x</c> still rounds to SINGLE as it must - the
+  /// rounding PB does keeps happening, and the rounding it does not do stops.
+  /// </summary>
   private MOperand FloatCell(IrValue value) {
     if (!this._fslots.TryGetValue(value, out var slot)) {
       slot = this._function.StackSlots.Count;
-      this._function.StackSlots.Add(SizeOf(value.Type));
+      this._function.StackSlots.Add(_X87_CELL_BYTES);
       this._fslots[value] = slot;
     }
-    return new MOperand.StackSlot(slot, RegSize(value.Type));
+    return new MOperand.StackSlot(slot, MRegSize.Tbyte);
   }
+
+  /// <summary>The x87's own register width, which is what an intermediate float is stored and reloaded at.</summary>
+  private const int _X87_CELL_BYTES = 10;
 
   /// <summary>
   /// A float value as something x87 can load: its own frame cell, or - for a literal - the code
@@ -1432,11 +1450,26 @@ public sealed class InstructionSelector {
   /// IR (it is a target property), and on x86-16 it is a 2-byte near offset - so it is a word, not
   /// the byte a naive width test would give it, which would size its loads and stores wrongly.
   /// </summary>
-  private static MRegSize RegSize(IrType type) => type.IsPointer ? MRegSize.Word : type.Bits switch {
-    <= 8 => MRegSize.Byte,
-    <= 16 => MRegSize.Word,
-    _ => MRegSize.Dword,
-  };
+  /// <summary>
+  /// The width a value of this type occupies in memory.
+  ///
+  /// Floats are sized by their OWN width rather than falling into the integer ladder's Dword. That
+  /// ladder is right for integers, where a 32-bit value lives in a register PAIR and each half is
+  /// addressed a word at a time, and wrong for every float wider than a SINGLE: a DOUBLE addressed as
+  /// a dword is half a value and an EXTENDED is less than half of one. Nothing had caught it because
+  /// no routed corpus program had yet spilled a DOUBLE temporary.
+  /// </summary>
+  private static MRegSize RegSize(IrType type) {
+    if (type.IsPointer)
+      return MRegSize.Word;
+    if (type.Kind == IrTypeKind.Float)
+      return type.Bits switch { <= 32 => MRegSize.Dword, <= 64 => MRegSize.Qword, _ => MRegSize.Tbyte };
+    return type.Bits switch {
+      <= 8 => MRegSize.Byte,
+      <= 16 => MRegSize.Word,
+      _ => MRegSize.Dword,
+    };
+  }
 
   private static int SizeOf(IrType type) => type.IsPointer ? 2 : System.Math.Max(1, (type.Bits + 7) / 8);
 }

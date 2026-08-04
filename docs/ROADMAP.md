@@ -1,26 +1,26 @@
 
-### The 80-bit frame cell
+### Float precision: the declared type should pick the formatter, not round the value
 
-The x86-16 back end cannot spill an EXTENDED. `MRegSize` stops at `Qword`, and `RegSize()` calls
-anything wider than a word a `Dword`, so an f80 temporary is given a 10-byte slot that `FSTP` writes
-four bytes of. Until that is fixed, `rt_print_ext` / `rt_fprint_ext` and `llvm.pow.f80` stay out of
-the runtime ABI table even though their mappings are known to be right (EXTENDED prints through the
-DOUBLE formatter; there is no `rt_print_f80` and there should not be one).
+PowerBASIC computes a float expression at x87 precision and lets the static type choose only the
+**formatter** - a SINGLE prints 7 significant digits, a DOUBLE 15. It does not round the value on the
+way there. The IR types the expression at its declared width instead, so `H?/3` with `H? = 200` is an
+f32 value, 66.666664, and prints `66.66666` where genuine PBC 3.50 prints `66.66667` from the
+unrounded register. It is visible in the emitted LLVM as `float 0x4050AAAAA0000000` - the rounding is
+already in the IR before any back end sees it.
 
-This was measured, not predicted. Listing them routed four more corpus compilations and made two of
-them disagree: `DIFF24.BAS` printed `66.66666` where the direct emitter - byte-verified against PBC
-3.50 - gives `66.66667`, because the routed path rounds a quotient to its nominal width before
-printing while genuine PB keeps x87 precision all the way into the formatter. The entries were backed
-out and `BackendRuntimeCallTests` now asserts the decline, so re-listing them without the cell fails.
+This is what keeps `rt_print_ext` / `rt_fprint_ext` out of the runtime ABI table, worth about 11
+selection declines. The mapping itself is right (EXTENDED prints through the DOUBLE formatter; there
+is no `rt_print_f80` and there should not be one), but listing it routes `DIFF24.BAS` and that program
+then disagrees. Fixing it means changing how the lowering types PB float arithmetic - and that reaches
+the C and LLVM back ends too, which today receive well-typed f32/f64 arithmetic.
 
-It is worth about 11 selection declines, and it is the largest single mechanical blocker left.
-
-# Roadmap — missing features from the oracle compilers
-
-Prioritised backlog (IREPB MoSCoW) of capabilities the genuine oracle compilers
-(the BASIC family **and** the staged C compilers — see `docs/LINKER.md`,
-`docs/BASIC-FAMILY.md`) demonstrate that `pbc` does not yet implement. Grounded
-in the codegen `Unsupported(...)` surface and the `OmfException` rejections.
+It was first diagnosed here as a missing 80-bit frame cell. **That was wrong.** The cell was a genuine
+bug and is now fixed - `MRegSize` has a `Tbyte`, `RegSize()` sizes a float by its own width instead of
+calling everything wider than a word a `Dword` (a DOUBLE was being addressed through a dword
+reference: half a value, latent only because no routed corpus program had yet spilled one), and float
+temporaries park at the x87's own width so nothing is rounded passing through the frame. With all of
+that fixed, listing the entries still disagreed on the same two compilations, which is how the real
+cause was found.
 
 ## A. Foreign-object interop / ABI (the active frontier)
 

@@ -280,13 +280,15 @@ public sealed class MachineEmitter {
 
   /// <summary>
   /// Stamps the operand width onto a memory reference. Everything integer here is a word, but an x87
-  /// load or store is a dword or a qword and the encoding differs - a SINGLE written through a word
-  /// reference would be half a value.
+  /// load or store is a dword, a qword or a tbyte and the encoding differs - a SINGLE written through
+  /// a word reference would be half a value, and an EXTENDED through a dword reference would be less
+  /// than half of one.
   /// </summary>
   private static Mem Sized(Mem memory, MRegSize size) => size switch {
     MRegSize.Byte => memory.WithSize(OperandSize.Byte),
     MRegSize.Dword => memory.WithSize(OperandSize.Dword),
     MRegSize.Qword => memory.WithSize(OperandSize.Qword),
+    MRegSize.Tbyte => memory.WithSize(OperandSize.Tbyte),
     _ => memory.WithSize(OperandSize.Word),
   };
 }
