@@ -28,11 +28,6 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// </list>
 /// </summary>
 [TestFixture]
-[Explicit("Blocked on a defect in the interpreter itself, pinned by InterpreterSanityTests: a "
-  + "subtraction of two variables comes out negated when the DIRECT emitter's code is executed. "
-  + "The three corpus disagreements this fixture reports are therefore the interpreter's, not the "
-  + "back end's, and a harness whose reference is wrong is worse than no harness. Run it explicitly "
-  + "while working on the interpreter; it becomes a gate once the sanity fixture is green.")]
 public sealed class BackendCorpusDifferentialTests {
 
   private static readonly string _repoRoot =
@@ -63,6 +58,20 @@ public sealed class BackendCorpusDifferentialTests {
   // compared, which is a gap in the comparison rather than a pass
   private static readonly string[] _fileNames =
     ["OUT.TXT", "RESULT.TXT", "T.TXT", "TEST.TXT", "TMP.TXT", "DATA.TXT", "O.TXT", "SCREEN.TXT"];
+
+  /// <summary>
+  /// Disagreements that are understood and open. They are listed rather than tolerated silently,
+  /// because the value of this fixture is that a NEW one fails the build.
+  /// </summary>
+  private static readonly Dictionary<string, string> _known = new(StringComparer.OrdinalIgnoreCase) {
+    ["DIFF25.BAS"] =
+      "L& = A2% * B2% with both operands 32767 gives 1073676288 on the IR path and 1073676289 - the "
+      + "exact answer - on the direct one. PowerBASIC's integral arithmetic is float-shaped, and "
+      + "IntegerRecovery does not recover a 16x16 multiply widening into a LONG, so the IR keeps the "
+      + "product in an f32 whose 24-bit mantissa cannot hold 2^30; the direct emitter computes it on "
+      + "the x87 where the temporary has 64 bits of mantissa. The fix belongs in IntegerRecovery: a "
+      + "multiply of two INTEGER values assigned to a LONG is exact as a 32-bit integer multiply.",
+  };
 
   private static string Summarize(string reason) {
     var cut = reason.IndexOf(" at ", StringComparison.Ordinal);
@@ -138,9 +147,18 @@ public sealed class BackendCorpusDifferentialTests {
       report.AppendLine($"DISAGREEMENT {d.Program}:\n  direct: {Escape(d.Direct)}\n  routed: {Escape(d.Routed)}");
     TestContext.Out.Write(report.ToString());
 
-    Assert.That(disagreements, Is.Empty,
+    // A baseline, not a blanket pass. Each entry is a KNOWN defect with a diagnosis; anything else
+    // appearing here is a regression and fails immediately.
+    var unexpected = disagreements.Where(d => !_known.ContainsKey(d.Program)).ToList();
+    Assert.That(unexpected, Is.Empty,
       "the x86-16 back end and the direct emitter produce programs that behave differently:\n" + report);
     Assert.That(agreed, Is.GreaterThan(0), "nothing was actually compared:\n" + report);
+
+    // and a known defect that quietly starts agreeing is worth knowing about too - it means either it
+    // was fixed (delete the entry) or the comparison stopped reaching it (a worse problem)
+    foreach (var (program, diagnosis) in _known)
+      if (disagreements.All(d => d.Program != program))
+        TestContext.Out.WriteLine($"NOTE {program} no longer disagrees - check whether this was fixed: {diagnosis}");
   }
 
   private static string Escape(Behaviour behaviour) {

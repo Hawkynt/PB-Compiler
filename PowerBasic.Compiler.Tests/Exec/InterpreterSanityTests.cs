@@ -22,6 +22,12 @@ public sealed class InterpreterSanityTests {
     return Cpu8086.Run(image).Output;
   }
 
+  private static string RunUnoptimized(string source) {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    var codegen = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = false };
+    return Cpu8086.Run(codegen.EmitExecutable()).Output;
+  }
+
   [TestCase("PRINT 100 - 1", " 99 ")]
   [TestCase("PRINT 1 - 100", "-99 ")]
   [TestCase("PRINT 100 + 1", " 101 ")]
@@ -38,13 +44,11 @@ public sealed class InterpreterSanityTests {
     Assert.That(Run("x% = 99" + "\n" + "PRINT x%").TrimEnd(), Is.EqualTo(" 99"));
   }
 
-  [Ignore("INTERPRETER DEFECT: a subtraction of two variables comes out negated. PRINT x% (no arithmetic) is right and every constant-folded case is right, so the fault is in the interpreter's execution of the direct emitter's two-operand subtract - not in either compiler path. Until it is found, no disagreement this interpreter reports can be trusted.")]
   [Test]
   public void Run_GivenTwoVariablesSubtracted_ThenTheSignIsRight() {
     Assert.That(Run("x% = 100" + "\n" + "y% = 1" + "\n" + "PRINT x% - y%").TrimEnd(), Is.EqualTo(" 99"));
   }
 
-  [Ignore("INTERPRETER DEFECT: a subtraction of two variables comes out negated. PRINT x% (no arithmetic) is right and every constant-folded case is right, so the fault is in the interpreter's execution of the direct emitter's two-operand subtract - not in either compiler path. Until it is found, no disagreement this interpreter reports can be trusted.")]
   [Test]
   public void Run_GivenAVariableSubtraction_ThenTheSignIsRight() {
     // the immediate-folding path: v - c is emitted as an ADD of -c, and a sign error there would make

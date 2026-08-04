@@ -192,7 +192,27 @@ interpreter has no x87 arithmetic), and none disagree. The three outcomes are ke
 "not compared" is never counted as agreement, because collapsing them is how a coverage number starts
 lying.
 
-**It is not a gate yet.** `InterpreterSanityTests` checks the interpreter against the one path already
+**It is a gate.** Of the 24 programs the back end compiles part of, **23 run both ways and agree,
+none are uncompared, and one disagrees** - and that one is listed as a known defect with its
+diagnosis, so a NEW disagreement fails the build.
+
+The open one: `L& = A2% * B2%` with both operands 32767 gives 1073676288 on the IR path and
+1073676289 - the exact answer - on the direct one. PowerBASIC's integral arithmetic is float-shaped,
+and `IntegerRecovery` does not recover a 16x16 multiply widening into a LONG, so the IR keeps the
+product in an `f32` whose 24-bit mantissa cannot hold 2^30; the direct emitter computes it on the x87
+where the temporary carries 64 bits. The fix belongs in `IntegerRecovery`.
+
+Getting here needed the interpreter to be checked against the one path already known to be right
+(`InterpreterSanityTests`, against the direct emitter). It failed that check at first - a subtraction
+reaching the FPU came out negated - and the cause was the Intel encoding trap the manuals are famous
+for: the `DC`/`DE` register forms **swap** `FSUB`/`FSUBR` and `FDIV`/`FDIVR` relative to `D8`, so
+`DE /5` is `FSUBP` (ST(i) - ST(0)) while `D8 /4` is `FSUB` (ST(0) - ST(i)). Reading /5 as "reverse" in
+both directions inverted the sign of every subtraction PowerBASIC's float-shaped integer arithmetic
+put through the FPU. Three of the four "disagreements" the harness first reported were that bug, in
+the harness rather than in either compiler - which is why the reference is checked before its verdicts
+are believed.
+
+**Superseded note.** `InterpreterSanityTests` checks the interpreter against the one path already
 known to be right - the direct emitter, whose bytes the golden battery holds to PBC 3.50 - and two of
 those checks fail: a subtraction of two VARIABLES comes out negated, while `PRINT x%` and every
 constant-folded case are right. So the fault is in the interpreter's execution of the direct emitter's

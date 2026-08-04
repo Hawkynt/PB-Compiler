@@ -722,9 +722,17 @@ public sealed class Cpu8086 {
           this.FPop();
         return;
       case 0xD8 or 0xDC or 0xDE: {
-        // D8 computes into ST(0); DC and DE compute into ST(i), and DE pops afterwards
+        // D8 computes into ST(0); DC and DE compute into ST(i), and DE pops afterwards.
+        //
+        // And the DC/DE register forms SWAP the reversing pair: DE /5 is FSUBP (ST(i) - ST(0)) while
+        // D8 /4 is FSUB (ST(0) - ST(i)) - the encodings for FSUB/FSUBR and FDIV/FDIVR exchange places
+        // between the two directions. Reading /5 as "reverse" in both is a sign flip on every
+        // subtraction that reaches the FPU, which is exactly what PB's float-shaped integer
+        // arithmetic does.
         var op = (modrm >> 3) & 7;
         var intoStack0 = opcode == 0xD8;
+        if (!intoStack0 && op >= 4)
+          op ^= 1;
         var result = intoStack0
           ? Arithmetic(op, this.St(0), this.St(index))
           : Arithmetic(op, this.St(index), this.St(0));
