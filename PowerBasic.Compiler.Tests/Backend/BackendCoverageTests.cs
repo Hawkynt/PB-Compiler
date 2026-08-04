@@ -101,7 +101,11 @@ public sealed class BackendCoverageTests {
       report.AppendLine($"  {count,5}  {reason}");
     TestContext.Out.Write(report.ToString());
 
-    // a floor, not an exact count: widening the selector may only raise it
-    Assert.That(census.Selected, Is.GreaterThan(0), "the back end selects nothing at all:\n" + report);
+    // A floor, not an exact count: widening the selector may only raise it, and a change that
+    // lowers it has taken coverage away from the retargetable path - which is the thing this whole
+    // back end exists to grow. The number moved 8 -> 9 when calls to defined procedures became
+    // selectable; raise it with the next widening.
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(9),
+      "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
   }
 }
