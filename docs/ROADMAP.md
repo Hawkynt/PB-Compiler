@@ -184,7 +184,7 @@ Measured by `OptimizationPortingLedgerTests`, which reads the Stage of every doc
 | machine-level (not IR work at all) | **290** |
 | portable to the IR | **130** |
 | …already expressed on the IR | 20 |
-| …still to port | **110**, of which **14** now carry an `IR` row |
+| …still to port | **110**, of which **17** now carry an `IR` row |
 
 So the target is 110, not 420 — and the bulk of it is one category, *Mid-end* (52). The ledger is a
 test with floors, so the portable share cannot shrink by reclassification instead of movement.
@@ -230,6 +230,14 @@ A ported optimization records an **IR** row in its own document, which is what t
   promotes each element into SSA and the rest of the pipeline can see through it. It sits *after*
   SCCP, because a subscript is not constant in the raw lowering — it is `index * sizeof(element)`
   with the index still an expression.
+- **O0165 read-only global propagation** — `Ir/Passes/ReadOnlyGlobals.cs`. A module-level variable
+  nothing ever writes reads as ZERO, which is what PB guarantees an uninitialized variable holds. It
+  sounds like it would never fire, and it fires because DOS-era BASIC uses `DIM SHARED` where a
+  modern program would use `CONST`.
+- **O0022 dead procedure elimination** and **O0023 dead global elimination** — `Ir/Passes/GlobalDce.cs`,
+  run from the driver on the `--emit-c` / `--emit-llvm` path. Deliberately NOT in the hybrid x86
+  pipeline: there the IR module is not the whole program, so removing a function only stops it being
+  routed. Measured, that cost six corpus comparisons and saved nothing.
 - **O0225 SSA construction** — `Ir/IrDominators.cs` + `Ir/Passes/Mem2Reg.cs`, the same Cytron
   construction the direct tier has.
 

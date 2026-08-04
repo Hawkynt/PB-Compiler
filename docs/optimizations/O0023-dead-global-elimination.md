@@ -6,6 +6,7 @@
 | **Stage** | Whole-program analysis, before emission |
 | **Source** | `CodeGen/OptDeadGlobals.cs` |
 | **Gate** | `--optimize`, no unit compile, nothing linked |
+| **IR** | ✅ `Ir/Passes/GlobalDce.cs` — the same sweep's second half: a global with no users is removed, after the dead functions are gone and have dropped their uses of it. Same placement and same caveat as [O0022](O0022-dead-procedure-elimination.md) |
 | **Related** | [O0022](O0022-dead-procedure-elimination.md), [O0002](O0002-dead-code-elimination.md), [P0003](P0003-bss.md) |
 
 ## What it is

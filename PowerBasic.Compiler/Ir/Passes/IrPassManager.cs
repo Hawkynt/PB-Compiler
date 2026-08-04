@@ -115,5 +115,6 @@ public sealed class IrPassManager {
     .Add("dce", Dce.Run)
     .Add("ifconv", IfConversion.Run)
     .Add("simplifycfg", SimplifyCfg.Run)
+    .AddModulePass("readonly-globals", ReadOnlyGlobals.Run)
     .AddModulePass("ipconstprop", IpConstantProp.Run);
 }

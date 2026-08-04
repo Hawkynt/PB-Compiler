@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | ⬜ Planned |
 | **Stage** | Whole-program analysis |
+| **IR** | ✅ `Ir/Passes/ReadOnlyGlobals.cs` — a module-level variable nothing ever writes reads as ZERO, which is what PB guarantees an uninitialized variable holds (the same rule `Mem2Reg` uses for a promoted slot with no reaching store). Every use must be a plain load: an address that reaches a call, a store or a GEP means the writes are not all visible, so it declines. Registered with `AddModulePass`; deleting the now-unused global is [O0023](O0023-dead-global-elimination.md)'s job. Verified by `ReadOnlyGlobalsTests` and `IrPassObservableEquivalenceTests` |
 | **Related** | [O0023](O0023-dead-global-elimination.md), [O0017](O0017-sccp.md), [O0161](O0161-function-summaries.md) |
 
 ## The idea
