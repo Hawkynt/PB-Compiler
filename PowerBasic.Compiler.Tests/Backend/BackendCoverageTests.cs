@@ -192,12 +192,12 @@ public sealed class BackendCoverageTests {
 
     // selection is not routing: the whole-program codegen also schedules and allocates, and a value
     // live across a CALL has no register unless the spiller can move it to the frame
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(72),
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(73),
       "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // the figure that matters for whole-program ownership: module bodies the back end compiles end to
     // end. It was zero until main became routable at all
-    Assert.That(census.MainBodies, Is.GreaterThanOrEqualTo(26),
+    Assert.That(census.MainBodies, Is.GreaterThanOrEqualTo(27),
       "fewer whole module bodies are compilable than they used to be:\n" + report);
   }
 }

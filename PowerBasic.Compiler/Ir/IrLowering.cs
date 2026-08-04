@@ -1531,6 +1531,7 @@ public sealed class IrLowering {
       "CVDWD" => this.LowerCv(call, "rt_str_cvdwd", IrType.I32),
       "CVS" => this.LowerCv(call, "rt_str_cvs", IrType.F32),
       "CVD" => this.LowerCv(call, "rt_str_cvd", IrType.F64),
+      "POS" => this.LowerPos(call),
       "SQR" => this.LowerMath(call, "sqrt"),
       "SIN" => this.LowerMath(call, "sin"),
       "COS" => this.LowerMath(call, "cos"),
@@ -1540,6 +1541,22 @@ public sealed class IrLowering {
       "ATN" => this.LowerMath(call, "atan"),
       _ => throw new IrLoweringException($"intrinsic {name}"),
     };
+  }
+
+  /// <summary>
+  /// <c>POS(n)</c>: the current print column, which the runtime keeps in <c>rt_col</c> and counts
+  /// from zero while BASIC counts from one - so it is that cell plus one, exactly as the direct
+  /// emitter reads it. The argument is lowered and discarded, because PowerBASIC ignores its value
+  /// but a call inside it still has to happen.
+  /// </summary>
+  private IrValue LowerPos(CallOrIndexExpr call) {
+    if (this._module is null)
+      throw new IrLoweringException("POS requires whole-module lowering");
+    foreach (var argument in call.Arguments)
+      this.LowerExpr(argument);
+    var column = this._module.FindGlobal("rt_col")
+      ?? this._module.AddGlobal(new IrGlobalVariable("rt_col", IrType.I16) { IsZeroInitialized = true });
+    return this._b.Add(this._b.Load(IrType.I16, column), new IrConstantInt(IrType.I16, 1));
   }
 
   /// <summary>LBOUND/UBOUND of an array dimension: a compile-time constant for static arrays, a descriptor read for dynamic ones.</summary>
