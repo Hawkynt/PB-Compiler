@@ -162,7 +162,9 @@ public sealed class BackendCorpusDifferentialTests {
     // entry needs to be safe), 65 once the back end could EMIT the ON ERROR handler rather than only
     // lower it, and 75 once loop unrolling joined the pipeline - a fully unrolled loop turns its
     // counter into a constant, which makes bodies selectable that were not before.
-    Assert.That(agreed, Is.GreaterThanOrEqualTo(75), "fewer programs were compared than used to be:\n" + report);
+    // 78 once inlining joined the production pipeline - a call inlined is a callee body the caller's
+    // optimizer can see, which makes module bodies selectable that were not.
+    Assert.That(agreed, Is.GreaterThanOrEqualTo(78), "fewer programs were compared than used to be:\n" + report);
 
     // and a known defect that quietly starts agreeing is worth knowing about too - it means either it
     // was fixed (delete the entry) or the comparison stopped reaching it (a worse problem)

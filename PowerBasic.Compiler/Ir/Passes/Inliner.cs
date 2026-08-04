@@ -16,10 +16,16 @@ public static class Inliner {
   public static int Run(IrModule module) {
     var inlined = 0;
     foreach (var fn in module.Functions) {
-      if (fn.IsDeclaration)
+      // A function with an armed error handler is not duplicable, in either direction. Its blocks are
+      // the target of a jump the CFG does not show, and IrBlockAddress is a CONSTANT - IrCloner maps
+      // values, so a cloned handler address still points at the original function's block, which the
+      // emitter then cannot find. Inlining into such a caller is no better: the handler's saved frame
+      // describes a frame whose contents just changed underneath it.
+      if (fn.IsDeclaration || fn.HasErrorHandler)
         continue;
       foreach (var call in fn.AllInstructions.OfType<IrCall>().ToList())
-        if (call.Parent is not null && call.Callee is IrFunction callee && IsInlinable(callee, fn)) {
+        if (call.Parent is not null && call.Callee is IrFunction callee
+            && !callee.HasErrorHandler && IsInlinable(callee, fn)) {
           InlineCall(call, callee, fn, inlined);
           ++inlined;
         }

@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | ✅ Implemented (small leaf procedures; trivial TYPE methods and properties) |
 | **Stage** | Pre-emission analysis + emitter |
+| **IR** | ✅ `Ir/Passes/Inliner.cs`, run by `CodeGenerator.BackendProcs` after the pass sweep and followed by another - the point of inlining is not the call overhead but that the callee body becomes visible to the caller's optimizer, and nothing sees it until the passes run again |
 | **Source** | `CodeGen/OptInlining.cs`, `CodeGen/CodeGenerator.Procs.cs` |
 | **Gate** | `--optimize` |
 | **Verified by** | `tests/diff/DIFF30.BAS` (mixed eligible/ineligible callees, side-effecting and nested arguments) |

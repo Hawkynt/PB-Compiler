@@ -55,6 +55,18 @@ public sealed partial class CodeGenerator {
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);                  // again: the optimizer can expose trees the first pass could not see
     IrPassManager.Standard().RunOnModule(module);  // clean up the now-dead float ops
+
+    // O0006 inlining. It runs LAST of the module-level steps and is followed by another full pass
+    // sweep, because the point of inlining is not the call overhead - it is that the callee's body
+    // becomes visible to the caller's optimizer, and nothing sees it until the passes run again.
+    // A function whose only caller inlines it is then dead, which GlobalDce collects.
+    if (Inliner.Run(module) > 0) {
+      IrPassManager.Standard().RunOnModule(module);
+      foreach (var f in module.Functions)
+        if (!f.IsDeclaration)
+          IntegerRecovery.Run(f);
+      IrPassManager.Standard().RunOnModule(module);
+    }
     var byName = new Dictionary<string, IrFunction>(System.StringComparer.OrdinalIgnoreCase);
     foreach (var f in module.Functions)
       if (!f.IsDeclaration)

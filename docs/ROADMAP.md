@@ -180,6 +180,9 @@ A ported optimization records an **IR** row in its own document, which is what t
 - **O0002 dead-code elimination** — `Dce` + `DeadStoreElim`.
 - **O0003 common subexpression elimination** — `Gvn`, and *global* where the emitter's is
   block-local: a subexpression shared across two blocks is still computed once.
+- **O0006 inlining** — `Ir/Passes/Inliner.cs`, run by `CodeGenerator.BackendProcs` and followed by
+  another full pass sweep: the point of inlining is not the call overhead but that the callee body
+  becomes visible to the caller's optimizer, and nothing sees it until the passes run again.
 - **O0007 loop unrolling** — `Ir/Passes/LoopUnroll.cs`, in the standard pipeline.
 - **O0132 whole-loop compile-time evaluation** — nobody wrote a pass for it; it falls out of
   unrolling composing with the constant propagation and dead-code elimination already there.
