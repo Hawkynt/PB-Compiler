@@ -2347,6 +2347,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       return;
     }
 
+    // O0099: `IF k = 1 OR k = 3 OR k = 5 [OR ...]` is membership in a small constant set - a bit-mask
+    // test rather than a compare per value. Tried before the short-circuit lowering, which would
+    // otherwise emit the compare chain.
+    if (this.Optimize && this.OptimizeSpeed && this.TryEmitOrChainBitMask(condition, target, whenFalse))
+      return;
+
     // Short-circuit a condition that is an AND/OR of pure comparisons into conditional branches,
     // instead of materializing each comparison as -1/0, bitwise-combining them and testing. PB's
     // AND/OR are bitwise, but over comparison results (always -1 or 0) that equals the logical
@@ -3362,6 +3368,81 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     asm.Test(Reg.AX, (Imm)1);
     asm.Jnz(armBody);                               // bit set -> the subject is in the set
     asm.MarkLabel(skip);
+    return true;
+  }
+
+  /// <summary>
+  /// pb36 O0099: the <c>IF k = 1 OR k = 3 OR k = 5 THEN</c> spelling of a small-set membership test.
+  /// Flattens the OR tree; every leaf must be <c>k = const</c> for the SAME 16-bit integer variable,
+  /// the values must fit a 16-bit mask (<c>max - min &lt;= 15</c>) and number at least 3. Emits the same
+  /// normalize / range-guard / <c>SHR</c> / bit-0 test the SELECT arm form uses, branching to
+  /// <paramref name="target"/> on the requested truth value. Evaluates <c>k</c> once (a bare variable,
+  /// no side effect), so it is equivalent to the short-circuited compare chain it replaces. Declines
+  /// (false) for any non-conforming leaf, a mixed variable, a wide window or fewer than 3 values.
+  /// </summary>
+  private bool TryEmitOrChainBitMask(Expression condition, Label target, bool whenFalse) {
+    if (condition is not BinaryExpr { Op: BinaryOp.Or })
+      return false;
+    NameExpr? keyVar = null;
+    var values = new List<int>();
+
+    bool Collect(Expression e) {
+      switch (e) {
+        case BinaryExpr { Op: BinaryOp.Or, Left: { } l, Right: { } r }:
+          return Collect(l) && Collect(r);
+        case BinaryExpr { Op: BinaryOp.Equal, Left: { } el, Right: { } er }: {
+          var (name, valueExpr) = el is NameExpr ? (el, er) : er is NameExpr ? (er, el) : (null, null);
+          if (name is not NameExpr n || model.IntrinsicBindings.ContainsKey(n)
+              || model.TypeOf(n) is not ScalarType { IsFloat: false, ByteSize: 2 }
+              || !model.VariableBindings.TryGetValue(n, out var nsym))
+            return false;
+          if (keyVar == null)
+            keyVar = n;
+          else if (!model.VariableBindings.TryGetValue(keyVar, out var ksym) || !ReferenceEquals(ksym, nsym))
+            return false;                             // a different variable: not one set membership
+          if (this.OptFolder.TryFold(valueExpr) is not { Integer: { } v } || v is < short.MinValue or > short.MaxValue)
+            return false;
+          values.Add((int)v);
+          return true;
+        }
+        default:
+          return false;
+      }
+    }
+
+    if (!Collect(condition) || keyVar == null || values.Count < 3)
+      return false;
+    int min = values.Min(), max = values.Max();
+    if (max - min > 15)
+      return false;
+    var mask = 0;
+    foreach (var v in values)
+      mask |= 1 << (v - min);
+
+    var asm = this._asm;
+    this.EmitExpression(keyVar);                      // k -> AX (bare 16-bit variable read)
+    if (min != 0)
+      asm.Sub(Reg.AX, (Imm)min);
+    asm.Cmp(Reg.AX, (Imm)(max - min));
+    if (whenFalse) {
+      // branch to target when the condition is FALSE (k not in the set): out of range, or bit clear
+      asm.Ja(target);
+      asm.Mov(Reg.CX, Reg.AX);
+      asm.Mov(Reg.AX, (Imm)mask);
+      asm.Shr(Reg.AX, Reg.CL);
+      asm.Test(Reg.AX, (Imm)1);
+      asm.Jz(target);
+    } else {
+      // branch to target when the condition is TRUE (k in the set)
+      var skip = asm.DefineLabel();
+      asm.Ja(skip);
+      asm.Mov(Reg.CX, Reg.AX);
+      asm.Mov(Reg.AX, (Imm)mask);
+      asm.Shr(Reg.AX, Reg.CL);
+      asm.Test(Reg.AX, (Imm)1);
+      asm.Jnz(target);
+      asm.MarkLabel(skip);
+    }
     return true;
   }
 

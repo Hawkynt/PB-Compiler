@@ -132,6 +132,23 @@ public sealed class SelectJumpTableTests {
   }
 
   [Test]
+  public void Emit_GivenOrChainEqualityIf_WhenPb36Speed_ThenTestsMembershipWithABitMask() {
+    // O0099: IF k = 1 OR k = 8 OR k = 15 THEN is the same small-set membership as CASE 1, 8, 15 - the
+    // OR chain lowers to the mask test (MOV AX, 4081h / SHR AX, CL) instead of a compare per value.
+    // k% comes from INPUT so it is not a proven constant (which SCCP would fold the whole IF away).
+    var img = Compile("$OPTIMIZE SPEED\nDIM k%\nINPUT k%\nIF k% = 1 OR k% = 8 OR k% = 15 THEN PRINT \"a\" ELSE PRINT \"b\"\nEND", Dialect.Pb36);
+    Assert.That(Contains(img, 0xB8, 0x81, 0x40), Is.True, "the OR-equality chain builds the membership mask 4081h");
+    Assert.That(Contains(img, 0xD3, 0xE8), Is.True, "and shifts it by the subject (SHR AX, CL)");
+  }
+
+  [Test]
+  public void Emit_GivenOrChainOfDifferentVariables_WhenPb36Speed_ThenNoBitMask() {
+    // the mask requires ONE variable across the chain; mixed variables (k OR j) are not a set test.
+    var img = Compile("$OPTIMIZE SPEED\nDIM k%, j%\nINPUT k%\nINPUT j%\nIF k% = 1 OR j% = 8 OR k% = 15 THEN PRINT \"a\"\nEND", Dialect.Pb36);
+    Assert.That(Contains(img, 0xB8, 0x81, 0x40), Is.False, "a mixed-variable OR chain is not a membership mask");
+  }
+
+  [Test]
   public void Emit_GivenFewCaseSparseSelect_WhenPb36Speed_ThenKeepsTheCompareChain() {
     // below the 8-distinct-value threshold the tree declines and the linear compare chain stays:
     // it loads each case value into AX (MOV AX, 012Ch = B8 2C 01) and compares against the subject
