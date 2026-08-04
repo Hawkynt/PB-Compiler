@@ -2196,6 +2196,10 @@ public sealed class IrLowering {
     switch (meta.Command.ToUpperInvariant()) {
       case "OPTIMIZE":   // optimizer policy - the IR path runs its own pipeline
       case "CPU":        // the instruction-set floor of the DOS emitter; an IR back end picks its own
+      // $COMPILE UNIT / EXE says what KIND of artefact to produce. It is output policy, not runtime
+      // semantics: the procedures in a unit mean exactly what they would in a program, and refusing
+      // it kept every unit off the IR path over a directive that describes the file being written.
+      case "COMPILE":
         return;
       // $ERROR BOUNDS ON: every subscript is checked against its dimension and Error 9 raised when it
       // falls outside - the same guard CodeGenerator.Arrays emits when CheckBounds is set

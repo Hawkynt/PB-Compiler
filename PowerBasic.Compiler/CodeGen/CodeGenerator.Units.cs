@@ -136,9 +136,16 @@ public sealed partial class CodeGenerator {
           break;
       }
 
+    // the same dispatch the executable path uses: a routed procedure is emitted by the x86-16 back
+    // end from its SSA IR, everything else the ordinary way. A unit's exports keep the stack
+    // convention either way, which is what makes the two interchangeable here
     foreach (var proc in model.Procedures.Values)
-      if (!proc.IsExternal)
-        this.EmitProcedure(proc);
+      if (!proc.IsExternal) {
+        if (this.IsBackendRouted(proc))
+          this.EmitBackendFunction(proc);
+        else
+          this.EmitProcedure(proc);
+      }
 
     this.EmitFarThunks();
     asm.Align(2, 0x90); // word-align so the data area stays aligned wherever the code lands

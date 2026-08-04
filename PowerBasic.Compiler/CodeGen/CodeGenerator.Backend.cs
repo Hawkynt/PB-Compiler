@@ -35,7 +35,13 @@ public sealed partial class CodeGenerator {
     if (this._backendProcs is not null)
       return this._backendProcs;
     this._backendProcs = new(ReferenceEqualityComparer.Instance);
-    if (!this.UseExperimentalBackend || this._isUnit || this._allowExternalCalls)
+    // A $COMPILE UNIT can be routed. It was excluded along with _allowExternalCalls, and the reason
+    // does not hold for procedures: a unit exports its procedures with the STACK convention (they are
+    // called from outside, so OptRegParm never converts them), which is exactly the ABI this back end
+    // emits. An external callee is handled by the routing fixpoint already - a function may only be
+    // routed if every callee is routed, so a call to an imported procedure excludes it by
+    // construction rather than by this flag.
+    if (!this.UseExperimentalBackend)
       return this._backendProcs;
 
     var module = IrLowering.TryLowerModule(model);
