@@ -487,3 +487,13 @@ One caveat the numbers deserve: the census measures the back end's **capability*
 allocates. `CodeGenerator.BackendProcs` routes only entries of `model.ProcedureList`, so a `main` body
 that now selects and allocates is still emitted by the direct path. Routing it needs the module
 frame and the startup/exit sequence, and is the next structural step rather than another table entry.
+
+### String concatenation and the 32-bit multiply
+
+Two more, both taken from the register conventions the runtime documents at the head of its partials:
+`rt_str_concat(ptr, ptr) -> ptr` is `rt_strcat` (`AX` = left, `DX` = right, result in `AX`, consuming
+both), and a 32-bit `Mul` — which x86-16 simply does not have — is `rt_lmul` (`left DX:AX`,
+`right CX:BX`, result in `DX:AX`). The multiply is not a table entry, because it is not an IR call at
+all: `SelectWideBinary` emits the call itself when the pair form has no instruction. Each of the four
+pinned loads declares the whole pinned set as its clobbers, so nothing live is parked in a register
+the sequence is about to overwrite; the call then spills whatever else was live, like any other.

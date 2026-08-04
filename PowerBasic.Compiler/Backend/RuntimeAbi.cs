@@ -72,6 +72,10 @@ internal static class RuntimeAbi {
       [new(ArgKind.Offset, Reg.SI), new(ArgKind.Word, Reg.CX)], _callerSaved,
       Result: Reg.AX, Presets: [(Reg.DX, Reg.DS)]),
 
+    // rt_str_concat(ptr,ptr) -> ptr is the runtime's StrCat: AX=left, DX=right -> AX, consuming both
+    ["rt_str_concat"] = new("rt_strcat",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
+
     // files. The runtime documents these conventions at the head of DosRuntime.Files.cs:
     // FOpen AX=filename handle, BX=PB file number, CX=mode, SI=reclen; FClose AX=file number.
     // The IR names the file number first, the runtime puts it in BX - hence the per-position table

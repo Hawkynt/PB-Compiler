@@ -173,16 +173,26 @@ public sealed class BackendWideIntegerTests {
   }
 
   [Test]
-  public void Select_GivenLongMultiply_ThenDeclines() {
-    // a 32-bit multiply is a runtime helper (rt_lmul), not an instruction on this target
+  public void Select_GivenLongMultiply_ThenCallsTheRuntimeHelperInItsPairConvention() {
+    // a 32-bit multiply is a runtime helper (rt_lmul), not an instruction on this target: it takes
+    // left in DX:AX and right in CX:BX and answers in DX:AX
     var fn = WideFunction((b, slot) => {
       var value = b.Load(IrType.I32, slot);
       b.Store(b.Mul(value, new IrConstantInt(IrType.I32, 3)), slot);
       b.Ret(null);
     }, IrType.Void);
 
-    Assert.That(InstructionSelector.TrySelect(fn, out var reason), Is.Null);
-    Assert.That(reason, Does.Contain("32-bit binary"));
+    var m = InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(m, Is.Not.Null, $"declined: {reason}");
+    var call = m!.AllInstructions.First(i => i.Opcode == MOpcode.Call);
+    Assert.That(((MOperand.LabelRef)call.Operands[0]).Name, Is.EqualTo("rt_lmul"));
+    var loaded = m.AllInstructions.TakeWhile(i => i != call)
+      .Where(i => i.Opcode == MOpcode.Mov && i.Operands[0] is MOperand.Register { Reg.IsVirtual: false })
+      .Select(i => ((MOperand.Register)i.Operands[0]).Reg.Physical)
+      .ToList();
+    Assert.That(loaded, Is.EqualTo(new[] { Reg.AX, Reg.DX, Reg.BX, Reg.CX }),
+      "left DX:AX, right CX:BX - the convention the direct emitter uses");
   }
 
   [Test]

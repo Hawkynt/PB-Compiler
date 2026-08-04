@@ -298,6 +298,8 @@ public sealed class InstructionSelector {
       MOpcode.And or MOpcode.Or or MOpcode.Xor => opcode,   // bitwise: the halves are independent
       _ => MOpcode.Ret,                                     // sentinel: no 32-bit form here
     };
+    if (opcode == MOpcode.Imul)
+      return this.SelectWideMultiply(bin);
     if (high == MOpcode.Ret)
       return this.Decline($"32-bit binary: {bin.Op} (needs a runtime helper)");
     if (!this.TryOperandPair(bin.Lhs, out var lhsLo, out var lhsHi)
@@ -345,6 +347,44 @@ public sealed class InstructionSelector {
         new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: true, WritesFlags: true,
           ReadsMemory: false, WritesMemory: false)));
     }
+    return true;
+  }
+
+  /// <summary>
+  /// A 32-bit multiply. x86-16 has no 32x32 multiply, so the runtime does it in the convention the
+  /// direct emitter uses: <c>left DX:AX, right CX:BX -&gt; DX:AX</c> (docs at the head of DosRuntime).
+  /// It is a call like any other, so it destroys the caller-saved file - which the allocator handles
+  /// by spilling anything live across it, exactly as for a user call.
+  /// </summary>
+  private bool SelectWideMultiply(IrBinary bin) {
+    if (!this.TryOperandPair(bin.Lhs, out var leftLo, out var leftHi))
+      return false;
+    if (!this.TryOperandPair(bin.Rhs, out var rightLo, out var rightHi))
+      return false;
+
+    // the pair registers are pinned, so each move declares them all as clobbers: nothing live may
+    // sit in DX:AX or CX:BX while the sequence is being built
+    var pinned = new[] { Reg.AX, Reg.DX, Reg.BX, Reg.CX };
+    void Load(Reg reg, MOperand source) {
+      var dest = new MOperand.Register(MReg.Physical_(reg, MRegSize.Word));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, source], MovEffect(dest, source),
+        condition: null, clobbers: pinned));
+    }
+    Load(Reg.AX, leftLo);
+    Load(Reg.DX, leftHi);
+    Load(Reg.BX, rightLo);
+    Load(Reg.CX, rightHi);
+
+    this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef("rt_lmul")],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: true, WritesMemory: true),
+      condition: null, clobbers: _callClobbers));
+
+    var (lo, hi) = this.FreshPair(bin);
+    var axResult = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+    var dxResult = new MOperand.Register(MReg.Physical_(Reg.DX, MRegSize.Word));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lo, axResult], MovEffect(lo, axResult)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [hi, dxResult], MovEffect(hi, dxResult)));
     return true;
   }
 

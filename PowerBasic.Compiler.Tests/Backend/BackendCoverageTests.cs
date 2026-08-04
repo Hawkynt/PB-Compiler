@@ -153,7 +153,8 @@ public sealed class BackendCoverageTests {
     // then 38 -> 66 as the bridge grew string constants (rt_strmem) and files (rt_fopen/rt_fclose plus
     // the rt_fselect routing PRINT # needs) - the battery writes its results to a file, so file I/O
     // was what stood in front of almost every module body
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(66),
+    // then 66 -> 69 with string concatenation (rt_strcat) and the 32-bit multiply helper (rt_lmul)
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(69),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
   }
 }
