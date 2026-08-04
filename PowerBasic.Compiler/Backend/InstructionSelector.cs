@@ -759,9 +759,11 @@ public sealed class InstructionSelector {
     if (callee.IsDeclaration)
       return ErrorHandlerIntrinsics.Contains(callee.Name)
         ? this.SelectErrorHandlerIntrinsic(call, callee)
-        : RuntimeAbi.For(callee.Name) is { } routine
-          ? this.SelectRuntimeCall(call, callee, routine)
-          : this.Decline($"call: {callee.Name} (runtime declaration - not in the runtime ABI table)");
+        : callee.Name.StartsWith("llvm.sqrt.f", StringComparison.Ordinal)
+          ? this.SelectSquareRoot(call, callee)
+          : RuntimeAbi.For(callee.Name) is { } routine
+            ? this.SelectRuntimeCall(call, callee, routine)
+            : this.Decline($"call: {callee.Name} (runtime declaration - not in the runtime ABI table)");
     if (!call.Type.IsVoid && !IsWide(call.Type) && RegSize(call.Type) != MRegSize.Word)
       return this.Decline($"call: {callee.Name} returns {call.Type} (word or 32-bit results only)");
 
@@ -995,6 +997,15 @@ public sealed class InstructionSelector {
       }
     }
 
+    // the constants a convention fixes rather than taking as an argument: HEX$'s "four bits per
+    // digit, minimum one", INSTR's "start at position 1"
+    foreach (var (dest, value) in routine.Constants ?? []) {
+      var to = new MOperand.Register(MReg.Physical_(dest, MRegSize.Word));
+      var immediate = new MOperand.Immediate(value);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [to, immediate], MovEffect(to, immediate),
+        condition: null, clobbers: [dest]));
+    }
+
     // whatever else the convention fixes: the string kernel wants the literal's segment in DX
     foreach (var (dest, source) in routine.Presets ?? []) {
       var to = new MOperand.Register(MReg.Physical_(dest, MRegSize.Word));
@@ -1061,6 +1072,31 @@ public sealed class InstructionSelector {
     var dxOperand = new MOperand.Register(MReg.Physical_(Reg.DX, MRegSize.Word));
     this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lo, resultReg], MovEffect(lo, resultReg)));
     this._current.Instructions.Add(new MInstr(MOpcode.Mov, [hi, dxOperand], MovEffect(hi, dxOperand)));
+    return true;
+  }
+
+  /// <summary>
+  /// <c>SQR</c> is an INSTRUCTION, not a runtime routine - the x87 has FSQRT and the direct emitter
+  /// writes it inline. The IR spells it as a call because that is how the C and LLVM back ends want it
+  /// (<c>sqrt</c>, <c>llvm.sqrt.*</c>), so the name is recognised here and turned back into the one
+  /// instruction it always was, with no call and no clobbered registers.
+  /// </summary>
+  private bool SelectSquareRoot(IrCall call, IrFunction callee) {
+    if (call.Args.ToList() is not [{ } operand])
+      return this.Decline($"call: {callee.Name} takes one operand");
+    if (!call.Type.IsIeeeFloat || !operand.Type.IsIeeeFloat)
+      return this.Decline($"call: {callee.Name} is not floating point");
+    if (!this.TryFloatOperand(operand, out var cell))
+      return false;
+    this.EmitX87(MOpcode.Fld, cell, reads: true);
+    // Declared to read AND write memory, which is a lie about what FSQRT touches and the only honest
+    // thing to say here: it operates on ST(0), and the machine IR has no x87 register to name. With no
+    // effect at all the scheduler is free to move it past the FSTP that captures its answer - which is
+    // exactly what happened, and only showed up when a call landed between the two, because otherwise
+    // there was nothing to reorder against.
+    this._current.Instructions.Add(new MInstr(MOpcode.Fsqrt, [],
+      new MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: true, WritesMemory: true)));
+    this.EmitX87(MOpcode.Fstp, this.FloatCell(call), reads: false);
     return true;
   }
 

@@ -201,6 +201,7 @@ public sealed class MachineEmitter {
       case MOpcode.Fsubp: asm.Fsubp(); break;
       case MOpcode.Fmulp: asm.Fmulp(); break;
       case MOpcode.Fdivp: asm.Fdivp(); break;
+      case MOpcode.Fsqrt: asm.Fsqrt(); break;
       default: throw new System.NotSupportedException($"machine opcode {instr.Opcode} has no emission yet");
     }
   }

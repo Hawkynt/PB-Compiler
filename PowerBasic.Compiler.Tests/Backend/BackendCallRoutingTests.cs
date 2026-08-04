@@ -94,13 +94,14 @@ public sealed class BackendCallRoutingTests {
     // where its arguments go is RuntimeAbi's table. Anything not in that table must DECLINE rather
     // than be guessed at - a wrong register claim miscompiles silently.
     //
-    // This used to be spelled with LEN, which has since been listed (the word/LONG mismatch it named
-    // is now ResultKind.WidenedWord). HEX$ takes its place: still unlisted, and unlisted is the point
-    // - the rule under test is "not in the table means decline", not anything about a routine.
+    // The example keeps moving as routines get listed - LEN first, then HEX$. STRING$ takes its turn:
+    // it is a runtime routine with no single entry (the count comes from one call and the character
+    // from ASC of another), so it will stay unlisted longer than most. Unlisted is the whole point -
+    // the rule under test is "not in the table means decline", not anything about a routine.
     var module = Optimized(Bind("""
-      DIM n AS LONG
-      n = 255
-      PRINT HEX$(n)
+      DIM s AS STRING
+      s = STRING$(3, "x")
+      PRINT s
       """));
 
     Assert.That(InstructionSelector.TrySelect(FunctionNamed(module, "main"), out var reason), Is.Null);

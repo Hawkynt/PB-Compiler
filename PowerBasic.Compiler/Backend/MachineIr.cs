@@ -150,6 +150,9 @@ public enum MOpcode {
   /// </summary>
   Fld, Fstp, Fild, Fistp,
   Faddp, Fsubp, Fmulp, Fdivp,
+
+  /// <summary>Square root of ST(0), in place - no operand, because the x87 answers where it was asked.</summary>
+  Fsqrt,
 }
 
 /// <summary>A machine basic block: a label, its instructions in order, and its successor labels.</summary>

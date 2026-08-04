@@ -95,18 +95,16 @@ public sealed class BackendRuntimeCallTests {
   [Test]
   public void Select_GivenARoutineOutsideTheTable_ThenDeclinesNamingIt() {
     // A routine the table does not cover must decline rather than have a convention guessed for it.
-    // LEN was the original example here and is now listed; HEX$ is not, and being unlisted is the
-    // whole point of the test.
+    // LEN was the original example and then HEX$; both are listed now. STRING$ takes its turn - it has
+    // no single runtime entry, so it will stay unlisted longer than most.
     var module = Optimized("""
-      FUNCTION Digits$
-        DIM n AS LONG
-        n = 255
-        Digits$ = HEX$(n)
+      FUNCTION Padded$
+        Padded$ = STRING$(3, "x")
       END FUNCTION
 
-      PRINT Digits$
+      PRINT Padded$
       """);
-    var fn = module.Functions.First(f => f.Name.Equals("Digits", StringComparison.OrdinalIgnoreCase));
+    var fn = module.Functions.First(f => f.Name.Equals("Padded", StringComparison.OrdinalIgnoreCase));
 
     InstructionSelector.TrySelect(fn, out var reason);
 

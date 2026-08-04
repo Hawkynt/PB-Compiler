@@ -74,7 +74,7 @@ internal static class RuntimeAbi {
   /// </summary>
   internal sealed record Routine(string Label, RuntimeArg[] Args, IReadOnlyList<Reg> Clobbers,
     Reg? Result = null, (Reg Dest, Reg Source)[]? Presets = null, bool FileSelect = false,
-    ResultKind Answer = ResultKind.Word);
+    ResultKind Answer = ResultKind.Word, (Reg Dest, int Value)[]? Constants = null);
 
   // The print routines all save and restore every register they touch, so they are in fact
   // register-transparent - but "in fact" is not the same as "provably", and a clobber claim that is
@@ -205,6 +205,40 @@ internal static class RuntimeAbi {
     // "Asc: AX=handle -> AX=first byte or 0 (consumes)"; the IR types the result i32
     ["rt_str_asc"] = new("rt_asc", [new(ArgKind.Word, Reg.AX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.WidenedWord),
+
+    // "Radix: DX:AX=value, CL=bits/digit (1/3/4), CH=min digits -> AX". HEX$ is four bits per digit
+    // with a one-digit minimum, which is the CX the direct emitter loads: (digits << 8) | bits. The
+    // IR carries no digit count - HEX$ WITH one is still a lowering decline - so the minimum is 1.
+    ["rt_str_hex"] = new("rt_radix", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved,
+      Result: Reg.AX, Constants: [(Reg.CX, (1 << 8) | 4)]),
+
+    // OCT$ and BIN$ are the same routine at three and one bits per digit - the direct emitter's own
+    // `(digits << 8) | bits`, with the same one-digit minimum
+    ["rt_str_oct"] = new("rt_radix", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved,
+      Result: Reg.AX, Constants: [(Reg.CX, (1 << 8) | 3)]),
+    ["rt_str_bin"] = new("rt_radix", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved,
+      Result: Reg.AX, Constants: [(Reg.CX, (1 << 8) | 1)]),
+
+    // "Chr: DL=char -> AX". The IR types the code point i32; only the low byte is read, so the word
+    // narrowing that puts it in DX puts it in DL
+    ["rt_str_chr"] = new("rt_chr", [new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
+
+    // "StrFill: CX=count, DL=char -> AX" - SPACE$ is StrFill with a blank, which is exactly what the
+    // direct emitter writes
+    ["rt_str_space"] = new("rt_strfill", [new(ArgKind.Word, Reg.CX)], _callerSaved,
+      Result: Reg.AX, Constants: [(Reg.DX, ' ')]),
+
+    // the three-argument INSTR names its start, so nothing is preset
+    ["rt_str_instr_start"] = new("rt_instr",
+      [new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)],
+      _callerSaved, Result: Reg.AX, Answer: ResultKind.WidenedWord),
+
+    // "Instr: AX=haystack, DX=needle, CX=start -> AX=position/0 (consumes both)". The IR's two-argument
+    // form has no start, and the direct emitter loads CX=1 for it. The answer is a word the IR types
+    // i32, so it widens - the CWD the emitter writes after the call
+    ["rt_str_instr"] = new("rt_instr",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.WidenedWord, Constants: [(Reg.CX, 1)]),
 
     // "Repeat: AX=handle, CX=count -> AX (consumes)". The IR declares it (count, text), the runtime
     // wants the text in AX - hence the per-position table rather than a convention
