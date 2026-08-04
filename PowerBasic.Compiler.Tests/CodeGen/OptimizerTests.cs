@@ -1328,6 +1328,16 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenSingleCharMidCompare_WhenPb36_ThenComparesByteNotSubstring() {
+    // O0297: `MID$(s$, i, 1) = "c"` compares a byte read directly (rt_charat) against the literal's
+    // byte - no substring / StrDup / literal / StrCmp allocations. A two-character literal cannot use
+    // this (the comparison is a real string compare), so the two forms compile to different images.
+    var direct = Compile("$OPTIMIZE SPEED\nDIM s$, r%\nLINE INPUT s$\nIF MID$(s$, 1, 1) = \"x\" THEN r% = 1\nPRINT r%\nEND", Dialect.Pb36);
+    var strcmp = Compile("$OPTIMIZE SPEED\nDIM s$, r%\nLINE INPUT s$\nIF MID$(s$, 1, 1) = \"xy\" THEN r% = 1\nPRINT r%\nEND", Dialect.Pb36);
+    Assert.That(direct.SequenceEqual(strcmp), Is.False, "a single-char MID$ compare reads the byte directly; a multi-char one keeps the string compare");
+  }
+
+  [Test]
   public void Emit_GivenStringEquality_WhenPb36_ThenUsesLengthGuardedCompare() {
     // O0298: `=` / `<>` use rt_strcmpeq under --optimize, which after loading the two string
     // descriptors does a length guard `cmp ax,dx / jne` (39 D0 75) - unequal lengths skip the byte

@@ -35,12 +35,23 @@ keeps the substring form byte-for-byte (golden gate 250/250). Verified by a
 self-differential DOSBox run over every edge — `i` in range, `i < 1` (clamped),
 `i > LEN`, an empty string, first and last character — identical to `$OPTIMIZE OFF`.
 
+The **single-character compare** view ships too: `MID$(s$, i, 1) = "c"` / `<> "c"`
+(character matching in parsers — the most common substring compare) reads the byte
+with `rt_charat` and compares it to the literal's byte, with *no* substring, `StrDup`,
+literal, or `StrCmp` allocation — three heap operations become one byte read and a
+compare. Exact for a single **non-NUL** character literal (a past-the-end `MID$` is
+`""` whose byte reads as 0, which a non-zero literal never matches; a NUL literal is
+excluded because it would alias that 0), operands in either order. Verified by a
+self-differential DOSBox run over a match, a mismatch, a clamped and a past-the-end
+index, an empty string, and the swapped-operand and `<>` spellings — all identical to
+`$OPTIMIZE OFF`.
+
 ## Still planned
 
-- The general read-only view for `LEFT$`/`RIGHT$`/`MID$` results that are compared
-  (compose with [O0298](O0298-string-compare-length-guard.md)), printed, or measured
-  — a segment/offset/length view the emitter passes without entering the string
-  manager, with the expression-local lifetime rule below.
+- The general read-only view for longer `LEFT$`/`RIGHT$`/`MID$` results that are
+  compared (compose with [O0298](O0298-string-compare-length-guard.md)), printed, or
+  measured — a segment/offset/length view the emitter passes without entering the
+  string manager, with the expression-local lifetime rule below.
 
 ## What it needs
 

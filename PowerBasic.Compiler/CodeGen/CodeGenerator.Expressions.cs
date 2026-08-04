@@ -846,22 +846,36 @@ public sealed partial class CodeGenerator {
       }
     }
 
-    this.EmitExpression(b.Left);
-    asm.Push(Reg.AX);
-    this.EmitExpression(b.Right);
-    asm.Mov(Reg.DX, Reg.AX);
-    asm.Pop(Reg.AX);
+    // O0297 char compare: `MID$(s$, i, 1) = "c"` (character matching) reads the byte directly
+    // (rt_charat) and compares it to the literal's byte - no substring, no StrDup, no literal alloc,
+    // no StrCmp. Only for a single non-NUL char literal (a NUL would alias the past-the-end 0).
+    if (this.Optimize && b.Op is BinaryOp.Equal or BinaryOp.NotEqual
+        && this.TryCharCompareOperands(b, out var chStr, out var chIdx, out var chByte)) {
+      this.EmitExpression(chStr);
+      asm.Push(Reg.AX);
+      this.EmitInt16Argument(chIdx);
+      asm.Mov(Reg.CX, Reg.AX);
+      asm.Pop(Reg.AX);
+      asm.Call(this._rt.CharAt);                 // AX = the i-th byte (0 past the end)
+      asm.Mov(Reg.BX, (Imm)chByte);
+    } else {
+      this.EmitExpression(b.Left);
+      asm.Push(Reg.AX);
+      this.EmitExpression(b.Right);
+      asm.Mov(Reg.DX, Reg.AX);
+      asm.Pop(Reg.AX);
 
-    if (b.Op is BinaryOp.Add or BinaryOp.Concat) {
-      asm.Call(this._rt.StrCat);
-      return;
+      if (b.Op is BinaryOp.Add or BinaryOp.Concat) {
+        asm.Call(this._rt.StrCat);
+        return;
+      }
+
+      // O0298: `=` / `<>` only need equality, so under --optimize use the length-guarded compare that
+      // skips the byte scan when the lengths differ. It returns 0 (equal) / 1 (unequal), which the same
+      // xor bx,bx / je-jne test reads. Ordering forms keep the full three-way StrCmp.
+      asm.Call(this.Optimize && b.Op is BinaryOp.Equal or BinaryOp.NotEqual ? this._rt.StrCmpEq : this._rt.StrCmp);
+      asm.Xor(Reg.BX, Reg.BX);
     }
-
-    // O0298: `=` / `<>` only need equality, so under --optimize use the length-guarded compare that
-    // skips the byte scan when the lengths differ. It returns 0 (equal) / 1 (unequal), which the same
-    // xor bx,bx / je-jne test reads. Ordering forms keep the full three-way StrCmp.
-    asm.Call(this.Optimize && b.Op is BinaryOp.Equal or BinaryOp.NotEqual ? this._rt.StrCmpEq : this._rt.StrCmp);
-    asm.Xor(Reg.BX, Reg.BX);
     switch (b.Op) {
       case BinaryOp.Equal: this.EmitInt16Compare(b, asm => asm.Je, Condition.Equal); break;
       case BinaryOp.NotEqual: this.EmitInt16Compare(b, asm => asm.Jne, Condition.NotEqual); break;
@@ -873,6 +887,30 @@ public sealed partial class CodeGenerator {
         this.Unsupported(b, $"string {b.Op}");
         break;
     }
+  }
+
+  /// <summary>
+  /// O0297: recognizes <c>MID$(s$, i, 1) = "c"</c> (or with the sides swapped) where the other operand
+  /// is a single non-NUL character literal, so the comparison can be a direct byte read against the
+  /// literal's byte. <c>ASC(MID$(s$, i, 1)) = ASC("c")</c> is exact for a non-NUL "c": a past-the-end
+  /// MID$ is "" whose byte reads as 0, which a non-zero literal byte never matches, and an in-range
+  /// byte matches iff the characters are equal. A NUL literal is excluded (it would alias that 0).
+  /// </summary>
+  private bool TryCharCompareOperands(BinaryExpr b, out Expression strExpr, out Expression idxExpr, out int literalByte) {
+    strExpr = null!; idxExpr = null!; literalByte = 0;
+    var (mid, lit) = IsSingleCharMid(b.Left) && b.Right is StringLiteralExpr ? (b.Left, b.Right)
+      : IsSingleCharMid(b.Right) && b.Left is StringLiteralExpr ? (b.Right, b.Left)
+      : ((Expression?)null, (Expression?)null);
+    if (mid is not CallOrIndexExpr midCall || lit is not StringLiteralExpr { Value: { Length: 1 } text } || text[0] is '\0' or > (char)255)
+      return false;
+    strExpr = midCall.Arguments[0];
+    idxExpr = midCall.Arguments[1];
+    literalByte = (byte)text[0];
+    return model.TypeOf(strExpr) is StringType or FlexType;
+
+    bool IsSingleCharMid(Expression e) => e is CallOrIndexExpr c && model.IntrinsicBindings.TryGetValue(c, out var info)
+      && info.Name.Equals("MID$", StringComparison.OrdinalIgnoreCase) && c.Arguments.Count == 3
+      && this.OptFolder.TryFold(c.Arguments[2]) is { Integer: 1 };
   }
 
   /// <summary>left AX, right BX -> result AX.</summary>
