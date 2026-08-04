@@ -240,7 +240,7 @@ Measured by `OptimizationPortingLedgerTests`, which reads the Stage of every doc
 | machine-level (not IR work at all) | **290** |
 | portable to the IR | **130** |
 | …already expressed on the IR | 20 |
-| …still to port | **110**, of which **17** now carry an `IR` row |
+| …still to port | **110**, of which **18** now carry an `IR` row |
 
 So the target is 110, not 420 — and the bulk of it is one category, *Mid-end* (52). The ledger is a
 test with floors, so the portable share cannot shrink by reclassification instead of movement.
@@ -294,6 +294,10 @@ A ported optimization records an **IR** row in its own document, which is what t
   run from the driver on the `--emit-c` / `--emit-llvm` path. Deliberately NOT in the hybrid x86
   pipeline: there the IR module is not the whole program, so removing a function only stops it being
   routed. Measured, that cost six corpus comparisons and saved nothing.
+- **O0278 global variable localization** — `Ir/Passes/LocalizeGlobals.cs`. A scalar global whose only
+  user is one function becomes an alloca there. "Only one user" is NOT the whole condition: a global
+  keeps its value between calls and a local does not, so it also requires a store in the entry block
+  with no load before it, which makes the incoming value unobservable.
 - **O0225 SSA construction** — `Ir/IrDominators.cs` + `Ir/Passes/Mem2Reg.cs`, the same Cytron
   construction the direct tier has.
 

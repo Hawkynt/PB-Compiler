@@ -47,6 +47,7 @@ public sealed class IrPassObservableEquivalenceTests {
   private static readonly (string Name, Func<IrModule, int> Run)[] _modulePasses = [
     ("ipconstprop", IpConstantProp.Run),
     ("readonly-globals", ReadOnlyGlobals.Run),
+    ("localize-globals", LocalizeGlobals.Run),
   ];
 
   /// <summary>
