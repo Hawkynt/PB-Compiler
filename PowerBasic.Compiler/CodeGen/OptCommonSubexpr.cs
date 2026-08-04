@@ -84,7 +84,8 @@ public static class OptCommonSubexpr {
       VariableSymbol? counter,
       int firstSlot,
       bool checkedArithmetic,
-      SemanticModel model) {
+      SemanticModel model,
+      IReadOnlyList<Expression>? conditions = null) {
     var result = new LicmResult();
     if (checkedArithmetic)
       return result; // overflow/numeric traps must fire in-body, never in preheader
@@ -108,6 +109,14 @@ public static class OptCommonSubexpr {
     // walk each statement's expressions to discover cacheable invariants
     foreach (var stmt in body)
       WalkStmtForLicm(stmt, written, firstSlot, slotOfKey, varId, result, model);
+
+    // a loop condition is re-evaluated every iteration - hoist its invariants too
+    // (e.g. LEN(s$) in `WHILE i <= LEN(s$)` when the body never writes s$). The body's
+    // write-set already excludes any string mutated in-loop, so this stays correct.
+    if (conditions != null)
+      foreach (var cond in conditions)
+        if (cond != null)
+          FindLicmIn(cond, written, firstSlot, slotOfKey, varId, result, model);
 
     result.SlotCount = slotOfKey.Count;
     return result;
@@ -362,10 +371,13 @@ public static class OptCommonSubexpr {
   /// <see cref="State.IsCacheable"/> for both Integer and Modular modes.
   /// </summary>
   private static bool IsLicmCacheable(Expression e, SemanticModel model)
-    => e is (BinaryExpr or UnaryExpr)
-       && IsPure(e, model)
-       && (model.TypeOf(e) is ScalarType { IsFloat: false, ByteSize: <= 4 }
-           || (model.TypeOf(e) is ScalarType { IsFloat: true } && IsModularInt16Tree(e, model, 0)));
+    => (e is (BinaryExpr or UnaryExpr)
+        && IsPure(e, model)
+        && (model.TypeOf(e) is ScalarType { IsFloat: false, ByteSize: <= 4 }
+            || (model.TypeOf(e) is ScalarType { IsFloat: true } && IsModularInt16Tree(e, model, 0))))
+       // O0180/LICM: LEN of a bare dynamic string reads only the descriptor - pure, non-trapping,
+       // LONG-typed. Hoistable whenever the string variable is not written in the loop.
+       || CacheableLenSymbol(e, model) != null;
 
   /// <summary>
   /// True when <paramref name="e"/> is a modular-int16 tree: a tree of +,-,* (and
@@ -450,6 +462,15 @@ public static class OptCommonSubexpr {
         AppendLicmKey(sb, b.Left, varId, model);
         AppendLicmKey(sb, b.Right, varId, model);
         sb.Append(')');
+        break;
+      case CallOrIndexExpr when CacheableLenSymbol(e, model) is { } lensym:
+        // a LEN(s$) node keyed by its string variable id, so a length used both
+        // in the condition and the body shares one preheader slot
+        if (!varId.TryGetValue(lensym, out var lid)) {
+          lid = varId.Count;
+          varId[lensym] = lid;
+        }
+        sb.Append('L').Append(lid).Append(';');
         break;
       default:
         sb.Append('?').Append(e.GetHashCode()).Append(';');

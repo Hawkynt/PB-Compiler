@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | ✅ Done |
 | **Stage** | Emitter |
-| **Related** | [O0003](O0003-common-subexpression-elimination.md), [O0181](O0181-empty-string-comparison.md), [R0003](R0003-string-engine.md) |
+| **Related** | [O0003](O0003-common-subexpression-elimination.md), [O0028](O0028-loop-invariant-code-motion.md), [O0181](O0181-empty-string-comparison.md), [R0003](R0003-string-engine.md) |
 
 ## The idea
 
@@ -39,6 +39,25 @@ string symbol, exactly the treatment the array-element read gets
 (`CacheableArrayReadSymbol`). `LEN` is also made **barrier-free** so a condition
 or statement holding it is scanned. The `LEN` result is a `LONG`, so it reuses
 the existing wide (4-byte) CSE slot machinery — no emitter change was needed.
+
+### Loop-condition hoisting (LICM)
+
+The block-local CSE above collapses `LEN(s$)` repeats *within one straight-line
+run*, but a `DO`/`WHILE` **condition** is re-evaluated every iteration and lives
+outside the body block — so `WHILE i% <= LEN(s$)` recomputed the length on each
+pass. The LICM preheader ([O0028](O0028-loop-invariant-code-motion.md),
+`AnalyzeLicm`) now also scans the loop's pre/post condition: a `LEN` of a string
+the body never writes is hoisted into the preheader as a single descriptor read,
+and both the condition *and* any body use reload the one slot (keyed by the
+string symbol, so they share it). `IsLicmCacheable` accepts a `CacheableLenSymbol`
+node; `IsHoistableSafely` is trivially true for it (a `LEN` cannot trap).
+
+The invariance test is the body write-set: if the loop mutates the string
+(`s$ = s$ + …`) its length is *not* invariant, `s$` is in `written`, and the
+length stays a per-iteration read. Verified by a self-differential DOSBox run of
+`WHILE i% <= LEN(s$)` (optimized output identical to the golden-faithful
+build) plus two regression tests — the invariant form collapses the condition and
+body reads to **one** `rt_len` call, the string-mutating form keeps them separate.
 
 ### Invalidation
 

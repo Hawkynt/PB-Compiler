@@ -1262,6 +1262,44 @@ public sealed class OptimizerTests {
     return count;
   }
 
+  // rt_len entry: TEST AX,AX / JZ ret / PUSH BX / PUSH SI / MOV BX,AX = 85 C0 74 ?? 53 56 89 C3
+  // (the JZ rel8 at index 3 varies with the routine length). Count E8 near-CALL sites targeting it.
+  private static int CountCallsToLen(byte[] image) {
+    var head = -1;
+    for (var i = 0; i + 8 <= image.Length && head < 0; ++i)
+      if (image[i] == 0x85 && image[i + 1] == 0xC0 && image[i + 2] == 0x74
+          && image[i + 4] == 0x53 && image[i + 5] == 0x56 && image[i + 6] == 0x89 && image[i + 7] == 0xC3)
+        head = i;
+    if (head < 0)
+      return 0;
+    var count = 0;
+    for (var i = 0; i + 2 < image.Length; ++i)
+      if (image[i] == 0xE8 && i + 3 + (short)(image[i + 1] | (image[i + 2] << 8)) == head)
+        ++count;
+    return count;
+  }
+
+  [Test]
+  public void Emit_GivenLoopInvariantLen_WhenPb36_ThenHoistedToOneDescriptorRead() {
+    // O0180/LICM: LEN(s$) in a WHILE condition (re-evaluated every iteration) and again in the body is
+    // loop-invariant when the body never writes s$ - it hoists into the preheader as a single descriptor
+    // read, both uses reloading one slot: exactly one rt_len call for the whole loop.
+    const string invariant = "$OPTIMIZE SPEED\nDIM s AS STRING, i%, n%\ns = \"hello world\"\ni% = 1\n"
+      + "WHILE i% <= LEN(s)\nn% = n% + LEN(s)\ni% = i% + 1\nWEND\nPRINT n%\nEND";
+    Assert.That(CountCallsToLen(Compile(invariant, Dialect.Pb36)), Is.EqualTo(1),
+      "a loop-invariant LEN(s$) used in the condition and body hoists to one rt_len call");
+  }
+
+  [Test]
+  public void Emit_GivenLenOfStringWrittenInLoop_WhenPb36_ThenNotHoisted() {
+    // The invariance guard: when the body writes s$ its length changes per iteration, so the condition's
+    // and body's LEN(s$) must NOT merge into a preheader read - each stays a live call (two rt_len sites).
+    const string variant = "$OPTIMIZE SPEED\nDIM s AS STRING, i%, n%\ns = \"hi\"\ni% = 1\n"
+      + "WHILE i% <= LEN(s)\ns = s + \"x\"\nn% = n% + LEN(s)\ni% = i% + 1\nWEND\nPRINT n%\nEND";
+    Assert.That(CountCallsToLen(Compile(variant, Dialect.Pb36)), Is.GreaterThan(1),
+      "LEN of a string mutated inside the loop is recomputed - the two reads do not collapse to one");
+  }
+
   [Test]
   public void Emit_GivenFourOperandConcatChain_WhenPb36_ThenSingleAllocMultiConcat() {
     // r$ = a$ & b$ & c$ & d$ is a 4-leaf chain: it builds with ONE rt_strcatn call (a single heap
