@@ -466,15 +466,22 @@ public sealed class InstructionSelector {
 
   private bool SelectAlloca(IrAlloca alloca, MBlock block) {
     var byteSize = SizeOf(alloca.Allocated);
+    var count = System.Math.Max(1, alloca.Count);
     var slot = this._function.StackSlots.Count;
-    for (var i = 0; i < System.Math.Max(1, alloca.Count); ++i)
+    for (var i = 0; i < count; ++i)
       this._function.StackSlots.Add(byteSize);
     this._slots[alloca] = slot;
-    // the alloca result is the slot's address: LEA dest, [slot]
+    // The alloca result is the address the ELEMENTS are indexed from, and the two run in opposite
+    // directions: slots are laid out downward from BP (slot 0 at [BP-2], slot 1 at [BP-4], ...) while
+    // a GEP walks upward from the base. So a multi-slot alloca has to point at its LAST slot, the
+    // lowest address of the block - pointing at slot 0 puts element 0 at the block's TOP and sends
+    // every later element climbing out of the frame into the saved BP, the return address and the
+    // caller's arguments. A DIM a%(0 TO 49) that summed its fifty elements read the parameter list
+    // back and reported plausible numbers for it. A single-slot alloca is unaffected: last IS first.
     var dest = this.FreshVreg(IrType.Ptr);
     this._vregs[alloca] = dest;
     var destOp = new MOperand.Register(dest);
-    this._current.Instructions.Add(new MInstr(MOpcode.Lea, [destOp, new MOperand.StackSlot(slot, MRegSize.Word)],
+    this._current.Instructions.Add(new MInstr(MOpcode.Lea, [destOp, new MOperand.StackSlot(slot + count - 1, MRegSize.Word)],
       new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: false)));
     return true;
   }

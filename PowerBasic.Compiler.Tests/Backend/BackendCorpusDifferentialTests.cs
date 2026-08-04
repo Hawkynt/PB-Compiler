@@ -155,7 +155,10 @@ public sealed class BackendCorpusDifferentialTests {
     var unexpected = disagreements.Where(d => !_known.ContainsKey(d.Program)).ToList();
     Assert.That(unexpected, Is.Empty,
       "the x86-16 back end and the direct emitter produce programs that behave differently:\n" + report);
-    Assert.That(agreed, Is.GreaterThan(0), "nothing was actually compared:\n" + report);
+    // A floor, so a change that quietly stops routing things fails instead of passing with less
+    // compared. 55 when the harness first ran both optimization modes, 57 once procedures with local
+    // arrays became routable - the alloca layout and frame zeroing that had kept them out are fixed.
+    Assert.That(agreed, Is.GreaterThanOrEqualTo(57), "fewer programs were compared than used to be:\n" + report);
 
     // and a known defect that quietly starts agreeing is worth knowing about too - it means either it
     // was fixed (delete the entry) or the comparison stopped reaching it (a worse problem)

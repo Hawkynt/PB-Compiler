@@ -84,8 +84,12 @@ machine IR).
   / BYREF-as-ptr), GOTO/GOSUB, PRINT/INPUT/file/DATA via runtime calls, MID$, arithmetic/
   comparison/cast/intrinsic expressions, strings as handle pointers. **Unsupported (throws
   `IrLoweringException`):** dynamic arrays, UDT-array fields, non-scalar params, inline
-  asm, error handling (ON ERROR/RESUME), unlisted intrinsics. A program either fully
-  lowers or the backend declines it.
+  asm, unlisted intrinsics. A program either fully lowers or the backend declines it.
+  Error handling (ON ERROR/RESUME) DOES lower - see the error-handler section in
+  [IR.md](IR.md) - but such a function is not routed: arming a handler captures the
+  current BP/SP and so must be expanded inline rather than called, which the selector
+  does not do yet, and it declines the `rt_onerr_arm` / `rt_resume_mark` intrinsics on
+  the ordinary "not in the runtime ABI table" rule.
 - **Wiring** (`pbc/Driver.cs` `--emit-llvm`): `TryLowerModule` → `IrPassManager.Standard()`
   `.RunOnModule` → `Inliner.Run` → re-run → `IrVerifier.Verify` → emit. The new backend
   slots a lowering pass in the same spot, after optimisation, before emission.
@@ -237,6 +241,29 @@ functions get genuine integer IR and the selector fires. The routing (`CodeGener
   the call sites; `EmitBackendFunction` emits the standard prologue / argument loads / body / `RET n`.
 - Selection fixes for real IR: a register is materialized for an immediate `IMUL` multiplier (`a%*2`);
   argument vregs are numbered before phi vregs so argument `i` is vreg `i`.
+
+### The routed frame (`BackendFrameTests`)
+
+A procedure with a **local array** used to be kept off the back end outright, after `CODEGEN.BAS`
+printed `accumulate-32283` where the direct emitter prints `accumulate 3`. That was blamed on the
+frame layout — the routed function getting its slots from `MachineEmitter` while the direct path lays
+locals out through `LayoutFrame` — and it was the wrong diagnosis. Two smaller, more specific defects
+were, and both show *only* on an array, because a scalar is one slot and is written before it is read:
+
+1. **A multi-slot alloca pointed at the top of its block.** Stack slots are laid out *downward* from
+   `BP` (slot 0 at `[BP-2]`, slot 1 at `[BP-4]`, …) while a GEP walks *upward* from its base, so
+   pointing at slot 0 put element 0 at the block's high end and sent every later element climbing over
+   the saved `BP`, the return address and the caller's arguments. The base is the block's **last**
+   slot. A `DIM a%(0 TO 49)` that summed its fifty elements was reading the parameter list back and
+   reporting plausible numbers for it.
+2. **The prologue never zeroed the frame.** PB gives every local a zero start; the direct path spells
+   this `REP STOSW` over the whole frame and the routed one now does the same, before the argument
+   loads (it clobbers `AX`, `CX`, `DI` and `ES`, and at that point no allocated register holds
+   anything). Spill slots get zeroed along with the allocas — they are written before they are read,
+   so it costs only the instruction.
+
+With both fixed the exclusion is gone, and the corpus differential agrees on every routed program in
+both optimization modes.
 
 ### Coverage, measured (`BackendCoverageTests`)
 

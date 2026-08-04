@@ -81,8 +81,25 @@ public sealed class MachineEmitter {
     var frame = 0;
     foreach (var size in function.StackSlots)
       frame += (size + 1) & ~1;                      // word-aligned space for allocas / spills
-    if (frame > 0)
+    if (frame > 0) {
       asm.Sub(Asm.Reg.SP, (Imm)frame);
+      // PB gives every local a zero start, and the frame is where the locals live - the direct path
+      // spells this REP STOSW over the whole frame and so does this one. Skipping it is not a size
+      // optimization here, it is a miscompile: a SUB with DIM a%(0 TO 49) that writes one element and
+      // sums all fifty read forty-nine words of whatever the last call left on the stack. That is
+      // exactly how it was found, and it read as plausible numbers rather than as a crash.
+      //
+      // It has to happen before the arguments are loaded, because it clobbers AX, CX, DI and ES - at
+      // this point no allocated register holds anything yet. Spill slots get zeroed along with the
+      // allocas; they are written before they are read, so it costs only the instruction.
+      asm.Push(Asm.Reg.DS);
+      asm.Pop(Asm.Reg.ES);
+      asm.Mov(Asm.Reg.DI, Asm.Reg.SP);
+      asm.Mov(Asm.Reg.CX, (Imm)(frame / 2));
+      asm.Xor(Asm.Reg.AX, Asm.Reg.AX);
+      asm.Rep();
+      asm.Stosw();
+    }
 
     // the caller pushed the arguments; load each into the register the allocator gave its vreg.
     // A 32-bit argument is two words, so the selector supplies an explicit table; a function selected

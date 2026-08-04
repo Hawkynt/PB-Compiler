@@ -145,21 +145,33 @@ battery, it currently reaches:
 
 | | |
 |---|---|
-| programs reaching the IR at all | 107 / 162 |
-| functions selected | 94 / 171 |
-| functions routed (selected **and** allocated) | 68 / 171 |
-| whole module bodies the back end can own | 25 / 107 |
+| programs reaching the IR at all | 132 / 162 |
+| functions selected | 120 / 218 |
+| functions routed (selected **and** allocated) | 79 / 218 |
+| whole module bodies the back end can own | 28 / 132 |
+
+The runtime traps and the error handler are **done**. `$ERROR BOUNDS / OVERFLOW / NUMERIC ON` now emit
+their checks rather than merely accepting the metastatement, over dynamic arrays as well as static
+ones; `ON ERROR` / `RESUME` / `ERROR n` / `ERRCLEAR` lower, along with the `ERR` / `ERL` / `ERADR`
+cells a handler reads. See [IR.md](IR.md) for how a construct whose control flow no CFG can express is
+kept sound - `IrBlockAddress` names the handler and `IrFunction.HasErrorHandler` takes the whole
+function out of the optimizer, the same trade the direct emitter makes with `_trackResume`.
 
 Ranked by the census, what stands between that and full coverage:
 
-1. **`$ERROR BOUNDS / OVERFLOW / NUMERIC ON`** (19 programs) - the lowering has to emit the checks
-   themselves, not just accept the metastatement. Bounds is a comparison per subscript against the
-   static bounds branching to the runtime's raise entry (`rt_raise`, `AX` = code), which is what
-   `CodeGenerator.Arrays` does when `CheckBounds` is set.
-2. **`ON ERROR`** (4 programs) - the handler machinery is emitted around the body by the direct path.
-3. A tail of statements: `ArraySortStmt`, `DIM AT`, `ERASE` of a static array, `ROTATE`.
-4. **26 functions that select but fail allocation** - each needs a memory operand in a position the
+1. **The routed path cannot yet EMIT the traps or the handler.** The lowering builds them, but the
+   selector declines `rt_onerr_arm` / `rt_resume_mark` and the rest, because arming captures the
+   current `BP`/`SP` and so has to be expanded inline rather than called - and a block address has to
+   reach the emitter as a label offset. Until then these programs reach the IR but stay on the direct
+   path, which is safe (an unknown `rt_` call declines) but is not yet parity.
+2. A tail of statements: `ArraySortStmt`, `PUT$`, `DIM AT`, `ERASE` of a static array, `HEX$` with a
+   digit count, `PRINT USING` / `LPRINT`, `CODEPTR32`, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
+   metastatements.
+3. **41 functions that select but fail allocation** - each needs a memory operand in a position the
    emitter has no form for; `Spiller` names the position it could not move.
+4. The largest selection declines are runtime routines with no entry in the ABI table
+   (`rt_fprint_strvar`, `rt_str_val`, `rt_fprint_i64`, ...), a 32-bit compare used as a value, and a
+   float phi with no frame cell.
 
 ### Differential execution without the vintage oracle - DONE
 

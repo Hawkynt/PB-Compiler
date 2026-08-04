@@ -67,21 +67,22 @@ public sealed partial class CodeGenerator {
       // function with signed 16-bit parameters - the truth when the back end knew only integers. It
       // now returns LONGs in DX:AX and reals on ST(0), and a SUB returns nothing.
       //
-      // A local ARRAY keeps a procedure out, and that exclusion was bought the hard way: admitting
-      // them made CODEGEN.BAS print "accumulate-32283" where the direct emitter prints
-      // "accumulate 3". A routed function gets its own frame from MachineEmitter's stack slots while
-      // the direct path lays local storage out through LayoutFrame, and only module variables are
-      // bridged - a body computing over an alloca array where the surrounding layout expects the
-      // frame one reads plausible garbage instead of failing loudly. Strings stay out for the same
-      // kind of reason: they are runtime handles with ownership rules the back end does not model.
+      // A local ARRAY used to keep a procedure out. The exclusion was bought by CODEGEN.BAS printing
+      // "accumulate-32283" where the direct emitter prints "accumulate 3", and it was blamed on the
+      // frame layout - but the frame was never the problem. Two real defects were: a multi-slot
+      // alloca pointed at the TOP of its block rather than the bottom, so element 0 sat at the block's
+      // high end and every later one climbed out of the frame (see InstructionSelector.SelectAlloca);
+      // and the routed prologue never zeroed the frame, which PB requires and the direct path does
+      // with REP STOSW (see MachineEmitter.EmitFunction). Both are fixed, both show only on an array -
+      // a scalar is one slot and is written before it is read - and the whole corpus now agrees.
+      // Strings still stay out: they are runtime handles with ownership rules the back end does not
+      // model, and the selector declines them on their own.
       if (proc.IsExternal || proc.Body is null || ContainsErrorHandling(proc.Body))
         continue;
       if (proc.IsFunction && proc.ReturnType is not ScalarType { IsFloat: false, ByteSize: 2 or 4 }
                           and not ScalarType { IsFloat: true, ByteSize: 4 or 8 })
         continue;
       if (!proc.Parameters.All(p => p.ByVal && p.Type is ScalarType { IsFloat: false, ByteSize: 2 or 4 }))
-        continue;
-      if (DeclaresAnArray(proc.Body))
         continue;
       if (!byName.TryGetValue(proc.Name, out var irFn) || InstructionSelector.TrySelect(irFn) is not { } mfn)
         continue;
@@ -210,22 +211,6 @@ public sealed partial class CodeGenerator {
     if (name.StartsWith("rt_", System.StringComparison.Ordinal))
       return Asm.Mem.Word(this._asm.Lbl(name));
     return null;   // a STATIC local, or a synthesized IR global like .data_cursor - not addressable here yet
-  }
-
-  /// <summary>
-  /// Whether a body DIMs or REDIMs an array. Such a procedure is kept off the back end until routed
-  /// code and the direct frame layout agree on where local storage lives.
-  /// </summary>
-  private static bool DeclaresAnArray(IEnumerable<Syntax.Ast.Statement> body) {
-    foreach (var statement in body) {
-      if (statement is Syntax.Ast.DimStmt dim && dim.Variables.Any(v => v.ArrayBounds is { Count: > 0 }))
-        return true;
-      if (statement is Syntax.Ast.RedimStmt)
-        return true;
-      if (ChildStatementBlocks(statement).Any(DeclaresAnArray))
-        return true;
-    }
-    return false;
   }
 
   /// <summary>The names of the defined functions <paramref name="fn"/> calls directly (its ABI partners).</summary>

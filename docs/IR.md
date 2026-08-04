@@ -194,10 +194,10 @@ path off 16-bit DOS.
 
 ## Roadmap
 
-- the constructs that still decline: `ON ERROR`, `PRINT USING`/`LPRINT`, the
-  `CommandStmt` family (`KILL`, `CLS`, `LOCATE`, `POKE`, ...), `BIN$`, UDT-typed
-  array elements, and inline assembly (target-specific by definition - it will never
-  lower). `TryLowerModule(model, out var reason)` reports which one a program hit, and
+- the constructs that still decline: `PRINT USING`/`LPRINT`, `ArraySortStmt`, `PUT$`,
+  `DIM AT`, `HEX$` with a digit count, parts of the `CommandStmt` family, and inline
+  assembly (target-specific by definition - it will never lower).
+  `TryLowerModule(model, out var reason)` reports which one a program hit, and
   `pbc --emit-c` / `--emit-llvm` print it;
 - a native IR → x86-16 back end that reproduces byte-identical output for a
   subset (the fidelity proof that would let the IR augment the direct emitter);
@@ -212,11 +212,64 @@ them was costing the IR path most of the corpus for no reason: they are the majo
 metastatement in the battery, and accepting the two of them took the corpus from **40 to 78 of 162
 programs** lowering.
 
-`$ERROR <kind> ON` is the one that is not policy. It arms the Error 6/9/11 traps — observable
-behaviour this lowering does not emit — so a program that turns a check **on** declines. Silently
-dropping its traps would be a miscompile, not a missing optimization. Anything unrecognized declines
-as well, so a directive that gains semantics later is refused by default rather than ignored by
-accident.
+`$ERROR <kind> ON` is the one that is not policy: it arms real traps, and the lowering emits them.
+Anything unrecognized still declines, so a directive that gains semantics later is refused by default
+rather than ignored by accident — silently dropping a trap is a miscompile, not a missing
+optimization.
+
+| arm | what it raises | where |
+|---|---|---|
+| `BOUNDS` | Error 9 on a subscript outside its dimension | every array index, static or dynamic |
+| `OVERFLOW` | Error 6 when integer `+`, `-` or `*` wraps | every checked arithmetic node |
+| `NUMERIC` | Error 6 when a `FOR` counter wraps past its own range | the counter increment, and nowhere else |
+
+The direct emitter reads the overflow flag straight off the `ADD`/`SUB`/`IMUL` it has just written —
+a `JNO` over a call to `rt_raise`. A target-independent IR has no flags register, so the same question
+is asked in arithmetic every back end already has:
+
+- `+` and `-` use the textbook sign rule, which is **exact in the operand's own width**: an addition
+  overflows exactly when both operands share a sign the sum does not (`~(l^r) & (s^l) < 0`), and a
+  subtraction exactly when they differ in sign and the difference takes the subtrahend's
+  (`(l^r) & (s^l) < 0`);
+- an unsigned type has no overflow flag either — its wrap is a *carry*, which is one unsigned compare
+  (`s < l` for `+`, `l < r` for `-`);
+- a multiply has no such rule, so it is computed one width up, where the product is exact, and
+  range-checked before being truncated back.
+
+A dynamic array's bounds are not in its type — a `REDIM` decides them at run time — so the check reads
+the same descriptor slots the address arithmetic reads: the lower bound directly, the upper one
+reconstructed as `lo + size - 1`.
+
+## Error handling: the edge the CFG cannot show
+
+`ON ERROR GOTO` writes a code address into a runtime cell, and a fault **anywhere** afterwards — deep
+inside a runtime routine, where this compiler emitted no instruction at all — restores the armed frame
+and lands on that address. The edge is real at run time and has no representation as a CFG edge,
+because its source is "any point in the armed region".
+
+Two things follow, and they are the whole design.
+
+**The handler is named by `IrBlockAddress`** — LLVM's `blockaddress`. Arming is a call to an `rt_`
+intrinsic the back end expands *in place* rather than a real call, because it captures the current
+`BP` and `SP`; a call would capture its own.
+
+**The function is marked `IrFunction.HasErrorHandler`, and the optimizer does not touch it.** Every
+pass in the pipeline reasons from the CFG, and on such a function the CFG is missing its most
+important edge: the handler looks unreachable and gets deleted, or a variable the handler reads looks
+like it can only hold the value arriving on the fall-through. Both conclusions are wrong and both are
+silent. `IrPassManager.Run` and `IntegerRecovery.Run` carry the guard themselves, so no individual
+pass has to remember it — one place to be right instead of a dozen. It is the identical trade the
+direct emitter makes, where `_trackResume` switches its optimizations off wholesale.
+
+`RESUME <label>` names its destination and is an ordinary branch. `RESUME` and `RESUME NEXT` go back
+to a statement the *fault* chose, so each statement publishes its own start and successor addresses
+(`rt_resume_mark`, a pair of block addresses) exactly as `_trackResume` does — which is also why they
+cannot be IR branches: the destination is a value in a runtime cell, so the runtime performs the jump
+and the call never returns.
+
+`ERR`, `ERL` and `ERADR` bind to no variable, so a handler naming one arrives at the lowering as an
+unbound name; they read `rt_err` / `rt_erl` / `rt_eresume`, named exactly as the runtime labels them
+so the back end's data-cell bridge resolves them to the very storage the direct emitter uses.
 
 ## Float to integer: two conversions, not one
 
