@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial — the IR tier reassociates constant chains (`op(op(x,c1),c2) → op(x, c1∘c2)`), `x - C → x + (-C)`, and orders constants to the right; canonical *variable* operand ordering by SSA id (so `x+y+1` and `1+y+x` align for GVN) is not done |
 | **Stage** | Mid-end, before CSE/GVN |
 | **Related** | [O0003](O0003-common-subexpression-elimination.md), [O0046](O0046-ir-gvn.md), [O0064](O0064-lea-fusion.md) |
 
