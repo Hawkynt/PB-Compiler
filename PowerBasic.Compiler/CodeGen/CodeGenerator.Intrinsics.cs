@@ -33,12 +33,13 @@ public sealed partial class CodeGenerator {
   };
 
   /// <summary>
-  /// O0297: a one-character substring of a string, either <c>MID$(s$, i, 1)</c> (index <c>i</c>) or
-  /// <c>LEFT$(s$, 1)</c> (index 1, signalled by a null <paramref name="idx"/>). Used to route the read
-  /// (ASC) and the compare through the direct byte path rt_charat.
+  /// O0297: a one-character substring of a string - <c>MID$(s$, i, 1)</c> (index <c>i</c>),
+  /// <c>LEFT$(s$, 1)</c> (index 1, a null <paramref name="idx"/>), or <c>RIGHT$(s$, 1)</c> (the last
+  /// character, <paramref name="isLast"/> set). Routes the read (ASC) and the compare through the
+  /// direct byte paths <c>rt_charat</c> / <c>rt_lastchar</c>.
   /// </summary>
-  private bool SingleCharSource(Expression e, out Expression str, out Expression? idx) {
-    str = null!; idx = null;
+  private bool SingleCharSource(Expression e, out Expression str, out Expression? idx, out bool isLast) {
+    str = null!; idx = null; isLast = false;
     if (e is not CallOrIndexExpr c || !model.IntrinsicBindings.TryGetValue(c, out var info))
       return false;
     if (info.Name.Equals("MID$", StringComparison.OrdinalIgnoreCase) && c.Arguments.Count == 3
@@ -48,10 +49,33 @@ public sealed partial class CodeGenerator {
     }
     if (info.Name.Equals("LEFT$", StringComparison.OrdinalIgnoreCase) && c.Arguments.Count == 2
         && this.OptFolder.TryFold(c.Arguments[1]) is { Integer: 1 }) {
-      str = c.Arguments[0]; idx = null;             // LEFT$(s$, 1) is the character at index 1
+      str = c.Arguments[0];                          // LEFT$(s$, 1) is the character at index 1
+      return model.TypeOf(str) is StringType or FlexType;
+    }
+    if (info.Name.Equals("RIGHT$", StringComparison.OrdinalIgnoreCase) && c.Arguments.Count == 2
+        && this.OptFolder.TryFold(c.Arguments[1]) is { Integer: 1 }) {
+      str = c.Arguments[0]; isLast = true;           // RIGHT$(s$, 1) is the last character
       return model.TypeOf(str) is StringType or FlexType;
     }
     return false;
+  }
+
+  /// <summary>Emits the byte of the one-character source classified by <see cref="SingleCharSource"/> into AX, consuming the handle.</summary>
+  private void EmitSingleCharByte(Expression str, Expression? idx, bool isLast) {
+    var asm = this._asm;
+    this.EmitExpression(str);                        // owned string handle in AX
+    if (isLast) {
+      asm.Call(this._rt.LastChar);
+      return;
+    }
+    asm.Push(Reg.AX);
+    if (idx != null)
+      this.EmitInt16Argument(idx);
+    else
+      asm.Mov(Reg.AX, 1);                            // LEFT$(s$, 1): the index is 1
+    asm.Mov(Reg.CX, Reg.AX);
+    asm.Pop(Reg.AX);
+    asm.Call(this._rt.CharAt);
   }
 
   /// <summary>O0302: the byte of a single-character constant needle - a 1-char string literal or CHR$(const). Any byte, 0 included.</summary>
@@ -371,23 +395,16 @@ public sealed partial class CodeGenerator {
         // result, one fewer heap allocation per character in a scan loop. Gated on --optimize.
         Expression? strExpr = null, idxExpr = null;
         var haveSource = false;
+        var ascLast = false;
         if (this.Optimize) {
           if (args.Count == 2) {
             strExpr = args[0]; idxExpr = args[1]; haveSource = model.TypeOf(strExpr) is StringType or FlexType;
-          } else if (args.Count == 1 && this.SingleCharSource(args[0], out var src, out var idx)) {
-            strExpr = src; idxExpr = idx; haveSource = true;   // idxExpr null => LEFT$(s$, 1): index 1
+          } else if (args.Count == 1 && this.SingleCharSource(args[0], out var src, out var idx, out ascLast)) {
+            strExpr = src; idxExpr = idx; haveSource = true;   // MID$ / LEFT$ (index 1) / RIGHT$ (last)
           }
         }
         if (haveSource) {
-          this.EmitExpression(strExpr!);           // owned string handle in AX
-          asm.Push(Reg.AX);
-          if (idxExpr != null)
-            this.EmitInt16Argument(idxExpr);
-          else
-            asm.Mov(Reg.AX, 1);                    // LEFT$(s$, 1): the index is 1
-          asm.Mov(Reg.CX, Reg.AX);
-          asm.Pop(Reg.AX);
-          asm.Call(this._rt.CharAt);
+          this.EmitSingleCharByte(strExpr!, idxExpr, ascLast);
           break;
         }
         this.EmitExpression(args[0]);

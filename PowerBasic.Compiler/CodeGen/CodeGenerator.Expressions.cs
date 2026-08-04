@@ -850,16 +850,8 @@ public sealed partial class CodeGenerator {
     // (rt_charat) and compares it to the literal's byte - no substring, no StrDup, no literal alloc,
     // no StrCmp. Only for a single non-NUL char literal (a NUL would alias the past-the-end 0).
     if (this.Optimize && b.Op is BinaryOp.Equal or BinaryOp.NotEqual
-        && this.TryCharCompareOperands(b, out var chStr, out var chIdx, out var chByte)) {
-      this.EmitExpression(chStr);
-      asm.Push(Reg.AX);
-      if (chIdx != null)
-        this.EmitInt16Argument(chIdx);
-      else
-        asm.Mov(Reg.AX, 1);                       // LEFT$(s$, 1): the index is 1
-      asm.Mov(Reg.CX, Reg.AX);
-      asm.Pop(Reg.AX);
-      asm.Call(this._rt.CharAt);                 // AX = the i-th byte (0 past the end)
+        && this.TryCharCompareOperands(b, out var chStr, out var chIdx, out var chLast, out var chByte)) {
+      this.EmitSingleCharByte(chStr, chIdx, chLast);   // AX = the compared byte (0 past the end)
       asm.Mov(Reg.BX, (Imm)chByte);
     } else {
       this.EmitExpression(b.Left);
@@ -899,12 +891,12 @@ public sealed partial class CodeGenerator {
   /// MID$ is "" whose byte reads as 0, which a non-zero literal byte never matches, and an in-range
   /// byte matches iff the characters are equal. A NUL literal is excluded (it would alias that 0).
   /// </summary>
-  private bool TryCharCompareOperands(BinaryExpr b, out Expression strExpr, out Expression? idxExpr, out int literalByte) {
-    strExpr = null!; idxExpr = null; literalByte = 0;
+  private bool TryCharCompareOperands(BinaryExpr b, out Expression strExpr, out Expression? idxExpr, out bool isLast, out int literalByte) {
+    strExpr = null!; idxExpr = null; isLast = false; literalByte = 0;
     var matched = false;
     int? litByte = null;
-    if (this.SingleCharSource(b.Left, out var ls, out var li) && ByteOf(b.Right) is { } rb) { matched = true; strExpr = ls; idxExpr = li; litByte = rb; }
-    else if (this.SingleCharSource(b.Right, out var rs, out var ri) && ByteOf(b.Left) is { } lb) { matched = true; strExpr = rs; idxExpr = ri; litByte = lb; }
+    if (this.SingleCharSource(b.Left, out var ls, out var li, out var ll) && ByteOf(b.Right) is { } rb) { matched = true; strExpr = ls; idxExpr = li; isLast = ll; litByte = rb; }
+    else if (this.SingleCharSource(b.Right, out var rs, out var ri, out var rl) && ByteOf(b.Left) is { } lb) { matched = true; strExpr = rs; idxExpr = ri; isLast = rl; litByte = lb; }
     if (!matched || litByte is not { } theByte)
       return false;
     literalByte = theByte;

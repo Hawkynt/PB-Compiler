@@ -63,6 +63,7 @@ public sealed partial class DosRuntime {
   public Label StrCmp { get; private set; } = null!;
   public Label StrCmpEq { get; private set; } = null!;
   public Label CharAt { get; private set; } = null!;
+  public Label LastChar { get; private set; } = null!;
   public Label ScanChar { get; private set; } = null!;
   public Label StrMid { get; private set; } = null!;
   public Label StrLeft { get; private set; } = null!;
@@ -941,6 +942,49 @@ public sealed partial class DosRuntime {
   /// Consumes (frees) the haystack like <see cref="EmitInstr"/>; the one-byte needle is passed as a
   /// value, so it never allocates. Emitted only when referenced, which the emitter does under --optimize.
   /// </summary>
+  /// <summary>
+  /// O0297: the last byte of a string, the value of <c>ASC(RIGHT$(s$, 1))</c> / <c>RIGHT$(s$, 1)</c>,
+  /// read directly from the tail of the source buffer. AX = handle; returns AX = the last byte, or 0
+  /// for an empty string. Consumes (frees) the handle like the substring path it replaces.
+  /// </summary>
+  private void EmitLastChar(Assembler asm) {
+    this.LastChar = asm.MarkLabel("rt_lastchar");
+    var zero = asm.DefineLabel();
+    var output = asm.DefineLabel();
+
+    asm.Push(Reg.BX);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.SI);
+    asm.Push(Reg.ES);
+    asm.Push(Reg.AX);                              // save the handle for the free
+    asm.Test(Reg.AX, Reg.AX);
+    asm.Jz(zero);                                  // null handle -> 0
+    asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_strseg")));
+    asm.Mov(Reg.BX, Reg.AX);
+    asm.Shl(Reg.BX, 2);
+    asm.Mov(Reg.CX, this.Descriptor(Reg.BX, 2));  // length
+    asm.Jcxz(zero);                                // empty -> 0
+    asm.Mov(Reg.SI, this.Descriptor(Reg.BX));     // buffer base
+    asm.Add(Reg.SI, Reg.CX);
+    asm.Dec(Reg.SI);                               // SI = base + length - 1 (last byte)
+    asm.Mov(Reg.AL, Mem.Byte(Reg.SI).Es());
+    asm.Xor(Reg.AH, Reg.AH);
+    asm.Jmp(output);
+    asm.MarkLabel(zero);
+    asm.Xor(Reg.AX, Reg.AX);
+    asm.MarkLabel(output);
+    asm.Pop(Reg.BX);                                // BX = handle
+    asm.Push(Reg.AX);                               // save the byte
+    asm.Mov(Reg.AX, Reg.BX);
+    asm.Call(this.StrFree);
+    asm.Pop(Reg.AX);                                // restore the byte
+    asm.Pop(Reg.ES);
+    asm.Pop(Reg.SI);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.BX);
+    asm.Ret();
+  }
+
   private void EmitScanChar(Assembler asm) {
     this.ScanChar = asm.MarkLabel("rt_scanchar");
     var startOk = asm.DefineLabel();

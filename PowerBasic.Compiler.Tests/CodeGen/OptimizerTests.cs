@@ -1338,6 +1338,16 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenRightOneCompare_WhenPb36_ThenReadsLastByteDirectly() {
+    // O0297: RIGHT$(s$, 1) is the last character - ASC(RIGHT$(s$,1)) and RIGHT$(s$,1) = "c" read it
+    // directly from the buffer tail (rt_lastchar). RIGHT$(s$, 2) is a real substring, so the two
+    // compile to different images.
+    var direct = Compile("$OPTIMIZE SPEED\nDIM s$, r%\nLINE INPUT s$\nIF RIGHT$(s$, 1) = \"/\" THEN r% = 1\nPRINT r%\nEND", Dialect.Pb36);
+    var substr = Compile("$OPTIMIZE SPEED\nDIM s$, r%\nLINE INPUT s$\nIF RIGHT$(s$, 2) = \"x/\" THEN r% = 1\nPRINT r%\nEND", Dialect.Pb36);
+    Assert.That(direct.SequenceEqual(substr), Is.False, "RIGHT$(s$,1) reads the last byte directly; RIGHT$(s$,2) keeps the substring compare");
+  }
+
+  [Test]
   public void Emit_GivenLeftOneCompare_WhenPb36_ThenReadsFirstByteDirectly() {
     // O0297: LEFT$(s$, 1) is the first character - ASC(LEFT$(s$,1)) and LEFT$(s$,1) = "c" read it
     // directly (rt_charat, index 1) like MID$(s$, 1, 1). LEFT$(s$, 2) is a real substring, so the two
