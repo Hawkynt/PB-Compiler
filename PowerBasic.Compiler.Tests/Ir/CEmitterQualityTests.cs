@@ -37,9 +37,13 @@ public sealed class CEmitterQualityTests {
     return CEmitter.Emit(module);
   }
 
+  // The bound is read at run time on purpose. These tests are about the SHAPE a loop takes in the
+  // emitted C - the guard, the phi copies, the fall-through - and a constant-trip loop is unrolled
+  // away by the pipeline before the emitter ever sees one.
   private const string _counterLoop = """
-    DIM i AS INTEGER, total AS LONG
-    FOR i = 1 TO 10
+    DIM i AS INTEGER, total AS LONG, n AS INTEGER
+    INPUT n
+    FOR i = 1 TO n
       total = total + i * i
     NEXT i
     PRINT total

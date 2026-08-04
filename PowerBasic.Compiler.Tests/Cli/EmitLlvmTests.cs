@@ -24,7 +24,7 @@ public sealed class EmitLlvmTests {
     var (code, output, err) = RunEmit(
       "DECLARE FUNCTION sq%(BYVAL n%)\n" +
       "DIM a%(0 TO 4)\n" +
-      "FOR i% = 0 TO 4\n  a%(i%) = sq%(i%)\nNEXT i%\n" +
+      "INPUT k%\nFOR i% = 0 TO k%\n  a%(i%) = sq%(i%)\nNEXT i%\n" +
       "\n" +
       "FUNCTION sq%(BYVAL n%)\n  sq% = n% OR n%\nEND FUNCTION");
 
@@ -32,7 +32,7 @@ public sealed class EmitLlvmTests {
     Assert.That(output, Does.Contain("define void @main()"));
     Assert.That(output, Does.Contain("target triple"));
     Assert.That(output, Does.Contain("phi i16"));        // mem2reg formed the loop counter phi
-    Assert.That(output, Does.Not.Contain("call "));      // sq() inlined away
+    Assert.That(output, Does.Not.Contain("@sq"));        // sq() inlined away (INPUT's runtime calls remain)
   }
 
   [Test]

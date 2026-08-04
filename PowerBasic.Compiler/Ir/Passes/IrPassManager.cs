@@ -70,6 +70,9 @@ public sealed class IrPassManager {
   /// </summary>
   public static IrPassManager Standard() => new IrPassManager()
     .Add("mem2reg", Mem2Reg.Run)
+    // unrolling goes early, right after values reach SSA: a fully unrolled loop turns its counter
+    // into a constant in every copy, which is what gives the rest of the pipeline something to fold
+    .Add("unroll", LoopUnroll.Run)
     .Add("instcombine", InstCombine.Run)
     .Add("sccp", Sccp.Run)
     .Add("correlate", CorrelatedValueProp.Run)

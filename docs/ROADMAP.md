@@ -146,9 +146,9 @@ battery, it currently reaches:
 | | |
 |---|---|
 | programs reaching the IR at all | 132 / 162 |
-| functions selected | 126 / 218 |
-| functions routed (selected **and** allocated) | 84 / 218 |
-| whole module bodies the back end can own | 32 / 132 |
+| functions selected | 133 / 218 |
+| functions routed (selected **and** allocated) | 90 / 218 |
+| whole module bodies the back end can own | 37 / 132 |
 
 The runtime traps and the error handler are **done**. `$ERROR BOUNDS / OVERFLOW / NUMERIC ON` now emit
 their checks rather than merely accepting the metastatement, over dynamic arrays as well as static
