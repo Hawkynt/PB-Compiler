@@ -257,6 +257,8 @@ public sealed class InstructionSelector {
   };
 
   private bool SelectInstruction(IrInstruction instr, MBlock block) {
+    if (this.RefusesMbf(instr))
+      return false;
     switch (instr) {
       case IrBinary bin when bin.Type.IsFloat:
         return this.SelectFloatBinary(bin);
@@ -735,6 +737,22 @@ public sealed class InstructionSelector {
   /// Allocation therefore refuses to keep any value in a register across the call, and - having no
   /// spilling yet - declines such a function rather than miscompiling it.
   /// </summary>
+  /// <summary>
+  /// Microsoft Binary Format never reaches an instruction here. The x87 cannot compute on those bits
+  /// - they are a storage encoding with a different exponent bias and layout - so a value carrying
+  /// one has to be converted on load and back on store, which this back end does not emit. The IR now
+  /// CARRIES the format rather than refusing to lower it, which makes checking for it the back end's
+  /// job; treating mbf32 as f32 would read a different number.
+  /// </summary>
+  private bool RefusesMbf(IrInstruction instruction) {
+    if (instruction.Type.IsMbf)
+      return this.Decline($"Microsoft Binary Format ({instruction.Type}) needs the MBF/IEEE load-store conversion");
+    foreach (var operand in instruction.Operands)
+      if (operand.Type.IsMbf)
+        return this.Decline($"an operand in Microsoft Binary Format ({operand.Type})");
+    return false;
+  }
+
   private bool SelectCall(IrCall call, MBlock block) {
     if (call.Callee is not IrFunction callee)
       return this.Decline("call: indirect (through a procedure pointer)");

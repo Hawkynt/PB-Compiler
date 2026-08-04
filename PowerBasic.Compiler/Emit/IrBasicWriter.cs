@@ -43,15 +43,37 @@ public sealed class IrBasicWriter {
   private readonly Dictionary<IrValue, string> _names = new(ReferenceEqualityComparer.Instance);
   private readonly Dictionary<IrType, string> _declared = [];
   private readonly List<(string Name, IrType Type)> _locals = [];
+
+  /// <summary>
+  /// Facts the rendered pb35 cannot carry, stated rather than silently dropped. Microsoft Binary
+  /// Format is the one that matters: BASICA and GW-BASIC store SINGLE in it, pb35 stores IEEE, and
+  /// the two disagree on exponent bias and layout. The rendered program computes the same VALUES to
+  /// the precision IEEE gives, but it is not bit-for-bit the same storage, and a reader deserves to
+  /// be told which of those they are holding.
+  /// </summary>
+  private readonly List<string> _warnings = [];
   private readonly List<(string Name, IrType Element, int Count)> _arrays = [];
   private readonly Dictionary<IrAlloca, string> _arrayNames = new(ReferenceEqualityComparer.Instance);
   private int _seq;
 
   /// <summary>Renders a whole module: its globals, then each defined function.</summary>
-  public static string Write(IrModule module) {
+  public static string Write(IrModule module) => Write(module, out _);
+
+  /// <summary>
+  /// Renders a module and reports what the pb35 spelling could not carry. The warnings are also
+  /// written into the text as comments, so a rendered file is self-describing even when nobody kept
+  /// the list - a translation that quietly loses a property is the thing worth avoiding.
+  /// </summary>
+  public static string Write(IrModule module, out IReadOnlyList<string> warnings) {
     var writer = new IrBasicWriter();
     writer.Module(module);
-    return writer._out.ToString();
+    warnings = writer._warnings;
+    if (writer._warnings.Count == 0)
+      return writer._out.ToString();
+    var header = new StringBuilder();
+    foreach (var warning in writer._warnings)
+      header.Append("' WARNING: ").Append(warning).Append('\n');
+    return header + writer._out.ToString();
   }
 
   /// <summary>Renders one function on its own (the common case in tests).</summary>
@@ -87,8 +109,8 @@ public sealed class IrBasicWriter {
     // it is visible only to the main body - a procedure reading one would not even compile. The
     // rendered program has procedures, so this is not a detail that could be left for later.
     this.Line(global.Count > 1
-      ? $"DIM {name}(0 TO {global.Count - 1}) AS SHARED {TypeName(global.ValueType)}"
-      : $"DIM {name} AS SHARED {TypeName(global.ValueType)}");
+      ? $"DIM {name}(0 TO {global.Count - 1}) AS SHARED {this.DeclaredType(global.ValueType)}"
+      : $"DIM {name} AS SHARED {this.DeclaredType(global.ValueType)}");
   }
 
   // ---- functions --------------------------------------------------------------------------------
@@ -108,16 +130,16 @@ public sealed class IrBasicWriter {
 
     if (!isMain) {
       var parameters = string.Join(", ", function.Parameters.Select(a =>
-        $"BYVAL {body._names[a]} AS {TypeName(a.Type)}"));
+        $"BYVAL {body._names[a]} AS {body.DeclaredType(a.Type)}"));
       this.Line(function.ReturnType.IsVoid
         ? $"SUB {Sanitize(function.Name)}({parameters})"
-        : $"FUNCTION {Sanitize(function.Name)}({parameters}) AS {TypeName(function.ReturnType)}");
+        : $"FUNCTION {Sanitize(function.Name)}({parameters}) AS {this.DeclaredType(function.ReturnType)}");
     }
 
     foreach (var (name, type) in body._locals)
-      this.Line($"  DIM {name} AS {TypeName(type)}");
+      this.Line($"  DIM {name} AS {this.DeclaredType(type)}");
     foreach (var (name, element, count) in body._arrays)
-      this.Line($"  DIM {name}(0 TO {count - 1}) AS {TypeName(element)}");
+      this.Line($"  DIM {name}(0 TO {count - 1}) AS {this.DeclaredType(element)}");
     this._out.Append(body._out);
 
     if (!isMain)
@@ -215,6 +237,27 @@ public sealed class IrBasicWriter {
     };
   }
 
+  /// <summary>The BASIC type for a DIM, noting anything the pb35 spelling cannot carry.</summary>
+  private string DeclaredType(IrType type) {
+    if (type.IsMbf)
+      this.Note($"Microsoft Binary Format ({type}) is stored as IEEE {TypeName(type)}: pb35 has no MBF. "
+        + "Values compute the same; the STORAGE layout does not survive.");
+    return TypeName(type);
+  }
+
+  /// <summary>The value, with the note that its MBF storage did not survive the translation.</summary>
+  private string MbfDropped(string source, IrType type) {
+    this.Note($"Microsoft Binary Format is stored as IEEE {TypeName(type)}: pb35 has no MBF. "
+      + "Values compute the same; the STORAGE layout does not survive.");
+    return source;
+  }
+
+  /// <summary>Records a translation fact once, in order.</summary>
+  private void Note(string warning) {
+    if (!this._warnings.Contains(warning))
+      this._warnings.Add(warning);
+  }
+
   private static string TypeName(IrType type) => type.Kind switch {
     IrTypeKind.Int => type.Bits switch {
       1 or 8 or 16 => type.Signed ? "INTEGER" : "WORD",
@@ -222,7 +265,7 @@ public sealed class IrBasicWriter {
       64 => type.Signed ? "QUAD" : "QWORD",
       _ => throw new IrBasicWriterException($"an integer of {type.Bits} bits"),
     },
-    IrTypeKind.Float when type.IsIeeeFloat => type.Bits == 32 ? "SINGLE" : "DOUBLE",
+    IrTypeKind.Float => type.Bits == 32 ? "SINGLE" : "DOUBLE",
     // every pointer this lowering produces for a VALUE is a string handle; storage pointers are
     // allocas and arrays, which are declared from what they hold rather than from the pointer
     IrTypeKind.Ptr => "STRING",
@@ -349,6 +392,10 @@ public sealed class IrBasicWriter {
       IrCastOp.FPToSIRound => $"CLNG({source})",                // BASIC rounds when a real meets an integer
       IrCastOp.FPToSI => $"FIX({source})",                      // FIX truncates toward zero
       IrCastOp.FPExt or IrCastOp.FPTrunc => source,
+      // pb35 has no Microsoft Binary Format, so the conversions to and from it are the identity here
+      // and the STORAGE simply becomes IEEE. That is a real loss of fidelity, so it is stated rather
+      // than performed quietly - see DeclaredType.
+      IrCastOp.MbfToFP or IrCastOp.FPToMbf => this.MbfDropped(source, cast.Type),
       _ => throw new IrBasicWriterException($"the cast {cast.Op}"),
     };
     this.Line($"  {this.Define(cast)} = {text}");

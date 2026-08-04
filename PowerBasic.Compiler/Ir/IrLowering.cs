@@ -759,10 +759,16 @@ public sealed class IrLowering {
       this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr], this.LowerStringExpr(expr));
       return;
     }
-    if (this._model.TypeOf(expr) is not ScalarType s)
+    // an MBF value prints as the IEEE number it converts to - the runtime's print entries take a
+    // value on the x87, which is the one thing MBF bits cannot be
+    var printed = this._model.TypeOf(expr);
+    if (printed is MbfType mbf)
+      printed = IeeeFormOf(mbf);
+    if (printed is not ScalarType s)
       throw new IrLoweringException("PRINT of a non-numeric, non-literal item");
     var (suffix, ty) = NumericSuffix(s);
-    this.EmitIo(file, "print", suffix, IrType.Void, [ty], this.Coerce(this.LowerExpr(expr), s, s));
+    this.EmitIo(file, "print", suffix, IrType.Void, [ty],
+      this.Coerce(this.LowerExpr(expr), this._model.TypeOf(expr), s));
   }
 
   private void LowerInput(InputStmt input) {
@@ -2220,11 +2226,19 @@ public sealed class IrLowering {
   /// such a cell perform, so it declines rather than treat the bits as IEEE - which would be a
   /// miscompile, the two encodings disagreeing on exponent bias and layout.
   /// </summary>
-  private static IrType MapType(PbType type) {
-    var ir = IrTypeMapper.Map(type);
-    return !ir.IsMbf ? ir : throw new IrLoweringException(
-      $"Microsoft Binary Format storage ({ir}) needs the MbfToFP/FPToMbf load-store conversion, which the lowering does not emit yet");
-  }
+  /// <summary>
+  /// Maps a PB type for a lowered value, Microsoft Binary Format included.
+  ///
+  /// MBF used to be refused here, which kept every BASICA and GW-BASIC program with a SINGLE variable
+  /// off the IR path entirely. It is carried instead: the IR type system already distinguishes it
+  /// (<see cref="IrFloatFormat.Mbf"/>), and a back end that cannot compute on those bits declines on
+  /// the TYPE - which the x86-16 selector and the C and LLVM emitters all do. Carrying a fact and
+  /// refusing to act on it is what a type system is for; refusing to record it loses the program.
+  ///
+  /// The BASIC writer does act on it, by dropping it: pb35 has no MBF, so a rendered SINGLE is IEEE
+  /// and the writer says so rather than pretending the storage survived.
+  /// </summary>
+  private static IrType MapType(PbType type) => IrTypeMapper.Map(type);
 
   private static (PbType Type, bool IsFloat, bool Signed) CommonCompareType(PbType a, PbType b) {
     if (a is not ScalarType sa || b is not ScalarType sb)
@@ -2238,7 +2252,26 @@ public sealed class IrLowering {
     return (new ScalarType(ScalarKind.Long, width, signed, false), false, signed);
   }
 
+  /// <summary>
+  /// The IEEE scalar an MBF type computes as. Microsoft Binary Format is STORAGE - the x87 cannot
+  /// add two of them - so a value is converted to IEEE the moment it is used and back when it is
+  /// stored, which is exactly what the direct emitter does around an MBF cell.
+  /// </summary>
+  private static ScalarType IeeeFormOf(MbfType mbf) =>
+    new(mbf.IsDouble ? ScalarKind.Double : ScalarKind.Single, mbf.IsDouble ? 8 : 4, true, true);
+
   private IrValue Coerce(IrValue value, PbType from, PbType to) {
+    // MBF on either side: convert to IEEE to compute, and back to MBF to store. Recording the format
+    // in the IR is only worth anything if the conversions it implies are emitted too - a type nobody
+    // converts is a type nobody honoured.
+    if (from is MbfType fromMbf) {
+      var ieee = IeeeFormOf(fromMbf);
+      return this.Coerce(this._b.Cast(IrCastOp.MbfToFP, value, MapType(ieee)), ieee, to);
+    }
+    if (to is MbfType toMbf) {
+      var ieee = IeeeFormOf(toMbf);
+      return this._b.Cast(IrCastOp.FPToMbf, this.Coerce(value, from, ieee), MapType(to));
+    }
     if (from is not ScalarType sf || to is not ScalarType st)
       throw new IrLoweringException("coercion between non-scalar types");
     var toTy = MapType(to);

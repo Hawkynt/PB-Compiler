@@ -163,17 +163,28 @@ public sealed class IrTypeSystemTests {
 
   #region back ends
 
+  /// <summary>
+  /// A GW-BASIC SINGLE is Microsoft Binary Format, and the lowering CARRIES that rather than refusing
+  /// the program. It used to decline, which was safe and lost every BASICA/GW program with a float in
+  /// it; what makes carrying safe is that the conversions the format implies are emitted with it -
+  /// MbfToFP to compute, FPToMbf to store - so no back end ever sees MBF bits where it expects IEEE.
+  /// The back ends still refuse the TYPE (see below), which is where the refusal belongs.
+  /// </summary>
   [Test]
-  public void Lowering_GivenGwBasicSingle_ThenDeclinesRatherThanTreatMbfAsIeee() {
+  public void Lowering_GivenGwBasicSingle_ThenCarriesMbfWithItsConversions() {
     var model = Bind("""
       DIM x AS SINGLE
       x = 1.5
       PRINT x
       """, Dialect.Gw);
 
-    // the IR can express mbf32, but the lowering does not emit the load/store conversions yet -
-    // declining is correct; treating the bits as IEEE would be a miscompile
-    Assert.That(IrLowering.TryLowerModule(model), Is.Null);
+    var module = IrLowering.TryLowerModule(model);
+    Assert.That(module, Is.Not.Null, "an MBF program has to reach the IR");
+    var instructions = module!.Functions.SelectMany(f => f.Blocks).SelectMany(b => b.Instructions).ToList();
+    Assert.That(instructions.Any(i => i.Type.IsMbf || i.Operands.Any(o => o.Type.IsMbf)),
+      "the format has to survive, not be silently read as IEEE");
+    Assert.That(instructions.OfType<IrCast>().Select(c => c.Op),
+      Does.Contain(IrCastOp.FPToMbf), "storing into an MBF cell converts");
   }
 
   [Test]

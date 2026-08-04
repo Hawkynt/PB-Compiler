@@ -168,11 +168,25 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
     ["pb36/DIFF01.BAS"] = "INT/FIX of a float: the writer truncates where the direct emitter rounds. Which is "
       + "right needs the genuine compiler to settle - INT(2.7) is 2 by the language definition and 3 here - "
       + "so neither side is changed until the oracle can say.",
-    ["tb10/DIFF01.BAS"] = "as pb36/DIFF01: INT/FIX rounding.",
-    ["tb11/DIFF01.BAS"] = "as pb36/DIFF01: INT/FIX rounding.",
-    ["pb21/DIFF01.BAS"] = "as pb36/DIFF01: INT/FIX rounding.",
-    ["gw/DIFF01.BAS"] = "as pb36/DIFF01, plus GW-BASIC's MBF floats: the IR types them IEEE, so the "
-      + "rendered arithmetic is done at a different precision than the source dialect's.",
+    // Float PRINT FORMATTING, not arithmetic: Turbo Basic and PB 2.1 render 1000000000000000 where
+    // pb35 renders 1E+15, and .000001 where pb35 renders 1E-006. The rendered program IS pb35 and
+    // formats the pb35 way, which is correct for what it is - the dialect's formatter is a front-end
+    // property the IR does not carry.
+    ["tb10/DIFF01.BAS"] = "float PRINT formatting differs between TB 1.0 and pb35 (1E+15 against 1000000000000000).",
+    ["tb11/DIFF01.BAS"] = "float PRINT formatting differs between TB 1.1 and pb35.",
+    ["pb21/DIFF01.BAS"] = "float PRINT formatting differs between PB 2.1 and pb35.",
+    // Not yet diagnosed. Compiled optimized, the original and the rendering agree exactly; the
+    // disagreement is between the original and the UNOPTIMIZED rendering, and the cause has not been
+    // established. It is recorded as unknown rather than guessed at - an earlier note here blamed
+    // MBF floats, which the evidence does not support (the binder does map GW SINGLEs to MbfType and
+    // the lowering declines on them, so they never reach the writer silently).
+    ["gw/DIFF01.BAS"] = "UNDIAGNOSED: optimized, the two agree; the unoptimized rendering does not.",
+    // BASICA reaches the writer at all only because MBF is now carried through the IR instead of
+    // refused. It disagrees for the reason the rendering WARNS about: pb35 has no Microsoft Binary
+    // Format, so the storage becomes IEEE and float values print at a different precision. This one
+    // is a translation decision that was made explicitly, not a defect.
+    ["basica/DIFF01.BAS"] = "MBF storage dropped to IEEE, as the rendering's own warning says: pb35 "
+      + "has no Microsoft Binary Format, so floats print at IEEE precision.",
     ["pb36/DIFF04.BAS"] = "an unsigned DWORD prints as signed (-1 for 4294967295): the writer loses the "
       + "unsignedness when the value passes through a temporary.",
     ["pb36/DIFF06.BAS"] = "the same unsigned width loss on a DWORD literal (4000000000 renders as -294967296).",
@@ -184,8 +198,8 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
       + "rendered BASIC computes at a different width.",
     ["pb36/DIFF18.BAS"] = "a BYTE FOR counter must WRAP past 255 (QUIRK 2.28); the rendered loop does not, "
       + "so the trip count differs.",
-    ["pb30/QUIRK30.BAS"] = "a PB 3.0 quirk the IR does not carry: the rendered pb35 program does not "
-      + "reproduce the older dialect's behaviour, which is the front end's job and is lost by lowering.",
+    ["pb30/QUIRK30.BAS"] = "the unsigned width loss again (40000 renders as -25536), not a PB 3.0 "
+      + "quirk - the same defect as DIFF04, reached through a different program.",
     ["qb10/DIFF02.BAS"] = "QuickBASIC 1.0 rounds half AWAY from zero where pb35 does not; the rendered "
       + "program is pb35 and rounds the pb35 way.",
     ["qb20/DIFF02.BAS"] = "as qb10/DIFF02: the BASCOM-heritage rounding.",
