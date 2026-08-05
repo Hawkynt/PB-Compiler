@@ -119,9 +119,8 @@ public sealed class Sccp {
         if (folded is not { } v)
           return Lat.Bottom;
         // PB promotes +,-,* over integral operands to floating point, and an out-of-range
-        // float-to-LONG store saturates instead of wrapping - the fold has to agree
-        var promoted = value.DefExpr is not null && this._model.TypeOf(value.DefExpr) is ScalarType { IsFloat: true };
-        return Lat.Of(CodeGenerator.StoreFoldedPromoted(v, (ScalarType)value.Variable.Type, promoted));
+        // float-to-LONG store wraps like every narrower one - the fold has to agree
+        return Lat.Of(CodeGenerator.WrapToType(v, (ScalarType)value.Variable.Type));
       }
     }
   }

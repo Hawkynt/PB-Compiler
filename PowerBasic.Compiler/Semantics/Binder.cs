@@ -4101,13 +4101,16 @@ public sealed class Binder {
       var wide = Math.Max(EffectiveDivideWidth(b.Left, left), EffectiveDivideWidth(b.Right, right)) <= 2
         ? PbType.Single
         : PbType.Double;
-      // Genuine PBC promotes to float only where it keeps the result exact: a 2-byte +/-/*
-      // sum fits Single, and a 4-byte product needs the FPU (>32 bits). But a 4-byte ADD or
-      // SUBTRACT is done in the native 32-bit ALU and WRAPS - verified against PBC 3.50, which
-      // prints 2147483000+1000 as -2147483296 (wrapped), not the x87 sentinel a Double store
-      // would give. So Double-wide +/- stays integral; only the multiply promotes.
+      // Genuine PBC computes +/-/* in a WIDE type and narrows only at a store. `PRINT a& + b&`
+      // with a& = 2147483000 and b& = 1000 gives 2147484000; `c& = a& + b& : PRINT c&` gives
+      // -2147483296. Both verified against PBC 3.50.
+      //
+      // This used to return an integral type for a 4-byte +/-, on the evidence of the STORED case
+      // alone - which reads as a wrap and is one, but the wrap belongs to the store rather than to
+      // the addition. A wide use of the same sum then printed the wrapped value where the genuine
+      // compiler prints the full one (DIFF25).
       if (!this._checkedArithmetic)
-        return wide == PbType.Single || b.Op == BinaryOp.Multiply ? wide : PromoteUnsigned(Widest(left, right));
+        return wide;
       var bothSigned = left is ScalarType { Signed: true } && right is ScalarType { Signed: true };
       if (b.Op == BinaryOp.Multiply && bothSigned && wide == PbType.Double)
         return wide;

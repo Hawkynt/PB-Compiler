@@ -1947,7 +1947,11 @@ public sealed partial class CodeGenerator {
           this.EmitRaiseWhen(asm.Jae, 6);      // below the smallest
           asm.Fistp(Mem.Dword(this._scratch));
         } else
-          asm.Fistp(Mem.Dword(this._scratch));
+          // Without the overflow check the narrowing WRAPS, which is what the genuine compiler does
+          // (2147483000 + 1000 stored into a LONG is -2147483296). A 32-bit FISTP would store
+          // 8000_0000h instead - the x87's "does not fit" answer, not a wrap - so the store goes
+          // through 64 bits and keeps the low half, which is the wrap by construction.
+          asm.Fistp(Mem.Qword(this._scratch));
         asm.Mov(Reg.AX, Mem.Word(this._scratch));
         asm.Mov(Reg.DX, Mem.Word(this._scratch, 2));
         break;

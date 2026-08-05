@@ -44,20 +44,14 @@ public sealed partial class CodeGenerator {
   /// Wraps a compile-time value to the silent-wrap storage semantics of
   /// <paramref name="type"/> - folded arithmetic must land on exactly the bits
   /// the runtime ALU would have produced (QUIRKS: PB wraps without $ERROR NUMERIC).
+  ///
+  /// That holds for a float-PROMOTED value too - which every <c>+</c>, <c>-</c> and <c>*</c> over
+  /// integral operands is in PB 2.0+. An earlier reading had a 4-byte signed target take the x87's
+  /// integer-indefinite pattern (8000_0000h) instead, reasoning that a 32-bit FISTP cannot
+  /// represent an out-of-range value. Genuine PBC narrows through a 64-bit store and keeps the low
+  /// half, so 2147483000+1000 lands as -2147483296 and 2147483647+2147483647 as -2 - wraps, not
+  /// sentinels. Verified against PBC 3.50; tests/diff/DIFF113.BAS covers both.
   /// </summary>
-  /// <summary>
-  /// The value a compile-time fold must store when the expression was float-PROMOTED - which
-  /// every <c>+</c>, <c>-</c> and <c>*</c> over integral operands is in PB 2.0+. Storing such a
-  /// value into a 1- or 2-byte integral wraps, exactly like integral arithmetic; storing it into
-  /// a 4-byte signed one does NOT, because the x87 writes its integer-indefinite pattern
-  /// (8000_0000h) for anything outside the destination's range. Folding must reproduce that or
-  /// the optimizer changes the program's output - the one thing it may never do.
-  /// </summary>
-  public static long StoreFoldedPromoted(long exact, ScalarType type, bool promoted) =>
-    promoted && type is { ByteSize: 4, Signed: true } && (exact < int.MinValue || exact > int.MaxValue)
-      ? unchecked((int)0x80000000)
-      : WrapToType(exact, type);
-
   public static long WrapToType(long value, ScalarType type) => type switch {
     { ByteSize: 1, Signed: true } => (sbyte)value,
     { ByteSize: 1 } => (byte)value,

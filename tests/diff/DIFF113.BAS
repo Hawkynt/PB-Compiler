@@ -22,7 +22,8 @@ r = i * j + i : PRINT #1, "i16tree"; r
 i = 32000 : j = 32000
 r = i * j : PRINT #1, "i16big"; r
 
-' full-width operands: exact when it fits, the x87 sentinel when it does not
+' full-width operands: exact when it fits, the modular wrap when it does not - posovf is
+' 2147484000 truncated to 32 bits, NOT the x87's 8000_0000h indefinite
 a = 100000 : b = 7
 Opaque a : Opaque b
 r = a + b : PRINT #1, "add"; r
@@ -41,8 +42,9 @@ Opaque a : Opaque b
 r = a + b : PRINT #1, "edge"; r
 r = a + b + b : PRINT #1, "chain"; r
 
-' the same shapes with COMPILE-TIME operands: the folder must reproduce the store's
-' saturation too, not wrap - SCCP sees through these to a single constant
+' the same shapes with COMPILE-TIME operands: the folder must reproduce the store's wrap
+' too - SCCP sees through these to a single constant, and foldadd (2147483647+2147483647)
+' is the one that tells a wrap (-2) apart from a saturation (-2147483648)
 a = 2147483647
 r = a + a : PRINT #1, "foldadd"; r
 a = 2147483647

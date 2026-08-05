@@ -522,9 +522,9 @@ public sealed partial class CodeGenerator {
       return false;
 
     var asm = this._asm;
-    // exactly what the load-convert-store path would leave in the cell: a 1/2-byte target wraps,
-    // a 4-byte signed one takes the x87's integer-indefinite pattern when the value cannot fit
-    var value = StoreFoldedPromoted(raw, target, valueType.IsFloat);
+    // exactly what the load-convert-store path would leave in the cell - a wrap at every width,
+    // a float-promoted value into a 4-byte signed target included
+    var value = WrapToType(raw, target);
     switch (target.ByteSize) {
       case 1:
         asm.Mov(Adjust(place.Cell, 0, OperandSize.Byte), (Imm)(byte)value);
@@ -764,11 +764,8 @@ public sealed partial class CodeGenerator {
         && targetType is ScalarType { IsFloat: false, ByteSize: 4 } int32Target
         && model.TypeOf(a.Value) is ScalarType { IsFloat: true }
         && (this.IsModularInt32Tree(a.Value, int32Target.Signed)
-            || this.IsGuardedInt32AddSub(a.Value, int32Target.Signed))) {
-      var needsSaturationGuard = !this.IsModularInt32Tree(a.Value, int32Target.Signed);
+            || this.IsWrappingInt32AddSub(a.Value, int32Target.Signed))) {
       this.EmitModularInt32(a.Value);
-      if (needsSaturationGuard)
-        this.EmitInt32SaturationGuard();
       var simple32 = this.TargetNeedsNoAddressCode(a.Target);
       if (!simple32) {
         this._asm.Push(Reg.DX);              // a subscripted target's address code may clobber the pair
@@ -1168,7 +1165,7 @@ public sealed partial class CodeGenerator {
   /// arithmetic reproduces. So the tree only qualifies when its value provably cannot leave the
   /// destination's range - then exact, modular and stored all coincide. That still covers the
   /// everyday shapes (narrow leaves widened into a LONG, anything the interval lattice bounds);
-  /// a genuinely 32-bit-wide sum keeps the promoted path and its saturation.
+  /// a genuinely 32-bit-wide sum is picked up instead by <see cref="IsWrappingInt32AddSub"/>.
   /// </summary>
   private bool IsModularInt32Tree(Expression e, bool targetSigned) =>
     this.ModularTreeBits(e, 4, 0) is { } bits && bits <= (targetSigned ? 31 : 32);
@@ -1176,12 +1173,14 @@ public sealed partial class CodeGenerator {
   /// <summary>
   /// The one shape worth rescuing from the promoted path even though it CAN leave the
   /// destination's range: a single <c>+</c> or <c>-</c> whose operands are each exactly
-  /// representable (their own bound fits int32). The true result then needs exactly 33 bits, so
-  /// the ALU's overflow flag says precisely whether it left int32 - and the emitter reproduces
-  /// the x87's integer-indefinite sentinel in three instructions rather than paying the whole
-  /// FILD/op/FISTP round-trip. This is the everyday <c>total&amp; = total&amp; + delta&amp;</c>.
+  /// representable (their own bound fits int32). The true result then needs at most 33 bits, and
+  /// the store keeps the low 32 of them - genuine PBC narrows a promoted value through a 64-bit
+  /// store rather than a saturating 32-bit FISTP - so the ALU's own modular answer IS the stored
+  /// one and nothing has to be guarded. Earlier this branch spent three instructions turning that
+  /// answer back into the x87's 8000_0000h; tests/diff/DIFF113.BAS shows the oracle wants the wrap
+  /// (<c>2147483000&amp; + 1000&amp;</c> stores -2147483296).
   /// </summary>
-  private bool IsGuardedInt32AddSub(Expression e, bool targetSigned) =>
+  private bool IsWrappingInt32AddSub(Expression e, bool targetSigned) =>
     targetSigned && e is BinaryExpr { Op: BinaryOp.Add or BinaryOp.Subtract } b
     && this.ModularTreeBits(b.Left, 4, 1) is <= 31
     && this.ModularTreeBits(b.Right, 4, 1) is <= 31;
@@ -1303,21 +1302,6 @@ public sealed partial class CodeGenerator {
         this.EmitInt32Op(b);
         break;
     }
-  }
-
-  /// <summary>
-  /// Reproduces what an out-of-range float-to-LONG store does: the x87 writes its
-  /// integer-indefinite value (8000_0000h) rather than wrapping. The preceding 32-bit ADD/ADC
-  /// (or SUB/SBB) leaves OF set exactly when the true 33-bit result left the signed 32-bit
-  /// range, so one branch decides it.
-  /// </summary>
-  private void EmitInt32SaturationGuard() {
-    var asm = this._asm;
-    var inRange = asm.DefineLabel();
-    asm.Jno(inRange);
-    asm.Xor(Reg.AX, Reg.AX);
-    asm.Mov(Reg.DX, unchecked((short)0x8000));
-    asm.MarkLabel(inRange);
   }
 
   private void EmitModularInt16Core(Expression e) {
