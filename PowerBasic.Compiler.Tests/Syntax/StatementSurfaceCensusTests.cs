@@ -118,15 +118,15 @@ public sealed class StatementSurfaceCensusTests {
   /// The statement forms that reach no code generator under pb36 - every one a statement the genuine
   /// compiler accepts, so every one a real gap rather than a dialect saying no.
   ///
-  /// `lprint` and `pcopy`, `files`, `environ`, `bload`, `bsave` have no emitter case at all; `paint`
-  /// and `draw` are parsed as commands and fall to the unsupported default; the three `circle.*` forms
-  /// are the arc and aspect-ratio arguments, which the midpoint circle in the runtime cannot express.
+  /// `lprint` and `pcopy`, `files`, `environ`, `bload`, `bsave` have no emitter case at all; `draw` is
+  /// parsed as a command and falls to the unsupported default; the three `circle.*` forms are the arc
+  /// and aspect-ratio arguments, which the midpoint circle in the runtime cannot express.
   /// Strike a name from here when it starts compiling - the test insists on it.
   /// </summary>
   private static readonly string[] _pb36Gaps = [
     "lprint",
     "circle.arc", "circle.aspect", "circle.elided.color",
-    "paint", "paint.border", "draw", "pcopy",
+    "draw", "pcopy",
     "files", "environ", "bload", "bsave",
   ];
 

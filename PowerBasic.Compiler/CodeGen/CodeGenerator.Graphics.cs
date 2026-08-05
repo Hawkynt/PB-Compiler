@@ -81,4 +81,33 @@ public sealed partial class CodeGenerator {
     asm.Mov(Mem.Word(asm.Lbl("rt_gcolor")), Reg.AX);
     asm.Call(this._rt.Circle);
   }
+
+  /// <summary>
+  /// <c>PAINT (x, y), paint [, border]</c> - the flood fill, which the parser hands over as a command
+  /// whose point has already been split into two arguments, so the shapes are [x, y, paint] and
+  /// [x, y, paint, border].
+  ///
+  /// An omitted border is the paint colour itself, which is BASIC's rule and not an arbitrary
+  /// default: a fill with no stated boundary stops where it has already been, so it spreads over
+  /// everything reachable that is not already the colour being painted.
+  /// </summary>
+  private void EmitPaintStatement(CommandStmt paint) {
+    if (paint.Arguments is not [{ } x, { } y, { } colour, ..] || paint.Arguments.Count > 4) {
+      this.Unsupported(paint.Position, "PAINT takes a point, a paint colour and an optional border colour");
+      return;
+    }
+    var asm = this._asm;
+    this.EmitInt16Argument(x);
+    asm.Mov(Mem.Word(asm.Lbl("rt_gx1")), Reg.AX);
+    this.EmitInt16Argument(y);
+    asm.Mov(Mem.Word(asm.Lbl("rt_gy1")), Reg.AX);
+    this.EmitInt16Argument(colour);
+    asm.Mov(Mem.Word(asm.Lbl("rt_gcolor")), Reg.AX);
+
+    if (paint.Arguments.Count == 4 && paint.Arguments[3] is { } border)
+      this.EmitInt16Argument(border);
+    // else: AX still holds the paint colour, which is what an omitted border means
+    asm.Mov(Mem.Word(asm.Lbl("rt_gpbord")), Reg.AX);
+    asm.Call(this._rt.Paint);
+  }
 }

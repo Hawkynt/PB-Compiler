@@ -29,11 +29,238 @@ public sealed partial class DosRuntime {
   /// <summary>The full circle of radius rt_gr about (rt_gx1, rt_gy1) - the midpoint algorithm.</summary>
   public Label Circle { get; private set; } = null!;
 
+  /// <summary>The flood fill bounded by rt_gpbord, seeded at (rt_gx1, rt_gy1) - PAINT.</summary>
+  public Label Paint { get; private set; } = null!;
+
+  /// <summary>
+  /// Spans the fill can have outstanding at once. A scanline fill pushes one seed per contiguous run
+  /// on the row above and below the one it just filled, so the depth is the number of separate runs
+  /// still to visit rather than the pixel count - a filled rectangle never needs more than two.
+  /// Shapes with many disjoint fingers need more, and QuickBASIC answers those with "Out of memory"
+  /// rather than a partial fill, so this does too.
+  ///
+  /// The size is a compromise the runtime trimmer only half solves. This stack is four bytes an entry
+  /// of image, and the trimmer drops the whole PAINT section for a program that does not fill - but
+  /// only with the optimizer on, so an unoptimized build carries it whatever it draws. 128 spans is
+  /// half a kilobyte, comfortably more than any convex shape needs. Putting the stack on the machine
+  /// stack instead (SUB SP at entry, SS:BP-relative addressing) would cost the image nothing at all
+  /// and is the right answer; it is more assembly than this first cut wanted to be.
+  /// </summary>
+  private const int _paintSpans = 128;
+
   private void EmitGraphicsProcedures(Assembler asm) {
     this.EmitLine(asm);
     this.EmitLineBox(asm);
     this.EmitLineFill(asm);
     this.EmitCircle(asm);
+  }
+
+  /// <summary>
+  /// <c>rt_paint</c>: the scanline flood fill behind <c>PAINT (x, y), paint, border</c>.
+  ///
+  /// A pixel belongs to the region when it is neither the border colour nor already the paint colour.
+  /// The second half of that is what makes the fill terminate - without it a filled pixel is still
+  /// fillable and the seeds never run out.
+  ///
+  /// Scanline rather than four-way: pop a seed, walk left and right to the ends of its run, fill the
+  /// whole run at once, then push ONE seed for each contiguous run on the row above and the row
+  /// below. Four-way pushes a seed per pixel and would need thousands of them for a shape this one
+  /// crosses in a few dozen; the stack below is sized for spans because of it.
+  ///
+  /// The state lives in memory cells like the rest of this file - a fill needs x, the two run ends,
+  /// the row, the row being scanned and a cursor along it, which is more than the 8086 has registers
+  /// to spare once the pixel primitives have taken theirs.
+  /// </summary>
+  internal void EmitPaint(Assembler asm) {
+    var fillable = asm.DefineLabel("rt_paint_ok");
+    var notFillable = asm.DefineLabel();
+    var okDone = asm.DefineLabel();
+    var popLoop = asm.DefineLabel();
+    var done = asm.DefineLabel();
+    var scanLeft = asm.DefineLabel();
+    var scanLeftDone = asm.DefineLabel();
+    var scanRight = asm.DefineLabel();
+    var scanRightDone = asm.DefineLabel();
+    var fillRun = asm.DefineLabel();
+    var fillDone = asm.DefineLabel();
+    var neighbourRow = asm.DefineLabel();
+    var scanRow = asm.DefineLabel();
+    var scanRowDone = asm.DefineLabel();
+    var inRun = asm.DefineLabel();
+    var skipRun = asm.DefineLabel();
+    var overflow = asm.DefineLabel();
+    var stack = asm.DefineLabel("rt_pstk");
+
+    this.Paint = asm.MarkLabel("rt_paint");
+    asm.Push(Reg.AX);
+    asm.Push(Reg.BX);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.DX);
+    asm.Push(Reg.SI);
+    asm.Push(Reg.DI);
+
+    // seed the stack with the point PAINT was given
+    asm.Mov(Mem.Word(asm.Lbl("rt_psp")), (Imm)0);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx1")));
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_gy1")));
+    asm.Mov(Reg.DI, Mem.Word(asm.Lbl("rt_psp")));
+    asm.Mov(Mem.Word(Reg.DI, stack), Reg.AX);
+    asm.Mov(Mem.Word(Reg.DI, stack, 2), Reg.BX);
+    asm.Add(Mem.Word(asm.Lbl("rt_psp")), (Imm)4);
+
+    asm.MarkLabel(popLoop);
+    asm.Cmp(Mem.Word(asm.Lbl("rt_psp")), (Imm)0);
+    asm.Je(done);
+    asm.Sub(Mem.Word(asm.Lbl("rt_psp")), (Imm)4);
+    asm.Mov(Reg.DI, Mem.Word(asm.Lbl("rt_psp")));
+    asm.Mov(Reg.AX, Mem.Word(Reg.DI, stack));
+    asm.Mov(Reg.BX, Mem.Word(Reg.DI, stack, 2));
+    asm.Mov(Mem.Word(asm.Lbl("rt_px1")), Reg.AX);
+    asm.Mov(Mem.Word(asm.Lbl("rt_px2")), Reg.AX);
+    asm.Mov(Mem.Word(asm.Lbl("rt_py")), Reg.BX);
+    // the run may already have been filled by another seed reaching it first
+    asm.Call(fillable);
+    asm.Cmp(Reg.AL, (Imm)0);
+    asm.Je(popLoop);
+
+    asm.MarkLabel(scanLeft);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_px1")));
+    asm.Dec(Reg.AX);
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_py")));
+    asm.Call(fillable);
+    asm.Cmp(Reg.AL, (Imm)0);
+    asm.Je(scanLeftDone);
+    asm.Dec(Mem.Word(asm.Lbl("rt_px1")));
+    asm.Jmp(scanLeft);
+    asm.MarkLabel(scanLeftDone);
+
+    asm.MarkLabel(scanRight);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_px2")));
+    asm.Inc(Reg.AX);
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_py")));
+    asm.Call(fillable);
+    asm.Cmp(Reg.AL, (Imm)0);
+    asm.Je(scanRightDone);
+    asm.Inc(Mem.Word(asm.Lbl("rt_px2")));
+    asm.Jmp(scanRight);
+    asm.MarkLabel(scanRightDone);
+
+    // fill the run before scanning the neighbours, so their fillable tests see it as done
+    asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_px1")));
+    asm.MarkLabel(fillRun);
+    asm.Cmp(Reg.SI, Mem.Word(asm.Lbl("rt_px2")));
+    asm.Jg(fillDone);
+    asm.Mov(Reg.AX, Reg.SI);
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_py")));
+    asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_gcolor")));
+    asm.Call(this.Pset);
+    asm.Inc(Reg.SI);
+    asm.Jmp(fillRun);
+    asm.MarkLabel(fillDone);
+
+    // the row above, then the row below
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_py")));
+    asm.Dec(Reg.AX);
+    asm.Mov(Mem.Word(asm.Lbl("rt_pny")), Reg.AX);
+    asm.Mov(Mem.Word(asm.Lbl("rt_pside")), (Imm)0);
+
+    asm.MarkLabel(neighbourRow);
+    asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_px1")));
+    asm.MarkLabel(scanRow);
+    asm.Cmp(Reg.SI, Mem.Word(asm.Lbl("rt_px2")));
+    asm.Jg(scanRowDone);
+    asm.Mov(Reg.AX, Reg.SI);
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_pny")));
+    asm.Call(fillable);
+    asm.Cmp(Reg.AL, (Imm)0);
+    asm.Jne(inRun);
+    asm.Inc(Reg.SI);
+    asm.Jmp(scanRow);
+
+    // the start of a run: push it once, then step over the rest of the run so the same run is not
+    // seeded again for every pixel it contains
+    asm.MarkLabel(inRun);
+    asm.Mov(Reg.DI, Mem.Word(asm.Lbl("rt_psp")));
+    asm.Cmp(Reg.DI, (Imm)(_paintSpans * 4));
+    asm.Jae(overflow);
+    asm.Mov(Reg.AX, Reg.SI);
+    asm.Mov(Mem.Word(Reg.DI, stack), Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_pny")));
+    asm.Mov(Mem.Word(Reg.DI, stack, 2), Reg.AX);
+    asm.Add(Mem.Word(asm.Lbl("rt_psp")), (Imm)4);
+
+    asm.MarkLabel(skipRun);
+    asm.Inc(Reg.SI);
+    asm.Cmp(Reg.SI, Mem.Word(asm.Lbl("rt_px2")));
+    asm.Jg(scanRowDone);
+    asm.Mov(Reg.AX, Reg.SI);
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_pny")));
+    asm.Call(fillable);
+    asm.Cmp(Reg.AL, (Imm)0);
+    asm.Jne(skipRun);
+    asm.Jmp(scanRow);
+
+    asm.MarkLabel(scanRowDone);
+    asm.Cmp(Mem.Word(asm.Lbl("rt_pside")), (Imm)0);
+    asm.Jne(popLoop);
+    asm.Mov(Mem.Word(asm.Lbl("rt_pside")), (Imm)1);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_py")));
+    asm.Inc(Reg.AX);
+    asm.Mov(Mem.Word(asm.Lbl("rt_pny")), Reg.AX);
+    asm.Jmp(neighbourRow);
+
+    asm.MarkLabel(overflow);
+    asm.Mov(Reg.AX, (Imm)7);            // "Out of memory", as QuickBASIC answers a fill it cannot hold
+    asm.Call(this.Raise);
+
+    asm.MarkLabel(done);
+    asm.Pop(Reg.DI);
+    asm.Pop(Reg.SI);
+    asm.Pop(Reg.DX);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.BX);
+    asm.Pop(Reg.AX);
+    asm.Ret();
+
+    // AX = x, BX = y -> AL = 1 when the pixel is part of the region still to be filled. Off-screen
+    // is not fillable, which is what keeps the walk inside the frame buffer without every caller
+    // having to clip.
+    asm.MarkLabel(fillable);
+    asm.Push(Reg.BX);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.DX);
+    asm.Cmp(Reg.AX, (Imm)0);
+    asm.Jl(notFillable);
+    asm.Cmp(Reg.AX, (Imm)320);
+    asm.Jge(notFillable);
+    asm.Cmp(Reg.BX, (Imm)0);
+    asm.Jl(notFillable);
+    asm.Cmp(Reg.BX, (Imm)200);
+    asm.Jge(notFillable);
+    asm.Call(this.Point);               // AL = colour, AH cleared
+    asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_gpbord")));
+    asm.Je(notFillable);
+    asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_gcolor")));
+    asm.Je(notFillable);
+    asm.Mov(Reg.AL, (Imm)1);
+    asm.Jmp(okDone);
+    asm.MarkLabel(notFillable);
+    asm.Mov(Reg.AL, (Imm)0);
+    asm.MarkLabel(okDone);
+    asm.Pop(Reg.DX);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.BX);
+    asm.Ret();
+
+    // The seed stack and the fill's scratch, placed here rather than in the common data block so the
+    // runtime trimmer drops all of it with the graphics section when a program draws nothing.
+    foreach (var cell in new[] { "rt_gpbord", "rt_psp", "rt_px1", "rt_px2", "rt_py", "rt_pny", "rt_pside" }) {
+      asm.MarkLabel(cell);
+      asm.Dw(0);
+    }
+    asm.MarkLabel(stack);
+    for (var i = 0; i < _paintSpans * 2; ++i)
+      asm.Dw(0);
   }
 
   /// <summary>

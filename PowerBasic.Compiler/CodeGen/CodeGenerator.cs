@@ -2231,6 +2231,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         asm.Jmp(this._rt.Exit);
         break;
 
+      case "PAINT":
+        this.EmitPaintStatement(cmd);
+        break;
+
       case "PLAY": // parse-and-ignore stub: evaluate and drop the tune string
         foreach (var argument in cmd.Arguments)
           if (argument != null) {
