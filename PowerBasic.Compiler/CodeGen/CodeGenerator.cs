@@ -2359,6 +2359,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (this.Optimize && this.TryEmitRangeCheckBranch(condition, target, whenFalse))
       return;
 
+    // O0081: `(x AND mask) = 0` / `<> 0` is a bit test - `test ax, mask` sets ZF, no AND materialized.
+    if (this.Optimize && this.TryEmitBitTestCompareBranch(condition, target, whenFalse))
+      return;
+
     // Short-circuit a condition that is an AND/OR of pure comparisons into conditional branches,
     // instead of materializing each comparison as -1/0, bitwise-combining them and testing. PB's
     // AND/OR are bitwise, but over comparison results (always -1 or 0) that equals the logical
@@ -2424,6 +2428,44 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this.EmitExpression(variable);
     this.Coerce(model.TypeOf(variable), PbType.Integer, variable);
     this._asm.Test(Reg.AX, (Imm)(int)(short)(mask & 0xFFFF));   // ZF = (AX AND mask) == 0
+    return true;
+  }
+
+  /// <summary>
+  /// O0081: the explicit comparison forms of the bit test - <c>(x AND mask) = 0</c> and
+  /// <c>(x AND mask) &lt;&gt; 0</c> - emit <c>TEST ax, mask</c> and branch on the resulting ZF directly, with no
+  /// AND materialized and no separate compare. Emits the whole branch (so the caller returns). The jump sense
+  /// combines the `= 0` vs `&lt;&gt; 0` polarity with the caller's <paramref name="whenFalse"/>.
+  /// </summary>
+  private bool TryEmitBitTestCompareBranch(Expression condition, Label target, bool whenFalse) {
+    if (condition is not BinaryExpr { Op: BinaryOp.Equal or BinaryOp.NotEqual, Left: { } cl, Right: { } cr } cmp)
+      return false;
+    if (this._cseMarks?.ContainsKey(condition) == true)
+      return false;
+    bool IsZero(Expression e) => this.OptFolder.TryFold(e) is { Integer: 0 };
+    var andExpr =
+      cl is BinaryExpr { Op: BinaryOp.And } al && IsZero(cr) ? al :
+      cr is BinaryExpr { Op: BinaryOp.And } ar && IsZero(cl) ? ar : null;
+    if (andExpr is null || KindOf(model.TypeOf(andExpr)) != ValueKind.Int16)
+      return false;
+    Expression variable;
+    long mask;
+    if (this.OptFolder.TryFold(andExpr.Right) is { Integer: { } rc }) { variable = andExpr.Left; mask = rc; }
+    else if (this.OptFolder.TryFold(andExpr.Left) is { Integer: { } lc }) { variable = andExpr.Right; mask = lc; }
+    else
+      return false;
+    if (KindOf(model.TypeOf(variable)) != ValueKind.Int16)
+      return false;
+
+    this.EmitExpression(variable);
+    this.Coerce(model.TypeOf(variable), PbType.Integer, variable);
+    this._asm.Test(Reg.AX, (Imm)(int)(short)(mask & 0xFFFF));   // ZF = (x AND mask) == 0
+    // `= 0` is true when ZF set; `<> 0` when ZF clear. Branch to target when that truth == !whenFalse.
+    var isEqualZero = cmp.Op == BinaryOp.Equal;
+    if (isEqualZero != whenFalse)
+      this._asm.Jz(target);
+    else
+      this._asm.Jnz(target);
     return true;
   }
 

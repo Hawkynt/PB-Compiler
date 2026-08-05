@@ -226,9 +226,12 @@ END SUB
 ' ---------------------------------------------------------------------------
 ' ---------------------------------------------------------------------------
 ' @scenario BitTestUsesTest
-' @what     IF x% AND mask - bit-flag conditions
+' @what     IF x% AND mask - bit-flag conditions, bare and compared against 0
 ' @expect   O0081 emits TEST ax,mask instead of AND ax,mask + a separate test, so
-'           no AND-with-immediate materializes the masked value
+'           no AND-with-immediate materializes the masked value; (x AND mask) = 0
+'           and <> 0 take the same TEST, only the branch polarity differs. Every
+'           mask here is distinct - a mask used twice would be CSE'd and would
+'           legitimately have to materialize its value
 ' @assert   absent and-ax-imm8
 ' @status   done
 ' ---------------------------------------------------------------------------
@@ -236,6 +239,10 @@ SUB BitTestUsesTest(BYVAL x%) NOINLINE
   IF x% AND 4 THEN PRINT "b4 set" ELSE PRINT "b4 clr"
   IF x% AND 1 THEN PRINT "b0 set" ELSE PRINT "b0 clr"
   IF x% AND 2 THEN PRINT "b1 set" ELSE PRINT "b1 clr"
+  IF (x% AND 8) = 0 THEN PRINT "e8 T" ELSE PRINT "e8 F"
+  IF (x% AND 12) = 0 THEN PRINT "e4 T" ELSE PRINT "e4 F"
+  IF (x% AND 3) <> 0 THEN PRINT "n1 T" ELSE PRINT "n1 F"
+  IF (x% AND 16) <> 0 THEN PRINT "n2 T" ELSE PRINT "n2 F"
 END SUB
 
 SUB PrintChrIsDirect(BYVAL n%) NOINLINE

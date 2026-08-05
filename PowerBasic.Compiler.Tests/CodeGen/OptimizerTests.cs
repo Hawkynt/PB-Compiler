@@ -798,6 +798,44 @@ public sealed class OptimizerTests {
   }
 
   [Test]
+  public void Emit_GivenBitTestComparedAgainstZero_WhenPb36_ThenSameTestOnlyPolarityDiffers() {
+    // O0081: `(x AND mask) = 0` and `<> 0` are the same bit test as the bare `IF x AND mask` - the compare
+    // against zero only picks the branch polarity, so neither materializes the masked value.
+    static bool Has(byte[] img, params byte[] seq) {
+      for (var i = 0; i <= img.Length - seq.Length; ++i) {
+        var ok = true;
+        for (var j = 0; j < seq.Length; ++j) if (img[i + j] != seq[j]) { ok = false; break; }
+        if (ok) return true;
+      }
+      return false;
+    }
+    const string head = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL x%)\nS 5\nEND\nSUB S(BYVAL x%) NOINLINE\n";
+    var eq = Compile(head + "IF (x% AND 4) = 0 THEN PRINT \"y\" ELSE PRINT \"n\"\nEND SUB", Dialect.Pb36);
+    var ne = Compile(head + "IF (x% AND 4) <> 0 THEN PRINT \"y\" ELSE PRINT \"n\"\nEND SUB", Dialect.Pb36);
+    Assert.That(Has(eq, 0xA9, 0x04, 0x00), Is.True, "= 0: test ax, 4");
+    Assert.That(Has(eq, 0x83, 0xE0, 0x04), Is.False, "= 0: no and ax, 4");
+    Assert.That(Has(ne, 0xA9, 0x04, 0x00), Is.True, "<> 0: test ax, 4");
+    Assert.That(Has(ne, 0x83, 0xE0, 0x04), Is.False, "<> 0: no and ax, 4");
+  }
+
+  [Test]
+  public void Emit_GivenBitTestValueAlsoUsed_WhenPb36_ThenMaskIsMaterialized() {
+    // O0081 backs off when the AND is CSE'd: a second use of the same `x AND mask` needs the value, so the
+    // masked result has to be materialized with `and ax, mask` rather than discarded by a bare `test`.
+    static bool Has(byte[] img, params byte[] seq) {
+      for (var i = 0; i <= img.Length - seq.Length; ++i) {
+        var ok = true;
+        for (var j = 0; j < seq.Length; ++j) if (img[i + j] != seq[j]) { ok = false; break; }
+        if (ok) return true;
+      }
+      return false;
+    }
+    const string head = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL x%)\nS 5\nEND\nSUB S(BYVAL x%) NOINLINE\n";
+    var img = Compile(head + "IF x% AND 4 THEN PRINT \"y\"\nIF (x% AND 4) = 0 THEN PRINT \"n\"\nEND SUB", Dialect.Pb36);
+    Assert.That(Has(img, 0x83, 0xE0, 0x04), Is.True, "the shared `x AND 4` is materialized for its CSE slot");
+  }
+
+  [Test]
   public void Emit_GivenOnGoto_WhenPb36_ThenJumpTableForFourTargetsChainForThree() {
     // O0029: four+ targets dispatch through a jump table (a `cmp ax, count` bounds check); three keep the
     // linear dec/JNZ chain, which has no such compare.

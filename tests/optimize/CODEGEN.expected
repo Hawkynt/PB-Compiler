@@ -25,6 +25,10 @@ Hi#
 b4 set
 b0 set
 b1 clr
+e8 T
+e4 F
+n1 T
+n2 F
 dmax 8
 dmin 3
 dclamp 3

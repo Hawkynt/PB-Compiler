@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — `CMP reg,0 → TEST reg,reg` ships (`Assembler.Peephole.cs`), and `IF x AND mask` emits `TEST ax, mask` in codegen rather than `AND` + a separate test; the general "reuse the ZF a preceding `ADD/SUB/OR/XOR/INC/DEC/NEG` already set" peephole does not |
+| **Status** | 🟡 Partial — `CMP reg,0 → TEST reg,reg` ships (`Assembler.Peephole.cs`), and `IF x AND mask` — bare or compared against zero — emits `TEST ax, mask` in codegen rather than `AND` + a separate test; the general "reuse the ZF a preceding `ADD/SUB/OR/XOR/INC/DEC/NEG` already set" peephole does not |
 | **Stage** | Assembler peephole + codegen |
 | **Related** | [O0008](O0008-peephole-zero-idiom.md), [O0031](O0031-branch-fusion.md), [O0038](O0038-instruction-scheduling.md) |
 
@@ -53,7 +53,26 @@ result is never stored), and it leaves `AX` holding `x` unmodified. Applies to a
 int16 `AND` whose other operand folds to a constant and whose value is not also wanted
 for CSE; recognized in `EmitConditionalBranch` before the comparison-fusion path, so it
 survives into the `$OPTIMIZE SPEED` scheduler's stream (unlike the peephole below).
-Verified by a DOSBox self-diff over several masks and an `absent and-ax-imm8` assertion.
+
+The explicit forms `(x AND mask) = 0` and `(x AND mask) <> 0` are the same bit test —
+comparing against zero asks exactly what `TEST` already answers — so they take the same
+single instruction and differ only in which way the branch goes:
+
+```asm
+    mov     ax, [x]
+    test    ax, mask
+    jnz     Else             ; `= 0`  falls through when the bit is clear
+    ; ... or `jz Else` for `<> 0`
+```
+
+The comparison is recognized with either operand order (`0 = (x AND mask)` too), and the
+zero side is whatever the constant folder reduces to zero, not just a literal `0`.
+
+Both forms back off when the `AND` is CSE'd: a second use of the same `x AND mask` needs
+the value, so it is materialized normally. Verified by a DOSBox self-diff over seven masks
+(three bare, four compared, all distinct so none is CSE'd) plus an `absent and-ax-imm8`
+assertion, and by unit tests pinning `test ax,4` present / `and ax,4` absent for each form
+— and one pinning the opposite for the deliberately-CSE'd case.
 
 ## Planned
 
