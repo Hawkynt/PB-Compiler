@@ -263,6 +263,13 @@ internal static class StatementSurface {
 
     new("draw", "DRAW \"U10 R10 D10 L10\""),
     new("view", "VIEW (0, 0)-(319, 199)"),
+    // VIEW PRINT / VIEW TEXT / VIEW SCREEN and PALETTE USING had no forms at all, which is why the
+    // census never noticed that VIEW PRINT's own row-range spelling did not parse
+    new("view.print", "VIEW PRINT"),
+    new("view.print.range", "VIEW PRINT 1 TO 20"),
+    new("view.screen", "VIEW SCREEN (0, 0)-(10, 10)"),
+    new("view.text", "VIEW TEXT 1, 20"),
+    new("palette.using", "PALETTE USING pal%(0)", Preamble: "DIM pal%(16)"),
     new("window", "WINDOW (0, 0)-(319, 199)"),
     new("palette", "PALETTE 1, 2"),
     new("pcopy", "PCOPY 0, 1"),

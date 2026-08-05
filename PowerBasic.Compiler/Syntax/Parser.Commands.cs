@@ -424,6 +424,11 @@ public sealed partial class Parser {
         this.Advance();
         continue;
       }
+      // VIEW PRINT's row range is written `VIEW PRINT 1 TO 20`, and TO separates the two bounds
+      // exactly as a comma would. It is only a separator here: TO belongs to FOR, DIM and CASE
+      // everywhere else, and treating it as one generally would swallow those.
+      if (keyword == "VIEW PRINT" && this.TryMatchKeyword("TO"))
+        continue;
       return new CommandStmt(pos, keyword, arguments);
     }
   }
