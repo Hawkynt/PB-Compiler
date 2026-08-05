@@ -2267,6 +2267,15 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         asm.Jmp(this._rt.Exit);
         break;
 
+      case "PCOPY" when cmd.Arguments is [{ } fromPage, { } toPage]:
+        this.EmitInt16Argument(fromPage);
+        asm.Push(Reg.AX);
+        this.EmitInt16Argument(toPage);
+        asm.Mov(Reg.DX, Reg.AX);
+        asm.Pop(Reg.AX);
+        asm.Call(this._rt.PCopy);
+        break;
+
       case "PAINT":
         this.EmitPaintStatement(cmd);
         break;

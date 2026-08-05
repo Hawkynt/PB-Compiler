@@ -302,6 +302,52 @@ public sealed partial class DosRuntime {
     }
   }
 
+  /// <summary>PCOPY: one text-mode video page copied over another.</summary>
+  public Label PCopy { get; private set; } = null!;
+
+  /// <summary>
+  /// <c>PCOPY source, destination</c> - one text page over another.
+  ///
+  /// A text page is 4096 bytes at B800, of which 80x25x2 = 4000 are on screen and the rest is the
+  /// slack that makes the page start on a round boundary. The whole 4096 is copied: that is what
+  /// "copy the page" means, and the visible result is the same either way.
+  ///
+  /// Both segments are B800, so DS moves there for the duration and comes back afterwards - the
+  /// string heap and every runtime cell live through DS and would be unreachable meanwhile.
+  /// </summary>
+  private void EmitPCopy(Assembler asm) {
+    this.PCopy = asm.MarkLabel("rt_pcopy");
+    asm.Push(Reg.AX);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.SI);
+    asm.Push(Reg.DI);
+    asm.Push(Reg.DS);
+    asm.Push(Reg.ES);
+    asm.Cld();
+
+    asm.Mov(Reg.CL, (Imm)12);            // page number to byte offset: 4096 bytes each
+    asm.Shl(Reg.AX, Reg.CL);
+    asm.Mov(Reg.SI, Reg.AX);
+    asm.Mov(Reg.AX, Reg.DX);
+    asm.Shl(Reg.AX, Reg.CL);
+    asm.Mov(Reg.DI, Reg.AX);
+
+    asm.Mov(Reg.AX, 0xB800);
+    asm.Mov(Reg.DS, Reg.AX);
+    asm.Mov(Reg.ES, Reg.AX);
+    asm.Mov(Reg.CX, (Imm)2048);          // 4096 bytes, a word at a time
+    asm.Rep();
+    asm.Movsw();
+
+    asm.Pop(Reg.ES);
+    asm.Pop(Reg.DS);
+    asm.Pop(Reg.DI);
+    asm.Pop(Reg.SI);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.AX);
+    asm.Ret();
+  }
+
   public Label Pset { get; private set; } = null!;
   public Label Point { get; private set; } = null!;
 
@@ -360,6 +406,7 @@ public sealed partial class DosRuntime {
 
   private void EmitMiscProcedures2(Assembler asm) {
     this.EmitPixelProcedures(asm);
+    this.EmitPCopy(asm);
     this.ScreenMode = asm.MarkLabel("rt_screenmode");
     {
       // AX = PB SCREEN number -> BIOS video mode (QB-compatible mapping)
