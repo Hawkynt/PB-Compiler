@@ -321,7 +321,11 @@ internal static class StatementSurface {
     new("shared.global.pb", "DIM g AS SHARED INTEGER\ng = 1", MinMicrosoft: _noMicrosoft),
     // DIM SHARED is Microsoft's spelling. Whether PowerBASIC rejects it is not established here, so
     // the entry stays permissive on the Borland side rather than pinning an unverified claim
-    new("shared.global.qb", "DIM SHARED g%' + chr(92) + 'ng% = 1"),
+    new("shared.global.qb", "DIM SHARED g%\ng% = 1"),
+    // SHARED as a statement of its own, inside a procedure - the other two forms declare module-level
+    // storage and merely contain the word. History is not established well enough to pin either
+    // lineage (BASICA has no procedures to put it in), so the entry stays permissive.
+    new("shared.stmt", "DIM h%\nCALL S6\nEND\nSUB S6\n  SHARED h%\n  h% = 1\nEND SUB"),
     new("static.local", "CALL S4\nEND\nSUB S4\n  STATIC s%\n  s% = s% + 1\nEND SUB"),
     new("local.decl", "CALL S5\nEND\nSUB S5\n  LOCAL l%\n  l% = 1\nEND SUB"),
     // TYPE ... END TYPE is PB 3.0 in one line and QuickBASIC 4.0 in the other

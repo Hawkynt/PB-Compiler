@@ -105,14 +105,30 @@ public sealed class StatementSurfaceCensusTests {
     report.Insert(0, $"statement forms compiling through BOTH emitters under pb36: {done}/{results.Count}\n");
     TestContext.Out.Write(report.ToString());
 
-    // A floor, not an exact count. Every form in the table is a statement the genuine compiler
-    // accepts, so each one that does not reach Done is a real gap - the report names it and the
-    // number below stops the total sliding back while they are worked off.
-    Assert.That(done, Is.GreaterThanOrEqualTo(_pb36Floor),
-      "fewer statement forms compile than used to:\n" + report);
+    // The gaps are pinned by NAME, not by count. A count is a ratchet that only catches the total
+    // sliding back, so implementing one statement while breaking another nets to zero and says
+    // nothing; and it never notices a gap being closed, which leaves the number quietly pessimistic.
+    // Set equality fails in both directions: a form that stops compiling is not in the set, and a
+    // form that starts compiling has to be struck from it.
+    Assert.That(results.Where(r => r.Reached != Stage.Done).Select(r => r.Form.Id), Is.EquivalentTo(_pb36Gaps),
+      "the set of statement forms that do not compile has changed:\n" + report);
   }
 
-  private const int _pb36Floor = 211;   // 129 at first measurement; +LINE, +CIRCLE, +MKDIR/RMDIR/CHDIR, then the table grew from 155 forms to 223
+  /// <summary>
+  /// The statement forms that reach no code generator under pb36 - every one a statement the genuine
+  /// compiler accepts, so every one a real gap rather than a dialect saying no.
+  ///
+  /// `lprint` and `pcopy`, `files`, `environ`, `bload`, `bsave` have no emitter case at all; `paint`
+  /// and `draw` are parsed as commands and fall to the unsupported default; the three `circle.*` forms
+  /// are the arc and aspect-ratio arguments, which the midpoint circle in the runtime cannot express.
+  /// Strike a name from here when it starts compiling - the test insists on it.
+  /// </summary>
+  private static readonly string[] _pb36Gaps = [
+    "lprint",
+    "circle.arc", "circle.aspect", "circle.elided.color",
+    "paint", "paint.border", "draw", "pcopy",
+    "files", "environ", "bload", "bsave",
+  ];
 
   /// <summary>
   /// The same surface across every dialect the compiler claims. A form must be accepted by the
@@ -148,9 +164,16 @@ public sealed class StatementSurfaceCensusTests {
       + $"  accepted but should be rejected : {wrongfullyAccepted}\n");
     TestContext.Out.Write(report.ToString());
 
-    Assert.That(wrongfullyRejected, Is.LessThanOrEqualTo(_rejectionFloor),
-      "the front end rejects statement forms its dialect should accept:\n" + report);
+    // Both directions are errors, and both are currently zero over all 4237 pairs, so both are pinned
+    // there. The second half is the half that is easy to forget: a dialect quietly accepting a
+    // statement it never had is a fidelity bug exactly like rejecting one it did, and it is the more
+    // likely of the two to be introduced, because adding a feature without a gate entry costs nothing
+    // and fails nowhere else.
+    Assert.Multiple(() => {
+      Assert.That(wrongfullyRejected, Is.Zero,
+        "the front end rejects statement forms its dialect should accept:\n" + report);
+      Assert.That(wrongfullyAccepted, Is.Zero,
+        "the front end accepts statement forms whose dialect never had them:\n" + report);
+    });
   }
-
-  private const int _rejectionFloor = int.MaxValue;   // measured first, then tightened
 }

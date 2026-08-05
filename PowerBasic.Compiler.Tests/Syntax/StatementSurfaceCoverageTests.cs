@@ -29,12 +29,16 @@ public sealed class StatementSurfaceCoverageTests {
 
   [Test]
   public void Surface_GivenTheParsersKeywords_ThenEveryOneIsExercisedByAForm() {
-    // a keyword counts as exercised when it opens a form, or appears as a word anywhere in one - the
-    // second half is what covers EXIT, THEN-less IF bodies, and the block closers' own statements
+    // A keyword counts as exercised only when it OPENS a statement - the first word of some line of
+    // some form. The looser reading, "appears as a word anywhere in a form", passes for the wrong
+    // reason: SHARED is not tested by `DIM x AS SHARED INTEGER`, nor USING by `PRINT USING`, nor BASE
+    // by `OPTION BASE 1`, yet each of those would count it covered. Mentioning a word proves the
+    // lexer produced a token; only opening a statement proves the parser dispatches on it.
     var covered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     foreach (var form in StatementSurface.All)
-      foreach (var word in Words(form.Preamble + "\n" + form.Body))
-        covered.Add(word);
+      foreach (var line in (form.Preamble + "\n" + form.Body).Split('\n'))
+        if (Words(line).FirstOrDefault() is { } opener)
+          covered.Add(opener);
 
     var missing = Parser.StatementKeywords
       .Where(k => !_notStatementsOfTheirOwn.Contains(k) && !covered.Contains(k))
