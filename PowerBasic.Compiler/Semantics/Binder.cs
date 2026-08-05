@@ -368,6 +368,14 @@ public sealed class Binder {
           this._optionBase = (int)b.Value;
           break;
 
+        // Anything else is not a base the language has. Letting it through silently would be the
+        // worst of the three answers: OPTION BASE decides the implicit lower bound of every array
+        // declared after it, so a value that does not take effect shifts an entire program's
+        // subscripts with nothing to show for it.
+        case CommandStmt { Keyword: "OPTION BASE" } bad:
+          this.Error(bad.Position, "OPTION BASE takes a literal 0 or 1");
+          break;
+
         default:
           this._model.MainBody.Add(statement);
           break;

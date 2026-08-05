@@ -1,9 +1,14 @@
 ' Differential battery 56: array operations vs genuine PBC 3.5.
 ' DIM/REDIM/REDIM PRESERVE/ERASE, LBOUND/UBOUND, multi-dimensional indexing,
 ' OPTION BASE, and element arithmetic - every value must be byte-identical.
+OPTION BASE 1
 DIM a%(1 TO 10)
 DIM g%(1 TO 3, 1 TO 4)
+' declared without a lower bound, so OPTION BASE supplies it - the arrays above state theirs
+' and are unaffected, which is the half of the rule worth pinning
+DIM b%(4)
 OPEN "RESULT.TXT" FOR OUTPUT AS #1
+PRINT #1, LBOUND(b%); UBOUND(b%)
 
 FOR i% = 1 TO 10
   a%(i%) = i% * i%

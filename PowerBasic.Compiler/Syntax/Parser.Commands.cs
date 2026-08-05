@@ -258,6 +258,20 @@ public sealed partial class Parser {
     return new LsetRsetStmt(pos, isLeft, target, this.ParseExpression());
   }
 
+  /// <summary>
+  /// OPTION BASE 0|1 - the default lower bound of an array declared without one.
+  ///
+  /// Kept as a CommandStmt so the binder's module pre-pass can read it before any DIM is bound,
+  /// which is the whole point of the statement: it has to take effect on declarations that come
+  /// after it in the file but are processed in the same sweep. Nothing reaches the code generator -
+  /// the bound lower bounds already carry the answer.
+  /// </summary>
+  private Statement ParseOption() {
+    var pos = this.Advance().Position;
+    this.ExpectKeyword("BASE");
+    return new CommandStmt(pos, "OPTION BASE", [this.ParseExpression()]);
+  }
+
   /// <summary>SHIFT/ROTATE LEFT|RIGHT lvalue, count - kept as a CommandStmt with the direction in the keyword.</summary>
   private Statement ParseShiftRotate(string keyword) {
     this.Require(LanguageFeature.ShiftRotateStatements);

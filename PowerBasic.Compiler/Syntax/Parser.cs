@@ -25,6 +25,7 @@ public sealed partial class Parser {
     "BEEP", "CLS", "SCREEN", "COLOR", "LOCATE", "WINDOW", "PAINT", "SOUND", "RANDOMIZE",
     "SLEEP", "DELAY", "SHELL", "KILL", "NAME", "CHDIR", "MKDIR", "RMDIR", "ENVIRON", "WIDTH",
     "POKE", "OUT", "WAIT", "REG", "FILES", "BLOAD", "BSAVE", "DRAW", "PCOPY", "SHIFT", "ROTATE",
+    "OPTION",
   };
 
   /// <summary>
@@ -357,6 +358,7 @@ public sealed partial class Parser {
       case "COMMON": return this.ParseDim(StorageClass.Common);
       case "REDIM": return this.ParseRedim();
       case "ERASE": return this.ParseErase();
+      case "OPTION": return this.ParseOption();
       case "IF": return this.ParseIf();
       case "SELECT": return this.ParseSelect();
       case "TRY": return this.ParseTry();

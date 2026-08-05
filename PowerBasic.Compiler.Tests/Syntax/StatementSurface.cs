@@ -70,6 +70,8 @@ internal static class StatementSurface {
     // never preserved anything
     new("redim.preserve", "REDIM f(1 TO 4) AS LONG\nREDIM PRESERVE f(1 TO 8) AS LONG", Dialect.Pb35, Dialect.Pds70),
     new("common", "COMMON c%"),
+    // OPTION BASE is in every BASIC there has ever been, so both lineages stay at their oldest
+    new("option.base", "OPTION BASE 1\nDIM ob%(4)"),
     new("public", "PUBLIC p%", MinMicrosoft: _noMicrosoft),
     new("ext", "EXT e%", MinMicrosoft: _noMicrosoft),
     // DEFINT / DEFSNG / DEFDBL / DEFSTR are in every BASIC there has ever been
