@@ -74,7 +74,33 @@ public sealed class Cpu8086 {
     return cpu;
   }
 
+  /// <summary>
+  /// The environment a loaded program sees, as DOS lays it out: NAME=VALUE strings, each
+  /// NUL-terminated, the lot closed by a second NUL. The segment holding it goes in the PSP word at
+  /// 2Ch, which is where <c>rt_environ</c> looks for it.
+  ///
+  /// Without this the PSP was blank and every program read an environment segment of zero, so
+  /// ENVIRON$ - which ships - could not be executed here at all and had no test.
+  /// </summary>
+  private static readonly (string Name, string Value)[] _environment = [
+    ("PATH", "C:\\DOS"), ("COMSPEC", "C:\\COMMAND.COM"), ("PROMPT", "$P$G"),
+  ];
+
+  private const ushort _ENVIRONMENT_SEGMENT = 0x00F0;
+
+  private void InstallEnvironment() {
+    var at = _ENVIRONMENT_SEGMENT * 16;
+    foreach (var (name, value) in _environment) {
+      foreach (var c in $"{name}={value}")
+        this._memory[at++] = (byte)c;
+      this._memory[at++] = 0;
+    }
+    this._memory[at] = 0;                                        // the block's own terminator
+    this.WriteWord(_PSP_SEGMENT * 16 + 0x2C, _ENVIRONMENT_SEGMENT);
+  }
+
   private void Load(byte[] exe) {
+    this.InstallEnvironment();
     if (exe.Length < 0x1C || exe[0] != 'M' || exe[1] != 'Z') {
       // a COM-style image: no header, no relocations, everything in one segment at offset 0x100
       Array.Copy(exe, 0, this._memory, _PSP_SEGMENT * 16 + 0x100, exe.Length);
