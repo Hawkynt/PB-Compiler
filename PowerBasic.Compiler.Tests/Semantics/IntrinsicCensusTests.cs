@@ -242,8 +242,9 @@ public sealed class IntrinsicCensusTests {
   /// can write and nothing compiles - measured, not assumed.
   ///
   /// Eleven when this was first run; ten once LPOS was written - the printer's print column, whose
-  /// cell had just been added for LPRINT - and eight once CEIL and FRAC followed, both of which are
-  /// the x87 doing the work under a rounding mode exactly as INT and FIX beside them do.
+  /// cell had just been added for LPRINT - eight once CEIL and FRAC followed, both of which are the
+  /// x87 doing the work under a rounding mode exactly as INT and FIX beside them do, and six with
+  /// MIN$ and MAX$.
   ///
   /// ROUND is the one left that still looks like an oversight rather than a decision: it is ordinary
   /// arithmetic, and unlike CEIL it cannot borrow a rounding mode, because BASIC rounds halves away
@@ -255,8 +256,6 @@ public sealed class IntrinsicCensusTests {
   private static readonly string[] _noCodeGeneration = [
     "BITS",
     "FILEATTR",
-    "MAX$",
-    "MIN$",
     "PLAY",
     "REMOVE$",
     "ROUND",

@@ -252,6 +252,17 @@ public sealed partial class CodeGenerator {
         asm.Call(this._rt.StrMid);
         break;
 
+      // MIN$/MAX$ take their two operands the way INSTR does - left pushed, right into DX - and the
+      // runtime hands one of them back, having freed the other.
+      case "MIN$" or "MAX$":
+        this.EmitExpression(args[0]);
+        asm.Push(Reg.AX);
+        this.EmitExpression(args[1]);
+        asm.Mov(Reg.DX, Reg.AX);
+        asm.Pop(Reg.AX);
+        asm.Call(intrinsic.Name == "MAX$" ? this._rt.StrMax : this._rt.StrMin);
+        break;
+
       case "INSTR" or "VERIFY": {
         var hasStart = args.Count > 2;
         var needle = args[hasStart ? 2 : 1];

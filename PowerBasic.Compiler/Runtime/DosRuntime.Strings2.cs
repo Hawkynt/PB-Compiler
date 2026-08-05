@@ -41,6 +41,7 @@ public sealed partial class DosRuntime {
     this.EmitCommand(asm);
     this.EmitEnviron(asm);
     this.EmitSetEnviron(asm);
+    this.EmitStrMinMax(asm);
     this.EmitShell(asm);   // uses Environ - must follow it
     this.EmitTimeDate(asm);
     this.EmitKeyInput(asm);
@@ -84,6 +85,77 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.CX);
     asm.Pop(Reg.BX);
     asm.Ret();
+  }
+
+  /// <summary>MIN$/MAX$: the lexicographically smaller/larger of two strings (consumes both).</summary>
+  public Label StrMin { get; private set; } = null!;
+
+  /// <summary>MAX$ - see <see cref="StrMin"/>.</summary>
+  public Label StrMax { get; private set; } = null!;
+
+  /// <summary>
+  /// <c>MIN$(a$, b$)</c> and <c>MAX$(a$, b$)</c>: the bytewise smaller and larger of two strings.
+  ///
+  /// The comparison is the ordinary one, but StrCmp CONSUMES both operands, and this has to give one
+  /// of them back. So the two are duplicated, the copies are what get compared and freed, and the
+  /// original that lost is freed afterwards - the winner is returned untouched. Duplicating rather
+  /// than comparing in place keeps the whole thing inside the existing heap contract instead of
+  /// adding a second, non-consuming compare that only these two would use.
+  ///
+  /// Ties keep the LEFT operand, matching the numeric MIN/MAX fold beside it, where the accumulator
+  /// wins an equal comparison. For strings that compare equal it is unobservable; the rule is stated
+  /// so the two families do not have to be reasoned about separately.
+  /// </summary>
+  private void EmitStrMinMax(Assembler asm) {
+    void Emit(string label, bool wantMax) {
+      var keepLeft = asm.DefineLabel();
+      var done = asm.DefineLabel();
+      asm.MarkLabel(label);
+      asm.Push(Reg.BX);
+      asm.Push(Reg.CX);
+      asm.Push(Reg.DX);
+      asm.Mov(Mem.Word(asm.Lbl("rt_smleft")), Reg.AX);
+      asm.Mov(Mem.Word(asm.Lbl("rt_smright")), Reg.DX);
+
+      asm.Call(this.StrDup);                              // AX = a copy of the left
+      asm.Push(Reg.AX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_smright")));
+      asm.Call(this.StrDup);
+      asm.Mov(Reg.DX, Reg.AX);                            // DX = a copy of the right
+      asm.Pop(Reg.AX);
+      asm.Call(this.StrCmp);                              // AX = -1/0/1, both copies gone
+      asm.Cmp(Reg.AX, (Imm)0);
+      if (wantMax)
+        asm.Jge(keepLeft);                                // left >= right: the left is the larger
+      else
+        asm.Jle(keepLeft);                                // left <= right: the left is the smaller
+
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_smleft")));
+      asm.Call(this.StrFree);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_smright")));
+      asm.Jmp(done);
+
+      asm.MarkLabel(keepLeft);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_smright")));
+      asm.Call(this.StrFree);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_smleft")));
+
+      asm.MarkLabel(done);
+      asm.Pop(Reg.DX);
+      asm.Pop(Reg.CX);
+      asm.Pop(Reg.BX);
+      asm.Ret();
+    }
+
+    this.StrMin = asm.Lbl("rt_strmin");
+    Emit("rt_strmin", wantMax: false);
+    this.StrMax = asm.Lbl("rt_strmax");
+    Emit("rt_strmax", wantMax: true);
+
+    foreach (var cell in new[] { "rt_smleft", "rt_smright" }) {
+      asm.MarkLabel(cell);
+      asm.Dw(0);
+    }
   }
 
   /// <summary>ENVIRON name$ ("NAME=VALUE"): sets, replaces or removes an environment entry.</summary>
