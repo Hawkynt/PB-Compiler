@@ -54,12 +54,19 @@ public sealed partial class CodeGenerator {
   /// <summary>
   /// <c>CIRCLE (x,y), r [,colour] [,start] [,end] [,aspect]</c>, in the full-circle forms.
   ///
-  /// The arc and aspect arguments are declined rather than ignored. They are angles in radians, so
-  /// drawing one needs the x87 - and the interpreter the graphics tests run on deliberately does not
-  /// emulate x87, because a half-faithful 80-bit stack would let a float test pass while disagreeing
-  /// with the hardware. Emitting an arc nobody could execute would mean shipping the one thing worse
-  /// than a missing feature: a CIRCLE that quietly draws all 360 degrees when the program asked for a
-  /// quarter of them.
+  /// The arc and aspect arguments are declined rather than ignored, which remains the right answer -
+  /// a CIRCLE quietly drawing all 360 degrees when the program asked for a quarter of them would be
+  /// worse than one that refuses.
+  ///
+  /// The reason given here used to be that the test interpreter does not emulate x87. That is no
+  /// longer true and may never have been: SIN and COS run through it correctly, so an arc CAN be
+  /// executed and checked here. What is missing is the work, not the ability to verify it.
+  ///
+  /// The shape it wants is the parametric one rather than an extension of the midpoint walk below -
+  /// step an angle from start to end by about 1/r radians and PSET cos and sin of it - because that
+  /// form takes the aspect ratio for free (it scales the sine) and needs no 32-bit arithmetic, while
+  /// a midpoint ELLIPSE would need it: the radius squared leaves 16 bits at a radius of 181 and this
+  /// screen is 320 wide. The full-circle case should keep the integer midpoint walk it has.
   /// </summary>
   private void EmitCircleStatement(CircleStmt circle) {
     if (circle.Start is not null || circle.End is not null || circle.Aspect is not null) {
