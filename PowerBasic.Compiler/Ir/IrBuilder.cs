@@ -40,6 +40,8 @@ public sealed class IrBuilder {
 
   public IrCmp Cmp(IrCmpPred pred, IrValue lhs, IrValue rhs) => this.Emit(new IrCmp(pred, lhs, rhs));
 
+  public IrSelect Select(IrValue condition, IrValue ifTrue, IrValue ifFalse) => this.Emit(new IrSelect(condition, ifTrue, ifFalse));
+
   public IrCast Cast(IrCastOp op, IrValue value, IrType to) => this.Emit(new IrCast(op, value, to));
   public IrCast Trunc(IrValue value, IrType to) => this.Cast(IrCastOp.Trunc, value, to);
   public IrCast ZExt(IrValue value, IrType to) => this.Cast(IrCastOp.ZExt, value, to);

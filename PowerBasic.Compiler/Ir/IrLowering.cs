@@ -1796,6 +1796,10 @@ public sealed class IrLowering {
       return this.LowerInstr(call);
     if (name.Equals("LBOUND", StringComparison.OrdinalIgnoreCase) || name.Equals("UBOUND", StringComparison.OrdinalIgnoreCase))
       return this.LowerArrayBound(call, name.Equals("UBOUND", StringComparison.OrdinalIgnoreCase));
+    // MIN/MAX take two to sixteen arguments, so they are answered before the single-argument check
+    // below. The string spellings MIN$/MAX$ are not these - they go through the string path.
+    if (name.TrimEnd('%', '&', '!', '#', '?').ToUpperInvariant() is "MIN" or "MAX")
+      return this.LowerMinMax(call, name.StartsWith("MAX", StringComparison.OrdinalIgnoreCase));
     if (call.Arguments.Count != 1)
       throw new IrLoweringException($"intrinsic {name} with {call.Arguments.Count} arguments");
     return name.ToUpperInvariant() switch {
@@ -2070,6 +2074,35 @@ public sealed class IrLowering {
       neg = signed ? this._b.Cmp(IrCmpPred.Slt, v, new IrConstantInt(v.Type, 0)) : new IrConstantInt(IrType.I1, 0);
     }
     return this._b.Sub(this._b.ZExt(pos, resultTy), this._b.ZExt(neg, resultTy));
+  }
+
+  /// <summary>
+  /// <c>MIN</c>/<c>MAX</c> over two to sixteen arguments: a left fold of compare-and-select.
+  ///
+  /// The accumulator is kept when it already wins, which is the direct emitter's rule too (CMP then
+  /// JGE for MAX, JLE for MIN) and the FPU fold's before that. It decides ties: MAX(a, b) with a = b
+  /// yields the FIRST of them. Numerically that is nothing, but the two paths are checked against
+  /// each other, and a fold that broke ties the other way would differ from the emitter on exactly
+  /// the inputs a test is most likely to try.
+  ///
+  /// Every argument is coerced to the result type first, so the comparison happens in the domain the
+  /// answer is returned in - MAX of an INTEGER and a LONG is a LONG comparison, not an INTEGER one.
+  /// </summary>
+  private IrValue LowerMinMax(CallOrIndexExpr call, bool wantMax) {
+    var resultPb = this._model.TypeOf(call);
+    var accumulator = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
+
+    for (var i = 1; i < call.Arguments.Count; ++i) {
+      var candidate = this.Coerce(this.LowerExpr(call.Arguments[i]), this._model.TypeOf(call.Arguments[i]), resultPb);
+      var keepAccumulator = resultPb switch {
+        ScalarType { IsFloat: true } => this._b.Cmp(wantMax ? IrCmpPred.Foge : IrCmpPred.Fole, accumulator, candidate),
+        ScalarType { Signed: true } => this._b.Cmp(wantMax ? IrCmpPred.Sge : IrCmpPred.Sle, accumulator, candidate),
+        ScalarType => this._b.Cmp(wantMax ? IrCmpPred.Uge : IrCmpPred.Ule, accumulator, candidate),
+        _ => throw new IrLoweringException($"{(wantMax ? "MAX" : "MIN")} of {resultPb}"),
+      };
+      accumulator = this._b.Select(keepAccumulator, accumulator, candidate);
+    }
+    return accumulator;
   }
 
   private IrValue LowerCallExpr(CallOrIndexExpr call) {
