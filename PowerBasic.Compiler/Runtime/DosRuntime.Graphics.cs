@@ -29,6 +29,94 @@ public sealed partial class DosRuntime {
   /// <summary>The full circle of radius rt_gr about (rt_gx1, rt_gy1) - the midpoint algorithm.</summary>
   public Label Circle { get; private set; } = null!;
 
+  /// <summary>CIRCLE's arc and aspect forms: the parametric walk from rt_gastart to rt_gaend.</summary>
+  public Label Arc { get; private set; } = null!;
+
+  /// <summary>
+  /// <c>rt_arc</c>: the angle stepped from start to end, plotting cosine and sine of it.
+  ///
+  /// The full circle next door is the integer midpoint walk and stays that way - it is exact and
+  /// needs no x87. This is for the forms that one cannot express: a start and end angle, and an
+  /// aspect ratio. Parametric rather than a midpoint ELLIPSE because aspect then costs nothing (it
+  /// simply scales the sine) and no 32-bit arithmetic is needed, where the ellipse's radius squared
+  /// leaves 16 bits at a radius of 181 on a screen 320 wide.
+  ///
+  /// The step is one over the radius, which is about a pixel of arc per plot - fine enough to leave
+  /// no gaps and coarse enough not to plot the same pixel a dozen times.
+  ///
+  /// y is SUBTRACTED because the screen counts rows downward while the angle turns anticlockwise,
+  /// which is what makes an arc from 0 to pi/2 the upper right quadrant rather than the lower.
+  /// </summary>
+  private void EmitArc(Assembler asm) {
+    var loop = asm.DefineLabel();
+    var done = asm.DefineLabel();
+
+    this.Arc = asm.MarkLabel("rt_arc");
+    asm.Push(Reg.AX);
+    asm.Push(Reg.BX);
+    asm.Push(Reg.DX);
+
+    // step = 1/r, guarding a zero radius so a degenerate circle plots its centre and stops
+    asm.Cmp(Mem.Word(asm.Lbl("rt_gr")), (Imm)0);
+    asm.Jle(done);
+    asm.Fld1();
+    asm.Fidiv(Mem.Word(asm.Lbl("rt_gr")));
+    asm.Fstp(Mem.Qword(asm.Lbl("rt_gastep")));
+
+    asm.Fld(Mem.Qword(asm.Lbl("rt_gastart")));            // ST0 = t, kept for the whole walk
+    asm.MarkLabel(loop);
+    asm.Fcom(Mem.Qword(asm.Lbl("rt_gaend")));
+    asm.Fstsw(Mem.Word(this._scratch, 16));
+    asm.Mov(Reg.AX, Mem.Word(this._scratch, 16));
+    asm.Sahf();
+    asm.Ja(done);                                          // past the end angle
+
+    asm.Fld(St.St0);                                       // x = cx + r*cos t
+    asm.Fcos();
+    asm.Fimul(Mem.Word(asm.Lbl("rt_gr")));
+    asm.Fiadd(Mem.Word(asm.Lbl("rt_gcx")));
+    asm.Fistp(Mem.Word(asm.Lbl("rt_gax")));
+
+    asm.Fld(St.St0);                                       // y = cy - r*aspect*sin t
+    asm.Fsin();
+    asm.Fmul(Mem.Qword(asm.Lbl("rt_gaspect")));
+    asm.Fimul(Mem.Word(asm.Lbl("rt_gr")));
+    asm.Fchs();
+    asm.Fiadd(Mem.Word(asm.Lbl("rt_gcy")));
+    asm.Fistp(Mem.Word(asm.Lbl("rt_gay")));
+
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gax")));
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_gay")));
+    asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_gcolor")));
+    asm.Call(this.Pset);
+
+    asm.Fadd(Mem.Qword(asm.Lbl("rt_gastep")));
+    asm.Jmp(loop);
+
+    asm.MarkLabel(done);
+    asm.Fstp(St.St0);                                      // drop t
+
+    // the last point referenced ends at the centre, as it does after a full CIRCLE
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcx")));
+    asm.Mov(Mem.Word(asm.Lbl("rt_gx1")), Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcy")));
+    asm.Mov(Mem.Word(asm.Lbl("rt_gy1")), Reg.AX);
+
+    asm.Pop(Reg.DX);
+    asm.Pop(Reg.BX);
+    asm.Pop(Reg.AX);
+    asm.Ret();
+
+    foreach (var cell in new[] { "rt_gax", "rt_gay" }) {
+      asm.MarkLabel(cell);
+      asm.Dw(0);
+    }
+    foreach (var cell in new[] { "rt_gastart", "rt_gaend", "rt_gaspect", "rt_gastep" }) {
+      asm.MarkLabel(cell);
+      asm.Dq(0.0);
+    }
+  }
+
   /// <summary>The flood fill bounded by rt_gpbord, seeded at (rt_gx1, rt_gy1) - PAINT.</summary>
   public Label Paint { get; private set; } = null!;
 
@@ -53,6 +141,7 @@ public sealed partial class DosRuntime {
     this.EmitLineBox(asm);
     this.EmitLineFill(asm);
     this.EmitCircle(asm);
+    this.EmitArc(asm);
   }
 
   /// <summary>GET: the rectangle between the two points captured into an array.</summary>

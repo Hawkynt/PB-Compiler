@@ -118,13 +118,13 @@ public sealed class StatementSurfaceCensusTests {
   /// The statement forms that reach no code generator under pb36 - every one a statement the genuine
   /// compiler accepts, so every one a real gap rather than a dialect saying no.
   ///
-  /// `files` has no emitter case at all; the three `circle.*` forms are the arc and aspect-ratio
-  /// arguments, which the midpoint circle in the runtime cannot express - an ellipse needs 32-bit
-  /// arithmetic on this target, since the radius squared leaves 16 bits somewhere around 181.
+  /// FILES is the last one, and the only statement form in the table that reaches no code generator.
+  /// It needs INT 21h's FindFirst and FindNext and a DTA, neither of which the test interpreter
+  /// models, and its listing format is not verifiable here without the genuine compiler to compare
+  /// against - a guessed column layout would be worse than the error it gives now.
   /// Strike a name from here when it starts compiling - the test insists on it.
   /// </summary>
   private static readonly string[] _pb36Gaps = [
-    "circle.arc", "circle.aspect", "circle.elided.color",
     "files",
   ];
 

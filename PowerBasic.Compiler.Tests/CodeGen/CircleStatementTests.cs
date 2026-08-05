@@ -68,11 +68,13 @@ public sealed class CircleStatementTests {
       """), Is.EqualTo("5  0  0"));
 
   /// <summary>
-  /// An arc is declined rather than drawn as a whole circle. Silently ignoring the angles would be
-  /// the worst outcome available - a program asking for a quarter turn would get all four.
+  /// An arc no longer draws a whole circle, and never did draw one: it was declined until the walk
+  /// below was written. Silently ignoring the angles would have been the worst outcome available -
+  /// a program asking for a quarter turn getting all four - which is why it refused rather than
+  /// approximated, and the tests underneath are what replaced the refusal.
   /// </summary>
   [Test]
-  public void Circle_GivenAnArc_ThenTheCompilerSaysItCannotYet() {
+  public void Circle_GivenAnArc_ThenItIsDrawnRatherThanRefused() {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("""
       SCREEN 13
       CIRCLE (40, 40), 10, 12, 0.0, 1.5
@@ -81,6 +83,63 @@ public sealed class CircleStatementTests {
     var cg = new CodeGenerator(model);
     cg.EmitExecutable();
 
-    Assert.That(cg.Errors.Select(e => e.Message), Has.Some.Contains("start/end angle"));
+    Assert.That(cg.Errors, Is.Empty);
   }
+
+  // ---- the arc and aspect forms -----------------------------------------------------------------
+
+  /// <summary>
+  /// A quarter arc from 0 to pi/2 is the UPPER RIGHT quadrant. The screen counts rows downward while
+  /// the angle turns anticlockwise, so the sine is subtracted - get that backwards and the arc is a
+  /// perfect quarter circle in the wrong place, which no single sample would catch.
+  /// </summary>
+  [Test]
+  public void Circle_GivenAQuarterArc_ThenItCoversTheUpperRightAndNothingElse() =>
+    Assert.That(Run("""
+      CIRCLE (60, 60), 20, 9, 0, 1.5707963
+      PRINT POINT(80, 60); POINT(60, 40); POINT(40, 60); POINT(60, 80)
+      """), Is.EqualTo("9  9  0  0"), "right and up are on the arc; left and down are not");
+
+  /// <summary>The opposite quarter, to show the walk follows its bounds rather than always starting at 0.</summary>
+  [Test]
+  public void Circle_GivenAnArcThatDoesNotStartAtZero_ThenItBeginsWhereItWasTold() =>
+    Assert.That(Run("""
+      CIRCLE (60, 60), 20, 11, 3.1415927, 4.712389
+      PRINT POINT(40, 60); POINT(60, 80); POINT(80, 60); POINT(60, 40)
+      """), Is.EqualTo("11  11  0  0"), "left and down this time");
+
+  /// <summary>A full turn given explicitly draws the same circle the midpoint walk does.</summary>
+  [Test]
+  public void Circle_GivenAFullTurnAsAnArc_ThenAllFourCardinalPointsAreOn() =>
+    Assert.That(Run("""
+      CIRCLE (60, 60), 20, 12, 0, 6.2831853
+      PRINT POINT(80, 60); POINT(60, 40); POINT(40, 60); POINT(60, 80); POINT(60, 60)
+      """), Is.EqualTo("12  12  12  12  0"), "an outline, with the centre still clear");
+
+  /// <summary>
+  /// The aspect ratio scales the vertical radius and leaves the horizontal one alone, so a half
+  /// aspect puts the top of the ellipse at half the distance while the sides stay put.
+  /// </summary>
+  [Test]
+  public void Circle_GivenAnAspectRatio_ThenOnlyTheVerticalRadiusScales() =>
+    Assert.That(Run("""
+      CIRCLE (60, 60), 20, 13, , , 0.5
+      PRINT POINT(80, 60); POINT(60, 50); POINT(60, 40)
+      """), Is.EqualTo("13  13  0"), "the side is still at 20; the top is at 10 rather than 20");
+
+  /// <summary>An aspect of one is the plain circle, which is what makes it the right default.</summary>
+  [Test]
+  public void Circle_GivenAnAspectOfOne_ThenItIsTheOrdinaryCircle() =>
+    Assert.That(Run("""
+      CIRCLE (60, 60), 20, 14, , , 1.0
+      PRINT POINT(80, 60); POINT(60, 40); POINT(40, 60); POINT(60, 80)
+      """), Is.EqualTo("14  14  14  14"));
+
+  /// <summary>A zero radius plots nothing rather than dividing by it to find the step.</summary>
+  [Test]
+  public void Circle_GivenAZeroRadiusArc_ThenItDrawsNothingAndReturns() =>
+    Assert.That(Run("""
+      CIRCLE (60, 60), 0, 15, 0, 1.5
+      PRINT POINT(60, 60)
+      """), Is.EqualTo("0"));
 }

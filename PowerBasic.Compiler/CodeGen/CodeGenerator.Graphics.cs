@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Asm;
+using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax.Ast;
 
 namespace PowerBasic.Compiler.CodeGen;
@@ -69,11 +70,8 @@ public sealed partial class CodeGenerator {
   /// screen is 320 wide. The full-circle case should keep the integer midpoint walk it has.
   /// </summary>
   private void EmitCircleStatement(CircleStmt circle) {
-    if (circle.Start is not null || circle.End is not null || circle.Aspect is not null) {
-      this.Unsupported(circle.Position, "CIRCLE with a start/end angle or aspect ratio (the arc needs x87 trigonometry)");
-      return;
-    }
     var asm = this._asm;
+    var isArc = circle.Start is not null || circle.End is not null || circle.Aspect is not null;
     this.EmitInt16Argument(circle.Center.X);
     asm.Mov(Mem.Word(asm.Lbl("rt_gcx")), Reg.AX);
     this.EmitInt16Argument(circle.Center.Y);
@@ -86,7 +84,30 @@ public sealed partial class CodeGenerator {
     else
       asm.Mov(Reg.AX, 15);
     asm.Mov(Mem.Word(asm.Lbl("rt_gcolor")), Reg.AX);
-    asm.Call(this._rt.Circle);
+
+    if (!isArc) {
+      asm.Call(this._rt.Circle);
+      return;
+    }
+
+    // the three optional angles, each defaulted where it was left out: a whole turn, and a ratio of
+    // one, which together make the arc walk draw exactly the circle the midpoint walk would
+    this.EmitDoubleInto(circle.Start, asm.Lbl("rt_gastart"), () => asm.Fldz());
+    this.EmitDoubleInto(circle.End, asm.Lbl("rt_gaend"), () => { asm.Fldpi(); asm.Fld(St.St0); asm.Faddp(St.St1); });
+    this.EmitDoubleInto(circle.Aspect, asm.Lbl("rt_gaspect"), asm.Fld1);
+    asm.Call(this._rt.Arc);
+  }
+
+  /// <summary>Evaluates an optional argument as a double into a cell, or stores the default.</summary>
+  private void EmitDoubleInto(Expression? value, Label cell, Action emitDefault) {
+    var asm = this._asm;
+    if (value is null)
+      emitDefault();
+    else {
+      this.EmitExpression(value);
+      this.Coerce(model.TypeOf(value), PbType.Double, value);
+    }
+    asm.Fstp(Mem.Qword(cell));
   }
 
   /// <summary>
