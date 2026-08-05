@@ -108,6 +108,7 @@ public sealed partial class Parser {
 
   /// <summary>BIT SET/RESET/TOGGLE var, bit-number (PB 3.0).</summary>
   private Statement ParseBit() {
+    this.Require(LanguageFeature.BitStatements);   // Bob Zale's; BC 1.00 and 4.50 both reject it
     var pos = this.Advance().Position; // BIT
     var op = this.Advance().Text.ToUpperInvariant() switch {
       "SET" => BitOp.Set,
@@ -121,6 +122,7 @@ public sealed partial class Parser {
 
   /// <summary>ARRAY SORT / ARRAY SCAN (PB 3.5) - see <see cref="ArraySortStmt"/>/<see cref="ArrayScanStmt"/>.</summary>
   private Statement ParseArrayStatement() {
+    this.Require(LanguageFeature.ArraySortScan);   // Bob Zale's; BC 1.00 and 4.50 both reject it
     var pos = this.Advance().Position; // ARRAY
     var isScan = this.Advance().Text.Equals("SCAN", StringComparison.OrdinalIgnoreCase);
 

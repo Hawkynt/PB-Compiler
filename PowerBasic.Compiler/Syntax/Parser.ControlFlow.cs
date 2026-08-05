@@ -274,6 +274,7 @@ public sealed partial class Parser {
 
   /// <summary>ITERATE [FOR|DO|LOOP|WHILE] - continue with the next loop pass.</summary>
   private Statement ParseIterate() {
+    this.Require(LanguageFeature.IterateStatement);   // Bob Zale's; BC 1.00 and 4.50 both reject it
     var pos = this.Advance().Position;
     var kind = ExitKind.Loop; // bare ITERATE: innermost loop
     if (this.TryMatchKeyword("FOR"))

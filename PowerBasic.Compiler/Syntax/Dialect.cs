@@ -151,6 +151,14 @@ public enum LanguageFeature {
   SharedTypeClause,
   ExtendedNumericTypes,
   PublicStorage,
+  // The same shape, settled against the genuine compilers rather than the history books: PBC 3.0
+  // and 3.5 compile all four cleanly, and BC 1.00 and 4.50 reject every one of them (each a Severe
+  // Error against a control program that compiles with none). They were accepted in every dialect
+  // here, BASICA included, until that was checked.
+  EquateStatement,
+  IterateStatement,
+  ArraySortScan,
+  BitStatements,
 
   /// <summary>
   /// The PB 3.0 machine-level wave: REG, and the SHIFT / ROTATE STATEMENTS. Not to be confused with
@@ -268,6 +276,10 @@ public static class DialectFacts {
     [LanguageFeature.SharedTypeClause] = (Dialect.Tb10, "SHARED / STATIC inside a DIM type clause ('DIM x AS SHARED type')"),
     [LanguageFeature.ExtendedNumericTypes] = (Dialect.Tb10, "the extended numeric types (EXT / FIX / BCD / FLEX)"),
     [LanguageFeature.PublicStorage] = (Dialect.Tb10, "PUBLIC / EXT storage declarations"),
+    [LanguageFeature.EquateStatement] = (Dialect.Tb10, "the equate statement ('%name = value')"),
+    [LanguageFeature.IterateStatement] = (Dialect.Tb10, "ITERATE"),
+    [LanguageFeature.ArraySortScan] = (Dialect.Tb10, "the ARRAY SORT / ARRAY SCAN statements"),
+    [LanguageFeature.BitStatements] = (Dialect.Tb10, "the BIT SET / BIT RESET / BIT TOGGLE statements"),
     [LanguageFeature.RegStatement] = (Dialect.Pb30, "the REG statement"),
     [LanguageFeature.ShiftRotateStatements] = (Dialect.Pb30, "the SHIFT / ROTATE statements"),
     [LanguageFeature.UnionType] = (Dialect.Pb30, "UNION (the overlapping variant of TYPE)"),

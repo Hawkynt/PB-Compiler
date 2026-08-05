@@ -424,6 +424,66 @@ public sealed class DialectGateTests {
 
   #endregion
 
+  #region statements no Microsoft BASIC has
+
+  private static void AssertNotInMicrosoftFamily(string source, Dialect dialect, string what) {
+    const string shape = "is not available in the Microsoft BASIC family";
+    try {
+      var errors = Compile(source, dialect);
+      Assert.That(errors, Has.Some.Contains(shape).And.Contains(what),
+        $"expected a Microsoft-family gate under {dialect.DisplayName()} for: {source}\ngot: {string.Join("; ", errors)}");
+    } catch (LexerException e) {
+      Assert.That(e.Message, Does.Contain(shape).And.Contain(what), source);
+    } catch (ParserException e) {
+      Assert.That(e.Message, Does.Contain(shape).And.Contain(what), source);
+    }
+  }
+
+  /// <summary>
+  /// Four statements the compiler used to accept in EVERY dialect, BASICA included, because the
+  /// surface table recorded no claim where none had been verified - each reads like Bob Zale's, but
+  /// "reads like" is not evidence.
+  ///
+  /// The oracles settled it. PBC 3.0 and 3.5 compile all four cleanly; BC 1.00 and 4.50 answer every
+  /// one with a Severe Error. The probe carried a control program (<c>PRINT 1 / END</c>) that all
+  /// four compilers accept, which is what makes the rejections mean the statement rather than the
+  /// harness - the first run of it reported all five as syntax errors, control included, because the
+  /// sources had been written with Unix line endings.
+  ///
+  /// The Borland minimum stays at the OLDEST Borland dialect deliberately. pb21, tb10 and tb11 are
+  /// precisely the three oracles that cannot run here, so a tighter minimum would replace the claim
+  /// just removed with a new one just as unchecked. Only the half that was demonstrably wrong moved.
+  /// </summary>
+  [TestCase("%N = 5\nq% = %N", "equate statement")]
+  [TestCase("FOR i% = 1 TO 3\nITERATE FOR\nNEXT i%", "ITERATE")]
+  [TestCase("DIM a%(3)\nARRAY SORT a%()", "ARRAY SORT")]
+  [TestCase("bx% = 0\nBIT SET bx%, 2", "BIT SET")]
+  public void Gate_GivenAStatementOnlyBorlandEverHad_WhenQuickBasic45_ThenRefused(string source, string what)
+    => AssertNotInMicrosoftFamily(source, Dialect.Qb45, what);
+
+  /// <summary>BASICA is the oldest Microsoft dialect and refuses them too - the gate is family-wide.</summary>
+  [TestCase("%N = 5\nq% = %N", "equate statement")]
+  [TestCase("FOR i% = 1 TO 3\nITERATE FOR\nNEXT i%", "ITERATE")]
+  [TestCase("DIM a%(3)\nARRAY SORT a%()", "ARRAY SORT")]
+  [TestCase("bx% = 0\nBIT SET bx%, 2", "BIT SET")]
+  public void Gate_GivenAStatementOnlyBorlandEverHad_WhenBasica_ThenRefused(string source, string what)
+    => AssertNotInMicrosoftFamily(source, Dialect.Basica, what);
+
+  /// <summary>
+  /// And the other direction, which is the half that must NOT change: PowerBASIC still takes all
+  /// four, matching PBC 3.5 itself. A gate that rejected everywhere would pass the tests above.
+  /// </summary>
+  [TestCase("%N = 5\nq% = %N")]
+  [TestCase("FOR i% = 1 TO 3\nITERATE FOR\nNEXT i%")]
+  [TestCase("DIM a%(3)\nARRAY SORT a%()")]
+  [TestCase("bx% = 0\nBIT SET bx%, 2")]
+  public void Gate_GivenAStatementOnlyBorlandEverHad_WhenPb35_ThenStillAccepted(string source) {
+    AssertAccepted(source, Dialect.Pb35);
+    Assert.That(Compile(source, Dialect.Pb35), Has.None.Contains("Microsoft BASIC family"));
+  }
+
+  #endregion
+
   #region defaults
 
   [Test]

@@ -484,6 +484,7 @@ public sealed partial class Parser {
   }
 
   private Statement ParseEquate() {
+    this.Require(LanguageFeature.EquateStatement);   // Bob Zale's; BC 1.00 and 4.50 both reject it
     var name = this.Advance();
     this.Expect(TokenKind.Equals, "'='");
     return new EquateStmt(name.Position, name.Text, this.ParseExpression());

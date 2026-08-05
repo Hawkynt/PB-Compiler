@@ -92,11 +92,14 @@ internal static class StatementSurface {
     // These six had no form of their own and so no census counted them - MID$ assignment in
     // particular is as common a statement as BASIC has.
     //
-    // All six stay PERMISSIVE. EQUATE, ARRAY SORT and BIT SET read as Bob Zale's and FOR EACH and
-    // ITERATE as pb36's, but the compiler accepts every one of them in BASICA and QuickBASIC as
-    // well, and this table's rule is that an unverified claim is worse than no claim - it makes the
-    // claim look checked. Whether that acceptance is a gating hole or the history is wrong needs the
-    // oracle to settle, and the census measures the compiler either way.
+    // MID$ assignment stays PERMISSIVE - every dialect has it.
+    //
+    // EQUATE, ARRAY SORT, BIT SET and ITERATE used to sit here as well, accepted in BASICA and
+    // QuickBASIC alongside everything else, on the grounds that an unverified claim is worse than
+    // no claim. The oracle has now settled it: PBC 3.0 and 3.5 compile all four cleanly, BC 1.00
+    // and 4.50 reject every one with a Severe Error, and a control program compiles under all four
+    // compilers - so it was a gating hole, not a quirk of history. They are gated out of the
+    // Microsoft family below.
     new("mid.assign", "s$ = \"abc\"\nMID$(s$, 1, 1) = \"X\""),
     // ten more the statement-kind census found: each is a grammar the parser accepts that no form
     // compiled. Dialect minimums here are what the compiler enforces, measured, not what the history
@@ -104,7 +107,9 @@ internal static class StatementSurface {
     new("asc.assign", "s2$ = \"abc\"\nASC(s2$, 1) = 65", Dialect.Pb35, _noMicrosoft),
     new("chain", "CHAIN \"NEXT.EXE\""),
     new("replace", "s3$ = \"aXa\"\nREPLACE \"X\" WITH \"Y\" IN s3$"),
-    new("array.scan", "ARRAY SCAN a4%(), = 5, TO f4%", Preamble: "DIM a4%(4)"),
+    // ARRAY SCAN shares ARRAY SORT's keyword, parse site and gate, and the oracle agrees it shares
+    // the answer too: 2 Severe Errors from BC 4.50, 1 from BC 1.00, clean under PBC 3.5.
+    new("array.scan", "ARRAY SCAN a4%(), = 5, TO f4%", MinMicrosoft: _noMicrosoft, Preamble: "DIM a4%(4)"),
     new("exit.far", "CALL S9\nEND\nSUB S9\n  EXIT FAR\nEND SUB"),
     new("inline.asm", "! mov ax, 1", Dialect.Pb30, _noMicrosoft),
     new("destructure", "d1%, d2% = (1, 2)", Dialect.Pb36, _noMicrosoft),
@@ -119,15 +124,16 @@ internal static class StatementSurface {
     new("type.alias", "TYPE Small AS INTEGER\nDIM tv AS Small\ntv = 1", Dialect.Pb36, _noMicrosoft),
     new("defer", "CALL S4\nEND\nSUB S4\n  DEFER PRINT \"bye\"\n  PRINT \"hi\"\nEND SUB", Dialect.Pb36, _noMicrosoft),
     new("yield", "FUNCTION G9%()\n  YIELD 1\nEND FUNCTION", Dialect.Pb36, _noMicrosoft),
-    new("equate", "%N = 5\nq% = %N"),
-    new("array.sort", "ARRAY SORT a2%()", Preamble: "DIM a2%(3)"),
-    new("bit.set", "BIT SET bx%, 2", Preamble: "bx% = 0"),
-    // FOR EACH is the only one of the six the compiler actually gates: pb36 on Bob Zale's line and
-    // nowhere at all on Microsoft's. ITERATE, EQUATE, ARRAY SORT and BIT SET are taken by every
-    // dialect there is, BASICA included, so they stay permissive - each reads like a PowerBASIC
-    // statement and each is probably a gating hole, but "probably" is not what this table records.
+    new("equate", "%N = 5\nq% = %N", MinMicrosoft: _noMicrosoft),
+    new("array.sort", "ARRAY SORT a2%()", MinMicrosoft: _noMicrosoft, Preamble: "DIM a2%(3)"),
+    new("bit.set", "BIT SET bx%, 2", MinMicrosoft: _noMicrosoft, Preamble: "bx% = 0"),
+    // All five are now gated on the Microsoft side, four of them against the genuine BC. The
+    // Borland minimum stays at the oldest Borland dialect on purpose: pb21, tb10 and tb11 are the
+    // three oracles that cannot run here (their oracle.conf drives an IDE through 'autotype',
+    // which vanilla DOSBox lacks), so a tighter minimum would be exactly the unverified claim this
+    // table refuses to make. What IS verified is the half that was wrong.
     new("for.each", "FOR EACH ev% IN a3%()\nNEXT ev%", Dialect.Pb36, _noMicrosoft, Preamble: "DIM a3%(3)"),
-    new("iterate", "FOR i% = 1 TO 3\n  ITERATE FOR\nNEXT i%"),
+    new("iterate", "FOR i% = 1 TO 3\n  ITERATE FOR\nNEXT i%", MinMicrosoft: _noMicrosoft),
     // INCR / DECR are Bob Zale's; no Microsoft BASIC ever had them
     new("incr.bare", "INCR x%", MinMicrosoft: _noMicrosoft),
     new("incr.by", "INCR x%, 2", MinMicrosoft: _noMicrosoft),
