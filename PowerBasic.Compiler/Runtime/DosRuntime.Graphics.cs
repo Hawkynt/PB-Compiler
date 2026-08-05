@@ -293,7 +293,6 @@ public sealed partial class DosRuntime {
     var inRun = asm.DefineLabel();
     var skipRun = asm.DefineLabel();
     var overflow = asm.DefineLabel();
-    var stack = asm.DefineLabel("rt_pstk");
 
     this.Paint = asm.MarkLabel("rt_paint");
     asm.Push(Reg.AX);
@@ -302,14 +301,22 @@ public sealed partial class DosRuntime {
     asm.Push(Reg.DX);
     asm.Push(Reg.SI);
     asm.Push(Reg.DI);
+    // The seed stack comes off the MACHINE stack. As static data it was half a kilobyte of zeros in
+    // every image, because the trimmer that drops this whole section only runs with the optimizer on
+    // - an unoptimized build carried it whatever it drew. Here it costs nothing until PAINT is
+    // called. [BP+DI] is one of the four base+index modes the 8086 has and addresses through SS,
+    // which is where BP already points.
+    asm.Push(Reg.BP);
+    asm.Mov(Reg.BP, Reg.SP);
+    asm.Sub(Reg.SP, (Imm)(_paintSpans * 4));
 
     // seed the stack with the point PAINT was given
     asm.Mov(Mem.Word(asm.Lbl("rt_psp")), (Imm)0);
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx1")));
     asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_gy1")));
     asm.Mov(Reg.DI, Mem.Word(asm.Lbl("rt_psp")));
-    asm.Mov(Mem.Word(Reg.DI, stack), Reg.AX);
-    asm.Mov(Mem.Word(Reg.DI, stack, 2), Reg.BX);
+    asm.Mov(Mem.Word(Reg.BP, Reg.DI, -_paintSpans * 4), Reg.AX);
+    asm.Mov(Mem.Word(Reg.BP, Reg.DI, -_paintSpans * 4 + 2), Reg.BX);
     asm.Add(Mem.Word(asm.Lbl("rt_psp")), (Imm)4);
 
     asm.MarkLabel(popLoop);
@@ -317,8 +324,8 @@ public sealed partial class DosRuntime {
     asm.Je(done);
     asm.Sub(Mem.Word(asm.Lbl("rt_psp")), (Imm)4);
     asm.Mov(Reg.DI, Mem.Word(asm.Lbl("rt_psp")));
-    asm.Mov(Reg.AX, Mem.Word(Reg.DI, stack));
-    asm.Mov(Reg.BX, Mem.Word(Reg.DI, stack, 2));
+    asm.Mov(Reg.AX, Mem.Word(Reg.BP, Reg.DI, -_paintSpans * 4));
+    asm.Mov(Reg.BX, Mem.Word(Reg.BP, Reg.DI, -_paintSpans * 4 + 2));
     asm.Mov(Mem.Word(asm.Lbl("rt_px1")), Reg.AX);
     asm.Mov(Mem.Word(asm.Lbl("rt_px2")), Reg.AX);
     asm.Mov(Mem.Word(asm.Lbl("rt_py")), Reg.BX);
@@ -388,9 +395,9 @@ public sealed partial class DosRuntime {
     asm.Cmp(Reg.DI, (Imm)(_paintSpans * 4));
     asm.Jae(overflow);
     asm.Mov(Reg.AX, Reg.SI);
-    asm.Mov(Mem.Word(Reg.DI, stack), Reg.AX);
+    asm.Mov(Mem.Word(Reg.BP, Reg.DI, -_paintSpans * 4), Reg.AX);
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_pny")));
-    asm.Mov(Mem.Word(Reg.DI, stack, 2), Reg.AX);
+    asm.Mov(Mem.Word(Reg.BP, Reg.DI, -_paintSpans * 4 + 2), Reg.AX);
     asm.Add(Mem.Word(asm.Lbl("rt_psp")), (Imm)4);
 
     asm.MarkLabel(skipRun);
@@ -418,6 +425,8 @@ public sealed partial class DosRuntime {
     asm.Call(this.Raise);
 
     asm.MarkLabel(done);
+    asm.Mov(Reg.SP, Reg.BP);
+    asm.Pop(Reg.BP);
     asm.Pop(Reg.DI);
     asm.Pop(Reg.SI);
     asm.Pop(Reg.DX);
@@ -462,9 +471,7 @@ public sealed partial class DosRuntime {
       asm.MarkLabel(cell);
       asm.Dw(0);
     }
-    asm.MarkLabel(stack);
-    for (var i = 0; i < _paintSpans * 2; ++i)
-      asm.Dw(0);
+
   }
 
   /// <summary>
