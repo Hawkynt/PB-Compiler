@@ -13,7 +13,13 @@
 # compiled with `pbc --dialect <dialect>` on our side and with the matching
 # oracle compiler from tools/<dialect>/PBC.EXE (override via PB30_DIR etc.).
 # Batteries whose oracle binary is absent are SKIPPED - drop the proprietary
-# compiler into tools/<dialect>/ and they activate automatically.
+# compiler into tools/<dialect>/ and they activate automatically. So are those
+# whose oracle is present but CANNOT RUN here, with the reason named: a staged
+# executable that is still SZDD-compressed or is an OS/2 binary, or a command
+# template needing a DOSBox command this emulator lacks (autotype). Such a
+# battery produces no RESULT.TXT at all, and reporting that as a failure makes
+# a missing toolchain indistinguishable from the fidelity divergence this
+# harness exists to catch. A FAIL now always means the oracle ran and disagreed.
 #
 # The proprietary toolchains are NOT in the repo: place PBC.EXE 3.50 in
 # tools/pb35/ (or point PB35_DIR at it). Without it this harness SKIPS with
@@ -74,6 +80,83 @@ run_dosbox() { # $1 = conf file, $2 = sentinel dir
 }
 
 winpath() { cd "$1" && { pwd -W 2>/dev/null || pwd; }; }
+
+# --- can the configured oracle actually run in THIS emulator? ----------------
+# A battery whose oracle cannot start writes no RESULT.TXT, and counting that as
+# a failure makes it indistinguishable from a real fidelity divergence - the one
+# thing this harness exists to detect. Both causes seen so far are decidable up
+# front, so they SKIP with the reason named, the same contract as a missing
+# toolchain. What is NOT pre-checked stays a failure: an oracle that runs and
+# rejects the program is a genuine result.
+DOSBOX_FLAVOR=$("$DOSBOX" --version 2>&1 | tr -d '\r' | grep -im1 version || echo "unknown DOSBox")
+
+u16_at() { od -An -tu2 -j "$2" -N 2 "$1" 2>/dev/null | tr -d ' \n'; }
+u8_at()  { od -An -tu1 -j "$2" -N 1 "$1" 2>/dev/null | tr -d ' \n'; }
+
+# Why one staged oracle executable cannot run, or nothing when it can. Two cases
+# occur in practice: Microsoft's SZDD compression exactly as shipped on the
+# distribution disks (DOSBox HANGS trying to execute one, so the whole battery
+# stalls until the watchdog kills it), and OS/2 New Executables, whose MZ stub
+# makes them look runnable to any check that only reads the first two bytes.
+# Every path returns 0: the answer is the text on stdout, not the status. A
+# non-zero return here would abort the whole run under `set -e`, because the
+# caller reads it with a plain assignment.
+exe_blocker() { # $1 = path to an oracle executable
+  local f="$1" magic lfanew
+  magic=$(od -An -tx1 -N 8 "$f" 2>/dev/null | tr -d ' \n')
+  if [ "$magic" = "535a2088f02733d1" ]; then
+    echo "$(basename "$f") is still SZDD-compressed"
+    return 0
+  fi
+  if [ "${magic:0:4}" != "4d5a" ]; then
+    echo "$(basename "$f") is not a DOS executable"
+    return 0
+  fi
+  lfanew=$(u16_at "$f" 60)
+  case "$lfanew" in ''|*[!0-9]*) return 0;; esac
+  [ "$lfanew" -gt 0 ] || return 0
+  if [ "$(od -An -c -j "$lfanew" -N 2 "$f" 2>/dev/null | tr -d ' \n')" = "NE" ] \
+     && [ "$(u8_at "$f" $((lfanew + 54)))" = "1" ]; then
+    echo "$(basename "$f") is an OS/2 executable, not a DOS one"
+  fi
+  return 0
+}
+
+# Oracle executables a command template names, resolved from the D: mount.
+conf_exes() { # $1 = conf file, $2 = oracle dir
+  local tok p
+  for tok in $(tr -d '\r' < "$1" | grep -oiE '[A-Za-z]:\\[^ >]*\.EXE' || true); do
+    case "$tok" in [Cc]:*) continue;; esac
+    p="$2/$(echo "${tok#??}" | tr '\\' '/')"
+    [ -f "$p" ] && echo "$p"
+  done
+}
+
+# Why a whole battery cannot run here, or nothing when it can.
+battery_blocker() { # $1 = tests/diff/<dialect>, $2 = oracle dir
+  local tpl exe why
+  for tpl in "$1/oracle.conf" "$1/oracle.interpreter"; do
+    [ -f "$tpl" ] || continue
+    # A DOSBox shell command the emulator does not implement is silently rejected
+    # and the IDE it was meant to drive never compiles anything. autotype is
+    # DOSBox-X / dosbox-staging only.
+    if grep -qiw autotype "$tpl" 2>/dev/null; then
+      # "DOSBox-X version ..." / "dosbox-staging, version ...". Match the hyphen:
+      # plain vanilla announces itself as "DOSBox version", which ends in an x and
+      # slips through any looser pattern.
+      case "$DOSBOX_FLAVOR" in
+        *DOSBox-X*|*dosbox-x*|*staging*) ;;
+        *) echo "needs the 'autotype' command, absent from $DOSBOX_FLAVOR"; return;;
+      esac
+    fi
+    for exe in $(conf_exes "$tpl" "$2"); do
+      why=$(exe_blocker "$exe")
+      [ -n "$why" ] && { echo "$why"; return; }
+    done
+  done
+  [ -f "$2/PBC.EXE" ] && { why=$(exe_blocker "$2/PBC.EXE"); [ -n "$why" ] && echo "$why"; }
+  return 0
+}
 
 fail=0
 
@@ -237,7 +320,12 @@ for dir in tests/diff/*/; do
   if [ -f "$oracle/PBC.EXE" ] \
      || { [ -f "$dir/oracle.conf" ] && [ -d "$oracle" ]; } \
      || { [ -f "$dir/oracle.interpreter" ] && [ -d "$oracle" ] && [ -n "$(ls -A "$oracle" 2>/dev/null)" ]; }; then
-    run_battery "$oracle" "$dialect" "${dtests[@]}"
+    blocker=$(battery_blocker "${dir%/}" "$oracle")
+    if [ -n "$blocker" ]; then
+      echo "SKIP  $dialect battery (${#dtests[@]} file(s)) - oracle cannot run here: $blocker"
+    else
+      run_battery "$oracle" "$dialect" "${dtests[@]}"
+    fi
   else
     echo "SKIP  $dialect battery (${#dtests[@]} file(s)) - no oracle in $oracle (stage the toolchain there to activate)"
   fi
