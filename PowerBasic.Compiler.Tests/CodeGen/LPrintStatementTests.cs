@@ -53,6 +53,19 @@ public sealed class LPrintStatementTests {
       """), Is.EqualTo("screen"));
 
   /// <summary>
+  /// LPOS reports the printer's column, and it moves as the printer is written to - which is the
+  /// only observable the printer has here, there being nothing to read the paper back from.
+  /// </summary>
+  [Test]
+  public void LPos_GivenPrinterOutput_ThenItTracksThePrinterColumnAndNotTheScreens() =>
+    Assert.That(Run("""
+      PRINT LPOS(0);
+      LPRINT "abcde";
+      PRINT LPOS(0); POS(0)
+      """), Is.EqualTo("1  6  7"),
+      "LPOS counts the five printer characters; POS counts the six screen ones PRINT itself emitted");
+
+  /// <summary>
   /// The printer's column is its own. A comma zone on the printer must not shift the screen's,
   /// which is why LPOS and POS are separate functions - so POS(0) is unmoved by an LPRINT.
   /// </summary>

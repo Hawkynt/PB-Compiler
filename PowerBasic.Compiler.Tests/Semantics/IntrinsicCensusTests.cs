@@ -177,6 +177,91 @@ public sealed class IntrinsicCensusTests {
   private static readonly string[] _noCleanProbe = [];
 
   /// <summary>
+  /// Every intrinsic that BINDS also generates code.
+  ///
+  /// The arity census above asks whether the front end takes a call. This asks the question after
+  /// it: an intrinsic the binder accepts and the code generator has no case for gets "not yet
+  /// generated" - a hard error, so it is honest, but nothing was counting them and the catalog does
+  /// not say which. It is the statement-surface census's question asked of the other table.
+  /// </summary>
+  [Test]
+  public void Intrinsics_GivenEveryCatalogEntry_ThenTheOnesThatBindAlsoReachCodeGeneration() {
+    var report = new StringBuilder();
+    var noCodeGen = new List<string>();
+    var unprobeable = new List<string>();
+
+    foreach (var intrinsic in Intrinsics.All.OrderBy(i => i.Name, StringComparer.Ordinal)) {
+      // EVERY spelling that binds is tried, not the first: CODEPTR takes a procedure name and
+      // STRPTR a string, and both also bind happily against a plain integer that the code generator
+      // then refuses. Reporting the first shape's failure would name seven intrinsics that work.
+      var lengths = Enumerable.Range(intrinsic.MinArgs, Math.Min(intrinsic.MaxArgs, intrinsic.MinArgs + 2) - intrinsic.MinArgs + 1);
+      var callable = (from shape in _shapes
+                      from count in lengths
+                      let body = CallWith(intrinsic, count, shape)
+                      where Diagnose(body, Dialect.Pb36).Count == 0
+                      select body).ToList();
+      if (callable.Count == 0) {
+        unprobeable.Add(intrinsic.Name);
+        continue;
+      }
+
+      string? complaint = null;
+      var generated = false;
+      foreach (var body in callable) {
+        var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(_preamble + "\n" + body + _epilogue, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+        var generator = new CodeGenerator(model);
+        try {
+          generator.EmitExecutable();
+        } catch (Exception e) {
+          complaint ??= e.GetType().Name;
+          continue;
+        }
+        if (generator.Errors.Count == 0) {
+          generated = true;
+          break;
+        }
+        complaint ??= generator.Errors[0].Message;
+      }
+      if (!generated) {
+        noCodeGen.Add(intrinsic.Name);
+        report.AppendLine($"  NO CODEGEN {intrinsic.Name,-12} {complaint}");
+      }
+    }
+
+    var catalog = Intrinsics.All.Count();
+    report.Insert(0, $"intrinsics: {catalog}, callable: {catalog - unprobeable.Count}, "
+      + $"reaching code generation: {catalog - unprobeable.Count - noCodeGen.Count}\n");
+    TestContext.Out.Write(report.ToString());
+
+    Assert.That(noCodeGen, Is.EquivalentTo(_noCodeGeneration),
+      "the set of intrinsics that bind but generate nothing has changed:\n" + report);
+  }
+
+  /// <summary>
+  /// Intrinsics the binder accepts and the code generator has no case for. Each is a call a program
+  /// can write and nothing compiles - measured, not assumed.
+  ///
+  /// Eleven when this was first run, ten once LPOS was written: it is the printer's print column,
+  /// and the cell it reads had just been added for LPRINT, so it wanted three lines. CEIL, FRAC and
+  /// ROUND are the ones that look most like oversights - ordinary arithmetic a program would expect
+  /// to have. FILEATTR is not absent so much as partial; its own message says so.
+  ///
+  /// Strike a name when it gains a case; the test insists either way.
+  /// </summary>
+  private static readonly string[] _noCodeGeneration = [
+    "BITS",
+    "CEIL",
+    "FILEATTR",
+    "FRAC",
+    "MAX$",
+    "MIN$",
+    "PLAY",
+    "REMOVE$",
+    "ROUND",
+    "SCREEN",
+  ];
+
+  /// <summary>
   /// A gated intrinsic is refused below its gate.
   ///
   /// <c>DialectFacts.IntrinsicGate</c> maps a handful of names to the feature that introduced them.

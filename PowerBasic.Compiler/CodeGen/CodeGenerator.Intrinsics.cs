@@ -1052,6 +1052,16 @@ public sealed partial class CodeGenerator {
         asm.Inc(Reg.AX);
         break;
 
+      // LPOS is POS for the printer. The two columns are counted apart - a comma zone on one must
+      // not move the other, which is why BASIC has both functions - so this reads the cell LPRINT
+      // keeps rather than the screen's.
+      case "LPOS":
+        if (args.Count > 0)
+          this.EmitExpression(args[0]);
+        asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_lcol")));
+        asm.Inc(Reg.AX);
+        break;
+
       case "CSRLIN":
         asm.Mov(Reg.AH, (Imm)3);
         asm.Xor(Reg.BH, Reg.BH);
