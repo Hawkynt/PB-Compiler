@@ -246,11 +246,11 @@ public sealed class IntrinsicCensusTests {
   /// x87 doing the work under a rounding mode exactly as INT and FIX beside them do, and six with
   /// MIN$ and MAX$.
   ///
-  /// The four left are not missing cases, they are missing FEATURES: BITS, PLAY, SCREEN and FILEATTR
-  /// each want something this runtime does not have - a note queue, a text page to read back, a file
-  /// attribute beyond the DOS handle. Writing the case is the small part; deciding what it should
-  /// answer, and against what, is the rest. FILEATTR is partial rather than absent and says so
-  /// itself.
+  /// SCREEN turned out to want nothing the runtime lacks after all - the text page is just memory at
+  /// B800 - so it is written and three are left. Each of those does want a feature rather than a
+  /// case: PLAY a note queue, FILEATTR a file attribute beyond the DOS handle, and BITS a documented
+  /// meaning for its three arguments, which is nowhere to be found. Writing the case is the small
+  /// part of each; deciding what it should answer, and against what, is the rest.
   ///
   /// Strike a name when it gains a case; the test insists either way.
   /// </summary>
@@ -258,7 +258,6 @@ public sealed class IntrinsicCensusTests {
     "BITS",
     "FILEATTR",
     "PLAY",
-    "SCREEN",
   ];
 
   /// <summary>

@@ -1104,6 +1104,32 @@ public sealed partial class CodeGenerator {
       // LPOS is POS for the printer. The two columns are counted apart - a comma zone on one must
       // not move the other, which is why BASIC has both functions - so this reads the cell LPRINT
       // keeps rather than the screen's.
+      // SCREEN(row, col [, colour]) reads the text page back: the character at that cell, or its
+      // attribute byte when the third argument is given and true. Rows and columns count from one,
+      // and the page is 80 columns of two bytes each at B800 - character first, attribute second.
+      case "SCREEN": {
+        this.EmitInt16Argument(args[1]);              // column
+        asm.Dec(Reg.AX);
+        asm.Add(Reg.AX, Reg.AX);                      // two bytes a cell
+        asm.Push(Reg.AX);
+        this.EmitInt16Argument(args[0]);              // row
+        asm.Dec(Reg.AX);
+        asm.Mov(Reg.DX, (Imm)160);                    // 80 columns of two bytes
+        asm.Imul(Reg.DX);
+        asm.Pop(Reg.DX);
+        asm.Add(Reg.AX, Reg.DX);
+        if (args.Count > 2 && this.OptFolder.TryFold(args[2]) is not { Integer: 0 })
+          asm.Inc(Reg.AX);                            // the attribute sits after the character
+        asm.Mov(Reg.DI, Reg.AX);
+        asm.Mov(Reg.AX, 0xB800);
+        asm.Push(Reg.ES);
+        asm.Mov(Reg.ES, Reg.AX);
+        asm.Mov(Reg.AL, Mem.Byte(Reg.DI).Es());
+        asm.Pop(Reg.ES);
+        asm.Xor(Reg.AH, Reg.AH);
+        break;
+      }
+
       case "LPOS":
         if (args.Count > 0)
           this.EmitExpression(args[0]);
