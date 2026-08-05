@@ -20,6 +20,14 @@ public static class Intrinsics {
 
   public static bool IsIntrinsic(string name) => _byName.ContainsKey(name);
 
+  /// <summary>
+  /// The whole catalog, so that a test can walk it rather than restate it. A hand-written list of
+  /// "every built-in" in a fixture is complete on the day it is written and quietly stops being so;
+  /// an intrinsic added here should start being asked the same questions as the rest without anyone
+  /// remembering to go and add it somewhere else.
+  /// </summary>
+  public static IEnumerable<IntrinsicInfo> All => _byName.Values;
+
   private static void Add(string name, int minArgs, int maxArgs, IntrinsicReturn returns)
     => _byName[name] = new(name, minArgs, maxArgs, returns);
 
