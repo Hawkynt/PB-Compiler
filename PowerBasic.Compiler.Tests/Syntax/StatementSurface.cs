@@ -89,6 +89,24 @@ internal static class StatementSurface {
     new("deftype.bcd", "DEFBCD W-X\nwv = 1", MinMicrosoft: _noMicrosoft),
     new("deftype.flx", "DEFFLX Y-Z\nyv = \"x\"", MinMicrosoft: _noMicrosoft),
     new("swap", "SWAP x%, y%", Preamble: "x% = 1 : y% = 2"),
+    // These six had no form of their own and so no census counted them - MID$ assignment in
+    // particular is as common a statement as BASIC has.
+    //
+    // All six stay PERMISSIVE. EQUATE, ARRAY SORT and BIT SET read as Bob Zale's and FOR EACH and
+    // ITERATE as pb36's, but the compiler accepts every one of them in BASICA and QuickBASIC as
+    // well, and this table's rule is that an unverified claim is worse than no claim - it makes the
+    // claim look checked. Whether that acceptance is a gating hole or the history is wrong needs the
+    // oracle to settle, and the census measures the compiler either way.
+    new("mid.assign", "s$ = \"abc\"\nMID$(s$, 1, 1) = \"X\""),
+    new("equate", "%N = 5\nq% = %N"),
+    new("array.sort", "ARRAY SORT a2%()", Preamble: "DIM a2%(3)"),
+    new("bit.set", "BIT SET bx%, 2", Preamble: "bx% = 0"),
+    // FOR EACH is the only one of the six the compiler actually gates: pb36 on Bob Zale's line and
+    // nowhere at all on Microsoft's. ITERATE, EQUATE, ARRAY SORT and BIT SET are taken by every
+    // dialect there is, BASICA included, so they stay permissive - each reads like a PowerBASIC
+    // statement and each is probably a gating hole, but "probably" is not what this table records.
+    new("for.each", "FOR EACH ev% IN a3%()\nNEXT ev%", Dialect.Pb36, _noMicrosoft, Preamble: "DIM a3%(3)"),
+    new("iterate", "FOR i% = 1 TO 3\n  ITERATE FOR\nNEXT i%"),
     // INCR / DECR are Bob Zale's; no Microsoft BASIC ever had them
     new("incr.bare", "INCR x%", MinMicrosoft: _noMicrosoft),
     new("incr.by", "INCR x%, 2", MinMicrosoft: _noMicrosoft),
