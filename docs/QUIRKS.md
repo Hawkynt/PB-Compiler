@@ -50,9 +50,12 @@ Unit coverage for the emulated rows: `PowerBasic.Compiler.Tests/Syntax/QuirkEmul
   a LONG store, by contrast, **raises Error 6** — it goes to the handler under
   `ON ERROR`, and halts the program without one; a *wide use* of the same product
   (`PRINT a& * b&`) shows the full value with no trap, and a DWORD multiply wraps silently.
-  **Open item:** PB-Compiler currently stores the sentinel there instead of trapping
-  (`DIFF105`, a known divergence — the float→LONG store needs an overflow-check that raises
-  Error 6). DWORD multiply already matches (wraps, never traps).
+  PB-Compiler matches this (`DIFF105`, byte-identical). The narrowing store RANGE-CHECKS the
+  value against the LONG limits before FISTP rather than reading the x87 Invalid-Operation
+  flag afterwards: FISTP does store `8000_0000h` for an out-of-range value, but the IE bit it
+  should set alongside does not survive to a `FSTSW` under emulation, so the flag-based form
+  stored the sentinel and trapped nothing. Comparing first also keeps `8000_0000h` a legal
+  value a program may store. DWORD multiply matches too (wraps, never traps).
 - **Radix sizing is by value bit length, not digit count**: `&O177777` (6 octal
   digits, but a 16-bit value) is `-1` INTEGER, exactly like `&HFFFF`. A leading
   zero *digit* switches to unsigned interpretation and widens as needed

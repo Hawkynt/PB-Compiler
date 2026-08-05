@@ -6,10 +6,11 @@
 ' stores a&/b& are NOT folded into their reads, so dead-store elimination must keep them -
 ' the un-folded multiply reads them from memory.)
 '
-' KNOWN OPEN DIVERGENCE (see docs/QUIRKS.md): this expectation is oracle-correct, but
-' PB-Compiler currently stores the x87 sentinel (8000_0000h) on the narrowing-multiply
-' overflow instead of raising Error 6 - the float->LONG store needs an overflow check. The
-' LONG +/- half of the same model is fixed and byte-identical (see DIFF113).
+' The narrowing store RANGE-CHECKS against the LONG limits before FISTP rather than reading
+' the x87 Invalid-Operation flag after it: FISTP does store the sentinel (8000_0000h) when
+' the value will not fit, but the IE bit it should set alongside does not survive to a FSTSW
+' under emulation, so the flag-based form stored the sentinel and trapped nothing. The
+' LONG +/- half of the same model is DIFF113.
 $ERROR OVERFLOW ON
 ON ERROR GOTO trap
 OPEN "RESULT.TXT" FOR OUTPUT AS #1

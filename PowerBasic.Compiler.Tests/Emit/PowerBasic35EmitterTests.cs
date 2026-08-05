@@ -197,7 +197,7 @@ public sealed class PowerBasic35EmitterTests {
   [Test]
   public void Render_Events_LowerToHandlerArrayAddRemoveAndCallDwordLoop() {
     var basic = RenderAndRebind("DECLARE SUB ClickProc(BYVAL x AS LONG)\nDECLARE SUB Log1(BYVAL x AS LONG)\nEVENT OnClick AS ClickProc\nOnClick += CODEPTR32(Log1)\nOnClick(42)\nOnClick -= CODEPTR32(Log1)\nSUB Log1(BYVAL x AS LONG)\n  PRINT x\nEND SUB\n", Dialect.Pb36);
-    Assert.That(basic, Does.Contain("DIM OnClick__evh(31) AS DWORD"), "the event lowers to a fixed DWORD handler array");
+    Assert.That(basic, Does.Contain("DIM OnClick__evh(0 TO 31) AS DWORD"), "the event lowers to a fixed DWORD handler array");
     Assert.That(basic, Does.Contain("OnClick__evh(OnClick__evn) = CODEPTR32(Log1)"), "+= appends the handler pointer");
     Assert.That(basic, Does.Contain("CALL DWORD (OnClick__evh("), "invoking the event calls each handler via CALL DWORD through the array element");
     Assert.That(basic, Does.Match(@"OnClick__evh__a\d+_0& = 42"), "the raise argument is hoisted once into a typed temp (assignment-coerced to the delegate parameter type)");

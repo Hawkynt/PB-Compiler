@@ -691,7 +691,17 @@ public sealed class PowerBasic35Emitter {
       var declared = v.Type is { } t ? this.TypeNameText(t) : this.ScopeSymbol(v.Name) is { } s ? TypeText(s.Type) : null;
       return $"{v.Name}{Suffix(v.Suffix)}{(declared is null ? "" : " AS " + declared)}";
     }
-    var bounds = v.ArrayBounds is { Count: > 0 } ? "(" + this.FormatBounds(v.ArrayBounds) + ")" : "";
+    // Bounds come from the BOUND SYMBOL when it has them, not from the text as written. `DIM b(4)`
+    // under OPTION BASE 1 is the array 1..4, and re-emitting `b(4)` into a file with no OPTION BASE
+    // would declare 0..4 - a different array that still compiles. Writing `1 TO 4` makes the
+    // declaration say what it means and leaves the round-trip independent of the base entirely.
+    // the symbol is keyed with its type suffix, so `b%` is not found under `b`
+    var arraySymbol = this.ScopeSymbol(v.Name + Suffix(v.Suffix)) ?? this.ScopeSymbol(v.Name);
+    var resolved = arraySymbol?.Type is ArrayType ra && ra.StaticBounds is { } rb
+                   && v.ArrayBounds is { Count: > 0 } && rb.Count == v.ArrayBounds.Count
+      ? "(" + string.Join(", ", rb.Select(b => $"{b.Lower} TO {b.Upper}")) + ")"
+      : null;
+    var bounds = resolved ?? (v.ArrayBounds is { Count: > 0 } ? "(" + this.FormatBounds(v.ArrayBounds) + ")" : "");
     // Prefer the bound symbol's resolved type so a generic use (Box OF LONG) names its monomorphized
     // type and a proc-pointer / named delegate becomes a DWORD - which the surface TypeName cannot.
     var type = this.ScopeSymbol(v.Name)?.Type switch {

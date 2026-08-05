@@ -1204,6 +1204,11 @@ public sealed partial class DosRuntime {
 
     asm.MarkLabel("rt_ten");
     asm.Dq(10.0);
+    // the signed-LONG limits, as doubles: $ERROR OVERFLOW compares against these before narrowing
+    asm.MarkLabel("rt_l32max");
+    asm.Dq(2147483647.0);
+    asm.MarkLabel("rt_l32min");
+    asm.Dq(-2147483648.0);
     asm.MarkLabel("rt_half");
     asm.Dq(0.5);
   }
