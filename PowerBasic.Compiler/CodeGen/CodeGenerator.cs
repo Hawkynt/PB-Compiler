@@ -1887,6 +1887,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         this.EmitCircleStatement(ci);
         break;
 
+      case GetPutGraphicsStmt gg:
+        this.EmitGetPutGraphics(gg);
+        break;
+
       // R2 direct-video pixel write (mode 13h): PSET (x,y)[,c] / PRESET (x,y)[,c]
       case PsetStmt ps: {
         var asm3 = this._asm;

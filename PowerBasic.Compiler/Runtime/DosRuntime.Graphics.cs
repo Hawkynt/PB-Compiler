@@ -55,6 +55,210 @@ public sealed partial class DosRuntime {
     this.EmitCircle(asm);
   }
 
+  /// <summary>GET: the rectangle between the two points captured into an array.</summary>
+  public Label GGet { get; private set; } = null!;
+
+  /// <summary>PUT: the captured rectangle drawn back at a point, under one of the five actions.</summary>
+  public Label GPut { get; private set; } = null!;
+
+  /// <summary>
+  /// <c>GET (x1,y1)-(x2,y2), a%(0)</c> and <c>PUT (x,y), a%(0)[, verb]</c> - sprite capture and blit.
+  ///
+  /// The array holds QuickBASIC's layout: a word of width in BITS, a word of height in pixels, then
+  /// the bytes row by row. Width is in bits rather than pixels because the format predates 256-colour
+  /// modes, where a pixel was a bit; at eight bits per pixel it is simply the pixel count times eight,
+  /// and storing it that way is what lets an array DIMmed by the usual 4 + INT((x*bpp+7)/8)*y formula
+  /// be the right size.
+  ///
+  /// PUT's five actions are the point of the statement: XOR is the default because drawing the same
+  /// sprite twice erases it, which is how everything moved on screen before there were sprites in
+  /// hardware. PRESET is PSET's complement, not "restore".
+  ///
+  /// The buffer segment and offset travel in cells rather than ES:DI, because rt_point and rt_pset
+  /// both take ES for the frame buffer - they save and restore it, so the cursor survives the call,
+  /// but only if it was not living in ES to begin with.
+  /// </summary>
+  private void EmitGetPutProcedures(Assembler asm) {
+    this.GGet = asm.MarkLabel("rt_gget");
+    {
+      var rowLoop = asm.DefineLabel();
+      var colLoop = asm.DefineLabel();
+      var nextRow = asm.DefineLabel();
+      var rowsDone = asm.DefineLabel();
+      var xOrdered = asm.DefineLabel();
+      var yOrdered = asm.DefineLabel();
+      asm.Push(Reg.AX);
+      asm.Push(Reg.BX);
+      asm.Push(Reg.CX);
+      asm.Push(Reg.DX);
+      asm.Push(Reg.SI);
+      asm.Push(Reg.DI);
+      asm.Push(Reg.ES);
+      asm.Cld();
+
+      // either corner may be given first, exactly as LINE's box takes them
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx1")));
+      asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_gx2")));
+      asm.Cmp(Reg.AX, Reg.BX);
+      asm.Jle(xOrdered);
+      asm.Xchg(Reg.AX, Reg.BX);
+      asm.MarkLabel(xOrdered);
+      asm.Mov(Mem.Word(asm.Lbl("rt_gbx1")), Reg.AX);
+      asm.Mov(Mem.Word(asm.Lbl("rt_gbx2")), Reg.BX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy1")));
+      asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_gy2")));
+      asm.Cmp(Reg.AX, Reg.BX);
+      asm.Jle(yOrdered);
+      asm.Xchg(Reg.AX, Reg.BX);
+      asm.MarkLabel(yOrdered);
+      asm.Mov(Mem.Word(asm.Lbl("rt_gby1")), Reg.AX);
+      asm.Mov(Mem.Word(asm.Lbl("rt_gby2")), Reg.BX);
+
+      asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_gbufseg")));
+      asm.Mov(Reg.DI, Mem.Word(asm.Lbl("rt_gbufofs")));
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gbx2")));
+      asm.Sub(Reg.AX, Mem.Word(asm.Lbl("rt_gbx1")));
+      asm.Inc(Reg.AX);                                  // width in pixels
+      asm.Shl(Reg.AX, 3);                               // ... stored as bits, at 8 per pixel
+      asm.Stosw();
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gby2")));
+      asm.Sub(Reg.AX, Mem.Word(asm.Lbl("rt_gby1")));
+      asm.Inc(Reg.AX);
+      asm.Stosw();
+
+      asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_gby1")));
+      asm.MarkLabel(rowLoop);
+      asm.Cmp(Reg.SI, Mem.Word(asm.Lbl("rt_gby2")));
+      asm.Jg(rowsDone);
+      asm.Mov(Reg.CX, Mem.Word(asm.Lbl("rt_gbx1")));
+      asm.MarkLabel(colLoop);
+      asm.Cmp(Reg.CX, Mem.Word(asm.Lbl("rt_gbx2")));
+      asm.Jg(nextRow);
+      asm.Mov(Reg.AX, Reg.CX);
+      asm.Mov(Reg.BX, Reg.SI);
+      asm.Push(Reg.CX);
+      asm.Call(this.Point);                             // AL = the pixel; ES and DI survive it
+      asm.Pop(Reg.CX);
+      asm.Stosb();
+      asm.Inc(Reg.CX);
+      asm.Jmp(colLoop);
+      asm.MarkLabel(nextRow);
+      asm.Inc(Reg.SI);
+      asm.Jmp(rowLoop);
+      asm.MarkLabel(rowsDone);
+
+      asm.Pop(Reg.ES);
+      asm.Pop(Reg.DI);
+      asm.Pop(Reg.SI);
+      asm.Pop(Reg.DX);
+      asm.Pop(Reg.CX);
+      asm.Pop(Reg.BX);
+      asm.Pop(Reg.AX);
+      asm.Ret();
+    }
+
+    this.GPut = asm.MarkLabel("rt_gput");
+    {
+      var rowLoop = asm.DefineLabel();
+      var colLoop = asm.DefineLabel();
+      var nextRow = asm.DefineLabel();
+      var rowsDone = asm.DefineLabel();
+      var combined = asm.DefineLabel();
+      var doPreset = asm.DefineLabel();
+      var doAnd = asm.DefineLabel();
+      var doOr = asm.DefineLabel();
+      var doXor = asm.DefineLabel();
+      asm.Push(Reg.AX);
+      asm.Push(Reg.BX);
+      asm.Push(Reg.CX);
+      asm.Push(Reg.DX);
+      asm.Push(Reg.SI);
+      asm.Push(Reg.DI);
+      asm.Push(Reg.ES);
+      asm.Cld();
+
+      asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_gbufseg")));
+      asm.Mov(Reg.DI, Mem.Word(asm.Lbl("rt_gbufofs")));
+      asm.Mov(Reg.AX, Mem.Word(Reg.DI).Seg(Reg.ES));
+      asm.Shr(Reg.AX, 3);                               // bits back to pixels
+      asm.Mov(Mem.Word(asm.Lbl("rt_gpw")), Reg.AX);
+      asm.Mov(Reg.AX, Mem.Word(Reg.DI, 2).Seg(Reg.ES));
+      asm.Mov(Mem.Word(asm.Lbl("rt_gph")), Reg.AX);
+      asm.Add(Reg.DI, (Imm)4);
+
+      asm.Xor(Reg.SI, Reg.SI);                          // SI = row within the sprite
+      asm.MarkLabel(rowLoop);
+      asm.Cmp(Reg.SI, Mem.Word(asm.Lbl("rt_gph")));
+      asm.Jge(rowsDone);
+      asm.Xor(Reg.CX, Reg.CX);                          // CX = column within the sprite
+      asm.MarkLabel(colLoop);
+      asm.Cmp(Reg.CX, Mem.Word(asm.Lbl("rt_gpw")));
+      asm.Jge(nextRow);
+
+      asm.Mov(Reg.DL, Mem.Byte(Reg.DI).Seg(Reg.ES));    // the sprite byte
+      asm.Inc(Reg.DI);
+      asm.Mov(Reg.AX, Reg.CX);
+      asm.Add(Reg.AX, Mem.Word(asm.Lbl("rt_gx1")));     // target x
+      asm.Mov(Reg.BX, Reg.SI);
+      asm.Add(Reg.BX, Mem.Word(asm.Lbl("rt_gy1")));     // target y
+
+      // PSET writes the byte through; the other four need what is already on screen
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gverb")), (Imm)0);
+      asm.Je(combined);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gverb")), (Imm)1);
+      asm.Je(doPreset);
+      asm.Push(Reg.CX);
+      asm.Push(Reg.DX);
+      asm.Call(this.Point);                             // AL = the screen pixel
+      asm.Pop(Reg.DX);
+      asm.Pop(Reg.CX);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gverb")), (Imm)2);
+      asm.Je(doAnd);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gverb")), (Imm)3);
+      asm.Je(doOr);
+      asm.MarkLabel(doXor);
+      asm.Xor(Reg.DL, Reg.AL);
+      asm.Jmp(combined);
+      asm.MarkLabel(doAnd);
+      asm.And(Reg.DL, Reg.AL);
+      asm.Jmp(combined);
+      asm.MarkLabel(doOr);
+      asm.Or(Reg.DL, Reg.AL);
+      asm.Jmp(combined);
+      asm.MarkLabel(doPreset);
+      asm.Not(Reg.DL);                                  // PRESET is PSET's complement
+      asm.MarkLabel(combined);
+
+      asm.Mov(Reg.AX, Reg.CX);
+      asm.Add(Reg.AX, Mem.Word(asm.Lbl("rt_gx1")));
+      asm.Mov(Reg.BX, Reg.SI);
+      asm.Add(Reg.BX, Mem.Word(asm.Lbl("rt_gy1")));
+      asm.Push(Reg.CX);
+      asm.Call(this.Pset);
+      asm.Pop(Reg.CX);
+      asm.Inc(Reg.CX);
+      asm.Jmp(colLoop);
+      asm.MarkLabel(nextRow);
+      asm.Inc(Reg.SI);
+      asm.Jmp(rowLoop);
+      asm.MarkLabel(rowsDone);
+
+      asm.Pop(Reg.ES);
+      asm.Pop(Reg.DI);
+      asm.Pop(Reg.SI);
+      asm.Pop(Reg.DX);
+      asm.Pop(Reg.CX);
+      asm.Pop(Reg.BX);
+      asm.Pop(Reg.AX);
+      asm.Ret();
+    }
+
+    foreach (var cell in new[] { "rt_gbufseg", "rt_gbufofs", "rt_gverb", "rt_gpw", "rt_gph" }) {
+      asm.MarkLabel(cell);
+      asm.Dw(0);
+    }
+  }
+
   /// <summary>
   /// <c>rt_paint</c>: the scanline flood fill behind <c>PAINT (x, y), paint, border</c>.
   ///

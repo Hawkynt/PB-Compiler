@@ -261,6 +261,7 @@ public sealed partial class DosRuntime {
     // PAINT has its own section rather than sharing "graphics": its seed stack is a kilobyte, and a
     // program that draws lines and circles should not carry it for nothing.
     ("paint", this.EmitPaint),
+    ("getput", this.EmitGetPutProcedures),   // sprite capture/blit; needs rt_pset/rt_point
     ("extras", this.EmitExtraProcedures),
     ("using_dyn", this.EmitUsingDyn),   // needs UseFmt (misc) and the string kernel
     ("quad", this.EmitQuadProcedures),

@@ -263,6 +263,11 @@ internal static class StatementSurface {
 
     new("draw", "DRAW \"U10 R10 D10 L10\""),
     new("view", "VIEW (0, 0)-(319, 199)"),
+    // GET/PUT's graphics form had no entry at all - the six get.*/put.* forms above are the FILE
+    // statement of the same name, which is a different grammar reached by the same keyword
+    new("get.graphics", "GET (0, 0)-(3, 3), spr%(0)", Preamble: "DIM spr%(64)"),
+    new("put.graphics", "PUT (0, 0), spr%(0)", Preamble: "DIM spr%(64)"),
+    new("put.graphics.verb", "PUT (0, 0), spr%(0), XOR", Preamble: "DIM spr%(64)"),
     // VIEW PRINT / VIEW TEXT / VIEW SCREEN and PALETTE USING had no forms at all, which is why the
     // census never noticed that VIEW PRINT's own row-range spelling did not parse
     new("view.print", "VIEW PRINT"),
