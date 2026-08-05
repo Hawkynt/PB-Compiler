@@ -139,6 +139,8 @@ public sealed partial class DosRuntime {
     asm.MarkLabel("rt_filecol");       // per-file print columns (PB file numbers 1..15; [0] unused)
     for (var i = 0; i < 16; ++i)
       asm.Dw(0);
+    asm.MarkLabel("rt_lcol");          // the PRINTER print column (LPOS, LPRINT), counted apart from
+    asm.Dw(0);                         // the screen's so a comma zone on one does not move the other
     asm.MarkLabel("rt_caplen");
     asm.Dw(0);
     asm.MarkLabel("rt_capmode");

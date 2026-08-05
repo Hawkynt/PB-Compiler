@@ -10,9 +10,17 @@ public sealed partial class CodeGenerator {
 
   private void EmitPrint(PrintStmt p) {
     var asm = this._asm;
+
+    // LPRINT is PRINT with the output pointed at the printer. DOS opens handle 4 (PRN) for every
+    // program before it starts, so there is nothing to open and nothing to close - selecting it is
+    // the whole statement, and every item, separator, zone and USING clause below works unchanged.
+    //
+    // The column moves to rt_lcol for the duration. The printer's column is not the screen's: a
+    // comma zone or a TAB on one must not shift the other, which is why LPOS and POS are separate
+    // functions in the first place.
     if (p.IsLPrint) {
-      this.Unsupported(p);
-      return;
+      asm.Mov(Mem.Word(asm.Lbl("rt_curout")), 4);
+      asm.Mov(Mem.Word(asm.Lbl("rt_colptr")), Imm.OffsetOf(asm.Lbl("rt_lcol")));
     }
 
     if (p.FileNumber != null) {
@@ -22,7 +30,7 @@ public sealed partial class CodeGenerator {
 
     if (p.UsingFormat != null) {
       this.EmitPrintUsing(p);
-      if (p.FileNumber != null) {
+      if (p.FileNumber != null || p.IsLPrint) {
         asm.Mov(Mem.Word(this._asm.Lbl("rt_curout")), 1);
         asm.Mov(Mem.Word(this._asm.Lbl("rt_colptr")), Imm.OffsetOf(this._asm.Lbl("rt_col")));
       }
@@ -88,7 +96,8 @@ public sealed partial class CodeGenerator {
     if (lastSeparator == PrintSeparator.Newline)
       asm.Call(this._rt.PrintNewLine);
 
-    if (p.FileNumber != null) {
+    // whichever of the two redirected the output, the screen gets it back
+    if (p.FileNumber != null || p.IsLPrint) {
       asm.Mov(Mem.Word(this._asm.Lbl("rt_curout")), 1);
       asm.Mov(Mem.Word(this._asm.Lbl("rt_colptr")), Imm.OffsetOf(this._asm.Lbl("rt_col")));
     }
