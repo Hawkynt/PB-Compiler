@@ -773,10 +773,26 @@ public sealed partial class CodeGenerator {
         this.RoundFpuToIntrinsicType(call);
         break;
 
-      case "INT" or "FIX":
+      case "INT" or "FIX" or "CEIL":
         this.EmitExpression(args[0]);
+        // an integer is already whole, whichever way the rounding would have gone
         if (KindOf(model.TypeOf(args[0])) == ValueKind.Float)
-          asm.Call(intrinsic.Name == "INT" ? this._rt.Floor : this._rt.Trunc);
+          asm.Call(intrinsic.Name switch { "INT" => this._rt.Floor, "FIX" => this._rt.Trunc, _ => this._rt.Ceil });
+        break;
+
+      // FRAC is what FIX leaves behind: x - FIX(x), so it keeps the sign of x and an integer has
+      // none of it. Computed on the stack rather than through a helper - duplicate, truncate the
+      // copy, subtract it from the original.
+      case "FRAC":
+        this.EmitExpression(args[0]);
+        if (KindOf(model.TypeOf(args[0])) != ValueKind.Float) {
+          asm.Xor(Reg.AX, Reg.AX);
+          asm.Xor(Reg.DX, Reg.DX);
+          break;
+        }
+        asm.Fld(St.St0);
+        asm.Call(this._rt.Trunc);
+        asm.Fsubp(St.St1);
         break;
 
       case "PEEK":

@@ -241,18 +241,20 @@ public sealed class IntrinsicCensusTests {
   /// Intrinsics the binder accepts and the code generator has no case for. Each is a call a program
   /// can write and nothing compiles - measured, not assumed.
   ///
-  /// Eleven when this was first run, ten once LPOS was written: it is the printer's print column,
-  /// and the cell it reads had just been added for LPRINT, so it wanted three lines. CEIL, FRAC and
-  /// ROUND are the ones that look most like oversights - ordinary arithmetic a program would expect
-  /// to have. FILEATTR is not absent so much as partial; its own message says so.
+  /// Eleven when this was first run; ten once LPOS was written - the printer's print column, whose
+  /// cell had just been added for LPRINT - and eight once CEIL and FRAC followed, both of which are
+  /// the x87 doing the work under a rounding mode exactly as INT and FIX beside them do.
+  ///
+  /// ROUND is the one left that still looks like an oversight rather than a decision: it is ordinary
+  /// arithmetic, and unlike CEIL it cannot borrow a rounding mode, because BASIC rounds halves away
+  /// from zero and the x87's nearest mode sends them to even. FILEATTR is not absent so much as
+  /// partial; its own message says so.
   ///
   /// Strike a name when it gains a case; the test insists either way.
   /// </summary>
   private static readonly string[] _noCodeGeneration = [
     "BITS",
-    "CEIL",
     "FILEATTR",
-    "FRAC",
     "MAX$",
     "MIN$",
     "PLAY",

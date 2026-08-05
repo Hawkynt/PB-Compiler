@@ -114,6 +114,9 @@ public sealed partial class DosRuntime {
   public Label Pow { get; private set; } = null!;
   public Label Floor { get; private set; } = null!;
   public Label Trunc { get; private set; } = null!;
+
+  /// <summary>CEIL: FRNDINT toward +infinity, the same shape as INT and FIX next to it.</summary>
+  public Label Ceil { get; private set; } = null!;
   public Label LongMul { get; private set; } = null!;
   public Label LongDiv { get; private set; } = null!;
   public Label LongMod { get; private set; } = null!;
@@ -1126,7 +1129,7 @@ public sealed partial class DosRuntime {
     asm.Ret();
   }
 
-  /// <summary>INT (floor) and FIX (truncate): FRNDINT under a temporary rounding mode.</summary>
+  /// <summary>INT (floor), FIX (truncate) and CEIL: FRNDINT under a temporary rounding mode.</summary>
   private void EmitRounding(Assembler asm) {
     void Emit(string label, int rcBits) {
       asm.MarkLabel(label);
@@ -1148,6 +1151,8 @@ public sealed partial class DosRuntime {
     Emit("rt_floor", 0x0400);  // RC=01: toward -infinity
     this.Trunc = asm.Lbl("rt_trunc");
     Emit("rt_trunc", 0x0C00);  // RC=11: toward zero
+    this.Ceil = asm.Lbl("rt_ceil");
+    Emit("rt_ceil", 0x0800);   // RC=10: toward +infinity
   }
 
   private void EmitLongHelpers(Assembler asm) {
