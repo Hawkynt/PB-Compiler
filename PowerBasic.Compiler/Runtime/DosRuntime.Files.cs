@@ -825,6 +825,130 @@ public sealed partial class DosRuntime {
     }
   }
 
+  /// <summary>BSAVE: the DEF SEG block written with QuickBASIC's seven-byte header.</summary>
+  public Label BSave { get; private set; } = null!;
+
+  /// <summary>BLOAD: the block read back, at the file's own offset or a supplied one.</summary>
+  public Label BLoad { get; private set; } = null!;
+
+  /// <summary>
+  /// <c>BSAVE name$, offset, length</c> and <c>BLOAD name$[, offset]</c> - the memory-image pair.
+  ///
+  /// The file is a seven-byte header (&amp;HFD, then the segment, offset and length as words) followed
+  /// by the bytes themselves, which is the layout every BASIC of the era wrote and the reason a .BSV
+  /// from one of them loads here.
+  ///
+  /// The awkward part is that INT 21h reads and writes through <c>DS:DX</c> while the block lives in
+  /// <c>DEF SEG</c>, so DS has to be the caller's segment for the payload transfer. Everything the
+  /// routine needs from its own data - the offset, the length, the segment - is therefore loaded into
+  /// registers BEFORE the swap, because once DS points at the user's block none of those cells can be
+  /// reached.
+  /// </summary>
+  private void EmitBsaveProcedures(Assembler asm) {
+    var header = asm.DefineLabel("rt_bhdr");
+
+    this.BSave = asm.MarkLabel("rt_bsave");
+    {
+      var failed = asm.DefineLabel();
+      asm.Push(Reg.AX);
+      asm.Push(Reg.BX);
+      asm.Push(Reg.CX);
+      asm.Push(Reg.DX);
+      asm.Call(asm.Lbl("rt_name_z"));
+      asm.Mov(Reg.DX, Imm.OffsetOf(asm.Lbl("rt_namebuf")));
+      asm.Xor(Reg.CX, Reg.CX);
+      asm.Mov(Reg.AH, 0x3C);                       // create/truncate
+      asm.Int(0x21);
+      asm.Jc(failed);
+      asm.Mov(Reg.BX, Reg.AX);                     // BX = handle for the rest
+
+      asm.Mov(Mem.Byte(header), (Imm)0xFD);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_defseg")));
+      asm.Mov(Mem.Word(header, 1), Reg.AX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_bofs")));
+      asm.Mov(Mem.Word(header, 3), Reg.AX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_blen")));
+      asm.Mov(Mem.Word(header, 5), Reg.AX);
+      asm.Mov(Reg.DX, Imm.OffsetOf(header));
+      asm.Mov(Reg.CX, (Imm)7);
+      asm.Mov(Reg.AH, 0x40);
+      asm.Int(0x21);
+
+      // everything out of our own data segment first - DS is about to stop pointing at it
+      asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_bofs")));
+      asm.Mov(Reg.CX, Mem.Word(asm.Lbl("rt_blen")));
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_defseg")));
+      asm.Push(Reg.DS);
+      asm.Mov(Reg.DS, Reg.AX);
+      asm.Mov(Reg.AH, 0x40);
+      asm.Int(0x21);
+      asm.Pop(Reg.DS);
+
+      asm.Mov(Reg.AH, 0x3E);
+      asm.Int(0x21);
+      asm.MarkLabel(failed);                       // PB reports nothing for a file it cannot write,
+      asm.Pop(Reg.DX);                             // exactly as KILL and CHDIR report nothing
+      asm.Pop(Reg.CX);
+      asm.Pop(Reg.BX);
+      asm.Pop(Reg.AX);
+      asm.Ret();
+    }
+
+    this.BLoad = asm.MarkLabel("rt_bload");
+    {
+      var failed = asm.DefineLabel();
+      var haveOffset = asm.DefineLabel();
+      asm.Push(Reg.AX);
+      asm.Push(Reg.BX);
+      asm.Push(Reg.CX);
+      asm.Push(Reg.DX);
+      asm.Call(asm.Lbl("rt_name_z"));
+      asm.Mov(Reg.DX, Imm.OffsetOf(asm.Lbl("rt_namebuf")));
+      asm.Mov(Reg.AX, 0x3D00);                     // open, read only
+      asm.Int(0x21);
+      asm.Jc(failed);
+      asm.Mov(Reg.BX, Reg.AX);
+
+      asm.Mov(Reg.DX, Imm.OffsetOf(header));
+      asm.Mov(Reg.CX, (Imm)7);
+      asm.Mov(Reg.AH, 0x3F);
+      asm.Int(0x21);
+
+      // with no offset written down, the file's own is used - which is what makes a BSAVE/BLOAD pair
+      // round-trip without the program having to remember where the block was
+      asm.Cmp(Mem.Word(asm.Lbl("rt_bhasofs")), (Imm)0);
+      asm.Jne(haveOffset);
+      asm.Mov(Reg.AX, Mem.Word(header, 3));
+      asm.Mov(Mem.Word(asm.Lbl("rt_bofs")), Reg.AX);
+      asm.MarkLabel(haveOffset);
+
+      asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_bofs")));
+      asm.Mov(Reg.CX, Mem.Word(header, 5));
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_defseg")));
+      asm.Push(Reg.DS);
+      asm.Mov(Reg.DS, Reg.AX);
+      asm.Mov(Reg.AH, 0x3F);
+      asm.Int(0x21);
+      asm.Pop(Reg.DS);
+
+      asm.Mov(Reg.AH, 0x3E);
+      asm.Int(0x21);
+      asm.MarkLabel(failed);
+      asm.Pop(Reg.DX);
+      asm.Pop(Reg.CX);
+      asm.Pop(Reg.BX);
+      asm.Pop(Reg.AX);
+      asm.Ret();
+    }
+
+    foreach (var cell in new[] { "rt_bofs", "rt_blen", "rt_bhasofs" }) {
+      asm.MarkLabel(cell);
+      asm.Dw(0);
+    }
+    asm.MarkLabel(header);
+    asm.Db(new byte[8]);
+  }
+
   private void EmitFileData(Assembler asm) {
     asm.Align(2);
     this.ZeroBlob(asm, "rt_files", 32);

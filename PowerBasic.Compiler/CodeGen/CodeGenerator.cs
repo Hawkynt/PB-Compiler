@@ -2060,6 +2060,29 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         asm.Call(this._rt.Kill);
         break;
 
+      // BSAVE name$, offset, length - the numbers go into their cells first because evaluating the
+      // name leaves its string handle in AX, which is where the runtime wants it
+      case "BSAVE" when cmd.Arguments is [{ } saveName, { } saveOffset, { } saveLength]:
+        this.EmitInt16Argument(saveOffset);
+        asm.Mov(Mem.Word(asm.Lbl("rt_bofs")), Reg.AX);
+        this.EmitInt16Argument(saveLength);
+        asm.Mov(Mem.Word(asm.Lbl("rt_blen")), Reg.AX);
+        this.EmitExpression(saveName);
+        asm.Call(this._rt.BSave);
+        break;
+
+      // BLOAD name$ [, offset] - with no offset the block goes back where BSAVE recorded it
+      case "BLOAD" when cmd.Arguments is [{ } loadName, ..] && cmd.Arguments.Count <= 2:
+        if (cmd.Arguments.Count == 2 && cmd.Arguments[1] is { } loadOffset) {
+          this.EmitInt16Argument(loadOffset);
+          asm.Mov(Mem.Word(asm.Lbl("rt_bofs")), Reg.AX);
+          asm.Mov(Mem.Word(asm.Lbl("rt_bhasofs")), (Imm)1);
+        } else
+          asm.Mov(Mem.Word(asm.Lbl("rt_bhasofs")), (Imm)0);
+        this.EmitExpression(loadName);
+        asm.Call(this._rt.BLoad);
+        break;
+
       case "MKDIR" when cmd.Arguments is [{ } path]:
         this.EmitExpression(path);
         asm.Call(this._rt.MkDir);

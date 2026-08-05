@@ -251,6 +251,7 @@ public sealed partial class DosRuntime {
 
     ("arraynum", this.EmitArrayNum),
     ("files", this.EmitFileProcedures),
+    ("bsave", this.EmitBsaveProcedures),   // needs rt_name_z/rt_namebuf from "files"
     ("arrays", this.EmitArrayProcedures),
     ("array_alloc_nz", this.EmitArrayAllocNoZero),
     ("lowlevel", this.EmitLowLevelProcedures),
