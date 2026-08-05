@@ -42,6 +42,7 @@ public sealed partial class DosRuntime {
     this.EmitEnviron(asm);
     this.EmitSetEnviron(asm);
     this.EmitStrMinMax(asm);
+    this.EmitStrRemove(asm);
     this.EmitShell(asm);   // uses Environ - must follow it
     this.EmitTimeDate(asm);
     this.EmitKeyInput(asm);
@@ -85,6 +86,134 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.CX);
     asm.Pop(Reg.BX);
     asm.Ret();
+  }
+
+  /// <summary>REMOVE$: the source with every occurrence of the match string cut out.</summary>
+  public Label StrRemove { get; private set; } = null!;
+
+  /// <summary>
+  /// <c>REMOVE$(s$, match$)</c>: <paramref name="s$"/> with every occurrence of match$ cut out.
+  ///
+  /// The result is at most as long as the source and usually shorter, and its exact length is not
+  /// known until the walk is over - so the full length is allocated up front and the finished string
+  /// trimmed with StrMid, which is cheaper than counting the occurrences in a first pass.
+  ///
+  /// The ordering matters and is the only real trap here: ALLOCATING MAY COMPACT THE HEAP, so every
+  /// pointer is fetched from the table AFTER the allocation and nothing is cached across it. A
+  /// pointer read before the alloc would still look plausible and would address whatever the
+  /// compaction moved into its place.
+  ///
+  /// An empty match matches nothing, so REMOVE$(s$, "") is s$ - a match of no length occurring
+  /// everywhere would remove nothing anyway, and looping on it would not terminate.
+  /// </summary>
+  private void EmitStrRemove(Assembler asm) {
+    var outer = asm.DefineLabel();
+    var copyOne = asm.DefineLabel();
+    var compareLoop = asm.DefineLabel();
+    var noMatch = asm.DefineLabel();
+    var walked = asm.DefineLabel();
+
+    this.StrRemove = asm.MarkLabel("rt_str_remove");
+    asm.Push(Reg.BX);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.DX);
+    asm.Push(Reg.SI);
+    asm.Push(Reg.DI);
+    asm.Push(Reg.ES);
+    asm.Mov(Mem.Word(asm.Lbl("rt_rvsrc")), Reg.AX);
+    asm.Mov(Mem.Word(asm.Lbl("rt_rvmat")), Reg.DX);
+
+    asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_strseg")));
+    asm.Mov(Reg.BX, Reg.AX);
+    asm.Shl(Reg.BX, 2);
+    asm.Mov(Reg.CX, Mem.Word(Reg.BX, asm.Lbl("rt_strtab"), 2));
+    asm.Mov(Mem.Word(asm.Lbl("rt_rvslen")), Reg.CX);
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_rvmat")));
+    asm.Shl(Reg.BX, 2);
+    asm.Mov(Reg.AX, Mem.Word(Reg.BX, asm.Lbl("rt_strtab"), 2));
+    asm.Mov(Mem.Word(asm.Lbl("rt_rvmlen")), Reg.AX);
+
+    asm.Mov(Reg.CX, Mem.Word(asm.Lbl("rt_rvslen")));
+    asm.Call(this.StrAlloc);                       // the most it can need; trimmed at the end
+    asm.Mov(Mem.Word(asm.Lbl("rt_rvres")), Reg.AX);
+
+    // every pointer AFTER the allocation - it may have compacted the heap under them
+    asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_strseg")));
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_rvsrc")));
+    asm.Shl(Reg.BX, 2);
+    asm.Mov(Reg.SI, Mem.Word(Reg.BX, asm.Lbl("rt_strtab")));
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_rvmat")));
+    asm.Shl(Reg.BX, 2);
+    asm.Mov(Reg.AX, Mem.Word(Reg.BX, asm.Lbl("rt_strtab")));
+    asm.Mov(Mem.Word(asm.Lbl("rt_rvmp")), Reg.AX);
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_rvres")));
+    asm.Shl(Reg.BX, 2);
+    asm.Mov(Reg.DI, Mem.Word(Reg.BX, asm.Lbl("rt_strtab")));
+
+    asm.Mov(Mem.Word(asm.Lbl("rt_rvout")), (Imm)0);
+    asm.Mov(Reg.CX, Mem.Word(asm.Lbl("rt_rvslen")));   // CX = bytes of source left
+
+    asm.MarkLabel(outer);
+    asm.Jcxz(walked);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_rvmlen")));
+    asm.Cmp(Reg.AX, (Imm)0);
+    asm.Je(copyOne);                                   // an empty match removes nothing
+    asm.Cmp(Reg.AX, Reg.CX);
+    asm.Ja(copyOne);                                   // no room left for one
+
+    asm.Push(Reg.SI);
+    asm.Push(Reg.CX);
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_rvmp")));
+    asm.Mov(Reg.CX, Mem.Word(asm.Lbl("rt_rvmlen")));
+    asm.MarkLabel(compareLoop);
+    asm.Mov(Reg.DL, Mem.Byte(Reg.SI).Es());
+    asm.Cmp(Reg.DL, Mem.Byte(Reg.BX).Es());
+    asm.Jne(noMatch);
+    asm.Inc(Reg.SI);
+    asm.Inc(Reg.BX);
+    asm.Loop(compareLoop);
+    asm.Pop(Reg.CX);                                   // matched: SI already past it
+    asm.Pop(Reg.AX);                                   // drop the saved SI
+    asm.Sub(Reg.CX, Mem.Word(asm.Lbl("rt_rvmlen")));
+    asm.Jmp(outer);
+
+    asm.MarkLabel(noMatch);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.SI);
+
+    asm.MarkLabel(copyOne);
+    asm.Mov(Reg.DL, Mem.Byte(Reg.SI).Es());
+    asm.Mov(Mem.Byte(Reg.DI).Es(), Reg.DL);
+    asm.Inc(Reg.SI);
+    asm.Inc(Reg.DI);
+    asm.Inc(Mem.Word(asm.Lbl("rt_rvout")));
+    asm.Dec(Reg.CX);
+    asm.Jmp(outer);
+
+    asm.MarkLabel(walked);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_rvres")));
+    asm.Mov(Reg.CX, (Imm)1);
+    asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_rvout")));
+    asm.Call(this.StrMid);                             // trim to what was actually written
+    asm.Mov(Mem.Word(asm.Lbl("rt_rvres")), Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_rvsrc")));
+    asm.Call(this.StrFree);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_rvmat")));
+    asm.Call(this.StrFree);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_rvres")));
+
+    asm.Pop(Reg.ES);
+    asm.Pop(Reg.DI);
+    asm.Pop(Reg.SI);
+    asm.Pop(Reg.DX);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.BX);
+    asm.Ret();
+
+    foreach (var cell in new[] { "rt_rvsrc", "rt_rvmat", "rt_rvres", "rt_rvslen", "rt_rvmlen", "rt_rvmp", "rt_rvout" }) {
+      asm.MarkLabel(cell);
+      asm.Dw(0);
+    }
   }
 
   /// <summary>MIN$/MAX$: the lexicographically smaller/larger of two strings (consumes both).</summary>

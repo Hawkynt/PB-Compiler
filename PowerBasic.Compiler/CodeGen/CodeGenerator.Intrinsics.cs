@@ -254,6 +254,15 @@ public sealed partial class CodeGenerator {
 
       // MIN$/MAX$ take their two operands the way INSTR does - left pushed, right into DX - and the
       // runtime hands one of them back, having freed the other.
+      case "REMOVE$":
+        this.EmitExpression(args[0]);
+        asm.Push(Reg.AX);
+        this.EmitExpression(args[1]);
+        asm.Mov(Reg.DX, Reg.AX);
+        asm.Pop(Reg.AX);
+        asm.Call(this._rt.StrRemove);
+        break;
+
       case "MIN$" or "MAX$":
         this.EmitExpression(args[0]);
         asm.Push(Reg.AX);

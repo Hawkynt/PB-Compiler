@@ -246,10 +246,11 @@ public sealed class IntrinsicCensusTests {
   /// x87 doing the work under a rounding mode exactly as INT and FIX beside them do, and six with
   /// MIN$ and MAX$.
   ///
-  /// What is left is not arithmetic. BITS and PLAY and SCREEN and FILEATTR each want something the
-  /// runtime does not have - a note queue, a text page to read back, a file attribute beyond the DOS
-  /// handle - and REMOVE$ is the only one that is simply unwritten. FILEATTR is partial rather than
-  /// absent; its own message says so.
+  /// The four left are not missing cases, they are missing FEATURES: BITS, PLAY, SCREEN and FILEATTR
+  /// each want something this runtime does not have - a note queue, a text page to read back, a file
+  /// attribute beyond the DOS handle. Writing the case is the small part; deciding what it should
+  /// answer, and against what, is the rest. FILEATTR is partial rather than absent and says so
+  /// itself.
   ///
   /// Strike a name when it gains a case; the test insists either way.
   /// </summary>
@@ -257,7 +258,6 @@ public sealed class IntrinsicCensusTests {
     "BITS",
     "FILEATTR",
     "PLAY",
-    "REMOVE$",
     "SCREEN",
   ];
 
