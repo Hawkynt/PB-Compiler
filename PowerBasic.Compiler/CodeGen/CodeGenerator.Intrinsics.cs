@@ -784,6 +784,19 @@ public sealed partial class CodeGenerator {
         this.RoundFpuToIntrinsicType(call);
         break;
 
+      // ROUND(x [, places]): the places default to none, and an integer is already round
+      case "ROUND":
+        this.EmitExpression(args[0]);
+        if (KindOf(model.TypeOf(args[0])) != ValueKind.Float)
+          break;
+        if (args.Count > 1) {
+          this.EmitInt16Argument(args[1]);
+          asm.Mov(Reg.CX, Reg.AX);
+        } else
+          asm.Xor(Reg.CX, Reg.CX);
+        asm.Call(this._rt.Round);
+        break;
+
       case "INT" or "FIX" or "CEIL":
         this.EmitExpression(args[0]);
         // an integer is already whole, whichever way the rounding would have gone

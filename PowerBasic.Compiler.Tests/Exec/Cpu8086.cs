@@ -673,6 +673,10 @@ public sealed class Cpu8086 {
         this.WriteQword(address, (ulong)BitConverter.DoubleToInt64Bits(this.St(0)));
         if (reg == 3) this.FPop();
         return;
+      // FSTSW m2byte - the 8087 way to get at the condition codes a compare just set. The 287's
+      // FSTSW AX does not exist on this target, so this is the only way, and ROUND needs it to tell
+      // which side of zero a value was on before taking its magnitude.
+      case 0xDD when reg == 7: this.WriteWord(address, this._status); return;
       case 0xDB when reg == 0: this.FPush((int)this.ReadDword(address)); return;
       case 0xDB when reg is 2 or 3:
         this.WriteDword(address, (uint)(int)RoundToInteger(this.St(0)));

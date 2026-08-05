@@ -246,10 +246,10 @@ public sealed class IntrinsicCensusTests {
   /// x87 doing the work under a rounding mode exactly as INT and FIX beside them do, and six with
   /// MIN$ and MAX$.
   ///
-  /// ROUND is the one left that still looks like an oversight rather than a decision: it is ordinary
-  /// arithmetic, and unlike CEIL it cannot borrow a rounding mode, because BASIC rounds halves away
-  /// from zero and the x87's nearest mode sends them to even. FILEATTR is not absent so much as
-  /// partial; its own message says so.
+  /// What is left is not arithmetic. BITS and PLAY and SCREEN and FILEATTR each want something the
+  /// runtime does not have - a note queue, a text page to read back, a file attribute beyond the DOS
+  /// handle - and REMOVE$ is the only one that is simply unwritten. FILEATTR is partial rather than
+  /// absent; its own message says so.
   ///
   /// Strike a name when it gains a case; the test insists either way.
   /// </summary>
@@ -258,7 +258,6 @@ public sealed class IntrinsicCensusTests {
     "FILEATTR",
     "PLAY",
     "REMOVE$",
-    "ROUND",
     "SCREEN",
   ];
 

@@ -117,6 +117,9 @@ public sealed partial class DosRuntime {
 
   /// <summary>CEIL: FRNDINT toward +infinity, the same shape as INT and FIX next to it.</summary>
   public Label Ceil { get; private set; } = null!;
+
+  /// <summary>ROUND: ST0 = value, CX = decimal places -> ST0 rounded, halves away from zero.</summary>
+  public Label Round { get; private set; } = null!;
   public Label LongMul { get; private set; } = null!;
   public Label LongDiv { get; private set; } = null!;
   public Label LongMod { get; private set; } = null!;
@@ -1153,6 +1156,56 @@ public sealed partial class DosRuntime {
     Emit("rt_trunc", 0x0C00);  // RC=11: toward zero
     this.Ceil = asm.Lbl("rt_ceil");
     Emit("rt_ceil", 0x0800);   // RC=10: toward +infinity
+
+    // ROUND is the one that cannot borrow a rounding mode. BASIC rounds a half AWAY FROM ZERO -
+    // 2.5 is 3 and -2.5 is -3 - while the x87's nearest mode sends halves to EVEN, making 2.5 into
+    // 2 and 3.5 into 4. So it is done by hand: scale by ten to the requested places, take the
+    // magnitude, add a half, truncate, put the sign back, unscale.
+    this.Round = asm.MarkLabel("rt_round");
+    {
+      var scaleLoop = asm.DefineLabel();
+      var scaled = asm.DefineLabel();
+      var wasPositive = asm.DefineLabel();
+      asm.Push(Reg.AX);
+
+      asm.Fld1();                                   // ST0 = scale, ST1 = value
+      asm.Jcxz(scaled);
+      asm.MarkLabel(scaleLoop);
+      asm.Fld(Mem.Qword(asm.Lbl("rt_ten")));
+      asm.Fmulp(St.St1);
+      asm.Loop(scaleLoop);
+      asm.MarkLabel(scaled);
+
+      asm.Fxch();                                   // ST0 = value, ST1 = scale
+      asm.Fmul(St.St0, St.St1);                     // ST0 = value * scale, scale kept
+
+      asm.Ftst();                                   // remember which side of zero it was on
+      asm.Fstsw(Mem.Word(this._scratch, 16));
+      asm.Mov(Reg.AX, Mem.Word(this._scratch, 16));
+      asm.Sahf();
+      asm.Pushf();
+
+      asm.Fabs();
+      asm.Fld(Mem.Qword(asm.Lbl("rt_half")));
+      asm.Faddp(St.St1);                            // |v| + 0.5
+      asm.Call(asm.Lbl("rt_trunc"));                // toward zero, so this is the away-from-zero round
+
+      asm.Popf();
+      asm.Jnc(wasPositive);
+      asm.Fchs();
+      asm.MarkLabel(wasPositive);
+
+      asm.Fdiv(St.St0, St.St1);                     // unscale
+      asm.Fxch();
+      asm.Fstp(St.St0);                             // drop the scale, leaving the result
+      asm.Pop(Reg.AX);
+      asm.Ret();
+    }
+
+    asm.MarkLabel("rt_ten");
+    asm.Dq(10.0);
+    asm.MarkLabel("rt_half");
+    asm.Dq(0.5);
   }
 
   private void EmitLongHelpers(Assembler asm) {
