@@ -5,28 +5,29 @@ using PowerBasic.Compiler.Syntax;
 namespace PowerBasic.Compiler.Tests.Asm;
 
 /// <summary>
-/// Whether an image built for an 8086 contains only instructions an 8086 has.
+/// That an image built for an 8086 contains only instructions an 8086 has.
 ///
-/// It does not. <c>Assembler.J(Condition, Label)</c> emits <c>0F 8x</c> - the near conditional jump,
-/// which is 80386 and later - whenever the target is not already bound within short range, and
-/// leans on <c>RunJumpRelaxation</c> to shrink it back to the 8086 <c>7x</c> form afterwards. When
-/// the distance genuinely exceeds 127 bytes the relaxation cannot, and the 386 encoding survives
-/// into an image whose declared target is an 8086. Nothing on that path consults the CPU setting.
+/// It did not. <c>Assembler.J(Condition, Label)</c> emitted <c>0F 8x</c> - the near conditional
+/// jump, which is 80386 and later - for any target it could not already reach in a byte, and leaned
+/// on <c>RunJumpRelaxation</c> to shrink it back to <c>7x</c>. Past 127 bytes the relaxation cannot,
+/// and the 386 encoding survived into an image whose declared target is an 8086: twelve of them in
+/// a PAINT program, eleven in a CIRCLE one. DOSBox emulates a 486 and runs them perfectly well,
+/// which is why it went unnoticed; the in-repo 8086 interpreter throws on the opcode.
 ///
-/// It goes unnoticed because DOSBox emulates a 486 and runs the instruction perfectly well; the
-/// in-repo 8086 interpreter is the stricter reader, and it throws on the opcode. The 8086 form is
-/// the inverted short jump over a near JMP - <c>Jcc t</c> becomes <c>J!cc over; JMP t; over:</c> -
-/// which is one byte longer, and that is the difficulty: the relaxation pass only ever shrinks
-/// (<c>RemoveBytes</c>), so there is no path today that can grow one instruction into that pair.
+/// The jump is now spelled the way an 8086 spells it - <c>J!cc over; JMP target; over:</c> - and
+/// folded back to a single short jump wherever the target turns out to be reachable.
 ///
-/// This fixture does not fix it. It pins the count so the number cannot climb unnoticed while the
-/// real fix waits, and so the next reader finds a measurement rather than a surprise.
+/// The count below is a byte scan, and a byte scan cannot tell an instruction from a coincidence.
+/// Two matches survive in every graphics image and neither is an instruction: <c>8B 0F</c>
+/// (<c>mov cx,[bx]</c>) followed by <c>8D 77 02</c> (<c>lea si,[bx+2]</c>) straddles a modrm byte
+/// and the next opcode, and <c>7F 0F</c> (<c>jg +15</c>) followed by <c>89 F0</c> (<c>mov ax,si</c>)
+/// straddles a displacement and the next opcode. Two is therefore the floor here, not a remainder.
 /// </summary>
 [TestFixture]
 public sealed class EightySixOnlyInstructionTests {
 
-  /// <summary>Occurrences of the 80386 near conditional jump (0F 80..0F 8F) in an image.</summary>
-  private static int Near386Jumps(byte[] image) {
+  /// <summary>Byte occurrences of the 80386 near conditional jump (0F 80..0F 8F) in an image.</summary>
+  private static int Near386JumpBytes(byte[] image) {
     var count = 0;
     for (var i = 0; i < image.Length - 1; ++i)
       if (image[i] == 0x0F && image[i + 1] is >= 0x80 and <= 0x8F)
@@ -43,23 +44,32 @@ public sealed class EightySixOnlyInstructionTests {
     return image;
   }
 
-  /// <summary>
-  /// A program drawing nothing carries none: the runtime sections it pulls in are all short enough
-  /// that every conditional jump relaxes. This is the control - it shows the count is about jump
-  /// DISTANCE and not about the runtime being 386 code throughout.
-  /// </summary>
   [Test]
-  public void Image_GivenAShortProgram_ThenItHasNoNear386ConditionalJump() =>
-    Assert.That(Near386Jumps(Compile("PRINT \"x\"\nEND\n", optimize: true)), Is.Zero);
+  public void Image_GivenAShortProgram_ThenNoNear386ConditionalJumpByteEvenAppears() =>
+    Assert.That(Near386JumpBytes(Compile("PRINT \"x\"\nEND\n", optimize: true)), Is.Zero);
 
   /// <summary>
-  /// The graphics runtime does carry them - its routines are long enough that some jumps cannot be
-  /// short. Every one is an instruction an 8086 cannot execute, sitting in an image built for one.
+  /// The graphics runtime is where the long jumps live - its routines are long enough that some
+  /// targets are simply out of a byte's reach. Twelve and eleven real ones before the fix; the two
+  /// that remain are the byte collisions named above.
   /// </summary>
-  [TestCase("SCREEN 13\nPAINT (10, 10), 15, 4\nEND\n", 12, TestName = "PAINT pulls in twelve")]
-  [TestCase("SCREEN 13\nCIRCLE (40, 40), 10, 12\nEND\n", 11, TestName = "CIRCLE pulls in eleven")]
-  public void Image_GivenAGraphicsProgram_ThenTheCountIsWhatItWas(string source, int expected) =>
-    // Pinned, not approved. A rise means a routine grew past what the relaxation can reach; a fall
-    // means someone shortened one, or fixed this properly and should delete the case.
-    Assert.That(Near386Jumps(Compile(source, optimize: true)), Is.EqualTo(expected));
+  [TestCase("SCREEN 13\nPAINT (10, 10), 15, 4\nEND\n", TestName = "PAINT carries no 386 jump")]
+  [TestCase("SCREEN 13\nCIRCLE (40, 40), 10, 12\nEND\n", TestName = "CIRCLE carries no 386 jump")]
+  [TestCase("SCREEN 13\nLINE (0, 0)-(100, 80), 4, BF\nEND\n", TestName = "LINE carries no 386 jump")]
+  public void Image_GivenAGraphicsProgram_ThenOnlyTheTwoByteCollisionsMatch(string source) =>
+    Assert.That(Near386JumpBytes(Compile(source, optimize: true)), Is.LessThanOrEqualTo(2));
+
+  /// <summary>
+  /// A 386 target keeps the compact encoding: the pair costs a byte, and there is no reason to pay
+  /// it on a processor that has the instruction.
+  /// </summary>
+  [Test]
+  public void Assembler_GivenA386Target_ThenTheNearFormIsStillAvailable() {
+    var asm = new PowerBasic.Compiler.Asm.Assembler { Allow386Jcc = true };
+    var done = asm.DefineLabel();
+    asm.J(PowerBasic.Compiler.Asm.Condition.Equal, done);
+    asm.Nop();
+    asm.MarkLabel(done);
+    Assert.That(asm.ToArray()[0], Is.EqualTo(0x0F));
+  }
 }

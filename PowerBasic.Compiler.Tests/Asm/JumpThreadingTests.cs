@@ -34,18 +34,19 @@ public sealed class JumpThreadingTests {
     var hop1 = asm.DefineLabel();
     var hop2 = asm.DefineLabel();
     var final = asm.DefineLabel();
-    asm.Jz(hop1);            // 0: 0F 84 xx xx -> threads through hop1 -> hop2 -> final
-    asm.Nop();               // 4
+    asm.Jz(hop1);            // 0: the 8086 pair, 75 03 E9 xx xx -> threads hop1 -> hop2 -> final
+    asm.Nop();               // 5
     asm.MarkLabel(hop1);
-    asm.Jmp(hop2);           // 5: E9 xx xx
+    asm.Jmp(hop2);           // 6: E9 xx xx
     asm.MarkLabel(hop2);
-    asm.Jmp(final);          // 8: E9 xx xx
-    asm.Nop();               // 11
-    asm.MarkLabel(final);    // 12:
+    asm.Jmp(final);          // 9: E9 xx xx
+    asm.Nop();               // 12
+    asm.MarkLabel(final);    // 13:
     asm.Nop();
     var image = asm.ToArray();
-    // Jcc near rel16 at 2: threaded displacement = final(12) - 4 = 8
-    Assert.That(image[2] | image[3] << 8, Is.EqualTo(8), "the conditional jump follows the whole chain");
+    // the pair's JMP carries the rel16 at 3, and it threads exactly as the near form did:
+    // displacement = final(13) - 5 = 8
+    Assert.That(image[3] | image[4] << 8, Is.EqualTo(8), "the conditional jump follows the whole chain");
   }
 
   [Test]

@@ -90,8 +90,10 @@ public sealed class MachineEmitterTests {
     var bytes = asm.ToArray();   // resolves the label fixups - throws if a branch target is unbound
 
     Assert.That(bytes, Is.Not.Empty);
-    // a JL (signed less-than) conditional jump - near form 0F 8C - is present
-    Assert.That(IndexOf(bytes, [0x0F, 0x8C]), Is.GreaterThanOrEqualTo(0), "a JL conditional jump is present");
+    // A JL (signed less-than) conditional jump is present. Its forward target is unbound when the
+    // jump is emitted, so on an 8086 it is spelled as the inverted short jump over a near JMP -
+    // JGE +3 (7D 03) then E9 - rather than as the 386 near form 0F 8C.
+    Assert.That(IndexOf(bytes, [0x7D, 0x03, 0xE9]), Is.GreaterThanOrEqualTo(0), "a JL conditional jump is present");
   }
 
   [Test]

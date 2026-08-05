@@ -114,9 +114,24 @@ public sealed class AssemblerStackAndFlowTests {
     Assert.That(asm.ToArray(), Is.EqualTo(new byte[] { opcode, 0xFE }));
   }
 
+  /// <summary>
+  /// A forward target is unknown when the jump is emitted, so it cannot be proven short. On an 8086
+  /// that means the inverted-short-over-near-JMP pair, because the near conditional jump is 80386.
+  /// </summary>
   [Test]
-  public void J_GivenForwardTarget_WhenAssembled_ThenNearFormUsed() {
+  public void J_GivenForwardTarget_WhenAssembled_ThenTheEightyEightySixPairIsUsed() {
     var asm = new Assembler();
+    var done = asm.DefineLabel();
+    asm.J(Condition.Equal, done);
+    asm.Nop();
+    asm.MarkLabel(done);
+    //                          JNZ +3  over   JMP  rel16 = 1   NOP
+    Assert.That(asm.ToArray(), Is.EqualTo(new byte[] { 0x75, 0x03, 0xE9, 0x01, 0x00, 0x90 }));
+  }
+
+  [Test]
+  public void J_GivenForwardTargetAndA386Target_WhenAssembled_ThenNearFormUsed() {
+    var asm = new Assembler { Allow386Jcc = true };
     var done = asm.DefineLabel();
     asm.J(Condition.Equal, done);
     asm.Nop();
@@ -138,6 +153,17 @@ public sealed class AssemblerStackAndFlowTests {
   [Test]
   public void J_GivenBoundTargetJustOutOfShortRange_WhenAssembled_ThenNearForm() {
     var asm = new Assembler();
+    var top = asm.MarkLabel("top");
+    for (var i = 0; i < 127; ++i)
+      asm.Nop();
+
+    asm.J(Condition.Equal, top); // rel8 would be -129, so the 8086 pair: JNZ +3 over a JMP of -132
+    Assert.That(asm.ToArray()[127..], Is.EqualTo(new byte[] { 0x75, 0x03, 0xE9, 0x7C, 0xFF }));
+  }
+
+  [Test]
+  public void J_GivenBoundTargetJustOutOfShortRangeAndA386Target_WhenAssembled_ThenNearForm() {
+    var asm = new Assembler { Allow386Jcc = true };
     var top = asm.MarkLabel("top");
     for (var i = 0; i < 127; ++i)
       asm.Nop();

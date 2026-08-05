@@ -802,9 +802,21 @@ public sealed partial class Assembler {
     }
 
     var start = this.Position;
-    this.EmitByte(0x0F);
-    this.EmitByte((byte)(0x80 + (int)condition));
-    this.EmitRel16(target);
+    if (this.Allow386Jcc) {
+      this.EmitByte(0x0F);
+      this.EmitByte((byte)(0x80 + (int)condition));
+      this.EmitRel16(target);
+      this.RecordSchedJump(start);
+      return;
+    }
+
+    // 8086: no near Jcc exists, so the condition inverts and hops over a near JMP that does the
+    // work. Five bytes against four - the relaxation folds it back to two wherever the target turns
+    // out to be reachable in a byte, so only the jumps that had no choice pay for it.
+    this.EmitByte((byte)(0x70 + ((int)condition ^ 1)));
+    this.EmitByte(0x03);
+    this.EmitByte(0xE9);
+    this.EmitRel16Pair(target);
     this.RecordSchedJump(start);
   }
 

@@ -11,7 +11,14 @@ namespace PowerBasic.Compiler.Asm;
 /// </summary>
 public sealed partial class Assembler {
 
-  private enum FixupKind { Rel8, Rel16, Abs16 }
+  /// <summary>
+  /// <c>Rel16Pair</c> is the rel16 of the near JMP inside the 8086 spelling of a long conditional
+  /// jump (<c>J!cc over; JMP target; over:</c>). It resolves exactly as <see cref="Rel16"/>; the
+  /// distinct kind exists so the relaxation can recognise the pair by RECORD rather than by matching
+  /// bytes backwards, which is not safe - `add ax,0370h` is 05 70 03 and `mov bx,0371h` is BB 71 03,
+  /// so either one before a near JMP would look exactly like the pair's first two bytes.
+  /// </summary>
+  private enum FixupKind { Rel8, Rel16, Abs16, Rel16Pair }
 
   private readonly record struct Fixup(int Position, FixupKind Kind, Label Target, int Addend);
 
@@ -138,6 +145,7 @@ public sealed partial class Assembler {
       if (fixup.Target.IsExternal || (!fixup.Target.IsBound && registered.Contains(fixup.Target))) {
         switch (fixup.Kind) {
           case FixupKind.Rel16:
+          case FixupKind.Rel16Pair:
             relocations.Add(new(fixup.Position, AsmRelocationKind.ExternalRelative, fixup.Target.Name));
             break;
           case FixupKind.Abs16:
@@ -212,6 +220,9 @@ public sealed partial class Assembler {
       var isJump = f.Kind switch {
         FixupKind.Rel8 => op is 0xEB or (>= 0x70 and <= 0x7F),
         FixupKind.Rel16 => op == 0xE9 || (f.Position >= 2 && this._buffer[f.Position - 2] == 0x0F && op is >= 0x80 and <= 0x8F),
+        // the 8086 long-conditional pair jumps through its own near JMP, so it threads like one -
+        // without this a conditional jump silently stops following JMP chains on an 8086 target
+        FixupKind.Rel16Pair => op == 0xE9,
         _ => false,
       };
       if (!isJump)
@@ -243,6 +254,14 @@ public sealed partial class Assembler {
   private bool _jumpRelaxationRan;
 
   /// <summary>
+  /// Whether the target may execute an 80386 near conditional jump (<c>0F 8x</c>). Off by default:
+  /// the default target is an 8086, and without this the assembler has no idea what it is building
+  /// for - it emitted the 386 encoding for every jump it could not reach in a byte and relied on
+  /// relaxation to shrink it back, which cannot happen past 127 bytes.
+  /// </summary>
+  public bool Allow386Jcc { get; set; }
+
+  /// <summary>
   /// Short-jump relaxation over the finished stream, iterated to fixpoint (each shrink can
   /// bring further jumps into short range). Every cut goes through the peephole's
   /// RemoveBytes, which slides all labels/fixups/relocations past it, so downstream offsets
@@ -265,6 +284,20 @@ public sealed partial class Assembler {
             && this._buffer[f.Position - 1] == 0xEB && f.Target.Position + f.Addend == f.Position + 1) {
           this.RemoveBytes(f.Position - 1, 2);
           changed = true;
+          continue;
+        }
+        // the 8086 long-conditional pair folding back into the one short jump it stands in for
+        if (f.Kind == FixupKind.Rel16Pair && f.Target.IsBound && !f.Target.IsExternal && f.Position >= 3) {
+          var pairStart = f.Position - 3;
+          var pairTarget = f.Target.Position + f.Addend;
+          var pairEffective = pairTarget > pairStart + 2 ? pairTarget - 3 : pairTarget;
+          var pairRel = pairEffective - (pairStart + 2);
+          if (pairRel is >= sbyte.MinValue and <= sbyte.MaxValue) {
+            this._buffer[pairStart] = (byte)(0x70 | ((this._buffer[pairStart] & 0x0F) ^ 1));   // un-invert
+            this._fixups[i] = new(pairStart + 1, FixupKind.Rel8, f.Target, f.Addend);
+            this.RemoveBytes(pairStart + 2, 3);
+            changed = true;
+          }
           continue;
         }
         if (f.Kind != FixupKind.Rel16 || !f.Target.IsBound || f.Target.IsExternal || f.Position < 1)
@@ -300,7 +333,8 @@ public sealed partial class Assembler {
         result[fixup.Position] = (byte)(sbyte)rel;
         break;
       }
-      case FixupKind.Rel16: {
+      case FixupKind.Rel16:
+      case FixupKind.Rel16Pair: {
         var rel = target - (fixup.Position + 2);
         result[fixup.Position] = (byte)rel;
         result[fixup.Position + 1] = (byte)(rel >> 8);
@@ -486,6 +520,12 @@ public sealed partial class Assembler {
 
   private void EmitRel16(Label target) {
     this._fixups.Add(new(this.Position, FixupKind.Rel16, target, 0));
+    this.EmitWord(0);
+  }
+
+  /// <summary>The rel16 of the JMP inside an 8086 long-conditional pair; see <see cref="FixupKind"/>.</summary>
+  private void EmitRel16Pair(Label target) {
+    this._fixups.Add(new(this.Position, FixupKind.Rel16Pair, target, 0));
     this.EmitWord(0);
   }
 

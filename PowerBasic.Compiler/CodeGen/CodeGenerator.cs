@@ -855,6 +855,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // emitting near for a forward branch is therefore a deviation FROM the oracle, not fidelity
     // to it. Units and external-call modules keep the near forms (their targets are relocated).
     asm.EnableJumpRelaxation = !this._allowExternalCalls && !this._isUnit;
+    // The near conditional jump (0F 8x) is 80386. Without this the assembler had no idea what it
+    // was building for and emitted it regardless, which is fine for anything relaxation could pull
+    // back into a byte and an invalid instruction for anything it could not.
+    asm.Allow386Jcc = this.Cpu386;
     // S3 SIZE: identical procedures fold to one copy (entry labels re-bound to the survivor)
     asm.EnableTailMerge = standalone && this.OptimizeSize;
     var userMain = asm.DefineLabel("user_main");
