@@ -233,6 +233,32 @@ public sealed class Binder {
     "WINDOW", "PALETTE", "PALETTE USING", "PLAY",
   };
 
+  /// <summary>
+  /// Checks a constant PLAY or DRAW string against its macro grammar.
+  ///
+  /// Both languages are otherwise read byte by byte at run time, where a typo is a runtime error at
+  /// best. PLAY is the worse of the two today: it binds, warns that it does nothing, and compiles,
+  /// so a malformed tune reaches the executable with nothing said about it at all. When the string
+  /// is a constant the grammar is knowable here, and there is no reason to wait for a run that will
+  /// not happen.
+  ///
+  /// A computed string is left alone - there is nothing to check - and so is one the folder cannot
+  /// reduce whole. It is a warning rather than an error because the genuine compiler accepts these
+  /// strings and finds out later, and refusing a program it takes would be the larger bug.
+  /// </summary>
+  private void CheckMacroString(CommandStmt cmd, Scope scope) {
+    if (cmd.Keyword is not ("PLAY" or "DRAW") || cmd.Arguments is not [{ } argument])
+      return;
+    if (this._folder.TryFold(argument) is not { Text: { } text })
+      return;
+
+    var complaint = cmd.Keyword == "PLAY"
+      ? MacroStringValidator.ValidatePlay(text)
+      : MacroStringValidator.ValidateDraw(text);
+    if (complaint is not null)
+      this.Warn(cmd.Position, $"{cmd.Keyword} string: {complaint}");
+  }
+
   /// <summary>Reports a command that binds but does nothing, and the one that binds in the wrong place.</summary>
   private void NoteCommandWithNoEffect(CommandStmt cmd) {
     // A module-level OPTION BASE never reaches here - the pre-pass consumes the valid spellings and
@@ -2817,6 +2843,7 @@ public sealed class Binder {
           if (argument != null)
             this.BindExpression(argument, scope);
         this.NoteCommandWithNoEffect(cmd);
+        this.CheckMacroString(cmd, scope);
         break;
 
       case LineStmt line:
