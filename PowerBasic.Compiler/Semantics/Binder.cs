@@ -216,6 +216,38 @@ public sealed class Binder {
   private void Error(SourcePosition position, string message) => this._model.Errors.Add(new(position, message));
   private void Warn(SourcePosition position, string message) => this._model.Warnings.Add(new(position, message));
 
+  /// <summary>
+  /// Commands this runtime parses and binds in full and then emits nothing for.
+  ///
+  /// They are not errors: the genuine compiler accepts every one of them, and refusing them would
+  /// turn programs that compile today into programs that do not - the sibling graphics corpus alone
+  /// uses PALETTE and WIDTH. But accepting them in silence is its own bug, because the program then
+  /// runs with its colours, screen width and viewport quietly not applied and nothing anywhere says
+  /// so. A warning is the honest middle: no bytes change, nothing is rejected, and the gap is on the
+  /// record at the point it matters.
+  ///
+  /// Strike a name from here when it gains a code generator - the test over this set insists on it.
+  /// </summary>
+  public static readonly IReadOnlySet<string> CommandsWithNoEffect = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+    "COLOR", "WIDTH", "KEY", "VIEW", "VIEW TEXT", "VIEW PRINT", "VIEW SCREEN",
+    "WINDOW", "PALETTE", "PALETTE USING", "PLAY",
+  };
+
+  /// <summary>Reports a command that binds but does nothing, and the one that binds in the wrong place.</summary>
+  private void NoteCommandWithNoEffect(CommandStmt cmd) {
+    // A module-level OPTION BASE never reaches here - the pre-pass consumes the valid spellings and
+    // refuses the rest - so one that does is inside a procedure, where it would be read after the
+    // arrays it is meant to govern have already been bound. Silently ignoring it there would undo
+    // the point of implementing it at all.
+    if (cmd.Keyword == "OPTION BASE") {
+      this.Error(cmd.Position, "OPTION BASE must appear at module level, before the arrays it affects");
+      return;
+    }
+
+    if (CommandsWithNoEffect.Contains(cmd.Keyword))
+      this.Warn(cmd.Position, $"{cmd.Keyword} is accepted but has no effect: this runtime does not implement it");
+  }
+
   /// <summary>Folder hook: folds what the surface tree alone cannot - bind-time desugars recorded in the model (e.g. compile-time reflection calls already replaced by literals).</summary>
   private ConstantValue? FoldDesugared(Expression e)
     => this._model.Desugared.TryGetValue(e, out var d) ? this._folder.TryFold(d) : null;
@@ -2579,14 +2611,21 @@ public sealed class Binder {
         scope.PendingLabelRefs.Add((rs.Target, rs.Position));
         break;
 
+      // The event system is recorded but inert - there is no dispatch, so a handler is bound, its
+      // label is resolved, and it is then never called. That is the quietest failure in the compiler:
+      // ON TIMER(1) GOSUB Tick compiles without a word and simply never fires. Refusing it would be
+      // wrong (the genuine compiler takes it), so it is warned about instead.
       case OnEventStmt ev:
         if (ev.Index != null)
           this.BindExpression(ev.Index, scope);
         scope.PendingLabelRefs.Add((ev.Target, ev.Position));
+        this.Warn(ev.Position, $"ON {ev.EventKind} is accepted but has no effect: this runtime has no event dispatch");
         break;
 
-      case EventControlStmt ec when ec.Index != null:
-        this.BindExpression(ec.Index, scope);
+      case EventControlStmt ec:
+        if (ec.Index != null)
+          this.BindExpression(ec.Index, scope);
+        this.Warn(ec.Position, $"{ec.EventKind} {ec.Mode} is accepted but has no effect: this runtime has no event dispatch");
         break;
 
       case IncrDecrStmt id: {
@@ -2777,6 +2816,7 @@ public sealed class Binder {
         foreach (var argument in cmd.Arguments)
           if (argument != null)
             this.BindExpression(argument, scope);
+        this.NoteCommandWithNoEffect(cmd);
         break;
 
       case LineStmt line:
