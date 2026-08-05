@@ -129,4 +129,17 @@ public sealed class LineStatementTests {
       LINE (6, 6)-(2, 2), 7, BF
       PRINT POINT(2, 2); POINT(4, 4); POINT(6, 6)
       """), Is.EqualTo("7  7  7"));
+
+  /// <summary>
+  /// PSET sets the LAST POINT REFERENCED, so the line that follows starts where the pixel was put.
+  /// Before this it did not, and `PSET (x,y) : LINE -(a,b)` drew from wherever the previous graphics
+  /// statement had finished - or from the origin, in a program where PSET was the first one.
+  /// </summary>
+  [Test]
+  public void Pset_GivenAFollowingLineWithNoStart_ThenItBeginsWherePsetLeftOff() =>
+    Assert.That(Run("""
+      PSET (40, 40), 3
+      LINE -(44, 40), 9
+      PRINT POINT(42, 40); POINT(2, 0)
+      """), Is.EqualTo("9  0"), "the segment runs from 40 to 44, not from the origin");
 }

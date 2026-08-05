@@ -1,5 +1,11 @@
 namespace PowerBasic.Compiler.Semantics;
 
+/// <summary>One step of a DRAW string, already reduced to what the code generator has to emit.</summary>
+public readonly record struct DrawStep(DrawStepKind Kind, int X, int Y, bool Blank, bool NoUpdate);
+
+/// <summary>What a <see cref="DrawStep"/> does: move by a delta, move to a point, or set the colour.</summary>
+public enum DrawStepKind { Relative, Absolute, Colour }
+
 /// <summary>
 /// Compile-time checking of the two macro languages BASIC embeds in string literals: the tune
 /// strings <c>PLAY</c> takes and the turtle-graphics strings <c>DRAW</c> takes.
@@ -15,6 +21,96 @@ namespace PowerBasic.Compiler.Semantics;
 /// what the folder hands over or nothing is.
 /// </summary>
 public static class MacroStringValidator {
+
+  /// <summary>
+  /// Reduces a DRAW string to the steps it denotes, or explains why it cannot.
+  ///
+  /// This is the same walk as <see cref="ValidateDraw"/> and deliberately not folded into it: one
+  /// answers "is this well formed", which every constant string is asked, and the other answers
+  /// "what does it draw", which is only asked when the answer is going to be emitted.
+  ///
+  /// The commands that carry state across steps - A and TA rotate the axes, S scales every delta -
+  /// are declined rather than approximated, as is P (a flood fill mid-picture) and X (which runs a
+  /// string that is not this one). Declining returns false with a reason; the caller reports it and
+  /// emits nothing, which is what the statement did for every string before this.
+  /// </summary>
+  public static bool TryParseDraw(string picture, out List<DrawStep> steps, out string? declined) {
+    steps = [];
+    declined = ValidateDraw(picture);
+    if (declined is not null)
+      return false;
+
+    var at = 0;
+    var blank = false;
+    var noUpdate = false;
+    while (at < picture.Length) {
+      var c = char.ToUpperInvariant(picture[at]);
+      if (char.IsWhiteSpace(c)) {
+        ++at;
+        continue;
+      }
+      if (c is 'B' or 'N') {
+        blank |= c == 'B';
+        noUpdate |= c == 'N';
+        ++at;
+        continue;
+      }
+      ++at;
+
+      switch (c) {
+        case 'U' or 'D' or 'L' or 'R' or 'E' or 'F' or 'G' or 'H': {
+          var start = at;
+          ReadNumber(picture, ref at);
+          var n = at > start ? int.Parse(picture[start..at]) : 1;
+          var (dx, dy) = c switch {
+            'U' => (0, -n),
+            'D' => (0, n),
+            'L' => (-n, 0),
+            'R' => (n, 0),
+            'E' => (n, -n),
+            'F' => (n, n),
+            'G' => (-n, n),
+            _ => (-n, -n),                       // H
+          };
+          steps.Add(new(DrawStepKind.Relative, dx, dy, blank, noUpdate));
+          break;
+        }
+
+        case 'M': {
+          var relative = at < picture.Length && picture[at] is '+' or '-';
+          var negateX = at < picture.Length && picture[at] == '-';
+          SkipSign(picture, ref at);
+          var sx = at;
+          ReadNumber(picture, ref at);
+          var x = int.Parse(picture[sx..at]) * (negateX ? -1 : 1);
+          ++at;                                  // the comma
+          var negateY = at < picture.Length && picture[at] == '-';
+          SkipSign(picture, ref at);
+          var sy = at;
+          ReadNumber(picture, ref at);
+          var y = int.Parse(picture[sy..at]) * (negateY ? -1 : 1);
+          steps.Add(new(relative ? DrawStepKind.Relative : DrawStepKind.Absolute, x, y, blank, noUpdate));
+          break;
+        }
+
+        case 'C': {
+          var start = at;
+          ReadNumber(picture, ref at);
+          steps.Add(new(DrawStepKind.Colour, int.Parse(picture[start..at]), 0, false, false));
+          break;
+        }
+
+        default:
+          steps = [];
+          declined = $"DRAW {c} is not modelled (A, S, TA, P and X carry state this cannot follow)";
+          return false;
+      }
+      blank = false;
+      noUpdate = false;
+    }
+    return true;
+  }
+
 
   /// <summary>Describes what is wrong with a macro string, or null when it is well formed.</summary>
   public static string? ValidatePlay(string tune) {

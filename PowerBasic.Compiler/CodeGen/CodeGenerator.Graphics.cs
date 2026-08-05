@@ -83,6 +83,70 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
+  /// <c>DRAW "..."</c> with a CONSTANT string, expanded here into the moves it denotes.
+  ///
+  /// DRAW is a macro language, and the obvious way to run one is an interpreter in the runtime that
+  /// walks the string byte by byte. It does not need one when the string is written down: the deltas
+  /// are all known while compiling, and each step becomes half a dozen instructions against the
+  /// runtime's "last point referenced" - which is the same cell LINE reads when its start point is
+  /// omitted, so the turtle is already there and needs no state of its own.
+  ///
+  /// A computed string still declines. So does one using A, S, TA, P or X: those carry state from
+  /// one step to the next - a rotation, a scale, a fill, a string that is not this one - and the
+  /// point of doing it here is that the answer is knowable, which for those it is not.
+  /// </summary>
+  private void EmitDrawStatement(CommandStmt draw, string picture) {
+    if (!Semantics.MacroStringValidator.TryParseDraw(picture, out var steps, out var declined)) {
+      this.Unsupported(draw.Position, declined ?? "DRAW string");
+      return;
+    }
+    var asm = this._asm;
+    asm.Mov(Mem.Word(asm.Lbl("rt_gstyle")), 0xFFFF);        // solid; DRAW has no style mask
+
+    foreach (var step in steps) {
+      if (step.Kind == Semantics.DrawStepKind.Colour) {
+        asm.Mov(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)step.X);
+        continue;
+      }
+
+      // where this step ends: a delta from the current point, or the point itself
+      if (step.Kind == Semantics.DrawStepKind.Relative) {
+        asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx1")));
+        if (step.X != 0)
+          asm.Add(Reg.AX, (Imm)step.X);
+        asm.Mov(Mem.Word(asm.Lbl("rt_gx2")), Reg.AX);
+        asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy1")));
+        if (step.Y != 0)
+          asm.Add(Reg.AX, (Imm)step.Y);
+        asm.Mov(Mem.Word(asm.Lbl("rt_gy2")), Reg.AX);
+      } else {
+        asm.Mov(Mem.Word(asm.Lbl("rt_gx2")), (Imm)step.X);
+        asm.Mov(Mem.Word(asm.Lbl("rt_gy2")), (Imm)step.Y);
+      }
+
+      // B moves without drawing: the endpoint simply becomes the current point
+      if (step.Blank) {
+        asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx2")));
+        asm.Mov(Mem.Word(asm.Lbl("rt_gx1")), Reg.AX);
+        asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy2")));
+        asm.Mov(Mem.Word(asm.Lbl("rt_gy1")), Reg.AX);
+        continue;
+      }
+
+      // N draws and comes back, so the point it started from is kept over the call that moves it
+      if (step.NoUpdate) {
+        asm.Push(Mem.Word(asm.Lbl("rt_gx1")));
+        asm.Push(Mem.Word(asm.Lbl("rt_gy1")));
+      }
+      asm.Call(this._rt.Line);
+      if (step.NoUpdate) {
+        asm.Pop(Mem.Word(asm.Lbl("rt_gy1")));
+        asm.Pop(Mem.Word(asm.Lbl("rt_gx1")));
+      }
+    }
+  }
+
+  /// <summary>
   /// <c>GET (x1,y1)-(x2,y2), a%(0)</c> and <c>PUT (x,y), a%(0)[, verb]</c> - sprite capture and blit.
   ///
   /// The array is named by one of its elements rather than bare, which is how QuickBASIC spells it

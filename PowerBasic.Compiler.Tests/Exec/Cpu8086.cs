@@ -616,6 +616,9 @@ public sealed class Cpu8086 {
       case 0x0F: this.TwoByte(); return;
       case 0xF6 or 0xF7: this.Group3(opcode, repeat); return;
       case 0xFE or 0xFF: this.Group45(opcode); return;
+      // POP r/m16. The compiler emits it for ON ERROR's handler save/restore and for DRAW's
+      // no-update prefix, and the interpreter simply had no case for it.
+      case 0x8F: { var (mode, _, address) = this.ModRm(); this.SetRm16(mode, address, this.Pop()); return; }
 
       default:
         throw new Cpu8086Exception($"unimplemented opcode {opcode:X2} at {this._cs:X4}:{this._ip - 1:X4}");

@@ -1910,6 +1910,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         asm3.Pop(Reg.BX);                            // y
         asm3.Pop(Reg.AX);                            // x
         asm3.Call(this._rt.Pset);
+        // PSET sets the LAST POINT REFERENCED, like every other graphics statement. Without this
+        // `PSET (10,10) : LINE -(20,20)` draws from wherever the previous statement finished - or
+        // from the origin in a program whose first graphics statement it is - and DRAW, whose whole
+        // notion of position is this cell, starts its picture in the top-left corner.
+        asm3.Mov(Mem.Word(asm3.Lbl("rt_gx1")), Reg.AX);
+        asm3.Mov(Mem.Word(asm3.Lbl("rt_gy1")), Reg.BX);
         break;
       }
 
@@ -2265,6 +2271,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         asm.Call(this._rt.Shell);
         asm.Xor(Reg.AL, Reg.AL);
         asm.Jmp(this._rt.Exit);
+        break;
+
+      // DRAW with a written-down string is expanded into its moves. A computed one declines, as it
+      // did before - the point of doing this at compile time is that the picture is knowable.
+      case "DRAW" when cmd.Arguments is [StringLiteralExpr picture]:
+        this.EmitDrawStatement(cmd, picture.Value);
         break;
 
       case "PCOPY" when cmd.Arguments is [{ } fromPage, { } toPage]:
