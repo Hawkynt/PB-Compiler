@@ -389,14 +389,41 @@ public sealed partial class CodeGenerator {
         break;
 
       case "FILEATTR": {
-        // only FILEATTR(n, 2) = DOS handle is meaningful on this runtime
-        if (args[1] is not IntegerLiteralExpr { Value: 2 }) {
-          this.Unsupported(call, "FILEATTR attribute (only 2 = DOS handle)");
+        // FILEATTR(n, 1) is the mode the file was opened in and FILEATTR(n, 2) its DOS handle. The
+        // attribute has to be written down: the two answers come from different places and there is
+        // nowhere to put a runtime choice between them.
+        if (args[1] is not IntegerLiteralExpr { Value: 1 or 2 } attribute) {
+          this.Unsupported(call, "FILEATTR attribute (1 = mode, 2 = DOS handle)");
           break;
         }
         this.EmitInt16Argument(UnwrapFileNumber(args[0]));
-        asm.Call(this._rt.FHandle);
-        asm.Mov(Reg.AX, Reg.BX);
+        if (attribute.Value == 2) {
+          asm.Call(this._rt.FHandle);
+          asm.Mov(Reg.AX, Reg.BX);
+          asm.Cwd();
+          break;
+        }
+
+        // The mode table holds this runtime's own numbering - 0 INPUT, 1 OUTPUT, 2 APPEND, 3 RANDOM,
+        // 4 BINARY - and the answer is the one BASIC gives: 1, 2, 8, 4, 32. The two orders differ,
+        // which is the entire reason this is a translation and not a load. Reported the way the
+        // handle already is, following the same convention the attribute-2 case set.
+        var binary = asm.DefineLabel();
+        var mapped = asm.DefineLabel();
+        asm.Mov(Reg.BX, Reg.AX);
+        asm.Shl(Reg.BX, 1);
+        asm.Mov(Reg.AX, Mem.Word(Reg.BX, asm.Lbl("rt_fmode")));
+        foreach (var (internalMode, basicMode) in new[] { (0, 1), (1, 2), (2, 8), (3, 4) }) {
+          var next = asm.DefineLabel();
+          asm.Cmp(Reg.AX, (Imm)internalMode);
+          asm.Jne(next);
+          asm.Mov(Reg.AX, (Imm)basicMode);
+          asm.Jmp(mapped);
+          asm.MarkLabel(next);
+        }
+        asm.MarkLabel(binary);
+        asm.Mov(Reg.AX, (Imm)32);
+        asm.MarkLabel(mapped);
         asm.Cwd();
         break;
       }

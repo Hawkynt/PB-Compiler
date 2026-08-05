@@ -246,11 +246,22 @@ public sealed class IntrinsicCensusTests {
   /// x87 doing the work under a rounding mode exactly as INT and FIX beside them do, and six with
   /// MIN$ and MAX$.
   ///
-  /// SCREEN turned out to want nothing the runtime lacks after all - the text page is just memory at
-  /// B800 - so it is written and three are left. Each of those does want a feature rather than a
-  /// case: PLAY a note queue, FILEATTR a file attribute beyond the DOS handle, and BITS a documented
-  /// meaning for its three arguments, which is nowhere to be found. Writing the case is the small
-  /// part of each; deciding what it should answer, and against what, is the rest.
+  /// Two of the four that were filed as needing FEATURES turned out not to. SCREEN wanted a text
+  /// page to read back and the page is just memory at B800; FILEATTR wanted a file attribute beyond
+  /// the DOS handle and the open mode was already in rt_fmode, needing only the translation from
+  /// this runtime's numbering to the language's.
+  ///
+  /// FILEATTR stays on this list and is no longer a gap, which is worth explaining rather than
+  /// striking. Its attribute must be WRITTEN DOWN - the mode and the DOS handle come from different
+  /// places and there is nowhere to put a runtime choice between them - and the census probes with
+  /// variables, so it sees the refusal that a variable attribute correctly gets. Both literal forms
+  /// work and FileAttrTests covers them.
+  ///
+  /// The other two are decisions rather than work. PLAY(n) reports the depth of a note queue that
+  /// does not exist, and answering zero quietly is the failure this whole fixture was written to
+  /// find. BITS takes three arguments and returns a Long, and nothing in the repository or the
+  /// documentation says what the three mean - writing it would be inventing the semantics, which is
+  /// worse than leaving the error.
   ///
   /// Strike a name when it gains a case; the test insists either way.
   /// </summary>
