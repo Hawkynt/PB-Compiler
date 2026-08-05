@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using PowerBasic.Compiler.CodeGen;
 using PowerBasic.Compiler.Syntax;
 using PowerBasic.Compiler.Syntax.Ast;
@@ -23,6 +24,9 @@ namespace PowerBasic.Compiler.Tests.Syntax;
 /// </summary>
 [TestFixture]
 public sealed class StatementNodeCoverageTests {
+
+  private static readonly string _repoRoot =
+    Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 
   /// <summary>Every statement node the parser can build, nested bodies included.</summary>
   private static IEnumerable<Type> NodesProducedByTheSurface() {
@@ -63,15 +67,79 @@ public sealed class StatementNodeCoverageTests {
   }
 
   /// <summary>
+  /// Statement kinds the PARSER constructs, read from its own source.
+  ///
+  /// A node the parser never builds cannot have a surface form: there is no text that produces it.
+  /// TRY/CATCH becoming four Handler* statements is the binder's doing, and asking for a form that
+  /// spells one directly is asking for something BASIC has no syntax for. Splitting the two is what
+  /// turns the pinned list below from a tally into a work queue.
+  /// </summary>
+  private static HashSet<string> ConstructedByTheParser() {
+    var dir = Path.Combine(_repoRoot, "PowerBasic.Compiler", "Syntax");
+    Assume.That(Directory.Exists(dir), "no parser sources to read");
+    var built = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var file in Directory.EnumerateFiles(dir, "Parser*.cs"))
+      foreach (Match m in Regex.Matches(File.ReadAllText(file), @"new\s+([A-Za-z]+(?:Stmt|Decl|Group))\s*\("))
+        built.Add(m.Groups[1].Value);
+    return built;
+  }
+
+  /// <summary>
+  /// The kinds with no form that the parser really can build - the ones a program could contain and
+  /// nothing in the surface exercises. This is the actionable half of the pinned list.
+  /// </summary>
+  [Test]
+  public void Surface_GivenTheKindsWithNoForm_ThenTheOnesTheParserBuildsAreNamedSeparately() {
+    var built = ConstructedByTheParser();
+    var reachable = _noSurfaceForm.Where(built.Contains).OrderBy(n => n, StringComparer.Ordinal).ToList();
+    var unreachable = _noSurfaceForm.Where(n => !built.Contains(n)).OrderBy(n => n, StringComparer.Ordinal).ToList();
+
+    var report = new StringBuilder()
+      .AppendLine($"kinds with no surface form: {_noSurfaceForm.Length}")
+      .AppendLine($"  the parser builds these - a program can contain one and nothing tests it:")
+      .AppendLine("    " + string.Join(", ", reachable))
+      .AppendLine($"  the parser never builds these - the binder's lowering makes them, so no form can:")
+      .AppendLine("    " + string.Join(", ", unreachable));
+    TestContext.Out.Write(report.ToString());
+
+    Assert.That(reachable, Is.EquivalentTo(_parserBuiltWithNoForm),
+      "the set of parser-reachable statement kinds with no form has changed:\n" + report);
+  }
+
+  /// <summary>
+  /// Statement kinds a program can contain that no surface form exercises. Every name here is a
+  /// grammar the parser accepts and no census compiles - write a form and strike it.
+  /// </summary>
+  private static readonly string[] _parserBuiltWithNoForm = [
+    "ArrayScanStmt",
+    "AscAssignStmt",
+    "CallPtrStmt",
+    "ChainStmt",
+    "DeferStmt",
+    "DestructureStmt",
+    "ExitFarStmt",
+    "GosubPtrStmt",
+    "GotoPtrStmt",
+    "InlineAsmStmt",
+    "MetaStmt",
+    "ReplaceStmt",
+    "RequireStmt",
+    "ResourceStmt",
+    "StatementGroup",
+    "StaticAssertStmt",
+    "TypeAliasDecl",
+    "YieldStmt",
+  ];
+
+  /// <summary>
   /// Statement kinds no surface form produces - 29 when this census was first run, and 23 once forms
   /// were written for MID$ assignment, EQUATE, ARRAY SORT, BIT SET, FOR EACH and ITERATE, none of
   /// which had one. MID$ assignment is as common a statement as BASIC has.
   ///
-  /// The list is not all holes. Some of these are built by the BINDER's lowering rather than by the
-  /// parser - the four Handler* kinds are what TRY/CATCH becomes, and StatementGroup is a container -
-  /// and no surface form can exist for a node no source text produces. Separating the two is the
-  /// next refinement; until then the names are pinned so the set cannot grow while nobody is looking,
-  /// which is the failure this whole fixture exists to stop.
+  /// The list is not all holes, and the companion test splits it by reading the parser's own source:
+  /// five of the twenty-three - GroupStmt and the four Handler* kinds TRY/CATCH lowers to - are built
+  /// by the binder alone, and no surface form can exist for a node no source text produces. The other
+  /// eighteen are grammars a program can really contain, and that is the queue.
   ///
   /// Write a form and strike the name. The test insists either way.
   /// </summary>
