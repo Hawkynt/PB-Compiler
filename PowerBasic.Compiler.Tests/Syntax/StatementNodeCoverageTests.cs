@@ -129,39 +129,39 @@ public sealed class StatementNodeCoverageTests {
   }
 
   /// <summary>
-  /// Statement kinds a program can contain that no surface form exercises. Every name here is a
-  /// grammar the parser accepts and no census compiles - write a form and strike it.
+  /// Statement kinds a program can contain that no surface form exercises.
+  ///
+  /// Three are left, and each is a different reason rather than an oversight. ResourceStmt bakes a
+  /// named file into the image, so a form needs a payload sitting beside the test. StatementGroup is
+  /// what an IS pattern binding wraps its statement in, which no statement spells on its own.
+  /// DeferStmt the parser really does build - and then ParseBody rewrites it into TRY ... FINALLY
+  /// before anyone sees the tree, so a form for it can exist and still never produce one. That last
+  /// is the limit of reading `new XxxStmt(` out of the parser's source: it finds what is constructed,
+  /// not what survives.
   /// </summary>
   private static readonly string[] _parserBuiltWithNoForm = [
-    "CallPtrStmt",
     "DeferStmt",
-    "GosubPtrStmt",
-    "GotoPtrStmt",
     "ResourceStmt",
     "StatementGroup",
-    "TypeAliasDecl",
-    "YieldStmt",
   ];
 
   /// <summary>
   /// Statement kinds no surface form produces: 29 when this census was first run, 23 once forms were
   /// written for MID$ assignment, EQUATE, ARRAY SORT, BIT SET, FOR EACH and ITERATE, and 13 once ten
   /// more followed - ASC assignment, CHAIN, REPLACE, ARRAY SCAN, EXIT FAR, inline assembly,
-  /// destructuring, $ASSERT, a metastatement and REQUIRE. MID$ assignment is as common a statement as
-  /// BASIC has and none of the sixteen had a form.
+  /// destructuring, $ASSERT, a metastatement and REQUIRE, then 8 with the code-pointer trio, the
+  /// single-line type alias and a coroutine YIELD. MID$ assignment is as common a statement as BASIC
+  /// has and none of the twenty-one had a form.
   ///
   /// The list is not all holes, and the companion test splits it by reading the parser's own source:
-  /// five of the thirteen - GroupStmt and the four Handler* kinds TRY/CATCH lowers to - are built
+  /// five of the eight - GroupStmt and the four Handler* kinds TRY/CATCH lowers to - are built
   /// by the binder alone, and no surface form can exist for a node no source text produces. The other
-  /// eight are grammars a program can really contain, and that is what is left of the queue.
+  /// three are grammars a program can really contain, and that is what is left of the queue.
   ///
   /// Write a form and strike the name. The test insists either way.
   /// </summary>
   private static readonly string[] _noSurfaceForm = [
-    "CallPtrStmt",
     "DeferStmt",
-    "GosubPtrStmt",
-    "GotoPtrStmt",
     "GroupStmt",
     "HandlerArmStmt",
     "HandlerReraiseStmt",
@@ -169,7 +169,5 @@ public sealed class StatementNodeCoverageTests {
     "HandlerSaveStmt",
     "ResourceStmt",
     "StatementGroup",
-    "TypeAliasDecl",
-    "YieldStmt",
   ];
 }

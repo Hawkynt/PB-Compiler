@@ -111,6 +111,14 @@ internal static class StatementSurface {
     new("static.assert", "$ASSERT 1 = 1, \"ok\"", Dialect.Pb36, _noMicrosoft),
     new("metastatement", "$CPU 8086"),
     new("require", "CALL S8(1)\nEND\nSUB S8(BYVAL n%)\n  REQUIRE n% > 0, \"positive\"\nEND SUB", Dialect.Pb36, _noMicrosoft),
+    // and six more: the code-pointer trio, the single-line type alias (TYPE Name AS type - no
+    // ALIAS keyword, which a guess would put there), DEFER and a coroutine YIELD
+    new("call.dword", "DIM cp AS DWORD\ncp = CODEPTR32(S7)\nCALL DWORD cp\nEND\nSUB S7()\nEND SUB", Dialect.Pb32, _noMicrosoft),
+    new("goto.dword", "DIM gp AS DWORD\ngp = CODEPTR32(S6)\nGOTO DWORD gp\nEND\nSUB S6()\nEND SUB", Dialect.Pb32, _noMicrosoft),
+    new("gosub.dword", "DIM sp AS DWORD\nsp = CODEPTR32(S5)\nGOSUB DWORD sp\nEND\nSUB S5()\nEND SUB", Dialect.Pb32, _noMicrosoft),
+    new("type.alias", "TYPE Small AS INTEGER\nDIM tv AS Small\ntv = 1", Dialect.Pb36, _noMicrosoft),
+    new("defer", "CALL S4\nEND\nSUB S4\n  DEFER PRINT \"bye\"\n  PRINT \"hi\"\nEND SUB", Dialect.Pb36, _noMicrosoft),
+    new("yield", "FUNCTION G9%()\n  YIELD 1\nEND FUNCTION", Dialect.Pb36, _noMicrosoft),
     new("equate", "%N = 5\nq% = %N"),
     new("array.sort", "ARRAY SORT a2%()", Preamble: "DIM a2%(3)"),
     new("bit.set", "BIT SET bx%, 2", Preamble: "bx% = 0"),
