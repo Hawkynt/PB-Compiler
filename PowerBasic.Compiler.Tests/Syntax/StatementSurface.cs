@@ -98,6 +98,19 @@ internal static class StatementSurface {
     // claim look checked. Whether that acceptance is a gating hole or the history is wrong needs the
     // oracle to settle, and the census measures the compiler either way.
     new("mid.assign", "s$ = \"abc\"\nMID$(s$, 1, 1) = \"X\""),
+    // ten more the statement-kind census found: each is a grammar the parser accepts that no form
+    // compiled. Dialect minimums here are what the compiler enforces, measured, not what the history
+    // books say - the census reports both and only one of them is this table's business.
+    new("asc.assign", "s2$ = \"abc\"\nASC(s2$, 1) = 65", Dialect.Pb35, _noMicrosoft),
+    new("chain", "CHAIN \"NEXT.EXE\""),
+    new("replace", "s3$ = \"aXa\"\nREPLACE \"X\" WITH \"Y\" IN s3$"),
+    new("array.scan", "ARRAY SCAN a4%(), = 5, TO f4%", Preamble: "DIM a4%(4)"),
+    new("exit.far", "CALL S9\nEND\nSUB S9\n  EXIT FAR\nEND SUB"),
+    new("inline.asm", "! mov ax, 1", Dialect.Pb30, _noMicrosoft),
+    new("destructure", "d1%, d2% = (1, 2)", Dialect.Pb36, _noMicrosoft),
+    new("static.assert", "$ASSERT 1 = 1, \"ok\"", Dialect.Pb36, _noMicrosoft),
+    new("metastatement", "$CPU 8086"),
+    new("require", "CALL S8(1)\nEND\nSUB S8(BYVAL n%)\n  REQUIRE n% > 0, \"positive\"\nEND SUB", Dialect.Pb36, _noMicrosoft),
     new("equate", "%N = 5\nq% = %N"),
     new("array.sort", "ARRAY SORT a2%()", Preamble: "DIM a2%(3)"),
     new("bit.set", "BIT SET bx%, 2", Preamble: "bx% = 0"),

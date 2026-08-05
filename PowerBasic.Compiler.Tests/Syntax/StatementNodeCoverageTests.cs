@@ -37,13 +37,35 @@ public sealed class StatementNodeCoverageTests {
       } catch (Exception) {
         continue;                       // a form the pb36 parser rejects is the other census's business
       }
-      // OptReachability walks the tree by reflection, so it is complete for anything the AST holds
-      foreach (var statement in unit.Statements) {
-        yield return statement.GetType();
-        foreach (var node in OptReachability.DescendantNodes(statement))
-          if (node is Statement nested)
-            yield return nested.GetType();
-      }
+      foreach (var type in Walk(unit.Statements))
+        yield return type;
+    }
+  }
+
+  /// <summary>
+  /// Every statement in <paramref name="body"/>, procedure bodies included.
+  ///
+  /// <see cref="OptReachability.DescendantNodes"/> walks a statement's own tree by reflection and is
+  /// complete for it, but it deliberately stops at a nested SUB or FUNCTION - those are separate
+  /// procedures, reached on their own when the optimizer needs them. A census that stopped there too
+  /// would report EXIT FAR and REQUIRE as having no form while forms for both sat in the table,
+  /// because neither statement is legal anywhere but inside a procedure.
+  /// </summary>
+  private static IEnumerable<Type> Walk(IEnumerable<Statement> body) {
+    foreach (var statement in body) {
+      yield return statement.GetType();
+      foreach (var node in OptReachability.DescendantNodes(statement))
+        if (node is Statement nested)
+          yield return nested.GetType();
+
+      var nestedBody = statement switch {
+        SubDecl sub => sub.Body,
+        FunctionDecl function => function.Body,
+        _ => null,
+      };
+      if (nestedBody is not null)
+        foreach (var type in Walk(nestedBody))
+          yield return type;
     }
   }
 
@@ -111,46 +133,33 @@ public sealed class StatementNodeCoverageTests {
   /// grammar the parser accepts and no census compiles - write a form and strike it.
   /// </summary>
   private static readonly string[] _parserBuiltWithNoForm = [
-    "ArrayScanStmt",
-    "AscAssignStmt",
     "CallPtrStmt",
-    "ChainStmt",
     "DeferStmt",
-    "DestructureStmt",
-    "ExitFarStmt",
     "GosubPtrStmt",
     "GotoPtrStmt",
-    "InlineAsmStmt",
-    "MetaStmt",
-    "ReplaceStmt",
-    "RequireStmt",
     "ResourceStmt",
     "StatementGroup",
-    "StaticAssertStmt",
     "TypeAliasDecl",
     "YieldStmt",
   ];
 
   /// <summary>
-  /// Statement kinds no surface form produces - 29 when this census was first run, and 23 once forms
-  /// were written for MID$ assignment, EQUATE, ARRAY SORT, BIT SET, FOR EACH and ITERATE, none of
-  /// which had one. MID$ assignment is as common a statement as BASIC has.
+  /// Statement kinds no surface form produces: 29 when this census was first run, 23 once forms were
+  /// written for MID$ assignment, EQUATE, ARRAY SORT, BIT SET, FOR EACH and ITERATE, and 13 once ten
+  /// more followed - ASC assignment, CHAIN, REPLACE, ARRAY SCAN, EXIT FAR, inline assembly,
+  /// destructuring, $ASSERT, a metastatement and REQUIRE. MID$ assignment is as common a statement as
+  /// BASIC has and none of the sixteen had a form.
   ///
   /// The list is not all holes, and the companion test splits it by reading the parser's own source:
-  /// five of the twenty-three - GroupStmt and the four Handler* kinds TRY/CATCH lowers to - are built
+  /// five of the thirteen - GroupStmt and the four Handler* kinds TRY/CATCH lowers to - are built
   /// by the binder alone, and no surface form can exist for a node no source text produces. The other
-  /// eighteen are grammars a program can really contain, and that is the queue.
+  /// eight are grammars a program can really contain, and that is what is left of the queue.
   ///
   /// Write a form and strike the name. The test insists either way.
   /// </summary>
   private static readonly string[] _noSurfaceForm = [
-    "ArrayScanStmt",
-    "AscAssignStmt",
     "CallPtrStmt",
-    "ChainStmt",
     "DeferStmt",
-    "DestructureStmt",
-    "ExitFarStmt",
     "GosubPtrStmt",
     "GotoPtrStmt",
     "GroupStmt",
@@ -158,13 +167,8 @@ public sealed class StatementNodeCoverageTests {
     "HandlerReraiseStmt",
     "HandlerRestoreStmt",
     "HandlerSaveStmt",
-    "InlineAsmStmt",
-    "MetaStmt",
-    "ReplaceStmt",
-    "RequireStmt",
     "ResourceStmt",
     "StatementGroup",
-    "StaticAssertStmt",
     "TypeAliasDecl",
     "YieldStmt",
   ];
