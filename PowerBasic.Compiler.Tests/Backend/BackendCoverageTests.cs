@@ -25,7 +25,7 @@ public sealed class BackendCoverageTests {
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 
   private sealed record Census(int Functions, int Selected, int Allocated, List<string> MainBodies, Dictionary<string, int> Declines,
-    int ProgramsLowered, int ProgramsTotal, Dictionary<string, int> LoweringDeclines,
+    List<string> ProgramsLowered, int ProgramsTotal, Dictionary<string, int> LoweringDeclines,
     Dictionary<string, int> ProcedureDeclines, Dictionary<string, int> AllocationDeclines);
 
   /// <summary>
@@ -42,11 +42,12 @@ public sealed class BackendCoverageTests {
     var procedureDeclines = new Dictionary<string, int>(StringComparer.Ordinal);
     // why a function that DID select still does not route - the row that used to read only as a count
     var allocationDeclines = new Dictionary<string, int>(StringComparer.Ordinal);
-    int functions = 0, selected = 0, allocated = 0, lowered = 0, total = 0;
+    int functions = 0, selected = 0, allocated = 0, total = 0;
     var mainBodies = new List<string>();
+    var lowered = new List<string>();
     var dir = Path.Combine(_repoRoot, "tests");
     if (!Directory.Exists(dir))
-      return new(0, 0, 0, mainBodies, declines, 0, 0, loweringDeclines, procedureDeclines, allocationDeclines);
+      return new(0, 0, 0, mainBodies, declines, lowered, 0, loweringDeclines, procedureDeclines, allocationDeclines);
 
     // the whole corpus: the golden battery plus tests/diff, the 100+ differential programs
     foreach (var file in Directory.EnumerateFiles(dir, "*.BAS", SearchOption.AllDirectories)
@@ -77,7 +78,7 @@ public sealed class BackendCoverageTests {
         loweringDeclines[reason] = loweringDeclines.GetValueOrDefault(reason) + 1;
         continue;
       }
-      ++lowered;
+      lowered.Add(name);
 
       try {
         IrPassManager.Standard().RunOnModule(module);
@@ -156,10 +157,10 @@ public sealed class BackendCoverageTests {
     Assume.That(census.ProgramsTotal, Is.GreaterThan(0), "no tests/*.BAS corpus present");
 
     var report = new StringBuilder()
-      .AppendLine($"programs           : {census.ProgramsLowered}/{census.ProgramsTotal} lowered to IR")
+      .AppendLine($"programs           : {census.ProgramsLowered.Count}/{census.ProgramsTotal} lowered to IR")
       .AppendLine($"functions selected : {census.Selected}/{census.Functions}")
       .AppendLine($"functions routed   : {census.Allocated}/{census.Functions} (selected AND allocated)")
-      .AppendLine($"module bodies      : {census.MainBodies.Count}/{census.ProgramsLowered} whole programs the back end can own")
+      .AppendLine($"module bodies      : {census.MainBodies.Count}/{census.ProgramsLowered.Count} whole programs the back end can own")
       .AppendLine("lowering declines - what keeps a program off the IR path entirely:");
     foreach (var (reason, count) in census.LoweringDeclines.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal).Take(12))
       report.AppendLine($"  {count,5}  {reason}");
@@ -202,8 +203,11 @@ public sealed class BackendCoverageTests {
     // above. 119 -> 122 with $ERROR OVERFLOW ON and dynamic-array bounds checking, 122 -> 129 with
     // ON ERROR / RESUME and the ERR / ERL cells their handlers read, 129 -> 132 with $ERROR NUMERIC
     // ON and ERRCLEAR.
-    Assert.That(census.ProgramsLowered, Is.GreaterThanOrEqualTo(135),
-      "fewer corpus programs reach the IR than used to:\n" + report);
+    // By NAME, like the module bodies below and for the same reason: a count cannot tell a program
+    // that stopped lowering from a program that was added and never did. Both move the number by one
+    // and only one of them is a regression.
+    Assert.That(census.ProgramsLowered, Is.EquivalentTo(_loweredToIr),
+      "the set of corpus programs reaching the IR has changed:\n" + report);
 
     // selection is not routing: the whole-program codegen also schedules and allocates, and a value
     // live across a CALL has no register unless the spiller can move it to the frame
@@ -230,6 +234,149 @@ public sealed class BackendCoverageTests {
   ///
   /// Add a name when a program becomes ownable. Removing one is a regression and needs a reason.
   /// </summary>
+  /// <summary>
+  /// Every corpus program the IR lowering takes whole. Pinned by name for the reason the module
+  /// bodies below are: a count cannot tell a program that STOPPED lowering from one that was added
+  /// and never did, and both move it by one.
+  /// </summary>
+  private static readonly string[] _loweredToIr = [
+    "ARITH.BAS",
+    "CODEGEN.BAS",
+    "CTRL.BAS",
+    "DATAREAD.BAS",
+    "DIFF01.BAS",
+    "DIFF01.BAS",
+    "DIFF01.BAS",
+    "DIFF01.BAS",
+    "DIFF01.BAS",
+    "DIFF01.BAS",
+    "DIFF01.BAS",
+    "DIFF01.BAS",
+    "DIFF01.BAS",
+    "DIFF01.BAS",
+    "DIFF01.BAS",
+    "DIFF01.BAS",
+    "DIFF01.BAS",
+    "DIFF01.BAS",
+    "DIFF02.BAS",
+    "DIFF02.BAS",
+    "DIFF02.BAS",
+    "DIFF02.BAS",
+    "DIFF02.BAS",
+    "DIFF02.BAS",
+    "DIFF02.BAS",
+    "DIFF02.BAS",
+    "DIFF02.BAS",
+    "DIFF02.BAS",
+    "DIFF02.BAS",
+    "DIFF03.BAS",
+    "DIFF03.BAS",
+    "DIFF03.BAS",
+    "DIFF04.BAS",
+    "DIFF05.BAS",
+    "DIFF06.BAS",
+    "DIFF10.BAS",
+    "DIFF100.BAS",
+    "DIFF101.BAS",
+    "DIFF102.BAS",
+    "DIFF103.BAS",
+    "DIFF104.BAS",
+    "DIFF105.BAS",
+    "DIFF106.BAS",
+    "DIFF107.BAS",
+    "DIFF108.BAS",
+    "DIFF109.BAS",
+    "DIFF110.BAS",
+    "DIFF111.BAS",
+    "DIFF112.BAS",
+    "DIFF113.BAS",
+    "DIFF15.BAS",
+    "DIFF18.BAS",
+    "DIFF22.BAS",
+    "DIFF23.BAS",
+    "DIFF24.BAS",
+    "DIFF25.BAS",
+    "DIFF26.BAS",
+    "DIFF27.BAS",
+    "DIFF28.BAS",
+    "DIFF29.BAS",
+    "DIFF30.BAS",
+    "DIFF31.BAS",
+    "DIFF32.BAS",
+    "DIFF33.BAS",
+    "DIFF35.BAS",
+    "DIFF36.BAS",
+    "DIFF37.BAS",
+    "DIFF38.BAS",
+    "DIFF39.BAS",
+    "DIFF40.BAS",
+    "DIFF41.BAS",
+    "DIFF42.BAS",
+    "DIFF43.BAS",
+    "DIFF44.BAS",
+    "DIFF45.BAS",
+    "DIFF46.BAS",
+    "DIFF47.BAS",
+    "DIFF48.BAS",
+    "DIFF49.BAS",
+    "DIFF50.BAS",
+    "DIFF51.BAS",
+    "DIFF52.BAS",
+    "DIFF53.BAS",
+    "DIFF54.BAS",
+    "DIFF55.BAS",
+    "DIFF56.BAS",
+    "DIFF58.BAS",
+    "DIFF59.BAS",
+    "DIFF61.BAS",
+    "DIFF62.BAS",
+    "DIFF63.BAS",
+    "DIFF64.BAS",
+    "DIFF65.BAS",
+    "DIFF66.BAS",
+    "DIFF67.BAS",
+    "DIFF68.BAS",
+    "DIFF69.BAS",
+    "DIFF70.BAS",
+    "DIFF71.BAS",
+    "DIFF72.BAS",
+    "DIFF73.BAS",
+    "DIFF75.BAS",
+    "DIFF76.BAS",
+    "DIFF77.BAS",
+    "DIFF78.BAS",
+    "DIFF79.BAS",
+    "DIFF80.BAS",
+    "DIFF81.BAS",
+    "DIFF82.BAS",
+    "DIFF83.BAS",
+    "DIFF84.BAS",
+    "DIFF85.BAS",
+    "DIFF87.BAS",
+    "DIFF88.BAS",
+    "DIFF89.BAS",
+    "DIFF90.BAS",
+    "DIFF91.BAS",
+    "DIFF92.BAS",
+    "DIFF93.BAS",
+    "DIFF94.BAS",
+    "DIFF95.BAS",
+    "DIFF96.BAS",
+    "DIFF97.BAS",
+    "DIFF99.BAS",
+    "HELLO.BAS",
+    "INPUTS.BAS",
+    "MATHUNIT.BAS",
+    "ONERR.BAS",
+    "ONERRNXT.BAS",
+    "QUIRK30.BAS",
+    "RANGES.BAS",
+    "SHAREDG.BAS",
+    "STRHEAP.BAS",
+    "STRINGS.BAS",
+    "SUBFN.BAS",
+  ];
+
   private static readonly string[] _ownedMainBodies = [
 "ARITH.BAS",
     "CTRL.BAS",
