@@ -2063,6 +2063,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private void EmitCommand(CommandStmt cmd) {
     var asm = this._asm;
     switch (cmd.Keyword) {
+      case "ENVIRON" when cmd.Arguments is [{ } setting]:
+        this.EmitExpression(setting);
+        asm.Call(this._rt.SetEnviron);
+        break;
+
       case "KILL" when cmd.Arguments is [{ } name]:
         this.EmitExpression(name);
         asm.Call(this._rt.Kill);

@@ -88,6 +88,9 @@ public sealed class Cpu8086 {
 
   private const ushort _ENVIRONMENT_SEGMENT = 0x00F0;
 
+  /// <summary>Paragraphs DOS allocated for the environment - the bound ENVIRON has to respect.</summary>
+  private const ushort _ENVIRONMENT_PARAGRAPHS = 32;
+
   private void InstallEnvironment() {
     var at = _ENVIRONMENT_SEGMENT * 16;
     foreach (var (name, value) in _environment) {
@@ -97,6 +100,13 @@ public sealed class Cpu8086 {
     }
     this._memory[at] = 0;                                        // the block's own terminator
     this.WriteWord(_PSP_SEGMENT * 16 + 0x2C, _ENVIRONMENT_SEGMENT);
+
+    // the memory-control block DOS puts one paragraph below any allocation: 'M', owner, size in
+    // paragraphs. ENVIRON reads the size from here to know how much room it has to write into.
+    var mcb = (_ENVIRONMENT_SEGMENT - 1) * 16;
+    this._memory[mcb] = (byte)'M';
+    this.WriteWord(mcb + 1, _PSP_SEGMENT);
+    this.WriteWord(mcb + 3, _ENVIRONMENT_PARAGRAPHS);
   }
 
   private void Load(byte[] exe) {

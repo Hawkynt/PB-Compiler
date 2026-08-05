@@ -59,4 +59,65 @@ public sealed class EnvironFunctionTests {
   [Test]
   public void Environ_GivenAnEmptyName_ThenItReturnsEmpty() =>
     Assert.That(Run("PRINT \"[\"; ENVIRON$(\"\"); \"]\""), Is.EqualTo("[]"));
+
+  // ---- the STATEMENT ---------------------------------------------------------------------------
+
+  /// <summary>Set, then read back through the function - the round trip is the whole test.</summary>
+  [Test]
+  public void Environ_GivenANewSetting_WhenReadBack_ThenItIsThere() =>
+    Assert.That(Run("""
+      ENVIRON "MYVAR=hello"
+      PRINT ENVIRON$("MYVAR")
+      """), Is.EqualTo("hello"));
+
+  /// <summary>
+  /// Setting one that exists replaces it rather than adding a second. The runtime cuts the old
+  /// entry out and appends the new one, so this also exercises the shuffle.
+  /// </summary>
+  [Test]
+  public void Environ_GivenAnExistingSetting_ThenItIsReplacedNotDuplicated() =>
+    Assert.That(Run("""
+      ENVIRON "MYVAR=hello"
+      ENVIRON "MYVAR=bye"
+      PRINT ENVIRON$("MYVAR")
+      """), Is.EqualTo("bye"));
+
+  /// <summary>A name with an empty value removes the entry - the documented way to unset one.</summary>
+  [Test]
+  public void Environ_GivenAnEmptyValue_ThenTheEntryIsRemoved() =>
+    Assert.That(Run("""
+      ENVIRON "MYVAR=hello"
+      ENVIRON "MYVAR="
+      PRINT "["; ENVIRON$("MYVAR"); "]"
+      """), Is.EqualTo("[]"));
+
+  /// <summary>
+  /// The entries around the one being changed survive. Cutting an entry out shifts everything after
+  /// it down over the top, which is where a block-walking bug would show up as a neighbour losing
+  /// its value or its terminator.
+  /// </summary>
+  [Test]
+  public void Environ_GivenSettingsAndRemovals_ThenTheOtherEntriesAreUntouched() =>
+    Assert.That(Run("""
+      ENVIRON "MYVAR=hello"
+      ENVIRON "MYVAR=bye"
+      ENVIRON "MYVAR="
+      PRINT ENVIRON$("PATH"); "/"; ENVIRON$("COMSPEC"); "/"; ENVIRON$("PROMPT")
+      """), Is.EqualTo("C:\\DOS/C:\\COMMAND.COM/$P$G"));
+
+  /// <summary>An existing entry can be replaced too, not only ones this program added.</summary>
+  [Test]
+  public void Environ_GivenAnEntryThatCameFromDos_ThenItCanBeReplaced() =>
+    Assert.That(Run("""
+      ENVIRON "PROMPT=$N$G"
+      PRINT ENVIRON$("PROMPT"); "/"; ENVIRON$("PATH")
+      """), Is.EqualTo("$N$G/C:\\DOS"));
+
+  /// <summary>The name is upper-cased on the way in, so a lowercase setting is found either way.</summary>
+  [Test]
+  public void Environ_GivenALowercaseName_ThenItIsStoredUpperCased() =>
+    Assert.That(Run("""
+      ENVIRON "myvar=hello"
+      PRINT ENVIRON$("MYVAR")
+      """), Is.EqualTo("hello"));
 }

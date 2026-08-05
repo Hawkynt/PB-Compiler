@@ -40,6 +40,7 @@ public sealed partial class DosRuntime {
     this.EmitStringManagerExports(asm);
     this.EmitCommand(asm);
     this.EmitEnviron(asm);
+    this.EmitSetEnviron(asm);
     this.EmitShell(asm);   // uses Environ - must follow it
     this.EmitTimeDate(asm);
     this.EmitKeyInput(asm);
@@ -83,6 +84,209 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.CX);
     asm.Pop(Reg.BX);
     asm.Ret();
+  }
+
+  /// <summary>ENVIRON name$ ("NAME=VALUE"): sets, replaces or removes an environment entry.</summary>
+  public Label SetEnviron { get; private set; } = null!;
+
+  /// <summary>
+  /// <c>ENVIRON "NAME=VALUE"</c> - the statement, as against the function next door.
+  ///
+  /// DOS gives a program one fixed environment block and no way to grow it, so the whole of this is
+  /// arithmetic against a bound: the block's size in paragraphs sits in the memory-control block one
+  /// paragraph below it, and writing past that would scribble on whatever DOS put there next. A
+  /// setting that does not fit raises error 7, which is what QuickBASIC answers.
+  ///
+  /// An existing entry is REMOVED before the new one is appended rather than overwritten in place,
+  /// because the replacement is rarely the same length and shuffling the remainder twice is worse
+  /// than shuffling it once. <c>ENVIRON "NAME="</c> - a name with an empty value - therefore deletes,
+  /// which is the documented way to unset one.
+  ///
+  /// The name is upper-cased and the value is not: DOS stores names in upper case and compares them
+  /// that way, and a value that came back from a round trip in a different case would be wrong.
+  /// </summary>
+  private void EmitSetEnviron(Assembler asm) {
+    this.SetEnviron = asm.MarkLabel("rt_setenv");
+    var copyLoop = asm.DefineLabel();
+    var copied = asm.DefineLabel();
+    var upperLoop = asm.DefineLabel();
+    var upperNext = asm.DefineLabel();
+    var upperDone = asm.DefineLabel();
+    var scanEntry = asm.DefineLabel();
+    var scanNext = asm.DefineLabel();
+    var scanCompare = asm.DefineLabel();
+    var scanMatched = asm.DefineLabel();
+    var scanEnd = asm.DefineLabel();
+    var skipEntry = asm.DefineLabel();
+    var pastNul = asm.DefineLabel();
+    var shiftLoop = asm.DefineLabel();
+    var tailFound = asm.DefineLabel();
+    var tailLoop = asm.DefineLabel();
+    var appendLoop = asm.DefineLabel();
+    var done = asm.DefineLabel();
+    var tooBig = asm.DefineLabel();
+
+    asm.Push(Reg.AX);
+    asm.Push(Reg.BX);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.DX);
+    asm.Push(Reg.SI);
+    asm.Push(Reg.DI);
+    asm.Push(Reg.DS);
+    asm.Push(Reg.ES);
+    asm.Cld();
+
+    // the setting, copied out of the string heap into rt_dirspec and NUL-terminated, so the walk
+    // below has one far segment to worry about instead of two
+    asm.Mov(Mem.Word(asm.Lbl("rt_senvh")), Reg.AX);    // the handle, to free once it is copied out
+    asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_strseg")));
+    asm.Mov(Reg.BX, Reg.AX);
+    asm.Shl(Reg.BX, 2);
+    asm.Mov(Reg.SI, Mem.Word(Reg.BX, asm.Lbl("rt_strtab")));
+    asm.Mov(Reg.CX, Mem.Word(Reg.BX, asm.Lbl("rt_strtab"), 2));
+    asm.Cmp(Reg.CX, 126);
+    asm.Jbe(asm.Lbl("rt_senv_lenok"));
+    asm.Mov(Reg.CX, 126);
+    asm.MarkLabel("rt_senv_lenok");
+    asm.Mov(Mem.Word(asm.Lbl("rt_senvlen")), Reg.CX);
+    asm.Mov(Reg.DI, Imm.OffsetOf(asm.Lbl("rt_dirspec")));
+    asm.Jcxz(copied);
+    asm.MarkLabel(copyLoop);
+    asm.Mov(Reg.DL, Mem.Byte(Reg.SI).Es());
+    asm.Mov(Mem.Byte(Reg.DI), Reg.DL);
+    asm.Inc(Reg.SI);
+    asm.Inc(Reg.DI);
+    asm.Loop(copyLoop);
+    asm.MarkLabel(copied);
+    asm.Mov(Mem.Byte(Reg.DI), (Imm)0);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_senvh")));
+    asm.Call(this.StrFree);                            // the setting's handle is done with
+
+    // upper-case the name and measure it: everything up to the '=' (or the whole string, which is
+    // the delete form written without one)
+    asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_dirspec")));
+    asm.Xor(Reg.CX, Reg.CX);
+    asm.MarkLabel(upperLoop);
+    asm.Mov(Reg.DL, Mem.Byte(Reg.SI));
+    asm.Cmp(Reg.DL, (Imm)0);
+    asm.Je(upperDone);
+    asm.Cmp(Reg.DL, (Imm)'=');
+    asm.Je(upperDone);
+    asm.Cmp(Reg.DL, (Imm)'a');
+    asm.Jb(upperNext);
+    asm.Cmp(Reg.DL, (Imm)'z');
+    asm.Ja(upperNext);
+    asm.Sub(Reg.DL, (Imm)0x20);
+    asm.Mov(Mem.Byte(Reg.SI), Reg.DL);
+    asm.MarkLabel(upperNext);
+    asm.Inc(Reg.SI);
+    asm.Inc(Reg.CX);
+    asm.Jmp(upperLoop);
+    asm.MarkLabel(upperDone);
+    asm.Mov(Mem.Word(asm.Lbl("rt_senvname")), Reg.CX);   // name length, '=' excluded
+
+    // ES = the environment block; DS stays on our own data for the name we are matching against
+    asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_pspseg")));
+    asm.Mov(Reg.ES, Mem.Word(0x2C).Es());
+    asm.Xor(Reg.SI, Reg.SI);
+
+    // find an entry whose name matches, and cut it out
+    asm.MarkLabel(scanEntry);
+    asm.Cmp(Mem.Byte(Reg.SI).Es(), (Imm)0);
+    asm.Je(scanEnd);
+    asm.Mov(Reg.DI, Imm.OffsetOf(asm.Lbl("rt_dirspec")));
+    asm.Mov(Reg.CX, Mem.Word(asm.Lbl("rt_senvname")));
+    asm.Mov(Reg.BX, Reg.SI);
+    asm.MarkLabel(scanCompare);
+    asm.Jcxz(asm.Lbl("rt_senv_nameend"));
+    asm.Mov(Reg.DL, Mem.Byte(Reg.BX).Es());
+    asm.Cmp(Reg.DL, Mem.Byte(Reg.DI));
+    asm.Jne(scanNext);
+    asm.Inc(Reg.BX);
+    asm.Inc(Reg.DI);
+    asm.Dec(Reg.CX);
+    asm.Jmp(scanCompare);
+    asm.MarkLabel("rt_senv_nameend");
+    asm.Cmp(Mem.Byte(Reg.BX).Es(), (Imm)'=');           // a prefix is not a match
+    asm.Je(scanMatched);
+
+    asm.MarkLabel(scanNext);
+    asm.MarkLabel(skipEntry);
+    asm.Cmp(Mem.Byte(Reg.SI).Es(), (Imm)0);
+    asm.Je(pastNul);
+    asm.Inc(Reg.SI);
+    asm.Jmp(skipEntry);
+    asm.MarkLabel(pastNul);
+    asm.Inc(Reg.SI);                                    // over this entry's NUL, onto the next
+    asm.Jmp(scanEntry);
+
+    // cut: shift everything after this entry down over it, terminator included
+    asm.MarkLabel(scanMatched);
+    asm.Mov(Reg.DI, Reg.SI);                            // DI = where the entry starts
+    asm.Mov(Reg.BX, Reg.SI);
+    asm.MarkLabel(tailLoop);
+    asm.Cmp(Mem.Byte(Reg.BX).Es(), (Imm)0);
+    asm.Je(tailFound);
+    asm.Inc(Reg.BX);
+    asm.Jmp(tailLoop);
+    asm.MarkLabel(tailFound);
+    asm.Inc(Reg.BX);                                    // BX = the byte after this entry's NUL
+    asm.MarkLabel(shiftLoop);
+    asm.Mov(Reg.DL, Mem.Byte(Reg.BX).Es());
+    asm.Mov(Mem.Byte(Reg.DI).Es(), Reg.DL);
+    asm.Inc(Reg.BX);
+    asm.Inc(Reg.DI);
+    asm.Cmp(Reg.DL, (Imm)0);
+    asm.Jne(shiftLoop);
+    asm.Mov(Reg.SI, (Imm)0);
+    asm.Jmp(scanEntry);                                 // restart: the block moved under us
+
+    // SI is now the terminating NUL - the append point. Room is the MCB's paragraph count.
+    asm.MarkLabel(scanEnd);
+    asm.Push(Reg.DS);
+    asm.Mov(Reg.AX, Reg.ES);
+    asm.Dec(Reg.AX);
+    asm.Mov(Reg.DS, Reg.AX);                            // DS = the memory-control block
+    asm.Mov(Reg.CX, Mem.Word(0x03));                    // its size, in paragraphs
+    asm.Pop(Reg.DS);                                    // back to our own data - rt_dirspec is there
+    asm.Shl(Reg.CX, 4);                                 // paragraphs to bytes
+    asm.Mov(Reg.AX, Reg.SI);
+    asm.Add(Reg.AX, Mem.Word(asm.Lbl("rt_senvlen")));
+    asm.Add(Reg.AX, (Imm)2);                            // the entry's NUL and the block's
+    asm.Cmp(Reg.AX, Reg.CX);
+    asm.Ja(tooBig);
+
+    asm.Mov(Reg.BX, Imm.OffsetOf(asm.Lbl("rt_dirspec")));
+    asm.MarkLabel(appendLoop);
+    asm.Mov(Reg.DL, Mem.Byte(Reg.BX));
+    asm.Mov(Mem.Byte(Reg.SI).Es(), Reg.DL);
+    asm.Inc(Reg.BX);
+    asm.Inc(Reg.SI);
+    asm.Cmp(Reg.DL, (Imm)0);
+    asm.Jne(appendLoop);
+    asm.Mov(Mem.Byte(Reg.SI).Es(), (Imm)0);             // close the block again
+    asm.Jmp(done);
+
+    asm.MarkLabel(tooBig);
+    asm.Mov(Reg.AX, (Imm)7);                            // "Out of memory", as QuickBASIC answers
+    asm.Call(asm.Lbl("rt_raise"));                      // by name: the low-level section is emitted
+                                                        // after this one, so the property is null here
+
+    asm.MarkLabel(done);
+    asm.Pop(Reg.ES);
+    asm.Pop(Reg.DS);
+    asm.Pop(Reg.DI);
+    asm.Pop(Reg.SI);
+    asm.Pop(Reg.DX);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.BX);
+    asm.Pop(Reg.AX);
+    asm.Ret();
+
+    foreach (var cell in new[] { "rt_senvlen", "rt_senvname", "rt_senvh" }) {
+      asm.MarkLabel(cell);
+      asm.Dw(0);
+    }
   }
 
   /// <summary>ENVIRON$(name$): value of the environment variable (consumes the name handle).</summary>
