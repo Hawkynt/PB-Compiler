@@ -72,4 +72,39 @@ public sealed class EightySixOnlyInstructionTests {
     asm.MarkLabel(done);
     Assert.That(asm.ToArray()[0], Is.EqualTo(0x0F));
   }
+
+  /// <summary>
+  /// Occurrences of the 80387 transcendentals FSIN (D9 FE) and FCOS (D9 FF). An 8087 has FPTAN and
+  /// FPATAN and no sine or cosine of its own; those arrived with the 387.
+  /// </summary>
+  private static int Fsincos(byte[] image) {
+    var count = 0;
+    for (var i = 0; i < image.Length - 1; ++i)
+      if (image[i] == 0xD9 && image[i + 1] is 0xFE or 0xFF)
+        ++count;
+    return count;
+  }
+
+  /// <summary>
+  /// SIN and COS emit the 387's FSIN and FCOS with no CPU gate, so a program using either needs a
+  /// 387 whatever its declared target. This is the same shape as the conditional-jump problem above
+  /// and larger: that one only bit past 127 bytes, and this one bites every call.
+  ///
+  /// It is NOT caught by running the program - the interpreter implements both, so the tests pass
+  /// and the image is still wrong for the processor it names. A byte scan is the only thing that
+  /// sees it, which is why it is measured here rather than left to a runtime failure that will not
+  /// come.
+  ///
+  /// Pinned, not approved. TAN is the counter-example that shows the fix is possible: it uses FPTAN,
+  /// which the 8087 has, and needs nothing.
+  /// </summary>
+  [Test]
+  public void Image_GivenSinOrCos_ThenTheThreeEightySevenFormIsStillWhatIsEmitted() {
+    Assert.Multiple(() => {
+      Assert.That(Fsincos(Compile("PRINT SIN(1.0)\nEND\n", optimize: true)), Is.EqualTo(1), "SIN emits FSIN");
+      Assert.That(Fsincos(Compile("PRINT COS(1.0)\nEND\n", optimize: true)), Is.EqualTo(1), "COS emits FCOS");
+      Assert.That(Fsincos(Compile("PRINT TAN(1.0)\nEND\n", optimize: true)), Is.Zero, "TAN uses FPTAN, which the 8087 has");
+      Assert.That(Fsincos(Compile("PRINT 1.0\nEND\n", optimize: true)), Is.Zero);
+    });
+  }
 }
