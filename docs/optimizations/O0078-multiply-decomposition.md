@@ -66,9 +66,35 @@ runtime cross-check.
 
 - **Five-or-more set bits** still keep the compact `IMUL`; the chain length now
   outweighs even the 8086 multiply, and the cost model would decline them anyway.
-- The two- and three-bit chains ship unconditionally under SPEED — a clear win on
-  every `$CPU`-reachable target — while the four-bit chain asks the cost model;
-  wiring the two/three-bit forms through the same query is a mechanical follow-up.
+- The two- and three-bit chains ship unconditionally under SPEED, while the
+  four-bit chain asks the cost model. **This is not the mechanical follow-up it
+  was described as** — wiring them through the same query would turn them OFF on
+  targets they currently serve. `PreferShiftAddMultiply(n)` is
+  `2 * n * ShiftAddCycles < Mul16Cycles`, which evaluates:
+
+  | tier | `Mul16` | `ShiftAdd` | n=2 | n=3 | n=4 |
+  |---|---|---|---|---|---|
+  | 8086 | 124 | 4 | ✅ | ✅ | ✅ |
+  | 286 | 21 | 4 | ✅ | ❌ | ❌ |
+  | 386 | 12 | 2 | ✅ | ❌ | ❌ |
+  | 486 | 15 | 2 | ✅ | ✅ | ❌ |
+  | Pentium | 11 | 2 | ✅ | ❌ | ❌ |
+  | P6 | 4 | 2 | ❌ | ❌ | ❌ |
+
+  So the query declines the three-bit chain on the 286, 386 and Pentium, and the
+  two-bit chain on a P6 — while this page says both are "a clear win on every
+  `$CPU`-reachable target". One of the two is wrong and it is not obvious which.
+
+  The suspect is the `2 *`. `ShiftAddCycles` is documented as the cost of a shift/add
+  **pair**, and the predicate's own summary says the chain costs "roughly a shift and
+  an add per set bit" — one pair per bit, i.e. `n * ShiftAddCycles`. Drop the factor
+  and every tier below the P6 takes all three lengths, which is what this page claims.
+  But the four-bit chain's shipped 8086-only behaviour depends on that factor, so
+  changing it moves a live decision on five tiers at once.
+
+  Nothing here can settle it: the differential battery compares program OUTPUT, and
+  this is a question about cycles. It wants either real measurement on the targets or
+  a documented derivation of the cycle counts — not a wiring commit.
 - Soundness is [O0004](O0004-strength-reduction.md)'s: only on the unchecked,
   modular path, where every chain reproduces the product's low bits exactly.
   Under `$ERROR OVERFLOW` the real `IMUL` and its `JNO` guard survive.

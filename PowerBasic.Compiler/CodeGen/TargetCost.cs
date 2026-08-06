@@ -104,6 +104,15 @@ public sealed class TargetCost {
   /// and loses where the multiply is a handful of cycles (Pentium/P6) - the decomposition should back off to
   /// the compact single <c>IMUL</c> there. A pure power of two (one set bit) is a single shift and always wins;
   /// this prices the multi-term chains.</summary>
+  /// <remarks>
+  /// The <c>2 *</c> is unexplained and load-bearing, so leave it alone without measurement.
+  /// <see cref="ShiftAddCycles"/> is already a shift/add PAIR and the summary above prices the chain
+  /// at one pair per set bit, which makes the natural form <c>setBits * ShiftAddCycles</c>; the
+  /// factor doubles that. It is what keeps the four-bit chain 8086-only (its shipped behaviour), and
+  /// it is also why this query would decline the three-bit chain on the 286/386/Pentium - which is
+  /// why O0078's two- and three-bit forms are NOT wired through here, despite that being recorded as
+  /// a mechanical follow-up. See docs/optimizations/O0078 for the table.
+  /// </remarks>
   public bool PreferShiftAddMultiply(int setBits) =>
     setBits >= 1 && 2 * setBits * this.ShiftAddCycles < this.Mul16Cycles;
 
