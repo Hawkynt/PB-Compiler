@@ -3442,8 +3442,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       else {
         // O0099: an arm listing several point values in a <=16-wide window (CASE 1, 3, 5, 9) tests
         // membership with one shift + bit-0 test instead of a compare per value; declines otherwise.
-        if (!(kind == ValueKind.Int16 && this.Optimize && this.OptimizeSpeed
-              && this.TryEmitArmBitMask(arm, subject, armBody)))
+        if (!(kind is ValueKind.Int16 or ValueKind.Int32 && this.Optimize && this.OptimizeSpeed
+              && this.TryEmitArmBitMask(arm, subject, armBody, kind == ValueKind.Int32)))
           foreach (var selector in arm.Selectors) {
             if (selector.Value == null) {
               this.Unsupported(s);
@@ -3787,7 +3787,19 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// Jumps to <paramref name="armBody"/> on membership and falls through otherwise; declines (false)
   /// for ranges, IS-relations, fewer than 3 values, or a span wider than 15.
   /// </summary>
-  private bool TryEmitArmBitMask(CaseArm arm, Mem subject, Label armBody) {
+  /// <summary>
+  /// O0099. <paramref name="wideSubject"/> is a 32-bit (LONG/DWORD) subject: the mask is still built
+  /// over the arm's values, which every one of them must fit an int16 to reach here, but the subject
+  /// must first be PROVEN to be its own low word. Testing the low half alone would read 0001_0005h
+  /// as 5 and take a <c>CASE 5</c> arm the program never selected.
+  ///
+  /// <c>CWD</c> gives the sign-extension of the low word, and comparing it against the real high word
+  /// answers exactly that question - for a signed subject (-5 is FFFB/FFFF, which matches) and for an
+  /// unsigned one alike (65535 is FFFF/0000, which does not, and correctly cannot equal any int16
+  /// case value). A subject that fails the test cannot equal any value in the set, so it takes the
+  /// same not-a-member exit. Only AX and CX carry the membership test, so DX is free to borrow.
+  /// </summary>
+  private bool TryEmitArmBitMask(CaseArm arm, Mem subject, Label armBody, bool wideSubject = false) {
     if (arm.Selectors.Count < 3)
       return false;                                 // below three values the compare chain is already small
     var values = new List<int>();
@@ -3804,6 +3816,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     var asm = this._asm;
     var skip = asm.DefineLabel();
     asm.Mov(Reg.AX, subject.WithSize(OperandSize.Word));
+    if (wideSubject) {
+      asm.Cwd();                                    // DX = sign-extension of the low word
+      asm.Cmp(Reg.DX, Adjust(subject, 2, OperandSize.Word));
+      asm.Jne(skip);                                // the 32-bit value is not its own int16 low half
+    }
     this.EmitMaskMembership(m, skip);               // sets ZF: bit clear (not a member) or the range guard jumped
     asm.Jnz(armBody);                               // bit set -> the subject is in the set
     asm.MarkLabel(skip);
