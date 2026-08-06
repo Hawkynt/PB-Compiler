@@ -1,10 +1,12 @@
+using PowerBasic.Compiler.Syntax;
+
 namespace PowerBasic.Compiler.Ir;
 
 /// <summary>
 /// A translation unit: the globals and functions produced from one bound program.
 /// This is the root the middle-end optimizes and the backends consume.
 /// </summary>
-public sealed class IrModule(string name) {
+public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialect? compatDialect = null) {
 
   private readonly List<IrFunction> _functions = [];
   private readonly List<IrGlobalVariable> _globals = [];
@@ -15,6 +17,15 @@ public sealed class IrModule(string name) {
 
   /// <summary>A name for the module (typically the source file).</summary>
   public string Name { get; } = name;
+
+  /// <summary>The dialect whose source surface produced this module.</summary>
+  public Dialect Dialect { get; } = dialect;
+
+  /// <summary>
+  /// The dialect whose observable runtime rules the module requires. This differs from
+  /// <see cref="Dialect"/> when a pb35 source carries a <c>$COMPAT</c> directive.
+  /// </summary>
+  public Dialect EffectiveDialect { get; } = compatDialect ?? dialect;
 
   public IReadOnlyList<IrFunction> Functions => this._functions;
   public IReadOnlyList<IrGlobalVariable> Globals => this._globals;
