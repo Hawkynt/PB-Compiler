@@ -62,6 +62,7 @@ printf '# dialect\tform\texpected\tobserved\tstatus\n' > "$results"
 
 dialect_filter="${DIALECTS:-}"
 form_filter="${FORMS:-}"
+required_filter="${REQUIRE_ORACLES:-}"
 max_cases="${MAX_CASES:-0}"
 cases=0
 passes=0
@@ -89,8 +90,14 @@ while IFS=$'\t' read -r dialect form expected source; do
   oracle="${!dir_var:-tools/$dialect}"
   template="tests/diff/$dialect/oracle.conf"
   if [ ! -f "$oracle/PBC.EXE" ] && { [ ! -f "$template" ] || [ ! -d "$oracle" ]; }; then
-    printf '%s\t%s\t%s\t-\tskip-no-oracle\n' "$dialect" "$form" "$expected" >> "$results"
-    skips=$((skips + 1))
+    if selected "$required_filter" "$dialect"; then
+      printf '%s\t%s\t%s\t-\tmissing-required-oracle\n' "$dialect" "$form" "$expected" >> "$results"
+      echo "FAIL  $dialect/$form (required oracle is unavailable)"
+      failures=$((failures + 1))
+    else
+      printf '%s\t%s\t%s\t-\tskip-no-oracle\n' "$dialect" "$form" "$expected" >> "$results"
+      skips=$((skips + 1))
+    fi
     continue
   fi
 
@@ -98,7 +105,8 @@ while IFS=$'\t' read -r dialect form expected source; do
   case_dir="$work/$dialect"
   mkdir -p "$case_dir"
   cp "build/conformance/syntax/$source" "$case_dir/T.BAS"
-  for stale in "$case_dir/T.EXE" "$case_dir/T.OBJ" "$case_dir/DONE.TXT"; do
+  for stale in "$case_dir/T.EXE" "$case_dir/T.PBU" "$case_dir/T.PBC" "$case_dir/T.OBJ" \
+      "$case_dir/DONE.TXT"; do
     unlink "$stale" 2>/dev/null || true
   done
   conf="$work/$dialect.conf"
@@ -123,14 +131,25 @@ while IFS=$'\t' read -r dialect form expected source; do
   } > "$conf"
 
   if ! run_dosbox "$conf" "$case_dir"; then
-    printf '%s\t%s\t%s\t-\tinfra-timeout\n' "$dialect" "$form" "$expected" >> "$results"
-    echo "SKIP  $dialect/$form (oracle did not return to DOS)"
-    skips=$((skips + 1))
+    if selected "$required_filter" "$dialect"; then
+      printf '%s\t%s\t%s\t-\trequired-oracle-timeout\n' "$dialect" "$form" "$expected" >> "$results"
+      echo "FAIL  $dialect/$form (required oracle did not return to DOS)"
+      failures=$((failures + 1))
+    else
+      printf '%s\t%s\t%s\t-\tinfra-timeout\n' "$dialect" "$form" "$expected" >> "$results"
+      echo "SKIP  $dialect/$form (oracle did not return to DOS)"
+      skips=$((skips + 1))
+    fi
     continue
   fi
 
   observed=reject
-  [ -f "$case_dir/T.EXE" ] && observed=accept
+  for artifact in T.EXE T.PBU T.PBC T.OBJ; do
+    if [ -f "$case_dir/$artifact" ]; then
+      observed=accept
+      break
+    fi
+  done
   if [ "$observed" = "$expected" ]; then
     status=pass
     passes=$((passes + 1))

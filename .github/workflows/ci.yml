@@ -15,6 +15,47 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
+  syntax-oracle:
+    name: PB35 / PDS syntax oracle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore PB-Compiler.slnx
+
+      - name: Build
+        run: dotnet build PB-Compiler.slnx --configuration Release --no-restore
+
+      - name: Install DOSBox
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dosbox
+          echo "DOSBOX_EXE=$(command -v dosbox)" >> "$GITHUB_ENV"
+          echo "SDL_VIDEODRIVER=dummy" >> "$GITHUB_ENV"
+
+      # This is a separate required job so unrelated failures in the ordinary compiler suite cannot
+      # silently skip the historical accept/reject contract. Every project statement form is fed to
+      # genuine PBC 3.50 and BASIC PDS 7.0/7.1.
+      - name: Exhaustive PB35 / PDS statement oracle
+        env:
+          PB_TOOLCHAIN_KEY: ${{ secrets.PB_TOOLCHAIN_KEY }}
+          DIALECTS: pb35,pds70,pds71
+          REQUIRE_ORACLES: pb35,pds70,pds71
+        run: bash scripts/run-syntax-oracle-tests.sh
+
+      - name: Upload syntax oracle results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pb35-pds-syntax-oracle
+          path: build/conformance/syntax/oracle-results.tsv
+          if-no-files-found: error
+
   test:
     name: ${{ matrix.os }}
     strategy:

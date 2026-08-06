@@ -122,6 +122,9 @@ public sealed class Lexer {
       return new(TokenKind.EndOfLine, "", position);
     }
 
+    if (c == '\'' && this.TryLexMicrosoftCommentMeta(position, markerLength: 1, out var commentMeta))
+      return commentMeta;
+
     if (c == '\'') {
       this.SkipToEndOfLine();
       return this.Next();
@@ -140,8 +143,10 @@ public sealed class Lexer {
     if (c == '$' && this.Peek() == '"')
       return this.LexInterpString(position);
 
-    if (c == '$' && atStatementStart)
+    if (c == '$' && atStatementStart) {
+      this.Require(LanguageFeature.MetaStatements, position);
       return this.LexMetaCommand(position);
+    }
 
     if (c == '%' && IsIdentifierStart(this.Peek()))
       return this.LexNamedConstant(position);
@@ -223,6 +228,39 @@ public sealed class Lexer {
     return new(TokenKind.MetaCommand, this._source[start..this._index].ToUpperInvariant(), position);
   }
 
+  /// <summary>
+  /// Recognizes Microsoft's compiler directives embedded in a comment. <paramref name="markerLength"/>
+  /// is one for an apostrophe and zero after <c>REM</c> has already been consumed. Looking ahead
+  /// before advancing lets an ordinary comment retain the normal skip-to-EOL path.
+  /// </summary>
+  private bool TryLexMicrosoftCommentMeta(SourcePosition position, int markerLength, out Token token) {
+    token = default;
+    if (!DialectFacts.IsAvailable(LanguageFeature.MicrosoftCommentMetaStatements, this._dialect))
+      return false;
+
+    var look = this._index + markerLength;
+    while (look < this._source.Length && this._source[look] is ' ' or '\t')
+      ++look;
+    if (look >= this._source.Length || this._source[look] != '$')
+      return false;
+    ++look;
+
+    var commandStart = look;
+    while (look < this._source.Length && IsIdentifierPart(this._source[look]))
+      ++look;
+    if (look == commandStart)
+      return false;
+
+    var tailStart = look;
+    while (look < this._source.Length && this._source[look] is not ('\r' or '\n'))
+      ++look;
+    var command = this._source[commandStart..tailStart].ToUpperInvariant();
+    var tail = this._source[tailStart..look].Trim();
+    this.Advance(look - this._index);
+    token = new(TokenKind.MicrosoftMetaCommand, command, position, StringValue: tail);
+    return true;
+  }
+
   private Token LexNamedConstant(SourcePosition position) {
     this.Advance(); // %
     var start = this._index;
@@ -241,6 +279,8 @@ public sealed class Lexer {
       this.Require(LanguageFeature.IdentifierUnderscores, position);
 
     if (text.Equals("REM", StringComparison.OrdinalIgnoreCase)) {
+      if (this.TryLexMicrosoftCommentMeta(position, markerLength: 0, out var meta))
+        return meta;
       this.SkipToEndOfLine();
       this._atStatementStart = true;
       return this.Next();

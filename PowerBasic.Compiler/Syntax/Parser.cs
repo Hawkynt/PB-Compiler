@@ -283,6 +283,7 @@ public sealed partial class Parser {
     return token.Kind switch {
       TokenKind.InlineAsm => new InlineAsmStmt(this.Advance().Position, token.Text),
       TokenKind.MetaCommand => this.ParseMeta(),
+      TokenKind.MicrosoftMetaCommand => this.ParseMicrosoftCommentMeta(),
       TokenKind.NamedConstant => this.ParseEquate(),
       TokenKind.IntegerLiteral when atLineStart => new LabelStmt(this.Advance().Position, token.IntegerValue.ToString()),
       TokenKind.Question => this.ParsePrint(false),
@@ -505,7 +506,159 @@ public sealed partial class Parser {
     var arguments = new List<Token>();
     while (this.Current.Kind is not (TokenKind.EndOfLine or TokenKind.EndOfFile))
       arguments.Add(this.Advance());
+    this.ValidateMetaArguments(token, arguments);
     return new MetaStmt(token.Position, token.Text, arguments);
+  }
+
+  private Statement ParseMicrosoftCommentMeta() {
+    var command = this.Advance();
+    this.Require(LanguageFeature.MicrosoftCommentMetaStatements);
+    var tail = command.StringValue ?? "";
+    if (command.Text is "STATIC" or "DYNAMIC") {
+      if (tail.Length != 0)
+        throw new ParserException($"REM ${command.Text} takes no arguments", command.Position);
+      return new MetaStmt(command.Position, command.Text, []);
+    }
+    if (command.Text == "INCLUDE" && TryParseMicrosoftInclude(tail, out var fileName))
+      return new MetaStmt(command.Position, "INCLUDE",
+        [new Token(TokenKind.StringLiteral, fileName, command.Position, StringValue: fileName)]);
+    throw new ParserException($"unknown or malformed Microsoft comment metacommand '${command.Text}'", command.Position);
+  }
+
+  internal static bool TryParseMicrosoftInclude(string tail, out string fileName) {
+    var text = tail.Trim();
+    if (text.StartsWith(':'))
+      text = text[1..].TrimStart();
+    if (text.Length >= 2 && text[0] == '\'' && text[^1] == '\'') {
+      fileName = text[1..^1];
+      return fileName.Length > 0 && !fileName.Contains('\'');
+    }
+    fileName = "";
+    return false;
+  }
+
+  private void ValidateMetaArguments(Token command, IReadOnlyList<Token> arguments) {
+    var name = command.Text.ToUpperInvariant();
+    switch (name) {
+      case "COMPILE":
+        RequireOneOf(command, arguments, "EXE", "UNIT", "CHAIN");
+        return;
+      case "CPU":
+        this.ValidateCpuMeta(command, arguments);
+        return;
+      case "ERROR":
+        RequirePair(command, arguments, ["BOUNDS", "NUMERIC", "OVERFLOW", "STACK", "ALL"], ["ON", "OFF"]);
+        return;
+      case "OPTIMIZE":
+        if (arguments is [{ Kind: TokenKind.Identifier } optimize]
+            && optimize.Text.Equals("OFF", StringComparison.OrdinalIgnoreCase)) {
+          this.Require(LanguageFeature.ExtendedMetaArguments);
+          return;
+        }
+        RequireOneOf(command, arguments, "SIZE", "SPEED");
+        return;
+      case "OPTION":
+        this.ValidateOptionMeta(command, arguments);
+        return;
+      case "STACK":
+        RequireSingleInteger(command, arguments);
+        return;
+      case "STRING":
+        RequireIntegerOneOf(command, arguments, 1, 2, 4, 8, 16, 32);
+        return;
+      case "DYNAMIC" or "STATIC" when arguments.Count == 0:
+        return;
+      case "DIM":
+        RequireOneOf(command, arguments, "ALL", "ARRAY");
+        return;
+      case "COMPAT":
+        this.Require(LanguageFeature.CompatMeta);
+        if (arguments is not [{ Kind: TokenKind.Identifier } dialect]
+            || !DialectFacts.TryParse(dialect.Text, out _))
+          throw new ParserException("$COMPAT requires one known dialect name", command.Position);
+        return;
+      case "INCLUDE" when arguments is [{ Kind: TokenKind.StringLiteral }]:
+      case "LINK" when arguments is [{ Kind: TokenKind.StringLiteral }]:
+        return;
+      case "IF" when arguments.Count > 0:
+        return;
+      case "ELSEIF" when arguments.Count > 0:
+        this.Require(LanguageFeature.ElseIfMeta);
+        return;
+      case "ELSE" or "ENDIF" when arguments.Count == 0:
+        return;
+      default:
+        throw new ParserException($"unknown or malformed metastatement '${command.Text}'", command.Position);
+    }
+  }
+
+  private void ValidateCpuMeta(Token command, IReadOnlyList<Token> arguments) {
+    if (arguments is [{ Kind: TokenKind.IntegerLiteral } cpuOnly]) {
+      switch (cpuOnly.IntegerValue) {
+        case 8086 or 80286:
+          return;
+        case 80386:
+          this.Require(LanguageFeature.InlineAsm);
+          return;
+        case 80486 or 80586:
+          this.Require(LanguageFeature.ExtendedMetaArguments);
+          return;
+      }
+    }
+    var features = new HashSet<string>(["MMX", "SSE", "SSE2", "AVX", "AVX2", "AVX512", "AES"],
+      StringComparer.OrdinalIgnoreCase);
+    if (arguments is [{ Kind: TokenKind.IntegerLiteral } cpu, ..]
+        && cpu.IntegerValue == 80586
+        && arguments.Skip(1).All(argument => argument.Kind == TokenKind.Identifier && features.Contains(argument.Text))) {
+      this.Require(LanguageFeature.ExtendedMetaArguments);
+      return;
+    }
+    throw new ParserException("$CPU requires 8086, 80286, 80386, or a PB 3.6 extended CPU tier",
+      command.Position);
+  }
+
+  private void ValidateOptionMeta(Token command, IReadOnlyList<Token> arguments) {
+    if (arguments is [{ Kind: TokenKind.Identifier } option]) {
+      if (option.Text.Equals("SIGNED", StringComparison.OrdinalIgnoreCase)
+          || option.Text.Equals("GOSUB", StringComparison.OrdinalIgnoreCase)
+          || option.Text.Equals("VIDEO", StringComparison.OrdinalIgnoreCase))
+        return;
+    }
+    if (arguments is [{ Kind: TokenKind.Identifier } cntlBreak, { Kind: TokenKind.Identifier } mode]
+        && cntlBreak.Text.Equals("CNTLBREAK", StringComparison.OrdinalIgnoreCase)
+        && (mode.Text.Equals("ON", StringComparison.OrdinalIgnoreCase)
+          || mode.Text.Equals("OFF", StringComparison.OrdinalIgnoreCase)))
+      return;
+    throw new ParserException("$OPTION requires SIGNED, GOSUB, VIDEO, or CNTLBREAK ON|OFF", command.Position);
+  }
+
+  private static void RequireOneOf(Token command, IReadOnlyList<Token> arguments, params string[] choices) {
+    if (arguments is [{ Kind: TokenKind.Identifier } value]
+        && choices.Contains(value.Text, StringComparer.OrdinalIgnoreCase))
+      return;
+    throw new ParserException($"${command.Text} requires one of: {string.Join(", ", choices)}", command.Position);
+  }
+
+  private static void RequirePair(Token command, IReadOnlyList<Token> arguments,
+    IReadOnlyList<string> firstChoices, IReadOnlyList<string> secondChoices) {
+    if (arguments is [{ Kind: TokenKind.Identifier } first, { Kind: TokenKind.Identifier } second]
+        && firstChoices.Contains(first.Text, StringComparer.OrdinalIgnoreCase)
+        && secondChoices.Contains(second.Text, StringComparer.OrdinalIgnoreCase))
+      return;
+    throw new ParserException($"malformed ${command.Text} metastatement", command.Position);
+  }
+
+  private static void RequireSingleInteger(Token command, IReadOnlyList<Token> arguments) {
+    if (arguments is [{ Kind: TokenKind.IntegerLiteral }])
+      return;
+    throw new ParserException($"${command.Text} requires one integer", command.Position);
+  }
+
+  private static void RequireIntegerOneOf(Token command, IReadOnlyList<Token> arguments, params int[] choices) {
+    if (arguments is [{ Kind: TokenKind.IntegerLiteral } value]
+        && choices.Contains((int)value.IntegerValue))
+      return;
+    throw new ParserException($"${command.Text} requires one of: {string.Join(", ", choices)}", command.Position);
   }
 
   private Statement ParseEquate() {

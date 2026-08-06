@@ -14,6 +14,13 @@ public enum TokenKind {
   /// <summary>Metastatement, e.g. <c>$INCLUDE</c>; <see cref="Token.Text"/> holds the bare command name.</summary>
   MetaCommand,
 
+  /// <summary>
+  /// QuickBASIC/PDS compiler metacommand carried inside a REM/apostrophe comment. Unlike a
+  /// PowerBASIC <see cref="MetaCommand"/>, the comment marker is part of the dialect grammar.
+  /// <see cref="Token.Text"/> is the command and <see cref="Token.StringValue"/> is its raw tail.
+  /// </summary>
+  MicrosoftMetaCommand,
+
   /// <summary>Raw inline-assembly statement body following <c>!</c>.</summary>
   InlineAsm,
 

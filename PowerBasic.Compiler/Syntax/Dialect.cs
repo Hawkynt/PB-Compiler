@@ -198,6 +198,12 @@ public enum LanguageFeature {
   ExitFar,
   /// <summary>PowerBASIC/Turbo Basic compiler metastatements such as $CPU.</summary>
   MetaStatements,
+  /// <summary>QuickBASIC/PDS REM/apostrophe comment metacommands such as REM $INCLUDE.</summary>
+  MicrosoftCommentMetaStatements,
+  /// <summary>PB-Compiler's PB 3.6-only cross-dialect runtime directive.</summary>
+  CompatMeta,
+  /// <summary>PB 3.6 optimizer modes, 80486+ tiers, and CPU feature flags.</summary>
+  ExtendedMetaArguments,
 }
 
 /// <summary>
@@ -308,6 +314,10 @@ public static class DialectFacts {
     [LanguageFeature.ExitStatement] = (Dialect.Tb10, "EXIT statements"),
     [LanguageFeature.ExitFar] = (Dialect.Tb10, "EXIT FAR"),
     [LanguageFeature.MetaStatements] = (Dialect.Tb10, "compiler metastatements"),
+    // The Borland minimum is unused: the lexer only recognizes this syntax in the Microsoft family.
+    [LanguageFeature.MicrosoftCommentMetaStatements] = (Dialect.Pb36, "REM/apostrophe comment metacommands"),
+    [LanguageFeature.CompatMeta] = (Dialect.Pb36, "$COMPAT metastatement"),
+    [LanguageFeature.ExtendedMetaArguments] = (Dialect.Pb36, "extended metastatement arguments and 80486+ CPU tiers"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>
@@ -337,6 +347,7 @@ public static class DialectFacts {
     [LanguageFeature.SelectCase] = Dialect.Qb10,
     [LanguageFeature.Procedures] = Dialect.Qb10,
     [LanguageFeature.ExitStatement] = Dialect.Qb10,
+    [LanguageFeature.MicrosoftCommentMetaStatements] = Dialect.Qb10,
   };
 
   /// <summary>Human-readable dialect name, e.g. "PB 3.5", "TB 1.1", "QB 4.5", "PDS 7.1", "GW-BASIC".</summary>

@@ -36,6 +36,18 @@ public sealed class InvalidSyntaxSurfaceTests {
     new("type-field.missing-type", "TYPE T\n  x AS\nEND TYPE\n"),
     new("call-dword.missing-target", "CALL DWORD\n"),
     new("resume.too-many-targets", "RESUME first, second\n"),
+    new("meta.unknown-command", "$WHATEVER 1\n"),
+    new("meta.compile.bad-kind", "$COMPILE SOMETHING\n"),
+    new("meta.cpu.missing-tier", "$CPU\n"),
+    new("meta.error.bad-check", "$ERROR CARRY ON\n"),
+    new("meta.error.bad-mode", "$ERROR BOUNDS MAYBE\n"),
+    new("meta.optimize.bad-mode", "$OPTIMIZE TURBO\n"),
+    new("meta.option.bad-name", "$OPTION MAGIC\n"),
+    new("meta.stack.missing-size", "$STACK\n"),
+    new("meta.string.bad-size", "$STRING 3\n"),
+    new("meta.dynamic.unexpected-argument", "$DYNAMIC NOW\n"),
+    new("meta.static.unexpected-argument", "$STATIC NOW\n"),
+    new("meta.dim.bad-scope", "$DIM SOMETHING\n"),
   ];
 
   public static IEnumerable<TestCaseData> Cases() =>

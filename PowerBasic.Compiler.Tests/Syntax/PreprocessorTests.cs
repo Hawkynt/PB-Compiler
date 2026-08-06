@@ -71,6 +71,22 @@ public sealed class PreprocessorTests {
     Assert.That(Identifiers(t), Is.EqualTo(new[] { "x", "x" }));
   }
 
+  [TestCase("REM $INCLUDE: 'INC.BI'")]
+  [TestCase("'$INCLUDE: 'INC.BI'")]
+  public void Expand_GivenMicrosoftCommentInclude_WhenPds_ThenTokensSplicedInPlace(string directive) {
+    var files = new FakeSources(("MAIN.BAS", directive + "\r\nafter"), ("INC.BI", "inside"));
+    var tokens = Preprocessor.Expand("MAIN.BAS", files, Dialect.Pds71).ToArray();
+    Assert.That(Identifiers(tokens), Is.EqualTo(new[] { "inside", "after" }));
+  }
+
+  [TestCase("REM $INCLUDE 'INC.BI'")]
+  [TestCase("REM $INCLUDE:")]
+  [TestCase("REM $INCLUDE: \"INC.BI\"")]
+  public void Expand_GivenMalformedMicrosoftCommentInclude_WhenPds_ThenRejected(string directive) {
+    var files = new FakeSources(("MAIN.BAS", directive), ("INC.BI", "inside"));
+    Assert.Throws<PreprocessorException>(() => Preprocessor.Expand("MAIN.BAS", files, Dialect.Pds71).ToArray());
+  }
+
   #endregion
 
   #region $IF / $ELSE / $ENDIF
