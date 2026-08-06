@@ -66,13 +66,6 @@ subject range (all 8 members, low-bit-**colliding** non-members that exercise th
 verify, and plain non-members) identical to `$OPTIMIZE OFF`, plus a regression test
 pinning the `AND AX, 7` masked-table shape. Golden gate 250/250.
 
-## Still planned
-
-- The rest of the **hash search**: multiply-shift (`(k * a) >> s`) and modulus
-  (`k MOD p`) families for value sets whose low bits collide at every width — the
-  current search is the `AND`-mask family only.
-- A cost-model decision against the tree and the table where more than one applies.
-
 A `LONG`/`DWORD` subject now hashes through the same 16-bit table — every key
 must fit an int16 to survive the fold, so the table serves both. The subject is
 first proven to BE its own int16 low half (`CWD` against the real high word,
@@ -85,3 +78,10 @@ hashes to 1000's slot, matches the key 1000 sitting there, and takes that arm.
 The verify cannot reject what it never sees; only checking the high word first
 does. The tree ([O0098](O0098-balanced-decision-tree.md)) and the per-arm mask
 ([O0099](O0099-bit-test-dispatch.md)) use the same guard for the same reason.
+
+## Still planned
+
+- The rest of the **hash search**: multiply-shift (`(k * a) >> s`) and modulus
+  (`k MOD p`) families for value sets whose low bits collide at every width — the
+  current search is the `AND`-mask family only.
+- A cost-model decision against the tree and the table where more than one applies.
