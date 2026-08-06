@@ -26,12 +26,50 @@ public sealed class Lexer {
 
   /// <summary>Tokenizes <paramref name="source"/>; the stream always ends with <see cref="TokenKind.EndOfFile"/>.</summary>
   public static IEnumerable<Token> Tokenize(string source, string file, Dialect dialect = Dialect.Pb35) {
+    if (dialect.IsGwBasica())
+      ValidateNumberedPhysicalLines(source, file, dialect);
+
     var lexer = new Lexer(source, file, dialect);
     for (;;) {
       var token = lexer.Next();
       yield return token;
       if (token.Kind == TokenKind.EndOfFile)
         yield break;
+    }
+  }
+
+  /// <summary>
+  /// BASICA and GW-BASIC edit and store numbered program lines. Check the raw source before comments
+  /// and blank tokens disappear, otherwise an unnumbered <c>REM</c> or apostrophe-only line would
+  /// accidentally bypass the parser's line-number check.
+  /// </summary>
+  private static void ValidateNumberedPhysicalLines(string source, string file, Dialect dialect) {
+    var line = 1;
+    var start = 0;
+    while (start < source.Length) {
+      var end = start;
+      while (end < source.Length && source[end] is not ('\r' or '\n'))
+        ++end;
+
+      var first = start;
+      while (first < end && source[first] is ' ' or '\t')
+        ++first;
+      if (line == 1 && first < end && source[first] == '\uFEFF') {
+        ++first;
+        while (first < end && source[first] is ' ' or '\t')
+          ++first;
+      }
+      if (first < end && !char.IsAsciiDigit(source[first]))
+        throw new LexerException(
+          $"{dialect.DisplayName()} requires a numeric line number on every program line",
+          new SourcePosition(file, line, first - start + 1));
+
+      if (end < source.Length && source[end] == '\r')
+        ++end;
+      if (end < source.Length && source[end] == '\n')
+        ++end;
+      start = end;
+      ++line;
     }
   }
 

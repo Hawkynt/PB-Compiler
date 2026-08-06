@@ -63,13 +63,19 @@ public sealed class StatementSurfaceCensusTests {
   /// in the census above; asking it here would emit two executables per pair, nearly six thousand
   /// times, to learn nothing extra.
   /// </summary>
-  private static (bool Accepted, string? Why) AcceptedByFrontEnd(StatementSurface.Form form, Dialect dialect) {
-    var source = StatementSurface.Program(form);
+  private sealed record FrontEndResult(bool Accepted, bool ControlledRejection, string? Why);
+
+  private static FrontEndResult AcceptedByFrontEnd(StatementSurface.Form form, Dialect dialect) {
+    var source = StatementSurface.Program(form, dialect);
     try {
       var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", dialect), "T.BAS", dialect), dialect);
-      return (model.Errors.Count == 0, model.Errors.Count > 0 ? model.Errors[0].Message : null);
+      return model.Errors.Count == 0
+        ? new(true, false, null)
+        : new(false, true, model.Errors[0].Message);
+    } catch (Exception e) when (e is LexerException or ParserException or PreprocessorException or BindException) {
+      return new(false, true, e.Message);
     } catch (Exception e) {
-      return (false, e.Message);
+      return new(false, false, e.GetType().Name + ": " + e.Message);
     }
   }
 
@@ -137,16 +143,15 @@ public sealed class StatementSurfaceCensusTests {
   [Test]
   public void Compile_GivenEveryStatementFormAcrossDialects_ThenReportsWhereTheFrontEndDisagrees() {
     var report = new StringBuilder();
-    int acceptedWhenItShould = 0, total = 0, wrongfullyRejected = 0, wrongfullyAccepted = 0;
+    int total = 0, wrongfullyRejected = 0, wrongfullyAccepted = 0, rejectionCrashes = 0;
 
     foreach (var form in StatementSurface.All)
       foreach (var dialect in StatementSurface.AllDialects) {
         ++total;
-        var (accepted, why) = AcceptedByFrontEnd(form, dialect);
+        var result = AcceptedByFrontEnd(form, dialect);
+        var (accepted, controlled, why) = result;
         var should = StatementSurface.ShouldAccept(form, dialect);
-        if (should && accepted)
-          ++acceptedWhenItShould;
-        else if (should && !accepted) {
+        if (should && !accepted) {
           ++wrongfullyRejected;
           if (wrongfullyRejected <= 400)
             report.AppendLine($"  REJECTED  {dialect,-8} {form.Id,-28} {Summarize(why ?? "")}");
@@ -154,12 +159,17 @@ public sealed class StatementSurfaceCensusTests {
           ++wrongfullyAccepted;
           if (wrongfullyAccepted <= 400)
             report.AppendLine($"  ACCEPTED  {dialect,-8} {form.Id,-28} (the dialect never had this)");
+        } else if (!accepted && !controlled) {
+          ++rejectionCrashes;
+          if (rejectionCrashes <= 400)
+            report.AppendLine($"  CRASHED   {dialect,-8} {form.Id,-28} {Summarize(why ?? "")}");
         }
       }
 
-    report.Insert(0, $"form x dialect pairs: {total}, front end agrees on {acceptedWhenItShould + (total - acceptedWhenItShould - wrongfullyRejected - wrongfullyAccepted)}\n"
+    report.Insert(0, $"form x dialect pairs: {total}, front end agrees on {total - wrongfullyRejected - wrongfullyAccepted - rejectionCrashes}\n"
       + $"  rejected but should be accepted : {wrongfullyRejected}\n"
-      + $"  accepted but should be rejected : {wrongfullyAccepted}\n");
+      + $"  accepted but should be rejected : {wrongfullyAccepted}\n"
+      + $"  crashed instead of rejecting    : {rejectionCrashes}\n");
     TestContext.Out.Write(report.ToString());
 
     // Both directions are errors, and both are currently zero over all 4237 pairs, so both are pinned
@@ -172,6 +182,8 @@ public sealed class StatementSurfaceCensusTests {
         "the front end rejects statement forms its dialect should accept:\n" + report);
       Assert.That(wrongfullyAccepted, Is.Zero,
         "the front end accepts statement forms whose dialect never had them:\n" + report);
+      Assert.That(rejectionCrashes, Is.Zero,
+        "invalid-in-this-dialect source must produce a controlled lexer/parser/binder diagnostic, not an internal exception:\n" + report);
     });
   }
 }

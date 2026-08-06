@@ -15,8 +15,13 @@ namespace PowerBasic.Compiler.Tests.Ir;
 [TestFixture]
 public sealed class IrTypeSystemTests {
 
-  private static SemanticModel Bind(string source, Dialect dialect = Dialect.Pb35)
-    => Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", dialect), "T.BAS", dialect), dialect);
+  private static SemanticModel Bind(string source, Dialect dialect = Dialect.Pb35) {
+    if (dialect.IsGwBasica()) {
+      var lines = source.Replace("\r", "", StringComparison.Ordinal).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+      source = string.Join("\n", lines.Select((line, i) => $"{(i + 1) * 10} {line.TrimStart()}")) + "\n";
+    }
+    return Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", dialect), "T.BAS", dialect), dialect);
+  }
 
   #region signedness
 

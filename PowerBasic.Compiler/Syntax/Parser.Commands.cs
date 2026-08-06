@@ -51,6 +51,18 @@ public sealed partial class Parser {
   private Statement ParseBareCall() {
     var name = this.Advance();
 
+    // BASICA/GW-BASIC store a source line before all of its statement text is necessarily
+    // validated. Unknown identifier-led text can therefore exist behind a branch that is never
+    // taken. Preserve it instead of inventing a SUB call (these interpreters have no SUBs); the
+    // compiler later accepts it only when reachability proves the path dead.
+    if (this._dialect.IsGwBasica()) {
+      var text = new System.Text.StringBuilder(name.Text);
+      while (!this.IsStatementEnd()) {
+        text.Append(' ').Append(this.Advance().Text);
+      }
+      return new DeferredSourceStmt(name.Position, text.ToString());
+    }
+
     // pb36 generics: explicit type arguments on a statement call, Name OF type(args) / Name OF type args
     if (name.Suffix == TypeSuffix.None && this.IsKeyword(0, "OF")) {
       var typeArgs = this.TryParseTypeArguments();

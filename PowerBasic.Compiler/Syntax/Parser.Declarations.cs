@@ -6,6 +6,7 @@ namespace PowerBasic.Compiler.Syntax;
 public sealed partial class Parser {
 
   private Statement ParseSub() {
+    this.Require(LanguageFeature.Procedures);
     var pos = this.Advance().Position;
     var name = this.Expect(TokenKind.Identifier, "SUB name");
     var typeParams = this.ParseProcTypeParameters();   // pb36 generics: SUB Name OF T
@@ -33,6 +34,7 @@ public sealed partial class Parser {
   }
 
   private Statement ParseFunction() {
+    this.Require(LanguageFeature.Procedures);
     var pos = this.Advance().Position;
     var name = this.Expect(TokenKind.Identifier, "FUNCTION name");
     var typeParams = this.ParseProcTypeParameters();   // pb36 generics: FUNCTION Name OF T
@@ -142,6 +144,7 @@ public sealed partial class Parser {
   }
 
   private Statement ParseDeclare() {
+    this.Require(LanguageFeature.Procedures);
     var pos = this.Advance().Position;
     var isFunction = this.TryMatchKeyword("FUNCTION");
     if (!isFunction)

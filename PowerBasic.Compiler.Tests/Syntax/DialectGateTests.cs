@@ -12,6 +12,8 @@ namespace PowerBasic.Compiler.Tests.Syntax;
 public sealed class DialectGateTests {
 
   private static List<string> Compile(string source, Dialect dialect) {
+    if (dialect.IsGwBasica())
+      source = StatementSurface.NumberPhysicalLines(source);
     var tokens = Lexer.Tokenize(source, "TEST.BAS", dialect);
     var unit = Parser.Parse(tokens, "TEST.BAS", dialect);
     var model = Binder.Bind(unit, dialect);

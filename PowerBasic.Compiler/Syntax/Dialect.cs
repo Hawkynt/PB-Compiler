@@ -182,6 +182,18 @@ public enum LanguageFeature {
   /// DEFLNG is meaningless there.
   /// </summary>
   LongType,
+  /// <summary>Named statement labels; BASICA/GW-BASIC accept numeric line labels only.</summary>
+  NamedLabels,
+  /// <summary>Multi-line IF / ELSEIF / END IF; BASICA/GW-BASIC have only single-line IF.</summary>
+  BlockIf,
+  /// <summary>DO / LOOP; BASICA/GW-BASIC use WHILE / WEND instead.</summary>
+  DoLoop,
+  /// <summary>SELECT CASE blocks, absent from BASICA/GW-BASIC.</summary>
+  SelectCase,
+  /// <summary>SUB/FUNCTION/DECLARE procedures, absent from BASICA/GW-BASIC.</summary>
+  Procedures,
+  /// <summary>Structured EXIT statements, absent from BASICA/GW-BASIC.</summary>
+  ExitStatement,
 }
 
 /// <summary>
@@ -284,6 +296,12 @@ public static class DialectFacts {
     [LanguageFeature.ShiftRotateStatements] = (Dialect.Pb30, "the SHIFT / ROTATE statements"),
     [LanguageFeature.UnionType] = (Dialect.Pb30, "UNION (the overlapping variant of TYPE)"),
     [LanguageFeature.LongType] = (Dialect.Tb10, "LONG (32-bit) type"),
+    [LanguageFeature.NamedLabels] = (Dialect.Tb10, "named labels"),
+    [LanguageFeature.BlockIf] = (Dialect.Tb10, "multi-line IF blocks"),
+    [LanguageFeature.DoLoop] = (Dialect.Tb10, "DO / LOOP"),
+    [LanguageFeature.SelectCase] = (Dialect.Tb10, "SELECT CASE"),
+    [LanguageFeature.Procedures] = (Dialect.Tb10, "SUB/FUNCTION procedures"),
+    [LanguageFeature.ExitStatement] = (Dialect.Tb10, "EXIT statements"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>
@@ -307,6 +325,12 @@ public static class DialectFacts {
     [LanguageFeature.TypeUnion] = Dialect.Qb40,        // TYPE...END TYPE (QB has no UNION; the binder rejects UNION separately)
     [LanguageFeature.RedimPreserve] = Dialect.Pds70,   // REDIM with far strings; QB REDIM never preserves
     [LanguageFeature.LongType] = Dialect.Qb10,        // QuickBASIC has LONG; BASICA and GW-BASIC do not
+    [LanguageFeature.NamedLabels] = Dialect.Qb10,
+    [LanguageFeature.BlockIf] = Dialect.Qb10,
+    [LanguageFeature.DoLoop] = Dialect.Qb10,
+    [LanguageFeature.SelectCase] = Dialect.Qb10,
+    [LanguageFeature.Procedures] = Dialect.Qb10,
+    [LanguageFeature.ExitStatement] = Dialect.Qb10,
   };
 
   /// <summary>Human-readable dialect name, e.g. "PB 3.5", "TB 1.1", "QB 4.5", "PDS 7.1", "GW-BASIC".</summary>

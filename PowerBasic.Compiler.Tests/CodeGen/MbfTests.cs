@@ -15,6 +15,8 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 public sealed class MbfTests {
 
   private static string Run(string source, Dialect dialect) {
+    if (dialect.IsGwBasica())
+      source = NumberLines(source);
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", dialect), "TEST.BAS", dialect);
     var model = Binder.Bind(unit, dialect);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
@@ -22,6 +24,11 @@ public sealed class MbfTests {
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     return DosBoxRunner.Normalize(DosBoxRunner.Run(exe));
+  }
+
+  private static string NumberLines(string source) {
+    var lines = source.Replace("\r", "", StringComparison.Ordinal).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+    return string.Join("\n", lines.Select((line, i) => $"{(i + 1) * 10} {line.TrimStart()}")) + "\n";
   }
 
   [Test]
