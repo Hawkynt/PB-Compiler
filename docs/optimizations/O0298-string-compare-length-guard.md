@@ -41,11 +41,56 @@ ordering `<` keeps the min computation.
 
 ## Still planned
 
-- The ordering forms `<` / `>` comparing the common prefix wide before considering
-  the length difference. This needs more than swapping the instruction: on a
-  `CMPSW` mismatch the two bytes of the differing word must be re-compared to
-  recover the lexicographic answer, since the word compare's own sign is the
-  little-endian numeric one.
+- The ordering forms `<` / `>` comparing the common prefix wide. Worked out but not
+  built; the shape is below so it need not be re-derived.
+
+  It cannot widen `rt_strcmp` in place. That routine is what the FAITHFUL build
+  calls, so touching its bytes moves non-optimized output — the one thing the
+  golden gate forbids. It needs a second routine referenced only by the optimized
+  emitter, exactly as `rt_strcmpeq` is, which the trimmed-section arrangement
+  already in place carries.
+
+  The loop, after the existing `CX = min(len)` and `JCXZ`:
+
+  ```
+      push ds
+      mov  bx, es
+      mov  ds, bx
+      mov  bx, cx          ; keep the min: its low bit is the odd-tail test
+      shr  cx, 1
+      jz   tail            ; min is 1 - no whole word to compare
+      repe cmpsw
+      jne  mismatch
+  tail:
+      test bl, 1
+      jz   prefixPop       ; even min, the common prefix is equal
+      cmpsb                ; the odd trailing byte decides
+      jne  diffPop
+  prefixPop:
+      pop  ds
+      jmp  prefix          ; on to the length comparison
+  mismatch:
+      sub  si, 2           ; REPE left SI/DI past the differing word
+      sub  di, 2
+      cmpsb                ; its first byte - if equal, the second must differ
+      jne  diffPop
+      cmpsb
+  diffPop:
+      pop  ds
+      jmp  diff            ; CMPSB's flags are the lexicographic answer
+  ```
+
+  Three things make it work and each is easy to lose. The mismatch must be
+  re-compared BYTE-wise, because `CMPSW`'s own sign orders the little-endian 16-bit
+  values and would sort `"ba"` before `"ab"` (0x6162 against 0x6261). `POP DS` does
+  not disturb flags, which is what lets the answer survive to `diff` — the existing
+  `rt_strcmp` leans on the same property. And every path leaving the `PUSH DS`
+  region must pop exactly once: the three exits are `prefixPop`, `diffPop`, and the
+  `JCXZ` that never entered.
+
+  Worth measuring before building. Ordering compares are rarer than equality, and
+  the mismatch path pays two extra `CMPSB`s and two `SUB`s to buy half the REPE
+  iterations over the matching prefix.
 - `CMPSD` for the equal-length case on a 386 target, halving the iterations again
   behind the `$CPU` gate.
 
