@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — every case folds except `x \ -1` (held back by its `MININT` trap) |
+| **Status** | ✅ Done — every case folds, `x \ -1` included (on a proven `x <> MININT`) |
 | **Stage** | Emitter |
 | **Related** | [O0004](O0004-strength-reduction.md), [O0016](O0016-value-fact-analysis.md), [O0056](O0056-reciprocal-division.md) |
 
@@ -14,7 +14,7 @@ Divisors the hardware never needs to see:
 |---|---|---|
 | `x \ 1` | `x` | ✅ folds unconditionally (÷1 never traps) |
 | `x MOD 1` | `0` | ✅ (`facts.Mod.IsMultipleOf(1)`) |
-| `x \ -1` | `-x` (with the `MININT` caveat) | ⬜ kept on `IDIV` — see below |
+| `x \ -1` | `-x` | ✅ folds when the interval domain proves `x <> MININT`; otherwise the divide stays |
 | `x MOD -1` | `0` | ✅ (`facts.Mod.IsMultipleOf(-1)`) |
 | `x \ k` where the facts prove `|x| < |k|` | `0` | ✅ ([O0016](O0016-value-fact-analysis.md)) |
 | `x MOD k` where the facts prove `0 <= x < k` | `x` | ✅ ([O0016](O0016-value-fact-analysis.md)) |
@@ -52,18 +52,22 @@ signed remainder reconstruction (`CWD`, bias, mask, un-bias).
     mov     [b], ax
 ```
 
-## Still open
+## How `x \ -1` folds
 
-- **`x \ -1 → -x`.** `NEG` cannot replace the `IDIV` unconditionally:
-  `MININT \ -1` overflows `IDIV` (an `#DE` trap the genuine hardware path takes),
-  whereas `NEG(8000h)` = `8000h` silently. Folding it needs either a proven
-  `x ≠ MININT` (from the interval domain) or an explicit `MININT` guard, so it
-  stays on `IDIV` for now — correct, just not reduced.
-- **General `MOD 2^n` on a provably non-negative value** (`i% MOD 8 → i% AND 7`
-  for `i%` in `[0,99]`) — the sign proof is already computed by
-  [O0016](O0016-value-fact-analysis.md); today the mask lowering fires only for
-  the parity shape and constant-bounded ranges, not the general non-negative
-  case.
+`NEG` cannot replace the divide unconditionally: `MININT \ -1` overflows (the
+quotient +32768 does not fit the destination) where `NEG 8000h` is `8000h` and
+reports nothing, so an unconditional fold would delete a trap the real divide
+takes. The interval domain supplies the missing proof — a range whose low end is
+above `MININT` cannot contain it — and without that proof the divide is emitted
+unchanged, trap included.
 
-Native-only. The IR tier folds `\ 1`/`MOD 1`/`\ -1` itself
-([O0043](O0043-ir-instcombine.md)), so the C/LLVM back ends already reduce them.
+The saving is larger than the instruction count suggests. PB widens `\` to LONG
+and calls the software `rt_longdiv` (shift-and-subtract; there is no hardware
+IDIV in the image for this at all), so folding the last reference to it lets
+Tier 3 trim the whole routine — about 500 bytes on a small program.
+
+`Tests/CodeGen/DivideByMinusOneTests.cs` measures that by image size against an
+A/B pair differing only in whether the operand is provable. It does so because
+two byte-scans were tried first and both measured nothing: a vanished `IDIV`
+(never there), and the LONG negate the fold leaves behind (also inside
+`rt_longdiv`, which negates its own operands to divide signed).

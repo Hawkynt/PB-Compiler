@@ -554,6 +554,28 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (b.Op == BinaryOp.IntegerDivide && k == 1)
       return this.EmitOperandOnly(b.Left, opType);
 
+    // O0080: x \ -1 is -x, but ONLY once MININT is ruled out. IDIV traps (#DE) on MININT \ -1
+    // because the quotient +32768 does not fit the destination, while NEG(8000h) is 8000h and
+    // says nothing - so folding without the proof would delete a trap the genuine hardware path
+    // takes. The interval domain supplies the proof: a range whose low end is above MININT cannot
+    // contain it. Unproven, the IDIV stays and so does the trap.
+    // Signed only - on an unsigned type the divisor is 0FFFFh, not minus one, and the quotient is
+    // 0 or 1 rather than a negation.
+    if (b.Op == BinaryOp.IntegerDivide && k == -1 && scalar.Signed
+        && facts.Range is { } neg && neg.Lo > -(1L << (width - 1))) {
+      if (!this.EmitOperandOnly(b.Left, opType))
+        return false;
+      var asm = this._asm;
+      if (scalar.ByteSize <= 2)
+        asm.Neg(Reg.AX);
+      else {
+        asm.Not(Reg.DX);
+        asm.Neg(Reg.AX);
+        asm.Sbb(Reg.DX, -1);
+      }
+      return true;
+    }
+
     // a value already inside [0,|k|) is its own remainder
     if (b.Op == BinaryOp.Modulo && facts.Range is { Lo: >= 0 } r && r.Hi < Math.Abs(k))
       return this.EmitOperandOnly(b.Left, opType);
