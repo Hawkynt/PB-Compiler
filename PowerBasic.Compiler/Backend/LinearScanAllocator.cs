@@ -8,8 +8,9 @@ namespace PowerBasic.Compiler.Backend;
 /// register from <c>AX BX CX DX SI DI</c> (BP/SP are the frame, so reserved) and freeing it again when
 /// the interval ends. Two intervals that overlap in time therefore get distinct registers, while
 /// disjoint intervals reuse one - this is where independent values land in independent registers, the
-/// reassignment the byte-level scheduler could never do. When more values are simultaneously live than
-/// there are registers it returns null (a spill is needed); spilling to the frame is the next increment.
+/// reassignment the byte-level scheduler could never do. When a sweep cannot assign a value, the
+/// allocator retries after rematerializing, directly spilling, or splitting one live range; it
+/// returns null only when none of those transformations can make progress.
 /// </summary>
 public sealed class LinearScanAllocator {
 
@@ -17,6 +18,7 @@ public sealed class LinearScanAllocator {
   // used as a memory base/index) must come from BX/SI/DI - in 16-bit mode AX/CX/DX/BP/SP cannot index
   // memory (BP is reserved for the frame). BP/SP are never allocated.
   private static readonly Reg[] _pool = [Reg.AX, Reg.CX, Reg.DX, Reg.BX, Reg.SI, Reg.DI];
+  private static readonly Reg[] _bytePool = [Reg.AX, Reg.CX, Reg.DX, Reg.BX];
   /// <summary>Registers that may be a memory BASE on this target.</summary>
   private static readonly Reg[] _addressing = [Reg.BX, Reg.SI, Reg.DI];
 
@@ -55,10 +57,12 @@ public sealed class LinearScanAllocator {
       // value used as a memory base, which cannot go to memory itself
       if (Spiller.RematerializeOne(function))
         continue;
-      if (!Spiller.SpillOne(function)) {
-        reason = Blocker(function);
-        return null;
-      }
+      if (Spiller.SpillOne(function))
+        continue;
+      if (Spiller.SplitOne(function))
+        continue;
+      reason = Blocker(function);
+      return null;
     }
   }
 
@@ -68,6 +72,7 @@ public sealed class LinearScanAllocator {
   /// </summary>
   private static string Blocker(MFunction function) {
     var addressing = AddressRegisters(function);
+    var byteRegisters = ByteRegisters(function);
     var clobbersAt = ClobbersByIndex(function);
     var free = new List<Reg>(_pool);
     var active = new List<LivenessAnalysis.LiveInterval>();
@@ -77,10 +82,11 @@ public sealed class LinearScanAllocator {
         if (active[a].End < interval.Start)
           active.RemoveAt(a);
       var unsafeRegs = ClobberedOver(clobbersAt, interval.Start, interval.End);
-      var legal = LegalFor(interval.VirtualId, addressing);
+      var legal = LegalFor(interval.VirtualId, addressing, byteRegisters);
       if (free.Count > active.Count && legal.Any(r => !unsafeRegs.Contains(r)))
         continue;
-      return legal != _pool
+      var isAddress = addressing.Base.Contains(interval.VirtualId) || addressing.Index.Contains(interval.VirtualId);
+      return isAddress
         ? "a value used as a memory base or index is live across a full-register clobber (it cannot spill)"
         : unsafeRegs.Count >= _pool.Length
           ? "a value is live across an instruction that clobbers every register, and cannot move to memory"
@@ -93,6 +99,7 @@ public sealed class LinearScanAllocator {
   private static IReadOnlyDictionary<int, Reg>? TryAllocate(MFunction function) {
     var intervals = LivenessAnalysis.Compute(function);
     var addressVregs = AddressRegisters(function);   // vregs that ever form a memory address -> need BX/SI/DI
+    var byteRegisters = ByteRegisters(function);     // byte values need AL/CL/DL/BL, which SI/DI do not have
     var clobbersAt = ClobbersByIndex(function);       // global instruction index -> registers a CALL there destroys
     var assignment = new Dictionary<int, Reg>();
     var free = new List<Reg>(_pool);                 // registers currently available, preferred order preserved
@@ -108,7 +115,7 @@ public sealed class LinearScanAllocator {
 
       // registers destroyed by a CALL anywhere this value is live cannot hold it
       var unsafeRegs = ClobberedOver(clobbersAt, interval.Start, interval.End);
-      var legal = LegalFor(interval.VirtualId, addressVregs);
+      var legal = LegalFor(interval.VirtualId, addressVregs, byteRegisters);
       var slot = free.FindIndex(r => System.Array.IndexOf(legal, r) >= 0 && !unsafeRegs.Contains(r));
       if (slot < 0)
         return null;                                 // no suitable register free - spill needed
@@ -160,11 +167,33 @@ public sealed class LinearScanAllocator {
     return (bases, indices);
   }
 
+  private static HashSet<int> ByteRegisters(MFunction function) {
+    var result = new HashSet<int>();
+    foreach (var instruction in function.AllInstructions)
+      foreach (var operand in instruction.Operands)
+        switch (operand) {
+          case MOperand.Register { Reg: { IsVirtual: true, Size: MRegSize.Byte } register }:
+            result.Add(register.VirtualId);
+            break;
+          case MOperand.Memory memory:
+            if (memory.Base is { IsVirtual: true, Size: MRegSize.Byte } baseRegister)
+              result.Add(baseRegister.VirtualId);
+            if (memory.Index is { IsVirtual: true, Size: MRegSize.Byte } indexRegister)
+              result.Add(indexRegister.VirtualId);
+            break;
+        }
+    return result;
+  }
+
   /// <summary>The registers a value may occupy given how it is used to address memory.</summary>
-  private static Reg[] LegalFor(int virtualId, (HashSet<int> Base, HashSet<int> Index) addressing)
-    => addressing.Index.Contains(virtualId) ? _indexing
+  private static Reg[] LegalFor(int virtualId, (HashSet<int> Base, HashSet<int> Index) addressing,
+      HashSet<int> byteRegisters) {
+    if (byteRegisters.Contains(virtualId))
+      return addressing.Base.Contains(virtualId) || addressing.Index.Contains(virtualId) ? [] : _bytePool;
+    return addressing.Index.Contains(virtualId) ? _indexing
       : addressing.Base.Contains(virtualId) ? _addressing
       : _pool;
+  }
 
   // keep the freed register in the pool's preferred order so allocation is deterministic
   private static void ReturnToPool(List<Reg> free, Reg reg) {

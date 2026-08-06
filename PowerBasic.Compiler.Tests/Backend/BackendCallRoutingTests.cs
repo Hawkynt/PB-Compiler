@@ -5,6 +5,7 @@ using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Tests.Exec;
 
 namespace PowerBasic.Compiler.Tests.Backend;
 
@@ -180,5 +181,30 @@ public sealed class BackendCallRoutingTests {
     // the two images would be identical. (Equality of OUTPUT is what the DOSBox battery verifies.)
     Assert.That(routedImage, Is.Not.EqualTo(directImage),
       "the back end did not compile anything - the call-containing function fell back to the direct codegen");
+  }
+
+  [Test]
+  public void Emit_GivenARoutedRecursiveProcedureUsingASuffixedSharedGlobal_ThenResolvesItsDataCell() {
+    const string source = """
+      DECLARE SUB Sum(BYVAL n%)
+      total% = 0
+      Sum 3
+      PRINT total%
+      END
+
+      SUB Sum(BYVAL n%)
+        SHARED total%
+        total% = total% + n%
+        IF n% > 0 THEN Sum n% - 1
+      END SUB
+      """;
+    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.That(routed.BackendRoutedNames, Does.Contain("Sum"));
+    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
   }
 }

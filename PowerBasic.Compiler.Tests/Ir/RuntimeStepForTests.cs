@@ -14,6 +14,11 @@ public sealed class RuntimeStepForTests {
     return IrLowering.TryLowerMainBody(Binder.Bind(unit, Dialect.Pb35));
   }
 
+  private static IrFunction? Lower(string source, Dialect dialect) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", dialect), "T.BAS", dialect);
+    return IrLowering.TryLowerMainBody(Binder.Bind(unit, dialect));
+  }
+
   [Test]
   public void RuntimeStep_LowersWithADirectionTest() {
     var fn = Lower("d% = -1\ns% = 0\nFOR i% = 10 TO 1 STEP d%\n  s% = s% + i%\nNEXT i%\nEND");
@@ -42,6 +47,36 @@ public sealed class RuntimeStepForTests {
 
     var text = IrPrinter.Print(fn);
     Assert.That(text, Does.Contain("icmp sge i16"));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
+  public void ConstantStep_GivenAnUnsignedCounter_UsesTheCoercedStepDirection() {
+    var fn = Lower("FOR i?? = 2 TO 0 STEP -1\nNEXT i??\nEND", Dialect.Pb36)!;
+
+    var text = IrPrinter.Print(fn);
+    Assert.That(text, Does.Contain("icmp ule u16"));
+    Assert.That(text, Does.Contain("add u16"));
+    Assert.That(text, Does.Contain("65535"));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
+  public void ConstantStep_GivenAnUnsignedQwordCounter_UsesAscendingDirectionForTheAllOnesPattern() {
+    var fn = Lower("DIM i AS QWORD\nFOR i = 2 TO 0 STEP -1\nNEXT i\nEND", Dialect.Pb36)!;
+
+    var text = IrPrinter.Print(fn);
+    Assert.That(text, Does.Contain("icmp ule u64"));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
+  public void ConstantStep_GivenZeroForAnUnsignedCounter_StillLowersAsAnAscendingLoop() {
+    var fn = Lower("FOR i?? = 0 TO 1 STEP 0\nNEXT i??\nEND", Dialect.Pb36)!;
+
+    var text = IrPrinter.Print(fn);
+    Assert.That(text, Does.Contain("icmp ule u16"));
+    Assert.That(text, Does.Contain("add u16"));
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
   }
 }

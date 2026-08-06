@@ -16,9 +16,9 @@ namespace PowerBasic.Compiler.Tests.Exec;
 /// The design rule that matters more than coverage: <b>it fails loudly</b>. An unimplemented opcode,
 /// an unhandled DOS call, a runaway loop - all throw <see cref="Cpu8086Exception"/> naming what was
 /// hit and where. An interpreter that quietly does the wrong thing would prove the opposite of what it
-/// is for, so a program it cannot run is a skipped test, never a passing one. x87 is deliberately not
-/// implemented for that reason: floating point would need the whole 80-bit stack to be faithful, and a
-/// half-faithful one would silently disagree with the hardware the fidelity tests describe.
+/// is for, so a program it cannot run is a skipped test, never a passing one. Its x87 model preserves
+/// integral values exactly and approximates non-integral values with doubles; the latter still bounds
+/// which floating-point fidelity claims this interpreter can make.
 /// </summary>
 public sealed class Cpu8086 {
 
@@ -627,29 +627,60 @@ public sealed class Cpu8086 {
 
   // ---- x87 ---------------------------------------------------------------------------------------
 
-  private readonly double[] _st = new double[8];
+  /// <summary>
+  /// One x87 value. FILD must retain every bit of a signed 64-bit integer: extended precision has a
+  /// 64-bit significand, while a host double has only 53. Keeping that integral form alongside the
+  /// floating approximation prevents FILD/FISTP and integral x87 arithmetic from losing low bits.
+  /// </summary>
+  private readonly record struct X87Value(double Approximation, Int128? Integer = null) {
+    public double AsDouble => this.Integer is { } exact ? (double)exact : this.Approximation;
+
+    public static X87Value Exact(Int128 value) => new(0, value);
+    public static X87Value Floating(double value) => new(value);
+
+    public X87Value Abs() => this.Integer is { } exact
+      ? Exact(Int128.Abs(exact))
+      : Floating(Math.Abs(this.Approximation));
+
+    public X87Value Negate() => this.Integer is { } exact
+      ? Exact(-exact)
+      : Floating(-this.Approximation);
+  }
+
+  private readonly X87Value[] _st = new X87Value[8];
   private int _top = 8;                                 // the stack grows DOWN; 8 means empty
   private ushort _status;                               // only the condition-code bits are modelled
 
-  private double St(int index) => this._st[(this._top + index) & 7];
-  private void SetSt(int index, double value) => this._st[(this._top + index) & 7] = value;
+  private X87Value St(int index) => this._st[(this._top + index) & 7];
+  private void SetSt(int index, X87Value value) => this._st[(this._top + index) & 7] = value;
+  private void SetFloatingSt(int index, double value) => this.SetSt(index, X87Value.Floating(value));
 
   private void FPush(double value) {
     this._top = (this._top - 1) & 7;
+    this._st[this._top & 7] = X87Value.Floating(value);
+  }
+
+  private void FPush(X87Value value) {
+    this._top = (this._top - 1) & 7;
     this._st[this._top & 7] = value;
+  }
+
+  private void FPushInteger(Int128 value) {
+    this._top = (this._top - 1) & 7;
+    this._st[this._top & 7] = X87Value.Exact(value);
   }
 
   private void FPop() => this._top = (this._top + 1) & 7;
 
   /// <summary>
-  /// x87, on a <b>double</b> stack rather than the hardware's 80-bit one.
+  /// x87, with exact integral values and host doubles standing in for non-integral extended values.
   ///
   /// That approximation is deliberate and it bounds what this interpreter may be used for. Both
-  /// images in a differential comparison run on the SAME approximation, so a difference in what they
-  /// print still means a real difference in the emitted code - which is the question being asked. It
-  /// is NOT a statement about matching real hardware: a program whose output turned on the extra
-  /// eleven bits of an 80-bit temporary would agree here and differ on a real 8087. Judging fidelity
-  /// to the genuine compiler stays the golden battery's job, on real bytes.
+  /// non-integral values in a differential comparison run on the SAME approximation. Integer loads
+  /// are not allowed that shortcut: the hardware represents every signed qword exactly, and reducing
+  /// one to 53 bits made the two code generators appear to disagree when only the interpreter did.
+  /// This is still NOT a statement about matching the eleven extra fraction bits of a real 8087 for
+  /// non-integral temporaries; the golden battery remains the authority there.
   /// </summary>
   private void X87(byte opcode) {
     var start = this._ip - 1;
@@ -662,7 +693,7 @@ public sealed class Cpu8086 {
     switch (opcode) {
       case 0xD9 when reg == 0: this.FPush(BitConverter.Int32BitsToSingle((int)this.ReadDword(address))); return;
       case 0xD9 when reg is 2 or 3:
-        this.WriteDword(address, (uint)BitConverter.SingleToInt32Bits((float)this.St(0)));
+        this.WriteDword(address, (uint)BitConverter.SingleToInt32Bits((float)this.St(0).AsDouble));
         if (reg == 3) this.FPop();
         return;
       // FLDCW. Ignoring this used to be harmless-looking and was not: INT and FIX are implemented by
@@ -673,37 +704,42 @@ public sealed class Cpu8086 {
       case 0xD9 when reg == 7: this.WriteWord(address, this._controlWord); return;  // FSTCW/FNSTCW
       case 0xDD when reg == 0: this.FPush(BitConverter.Int64BitsToDouble((long)this.ReadQword(address))); return;
       case 0xDD when reg is 2 or 3:
-        this.WriteQword(address, (ulong)BitConverter.DoubleToInt64Bits(this.St(0)));
+        this.WriteQword(address, (ulong)BitConverter.DoubleToInt64Bits(this.St(0).AsDouble));
         if (reg == 3) this.FPop();
         return;
       // FSTSW m2byte - the 8087 way to get at the condition codes a compare just set. The 287's
       // FSTSW AX does not exist on this target, so this is the only way, and ROUND needs it to tell
       // which side of zero a value was on before taking its magnitude.
       case 0xDD when reg == 7: this.WriteWord(address, this._status); return;
-      case 0xDB when reg == 0: this.FPush((int)this.ReadDword(address)); return;
+      case 0xDB when reg == 0: this.FPushInteger((int)this.ReadDword(address)); return;
       case 0xDB when reg is 2 or 3:
-        this.WriteDword(address, (uint)(int)RoundToInteger(this.St(0)));
+        this.WriteDword(address, (uint)NarrowInt32(this.RoundToInteger(this.St(0))));
         if (reg == 3) this.FPop();
         return;
       case 0xDB when reg == 5: this.FPush(this.ReadExtended(address)); return;
-      case 0xDB when reg == 7: this.WriteExtended(address, this.St(0)); this.FPop(); return;
-      case 0xDF when reg == 0: this.FPush((short)this.ReadWord(address)); return;
+      case 0xDB when reg == 7: this.WriteExtended(address, this.St(0).AsDouble); this.FPop(); return;
+      case 0xDF when reg == 0: this.FPushInteger((short)this.ReadWord(address)); return;
       case 0xDF when reg is 2 or 3:
-        this.WriteWord(address, (ushort)(short)RoundToInteger(this.St(0)));
+        this.WriteWord(address, (ushort)NarrowInt16(this.RoundToInteger(this.St(0))));
         if (reg == 3) this.FPop();
         return;
-      case 0xDF when reg == 5: this.FPush((long)this.ReadQword(address)); return;
-      case 0xDF when reg == 7: this.WriteQword(address, (ulong)(long)RoundToInteger(this.St(0))); this.FPop(); return;
-      case 0xD8: this.MemoryArithmetic(reg, BitConverter.Int32BitsToSingle((int)this.ReadDword(address))); return;
-      case 0xDC: this.MemoryArithmetic(reg, BitConverter.Int64BitsToDouble((long)this.ReadQword(address))); return;
-      case 0xDA: this.MemoryArithmetic(reg, (int)this.ReadDword(address)); return;
-      case 0xDE: this.MemoryArithmetic(reg, (short)this.ReadWord(address)); return;
+      case 0xDF when reg == 5: this.FPushInteger((long)this.ReadQword(address)); return;
+      case 0xDF when reg == 7:
+        this.WriteQword(address, (ulong)NarrowInt64(this.RoundToInteger(this.St(0))));
+        this.FPop();
+        return;
+      case 0xD8: this.MemoryArithmetic(reg,
+        X87Value.Floating(BitConverter.Int32BitsToSingle((int)this.ReadDword(address)))); return;
+      case 0xDC: this.MemoryArithmetic(reg,
+        X87Value.Floating(BitConverter.Int64BitsToDouble((long)this.ReadQword(address)))); return;
+      case 0xDA: this.MemoryArithmetic(reg, X87Value.Exact((int)this.ReadDword(address))); return;
+      case 0xDE: this.MemoryArithmetic(reg, X87Value.Exact((short)this.ReadWord(address))); return;
       default:
         throw new Cpu8086Exception($"unimplemented x87 {opcode:X2} /{reg} at {this._cs:X4}:{start:X4}");
     }
   }
 
-  private void MemoryArithmetic(int reg, double operand) {
+  private void MemoryArithmetic(int reg, X87Value operand) {
     if (reg is 2 or 3) {                                // FCOM / FCOMP
       this.Compare(this.St(0), operand);
       if (reg == 3)
@@ -718,46 +754,51 @@ public sealed class Cpu8086 {
     switch (opcode, modrm) {
       case (0xDB, 0xE3): this._top = 8; this._status = 0; return;             // FINIT / FNINIT
       case (0xDB, 0xE2): this._status = 0; return;                            // FNCLEX
-      case (0xD9, 0xE0): this.SetSt(0, -this.St(0)); return;                  // FCHS
-      case (0xD9, 0xE1): this.SetSt(0, Math.Abs(this.St(0))); return;         // FABS
-      case (0xD9, 0xE4): this.Compare(this.St(0), 0); return;                 // FTST
-      case (0xD9, 0xE8): this.FPush(1); return;                               // FLD1
-      case (0xD9, 0xEE): this.FPush(0); return;                               // FLDZ
+      case (0xD9, 0xE0): this.SetSt(0, this.St(0).Negate()); return;          // FCHS
+      case (0xD9, 0xE1): this.SetSt(0, this.St(0).Abs()); return;             // FABS
+      case (0xD9, 0xE4): this.Compare(this.St(0), X87Value.Exact(0)); return; // FTST
+      case (0xD9, 0xE8): this.FPushInteger(1); return;                        // FLD1
+      case (0xD9, 0xEE): this.FPushInteger(0); return;                        // FLDZ
       case (0xD9, 0xEB): this.FPush(Math.PI); return;                         // FLDPI
       case (0xD9, 0xE9): this.FPush(Math.Log2(10)); return;                   // FLDL2T
       case (0xD9, 0xEA): this.FPush(Math.Log2(Math.E)); return;               // FLDL2E
       case (0xD9, 0xEC): this.FPush(Math.Log10(2)); return;                   // FLDLG2
       case (0xD9, 0xED): this.FPush(Math.Log(2)); return;                     // FLDLN2
-      case (0xD9, 0xFA): this.SetSt(0, Math.Sqrt(this.St(0))); return;        // FSQRT
-      case (0xD9, 0xFE): this.SetSt(0, Math.Sin(this.St(0))); return;         // FSIN
-      case (0xD9, 0xFF): this.SetSt(0, Math.Cos(this.St(0))); return;         // FCOS
+      case (0xD9, 0xFA): this.SetFloatingSt(0, Math.Sqrt(this.St(0).AsDouble)); return; // FSQRT
+      case (0xD9, 0xFE): this.SetFloatingSt(0, Math.Sin(this.St(0).AsDouble)); return;  // FSIN
+      case (0xD9, 0xFF): this.SetFloatingSt(0, Math.Cos(this.St(0).AsDouble)); return;  // FCOS
       // FPTAN replaces ST(0) with its tangent and then PUSHES 1.0 - the extra push is why every
       // caller follows it with an FSTP that throws the 1.0 away
-      case (0xD9, 0xF2): this.SetSt(0, Math.Tan(this.St(0))); this.FPush(1); return;
-      case (0xD9, 0xFC): this.SetSt(0, RoundToInteger(this.St(0))); return;   // FRNDINT
-      case (0xD9, 0xF0): this.SetSt(0, Math.Pow(2, this.St(0)) - 1); return;  // F2XM1
+      case (0xD9, 0xF2):
+        this.SetFloatingSt(0, Math.Tan(this.St(0).AsDouble));
+        this.FPushInteger(1);
+        return;
+      case (0xD9, 0xFC): this.SetSt(0, X87Value.Exact(this.RoundToInteger(this.St(0)))); return; // FRNDINT
+      case (0xD9, 0xF0):
+        this.SetFloatingSt(0, Math.Pow(2, this.St(0).AsDouble) - 1);
+        return;
       case (0xD9, 0xF1): {                                                    // FYL2X
         var y = this.St(1);
         var x = this.St(0);
         this.FPop();
-        this.SetSt(0, y * Math.Log2(x));
+        this.SetFloatingSt(0, y.AsDouble * Math.Log2(x.AsDouble));
         return;
       }
       case (0xD9, 0xF3): {                                                    // FPATAN
         var y = this.St(1);
         var x = this.St(0);
         this.FPop();
-        this.SetSt(0, Math.Atan2(y, x));
+        this.SetFloatingSt(0, Math.Atan2(y.AsDouble, x.AsDouble));
         return;
       }
       case (0xD9, 0xFD): {                                                    // FSCALE
-        this.SetSt(0, this.St(0) * Math.Pow(2, Math.Truncate(this.St(1))));
+        this.SetFloatingSt(0, this.St(0).AsDouble * Math.Pow(2, Math.Truncate(this.St(1).AsDouble)));
         return;
       }
       case (0xD9, 0xF8): {                                                    // FPREM
-        var a = this.St(0);
-        var b = this.St(1);
-        this.SetSt(0, b == 0 ? double.NaN : a - b * Math.Truncate(a / b));
+        var a = this.St(0).AsDouble;
+        var b = this.St(1).AsDouble;
+        this.SetFloatingSt(0, b == 0 ? double.NaN : a - b * Math.Truncate(a / b));
         this._status &= 0xFBFF;                                               // C2 clear: the reduction completed
         return;
       }
@@ -819,15 +860,35 @@ public sealed class Cpu8086 {
     }
   }
 
-  private static double Arithmetic(int op, double a, double b) => op switch {
-    0 => a + b,
-    1 => a * b,
-    4 => a - b,
-    5 => b - a,                                        // the R forms reverse the operands
-    6 => a / b,
-    7 => b / a,
-    _ => throw new Cpu8086Exception($"unimplemented x87 arithmetic {op}"),
-  };
+  private static X87Value Arithmetic(int op, X87Value a, X87Value b) {
+    if (a.Integer is { } ai && b.Integer is { } bi) {
+      var exact = op switch {
+        0 => ai + bi,
+        1 => ai * bi,
+        4 => ai - bi,
+        5 => bi - ai,
+        6 when bi != 0 && ai % bi == 0 => ai / bi,
+        7 when ai != 0 && bi % ai == 0 => bi / ai,
+        _ => (Int128?)null,
+      };
+      // A signed QUAD result is within this range, and every such integer fits the x87's 64-bit
+      // significand exactly. Wider intermediate integers fall back to the floating approximation.
+      if (exact.HasValue && exact.Value >= long.MinValue && exact.Value <= long.MaxValue)
+        return X87Value.Exact(exact.Value);
+    }
+
+    var ad = a.AsDouble;
+    var bd = b.AsDouble;
+    return X87Value.Floating(op switch {
+      0 => ad + bd,
+      1 => ad * bd,
+      4 => ad - bd,
+      5 => bd - ad,                                    // the R forms reverse the operands
+      6 => ad / bd,
+      7 => bd / ad,
+      _ => throw new Cpu8086Exception($"unimplemented x87 arithmetic {op}"),
+    });
+  }
 
   /// <summary>FISTP stores by the control word, which FINIT leaves at nearest-ties-to-even.</summary>
   /// <summary>The x87 control word; only its rounding-control field (bits 11-10) is modelled.</summary>
@@ -837,21 +898,49 @@ public sealed class Cpu8086 {
   /// FRNDINT and the integer stores round by the control word's RC field, not always to nearest:
   /// 00 nearest-even, 01 toward -infinity (BASIC's INT), 10 toward +infinity, 11 toward zero (FIX).
   /// </summary>
-  private double RoundToInteger(double value) => (this._controlWord & 0x0C00) switch {
-    0x0400 => Math.Floor(value),
-    0x0800 => Math.Ceiling(value),
-    0x0C00 => Math.Truncate(value),
-    _ => Math.Round(value, MidpointRounding.ToEven),
-  };
+  private Int128 RoundToInteger(X87Value value) {
+    if (value.Integer is { } exact)
+      return exact;
+    var rounded = (this._controlWord & 0x0C00) switch {
+      0x0400 => Math.Floor(value.Approximation),
+      0x0800 => Math.Ceiling(value.Approximation),
+      0x0C00 => Math.Truncate(value.Approximation),
+      _ => Math.Round(value.Approximation, MidpointRounding.ToEven),
+    };
+    return double.IsFinite(rounded) && rounded >= (double)Int128.MinValue && rounded <= (double)Int128.MaxValue
+      ? (Int128)rounded
+      : Int128.MinValue;
+  }
 
-  /// <summary>The comparison condition codes, in the status-word bits FSTSW hands to SAHF (C3 -> ZF, C0 -> CF).</summary>
-  private void Compare(double a, double b) {
+  private static short NarrowInt16(Int128 value)
+    => value >= short.MinValue && value <= short.MaxValue ? (short)value : short.MinValue;
+
+  private static int NarrowInt32(Int128 value)
+    => value >= int.MinValue && value <= int.MaxValue ? (int)value : int.MinValue;
+
+  private static long NarrowInt64(Int128 value)
+    => value >= long.MinValue && value <= long.MaxValue ? (long)value : long.MinValue;
+
+  /// <summary>
+  /// The comparison condition codes, in the status-word bits FSTSW hands to SAHF
+  /// (C3 -&gt; ZF, C0 -&gt; CF).
+  /// </summary>
+  private void Compare(X87Value a, X87Value b) {
     this._status = (ushort)(this._status & ~0x4700);
-    if (double.IsNaN(a) || double.IsNaN(b))
+    if (a.Integer is { } ai && b.Integer is { } bi) {
+      if (ai < bi)
+        this._status |= 0x0100;
+      else if (ai == bi)
+        this._status |= 0x4000;
+      return;
+    }
+    var ad = a.AsDouble;
+    var bd = b.AsDouble;
+    if (double.IsNaN(ad) || double.IsNaN(bd))
       this._status |= 0x4500;                          // unordered: C3 C2 C0
-    else if (a < b)
+    else if (ad < bd)
       this._status |= 0x0100;                          // C0
-    else if (a == b)
+    else if (ad == bd)
       this._status |= 0x4000;                          // C3
   }
 

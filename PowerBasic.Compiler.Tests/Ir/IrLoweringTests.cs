@@ -122,6 +122,27 @@ public sealed class IrLoweringTests {
   }
 
   [Test]
+  public void Lower_GivenAnUnsuffixedSingleLiteral_ThenPreservesItsSinglePrecisionBits() {
+    var fn = Lower("x# = 0.1");
+
+    Assert.That(fn, Is.Not.Null);
+    var widened = fn!.AllInstructions.OfType<IrCast>().Single(c => c.Op == IrCastOp.FPExt);
+    Assert.That(widened.Value, Is.InstanceOf<IrConstantFloat>());
+    Assert.That(((IrConstantFloat)widened.Value).Value, Is.EqualTo((double)(float)0.1));
+  }
+
+  [Test]
+  public void Lower_GivenAnExplicitDoubleLiteral_ThenDoesNotNarrowItToSinglePrecision() {
+    var fn = Lower("x# = 0.1#");
+
+    Assert.That(fn, Is.Not.Null);
+    var stored = fn!.AllInstructions.OfType<IrStore>().Single().Value;
+    Assert.That(stored, Is.InstanceOf<IrConstantFloat>());
+    Assert.That(((IrConstantFloat)stored).Value, Is.EqualTo(0.1));
+    Assert.That(((IrConstantFloat)stored).Value, Is.Not.EqualTo((double)(float)0.1));
+  }
+
+  [Test]
   public void Lower_GivenUnsupportedStatement_DeclinesWithNull() {
     Assert.That(Lower("PRINT \"hi\""), Is.Null);          // I/O not in the subset yet
     Assert.That(Lower("s$ = \"hi\""), Is.Null);           // strings not in the subset yet

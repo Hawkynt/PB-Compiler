@@ -4,10 +4,10 @@ namespace PowerBasic.Compiler.Backend;
 
 /// <summary>
 /// Stage 6 of the x86-16 back end (docs/X86-BACKEND.md): instruction scheduling on the machine IR.
-/// This is the payoff of the whole backend - run after register allocation, when independent values
-/// already live in independent registers, the dependency-driven list scheduler can finally interleave
-/// their chains and cluster memory/ALU work, the reordering the AX-centric byte-level scheduler could
-/// never reach. It reuses the shared <see cref="InlineAsmScheduler.ScheduleByDependency"/> core,
+/// This is the payoff of the whole backend - run immediately before register allocation, the
+/// dependency-driven list scheduler can interleave independent chains and cluster memory/ALU work,
+/// the reordering the AX-centric byte-level scheduler could never reach. It reuses the shared
+/// <see cref="InlineAsmScheduler.ScheduleByDependency"/> core,
 /// reading each instruction's explicit def/use descriptor (registers - virtual or physical - plus
 /// flags and memory) rather than re-deriving it from bytes. The block terminator stays pinned last.
 /// </summary>
@@ -55,6 +55,11 @@ public static class MachineScheduler {
     // allocator cannot satisfy. Scheduling ran before allocation and was making the pressure it then
     // failed on.
     if (a.Opcode == MOpcode.Call || b.Opcode == MOpcode.Call)
+      return true;
+    // Explicit physical clobbers also delimit pinned-register sequences. Allocation has not happened
+    // yet, so an otherwise independent virtual instruction moved into such a sequence could later be
+    // assigned the pinned register and overwrite a prepared runtime argument or implicit result.
+    if (a.Clobbers.Count > 0 || b.Clobbers.Count > 0)
       return true;
     // the x87 stack is a resource no effect descriptor names, so two instructions that use it are
     // ordered against each other whatever their operands say - see MOpcodes.UsesX87

@@ -48,15 +48,16 @@ both be first; the universal answer is inline-early / allocate-late.
 source → AST
        → typed SSA IR          [mem2reg, inline, SCCP, GVN, instcombine, LICM, DCE]   ← BUILT (Ir/)
        → instruction selection → x86-16 MachineFunction with VIRTUAL registers        ← STAGE 1-2
+       → instruction scheduling on virtual-register machine instructions              ← STAGE 6
        → liveness / live intervals                                                     ← STAGE 3
        → linear-scan register allocation (vreg → AX/BX/CX/DX/SI/DI, spill on pressure) ← STAGE 4  ★ reassignment
-       → instruction scheduling on the allocated machine instrs (interleave freely)    ← STAGE 6
        → Assembler → machine code                                                      ← EXISTS (Asm/)
 ```
 
-The existing SSA IR middle-end and the `Assembler` are the fixed bookends; the new work
-is the middle three boxes (isel, regalloc, and moving the scheduler onto the allocated
-machine IR).
+The existing SSA IR middle-end and the `Assembler` are the fixed bookends. Scheduling runs before
+allocation so the scheduler can still see independent virtual chains. Calls and any instruction
+with explicit physical clobbers are barriers: allocation has not yet chosen physical registers, so
+moving virtual work into a pinned-register sequence could overwrite a prepared argument or result.
 
 ## The SSA IR foundation (accurate map — `PowerBasic.Compiler/Ir/`)
 
@@ -144,13 +145,13 @@ land in distinct physical registers, so `x=x*2+7 : y=y*3+15` keeps `x` and `y` a
 Constraints handled here: `Imul`/`Mul`/`Div` implicit `AX`/`DX`, shift-count in `CL`,
 call-clobbered registers across `Call`.
 
-## Emission (Stage 5) + scheduling (Stage 6)
+## Scheduling (Stage 6) + emission (Stage 5)
 
-Emit each `MInstr` through the existing `Assembler` methods (encoding/length/fixups are
-already handled there — no byte-patching, so wall 2 never arises). Then run the
-**existing dependency scheduler on the allocated machine IR**, where it finally has
-independent chains in distinct registers to interleave. The byte-level scheduler stays
-as the ceiling for the direct codegen path.
+Run the dependency scheduler over virtual-register machine IR, preserving calls, physical-clobber
+sequences, x87 stack order, flags and memory dependencies. Linear scan then allocates that final
+order. Emit each `MInstr` through the existing `Assembler` methods; encoding, length and fixups are
+already handled there, so wall 2 never arises. The byte-level scheduler stays as the ceiling for the
+direct codegen path.
 
 ## Gating + verification
 
@@ -167,27 +168,25 @@ parity on the full battery, then becomes the default for the programs it can han
 ## Status
 
 All six stages are implemented and unit-tested (the pipeline runs end to end:
-`SSA IR → InstructionSelector → LivenessAnalysis → LinearScanAllocator →
-MachineScheduler → MachineEmitter → Assembler → machine code`):
+`SSA IR → InstructionSelector → MachineScheduler → LivenessAnalysis →
+LinearScanAllocator → MachineEmitter → Assembler → machine code`):
 
 - **Stage 1 — MachineIR** (`Backend/MachineIr.cs`). ✅
-- **Stage 2 — instruction selection** (`Backend/InstructionSelector.cs`), straight-line integer core; declines the rest. ✅
+- **Stage 2 — instruction selection** (`Backend/InstructionSelector.cs`), the corpus-covered integer,
+  x87 and runtime-call forms; declines unsupported shapes. ✅
 - **Stage 3 — liveness / live intervals** (`Backend/LivenessAnalysis.cs`). ✅
-- **Stage 4 — linear-scan allocation** (`Backend/LinearScanAllocator.cs`), with the BX/SI/DI addressing register class — *this is the register reassignment*. ✅
+- **Stage 4 — linear-scan allocation** (`Backend/LinearScanAllocator.cs`), with BX/SI/DI address
+  constraints, memory spilling, rematerialization and live-range splitting — *this is the register
+  reassignment*. ✅
 - **Stage 5 — emission** (`Backend/MachineEmitter.cs`), virtual→physical rewrite + frame-slot resolution through the `Assembler`. ✅
-- **Stage 6 — machine scheduling** (`Backend/MachineScheduler.cs`), post-allocation interleaving of independent chains. ✅
+- **Stage 6 — machine scheduling** (`Backend/MachineScheduler.cs`), pre-allocation interleaving with
+  physical-clobber barriers. ✅
 
-The backend is still **standalone** — not yet wired into the production codegen — so the
-241-battery harness is untouched. Remaining **productionization**: wire it as the codegen for
-eligible pb36 + `$OPTIMIZE SPEED` programs (whole-program ABI: prologue/epilogue, how arguments
-arrive and the result returns, the entry call), widen instruction-selection coverage beyond the
-straight-line integer core (branches, phis, calls, casts, division, float/x87), add stack spilling to
-the allocator (it currently declines when the live set exceeds six registers), and end-to-end
-oracle-verify against the differential battery.
-
-(Since this was written, instruction selection AND emission also cover **branches** — `IrBr`→`JMP`,
-`IrCondBr`+folded compare→`CMP`/`Jcc`/`JMP` — and the emitter produces a complete function with the
-standard stack ABI. Phis, calls, casts, division and float remain.)
+The backend is wired into production codegen behind the experimental backend switch. It can own
+individual procedures and the module body when every participating function lowers, selects,
+schedules and allocates. Unsupported constructs still decline to the direct emitter; removing that
+fallback is a goal, not the current state. The sections below retain the implementation findings in
+the order they were discovered.
 
 ### Activation finding (empirical — a routing was prototyped, harness-tested, and reverted)
 
@@ -247,8 +246,8 @@ functions get genuine integer IR and the selector fires. The routing (`CodeGener
 
 - `BackendProcs` — `TryLowerModule` → standard IR passes → `IntegerRecovery` → standard passes →
   per-eligible-function `TrySelect` + `MachineScheduler.Schedule` + `LinearScanAllocator.Allocate`.
-- Eligible = pure INTEGER (signed-16) function, INTEGER BYVAL params, no error handling, and the IR
-  fully selects + allocates (so calls/division/float are declined automatically). The back end owns the
+- Eligible = a procedure with supported scalar BYVAL parameters/results, no procedure-local error
+  handling, and IR that fully selects + allocates. Unsupported constructs decline automatically. The back end owns the
   **whole function via SSA** — no shared memory cells, so it never reads an optimizer-stale cell (the
   blocker the cell-sharing prototype hit).
 - The function is excluded from inlining (`CodeGenerator.cs:601` `isInlinable` predicate) and from the
@@ -425,7 +424,7 @@ Only a *module* variable is bridged. A `STATIC` local and a synthesized IR globa
 string literal) have no `ModuleVariables` symbol to map back to, so they decline — the emitter throws
 rather than guesses if the routing ever admits one it cannot address.
 
-### Signed division, and the first physically-pinned instruction
+### Signed division: physical pins and the long-runtime bridge
 
 `IDIV` is the first selected instruction that is **fixed to physical registers**: it divides `DX:AX`
 and answers with the quotient in `AX` and the remainder in `DX`. Everything else in the machine IR
@@ -438,20 +437,26 @@ names its registers in its operands, so this is where two mechanisms have to car
 - **Scheduling.** `MachineScheduler` used to build its dependency keys from the operands alone, so a
   clobberer and the `MOV` that reads its result out of `AX` had *no edge between them* and the list
   scheduler was free to hoist the read above the divide. A clobber now counts as a write, which also
-  closes the same latent hole for `CALL`.
+  closes the same latent hole for `CALL`. Explicit physical clobbers are also scheduling barriers:
+  before allocation, virtual work moved into a pinned sequence could later receive the pinned
+  register and overwrite its argument or result.
 
-Only a **non-zero compile-time constant** divisor is selected. PowerBASIC raises Error 11 on a zero
-divisor, and that guard belongs to the language rather than to an `$ERROR` option — but a constant
-that is not zero cannot trap, which is exactly the case where the direct emitter also drops the guard
-(`O0220`). A `-1` divisor declines as well, because `MININT \ -1` overflows `IDIV` into a hardware
-divide fault where PowerBASIC reports Error 6. A runtime divisor waits for the runtime-label bridge,
-since the guard it needs is a jump to the runtime's error entry.
+The inline 16-bit form selects only a **non-zero compile-time constant** divisor. A constant that is
+not zero cannot trap, exactly where the direct emitter drops the Error 11 guard (`O0220`); `-1`
+declines because `MININT \ -1` would overflow the hardware `IDIV`.
+
+Signed 32-bit `SDiv`/`SRem` instead use the runtime convention the direct emitter already relies on:
+dividend in `DX:AX`, divisor in `CX:BX`, result in `DX:AX`, through `rt_ldiv`/`rt_lmod`. The shared
+pair-call selector pins all four argument registers, declares the caller-saved clobbers, and copies
+both result words back into virtual registers. Runtime divisors are safe here because the helper owns
+the language path: zero calls `rt_raise` with Error 11, signed division truncates toward zero, the
+remainder takes the dividend's sign, and `MINLONG \ -1` retains the established wrapped result.
 
 ### Selection is not routing
 
 The census reports two numbers, because the first overstates the second: `BackendProcs` also
-**schedules and allocates**, and a value live across a `CALL` has no register while there is no
-spilling. `functions routed` counts the functions that survive both, and is the honest coverage
+**schedules and allocates**, and not every selected value can yet be preserved across a `CALL`.
+`functions routed` counts the functions that survive both, and is the honest coverage
 figure. It also splits the decline histogram into all functions versus *named procedures only* -
 routing a module body (`main`) additionally needs the whole startup/exit sequence, so what blocks a
 procedure is always the cheaper next increment. That split corrected a wrong reading of the earlier
@@ -483,40 +488,65 @@ everything they touch, but "in fact" is not "provably", and a claim one register
 miscompiles a value that is never recomputed; narrowing it needs a mechanical check of each routine's
 push/pop discipline standing behind it.
 
-That conservatism is now the binding constraint, and the census says so plainly: selection went
+Constant signed QUAD printing is now on the bridge as well. Genuine PBC routes it through the
+15-digit DOUBLE formatter even though the value remains an integer on x87. The selector writes all
+four words of the `i64` constant into an eight-byte frame cell, `FILD`s that qword, and maps
+`rt_print_i64` / `rt_fprint_i64` to `rt_print_f64`. A non-constant `i64` still declines: admitting one
+before machine IR has a general 64-bit representation would silently truncate it.
+
+At that point the conservatism was the binding constraint, and the census said so plainly: selection went
 **15 → 38** functions, while routing went only **14 → 18**. The other 20 select and then lose their
 allocation, because a parameter is live from the prologue and a value live across a `CALL` has no
 register while there is no spilling. Spilling to the frame — not more selection — is what the ranking
 points at next.
 
-### Spilling — and why it costs nothing here
+### Spilling, rematerialization and live-range splitting
 
 The allocation failure that matters on this target is not "six registers ran out". It is a `CALL`: it
 destroys the whole caller-saved file, so a value live across one may sit in *none* of the six. Before
 spilling existed, those functions were selected and then silently dropped — which is exactly what the
 `selected` / `routed` split in the census was added to expose.
 
-x86 is a memory-operand machine, so a spilled value needs no reload code at all: it simply **is** its
-frame cell, and every instruction that named the register now names the cell. `Backend/Spiller.cs`
-has two cells, cheaper first:
+x86 is a memory-operand machine, so the cheapest spill needs no reload code: the value simply **is**
+its frame cell, and every instruction that can legally name memory uses that cell.
+`Backend/Spiller.cs` tries these forms in order:
 
 - an incoming **parameter** is already in the frame where the caller pushed it, and an IR argument is
   an SSA value nothing writes — so the spill is free: the prologue copy disappears and the uses
   address `[BP+6]` directly (`MOperand.ParamCell`);
 - any other value gets a fresh stack slot, and its defining instruction writes there.
+- a read-only pointer parameter used as a base/index reloads from its incoming cell immediately before
+  each dereference, because x86 cannot use memory as a memory-address base;
+- a stable `LEA` address is rematerialized with a **fresh virtual register per use**. Reusing the old
+  virtual id would leave one live interval spanning every call. Chained `LEA`/GEP addresses use the
+  same rule recursively;
+- a value that would require an illegal memory-to-memory operand is split through one shared spill
+  cell. Every definition receives a fresh virtual id and stores to the cell; every use receives its
+  own reload. This includes out-of-SSA phi destinations with definitions in several predecessors and
+  read-modify-write definitions, which reload before updating and store afterwards;
+- an immutable argument whose use cannot name its caller-owned cell directly reloads immediately
+  before each use.
 
-It is conservative about legality: only the instruction forms the emitter really has (the two-operand
-ALU family, `PUSH`, `IMUL`'s source), never two memory operands in one instruction, and never a value
-used as an address base or index. What it cannot move stays in a register, and if that leaves no
-allocation the function declines.
+Direct memory rewriting remains conservative: only instruction forms the emitter really has, and
+never two memory operands in one instruction. Every spill cell is allocated at the value's widest
+view, while each reference retains its own byte/word width. Machine booleans remain BASIC truth words
+(`-1`/`0`); only genuine 8-bit values use `AL`/`CL`/`DL`/`BL`.
 
 **The scheduler was manufacturing the pressure it then failed on.** Scheduling runs before allocation,
 and a list scheduler with no reason to care about live ranges will happily hoist a value's definition
 above a `CALL` — stretching it across the caller-saved file. A `CALL` is now a scheduling barrier:
 nothing is gained by moving work across one on a target with no register renaming to hide a latency
-behind, and this is what is lost. With the barrier, routing went 22 → 32.
+behind, and this is what is lost. A call is a barrier, as is every explicit physical clobber: the
+latter prevents fixed ABI setup such as `MOV SI,literal` from moving above virtual work that allocation
+may later assign to `SI`. With the call barrier, routing went 22 → 32.
 
 Together the two took routing from **14 to 32 of 139** corpus functions this round (38 select).
+
+The current census is **135/162 programs lowered**, **209/233 functions selected**, **209/233
+functions routed**, and **116/135 lowered module bodies owned end to end**. Allocation declines are
+zero: all selected functions now survive scheduling and allocation. The last 19 required
+multi-definition phi splitting, read-modify-write splitting, per-use parameter reloads, and
+width-correct byte/word spill references.
 
 ### Strings and files on the bridge — and what the census was really measuring
 
@@ -585,8 +615,13 @@ between operations, so the two paths agree on the representation.
   and the popping arithmetic computes `ST(1) op ST(0)` — so `FSUBP`/`FDIVP` come out the right way
   round. Getting that backwards is silent and wrong, which is why it has its own test.
 - **Literals** resolve through the code generator's own float pool, which stores every constant as a
-  qword double whatever its source precision — so a `SINGLE` literal is loaded from the identical
-  cell the direct emitter loads.
+  qword double whatever its source precision. An unsuffixed literal is quantized to `SINGLE` before
+  widening into that qword, so it has the identical bits the direct emitter loads. Constant FOR steps
+  go through the same expression-lowering and coercion path instead of bypassing this source boundary.
+- **Comparisons used as values** emit `FLD lhs; FLD rhs; FXCH; FCOMPP; FSTSW AX; SAHF`, then the same
+  branch diamond integer comparisons use to materialize BASIC's `-1`/`0`. The x87 condition bits map
+  to unsigned integer conditions. `FSTSW AX` exposes its physical clobber and `SAHF` its AX/flags use,
+  so scheduling and allocation preserve the hidden hardware dependency.
 - **`SIToFP`** parks the integer in a cell first (x87 reads integers from memory only), a word for an
   `INTEGER` and both halves of the pair for a `LONG`, then `FILD`s it at that width.
 - **A float result** is left on `ST(0)` and deliberately *not* popped — "Results: AX / DX:AX / ST0 /
@@ -600,6 +635,29 @@ between operations, so the two paths agree on the representation.
 load or store needs and what a word-sized reference would have silently halved.
 
 Selection 69 → 81 of 139, routing 52 → 57.
+
+### IEEE real procedure calls - declared width on the stack, x87 width between operations
+
+The procedure bridge now admits BYVAL `SINGLE`/`DOUBLE` parameters and functions returning those
+types. It preserves the direct emitter's BASIC/PASCAL stack ABI without pretending x87 values belong
+in the integer register allocator:
+
+- an incoming real remains in its caller-owned parameter cell, and `FLD` reads that cell at its
+  declared dword/qword width;
+- a call argument is first `FSTP`ed from its ten-byte SSA cell into a declared-width staging slot,
+  both producing the IEEE stack representation and applying the language's parameter rounding;
+- the staging words are pushed high to low, so the low word lands at the callee's parameter offset;
+- a function returns its real on `ST(0)`, and the caller immediately `FSTP`s it into its own ten-byte
+  result cell, leaving the x87 stack empty at the next machine-IR boundary.
+
+The staging store and pushes also exposed a scheduler fact that register-only arguments had hidden:
+`PUSH [memory]` reads its source as well as writing the hardware stack. The machine effect now says so,
+preventing a push from crossing the store that produces its bytes.
+
+This removes four census declines and moves selection/routing **205 → 209 of 233**, with whole-module
+ownership **113 → 116 of 135** and allocation declines still at zero. The execution differential stays
+at 234 participating, 228 agreeing, 6 emulator-limited, and 0 disagreeing because each newly owned
+program already had another routed procedure and therefore already counted as participating.
 
 ### Routing the module body
 
