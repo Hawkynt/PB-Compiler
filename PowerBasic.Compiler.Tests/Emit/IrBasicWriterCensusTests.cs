@@ -158,7 +158,9 @@ public sealed class IrBasicWriterCensusTests {
   /// Add a name when a program starts re-binding. Removing one is a regression and needs a reason.
   /// </summary>
   private static readonly string[] _reboundUnderPb35 = [
-"basica/DIFF01.BAS",
+    "basica/DEADTEXT.BAS",
+    "basica/DIFF01.BAS",
+    "gw/DEADTEXT.BAS",
     "gw/DIFF01.BAS",
     "pb21/DIFF01.BAS",
     "pb21/DIFF02.BAS",
