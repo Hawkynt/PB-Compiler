@@ -81,7 +81,33 @@ does. The tree ([O0098](O0098-balanced-decision-tree.md)) and the per-arm mask
 
 ## Still planned
 
-- The rest of the **hash search**: multiply-shift (`(k * a) >> s`) and modulus
-  (`k MOD p`) families for value sets whose low bits collide at every width — the
-  current search is the `AND`-mask family only.
 - A cost-model decision against the tree and the table where more than one applies.
+
+**The other hash families are declined, not pending.** The search covers the
+`AND`-mask family only, and the obvious extensions — multiply-shift
+(`(k * a) >> s`) and modulus (`k MOD p`) — would be slower than what they replace
+on every tier this compiler emits for. Their whole purpose is value sets whose low
+bits collide at every width, and the fallback for those is the decision tree
+([O0098](O0098-balanced-decision-tree.md)), which is cheap here: eight keys is
+three compares.
+
+Priced against that tree, using `TargetCost`'s own `Mul16Cycles`/`Div16Cycles` and
+era-typical figures for the rest:
+
+| tier | tree (3 cmp) | mul-shift hash | `MUL` alone | `DIV` alone |
+|---|---|---|---|---|
+| 8086 | 36 | 170 | 124 | 154 |
+| 286 | 27 | 47 | 21 | 22 |
+| 386 | 18 | 30 | 12 | 27 |
+| 486 | 9 | 25 | 15 | 40 |
+| Pentium | 6 | 18 | 11 | 25 |
+| P6 | 6 | 11 | 4 | 20 |
+
+The tree wins everywhere — by 4.7× on an 8086 and still 1.8× on a P6. The
+conclusion does not rest on the softer numbers either: on an 8086 the `MUL` term
+*alone* is 3.4× the entire tree, and the `DIV` term alone is 4.3×.
+
+What makes the `AND`-mask family pay is precisely that it is not a multiply — an
+`AND` and a `SHL`, then the table. A hash is only worth a multiply where branches
+cost more than arithmetic, and none of these targets is that machine. Revisit this
+only alongside a target where a mispredict outweighs a `MUL`.
