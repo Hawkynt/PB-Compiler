@@ -3207,13 +3207,19 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (f.Variable is NameExpr nameVar && model.VariableBindings.TryGetValue(nameVar, out var counterSym))
       this.EmitLicmPreheader(f, counterSym);
 
-    // O0113: a constant word limit folds into the compare as an immediate under --optimize - no temp
+    // O0113: a constant limit folds into the compare as an immediate under --optimize - no temp
     // cell, no per-iteration memory read. Gated on Optimize so the faithful path keeps the cmp-against-
-    // memory form byte-identical to genuine. Byte counters and non-constant / out-of-range limits keep
-    // the temp. (TryFold only folds pure constants, so skipping the To evaluation drops no side effect.)
-    int? constLimit = this.Optimize && !isByte
+    // memory form byte-identical to genuine. Non-constant / out-of-range limits keep the temp.
+    // (TryFold only folds pure constants, so skipping the To evaluation drops no side effect.)
+    //
+    // The range that counts is the COUNTER's, not the word's: a byte counter compares in AL, so its
+    // limit has to fit a byte or the immediate would be truncated into a different comparison.
+    int? constLimit = this.Optimize
         && this.OptFolder.TryFold(f.To) is { Integer: { } toVal }
-        && (unsigned ? toVal is >= 0 and <= 0xFFFF : toVal is >= short.MinValue and <= short.MaxValue)
+        && (unsigned
+              ? toVal >= 0 && toVal <= (isByte ? 0xFF : 0xFFFF)
+              : toVal >= (isByte ? sbyte.MinValue : short.MinValue)
+                && toVal <= (isByte ? sbyte.MaxValue : short.MaxValue))
       ? (int)toVal : null;
     Mem? limit = null;
     if (constLimit is null) {
@@ -3233,10 +3239,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     // compare the just-loaded (or resident) counter against the limit - immediate when constant-folded
     void CmpAgainstLimit() {
-      if (isByte)
+      if (constLimit is { } cl)
+        asm.Cmp(isByte ? Reg.AL : Reg.AX, (Imm)cl);
+      else if (isByte)
         asm.Cmp(Reg.AL, limit!.Value.WithSize(OperandSize.Byte));
-      else if (constLimit is { } cl)
-        asm.Cmp(Reg.AX, (Imm)cl);
       else
         asm.Cmp(Reg.AX, limit!.Value);
     }

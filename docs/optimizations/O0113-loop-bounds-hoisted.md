@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial (a constant limit folds into the compare as an immediate on every FOR path — SI-resident, memory-counter, nested DI-resident and 386 LONG; a variable limit still reloads its cell) |
+| **Status** | 🟡 Partial (a constant limit folds into the compare as an immediate on every FOR path and every counter width, BYTE included; a variable limit still reloads its cell) |
 | **Stage** | Emitter |
 | **Related** | [O0028](O0028-loop-invariant-code-motion.md), [O0005](O0005-register-residency.md), [O0112](O0112-countdown-loop.md), [O0131](O0131-exact-trip-count.md) |
 
@@ -87,6 +87,10 @@ limit keeps the cell.
   ([O0174](O0174-target-cost-models.md)); on a 386 there is room
   ([O0058](O0058-386-register-allocation.md)). It also needs a body proven not to
   clobber the chosen register.
-- The same immediate fold on the memory-counter fallback path
-  (`EmitForInt16Fast`), which is not `--optimize`-gated and so needs the fold
-  guarded on the flag there.
+The fold now covers `EmitForInt16Fast` too, guarded on the `Optimize` flag
+because that path is not itself `--optimize`-gated, and BYTE counters along with
+it: the compare happens in `AL`, so the folded form is `CMP AL, imm8`. The range
+test comes from the COUNTER's width rather than a word's — a byte counter given a
+limit truncated from 300 would compare against 44 and stop early — so an
+out-of-range constant keeps its temp instead of folding into something narrower
+than itself.
