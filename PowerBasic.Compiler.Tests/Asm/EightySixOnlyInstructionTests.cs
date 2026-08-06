@@ -95,8 +95,19 @@ public sealed class EightySixOnlyInstructionTests {
   /// sees it, which is why it is measured here rather than left to a runtime failure that will not
   /// come.
   ///
-  /// Pinned, not approved. TAN is the counter-example that shows the fix is possible: it uses FPTAN,
-  /// which the 8087 has, and needs nothing.
+  /// Pinned, not approved - and the oracle says it is a FIDELITY deviation as well as a CPU one.
+  /// Genuine PBC 3.5 compiling <c>SIN(1.0)</c>, <c>COS(1.0)</c> and <c>TAN(1.0)</c> in one program
+  /// emits ZERO FSIN and ZERO FCOS, and exactly ONE FPTAN - with FPATAN, FPREM, F2XM1, FSCALE and
+  /// FYL2X alongside it. One FPTAN for all three means a single shared routine that reduces the
+  /// argument and derives sine and cosine from the tangent, which is what an 8087 leaves you: its
+  /// FPTAN is defined only for 0 &lt;= x &lt;= pi/4, unlike the 387's.
+  ///
+  /// So the fix is not "swap FSIN for FPTAN" - it is that routine. Reduce by pi/2 with FPREM (whose
+  /// condition codes carry the low quotient bits, which is what they are for), fold the remainder
+  /// into [0, pi/4] by taking pi/2 - r and swapping the two results, then FPTAN gives Y and X whose
+  /// hypotenuse yields sin = Y/h and cos = X/h together; the quadrant picks the signs, and sine
+  /// alone carries the argument's sign. TAN already uses FPTAN and needs none of it, which is the
+  /// counter-example proving the instruction is reachable from this back end.
   /// </summary>
   [Test]
   public void Image_GivenSinOrCos_ThenTheThreeEightySevenFormIsStillWhatIsEmitted() {
