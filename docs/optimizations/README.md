@@ -21,6 +21,22 @@ the callee's bytes are in every faithful image), and O0174's "backs O00xx" lines
 the source the page points at, which takes minutes and is the difference between
 implementing something and rediscovering it.
 
+**Two more things a reader of the 🟡 list should know, from auditing all 22 on
+2026-08-06.**
+
+*Five have no "Still planned" section at all* — O0061, O0081, O0085, O0108 and
+O0286 carry their remaining work only in the status line, so skimming for the
+heading makes them look finished.
+
+*Three name the same blocker.* O0098 (balanced tree), O0099 (bit-test dispatch)
+and O0100 (perfect hash) each list "`LONG` subjects" as remaining, which reads as
+three items and is closer to one. `EmitSelect` already emits both
+`EmitSelectorInt16` and `EmitSelectorInt32`, and O0099's restriction is a single
+`kind == ValueKind.Int16` conjunct at the `TryEmitArmBitMask` call site — its mask
+machinery already works 32 bits wide under `$CPU 80386`. Widening the dispatch
+subject is one piece of work that moves three entries, which is worth knowing
+before picking any of them off individually.
+
 **One entry, one optimization.** A page describes a single transformation.
 Where an ID once covered a family, the family is dissected: the original entry
 keeps one member and lists its siblings in a **Split into** row of its header
