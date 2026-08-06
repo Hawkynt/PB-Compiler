@@ -196,6 +196,8 @@ public enum LanguageFeature {
   ExitStatement,
   /// <summary>PowerBASIC/Turbo Basic's EXIT FAR extension, absent from the Microsoft line.</summary>
   ExitFar,
+  /// <summary>PowerBASIC/Turbo Basic compiler metastatements such as $CPU.</summary>
+  MetaStatements,
 }
 
 /// <summary>
@@ -305,6 +307,7 @@ public static class DialectFacts {
     [LanguageFeature.Procedures] = (Dialect.Tb10, "SUB/FUNCTION procedures"),
     [LanguageFeature.ExitStatement] = (Dialect.Tb10, "EXIT statements"),
     [LanguageFeature.ExitFar] = (Dialect.Tb10, "EXIT FAR"),
+    [LanguageFeature.MetaStatements] = (Dialect.Tb10, "compiler metastatements"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>
