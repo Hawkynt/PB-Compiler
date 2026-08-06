@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial (the balanced tree is emitted for sparse single-constant INTEGER `SELECT`s; the cluster analysis that makes dense sub-ranges tables within the tree is not) |
+| **Status** | 🟡 Partial (the balanced tree is emitted for sparse single-constant `INTEGER` **and** `LONG`/`DWORD` `SELECT`s; the cluster analysis that makes dense sub-ranges jump tables is not) |
 | **Stage** | Emitter |
 | **Related** | [O0029](O0029-select-jump-table.md), [O0099](O0099-bit-test-dispatch.md), [O0100](O0100-perfect-hash-dispatch.md) |
 
@@ -78,7 +78,16 @@ larger than the chain) so non-optimized output is byte-identical to genuine
 - A **cluster analysis**: dense sub-ranges should still become jump tables and
   only the sparse remainder a tree, so the two lowerings compose (a tree whose
   leaves are small tables).
-- `LONG` subjects (the current path is `INTEGER`-only; a 32-bit subject needs a
-  two-word compare at each node).
+A `LONG`/`DWORD` subject now dispatches through the tree. Every tree point must
+fit an int16 to survive the fold, and the tree compares `AX`, so a 32-bit subject
+is first proven to BE its own int16 low half: `CWD` against the real high word
+(held in `CX` across the check, since the tree only ever touches `AX`). A subject
+failing it cannot equal any point and goes straight to the default path. Without
+the check the tree compares a truncated low word — 0001_0064h reads as 100 — and
+takes an arm the program never selected.
+
+The same widening and the same guard serve [O0099](O0099-bit-test-dispatch.md);
+[O0100](O0100-perfect-hash-dispatch.md)'s hash is the one still refusing a
+non-INTEGER subject.
 - The same arm emission and default routing [O0029](O0029-select-jump-table.md)
   already uses, so the arms themselves are untouched.

@@ -3709,8 +3709,15 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// (the tree's extra JL/JG branches can be larger than the chain) and INTEGER subjects only.
   /// </summary>
   private bool TryEmitSelectDecisionTree(SelectStmt s) {
-    if (KindOf(model.TypeOf(s.Subject)) != ValueKind.Int16)
+    // A 32-bit subject dispatches through the same 16-bit tree: every tree point must fit an int16
+    // to get past the fold below, so a subject that is not its own int16 low half cannot equal any
+    // of them and belongs on the default path. The guard that establishes that is emitted with the
+    // subject (see below); without it the tree would compare a truncated low word and take an arm
+    // the program never selected.
+    var subjectKind = KindOf(model.TypeOf(s.Subject));
+    if (subjectKind is not (ValueKind.Int16 or ValueKind.Int32))
       return false;
+    var wideSubject = subjectKind == ValueKind.Int32;
     var byValue = new Dictionary<short, int>();   // case value -> first matching arm (first match wins)
     int? elseArm = null;
     for (var i = 0; i < s.Arms.Count; ++i) {
@@ -3740,7 +3747,17 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     this._exitSelect.Push(end);
     this.EmitExpression(s.Subject);
-    this.Coerce(model.TypeOf(s.Subject), PbType.Integer, s.Subject);   // subject -> AX, held for every compare
+    if (wideSubject) {
+      // DX:AX holds the subject. Keep the real high word, replace DX with the sign-extension of the
+      // low word, and compare: equal means the 32-bit value IS its int16 low half and the tree below
+      // may read AX. Unequal means it cannot match any point, so it takes the default path directly.
+      // The tree only ever touches AX, so CX is free to hold the high word across the check.
+      asm.Mov(Reg.CX, Reg.DX);
+      asm.Cwd();
+      asm.Cmp(Reg.DX, Reg.CX);
+      asm.Jne(defaultLabel);
+    } else
+      this.Coerce(model.TypeOf(s.Subject), PbType.Integer, s.Subject);   // subject -> AX, held for every compare
 
     void Tree(int lo, int hi) {
       var mid = (lo + hi) / 2;
