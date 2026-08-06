@@ -863,9 +863,26 @@ public sealed partial class DosRuntime {
     asm.Push(Reg.DS);
     asm.Mov(Reg.BX, Reg.ES);
     asm.Mov(Reg.DS, Reg.BX);
+    // O0298: the lengths are known equal here, so the content compare runs a WORD at a time and
+    // finishes an odd length with the one trailing byte - half the REPE iterations of a CMPSB scan.
+    // Only equality may be widened: CMPSW compares little-endian 16-bit values, so on a mismatch its
+    // sign says which WORD is larger numerically, which is not which string sorts first. The
+    // ordering forms therefore keep the byte compare (see the page's "Still planned").
+    // Exactly `length` bytes are touched - (length >> 1) words plus the odd byte - so a string
+    // ending at the last byte of the heap is never read past.
+    var tail = asm.DefineLabel();
+    var finish = asm.DefineLabel();
+    asm.Shr(Reg.CX, 1);
+    asm.Jz(tail);                                   // length 1: no whole word to compare
     asm.Repe();
-    asm.Cmpsb();
-    asm.Pop(Reg.DS);
+    asm.Cmpsw();
+    asm.Jne(finish);                                // mismatching word -> unequal, ZF already clear
+    asm.MarkLabel(tail);
+    asm.Test(Reg.AL, (Imm)1);                       // odd length? (AX still holds it)
+    asm.Jz(finish);                                 // even -> ZF set -> equal
+    asm.Cmpsb();                                    // the trailing byte decides
+    asm.MarkLabel(finish);
+    asm.Pop(Reg.DS);                                // POP does not disturb ZF
     asm.Jne(unequal);
     asm.MarkLabel(equal);
     asm.Xor(Reg.AX, Reg.AX);                         // 0 = equal
