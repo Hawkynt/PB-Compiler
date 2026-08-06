@@ -1,4 +1,5 @@
 using System.Text;
+using PowerBasic.Compiler.Syntax;
 
 namespace PowerBasic.Compiler.Tests.Syntax;
 
