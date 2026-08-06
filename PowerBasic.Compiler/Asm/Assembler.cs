@@ -243,6 +243,70 @@ public sealed partial class Assembler {
         continue;   // the short encoding cannot reach the final destination - keep the hop
       this._fixups[i] = f with { Target = target, Addend = addend };
     }
+
+    this.RemoveOrphanedJumpHops();
+  }
+
+  /// <summary>
+  /// O0093, second half: the <c>A: JMP B</c> hop threading has just bypassed is dead code once
+  /// nothing reaches it, and deleting it is the size saving the taken-jump saving left behind.
+  ///
+  /// Two conditions, both deliberately conservative, because a wrong deletion here is a miscompile
+  /// anywhere:
+  ///
+  /// NOTHING MAY TARGET IT. Every fixup's resolved destination is collected as
+  /// <c>Position + Addend</c>, not just <c>Position</c>, so a label reached through an addend still
+  /// counts as a reference. A named label bound on the hop keeps it too - another module may
+  /// reference it by name, and this assembler cannot see that.
+  ///
+  /// CONTROL MAY NOT FALL INTO IT. The only instruction proven not to fall through is another
+  /// unconditional JMP, so a hop qualifies only when one ends exactly at its first byte. A RET
+  /// would qualify as well but is not attempted: <c>C3</c> cannot be told from a displacement byte
+  /// by looking at it, and guessing wrong deletes reachable code.
+  ///
+  /// Deleting can only SHRINK the distance a jump spans, so no short displacement can be pushed out
+  /// of range by this - the cut either sits between a jump and its target, bringing them closer, or
+  /// outside it, changing nothing. Cuts run from the end backwards so earlier offsets stay valid,
+  /// and the whole thing iterates a few times because removing one hop can orphan the next.
+  /// </summary>
+  private void RemoveOrphanedJumpHops() {
+    for (var pass = 0; pass < 4; ++pass) {
+      var jmps = new Dictionary<int, int>();               // instruction start -> encoded length
+      foreach (var f in this._fixups) {
+        if (f.Position < 1)
+          continue;
+        var op = this._buffer[f.Position - 1];
+        if (f.Kind == FixupKind.Rel16 && op == 0xE9)
+          jmps[f.Position - 1] = 3;
+        else if (f.Kind == FixupKind.Rel8 && op == 0xEB)
+          jmps[f.Position - 1] = 2;
+      }
+      if (jmps.Count == 0)
+        return;
+
+      var targeted = new HashSet<int>();
+      foreach (var f in this._fixups)
+        if (f.Target.IsBound && !f.Target.IsConstant)
+          targeted.Add(f.Target.Position + f.Addend);
+      foreach (var label in this._namedLabels.Values)
+        if (label.IsBound && !label.IsConstant)
+          targeted.Add(label.Position);
+
+      var afterAJump = new HashSet<int>();
+      foreach (var (start, length) in jmps)
+        afterAJump.Add(start + length);
+
+      var victims = new List<(int Start, int Length)>();
+      foreach (var (start, length) in jmps)
+        if (!targeted.Contains(start) && afterAJump.Contains(start))
+          victims.Add((start, length));
+      if (victims.Count == 0)
+        return;
+
+      victims.Sort((a, b) => b.Start.CompareTo(a.Start));
+      foreach (var (start, length) in victims)
+        this.RemoveBytes(start, length);
+    }
   }
 
   /// <summary>

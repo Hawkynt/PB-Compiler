@@ -44,9 +44,14 @@ public sealed class JumpThreadingTests {
     asm.MarkLabel(final);    // 13:
     asm.Nop();
     var image = asm.ToArray();
-    // the pair's JMP carries the rel16 at 3, and it threads exactly as the near form did:
-    // displacement = final(13) - 5 = 8
-    Assert.That(image[3] | image[4] << 8, Is.EqualTo(8), "the conditional jump follows the whole chain");
+    // The pair's JMP carries the rel16 at 3. What is asserted is where it LANDS, not the raw
+    // displacement: once the bypassed hops are removed as orphans the layout shrinks under it
+    // (hop2's JMP goes, so `final` slides from 13 to 10 and the displacement from 8 to 5), and
+    // pinning the number would be pinning the layout rather than the threading. `final` is the
+    // last instruction, so its offset is the last index either way.
+    var destination = 5 + (short)(image[3] | image[4] << 8);
+    Assert.That(destination, Is.EqualTo(image.Length - 1), "the conditional jump follows the whole chain");
+    Assert.That(image[destination], Is.EqualTo(0x90), "and lands on the final NOP");
   }
 
   [Test]

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial (the threading itself is done and wired under `--optimize`; deleting the now-orphaned intermediate jump is the remaining piece) |
+| **Status** | ✅ Done — threading plus removal of the orphaned intermediate jump |
 | **Stage** | Assembler |
 | **Source** | `Asm/Assembler.cs` (`RunJumpThreading`) |
 | **Related** | [O0035](O0035-jump-relaxation.md), [O0094](O0094-branch-inversion.md), [O0107](O0107-branch-folding-through-phi.md) |
@@ -71,10 +71,29 @@ module under `--optimize` (`EnableJumpThreading = standalone`); it collapses the
 flow routinely emits. Covered by `JumpThreadingTests` (jmp-to-jmp, `Jcc`,
 transitive chains, and the CALL-is-never-threaded guard).
 
-## Still planned
+## Removing the orphan
 
-- **Deleting the orphaned intermediate block.** Threading only *bypasses* the
-  `A: JMP B` hop; when nothing else targets `A` any more it is now dead code,
-  but the assembler does not yet reference-count labels to prove that and remove
-  the bytes. The taken-jump saving (the actual runtime win, and the harder-on-the
-  8086 prefetch flush) is already realized; this is the remaining size saving.
+`RemoveOrphanedJumpHops` (same file, run at the end of `RunJumpThreading`) deletes
+the `A: JMP B` hop once threading has bypassed it, reclaiming the bytes the
+taken-jump saving left behind. Two conditions gate it, both conservative, because
+a wrong deletion here is a miscompile anywhere:
+
+- **Nothing may target it.** Every fixup's resolved destination is collected as
+  `Position + Addend` — not just `Position`, so a label reached through an addend
+  still counts. A *named* label on the hop keeps it as well: another module may
+  import that name and this assembler cannot see it.
+- **Control may not fall into it.** A hop reached by falling off the end of the
+  preceding instruction is live however few things jump to it. The only
+  instruction proven not to fall through is another unconditional `JMP` ending
+  exactly at the hop's first byte. `RET` would qualify too but is not attempted —
+  `C3` cannot be told from a displacement byte by looking at it.
+
+Deletion only ever *shrinks* the distance a jump spans, so no short displacement
+can be pushed out of range by it; the pass runs before relaxation either way.
+Cuts go from the end backwards so earlier offsets stay valid, and the whole thing
+iterates (bounded) because removing one hop can orphan the next.
+
+Covered by `OrphanedJumpHopTests`, which compares two builds rather than naming
+byte counts — these images are small enough that jumps take their short form, and
+one hop going away can take the next with it, so an absolute length is a statement
+about the layout rather than about the pass.
