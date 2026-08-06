@@ -91,4 +91,29 @@ takes an arm the program never selected.
 
 - A **cluster analysis**: dense sub-ranges should still become jump tables and
   only the sparse remainder a tree, so the two lowerings compose (a tree whose
-  leaves are small tables).
+  leaves are small tables). Worth building, but it needs a **big** cluster to pay,
+  and the threshold belongs in the implementation rather than being discovered
+  after it.
+
+  A cluster costs one tree node to reach plus an indexed jump; those same values
+  as tree points cost `ceil(log2 k)` nodes. Pricing both (era-typical figures, the
+  table path dominated by the indirect memory jump):
+
+  | tier | table path | k=8 | k=16 | k=32 | k=64 | break-even k |
+  |---|---|---|---|---|---|---|
+  | 8086 | 48 | 36 | 48 | 60 | 72 | **17** |
+  | 286 | 29 | 27 | 36 | 45 | 54 | 9 |
+  | 386 | 20 | 18 | 24 | 30 | 36 | 9 |
+  | 486 | 11 | 9 | 12 | 15 | 18 | 9 |
+  | Pentium | 8 | 6 | 8 | 10 | 12 | 17 |
+  | P6 | 8 | 6 | 8 | 10 | 12 | 17 |
+
+  So on the default target a cluster of fewer than ~17 values is *slower* as a
+  table than as tree points — the indexed jump is worth about three compares.
+
+  Narrowing it further: the tree only runs when the whole-select jump table has
+  already declined, which it does for `span > 256` or under 25% density
+  (`TryEmitSelectJumpTable`). The shape that actually benefits is therefore a
+  SELECT listing 17+ individual dense constants *plus* outliers far enough out to
+  push the span past 256 — real, but not common. Gate on the cluster size; do not
+  cluster because a run merely exists.
