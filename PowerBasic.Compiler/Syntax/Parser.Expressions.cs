@@ -875,8 +875,6 @@ public sealed partial class Parser {
   /// by <c>=</c> (pb36). Precise, so a command like <c>PRINT #1, 1 = 1</c> is not mistaken for one.
   /// </summary>
   private bool IsDestructuringAhead() {
-    if (!DialectFacts.IsAvailable(LanguageFeature.Tuples, this._dialect))
-      return false;
     var i = this._pos;
     var lvalues = 0;
     for (;;) {

@@ -137,10 +137,12 @@ public sealed class StatementNodeCoverageTests {
   /// DeferStmt the parser really does build - and then ParseBody rewrites it into TRY ... FINALLY
   /// before anyone sees the tree, so a form for it can exist and still never produce one. That last
   /// is the limit of reading `new XxxStmt(` out of the parser's source: it finds what is constructed,
-  /// not what survives.
+  /// not what survives. DeferredSourceStmt deliberately has no ordinary surface form: only the
+  /// BASICA/GW compatibility recovery path creates it from otherwise unparseable stored source.
   /// </summary>
   private static readonly string[] _parserBuiltWithNoForm = [
     "DeferStmt",
+    "DeferredSourceStmt",
     "ResourceStmt",
     "StatementGroup",
   ];
@@ -154,14 +156,16 @@ public sealed class StatementNodeCoverageTests {
   /// has and none of the twenty-one had a form.
   ///
   /// The list is not all holes, and the companion test splits it by reading the parser's own source:
-  /// five of the eight - GroupStmt and the four Handler* kinds TRY/CATCH lowers to - are built
+  /// five of the nine - GroupStmt and the four Handler* kinds TRY/CATCH lowers to - are built
   /// by the binder alone, and no surface form can exist for a node no source text produces. The other
-  /// three are grammars a program can really contain, and that is what is left of the queue.
+  /// four include three grammars a program can really contain plus DeferredSourceStmt's dialect-only
+  /// recovery path, and that is what is left of the queue.
   ///
   /// Write a form and strike the name. The test insists either way.
   /// </summary>
   private static readonly string[] _noSurfaceForm = [
     "DeferStmt",
+    "DeferredSourceStmt",
     "GroupStmt",
     "HandlerArmStmt",
     "HandlerReraiseStmt",

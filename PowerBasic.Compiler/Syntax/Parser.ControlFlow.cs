@@ -298,8 +298,10 @@ public sealed partial class Parser {
     var token = this.Expect(TokenKind.Identifier, "EXIT kind");
 
     // EXIT FAR [AT label] - record/trigger the far unwind point
-    if (token.Text.Equals("FAR", StringComparison.OrdinalIgnoreCase))
+    if (token.Text.Equals("FAR", StringComparison.OrdinalIgnoreCase)) {
+      this.Require(LanguageFeature.ExitFar);
       return new ExitFarStmt(pos, this.TryMatchKeyword("AT") ? this.ParseLabelReference() : null);
+    }
 
     var kind = token.Text.ToUpperInvariant() switch {
       "FOR" => ExitKind.For,

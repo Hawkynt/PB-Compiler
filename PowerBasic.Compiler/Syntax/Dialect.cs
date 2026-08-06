@@ -194,6 +194,8 @@ public enum LanguageFeature {
   Procedures,
   /// <summary>Structured EXIT statements, absent from BASICA/GW-BASIC.</summary>
   ExitStatement,
+  /// <summary>PowerBASIC/Turbo Basic's EXIT FAR extension, absent from the Microsoft line.</summary>
+  ExitFar,
 }
 
 /// <summary>
@@ -302,6 +304,7 @@ public static class DialectFacts {
     [LanguageFeature.SelectCase] = (Dialect.Tb10, "SELECT CASE"),
     [LanguageFeature.Procedures] = (Dialect.Tb10, "SUB/FUNCTION procedures"),
     [LanguageFeature.ExitStatement] = (Dialect.Tb10, "EXIT statements"),
+    [LanguageFeature.ExitFar] = (Dialect.Tb10, "EXIT FAR"),
   };
 
   /// <summary>Version-gated intrinsic functions (checked by the binder at call sites).</summary>

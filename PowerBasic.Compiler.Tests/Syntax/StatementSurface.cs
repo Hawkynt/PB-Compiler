@@ -114,7 +114,7 @@ internal static class StatementSurface {
     new("inline.asm", "! mov ax, 1", Dialect.Pb30, _noMicrosoft),
     new("destructure", "d1%, d2% = (1, 2)", Dialect.Pb36, _noMicrosoft),
     new("static.assert", "$ASSERT 1 = 1, \"ok\"", Dialect.Pb36, _noMicrosoft),
-    new("metastatement", "$CPU 8086"),
+    new("metastatement", "$CPU 8086", MinMicrosoft: _noMicrosoft),
     new("require", "CALL S8(1)\nEND\nSUB S8(BYVAL n%)\n  REQUIRE n% > 0, \"positive\"\nEND SUB", Dialect.Pb36, _noMicrosoft),
     // and six more: the code-pointer trio, the single-line type alias (TYPE Name AS type - no
     // ALIAS keyword, which a guess would put there), DEFER and a coroutine YIELD
