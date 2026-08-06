@@ -74,7 +74,19 @@ What is ruled out, so the next attempt need not re-do it:
   plain dead store (`t = 5` next to the identical program without it produces the
   same image, byte for byte);
 - `t` is a trackable scalar, and `FindTrackable` escapes only a call's ARGUMENTS,
-  not an assignment's target.
+  not an assignment's target;
+- and most directly: in the SAME program, with the same escaped `n`, an unused copy
+  `t = n` **is** removed (byte-identical to the program without it). So candidacy,
+  liveness and statement removal all work for this shape — a literal RHS and a copy
+  RHS both go, and only the call-valued one stays.
+
+Three RHS shapes in one program shape, `t` unused in all three:
+
+| RHS | removed? |
+|---|---|
+| `t = 5` | yes |
+| `t = n` | yes |
+| `t = Hash%(n)` | no — even with the purity test bypassed |
 
 So the assignment whose RHS is a user call does not reach `DeadStore` as an
 `SsaDefKind.Assign` candidate in the first place. That is a question about how
