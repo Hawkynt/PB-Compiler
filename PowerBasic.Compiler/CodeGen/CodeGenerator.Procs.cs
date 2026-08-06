@@ -98,7 +98,20 @@ public sealed partial class CodeGenerator {
   private bool ResultForwardable(ProcedureSymbol proc, VariableSymbol? resultVar, Mem? savedHandler) {
     if (!this.Optimize || resultVar == null || proc.HasSretParam)
       return false;
-    if (resultVar.Type is not ScalarType { IsFloat: false, ByteSize: 2 or 4 })
+    // Integer/LONG return in AX / DX:AX; SINGLE and DOUBLE return on the x87 stack, where the
+    // epilogue's FLD would have put them, so leaving the computed value in ST(0) is the same thing
+    // with the round-trip removed. Stack depth still balances: the RHS leaves exactly one value
+    // where the assignment would have FSTP'd it and the epilogue would have FLD'd it back.
+    //
+    // MbfType (BASICA/GW SINGLE and DOUBLE) is a separate PbType, not a float ScalarType, so it
+    // cannot match here - which is right, because its epilogue converts MBF to IEEE rather than
+    // loading, and there is no "already in place" for that to skip.
+    var forwardableResult = resultVar.Type switch {
+      ScalarType { IsFloat: false, ByteSize: 2 or 4 } => true,
+      ScalarType { IsFloat: true, ByteSize: 4 or 8 } => true,
+      _ => false,
+    };
+    if (!forwardableResult)
       return false;
     if (savedHandler != null)
       return false;
@@ -264,7 +277,7 @@ public sealed partial class CodeGenerator {
       var last = (AssignStmt)body[^1];
       this._currentStatement = last;                                  // keep interval facts at the right point
       this.EmitExpression(last.Value);
-      this.Coerce(model.TypeOf(last.Value), resultVar!.Type, last.Value);   // value now in AX / DX:AX
+      this.Coerce(model.TypeOf(last.Value), resultVar!.Type, last.Value);   // now in AX / DX:AX, or ST(0) for a float
     } else
       foreach (var statement in proc.Body!)
         this.EmitStatement(statement);
