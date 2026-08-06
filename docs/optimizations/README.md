@@ -11,6 +11,16 @@ the equivalent BASIC the transformed program behaves like.
 - ⬜ **planned** — a roadmap idea. The "after" code on those pages is what the
   pass *would* emit; the compiler does not do it yet.
 
+**A 🟡 page's "Still planned" list can be behind the code, so check before building
+from it.** Of eight partial pages read closely on 2026-08-06, four named work that
+had already shipped: O0113's constant-limit fold (present for word counters, only
+BYTE was missing), O0056's `$OPTIMIZE SPEED` gate (present, and contradicting that
+page's own status line), O0298's "trimmed section" claim (the call is optimize-only,
+the callee's bytes are in every faithful image), and O0174's "backs O00xx" lines
+(three of its fourteen query members have a call site). Each was found by reading
+the source the page points at, which takes minutes and is the difference between
+implementing something and rediscovering it.
+
 **One entry, one optimization.** A page describes a single transformation.
 Where an ID once covered a family, the family is dissected: the original entry
 keeps one member and lists its siblings in a **Split into** row of its header

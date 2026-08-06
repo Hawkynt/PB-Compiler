@@ -65,8 +65,10 @@ Error 11 nor a quotient overflow.
   the wider shift sequence.
 - **Unsigned** (`WORD`/`DWORD`) — the unsigned magic variant; today a `WORD`
   operand promotes to `LONG`, so it takes the `LONG` `IDIV` path.
-- The `$OPTIMIZE SPEED` gate, since the `MUL`+shift is larger than `IDIV` while
-  being faster; a size-tuned build keeps the compact divide.
+The `$OPTIMIZE SPEED` gate this list used to name as planned already ships — the
+rewrite is behind `this.OptimizeSpeed` in `TryEmitConstantDivide`, so a size-tuned
+build keeps the compact `IDIV`, exactly as the status line above says. Verified
+against the code 2026-08-06.
 
 Native-only. The IR back ends leave `/ constant` for LLVM / the host C compiler,
 which apply their own reciprocal-multiply against the real target's cost model.
