@@ -6,6 +6,13 @@ public abstract record Statement(SourcePosition Position);
 /// <summary>A whole compilation unit (main program, unit, or include-expanded module).</summary>
 public sealed record CompilationUnit(string FileName, IReadOnlyList<Statement> Statements);
 
+/// <summary>
+/// BASICA/GW-BASIC text that the interpreter stores but does not parse until execution reaches it.
+/// A compiler may discard this node only when it proves the containing path unreachable; otherwise
+/// code generation reports an error because silently guessing what the interpreter would do is wrong.
+/// </summary>
+public sealed record DeferredSourceStmt(SourcePosition Position, string Text) : Statement(Position);
+
 #region types
 
 /// <summary>Built-in scalar type names usable in an <c>AS</c> clause.</summary>

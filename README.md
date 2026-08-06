@@ -79,7 +79,8 @@ The historic dialects (everything except `pb36`) are validated by an
 oracle-driven **differential harness**: when the genuine compiler is dropped into
 `tools/<dialect>/`, `scripts/run-diff-tests.sh` compiles each test program with
 both `pbc` and the original and asserts the outputs match byte for byte. See
-[docs/DIALECTS.md](docs/DIALECTS.md) for the PowerBASIC feature matrix and
+[docs/DIALECTS.md](docs/DIALECTS.md) for the PowerBASIC feature matrix,
+[docs/CONFORMANCE.md](docs/CONFORMANCE.md) for the positive, negative, syntax-oracle and runtime-oracle test lanes, and
 [docs/BASIC-FAMILY.md](docs/BASIC-FAMILY.md) for the cross-family lineage.
 
 ## PowerBASIC 3.6 — what's new

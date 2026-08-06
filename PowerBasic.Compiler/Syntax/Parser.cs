@@ -194,6 +194,17 @@ public sealed partial class Parser {
     var result = new List<Statement>();
     for (;;) {
       this.SkipSeparators();
+      // A BASICA/GW-BASIC block terminator still begins with that physical line's mandatory number:
+      //   10 FOR I=1 TO 3
+      //   20 PRINT I
+      //   30 NEXT I
+      // Keep 30 as a real label (GOTO 30 must work), then let the surrounding parser consume NEXT.
+      if (this._dialect.IsGwBasica() && this.Current.Kind == TokenKind.IntegerLiteral
+          && terminators.Any(t => this.IsAtTerminator(t, 1))) {
+        var line = this.Advance();
+        result.Add(new LabelStmt(line.Position, line.IntegerValue.ToString()));
+        this._atLineStart = false;
+      }
       if (this._pendingNexts > 0)
         return LowerDefers(result);
       if (this.Current.Kind == TokenKind.EndOfFile) {
@@ -235,10 +246,14 @@ public sealed partial class Parser {
   }
 
   private bool IsAtTerminator(string terminator) {
+    return this.IsAtTerminator(terminator, 0);
+  }
+
+  private bool IsAtTerminator(string terminator, int offset) {
     var space = terminator.IndexOf(' ');
     return space < 0
-      ? this.IsKeyword(0, terminator)
-      : this.IsKeyword(0, terminator[..space]) && this.IsKeyword(1, terminator[(space + 1)..]);
+      ? this.IsKeyword(offset, terminator)
+      : this.IsKeyword(offset, terminator[..space]) && this.IsKeyword(offset + 1, terminator[(space + 1)..]);
   }
 
   #endregion
@@ -260,6 +275,11 @@ public sealed partial class Parser {
     this._atLineStart = false;
 
     var token = this.Current;
+    if (atLineStart && this._dialect.IsGwBasica() && token.Kind != TokenKind.IntegerLiteral)
+      throw this.Error($"{this._dialect.DisplayName()} requires a numeric line number on every program line");
+    if (atLineStart && this._dialect.IsGwBasica() && token.IntegerValue is < 0 or > 65529)
+      throw this.Error($"{this._dialect.DisplayName()} line number must be between 0 and 65529");
+
     return token.Kind switch {
       TokenKind.InlineAsm => new InlineAsmStmt(this.Advance().Position, token.Text),
       TokenKind.MetaCommand => this.ParseMeta(),
@@ -276,6 +296,10 @@ public sealed partial class Parser {
   private Statement ParseIdentifierStatement(bool atLineStart) {
     var token = this.Current;
     var keyword = token.Text.ToUpperInvariant();
+
+    if (token.Suffix == TypeSuffix.None && this.Peek().Kind == TokenKind.Colon
+        && !DialectFacts.IsAvailable(LanguageFeature.NamedLabels, this._dialect))
+      throw this.Error($"{this._dialect.DisplayName()} supports numeric line labels only");
 
     if (atLineStart && token.Suffix == TypeSuffix.None && this.Peek().Kind == TokenKind.Colon && !_statementKeywords.Contains(keyword)) {
       this.Advance();

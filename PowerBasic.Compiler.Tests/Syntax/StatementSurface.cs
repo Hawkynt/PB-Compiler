@@ -110,7 +110,7 @@ internal static class StatementSurface {
     // ARRAY SCAN shares ARRAY SORT's keyword, parse site and gate, and the oracle agrees it shares
     // the answer too: 2 Severe Errors from BC 4.50, 1 from BC 1.00, clean under PBC 3.5.
     new("array.scan", "ARRAY SCAN a4%(), = 5, TO f4%", MinMicrosoft: _noMicrosoft, Preamble: "DIM a4%(4)"),
-    new("exit.far", "CALL S9\nEND\nSUB S9\n  EXIT FAR\nEND SUB"),
+    new("exit.far", "CALL S9\nEND\nSUB S9\n  EXIT FAR\nEND SUB", MinMicrosoft: _noMicrosoft),
     new("inline.asm", "! mov ax, 1", Dialect.Pb30, _noMicrosoft),
     new("destructure", "d1%, d2% = (1, 2)", Dialect.Pb36, _noMicrosoft),
     new("static.assert", "$ASSERT 1 = 1, \"ok\"", Dialect.Pb36, _noMicrosoft),
@@ -146,33 +146,33 @@ internal static class StatementSurface {
   private static readonly Form[] _control = [
     new("if.single", "IF x% = 1 THEN y% = 2"),
     new("if.else.single", "IF x% = 1 THEN y% = 2 ELSE y% = 3"),
-    new("if.block", "IF x% = 1 THEN\n  y% = 2\nEND IF"),
-    new("if.elseif", "IF x% = 1 THEN\n  y% = 2\nELSEIF x% = 2 THEN\n  y% = 3\nELSE\n  y% = 4\nEND IF"),
+    new("if.block", "IF x% = 1 THEN\n  y% = 2\nEND IF", MinMicrosoft: Dialect.Qb10),
+    new("if.elseif", "IF x% = 1 THEN\n  y% = 2\nELSEIF x% = 2 THEN\n  y% = 3\nELSE\n  y% = 4\nEND IF", MinMicrosoft: Dialect.Qb10),
     new("for.bare", "FOR i% = 1 TO 3\nNEXT i%"),
     new("for.step", "FOR i% = 1 TO 9 STEP 2\nNEXT i%"),
     new("for.step.negative", "FOR i% = 9 TO 1 STEP -2\nNEXT i%"),
     new("for.next.bare", "FOR i% = 1 TO 3\nNEXT"),
     new("while.wend", "WHILE x% < 3\n  x% = x% + 1\nWEND", Preamble: "x% = 0"),
-    new("do.while.top", "DO WHILE x% < 3\n  x% = x% + 1\nLOOP", Preamble: "x% = 0"),
-    new("do.until.top", "DO UNTIL x% >= 3\n  x% = x% + 1\nLOOP", Preamble: "x% = 0"),
-    new("do.loop.while", "DO\n  x% = x% + 1\nLOOP WHILE x% < 3", Preamble: "x% = 0"),
-    new("do.loop.until", "DO\n  x% = x% + 1\nLOOP UNTIL x% >= 3", Preamble: "x% = 0"),
-    new("exit.for", "FOR i% = 1 TO 3\n  EXIT FOR\nNEXT i%"),
-    new("exit.do", "DO\n  EXIT DO\nLOOP"),
-    new("select.case", "SELECT CASE x%\n  CASE 1\n    y% = 1\n  CASE ELSE\n    y% = 2\nEND SELECT"),
-    new("select.case.range", "SELECT CASE x%\n  CASE 1 TO 5\n    y% = 1\nEND SELECT"),
-    new("select.case.is", "SELECT CASE x%\n  CASE IS > 5\n    y% = 1\nEND SELECT"),
-    new("select.case.list", "SELECT CASE x%\n  CASE 1, 3, 5\n    y% = 1\nEND SELECT"),
-    new("goto", "GOTO Skip\nSkip:"),
-    new("gosub.return", "GOSUB Sub1\nGOTO Past\nSub1:\nRETURN\nPast:"),
-    new("on.goto", "ON x% GOTO L1, L2\nL1:\nL2:"),
-    new("on.gosub", "ON x% GOSUB L1, L2\nGOTO Past\nL1:\nRETURN\nL2:\nRETURN\nPast:"),
+    new("do.while.top", "DO WHILE x% < 3\n  x% = x% + 1\nLOOP", MinMicrosoft: Dialect.Qb10, Preamble: "x% = 0"),
+    new("do.until.top", "DO UNTIL x% >= 3\n  x% = x% + 1\nLOOP", MinMicrosoft: Dialect.Qb10, Preamble: "x% = 0"),
+    new("do.loop.while", "DO\n  x% = x% + 1\nLOOP WHILE x% < 3", MinMicrosoft: Dialect.Qb10, Preamble: "x% = 0"),
+    new("do.loop.until", "DO\n  x% = x% + 1\nLOOP UNTIL x% >= 3", MinMicrosoft: Dialect.Qb10, Preamble: "x% = 0"),
+    new("exit.for", "FOR i% = 1 TO 3\n  EXIT FOR\nNEXT i%", MinMicrosoft: Dialect.Qb10),
+    new("exit.do", "DO\n  EXIT DO\nLOOP", MinMicrosoft: Dialect.Qb10),
+    new("select.case", "SELECT CASE x%\n  CASE 1\n    y% = 1\n  CASE ELSE\n    y% = 2\nEND SELECT", MinMicrosoft: Dialect.Qb10),
+    new("select.case.range", "SELECT CASE x%\n  CASE 1 TO 5\n    y% = 1\nEND SELECT", MinMicrosoft: Dialect.Qb10),
+    new("select.case.is", "SELECT CASE x%\n  CASE IS > 5\n    y% = 1\nEND SELECT", MinMicrosoft: Dialect.Qb10),
+    new("select.case.list", "SELECT CASE x%\n  CASE 1, 3, 5\n    y% = 1\nEND SELECT", MinMicrosoft: Dialect.Qb10),
+    new("goto", "GOTO Skip\nSkip:", MinMicrosoft: Dialect.Qb10),
+    new("gosub.return", "GOSUB Sub1\nGOTO Past\nSub1:\nRETURN\nPast:", MinMicrosoft: Dialect.Qb10),
+    new("on.goto", "ON x% GOTO L1, L2\nL1:\nL2:", MinMicrosoft: Dialect.Qb10),
+    new("on.gosub", "ON x% GOSUB L1, L2\nGOTO Past\nL1:\nRETURN\nL2:\nRETURN\nPast:", MinMicrosoft: Dialect.Qb10),
     new("for.nested.next.list", "FOR i% = 1 TO 2\n  FOR j% = 1 TO 2\n  NEXT j%, i%"),
-    new("select.case.is.list", "SELECT CASE x%\n  CASE IS < 0, IS > 9\n    y% = 1\nEND SELECT"),
-    new("select.case.range.and.value", "SELECT CASE x%\n  CASE 1 TO 5, 9\n    y% = 1\nEND SELECT"),
-    new("do.bare.exit", "DO\n  EXIT DO\nLOOP"),
-    new("if.then.goto", "IF x% = 1 THEN GOTO Skip\nSkip:"),
-    new("on.goto.single", "ON x% GOTO L9\nL9:"),
+    new("select.case.is.list", "SELECT CASE x%\n  CASE IS < 0, IS > 9\n    y% = 1\nEND SELECT", MinMicrosoft: Dialect.Qb10),
+    new("select.case.range.and.value", "SELECT CASE x%\n  CASE 1 TO 5, 9\n    y% = 1\nEND SELECT", MinMicrosoft: Dialect.Qb10),
+    new("do.bare.exit", "DO\n  EXIT DO\nLOOP", MinMicrosoft: Dialect.Qb10),
+    new("if.then.goto", "IF x% = 1 THEN GOTO Skip\nSkip:", MinMicrosoft: Dialect.Qb10),
+    new("on.goto.single", "ON x% GOTO L9\nL9:", MinMicrosoft: Dialect.Qb10),
     new("stop", "STOP"),
     new("end.bare", "END"),
     new("system", "SYSTEM"),
@@ -181,14 +181,14 @@ internal static class StatementSurface {
   // ---- error handling -------------------------------------------------------------------------
 
   private static readonly Form[] _errors = [
-    new("on.error.goto", "ON ERROR GOTO Trap\nGOTO Past\nTrap:\nRESUME Past\nPast:"),
+    new("on.error.goto", "ON ERROR GOTO Trap\nGOTO Past\nTrap:\nRESUME Past\nPast:", MinMicrosoft: Dialect.Qb10),
     new("on.error.goto.zero", "ON ERROR GOTO 0"),
     new("on.error.resume.next", "ON ERROR RESUME NEXT"),
-    new("resume.next", "ON ERROR GOTO T\nGOTO P\nT:\nRESUME NEXT\nP:"),
-    new("resume.same", "ON ERROR GOTO T\nGOTO P\nT:\nRESUME\nP:"),
-    new("error.raise", "ON ERROR GOTO T\nERROR 5\nGOTO P\nT:\nRESUME NEXT\nP:"),
-    new("err.read", "ON ERROR GOTO T\nGOTO P\nT:\nx% = ERR\nRESUME NEXT\nP:"),
-    new("erl.read", "ON ERROR GOTO T\nGOTO P\nT:\nl& = ERL\nRESUME NEXT\nP:"),
+    new("resume.next", "ON ERROR GOTO T\nGOTO P\nT:\nRESUME NEXT\nP:", MinMicrosoft: Dialect.Qb10),
+    new("resume.same", "ON ERROR GOTO T\nGOTO P\nT:\nRESUME\nP:", MinMicrosoft: Dialect.Qb10),
+    new("error.raise", "ON ERROR GOTO T\nERROR 5\nGOTO P\nT:\nRESUME NEXT\nP:", MinMicrosoft: Dialect.Qb10),
+    new("err.read", "ON ERROR GOTO T\nGOTO P\nT:\nx% = ERR\nRESUME NEXT\nP:", MinMicrosoft: Dialect.Qb10),
+    new("erl.read", "ON ERROR GOTO T\nGOTO P\nT:\nl& = ERL\nRESUME NEXT\nP:", MinMicrosoft: Dialect.Qb10),
     new("errclear", "ERRCLEAR", Dialect.Pb35, _noMicrosoft),
   ];
 
@@ -349,7 +349,7 @@ internal static class StatementSurface {
     new("sleep", "SLEEP 1"),
     new("bload", "BLOAD \"T.BIN\", 0"),
     new("bsave", "BSAVE \"T.BIN\", 0, 16"),
-    new("timer.on", "ON TIMER(1) GOSUB Tick\nTIMER ON\nGOTO Past\nTick:\nRETURN\nPast:"),
+    new("timer.on", "ON TIMER(1) GOSUB Tick\nTIMER ON\nGOTO Past\nTick:\nRETURN\nPast:", MinMicrosoft: Dialect.Qb10),
     new("key.off", "KEY OFF"),
     new("com.on", "COM(1) ON"),
     new("pen.on", "PEN ON"),
@@ -370,11 +370,11 @@ internal static class StatementSurface {
   // ---- procedures and types ---------------------------------------------------------------------
 
   private static readonly Form[] _procedures = [
-    new("sub.call", "CALL S1(1)\nEND\nSUB S1(BYVAL n%)\nEND SUB"),
-    new("sub.call.bare", "S1 1\nEND\nSUB S1(BYVAL n%)\nEND SUB"),
-    new("function.call", "x% = F1%(1)\nEND\nFUNCTION F1%(BYVAL n%)\n  F1% = n%\nEND FUNCTION"),
-    new("sub.byref", "CALL S2(x%)\nEND\nSUB S2(n%)\n  n% = 1\nEND SUB"),
-    new("declare.sub", "DECLARE SUB S3(BYVAL n%)\nCALL S3(1)\nEND\nSUB S3(BYVAL n%)\nEND SUB"),
+    new("sub.call", "CALL S1(1)\nEND\nSUB S1(BYVAL n%)\nEND SUB", MinMicrosoft: Dialect.Qb10),
+    new("sub.call.bare", "S1 1\nEND\nSUB S1(BYVAL n%)\nEND SUB", MinMicrosoft: Dialect.Qb10),
+    new("function.call", "x% = F1%(1)\nEND\nFUNCTION F1%(BYVAL n%)\n  F1% = n%\nEND FUNCTION", MinMicrosoft: Dialect.Qb10),
+    new("sub.byref", "CALL S2(x%)\nEND\nSUB S2(n%)\n  n% = 1\nEND SUB", MinMicrosoft: Dialect.Qb10),
+    new("declare.sub", "DECLARE SUB S3(BYVAL n%)\nCALL S3(1)\nEND\nSUB S3(BYVAL n%)\nEND SUB", MinMicrosoft: Dialect.Qb10),
     // the two lineages spell module-shared storage differently - PowerBASIC puts SHARED in the type
     // clause, QuickBASIC puts it straight after DIM - so each family is asked for its own spelling
     new("shared.global.pb", "DIM g AS SHARED INTEGER\ng = 1", MinMicrosoft: _noMicrosoft),
@@ -382,11 +382,11 @@ internal static class StatementSurface {
     // the entry stays permissive on the Borland side rather than pinning an unverified claim
     new("shared.global.qb", "DIM SHARED g%\ng% = 1"),
     // SHARED as a statement of its own, inside a procedure - the other two forms declare module-level
-    // storage and merely contain the word. History is not established well enough to pin either
-    // lineage (BASICA has no procedures to put it in), so the entry stays permissive.
-    new("shared.stmt", "DIM h%\nCALL S6\nEND\nSUB S6\n  SHARED h%\n  h% = 1\nEND SUB"),
-    new("static.local", "CALL S4\nEND\nSUB S4\n  STATIC s%\n  s% = s% + 1\nEND SUB"),
-    new("local.decl", "CALL S5\nEND\nSUB S5\n  LOCAL l%\n  l% = 1\nEND SUB"),
+    // storage and merely contain the word. The exact compiled-dialect minimum remains permissive;
+    // BASICA/GW-BASIC are excluded because they have no SUB procedures in which it could appear.
+    new("shared.stmt", "DIM h%\nCALL S6\nEND\nSUB S6\n  SHARED h%\n  h% = 1\nEND SUB", MinMicrosoft: Dialect.Qb10),
+    new("static.local", "CALL S4\nEND\nSUB S4\n  STATIC s%\n  s% = s% + 1\nEND SUB", MinMicrosoft: Dialect.Qb10),
+    new("local.decl", "CALL S5\nEND\nSUB S5\n  LOCAL l%\n  l% = 1\nEND SUB", MinMicrosoft: Dialect.Qb10),
     // TYPE ... END TYPE is PB 3.0 in one line and QuickBASIC 4.0 in the other
     new("type.decl", "TYPE Pt\n  X AS INTEGER\n  Y AS INTEGER\nEND TYPE\nDIM p AS Pt\np.X = 1", Dialect.Pb30, Dialect.Qb40),
     // UNION is PowerBASIC's; QuickBASIC's TYPE has no overlapping variant
@@ -426,6 +426,38 @@ internal static class StatementSurface {
         && !form.Body.TrimEnd().EndsWith("END FUNCTION", StringComparison.OrdinalIgnoreCase))
       lines.Add("END");
     return string.Join("\n", lines) + "\n";
+  }
+
+  /// <summary>The standalone form rendered using the physical-line rules of a dialect.</summary>
+  internal static string Program(Form form, Dialect dialect) {
+    var source = Program(form);
+    if (!dialect.IsGwBasica())
+      return source;
+
+    return NumberPhysicalLines(source);
+  }
+
+  /// <summary>Adds the mandatory ascending numeric label to every non-empty physical line.</summary>
+  internal static string NumberPhysicalLines(string source) {
+    var numbered = new List<string>();
+    var number = 10;
+    foreach (var line in source.Replace("\r", "", StringComparison.Ordinal).Split('\n')) {
+      if (line.Length == 0)
+        continue;
+      numbered.Add($"{number} {line}");
+      number += 10;
+    }
+    return string.Join("\n", numbered) + "\n";
+  }
+
+  /// <summary>
+  /// Renders a form as a standalone source file for the genuine compiler/interpreter of a dialect.
+  /// BASICA and GW-BASIC require numbered physical lines; the later compilers accept the ordinary
+  /// source returned by <see cref="Program"/>. This renderer deliberately does not translate syntax:
+  /// if an oracle rejects a form, that rejection is precisely the result the conformance probe needs.
+  /// </summary>
+  internal static string OracleProgram(Form form, Dialect dialect) {
+    return Program(form, dialect).Replace("\n", "\r\n", StringComparison.Ordinal);
   }
 
   /// <summary>Whether <paramref name="dialect"/> should accept <paramref name="form"/> at all.</summary>

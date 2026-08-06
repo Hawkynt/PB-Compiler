@@ -14,7 +14,9 @@ selected dialect also **re-enables that version's documented bugs**
 Related documents: docs/BASIC-FAMILY.md (cross-dialect matrix for GW-BASIC,
 QuickBASIC, QBasic, Turbo Basic & friends - groundwork for cross-compiling
 those dialects), docs/PB36.md (an envisioned `pb36` successor dialect - new
-language features, with the dialect-agnostic optimizer preset on).
+language features, with the dialect-agnostic optimizer preset on), and
+docs/CONFORMANCE.md (positive, negative, genuine-syntax-oracle and runtime-oracle
+coverage requirements).
 
 ## Baseline (PB 2.0/2.1, Turbo Basic lineage)
 

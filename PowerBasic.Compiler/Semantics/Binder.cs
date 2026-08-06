@@ -2885,6 +2885,11 @@ public sealed class Binder {
         }
         break;
 
+      case DeferredSourceStmt deferred:
+        this.Warn(deferred.Position,
+          $"deferred {this._dialect.DisplayName()} source was not syntax-checked: {deferred.Text}");
+        break;
+
       // declarations already handled in pass 1 (module) or harmless here; labels collected upfront
       case LabelStmt or DataStmt or MetaStmt or EquateStmt or DefTypeStmt
         or ExitStmt or ReturnStmt or ResumeStmt or OnErrorStmt or EndStmt or RestoreStmt or EventControlStmt:

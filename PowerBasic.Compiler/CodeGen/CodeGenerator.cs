@@ -1901,6 +1901,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         this.EmitInlineAsm(ia);
         break;
 
+      case DeferredSourceStmt deferred:
+        this.Unsupported(deferred.Position,
+          $"deferred {model.Dialect.DisplayName()} source whose path is not provably unreachable: {deferred.Text}");
+        break;
+
       case MetaStmt meta:
         this.ApplyMeta(meta);
         break;
@@ -2703,7 +2708,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // SSA propagation - selects one arm at compile time and the dead arm is not
     // emitted at all (whole-branch dead-code elimination). Cascades through the
     // ELSEIF chain until a non-constant condition appears.
-    if (this.Optimize && this.FoldConditionWithProven(i.Condition) is { } c) {
+    var mustResolveDeferredInterpreterText = model.Dialect.IsGwBasica() && ContainsDeferredSource(i);
+    if ((this.Optimize || mustResolveDeferredInterpreterText) && this.FoldConditionWithProven(i.Condition) is { } c) {
       if (c != 0) {
         foreach (var s in i.Then)
           this.EmitStatement(s);
@@ -2772,6 +2778,17 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     asm.MarkLabel(endLabel);
   }
+
+  private static bool ContainsDeferredSource(IfStmt statement) =>
+    statement.Then.Any(ContainsDeferredSource)
+    || statement.ElseIfs.Any(e => e.Body.Any(ContainsDeferredSource))
+    || statement.Else?.Any(ContainsDeferredSource) == true;
+
+  private static bool ContainsDeferredSource(Statement statement) => statement switch {
+    DeferredSourceStmt => true,
+    IfStmt nested => ContainsDeferredSource(nested),
+    _ => false,
+  };
 
   /// <summary>
   /// O0067: recognizes an IF/ELSEIF (+ optional ELSE) chain that is nothing but equality tests of a

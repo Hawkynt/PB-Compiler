@@ -1372,6 +1372,29 @@ public sealed class IrLowering {
   }
 
   private void LowerIf(IfStmt stmt) {
+    // BASICA/GW-BASIC can retain text whose syntax is checked only if execution reaches it. This is
+    // a correctness fold, not an optimization: eliminate a constant arm before lowering so a dead
+    // DeferredSourceStmt never forces the IR/x86-16 route to decline. If any tested condition is not
+    // constant, ordinary lowering reaches the deferred node and safely declines.
+    if (ContainsDeferredSource(stmt) && this._folder.TryFold(stmt.Condition) is { Integer: { } c }) {
+      if (c != 0) {
+        this.LowerStatements(stmt.Then);
+        return;
+      }
+      if (stmt.ElseIfs.Count > 0) {
+        var (firstCondition, firstBody) = stmt.ElseIfs[0];
+        this.LowerIf(stmt with {
+          Condition = firstCondition,
+          Then = firstBody,
+          ElseIfs = stmt.ElseIfs.Skip(1).ToList(),
+        });
+        return;
+      }
+      if (stmt.Else is { } selectedElse)
+        this.LowerStatements(selectedElse);
+      return;
+    }
+
     var endif = this.NewBlock("if.end");
     var clauses = new List<(Expression Cond, IReadOnlyList<Statement> Body)> { (stmt.Condition, stmt.Then) };
     clauses.AddRange(stmt.ElseIfs);
@@ -1393,6 +1416,17 @@ public sealed class IrLowering {
       this._b.Br(endif);
     this._b.Position(endif);
   }
+
+  private static bool ContainsDeferredSource(IfStmt statement) =>
+    statement.Then.Any(ContainsDeferredSource)
+    || statement.ElseIfs.Any(e => e.Body.Any(ContainsDeferredSource))
+    || statement.Else?.Any(ContainsDeferredSource) == true;
+
+  private static bool ContainsDeferredSource(Statement statement) => statement switch {
+    DeferredSourceStmt => true,
+    IfStmt nested => ContainsDeferredSource(nested),
+    _ => false,
+  };
 
   private void LowerFor(ForStmt f) {
     var symbol = this.SymbolOf(f.Variable);

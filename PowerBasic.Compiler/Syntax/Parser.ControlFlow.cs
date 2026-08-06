@@ -22,6 +22,7 @@ public sealed partial class Parser {
     if (this.Current.Kind is not (TokenKind.EndOfLine or TokenKind.EndOfFile))
       return WrapBindings(bindings, this.ParseSingleLineIf(pos, condition));
 
+    this.Require(LanguageFeature.BlockIf);
     var then = this.ParseBody("ELSEIF", "ELSE", "END IF");
     var elseIfs = new List<(Expression Condition, IReadOnlyList<Statement> Body)>();
     while (this.TryMatchKeyword("ELSEIF")) {
@@ -62,14 +63,54 @@ public sealed partial class Parser {
         continue;
       }
 
-      if (this.ParseStatement() is var parsed && parsed is StatementGroup group)   // hoisted IS bindings splice inline
+      if (this.ParseInlineStatement() is var parsed && parsed is StatementGroup group)   // hoisted IS bindings splice inline
         result.AddRange(group.Statements);
       else
         result.Add(parsed);
     }
   }
 
+  /// <summary>
+  /// BASICA/GW-BASIC store a line without necessarily validating every statement on it. If an
+  /// inline branch contains text this compiler cannot parse, preserve that text as a deferred node.
+  /// Code generation may discard it only after proving the branch unreachable; otherwise it emits
+  /// a hard diagnostic instead of silently inventing semantics.
+  /// </summary>
+  private Statement ParseInlineStatement() {
+    if (!this._dialect.IsGwBasica())
+      return this.ParseStatement();
+
+    var start = this._pos;
+    var position = this.Current.Position;
+    var atLineStart = this._atLineStart;
+    var pendingNexts = this._pendingNexts;
+    var patternBindingCount = this._patternBindings.Count;
+    var withSubjectCount = this._withSubjects.Count;
+    try {
+      return this.ParseStatement();
+    } catch (ParserException) {
+      this._pos = start;
+      this._atLineStart = atLineStart;
+      this._pendingNexts = pendingNexts;
+      if (this._patternBindings.Count > patternBindingCount)
+        this._patternBindings.RemoveRange(patternBindingCount, this._patternBindings.Count - patternBindingCount);
+      if (this._withSubjects.Count > withSubjectCount)
+        this._withSubjects.RemoveRange(withSubjectCount, this._withSubjects.Count - withSubjectCount);
+
+      var text = new System.Text.StringBuilder();
+      while (!this.IsStatementEnd()) {
+        if (text.Length > 0)
+          text.Append(' ');
+        text.Append(this.Advance().Text);
+      }
+      if (text.Length == 0)
+        throw;
+      return new DeferredSourceStmt(position, text.ToString());
+    }
+  }
+
   private Statement ParseSelect() {
+    this.Require(LanguageFeature.SelectCase);
     var pos = this.Advance().Position;
     this.ExpectKeyword("CASE");
     var subject = this.ParseExpression();
@@ -226,6 +267,7 @@ public sealed partial class Parser {
   }
 
   private Statement ParseDo() {
+    this.Require(LanguageFeature.DoLoop);
     var pos = this.Advance().Position;
     var (preTest, preCondition) = this.ParseLoopTest();
     var body = this.ParseBody("LOOP");
@@ -251,6 +293,7 @@ public sealed partial class Parser {
   }
 
   private Statement ParseExit() {
+    this.Require(LanguageFeature.ExitStatement);
     var pos = this.Advance().Position;
     var token = this.Expect(TokenKind.Identifier, "EXIT kind");
 
