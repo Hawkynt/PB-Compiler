@@ -28,6 +28,18 @@ never read past. Widening is sound **only for equality**: `CMPSW` compares littl
 which string sorts first (`"ba"` is 0x6162 and `"ab"` is 0x6261, ordering them backwards).
 The ordering forms therefore keep `CMPSB`.
 
+**How much the widening actually saves depends on the bus, and neither half of that
+is controlled here.** `REPE CMPSB` reads two bytes per iteration; `REPE CMPSW` reads
+two words over half as many iterations. On an **8088** a word is two bus cycles, so
+the traffic is identical (2n either way) and only the REP loop overhead is saved. On
+a true 16-bit **8086** with word-aligned operands the traffic halves — but a string
+at an odd address costs four extra clocks per access, which spends the gain. PB's
+string heap does not align its allocations, so both cases occur.
+
+The widening is never worse in instruction count and is a real win on aligned 16-bit
+accesses; "half the REPE iterations" is the honest description, "twice as fast" is
+not. Measured claims about it want a specific machine and a known alignment.
+
 `rt_strcmpeq` is referenced only by the optimized emitter, so the faithful build keeps the
 full three-way compare for every comparison it makes (golden gate 250/250). Note it is not
 *absent* from that image, though: dead-code trimming is a Tier 3 pass that runs under
@@ -88,9 +100,24 @@ ordering `<` keeps the min computation.
   region must pop exactly once: the three exits are `prefixPop`, `diffPop`, and the
   `JCXZ` that never entered.
 
-  Worth measuring before building. Ordering compares are rarer than equality, and
-  the mismatch path pays two extra `CMPSB`s and two `SUB`s to buy half the REPE
-  iterations over the matching prefix.
+  Worth measuring before building, and here is the number to measure against: the
+  mismatch disambiguation costs about 52 cycles on an 8086, which buys back roughly
+  22 per byte-PAIR saved, so it **breaks even at about six bytes of common prefix**
+  and is a loss below that.
+
+  | common prefix | `CMPSB` | widened | |
+  |---|---|---|---|
+  | 2 | 44 | 78 | loss |
+  | 4 | 88 | 104 | loss |
+  | 6 | 132 | 130 | break-even |
+  | 10 | 220 | 182 | win |
+  | 20 | 440 | 312 | win |
+  | 40 | 880 | 572 | win |
+
+  Equal strings never pay the penalty (there is no mismatch), so they always win;
+  ordering comparisons that differ early do not. Whether that is a net gain depends
+  on how far real comparisons agree before diverging, which is a profiling question
+  about actual programs, not one this page can settle.
 - `CMPSD` for the equal-length case on a 386 target, halving the iterations again
   behind the `$CPU` gate.
 
