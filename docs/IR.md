@@ -4,12 +4,18 @@
 and optimization middle-end. It exists to take the compiler **beyond 16-bit
 DOS**: bound PowerBASIC is lowered into a target-independent IR, optimized hard,
 and then either emitted as textual LLVM (handed to LLVM's back end for
-x86-64/ARM/…) or — in future — lowered by a native IR back end.
+x86-64/ARM/…) or lowered by the in-house native x86-16 back end.
 
 It is a **parallel path**. The direct bound-AST → x86-16 emitter
-(`CodeGen/CodeGenerator*.cs`) and its byte-for-byte fidelity to the genuine
-PBC/QB/TB/PDS compilers is untouched; the differential harness stays green by
-construction. Nothing in the production pipeline depends on this IR yet.
+(`CodeGen/CodeGenerator*.cs`) remains the fallback fidelity path; the IR's native
+x86-16 back end can own eligible functions or the whole main body behind
+`--x-backend`, with executed differential tests against the direct emitter.
+
+`IrModule` retains both the source dialect and the effective runtime dialect (the
+latter may come from `$COMPAT`). This is part of the IR contract: optimization
+passes preserve it, the x86-16 back end reaches the dialect-configured DOS runtime,
+and the BASIC back end emits `$COMPAT` when its pb35 target spelling would otherwise
+lose formatting, rounding, file-close or other runtime semantics.
 
 ## Type system
 

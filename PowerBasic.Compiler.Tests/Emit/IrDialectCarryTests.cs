@@ -32,6 +32,53 @@ public sealed class IrDialectCarryTests {
     40 END
     """;
 
+  private static readonly Dialect[] _allDialects = Enum.GetValues<Dialect>();
+
+  /// <summary>
+  /// Given any advertised dialect, when its program enters the middle end, then the module retains
+  /// the runtime contract a detached back end needs instead of flattening everything to pb35.
+  /// </summary>
+  [TestCaseSource(nameof(_allDialects))]
+  public void Lower_GivenAnyAdvertisedDialect_ThenTheModuleCarriesIt(Dialect dialect) {
+    var module = Lower("10 A% = 42\n20 PRINT A%\n30 END\n", dialect);
+
+    Assert.That(module.Dialect, Is.EqualTo(dialect));
+    Assert.That(module.EffectiveDialect, Is.EqualTo(dialect));
+  }
+
+  /// <summary>A $COMPAT source keeps the compile dialect and runtime dialect as separate facts.</summary>
+  [Test]
+  public void Lower_GivenACompatDirective_ThenTheModuleCarriesTheEffectiveDialect() {
+    var module = Lower("$COMPAT qb45\nA% = 42\nPRINT A%\nEND\n", Dialect.Pb35);
+
+    Assert.That(module.Dialect, Is.EqualTo(Dialect.Pb35));
+    Assert.That(module.EffectiveDialect, Is.EqualTo(Dialect.Qb45));
+  }
+
+  /// <summary>
+  /// Given a non-pb35 module, when it is rendered back to BASIC, then the recompile retains the
+  /// source runtime rules through $COMPAT (including formatting and the QB1-3 close marker).
+  /// </summary>
+  [Test]
+  public void Write_GivenAQuickBasicModule_ThenTheRoundTripKeepsItsRuntimeDialect() {
+    var rendered = IrBasicWriter.Write(Lower("10 A% = 42\n20 PRINT A%\n30 END\n", Dialect.Qb10));
+    var rebound = Binder.Bind(
+      Parser.Parse(Lexer.Tokenize(rendered, "RT.BAS", Dialect.Pb35), "RT.BAS", Dialect.Pb35),
+      Dialect.Pb35);
+
+    Assert.That(rendered, Does.StartWith("$COMPAT qb10"));
+    Assert.That(rebound.Errors, Is.Empty, "rendered: " + rendered);
+    Assert.That(rebound.EffectiveDialect, Is.EqualTo(Dialect.Qb10));
+  }
+
+  /// <summary>pb35 is the target spelling already, so its IR round-trip needs no compatibility shim.</summary>
+  [Test]
+  public void Write_GivenAPb35Module_ThenItDoesNotAddACompatDirective() {
+    var rendered = IrBasicWriter.Write(Lower("A% = 42\nPRINT A%\nEND\n", Dialect.Pb35));
+
+    Assert.That(rendered, Does.Not.Contain("$COMPAT"));
+  }
+
   /// <summary>
   /// A GW-BASIC SINGLE is Microsoft Binary Format, and the IR says so. It used to refuse the program
   /// outright, which lost every BASICA and GW-BASIC program that declared a float.

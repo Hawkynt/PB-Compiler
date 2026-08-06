@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Syntax;
 
 namespace PowerBasic.Compiler.Emit;
 
@@ -89,6 +90,13 @@ public sealed class IrBasicWriter {
   private void Line(string text = "") => this._out.Append(text).Append('\n');
 
   private void Module(IrModule module) {
+    // The IR carries semantic choices, not just calculations. A pb35 recompile must use the source
+    // dialect's runtime formatting, rounding, random-file and close semantics; $COMPAT is the
+    // target language's lossless spelling for that requirement.
+    if (module.EffectiveDialect != Dialect.Pb35) {
+      this.Line($"$COMPAT {module.EffectiveDialect.CanonicalName()}");
+      this.Line();
+    }
     foreach (var global in module.Globals)
       this.Global(global);
     // the module body has to come first: in BASIC the executable statements ARE the program, and a

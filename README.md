@@ -818,6 +818,7 @@ pbc --dialect pb36 HELLO.BAS  # pb36 syntax features (optimizer on by default)
 pbc --dialect qb45 OLD.BAS    # compile a QuickBASIC 4.5 source
 pbc --optimize OLD.BAS        # run the optimizer for any dialect
 pbc --no-optimize APP.BAS     # disable the optimizer (faithful codegen)
+pbc --x-backend FAST.BAS      # opt into the IR -> native x86-16 backend
 pbc -G386 TEST.BAS            # allow 80386 instructions ($CPU 80386)
 pbc UNIT.BAS                  # $COMPILE UNIT inside -> UNIT.PBU
 pbc MAIN.BAS                  # $LINK "UNIT.PBU" / "MY.PBL" inside -> linked EXE

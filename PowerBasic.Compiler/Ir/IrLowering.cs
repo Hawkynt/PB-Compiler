@@ -98,7 +98,7 @@ public sealed class IrLowering {
   /// </summary>
   public static IrModule? TryLowerModule(SemanticModel model, out string? declinedBecause) {
     declinedBecause = null;
-    var module = new IrModule(model.FileName);
+    var module = new IrModule(model.FileName, model.Dialect, model.CompatDialect);
     var procMap = new Dictionary<ProcedureSymbol, IrFunction>(ReferenceEqualityComparer.Instance);
 
     foreach (var proc in model.Procedures.Values)
@@ -2342,6 +2342,10 @@ public sealed class IrLowering {
       // executes the statement list, so a directive applied DURING emission would be silently lost -
       // this one is not, which is why it is safe to ignore here
       case "STRING":
+      // $COMPAT selects observable runtime semantics. TryLowerModule copied both the source and
+      // effective dialect onto IrModule before lowering any statement, so the directive itself has
+      // no instruction to emit and every detached back end can still make the dialect-aware choice.
+      case "COMPAT":
         return;
       // $ERROR BOUNDS ON: every subscript is checked against its dimension and Error 9 raised when it
       // falls outside - the same guard CodeGenerator.Arrays emits when CheckBounds is set

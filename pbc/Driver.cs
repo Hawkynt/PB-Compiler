@@ -31,6 +31,7 @@ public static class Driver {
     var checkOverflow = false;
     var checkStack = false;
     var optimizeSpeed = false;
+    bool? useExperimentalBackend = null;
     bool? optimize = null; // null = dialect default (on for pb36); --optimize/--no-optimize override
 
     for (var i = 0; i < args.Length; ++i)
@@ -74,6 +75,12 @@ public static class Driver {
           break;
         case "--no-optimize":
           optimize = false; // the pb35-faithful escape hatch, even for pb36
+          break;
+        case "--x-backend":
+          useExperimentalBackend = true;
+          break;
+        case "--no-x-backend":
+          useExperimentalBackend = false;
           break;
         case "--dump-tokens" or "--dump-ast" or "--dump-bind" or "--emit-llvm" or "--emit-c" or "--emit-obj" or "--emit-basic":
           dumpStage = args[i];
@@ -206,6 +213,8 @@ public static class Driver {
       };
       if (optimize is { } opt)        // --optimize / --no-optimize override the dialect default
         generator.Optimize = opt;
+      if (useExperimentalBackend is { } useBackend)
+        generator.UseExperimentalBackend = useBackend;
 
       if (dumpStage == "--emit-obj") {
         // emit the program's procedures as a linkable Intel OMF object, so C/asm/foreign
@@ -413,6 +422,8 @@ public static class Driver {
     w.WriteLine("  --emit-basic   un-parse the bound (optimized) tree back to readable PowerBASIC");
     w.WriteLine("  --emit-llvm    optimize through the IR middle end and emit textual LLVM");
     w.WriteLine("  --emit-c       optimize through the IR middle end and emit portable C99");
+    w.WriteLine("  --x-backend    compile eligible code through the IR and native x86-16 back end");
+    w.WriteLine("  --no-x-backend disable it even when PBC_X_BACKEND is set");
     w.WriteLine("  --list         write a human-readable .LST map of the compiled image");
     w.WriteLine("  -h, --help     show this help");
   }
