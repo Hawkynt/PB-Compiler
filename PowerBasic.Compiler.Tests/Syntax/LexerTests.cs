@@ -212,6 +212,26 @@ public sealed class LexerTests {
     Assert.That(t[0].StringValue, Is.EqualTo("don't"));
   }
 
+  [TestCase("REM $STATIC", "STATIC", "")]
+  [TestCase("' $DYNAMIC", "DYNAMIC", "")]
+  [TestCase("REM $INCLUDE: 'PART.BI'", "INCLUDE", ": 'PART.BI'")]
+  [TestCase("'$INCLUDE: 'PART.BI'", "INCLUDE", ": 'PART.BI'")]
+  public void Tokenize_GivenMicrosoftCommentMeta_WhenQbOrPds_ThenDirectiveIsNotDiscarded(
+    string source, string command, string tail) {
+    var tokens = Lexer.Tokenize(source, "TEST.BAS", Dialect.Pds71).ToArray();
+    Assert.That(tokens[0].Kind, Is.EqualTo(TokenKind.MicrosoftMetaCommand));
+    Assert.That(tokens[0].Text, Is.EqualTo(command));
+    Assert.That(tokens[0].StringValue, Is.EqualTo(tail));
+  }
+
+  [TestCase(Dialect.Pb35)]
+  [TestCase(Dialect.Basica)]
+  [TestCase(Dialect.Gw)]
+  public void Tokenize_GivenMicrosoftCommentMeta_WhenDialectDoesNotProvideIt_ThenItRemainsAComment(Dialect dialect) {
+    var tokens = Lexer.Tokenize("REM $STATIC", "TEST.BAS", dialect).ToArray();
+    Assert.That(tokens.Select(token => token.Kind), Is.EqualTo(new[] { TokenKind.EndOfFile }));
+  }
+
   #endregion
 
   #region operators and punctuation

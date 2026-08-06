@@ -73,6 +73,17 @@ public sealed class Preprocessor {
               yield return t;
             break;
 
+          case TokenKind.MicrosoftMetaCommand when token.Text == "INCLUDE":
+            foreach (var t in this.FlushLine(pending))
+              yield return t;
+            if (!Parser.TryParseMicrosoftInclude(token.StringValue ?? "", out var microsoftInclude))
+              throw new PreprocessorException("REM $INCLUDE requires : 'file-name'", token.Position);
+            var microsoftName = new Token(TokenKind.StringLiteral, microsoftInclude, token.Position,
+              StringValue: microsoftInclude);
+            foreach (var t in this.ExpandInclude(microsoftName))
+              yield return t;
+            break;
+
           case TokenKind.MetaCommand when token.Text is "IF" or "ELSEIF" or "ELSE" or "ENDIF":
             foreach (var t in this.FlushLine(pending))
               yield return t;
