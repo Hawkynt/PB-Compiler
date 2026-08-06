@@ -73,11 +73,12 @@ threshold). Gated on `$OPTIMIZE SPEED` (the tree's extra `JL`/`JG` branches can 
 larger than the chain) so non-optimized output is byte-identical to genuine
 (golden gate 250/250).
 
-## Still planned
+The same widening and the same guard serve [O0099](O0099-bit-test-dispatch.md);
+[O0100](O0100-perfect-hash-dispatch.md)'s hash is the one still refusing a
+non-INTEGER subject.
+- The same arm emission and default routing [O0029](O0029-select-jump-table.md)
+  already uses, so the arms themselves are untouched.
 
-- A **cluster analysis**: dense sub-ranges should still become jump tables and
-  only the sparse remainder a tree, so the two lowerings compose (a tree whose
-  leaves are small tables).
 A `LONG`/`DWORD` subject now dispatches through the tree. Every tree point must
 fit an int16 to survive the fold, and the tree compares `AX`, so a 32-bit subject
 is first proven to BE its own int16 low half: `CWD` against the real high word
@@ -86,8 +87,8 @@ failing it cannot equal any point and goes straight to the default path. Without
 the check the tree compares a truncated low word — 0001_0064h reads as 100 — and
 takes an arm the program never selected.
 
-The same widening and the same guard serve [O0099](O0099-bit-test-dispatch.md);
-[O0100](O0100-perfect-hash-dispatch.md)'s hash is the one still refusing a
-non-INTEGER subject.
-- The same arm emission and default routing [O0029](O0029-select-jump-table.md)
-  already uses, so the arms themselves are untouched.
+## Still planned
+
+- A **cluster analysis**: dense sub-ranges should still become jump tables and
+  only the sparse remainder a tree, so the two lowerings compose (a tree whose
+  leaves are small tables).

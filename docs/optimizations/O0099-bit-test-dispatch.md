@@ -84,8 +84,6 @@ nested in an `AND`) identical to `$OPTIMIZE OFF`, plus regression tests pinning 
 `MOV AX, 4081h` / `SHR AX, CL` shape for both spellings (and its decline below
 three values, and for a mixed-variable chain). Golden gate 250/250.
 
-## Still planned
-
 A `LONG`/`DWORD` subject now reaches the mask. The values still have to fit an
 int16 — that is what makes a narrow window — and the mask is indexed by the
 subject's LOW WORD, so the wide subject is first proven to BE its own low word:
@@ -99,5 +97,9 @@ Note the per-arm mask is the LAST strategy tried — the whole-select jump table
 perfect hash and decision tree each get first refusal, and a dense little span
 like `1, 3, 5, 9` is exactly what the jump table takes. A test meaning to exercise
 this path needs an arm those decline (a `CASE IS >` comparison will do it).
+
+## Still planned
+
 - A cost-model call against the jump table where both apply (the mask needs no
   table bytes, so it wins on a size-constrained target even where a table fits).
+
