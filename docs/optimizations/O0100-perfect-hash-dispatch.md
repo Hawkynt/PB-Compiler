@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial (the low-bit `AND`-mask perfect hash is emitted; the multiply/shift and modulus families in the hash search are not) |
+| **Status** | 🟡 Partial (the low-bit `AND`-mask perfect hash is emitted, for `INTEGER` and `LONG`/`DWORD` subjects; the multiply/shift and modulus families in the hash search are not) |
 | **Stage** | Emitter |
 | **Related** | [O0029](O0029-select-jump-table.md), [O0098](O0098-balanced-decision-tree.md), [O0099](O0099-bit-test-dispatch.md) |
 
@@ -71,5 +71,17 @@ pinning the `AND AX, 7` masked-table shape. Golden gate 250/250.
 - The rest of the **hash search**: multiply-shift (`(k * a) >> s`) and modulus
   (`k MOD p`) families for value sets whose low bits collide at every width — the
   current search is the `AND`-mask family only.
-- `LONG` subjects, and a cost-model decision against the tree and the table where
-  more than one applies ([O0174](O0174-target-cost-models.md)).
+- A cost-model decision against the tree and the table where more than one applies.
+
+A `LONG`/`DWORD` subject now hashes through the same 16-bit table — every key
+must fit an int16 to survive the fold, so the table serves both. The subject is
+first proven to BE its own int16 low half (`CWD` against the real high word,
+parked in `BX`, which is free until the slot index is computed).
+
+Here that guard buys **correctness**, not merely a skipped table read, and it is
+worth being explicit about why. The slot verify compares the subject against the
+key stored at its slot — but it compares the TRUNCATED low word. So 0001_03E8h
+hashes to 1000's slot, matches the key 1000 sitting there, and takes that arm.
+The verify cannot reject what it never sees; only checking the high word first
+does. The tree ([O0098](O0098-balanced-decision-tree.md)) and the per-arm mask
+([O0099](O0099-bit-test-dispatch.md)) use the same guard for the same reason.

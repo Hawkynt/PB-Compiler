@@ -3636,8 +3636,13 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// $OPTIMIZE SPEED. Declines when no mask within 8 bits separates the values.
   /// </summary>
   private bool TryEmitSelectPerfectHash(SelectStmt s) {
-    if (KindOf(model.TypeOf(s.Subject)) != ValueKind.Int16)
+    // As for the tree: a 32-bit subject hashes through the same 16-bit table, because every key must
+    // fit an int16 to survive the fold below. The low word alone is not the value, so it is proven to
+    // be one first (see the guard with the subject load).
+    var subjectKind = KindOf(model.TypeOf(s.Subject));
+    if (subjectKind is not (ValueKind.Int16 or ValueKind.Int32))
       return false;
+    var wideSubject = subjectKind == ValueKind.Int32;
     var byValue = new Dictionary<int, int>();     // case value -> first matching arm
     int? elseArm = null;
     for (var i = 0; i < s.Arms.Count; ++i) {
@@ -3687,7 +3692,18 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     this._exitSelect.Push(end);
     this.EmitExpression(s.Subject);
-    this.Coerce(model.TypeOf(s.Subject), PbType.Integer, s.Subject);   // subject -> AX
+    if (wideSubject) {
+      // DX:AX holds the subject. Park the real high word in BX (free until the index is computed
+      // below), replace DX with the sign-extension of the low word and compare: equal means the
+      // 32-bit value IS its int16 low half and may be hashed. Unequal means it cannot be any key -
+      // the verify below would reject it anyway, but only after a table read, and a truncated value
+      // could collide with a real key's slot.
+      asm.Mov(Reg.BX, Reg.DX);
+      asm.Cwd();
+      asm.Cmp(Reg.DX, Reg.BX);
+      asm.Jne(defaultLabel);
+    } else
+      this.Coerce(model.TypeOf(s.Subject), PbType.Integer, s.Subject);   // subject -> AX
     // SELECT dispatch must preserve SI/DI (a resident FOR counter / accumulator); it may use AX, BX,
     // CX, DX - so the index lives in BX (as the jump table does) and the original in CX for the verify.
     asm.Mov(Reg.CX, Reg.AX);                      // CX keeps the original value for the verify
