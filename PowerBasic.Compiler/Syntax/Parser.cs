@@ -501,6 +501,7 @@ public sealed partial class Parser {
       var file = this.Expect(TokenKind.StringLiteral, "resource file name");
       return new ResourceStmt(token.Position, name.Text, file.StringValue!);
     }
+    this.Require(LanguageFeature.MetaStatements);
     var arguments = new List<Token>();
     while (this.Current.Kind is not (TokenKind.EndOfLine or TokenKind.EndOfFile))
       arguments.Add(this.Advance());
