@@ -46,6 +46,26 @@ doc opens with:
 - `MacroFusionMatters` — true from the Pentium, false earlier. Backs O0109.
 - `Mul16Cycles`/`Div16Cycles`/`ShiftAddCycles` — the latencies that price the
   multiply/divide-decomposition rewrites (O0078/O0056) per tier.
+
+**Measured 2026-08-06: 3 of the 14 query members have a call site.** `AlignHotLoops`,
+`MaxFullUnrollTrips` and `PreferShiftAddMultiply` are consumed; `NoBranchPredictor`,
+`BranchMispredictPenalty`, `PrefetchBound`, `Mul16Cycles`, `Div16Cycles`,
+`ShiftAddCycles`, `SubRegisterPackingProfitable`, `MacroFusionMatters`,
+`PreferLoopInstruction`, `PreferBranchless` and `UnrollFactor` have none.
+
+Read the "backs O00xx" lines above as *what each answer is for*, not as wiring that
+exists — the passes they name (O0058's sub-register packing, O0109's fusion
+placement, the branchless halves of O0094/O0108/O0248, the partial-unroll factor of
+O0129) are themselves unbuilt, which is why nothing calls in yet. The model is not
+the blocker it is sometimes taken for: it is built, tested (`TargetCostTests`) and
+ready, and each of those passes brings its own consumer when it lands.
+
+One member is deliberately not consulted where it might look like it should be. The
+branchless ABS that ships (`TryEmitBranchlessAbsIf`, O0249) does not ask
+`PreferBranchless`, and should not: that predicate prices general if-conversion,
+where running both arms buys you a mispredict you might not have paid, whereas
+`cwd; xor ax,dx; sub ax,dx` is shorter *and* faster than the compare-and-branch it
+replaces on every tier. An idiom that wins everywhere needs no cost question.
 - `PreferLoopInstruction` — avoids the microcoded `LOOP` from the 486 up unless
   size-bound.
 - `UnrollFactor(trip, bodyBytes)` — scales with the tier, clamps to the fetch
