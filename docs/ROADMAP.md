@@ -166,10 +166,10 @@ battery, it currently reaches:
 
 | | |
 |---|---|
-| programs reaching the IR at all | 132 / 162 |
-| functions selected | 133 / 218 |
-| functions routed (selected **and** allocated) | 90 / 218 |
-| whole module bodies the back end can own | 37 / 132 |
+| programs reaching the IR at all | 135 / 162 |
+| functions selected | 192 / 233 |
+| functions routed (selected **and** allocated) | 192 / 233 |
+| whole module bodies the back end can own | 102 / 135 |
 
 ### Inline assembly
 
@@ -210,21 +210,61 @@ selected and never allocated.
 
 The `LEA` is still emitted and is now dead for scalars, which is worth cleaning up but costs only size.
 
-### Float comparison as a value - written, reverted, and what it found
+### Float comparison as a value - implemented, and the precision gap it exposed is closed
 
 `FLD lhs; FLD rhs; FXCH; FCOMPP; FSTSW AX; SAHF` then the usual -1/0 diamond, with the UNSIGNED
 conditions because SAHF puts C3 in the ZF and C0 in the CF and the x87 never sets the sign flag. It is
-implemented and it works.
+now in the machine IR. `FSTSW AX` explicitly clobbers AX, `SAHF` explicitly reads it and writes the
+flags, and both `FCOMPP` and the status transfer are x87 operations for scheduling purposes. All six
+ordered predicates materialize BASIC truth as `-1` or `0` and survive scheduling and allocation.
+This is the direct emitter's status-bit mapping. Comparisons involving a raw NaN reconstructed from
+binary data still need a vintage-compiler oracle before either path can claim dialect-exact behavior.
 
-It is not in the tree, because it routes sixteen more corpus compilations and fourteen of them
-disagree - and not on the comparison. `DIFF02` prints `1.20000000447035` where the direct emitter
-prints `1.20000004023314`: a float VALUE differing in its low digits, which a comparison cannot
-produce. The compare is a key that opens a door onto the float-precision gap in a larger set of
-programs.
+The first implementation exposed fourteen differential disagreements. They were not an x87 temporary-
+width problem: `DIFF02` printed `1.20000000447035` where the direct emitter printed
+`1.20000004023314` because constant-step lowering built a DOUBLE IR constant directly from the host
+`double` returned by `ConstantFolder`. That bypassed the source rule that an unsuffixed `0.3` is first
+a SINGLE. Float literals now quantize at that source boundary, and a constant FOR step goes through
+the same `LowerExpr` plus coercion path as a runtime step. Ten more programs participated in both
+optimization modes at that milestone: 228 participating, 222 agreeing, 6 outside the executor's
+opcode set, and 0 disagreeing.
 
-That gap is the same one behind the five known IR-to-BASIC writer gaps (`pb36/DIFF35`, `qb40`, `qb45`,
-`pds70`, `pds71` DIFF02): a SINGLE value and the width it is carried at. Settling it is the
-prerequisite, and it is worth roughly seven selection declines plus whatever the writer gaps are worth.
+### Signed 32-bit division and remainder - implemented through the DOS runtime
+
+The IR's `SDiv` and `SRem` pair values now use the same ABI as the direct emitter: dividend in
+`DX:AX`, divisor in `CX:BX`, and the selected result in `DX:AX`, calling `rt_ldiv` or `rt_lmod`.
+The helpers handle runtime divisors, sign the remainder like the dividend, preserve the established
+`MINLONG \ -1` result, and raise PowerBASIC Error 11 through `rt_raise` for zero. The four pinned
+argument moves and the call declare their physical clobbers, so scheduling cannot split the sequence
+and the allocator spills around it.
+
+This removed all five `SDiv on i32` and the one `SRem on i32` census entries. Selection/routing moved
+from 200 to 205 functions and whole-module ownership from 110 to 113 programs. The broader corpus
+differential now reports 234 participating, 228 agreeing, 6 outside the executor's opcode set, and 0
+disagreeing. `DIFF32` reaches the next honest blocker, an `i64`-to-`u32` truncation, instead of being
+counted as complete merely because division selects.
+
+### SINGLE/DOUBLE procedure ABI - routed through declared-width stack cells
+
+IEEE `SINGLE` and `DOUBLE` BYVAL parameters and function results now use the direct emitter's
+BASIC/PASCAL ABI end to end. A callee loads each incoming parameter straight from its caller-owned
+four- or eight-byte stack cell. A caller first stores the x87-width intermediate into a temporary of
+the parameter's declared width - the required IEEE rounding and encoding boundary - then pushes its
+words high to low. A real function returns on `ST(0)`; its caller immediately parks the result in the
+ten-byte cell used for float SSA temporaries, restoring the selector's empty-x87-stack invariant.
+
+The scheduler now knows that a `PUSH` from a stack/data/parameter cell reads memory, so it cannot move
+one of those pushes above the `FSTP` that creates the staged argument. Focused selection tests pin the
+widths and word order; an executed two-argument `DOUBLE`/`SINGLE` function plus a `SINGLE` precision
+boundary agrees with the direct emitter.
+
+This removes both `FNDouble returns f32` call declines, the `Half returns f32` decline, and the
+remaining `f32 parameter has no frame cell` decline. Selection/routing is now 209 of 233 functions and
+whole-module ownership is 116 of 135 lowered programs, with zero allocation declines. The corpus
+differential remains 234 participating, 228 agreeing, 6 outside the executor's opcode set, and 0
+disagreeing: those programs already counted as participating because another procedure routed; the
+new result is that their complete module bodies are now owned. `EXT`, MBF, BYREF reals, and foreign
+register conventions remain separate ABI work.
 
 ### Wider integers and SIMD as IR operations - not started
 
@@ -235,9 +275,10 @@ them - a loop on an 8086, register pairs on a 386, one instruction on an MMX or 
 the front end knowing which. That is the difference between one emitter per target and one emitter
 with a target parameter.
 
-Ordering note: the existing back end is x86-**16** and still declines 32-bit compares and division
-(`compare as a value: 32-bit Slt`, `SDiv on i32 (16-bit only)` are live census entries), so widening
-the integer tier and parameterizing the selector comes before vectors.
+Ordering note: the existing back end is x86-**16** and now implements signed 32-bit arithmetic with
+word pairs and runtime helpers, but unsigned divide/remainder and general 64-bit values still lack a
+machine representation. Widening that integer tier and parameterizing the selector comes before
+vectors.
 
 ### Porting the optimization catalogue to the IR — the real denominator
 
@@ -354,9 +395,10 @@ Ranked by the census, what stands between that and full coverage:
 2. A tail of statements: `ArraySortStmt`, `PUT$`, `DIM AT`, `ERASE` of a static array, `HEX$` with a
    digit count, `PRINT USING` / `LPRINT`, `CODEPTR32`, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
    metastatements.
-3. **42 functions that select but fail allocation** - each needs a memory operand in a position the
-   emitter has no form for; `Spiller` names the position it could not move.
-4. The largest selection declines are runtime routines with no entry in the ABI table, a 32-bit
+3. **Register allocation no longer loses selected functions:** all 192 selected functions route.
+   Direct memory spills, address rematerialization, multi-definition/RMW live-range splitting and
+   per-use argument reloads cover every allocation shape currently present in the corpus.
+4. The largest remaining selection declines are runtime routines with no entry in the ABI table, a 32-bit
    compare used as a value, and a float phi with no frame cell. The table grows one routine at a time
    and only after its emitter has been read - see [X86-BACKEND.md](X86-BACKEND.md). Several of the
    remaining ones need the bridge to grow first, not just an entry: `rt_str_val` answers on `ST(0)`
@@ -378,25 +420,23 @@ emitted MZ image (loader, relocations, the single-segment model the runtime docu
 images, and compares the captured output. It needs no DOSBox and no vintage toolchain.
 
 The rule that makes it worth trusting is that it **fails loudly**: an unimplemented opcode, an
-unhandled DOS call or a runaway program throws, and the test is skipped rather than passed. x87
-arithmetic is deliberately not interpreted - only the control instructions the entry stub runs - since
-an approximate 80-bit stack would let a float test pass while disagreeing with the hardware, which is
-the one outcome an execution oracle must never produce.
+unhandled DOS call or a runaway program throws, and the test is skipped rather than passed. Its x87
+model keeps integral values exact through `FILD`, integral arithmetic, comparison and `FISTP`; this is
+required because the real extended format has a 64-bit significand and represents every signed QUAD.
+Non-integral values still use a host `double`, so the executor does not claim fidelity for differences
+that depend on the extra eleven fraction bits of a real 8087 temporary.
 
 What it already proves, on programs it can run end to end: routed and directly-emitted code agree on
 integer arithmetic, a constant divide, control flow through a loop and a merge, a value spilled across
 a call, a SHARED global written by one path and read by the other, and a whole module body the back
 end owns.
 
-`BackendCorpusDifferentialTests` runs the same comparison over the **whole battery**: of the 24
-programs the back end compiles part of, 12 run both ways and agree, 12 are not compared (the
-interpreter has no x87 arithmetic), and none disagree. The three outcomes are kept apart deliberately -
-"not compared" is never counted as agreement, because collapsing them is how a coverage number starts
-lying.
-
-**It is a gate, and it is clean.** Of the 24 programs the back end compiles part of, **all 24 run
-both ways and behave identically** - none uncompared, none disagreeing. The known-defect list is
-empty; an entry in it would be a diagnosed bug, and a new disagreement fails the build outright.
+`BackendCorpusDifferentialTests` runs the same comparison over the **whole battery**, optimized and
+unoptimized. The current run has 234 compilations in which the back end participates: 228 run both
+ways and agree, 6 cannot be compared because the 8086 executor does not implement opcode 66, and 0
+disagree. No participating compilation throws. The outcomes stay separate deliberately: "not
+compared" is never counted as agreement, because collapsing them is how a coverage number starts
+lying. Any disagreement fails the build.
 
 Getting the last one took two fixes, both real. `L& = A2% * B2%` with both operands 32767 answered
 1073676288 against the exact 1073676289: PowerBASIC's integral arithmetic is float-shaped in the IR,
@@ -428,15 +468,6 @@ next step, and it is a bounded one.
 It still earned its place on the first run by finding a real miscompilation that every static check had
 missed: `sext i1 1 to i16` folded to **1** where BASIC's TRUE is **-1**, so every comparison the
 optimizer could decide at compile time went out as 1 - on the native, C and LLVM back ends alike.
-
-### Still not covered by execution
-
-None of the routed output has ever been **executed**. The differential oracle needs DOSBox
-(`tools/dosbox`, or `DOSBOX_EXE`) and the vintage toolchains; without them every correctness claim
-about the back end rests on matching the direct emitter's documented register conventions and on
-static invariants (selection declines, allocation, images that assemble and link). Coverage added
-without that is a larger body of unexecuted code, not parity - so an execution oracle should come
-before, or alongside, the items above rather than after them.
 
 ---
 *Optimizations are owned by the separate optimizer instance; ABI/interop items

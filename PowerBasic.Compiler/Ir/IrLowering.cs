@@ -1405,6 +1405,8 @@ public sealed class IrLowering {
       throw new IrLoweringException($"FOR over a {ty} counter");
     var signed = ((ScalarType)symbol.Type).Signed;
     var constStep = this.TryConstStep(f.Step);
+    if (!signed && constStep is < 0)
+      constStep = TruncateUnsignedConstant(constStep.Value, ty.Bits);
     var slot = this.SlotFor(symbol);
     var limitSlot = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(ty) { Name = symbol.Name + ".limit" });
 
@@ -1430,7 +1432,8 @@ public sealed class IrLowering {
     var limit = this._b.Load(ty, limitSlot);
     IrValue cond;
     if (constStep is { } cs) {
-      var pred = cs > 0 ? (signed ? IrCmpPred.Sle : IrCmpPred.Ule) : (signed ? IrCmpPred.Sge : IrCmpPred.Uge);
+      var ascending = !signed || cs >= 0;
+      var pred = ascending ? (signed ? IrCmpPred.Sle : IrCmpPred.Ule) : IrCmpPred.Sge;
       cond = this._b.Cmp(pred, i, limit);
     } else {
       // continue = step >= 0 ? i <= limit : i >= limit  (the sign test is loop-invariant; LICM hoists it)
@@ -1483,10 +1486,15 @@ public sealed class IrLowering {
 
     // a step whose sign is known at compile time picks the test outright; otherwise the direction is
     // a loop-invariant value the test asks about each time round (LICM hoists it)
-    double? constStep = f.Step is null ? 1 : this._folder.TryFold(f.Step) is { IsNumeric: true } folded ? folded.AsFloat : null;
-    IrValue? stepValue = null;
-    if (constStep is null or 0)
-      stepValue = this.Coerce(this.LowerExpr(f.Step!), this._model.TypeOf(f.Step!), symbol.Type);
+    double? constStep = f.Step is null
+      ? 1
+      : this._folder.TryFold(f.Step) is { IsNumeric: true } folded ? folded.AsFloat : null;
+    // The value still goes through ordinary expression lowering even when only its sign is needed at
+    // run time. In particular, an unsuffixed 0.3 is a SINGLE literal before it widens to a DOUBLE
+    // counter; constructing a raw f64 constant from ConstantFolder's host double loses that boundary.
+    var stepValue = f.Step is null
+      ? (IrValue)new IrConstantFloat(ty, 1)
+      : this.Coerce(this.LowerExpr(f.Step), this._model.TypeOf(f.Step), symbol.Type);
 
     var header = this.NewBlock("for.head");
     var body = this.NewBlock("for.body");
@@ -1518,8 +1526,7 @@ public sealed class IrLowering {
 
     this._b.Position(inc);
     var iv = this._b.Load(ty, slot);
-    var increment = constStep is { } c2 and not 0 ? (IrValue)new IrConstantFloat(ty, c2) : stepValue!;
-    this._b.Store(this._b.Binary(IrBinaryOp.FAdd, iv, increment), slot);
+    this._b.Store(this._b.Binary(IrBinaryOp.FAdd, iv, stepValue), slot);
     this._b.Br(header);
 
     this._b.Position(exit);
@@ -1686,10 +1693,13 @@ public sealed class IrLowering {
   private long? TryConstStep(Expression? step) {
     if (step is null)
       return 1;
-    if (this._folder.TryFold(step) is { Integer: { } n } && n != 0)
+    if (this._folder.TryFold(step) is { Integer: { } n })
       return n;
-    return null;   // runtime step (or a constant zero, which the direction test also handles)
+    return null;
   }
+
+  private static long TruncateUnsignedConstant(long value, int bits)
+    => bits >= 64 ? value : value & ((1L << bits) - 1);
 
   // ---- conditions & expressions -------------------------------------------
 
@@ -1704,8 +1714,14 @@ public sealed class IrLowering {
     switch (expr) {
       case IntegerLiteralExpr lit:
         return new IrConstantInt(MapType(this._model.TypeOf(lit)), lit.Value);
-      case FloatLiteralExpr lit:
-        return new IrConstantFloat(MapType(this._model.TypeOf(lit)), lit.Value);
+      case FloatLiteralExpr lit: {
+        var type = this._model.TypeOf(lit);
+        // The parser carries every decimal in a host double, but an unsuffixed PB literal is a
+        // SINGLE. Quantize at the source boundary before a later FPExt can make the wider container
+        // preserve bits the original literal never had. This mirrors the direct emitter exactly.
+        var value = type is ScalarType { Kind: ScalarKind.Single } ? (float)lit.Value : lit.Value;
+        return new IrConstantFloat(MapType(type), value);
+      }
       case NamedConstantExpr nc:
         return this.LowerNamedConstant(nc);
       case NameExpr name:

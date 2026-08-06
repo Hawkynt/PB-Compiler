@@ -7,9 +7,9 @@ namespace PowerBasic.Compiler.Backend;
 /// Stage 2 of the x86-16 back end (docs/X86-BACKEND.md): selects the typed-SSA IR into the
 /// <see cref="MFunction"/> machine IR over virtual registers. Each SSA value becomes a virtual
 /// register (or an immediate for an <see cref="IrConstantInt"/>); each instruction lowers to one or
-/// more <see cref="MInstr"/> in two-address x86 form. This first increment handles the straight-line
-/// integer core; anything it cannot model yet (branches, phis, calls, casts, division, floating
-/// point) makes <see cref="TrySelect"/> return null, so the caller falls back to the direct codegen.
+/// more <see cref="MInstr"/> in two-address x86 form. Anything it cannot model makes
+/// <see cref="TrySelect"/> return null, so the coverage census can name the unsupported construct and
+/// the migration path can temporarily use the direct code generator.
 /// Frame offsets are NOT resolved here - allocas become symbolic <see cref="MOperand.StackSlot"/>s and
 /// register binding happens in later stages.
 /// </summary>
@@ -34,6 +34,13 @@ public sealed class InstructionSelector {
   /// simply its cell. That is also what the direct emitter does with ST0.
   /// </summary>
   private readonly Dictionary<IrValue, int> _fslots = new(ReferenceEqualityComparer.Instance);
+
+  /// <summary>
+  /// IEEE float parameters already live in caller-owned stack cells at their declared widths. x87 can
+  /// load those cells directly, so they need neither a virtual register nor a temporary frame slot.
+  /// </summary>
+  private readonly Dictionary<IrValue, MOperand.ParamCell> _floatParams =
+    new(ReferenceEqualityComparer.Instance);
   private MFunction _function = null!;
 
   /// <summary>
@@ -80,23 +87,18 @@ public sealed class InstructionSelector {
   }
 
   private MFunction? Run(IrFunction fn) {
-    // A float PARAMETER still has no home: it arrives on the caller's stack in a layout this back end
-    // does not yet describe. A float PHI does now - it gets a frame cell like any other intermediate,
-    // and its edge copies are FLD/FSTP through it rather than register moves (see InsertPhiCopies).
-    //
-    // Everything else floating point is selected instruction by instruction (SelectFloat*), and the
-    // scalar paths refuse a float type outright - without that refusal a SINGLE load would mint one
-    // Dword virtual register and emit a single WORD-sized MOV, carrying half the value.
-    foreach (var parameter in fn.Parameters)
-      if (parameter.Type.IsFloat)
-        return this.DeclineNull($"floating point: a {parameter.Type} parameter has no frame cell yet");
-
     this._function = new MFunction(fn.Name) { HasArgumentPlan = true };
 
     // arguments take the FIRST virtual registers (so argument i is vreg i, which the emitter's ABI
     // prologue relies on to load argument i into allocation[i]); they are function live-ins
     for (var index = 0; index < fn.Parameters.Count; ++index) {
       var arg = fn.Parameters[index];
+      if (arg.Type.IsFloat) {
+        // The direct BASIC/PASCAL caller pushed the value's raw IEEE words. Keep the declared width:
+        // FLD widens it to x87 only when an instruction consumes the parameter.
+        this._floatParams[arg] = new MOperand.ParamCell(index, 0, RegSize(arg.Type));
+        continue;
+      }
       if (IsWide(arg.Type)) {
         // a 32-bit argument arrives as two words: its low half at the parameter's own offset and its
         // high half at +2, each into its own register
@@ -296,6 +298,16 @@ public sealed class InstructionSelector {
     _ => null,                     // float predicates: not in this increment
   };
 
+  private static Condition? MapFloatPredicate(IrCmpPred pred) => pred switch {
+    IrCmpPred.Foeq => Condition.Equal,
+    IrCmpPred.Fone => Condition.NotEqual,
+    IrCmpPred.Folt => Condition.Below,
+    IrCmpPred.Fole => Condition.BelowOrEqual,
+    IrCmpPred.Fogt => Condition.Above,
+    IrCmpPred.Foge => Condition.AboveOrEqual,
+    _ => null,
+  };
+
   private bool SelectInstruction(IrInstruction instr, MBlock block) {
     if (this.RefusesMbf(instr))
       return false;
@@ -428,13 +440,20 @@ public sealed class InstructionSelector {
     return true;
   }
 
+  /// <summary>A 32-bit multiply through the runtime's <c>DX:AX, CX:BX -&gt; DX:AX</c> ABI.</summary>
+  private bool SelectWideMultiply(IrBinary bin) => this.SelectWideRuntimeBinary(bin, "rt_lmul");
+
+  /// <summary>A signed 32-bit divide/remainder through the same pair-register ABI as the direct emitter.</summary>
+  private bool SelectWideDivide(IrBinary bin) => this.SelectWideRuntimeBinary(bin,
+    bin.Op == IrBinaryOp.SDiv ? "rt_ldiv" : "rt_lmod");
+
   /// <summary>
-  /// A 32-bit multiply. x86-16 has no 32x32 multiply, so the runtime does it in the convention the
-  /// direct emitter uses: <c>left DX:AX, right CX:BX -&gt; DX:AX</c> (docs at the head of DosRuntime).
-  /// It is a call like any other, so it destroys the caller-saved file - which the allocator handles
-  /// by spilling anything live across it, exactly as for a user call.
+  /// A 32-bit runtime binary operation. x86-16 has no native 32x32 arithmetic form for these
+  /// operations, so the runtime uses the convention <c>left DX:AX, right CX:BX -&gt; DX:AX</c>. The
+  /// call destroys the caller-saved file, which lets the allocator spill values live across it just
+  /// as it does for a user call.
   /// </summary>
-  private bool SelectWideMultiply(IrBinary bin) {
+  private bool SelectWideRuntimeBinary(IrBinary bin, string label) {
     if (!this.TryOperandPair(bin.Lhs, out var leftLo, out var leftHi))
       return false;
     if (!this.TryOperandPair(bin.Rhs, out var rightLo, out var rightHi))
@@ -453,7 +472,7 @@ public sealed class InstructionSelector {
     Load(Reg.BX, rightLo);
     Load(Reg.CX, rightHi);
 
-    this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef("rt_lmul")],
+    this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef(label)],
       new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
         ReadsMemory: true, WritesMemory: true),
       condition: null, clobbers: _callClobbers));
@@ -467,19 +486,20 @@ public sealed class InstructionSelector {
   }
 
   /// <summary>
-  /// A signed 16-bit divide or remainder. <c>IDIV</c> is fixed to <c>DX:AX</c>: the dividend is
-  /// sign-extended into the pair by <c>CWD</c>, the quotient comes back in <c>AX</c> and the
-  /// remainder in <c>DX</c>.
+  /// A signed divide or remainder. The 32-bit form uses the direct emitter's runtime ABI; the 16-bit
+  /// form uses <c>IDIV</c>, fixed to <c>DX:AX</c>: <c>CWD</c> sign-extends the dividend, the quotient
+  /// comes back in <c>AX</c>, and the remainder in <c>DX</c>.
   ///
   /// PowerBASIC raises Error 11 on a zero divisor, and that guard is part of the language rather than
   /// an <c>$ERROR</c> option - so only a <b>non-zero compile-time constant</b> divisor is selected
   /// here, which is precisely the case where the direct emitter also drops the guard (O0220): a
-  /// constant that cannot be zero cannot trap. A runtime divisor needs the guard, and the guard needs
-  /// the runtime's error label, so it waits for that bridge rather than emitting a divide that would
-  /// fault where the program should report.
+  /// constant that cannot be zero cannot trap. A runtime 16-bit divisor still declines; the 32-bit
+  /// helper owns the guard and calls <c>rt_raise</c> with Error 11.
   /// </summary>
   private bool SelectDivide(IrBinary bin, MBlock block) {
-    if (IsWide(bin.Type) || bin.Type.Bits != 16)
+    if (IsWide(bin.Type))
+      return this.SelectWideDivide(bin);
+    if (bin.Type.Bits != 16)
       return this.Decline($"binary: {bin.Op} on {bin.Type} (16-bit only)");
     if (bin.Rhs is not IrConstantInt { Value: var divisor } || divisor == 0)
       return this.Decline($"binary: {bin.Op} by a runtime divisor (needs the Error-11 guard)");
@@ -786,7 +806,7 @@ public sealed class InstructionSelector {
 
   private bool SelectCmpValue(IrCmp cmp) {
     if (cmp.Lhs.Type.IsFloat)
-      return this.Decline($"compare as a value: float {cmp.Pred}");
+      return this.SelectFloatCmpValue(cmp);
     if (IsWide(cmp.Lhs.Type))
       return this.SelectWideCmpValue(cmp);
     if (MapPredicate(cmp.Pred) is not { } cc)
@@ -796,6 +816,35 @@ public sealed class InstructionSelector {
     if (lhs is not MOperand.Register)
       return this.Decline("compare as a value: immediate left operand");
 
+    this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: lhs is MOperand.Memory || rhs is MOperand.Memory, WritesMemory: false)));
+    return this.MaterializeCondition(cmp, cc);
+  }
+
+  private bool SelectFloatCmpValue(IrCmp cmp) {
+    if (MapFloatPredicate(cmp.Pred) is not { } cc)
+      return this.Decline($"compare as a value: float {cmp.Pred}");
+    if (!this.TryFloatOperand(cmp.Lhs, out var lhs) || !this.TryFloatOperand(cmp.Rhs, out var rhs))
+      return false;
+
+    // FLD left; FLD right leaves the right operand on top. FCOMPP compares ST(0) against ST(1), so
+    // FXCH restores source order. FSTSW AX + SAHF maps x87 C0/C3 to the unsigned CF/ZF conditions.
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX));
+    this.EmitX87(MOpcode.Fld, lhs, reads: true);
+    this.EmitX87(MOpcode.Fld, rhs, reads: true);
+    this._current.Instructions.Add(new MInstr(MOpcode.Fxch, [], MInstrEffect.None));
+    this._current.Instructions.Add(new MInstr(MOpcode.Fcompp, [], MInstrEffect.None));
+    this._current.Instructions.Add(new MInstr(MOpcode.FstswAx, [ax],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+        ReadsMemory: false, WritesMemory: false), clobbers: [Reg.AX]));
+    this._current.Instructions.Add(new MInstr(MOpcode.Sahf, [ax],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false)));
+    return this.MaterializeCondition(cmp, cc);
+  }
+
+  private bool MaterializeCondition(IrCmp cmp, Condition cc) {
     // the result is i1 in the IR, but it is materialized in a word register - a later sext to i16
     // finds it already sign-extended, which is exactly what -1/0 means
     var dest = MReg.Virtual(this._nextVreg++, MRegSize.Word);
@@ -806,9 +855,6 @@ public sealed class InstructionSelector {
     var doneBlock = new MBlock($"{this._current.Label}.cmpdone{this._splitCount}");
     ++this._splitCount;
 
-    this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
-      new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: false, WritesFlags: true,
-        ReadsMemory: lhs is MOperand.Memory || rhs is MOperand.Memory, WritesMemory: false)));
     var minusOne = new MOperand.Immediate(-1);
     this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, minusOne], MovEffect(destOp, minusOne)));
     this._current.Instructions.Add(new MInstr(MOpcode.Jcc, [new MOperand.LabelRef(doneBlock.Label)],
@@ -967,12 +1013,29 @@ public sealed class InstructionSelector {
           : RuntimeAbi.For(callee.Name) is { } routine
             ? this.SelectRuntimeCall(call, callee, routine)
             : this.Decline($"call: {callee.Name} (runtime declaration - not in the runtime ABI table)");
-    if (!call.Type.IsVoid && !IsWide(call.Type) && RegSize(call.Type) != MRegSize.Word)
-      return this.Decline($"call: {callee.Name} returns {call.Type} (word or 32-bit results only)");
+    if (!call.Type.IsVoid && !call.Type.IsIeeeFloat && !IsWide(call.Type)
+        && RegSize(call.Type) != MRegSize.Word)
+      return this.Decline($"call: {callee.Name} returns {call.Type} (unsupported result shape)");
 
     foreach (var arg in call.Args) {
-      if (arg.Type.IsFloat)
-        return this.Decline($"call: {callee.Name} takes {arg.Type} (no float arguments yet)");
+      if (arg.Type.IsIeeeFloat) {
+        if (!this.TryFloatOperand(arg, out var source))
+          return false;
+        var bytes = arg.Type.Bits / 8;
+        if (bytes is not (4 or 8))
+          return this.Decline($"call: {callee.Name} takes {arg.Type} (only SINGLE/DOUBLE arguments)");
+        // Intermediates live in 80-bit cells. Storing to the parameter's declared width is both the
+        // ABI representation and its required rounding boundary; pushing words from the TBYTE cell
+        // itself would pass the x87 encoding as though it were IEEE bits.
+        var staged = this._function.StackSlots.Count;
+        this._function.StackSlots.Add(bytes);
+        this.EmitX87(MOpcode.Fld, source, reads: true);
+        this.EmitX87(MOpcode.Fstp, new MOperand.StackSlot(staged, RegSize(arg.Type)), reads: false);
+        for (var offset = bytes - 2; offset >= 0; offset -= 2)
+          this._current.Instructions.Add(PushOf(
+            new MOperand.StackSlot(staged, MRegSize.Word, offset)));
+        continue;
+      }
       if (IsWide(arg.Type)) {
         // a 32-bit argument occupies two stack words, and the callee reads its LOW half at the
         // parameter's own offset - the stack grows down, so the high half is pushed first
@@ -996,6 +1059,13 @@ public sealed class InstructionSelector {
 
     if (call.Type.IsVoid)
       return true;
+
+    if (call.Type.IsIeeeFloat) {
+      // The BASIC function ABI returns every IEEE real on ST(0); park it immediately so the x87
+      // stack is empty again at the instruction boundary.
+      this.EmitX87(MOpcode.Fstp, this.FloatCell(call), reads: false);
+      return true;
+    }
 
     if (IsWide(call.Type)) {
       // a 32-bit result comes back in DX:AX, the convention the direct codegen documents
@@ -1163,6 +1233,20 @@ public sealed class InstructionSelector {
           this.StoreWord(Shifted(cell, 2), high);
           this.StoreWord(Shifted(cell, 4), new MOperand.Immediate(0));
           this.StoreWord(Shifted(cell, 6), new MOperand.Immediate(0));
+          this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(staged, MRegSize.Qword), reads: true);
+          break;
+        }
+        case RuntimeAbi.ArgKind.SignedQwordSt0: {
+          // The machine IR does not yet carry a general four-register i64 value. An optimized QUAD
+          // literal does not need one: stage its four words verbatim, then FILD the qword just as the
+          // direct emitter loads a QUAD cell before calling the 15-digit DOUBLE formatter.
+          if (arg is not IrConstantInt { Type: { IsInteger: true, Bits: 64 }, Value: var value })
+            return this.Decline($"call: {callee.Name} wants a constant signed 64-bit value, got {arg}");
+          var staged = this._function.StackSlots.Count;
+          this._function.StackSlots.Add(8);
+          var cell = new MOperand.StackSlot(staged, MRegSize.Word);
+          for (var offset = 0; offset < 8; offset += 2)
+            this.StoreWord(Shifted(cell, offset), new MOperand.Immediate((short)(value >> (offset * 8))));
           this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(staged, MRegSize.Qword), reads: true);
           break;
         }
@@ -1340,6 +1424,19 @@ public sealed class InstructionSelector {
   /// </summary>
   private bool TryWordOperand(IrValue value, string what, out MOperand operand) {
     operand = null!;
+    if (!IsWide(value.Type) && value.Type.IsInteger && value.Type.Bits == 8
+        && value is not IrConstantInt) {
+      if (!this.TryOperand(value, out var narrow))
+        return false;
+      var id = this._nextVreg++;
+      var word = new MOperand.Register(MReg.Virtual(id, MRegSize.Word));
+      var lowByte = new MOperand.Register(MReg.Virtual(id, MRegSize.Byte));
+      var zero = new MOperand.Immediate(0);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [word, zero], MovEffect(word, zero)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lowByte, narrow], MovEffect(lowByte, narrow)));
+      operand = word;
+      return true;
+    }
     if (!IsWide(value.Type))
       return this.TryOperand(value, out operand);
 
@@ -1436,6 +1533,10 @@ public sealed class InstructionSelector {
   /// and it is the very cell the direct emitter loads too.
   /// </summary>
   private bool TryFloatOperand(IrValue value, out MOperand cell) {
+    if (this._floatParams.TryGetValue(value, out var parameter)) {
+      cell = parameter;
+      return true;
+    }
     if (this._fslots.ContainsKey(value)) {
       cell = this.FloatCell(value);
       return true;
@@ -1590,7 +1691,9 @@ public sealed class InstructionSelector {
   /// <summary>A PUSH of one argument word, with the effect descriptor that keeps it ordered against the call.</summary>
   private static MInstr PushOf(MOperand operand) => new(MOpcode.Push, [operand],
     new MInstrEffect(WrittenRegs: [], ReadRegs: operand is MOperand.Register ? [0] : [],
-      ReadsFlags: false, WritesFlags: false, ReadsMemory: operand is MOperand.Memory, WritesMemory: true));
+      ReadsFlags: false, WritesFlags: false,
+      ReadsMemory: operand is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell,
+      WritesMemory: true));
 
   /// <summary>Every allocatable register a CALL destroys under this ABI - the callee saves none of them.</summary>
   private static readonly Reg[] _callClobbers = [Reg.AX, Reg.BX, Reg.CX, Reg.DX, Reg.SI, Reg.DI];
@@ -1777,6 +1880,8 @@ public sealed class InstructionSelector {
       return MRegSize.Word;
     if (type.Kind == IrTypeKind.Float)
       return type.Bits switch { <= 32 => MRegSize.Dword, <= 64 => MRegSize.Qword, _ => MRegSize.Tbyte };
+    if (type.IsBool)
+      return MRegSize.Word;                   // BASIC truth is the full word -1/0, even though IR uses i1
     return type.Bits switch {
       <= 8 => MRegSize.Byte,
       <= 16 => MRegSize.Word,
@@ -1784,5 +1889,6 @@ public sealed class InstructionSelector {
     };
   }
 
-  private static int SizeOf(IrType type) => type.IsPointer ? 2 : System.Math.Max(1, (type.Bits + 7) / 8);
+  private static int SizeOf(IrType type)
+    => type.IsPointer || type.IsBool ? 2 : System.Math.Max(1, (type.Bits + 7) / 8);
 }

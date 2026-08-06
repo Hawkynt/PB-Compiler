@@ -106,7 +106,9 @@ public sealed partial class CodeGenerator {
       if (proc.IsFunction && proc.ReturnType is not ScalarType { IsFloat: false, ByteSize: 2 or 4 }
                           and not ScalarType { IsFloat: true, ByteSize: 4 or 8 })
         continue;
-      if (!proc.Parameters.All(p => p.ByVal && p.Type is ScalarType { IsFloat: false, ByteSize: 2 or 4 }))
+      if (!proc.Parameters.All(p => p.ByVal && p.Type is
+            ScalarType { IsFloat: false, ByteSize: 2 or 4 }
+            or ScalarType { IsFloat: true, ByteSize: 4 or 8 }))
         continue;
       if (!byName.TryGetValue(proc.Name, out var irFn) || InstructionSelector.TrySelect(irFn) is not { } mfn)
         continue;
@@ -219,10 +221,20 @@ public sealed partial class CodeGenerator {
   /// <c>g.&lt;name&gt;</c> and a STATIC local <c>static.&lt;name&gt;</c>.
   /// </summary>
   private Asm.Mem? DataCellOf(string name) {
-    if (name.StartsWith("g.", System.StringComparison.Ordinal))
-      return model.ModuleVariables.TryGetValue(name[2..], out var symbol)
-        ? this.TryDirectCell(symbol)
-        : null;
+    if (name.StartsWith("g.", System.StringComparison.Ordinal)) {
+      var sourceName = name[2..];
+      if (model.ModuleVariables.TryGetValue(sourceName, out var exact))
+        return this.TryDirectCell(exact);
+      // IR globals use the source spelling without its type suffix for readability, while the
+      // binder's module table is keyed by the canonical suffixed spelling (total%, total&, ...).
+      // Resolve that spelling only when it identifies one symbol; two differently typed globals
+      // with the same base name are ambiguous and must remain unroutable rather than aliasing.
+      var matches = model.ModuleVariables.Values
+        .Where(symbol => symbol.Name.Equals(sourceName, System.StringComparison.OrdinalIgnoreCase))
+        .Take(2)
+        .ToList();
+      return matches.Count == 1 ? this.TryDirectCell(matches[0]) : null;
+    }
     // a string constant the IR interned (".str0"): its bytes go through this codegen's own literal
     // pool, so the routed PRINT and a directly-emitted one share the identical pooled bytes
     if (name.StartsWith(".str", System.StringComparison.Ordinal)

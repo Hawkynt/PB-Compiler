@@ -58,4 +58,34 @@ public sealed class MachineSchedulerTests {
     Assert.That(ops[1], Is.SameAs(add));
     Assert.That(ops[2], Is.SameAs(store));
   }
+
+  [Test]
+  public void Schedule_GivenPhysicalRuntimeArgumentSetup_ThenKeepsItAfterIndependentVirtualWork() {
+    var address = MReg.Virtual(0);
+    var lea = new MInstr(MOpcode.Lea,
+      [new MOperand.Register(address), new MOperand.StackSlot(0, MRegSize.Word)],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+        ReadsMemory: false, WritesMemory: false));
+    var arrayStore = new MInstr(MOpcode.Mov,
+      [new MOperand.Memory(address, null, 1, 0, MRegSize.Word), new MOperand.Immediate(5)],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+        ReadsMemory: false, WritesMemory: true));
+    var setSi = new MInstr(MOpcode.Mov,
+      [new MOperand.Register(MReg.Physical_(Reg.SI)), new MOperand.DataOffset(".str0", 0)],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+        ReadsMemory: false, WritesMemory: false), clobbers: [Reg.SI]);
+    var setCx = new MInstr(MOpcode.Mov,
+      [new MOperand.Register(MReg.Physical_(Reg.CX)), new MOperand.Immediate(3)],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+        ReadsMemory: false, WritesMemory: false), clobbers: [Reg.CX]);
+    var call = new MInstr(MOpcode.Call, [new MOperand.LabelRef("rt_print_str")],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: true, WritesMemory: true), clobbers: [Reg.AX, Reg.BX, Reg.CX, Reg.DX, Reg.SI, Reg.DI]);
+    var fn = OneBlock(lea, arrayStore, setSi, setCx, call);
+
+    MachineScheduler.Schedule(fn);
+
+    Assert.That(fn.Blocks[0].Instructions, Is.EqualTo(new[] { lea, arrayStore, setSi, setCx, call }),
+      "virtual work must not enter a physical-register ABI setup window before allocation");
+  }
 }

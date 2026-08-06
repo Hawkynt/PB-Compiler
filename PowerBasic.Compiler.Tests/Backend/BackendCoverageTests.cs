@@ -24,9 +24,11 @@ public sealed class BackendCoverageTests {
   private static readonly string _repoRoot =
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 
-  private sealed record Census(int Functions, int Selected, int Allocated, List<string> MainBodies, Dictionary<string, int> Declines,
-    List<string> ProgramsLowered, int ProgramsTotal, Dictionary<string, int> LoweringDeclines,
-    Dictionary<string, int> ProcedureDeclines, Dictionary<string, int> AllocationDeclines);
+  private sealed record Census(int Functions, int Selected, int Allocated, List<string> MainBodies,
+    Dictionary<string, int> Declines, List<string> SelectionCases, List<string> ProgramsLowered,
+    int ProgramsTotal, Dictionary<string, int> LoweringDeclines,
+    Dictionary<string, int> ProcedureDeclines, Dictionary<string, int> AllocationDeclines,
+    List<string> AllocationCases);
 
   /// <summary>
   /// Runs the back end's own pipeline over every battery program and tallies what selects.
@@ -40,14 +42,17 @@ public sealed class BackendCoverageTests {
     // the same tally restricted to named procedures: routing a module body (main) additionally needs
     // the whole startup/exit sequence, so what blocks a PROCEDURE is the cheaper next increment
     var procedureDeclines = new Dictionary<string, int>(StringComparer.Ordinal);
+    var selectionCases = new List<string>();
     // why a function that DID select still does not route - the row that used to read only as a count
     var allocationDeclines = new Dictionary<string, int>(StringComparer.Ordinal);
+    var allocationCases = new List<string>();
     int functions = 0, selected = 0, allocated = 0, total = 0;
     var mainBodies = new List<string>();
     var lowered = new List<string>();
     var dir = Path.Combine(_repoRoot, "tests");
     if (!Directory.Exists(dir))
-      return new(0, 0, 0, mainBodies, declines, lowered, 0, loweringDeclines, procedureDeclines, allocationDeclines);
+      return new(0, 0, 0, mainBodies, declines, selectionCases, lowered, 0, loweringDeclines,
+        procedureDeclines, allocationDeclines, allocationCases);
 
     // the whole corpus: the golden battery plus tests/diff, the 100+ differential programs
     foreach (var file in Directory.EnumerateFiles(dir, "*.BAS", SearchOption.AllDirectories)
@@ -97,26 +102,31 @@ public sealed class BackendCoverageTests {
         if (InstructionSelector.TrySelect(fn, out var reason) is { } machine) {
           ++selected;
           // selection is not routing: the whole-program codegen also schedules and allocates, and a
-          // value live across a CALL has no register while there is no spilling - so this is the
-          // number of functions the back end would really take
+          // allocation includes memory spills, rematerialization and explicit live-range splitting;
+          // this is therefore the number of functions the back end would really take
           MachineScheduler.Schedule(machine);
           if (LinearScanAllocator.Allocate(machine, out var noRegisters) is not null) {
             ++allocated;
             // a module body that selects AND allocates is a whole program the back end can own
             if (fn.Name.Equals("main", StringComparison.OrdinalIgnoreCase))
               mainBodies.Add(name);
-          } else
-            allocationDeclines[noRegisters ?? "unknown"] = allocationDeclines.GetValueOrDefault(noRegisters ?? "unknown") + 1;
+          } else {
+            var allocationReason = noRegisters ?? "unknown";
+            allocationDeclines[allocationReason] = allocationDeclines.GetValueOrDefault(allocationReason) + 1;
+            allocationCases.Add($"{Path.GetRelativePath(dir, file).Replace('\\', '/')}::{fn.Name}: {allocationReason}");
+          }
         }
         else {
           declines[reason ?? "unknown"] = declines.GetValueOrDefault(reason ?? "unknown") + 1;
+          selectionCases.Add($"{Path.GetRelativePath(dir, file).Replace('\\', '/')}::{fn.Name}: {reason ?? "unknown"}");
           if (!fn.Name.Equals("main", StringComparison.OrdinalIgnoreCase))
             procedureDeclines[reason ?? "unknown"] = procedureDeclines.GetValueOrDefault(reason ?? "unknown") + 1;
         }
       }
     }
 
-    return new(functions, selected, allocated, mainBodies, declines, lowered, total, loweringDeclines, procedureDeclines, allocationDeclines);
+    return new(functions, selected, allocated, mainBodies, declines, selectionCases, lowered, total,
+      loweringDeclines, procedureDeclines, allocationDeclines, allocationCases);
   }
 
   /// <summary>Collapses a decline message to its cause, so names/labels do not fragment the histogram.</summary>
@@ -167,12 +177,16 @@ public sealed class BackendCoverageTests {
     report.AppendLine("selection declines - what keeps a lowered function off the x86-16 back end:");
     foreach (var (reason, count) in census.Declines.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal))
       report.AppendLine($"  {count,5}  {reason}");
+    foreach (var selectionCase in census.SelectionCases)
+      report.AppendLine($"         {selectionCase}");
     report.AppendLine($"of those, {census.ProcedureDeclines.Values.Sum()} are named procedures (main excluded):");
     foreach (var (reason, count) in census.ProcedureDeclines.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal))
       report.AppendLine($"  {count,5}  {reason}");
     report.AppendLine($"allocation declines - selected but not routed ({census.Selected - census.Allocated}):");
     foreach (var (reason, count) in census.AllocationDeclines.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal))
       report.AppendLine($"  {count,5}  {reason}");
+    foreach (var allocationCase in census.AllocationCases)
+      report.AppendLine($"         {allocationCase}");
     TestContext.Out.Write(report.ToString());
 
     // A floor, not an exact count: widening the selector may only raise it, and a change that lowers
@@ -195,7 +209,15 @@ public sealed class BackendCoverageTests {
     // then 69 -> 81 with x87: floats live in frame cells bracketed by FLD/FSTP
     // then 81 -> 88 (of a larger denominator, since 14 more programs now lower at all): CINT and the
     // rounding float-to-integer conversion it is spelled from
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(178),
+    // then 185 -> 192 when constant QUAD prints gained their exact qword-to-x87 ABI bridge
+    // then 192 -> 200 when ordered x87 comparisons could materialize BASIC's -1/0 truth value;
+    // DIFF28 reaches the next honest blocker (32-bit signed division), so eight rather than nine
+    // complete functions move even though all nine float-comparison declines disappear;
+    // then 200 -> 205 when signed 32-bit divide/remainder reused the DOS runtime's pair-register
+    // helpers. Six decline entries disappear, but DIFF32 exposes its next blocker (i64 truncation)
+    // then 205 -> 209 when SINGLE/DOUBLE BYVAL parameters and ST(0) results gained their declared-width
+    // stack ABI. Four honest float-procedure declines disappear and three more module bodies route
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(209),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
 
     // How many programs reach the IR at all - the figure the runtime-trap and error-handling work
@@ -211,7 +233,7 @@ public sealed class BackendCoverageTests {
 
     // selection is not routing: the whole-program codegen also schedules and allocates, and a value
     // live across a CALL has no register unless the spiller can move it to the frame
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(137),
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(209),
       "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // The figure that matters for whole-program ownership: module bodies the back end compiles end
@@ -224,7 +246,8 @@ public sealed class BackendCoverageTests {
     // one uses something the IR does not model yet. No back-end code changed. A set names the
     // program that stopped; a new program the back end cannot own leaves it alone.
     Assert.That(census.MainBodies, Is.EquivalentTo(_ownedMainBodies),
-      "the set of whole module bodies the back end can compile has changed:\n" + report);
+      "the set of whole module bodies the back end can compile has changed:\nactual: " +
+      string.Join(", ", census.MainBodies) + "\n" + report);
   }
 
   /// <summary>
@@ -378,7 +401,7 @@ public sealed class BackendCoverageTests {
   ];
 
   private static readonly string[] _ownedMainBodies = [
-"ARITH.BAS",
+    "ARITH.BAS",
     "CTRL.BAS",
     "DIFF01.BAS",
     "DIFF01.BAS",
@@ -391,28 +414,58 @@ public sealed class BackendCoverageTests {
     "DIFF01.BAS",
     "DIFF01.BAS",
     "DIFF01.BAS",
+    "DIFF01.BAS",
+    "DIFF01.BAS",
+    "DIFF01.BAS",
+    "DIFF02.BAS",
+    "DIFF02.BAS",
+    "DIFF02.BAS",
+    "DIFF02.BAS",
+    "DIFF02.BAS",
     "DIFF02.BAS",
     "DIFF02.BAS",
     "DIFF02.BAS",
     "DIFF02.BAS",
     "DIFF02.BAS",
     "DIFF03.BAS",
+    "DIFF03.BAS",
+    "DIFF03.BAS",
     "DIFF04.BAS",
     "DIFF100.BAS",
     "DIFF101.BAS",
+    "DIFF102.BAS",
     "DIFF103.BAS",
+    "DIFF104.BAS",
+    "DIFF106.BAS",
     "DIFF107.BAS",
     "DIFF108.BAS",
+    "DIFF109.BAS",
+    "DIFF110.BAS",
     "DIFF111.BAS",
+    "DIFF112.BAS",
+    "DIFF113.BAS",
+    "DIFF15.BAS",
+    "DIFF18.BAS",
     "DIFF22.BAS",
     "DIFF24.BAS",
     "DIFF25.BAS",
     "DIFF26.BAS",
+    "DIFF27.BAS",
+    "DIFF28.BAS",
+    "DIFF29.BAS",
+    "DIFF30.BAS",
+    "DIFF31.BAS",
+    "DIFF33.BAS",
+    "DIFF35.BAS",
+    "DIFF36.BAS",
     "DIFF38.BAS",
     "DIFF39.BAS",
+    "DIFF41.BAS",
     "DIFF42.BAS",
     "DIFF43.BAS",
     "DIFF44.BAS",
+    "DIFF45.BAS",
+    "DIFF46.BAS",
     "DIFF47.BAS",
     "DIFF48.BAS",
     "DIFF49.BAS",
@@ -424,17 +477,39 @@ public sealed class BackendCoverageTests {
     "DIFF59.BAS",
     "DIFF62.BAS",
     "DIFF63.BAS",
+    "DIFF64.BAS",
+    "DIFF65.BAS",
+    "DIFF66.BAS",
     "DIFF67.BAS",
     "DIFF68.BAS",
+    "DIFF69.BAS",
     "DIFF70.BAS",
     "DIFF71.BAS",
+    "DIFF72.BAS",
+    "DIFF73.BAS",
+    "DIFF75.BAS",
+    "DIFF76.BAS",
+    "DIFF77.BAS",
+    "DIFF78.BAS",
+    "DIFF79.BAS",
     "DIFF80.BAS",
+    "DIFF81.BAS",
+    "DIFF82.BAS",
     "DIFF83.BAS",
+    "DIFF84.BAS",
+    "DIFF85.BAS",
+    "DIFF87.BAS",
     "DIFF88.BAS",
+    "DIFF89.BAS",
+    "DIFF90.BAS",
     "DIFF91.BAS",
+    "DIFF92.BAS",
+    "DIFF93.BAS",
     "DIFF94.BAS",
     "DIFF95.BAS",
+    "DIFF96.BAS",
     "DIFF97.BAS",
+    "DIFF99.BAS",
     "HELLO.BAS",
     "MATHUNIT.BAS",
     "ONERR.BAS",

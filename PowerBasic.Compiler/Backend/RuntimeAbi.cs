@@ -43,6 +43,13 @@ internal static class RuntimeAbi {
     ZeroExtendedQwordSt0,
 
     /// <summary>
+    /// A signed 64-bit integer staged verbatim in a qword frame cell and FILDed onto the x87 stack.
+    /// PB keeps QUAD values integral on the x87 but formats PRINT through the 15-digit DOUBLE entry;
+    /// preserving all four words before the FILD is what keeps values above 2^32 exact.
+    /// </summary>
+    SignedQwordSt0,
+
+    /// <summary>
     /// A 16-bit value ZERO-extended into a register pair: the word goes in
     /// <see cref="RuntimeArg.Register"/> and <see cref="RuntimeArg.High"/> is cleared.
     ///
@@ -311,11 +318,15 @@ internal static class RuntimeAbi {
     ["rt_fprint_u32"] = new("rt_print_i64",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.ZeroExtendedQwordSt0, default)], _callerSaved, FileSelect: true),
 
-    // NOT listed, and each for a stated reason:
-    //   rt_print_i64 - a QUAD is routed through the 15-digit FLOAT formatter (genuine PBC does this,
-    //     so large values appear in E notation). The IR types the value i64, which this back end has
-    //     no representation for at all - it is a wider gap than a table row
-    //   (nothing else in the print family)
+    // Genuine PBC 3.50 routes QUAD through the 15-digit DOUBLE formatter, so large values appear in
+    // E notation. The IR keeps the value i64; the selector stages a constant bit-for-bit and FILDs it
+    // so the formatter receives the same exact x87 integer as the direct emitter. Non-constant i64
+    // values still decline until the machine IR has a general 64-bit representation.
+    ["rt_print_i64"] = new("rt_print_f64", [new(ArgKind.SignedQwordSt0, default)], _callerSaved),
+    ["rt_fprint_i64"] = new("rt_print_f64",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.SignedQwordSt0, default)], _callerSaved, FileSelect: true),
+
+    // nothing else in the print family is listed
 
     // deliberately NO rt_str_from_u16 entry: rt_str_i16 opens with a CWD, so routing an unsigned
     // WORD through it would render 65535 as -1

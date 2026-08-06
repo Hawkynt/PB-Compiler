@@ -55,9 +55,10 @@ public sealed class MachineEmitter {
   /// Emits a complete function with the standard PowerBASIC stack ABI: a <c>PUSH BP; MOV BP,SP</c>
   /// prologue (matching the caller's frame view, so <paramref name="paramOffsets"/> - the existing
   /// codegen's <c>[BP+disp]</c> for each parameter - are valid), the incoming arguments loaded into
-  /// their allocated registers, the body, and an epilogue that returns the result in <c>AX</c> and
-  /// cleans <paramref name="paramBytes"/> of arguments (<c>RET n</c>). The body's IrRet already moved
-  /// the result into AX, so each return site falls into the shared epilogue sequence.
+  /// their allocated registers, the body, and an epilogue that preserves the result in AX, DX:AX, or
+  /// ST(0) and cleans <paramref name="paramBytes"/> of arguments (<c>RET n</c>). The body's IrRet
+  /// already moved the result into its ABI location, so each return site falls into the shared
+  /// epilogue sequence.
   /// </summary>
   /// <param name="resolveCallee">
   /// Maps a called function's name to the <see cref="Label"/> the whole-program codegen bound for it.
@@ -201,6 +202,9 @@ public sealed class MachineEmitter {
       case MOpcode.Fsubp: asm.Fsubp(); break;
       case MOpcode.Fmulp: asm.Fmulp(); break;
       case MOpcode.Fdivp: asm.Fdivp(); break;
+      case MOpcode.Fcompp: asm.Fcompp(); break;
+      case MOpcode.FstswAx: asm.FstswAx(); break;
+      case MOpcode.Sahf: asm.Sahf(); break;
       case MOpcode.Fsqrt: asm.Fsqrt(); break;
       case MOpcode.Fsin: asm.Fsin(); break;
       case MOpcode.Fcos: asm.Fcos(); break;
@@ -312,11 +316,24 @@ public sealed class MachineEmitter {
     }
   }
 
-  private Reg Resolve(MReg reg) => reg.IsVirtual ? this._allocation[reg.VirtualId] : reg.Physical;
+  private Reg Resolve(MReg reg) {
+    var physical = reg.IsVirtual ? this._allocation[reg.VirtualId] : reg.Physical;
+    if (reg.Size != MRegSize.Byte || physical.IsByte())
+      return physical;
+    return physical switch {
+      Asm.Reg.AX => Asm.Reg.AL,
+      Asm.Reg.CX => Asm.Reg.CL,
+      Asm.Reg.DX => Asm.Reg.DL,
+      Asm.Reg.BX => Asm.Reg.BL,
+      _ => throw new System.InvalidOperationException(
+        $"word register {physical} has no addressable low byte for an 8086 byte value"),
+    };
+  }
 
   private Mem Mem(MOperand operand) => operand switch {
     MOperand.StackSlot slot => Sized(Asm.Mem.At(Asm.Reg.BP, this._slotDisp[slot.Index] + slot.Disp), slot.Size),
-    MOperand.ParamCell p => Asm.Mem.Word(Asm.Reg.BP, this._paramOffsets[p.ArgumentIndex] + p.ByteDelta),
+    MOperand.ParamCell p => Sized(Asm.Mem.At(Asm.Reg.BP,
+      this._paramOffsets[p.ArgumentIndex] + p.ByteDelta), p.Size),
     MOperand.DataCell cell => this.DataCell(cell),
     MOperand.Memory m when m.Index is { } x => Sized(Asm.Mem.At(this.Resolve(m.Base!.Value), this.Resolve(x), m.Disp), m.Size),
     MOperand.Memory m when m.Base is { } b => Sized(Asm.Mem.At(this.Resolve(b), m.Disp), m.Size),
@@ -325,10 +342,9 @@ public sealed class MachineEmitter {
   };
 
   /// <summary>
-  /// Stamps the operand width onto a memory reference. Everything integer here is a word, but an x87
-  /// load or store is a dword, a qword or a tbyte and the encoding differs - a SINGLE written through
-  /// a word reference would be half a value, and an EXTENDED through a dword reference would be less
-  /// than half of one.
+  /// Stamps the operand width onto a memory reference. Integer values may be bytes or words; x87
+  /// loads and stores may additionally be dwords, qwords or tbytes. The width is part of the machine
+  /// operand because using the storage cell's full width can silently change a low-byte access.
   /// </summary>
   private static Mem Sized(Mem memory, MRegSize size) => size switch {
     MRegSize.Byte => memory.WithSize(OperandSize.Byte),

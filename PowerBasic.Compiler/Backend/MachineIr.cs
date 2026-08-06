@@ -91,7 +91,7 @@ public abstract record MOperand {
   /// at all and address the caller's word instead. The emitter resolves the index through the same
   /// parameter offsets the prologue uses.
   /// </summary>
-  public sealed record ParamCell(int ArgumentIndex, int ByteDelta) : MOperand;
+  public sealed record ParamCell(int ArgumentIndex, int ByteDelta, MRegSize Size = MRegSize.Word) : MOperand;
 }
 
 /// <summary>
@@ -162,6 +162,13 @@ public enum MOpcode {
   Fld, Fstp, Fild, Fistp,
   Faddp, Fsubp, Fmulp, Fdivp,
 
+  /// <summary>
+  /// Compare ST(0) with ST(1) and pop both, copy the x87 status word into AX, then copy AH's
+  /// condition bits into the integer flags. The explicit AX operand on the latter two instructions
+  /// makes their hidden dependency visible to scheduling and allocation.
+  /// </summary>
+  Fcompp, FstswAx, Sahf,
+
   /// <summary>Square root of ST(0), in place - no operand, because the x87 answers where it was asked.</summary>
   Fsqrt,
 
@@ -195,6 +202,7 @@ public static class MOpcodes {
   public static bool UsesX87(MOpcode opcode) => opcode is
     MOpcode.Fld or MOpcode.Fstp or MOpcode.Fild or MOpcode.Fistp
     or MOpcode.Faddp or MOpcode.Fsubp or MOpcode.Fmulp or MOpcode.Fdivp
+    or MOpcode.Fcompp or MOpcode.FstswAx
     or MOpcode.Fsqrt
     or MOpcode.Fsin or MOpcode.Fcos or MOpcode.Fptan or MOpcode.Fpatan or MOpcode.Fyl2x
     or MOpcode.Fxch or MOpcode.FstpSt0

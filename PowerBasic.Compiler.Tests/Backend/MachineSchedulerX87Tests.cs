@@ -52,10 +52,14 @@ public sealed class MachineSchedulerX87Tests {
   public void UsesX87_GivenTheStackOpcodes_ThenTheyAreAllRecognised() {
     foreach (var opcode in new[] {
                MOpcode.Fld, MOpcode.Fstp, MOpcode.Fild, MOpcode.Fistp,
-               MOpcode.Faddp, MOpcode.Fsubp, MOpcode.Fmulp, MOpcode.Fdivp, MOpcode.Fsqrt })
+               MOpcode.Faddp, MOpcode.Fsubp, MOpcode.Fmulp, MOpcode.Fdivp,
+               MOpcode.Fcompp, MOpcode.FstswAx, MOpcode.Fsqrt,
+               MOpcode.Fsin, MOpcode.Fcos, MOpcode.Fptan, MOpcode.Fpatan, MOpcode.Fyl2x,
+               MOpcode.Fxch, MOpcode.FstpSt0,
+               MOpcode.Fld1, MOpcode.Fldln2, MOpcode.Fldlg2, MOpcode.Fldl2e, MOpcode.Fldl2t })
       Assert.That(MOpcodes.UsesX87(opcode), Is.True, $"{opcode} uses the x87 stack");
 
-    foreach (var opcode in new[] { MOpcode.Mov, MOpcode.Add, MOpcode.Call, MOpcode.Cmp })
+    foreach (var opcode in new[] { MOpcode.Mov, MOpcode.Add, MOpcode.Call, MOpcode.Cmp, MOpcode.Sahf })
       Assert.That(MOpcodes.UsesX87(opcode), Is.False, $"{opcode} does not");
   }
 }

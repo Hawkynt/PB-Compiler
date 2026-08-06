@@ -5,29 +5,45 @@ using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Tests.Exec;
 
 namespace PowerBasic.Compiler.Tests.Backend;
 
 /// <summary>
-/// Signed 16-bit division and remainder on the x86-16 back end. <c>IDIV</c> is the first selected
+/// Signed 16/32-bit division and remainder on the x86-16 back end. <c>IDIV</c> is the first selected
 /// instruction that is <b>fixed to physical registers</b>: it divides <c>DX:AX</c> and answers with the
 /// quotient in AX and the remainder in DX. Nothing else in the machine IR pins a register that the
 /// operands do not name, so the two mechanisms that have to carry it are exercised here -
 /// <see cref="MInstr.Clobbers"/> keeping the allocator's values out of AX/DX, and the scheduler
 /// treating a clobber as a write so the divide cannot drift past the MOV that reads its result out.
 ///
-/// Only a non-zero compile-time constant divisor is selected. PowerBASIC raises Error 11 on a zero
-/// divisor; a constant that is not zero cannot trap, which is exactly the case where the direct
-/// emitter also drops the guard (O0220). A runtime divisor keeps declining until the runtime-label
-/// bridge exists to raise the error.
+/// The inline 16-bit form selects only a non-zero compile-time constant divisor. The 32-bit form uses
+/// the direct emitter's long-runtime helper, which accepts a runtime divisor and raises PowerBASIC
+/// Error 11 on zero.
 /// </summary>
 [TestFixture]
 public sealed class BackendDivisionTests {
+
+  private static SemanticModel Bind(string source) {
+    var syntax = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
+    var model = Binder.Bind(syntax, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    return model;
+  }
 
   private static IrFunction Divide(IrBinaryOp op, long divisor) {
     var fn = new IrFunction("D", IrType.I16, [new IrArgument(IrType.I16, 0)]);
     var entry = fn.CreateBlock("entry");
     var value = entry.Append(new IrBinary(op, fn.Parameters[0], new IrConstantInt(IrType.I16, divisor)));
+    entry.Append(new IrRet(value));
+    return fn;
+  }
+
+  private static IrFunction WideDivide(IrBinaryOp op) {
+    var fn = new IrFunction("D", IrType.I32,
+      [new IrArgument(IrType.I32, 0), new IrArgument(IrType.I32, 1)]);
+    var entry = fn.CreateBlock("entry");
+    var value = entry.Append(new IrBinary(op, fn.Parameters[0], fn.Parameters[1]));
     entry.Append(new IrRet(value));
     return fn;
   }
@@ -102,6 +118,92 @@ public sealed class BackendDivisionTests {
     Assert.That(readsResult, Is.All.GreaterThan(idiv), "the result is read after the divide produced it");
   }
 
+  [TestCase(IrBinaryOp.SDiv, "rt_ldiv")]
+  [TestCase(IrBinaryOp.SRem, "rt_lmod")]
+  public void Select_GivenSigned32BitDivideOrRemainder_ThenCallsTheMatchingRuntimeHelper(
+      IrBinaryOp op, string label) {
+    var m = InstructionSelector.TrySelect(WideDivide(op), out var reason);
+
+    Assert.That(m, Is.Not.Null, $"declined: {reason}");
+    var call = m!.AllInstructions.Single(i => i.Opcode == MOpcode.Call);
+    Assert.That(call.Operands, Is.EqualTo(new[] { new MOperand.LabelRef(label) }));
+    Assert.That(call.Clobbers, Is.EquivalentTo(new[] { Reg.AX, Reg.BX, Reg.CX, Reg.DX, Reg.SI, Reg.DI }),
+      "the helper owns the caller-saved file while DX:AX and CX:BX carry its arguments");
+  }
+
+  [TestCase(IrBinaryOp.SDiv)]
+  [TestCase(IrBinaryOp.SRem)]
+  public void Allocate_GivenSigned32BitDivideOrRemainder_ThenThePinnedAbiSequenceSurvives(IrBinaryOp op) {
+    var m = InstructionSelector.TrySelect(WideDivide(op), out var reason);
+
+    Assert.That(m, Is.Not.Null, $"declined: {reason}");
+    MachineScheduler.Schedule(m!);
+    Assert.That(LinearScanAllocator.Allocate(m!), Is.Not.Null,
+      "the four argument registers and two result registers must not strand a live virtual");
+  }
+
+  [Test]
+  public void Execute_GivenSigned32BitDivideAndRemainder_ThenRoutedAndDirectResultsMatchAtBoundaries() {
+    const string source = """
+      FUNCTION Quot&(BYVAL n&, BYVAL d&)
+        Quot& = n& \ d&
+      END FUNCTION
+
+      FUNCTION Remain&(BYVAL n&, BYVAL d&)
+        Remain& = n& MOD d&
+      END FUNCTION
+
+      a& = 100000007
+      b& = -7
+      PRINT Quot&(a&, b&); Remain&(a&, b&)
+      PRINT Quot&(-a&, 7); Remain&(-a&, 7)
+      m& = -2147483647 - 1
+      PRINT Quot&(m&, -1); Remain&(m&, -1)
+      PRINT Quot&(m&, 3); Remain&(m&, 3)
+      """;
+    var direct = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = false };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = true };
+
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("Quot"));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("Remain"));
+    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+    Assert.That(routedCpu.Output.Split([' ', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
+      Is.EqualTo(new[] {
+        "-14285715", "2", "-14285715", "-2", "-2147483648", "0", "-715827882", "-2",
+      }), "division truncates toward zero, remainder follows the dividend, and MINLONG / -1 wraps");
+  }
+
+  [Test]
+  public void Execute_GivenAZeroRuntimeDivisor_ThenTheRoutedPathRaisesPowerBasicError11() {
+    const string source = """
+      ON ERROR GOTO trapped
+      n& = 7
+      d& = 0
+      q& = n& \ d&
+      PRINT "missed"
+      END
+      trapped:
+      PRINT ERR
+      END
+      """;
+    var direct = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = false };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = true };
+
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the error path must not be a fallback");
+    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+    Assert.That(routedCpu.Output.Trim(), Is.EqualTo("11"));
+  }
+
   [Test]
   public void Emit_GivenAProgramWithAConstantDivide_ThenTheBackEndCompilesIt() {
     const string source = """
@@ -112,8 +214,7 @@ public sealed class BackendDivisionTests {
       PRINT Tenth%(250)
       """;
 
-    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
-    Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
+    var model = Bind(source);
     var routed = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = true };
 
     var image = routed.EmitExecutable();

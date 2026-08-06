@@ -1,9 +1,11 @@
+using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Backend;
 using PowerBasic.Compiler.CodeGen;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Tests.Exec;
 
 namespace PowerBasic.Compiler.Tests.Backend;
 
@@ -62,6 +64,66 @@ public sealed class BackendFloatTests {
     Assert.That(opcodes[subtract + 1], Is.EqualTo(MOpcode.Fstp), "the result goes straight back to its cell");
   }
 
+  [TestCase(IrCmpPred.Foeq, Condition.Equal)]
+  [TestCase(IrCmpPred.Fone, Condition.NotEqual)]
+  [TestCase(IrCmpPred.Folt, Condition.Below)]
+  [TestCase(IrCmpPred.Fole, Condition.BelowOrEqual)]
+  [TestCase(IrCmpPred.Fogt, Condition.Above)]
+  [TestCase(IrCmpPred.Foge, Condition.AboveOrEqual)]
+  public void Select_GivenFloatComparisonUsedAsAValue_ThenMaterializesBasicTruthFromX87Flags(
+      IrCmpPred predicate, Condition condition) {
+    var fn = new IrFunction("F", IrType.I1, []);
+    var entry = fn.CreateBlock("entry");
+    var comparison = entry.Append(new IrCmp(predicate,
+      new IrConstantFloat(IrType.F32, 1.25), new IrConstantFloat(IrType.F32, 2.5)));
+    entry.Append(new IrRet(comparison));
+
+    var m = InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(m, Is.Not.Null, $"declined: {reason}");
+    var selected = m!;
+    MachineScheduler.Schedule(selected);
+    var instructions = selected.AllInstructions.ToList();
+    var opcodes = instructions.Select(i => i.Opcode).ToList();
+    Assert.That(opcodes.IndexOf(MOpcode.Fld), Is.LessThan(opcodes.LastIndexOf(MOpcode.Fld)));
+    Assert.That(opcodes.LastIndexOf(MOpcode.Fld), Is.LessThan(opcodes.IndexOf(MOpcode.Fxch)));
+    Assert.That(opcodes.IndexOf(MOpcode.Fxch), Is.LessThan(opcodes.IndexOf(MOpcode.Fcompp)));
+    Assert.That(opcodes.IndexOf(MOpcode.Fcompp), Is.LessThan(opcodes.IndexOf(MOpcode.FstswAx)));
+    Assert.That(opcodes.IndexOf(MOpcode.FstswAx), Is.LessThan(opcodes.IndexOf(MOpcode.Sahf)));
+    var status = instructions.Single(i => i.Opcode == MOpcode.FstswAx);
+    Assert.That(status.Clobbers, Does.Contain(Reg.AX), "a live virtual must not be allocated over FSTSW AX");
+    var branch = instructions.Single(i => i.Opcode == MOpcode.Jcc);
+    Assert.That(branch.Condition, Is.EqualTo(condition));
+    Assert.That(LinearScanAllocator.Allocate(selected), Is.Not.Null,
+      "the selected and scheduled diamond must allocate");
+  }
+
+  [Test]
+  public void Execute_GivenUnsuffixedSingleLiteralsInADoubleForLoop_ThenTheRoutedPathPreservesTheirBits() {
+    const string source = """
+      FUNCTION Walk%
+        total# = 0
+        FOR counter# = 0.1 TO 1 STEP 0.3
+          total# = total# + counter#
+        NEXT counter#
+        PRINT total#
+        Walk% = 0
+      END FUNCTION
+
+      PRINT Walk%
+      """;
+    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("Walk"), "the comparison must not silently fall back");
+    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+  }
+
   [Test]
   public void Select_GivenAFloatLiteral_ThenReadsItFromTheConstantPoolAsAQword() {
     var fn = new IrFunction("F", IrType.F32, []);
@@ -115,6 +177,88 @@ public sealed class BackendFloatTests {
     var ret = instructions.FindIndex(i => i.Opcode == MOpcode.Ret);
     Assert.That(instructions[ret - 1].Opcode, Is.EqualTo(MOpcode.Fld),
       "the result is loaded, not stored-and-popped, right before the return");
+  }
+
+  [Test]
+  public void Select_GivenAFloatParameter_ThenReadsItsDeclaredWidthFromTheIncomingStackCell() {
+    var fn = new IrFunction("Scale", IrType.F32, [new IrArgument(IrType.F32, 0)]);
+    var entry = fn.CreateBlock("entry");
+    var result = entry.Append(new IrBinary(IrBinaryOp.FMul, fn.Parameters[0],
+      new IrConstantFloat(IrType.F32, 2)));
+    entry.Append(new IrRet(result));
+
+    var m = InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(m, Is.Not.Null, $"declined: {reason}");
+    var incoming = m!.AllInstructions.SelectMany(i => i.Operands).OfType<MOperand.ParamCell>().ToList();
+    Assert.That(incoming, Does.Contain(new MOperand.ParamCell(0, 0, MRegSize.Dword)),
+      "SINGLE is loaded from the four bytes the caller pushed, then widened by FLD");
+    Assert.That(m.ArgumentLoads, Is.Empty, "x87 reads the parameter cell directly; no scalar vreg is minted");
+  }
+
+  [Test]
+  public void Select_GivenAFloatCall_ThenRoundsArgumentsToTheirDeclaredWidthAndParksTheSt0Result() {
+    var callee = new IrFunction("Blend", IrType.F64,
+      [new IrArgument(IrType.F64, 0), new IrArgument(IrType.F32, 1)]);
+    var calleeEntry = callee.CreateBlock("entry");
+    calleeEntry.Append(new IrRet(callee.Parameters[0]));
+    var caller = new IrFunction("Caller", IrType.F64, []);
+    var entry = caller.CreateBlock("entry");
+    var call = entry.Append(new IrCall(IrType.F64, callee,
+      [new IrConstantFloat(IrType.F64, 1.25), new IrConstantFloat(IrType.F32, 0.5)]));
+    entry.Append(new IrRet(call));
+
+    var m = InstructionSelector.TrySelect(caller, out var reason);
+
+    Assert.That(m, Is.Not.Null, $"declined: {reason}");
+    var selected = m!;
+    var instructions = selected.AllInstructions.ToList();
+    var callAt = instructions.FindIndex(i => i.Opcode == MOpcode.Call);
+    Assert.That(callAt, Is.GreaterThan(0));
+    var stores = instructions.Take(callAt).Where(i => i.Opcode == MOpcode.Fstp)
+      .Select(i => (MOperand.StackSlot)i.Operands[0]).ToList();
+    Assert.That(stores.Select(s => s.Size), Is.EqualTo(new[] { MRegSize.Qword, MRegSize.Dword }),
+      "arguments round from the x87 temporary to the callee's declared IEEE widths");
+    var pushes = instructions.Take(callAt).Where(i => i.Opcode == MOpcode.Push)
+      .Select(i => (MOperand.StackSlot)i.Operands[0]).ToList();
+    Assert.That(pushes.Select(p => p.Size), Is.All.EqualTo(MRegSize.Word));
+    Assert.That(pushes.Select(p => p.Disp), Is.EqualTo(new[] { 6, 4, 2, 0, 2, 0 }),
+      "each argument is pushed high word first, matching the BASIC/PASCAL stack layout");
+    Assert.That(instructions[callAt + 1].Opcode, Is.EqualTo(MOpcode.Fstp),
+      "the caller pops the returned ST0 value into its own x87 cell");
+    MachineScheduler.Schedule(selected);
+    Assert.That(LinearScanAllocator.Allocate(selected), Is.Not.Null);
+  }
+
+  [Test]
+  public void Execute_GivenFloatParametersAndResults_ThenTheRoutedStackAbiMatchesTheDirectEmitter() {
+    const string source = """
+      DECLARE FUNCTION Weighted#(BYVAL a#, BYVAL b!)
+      DECLARE FUNCTION Echo!(BYVAL value!)
+
+      PRINT Weighted#(1.25#, 0.5!); Echo!(16777217#)
+      END
+
+      FUNCTION Weighted#(BYVAL a#, BYVAL b!) NOINLINE
+        Weighted# = a# + b! * 10
+      END FUNCTION
+
+      FUNCTION Echo!(BYVAL value!) NOINLINE
+        Echo! = value!
+      END FUNCTION
+      """;
+    var direct = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = false };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = true };
+
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("Weighted"));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("Echo"));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
+    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
   }
 
   [Test]
