@@ -389,7 +389,7 @@ Conventions used on every page:
 | ⬜ | [O0296](O0296-string-move-instead-of-copy.md) | String move instead of copy |
 | 🟡 | [O0297](O0297-substring-view.md) | Substring as a view |
 | 🟡 | [O0298](O0298-string-compare-length-guard.md) | String comparison length guard |
-| ⬜ | [O0299](O0299-interned-literal-identity.md) | Interned literal identity comparison |
+| ✅ | [O0299](O0299-interned-literal-identity.md) | Interned literal identity comparison |
 | ⬜ | [O0300](O0300-ascii-string-specialization.md) | ASCII string specialization |
 | ⬜ | [O0301](O0301-encoding-conversion-elimination.md) | Encoding-conversion elimination |
 | 🟡 | [O0302](O0302-search-algorithm-selection.md) | Search algorithm selection by pattern |
