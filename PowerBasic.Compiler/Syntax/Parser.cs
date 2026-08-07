@@ -527,8 +527,14 @@ public sealed partial class Parser {
 
   internal static bool TryParseMicrosoftInclude(string tail, out string fileName) {
     var text = tail.Trim();
-    if (text.StartsWith(':'))
-      text = text[1..].TrimStart();
+    // The colon is part of the directive, not decoration: Microsoft's form is
+    // `REM $INCLUDE: 'FILE.BI'`. Accepting it without one let `REM $INCLUDE 'INC.BI'` through as a
+    // valid include, so a malformed directive silently pulled the file in instead of being reported.
+    if (!text.StartsWith(':')) {
+      fileName = "";
+      return false;
+    }
+    text = text[1..].TrimStart();
     if (text.Length >= 2 && text[0] == '\'' && text[^1] == '\'') {
       fileName = text[1..^1];
       return fileName.Length > 0 && !fileName.Contains('\'');
@@ -569,6 +575,7 @@ public sealed partial class Parser {
       case "DYNAMIC" or "STATIC" when arguments.Count == 0:
         return;
       case "DIM":
+        this.Require(LanguageFeature.DimMetaStatement);
         RequireOneOf(command, arguments, "ALL", "ARRAY");
         return;
       case "COMPAT":

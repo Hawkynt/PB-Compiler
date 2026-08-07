@@ -235,7 +235,14 @@ public sealed class Lexer {
   /// </summary>
   private bool TryLexMicrosoftCommentMeta(SourcePosition position, int markerLength, out Token token) {
     token = default;
-    if (!DialectFacts.IsAvailable(LanguageFeature.MicrosoftCommentMetaStatements, this._dialect))
+    // The Microsoft family only, which is what the gate's own note in DialectFacts claims but did
+    // not enforce: IsAvailable consults the BORLAND table for a Borland dialect, so a pb36 minimum
+    // made pb36 read these too. An unrecognised `$word` after a comment marker is then a hard parse
+    // error, and PowerBASIC comments that merely mention a metastatement stop compiling - six of the
+    // differential battery's own sources describe the `$OPTIMIZE`/`$ERROR`/`$CPU` they use, and all
+    // six broke. In this family the syntax is a comment and stays one.
+    if (this._dialect.Family() != DialectFamily.Microsoft
+        || !DialectFacts.IsAvailable(LanguageFeature.MicrosoftCommentMetaStatements, this._dialect))
       return false;
 
     var look = this._index + markerLength;

@@ -202,6 +202,8 @@ public enum LanguageFeature {
   MicrosoftCommentMetaStatements,
   /// <summary>PB-Compiler's PB 3.6-only cross-dialect runtime directive.</summary>
   CompatMeta,
+  /// <summary>The $DIM ALL / $DIM ARRAY declaration-discipline metastatement (PB 3.0; docs/DIALECTS.md).</summary>
+  DimMetaStatement,
   /// <summary>PB 3.6 optimizer modes, 80486+ tiers, and CPU feature flags.</summary>
   ExtendedMetaArguments,
 }
@@ -316,7 +318,14 @@ public static class DialectFacts {
     [LanguageFeature.MetaStatements] = (Dialect.Tb10, "compiler metastatements"),
     // The Borland minimum is unused: the lexer only recognizes this syntax in the Microsoft family.
     [LanguageFeature.MicrosoftCommentMetaStatements] = (Dialect.Pb36, "REM/apostrophe comment metacommands"),
-    [LanguageFeature.CompatMeta] = (Dialect.Pb36, "$COMPAT metastatement"),
+    // pb35, not pb36: $COMPAT is what the DECOMPILER emits so that a cross-family program recompiles
+    // under --dialect pb35 with its own runtime semantics - "un-parses back to compile-clean PB 3.5"
+    // is the contract, and roundtrip-check.sh recompiles at pb35 exactly. Gating it at pb36 made
+    // BasicWriter's own output uncompilable by the gate that checks it (28 of the corpus failed).
+    [LanguageFeature.CompatMeta] = (Dialect.Pb35, "$COMPAT metastatement"),
+    // PB 3.0 per docs/DIALECTS.md, which lists "$DIM ALL/ARRAY" among that release's additions. The
+    // argument was already validated; nothing checked the dialect, so Turbo Basic took it too.
+    [LanguageFeature.DimMetaStatement] = (Dialect.Pb30, "the $DIM ALL / $DIM ARRAY metastatement"),
     [LanguageFeature.ExtendedMetaArguments] = (Dialect.Pb36, "extended metastatement arguments and 80486+ CPU tiers"),
   };
 

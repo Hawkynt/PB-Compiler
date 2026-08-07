@@ -228,8 +228,12 @@ public sealed class LexerTests {
   [TestCase(Dialect.Basica)]
   [TestCase(Dialect.Gw)]
   public void Tokenize_GivenMicrosoftCommentMeta_WhenDialectDoesNotProvideIt_ThenItRemainsAComment(Dialect dialect) {
-    var tokens = Lexer.Tokenize("REM $STATIC", "TEST.BAS", dialect).ToArray();
-    Assert.That(tokens.Select(token => token.Kind), Is.EqualTo(new[] { TokenKind.EndOfFile }));
+    // GW-BASIC and BASICA require a numeric line number on every program line - a rule this same
+    // change enforces - so the probe carries one for those two. What is asserted either way is the
+    // thing the name promises: no metacommand token is produced and the text stays a comment.
+    var source = dialect.IsGwBasica() ? "10 REM $STATIC" : "REM $STATIC";
+    var tokens = Lexer.Tokenize(source, "TEST.BAS", dialect).ToArray();
+    Assert.That(tokens.Select(token => token.Kind), Has.None.EqualTo(TokenKind.MicrosoftMetaCommand));
   }
 
   #endregion

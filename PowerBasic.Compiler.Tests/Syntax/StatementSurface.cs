@@ -167,7 +167,9 @@ internal static class StatementSurface {
     new("meta.if", "%YES = -1\n$IF %YES\n  PRINT 1\n$ENDIF", MinMicrosoft: _noMicrosoft),
     new("meta.elseif", "%NO = 0\n%YES = -1\n$IF %NO\n  PRINT 0\n$ELSEIF %YES\n  PRINT 1\n$ENDIF",
       Dialect.Pb35, _noMicrosoft),
-    new("meta.compat", "$COMPAT qb45", Dialect.Pb36, _noMicrosoft),
+    // pb35, matching the gate: $COMPAT is what the decompiler emits so a cross-family program
+    // recompiles under --dialect pb35, which is what roundtrip-check.sh does.
+    new("meta.compat", "$COMPAT qb45", Dialect.Pb35, _noMicrosoft),
     new("require", "CALL S8(1)\nEND\nSUB S8(BYVAL n%)\n  REQUIRE n% > 0, \"positive\"\nEND SUB", Dialect.Pb36, _noMicrosoft),
     // and six more: the code-pointer trio, the single-line type alias (TYPE Name AS type - no
     // ALIAS keyword, which a guess would put there), DEFER and a coroutine YIELD
@@ -748,6 +750,9 @@ internal static class StatementSurface {
     "rotate.left",
     "shared.global.pb",
     "union.decl",
+    // $COMPAT is the decompiler's directive and is available from pb35 - the dialect its
+    // output is recompiled under - so it belongs on the PB 3.5 side, not in "neither".
+    "meta.compat",
   ];
 
   private static readonly string[] _pairPds71 = [
@@ -757,7 +762,6 @@ internal static class StatementSurface {
   private static readonly string[] _pairNeither = [
     "destructure",
     "static.assert",
-    "meta.compat",
     "meta.cpu.80486",
     "meta.cpu.80586",
     "meta.cpu.80586.mmx",
