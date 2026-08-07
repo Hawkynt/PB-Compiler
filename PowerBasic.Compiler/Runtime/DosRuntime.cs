@@ -709,6 +709,23 @@ public sealed partial class DosRuntime {
     // The number is decomposed in C-helper style entirely on the FPU:
     //   exp10 = 0; while |x| >= 10^digits: x /= 10, exp10++; while x != 0 && |x| < 10^(digits-1): x *= 10, exp10--
     //   mantissa = round(x) as 64-bit integer; then decimal point sits at (digits + exp10).
+    //
+    // The scaling LOOP costs the last digit at 64-bit FPU precision, which is what both emulators
+    // give (DOSBox computes in 64-bit doubles; Cpu8086's X87Value is a C# double). Each x10 rounds,
+    // and sixteen of them accumulate past the half-ulp that decides the sixteenth digit:
+    //
+    //   1/3 -> sixteen successive x10 -> 3333333333333332.5 -> .3333333333333332   (this compiler)
+    //   1/3 -> one multiply by 1e16   -> 3333333333333333.0 -> .3333333333333333   (genuine QB)
+    //
+    // That is the whole of the qb10..qb45 DIFF01 divergence, verified against those toolchains. At
+    // 80 bits the loop's error is ~1.6e-18 relative, far inside the half-ulp, so on real hardware it
+    // would not show - which is why this is a robustness bug rather than a known fidelity one.
+    //
+    // The fix is to round ONCE: keep the exact input and a scale factor, recomputing x*scale each
+    // iteration instead of compounding x. Powers of ten are exact in a double up to 1e22, so the
+    // scale itself accumulates no error and only the final product rounds. It must be measured
+    // against pb35 before landing - that battery passes today, so our current output already agrees
+    // with PBC 3.5 for everything it prints.
     var zero = asm.DefineLabel();
     var scaleDown = asm.DefineLabel();
     var scaleDownTest = asm.DefineLabel();
