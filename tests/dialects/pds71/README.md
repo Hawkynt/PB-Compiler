@@ -31,7 +31,7 @@ passes; an empty box means nobody has checked yet, which is not the same as fail
 - **Syntax belonging to another dialect is rejected** - A form this dialect never had is refused, with a controlled diagnostic naming the requirement.
 - **Numeric typing follows the dialect** - Default types, suffix widths, literal typing and division result types are the dialect's own.
 - **Runtime implementations follow the dialect** - Where two dialects differ in a runtime routine - rounding, float format - the right one is called.
-- **Every runtime function's observable output** - Each runtime entry is exercised in all its variations and checked on stdout, files, exit code.
+- **Every runtime function's observable output** - Each runtime entry is exercised in all its variations and checked on stdout, files, exit code. GRAPHICS IS THE OPEN PART: SCREEN, PSET, LINE, CIRCLE, PAINT, GET/PUT and PCOPY need checking PIXEL BY PIXEL against the mode-13h framebuffer the emulator already keeps at 0xA0000, and offscreen pages need the same treatment - a GUI statement that draws almost the right shape passes every stdout-based test there is.
 - **Metastatements and their effect on the produced executable** - $CPU, $FLOAT and the rest change the image in the documented way, per target and FPU mode.
 - **Documented quirks and bugs are reproduced** - Each quirk recorded for the dialect is reproduced, not merely tolerated.
 - **Numeric operations are bit-compatible** - Arithmetic - floating point above all - produces the same bits as the genuine implementation.

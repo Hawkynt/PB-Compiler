@@ -58,7 +58,11 @@ internal static class DialectBattery {
     new("runtime-selection", "Runtime implementations follow the dialect",
       "Where two dialects differ in a runtime routine - rounding, float format - the right one is called."),
     new("runtime-behaviour", "Every runtime function's observable output",
-      "Each runtime entry is exercised in all its variations and checked on stdout, files, exit code."),
+      "Each runtime entry is exercised in all its variations and checked on stdout, files, exit code. "
+      + "GRAPHICS IS THE OPEN PART: SCREEN, PSET, LINE, CIRCLE, PAINT, GET/PUT and PCOPY need checking "
+      + "PIXEL BY PIXEL against the mode-13h framebuffer the emulator already keeps at 0xA0000, and "
+      + "offscreen pages need the same treatment - a GUI statement that draws almost the right shape "
+      + "passes every stdout-based test there is."),
     new("metastatements", "Metastatements and their effect on the produced executable",
       "$CPU, $FLOAT and the rest change the image in the documented way, per target and FPU mode."),
     new("quirks", "Documented quirks and bugs are reproduced",
