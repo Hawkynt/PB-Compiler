@@ -21,9 +21,27 @@ internal static class DialectProbes {
   /// <summary>Whether the front end accepts a source, and whether a rejection was a controlled diagnostic.</summary>
   internal readonly record struct FrontEnd(bool Accepted, bool Controlled, string? Why);
 
+  /// <summary>Feeds an in-memory source to the preprocessor, which is a separate entry point from the lexer.</summary>
+  private sealed class MemorySource(string text) : ISourceProvider {
+    public bool TryReadSource(string name, string? includedFrom, out string sourceText, out string resolvedName) {
+      sourceText = text;
+      resolvedName = name;
+      return true;
+    }
+  }
+
+  /// <summary>
+  /// The whole front end, metastatements included.
+  ///
+  /// <c>Preprocessor.Expand</c> is NOT reached by tokenizing and parsing - it is its own entry point,
+  /// and a probe that goes straight to the lexer never sees a `$IF` resolved. The dead-branch probe
+  /// did exactly that and reported seventeen dialects failing to skip a false branch, which the
+  /// preprocessor skips correctly when it is actually asked.
+  /// </summary>
   internal static FrontEnd Compile(string source, Dialect dialect) {
     try {
-      var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, _file, dialect), _file, dialect), dialect);
+      var tokens = Preprocessor.Expand(_file, new MemorySource(source), dialect);
+      var model = Binder.Bind(Parser.Parse(tokens, _file, dialect), dialect);
       return model.Errors.Count == 0 ? new(true, false, null) : new(false, true, model.Errors[0].Message);
     } catch (Exception e) when (e is LexerException or ParserException or PreprocessorException or BindException) {
       return new(false, true, e.Message);
@@ -98,6 +116,81 @@ internal static class DialectProbes {
         $"{crashed.Count} form(s) fail without a named reason: {string.Join(", ", crashed.Take(4))}");
     return new(DialectBattery.State.Held, lowered, total,
       $"{lowered} of {total} reach the IR; the rest decline by name, which is the documented subset");
+  }
+
+  /// <summary>
+  /// The malformed text both branch probes use. It is not a typo or a near-miss - it is a sequence no
+  /// BASIC of any lineage could parse - so "the compiler accepted it" can only mean it never looked.
+  /// </summary>
+  private const string _garbage = "THIS IS ARBITRARY TEXT";
+
+  /// <summary>
+  /// How a dialect spells "control cannot reach this".
+  ///
+  /// The two lineages answer differently and both answers are right. An INTERPRETER never parses a
+  /// statement it does not execute, so <c>IF 0 THEN &lt;garbage&gt;</c> simply runs past it - which is
+  /// what tests/diff/basica/DEADTEXT.BAS pins. A COMPILER parses everything it is given, so the only
+  /// text it genuinely never sees is what the preprocessor removed: <c>$IF 0 ... $ENDIF</c>.
+  /// </summary>
+  private static string DeadBranchSource(Dialect dialect)
+    => dialect.IsInterpreter()
+      ? string.Join("\n", Numbered(["IF 0 THEN " + _garbage, "PRINT 1", "END"])) + "\n"
+      : $"$IF 0\n{_garbage}\n$ENDIF\nPRINT 1\nEND\n";
+
+  private static string LiveBranchSource(Dialect dialect)
+    => dialect.IsInterpreter()
+      ? string.Join("\n", Numbered(["IF 1 THEN " + _garbage, "PRINT 1", "END"])) + "\n"
+      : $"$IF 1\n{_garbage}\n$ENDIF\nPRINT 1\nEND\n";
+
+  /// <summary>
+  /// D3 - malformed source control cannot reach compiles, AND says so.
+  ///
+  /// The warning is half the claim. Silently accepting unreachable rubbish is indistinguishable from
+  /// not having looked, and the whole point of matching the interpreters here is that the acceptance
+  /// is deliberate rather than accidental.
+  /// </summary>
+  internal static DialectBattery.Measurement DeadBranch(Dialect dialect) {
+    // A compiled Microsoft dialect has no way to express "control cannot reach this". QuickBASIC and
+    // PDS have no conditional compilation - `$STATIC` and `$DYNAMIC` are the only metacommands, and
+    // they are array-storage directives - so there is no construct to test rather than a construct
+    // that fails. Reporting that as a gap would be inventing one.
+    if (!dialect.IsInterpreter() && dialect.Family() == DialectFamily.Microsoft)
+      return new(DialectBattery.State.NotApplicable, 0, 0,
+        "no conditional compilation in this family; $STATIC/$DYNAMIC are storage directives, not branches");
+
+    var source = DeadBranchSource(dialect);
+    var accepted = Compile(source, dialect).Accepted;
+    var warned = accepted && Warnings(source, dialect) > 0;
+    var failed = new List<string>();
+    if (!accepted)
+      failed.Add("unreachable malformed source was rejected");
+    else if (!warned)
+      failed.Add("accepted but silent - acceptance must be deliberate, not indistinguishable from not looking");
+    return Report(failed.Count == 0 ? 1 : 0, 1, failed, "held");
+  }
+
+  /// <summary>D4 - the same malformed source, where control CAN reach it, is a diagnostic.</summary>
+  internal static DialectBattery.Measurement LiveBranch(Dialect dialect) {
+    if (!dialect.IsInterpreter() && dialect.Family() == DialectFamily.Microsoft)
+      return new(DialectBattery.State.NotApplicable, 0, 0,
+        "the same reason as the dead-branch dimension: there is no conditional compilation to make live");
+
+    var result = Compile(LiveBranchSource(dialect), dialect);
+    var failed = new List<string>();
+    if (result.Accepted)
+      failed.Add("reachable malformed source was accepted");
+    else if (!result.Controlled)
+      failed.Add($"rejected, but not cleanly: {result.Why}");
+    return Report(failed.Count == 0 ? 1 : 0, 1, failed, "held");
+  }
+
+  private static int Warnings(string source, Dialect dialect) {
+    try {
+      var tokens = Preprocessor.Expand(_file, new MemorySource(source), dialect);
+      return Binder.Bind(Parser.Parse(tokens, _file, dialect), dialect).Warnings.Count;
+    } catch {
+      return 0;
+    }
   }
 
   private static DialectBattery.Measurement Report(int covered, int total, List<string> failed, string verb)

@@ -4,15 +4,15 @@
 
 `pds71` - family Microsoft, compiled.
 
-**5 of 12 dimensions hold.** A box is ticked only when a probe runs and
+**7 of 12 dimensions hold.** A box is ticked only when a probe runs and
 passes; an empty box means nobody has checked yet, which is not the same as failing.
 
 | | Dimension | Measured | Notes |
 |---|---|---|---|
 | [x] | Statement syntax and parameter combinations | 210 / 210 | all 210 accepted |
 | [x] | Lowers to the IR | 122 / 210 | 122 of 210 reach the IR; the rest decline by name, which is the documented subset |
-| [ ] | Syntax errors in unreachable branches are ignored, and warned about | - | needs malformed source behind a false $IF (compiled) or an unexecuted line (interpreted), asserting the compile succeeds AND warns |
-| [ ] | Syntax errors on reachable flow fail | - | the same malformed source on reachable flow, asserting a diagnostic rather than a miscompile |
+| [-] | Syntax errors in unreachable branches are ignored, and warned about | - | no conditional compilation in this family; $STATIC/$DYNAMIC are storage directives, not branches |
+| [-] | Syntax errors on reachable flow fail | - | the same reason as the dead-branch dimension: there is no conditional compilation to make live |
 | [x] | Syntax belonging to another dialect is rejected | 91 / 91 | all 91 cleanly refused |
 | [x] | Numeric typing follows the dialect | 18 / 18 | all 18 as claimed |
 | [ ] | Runtime implementations follow the dialect | - | which runtime entry is called where dialects differ - round-half-away against the FPU's round-half-even, MBF against IEEE |

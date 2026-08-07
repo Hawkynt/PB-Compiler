@@ -4,15 +4,15 @@
 
 `qbasic` - family Microsoft, interpreted.
 
-**5 of 12 dimensions hold.** A box is ticked only when a probe runs and
+**6 of 12 dimensions hold.** A box is ticked only when a probe runs and
 passes; an empty box means nobody has checked yet, which is not the same as failing.
 
 | | Dimension | Measured | Notes |
 |---|---|---|---|
 | [x] | Statement syntax and parameter combinations | 209 / 209 | all 209 accepted |
 | [x] | Lowers to the IR | 121 / 209 | 121 of 209 reach the IR; the rest decline by name, which is the documented subset |
-| [ ] | Syntax errors in unreachable branches are ignored, and warned about | - | needs malformed source behind a false $IF (compiled) or an unexecuted line (interpreted), asserting the compile succeeds AND warns |
-| [ ] | Syntax errors on reachable flow fail | - | the same malformed source on reachable flow, asserting a diagnostic rather than a miscompile |
+| [~] | Syntax errors in unreachable branches are ignored, and warned about | 0 / 1 | 1 not held: unreachable malformed source was rejected |
+| [x] | Syntax errors on reachable flow fail | 1 / 1 | all 1 held |
 | [x] | Syntax belonging to another dialect is rejected | 92 / 92 | all 92 cleanly refused |
 | [x] | Numeric typing follows the dialect | 18 / 18 | all 18 as claimed |
 | [ ] | Runtime implementations follow the dialect | - | which runtime entry is called where dialects differ - round-half-away against the FPU's round-half-even, MBF against IEEE |

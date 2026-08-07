@@ -27,11 +27,8 @@ public sealed class DialectBatteryTests {
         "syntax" => DialectProbes.Syntax(dialect),
         "lowering" => DialectProbes.Lowering(dialect),
         "foreign" => DialectProbes.Foreign(dialect),
-        "dead-branch" => DialectProbes.Unprobed(
-          "needs malformed source behind a false $IF (compiled) or an unexecuted line (interpreted), "
-          + "asserting the compile succeeds AND warns"),
-        "live-branch" => DialectProbes.Unprobed(
-          "the same malformed source on reachable flow, asserting a diagnostic rather than a miscompile"),
+        "dead-branch" => DialectProbes.DeadBranch(dialect),
+        "live-branch" => DialectProbes.LiveBranch(dialect),
         "numeric-types" => DialectProbes.NumericTypes(dialect),
         "runtime-selection" => DialectProbes.Unprobed(
           "which runtime entry is called where dialects differ - round-half-away against the FPU's "

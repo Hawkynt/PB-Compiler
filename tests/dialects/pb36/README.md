@@ -4,15 +4,15 @@
 
 `pb36` - family Borland, compiled.
 
-**5 of 12 dimensions hold.** A box is ticked only when a probe runs and
+**6 of 12 dimensions hold.** A box is ticked only when a probe runs and
 passes; an empty box means nobody has checked yet, which is not the same as failing.
 
 | | Dimension | Measured | Notes |
 |---|---|---|---|
 | [x] | Statement syntax and parameter combinations | 301 / 301 | all 301 accepted |
 | [x] | Lowers to the IR | 182 / 301 | 182 of 301 reach the IR; the rest decline by name, which is the documented subset |
-| [ ] | Syntax errors in unreachable branches are ignored, and warned about | - | needs malformed source behind a false $IF (compiled) or an unexecuted line (interpreted), asserting the compile succeeds AND warns |
-| [ ] | Syntax errors on reachable flow fail | - | the same malformed source on reachable flow, asserting a diagnostic rather than a miscompile |
+| [~] | Syntax errors in unreachable branches are ignored, and warned about | 0 / 1 | 1 not held: accepted but silent - acceptance must be deliberate, not indistinguishable from not looking |
+| [x] | Syntax errors on reachable flow fail | 1 / 1 | all 1 held |
 | [-] | Syntax belonging to another dialect is rejected | - | this dialect provides every form in the surface |
 | [x] | Numeric typing follows the dialect | 18 / 18 | all 18 as claimed |
 | [ ] | Runtime implementations follow the dialect | - | which runtime entry is called where dialects differ - round-half-away against the FPU's round-half-even, MBF against IEEE |
