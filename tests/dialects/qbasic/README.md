@@ -4,18 +4,18 @@
 
 `qbasic` - family Microsoft, interpreted.
 
-**6 of 12 dimensions hold.** A box is ticked only when a probe runs and
+**8 of 12 dimensions hold.** A box is ticked only when a probe runs and
 passes; an empty box means nobody has checked yet, which is not the same as failing.
 
 | | Dimension | Measured | Notes |
 |---|---|---|---|
 | [x] | Statement syntax and parameter combinations | 209 / 209 | all 209 accepted |
 | [x] | Lowers to the IR | 121 / 209 | 121 of 209 reach the IR; the rest decline by name, which is the documented subset |
-| [~] | Syntax errors in unreachable branches are ignored, and warned about | 0 / 1 | 1 not held: unreachable malformed source was rejected |
-| [x] | Syntax errors on reachable flow fail | 1 / 1 | all 1 held |
+| [-] | Syntax errors in unreachable branches are ignored, and warned about | - | QBasic syntax-checks the whole program rather than deferring per line, so no line goes unparsed |
+| [-] | Syntax errors on reachable flow fail | - | the dead-branch dimension's reason: QBasic syntax-checks the whole program rather than deferring per line, so no line goes unparsed |
 | [x] | Syntax belonging to another dialect is rejected | 92 / 92 | all 92 cleanly refused |
 | [x] | Numeric typing follows the dialect | 18 / 18 | all 18 as claimed |
-| [ ] | Runtime implementations follow the dialect | - | which runtime entry is called where dialects differ - round-half-away against the FPU's round-half-even, MBF against IEEE |
+| [x] | Runtime implementations follow the dialect | 2 / 2 | all 2 selected as the dialect requires |
 | [ ] | Every runtime function's observable output | - | every runtime entry in each variation, checked on stdout, written files and exit code |
 | [ ] | Metastatements and their effect on the produced executable | - | $CPU 8086/80286 and $FLOAT emulated/hardware, asserting the produced image really differs |
 | [ ] | Documented quirks and bugs are reproduced | - | each quirk recorded for this dialect in docs/QUIRKS.md, reproduced rather than tolerated |

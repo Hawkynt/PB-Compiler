@@ -4,7 +4,7 @@
 
 `pds71` - family Microsoft, compiled.
 
-**7 of 12 dimensions hold.** A box is ticked only when a probe runs and
+**8 of 12 dimensions hold.** A box is ticked only when a probe runs and
 passes; an empty box means nobody has checked yet, which is not the same as failing.
 
 | | Dimension | Measured | Notes |
@@ -12,10 +12,10 @@ passes; an empty box means nobody has checked yet, which is not the same as fail
 | [x] | Statement syntax and parameter combinations | 210 / 210 | all 210 accepted |
 | [x] | Lowers to the IR | 122 / 210 | 122 of 210 reach the IR; the rest decline by name, which is the documented subset |
 | [-] | Syntax errors in unreachable branches are ignored, and warned about | - | no conditional compilation in this family; $STATIC/$DYNAMIC are storage directives, not branches |
-| [-] | Syntax errors on reachable flow fail | - | the same reason as the dead-branch dimension: there is no conditional compilation to make live |
+| [-] | Syntax errors on reachable flow fail | - | the dead-branch dimension's reason: no conditional compilation in this family; $STATIC/$DYNAMIC are storage directives, not branches |
 | [x] | Syntax belonging to another dialect is rejected | 91 / 91 | all 91 cleanly refused |
 | [x] | Numeric typing follows the dialect | 18 / 18 | all 18 as claimed |
-| [ ] | Runtime implementations follow the dialect | - | which runtime entry is called where dialects differ - round-half-away against the FPU's round-half-even, MBF against IEEE |
+| [x] | Runtime implementations follow the dialect | 2 / 2 | all 2 selected as the dialect requires |
 | [ ] | Every runtime function's observable output | - | every runtime entry in each variation, checked on stdout, written files and exit code |
 | [ ] | Metastatements and their effect on the produced executable | - | $CPU 8086/80286 and $FLOAT emulated/hardware, asserting the produced image really differs |
 | [ ] | Documented quirks and bugs are reproduced | - | each quirk recorded for this dialect in docs/QUIRKS.md, reproduced rather than tolerated |

@@ -158,9 +158,13 @@ public sealed class IrBasicWriterCensusTests {
   /// Add a name when a program starts re-binding. Removing one is a regression and needs a reason.
   /// </summary>
   private static readonly string[] _reboundUnderPb35 = [
-    "basica/DEADTEXT.BAS",
+    // basica/DEADTEXT.BAS and gw/DEADTEXT.BAS were here and are deliberately not any more. They used
+    // to spell the dead text as `IF 0 THEN <garbage>`, which is wrong for these dialects: BASICA and
+    // GW-BASIC parse a whole LINE at a time, so the false condition stops the garbage EXECUTING, not
+    // its being parsed. The programs now jump OVER a line (`IF -1 GOTO 50`), which is the only text a
+    // deferred interpreter genuinely never reads - and that line survives into the IR as a call the
+    // writer renders and pb35 then rejects. The material is right now and the round trip is the gap.
     "basica/DIFF01.BAS",
-    "gw/DEADTEXT.BAS",
     "gw/DIFF01.BAS",
     "pb21/DIFF01.BAS",
     "pb21/DIFF02.BAS",

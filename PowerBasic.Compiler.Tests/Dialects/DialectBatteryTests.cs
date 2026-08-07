@@ -30,9 +30,7 @@ public sealed class DialectBatteryTests {
         "dead-branch" => DialectProbes.DeadBranch(dialect),
         "live-branch" => DialectProbes.LiveBranch(dialect),
         "numeric-types" => DialectProbes.NumericTypes(dialect),
-        "runtime-selection" => DialectProbes.Unprobed(
-          "which runtime entry is called where dialects differ - round-half-away against the FPU's "
-          + "round-half-even, MBF against IEEE"),
+        "runtime-selection" => DialectProbes.RuntimeSelection(dialect),
         "runtime-behaviour" => DialectProbes.Unprobed(
           "every runtime entry in each variation, checked on stdout, written files and exit code"),
         "metastatements" => DialectProbes.Unprobed(

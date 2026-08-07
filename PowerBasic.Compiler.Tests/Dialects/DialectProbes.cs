@@ -125,21 +125,47 @@ internal static class DialectProbes {
   private const string _garbage = "THIS IS ARBITRARY TEXT";
 
   /// <summary>
+  /// Why a dialect has no way to express "text control never reaches", or null when it has one.
+  ///
+  /// Two different absences. A compiled Microsoft dialect has no conditional compilation at all -
+  /// $STATIC and $DYNAMIC are array-storage directives, not branches. QBasic is an interpreter but
+  /// not a DEFERRED one: its environment syntax-checks the whole program, so unlike BASICA and
+  /// GW-BASIC there is no line it declines to parse just because control skipped it.
+  /// </summary>
+  private static string? NoUnreachableTextConstruct(Dialect dialect) {
+    if (dialect == Dialect.Qbasic)
+      return "QBasic syntax-checks the whole program rather than deferring per line, so no line goes unparsed";
+    if (!dialect.IsInterpreter() && dialect.Family() == DialectFamily.Microsoft)
+      return "no conditional compilation in this family; $STATIC/$DYNAMIC are storage directives, not branches";
+    return null;
+  }
+
+  /// <summary>
   /// How a dialect spells "control cannot reach this".
   ///
-  /// The two lineages answer differently and both answers are right. An INTERPRETER never parses a
-  /// statement it does not execute, so <c>IF 0 THEN &lt;garbage&gt;</c> simply runs past it - which is
-  /// what tests/diff/basica/DEADTEXT.BAS pins. A COMPILER parses everything it is given, so the only
-  /// text it genuinely never sees is what the preprocessor removed: <c>$IF 0 ... $ENDIF</c>.
+  /// The two lineages answer differently and both answers are right, but the interpreter case has a
+  /// trap in it. BASICA and GW-BASIC parse a whole LINE at a time, so
+  /// <c>IF 0 THEN &lt;garbage&gt;</c> still fails: the garbage is on the line being parsed, and the
+  /// false condition only stops it being EXECUTED. What is genuinely never parsed is a line control
+  /// jumps over - <c>10 IF -1 GOTO 30</c> leaves line 20 untouched - which is why the dead branch here
+  /// is a skipped LINE and not a dead clause.
+  ///
+  /// A COMPILER parses everything it is given, so the only text it genuinely never sees is what the
+  /// preprocessor removed: <c>$IF 0 ... $ENDIF</c>.
   /// </summary>
   private static string DeadBranchSource(Dialect dialect)
     => dialect.IsInterpreter()
-      ? string.Join("\n", Numbered(["IF 0 THEN " + _garbage, "PRINT 1", "END"])) + "\n"
+      ? string.Join("\n", Numbered(["IF -1 GOTO 40", _garbage, "PRINT 1", "END"])) + "\n"
       : $"$IF 0\n{_garbage}\n$ENDIF\nPRINT 1\nEND\n";
 
+  /// <summary>
+  /// The same line, reached. <c>IF 0 GOTO 40</c> falls through onto the garbage, so the interpreter
+  /// parses it and fails - which is what makes the dead-branch case above a real distinction rather
+  /// than the compiler simply never looking at anything.
+  /// </summary>
   private static string LiveBranchSource(Dialect dialect)
     => dialect.IsInterpreter()
-      ? string.Join("\n", Numbered(["IF 1 THEN " + _garbage, "PRINT 1", "END"])) + "\n"
+      ? string.Join("\n", Numbered(["IF 0 GOTO 40", _garbage, "PRINT 1", "END"])) + "\n"
       : $"$IF 1\n{_garbage}\n$ENDIF\nPRINT 1\nEND\n";
 
   /// <summary>
@@ -154,9 +180,8 @@ internal static class DialectProbes {
     // PDS have no conditional compilation - `$STATIC` and `$DYNAMIC` are the only metacommands, and
     // they are array-storage directives - so there is no construct to test rather than a construct
     // that fails. Reporting that as a gap would be inventing one.
-    if (!dialect.IsInterpreter() && dialect.Family() == DialectFamily.Microsoft)
-      return new(DialectBattery.State.NotApplicable, 0, 0,
-        "no conditional compilation in this family; $STATIC/$DYNAMIC are storage directives, not branches");
+    if (NoUnreachableTextConstruct(dialect) is { } why)
+      return new(DialectBattery.State.NotApplicable, 0, 0, why);
 
     var source = DeadBranchSource(dialect);
     var accepted = Compile(source, dialect).Accepted;
@@ -171,9 +196,8 @@ internal static class DialectProbes {
 
   /// <summary>D4 - the same malformed source, where control CAN reach it, is a diagnostic.</summary>
   internal static DialectBattery.Measurement LiveBranch(Dialect dialect) {
-    if (!dialect.IsInterpreter() && dialect.Family() == DialectFamily.Microsoft)
-      return new(DialectBattery.State.NotApplicable, 0, 0,
-        "the same reason as the dead-branch dimension: there is no conditional compilation to make live");
+    if (NoUnreachableTextConstruct(dialect) is { } why)
+      return new(DialectBattery.State.NotApplicable, 0, 0, "the dead-branch dimension's reason: " + why);
 
     var result = Compile(LiveBranchSource(dialect), dialect);
     var failed = new List<string>();
@@ -182,6 +206,54 @@ internal static class DialectProbes {
     else if (!result.Controlled)
       failed.Add($"rejected, but not cleanly: {result.Why}");
     return Report(failed.Count == 0 ? 1 : 0, 1, failed, "held");
+  }
+
+  /// <summary>
+  /// D7 - the runtime implementation the dialect selects, read out of the lowered IR.
+  ///
+  /// Each claim is checked in BOTH directions: the marker must be there where the dialect uses that
+  /// implementation and absent where it does not. Only checking the positive half would pass a
+  /// compiler that emitted the marker unconditionally, which is precisely the bug worth catching -
+  /// two dialects lowering to the same shape and only the callee telling them apart.
+  /// </summary>
+  internal static DialectBattery.Measurement RuntimeSelection(Dialect dialect) {
+    int total = 0, covered = 0;
+    var failed = new List<string>();
+    foreach (var claim in DialectRuntimeClaims.All) {
+      ++total;
+      var source = dialect.IsGwBasica()
+        ? string.Join("\n", Numbered([.. claim.Body.Split('\n')])) + "\n"
+        : claim.Body + "\n";
+
+      string ir;
+      try {
+        var tokens = Preprocessor.Expand(_file, new MemorySource(source), dialect);
+        var model = Binder.Bind(Parser.Parse(tokens, _file, dialect), dialect);
+        if (model.Errors.Count > 0) {
+          failed.Add($"{claim.Id}: the probe program did not bind ({model.Errors[0].Message})");
+          continue;
+        }
+        var module = IrLowering.TryLowerModule(model, out var why);
+        if (module is null) {
+          failed.Add($"{claim.Id}: lowering declined ({why})");
+          continue;
+        }
+        ir = string.Join("\n", module.Functions.Where(f => !f.IsDeclaration).Select(IrPrinter.Print))
+             + string.Join("\n", module.Functions.Select(f => f.Name));
+      } catch (Exception e) {
+        failed.Add($"{claim.Id}: {e.GetType().Name}");
+        continue;
+      }
+
+      var present = ir.Contains(claim.Marker, StringComparison.OrdinalIgnoreCase);
+      if (present == claim.Applies(dialect))
+        ++covered;
+      else
+        failed.Add(claim.Applies(dialect)
+          ? $"{claim.Id}: '{claim.Marker}' is missing - {claim.Why}"
+          : $"{claim.Id}: '{claim.Marker}' is present, but this dialect does not use it - {claim.Why}");
+    }
+    return Report(covered, total, failed, "selected as the dialect requires");
   }
 
   private static int Warnings(string source, Dialect dialect) {
