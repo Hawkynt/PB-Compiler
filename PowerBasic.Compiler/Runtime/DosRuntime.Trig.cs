@@ -4,7 +4,12 @@ namespace PowerBasic.Compiler.Runtime;
 
 public sealed partial class DosRuntime {
 
-  /// <summary>8087 sine/cosine: angle on ST(0), BL selects (0 sine, 1 cosine); result on ST(0).</summary>
+  /// <summary>
+  /// 8087 sine/cosine/tangent: angle on ST(0), BL selects, result on ST(0). BL is a pair of bits and
+  /// not an index - bit 1 is the tangent family and bit 0 is the co- variant, so 0 is sine, 1 cosine,
+  /// 2 tangent and 3 cotangent. Both places the routine swaps a function for its cofunction are then
+  /// the same single <c>XOR BL, 1</c> whichever family is being computed.
+  /// </summary>
   public Label Trig { get; private set; } = null!;
 
   /// <summary>8087 sine: angle on ST(0), result on ST(0). A one-instruction door onto <see cref="Trig"/>.</summary>
@@ -12,6 +17,9 @@ public sealed partial class DosRuntime {
 
   /// <summary>8087 cosine: angle on ST(0), result on ST(0).</summary>
   public Label Cos { get; private set; } = null!;
+
+  /// <summary>8087 tangent: angle on ST(0), result on ST(0).</summary>
+  public Label Tan { get; private set; } = null!;
 
   /// <summary>
   /// <c>rt_trig</c> - sine and cosine using only instructions an 8087 has. Entry: the angle on
@@ -47,6 +55,9 @@ public sealed partial class DosRuntime {
     this.Sin = asm.MarkLabel("rt_sin");
     asm.Xor(Reg.BL, Reg.BL);
     asm.Jmp(body);
+    this.Tan = asm.MarkLabel("rt_tan");
+    asm.Mov(Reg.BL, 2);
+    asm.Jmp(body);
     this.Cos = asm.MarkLabel("rt_cos");
     asm.Mov(Reg.BL, 1);
     this.Trig = asm.MarkLabel("rt_trig");
@@ -58,6 +69,7 @@ public sealed partial class DosRuntime {
     var divide = asm.DefineLabel();
     var quadDone = asm.DefineLabel();
     var noNegate = asm.DefineLabel();
+    var sign = asm.DefineLabel();
 
     asm.Push(Reg.CX);
     asm.Push(Reg.DX);
@@ -70,8 +82,8 @@ public sealed partial class DosRuntime {
     asm.Sahf();
     asm.Jnc(abs);                                  // C0 clear -> x >= 0
     asm.Fabs();
-    asm.Or(Reg.BL, Reg.BL);
-    asm.Jnz(abs);                                  // cosine: no sign to carry
+    asm.Cmp(Reg.BL, (Imm)1);
+    asm.Jz(abs);                                   // cosine alone is even: no sign to carry
     asm.Mov(Reg.BH, 1);
     asm.MarkLabel(abs);
 
@@ -116,16 +128,36 @@ public sealed partial class DosRuntime {
     // computing: sine is negative in quadrants 2 and 3, cosine in 1 and 2. Both are (q >> 1) & 1
     // once cosine's quadrant is shifted by one, which is why DH is consulted and not BL.
     var sinSign = asm.DefineLabel();
+    var signDone = asm.DefineLabel();
     asm.Mov(Reg.DL, Reg.CL);
+    asm.Cmp(Reg.DH, (Imm)2);
+    asm.Jz(signDone);                              // tangent has period pi: the sign is q's LOW bit
     asm.Or(Reg.DH, Reg.DH);
     asm.Jz(sinSign);
     asm.Inc(Reg.DL);                               // cosine: negative for q+1 in {2, 3}
     asm.MarkLabel(sinSign);
     asm.Shr(Reg.DL, 1);
+    asm.MarkLabel(signDone);
     asm.And(Reg.DL, (Imm)1);
     asm.Xor(Reg.BH, Reg.DL);
 
     asm.Fptan();                                   // ST0 = X, ST1 = Y ; tan = Y/X
+
+    // The tangent family IS that ratio, so it skips the hypotenuse entirely: tan = Y/X and
+    // cot = X/Y, and FXCH is what chooses between them.
+    var ratio = asm.DefineLabel();
+    var sinCos = asm.DefineLabel();
+    asm.Test(Reg.BL, (Imm)2);
+    asm.Jz(sinCos);
+    asm.Test(Reg.BL, (Imm)1);
+    asm.Jnz(ratio);                                // cotangent wants X over Y: the stack already is
+    asm.Fxch();                                    // tangent wants Y over X
+    asm.MarkLabel(ratio);
+    asm.Fdiv(St.St0, St.St1);
+    asm.Fstp(St.St1);                              // drop the denominator from under the result
+    asm.Jmp(sign);
+
+    asm.MarkLabel(sinCos);
     asm.Fld(St.St0);                               // X
     asm.Fmul(St.St0, St.St0);                      // X*X
     asm.Fld(St.St2);                               // Y
@@ -145,6 +177,7 @@ public sealed partial class DosRuntime {
     asm.Fstp(St.St1);
     asm.Fstp(St.St1);
 
+    asm.MarkLabel(sign);
     asm.Or(Reg.BH, Reg.BH);
     asm.Jz(noNegate);
     asm.Fchs();

@@ -1382,7 +1382,7 @@ public sealed class InstructionSelector {
       // direct path answers, which is what the two-path agreement tests measure.
       "sin" => ([], "rt_sin"),
       "cos" => ([], "rt_cos"),
-      "tan" => ([MOpcode.Fptan, MOpcode.FstpSt0], null),          // FPTAN pushes a 1.0 to discard
+      "tan" => ([], "rt_tan"),                                    // an 8087's FPTAN leaves a ratio, not a tangent
       "atan" => ([MOpcode.Fld1, MOpcode.Fpatan], null),
       "log" => ([MOpcode.Fldln2, MOpcode.Fxch, MOpcode.Fyl2x], null),
       "log2" => ([MOpcode.Fld1, MOpcode.Fxch, MOpcode.Fyl2x], null),

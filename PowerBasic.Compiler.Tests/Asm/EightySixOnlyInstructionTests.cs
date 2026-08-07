@@ -125,18 +125,19 @@ public sealed class EightySixOnlyInstructionTests {
   /// hypotenuse yields sin = Y/h and cos = X/h together; the quadrant picks the signs, and sine
   /// alone carries the argument's sign.
   ///
-  /// TAN IS NOT THE COUNTER-EXAMPLE IT WAS TAKEN FOR. This fixture used to say TAN "uses FPTAN,
-  /// which the 8087 has, and needs nothing" - true of the opcode, false of the usage. The two
-  /// generations disagree about what FPTAN leaves behind:
+  /// TAN WAS NOT THE COUNTER-EXAMPLE IT WAS TAKEN FOR, and is now fixed alongside them. This fixture
+  /// used to say TAN "uses FPTAN, which the 8087 has, and needs nothing" - true of the opcode, false
+  /// of the usage. The two generations disagree about what FPTAN leaves behind:
   ///
   ///   8087/287  replaces ST with Y and pushes X - the tangent is Y/X, and the argument must
   ///             already lie in [0, pi/4]
   ///   387+      replaces ST with the tangent itself and pushes a 1.0, for any |x| &lt; 2^63
   ///
-  /// This compiler emits <c>FPTAN; FSTP ST(0)</c> - discard what was pushed, keep what is under it -
-  /// which is the 387 reading. On a real 8087 that keeps Y, not the tangent. TAN therefore needs the
-  /// same range reduction and the same Y/X divide as SIN and COS; it merely escapes the scan above,
-  /// which looks for FSIN and FCOS.
+  /// This compiler emitted <c>FPTAN; FSTP ST(0)</c> - discard what was pushed, keep what is under it -
+  /// which is the 387 reading. On a real 8087 that keeps Y, not the tangent. TAN therefore needed the
+  /// same range reduction and the same Y/X divide as SIN and COS, and it escaped the scan above only
+  /// because that scan looks for FSIN and FCOS. Below a 386 it now calls the same routine, entering
+  /// at rt_tan; a 386 keeps the two-instruction form, which is correct on the processor it names.
   ///
   /// It IS verifiable, though an earlier reading here said otherwise. Cpu8086 answers FPTAN with the
   /// tangent and a pushed 1.0 - the 387 form - but that makes X equal to 1, so Y/X equals Y equals
@@ -160,11 +161,14 @@ public sealed class EightySixOnlyInstructionTests {
       Assert.That(Fsincos(Compile("$CPU 80386\nPRINT SIN(1.0)\nEND\n", optimize: true)), Is.EqualTo(1), "SIN uses FSIN on a 386");
       Assert.That(Fsincos(Compile("$CPU 80386\nPRINT COS(1.0)\nEND\n", optimize: true)), Is.EqualTo(1), "COS uses FCOS on a 386");
       Assert.That(Fsincos(Compile("PRINT TAN(1.0)\nEND\n", optimize: true)), Is.Zero, "TAN emits no FSIN/FCOS");
-      // ...but it is no more 8086-safe for it: FPTAN (D9 F2) immediately followed by FSTP ST(0)
-      // (DD D8) discards the pushed value and keeps what is under it, which is the tangent only on a
-      // 387. An 8087 leaves X on top and Y beneath, so the same two instructions keep Y.
+      // FPTAN (D9 F2) immediately followed by FSTP ST(0) (DD D8) discards the pushed value and keeps
+      // what is under it, which is the tangent only on a 387; an 8087 leaves X on top and Y beneath,
+      // so the same two instructions keep Y. That pair is the 387 reading, and an 8086 target no
+      // longer contains it - the routine divides Y by X instead.
       Assert.That(HasSequence(Compile("PRINT TAN(1.0)\nEND\n", optimize: true), 0xD9, 0xF2, 0xDD, 0xD8),
-        Is.True, "TAN reads FPTAN the 387 way, so it needs the same reduction as SIN and COS");
+        Is.False, "an 8086 target reads FPTAN as an 8087 leaves it: the ratio Y/X");
+      Assert.That(HasSequence(Compile("$CPU 80386\nPRINT TAN(1.0)\nEND\n", optimize: true), 0xD9, 0xF2, 0xDD, 0xD8),
+        Is.True, "a 386 keeps the two-instruction form, which is what its FPTAN means");
       Assert.That(Fsincos(Compile("PRINT 1.0\nEND\n", optimize: true)), Is.Zero);
     });
   }

@@ -78,6 +78,40 @@ public sealed class EightySevenTrigTests {
   public void Trig_GivenAnyAngle_ThenSinSquaredPlusCosSquaredIsOne(string angle) =>
     Assert.That(Run($"PRINT CSNG(SIN({angle}) * SIN({angle}) + COS({angle}) * COS({angle}))"), Is.EqualTo("1"));
 
+  /// <summary>
+  /// TAN went through the same routine for the same reason, and it is the case the FPTAN reading
+  /// actually breaks on: <c>FPTAN; FSTP ST(0)</c> keeps the tangent on a 387 and keeps Y on an 8087.
+  ///
+  /// Its quadrant rule is not sine's. Tangent has period pi rather than 2*pi, so the sign is the
+  /// quadrant's LOW bit where sine and cosine read the one above it - which is why quadrants 1 and 3
+  /// are here, and why a rule copied from sine passes 0 and 2 while inverting the rest.
+  /// </summary>
+  [TestCase("0.0", "0")]
+  [TestCase("0.5", ".5463025")]
+  [TestCase("1.0", "1.557408")]
+  [TestCase("2.0", "-2.18504")]
+  [TestCase("3.0", "-.1425465")]
+  [TestCase("4.0", "1.157821")]
+  [TestCase("5.0", "-3.380515")]
+  [TestCase("6.0", "-.2910062")]
+  [TestCase("7.0", ".871448")]
+  [TestCase("-1.0", "-1.557408")]
+  [TestCase("-2.0", "2.18504")]
+  public void Tan_GivenAnAngle_ThenTheEightySevenRoutineAgreesWithTheRealValue(string angle, string expected) =>
+    Assert.That(Run($"PRINT CSNG(TAN({angle}))"), Is.EqualTo(expected));
+
+  /// <summary>
+  /// Tangent is the ratio of the other two - three separate paths through the routine agreeing.
+  /// Compared after rounding to SINGLE rather than as a difference against zero: the two routes
+  /// reach the same number by different arithmetic and land one double ulp apart (2.2E-16), which
+  /// is a fact about the order of operations and not about the quadrant logic under test.
+  /// </summary>
+  [TestCase("1.0")]
+  [TestCase("2.5")]
+  [TestCase("4.0")]
+  public void Tan_GivenAnAngle_ThenItIsSineOverCosine(string angle) =>
+    Assert.That(Run($"PRINT CSNG(TAN({angle}))"), Is.EqualTo(Run($"PRINT CSNG(SIN({angle}) / COS({angle}))")));
+
   // That a 386 target still emits FSIN/FCOS is asserted in EightySixOnlyInstructionTests by scanning
   // the image, and not by running one: Cpu8086 refuses opcode 66, the 32-bit operand-size prefix, so
   // it cannot execute a 386 build at all. That limit predates this routine and is unrelated to it.

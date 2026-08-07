@@ -1090,8 +1090,14 @@ public sealed partial class CodeGenerator {
               asm.Call(this._rt.Cos);
             break;
           case "TAN":
-            asm.Fptan();
-            asm.Fstp(St.St0);
+            // FPTAN; FSTP ST(0) is the 387 reading - discard what was pushed, keep the tangent
+            // under it. An 8087 pushes X and leaves Y beneath, so the same pair keeps Y, and its
+            // FPTAN is only defined on [0, pi/4] besides; below a 386 the reduction is the answer.
+            if (this._rt.Cpu386) {
+              asm.Fptan();
+              asm.Fstp(St.St0);
+            } else
+              asm.Call(this._rt.Tan);
             break;
           case "ATN":
             asm.Fld1();
