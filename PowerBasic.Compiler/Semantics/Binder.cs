@@ -259,6 +259,54 @@ public sealed class Binder {
       this.Warn(cmd.Position, $"{cmd.Keyword} string: {complaint}");
   }
 
+  /// <summary>
+  /// The argument counts each command accepts, MEASURED against the genuine compilers rather than
+  /// read off a manual. Every entry below was probed at its boundary - the largest accepted count and
+  /// the first rejected one - because a limit invented here is worse than no limit: it would reject
+  /// programs the real compiler compiles.
+  ///
+  /// The two families disagree, which is why they are separate columns rather than one number. PBC
+  /// 3.5 takes <c>BEEP 1</c> and BC 4.50 refuses it; BC takes a bare <c>COLOR</c> and <c>LOCATE</c>
+  /// where PBC demands at least one argument. A single table would have been wrong for one of them
+  /// whichever way it was written.
+  ///
+  /// PALETTE is why these are SETS and not a min/max pair: 0 and 2 are accepted, 1 and 3 refused, by
+  /// both families. A range would have admitted <c>PALETTE 1</c>.
+  ///
+  /// <c>null</c> means unmeasured, and unmeasured means unchecked. Most of the Microsoft column is
+  /// null because only COLOR, LOCATE and PALETTE were bounded on that side; the rest keep the old
+  /// behaviour of accepting any count until someone probes them.
+  /// </summary>
+  private static readonly Dictionary<string, (int[]? Borland, int[]? Microsoft)> _commandArities =
+    new(StringComparer.OrdinalIgnoreCase) {
+      ["BEEP"] = ([0, 1], null),          // PBC: 0,1 ok / 2 refused.  BC refuses even BEEP 1
+      ["CLS"] = ([0, 1], null),           // PBC: 0,1 ok / 2 refused
+      ["COLOR"] = ([1, 2, 3], [0, 1, 2, 3]),   // PBC refuses a bare COLOR; BC accepts it. 4 refused by both
+      ["LOCATE"] = ([1, 2, 3, 4, 5], [0, 1, 2, 3, 4, 5]),  // same split; 6 refused by both
+      ["RANDOMIZE"] = ([0, 1], null),     // PBC: 0,1 ok / 2 refused
+      ["SLEEP"] = ([0, 1], null),         // PBC: 0,1 ok / 2 refused
+      ["WIDTH"] = ([1, 2], null),         // PBC refuses a bare WIDTH; 2 ok / 3 refused
+      ["PALETTE"] = ([0, 2], [0, 2]),     // 0 and 2 ok, 1 and 3 refused - not a range
+      ["SCREEN"] = ([0, 1, 2, 3, 4], null),    // PBC accepts a bare SCREEN; 4 ok / 5 refused
+    };
+
+  /// <summary>
+  /// Rejects a command given a number of arguments its dialect's compiler does not accept. Only the
+  /// counts in <see cref="_commandArities"/> are enforced, and only for the family they were measured
+  /// on - everything else is left alone.
+  /// </summary>
+  private void CheckCommandArity(CommandStmt cmd) {
+    if (!_commandArities.TryGetValue(cmd.Keyword, out var arity))
+      return;
+    var allowed = this._dialect.Family() == DialectFamily.Microsoft ? arity.Microsoft : arity.Borland;
+    if (allowed == null || Array.IndexOf(allowed, cmd.Arguments.Count) >= 0)
+      return;
+    var counts = allowed.Length == 1
+      ? allowed[0].ToString()
+      : string.Join(", ", allowed[..^1]) + " or " + allowed[^1];
+    this.Error(cmd.Position, $"{cmd.Keyword} takes {counts} argument(s), not {cmd.Arguments.Count}");
+  }
+
   /// <summary>Reports a command that binds but does nothing, and the one that binds in the wrong place.</summary>
   private void NoteCommandWithNoEffect(CommandStmt cmd) {
     // A module-level OPTION BASE never reaches here - the pre-pass consumes the valid spellings and
@@ -2843,6 +2891,7 @@ public sealed class Binder {
           if (argument != null)
             this.BindExpression(argument, scope);
         this.NoteCommandWithNoEffect(cmd);
+        this.CheckCommandArity(cmd);
         this.CheckMacroString(cmd, scope);
         break;
 
