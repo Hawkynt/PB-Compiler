@@ -257,18 +257,21 @@ public sealed class IntrinsicCensusTests {
   /// variables, so it sees the refusal that a variable attribute correctly gets. Both literal forms
   /// work and FileAttrTests covers them.
   ///
-  /// The other two are decisions rather than work. PLAY(n) reports the depth of a note queue that
-  /// does not exist, and answering zero quietly is the failure this whole fixture was written to
-  /// find. BITS takes three arguments and returns a Long, and nothing in the repository or the
-  /// documentation says what the three mean - writing it would be inventing the semantics, which is
-  /// worse than leaving the error.
+  /// PLAY(n) now generates code. The oracle gave it semantics to generate: PBC 3.5 answers 0 before
+  /// anything plays and 4 after PLAY "MBT120L4CDEF" queues four notes, ignoring the argument. Zero
+  /// is truthful here because the PLAY STATEMENT is a no-op in this runtime, so nothing is ever
+  /// queued - and the binder WARNS rather than answering quietly, which is what this fixture was
+  /// written to catch.
+  ///
+  /// BITS used to sit here too, on the grounds that nothing said what its three arguments meant and
+  /// writing it would be inventing semantics. The oracle settled it the other way - PBC 3.5 has no
+  /// BITS function at all, reading BITS(255) as an array subscript and refusing it with "Error 479:
+  /// Array bounds error" - so the entry itself was the mistake and it is gone from the table.
   ///
   /// Strike a name when it gains a case; the test insists either way.
   /// </summary>
   private static readonly string[] _noCodeGeneration = [
-    "BITS",
     "FILEATTR",
-    "PLAY",
   ];
 
   /// <summary>

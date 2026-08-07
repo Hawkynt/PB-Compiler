@@ -909,6 +909,19 @@ public sealed partial class CodeGenerator {
         asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_err")));
         break;
 
+      // PLAY(n) is the number of notes still queued for background music. Measured against PBC 3.5:
+      // 0 before anything plays, 4 after PLAY "MBT120L4CDEF" queues four notes, and the argument is
+      // ignored - PLAY(0) and PLAY(1) answer alike.
+      //
+      // Zero is the honest answer HERE because the PLAY statement is a no-op in this runtime, which
+      // it already says so out loud (Binder.CommandsWithNoEffect warns on it). Nothing is ever
+      // queued, so nothing is ever pending. That is a divergence from genuine PB for background
+      // music, and it belongs to the unimplemented statement rather than to this function - which is
+      // why the warning is repeated here instead of the value being returned silently.
+      case "PLAY":
+        asm.Xor(Reg.AX, Reg.AX);
+        break;
+
       case "ERL": // last executed numeric line label (tracked in error-handling scopes)
         asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_erl")));
         asm.Cwd();

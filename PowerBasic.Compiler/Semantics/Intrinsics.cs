@@ -169,7 +169,11 @@ public static class Intrinsics {
     Add("CODESEG", 1, 1, IntrinsicReturn.Word);
     Add("CODEPTR32", 1, 1, IntrinsicReturn.Dword);
     Add("BIT", 2, 2, IntrinsicReturn.Integer);
-    Add("BITS", 3, 3, IntrinsicReturn.Long);
+    // BITS is deliberately absent. It was declared here as a three-argument Long-returning function
+    // that nothing implemented and nothing documented; asked directly, PBC 3.5 has no such function
+    // at all - it reads BITS(255) as an array subscript and refuses it with "Error 479: Array bounds
+    // error", and BITS(x, 0, 4) as a subscripted read of an undeclared array, which answers 0 for
+    // every argument. Declaring it made this compiler accept a name the oracle does not have.
     Add("UBOUND", 1, 2, IntrinsicReturn.Long);
     Add("LBOUND", 1, 2, IntrinsicReturn.Long);
     Add("REG", 1, 1, IntrinsicReturn.Integer);

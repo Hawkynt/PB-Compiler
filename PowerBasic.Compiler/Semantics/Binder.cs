@@ -4553,6 +4553,15 @@ public sealed class Binder {
       if (call.Arguments.Count < intrinsic.MinArgs || call.Arguments.Count > intrinsic.MaxArgs)
         this.Error(call.Position, $"{intrinsic.Name} expects {intrinsic.MinArgs}..{intrinsic.MaxArgs} argument(s), got {call.Arguments.Count}");
 
+      // PLAY(n) answers how many notes are still queued for background music. Measured against
+      // PBC 3.5: 0 before anything plays and 4 after PLAY "MBT120L4CDEF" queues four, with the
+      // argument ignored. Zero is the truthful answer here because the PLAY STATEMENT is a no-op in
+      // this runtime - nothing is ever queued - but that is a divergence for background music, and
+      // it is said out loud rather than being returned quietly. The statement warns on the same
+      // grounds (CommandsWithNoEffect).
+      if (intrinsic.Name.Equals("PLAY", StringComparison.OrdinalIgnoreCase))
+        this.Warn(call.Position, "PLAY(n) reports a background-music queue this runtime does not have, so it is always 0");
+
       if (DialectFacts.IntrinsicGate(intrinsic.Name) is { } gate)
         this.Require(gate, call.Position);
 
