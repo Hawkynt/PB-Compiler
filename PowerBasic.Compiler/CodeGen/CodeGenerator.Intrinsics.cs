@@ -1072,11 +1072,22 @@ public sealed partial class CodeGenerator {
         this.EmitExpression(args[0]);
         this.Coerce(model.TypeOf(args[0]), PbType.Double, args[0]);
         switch (intrinsic.Name) {
+          // FSIN and FCOS are 80387 instructions. An image whose declared target is an 8086 must not
+          // contain them, and the oracle does not: genuine PBC 3.5 compiles SIN, COS and TAN with
+          // zero FSIN, zero FCOS and one shared FPTAN routine. Below a 386 this calls that routine
+          // (rt_trig, BL selects the function); on a 386 the single instruction is kept, since there
+          // the processor has it and it is both smaller and faster.
           case "SIN":
-            asm.Fsin();
+            if (this._rt.Cpu386)
+              asm.Fsin();
+            else
+              asm.Call(this._rt.Sin);
             break;
           case "COS":
-            asm.Fcos();
+            if (this._rt.Cpu386)
+              asm.Fcos();
+            else
+              asm.Call(this._rt.Cos);
             break;
           case "TAN":
             asm.Fptan();

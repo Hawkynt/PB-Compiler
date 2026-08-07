@@ -798,8 +798,20 @@ public sealed class Cpu8086 {
       case (0xD9, 0xF8): {                                                    // FPREM
         var a = this.St(0).AsDouble;
         var b = this.St(1).AsDouble;
-        this.SetFloatingSt(0, b == 0 ? double.NaN : a - b * Math.Truncate(a / b));
-        this._status &= 0xFBFF;                                               // C2 clear: the reduction completed
+        var quotient = b == 0 ? 0 : Math.Truncate(a / b);
+        this.SetFloatingSt(0, b == 0 ? double.NaN : a - b * quotient);
+        // C2 clear: the reduction completed. C0, C3 and C1 carry the low THREE bits of the
+        // quotient - bit 2, bit 1 and bit 0 in that order - which is what a range reduction reads
+        // them for: reducing modulo pi/2 leaves the quadrant in them. Clearing C2 without setting
+        // those left a caller reading whatever the previous FSTSW happened to have.
+        var bits = (long)Math.Abs(quotient);
+        this._status &= unchecked((ushort)~0x4700);                           // C0|C1|C2|C3
+        if ((bits & 1) != 0)
+          this._status |= 0x0200;                                             // C1 = quotient bit 0
+        if ((bits & 2) != 0)
+          this._status |= 0x4000;                                             // C3 = quotient bit 1
+        if ((bits & 4) != 0)
+          this._status |= 0x0100;                                             // C0 = quotient bit 2
         return;
       }
       case (0xDE, 0xD9): {                                                    // FCOMPP

@@ -247,6 +247,7 @@ public sealed partial class DosRuntime {
     ("long_helpers", this.EmitLongHelpers),
     ("strings", this.EmitStringProcedures),
     ("strings2", this.EmitString2Procedures),
+    ("trig", this.EmitTrig),          // 8087 SIN/COS - referenced only when the target has no 387
     ("strcmpeq", this.EmitStrCmpEq),   // O0298: only referenced under --optimize, so trimmed from the faithful build
     ("charat", this.EmitCharAt),       // O0297: ASC(MID$(s$, i, 1)) direct read - only under --optimize
     ("lastchar", this.EmitLastChar),   // O0297: ASC(RIGHT$(s$, 1)) direct read - only under --optimize
@@ -1458,6 +1459,12 @@ public sealed partial class DosRuntime {
     asm.Dq(10.0);
     asm.MarkLabel("rt_const_half_m64");
     asm.Dq(0.5);
+    // The 8087 trig reduction's two bounds. FPREM against pi/2 gives the quadrant in its condition
+    // codes; pi/4 decides whether the remainder is folded and the two results swapped.
+    asm.MarkLabel("rt_const_pi2_m64");
+    asm.Dq(Math.PI / 2);
+    asm.MarkLabel("rt_const_pi4_m64");
+    asm.Dq(Math.PI / 4);
     asm.MarkLabel("rt_const_65536");
     asm.Dq(65536.0);
     asm.MarkLabel("rt_const_2p31");

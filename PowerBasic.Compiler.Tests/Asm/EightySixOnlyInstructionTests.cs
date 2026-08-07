@@ -107,7 +107,12 @@ public sealed class EightySixOnlyInstructionTests {
   /// sees it, which is why it is measured here rather than left to a runtime failure that will not
   /// come.
   ///
-  /// Pinned, not approved - and the oracle says it is a FIDELITY deviation as well as a CPU one.
+  /// FIXED for SIN and COS. Below a 386 they now call rt_trig, a shared routine built from
+  /// instructions an 8087 has; a 386 keeps FSIN/FCOS, which it has and which are smaller and faster.
+  /// The oracle agrees with the shape: genuine PBC 3.5 compiling all three emits zero FSIN, zero
+  /// FCOS and exactly ONE FPTAN.
+  ///
+  /// What follows is the record of why it was not the swap it looked like.
   /// Genuine PBC 3.5 compiling <c>SIN(1.0)</c>, <c>COS(1.0)</c> and <c>TAN(1.0)</c> in one program
   /// emits ZERO FSIN and ZERO FCOS, and exactly ONE FPTAN - with FPATAN, FPREM, F2XM1, FSCALE and
   /// FYL2X alongside it. One FPTAN for all three means a single shared routine that reduces the
@@ -133,17 +138,27 @@ public sealed class EightySixOnlyInstructionTests {
   /// same range reduction and the same Y/X divide as SIN and COS; it merely escapes the scan above,
   /// which looks for FSIN and FCOS.
   ///
-  /// And it cannot be verified here either way. Cpu8086 implements FPTAN as <c>Math.Tan</c> followed
-  /// by a pushed 1.0, and DOSBox emulates a 486 - so BOTH machines available give 387 semantics. An
-  /// 8087-form routine would be right on the hardware it targets and wrong on everything this
-  /// repository can run it on, which is why the first step is teaching the interpreter the 8087 form
-  /// rather than writing the routine.
+  /// It IS verifiable, though an earlier reading here said otherwise. Cpu8086 answers FPTAN with the
+  /// tangent and a pushed 1.0 - the 387 form - but that makes X equal to 1, so Y/X equals Y equals
+  /// the tangent. Code written the 8087 way, dividing Y by X, is therefore correct on the hardware
+  /// it targets AND on the emulator. Only the domain restriction is unmodelled, and the reduction
+  /// that satisfies it is ordinary arithmetic the interpreter does model.
+  ///
+  /// One real gap did have to be closed first: Cpu8086's FPREM cleared C2 and never set C0/C1/C3,
+  /// the quotient bits a range reduction reads the quadrant from, so the first version of the
+  /// routine read whatever the previous FSTSW had left. TAN still reads FPTAN the 387 way and is
+  /// pinned below as such.
   /// </summary>
   [Test]
   public void Image_GivenSinOrCos_ThenTheThreeEightySevenFormIsStillWhatIsEmitted() {
     Assert.Multiple(() => {
-      Assert.That(Fsincos(Compile("PRINT SIN(1.0)\nEND\n", optimize: true)), Is.EqualTo(1), "SIN emits FSIN");
-      Assert.That(Fsincos(Compile("PRINT COS(1.0)\nEND\n", optimize: true)), Is.EqualTo(1), "COS emits FCOS");
+      Assert.That(Fsincos(Compile("PRINT SIN(1.0)\nEND\n", optimize: true)), Is.Zero,
+        "an 8086 target calls the FPTAN routine instead of FSIN");
+      Assert.That(Fsincos(Compile("PRINT COS(1.0)\nEND\n", optimize: true)), Is.Zero,
+        "an 8086 target calls the FPTAN routine instead of FCOS");
+      // A 386 keeps the single instruction: it has it, and it is smaller and faster than the routine.
+      Assert.That(Fsincos(Compile("$CPU 80386\nPRINT SIN(1.0)\nEND\n", optimize: true)), Is.EqualTo(1), "SIN uses FSIN on a 386");
+      Assert.That(Fsincos(Compile("$CPU 80386\nPRINT COS(1.0)\nEND\n", optimize: true)), Is.EqualTo(1), "COS uses FCOS on a 386");
       Assert.That(Fsincos(Compile("PRINT TAN(1.0)\nEND\n", optimize: true)), Is.Zero, "TAN emits no FSIN/FCOS");
       // ...but it is no more 8086-safe for it: FPTAN (D9 F2) immediately followed by FSTP ST(0)
       // (DD D8) discards the pushed value and keeps what is under it, which is the tangent only on a

@@ -1377,8 +1377,11 @@ public sealed class InstructionSelector {
     var cut = bare.IndexOf(".f", StringComparison.Ordinal);
     return (cut > 0 ? bare[..cut] : bare) switch {
       "sqrt" => ([MOpcode.Fsqrt], null),
-      "sin" => ([MOpcode.Fsin], null),
-      "cos" => ([MOpcode.Fcos], null),
+      // FSIN and FCOS are 387 instructions, and this back end declares no CPU floor - so both go
+      // through the 8087 routine unconditionally. That also keeps it answering bit-for-bit what the
+      // direct path answers, which is what the two-path agreement tests measure.
+      "sin" => ([], "rt_sin"),
+      "cos" => ([], "rt_cos"),
       "tan" => ([MOpcode.Fptan, MOpcode.FstpSt0], null),          // FPTAN pushes a 1.0 to discard
       "atan" => ([MOpcode.Fld1, MOpcode.Fpatan], null),
       "log" => ([MOpcode.Fldln2, MOpcode.Fxch, MOpcode.Fyl2x], null),
