@@ -110,6 +110,9 @@ public sealed class IrPassManager {
     .Add("reassociate", Reassociate.Run)
     // GVN cannot number a phi - a loop phi's operands include the value coming back round the latch,
     // which is derived from the phi itself - so congruent induction variables survive it untouched
+    // after mem2reg has made the counter a phi, and before the value passes, so the integer form is
+    // what they see
+    .Add("demote", FloatDemotion.Run)
     .Add("phicong", PhiCongruence.Run)
     .Add("gvn", Gvn.Run)
     .Add("memopt", RedundantMemory.Run)

@@ -6,6 +6,7 @@
 | **Stage** | Pre-emission analysis |
 | **Source** | `CodeGen/OptCommonSubexpr.cs` |
 | **Gate** | `--optimize` |
+| **IR** | ✅ Falls out of SSA + `Gvn` — the preheader dominates the body, so a value computed before the loop is still the leader inside it. `Licm` covers the other direction (hoisting an invariant OUT); this is reuse of one already there. Verified by `CseShapeTests` |
 | **Split from** | [O0003](O0003-common-subexpression-elimination.md) |
 
 ## What it is

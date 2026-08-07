@@ -6,6 +6,7 @@
 | **Stage** | Pre-emission analysis |
 | **Source** | `CodeGen/OptCommonSubexpr.cs` |
 | **Gate** | `--optimize` |
+| **IR** | ✅ Falls out of SSA + `Gvn` — the test dominates both arms, so a condition recomputed inside the arm it guards is numbered to the test. Verified by `CseShapeTests` |
 | **Split from** | [O0003](O0003-common-subexpression-elimination.md) |
 
 ## What it is

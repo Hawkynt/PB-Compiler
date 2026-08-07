@@ -7,6 +7,7 @@
 | **Source** | `CodeGen/OptFloatDemotion.cs` |
 | **Gate** | `--optimize` |
 | **Verified by** | `tests/diff/DIFF28.BAS` (demoted and blocked twins side by side) |
+| **IR** | ✅ `Ir/Passes/FloatDemotion.cs` — the FOR-counter case, after `Mem2Reg` has made the counter a phi. Demotion is only SOUND where the counter is bounded, because integer arithmetic wraps where float arithmetic saturates: the init, the step and the limit must all be integral constants inside 16 bits, and the step must move toward the limit. A conversion back to an integer then becomes the identity, which is the whole saving. Note that the lowering writes a FOR bound as `sitofp i16 10 to f32` rather than as a float literal, so `Integral` accepts both spellings - a version that took only `IrConstantFloat` declined every counter it exists for. Verified by `FloatDemotionTests` and `IrPassObservableEquivalenceTests` |
 | **Related** | [O0013](O0013-promotion-lowering.md), [O0037](O0037-fixed-point-for-counters.md), [O0057](O0057-storage-narrowing.md) |
 
 ## What it is

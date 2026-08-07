@@ -7,6 +7,7 @@
 | **Source** | `CodeGen/OptCommonSubexpr.cs` — `RetainPastMerge`, `IsRetainableBranch`, `CollectWrites` |
 | **Gate** | `--optimize` |
 | **Verified by** | `tests/diff/DIFF67.BAS` (IF), `DIFF68.BAS` (`SELECT CASE`) |
+| **IR** | ✅ Falls out of SSA + `Gvn` — no pass of its own. The direct tier needs `RetainPastMerge` and `CollectWrites` to PROVE that no arm of the branch overwrote an input; in SSA that proof is the representation, because an operand still being the same SSA value IS the absence of an intervening store. The block before the branch dominates the merge, so GVN's dominator-scoped table still holds the leader there. Verified by `CseShapeTests` |
 | **Split from** | [O0003](O0003-common-subexpression-elimination.md) |
 
 ## What it is
