@@ -77,6 +77,18 @@ public sealed class EightySixOnlyInstructionTests {
   /// Occurrences of the 80387 transcendentals FSIN (D9 FE) and FCOS (D9 FF). An 8087 has FPTAN and
   /// FPATAN and no sine or cosine of its own; those arrived with the 387.
   /// </summary>
+  /// <summary>Whether <paramref name="bytes"/> appear consecutively anywhere in the image.</summary>
+  private static bool HasSequence(byte[] image, params byte[] bytes) {
+    for (var i = 0; i + bytes.Length <= image.Length; ++i) {
+      var hit = true;
+      for (var j = 0; j < bytes.Length; ++j)
+        if (image[i + j] != bytes[j]) { hit = false; break; }
+      if (hit)
+        return true;
+    }
+    return false;
+  }
+
   private static int Fsincos(byte[] image) {
     var count = 0;
     for (var i = 0; i < image.Length - 1; ++i)
@@ -106,15 +118,38 @@ public sealed class EightySixOnlyInstructionTests {
   /// condition codes carry the low quotient bits, which is what they are for), fold the remainder
   /// into [0, pi/4] by taking pi/2 - r and swapping the two results, then FPTAN gives Y and X whose
   /// hypotenuse yields sin = Y/h and cos = X/h together; the quadrant picks the signs, and sine
-  /// alone carries the argument's sign. TAN already uses FPTAN and needs none of it, which is the
-  /// counter-example proving the instruction is reachable from this back end.
+  /// alone carries the argument's sign.
+  ///
+  /// TAN IS NOT THE COUNTER-EXAMPLE IT WAS TAKEN FOR. This fixture used to say TAN "uses FPTAN,
+  /// which the 8087 has, and needs nothing" - true of the opcode, false of the usage. The two
+  /// generations disagree about what FPTAN leaves behind:
+  ///
+  ///   8087/287  replaces ST with Y and pushes X - the tangent is Y/X, and the argument must
+  ///             already lie in [0, pi/4]
+  ///   387+      replaces ST with the tangent itself and pushes a 1.0, for any |x| &lt; 2^63
+  ///
+  /// This compiler emits <c>FPTAN; FSTP ST(0)</c> - discard what was pushed, keep what is under it -
+  /// which is the 387 reading. On a real 8087 that keeps Y, not the tangent. TAN therefore needs the
+  /// same range reduction and the same Y/X divide as SIN and COS; it merely escapes the scan above,
+  /// which looks for FSIN and FCOS.
+  ///
+  /// And it cannot be verified here either way. Cpu8086 implements FPTAN as <c>Math.Tan</c> followed
+  /// by a pushed 1.0, and DOSBox emulates a 486 - so BOTH machines available give 387 semantics. An
+  /// 8087-form routine would be right on the hardware it targets and wrong on everything this
+  /// repository can run it on, which is why the first step is teaching the interpreter the 8087 form
+  /// rather than writing the routine.
   /// </summary>
   [Test]
   public void Image_GivenSinOrCos_ThenTheThreeEightySevenFormIsStillWhatIsEmitted() {
     Assert.Multiple(() => {
       Assert.That(Fsincos(Compile("PRINT SIN(1.0)\nEND\n", optimize: true)), Is.EqualTo(1), "SIN emits FSIN");
       Assert.That(Fsincos(Compile("PRINT COS(1.0)\nEND\n", optimize: true)), Is.EqualTo(1), "COS emits FCOS");
-      Assert.That(Fsincos(Compile("PRINT TAN(1.0)\nEND\n", optimize: true)), Is.Zero, "TAN uses FPTAN, which the 8087 has");
+      Assert.That(Fsincos(Compile("PRINT TAN(1.0)\nEND\n", optimize: true)), Is.Zero, "TAN emits no FSIN/FCOS");
+      // ...but it is no more 8086-safe for it: FPTAN (D9 F2) immediately followed by FSTP ST(0)
+      // (DD D8) discards the pushed value and keeps what is under it, which is the tangent only on a
+      // 387. An 8087 leaves X on top and Y beneath, so the same two instructions keep Y.
+      Assert.That(HasSequence(Compile("PRINT TAN(1.0)\nEND\n", optimize: true), 0xD9, 0xF2, 0xDD, 0xD8),
+        Is.True, "TAN reads FPTAN the 387 way, so it needs the same reduction as SIN and COS");
       Assert.That(Fsincos(Compile("PRINT 1.0\nEND\n", optimize: true)), Is.Zero);
     });
   }
