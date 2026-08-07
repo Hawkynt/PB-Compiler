@@ -129,6 +129,12 @@ exe_blocker() { # $1 = path to an oracle executable
   local f="$1" magic lfanew
   magic=$(od -An -tx1 -N 8 "$f" 2>/dev/null | tr -d ' \n')
   if [ "$magic" = "535a2088f02733d1" ]; then
+    # Expanding it does not help, which is worth saying here so the next reader does
+    # not go and find out: pds70's BC.EXE decompresses (LZSS, 4096-byte window, write
+    # position starting at 4078) to a 127,439-byte NE image whose DOS stub says "will
+    # only work in Microsoft Operating System/2 mode" - the same blocker pds71 reports
+    # outright. Both toolchains were staged from the OS/2 build of BC.EXE rather than
+    # the DOS one, and only a DOS-hosted BC 7.x unblocks either.
     echo "$(basename "$f") is still SZDD-compressed"
     return 0
   fi
