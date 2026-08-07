@@ -814,6 +814,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     omfLibraries ??= [];
     this._allowExternalCalls = units.Count > 0 || libraries.Count > 0 || omfLibraries.Count > 0;
 
+    // BASICA/GW dead interpreter text, decided before anything rewrites the body: which
+    // DeferredSourceStmt nodes control cannot reach. Not gated on the optimizer - whether a program
+    // COMPILES must not depend on it.
+    if (model.Dialect.IsGwBasica())
+      this._unreachableDeferred = UnreachableDeferredSource(model.MainBody, this.OptFolder);
+
     // pb36 O2/O10: drop unreachable statements and redundant DEF SEGs first -
     // dead code also vanishes from the trivial-lowering analysis below
     if (this.Optimize && !this._isUnit) {
@@ -1902,6 +1908,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         break;
 
       case DeferredSourceStmt deferred:
+        // Text on a line control can never arrive at is discarded, which is the whole point of
+        // preserving it as a node: BASICA and GW-BASIC store a line without validating every
+        // statement on it, so unparseable text behind a never-taken branch is legal source.
+        if (this._unreachableDeferred?.Contains(deferred) == true)
+          break;
         this.Unsupported(deferred.Position,
           $"deferred {model.Dialect.DisplayName()} source whose path is not provably unreachable: {deferred.Text}");
         break;
@@ -2777,6 +2788,60 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         this.EmitStatement(s);
 
     asm.MarkLabel(endLabel);
+  }
+
+  /// <summary>
+  /// Deferred BASICA/GW text that control demonstrably cannot arrive at, and so may be discarded
+  /// rather than refused.
+  ///
+  /// The existing fold handles text INSIDE an <c>IF</c> whose condition is constant. It does not
+  /// reach the commoner interpreter shape, where the dead text is the line AFTER an always-taken
+  /// jump - <c>30 IF -1 GOTO 50 / 40 THIS IS ARBITRARY TEXT / 50 ...</c>. Line 40 is unreachable for
+  /// two reasons together, and both are needed: nothing falls through line 30, and no jump targets
+  /// line 40's own number. A line that anything branches to is live however it was reached.
+  ///
+  /// The walk is deliberately shallow - the top level of the body, which is where interpreter line
+  /// numbers live. Anything it cannot prove stays refused.
+  /// </summary>
+  /// <summary>BASICA/GW deferred text control cannot arrive at; null outside those dialects.</summary>
+  private HashSet<DeferredSourceStmt>? _unreachableDeferred;
+
+  private static HashSet<DeferredSourceStmt>? UnreachableDeferredSource(
+    IReadOnlyList<Statement> body, ConstantFolder folder) {
+    var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    foreach (var node in body.SelectMany(OptReachability.DescendantNodes).Prepend(body))
+      switch (node) {
+        case GotoStmt g: referenced.Add(g.Target); break;
+        case GosubStmt g: referenced.Add(g.Target); break;
+        case OnGotoStmt og: foreach (var t in og.Targets) referenced.Add(t); break;
+      }
+
+    HashSet<DeferredSourceStmt>? dead = null;
+    var reachable = true;
+    foreach (var statement in body)
+      switch (statement) {
+        case LabelStmt label:
+          if (referenced.Contains(label.Name))
+            reachable = true;      // something branches here, so the line is live
+          break;
+        case DeferredSourceStmt d when !reachable:
+          (dead ??= []).Add(d);
+          break;
+        default:
+          if (Transfers(statement))
+            reachable = false;
+          break;
+      }
+    return dead;
+
+    // Control does not continue to the next statement. Only the shapes an interpreter program
+    // actually uses for this, and only when the condition folds - anything else keeps falling through.
+    bool Transfers(Statement s) => s switch {
+      GotoStmt or EndStmt => true,
+      IfStmt { Then.Count: > 0 } i when i.ElseIfs.Count == 0 && i.Else == null
+        && folder.TryFold(i.Condition) is { Integer: { } c } && c != 0 => Transfers(i.Then[^1]),
+      _ => false,
+    };
   }
 
   private static bool ContainsDeferredSource(IfStmt statement) =>
