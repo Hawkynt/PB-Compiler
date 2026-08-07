@@ -256,6 +256,68 @@ internal static class DialectProbes {
     return Report(covered, total, failed, "selected as the dialect requires");
   }
 
+  /// <summary>
+  /// D9 - each metastatement really changes the produced executable.
+  ///
+  /// A directive that parses and is then ignored is worse than one that is rejected: the source says
+  /// "target an 80386" and the program does not, silently. So the same body is compiled twice under
+  /// two SETTINGS of the directive - not with and without it - and the images must differ.
+  /// </summary>
+  internal static DialectBattery.Measurement Metastatements(Dialect dialect) {
+    if (!DialectMetaClaims.Applies(dialect))
+      return new(DialectBattery.State.NotApplicable, 0, 0,
+        "no compiler metastatements in this family; REM $STATIC/$DYNAMIC are array-storage directives");
+
+    int total = 0, covered = 0;
+    var failed = new List<string>();
+    foreach (var claim in DialectMetaClaims.All) {
+      if (claim.Applies is { } applies && !applies(dialect))
+        continue;                                // the claim is about dialects that have the feature
+      ++total;
+      var first = Image(claim.Directive + "\n" + claim.Body, dialect);
+      var second = Image(claim.Against + "\n" + claim.Body, dialect);
+
+      // A CPU-tier claim about inline assembly is not "the images differ" - it is "the narrower target
+      // REFUSES an instruction it cannot execute". Accepting it produces an image that faults on the
+      // very machine the source named, which no amount of difference between two images would show.
+      if (claim.Kind == DialectMetaClaims.Kind.RefusedUnderDirective) {
+        if (second is null)
+          failed.Add($"{claim.Id}: the body did not compile even under '{claim.Against}', so the claim is untestable");
+        else if (first is null)
+          ++covered;
+        else
+          failed.Add($"{claim.Id}: '{claim.Directive}' accepted it - {claim.Why}");
+        continue;
+      }
+
+      if (first is null || second is null) {
+        failed.Add($"{claim.Id}: {(first is null ? claim.Directive : claim.Against)} did not compile");
+        continue;
+      }
+      if (!first.SequenceEqual(second))
+        ++covered;
+      else
+        failed.Add($"{claim.Id}: '{claim.Directive}' and '{claim.Against}' produce the SAME image, "
+                   + $"so the directive changed nothing - it should change {claim.Why}");
+    }
+    return Report(covered, total, failed, "reflected in the image");
+  }
+
+  /// <summary>The produced executable, or null when the program did not compile.</summary>
+  private static byte[]? Image(string source, Dialect dialect) {
+    try {
+      var tokens = Preprocessor.Expand(_file, new MemorySource(source), dialect);
+      var model = Binder.Bind(Parser.Parse(tokens, _file, dialect), dialect);
+      if (model.Errors.Count > 0)
+        return null;
+      var generator = new PowerBasic.Compiler.CodeGen.CodeGenerator(model);
+      var image = generator.EmitExecutable();
+      return generator.Errors.Count > 0 ? null : image;
+    } catch {
+      return null;
+    }
+  }
+
   private static int Warnings(string source, Dialect dialect) {
     try {
       var tokens = Preprocessor.Expand(_file, new MemorySource(source), dialect);

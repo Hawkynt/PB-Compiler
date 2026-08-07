@@ -33,8 +33,7 @@ public sealed class DialectBatteryTests {
         "runtime-selection" => DialectProbes.RuntimeSelection(dialect),
         "runtime-behaviour" => DialectProbes.Unprobed(
           "every runtime entry in each variation, checked on stdout, written files and exit code"),
-        "metastatements" => DialectProbes.Unprobed(
-          "$CPU 8086/80286 and $FLOAT emulated/hardware, asserting the produced image really differs"),
+        "metastatements" => DialectProbes.Metastatements(dialect),
         "quirks" => DialectProbes.Unprobed(
           "each quirk recorded for this dialect in docs/QUIRKS.md, reproduced rather than tolerated"),
         "bit-exact" => DialectProbes.Unprobed(
