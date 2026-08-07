@@ -751,6 +751,20 @@ public sealed partial class DosRuntime {
     asm.MarkLabel("rt_print_flt_abs");
     asm.Fabs();
 
+    // MICROSOFT FAMILY ONLY: a pristine |x| kept beneath the working copy for the whole of the
+    // scaling. The loops below compound their value by ten once per decimal place, which is what
+    // costs the last digit; they are kept for the EXPONENT they count, and the mantissa is then
+    // recomputed from this copy with a single multiply or divide, so exactly one rounding separates
+    // the input from the digits.
+    //
+    // PowerBASIC deliberately keeps the compounding. It is less accurate, and it is what PBC 3.50
+    // does: the fix was tried on the shared path and moved pb35's DIFF72, where a QUAD prints as
+    // 7.68624598513091E+16 in both PBC and this compiler but 7.6862459851309E+16 once the rounding
+    // is done once. Matching the oracle outranks being closer to the real value, so each family
+    // keeps the arithmetic its own compiler performs.
+    if (microsoft)
+      asm.Fld(St.St0);
+
     // CX = decimal exponent counter
     asm.Xor(Reg.CX, Reg.CX);
 
@@ -786,7 +800,33 @@ public sealed partial class DosRuntime {
     asm.Dec(Reg.CX);
     asm.Jmp(scaleUpTest);
     asm.MarkLabel("rt_print_flt_scaled");
-    asm.Fstp(St.St0);                             // ST0 = scaled x in [10^(digits-1), 10^digits)
+    asm.Fstp(St.St0);                             // drop the bound: ST0 = scaled x (Microsoft: ST1 = pristine |x|)
+
+    // Microsoft family: redo the scaling in one step. CX is the decimal exponent the loops counted -
+    // positive when the value was divided down, negative when multiplied up - so 10^|CX| applied
+    // once to the pristine copy lands on the same place with a single rounding instead of |CX| of
+    // them. DX carries the magnitude because EmitLoadPow10 consumes CX and BX still holds the digit
+    // count. The Borland path never pushed the copy and falls straight through.
+    if (microsoft) {
+      var rescaleMul = asm.DefineLabel();
+      var rescaleDone = asm.DefineLabel();
+      var rescalePositive = asm.DefineLabel();
+      asm.Fstp(St.St0);                           // discard the compounded value; ST0 = pristine |x|
+      asm.Mov(Reg.DX, Reg.CX);
+      asm.Test(Reg.CX, Reg.CX);
+      asm.Jns(rescalePositive);
+      asm.Neg(Reg.DX);
+      asm.MarkLabel(rescalePositive);
+      this.EmitLoadPow10(asm, Reg.DX);            // ST0 = 10^|CX|, ST1 = pristine |x|
+      asm.Test(Reg.CX, Reg.CX);
+      asm.Js(rescaleMul);
+      asm.Fdivp();                                // scaled down: |x| / 10^CX
+      asm.Jmp(rescaleDone);
+      asm.MarkLabel(rescaleMul);
+      asm.Fmulp();                                // scaled up: |x| * 10^|CX|
+      asm.MarkLabel(rescaleDone);
+    }
+                                                  // ST0 = scaled x in [10^(digits-1), 10^digits)
 
     // mantissa -> 64-bit integer at rt_scratch
     asm.Frndint();
