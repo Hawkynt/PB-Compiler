@@ -16,6 +16,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# shellcheck source=scripts/lib/dosbox.sh
+. "$(dirname "$0")/lib/dosbox.sh"
+
 DOSBOX="${DOSBOX_EXE:-}"
 if [ -z "$DOSBOX" ]; then
   for candidate in dosbox-staging dosbox; do
@@ -27,6 +30,8 @@ if [ -z "$DOSBOX" ]; then
   [ -n "$found" ] && DOSBOX=$found
 fi
 [ -n "$DOSBOX" ] || { echo "::error::no DOSBox found (set DOSBOX_EXE)"; exit 1; }
+DOSBOX_FLAVOR=$("$DOSBOX" --version 2>&1 | tr -d '\r' | grep -im1 version || echo "unknown DOSBox")
+dosbox_detect_prefix
 
 echo "building compiler ..."
 dotnet build pbc -c Release -v q --nologo
@@ -106,7 +111,8 @@ for t in "${tests[@]}"; do
     echo "exit"
   } > "build/dosbox-T$i.conf"
   rm -f build/DONE.TXT
-  "$DOSBOX" -conf "build/dosbox-T$i.conf" >/dev/null 2>&1 &
+  # shellcheck disable=SC2086  # DOSBOX_PREFIX is a command prefix and must split
+  $DOSBOX_PREFIX "$DOSBOX" -conf "$(dosbox_conf_path "build/dosbox-T$i.conf")" >/dev/null 2>&1 &
   dospid=$!
   for _ in $(seq 1 600); do
     { [ -f build/DONE.TXT ] || ! kill -0 "$dospid" 2>/dev/null; } && break

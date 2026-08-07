@@ -21,11 +21,30 @@
 # a missing toolchain indistinguishable from the fidelity divergence this
 # harness exists to catch. A FAIL now always means the oracle ran and disagreed.
 #
+# WHICH EMULATOR MATTERS, and a score is meaningless without naming one:
+#
+#   vanilla DOSBox 0.74-3   472 pass /  8 fail / 5 skip
+#   dosbox-staging 0.82     496 pass /  0 fail / 2 skip
+#
+# for two unrelated reasons. pb21, tb10 and tb11 have no command-line compiler at
+# all - only an IDE - so their oracles drive the menus with autotype, a command
+# only staging and DOSBox-X have; vanilla skips those 16 tests. And the 8 qb40 /
+# qb45 "failures" are not ours: they are LOG and EXP results a digit off in the
+# EMULATOR's x87, and they pass on staging. Vanilla is ~4x faster and still fine
+# for a quick check - just do not read its 8 failures as a fidelity gap.
+#
+# Staging needs an X server (see scripts/lib/dosbox.sh); DOSBOX_EXE is still all a
+# caller sets. The remaining 2 skips are pds70 and pds71, whose oracles are an
+# SZDD-compressed and an OS/2 binary respectively.
+#
 # The proprietary toolchains are NOT in the repo: place PBC.EXE 3.50 in
 # tools/pb35/ (or point PB35_DIR at it). Without it this harness SKIPS with
 # exit 0.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# shellcheck source=scripts/lib/dosbox.sh
+. "$(dirname "$0")/lib/dosbox.sh"
 
 DOSBOX="${DOSBOX_EXE:-}"
 if [ -z "$DOSBOX" ]; then
@@ -65,7 +84,10 @@ fi
 
 run_dosbox() { # $1 = conf file, $2 = sentinel dir
   rm -f "$2/DONE.TXT"
-  "$DOSBOX" -conf "$1" >/dev/null 2>&1 &
+  local conf
+  conf=$(dosbox_conf_path "$1")
+  # shellcheck disable=SC2086  # DOSBOX_PREFIX is a command prefix and must split
+  $DOSBOX_PREFIX "$DOSBOX" -conf "$conf" >/dev/null 2>&1 &
   local pid=$!
   for _ in $(seq 1 600); do
     { [ -f "$2/DONE.TXT" ] || ! kill -0 "$pid" 2>/dev/null; } && break
@@ -89,6 +111,8 @@ winpath() { cd "$1" && { pwd -W 2>/dev/null || pwd; }; }
 # toolchain. What is NOT pre-checked stays a failure: an oracle that runs and
 # rejects the program is a genuine result.
 DOSBOX_FLAVOR=$("$DOSBOX" --version 2>&1 | tr -d '\r' | grep -im1 version || echo "unknown DOSBox")
+
+dosbox_detect_prefix
 
 u16_at() { od -An -tu2 -j "$2" -N 2 "$1" 2>/dev/null | tr -d ' \n'; }
 u8_at()  { od -An -tu1 -j "$2" -N 1 "$1" 2>/dev/null | tr -d ' \n'; }

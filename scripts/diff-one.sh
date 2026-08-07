@@ -6,7 +6,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 SRC="$1"; DIALECT="${2:-}"
+# shellcheck source=scripts/lib/dosbox.sh
+. "$(dirname "$0")/lib/dosbox.sh"
+
 DOSBOX="${DOSBOX_EXE:-$PWD/tools/dosbox/dosbox}"
+DOSBOX_FLAVOR=$("$DOSBOX" --version 2>&1 | tr -d '\r' | grep -im1 version || echo "unknown DOSBox")
+dosbox_detect_prefix
 OUT="build/diff-one"
 rm -rf "$OUT" && mkdir -p "$OUT/real" "$OUT/ours"
 
@@ -30,7 +35,8 @@ fi
 winpath() { cd "$1" && { pwd -W 2>/dev/null || pwd; }; }
 run_dosbox() {
   rm -f "$2/DONE.TXT"
-  "$DOSBOX" -conf "$1" >/dev/null 2>&1 &
+  # shellcheck disable=SC2086  # DOSBOX_PREFIX is a command prefix and must split
+  $DOSBOX_PREFIX "$DOSBOX" -conf "$(dosbox_conf_path "$1")" >/dev/null 2>&1 &
   local pid=$!
   for _ in $(seq 1 600); do
     { [ -f "$2/DONE.TXT" ] || ! kill -0 "$pid" 2>/dev/null; } && break
