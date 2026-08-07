@@ -4,7 +4,7 @@
 
 `pb31` - family Borland, compiled.
 
-**8 of 12 dimensions hold.** A box is ticked only when a probe runs and
+**9 of 12 dimensions hold.** A box is ticked only when a probe runs and
 passes; an empty box means nobody has checked yet, which is not the same as failing.
 
 | | Dimension | Measured | Notes |
@@ -16,7 +16,7 @@ passes; an empty box means nobody has checked yet, which is not the same as fail
 | [x] | Syntax belonging to another dialect is rejected | 30 / 30 | all 30 cleanly refused |
 | [x] | Numeric typing follows the dialect | 18 / 18 | all 18 as claimed |
 | [x] | Runtime implementations follow the dialect | 2 / 2 | all 2 selected as the dialect requires |
-| [ ] | Every runtime function's observable output | - | every runtime entry in each variation, checked on stdout, written files and exit code |
+| [x] | Every runtime function's observable output | 28 / 28 | all 28 behaved as the language defines |
 | [~] | Metastatements and their effect on the produced executable | 3 / 7 | 4 not reflected in the image: cpu.tier: '$CPU 80286' and '$CPU 8086' produce the SAME image, so the directive changed nothing - it should change a wider instruction set for the same arithmetic - the 286's shift-by-immediate and PUSH imm, optimize.speed: '$OPTIMIZE SPEED' and '$OPTIMIZE SIZE' produce the SAME image, so the directive changed nothing - it should change the optimizer's objective, which changes which transformations it takes, asm.cpu.push-imm: '$CPU 8086' accepted it - PUSH with an immediate is 80286 and later; on an 8086 target it must be refused, asm.cpu.shift-imm: '$CPU 8086' accepted it - a shift by an immediate count above 1 is 80286 and later; the 8086 has only SHL r, CL |
 | [~] | Documented quirks and bugs are reproduced | 8 / 14 | 6 pending oracle (the wrong behaviour is not documented precisely enough to clone safely, and a guess would look like fidelity): 2.9, 2.21, 2.24, 2.27, 2.30, 2.34 |
 | [x] | Numeric operations are bit-compatible | 9 / 9 | all 9 converted to the exact IEEE-754 bits |

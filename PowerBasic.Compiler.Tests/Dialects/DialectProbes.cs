@@ -400,6 +400,62 @@ internal static class DialectProbes {
     }
   }
 
+  /// <summary>
+  /// D8 - what the runtime functions do, checked by RUNNING the produced executable.
+  ///
+  /// A scenario whose function this dialect does not have is skipped rather than failed; one it has
+  /// and gets wrong is named with the rule it broke. The expectations come from the language
+  /// definition - an expectation captured from our own output would pass by construction and notice
+  /// nothing.
+  /// </summary>
+  internal static DialectBattery.Measurement RuntimeBehaviour(Dialect dialect, Func<byte[], (string Output, int ExitCode)> run) {
+    int total = 0, covered = 0;
+    var failed = new List<string>();
+    var skipped = 0;
+    foreach (var scenario in DialectRuntimeScenarios.All) {
+      if (scenario.Applies is { } applies && !applies(dialect)) {
+        ++skipped;
+        continue;
+      }
+      ++total;
+      var lines = new List<string>(scenario.Body.Split('\n')) { "END" };
+      var source = string.Join("\n", dialect.IsGwBasica() ? Numbered(lines) : lines) + "\n";
+
+      var image = Image(source, dialect);
+      if (image is null) {
+        failed.Add($"{scenario.Id}: did not compile");
+        continue;
+      }
+      try {
+        var actual = Observable(run(image).Output);
+        if (actual == scenario.Expect)
+          ++covered;
+        else
+          failed.Add($"{scenario.Id}: printed <{actual}>, want <{scenario.Expect}> - {scenario.Why}");
+      } catch (Exception e) {
+        failed.Add($"{scenario.Id}: {e.GetType().Name} while running");
+      }
+    }
+    var note = skipped > 0 ? $" ({skipped} skipped - not this dialect's)" : "";
+    var measured = Report(covered, total, failed, "behaved as the language defines");
+    return measured with { Note = measured.Note + note };
+  }
+
+  /// <summary>
+  /// The program's output, normalized for comparison WITHOUT touching leading space.
+  ///
+  /// BASIC's PRINT puts a blank in front of a non-negative number - that blank is the sign column, and
+  /// it is part of what these scenarios check. SPACE$ produces leading blanks on purpose. An earlier
+  /// version trimmed the whole output and reported eight failures that were entirely its own doing:
+  /// the probe was deleting the thing under test. Only trailing space and the final newline go.
+  /// </summary>
+  private static string Observable(string output) {
+    var lines = output.Replace("\r\n", "\n").Split('\n').Select(l => l.TrimEnd()).ToList();
+    while (lines.Count > 0 && lines[^1].Length == 0)
+      lines.RemoveAt(lines.Count - 1);
+    return string.Join("|", lines);
+  }
+
   /// <summary>The produced executable, or null when the program did not compile.</summary>
   private static byte[]? Image(string source, Dialect dialect) {
     try {

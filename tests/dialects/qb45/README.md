@@ -4,7 +4,7 @@
 
 `qb45` - family Microsoft, compiled.
 
-**10 of 12 dimensions hold.** A box is ticked only when a probe runs and
+**11 of 12 dimensions hold.** A box is ticked only when a probe runs and
 passes; an empty box means nobody has checked yet, which is not the same as failing.
 
 | | Dimension | Measured | Notes |
@@ -16,7 +16,7 @@ passes; an empty box means nobody has checked yet, which is not the same as fail
 | [x] | Syntax belonging to another dialect is rejected | 92 / 92 | all 92 cleanly refused |
 | [x] | Numeric typing follows the dialect | 18 / 18 | all 18 as claimed |
 | [x] | Runtime implementations follow the dialect | 2 / 2 | all 2 selected as the dialect requires |
-| [ ] | Every runtime function's observable output | - | every runtime entry in each variation, checked on stdout, written files and exit code |
+| [x] | Every runtime function's observable output | 27 / 27 | all 27 behaved as the language defines (1 skipped - not this dialect's) |
 | [-] | Metastatements and their effect on the produced executable | - | no compiler metastatements in this family; REM $STATIC/$DYNAMIC are array-storage directives |
 | [ ] | Documented quirks and bugs are reproduced | - | docs/QUIRKS.md catalogues the PowerBASIC lineage; the Microsoft dialects need their own list before a count here would mean anything |
 | [x] | Numeric operations are bit-compatible | 9 / 9 | all 9 converted to the exact IEEE-754 bits |

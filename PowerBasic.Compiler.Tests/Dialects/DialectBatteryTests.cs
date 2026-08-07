@@ -31,8 +31,10 @@ public sealed class DialectBatteryTests {
         "live-branch" => DialectProbes.LiveBranch(dialect),
         "numeric-types" => DialectProbes.NumericTypes(dialect),
         "runtime-selection" => DialectProbes.RuntimeSelection(dialect),
-        "runtime-behaviour" => DialectProbes.Unprobed(
-          "every runtime entry in each variation, checked on stdout, written files and exit code"),
+        "runtime-behaviour" => DialectProbes.RuntimeBehaviour(dialect, image => {
+          var run = Exec.Cpu8086.Run(image);
+          return (run.Output, run.ExitCode);
+        }),
         "metastatements" => DialectProbes.Metastatements(dialect),
         "quirks" => DialectProbes.Quirks(dialect, _root),
         "bit-exact" => DialectProbes.BitExact(dialect),
