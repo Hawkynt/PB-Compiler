@@ -33,6 +33,20 @@ MAX_CASES=25 DIALECTS=qb45 scripts/run-syntax-oracle-tests.sh
 The encrypted vintage toolchains are unlocked with `PB_TOOLCHAIN_KEY`, exactly as for the runtime
 differential harness. Missing toolchains are recorded as skips rather than guessed results.
 
+
+## Per-dialect batteries
+
+`tests/dialects/` holds one battery per dialect plus a generated index. Each battery states twelve
+claims and marks each one held, partial, unprobed or not applicable - and the page is WRITTEN BY
+`DialectBatteryTests` from what its probes measured, so it cannot claim a dimension holds after the
+code stopped holding it. An empty box means nobody has checked, which is deliberately distinct from a
+failing one: in a green test run those two look identical and must not read identically.
+
+The twelve are: statement syntax and parameter combinations, lowering to the IR, syntax errors in
+unreachable branches (ignored and warned), syntax errors on reachable flow (rejected), foreign-dialect
+syntax (rejected), numeric typing, runtime-implementation selection, runtime behaviour, metastatements
+and their effect on the image, quirk reproduction, bit-exact arithmetic, and the README itself.
+
 ## Line-numbered interpreters
 
 BASICA and GW-BASIC source has a numeric line number on every non-empty physical program line,

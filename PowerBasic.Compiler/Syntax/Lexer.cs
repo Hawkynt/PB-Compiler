@@ -349,10 +349,16 @@ public sealed class Lexer {
         this.Advance();
         if (this.Current != '#')
           return TypeSuffix.Double;
+        // EXT, FIX and BCD are Bob Zale's, and the SUFFIX spelling has to be gated as well as the
+        // DEFEXT/DEFFIX/DEFBCD statements were. Without this, `x## = 1` bound to an 80-bit EXT under
+        // QuickBASIC, which never had the type at all - the dialect battery's numeric-typing probe
+        // found it on its first run.
+        this.Require(LanguageFeature.ExtendedNumericTypes, position);
         this.Advance();
         return TypeSuffix.Ext;
       case '@':
         this.Advance();
+        this.Require(LanguageFeature.ExtendedNumericTypes, position);
         if (this.Current != '@')
           return TypeSuffix.Fix;
         this.Advance();
