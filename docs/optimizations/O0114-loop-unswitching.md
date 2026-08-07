@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | ⬜ Planned |
 | **Stage** | Mid-end |
+| **IR** | ✅ `Ir/Passes/LoopUnswitch.cs` — the loop is cloned once per outcome and the test moves to the preheader. Placed AFTER `Licm` in `IrPassManager.Standard()`, and that ordering IS the composition: `IF mode THEN` inside a loop lowers to a compare computed IN the loop, and a condition defined inside the region cannot be specialized by cloning, because each clone gets its own copy of the compare and binding the original to a constant reaches nothing. LICM hoists it out first. The pass also inserts the exit phis itself - this IR does not keep loop-closed SSA, so a value the loop computes is read directly afterwards rather than through a phi at the boundary, and removing the original loop would leave those operands dominating nothing. Verified by `LoopUnswitchTests` and `IrPassObservableEquivalenceTests` |
 | **Related** | [O0028](O0028-loop-invariant-code-motion.md), [O0107](O0107-branch-folding-through-phi.md), [O0130](O0130-trip-count-versioning.md) |
 
 ## The idea

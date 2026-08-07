@@ -23,8 +23,21 @@ public sealed class IrCloner {
   /// the clone of <paramref name="source"/>[0].
   /// </summary>
   public static IReadOnlyDictionary<IrBasicBlock, IrBasicBlock> Clone(
-      IrFunction into, IReadOnlyList<IrBasicBlock> source, Dictionary<IrValue, IrValue> seed, string labelPrefix) {
+      IrFunction into, IReadOnlyList<IrBasicBlock> source, Dictionary<IrValue, IrValue> seed, string labelPrefix)
+    => Clone(into, source, seed, labelPrefix, out _);
+
+  /// <summary>
+  /// The same, also handing back the VALUE mapping.
+  ///
+  /// A caller that rewires anything outside the cloned region needs it: a phi in the loop's exit names
+  /// a value defined in the block that was cloned, and after the original is removed that operand
+  /// dominates nothing. The block map alone cannot answer "which value in the copy corresponds".
+  /// </summary>
+  public static IReadOnlyDictionary<IrBasicBlock, IrBasicBlock> Clone(
+      IrFunction into, IReadOnlyList<IrBasicBlock> source, Dictionary<IrValue, IrValue> seed, string labelPrefix,
+      out IReadOnlyDictionary<IrValue, IrValue> values) {
     var cloner = new IrCloner(seed);
+    values = cloner._values;
     foreach (var block in source)
       cloner._blocks[block] = into.CreateBlock(labelPrefix + block.Label);
     foreach (var block in source)

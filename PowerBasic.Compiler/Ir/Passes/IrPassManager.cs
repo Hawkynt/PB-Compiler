@@ -118,6 +118,11 @@ public sealed class IrPassManager {
     .Add("memopt", RedundantMemory.Run)
     .Add("dse", DeadStoreElim.Run)
     .Add("licm", Licm.Run)
+    // AFTER licm, and that ordering is the whole composition: `IF mode THEN` inside a loop lowers to
+    // a COMPARE computed in the loop, and a condition defined inside the region cannot be specialized
+    // by cloning - each clone gets its own copy of the compare, so binding the original to a constant
+    // reaches nothing. LICM hoists it out first, which is what makes the value substitutable.
+    .Add("unswitch", LoopUnswitch.Run)
     .Add("dce", Dce.Run)
     .Add("ifconv", IfConversion.Run)
     .Add("simplifycfg", SimplifyCfg.Run)
