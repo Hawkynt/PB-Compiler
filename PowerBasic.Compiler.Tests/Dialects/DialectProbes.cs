@@ -303,6 +303,103 @@ internal static class DialectProbes {
     return Report(covered, total, failed, "reflected in the image");
   }
 
+  /// <summary>
+  /// D10 - the documented quirks, and how many of them this dialect actually reproduces.
+  ///
+  /// The catalogue is <c>docs/QUIRKS.md</c>, whose "Our behavior" column already draws the distinction
+  /// this dimension needs: a quirk is either emulated (and, where a genuine binary exists, verified
+  /// against it) or it is <b>pending oracle</b> - documented, understood in outline, and deliberately
+  /// NOT cloned because the precise wrong behaviour was never written down well enough to clone
+  /// safely. Guessing at a bug's exact output is worse than not emulating it, because the guess looks
+  /// like fidelity.
+  ///
+  /// So the probe counts rather than judges: it reads the table and reports how many quirks are
+  /// reproduced against how many are documented. That number is the honest answer to "does this
+  /// dialect mimic its bugs", and it moves only when the catalogue or the emulation does.
+  /// </summary>
+  internal static DialectBattery.Measurement Quirks(Dialect dialect, string repositoryRoot) {
+    var path = Path.Combine(repositoryRoot, "docs", "QUIRKS.md");
+    if (!File.Exists(path))
+      return Unprobed("docs/QUIRKS.md is not present");
+
+    // The Borland lineage is what the catalogue documents - it is a PowerBASIC quirks list. The
+    // Microsoft dialects have their own oddities, but they are pinned by the tests/diff corpora
+    // rather than enumerated here, so claiming a count for them would be claiming a catalogue that
+    // does not exist.
+    if (dialect.Family() != DialectFamily.Borland)
+      return new(DialectBattery.State.Unprobed, 0, 0,
+        "docs/QUIRKS.md catalogues the PowerBASIC lineage; the Microsoft dialects need their own list "
+        + "before a count here would mean anything");
+
+    var rows = File.ReadAllLines(path)
+      .Where(line => line.StartsWith("| ", StringComparison.Ordinal) && char.IsDigit(line[2]))
+      .ToList();
+    if (rows.Count == 0)
+      return Unprobed("no quirk rows found in docs/QUIRKS.md");
+
+    var pending = rows.Where(r => r.Contains("Pending oracle", StringComparison.OrdinalIgnoreCase)).ToList();
+    var reproduced = rows.Count - pending.Count;
+    var names = pending
+      .Select(r => r.Split('|', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim() ?? "?")
+      .ToList();
+
+    return pending.Count == 0
+      ? new(DialectBattery.State.Held, reproduced, rows.Count, $"all {rows.Count} catalogued quirks are emulated")
+      : new(DialectBattery.State.Partial, reproduced, rows.Count,
+          $"{pending.Count} pending oracle (the wrong behaviour is not documented precisely enough to "
+          + $"clone safely, and a guess would look like fidelity): {string.Join(", ", names)}");
+  }
+
+  /// <summary>
+  /// D11 - bit-exact arithmetic, in the one part that can be settled without a vintage binary: the
+  /// literal's own bits.
+  ///
+  /// This is deliberately a partial answer and says so. Comparing whole computations bit for bit
+  /// needs the genuine implementation to compare against, which is the runtime-differential harness's
+  /// job and needs the toolchains present. What is checkable here, and worth checking first, is that
+  /// the numbers the two programs START from are the same: a decimal-to-binary conversion that is one
+  /// unit in the last place out makes every later agreement meaningless.
+  /// </summary>
+  internal static DialectBattery.Measurement BitExact(Dialect dialect) {
+    int total = 0, covered = 0;
+    var failed = new List<string>();
+    foreach (var claim in DialectBitExactClaims.All) {
+      ++total;
+      var bound = BindExpressionType(claim.Literal, "", dialect);
+      if (bound is null) {
+        failed.Add($"{claim.Literal}: the dialect refused the literal");
+        continue;
+      }
+      if (LiteralBits(claim.Literal, dialect) is not { } bits) {
+        failed.Add($"{claim.Literal}: no constant reached the bound tree");
+        continue;
+      }
+      if (bits == claim.DoubleBits)
+        ++covered;
+      else
+        failed.Add($"{claim.Literal}: got 0x{bits:X16}, want 0x{claim.DoubleBits:X16} - {claim.Why}");
+    }
+    return Report(covered, total, failed, "converted to the exact IEEE-754 bits");
+  }
+
+  /// <summary>The binary64 pattern the front end produced for a float literal, or null.</summary>
+  private static ulong? LiteralBits(string literal, Dialect dialect) {
+    var lines = new List<string> { "probeResult# = " + literal, "END" };
+    var source = string.Join("\n", dialect.IsGwBasica() ? Numbered(lines) : lines) + "\n";
+    try {
+      var tokens = Preprocessor.Expand(_file, new MemorySource(source), dialect);
+      var model = Binder.Bind(Parser.Parse(tokens, _file, dialect), dialect);
+      if (model.Errors.Count > 0)
+        return null;
+      foreach (var statement in model.MainBody)
+        if (statement is AssignStmt { Value: FloatLiteralExpr f })
+          return BitConverter.DoubleToUInt64Bits(f.Value);
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   /// <summary>The produced executable, or null when the program did not compile.</summary>
   private static byte[]? Image(string source, Dialect dialect) {
     try {
