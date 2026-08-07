@@ -295,7 +295,7 @@ Measured by `OptimizationPortingLedgerTests`, which reads the Stage of every doc
 |---|---|
 | documented optimizations with a Stage | 420 |
 | machine-level (not IR work at all) | **290** |
-| portable to the IR | **130** |
+| portable to the IR | **126** |
 | …already expressed on the IR | 20 |
 | …still to port | **110**, of which **20** now carry an `IR` row |
 

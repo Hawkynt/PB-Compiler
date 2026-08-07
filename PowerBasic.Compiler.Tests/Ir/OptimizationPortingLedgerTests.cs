@@ -23,9 +23,16 @@ public sealed class OptimizationPortingLedgerTests {
   private static readonly string _docs = Path.GetFullPath(Path.Combine(
     TestContext.CurrentContext.TestDirectory, "..", "..", "..", "..", "docs", "optimizations"));
 
-  /// <summary>Stages that name a machine-level decision - instruction, register, encoding, address.</summary>
+  /// <summary>
+  /// Stages that name a machine-level decision - instruction, register, encoding, address.
+  ///
+  /// "image" is in the list for the same reason as "layout": P0001 trims the runtime after user code
+  /// is emitted, P0005 writes a COM instead of an MZ, P0006 squeezes the header. Those are decisions
+  /// about the FILE, and an IR that could express them would be describing an object format rather
+  /// than a program. Leaving them in the portable count inflated the denominator by four.
+  /// </summary>
   private static readonly Regex _machineLevel = new(
-    "emitter|assembler|register alloc|layout|link|schedul|runtime|peephole|encoding",
+    "emitter|assembler|register alloc|layout|link|schedul|runtime|peephole|encoding|image",
     RegexOptions.IgnoreCase);
 
   /// <summary>Stages already expressed on the IR.</summary>
