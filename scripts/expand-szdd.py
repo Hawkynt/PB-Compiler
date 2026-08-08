@@ -74,11 +74,19 @@ def expand(data):
 
 
 def expanded_name(name):
-    """A compressed member's name with its trailing '$' mapped back."""
-    for suffix, full in ((".EX$", ".EXE"), (".LI$", ".LIB"), (".OB$", ".OBJ"), (".HL$", ".HLP")):
-        if name.upper().endswith(suffix):
-            return name[: -len(suffix)] + full
-    return name[:-1] + "_" if name.endswith("$") else name
+    """A compressed member's name with its truncated last character restored.
+
+    Microsoft used both spellings for the same convention - the older disks mark a
+    compressed file with a trailing '$' and the later ones with '_'. Handling only
+    '$' does not fail, it just quietly leaves the file under a name nothing looks
+    for afterwards, which is the same class of silent miss as the rest of this.
+    """
+    upper = name.upper()
+    for stem, full in (("EX", ".EXE"), ("LI", ".LIB"), ("OB", ".OBJ"), ("HL", ".HLP")):
+        for mark in ("$", "_"):
+            if upper.endswith("." + stem + mark):
+                return name[: -(len(stem) + 2)] + full
+    return name[:-1] + "_" if name[-1:] in ("$", "_") else name
 
 
 def main(argv):
