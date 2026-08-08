@@ -86,6 +86,20 @@ staged these took `BINB\` (the protected-mode tools) rather than `BIN\` (the DOS
 ones). pds70's copies are additionally still SZDD-compressed, which hides this until
 they are expanded.
 
+Everything around those three has been verified, so they are the only unknown left.
+Mounting, `SET LIB=`, the invocation and the log redirection were exercised by
+running the staged OS/2 `BC.EXE` under DOSBox: it does not print its "needs OS/2"
+stub, it *crashes the DOS session* - no `DONE.TXT`, no `LINKLOG.TXT` - which is why
+the pre-flight skip in `run-diff-tests.sh` matters rather than letting the battery
+discover it per program.
+
+The one structurally novel thing in these templates is the LINK line's EMPTY library
+field: every working template names its library outright (`,,D:\BCOM45.LIB;`), while
+these rely on `LIB=` plus the default-library record `BC /O` writes into the OBJ.
+That mechanism was confirmed by proxy against the qb45 toolchain - same Microsoft
+BC/LINK lineage - with `SET LIB=D:\` and `LINK T.OBJ,T.EXE,NUL,;`: it linked and
+the program produced correct output. So the templates should work unchanged.
+
 Only those three executables per version are wrong. The runtime libraries are
 already correct: `LIB\` holds both variants and the real-mode set is present
 (`B71ROAF.LIB` beside `B71POAF.LIB`, `EMR.LIB` beside `EMP.LIB`, and so on). So
