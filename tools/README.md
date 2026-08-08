@@ -77,34 +77,37 @@ whole directory (mapping the trailing `$` back to `E`/`B`/`J`) so the files can 
 staged before packing; `scripts/expand-szdd.py` is the same thing where PowerShell
 is not available.
 
-### pds70 and pds71 are staged from the wrong directory
+### pds70 and pds71: what actually went wrong
 
-Both batteries SKIP, and the reason is not a missing toolchain: `BC.EXE`, `LINK.EXE`
-and `LIB.EXE` in each are the OS/2 builds - NE images whose DOS stub prints *"will
-only work in Microsoft Operating System/2 mode"*. PDS 7.x ships both, and whoever
-staged these took `BINB\` (the protected-mode tools) rather than `BIN\` (the DOS
-ones). pds70's copies are additionally still SZDD-compressed, which hides this until
-they are expanded.
+Both batteries skipped for over a year, and the recorded reason was wrong twice over.
+The diagnosis said "staged from `BINB\` (OS/2) instead of `BIN\` (DOS)". Neither half
+of that holds:
 
-Everything around those three has been verified, so they are the only unknown left.
-Mounting, `SET LIB=`, the invocation and the log redirection were exercised by
-running the staged OS/2 `BC.EXE` under DOSBox: it does not print its "needs OS/2"
-stub, it *crashes the DOS session* - no `DONE.TXT`, no `LINKLOG.TXT` - which is why
-the pre-flight skip in `run-diff-tests.sh` matters rather than letting the battery
-discover it per program.
+* **The PDS 7.x tools are BOUND executables.** There is exactly one `BC.EX$` on the
+  media - no DOS and OS/2 variants to confuse - because a single file holds both
+  builds. Its MZ part is the entire DOS program: `BC.EXE` 7.10 carries a 13.6 KB stub
+  with the compiler's banner in it and runs under DOS perfectly well. Classifying it
+  by its NE signature is what produced "OS/2 executable, not a DOS one".
+* **The staged copies were corrupt, not the wrong build.** They were expanded with
+  `expand-szdd` while it started the ring buffer at 4096-16 instead of 4096-18, which
+  shifts every back-reference. The result has exactly the right length and a plausible
+  header - the staged `BC.EXE` matched the correct one's 127,987 bytes to the byte -
+  while 44% of its contents were wrong. That is why it did not print a complaint under
+  DOS but crashed outright.
 
-The one structurally novel thing in these templates is the LINK line's EMPTY library
-field: every working template names its library outright (`,,D:\BCOM45.LIB;`), while
-these rely on `LIB=` plus the default-library record `BC /O` writes into the OBJ.
-That mechanism was confirmed by proxy against the qb45 toolchain - same Microsoft
-BC/LINK lineage - with `SET LIB=D:\` and `LINK T.OBJ,T.EXE,NUL,;`: it linked and
-the program produced correct output. So the templates should work unchanged.
+So the fix was the expander, not the media. Both toolchains are now staged from the
+distribution disks with `scripts/stage-pds.sh`, and all four diff programs pass.
 
-Only those three executables per version are wrong. The runtime libraries are
-already correct: `LIB\` holds both variants and the real-mode set is present
-(`B71ROAF.LIB` beside `B71POAF.LIB`, `EMR.LIB` beside `EMP.LIB`, and so on). So
-replacing `BC7/BIN/{BC,LINK,LIB}.EXE` with the DOS `BIN\` copies and re-packing is
-the whole job - no other file needs to change.
+Telling a bound image from an OS/2-only one is done by the **size of the DOS stub** -
+a real program versus a few hundred bytes that print a complaint. Searching for the
+complaint does not work: the correct `BC.EXE` contains "will only work in Microsoft
+Operating System/2 mode" as well, in its OS/2 half. That string is what sold the wrong
+diagnosis in the first place.
+
+```bash
+scripts/stage-pds.sh pds71 ~/Downloads/<archive or disk images>
+PB_TOOLCHAIN_KEY=... bash scripts/pack-toolchains.sh pds71
+```
 
 `pack-toolchains.sh` is the exact inverse of the harness's decrypt step, so a
 container always round-trips. The raw `tools/<dialect>/` directories are

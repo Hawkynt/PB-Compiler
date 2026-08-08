@@ -129,13 +129,7 @@ exe_blocker() { # $1 = path to an oracle executable
   local f="$1" magic lfanew
   magic=$(od -An -tx1 -N 8 "$f" 2>/dev/null | tr -d ' \n')
   if [ "$magic" = "535a2088f02733d1" ]; then
-    # Expanding it does not help, which is worth saying here so the next reader does
-    # not go and find out: pds70's BC.EXE decompresses (LZSS, 4096-byte window, write
-    # position starting at 4078) to a 127,439-byte NE image whose DOS stub says "will
-    # only work in Microsoft Operating System/2 mode" - the same blocker pds71 reports
-    # outright. Both toolchains were staged from the OS/2 build of BC.EXE rather than
-    # the DOS one, and only a DOS-hosted BC 7.x unblocks either.
-    echo "$(basename "$f") is still SZDD-compressed"
+    echo "$(basename "$f") is still SZDD-compressed (scripts/expand-szdd.py)"
     return 0
   fi
   if [ "${magic:0:4}" != "4d5a" ]; then
@@ -145,10 +139,21 @@ exe_blocker() { # $1 = path to an oracle executable
   lfanew=$(u16_at "$f" 60)
   case "$lfanew" in ''|*[!0-9]*) return 0;; esac
   [ "$lfanew" -gt 0 ] || return 0
-  if [ "$(od -An -c -j "$lfanew" -N 2 "$f" 2>/dev/null | tr -d ' \n')" = "NE" ] \
-     && [ "$(u8_at "$f" $((lfanew + 54)))" = "1" ]; then
-    echo "$(basename "$f") is an OS/2 executable, not a DOS one"
-  fi
+  [ "$(od -An -c -j "$lfanew" -N 2 "$f" 2>/dev/null | tr -d ' \n')" = "NE" ] || return 0
+  [ "$(u8_at "$f" $((lfanew + 54)))" = "1" ] || return 0
+  # An NE header does NOT mean "cannot run under DOS". The PDS 7.x tools are BOUND
+  # executables - one file holding both builds, the MZ part being the entire DOS
+  # program - and BC.EXE 7.10 carries a 13.6 KB stub with the compiler's banner in it
+  # and runs under DOS perfectly well. A genuinely OS/2-only image has a stub of a few
+  # hundred bytes whose only job is to print a complaint, so the stub's SIZE is what
+  # separates them. Searching for that complaint does not work: the correct BC.EXE
+  # contains the string too, in its OS/2 half.
+  local pages last stub
+  pages=$(u16_at "$f" 4); last=$(u16_at "$f" 2)
+  case "$pages$last" in ''|*[!0-9]*) return 0;; esac
+  stub=$(( pages > 0 ? (pages - 1) * 512 + last : 0 ))
+  [ "$stub" -ge 4096 ] && return 0            # bound: the DOS stub is a real program
+  echo "$(basename "$f") can only run under OS/2 (DOS stub is $stub bytes)"
   return 0
 }
 

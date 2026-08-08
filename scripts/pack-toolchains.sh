@@ -42,7 +42,7 @@ fi
 # "still compressed" for as long as it did. A warning, not an error: a container may
 # legitimately hold OS/2 or compressed members that are not the oracle itself.
 warn_wrong_build() { # $1 = staged slot
-  local f magic lfanew sig
+  local f magic lfanew sig pages last
   while IFS= read -r f; do
     magic=$(od -An -tx1 -N 8 "$f" 2>/dev/null | tr -d ' \n')
     if [ "$magic" = "535a2088f02733d1" ]; then
@@ -54,9 +54,17 @@ warn_wrong_build() { # $1 = staged slot
     case "$lfanew" in ''|*[!0-9]*) continue;; esac
     [ "$lfanew" -gt 0 ] || continue
     sig=$(od -An -c -j "$lfanew" -N 2 "$f" 2>/dev/null | tr -d ' \n')
-    if [ "$sig" = "NE" ] && [ "$(od -An -tu1 -j $((lfanew + 54)) -N 1 "$f" 2>/dev/null | tr -d ' \n')" = "1" ]; then
-      echo "::warning::$f is an OS/2 executable, not a DOS one - PDS media keep the DOS tools in BIN\\, not BINB\\"
-    fi
+    [ "$sig" = "NE" ] || continue
+    [ "$(od -An -tu1 -j $((lfanew + 54)) -N 1 "$f" 2>/dev/null | tr -d ' \n')" = "1" ] || continue
+    # An NE header alone is not the problem: a BOUND executable holds both builds and
+    # its MZ part is the whole DOS program. Only a stub too small to be one - a few
+    # hundred bytes that print a complaint - means the file cannot run under DOS.
+    pages=$(od -An -tu2 -j 4 -N 2 "$f" 2>/dev/null | tr -d ' \n')
+    last=$(od -An -tu2 -j 2 -N 2 "$f" 2>/dev/null | tr -d ' \n')
+    case "$pages$last" in ''|*[!0-9]*) continue;; esac
+    [ "$pages" -gt 0 ] || continue
+    [ $(( (pages - 1) * 512 + last )) -ge 4096 ] && continue
+    echo "::warning::$f can only run under OS/2 - PDS media keep the DOS tools in BIN\\, not BINB\\"
   done < <(find "$1" -type f \( -iname "*.exe" -o -iname "*.com" \) 2>/dev/null)
 }
 

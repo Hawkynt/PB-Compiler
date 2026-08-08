@@ -21,7 +21,9 @@
 # by one letter, the wrong one is a valid executable that DOS will happily start
 # and then die inside, and reading BINB as BIN is precisely how this slot came to
 # be broken in the first place. So every candidate is classified and only a plain
-# DOS MZ is accepted; an NE image is reported and skipped.
+# DOS MZ or a BOUND image is accepted - PDS ships its tools bound, one file holding
+# both builds, and the DOS half is the whole compiler - while an image that can only
+# run under OS/2 is reported and skipped.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -96,21 +98,35 @@ import os, struct, shutil, sys
 src, dst = sys.argv[1], sys.argv[2]
 
 def kind(path):
+    """DOS-runnable or not, decided by the DOS stub rather than the NE signature.
+
+    An NE header does NOT mean "cannot run under DOS". The PDS 7.x tools are BOUND
+    executables: one file holding both builds, where the MZ part is the entire DOS
+    program and the NE part is the OS/2 one. BC.EXE 7.10 carries a 13.6 KB stub with
+    the compiler's banner in it and runs under DOS perfectly well. A genuinely
+    OS/2-only image instead has a stub of a few hundred bytes whose whole job is to
+    print a complaint, so the stub's SIZE is what separates them.
+
+    Searching the file for that complaint does not work either - the correctly
+    expanded BC.EXE contains the string too, in its OS/2 half.
+    """
     with open(path, "rb") as fh:
         d = fh.read()
     if d[:8] == b"SZ \x88\xf0'3\xd1":
         return "still-compressed", d
-    if d[:2] != b"MZ":
+    if d[:2] != b"MZ" or len(d) < 0x40:
         return "not-an-executable", d
-    if len(d) > 0x40:
-        lfanew = struct.unpack("<I", d[0x3c:0x40])[0]
-        if 0 < lfanew < len(d) - 2:
-            sig = d[lfanew:lfanew + 2]
-            if sig == b"NE":
-                return "OS/2" if d[lfanew + 54] == 1 else "NE-other", d
-            if sig in (b"PE", b"LE", b"LX"):
-                return sig.decode(), d
-    return "DOS", d
+    lfanew = struct.unpack("<I", d[0x3c:0x40])[0]
+    if not (0 < lfanew < len(d) - 2):
+        return "DOS", d
+    sig = d[lfanew:lfanew + 2]
+    if sig not in (b"NE", b"PE", b"LE", b"LX"):
+        return "DOS", d
+    pages, last = struct.unpack("<H", d[4:6])[0], struct.unpack("<H", d[2:4])[0]
+    stub = (pages - 1) * 512 + last if pages else 0
+    if stub >= 4096:
+        return "DOS", d                       # bound: the stub is a real program
+    return ("OS/2" if sig == b"NE" and d[lfanew + 54] == 1 else sig.decode()), d
 
 picked, rejected = {}, []
 for name in sorted(os.listdir(src)):
