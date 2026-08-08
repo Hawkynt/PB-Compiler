@@ -26,6 +26,61 @@ public static class DosBoxRunner {
     return null;
   }
 
+
+  /// <summary>
+  /// Whether this emulator refuses to start without a display, established by trying it once.
+  ///
+  /// Vanilla DOSBox is happy with SDL's dummy video driver. dosbox-staging builds an OpenGL
+  /// context before it reads any setting and aborts under that driver, so it needs a real X
+  /// server even though these tests never look at a window. Without this, pointing DOSBOX_EXE at
+  /// staging does not skip and does not warn - every execution test simply fails, which reads as
+  /// several hundred compiler regressions.
+  ///
+  /// Probed rather than matched against the version string: which build needs what is a property
+  /// of how it was compiled, and the name is only a guess about that.
+  /// </summary>
+  private static readonly Lazy<bool> _needsDisplay = new(() => {
+    if (Executable == null || RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+      return false;
+    try {
+      var probe = new ProcessStartInfo(Executable, "-c exit") {
+        UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+      };
+      using var process = Process.Start(probe)!;
+      var text = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+      if (!process.WaitForExit(30000)) {
+        process.Kill(entireProcessTree: true);
+        return false;
+      }
+      return text.Contains("ABORT", StringComparison.OrdinalIgnoreCase)
+          || text.Contains("Could not initialize video", StringComparison.OrdinalIgnoreCase);
+    } catch {
+      return false;
+    }
+  });
+
+  private static bool HasXvfb => File.Exists("/usr/bin/xvfb-run");
+
+  /// <summary>
+  /// A start-info for the emulator, wrapped in a virtual X server when it needs one.
+  /// Every launch of DOSBox in the test suite must go through here - three fixtures used to build
+  /// their own ProcessStartInfo and were the only ones still failing after this was introduced.
+  /// </summary>
+  public static ProcessStartInfo Launch(string arguments) {
+    if (!_needsDisplay.Value)
+      return new ProcessStartInfo(Executable!, arguments) { UseShellExecute = false };
+
+    Assume.That(HasXvfb, Is.True,
+      $"{Executable} cannot start headless and xvfb-run is not installed - execution test skipped");
+    var psi = new ProcessStartInfo("/usr/bin/xvfb-run", $"-a \"{Executable}\" {arguments}") {
+      UseShellExecute = false,
+    };
+    // Dropped deliberately: callers set it to "dummy" for vanilla DOSBox, and keeping it would
+    // hand SDL the driver with no OpenGL inside the very X server provided to supply one.
+    psi.Environment.Remove("SDL_VIDEODRIVER");
+    return psi;
+  }
+
   /// <summary>Runs <paramref name="exeBytes"/> in DOSBox; returns the redirected stdout text.</summary>
   public static string Run(byte[] exeBytes, int timeoutMs = 60000)
     => RunWithFiles(exeBytes, [], timeoutMs).Output;
@@ -58,7 +113,7 @@ public static class DosBoxRunner {
         echo ok > DONE.TXT
         exit
         """);
-      var psi = new ProcessStartInfo(Executable!, $"-conf \"{conf}\"") { UseShellExecute = false };
+      var psi = Launch($"-conf \"{conf}\"");
       using var process = Process.Start(psi)!;
       var sentinel = Path.Combine(dir, "DONE.TXT");
       var deadline = Environment.TickCount64 + timeoutMs;
@@ -132,9 +187,7 @@ public static class DosBoxRunner {
       // CreateNoWindow makes dosbox-staging hang before the autoexec; instead
       // the [sdl] windowposition above parks the window off-screen (dosbox-x)
       // so local runs do not disturb the desktop.
-      var psi = new ProcessStartInfo(Executable!, $"-conf \"{conf}\"") {
-        UseShellExecute = false,
-      };
+      var psi = Launch($"-conf \"{conf}\"");
 
       using var process = Process.Start(psi)!;
       var sentinel = Path.Combine(dir, "DONE.TXT");

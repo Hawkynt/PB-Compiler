@@ -287,7 +287,7 @@ public sealed class LinkOracleTests {
         exit
         """);
 
-      var psi = new ProcessStartInfo(DosBoxRunner.Executable!, $"-conf \"{conf}\"") { UseShellExecute = false };
+      var psi = DosBoxRunner.Launch($"-conf \"{conf}\"");
       using var process = Process.Start(psi)!;
       var sentinel = Path.Combine(dir, "DONE.TXT");
       var deadline = Environment.TickCount64 + 60000;
@@ -342,7 +342,7 @@ public sealed class LinkOracleTests {
         exit
         """);
 
-      var psi = new ProcessStartInfo(DosBoxRunner.Executable!, $"-conf \"{conf}\"") { UseShellExecute = false };
+      var psi = DosBoxRunner.Launch($"-conf \"{conf}\"");
       using var process = Process.Start(psi)!;
       var sentinel = Path.Combine(dir, "DONE.TXT");
       var deadline = Environment.TickCount64 + 60000;
