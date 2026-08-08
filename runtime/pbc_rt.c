@@ -69,6 +69,15 @@ int32_t rt_str_compare(void *a, void *b) {
   return x->len == y->len ? 0 : (x->len < y->len ? -1 : 1);
 }
 
+/* An owned copy, so the value handed on is a temporary the consuming routines may free. Every
+   other producer in the lowering already yields one - a literal from rt_str_const, a concatenation
+   from rt_str_concat - and only a read of a variable or array element does not, because the handle
+   it finds belongs to that cell. */
+void *rt_str_dup(void *s) {
+  pb_str *x = rt_of(s);
+  return rt_make(x->data, x->len);
+}
+
 void *rt_str_left(void *s, int32_t n) {
   pb_str *x = rt_of(s);
   if (n < 0) n = 0;
@@ -315,8 +324,8 @@ void rt_print_i32(int32_t v) { rt_out_int(v); }
 void rt_print_u32(uint32_t v) { rt_out_int((long long)v); }
 void rt_print_i64(int64_t v) { rt_out_int((long long)v); }
 
-void rt_print_single(float v) { char b[64]; rt_fmt_float(b, sizeof b, v, 7); rt_out_num(b); }
-void rt_print_double(double v) { char b[64]; rt_fmt_float(b, sizeof b, v, 15); rt_out_num(b); }
+void rt_print_single(long double v) { char b[64]; rt_fmt_float(b, sizeof b, v, 7); rt_out_num(b); }
+void rt_print_double(long double v) { char b[64]; rt_fmt_float(b, sizeof b, v, 15); rt_out_num(b); }
 void rt_print_ext(long double v) { char b[64]; rt_fmt_float(b, sizeof b, v, 18); rt_out_num(b); }
 
 void rt_print_tab(int32_t column) {

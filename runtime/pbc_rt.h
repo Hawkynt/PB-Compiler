@@ -30,6 +30,7 @@ typedef struct pb_str {
 /* --- strings ----------------------------------------------------------- */
 void *rt_str_const(void *bytes, int32_t len);
 void *rt_str_concat(void *a, void *b);
+void *rt_str_dup(void *s);
 int32_t rt_str_len(void *s);
 int32_t rt_str_compare(void *a, void *b);
 void *rt_str_left(void *s, int32_t n);
@@ -89,8 +90,13 @@ void rt_print_u16(uint16_t v);
 void rt_print_i32(int32_t v);
 void rt_print_u32(uint32_t v);
 void rt_print_i64(int64_t v);
-void rt_print_single(float v);
-void rt_print_double(double v);
+/* Both take a long double, and that is the IR's contract rather than an oversight: a float is
+   handed to the formatter at the x87's own width whatever its declared type, and the NAME picks
+   the significant-digit count. Declaring these at their nominal widths made the emitted C
+   contradict its own extern - "conflicting types for rt_print_single" - and narrowing here would
+   undo exactly the precision the lowering keeps. */
+void rt_print_single(long double v);
+void rt_print_double(long double v);
 void rt_print_ext(long double v);
 void rt_print_tab(int32_t column);
 void rt_print_spc(int32_t count);
