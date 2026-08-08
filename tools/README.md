@@ -77,35 +77,46 @@ whole directory (mapping the trailing `$` back to `E`/`B`/`J`) so the files can 
 staged before packing; `scripts/expand-szdd.py` is the same thing where PowerShell
 is not available.
 
-### pds70 and pds71: what actually went wrong
+### pds70 and pds71: what actually went wrong, and the one step SETUP does
 
-Both batteries skipped for over a year, and the recorded reason was wrong twice over.
-The diagnosis said "staged from `BINB\` (OS/2) instead of `BIN\` (DOS)". Neither half
-of that holds:
+Both batteries skipped since they were added, and the recorded reason was wrong twice
+over. It said "staged from `BINB\` (OS/2) instead of `BIN\` (DOS)". Neither half held:
 
 * **The PDS 7.x tools are BOUND executables.** There is exactly one `BC.EX$` on the
-  media - no DOS and OS/2 variants to confuse - because a single file holds both
-  builds. Its MZ part is the entire DOS program: `BC.EXE` 7.10 carries a 13.6 KB stub
-  with the compiler's banner in it and runs under DOS perfectly well. Classifying it
-  by its NE signature is what produced "OS/2 executable, not a DOS one".
-* **The staged copies were corrupt, not the wrong build.** They were expanded with
-  `expand-szdd` while it started the ring buffer at 4096-16 instead of 4096-18, which
-  shifts every back-reference. The result has exactly the right length and a plausible
-  header - the staged `BC.EXE` matched the correct one's 127,987 bytes to the byte -
-  while 44% of its contents were wrong. That is why it did not print a complaint under
-  DOS but crashed outright.
+  media, because a single file holds both builds; its MZ part is the entire DOS
+  program. `BC.EXE` 7.10 carries a 13.6 KB stub with the compiler's banner in it and
+  runs under DOS perfectly well. Classifying by the NE signature is what produced
+  "OS/2 executable, not a DOS one" - so the check is the DOS stub's SIZE instead. Do
+  not search for the "only work in ... Operating System/2 mode" string either: the
+  CORRECT `BC.EXE` contains it too, in its OS/2 half, and that string sold the wrong
+  diagnosis.
+* **The staged files were corrupt, not the wrong build** - the whole tree, libraries
+  included. They had been expanded while `expand-szdd` started its ring buffer at
+  4096-16 instead of 4096-18, which shifts every back-reference. The result has
+  exactly the right length and a plausible header: the staged `BC.EXE` matched the
+  correct one's 127,987 bytes to the byte with 44% of its contents wrong. A corrupt
+  `.LIB` is no louder - the compiler ran fine and LINK said "invalid object module"
+  about one library out of ninety.
 
-So the fix was the expander, not the media. Both toolchains are now staged from the
-distribution disks with `scripts/stage-pds.sh`, and all four diff programs pass.
+**The runtime library is BUILT, not shipped.** `BC` emits a default-library record
+naming `bcl7xenr` (with `/O`) or `brt7xenr` (without), and neither is on the media -
+SETUP constructs them at install time. `BUILDRTM.EXE` is the tool that does it, and
+running it directly is far simpler than driving SETUP:
 
-Telling a bound image from an OS/2-only one is done by the **size of the DOS stub** -
-a real program versus a few hundred bytes that print a complaint. Searching for the
-complaint does not work: the correct `BC.EXE` contains "will only work in Microsoft
-Operating System/2 mode" as well, in its OS/2 half. That string is what sold the wrong
-diagnosis in the first place.
+```bash
+# under DOSBox, with LIB= pointing at BC7\LIB and BUILDRTM on the PATH:
+BUILDRTM /Default /FPi /Lr        # -> BRT7xENR.EXE + BRT7xENR.LIB
+```
+
+`/FPi` is IEEE/emulator math (the **E**), `/Lr` is real mode (the **R**), and omitting
+`/FS` gives near strings (the **N**) - which is exactly how `BRT71ENR` is spelled. The
+oracle templates therefore compile WITHOUT `/O` and put `BC7\LIB` on the PATH so the
+runtime module is found at run time. On 7.0 the media stores SZDD content under
+ordinary `.EXE` names, so `BUILDRTM.EXE` must be expanded before it will run at all.
 
 ```bash
 scripts/stage-pds.sh pds71 ~/Downloads/<archive or disk images>
+# then build the runtime module as above and drop BRT7xENR.* into BC7/LIB
 PB_TOOLCHAIN_KEY=... bash scripts/pack-toolchains.sh pds71
 ```
 
