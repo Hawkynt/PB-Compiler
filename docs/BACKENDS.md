@@ -185,8 +185,24 @@ now pins both, in the DOS battery and in `CBackendTests`.
 
 The lowering's supported subset is listed in [IR.md](IR.md); everything outside it
 makes `TryLowerModule` return null rather than miscompile. The largest gaps today
-are `ON ERROR`, `PRINT USING`, the FIELD form of random I/O and inline assembly
-(which is target-specific by definition and will never lower).
+are `PRINT USING`, the FIELD form of random I/O and inline assembly (which is
+target-specific by definition and will never lower).
+
+`ON ERROR` lowers, but the **C** emitter declines it, and that is a second and
+separate gap. It arms its handler with the address of a basic block, which standard
+C has no value for - GCC's `&&label` is an extension, and even with it the jump
+`ON ERROR` performs is non-local, from an arbitrary fault point inside a runtime
+routine, so it needs `setjmp`/`longjmp` rather than a computed goto. The portable
+shape would be an integer id per address-taken block plus a `setjmp` dispatch at
+function entry; what makes it a project rather than an afternoon is that the fault
+has to come from somewhere, and the C runtime has no file I/O at all - so the one
+battery program that faults for real (`ONERR.BAS` opens a missing file) needs
+`rt_open` before it needs a handler.
+
+Both emitters DECLINE rather than emit something that compiles and misbehaves, and
+`CBackendTests` treats a decline as a skip naming the construct - the same answer it
+already gives when the lowering declines. A FAILURE there means emitted C that
+disagrees with the DOS golden, which is the only thing that fixture exists to catch.
 
 Beyond widening that subset, the two items that would most change the picture:
 
