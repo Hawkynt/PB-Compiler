@@ -3,8 +3,15 @@
 # the old SZDD variant ("SZ\x20\x88\xF0\x27\x33\xD1") that neither 7-Zip nor the
 # modern Windows expand.exe handle. Format: 8-byte magic, 4-byte uncompressed
 # length (LE) at offset 8, LZSS stream from offset 12 over a 4096-byte ring buffer
-# pre-filled with spaces (start position 4096-16); control byte, LSB-first: bit set
+# pre-filled with spaces (start position 4096-18); control byte, LSB-first: bit set
 # = literal, bit clear = (12-bit window offset, 4-bit length+3) back-reference.
+#
+# The start position is N - F, and F is fixed by the format's own encoding: a match
+# length is a nibble plus 3, so the longest is 18, so F is 18. This said 4096-16 -
+# the NEWER SZDD format's value - and that does NOT fail loudly: the output is still
+# exactly the declared length and still opens with a plausible header, because only
+# back-references shift. About 44% of a PDS 7.0 BC.EXE came out corrupted, with the
+# readable strings turned to noise and the file size perfect.
 #
 #   expand-szdd.ps1 <file.in> <file.out>     # one file
 #   expand-szdd.ps1 <dir.in>  <dir.out>      # every file in a dir: SZDD files are
@@ -18,7 +25,7 @@ function Expand-One([byte[]]$d) {
   $ulen = [int][BitConverter]::ToUInt32($d, 8)
   $win = [byte[]]::new(4096)
   for ($i = 0; $i -lt 4096; $i++) { $win[$i] = 0x20 }
-  $wp = 4096 - 16
+  $wp = 4096 - 18
   $outBuf = [byte[]]::new($ulen)
   $op = 0; $ip = 12
   while ($op -lt $ulen -and $ip -lt $d.Length) {

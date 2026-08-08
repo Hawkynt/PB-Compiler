@@ -74,7 +74,23 @@ Some install media (e.g. BASIC PDS 7.1) ship their files MS-compressed in the ol
 SZDD `"SZ "` variant (`.EX$`/`.LI$`/`.OB$`), which neither 7-Zip nor the modern
 Windows `expand.exe` decode. `scripts/expand-szdd.ps1 <srcdir> <dstdir>` expands a
 whole directory (mapping the trailing `$` back to `E`/`B`/`J`) so the files can be
-staged before packing.
+staged before packing; `scripts/expand-szdd.py` is the same thing where PowerShell
+is not available.
+
+### pds70 and pds71 are staged from the wrong directory
+
+Both batteries SKIP, and the reason is not a missing toolchain: `BC.EXE`, `LINK.EXE`
+and `LIB.EXE` in each are the OS/2 builds - NE images whose DOS stub prints *"will
+only work in Microsoft Operating System/2 mode"*. PDS 7.x ships both, and whoever
+staged these took `BINB\` (the protected-mode tools) rather than `BIN\` (the DOS
+ones). pds70's copies are additionally still SZDD-compressed, which hides this until
+they are expanded.
+
+Only those three executables per version are wrong. The runtime libraries are
+already correct: `LIB\` holds both variants and the real-mode set is present
+(`B71ROAF.LIB` beside `B71POAF.LIB`, `EMR.LIB` beside `EMP.LIB`, and so on). So
+replacing `BC7/BIN/{BC,LINK,LIB}.EXE` with the DOS `BIN\` copies and re-packing is
+the whole job - no other file needs to change.
 
 `pack-toolchains.sh` is the exact inverse of the harness's decrypt step, so a
 container always round-trips. The raw `tools/<dialect>/` directories are
