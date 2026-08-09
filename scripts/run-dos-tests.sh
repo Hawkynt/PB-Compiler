@@ -112,7 +112,7 @@ for t in "${tests[@]}"; do
   } > "build/dosbox-T$i.conf"
   rm -f build/DONE.TXT
   # shellcheck disable=SC2086  # DOSBOX_PREFIX is a command prefix and must split
-  $DOSBOX_PREFIX "$DOSBOX" -conf "$(dosbox_conf_path "build/dosbox-T$i.conf")" >/dev/null 2>&1 &
+  setsid $DOSBOX_PREFIX "$DOSBOX" -conf "$(dosbox_conf_path "build/dosbox-T$i.conf")" >/dev/null 2>&1 &
   dospid=$!
   for _ in $(seq 1 "${DOSBOX_TICKS:-600}"); do
     { [ -f build/DONE.TXT ] || ! kill -0 "$dospid" 2>/dev/null; } && break

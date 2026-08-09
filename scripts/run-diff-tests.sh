@@ -87,7 +87,7 @@ run_dosbox() { # $1 = conf file, $2 = sentinel dir
   local conf
   conf=$(dosbox_conf_path "$1")
   # shellcheck disable=SC2086  # DOSBOX_PREFIX is a command prefix and must split
-  $DOSBOX_PREFIX "$DOSBOX" -conf "$conf" >/dev/null 2>&1 &
+  setsid $DOSBOX_PREFIX "$DOSBOX" -conf "$conf" >/dev/null 2>&1 &
   local pid=$!
   for _ in $(seq 1 "${DOSBOX_TICKS:-600}"); do
     { [ -f "$2/DONE.TXT" ] || ! kill -0 "$pid" 2>/dev/null; } && break
@@ -95,7 +95,7 @@ run_dosbox() { # $1 = conf file, $2 = sentinel dir
   done
   if kill -0 "$pid" 2>/dev/null; then
     sleep 0.3
-    kill "$pid" 2>/dev/null || true
+    dosbox_kill "$pid"
     wait "$pid" 2>/dev/null || true
   fi
   [ -f "$2/DONE.TXT" ]

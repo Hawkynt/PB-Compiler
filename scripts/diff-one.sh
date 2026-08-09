@@ -36,13 +36,13 @@ winpath() { cd "$1" && { pwd -W 2>/dev/null || pwd; }; }
 run_dosbox() {
   rm -f "$2/DONE.TXT"
   # shellcheck disable=SC2086  # DOSBOX_PREFIX is a command prefix and must split
-  $DOSBOX_PREFIX "$DOSBOX" -conf "$(dosbox_conf_path "$1")" >/dev/null 2>&1 &
+  setsid $DOSBOX_PREFIX "$DOSBOX" -conf "$(dosbox_conf_path "$1")" >/dev/null 2>&1 &
   local pid=$!
   for _ in $(seq 1 "${DOSBOX_TICKS:-600}"); do
     { [ -f "$2/DONE.TXT" ] || ! kill -0 "$pid" 2>/dev/null; } && break
     sleep 0.2
   done
-  kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+  dosbox_kill "$pid"; wait "$pid" 2>/dev/null || true
   [ -f "$2/DONE.TXT" ]
 }
 

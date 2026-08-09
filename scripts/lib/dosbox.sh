@@ -51,6 +51,26 @@ dosbox_detect_prefix() {
   fi
 }
 
+# Stop a launched emulator AND everything it started.
+#
+# xvfb-run is a SHELL SCRIPT: it starts an X server, runs the command, and cleans the
+# server up when it exits normally. Killing the wrapper skips that entirely, leaving
+# both the X server and the emulator orphaned - and nothing ever reaps them. One full
+# battery leaked about 2000 Xvfb processes and 90 emulators, drove the load average
+# past 400, and the machine was then slow enough that ORACLES began missing their
+# deadline and reporting as fidelity differences. The leak diagnosed itself as a
+# compiler bug in another dialect, which is the expensive kind of wrong.
+dosbox_kill() { # $1 = pid of the launched job
+  local pid="$1" signal
+  for signal in TERM KILL; do
+    kill -"$signal" -- "-$pid" 2>/dev/null || true   # the process GROUP (see setsid at the call site)
+    pkill -"$signal" -P "$pid" 2>/dev/null || true   # its children, when the group did not cover them
+    kill -"$signal" "$pid" 2>/dev/null || true
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.3
+  done
+}
+
 # An absolute config path, since the emulator may not share our working directory.
 dosbox_conf_path() { # $1 = config file
   case "$1" in
