@@ -252,9 +252,20 @@ Why nothing catches it today:
 * `STRHEAP.BAS` itself does not route, because its main declines on a null pointer. Selecting null is
   a two-line change that immediately exposes this, which is exactly how it was found.
 
-So the ordering is real: the IR needs an ownership discipline - a free on the handle an assignment
-replaces, and a free of each temporary once consumed - before the back end can own a string-heavy
-program. Until then, coverage over such programs is worth less than it looks.
+So the ordering is real: the IR needs an ownership discipline before the back end can own a
+string-heavy program, and until then coverage over such programs is worth less than it looks.
+
+**And the obvious patch is not it.** Emitting a free of the handle an assignment replaces - what
+`rt_strassign` does for the direct emitter - was tried and reverted: it breaks 15 tests, "both
+operands survive a concatenation" among them. The reason is that the IR has no stated convention
+about who owns an argument. The C runtime's `rt_str_concat` leaves `a` and `b` alone; the DOS
+`rt_strcat` CONSUMES both, and the ABI table is where that difference lives. A free in the lowering
+is therefore a double free on one back end and correct on the other.
+
+So the decision to make first is not where to put a free - it is whether a runtime argument is
+BORROWED or CONSUMED in the IR, uniformly, with the ABI mapping making up the difference for the DOS
+entries that disagree. `rt_str_free` is already in the runtime ABI table and the C runtime, so the
+plumbing is there once the convention is chosen.
 
 **3. The golden gate - byte-identical output with the optimizer off.** This is the hard one, and it
 is the direct emitter's whole reason for existing: its optimizations are interleaved with emission

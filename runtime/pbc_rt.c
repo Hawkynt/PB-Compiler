@@ -179,6 +179,14 @@ void *rt_str_asc_set(void *s, int16_t pos, int16_t code) {
   return s;
 }
 
+/* The C runtime allocates with malloc and never compacts, so freeing is optional for correctness
+   here - but the IR emits the call and it has to link, and honouring it keeps a long-running C build
+   from growing without bound the way the DOS heap would have run out. */
+void rt_str_free(void *s) {
+  if (s)
+    free(s);
+}
+
 void *rt_str_chr(int32_t code) {
   char c = (char)(unsigned char)code;
   return rt_make(&c, 1);

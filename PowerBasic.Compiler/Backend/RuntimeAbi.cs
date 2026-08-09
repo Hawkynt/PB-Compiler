@@ -148,6 +148,8 @@ internal static class RuntimeAbi {
     // every read of a string variable or array element, which is what makes the consuming routines
     // above safe to call - see IrLowering.BorrowString
     ["rt_str_dup"] = new("rt_strdup", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    // "StrFree: AX=handle (0 ok)" - the zero case is why an assignment needs no first-time guard
+    ["rt_str_free"] = new("rt_strfree", [new(ArgKind.Word, Reg.AX)], _callerSaved),
 
     // rt_print_strvar(ptr handle) is the runtime's StrPrint: "AX=handle - writes to current output
     // (consumes)". PRINT of a string VARIABLE goes through this rather than through rt_print_str,

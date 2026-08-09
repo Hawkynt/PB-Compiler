@@ -720,6 +720,17 @@ public sealed class IrLowering {
     this._b.Store(value, slot);
   }
 
+  // A free-on-assign was tried here and REVERTED, which is worth recording because the idea is
+  // right and the placement is not. Freeing the handle an assignment replaces - what rt_strassign
+  // does for the direct emitter - broke 15 tests, "both operands survive a concatenation" among
+  // them, because the IR's model is that a runtime entry does NOT consume its arguments: the C
+  // runtime's rt_str_concat leaves a and b alone, and it is the DOS ABI mapping that consumes. So a
+  // free here is a double free on one back end and correct on another.
+  //
+  // Ownership has to be decided for the IR as a whole - who frees, and where the borrow ends -
+  // before any single free is emitted. See docs/BACKENDS.md and the note on STRHEAP.BAS.
+
+
   /// <summary>MID$(target$, start[, length]) = value$ - replace a substring in place (strings are handles, so store a new one back).</summary>
   private void LowerMidAssign(MidAssignStmt m) {
     if (this._module is null)

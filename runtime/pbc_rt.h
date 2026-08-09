@@ -31,6 +31,7 @@ typedef struct pb_str {
 void *rt_str_const(void *bytes, int32_t len);
 void *rt_str_concat(void *a, void *b);
 void *rt_str_dup(void *s);
+void rt_str_free(void *s);
 int32_t rt_str_len(void *s);
 int32_t rt_str_compare(void *a, void *b);
 void *rt_str_left(void *s, int32_t n);
