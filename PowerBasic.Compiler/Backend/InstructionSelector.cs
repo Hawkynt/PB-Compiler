@@ -241,8 +241,15 @@ public sealed class InstructionSelector {
       case IrCondBr cond when folded is { } cmp && MapPredicate(cmp.Pred) is { } cc:
         if (!this.TryOperand(cmp.Lhs, out var lhs) || !this.TryOperand(cmp.Rhs, out var rhs))
           return false;
-        if (lhs is not MOperand.Register)
-          return this.Decline("compare: immediate left operand");   // CMP needs a register/memory left operand
+        if (lhs is not MOperand.Register) {
+          // CMP wants a register on the left, and a constant there is not a dead end: comparing the
+          // other way round asks the same question with the predicate mirrored - `5 > x` is `x < 5` -
+          // so the operands swap and the condition follows them. Equality mirrors to itself.
+          if (rhs is not MOperand.Register)
+            return this.Decline("compare: neither operand is in a register");
+          (lhs, rhs) = (rhs, lhs);
+          cc = MapPredicate(Mirrored(cmp.Pred))!.Value;
+        }
         this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
           new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: false, WritesFlags: true,
             ReadsMemory: lhs is MOperand.Memory || rhs is MOperand.Memory, WritesMemory: false)));
@@ -283,6 +290,23 @@ public sealed class InstructionSelector {
   /// <summary>The read-operand indices for a two-operand CMP: operand 0 (the left) and operand 1 when it is a register.</summary>
   private static int[] RegReadIndices(MOperand left, MOperand right)
     => right is MOperand.Register ? [0, 1] : left is MOperand.Register ? [0] : [];
+
+  /// <summary>
+  /// The predicate that asks the same question with the operands the other way round: the one to use
+  /// after swapping them. Note this is the MIRROR, not the negation - <c>Slt</c> becomes <c>Sgt</c>
+  /// and not <c>Sge</c>, because swapping the sides does not change what counts as true.
+  /// </summary>
+  private static IrCmpPred Mirrored(IrCmpPred pred) => pred switch {
+    IrCmpPred.Slt => IrCmpPred.Sgt,
+    IrCmpPred.Sgt => IrCmpPred.Slt,
+    IrCmpPred.Sle => IrCmpPred.Sge,
+    IrCmpPred.Sge => IrCmpPred.Sle,
+    IrCmpPred.Ult => IrCmpPred.Ugt,
+    IrCmpPred.Ugt => IrCmpPred.Ult,
+    IrCmpPred.Ule => IrCmpPred.Uge,
+    IrCmpPred.Uge => IrCmpPred.Ule,
+    _ => pred,                     // Eq and Ne are their own mirror
+  };
 
   private static Condition? MapPredicate(IrCmpPred pred) => pred switch {
     IrCmpPred.Eq => Condition.Equal,
