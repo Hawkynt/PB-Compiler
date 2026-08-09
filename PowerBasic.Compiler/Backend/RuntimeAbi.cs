@@ -301,6 +301,9 @@ internal static class RuntimeAbi {
     // STR$ of a number. "StrI16: AX=value (clobbers DX); StrI32: DX:AX=value; StrF64: ST0 (popped)"
     // - and rt_str_f32 is the SINGLE entry beside it, differing only in the digit count it sets,
     // which is the rendering the fidelity tests compare
+    // EOF(n): AX = the file number -> AX = PB's -1/0 truth
+    ["rt_eof"] = new("rt_eof", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+
     // FREEFILE: no arguments -> AX = the lowest file number not in use
     ["rt_freefile"] = new("rt_freefile", [], _callerSaved, Result: Reg.AX),
 

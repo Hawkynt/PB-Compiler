@@ -441,6 +441,145 @@ void *rt_input_line(void) {
   return rt_make(buf, (int32_t)strlen(buf));
 }
 
+/* --- sequential file I/O -------------------------------------------------
+
+   PB numbers files 1..15 and the runtime keeps the handles itself, so a file number is an index
+   here exactly as it is a table slot in the DOS runtime. Only the SEQUENTIAL modes are served:
+   INPUT, OUTPUT and APPEND. RANDOM and BINARY need a record layout and FIELD, which the lowering
+   declines anyway, so opening one raises rather than pretending.
+
+   The print entries take the file number FIRST and are otherwise the console ones - that is the
+   lowering's own naming rule (rt_print_x becomes rt_fprint_x with the number pushed in front), so
+   the two stay in step by construction. Each file carries its own column for the same reason the
+   DOS runtime keeps rt_colptr: a comma zone on #2 must not be measured against the screen. */
+
+#define RT_FILES 16
+
+static FILE *rt_file[RT_FILES];
+static int32_t rt_file_col[RT_FILES];
+
+static FILE *rt_file_of(int32_t n) {
+  if (n < 1 || n >= RT_FILES || !rt_file[n])
+    rt_error(52);                       /* bad file number / not open */
+  return rt_file[n];
+}
+
+void rt_file_open(int32_t n, void *name, int32_t mode, int32_t reclen) {
+  pb_str *x = rt_of(name);
+  char path[260];
+  int32_t len = x->len < (int32_t)sizeof path - 1 ? x->len : (int32_t)sizeof path - 1;
+  (void)reclen;
+  if (n < 1 || n >= RT_FILES)
+    rt_error(52);
+  if (rt_file[n])
+    rt_error(55);                       /* already open */
+  memcpy(path, x->data, (size_t)len);
+  path[len] = '\0';
+  /* FileMode: 0 Input, 1 Output, 2 Append, 3 Random, 4 Binary */
+  rt_file[n] = mode == 0 ? fopen(path, "rb")
+             : mode == 1 ? fopen(path, "wb")
+             : mode == 2 ? fopen(path, "ab")
+             : NULL;
+  if (!rt_file[n])
+    rt_error(mode == 0 ? 53 : 64);      /* file not found / bad file name */
+  rt_file_col[n] = 0;
+}
+
+void rt_file_close(int32_t n) {
+  if (n >= 1 && n < RT_FILES && rt_file[n]) {
+    fclose(rt_file[n]);
+    rt_file[n] = NULL;
+    rt_file_col[n] = 0;
+  }
+}
+
+void rt_file_close_all(void) {
+  int32_t n;
+  for (n = 1; n < RT_FILES; ++n)
+    rt_file_close(n);
+}
+
+int16_t rt_freefile(void) {
+  int32_t n;
+  for (n = 1; n < RT_FILES; ++n)
+    if (!rt_file[n])
+      return (int16_t)n;
+  rt_error(67);                         /* too many files */
+  return 0;
+}
+
+/* PB's EOF is TRUE only once the last byte has been read, so it peeks rather than trusting feof,
+   which stays false until a read has already failed. */
+int16_t rt_eof(int16_t n) {
+  FILE *f = rt_file_of(n);
+  int ch = fgetc(f);
+  if (ch == EOF)
+    return -1;
+  ungetc(ch, f);
+  return 0;
+}
+
+void rt_kill(void *name) {
+  pb_str *x = rt_of(name);
+  char path[260];
+  int32_t len = x->len < (int32_t)sizeof path - 1 ? x->len : (int32_t)sizeof path - 1;
+  memcpy(path, x->data, (size_t)len);
+  path[len] = '\0';
+  /* The failure is IGNORED, matching the DOS runtime: its rt_kill issues INT 21h and returns
+     without looking at the carry flag, so KILL of a file that is not there is a no-op. Programs
+     rely on it - the battery's own FILEIO1 opens with KILL "OUT.TXT" to clear any previous run. */
+  (void)remove(path);
+}
+
+static void rt_fout(int32_t n, const char *bytes, int32_t len) {
+  FILE *f = rt_file_of(n);
+  int32_t i;
+  for (i = 0; i < len; ++i) {
+    fputc(bytes[i], f);
+    rt_file_col[n] = bytes[i] == '\n' ? 0 : rt_file_col[n] + 1;
+  }
+}
+
+static void rt_fout_int(int32_t n, long long v) {
+  char b[32];
+  sprintf(b, "%lld", v);
+  if (v >= 0)
+    rt_fout(n, " ", 1);
+  rt_fout(n, b, (int32_t)strlen(b));
+  rt_fout(n, " ", 1);
+}
+
+void rt_fprint_str(int32_t n, void *bytes, int32_t len) { rt_fout(n, (const char *)bytes, len); }
+void rt_fprint_strvar(int32_t n, void *s) { pb_str *x = rt_of(s); rt_fout(n, x->data, x->len); }
+void rt_fprint_nl(int32_t n) { rt_fout(n, "\n", 1); }
+void rt_fprint_comma(int32_t n) {
+  int32_t pad = 14 - (rt_file_col[n] % 14);
+  while (pad-- > 0)
+    rt_fout(n, " ", 1);
+}
+
+void rt_fprint_i8(int32_t n, int8_t v) { rt_fout_int(n, v); }
+void rt_fprint_u8(int32_t n, uint8_t v) { rt_fout_int(n, v); }
+void rt_fprint_i16(int32_t n, int16_t v) { rt_fout_int(n, v); }
+void rt_fprint_u16(int32_t n, uint16_t v) { rt_fout_int(n, v); }
+void rt_fprint_i32(int32_t n, int32_t v) { rt_fout_int(n, v); }
+void rt_fprint_u32(int32_t n, uint32_t v) { rt_fout_int(n, (long long)v); }
+void rt_fprint_i64(int32_t n, int64_t v) { rt_fout_int(n, (long long)v); }
+void rt_fprint_single(int32_t n, long double v) { char b[64]; rt_fmt_float(b, sizeof b, v, 7); rt_fout(n, b, (int32_t)strlen(b)); rt_fout(n, " ", 1); }
+void rt_fprint_double(int32_t n, long double v) { char b[64]; rt_fmt_float(b, sizeof b, v, 15); rt_fout(n, b, (int32_t)strlen(b)); rt_fout(n, " ", 1); }
+
+/* LINE INPUT #n: the rest of the line, without its terminator. */
+void *rt_finput_line(int32_t n) {
+  FILE *f = rt_file_of(n);
+  char buf[1024];
+  int32_t len = 0;
+  int ch;
+  while ((ch = fgetc(f)) != EOF && ch != '\n')
+    if (ch != '\r' && len < (int32_t)sizeof buf)
+      buf[len++] = (char)ch;
+  return rt_make(buf, len);
+}
+
 /* --- memory / arrays ---------------------------------------------------- */
 
 void *rt_arr_alloc(int32_t count, int32_t elementSize) {
@@ -467,6 +606,14 @@ void rt_mem_copy(void *dst, void *src, int32_t n) { memmove(dst, src, (size_t)(n
 int32_t rt_mem_compare(void *a, void *b, int32_t n) {
   int c = memcmp(a, b, (size_t)(n < 0 ? 0 : n));
   return c < 0 ? -1 : (c > 0 ? 1 : 0);
+}
+
+/* A BASIC run-time error. ON ERROR is not modelled by the C emitter (docs/BACKENDS.md), so there is
+   no handler to reach and nothing to resume to: the only honest thing left is to say which error it
+   was and stop. Silently continuing would make the program's output a fiction. */
+void rt_error(int32_t code) {
+  fprintf(stderr, "pbc runtime: BASIC error %ld\n", (long)code);
+  exit(3);
 }
 
 void rt_unreachable(void) {

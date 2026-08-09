@@ -134,7 +134,7 @@ public static class DosBoxRunner {
           minimized = TryHideWindow(process);
         Thread.Sleep(50);
       }
-      var finished = File.Exists(sentinel) || process.HasExited;
+      var finished = File.Exists(sentinel);   // the sentinel alone, for the reason given below
       if (!process.HasExited) {
         if (finished)
           Thread.Sleep(200);
@@ -210,15 +210,23 @@ public static class DosBoxRunner {
         Thread.Sleep(50);
       }
 
-      var finished = File.Exists(sentinel) || process.HasExited;
+      // The SENTINEL is the only evidence the program ran to the end. Counting a bare process exit
+      // as "finished" too was a hole: an emulator that quit before its autoexec - which happens
+      // under load, and happened once in a full 4300-test run - left an empty output file that the
+      // caller then compared against the expected text and reported as a wrong ANSWER. A run that
+      // did not complete is not an answer, so it says so instead.
+      var completed = File.Exists(sentinel);
       if (!process.HasExited) {
-        if (finished)
+        if (completed)
           Thread.Sleep(200); // let the redirection handles settle
         process.Kill(entireProcessTree: true);
         process.WaitForExit(5000);
       }
-      if (!finished)
-        Assert.Fail("DOSBox run timed out - generated program probably hangs");
+      if (!completed)
+        Assert.Fail(process.HasExited
+          ? "DOSBox exited without running the program to completion (no DONE.TXT) - the emulator "
+            + "quit early rather than the program answering wrongly"
+          : "DOSBox run timed out - generated program probably hangs");
 
       var outFile = Path.Combine(dir, "T.OUT");
       var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

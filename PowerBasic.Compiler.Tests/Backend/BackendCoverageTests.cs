@@ -390,6 +390,7 @@ public sealed class BackendCoverageTests {
     "DIFF01.BAS",
     "DIFF02.BAS",
     "DIFF03.BAS",
+    "FILEIO1.BAS",
     "HELLO.BAS",
     "INPUTS.BAS",
     "MATHUNIT.BAS",

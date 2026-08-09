@@ -122,6 +122,29 @@ long double rt_input_ext(void);
 void *rt_input_str(void);
 void *rt_input_line(void);
 
+/* sequential file I/O - INPUT / OUTPUT / APPEND; the file number comes first, as the lowering's
+   rt_print_x -> rt_fprint_x naming rule requires */
+void rt_file_open(int32_t n, void *name, int32_t mode, int32_t reclen);
+void rt_file_close(int32_t n);
+void rt_file_close_all(void);
+int16_t rt_freefile(void);
+int16_t rt_eof(int16_t n);
+void rt_kill(void *name);
+void rt_fprint_str(int32_t n, void *bytes, int32_t len);
+void rt_fprint_strvar(int32_t n, void *s);
+void rt_fprint_nl(int32_t n);
+void rt_fprint_comma(int32_t n);
+void rt_fprint_i8(int32_t n, int8_t v);
+void rt_fprint_u8(int32_t n, uint8_t v);
+void rt_fprint_i16(int32_t n, int16_t v);
+void rt_fprint_u16(int32_t n, uint16_t v);
+void rt_fprint_i32(int32_t n, int32_t v);
+void rt_fprint_u32(int32_t n, uint32_t v);
+void rt_fprint_i64(int32_t n, int64_t v);
+void rt_fprint_single(int32_t n, long double v);
+void rt_fprint_double(int32_t n, long double v);
+void *rt_finput_line(int32_t n);
+
 /* --- memory / arrays --------------------------------------------------- */
 void *rt_arr_alloc(int32_t count, int32_t elementSize);
 void *rt_arr_alloc_ptr(int32_t count);
@@ -131,6 +154,7 @@ void rt_arr_free(void *p);
 void rt_mem_copy(void *dst, void *src, int32_t n);
 int32_t rt_mem_compare(void *a, void *b, int32_t n);
 
+void rt_error(int32_t code);
 void rt_unreachable(void);
 
 /* The generated translation unit defines this; main() in the runtime calls it. */

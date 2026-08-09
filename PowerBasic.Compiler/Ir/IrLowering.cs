@@ -1884,6 +1884,10 @@ public sealed class IrLowering {
       "CVD" => this.LowerCv(call, "rt_str_cvd", IrType.F64),
       "POS" => this.LowerPos(call),
       "FREEFILE" => this._b.Call(IrType.I16, this.RuntimeFn("rt_freefile", IrType.I16)),
+      // EOF(n): the file number in, PB's -1/0 truth out - the runtime answers in the same shape the
+      // direct emitter's callers expect, so there is nothing to normalise here
+      "EOF" => this._b.Call(IrType.I16, this.RuntimeFn("rt_eof", IrType.I16, IrType.I16),
+        this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), PbType.Integer)),
       "SQR" => this.LowerMath(call, "sqrt"),
       "SIN" => this.LowerMath(call, "sin"),
       "COS" => this.LowerMath(call, "cos"),
