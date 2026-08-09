@@ -394,6 +394,9 @@ public sealed class IrLowering {
     TypeSuffix.None, TypeSuffix.Integer, TypeSuffix.Long, TypeSuffix.Single, TypeSuffix.Double, TypeSuffix.Ext, TypeSuffix.String,
   ];
 
+  /// <summary>String slots this lowering has null-initialised, so a read of the previous value is sound.</summary>
+  private readonly HashSet<IrValue> _nullInitialisedStrings = [];
+
   private IrValue SlotFor(VariableSymbol symbol) {
     if (this._addr.TryGetValue(symbol, out var existing))
       return existing;
@@ -402,6 +405,12 @@ public sealed class IrLowering {
     IrAlloca alloca;
     if (symbol.Type is StringType) {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.Ptr) { Name = symbol.Name });  // holds a string handle
+      // ...starting EMPTY, which is both what PB says a string variable holds before its first
+      // assignment and what makes the handle readable at all. An alloca is uninitialised, so anything
+      // that looks at the previous value - freeing the handle an assignment replaces, most obviously -
+      // would be reading whatever the frame happened to contain.
+      this._entry.InsertAt(this._entryAllocaCount++, new IrStore(new IrNullPtr(), alloca));
+      this._nullInitialisedStrings.Add(alloca);
     } else if (symbol.Type is FixedStringType fixedStr) {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I8) { Count = fixedStr.Length, Name = symbol.Name });  // inline fixed buffer
     } else if (symbol.Type is ArrayType arr) {
@@ -678,7 +687,11 @@ public sealed class IrLowering {
 
   private void LowerAssign(AssignStmt a) {
     if (a.Target is NameExpr && this._model.VariableBindings.TryGetValue(a.Target, out var strSym) && strSym.Type is StringType) {
-      this._b.Store(this.LowerStringExpr(a.Value), this.SlotFor(strSym));   // strings are immutable handles
+      // the value FIRST, so `t = t + "x"` has taken its own copy before the old handle goes
+      var strSlot = this.SlotFor(strSym);
+      var strValue = this.LowerStringExpr(a.Value);
+      this.FreeReplacedString(strSlot);
+      this._b.Store(strValue, strSlot);                                     // strings are immutable handles
       return;
     }
     if (a.Target is NameExpr && this._model.VariableBindings.TryGetValue(a.Target, out var fstrSym) && fstrSym.Type is FixedStringType fixedStr) {
@@ -720,15 +733,27 @@ public sealed class IrLowering {
     this._b.Store(value, slot);
   }
 
-  // A free-on-assign was tried here and REVERTED, which is worth recording because the idea is
-  // right and the placement is not. Freeing the handle an assignment replaces - what rt_strassign
-  // does for the direct emitter - broke 15 tests, "both operands survive a concatenation" among
-  // them, because the IR's model is that a runtime entry does NOT consume its arguments: the C
-  // runtime's rt_str_concat leaves a and b alone, and it is the DOS ABI mapping that consumes. So a
-  // free here is a double free on one back end and correct on another.
-  //
-  // Ownership has to be decided for the IR as a whole - who frees, and where the borrow ends -
-  // before any single free is emitted. See docs/BACKENDS.md and the note on STRHEAP.BAS.
+  /// <summary>
+  /// Frees the handle a string assignment is about to replace - what <c>rt_strassign</c> does for the
+  /// direct emitter, which hands the routine the CELL and lets it free what it finds there.
+  ///
+  /// Without this the IR leaks every value a string variable ever held: the runtime entries consume
+  /// the temporaries inside an expression (that is what the borrow on a read is for), and the one
+  /// handle nothing consumes is the variable's previous value. STRHEAP.BAS is the program that
+  /// notices - two thousand assignments of a 200-byte concatenation through a 64 KiB compacting heap
+  /// - and it says OUT OF STRING SPACE rather than anything that points here.
+  ///
+  /// Only slots this lowering NULL-INITIALISED are freed. That is not a formality: an alloca holds
+  /// whatever the frame did, so freeing the previous value of a variable that has never been
+  /// assigned hands the allocator a garbage handle. The first attempt at this did exactly that and
+  /// took 15 tests with it.
+  /// </summary>
+  private void FreeReplacedString(IrValue slot) {
+    if (!this._nullInitialisedStrings.Contains(slot))
+      return;
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr),
+      this._b.Load(IrType.Ptr, slot));
+  }
 
 
   /// <summary>MID$(target$, start[, length]) = value$ - replace a substring in place (strings are handles, so store a new one back).</summary>

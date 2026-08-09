@@ -323,6 +323,11 @@ public sealed class IrBasicWriter {
         this.Line($"  {this.Define(load)} = {this.Ref(this.ScalarSlot(load.Pointer, load.Type))}");
         return;
       case IrStore store:
+        // A string slot is null-initialised at entry so the handle it replaces is readable. In BASIC
+        // a string variable already starts empty, so the initialiser has nothing to say - and
+        // rendering it would need a spelling for the null pointer, which the language has not got.
+        if (store.Value is IrNullPtr && store.Pointer.Type.Kind == IrTypeKind.Ptr)
+          return;
         this.Line($"  {this.Ref(this.ScalarSlot(store.Pointer, store.Value.Type))} = {this.Ref(store.Value)}");
         return;
       // inline asm renders as the "!" statement it came from - the one construct whose faithful
@@ -786,6 +791,11 @@ public sealed class IrBasicWriter {
     if (call.Callee is not IrFunction callee)
       throw new IrBasicWriterException("an indirect call");
     if (callee.IsDeclaration) {
+      // Releasing the handle an assignment replaced is the same kind of bookkeeping rt_str_dup is,
+      // and has the same spelling here: none. BASIC assigns strings by value and says nothing about
+      // when the old one goes.
+      if (callee.Name == "rt_str_free")
+        return;
       if (this.TryStringExpression(call, callee))
         return;
       // ERROR n: the statement that raises, spelled as itself

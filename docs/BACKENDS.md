@@ -187,8 +187,8 @@ Worth stating plainly, because coverage numbers make the distance look shorter t
 `CodeGen/` needs THREE things, and only the first is being measured today.
 
 **1. Coverage - every program on the IR path.** `BackendCoverageTests` ranks this over the whole
-corpus. As of this writing: **138 of 164 programs lower**, **217 of 236 functions select and
-allocate**, **124 of 138 module bodies** can be owned outright. The remaining lowering blockers are
+corpus. As of this writing: **138 of 164 programs lower**, **219 of 236 functions select and
+allocate**, **125 of 138 module bodies** can be owned outright. The remaining lowering blockers are
 `ARRAY SORT`, `PUT$`, `FIELD`, `CHAIN`, `DEF SEG`, `DIM AT`, `LPRINT`/`PRINT USING`, `CODEPTR32`,
 `SIZEOF`, `CSRLIN` and `$ERROR STACK ON`; the remaining selection blockers are the unsigned
 float-to-integer casts, 64-bit truncation and widening, module globals needing the data-layout
@@ -231,41 +231,30 @@ So the order is: widen, run the battery routed, and keep the widening only if th
 coverage number that went up while the battery went down is a worse position than before. The two
 faults that turned up this way were worth more than the two functions that found them.
 
-**A whole concern the IR path does not have yet: string lifetime.** This is not a construct on the
-decline list, which is why it took a coverage increment to surface it, and it qualifies the 504/504
-above rather than being covered by it.
+**String lifetime: the leak is closed, the convention is now stated.** This was not on the decline
+list - it is a concern rather than a construct, and only a coverage increment surfaced it.
 
-`IrLowering` emits **no `rt_str_free` at all** - the name appears nowhere in `Ir/` or in the runtime
-ABI table, against twelve free sites across six files in the direct emitter. Every string temporary
-the IR allocates is leaked. `STRHEAP.BAS` is the program that shows it: a loop assigning
-`t = STRING$(100,"x") + STRING$(100,"y")` two thousand times allocates several temporaries per
-iteration and frees none, and the DOS runtime's 64 KiB compacting heap gives out with
-`OUT OF STRING SPACE`.
+`IrLowering` emitted **no `rt_str_free` at all**, so every value a string variable ever held was
+leaked. `STRHEAP.BAS` is the program that notices: two thousand assignments of a 200-byte
+concatenation through the DOS runtime's 64 KiB compacting heap, ending in `OUT OF STRING SPACE`. The
+C and LLVM back ends `malloc` and never noticed, and the battery did not either, because the
+programs the back end owned did not churn enough - a passing battery does not exclude a
+scale-dependent fault.
 
-Why nothing catches it today:
+The rule now written into the lowering, in the order it has to hold:
 
-* the C and LLVM back ends allocate with `malloc` and never run out on programs this size, so the
-  leak is invisible there;
-* the differential battery scores 504/504 routed because the programs the back end currently owns do
-  not churn enough strings to exhaust the heap. **That is a statement about those programs, not about
-  correctness** - the fault is scale-dependent, and a passing battery does not exclude it;
-* `STRHEAP.BAS` itself does not route, because its main declines on a null pointer. Selecting null is
-  a two-line change that immediately exposes this, which is exactly how it was found.
+1. **A runtime entry CONSUMES its handle arguments.** That is what the borrow on every variable read
+   is already for, and it is what the DOS runtime does; the C runtime simply never reclaims, which is
+   safe and leaky rather than different.
+2. **A string slot is NULL-INITIALISED at entry.** An alloca holds whatever the frame did, so the
+   previous value is only readable if it was put there. The first attempt skipped this and freed
+   garbage - 15 tests, and none of them said "uninitialised".
+3. **An assignment frees the handle it replaces**, after the new value is computed, so `t = t + "x"`
+   has already taken its copy. Freeing a null handle is a no-op, which is what makes the first
+   assignment need no special case.
 
-So the ordering is real: the IR needs an ownership discipline before the back end can own a
-string-heavy program, and until then coverage over such programs is worth less than it looks.
-
-**And the obvious patch is not it.** Emitting a free of the handle an assignment replaces - what
-`rt_strassign` does for the direct emitter - was tried and reverted: it breaks 15 tests, "both
-operands survive a concatenation" among them. The reason is that the IR has no stated convention
-about who owns an argument. The C runtime's `rt_str_concat` leaves `a` and `b` alone; the DOS
-`rt_strcat` CONSUMES both, and the ABI table is where that difference lives. A free in the lowering
-is therefore a double free on one back end and correct on the other.
-
-So the decision to make first is not where to put a free - it is whether a runtime argument is
-BORROWED or CONSUMED in the IR, uniformly, with the ABI mapping making up the difference for the DOS
-entries that disagree. `rt_str_free` is already in the runtime ABI table and the C runtime, so the
-plumbing is there once the convention is chosen.
+`IrBasicWriter` renders none of it: releasing a handle has no BASIC spelling, exactly as `rt_str_dup`
+has none, and a string variable already starts empty.
 
 **3. The golden gate - byte-identical output with the optimizer off.** This is the hard one, and it
 is the direct emitter's whole reason for existing: its optimizations are interleaved with emission

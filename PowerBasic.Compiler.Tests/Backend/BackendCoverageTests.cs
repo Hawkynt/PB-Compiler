@@ -221,7 +221,7 @@ public sealed class BackendCoverageTests {
     // x87's eighty bits are not pre-rounded to sixty-four) leaves one FPToSI f32 -> i64 the selector
     // does not handle, where the fold used to remove it. Correctness bought back six battery
     // programs for one function's coverage, which is the trade worth making in that direction.
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(217),
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(219),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
 
     // How many programs reach the IR at all - the figure the runtime-trap and error-handling work
@@ -240,7 +240,7 @@ public sealed class BackendCoverageTests {
 
     // selection is not routing: the whole-program codegen also schedules and allocates, and a value
     // live across a CALL has no register unless the spiller can move it to the frame
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(217),
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(219),
       "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // The figure that matters for whole-program ownership: module bodies the back end compiles end
@@ -533,6 +533,7 @@ public sealed class BackendCoverageTests {
     "ONERRNXT.BAS",
     "RANGES.BAS",
     "STRBOUND.BAS",
+    "STRHEAP.BAS",
     "STRINGS.BAS",
     "SUBFN.BAS",
   ];
