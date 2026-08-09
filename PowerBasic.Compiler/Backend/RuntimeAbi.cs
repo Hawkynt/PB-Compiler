@@ -358,6 +358,12 @@ internal static class RuntimeAbi {
     // deliberately NO rt_str_from_u16 entry: rt_str_i16 opens with a CWD, so routing an unsigned
     // WORD through it would render 65535 as -1
     ["rt_str_from_i32"] = new("rt_str_i32", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
+    // ...and for the same reason there is no rt_str_from_u32 through rt_str_i32: that entry renders
+    // DX:AX SIGNED, so 4294967295 would come out as -1. A DWORD goes through the 64-bit one with a
+    // zeroed high half, which is the trap ArgKind.ZeroExtendedQwordSt0 was introduced for on the
+    // print side and the same four MOVs and FILD the direct emitter writes here.
+    ["rt_str_from_u32"] = new("rt_str_i64",
+      [new(ArgKind.ZeroExtendedQwordSt0, default)], _callerSaved, Result: Reg.AX),
     ["rt_str_from_single"] = new("rt_str_f32", [new(ArgKind.St0, default)], _callerSaved, Result: Reg.AX),
     ["rt_str_from_double"] = new("rt_str_f64", [new(ArgKind.St0, default)], _callerSaved, Result: Reg.AX),
   };
