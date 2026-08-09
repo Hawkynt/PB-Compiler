@@ -1937,6 +1937,14 @@ public sealed class IrLowering {
     // the single-argument check, the same way LBOUND and MIN/MAX are above.
     if (name.ToUpperInvariant() is "ASC" or "ASCII")
       return this.LowerAsc(call);
+    // RND(a, z) is a LONG in [a, z], a different routine from the bare RND's fraction - answered
+    // here because it takes two arguments and the check below allows one.
+    if (name.Equals("RND", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 2)
+      return this.Coerce(
+        this._b.Call(IrType.I32, this.RuntimeFn("rt_rnd_range", IrType.I32, IrType.I32, IrType.I32),
+          this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), PbType.Long),
+          this.Coerce(this.LowerExpr(call.Arguments[1]), this._model.TypeOf(call.Arguments[1]), PbType.Long)),
+        PbType.Long, this._model.TypeOf(call));
     // the CV family takes an optional starting offset, so it is answered here for the same reason
     if (name.ToUpperInvariant() is "CVI" or "CVL" or "CVDWD" or "CVS" or "CVD" && call.Arguments.Count == 2)
       return name.ToUpperInvariant() switch {
@@ -1966,6 +1974,17 @@ public sealed class IrLowering {
       "CVS" => this.LowerCv(call, "rt_str_cvs", IrType.F32, 4),
       "CVD" => this.LowerCv(call, "rt_str_cvd", IrType.F64, 8),
       "POS" => this.LowerPos(call),
+      // RND and RND(n): the next value in [0, 1). A reseed argument is EVALUATED and then dropped,
+      // which is what the direct emitter does with it - the reseed semantics are not modelled on
+      // either path, and evaluating it keeps any side effect it carries.
+      "RND" => this.LowerRnd(call),
+      // SIZEOF is answered at COMPILE time from the argument's type - the operand is never
+      // evaluated, which is the whole point of asking. A dynamic string reports the 2 bytes of its
+      // handle rather than its contents, and a zero-size type still reports 1, both of which are the
+      // direct emitter's own answers.
+      "SIZEOF" => this.Coerce(
+        new IrConstantInt(IrType.I16, Math.Max(this._model.TypeOf(call.Arguments[0]).Size, 1)),
+        PbType.Integer, this._model.TypeOf(call)),
       "FREEFILE" => this._b.Call(IrType.I16, this.RuntimeFn("rt_freefile", IrType.I16)),
       // EOF(n): the file number in, PB's -1/0 truth out - the runtime answers in the same shape the
       // direct emitter's callers expect, so there is nothing to normalise here
@@ -1988,6 +2007,13 @@ public sealed class IrLowering {
   /// emitter reads it. The argument is lowered and discarded, because PowerBASIC ignores its value
   /// but a call inside it still has to happen.
   /// </summary>
+  private IrValue LowerRnd(CallOrIndexExpr call) {
+    foreach (var argument in call.Arguments)
+      this.LowerExpr(argument);                       // evaluated for its effects, then dropped
+    return this.Coerce(this._b.Call(IrType.F64, this.RuntimeFn("rt_rnd", IrType.F64)),
+      PbType.Double, this._model.TypeOf(call));
+  }
+
   private IrValue LowerPos(CallOrIndexExpr call) {
     if (this._module is null)
       throw new IrLoweringException("POS requires whole-module lowering");

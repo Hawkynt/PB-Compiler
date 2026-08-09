@@ -316,6 +316,14 @@ internal static class RuntimeAbi {
     ["rt_finput_line"] = new("rt_linput", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     ["rt_input_line"] = new("rt_linput", [], _callerSaved, Result: Reg.AX, Constants: [(Reg.AX, 0)]),
 
+    // "Rnd: -> ST0 = next SINGLE in [0,1)"
+    ["rt_rnd"] = new("rt_rnd", [], _callerSaved, Answer: ResultKind.St0),
+
+    // "RND(a, z): DX:AX=lower, CX:BX=upper -> DX:AX = lower + trunc(rnd * (upper-lower+1))"
+    ["rt_rnd_range"] = new("rt_rndrange",
+      [new(ArgKind.Pair, Reg.AX, Reg.DX), new(ArgKind.Pair, Reg.BX, Reg.CX)],
+      _callerSaved, Result: Reg.AX),
+
     // EOF(n): AX = the file number -> AX = PB's -1/0 truth
     ["rt_eof"] = new("rt_eof", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
 

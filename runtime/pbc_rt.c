@@ -187,6 +187,33 @@ void rt_str_free(void *s) {
     free(s);
 }
 
+/* RND, reproducing the DOS runtime's generator exactly rather than reaching for the C library's:
+   seed = seed * 1103515245 + 12345, answer = (high word & 0x7FFF) / 32768.
+
+   The +12345 lands on the LOW word only and its carry is NOT propagated - the DOS routine writes
+   ADD AX, 12345 with no ADC DX, 0 - so the sequence depends on that omission. Reproducing the
+   generator is what makes a program using RND comparable across the two back ends at all; "some
+   pseudo-random number" would not be. */
+static uint32_t rt_rndseed = 0x12345678u;
+
+static double rt_rnd_next(void) {
+  uint32_t product = rt_rndseed * 1103515245u;
+  uint16_t high = (uint16_t)(product >> 16);
+  uint16_t low = (uint16_t)((product & 0xFFFFu) + 12345u);   /* wraps; no carry into `high` */
+  rt_rndseed = ((uint32_t)high << 16) | low;
+  return (double)(high & 0x7FFF) / 32768.0;
+}
+
+double rt_rnd(void) { return rt_rnd_next(); }
+
+/* RND(a, z): a LONG in [a, z] inclusive - a different answer from the bare RND's fraction. */
+int32_t rt_rnd_range(int32_t lower, int32_t upper) {
+  double span = (double)upper - (double)lower + 1.0;
+  if (span <= 0.0)
+    return lower;
+  return lower + (int32_t)(rt_rnd_next() * span);
+}
+
 void *rt_str_chr(int32_t code) {
   char c = (char)(unsigned char)code;
   return rt_make(&c, 1);
