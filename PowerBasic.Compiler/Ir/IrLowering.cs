@@ -2574,9 +2574,31 @@ public sealed class IrLowering {
       var bytes = Math.Max(sa.IsFloat ? sa.ByteSize : 8, sb.IsFloat ? sb.ByteSize : 8);
       return (new ScalarType(ScalarKind.Double, bytes, true, true), true, true);
     }
+    // Integer comparison is NOT simply "signed if either side is". PB's rule turns on whether the
+    // unsigned operand has a signed type wide enough to hold it, and the direct emitter states it at
+    // CodeGenerator.Expressions' isComparison branch, which this mirrors:
+    //
+    //   * a DWORD has no signed 32-bit counterpart, so a comparison involving one runs UNSIGNED and
+    //     reads the signed side as unsigned - 4000000000 > 100 is TRUE and 4000000000 > -1 is FALSE.
+    //     A wider QUAD or float operand keeps the widened compare instead.
+    //   * two unsigned operands compare unsigned at the width that holds them.
+    //   * a WORD or BYTE against a signed type compares SIGNED, widened to the next signed size that
+    //     holds the unsigned one (WORD -> LONG, BYTE -> INTEGER), so its value stays positive:
+    //     50000 > -1 is TRUE and not a 16-bit -15536 > -1.
+    //
+    // Getting this wrong does not fail loudly - it silently answers the other way for exactly the
+    // values above the signed maximum, which is where DIFF61 lives.
     var width = Math.Max(sa.ByteSize, sb.ByteSize);
-    var signed = sa.Signed || sb.Signed;
-    return (new ScalarType(ScalarKind.Long, width, signed, false), false, signed);
+    var dwordOperand = (!sa.Signed && sa.ByteSize == 4) || (!sb.Signed && sb.ByteSize == 4);
+    if (dwordOperand && width <= 4)
+      return (new ScalarType(ScalarKind.Long, 4, false, false), false, false);
+    if (!sa.Signed && !sb.Signed)
+      return (new ScalarType(ScalarKind.Long, width > 2 ? 4 : 2, false, false), false, false);
+    if (sa.Signed != sb.Signed && width <= 4) {
+      var unsignedSide = sa.Signed ? sb : sa;
+      width = Math.Max(width, unsignedSide.ByteSize == 1 ? 2 : 4);
+    }
+    return (new ScalarType(ScalarKind.Long, width, true, false), false, true);
   }
 
   /// <summary>

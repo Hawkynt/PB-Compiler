@@ -992,16 +992,11 @@ public sealed class InstructionSelector {
         return this.SelectIntToFloat(cast);
       case IrCastOp.FPToSIRound when from.IsIeeeFloat && to.IsInteger && to.Bits is 16 or 32:
         return this.SelectFloatToInt(cast);
-      // FPToUI is IMPLEMENTED (SelectFloatToUnsigned) and deliberately not reached yet. Selecting it
-      // takes coverage from 215 to 217 functions and pulls DIFF05.BAS's main into the back end,
-      // where two faults that predate it become visible and cost the battery its 504 of 504:
-      //
-      //   * a BYTE prints as -56 for 200. The rt_print_u8 row passes the byte as a WORD in AX and
-      //     relies on the high half being clear, which it is not on this path.
-      //   * a DWORD prints 3000000000 where the direct emitter prints 300000000.
-      //
-      // Neither is caused by the conversion, and neither should be fixed by guessing from here.
-      // Turning this case on is the last step of that work, not the first.
+      // The x87 stores only SIGNED integers, so an unsigned target is staged one size larger than
+      // itself: a WORD's 65535 does not fit a signed word but fits a signed dword, and a DWORD's
+      // 4294967295 needs the qword store. The bits that come back are the value either way.
+      case IrCastOp.FPToUI when from.IsIeeeFloat && to.IsInteger && to.Bits is 8 or 16 or 32:
+        return this.SelectFloatToUnsigned(cast);
       case IrCastOp.FPExt or IrCastOp.FPTrunc when from.IsIeeeFloat && to.IsIeeeFloat:
         return this.SelectFloatResize(cast);
       default:
@@ -1472,8 +1467,16 @@ public sealed class InstructionSelector {
   /// </summary>
   private bool TryWordOperand(IrValue value, string what, out MOperand operand) {
     operand = null!;
-    if (!IsWide(value.Type) && value.Type.IsInteger && value.Type.Bits == 8
-        && value is not IrConstantInt) {
+    if (!IsWide(value.Type) && value.Type.IsInteger && value.Type.Bits == 8) {
+      // PB's BYTE is UNSIGNED and the IR types it i8, so 200 is carried as the bit pattern -56. A
+      // row that wants it in a WORD wants the VALUE, which is why the register path below clears the
+      // high half - and why a CONSTANT has to be zero-extended here rather than emitted as it
+      // stands. It used to skip this branch entirely and hand the immediate over sign-extended, so
+      // PRINT of a BYTE holding 200 rendered -56: the two halves of one rule disagreeing.
+      if (value is IrConstantInt literal) {
+        operand = new MOperand.Immediate(literal.Value & 0xFF);
+        return true;
+      }
       if (!this.TryOperand(value, out var narrow))
         return false;
       var id = this._nextVreg++;
