@@ -181,6 +181,38 @@ single back end cannot expose, because there was nothing to disagree with:
 The last two were miscompiles: correct-looking IR, wrong program. `tests/SHAREDG.BAS`
 now pins both, in the DOS battery and in `CBackendTests`.
 
+## The bar for retiring the direct emitter
+
+Worth stating plainly, because coverage numbers make the distance look shorter than it is. Dropping
+`CodeGen/` needs THREE things, and only the first is being measured today.
+
+**1. Coverage - every program on the IR path.** `BackendCoverageTests` ranks this over the whole
+corpus. As of this writing: **138 of 164 programs lower**, **215 of 236 functions select and
+allocate**, **122 of 138 module bodies** can be owned outright. The remaining lowering blockers are
+`ARRAY SORT`, `PUT$`, `FIELD`, `CHAIN`, `DEF SEG`, `DIM AT`, `LPRINT`/`PRINT USING`, `CODEPTR32`,
+`SIZEOF`, `CSRLIN` and `$ERROR STACK ON`; the remaining selection blockers are the unsigned
+float-to-integer casts, 64-bit truncation and widening, module globals needing the data-layout
+bridge, `IrSwitch`, a null pointer with no register, and a compare whose left operand is an
+immediate.
+
+**2. Fidelity - the routed path agreeing with the direct one everywhere.** Today the x86-16 back end
+is checked by targeted differential fixtures (routed vs direct, one construct at a time) and by
+`BackendCorpusDifferentialTests`. The differential BATTERY - the 504 programs compiled by both us
+and the genuine vintage compilers - runs only the direct path. Until it runs green with
+`--x-backend` on, "the IR path compiles it" is not the same claim as "the IR path compiles it
+correctly".
+
+**3. The golden gate - byte-identical output with the optimizer off.** This is the hard one, and it
+is the direct emitter's whole reason for existing: its optimizations are interleaved with emission
+*on purpose*, because that is what makes byte-identity with genuine PBC achievable. An SSA
+middle-end that schedules and allocates registers does not naturally emit the same bytes as an
+AX-serial emitter, and nothing about widening coverage moves this. Retiring `CodeGen/` therefore
+means either reproducing that byte-for-byte through the IR path, or deciding the gate becomes
+behavioural rather than byte-exact - a decision about what the project promises, not a task.
+
+The honest summary: (1) is a grind that the census orders for you, (2) is a switch to flip and a
+battery to run once (1) is far enough along, and (3) is a design decision that has not been made.
+
 ## Coverage and what is next
 
 The lowering's supported subset is listed in [IR.md](IR.md); everything outside it
