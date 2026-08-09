@@ -170,6 +170,15 @@ void *rt_str_repeat(int32_t n, void *src) {
   return s;
 }
 
+/* ASC(s$, n) = code. Out-of-range positions are IGNORED, matching the DOS rt_ascset, which returns
+   early for a zero handle, a zero position or one past the end. */
+void *rt_str_asc_set(void *s, int16_t pos, int16_t code) {
+  pb_str *x = rt_of(s);
+  if (pos >= 1 && pos <= x->len)
+    x->data[pos - 1] = (char)(unsigned char)code;
+  return s;
+}
+
 void *rt_str_chr(int32_t code) {
   char c = (char)(unsigned char)code;
   return rt_make(&c, 1);

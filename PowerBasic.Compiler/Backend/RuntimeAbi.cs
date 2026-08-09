@@ -301,6 +301,13 @@ internal static class RuntimeAbi {
     // STR$ of a number. "StrI16: AX=value (clobbers DX); StrI32: DX:AX=value; StrF64: ST0 (popped)"
     // - and rt_str_f32 is the SINGLE entry beside it, differing only in the digit count it sets,
     // which is the rendering the fidelity tests compare
+    // "ASC(s$, n) = code - pokes one byte of a dynamic string in place": AX = handle, CX = position,
+    // the code in DL. It returns nothing and preserves AX, so the handle it was given is still there
+    // - which is the pointer the IR declares it answers with, the same arrangement as rt_midset.
+    ["rt_str_asc_set"] = new("rt_ascset",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.DX)],
+      _callerSaved, Result: Reg.AX),
+
     // EOF(n): AX = the file number -> AX = PB's -1/0 truth
     ["rt_eof"] = new("rt_eof", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
 

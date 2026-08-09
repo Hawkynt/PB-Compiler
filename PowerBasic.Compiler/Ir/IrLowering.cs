@@ -634,6 +634,7 @@ public sealed class IrLowering {
       case EraseStmt er: this.LowerErase(er); break;
       case SwapStmt sw: this.LowerSwap(sw); break;
       case MidAssignStmt mid: this.LowerMidAssign(mid); break;
+      case AscAssignStmt asc: this.LowerAscAssign(asc); break;
       case LabelStmt l: this.LowerLabel(l); break;
       case GotoStmt g: this.LowerGoto(g); break;
       case GosubStmt gs: this.LowerGosub(gs); break;
@@ -731,6 +732,31 @@ public sealed class IrLowering {
     var result = this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid_assign", IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I32, IrType.Ptr),
       current, start, length, this.LowerStringExpr(m.Value));
     this._b.Store(result, this.StringTargetAddress(m.Target));
+  }
+
+  /// <summary>
+  /// <c>ASC(target$[, n]) = code</c> - one byte poked in place. Modelled the way MID$ assignment is,
+  /// and for the same reason: a read of a string variable hands out an owned COPY, so poking what
+  /// LowerStringExpr returned would change a temporary and leave the variable alone. The routine
+  /// answers with the handle it was given, so storing that back is what makes the edit visible -
+  /// and the copy the borrow made is the thing that ends up in the variable.
+  ///
+  /// Only the dynamic-string target is lowered. FIXED and ASCIIZ ones are a different sequence in
+  /// the direct emitter (an address, not a handle) and decline here rather than being approximated.
+  /// </summary>
+  private void LowerAscAssign(AscAssignStmt asc) {
+    if (this._module is null)
+      throw new IrLoweringException("ASC assignment requires whole-module lowering");
+    if (this._model.TypeOf(asc.Target) is not (StringType or FlexType))
+      throw new IrLoweringException("ASC assignment to a fixed-length or ASCIIZ target");
+    var index = asc.Index is { } ix
+      ? this.Coerce(this.LowerExpr(ix), this._model.TypeOf(ix), PbType.Integer)
+      : new IrConstantInt(IrType.I16, 1);
+    var code = this.Coerce(this.LowerExpr(asc.Value), this._model.TypeOf(asc.Value), PbType.Integer);
+    var poked = this._b.Call(IrType.Ptr,
+      this.RuntimeFn("rt_str_asc_set", IrType.Ptr, IrType.Ptr, IrType.I16, IrType.I16),
+      this.LowerStringExpr(asc.Target), index, code);
+    this._b.Store(poked, this.StringTargetAddress(asc.Target));
   }
 
   /// <summary>The storage slot of a string lvalue (a string variable or a string-array element).</summary>
@@ -1863,6 +1889,19 @@ public sealed class IrLowering {
     // below. The string spellings MIN$/MAX$ are not these - they go through the string path.
     if (name.TrimEnd('%', '&', '!', '#', '?').ToUpperInvariant() is "MIN" or "MAX")
       return this.LowerMinMax(call, name.StartsWith("MAX", StringComparison.OrdinalIgnoreCase));
+    // ASC takes one argument or two - ASC(s$, i) is the i-th character - so it is answered before
+    // the single-argument check, the same way LBOUND and MIN/MAX are above.
+    if (name.ToUpperInvariant() is "ASC" or "ASCII")
+      return this.LowerAsc(call);
+    // the CV family takes an optional starting offset, so it is answered here for the same reason
+    if (name.ToUpperInvariant() is "CVI" or "CVL" or "CVDWD" or "CVS" or "CVD" && call.Arguments.Count == 2)
+      return name.ToUpperInvariant() switch {
+        "CVI" => this.LowerCv(call, "rt_str_cvi", IrType.I16, 2),
+        "CVL" => this.LowerCv(call, "rt_str_cvl", IrType.I32, 4),
+        "CVDWD" => this.LowerCv(call, "rt_str_cvdwd", IrType.I32, 4),
+        "CVS" => this.LowerCv(call, "rt_str_cvs", IrType.F32, 4),
+        _ => this.LowerCv(call, "rt_str_cvd", IrType.F64, 8),
+      };
     if (call.Arguments.Count != 1)
       throw new IrLoweringException($"intrinsic {name} with {call.Arguments.Count} arguments");
     return name.ToUpperInvariant() switch {
@@ -1877,11 +1916,11 @@ public sealed class IrLowering {
       "LEN" => this.LowerLen(call),
       "ASC" => this.LowerAsc(call),
       "VAL" => this.LowerVal(call),
-      "CVI" => this.LowerCv(call, "rt_str_cvi", IrType.I16),
-      "CVL" => this.LowerCv(call, "rt_str_cvl", IrType.I32),
-      "CVDWD" => this.LowerCv(call, "rt_str_cvdwd", IrType.I32),
-      "CVS" => this.LowerCv(call, "rt_str_cvs", IrType.F32),
-      "CVD" => this.LowerCv(call, "rt_str_cvd", IrType.F64),
+      "CVI" => this.LowerCv(call, "rt_str_cvi", IrType.I16, 2),
+      "CVL" => this.LowerCv(call, "rt_str_cvl", IrType.I32, 4),
+      "CVDWD" => this.LowerCv(call, "rt_str_cvdwd", IrType.I32, 4),
+      "CVS" => this.LowerCv(call, "rt_str_cvs", IrType.F32, 4),
+      "CVD" => this.LowerCv(call, "rt_str_cvd", IrType.F64, 8),
       "POS" => this.LowerPos(call),
       "FREEFILE" => this._b.Call(IrType.I16, this.RuntimeFn("rt_freefile", IrType.I16)),
       // EOF(n): the file number in, PB's -1/0 truth out - the runtime answers in the same shape the
@@ -1941,8 +1980,22 @@ public sealed class IrLowering {
   }
 
   /// <summary>CVI/CVL/CVS/CVD: decode a number from a binary-record string's raw bytes.</summary>
-  private IrValue LowerCv(CallOrIndexExpr call, string fn, IrType resultType) =>
-    this._b.Call(resultType, this.RuntimeFn(fn, resultType, IrType.Ptr), this.LowerStringExpr(call.Arguments[0]));
+  /// <summary>
+  /// <c>CVI</c>/<c>CVL</c>/<c>CVS</c>/<c>CVD</c>/<c>CVDWD</c> - the bytes of a string read back as a
+  /// number. The two-argument form starts at an offset, which the direct emitter spells as
+  /// <c>MID$(s$, offset, size)</c> before the conversion, so that is what is written here: the size
+  /// is the width the conversion reads, and the composition reuses an entry already mapped.
+  /// </summary>
+  private IrValue LowerCv(CallOrIndexExpr call, string fn, IrType resultType, int size) {
+    var source = this.LowerStringExpr(call.Arguments[0]);
+    if (call.Arguments.Count > 1)
+      source = this._b.Call(IrType.Ptr,
+        this.RuntimeFn("rt_str_mid", IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I32),
+        source,
+        this.Coerce(this.LowerExpr(call.Arguments[1]), this._model.TypeOf(call.Arguments[1]), PbType.Long),
+        new IrConstantInt(IrType.I32, size));
+    return this._b.Call(resultType, this.RuntimeFn(fn, resultType, IrType.Ptr), source);
+  }
 
   /// <summary>INSTR(haystack$, needle$) or INSTR(start%, haystack$, needle$) -> 1-based position (0 = not found).</summary>
   private IrValue LowerInstr(CallOrIndexExpr call) {
@@ -2039,8 +2092,24 @@ public sealed class IrLowering {
     return this._b.Call(ty, this.RuntimeFn($"llvm.{fn}.f{ty.Bits}", ty, ty), arg);
   }
 
+  /// <summary>
+  /// <c>ASC(s$)</c>, and <c>ASC(s$, i)</c> as the one-character substring it is defined to be.
+  ///
+  /// The direct emitter has two spellings of the two-argument form: a direct byte read (rt_charat)
+  /// under --optimize, and MID$(s$, i, 1) fed to ASC without it. The composition is the one written
+  /// here - it is the unoptimized reference, it reuses entries that are already mapped, and leaving
+  /// the pair adjacent is what lets the IR's own optimizer collapse it later. Both clamp a start
+  /// below 1 to the first character and answer for a position past the end the same way.
+  /// </summary>
   private IrValue LowerAsc(CallOrIndexExpr call) {
-    var code = this._b.Call(IrType.I32, this.RuntimeFn("rt_str_asc", IrType.I32, IrType.Ptr), this.LowerStringExpr(call.Arguments[0]));
+    var source = this.LowerStringExpr(call.Arguments[0]);
+    if (call.Arguments.Count > 1)
+      source = this._b.Call(IrType.Ptr,
+        this.RuntimeFn("rt_str_mid", IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I32),
+        source,
+        this.Coerce(this.LowerExpr(call.Arguments[1]), this._model.TypeOf(call.Arguments[1]), PbType.Long),
+        new IrConstantInt(IrType.I32, 1));
+    var code = this._b.Call(IrType.I32, this.RuntimeFn("rt_str_asc", IrType.I32, IrType.Ptr), source);
     return this.Coerce(code, PbType.Long, this._model.TypeOf(call));
   }
 
