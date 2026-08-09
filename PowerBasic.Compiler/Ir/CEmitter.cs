@@ -94,14 +94,16 @@ public sealed class CEmitter {
   /// The C standard-library spelling of an LLVM intrinsic, or null when it is not one. The IR
   /// lowers PB's math to <c>llvm.sqrt.f64</c> and friends because that is what an LLVM back end
   /// optimizes natively; C has the same functions under their &lt;math.h&gt; names, with the
-  /// <c>f</c>/<c>l</c> suffix carrying the width. <c>llvm.memcpy</c> maps to <c>memcpy</c>, whose
-  /// trailing is-volatile argument the call site drops.
+  /// <c>f</c>/<c>l</c> suffix carrying the width. <c>llvm.memcpy</c> and <c>llvm.memset</c> map to
+  /// <c>memcpy</c> and <c>memset</c>, whose trailing is-volatile argument the call site drops.
   /// </summary>
   private static string? CLibraryName(string name) {
     if (!name.StartsWith("llvm.", StringComparison.Ordinal))
       return null;
     if (name.StartsWith("llvm.memcpy", StringComparison.Ordinal))
       return "memcpy";
+    if (name.StartsWith("llvm.memset", StringComparison.Ordinal))
+      return "memset";
     var parts = name.Split('.');
     if (parts.Length < 3)
       return null;
@@ -254,7 +256,7 @@ public sealed class CEmitter {
       case IrCall c: {
         var callee = c.Callee is IrFunction target ? FuncName(target) : "(*(void (*)())" + this.Ref(c.Callee) + ")";
         var args = c.Args.Select(this.Ref).ToList();
-        if (callee == "memcpy" && args.Count == 4)
+        if (callee is "memcpy" or "memset" && args.Count == 4)
           args.RemoveAt(3);                          // LLVM's trailing is-volatile flag
         sb.Append("  ").Append(lhs).Append(callee).Append('(').Append(string.Join(", ", args)).Append(");\n");
         break;

@@ -1300,8 +1300,16 @@ public sealed class IrLowering {
     foreach (var name in e.Arrays) {
       if (!this._model.VariableBindings.TryGetValue(name, out var symbol) || symbol.Type is not ArrayType arr)
         throw new IrLoweringException("ERASE of a non-array");
-      if (!arr.IsDynamic)
-        throw new IrLoweringException("ERASE of a static array");   // PB zeroes it in place; not modeled here
+      if (!arr.IsDynamic) {
+        // A static array is not freed - PB zeroes it where it stands, and the storage stays. The
+        // direct emitter writes a REP STOSW over the word-rounded size; the portable spelling of
+        // that is a memset, which the C back end renders as one and an LLVM target lowers itself.
+        this._b.Call(IrType.Void,
+          this.RuntimeFn("llvm.memset.p0.i32", IrType.Void, IrType.Ptr, IrType.I8, IrType.I32, IrType.I1),
+          this.SlotFor(symbol), new IrConstantInt(IrType.I8, 0),
+          new IrConstantInt(IrType.I32, arr.Size), new IrConstantInt(IrType.I1, 0));
+        continue;
+      }
       var descriptor = this.DynDescriptor(symbol, arr.Rank);
       this._b.Call(IrType.Void, this.RuntimeFn("rt_arr_free", IrType.Void, IrType.Ptr), this._b.Load(IrType.Ptr, descriptor.Data));
       this._b.Store(new IrNullPtr(), descriptor.Data);
