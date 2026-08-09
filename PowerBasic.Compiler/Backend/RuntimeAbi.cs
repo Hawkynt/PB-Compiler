@@ -209,6 +209,33 @@ internal static class RuntimeAbi {
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.DX)],
       _callerSaved, Result: Reg.AX),
 
+    // "StrMid: AX=handle, CX=start(1-based), DX=length -> AX (consumes; clamps)" - the two-argument
+    // MID$(s$, i) is the same routine asked for everything from the start on. The runtime CLAMPS the
+    // length, so the largest positive word says "to the end" without the caller computing a length
+    // it would only have to be right about twice.
+    ["rt_str_mid2"] = new("rt_strmid",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)],
+      _callerSaved, Result: Reg.AX, Constants: [(Reg.DX, 0x7FFF)]),
+
+    // "StrCmp: AX=left, DX=right -> AX=-1/0/1 bytewise (consumes both)". The IR declares the result
+    // i32, so the word answer is sign-extended - the same reason rt_str_len carries WidenedWord.
+    ["rt_str_compare"] = new("rt_strcmp",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.WidenedWord),
+
+    // "MidSet: AX=target handle, CX=start, BX=length limit, DX=value handle (in-place replace;
+    // consumes the value handle only)". The IR declares a pointer result and the routine returns
+    // none - but it replaces IN PLACE and preserves AX, so the target handle it was given is still
+    // there, which is exactly the value the IR wants back.
+    ["rt_str_mid_assign"] = new("rt_midset",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX),
+       new(ArgKind.Word, Reg.BX), new(ArgKind.Word, Reg.DX)],
+      _callerSaved, Result: Reg.AX),
+
+    // STR$ of a QUAD: a capture-mode wrapper around rt_print_i64, which takes ST0 integral and pops.
+    ["rt_str_from_i64"] = new("rt_str_i64",
+      [new(ArgKind.SignedQwordSt0, default)], _callerSaved, Result: Reg.AX),
+
     // "StrUpr/StrLwr: AX=handle -> AX (transforms in place)"
     ["rt_str_ucase"] = new("rt_strupr", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     ["rt_str_lcase"] = new("rt_strlwr", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
