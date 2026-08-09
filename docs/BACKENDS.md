@@ -195,28 +195,29 @@ float-to-integer casts, 64-bit truncation and widening, module globals needing t
 bridge, `IrSwitch`, a null pointer with no register, and a compare whose left operand is an
 immediate.
 
-**2. Fidelity - the routed path agreeing with the direct one everywhere.** This has now been
-measured: the differential battery run with `PBC_X_BACKEND=1` scores **498 of 504** where the direct
-path scores 504. All six failures are one float printed differently, and they share a single cause.
+**2. Fidelity - the routed path agreeing with the direct one everywhere. DONE.** The differential
+battery run with `PBC_X_BACKEND=1` scores **504 of 504** against the genuine vintage compilers -
+the same score the direct path gets. Every program the back end owns produces output the oracle
+agrees with.
 
-PB computes a SINGLE-typed expression on the x87 at EIGHTY bits and rounds only when it is stored -
-the declared type picks the formatter's digit count, not the width of the arithmetic. The IR types
-such an expression `f32` and folds it there, so the value is rounded to 32 bits before anything reads
-it. Under an ordinary pb35 program this is invisible, because a SINGLE prints 7 digits either way.
-Under `$COMPAT tb10` the runtime's formatter prints seventeen, and the difference surfaces:
+Getting there took three fixes, and all three were the same mistake in different clothes: guessing
+where PB rounds instead of checking.
 
-```basic
-$COMPAT tb10
-PRINT STR$(2 / 3)         ' direct: .6666666666666667   routed: .6666666865348816
-```
+* `STR$` coerced its argument to the declared type before handing it over. A float reaches the
+  formatter at the x87's own width and the NAME picks the digit count - `rt_str_f32` and
+  `rt_str_f64` share a body. Rounding first cost eight digits under `$COMPAT tb10`, whose formatter
+  prints seventeen.
+* Constant float arithmetic folded at 64 bits while the target computes at 80, so every INEXACT
+  result differed in the last bit. It now folds only when the result is exact, which is TESTED with
+  a fused multiply-add rather than assumed.
+* A transcendental's result was kept at 80 bits, where the direct emitter writes `FSTP m64; FLD m64`
+  right after the `FYL2X`. This one is the opposite of the first two - here PB *does* round - and
+  keeping the extra bits looked more accurate while being less faithful:
+  `LOG(2.718281828459045#)` is 1 rounded to a double and .9999999999999999 with all eighty, and the
+  oracle says 1.
 
-`.6666666865348816` is the float 2/3 widened back up - not a rounding disagreement but lost
-precision, printing plausibly enough to read as one. The same cause gives `C% / D%` one ulp out.
-
-This is the LONG-overflow lesson in floating point (see the wide-compute / wrapping-store note in
-`Binder.ArithmeticResultType`): the IR needs to carry PB's "compute wide, round at the store" rule
-for floats as it already does for integers, rather than treating the declared type as the width of
-the arithmetic.
+The lesson worth carrying: none of these was found by reading the IR. The last one was found by
+disassembling both images and noticing `DD 1E` where the other wrote `DB 7E`.
 
 **3. The golden gate - byte-identical output with the optimizer off.** This is the hard one, and it
 is the direct emitter's whole reason for existing: its optimizations are interleaved with emission
