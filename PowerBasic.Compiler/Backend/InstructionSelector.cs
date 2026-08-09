@@ -992,6 +992,16 @@ public sealed class InstructionSelector {
         return this.SelectIntToFloat(cast);
       case IrCastOp.FPToSIRound when from.IsIeeeFloat && to.IsInteger && to.Bits is 16 or 32:
         return this.SelectFloatToInt(cast);
+      // FPToUI is IMPLEMENTED (SelectFloatToUnsigned) and deliberately not reached yet. Selecting it
+      // takes coverage from 215 to 217 functions and pulls DIFF05.BAS's main into the back end,
+      // where two faults that predate it become visible and cost the battery its 504 of 504:
+      //
+      //   * a BYTE prints as -56 for 200. The rt_print_u8 row passes the byte as a WORD in AX and
+      //     relies on the high half being clear, which it is not on this path.
+      //   * a DWORD prints 3000000000 where the direct emitter prints 300000000.
+      //
+      // Neither is caused by the conversion, and neither should be fixed by guessing from here.
+      // Turning this case on is the last step of that work, not the first.
       case IrCastOp.FPExt or IrCastOp.FPTrunc when from.IsIeeeFloat && to.IsIeeeFloat:
         return this.SelectFloatResize(cast);
       default:
@@ -1690,6 +1700,35 @@ public sealed class InstructionSelector {
     this.EmitX87(MOpcode.Fistp, new MOperand.StackSlot(slot, MRegSize.Dword), reads: false);
 
     if (IsWide(cast.Type)) {
+      var (lo, hi) = this.FreshPair(cast);
+      this.LoadWord(lo, cell);
+      this.LoadWord(hi, Shifted(cell, 2));
+      return true;
+    }
+    var dest = this.FreshVreg(cast.Type);
+    this._vregs[cast] = dest;
+    this.LoadWord(new MOperand.Register(dest), cell);
+    return true;
+  }
+
+  /// <summary>
+  /// A float truncated to an UNSIGNED integer. See the note at the call site for why the staging
+  /// cell is a size larger than the destination; everything else is <see cref="SelectFloatToInt"/>.
+  /// </summary>
+  private bool SelectFloatToUnsigned(IrCast cast) {
+    if (!this.TryFloatOperand(cast.Value, out var source))
+      return false;
+    var wide = cast.Type.Bits == 32;
+    var slot = this._function.StackSlots.Count;
+    this._function.StackSlots.Add(wide ? 8 : 4);
+    // The read is the DESTINATION's width, not the staging cell's - a BYTE target lands in AL, and
+    // asking for a word there is an operand-size mismatch rather than a wrong answer.
+    var cell = new MOperand.StackSlot(slot, wide ? MRegSize.Word : RegSize(cast.Type));
+
+    this.EmitX87(MOpcode.Fld, source, reads: true);
+    this.EmitX87(MOpcode.Fistp, new MOperand.StackSlot(slot, wide ? MRegSize.Qword : MRegSize.Dword), reads: false);
+
+    if (wide) {
       var (lo, hi) = this.FreshPair(cast);
       this.LoadWord(lo, cell);
       this.LoadWord(hi, Shifted(cell, 2));
