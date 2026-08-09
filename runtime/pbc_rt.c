@@ -294,8 +294,10 @@ void *rt_str_from_i32(int32_t v) { return rt_str_int(v); }
 void *rt_str_from_u32(uint32_t v) { return rt_str_int((long long)v); }
 void *rt_str_from_i64(int64_t v) { return rt_str_int((long long)v); }
 
-void *rt_str_from_single(float v) { char b[64]; rt_fmt_float(b, sizeof b, v, 7); return rt_str_num(b); }
-void *rt_str_from_double(double v) { char b[64]; rt_fmt_float(b, sizeof b, v, 15); return rt_str_num(b); }
+/* Both take a long double, for the reason rt_print_single does: the value arrives at the x87's own
+   width whatever its declared type, and the NAME picks the significant-digit count. */
+void *rt_str_from_single(long double v) { char b[64]; rt_fmt_float(b, sizeof b, v, 7); return rt_str_num(b); }
+void *rt_str_from_double(long double v) { char b[64]; rt_fmt_float(b, sizeof b, v, 15); return rt_str_num(b); }
 void *rt_str_from_ext(long double v) { char b[64]; rt_fmt_float(b, sizeof b, v, 18); return rt_str_num(b); }
 
 /* --- MKx$ / CVx --------------------------------------------------------- */

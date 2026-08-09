@@ -2076,13 +2076,28 @@ public sealed class IrLowering {
     };
   }
 
+  /// <summary>
+  /// <c>STR$</c> of a number. A float is handed over at the x87's OWN width and the NAME picks the
+  /// significant-digit count, exactly as the PRINT path does - rt_str_f32 and rt_str_f64 share a
+  /// body and differ only in the digits they set.
+  ///
+  /// Coercing the argument to its declared width instead was a real loss, not a formality. PB
+  /// evaluates a SINGLE-typed expression on the x87 at eighty bits and rounds when it is STORED;
+  /// rounding it here threw those bits away before the formatter saw them. Under plain pb35 that is
+  /// invisible, because a SINGLE prints 7 digits either way - but $COMPAT tb10 prints seventeen, and
+  /// STR$(2 / 3) came back as .6666666865348816, the float 2/3 widened, against the direct emitter's
+  /// .6666666666666667. Six of the differential battery's programs turned on this one line.
+  /// </summary>
   private IrValue LowerStrOf(Expression arg) {
     if (this._model.TypeOf(arg) is not ScalarType s)
       throw new IrLoweringException("STR$ of a non-numeric value");
     var (name, ty) = s.IsFloat
-      ? (s.ByteSize == 8 ? ("rt_str_from_double", IrType.F64) : ("rt_str_from_single", IrType.F32))
+      ? (s.ByteSize == 8 ? ("rt_str_from_double", IrType.F80) : ("rt_str_from_single", IrType.F80))
       : ($"rt_str_from_{(s.Signed ? "i" : "u")}{s.ByteSize * 8}", IrType.Integer(s.ByteSize * 8));
-    return this._b.Call(IrType.Ptr, this.RuntimeFn(name, IrType.Ptr, ty), this.Coerce(this.LowerExpr(arg), s, s));
+    var value = s.IsFloat
+      ? this.Coerce(this.LowerExpr(arg), s, PbType.Ext)
+      : this.Coerce(this.LowerExpr(arg), s, s);
+    return this._b.Call(IrType.Ptr, this.RuntimeFn(name, IrType.Ptr, ty), value);
   }
 
   private IrValue LowerVal(CallOrIndexExpr call) {

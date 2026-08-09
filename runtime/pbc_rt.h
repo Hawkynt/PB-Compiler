@@ -68,8 +68,8 @@ void *rt_str_from_u16(uint16_t v);
 void *rt_str_from_i32(int32_t v);
 void *rt_str_from_u32(uint32_t v);
 void *rt_str_from_i64(int64_t v);
-void *rt_str_from_single(float v);
-void *rt_str_from_double(double v);
+void *rt_str_from_single(long double v);
+void *rt_str_from_double(long double v);
 void *rt_str_from_ext(long double v);
 
 /* MKx$ / CVx binary record encoders */
