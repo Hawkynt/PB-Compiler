@@ -217,7 +217,7 @@ public sealed class BackendCoverageTests {
     // helpers. Six decline entries disappear, but DIFF32 exposes its next blocker (i64 truncation)
     // then 205 -> 209 when SINGLE/DOUBLE BYVAL parameters and ST(0) results gained their declared-width
     // stack ABI. Four honest float-procedure declines disappear and three more module bodies route
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(215),
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(216),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
 
     // How many programs reach the IR at all - the figure the runtime-trap and error-handling work
@@ -236,7 +236,7 @@ public sealed class BackendCoverageTests {
 
     // selection is not routing: the whole-program codegen also schedules and allocates, and a value
     // live across a CALL has no register unless the spiller can move it to the frame
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(215),
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(216),
       "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // The figure that matters for whole-program ownership: module bodies the back end compiles end
@@ -521,6 +521,7 @@ public sealed class BackendCoverageTests {
     "DIFF01.BAS",
     "DIFF02.BAS",
     "DIFF03.BAS",
+    "FILEIO1.BAS",
     "HELLO.BAS",
     "MATHUNIT.BAS",
     "ONERR.BAS",

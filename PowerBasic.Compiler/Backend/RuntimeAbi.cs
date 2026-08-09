@@ -308,6 +308,12 @@ internal static class RuntimeAbi {
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.DX)],
       _callerSaved, Result: Reg.AX),
 
+    // "rt_linput: AX = the file number (0 = console) -> AX = the line as a handle". One routine
+    // serves LINE INPUT and LINE INPUT #n, which is why the console form is the same entry with a
+    // zero pinned into AX rather than a second row that could drift from this one.
+    ["rt_finput_line"] = new("rt_linput", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    ["rt_input_line"] = new("rt_linput", [], _callerSaved, Result: Reg.AX, Constants: [(Reg.AX, 0)]),
+
     // EOF(n): AX = the file number -> AX = PB's -1/0 truth
     ["rt_eof"] = new("rt_eof", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
 
