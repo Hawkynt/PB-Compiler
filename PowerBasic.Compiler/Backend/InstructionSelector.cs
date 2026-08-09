@@ -1864,6 +1864,16 @@ public sealed class InstructionSelector {
       case IrConstantInt c:
         operand = new MOperand.Immediate(c.Value);
         return true;
+      // A null pointer IS zero on this target - a string handle of 0 is the empty string - and
+      // selecting it as the immediate works: it takes coverage from 217 to 219 functions and 124 to
+      // 125 module bodies, and the phi edge copy becomes MOV reg, 0.
+      //
+      // It stays OUT because of what it then lets through, not because of itself. STRHEAP.BAS's main
+      // routes once null selects, and dies with OUT OF STRING SPACE: something in that function's
+      // string LIFETIME - the rt_str_dup on a read, the free of the handle it replaces - is not
+      // reproduced by the back end, and the heap fills. That is a separate fault this makes
+      // reachable, exactly as FPToUI made two others reachable, and it wants finding rather than
+      // guessing at.
       case IrGlobalVariable g:
         operand = null!;
         return this.Decline($"operand: global '{g.Name}' (needs the data-layout bridge)");
