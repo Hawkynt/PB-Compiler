@@ -1412,6 +1412,17 @@ public sealed class InstructionSelector {
         new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
           ReadsMemory: true, WritesMemory: true),
         condition: null, clobbers: _callClobbers));
+    // Rounded to the DECLARED width on the way out, then brought back up - the FSTP m64 / FLD m64
+    // the direct emitter writes right after the FYL2X. Keeping all eighty bits looks more accurate
+    // and is less faithful: LOG(2.718281828459045#) is .9999999999999999 at eighty bits and 1 once
+    // rounded to a double, and genuine QuickBASIC prints 1. Four battery programs turned on it.
+    if (call.Type.Bits < 80) {
+      var narrow = this._function.StackSlots.Count;
+      this._function.StackSlots.Add(call.Type.Bits / 8);
+      var rounded = new MOperand.StackSlot(narrow, RegSize(call.Type));
+      this.EmitX87(MOpcode.Fstp, rounded, reads: false);
+      this.EmitX87(MOpcode.Fld, rounded, reads: true);
+    }
     this.EmitX87(MOpcode.Fstp, this.FloatCell(call), reads: false);
     return true;
   }

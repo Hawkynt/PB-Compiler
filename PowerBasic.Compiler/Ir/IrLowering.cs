@@ -2106,6 +2106,14 @@ public sealed class IrLowering {
   }
 
   /// <summary>Lowers a floating-point math intrinsic to the matching LLVM intrinsic (llvm.sqrt.fN, etc.).</summary>
+  /// <summary>
+  /// SQR, SIN, COS, TAN, ATN, LOG, EXP. The result is typed at the DECLARED width, and that is not
+  /// an oversight: unlike ordinary arithmetic, which PB keeps on the x87 at eighty bits until it is
+  /// stored, the direct emitter rounds a transcendental's answer to its declared type on the way out
+  /// - <c>FSTP m64; FLD m64</c> right after the FYL2X - and genuine QuickBASIC agrees with it.
+  /// LOG(2.718281828459045#) is 1 that way and .9999999999999999 with all eighty bits kept, and the
+  /// oracle says 1. The back end has to make the same round trip; see SelectMathIntrinsic.
+  /// </summary>
   private IrValue LowerMath(CallOrIndexExpr call, string fn) {
     var resultPb = this._model.TypeOf(call);
     var ty = MapType(resultPb);
