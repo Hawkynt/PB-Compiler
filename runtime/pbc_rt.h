@@ -49,6 +49,10 @@ void *rt_str_chr(int32_t code);
 int32_t rt_str_asc(void *s);
 void *rt_str_hex(int32_t v);
 void *rt_str_oct(int32_t v);
+void *rt_str_bin(int32_t v);
+void *rt_str_repeat(int32_t n, void *src);
+/* (minimum digits << 8) | bits-per-digit - the one word the DOS rt_radix reads */
+void *rt_str_radix(int32_t v, int32_t packed);
 int32_t rt_str_instr(void *hay, void *needle);
 int32_t rt_str_instr_start(int32_t start, void *hay, void *needle);
 double rt_str_val(void *s);
@@ -98,6 +102,7 @@ void rt_print_i64(int64_t v);
 void rt_print_single(long double v);
 void rt_print_double(long double v);
 void rt_print_ext(long double v);
+void rt_print_comma(void);
 void rt_print_tab(int32_t column);
 void rt_print_spc(int32_t count);
 void rt_print_zone(void);

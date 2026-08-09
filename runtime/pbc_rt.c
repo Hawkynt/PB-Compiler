@@ -159,6 +159,17 @@ void *rt_str_string_s(int32_t n, void *src) {
   return rt_str_string(n, x->len ? (unsigned char)x->data[0] : 0);
 }
 
+/* REPEAT$(n, s$) - the WHOLE string n times. Not rt_str_string_s, which is STRING$ and repeats only
+   the first character; the two differ for every source longer than one byte. */
+void *rt_str_repeat(int32_t n, void *src) {
+  pb_str *x = rt_of(src);
+  int32_t count = n < 0 ? 0 : n, i;
+  pb_str *s = rt_new(count * x->len);
+  for (i = 0; i < count; ++i)
+    memcpy(s->data + (size_t)i * (size_t)x->len, x->data, (size_t)x->len);
+  return s;
+}
+
 void *rt_str_chr(int32_t code) {
   char c = (char)(unsigned char)code;
   return rt_make(&c, 1);
@@ -169,19 +180,36 @@ int32_t rt_str_asc(void *s) {
   return x->len ? (unsigned char)x->data[0] : -1;   /* PB: ASC("") is -1 */
 }
 
-static void *rt_radix(int32_t v, int base) {
-  char buf[40];
+/* HEX$/OCT$/BIN$, all one routine, matching the DOS rt_radix exactly.
+   `packed` is (minimum digits << 8) | bits-per-digit, the single word that routine reads.
+
+   Two things this has to reproduce and the previous version did not. The digit count is a MINIMUM
+   that zero-pads, never a width that truncates - a value needing more digits still prints them all.
+   And genuine HEX$ renders at SIXTEEN bits whenever the value fits in [-32768, 65535]: a small
+   negative arrives sign-extended, so HEX$(-1) is "FFFF" and not "FFFFFFFF". Dividing by a base got
+   the digits right and both of those wrong. */
+static void *rt_radix_packed(int32_t v, int32_t packed) {
+  int bits = packed & 0xFF;                 /* 4 for HEX$, 3 for OCT$, 1 for BIN$ */
+  int least = (packed >> 8) & 0xFF;
   uint32_t u = (uint32_t)v;
+  uint32_t mask = (1u << bits) - 1u;
+  char tmp[48], buf[48];
   int i = 0, j;
-  char tmp[40];
-  if (!u) { tmp[i++] = '0'; }
-  while (u) { int d = (int)(u % (uint32_t)base); tmp[i++] = (char)(d < 10 ? '0' + d : 'A' + d - 10); u /= (uint32_t)base; }
+  if ((u >> 16) == 0xFFFFu && (u & 0x8000u))
+    u &= 0xFFFFu;                           /* the 16-bit fold */
+  do {
+    int d = (int)(u & mask);
+    tmp[i++] = (char)(d < 10 ? '0' + d : 'A' + d - 10);
+    u >>= bits;
+  } while (u || i < least);
   for (j = 0; j < i; ++j) buf[j] = tmp[i - 1 - j];
   return rt_make(buf, i);
 }
 
-void *rt_str_hex(int32_t v) { return rt_radix(v, 16); }
-void *rt_str_oct(int32_t v) { return rt_radix(v, 8); }
+void *rt_str_radix(int32_t v, int32_t packed) { return rt_radix_packed(v, packed); }
+void *rt_str_hex(int32_t v) { return rt_radix_packed(v, (1 << 8) | 4); }
+void *rt_str_oct(int32_t v) { return rt_radix_packed(v, (1 << 8) | 3); }
+void *rt_str_bin(int32_t v) { return rt_radix_packed(v, (1 << 8) | 1); }
 
 int32_t rt_str_instr(void *hay, void *needle) { return rt_str_instr_start(1, hay, needle); }
 
@@ -327,6 +355,15 @@ void rt_print_i64(int64_t v) { rt_out_int((long long)v); }
 void rt_print_single(long double v) { char b[64]; rt_fmt_float(b, sizeof b, v, 7); rt_out_num(b); }
 void rt_print_double(long double v) { char b[64]; rt_fmt_float(b, sizeof b, v, 15); rt_out_num(b); }
 void rt_print_ext(long double v) { char b[64]; rt_fmt_float(b, sizeof b, v, 18); rt_out_num(b); }
+
+/* The PRINT comma separator: advance to the next 14-column zone. Sitting exactly on a boundary
+   still emits a full zone of spaces, which is what 14 - (column mod 14) says and what the DOS
+   rt_print_zone does. */
+void rt_print_comma(void) {
+  int32_t pad = 14 - (rt_column % 14);
+  while (pad-- > 0)
+    rt_out(" ", 1);
+}
 
 void rt_print_tab(int32_t column) {
   if (column < 1) column = 1;

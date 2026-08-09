@@ -254,6 +254,12 @@ internal static class RuntimeAbi {
     ["rt_str_hex"] = new("rt_radix", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved,
       Result: Reg.AX, Constants: [(Reg.CX, (1 << 8) | 4)]),
 
+    // The same routine when the CALL carries the digit count: the lowering packs
+    // (digits << 8) | bits into one word because that is the shape rt_radix reads, and a constant
+    // count folds there rather than costing instructions here.
+    ["rt_str_radix"] = new("rt_radix",
+      [new(ArgKind.Pair, Reg.AX, Reg.DX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
+
     // OCT$ and BIN$ are the same routine at three and one bits per digit - the direct emitter's own
     // `(digits << 8) | bits`, with the same one-digit minimum
     ["rt_str_oct"] = new("rt_radix", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved,
@@ -295,6 +301,9 @@ internal static class RuntimeAbi {
     // STR$ of a number. "StrI16: AX=value (clobbers DX); StrI32: DX:AX=value; StrF64: ST0 (popped)"
     // - and rt_str_f32 is the SINGLE entry beside it, differing only in the digit count it sets,
     // which is the rendering the fidelity tests compare
+    // FREEFILE: no arguments -> AX = the lowest file number not in use
+    ["rt_freefile"] = new("rt_freefile", [], _callerSaved, Result: Reg.AX),
+
     ["rt_str_from_i16"] = new("rt_str_i16", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     // PRINT of the remaining numeric widths, transcribed from CodeGenerator.Io.cs's EmitPrintValue -
     // the direct emitter's own dispatch, which is the only thing that says which formatter a PB type

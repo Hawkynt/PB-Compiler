@@ -62,6 +62,17 @@ public static class DosBoxRunner {
   private static bool HasXvfb => File.Exists("/usr/bin/xvfb-run");
 
   /// <summary>
+  /// The wait a program gets, stretched when the emulator runs inside a virtual X server.
+  ///
+  /// 60 seconds is ample natively and tight under xvfb, which is several times slower - and the way
+  /// it fails is not "this test timed out". A program killed part-way writes a TRUNCATED output
+  /// file, and the assertion then reports a value that differs from the golden: a fidelity failure
+  /// that is nothing of the kind. The shell harness hit exactly this and blamed an unrelated
+  /// dialect for it, so the same allowance is made here.
+  /// </summary>
+  private static int Deadline(int timeoutMs) => _needsDisplay.Value ? timeoutMs * 5 : timeoutMs;
+
+  /// <summary>
   /// A start-info for the emulator, wrapped in a virtual X server when it needs one.
   /// Every launch of DOSBox in the test suite must go through here - three fixtures used to build
   /// their own ProcessStartInfo and were the only ones still failing after this was introduced.
@@ -116,7 +127,7 @@ public static class DosBoxRunner {
       var psi = Launch($"-conf \"{conf}\"");
       using var process = Process.Start(psi)!;
       var sentinel = Path.Combine(dir, "DONE.TXT");
-      var deadline = Environment.TickCount64 + timeoutMs;
+      var deadline = Environment.TickCount64 + Deadline(timeoutMs);
       var minimized = false;
       while (!File.Exists(sentinel) && !process.HasExited && Environment.TickCount64 < deadline) {
         if (!minimized)
@@ -191,7 +202,7 @@ public static class DosBoxRunner {
 
       using var process = Process.Start(psi)!;
       var sentinel = Path.Combine(dir, "DONE.TXT");
-      var deadline = Environment.TickCount64 + timeoutMs;
+      var deadline = Environment.TickCount64 + Deadline(timeoutMs);
       var minimized = false;
       while (!File.Exists(sentinel) && !process.HasExited && Environment.TickCount64 < deadline) {
         if (!minimized)

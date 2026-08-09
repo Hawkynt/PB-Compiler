@@ -217,7 +217,7 @@ public sealed class BackendCoverageTests {
     // helpers. Six decline entries disappear, but DIFF32 exposes its next blocker (i64 truncation)
     // then 205 -> 209 when SINGLE/DOUBLE BYVAL parameters and ST(0) results gained their declared-width
     // stack ABI. Four honest float-procedure declines disappear and three more module bodies route
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(214),
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(215),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
 
     // How many programs reach the IR at all - the figure the runtime-trap and error-handling work
@@ -229,11 +229,14 @@ public sealed class BackendCoverageTests {
     // that stopped lowering from a program that was added and never did. Both move the number by one
     // and only one of them is a regression.
     Assert.That(census.ProgramsLowered, Is.EquivalentTo(_loweredToIr),
-      "the set of corpus programs reaching the IR has changed:\n" + report);
+      // spelled out rather than left to NUnit's elision: the set is the thing being re-pinned, and
+      // "..." after ten entries cannot be pasted back into the list below
+      "the set of corpus programs reaching the IR has changed:\nlowered: " +
+      string.Join(", ", census.ProgramsLowered) + "\n" + report);
 
     // selection is not routing: the whole-program codegen also schedules and allocates, and a value
     // live across a CALL has no register unless the spiller can move it to the frame
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(214),
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(215),
       "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // The figure that matters for whole-program ownership: module bodies the back end compiles end
@@ -264,36 +267,11 @@ public sealed class BackendCoverageTests {
   /// </summary>
   private static readonly string[] _loweredToIr = [
     "ARITH.BAS",
-    "CODEGEN.BAS",
     "CTRL.BAS",
     "DATAREAD.BAS",
     "DIFF01.BAS",
     "DIFF01.BAS",
-    "DIFF01.BAS",
-    "DIFF01.BAS",
-    "DIFF01.BAS",
-    "DIFF01.BAS",
-    "DIFF01.BAS",
-    "DIFF01.BAS",
-    "DIFF01.BAS",
-    "DIFF01.BAS",
-    "DIFF01.BAS",
-    "DIFF01.BAS",
-    "DIFF01.BAS",
-    "DIFF01.BAS",
     "DIFF02.BAS",
-    "DIFF02.BAS",
-    "DIFF02.BAS",
-    "DIFF02.BAS",
-    "DIFF02.BAS",
-    "DIFF02.BAS",
-    "DIFF02.BAS",
-    "DIFF02.BAS",
-    "DIFF02.BAS",
-    "DIFF02.BAS",
-    "DIFF02.BAS",
-    "DIFF03.BAS",
-    "DIFF03.BAS",
     "DIFF03.BAS",
     "DIFF04.BAS",
     "DIFF05.BAS",
@@ -387,14 +365,40 @@ public sealed class BackendCoverageTests {
     "DIFF96.BAS",
     "DIFF97.BAS",
     "DIFF99.BAS",
+    "DIFF01.BAS",
+    "DIFF01.BAS",
+    "DIFF02.BAS",
+    "QUIRK30.BAS",
+    "DIFF01.BAS",
+    "DIFF02.BAS",
+    "DIFF01.BAS",
+    "DIFF02.BAS",
+    "DIFF01.BAS",
+    "DIFF02.BAS",
+    "DIFF01.BAS",
+    "DIFF02.BAS",
+    "DIFF01.BAS",
+    "DIFF02.BAS",
+    "DIFF01.BAS",
+    "DIFF02.BAS",
+    "DIFF01.BAS",
+    "DIFF02.BAS",
+    "DIFF01.BAS",
+    "DIFF01.BAS",
+    "DIFF02.BAS",
+    "DIFF03.BAS",
+    "DIFF01.BAS",
+    "DIFF02.BAS",
+    "DIFF03.BAS",
     "HELLO.BAS",
     "INPUTS.BAS",
     "MATHUNIT.BAS",
     "ONERR.BAS",
     "ONERRNXT.BAS",
-    "QUIRK30.BAS",
+    "CODEGEN.BAS",
     "RANGES.BAS",
     "SHAREDG.BAS",
+    "STRBOUND.BAS",
     "STRHEAP.BAS",
     "STRINGS.BAS",
     "SUBFN.BAS",
@@ -520,6 +524,7 @@ public sealed class BackendCoverageTests {
     "ONERR.BAS",
     "ONERRNXT.BAS",
     "RANGES.BAS",
+    "STRBOUND.BAS",
     "STRINGS.BAS",
     "SUBFN.BAS",
   ];

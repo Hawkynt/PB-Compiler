@@ -1801,6 +1801,7 @@ public sealed class IrLowering {
     }
     if (!this._model.VariableBindings.TryGetValue(name, out var symbol))
       return this.LowerErrorPseudoVariable(name.Name)
+        ?? this.LowerNullaryIntrinsicName(name.Name)
         ?? throw new IrLoweringException($"unbound name {name.Name}");
     return this._b.Load(MapType(symbol.Type), this.SlotFor(symbol));
   }
@@ -1813,6 +1814,18 @@ public sealed class IrLowering {
   /// ERDEV / ERDEV$ are deliberately absent: the direct emitter answers both with zero (there is no
   /// device-error reporting), and a stub that silently agrees is not worth having on this path.
   /// </summary>
+  /// <summary>
+  /// An intrinsic that takes no arguments and is written without parentheses. The binder does not
+  /// turn a bare name into a call, so it reaches the lowering as an unbound name - the same route
+  /// the error pseudo-variables take, and for the same reason.
+  /// </summary>
+  private IrValue? LowerNullaryIntrinsicName(string name) => name.ToUpperInvariant() switch {
+    // "FREEFILE: no arguments -> AX = the lowest unused file number" - it raises an I/O error itself
+    // when all fifteen are taken, so there is nothing to check here
+    "FREEFILE" => this._b.Call(IrType.I16, this.RuntimeFn("rt_freefile", IrType.I16)),
+    _ => null,
+  };
+
   private IrValue? LowerErrorPseudoVariable(string name) {
     if (this._module is null)
       return null;
@@ -1870,6 +1883,7 @@ public sealed class IrLowering {
       "CVS" => this.LowerCv(call, "rt_str_cvs", IrType.F32),
       "CVD" => this.LowerCv(call, "rt_str_cvd", IrType.F64),
       "POS" => this.LowerPos(call),
+      "FREEFILE" => this._b.Call(IrType.I16, this.RuntimeFn("rt_freefile", IrType.I16)),
       "SQR" => this.LowerMath(call, "sqrt"),
       "SIN" => this.LowerMath(call, "sin"),
       "COS" => this.LowerMath(call, "cos"),
@@ -1977,11 +1991,19 @@ public sealed class IrLowering {
         this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_ltrim", IrType.Ptr, IrType.Ptr), Str(0))),
       "REPEAT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_repeat", IrType.Ptr, IrType.I32, IrType.Ptr),
         Num(0), Str(1)),
-      // the radix conversions. Their two-argument form fixes the digit count (HEX$(n, 4) pads or
-      // truncates to four) - it is a different result, not a formatting nicety, so it declines rather
-      // than quietly dropping the count the way taking argument 0 alone would
+      // the radix conversions. Their two-argument form sets a MINIMUM digit count (HEX$(n, 4)
+      // zero-pads to four; a value needing more still prints them all) - a different result, not a
+      // formatting nicety, so it is carried rather
+      // than quietly dropped the way taking argument 0 alone would. The runtime reads the count and
+      // the bits-per-digit from ONE word, (digits << 8) | bits, so the packing is done here where a
+      // constant folds away, and the direct emitter's clamp to 1..32 is reproduced exactly.
+      // A NON-constant count declines, which is what the direct emitter does with it too.
       "HEX$" or "OCT$" or "BIN$" when ci.Arguments.Count > 1 =>
-        throw new IrLoweringException($"{name} with a digit count"),
+        ci.Arguments[1] is IntegerLiteralExpr digits
+          ? this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_radix", IrType.Ptr, IrType.I32, IrType.I32),
+              Num(0), new IrConstantInt(IrType.I32,
+                (Math.Clamp((int)digits.Value, 1, 32) << 8) | (name == "HEX$" ? 4 : name == "OCT$" ? 3 : 1)))
+          : throw new IrLoweringException($"{name} with a non-constant digit count"),
       "HEX$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_hex", IrType.Ptr, IrType.I32), Num(0)),
       "OCT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_oct", IrType.Ptr, IrType.I32), Num(0)),
       "BIN$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_bin", IrType.Ptr, IrType.I32), Num(0)),
