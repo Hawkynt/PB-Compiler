@@ -231,6 +231,31 @@ So the order is: widen, run the battery routed, and keep the widening only if th
 coverage number that went up while the battery went down is a worse position than before. The two
 faults that turned up this way were worth more than the two functions that found them.
 
+**A whole concern the IR path does not have yet: string lifetime.** This is not a construct on the
+decline list, which is why it took a coverage increment to surface it, and it qualifies the 504/504
+above rather than being covered by it.
+
+`IrLowering` emits **no `rt_str_free` at all** - the name appears nowhere in `Ir/` or in the runtime
+ABI table, against twelve free sites across six files in the direct emitter. Every string temporary
+the IR allocates is leaked. `STRHEAP.BAS` is the program that shows it: a loop assigning
+`t = STRING$(100,"x") + STRING$(100,"y")` two thousand times allocates several temporaries per
+iteration and frees none, and the DOS runtime's 64 KiB compacting heap gives out with
+`OUT OF STRING SPACE`.
+
+Why nothing catches it today:
+
+* the C and LLVM back ends allocate with `malloc` and never run out on programs this size, so the
+  leak is invisible there;
+* the differential battery scores 504/504 routed because the programs the back end currently owns do
+  not churn enough strings to exhaust the heap. **That is a statement about those programs, not about
+  correctness** - the fault is scale-dependent, and a passing battery does not exclude it;
+* `STRHEAP.BAS` itself does not route, because its main declines on a null pointer. Selecting null is
+  a two-line change that immediately exposes this, which is exactly how it was found.
+
+So the ordering is real: the IR needs an ownership discipline - a free on the handle an assignment
+replaces, and a free of each temporary once consumed - before the back end can own a string-heavy
+program. Until then, coverage over such programs is worth less than it looks.
+
 **3. The golden gate - byte-identical output with the optimizer off.** This is the hard one, and it
 is the direct emitter's whole reason for existing: its optimizations are interleaved with emission
 *on purpose*, because that is what makes byte-identity with genuine PBC achievable. An SSA
