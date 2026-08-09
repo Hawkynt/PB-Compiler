@@ -219,6 +219,17 @@ where PB rounds instead of checking.
 The lesson worth carrying: none of these was found by reading the IR. The last one was found by
 disassembling both images and noticing `DD 1E` where the other wrote `DB 7E`.
 
+**Tiers 1 and 2 are not independent, which is the thing to know before grinding coverage.** Every
+function the back end newly owns is a function the differential battery newly measures. Enabling
+`FPToUI` is the worked example: it is implemented, it takes coverage from 215 to 217 functions, and
+it pulls `DIFF05.BAS` into the back end where two faults that predate it become visible - a BYTE
+printing as -56 for 200, and a DWORD printing 3000000000 where the direct emitter prints
+300000000. `DIFF05` is in the battery, so turning that case on trades six programs of fidelity for
+two functions of coverage. It stays declined, with the reason written at the `case`.
+
+So the order is: widen, run the battery routed, and only keep the widening if the score holds.
+A coverage number that went up while the battery went down is a worse position than before.
+
 **3. The golden gate - byte-identical output with the optimizer off.** This is the hard one, and it
 is the direct emitter's whole reason for existing: its optimizations are interleaved with emission
 *on purpose*, because that is what makes byte-identity with genuine PBC achievable. An SSA
