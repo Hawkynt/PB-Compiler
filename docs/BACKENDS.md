@@ -187,8 +187,8 @@ Worth stating plainly, because coverage numbers make the distance look shorter t
 `CodeGen/` needs THREE things, and only the first is being measured today.
 
 **1. Coverage - every program on the IR path.** `BackendCoverageTests` ranks this over the whole
-corpus. As of this writing: **138 of 164 programs lower**, **215 of 236 functions select and
-allocate**, **122 of 138 module bodies** can be owned outright. The remaining lowering blockers are
+corpus. As of this writing: **138 of 164 programs lower**, **217 of 236 functions select and
+allocate**, **124 of 138 module bodies** can be owned outright. The remaining lowering blockers are
 `ARRAY SORT`, `PUT$`, `FIELD`, `CHAIN`, `DEF SEG`, `DIM AT`, `LPRINT`/`PRINT USING`, `CODEPTR32`,
 `SIZEOF`, `CSRLIN` and `$ERROR STACK ON`; the remaining selection blockers are the unsigned
 float-to-integer casts, 64-bit truncation and widening, module globals needing the data-layout
@@ -220,15 +220,16 @@ The lesson worth carrying: none of these was found by reading the IR. The last o
 disassembling both images and noticing `DD 1E` where the other wrote `DB 7E`.
 
 **Tiers 1 and 2 are not independent, which is the thing to know before grinding coverage.** Every
-function the back end newly owns is a function the differential battery newly measures. Enabling
-`FPToUI` is the worked example: it is implemented, it takes coverage from 215 to 217 functions, and
-it pulls `DIFF05.BAS` into the back end where two faults that predate it become visible - a BYTE
-printing as -56 for 200, and a DWORD printing 3000000000 where the direct emitter prints
-300000000. `DIFF05` is in the battery, so turning that case on trades six programs of fidelity for
-two functions of coverage. It stays declined, with the reason written at the `case`.
+function the back end newly owns is a function the differential battery newly measures, and a
+widening can therefore COST fidelity. `FPToUI` was the worked example: enabling it took coverage
+from 215 to 217 functions and pulled `DIFF05.BAS` and `DIFF61.BAS` into the back end, where two
+faults that predated it became visible - a BYTE printing as -56 for 200, and a DWORD comparison
+answering `LE` where PB says `GT`. Neither was caused by the conversion; enabling it is simply what
+made them reachable. Both are fixed and the case is on.
 
-So the order is: widen, run the battery routed, and only keep the widening if the score holds.
-A coverage number that went up while the battery went down is a worse position than before.
+So the order is: widen, run the battery routed, and keep the widening only if the score holds. A
+coverage number that went up while the battery went down is a worse position than before. The two
+faults that turned up this way were worth more than the two functions that found them.
 
 **3. The golden gate - byte-identical output with the optimizer off.** This is the hard one, and it
 is the direct emitter's whole reason for existing: its optimizations are interleaved with emission
