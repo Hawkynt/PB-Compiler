@@ -85,15 +85,53 @@ public static class IrConstFold {
     return new IrConstantInt(t, Wrap(s, t));
   }
 
+  /// <summary>
+  /// Constant float arithmetic - folded ONLY when the result is exact.
+  ///
+  /// The target computes on the x87 at EIGHTY bits; this folds in a 64-bit double. When the true
+  /// result is representable in a double the two agree exactly, and folding is free. When it is not,
+  /// they differ in the last bit - and that difference is observable: PB hands a float to the
+  /// formatter at the x87's own width, so <c>$COMPAT tb10</c>, whose formatter prints seventeen
+  /// significant digits, showed <c>2 / 3</c> as .6666666666666666 folded against the hardware's
+  /// .6666666666666667. Six programs of the differential battery turned on it.
+  ///
+  /// Exactness is TESTED rather than guessed at. A fused multiply-add computes its product without
+  /// an intermediate rounding, so it recovers the error term a plain operation threw away: the
+  /// product is exact when <c>fma(l, r, -p)</c> is zero, and the quotient when <c>fma(q, r, -l)</c>
+  /// is. Addition uses the classic two-sum, whose error term is exact whenever no overflow occurs.
+  /// Refusing to fold costs an instruction; folding wrongly costs a digit nobody can trace.
+  /// </summary>
   private static IrConstant? FoldFloat(IrBinary b, double l, double r) {
-    var v = b.Op switch {
-      IrBinaryOp.FAdd => l + r,
-      IrBinaryOp.FSub => l - r,
-      IrBinaryOp.FMul => l * r,
-      IrBinaryOp.FDiv when r != 0.0 => l / r,        // leave x/0 to the runtime (PB error 11)
-      _ => (double?)null,
-    };
-    return v is { } d ? new IrConstantFloat(b.Type, NarrowFloat(d, b.Type)) : null;
+    double value;
+    switch (b.Op) {
+      case IrBinaryOp.FAdd:
+      case IrBinaryOp.FSub: {
+        var addend = b.Op == IrBinaryOp.FAdd ? r : -r;
+        value = l + addend;
+        if (!double.IsFinite(value))
+          return null;
+        // two-sum: the part of the exact sum the rounding dropped
+        var back = value - l;
+        if ((l - (value - back)) + (addend - back) != 0.0)
+          return null;
+        break;
+      }
+      case IrBinaryOp.FMul:
+        value = l * r;
+        if (!double.IsFinite(value) || Math.FusedMultiplyAdd(l, r, -value) != 0.0)
+          return null;
+        break;
+      case IrBinaryOp.FDiv:
+        if (r == 0.0)
+          return null;                               // leave x/0 to the runtime (PB error 11)
+        value = l / r;
+        if (!double.IsFinite(value) || Math.FusedMultiplyAdd(value, r, -l) != 0.0)
+          return null;
+        break;
+      default:
+        return null;
+    }
+    return new IrConstantFloat(b.Type, NarrowFloat(value, b.Type));
   }
 
   private static IrConstant? FoldCmp(IrCmp c) {
