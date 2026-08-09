@@ -5,6 +5,7 @@
 #   DOSBOX          the emulator, or empty when none was found
 #   DOSBOX_FLAVOR   its self-reported version line (the autotype gate reads this)
 #   DOSBOX_PREFIX   a command prefix to launch it with, possibly empty
+#   DOSBOX_TICKS    how many 0.2s ticks to wait for a program to finish
 #
 # Two things differ between vanilla DOSBox and dosbox-staging, and both of them
 # fail SILENTLY - the emulator boots to a bare DOS prompt or dies before it, the
@@ -23,6 +24,13 @@
 # a property of how it was compiled, and the name is only a guess about that.
 dosbox_detect_prefix() {
   DOSBOX_PREFIX=""
+  # 120 seconds is ample for vanilla DOSBox and marginal under xvfb, which runs the
+  # whole battery about four times slower. A slow ORACLE that gets killed mid-write
+  # is the worst outcome available: it leaves a truncated RESULT.TXT, which is not
+  # reported as "the oracle did not run" but as an output difference - a fidelity
+  # divergence that is not one. Two qb20 programs failed exactly that way in a full
+  # run and passed on their own immediately after.
+  DOSBOX_TICKS=600
   local probe
   # Captured, not piped into grep: the probe aborts on purpose when it fails, and
   # under `set -o pipefail` the pipeline reports that abort rather than the match -
@@ -35,7 +43,8 @@ dosbox_detect_prefix() {
     # vanilla DOSBox, and keeping it would hand SDL the driver with no OpenGL
     # inside the very X server provided to supply one.
     DOSBOX_PREFIX="env -u SDL_VIDEODRIVER xvfb-run -a"
-    echo "$DOSBOX_FLAVOR needs a display: running it under xvfb-run"
+    DOSBOX_TICKS=3000
+    echo "$DOSBOX_FLAVOR needs a display: running it under xvfb-run (10 minute per-program limit)"
   else
     echo "::error::$DOSBOX_FLAVOR cannot start headless and xvfb-run is not installed"
     exit 1
