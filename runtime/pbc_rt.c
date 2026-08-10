@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <ctype.h>
 
 /* --- handles ------------------------------------------------------------ */
@@ -358,12 +359,13 @@ double rt_str_cvd(void *s) { double v; rt_cv(s, &v, 8); return v; }
 /* --- console ------------------------------------------------------------ */
 
 static int32_t rt_column;                      /* 0-based, for TAB / print zones */
+static int32_t rt_row;                         /* 0-based, for CSRLIN */
 
 static void rt_out(const char *bytes, int32_t len) {
   int32_t i;
   for (i = 0; i < len; ++i) {
     fputc(bytes[i], stdout);
-    rt_column = bytes[i] == '\n' ? 0 : rt_column + 1;
+    if (bytes[i] == '\n') { rt_column = 0; ++rt_row; } else { ++rt_column; }
   }
 }
 
@@ -410,6 +412,18 @@ void rt_print_comma(void) {
   while (pad-- > 0)
     rt_out(" ", 1);
 }
+
+/* CSRLIN, and whether the standard handles are a console. The DOS runtime asks the BIOS and DOS;
+   here the row is the one rt_out has been counting and the console question is isatty, which is the
+   same question this platform's way. */
+int16_t rt_csrlin(void) { return (int16_t)(rt_row + 1); }
+int16_t rt_consin(void) { return isatty(0) ? -1 : 0; }
+int16_t rt_consout(void) { return isatty(1) ? -1 : 0; }
+
+/* DEF SEG has no meaning off a segmented target; the cell is kept so a PEEK/POKE lowering that
+   reads it still finds something, and resetting it is a no-op rather than a lie about DS. */
+static int16_t rt_defseg;
+void rt_defseg_reset(void) { rt_defseg = 0; }
 
 void rt_print_tab(int32_t column) {
   if (column < 1) column = 1;

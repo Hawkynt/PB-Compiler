@@ -25,8 +25,70 @@ public sealed partial class DosRuntime {
   public Label Swap { get; private set; } = null!;
   public Label ResumeNextHandler { get; private set; } = null!;
 
+  /// <summary>CSRLIN: the cursor row, 1-based (BIOS reports it 0-based).</summary>
+  public Label CsrLin { get; private set; } = null!;
+
+  /// <summary>CONSIN / CONSOUT: -1 when the handle is a console, 0 when it is redirected.</summary>
+  public Label ConsIn { get; private set; } = null!;
+  public Label ConsOut { get; private set; } = null!;
+
+  /// <summary>DEF SEG with no argument: the default segment goes back to DS.</summary>
+  public Label DefSegReset { get; private set; } = null!;
+
   private void EmitLowLevelProcedures(Assembler asm) {
     var regs = asm.Lbl("rt_regs");
+
+    // Three sequences the direct emitter writes INLINE, given labels so the IR path can reach them
+    // too. It cannot inline them: an INT is not something the IR can say, and the C and LLVM back
+    // ends need a name to bind their own answer to. The direct emitter keeps writing them inline -
+    // this changes no existing output, it only adds somewhere to call.
+    this.CsrLin = asm.MarkLabel("rt_csrlin");
+    {
+      asm.Push(Reg.BX);
+      asm.Push(Reg.CX);
+      asm.Push(Reg.DX);
+      asm.Mov(Reg.AH, (Imm)3);
+      asm.Xor(Reg.BH, Reg.BH);
+      asm.Int(0x10);
+      asm.Mov(Reg.AL, Reg.DH);          // DH = row, 0-based
+      asm.Xor(Reg.AH, Reg.AH);
+      asm.Inc(Reg.AX);                  // ...and PB counts from 1
+      asm.Pop(Reg.DX);
+      asm.Pop(Reg.CX);
+      asm.Pop(Reg.BX);
+      asm.Ret();
+    }
+
+    // IOCTL get-device-info on handle 0 or 1: bit 7 of DL set means a character device
+    var consoleShared = asm.DefineLabel();
+    this.ConsIn = asm.MarkLabel("rt_consin");
+    asm.Xor(Reg.BX, Reg.BX);
+    asm.Jmp(consoleShared);
+    this.ConsOut = asm.MarkLabel("rt_consout");
+    asm.Mov(Reg.BX, 1);
+    asm.MarkLabel(consoleShared);
+    {
+      var isConsole = asm.DefineLabel();
+      asm.Push(Reg.DX);
+      asm.Mov(Reg.AX, 0x4400);
+      asm.Int(0x21);
+      asm.Mov(Reg.AX, -1);
+      asm.Test(Reg.DL, (Imm)0x80);
+      asm.Jnz(isConsole);
+      asm.Xor(Reg.AX, Reg.AX);
+      asm.MarkLabel(isConsole);
+      asm.Pop(Reg.DX);
+      asm.Ret();
+    }
+
+    this.DefSegReset = asm.MarkLabel("rt_defsegreset");
+    {
+      asm.Push(Reg.AX);
+      asm.Mov(Reg.AX, Reg.DS);
+      asm.Mov(Mem.Word(asm.Lbl("rt_defseg")), Reg.AX);
+      asm.Pop(Reg.AX);
+      asm.Ret();
+    }
 
     this.Swap = asm.MarkLabel("rt_swap");
     {

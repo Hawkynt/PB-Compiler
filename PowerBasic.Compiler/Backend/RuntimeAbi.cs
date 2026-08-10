@@ -341,6 +341,13 @@ internal static class RuntimeAbi {
     // EOF(n): AX = the file number -> AX = PB's -1/0 truth
     ["rt_eof"] = new("rt_eof", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
 
+    // CSRLIN -> AX = the 1-based cursor row; CONSIN / CONSOUT -> AX = -1 for a console, 0 redirected
+    ["rt_csrlin"] = new("rt_csrlin", [], _callerSaved, Result: Reg.AX),
+    ["rt_consin"] = new("rt_consin", [], _callerSaved, Result: Reg.AX),
+    ["rt_consout"] = new("rt_consout", [], _callerSaved, Result: Reg.AX),
+    // DEF SEG: the argument form stores the word, the bare form puts DS back
+    ["rt_defseg_reset"] = new("rt_defsegreset", [], _callerSaved),
+
     // FREEFILE: no arguments -> AX = the lowest file number not in use
     ["rt_freefile"] = new("rt_freefile", [], _callerSaved, Result: Reg.AX),
 

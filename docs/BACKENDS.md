@@ -187,10 +187,10 @@ Worth stating plainly, because coverage numbers make the distance look shorter t
 `CodeGen/` needs THREE things, and only the first is being measured today.
 
 **1. Coverage - every program on the IR path.** `BackendCoverageTests` ranks this over the whole
-corpus. As of this writing: **139 of 164 programs lower**, **219 of 237 functions select and
-allocate**, **125 of 139 module bodies** can be owned outright. The remaining lowering blockers are
-`ARRAY SORT`, `FIELD`, `CHAIN`, `DEF SEG`, `DIM AT`, `LPRINT`/`PRINT USING`, `CODEPTR32`, `CSRLIN`,
-`CONSIN` and `$ERROR STACK ON`; the remaining selection blockers are the unsigned
+corpus. As of this writing: **141 of 164 programs lower**, **220 of 239 functions select and
+allocate**, **126 of 141 module bodies** can be owned outright. The remaining lowering blockers are
+`ARRAY SORT`, `FIELD`, `CHAIN`, `DIM AT`, `LPRINT`/`PRINT USING`, `CODEPTR32`, external linkage
+(a DECLAREd body-less FUNCTION) and `$ERROR STACK ON`; the remaining selection blockers are the unsigned
 float-to-integer casts, 64-bit truncation and widening, module globals needing the data-layout
 bridge, `IrSwitch`, a null pointer with no register, and a compare whose left operand is an
 immediate.

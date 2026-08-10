@@ -677,6 +677,14 @@ public sealed class IrLowering {
       case CommandStmt { Keyword: "KILL", Arguments: [{ } file] }:
         this._b.Call(IrType.Void, this.RuntimeFn("rt_kill", IrType.Void, IrType.Ptr), this.LowerStringExpr(file));
         break;
+      // DEF SEG = n stores the word; bare DEF SEG puts DS back, which only the runtime can say
+      case DefSegStmt { Segment: { } segment }:
+        this._b.Store(this.Coerce(this.LowerExpr(segment), this._model.TypeOf(segment), PbType.Integer),
+          this.ErrorCell("rt_defseg", IrType.I16));
+        break;
+      case DefSegStmt:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_defseg_reset", IrType.Void));
+        break;
       // SEEK #n, p - PB's own numbering: 0-based BYTES for BINARY, 1-based RECORDS for RANDOM, which
       // rt_fseekstmt sorts out from the file's own record length. The position is a LONG.
       case SeekStmt seek:
@@ -1913,6 +1921,9 @@ public sealed class IrLowering {
     // "FREEFILE: no arguments -> AX = the lowest unused file number" - it raises an I/O error itself
     // when all fifteen are taken, so there is nothing to check here
     "FREEFILE" => this._b.Call(IrType.I16, this.RuntimeFn("rt_freefile", IrType.I16)),
+    "CSRLIN" => this._b.Call(IrType.I16, this.RuntimeFn("rt_csrlin", IrType.I16)),
+    "CONSIN" => this._b.Call(IrType.I16, this.RuntimeFn("rt_consin", IrType.I16)),
+    "CONSOUT" => this._b.Call(IrType.I16, this.RuntimeFn("rt_consout", IrType.I16)),
     _ => null,
   };
 
@@ -2006,6 +2017,9 @@ public sealed class IrLowering {
         new IrConstantInt(IrType.I16, Math.Max(this._model.TypeOf(call.Arguments[0]).Size, 1)),
         PbType.Integer, this._model.TypeOf(call)),
       "FREEFILE" => this._b.Call(IrType.I16, this.RuntimeFn("rt_freefile", IrType.I16)),
+      "CSRLIN" => this._b.Call(IrType.I16, this.RuntimeFn("rt_csrlin", IrType.I16)),
+      "CONSIN" => this._b.Call(IrType.I16, this.RuntimeFn("rt_consin", IrType.I16)),
+      "CONSOUT" => this._b.Call(IrType.I16, this.RuntimeFn("rt_consout", IrType.I16)),
       // LOF(n) is the file's length and SEEK(n)/LOC(n) the current position - all LONG, all reached
       // by the file number alone. SEEK and LOC share a routine: PB reports the same number for a
       // sequential file, and the direct emitter calls rt_fpos for both.
