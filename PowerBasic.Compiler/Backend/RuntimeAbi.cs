@@ -324,6 +324,20 @@ internal static class RuntimeAbi {
       [new(ArgKind.Pair, Reg.AX, Reg.DX), new(ArgKind.Pair, Reg.BX, Reg.CX)],
       _callerSaved, Result: Reg.AX),
 
+    // LOF(n) and SEEK(n)/LOC(n): AX = the file number -> DX:AX
+    ["rt_file_length"] = new("rt_lof", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    ["rt_file_pos"] = new("rt_fpos", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+
+    // SEEK #n, p: AX = the file number, CX = the position
+    ["rt_file_seek"] = new("rt_fseekstmt",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved),
+
+    // PUT$ fh, s$: AX = the file number, DX = the handle. GET$ fh, n, s$: AX = file, CX = count -> AX
+    ["rt_fput_str"] = new("rt_fputstr",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),
+    ["rt_fget_str"] = new("rt_fgetstr",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
+
     // EOF(n): AX = the file number -> AX = PB's -1/0 truth
     ["rt_eof"] = new("rt_eof", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
 

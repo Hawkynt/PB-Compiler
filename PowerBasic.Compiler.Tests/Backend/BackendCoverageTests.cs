@@ -403,6 +403,7 @@ public sealed class BackendCoverageTests {
     "ONERRNXT.BAS",
     "CODEGEN.BAS",
     "RANGES.BAS",
+    "RANDFILE.BAS",
     "SHAREDG.BAS",
     "STRBOUND.BAS",
     "STRHEAP.BAS",

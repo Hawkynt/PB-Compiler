@@ -521,11 +521,19 @@ void rt_file_open(int32_t n, void *name, int32_t mode, int32_t reclen) {
     rt_error(55);                       /* already open */
   memcpy(path, x->data, (size_t)len);
   path[len] = '\0';
-  /* FileMode: 0 Input, 1 Output, 2 Append, 3 Random, 4 Binary */
-  rt_file[n] = mode == 0 ? fopen(path, "rb")
-             : mode == 1 ? fopen(path, "wb")
-             : mode == 2 ? fopen(path, "ab")
-             : NULL;
+  /* FileMode: 0 Input, 1 Output, 2 Append, 3 Random, 4 Binary. RANDOM and BINARY are opened for
+     READ AND WRITE and created when absent, which is what PB does with them - "r+b" fails on a file
+     that is not there, so the miss falls back to "w+b" rather than raising. */
+  if (mode == 3 || mode == 4) {
+    rt_file[n] = fopen(path, "r+b");
+    if (!rt_file[n])
+      rt_file[n] = fopen(path, "w+b");
+  } else {
+    rt_file[n] = mode == 0 ? fopen(path, "rb")
+               : mode == 1 ? fopen(path, "wb")
+               : mode == 2 ? fopen(path, "ab")
+               : NULL;
+  }
   if (!rt_file[n])
     rt_error(mode == 0 ? 53 : 64);      /* file not found / bad file name */
   rt_file_col[n] = 0;
@@ -613,6 +621,63 @@ void rt_fprint_u32(int32_t n, uint32_t v) { rt_fout_int(n, (long long)v); }
 void rt_fprint_i64(int32_t n, int64_t v) { rt_fout_int(n, (long long)v); }
 void rt_fprint_single(int32_t n, long double v) { char b[64]; rt_fmt_float(b, sizeof b, v, 7); rt_fout(n, b, (int32_t)strlen(b)); rt_fout(n, " ", 1); }
 void rt_fprint_double(int32_t n, long double v) { char b[64]; rt_fmt_float(b, sizeof b, v, 15); rt_fout(n, b, (int32_t)strlen(b)); rt_fout(n, " ", 1); }
+
+/* GET #n, rec, var / PUT #n, rec, var - one fixed-size value at a record position. The record
+   number is 1-BASED (record 1 is the first) and 0 means "wherever the file already is", which is
+   what the lowering passes when the statement names no record. */
+static void rt_file_seek_record(int32_t n, int32_t record, int32_t size) {
+  FILE *f = rt_file_of(n);
+  if (record > 0)
+    fseek(f, (long)(record - 1) * (long)size, SEEK_SET);
+}
+
+void rt_file_put(int32_t n, int32_t record, void *value, int32_t size) {
+  rt_file_seek_record(n, record, size);
+  fwrite(value, 1, (size_t)(size < 0 ? 0 : size), rt_file_of(n));
+}
+
+void rt_file_get(int32_t n, int32_t record, void *value, int32_t size) {
+  size_t want = (size_t)(size < 0 ? 0 : size);
+  size_t got;
+  rt_file_seek_record(n, record, size);
+  got = fread(value, 1, want, rt_file_of(n));
+  if (got < want)
+    memset((char *)value + got, 0, want - got);      /* a short read leaves zeros, not stale bytes */
+}
+
+int32_t rt_file_length(int32_t n) {
+  FILE *f = rt_file_of(n);
+  long here = ftell(f), end;
+  fseek(f, 0, SEEK_END);
+  end = ftell(f);
+  fseek(f, here, SEEK_SET);
+  return (int32_t)end;
+}
+
+int32_t rt_file_pos(int32_t n) { return (int32_t)ftell(rt_file_of(n)); }
+
+/* SEEK #n, p. Only the sequential modes are open here, so this is the BINARY reading: a 0-based
+   byte offset. RANDOM's 1-based record numbering has no meaning without a record length, and
+   opening one already raises. */
+void rt_file_seek(int32_t n, int32_t position) {
+  FILE *f = rt_file_of(n);
+  fseek(f, position < 0 ? 0 : position, SEEK_SET);
+}
+
+/* PUT$ / GET$ - raw bytes, no terminator and no record structure. A GET$ that reaches end of file
+   early yields what there was, which is what the DOS routine does with a short read. */
+void rt_fput_str(int32_t n, void *s) {
+  pb_str *x = rt_of(s);
+  rt_fout(n, x->data, x->len);
+}
+
+void *rt_fget_str(int32_t n, int32_t count) {
+  FILE *f = rt_file_of(n);
+  char buf[1024];
+  int32_t want = count < 0 ? 0 : (count > (int32_t)sizeof buf ? (int32_t)sizeof buf : count);
+  size_t got = want ? fread(buf, 1, (size_t)want, f) : 0;
+  return rt_make(buf, (int32_t)got);
+}
 
 /* LINE INPUT #n: the rest of the line, without its terminator. */
 void *rt_finput_line(int32_t n) {

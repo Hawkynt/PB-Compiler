@@ -677,6 +677,26 @@ public sealed class IrLowering {
       case CommandStmt { Keyword: "KILL", Arguments: [{ } file] }:
         this._b.Call(IrType.Void, this.RuntimeFn("rt_kill", IrType.Void, IrType.Ptr), this.LowerStringExpr(file));
         break;
+      // SEEK #n, p - PB's own numbering: 0-based BYTES for BINARY, 1-based RECORDS for RANDOM, which
+      // rt_fseekstmt sorts out from the file's own record length. The position is a LONG.
+      case SeekStmt seek:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_file_seek", IrType.Void, IrType.I32, IrType.I32),
+          this.FileNum(seek.FileNumber),
+          this.Coerce(this.LowerExpr(seek.Target), this._model.TypeOf(seek.Target), PbType.Long));
+        break;
+      // PUT$ fh, s$ - the string's bytes written raw, no terminator and no record structure
+      case CommandStmt { Keyword: "PUT$", Arguments: [{ } putFile, { } putValue] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_fput_str", IrType.Void, IrType.I32, IrType.Ptr),
+          this.FileNum(putFile), this.LowerStringExpr(putValue));
+        break;
+      // GET$ fh, count, target$ - count bytes read raw; a short read yields what there was
+      case CommandStmt { Keyword: "GET$", Arguments: [{ } getFile, { } getCount, { } getTarget] }:
+        this._b.Store(
+          this._b.Call(IrType.Ptr, this.RuntimeFn("rt_fget_str", IrType.Ptr, IrType.I32, IrType.I32),
+            this.FileNum(getFile),
+            this.Coerce(this.LowerExpr(getCount), this._model.TypeOf(getCount), PbType.Long)),
+          this.StringTargetAddress(getTarget));
+        break;
       // CommandStmt is a catch-all for a dozen unrelated statements (KILL, POKE, OUT, RANDOMIZE...),
       // so it names the keyword: "unsupported statement: CommandStmt" ranks nothing
       default: throw new IrLoweringException(statement is CommandStmt command
@@ -1986,6 +2006,15 @@ public sealed class IrLowering {
         new IrConstantInt(IrType.I16, Math.Max(this._model.TypeOf(call.Arguments[0]).Size, 1)),
         PbType.Integer, this._model.TypeOf(call)),
       "FREEFILE" => this._b.Call(IrType.I16, this.RuntimeFn("rt_freefile", IrType.I16)),
+      // LOF(n) is the file's length and SEEK(n)/LOC(n) the current position - all LONG, all reached
+      // by the file number alone. SEEK and LOC share a routine: PB reports the same number for a
+      // sequential file, and the direct emitter calls rt_fpos for both.
+      "LOF" => this.Coerce(
+        this._b.Call(IrType.I32, this.RuntimeFn("rt_file_length", IrType.I32, IrType.I32),
+          this.FileNum(call.Arguments[0])), PbType.Long, this._model.TypeOf(call)),
+      "SEEK" or "LOC" => this.Coerce(
+        this._b.Call(IrType.I32, this.RuntimeFn("rt_file_pos", IrType.I32, IrType.I32),
+          this.FileNum(call.Arguments[0])), PbType.Long, this._model.TypeOf(call)),
       // EOF(n): the file number in, PB's -1/0 truth out - the runtime answers in the same shape the
       // direct emitter's callers expect, so there is nothing to normalise here
       "EOF" => this._b.Call(IrType.I16, this.RuntimeFn("rt_eof", IrType.I16, IrType.I16),

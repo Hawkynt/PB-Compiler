@@ -148,6 +148,13 @@ void rt_fprint_i64(int32_t n, int64_t v);
 void rt_fprint_single(int32_t n, long double v);
 void rt_fprint_double(int32_t n, long double v);
 void *rt_finput_line(int32_t n);
+void rt_file_put(int32_t n, int32_t record, void *value, int32_t size);
+void rt_file_get(int32_t n, int32_t record, void *value, int32_t size);
+int32_t rt_file_length(int32_t n);
+int32_t rt_file_pos(int32_t n);
+void rt_file_seek(int32_t n, int32_t position);
+void rt_fput_str(int32_t n, void *s);
+void *rt_fget_str(int32_t n, int32_t count);
 
 /* --- memory / arrays --------------------------------------------------- */
 void *rt_arr_alloc(int32_t count, int32_t elementSize);
