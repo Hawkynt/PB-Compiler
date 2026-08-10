@@ -400,6 +400,7 @@ public sealed class BackendCoverageTests {
     "FILEIO1.BAS",
     "HELLO.BAS",
     "INPUTS.BAS",
+    "LINKDEMO.BAS",
     "MATHUNIT.BAS",
     "ONERR.BAS",
     "ONERRNXT.BAS",

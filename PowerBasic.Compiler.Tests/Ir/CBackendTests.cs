@@ -77,6 +77,17 @@ public sealed class CBackendTests {
     GlobalDce.Run(module!);
     Assert.That(IrVerifier.Verify(module!), Is.Empty, "optimized IR failed verification");
 
+    // A program that calls into ANOTHER OBJECT FILE cannot be built alone, and that is a property of
+    // the program rather than of the back end: LINKDEMO declares AddInts%, Bump and Greet, which
+    // MATHUNIT supplies. The DOS harness links the pair; this fixture compiles one file, so it says
+    // so instead of reporting a link error as though the emitted C were wrong.
+    var externals = module!.Functions
+      .Where(f => f.IsDeclaration && !f.Name.StartsWith("rt_", StringComparison.Ordinal)
+                                  && !f.Name.StartsWith("llvm.", StringComparison.Ordinal))
+      .Select(f => f.Name).ToList();
+    Assume.That(externals, Is.Empty,
+      $"{program}: calls {string.Join(", ", externals)} from another object file, which this fixture does not link");
+
     var work = Path.Combine(Path.GetTempPath(), "pbc-c-" + Guid.NewGuid().ToString("N")[..8]);
     Directory.CreateDirectory(work);
     try {

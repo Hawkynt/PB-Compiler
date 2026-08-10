@@ -101,8 +101,13 @@ public sealed class IrLowering {
     var module = new IrModule(model.FileName, model.Dialect, model.CompatDialect);
     var procMap = new Dictionary<ProcedureSymbol, IrFunction>(ReferenceEqualityComparer.Instance);
 
+    // An EXTERNAL procedure is included too, as a signature with no body - which is exactly what
+    // IrFunction calls a declaration. It has no code to lower and never will: DECLARE FUNCTION
+    // AddInts%(BYVAL a%, BYVAL b%) names a symbol another object file supplies. Leaving it out of
+    // the map meant every CALL to one declined, and the program with it, for want of a callee that
+    // was never going to have a body.
     foreach (var proc in model.Procedures.Values)
-      if (!proc.IsExternal && TrySignature(proc, out var irfn)) {
+      if (TrySignature(proc, out var irfn)) {
         procMap[proc] = irfn!;
         module.AddFunction(irfn!);
       }
@@ -119,6 +124,8 @@ public sealed class IrLowering {
     }
 
     foreach (var (proc, irfn) in procMap) {
+      if (proc.IsExternal)
+        continue;                                      // no body to lower, and that is the point
       try {
         new IrLowering(model, procMap, module, shared, escapes).LowerProcedure(proc, irfn);
       } catch (IrLoweringException) {
