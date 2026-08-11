@@ -2861,6 +2861,13 @@ public sealed class IrLowering {
 
   /// <summary>The checked multiply: exact one width up, then range-checked back down.</summary>
   private IrValue CheckedMultiply(IrValue l, IrValue r, IrType ty, bool signed) {
+    // An UNSIGNED product WRAPS. The Error 6 trap $ERROR OVERFLOW arms is the one the direct emitter
+    // takes off IMUL's overflow flag, and that flag answers a SIGNED question; PB's own battery says
+    // so out loud - DIFF105 multiplies two DWORDs of 100000 and expects 1410065408, "wraps and never
+    // traps". Checking it here would raise where the language returns a number, and it also cost the
+    // widening to a 64-bit intermediate that this back end has no register for.
+    if (!signed)
+      return this._b.Binary(IrBinaryOp.Mul, l, r);
     if (ty.Bits >= 64)
       throw new IrLoweringException(
         "$ERROR OVERFLOW ON over a 64-bit multiply (there is no wider integer to hold the exact product)");
@@ -3069,8 +3076,35 @@ public sealed class IrLowering {
     // It is spelled as a named runtime call, not a second cast opcode, because that is what lets each
     // back end decide: the pb35 writer expands it into the arithmetic that reproduces it, and a back
     // end with no such entry declines instead of rounding the other way.
+    // $ERROR OVERFLOW ON: a real that will not FIT the integer traps with Error 6, and the check has
+    // to happen BEFORE the conversion. FISTP stores a sentinel (8000_0000h for a LONG) when the value
+    // is out of range and sets the Invalid-Operation flag beside it; the flag is the natural thing to
+    // read and the wrong thing to rely on, so the limits are compared instead - which is what the
+    // direct emitter does, and what DIFF105 pins.
+    //
+    // SIGNED only. An unsigned conversion WRAPS: PB multiplies two DWORDs of 100000 and answers
+    // 1410065408 rather than raising, so range-checking one would trap where the language returns a
+    // number.
+    if (this._checkOverflow && st.Signed)
+      this.RaiseWhen(this.OutsideIntegerRange(value, st), 6, "overflow");
     if (st.Signed && this._model.EffectiveDialect.IsBascomRuntime())
       return this._b.Call(toTy, this.RuntimeFn("rt_round_half_away", toTy, value.Type), value);
     return this._b.Cast(st.Signed ? IrCastOp.FPToSIRound : IrCastOp.FPToUI, value, toTy);
+  }
+
+  /// <summary>
+  /// True when <paramref name="value"/> lies outside what <paramref name="target"/> can hold. The
+  /// comparison is made in the FLOAT the value already is: converting first is what the check exists
+  /// to guard against, so it cannot be part of the question.
+  /// </summary>
+  private IrValue OutsideIntegerRange(IrValue value, ScalarType target) {
+    var bits = target.ByteSize * 8;
+    var lowest = -(double)(1UL << (bits - 1));
+    var highest = (double)((1UL << (bits - 1)) - 1);
+    // ...and the bound itself is inclusive: rounding carries a value up to the next integer, so the
+    // limit that must not be crossed is half a unit beyond the last representable one
+    return this._b.Or(
+      this._b.Cmp(IrCmpPred.Folt, value, new IrConstantFloat(value.Type, lowest - 0.5)),
+      this._b.Cmp(IrCmpPred.Fogt, value, new IrConstantFloat(value.Type, highest + 0.5)));
   }
 }

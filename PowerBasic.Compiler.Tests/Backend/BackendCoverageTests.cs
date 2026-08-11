@@ -448,6 +448,7 @@ public sealed class BackendCoverageTests {
     "DIFF102.BAS",
     "DIFF103.BAS",
     "DIFF104.BAS",
+    "DIFF105.BAS",  // $ERROR OVERFLOW: unsigned wrap + narrowing-store check
     "DIFF106.BAS",
     "DIFF107.BAS",
     "DIFF108.BAS",
