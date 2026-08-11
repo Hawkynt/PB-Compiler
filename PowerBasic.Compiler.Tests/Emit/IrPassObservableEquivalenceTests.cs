@@ -44,6 +44,7 @@ public sealed class IrPassObservableEquivalenceTests {
     ("phicong", PhiCongruence.Run),
     ("demote", FloatDemotion.Run),
     ("unswitch", LoopUnswitch.Run),
+    ("closed-form", RecurrenceClosedForm.Run),
   ];
 
   /// <summary>The interprocedural passes, which need the whole module rather than one function.</summary>

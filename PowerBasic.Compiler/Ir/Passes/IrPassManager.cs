@@ -124,6 +124,10 @@ public sealed class IrPassManager {
     // reaches nothing. LICM hoists it out first, which is what makes the value substitutable.
     .Add("unswitch", LoopUnswitch.Run)
     .Add("dce", Dce.Run)
+    // AFTER dce: IntegerRecovery leaves the float-shaped arithmetic it replaced standing beside the
+    // integer form, and until that shadow is collected the accumulator still has a reader inside the
+    // loop - which is exactly the condition this pass requires to be absent
+    .Add("closed-form", RecurrenceClosedForm.Run)
     .Add("ifconv", IfConversion.Run)
     .Add("simplifycfg", SimplifyCfg.Run)
     // FunctionSummaries.RemoveDeadPureCalls deliberately does NOT run here. The analysis is right and

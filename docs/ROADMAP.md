@@ -266,6 +266,112 @@ disagreeing: those programs already counted as participating because another pro
 new result is that their complete module bodies are now owned. `EXT`, MBF, BYREF reals, and foreign
 register conventions remain separate ABI work.
 
+### Remaining DOS string kernels - explicit runtime ABI mappings
+
+The IR's last three string calls with existing DOS implementations now cross the same explicit bridge
+as the rest of the string runtime. `rt_str_compare` calls consuming `rt_strcmp` with handles in
+`AX`/`DX`, then sign-extends its word-sized `-1`/`0`/`1` answer to the IR's `i32`. Two-argument
+`rt_str_mid2` calls `rt_strmid` with the direct emitter's `DX=7FFFh` maximum-length preset.
+`rt_str_mid_assign` calls `rt_midset` with target/start/limit/replacement in `AX`/`CX`/`BX`/`DX`; the
+kernel consumes the replacement and returns the duplicated, mutated target handle in `AX` for the IR
+store back to the lvalue.
+
+The selector tests pin those registers, the preset, and the result extension. Executed tests use
+runtime INTEGER start/length values and compare optimized and unoptimized routed images with the direct
+emitter. Arbitrary true 32-bit indices still decline unless the existing word extraction proves that
+narrowing is safe; their historical overflow behavior needs an oracle rather than an implicit truncation.
+
+All four affected module bodies (`DIFF02`, `DIFF40`, `DIFF54`, and `STRINGS`) route at this milestone.
+Selection and routing move 209 → 213 of 233 functions, whole-module ownership moves 116 → 120 of 135
+lowered programs, and allocation declines remain zero. The differential moves to 242 participating,
+235 agreeing, 7 outside the executor's opcode set, and 0 disagreeing.
+
+### Shared arrays and STATIC locals - one data layout, stable identities
+
+The x86-16 back end now addresses shared static arrays through the cells the direct emitter already
+owns. A global-array GEP materializes `OFFSET g.name` plus its constant or runtime byte offset; loads
+and stores then use the resulting address normally. No second data segment or competing layout exists.
+
+`STATIC` locals use the same bridge, but their IR names now include their owning procedure:
+`static.<procedure>.<local>` (and an overload index where PB 3.6 needs one). This makes two legal
+`STATIC count` declarations distinct and lets emission resolve each name to the exact `VariableSymbol`
+whose `SlotOf` cell the direct path uses. Synthesized globals such as `.data_cursor` still decline.
+
+This removes all four shared/static named-procedure declines in `SHAREDG` and `SUBFN`. Against the
+post-pull census, selection and routing move **220 → 224 of 240**, whole-module ownership moves
+**126 → 127 of 142**, and allocation declines remain zero. `SHAREDG` joins differential execution in
+both modes, moving it to **256 participating, 249 agreeing, 7 emulator-limited, and 0 disagreeing**.
+
+### Integer switch selection - every lowered named procedure now routes
+
+`IrSwitch` now selects to an explicit 8086 compare chain. Byte and word selectors compare each case
+directly. A dword selector first branches on its high word, then compares low words inside the matching
+group, preserving all 32 bits without inventing a 32-bit machine instruction. Default and case edges
+remain explicit in the machine CFG, and successor phi values are copied before dispatch.
+
+Switch equality is defined once as fixed-width bit equality across SimplifyCFG, SCCP, and instruction
+selection. Signed and unsigned spellings of the same pattern therefore agree (`i16 -1` is `i16 65535`),
+while the verifier rejects non-integer conditions, out-of-width cases, and duplicate patterns.
+
+Language-level `ON GOTO` first coerces its selector to the historical 16-bit `INTEGER`, matching the
+direct emitter: `65537&` therefore selects arm 1. Focused execution covers negative, zero, every
+in-range arm, the first value above the range, and that LONG-to-INTEGER truncation in both optimization
+modes. The general raw-I32 switch path is separately verified through selection, scheduling, and
+allocation.
+
+Selection and routing move **224 → 225 of 240**, with zero allocation declines. The census now has
+**no declined named procedures** among the programs that reach IR. Module ownership and the
+differential counts remain 127/142 and 256/249/7/0: `CODEGEN.BAS` already participated through other
+routed functions, while its `main` still honestly declines at an external call.
+
+### Binary-record strings and paired runtime results - explicit and trimmable
+
+The complete binary-record family now crosses the runtime ABI. `MKI$`, `MKL$`, `MKDWD$`, `MKS$`, and
+`MKD$`, together with `MKBYT$`, `MKWRD$`, and `MKE$`, stage exact little-endian integer or
+declared-width IEEE bytes in `rt_scratch`, allocate an owned BASIC string, and remain a separately
+trimmable runtime section. `CVI`, `CVL`, `CVDWD`, `CVS`, and `CVD`, plus the
+`CVBYT`/`CVWRD`/`CVE` aliases, use the existing copy/pad kernel. Selection then loads the exact byte,
+word, dword, binary32, or binary64 scratch representation for both the ordinary and start-offset CV
+forms.
+
+The ABI also represents a 32-bit answer in `DX:AX`. Integer-range `RND`, `LOF`, and `LOC` copy both
+halves immediately after their runtime call, giving scheduling and allocation explicit dependencies
+on the physical result pair.
+
+`DIFF08` and `DIFF58` now route as whole module bodies. Selection/routing moves **225 → 227 of 240**,
+module ownership moves **127 → 129 of 142**, and allocation declines remain zero. The differential
+moves to **260 participating, 251 agreeing, 9 emulator-limited, and 0 disagreeing**. `DIFF58` agrees
+in both modes; both `DIFF08` executions stop only because the test executor does not yet implement DOS
+device-information call `AX=4400h`.
+
+### Segmented raw-memory comparison - DS globals and SS locals
+
+Whole `TYPE`/`UNION` equality now crosses the x86-16 runtime ABI without flattening a segmented
+address to an offset. Selection derives DS for module/static objects and SS for frame objects, then
+passes the left address in `DX:SI`, the right in `BX:DI`, and the byte count in CX. The separately
+trimmable `rt_memcmp` kernel installs DS/ES, scans unsigned bytes with `REPE CMPSB`, restores both
+segment registers, and returns -1/0/1 in AX; the bridge sign-extends that word to the IR's i32 result.
+
+Focused tests cover equal and unequal records, module globals, stack locals, and both optimization
+modes against the direct emitter. `DIFF10` becomes a complete module body: selection/routing moves
+**227 → 228 of 240**, ownership moves **129 → 130 of 142**, and allocation declines remain zero. The
+differential moves to **262 participating, 253 agreeing, 9 emulator-limited, and 0 disagreeing**.
+
+### Segmented raw-memory copy/fill - exact tails and static storage
+
+Whole-record assignment and static-array `ERASE` now cross the same segmented-pointer ABI through
+LLVM's `memcpy` and `memset` intrinsics. Selection derives DS for module/static objects and SS for
+frame objects. The separately trimmable `rt_memcpy` kernel consumes source `DX:SI`, destination
+`BX:DI`, and byte count CX; `rt_memset` consumes destination `BX:DI`, fill byte AL, and byte count CX.
+Both use byte-string instructions so a seven-byte UDT tail is copied exactly, and both restore every
+segment register they change. A nonconstant LLVM volatility flag remains an honest selection decline.
+
+Focused optimized/unoptimized tests cover odd-sized UDT copies and static-array zero fill. `DIFF23`
+and `DIFF74` become complete module bodies: selection/routing moves **228 → 230 of 240**, ownership
+moves **130 → 132 of 142**, and allocation declines remain zero. The differential moves to
+**266 participating, 256 agreeing, 10 emulator-limited, and 0 disagreeing**; one new execution reaches
+an existing direct-emitter test-CPU opcode limitation rather than being credited as agreement.
+
 ### Wider integers and SIMD as IR operations - not started
 
 The IR has no integer tier above the dialects' own widths and no vector type; `MRegSize` reads
@@ -432,9 +538,9 @@ a call, a SHARED global written by one path and read by the other, and a whole m
 end owns.
 
 `BackendCorpusDifferentialTests` runs the same comparison over the **whole battery**, optimized and
-unoptimized. The current run has 234 compilations in which the back end participates: 228 run both
-ways and agree, 6 cannot be compared because the 8086 executor does not implement opcode 66, and 0
-disagree. No participating compilation throws. The outcomes stay separate deliberately: "not
+unoptimized. The current run has 266 compilations in which the back end participates: 256 run both
+ways and agree, 10 cannot be compared because the 8086 executor lacks one required instruction or DOS
+service, and 0 disagree. No participating compilation throws. The outcomes stay separate deliberately: "not
 compared" is never counted as agreement, because collapsing them is how a coverage number starts
 lying. Any disagreement fails the build.
 
