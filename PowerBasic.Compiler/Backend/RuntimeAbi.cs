@@ -541,6 +541,57 @@ internal static class RuntimeAbi {
     // FREEFILE: no arguments -> AX = the lowest file number not in use
     ["rt_freefile"] = new("rt_freefile", [], _callerSaved, Result: Reg.AX),
 
+    // FIELD, transcribed from the ABI block at the head of DosRuntime.Fields.cs:
+    //   FieldAdd: AX = PB file number, CX = width, BX = address of the string handle cell
+    //   FieldGet / FieldPut: AX = PB file number - scatters / gathers one record through the fields
+    //
+    // The cell address is an ArgKind.Offset, and that is a correctness requirement rather than an
+    // optimization. rt_fldadd KEEPS the address in a table and rt_fld_walk dereferences it later,
+    // through DS, with nothing to say which segment it came from - so only a module-level cell may
+    // ever be registered. An Offset refuses everything else; a Pointer would have handed over a
+    // frame displacement read as though it were a data one.
+    ["rt_field_add"] = new("rt_fldadd",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX), new(ArgKind.Offset, Reg.BX)], _callerSaved),
+    ["rt_field_get"] = new("rt_fldget", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_field_put"] = new("rt_fldput", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+
+    // "FSetPos: AX = PB file number, DX:CX = 1-based position (record number when the file's
+    // reclen > 1, byte position otherwise)". This is the positioning a BARE GET/PUT does, and it is
+    // NOT the one SEEK does - rt_fseekstmt applies PB's statement-level numbering on top. The high
+    // half matters, so the position takes a register pair.
+    ["rt_file_setpos"] = new("rt_fsetpos",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Pair, Reg.CX, Reg.DX)], _callerSaved),
+
+    // "LSET/RSET into a dynamic string: AX = target handle (mutated in place, NOT consumed),
+    // DX = value handle (consumed), BL = 0 left / 1 right justified". The target keeps its handle
+    // and its length, so the IR passes the cell's raw handle rather than a borrowed copy - a copy
+    // would be justified into and thrown away, leaving the variable untouched.
+    ["rt_str_justify"] = new("rt_justify",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX), new(ArgKind.Word, Reg.BX)], _callerSaved),
+
+    // CHAIN / RUN, transcribed from the ABI block at the head of DosRuntime.Chain.cs. The handoff
+    // file's own DOS handle lives in rt_chfh, so none of these carries it:
+    //   ChainOpenWrite/ChainOpenRead: create/open PBCHAIN.$$$ (read: AX = 1 ok, 0 none)
+    //   ChainWrite/ChainRead: DS:DX buffer, CX bytes
+    //   ChainWriteStr: AX = string handle (KEPT); ChainReadStr: -> AX = a fresh handle
+    //   ChainCloseDelete: AL = 1 to unlink after closing
+    //   ChainExec: AX = target path handle (consumed) - EXECs and never returns
+    //
+    // The buffer is an ArgKind.Offset rather than a Pointer because these two routines assume DS
+    // and take no segment: an Offset REFUSES anything but a module-level global, which is exactly
+    // the storage that assumption holds for. A frame slot would have assembled a plausible DS-based
+    // address out of an SS displacement and streamed the wrong bytes without a word of complaint.
+    ["rt_chain_open_write"] = new("rt_chopenw", [], _callerSaved),
+    ["rt_chain_open_read"] = new("rt_chopenr", [], _callerSaved, Result: Reg.AX),
+    ["rt_chain_write"] = new("rt_chwrite",
+      [new(ArgKind.Offset, Reg.DX), new(ArgKind.Word, Reg.CX)], _callerSaved),
+    ["rt_chain_read"] = new("rt_chread",
+      [new(ArgKind.Offset, Reg.DX), new(ArgKind.Word, Reg.CX)], _callerSaved),
+    ["rt_chain_write_str"] = new("rt_chwstr", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_chain_read_str"] = new("rt_chrstr", [], _callerSaved, Result: Reg.AX),
+    ["rt_chain_close"] = new("rt_chclose", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_chain_exec"] = new("rt_chainexec", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+
     ["rt_str_from_i16"] = new("rt_str_i16", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     // PRINT of the remaining numeric widths, transcribed from CodeGenerator.Io.cs's EmitPrintValue -
     // the direct emitter's own dispatch, which is the only thing that says which formatter a PB type

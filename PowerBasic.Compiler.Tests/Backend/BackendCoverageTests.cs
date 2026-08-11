@@ -312,6 +312,8 @@ public sealed class BackendCoverageTests {
     "DIFF15.BAS",
     "DIFF18.BAS",
     "DIFF19.BAS",   // $ERROR STACK ON
+    "DIFF20.BAS",   // FIELD, LSET/RSET and bare GET/PUT (main still declines on inline asm)
+    "DIFF21.BAS",   // CHAIN with a COMMON handoff
     "DIFF22.BAS",
     "DIFF23.BAS",
     "DIFF24.BAS",
@@ -460,6 +462,7 @@ public sealed class BackendCoverageTests {
     "DIFF15.BAS",
     "DIFF18.BAS",
     "DIFF19.BAS",
+    "DIFF21.BAS",   // CHAIN with a COMMON handoff
     "DIFF22.BAS",
     "DIFF23.BAS",
     "DIFF24.BAS",

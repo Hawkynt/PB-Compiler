@@ -66,11 +66,43 @@ public sealed class Cpu8086 {
   public string? FileContent(string name)
     => this._byName.TryGetValue(name, out var file) ? Encoding.ASCII.GetString([.. file.Bytes]) : null;
 
+  /// <summary>The raw bytes of a file the program created, or null if it made no such file.</summary>
+  public byte[]? FileBytes(string name)
+    => this._byName.TryGetValue(name, out var file) ? [.. file.Bytes] : null;
+
   /// <summary>Loads an MZ executable and runs it to termination (or until <paramref name="maxSteps"/> instructions).</summary>
   public static Cpu8086 Run(byte[] exe, int maxSteps = 20_000_000) {
     var cpu = new Cpu8086();
     cpu.Load(exe);
     cpu.Execute(maxSteps);
+    return cpu;
+  }
+
+  /// <summary>
+  /// As <see cref="Run(byte[],int)"/>, but with files already on the (in-memory) disk, and reporting
+  /// rather than throwing what stopped the program - the machine comes back either way.
+  ///
+  /// <para>
+  /// Both halves exist for CHAIN, which cannot be watched any other way here. A CHAIN writes its
+  /// COMMON handoff and then EXECs, and there is no EXEC in this interpreter - so the run always ends
+  /// on that, and what has to be inspected is the file it left behind. The next image absorbs that
+  /// file before its first statement, so it has to be back on the disk before that image starts.
+  /// Loudness is preserved where it matters: <paramref name="fault"/> still names what stopped the
+  /// run, and a caller that ignores it is asserting on a program that did not finish.
+  /// </para>
+  /// </summary>
+  public static Cpu8086 Run(byte[] exe, IReadOnlyDictionary<string, byte[]> disk,
+      out Cpu8086Exception? fault, int maxSteps = 20_000_000) {
+    var cpu = new Cpu8086();
+    foreach (var (name, bytes) in disk)
+      cpu._byName[name] = new MemoryFile { Name = name, Bytes = [.. bytes] };
+    cpu.Load(exe);
+    fault = null;
+    try {
+      cpu.Execute(maxSteps);
+    } catch (Cpu8086Exception e) {
+      fault = e;
+    }
     return cpu;
   }
 

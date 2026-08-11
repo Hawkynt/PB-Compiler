@@ -115,6 +115,18 @@ public sealed class IrLowering {
 
     var shared = new Dictionary<VariableSymbol, IrGlobalVariable>(ReferenceEqualityComparer.Instance);
     var escapes = ModuleVariablesUsedByProcedures(model);
+    // A COMMON variable needs a DATA cell rather than a frame slot, whether or not any procedure
+    // reads it. The CHAIN handoff is copied by the runtime, and rt_chwrite/rt_chread take their
+    // buffer as a bare offset with DS assumed - so a COMMON value in the frame would be streamed
+    // from the wrong segment. Naming it here is also what makes both back ends address the SAME
+    // storage: the codegen resolves g.<name> to the direct emitter's own cell.
+    foreach (var symbol in CommonVariables(model))
+      escapes.Add(symbol);
+    // A FIELD variable needs one for the same reason and a stronger one: rt_fldadd keeps the ADDRESS
+    // of the handle cell in a table and the record walk dereferences it later, long after the
+    // statement that registered it - through DS, and with no segment of its own to check against.
+    foreach (var symbol in FieldTargets(model))
+      escapes.Add(symbol);
     var main = new IrFunction("main", IrType.Void);
     module.AddFunction(main);
     try {
@@ -153,6 +165,45 @@ public sealed class IrLowering {
           used.Add(symbol);
     }
     return used;
+  }
+
+  /// <summary>
+  /// The module's COMMON variables in DECLARATION order, which is the order CHAIN streams them into
+  /// the handoff file and the order the next image reads them back out of it. The two sides agree on
+  /// nothing else - there is no name or type in the file, only bytes - so the order IS the protocol.
+  ///
+  /// <para>
+  /// A COMMON ARRAY is deliberately absent rather than reported here: the direct emitter refuses one
+  /// too, and a caller that needs to say so raises it where the statement is (see
+  /// <see cref="LowerChain"/>). Returning the list unconditionally keeps this callable from
+  /// <see cref="TryLowerModule"/>, which runs outside the lowering's own try block.
+  /// </para>
+  /// </summary>
+  private static List<VariableSymbol> CommonVariables(SemanticModel model) {
+    var result = new List<VariableSymbol>();
+    foreach (var statement in model.MainBody)
+      if (statement is DimStmt { Storage: StorageClass.Common } dim)
+        foreach (var v in dim.Variables) {
+          var key = v.Name + v.Suffix.KeyText();
+          var symbol = model.ModuleVariables.GetValueOrDefault(key)
+            ?? model.ModuleVariables.GetValueOrDefault(key + "()");
+          if (symbol is not null && !result.Contains(symbol))
+            result.Add(symbol);
+        }
+    return result;
+  }
+
+  /// <summary>
+  /// Every module-level string a <c>FIELD</c> statement names as a record window. The whole module
+  /// body is walked rather than its top level, because a FIELD may sit inside an IF or a loop and the
+  /// registration outlives the statement either way.
+  /// </summary>
+  private static IEnumerable<VariableSymbol> FieldTargets(SemanticModel model) {
+    foreach (var node in CodeGen.OptReachability.DescendantNodes(model.MainBody))
+      if (node is FieldStmt field)
+        foreach (var (_, target) in field.Fields)
+          if (model.VariableBindings.TryGetValue(target, out var symbol))
+            yield return symbol;
   }
 
   /// <summary>Builds an IR signature for a procedure, or false if it is outside the supported subset.</summary>
@@ -234,6 +285,12 @@ public sealed class IrLowering {
     // whether statements must publish their boundaries has to be known BEFORE the first one is
     // lowered: RESUME NEXT can name a statement that ran long before the handler was armed
     this._resumeTracking = ContainsResume(body);
+
+    // ...and the other half of CHAIN: whatever the PREVIOUS image left in PBCHAIN.$$$ is absorbed
+    // into the COMMON cells before the first statement runs. The direct emitter writes this at the
+    // head of its module body too, but only on the path where it owns that body - so a routed main
+    // that did not carry it would start every chained-to pass with the values it was handed missing.
+    this.LowerChainCommonLoad();
 
     this.LowerStatements(body);
 
@@ -767,6 +824,15 @@ public sealed class IrLowering {
       case WriteStmt write:
         this.LowerWrite(write);
         break;
+      case ChainStmt chain:
+        this.LowerChain(chain);
+        break;
+      case FieldStmt field:
+        this.LowerField(field);
+        break;
+      case LsetRsetStmt lset:
+        this.LowerLsetRset(lset);
+        break;
       // SETEOF #n truncates the file where it stands. The direct emitter writes it INLINE as a DOS
       // write of zero bytes, so it needs a routine to call, like PEEK and POKE before it.
       case CommandStmt { Keyword: "SETEOF", Arguments: [{ } setEofFile] }:
@@ -1137,8 +1203,18 @@ public sealed class IrLowering {
   private void LowerGetPut(GetPutFileStmt s) {
     if (this._module is null)
       throw new IrLoweringException("GET/PUT requires whole-module lowering");
-    if (s.Variable is null)
-      throw new IrLoweringException("FIELD-based GET/PUT");   // the buffer/FIELD form is not modeled
+    // The bare form names no variable: the record moves through the FIELD windows registered for the
+    // file. Positioning is a separate call rather than an argument, because the runtime routine that
+    // walks the fields takes only the file - the direct emitter seeks first for the same reason.
+    if (s.Variable is null) {
+      var target = this.FileNum(s.FileNumber);
+      if (s.RecordNumber is { } at)
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_file_setpos", IrType.Void, IrType.I32, IrType.I32),
+          target, this.Coerce(this.LowerExpr(at), this._model.TypeOf(at), PbType.Long));
+      this._b.Call(IrType.Void,
+        this.RuntimeFn(s.IsGet ? "rt_field_get" : "rt_field_put", IrType.Void, IrType.I32), target);
+      return;
+    }
     IrValue address;
     int recordSize;
     if (s.Variable is NameExpr && this._model.VariableBindings.TryGetValue(s.Variable, out var sym) && sym.Type is UdtType udt) {
@@ -1540,7 +1616,157 @@ public sealed class IrLowering {
     }
   }
 
+  /// <summary>
+  /// <c>FIELD #n, w AS a$, ...</c> - each name becomes a WINDOW on the file's record buffer rather
+  /// than a variable of its own. The runtime keeps the association in a table: the file, the width,
+  /// and the address of the variable's handle cell, so that a later bare <c>GET #n</c> can scatter a
+  /// record through the names and a bare <c>PUT #n</c> gather one back out of them.
+  ///
+  /// <para>
+  /// Registering a field also ASSIGNS the variable a fresh blank string of the field's width, which
+  /// is what makes it a window at all - LSET justifies within the length that is already there, so a
+  /// zero-length field would take no characters. That happens inside <c>rt_fldadd</c>, which is why
+  /// nothing here writes to the variable.
+  /// </para>
+  /// </summary>
+  private void LowerField(FieldStmt field) {
+    foreach (var (width, target) in field.Fields) {
+      if (this._model.TypeOf(target) is not StringType)
+        throw new IrLoweringException("FIELD target that is not a dynamic string");
+      this._b.Call(IrType.Void,
+        this.RuntimeFn("rt_field_add", IrType.Void, IrType.I32, IrType.I32, IrType.Ptr),
+        this.FileNum(field.FileNumber),
+        this.Coerce(this.LowerExpr(width), this._model.TypeOf(width), PbType.Long),
+        this.StringTargetAddress(target));
+    }
+  }
+
+  /// <summary>
+  /// <c>LSET a$ = v$</c> / <c>RSET a$ = v$</c> into a dynamic string: the value justified IN PLACE
+  /// within the length the target already has, blank-padded to fill it. That is not an assignment -
+  /// the target keeps its handle and its length, which is the whole point for a FIELD variable, whose
+  /// length is the width of its window on the record.
+  ///
+  /// <para>
+  /// The value is lowered before the target's cell is read, matching the direct emitter's order: it
+  /// evaluates the right-hand side and pushes it before touching the place.
+  /// </para>
+  /// </summary>
+  private void LowerLsetRset(LsetRsetStmt ls) {
+    if (this._model.TypeOf(ls.Target) is not StringType)
+      throw new IrLoweringException($"{(ls.IsLeft ? "LSET" : "RSET")} into a {this._model.TypeOf(ls.Target)}");
+    var value = this.LowerStringExpr(ls.Value);
+    var target = this._b.Load(IrType.Ptr, this.StringTargetAddress(ls.Target));
+    this._b.Call(IrType.Void,
+      this.RuntimeFn("rt_str_justify", IrType.Void, IrType.Ptr, IrType.Ptr, IrType.I16),
+      target, value, new IrConstantInt(IrType.I16, ls.IsLeft ? 0 : 1));
+  }
+
+  /// <summary>
+  /// <c>CHAIN file$</c> - the COMMON values into the handoff file, then hand the machine to the named
+  /// image. <c>RUN file$</c> is the same transfer with no handoff, which is what
+  /// <see cref="ChainStmt.IsRun"/> selects.
+  ///
+  /// <para>
+  /// <c>rt_chainexec</c> never comes back: it EXECs the child and leaves with the child's exit code.
+  /// Nothing is emitted to say so, and nothing needs to be - the statements after a CHAIN lower into
+  /// code that is simply never reached, exactly as the direct emitter leaves them.
+  /// </para>
+  /// </summary>
+  private void LowerChain(ChainStmt chain) {
+    if (this._module is null)
+      throw new IrLoweringException("CHAIN requires whole-module lowering");
+    var commons = chain.IsRun ? [] : CommonVariables(this._model);
+    if (commons.Count > 0) {
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_chain_open_write", IrType.Void));
+      foreach (var symbol in commons)
+        this.LowerChainTransfer(symbol, writing: true);
+      // AL = 0: close the file and KEEP it - it is what the next image reads
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_chain_close", IrType.Void, IrType.I16),
+        new IrConstantInt(IrType.I16, 0));
+    }
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_chain_exec", IrType.Void, IrType.Ptr),
+      this.LowerStringExpr(chain.Target));
+  }
+
+  /// <summary>
+  /// The chained-TO side, at the head of the module body: absorb PBCHAIN.$$$ into the COMMON cells
+  /// and delete it. <c>rt_chopenr</c> answers 0 when there is no handoff, which is the ordinary case
+  /// of a program started from the command line - so the whole load sits behind that test.
+  /// </summary>
+  private void LowerChainCommonLoad() {
+    if (!this._isMain || this._module is null)
+      return;
+    var commons = CommonVariables(this._model);
+    if (commons.Count == 0)
+      return;
+
+    var present = this._b.Call(IrType.I16, this.RuntimeFn("rt_chain_open_read", IrType.I16));
+    var load = this.NewBlock("chain.load");
+    var after = this.NewBlock("chain.ready");
+    this._b.CondBr(this._b.Cmp(IrCmpPred.Ne, present, new IrConstantInt(IrType.I16, 0)), load, after);
+
+    this._b.Position(load);
+    foreach (var symbol in commons)
+      this.LowerChainTransfer(symbol, writing: false);
+    // AL = 1: close AND unlink, so a second run without a CHAIN in front of it starts clean
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_chain_close", IrType.Void, IrType.I16),
+      new IrConstantInt(IrType.I16, 1));
+    this._b.Br(after);
+    this._b.Position(after);
+  }
+
+  /// <summary>
+  /// One COMMON variable through the handoff, in whichever direction. A string travels as its length
+  /// word followed by its bytes, which only the runtime can take apart; everything else travels as
+  /// the raw bytes of its cell.
+  ///
+  /// <para>
+  /// The string handle is passed WITHOUT a borrowing copy, unlike every other runtime string
+  /// argument: <c>rt_chwstr</c> is documented to keep what it is given, so duplicating for it would
+  /// leak a handle per CHAIN. On the read side the returned handle is stored straight into the cell
+  /// rather than assigned through the string manager, because this runs before the first statement
+  /// of the image - the cell is still the zero its data segment was created with, so there is no
+  /// previous handle to release.
+  /// </para>
+  /// </summary>
+  private void LowerChainTransfer(VariableSymbol symbol, bool writing) {
+    if (symbol.IsArray)
+      throw new IrLoweringException("COMMON array across CHAIN");
+    var slot = this.SlotFor(symbol);
+    if (symbol.Type is StringType) {
+      if (writing)
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_chain_write_str", IrType.Void, IrType.Ptr),
+          this._b.Load(IrType.Ptr, slot));
+      else
+        this._b.Store(this._b.Call(IrType.Ptr, this.RuntimeFn("rt_chain_read_str", IrType.Ptr)), slot);
+      return;
+    }
+    if (symbol.Type is not ScalarType scalar)
+      throw new IrLoweringException($"COMMON {symbol.Type} across CHAIN");
+    var bytes = new IrConstantInt(IrType.I32, Math.Max(scalar.Size, 1));
+    this._b.Call(IrType.Void,
+      this.RuntimeFn(writing ? "rt_chain_write" : "rt_chain_read", IrType.Void, IrType.Ptr, IrType.I32),
+      slot, bytes);
+  }
+
   private void LowerDim(DimStmt d) {
+    // DIM AT and the memory-model classes stay OUT, and the reason is worth stating because letting
+    // them through costs nothing at the lowering and everything afterwards.
+    //
+    // What HUGE, VIRTUAL/EMS/XMS and ABSOLUTE have in common is that an element of one is not at a
+    // near address. The direct emitter reaches each of them through ES with a segment worked out per
+    // access - base + (byteOffset >> 4) for HUGE, the EMS page frame after mapping the right logical
+    // page for VIRTUAL, and the AT segment itself for ABSOLUTE - and the machine IR has no segment
+    // to put that in: MOperand.Memory is a base, an index, a scale and a displacement, all implicitly
+    // DS or SS. So the DECLARATION is the only part of the statement the IR could carry, and the
+    // declaration is the part that does not matter.
+    //
+    // Measured rather than assumed. With this refusal removed, DIM DYNAMIC ab(0 TO 7) AT &HB800
+    // lowers to an ordinary dynamic-array descriptor, the AT segment never appears in the IR at all,
+    // and the function SELECTS - so ab(0) = n would have been emitted as a store through an
+    // uninitialised near pointer instead of a write to video memory. It assembles, it routes, and it
+    // is wrong, which is the worst of the three outcomes available here.
     if (d.AtAddress is not null || d.Class != ArrayClass.Default)
       throw new IrLoweringException("DIM AT / non-default array class");
     // a DIM is just a declaration here; storage is allocated lazily on first use
