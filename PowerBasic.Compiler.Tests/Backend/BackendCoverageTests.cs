@@ -26,7 +26,7 @@ public sealed class BackendCoverageTests {
 
   private sealed record Census(int Functions, int Selected, int Allocated, List<string> MainBodies,
     Dictionary<string, int> Declines, List<string> SelectionCases, List<string> ProgramsLowered,
-    int ProgramsTotal, Dictionary<string, int> LoweringDeclines,
+    int ProgramsTotal, int ProgramsRejectedByFrontEnd, Dictionary<string, int> LoweringDeclines,
     Dictionary<string, int> ProcedureDeclines, Dictionary<string, int> AllocationDeclines,
     List<string> AllocationCases);
 
@@ -46,12 +46,12 @@ public sealed class BackendCoverageTests {
     // why a function that DID select still does not route - the row that used to read only as a count
     var allocationDeclines = new Dictionary<string, int>(StringComparer.Ordinal);
     var allocationCases = new List<string>();
-    int functions = 0, selected = 0, allocated = 0, total = 0;
+    int functions = 0, selected = 0, allocated = 0, total = 0, rejected = 0;
     var mainBodies = new List<string>();
     var lowered = new List<string>();
     var dir = Path.Combine(_repoRoot, "tests");
     if (!Directory.Exists(dir))
-      return new(0, 0, 0, mainBodies, declines, selectionCases, lowered, 0, loweringDeclines,
+      return new(0, 0, 0, mainBodies, declines, selectionCases, lowered, 0, 0, loweringDeclines,
         procedureDeclines, allocationDeclines, allocationCases);
 
     // the whole corpus: the golden battery plus tests/diff, the 100+ differential programs
@@ -63,9 +63,12 @@ public sealed class BackendCoverageTests {
       try {
         var text = File.ReadAllText(file);
         model = Binder.Bind(Parser.Parse(Lexer.Tokenize(text, name, Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
-        if (model.Errors.Count > 0)
-          continue;                             // a program the front end rejects is not the back end's business
+        if (model.Errors.Count > 0) {
+          ++rejected;                           // a program the front end rejects is not the back end's business
+          continue;
+        }
       } catch (Exception) {
+        ++rejected;
         continue;
       }
 
@@ -126,7 +129,7 @@ public sealed class BackendCoverageTests {
     }
 
     return new(functions, selected, allocated, mainBodies, declines, selectionCases, lowered, total,
-      loweringDeclines, procedureDeclines, allocationDeclines, allocationCases);
+      rejected, loweringDeclines, procedureDeclines, allocationDeclines, allocationCases);
   }
 
   /// <summary>Collapses a decline message to its cause, so names/labels do not fragment the histogram.</summary>
@@ -168,6 +171,10 @@ public sealed class BackendCoverageTests {
 
     var report = new StringBuilder()
       .AppendLine($"programs           : {census.ProgramsLowered.Count}/{census.ProgramsTotal} lowered to IR")
+      // the denominator above is every .BAS on disk, which is not the same as every program the back
+      // end could ever be asked for: one the FRONT end rejects never reaches a lowering to decline.
+      // Reported separately so the gap that is actually the back end's to close is legible.
+      .AppendLine($"                     ({census.ProgramsRejectedByFrontEnd} of the rest are rejected by the front end and never reach the IR)")
       .AppendLine($"functions selected : {census.Selected}/{census.Functions}")
       .AppendLine($"functions routed   : {census.Allocated}/{census.Functions} (selected AND allocated)")
       .AppendLine($"module bodies      : {census.MainBodies.Count}/{census.ProgramsLowered.Count} whole programs the back end can own")
@@ -246,7 +253,7 @@ public sealed class BackendCoverageTests {
     // Then when dynamic array storage routed: an IR pointer gained an ADDRESS SPACE, so a block in the
     // far array heap is a different kind of pointer rather than the same kind pointing somewhere the
     // back end could not name, and the allocation family took its size in bytes.
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(234),
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(257),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
     Assert.That(census.ProcedureDeclines, Is.Empty,
       "a lowered named procedure no longer reaches the x86-16 back end:\n" + report);
@@ -267,7 +274,7 @@ public sealed class BackendCoverageTests {
 
     // selection is not routing: the whole-program codegen also schedules and allocates, and a value
     // live across a CALL has no register unless the spiller can move it to the frame
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(234),
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(256),
       "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // The figure that matters for whole-program ownership: module bodies the back end compiles end
