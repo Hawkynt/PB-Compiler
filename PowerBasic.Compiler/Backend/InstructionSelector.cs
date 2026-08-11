@@ -1525,8 +1525,8 @@ public sealed class InstructionSelector {
     // no body HERE but an ordinary PB signature, supplied by another object file and resolved by the
     // linker; it takes the same stack convention a defined procedure does, so it takes the same path.
     if (callee.IsDeclaration) {
-      if (ErrorHandlerIntrinsics.Contains(callee.Name))
-        return this.SelectErrorHandlerIntrinsic(call, callee);
+      if (NonLocalJumpIntrinsics.Contains(callee.Name))
+        return this.SelectNonLocalJumpIntrinsic(call, callee);
       if (MathSequence(callee.Name, this._cpu386) is { } sequence)
         return this.SelectMathIntrinsic(call, callee, sequence);
       if (RuntimeAbi.For(callee.Name) is { } routine)
@@ -1618,14 +1618,16 @@ public sealed class InstructionSelector {
   /// source) in a register the sequence is about to overwrite.
   /// </summary>
   /// <summary>
-  /// The ON ERROR intrinsics the lowering emits. They are NOT runtime calls and cannot be: arming a
-  /// handler captures the CURRENT frame - the BP and SP that <c>rt_raise</c> will restore before it
-  /// jumps - and a CALL would capture its own. So they expand to the same few MOVs the direct emitter
-  /// writes inline, which is why they live here rather than in the runtime ABI table.
+  /// The non-local-jump intrinsics the lowering emits - PB's two of them, ON ERROR and EXIT FAR. They
+  /// are NOT runtime calls and cannot be: arming either one captures the CURRENT frame - the BP and SP
+  /// that <c>rt_raise</c> or a bare <c>EXIT FAR</c> will restore before it jumps - and a CALL would
+  /// capture its own. So they expand to the same few MOVs the direct emitter writes inline, which is
+  /// why they live here rather than in the runtime ABI table.
   /// </summary>
-  private static readonly HashSet<string> ErrorHandlerIntrinsics = new(StringComparer.Ordinal) {
+  private static readonly HashSet<string> NonLocalJumpIntrinsics = new(StringComparer.Ordinal) {
     "rt_onerr_arm", "rt_onerr_disarm", "rt_onerr_resume_next",
     "rt_err_clear", "rt_resume_mark", "rt_resume_same", "rt_resume_next",
+    "rt_efar_arm", "rt_efar_go",
   };
 
   /// <summary>A word store into a named runtime cell.</summary>
@@ -1643,8 +1645,43 @@ public sealed class InstructionSelector {
     this.StoreCell("rt_err", new MOperand.Immediate(0));
   }
 
-  private bool SelectErrorHandlerIntrinsic(IrCall call, IrFunction callee) {
+  /// <summary>
+  /// A word load of a named runtime cell into a PHYSICAL register - the half of <see cref="StoreCell"/>
+  /// that puts a captured frame back. Declared as clobbering what it writes, which is both true and
+  /// what pins the sequence: the scheduler treats an instruction with explicit clobbers as a barrier,
+  /// so nothing addressed off BP can be moved after the MOV that replaces BP.
+  /// </summary>
+  private void LoadCell(Reg register, string cell) =>
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov,
+      [new MOperand.Register(MReg.Physical_(register)), new MOperand.DataCell(cell, 0, MRegSize.Word)],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+        ReadsMemory: true, WritesMemory: false),
+      condition: null, clobbers: [register]));
+
+  private bool SelectNonLocalJumpIntrinsic(IrCall call, IrFunction callee) {
     switch (callee.Name) {
+      // EXIT FAR AT label: the unwind point, in the same three cells the direct emitter uses - where
+      // to land, and the SP/BP of the frame that has to be back in place when it does
+      case "rt_efar_arm":
+        if (call.Args.FirstOrDefault() is not IrBlockAddress unwind)
+          return this.Decline("EXIT FAR: the unwind target is not a block address");
+        this.StoreCell("rt_efar_tgt", new MOperand.BlockOffset(unwind.Block.Label));
+        this.StoreCell("rt_efar_sp", new MOperand.Register(MReg.Physical_(Reg.SP)));
+        this.StoreCell("rt_efar_bp", new MOperand.Register(MReg.Physical_(Reg.BP)));
+        return true;
+
+      // a bare EXIT FAR: put the recorded frame back and jump into it. Every frame between here and
+      // there is simply abandoned - that is what the statement means, and the restored SP is what
+      // discards them all at once
+      case "rt_efar_go":
+        this.LoadCell(Reg.SP, "rt_efar_sp");
+        this.LoadCell(Reg.BP, "rt_efar_bp");
+        this._current.Instructions.Add(new MInstr(MOpcode.JmpIndirect,
+          [new MOperand.DataCell("rt_efar_tgt", 0, MRegSize.Word)],
+          new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+            ReadsMemory: true, WritesMemory: false)));
+        return true;
+
       case "rt_onerr_arm":
         if (call.Args.FirstOrDefault() is not IrBlockAddress handler)
           return this.Decline("ON ERROR: the handler is not a block address");
@@ -1686,7 +1723,7 @@ public sealed class InstructionSelector {
         return true;
 
       default:
-        return this.Decline($"call: {callee.Name} (unhandled error-handler intrinsic)");
+        return this.Decline($"call: {callee.Name} (unhandled non-local-jump intrinsic)");
     }
   }
 

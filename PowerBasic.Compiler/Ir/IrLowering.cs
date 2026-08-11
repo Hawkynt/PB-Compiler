@@ -898,6 +898,7 @@ public sealed class IrLowering {
       case ForStmt f: this.LowerFor(f); break;
       case DoLoopStmt d: this.LowerDo(d); break;
       case ExitStmt e: this.LowerExit(e); break;
+      case ExitFarStmt ef: this.LowerExitFar(ef); break;
       case IterateStmt it: this.LowerIterate(it); break;
       case CallStmt c: this.LowerCallStatement(c); break;
       case SelectStmt s: this.LowerSelect(s); break;
@@ -1884,6 +1885,39 @@ public sealed class IrLowering {
         this._b.Unreachable();
         return;
     }
+  }
+
+  // ---- EXIT FAR ------------------------------------------------------------
+  //
+  // Not a far RETURN, whatever the keyword suggests: nothing is popped and nothing returns. PB's
+  // EXIT FAR is a non-local jump of exactly the shape ON ERROR uses above. <c>EXIT FAR AT label</c>
+  // records an unwind point - where to land, and the frame to land in - and a bare <c>EXIT FAR</c>
+  // afterwards, at any call depth, restores that frame and jumps there, abandoning every procedure
+  // frame and GOSUB in between. The direct emitter spells it in six instructions over three cells
+  // (CodeGenerator.Vendor.EmitExitFar) and this is those cells, named the same way.
+  //
+  // So it takes the ON ERROR treatment for the same two reasons. Arming has to be INLINE code rather
+  // than a call, because it captures the CURRENT SP and BP and a call would capture its own - hence
+  // an rt_ intrinsic the back end expands in place. And the function that arms is marked
+  // HasErrorHandler, because the block it names is entered by an edge the CFG does not have: no
+  // CFG-based pass may reason about it, and in particular nothing may promote a variable to a
+  // register that the landing would find holding somebody else's value.
+
+  private void LowerExitFar(ExitFarStmt ef) {
+    // the bare form jumps through the armed cell, which the runtime does itself: a call that does
+    // not come back, like RESUME's
+    if (ef.AtLabel is not { } label) {
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_efar_go", IrType.Void));
+      this._b.Unreachable();
+      return;
+    }
+    // AT names a label of the procedure the statement is written in - the only labels this lowering
+    // has blocks for. One naming a label elsewhere declines rather than being given a block address
+    // out of the wrong function.
+    if (!this._labels.TryGetValue(label, out var target))
+      throw new IrLoweringException($"EXIT FAR AT unknown label {label}");
+    this._fn.HasErrorHandler = true;
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_efar_arm", IrType.Void, IrType.Ptr), new IrBlockAddress(target));
   }
 
   private void LowerErrorStatement(ErrorStmt err)

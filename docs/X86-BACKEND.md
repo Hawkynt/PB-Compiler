@@ -1070,6 +1070,8 @@ reaching stdout while it is on.
 
 `DIFF14.BAS` does **not** join the IR path on the back of this. Its decline moves to the next
 construct in the same program, `EXIT FAR`, so the program count is unchanged and only the reason is.
+(It joins the path when `EXIT FAR` lowers, below — and stops one level further on, still short of
+routing.)
 
 ## A BASIC label inside an inline-assembly block
 
@@ -1219,3 +1221,41 @@ that pressure is in the selector's output and no scheduling decision put it ther
 Selection stays at **257 of 259**, routing moves **256 → 257**, module ownership **156 → 157 of 159**,
 and allocation declines reach **zero for the whole corpus**. The execution differential moves to **295
 agreeing, 0 disagreeing**.
+## `EXIT FAR`: PB's other non-local jump
+
+The keyword argues for the wrong reading. `EXIT FAR` is not a far **return** and pops nothing: `EXIT
+FAR AT label` records an unwind point — a target offset plus the `SP` and `BP` of the frame it belongs
+to — and a bare `EXIT FAR` at any call depth afterwards puts that frame back and jumps there,
+abandoning every procedure frame and `GOSUB` in between without unwinding them. The procedure that
+fires it never returns to its caller, and neither does anything between it and the landing point.
+
+So it is `ON ERROR` in a different suit, and it took the same treatment rather than a new one. Arming
+is an **intrinsic the selector expands in place** (`rt_efar_arm`) for the reason arming a handler is:
+it captures the *current* `SP` and `BP`, and a `CALL` would capture its own. The bare form
+(`rt_efar_go`) is a call that never comes back, followed by `unreachable` — two `MOV`s out of the cells
+and a `JMP` through the third, which is exactly what `CodeGenerator.Vendor.EmitExitFar` writes and into
+the same three cells, so the two emitters can be mixed in one image. Both loads carry an explicit
+clobber of what they write, which is what pins the sequence: the scheduler treats a clobber as a
+barrier, so nothing addressed off `BP` can be moved after the `MOV` that replaces `BP`.
+
+The function that **arms** is marked `HasErrorHandler`, taking it out of the optimizer whole. The
+justification is unchanged from `ON ERROR`: the landing block is entered by an edge the CFG does not
+have, so a reachability pass would delete it and `mem2reg` would promote variables the landing then
+reads out of registers holding somebody else's value. The function that *fires* needs no mark — it
+only leaves.
+
+`EXIT FAR AT` can only name a label of its own procedure, and the front end already enforces that (a
+reference elsewhere is `undefined label`), so the lowering's guard for it is defence rather than a
+path. Nothing renders it back to BASIC and nothing emits it in C: the arm is a frame capture, and that
+has no spelling in either.
+
+`DIFF14.BAS` reaches the IR with this — **160/165 programs lowered, 258/261 functions selected, 257
+routed** — and then stops again, twice over, which is worth recording rather than rounding off. Its
+module body declines at `UIToFP u32 -> f80` (`USING$` of a `DWORD`), and its `SUB Noisy(n%)` takes a
+**BYREF** parameter, which `BackendProcs` excludes from whole-program routing regardless; a routed
+`main` may only call routed procedures, so closing either one alone would change nothing. The corpus
+differential is therefore unmoved at **293 agreeing, 0 disagreeing** — the back end still takes nothing
+of that program. What `EXIT FAR` does *through* the back end is verified by `BackendExitFarTests`,
+which runs both emitters over programs shaped to route: an unwind out of a loop, out of three nested
+frames, out of a `FUNCTION` that had already assigned its result (the caller never receives it — an
+unwind is not a return), and the same procedure returning normally on a call that does not fire one.

@@ -253,6 +253,9 @@ public sealed class BackendCoverageTests {
     // Then when dynamic array storage routed: an IR pointer gained an ADDRESS SPACE, so a block in the
     // far array heap is a different kind of pointer rather than the same kind pointing somewhere the
     // back end could not name, and the allocation family took its size in bytes.
+    // Then 257 -> 258 when EXIT FAR lowered, which is one program's whole gain: DIFF14 reached the IR
+    // at all and its SUB selected. Its module body did not - the decline behind EXIT FAR was another
+    // one, and this is what "the count moved by one" looks like when that happens.
     Assert.That(census.Selected, Is.GreaterThanOrEqualTo(258),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
     Assert.That(census.ProcedureDeclines, Is.Empty,
@@ -277,8 +280,7 @@ public sealed class BackendCoverageTests {
     // 256 -> 257, and the gap closes: the last function that selected without routing did so because
     // SCHEDULING made the pressure. The scheduler now refuses a reordering that would keep more values
     // alive at once than the register file holds (MachineScheduler.CostsRegisters).
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(258),
-      "fewer selected functions survive register allocation than they used to:\n" + report);
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(258),      "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // The figure that matters for whole-program ownership: module bodies the back end compiles end
     // to end. It was zero until main became routable at all.
@@ -340,6 +342,11 @@ public sealed class BackendCoverageTests {
     "DIFF112.BAS",
     "DIFF113.BAS",
     "DIFF114.BAS",   // DIM ... AT segment (an ABSOLUTE array over the text screen)
+    // EXIT FAR: the unwind point and the jump through it, as intrinsics the back end expands inline.
+    // The program lowers and its SUB selects; its MODULE BODY does not, so DIFF14 is absent from the
+    // owned bodies below - the report's selection declines say why (UIToFP u32 -> f80, from USING$ of
+    // a DWORD), and its SUB takes a BYREF parameter, which the whole-program routing excludes anyway.
+    "DIFF14.BAS",
     "DIFF15.BAS",
     "DIFF16.BAS",   // FIX (@) and BCD (@@): a scaled int64 cell and an f80 one
     "DIFF18.BAS",
