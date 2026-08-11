@@ -175,6 +175,7 @@ public sealed class IrBasicWriterCensusTests {
     "pb36/DIFF03.BAS",
     "pb36/DIFF04.BAS",
     "pb36/DIFF06.BAS",
+    "pb36/DIFF09.BAS",   // data pointers: @p reads and writes render as the loads and stores they are
     "pb36/DIFF100.BAS",
     "pb36/DIFF101.BAS",
     "pb36/DIFF102.BAS",

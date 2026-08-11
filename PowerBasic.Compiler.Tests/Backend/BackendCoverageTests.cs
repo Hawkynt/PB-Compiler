@@ -231,6 +231,10 @@ public sealed class BackendCoverageTests {
     // Then 227 -> 228 when raw segmented-pointer comparison routed DIFF10's UDT equality.
     // Then 228 -> 230 when segmented memcpy/memset routed DIFF23's whole-record assignment and
     // DIFF74's static ERASE.
+    // Then PB 3.2 data pointers brought DIFF09 and DIFF12 onto the path whole - three more functions,
+    // two more module bodies - because a pointer is an ADDRESS in the IR and never a number: the
+    // forms whose segment is known (VARPTR32 of storage, a pointer copied from another) lower, and
+    // one made out of a DWORD declines rather than being given a segment nobody named.
     Assert.That(census.Selected, Is.GreaterThanOrEqualTo(230),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
     Assert.That(census.ProcedureDeclines, Is.Empty,
@@ -294,7 +298,9 @@ public sealed class BackendCoverageTests {
     "DIFF06.BAS",
     "DIFF07.BAS",   // ASCIIZ * n
     "DIFF08.BAS",
+    "DIFF09.BAS",   // data pointers: VARPTR32, @p, @p[i], @q.Field
     "DIFF10.BAS",
+    "DIFF12.BAS",   // BYVAL pointer override against a BYREF parameter
     "DIFF100.BAS",
     "DIFF101.BAS",
     "DIFF102.BAS",
@@ -442,7 +448,9 @@ public sealed class BackendCoverageTests {
     "DIFF06.BAS",
     "DIFF07.BAS",   // ASCIIZ * n
     "DIFF08.BAS",
+    "DIFF09.BAS",   // data pointers: VARPTR32, @p, @p[i], @q.Field
     "DIFF10.BAS",
+    "DIFF12.BAS",   // BYVAL pointer override against a BYREF parameter
     "DIFF100.BAS",
     "DIFF101.BAS",
     "DIFF102.BAS",
