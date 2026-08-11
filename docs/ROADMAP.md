@@ -561,9 +561,9 @@ Ranked by the census, what stands between that and full coverage:
    metastatements. `ARRAY SORT` / `ARRAY SCAN` came off this list: the parameter block is a set of
    stores to NAMED runtime cells, which the IR addresses directly, and only the array DESCRIPTOR
    needed a routine - it opens with a segment, and a segment register is not a value the IR can name
-   (`rt_arr_desc`, DosRuntime.ArrayDesc). A string array still cannot be ROUTED for a reason that has
-   nothing to do with the statement: reading or writing one of its elements is an element-indexed GEP,
-   which the selector declines wherever it appears.
+   (`rt_arr_desc`, DosRuntime.ArrayDesc). A string array routes too: reading or writing one of its
+   elements is an element-indexed GEP, which the selector declined wherever it appeared until it
+   learned to scale the index by the target's own pointer width (X86-BACKEND.md).
 2. A tail of statements: `ArraySortStmt`, `PUT$`, `DIM AT`, `ERASE` of a static array, `HEX$` with a
    digit count, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
 2. A tail of statements: `ArraySortStmt`, `PUT$`, `IrFarPtr` (a `DIM … AT` element), `ERASE` of a static array, `HEX$` with a

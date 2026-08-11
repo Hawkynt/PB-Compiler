@@ -980,13 +980,73 @@ for a label the emitter had already deleted. `IrCloner` now rewrites a block add
 own block for the same reason.
 
 `DIFF11` joins the IR path with this — **157/164 programs lowered**, still 283 corpus comparisons with
-no disagreement. Its module body declines at *selection*, on a limitation that predates all of this
-and has nothing to do with code pointers: a plain two-`GOSUB` body does not route either, because the
-shared `RETURN` dispatch block is created after the continuations that use its `GEP` and the selector
-walks blocks in list order.
+no disagreement. Its module body declined at *selection* for a while longer, on a limitation that
+predates all of this and has nothing to do with code pointers: a plain two-`GOSUB` body did not route
+either, because the shared `RETURN` dispatch block is created after the continuations that use its
+`GEP` and the selector walked blocks in list order. See the next section for what that cost.
 
 An address printed as a NUMBER usually will not route, and that is nothing to do with `VARPTR`: PB
 computes integral `+`/`-`/`*` in floating point, `VARPTR` answers a `WORD`, and `IntegerRecovery`
 only closes a float-shaped tree whose leaves are `sitofp` — an unsigned leaf (`uitofp u16 -> f80`)
 stops it, and the selector has no form for that conversion. Widening the addresses to `LONG` first
 (`p1 = VARPTR(a%(1))`) keeps the arithmetic on the integer path.
+
+### Three gaps behind one decline: `pointer: IrGep has no register`
+
+One row of the coverage census, `DIFF11.BAS::main`, was three independent gaps stacked on top of each
+other. Each was invisible until the one above it was closed, which is what a census row looks like
+from the outside: it names the *first* thing the selector tripped over, not the only one.
+
+**The index of a typed GEP was never scaled.** Most array elements reach the selector as a
+byte-offset `GEP`: the lowering already multiplied the flattened subscript by the element's size,
+because that size is a property of the source type and the same on every target. An array of dynamic
+`STRING`s cannot be lowered that way — its elements are *handles*, and a handle is two bytes here and
+eight on a 64-bit host — so the lowering emits an element-indexed `GEP` and leaves the multiplication
+to whoever knows the answer. The selector was not one of them and declined outright, which took every
+module body that so much as read `a$(i)` with it. It scales the index itself now: a constant folds
+into the displacement and costs nothing, a runtime index is shifted into a temporary of its own (a
+copy, because the index is an SSA value whose other uses still want it unscaled), and a stride that is
+not a power of two is a multiply. `[base+index]` on this target has no scale factor, so the shift is
+not an optimization — it is the only form there is.
+
+**The selector walked blocks in list order, which is not dominance order.** SSA promises a definition
+*dominates* its uses. It promises nothing about the order the blocks happen to sit in `fn.Blocks`,
+and `GOSUB` is where the two part company: the dispatch block is built at the first `RETURN`, so it is
+listed *after* the continuations its switch reaches. Once CSE commons the address the dispatch pops
+from with the one a continuation pushes to, the definition sits in a block listed after its use, the
+selector reaches the use first, finds no register, and declines a function that was never ill-formed.
+Selection now runs in **reverse postorder** (`IrDominators.ReversePostorder`, with anything
+unreachable left where the function lists it), which places every block after every block that
+dominates it. It is free elsewhere: terminators here are always explicit jumps — nothing falls through
+to the next listed block — and liveness is a control-flow dataflow, not a scan of the list.
+
+**An `unreachable` that is not already closed still needs an instruction.** The default arm of the
+`GOSUB` dispatch is `unreachable`, and an empty block falls into whichever block is laid out next. It
+emits a `RET`: the one instruction that is always available, always terminates, and is never taken.
+
+Then the corpus differential earned its keep. Reordering the blocks changed nothing about the
+instructions and everything about the *pressure*, and `DIFF03` — `Fact&(7)` — began answering
+`330306480` where it had answered `5040`. That number is `5040 * 65537`: the high word of the result
+had become the low word. The epilogue is
+
+```
+MOV AX, lo
+MOV DX, hi
+```
+
+and the allocator had put `lo` in `DX`. **Liveness only tracks virtual registers, so a write to a
+physical one is invisible to it** — nothing stopped a live value from sitting in the very register a
+pinned move was about to overwrite. Under the old layout those two values were spilled and the
+sequence read them back from the frame; under the new one they stayed in registers and the hole
+opened. It was not new, and it was not confined to returns: every runtime-ABI call sets its arguments
+up the same way, and only the allocation it happened to get had been keeping them apart.
+
+`LinearScanAllocator.PinnedByIndex` closes it. Every instruction that writes a *named* physical
+register contributes that register — its whole word, since writing `AL` destroys half of `AX` — at its
+own index, and a value whose live interval spans that index cannot be given it. Read over
+`[start, end)` rather than the call clobbers' `[start, end]`, because a value whose last live point
+*is* the pinned move is the value being moved, and `MOV AX, AX` is not a loss.
+
+Together: **256/259 functions selected and routed, 156/159 module bodies, 159/165 programs lowered,
+293 corpus comparisons with no disagreement.** One census row, three gaps, and one latent miscompile
+that had been waiting for a change in register pressure to surface.

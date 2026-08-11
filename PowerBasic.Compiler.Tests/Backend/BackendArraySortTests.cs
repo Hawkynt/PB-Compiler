@@ -227,12 +227,12 @@ public sealed class BackendArraySortTests {
   }
 
   /// <summary>
-  /// A string array's ELEMENTS are out of the back end's reach for a reason that has nothing to do
-  /// with ARRAY SORT: reading or writing one is an element-indexed GEP, which the selector declines
-  /// whatever statement it appears in. So the sort itself goes in a SHARED-array procedure, which is
-  /// the part that routes, and the module body - which fills the array and prints it, and stays with
-  /// the direct emitter - is what says what the routed code left behind. The two see one array: the
-  /// data-cell bridge resolves the IR's <c>g.a</c> to the direct emitter's own label.
+  /// The sort goes in a SHARED-array procedure and the module body fills the array and prints it, so
+  /// what the routed code left behind is read back by code that did not write it. Both halves route
+  /// now - reading or writing <c>a(i)</c> is an element-indexed GEP, which the selector declined
+  /// whatever statement it appeared in until it learned to scale the index itself - and the two see
+  /// one array either way: the data-cell bridge resolves the IR's <c>g.a</c> to the direct emitter's
+  /// own label.
   /// </summary>
   private const string _stringArray = """
     DIM a(1 TO 8) AS SHARED STRING
@@ -266,7 +266,7 @@ public sealed class BackendArraySortTests {
         ARRAY SORT a(1) FOR 8, DESCEND
       END SUB
       """,
-      ["Ascending", "Descending"],
+      ["main", "Ascending", "Descending"],
       // a byte-wise order, so every capital sorts before every lower-case letter
       "Apple", "apricot", "cherry", "date", "fig", "kiwi", "pear", "plum",
       "plum", "pear", "kiwi", "fig", "date", "cherry", "apricot", "Apple");

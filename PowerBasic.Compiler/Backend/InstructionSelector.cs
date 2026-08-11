@@ -146,7 +146,7 @@ public sealed class InstructionSelector {
           this._vregs[phi] = this.FreshVreg(phi.Type);
 
     var mblocks = new Dictionary<string, MBlock>();
-    foreach (var block in fn.Blocks) {
+    foreach (var block in SelectionOrder(fn)) {
       var mblock = new MBlock(block.Label);
       this._function.Blocks.Add(mblock);
       this._current = mblock;
@@ -174,6 +174,38 @@ public sealed class InstructionSelector {
 
     this._function.VirtualRegisterCount = this._nextVreg;
     return this._function;
+  }
+
+  /// <summary>
+  /// The order the blocks are selected - and therefore laid out - in: REVERSE POSTORDER from the
+  /// entry, with anything unreachable left in the order the function lists it.
+  ///
+  /// <para>
+  /// Selection mints a value's register when it reaches the instruction that defines it, and reads
+  /// that register when it reaches a use. SSA promises the definition DOMINATES the use; it promises
+  /// nothing about the order the blocks happen to sit in the function's list, and the two are not the
+  /// same thing. GOSUB is where they part company: the dispatch block is built at the first RETURN,
+  /// so it is listed after the continuations it switches to - and once CSE commons the address the
+  /// dispatch pops from with the one a continuation pushes to, the definition is in a block listed
+  /// AFTER its use. The selector reached the use first, found no register, and declined the whole
+  /// function with "IrGep has no register" - a true statement about a program that was never
+  /// ill-formed.
+  /// </para>
+  ///
+  /// <para>
+  /// Reverse postorder places every block after every block that dominates it, which is exactly the
+  /// promise SSA makes. It costs nothing elsewhere: block terminators are always explicit jumps here
+  /// (nothing falls through to the next listed block), and liveness is a control-flow dataflow rather
+  /// than a linear scan of the list, so the order is a layout choice and not a correctness one.
+  /// </para>
+  /// </summary>
+  private static IEnumerable<IrBasicBlock> SelectionOrder(IrFunction fn) {
+    if (IrDominators.Build(fn) is not { } dominators)
+      return fn.Blocks;
+    var reachable = new HashSet<IrBasicBlock>(dominators.ReversePostorder, ReferenceEqualityComparer.Instance);
+    return reachable.Count == fn.Blocks.Count
+      ? dominators.ReversePostorder
+      : [.. dominators.ReversePostorder, .. fn.Blocks.Where(b => !reachable.Contains(b))];
   }
 
   /// <summary>
@@ -295,6 +327,13 @@ public sealed class InstructionSelector {
       // really is closed already. An unreachable with no terminator in front of it would fall into
       // whatever follows, so that one still declines.
       case IrUnreachable when this._current.Instructions is [.., { IsTerminator: true }]:
+        return true;
+      // An unreachable block that is NOT already closed - the default arm of the GOSUB dispatch, which
+      // a RETURN with nothing on the shadow stack would take - still needs an instruction that cannot
+      // fall into whichever block is laid out next. Leaving the function is that instruction: it is
+      // the one thing that is always available, always terminates, and is never taken.
+      case IrUnreachable:
+        this._current.Instructions.Add(new MInstr(MOpcode.Ret, [], MInstrEffect.None));
         return true;
       // A branch whose condition is a VALUE rather than a compare it can fold - PB's -1/0 truth value
       // arriving from a materialized comparison, a logical operator, or a 32-bit compare that had to
@@ -905,24 +944,23 @@ public sealed class InstructionSelector {
   }
 
   private bool SelectGep(IrGep gep, MBlock block) {
-    if (gep.ElementType is not null)
-      return this.Decline("gep: element-indexed");   // byte-offset only in this increment
-
     var dest = this.FreshVreg(IrType.Ptr);
     this._vregs[gep] = dest;
     var destOp = new MOperand.Register(dest);
+    if (!this.TryGepDisplacement(gep, out var offset))
+      return false;
     if (gep.BasePtr is IrGlobalVariable global)
-      return this.SelectGlobalGep(gep, global, destOp);
+      return this.SelectGlobalGep(global, offset, destOp);
     if (!this.TryOperand(gep.BasePtr, out var baseOp))
       return false;
     if (baseOp is not MOperand.Register baseReg)
       return this.Decline("gep: non-register base");
     // LEA dest, [base + offset]: a constant offset folds into the displacement, a register offset becomes the index
-    MOperand.Memory mem = gep.ByteOffset is IrConstantInt c
-      ? new(baseReg.Reg, null, 1, (int)c.Value, MRegSize.Word)
-      : this.TryOperand(gep.ByteOffset, out var offset) && offset is MOperand.Register idx
-        ? new(baseReg.Reg, idx.Reg, 1, 0, MRegSize.Word)
-        : null!;
+    var mem = offset switch {
+      MOperand.Immediate disp => new MOperand.Memory(baseReg.Reg, null, 1, (int)disp.Value, MRegSize.Word),
+      MOperand.Register index => new MOperand.Memory(baseReg.Reg, index.Reg, 1, 0, MRegSize.Word),
+      _ => null,
+    };
     if (mem is null)
       return this.Decline("gep: offset is neither a constant nor a register");
     this._current.Instructions.Add(new MInstr(MOpcode.Lea, [destOp, mem],
@@ -931,23 +969,83 @@ public sealed class InstructionSelector {
   }
 
   /// <summary>
+  /// The BYTE displacement a GEP adds to its base, as an immediate when it is known here and a
+  /// register otherwise.
+  ///
+  /// <para>
+  /// A byte-offset GEP already carries bytes and this only reshapes it. An ELEMENT-indexed one
+  /// carries an index that has to be multiplied by the element's stride, and the stride is this
+  /// target's answer rather than the IR's: a <c>ptr</c> has no width in the IR at all (it is a target
+  /// property), which is exactly why the lowering emits a typed GEP for a string array instead of
+  /// pre-multiplying by a size it cannot know. Here it is two bytes, a near offset.
+  /// </para>
+  ///
+  /// <para>
+  /// A constant index is folded into the displacement and costs nothing. A runtime index is scaled
+  /// into a temporary of its own rather than in place, because the index is an SSA value whose other
+  /// uses still want it unscaled - <c>SHL</c> when the stride is a power of two, which every scalar
+  /// and pointer element is, and <c>IMUL</c> for a record stride that is not. The 8086's
+  /// <c>[base+index]</c> has no scale factor, so the shift is not an optimization but the only form
+  /// there is.
+  /// </para>
+  /// </summary>
+  private bool TryGepDisplacement(IrGep gep, out MOperand offset) {
+    offset = null!;
+    var stride = gep.ElementType is { } element ? SizeOf(element) : 1;
+
+    if (gep.ByteOffset is IrConstantInt constant) {
+      var bytes = constant.Value * stride;
+      if (bytes is < int.MinValue or > int.MaxValue)
+        return this.Decline($"gep: constant byte offset {bytes} does not fit the data displacement");
+      offset = new MOperand.Immediate(bytes);
+      return true;
+    }
+
+    if (!this.TryOperand(gep.ByteOffset, out var index))
+      return false;
+    if (index is not MOperand.Register indexReg)
+      return this.Decline("gep: offset is neither a constant nor a register");
+    if (stride == 1) {
+      offset = indexReg;
+      return true;
+    }
+
+    var scaled = new MOperand.Register(this.FreshVreg(IrType.I16));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [scaled, indexReg], MovEffect(scaled, indexReg)));
+    if ((stride & (stride - 1)) == 0) {
+      var shift = new MOperand.Immediate(System.Numerics.BitOperations.TrailingZeroCount(stride));
+      this._current.Instructions.Add(new MInstr(MOpcode.Shl, [scaled, shift],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+          ReadsMemory: false, WritesMemory: false)));
+    } else {
+      // the two-operand IMUL has no immediate form on this target, as SelectBinary already found
+      var multiplier = new MOperand.Register(this.FreshVreg(IrType.I16));
+      var strideOp = new MOperand.Immediate(stride);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [multiplier, strideOp], MovEffect(multiplier, strideOp)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Imul, [scaled, multiplier],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: true,
+          ReadsMemory: false, WritesMemory: false)));
+    }
+    offset = scaled;
+    return true;
+  }
+
+  /// <summary>
   /// Forms an address inside a module/static data object. A label is an immediate address on the
   /// 8086, not an SSA register: materialize its OFFSET first, then add a runtime byte offset when the
   /// index was not constant. The whole-program bridge resolves the name to the direct emitter's cell.
   /// </summary>
-  private bool SelectGlobalGep(IrGep gep, IrGlobalVariable global, MOperand.Register dest) {
+  private bool SelectGlobalGep(IrGlobalVariable global, MOperand offset, MOperand.Register dest) {
     if (!IsAddressableGlobal(global))
       return this.Decline($"gep: global '{global.Name}' has no addressable data cell");
 
-    if (gep.ByteOffset is IrConstantInt constant) {
-      if (constant.Value is < int.MinValue or > int.MaxValue)
-        return this.Decline($"gep: constant byte offset {constant.Value} does not fit the data displacement");
+    if (offset is MOperand.Immediate constant) {
       var address = new MOperand.DataOffset(global.Name, (int)constant.Value);
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, address], MovEffect(dest, address)));
       return true;
     }
 
-    if (!this.TryOperand(gep.ByteOffset, out var offset) || offset is not MOperand.Register index)
+    if (offset is not MOperand.Register index)
       return this.Decline("gep: global offset is not a register");
     var baseAddress = new MOperand.DataOffset(global.Name, 0);
     this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, baseAddress], MovEffect(dest, baseAddress)));
