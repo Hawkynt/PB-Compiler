@@ -35,6 +35,9 @@ public sealed partial class DosRuntime {
   /// <summary>DEF SEG with no argument: the default segment goes back to DS.</summary>
   public Label DefSegReset { get; private set; } = null!;
 
+  /// <summary>$ERROR STACK ON: raises Error 201 when the stack has run out of headroom.</summary>
+  public Label StackProbe { get; private set; } = null!;
+
   /// <summary>REG n: AX = the PB register number -> AX = the word held for it in <c>rt_regs</c>.</summary>
   public Label RegGet { get; private set; } = null!;
 
@@ -114,6 +117,31 @@ public sealed partial class DosRuntime {
       asm.Shl(Reg.BX, 1);
       asm.Mov(Mem.Word(Reg.BX, regs), Reg.DX);
       asm.Pop(Reg.BX);
+      asm.Ret();
+    }
+
+    // $ERROR STACK ON: the headroom probe a procedure entry makes. The direct emitter writes it
+    // inline as CMP SP, [rt_stackmin] - and SP is not a value the IR has any way to name, so the
+    // comparison moves in here.
+    //
+    // The two cannot probe at the same instant and do not try to. This routine's own return address
+    // is already pushed, so it adds the 2 back before comparing; beyond that the frames differ in
+    // shape between the paths and no adjustment would make the moment identical. What is identical
+    // is the CONTRACT - Error 201 when the stack is exhausted - and that is what the check is for.
+    this.StackProbe = asm.MarkLabel("rt_stackprobe");
+    {
+      var roomy = asm.DefineLabel();
+      asm.Push(Reg.AX);
+      asm.Push(Reg.BX);
+      asm.Mov(Reg.BX, Reg.SP);
+      asm.Add(Reg.BX, 6);               // undo this routine's own push AX, push BX and return address
+      asm.Cmp(Reg.BX, Mem.Word(asm.Lbl("rt_stackmin")));
+      asm.Ja(roomy);
+      asm.Mov(Reg.AX, 201);
+      asm.Call(asm.Lbl("rt_raise"));    // by NAME: rt_raise is marked further down this same emitter
+      asm.MarkLabel(roomy);
+      asm.Pop(Reg.BX);
+      asm.Pop(Reg.AX);
       asm.Ret();
     }
 

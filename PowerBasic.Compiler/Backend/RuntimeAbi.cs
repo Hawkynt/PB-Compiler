@@ -424,6 +424,8 @@ internal static class RuntimeAbi {
     ["rt_defseg_reset"] = new("rt_defsegreset", [], _callerSaved),
     // PEEK(offset) -> AX = the byte, zero-extended; POKE offset, value -> AX = offset, DL = the byte.
     // Both go through DEF SEG's segment, the same rt_defseg cell the inline form reads.
+    // $ERROR STACK ON: the procedure-entry headroom probe; raises Error 201 itself
+    ["rt_stack_probe"] = new("rt_stackprobe", [], _callerSaved),
     // INTERRUPT n: AL = the vector, which the routine patches into its own INT instruction. It
     // loads every register from rt_regs, executes the INT, and stores them all back.
     ["rt_interrupt"] = new("rt_interrupt", [new(ArgKind.Word, Reg.AX)], _callerSaved),

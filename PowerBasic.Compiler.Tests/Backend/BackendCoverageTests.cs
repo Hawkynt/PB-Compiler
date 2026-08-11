@@ -310,6 +310,7 @@ public sealed class BackendCoverageTests {
     "DIFF113.BAS",
     "DIFF15.BAS",
     "DIFF18.BAS",
+    "DIFF19.BAS",   // $ERROR STACK ON
     "DIFF22.BAS",
     "DIFF23.BAS",
     "DIFF24.BAS",

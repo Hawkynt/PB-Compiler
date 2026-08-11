@@ -73,6 +73,7 @@ public sealed class IrLowering {
     this._procMap = procMap;
     this._module = module;
     this._folder = new ConstantFolder(model.Equates);
+    this._checkStack = StackCheckArmed(model);
   }
 
   /// <summary>Lowers just the main body into an <c>@main</c> function (no procedures), or null if unsupported.</summary>
@@ -216,6 +217,12 @@ public sealed class IrLowering {
         else
           this._addr[p] = fn.Parameters[i];
       }
+
+    // $ERROR STACK ON: the headroom probe, at the head of the procedure and before anything that
+    // could consume more of the stack. The module body is not probed, matching the direct emitter -
+    // it is the RECURSION a procedure can start that exhausts a stack, and main is entered once.
+    if (proc is not null && this._checkStack)
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_stack_probe", IrType.Void));
 
     // pre-create a block for every label so forward GOTOs have a target
     foreach (var label in CollectLabels(body))
@@ -564,6 +571,34 @@ public sealed class IrLowering {
 
   /// <summary>$ERROR NUMERIC ON: a FOR counter that wraps past its own range raises Error 6.</summary>
   private bool _checkNumeric;
+
+  /// <summary>
+  /// $ERROR STACK ON: every procedure entry probes for headroom and raises Error 201 without it.
+  ///
+  /// <para>
+  /// Read from the DIRECTIVES rather than accumulated as the statements go by, which the three flags
+  /// above cannot be: each procedure is lowered by its own <see cref="IrLowering"/>, so a flag a
+  /// metastatement sets while the module body is being lowered has no way to reach one. The probe
+  /// belongs to the procedure prologue, so it needs an answer that survives that boundary.
+  /// </para>
+  /// </summary>
+  private bool _checkStack;
+
+  /// <summary>
+  /// Whether <c>$ERROR STACK ON</c> (or <c>$ERROR ALL ON</c>) is the last word on the subject.
+  /// The direct emitter's flag is positional - whatever the metastatement handler last set while
+  /// emitting - which for a directive at the top of the file, where they all live, is this.
+  /// </summary>
+  private static bool StackCheckArmed(SemanticModel model) {
+    var armed = false;
+    foreach (var meta in model.MetaStatements)
+      if (meta.Command.Equals("ERROR", StringComparison.OrdinalIgnoreCase)
+          && meta.Arguments is [{ } arm, { } state, ..]
+          && (arm.Text.Equals("STACK", StringComparison.OrdinalIgnoreCase)
+              || arm.Text.Equals("ALL", StringComparison.OrdinalIgnoreCase)))
+        armed = state.Text.Equals("ON", StringComparison.OrdinalIgnoreCase);
+    return armed;
+  }
 
   private DynArr DynDescriptor(VariableSymbol symbol, int rank) {
     if (this._dynArrays.TryGetValue(symbol, out var existing))
@@ -2814,6 +2849,13 @@ public sealed class IrLowering {
       // $ERROR NUMERIC ON: the FOR counter increment is the one place this raises - see LowerFor
       case "ERROR" when arm.Equals("NUMERIC", StringComparison.OrdinalIgnoreCase):
         this._checkNumeric = on;
+        return;
+      // $ERROR STACK ON: each procedure entry probes for headroom - see _checkStack, which is read
+      // from the directives rather than set here, because this handler never runs for a procedure
+      case "ERROR" when arm.Equals("STACK", StringComparison.OrdinalIgnoreCase):
+        return;
+      case "ERROR" when arm.Equals("ALL", StringComparison.OrdinalIgnoreCase):
+        this._checkBounds = this._checkOverflow = this._checkNumeric = on;
         return;
       case "ERROR" when meta.Arguments.Count >= 2 && !on:
         return;          // turning a check OFF is exactly what this lowering already assumes
