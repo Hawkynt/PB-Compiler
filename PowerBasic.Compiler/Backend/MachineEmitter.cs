@@ -329,29 +329,39 @@ public sealed class MachineEmitter {
   /// The pairing was made by the lowering against the semantic model, so nothing here has to know what
   /// a BASIC variable is - only where this back end put it, which is the one thing the direct
   /// emitter's resolver could never answer for a frame it did not lay out.
+  ///
+  /// <para>
+  /// A name may denote a BASIC LABEL rather than a variable, and then the operand is the block's
+  /// offset rather than a cell: <c>!JNZ AddLoop</c> needs a jump target, and a memory reference is
+  /// not one. The distinction is made here rather than in the resolver because it is a property of
+  /// the OPERAND the selector chose, not of the identifier's spelling.
+  /// </para>
   /// </summary>
   private void EmitInlineAsm(Assembler asm, MInstr instr) {
     if (instr.Operands.Count == 0 || instr.Operands[0] is not MOperand.InlineAsmText descriptor)
       throw new System.NotSupportedException("inline asm without its descriptor");
 
-    var bound = new Dictionary<string, Mem>(StringComparer.OrdinalIgnoreCase);
+    var bound = new Dictionary<string, AsmSymbol>(StringComparer.OrdinalIgnoreCase);
     for (var i = 0; i < descriptor.Names.Count && i + 1 < instr.Operands.Count; ++i)
-      bound[descriptor.Names[i]] = this.Mem(instr.Operands[i + 1]);
+      bound[descriptor.Names[i]] = instr.Operands[i + 1] is MOperand.BlockOffset target
+        ? AsmSymbol.OfLabel(this._labels[target.Block])
+        : AsmSymbol.OfMemory(this.Mem(instr.Operands[i + 1]));
 
     if (!new TextAssembler(asm).TryParse(descriptor.Text, new FrameResolver(bound, asm), out var error))
       throw new System.NotSupportedException($"inline asm '{descriptor.Text.Trim()}': {error}");
   }
 
   /// <summary>
-  /// Answers inline-asm identifiers from the cells the selector paired with them - and, for the
-  /// string-manager routines PB publishes an inline-asm ABI for, from the runtime's own labels.
-  /// Those carry no cell because they are code: nothing about them depends on which back end laid
-  /// out the frame, which is why the selector passes them through unpaired.
+  /// Answers inline-asm identifiers from what the selector paired with them - a frame cell for a
+  /// variable, a block label for a jump target - and, for the string-manager routines PB publishes an
+  /// inline-asm ABI for, from the runtime's own labels. Those carry no operand because they are code:
+  /// nothing about them depends on which back end laid out the frame, which is why the selector
+  /// passes them through unpaired.
   /// </summary>
-  private sealed class FrameResolver(Dictionary<string, Mem> bound, Assembler asm) : IAsmSymbolResolver {
+  private sealed class FrameResolver(Dictionary<string, AsmSymbol> bound, Assembler asm) : IAsmSymbolResolver {
     public bool TryResolve(string name, out AsmSymbol symbol) {
-      if (bound.TryGetValue(name, out var cell)) {
-        symbol = AsmSymbol.OfMemory(cell);
+      if (bound.TryGetValue(name, out var known)) {
+        symbol = known;
         return true;
       }
       if (Runtime.InlineAsmExports.Canonical(name) is { } canonical) {

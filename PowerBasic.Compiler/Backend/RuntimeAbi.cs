@@ -768,6 +768,13 @@ internal static class RuntimeAbi {
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Pair, Reg.AX, Reg.DX), new(ArgKind.Word, Reg.CX)],
       _callerSaved, FileSelect: true),
 
+    // USING$: the SAME field emission as PRINT USING, run with the print routines pointed at
+    // rt_capbuf instead of at a file handle. Neither takes an argument; rt_capoff answers the
+    // captured bytes as a string handle in AX, which is what makes USING$ a string expression rather
+    // than a statement (DosRuntime.Capture.cs).
+    ["rt_capture_begin"] = new("rt_capon", [], _callerSaved),
+    ["rt_capture_end"] = new("rt_capoff", [], _callerSaved, Result: Reg.AX),
+
     // LPRINT: point the console routines at the printer for the length of one statement, and back
     // at the screen after it. Neither takes an argument nor touches a register - see
     // DosRuntime.Printer.cs for why they are routines at all rather than the four inline MOVs the

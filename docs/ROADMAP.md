@@ -203,7 +203,21 @@ it did not lay out.
 Collecting the names is done by ASSEMBLING the text against a throwaway target with a recording
 resolver, not by scanning it: the real parser knows which tokens are registers, which are mnemonics
 and which are operands. (The stand-in it answers with has to be MEMORY - a constant makes `MOV n, AX`
-not an instruction, and every write-to-a-variable block reported itself unbindable.)
+not an instruction, and every write-to-a-variable block reported itself unbindable - except for a
+BASIC LABEL, which has to be answered as a label for the same reason: `JNZ [BP+0]` is not an
+instruction either. So the probe asks the lowering which kind each name is rather than guessing from
+the spelling, and reaches the conclusion the real resolver will.)
+
+**A BASIC label binds too**, to the block's own address rather than to storage: `!JNZ AddLoop` is a
+jump the CFG does not draw, and the address it needs is the `IrBlockAddress` an `ON ERROR` handler and
+`CODEPTR32` are already named by. Which makes the keep-alive rule automatic - the block is
+address-taken, so `SimplifyCfg` and `Sccp` may not merge or drop it.
+
+! **Open, and load-bearing:** a register an `!` statement loads does NOT survive an intervening BASIC
+statement on the routed path. The allocator is free to put a temporary in `CX` and has no way to know
+the text cared; the direct emitter leaves `CX` alone by luck rather than by contract. `LOWLEVEL.BAS`
+relies on exactly this and currently declines earlier, so the corpus differential does not see it -
+but removing that decline without fixing this turns it into a disagreement.
 
 **Inline asm routes.** Getting there needed one more thing, and it was not in the asm path at all: a
 single-slot alloca is now addressed AS its slot rather than through the register its `LEA` put the

@@ -275,6 +275,7 @@ public sealed partial class DosRuntime {
     ("getput", this.EmitGetPutProcedures),   // sprite capture/blit; needs rt_pset/rt_point
     ("extras", this.EmitExtraProcedures),
     ("using_dyn", this.EmitUsingDyn),   // needs UseFmt (misc) and the string kernel
+    ("capture", this.EmitCaptureProcedures),   // needs StrMem and the rt_capmode/rt_capbuf cells ("strings")
     ("quad", this.EmitQuadProcedures),
     ("ems", this.EmitEmsProcedures),
     ("fields", this.EmitFieldProcedures),

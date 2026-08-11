@@ -1047,3 +1047,58 @@ bytes into a segment made out of a frame offset.
 Every instruction was defensible on its own, which is the signature of a reservation with no owner.
 The fix is in `Spiller`: anything it inserts claims the staging pending where it lands
 (`WithPendingStaging`), for rematerialized addresses, argument reloads and split reloads alike.
+
+## `USING$`: PRINT USING captured into a string
+
+The runtime's print routines all consult one cell, `rt_capmode`: zero writes to the current output
+handle, anything else appends to `rt_capbuf` and counts in `rt_caplen`. That is what already makes
+`STR$` the printed form of a number rather than a second formatter, and it is the whole of `USING$` —
+the same field emission `PRINT USING` performs, run with the output pointed at a buffer.
+
+So the lowering is composition: `rt_capon`, the shared `EmitUsingBody`, `rt_capoff`, which hands the
+captured bytes back as a string handle. The two halves are new **routines** (`DosRuntime.Capture.cs`)
+for the reason `rt_lpon`/`rt_lpoff` are: the direct emitter writes the four instructions inline, and
+a store of one runtime cell's *offset* into another is not something the IR can say. Neither emitter's
+output moves; there is now somewhere to `CALL`. They are declined by the C back end alongside
+`rt_using_field`, because a stub cannot have the property that matters — that `rt_print_*` stop
+reaching stdout while it is on.
+
+`DIFF14.BAS` does **not** join the IR path on the back of this. Its decline moves to the next
+construct in the same program, `EXIT FAR`, so the program count is unchanged and only the reason is.
+
+## A BASIC label inside an inline-assembly block
+
+`!JNZ AddLoop` names a **label**, not a variable, and the binding pass bound variables. Everything the
+answer needs was already here: a label is an `IrBasicBlock`, its address is the `IrBlockAddress` that
+`ON ERROR` and `CODEPTR32` are named by, and the machine operand for it is the `MOperand.BlockOffset`
+those two already select. So the lowering binds the name to a block address, the selector answers with
+the block's offset instead of a frame cell, and `MachineEmitter` hands the assembler an
+`AsmSymbol.OfLabel` rather than an `AsmSymbol.OfMemory`. The keep-alive rule comes free: an operand
+that is a block address makes the block address-taken, which is exactly what `SimplifyCfg` and `Sccp`
+already consult before merging or dropping one.
+
+The part that was not free is the **probe**. Names are collected by assembling the text against a
+throwaway target with a recording resolver, and that resolver answered every question with a memory
+stand-in — which is right for `MOV n, AX` and fatal for `JNZ AddLoop`, because `JNZ [BP+0]` is not an
+instruction. The parse failed, and a failed parse is reported as "a name in it is not a variable this
+pass could bind" — so the block declined for a name it could in fact bind. The probe now asks the
+lowering which kind each name is, and reaches the same conclusion the real resolver will.
+
+`LOWLEVEL.BAS` does **not** route on the back of this, and the reason is worth writing down because it
+is a defect rather than a missing feature. Its module body now declines one construct later, at
+`BIT(s, 2)`: a function with inline asm is skipped by the optimizer whole, so the shift count is still
+an unfolded `IrCast` of a constant where `SelectWideShift` wants a constant. Behind *that* sits a real
+disagreement, pinned by `InlineAsm_GivenARegisterHeldAcrossABasicStatement_ThenTheTwoPathsDisagree`:
+
+```basic
+! MOV CX, 5
+n = n + 1        ' the allocator puts n+1 in CX
+! MOV r, CX      ' ...and the asm's 5 is gone
+```
+
+The direct emitter computes through `AX` and so leaves `CX` alone by luck rather than by contract; the
+back end's allocator has no way to know the text cared about a register, and `MInstrEffect`'s clobber
+list says only that nothing of *ours* survives the block — not that something of *theirs* must. No
+label is involved, and a function shaped like this routes today. LOWLEVEL is shaped like this, so
+whoever removes its `LShr` decline turns a decline into a corpus **disagreement** unless this is fixed
+first.
