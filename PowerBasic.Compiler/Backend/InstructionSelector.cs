@@ -53,21 +53,32 @@ public sealed class InstructionSelector {
   private int _splitCount;
   private string? _decline;
 
+  /// <summary>
+  /// True when the declared target is an 80386 or later, which is what decides whether a transcendental
+  /// is one instruction or a call - see <see cref="MathSequence"/>. It mirrors the direct emitter's
+  /// <c>_rt.Cpu386</c> and must be given the same answer, because the two paths emit into the SAME
+  /// image: a routed function computing SIN one way while a directly-emitted one computes it the other
+  /// is one program with two sines in it.
+  /// </summary>
+  private readonly bool _cpu386;
+
+  private InstructionSelector(bool cpu386) => this._cpu386 = cpu386;
+
   /// <summary>Selects a function into machine IR, or null if it contains a construct this stage cannot model.</summary>
-  public static MFunction? TrySelect(IrFunction fn) => TrySelect(fn, out _);
+  public static MFunction? TrySelect(IrFunction fn, bool cpu386 = false) => TrySelect(fn, out _, cpu386);
 
   /// <summary>
   /// Selects a function into machine IR, reporting <paramref name="declineReason"/> - the construct that
   /// stopped it - when the result is null. The reason is what the coverage census reads to rank which
   /// widening buys the most eligible functions, so it names the IR construct, not the failing routine.
   /// </summary>
-  public static MFunction? TrySelect(IrFunction fn, out string? declineReason) {
+  public static MFunction? TrySelect(IrFunction fn, out string? declineReason, bool cpu386 = false) {
     declineReason = null;
     if (fn.IsDeclaration || fn.Entry is null) {
       declineReason = "declaration";
       return null;
     }
-    var selector = new InstructionSelector();
+    var selector = new InstructionSelector(cpu386);
     var selected = selector.Run(fn);
     if (selected is null)
       declineReason = selector._decline ?? "unknown";
@@ -281,11 +292,136 @@ public sealed class InstructionSelector {
         this._current.Successors.Add(valued.IfFalse.Label);
         return true;
       }
+      case IrSwitch sw:
+        return this.SelectSwitch(sw);
       default:
         return this.Decline($"terminator: {terminator?.GetType().Name ?? "none"}"
           + (terminator is IrCondBr ? " (condition is not a folded compare)" : ""));
     }
   }
+
+  /// <summary>
+  /// An integer switch as an 8086 compare chain. Byte/word conditions compare each case directly.
+  /// A dword condition first branches by high word, then compares the low word inside that group;
+  /// this keeps equality bit-exact without pretending the 16-bit target has a 32-bit CMP.
+  /// </summary>
+  private bool SelectSwitch(IrSwitch sw) {
+    if (!sw.Condition.Type.IsInteger || sw.Condition.Type.Bits is not (8 or 16 or 32))
+      return this.Decline($"switch: condition {sw.Condition.Type} is not a supported integer width");
+    foreach (var (value, _) in sw.Cases)
+      if (!sw.IsCaseValueRepresentable(value))
+        return this.Decline($"switch: case {value} does not fit {sw.Condition.Type}");
+
+    if (sw.Condition is IrConstantInt constant) {
+      var target = sw.TargetFor(constant.Value);
+      this.EmitJump(target.Label);
+      AddSuccessor(this._current, target.Label);
+      return true;
+    }
+
+    return sw.Condition.Type.Bits == 32
+      ? this.SelectWideSwitch(sw)
+      : this.SelectNarrowSwitch(sw);
+  }
+
+  private bool SelectNarrowSwitch(IrSwitch sw) {
+    if (!this.TryOperand(sw.Condition, out var condition) || condition is not MOperand.Register conditionRegister)
+      return this.Decline("switch: condition is not in a register");
+
+    var dispatch = this._current;
+    this.EmitEqualityChain(dispatch, conditionRegister,
+      sw.Cases.Select(item => ((MOperand)SwitchImmediate(sw.Condition.Type, item.Value), item.Target.Label)).ToList(),
+      sw.DefaultTarget.Label, "switch");
+    this._current = dispatch;                    // phi copies belong before the IR predecessor's dispatch
+    return true;
+  }
+
+  /// <summary>
+  /// Groups dword cases by their high word. The dispatch block chooses a group; that group's block
+  /// compares low words and otherwise reaches the default. Phi copies for every IR successor remain
+  /// in the dispatch block, before its first branch, which preserves the selector's existing
+  /// out-of-SSA model across the introduced machine-only blocks.
+  /// </summary>
+  private bool SelectWideSwitch(IrSwitch sw) {
+    if (!this.TryOperandPair(sw.Condition, out var low, out var high)
+        || low is not MOperand.Register lowRegister || high is not MOperand.Register highRegister)
+      return this.Decline("switch: dword condition has no register pair");
+
+    var dispatch = this._current;
+    var groups = sw.Cases
+      .Select(item => {
+        var bits = unchecked((uint)item.Value);
+        return (High: (ushort)(bits >> 16), Low: (ushort)bits, item.Target);
+      })
+      .GroupBy(item => item.High)
+      .ToList();
+    var checks = new List<(ushort High, MBlock Block, IReadOnlyList<(MOperand Value, string Target)> Cases)>();
+
+    foreach (var group in groups) {
+      var check = new MBlock($"{dispatch.Label}.switch.low{this._splitCount++}");
+      this._function.Blocks.Add(check);
+      checks.Add((group.Key, check, group
+        .Select(item => ((MOperand)WordImmediate(item.Low), item.Target.Label))
+        .ToList()));
+    }
+    this.EmitEqualityChain(dispatch, highRegister,
+      checks.Select(item => ((MOperand)WordImmediate(item.High), item.Block.Label)).ToList(),
+      sw.DefaultTarget.Label, "switch.high");
+
+    foreach (var (_, check, cases) in checks)
+      this.EmitEqualityChain(check, lowRegister, cases, sw.DefaultTarget.Label, "switch.low");
+    this._current = dispatch;                    // phi copies belong before the IR predecessor's dispatch
+    return true;
+  }
+
+  /// <summary>
+  /// Emits one equality decision per machine block. Keeping each <c>Jcc/Jmp</c> pair trailing is a
+  /// correctness requirement: the scheduler treats only trailing terminators as pinned, so a flat
+  /// chain could move work or phi copies past an earlier taken branch.
+  /// </summary>
+  private void EmitEqualityChain(MBlock first, MOperand.Register condition,
+      IReadOnlyList<(MOperand Value, string Target)> cases, string defaultTarget, string labelStem) {
+    var blocks = new List<MBlock> { first };
+    for (var i = 1; i < cases.Count; ++i) {
+      var next = new MBlock($"{first.Label}.{labelStem}{this._splitCount++}");
+      this._function.Blocks.Add(next);
+      blocks.Add(next);
+    }
+
+    for (var i = 0; i < cases.Count; ++i) {
+      this._current = blocks[i];
+      var (value, target) = cases[i];
+      this.EmitCompare(condition, value);
+      this.EmitBranch(Condition.Equal, target);
+      AddSuccessor(this._current, target);
+      var next = i + 1 < blocks.Count ? blocks[i + 1].Label : defaultTarget;
+      this.EmitJump(next);
+      AddSuccessor(this._current, next);
+    }
+
+    if (cases.Count > 0)
+      return;
+    this._current = first;
+    this.EmitJump(defaultTarget);
+    AddSuccessor(first, defaultTarget);
+  }
+
+  private void EmitJump(string target)
+    => this._current.Instructions.Add(new MInstr(MOpcode.Jmp,
+      [new MOperand.LabelRef(target)], MInstrEffect.None));
+
+  private static void AddSuccessor(MBlock block, string target) {
+    if (!block.Successors.Contains(target, System.StringComparer.Ordinal))
+      block.Successors.Add(target);
+  }
+
+  private static MOperand.Immediate WordImmediate(ushort value)
+    => new(unchecked((short)value));
+
+  private static MOperand.Immediate SwitchImmediate(IrType type, long value)
+    => type.Bits == 8
+      ? new(unchecked((sbyte)value))
+      : WordImmediate(unchecked((ushort)value));
 
   /// <summary>The read-operand indices for a two-operand CMP: operand 0 (the left) and operand 1 when it is a register.</summary>
   private static int[] RegReadIndices(MOperand left, MOperand right)
@@ -649,8 +785,7 @@ public sealed class InstructionSelector {
   private MOperand? AsmCell(IrValue pointer) => pointer switch {
     IrAlloca alloca when this._slots.TryGetValue(alloca, out var slot)
       => new MOperand.StackSlot(slot, MRegSize.Word),
-    IrGlobalVariable g when g.Name.StartsWith("g.", System.StringComparison.Ordinal)
-                            || g.Name.StartsWith("rt_", System.StringComparison.Ordinal)
+    IrGlobalVariable g when IsAddressableGlobal(g)
       => new MOperand.DataCell(g.Name, 0, MRegSize.Word),
     _ => this.DeclineCell(pointer),
   };
@@ -692,6 +827,8 @@ public sealed class InstructionSelector {
     var dest = this.FreshVreg(IrType.Ptr);
     this._vregs[gep] = dest;
     var destOp = new MOperand.Register(dest);
+    if (gep.BasePtr is IrGlobalVariable global)
+      return this.SelectGlobalGep(gep, global, destOp);
     if (!this.TryOperand(gep.BasePtr, out var baseOp))
       return false;
     if (baseOp is not MOperand.Register baseReg)
@@ -706,6 +843,33 @@ public sealed class InstructionSelector {
       return this.Decline("gep: offset is neither a constant nor a register");
     this._current.Instructions.Add(new MInstr(MOpcode.Lea, [destOp, mem],
       new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: false)));
+    return true;
+  }
+
+  /// <summary>
+  /// Forms an address inside a module/static data object. A label is an immediate address on the
+  /// 8086, not an SSA register: materialize its OFFSET first, then add a runtime byte offset when the
+  /// index was not constant. The whole-program bridge resolves the name to the direct emitter's cell.
+  /// </summary>
+  private bool SelectGlobalGep(IrGep gep, IrGlobalVariable global, MOperand.Register dest) {
+    if (!IsAddressableGlobal(global))
+      return this.Decline($"gep: global '{global.Name}' has no addressable data cell");
+
+    if (gep.ByteOffset is IrConstantInt constant) {
+      if (constant.Value is < int.MinValue or > int.MaxValue)
+        return this.Decline($"gep: constant byte offset {constant.Value} does not fit the data displacement");
+      var address = new MOperand.DataOffset(global.Name, (int)constant.Value);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, address], MovEffect(dest, address)));
+      return true;
+    }
+
+    if (!this.TryOperand(gep.ByteOffset, out var offset) || offset is not MOperand.Register index)
+      return this.Decline("gep: global offset is not a register");
+    var baseAddress = new MOperand.DataOffset(global.Name, 0);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, baseAddress], MovEffect(dest, baseAddress)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Add, [dest, index],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false)));
     return true;
   }
 
@@ -1037,7 +1201,7 @@ public sealed class InstructionSelector {
     if (callee.IsDeclaration)
       return ErrorHandlerIntrinsics.Contains(callee.Name)
         ? this.SelectErrorHandlerIntrinsic(call, callee)
-        : MathSequence(callee.Name) is { } sequence
+        : MathSequence(callee.Name, this._cpu386) is { } sequence
           ? this.SelectMathIntrinsic(call, callee, sequence)
           : RuntimeAbi.For(callee.Name) is { } routine
             ? this.SelectRuntimeCall(call, callee, routine)
@@ -1200,7 +1364,8 @@ public sealed class InstructionSelector {
 
   private bool SelectRuntimeCall(IrCall call, IrFunction callee, RuntimeAbi.Routine routine) {
     // an x87 answer arrives on the stack rather than in a named register, so it needs no Result
-    if (!call.Type.IsVoid && routine.Result is null && routine.Answer != RuntimeAbi.ResultKind.St0)
+    if (!call.Type.IsVoid && routine.Result is null
+        && routine.Answer is RuntimeAbi.ResultKind.Word or RuntimeAbi.ResultKind.WidenedWord)
       return this.Decline($"call: {callee.Name} returns a value the runtime ABI table does not place");
     if (!call.Type.IsVoid && !this.ResultShapeAgrees(call, callee, routine))
       return false;
@@ -1240,6 +1405,22 @@ public sealed class InstructionSelector {
             condition: null, clobbers: [slot.Register]));
           break;
         }
+        case RuntimeAbi.ArgKind.Pointer: {
+          if (!this.TryRuntimePointer(arg, callee.Name, out var source, out var segment))
+            return false;
+          var dest = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));
+          var segmentDest = new MOperand.Register(MReg.Physical_(slot.High, MRegSize.Word));
+          var segmentSource = new MOperand.Register(MReg.Physical_(segment, MRegSize.Word));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, source], MovEffect(dest, source),
+            condition: null, clobbers: [slot.Register, slot.High]));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [segmentDest, segmentSource],
+            MovEffect(segmentDest, segmentSource), condition: null, clobbers: [slot.Register, slot.High]));
+          break;
+        }
+        case RuntimeAbi.ArgKind.VolatileFlag:
+          if (arg is not IrConstantInt { Type: { IsInteger: true, Bits: 1 }, Value: 0 or 1 })
+            return this.Decline($"call: {callee.Name} has a non-constant LLVM volatility flag");
+          break;
         case RuntimeAbi.ArgKind.Word: {
           if (!this.TryWordOperand(arg, $"{callee.Name} takes a 32-bit value in a word register", out var source))
             return false;
@@ -1343,12 +1524,50 @@ public sealed class InstructionSelector {
     return this.PlaceRuntimeResult(call, routine);
   }
 
+  /// <summary>Materializes a near pointer and identifies the segment containing its base object.</summary>
+  private bool TryRuntimePointer(IrValue value, string callee, out MOperand offset, out Reg segment) {
+    offset = null!;
+    segment = default;
+    if (PointerSegmentOf(value) is not { } sourceSegment)
+      return this.Decline($"call: {callee} cannot derive the segment of pointer {value}");
+    segment = sourceSegment;
+    if (value is IrGlobalVariable global) {
+      offset = new MOperand.DataOffset(global.Name, 0);
+      return true;
+    }
+    if (!this.TryOperand(value, out offset) || offset is not MOperand.Register)
+      return this.Decline($"call: {callee} pointer is not an address register");
+    return true;
+  }
+
+  private static Reg? PointerSegmentOf(IrValue value) => value switch {
+    IrGlobalVariable => Reg.DS,
+    IrAlloca => Reg.SS,
+    IrGep gep => PointerSegmentOf(gep.BasePtr),
+    IrCast cast when cast.Type.IsPointer => PointerSegmentOf(cast.Value),
+    _ => null,
+  };
+
   /// <summary>Whether the call's IR result type is one this table entry knows how to hand back.</summary>
   private bool ResultShapeAgrees(IrCall call, IrFunction callee, RuntimeAbi.Routine routine) => routine.Answer switch {
     RuntimeAbi.ResultKind.WidenedWord when !IsWide(call.Type)
       => this.Decline($"call: {callee.Name} widens a word result, but the call is typed {call.Type}"),
     RuntimeAbi.ResultKind.St0 when !call.Type.IsIeeeFloat
       => this.Decline($"call: {callee.Name} answers on the x87 stack, but the call is typed {call.Type}"),
+    RuntimeAbi.ResultKind.Pair when !call.Type.IsInteger || !IsWide(call.Type)
+      => this.Decline($"call: {callee.Name} answers in DX:AX, but the call is typed {call.Type}"),
+    RuntimeAbi.ResultKind.ScratchI16 when !call.Type.IsInteger || IsWide(call.Type)
+        || RegSize(call.Type) != MRegSize.Word
+      => this.Decline($"call: {callee.Name} answers with a scratch word, but the call is typed {call.Type}"),
+    RuntimeAbi.ResultKind.ScratchU8ToWord when !call.Type.IsInteger || IsWide(call.Type)
+        || RegSize(call.Type) != MRegSize.Word
+      => this.Decline($"call: {callee.Name} zero-extends a scratch byte, but the call is typed {call.Type}"),
+    RuntimeAbi.ResultKind.ScratchI32 when !call.Type.IsInteger || !IsWide(call.Type)
+      => this.Decline($"call: {callee.Name} answers with a scratch dword, but the call is typed {call.Type}"),
+    RuntimeAbi.ResultKind.ScratchF32 when !call.Type.IsIeeeFloat || call.Type.Bits != 32
+      => this.Decline($"call: {callee.Name} answers with scratch binary32, but the call is typed {call.Type}"),
+    RuntimeAbi.ResultKind.ScratchF64 when !call.Type.IsIeeeFloat || call.Type.Bits is not (64 or 80)
+      => this.Decline($"call: {callee.Name} answers with scratch binary64, but the call is typed {call.Type}"),
     RuntimeAbi.ResultKind.Word when IsWide(call.Type) || RegSize(call.Type) != MRegSize.Word
       => this.Decline($"call: {callee.Name} returns {call.Type} (word results only)"),
     _ => true,
@@ -1361,6 +1580,54 @@ public sealed class InstructionSelector {
   private bool PlaceRuntimeResult(IrCall call, RuntimeAbi.Routine routine) {
     // the x87 answer is already on the stack; popping it into the call's cell is the whole transfer
     if (routine.Answer == RuntimeAbi.ResultKind.St0) {
+      this.EmitX87(MOpcode.Fstp, this.FloatCell(call), reads: false);
+      return true;
+    }
+
+    if (routine.Answer == RuntimeAbi.ResultKind.Pair) {
+      if (routine.Result != Reg.AX)
+        return this.Decline($"call: {routine.Label} returns a pair outside the supported DX:AX convention");
+      var (low, high) = this.FreshPair(call);
+      var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+      var dx = new MOperand.Register(MReg.Physical_(Reg.DX, MRegSize.Word));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [low, ax], MovEffect(low, ax)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [high, dx], MovEffect(high, dx)));
+      return true;
+    }
+
+    if (routine.Answer == RuntimeAbi.ResultKind.ScratchI16) {
+      var dest = this.FreshVreg(call.Type);
+      this._vregs[call] = dest;
+      var destOp = new MOperand.Register(dest);
+      var source = new MOperand.DataCell("rt_scratch", 0, MRegSize.Word);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, source], MovEffect(destOp, source)));
+      return true;
+    }
+
+    if (routine.Answer == RuntimeAbi.ResultKind.ScratchU8ToWord) {
+      var dest = this.FreshVreg(call.Type);
+      this._vregs[call] = dest;
+      var word = new MOperand.Register(dest);
+      var lowByte = new MOperand.Register(dest with { Size = MRegSize.Byte });
+      var zero = new MOperand.Immediate(0);
+      var source = new MOperand.DataCell("rt_scratch", 0, MRegSize.Byte);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [word, zero], MovEffect(word, zero)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lowByte, source], MovEffect(lowByte, source)));
+      return true;
+    }
+
+    if (routine.Answer == RuntimeAbi.ResultKind.ScratchI32) {
+      var (low, high) = this.FreshPair(call);
+      var lowSource = new MOperand.DataCell("rt_scratch", 0, MRegSize.Word);
+      var highSource = new MOperand.DataCell("rt_scratch", 2, MRegSize.Word);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [low, lowSource], MovEffect(low, lowSource)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [high, highSource], MovEffect(high, highSource)));
+      return true;
+    }
+
+    if (routine.Answer is RuntimeAbi.ResultKind.ScratchF32 or RuntimeAbi.ResultKind.ScratchF64) {
+      var size = routine.Answer == RuntimeAbi.ResultKind.ScratchF32 ? MRegSize.Dword : MRegSize.Qword;
+      this.EmitX87(MOpcode.Fld, new MOperand.DataCell("rt_scratch", 0, size), reads: true);
       this.EmitX87(MOpcode.Fstp, this.FloatCell(call), reads: false);
       return true;
     }
@@ -1401,17 +1668,33 @@ public sealed class InstructionSelector {
   /// constant multiplied in before <c>rt_pow2</c> - which is the one entry here that IS a call, because
   /// 2^x is a routine and not an instruction.
   /// </summary>
-  private static (MOpcode[] Before, string? Call)? MathSequence(string name) {
+  /// <summary>
+  /// How a transcendental is computed, which depends on the declared target.
+  ///
+  /// <para>
+  /// FSIN, FCOS and the 387 reading of FPTAN are 80387 instructions. An image whose declared target is
+  /// an 8086 must not contain them, and genuine PBC 3.5 does not emit them at all - it compiles SIN,
+  /// COS and TAN through one shared FPTAN routine. Below a 386 this calls that routine; on a 386 the
+  /// single instruction is kept, where the processor has it and it is both smaller and faster.
+  /// </para>
+  /// <para>
+  /// This used to be hardcoded to the 8087 form on the grounds that the back end declared no CPU
+  /// floor, which was true and was still wrong: the direct emitter has always chosen by target, and
+  /// the two paths emit into the SAME image. Under <c>$CPU 386</c> a routed function called rt_sin
+  /// while a directly-emitted one executed FSIN - one program computing sine two ways, and the two do
+  /// not have to agree.
+  /// </para>
+  /// </summary>
+  private static (MOpcode[] Before, string? Call)? MathSequence(string name, bool cpu386) {
     var bare = name.StartsWith("llvm.", StringComparison.Ordinal) ? name[5..] : name;
     var cut = bare.IndexOf(".f", StringComparison.Ordinal);
     return (cut > 0 ? bare[..cut] : bare) switch {
       "sqrt" => ([MOpcode.Fsqrt], null),
-      // FSIN and FCOS are 387 instructions, and this back end declares no CPU floor - so both go
-      // through the 8087 routine unconditionally. That also keeps it answering bit-for-bit what the
-      // direct path answers, which is what the two-path agreement tests measure.
-      "sin" => ([], "rt_sin"),
-      "cos" => ([], "rt_cos"),
-      "tan" => ([], "rt_tan"),                                    // an 8087's FPTAN leaves a ratio, not a tangent
+      "sin" => cpu386 ? ([MOpcode.Fsin], null) : ([], "rt_sin"),
+      "cos" => cpu386 ? ([MOpcode.Fcos], null) : ([], "rt_cos"),
+      // FPTAN; FSTP ST(0) is the 387 reading - discard what was pushed, keep the tangent under it.
+      // An 8087's FPTAN leaves a ratio, not a tangent, and is only defined on [0, pi/4] besides.
+      "tan" => cpu386 ? ([MOpcode.Fptan, MOpcode.FstpSt0], null) : ([], "rt_tan"),
       "atan" => ([MOpcode.Fld1, MOpcode.Fpatan], null),
       "log" => ([MOpcode.Fldln2, MOpcode.Fxch, MOpcode.Fyl2x], null),
       "log2" => ([MOpcode.Fld1, MOpcode.Fxch, MOpcode.Fyl2x], null),
@@ -1903,12 +2186,9 @@ public sealed class InstructionSelector {
     if (this._vregs.TryGetValue(pointer, out var reg))
       return new MOperand.Memory(reg, null, 1, 0, size);
     if (pointer is IrGlobalVariable g) {
-      // A module variable maps back to a symbol the codegen laid out, and an rt_ global IS the
-      // runtime's own named cell - rt_err, rt_erl, rt_col - which the data bridge resolves to the very
-      // storage the direct emitter reads. A STATIC local or a synthesized IR global (.data_cursor, a
-      // string literal) still has no cell to borrow.
-      if (!g.Name.StartsWith("g.", System.StringComparison.Ordinal)
-          && !g.Name.StartsWith("rt_", System.StringComparison.Ordinal)) {
+      // A source global or STATIC maps back to the symbol the codegen laid out, and an rt_ global IS
+      // the runtime's own named cell. Synthesized globals such as .data_cursor still have no cell.
+      if (!IsAddressableGlobal(g)) {
         this.Decline($"pointer: global '{g.Name}' (no module symbol to address)");
         return null;
       }
@@ -1917,6 +2197,11 @@ public sealed class InstructionSelector {
     this.Decline($"pointer: {pointer.GetType().Name} has no register");
     return null;
   }
+
+  private static bool IsAddressableGlobal(IrGlobalVariable global)
+    => global.Name.StartsWith("g.", System.StringComparison.Ordinal)
+       || global.Name.StartsWith("static.", System.StringComparison.Ordinal)
+       || global.Name.StartsWith("rt_", System.StringComparison.Ordinal);
 
   /// <summary>The same cell shifted by <paramref name="delta"/> bytes - the high word of a 32-bit access.</summary>
   private static MOperand Shifted(MOperand cell, int delta) => cell switch {

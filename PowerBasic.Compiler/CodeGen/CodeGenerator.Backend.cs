@@ -110,7 +110,7 @@ public sealed partial class CodeGenerator {
             ScalarType { IsFloat: false, ByteSize: 2 or 4 }
             or ScalarType { IsFloat: true, ByteSize: 4 or 8 }))
         continue;
-      if (!byName.TryGetValue(proc.Name, out var irFn) || InstructionSelector.TrySelect(irFn) is not { } mfn)
+      if (!byName.TryGetValue(proc.Name, out var irFn) || InstructionSelector.TrySelect(irFn, this._rt.Cpu386) is not { } mfn)
         continue;
       candidates.Add((proc, irFn, mfn));
     }
@@ -185,7 +185,7 @@ public sealed partial class CodeGenerator {
       return null;
     if (!CalleeNames(main).All(n => routed.Keys.Any(p => p.Name.Equals(n, System.StringComparison.OrdinalIgnoreCase))))
       return null;
-    if (InstructionSelector.TrySelect(main) is not { } machine)
+    if (InstructionSelector.TrySelect(main, this._rt.Cpu386) is not { } machine)
       return null;
     MachineScheduler.Schedule(machine);
     if (LinearScanAllocator.Allocate(machine) is not { } alloc)
