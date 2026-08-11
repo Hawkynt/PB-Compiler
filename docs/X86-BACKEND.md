@@ -990,3 +990,21 @@ computes integral `+`/`-`/`*` in floating point, `VARPTR` answers a `WORD`, and 
 only closes a float-shaped tree whose leaves are `sitofp` — an unsigned leaf (`uitofp u16 -> f80`)
 stops it, and the selector has no form for that conversion. Widening the addresses to `LONG` first
 (`p1 = VARPTR(a%(1))`) keeps the arithmetic on the integer path.
+
+## `USING$`: PRINT USING captured into a string
+
+The runtime's print routines all consult one cell, `rt_capmode`: zero writes to the current output
+handle, anything else appends to `rt_capbuf` and counts in `rt_caplen`. That is what already makes
+`STR$` the printed form of a number rather than a second formatter, and it is the whole of `USING$` —
+the same field emission `PRINT USING` performs, run with the output pointed at a buffer.
+
+So the lowering is composition: `rt_capon`, the shared `EmitUsingBody`, `rt_capoff`, which hands the
+captured bytes back as a string handle. The two halves are new **routines** (`DosRuntime.Capture.cs`)
+for the reason `rt_lpon`/`rt_lpoff` are: the direct emitter writes the four instructions inline, and
+a store of one runtime cell's *offset* into another is not something the IR can say. Neither emitter's
+output moves; there is now somewhere to `CALL`. They are declined by the C back end alongside
+`rt_using_field`, because a stub cannot have the property that matters — that `rt_print_*` stop
+reaching stdout while it is on.
+
+`DIFF14.BAS` does **not** join the IR path on the back of this. Its decline moves to the next
+construct in the same program, `EXIT FAR`, so the program count is unchanged and only the reason is.

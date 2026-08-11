@@ -64,6 +64,10 @@ public sealed class CEmitter {
   /// </summary>
   private static readonly HashSet<string> _notInTheCRuntime = new(StringComparer.Ordinal) {
     "rt_using_field", "rt_fusing_field", "rt_lprint_on", "rt_lprint_off",
+    // print capture (USING$): the DOS runtime's rt_capmode/rt_capbuf pair, which the portable
+    // runtime has no counterpart for - and cannot have as a stub, since the whole point is that
+    // rt_print_* stop writing to stdout while it is on
+    "rt_capture_begin", "rt_capture_end",
   };
 
   /// <summary>Renders <paramref name="module"/> as a self-contained C99 translation unit.</summary>

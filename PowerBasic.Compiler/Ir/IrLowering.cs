@@ -1433,12 +1433,22 @@ public sealed class IrLowering {
   private void LowerPrintUsing(PrintStmt p, IrValue? file) {
     if (p.UsingFormat is not StringLiteralExpr literal)
       throw new IrLoweringException("non-literal PRINT USING format");
-    var segments = Runtime.UsingFormat.Parse(literal.Value);
+    this.EmitUsingBody(file, literal.Value, p.Items.Where(i => i.Value is not null).Select(i => i.Value!));
+
+    if (p.Items.Count == 0 || p.Items[^1].Separator == PrintSeparator.Newline)
+      this.EmitIo(file, "print", "nl", IrType.Void, []);
+  }
+
+  /// <summary>
+  /// The field emission <c>PRINT USING</c> and <c>USING$</c> share, with no trailing newline - the
+  /// same split the direct emitter makes (CodeGenerator.Io.cs, <c>EmitUsingBody</c>), and for the
+  /// same reason: the two statements differ in WHERE the text goes and in nothing else.
+  /// </summary>
+  private void EmitUsingBody(IrValue? file, string format, IEnumerable<Expression> values) {
+    var segments = Runtime.UsingFormat.Parse(format);
     var index = 0;
 
-    foreach (var item in p.Items) {
-      if (item.Value is not { } value)
-        continue;                                   // a bare separator carries no value to place
+    foreach (var value in values) {
       while (index < segments.Count && segments[index].Field is null)
         this.UsingLiteral(file, segments[index++].Literal!);
       if (index >= segments.Count)
@@ -1467,9 +1477,39 @@ public sealed class IrLowering {
 
     while (index < segments.Count && segments[index].Field is null)
       this.UsingLiteral(file, segments[index++].Literal!);
+  }
 
-    if (p.Items.Count == 0 || p.Items[^1].Separator == PrintSeparator.Newline)
-      this.EmitIo(file, "print", "nl", IrType.Void, []);
+  /// <summary>
+  /// <c>USING$("fmt", a, b, ...)</c> - the PRINT USING text as a STRING instead of as output.
+  ///
+  /// <para>
+  /// It is the same body written to a different place, which is what the runtime's capture mode
+  /// already means: <c>rt_capon</c> points every print routine at <c>rt_capbuf</c>, the fields are
+  /// emitted exactly as <c>PRINT USING</c> emits them, and <c>rt_capoff</c> hands back what was
+  /// written as a string handle. The direct emitter does precisely this with the same two cells
+  /// (CodeGenerator.Intrinsics.cs); it writes the four instructions inline where this calls two
+  /// routines, for the reason DosRuntime.Capture.cs gives.
+  /// </para>
+  ///
+  /// <para>
+  /// The device argument is <c>null</c> - the CONSOLE entries - and that is not an approximation:
+  /// capture mode is read by the console routines, so the text has to be aimed at them to be caught
+  /// at all. Nothing reaches the screen, because <c>rt_capmode</c> is what decides between the two.
+  /// </para>
+  ///
+  /// <para>
+  /// A non-literal format declines, as it does for <c>PRINT USING</c> and for the same reason - the
+  /// format is read at COMPILE time into fields, and there is nothing to read. The direct emitter
+  /// has a single-field runtime fallback (<c>rt_usingdyn</c>) for the two-argument case; answering
+  /// only that shape here would leave every other one silently unformatted, so this declines whole.
+  /// </para>
+  /// </summary>
+  private IrValue LowerUsingString(CallOrIndexExpr ci) {
+    if (ci.Arguments.Count == 0 || ci.Arguments[0] is not StringLiteralExpr format)
+      throw new IrLoweringException("non-literal USING$ format");
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_capture_begin", IrType.Void));
+    this.EmitUsingBody(null, format.Value, ci.Arguments.Skip(1));
+    return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_capture_end", IrType.Ptr));
   }
 
   /// <summary>One literal run of a USING format, through the literal pool - the same call a string literal in an ordinary PRINT makes.</summary>
@@ -3532,6 +3572,9 @@ public sealed class IrLowering {
       // concatenation the direct emitter writes - one rt_chr per code, joined by rt_strcat - rather
       // than as a call that quietly reads the first argument and drops the rest.
       "CHR$" => this.LowerChr(ci),
+      // USING$ is PRINT USING captured into a string rather than written to a device - see
+      // LowerUsingString for why that is the whole of it
+      "USING$" => this.LowerUsingString(ci),
       "SPACE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_space", IrType.Ptr, IrType.I32), Num(0)),
       // STRING$(n, s$) repeats the FIRST CHARACTER of s$, so it is STRING$(n, ASC(s$)) - composed
       // from two calls the IR already has rather than a third runtime entry that would have to be

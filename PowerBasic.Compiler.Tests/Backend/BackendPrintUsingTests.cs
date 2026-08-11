@@ -269,6 +269,79 @@ public sealed class BackendPrintUsingTests {
 
   #endregion
 
+  #region USING$
+
+  /// <summary>
+  /// <c>USING$</c> is the same formatter with the text captured into a string. The whole point of it
+  /// is that it does NOT print, so every case here brackets the value with characters of its own and
+  /// puts an unrelated line on the screen FIRST: if the capture leaked, the formatted text would
+  /// appear before that line and outside the brackets, and both readings would fail rather than one.
+  /// </summary>
+  [Test]
+  public void UsingString_GivenAnIntegerField_ThenTheFieldWidthIsHeldAndNothingIsPrinted()
+    => Prints("""
+      PRINT "screen"
+      s$ = USING$("Total: ####", 42)
+      PRINT "["; s$; "]"
+      """, "screen\n[Total:   42]\n");
+
+  [Test]
+  public void UsingString_GivenAFractionalField_ThenTheDecimalsAlignAsTheyDoWhenPrinted()
+    // 3.456 scaled by 100 and rounded to nearest is 346, four digits in a five-wide field
+    => Prints("""
+      s$ = USING$("##.##", 3.456)
+      PRINT "["; s$; "]"
+      """, "[ 3.46]\n");
+
+  [Test]
+  public void UsingString_GivenGroupingAndSeveralFields_ThenEachIsPlacedInItsOwnColumns()
+    => Prints("""
+      PRINT "["; USING$("###,###,###", 1234567); "]"
+      PRINT "["; USING$("x=## y", 42); "]"
+      """, "[  1,234,567]\n[x=42 y]\n");
+
+  [Test]
+  public void UsingString_GivenAValueTooWideForItsField_ThenTheStringOverflowsRatherThanTruncating()
+    // the same answer the printed form gives: every digit is there, the column alignment is what is
+    // lost. A truncating formatter would give "45" and look tidier while being wrong.
+    => Prints("""
+      s$ = USING$("##", 12345)
+      PRINT "["; s$; "]"; LEN(s$)
+      """, "[12345] 5 \n");
+
+  [Test]
+  public void UsingString_GivenTwoCallsInARow_ThenTheSecondStartsFromAnEmptyBuffer()
+    // the capture is ONE buffer and one length, so the second call has to reset the length rather
+    // than append to what the first left there - which would give "[ 1][ 1][ 2]" for b$
+    => Prints("""
+      a$ = USING$("[##]", 1)
+      b$ = USING$("[##]", 2)
+      PRINT a$; b$
+      """, "[ 1][ 2]\n");
+
+  [Test]
+  public void UsingString_GivenTheResultIsTrimmed_ThenItIsAnOrdinaryStringValue()
+    // DIFF14's own use: the field's leading blanks are exactly what LTRIM$ removes, which only
+    // works because what comes back is a real string handle rather than something printed
+    => Prints("""
+      d??? = 1234567
+      PRINT "["; LTRIM$(USING$("###,###,###", d???)); "]"
+      """, "[1,234,567]\n");
+
+  [Test]
+  public void UsingString_GivenAPrintAroundIt_ThenTheConsoleColumnIsUntouchedByTheCapture() {
+    // POS reads the screen column. The capture writes nine characters, none of which are on the
+    // screen, so POS after "ab" must still be 3 - a capture that wrote through the console would
+    // have advanced it.
+    Prints("""
+      PRINT "ab";
+      s$ = USING$("###,###", 1234)
+      PRINT POS(0)
+      """, "ab 3 \n");
+  }
+
+  #endregion
+
   #region what still declines
 
   [Test]
@@ -315,6 +388,18 @@ public sealed class BackendPrintUsingTests {
 
     Assert.That(() => CEmitter.Emit(module!),
       Throws.TypeOf<NotSupportedException>().With.Message.Contains("rt_using_field"));
+  }
+
+  [Test]
+  public void UsingString_WhenEmittedAsC_ThenTheEmitterSaysTheCRuntimeHasNoCapture() {
+    // and the capture pair is declined for a reason a stub could not paper over: what rt_capon MEANS
+    // is that rt_print_* stop reaching stdout, which is a property of those routines rather than of
+    // this one. An empty rt_capon would compile, link, and print the format to the screen.
+    var module = IrLowering.TryLowerModule(Bind("""s$ = USING$("##.##", 3.14159)"""));
+    Assert.That(module, Is.Not.Null);
+
+    Assert.That(() => CEmitter.Emit(module!),
+      Throws.TypeOf<NotSupportedException>().With.Message.Contains("rt_capture_begin"));
   }
 
   #endregion
