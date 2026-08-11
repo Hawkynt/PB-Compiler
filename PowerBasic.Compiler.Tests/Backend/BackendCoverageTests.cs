@@ -253,7 +253,7 @@ public sealed class BackendCoverageTests {
     // Then when dynamic array storage routed: an IR pointer gained an ADDRESS SPACE, so a block in the
     // far array heap is a different kind of pointer rather than the same kind pointing somewhere the
     // back end could not name, and the allocation family took its size in bytes.
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(257),
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(258),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
     Assert.That(census.ProcedureDeclines, Is.Empty,
       "a lowered named procedure no longer reaches the x86-16 back end:\n" + report);
@@ -277,7 +277,7 @@ public sealed class BackendCoverageTests {
     // 256 -> 257, and the gap closes: the last function that selected without routing did so because
     // SCHEDULING made the pressure. The scheduler now refuses a reordering that would keep more values
     // alive at once than the register file holds (MachineScheduler.CostsRegisters).
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(257),
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(258),
       "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // The figure that matters for whole-program ownership: module bodies the back end compiles end
