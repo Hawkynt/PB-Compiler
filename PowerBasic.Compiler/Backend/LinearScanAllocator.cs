@@ -74,6 +74,7 @@ public sealed class LinearScanAllocator {
     var addressing = AddressRegisters(function);
     var byteRegisters = ByteRegisters(function);
     var clobbersAt = ClobbersByIndex(function);
+    var pinnedAt = PinnedByIndex(function);
     var free = new List<Reg>(_pool);
     var active = new List<LivenessAnalysis.LiveInterval>();
 
@@ -82,6 +83,7 @@ public sealed class LinearScanAllocator {
         if (active[a].End < interval.Start)
           active.RemoveAt(a);
       var unsafeRegs = ClobberedOver(clobbersAt, interval.Start, interval.End);
+      unsafeRegs.UnionWith(ClobberedOver(pinnedAt, interval.Start, interval.End - 1));
       var legal = LegalFor(interval.VirtualId, addressing, byteRegisters);
       if (free.Count > active.Count && legal.Any(r => !unsafeRegs.Contains(r)))
         continue;
@@ -101,6 +103,7 @@ public sealed class LinearScanAllocator {
     var addressVregs = AddressRegisters(function);   // vregs that ever form a memory address -> need BX/SI/DI
     var byteRegisters = ByteRegisters(function);     // byte values need AL/CL/DL/BL, which SI/DI do not have
     var clobbersAt = ClobbersByIndex(function);       // global instruction index -> registers a CALL there destroys
+    var pinnedAt = PinnedByIndex(function);           // ...and the ones an ABI-pinned physical write lands in
     var assignment = new Dictionary<int, Reg>();
     var free = new List<Reg>(_pool);                 // registers currently available, preferred order preserved
     var active = new List<LivenessAnalysis.LiveInterval>();  // live intervals holding a register, kept sorted by End
@@ -113,8 +116,10 @@ public sealed class LinearScanAllocator {
           active.RemoveAt(a);
         }
 
-      // registers destroyed by a CALL anywhere this value is live cannot hold it
+      // registers destroyed by a CALL anywhere this value is live cannot hold it, and neither can one
+      // an ABI-PINNED write lands in while the value still has readers
       var unsafeRegs = ClobberedOver(clobbersAt, interval.Start, interval.End);
+      unsafeRegs.UnionWith(ClobberedOver(pinnedAt, interval.Start, interval.End - 1));
       var legal = LegalFor(interval.VirtualId, addressVregs, byteRegisters);
       var slot = free.FindIndex(r => System.Array.IndexOf(legal, r) >= 0 && !unsafeRegs.Contains(r));
       if (slot < 0)
@@ -138,6 +143,46 @@ public sealed class LinearScanAllocator {
         clobbered.UnionWith(regs);
     return clobbered;
   }
+
+  /// <summary>
+  /// Maps each global instruction index to the physical registers that instruction WRITES BY NAME -
+  /// the ABI-pinned spots: the <c>AX</c>/<c>DX:AX</c> a result goes home in, the register a runtime
+  /// entry takes its argument in, the <c>AX</c>/<c>DX</c> of a multiply or divide.
+  ///
+  /// <para>
+  /// Liveness only tracks VIRTUAL registers, so without this a pinned write is invisible: the
+  /// allocator would happily leave a live value in <c>AX</c> across a <c>MOV AX, something</c> and the
+  /// value would simply be gone. It is not a hypothetical - a pair of returns, <c>MOV AX,lo</c> then
+  /// <c>MOV DX,hi</c>, quietly returned the low word twice the moment the allocator handed <c>lo</c>
+  /// the <c>DX</c> that the second move was about to read from. A CALL's clobber list already says
+  /// this for the whole register file; this says it for the one register a pinned move names.
+  /// </para>
+  ///
+  /// <para>
+  /// Read over [start, end) rather than the CALL clobbers' [start, end]: a value whose LAST live point
+  /// is the pinned move itself is the value being moved, and <c>MOV AX, AX</c> is not a loss.
+  /// </para>
+  /// </summary>
+  private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> PinnedByIndex(MFunction function) {
+    var map = new Dictionary<int, IReadOnlyList<Reg>>();
+    var index = 0;
+    foreach (var block in function.Blocks)
+      foreach (var instr in block.Instructions) {
+        List<Reg>? pinned = null;
+        foreach (var operand in instr.Effect.WrittenRegs)
+          if (operand < instr.Operands.Count
+              && instr.Operands[operand] is MOperand.Register { Reg: { IsVirtual: false } fixedReg })
+            (pinned ??= []).Add(WholeRegister(fixedReg.Physical));
+        if (pinned is not null)
+          map[index] = pinned;
+        ++index;
+      }
+    return map;
+  }
+
+  /// <summary>The word register a byte half belongs to - writing <c>AL</c> destroys half of <c>AX</c>.</summary>
+  private static Reg WholeRegister(Reg register)
+    => register.IsByte() ? (Reg)(0x10 | (register.Index() & 0x03)) : register;
 
   /// <summary>Maps each global instruction index (same numbering as the liveness pass) to the registers it clobbers.</summary>
   private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> ClobbersByIndex(MFunction function) {
