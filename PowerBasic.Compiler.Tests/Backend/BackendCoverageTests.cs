@@ -490,6 +490,7 @@ public sealed class BackendCoverageTests {
     "DIFF52.BAS",
     "DIFF53.BAS",
     "DIFF54.BAS",
+    "DIFF55.BAS",   // INT/FIX round trip through a qword
     "DIFF57.BAS",
     "DIFF58.BAS",
     "DIFF59.BAS",

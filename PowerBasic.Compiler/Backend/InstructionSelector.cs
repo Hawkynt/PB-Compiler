@@ -1136,6 +1136,32 @@ public sealed class InstructionSelector {
         this._vregs[cast] = truth;
         return true;
       }
+      // BASIC truth is a FULL WORD of -1 or 0, so widening a bool to a number is not a copy: the
+      // value wanted is 1 or 0. Masking the low bit is what turns one into the other, and it is the
+      // reason this cannot share the integer widening below - that one would produce -1.
+      case IrCastOp.ZExt when from.IsBool && to.IsInteger && to.Bits is 16 or 32: {
+        if (!this.TryOperand(cast.Value, out var truth))
+          return false;
+        var one = new MOperand.Immediate(1);
+        if (IsWide(to)) {
+          var (low, high) = this.FreshPair(cast);
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [low, truth], MovEffect(low, truth)));
+          this._current.Instructions.Add(new MInstr(MOpcode.And, [low, one],
+            new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+              ReadsMemory: false, WritesMemory: false)));
+          var zero = new MOperand.Immediate(0);
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [high, zero], MovEffect(high, zero)));
+          return true;
+        }
+        var narrow = this.FreshVreg(cast.Type);
+        var dest = new MOperand.Register(narrow);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, truth], MovEffect(dest, truth)));
+        this._current.Instructions.Add(new MInstr(MOpcode.And, [dest, one],
+          new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+            ReadsMemory: false, WritesMemory: false)));
+        this._vregs[cast] = narrow;
+        return true;
+      }
       case IrCastOp.SExt or IrCastOp.ZExt when IsWide(to) && from.IsInteger && from.Bits == 16: {
         if (!this.TryOperand(cast.Value, out var source))
           return false;
@@ -1181,6 +1207,21 @@ public sealed class InstructionSelector {
         this._vregs[cast] = low.Reg;      // the low half IS the narrowed value - no instruction needed
         return true;
       }
+      // ...and the FPToSI half emits NOTHING. Selection walks instructions in order, so it reaches
+      // the truncation first and would decline there before the pair was ever recognised; the work
+      // happens when its consumer is selected, which is the only point at which both halves are known.
+      case IrCastOp.FPToSI when to.IsInteger && to.Bits == 64 && from.IsIeeeFloat
+          && cast.Users is [IrCast { Op: IrCastOp.SIToFP, Type.IsIeeeFloat: true }]:
+        return true;
+      // FIX and INT round a float toward zero by going through a 64-BIT integer, and the round trip
+      // is the whole operation - the i64 is never a value the program can see, only the shape the
+      // rounding takes. Selected as a pair, that is FISTP to a qword cell and FILD straight back,
+      // which is what the direct emitter writes; selected apart, the intermediate would need a
+      // four-register integer this back end does not have, and declines.
+      case IrCastOp.SIToFP when to.IsIeeeFloat
+          && cast.Value is IrCast { Op: IrCastOp.FPToSI, Type: { IsInteger: true, Bits: 64 } } inner
+          && inner.Value.Type.IsIeeeFloat && inner.Users.Count == 1:
+        return this.SelectRoundTripThroughQword(inner, cast);
       case IrCastOp.SIToFP when to.IsIeeeFloat:
         return this.SelectIntToFloat(cast);
       case IrCastOp.FPToSIRound when from.IsIeeeFloat && to.IsInteger && to.Bits is 16 or 32:
@@ -2027,6 +2068,24 @@ public sealed class InstructionSelector {
   /// frame cell first - a word for an INTEGER, both halves of the pair for a LONG - and <c>FILD</c>
   /// reads it back at that width.
   /// </summary>
+  /// <summary>
+  /// <c>SIToFP(FPToSI(x, i64), f)</c> - truncation toward zero at 64-bit precision, which the x87
+  /// does in two instructions through one qword frame cell. The intermediate integer is never
+  /// materialized, which is what makes this selectable at all: a 64-bit value has no register
+  /// representation here.
+  /// </summary>
+  private bool SelectRoundTripThroughQword(IrCast toInteger, IrCast backToFloat) {
+    if (!this.TryFloatOperand(toInteger.Value, out var source))
+      return false;
+    var slot = this._function.StackSlots.Count;
+    this._function.StackSlots.Add(8);
+    this.EmitX87(MOpcode.Fld, source, reads: true);
+    this.EmitX87(MOpcode.Fistp, new MOperand.StackSlot(slot, MRegSize.Qword), reads: false);
+    this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(slot, MRegSize.Qword), reads: true);
+    this.EmitX87(MOpcode.Fstp, this.FloatCell(backToFloat), reads: false);
+    return true;
+  }
+
   private bool SelectIntToFloat(IrCast cast) {
     var from = cast.Value.Type;
     if (!from.IsInteger || from.Bits is not (16 or 32))
