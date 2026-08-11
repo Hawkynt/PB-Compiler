@@ -235,6 +235,8 @@ public sealed class BackendCoverageTests {
     // two more module bodies - because a pointer is an ADDRESS in the IR and never a number: the
     // forms whose segment is known (VARPTR32 of storage, a pointer copied from another) lower, and
     // one made out of a DWORD declines rather than being given a segment nobody named.
+    // Then one more when PRINT USING and LPRINT lowered: rt_usefmt was already the direct emitter's
+    // own formatter, so what was missing was the ABI row and the compile-time read of the format.
     Assert.That(census.Selected, Is.GreaterThanOrEqualTo(230),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
     Assert.That(census.ProcedureDeclines, Is.Empty,
@@ -432,6 +434,7 @@ public sealed class BackendCoverageTests {
     "ONERRNXT.BAS",
     "CODEGEN.BAS",
     "RANGES.BAS",
+    "PRTUSING.BAS",   // PRINT USING
     "RANDFILE.BAS",
     "SHAREDG.BAS",
     "STRBOUND.BAS",
@@ -584,6 +587,7 @@ public sealed class BackendCoverageTests {
     "ONERRNXT.BAS",
     "RANGES.BAS",
     "CODEGEN.BAS",
+    "PRTUSING.BAS",   // PRINT USING
     "RANDFILE.BAS",
     "SHAREDG.BAS",
     "STRBOUND.BAS",

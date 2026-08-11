@@ -343,6 +343,8 @@ public sealed partial class DosRuntime {
     // fault or ERRCLEAR - so we just jump to the latched successor offset.
     this.ResumeNextHandler = asm.MarkLabel("rt_resumenext_handler");
     asm.Jmp(Mem.Word(asm.Lbl("rt_eresumenext")));
+
+    this.EmitPrinterProcedures(asm);
   }
 
   private void EmitLowLevelData(Assembler asm) {

@@ -46,6 +46,26 @@ public sealed class CEmitter {
   /// <summary>The C name of PB's top-level code; <c>main</c> itself lives in the runtime shim.</summary>
   public const string MainName = "pb_main";
 
+  /// <summary>
+  /// Runtime entries the DOS runtime provides and <c>runtime/pbc_rt.c</c> does not yet.
+  ///
+  /// <para>
+  /// Emitting a call to one would produce a translation unit that does not link, and a link error
+  /// reads as "the emitted C is wrong" rather than as "this target has no answer for that yet" -
+  /// which is the distinction the C back-end fixture is built around, and the same one the MBF type
+  /// declines on. So the emitter says so instead.
+  /// </para>
+  /// <para>
+  /// Both entries are PRINT USING's: the numeric field formatter and LPRINT's printer routing.
+  /// A C implementation of either is a real piece of work rather than a shim - the formatter is a
+  /// whole fixed-point renderer with grouping and field overflow, and "the printer" has no meaning
+  /// on a hosted platform - so they are named here rather than approximated.
+  /// </para>
+  /// </summary>
+  private static readonly HashSet<string> _notInTheCRuntime = new(StringComparer.Ordinal) {
+    "rt_using_field", "rt_fusing_field", "rt_lprint_on", "rt_lprint_off",
+  };
+
   /// <summary>Renders <paramref name="module"/> as a self-contained C99 translation unit.</summary>
   public static string Emit(IrModule module) {
     var sb = new StringBuilder();
@@ -255,6 +275,8 @@ public sealed class CEmitter {
 
       case IrCall c: {
         var callee = c.Callee is IrFunction target ? FuncName(target) : "(*(void (*)())" + this.Ref(c.Callee) + ")";
+        if (_notInTheCRuntime.Contains(callee))
+          throw new NotSupportedException($"C emission: {callee} has no entry in runtime/pbc_rt.c");
         var args = c.Args.Select(this.Ref).ToList();
         if (callee is "memcpy" or "memset" && args.Count == 4)
           args.RemoveAt(3);                          // LLVM's trailing is-volatile flag

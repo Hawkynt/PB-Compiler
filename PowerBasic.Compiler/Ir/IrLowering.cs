@@ -1220,22 +1220,153 @@ public sealed class IrLowering {
 
   #endregion
 
+  /// <summary>
+  /// PRINT, LPRINT and PRINT USING, console and file form.
+  ///
+  /// <para>
+  /// LPRINT is the same statement with the output pointed at the printer, so it is this one
+  /// bracketed by <c>rt_lprint_on</c> / <c>rt_lprint_off</c> - the direct emitter's own four MOVs,
+  /// given a name because the IR cannot write them inline (DosRuntime.Printer.cs). Everything
+  /// between them - items, separators, comma zones, TAB, a USING clause - is unchanged, because all
+  /// of it already writes through the runtime's current-output cell.
+  /// </para>
+  ///
+  /// <para>
+  /// LPRINT to a FILE NUMBER declines. The parser accepts <c>LPRINT #1,</c> and the direct emitter
+  /// resolves it by letting the file win - it points the output at the printer and then at the file,
+  /// one statement wide. This path selects the file per CALL and puts the console back after each
+  /// one, so the printer half would survive exactly as far as the first item and then be silently
+  /// dropped. Two answers for one statement is worse than none.
+  /// </para>
+  /// </summary>
   private void LowerPrint(PrintStmt p) {
     if (this._module is null)
       throw new IrLoweringException("PRINT requires whole-module lowering");
-    if (p.IsLPrint || p.UsingFormat is not null)
-      throw new IrLoweringException("LPRINT / PRINT USING");
+    if (p.IsLPrint && p.FileNumber is not null)
+      throw new IrLoweringException("LPRINT to a file number");
     var file = p.FileNumber is { } fn ? this.FileNum(fn) : null;
 
-    foreach (var item in p.Items) {
-      if (item.Value is { } expr)
-        this.LowerPrintItem(file, expr);
-      if (item.Separator == PrintSeparator.Comma)
-        this.EmitIo(file, "print", "comma", IrType.Void, []);   // advance to the next 14-column print zone
+    if (p.IsLPrint)
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_lprint_on", IrType.Void));
+
+    if (p.UsingFormat is not null)
+      this.LowerPrintUsing(p, file);
+    else {
+      foreach (var item in p.Items) {
+        if (item.Value is { } expr)
+          this.LowerPrintItem(file, expr);
+        if (item.Separator == PrintSeparator.Comma)
+          this.EmitIo(file, "print", "comma", IrType.Void, []);   // advance to the next 14-column print zone
+      }
+
+      if (p.Items.Count == 0 || p.Items[^1].Separator == PrintSeparator.Newline)
+        this.EmitIo(file, "print", "nl", IrType.Void, []);
     }
+
+    if (p.IsLPrint)
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_lprint_off", IrType.Void));
+  }
+
+  /// <summary>
+  /// <c>PRINT USING "fmt"; a; b; ...</c> - the format read at COMPILE time into literal runs and
+  /// numeric fields (<see cref="Runtime.UsingFormat"/>), then one runtime call per piece.
+  ///
+  /// <para>
+  /// Nothing here is inline, so the whole statement is composition, and the composition is the
+  /// direct emitter's own piece for piece: literal text goes through the same <c>rt_print_str</c> a
+  /// string literal in an ordinary PRINT does, and a numeric field is scaled by ten to its decimal
+  /// count, rounded to a 32-bit integer and handed to <c>rt_usefmt</c> with the packed field spec.
+  /// The scale-then-round is not a rendering choice: <c>rt_usefmt</c> prints DIGITS and places a
+  /// point among them, so 3.14159 in <c>##.##</c> has to reach it as 314.
+  /// </para>
+  ///
+  /// <para>
+  /// The rounding is the x87's - nearest, ties to even - because the direct emitter's FISTP is, and
+  /// it is spelled <see cref="IrCastOp.FPToSIRound"/> DIRECTLY rather than through
+  /// <see cref="Coerce"/>. Coerce would additionally apply <c>$ERROR OVERFLOW</c>'s range trap and
+  /// the BASCOM dialects' round-half-away-from-zero, neither of which a USING field goes through on
+  /// the other path: a field too narrow for its value overflows the field, not the program.
+  /// </para>
+  ///
+  /// <para>
+  /// The arithmetic is done at the x87's own width whatever the value's declared type, for the
+  /// reason PRINT hands floats over at eighty bits: that is where the direct emitter's value already
+  /// is when it multiplies, and rounding it to sixty-four first would be a step that emitter does
+  /// not take.
+  /// </para>
+  ///
+  /// <para>
+  /// What DOES not lower: a format that is not a literal (there is nothing to read at compile time,
+  /// and the direct emitter refuses it too), and more values than the format has fields. A value
+  /// left without a field would have to print somewhere, and dropping it silently is the one answer
+  /// worse than declining. Trailing FIELDS with no value are not an error on either path - the
+  /// literal text after the last filled field prints, and the format is not recycled.
+  /// </para>
+  ///
+  /// <para>
+  /// <b>The 32-bit ceiling, and where the two paths part company inside it.</b> <c>rt_usefmt</c>
+  /// takes the scaled value in <c>DX:AX</c>, so a field whose value times ten to its decimal count
+  /// reaches 2^31 is beyond what EITHER back end can render - <c>PRINT USING "###,###,###.##"</c>
+  /// tops out at 21474836.47. Genuine PowerBASIC prints an overflowing field with a leading
+  /// <c>%</c>; neither of these does, and above the ceiling they do not even agree on the wrong
+  /// answer: the direct emitter scales in ASSEMBLY, so its FISTP faults and stores the x87's
+  /// integer-indefinite 8000_0000h, while the scale here is an IR multiply that <c>IrConstFold</c>
+  /// can reach and WRAPS. Matching it would mean folding out-of-range conversions the x87 way -
+  /// which the direct emitter itself does not do for an ordinary <c>n&amp; = d#</c> store, where it
+  /// folds and wraps like this. The two are inconsistent with each OTHER at the source, so there is
+  /// no single rule this path could adopt that agrees with both. Lifting the ceiling is the real
+  /// fix, and it is a 64-bit formatter in the runtime rather than anything here.
+  /// </para>
+  /// </summary>
+  private void LowerPrintUsing(PrintStmt p, IrValue? file) {
+    if (p.UsingFormat is not StringLiteralExpr literal)
+      throw new IrLoweringException("non-literal PRINT USING format");
+    var segments = Runtime.UsingFormat.Parse(literal.Value);
+    var index = 0;
+
+    foreach (var item in p.Items) {
+      if (item.Value is not { } value)
+        continue;                                   // a bare separator carries no value to place
+      while (index < segments.Count && segments[index].Field is null)
+        this.UsingLiteral(file, segments[index++].Literal!);
+      if (index >= segments.Count)
+        throw new IrLoweringException("more PRINT USING values than fields");
+      var field = segments[index++].Field!.Value;
+
+      // a string in a numeric field prints as itself: PB's '&' approximation, and what the direct
+      // emitter does with it
+      if (this._model.TypeOf(value) is StringType or FixedStringType or AsciizType) {
+        this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr], this.LowerStringExpr(value));
+        continue;
+      }
+
+      var valueType = this._model.TypeOf(value);
+      var effective = valueType is MbfType mbf ? IeeeFormOf(mbf) : valueType;
+      if (effective is not ScalarType)
+        throw new IrLoweringException("PRINT USING of a non-numeric, non-string value");
+      var scaled = this.Coerce(this.LowerExpr(value), valueType, PbType.Ext);
+      if (field.Decimals > 0)
+        scaled = this._b.Binary(IrBinaryOp.FMul, scaled,
+          new IrConstantFloat(IrType.F80, Math.Pow(10, field.Decimals)));
+      this.EmitIo(file, "using", "field", IrType.Void, [IrType.I32, IrType.I32],
+        this._b.Cast(IrCastOp.FPToSIRound, scaled, IrType.I32),
+        new IrConstantInt(IrType.I32, field.Spec));
+    }
+
+    while (index < segments.Count && segments[index].Field is null)
+      this.UsingLiteral(file, segments[index++].Literal!);
 
     if (p.Items.Count == 0 || p.Items[^1].Separator == PrintSeparator.Newline)
       this.EmitIo(file, "print", "nl", IrType.Void, []);
+  }
+
+  /// <summary>One literal run of a USING format, through the literal pool - the same call a string literal in an ordinary PRINT makes.</summary>
+  private void UsingLiteral(IrValue? file, string text) {
+    if (text.Length == 0)
+      return;
+    var bytes = System.Text.Encoding.ASCII.GetBytes(text);
+    this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32],
+      this._module!.AddStringConstant(bytes), new IrConstantInt(IrType.I32, bytes.Length));
   }
 
   /// <summary>

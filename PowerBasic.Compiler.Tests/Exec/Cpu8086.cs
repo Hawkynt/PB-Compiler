@@ -31,6 +31,7 @@ public sealed class Cpu8086 {
   /// <summary>The BIOS video mode last set through INT 10h AH=00h; 03h (80x25 colour text) at reset.</summary>
   private byte _videoMode = 0x03;
   private readonly StringBuilder _output = new();
+  private readonly StringBuilder _printer = new();
   private readonly Dictionary<int, MemoryFile> _files = [];
   private readonly Dictionary<string, MemoryFile> _byName = new(StringComparer.OrdinalIgnoreCase);
 
@@ -55,6 +56,17 @@ public sealed class Cpu8086 {
 
   /// <summary>Everything the program wrote to stdout/stderr, in order.</summary>
   public string Output => this._output.ToString();
+
+  /// <summary>
+  /// Everything the program wrote to DOS handle 4, PRN - what LPRINT prints.
+  ///
+  /// <para>
+  /// Kept APART from <see cref="Output"/> rather than folded into it, because the whole point of
+  /// LPRINT is that the printer is a second destination: a test that could not tell the two apart
+  /// would pass just as happily for a compiler that sent everything to the screen.
+  /// </para>
+  /// </summary>
+  public string PrinterOutput => this._printer.ToString();
 
   /// <summary>The exit code the program terminated with.</summary>
   public int ExitCode { get; private set; }
@@ -1298,6 +1310,9 @@ public sealed class Cpu8086 {
         if (handle is 1 or 2)
           for (var i = 0; i < count; ++i)
             this._output.Append((char)this.ReadByte(at + i));
+        else if (handle == 4)                                  // PRN, which DOS opens for every program
+          for (var i = 0; i < count; ++i)
+            this._printer.Append((char)this.ReadByte(at + i));
         else if (this._files.TryGetValue(handle, out var file))
           for (var i = 0; i < count; ++i)
             file.Bytes.Add(this.ReadByte(at + i));

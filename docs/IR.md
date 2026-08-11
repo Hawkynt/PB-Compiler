@@ -312,6 +312,13 @@ IR writer has.
   is a runtime cell rather than the DS or SS an IR pointer carries, so there is no
   descriptor to build for it. `COLLATE` declines with it: the table is an owned
   handle the parameter block would have to hold across the call and release after;
+- the constructs that still decline: `ArraySortStmt`, `PUT$`,
+  `DIM AT`, `HEX$` with a digit count, parts of the `CommandStmt` family, and inline
+  assembly (target-specific by definition - it will never lower).
+  `PRINT USING` lowers for a LITERAL format with no more values than fields, which is the
+  whole of what the DOS runtime's `rt_usefmt` renders - `#` digit runs, an optional `.`
+  fraction and commas inside the run. `$$`, `**`, `+`, `^^^^` and the `&` / `\ \` string
+  fields are literal text on the direct path too, so both emitters print them verbatim;
   `TryLowerModule(model, out var reason)` reports which one a program hit, and
   `pbc --emit-c` / `--emit-llvm` print it;
 - a native IR → x86-16 back end that reproduces byte-identical output for a
