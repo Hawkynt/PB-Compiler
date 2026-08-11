@@ -292,6 +292,7 @@ public sealed class BackendCoverageTests {
     "DIFF04.BAS",
     "DIFF05.BAS",
     "DIFF06.BAS",
+    "DIFF07.BAS",   // ASCIIZ * n
     "DIFF08.BAS",
     "DIFF10.BAS",
     "DIFF100.BAS",
@@ -439,6 +440,7 @@ public sealed class BackendCoverageTests {
     "DIFF04.BAS",
     "DIFF05.BAS",
     "DIFF06.BAS",
+    "DIFF07.BAS",   // ASCIIZ * n
     "DIFF08.BAS",
     "DIFF10.BAS",
     "DIFF100.BAS",

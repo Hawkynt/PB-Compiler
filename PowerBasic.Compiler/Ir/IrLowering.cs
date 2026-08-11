@@ -427,6 +427,8 @@ public sealed class IrLowering {
       this._nullInitialisedStrings.Add(alloca);
     } else if (symbol.Type is FixedStringType fixedStr) {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I8) { Count = fixedStr.Length, Name = symbol.Name });  // inline fixed buffer
+    } else if (symbol.Type is AsciizType asciiz) {
+      alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I8) { Count = asciiz.Length, Name = symbol.Name });   // inline NUL-terminated buffer
     } else if (symbol.Type is ArrayType arr) {
       if (arr.IsDynamic)
         throw new IrLoweringException("dynamic array");
@@ -479,6 +481,7 @@ public sealed class IrLowering {
     var (valueType, count) = symbol.Type switch {
       StringType => (IrType.Ptr, 1),
       FixedStringType fs => (IrType.I8, fs.Length),
+      AsciizType az => (IrType.I8, az.Length),
       UdtType udt => (IrType.I8, udt.Size),
       ArrayType { IsDynamic: false } arr => arr.Element switch {
         StringType => (IrType.Ptr, arr.ElementCount),
@@ -816,6 +819,14 @@ public sealed class IrLowering {
         this.SlotFor(fstrSym), new IrConstantInt(IrType.I32, fixedStr.Length), this.LowerStringExpr(a.Value));  // copy, space-pad / truncate to N
       return;
     }
+    // ASCIIZ * n: copy and TERMINATE rather than copy and blank-pad, which is the whole difference
+    // between it and a fixed string - assigning a ten-character value to an ASCIIZ * 6 keeps five
+    // characters and a NUL, where a STRING * 6 would keep six and no terminator at all
+    if (a.Target is NameExpr && this._model.VariableBindings.TryGetValue(a.Target, out var azSym) && azSym.Type is AsciizType azTarget) {
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_asciiz_store", IrType.Void, IrType.Ptr, IrType.I32, IrType.Ptr),
+        this.SlotFor(azSym), new IrConstantInt(IrType.I32, azTarget.Length), this.LowerStringExpr(a.Value));
+      return;
+    }
     if (a.Target is CallOrIndexExpr indexed && this._model.VariableBindings.TryGetValue(indexed, out var arrSym) && arrSym.Type is ArrayType) {
       var (address, element) = this.ElementAddress(indexed);
       if (element is StringType) {
@@ -837,6 +848,11 @@ public sealed class IrLowering {
         if (field.Type is FixedStringType ffs) {       // a fixed-string record field: pad/truncate into its bytes
           this._b.Call(IrType.Void, this.RuntimeFn("rt_str_to_fixed", IrType.Void, IrType.Ptr, IrType.I32, IrType.Ptr),
             fieldAddr, new IrConstantInt(IrType.I32, ffs.Length), this.LowerStringExpr(a.Value));
+          return;
+        }
+        if (field.Type is AsciizType faz) {            // an ASCIIZ record field: truncate and terminate
+          this._b.Call(IrType.Void, this.RuntimeFn("rt_asciiz_store", IrType.Void, IrType.Ptr, IrType.I32, IrType.Ptr),
+            fieldAddr, new IrConstantInt(IrType.I32, faz.Length), this.LowerStringExpr(a.Value));
           return;
         }
       }
@@ -1015,7 +1031,7 @@ public sealed class IrLowering {
       if (i > 0)
         this.WritePunctuation(file, ",");
       var item = write.Items[i];
-      if (this._model.TypeOf(item) is StringType or FixedStringType) {
+      if (this._model.TypeOf(item) is StringType or FixedStringType or AsciizType) {
         this.WritePunctuation(file, "\"");
         this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr], this.LowerStringExpr(item));
         this.WritePunctuation(file, "\"");
@@ -1047,7 +1063,7 @@ public sealed class IrLowering {
       this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], global, new IrConstantInt(IrType.I32, bytes.Length));
       return;
     }
-    if (this._model.TypeOf(expr) is StringType or FixedStringType) {
+    if (this._model.TypeOf(expr) is StringType or FixedStringType or AsciizType) {
       this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr], this.LowerStringExpr(expr));
       return;
     }
@@ -1200,6 +1216,9 @@ public sealed class IrLowering {
       case NameExpr when this._model.VariableBindings.TryGetValue(expr, out var fsym) && fsym.Type is FixedStringType fixedStr:
         return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_from_fixed", IrType.Ptr, IrType.Ptr, IrType.I32),
           this.SlotFor(fsym), new IrConstantInt(IrType.I32, fixedStr.Length));   // the inline N bytes as a handle
+      case NameExpr when this._model.VariableBindings.TryGetValue(expr, out var azs) && azs.Type is AsciizType azRead:
+        return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_asciiz_load", IrType.Ptr, IrType.Ptr, IrType.I32),
+          this.SlotFor(azs), new IrConstantInt(IrType.I32, azRead.Length));      // the bytes BEFORE the NUL
       // '+' between strings is concatenation too - the original BASIC spelling, and still the
       // common one; '&' (PB 3.5) is the unambiguous form of the same operation
       case BinaryExpr { Op: BinaryOp.Concat or BinaryOp.Add } cat:
@@ -1210,6 +1229,9 @@ public sealed class IrLowering {
       case MemberExpr fm when !this._model.VariableBindings.ContainsKey(fm) && this.MemberFieldAddress(fm) is { Field.Type: FixedStringType ffs } fa:
         return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_from_fixed", IrType.Ptr, IrType.Ptr, IrType.I32),
           fa.Address, new IrConstantInt(IrType.I32, ffs.Length));   // read a fixed-string record field as a handle
+      case MemberExpr am when !this._model.VariableBindings.ContainsKey(am) && this.MemberFieldAddress(am) is { Field.Type: AsciizType afz } aa:
+        return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_asciiz_load", IrType.Ptr, IrType.Ptr, IrType.I32),
+          aa.Address, new IrConstantInt(IrType.I32, afz.Length));
       case CallOrIndexExpr ci when this._model.IntrinsicBindings.TryGetValue(ci, out var info):
         return this.LowerStringIntrinsic(ci, info.Name);
       // a user FUNCTION whose result is a string - its IR result already IS the handle
@@ -2458,11 +2480,51 @@ public sealed class IrLowering {
     return this.Coerce(code, PbType.Long, this._model.TypeOf(call));
   }
 
+  /// <summary>
+  /// LEN. For a dynamic string it is the handle's own length; for a FIXED string it is the declared
+  /// width, known at compile time and never measured.
+  ///
+  /// <para>
+  /// ASCIIZ is the one that has to be counted at run time: its length is the characters BEFORE the
+  /// NUL, not its capacity, so <c>LEN</c> and <c>SIZEOF</c> disagree on it. Answering the capacity
+  /// would look right on every value that happens to fill the buffer.
+  /// </para>
+  /// </summary>
   private IrValue LowerLen(CallOrIndexExpr call) {
-    if (this._model.TypeOf(call.Arguments[0]) is not StringType)
-      throw new IrLoweringException("LEN of a non-string");
-    var length = this._b.Call(IrType.I32, this.RuntimeFn("rt_str_len", IrType.I32, IrType.Ptr), this.LowerStringExpr(call.Arguments[0]));
-    return this.Coerce(length, PbType.Long, this._model.TypeOf(call));   // LEN result narrows to its bound type
+    var argument = call.Arguments[0];
+    var resultType = this._model.TypeOf(call);
+    switch (this._model.TypeOf(argument)) {
+      case StringType: {
+        var length = this._b.Call(IrType.I32, this.RuntimeFn("rt_str_len", IrType.I32, IrType.Ptr), this.LowerStringExpr(argument));
+        return this.Coerce(length, PbType.Long, resultType);   // LEN result narrows to its bound type
+      }
+      case AsciizType asciiz: {
+        var address = this.StringStorageAddress(argument)
+          ?? throw new IrLoweringException("LEN of an ASCIIZ expression that is not storage");
+        var counted = this._b.Call(IrType.I32, this.RuntimeFn("rt_asciiz_len", IrType.I32, IrType.Ptr, IrType.I32),
+          address, new IrConstantInt(IrType.I32, asciiz.Length));
+        return this.Coerce(counted, PbType.Long, resultType);
+      }
+      // a fixed string and a record are their declared size, which the binder already knows
+      case FixedStringType fixedStr:
+        return this.Coerce(new IrConstantInt(IrType.I32, fixedStr.Length), PbType.Long, resultType);
+      case UdtType udt:
+        return this.Coerce(new IrConstantInt(IrType.I32, udt.Size), PbType.Long, resultType);
+      default:
+        throw new IrLoweringException("LEN of a non-string");
+    }
+  }
+
+  /// <summary>
+  /// The address of an inline string buffer - an ASCIIZ or fixed-string variable or record field -
+  /// or null when the expression is not storage of that kind.
+  /// </summary>
+  private IrValue? StringStorageAddress(Expression expr) {
+    if (expr is NameExpr && this._model.VariableBindings.TryGetValue(expr, out var symbol))
+      return this.SlotFor(symbol);
+    if (expr is MemberExpr member && !this._model.VariableBindings.ContainsKey(member))
+      return this.MemberFieldAddress(member).Address;
+    return null;
   }
 
   private IrValue LowerStringComparison(BinaryExpr expr, PbType resultPb) {
@@ -2670,7 +2732,7 @@ public sealed class IrLowering {
     var resultPb = this._model.TypeOf(expr);
     return expr.Op switch {
       BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
-        or BinaryOp.LessEqual or BinaryOp.GreaterEqual => leftPb is StringType or FixedStringType
+        or BinaryOp.LessEqual or BinaryOp.GreaterEqual => leftPb is StringType or FixedStringType or AsciizType
           ? this.LowerStringComparison(expr, resultPb)
           : leftPb is UdtType
             ? this.LowerUdtComparison(expr, resultPb)

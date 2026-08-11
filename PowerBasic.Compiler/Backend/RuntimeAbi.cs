@@ -388,6 +388,19 @@ internal static class RuntimeAbi {
     ["rt_input_line"] = new("rt_linput", [], _callerSaved, Result: Reg.AX, Constants: [(Reg.AX, 0)]),
     // INPUT of a number: a token read, VAL'd and rounded. The console form presets the file number
     // to 0 exactly as the LINE INPUT pair above does.
+    // ASCIIZ * n: a NUL-terminated fixed buffer. Reading one makes a handle of the bytes before the
+    // NUL, writing one copies and terminates, and LEN counts to the NUL rather than to the capacity -
+    // which is the whole difference from a blank-padded fixed string.
+    //   "AsciizLoad:  DX=segment, SI=offset, CX=capacity -> AX=string handle"
+    //   "AsciizStore: AX=handle (consumed), DX=segment, DI=offset, CX=capacity"
+    //   "AsciizLen:   DX=segment, SI=offset, CX=capacity -> AX=length before NUL"
+    ["rt_asciiz_load"] = new("rt_az_load",
+      [new(ArgKind.Pointer, Reg.SI, Reg.DX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
+    ["rt_asciiz_store"] = new("rt_az_store",
+      [new(ArgKind.Pointer, Reg.DI, Reg.DX), new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_asciiz_len"] = new("rt_az_len",
+      [new(ArgKind.Pointer, Reg.SI, Reg.DX), new(ArgKind.Word, Reg.CX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.WidenedWord),
     // INPUT of a FLOAT: rt_val already leaves its answer on ST0, so there is nothing to convert.
     // All three widths share one entry - the runtime reads a number, and the DECLARED type picks the
     // formatter rather than a rounding step, which is the same rule PRINT follows.
