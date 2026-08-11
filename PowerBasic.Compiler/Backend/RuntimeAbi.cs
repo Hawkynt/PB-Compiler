@@ -404,6 +404,40 @@ internal static class RuntimeAbi {
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.WidenedWord, Constants: [(Reg.CX, 1)]),
 
+    // "ScanSet: AX=haystack, DX=set, CX=start(1-based), BL=0 find member / 1 find non-member ->
+    // AX = position or 0 (consumes both)". INSTR ANY and VERIFY are the same routine under one flag,
+    // which is a CONSTANT at every call site - so it is a preset here rather than an argument, and
+    // the two spellings become two entries over one label. The answer is a word the IR types i32,
+    // hence the CWD the direct emitter writes after the call.
+    ["rt_str_scanset"] = new("rt_scanset",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX), new(ArgKind.Word, Reg.CX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.WidenedWord, Constants: [(Reg.BX, 0)]),
+    ["rt_str_verify"] = new("rt_scanset",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX), new(ArgKind.Word, Reg.CX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.WidenedWord, Constants: [(Reg.BX, 1)]),
+
+    // "Replace: AX=subject, DX=find, CX=repl -> AX = handle" - the direct emitter's own register
+    // placement for REPLACE … WITH … IN, argument for argument
+    ["rt_str_replace"] = new("rt_replace",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX), new(ArgKind.Word, Reg.CX)], _callerSaved,
+      Result: Reg.AX),
+
+    // "Extract: AX=main, DX=match, BL=0 substring / 1 any-set -> AX = handle (consumes both)"
+    ["rt_str_extract"] = new("rt_extract",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved,
+      Result: Reg.AX, Constants: [(Reg.BX, 0)]),
+    ["rt_str_extract_any"] = new("rt_extract",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved,
+      Result: Reg.AX, Constants: [(Reg.BX, 1)]),
+
+    // "Tally: AX=main, DX=match, BL flag as above -> AX = count (consumes both)"
+    ["rt_str_tally"] = new("rt_tally",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.WidenedWord, Constants: [(Reg.BX, 0)]),
+    ["rt_str_tally_any"] = new("rt_tally",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.WidenedWord, Constants: [(Reg.BX, 1)]),
+
     // "Repeat: AX=handle, CX=count -> AX (consumes)". The IR declares it (count, text), the runtime
     // wants the text in AX - hence the per-position table rather than a convention
     ["rt_str_repeat"] = new("rt_repeat",
