@@ -5,7 +5,7 @@
 | **Status** | ⬜ Planned (the arithmetic-series closed form exists — [O0020](O0020-idiom-replacement.md)) |
 | **Stage** | Mid-end |
 | **IR** | 🟡 `Ir/Passes/RecurrenceClosedForm.cs` — the CLOSED-FORM half, for the constant-step case: an accumulator whose only work is adding a constant is `start + step * trips`, computed once instead of iterated. It is not unrolling with extra steps - `LoopUnroll` replaces a loop with copies and is capped because the copies are the cost, while a closed form does not care whether the trip count is four or forty thousand, so the two cover different loops. Restricted to INTEGER accumulators, and that restriction IS the soundness argument: two's-complement addition is associative across wrapping, so accumulating n times and multiplying by n agree even when the steps overflow, whereas floating point rounds at every step and a sum of forty roundings is not one multiplication. The accumulator must also be unread inside the loop, or its intermediate values are observable. Placed after `dce`, because `IntegerRecovery` leaves the float-shaped arithmetic standing beside the integer form and that shadow counts as a reader. The SHORTENING half is not done. Verified by `RecurrenceClosedFormTests` and `IrPassObservableEquivalenceTests` |
-| **Related** | [O0020](O0020-idiom-replacement.md), [O0119](O0119-reduction-recognition.md), [O0121](O0121-reduction-tree-balancing.md) |
+| **Related** | [O0020](O0020-idiom-replacement.md), [O0119](O0119-reduction-recognition.md), [O0121](O0121-reduction-tree-balancing.md), [O0407](O0407-dead-loop-elimination.md) — which deletes the loop this pass empties |
 
 ## The idea
 

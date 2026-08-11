@@ -56,22 +56,22 @@ public sealed partial class CodeGenerator {
     foreach (var f in module.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);
-    IrPassManager.Standard().RunOnModule(module);
+    IrPassManager.Standard(this.OptimizeSpeed).RunOnModule(module);
     foreach (var f in module.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);                  // again: the optimizer can expose trees the first pass could not see
-    IrPassManager.Standard().RunOnModule(module);  // clean up the now-dead float ops
+    IrPassManager.Standard(this.OptimizeSpeed).RunOnModule(module);  // clean up the now-dead float ops
 
     // O0006 inlining. It runs LAST of the module-level steps and is followed by another full pass
     // sweep, because the point of inlining is not the call overhead - it is that the callee's body
     // becomes visible to the caller's optimizer, and nothing sees it until the passes run again.
     // A function whose only caller inlines it is then dead, which GlobalDce collects.
     if (Inliner.Run(module) > 0) {
-      IrPassManager.Standard().RunOnModule(module);
+      IrPassManager.Standard(this.OptimizeSpeed).RunOnModule(module);
       foreach (var f in module.Functions)
         if (!f.IsDeclaration)
           IntegerRecovery.Run(f);
-      IrPassManager.Standard().RunOnModule(module);
+      IrPassManager.Standard(this.OptimizeSpeed).RunOnModule(module);
     }
     // GlobalDce deliberately does NOT run here, though inlining leaves callees unreferenced and it
     // is the obvious next step. In this pipeline the IR module is not the whole program: anything
@@ -218,7 +218,7 @@ public sealed partial class CodeGenerator {
   /// <summary>
   /// The cell a back-end-emitted access to a module variable resolves to: exactly the one the direct
   /// emitter uses for that symbol, so the two paths address the same storage. The IR names a global
-  /// <c>g.&lt;name&gt;</c> and a STATIC local <c>static.&lt;name&gt;</c>.
+  /// <c>g.&lt;name&gt;</c> and a STATIC local <c>static.&lt;procedure&gt;.&lt;name&gt;</c>.
   /// </summary>
   private Asm.Mem? DataCellOf(string name) {
     if (name.StartsWith("g.", System.StringComparison.Ordinal)) {
@@ -235,6 +235,25 @@ public sealed partial class CodeGenerator {
         .ToList();
       return matches.Count == 1 ? this.TryDirectCell(matches[0]) : null;
     }
+    if (name.StartsWith("static.", System.StringComparison.Ordinal)) {
+      VariableSymbol? match = null;
+      foreach (var procedure in model.ProcedureList)
+        foreach (var symbol in procedure.Variables.Values)
+          if (symbol.Storage == VariableStorage.Static
+              && IrLowering.StaticGlobalName(procedure, symbol).Equals(name, System.StringComparison.Ordinal)) {
+            if (match is not null && !ReferenceEquals(match, symbol))
+              return null;
+            match = symbol;
+          }
+      foreach (var symbol in model.ModuleVariables.Values)
+        if (symbol.Storage == VariableStorage.Static
+            && IrLowering.StaticGlobalName(null, symbol).Equals(name, System.StringComparison.Ordinal)) {
+          if (match is not null && !ReferenceEquals(match, symbol))
+            return null;
+          match = symbol;
+        }
+      return match is null ? null : this.TryDirectCell(match);
+    }
     // a string constant the IR interned (".str0"): its bytes go through this codegen's own literal
     // pool, so the routed PRINT and a directly-emitted one share the identical pooled bytes
     if (name.StartsWith(".str", System.StringComparison.Ordinal)
@@ -250,7 +269,7 @@ public sealed partial class CodeGenerator {
     // the back end addresses the very same ones the direct emitter does
     if (name.StartsWith("rt_", System.StringComparison.Ordinal))
       return Asm.Mem.Word(this._asm.Lbl(name));
-    return null;   // a STATIC local, or a synthesized IR global like .data_cursor - not addressable here yet
+    return null;   // a synthesized IR global like .data_cursor is not addressable here yet
   }
 
   /// <summary>The names of the defined functions <paramref name="fn"/> calls directly (its ABI partners).</summary>

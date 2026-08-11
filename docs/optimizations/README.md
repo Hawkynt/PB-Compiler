@@ -537,6 +537,7 @@ Conventions used on every page:
 | ⬜ | [O0404](O0404-stale-profile-matching.md) | Stale profile matching |
 | ⬜ | [O0405](O0405-sample-based-reordering.md) | Sample-based binary reordering |
 | ⬜ | [O0406](O0406-layout-assertion-battery.md) | Executable-layout assertion battery |
+| ✅ | [O0407](O0407-dead-loop-elimination.md) | Dead loop elimination |
 
 ## P — lean output
 

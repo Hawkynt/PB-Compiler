@@ -27,6 +27,10 @@ public sealed class IrPassManager {
     return this;
   }
 
+  /// <summary>Adds a pass only when <paramref name="condition"/> holds, so the pipeline stays one expression.</summary>
+  public IrPassManager AddWhen(bool condition, string name, Func<IrFunction, int> pass)
+    => condition ? this.Add(name, pass) : this;
+
   /// <summary>Adds an interprocedural pass, run by <see cref="RunOnModule"/> around the function pipeline.</summary>
   public IrPassManager AddModulePass(string name, Func<IrModule, int> pass) {
     this._modulePasses.Add((name, pass));
@@ -91,8 +95,15 @@ public sealed class IrPassManager {
   /// The default optimization pipeline: promote memory to registers, then iterate
   /// simplification, conditional constant propagation, value numbering and dead-code
   /// elimination to a fixpoint.
+  ///
+  /// <para>
+  /// <paramref name="optimizeForSpeed"/> reflects <c>$OPTIMIZE SPEED</c>. Only one pass reads it and
+  /// the reason is specific to that pass rather than to a size/speed trade: a loop that does nothing
+  /// can be a delay loop, and <see cref="DeadLoopElimination"/> is the one transform here whose
+  /// correctness argument rests on the author not having meant it.
+  /// </para>
   /// </summary>
-  public static IrPassManager Standard() => new IrPassManager()
+  public static IrPassManager Standard(bool optimizeForSpeed = false) => new IrPassManager()
     .Add("mem2reg", Mem2Reg.Run)
     // unrolling goes early, right after values reach SSA: a fully unrolled loop turns its counter
     // into a constant in every copy, which is what gives the rest of the pipeline something to fold
@@ -128,6 +139,10 @@ public sealed class IrPassManager {
     // integer form, and until that shadow is collected the accumulator still has a reader inside the
     // loop - which is exactly the condition this pass requires to be absent
     .Add("closed-form", RecurrenceClosedForm.Run)
+    // and AFTER closed-form, which is what empties the loop it deletes: the accumulator's final value
+    // moves to the exit block, the counter is left turning for nobody, and only then is there nothing
+    // inside anyone reads
+    .AddWhen(optimizeForSpeed, "deadloop", DeadLoopElimination.Run)
     .Add("ifconv", IfConversion.Run)
     .Add("simplifycfg", SimplifyCfg.Run)
     // FunctionSummaries.RemoveDeadPureCalls deliberately does NOT run here. The analysis is right and

@@ -26,9 +26,6 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// </summary>
 public static class RecurrenceClosedForm {
 
-  /// <summary>How many iterations to simulate before giving up on finding the trip count.</summary>
-  private const int _MAX_SIMULATED = 1 << 20;
-
   /// <summary>Rewrites what it can in <paramref name="fn"/>; returns how many recurrences closed.</summary>
   public static int Run(IrFunction fn) {
     if (fn.HasErrorHandler || fn.HasInlineAsm)
@@ -42,25 +39,9 @@ public static class RecurrenceClosedForm {
   }
 
   private static int CloseIn(IrFunction fn, IrBasicBlock header) {
-    if (header.Terminator is not IrCondBr { Condition: IrCmp test } branch)
+    if (CountedLoop.Match(fn, header) is not { } loop)
       return 0;
-
-    var predecessors = fn.Blocks.Where(b => b.Terminator is { } t && t.Successors.Contains(header)).ToList();
-    if (predecessors.Count != 2)
-      return 0;
-
-    // the region is everything reachable from the true edge that is not the exit; the latch is the
-    // block that branches back
-    var exit = branch.IfFalse;
-    var region = Region(header, branch.IfTrue, exit, out var latch);
-    if (region is null || latch is null)
-      return 0;
-    var preheader = predecessors.SingleOrDefault(b => !ReferenceEquals(b, latch));
-    if (preheader is null)
-      return 0;
-
-    if (TripCount(header, test, preheader, latch) is not { } trips || trips == 0)
-      return 0;
+    var (_, preheader, latch, exit, region, _, _, trips) = loop;
 
     var closed = 0;
     foreach (var phi in header.Instructions.OfType<IrPhi>().ToList()) {
@@ -83,8 +64,8 @@ public static class RecurrenceClosedForm {
 
       var total = unchecked(step.Value * trips);
       var finalValue = start is IrConstantInt from
-        ? (IrValue)new IrConstantInt(phi.Type, Truncate(phi.Type, unchecked(from.Value + total)))
-        : exit.InsertAt(0, new IrBinary(IrBinaryOp.Add, start, new IrConstantInt(phi.Type, Truncate(phi.Type, total))));
+        ? (IrValue)new IrConstantInt(phi.Type, CountedLoop.Truncate(phi.Type, unchecked(from.Value + total)))
+        : exit.InsertAt(0, new IrBinary(IrBinaryOp.Add, start, new IrConstantInt(phi.Type, CountedLoop.Truncate(phi.Type, total))));
 
       foreach (var user in phi.Users.ToList())
         if (user.Parent is { } where && !region.Contains(where) && !ReferenceEquals(user, finalValue))
@@ -93,80 +74,4 @@ public static class RecurrenceClosedForm {
     }
     return closed;
   }
-
-  /// <summary>
-  /// The blocks the loop body occupies, or null when the shape is not one this can reason about.
-  /// Collected by traversal, so both arms of an inner branch are inside rather than only the one a
-  /// single walk would follow.
-  /// </summary>
-  private static HashSet<IrBasicBlock>? Region(IrBasicBlock header, IrBasicBlock entry, IrBasicBlock exit, out IrBasicBlock? latch) {
-    latch = null;
-    var region = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance) { header };
-    var queue = new Queue<IrBasicBlock>([entry]);
-    while (queue.Count > 0) {
-      var at = queue.Dequeue();
-      if (ReferenceEquals(at, exit) || !region.Add(at))
-        continue;
-      if (at.Terminator is null)
-        return null;
-      foreach (var successor in at.Terminator.Successors)
-        if (ReferenceEquals(successor, header)) {
-          if (latch is not null && !ReferenceEquals(latch, at))
-            return null;                         // more than one back edge
-          latch = at;
-        } else
-          queue.Enqueue(successor);
-    }
-    return region.Contains(exit) ? null : region;
-  }
-
-  /// <summary>
-  /// How many times the loop body runs, by simulating the counter the test looks at - or null when
-  /// that is not a terminating, wrap-free number.
-  ///
-  /// Simulation rather than a formula because the predicate, the step's sign and the wrap behaviour
-  /// all have to agree, and a formula that is right for three of the four is a formula that produces
-  /// a plausible wrong count.
-  /// </summary>
-  private static long? TripCount(IrBasicBlock header, IrCmp test, IrBasicBlock preheader, IrBasicBlock latch) {
-    if (test.Lhs is not IrPhi counter || !ReferenceEquals(counter.Parent, header))
-      return null;
-    if (test.Rhs is not IrConstantInt limit)
-      return null;
-    if (counter.IncomingFrom(preheader) is not IrConstantInt init)
-      return null;
-    if (counter.IncomingFrom(latch) is not IrBinary { Op: IrBinaryOp.Add } next
-        || !ReferenceEquals(next.Lhs, counter) || next.Rhs is not IrConstantInt step || step.Value == 0)
-      return null;
-
-    var bits = counter.Type.Bits;
-    var value = init.Value;
-    for (long trips = 0; trips <= _MAX_SIMULATED; ++trips) {
-      if (!Holds(test.Pred, value, limit.Value))
-        return trips;
-      var advanced = Truncate(counter.Type, unchecked(value + step.Value));
-      if (advanced == value)
-        return null;                             // standing still: not a counted loop
-      value = advanced;
-    }
-    return null;
-  }
-
-  private static bool Holds(IrCmpPred pred, long l, long r) => pred switch {
-    IrCmpPred.Slt => l < r,
-    IrCmpPred.Sle => l <= r,
-    IrCmpPred.Sgt => l > r,
-    IrCmpPred.Sge => l >= r,
-    IrCmpPred.Eq => l == r,
-    IrCmpPred.Ne => l != r,
-    _ => false,
-  };
-
-  /// <summary>Wraps a value to its type's width, the way the machine would have.</summary>
-  private static long Truncate(IrType type, long value) => type.Bits switch {
-    8 => (sbyte)value,
-    16 => (short)value,
-    32 => (int)value,
-    _ => value,
-  };
 }
