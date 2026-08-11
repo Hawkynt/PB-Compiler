@@ -6,7 +6,7 @@
 | **Stage** | Emitter |
 | **Source** | `CodeGen/CodeGenerator.Optimize.cs` — `#region O7`, `TryEmitUnrolledFor`, `CountUnrollableStatements` |
 | **Gate** | `--optimize` + `$OPTIMIZE SPEED` |
-| **IR** | ✅ `Ir/Passes/LoopUnroll.cs` — full unroll of a constant-trip counted loop, in `IrPassManager.Standard()`; verified by `IrPassObservableEquivalenceTests` (render to BASIC, run, compare) |
+| **IR** | ✅ `Ir/Passes/LoopUnroll.cs` — full unroll of a constant-trip counted loop, in `IrPassManager.Standard()`; **nested** loops unroll inner-out, each inner copy leaving the outer body straight-line for the next fixpoint sweep; verified by `IrPassObservableEquivalenceTests` (render to BASIC, run, compare) and `RemovedBlockUseListTests` |
 | **Verified by** | `tests/diff/DIFF26.BAS` |
 | **Related** | [O0020](O0020-idiom-replacement.md), [O0063](O0063-duff-unrolling.md), [O0066](O0066-unrolled-counter-propagation.md) |
 
@@ -85,7 +85,8 @@ PRINT i%; t%
 
 ## Why it is safe
 
-The body must contain no jumps, exits, nested loops or writes to the counter, so
+On the emitter path the body must contain no jumps, exits, nested loops or writes
+to the counter, so
 each copy is a faithful iteration; the trip count is simulated exactly like the
 generic loop engine (signed compare, 16-bit wrap on increment), and the final
 counter value is stored explicitly. `$OPTIMIZE SPEED` gating matters because

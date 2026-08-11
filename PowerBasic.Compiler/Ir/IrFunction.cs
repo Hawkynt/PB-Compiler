@@ -73,10 +73,28 @@ public sealed class IrFunction : IrGlobalValue {
   /// <summary>Creates, appends and returns a fresh block with the given label.</summary>
   public IrBasicBlock CreateBlock(string label) => this.AddBlock(new IrBasicBlock(label));
 
-  /// <summary>Removes a block from the function.</summary>
+  /// <summary>
+  /// Removes a block from the function, dropping its instructions' uses of their operands.
+  ///
+  /// <para>
+  /// Dropping the uses is what makes the removal complete, and leaving them was costing optimizations
+  /// silently. An instruction whose block has gone stays registered in its operands' use-lists, and
+  /// it still names that block as its parent - so every pass that asks "is this value read outside
+  /// the loop" or "does this have exactly one user" is answered by a reader that can never run. The
+  /// result is not a wrong transform but a DECLINED one, which leaves no trace to find it by: a
+  /// nested loop whose inner half had been unrolled kept the outer half forever, because the dead
+  /// float shadow of the accumulator still counted as a use.
+  /// </para>
+  /// <para>
+  /// Callers that move the instructions out first are unaffected - there is nothing left to erase.
+  /// </para>
+  /// </summary>
   public void RemoveBlock(IrBasicBlock block) {
-    if (this._blocks.Remove(block))
-      block.Parent = null;
+    if (!this._blocks.Remove(block))
+      return;
+    foreach (var instruction in block.Instructions.ToList())
+      instruction.EraseFromParent();
+    block.Parent = null;
   }
 
   /// <summary>All instructions across all blocks, in block then program order.</summary>
