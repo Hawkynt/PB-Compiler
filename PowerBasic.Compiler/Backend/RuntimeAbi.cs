@@ -50,12 +50,18 @@ internal static class RuntimeAbi {
     ///   disagreed on two more.</item>
     /// </list>
     /// <para>
-    /// The staging writes each argument straight into its PHYSICAL register as it goes, so a source
-    /// operand the allocator happened to place in a later argument's register is read after it has
-    /// been overwritten - the destination's segment slot is the one that collides most often. The
-    /// entries that use this kind today were added before the pattern was visible and are pinned by
-    /// the corpus; a new one needs the staging fixed first, which means computing every argument into
-    /// a temporary before any physical register is written.
+    /// The MECHANISM is not established. The obvious explanation - that staging writes each argument
+    /// straight into its physical register, so a later argument's source is read after being
+    /// overwritten - does not survive reading the allocator: <c>LinearScanAllocator</c> already
+    /// excludes any register clobbered anywhere an interval is live, and these moves do carry their
+    /// destinations in <c>clobbers</c>. Something else is wrong, and guessing at it is what produced
+    /// three withdrawn changes in one sitting.
+    /// </para>
+    /// <para>
+    /// What IS established is the reproduction: add an entry, run the corpus differential, and watch
+    /// programs that agreed start disagreeing - with the optimizer off, so no pass is involved. The
+    /// entries using this kind today were added before the pattern was visible and are pinned by that
+    /// same differential; a new one needs the defect found first.
     /// </para>
     /// </summary>
     Pointer,
