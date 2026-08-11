@@ -166,15 +166,31 @@ battery, it currently reaches:
 
 | | |
 |---|---|
-| programs reaching the IR at all | 155 / 164 |
-| functions selected | 253 / 255 |
-| functions routed (selected **and** allocated) | 252 / 255 |
-| whole module bodies the back end can own | 152 / 155 |
+| programs reaching the IR at all | 159 / 165 (4 of the rest the FRONT end rejects) |
+| functions selected | 257 / 259 |
+| functions routed (selected **and** allocated) | 257 / 259 |
+| whole module bodies the back end can own | 157 / 159 |
 
-The one function that selects and does not allocate is `DIFF56`'s module body, over the register file
-in a 32-bit accumulation loop over a static array — measurably not an array-lowering limit: the same
-loop with no dynamic array anywhere fails allocation identically, and did so before dynamic array
-storage routed at all.
+**Every function the selector takes is now allocated.** The last one that was not was `DIFF56`'s module
+body — a 32-bit accumulation over a static array — and it took two independent repairs, one on each
+side of the pressure:
+
+- **the scheduler no longer manufactures pressure it cannot pay for.** With constant bounds the loop is
+  unrolled, so all ten element loads are ready at the top of the block, and a list scheduler maximizing
+  independence issues them there: ten live values on a six-register machine, where the selector's own
+  serial order needed four. `MachineScheduler` now measures the peak simultaneous live count of a
+  proposed order and keeps the written one when the reordering would cross the register file. Below six
+  it changes nothing, so this only ever refuses a schedule that could not have been allocated.
+- **the spiller has an answer for pressure it did not create.** Live-range splitting only considered
+  values live across a full-register clobber, which is the pressure a `CALL` makes; four `LONG`
+  accumulators wanted at once are eight words with no call in sight, and none of them can move to
+  memory as it stands (a value loaded out of an array already has a memory operand in its defining
+  instruction, so making it one too would be a memory-to-memory `MOV`). `Spiller.SplitOne` gained a
+  second pass over plain pressure, with `MFunction.SplitValues` recording what it has already taken
+  apart so the transformation terminates.
+
+Each is load-bearing on its own: the accumulation routes without the scheduler gate, and the
+four-accumulator procedure declines without the splitting pass whether it is scheduled or not.
 
 ### Inline assembly
 

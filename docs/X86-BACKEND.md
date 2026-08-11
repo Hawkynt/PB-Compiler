@@ -158,6 +158,11 @@ order. Emit each `MInstr` through the existing `Assembler` methods; encoding, le
 already handled there, so wall 2 never arises. The byte-level scheduler stays as the ceiling for the
 direct codegen path.
 
+The scheduler also **weighs its own reordering against the register file**, and keeps the written order
+when a proposed one would hold more values alive at once than six. Independence and register pressure
+are the same quantity read two ways, so a list scheduler maximizing the first is maximizing the second
+— see "Scheduling is not free on six registers" below.
+
 ## Gating + verification
 
 The backend is an **optimiser** feature, so it is gated on the optimiser flags, not the
@@ -1162,3 +1167,55 @@ own index, and a value whose live interval spans that index cannot be given it. 
 Together: **256/259 functions selected and routed, 156/159 module bodies, 159/165 programs lowered,
 293 corpus comparisons with no disagreement.** One census row, three gaps, and one latent miscompile
 that had been waiting for a change in register pressure to surface.
+## Scheduling is not free on six registers
+
+`DIFF56`'s module body was the last function in the corpus that selected and did not allocate. It sums
+a static array into a `LONG`, and the census reported it as an allocation decline by name.
+
+The selector's own order is fine. It writes the accumulation serially — load an element, sign-extend it
+into a register pair, add the pair, move on — which wants four registers at a time however long the
+array is, and it allocates unchanged. What does not survive is the SCHEDULED order. With constant
+bounds the loop is unrolled, so all ten loads read only frame addresses and are ready at the top of the
+block, and the list scheduler prefers memory work: it issues every one of them there. Ten live values,
+six registers.
+
+Nothing downstream could undo that, which is why it declined rather than merely spilling. A loaded
+element's defining instruction already carries a memory operand, so direct spilling would make the
+instruction memory-to-memory; and with the loop unrolled there is no `CALL` between the load and its
+use, so live-range splitting — which only looked at values live across a clobber — did not offer it a
+candidate either.
+
+**`MachineScheduler.CostsRegisters`** computes the peak number of simultaneously live virtual values for
+the proposed order and for the written one, and discards the proposal when it exceeds the register file
+having started below it. The gate is the file rather than "no increase at all", so a block whose peak
+stays within six keeps every schedule it used to get: this can only refuse an order that was not going
+to be allocatable. Physical registers are excluded because they are already pinned — an ABI staging
+window is a scheduling barrier through its clobbers.
+
+This is the general form of a rule the `Conflicts` predicate already stated for one case. A `CALL` is a
+scheduling barrier there precisely because hoisting a definition above one stretches its live range
+across the whole caller-saved file; the pressure a `CALL` makes was simply the only kind that had been
+noticed.
+
+### The other half: pressure the scheduler did not create
+
+Splitting a live range was reachable only for a value live across a full-register clobber. That is the
+pressure this target creates by itself, and splitting one is self-limiting because the fresh ranges no
+longer cross the call. Plain pressure has no such shape: four `LONG` accumulators are eight words with
+no call anywhere near them, and each is defined by an instruction that already reads memory.
+
+`Spiller.SplitOne` now runs a second pass over ordinary live ranges once the clobber-crossing pass finds
+nothing. The order matters — a function that routes today takes exactly the transformation it took
+before, because the new pass is only reached where the old one gave up. Termination comes from
+`MFunction.SplitValues`, the set of virtual ids the splitter minted: re-splitting one of those could
+only add another store and another reload without shortening anything, so the second pass never offers
+one, and the set of ids it can offer therefore shrinks strictly with each split.
+
+Both repairs are load-bearing and neither subsumes the other. The unrolled accumulation routes with the
+splitting pass alone, but at the cost of a store and a reload per element that the scheduler gate makes
+unnecessary; a procedure holding four `LONG` accumulators at once declines with the gate alone, because
+that pressure is in the selector's output and no scheduling decision put it there.
+
+Selection stays at **257 of 259**, routing moves **256 → 257**, module ownership **156 → 157 of 159**,
+and allocation declines reach **zero for the whole corpus**. The execution differential moves to **295
+agreeing, 0 disagreeing**.

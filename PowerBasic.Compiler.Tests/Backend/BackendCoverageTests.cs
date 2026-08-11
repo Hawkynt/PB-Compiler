@@ -273,8 +273,11 @@ public sealed class BackendCoverageTests {
       string.Join(", ", census.ProgramsLowered) + "\n" + report);
 
     // selection is not routing: the whole-program codegen also schedules and allocates, and a value
-    // live across a CALL has no register unless the spiller can move it to the frame
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(256),
+    // live across a CALL has no register unless the spiller can move it to the frame.
+    // 256 -> 257, and the gap closes: the last function that selected without routing did so because
+    // SCHEDULING made the pressure. The scheduler now refuses a reordering that would keep more values
+    // alive at once than the register file holds (MachineScheduler.CostsRegisters).
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(257),
       "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // The figure that matters for whole-program ownership: module bodies the back end compiles end
@@ -539,6 +542,7 @@ public sealed class BackendCoverageTests {
     "DIFF53.BAS",
     "DIFF54.BAS",
     "DIFF55.BAS",   // INT/FIX round trip through a qword
+    "DIFF56.BAS",   // a 32-bit accumulation over an array, unrolled: pressure the scheduler must not add
     "DIFF57.BAS",
     "DIFF58.BAS",
     "DIFF59.BAS",
