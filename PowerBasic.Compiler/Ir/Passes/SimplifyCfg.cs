@@ -55,6 +55,11 @@ public static class SimplifyCfg {
     var stack = new Stack<IrBasicBlock>();
     stack.Push(fn.Entry!);
     reachable.Add(fn.Entry!);
+    // a block whose address is taken is a ROOT: something can jump there through an edge the graph
+    // does not draw, which is the whole reason the address exists
+    foreach (var addressed in fn.AddressTakenBlocks())
+      if (addressed.Parent is not null && reachable.Add(addressed))
+        stack.Push(addressed);
     while (stack.Count > 0)
       foreach (var s in stack.Pop().Successors)
         if (reachable.Add(s))
@@ -108,11 +113,14 @@ public static class SimplifyCfg {
 
   private static int MergeSingleSuccessorBlocks(IrFunction fn, ref bool changed) {
     var merged = 0;
+    // a block whose address something holds has to keep existing under its own label, whatever the
+    // edges say - see IrFunction.AddressTakenBlocks
+    var addressed = fn.AddressTakenBlocks();
     foreach (var block in fn.Blocks.ToList()) {
       if (block.Parent is null || block.Terminator is not IrBr br)
         continue;
       var succ = br.Target;
-      if (ReferenceEquals(succ, block) || ReferenceEquals(succ, fn.Entry))
+      if (ReferenceEquals(succ, block) || ReferenceEquals(succ, fn.Entry) || addressed.Contains(succ))
         continue;
       var preds = succ.Predecessors.ToList();
       if (preds.Count != 1 || !ReferenceEquals(preds[0], block))

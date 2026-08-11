@@ -378,7 +378,7 @@ public sealed class IrLowering {
   private static bool ContainsGosub(IReadOnlyList<Statement> statements) {
     foreach (var s in statements)
       switch (s) {
-        case GosubStmt: return true;
+        case GosubStmt or GosubPtrStmt: return true;   // both push a return id onto the same stack
         case IfStmt i when ContainsGosub(i.Then) || i.ElseIfs.Any(e => ContainsGosub(e.Body)) || (i.Else is { } el && ContainsGosub(el)):
           return true;
         case ForStmt f when ContainsGosub(f.Body): return true;
@@ -775,7 +775,9 @@ public sealed class IrLowering {
       case BitStmt bit: this.LowerBitStmt(bit); break;
       case LabelStmt l: this.LowerLabel(l); break;
       case GotoStmt g: this.LowerGoto(g); break;
+      case GotoPtrStmt gp: this.LowerGotoPtr(gp); break;
       case GosubStmt gs: this.LowerGosub(gs); break;
+      case GosubPtrStmt gsp: this.LowerGosubPtr(gsp); break;
       case ReturnStmt rs: this.LowerReturn(rs); break;
       case OnGotoStmt og: this.LowerOnGoto(og); break;
       case PrintStmt pr: this.LowerPrint(pr); break;
@@ -1718,6 +1720,57 @@ public sealed class IrLowering {
     this._b.Store(this._b.Add(sp, new IrConstantInt(IrType.I32, 1)), this._gosubSp);
     this._b.Br(target);
     var cont = this.NewBlock("gosub.cont");            // RETURN dispatches back here
+    this._gosubConts.Add((id, cont));
+    this._b.Position(cont);
+  }
+
+  /// <summary>
+  /// The near offset a <c>GOTO DWORD</c> / <c>GOSUB DWORD</c> jumps to: the low half of the PB code
+  /// pointer, read back as an address. The high half is the segment, and the image is one segment -
+  /// which is the same reason the direct emitter can push a NEAR continuation in front of its far
+  /// jump and let the target's plain RETURN come back through it.
+  /// </summary>
+  private IrValue CodeAddress(Expression pointer) {
+    var dword = this.Coerce(this.LowerExpr(pointer), this._model.TypeOf(pointer), PbType.Dword);
+    return this._b.Cast(IrCastOp.IntToPtr, this._b.Trunc(dword, IrType.U16), IrType.Ptr);
+  }
+
+  /// <summary>
+  /// Every block a computed jump in this function could land on: its labels.
+  ///
+  /// <para>
+  /// A superset of the truth, and deliberately so - <c>CODEPTR32</c> of a label can only name a label
+  /// of the function it is written in, so listing them all cannot miss one, and missing one is the
+  /// only error that matters here. The list does not steer the branch; it is what keeps the CFG from
+  /// claiming those blocks are unreachable, which is what reachability, liveness and phi placement all
+  /// read. A function with no labels has nowhere a computed jump could go and declines.
+  /// </para>
+  /// </summary>
+  private IReadOnlyList<IrBasicBlock> ComputedJumpTargets() {
+    if (this._labels.Count == 0)
+      throw new IrLoweringException("GOTO/GOSUB DWORD in a function with no labels to reach");
+    return [.. this._labels.Values];
+  }
+
+  private void LowerGotoPtr(GotoPtrStmt g)
+    => this._b.IndirectBr(this.CodeAddress(g.Pointer), this.ComputedJumpTargets());
+
+  /// <summary>
+  /// <c>GOSUB DWORD</c> is the ordinary GOSUB with its destination computed: the same return id is
+  /// pushed onto the same shadow stack, so the <c>RETURN</c> at the far end dispatches back here
+  /// through the very switch a named GOSUB uses. Only the branch differs.
+  /// </summary>
+  private void LowerGosubPtr(GosubPtrStmt g) {
+    if (this._gosubSp is null)
+      throw new IrLoweringException("GOSUB DWORD without return-stack setup");
+    var targets = this.ComputedJumpTargets();
+    var address = this.CodeAddress(g.Pointer);
+    var id = ++this._gosubSeq;
+    var sp = this._b.Load(IrType.I32, this._gosubSp);
+    this._b.Store(new IrConstantInt(IrType.I32, id), this._b.Gep(this._gosubStack!, sp, IrType.I32));
+    this._b.Store(this._b.Add(sp, new IrConstantInt(IrType.I32, 1)), this._gosubSp);
+    this._b.IndirectBr(address, targets);
+    var cont = this.NewBlock("gosub.cont");
     this._gosubConts.Add((id, cont));
     this._b.Position(cont);
   }
@@ -2903,6 +2956,27 @@ public sealed class IrLowering {
     if (name.Equals("VARSEG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this.Coerce(this._b.Call(IrType.I16, this.RuntimeFn("rt_varseg", IrType.I16)),
         PbType.Integer, this._model.TypeOf(call));
+    // CODEPTR / CODEPTR32 of a LABEL. A label is a block here rather than a value, so the address is
+    // the blockaddress the ON ERROR handler is already named by; CODEPTR32 pairs it with CS in the
+    // high word, which is what the direct emitter writes and what makes the two paths store the same
+    // 32-bit number in the program's own DWORD.
+    //
+    // Of a PROCEDURE it declines. The direct emitter answers with a FAR ENTRY THUNK it synthesizes
+    // beside the procedure - a near proc reached through a far call - and the IR has no such thing to
+    // point at; a near entry offset would be a different address wearing the same name.
+    if (name.ToUpperInvariant() is "CODEPTR" or "CODEPTR32" && call.Arguments is [NameExpr labelRef]
+        && this._model.LabelBindings.TryGetValue(labelRef, out var labelName)) {
+      if (!this._labels.TryGetValue(labelName, out var block))
+        throw new IrLoweringException($"{name} of an unknown label {labelName}");
+      var offset = this._b.Cast(IrCastOp.PtrToInt, new IrBlockAddress(block), IrType.U16);
+      if (name.Equals("CODEPTR", StringComparison.OrdinalIgnoreCase))
+        return this.Coerce(offset, PbType.Word, this._model.TypeOf(call));
+      var segment = this._b.Shl(
+        this._b.ZExt(this._b.Call(IrType.I16, this.RuntimeFn("rt_codeseg", IrType.I16)), IrType.U32),
+        new IrConstantInt(IrType.U32, 16));
+      return this.Coerce(this._b.Or(segment, this._b.ZExt(offset, IrType.U32)),
+        PbType.Dword, this._model.TypeOf(call));
+    }
     if (name.Equals("CODESEG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this.Coerce(this._b.Call(IrType.I16, this.RuntimeFn("rt_codeseg", IrType.I16)),
         PbType.Integer, this._model.TypeOf(call));

@@ -331,6 +331,41 @@ public sealed class IrSwitch : IrInstruction {
   }
 }
 
+/// <summary>
+/// A branch through a code ADDRESS rather than to a named block: <c>indirectbr addr, [targets]</c>,
+/// which is what <c>GOTO DWORD</c> / <c>GOSUB DWORD</c> perform over a <c>CODEPTR32</c> value.
+///
+/// <para>
+/// The target list is not how the branch chooses where to go - the address is - but it is how the CFG
+/// stays true. Every block whose address the function takes is listed, so the blocks a jump can reach
+/// have an edge to them and neither reachability, liveness nor phi placement has to know that a value
+/// somewhere is a label. A superset is sound; a missing target is not, which is why the lowering
+/// declines rather than guessing when the function has taken no label's address at all.
+/// </para>
+/// </summary>
+public sealed class IrIndirectBr : IrInstruction {
+
+  private readonly List<IrBasicBlock> _targets;
+
+  public IrIndirectBr(IrValue address, IEnumerable<IrBasicBlock> targets) : base(IrType.Void) {
+    this.AddOperand(address);
+    this._targets = [.. targets];
+  }
+
+  public IrValue Address => this.GetOperand(0);
+  public IReadOnlyList<IrBasicBlock> Targets => this._targets;
+
+  /// <summary>Repoints one target, for the CFG rewrites a block merge performs.</summary>
+  public void ReplaceTarget(IrBasicBlock from, IrBasicBlock to) {
+    for (var i = 0; i < this._targets.Count; ++i)
+      if (ReferenceEquals(this._targets[i], from))
+        this._targets[i] = to;
+  }
+
+  public override bool IsTerminator => true;
+  public override IEnumerable<IrBasicBlock> Successors => this._targets;
+}
+
 /// <summary>Marks an unreachable point (control must never arrive here).</summary>
 public sealed class IrUnreachable() : IrInstruction(IrType.Void) {
   public override bool IsTerminator => true;

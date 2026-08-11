@@ -100,6 +100,26 @@ public sealed class IrFunction : IrGlobalValue {
   /// <summary>All instructions across all blocks, in block then program order.</summary>
   public IEnumerable<IrInstruction> AllInstructions => this._blocks.SelectMany(b => b.Instructions);
 
+  /// <summary>
+  /// Every block whose ADDRESS this function takes - an <c>ON ERROR</c> handler, a statement boundary
+  /// a <c>RESUME</c> can land on, a label a <c>CODEPTR32</c> names.
+  ///
+  /// <para>
+  /// Such a block cannot be merged into its predecessor or dropped, however few edges reach it: the
+  /// address still names it, and it is the one property of a block that no CFG rewrite can see, since
+  /// it is carried in a VALUE rather than in an edge. Merging one away leaves an address pointing at
+  /// a label the emitter never defines.
+  /// </para>
+  /// </summary>
+  public HashSet<IrBasicBlock> AddressTakenBlocks() {
+    var taken = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance);
+    foreach (var instruction in this.AllInstructions)
+      foreach (var operand in instruction.Operands)
+        if (operand is IrBlockAddress address)
+          taken.Add(address.Block);
+    return taken;
+  }
+
   /// <summary>Removes every block, turning the function back into a declaration (used when a body fails to lower).</summary>
   public void ClearBody() {
     foreach (var block in this._blocks)

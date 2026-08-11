@@ -164,6 +164,12 @@ public sealed class IrVerifier {
       case IrSwitch sw:
         this.VerifySwitch(sw);
         break;
+      case IrIndirectBr ib:
+        if (!ib.Address.Type.IsPointer)
+          this.Error($"indirectbr address must be a pointer, got {ib.Address.Type}");
+        if (ib.Targets.Count == 0)
+          this.Error("indirectbr with no possible target: the CFG would not show where it can go");
+        break;
       case IrSelect sel:
         if (!sel.Condition.Type.IsBool)
           this.Error($"select condition must be i1, got {sel.Condition.Type}");

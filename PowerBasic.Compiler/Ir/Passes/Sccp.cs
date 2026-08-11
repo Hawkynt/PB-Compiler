@@ -210,6 +210,11 @@ public static class Sccp {
       var stack = new Stack<IrBasicBlock>();
       stack.Push(fn.Entry!);
       reachable.Add(fn.Entry!);
+      // a block whose ADDRESS the function holds is a root as much as the entry is: something can
+      // arrive there through a jump no edge draws - see IrFunction.AddressTakenBlocks
+      foreach (var addressed in fn.AddressTakenBlocks())
+        if (addressed.Parent is not null && reachable.Add(addressed))
+          stack.Push(addressed);
       while (stack.Count > 0)
         foreach (var s in stack.Pop().Successors)
           if (reachable.Add(s))

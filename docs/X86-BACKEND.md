@@ -854,6 +854,46 @@ and routed, 151/156 module bodies owned**, on 283 corpus comparisons with no dis
 module body still declines at *selection*, and for an unrelated reason: `!JNZ AddLoop` names a BASIC
 label from inside an inline-assembly block, and the binding pass binds variables.
 
+## `indirectbr`: a branch the CFG can still describe
+
+`CODEPTR32(SomeLabel)` and the `GOTO DWORD` / `GOSUB DWORD` that consume it are the one construct in
+this family that needed a new IR **instruction**. A label is an `IrBasicBlock`, not an addressable
+value, and `IrBr` / `IrCondBr` / `IrSwitch` all take block targets — none of them can branch to a
+number. Half the machinery was already there, because `ON ERROR` needed the same two things:
+`IrBlockAddress` (a constant naming a block) and `MOperand.BlockOffset` (the offset of a block's own
+label, which only the assembler knows). What was missing was the branch.
+
+`IrIndirectBr(address, targets)` supplies it. The address decides where control goes; the target list
+is how the **CFG stays true** — every block whose address the function takes is listed as a successor,
+so reachability, liveness and phi placement all see edges to the blocks a computed jump can land on.
+That is the difference between this and the `ON ERROR` trade next door: a handler is entered through
+an edge no graph can draw, so `IrFunction.HasErrorHandler` takes the whole function out of the
+optimizer. A computed jump *can* be drawn, so it is, and the function stays optimized. The lowering
+lists every label of the function — a superset, since `CODEPTR32` of a label can only name a label of
+the function it is written in, and a superset is sound where a missing target is not. A function with
+no labels declines rather than being given an empty list.
+
+Selection is one instruction on each side: `MOV dest, OFFSET lbl` for the address (`ptrtoint` of a
+block address), `JMP reg` for the branch, and the `inttoptr` in between is a rename for the same
+reason `ptrtoint` is. `CODEPTR32` pairs the offset with `CS` in the high word, which is what the
+direct emitter writes; joining them needs a 32-bit shift by sixteen, which on a register pair is not
+a shift at all but the two halves changing places — two `MOV`s where the bit-at-a-time loop would
+have needed thirty-two steps.
+
+One rule falls out of taking a block's address and is not optional: **a block whose address is taken
+cannot be merged away or dropped**. It is the one property of a block carried in a *value* rather than
+in an edge, so no CFG rewrite can see it. `IrFunction.AddressTakenBlocks` names them, `SimplifyCfg`
+refuses to merge one into its predecessor and treats them as reachability roots, and `Sccp` does the
+same. Without it, `CODEPTR(Here)` of a label with nothing in it emitted a `MOV AX, OFFSET lbl.Here`
+for a label the emitter had already deleted. `IrCloner` now rewrites a block address into the copy's
+own block for the same reason.
+
+`DIFF11` joins the IR path with this — **157/164 programs lowered**, still 283 corpus comparisons with
+no disagreement. Its module body declines at *selection*, on a limitation that predates all of this
+and has nothing to do with code pointers: a plain two-`GOSUB` body does not route either, because the
+shared `RETURN` dispatch block is created after the continuations that use its `GEP` and the selector
+walks blocks in list order.
+
 An address printed as a NUMBER usually will not route, and that is nothing to do with `VARPTR`: PB
 computes integral `+`/`-`/`*` in floating point, `VARPTR` answers a `WORD`, and `IntegerRecovery`
 only closes a float-shaped tree whose leaves are `sitofp` — an unsigned leaf (`uitofp u16 -> f80`)

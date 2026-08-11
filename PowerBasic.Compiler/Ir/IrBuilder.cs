@@ -70,5 +70,7 @@ public sealed class IrBuilder {
   public IrBr Br(IrBasicBlock target) => this.Emit(new IrBr(target));
   public IrCondBr CondBr(IrValue cond, IrBasicBlock ifTrue, IrBasicBlock ifFalse) => this.Emit(new IrCondBr(cond, ifTrue, ifFalse));
   public IrSwitch Switch(IrValue cond, IrBasicBlock defaultTarget) => this.Emit(new IrSwitch(cond, defaultTarget));
+  public IrIndirectBr IndirectBr(IrValue address, IEnumerable<IrBasicBlock> targets)
+    => this.Emit(new IrIndirectBr(address, targets));
   public IrUnreachable Unreachable() => this.Emit(new IrUnreachable());
 }

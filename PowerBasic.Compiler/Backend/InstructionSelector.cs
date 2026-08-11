@@ -303,6 +303,22 @@ public sealed class InstructionSelector {
       }
       case IrSwitch sw:
         return this.SelectSwitch(sw);
+      // GOTO / GOSUB DWORD: the destination is a VALUE, so the branch is `JMP reg` and the block's
+      // successors are the instruction's own target list - the labels the function has taken the
+      // address of. Nothing here chooses between them; they are what the allocator's liveness reads
+      // so that a value live into a computed label is still live when the jump lands there.
+      case IrIndirectBr indirect: {
+        if (!this.TryOperand(indirect.Address, out var address))
+          return false;
+        if (address is not MOperand.Register)
+          return this.Decline("terminator: IrIndirectBr on an address that is not in a register");
+        this._current.Instructions.Add(new MInstr(MOpcode.JmpIndirect, [address],
+          new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: false,
+            ReadsMemory: false, WritesMemory: false)));
+        foreach (var target in indirect.Targets)
+          AddSuccessor(this._current, target.Label);
+        return true;
+      }
       default:
         return this.Decline($"terminator: {terminator?.GetType().Name ?? "none"}"
           + (terminator is IrCondBr ? " (condition is not a folded compare)" : ""));
@@ -590,6 +606,12 @@ public sealed class InstructionSelector {
   /// unrolled into a wall of instructions.
   /// </summary>
   private bool SelectWideShift(IrBinary bin, MOpcode opcode, MBlock block) {
+    // ...except by exactly sixteen, which is not a shift on a register pair at all: it is the two
+    // halves changing places. That is two moves rather than the thirty-two shift/rotate steps the
+    // bit-at-a-time loop would need, and it is how a segment and an offset are joined into one
+    // DWORD (CODEPTR32) or taken apart again.
+    if (bin.Rhs is IrConstantInt { Value: 16 } && opcode is MOpcode.Shl or MOpcode.Shr)
+      return this.SelectWideWordSwap(bin, opcode == MOpcode.Shl);
     if (bin.Rhs is not IrConstantInt { Value: var count } || count is < 0 or > 8)
       return this.Decline($"32-bit binary: {bin.Op} (only a small constant count, not {bin.Rhs})");
     if (!this.TryOperandPair(bin.Lhs, out var lhsLo, out var lhsHi))
@@ -612,6 +634,22 @@ public sealed class InstructionSelector {
         new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: true, WritesFlags: true,
           ReadsMemory: false, WritesMemory: false)));
     }
+    return true;
+  }
+
+  /// <summary>
+  /// A 32-bit shift by exactly sixteen: the surviving half moves to the other end of the pair and the
+  /// vacated one becomes zero. Left is <c>hi = lo, lo = 0</c> and logical right its mirror; the
+  /// ARITHMETIC right shift is not here, because its vacated half is the sign rather than zero.
+  /// </summary>
+  private bool SelectWideWordSwap(IrBinary bin, bool left) {
+    if (!this.TryOperandPair(bin.Lhs, out var lhsLo, out var lhsHi))
+      return false;
+    var (destLo, destHi) = this.FreshPair(bin);
+    var (kept, keptSource, cleared) = left ? (destHi, lhsLo, destLo) : (destLo, lhsHi, destHi);
+    var zero = new MOperand.Immediate(0);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [kept, keptSource], MovEffect(kept, keptSource)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [cleared, zero], MovEffect(cleared, zero)));
     return true;
   }
 
@@ -1239,6 +1277,17 @@ public sealed class InstructionSelector {
       // A module-level or STATIC variable is a data LABEL rather than a register, so there is nothing
       // to rename and its offset is materialized the way an indexed access into it already is.
       case IrCastOp.PtrToInt when to.IsInteger && to.Bits == 16: {
+        // CODEPTR of a label: a point in this function's own code, which is the one address no
+        // instruction produces and only the assembler knows. MOperand.BlockOffset already names it -
+        // it is how ON ERROR arms a handler - so this is that operand moved into a register.
+        if (cast.Value is IrBlockAddress blockAddress) {
+          var labelReg = this.FreshVreg(to);
+          var labelDest = new MOperand.Register(labelReg);
+          var here = new MOperand.BlockOffset(blockAddress.Block.Label);
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [labelDest, here], MovEffect(labelDest, here)));
+          this._vregs[cast] = labelReg;
+          return true;
+        }
         if (cast.Value is IrGlobalVariable global) {
           if (!IsAddressableGlobal(global))
             return this.Decline($"ptrtoint: global '{global.Name}' has no addressable data cell");
@@ -1254,6 +1303,16 @@ public sealed class InstructionSelector {
         if (pointer is not MOperand.Register held)
           return this.Decline("ptrtoint: the address is not in a register");
         this._vregs[cast] = held.Reg with { Size = MRegSize.Word };
+        return true;
+      }
+      // ...and the same rename read the other way: a word becomes an address. GOTO DWORD's target is
+      // the low half of a PB code pointer, and on a near target that half IS the address.
+      case IrCastOp.IntToPtr when from.IsInteger && from.Bits == 16: {
+        if (!this.TryOperand(cast.Value, out var word))
+          return false;
+        if (word is not MOperand.Register number)
+          return this.Decline("inttoptr: the value is not in a register");
+        this._vregs[cast] = number.Reg with { Size = MRegSize.Word };
         return true;
       }
       case IrCastOp.Trunc when IsWide(from) && to.IsInteger && to.Bits == 16: {

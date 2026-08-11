@@ -47,8 +47,17 @@ public sealed class IrCloner {
     return cloner._blocks;
   }
 
-  private IrValue Map(IrValue v) =>
-    v is IrBasicBlock ? v : this._values.GetValueOrDefault(v, v);
+  /// <summary>
+  /// The copy of a value. A block ADDRESS is the one constant that has to be rewritten rather than
+  /// passed through: it names a block, and the copy's blocks are not the original's. Naming one
+  /// outside the cloned region is left alone, because a reference out of the region still means what
+  /// it said.
+  /// </summary>
+  private IrValue Map(IrValue v) => v switch {
+    IrBasicBlock => v,
+    IrBlockAddress ba when this._blocks.TryGetValue(ba.Block, out var copy) => new IrBlockAddress(copy),
+    _ => this._values.GetValueOrDefault(v, v),
+  };
 
   private IrBasicBlock MapBlock(IrBasicBlock b) => this._blocks.GetValueOrDefault(b, b);
 
@@ -90,6 +99,7 @@ public sealed class IrCloner {
     IrBr br => new IrBr(this.MapBlock(br.Target)),
     IrCondBr cb => new IrCondBr(this.Map(cb.Condition), this.MapBlock(cb.IfTrue), this.MapBlock(cb.IfFalse)),
     IrSwitch sw => this.CloneSwitch(sw),
+    IrIndirectBr ib => new IrIndirectBr(this.Map(ib.Address), ib.Targets.Select(this.MapBlock)),
     IrUnreachable => new IrUnreachable(),
     _ => throw new InvalidOperationException($"cannot clone {inst.GetType().Name}"),
   };

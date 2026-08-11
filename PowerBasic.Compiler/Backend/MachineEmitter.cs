@@ -173,7 +173,14 @@ public sealed class MachineEmitter {
       case MOpcode.Rcl: asm.Rcl(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
       case MOpcode.Rcr: asm.Rcr(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
       case MOpcode.Jmp: asm.Jmp(this._labels[((MOperand.LabelRef)ops[0]).Name]); break;
-      case MOpcode.JmpIndirect: asm.Jmp(this.Mem(ops[0])); break;
+      // through a cell (RESUME goes where the fault latched) or through a register (GOTO/GOSUB DWORD
+      // computed the address itself) - the same near indirect jump either way
+      case MOpcode.JmpIndirect:
+        if (ops[0] is MOperand.Register jumpThrough)
+          asm.Jmp(this.Resolve(jumpThrough.Reg));
+        else
+          asm.Jmp(this.Mem(ops[0]));
+        break;
       case MOpcode.Jcc: asm.J(instr.Condition!.Value, this._labels[((MOperand.LabelRef)ops[0]).Name]); break;
       case MOpcode.Call: {
         // with a resolver (the whole-program routing) the callee MUST be one it bound - anything else

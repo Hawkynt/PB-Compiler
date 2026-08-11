@@ -103,6 +103,7 @@ public sealed class LlvmEmitter {
       IrBr br => $"br label %{br.Target.Label}",
       IrCondBr cb => $"br i1 {this.Ref(cb.Condition)}, label %{cb.IfTrue.Label}, label %{cb.IfFalse.Label}",
       IrSwitch sw => this.EmitSwitch(sw),
+      IrIndirectBr ib => $"indirectbr ptr {this.Ref(ib.Address)}, [ {string.Join(", ", ib.Targets.Select(t => "label %" + t.Label))} ]",
       IrUnreachable => "unreachable",
       _ => throw new InvalidOperationException($"cannot emit {inst.GetType().Name} as LLVM"),
     };

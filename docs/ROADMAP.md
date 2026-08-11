@@ -525,7 +525,7 @@ Ranked by the census, what stands between that and full coverage:
    saves the caller's handler triple on entry and restores it on every exit; the routed prologue has
    no equivalent, and routing without it would lose the caller's handler silently.
 2. A tail of statements: `LSET` / `RSET`, `DIM AT`, `HEX$` with a digit count, `PRINT USING` /
-   `LPRINT`, `CODEPTR32`, `FIELD`, `CHAIN`, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
+   `LPRINT`, `FIELD`, `CHAIN`, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
    metastatements. `ARRAY SORT` / `ARRAY SCAN` came off this list: the parameter block is a set of
    stores to NAMED runtime cells, which the IR addresses directly, and only the array DESCRIPTOR
    needed a routine - it opens with a segment, and a segment register is not a value the IR can name
@@ -533,9 +533,14 @@ Ranked by the census, what stands between that and full coverage:
    nothing to do with the statement: reading or writing one of its elements is an element-indexed GEP,
    which the selector declines wherever it appears.
 2. A tail of statements: `ArraySortStmt`, `PUT$`, `DIM AT`, `ERASE` of a static array, `HEX$` with a
-   digit count, `CODEPTR32`, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
+   digit count, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
    metastatements. `PRINT USING` and `LPRINT` lower; a NON-LITERAL USING format still declines,
-   since the format is read at compile time on both paths.
+   since the format is read at compile time on both paths. `VARPTR` and `CODEPTR32` came off this
+   list: an address is `ptrtoint` of the address `VARPTR32` already forms, and a LABEL's address is
+   the `IrBlockAddress` an `ON ERROR` handler is already named by, jumped through by a new
+   `IrIndirectBr` whose target list keeps the CFG honest about where a computed jump can land
+   (X86-BACKEND.md). `CODEPTR32` of a PROCEDURE still declines: the direct emitter answers it with a
+   far entry THUNK it synthesizes, and the IR has nothing of the kind to point at.
 3. **Register allocation no longer loses selected functions:** all 192 selected functions route.
    Direct memory spills, address rematerialization, multi-definition/RMW live-range splitting and
    per-use argument reloads cover every allocation shape currently present in the corpus.
