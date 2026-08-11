@@ -2380,7 +2380,10 @@ public sealed class InstructionSelector {
   private static bool IsAddressableGlobal(IrGlobalVariable global)
     => global.Name.StartsWith("g.", System.StringComparison.Ordinal)
        || global.Name.StartsWith("static.", System.StringComparison.Ordinal)
-       || global.Name.StartsWith("rt_", System.StringComparison.Ordinal);
+       || global.Name.StartsWith("rt_", System.StringComparison.Ordinal)
+       // the IR's own DATA pool and read cursor, emitted beside the direct emitter's pair rather
+       // than shared with it - see CodeGenerator.DataCellOf
+       || global.Name is ".data" or ".data_cursor";
 
   /// <summary>The same cell shifted by <paramref name="delta"/> bytes - the high word of a 32-bit access.</summary>
   private static MOperand Shifted(MOperand cell, int delta) => cell switch {

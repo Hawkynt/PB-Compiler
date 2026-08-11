@@ -51,6 +51,9 @@ public sealed partial class Assembler {
 
     recs.Sort((left, right) => left.Start.CompareTo(right.Start));
     var labels = this.BoundLabelPositions();
+    // every byte a still-unresolved fixup will overwrite; an immediate read out of one of them is
+    // a placeholder rather than the value the instruction will carry
+    var patched = this._fixups.Select(fixup => fixup.Position).ToHashSet();
     var patches = new List<(int Position, byte[] Bytes)>();
     var cuts = new List<(int Start, int Length)>();
     var rewritten = new HashSet<int>();
@@ -58,7 +61,7 @@ public sealed partial class Assembler {
 
     for (var i = 0; i < recs.Count; ++i) {
       var source = this.FrameCellRegister(recs[i], store: true);
-      var constant = source is null ? this.FrameCellImmediate(recs[i]) : null;
+      var constant = source is null ? this.FrameCellImmediate(recs[i], patched) : null;
       if (source is null && constant is null)
         continue;
 
@@ -129,12 +132,22 @@ public sealed partial class Assembler {
     return (modrm & 0xC0) == 0xC0 ? null : (modrm >> 3) & 7;   // mod=11 is register-to-register
   }
 
-  /// <summary>The 16-bit immediate of <c>MOV WORD PTR [BP+d],imm16</c>, or null for anything else.</summary>
-  private ushort? FrameCellImmediate(SchedInstr instr) {
+  /// <summary>
+  /// The 16-bit immediate of <c>MOV WORD PTR [BP+d],imm16</c>, or null for anything else - and null
+  /// as well when a pending fixup covers those two bytes, because then they are not the immediate
+  /// yet. A <c>MOV WORD PTR [BP-88],OFFSET pool+21</c> is emitted with a zero placeholder and the
+  /// address written in when the label resolves, so reading the buffer here answers 0 for a cell
+  /// that will hold an address, and forwarding that 0 into the reload is a miscompile. It cost
+  /// DATAREAD.BAS a garbage string at -O1 and nothing at all at -O0, the pass being off there.
+  /// </summary>
+  private ushort? FrameCellImmediate(SchedInstr instr, HashSet<int> patched) {
     if (!instr.MemWrite || instr.MemRead || !IsFrameCell(instr) || !this.HasOpcode(instr, 0xC7))
       return null;
     if ((this._buffer[instr.Start + 1] & 0xC0) == 0xC0)
       return null;
+    for (var at = instr.Start; at < instr.Start + instr.Length; ++at)
+      if (patched.Contains(at))
+        return null;
     return (ushort)(this._buffer[instr.Start + instr.Length - 2]
                   | (this._buffer[instr.Start + instr.Length - 1] << 8));
   }

@@ -42,7 +42,10 @@ public sealed class DataReadLoweringTests {
     Assert.That(module, Is.Not.Null);
     Assert.That(IrVerifier.Verify(module!), Is.Empty);
     var text = LlvmEmitter.Emit(module!);
-    Assert.That(text, Does.Contain("call ptr @rt_str_const(ptr"));        // build a handle from the blob bytes
+    // rt_str_from_fixed, not rt_str_const: a DATA item is n bytes at an OFFSET into the pool, where a
+    // constant is a whole pooled literal named by its global. Same routine underneath, and only the
+    // constant form can be reached by naming a global, which is why the two are spelled apart
+    Assert.That(text, Does.Contain("call ptr @rt_str_from_fixed(ptr"));   // build a handle from the blob bytes
     Assert.That(text, Does.Contain("call void @rt_print_strvar(ptr"));
   }
 

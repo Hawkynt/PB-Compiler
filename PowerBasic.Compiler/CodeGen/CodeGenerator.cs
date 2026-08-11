@@ -1557,6 +1557,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     }
 
     this.EmitLiteralPool(asm);
+    this.EmitBackendDataPool(asm);
 
     foreach (var (symbol, label) in this._variableSlots) {
       // pb36 O23: a dead global's data slot carries no live value - emit no bytes for it.

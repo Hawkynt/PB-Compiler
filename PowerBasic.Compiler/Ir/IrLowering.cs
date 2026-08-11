@@ -1452,7 +1452,11 @@ public sealed class IrLowering {
     var off = this._b.Load(IrType.I32, cursor);
     var len = this._b.ZExt(this._b.Load(IrType.I16, this._b.Gep(blob, off)), IrType.I32);       // 2-byte length prefix
     var dataPtr = this._b.Gep(blob, this._b.Add(off, new IrConstantInt(IrType.I32, 2)));
-    var handle = this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_const", IrType.Ptr, IrType.Ptr, IrType.I32), dataPtr, len);
+    // rt_str_from_fixed rather than rt_str_const, and the difference is where the bytes ARE: a
+    // constant names a whole pooled literal, while a DATA item is n bytes at an OFFSET into the pool.
+    // Both make a handle from n bytes and both are rt_make in the C runtime and rt_strmem on DOS, but
+    // rt_str_const's argument is a global's own address, and this one's is an address computed from it.
+    var handle = this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_from_fixed", IrType.Ptr, IrType.Ptr, IrType.I32), dataPtr, len);
     this._b.Store(this._b.Add(this._b.Add(off, new IrConstantInt(IrType.I32, 2)), len), cursor); // advance past length + bytes
 
     this._model.VariableBindings.TryGetValue(target, out var sym);

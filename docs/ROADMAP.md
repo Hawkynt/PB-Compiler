@@ -295,7 +295,8 @@ and stores then use the resulting address normally. No second data segment or co
 `STATIC` locals use the same bridge, but their IR names now include their owning procedure:
 `static.<procedure>.<local>` (and an overload index where PB 3.6 needs one). This makes two legal
 `STATIC count` declarations distinct and lets emission resolve each name to the exact `VariableSymbol`
-whose `SlotOf` cell the direct path uses. Synthesized globals such as `.data_cursor` still decline.
+whose `SlotOf` cell the direct path uses. Synthesized globals such as `.data_cursor` no longer decline
+either - see below.
 
 This removes all four shared/static named-procedure declines in `SHAREDG` and `SUBFN`. Against the
 post-pull census, selection and routing move **220 → 224 of 240**, whole-module ownership moves
@@ -371,6 +372,31 @@ and `DIFF74` become complete module bodies: selection/routing moves **228 → 23
 moves **130 → 132 of 142**, and allocation declines remain zero. The differential moves to
 **266 participating, 256 agreeing, 10 emulator-limited, and 0 disagreeing**; one new execution reaches
 an existing direct-emitter test-CPU opcode limitation rather than being credited as agreement.
+
+### The IR's own DATA pool and read cursor - two pools, never both live
+
+`DATA`/`READ`/`RESTORE` lower to a length-prefixed blob (`.data`) and a read cursor
+(`.data_cursor`), and the back end now lays both down itself as `ir_datapool` / `ir_dataptr`. They sit
+*beside* the direct emitter's `rt_datapool` / `rt_dataptr` rather than replacing them, because the two
+cursors do not mean the same thing: the IR's is a blob-relative **index**, the direct emitter's an
+**absolute pointer**, and one cell cannot be both. `CodeGenerator.BackendOwnsData` is what makes two
+pools safe - it refuses the whole arrangement when any procedure the direct emitter still compiles
+also reads `DATA`, so no program can ever advance one cursor and consult the other. A `READ` of a
+string item calls `rt_str_from_fixed` rather than `rt_str_const`: same routine underneath, but a
+`DATA` item is *n* bytes at an offset into the pool where a constant is a whole pooled literal named
+by its global, and only the second can be reached by naming one.
+
+`DATAREAD` becomes a complete module body, and the differential still reports zero disagreements.
+
+Getting there needed a load-forwarding fix that had nothing to do with `DATA` and everything to do
+with when the assembler's bytes become true. `MOV WORD PTR [BP-88],OFFSET ir_datapool+21` is emitted
+with a **zero placeholder** and the address written in when the label resolves, so
+`FrameCellImmediate` - which reads the immediate straight out of the buffer - answered 0 for a cell
+that was going to hold an address, and the reload was rewritten to `MOV SI,0`. It cost `DATAREAD` a
+garbage string at `-O1` and nothing at all at `-O0`, the pass being off there; the pool bytes, the IR,
+and every individual instruction all looked correct throughout. Any `MOV WORD PTR [BP+d],<label>`
+followed by a reload had the same defect waiting - `DATA` is only the first construct to emit that
+shape - and the pass now declines any store whose bytes a pending fixup will overwrite.
 
 ### Wider integers and SIMD as IR operations - not started
 
