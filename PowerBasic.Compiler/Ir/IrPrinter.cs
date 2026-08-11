@@ -77,6 +77,7 @@ public sealed class IrPrinter {
       IrStore s => $"store {s.Value.Type} {this.Ref(s.Value)}, ptr {this.Ref(s.Pointer)}",
       IrInlineAsm a => $"asm \"{a.Text.Trim()}\"",
       IrGep g => $"gep {g.ElementType?.ToString() ?? "i8"} {this.Ref(g.BasePtr)}, {g.ByteOffset.Type} {this.Ref(g.ByteOffset)}",
+      IrFarPtr f => $"farptr {f.Segment.Type} {this.Ref(f.Segment)}:{f.Offset.Type} {this.Ref(f.Offset)}",
       IrPhi p => $"phi {p.Type} {this.PrintPhiInputs(p)}",
       IrSelect sel => $"select i1 {this.Ref(sel.Condition)}, {sel.Type} {this.Ref(sel.IfTrue)}, {sel.Type} {this.Ref(sel.IfFalse)}",
       IrCall call => $"call {call.Type} {this.Ref(call.Callee)}({this.PrintArgs(call)})",

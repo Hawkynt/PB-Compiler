@@ -58,6 +58,9 @@ public sealed class IrBuilder {
   public IrGep Gep(IrValue basePtr, IrValue byteOffset) => this.Emit(new IrGep(basePtr, byteOffset));
   public IrGep Gep(IrValue basePtr, IrValue index, IrType elementType) => this.Emit(new IrGep(basePtr, index, elementType));
 
+  /// <summary>A pointer into an explicitly named segment (see <see cref="IrFarPtr"/>).</summary>
+  public IrFarPtr FarPtr(IrValue segment, IrValue offset) => this.Emit(new IrFarPtr(segment, offset));
+
   // ---- ssa / calls ---------------------------------------------------------
 
   public IrPhi Phi(IrType type) => this.Target.AppendPhi(new IrPhi(type));

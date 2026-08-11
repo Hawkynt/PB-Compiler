@@ -139,6 +139,7 @@ public sealed class MachineEmitter {
   private void EmitInstruction(MInstr instr) {
     var asm = this._asm;
     var ops = instr.Operands;
+    this.LoadSegmentOverride(instr);
     switch (instr.Opcode) {
       case MOpcode.Mov: this.Emit2(ops[0], ops[1], asm.Mov, asm.Mov, asm.Mov, asm.Mov, asm.Mov); break;
       case MOpcode.Add: this.Emit2(ops[0], ops[1], asm.Add, asm.Add, asm.Add, asm.Add, asm.Add); break;
@@ -221,6 +222,23 @@ public sealed class MachineEmitter {
       case MOpcode.InlineAsm: this.EmitInlineAsm(asm, instr); break;
       default: throw new System.NotSupportedException($"machine opcode {instr.Opcode} has no emission yet");
     }
+  }
+
+  /// <summary>
+  /// Moves a far operand's segment into <c>ES</c>, immediately in front of the instruction that reads
+  /// through it. An x86 instruction has at most one memory operand, so at most one segment is ever in
+  /// play, and emitting the move HERE - rather than as an instruction of its own that selection
+  /// produced - is what makes the pair indivisible: no scheduling decision, spill reload or
+  /// rematerialized address can land between a move nothing upstream ever saw and the access it
+  /// belongs to. <c>ES</c> is scratch on this target (the direct emitter uses it exactly this way for
+  /// every dynamic-array element), so nothing is live in it to preserve.
+  /// </summary>
+  private void LoadSegmentOverride(MInstr instr) {
+    foreach (var operand in instr.Operands)
+      if (operand is MOperand.Memory { Segment: { } segment }) {
+        this._asm.Mov(Asm.Reg.ES, this.Resolve(segment));
+        return;
+      }
   }
 
   /// <summary>A shift by a constant count, against a register or a frame cell.</summary>
@@ -335,9 +353,9 @@ public sealed class MachineEmitter {
     MOperand.ParamCell p => Sized(Asm.Mem.At(Asm.Reg.BP,
       this._paramOffsets[p.ArgumentIndex] + p.ByteDelta), p.Size),
     MOperand.DataCell cell => this.DataCell(cell),
-    MOperand.Memory m when m.Index is { } x => Sized(Asm.Mem.At(this.Resolve(m.Base!.Value), this.Resolve(x), m.Disp), m.Size),
-    MOperand.Memory m when m.Base is { } b => Sized(Asm.Mem.At(this.Resolve(b), m.Disp), m.Size),
-    MOperand.Memory m => Sized(Asm.Mem.At(m.Disp), m.Size),
+    MOperand.Memory m when m.Index is { } x => Segmented(Sized(Asm.Mem.At(this.Resolve(m.Base!.Value), this.Resolve(x), m.Disp), m.Size), m),
+    MOperand.Memory m when m.Base is { } b => Segmented(Sized(Asm.Mem.At(this.Resolve(b), m.Disp), m.Size), m),
+    MOperand.Memory m => Segmented(Sized(Asm.Mem.At(m.Disp), m.Size), m),
     _ => throw new System.NotSupportedException($"operand {operand} is not a memory reference"),
   };
 
@@ -346,6 +364,10 @@ public sealed class MachineEmitter {
   /// loads and stores may additionally be dwords, qwords or tbytes. The width is part of the machine
   /// operand because using the storage cell's full width can silently change a low-byte access.
   /// </summary>
+  /// <summary>Adds the <c>ES:</c> override prefix to a far operand - <see cref="LoadSegmentOverride"/> put the value there.</summary>
+  private static Mem Segmented(Mem memory, MOperand.Memory operand)
+    => operand.Segment is null ? memory : memory.Es();
+
   private static Mem Sized(Mem memory, MRegSize size) => size switch {
     MRegSize.Byte => memory.WithSize(OperandSize.Byte),
     MRegSize.Dword => memory.WithSize(OperandSize.Dword),

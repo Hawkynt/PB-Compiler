@@ -98,6 +98,8 @@ public static class MachineScheduler {
           reads.Add(Key(b));
         if (mem.Index is { } x)
           reads.Add(Key(x));
+        if (mem.Segment is { } s)
+          reads.Add(Key(s));
       }
     return (reads, writes);
   }

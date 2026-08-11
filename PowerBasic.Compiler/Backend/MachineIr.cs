@@ -40,8 +40,22 @@ public abstract record MOperand {
 
   public sealed record Immediate(long Value) : MOperand;
 
-  /// <summary><c>[Base + Index*Scale + Disp]</c>; <see cref="Base"/>/<see cref="Index"/> are registers, either may be null.</summary>
-  public sealed record Memory(MReg? Base, MReg? Index, int Scale, int Disp, MRegSize Size) : MOperand;
+  /// <summary>
+  /// <c>[Base + Index*Scale + Disp]</c>; <see cref="Base"/>/<see cref="Index"/> are registers, either
+  /// may be null.
+  ///
+  /// <para>
+  /// <see cref="Segment"/>, when set, is a general register HOLDING a segment value, and the access
+  /// goes through that segment instead of the default one - the machine form of <see cref="Ir.IrFarPtr"/>.
+  /// It is part of the OPERAND rather than a preceding instruction on purpose: x86-16 reaches a
+  /// non-default segment through a segment register, so the value has to be moved into <c>ES</c>
+  /// first, and any gap between that move and the access is a window for a later pass - scheduling, a
+  /// spill reload, a rematerialized address - to put something in. Carrying it here makes the pair
+  /// indivisible: the emitter writes <c>MOV ES, reg</c> immediately in front of the instruction it
+  /// belongs to, and nothing upstream can separate what it never saw as two things.
+  /// </para>
+  /// </summary>
+  public sealed record Memory(MReg? Base, MReg? Index, int Scale, int Disp, MRegSize Size, MReg? Segment = null) : MOperand;
 
   /// <summary>A code label (branch target) or a data/global symbol address.</summary>
   public sealed record LabelRef(string Name) : MOperand;

@@ -32,6 +32,10 @@ public sealed class LivenessAnalysis {
           reads.Add(b.VirtualId);
         if (mem.Index is { IsVirtual: true } x)
           reads.Add(x.VirtualId);
+        // a far operand's segment register is read the same way the base is - the emitter moves it
+        // into ES in front of the access, so the value has to still be there
+        if (mem.Segment is { IsVirtual: true } s)
+          reads.Add(s.VirtualId);
       }
 
     return (reads, writes);

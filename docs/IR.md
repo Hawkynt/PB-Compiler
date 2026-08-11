@@ -167,15 +167,26 @@ and sequential file-processing programs lower, optimize and compile to a native 
 object via `pbc --emit-llvm | llc` (linked against a runtime providing the `rt_*`
 functions; the `llvm.*` math intrinsics need no runtime).
 
+`DIM a(…) AT segment` lowers. An `ABSOLUTE` array is a VIEW of memory the program does not
+own - the text screen at `&HB800`, a BIOS area - so its elements are not at a near address,
+and `IrFarPtr` is the instruction that says so: a pointer carrying its own segment beside its
+offset. The machine operand carries the segment too, and the emitter writes `MOV ES, reg`
+immediately in front of the access rather than as an instruction of its own, so nothing
+between selection and emission can separate the pair.
+
+A far pointer is deliberately not interchangeable with a near one. Only a load or a store
+DIRECTLY through it lowers; taking VARPTR of an element, passing one BYREF, reaching a record
+field inside one or handing one to a runtime routine would each drop the segment and address
+the program's own data instead, so each declines. So do `ERASE` and `REDIM` of an `AT` array
+(one unmaps it, the other would allocate over the view), an `AT` segment that is not a
+compile-time constant, and a dynamic-string element type.
+
 Not yet: `GET`/`PUT` of UDT/string records (only fixed-size scalar records are modeled), and
-`DIM … AT` together with the memory-model array classes (`HUGE`, `VIRTUAL`, `EMS`, `XMS`,
-`ABSOLUTE`). The declaration of one of those is expressible; an ELEMENT of one is not. Each
-reaches its storage through a segment computed per access - `base + (byteOffset >> 4)` for
-`HUGE`, the EMS page frame after mapping the right logical page for `VIRTUAL`, the `AT`
-segment for `ABSOLUTE` - and the machine IR's memory operand carries no segment at all, only
-a base, an index, a scale and a displacement, all implicitly `DS` or `SS`. Admitting the
-declaration alone is worse than refusing it: the `AT` segment then disappears from the IR
-entirely and the accesses select as ordinary near stores.
+the memory-model array classes `HUGE`, `VIRTUAL`, `EMS` and `XMS`. Those need more than a
+segment named once at the declaration: `HUGE` steps the segment by `byteOffset >> 4` so one
+array spans many of them, and `VIRTUAL` maps a 16 KiB EMS page pair into a window before each
+access. Both need the allocator, the page mapper and the far descriptor the DOS runtime holds,
+none of which is modelled here.
 
 ## Optimization passes (`Ir/Passes/`)
 
@@ -304,8 +315,9 @@ IR writer has.
 
 ## Roadmap
 
-- the constructs that still decline: `PRINT USING`/`LPRINT`, `LSET`/`RSET`, `DIM AT`,
-  `HEX$` with a digit count, parts of the `CommandStmt` family, and inline
+- the constructs that still decline: `PRINT USING`/`LPRINT`, `LSET`/`RSET`,
+  `DIM HUGE`/`VIRTUAL`/`EMS`/`XMS`, `HEX$` with a digit count, parts of the
+  `CommandStmt` family, and inline
   assembly (target-specific by definition - it will never lower).
   `ARRAY SORT` / `ARRAY SCAN` lower over a STATIC one-dimensional array; a dynamic
   one still declines, because its elements live in the far array heap whose segment
@@ -313,8 +325,9 @@ IR writer has.
   descriptor to build for it. `COLLATE` declines with it: the table is an owned
   handle the parameter block would have to hold across the call and release after;
 - the constructs that still decline: `ArraySortStmt`, `PUT$`,
-  `DIM AT`, `HEX$` with a digit count, parts of the `CommandStmt` family, and inline
-  assembly (target-specific by definition - it will never lower).
+  `IrFarPtr` (a `DIM … AT` element - a far pointer has no BASIC spelling other than the
+  declaration it came from), `HEX$` with a digit count, parts of the `CommandStmt` family,
+  and inline assembly (target-specific by definition - it will never lower).
   `PRINT USING` lowers for a LITERAL format with no more values than fields, which is the
   whole of what the DOS runtime's `rt_usefmt` renders - `#` digit runs, an optional `.`
   fraction and commas inside the run. `$$`, `**`, `+`, `^^^^` and the `&` / `\ \` string

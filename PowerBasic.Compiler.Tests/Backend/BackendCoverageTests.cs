@@ -319,6 +319,7 @@ public sealed class BackendCoverageTests {
     "DIFF111.BAS",
     "DIFF112.BAS",
     "DIFF113.BAS",
+    "DIFF114.BAS",   // DIM ... AT segment (an ABSOLUTE array over the text screen)
     "DIFF15.BAS",
     "DIFF18.BAS",
     "DIFF19.BAS",   // $ERROR STACK ON
@@ -476,6 +477,7 @@ public sealed class BackendCoverageTests {
     "DIFF111.BAS",
     "DIFF112.BAS",
     "DIFF113.BAS",
+    "DIFF114.BAS",   // DIM ... AT segment (an ABSOLUTE array over the text screen)
     "DIFF15.BAS",
     "DIFF18.BAS",
     "DIFF19.BAS",
