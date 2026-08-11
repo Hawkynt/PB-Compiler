@@ -36,32 +36,35 @@ internal static class RuntimeAbi {
     /// <see cref="RuntimeArg.High"/>. The selector derives DS for globals and SS for frame objects.
     ///
     /// <para>
-    /// <b>Adding a new entry that uses this is not safe today.</b> Three separate attempts to route a
-    /// call through it produced a MISCOMPILE rather than a decline, and all three failed with the
-    /// optimizer off, which places the defect in the selector's argument staging rather than in any
-    /// pass:
-    /// </para>
-    /// <list type="bullet">
-    ///   <item>a record copy between two array elements - two pointers into the SAME frame object -
-    ///   copied zeros while the source still held its values;</item>
-    ///   <item><c>rt_str_from_fixed</c> reading a fixed buffer through this kind rather than through
-    ///   <see cref="Offset"/> disagreed with the direct emitter on two corpus runs;</item>
-    ///   <item>a four-argument record GET/PUT using one of these alongside a <see cref="Pair"/>
-    ///   disagreed on two more.</item>
-    /// </list>
-    /// <para>
-    /// The MECHANISM is not established. The obvious explanation - that staging writes each argument
-    /// straight into its physical register, so a later argument's source is read after being
-    /// overwritten - does not survive reading the allocator: <c>LinearScanAllocator</c> already
-    /// excludes any register clobbered anywhere an interval is live, and these moves do carry their
-    /// destinations in <c>clobbers</c>. Something else is wrong, and guessing at it is what produced
-    /// three withdrawn changes in one sitting.
+    /// This kind WORKS - the entries below use it and the corpus pins them. What has repeatedly
+    /// failed is composing a NEW multi-argument runtime routine around it, and the reproduction is
+    /// worth keeping because six plausible explanations have already been eliminated.
     /// </para>
     /// <para>
-    /// What IS established is the reproduction: add an entry, run the corpus differential, and watch
-    /// programs that agreed start disagreeing - with the optimizer off, so no pass is involved. The
-    /// entries using this kind today were added before the pattern was visible and are pinned by that
-    /// same differential; a new one needs the defect found first.
+    /// <b>The reproduction.</b> Add <c>rt_file_get</c> / <c>rt_file_put</c> mapping the IR's
+    /// <c>(i32 file, i32 record, ptr buffer, i32 size)</c> onto a DOS routine that seeks with
+    /// <c>rt_fsetpos</c>, resolves the handle with <c>rt_fhandle</c> and transfers with
+    /// <c>rt_fwrite</c>. Then compile:
+    /// </para>
+    /// <code>
+    /// TYPE R : a AS INTEGER : b AS INTEGER : END TYPE
+    /// DIM r AS R
+    /// OPEN "O.TXT" FOR BINARY AS #1
+    /// r.a = 7 : PUT #1, , r
+    /// </code>
+    /// <para>
+    /// The OPEN succeeds and the PUT raises ERR 57, with the optimizer OFF, while the direct emitter
+    /// writes the record. Eliminated so far: the seek (the unnumbered form skips it and still fails);
+    /// DI not being preserved across <c>rt_fsetpos</c> (staging it changes nothing); the staging
+    /// cells colliding with a callee's (nothing between them touches rt_st0..3); the buffer's segment
+    /// being SS rather than DS (a SHARED record, which lives in DGROUP, fails identically);
+    /// argument-order clobbering (the emitted moves are AX, CX, BX, DI, SI, DX - all distinct); and
+    /// the allocator ignoring <c>clobbers</c> (it excludes any register clobbered anywhere an
+    /// interval is live).
+    /// </para>
+    /// <para>
+    /// Whatever it is, it is not visible in the machine IR, which reads correctly instruction by
+    /// instruction. It wants a single-step through the emulator rather than a seventh guess.
     /// </para>
     /// </summary>
     Pointer,
