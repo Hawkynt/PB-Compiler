@@ -177,6 +177,12 @@ internal static class RuntimeAbi {
     ["rt_str_const"] = new("rt_strmem",
       [new(ArgKind.Offset, Reg.SI), new(ArgKind.Word, Reg.CX)], _callerSaved,
       Result: Reg.AX, Presets: [(Reg.DX, Reg.DS)]),
+    // the SAME routine reading a fixed-width buffer that is not a literal: a STRING * n variable or
+    // record field. It differs only in where the bytes are - a frame or data address rather than a
+    // pooled literal - so the pointer arrives as an offset AND a segment instead of an immediate
+    // offset with DS assumed
+    ["rt_str_from_fixed"] = new("rt_strmem",
+      [new(ArgKind.Pointer, Reg.SI, Reg.DX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
 
     // "PrintSingle/PrintDouble: value on ST(0), popped". SINGLE and DOUBLE have SEPARATE entries even
     // though both share the body: rt_print_f32 and rt_print_f64 differ only in the significant-digit
@@ -433,6 +439,15 @@ internal static class RuntimeAbi {
     ["rt_asciiz_len"] = new("rt_az_len",
       [new(ArgKind.Pointer, Reg.SI, Reg.DX), new(ArgKind.Word, Reg.CX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.WidenedWord),
+    // GET #n, r, v / PUT #n, r, v: a whole record between a file and a variable's storage. Four
+    // arguments and six registers, which is every one this ABI has - the record number takes a pair,
+    // the buffer takes an offset and a segment, and the file number and size take one each.
+    ["rt_file_get"] = new("rt_frec_get",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Pair, Reg.CX, Reg.BX),
+       new(ArgKind.Pointer, Reg.DI, Reg.SI), new(ArgKind.Word, Reg.DX)], _callerSaved),
+    ["rt_file_put"] = new("rt_frec_put",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Pair, Reg.CX, Reg.BX),
+       new(ArgKind.Pointer, Reg.DI, Reg.SI), new(ArgKind.Word, Reg.DX)], _callerSaved),
     // INPUT of a FLOAT: rt_val already leaves its answer on ST0, so there is nothing to convert.
     // All three widths share one entry - the runtime reads a number, and the DECLARED type picks the
     // formatter rather than a rounding step, which is the same rule PRINT follows.
@@ -478,9 +493,14 @@ internal static class RuntimeAbi {
     ["rt_file_pos"] = new("rt_fpos", [new(ArgKind.Word, Reg.AX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.Pair),
 
-    // SEEK #n, p: AX = the file number, CX = the position
+    // SEEK #n, p: AX = the file number, DX:CX = the position - a LONG, and the HIGH half matters.
+    //
+    // This row passed the position as a bare word and left DX holding whatever the caller had in it,
+    // so rt_fseekstmt seeked to garbage:p. It went unseen because the only corpus program that seeks
+    // did not route until the record routines arrived; SEEK #2, 5 then landed past the end of the
+    // file and the GET$ after it read nothing, which printed as five NULs rather than as an error.
     ["rt_file_seek"] = new("rt_fseekstmt",
-      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved),
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Pair, Reg.CX, Reg.DX)], _callerSaved),
 
     // PUT$ fh, s$: AX = the file number, DX = the handle. GET$ fh, n, s$: AX = file, CX = count -> AX
     ["rt_fput_str"] = new("rt_fputstr",

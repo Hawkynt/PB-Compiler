@@ -60,10 +60,57 @@ public sealed partial class DosRuntime {
   public Label FGetInto { get; private set; } = null!;
   public Label FToken { get; private set; } = null!;
 
+  /// <summary>GET #n, r, v: AX = file, BX:CX = record, SI:DI = storage, DX = size.</summary>
+  public Label FRecGet { get; private set; } = null!;
+
+  /// <summary>PUT #n, r, v: the same arguments, written instead of read.</summary>
+  public Label FRecPut { get; private set; } = null!;
+
   /// <summary>INPUT of a number: AX = PB file number (0 = console) -> AX (or DX:AX) = the value.</summary>
   public Label InputI16 { get; private set; } = null!;
   public Label InputI32 { get; private set; } = null!;
   public Label InputFlt { get; private set; } = null!;
+
+  /// <summary>
+  /// The body both record routines share: seek when a record number was given, resolve the handle,
+  /// then move <paramref name="transfer"/> bytes. Written once and emitted twice rather than branched
+  /// on a mode flag - two straight-line copies are shorter than one with a test in it, and neither
+  /// can be entered in the wrong state.
+  /// </summary>
+  private static void EmitRecordTransfer(Assembler asm, Label transfer) {
+    var atPosition = asm.DefineLabel();
+    asm.Push(Reg.AX);
+    asm.Push(Reg.BX);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.DX);
+    asm.Push(Reg.SI);
+    asm.Push(Reg.DI);
+    asm.Mov(Mem.Word(asm.Lbl("rt_st0")), Reg.AX);      // the file number, past rt_fhandle's use of BX
+    asm.Mov(Mem.Word(asm.Lbl("rt_st1")), Reg.DX);      // the byte count
+    asm.Mov(Mem.Word(asm.Lbl("rt_st2")), Reg.SI);      // the buffer's segment
+    // a record number of zero means "wherever the file already is", which is what the lowering
+    // passes when the statement names none
+    asm.Mov(Reg.AX, Reg.BX);
+    asm.Or(Reg.AX, Reg.CX);
+    asm.Jz(atPosition);
+    asm.Mov(Reg.DX, Reg.BX);                           // DX:CX = the 1-based position
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_st0")));
+    asm.Call(asm.Lbl("rt_fsetpos"));
+    asm.MarkLabel(atPosition);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_st0")));
+    asm.Call(asm.Lbl("rt_fhandle"));                   // BX = the DOS handle
+    asm.Mov(Reg.CX, Mem.Word(asm.Lbl("rt_st1")));
+    asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_st2")));
+    asm.Mov(Reg.DX, Reg.DI);                           // SI:DX = the buffer
+    asm.Call(transfer);
+    asm.Pop(Reg.DI);
+    asm.Pop(Reg.SI);
+    asm.Pop(Reg.DX);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.BX);
+    asm.Pop(Reg.AX);
+    asm.Ret();
+  }
 
   private void EmitFileProcedures(Assembler asm) {
     var files = asm.Lbl("rt_files");
@@ -515,6 +562,28 @@ public sealed partial class DosRuntime {
       asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_scratch")));
       asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_scratch"), 2));
       asm.Ret();
+    }
+
+    // GET #n, r, v and PUT #n, r, v - a whole record moved between a file and a variable's storage.
+    // The direct emitter composes this at the call site out of rt_fsetpos, rt_fhandle and
+    // rt_fread/rt_fwrite; the IR declares it as ONE function because the same declaration also feeds
+    // the C back end, so the composition moves in here.
+    //
+    //   AX = PB file number, BX:CX = 1-based record number (0 = wherever the file already is),
+    //   SI:DI = the variable's storage, DX = its size in bytes.
+    //
+    // The staging cells are needed because rt_fhandle answers in BX, which is half the record number
+    // this routine arrived with - so the file number has to outlive the register holding it. DI is
+    // never staged: rt_fsetpos and rt_fhandle both preserve it, which is what lets the buffer offset
+    // sit there across both calls.
+    this.FRecGet = asm.MarkLabel("rt_frec_get");
+    {
+      EmitRecordTransfer(asm, this.FRead);
+    }
+
+    this.FRecPut = asm.MarkLabel("rt_frec_put");
+    {
+      EmitRecordTransfer(asm, this.FWrite);
     }
 
     // and the float form, which needs no conversion at all: rt_val already answers on ST0, which is
