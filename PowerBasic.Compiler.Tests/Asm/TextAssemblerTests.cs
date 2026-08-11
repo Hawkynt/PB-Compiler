@@ -471,4 +471,67 @@ public sealed class TextAssemblerTests {
     => Assert.That(AssembleLine("CMOVG AX, [BX]"), Is.EqualTo(new byte[] { 0x0F, 0x4F, 0x07 }));
 
   #endregion
+
+  #region the register census
+
+  // Which registers a statement touches - the question the back end's allocator asks before deciding
+  // whether a register is its own to hand out (see Backend/InlineAsmReservation).
+
+  private static IEnumerable<string> Used(string line)
+    => TextAssembler.RegistersUsed(line).Select(r => r.ToString()).OrderBy(n => n, StringComparer.Ordinal);
+
+  [Test]
+  public void RegistersUsed_GivenNamedRegisters_ThenBothOfThem()
+    => Assert.That(Used("MOV CX, BX"), Is.EqualTo(new[] { "BX", "CX" }));
+
+  [Test]
+  public void RegistersUsed_GivenAByteHalf_ThenTheWholeRegister()
+    => Assert.That(Used("XOR AH, AL"), Is.EqualTo(new[] { "AX" }), "AH and AL are both AX");
+
+  [Test]
+  public void RegistersUsed_GivenA32BitName_ThenTheWordRegisterItOverlaps()
+    => Assert.That(Used("MOV EAX, EBX"), Is.EqualTo(new[] { "AX", "BX" }));
+
+  [Test]
+  public void RegistersUsed_GivenAnAddressAndASegmentOverride_ThenTheAddressRegistersOnly()
+    // ES is not the integer allocator's to hand out, so it is not part of the answer
+    => Assert.That(Used("MOV AL, ES:[BX]"), Is.EqualTo(new[] { "AX", "BX" }));
+
+  [Test]
+  public void RegistersUsed_GivenAnOperandName_ThenItIsNotMistakenForARegister()
+    => Assert.That(Used("MOV counter, AX"), Is.EqualTo(new[] { "AX" }));
+
+  [Test]
+  public void RegistersUsed_GivenACommentNamingARegister_ThenItIsIgnored()
+    => Assert.That(Used("MOV AX, 1  ; and then DX"), Is.EqualTo(new[] { "AX" }));
+
+  // the implicit-operand families: the register is architectural and the text never spells it
+
+  [Test]
+  public void RegistersUsed_GivenARepeatedStringMove_ThenTheCounterAndBothPointers()
+    => Assert.That(Used("REP MOVSB"), Is.EqualTo(new[] { "CX", "DI", "SI" }));
+
+  [Test]
+  public void RegistersUsed_GivenLoop_ThenTheCounter()
+    => Assert.That(Used("LOOP Again"), Is.EqualTo(new[] { "CX" }));
+
+  [Test]
+  public void RegistersUsed_GivenAMultiply_ThenItsAnswerRegistersToo()
+    => Assert.That(Used("MUL BX"), Is.EqualTo(new[] { "AX", "BX", "DX" }), "DX:AX is where the product lands");
+
+  [Test]
+  public void RegistersUsed_GivenNoRegisterAtAll_ThenNothing()
+    => Assert.That(Used("INT &H10"), Is.Empty);
+
+  /// <summary>
+  /// A statement nobody can tokenize could touch anything, so it is answered with the whole file. It
+  /// will not assemble either - which is what really keeps it out of the back end - but the census
+  /// must not report "no registers" for text it failed to read.
+  /// </summary>
+  [Test]
+  public void RegistersUsed_GivenTextThatDoesNotTokenize_ThenEveryGeneralPurposeRegister()
+    => Assert.That(TextAssembler.RegistersUsed("MOV AX, #"),
+        Is.EquivalentTo(TextAssembler.AllGeneralPurposeRegisters));
+
+  #endregion
 }
