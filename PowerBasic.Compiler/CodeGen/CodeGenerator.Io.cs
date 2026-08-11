@@ -171,7 +171,7 @@ public sealed partial class CodeGenerator {
   /// <summary>Shared PRINT USING / USING$ field emission (no trailing newline).</summary>
   private void EmitUsingBody(string format, IEnumerable<Expression> values) {
     var asm = this._asm;
-    var segments = ParseUsingFormat(format);
+    var segments = Runtime.UsingFormat.Parse(format);
     var fieldIndex = 0;
     foreach (var value in values) {
       // print literal text up to and including the next numeric field
@@ -183,7 +183,7 @@ public sealed partial class CodeGenerator {
         this.Unsupported(value, "more PRINT USING values than fields");
         return;
       }
-      var (width, decimals, group) = segments[fieldIndex].Field!.Value;
+      var field = segments[fieldIndex].Field!.Value;
       ++fieldIndex;
 
       this.EmitExpression(value);
@@ -193,12 +193,12 @@ public sealed partial class CodeGenerator {
         continue;
       }
       this.Coerce(itemType, PbType.Double, value);
-      if (decimals > 0)
-        asm.Fmul(Mem.Qword(this.FloatConstOf(Math.Pow(10, decimals))));
+      if (field.Decimals > 0)
+        asm.Fmul(Mem.Qword(this.FloatConstOf(Math.Pow(10, field.Decimals))));
       asm.Fistp(Mem.Dword(this.RtScratch));
       asm.Mov(Reg.AX, Mem.Word(this.RtScratch));
       asm.Mov(Reg.DX, Mem.Word(this.RtScratch, 2));
-      asm.Mov(Reg.CX, (width << 8) | decimals | (group ? 0x80 : 0));
+      asm.Mov(Reg.CX, field.Spec);
       asm.Call(this._rt.UseFmt);
     }
 
@@ -216,50 +216,6 @@ public sealed partial class CodeGenerator {
     asm.Mov(Reg.SI, Imm.OffsetOf(this.LiteralOf(text)));
     asm.Mov(Reg.CX, text.Length);
     asm.Call(this._rt.PrintStr);
-  }
-
-  private static List<(string? Literal, (int Width, int Decimals, bool Group)? Field)> ParseUsingFormat(string format) {
-    var segments = new List<(string?, (int, int, bool)?)>();
-    var literal = "";
-    for (var i = 0; i < format.Length;) {
-      if (format[i] != '#') {
-        literal += format[i++];
-        continue;
-      }
-      if (literal.Length > 0) {
-        segments.Add((literal, null));
-        literal = "";
-      }
-      var digits = 0;
-      var commas = 0;
-      for (;;) {
-        if (i < format.Length && format[i] == '#') {
-          ++digits;
-          ++i;
-          continue;
-        }
-        // a comma inside the digit run requests thousands grouping
-        if (i + 1 < format.Length && format[i] == ',' && format[i + 1] == '#') {
-          ++commas;
-          ++i;
-          continue;
-        }
-        break;
-      }
-      var decimals = 0;
-      if (i < format.Length && format[i] == '.') {
-        ++i;
-        while (i < format.Length && format[i] == '#') {
-          ++decimals;
-          ++i;
-        }
-      }
-      var width = digits + commas + (decimals > 0 ? decimals + 1 : 0);
-      segments.Add((null, (width, decimals, commas > 0)));
-    }
-    if (literal.Length > 0)
-      segments.Add((literal, null));
-    return segments;
   }
 
   private void EmitOpen(OpenStmt open) {

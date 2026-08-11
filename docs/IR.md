@@ -283,9 +283,13 @@ IR writer has.
 
 ## Roadmap
 
-- the constructs that still decline: `PRINT USING`/`LPRINT`, `ArraySortStmt`, `PUT$`,
+- the constructs that still decline: `ArraySortStmt`, `PUT$`,
   `DIM AT`, `HEX$` with a digit count, parts of the `CommandStmt` family, and inline
   assembly (target-specific by definition - it will never lower).
+  `PRINT USING` lowers for a LITERAL format with no more values than fields, which is the
+  whole of what the DOS runtime's `rt_usefmt` renders - `#` digit runs, an optional `.`
+  fraction and commas inside the run. `$$`, `**`, `+`, `^^^^` and the `&` / `\ \` string
+  fields are literal text on the direct path too, so both emitters print them verbatim;
   `TryLowerModule(model, out var reason)` reports which one a program hit, and
   `pbc --emit-c` / `--emit-llvm` print it;
 - a native IR → x86-16 back end that reproduces byte-identical output for a

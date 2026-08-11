@@ -577,6 +577,25 @@ internal static class RuntimeAbi {
     ["llvm.pow.f80"] = new("rt_pow", [new(ArgKind.St0, default), new(ArgKind.St0, default)],
       _callerSaved, Answer: ResultKind.St0),
 
+    // PRINT USING's numeric field. "DX:AX = scaled value, CH = field width (chars incl. point),
+    // CL = decimals" - and bit 7 of CL is the thousands-grouping flag, which is why the lowering
+    // hands the whole packed word rather than two numbers (Runtime.UsingFormat.Field.Spec). The
+    // value arrives ALREADY SCALED by ten to the decimal count and already rounded to a 32-bit
+    // integer, exactly as the direct emitter's FMUL/FISTP pair leaves it: rt_usefmt renders digits
+    // and places a point, it does no arithmetic of its own.
+    ["rt_using_field"] = new("rt_usefmt",
+      [new(ArgKind.Pair, Reg.AX, Reg.DX), new(ArgKind.Word, Reg.CX)], _callerSaved),
+    ["rt_fusing_field"] = new("rt_usefmt",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Pair, Reg.AX, Reg.DX), new(ArgKind.Word, Reg.CX)],
+      _callerSaved, FileSelect: true),
+
+    // LPRINT: point the console routines at the printer for the length of one statement, and back
+    // at the screen after it. Neither takes an argument nor touches a register - see
+    // DosRuntime.Printer.cs for why they are routines at all rather than the four inline MOVs the
+    // direct emitter writes.
+    ["rt_lprint_on"] = new("rt_lpon", [], _callerSaved),
+    ["rt_lprint_off"] = new("rt_lpoff", [], _callerSaved),
+
     // "rt_tab: CX = 1-based target column; spaces forward only", and rt_spc the same shape for a count
     ["rt_print_tab"] = new("rt_tab", [new(ArgKind.Word, Reg.CX)], _callerSaved),
     ["rt_fprint_tab"] = new("rt_tab",

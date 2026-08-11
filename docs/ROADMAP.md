@@ -499,8 +499,9 @@ Ranked by the census, what stands between that and full coverage:
    saves the caller's handler triple on entry and restores it on every exit; the routed prologue has
    no equivalent, and routing without it would lose the caller's handler silently.
 2. A tail of statements: `ArraySortStmt`, `PUT$`, `DIM AT`, `ERASE` of a static array, `HEX$` with a
-   digit count, `PRINT USING` / `LPRINT`, `CODEPTR32`, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
-   metastatements.
+   digit count, `CODEPTR32`, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
+   metastatements. `PRINT USING` and `LPRINT` lower; a NON-LITERAL USING format still declines,
+   since the format is read at compile time on both paths.
 3. **Register allocation no longer loses selected functions:** all 192 selected functions route.
    Direct memory spills, address rematerialization, multi-definition/RMW live-range splitting and
    per-use argument reloads cover every allocation shape currently present in the corpus.

@@ -187,9 +187,10 @@ Worth stating plainly, because coverage numbers make the distance look shorter t
 `CodeGen/` needs THREE things, and only the first is being measured today.
 
 **1. Coverage - every program on the IR path.** `BackendCoverageTests` ranks this over the whole
-corpus. As of this writing: **142 of 164 programs lower**, **220 of 240 functions select and
-allocate**, **126 of 142 module bodies** can be owned outright. The remaining lowering blockers are
-`ARRAY SORT`, `FIELD`, `CHAIN`, `DIM AT`, `LPRINT`/`PRINT USING`, `CODEPTR32` and `$ERROR STACK ON`; the remaining selection blockers are the unsigned
+corpus. As of this writing: **147 of 164 programs lower**, **244 of 246 functions select and
+allocate**, **145 of 147 module bodies** can be owned outright. The remaining lowering blockers are
+`ARRAY SORT`, `FIELD`, `CHAIN`, `DIM AT`, `VARPTR`/`CODEPTR32` and the pointer, BCD and
+larger-UDT types; the remaining selection blockers are the unsigned
 float-to-integer casts, 64-bit truncation and widening, module globals needing the data-layout
 bridge, `IrSwitch`, a null pointer with no register, and a compare whose left operand is an
 immediate.
@@ -270,8 +271,14 @@ battery to run once (1) is far enough along, and (3) is a design decision that h
 
 The lowering's supported subset is listed in [IR.md](IR.md); everything outside it
 makes `TryLowerModule` return null rather than miscompile. The largest gaps today
-are `PRINT USING`, the FIELD form of random I/O and inline assembly (which is
+are `ARRAY SORT`, the FIELD form of random I/O and inline assembly (which is
 target-specific by definition and will never lower).
+
+`PRINT USING` lowers, but the **C** emitter declines it, for the reason `ON ERROR`
+does below: `runtime/pbc_rt.c` has no `rt_using_field`, and the DOS runtime's
+formatter is a fixed-point renderer with grouping and field overflow rather than
+anything a shim could stand in for. `LPRINT` declines there too, and more simply -
+"the printer" has no meaning on a hosted platform.
 
 `ON ERROR` lowers, but the **C** emitter declines it, and that is a second and
 separate gap. It arms its handler with the address of a basic block, which standard
