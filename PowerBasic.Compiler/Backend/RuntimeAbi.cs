@@ -19,7 +19,7 @@ namespace PowerBasic.Compiler.Backend;
 /// </summary>
 internal static class RuntimeAbi {
 
-  /// <summary>Where one IR argument goes: a register, a register pair (32-bit), or the address of the data object a pointer names.</summary>
+  /// <summary>Where one IR argument goes: registers, the x87 stack, or a target address.</summary>
   internal enum ArgKind {
 
     /// <summary>A 16-bit value in <see cref="RuntimeArg.Register"/>.</summary>
@@ -30,6 +30,15 @@ internal static class RuntimeAbi {
 
     /// <summary>The OFFSET of the global the pointer argument names (a string literal), as an immediate.</summary>
     Offset,
+
+    /// <summary>
+    /// A near offset in <see cref="RuntimeArg.Register"/> and its segment value in
+    /// <see cref="RuntimeArg.High"/>. The selector derives DS for globals and SS for frame objects.
+    /// </summary>
+    Pointer,
+
+    /// <summary>The constant i1 volatility marker on an LLVM memory intrinsic; it has no runtime slot.</summary>
+    VolatileFlag,
 
     /// <summary>A float pushed on the x87 stack, which the routine pops (the print entries take ST(0)).</summary>
     St0,
@@ -78,6 +87,24 @@ internal static class RuntimeAbi {
 
     /// <summary>The routine leaves its answer on the x87 stack (<c>VAL</c>), which is stored to the call's frame cell.</summary>
     St0,
+
+    /// <summary>A 32-bit result in DX:AX, copied into the call's virtual register pair.</summary>
+    Pair,
+
+    /// <summary>A 16-bit integer bit pattern written to <c>rt_scratch</c>.</summary>
+    ScratchI16,
+
+    /// <summary>An unsigned byte in <c>rt_scratch</c>, zero-extended to the call's word result.</summary>
+    ScratchU8ToWord,
+
+    /// <summary>A 32-bit integer bit pattern written to <c>rt_scratch</c>.</summary>
+    ScratchI32,
+
+    /// <summary>An IEEE binary32 bit pattern written to <c>rt_scratch</c>.</summary>
+    ScratchF32,
+
+    /// <summary>An IEEE binary64 bit pattern written to <c>rt_scratch</c>.</summary>
+    ScratchF64,
   }
 
   /// <summary>
@@ -190,6 +217,50 @@ internal static class RuntimeAbi {
     // DosRuntime.Strings.cs, which states each one's registers and whether it consumes its handles.
     // Consuming is what the IR wants: every string value in generated code is an owned temporary,
     // and the lowering puts an rt_str_dup on every read of a variable precisely so these are safe.
+
+    // The MK wrappers reproduce the direct emitter's rt_scratch staging and return a new owned
+    // handle in AX. Integers are copied as little-endian register bits; floats are popped from ST(0)
+    // at their declared IEEE width.
+    ["rt_str_mkbyt"] = new("rt_mkbyt", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_mki"] = new("rt_mki", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_mkl"] = new("rt_mkl", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_mkdwd"] = new("rt_mkdwd", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_mks"] = new("rt_mks", [new(ArgKind.St0, default)], _callerSaved, Result: Reg.AX),
+    ["rt_str_mkd"] = new("rt_mkd", [new(ArgKind.St0, default)], _callerSaved, Result: Reg.AX),
+
+    // rt_cv consumes the handle in AX and copies/pads CX bytes into rt_scratch. The result kind says
+    // how the selector must load those exact bytes after the call.
+    ["rt_str_cvi"] = new("rt_cv", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Answer: ResultKind.ScratchI16, Constants: [(Reg.CX, 2)]),
+    ["rt_str_cvbyt"] = new("rt_cv", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Answer: ResultKind.ScratchU8ToWord, Constants: [(Reg.CX, 1)]),
+    ["rt_str_cvwrd"] = new("rt_cv", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Answer: ResultKind.ScratchI16, Constants: [(Reg.CX, 2)]),
+    ["rt_str_cvl"] = new("rt_cv", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Answer: ResultKind.ScratchI32, Constants: [(Reg.CX, 4)]),
+    ["rt_str_cvdwd"] = new("rt_cv", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Answer: ResultKind.ScratchI32, Constants: [(Reg.CX, 4)]),
+    ["rt_str_cvs"] = new("rt_cv", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Answer: ResultKind.ScratchF32, Constants: [(Reg.CX, 4)]),
+    ["rt_str_cvd"] = new("rt_cv", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Answer: ResultKind.ScratchF64, Constants: [(Reg.CX, 8)]),
+    ["rt_str_cve"] = new("rt_cv", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Answer: ResultKind.ScratchF64, Constants: [(Reg.CX, 8)]),
+
+    // Raw memcmp: DX:SI=left, BX:DI=right, CX=byte count -> AX=-1/0/1. The portable declaration
+    // returns i32, so the signed word answer is widened exactly like LEN/ASC.
+    ["rt_mem_compare"] = new("rt_memcmp",
+      [new(ArgKind.Pointer, Reg.SI, Reg.DX), new(ArgKind.Pointer, Reg.DI, Reg.BX),
+       new(ArgKind.Word, Reg.CX)],
+      _callerSaved, Result: Reg.AX, Answer: ResultKind.WidenedWord),
+    ["llvm.memcpy.p0.p0.i32"] = new("rt_memcpy",
+      [new(ArgKind.Pointer, Reg.DI, Reg.BX), new(ArgKind.Pointer, Reg.SI, Reg.DX),
+       new(ArgKind.Word, Reg.CX), new(ArgKind.VolatileFlag, default)],
+      _callerSaved),
+    ["llvm.memset.p0.i32"] = new("rt_memset",
+      [new(ArgKind.Pointer, Reg.DI, Reg.BX), new(ArgKind.Word, Reg.AX),
+       new(ArgKind.Word, Reg.CX), new(ArgKind.VolatileFlag, default)],
+      _callerSaved),
 
     // "Len: AX=handle -> AX=length (consumes)". The IR declares the result i32 - see
     // ResultKind.WidenedWord for why, and why the CWD is not optional
@@ -322,11 +393,13 @@ internal static class RuntimeAbi {
     // "RND(a, z): DX:AX=lower, CX:BX=upper -> DX:AX = lower + trunc(rnd * (upper-lower+1))"
     ["rt_rnd_range"] = new("rt_rndrange",
       [new(ArgKind.Pair, Reg.AX, Reg.DX), new(ArgKind.Pair, Reg.BX, Reg.CX)],
-      _callerSaved, Result: Reg.AX),
+      _callerSaved, Result: Reg.AX, Answer: ResultKind.Pair),
 
     // LOF(n) and SEEK(n)/LOC(n): AX = the file number -> DX:AX
-    ["rt_file_length"] = new("rt_lof", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
-    ["rt_file_pos"] = new("rt_fpos", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    ["rt_file_length"] = new("rt_lof", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.Pair),
+    ["rt_file_pos"] = new("rt_fpos", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.Pair),
 
     // SEEK #n, p: AX = the file number, CX = the position
     ["rt_file_seek"] = new("rt_fseekstmt",
@@ -347,6 +420,10 @@ internal static class RuntimeAbi {
     ["rt_consout"] = new("rt_consout", [], _callerSaved, Result: Reg.AX),
     // DEF SEG: the argument form stores the word, the bare form puts DS back
     ["rt_defseg_reset"] = new("rt_defsegreset", [], _callerSaved),
+    // PEEK(offset) -> AX = the byte, zero-extended; POKE offset, value -> AX = offset, DL = the byte.
+    // Both go through DEF SEG's segment, the same rt_defseg cell the inline form reads.
+    ["rt_peek"] = new("rt_peek", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    ["rt_poke"] = new("rt_poke", [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),
 
     // FREEFILE: no arguments -> AX = the lowest file number not in use
     ["rt_freefile"] = new("rt_freefile", [], _callerSaved, Result: Reg.AX),

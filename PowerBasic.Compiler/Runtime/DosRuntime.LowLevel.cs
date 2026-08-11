@@ -35,6 +35,12 @@ public sealed partial class DosRuntime {
   /// <summary>DEF SEG with no argument: the default segment goes back to DS.</summary>
   public Label DefSegReset { get; private set; } = null!;
 
+  /// <summary>PEEK(offset): AX = offset -> AX = the byte there, zero-extended, from DEF SEG's segment.</summary>
+  public Label Peek { get; private set; } = null!;
+
+  /// <summary>POKE offset, value: AX = offset, DL = the byte, written into DEF SEG's segment.</summary>
+  public Label Poke { get; private set; } = null!;
+
   private void EmitLowLevelProcedures(Assembler asm) {
     var regs = asm.Lbl("rt_regs");
 
@@ -78,6 +84,36 @@ public sealed partial class DosRuntime {
       asm.Xor(Reg.AX, Reg.AX);
       asm.MarkLabel(isConsole);
       asm.Pop(Reg.DX);
+      asm.Ret();
+    }
+
+    // PEEK and POKE, for the same reason as the three above: the direct emitter writes them inline,
+    // as MOV ES, [rt_defseg] and a segment-overridden byte access, and a segment override is not
+    // something the IR can say. Both read the SAME rt_defseg cell the inline form does, so a program
+    // whose DEF SEG was set by a directly-emitted statement and read by a routed one agrees with
+    // itself. Byte-wide only: PEEK's 2- and 4-byte forms and POKE$ still take the inline path.
+    this.Peek = asm.MarkLabel("rt_peek");
+    {
+      asm.Push(Reg.BX);
+      asm.Push(Reg.ES);
+      asm.Mov(Reg.BX, Reg.AX);
+      asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_defseg")));
+      asm.Mov(Reg.AL, Mem.Byte(Reg.BX).Es());
+      asm.Xor(Reg.AH, Reg.AH);          // PB reports a byte as an unsigned INTEGER
+      asm.Pop(Reg.ES);
+      asm.Pop(Reg.BX);
+      asm.Ret();
+    }
+
+    this.Poke = asm.MarkLabel("rt_poke");
+    {
+      asm.Push(Reg.BX);
+      asm.Push(Reg.ES);
+      asm.Mov(Reg.BX, Reg.AX);          // AX = offset, DL = the byte to write
+      asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_defseg")));
+      asm.Mov(Mem.Byte(Reg.BX).Es(), Reg.DL);
+      asm.Pop(Reg.ES);
+      asm.Pop(Reg.BX);
       asm.Ret();
     }
 

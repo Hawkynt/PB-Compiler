@@ -453,6 +453,18 @@ public sealed class IrLowering {
     && (symbol.Storage == VariableStorage.Static
         || (symbol.Storage == VariableStorage.Global && this._escapesToProcedures?.Contains(symbol) == true));
 
+  /// <summary>
+  /// The stable IR name of one STATIC local's process-lifetime cell. The owning procedure is part of
+  /// the name because two procedures may legally declare the same local spelling without sharing it;
+  /// an overload index distinguishes same-named PB 3.6 procedures while preserving readable names for
+  /// the common, non-overloaded case.
+  /// </summary>
+  internal static string StaticGlobalName(ProcedureSymbol? procedure, VariableSymbol symbol) {
+    var owner = procedure?.Name ?? "main";
+    var overload = procedure is { OverloadIndex: > 0 } ? $".{procedure.OverloadIndex}" : "";
+    return $"static.{owner}{overload}.{symbol.Name}";
+  }
+
   /// <summary>The one module global backing <paramref name="symbol"/>, created on first use.</summary>
   private IrValue GlobalFor(VariableSymbol symbol) {
     if (this._sharedStorage!.TryGetValue(symbol, out var existing))
@@ -469,9 +481,11 @@ public sealed class IrLowering {
       ArrayType => throw new IrLoweringException("dynamic array with shared storage"),
       _ => (MapType(symbol.Type), 1),
     };
-    // the name is qualified so a STATIC local cannot collide with a module variable of the
-    // same spelling, and the IR stays readable
-    var name = symbol.Storage == VariableStorage.Static ? $"static.{symbol.Name}" : $"g.{symbol.Name}";
+    // The procedure qualification prevents same-named STATIC locals from aliasing; module globals
+    // need only the storage-class prefix because their source names are already module-unique.
+    var name = symbol.Storage == VariableStorage.Static
+      ? StaticGlobalName(this._proc, symbol)
+      : $"g.{symbol.Name}";
     var suffix = 0;
     while (this._module!.FindGlobal(name) is not null)
       name = $"{name}.{++suffix}";
@@ -711,6 +725,16 @@ public sealed class IrLowering {
             this.FileNum(getFile),
             this.Coerce(this.LowerExpr(getCount), this._model.TypeOf(getCount), PbType.Long)),
           this.StringTargetAddress(getTarget));
+        break;
+      // POKE offset, value | POKE seg, offset, value - the segmented form sets DEF SEG first and
+      // LEAVES it set, which is what the classic pair does: it is two statements written as one,
+      // not a scoped override, so a later bare POKE writes into the segment this one named.
+      case CommandStmt { Keyword: "POKE", Arguments: [{ } pokeAddress, { } pokeValue] }:
+        this.LowerPoke(pokeAddress, pokeValue);
+        break;
+      case CommandStmt { Keyword: "POKE", Arguments: [{ } pokeSegment, { } pokeOffset, { } pokeSegValue] }:
+        this.SetDefaultSegment(pokeSegment);
+        this.LowerPoke(pokeOffset, pokeSegValue);
         break;
       // CommandStmt is a catch-all for a dozen unrelated statements (KILL, POKE, OUT, RANDOMIZE...),
       // so it names the keyword: "unsupported statement: CommandStmt" ranks nothing
@@ -1224,7 +1248,10 @@ public sealed class IrLowering {
       throw new IrLoweringException("ON ... GOSUB");
     if (this._model.TypeOf(o.Selector) is not ScalarType { IsFloat: false })
       throw new IrLoweringException("ON GOTO with a non-integer selector");
-    var selector = this.LowerExpr(o.Selector);
+    // The direct emitter always coerces ON GOTO/GOSUB to INTEGER before dispatch. That truncation is
+    // observable: 65537& selects arm 1, not the default. Put the historical word rule in the
+    // target-independent IR instead of making every back end rediscover it.
+    var selector = this.Coerce(this.LowerExpr(o.Selector), this._model.TypeOf(o.Selector), PbType.Integer);
     var fallthrough = this.NewBlock("on.next");        // out-of-range selector falls through (PB semantics)
     var sw = this._b.Switch(selector, fallthrough);
     for (var k = 0; k < o.Targets.Count; ++k) {
@@ -1984,14 +2011,22 @@ public sealed class IrLowering {
           this.Coerce(this.LowerExpr(call.Arguments[1]), this._model.TypeOf(call.Arguments[1]), PbType.Long)),
         PbType.Long, this._model.TypeOf(call));
     // the CV family takes an optional starting offset, so it is answered here for the same reason
-    if (name.ToUpperInvariant() is "CVI" or "CVL" or "CVDWD" or "CVS" or "CVD" && call.Arguments.Count == 2)
+    if (name.ToUpperInvariant() is "CVI" or "CVBYT" or "CVWRD" or "CVL" or "CVDWD" or "CVS" or "CVD" or "CVE"
+        && call.Arguments.Count == 2)
       return name.ToUpperInvariant() switch {
         "CVI" => this.LowerCv(call, "rt_str_cvi", IrType.I16, 2),
+        "CVBYT" => this.LowerCv(call, "rt_str_cvbyt", IrType.U16, 1),
+        "CVWRD" => this.LowerCv(call, "rt_str_cvwrd", IrType.U16, 2),
         "CVL" => this.LowerCv(call, "rt_str_cvl", IrType.I32, 4),
-        "CVDWD" => this.LowerCv(call, "rt_str_cvdwd", IrType.I32, 4),
+        "CVDWD" => this.LowerCv(call, "rt_str_cvdwd", IrType.U32, 4),
         "CVS" => this.LowerCv(call, "rt_str_cvs", IrType.F32, 4),
-        _ => this.LowerCv(call, "rt_str_cvd", IrType.F64, 8),
+        "CVD" => this.LowerCv(call, "rt_str_cvd", IrType.F64, 8),
+        _ => this.LowerCv(call, "rt_str_cve", IrType.F80, 8),
       };
+    // PEEK takes one argument or two - PEEK(offset) and the pb36 PEEK(seg:offset) - so it is answered
+    // ahead of the one-argument guard rather than inside it
+    if (name.Equals("PEEK", StringComparison.OrdinalIgnoreCase))
+      return this.LowerPeek(call);
     if (call.Arguments.Count != 1)
       throw new IrLoweringException($"intrinsic {name} with {call.Arguments.Count} arguments");
     return name.ToUpperInvariant() switch {
@@ -2007,10 +2042,13 @@ public sealed class IrLowering {
       "ASC" => this.LowerAsc(call),
       "VAL" => this.LowerVal(call),
       "CVI" => this.LowerCv(call, "rt_str_cvi", IrType.I16, 2),
+      "CVBYT" => this.LowerCv(call, "rt_str_cvbyt", IrType.U16, 1),
+      "CVWRD" => this.LowerCv(call, "rt_str_cvwrd", IrType.U16, 2),
       "CVL" => this.LowerCv(call, "rt_str_cvl", IrType.I32, 4),
-      "CVDWD" => this.LowerCv(call, "rt_str_cvdwd", IrType.I32, 4),
+      "CVDWD" => this.LowerCv(call, "rt_str_cvdwd", IrType.U32, 4),
       "CVS" => this.LowerCv(call, "rt_str_cvs", IrType.F32, 4),
       "CVD" => this.LowerCv(call, "rt_str_cvd", IrType.F64, 8),
+      "CVE" => this.LowerCv(call, "rt_str_cve", IrType.F80, 8),
       "POS" => this.LowerPos(call),
       // RND and RND(n): the next value in [0, 1). A reseed argument is EVALUATED and then dropped,
       // which is what the direct emitter does with it - the reseed semantics are not modelled on
@@ -2074,6 +2112,36 @@ public sealed class IrLowering {
     return this._b.Add(this._b.Load(IrType.I16, column), new IrConstantInt(IrType.I16, 1));
   }
 
+  /// <summary>
+  /// PEEK(offset) or PEEK(seg, offset): the byte at that address in DEF SEG's segment, zero-extended.
+  ///
+  /// <para>
+  /// Only the byte-wide form lowers. PEEK's 2- and 4-byte relatives read a word and a dword through
+  /// the same segment override and would each need their own routine; naming them here without
+  /// providing one would turn a decline into a wrong answer.
+  /// </para>
+  /// </summary>
+  private IrValue LowerPeek(CallOrIndexExpr call) {
+    if (call.Arguments.Count is not (1 or 2))
+      throw new IrLoweringException("intrinsic PEEK takes one or two arguments");
+    var offset = call.Arguments[^1];
+    if (call.Arguments.Count == 2)
+      this.SetDefaultSegment(call.Arguments[0]);
+    return this._b.Call(IrType.I16, this.RuntimeFn("rt_peek", IrType.I16, IrType.I16),
+      this.Coerce(this.LowerExpr(offset), this._model.TypeOf(offset), PbType.Integer));
+  }
+
+  /// <summary>POKE: the low byte of <paramref name="value"/> written at <paramref name="address"/>.</summary>
+  private void LowerPoke(Expression address, Expression value)
+    => this._b.Call(IrType.Void, this.RuntimeFn("rt_poke", IrType.Void, IrType.I16, IrType.I16),
+        this.Coerce(this.LowerExpr(address), this._model.TypeOf(address), PbType.Integer),
+        this.Coerce(this.LowerExpr(value), this._model.TypeOf(value), PbType.Integer));
+
+  /// <summary>Stores a segment into the <c>rt_defseg</c> cell - what <c>DEF SEG = n</c> does, shared with it.</summary>
+  private void SetDefaultSegment(Expression segment)
+    => this._b.Store(this.Coerce(this.LowerExpr(segment), this._model.TypeOf(segment), PbType.Integer),
+        this.ErrorCell("rt_defseg", IrType.I16));
+
   /// <summary>LBOUND/UBOUND of an array dimension: a compile-time constant for static arrays, a descriptor read for dynamic ones.</summary>
   private IrValue LowerArrayBound(CallOrIndexExpr call, bool upper) {
     if (!this._model.VariableBindings.TryGetValue(call.Arguments[0], out var sym) || sym.Type is not ArrayType arr)
@@ -2099,10 +2167,9 @@ public sealed class IrLowering {
     return this.Coerce(result, PbType.Long, this._model.TypeOf(call));
   }
 
-  /// <summary>CVI/CVL/CVS/CVD: decode a number from a binary-record string's raw bytes.</summary>
   /// <summary>
-  /// <c>CVI</c>/<c>CVL</c>/<c>CVS</c>/<c>CVD</c>/<c>CVDWD</c> - the bytes of a string read back as a
-  /// number. The two-argument form starts at an offset, which the direct emitter spells as
+  /// The CV family reads a number from a binary-record string's raw bytes. The two-argument form
+  /// starts at an offset, which the direct emitter spells as
   /// <c>MID$(s$, offset, size)</c> before the conversion, so that is what is written here: the size
   /// is the width the conversion reads, and the composition reuses an entry already mapped.
   /// </summary>
@@ -2139,11 +2206,17 @@ public sealed class IrLowering {
     IrValue Val(int i, ScalarType t) => this.Coerce(this.LowerExpr(ci.Arguments[i]), this._model.TypeOf(ci.Arguments[i]), t);
     return name.ToUpperInvariant() switch {
       // binary-record encoders: a number to its raw little-endian bytes as a string
+      "MKBYT$" => this._b.Call(IrType.Ptr,
+        this.RuntimeFn("rt_str_mkbyt", IrType.Ptr, IrType.I16), Val(0, PbType.Integer)),
       "MKI$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mki", IrType.Ptr, IrType.I16), Val(0, PbType.Integer)),
+      "MKWRD$" => this._b.Call(IrType.Ptr,
+        this.RuntimeFn("rt_str_mki", IrType.Ptr, IrType.I16), Val(0, PbType.Integer)),
       "MKL$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mkl", IrType.Ptr, IrType.I32), Val(0, PbType.Long)),
-      "MKDWD$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mkdwd", IrType.Ptr, IrType.I32), Val(0, PbType.Dword)),
+      "MKDWD$" => this._b.Call(IrType.Ptr,
+        this.RuntimeFn("rt_str_mkdwd", IrType.Ptr, IrType.U32), Val(0, PbType.Dword)),
       "MKS$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mks", IrType.Ptr, IrType.F32), Val(0, PbType.Single)),
       "MKD$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mkd", IrType.Ptr, IrType.F64), Val(0, PbType.Double)),
+      "MKE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mkd", IrType.Ptr, IrType.F64), Val(0, PbType.Double)),
       "LEFT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_left", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Num(1)),
       "RIGHT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_right", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Num(1)),
       "MID$" when ci.Arguments.Count >= 3 => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid", IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I32), Str(0), Num(1), Num(2)),
