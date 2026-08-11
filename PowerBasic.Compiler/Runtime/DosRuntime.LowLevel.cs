@@ -35,6 +35,12 @@ public sealed partial class DosRuntime {
   /// <summary>DEF SEG with no argument: the default segment goes back to DS.</summary>
   public Label DefSegReset { get; private set; } = null!;
 
+  /// <summary>REG n: AX = the PB register number -> AX = the word held for it in <c>rt_regs</c>.</summary>
+  public Label RegGet { get; private set; } = null!;
+
+  /// <summary>REG n, v: AX = the PB register number, DX = the word to hold for it.</summary>
+  public Label RegSet { get; private set; } = null!;
+
   /// <summary>PEEK(offset): AX = offset -> AX = the byte there, zero-extended, from DEF SEG's segment.</summary>
   public Label Peek { get; private set; } = null!;
 
@@ -84,6 +90,30 @@ public sealed partial class DosRuntime {
       asm.Xor(Reg.AX, Reg.AX);
       asm.MarkLabel(isConsole);
       asm.Pop(Reg.DX);
+      asm.Ret();
+    }
+
+    // REG n and REG n, v: read and write the register buffer INT/INTERRUPT loads from. The direct
+    // emitter indexes rt_regs inline; the IR has no way to name a scaled index into a runtime table,
+    // so the scaling moves in here. Both touch the SAME buffer the interrupt entry reads, which is
+    // what lets a routed REG set up a directly-emitted INTERRUPT.
+    this.RegGet = asm.MarkLabel("rt_regget");
+    {
+      asm.Push(Reg.BX);
+      asm.Mov(Reg.BX, Reg.AX);
+      asm.Shl(Reg.BX, 1);
+      asm.Mov(Reg.AX, Mem.Word(Reg.BX, regs));
+      asm.Pop(Reg.BX);
+      asm.Ret();
+    }
+
+    this.RegSet = asm.MarkLabel("rt_regset");
+    {
+      asm.Push(Reg.BX);
+      asm.Mov(Reg.BX, Reg.AX);          // AX = the PB register number, DX = the value
+      asm.Shl(Reg.BX, 1);
+      asm.Mov(Mem.Word(Reg.BX, regs), Reg.DX);
+      asm.Pop(Reg.BX);
       asm.Ret();
     }
 

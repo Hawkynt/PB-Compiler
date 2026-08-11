@@ -424,6 +424,12 @@ internal static class RuntimeAbi {
     ["rt_defseg_reset"] = new("rt_defsegreset", [], _callerSaved),
     // PEEK(offset) -> AX = the byte, zero-extended; POKE offset, value -> AX = offset, DL = the byte.
     // Both go through DEF SEG's segment, the same rt_defseg cell the inline form reads.
+    // INTERRUPT n: AL = the vector, which the routine patches into its own INT instruction. It
+    // loads every register from rt_regs, executes the INT, and stores them all back.
+    ["rt_interrupt"] = new("rt_interrupt", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    // REG n / REG n, v: the register buffer INT and INTERRUPT load from, indexed by PB number
+    ["rt_reg_get"] = new("rt_regget", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    ["rt_reg_set"] = new("rt_regset", [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),
     ["rt_peek"] = new("rt_peek", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     ["rt_poke"] = new("rt_poke", [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),
 

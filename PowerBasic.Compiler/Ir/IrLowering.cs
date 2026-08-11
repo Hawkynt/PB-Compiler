@@ -735,6 +735,20 @@ public sealed class IrLowering {
         this._b.Call(IrType.Void, this.RuntimeFn("rt_file_seteof", IrType.Void, IrType.I32),
           this.FileNum(setEofFile));
         break;
+      // INTERRUPT n - the vector goes in AL and the routine patches its own INT instruction with it,
+      // loading every register from rt_regs beforehand and storing them all back after. Which is why
+      // REG had to lower first: the two are one facility, and either alone is unusable.
+      case CommandStmt { Keyword: "INTERRUPT", Arguments: [{ } vector] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_interrupt", IrType.Void, IrType.I16),
+          this.Coerce(this.LowerExpr(vector), this._model.TypeOf(vector), PbType.Integer));
+        break;
+      // REG n, v - the register buffer INTERRUPT loads from. The scaling lives in the routine because
+      // the IR has no way to name a scaled index into a runtime table.
+      case CommandStmt { Keyword: "REG", Arguments: [{ } regIndex, { } regValue] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_reg_set", IrType.Void, IrType.I16, IrType.I16),
+          this.Coerce(this.LowerExpr(regIndex), this._model.TypeOf(regIndex), PbType.Integer),
+          this.Coerce(this.LowerExpr(regValue), this._model.TypeOf(regValue), PbType.Integer));
+        break;
       // POKE offset, value | POKE seg, offset, value - the segmented form sets DEF SEG first and
       // LEAVES it set, which is what the classic pair does: it is two statements written as one,
       // not a scoped override, so a later bare POKE writes into the segment this one named.
@@ -2078,6 +2092,9 @@ public sealed class IrLowering {
       return this.LowerPeek(call);
     if (name.Equals("BIT", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 2)
       return this.LowerBit(call);
+    if (name.Equals("REG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
+      return this._b.Call(IrType.I16, this.RuntimeFn("rt_reg_get", IrType.I16, IrType.I16),
+        this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), PbType.Integer));
     if (call.Arguments.Count != 1)
       throw new IrLoweringException($"intrinsic {name} with {call.Arguments.Count} arguments");
     return name.ToUpperInvariant() switch {

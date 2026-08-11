@@ -413,6 +413,7 @@ public sealed class BackendCoverageTests {
     "FILEIO1.BAS",
     "HELLO.BAS",
     "INPUTS.BAS",
+    "INTREG.BAS",   // REG / CALL INTERRUPT
     "LINKDEMO.BAS",
     "MATHUNIT.BAS",
     "ONERR.BAS",
@@ -551,6 +552,7 @@ public sealed class BackendCoverageTests {
     "DIFF03.BAS",
     "FILEIO1.BAS",
     "HELLO.BAS",
+    "INTREG.BAS",   // REG / CALL INTERRUPT
     "MATHUNIT.BAS",
     "ONERR.BAS",
     "ONERRNXT.BAS",
