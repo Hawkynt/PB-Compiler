@@ -301,6 +301,7 @@ public sealed class BackendCoverageTests {
     "DIFF09.BAS",   // data pointers: VARPTR32, @p, @p[i], @q.Field
     "DIFF10.BAS",
     "DIFF12.BAS",   // BYVAL pointer override against a BYREF parameter
+    "DIFF13.BAS",   // INSTR ANY / VERIFY / EXTRACT$ / TALLY, REPLACE, BIT, variadic CHR$
     "DIFF100.BAS",
     "DIFF101.BAS",
     "DIFF102.BAS",
@@ -451,6 +452,7 @@ public sealed class BackendCoverageTests {
     "DIFF09.BAS",   // data pointers: VARPTR32, @p, @p[i], @q.Field
     "DIFF10.BAS",
     "DIFF12.BAS",   // BYVAL pointer override against a BYREF parameter
+    "DIFF13.BAS",   // INSTR ANY / VERIFY / EXTRACT$ / TALLY, REPLACE, BIT, variadic CHR$
     "DIFF100.BAS",
     "DIFF101.BAS",
     "DIFF102.BAS",

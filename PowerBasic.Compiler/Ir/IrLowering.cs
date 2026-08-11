@@ -712,6 +712,8 @@ public sealed class IrLowering {
       case SwapStmt sw: this.LowerSwap(sw); break;
       case MidAssignStmt mid: this.LowerMidAssign(mid); break;
       case AscAssignStmt asc: this.LowerAscAssign(asc); break;
+      case ReplaceStmt replace: this.LowerReplace(replace); break;
+      case BitStmt bit: this.LowerBitStmt(bit); break;
       case LabelStmt l: this.LowerLabel(l); break;
       case GotoStmt g: this.LowerGoto(g); break;
       case GosubStmt gs: this.LowerGosub(gs); break;
@@ -955,6 +957,59 @@ public sealed class IrLowering {
       this.RuntimeFn("rt_str_asc_set", IrType.Ptr, IrType.Ptr, IrType.I16, IrType.I16),
       this.LowerStringExpr(asc.Target), index, code);
     this._b.Store(poked, this.StringTargetAddress(asc.Target));
+  }
+
+  /// <summary>
+  /// <c>BIT SET</c> / <c>RESET</c> / <c>TOGGLE var, n</c> - one bit of an integer variable, in the
+  /// variable's own width. No runtime is involved on either path: the direct emitter builds
+  /// <c>1 &lt;&lt; n</c> in DX:AX with a shift loop and ORs, ANDs or XORs it into the cell.
+  ///
+  /// <para>
+  /// A count of 32 or more yields a mask of ZERO rather than an undefined shift - the emitter's loop
+  /// shifts the one out and lands on nothing, and a negative n reaches the same place by counting
+  /// through 65535 iterations of it. The guard folds away whenever n is a literal, which it nearly
+  /// always is. It is the same reasoning the BIT() function's own guard is built on.
+  /// </para>
+  /// </summary>
+  private void LowerBitStmt(BitStmt bit) {
+    // the bit number is evaluated BEFORE the target place, which is the order the direct emitter
+    // pushes them in and the only thing that distinguishes the two when either has a side effect
+    var index = this.Coerce(this.LowerExpr(bit.Bit), this._model.TypeOf(bit.Bit), PbType.Long);
+    var (address, targetType) = this.LValue(bit.Target);
+    if (targetType is not ScalarType { IsFloat: false, ByteSize: 1 or 2 or 4 })
+      throw new IrLoweringException($"BIT statement on {targetType}");
+    var ty = MapType(targetType);
+
+    var wide = this._b.Select(this._b.Cmp(IrCmpPred.Ult, index, new IrConstantInt(IrType.I32, 32)),
+      this._b.Binary(IrBinaryOp.Shl, new IrConstantInt(IrType.I32, 1), index), new IrConstantInt(IrType.I32, 0));
+    IrValue mask = ty.Bits == 32 ? wide : this._b.Trunc(wide, ty);
+    var value = this._b.Load(ty, address);
+    this._b.Store(bit.Op switch {
+      BitOp.Set => this._b.Or(value, mask),
+      BitOp.Reset => this._b.And(value, this._b.Xor(mask, new IrConstantInt(ty, -1))),
+      _ => this._b.Xor(value, mask),
+    }, address);
+  }
+
+  /// <summary>
+  /// <c>REPLACE find$ WITH new$ IN target$</c> - every occurrence, in one pass, answered as a fresh
+  /// handle the target then takes.
+  ///
+  /// The subject is read as an ordinary string expression (a borrowed copy, which the routine
+  /// consumes like every other runtime entry) and the handle the variable HELD is freed before the
+  /// new one lands, which is what the direct emitter's store into the place does for it.
+  /// </summary>
+  private void LowerReplace(ReplaceStmt replace) {
+    if (this._module is null)
+      throw new IrLoweringException("REPLACE requires whole-module lowering");
+    if (this._model.TypeOf(replace.Target) is not StringType)
+      throw new IrLoweringException("REPLACE into a fixed-length or ASCIIZ target");
+    var replaced = this._b.Call(IrType.Ptr,
+      this.RuntimeFn("rt_str_replace", IrType.Ptr, IrType.Ptr, IrType.Ptr, IrType.Ptr),
+      this.LowerStringExpr(replace.Target), this.LowerStringExpr(replace.Find), this.LowerStringExpr(replace.With));
+    var slot = this.StringTargetAddress(replace.Target);
+    this.FreeReplacedString(slot);
+    this._b.Store(replaced, slot);
   }
 
   /// <summary>The storage slot of a string lvalue (a string variable or a string-array element).</summary>
@@ -2220,6 +2275,19 @@ public sealed class IrLowering {
   private IrValue LowerIntrinsic(CallOrIndexExpr call, string name) {
     if (name.Equals("INSTR", StringComparison.OrdinalIgnoreCase))
       return this.LowerInstr(call);
+    // VERIFY(s$, set$) / VERIFY(start%, s$, set$): the first character NOT in the set. The set is the
+    // last argument, written plainly - VERIFY is a set scan by definition and needs no ANY to say so
+    if (name.Equals("VERIFY", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count is 2 or 3)
+      return this.Coerce(this.LowerScanSet(call, call.Arguments[^1], nonMember: true),
+        PbType.Long, this._model.TypeOf(call));
+    // TALLY(main$, match$) / TALLY(main$, ANY set$): how many times the match occurs
+    if (name.Equals("TALLY", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 2) {
+      var tallyMain = this.LowerStringExpr(call.Arguments[0]);            // main first, as the direct emitter evaluates it
+      var (tallyMatch, tallyIsSet) = this.MatchOperand(call.Arguments[1]);
+      return this.Coerce(this._b.Call(IrType.I32,
+        this.RuntimeFn(tallyIsSet ? "rt_str_tally_any" : "rt_str_tally", IrType.I32, IrType.Ptr, IrType.Ptr),
+        tallyMain, tallyMatch), PbType.Long, this._model.TypeOf(call));
+    }
     if (name.Equals("LBOUND", StringComparison.OrdinalIgnoreCase) || name.Equals("UBOUND", StringComparison.OrdinalIgnoreCase))
       return this.LowerArrayBound(call, name.Equals("UBOUND", StringComparison.OrdinalIgnoreCase));
     // MIN/MAX take two to sixteen arguments, so they are answered before the single-argument check
@@ -2472,16 +2540,68 @@ public sealed class IrLowering {
   /// <summary>INSTR(haystack$, needle$) or INSTR(start%, haystack$, needle$) -> 1-based position (0 = not found).</summary>
   private IrValue LowerInstr(CallOrIndexExpr call) {
     IrValue position;
-    if (call.Arguments.Count == 2) {
+    if (call.Arguments.Count is not (2 or 3))
+      throw new IrLoweringException($"INSTR with {call.Arguments.Count} arguments");
+    var hasStart = call.Arguments.Count == 3;
+    // INSTR(… ANY set$) is a different routine, not a different needle: it finds the first character
+    // that BELONGS to a set rather than the first occurrence of a substring
+    if (call.Arguments[hasStart ? 2 : 1] is AnyMatchExpr any)
+      return this.Coerce(this.LowerScanSet(call, any.Value, nonMember: false), PbType.Long, this._model.TypeOf(call));
+    if (!hasStart) {
       position = this._b.Call(IrType.I32, this.RuntimeFn("rt_str_instr", IrType.I32, IrType.Ptr, IrType.Ptr),
         this.LowerStringExpr(call.Arguments[0]), this.LowerStringExpr(call.Arguments[1]));
-    } else if (call.Arguments.Count == 3) {
+    } else {
       var start = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), PbType.Long);
       position = this._b.Call(IrType.I32, this.RuntimeFn("rt_str_instr_start", IrType.I32, IrType.I32, IrType.Ptr, IrType.Ptr),
         start, this.LowerStringExpr(call.Arguments[1]), this.LowerStringExpr(call.Arguments[2]));
-    } else
-      throw new IrLoweringException($"INSTR with {call.Arguments.Count} arguments");
+    }
     return this.Coerce(position, PbType.Long, this._model.TypeOf(call));
+  }
+
+  /// <summary>
+  /// The character-set scan both <c>INSTR … ANY</c> and <c>VERIFY</c> are: the position of the first
+  /// character of the haystack that is IN the set, or - for VERIFY - the first that is not, counting
+  /// from an optional 1-based start and answering zero when there is none.
+  ///
+  /// One runtime routine serves both, exactly as it does for the direct emitter, which differs only
+  /// in the flag it loads. They are spelled as two IR entries rather than one with a flag argument
+  /// because the flag is always a constant, and a constant belongs in the ABI table beside the
+  /// routine's other presets rather than in an argument the optimizer has to fold back to it.
+  /// </summary>
+  private IrValue LowerScanSet(CallOrIndexExpr call, Expression set, bool nonMember) {
+    var hasStart = call.Arguments.Count == 3;
+    var start = hasStart
+      ? this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), PbType.Long)
+      : new IrConstantInt(IrType.I32, 1);
+    return this._b.Call(IrType.I32,
+      this.RuntimeFn(nonMember ? "rt_str_verify" : "rt_str_scanset", IrType.I32, IrType.Ptr, IrType.Ptr, IrType.I32),
+      this.LowerStringExpr(call.Arguments[hasStart ? 1 : 0]), this.LowerStringExpr(set), start);
+  }
+
+  /// <summary>
+  /// The match operand of EXTRACT$ / TALLY, which is either a substring or - written <c>ANY set$</c>
+  /// - a character set. The two are the same routine with a different flag, so what the caller needs
+  /// back is the string underneath and which of the two it was.
+  /// </summary>
+  private (IrValue Handle, bool IsSet) MatchOperand(Expression match)
+    => match is AnyMatchExpr any
+      ? (this.LowerStringExpr(any.Value), true)
+      : (this.LowerStringExpr(match), false);
+
+  /// <summary>
+  /// <c>CHR$(a[, b, …])</c>: the character of each code, concatenated left to right. One argument is
+  /// the common case and the whole of it; more than one is the vendor spelling of a short literal
+  /// string, and PB builds it exactly this way.
+  /// </summary>
+  private IrValue LowerChr(CallOrIndexExpr ci) {
+    IrValue Character(int i) => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_chr", IrType.Ptr, IrType.I32),
+      this.Coerce(this.LowerExpr(ci.Arguments[i]), this._model.TypeOf(ci.Arguments[i]), PbType.Long));
+
+    var text = Character(0);
+    for (var i = 1; i < ci.Arguments.Count; ++i)
+      text = this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_concat", IrType.Ptr, IrType.Ptr, IrType.Ptr),
+        text, Character(i));
+    return text;
   }
 
   /// <summary>Lowers a string-returning intrinsic (LEFT$/RIGHT$/MID$/CHR$) to a runtime call.</summary>
@@ -2489,6 +2609,20 @@ public sealed class IrLowering {
     IrValue Str(int i) => this.LowerStringExpr(ci.Arguments[i]);
     IrValue Num(int i) => this.Coerce(this.LowerExpr(ci.Arguments[i]), this._model.TypeOf(ci.Arguments[i]), PbType.Long);
     IrValue Val(int i, ScalarType t) => this.Coerce(this.LowerExpr(ci.Arguments[i]), this._model.TypeOf(ci.Arguments[i]), t);
+
+    // EXTRACT$(main$, match$) / EXTRACT$(main$, ANY set$): everything before the first match, or the
+    // WHOLE string when there is none. The three-argument form takes a start position the runtime
+    // entry has no slot for, so it declines rather than silently ignoring one.
+    if (name.Equals("EXTRACT$", StringComparison.OrdinalIgnoreCase)) {
+      if (ci.Arguments.Count != 2)
+        throw new IrLoweringException($"EXTRACT$ with {ci.Arguments.Count} arguments");
+      var main = Str(0);                                        // main first, as the direct emitter evaluates it
+      var (match, isSet) = this.MatchOperand(ci.Arguments[1]);
+      return this._b.Call(IrType.Ptr,
+        this.RuntimeFn(isSet ? "rt_str_extract_any" : "rt_str_extract", IrType.Ptr, IrType.Ptr, IrType.Ptr),
+        main, match);
+    }
+
     return name.ToUpperInvariant() switch {
       // binary-record encoders: a number to its raw little-endian bytes as a string
       "MKBYT$" => this._b.Call(IrType.Ptr,
@@ -2506,7 +2640,10 @@ public sealed class IrLowering {
       "RIGHT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_right", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Num(1)),
       "MID$" when ci.Arguments.Count >= 3 => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid", IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I32), Str(0), Num(1), Num(2)),
       "MID$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid2", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Num(1)),
-      "CHR$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_chr", IrType.Ptr, IrType.I32), Num(0)),
+      // CHR$ is VARIADIC: CHR$(65, 66, 67) is "ABC", not "A". It lowers as the left fold of
+      // concatenation the direct emitter writes - one rt_chr per code, joined by rt_strcat - rather
+      // than as a call that quietly reads the first argument and drops the rest.
+      "CHR$" => this.LowerChr(ci),
       "SPACE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_space", IrType.Ptr, IrType.I32), Num(0)),
       // STRING$(n, s$) repeats the FIRST CHARACTER of s$, so it is STRING$(n, ASC(s$)) - composed
       // from two calls the IR already has rather than a third runtime entry that would have to be
