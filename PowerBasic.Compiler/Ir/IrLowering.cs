@@ -833,6 +833,12 @@ public sealed class IrLowering {
         this._b.Store(this.LowerStringExpr(a.Value), address);   // a string array element holds an immutable handle
         return;
       }
+      // A RECORD element would be copied whole, as a record variable is. It is NOT lowered here, and
+      // the reason is a defect further down rather than a gap in this file: the copy needs two
+      // pointer arguments, and when both are interior pointers into the SAME frame object the
+      // selector's argument staging clobbers one with the other's segment - grid(3) = grid(1) copied
+      // zeros. Declining keeps the program off the IR path, which is what it did before; emitting
+      // the call would put a silent miscompile into every image that contains one.
       this._b.Store(this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), element), address);
       return;
     }
@@ -2582,6 +2588,10 @@ public sealed class IrLowering {
   }
 
   /// <summary>The base address of a whole UDT value (a UDT variable).</summary>
+  /// <summary>
+  /// Where a record VALUE lives. A record has no single value to load, so every operation on one -
+  /// assignment, comparison, passing it by reference - is an operation on its address.
+  /// </summary>
   private IrValue UdtAddress(Expression e) {
     if (e is NameExpr && this._model.VariableBindings.TryGetValue(e, out var sym) && sym.Type is UdtType)
       return this.SlotFor(sym);
