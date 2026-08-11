@@ -20,11 +20,6 @@ public sealed partial class DosRuntime {
   public Label PrintInt64 { get; private set; } = null!;
   public Label StrI64 { get; private set; } = null!;
 
-  /// <summary>MKI$/MKWRD$, MKL$/MKDWD$, MKS$, MKD$ - a number's raw bytes as a string.</summary>
-  public Label StrMkI { get; private set; } = null!;
-  public Label StrMkL { get; private set; } = null!;
-  public Label StrMkS { get; private set; } = null!;
-  public Label StrMkD { get; private set; } = null!;
   public Label AsciizLoad { get; private set; } = null!;
   public Label AsciizStore { get; private set; } = null!;
   public Label AsciizLen { get; private set; } = null!;
@@ -34,7 +29,6 @@ public sealed partial class DosRuntime {
   private void EmitExtraProcedures(Assembler asm) {
     this.EmitPrintInt64(asm);
     this.EmitStrI64(asm);
-    this.EmitStrMk(asm);
     this.EmitAsciizProcedures(asm);
     this.EmitAscSet(asm);
     this.EmitRndRange(asm);
@@ -117,41 +111,6 @@ public sealed partial class DosRuntime {
   }
 
   /// <summary>STR$ of a QUAD: capture-mode wrapper around <see cref="PrintInt64"/>.</summary>
-  /// <summary>
-  /// The MK$ family: a number's own bytes, little-endian, as a string. The direct emitter writes
-  /// this inline - store to the scratch cell, then StrMem over it - and these are the same three
-  /// steps given labels, so the IR path can call what it cannot inline. Nothing the direct emitter
-  /// emits changes; it keeps writing the sequence itself.
-  /// </summary>
-  private void EmitStrMk(Assembler asm) {
-    var build = asm.DefineLabel();
-
-    this.StrMkI = asm.MarkLabel("rt_str_mki");        // AX = the value
-    asm.Mov(Mem.Word(this._scratch), Reg.AX);
-    asm.Mov(Reg.CX, 2);
-    asm.Jmp(build);
-
-    this.StrMkL = asm.MarkLabel("rt_str_mkl");        // DX:AX = the value
-    asm.Mov(Mem.Word(this._scratch), Reg.AX);
-    asm.Mov(Mem.Word(this._scratch, 2), Reg.DX);
-    asm.Mov(Reg.CX, 4);
-    asm.Jmp(build);
-
-    this.StrMkS = asm.MarkLabel("rt_str_mks");        // ST0, stored at SINGLE width
-    asm.Fstp(Mem.Dword(this._scratch));
-    asm.Mov(Reg.CX, 4);
-    asm.Jmp(build);
-
-    this.StrMkD = asm.MarkLabel("rt_str_mkd");        // ST0, stored at DOUBLE width
-    asm.Fstp(Mem.Qword(this._scratch));
-    asm.Mov(Reg.CX, 8);
-
-    asm.MarkLabel(build);
-    asm.Mov(Reg.SI, Imm.OffsetOf(this._scratch));
-    asm.Mov(Reg.DX, Reg.DS);
-    asm.Jmp(this.StrMem);                             // tail call: StrMem returns the handle in AX
-  }
-
   private void EmitStrI64(Assembler asm) {
     this.StrI64 = asm.MarkLabel("rt_str_i64");
     asm.Mov(Mem.Byte(asm.Lbl("rt_capmode")), (Imm)1);

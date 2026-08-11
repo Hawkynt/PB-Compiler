@@ -2655,15 +2655,12 @@ public sealed class InstructionSelector {
       case IrNullPtr:
         operand = new MOperand.Immediate(0);
         return true;
-      // A global's VALUE is its ADDRESS - MOV reg, OFFSET name - which is what DataOffset is, and
-      // PointerMemory already resolves the same names as cells. The two paths agreed about which
-      // globals exist and disagreed only about whether one could be named as a value.
-      //
-      // The prefixes are the same test for the same reason: a module variable (g.) maps to a symbol
-      // the codegen laid out and an rt_ global IS the runtime's own named cell, while a STATIC local
-      // or a synthesized IR global still has no storage to point at.
-      case IrGlobalVariable g when g.Name.StartsWith("g.", StringComparison.Ordinal)
-                                || g.Name.StartsWith("rt_", StringComparison.Ordinal):
+      // A global's VALUE is its ADDRESS - MOV reg, OFFSET name - which is what DataOffset is. The
+      // test is IsAddressableGlobal rather than a fresh list of prefixes, and deliberately the same
+      // one PointerMemory uses to turn a global into a DataCell: having a cell and having an offset
+      // are the same fact, so a second spelling of the question could only drift away from the first
+      // and answer it differently for some name neither list was written with in mind.
+      case IrGlobalVariable g when IsAddressableGlobal(g):
         operand = new MOperand.DataOffset(g.Name, 0);
         return true;
       case IrGlobalVariable g:

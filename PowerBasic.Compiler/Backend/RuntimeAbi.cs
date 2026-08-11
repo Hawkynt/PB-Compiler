@@ -573,14 +573,6 @@ internal static class RuntimeAbi {
     // SETEOF #n: truncate where the file stands (a DOS write of zero bytes)
     ["rt_file_seteof"] = new("rt_fseteof", [new(ArgKind.Word, Reg.AX)], _callerSaved),
 
-    // The MK$ family: the value in, the handle out. MKWRD$ and MKDWD$ share the signed entries -
-    // the bytes stored are the same either way, and the sign is a statement about how they are read.
-    ["rt_str_mki"] = new("rt_str_mki", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
-    ["rt_str_mkl"] = new("rt_str_mkl", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
-    ["rt_str_mkdwd"] = new("rt_str_mkl", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
-    ["rt_str_mks"] = new("rt_str_mks", [new(ArgKind.St0, default)], _callerSaved, Result: Reg.AX),
-    ["rt_str_mkd"] = new("rt_str_mkd", [new(ArgKind.St0, default)], _callerSaved, Result: Reg.AX),
-
     // CSRLIN -> AX = the 1-based cursor row; CONSIN / CONSOUT -> AX = -1 for a console, 0 redirected
     ["rt_csrlin"] = new("rt_csrlin", [], _callerSaved, Result: Reg.AX),
     ["rt_consin"] = new("rt_consin", [], _callerSaved, Result: Reg.AX),

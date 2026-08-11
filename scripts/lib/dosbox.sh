@@ -33,10 +33,17 @@
 # so each is a candidate of its own and the working one is found by trying. Each
 # candidate also UNSETS the other name, so an exported leftover cannot interfere.
 
+# Every candidate also unsets DISPLAY, and that is the design rather than tidiness. "Headless"
+# cannot be established by looking for an error message, because the way this goes wrong is that
+# the emulator starts PERFECTLY - on the user's desktop. A probe reading stderr for an abort cannot
+# tell that apart from success, and twice reported a configuration as working while it opened a
+# window per program on a machine somebody was using. With DISPLAY unset no window is POSSIBLE, so
+# "it ran" is proof of the property being claimed.
 _DOSBOX_CANDIDATES=(
-  "-u SDL_VIDEODRIVER SDL_VIDEO_DRIVER=dummy"   # SDL3's spelling
-  "-u SDL_VIDEO_DRIVER SDL_VIDEODRIVER=dummy"   # SDL2's spelling
-  "-u SDL_VIDEO_DRIVER -u SDL_VIDEODRIVER"      # no setting at all
+  "-u DISPLAY -u SDL_VIDEO_DRIVER SDL_VIDEODRIVER=dummy"      # SDL2's spelling
+  "-u DISPLAY -u SDL_VIDEODRIVER SDL_VIDEO_DRIVER=dummy"      # SDL3's spelling
+  "-u DISPLAY SDL_VIDEODRIVER=offscreen SDL_VIDEO_DRIVER=offscreen"
+  "-u DISPLAY -u SDL_VIDEO_DRIVER -u SDL_VIDEODRIVER"         # no setting at all
 )
 
 # Whether the emulator gets past starting its video, probed with `-c exit`.
@@ -70,9 +77,6 @@ dosbox_detect_prefix() {
   # run and passed on their own immediately after.
   DOSBOX_TICKS=600
 
-  # In cost order, and the no-setting candidate is deliberately LAST of the three: where DISPLAY is
-  # set - a developer machine rather than CI - it works, and puts a real window on the desktop for
-  # every program in the battery.
   local candidate
   for candidate in "${_DOSBOX_CANDIDATES[@]}"; do
     # shellcheck disable=SC2086  # deliberately word-split: separate -u flags and assignments
@@ -83,17 +87,18 @@ dosbox_detect_prefix() {
     fi
   done
 
-  if command -v xvfb-run >/dev/null 2>&1; then
-    # The dummy driver is dropped along the way: handing SDL the driver that draws
-    # nowhere, inside the very X server provided because it needs one, puts back the
-    # failure the X server is here to fix.
-    DOSBOX_PREFIX="env -u SDL_VIDEODRIVER -u SDL_VIDEO_DRIVER xvfb-run -a"
-    DOSBOX_TICKS=3000
-    echo "$DOSBOX_FLAVOR needs a display: running it under xvfb-run (10 minute per-program limit)"
-  else
-    echo "::error::$DOSBOX_FLAVOR cannot start headless and xvfb-run is not installed"
-    exit 1
+  # No headless way is a missing capability of this HOST, and it does not degrade into using the
+  # desktop: a battery of several hundred programs would then open a window each on the machine of
+  # whoever ran it, as an unannounced consequence of a library upgrade. xvfb-run is not a fallback
+  # either - it is only worth trying if it actually works, so it is a candidate like any other.
+  if [ "${PBC_ALLOW_DISPLAY:-}" = "1" ]; then
+    echo "::warning::$DOSBOX_FLAVOR has no headless mode here - using the desktop (PBC_ALLOW_DISPLAY=1)"
+    return 0
   fi
+  echo "::error::$DOSBOX_FLAVOR has no way to run without a display on this host."
+  echo "::error::Set PBC_ALLOW_DISPLAY=1 to let it use the desktop, or point DOSBOX_EXE at a build"
+  echo "::error::that runs headless (vanilla DOSBox does; dosbox-staging needs GLX)."
+  exit 1
 }
 
 # Stop a launched emulator AND everything it started.
