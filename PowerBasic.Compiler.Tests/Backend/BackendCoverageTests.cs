@@ -470,6 +470,7 @@ public sealed class BackendCoverageTests {
     "DIFF29.BAS",
     "DIFF30.BAS",
     "DIFF31.BAS",
+    "DIFF32.BAS",   // unsigned 32-bit divide + the Error-11 guard
     "DIFF33.BAS",
     "DIFF35.BAS",
     "DIFF36.BAS",

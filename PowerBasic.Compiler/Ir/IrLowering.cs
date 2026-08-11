@@ -2815,6 +2815,26 @@ public sealed class IrLowering {
       BinaryOp.Xor => IrBinaryOp.Xor,
       _ => throw new IrLoweringException($"unsupported binary op {expr.Op}"),
     };
+    // A zero divisor raises Error 11, and that guard belongs to the LANGUAGE rather than to an
+    // $ERROR option - PB raises it whether or not any checking is armed. Emitted here rather than
+    // left to each back end, so no back end has to carry its own.
+    //
+    // The constant cases are settled HERE rather than left to SCCP, which is the direct emitter's
+    // O0220 said in the IR. Leaving them would work for most programs and fail for the ones that
+    // matter: a function with an armed error handler is skipped by the whole optimizer, so the
+    // comparison would survive with a literal on both sides and reach a selector that has no form
+    // for it.
+    if (op is IrBinaryOp.SDiv or IrBinaryOp.UDiv or IrBinaryOp.SRem or IrBinaryOp.URem)
+      switch (r) {
+        case IrConstantInt { Value: not 0 }:
+          break;                                   // a constant that cannot be zero cannot trap
+        case IrConstantInt:
+          this.RaiseWhen(IrBuilder.ConstBool(true), 11, "division by zero");
+          break;                                   // ...and one that IS zero always does
+        default:
+          this.RaiseWhen(this._b.Cmp(IrCmpPred.Eq, r, new IrConstantInt(resultTy, 0)), 11, "division by zero");
+          break;
+      }
     return this._checkOverflow && op is IrBinaryOp.Add or IrBinaryOp.Sub or IrBinaryOp.Mul
       ? this.CheckedArithmetic(op, l, r, resultTy, signed)
       : this._b.Binary(op, l, r);

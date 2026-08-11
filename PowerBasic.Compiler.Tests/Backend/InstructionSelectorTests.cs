@@ -159,15 +159,19 @@ public sealed class InstructionSelectorTests {
     }
   }
 
+  /// <summary>
+  /// A runtime divisor selects. It used to decline, on the grounds that a value which might be zero
+  /// needs the Error-11 guard and the selector had no way to raise - but the guard belongs to the
+  /// LANGUAGE, not to this stage, and it is emitted by the lowering as an ordinary comparison and
+  /// raise. What arrives here is already guarded, so declining it only cost coverage.
+  /// </summary>
   [Test]
-  public void TrySelect_GivenDivisionByARuntimeValue_ThenDeclines() {
-    // a constant divisor cannot be zero and so needs no Error-11 guard; a runtime one does, and the
-    // guard needs the runtime's error label
+  public void TrySelect_GivenDivisionByARuntimeValue_ThenSelects() {
     var fn = new IrFunction("D", IrType.I16, [new IrArgument(IrType.I16, 0), new IrArgument(IrType.I16, 1)]);
     var entry = fn.CreateBlock("entry");
     var div = entry.Append(new IrBinary(IrBinaryOp.SDiv, fn.Parameters[0], fn.Parameters[1]));
     entry.Append(new IrRet(div));
 
-    Assert.That(InstructionSelector.TrySelect(fn), Is.Null, "a runtime divisor may be zero");
+    Assert.That(InstructionSelector.TrySelect(fn), Is.Not.Null);
   }
 }

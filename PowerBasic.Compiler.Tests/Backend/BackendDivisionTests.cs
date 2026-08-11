@@ -92,11 +92,24 @@ public sealed class BackendDivisionTests {
       .Reg.Physical;
   }
 
-  [TestCase(0L, TestName = "a zero divisor is Error 11, not a divide")]
-  [TestCase(-1L, TestName = "MININT / -1 overflows IDIV (Error 6)")]
-  public void Select_GivenADivisorThatWouldTrap_ThenDeclines(long divisor) {
-    Assert.That(InstructionSelector.TrySelect(Divide(IrBinaryOp.SDiv, divisor)), Is.Null);
-  }
+  /// <summary>
+  /// MININT / -1 is the one divisor IDIV cannot survive: the quotient does not fit, and the machine
+  /// faults rather than answering. A LITERAL -1 therefore still declines.
+  ///
+  /// <para>
+  /// A zero divisor no longer does, and that is not a relaxation. Error 11 is raised by the LOWERING
+  /// now - a comparison and a raise ahead of the divide, settled at compile time when the divisor is
+  /// a literal - so what reaches the selector has already been guarded, and declining it here would
+  /// only cost coverage. See <c>IrLowering.LowerArithmetic</c>.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Select_GivenMinIntOverMinusOne_ThenDeclines()
+    => Assert.That(InstructionSelector.TrySelect(Divide(IrBinaryOp.SDiv, -1)), Is.Null);
+
+  [Test]
+  public void Select_GivenAZeroDivisor_ThenSelectsBecauseTheGuardIsUpstream()
+    => Assert.That(InstructionSelector.TrySelect(Divide(IrBinaryOp.SDiv, 0)), Is.Not.Null);
 
   [Test]
   public void Schedule_GivenTheDivideSequence_ThenKeepsItInOrder() {

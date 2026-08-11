@@ -519,8 +519,14 @@ public sealed class InstructionSelector {
       return this.Decline($"binary: float {bin.Op}");
     if (bin.Op is IrBinaryOp.SDiv or IrBinaryOp.SRem)
       return this.SelectDivide(bin, block);
+    // A 32-bit UNSIGNED divide has its own runtime entries beside the signed pair, on the identical
+    // DX:AX / CX:BX convention - a DWORD divides unsigned, which is a different answer rather than
+    // the same one reached differently. The 16-bit unsigned form still declines: that one is DIV
+    // against a zero-extended dividend rather than a call, and it has no entry to borrow.
+    if (bin.Op is IrBinaryOp.UDiv or IrBinaryOp.URem && IsWide(bin.Type))
+      return this.SelectWideRuntimeBinary(bin, bin.Op == IrBinaryOp.UDiv ? "rt_uldiv" : "rt_ulmod");
     if (!TryMapBinary(bin.Op, out var opcode))
-      return this.Decline($"binary: {bin.Op}");   // unsigned divide / remainder - not in this increment
+      return this.Decline($"binary: {bin.Op}");   // 16-bit unsigned divide / remainder
     if (IsWide(bin.Type))
       return this.SelectWideBinary(bin, opcode, block);
 
@@ -670,17 +676,21 @@ public sealed class InstructionSelector {
       return this.SelectWideDivide(bin);
     if (bin.Type.Bits != 16)
       return this.Decline($"binary: {bin.Op} on {bin.Type} (16-bit only)");
-    if (bin.Rhs is not IrConstantInt { Value: var divisor } || divisor == 0)
-      return this.Decline($"binary: {bin.Op} by a runtime divisor (needs the Error-11 guard)");
-    if (divisor == -1)
+    // No constant-divisor restriction any more: the Error 11 guard is emitted by the LOWERING, as a
+    // comparison and a raise the optimizer folds away whenever the divisor is a non-zero constant.
+    // What arrives here is therefore already guarded, whatever the divisor turned out to be.
+    // MININT / -1 is the one quotient IDIV cannot produce - it overflows into a fault rather than a
+    // number - so a divisor that is LITERALLY -1 still declines. A runtime divisor that happens to
+    // hold -1 is a different question, and one the direct emitter does not answer either.
+    if (bin.Rhs is IrConstantInt { Value: -1 })
       return this.Decline($"binary: {bin.Op} by -1 (MININT / -1 overflows IDIV)");
-    if (!this.TryOperand(bin.Lhs, out var dividend))
+    if (!this.TryOperand(bin.Lhs, out var dividend) || !this.TryOperand(bin.Rhs, out var divisorSource))
       return false;
 
-    // the divisor must be a register or memory - IDIV has no immediate form
+    // the divisor must be a register - IDIV has no immediate form, whether the value came from a
+    // constant or from a variable
     var divisorReg = new MOperand.Register(this.FreshVreg(bin.Type));
-    var divisorImm = new MOperand.Immediate(divisor);
-    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [divisorReg, divisorImm], MovEffect(divisorReg, divisorImm)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [divisorReg, divisorSource], MovEffect(divisorReg, divisorSource)));
 
     // AX is written here, not by an allocated vreg - so it is declared a clobber too, which is what
     // keeps the allocator from parking some other live value (or the dividend itself) in AX
