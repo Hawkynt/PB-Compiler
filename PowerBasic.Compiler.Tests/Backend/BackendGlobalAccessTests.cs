@@ -68,9 +68,14 @@ public sealed class BackendGlobalAccessTests {
   }
 
   [Test]
-  public void Select_GivenSynthesizedIrGlobal_ThenDeclinesBecauseItHasNoSymbol() {
-    // DATA/READ introduces .data_cursor - an IR global with no PowerBASIC symbol behind it, so there
-    // is no cell of the direct emitter's to borrow
+  public void Select_GivenSynthesizedIrGlobal_ThenAddressesTheBackEndsOwnCell() {
+    // DATA/READ introduces .data and .data_cursor - IR globals with no PowerBASIC symbol behind them,
+    // so there is no cell of the DIRECT emitter's to borrow. They used to decline for exactly that
+    // reason. The back end now lays down its OWN pair (ir_datapool / ir_dataptr) beside the direct
+    // emitter's, which is sound only because CodeGenerator.BackendOwnsData refuses to route DATA at
+    // all when anything the direct emitter keeps also reads from one: the two cursors do not mean the
+    // same thing - this one is a blob-relative INDEX, rt_dataptr is an ABSOLUTE pointer - so a
+    // program reading through both would advance one and consult the other.
     var module = Optimized(Bind("""
       DIM n AS INTEGER
       DATA 7
@@ -79,9 +84,45 @@ public sealed class BackendGlobalAccessTests {
       """));
     var main = module.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
 
-    InstructionSelector.TrySelect(main, out var reason);
+    var m = InstructionSelector.TrySelect(main, out var reason);
 
-    Assert.That(reason, Is.Not.Null);
+    Assert.That(m, Is.Not.Null, $"main declined: {reason}");
+    var operands = m!.AllInstructions.SelectMany(i => i.Operands).ToList();
+    Assert.That(operands.OfType<MOperand.DataCell>().Select(c => c.Name), Does.Contain(".data_cursor"),
+      "the read cursor is READ and WRITTEN, so it is addressed as a named data cell");
+    Assert.That(operands.OfType<MOperand.DataOffset>().Select(o => o.Name), Does.Contain(".data"),
+      "the pool is INDEXED rather than loaded whole, so it is taken as an address");
+  }
+
+  [Test]
+  public void Route_GivenAProcedureTheDirectEmitterKeepsAlsoReadingData_ThenNothingRoutes() {
+    // Two pools are only sound while nothing uses both. Here `Grab` is never called, so the direct
+    // emitter compiles it, and it READs - which would leave the module body advancing ir_dataptr
+    // while `Grab` consults rt_dataptr. The whole arrangement is refused, and refused HERE: by
+    // emission the only answer left would be an exception, because DataCellOf has no cell to hand
+    // back and MachineEmitter raises on null.
+    const string source = """
+      DIM s AS STRING
+      READ s
+      PRINT s
+      DATA one, two
+      END
+
+      SUB Grab
+        DIM t AS STRING
+        READ t
+        PRINT t
+      END SUB
+      """;
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+
+    var image = routed.EmitExecutable();
+
+    Assert.Multiple(() => {
+      Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+      Assert.That(routed.BackendRoutedNames, Does.Not.Contain("main"));
+      Assert.That(image, Is.Not.Empty);
+    });
   }
 
   [Test]

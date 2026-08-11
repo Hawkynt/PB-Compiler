@@ -111,6 +111,7 @@ public sealed partial class CodeGenerator {
             or ScalarType { IsFloat: true, ByteSize: 4 or 8 }))
         continue;
       if (!byName.TryGetValue(proc.Name, out var irFn) || !this.ExternalCalleesResolve(irFn)
+          || !this.DataGlobalsResolve(irFn)
           || InstructionSelector.TrySelect(irFn, this._rt.Cpu386) is not { } mfn)
         continue;
       candidates.Add((proc, irFn, mfn));
@@ -186,7 +187,8 @@ public sealed partial class CodeGenerator {
       return null;
     if (!CalleeNames(main).All(n => routed.Keys.Any(p => p.Name.Equals(n, System.StringComparison.OrdinalIgnoreCase))))
       return null;
-    if (!this.ExternalCalleesResolve(main) || InstructionSelector.TrySelect(main, this._rt.Cpu386) is not { } machine)
+    if (!this.ExternalCalleesResolve(main) || !this.DataGlobalsResolve(main)
+        || InstructionSelector.TrySelect(main, this._rt.Cpu386) is not { } machine)
       return null;
     MachineScheduler.Schedule(machine);
     if (LinearScanAllocator.Allocate(machine) is not { } alloc)
@@ -204,6 +206,56 @@ public sealed partial class CodeGenerator {
       });
   }
 
+  private Asm.Label? _irDataPool;
+  private Asm.Label? _irDataCursor;
+  private byte[]? _irDataBytes;
+
+  /// <summary>
+  /// Emits the IR's DATA pool and read cursor, when a routed function asked for them. The cursor is
+  /// a DWORD because the IR types it i32 and reads it back at that width; it starts at zero, which
+  /// is the INDEX of the first item rather than an address.
+  /// </summary>
+  private void EmitBackendDataPool(Asm.Assembler asm) {
+    if (this._irDataCursor is { } cursor) {
+      asm.Align(2);
+      asm.MarkLabel(cursor);
+      asm.Dw(0);
+      asm.Dw(0);
+    }
+    if (this._irDataPool is { } pool) {
+      asm.Align(2);
+      asm.MarkLabel(pool);
+      asm.Db(this._irDataBytes ?? []);
+    }
+  }
+
+  /// <summary>
+  /// Whether the back end may own the DATA pool: only when no procedure the direct emitter might
+  /// still compile reads from one. The two paths keep SEPARATE pools and cursors, so a program that
+  /// read through both would advance one and consult the other.
+  /// </summary>
+  private bool BackendOwnsData()
+    => model.ProcedureList.All(p => p.Body is null || !ContainsDataRead(p.Body));
+
+  private static bool ContainsDataRead(IReadOnlyList<Syntax.Ast.Statement> body) {
+    foreach (var statement in body)
+      switch (statement) {
+        case Syntax.Ast.ReadStmt or Syntax.Ast.RestoreStmt:
+          return true;
+        case Syntax.Ast.IfStmt i when ContainsDataRead(i.Then)
+            || i.ElseIfs.Any(a => ContainsDataRead(a.Body)) || (i.Else is { } e && ContainsDataRead(e)):
+          return true;
+        case Syntax.Ast.ForStmt f when ContainsDataRead(f.Body):
+          return true;
+        case Syntax.Ast.DoLoopStmt d when ContainsDataRead(d.Body):
+          return true;
+        case Syntax.Ast.SelectStmt sel when sel.Arms.Any(a => ContainsDataRead(a.Body)):
+          return true;
+      }
+    return false;
+  }
+
+  /// <summary>
   /// The label a back-end-emitted CALL targets. A user procedure's label is the one the whole-program
   /// codegen bound for it; a runtime routine's is the named label the runtime marks, which is also
   /// what seeds the pb36 runtime trimmer - so a section only the routed function calls is kept.
@@ -264,6 +316,22 @@ public sealed partial class CodeGenerator {
         }
       return match is null ? null : this.TryDirectCell(match);
     }
+    // The IR's own DATA pool and read cursor. The direct emitter has its own pair - rt_datapool with
+    // an ABSOLUTE rt_dataptr - and these are deliberately NOT those: the IR's cursor is a
+    // blob-relative INDEX, so sharing the cell would make a routed READ and a directly-emitted
+    // RESTORE disagree about what the number means. Two independent pairs are only safe because
+    // nothing may use both, which BackendOwnsData enforces.
+    if (name is ".data" or ".data_cursor" && !this.BackendOwnsData())
+      return null;                                 // a procedure the direct emitter keeps reads DATA too
+    if (name == ".data" && this._backendModule?.FindGlobal(".data") is { Bytes: { } dataBytes }) {
+      this._irDataPool ??= this._asm.DefineLabel("ir_datapool");
+      this._irDataBytes ??= dataBytes;
+      return Asm.Mem.Word(this._irDataPool);
+    }
+    if (name == ".data_cursor") {
+      this._irDataCursor ??= this._asm.DefineLabel("ir_dataptr");
+      return Asm.Mem.Word(this._irDataCursor);
+    }
     // a string constant the IR interned (".str0"): its bytes go through this codegen's own literal
     // pool, so the routed PRINT and a directly-emitted one share the identical pooled bytes
     if (name.StartsWith(".str", System.StringComparison.Ordinal)
@@ -279,8 +347,21 @@ public sealed partial class CodeGenerator {
     // the back end addresses the very same ones the direct emitter does
     if (name.StartsWith("rt_", System.StringComparison.Ordinal))
       return Asm.Mem.Word(this._asm.Lbl(name));
-    return null;   // a synthesized IR global like .data_cursor is not addressable here yet
+    return null;   // any other synthesized IR global is not addressable here yet
   }
+
+  /// <summary>
+  /// Whether <paramref name="fn"/> may be routed as far as DATA is concerned: either the back end owns
+  /// the pool, or this function never touches it. Asked at ROUTING time and not at emission, because
+  /// by emission the only answer left is an exception - DataCellOf handing back null there means "the
+  /// routing admitted a reference it cannot address", and a decline is what that should have been.
+  /// </summary>
+  private bool DataGlobalsResolve(IrFunction fn)
+    => this.BackendOwnsData()
+       || !fn.Blocks.SelectMany(b => b.Instructions)
+            .SelectMany(i => i.Operands)
+            .OfType<IrGlobalVariable>()
+            .Any(g => g.Name is ".data" or ".data_cursor");
 
   /// <summary>
   /// Whether every EXTERNAL procedure <paramref name="fn"/> calls has a link symbol to call.

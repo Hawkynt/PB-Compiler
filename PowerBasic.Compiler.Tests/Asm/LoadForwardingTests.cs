@@ -67,6 +67,27 @@ public sealed class LoadForwardingTests {
   }
 
   [Test]
+  public void Forward_GivenStoredLabelOffset_WhenAssembled_ThenReloadKept() {
+    // MOV WORD PTR [BP-8],OFFSET cell is emitted with a ZERO PLACEHOLDER and the address written in
+    // when the label resolves, so the immediate read out of the buffer here is not the value the
+    // instruction will carry. Forwarding it turned the reload into MOV DI,0 - a cell holding an
+    // address read as if it held nothing, which is how DATAREAD.BAS printed a garbage string at -O1
+    // and the right one at -O0.
+    var asm = new Assembler { EnableLoadForwarding = true };
+    var cell = asm.DefineLabel();
+    asm.Mov(Mem.Word(Reg.BP, -8), Imm.OffsetOf(cell));
+    asm.Mov(Reg.DI, Mem.Word(Reg.BP, -8));
+    asm.Ret();
+    asm.MarkLabel(cell);
+    asm.Dw(0x1234);
+    var image = asm.ToArray();
+    Assert.Multiple(() => {
+      Assert.That(image[5..8], Is.EqualTo(new byte[] { 0x8B, 0x7E, 0xF8 }), "MOV DI,[BP-8] survives");
+      Assert.That(image[3..5], Is.Not.EqualTo(new byte[] { 0x00, 0x00 }), "and the store carries the resolved address");
+    });
+  }
+
+  [Test]
   public void Forward_GivenInterveningWriteToRegister_WhenAssembled_ThenReloadKept() {
     var asm = Store();
     asm.Mov(Reg.AX, Reg.CX);                    // AX no longer holds the stored value

@@ -433,6 +433,7 @@ public sealed class BackendCoverageTests {
   private static readonly string[] _ownedMainBodies = [
     "ARITH.BAS",
     "CTRL.BAS",
+    "DATAREAD.BAS",
     "DIFF01.BAS",
     "DIFF01.BAS",
     "DIFF02.BAS",
