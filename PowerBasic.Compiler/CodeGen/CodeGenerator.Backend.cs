@@ -110,7 +110,8 @@ public sealed partial class CodeGenerator {
             ScalarType { IsFloat: false, ByteSize: 2 or 4 }
             or ScalarType { IsFloat: true, ByteSize: 4 or 8 }))
         continue;
-      if (!byName.TryGetValue(proc.Name, out var irFn) || InstructionSelector.TrySelect(irFn, this._rt.Cpu386) is not { } mfn)
+      if (!byName.TryGetValue(proc.Name, out var irFn) || !this.ExternalCalleesResolve(irFn)
+          || InstructionSelector.TrySelect(irFn, this._rt.Cpu386) is not { } mfn)
         continue;
       candidates.Add((proc, irFn, mfn));
     }
@@ -185,7 +186,7 @@ public sealed partial class CodeGenerator {
       return null;
     if (!CalleeNames(main).All(n => routed.Keys.Any(p => p.Name.Equals(n, System.StringComparison.OrdinalIgnoreCase))))
       return null;
-    if (InstructionSelector.TrySelect(main, this._rt.Cpu386) is not { } machine)
+    if (!this.ExternalCalleesResolve(main) || InstructionSelector.TrySelect(main, this._rt.Cpu386) is not { } machine)
       return null;
     MachineScheduler.Schedule(machine);
     if (LinearScanAllocator.Allocate(machine) is not { } alloc)
@@ -212,6 +213,15 @@ public sealed partial class CodeGenerator {
       return this._asm.Lbl(name);
     var proc = model.ProcedureList.FirstOrDefault(p =>
       p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase) && this.BackendProcs().ContainsKey(p));
+    // ...or an EXTERNAL procedure, which has no body here to route and needs none: ProcLabelOf gives
+    // it the link symbol its ALIAS names, exactly as a directly-emitted call to it would get.
+    //
+    // Only when external calls are ENABLED, though. Without that, ProcLabelOf hands back an ordinary
+    // p_<name> that nothing will ever bind, and the assembler discovers it at the end - so the label
+    // has to be refused here, where refusing costs one function instead of the whole compilation.
+    if (proc is null && this._allowExternalCalls)
+      proc = model.ProcedureList.FirstOrDefault(p =>
+        p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase) && p.IsExternal);
     return proc is null ? null : this.ProcLabelOf(proc);
   }
 
@@ -271,6 +281,24 @@ public sealed partial class CodeGenerator {
       return Asm.Mem.Word(this._asm.Lbl(name));
     return null;   // a synthesized IR global like .data_cursor is not addressable here yet
   }
+
+  /// <summary>
+  /// Whether every EXTERNAL procedure <paramref name="fn"/> calls has a link symbol to call.
+  ///
+  /// The selector routes such a call the way it routes a defined one, because an imported procedure
+  /// has an ordinary PB signature - but only the code generator knows whether the name resolves. A
+  /// declaration that is neither a runtime routine nor a procedure this model declares has no label
+  /// at all, and emitting the call would throw where declining costs one function.
+  /// </summary>
+  private bool ExternalCalleesResolve(IrFunction fn)
+    => fn.Blocks.SelectMany(b => b.Instructions)
+        .OfType<IrCall>()
+        .Select(c => c.Callee)
+        .OfType<IrFunction>()
+        .Where(f => f.IsDeclaration
+                    && !f.Name.StartsWith("rt_", System.StringComparison.Ordinal)
+                    && !f.Name.StartsWith("llvm.", System.StringComparison.Ordinal))
+        .All(f => this.CalleeLabel(f.Name) is not null);
 
   /// <summary>The names of the defined functions <paramref name="fn"/> calls directly (its ABI partners).</summary>
   private static IEnumerable<string> CalleeNames(IrFunction fn)

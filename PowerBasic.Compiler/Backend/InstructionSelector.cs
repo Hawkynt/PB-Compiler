@@ -1224,17 +1224,32 @@ public sealed class InstructionSelector {
     return false;
   }
 
+  /// <summary>
+  /// Whether a declaration names a RUNTIME routine rather than an external user procedure. The IR
+  /// spells the runtime <c>rt_*</c> and the LLVM intrinsics <c>llvm.*</c>; a DECLARE in the source
+  /// keeps the programmer's own name, and nothing else is reserved.
+  /// </summary>
+  private static bool IsRuntimeName(string name)
+    => name.StartsWith("rt_", StringComparison.Ordinal) || name.StartsWith("llvm.", StringComparison.Ordinal);
+
   private bool SelectCall(IrCall call, MBlock block) {
     if (call.Callee is not IrFunction callee)
       return this.Decline("call: indirect (through a procedure pointer)");
-    if (callee.IsDeclaration)
-      return ErrorHandlerIntrinsics.Contains(callee.Name)
-        ? this.SelectErrorHandlerIntrinsic(call, callee)
-        : MathSequence(callee.Name, this._cpu386) is { } sequence
-          ? this.SelectMathIntrinsic(call, callee, sequence)
-          : RuntimeAbi.For(callee.Name) is { } routine
-            ? this.SelectRuntimeCall(call, callee, routine)
-            : this.Decline($"call: {callee.Name} (runtime declaration - not in the runtime ABI table)");
+    // A declaration is one of two very different things. A RUNTIME routine has a hand-written body
+    // with a register convention, and reaching it needs an entry in the ABI table - anything not
+    // listed declines, which is the signal the coverage census reads. An EXTERNAL user procedure has
+    // no body HERE but an ordinary PB signature, supplied by another object file and resolved by the
+    // linker; it takes the same stack convention a defined procedure does, so it takes the same path.
+    if (callee.IsDeclaration) {
+      if (ErrorHandlerIntrinsics.Contains(callee.Name))
+        return this.SelectErrorHandlerIntrinsic(call, callee);
+      if (MathSequence(callee.Name, this._cpu386) is { } sequence)
+        return this.SelectMathIntrinsic(call, callee, sequence);
+      if (RuntimeAbi.For(callee.Name) is { } routine)
+        return this.SelectRuntimeCall(call, callee, routine);
+      if (IsRuntimeName(callee.Name))
+        return this.Decline($"call: {callee.Name} (runtime declaration - not in the runtime ABI table)");
+    }
     if (!call.Type.IsVoid && !call.Type.IsIeeeFloat && !IsWide(call.Type)
         && RegSize(call.Type) != MRegSize.Word)
       return this.Decline($"call: {callee.Name} returns {call.Type} (unsupported result shape)");

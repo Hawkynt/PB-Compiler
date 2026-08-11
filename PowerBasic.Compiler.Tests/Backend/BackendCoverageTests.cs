@@ -560,10 +560,12 @@ public sealed class BackendCoverageTests {
     "HELLO.BAS",
     "INTREG.BAS",   // REG / CALL INTERRUPT
     "INPUTS.BAS",
+    "LINKDEMO.BAS",
     "MATHUNIT.BAS",
     "ONERR.BAS",
     "ONERRNXT.BAS",
     "RANGES.BAS",
+    "CODEGEN.BAS",
     "RANDFILE.BAS",
     "SHAREDG.BAS",
     "STRBOUND.BAS",
