@@ -2076,6 +2076,8 @@ public sealed class IrLowering {
     // ahead of the one-argument guard rather than inside it
     if (name.Equals("PEEK", StringComparison.OrdinalIgnoreCase))
       return this.LowerPeek(call);
+    if (name.Equals("BIT", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 2)
+      return this.LowerBit(call);
     if (call.Arguments.Count != 1)
       throw new IrLoweringException($"intrinsic {name} with {call.Arguments.Count} arguments");
     return name.ToUpperInvariant() switch {
@@ -2178,6 +2180,32 @@ public sealed class IrLowering {
       this.SetDefaultSegment(call.Arguments[0]);
     return this._b.Call(IrType.I16, this.RuntimeFn("rt_peek", IrType.I16, IrType.I16),
       this.Coerce(this.LowerExpr(offset), this._model.TypeOf(offset), PbType.Integer));
+  }
+
+  /// <summary>
+  /// BIT(value, n): bit <c>n</c> of <c>value</c>, as 0 or 1.
+  ///
+  /// <para>
+  /// The value is widened to a LONG first and the shift is LOGICAL, which together are what make
+  /// BIT(x, 31) of a negative number answer 1 rather than smearing the sign down. That is the direct
+  /// emitter's own shape - SHR DX / RCR AX around a loop, then AND AX, 1 - said in one operation
+  /// instead of a loop.
+  /// </para>
+  /// <para>
+  /// A shift count of 32 or more is answered ZERO rather than left to the back end. The emitter's
+  /// loop shifts zeros in and lands on nothing; <c>lshr</c> by the width or beyond has no defined
+  /// answer, so the two would agree only by luck. The guard folds away whenever the count is a
+  /// literal, which it nearly always is.
+  /// </para>
+  /// </summary>
+  private IrValue LowerBit(CallOrIndexExpr call) {
+    var value = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), PbType.Long);
+    var index = this.Coerce(this.LowerExpr(call.Arguments[1]), this._model.TypeOf(call.Arguments[1]), PbType.Long);
+    var bit = this._b.Binary(IrBinaryOp.And,
+      this._b.Binary(IrBinaryOp.LShr, value, index), new IrConstantInt(IrType.I32, 1));
+    var inRange = this._b.Cmp(IrCmpPred.Ult, index, new IrConstantInt(IrType.I32, 32));
+    return this.Coerce(this._b.Select(inRange, bit, new IrConstantInt(IrType.I32, 0)),
+      PbType.Long, this._model.TypeOf(call));
   }
 
   /// <summary>POKE: the low byte of <paramref name="value"/> written at <paramref name="address"/>.</summary>
