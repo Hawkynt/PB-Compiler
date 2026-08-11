@@ -288,6 +288,7 @@ public sealed class BackendCoverageTests {
   /// and never did, and both move it by one.
   /// </summary>
   private static readonly string[] _loweredToIr = [
+    "ARRAY.BAS",
     "ARITH.BAS",
     "CTRL.BAS",
     "DATAREAD.BAS",
@@ -335,6 +336,7 @@ public sealed class BackendCoverageTests {
     "DIFF31.BAS",
     "DIFF32.BAS",
     "DIFF33.BAS",
+    "DIFF34.BAS",
     "DIFF35.BAS",
     "DIFF36.BAS",
     "DIFF37.BAS",
@@ -490,6 +492,7 @@ public sealed class BackendCoverageTests {
     "DIFF31.BAS",
     "DIFF32.BAS",   // unsigned 32-bit divide + the Error-11 guard
     "DIFF33.BAS",
+    "DIFF34.BAS",   // whole-record copy between array elements
     "DIFF35.BAS",
     "DIFF36.BAS",
     "DIFF37.BAS",

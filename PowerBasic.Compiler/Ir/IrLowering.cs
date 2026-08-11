@@ -926,12 +926,16 @@ public sealed class IrLowering {
         this._b.Store(this.LowerStringExpr(a.Value), address);   // a string array element holds an immutable handle
         return;
       }
-      // A RECORD element would be copied whole, as a record variable is. It is NOT lowered here, and
-      // the reason is a defect further down rather than a gap in this file: the copy needs two
-      // pointer arguments, and when both are interior pointers into the SAME frame object the
-      // selector's argument staging clobbers one with the other's segment - grid(3) = grid(1) copied
-      // zeros. Declining keeps the program off the IR path, which is what it did before; emitting
-      // the call would put a silent miscompile into every image that contains one.
+      // a RECORD element is copied whole, as a record variable is - it has no single value to load,
+      // and asking for one is what used to take the program off the IR path. This declined for a
+      // while over a defect further down: two pointer arguments into the SAME frame object had the
+      // selector's staging overwrite one with the other, and grid(3) = grid(1) copied zeros. The
+      // staging now reserves every destination it has filled, so both pointers survive.
+      if (element is UdtType elementRecord) {
+        this._b.Call(IrType.Void, this.RuntimeFn("llvm.memcpy.p0.p0.i32", IrType.Void, IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I1),
+          address, this.UdtAddress(a.Value), new IrConstantInt(IrType.I32, elementRecord.Size), IrBuilder.ConstBool(false));
+        return;
+      }
       this._b.Store(this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), element), address);
       return;
     }
@@ -3389,6 +3393,14 @@ public sealed class IrLowering {
   private IrValue UdtAddress(Expression e) {
     if (e is NameExpr && this._model.VariableBindings.TryGetValue(e, out var sym) && sym.Type is UdtType)
       return this.SlotFor(sym);
+    // an ARRAY ELEMENT of record type is storage in exactly the same way, one stride along
+    if (e is CallOrIndexExpr indexed && this._model.VariableBindings.TryGetValue(indexed, out var arr)
+        && arr.Type is ArrayType { Element: UdtType })
+      return this.ElementAddress(indexed).Address;
+    // and so is a record-typed FIELD of another record
+    if (e is MemberExpr member && !this._model.VariableBindings.ContainsKey(member)
+        && this.MemberFieldAddress(member) is { Field.Type: UdtType } field)
+      return field.Address;
     throw new IrLoweringException("unsupported UDT value");
   }
 
