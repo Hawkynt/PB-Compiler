@@ -161,6 +161,118 @@ public sealed class BackendPointerTests {
   }
 
   /// <summary>
+  /// <c>VARPTR</c> is an address, and the only thing about an address that both back ends can be held
+  /// to is the DISTANCE between two of them: the absolute offset a variable happens to land on is a
+  /// layout fact, and the direct emitter's data cell and the routed frame slot are not the same place.
+  /// Array elements are the case where the distance IS the language's own promise - PB programs walk
+  /// an array by adding SIZEOF(element) to VARPTR of its first - so that is what is pinned here.
+  /// </summary>
+  [Test]
+  public void VarPtr_GivenAdjacentArrayElements_ThenTheAddressesDifferByTheElementSize() {
+    var (direct, routed, names) = RunBothWays("""
+      DIM a%(1 TO 4)
+      DIM b&(1 TO 4)
+      DIM first AS LONG
+      DIM second AS LONG
+      first = VARPTR(a%(1))
+      second = VARPTR(a%(2))
+      PRINT second - first
+      PRINT CLNG(VARPTR(a%(4))) - first
+      PRINT CLNG(VARPTR(b&(2))) - CLNG(VARPTR(b&(1)))
+      """);
+
+    Assert.That(names, Does.Contain("main"), "the back end did not take the module body under test");
+    Assert.That(routed, Is.EqualTo(direct));
+    // two bytes an INTEGER, four a LONG, and the stride multiplies rather than repeating
+    Assert.That(routed.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+      .Select(l => l.Trim()).ToArray(), Is.EqualTo(new[] { "2", "6", "4" }));
+  }
+
+  /// <summary>
+  /// The round trip that makes VARPTR mean anything: an address handed to POKE reaches the variable
+  /// itself, and PEEK at the same address reads the byte back. Both halves are asserted, because a
+  /// POKE that landed somewhere else and a PEEK that read the same wrong place would agree with each
+  /// other and say nothing about the variable.
+  /// </summary>
+  [Test]
+  public void VarPtr_WhenPokedAndPeekedThrough_ThenItReachesTheVariablesOwnByte() {
+    var (direct, routed, names) = RunBothWays("""
+      DIM v AS WORD
+      DIM w AS WORD
+      v = 0
+      w = 999
+      DEF SEG = VARSEG(v)
+      POKE VARPTR(v), 65
+      PRINT PEEK(VARPTR(v))
+      PRINT v
+      PRINT w
+      DEF SEG
+      """);
+
+    Assert.That(names, Does.Contain("main"));
+    Assert.That(routed, Is.EqualTo(direct));
+    // the byte read back is the byte written, the variable itself now holds it - and the variable
+    // beside it is untouched, which is what a VARPTR off by a cell would show
+    Assert.That(routed.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+      .Select(l => l.Trim()).ToArray(), Is.EqualTo(new[] { "65", "65", "999" }));
+  }
+
+  /// <summary>
+  /// The same round trip against a SHARED variable, which is not a frame slot but the direct
+  /// emitter's own data cell - so the address is the label's offset rather than a register the frame
+  /// put one in. Both back ends address the very same storage here, which is why the value the
+  /// procedure poked is visible to the module body afterwards.
+  /// </summary>
+  [Test]
+  public void VarPtr_GivenASharedVariable_ThenItAddressesTheModulesOwnDataCell() {
+    var (direct, routed, names) = RunBothWays("""
+      DECLARE FUNCTION Poked% ()
+      DIM SHARED g AS WORD
+      g = 5
+      PRINT Poked%()
+      PRINT g
+      END
+
+      FUNCTION Poked% ()
+        SHARED g AS WORD
+        DEF SEG = VARSEG(g)
+        POKE VARPTR(g), 77
+        Poked% = PEEK(VARPTR(g))
+        DEF SEG
+      END FUNCTION
+      """);
+
+    Assert.That(names, Does.Contain("main"));
+    Assert.That(names, Does.Contain("Poked"));
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(routed.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+      .Select(l => l.Trim()).ToArray(), Is.EqualTo(new[] { "77", "77" }));
+  }
+
+  /// <summary>
+  /// VARPTR names a CELL, never a value: taking the address of a variable does not read it, and the
+  /// variable it names has to survive in memory for the address to reach anything. A slot promoted to
+  /// an SSA register would leave the POKE above writing to a frame cell nobody reads again.
+  /// </summary>
+  [Test]
+  public void VarPtr_GivenTheSameVariableTwice_ThenItAnswersTheSameAddress() {
+    var (direct, routed, names) = RunBothWays("""
+      DIM v AS INTEGER
+      DIM here AS LONG
+      v = 3
+      here = VARPTR(v)
+      PRINT CLNG(VARPTR(v)) - here
+      v = v + 1
+      PRINT v
+      """);
+
+    Assert.That(names, Does.Contain("main"));
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(routed.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+      .Select(l => l.Trim()).ToArray(), Is.EqualTo(new[] { "0", "4" }));
+  }
+
+  /// <summary>
   /// A pointer made out of a NUMBER declines rather than lowering. The IR's pointer is a near offset
   /// and PB's is a seg:off pair, so a DWORD carries a segment this path has no way to honour;
   /// answering it with the low word would be a silently wrong address rather than a missing feature.

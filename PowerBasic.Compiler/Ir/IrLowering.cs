@@ -1189,8 +1189,9 @@ public sealed class IrLowering {
   }
 
   /// <summary>
-  /// The address of what a <c>VARPTR32</c> names: a variable, a static-array element, a record field
-  /// or the place another pointer already points at. Anything else has no address to take.
+  /// The address of what a <c>VARPTR</c> / <c>VARPTR32</c> names: a variable, a static-array element,
+  /// a record field or the place another pointer already points at. Anything else has no address to
+  /// take.
   /// </summary>
   private IrValue AddressOfStorage(Expression e) {
     if (e is NameExpr && this._model.VariableBindings.TryGetValue(e, out var symbol))
@@ -1203,7 +1204,7 @@ public sealed class IrLowering {
         : this.MemberFieldAddress(member).Address;
     if (e is PtrDerefExpr deref)
       return this.DerefAddress(deref);
-    throw new IrLoweringException("VARPTR32 of an expression that is not storage");
+    throw new IrLoweringException("VARPTR of an expression that is not storage");
   }
 
   /// <summary>
@@ -2891,6 +2892,14 @@ public sealed class IrLowering {
     // VARSEG / STRSEG / CODESEG: a segment, not a value read out of the variable - the operand is
     // NEVER evaluated, which is the point of asking. STRSEG is the string heap's own cell; the other
     // two are registers the IR cannot name and so are answered by a routine.
+    // VARPTR(x): the OFFSET half of the same address VARPTR32 forms, which on a NEAR target is the
+    // whole pointer - so this is AddressOfStorage read as a number rather than as a place, and the
+    // segment it belongs to is the one VARSEG answers beside it. The operand is addressed, never
+    // loaded: VARPTR of a string names the handle's cell, not the characters.
+    if (name.Equals("VARPTR", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
+      return this.Coerce(
+        this._b.Cast(IrCastOp.PtrToInt, this.AddressOfStorage(call.Arguments[0]), IrType.U16),
+        PbType.Word, this._model.TypeOf(call));
     if (name.Equals("VARSEG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this.Coerce(this._b.Call(IrType.I16, this.RuntimeFn("rt_varseg", IrType.I16)),
         PbType.Integer, this._model.TypeOf(call));

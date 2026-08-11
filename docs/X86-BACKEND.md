@@ -826,3 +826,36 @@ instructions against each other and against nothing else. The effects are truthf
 
 Anything added to the x87 opcode set must be added to `UsesX87` at the same time; `MachineSchedulerX87Tests`
 covers the current set.
+
+## `ptrtoint`: an address read as a number
+
+`VARPTR(x)` is the offset of a variable, and on this target a near pointer **is** that offset — the
+direct emitter answers it with one `LEA AX, cell`. So the IR needs no new operation for it: the
+lowering forms the same address `VARPTR32` forms (`AddressOfStorage`, which addresses a variable, a
+static-array element, a record field or the place another pointer points at) and casts it with the
+`IrCastOp.PtrToInt` the verifier and the C and LLVM emitters already understood. The operand is
+addressed, never loaded, which is what makes `VARPTR` of a string name the handle's cell rather than
+its characters.
+
+Selecting the cast costs no instruction. A frame object already has its address in a virtual register
+— its own `alloca` emitted the `LEA` — so the cast is a **rename**, the same change of view the
+`Trunc i16 -> u8` form performs when a byte is the low half of the word already holding it. A
+module-level or `STATIC` variable is a data *label* rather than a register, so there is nothing to
+rename and its offset is materialized as `MOV dest, OFFSET cell`, exactly as an indexed access into
+the same object already does. Anything else declines rather than guessing an address.
+
+One consequence is worth stating because it is load-bearing rather than incidental: `Mem2Reg` promotes
+an `alloca` only when every use is a direct load or store of it, and a `ptrtoint` is neither. Taking a
+variable's address therefore pins it in memory for the whole function, which is precisely what makes
+`POKE VARPTR(v), n` reach `v` at all.
+
+`LOWLEVEL.BAS` joins the IR path with this — **156/164 programs lowered, 251/256 functions selected
+and routed, 151/156 module bodies owned**, on 283 corpus comparisons with no disagreement. Its own
+module body still declines at *selection*, and for an unrelated reason: `!JNZ AddLoop` names a BASIC
+label from inside an inline-assembly block, and the binding pass binds variables.
+
+An address printed as a NUMBER usually will not route, and that is nothing to do with `VARPTR`: PB
+computes integral `+`/`-`/`*` in floating point, `VARPTR` answers a `WORD`, and `IntegerRecovery`
+only closes a float-shaped tree whose leaves are `sitofp` — an unsigned leaf (`uitofp u16 -> f80`)
+stops it, and the selector has no form for that conversion. Widening the addresses to `LONG` first
+(`p1 = VARPTR(a%(1))`) keeps the arithmetic on the integer path.

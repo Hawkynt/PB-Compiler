@@ -431,6 +431,7 @@ public sealed class BackendCoverageTests {
     "INPUTS.BAS",
     "INTREG.BAS",   // REG / CALL INTERRUPT
     "LINKDEMO.BAS",
+    "LOWLEVEL.BAS",   // VARPTR; its main still declines at SELECTION on an asm label reference
     "MATHUNIT.BAS",
     "ONERR.BAS",
     "ONERRNXT.BAS",

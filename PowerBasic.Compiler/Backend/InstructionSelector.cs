@@ -1231,6 +1231,31 @@ public sealed class InstructionSelector {
         this._current.Instructions.Add(new MInstr(MOpcode.Mov, [high, highHalf], MovEffect(high, highHalf)));
         return true;
       }
+      // A near pointer on this target IS its offset, so reading one as a number changes nothing about
+      // the bits - only what they are called. That makes this the same change of VIEW the byte
+      // truncation above performs: the register already holding the address is renamed, and the cast
+      // costs no instruction. A frame cell reaches here having had its LEA emitted by its own alloca.
+      //
+      // A module-level or STATIC variable is a data LABEL rather than a register, so there is nothing
+      // to rename and its offset is materialized the way an indexed access into it already is.
+      case IrCastOp.PtrToInt when to.IsInteger && to.Bits == 16: {
+        if (cast.Value is IrGlobalVariable global) {
+          if (!IsAddressableGlobal(global))
+            return this.Decline($"ptrtoint: global '{global.Name}' has no addressable data cell");
+          var offsetReg = this.FreshVreg(to);
+          var offsetDest = new MOperand.Register(offsetReg);
+          var address = new MOperand.DataOffset(global.Name, 0);
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [offsetDest, address], MovEffect(offsetDest, address)));
+          this._vregs[cast] = offsetReg;
+          return true;
+        }
+        if (!this.TryOperand(cast.Value, out var pointer))
+          return false;
+        if (pointer is not MOperand.Register held)
+          return this.Decline("ptrtoint: the address is not in a register");
+        this._vregs[cast] = held.Reg with { Size = MRegSize.Word };
+        return true;
+      }
       case IrCastOp.Trunc when IsWide(from) && to.IsInteger && to.Bits == 16: {
         if (!this.TryOperandPair(cast.Value, out var lo, out _))
           return false;
