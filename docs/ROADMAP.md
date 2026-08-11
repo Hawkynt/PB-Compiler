@@ -524,9 +524,14 @@ Ranked by the census, what stands between that and full coverage:
 1. **A PROCEDURE that arms a handler is still not routed** (the module body now is). The direct path
    saves the caller's handler triple on entry and restores it on every exit; the routed prologue has
    no equivalent, and routing without it would lose the caller's handler silently.
-2. A tail of statements: `ArraySortStmt`, `PUT$`, `DIM AT`, `ERASE` of a static array, `HEX$` with a
-   digit count, `PRINT USING` / `LPRINT`, `CODEPTR32`, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
-   metastatements.
+2. A tail of statements: `LSET` / `RSET`, `DIM AT`, `HEX$` with a digit count, `PRINT USING` /
+   `LPRINT`, `CODEPTR32`, `FIELD`, `CHAIN`, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
+   metastatements. `ARRAY SORT` / `ARRAY SCAN` came off this list: the parameter block is a set of
+   stores to NAMED runtime cells, which the IR addresses directly, and only the array DESCRIPTOR
+   needed a routine - it opens with a segment, and a segment register is not a value the IR can name
+   (`rt_arr_desc`, DosRuntime.ArrayDesc). A string array still cannot be ROUTED for a reason that has
+   nothing to do with the statement: reading or writing one of its elements is an element-indexed GEP,
+   which the selector declines wherever it appears.
 3. **Register allocation no longer loses selected functions:** all 192 selected functions route.
    Direct memory spills, address rematerialization, multi-definition/RMW live-range splitting and
    per-use argument reloads cover every allocation shape currently present in the corpus.

@@ -90,12 +90,29 @@ public sealed partial class DosRuntime {
     asm.MarkLabel("rt_dirspec");
     asm.Db(new byte[80]);
 
-    // ARRAY SORT/SCAN parameter block:
-    //   +0 descriptor ptr  +2 start index  +4 count  +6 collate handle
-    //   +8 from  +10 to  +12 flags (bit0 descend, bit1 range-left-only, hi byte relop)
-    //   +14 match handle  +16 data base offset  +18 data segment
-    asm.MarkLabel("rt_arpb");
-    asm.Db(new byte[20]);
+    // ARRAY SORT/SCAN parameter block. The runtime reads it by displacement off rt_arpb, which is how
+    // the routines below and the direct emitter both spell it; every field ALSO carries a name of its
+    // own, because the IR path has no displacement to spell - it addresses a runtime cell by naming
+    // it, and a block it had to index would cost one base register per field it fills, which is more
+    // registers than the 8086 has. The bytes are unchanged: twenty zeros either way.
+    asm.MarkLabel("rt_arpb");            // +0  descriptor pointer
+    asm.Dw(0);
+    asm.MarkLabel("rt_arpb_start");      // +2  start index
+    asm.Dw(0);
+    asm.MarkLabel("rt_arpb_count");      // +4  element count
+    asm.Dw(0);
+    asm.MarkLabel("rt_arpb_collate");    // +6  COLLATE table handle (0 = none)
+    asm.Dw(0);
+    asm.MarkLabel("rt_arpb_from");       // +8  FROM character position (1-based)
+    asm.Dw(0);
+    asm.MarkLabel("rt_arpb_to");         // +10 TO character position
+    asm.Dw(0);
+    asm.MarkLabel("rt_arpb_flags");      // +12 bit0 descend, bit1 range-left-only, high byte relop
+    asm.Dw(0);
+    asm.MarkLabel("rt_arpb_match");      // +14 match handle
+    asm.Dw(0);
+    asm.Dw(0);                           // +16 data base offset, filled by the setup prologue
+    asm.Dw(0);                           // +18 data segment, likewise
 
     // numeric ARRAY SORT/SCAN parameter block (parallel to rt_arpb for non-string
     // arrays): kind/size of the element, descend flag, scan relop + match value,

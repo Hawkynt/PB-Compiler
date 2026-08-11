@@ -283,9 +283,14 @@ IR writer has.
 
 ## Roadmap
 
-- the constructs that still decline: `PRINT USING`/`LPRINT`, `ArraySortStmt`, `PUT$`,
-  `DIM AT`, `HEX$` with a digit count, parts of the `CommandStmt` family, and inline
+- the constructs that still decline: `PRINT USING`/`LPRINT`, `LSET`/`RSET`, `DIM AT`,
+  `HEX$` with a digit count, parts of the `CommandStmt` family, and inline
   assembly (target-specific by definition - it will never lower).
+  `ARRAY SORT` / `ARRAY SCAN` lower over a STATIC one-dimensional array; a dynamic
+  one still declines, because its elements live in the far array heap whose segment
+  is a runtime cell rather than the DS or SS an IR pointer carries, so there is no
+  descriptor to build for it. `COLLATE` declines with it: the table is an owned
+  handle the parameter block would have to hold across the call and release after;
   `TryLowerModule(model, out var reason)` reports which one a program hit, and
   `pbc --emit-c` / `--emit-llvm` print it;
 - a native IR → x86-16 back end that reproduces byte-identical output for a

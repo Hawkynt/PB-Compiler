@@ -541,6 +541,29 @@ internal static class RuntimeAbi {
     // FREEFILE: no arguments -> AX = the lowest file number not in use
     ["rt_freefile"] = new("rt_freefile", [], _callerSaved, Result: Reg.AX),
 
+    // ARRAY SORT / ARRAY SCAN. The engines take EVERY parameter from memory - the rt_arpb block and
+    // the rt_num_* cells, which the lowering stores into directly because they are named runtime
+    // cells and the IR can address one. Only the descriptor needs a routine, and only because its
+    // first word is a segment; see DosRuntime.ArrayDesc for the whole argument.
+    //
+    //   "rt_arr_desc / rt_arr_tagdesc: DX:SI = the far address of the array's first element,
+    //    BX = the lower bound, CX = the element byte size, DI = the element count -> AX = the
+    //    DS offset of the filled descriptor". BX is pushed and restored; AX carries the answer.
+    ["rt_arr_desc"] = new("rt_arr_desc",
+      [new(ArgKind.Pointer, Reg.SI, Reg.DX), new(ArgKind.Word, Reg.BX),
+       new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.DI)], _callerSaved, Result: Reg.AX),
+    ["rt_arr_tagdesc"] = new("rt_arr_tagdesc",
+      [new(ArgKind.Pointer, Reg.SI, Reg.DX), new(ArgKind.Word, Reg.BX),
+       new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.DI)], _callerSaved, Result: Reg.AX),
+    // "SortNum / ScanNum take all parameters from memory; ScanNum returns the 1-based relative
+    // position in AX (0 = no match)" - DosRuntime.ArrayNum's own ABI note, and rt_sortstr / rt_scanstr
+    // say the same for the string array in DosRuntime.Strings2. Every one of the four saves and
+    // restores each register it touches apart from the answer.
+    ["rt_array_sort_num"] = new("rt_sortnum", [], _callerSaved),
+    ["rt_array_scan_num"] = new("rt_scannum", [], _callerSaved, Result: Reg.AX),
+    ["rt_array_sort_str"] = new("rt_sortstr", [], _callerSaved),
+    ["rt_array_scan_str"] = new("rt_scanstr", [], _callerSaved, Result: Reg.AX),
+
     ["rt_str_from_i16"] = new("rt_str_i16", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     // PRINT of the remaining numeric widths, transcribed from CodeGenerator.Io.cs's EmitPrintValue -
     // the direct emitter's own dispatch, which is the only thing that says which formatter a PB type
