@@ -263,6 +263,8 @@ public sealed partial class DosRuntime {
     ("bsave", this.EmitBsaveProcedures),   // needs rt_name_z/rt_namebuf from "files"
     ("arrays", this.EmitArrayProcedures),
     ("array_alloc_nz", this.EmitArrayAllocNoZero),
+    ("array_realloc", this.EmitArrayRealloc),        // REDIM PRESERVE as a routine - the IR path's spelling of it
+    ("array_ptr", this.EmitArrayPointerHelpers),     // the count-taking entries for arrays of target pointers
     ("lowlevel", this.EmitLowLevelProcedures),
     ("misc", this.EmitMiscProcedures),
     ("misc2", this.EmitMiscProcedures2),

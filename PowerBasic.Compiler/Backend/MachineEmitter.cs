@@ -136,6 +136,36 @@ public sealed class MachineEmitter {
       this._asm.Ret();
   }
 
+  /// <summary>
+  /// Points <c>ES</c> at the segment an operand of this instruction is relative to, when one of them
+  /// names a memory outside the program's own (<see cref="MOperand.Memory.SegmentCell"/>).
+  ///
+  /// It is emitted here, after scheduling and allocation, so the load and the access it serves are
+  /// adjacent bytes - nothing can be moved between them, and a CALL in between is what would otherwise
+  /// destroy it. <c>ES</c> is never allocated and holds nothing across an instruction boundary, so
+  /// overwriting it costs nothing; the runtime routines that use it set it themselves.
+  /// </summary>
+  private void LoadSegmentOverride(MInstr instr) {
+    string? cell = null;
+    foreach (var operand in instr.Operands)
+      if (operand is MOperand.Memory { SegmentCell: { } name }) {
+        if (cell is not null && cell != name)
+          throw new System.NotSupportedException($"one instruction cannot be relative to both {cell} and {name}");
+        cell = name;
+      }
+    if (cell is { } segment) {
+      this._asm.Mov(Asm.Reg.ES, Asm.Mem.Word(this.ResolveData(segment).Label!));
+      return;
+    }
+    // and the other origin of a segment: one the PROGRAM computed, which is already in a register
+    // because MOV ES, imm does not exist. DIM a(...) AT &HB800 is the form that gets here.
+    foreach (var operand in instr.Operands)
+      if (operand is MOperand.Memory { Segment: { } held }) {
+        this._asm.Mov(Asm.Reg.ES, this.Resolve(held));
+        return;
+      }
+  }
+
   private void EmitInstruction(MInstr instr) {
     var asm = this._asm;
     var ops = instr.Operands;
@@ -229,23 +259,6 @@ public sealed class MachineEmitter {
       case MOpcode.InlineAsm: this.EmitInlineAsm(asm, instr); break;
       default: throw new System.NotSupportedException($"machine opcode {instr.Opcode} has no emission yet");
     }
-  }
-
-  /// <summary>
-  /// Moves a far operand's segment into <c>ES</c>, immediately in front of the instruction that reads
-  /// through it. An x86 instruction has at most one memory operand, so at most one segment is ever in
-  /// play, and emitting the move HERE - rather than as an instruction of its own that selection
-  /// produced - is what makes the pair indivisible: no scheduling decision, spill reload or
-  /// rematerialized address can land between a move nothing upstream ever saw and the access it
-  /// belongs to. <c>ES</c> is scratch on this target (the direct emitter uses it exactly this way for
-  /// every dynamic-array element), so nothing is live in it to preserve.
-  /// </summary>
-  private void LoadSegmentOverride(MInstr instr) {
-    foreach (var operand in instr.Operands)
-      if (operand is MOperand.Memory { Segment: { } segment }) {
-        this._asm.Mov(Asm.Reg.ES, this.Resolve(segment));
-        return;
-      }
   }
 
   /// <summary>A shift by a constant count, against a register or a frame cell.</summary>
@@ -376,14 +389,18 @@ public sealed class MachineEmitter {
   };
 
   /// <summary>
+  /// The <c>ES:</c> prefix for an operand outside the program's own memory; identity for every other.
+  /// Either origin of the segment gets the same prefix - <see cref="LoadSegmentOverride"/> has already
+  /// put the value there, and by this point it no longer matters which one it came from.
+  /// </summary>
+  private static Mem Segmented(Mem memory, MOperand.Memory operand)
+    => operand is { SegmentCell: null, Segment: null } ? memory : memory.Es();
+
+  /// <summary>
   /// Stamps the operand width onto a memory reference. Integer values may be bytes or words; x87
   /// loads and stores may additionally be dwords, qwords or tbytes. The width is part of the machine
   /// operand because using the storage cell's full width can silently change a low-byte access.
   /// </summary>
-  /// <summary>Adds the <c>ES:</c> override prefix to a far operand - <see cref="LoadSegmentOverride"/> put the value there.</summary>
-  private static Mem Segmented(Mem memory, MOperand.Memory operand)
-    => operand.Segment is null ? memory : memory.Es();
-
   private static Mem Sized(Mem memory, MRegSize size) => size switch {
     MRegSize.Byte => memory.WithSize(OperandSize.Byte),
     MRegSize.Dword => memory.WithSize(OperandSize.Dword),

@@ -30,8 +30,12 @@ public sealed class IrConstantFloat(IrType type, double value) : IrConstant(type
   public double Value { get; } = type.Bits == 32 ? (float)value : value;
 }
 
-/// <summary>The <c>null</c> pointer constant.</summary>
-public sealed class IrNullPtr() : IrConstant(IrType.Ptr);
+/// <summary>
+/// The <c>null</c> pointer constant. It carries an address space so that seeding an unwritten pointer
+/// slot does not quietly narrow a far one to the program's own memory - the bits are the same either
+/// way, but the TYPE is what every later read of that slot inherits.
+/// </summary>
+public sealed class IrNullPtr(IrType? type = null) : IrConstant(type ?? IrType.Ptr);
 
 /// <summary>
 /// The address of a basic block - LLVM's <c>blockaddress</c>. PB needs one for exactly one reason:

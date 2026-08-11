@@ -735,24 +735,43 @@ void *rt_finput_line(int32_t n) {
 
 /* --- memory / arrays ---------------------------------------------------- */
 
-void *rt_arr_alloc(int32_t count, int32_t elementSize) {
-  size_t n = (size_t)(count < 0 ? 0 : count) * (size_t)(elementSize < 0 ? 0 : elementSize);
+/* The allocation family speaks BYTES, because the element size of an array is a compile-time
+   property of the BASIC type and the generated code knows it - so the multiply happens there, once,
+   at 32 bits, and both back ends call the same shape. The _ptr entries are the exception: their
+   element is a target pointer, whose width only this file knows, so those take a COUNT. */
+void *rt_arr_alloc(int32_t bytes) {
+  size_t n = (size_t)(bytes < 0 ? 0 : bytes);
   void *p = rt_xalloc(n ? n : 1);
   memset(p, 0, n ? n : 1);                    /* PB arrays start zeroed */
   return p;
 }
 
-void *rt_arr_alloc_ptr(int32_t count) { return rt_arr_alloc(count, (int32_t)sizeof(void *)); }
+void *rt_arr_alloc_ptr(int32_t count) {
+  return rt_arr_alloc((int32_t)((count < 0 ? 0 : count) * (int32_t)sizeof(void *)));
+}
 
-void *rt_arr_realloc(void *p, int32_t count, int32_t elementSize) {
-  size_t n = (size_t)(count < 0 ? 0 : count) * (size_t)(elementSize < 0 ? 0 : elementSize);
-  void *q = realloc(p, n ? n : 1);
-  if (!q) { fputs("pbc runtime: out of memory\n", stderr); exit(1); }
+/* REDIM PRESERVE. Allocate-copy-free rather than realloc(): PB's grown tail reads as ZERO, and
+   realloc leaves whatever the allocator had there. The DOS runtime does the same three steps for the
+   same reason, so the two back ends grow an array identically. */
+void *rt_arr_realloc(void *p, int32_t oldBytes, int32_t newBytes) {
+  size_t keep = (size_t)(oldBytes < 0 ? 0 : oldBytes);
+  size_t want = (size_t)(newBytes < 0 ? 0 : newBytes);
+  void *q = rt_arr_alloc(newBytes);
+  if (keep > want) keep = want;
+  if (p && keep) memcpy(q, p, keep);
+  free(p);
   return q;
 }
 
-void *rt_arr_realloc_ptr(void *p, int32_t count) { return rt_arr_realloc(p, count, (int32_t)sizeof(void *)); }
-void rt_arr_free(void *p) { free(p); }
+void *rt_arr_realloc_ptr(void *p, int32_t oldCount, int32_t newCount) {
+  return rt_arr_realloc(p, (int32_t)((oldCount < 0 ? 0 : oldCount) * (int32_t)sizeof(void *)),
+                           (int32_t)((newCount < 0 ? 0 : newCount) * (int32_t)sizeof(void *)));
+}
+
+/* The byte count is what a bump allocator needs to give a block back; a malloc/free runtime has no
+   use for it and says so by ignoring it. */
+void rt_arr_free(void *p, int32_t bytes) { (void)bytes; free(p); }
+void rt_arr_free_ptr(void *p, int32_t count) { (void)count; free(p); }
 
 void rt_mem_copy(void *dst, void *src, int32_t n) { memmove(dst, src, (size_t)(n < 0 ? 0 : n)); }
 

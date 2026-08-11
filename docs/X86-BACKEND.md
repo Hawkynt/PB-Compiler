@@ -118,7 +118,12 @@ A target-level IR over virtual registers, distinct from the SSA IR. Sketch:
   `Reg` (`AX..DI`), plus a size (byte/word/dword). Allocation rewrites virtual → physical.
 - `MOperand` — `MReg` | immediate | memory (`[base+index*scale+disp]`, base/index are
   `MReg`, plus an optional **segment**) | label/global | stack-slot (for spills and allocas).
-- `MInstr` — an opcode (`Mov, Add, Sub, Imul, Cmp, Test, Lea, Shl, …, Jcc, Jmp, Call,
+  `MReg`) | label/global | stack-slot (for spills and allocas). A memory operand may name a
+  **segment cell**: a runtime word holding the segment the address is relative to, for the one
+  memory that is not the program's own (the far array heap at `rt_arrseg`, which is what an IR
+  pointer in address space 1 points into — docs/IR.md). The emitter reloads `ES` from that cell
+  immediately before the access and prefixes the operand with `ES:`, after scheduling and
+  allocation, so the load and its use are adjacent bytes and no call can be moved between them.- `MInstr` — an opcode (`Mov, Add, Sub, Imul, Cmp, Test, Lea, Shl, …, Jcc, Jmp, Call,
   Ret, Push, Pop`) + operands + a per-opcode **def/use descriptor** (the same shape the
   scheduler already consumes), so liveness, allocation and scheduling all read one model.
 - `MBlock` (label + `MInstr` list + successors), `MFunction` (blocks, virtual-reg count,
@@ -990,3 +995,55 @@ computes integral `+`/`-`/`*` in floating point, `VARPTR` answers a `WORD`, and 
 only closes a float-shaped tree whose leaves are `sitofp` — an unsigned leaf (`uitofp u16 -> f80`)
 stops it, and the selector has no form for that conversion. Widening the addresses to `LONG` first
 (`p1 = VARPTR(a%(1))`) keeps the arithmetic on the integer path.
+## Dynamic array storage: an address space, not a pointer that happens to be elsewhere
+
+`rt_arr_alloc` was the last selection decline that read as a pure signature question. The IR declared
+`rt_arr_alloc(i32 count, i32 elementSize)` because the same declaration also feeds the C back end,
+where such a function exists; the DOS runtime's routine takes ONE dword — a byte count — in `DX:AX`.
+`RuntimeAbi` maps arguments to registers and cannot multiply, so no row could express it.
+
+The reconciliation is that the byte count is formed in the LOWERING (`IrLowering.ArrayBytes`), and both
+runtimes take bytes. The element size is a compile-time property of the source type, so the multiply
+belongs where the type is known, where it folds to a literal for constant bounds, and where it can be
+done at 32 bits. That last part is not incidental: 20000 LONGs is 80000 bytes, a 16-bit product says
+14464, and the difference between the two is a program that writes 65 KB past the end of its array
+versus one that gets the runtime's own Error 7. The `_ptr` entries stay count-based for the opposite
+reason — their element is a target pointer, whose width only the runtime knows.
+
+### The part that was not a signature question
+
+Closing the signature alone routes both programs and **miscompiles**. The block `rt_arr_alloc` answers
+with is an offset into `rt_arrseg`, a segment 128 KB above the program; the back end had no way to say
+so, so every element access came out `MOV [BX], AX` against `DS`. It printed the right numbers — an
+element written and read through the same wrong address round-trips perfectly — while writing over the
+program's own code. A 2000-element array put 8000 bytes across `DS:0000`–`DS:1F40`, which is the PSP
+and the runtime's already-executed entry stub, and the test still passed.
+
+What was missing was not a table row but a distinction: a pointer into the far array heap is a
+different KIND of pointer. `IrType` gained an `AddressSpace` (docs/IR.md), `rt_arr_alloc` answers in
+space 1, the descriptor cell is allocated as one, and a GEP inherits it from its base — so the fact
+survives a phi, a load and an index without the back end re-deriving it. `MOperand.Memory` gained a
+`SegmentCell`, and `MachineEmitter` reloads `ES` from it immediately before the access. Emission, not
+selection: the load and its use are then adjacent bytes, so neither the scheduler nor the spiller can
+put a call between them.
+
+`ARRAY.BAS` becomes the 152nd owned module body, selection moves **251 → 253 of 255** and the corpus
+differential **283 → 285 agreeing, 0 disagreeing**.
+
+### What routing ARRAY.BAS uncovered: a reserved register nobody spoke for
+
+`pts(2) = pts(1)` between two elements of a static UDT array came out as zeros. The defect predates
+this work — it reproduces at the branch point with no dynamic array in the program — and was invisible
+only because `ARRAY.BAS` declined at selection before reaching it.
+
+The staging for `rt_memcpy` is `MOV DI,dest / MOV BX,SS / MOV SI,src / MOV DX,SS`, and each move
+carries the registers filled so far as its clobber list, so a value live ACROSS the sequence avoids
+them. But a value defined and consumed entirely INSIDE the sequence is live across none of those moves,
+and nothing spoke for it. The spiller puts values exactly there: rematerializing the source address
+placed `LEA v,[BP-30]` between the second and third move, its one-instruction interval saw no clobber,
+and BX — holding the destination SEGMENT — was the first register free. `rt_memcpy` then wrote ten
+bytes into a segment made out of a frame offset.
+
+Every instruction was defensible on its own, which is the signature of a reservation with no owner.
+The fix is in `Spiller`: anything it inserts claims the staging pending where it lands
+(`WithPendingStaging`), for rematerialized addresses, argument reloads and split reloads alike.

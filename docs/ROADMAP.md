@@ -166,10 +166,15 @@ battery, it currently reaches:
 
 | | |
 |---|---|
-| programs reaching the IR at all | 135 / 162 |
-| functions selected | 192 / 233 |
-| functions routed (selected **and** allocated) | 192 / 233 |
-| whole module bodies the back end can own | 102 / 135 |
+| programs reaching the IR at all | 155 / 164 |
+| functions selected | 253 / 255 |
+| functions routed (selected **and** allocated) | 252 / 255 |
+| whole module bodies the back end can own | 152 / 155 |
+
+The one function that selects and does not allocate is `DIFF56`'s module body, over the register file
+in a 32-bit accumulation loop over a static array — measurably not an array-lowering limit: the same
+loop with no dynamic array anywhere fails allocation identically, and did so before dynamic array
+storage routed at all.
 
 ### Inline assembly
 

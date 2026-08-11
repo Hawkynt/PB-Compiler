@@ -16,6 +16,16 @@ public sealed partial class DosRuntime {
   public Label ArrAllocNoZero { get; private set; } = null!;
   public Label ArrFree { get; private set; } = null!;
 
+  /// <summary>
+  /// The entries the IR path needs and the direct emitter does not: it open-codes REDIM PRESERVE and
+  /// knows a handle is two bytes, while the IR declares the family portably and lets the runtime scale
+  /// a pointer count. Each lives in its own trimmer section, so a faithful image carries none of them.
+  /// </summary>
+  public Label ArrRealloc { get; private set; } = null!;
+  public Label ArrAllocPtr { get; private set; } = null!;
+  public Label ArrReallocPtr { get; private set; } = null!;
+  public Label ArrFreePtr { get; private set; } = null!;
+
   private void EmitArrayProcedures(Assembler asm) {
     this.ArrFree = asm.MarkLabel("rt_arr_free");
     {
@@ -86,6 +96,89 @@ public sealed partial class DosRuntime {
     asm.Ret();
     asm.MarkLabel(oom);
     asm.Jmp(asm.Lbl("rt_err_arr"));
+  }
+
+  /// <summary>
+  /// REDIM PRESERVE: a new block with the old one's prefix copied into it.
+  ///   BX = old block offset, CX = old byte count, DX:AX = new byte count -> AX = new block offset.
+  ///
+  /// <para>
+  /// The bump allocator cannot grow a block in place, so this is what "realloc" means here and what
+  /// the direct emitter open-codes at every REDIM PRESERVE: allocate, copy <c>min(old, new)</c>, leave
+  /// the old block where it is (the documented leak). Copying the MINIMUM is not an optimization - PB
+  /// allows the outer bound to shrink, and copying the old length into a shorter block would run past
+  /// the end of it. The new block arrives zeroed from <c>rt_arr_alloc</c>, so a grown array's tail
+  /// reads as zero rather than as whatever the heap last held there.
+  /// </para>
+  /// <para>
+  /// The old count's high half never arrives, because a block that exists is under 64 KiB - the
+  /// allocator refuses anything larger. The new count's does, in DX, and goes straight through to the
+  /// allocator, which is what turns an oversized REDIM into Error 7 instead of a wrapped short block.
+  /// </para>
+  /// <para>
+  /// Its own section: nothing the direct emitter writes references it, so the trimmer leaves it out of
+  /// every faithful image and those stay byte-identical.
+  /// </para>
+  /// </summary>
+  private void EmitArrayRealloc(Assembler asm) {
+    this.ArrRealloc = asm.MarkLabel("rt_arr_realloc");
+    var fits = asm.DefineLabel();
+    var done = asm.DefineLabel();
+    asm.Push(Reg.SI);
+    asm.Push(Reg.DI);
+    asm.Push(Reg.CX);                            // old byte count
+    asm.Push(Reg.AX);                            // new byte count (low half)
+    asm.Call(asm.Lbl("rt_arr_alloc"));           // AX = the new block; BX, CX, DX, SI, DI all survive it
+    asm.Pop(Reg.DX);
+    asm.Pop(Reg.CX);
+    asm.Cmp(Reg.CX, Reg.DX);
+    asm.Jbe(fits);
+    asm.Mov(Reg.CX, Reg.DX);                     // a shrinking REDIM copies only what the new block holds
+    asm.MarkLabel(fits);
+    asm.Jcxz(done);
+    asm.Mov(Reg.SI, Reg.BX);
+    asm.Mov(Reg.DI, Reg.AX);
+    asm.Push(Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_arrseg")));   // read through DS while DS is still DGROUP
+    asm.Push(Reg.DS);
+    asm.Mov(Reg.ES, Reg.AX);
+    asm.Mov(Reg.DS, Reg.AX);
+    asm.Rep();
+    asm.Movsb();
+    asm.Pop(Reg.DS);
+    asm.Pop(Reg.AX);
+    asm.MarkLabel(done);
+    asm.Pop(Reg.DI);
+    asm.Pop(Reg.SI);
+    asm.Ret();
+  }
+
+  /// <summary>
+  /// The COUNT-taking half of the allocation family, for an array whose element is a target pointer -
+  /// a dynamic array of strings, whose elements are handles. Only the runtime knows how wide one is,
+  /// which is the entire reason these entries take a count where the others take bytes; on this target
+  /// the scaling is a doubling, so each shim is the doubling and a jump.
+  ///
+  /// <para>
+  /// The doubling is done at 32 bits (<c>SHL</c> then <c>RCL</c>), so a count above 32767 carries into
+  /// DX and the allocator refuses it, rather than wrapping to a block a quarter the size asked for.
+  /// </para>
+  /// </summary>
+  private void EmitArrayPointerHelpers(Assembler asm) {
+    this.ArrAllocPtr = asm.MarkLabel("rt_arr_alloc_ptr");
+    asm.Shl(Reg.AX, 1);
+    asm.Rcl(Reg.DX, 1);
+    asm.Jmp(asm.Lbl("rt_arr_alloc"));
+
+    this.ArrReallocPtr = asm.MarkLabel("rt_arr_realloc_ptr");
+    asm.Shl(Reg.CX, 1);                          // old element count -> old byte count
+    asm.Shl(Reg.AX, 1);
+    asm.Rcl(Reg.DX, 1);
+    asm.Jmp(asm.Lbl("rt_arr_realloc"));
+
+    this.ArrFreePtr = asm.MarkLabel("rt_arr_free_ptr");
+    asm.Shl(Reg.CX, 1);
+    asm.Jmp(asm.Lbl("rt_arr_free"));
   }
 
   private void EmitArrayData(Assembler asm) {

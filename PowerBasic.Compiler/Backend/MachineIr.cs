@@ -54,8 +54,19 @@ public abstract record MOperand {
   /// indivisible: the emitter writes <c>MOV ES, reg</c> immediately in front of the instruction it
   /// belongs to, and nothing upstream can separate what it never saw as two things.
   /// </para>
+  ///
+  /// <para>
+  /// <see cref="SegmentCell"/> is the same idea arrived at from the other end: a runtime WORD holding
+  /// the segment, for memory whose segment the program never computes because the runtime owns it -
+  /// the far array heap at <c>rt_arrseg</c>, written once at startup. <see cref="Segment"/> is a
+  /// value the program made and so needs a register to have been put in; a cell needs none, and
+  /// <c>MOV ES, [rt_arrseg]</c> is one instruction where a register would cost a move as well. At
+  /// most one of the two is set. Null for both means the default segment, which is every other
+  /// operand in the back end.
+  /// </para>
   /// </summary>
-  public sealed record Memory(MReg? Base, MReg? Index, int Scale, int Disp, MRegSize Size, MReg? Segment = null) : MOperand;
+  public sealed record Memory(MReg? Base, MReg? Index, int Scale, int Disp, MRegSize Size,
+    MReg? Segment = null, string? SegmentCell = null) : MOperand;
 
   /// <summary>A code label (branch target) or a data/global symbol address.</summary>
   public sealed record LabelRef(string Name) : MOperand;

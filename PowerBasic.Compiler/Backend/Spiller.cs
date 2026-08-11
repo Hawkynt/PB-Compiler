@@ -111,7 +111,8 @@ internal static class Spiller {
           block.Instructions.Insert(i, new MInstr(MOpcode.Mov, [new MOperand.Register(fresh),
               new MOperand.ParamCell(load.ArgumentIndex, load.ByteDelta, MRegSize.Word)],
             new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
-              ReadsMemory: true, WritesMemory: false)));
+              ReadsMemory: true, WritesMemory: false),
+            condition: null, clobbers: WithPendingStaging(block, i, [])));
         }
 
       function.ArgumentLoads.Remove(load);
@@ -175,6 +176,52 @@ internal static class Spiller {
     => function.AllInstructions.Count(i => !LivenessAnalysis.RegistersOf(i).Writes.Contains(virtualId)
                                            && Mentions(i, virtualId));
 
+  /// <summary>
+  /// The physical registers a pending call's argument staging has already filled at this point in the
+  /// block - empty everywhere except between a call's first staging move and the <c>CALL</c> itself.
+  ///
+  /// <para>
+  /// Anything INSERTED there has to claim them. The selector attaches this prefix to each staging move
+  /// so that a value live ACROSS the sequence avoids the registers already loaded (see
+  /// <c>InstructionSelector.StagingDestinations</c>) - but a value defined and consumed entirely
+  /// INSIDE the sequence is live across none of those moves, so nothing spoke for it. The spiller puts
+  /// values exactly there: rematerializing a frame address places its <c>LEA</c> immediately before the
+  /// use, and a use is a staging move.
+  /// </para>
+  /// <para>
+  /// This is how <c>pts(2) = pts(1)</c> lost its record. The memcpy's staging is
+  /// <c>MOV DI,dest / MOV BX,SS / MOV SI,src / MOV DX,SS</c>; rematerializing the source address put
+  /// <c>LEA v,[BP-30]</c> between the second and third, its one-instruction interval saw no clobber,
+  /// and BX - holding the destination SEGMENT - was the first register free. rt_memcpy then wrote ten
+  /// bytes into a segment made out of a frame offset, and the read-back printed the zeroes the frame
+  /// prologue had left. Every instruction was defensible on its own.
+  /// </para>
+  /// </summary>
+  private static IReadOnlyList<Asm.Reg> StagingFilledAt(MBlock block, int index) {
+    var filled = new List<Asm.Reg>();
+    for (var j = index - 1; j >= 0; --j) {
+      var instruction = block.Instructions[j];
+      if (instruction.Opcode == MOpcode.Call)
+        break;                                   // past the previous call: nothing is staged yet
+      foreach (var register in instruction.Clobbers)
+        if (!filled.Contains(register))
+          filled.Add(register);
+    }
+    return filled;
+  }
+
+  /// <summary>The instruction's own clobbers plus whatever staging is pending where it is being placed.</summary>
+  private static IReadOnlyList<Asm.Reg> WithPendingStaging(MBlock block, int index, IReadOnlyList<Asm.Reg> own) {
+    var pending = StagingFilledAt(block, index);
+    if (pending.Count == 0)
+      return own;
+    var all = new List<Asm.Reg>(own);
+    foreach (var register in pending)
+      if (!all.Contains(register))
+        all.Add(register);
+    return all;
+  }
+
   /// <summary>Whether the instruction names the value anywhere - as an operand or inside a memory address.</summary>
   private static bool Mentions(MInstr instr, int virtualId) {
     foreach (var operand in instr.Operands)
@@ -208,7 +255,7 @@ internal static class Spiller {
         var operands = definition.Operands.ToArray();
         operands[0] = new MOperand.Register(fresh);
         block.Instructions.Insert(i, new MInstr(definition.Opcode, operands, definition.Effect,
-          definition.Condition, definition.Clobbers));
+          definition.Condition, WithPendingStaging(block, i, definition.Clobbers)));
       }
 
     foreach (var block in function.Blocks)
@@ -278,7 +325,8 @@ internal static class Spiller {
           block.Instructions.Insert(i, new MInstr(MOpcode.Mov,
             [new MOperand.Register(fresh), cell],
             new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
-              ReadsMemory: true, WritesMemory: false)));
+              ReadsMemory: true, WritesMemory: false),
+            condition: null, clobbers: WithPendingStaging(block, i, [])));
         }
 
       var stored = 0;
@@ -298,7 +346,8 @@ internal static class Spiller {
             block.Instructions.Insert(i, new MInstr(MOpcode.Mov,
               [new MOperand.Register(fresh), cell],
               new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
-                ReadsMemory: true, WritesMemory: false)));
+                ReadsMemory: true, WritesMemory: false),
+              condition: null, clobbers: WithPendingStaging(block, i, [])));
           ++stored;
         }
       if (stored != definitions.Count)
@@ -333,7 +382,8 @@ internal static class Spiller {
         block.Instructions.Insert(i, new MInstr(MOpcode.Mov,
           [new MOperand.Register(fresh), new MOperand.ParamCell(load.ArgumentIndex, load.ByteDelta, size.Value)],
           new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
-            ReadsMemory: true, WritesMemory: false)));
+            ReadsMemory: true, WritesMemory: false),
+          condition: null, clobbers: WithPendingStaging(block, i, [])));
         found = true;
       }
     if (!found)

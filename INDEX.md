@@ -5415,8 +5415,8 @@ with unrelated edits, so treat them as anchors, not gospel.
 - function `rt_fput_str(int32_t n, void *s)` — PUT$ / GET$ - raw bytes, no terminator and no record structure. A GET$ that reaches end of file — runtime/pbc_rt.c:687
 - function `rt_fget_str(int32_t n, int32_t count)` — runtime/pbc_rt.c:692
 - function `rt_finput_line(int32_t n)` — LINE INPUT #n: the rest of the line, without its terminator. — runtime/pbc_rt.c:701
-- function `rt_arr_alloc(int32_t count, int32_t elementSize)` — runtime/pbc_rt.c:714
-- function `rt_arr_alloc_ptr(int32_t count)` — runtime/pbc_rt.c:721
+- function `rt_arr_alloc(int32_t bytes)` — runtime/pbc_rt.c:718
+- function `rt_arr_alloc_ptr(int32_t count)` — runtime/pbc_rt.c:725
 - function `rt_arr_realloc(void *p, int32_t count, int32_t elementSize)` — runtime/pbc_rt.c:723
 - function `rt_arr_realloc_ptr(void *p, int32_t count)` — runtime/pbc_rt.c:730
 - function `rt_arr_free(void *p)` — runtime/pbc_rt.c:731

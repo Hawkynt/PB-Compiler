@@ -243,6 +243,9 @@ public sealed class BackendCoverageTests {
     // Then 231 -> 234 as the last three declines went: the documented inline-asm string-manager
     // routines are bound names rather than unknown ones, and FIX/BCD storage lowers - a FIX cell
     // being a scaled int64 the runtime's own scaling routines read and write.
+    // Then when dynamic array storage routed: an IR pointer gained an ADDRESS SPACE, so a block in the
+    // far array heap is a different kind of pointer rather than the same kind pointing somewhere the
+    // back end could not name, and the allocation family took its size in bytes.
     Assert.That(census.Selected, Is.GreaterThanOrEqualTo(234),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
     Assert.That(census.ProcedureDeclines, Is.Empty,
@@ -457,6 +460,7 @@ public sealed class BackendCoverageTests {
 
   private static readonly string[] _ownedMainBodies = [
     "ARITH.BAS",
+    "ARRAY.BAS",     // dynamic array storage: the far-heap address space and the byte-count allocator ABI
     "CTRL.BAS",
     "DATAREAD.BAS",
     "DIFF01.BAS",

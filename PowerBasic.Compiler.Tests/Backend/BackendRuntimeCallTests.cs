@@ -828,4 +828,54 @@ public sealed class BackendRuntimeCallTests {
     Assert.That(cells.Select(c => c.Size), Has.Some.EqualTo(MRegSize.Tbyte),
       "an intermediate is stored at the x87's own width, not the declared type's");
   }
+
+  /// <summary>
+  /// The allocator's size is a BYTE COUNT in <c>DX:AX</c>, so a REDIM whose bounds are constant folds
+  /// to one immediate pair and the table maps it straight across. It could not have mapped
+  /// <c>(count, elementSize)</c> at all: the table places arguments in registers, and turning two of
+  /// them into one takes a multiply it has no way to say.
+  /// </summary>
+  [Test]
+  public void Select_GivenARedim_ThenTheAllocatorTakesTheByteCountInDxAx() {
+    var m = Select("""
+      REDIM a(1 TO 5) AS LONG
+      a(1) = 7
+      PRINT a(1)
+      """, "main");
+
+    var call = m.AllInstructions.First(i => i.Opcode == MOpcode.Call
+      && ((MOperand.LabelRef)i.Operands[0]).Name == "rt_arr_alloc");
+    var staged = m.AllInstructions
+      .TakeWhile(i => i != call)
+      .Where(i => i.Opcode == MOpcode.Mov && i.Operands[0] is MOperand.Register { Reg.IsVirtual: false })
+      .ToDictionary(i => ((MOperand.Register)i.Operands[0]).Reg.Physical, i => i.Operands[1]);
+    Assert.That(staged.Keys, Is.EquivalentTo(new[] { Reg.AX, Reg.DX }));
+    Assert.That(((MOperand.Immediate)staged[Reg.AX]).Value, Is.EqualTo(20), "5 LONGs is 20 bytes, folded here");
+    Assert.That(((MOperand.Immediate)staged[Reg.DX]).Value, Is.EqualTo(0));
+  }
+
+  /// <summary>
+  /// A dynamic array's elements are in the far array heap, not in the program's own memory, and the
+  /// only thing that says so is the address space on the pointer. Every access through one has to name
+  /// the segment cell - and this is the assertion that would have caught the version of this that
+  /// printed the right numbers: an element written and read back through the same DS-relative address
+  /// round-trips perfectly while overwriting the program's own code with it.
+  /// </summary>
+  [Test]
+  public void Select_GivenADynamicArrayElement_ThenEveryAccessNamesTheFarHeapSegment() {
+    var m = Select("""
+      REDIM a(1 TO 5) AS INTEGER
+      a(2) = 7
+      PRINT a(2)
+      """, "main");
+
+    var accesses = m.AllInstructions
+      .Where(i => i.Opcode != MOpcode.Lea)                 // an LEA computes an address, it does not read one
+      .SelectMany(i => i.Operands)
+      .OfType<MOperand.Memory>()
+      .ToList();
+    Assert.That(accesses, Is.Not.Empty, "the element write and read should both be memory operands");
+    Assert.That(accesses.Select(a => a.SegmentCell), Has.All.EqualTo("rt_arrseg"),
+      "every dereference of far-heap storage carries its segment");
+  }
 }

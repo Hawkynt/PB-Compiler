@@ -95,7 +95,7 @@ public static class Mem2Reg {
     var seed = new Dictionary<IrAlloca, IrValue>(ReferenceEqualityComparer.Instance);
     foreach (var a in allocas)
       seed[a] = a.Allocated.IsFloat ? new IrConstantFloat(a.Allocated, 0.0)
-        : a.Allocated.IsPointer ? new IrNullPtr()           // an uninitialized string handle reads as null (empty)
+        : a.Allocated.IsPointer ? new IrNullPtr(a.Allocated)  // an uninitialized string handle reads as null (empty); the space it points into survives
         : new IrConstantInt(a.Allocated, 0);
     return seed;
   }

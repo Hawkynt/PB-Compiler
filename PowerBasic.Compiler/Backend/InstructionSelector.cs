@@ -905,23 +905,30 @@ public sealed class InstructionSelector {
   }
 
   private bool SelectGep(IrGep gep, MBlock block) {
-    if (gep.ElementType is not null)
-      return this.Decline("gep: element-indexed");   // byte-offset only in this increment
-
     var dest = this.FreshVreg(IrType.Ptr);
     this._vregs[gep] = dest;
     var destOp = new MOperand.Register(dest);
-    if (gep.BasePtr is IrGlobalVariable global)
+    if (gep.BasePtr is IrGlobalVariable global) {
+      if (gep.ElementType is not null)
+        return this.Decline("gep: element-indexed off a global");
       return this.SelectGlobalGep(gep, global, destOp);
+    }
     if (!this.TryOperand(gep.BasePtr, out var baseOp))
       return false;
     if (baseOp is not MOperand.Register baseReg)
       return this.Decline("gep: non-register base");
+    // An element-indexed GEP is the byte-offset one scaled: the 8086 has no scaled index (the SIB
+    // byte is a 386 invention), so the scale becomes a shift into a register of its own. That
+    // register is FRESH rather than the index's - the index is an SSA value other instructions still
+    // read, and shifting it in place would change what they see.
+    var stride = gep.ElementType is null ? 1 : ByteSize(gep.ElementType);
+    if (stride is not (1 or 2 or 4 or 8))
+      return this.Decline($"gep: element stride {stride} is not a shift");
     // LEA dest, [base + offset]: a constant offset folds into the displacement, a register offset becomes the index
     MOperand.Memory mem = gep.ByteOffset is IrConstantInt c
-      ? new(baseReg.Reg, null, 1, (int)c.Value, MRegSize.Word)
+      ? new(baseReg.Reg, null, 1, (int)c.Value * stride, MRegSize.Word)
       : this.TryOperand(gep.ByteOffset, out var offset) && offset is MOperand.Register idx
-        ? new(baseReg.Reg, idx.Reg, 1, 0, MRegSize.Word)
+        ? new(baseReg.Reg, stride == 1 ? idx.Reg : this.ScaleIndex(idx.Reg, stride), 1, 0, MRegSize.Word)
         : null!;
     if (mem is null)
       return this.Decline("gep: offset is neither a constant nor a register");
@@ -929,6 +936,21 @@ public sealed class InstructionSelector {
       new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: false)));
     return true;
   }
+
+  /// <summary>A copy of an index register shifted up to the element stride, so the original is untouched.</summary>
+  private MReg ScaleIndex(MReg index, int stride) {
+    var scaled = MReg.Virtual(this._nextVreg++, MRegSize.Word);
+    var dest = new MOperand.Register(scaled);
+    var source = new MOperand.Register(index);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, source], MovEffect(dest, source)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Shl, [dest, new MOperand.Immediate(stride switch { 2 => 1, 4 => 2, _ => 3 })],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false)));
+    return scaled;
+  }
+
+  /// <summary>The storage width of a type in bytes - what one step of an element-indexed GEP moves.</summary>
+  private static int ByteSize(IrType type) => type.IsPointer ? 2 : (type.Bits + 7) / 8;
 
   /// <summary>
   /// Forms an address inside a module/static data object. A label is an immediate address on the
@@ -1701,6 +1723,17 @@ public sealed class InstructionSelector {
             condition: null, clobbers: stagedRegisters[i]));
           break;
         }
+        case RuntimeAbi.ArgKind.LowWord: {
+          // the row claims the high half does not matter; see ArgKind.LowWord for what backs the claim
+          if (!IsWide(arg.Type))
+            return this.Decline($"call: {callee.Name} wants the low half of a 32-bit value, got {arg.Type}");
+          if (!this.TryOperandPair(arg, out var low, out _))
+            return false;
+          var lowDest = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lowDest, low], MovEffect(lowDest, low),
+            condition: null, clobbers: stagedRegisters[i]));
+          break;
+        }
         case RuntimeAbi.ArgKind.ZeroExtendedQwordSt0: {
           // four words into one qword cell - the value's own two, then two zeroes - and FILD it. The
           // zeroes are what make the 64-bit printer render the DWORD unsigned.
@@ -1807,6 +1840,8 @@ public sealed class InstructionSelector {
   private bool TryRuntimePointer(IrValue value, string callee, out MOperand offset, out Reg segment) {
     offset = null!;
     segment = default;
+    if (value.Type.IsFarPointer)
+      return this.Decline($"call: {callee} takes an address in the far array heap, whose segment is a runtime cell and not a register");
     if (PointerSegmentOf(value) is not { } sourceSegment)
       return this.Decline($"call: {callee} cannot derive the segment of pointer {value}");
     segment = sourceSegment;
@@ -2539,7 +2574,7 @@ public sealed class InstructionSelector {
     if (pointer is IrAlloca { Count: 1 } scalar && this._slots.TryGetValue(scalar, out var own))
       return new MOperand.StackSlot(own, size);
     if (this._vregs.TryGetValue(pointer, out var reg))
-      return new MOperand.Memory(reg, null, 1, 0, size);
+      return new MOperand.Memory(reg, null, 1, 0, size, SegmentCell: SegmentCellOf(pointer.Type));
     if (pointer is IrGlobalVariable g) {
       // A source global or STATIC maps back to the symbol the codegen laid out, and an rt_ global IS
       // the runtime's own named cell. Synthesized globals such as .data_cursor still have no cell.
@@ -2584,7 +2619,16 @@ public sealed class InstructionSelector {
     }
     return new MOperand.Memory(offsetReg.Reg, null, 1, 0, size, segmentReg);
   }
-
+  /// <summary>
+  /// The runtime cell holding the segment a pointer of this type is relative to, or null when it is
+  /// relative to the segment the instruction would use anyway.
+  ///
+  /// One address space needs one, and it is the only memory the program reaches that is not its own:
+  /// dynamic array storage, which the runtime bump-allocates out of the far array heap at
+  /// <c>rt_arrseg</c>. The direct emitter loads <c>ES</c> from the same cell before every element
+  /// access; this is that instruction, arrived at from the type rather than from the statement.
+  /// </summary>
+  private static string? SegmentCellOf(IrType type) => type.IsFarPointer ? "rt_arrseg" : null;
   private static bool IsAddressableGlobal(IrGlobalVariable global)
     => global.Name.StartsWith("g.", System.StringComparison.Ordinal)
        || global.Name.StartsWith("static.", System.StringComparison.Ordinal)

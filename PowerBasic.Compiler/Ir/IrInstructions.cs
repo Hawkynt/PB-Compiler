@@ -160,16 +160,23 @@ public sealed class IrInlineAsm(string text) : IrInstruction(IrType.Void) {
 /// size), used for pointer-element arrays whose stride is target-dependent.
 /// </summary>
 public sealed class IrGep : IrInstruction {
-  public IrGep(IrValue basePtr, IrValue byteOffset) : base(IrType.Ptr) {
+  public IrGep(IrValue basePtr, IrValue byteOffset) : base(SpaceOf(basePtr)) {
     this.AddOperand(basePtr);
     this.AddOperand(byteOffset);
   }
 
-  public IrGep(IrValue basePtr, IrValue index, IrType elementType) : base(IrType.Ptr) {
+  public IrGep(IrValue basePtr, IrValue index, IrType elementType) : base(SpaceOf(basePtr)) {
     this.ElementType = elementType;
     this.AddOperand(basePtr);
     this.AddOperand(index);
   }
+
+  /// <summary>
+  /// An address computed from a base stays in the base's memory. Only the address space travels - a
+  /// GEP has no pointee type to inherit - and it has to, or the one thing that says an element of a
+  /// dynamic array lives in the far array heap would be lost on the first index.
+  /// </summary>
+  private static IrType SpaceOf(IrValue basePtr) => basePtr.Type.IsPointer ? basePtr.Type : IrType.Ptr;
 
   public IrValue BasePtr => this.GetOperand(0);
 
