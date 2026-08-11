@@ -266,6 +266,18 @@ public sealed class MFunction(string name) {
   /// </summary>
   public bool HasArgumentPlan { get; set; }
 
+  /// <summary>
+  /// The virtual registers the spiller minted while splitting a live range - each one a reload or a
+  /// store standing beside the single instruction that wants the value.
+  ///
+  /// It exists so splitting terminates. Splitting a value replaces it with fresh ids whose ranges are
+  /// one instruction long, so re-splitting one can only add another store and another reload without
+  /// shortening anything; a live range crossing a CALL states that on its own (the fresh range no
+  /// longer crosses one), but plain register pressure has no such self-limiting shape and needs the
+  /// spiller to remember what it has already taken apart.
+  /// </summary>
+  public HashSet<int> SplitValues { get; } = [];
+
   public IEnumerable<MInstr> AllInstructions {
     get {
       foreach (var block in this.Blocks)

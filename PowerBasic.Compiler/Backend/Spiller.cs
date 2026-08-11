@@ -283,17 +283,37 @@ internal static class Spiller {
   }
 
   /// <summary>
-  /// Splits one value around full-register clobbers when it cannot be rewritten as a memory operand
-  /// directly. Every definition writes the value to one frame cell; every use reloads it into its own
-  /// fresh, instruction-local virtual register. Multiple definitions occur after phi elimination,
-  /// where each predecessor copies its incoming value into the same virtual destination. This also
-  /// handles shapes such as <c>MOV value,[array-element]</c>: direct spilling would require an illegal
-  /// memory-to-memory MOV, while the explicit store/reloads are ordinary register-memory instructions.
+  /// Shortens one value's live range when it cannot be rewritten as a memory operand directly. Every
+  /// definition writes the value to one frame cell; every use reloads it into its own fresh,
+  /// instruction-local virtual register. Multiple definitions occur after phi elimination, where each
+  /// predecessor copies its incoming value into the same virtual destination. This also handles shapes
+  /// such as <c>MOV value,[array-element]</c>: direct spilling would require an illegal memory-to-memory
+  /// MOV, while the explicit store/reloads are ordinary register-memory instructions.
   /// </summary>
   internal static bool SplitOne(MFunction function) {
     var clobbers = GetClobberIndices(function);
-    var candidates = LivenessAnalysis.Compute(function)
-      .Where(interval => clobbers.Any(at => interval.Start < at && at < interval.End))
+    var intervals = LivenessAnalysis.Compute(function);
+
+    // Values live across a full-register clobber first. That is the pressure this target creates all
+    // by itself - one CALL destroys every allocatable register - and splitting one is self-limiting,
+    // because the fresh ranges no longer cross the call.
+    if (TrySplitLongest(function,
+          intervals.Where(interval => clobbers.Any(at => interval.Start < at && at < interval.End))))
+      return true;
+
+    // Then plain pressure: no call anywhere near, simply more values wanted at once than there are
+    // registers. Four LONG accumulators are eight words on a six-register machine, and none of them
+    // can move to memory as it stands - a value loaded out of an array has a memory operand in its own
+    // defining instruction, so making it one too would be a memory-to-memory MOV. An explicit
+    // store/reload pair is two ordinary register-memory instructions and says the same thing.
+    return TrySplitLongest(function,
+      intervals.Where(interval => !function.SplitValues.Contains(interval.VirtualId)));
+  }
+
+  /// <summary>Splits the longest of the offered live ranges that can be split, if any can.</summary>
+  private static bool TrySplitLongest(MFunction function,
+      IEnumerable<LivenessAnalysis.LiveInterval> offered) {
+    var candidates = offered
       .OrderByDescending(interval => interval.End - interval.Start)
       .ThenBy(interval => interval.VirtualId);
 
@@ -321,6 +341,7 @@ internal static class Spiller {
             continue;
 
           var fresh = MReg.Virtual(function.VirtualRegisterCount++, target.Size);
+          function.SplitValues.Add(fresh.VirtualId);
           block.Instructions[i] = ReplaceMentions(instruction, interval.VirtualId, fresh);
           block.Instructions.Insert(i, new MInstr(MOpcode.Mov,
             [new MOperand.Register(fresh), cell],
@@ -337,6 +358,7 @@ internal static class Spiller {
             continue;
           var readsOldValue = LivenessAnalysis.RegistersOf(instruction).Reads.Contains(interval.VirtualId);
           var fresh = MReg.Virtual(function.VirtualRegisterCount++, target.Size);
+          function.SplitValues.Add(fresh.VirtualId);
           block.Instructions[i] = ReplaceMentions(instruction, interval.VirtualId, fresh);
           block.Instructions.Insert(i + 1, new MInstr(MOpcode.Mov,
             [cell, new MOperand.Register(fresh)],
@@ -378,6 +400,7 @@ internal static class Spiller {
         if (!Mentions(instruction, virtualId))
           continue;
         var fresh = MReg.Virtual(function.VirtualRegisterCount++, size.Value);
+        function.SplitValues.Add(fresh.VirtualId);
         block.Instructions[i] = ReplaceMentions(instruction, virtualId, fresh);
         block.Instructions.Insert(i, new MInstr(MOpcode.Mov,
           [new MOperand.Register(fresh), new MOperand.ParamCell(load.ArgumentIndex, load.ByteDelta, size.Value)],

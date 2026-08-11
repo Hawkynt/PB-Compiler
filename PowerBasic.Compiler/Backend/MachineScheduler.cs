@@ -13,6 +13,14 @@ namespace PowerBasic.Compiler.Backend;
 /// </summary>
 public static class MachineScheduler {
 
+  /// <summary>
+  /// How many values the register file can hold at once - <c>AX CX DX BX SI DI</c>, the pool
+  /// <see cref="LinearScanAllocator"/> allocates from (BP/SP are the frame). Above this a block needs
+  /// the spiller, and the spiller cannot always oblige, so it is the line the scheduler will not push
+  /// a block across.
+  /// </summary>
+  private const int _registerFile = 6;
+
   /// <summary>Reorders the non-terminator instructions of every block by their data dependencies.</summary>
   public static void Schedule(MFunction function) {
     foreach (var block in function.Blocks)
@@ -36,6 +44,8 @@ public static class MachineScheduler {
       i => instrs[i].Effect.ReadsMemory || instrs[i].Effect.WritesMemory);
     if (order == null)
       return;
+    if (CostsRegisters(keys, order))
+      return;
 
     var scheduled = new List<MInstr>(instrs.Count);
     foreach (var idx in order)
@@ -44,6 +54,76 @@ public static class MachineScheduler {
       scheduled.Add(instrs[i]);
     instrs.Clear();
     instrs.AddRange(scheduled);
+  }
+
+  /// <summary>
+  /// Whether the proposed order would keep more values alive at once than the register file holds,
+  /// having kept fewer in program order - in which case the block is left as the selector wrote it.
+  ///
+  /// <para>
+  /// A list scheduler maximizes independence, and independence IS register pressure: every chain it
+  /// interleaves is one more value waiting for its consumer. The selector emits a 32-bit accumulation
+  /// over an array as ten serial steps - load an element, sign-extend it, add the pair, move on - which
+  /// needs four registers at a time whatever the array's length. All ten loads are ready at the top of
+  /// the block, though, and nothing but this stops them being issued there: ten live values on a
+  /// six-register machine, and the accumulation then declines at allocation instead of compiling.
+  /// </para>
+  ///
+  /// <para>
+  /// Spilling cannot rescue that shape. A loaded element's definition already carries a memory operand,
+  /// so it cannot become one itself, and with the whole loop unrolled there is no CALL between the load
+  /// and its use for live-range splitting to split around. The pressure has to not be created.
+  /// </para>
+  ///
+  /// <para>
+  /// The gate is the register file rather than "no increase at all": below six, reordering is free and
+  /// the scheduler keeps every schedule it used to pick, so this only ever refuses one that could not
+  /// have been allocated as written. Physical registers are excluded because they are already pinned -
+  /// an ABI setup window is a scheduling barrier via its clobbers.
+  /// </para>
+  /// </summary>
+  private static bool CostsRegisters((HashSet<int> Reads, HashSet<int> Writes)[] keys, int[] order) {
+    var scheduled = PeakPressure(keys, order);
+    if (scheduled <= _registerFile)
+      return false;
+    var written = new int[order.Length];
+    for (var i = 0; i < written.Length; ++i)
+      written[i] = i;
+    return scheduled > PeakPressure(keys, written);
+  }
+
+  /// <summary>
+  /// The largest number of virtual values live at one point of a linear order, each value counted from
+  /// where the order first mentions it to where it last does. Values live across the whole block
+  /// contribute the same to every order of it, so the two figures are comparable even though neither is
+  /// the function's true pressure.
+  /// </summary>
+  private static int PeakPressure((HashSet<int> Reads, HashSet<int> Writes)[] keys, int[] order) {
+    var first = new Dictionary<int, int>();
+    var last = new Dictionary<int, int>();
+    for (var at = 0; at < order.Length; ++at) {
+      var (reads, writes) = keys[order[at]];
+      foreach (var value in reads.Concat(writes)) {
+        if (value < 0)
+          continue;                              // a physical register: pinned, not allocated
+        if (!first.ContainsKey(value))
+          first[value] = at;
+        last[value] = at;
+      }
+    }
+
+    var delta = new int[order.Length + 1];
+    foreach (var (value, from) in first) {
+      ++delta[from];
+      --delta[last[value] + 1];
+    }
+    int live = 0, peak = 0;
+    for (var at = 0; at < order.Length; ++at) {
+      live += delta[at];
+      if (live > peak)
+        peak = live;
+    }
+    return peak;
   }
 
   // a < b in program order: does b depend on a (so their order must be preserved)?
