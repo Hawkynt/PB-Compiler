@@ -231,6 +231,19 @@ So the order is: widen, run the battery routed, and keep the widening only if th
 coverage number that went up while the battery went down is a worse position than before. The two
 faults that turned up this way were worth more than the two functions that found them.
 
+**The routed path needs a REAL 80-bit x87 for QUAD where the direct one does not**, and that is
+invisible on an accurate emulator. `DIFF15` (QUAD division and modulo) and `DIFF72` (`$CPU 80386`
+64-bit bitwise) pass routed under dosbox-staging and fail under vanilla DOSBox 0.74, which computes
+the x87 in 64-bit doubles: `73300775184` comes back as `...85`, and DIFF72's ~1e16 values differ in
+their last digit. The direct emitter passes both on the same emulator, because it does that
+arithmetic in memory-based four-word integer routines while the routed path goes through the x87 -
+where a 64-bit integer IS exact, on hardware with the 64-bit mantissa the part promises.
+
+So it is not a fidelity bug and not something to fix by rounding differently. It is a dependency
+the direct emitter does not have, and it belongs on the retirement checklist rather than in the
+failure column: after `CodeGen/` is gone, QUAD arithmetic is only as exact as the FPU underneath,
+which on period hardware includes PB's own emulator library for machines with no 8087 at all.
+
 **String lifetime: the leak is closed, the convention is now stated.** This was not on the decline
 list - it is a concern rather than a construct, and only a coverage increment surfaced it.
 
