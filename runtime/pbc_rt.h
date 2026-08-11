@@ -61,7 +61,10 @@ int32_t rt_str_instr(void *hay, void *needle);
 int32_t rt_str_instr_start(int32_t start, void *hay, void *needle);
 double rt_str_val(void *s);
 void rt_str_to_fixed(void *dst, int32_t n, void *src);
+void rt_str_to_fixed_r(void *dst, int32_t n, void *src);
 void *rt_str_from_fixed(void *src, int32_t n);
+/* LSET/RSET into a DYNAMIC string: justified in place, within the length already there */
+void rt_str_justify(void *target, void *value, int16_t right);
 
 /* STR$ of each numeric width (the suffix is the IR's own naming) */
 void *rt_str_from_i8(int8_t v);

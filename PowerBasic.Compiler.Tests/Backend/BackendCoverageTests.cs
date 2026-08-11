@@ -237,7 +237,13 @@ public sealed class BackendCoverageTests {
     // one made out of a DWORD declines rather than being given a segment nobody named.
     // Then one more when PRINT USING and LPRINT lowered: rt_usefmt was already the direct emitter's
     // own formatter, so what was missing was the ABI row and the compile-time read of the format.
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(230),
+    // Then 230 -> 231 when a QUAD read out of storage gained a frame cell of its own: FILD/FISTP
+    // copies the eight bytes the moment the load names them, and the 64-bit printer takes them from
+    // there instead of insisting on a literal.
+    // Then 231 -> 234 as the last three declines went: the documented inline-asm string-manager
+    // routines are bound names rather than unknown ones, and FIX/BCD storage lowers - a FIX cell
+    // being a scaled int64 the runtime's own scaling routines read and write.
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(234),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
     Assert.That(census.ProcedureDeclines, Is.Empty,
       "a lowered named procedure no longer reaches the x86-16 back end:\n" + report);
@@ -258,7 +264,7 @@ public sealed class BackendCoverageTests {
 
     // selection is not routing: the whole-program codegen also schedules and allocates, and a value
     // live across a CALL has no register unless the spiller can move it to the frame
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(230),
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(234),
       "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // The figure that matters for whole-program ownership: module bodies the back end compiles end
@@ -322,6 +328,7 @@ public sealed class BackendCoverageTests {
     "DIFF113.BAS",
     "DIFF114.BAS",   // DIM ... AT segment (an ABSOLUTE array over the text screen)
     "DIFF15.BAS",
+    "DIFF16.BAS",   // FIX (@) and BCD (@@): a scaled int64 cell and an f80 one
     "DIFF18.BAS",
     "DIFF19.BAS",   // $ERROR STACK ON
     "DIFF20.BAS",   // FIELD, LSET/RSET and bare GET/PUT (main still declines on inline asm)
@@ -481,8 +488,10 @@ public sealed class BackendCoverageTests {
     "DIFF113.BAS",
     "DIFF114.BAS",   // DIM ... AT segment (an ABSOLUTE array over the text screen)
     "DIFF15.BAS",
+    "DIFF16.BAS",   // FIX (@) and BCD (@@): a scaled int64 cell and an f80 one
     "DIFF18.BAS",
     "DIFF19.BAS",
+    "DIFF20.BAS",   // the documented inline-asm string-manager ABI, called by name
     "DIFF21.BAS",   // CHAIN with a COMMON handoff
     "DIFF22.BAS",
     "DIFF23.BAS",
@@ -547,6 +556,7 @@ public sealed class BackendCoverageTests {
     "DIFF83.BAS",
     "DIFF84.BAS",
     "DIFF85.BAS",
+    "DIFF86.BAS",   // a QUAD read out of an array reaches the 64-bit printer through its own cell
     "DIFF87.BAS",
     "DIFF88.BAS",
     "DIFF89.BAS",

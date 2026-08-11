@@ -398,6 +398,35 @@ and every individual instruction all looked correct throughout. Any `MOV WORD PT
 followed by a reload had the same defect waiting - `DATA` is only the first construct to emit that
 shape - and the pass now declines any store whose bytes a pending fixup will overwrite.
 
+### QUAD storage, FIX/BCD, inline-asm exports and fixed-string LSET/RSET
+
+Four independent declines, each holding one program, and two shared cells they uncovered. The census
+moves to **156/164 programs lowered**, **254/256 functions selected and routed**, **154/156 module
+bodies owned**, and the corpus differential to **302 participating, 289 agreeing, 13
+emulator-limited, 0 disagreeing**.
+
+- **`LSET`/`RSET` into a fixed-length string.** Both were lowered for a FIELD variable, where they
+  justify a value inside the length the target already has. A `STRING * n` has no handle to justify
+  inside: the bytes are the variable and the width is declared, so `LSET` is exactly the padded store
+  an assignment already makes and `RSET` the same store against the far edge (`rt_storefixed_r`,
+  which the DOS runtime already had and the ABI table did not).
+- **A non-constant QUAD reaching the 64-bit printer.** A 64-bit integer has no register form here, so
+  the selector now gives one a frame cell of its own and copies it with `FILD qword` / `FISTP qword`.
+  The matching STORE had to land in the same step: without it a QUAD literal store went out through a
+  386 operand-size prefix carrying half the value.
+- **FIX (`@`) and BCD (`@@`).** Two types, not one. BCD is an `f80` cell whose bits are the value;
+  FIX is a scaled `i64` whose scale lives in `pbvFixDigits`, a runtime cell - so the conversions are
+  calls to `rt_fixdn` / `rt_fixup` and never a folded divide. No new `IrCastOp` was needed: the type
+  map plus `Coerce` plus two ABI rows carry it.
+- **Inline asm naming a runtime export.** `CALL GetStrLoc` was the one unbound name in `DIFF20`'s
+  documented-ABI block - the string handle beside it already bound. An export is code, so it carries
+  no cell and the machine emitter resolves it to the runtime's label.
+
+The two cells the differential caught on the way, both pre-existing and both invisible until the
+programs that read them routed: `ERL` was never recorded at a numeric line label, and every PB
+internal variable (`pbvFixDigits`, `pbvScrnCols`, …) was given a private frame slot instead of the
+runtime cell it names.
+
 ### Wider integers and SIMD as IR operations - not started
 
 The IR has no integer tier above the dialects' own widths and no vector type; `MRegSize` reads

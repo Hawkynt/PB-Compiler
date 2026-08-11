@@ -116,7 +116,7 @@ public sealed partial class CodeGenerator {
       }
 
       // string-manager runtime exports callable from inline asm (PB manual ABI)
-      if (_runtimeExports.TryGetValue(name, out var canonical)) {
+      if (Runtime.InlineAsmExports.Canonical(name) is { } canonical) {
         symbol = AsmSymbol.OfLabel(owner._asm.Lbl(canonical));
         return true;
       }
@@ -140,18 +140,6 @@ public sealed partial class CodeGenerator {
     ("##", TypeSuffix.Ext), ("#", TypeSuffix.Double),
     ("%", TypeSuffix.Integer), ("!", TypeSuffix.Single), ("$", TypeSuffix.String),
   ];
-
-  /// <summary>Runtime procedures resolvable by name from inline assembly (canonical label casing).</summary>
-  private static readonly Dictionary<string, string> _runtimeExports = new(StringComparer.OrdinalIgnoreCase) {
-    ["GetStrLoc"] = "GetStrLoc",
-    ["GET$LOC"] = "GetStrLoc",
-    ["GetStrLen"] = "GetStrLen",
-    ["GET$LEN"] = "GetStrLen",
-    ["GetStrAlloc"] = "GetStrAlloc",
-    ["GET$ALLOC"] = "GetStrAlloc",
-    ["RlsStrAlloc"] = "RlsStrAlloc",
-    ["RLS$ALLOC"] = "RlsStrAlloc",
-  };
 
   /// <summary>
   /// The memory cell an inline-asm reference to <paramref name="symbol"/>

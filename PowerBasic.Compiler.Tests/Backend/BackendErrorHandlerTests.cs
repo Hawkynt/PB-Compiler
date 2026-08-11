@@ -133,4 +133,28 @@ public sealed class BackendErrorHandlerTests {
       END
       """, "second|done");
 
+  /// <summary>
+  /// ERL is the last NUMERIC line label that ran - PB counts those and not alphabetic ones, and the
+  /// distinction is the whole test: 100 and 200 must be reported, and passing through <c>Middle:</c>
+  /// must not reset or change what ERL says. The lowering used to record neither, so every handler
+  /// asking read a zero the direct emitter never gives it.
+  /// </summary>
+  [Test]
+  public void Route_GivenNumericLineLabels_ThenErlReportsTheLastOneBeforeTheFault() =>
+    BothPathsAgree("""
+      ON ERROR GOTO Trap
+      100 PRINT "one"
+      Middle:
+      ERROR 5
+      After:
+      PRINT "erl"; ERL
+      200 ERROR 6
+      Later:
+      PRINT "erl"; ERL
+      ON ERROR GOTO 0
+      END
+      Trap:
+      RESUME NEXT
+      """, "one|erl 100 |erl 200");
+
 }

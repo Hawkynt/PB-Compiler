@@ -191,6 +191,55 @@ public sealed class BackendFieldTests {
     }));
   }
 
+  /// <summary>
+  /// The other target LSET/RSET accept, and a different operation entirely: a FIXED-length string has
+  /// no handle to justify inside - its bytes ARE the variable and its width is declared - so LSET is a
+  /// plain padded store and RSET the same store against the far edge. Both widths are exercised at
+  /// their boundaries: shorter than the field (padded), exactly the field, and longer (truncated).
+  /// </summary>
+  private const string _fixedJustify = """
+    DIM fs AS STRING * 8
+    LSET fs = "xy"
+    PRINT "["; fs; "]"
+    RSET fs = "xy"
+    PRINT "["; fs; "]"
+    LSET fs = "12345678"
+    PRINT "["; fs; "]"
+    RSET fs = "12345678"
+    PRINT "["; fs; "]"
+    LSET fs = "abcdefghij"
+    PRINT "["; fs; "]"
+    RSET fs = "abcdefghij"
+    PRINT "["; fs; "]"
+    END
+    """;
+
+  [Test]
+  public void Run_GivenRoutedLsetRsetIntoAFixedString_ThenTheValueIsJustifiedAndBlankPaddedToTheWidth() {
+    var (image, routed) = Compile(_fixedJustify, backend: true);
+    Assert.That(routed, Does.Contain("main"), "the back end did not take the module body under test");
+
+    var output = Execute(image, "routed");
+
+    Assert.That(Lines(output), Is.EqualTo(new[] {
+      "[xy      ]",     // LSET: left, blank-padded to the declared eight
+      "[      xy]",     // RSET: right, blank-padded to the declared eight
+      "[12345678]",     // exactly the width: no padding either way
+      "[12345678]",
+      "[abcdefgh]",     // too long: the leftmost eight survive, as PB truncates
+      "[abcdefgh]",     // RSET truncates the same end - it clamps and only then right-aligns
+    }));
+  }
+
+  [Test]
+  public void Run_GivenLsetRsetIntoAFixedString_ThenTheRoutedPathAgreesWithTheDirectEmitter() {
+    var (routedImage, routed) = Compile(_fixedJustify, backend: true);
+    var (directImage, _) = Compile(_fixedJustify, backend: false);
+    Assert.That(routed, Does.Contain("main"));
+
+    Assert.That(Execute(routedImage, "routed"), Is.EqualTo(Execute(directImage, "direct")));
+  }
+
   private static string[] Lines(string text)
     => text.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries);
 }

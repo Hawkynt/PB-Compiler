@@ -839,6 +839,63 @@ nothing, so a copy beside the use is free, and every live range collapses to one
 `HUGE`, `VIRTUAL`, `EMS` and `XMS` still decline. One segment named at the declaration is not enough
 for them: `HUGE` steps the segment by `byteOffset >> 4` so a single array spans many, and `VIRTUAL`
 maps a 16 KiB EMS page pair into a window before each access.
+### A QUAD in storage, and the two instructions that move eight bytes
+
+A 64-bit integer has no register representation here - it would want four - so the selector used to
+take a QUAD load down the *scalar* path, which sizes a value from its bit width and minted one
+dword-sized register for it. That is half the value, silently, and the matching store wrote the low
+half through a 386 operand-size prefix on a target that has no such instruction. Neither showed up
+until `DIFF86`'s module body routed, because until then the call that consumed the value declined
+first and took the whole function with it.
+
+`SelectQwordLoad`/`SelectQwordStore` give a QUAD a frame cell of its own and move it with the only
+unit that handles eight bytes at once: `FILD qword` then `FISTP qword`. Both directions are exact -
+the x87 mantissa is sixty-four bits wide, which is precisely what an int64 needs - so this is a copy
+and not a conversion. The copy happens at the LOAD, not at the use: an SSA load names the bytes at
+that point, and re-reading the source later would see whatever a store in between had put there.
+`ArgKind.SignedQwordSt0` then takes the cell as it already takes a literal's staging cell, and
+printing a non-constant QUAD stops declining.
+
+### FIX and BCD: one of them is a float and the other is not
+
+`@` and `@@` look like one feature and are two. A BCD cell is ten bytes of x87 extended, so its bits
+ARE the value and it maps to `f80` with no conversion in either direction. A FIX cell is a scaled
+INT64 - the number times ten to the power of `pbvFixDigits` - so it maps to `i64`, a read divides
+and a write multiplies and rounds to the nearest integer.
+
+That exponent lives in a RUNTIME cell, which is what decides the shape: the conversions are calls to
+`rt_fixdn` / `rt_fixup` (both ST(0) in, ST(0) out, one new ABI row each), not arithmetic the lowering
+folds. A compile-time divide by 100 agrees with every FIX program in the corpus and stops agreeing
+the moment one assigns `pbvFixDigits` - which the direct emitter's literal-store fold demonstrates,
+writing at two digits and reading back at four.
+
+No new `IrCastOp` was needed for either. The storage-versus-value distinction MBF carries in the type
+system is carried here by the type map plus `Coerce`, and the scaling by a runtime call the ABI table
+already knows how to bridge - which also means the qword load and store above are what make it
+selectable at all.
+
+### Two cells the IR was inventing rather than sharing
+
+Routing `DIFF20` and `DIFF16` each exposed a cell the IR had quietly given itself a private copy of,
+and the corpus differential caught both by running the images rather than reading them:
+
+- **`rt_erl`.** The direct emitter writes the line number into it at every NUMERIC line label when
+  error handling is in scope; the lowering wrote it nowhere, so every handler asking `ERL` read a
+  zero. Alphabetic labels do not count, which is PB's rule and not an omission.
+- **`rt_pbv_fixdigits`, and every other PB internal variable.** `SlotFor` gave `pbvFixDigits` a frame
+  slot of its own, so `PRINT pbvFixDigits` answered 0 while `rt_fixdn` - reading the runtime's cell,
+  three instructions away - scaled by 2. Internal variables now resolve to their runtime label, which
+  the data-layout bridge already addresses because it begins with `rt_`.
+
+### Inline asm can name CODE as well as storage
+
+The lowering binds each identifier in a `!` block to the storage it denotes, and refused the whole
+block when a name bound to nothing. One class of name binds to nothing on purpose: the string-manager
+routines PB publishes an inline-asm ABI for (`GetStrLoc`, `GetStrLen`, `GetStrAlloc`, `RlsStrAlloc`).
+They are code, so there is no cell to pair with them and nothing about them depends on which back end
+laid out the frame - the machine emitter resolves them to the runtime's own labels. `DIFF20` pushes a
+string handle, calls `GetStrLoc` and reads the far pointer it answers with; every variable in that
+block, the handle included, already bound.
 
 ## The x87 stack is not in the machine IR
 

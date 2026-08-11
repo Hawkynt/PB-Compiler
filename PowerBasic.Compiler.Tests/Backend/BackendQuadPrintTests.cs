@@ -63,8 +63,15 @@ public sealed class BackendQuadPrintTests {
       Is.EqualTo(new ushort[] { 0xCDEF, 0x89AB, 0x4567, 0x0123 }));
   }
 
+  /// <summary>
+  /// A QUAD READ out of storage has no literal words to stage, and no register to hold it either -
+  /// it would need four. It gets a frame cell of its own instead, filled by the only instruction
+  /// pair on this target that moves eight bytes at once and does so exactly: <c>FILD qword</c> from
+  /// the variable, <c>FISTP qword</c> into the cell. The printer then FILDs the cell, which is the
+  /// literal case's last instruction unchanged.
+  /// </summary>
   [Test]
-  public void Select_GivenANonConstantQuad_WhenPrinting_ThenDeclinesRatherThanTruncateIt() {
+  public void Select_GivenANonConstantQuad_WhenPrinting_ThenCopiesItThroughItsOwnQwordCell() {
     var module = new IrModule("t");
     var print = module.AddFunction(new IrFunction("rt_print_i64", IrType.Void, [new IrArgument(IrType.I64, 0)]));
     var main = module.AddFunction(new IrFunction("main", IrType.Void));
@@ -76,8 +83,51 @@ public sealed class BackendQuadPrintTests {
 
     var machine = InstructionSelector.TrySelect(main, out var reason);
 
-    Assert.That(machine, Is.Null, "a non-constant i64 has no safe machine-IR representation yet");
-    Assert.That(reason, Does.Contain("constant signed 64-bit value"));
+    Assert.That(machine, Is.Not.Null, $"selection declined: {reason}");
+    var x87 = machine!.AllInstructions
+      .Where(i => i.Opcode is MOpcode.Fild or MOpcode.Fistp)
+      .Select(i => (i.Opcode, Cell: (MOperand.StackSlot)i.Operands[0]))
+      .ToList();
+    Assert.That(x87.Select(i => i.Opcode),
+      Is.EqualTo(new[] { MOpcode.Fild, MOpcode.Fistp, MOpcode.Fild }));
+    Assert.That(x87.Select(i => i.Cell.Size), Is.All.EqualTo(MRegSize.Qword), "all eight bytes, every time");
+    Assert.That(x87[0].Cell.Index, Is.Not.EqualTo(x87[1].Cell.Index), "the variable is copied, not aliased");
+    Assert.That(x87[2].Cell.Index, Is.EqualTo(x87[1].Cell.Index), "the printer reads the copy");
+  }
+
+  /// <summary>
+  /// The value that separates a 64-bit path from one that is quietly 32 bits wide: the low half of
+  /// 4294967296 is zero, so anything that carried only DX:AX would print 0, and the low half of
+  /// 8589934593 is 1. Both are asserted as exact TEXT, because "the two back ends agree" would still
+  /// pass if both had truncated.
+  /// </summary>
+  [Test]
+  public void Print_GivenAQuadVariableAbove32Bits_WhenRun_ThenTheWholeValuePrints() {
+    const string source = """
+      OPEN "R.TXT" FOR OUTPUT AS #1
+      DIM q&&(1 TO 3)
+      q&&(1) = 4294967296
+      q&&(2) = 8589934593
+      q&&(3) = -1234567890123
+      n&& = 4294967296
+      FOR i% = 1 TO 3
+        PRINT #1, q&&(i%)
+      NEXT i%
+      PRINT #1, n&&
+      CLOSE #1
+      """;
+
+    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var directRun = Cpu8086.Run(direct.EmitExecutable());
+    var routedRun = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.Multiple(() => {
+      Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the test must not pass through fallback");
+      Assert.That(routedRun.FileContent("R.TXT"),
+        Is.EqualTo(" 4294967296 \r\n 8589934593 \r\n-1234567890123 \r\n 4294967296 \r\n"));
+      Assert.That(directRun.FileContent("R.TXT"), Is.EqualTo(routedRun.FileContent("R.TXT")));
+    });
   }
 
   [Test]

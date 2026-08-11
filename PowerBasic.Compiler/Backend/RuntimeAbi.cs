@@ -506,6 +506,12 @@ internal static class RuntimeAbi {
     ["rt_str_to_fixed"] = new("rt_store_fixed",
       [new(ArgKind.Pointer, Reg.DI, Reg.DX), new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.AX)],
       _callerSaved),
+    // "StoreFixedR: AX=handle, DX:DI=dest, CX=field length (blank the field, then copy RIGHT-
+    // justified; consumes)" - the same registers as rt_store_fixed, which is what RSET into a fixed
+    // string is: the same store with the padding on the other end
+    ["rt_str_to_fixed_r"] = new("rt_storefixed_r",
+      [new(ArgKind.Pointer, Reg.DI, Reg.DX), new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.AX)],
+      _callerSaved),
     ["rt_finput_i16"] = new("rt_inp_i16", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     ["rt_input_i16"] = new("rt_inp_i16", [], _callerSaved, Result: Reg.AX, Constants: [(Reg.AX, 0)]),
     ["rt_finput_i32"] = new("rt_inp_i32", [new(ArgKind.Word, Reg.AX)], _callerSaved,
@@ -683,6 +689,13 @@ internal static class RuntimeAbi {
       _callerSaved, Answer: ResultKind.St0),
     ["llvm.pow.f80"] = new("rt_pow", [new(ArgKind.St0, default), new(ArgKind.St0, default)],
       _callerSaved, Answer: ResultKind.St0),
+
+    // FIX scaling, both directions, on ST(0) and answering there: rt_fixdn divides by ten to the
+    // pbvFixDigits power (what reading a FIX cell means) and rt_fixup multiplies and rounds to the
+    // nearest integer (what writing one means). The exponent is a RUNTIME cell, which is the whole
+    // reason these are calls: a compile-time divide would be right only until pbvFixDigits changed.
+    ["rt_fix_down"] = new("rt_fixdn", [new(ArgKind.St0, default)], _callerSaved, Answer: ResultKind.St0),
+    ["rt_fix_up"] = new("rt_fixup", [new(ArgKind.St0, default)], _callerSaved, Answer: ResultKind.St0),
 
     // PRINT USING's numeric field. "DX:AX = scaled value, CH = field width (chars incl. point),
     // CL = decimals" - and bit 7 of CL is the thousands-grouping flag, which is why the lowering

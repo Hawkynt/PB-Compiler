@@ -41,6 +41,16 @@ public sealed class InstructionSelector {
   /// </summary>
   private readonly Dictionary<IrValue, MOperand.ParamCell> _floatParams =
     new(ReferenceEqualityComparer.Instance);
+
+  /// <summary>
+  /// Where a QUAD read out of storage lives: an eight-byte frame cell of its own. A 64-bit integer
+  /// has no register representation on this target - it would need four of them - and the x87 is
+  /// the only unit that handles one whole, so the value is copied into a private cell the moment it
+  /// is read and taken from there. The copy is not caution, it is correctness: an SSA load names the
+  /// bytes AT THAT POINT, and re-reading the source at the use would see whatever a store in between
+  /// had put there.
+  /// </summary>
+  private readonly Dictionary<IrValue, int> _qslots = new(ReferenceEqualityComparer.Instance);
   private MFunction _function = null!;
 
   /// <summary>
@@ -501,6 +511,10 @@ public sealed class InstructionSelector {
         return this.SelectFloatBinary(bin);
       case IrLoad load when load.Type.IsFloat:
         return this.SelectFloatLoad(load);
+      case IrLoad load when IsQuad(load.Type):
+        return this.SelectQwordLoad(load);
+      case IrStore store when IsQuad(store.Value.Type):
+        return this.SelectQwordStore(store);
       case IrStore store when store.Value.Type.IsFloat:
         return this.SelectFloatStore(store);
       case IrBinary bin:
@@ -792,6 +806,8 @@ public sealed class InstructionSelector {
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [hi, highCell], MovEffect(hi, highCell)));
       return true;
     }
+    if (load.Type.Bits > 32)
+      return this.Decline($"load: {load.Type} is wider than a register pair");
     var dest = this.FreshVreg(load.Type);
     this._vregs[load] = dest;
     var destOp = new MOperand.Register(dest);
@@ -873,6 +889,11 @@ public sealed class InstructionSelector {
         new MInstrEffect([], hi is MOperand.Register ? [1] : [], false, false, false, WritesMemory: true)));
       return true;
     }
+    // Anything wider than a pair has no scalar form here: sizing the access from the value's bit
+    // width would emit a single 386-prefixed access carrying half of it, which is what a QUAD store
+    // silently did before the x87 path below took the signed case.
+    if (store.Value.Type.Bits > 32)
+      return this.Decline($"store: {store.Value.Type} is wider than a register pair");
     if (this.PointerMemory(store.Pointer, RegSize(store.Value.Type)) is not { } mem)
       return false;
     if (!this.TryOperand(store.Value, out var value))
@@ -1698,6 +1719,13 @@ public sealed class InstructionSelector {
           break;
         }
         case RuntimeAbi.ArgKind.SignedQwordSt0: {
+          // A QUAD read out of storage is already in a qword cell of its own (SelectQwordLoad), so
+          // there is nothing to stage: FILD it, which is exactly what the direct emitter does with
+          // the variable's own cell before calling the 15-digit DOUBLE formatter.
+          if (IsQuad(arg.Type) && this._qslots.TryGetValue(arg, out var loaded)) {
+            this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(loaded, MRegSize.Qword), reads: true);
+            break;
+          }
           // The machine IR does not yet carry a general four-register i64 value. An optimized QUAD
           // literal does not need one: stage its four words verbatim, then FILD the qword just as the
           // direct emitter loads a QUAD cell before calling the 15-digit DOUBLE formatter.
@@ -2164,6 +2192,62 @@ public sealed class InstructionSelector {
     // scheduler orders by opcode (MOpcodes.UsesX87) because no effect descriptor can name it.
     this._current.Instructions.Add(new MInstr(opcode, [], MInstrEffect.None));
     this.EmitX87(MOpcode.Fstp, this.FloatCell(bin), reads: false);
+    return true;
+  }
+
+  /// <summary>
+  /// True for a QUAD - the one integer width this target holds in neither a register nor a pair, and
+  /// so the one that has to travel through the x87 instead.
+  ///
+  /// SIGNED only, deliberately. The instructions that move eight bytes at once are <c>FILD</c> and
+  /// <c>FISTP</c>, and both read the qword as signed; a pb36 <c>QWORD</c> above 2^63 would come back
+  /// negative. Excluding it here makes the selector decline such a value rather than answer wrongly.
+  /// </summary>
+  private static bool IsQuad(IrType type) => type is { IsInteger: true, Bits: 64, Signed: true };
+
+  /// <summary>
+  /// A QUAD read out of storage, copied into its own frame cell by the only unit that moves eight
+  /// bytes in one instruction: <c>FILD qword</c> then <c>FISTP qword</c>. Both directions are exact -
+  /// the x87's mantissa is sixty-four bits wide, which is precisely what an int64 needs - so this is
+  /// a copy and not a conversion, and the cell holds the integer rather than a float of it.
+  ///
+  /// Without this a QUAD load fell into the scalar path, which sizes a value from its bit width and
+  /// would have minted ONE dword-sized register for it - half the value, silently, and the same
+  /// truncation that was once found for LONG.
+  /// </summary>
+  private bool SelectQwordLoad(IrLoad load) {
+    if (this.PointerMemory(load.Pointer, MRegSize.Qword) is not { } source)
+      return false;
+    var slot = this._function.StackSlots.Count;
+    this._function.StackSlots.Add(8);
+    this._qslots[load] = slot;
+    this.EmitX87(MOpcode.Fild, source, reads: true);
+    this.EmitX87(MOpcode.Fistp, new MOperand.StackSlot(slot, MRegSize.Qword), reads: false);
+    return true;
+  }
+
+  /// <summary>
+  /// A QUAD written back to storage - four immediate words for a literal, and an <c>FILD</c> from
+  /// the value's cell followed by <c>FISTP</c> into the destination for anything else.
+  ///
+  /// This is not an optional companion to <see cref="SelectQwordLoad"/>. Without it a QUAD store
+  /// fell into the scalar path too, where the pointer was sized from the value's bit width: the
+  /// destination became a DWORD cell and the value a single immediate, so the low half was written
+  /// through a 386 operand-size prefix on a target that has no such instruction, and the high half
+  /// was never written at all.
+  /// </summary>
+  private bool SelectQwordStore(IrStore store) {
+    if (this.PointerMemory(store.Pointer, MRegSize.Word) is not { } words)
+      return false;
+    if (store.Value is IrConstantInt { Value: var value }) {
+      for (var offset = 0; offset < 8; offset += 2)
+        this.StoreWord(Shifted(words, offset), new MOperand.Immediate((short)(value >> (offset * 8))));
+      return true;
+    }
+    if (!this._qslots.TryGetValue(store.Value, out var slot))
+      return this.Decline($"store: 64-bit {store.Value.GetType().Name} has no cell");
+    this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(slot, MRegSize.Qword), reads: true);
+    this.EmitX87(MOpcode.Fistp, this.PointerMemory(store.Pointer, MRegSize.Qword)!, reads: false);
     return true;
   }
 
