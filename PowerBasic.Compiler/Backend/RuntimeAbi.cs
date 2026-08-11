@@ -413,6 +413,8 @@ internal static class RuntimeAbi {
 
     // EOF(n): AX = the file number -> AX = PB's -1/0 truth
     ["rt_eof"] = new("rt_eof", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    // SETEOF #n: truncate where the file stands (a DOS write of zero bytes)
+    ["rt_file_seteof"] = new("rt_fseteof", [new(ArgKind.Word, Reg.AX)], _callerSaved),
 
     // CSRLIN -> AX = the 1-based cursor row; CONSIN / CONSOUT -> AX = -1 for a console, 0 redirected
     ["rt_csrlin"] = new("rt_csrlin", [], _callerSaved, Result: Reg.AX),

@@ -726,6 +726,15 @@ public sealed class IrLowering {
             this.Coerce(this.LowerExpr(getCount), this._model.TypeOf(getCount), PbType.Long)),
           this.StringTargetAddress(getTarget));
         break;
+      case WriteStmt write:
+        this.LowerWrite(write);
+        break;
+      // SETEOF #n truncates the file where it stands. The direct emitter writes it INLINE as a DOS
+      // write of zero bytes, so it needs a routine to call, like PEEK and POKE before it.
+      case CommandStmt { Keyword: "SETEOF", Arguments: [{ } setEofFile] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_file_seteof", IrType.Void, IrType.I32),
+          this.FileNum(setEofFile));
+        break;
       // POKE offset, value | POKE seg, offset, value - the segmented form sets DEF SEG first and
       // LEAVES it set, which is what the classic pair does: it is two statements written as one,
       // not a scoped override, so a later bare POKE writes into the segment this one named.
@@ -935,6 +944,46 @@ public sealed class IrLowering {
 
     if (p.Items.Count == 0 || p.Items[^1].Separator == PrintSeparator.Newline)
       this.EmitIo(file, "print", "nl", IrType.Void, []);
+  }
+
+  /// <summary>
+  /// WRITE: the items comma-separated, strings in quotes, numbers with no sign column, then a newline.
+  ///
+  /// <para>
+  /// Every piece of this is already a runtime call the IR can make - there is no inline anything -
+  /// so the whole statement is composition, and the composition is the direct emitter's own, item for
+  /// item. A number goes through STR$ and then LTRIM$ because that is what strips the leading space
+  /// PB's numeric formatter reserves for a sign; WRITE is the one output statement that does not want
+  /// it.
+  /// </para>
+  /// </summary>
+  private void LowerWrite(WriteStmt write) {
+    if (this._module is null)
+      throw new IrLoweringException("WRITE requires whole-module lowering");
+    var file = write.FileNumber is { } fn ? this.FileNum(fn) : null;
+
+    for (var i = 0; i < write.Items.Count; ++i) {
+      if (i > 0)
+        this.WritePunctuation(file, ",");
+      var item = write.Items[i];
+      if (this._model.TypeOf(item) is StringType or FixedStringType) {
+        this.WritePunctuation(file, "\"");
+        this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr], this.LowerStringExpr(item));
+        this.WritePunctuation(file, "\"");
+        continue;
+      }
+      this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr],
+        this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_ltrim", IrType.Ptr, IrType.Ptr), this.LowerStrOf(item)));
+    }
+
+    this.EmitIo(file, "print", "nl", IrType.Void, []);
+  }
+
+  /// <summary>One of WRITE's fixed characters - the separator or a quote - through the literal pool.</summary>
+  private void WritePunctuation(IrValue? file, string text) {
+    var bytes = System.Text.Encoding.ASCII.GetBytes(text);
+    this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32],
+      this._module!.AddStringConstant(bytes), new IrConstantInt(IrType.I32, bytes.Length));
   }
 
   private void LowerPrintItem(IrValue? file, Expression expr) {

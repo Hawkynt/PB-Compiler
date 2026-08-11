@@ -221,8 +221,20 @@ public sealed class BackendCoverageTests {
     // x87's eighty bits are not pre-rounded to sixty-four) leaves one FPToSI f32 -> i64 the selector
     // does not handle, where the fold used to remove it. Correctness bought back six battery
     // programs for one function's coverage, which is the trade worth making in that direction.
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(220),
+    // Then 220 -> 224 when shared-array GEPs began at the direct emitter's data label and STATIC
+    // globals gained procedure-qualified identities; SHAREDG and SUBFN lose their four procedure
+    // declines without inventing a second data layout.
+    // Then 224 -> 225 when IrSwitch gained word and dword compare-chain selection, removing the last
+    // named-procedure decline from the corpus.
+    // Then 225 -> 227 when the complete MK/CV binary-record family and the DX:AX result convention
+    // routed DIFF08 and DIFF58 through their whole module bodies.
+    // Then 227 -> 228 when raw segmented-pointer comparison routed DIFF10's UDT equality.
+    // Then 228 -> 230 when segmented memcpy/memset routed DIFF23's whole-record assignment and
+    // DIFF74's static ERASE.
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(230),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
+    Assert.That(census.ProcedureDeclines, Is.Empty,
+      "a lowered named procedure no longer reaches the x86-16 back end:\n" + report);
 
     // How many programs reach the IR at all - the figure the runtime-trap and error-handling work
     // moves, since a program that declines at the lowering never reaches the selector to be counted
@@ -240,7 +252,7 @@ public sealed class BackendCoverageTests {
 
     // selection is not routing: the whole-program codegen also schedules and allocates, and a value
     // live across a CALL has no register unless the spiller can move it to the frame
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(220),
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(230),
       "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // The figure that matters for whole-program ownership: module bodies the back end compiles end
@@ -332,6 +344,7 @@ public sealed class BackendCoverageTests {
     "DIFF54.BAS",
     "DIFF55.BAS",
     "DIFF56.BAS",
+    "DIFF57.BAS",   // WRITE # and SETEOF
     "DIFF58.BAS",
     "DIFF59.BAS",
     "DIFF60.BAS",
@@ -424,6 +437,8 @@ public sealed class BackendCoverageTests {
     "DIFF04.BAS",
     "DIFF05.BAS",
     "DIFF06.BAS",
+    "DIFF08.BAS",
+    "DIFF10.BAS",
     "DIFF100.BAS",
     "DIFF101.BAS",
     "DIFF102.BAS",
@@ -440,6 +455,7 @@ public sealed class BackendCoverageTests {
     "DIFF15.BAS",
     "DIFF18.BAS",
     "DIFF22.BAS",
+    "DIFF23.BAS",
     "DIFF24.BAS",
     "DIFF25.BAS",
     "DIFF26.BAS",
@@ -468,6 +484,7 @@ public sealed class BackendCoverageTests {
     "DIFF52.BAS",
     "DIFF53.BAS",
     "DIFF54.BAS",
+    "DIFF58.BAS",
     "DIFF59.BAS",
     "DIFF60.BAS",
     "DIFF61.BAS",
@@ -483,6 +500,7 @@ public sealed class BackendCoverageTests {
     "DIFF71.BAS",
     "DIFF72.BAS",
     "DIFF73.BAS",
+    "DIFF74.BAS",
     "DIFF75.BAS",
     "DIFF76.BAS",
     "DIFF77.BAS",
@@ -537,6 +555,7 @@ public sealed class BackendCoverageTests {
     "ONERR.BAS",
     "ONERRNXT.BAS",
     "RANGES.BAS",
+    "SHAREDG.BAS",
     "STRBOUND.BAS",
     "STRHEAP.BAS",
     "STRINGS.BAS",

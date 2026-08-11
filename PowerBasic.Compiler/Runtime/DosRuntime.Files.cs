@@ -46,6 +46,9 @@ public sealed partial class DosRuntime {
   public Label ChDir { get; private set; } = null!;
   public Label LInput { get; private set; } = null!;
   public Label FHandle { get; private set; } = null!;
+
+  /// <summary>SETEOF: AX = PB file number - truncates the file at its current position.</summary>
+  public Label FSetEof { get; private set; } = null!;
   public Label Lof { get; private set; } = null!;
   public Label FSetPos { get; private set; } = null!;
   public Label FPos { get; private set; } = null!;
@@ -355,6 +358,24 @@ public sealed partial class DosRuntime {
       asm.Int(0x21);                        // DX:AX = 0-based position (PB BINARY convention)
       asm.Pop(Reg.CX);
       asm.Pop(Reg.BX);
+      asm.Ret();
+    }
+
+    // SETEOF #n: truncate the file where it stands, which DOS spells as a write of ZERO bytes. The
+    // direct emitter writes this inline; the IR cannot say INT, so it gets a label to call. AX = the
+    // PB file number, nothing returned.
+    this.FSetEof = asm.MarkLabel("rt_fseteof");
+    {
+      asm.Push(Reg.AX);
+      asm.Push(Reg.BX);
+      asm.Push(Reg.CX);
+      asm.Call(this.FHandle);               // AX = file number -> BX = DOS handle
+      asm.Xor(Reg.CX, Reg.CX);
+      asm.Mov(Reg.AH, (Imm)0x40);
+      asm.Int(0x21);
+      asm.Pop(Reg.CX);
+      asm.Pop(Reg.BX);
+      asm.Pop(Reg.AX);
       asm.Ret();
     }
 
