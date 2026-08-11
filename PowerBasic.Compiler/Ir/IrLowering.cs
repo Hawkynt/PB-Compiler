@@ -2146,9 +2146,25 @@ public sealed class IrLowering {
     // PEEK takes one argument or two - PEEK(offset) and the pb36 PEEK(seg:offset) - so it is answered
     // ahead of the one-argument guard rather than inside it
     if (name.Equals("PEEK", StringComparison.OrdinalIgnoreCase))
-      return this.LowerPeek(call);
+      return this.LowerPeek(call, "rt_peek", IrType.I16);
+    if (name.Equals("PEEKI", StringComparison.OrdinalIgnoreCase))
+      return this.LowerPeek(call, "rt_peeki", IrType.I16);
+    if (name.Equals("PEEKL", StringComparison.OrdinalIgnoreCase))
+      return this.LowerPeek(call, "rt_peekl", IrType.I32);
     if (name.Equals("BIT", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 2)
       return this.LowerBit(call);
+    // VARSEG / STRSEG / CODESEG: a segment, not a value read out of the variable - the operand is
+    // NEVER evaluated, which is the point of asking. STRSEG is the string heap's own cell; the other
+    // two are registers the IR cannot name and so are answered by a routine.
+    if (name.Equals("VARSEG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
+      return this.Coerce(this._b.Call(IrType.I16, this.RuntimeFn("rt_varseg", IrType.I16)),
+        PbType.Integer, this._model.TypeOf(call));
+    if (name.Equals("CODESEG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
+      return this.Coerce(this._b.Call(IrType.I16, this.RuntimeFn("rt_codeseg", IrType.I16)),
+        PbType.Integer, this._model.TypeOf(call));
+    if (name.Equals("STRSEG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
+      return this.Coerce(this._b.Load(IrType.I16, this.ErrorCell("rt_strseg", IrType.I16)),
+        PbType.Integer, this._model.TypeOf(call));
     if (name.Equals("REG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this._b.Call(IrType.I16, this.RuntimeFn("rt_reg_get", IrType.I16, IrType.I16),
         this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), PbType.Integer));
@@ -2246,14 +2262,15 @@ public sealed class IrLowering {
   /// providing one would turn a decline into a wrong answer.
   /// </para>
   /// </summary>
-  private IrValue LowerPeek(CallOrIndexExpr call) {
+  private IrValue LowerPeek(CallOrIndexExpr call, string routine, IrType answer) {
     if (call.Arguments.Count is not (1 or 2))
       throw new IrLoweringException("intrinsic PEEK takes one or two arguments");
     var offset = call.Arguments[^1];
     if (call.Arguments.Count == 2)
       this.SetDefaultSegment(call.Arguments[0]);
-    return this._b.Call(IrType.I16, this.RuntimeFn("rt_peek", IrType.I16, IrType.I16),
+    var value = this._b.Call(answer, this.RuntimeFn(routine, answer, IrType.I16),
       this.Coerce(this.LowerExpr(offset), this._model.TypeOf(offset), PbType.Integer));
+    return this.Coerce(value, answer.Bits == 32 ? PbType.Long : PbType.Integer, this._model.TypeOf(call));
   }
 
   /// <summary>
@@ -2282,7 +2299,16 @@ public sealed class IrLowering {
       PbType.Long, this._model.TypeOf(call));
   }
 
-  /// <summary>POKE: the low byte of <paramref name="value"/> written at <paramref name="address"/>.</summary>
+  /// <summary>
+  /// POKE: the low byte of <paramref name="value"/> written at <paramref name="address"/>.
+  ///
+  /// <para>
+  /// Only the BYTE form. The parser accepts POKEI and POKEL, but the binder does not bind them - it
+  /// reports "unknown SUB POKEI" - so neither reaches either back end, and lowering them would be
+  /// writing code for a statement no program can contain. PEEK's wider relatives ARE bound and do
+  /// lower, which is why the family is lopsided.
+  /// </para>
+  /// </summary>
   private void LowerPoke(Expression address, Expression value)
     => this._b.Call(IrType.Void, this.RuntimeFn("rt_poke", IrType.Void, IrType.I16, IrType.I16),
         this.Coerce(this.LowerExpr(address), this._model.TypeOf(address), PbType.Integer),

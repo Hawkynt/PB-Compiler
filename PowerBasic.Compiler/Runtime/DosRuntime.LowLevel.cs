@@ -35,6 +35,12 @@ public sealed partial class DosRuntime {
   /// <summary>DEF SEG with no argument: the default segment goes back to DS.</summary>
   public Label DefSegReset { get; private set; } = null!;
 
+  /// <summary>VARSEG: the data segment every variable this path can address lives in.</summary>
+  public Label VarSeg { get; private set; } = null!;
+
+  /// <summary>CODESEG: the segment procedures and labels live in.</summary>
+  public Label CodeSeg { get; private set; } = null!;
+
   /// <summary>$ERROR STACK ON: raises Error 201 when the stack has run out of headroom.</summary>
   public Label StackProbe { get; private set; } = null!;
 
@@ -46,6 +52,10 @@ public sealed partial class DosRuntime {
 
   /// <summary>PEEK(offset): AX = offset -> AX = the byte there, zero-extended, from DEF SEG's segment.</summary>
   public Label Peek { get; private set; } = null!;
+
+  /// <summary>PEEKI / PEEKL: the word and dword at an offset in DEF SEG's segment.</summary>
+  public Label PeekI { get; private set; } = null!;
+  public Label PeekL { get; private set; } = null!;
 
   /// <summary>POKE offset, value: AX = offset, DL = the byte, written into DEF SEG's segment.</summary>
   public Label Poke { get; private set; } = null!;
@@ -170,6 +180,49 @@ public sealed partial class DosRuntime {
       asm.Mov(Reg.BX, Reg.AX);          // AX = offset, DL = the byte to write
       asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_defseg")));
       asm.Mov(Mem.Byte(Reg.BX).Es(), Reg.DL);
+      asm.Pop(Reg.ES);
+      asm.Pop(Reg.BX);
+      asm.Ret();
+    }
+
+    // VARSEG / STRSEG / CODESEG - the segment half of an address, which the direct emitter writes
+    // inline as MOV AX, DS (or ES, or CS). A segment register is not a value the IR can name, so each
+    // becomes a one-instruction routine. VARSEG answers DS for every variable this path lowers: a
+    // FAR one would answer ES, and those decline at the lowering for other reasons already.
+    this.VarSeg = asm.MarkLabel("rt_varseg");
+    {
+      asm.Mov(Reg.AX, Reg.DS);
+      asm.Ret();
+    }
+
+    this.CodeSeg = asm.MarkLabel("rt_codeseg");
+    {
+      asm.Mov(Reg.AX, Reg.CS);
+      asm.Ret();
+    }
+
+    // the WORD and DWORD members of the same family. PEEK answers a byte zero-extended; PEEKI reads
+    // a signed word and PEEKL a dword in DX:AX, which is how PB types them.
+    this.PeekI = asm.MarkLabel("rt_peeki");
+    {
+      asm.Push(Reg.BX);
+      asm.Push(Reg.ES);
+      asm.Mov(Reg.BX, Reg.AX);
+      asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_defseg")));
+      asm.Mov(Reg.AX, Mem.Word(Reg.BX).Es());
+      asm.Pop(Reg.ES);
+      asm.Pop(Reg.BX);
+      asm.Ret();
+    }
+
+    this.PeekL = asm.MarkLabel("rt_peekl");
+    {
+      asm.Push(Reg.BX);
+      asm.Push(Reg.ES);
+      asm.Mov(Reg.BX, Reg.AX);
+      asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_defseg")));
+      asm.Mov(Reg.DX, Mem.Word(Reg.BX, 2).Es());
+      asm.Mov(Reg.AX, Mem.Word(Reg.BX).Es());
       asm.Pop(Reg.ES);
       asm.Pop(Reg.BX);
       asm.Ret();
