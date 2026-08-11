@@ -286,7 +286,31 @@ void rt_str_to_fixed(void *dst, int32_t n, void *src) {
     memset((char *)dst + copy, ' ', (size_t)(n - copy));   /* PB pads with spaces */
 }
 
+/* RSET into a fixed field: blank the whole width, then land the value against its right edge.
+   A value longer than the field keeps its LEFTMOST n characters, as the DOS routine does - it
+   clamps the copy length and only then subtracts it from the far end. */
+void rt_str_to_fixed_r(void *dst, int32_t n, void *src) {
+  pb_str *x = rt_of(src);
+  int32_t copy = x->len < n ? x->len : n;
+  memset(dst, ' ', (size_t)(n < 0 ? 0 : n));
+  if (copy > 0)
+    memcpy((char *)dst + (n - copy), x->data, (size_t)copy);
+}
+
 void *rt_str_from_fixed(void *src, int32_t n) { return rt_make((const char *)src, n); }
+
+/* LSET/RSET into a DYNAMIC string: the target keeps its handle AND its length - that is what makes
+   a FIELD variable a window on the record buffer - so the value is justified into the bytes that
+   are already there and blank-padded to fill them, truncating anything that does not fit. */
+void rt_str_justify(void *target, void *value, int16_t right) {
+  pb_str *d = rt_of(target), *v = rt_of(value);
+  int32_t copy = v->len < d->len ? v->len : d->len;
+  if (d->len <= 0)
+    return;
+  memset(d->data, ' ', (size_t)d->len);
+  if (copy > 0)
+    memcpy(d->data + (right ? d->len - copy : 0), v->data, (size_t)copy);
+}
 
 /* --- PB numeric text ---------------------------------------------------- */
 

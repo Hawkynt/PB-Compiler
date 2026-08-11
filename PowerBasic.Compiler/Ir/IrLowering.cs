@@ -285,6 +285,7 @@ public sealed class IrLowering {
     // whether statements must publish their boundaries has to be known BEFORE the first one is
     // lowered: RESUME NEXT can name a statement that ran long before the handler was armed
     this._resumeTracking = ContainsResume(body);
+    this._errorHandling = ContainsErrorHandling(body);
 
     // ...and the other half of CHAIN: whatever the PREVIOUS image left in PBCHAIN.$$$ is absorbed
     // into the COMMON cells before the first statement runs. The direct emitter writes this at the
@@ -375,6 +376,25 @@ public sealed class IrLowering {
     return false;
   }
 
+  /// <summary>
+  /// Whether the body has error handling in scope at all - which is the direct emitter's own gate on
+  /// ERL bookkeeping (<c>_trackResume</c>), and a WIDER condition than <see cref="ContainsResume"/>:
+  /// a handler that only reads ERL and jumps to a named label needs the line number recorded, and
+  /// needs no statement boundaries at all.
+  /// </summary>
+  private static bool ContainsErrorHandling(IReadOnlyList<Statement> statements) {
+    foreach (var s in statements)
+      switch (s) {
+        case OnErrorStmt or ResumeStmt: return true;
+        case IfStmt i when ContainsErrorHandling(i.Then) || i.ElseIfs.Any(e => ContainsErrorHandling(e.Body)) || (i.Else is { } el && ContainsErrorHandling(el)):
+          return true;
+        case ForStmt f when ContainsErrorHandling(f.Body): return true;
+        case DoLoopStmt d when ContainsErrorHandling(d.Body): return true;
+        case SelectStmt sel when sel.Arms.Any(a => ContainsErrorHandling(a.Body)): return true;
+      }
+    return false;
+  }
+
   private static bool ContainsGosub(IReadOnlyList<Statement> statements) {
     foreach (var s in statements)
       switch (s) {
@@ -415,6 +435,16 @@ public sealed class IrLowering {
   /// an equate, or something the model does not know at all; the direct emitter resolves all of those,
   /// and until a back end can too, emitting a partly-resolved block would put a name on the wrong cell
   /// without saying so.
+  ///
+  /// <para>
+  /// One class of name binds without carrying anything: the string-manager routines PB documents as
+  /// callable from inline assembly (<c>GetStrLoc</c> and its family). Those are CODE, not storage -
+  /// there is no cell to pair with them, and the frame they are called from does not enter into it -
+  /// so the machine emitter resolves them to the runtime's own labels and this pass need only stop
+  /// treating them as unknown. <c>CALL GetStrLoc</c> was the single unbound name in the corpus's
+  /// documented-ABI program; every variable in the same block, the string handle included, already
+  /// bound.
+  /// </para>
   /// </summary>
   private void LowerInlineAsm(InlineAsmStmt stmt) {
     var node = new IrInlineAsm(stmt.Text);
@@ -425,7 +455,7 @@ public sealed class IrLowering {
     foreach (var name in seen.Collected)
       if (this.AsmVariable(name) is { } symbol)
         node.Bind(name, this.SlotFor(symbol));
-      else
+      else if (Runtime.InlineAsmExports.Canonical(name) is null)
         routable = false;
 
     node.Routable = routable;
@@ -471,6 +501,14 @@ public sealed class IrLowering {
   private IrValue SlotFor(VariableSymbol symbol) {
     if (this._addr.TryGetValue(symbol, out var existing))
       return existing;
+    // A PB INTERNAL variable (pbvFixDigits, pbvScrnCols, pbvDefSeg, ...) is not storage this pass may
+    // invent. It names a cell the RUNTIME owns, initialises and reads: pbvFixDigits is the very count
+    // rt_fixdn scales by, and pbvScrnCols is refreshed from the BIOS data area at startup. A frame
+    // slot of the same name is a private zero that agrees with nothing - which is what a routed
+    // PRINT pbvFixDigits said, against the direct emitter's 2.
+    if (symbol.Storage == VariableStorage.Global
+        && Runtime.DosRuntime.InternalVariableLabel(symbol.Name) is { } internalCell)
+      return this.ErrorCell(internalCell, MapType(symbol.Type));
     // A PB data pointer is a 4-byte seg:off cell and the IR's pointer is the 2-byte near offset the
     // whole program shares a segment for, so the two layouts differ. That costs nothing while the
     // cell is this lowering's own frame slot, and everything the moment a DIRECTLY EMITTED procedure
@@ -1430,10 +1468,12 @@ public sealed class IrLowering {
       return;
     }
     // an MBF value prints as the IEEE number it converts to - the runtime's print entries take a
-    // value on the x87, which is the one thing MBF bits cannot be
+    // value on the x87, which is the one thing MBF bits cannot be. FIX and BCD reach the same
+    // formatter for the same reason: what prints is the number, not the cell.
     var printed = this._model.TypeOf(expr);
     if (printed is MbfType mbf)
       printed = IeeeFormOf(mbf);
+    printed = Valued(printed);
     if (printed is not ScalarType s)
       throw new IrLoweringException("PRINT of a non-numeric, non-literal item");
     // A float is handed to the formatter at the x87's own width whatever its declared type, and the
@@ -1630,11 +1670,19 @@ public sealed class IrLowering {
   private IrValue BorrowString(IrValue stored)
     => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_dup", IrType.Ptr, IrType.Ptr), stored);
 
+  /// <summary>
+  /// A BASIC label, plus the one thing arriving at one can be observed to do: a NUMERIC line label
+  /// records itself in <c>rt_erl</c>, so a handler reached from anywhere after it can say which line
+  /// faulted. Alphabetic labels do not count - that is PB's rule, not an omission - and the write
+  /// only happens where error handling is in scope, exactly as the direct emitter gates it.
+  /// </summary>
   private void LowerLabel(LabelStmt label) {
     var block = this._labels[label.Name];
     if (!this.Terminated)
       this._b.Br(block);                               // fall through into the label
     this._b.Position(block);
+    if (this._errorHandling && label.Name.All(char.IsAsciiDigit) && int.TryParse(label.Name, out var line))
+      this._b.Store(new IrConstantInt(IrType.I16, (short)(line & 0xFFFF)), this.ErrorCell("rt_erl", IrType.I16));
   }
 
   private void LowerGoto(GotoStmt g) {
@@ -1705,6 +1753,13 @@ public sealed class IrLowering {
   /// as the direct emitter's <c>_trackResume</c> does.
   /// </summary>
   private bool _resumeTracking;
+
+  /// <summary>
+  /// True when error handling is in scope, which is what ERL bookkeeping is gated on: a numeric line
+  /// label then records itself, so a handler can ask which line faulted. The direct emitter's
+  /// <c>_trackResume</c> is the same flag under a name that outgrew it.
+  /// </summary>
+  private bool _errorHandling;
 
   private void LowerGosub(GosubStmt g) {
     if (this._gosubSp is null)
@@ -2137,15 +2192,51 @@ public sealed class IrLowering {
   /// The value is lowered before the target's cell is read, matching the direct emitter's order: it
   /// evaluates the right-hand side and pushes it before touching the place.
   /// </para>
+  ///
+  /// <para>
+  /// A FIXED-length string is the other case, and it is not the same operation at all: there is no
+  /// handle to justify inside, the bytes ARE the variable, and the width is declared rather than
+  /// whatever the last value happened to be. <c>LSET</c> is then exactly an assignment - copy, pad
+  /// with blanks, truncate a longer value - which is what the direct emitter routes it to;
+  /// <c>RSET</c> is the same store with the padding on the other end.
+  /// </para>
   /// </summary>
   private void LowerLsetRset(LsetRsetStmt ls) {
-    if (this._model.TypeOf(ls.Target) is not StringType)
-      throw new IrLoweringException($"{(ls.IsLeft ? "LSET" : "RSET")} into a {this._model.TypeOf(ls.Target)}");
-    var value = this.LowerStringExpr(ls.Value);
-    var target = this._b.Load(IrType.Ptr, this.StringTargetAddress(ls.Target));
-    this._b.Call(IrType.Void,
-      this.RuntimeFn("rt_str_justify", IrType.Void, IrType.Ptr, IrType.Ptr, IrType.I16),
-      target, value, new IrConstantInt(IrType.I16, ls.IsLeft ? 0 : 1));
+    switch (this._model.TypeOf(ls.Target)) {
+      case StringType: {
+        var value = this.LowerStringExpr(ls.Value);
+        var target = this._b.Load(IrType.Ptr, this.StringTargetAddress(ls.Target));
+        this._b.Call(IrType.Void,
+          this.RuntimeFn("rt_str_justify", IrType.Void, IrType.Ptr, IrType.Ptr, IrType.I16),
+          target, value, new IrConstantInt(IrType.I16, ls.IsLeft ? 0 : 1));
+        return;
+      }
+      case FixedStringType when ls.IsLeft:
+        this.LowerAssign(new(ls.Position, ls.Target, ls.Value));
+        return;
+      case FixedStringType: {
+        var (address, length) = this.FixedStringPlace(ls.Target, "RSET");
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_str_to_fixed_r", IrType.Void, IrType.Ptr, IrType.I32, IrType.Ptr),
+          address, new IrConstantInt(IrType.I32, length), this.LowerStringExpr(ls.Value));
+        return;
+      }
+      default:
+        throw new IrLoweringException($"{(ls.IsLeft ? "LSET" : "RSET")} into a {this._model.TypeOf(ls.Target)}");
+    }
+  }
+
+  /// <summary>
+  /// The bytes a fixed-length string target occupies - its address and its declared width - for the
+  /// forms that HAVE an address of their own: a variable and a record field. Anything else declines
+  /// rather than being given an address the lowering cannot name.
+  /// </summary>
+  private (IrValue Address, int Length) FixedStringPlace(Expression target, string what) {
+    if (target is NameExpr && this._model.VariableBindings.TryGetValue(target, out var sym) && sym.Type is FixedStringType fixedStr)
+      return (this.SlotFor(sym), fixedStr.Length);
+    if (target is MemberExpr member && !this._model.VariableBindings.ContainsKey(member)
+        && this.MemberFieldAddress(member) is { Field.Type: FixedStringType fieldType } field)
+      return (field.Address, fieldType.Length);
+    throw new IrLoweringException($"{what} into a fixed string that is neither a variable nor a record field");
   }
 
   /// <summary>
@@ -2913,7 +3004,11 @@ public sealed class IrLowering {
       "CDBL" or "CSNG" or "CEXT" => this.LowerConvert(call),
       // CINT/CLNG and the unsigned spellings are the ordinary assignment conversion written out: the
       // result type carries the width, and Coerce rounds into it
-      "CINT" or "CBYT" or "CWRD" or "CLNG" or "CDWD" => this.LowerConvert(call),
+      "CINT" or "CBYT" or "CWRD" or "CLNG" or "CDWD" or "CQUD" => this.LowerConvert(call),
+      // CFIX and CBCD are conversions to the FIX and BCD types, and nothing more: the binder types
+      // them so, and Coerce already knows what those cells hold. CFIX rounding to pbvFixDigits
+      // decimals is not a separate step here - it is what storing into a FIX means.
+      "CFIX" or "CBCD" => this.LowerConvert(call),
       "LEN" => this.LowerLen(call),
       "ASC" => this.LowerAsc(call),
       "VAL" => this.LowerVal(call),
@@ -3255,14 +3350,15 @@ public sealed class IrLowering {
   /// .6666666666666667. Six of the differential battery's programs turned on this one line.
   /// </summary>
   private IrValue LowerStrOf(Expression arg) {
-    if (this._model.TypeOf(arg) is not ScalarType s)
+    // the DECLARED type picks the formatter, the STORED type the conversion into it - which for FIX
+    // and BCD are not the same thing, the cell being a scaled integer or ten bytes of x87
+    var stored = this._model.TypeOf(arg);
+    if (Valued(stored) is not ScalarType s)
       throw new IrLoweringException("STR$ of a non-numeric value");
     var (name, ty) = s.IsFloat
       ? (s.ByteSize == 8 ? ("rt_str_from_double", IrType.F80) : ("rt_str_from_single", IrType.F80))
       : ($"rt_str_from_{(s.Signed ? "i" : "u")}{s.ByteSize * 8}", IrType.Integer(s.ByteSize * 8));
-    var value = s.IsFloat
-      ? this.Coerce(this.LowerExpr(arg), s, PbType.Ext)
-      : this.Coerce(this.LowerExpr(arg), s, s);
+    var value = this.Coerce(this.LowerExpr(arg), stored, s.IsFloat ? PbType.Ext : s);
     return this._b.Call(IrType.Ptr, this.RuntimeFn(name, IrType.Ptr, ty), value);
   }
 
@@ -3824,7 +3920,10 @@ public sealed class IrLowering {
   /// </summary>
   private static IrType MapType(PbType type) => IrTypeMapper.Map(type);
 
-  private static (PbType Type, bool IsFloat, bool Signed) CommonCompareType(PbType a, PbType b) {
+  private static (PbType Type, bool IsFloat, bool Signed) CommonCompareType(PbType left, PbType right) {
+    // FIX and BCD compare as the numbers they hold: the cell of one is a scaled integer and of the
+    // other ten bytes of x87, and neither is comparable to anything without being read first
+    var (a, b) = (Valued(left), Valued(right));
     if (a is not ScalarType sa || b is not ScalarType sb)
       throw new IrLoweringException("comparison of non-scalar operands");
     if (sa.IsFloat || sb.IsFloat) {
@@ -3866,6 +3965,22 @@ public sealed class IrLowering {
   private static ScalarType IeeeFormOf(MbfType mbf) =>
     new(mbf.IsDouble ? ScalarKind.Double : ScalarKind.Single, mbf.IsDouble ? 8 : 4, true, true);
 
+  /// <summary>
+  /// The value form of a PB type - what arithmetic on it happens AT, which for FIX and BCD is the
+  /// x87's own extended, exactly as the direct emitter classifies both as
+  /// <c>ValueKind.Float</c>. Everything else is its own value form.
+  /// </summary>
+  private static PbType Valued(PbType type) => type is BcdType ? PbType.Ext : type;
+
+  /// <summary>
+  /// One of the FIX scaling helpers applied to a value on the x87: <c>rt_fix_down</c> divides by ten
+  /// to the pbvFixDigits power (the load path), <c>rt_fix_up</c> multiplies and rounds to the nearest
+  /// integer (the store path). Both take and answer with ST(0), which is why they are calls rather
+  /// than arithmetic: the exponent is a runtime cell, not a constant this pass may fold.
+  /// </summary>
+  private IrValue FixScale(string routine, IrValue value)
+    => this._b.Call(IrType.F80, this.RuntimeFn(routine, IrType.F80, IrType.F80), value);
+
   private IrValue Coerce(IrValue value, PbType from, PbType to) {
     // MBF on either side: convert to IEEE to compute, and back to MBF to store. Recording the format
     // in the IR is only worth anything if the conversions it implies are emitted too - a type nobody
@@ -3877,6 +3992,23 @@ public sealed class IrLowering {
     if (to is MbfType toMbf) {
       var ieee = IeeeFormOf(toMbf);
       return this._b.Cast(IrCastOp.FPToMbf, this.Coerce(value, from, ieee), MapType(to));
+    }
+    // FIX / BCD on either side, for the same reason and by the same shape: the cell is not the value.
+    // A BCD cell already holds x87 extended, so only its TYPE changes; a FIX cell holds the value
+    // scaled by ten to a digit count nothing here may read, so the conversion is a call to the
+    // runtime that owns the count. Skipping straight to a compile-time divide would be right until
+    // pbvFixDigits changed, and then silently wrong.
+    if (from is BcdType fromBcd) {
+      var scaled = fromBcd.IsFixedPoint
+        ? this.FixScale("rt_fix_down", this._b.Cast(IrCastOp.SIToFP, value, IrType.F80))
+        : value;
+      return this.Coerce(scaled, PbType.Ext, to);
+    }
+    if (to is BcdType toBcd) {
+      var extended = this.Coerce(value, from, PbType.Ext);
+      return toBcd.IsFixedPoint
+        ? this._b.Cast(IrCastOp.FPToSI, this.FixScale("rt_fix_up", extended), IrType.I64)
+        : extended;
     }
     if (from is not ScalarType sf || to is not ScalarType st)
       throw new IrLoweringException("coercion between non-scalar types");

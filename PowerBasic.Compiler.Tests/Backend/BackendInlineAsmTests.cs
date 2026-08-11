@@ -110,4 +110,55 @@ public sealed class BackendInlineAsmTests {
 
     Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)));
   }
+
+  /// <summary>
+  /// The documented string-manager ABI, called by name: push the handle, <c>CALL GetStrLoc</c>, and
+  /// the routine answers DX:AX = a far pointer at the characters and CX = the length. The name is
+  /// CODE, so nothing about it belongs to a frame - the emitter resolves it to the runtime's own
+  /// label, and the exact first character and length are asserted rather than only agreement, since
+  /// two paths that both got a null pointer would agree too.
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenTheStringManagerAbiCalledByName_ThenTheHandleResolvesToItsCharacters() {
+    const string source = """
+      a$ = "XYZZY"
+      r% = 0
+      c% = 0
+      ! push Word Ptr a$
+      ! call GetStrLoc
+      ! mov  ES, DX
+      ! mov  BX, AX
+      ! mov  AL, ES:[BX]
+      ! xor  AH, AH
+      ! mov  r%, AX
+      ! mov  c%, CX
+      PRINT r%; c%
+      """;
+
+    Assert.That(Run(source, routed: true), Is.EqualTo("88  5"), "'X' is 88, and the string is five long");
+    Assert.That(Run(source, routed: false), Is.EqualTo(Run(source, routed: true)));
+  }
+
+  /// <summary>
+  /// The call target really does route rather than fall back to the direct emitter - which is the
+  /// only thing that makes the assertion above about the ROUTED path mean anything.
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenAnExportCalledByName_ThenTheBlockIsRoutableWithNoCellForIt() {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("""
+      a$ = "XYZZY"
+      ! push Word Ptr a$
+      ! call GetStrLoc
+      """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    var module = IrLowering.TryLowerModule(model, out var why);
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+
+    var main = module!.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
+    var asm = main.Blocks.SelectMany(b => b.Instructions).OfType<IrInlineAsm>().ToList();
+
+    Assert.That(asm.Select(a => a.Routable), Is.All.True, "an export is a bound name, not an unknown one");
+    var call = asm.Single(a => a.Text.Contains("GetStrLoc", StringComparison.OrdinalIgnoreCase));
+    Assert.That(call.Names, Is.Empty, "code has no cell to pair the name with");
+    Assert.That(InstructionSelector.TrySelect(main, out var reason), Is.Not.Null, $"selection declined: {reason}");
+  }
 }

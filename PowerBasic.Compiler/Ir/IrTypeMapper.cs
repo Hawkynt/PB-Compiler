@@ -25,6 +25,13 @@ public static class IrTypeMapper {
       case MbfType m:
         ir = m.IsDouble ? IrType.Mbf64 : IrType.Mbf32;
         return true;
+      // FIX (@) and BCD (@@) are STORAGE, and only one of them is a float. A BCD cell is ten bytes
+      // of x87 extended and its bits are the value; a FIX cell is a scaled INT64 - the value times
+      // ten to the power of a digit count that lives in a runtime cell - so it maps to the integer
+      // it is and the scaling happens on either side of the access, never here.
+      case BcdType bcd:
+        ir = bcd.IsFixedPoint ? IrType.I64 : IrType.F80;
+        return true;
       default:
         ir = IrType.Void;
         return false;

@@ -300,15 +300,24 @@ public sealed class MachineEmitter {
     for (var i = 0; i < descriptor.Names.Count && i + 1 < instr.Operands.Count; ++i)
       bound[descriptor.Names[i]] = this.Mem(instr.Operands[i + 1]);
 
-    if (!new TextAssembler(asm).TryParse(descriptor.Text, new FrameResolver(bound), out var error))
+    if (!new TextAssembler(asm).TryParse(descriptor.Text, new FrameResolver(bound, asm), out var error))
       throw new System.NotSupportedException($"inline asm '{descriptor.Text.Trim()}': {error}");
   }
 
-  /// <summary>Answers inline-asm identifiers from the cells the selector paired with them.</summary>
-  private sealed class FrameResolver(Dictionary<string, Mem> bound) : IAsmSymbolResolver {
+  /// <summary>
+  /// Answers inline-asm identifiers from the cells the selector paired with them - and, for the
+  /// string-manager routines PB publishes an inline-asm ABI for, from the runtime's own labels.
+  /// Those carry no cell because they are code: nothing about them depends on which back end laid
+  /// out the frame, which is why the selector passes them through unpaired.
+  /// </summary>
+  private sealed class FrameResolver(Dictionary<string, Mem> bound, Assembler asm) : IAsmSymbolResolver {
     public bool TryResolve(string name, out AsmSymbol symbol) {
       if (bound.TryGetValue(name, out var cell)) {
         symbol = AsmSymbol.OfMemory(cell);
+        return true;
+      }
+      if (Runtime.InlineAsmExports.Canonical(name) is { } canonical) {
+        symbol = AsmSymbol.OfLabel(asm.Lbl(canonical));
         return true;
       }
       symbol = default;
