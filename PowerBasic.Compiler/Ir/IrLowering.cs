@@ -700,6 +700,8 @@ public sealed class IrLowering {
       case DimStmt d: this.LowerDim(d); break;
       case RedimStmt rdm: this.LowerRedim(rdm); break;
       case EraseStmt er: this.LowerErase(er); break;
+      case ArraySortStmt sort: this.LowerArraySort(sort); break;
+      case ArrayScanStmt scan: this.LowerArrayScan(scan); break;
       case SwapStmt sw: this.LowerSwap(sw); break;
       case MidAssignStmt mid: this.LowerMidAssign(mid); break;
       case AscAssignStmt asc: this.LowerAscAssign(asc); break;
@@ -1538,6 +1540,198 @@ public sealed class IrLowering {
       this._b.Call(IrType.Void, this.RuntimeFn("rt_arr_free", IrType.Void, IrType.Ptr), this._b.Load(IrType.Ptr, descriptor.Data));
       this._b.Store(new IrNullPtr(), descriptor.Data);
     }
+  }
+
+  // ---- ARRAY SORT / ARRAY SCAN ---------------------------------------------
+
+  /// <summary>
+  /// The three things the sort/scan parameter block needs to know about an array: where its elements
+  /// start, and the bounds the runtime turns a start index into a byte offset with.
+  /// </summary>
+  private readonly record struct SortArray(ArrayType Type, IrValue Data, int Lower, int Extent);
+
+  /// <summary>
+  /// The array an ARRAY SORT / ARRAY SCAN names, or a decline. Only a STATIC one-dimensional array is
+  /// taken: a dynamic array's elements live in the far array heap, whose segment is a runtime cell
+  /// rather than the DS or SS an IR pointer carries, so there is no descriptor this path could build
+  /// for it - and a rank above one has bounds past the single pair <see cref="SortArray"/> holds.
+  /// </summary>
+  private SortArray SortOperand(CallOrIndexExpr array) {
+    if (!this._model.VariableBindings.TryGetValue(array, out var symbol) || symbol.Type is not ArrayType arr)
+      throw new IrLoweringException("ARRAY SORT/SCAN of a non-array");
+    if (symbol.Storage == VariableStorage.Parameter)
+      throw new IrLoweringException("ARRAY SORT/SCAN of an array parameter");
+    if (arr.StaticBounds is not { } bounds)
+      throw new IrLoweringException("ARRAY SORT/SCAN of a dynamic array");
+    if (bounds.Count != 1)
+      throw new IrLoweringException("ARRAY SORT/SCAN of a multi-dimensional array");
+    return new(arr, this.SlotFor(symbol), bounds[0].Lower, bounds[0].Upper - bounds[0].Lower + 1);
+  }
+
+  /// <summary>
+  /// One field of the runtime's shared ARRAY SORT/SCAN parameter block. The runtime spells the block
+  /// as displacements off <c>rt_arpb</c>; each field also carries a name, and the name is what this
+  /// path uses - a GEP into the block would put its address in a register, and a register holding a
+  /// memory BASE is the one thing the spiller cannot move. Filling six fields that way needs six such
+  /// registers at once, which is more than the machine has, and the whole function then declines at
+  /// allocation with nothing in the machine IR looking wrong.
+  /// </summary>
+  private void StoreArpb(string field, IrValue value)
+    => this._b.Store(value, this.ErrorCell(field, IrType.I16));
+
+  /// <summary>
+  /// Fills a runtime array descriptor and answers its address - the one part of ARRAY SORT the IR
+  /// cannot say for itself. A descriptor opens with the SEGMENT its elements live in, and a segment
+  /// register is not a value the IR can name; it must also live where DS reaches it, which a frame
+  /// object of a routed function does not promise. So the near address, the bounds and the element
+  /// size go to a runtime routine which supplies the segment and the storage, exactly as CSRLIN and
+  /// the bare DEF SEG became routines for the same reason.
+  /// </summary>
+  private IrValue DescriptorOf(SortArray array, bool forTagArray)
+    => this._b.Call(IrType.I16,
+      this.RuntimeFn(forTagArray ? "rt_arr_tagdesc" : "rt_arr_desc", IrType.I16, IrType.Ptr, IrType.I16, IrType.I16, IrType.I16),
+      array.Data,
+      new IrConstantInt(IrType.I16, array.Lower),
+      new IrConstantInt(IrType.I16, Math.Max(array.Type.Element.Size, 1)),
+      new IrConstantInt(IrType.I16, array.Extent));
+
+  /// <summary>
+  /// Start index (+2) and element count (+4). Both have defaults, and both defaults are read out of
+  /// the DESCRIPTOR by the direct emitter - the array's own lower bound, and "everything from the
+  /// start element on". A static array knows both at compile time, so they are constants here rather
+  /// than two loads through the descriptor pointer.
+  /// </summary>
+  private void StoreStartAndCount(CallOrIndexExpr array, SortArray shape, Expression? count) {
+    var start = array.Arguments.Count == 1
+      ? this.Coerce(this.LowerExpr(array.Arguments[0]), this._model.TypeOf(array.Arguments[0]), PbType.Integer)
+      : new IrConstantInt(IrType.I16, shape.Lower);
+    this.StoreArpb("rt_arpb_start", start);
+    this.StoreArpb("rt_arpb_count", count is null
+      ? this._b.Sub(new IrConstantInt(IrType.I16, shape.Lower + shape.Extent), start)
+      : this.Coerce(this.LowerExpr(count), this._model.TypeOf(count), PbType.Integer));
+  }
+
+  /// <summary>
+  /// (kind code, copy size, x87 load width) for a non-string element - the direct emitter's own table
+  /// in CodeGenerator.Vendor. An unsigned integer loads through the next WIDER signed FILD so it stays
+  /// positive, which the zero-padded staging cell is what makes sound; a float loads at its own width.
+  /// </summary>
+  private static (int Kind, int Size, int Load)? NumericElement(PbType element) => element switch {
+    ScalarType { IsFloat: false, Signed: true } s => (0, s.ByteSize, s.ByteSize),
+    ScalarType { IsFloat: false, Signed: false, ByteSize: var b } => (0, b, b == 4 ? 8 : b == 2 ? 4 : 2),
+    ScalarType { IsFloat: true } s => (2, s.ByteSize, s.ByteSize),
+    _ => null,
+  };
+
+  /// <summary>The relop encoding rt_scannum and rt_scanstr share (rt_num_relop, and the rt_arpb flags high byte).</summary>
+  private static int ScanRelop(CaseComparison op) => op switch {
+    CaseComparison.Equal => 0,
+    CaseComparison.NotEqual => 1,
+    CaseComparison.Less => 2,
+    CaseComparison.LessEqual => 3,
+    CaseComparison.Greater => 4,
+    _ => 5,
+  };
+
+  /// <summary>The numeric parameter block: descriptor, element shape, range, and the optional TAGARRAY.</summary>
+  private void StoreNumericHeader(CallOrIndexExpr array, SortArray shape, Expression? count, Expression? fromPos, CallOrIndexExpr? tagArray) {
+    if (NumericElement(shape.Type.Element) is not { } element)
+      throw new IrLoweringException($"ARRAY SORT/SCAN over {shape.Type.Element} elements");
+    if (fromPos is not null)
+      throw new IrLoweringException("FROM/TO range on a non-string ARRAY SORT/SCAN");   // a character range, which a number has none of
+    var (kind, size, load) = element;
+
+    this.StoreArpb("rt_arpb", this.DescriptorOf(shape, forTagArray: false));
+    this._b.Store(new IrConstantInt(IrType.I8, kind), this.ErrorCell("rt_num_kind", IrType.I8));
+    this._b.Store(new IrConstantInt(IrType.I8, size), this.ErrorCell("rt_num_size", IrType.I8));
+    this._b.Store(new IrConstantInt(IrType.I8, load), this.ErrorCell("rt_num_load", IrType.I8));
+    this.StoreStartAndCount(array, shape, count);
+
+    if (tagArray is null) {
+      this._b.Store(new IrConstantInt(IrType.I16, 0), this.ErrorCell("rt_num_tagdesc", IrType.I16));
+      return;
+    }
+    // the tag array shares the KEY's start index but has its own lower bound and element size, which
+    // is why it needs a descriptor of its own rather than an offset off the key's
+    var tagShape = this.SortOperand(tagArray);
+    this._b.Store(this.DescriptorOf(tagShape, forTagArray: true), this.ErrorCell("rt_num_tagdesc", IrType.I16));
+    this._b.Store(new IrConstantInt(IrType.I16, Math.Max(tagShape.Type.Element.Size, 1)),
+      this.ErrorCell("rt_num_tagsize", IrType.I16));
+  }
+
+  /// <summary>The string parameter block: descriptor, range, the FROM/TO character window and the collate table.</summary>
+  private void StoreStringHeader(CallOrIndexExpr array, SortArray shape, Expression? count, Expression? fromPos, Expression? toPos) {
+    this.StoreArpb("rt_arpb", this.DescriptorOf(shape, forTagArray: false));
+    this.StoreStartAndCount(array, shape, count);
+    if (fromPos is null) {
+      this.StoreArpb("rt_arpb_from", new IrConstantInt(IrType.I16, 1));
+      this.StoreArpb("rt_arpb_to", new IrConstantInt(IrType.I16, 0x7FFF));   // the whole string, clamped by the runtime
+    } else {
+      this.StoreArpb("rt_arpb_from", this.Coerce(this.LowerExpr(fromPos), this._model.TypeOf(fromPos), PbType.Integer));
+      this.StoreArpb("rt_arpb_to", this.Coerce(this.LowerExpr(toPos!), this._model.TypeOf(toPos!), PbType.Integer));
+    }
+    this.StoreArpb("rt_arpb_collate", new IrConstantInt(IrType.I16, 0));           // no COLLATE table - the form declines above
+  }
+
+  /// <summary>
+  /// ARRAY SORT arr([start]) [FOR n] [, DESCEND] [, TAGARRAY t()] - an insertion sort in the runtime,
+  /// driven entirely from the parameter block. COLLATE declines: its table is an owned handle the
+  /// block would have to hold across the call and release after, and no corpus program asks for one.
+  /// </summary>
+  private void LowerArraySort(ArraySortStmt sort) {
+    if (this._module is null)
+      throw new IrLoweringException("ARRAY SORT requires whole-module lowering");
+    if (sort.Collate is not null)
+      throw new IrLoweringException("COLLATE on an ARRAY SORT");
+    var shape = this.SortOperand(sort.Array);
+    if (shape.Type.Element is StringType) {
+      if (sort.TagArray is not null)
+        throw new IrLoweringException("ARRAY SORT TAGARRAY on a string array");
+      this.StoreStringHeader(sort.Array, shape, sort.Count, sort.FromPos, sort.ToPos);
+      this.StoreArpb("rt_arpb_flags", new IrConstantInt(IrType.I16, sort.Descend ? 1 : 0));   // flags: bit0 = descending
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_array_sort_str", IrType.Void));
+      return;
+    }
+    this.StoreNumericHeader(sort.Array, shape, sort.Count, sort.FromPos, sort.TagArray);
+    this._b.Store(new IrConstantInt(IrType.I8, sort.Descend ? 1 : 0), this.ErrorCell("rt_num_desc", IrType.I8));
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_array_sort_num", IrType.Void));
+  }
+
+  /// <summary>
+  /// ARRAY SCAN arr([start]) [FOR n] [, FROM x TO y], relop expr, TO var - the 1-based position of the
+  /// first element the relation holds for, relative to the start element, or zero.
+  /// </summary>
+  private void LowerArrayScan(ArrayScanStmt scan) {
+    if (this._module is null)
+      throw new IrLoweringException("ARRAY SCAN requires whole-module lowering");
+    if (scan.Collate is not null)
+      throw new IrLoweringException("COLLATE on an ARRAY SCAN");
+    var shape = this.SortOperand(scan.Array);
+
+    IrValue found;
+    if (shape.Type.Element is StringType) {
+      this.StoreStringHeader(scan.Array, shape, scan.Count, scan.FromPos, scan.ToPos);
+      // flags: bit1 says the FROM/TO window clamps the ELEMENT side only, and the relop rides in the
+      // high byte, which is where rt_scanstr reads it from
+      this.StoreArpb("rt_arpb_flags", new IrConstantInt(IrType.I16, 2 | (ScanRelop(scan.Op) << 8)));
+      var match = this.LowerStringExpr(scan.Match);
+      this.StoreArpb("rt_arpb_match", match);
+      found = this._b.Call(IrType.I16, this.RuntimeFn("rt_array_scan_str", IrType.I16));
+      // the comparison does not consume its operands, so the match handle is still this statement's
+      // to release - and the answer is already in hand when it goes
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr), match);
+    } else {
+      this.StoreNumericHeader(scan.Array, shape, scan.Count, scan.FromPos, null);
+      this._b.Store(new IrConstantInt(IrType.I8, ScanRelop(scan.Op)), this.ErrorCell("rt_num_relop", IrType.I8));
+      // the match is compared as an ELEMENT, so it is coerced to the element type and stored as its
+      // raw bytes - the staging cell reads it back with the same FILD/FLD the elements go through
+      this._b.Store(this.Coerce(this.LowerExpr(scan.Match), this._model.TypeOf(scan.Match), shape.Type.Element),
+        this.ErrorCell("rt_num_match", MapType(shape.Type.Element)));
+      found = this._b.Call(IrType.I16, this.RuntimeFn("rt_array_scan_num", IrType.I16));
+    }
+
+    var (address, targetType) = this.LValue(scan.Target);
+    this._b.Store(this.Coerce(found, PbType.Integer, targetType), address);
   }
 
   private void LowerDim(DimStmt d) {

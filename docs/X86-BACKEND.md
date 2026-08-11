@@ -500,6 +500,31 @@ allocation, because a parameter is live from the prologue and a value live acros
 register while there is no spilling. Spilling to the frame — not more selection — is what the ranking
 points at next.
 
+### A parameter BLOCK is a set of named cells, not an address to index
+
+`ARRAY SORT` and `ARRAY SCAN` take every parameter from memory: the shared `rt_arpb` block and the
+`rt_num_*` cells. The IR can fill those itself — the selector addresses any global whose name starts
+with `rt_`, which is exactly what a runtime cell is — so the whole statement is stores plus a call,
+with one exception. The descriptor those routines dereference opens with the SEGMENT its elements live
+in, and a segment register is not a value the IR can name; it must also live where DS reaches it,
+which a frame object of a routed function does not promise. `rt_arr_desc` (DosRuntime.ArrayDesc)
+takes the near address, the bounds and the element size and supplies the rest — the same reason
+`CSRLIN`, `VARSEG` and the bare `DEF SEG` became one-instruction routines.
+
+The lesson worth keeping is how the *fields* are addressed. The first version spelled the block the
+way the runtime does, as displacements off `rt_arpb`, which in the IR is a GEP: an address in a
+register, and one register per field. A register holding a memory BASE is the one thing the spiller
+cannot move, the scheduler hoists all the address materializations to the top of the block, and
+filling six fields therefore wants six such registers live at once — one more than this machine has
+to give. The function selected cleanly and then declined at allocation with **nothing in the machine
+IR looking wrong**: every instruction reads correctly, and the only symptom is
+`no register assignment, and nothing left that can move to memory`.
+
+Naming each field in the runtime data (`rt_arpb_start`, `rt_arpb_count`, … — the same twenty bytes,
+with labels) removes the registers entirely: each store becomes `MOV word [rt_arpb_start], imm`,
+which is what the direct emitter writes anyway. A block the IR has to INDEX costs a register per
+field; a block whose fields have names costs none.
+
 ### Spilling, rematerialization and live-range splitting
 
 The allocation failure that matters on this target is not "six registers ran out". It is a `CALL`: it

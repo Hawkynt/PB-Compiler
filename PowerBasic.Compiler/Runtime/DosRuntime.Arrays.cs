@@ -58,6 +58,7 @@ public sealed partial class DosRuntime {
     asm.Ret();
     asm.MarkLabel(oom);
     asm.Jmp(asm.Lbl("rt_err_arr"));
+    this.EmitArrayDescriptors(asm);
   }
 
   /// <summary>
@@ -93,5 +94,6 @@ public sealed partial class DosRuntime {
     asm.Dw(0);
     asm.MarkLabel("rt_arrtop");
     asm.Dw(0);
+    EmitArrayDescriptorData(asm);
   }
 }

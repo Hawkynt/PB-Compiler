@@ -375,6 +375,7 @@ public sealed class BackendCoverageTests {
     "DIFF83.BAS",
     "DIFF84.BAS",
     "DIFF85.BAS",
+    "DIFF86.BAS",   // ARRAY SORT / ARRAY SCAN / TAGARRAY over numeric arrays
     "DIFF87.BAS",
     "DIFF88.BAS",
     "DIFF89.BAS",
