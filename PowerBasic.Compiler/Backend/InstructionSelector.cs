@@ -1199,6 +1199,28 @@ public sealed class InstructionSelector {
         this._vregs[cast] = narrowed;
         return true;
       }
+      // Narrowing a CONSTANT is arithmetic the compiler can do itself, whatever the widths. It
+      // normally never reaches here - IrConstFold folds it - but a function with an armed error
+      // handler is skipped by the whole optimizer, because a raise can enter it where the CFG shows
+      // no edge. So the one place a folded constant is guaranteed NOT to have been folded is exactly
+      // the place that has to select it.
+      case IrCastOp.Trunc when cast.Value is IrConstantInt constant && to.IsInteger && to.Bits is 16 or 32: {
+        var wrapped = to.Bits == 16 ? (short)constant.Value : (int)constant.Value;
+        if (!IsWide(to)) {
+          var narrow = this.FreshVreg(to);
+          var dest = new MOperand.Register(narrow);
+          var value = new MOperand.Immediate((short)wrapped);
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, value], MovEffect(dest, value)));
+          this._vregs[cast] = narrow;
+          return true;
+        }
+        var (low, high) = this.FreshPair(cast);
+        var lowHalf = new MOperand.Immediate((short)wrapped);
+        var highHalf = new MOperand.Immediate((short)(wrapped >> 16));
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [low, lowHalf], MovEffect(low, lowHalf)));
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [high, highHalf], MovEffect(high, highHalf)));
+        return true;
+      }
       case IrCastOp.Trunc when IsWide(from) && to.IsInteger && to.Bits == 16: {
         if (!this.TryOperandPair(cast.Value, out var lo, out _))
           return false;
