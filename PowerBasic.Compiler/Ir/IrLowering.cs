@@ -672,7 +672,10 @@ public sealed class IrLowering {
   private DynArr DynDescriptor(VariableSymbol symbol, int rank) {
     if (this._dynArrays.TryGetValue(symbol, out var existing))
       return existing;
-    var data = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.Ptr) { Name = symbol.Name + ".data" });
+    // FarPtr, not Ptr: dynamic array storage comes out of the runtime's far array heap, and the cell
+    // that holds the block address is the only place that fact is written down. Every read of it - a
+    // load here, a phi mem2reg mints for it, a GEP off either - inherits the space from this type.
+    var data = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.FarPtr) { Name = symbol.Name + ".data" });
     var lo = new IrValue[rank];
     var size = new IrValue[rank];
     for (var k = 0; k < rank; ++k) {
@@ -689,7 +692,7 @@ public sealed class IrLowering {
     if (expr.Arguments.Count != arr.Rank)
       throw new IrLoweringException("dynamic array rank mismatch");
     var descriptor = this.DynDescriptor(symbol, arr.Rank);
-    var data = this._b.Load(IrType.Ptr, descriptor.Data);
+    var data = this._b.Load(IrType.FarPtr, descriptor.Data);
 
     IrValue? flat = null;
     for (var k = 0; k < arr.Rank; ++k) {
@@ -1853,6 +1856,44 @@ public sealed class IrLowering {
     this.ReturnFromFunction();
   }
 
+  /// <summary>
+  /// The element count a dynamic array's descriptor currently describes - the product of its per-
+  /// dimension extents, which <c>REDIM</c> fills in and every read of the array uses. Zero for an
+  /// array that has never been allocated, since the cells start zeroed.
+  /// </summary>
+  private IrValue DynElementCount(DynArr descriptor, int rank) {
+    IrValue count = this._b.Load(IrType.I32, descriptor.Size[0]);
+    for (var k = 1; k < rank; ++k)
+      count = this._b.Mul(count, this._b.Load(IrType.I32, descriptor.Size[k]));
+    return count;
+  }
+
+  /// <summary>
+  /// An element count as a BYTE count, which is the unit every allocation entry in the family takes.
+  ///
+  /// <para>
+  /// Bytes rather than (count, elementSize) because the element size is a COMPILE-TIME property of the
+  /// source type and the DOS runtime's allocator has always taken a 32-bit byte count in <c>DX:AX</c> -
+  /// so passing the pair meant asking a register-mapping table to multiply, which it cannot do. Doing
+  /// the multiply here gives both back ends one shape, and it folds to a literal whenever the bounds
+  /// are constant.
+  /// </para>
+  /// <para>
+  /// The product is formed at 32 bits ON PURPOSE. A count that fits a word and an element size that
+  /// fits a word can still need seventeen: <c>DIM x(1 TO 5000) AS LONG</c> is 20000 bytes and
+  /// <c>DIM x(1 TO 20000) AS LONG</c> is 80000, which does not fit one. A 16-bit multiply would wrap
+  /// 80000 to 14464 and allocate a quarter of the array with nothing to say so; at 32 bits the high
+  /// half reaches the runtime, which refuses it as Error 7 exactly as the direct emitter does.
+  /// </para>
+  /// <para>
+  /// The pointer entries stay COUNT-based for the opposite reason: a target pointer's size is a
+  /// property of the target, not of the program, so only the runtime can know it. That is the whole
+  /// difference between <c>rt_arr_alloc</c> and <c>rt_arr_alloc_ptr</c>.
+  /// </para>
+  /// </summary>
+  private IrValue ArrayBytes(IrValue count, ArrayType arr)
+    => this._b.Mul(count, new IrConstantInt(IrType.I32, Math.Max(arr.Element.Size, 1)));
+
   private void LowerRedim(RedimStmt r) {
     foreach (var v in r.Variables) {
       if (!this._model.RedimBindings.TryGetValue(v, out var symbol) || symbol.Type is not ArrayType { IsDynamic: true } arr)
@@ -1861,6 +1902,13 @@ public sealed class IrLowering {
         throw new IrLoweringException("REDIM rank mismatch");
 
       var descriptor = this.DynDescriptor(symbol, arr.Rank);
+      var isString = arr.Element is StringType;
+      // REDIM PRESERVE carries the old contents over, so the OLD extent has to be read out of the
+      // descriptor BEFORE the new bounds overwrite it. An array that was never allocated reads zero
+      // in every size cell, which is the "nothing to preserve" the direct emitter spells as a
+      // segment-word test.
+      var oldCount = r.Preserve ? this.DynElementCount(descriptor, arr.Rank) : null;
+
       IrValue? count = null;
       for (var k = 0; k < dims.Count; ++k) {
         var (lower, upper) = dims[k];
@@ -1874,17 +1922,18 @@ public sealed class IrLowering {
         count = count is null ? size : this._b.Mul(count, size);
       }
 
-      var isString = arr.Element is StringType;
       IrValue data;
       if (r.Preserve) {                                // realloc keeps the existing prefix (mem2reg seeds the unallocated slot to null = fresh malloc)
-        var old = this._b.Load(IrType.Ptr, descriptor.Data);
+        var old = this._b.Load(IrType.FarPtr, descriptor.Data);
         data = isString
-          ? this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_realloc_ptr", IrType.Ptr, IrType.Ptr, IrType.I32), old, count!)
-          : this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_realloc", IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I32), old, count!, new IrConstantInt(IrType.I32, arr.Element.Size));
+          ? this._b.Call(IrType.FarPtr, this.RuntimeFn("rt_arr_realloc_ptr", IrType.FarPtr, IrType.FarPtr, IrType.I32, IrType.I32),
+              old, oldCount!, count!)
+          : this._b.Call(IrType.FarPtr, this.RuntimeFn("rt_arr_realloc", IrType.FarPtr, IrType.FarPtr, IrType.I32, IrType.I32),
+              old, this.ArrayBytes(oldCount!, arr), this.ArrayBytes(count!, arr));
       } else {
         data = isString
-          ? this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_alloc_ptr", IrType.Ptr, IrType.I32), count!)            // count target-pointers
-          : this._b.Call(IrType.Ptr, this.RuntimeFn("rt_arr_alloc", IrType.Ptr, IrType.I32, IrType.I32), count!, new IrConstantInt(IrType.I32, arr.Element.Size));
+          ? this._b.Call(IrType.FarPtr, this.RuntimeFn("rt_arr_alloc_ptr", IrType.FarPtr, IrType.I32), count!)      // count target-pointers
+          : this._b.Call(IrType.FarPtr, this.RuntimeFn("rt_arr_alloc", IrType.FarPtr, IrType.I32), this.ArrayBytes(count!, arr));
       }
       this._b.Store(data, descriptor.Data);
     }
@@ -1904,9 +1953,19 @@ public sealed class IrLowering {
           new IrConstantInt(IrType.I32, arr.Size), new IrConstantInt(IrType.I1, 0));
         continue;
       }
+      // The byte count travels with the pointer: the DOS heap is a bump allocator that can only give
+      // a block back when it is the topmost one, and "is this block on top" is `offset + bytes ==
+      // top`. A malloc/free runtime ignores the second argument, but the IR cannot know which kind of
+      // runtime it is talking to and the size is free to compute here.
       var descriptor = this.DynDescriptor(symbol, arr.Rank);
-      this._b.Call(IrType.Void, this.RuntimeFn("rt_arr_free", IrType.Void, IrType.Ptr), this._b.Load(IrType.Ptr, descriptor.Data));
-      this._b.Store(new IrNullPtr(), descriptor.Data);
+      var count = this.DynElementCount(descriptor, arr.Rank);
+      var block = this._b.Load(IrType.FarPtr, descriptor.Data);
+      if (arr.Element is StringType)
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_arr_free_ptr", IrType.Void, IrType.FarPtr, IrType.I32), block, count);
+      else
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_arr_free", IrType.Void, IrType.FarPtr, IrType.I32),
+          block, this.ArrayBytes(count, arr));
+      this._b.Store(new IrNullPtr(IrType.FarPtr), descriptor.Data);
     }
   }
 

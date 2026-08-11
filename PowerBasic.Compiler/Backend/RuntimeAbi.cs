@@ -28,6 +28,26 @@ internal static class RuntimeAbi {
     /// <summary>A 32-bit value in <see cref="RuntimeArg.High"/>:<see cref="RuntimeArg.Register"/>.</summary>
     Pair,
 
+    /// <summary>
+    /// The LOW HALF of a 32-bit value in <see cref="RuntimeArg.Register"/>, the high half deliberately
+    /// dropped.
+    ///
+    /// <para>
+    /// The ordinary <see cref="Word"/> kind refuses a 32-bit value that is not provably narrow, and it
+    /// is right to: dropping sixteen bits of an arbitrary value is a miscompile that reads as a
+    /// plausible number. This kind is the same drop made ON PURPOSE, as a claim about a particular
+    /// routine and a particular argument - and it is a claim, so it belongs at the row where someone
+    /// can check it rather than inside the operand code where it would apply to everything.
+    /// </para>
+    /// <para>
+    /// The array entries are what it exists for: <c>rt_arr_realloc</c> and <c>rt_arr_free</c> take the
+    /// size of a block that ALREADY EXISTS, and a block that exists is under 64 KiB because
+    /// <c>rt_arr_alloc</c> raises Error 7 on anything larger. Passing the pair instead costs a second
+    /// physical register at the call, which is what put DIFF56's module body over the machine's six.
+    /// </para>
+    /// </summary>
+    LowWord,
+
     /// <summary>The OFFSET of the global the pointer argument names (a string literal), as an immediate.</summary>
     Offset,
 
@@ -593,6 +613,45 @@ internal static class RuntimeAbi {
     // position in AX (0 = no match)" - DosRuntime.ArrayNum's own ABI note, and rt_sortstr / rt_scanstr
     // say the same for the string array in DosRuntime.Strings2. Every one of the four saves and
     // restores each register it touches apart from the answer.
+    // Dynamic array storage. The runtime's allocator is a bump allocator over the far array heap and
+    // has always taken its size as a 32-bit BYTE COUNT in DX:AX - so the IR declares these in bytes
+    // too, and does the count * elementSize multiply itself (IrLowering.ArrayBytes explains why that
+    // is the right place for it, and why it must be a 32-bit multiply). The pair therefore maps
+    // straight across with no arithmetic in the table, which is the only kind of mapping this table
+    // can express.
+    //
+    // The _ptr entries are the exception, and deliberately so: their element is a TARGET pointer,
+    // whose size the front end has no business knowing, so they take a COUNT and the runtime scales
+    // it. On this target that scaling is a 32-bit doubling, which is the whole body of the shim.
+    //
+    //   "rt_arr_alloc:     DX:AX = byte count  -> AX = offset within rt_arrseg (zero-filled)"
+    //   "rt_arr_alloc_ptr: DX:AX = element count -> the same, for a block of target pointers"
+    ["rt_arr_alloc"] = new("rt_arr_alloc", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
+    ["rt_arr_alloc_ptr"] = new("rt_arr_alloc_ptr", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
+
+    //   "rt_arr_realloc: BX = old block, CX = old byte count, DX:AX = new byte count -> AX = new block"
+    //
+    // The OLD count goes over as its low half alone (ArgKind.LowWord), because a block that was
+    // allocated is under 64 KiB by construction - rt_arr_alloc refuses anything else. The NEW count's
+    // high half is NOT droppable: it is the overflow the allocator turns into Error 7, so it has to
+    // reach it, which is why that one is a real pair.
+    ["rt_arr_realloc"] = new("rt_arr_realloc",
+      [new(ArgKind.Word, Reg.BX), new(ArgKind.LowWord, Reg.CX), new(ArgKind.Pair, Reg.AX, Reg.DX)],
+      _callerSaved, Result: Reg.AX),
+    ["rt_arr_realloc_ptr"] = new("rt_arr_realloc_ptr",
+      [new(ArgKind.Word, Reg.BX), new(ArgKind.LowWord, Reg.CX), new(ArgKind.Pair, Reg.AX, Reg.DX)],
+      _callerSaved, Result: Reg.AX),
+
+    //   "rt_arr_free: AX = block offset, CX = byte count (no-op unless topmost)"
+    //
+    // The size travels with the pointer because a bump allocator needs it: "is this block on top" is
+    // offset + bytes == top, and nothing else in the runtime remembers how big a block was. The high
+    // half is dropped for the reason above.
+    ["rt_arr_free"] = new("rt_arr_free",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.LowWord, Reg.CX)], _callerSaved),
+    ["rt_arr_free_ptr"] = new("rt_arr_free_ptr",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.LowWord, Reg.CX)], _callerSaved),
+
     ["rt_array_sort_num"] = new("rt_sortnum", [], _callerSaved),
     ["rt_array_scan_num"] = new("rt_scannum", [], _callerSaved, Result: Reg.AX),
     ["rt_array_sort_str"] = new("rt_sortstr", [], _callerSaved),

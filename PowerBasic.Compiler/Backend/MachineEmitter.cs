@@ -136,9 +136,31 @@ public sealed class MachineEmitter {
       this._asm.Ret();
   }
 
+  /// <summary>
+  /// Points <c>ES</c> at the segment an operand of this instruction is relative to, when one of them
+  /// names a memory outside the program's own (<see cref="MOperand.Memory.SegmentCell"/>).
+  ///
+  /// It is emitted here, after scheduling and allocation, so the load and the access it serves are
+  /// adjacent bytes - nothing can be moved between them, and a CALL in between is what would otherwise
+  /// destroy it. <c>ES</c> is never allocated and holds nothing across an instruction boundary, so
+  /// overwriting it costs nothing; the runtime routines that use it set it themselves.
+  /// </summary>
+  private void LoadSegmentOverride(MInstr instr) {
+    string? cell = null;
+    foreach (var operand in instr.Operands)
+      if (operand is MOperand.Memory { SegmentCell: { } name }) {
+        if (cell is not null && cell != name)
+          throw new System.NotSupportedException($"one instruction cannot be relative to both {cell} and {name}");
+        cell = name;
+      }
+    if (cell is { } segment)
+      this._asm.Mov(Asm.Reg.ES, Asm.Mem.Word(this.ResolveData(segment).Label!));
+  }
+
   private void EmitInstruction(MInstr instr) {
     var asm = this._asm;
     var ops = instr.Operands;
+    this.LoadSegmentOverride(instr);
     switch (instr.Opcode) {
       case MOpcode.Mov: this.Emit2(ops[0], ops[1], asm.Mov, asm.Mov, asm.Mov, asm.Mov, asm.Mov); break;
       case MOpcode.Add: this.Emit2(ops[0], ops[1], asm.Add, asm.Add, asm.Add, asm.Add, asm.Add); break;
@@ -335,11 +357,15 @@ public sealed class MachineEmitter {
     MOperand.ParamCell p => Sized(Asm.Mem.At(Asm.Reg.BP,
       this._paramOffsets[p.ArgumentIndex] + p.ByteDelta), p.Size),
     MOperand.DataCell cell => this.DataCell(cell),
-    MOperand.Memory m when m.Index is { } x => Sized(Asm.Mem.At(this.Resolve(m.Base!.Value), this.Resolve(x), m.Disp), m.Size),
-    MOperand.Memory m when m.Base is { } b => Sized(Asm.Mem.At(this.Resolve(b), m.Disp), m.Size),
-    MOperand.Memory m => Sized(Asm.Mem.At(m.Disp), m.Size),
+    MOperand.Memory m when m.Index is { } x => Segmented(Sized(Asm.Mem.At(this.Resolve(m.Base!.Value), this.Resolve(x), m.Disp), m.Size), m),
+    MOperand.Memory m when m.Base is { } b => Segmented(Sized(Asm.Mem.At(this.Resolve(b), m.Disp), m.Size), m),
+    MOperand.Memory m => Segmented(Sized(Asm.Mem.At(m.Disp), m.Size), m),
     _ => throw new System.NotSupportedException($"operand {operand} is not a memory reference"),
   };
+
+  /// <summary>The <c>ES:</c> prefix for an operand outside the program's own memory; identity for every other.</summary>
+  private static Mem Segmented(Mem memory, MOperand.Memory operand)
+    => operand.SegmentCell is null ? memory : memory.Es();
 
   /// <summary>
   /// Stamps the operand width onto a memory reference. Integer values may be bytes or words; x87

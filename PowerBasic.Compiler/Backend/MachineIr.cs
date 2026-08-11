@@ -40,8 +40,23 @@ public abstract record MOperand {
 
   public sealed record Immediate(long Value) : MOperand;
 
-  /// <summary><c>[Base + Index*Scale + Disp]</c>; <see cref="Base"/>/<see cref="Index"/> are registers, either may be null.</summary>
-  public sealed record Memory(MReg? Base, MReg? Index, int Scale, int Disp, MRegSize Size) : MOperand;
+  /// <summary>
+  /// <c>[Base + Index*Scale + Disp]</c>; <see cref="Base"/>/<see cref="Index"/> are registers, either
+  /// may be null.
+  ///
+  /// <para>
+  /// <paramref name="SegmentCell"/> names a runtime word holding the SEGMENT the address is relative
+  /// to, for the one memory that is not the program's own: the far array heap. It is a cell rather
+  /// than a register because that is what the segment is - <c>rt_arrseg</c>, written once at startup -
+  /// and the emitter reloads <c>ES</c> from it immediately before the access, which is instruction for
+  /// instruction what the direct emitter writes for the same element. Doing it at EMISSION rather than
+  /// in the selector is deliberate: the load and its use are adjacent by construction, so neither the
+  /// scheduler nor the spiller can put a call between them, and <c>ES</c> holds nothing at any other
+  /// time. Null means the default segment, which is every other operand in the back end.
+  /// </para>
+  /// </summary>
+  public sealed record Memory(MReg? Base, MReg? Index, int Scale, int Disp, MRegSize Size,
+    string? SegmentCell = null) : MOperand;
 
   /// <summary>A code label (branch target) or a data/global symbol address.</summary>
   public sealed record LabelRef(string Name) : MOperand;

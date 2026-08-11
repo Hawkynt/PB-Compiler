@@ -232,7 +232,7 @@ public static class Sccp {
     private static IrConstant Clone(IrConstant c) => c switch {
       IrConstantInt i => new IrConstantInt(i.Type, i.Value),
       IrConstantFloat f => new IrConstantFloat(f.Type, f.Value),
-      IrNullPtr => new IrNullPtr(),
+      IrNullPtr n => new IrNullPtr(n.Type),
       _ => new IrUndef(c.Type),
     };
 

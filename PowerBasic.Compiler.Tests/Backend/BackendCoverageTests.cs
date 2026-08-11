@@ -237,6 +237,9 @@ public sealed class BackendCoverageTests {
     // one made out of a DWORD declines rather than being given a segment nobody named.
     // Then one more when PRINT USING and LPRINT lowered: rt_usefmt was already the direct emitter's
     // own formatter, so what was missing was the ABI row and the compile-time read of the format.
+    // Then 251 -> 253 when dynamic array storage routed: an IR pointer gained an ADDRESS SPACE, so a
+    // block in the far array heap is a different kind of pointer rather than the same kind pointing
+    // somewhere the back end could not name, and the allocation family took its size in bytes.
     Assert.That(census.Selected, Is.GreaterThanOrEqualTo(230),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
     Assert.That(census.ProcedureDeclines, Is.Empty,
@@ -447,6 +450,7 @@ public sealed class BackendCoverageTests {
 
   private static readonly string[] _ownedMainBodies = [
     "ARITH.BAS",
+    "ARRAY.BAS",     // dynamic array storage: the far-heap address space and the byte-count allocator ABI
     "CTRL.BAS",
     "DATAREAD.BAS",
     "DIFF01.BAS",

@@ -50,7 +50,17 @@ public enum IrFloatFormat {
 /// of the same storage, so it does not affect <see cref="SameStorage"/>.
 /// </param>
 /// <param name="Format">The encoding of an <see cref="IrTypeKind.Float"/>; see <see cref="IrFloatFormat"/>.</param>
-public sealed record IrType(IrTypeKind Kind, int Bits, bool Signed = true, IrFloatFormat Format = IrFloatFormat.Ieee) {
+/// <param name="AddressSpace">
+/// Which memory a <see cref="IrTypeKind.Ptr"/> points into - LLVM's <c>addrspace</c>, and needed here
+/// for the same reason LLVM has it: a 16-bit real-mode target has more than one memory. Space 0 is the
+/// program's own - <c>DS</c> for a global, <c>SS</c> for a frame object - and is what every pointer in
+/// the IR meant before this existed. Space 1 is <see cref="FarHeap"/>: the far array heap the runtime
+/// bump-allocates dynamic array storage out of, whose segment is a runtime cell rather than a register
+/// the caller already has. A back end with one flat memory (the C emitter, an LLVM target) ignores the
+/// number entirely; the DOS back end reads it to decide whether an access needs a segment override.
+/// </param>
+public sealed record IrType(IrTypeKind Kind, int Bits, bool Signed = true,
+    IrFloatFormat Format = IrFloatFormat.Ieee, int AddressSpace = 0) {
 
   public static readonly IrType Void = new(IrTypeKind.Void, 0);
   public static readonly IrType I1 = new(IrTypeKind.Int, 1);
@@ -74,6 +84,17 @@ public sealed record IrType(IrTypeKind Kind, int Bits, bool Signed = true, IrFlo
   public static readonly IrType Mbf64 = new(IrTypeKind.Float, 64, Format: IrFloatFormat.Mbf);
 
   public static readonly IrType Ptr = new(IrTypeKind.Ptr, 0);
+
+  /// <summary>The address space of the far array heap - see <see cref="AddressSpace"/>.</summary>
+  public const int FarHeap = 1;
+
+  /// <summary>
+  /// A pointer into the far array heap (<see cref="FarHeap"/>). Dynamic array storage lives there and
+  /// nowhere else, so this is the type <c>rt_arr_alloc</c> answers with and the type the descriptor
+  /// cell holding it is allocated as - which is what carries the fact through a phi, a load and a GEP
+  /// without the back end having to re-derive it.
+  /// </summary>
+  public static readonly IrType FarPtr = new(IrTypeKind.Ptr, 0, AddressSpace: FarHeap);
 
   /// <summary>Returns the canonical integer type of the given bit width and signedness.</summary>
   public static IrType Integer(int bits, bool signed = true) => (bits, signed) switch {
@@ -104,6 +125,9 @@ public sealed record IrType(IrTypeKind Kind, int Bits, bool Signed = true, IrFlo
   public bool IsFloat => this.Kind == IrTypeKind.Float;
   public bool IsPointer => this.Kind == IrTypeKind.Ptr;
 
+  /// <summary>True for a pointer into the far array heap - an access through it needs a segment override.</summary>
+  public bool IsFarPointer => this.Kind == IrTypeKind.Ptr && this.AddressSpace == FarHeap;
+
   /// <summary>True for an unsigned integer type (<c>u8</c>/<c>u16</c>/<c>u32</c>/<c>u64</c>).</summary>
   public bool IsUnsigned => this.Kind == IrTypeKind.Int && !this.Signed && this.Bits > 1;
 
@@ -126,6 +150,13 @@ public sealed record IrType(IrTypeKind Kind, int Bits, bool Signed = true, IrFlo
   /// <c>ult</c>, <c>sext</c> vs <c>zext</c>), not what they are, so <c>u16</c> and <c>i16</c> mix
   /// freely in a phi, a store or a binary operand pair. An IEEE float and an MBF float of the same
   /// width are <b>not</b> storage-compatible - the encodings differ.
+  ///
+  /// <para>
+  /// <see cref="AddressSpace"/> is excluded for the same reason signedness is: it says which memory an
+  /// address reaches, not how wide the address is, and on this target both are one word. That is what
+  /// lets a null constant seed a far descriptor cell - <c>null</c> is the same sixteen zero bits in
+  /// either space, and the type the slot was allocated as is what the reads of it carry.
+  /// </para>
   /// </summary>
   public bool SameStorage(IrType other) =>
     other is not null && this.Kind == other.Kind && this.Bits == other.Bits && this.Format == other.Format;
@@ -134,7 +165,7 @@ public sealed record IrType(IrTypeKind Kind, int Bits, bool Signed = true, IrFlo
     IrTypeKind.Void => "void",
     IrTypeKind.Int => (this.Signed || this.Bits == 1 ? "i" : "u") + this.Bits,
     IrTypeKind.Float => (this.Format == IrFloatFormat.Mbf ? "mbf" : "f") + this.Bits,
-    IrTypeKind.Ptr => "ptr",
+    IrTypeKind.Ptr => this.AddressSpace == 0 ? "ptr" : $"ptr addrspace({this.AddressSpace})",
     _ => "?",
   };
 }

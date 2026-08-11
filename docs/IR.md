@@ -26,12 +26,40 @@ A small, target-independent first-class type lattice (`IrType`):
 | Void  | `void`                          | stores, void calls, `ret void`               |
 | Int   | `i1 i8 i16 i32 i64` / `u8 u16 u32 u64` | width in bits **and** signedness      |
 | Float | `f32 f64 f80` / `mbf32 mbf64`   | IEEE / x87 extended, or Microsoft Binary Format |
-| Ptr   | `ptr`                           | opaque; pointee travels on the mem op        |
+| Ptr   | `ptr` / `ptr addrspace(n)`      | opaque; pointee travels on the mem op        |
 
 PB scalar types map directly (`IrTypeMapper`): INTEGER→`i16` and WORD→`u16`,
 LONG→`i32` and DWORD→`u32`, QUAD→`i64` and QWORD→`u64`, BYTE→`u8` and SBYTE→`i8`,
 SINGLE/DOUBLE/EXT→`f32/f64/f80`. Non-scalars (strings, UDTs, dynamic arrays) are
 not yet mapped.
+
+### Address spaces
+
+A pointer carries an `AddressSpace`, LLVM's `addrspace`, and it is here for the reason
+LLVM has it: a 16-bit real-mode target has more than one memory.
+
+- **Space 0** is the program's own — `DS` for a global, `SS` for a frame object — and is
+  what every pointer in the IR meant before this existed.
+- **Space 1** (`IrType.FarPtr`) is the **far array heap**: the segment the runtime
+  bump-allocates dynamic array storage out of, whose value lives in the `rt_arrseg` cell
+  rather than in a register the caller already holds. `rt_arr_alloc` answers in it, the
+  descriptor cell is allocated as it, and a GEP inherits it from its base — which is what
+  carries the fact through a phi, a load and an index without the back end re-deriving it.
+
+The x86-16 back end reads the space to decide whether an access needs a segment override:
+a load or store through a space-1 pointer becomes `MOV ES, [rt_arrseg]` followed by an
+`ES:`-prefixed operand, which is instruction for instruction what the direct emitter writes
+for the same element. A back end with one flat memory — `CEmitter`, `LlvmEmitter`, any
+32/64-bit target — ignores the number and renders `void *` / `ptr` as before.
+
+`SameStorage` deliberately ignores the space, for the same reason it ignores signedness: it
+says which memory an address reaches, not how wide the address is, and on this target both
+are one word. That is what lets a null constant seed a far descriptor cell.
+
+A runtime routine that takes a *pointer argument* still declines a space-1 address, because
+the `Pointer` argument kind hands the segment over in a register and this one is a cell. Only
+loads and stores go through the override so far; a whole-record copy into a dynamic array
+therefore does not route yet, and says so.
 
 ### Two distinctions LLVM does not make
 
@@ -101,10 +129,14 @@ Supported today:
   (a buffer of pointer handles addressed by a typed, element-indexed GEP so the index
   scales by the target pointer size rather than the DOS 2-byte handle width);
 - **dynamic (`REDIM`'d) arrays** (1-D and multi-dimensional): a runtime-allocated buffer
-  behind a descriptor (data pointer + per-dimension lower bound and size) - `REDIM`
-  allocates via `rt_arr_alloc`/`rt_arr_alloc_ptr` (count = product of dimension sizes),
-  `REDIM PRESERVE` grows in place via `rt_arr_realloc`/`rt_arr_realloc_ptr`, element
-  access is row-major flattened relative to the bounds, `ERASE` frees via `rt_arr_free`;
+  behind a descriptor (data pointer + per-dimension lower bound and size). The data pointer
+  is typed `ptr addrspace(1)` — see *address spaces* below — and the whole allocation family
+  takes **byte counts**: `REDIM` calls `rt_arr_alloc(bytes)`, `REDIM PRESERVE` calls
+  `rt_arr_realloc(p, oldBytes, newBytes)` and `ERASE` calls `rt_arr_free(p, bytes)`, with the
+  lowering forming `count * elementSize` itself at 32 bits (`IrLowering.ArrayBytes`). The
+  `_ptr` variants — `rt_arr_alloc_ptr`, `rt_arr_realloc_ptr`, `rt_arr_free_ptr` — take element
+  **counts** instead, because their element is a target pointer whose width only the runtime
+  knows. Element access is row-major flattened relative to the bounds;
   `LBOUND`/`UBOUND` fold to constants for static arrays and read the descriptor for dynamic;
 - **strings** via a runtime-handle ABI (`rt_str_*`): assignment, `&` concat, all
   comparisons, `LEN`, `LEFT$`/`RIGHT$`/`MID$`, `CHR$`/`ASC`, `STR$`/`VAL`,
