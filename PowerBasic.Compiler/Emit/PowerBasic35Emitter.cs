@@ -671,7 +671,18 @@ public sealed class PowerBasic35Emitter {
     };
     var shared = s.Storage == StorageClass.Dim && s.SharedFlag ? " SHARED" : "";
     var cls = s.Class switch { ArrayClass.Dynamic => " DYNAMIC", ArrayClass.Huge => " HUGE", ArrayClass.Virtual => " VIRTUAL", _ => "" };
-    this.Line($"{keyword}{shared}{cls} {string.Join(", ", s.Variables.Select(this.FormatVarDecl))}");
+    // AT is not decoration: it makes the declaration a VIEW of memory the program does not own, so
+    // dropping it does not produce a slightly different program - it produces one that reads and
+    // writes its own data instead of the screen, the port window or whatever was named, and still
+    // compiles and runs. That is the failure this whole emitter is written to avoid, and it is worse
+    // than the [unsupported:] marker an unmodelled construct would have left.
+    // A constant segment is written as hex rather than through the ordinary expression path, which
+    // renders &HB800 as the INTEGER it fits in: -18432%. Both denote the same sixteen bits, but the
+    // hex is what the address MEANS, and it removes any question about how the negative one is read.
+    var at = s.AtAddress is { } address
+      ? $" AT {(this.ConstInt(address) is { } segment ? $"&H{(ushort)segment:X4}" : this.Expr(address))}"
+      : "";
+    this.Line($"{keyword}{shared}{cls} {string.Join(", ", s.Variables.Select(this.FormatVarDecl))}{at}");
   }
 
   private string FormatVarDecl(VariableDecl v) {
