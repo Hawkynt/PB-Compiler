@@ -165,8 +165,7 @@ public static class Sccp {
               this.AddEdge(block, s);
           } else {
             var value = ((IrConstantInt)c.Const!).Value;
-            var target = sw.Cases.FirstOrDefault(x => x.Value == value).Target ?? sw.DefaultTarget;
-            this.AddEdge(block, target);
+            this.AddEdge(block, sw.TargetFor(value));
           }
           break;
         }

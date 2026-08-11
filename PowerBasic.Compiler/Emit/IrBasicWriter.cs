@@ -572,8 +572,12 @@ public sealed class IrBasicWriter {
     ["rt_str_ucase"] = "UCASE$", ["rt_str_lcase"] = "LCASE$",
     ["rt_str_ltrim"] = "LTRIM$", ["rt_str_rtrim"] = "RTRIM$",
     ["rt_str_instr"] = "INSTR", ["rt_str_instr_start"] = "INSTR",
-    ["rt_str_mki"] = "MKI$", ["rt_str_mkl"] = "MKL$", ["rt_str_mks"] = "MKS$",
+    ["rt_str_mkbyt"] = "MKBYT$", ["rt_str_mki"] = "MKI$", ["rt_str_mkl"] = "MKL$",
+    ["rt_str_mks"] = "MKS$",
     ["rt_str_mkd"] = "MKD$", ["rt_str_mkdwd"] = "MKDWD$",
+    ["rt_str_cvi"] = "CVI", ["rt_str_cvbyt"] = "CVBYT", ["rt_str_cvwrd"] = "CVWRD",
+    ["rt_str_cvl"] = "CVL", ["rt_str_cvdwd"] = "CVDWD", ["rt_str_cvs"] = "CVS",
+    ["rt_str_cvd"] = "CVD", ["rt_str_cve"] = "CVE",
     // STR$ of every width lowers to its own routine; they all came from the one intrinsic
     ["rt_str_from_i8"] = "STR$", ["rt_str_from_i16"] = "STR$", ["rt_str_from_i32"] = "STR$",
     ["rt_str_from_i64"] = "STR$", ["rt_str_from_u8"] = "STR$", ["rt_str_from_u16"] = "STR$",

@@ -5,6 +5,7 @@ using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Tests.Exec;
 
 namespace PowerBasic.Compiler.Tests.Backend;
 
@@ -27,6 +28,128 @@ public sealed class BackendRuntimeCallTests {
     END FUNCTION
 
     PRINT Announce%
+    """;
+
+  private const string _remainingStringKernelsProgram = """
+    DECLARE FUNCTION StringOps%(BYVAL start%, BYVAL count%)
+
+    PRINT StringOps%(2, 3)
+    END
+
+    FUNCTION StringOps%(BYVAL start%, BYVAL count%) NOINLINE
+      DIM value AS STRING
+      value = "abcdef"
+      PRINT MID$(value, start%)
+      IF MID$(value, start%, 1) < "z" THEN PRINT "less"
+      MID$(value, start%, count%) = "XYZ"
+      PRINT value
+      StringOps% = 7
+    END FUNCTION
+    """;
+
+  private const string _binaryRecordProgram = """
+    i% = -12345
+    mi$ = MKI$(i%)
+    PRINT CVI(mi$)
+    PRINT ASC(mi$, 1); ASC(mi$, 2)
+
+    l& = -123456789
+    ml$ = MKL$(l&)
+    PRINT CVL(ml$)
+    PRINT ASC(ml$, 1); ASC(ml$, 2); ASC(ml$, 3); ASC(ml$, 4)
+
+    dw??? = 3000000000
+    mdw$ = MKDWD$(dw???)
+    PRINT CVDWD(mdw$)
+    PRINT ASC(mdw$, 1); ASC(mdw$, 2); ASC(mdw$, 3); ASC(mdw$, 4)
+
+    s! = 3.5
+    ms$ = MKS$(s!)
+    PRINT CVS(ms$)
+    PRINT ASC(ms$, 1); ASC(ms$, 2); ASC(ms$, 3); ASC(ms$, 4)
+
+    d# = 2.5
+    md$ = MKD$(d#)
+    PRINT CVD(md$)
+    PRINT ASC(md$, 7); ASC(md$, 8)
+    """;
+
+  private const string _binaryRecordAliasProgram = """
+    ok% = -1
+    IF CVBYT(MKBYT$(200)) <> 200 THEN ok% = 0
+    IF CVWRD(MKWRD$(50000)) <> 50000 THEN ok% = 0
+    IF CVE(MKE$(2.5)) <> 2.5 THEN ok% = 0
+    IF CVBYT("x" + MKBYT$(200), 2) <> 200 THEN ok% = 0
+    IF CVWRD("x" + MKWRD$(50000), 2) <> 50000 THEN ok% = 0
+    IF CVE("x" + MKE$(2.5), 2) <> 2.5 THEN ok% = 0
+    PRINT ok%
+    """;
+
+  private const string _rndRangeProgram = """
+    ok% = -1
+    FOR i% = 1 TO 20
+      value& = RND(-5, 10)
+      IF value& < -5 OR value& > 10 THEN ok% = 0
+    NEXT i%
+    PRINT ok%
+    """;
+
+  private const string _udtCompareProgram = """
+    TYPE Pair
+      A AS INTEGER
+      B AS LONG
+    END TYPE
+    DIM leftValue AS Pair
+    DIM rightValue AS Pair
+    leftValue.A = 1
+    leftValue.B = 70000
+    rightValue.A = 1
+    rightValue.B = 70000
+    PRINT leftValue = rightValue
+    rightValue.B = 70001
+    PRINT leftValue <> rightValue
+    """;
+
+  private const string _localUdtCompareProgram = """
+    TYPE Pair
+      A AS INTEGER
+      B AS LONG
+    END TYPE
+    DECLARE FUNCTION LocalMatch%
+    PRINT LocalMatch%
+    END
+
+    FUNCTION LocalMatch% NOINLINE
+      DIM leftValue AS Pair
+      DIM rightValue AS Pair
+      leftValue.A = 12
+      rightValue.A = 12
+      LocalMatch% = leftValue = rightValue
+    END FUNCTION
+    """;
+
+  private const string _udtCopyProgram = """
+    TYPE Odd7
+      A AS INTEGER
+      B AS LONG
+      C AS BYTE
+    END TYPE
+    DIM sourceValue AS Odd7
+    DIM copiedValue AS Odd7
+    sourceValue.A = -123
+    sourceValue.B = 987654
+    sourceValue.C = 250
+    copiedValue = sourceValue
+    PRINT copiedValue.A; copiedValue.B; copiedValue.C
+    """;
+
+  private const string _staticEraseProgram = """
+    DIM values(1 TO 5) AS INTEGER
+    FOR i% = 1 TO 5
+      values(i%) = i% * 10
+    NEXT i%
+    ERASE values
+    PRINT values(1); values(3); values(5)
     """;
 
   private static SemanticModel Bind(string source) {
@@ -260,6 +383,371 @@ public sealed class BackendRuntimeCallTests {
     var after = m.AllInstructions.Skip(call + 1).First();
     Assert.That(after.Opcode, Is.EqualTo(MOpcode.Fstp), "the answer is popped straight off ST(0)");
     Assert.That(after.Operands[0], Is.InstanceOf<MOperand.StackSlot>());
+  }
+
+  [Test]
+  public void Select_GivenRemainingStringKernels_ThenUsesTheirExactDosRegisterConventions() {
+    var m = Select(_remainingStringKernelsProgram, "StringOps");
+    var instructions = m.AllInstructions.ToList();
+
+    var mid = instructions.FindIndex(i => i.Opcode == MOpcode.Call
+      && i.Operands is [MOperand.LabelRef { Name: "rt_strmid" }]);
+    Assert.That(mid, Is.GreaterThan(0));
+    var midArgs = instructions.Take(mid)
+      .Where(IsPhysicalMove)
+      .TakeLast(3)
+      .ToDictionary(Destination, i => i.Operands[1]);
+    Assert.That(midArgs.Keys, Is.EquivalentTo(new[] { Reg.AX, Reg.CX, Reg.DX }));
+    Assert.That(midArgs[Reg.DX], Is.EqualTo(new MOperand.Immediate(0x7FFF)),
+      "MID$(s, start) uses the direct emitter's maximum-length preset");
+
+    var compare = instructions.FindIndex(i => i.Opcode == MOpcode.Call
+      && i.Operands is [MOperand.LabelRef { Name: "rt_strcmp" }]);
+    Assert.That(compare, Is.GreaterThan(mid));
+    var compareArgs = instructions.Take(compare)
+      .Where(IsPhysicalMove)
+      .TakeLast(2)
+      .Select(Destination);
+    Assert.That(compareArgs, Is.EquivalentTo(new[] { Reg.AX, Reg.DX }));
+    Assert.That(instructions[compare + 1].Opcode, Is.EqualTo(MOpcode.Cwd),
+      "the runtime's -1/0/1 word answer is sign-extended to the IR's i32");
+
+    var midSet = instructions.FindIndex(i => i.Opcode == MOpcode.Call
+      && i.Operands is [MOperand.LabelRef { Name: "rt_midset" }]);
+    Assert.That(midSet, Is.GreaterThan(compare));
+    var midSetArgs = instructions.Take(midSet)
+      .Where(IsPhysicalMove)
+      .TakeLast(4)
+      .Select(Destination);
+    Assert.That(midSetArgs, Is.EquivalentTo(new[] { Reg.AX, Reg.BX, Reg.CX, Reg.DX }),
+      "target/start/limit/replacement map to AX/CX/BX/DX");
+    Assert.That(instructions[midSet + 1].Operands,
+      Does.Contain(new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word))),
+      "MidSet returns the unchanged target handle in AX");
+
+    static bool IsPhysicalMove(MInstr instruction) => instruction.Opcode == MOpcode.Mov
+      && instruction.Operands[0] is MOperand.Register { Reg.IsVirtual: false };
+    static Reg Destination(MInstr instruction) => ((MOperand.Register)instruction.Operands[0]).Reg.Physical;
+  }
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Execute_GivenRemainingStringKernels_ThenRoutedBehaviorMatchesTheDirectEmitter(bool optimize) {
+    var direct = new CodeGenerator(Bind(_remainingStringKernelsProgram)) {
+      Optimize = optimize,
+      UseExperimentalBackend = false,
+    };
+    var routed = new CodeGenerator(Bind(_remainingStringKernelsProgram)) {
+      Optimize = optimize,
+      UseExperimentalBackend = true,
+    };
+
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("StringOps"));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
+    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+  }
+
+  [Test]
+  public void Select_GivenBinaryRecordConversions_ThenUsesWidthExactRuntimeEntries() {
+    var m = Select(_binaryRecordProgram, "main");
+    var callees = m.AllInstructions
+      .Where(instruction => instruction.Opcode == MOpcode.Call)
+      .Select(instruction => ((MOperand.LabelRef)instruction.Operands[0]).Name)
+      .ToList();
+
+    Assert.That(callees, Does.Contain("rt_mki"));
+    Assert.That(callees, Does.Contain("rt_mkl"));
+    Assert.That(callees, Does.Contain("rt_mkdwd"));
+    Assert.That(callees, Does.Contain("rt_mks"));
+    Assert.That(callees, Does.Contain("rt_mkd"));
+    Assert.That(callees.Count(name => name == "rt_cv"), Is.EqualTo(5));
+    Assert.That(m.AllInstructions.Count(instruction => instruction.Opcode == MOpcode.Fld),
+      Is.GreaterThanOrEqualTo(4), "MKS/MKD arguments and CVS/CVD results cross the x87 at exact widths");
+  }
+
+  [Test]
+  public void Select_GivenCviWithANonWordResult_ThenDeclinesTheMismatchedScratchLoad() {
+    var cvi = new IrFunction("rt_str_cvi", IrType.I8, [new IrArgument(IrType.I16, 0)]);
+    var fn = new IrFunction("main", IrType.Void);
+    var entry = fn.CreateBlock("entry");
+    entry.Append(new IrCall(IrType.I8, cvi, [new IrConstantInt(IrType.I16, 0)]));
+    entry.Append(new IrRet());
+
+    InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(reason, Does.Contain("scratch word"));
+    Assert.That(reason, Does.Contain("i8"));
+  }
+
+  [Test]
+  public void Select_GivenBinaryRecordAliases_ThenEveryAliasUsesTheExactWidthRuntimeEntry() {
+    var m = Select(_binaryRecordAliasProgram, "main");
+    var callees = m.AllInstructions
+      .Where(instruction => instruction.Opcode == MOpcode.Call)
+      .Select(instruction => ((MOperand.LabelRef)instruction.Operands[0]).Name)
+      .ToList();
+
+    Assert.That(callees, Does.Contain("rt_mkbyt"));
+    Assert.That(callees, Does.Contain("rt_mki"));
+    Assert.That(callees, Does.Contain("rt_mkd"));
+    Assert.That(callees.Count(name => name == "rt_cv"), Is.EqualTo(6));
+  }
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Execute_GivenBinaryRecordAliases_ThenRoutedBehaviorMatchesTheDirectEmitter(bool optimize) {
+    var direct = new CodeGenerator(Bind(_binaryRecordAliasProgram)) {
+      Optimize = optimize,
+      UseExperimentalBackend = false,
+    };
+    var routed = new CodeGenerator(Bind(_binaryRecordAliasProgram)) {
+      Optimize = optimize,
+      UseExperimentalBackend = true,
+    };
+
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
+    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+    Assert.That(routedCpu.Output.Trim(), Is.EqualTo("-1"));
+  }
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Execute_GivenBinaryRecordConversions_ThenRoutedBytesMatchTheDirectEmitter(bool optimize) {
+    var direct = new CodeGenerator(Bind(_binaryRecordProgram)) {
+      Optimize = optimize,
+      UseExperimentalBackend = false,
+    };
+    var routed = new CodeGenerator(Bind(_binaryRecordProgram)) {
+      Optimize = optimize,
+      UseExperimentalBackend = true,
+    };
+
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"),
+      "the test is meaningful only when every conversion went through the IR back end");
+    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+  }
+
+  [Test]
+  public void Select_GivenRuntimePairResults_ThenCopiesDxAxIntoTheVirtualPair() {
+    var m = Select(_rndRangeProgram, "main");
+    var instructions = m.AllInstructions.ToList();
+    var call = instructions.FindIndex(instruction => instruction.Opcode == MOpcode.Call
+      && instruction.Operands is [MOperand.LabelRef { Name: "rt_rndrange" }]);
+
+    Assert.That(call, Is.GreaterThanOrEqualTo(0));
+    Assert.That(instructions.Skip(call + 1).Take(2).All(instruction => instruction.Opcode == MOpcode.Mov),
+      "the DX:AX answer must be copied before either physical result register can be clobbered");
+    Assert.That(instructions.Skip(call + 1).Take(2)
+      .Select(instruction => ((MOperand.Register)instruction.Operands[1]).Reg.Physical),
+      Is.EqualTo(new[] { Reg.AX, Reg.DX }));
+  }
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Execute_GivenRndRange_ThenTheRoutedPairResultMatchesTheDirectEmitter(bool optimize) {
+    var direct = new CodeGenerator(Bind(_rndRangeProgram)) {
+      Optimize = optimize,
+      UseExperimentalBackend = false,
+    };
+    var routed = new CodeGenerator(Bind(_rndRangeProgram)) {
+      Optimize = optimize,
+      UseExperimentalBackend = true,
+    };
+
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
+    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+    Assert.That(routedCpu.Output.Trim(), Is.EqualTo("-1"));
+  }
+
+  [Test]
+  public void Select_GivenFileLengthAndPosition_ThenTheirDxAxResultsRoute() {
+    var m = Select("""
+      OPEN "O.TXT" FOR OUTPUT AS #1
+      PRINT LOF(1)
+      PRINT LOC(1)
+      CLOSE #1
+      """, "main");
+    var callees = m.AllInstructions
+      .Where(instruction => instruction.Opcode == MOpcode.Call)
+      .Select(instruction => ((MOperand.LabelRef)instruction.Operands[0]).Name);
+
+    Assert.That(callees, Does.Contain("rt_lof"));
+    Assert.That(callees, Does.Contain("rt_fpos"));
+  }
+
+  [Test]
+  public void Select_GivenWholeUdtComparison_ThenPassesBothSegmentedAddressesToMemCompare() {
+    var m = Select(_udtCompareProgram, "main");
+    var instructions = m.AllInstructions.ToList();
+    var call = instructions.FindIndex(instruction => instruction.Opcode == MOpcode.Call
+      && instruction.Operands is [MOperand.LabelRef { Name: "rt_memcmp" }]);
+
+    Assert.That(call, Is.GreaterThanOrEqualTo(0));
+    var physicalDestinations = instructions.Take(call)
+      .Where(instruction => instruction.Opcode == MOpcode.Mov
+        && instruction.Operands[0] is MOperand.Register { Reg.IsVirtual: false })
+      .Select(instruction => ((MOperand.Register)instruction.Operands[0]).Reg.Physical);
+    Assert.That(physicalDestinations, Does.Contain(Reg.SI));
+    Assert.That(physicalDestinations, Does.Contain(Reg.DX));
+    Assert.That(physicalDestinations, Does.Contain(Reg.DI));
+    Assert.That(physicalDestinations, Does.Contain(Reg.BX));
+    Assert.That(physicalDestinations, Does.Contain(Reg.CX));
+  }
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Execute_GivenWholeUdtComparison_ThenRoutedBytesMatchTheDirectEmitter(bool optimize) {
+    var direct = new CodeGenerator(Bind(_udtCompareProgram)) {
+      Optimize = optimize,
+      UseExperimentalBackend = false,
+    };
+    var routed = new CodeGenerator(Bind(_udtCompareProgram)) {
+      Optimize = optimize,
+      UseExperimentalBackend = true,
+    };
+
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
+    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+    Assert.That(routedCpu.Output.Trim().Replace("\r\n", "|").Replace(" ", ""), Is.EqualTo("-1|-1"));
+  }
+
+  [Test]
+  public void Select_GivenStackLocalUdtComparison_ThenPassesSsForBothPointerSegments() {
+    var m = Select(_localUdtCompareProgram, "LocalMatch");
+    var stackSegments = m.AllInstructions
+      .Where(instruction => instruction.Opcode == MOpcode.Mov
+        && instruction.Operands is [MOperand.Register { Reg.Physical: Reg.DX or Reg.BX },
+          MOperand.Register { Reg.Physical: Reg.SS }]);
+
+    Assert.That(stackSegments, Has.Exactly(2).Items);
+  }
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Execute_GivenStackLocalUdtComparison_ThenRoutedBytesMatchTheDirectEmitter(bool optimize) {
+    var direct = new CodeGenerator(Bind(_localUdtCompareProgram)) {
+      Optimize = optimize,
+      UseExperimentalBackend = false,
+    };
+    var routed = new CodeGenerator(Bind(_localUdtCompareProgram)) {
+      Optimize = optimize,
+      UseExperimentalBackend = true,
+    };
+
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("LocalMatch"));
+    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+  }
+
+  [Test]
+  public void Select_GivenWholeUdtCopy_ThenUsesTheSegmentedMemoryCopyKernel() {
+    var m = Select(_udtCopyProgram, "main");
+
+    Assert.That(m.AllInstructions, Has.Some.Matches<MInstr>(instruction => instruction.Opcode == MOpcode.Call
+      && instruction.Operands is [MOperand.LabelRef { Name: "rt_memcpy" }]));
+  }
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Execute_GivenOddSizedUdtCopy_ThenRoutedTailByteMatchesTheDirectEmitter(bool optimize) {
+    var direct = new CodeGenerator(Bind(_udtCopyProgram)) {
+      Optimize = optimize,
+      UseExperimentalBackend = false,
+    };
+    var routed = new CodeGenerator(Bind(_udtCopyProgram)) {
+      Optimize = optimize,
+      UseExperimentalBackend = true,
+    };
+
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
+    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+  }
+
+  [Test]
+  public void Select_GivenStaticArrayErase_ThenUsesTheSegmentedMemoryFillKernel() {
+    var m = Select(_staticEraseProgram, "main");
+
+    Assert.That(m.AllInstructions, Has.Some.Matches<MInstr>(instruction => instruction.Opcode == MOpcode.Call
+      && instruction.Operands is [MOperand.LabelRef { Name: "rt_memset" }]));
+  }
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Execute_GivenStaticArrayErase_ThenRoutedZeroFillMatchesTheDirectEmitter(bool optimize) {
+    var direct = new CodeGenerator(Bind(_staticEraseProgram)) {
+      Optimize = optimize,
+      UseExperimentalBackend = false,
+    };
+    var routed = new CodeGenerator(Bind(_staticEraseProgram)) {
+      Optimize = optimize,
+      UseExperimentalBackend = true,
+    };
+
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
+    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+  }
+
+  [Test]
+  public void Select_GivenNonI1MemsetVolatilityFlag_ThenDeclinesRatherThanIgnoreIt() {
+    var memset = new IrFunction("llvm.memset.p0.i32", IrType.Void, [
+      new IrArgument(IrType.Ptr, 0),
+      new IrArgument(IrType.I8, 1),
+      new IrArgument(IrType.I32, 2),
+      new IrArgument(IrType.I1, 3),
+    ]);
+    var fn = new IrFunction("main", IrType.Void);
+    var entry = fn.CreateBlock("entry");
+    var bytes = entry.Append(new IrAlloca(IrType.I8) { Count = 4 });
+    entry.Append(new IrCall(IrType.Void, memset, [
+      bytes,
+      new IrConstantInt(IrType.I8, 0),
+      new IrConstantInt(IrType.I32, 4),
+      new IrConstantInt(IrType.I16, 0),
+    ]));
+    entry.Append(new IrRet());
+
+    InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(reason, Does.Contain("non-constant LLVM volatility flag"));
   }
 
   /// <summary>

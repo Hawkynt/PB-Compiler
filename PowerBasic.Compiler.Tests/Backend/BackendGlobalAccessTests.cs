@@ -4,6 +4,7 @@ using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Tests.Exec;
 
 namespace PowerBasic.Compiler.Tests.Backend;
 
@@ -32,6 +33,46 @@ public sealed class BackendGlobalAccessTests {
 
     g = 40
     PRINT AddG%(2)
+    """;
+
+  private const string _sharedArrayAndStaticsProgram = """
+    DIM tally(3) AS SHARED INTEGER
+
+    FUNCTION Touch%(BYVAL index%)
+      tally(index%) = tally(index%) + 10
+      Touch% = tally(index%)
+    END FUNCTION
+
+    FUNCTION First%()
+      STATIC count AS INTEGER
+      count = count + 1
+      First% = count
+    END FUNCTION
+
+    FUNCTION Second%()
+      STATIC count AS INTEGER
+      count = count + 10
+      Second% = count
+    END FUNCTION
+
+    tally(1) = 2
+    PRINT Touch%(1); tally(1)
+    PRINT First%; First%; Second%; First%; Second%
+    """;
+
+  private const string _globalArrayAcrossCallProgram = """
+    DIM values(3) AS SHARED INTEGER
+
+    FUNCTION Supply%(BYVAL value%)
+      Supply% = value% + 40
+    END FUNCTION
+
+    SUB Store(BYVAL index%)
+      values(index%) = Supply%(index%)
+    END SUB
+
+    Store 2
+    PRINT values(2)
     """;
 
   private static SemanticModel Bind(string source) {
@@ -65,6 +106,59 @@ public sealed class BackendGlobalAccessTests {
       .ToList();
     Assert.That(cells, Is.Not.Empty, "the global is read through a data cell, not a register-held address");
     Assert.That(cells[0].Name, Does.StartWith("g."), "a module variable keeps the IR's g.<name> spelling");
+  }
+
+  [Test]
+  public void Select_GivenSharedArrayWithRuntimeIndex_ThenStartsAtTheDirectEmittersNamedCell() {
+    var module = Optimized(Bind(_sharedArrayAndStaticsProgram));
+    var fn = module.Functions.First(f => f.Name.Equals("Touch", StringComparison.OrdinalIgnoreCase));
+
+    var machine = InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(machine, Is.Not.Null, $"Touch declined: {reason}");
+    Assert.That(machine!.AllInstructions.SelectMany(i => i.Operands).OfType<MOperand.DataOffset>()
+      .Select(offset => offset.Name), Does.Contain("g.tally"),
+      "the computed address must start at the data cell the direct emitter owns");
+  }
+
+  [Test]
+  public void Select_GivenSameNamedStaticsInTwoFunctions_ThenTheirCellsRemainDistinct() {
+    var module = Optimized(Bind(_sharedArrayAndStaticsProgram));
+    var first = module.Functions.First(f => f.Name.Equals("First", StringComparison.OrdinalIgnoreCase));
+    var second = module.Functions.First(f => f.Name.Equals("Second", StringComparison.OrdinalIgnoreCase));
+
+    var firstMachine = InstructionSelector.TrySelect(first, out var firstReason);
+    var secondMachine = InstructionSelector.TrySelect(second, out var secondReason);
+
+    Assert.That(firstMachine, Is.Not.Null, $"First declined: {firstReason}");
+    Assert.That(secondMachine, Is.Not.Null, $"Second declined: {secondReason}");
+    Assert.That(DataCells(firstMachine!), Does.Contain("static.First.count"));
+    Assert.That(DataCells(secondMachine!), Does.Contain("static.Second.count"));
+    Assert.That(DataCells(firstMachine!), Is.Not.EquivalentTo(DataCells(secondMachine!)),
+      "same-named STATIC locals in different procedures must not alias");
+
+    static IReadOnlyList<string> DataCells(MFunction fn) => fn.AllInstructions
+      .SelectMany(i => i.Operands)
+      .OfType<MOperand.DataCell>()
+      .Select(cell => cell.Name)
+      .Distinct()
+      .ToList();
+  }
+
+  [Test]
+  public void Allocate_GivenGlobalArrayAddressLiveAcrossCall_ThenPreservesItAtTheStore() {
+    var module = Optimized(Bind(_globalArrayAcrossCallProgram));
+    var fn = module.Functions.First(f => f.Name.Equals("Store", StringComparison.OrdinalIgnoreCase));
+    var machine = InstructionSelector.TrySelect(fn, out var selectReason);
+    Assert.That(machine, Is.Not.Null, $"Store declined: {selectReason}");
+    MachineScheduler.Schedule(machine!);
+
+    var allocation = LinearScanAllocator.Allocate(machine!, out var allocationReason);
+
+    Assert.That(allocation, Is.Not.Null,
+      $"allocation declined: {allocationReason}\n{string.Join(Environment.NewLine, machine!.AllInstructions)}");
+    Assert.That(machine!.AllInstructions.SelectMany(i => i.Operands).OfType<MOperand.DataOffset>()
+      .Select(offset => offset.Name), Does.Contain("g.values"));
   }
 
   [Test]
@@ -140,5 +234,29 @@ public sealed class BackendGlobalAccessTests {
     Assert.That(routed.BackendRoutedNames, Does.Contain("AddG"),
       "the back end did not take the global-reading function");
     Assert.That(directImage, Is.Not.Empty);
+  }
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Execute_GivenSharedArrayAndPersistentStatics_ThenBothEmittersAgreeWithoutFallback(bool optimize) {
+    var direct = new CodeGenerator(Bind(_sharedArrayAndStaticsProgram)) {
+      Optimize = optimize,
+      UseExperimentalBackend = false,
+    };
+    var routed = new CodeGenerator(Bind(_sharedArrayAndStaticsProgram)) {
+      Optimize = optimize,
+      UseExperimentalBackend = true,
+    };
+
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames,
+      Is.SupersetOf(new[] { "Touch", "First", "Second", "main" }),
+      "the feature under test must not pass through the direct-emitter fallback");
+    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+    Assert.That(directCpu.Output.Trim().Replace("\r\n", "|"), Is.EqualTo("12  12 | 1  2  10  3  20"));
   }
 }

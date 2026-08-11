@@ -245,7 +245,9 @@ public sealed partial class DosRuntime {
     ("pow", this.EmitPow),
     ("rounding", this.EmitRounding),
     ("long_helpers", this.EmitLongHelpers),
+    ("memory", this.EmitMemoryProcedures),
     ("strings", this.EmitStringProcedures),
+    ("binary_strings", this.EmitBinaryStringProcedures),
     ("strings2", this.EmitString2Procedures),
     ("trig", this.EmitTrig),          // 8087 SIN/COS - referenced only when the target has no 387
     ("strcmpeq", this.EmitStrCmpEq),   // O0298: only referenced under --optimize, so trimmed from the faithful build

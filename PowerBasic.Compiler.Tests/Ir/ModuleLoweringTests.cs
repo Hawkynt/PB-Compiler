@@ -179,7 +179,8 @@ public sealed class ModuleLoweringTests {
       "END FUNCTION");
 
     Assert.That(module, Is.Not.Null);
-    Assert.That(module!.Globals.Any(g => g.Name == "static.seen"), Is.True, "a STATIC local cannot live in the frame");
+    Assert.That(module!.Globals.Any(g => g.Name == "static.ticks.seen"), Is.True,
+      "a STATIC local must name its owning procedure and cannot live in the frame");
   }
 
   [Test]

@@ -76,16 +76,20 @@ void *rt_str_from_double(long double v);
 void *rt_str_from_ext(long double v);
 
 /* MKx$ / CVx binary record encoders */
+void *rt_str_mkbyt(int16_t v);
 void *rt_str_mki(int16_t v);
 void *rt_str_mkl(int32_t v);
 void *rt_str_mkdwd(int32_t v);
 void *rt_str_mks(float v);
 void *rt_str_mkd(double v);
 int16_t rt_str_cvi(void *s);
+int16_t rt_str_cvbyt(void *s);
+int16_t rt_str_cvwrd(void *s);
 int32_t rt_str_cvl(void *s);
 int32_t rt_str_cvdwd(void *s);
 float rt_str_cvs(void *s);
 double rt_str_cvd(void *s);
+long double rt_str_cve(void *s);
 
 /* --- console output ---------------------------------------------------- */
 void rt_print_str(void *bytes, int32_t len);

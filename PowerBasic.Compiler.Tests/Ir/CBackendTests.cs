@@ -119,6 +119,51 @@ public sealed class CBackendTests {
     }
   }
 
+  [Test]
+  public void Emit_GivenBinaryRecordAliases_WhenBuiltThroughCBackend_ThenRunsWithTheSharedRuntime() {
+    var runtime = Path.Combine(_repoRoot, "runtime");
+    var header = File.ReadAllText(Path.Combine(runtime, "pbc_rt.h"));
+    var implementation = File.ReadAllText(Path.Combine(runtime, "pbc_rt.c"));
+    Assert.Multiple(() => {
+      foreach (var name in new[] { "rt_str_mkbyt", "rt_str_cvbyt", "rt_str_cvwrd", "rt_str_cve" }) {
+        Assert.That(header, Does.Contain(name), $"portable runtime header does not declare {name}");
+        Assert.That(implementation, Does.Contain(name), $"portable runtime does not define {name}");
+      }
+    });
+    Assume.That(_cc, Is.Not.Null, "no C compiler on PATH - C back-end test skipped");
+    const string source = """
+      ok% = -1
+      IF CVBYT(MKBYT$(200)) <> 200 THEN ok% = 0
+      IF CVWRD(MKWRD$(50000)) <> 50000 THEN ok% = 0
+      IF CVE(MKE$(2.5)) <> 2.5 THEN ok% = 0
+      PRINT ok%
+      """;
+    var model = Binder.Bind(
+      Parser.Parse(Lexer.Tokenize(source, "ALIASES.BAS", Dialect.Pb36), "ALIASES.BAS", Dialect.Pb36),
+      Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var module = IrLowering.TryLowerModule(model);
+    Assert.That(module, Is.Not.Null);
+    IrPassManager.Standard().RunOnModule(module!);
+
+    var work = Path.Combine(Path.GetTempPath(), "pbc-c-alias-" + Guid.NewGuid().ToString("N")[..8]);
+    Directory.CreateDirectory(work);
+    try {
+      var csource = Path.Combine(work, "prog.c");
+      File.WriteAllText(csource, CEmitter.Emit(module!));
+      var exe = Path.Combine(work, "prog");
+      var build = Run(_cc!,
+        $"-std=c99 -O2 -I \"{runtime}\" -o \"{exe}\" \"{csource}\" \"{Path.Combine(runtime, "pbc_rt.c")}\" -lm",
+        work, null);
+      Assert.That(build.ExitCode, Is.Zero, $"C compilation failed:\n{build.Output}");
+
+      var run = Run(exe, "", work, null);
+      Assert.That(Normalize(run.Output), Is.EqualTo("-1"));
+    } finally {
+      try { Directory.Delete(work, recursive: true); } catch (IOException) { /* best effort */ }
+    }
+  }
+
   private static SemanticModel Bind(string path) {
     var name = Path.GetFileName(path);
     var text = File.ReadAllText(path);

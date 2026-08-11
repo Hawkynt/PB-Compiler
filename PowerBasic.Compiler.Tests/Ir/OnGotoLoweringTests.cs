@@ -53,6 +53,16 @@ public sealed class OnGotoLoweringTests {
   }
 
   [Test]
+  public void OnGoto_GivenLongSelector_ThenDispatchesOnItsCoercedWord() {
+    var module = LowerModule("n& = 65537\n" + Program.Replace("ON n% GOTO", "ON n& GOTO"));
+    IrPassManager.Standard().RunOnModule(module!);
+
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    Assert.That(LlvmEmitter.Emit(module!), Does.Contain("@rt_print_i16(i16 11)"),
+      "the direct emitter coerces 65537& to INTEGER 1 before ON GOTO dispatch");
+  }
+
+  [Test]
   public void Switch_ConstantSelector_FoldsInSimplifyCfg() {
     var fn = new IrFunction("f", IrType.I32);
     var entry = fn.CreateBlock("entry");
@@ -73,5 +83,25 @@ public sealed class OnGotoLoweringTests {
     Assert.That(fn.AllInstructions.OfType<IrSwitch>(), Is.Empty);   // folded to br b
     Assert.That(IrPrinter.Print(fn), Does.Contain("ret i32 20"));
     Assert.That(IrPrinter.Print(fn), Does.Not.Contain("ret i32 10"));
+  }
+
+  [Test]
+  public void Switch_GivenEquivalentSignedAndUnsignedSpellings_ThenConstantFoldSelectsTheCase() {
+    var fn = new IrFunction("f", IrType.I16);
+    var entry = fn.CreateBlock("entry");
+    var matched = fn.CreateBlock("matched");
+    var @default = fn.CreateBlock("default");
+    var sw = new IrSwitch(new IrConstantInt(IrType.I16, -1), @default);
+    sw.AddCase(ushort.MaxValue, matched);
+    entry.Append(sw);
+    new IrBuilder(matched).Ret(new IrConstantInt(IrType.I16, 1));
+    new IrBuilder(@default).Ret(new IrConstantInt(IrType.I16, 0));
+
+    SimplifyCfg.Run(fn);
+
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(IrPrinter.Print(fn), Does.Contain("ret i16 1"),
+      "switch equality is fixed-width bit equality, so i16 -1 equals i16 65535");
+    Assert.That(IrPrinter.Print(fn), Does.Not.Contain("ret i16 0"));
   }
 }

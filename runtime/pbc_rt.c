@@ -338,6 +338,7 @@ void *rt_str_from_ext(long double v) { char b[64]; rt_fmt_float(b, sizeof b, v, 
 
 /* --- MKx$ / CVx --------------------------------------------------------- */
 
+void *rt_str_mkbyt(int16_t v) { uint8_t b = (uint8_t)v; return rt_make((const char *)&b, 1); }
 void *rt_str_mki(int16_t v) { return rt_make((const char *)&v, 2); }
 void *rt_str_mkl(int32_t v) { return rt_make((const char *)&v, 4); }
 void *rt_str_mkdwd(int32_t v) { return rt_make((const char *)&v, 4); }
@@ -351,10 +352,13 @@ static void rt_cv(void *s, void *out, int32_t n) {
 }
 
 int16_t rt_str_cvi(void *s) { int16_t v; rt_cv(s, &v, 2); return v; }
+int16_t rt_str_cvbyt(void *s) { uint8_t v; rt_cv(s, &v, 1); return (int16_t)v; }
+int16_t rt_str_cvwrd(void *s) { int16_t v; rt_cv(s, &v, 2); return v; }
 int32_t rt_str_cvl(void *s) { int32_t v; rt_cv(s, &v, 4); return v; }
 int32_t rt_str_cvdwd(void *s) { int32_t v; rt_cv(s, &v, 4); return v; }
 float rt_str_cvs(void *s) { float v; rt_cv(s, &v, 4); return v; }
 double rt_str_cvd(void *s) { double v; rt_cv(s, &v, 8); return v; }
+long double rt_str_cve(void *s) { double v; rt_cv(s, &v, 8); return (long double)v; }
 
 /* --- console ------------------------------------------------------------ */
 

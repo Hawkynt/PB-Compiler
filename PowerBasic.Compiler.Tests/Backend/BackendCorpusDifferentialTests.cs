@@ -186,9 +186,19 @@ public sealed class BackendCorpusDifferentialTests {
     // modes; 222 execute in both paths and agree, while six remain outside the emulator's opcode set.
     // After signed 32-bit divide/remainder raised whole-body ownership by three, the corpus baseline
     // is 234 participants and 228 agreements; the same six cases remain outside the emulator.
-    Assert.That(routedSomething, Is.GreaterThanOrEqualTo(234),
+    // The remaining DOS string-kernel ABI mappings add four whole programs in both modes: seven of
+    // those eight executions agree, while one raises the opcode-66 executor limitation to seven.
+    // Subsequent lowering, unsigned conversion, and string-ownership work adds six more complete
+    // module bodies in both modes; the same seven executions remain emulator-limited.
+    // The shared-array/STATIC bridge adds SHAREDG in both modes, and both executions agree.
+    // Binary-record conversion adds DIFF58 in both modes; DIFF08 also routes in both modes but reaches
+    // an executor-only DOS device-information limitation. That yields four participants and two agreements.
+    // Segmented raw-memory comparison adds DIFF10 in both modes, and both executions agree.
+    // Segmented memcpy/memset adds DIFF23 and DIFF74 in both modes. Three executions agree; the
+    // fourth reaches an existing direct-emitter opcode limitation, so it is not counted as agreement.
+    Assert.That(routedSomething, Is.GreaterThanOrEqualTo(266),
       "the back end participated in fewer compilations than it used to:\n" + report);
-    Assert.That(agreed, Is.GreaterThanOrEqualTo(228),
+    Assert.That(agreed, Is.GreaterThanOrEqualTo(256),
       "fewer programs were compared than used to be:\n" + report);
 
     // and a known defect that quietly starts agreeing is worth knowing about too - it means either it

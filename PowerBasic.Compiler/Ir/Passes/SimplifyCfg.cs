@@ -37,7 +37,7 @@ public static class SimplifyCfg {
           target = c.IsZero ? cb.IfFalse : cb.IfTrue;   // constant condition
           break;
         case IrSwitch { Condition: IrConstantInt s } sw:
-          target = sw.Cases.FirstOrDefault(x => x.Value == s.Value).Target ?? sw.DefaultTarget;  // constant selector
+          target = sw.TargetFor(s.Value);                    // fixed-width constant selector
           break;
       }
       if (target is null)

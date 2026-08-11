@@ -402,12 +402,12 @@ real programs through the in-house back end, end to end, oracle-verified. Wideni
 x87 results, string/array params, the main body) is future work; the integer-function path is live and
 verified.
 
-### The data-layout bridge: a routed function reading a module variable
+### The data-layout bridge: globals, shared arrays, and STATIC locals
 
-The back end lays out no data of its own — the whole-program codegen does — so a global access
+The back end lays out no data of its own — the whole-program codegen does — so a scalar global access
 becomes a named `MOperand.DataCell` that resolves at emission to exactly the `Mem` the direct emitter
-uses for that symbol (`TryDirectCell`). Both paths then address the same storage, which is what lets
-routed and directly-emitted code share state at all.
+uses for that symbol (`TryDirectCell`). A shared-array GEP starts from `MOperand.DataOffset(g.name)` and
+adds its constant or runtime byte offset. Both paths therefore address the same storage.
 
 The question that had to be settled first was whether that cell can be **stale**, since the
 cell-sharing prototype was reverted for exactly that reason. It cannot, for two independent reasons,
@@ -420,9 +420,88 @@ and both are properties of the existing code rather than assumptions:
   requires an `SI`/`DI`-clean region — and a call is not clean, so a loop containing a call to the
   routed function cannot keep the global in a register.
 
-Only a *module* variable is bridged. A `STATIC` local and a synthesized IR global (`.data_cursor`, a
-string literal) have no `ModuleVariables` symbol to map back to, so they decline — the emitter throws
-rather than guesses if the routing ever admits one it cannot address.
+A `STATIC` local also borrows its direct-emitter cell. Its IR name is
+`static.<procedure>[.<overload-index>].<local>`, so same-named locals in different procedures cannot
+alias and the emission bridge can recover the exact `VariableSymbol`. A synthesized IR global such as
+`.data_cursor` still has no source symbol to borrow; it declines, and the emitter throws rather than
+guessing if routing ever admits one it cannot address.
+
+### Integer switches on a 16-bit target
+
+`IrSwitch` is selected without relying on an 80186 instruction or a target-owned jump-table format.
+An 8/16-bit selector becomes repeated `CMP`/`JE` pairs followed by a jump to the default. A 32-bit
+selector is grouped by high word: the dispatch block chooses a high-word group, and that block compares
+the low-word cases. Equality therefore covers all 32 bits using ordinary 8086 word operations.
+
+The IR defines switch equality by fixed-width bits, so signed and unsigned spellings of the same case
+pattern match throughout SimplifyCFG, SCCP, and selection (`i16 -1` equals `i16 65535`). Verification
+rejects non-integer conditions, out-of-width cases, and duplicate bit patterns before those stages run.
+
+The introduced machine-only group blocks carry exact successor metadata. Phi copies for every IR edge
+remain in the original dispatch block before its first conditional jump, so later scheduling and
+liveness see the values on every path. Language-level `ON GOTO` first coerces its selector to the
+historical 16-bit `INTEGER`, so `65537&` selects arm 1 exactly as it does in the direct emitter. Focused
+execution covers negative, zero, all in-range arms, the above-range default, and that LONG truncation;
+target phis and general raw-I32 switches are separately selected, scheduled, and allocated. This
+removes the last named-procedure decline in the current corpus: selection/routing moves **224 → 225 of
+240** with allocation declines still at zero.
+
+### Binary-record strings and DX:AX runtime results
+
+The `MKI$`, `MKL$`, `MKDWD$`, `MKS$`, and `MKD$` runtime declarations and their
+`MKBYT$`/`MKWRD$`/`MKE$` aliases now map to separately trimmable wrappers. Integer values are staged
+little-endian in `rt_scratch`; IEEE `SINGLE` and `DOUBLE` values are staged with declared-width x87
+stores. Each wrapper then allocates and returns an owned BASIC string through the existing
+string-memory kernel. Their inverse `CVI`, `CVL`, `CVDWD`, `CVS`, and `CVD` calls, plus
+`CVBYT`/`CVWRD`/`CVE`, share the runtime's padding/copy kernel and load the exact scratch bytes at the
+declared integer or IEEE width. Both one-argument and start-offset CV forms use this path.
+
+Runtime calls returning a dword in `DX:AX` now copy both physical words to a fresh virtual-register
+pair immediately after the call. The same explicit result convention covers integer-range `RND`,
+`LOF`, and `LOC`; scheduler dependencies and allocation therefore preserve both halves instead of
+silently treating the answer as a word.
+
+This routes `DIFF08` and `DIFF58` end to end. At that milestone the census was **142/164 programs lowered**,
+**227/240 functions selected and routed**, and **129/142 lowered module bodies owned**, with zero
+allocation declines. The differential is **260 participating, 251 agreeing, 9 emulator-limited, and
+0 disagreeing**; `DIFF08`'s two executions reach the executor's unimplemented DOS device-information
+call, while `DIFF58` agrees in both modes.
+
+### Segmented raw-memory comparison
+
+Whole-value `TYPE`/`UNION` equality lowers to `rt_mem_compare(ptr, ptr, i32)`. On a segmented target,
+an opaque near offset is insufficient: a module object lives in DS while a procedure-local object
+lives in SS. The runtime ABI therefore derives each pointer's segment from its IR base and passes
+`DX:SI` for the left address, `BX:DI` for the right, and the byte count in CX.
+
+The separately trimmable `rt_memcmp` kernel installs those segments in DS/ES, compares unsigned bytes
+with `REPE CMPSB`, restores both segment registers, and returns -1/0/1 in AX. Selection sign-extends
+that word into the IR declaration's i32 result. Tests cover both DS globals and SS frame objects, plus
+optimized and unoptimized execution against the direct emitter.
+
+`DIFF10` now routes and agrees in both modes. The current census is **142/164 programs lowered**,
+**228/240 functions selected and routed**, and **130/142 lowered module bodies owned**, with zero
+allocation declines. The differential is **262 participating, 253 agreeing, 9 emulator-limited, and
+0 disagreeing**.
+
+### Segmented raw-memory copy and fill
+
+Whole-record assignment and static-array `ERASE` lower to LLVM's `memcpy` and `memset` intrinsics.
+The x86-16 ABI preserves their segmented addresses: each pointer carries a near offset plus a segment
+derived from its IR base, using DS for module/static storage and SS for frame storage. The copy kernel
+takes the source in `DX:SI`, the destination in `BX:DI`, and the exact byte count in CX; the fill
+kernel takes `BX:DI`, the fill byte in AL, and the exact byte count in CX. The intrinsic volatility
+operand must remain a constant i1 marker and has no runtime register slot.
+
+The separately trimmable `rt_memcpy` and `rt_memset` entries install the destination segment in ES,
+use `REP MOVSB`/`REP STOSB`, and restore every segment register they change. Byte operations preserve
+odd-sized record tails instead of rounding them away. Focused tests compare optimized and unoptimized
+images with the direct emitter for a seven-byte record copy and a static-array zero fill.
+
+`DIFF23` and `DIFF74` now route as whole module bodies. Selection/routing moves **228 → 230 of 240**,
+ownership moves **130 → 132 of 142**, and allocation declines remain zero. The differential moves to
+**266 participating, 256 agreeing, 10 emulator-limited, and 0 disagreeing**; one of the four newly
+participating executions reaches an existing direct-emitter test-CPU opcode limitation.
 
 ### Signed division: physical pins and the long-runtime bridge
 
@@ -567,8 +646,8 @@ may later assign to `SI`. With the call barrier, routing went 22 → 32.
 
 Together the two took routing from **14 to 32 of 139** corpus functions this round (38 select).
 
-The current census is **135/162 programs lowered**, **209/233 functions selected**, **209/233
-functions routed**, and **116/135 lowered module bodies owned end to end**. Allocation declines are
+The current census is **142/164 programs lowered**, **230/240 functions selected**, **230/240
+functions routed**, and **132/142 lowered module bodies owned end to end**. Allocation declines are
 zero: all selected functions now survive scheduling and allocation. The last 19 required
 multi-definition phi splitting, read-modify-write splitting, per-use parameter reloads, and
 width-correct byte/word spill references.
@@ -683,6 +762,29 @@ This removes four census declines and moves selection/routing **205 → 209 of 2
 ownership **113 → 116 of 135** and allocation declines still at zero. The execution differential stays
 at 234 participating, 228 agreeing, 6 emulator-limited, and 0 disagreeing because each newly owned
 program already had another routed procedure and therefore already counted as participating.
+
+### The remaining existing DOS string kernels
+
+Three IR declarations were still declining even though the DOS runtime already contained exact
+kernels for them. Their mappings are now explicit in `RuntimeAbi`, preserving the rule that no runtime
+convention is guessed:
+
+- `rt_str_compare(left,right)` is consuming `rt_strcmp`, with handles in `AX`/`DX`. Its word-sized
+  `-1`/`0`/`1` result in `AX` is sign-extended with `CWD` to the IR's `i32` pair.
+- `rt_str_mid2(value,start)` is `rt_strmid` in `AX`/`CX`, with the direct emitter's `DX=7FFFh`
+  maximum-length preset.
+- `rt_str_mid_assign(target,start,limit,replacement)` is `rt_midset` in `AX`/`CX`/`BX`/`DX`. It
+  consumes the replacement, mutates the duplicated target, and restores that target handle in `AX`.
+
+The tests pin every register, the preset, and the result extension, then execute dynamic INTEGER
+positions through both optimized and unoptimized routed builds against the direct emitter. A true
+32-bit position that cannot be proven to originate in a word still declines instead of being silently
+truncated; its dialect-specific overflow behavior needs oracle evidence.
+
+The four former decline sites become complete module bodies at this milestone: `DIFF02`, `DIFF40`,
+`DIFF54`, and `STRINGS`. Selection/routing moves **209 → 213 of 233**, module ownership
+**116 → 120 of 135**, and the corpus differential moves to **242 participating, 235 agreeing,
+7 emulator-limited, 0 disagreeing**.
 
 ### Routing the module body
 

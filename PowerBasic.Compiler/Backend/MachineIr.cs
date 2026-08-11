@@ -54,7 +54,7 @@ public abstract record MOperand {
   public sealed record StackSlot(int Index, MRegSize Size, int Disp = 0) : MOperand;
 
   /// <summary>
-  /// A module-level variable's data cell, named as the IR names it (<c>g.total</c>, <c>static.c</c>).
+  /// A source variable's data cell, named as the IR names it (<c>g.total</c>, <c>static.Tick.c</c>).
   /// The back end does not lay data out - the whole-program codegen does - so this resolves at
   /// emission to exactly the <c>Mem</c> the direct emitter uses for that symbol, which is what keeps
   /// the two paths addressing the same storage.
