@@ -434,6 +434,15 @@ to a statement the *fault* chose, so each statement publishes its own start and 
 cannot be IR branches: the destination is a value in a runtime cell, so the runtime performs the jump
 and the call never returns.
 
+`EXIT FAR` is the same design under another name, and reuses it rather than inventing a second one.
+It is **not** a far return: `EXIT FAR AT label` records an unwind point (`rt_efar_arm`, taking the
+landing block's `IrBlockAddress`) and a bare `EXIT FAR` anywhere afterwards, at any call depth, puts
+that frame back and jumps there (`rt_efar_go`, a call that never returns, followed by `unreachable`).
+Every frame in between is abandoned rather than unwound. Arming is an in-place intrinsic for the
+reason arming a handler is — it captures the *current* `BP` and `SP` — and the function that arms is
+marked `HasErrorHandler` for the reason a handler's is: its landing block has an incoming edge the CFG
+does not show. The function that only *fires* one needs no mark, because it never lands anywhere.
+
 `ERR`, `ERL` and `ERADR` bind to no variable, so a handler naming one arrives at the lowering as an
 unbound name; they read `rt_err` / `rt_erl` / `rt_eresume`, named exactly as the runtime labels them
 so the back end's data-cell bridge resolves them to the very storage the direct emitter uses.
