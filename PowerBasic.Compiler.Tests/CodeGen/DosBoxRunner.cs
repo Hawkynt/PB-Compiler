@@ -27,28 +27,26 @@ public static class DosBoxRunner {
   }
 
 
-  /// <summary>How this emulator can be started without anyone looking at it.</summary>
-  private enum Headless {
-    /// <summary>Starts as it is - a real display, or a build that does not need one.</summary>
-    AsIs,
-    /// <summary>Starts once SDL is told to draw nowhere. Cheapest: no X server involved.</summary>
-    DummyDriver,
-    /// <summary>Needs a real X server to exist, even though nothing is ever displayed.</summary>
-    VirtualDisplay,
-  }
-
   /// <summary>
-  /// SDL's "draw nowhere" driver, under BOTH spellings of the variable that selects it.
+  /// The ways of starting the emulator with nobody looking, cheapest first. A null value means the
+  /// variable is REMOVED, so each candidate is a complete statement about both names rather than an
+  /// edit to whatever the caller happened to export.
   ///
-  /// SDL2 reads SDL_VIDEODRIVER and SDL3 reads SDL_VIDEO_DRIVER, and an SDL2 program is no longer
-  /// evidence that SDL2 is what answers: sdl2-compat re-implements the SDL2 ABI on top of SDL3, so
-  /// a distribution can switch the library underneath an unchanged emulator binary. Setting only
-  /// the SDL2 name then stops selecting anything - SDL3 ignores it, opens the real video backend,
-  /// finds no GLX visual and aborts before the autoexec. Setting both costs nothing and does not
-  /// care which library is underneath.
+  /// The two dummy-driver entries are ALTERNATIVES, and setting both names at once is not a safe
+  /// way to cover both: SDL2 reads SDL_VIDEODRIVER, SDL3 reads SDL_VIDEO_DRIVER, and sdl2-compat -
+  /// which re-implements the SDL2 ABI over SDL3, so an unchanged emulator binary can find either
+  /// underneath it - honours the SDL2 name by selecting SDL2's dummy driver, which has no OpenGL
+  /// and aborts. Belt and braces is a WORSE configuration here than either belt alone, which is why
+  /// each is offered as its own candidate and the one that works is found by trying.
+  ///
+  /// Starting as-is is last but one because on a machine with DISPLAY set it works - and puts a
+  /// real window on the user's desktop for every one of several hundred execution tests.
   /// </summary>
-  private static readonly (string Name, string Value)[] _dummyDriver =
-    [("SDL_VIDEODRIVER", "dummy"), ("SDL_VIDEO_DRIVER", "dummy")];
+  private static readonly (string Label, (string Name, string? Value)[] Vars)[] _candidates = [
+    ("SDL3's dummy video driver", [("SDL_VIDEO_DRIVER", "dummy"), ("SDL_VIDEODRIVER", null)]),
+    ("SDL2's dummy video driver", [("SDL_VIDEODRIVER", "dummy"), ("SDL_VIDEO_DRIVER", null)]),
+    ("no video driver setting", [("SDL_VIDEODRIVER", null), ("SDL_VIDEO_DRIVER", null)]),
+  ];
 
   /// <summary>
   /// Which of the three ways of starting works here, established by trying them in cost order.
@@ -64,19 +62,15 @@ public static class DosBoxRunner {
   /// the generated programs were broken - a host library upgrade wearing the costume of a compiler
   /// regression.
   /// </summary>
-  private static readonly Lazy<Headless> _headless = new(() => {
+  private static readonly Lazy<(string, (string Name, string? Value)[])?> _headless = new(() => {
     // dosbox-staging on Windows quits before the autoexec under the dummy driver, so that host
-    // takes itself out of the choice entirely.
+    // takes itself out of the choice entirely and is left exactly as the caller set it up.
     if (Executable == null || RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-      return Headless.AsIs;
-    // The dummy driver is tried FIRST, and not only because it is the cheapest. Where DISPLAY is
-    // set - a developer machine rather than CI - starting as-is also works, and puts a real window
-    // on the user's desktop for every one of several hundred execution tests.
-    if (StartsCleanly(applyDummyDriver: true))
-      return Headless.DummyDriver;
-    if (StartsCleanly(applyDummyDriver: false))
-      return Headless.AsIs;
-    return Headless.VirtualDisplay;
+      return ("the environment as given", Array.Empty<(string, string?)>());
+    foreach (var candidate in _candidates)
+      if (StartsCleanly(candidate.Vars))
+        return candidate;
+    return null;   // nothing worked: a real X server it is
   });
 
   /// <summary>
@@ -90,16 +84,12 @@ public static class DosBoxRunner {
   /// that works never returns at all. That deadlock is invisible in a test run. It looks like a
   /// slow suite, right up until the run is killed with nothing to show.
   /// </summary>
-  private static bool StartsCleanly(bool applyDummyDriver) {
+  private static bool StartsCleanly((string Name, string? Value)[] vars) {
     try {
       var probe = new ProcessStartInfo(Executable!, "-c exit") {
         UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
       };
-      foreach (var (name, value) in _dummyDriver)
-        if (applyDummyDriver)
-          probe.Environment[name] = value;
-        else
-          probe.Environment.Remove(name);
+      Apply(vars, probe);
 
       var text = new System.Text.StringBuilder();
       using var process = Process.Start(probe)!;
@@ -139,7 +129,16 @@ public static class DosBoxRunner {
   /// that is nothing of the kind. The shell harness hit exactly this and blamed an unrelated
   /// dialect for it, so the same allowance is made here.
   /// </summary>
-  private static int Deadline(int timeoutMs) => _headless.Value == Headless.VirtualDisplay ? timeoutMs * 5 : timeoutMs;
+  /// <summary>Sets or removes each named variable on <paramref name="psi"/> - a null value removes.</summary>
+  private static void Apply((string Name, string? Value)[] vars, ProcessStartInfo psi) {
+    foreach (var (name, value) in vars)
+      if (value == null)
+        psi.Environment.Remove(name);
+      else
+        psi.Environment[name] = value;
+  }
+
+  private static int Deadline(int timeoutMs) => _headless.Value == null ? timeoutMs * 5 : timeoutMs;
 
   /// <summary>
   /// A start-info for the emulator, started the way this host was found to accept.
@@ -147,25 +146,21 @@ public static class DosBoxRunner {
   /// their own ProcessStartInfo and were the only ones still failing after this was introduced.
   /// </summary>
   public static ProcessStartInfo Launch(string arguments) {
-    var psi = _headless.Value == Headless.VirtualDisplay
-      ? new ProcessStartInfo("/usr/bin/xvfb-run", $"-a \"{Executable}\" {arguments}")
-      : new ProcessStartInfo(Executable!, arguments);
-    psi.UseShellExecute = false;
-
-    switch (_headless.Value) {
-      case Headless.DummyDriver:
-        foreach (var (name, value) in _dummyDriver)
-          psi.Environment[name] = value;
-        break;
-      case Headless.VirtualDisplay:
-        Assume.That(HasXvfb, Is.True,
-          $"{Executable} cannot start headless and xvfb-run is not installed - execution test skipped");
-        // Dropped deliberately: handing SDL the driver that draws nowhere, inside the very X
-        // server provided because it needs one, puts back the failure the X server is here to fix.
-        foreach (var (name, _) in _dummyDriver)
-          psi.Environment.Remove(name);
-        break;
+    if (_headless.Value is { } chosen) {
+      var direct = new ProcessStartInfo(Executable!, arguments) { UseShellExecute = false };
+      Apply(chosen.Item2, direct);
+      return direct;
     }
+
+    Assume.That(HasXvfb, Is.True,
+      $"{Executable} cannot start headless and xvfb-run is not installed - execution test skipped");
+    var psi = new ProcessStartInfo("/usr/bin/xvfb-run", $"-a \"{Executable}\" {arguments}") {
+      UseShellExecute = false,
+    };
+    // Both names are dropped: handing SDL a driver that draws nowhere, inside the very X server
+    // provided because it needs one, puts back the failure the X server is here to fix.
+    foreach (var (name, _) in _candidates[0].Vars)
+      psi.Environment.Remove(name);
     return psi;
   }
 

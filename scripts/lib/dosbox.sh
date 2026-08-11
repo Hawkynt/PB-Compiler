@@ -25,9 +25,19 @@
 # library underneath an unchanged binary. Setting only the SDL2 name then selects
 # nothing, the emulator opens the real backend, finds no GLX visual and aborts before
 # the autoexec - no output file, and every program reporting as though the ORACLE had
-# refused it. Both names are set; whichever library is underneath, one of them lands.
+# refused it.
+#
+# The two names are ALTERNATIVES and setting both is not a safe way to cover both:
+# sdl2-compat honours the SDL2 name by selecting SDL2's dummy driver, which has no
+# OpenGL and aborts. Belt and braces is a WORSE configuration than either belt alone,
+# so each is a candidate of its own and the working one is found by trying. Each
+# candidate also UNSETS the other name, so an exported leftover cannot interfere.
 
-_DOSBOX_DUMMY_ENV="SDL_VIDEODRIVER=dummy SDL_VIDEO_DRIVER=dummy"
+_DOSBOX_CANDIDATES=(
+  "-u SDL_VIDEODRIVER SDL_VIDEO_DRIVER=dummy"   # SDL3's spelling
+  "-u SDL_VIDEO_DRIVER SDL_VIDEODRIVER=dummy"   # SDL2's spelling
+  "-u SDL_VIDEO_DRIVER -u SDL_VIDEODRIVER"      # no setting at all
+)
 
 # Whether the emulator gets past starting its video, probed with `-c exit`.
 #
@@ -60,16 +70,20 @@ dosbox_detect_prefix() {
   # run and passed on their own immediately after.
   DOSBOX_TICKS=600
 
-  # The dummy driver is tried FIRST, and not only because it is the cheapest way that can work.
-  # Where DISPLAY is set - a developer machine rather than CI - starting as-is also works, and puts
-  # a real window on the desktop for every program in the battery.
-  # shellcheck disable=SC2086  # deliberately word-split: these are separate assignments
-  if _dosbox_starts_cleanly $_DOSBOX_DUMMY_ENV; then
-    DOSBOX_PREFIX="env $_DOSBOX_DUMMY_ENV"
-    echo "$DOSBOX_FLAVOR needs SDL's dummy video driver: running it with $_DOSBOX_DUMMY_ENV"
-  elif _dosbox_starts_cleanly -u SDL_VIDEODRIVER -u SDL_VIDEO_DRIVER; then
-    return 0
-  elif command -v xvfb-run >/dev/null 2>&1; then
+  # In cost order, and the no-setting candidate is deliberately LAST of the three: where DISPLAY is
+  # set - a developer machine rather than CI - it works, and puts a real window on the desktop for
+  # every program in the battery.
+  local candidate
+  for candidate in "${_DOSBOX_CANDIDATES[@]}"; do
+    # shellcheck disable=SC2086  # deliberately word-split: separate -u flags and assignments
+    if _dosbox_starts_cleanly $candidate; then
+      DOSBOX_PREFIX="env $candidate"
+      echo "$DOSBOX_FLAVOR starts headless with: env $candidate"
+      return 0
+    fi
+  done
+
+  if command -v xvfb-run >/dev/null 2>&1; then
     # The dummy driver is dropped along the way: handing SDL the driver that draws
     # nowhere, inside the very X server provided because it needs one, puts back the
     # failure the X server is here to fix.
