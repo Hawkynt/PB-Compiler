@@ -34,6 +34,29 @@ internal static class RuntimeAbi {
     /// <summary>
     /// A near offset in <see cref="RuntimeArg.Register"/> and its segment value in
     /// <see cref="RuntimeArg.High"/>. The selector derives DS for globals and SS for frame objects.
+    ///
+    /// <para>
+    /// <b>Adding a new entry that uses this is not safe today.</b> Three separate attempts to route a
+    /// call through it produced a MISCOMPILE rather than a decline, and all three failed with the
+    /// optimizer off, which places the defect in the selector's argument staging rather than in any
+    /// pass:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item>a record copy between two array elements - two pointers into the SAME frame object -
+    ///   copied zeros while the source still held its values;</item>
+    ///   <item><c>rt_str_from_fixed</c> reading a fixed buffer through this kind rather than through
+    ///   <see cref="Offset"/> disagreed with the direct emitter on two corpus runs;</item>
+    ///   <item>a four-argument record GET/PUT using one of these alongside a <see cref="Pair"/>
+    ///   disagreed on two more.</item>
+    /// </list>
+    /// <para>
+    /// The staging writes each argument straight into its PHYSICAL register as it goes, so a source
+    /// operand the allocator happened to place in a later argument's register is read after it has
+    /// been overwritten - the destination's segment slot is the one that collides most often. The
+    /// entries that use this kind today were added before the pattern was visible and are pinned by
+    /// the corpus; a new one needs the staging fixed first, which means computing every argument into
+    /// a temporary before any physical register is written.
+    /// </para>
     /// </summary>
     Pointer,
 
