@@ -1144,6 +1144,26 @@ public sealed class InstructionSelector {
             ReadsMemory: false, WritesMemory: false)));
         return true;
       }
+      // A BYTE is the low half of the word already holding the value, so narrowing to one is a
+      // change of VIEW rather than of content: the same virtual register, named at byte width. That
+      // is the same reinterpretation the runtime-call staging does when it needs AL out of AX, and
+      // it is why no masking instruction is emitted - nothing above the low eight bits is readable
+      // through a byte-sized name.
+      case IrCastOp.Trunc when from.IsInteger && from.Bits == 16 && to.IsInteger && to.Bits <= 8: {
+        if (!this.TryOperand(cast.Value, out var source))
+          return false;
+        if (source is MOperand.Register word) {
+          this._vregs[cast] = word.Reg with { Size = MRegSize.Byte };
+          return true;
+        }
+        // a constant has no register to rename, so it is moved into one at byte width - the move is
+        // what the narrowing costs when the value did not arrive in a register to begin with
+        var narrowed = this.FreshVreg(cast.Type);
+        var dest = new MOperand.Register(narrowed);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, source], MovEffect(dest, source)));
+        this._vregs[cast] = narrowed;
+        return true;
+      }
       case IrCastOp.Trunc when IsWide(from) && to.IsInteger && to.Bits == 16: {
         if (!this.TryOperandPair(cast.Value, out var lo, out _))
           return false;

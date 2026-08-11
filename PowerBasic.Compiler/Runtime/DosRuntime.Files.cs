@@ -60,6 +60,11 @@ public sealed partial class DosRuntime {
   public Label FGetInto { get; private set; } = null!;
   public Label FToken { get; private set; } = null!;
 
+  /// <summary>INPUT of a number: AX = PB file number (0 = console) -> AX (or DX:AX) = the value.</summary>
+  public Label InputI16 { get; private set; } = null!;
+  public Label InputI32 { get; private set; } = null!;
+  public Label InputFlt { get; private set; } = null!;
+
   private void EmitFileProcedures(Assembler asm) {
     var files = asm.Lbl("rt_files");
     var ioError = asm.Lbl("rt_err_io");
@@ -481,6 +486,43 @@ public sealed partial class DosRuntime {
       asm.Pop(Reg.CX);
       asm.Pop(Reg.BX);
       asm.Pop(Reg.AX);
+      asm.Ret();
+    }
+
+    // INPUT of a NUMBER, given the same name the C runtime gives it. The IR declares rt_input_i16 /
+    // rt_input_i32 because the same declaration also feeds the C back end, where such a function
+    // really exists; on DOS the direct emitter composes the answer at the CALL SITE instead - read a
+    // token, VAL it, round it into the target. Composing it HERE rather than teaching the ABI table
+    // to compose gives both back ends one shape and keeps that table a plain list of claims.
+    //
+    // AX = the PB file number on entry (0 is the console), which is exactly what rt_ftoken wants.
+    // FISTP rounds with whatever control word is current, which is the same rounding an assignment
+    // of a DOUBLE to an INTEGER gets - nearest, ties to even.
+    this.InputI16 = asm.MarkLabel("rt_inp_i16");
+    {
+      asm.Call(asm.Lbl("rt_ftoken"));
+      asm.Call(asm.Lbl("rt_val"));          // AX = handle -> ST0, handle consumed
+      asm.Fistp(Mem.Word(asm.Lbl("rt_scratch")));
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_scratch")));
+      asm.Ret();
+    }
+
+    this.InputI32 = asm.MarkLabel("rt_inp_i32");
+    {
+      asm.Call(asm.Lbl("rt_ftoken"));
+      asm.Call(asm.Lbl("rt_val"));
+      asm.Fistp(Mem.Dword(asm.Lbl("rt_scratch")));
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_scratch")));
+      asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_scratch"), 2));
+      asm.Ret();
+    }
+
+    // and the float form, which needs no conversion at all: rt_val already answers on ST0, which is
+    // where the IR's float call result is read from
+    this.InputFlt = asm.MarkLabel("rt_inp_flt");
+    {
+      asm.Call(asm.Lbl("rt_ftoken"));
+      asm.Call(asm.Lbl("rt_val"));
       asm.Ret();
     }
 

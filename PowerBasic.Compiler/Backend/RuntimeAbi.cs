@@ -386,6 +386,38 @@ internal static class RuntimeAbi {
     // zero pinned into AX rather than a second row that could drift from this one.
     ["rt_finput_line"] = new("rt_linput", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     ["rt_input_line"] = new("rt_linput", [], _callerSaved, Result: Reg.AX, Constants: [(Reg.AX, 0)]),
+    // INPUT of a number: a token read, VAL'd and rounded. The console form presets the file number
+    // to 0 exactly as the LINE INPUT pair above does.
+    // INPUT of a FLOAT: rt_val already leaves its answer on ST0, so there is nothing to convert.
+    // All three widths share one entry - the runtime reads a number, and the DECLARED type picks the
+    // formatter rather than a rounding step, which is the same rule PRINT follows.
+    ["rt_finput_single"] = new("rt_inp_flt", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.St0),
+    ["rt_input_single"] = new("rt_inp_flt", [], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.St0, Constants: [(Reg.AX, 0)]),
+    ["rt_finput_double"] = new("rt_inp_flt", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.St0),
+    ["rt_input_double"] = new("rt_inp_flt", [], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.St0, Constants: [(Reg.AX, 0)]),
+    ["rt_finput_ext"] = new("rt_inp_flt", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.St0),
+    ["rt_input_ext"] = new("rt_inp_flt", [], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.St0, Constants: [(Reg.AX, 0)]),
+    // INPUT of a STRING item: one token, which rt_ftoken already answers with as a handle
+    ["rt_finput_str"] = new("rt_ftoken", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    ["rt_input_str"] = new("rt_ftoken", [], _callerSaved, Result: Reg.AX, Constants: [(Reg.AX, 0)]),
+    // "StoreFixed: AX=handle, DX:DI=dest, CX=field length (copy + blank pad; consumes)" - the IR
+    // names the destination first because it declares C-style, and the length arrives as an i32
+    // whose low word is the field width, exactly as rt_print_str's length does
+    ["rt_str_to_fixed"] = new("rt_store_fixed",
+      [new(ArgKind.Pointer, Reg.DI, Reg.DX), new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.AX)],
+      _callerSaved),
+    ["rt_finput_i16"] = new("rt_inp_i16", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    ["rt_input_i16"] = new("rt_inp_i16", [], _callerSaved, Result: Reg.AX, Constants: [(Reg.AX, 0)]),
+    ["rt_finput_i32"] = new("rt_inp_i32", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.Pair),
+    ["rt_input_i32"] = new("rt_inp_i32", [], _callerSaved, Result: Reg.AX,
+      Answer: ResultKind.Pair, Constants: [(Reg.AX, 0)]),
 
     // "Rnd: -> ST0 = next SINGLE in [0,1)"
     ["rt_rnd"] = new("rt_rnd", [], _callerSaved, Answer: ResultKind.St0),
