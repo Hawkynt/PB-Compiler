@@ -253,7 +253,10 @@ public sealed class BackendCoverageTests {
     // Then when dynamic array storage routed: an IR pointer gained an ADDRESS SPACE, so a block in the
     // far array heap is a different kind of pointer rather than the same kind pointing somewhere the
     // back end could not name, and the allocation family took its size in bytes.
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(257),
+    // Then 257 -> 258 when BIT(x, n) with a LITERAL bit number stopped emitting the range guard for
+    // constant folding to remove: a function with inline asm is skipped by the optimizer whole, so
+    // LOWLEVEL.BAS reached the selector with a shift count that was a widening cast of a 2.
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(258),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
     Assert.That(census.ProcedureDeclines, Is.Empty,
       "a lowered named procedure no longer reaches the x86-16 back end:\n" + report);
@@ -274,7 +277,7 @@ public sealed class BackendCoverageTests {
 
     // selection is not routing: the whole-program codegen also schedules and allocates, and a value
     // live across a CALL has no register unless the spiller can move it to the frame
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(256),
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(257),
       "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // The figure that matters for whole-program ownership: module bodies the back end compiles end
@@ -450,7 +453,7 @@ public sealed class BackendCoverageTests {
     "INPUTS.BAS",
     "INTREG.BAS",   // REG / CALL INTERRUPT
     "LINKDEMO.BAS",
-    "LOWLEVEL.BAS",   // VARPTR; its main still declines at SELECTION on an asm label reference
+    "LOWLEVEL.BAS",   // VARPTR, and inline assembly its module body now routes whole
     "MATHUNIT.BAS",
     "ONERR.BAS",
     "ONERRNXT.BAS",
@@ -610,6 +613,9 @@ public sealed class BackendCoverageTests {
     "INTREG.BAS",   // REG / CALL INTERRUPT
     "INPUTS.BAS",
     "LINKDEMO.BAS",
+    // inline assembly end to end: a jump to a BASIC label, and CX held across a BASIC statement
+    // because the registers an ! statement names are reserved where they have to survive
+    "LOWLEVEL.BAS",
     "MATHUNIT.BAS",
     "ONERR.BAS",
     "ONERRNXT.BAS",

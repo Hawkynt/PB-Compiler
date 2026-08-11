@@ -1084,21 +1084,54 @@ instruction. The parse failed, and a failed parse is reported as "a name in it i
 pass could bind" — so the block declined for a name it could in fact bind. The probe now asks the
 lowering which kind each name is, and reaches the same conclusion the real resolver will.
 
-`LOWLEVEL.BAS` does **not** route on the back of this, and the reason is worth writing down because it
-is a defect rather than a missing feature. Its module body now declines one construct later, at
-`BIT(s, 2)`: a function with inline asm is skipped by the optimizer whole, so the shift count is still
-an unfolded `IrCast` of a constant where `SelectWideShift` wants a constant. Behind *that* sits a real
-disagreement, pinned by `InlineAsm_GivenARegisterHeldAcrossABasicStatement_ThenTheTwoPathsDisagree`:
+## Which registers are the assembly's
+
+Two things stood between `LOWLEVEL.BAS` and the back end, and only one of them was a missing feature.
+
+The defect first. A register an `!` statement loads has to still be there for the next one:
 
 ```basic
 ! MOV CX, 5
-n = n + 1        ' the allocator puts n+1 in CX
-! MOV r, CX      ' ...and the asm's 5 is gone
+n = n + 1        ' the allocator put n+1 in CX
+! MOV r, CX      ' ...and the asm's 5 was gone
 ```
 
-The direct emitter computes through `AX` and so leaves `CX` alone by luck rather than by contract; the
-back end's allocator has no way to know the text cared about a register, and `MInstrEffect`'s clobber
-list says only that nothing of *ours* survives the block — not that something of *theirs* must. No
-label is involved, and a function shaped like this routes today. LOWLEVEL is shaped like this, so
-whoever removes its `LShr` decline turns a decline into a corpus **disagreement** unless this is fixed
-first.
+`MInstrEffect`'s clobber list said only that nothing of *ours* survives the block. The claim it could
+not make is the opposite one — that something of *theirs* must — and no pass reading machine operands
+could infer it, because between the two statements `CX` holds a value nothing in the IR mentions.
+
+`InlineAsmReservation` states it. **A register is the assembly's, and no value may be allocated into
+it, at every point reachable from an `!` statement that names it which can also reach an `!` statement
+that names it again.** Both directions are computed over the CFG rather than over a range of
+instruction indices, because a loop puts code between two executions of the same statement while it
+sits *after* it in the stream: the increment of a `FOR` whose body ends in `!DEC CX` is exactly that.
+The result is a per-instruction set the allocator reads through the same path a `CALL`'s clobbers
+take, so a reserved register is one an interval spanning that point may not be given, and the spiller
+moves what does not fit into the frame as usual.
+
+It reserves what it must and no more. A run of consecutive `!` statements has nothing in between to
+reserve against, which is why `DIFF20.BAS` — eight asm statements in a row implementing the
+string-manager ABI — pays nothing; and the registers a BASIC statement destroys by a FIXED convention
+(a runtime call's arguments and result, `DX:AX` around a divide, `CL` for a variable shift) are not
+reserved at all. Those are not the allocator's choice, and the direct emitter destroys the same ones
+in the same places, so reserving them would mean refusing to compile rather than compiling correctly.
+The residual gap is an `INT` whose OUTPUT register the text never names anywhere — a register is
+tracked only from the point some statement names it, and the usual shape (`MOV AH,..` before,
+`MOV var,AX` after) names it on both sides.
+
+In the other direction the rule is deliberately STRONGER than the direct emitter, which holds nothing
+on purpose and merely happens to leave a register alone. `!MOV DX,22 / n = n * n + 1 / !MOV s,DX`
+answers 22 through the back end and 0 through the direct emitter, whose multiply goes through `DX`.
+Being right where the older emitter is lucky is the intended direction of that difference — but it is
+a difference, and a program written against the luck would surface as a differential disagreement.
+
+What a statement touches is answered by `TextAssembler.RegistersUsed`, from the parser's own tokens —
+so a register is what the assembler will really assemble as one — plus a table of the registers a
+mnemonic implies without spelling them: `LOOP` and a `REP` prefix counting `CX` down, `MOVSB` walking
+`SI`/`DI`, `MUL` answering in `DX:AX`.
+
+Then the missing feature, which was not in the asm path either. `BIT(s, 2)` reached the selector as a
+32-bit shift whose count was a widening `IrCast` of a 2: `LowerBit` emitted a compare, a select and a
+cast for constant folding to remove, and a function holding inline asm is skipped by the optimizer
+whole. The guard for a LITERAL bit number is now decided in the lowering, where the literal is. With
+both, LOWLEVEL's module body routes end to end and the corpus differential runs it both ways.

@@ -108,4 +108,50 @@ public sealed class BitLoweringTests {
     Assert.That(Run(source, routed: true), Is.EqualTo(Run("PRINT 0; 0\nEND", routed: true)));
     Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)));
   }
+
+  /// <summary>
+  /// The edges of the literal guard, which is decided in the lowering rather than by constant folding:
+  /// bit 0 and bit 31 are inside, 32 is one past, and a NEGATIVE literal is out of range too - the
+  /// comparison is unsigned, so -1 is a huge count and not the last bit.
+  /// </summary>
+  [Test]
+  public void Bit_GivenALiteralAtTheEdgesOfTheRange_ThenBothPathsAnswerTheSame() {
+    const string source = """
+      DIM v AS LONG
+      v = -1
+      PRINT BIT(v, -1); BIT(v, 0); BIT(v, 31); BIT(v, 32)
+      END
+      """;
+    Assert.That(Run(source, routed: true), Is.EqualTo(Run("PRINT 0; 1; 1; 0\nEND", routed: true)));
+    Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)));
+  }
+
+  /// <summary>
+  /// A LITERAL bit number leaves no guard in the IR to fold away - which is the whole point, because
+  /// the optimizer does not run over every function. LOWLEVEL.BAS holds inline assembly, so its module
+  /// body is skipped whole, and <c>BIT(s, 2)</c> used to reach the selector as a 32-bit shift whose
+  /// count was an <c>IrCast</c> of a 2 rather than a 2. It kept the program off the back end.
+  ///
+  /// <para>Asserted on the UNOPTIMIZED module, since a pass folding it later would prove nothing.</para>
+  /// </summary>
+  [Test]
+  public void Bit_GivenALiteralBitNumber_ThenTheLoweringEmitsNeitherGuardNorCast() {
+    var module = IrLowering.TryLowerModule(Bind("""
+      DIM s AS WORD
+      s = 12
+      ! MOV CX, 1
+      PRINT BIT(s, 2)
+      END
+      """), out var why);
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+
+    var main = module!.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
+    var instructions = main.Blocks.SelectMany(b => b.Instructions).ToList();
+    Assert.That(instructions.OfType<IrSelect>(), Is.Empty, "the range guard is decided at lowering");
+    Assert.That(instructions.OfType<IrCmp>(), Is.Empty);
+
+    var shift = instructions.OfType<IrBinary>().Single(b => b.Op == IrBinaryOp.LShr);
+    Assert.That(shift.Rhs, Is.InstanceOf<IrConstantInt>(), "the count the back end has to read is a number");
+    Assert.That(((IrConstantInt)shift.Rhs).Value, Is.EqualTo(2));
+  }
 }
