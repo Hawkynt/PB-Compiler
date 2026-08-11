@@ -10,7 +10,7 @@ passes; an empty box means nobody has checked yet, which is not the same as fail
 | | Dimension | Measured | Notes |
 |---|---|---|---|
 | [x] | Statement syntax and parameter combinations | 171 / 171 | all 171 accepted |
-| [x] | Lowers to the IR | 91 / 171 | 91 of 171 reach the IR; the rest decline by name, which is the documented subset |
+| [x] | Lowers to the IR | 99 / 171 | 99 of 171 reach the IR; the rest decline by name, which is the documented subset |
 | [x] | Syntax errors in unreachable branches are ignored, and warned about | 1 / 1 | all 1 held |
 | [~] | Syntax errors on reachable flow fail | 0 / 1 | 1 not held: reachable malformed source was accepted |
 | [x] | Syntax belonging to another dialect is rejected | 130 / 130 | all 130 cleanly refused |

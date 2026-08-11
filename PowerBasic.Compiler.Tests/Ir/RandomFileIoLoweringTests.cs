@@ -57,11 +57,25 @@ public sealed class RandomFileIoLoweringTests {
     Assert.That(get.Args.ToList()[3], Is.InstanceOf<IrConstantInt>().And.Property("Value").EqualTo(4L));   // LONG = 4 bytes
   }
 
+  /// <summary>
+  /// A GET naming no variable is the FIELD-buffer form: it positions the file and then scatters the
+  /// record through whatever windows were registered for it. Two calls rather than one, because the
+  /// runtime routine that walks the fields takes only the file number and has nowhere to carry a
+  /// record number - which is the same split the direct emitter makes.
+  /// </summary>
   [Test]
-  public void FieldBasedGetPut_Declines() {
+  public void FieldBasedGetPut_SeeksAndThenWalksTheFields() {
     var module = LowerModule("OPEN \"d.dat\" FOR RANDOM AS #1 LEN = 2\nGET #1, 1\nEND", optimize: false);
 
-    Assert.That(module, Is.Null);   // GET with no variable is the FIELD-buffer form, not modeled
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
+    var main = module!.Functions.First(f => f.Name == "main");
+    var calls = main.AllInstructions.OfType<IrCall>()
+      .Select(c => (c.Callee as IrFunction)?.Name)
+      .Where(n => n is "rt_file_setpos" or "rt_field_get" or "rt_field_put")
+      .ToList();
+
+    Assert.That(calls, Is.EqualTo(new[] { "rt_file_setpos", "rt_field_get" }));
   }
 
   [Test]

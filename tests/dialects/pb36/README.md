@@ -10,7 +10,7 @@ passes; an empty box means nobody has checked yet, which is not the same as fail
 | | Dimension | Measured | Notes |
 |---|---|---|---|
 | [x] | Statement syntax and parameter combinations | 301 / 301 | all 301 accepted |
-| [x] | Lowers to the IR | 193 / 301 | 193 of 301 reach the IR; the rest decline by name, which is the documented subset |
+| [x] | Lowers to the IR | 201 / 301 | 201 of 301 reach the IR; the rest decline by name, which is the documented subset |
 | [~] | Syntax errors in unreachable branches are ignored, and warned about | 0 / 1 | 1 not held: accepted but silent - acceptance must be deliberate, not indistinguishable from not looking |
 | [x] | Syntax errors on reachable flow fail | 1 / 1 | all 1 held |
 | [-] | Syntax belonging to another dialect is rejected | - | this dialect provides every form in the surface |

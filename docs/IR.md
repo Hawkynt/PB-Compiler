@@ -118,7 +118,21 @@ Supported today:
   `INPUT`/`LINE INPUT`, `OPEN`/`CLOSE`/`PRINT #`/`INPUT #`)
   via `rt_print_*` / `rt_input_*` / `rt_file_*` declarations; **random/binary record I/O**
   (`OPEN … FOR RANDOM/BINARY … LEN=`, `GET`/`PUT #n, rec, var`) of a fixed-size scalar
-  variable via `rt_file_get`/`rt_file_put` (the FIELD-buffer form is declined);
+  variable via `rt_file_get`/`rt_file_put`; the **FIELD-buffer form** as well - `FIELD #n, w AS a$`
+  registers a window on the record buffer (`rt_field_add`), `LSET`/`RSET` justify inside that
+  window without replacing the handle (`rt_str_justify`), and a bare `GET`/`PUT #n [, rec]`
+  positions (`rt_file_setpos`) and then scatters/gathers the whole record through the
+  registered names (`rt_field_get`/`rt_field_put`). A FIELD variable is forced into module
+  storage: the runtime keeps the ADDRESS of its handle cell and dereferences it later
+  through DS, so a frame slot could not be registered;
+- **`CHAIN`/`RUN`**: the `COMMON` block streams into the handoff file in declaration order
+  (`rt_chain_open_write`, then `rt_chain_write`/`rt_chain_write_str` per variable,
+  `rt_chain_close`) and control passes to the named image (`rt_chain_exec`, which does not
+  return). The other half is emitted at the head of every module body that declares `COMMON`:
+  whatever the previous image left is absorbed back into those cells
+  (`rt_chain_open_read` guarding `rt_chain_read`/`rt_chain_read_str`). `RUN` is the same
+  transfer with no handoff. `COMMON` variables become module globals for the same
+  DS-addressability reason FIELD variables do;
 - **`DATA`/`READ`/`RESTORE`**: all DATA items pack into one length-prefixed module blob
   (`@.data`) walked by a module-global i32 cursor (`@.data_cursor`); numeric reads parse
   via `rt_str_val`, string reads store the `rt_str_const` handle, `RESTORE [<label>]`
@@ -153,8 +167,15 @@ and sequential file-processing programs lower, optimize and compile to a native 
 object via `pbc --emit-llvm | llc` (linked against a runtime providing the `rt_*`
 functions; the `llvm.*` math intrinsics need no runtime).
 
-Not yet: the FIELD-buffer form of random I/O, and `GET`/`PUT` of UDT/string records
-(only fixed-size scalar records are modeled).
+Not yet: `GET`/`PUT` of UDT/string records (only fixed-size scalar records are modeled), and
+`DIM … AT` together with the memory-model array classes (`HUGE`, `VIRTUAL`, `EMS`, `XMS`,
+`ABSOLUTE`). The declaration of one of those is expressible; an ELEMENT of one is not. Each
+reaches its storage through a segment computed per access - `base + (byteOffset >> 4)` for
+`HUGE`, the EMS page frame after mapping the right logical page for `VIRTUAL`, the `AT`
+segment for `ABSOLUTE` - and the machine IR's memory operand carries no segment at all, only
+a base, an index, a scale and a displacement, all implicitly `DS` or `SS`. Admitting the
+declaration alone is worse than refusing it: the `AT` segment then disappears from the IR
+entirely and the accesses select as ordinary near stores.
 
 ## Optimization passes (`Ir/Passes/`)
 
