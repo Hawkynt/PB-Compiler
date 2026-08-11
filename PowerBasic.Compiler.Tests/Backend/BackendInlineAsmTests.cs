@@ -140,6 +140,133 @@ public sealed class BackendInlineAsmTests {
   }
 
   /// <summary>
+  /// A BASIC LABEL as a jump target. The loop is written half in assembly and half in BASIC - the
+  /// body is a BASIC statement and <c>JNZ</c> goes back to the BASIC label - so the only thing that
+  /// can produce 5 is the branch actually being taken four times. A block that fell through instead
+  /// would print 1, and one whose target was mis-resolved would not run at all.
+  ///
+  /// <para>
+  /// The counter is a BASIC VARIABLE rather than CX, and that is not incidental: a register set by
+  /// one <c>!</c> statement does NOT survive an intervening BASIC statement on the routed path,
+  /// because the allocator is free to put a temporary in it and has no way to know the asm cared.
+  /// That is a separate defect, it has nothing to do with labels (a block with no label in it loses
+  /// CX the same way), and it is pinned by
+  /// <see cref="InlineAsm_GivenARegisterHeldAcrossABasicStatement_ThenTheTwoPathsDisagree"/> rather
+  /// than smuggled into this reading of the branch.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenAJumpToABasicLabel_ThenTheLoopReallyBranches() {
+    const string source = """
+      DIM n AS INTEGER
+      DIM c AS INTEGER
+      n = 0
+      c = 5
+      AddLoop:
+      n = n + 1
+      ! DEC c
+      ! JNZ AddLoop
+      PRINT n
+      """;
+
+    Assert.That(Run(source, routed: true), Is.EqualTo("5"), "the asm branch drove five BASIC iterations");
+    Assert.That(Run(source, routed: false), Is.EqualTo(Run(source, routed: true)));
+  }
+
+  /// <summary>
+  /// The open defect the test above steps around, written down so it fails the day it is fixed
+  /// rather than being discovered by a program: a register an <c>!</c> statement loads is destroyed
+  /// by the next BASIC statement on the routed path. The direct emitter computes through AX and so
+  /// leaves CX alone by luck rather than by contract; the back end's allocator picks CX for a
+  /// temporary and the asm's value is gone.
+  ///
+  /// <para>
+  /// No label is involved - this is what binding one made REACHABLE for LOWLEVEL.BAS, not what it
+  /// introduced. LOWLEVEL still declines before it can be bitten (a 32-bit LShr), so the corpus
+  /// differential does not yet see this; whoever removes that decline must fix this first.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenARegisterHeldAcrossABasicStatement_ThenTheTwoPathsDisagree() {
+    const string source = """
+      DIM n AS INTEGER
+      DIM r AS INTEGER
+      n = 0
+      ! MOV CX, 5
+      n = n + 1
+      ! MOV r, CX
+      PRINT n; r
+      """;
+
+    Assert.That(Run(source, routed: false), Is.EqualTo("1  5"), "the direct emitter happens to leave CX alone");
+    Assert.That(Run(source, routed: true), Is.EqualTo("1  1"),
+      "KNOWN DEFECT: the allocator put n+1 in CX. When this starts failing, the defect is fixed - "
+      + "make it assert agreement instead of pinning the disagreement");
+  }
+
+  /// <summary>
+  /// ...and it really is the ROUTED path doing it: the name binds to the block's address rather than
+  /// leaving the whole statement unbindable, the selector hands the emitter a block offset rather
+  /// than a frame cell, and the block reports itself address-taken - which is the property
+  /// <see cref="SimplifyCfg"/> and <see cref="Sccp"/> consult before merging or dropping a block, and
+  /// without it the label could be optimized out from under a jump nothing in the CFG shows.
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenAJumpToABasicLabel_ThenTheTargetBlockIsAddressTakenAndSelectsAsABlockOffset() {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("""
+      DIM n AS INTEGER
+      n = 0
+      ! MOV CX, 5
+      AddLoop:
+      n = n + 1
+      ! DEC CX
+      ! JNZ AddLoop
+      PRINT n
+      """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    var module = IrLowering.TryLowerModule(model, out var why);
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+
+    var main = module!.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
+    var jump = main.Blocks.SelectMany(b => b.Instructions).OfType<IrInlineAsm>()
+      .Single(a => a.Text.Contains("JNZ", StringComparison.OrdinalIgnoreCase));
+
+    Assert.That(jump.Routable, Is.True, "a label is a bound name, not an unknown one");
+    Assert.That(jump.Names, Is.EqualTo(new[] { "AddLoop" }));
+    Assert.That(jump.Operands.OfType<IrBlockAddress>().Single().Block,
+      Is.SameAs(main.AddressTakenBlocks().Single()), "the target block, and it is address-taken");
+
+    var m = InstructionSelector.TrySelect(main, out var reason);
+    Assert.That(m, Is.Not.Null, $"selection declined: {reason}");
+    var block = m!.AllInstructions.Single(i => i.Opcode == MOpcode.InlineAsm
+      && ((MOperand.InlineAsmText)i.Operands[0]).Names.Contains("AddLoop"));
+    Assert.That(block.Operands[1], Is.InstanceOf<MOperand.BlockOffset>(),
+      "a jump target is a code label, not a frame cell");
+    Assert.That(LinearScanAllocator.Allocate(m), Is.Not.Null, "and it allocates, so the function routes");
+  }
+
+  /// <summary>
+  /// A name that is neither a variable nor a label of this scope still leaves the block unroutable -
+  /// the equates and everything else the direct emitter resolves and this pass does not. Binding
+  /// labels must not have turned "I do not know this name" into a silent guess.
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenAnUnknownName_ThenTheBlockIsStillNotRoutable() {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("""
+      %Limit = 4
+      DIM n AS INTEGER
+      ! MOV AX, %Limit
+      ! MOV n, AX
+      PRINT n
+      """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    var module = IrLowering.TryLowerModule(model, out var why);
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+
+    var main = module!.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
+    Assert.That(InstructionSelector.TrySelect(main, out var reason), Is.Null);
+    Assert.That(reason, Does.Contain("not a variable this pass could bind"));
+  }
+
+  /// <summary>
   /// The call target really does route rather than fall back to the direct emitter - which is the
   /// only thing that makes the assertion above about the ROUTED path mean anything.
   /// </summary>

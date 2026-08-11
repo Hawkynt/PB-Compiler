@@ -431,10 +431,19 @@ public sealed class IrLowering {
   /// knows which tokens are registers, which are mnemonics and which are operands, and asks about
   /// exactly the last group. Guessing that set is the failure mode this whole node exists to avoid.
   ///
-  /// A name that does not bind to a variable leaves the block un-routable. It might be a BASIC label,
-  /// an equate, or something the model does not know at all; the direct emitter resolves all of those,
-  /// and until a back end can too, emitting a partly-resolved block would put a name on the wrong cell
-  /// without saying so.
+  /// A name that does not bind leaves the block un-routable. It might be an equate, or something the
+  /// model does not know at all; the direct emitter resolves all of those, and until a back end can
+  /// too, emitting a partly-resolved block would put a name on the wrong cell without saying so.
+  ///
+  /// <para>
+  /// A BASIC LABEL binds as well, and binds to a block rather than to storage: <c>!JNZ AddLoop</c> is
+  /// a jump the CFG does not draw, and the address it needs is the block's own - the same
+  /// <see cref="IrBlockAddress"/> an <c>ON ERROR</c> handler and <c>CODEPTR32</c> are named by. Which
+  /// makes the protection automatic: the block is address-taken, so
+  /// <see cref="IrFunction.AddressTakenBlocks"/> reports it and no CFG rewrite may merge or drop it.
+  /// A jump target optimized away underneath the text would be a label the emitter never defines, and
+  /// the assembler would be the first to hear about it.
+  /// </para>
   ///
   /// <para>
   /// One class of name binds without carrying anything: the string-manager routines PB documents as
@@ -448,13 +457,19 @@ public sealed class IrLowering {
   /// </summary>
   private void LowerInlineAsm(InlineAsmStmt stmt) {
     var node = new IrInlineAsm(stmt.Text);
-    var seen = new AsmNames();
-    var parsed = new Asm.TextAssembler(new Asm.Assembler()).TryParse(stmt.Text, seen, out _);
+    var probe = new Asm.Assembler();
+    var seen = new AsmNames(name =>
+      this.AsmVariable(name) is null && this._labels.ContainsKey(name) ? probe.Lbl(name) : null);
+    var parsed = new Asm.TextAssembler(probe).TryParse(stmt.Text, seen, out _);
 
     var routable = parsed;
     foreach (var name in seen.Collected)
+      // a VARIABLE first, exactly as the direct emitter's resolver orders it: a label sharing a
+      // variable's spelling is the variable, on both paths
       if (this.AsmVariable(name) is { } symbol)
         node.Bind(name, this.SlotFor(symbol));
+      else if (this._labels.TryGetValue(name, out var target))
+        node.Bind(name, new IrBlockAddress(target));
       else if (Runtime.InlineAsmExports.Canonical(name) is null)
         routable = false;
 
@@ -463,17 +478,32 @@ public sealed class IrLowering {
     this._fn.HasInlineAsm = true;
   }
 
-  /// <summary>Records every identifier the assembler asks about, answering so that parsing continues.</summary>
-  private sealed class AsmNames : Asm.IAsmSymbolResolver {
+  /// <summary>
+  /// Records every identifier the assembler asks about, answering so that parsing continues.
+  ///
+  /// <para>
+  /// The stand-in has to be MEMORY, not a constant. The parse must reach the same conclusions the
+  /// real one will, and <c>MOV n, AX</c> with n a constant is not an instruction - answering with a
+  /// constant made every write-to-a-variable block report itself unbindable.
+  /// </para>
+  ///
+  /// <para>
+  /// By the same argument a BASIC LABEL has to be answered as a label: <c>JNZ [BP+0]</c> is not an
+  /// instruction either, so the memory stand-in failed the whole parse and the block reported itself
+  /// unbindable for a name it could in fact bind. <paramref name="labelOf"/> is the lowering's own
+  /// answer to "is this a label of this scope", so the probe reaches the same conclusion the real
+  /// resolver will rather than a guess about the spelling.
+  /// </para>
+  /// </summary>
+  private sealed class AsmNames(Func<string, Asm.Label?> labelOf) : Asm.IAsmSymbolResolver {
     public List<string> Collected { get; } = [];
 
     public bool TryResolve(string name, out Asm.AsmSymbol symbol) {
       if (!this.Collected.Contains(name, StringComparer.OrdinalIgnoreCase))
         this.Collected.Add(name);
-      // The stand-in has to be MEMORY, not a constant. The parse must reach the same conclusions the
-      // real one will, and "MOV n, AX" with n a constant is not an instruction - answering with a
-      // constant made every write-to-a-variable block report itself unbindable.
-      symbol = Asm.AsmSymbol.OfMemory(Asm.Mem.Word(Asm.Reg.BP, 0));
+      symbol = labelOf(name) is { } label
+        ? Asm.AsmSymbol.OfLabel(label)
+        : Asm.AsmSymbol.OfMemory(Asm.Mem.Word(Asm.Reg.BP, 0));
       return true;
     }
   }

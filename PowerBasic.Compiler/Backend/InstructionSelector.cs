@@ -866,6 +866,9 @@ public sealed class InstructionSelector {
       => new MOperand.StackSlot(slot, MRegSize.Word),
     IrGlobalVariable g when IsAddressableGlobal(g)
       => new MOperand.DataCell(g.Name, 0, MRegSize.Word),
+    // a BASIC label the text jumps to. Not a cell at all - the block's own machine label, which is
+    // the same thing CODEPTR32 asks for and the same operand it is answered with
+    IrBlockAddress block => new MOperand.BlockOffset(block.Block.Label),
     _ => this.DeclineCell(pointer),
   };
 
