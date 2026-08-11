@@ -298,6 +298,29 @@ public sealed class IrSwitch : IrInstruction {
 
   public void AddCase(long value, IrBasicBlock target) => this._cases.Add((value, target));
 
+  /// <summary>
+  /// Resolves one fixed-width integer pattern. Like LLVM integer constants, a case may use either
+  /// signed or unsigned spelling: <c>i16 -1</c> and <c>i16 65535</c> name the same bits.
+  /// </summary>
+  public IrBasicBlock TargetFor(long value) {
+    var pattern = this.PatternOf(value);
+    return this._cases.FirstOrDefault(item => this.PatternOf(item.Value) == pattern).Target
+           ?? this.DefaultTarget;
+  }
+
+  /// <summary>Whether a case is a canonical signed or unsigned spelling for the condition width.</summary>
+  public bool IsCaseValueRepresentable(long value) => this.Condition.Type.Bits switch {
+    8 => value is >= sbyte.MinValue and <= byte.MaxValue,
+    16 => value is >= short.MinValue and <= ushort.MaxValue,
+    32 => value is >= int.MinValue and <= uint.MaxValue,
+    64 => true,
+    _ => false,
+  };
+
+  internal ulong PatternOf(long value) => this.Condition.Type.Bits >= 64
+    ? unchecked((ulong)value)
+    : unchecked((ulong)value) & ((1UL << this.Condition.Type.Bits) - 1);
+
   public override bool IsTerminator => true;
   public override IEnumerable<IrBasicBlock> Successors {
     get {

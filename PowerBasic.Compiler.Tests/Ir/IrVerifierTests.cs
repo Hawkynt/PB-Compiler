@@ -114,4 +114,41 @@ public sealed class IrVerifierTests {
 
     Assert.That(IrVerifier.Verify(fn), Has.Some.Contains("do not match its predecessors"));
   }
+
+  [Test]
+  public void Verify_GivenSwitchWithNonIntegerCondition_ReportsError() {
+    var fn = SwitchFunction(IrType.F32, 1);
+
+    Assert.That(IrVerifier.Verify(fn), Has.Some.Contains("switch condition must be an integer"));
+  }
+
+  [Test]
+  public void Verify_GivenSwitchCaseOutsideConditionWidth_ReportsError() {
+    var fn = SwitchFunction(IrType.I16, ushort.MaxValue + 1L);
+
+    Assert.That(IrVerifier.Verify(fn), Has.Some.Contains("does not fit switch condition i16"));
+  }
+
+  [Test]
+  public void Verify_GivenSwitchCasesWithDuplicateBitPatterns_ReportsError() {
+    var fn = SwitchFunction(IrType.I16, -1, ushort.MaxValue);
+
+    Assert.That(IrVerifier.Verify(fn), Has.Some.Contains("duplicate switch case bit pattern"));
+  }
+
+  private static IrFunction SwitchFunction(IrType conditionType, params long[] cases) {
+    var condition = new IrArgument(conditionType, 0, "condition");
+    var fn = new IrFunction("switch_test", IrType.Void, [condition]);
+    var entry = fn.CreateBlock("entry");
+    var @default = fn.CreateBlock("default");
+    new IrBuilder(@default).Ret();
+    var sw = new IrSwitch(condition, @default);
+    for (var i = 0; i < cases.Length; ++i) {
+      var target = fn.CreateBlock($"case{i}");
+      new IrBuilder(target).Ret();
+      sw.AddCase(cases[i], target);
+    }
+    entry.Append(sw);
+    return fn;
+  }
 }
