@@ -1391,6 +1391,39 @@ public sealed class InstructionSelector {
     }
   }
 
+  /// <summary>
+  /// For each argument, every physical register the staging has filled BY THAT POINT - its own
+  /// destination and all the earlier ones.
+  ///
+  /// <para>
+  /// A register filled by one move has to survive until the CALL and has no live interval of its own
+  /// to say so; the clobber list is the only thing the allocator reads. A PREFIX rather than the
+  /// whole set, because the registers later arguments will use are not filled yet and may still hold
+  /// a value now - and a value that lives on until they are filled is covered by their own prefix,
+  /// since the allocator unions clobbers over an interval. Claiming all of them everywhere is sound
+  /// too, and costs two corpus functions to register pressure.
+  /// </para>
+  private static IReadOnlyList<Reg>[] StagingDestinations(RuntimeAbi.Routine routine) {
+    var prefixes = new IReadOnlyList<Reg>[routine.Args.Length];
+    var filled = new List<Reg>();
+    for (var i = 0; i < routine.Args.Length; ++i) {
+      var slot = routine.Args[i];
+      switch (slot.Kind) {
+        case RuntimeAbi.ArgKind.VolatileFlag or RuntimeAbi.ArgKind.St0:
+          break;                                   // no general register is written for these
+        case RuntimeAbi.ArgKind.Pair or RuntimeAbi.ArgKind.Pointer or RuntimeAbi.ArgKind.ZeroPair:
+          filled.Add(slot.Register);
+          filled.Add(slot.High);
+          break;
+        default:
+          filled.Add(slot.Register);
+          break;
+      }
+      prefixes[i] = filled.Distinct().ToList();
+    }
+    return prefixes;
+  }
+
   private bool SelectRuntimeCall(IrCall call, IrFunction callee, RuntimeAbi.Routine routine) {
     // an x87 answer arrives on the stack rather than in a named register, so it needs no Result
     if (!call.Type.IsVoid && routine.Result is null
@@ -1410,6 +1443,17 @@ public sealed class InstructionSelector {
         return false;
       first = 1;
     }
+
+    // EVERY staging move claims the call's WHOLE destination set, not just the register it writes.
+    //
+    // The narrow claim was a silent miscompile. A staging move says "I destroy DI" so that a value
+    // live across it avoids DI - but it says nothing about the registers earlier moves already
+    // filled, and those have no live interval of their own. So a virtual register created midway
+    // through the sequence (the spiller inserts reloads exactly there) could legally be given AX,
+    // overwriting a file number staged two instructions earlier. rt_frec_put then read 0xFFF4 - a
+    // frame address - as its file number and raised ERR 57 from a routine that was correct at every
+    // instruction.
+    var stagedRegisters = StagingDestinations(routine);
 
     for (var i = first; i < args.Count; ++i) {
       var arg = args[i];
@@ -1431,7 +1475,7 @@ public sealed class InstructionSelector {
           var dest = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));
           var address = new MOperand.DataOffset(global.Name, 0);
           this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, address], MovEffect(dest, address),
-            condition: null, clobbers: [slot.Register]));
+            condition: null, clobbers: stagedRegisters[i]));
           break;
         }
         case RuntimeAbi.ArgKind.Pointer: {
@@ -1441,9 +1485,9 @@ public sealed class InstructionSelector {
           var segmentDest = new MOperand.Register(MReg.Physical_(slot.High, MRegSize.Word));
           var segmentSource = new MOperand.Register(MReg.Physical_(segment, MRegSize.Word));
           this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, source], MovEffect(dest, source),
-            condition: null, clobbers: [slot.Register, slot.High]));
+            condition: null, clobbers: stagedRegisters[i]));
           this._current.Instructions.Add(new MInstr(MOpcode.Mov, [segmentDest, segmentSource],
-            MovEffect(segmentDest, segmentSource), condition: null, clobbers: [slot.Register, slot.High]));
+            MovEffect(segmentDest, segmentSource), condition: null, clobbers: stagedRegisters[i]));
           break;
         }
         case RuntimeAbi.ArgKind.VolatileFlag:
@@ -1455,7 +1499,7 @@ public sealed class InstructionSelector {
             return false;
           var dest = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));
           this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, source], MovEffect(dest, source),
-            condition: null, clobbers: [slot.Register]));
+            condition: null, clobbers: stagedRegisters[i]));
           break;
         }
         case RuntimeAbi.ArgKind.ZeroExtendedQwordSt0: {
@@ -1499,9 +1543,9 @@ public sealed class InstructionSelector {
           var high = new MOperand.Register(MReg.Physical_(slot.High, MRegSize.Word));
           var zero = new MOperand.Immediate(0);
           this._current.Instructions.Add(new MInstr(MOpcode.Mov, [low, word], MovEffect(low, word),
-            condition: null, clobbers: [slot.Register, slot.High]));
+            condition: null, clobbers: stagedRegisters[i]));
           this._current.Instructions.Add(new MInstr(MOpcode.Mov, [high, zero], MovEffect(high, zero),
-            condition: null, clobbers: [slot.Register, slot.High]));
+            condition: null, clobbers: stagedRegisters[i]));
           break;
         }
         case RuntimeAbi.ArgKind.Pair: {
@@ -1512,9 +1556,9 @@ public sealed class InstructionSelector {
           var destLo = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));
           var destHi = new MOperand.Register(MReg.Physical_(slot.High, MRegSize.Word));
           this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destLo, lo], MovEffect(destLo, lo),
-            condition: null, clobbers: [slot.Register, slot.High]));
+            condition: null, clobbers: stagedRegisters[i]));
           this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destHi, hi], MovEffect(destHi, hi),
-            condition: null, clobbers: [slot.Register, slot.High]));
+            condition: null, clobbers: stagedRegisters[i]));
           break;
         }
         default:
