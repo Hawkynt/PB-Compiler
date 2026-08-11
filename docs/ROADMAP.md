@@ -526,6 +526,9 @@ Ranked by the census, what stands between that and full coverage:
    no equivalent, and routing without it would lose the caller's handler silently.
 2. A tail of statements: `LSET` / `RSET`, `DIM AT`, `HEX$` with a digit count, `PRINT USING` /
    `LPRINT`, `FIELD`, `CHAIN`, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
+2. A tail of statements: `LSET` / `RSET`, `DIM HUGE` / `VIRTUAL` / `EMS` / `XMS` (`DIM … AT` came
+   off this list - see the far-pointer note in [X86-BACKEND.md](X86-BACKEND.md)), `HEX$` with a digit count, `PRINT USING` /
+   `LPRINT`, `CODEPTR32`, `FIELD`, `CHAIN`, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
    metastatements. `ARRAY SORT` / `ARRAY SCAN` came off this list: the parameter block is a set of
    stores to NAMED runtime cells, which the IR addresses directly, and only the array DESCRIPTOR
    needed a routine - it opens with a segment, and a segment register is not a value the IR can name
@@ -534,6 +537,8 @@ Ranked by the census, what stands between that and full coverage:
    which the selector declines wherever it appears.
 2. A tail of statements: `ArraySortStmt`, `PUT$`, `DIM AT`, `ERASE` of a static array, `HEX$` with a
    digit count, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
+2. A tail of statements: `ArraySortStmt`, `PUT$`, `IrFarPtr` (a `DIM … AT` element), `ERASE` of a static array, `HEX$` with a
+   digit count, `CODEPTR32`, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
    metastatements. `PRINT USING` and `LPRINT` lower; a NON-LITERAL USING format still declines,
    since the format is read at compile time on both paths. `VARPTR` and `CODEPTR32` came off this
    list: an address is `ptrtoint` of the address `VARPTR32` already forms, and a LABEL's address is

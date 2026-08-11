@@ -71,6 +71,13 @@ public sealed class Cpu8086 {
   /// <summary>The exit code the program terminated with.</summary>
   public int ExitCode { get; private set; }
 
+  /// <summary>
+  /// The byte at a real-mode <c>segment:offset</c> after the run - what a test asks when the question
+  /// is where a store LANDED rather than what the program printed. The address space is flat here, so
+  /// video memory at B800 and A000 is ordinary memory and reads back what was written to it.
+  /// </summary>
+  public byte MemoryAt(ushort segment, int offset) => this.ReadByte(Linear(segment, (ushort)offset));
+
   /// <summary>Whether the program created (and did not remove) the named directory.</summary>
   public bool DirectoryExists(string name) => this._directories.Contains(name);
 

@@ -600,10 +600,37 @@ public sealed class IrLowering {
     => this.RaiseWhen(this._b.Or(this._b.Cmp(IrCmpPred.Slt, index, lower),
                                  this._b.Cmp(IrCmpPred.Sgt, index, upper)), 9, "bounds");
 
+  /// <summary>
+  /// The address of one array element for a direct load or store of its VALUE - the one context in
+  /// which an element of a <c>DIM ... AT</c> array has an address at all.
+  ///
+  /// <para>
+  /// Everywhere else an element address is used, it is used as an ordinary near pointer: handed to a
+  /// BYREF parameter, added to for a record field, given to a runtime routine, answered by VARPTR.
+  /// A far pointer in any of those places loses its segment, and losing it does not fail - it reads
+  /// and writes the program's own data instead, which is the exact miscompile this whole path exists
+  /// to avoid. It was measured, not feared: <c>Bump a%(0)</c> on an AT array went through the BYREF
+  /// path and the two back ends then disagreed about what the SUB had incremented.
+  /// </para>
+  /// </summary>
+  private (IrValue Address, PbType Element) ElementDataAddress(CallOrIndexExpr expr) {
+    var (address, element) = this.ElementAddress(expr, farAllowed: true);
+    // a record element is copied by ADDRESS, not loaded, so it is in the same position as every
+    // other consumer below - the memcpy would take the far pointer for a near one
+    if (address is IrFarPtr && element is not ScalarType)
+      throw new IrLoweringException($"a {element} element of an ABSOLUTE array");
+    return (address, element);
+  }
+
   /// <summary>The address of one array element, by row-major flattening of the index list.</summary>
-  private (IrValue Address, PbType Element) ElementAddress(CallOrIndexExpr expr) {
+  private (IrValue Address, PbType Element) ElementAddress(CallOrIndexExpr expr, bool farAllowed = false) {
     if (!this._model.VariableBindings.TryGetValue(expr, out var symbol) || symbol.Type is not ArrayType arr)
       throw new IrLoweringException($"not an array element: {expr.Name}");
+    if (symbol.ArrayClass == ArrayClass.Absolute)
+      return farAllowed
+        ? this.AbsoluteElementAddress(expr, symbol, arr)
+        : throw new IrLoweringException(
+            $"the address of an element of the ABSOLUTE array {symbol.Name} (only a direct read or write of one lowers)");
     if (arr.IsDynamic)
       return this.DynamicElementAddress(expr, symbol, arr);
     if (arr.StaticBounds is not { } bounds || bounds.Count != expr.Arguments.Count)
@@ -708,6 +735,46 @@ public sealed class IrLowering {
     if (arr.Element is StringType)
       return (this._b.Gep(data, flat!, IrType.Ptr), arr.Element);
     return (this._b.Gep(data, this._b.Mul(flat!, new IrConstantInt(IrType.I32, arr.Element.Size))), arr.Element);
+  }
+
+  /// <summary>
+  /// The address of one element of a <c>DIM ... AT segment</c> array: the same row-major flattening
+  /// every other array gets, ending in a FAR pointer rather than a near one.
+  ///
+  /// <para>
+  /// The offset is truncated to 16 bits deliberately. Address arithmetic within a segment wraps at 64
+  /// KiB on this target, which is what the direct emitter's <c>ES:[BX]</c> does, and computing it
+  /// wider would only invent a carry the machine does not have.
+  /// </para>
+  ///
+  /// <para>
+  /// The result is only usable by a load or a store directly through it. Every other consumer of an
+  /// element address - taking its VARPTR, passing it BYREF, copying a record element - would treat it
+  /// as a near pointer and lose the segment, and each of those declines instead, because no back end
+  /// has a case for <see cref="IrFarPtr"/> outside the address former.
+  /// </para>
+  /// </summary>
+  private (IrValue Address, PbType Element) AbsoluteElementAddress(CallOrIndexExpr expr, VariableSymbol symbol, ArrayType arr) {
+    if (!this._absoluteSegments.TryGetValue(symbol, out var segment))
+      throw new IrLoweringException($"element of {symbol.Name} before its DIM ... AT was lowered");
+    if (expr.Arguments.Count != arr.Rank)
+      throw new IrLoweringException("ABSOLUTE array rank mismatch");
+
+    var descriptor = this.DynDescriptor(symbol, arr.Rank);
+    IrValue? flat = null;
+    for (var k = 0; k < arr.Rank; ++k) {
+      var idx = this.Coerce(this.LowerExpr(expr.Arguments[k]), this._model.TypeOf(expr.Arguments[k]), PbType.Long);
+      var lo = this._b.Load(IrType.I32, descriptor.Lo[k]);
+      if (this._checkBounds) {
+        var size = this._b.Load(IrType.I32, descriptor.Size[k]);
+        this.EmitBoundsCheck(idx, lo, this._b.Sub(this._b.Add(lo, size), new IrConstantInt(IrType.I32, 1)));
+      }
+      var rel = this._b.Sub(idx, lo);
+      flat = flat is null ? rel : this._b.Add(this._b.Mul(flat, this._b.Load(IrType.I32, descriptor.Size[k])), rel);
+    }
+
+    var offset = this._b.Trunc(this._b.Mul(flat!, new IrConstantInt(IrType.I32, Math.Max(arr.Element.Size, 1))), IrType.I16);
+    return (this._b.FarPtr(new IrConstantInt(IrType.I16, segment), offset), arr.Element);
   }
 
   private VariableSymbol SymbolOf(Expression target) =>
@@ -923,7 +990,7 @@ public sealed class IrLowering {
       return;
     }
     if (a.Target is CallOrIndexExpr indexed && this._model.VariableBindings.TryGetValue(indexed, out var arrSym) && arrSym.Type is ArrayType) {
-      var (address, element) = this.ElementAddress(indexed);
+      var (address, element) = this.ElementDataAddress(indexed);
       if (element is StringType) {
         this._b.Store(this.LowerStringExpr(a.Value), address);   // a string array element holds an immutable handle
         return;
@@ -1911,6 +1978,10 @@ public sealed class IrLowering {
     foreach (var v in r.Variables) {
       if (!this._model.RedimBindings.TryGetValue(v, out var symbol) || symbol.Type is not ArrayType { IsDynamic: true } arr)
         throw new IrLoweringException($"REDIM of non-dynamic array {v.Name}");
+      // an ABSOLUTE array is a view of memory the program does not own; re-DIMing one would allocate
+      // a heap block and quietly stop it being that view
+      if (symbol.ArrayClass == ArrayClass.Absolute)
+        throw new IrLoweringException($"REDIM of the ABSOLUTE array {v.Name}");
       if (v.ArrayBounds is not { } dims || dims.Count != arr.Rank)
         throw new IrLoweringException("REDIM rank mismatch");
 
@@ -1948,6 +2019,10 @@ public sealed class IrLowering {
     foreach (var name in e.Arrays) {
       if (!this._model.VariableBindings.TryGetValue(name, out var symbol) || symbol.Type is not ArrayType arr)
         throw new IrLoweringException("ERASE of a non-array");
+      // ERASE on an ABSOLUTE array UNMAPS it - the memory is not the program's to free or to zero -
+      // and an unmapped array has no segment for a later access to name
+      if (symbol.ArrayClass == ArrayClass.Absolute)
+        throw new IrLoweringException($"ERASE of the ABSOLUTE array {symbol.Name}");
       if (!arr.IsDynamic) {
         // A static array is not freed - PB zeroes it where it stands, and the storage stays. The
         // direct emitter writes a REP STOSW over the word-rounded size; the portable spelling of
@@ -2291,25 +2366,101 @@ public sealed class IrLowering {
   }
 
   private void LowerDim(DimStmt d) {
-    // DIM AT and the memory-model classes stay OUT, and the reason is worth stating because letting
-    // them through costs nothing at the lowering and everything afterwards.
+    // DIM a(...) AT segment: an ABSOLUTE array, which is a VIEW of memory rather than storage of its
+    // own. Its elements are reached through the named segment, which is what IrFarPtr exists to say -
+    // so the declaration records the bounds and the segment and allocates nothing.
+    if (d is { Class: ArrayClass.Absolute, AtAddress: { } at }) {
+      this.LowerAbsoluteDim(d, at);
+      return;
+    }
+
+    // The MEMORY-MODEL classes stay out, and the reason is worth stating because letting them
+    // through costs nothing at the lowering and everything afterwards.
     //
-    // What HUGE, VIRTUAL/EMS/XMS and ABSOLUTE have in common is that an element of one is not at a
-    // near address. The direct emitter reaches each of them through ES with a segment worked out per
-    // access - base + (byteOffset >> 4) for HUGE, the EMS page frame after mapping the right logical
-    // page for VIRTUAL, and the AT segment itself for ABSOLUTE - and the machine IR has no segment
-    // to put that in: MOperand.Memory is a base, an index, a scale and a displacement, all implicitly
-    // DS or SS. So the DECLARATION is the only part of the statement the IR could carry, and the
-    // declaration is the part that does not matter.
+    // What HUGE and VIRTUAL/EMS/XMS have in common is that an element of one is not at an address any
+    // ONE segment covers: HUGE steps the segment by (byteOffset >> 4) so a single array spans many of
+    // them, and VIRTUAL maps a 16 KiB EMS page pair into a window before each access. A segment named
+    // once at the declaration - which is all IrFarPtr carries, and all an AT array needs - is not
+    // enough for either; both need the allocator, the page mapper and the far descriptor the direct
+    // emitter's runtime holds, and none of that is modelled here.
     //
-    // Measured rather than assumed. With this refusal removed, DIM DYNAMIC ab(0 TO 7) AT &HB800
-    // lowers to an ordinary dynamic-array descriptor, the AT segment never appears in the IR at all,
-    // and the function SELECTS - so ab(0) = n would have been emitted as a store through an
-    // uninitialised near pointer instead of a write to video memory. It assembles, it routes, and it
-    // is wrong, which is the worst of the three outcomes available here.
+    // Measured rather than assumed. With this refusal removed for ABSOLUTE alone, and no far pointer
+    // to lower it to, DIM DYNAMIC ab(0 TO 7) AT &HB800 lowered to an ordinary dynamic-array
+    // descriptor, the AT segment never appeared in the IR at all, and the function SELECTED - so
+    // ab(0) = n was emitted as a store through an uninitialised near pointer instead of a write to
+    // video memory. It assembled, it routed, and it was wrong, which is the worst of the three
+    // outcomes available here.
     if (d.AtAddress is not null || d.Class != ArrayClass.Default)
       throw new IrLoweringException("DIM AT / non-default array class");
     // a DIM is just a declaration here; storage is allocated lazily on first use
+  }
+
+  /// <summary>
+  /// The segment each <c>DIM ... AT</c> array in this function was mapped at. Populated by the
+  /// declaration and read by every element access, so an access that the declaration has not reached -
+  /// a use before the DIM, or an array declared in another function - finds nothing and declines
+  /// rather than guessing a segment.
+  /// </summary>
+  private readonly Dictionary<VariableSymbol, short> _absoluteSegments = new(ReferenceEqualityComparer.Instance);
+
+  /// <summary>
+  /// <c>DIM a(lo TO hi) AT segment</c>: records the bounds in the same descriptor slots a dynamic
+  /// array uses (so LBOUND/UBOUND and the bounds check need no special case) and the segment beside
+  /// them. Nothing is allocated - the memory is already there and belongs to someone else, which is
+  /// the entire point of the declaration.
+  ///
+  /// <para>
+  /// The segment must be a COMPILE-TIME constant. PowerBASIC allows an expression, and the direct
+  /// emitter evaluates one, but every AT in the corpus names a fixed address (<c>&amp;HB800</c>) and a
+  /// runtime segment would have to live somewhere a later access can read it back - a slot whose value
+  /// the far pointer then depends on, which is a different and larger thing than a constant. Declining
+  /// it keeps the two cases from being confused.
+  /// </para>
+  /// </summary>
+  private void LowerAbsoluteDim(DimStmt d, Expression atAddress) {
+    if (this._folder.TryFold(atAddress) is not { Integer: { } segment })
+      throw new IrLoweringException("DIM AT a segment that is not a compile-time constant");
+
+    foreach (var v in d.Variables) {
+      if (v.ArrayBounds is not { } dims)
+        throw new IrLoweringException($"DIM {v.Name} AT without array bounds");
+      if (this.ArrayVariable(v) is not { Type: ArrayType arr } symbol)
+        throw new IrLoweringException($"DIM AT: no array symbol for {v.Name}");
+      if (dims.Count != arr.Rank)
+        throw new IrLoweringException("DIM AT rank mismatch");
+      // a dynamic string element is a HANDLE into the string heap, and handles at an address the
+      // program does not own are not strings - the direct emitter refuses the same shape
+      if (arr.Element is StringType or FlexType)
+        throw new IrLoweringException("DIM AT over a dynamic-string element type");
+
+      var descriptor = this.DynDescriptor(symbol, arr.Rank);
+      for (var k = 0; k < dims.Count; ++k) {
+        var (lower, upper) = dims[k];
+        var lo = lower is null
+          ? new IrConstantInt(IrType.I32, 0)
+          : this.Coerce(this.LowerExpr(lower), this._model.TypeOf(lower), PbType.Long);
+        var hi = this.Coerce(this.LowerExpr(upper), this._model.TypeOf(upper), PbType.Long);
+        this._b.Store(lo, descriptor.Lo[k]);
+        this._b.Store(this._b.Add(this._b.Sub(hi, lo), new IrConstantInt(IrType.I32, 1)), descriptor.Size[k]);
+      }
+      this._absoluteSegments[symbol] = unchecked((short)segment);
+    }
+  }
+
+  /// <summary>
+  /// The array symbol a declaration names, looked up the way the direct emitter looks it up: the
+  /// declared suffix first, then the unsuffixed spelling, in the procedure's scope and then the
+  /// module's. A DIM carries no expression node, so there is no binding to read it off.
+  /// </summary>
+  private VariableSymbol? ArrayVariable(VariableDecl v) {
+    foreach (var suffix in new[] { v.Suffix, TypeSuffix.None }) {
+      var key = v.Name + suffix.KeyText() + "()";
+      if (this._proc?.Variables.TryGetValue(key, out var local) == true)
+        return local;
+      if (this._model.ModuleVariables.TryGetValue(key, out var global))
+        return global;
+    }
+    return null;
   }
 
   private void LowerIncrDecr(IncrDecrStmt id) {
@@ -2789,7 +2940,7 @@ public sealed class IrLowering {
       case BinaryExpr b:
         return this.LowerBinary(b);
       case CallOrIndexExpr indexed when this._model.VariableBindings.TryGetValue(indexed, out var s) && s.Type is ArrayType:
-        var (address, element) = this.ElementAddress(indexed);
+        var (address, element) = this.ElementDataAddress(indexed);
         return this._b.Load(MapType(element), address);
       case CallOrIndexExpr intr when this._model.IntrinsicBindings.TryGetValue(intr, out var info):
         return this.LowerIntrinsic(intr, info.Name);

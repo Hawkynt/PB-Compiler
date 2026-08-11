@@ -117,7 +117,7 @@ A target-level IR over virtual registers, distinct from the SSA IR. Sketch:
 - `MReg` — a register operand: either a virtual id (`v0, v1, …`, unbounded) or a physical
   `Reg` (`AX..DI`), plus a size (byte/word/dword). Allocation rewrites virtual → physical.
 - `MOperand` — `MReg` | immediate | memory (`[base+index*scale+disp]`, base/index are
-  `MReg`) | label/global | stack-slot (for spills and allocas).
+  `MReg`, plus an optional **segment**) | label/global | stack-slot (for spills and allocas).
 - `MInstr` — an opcode (`Mov, Add, Sub, Imul, Cmp, Test, Lea, Shl, …, Jcc, Jmp, Call,
   Ret, Push, Pop`) + operands + a per-opcode **def/use descriptor** (the same shape the
   scheduler already consumes), so liveness, allocation and scheduling all read one model.
@@ -805,6 +805,40 @@ not inside it, so a routed body would silently lose them.
 The census reports this as its own figure, because it is the one that matters for the goal: **25 of
 the 106 lowered programs** are module bodies the back end can own end to end. That is the first time
 the number has been anything but zero.
+
+### A memory operand can name its own segment (`DIM … AT`)
+
+`MOperand.Memory` was a base, an index, a scale and a displacement, all implicitly `DS` or `SS`. That
+is every address a PowerBASIC program forms except one: `DIM a(…) AT segment` declares an array that
+is a **view** of memory the program does not own — the text screen at `&HB800`, a BIOS area — and its
+elements are reached through that segment and no other.
+
+The SSA IR says it with `IrFarPtr(segment, offset)`, and the machine operand carries a `Segment`
+register beside its base. Two decisions are load-bearing:
+
+- the segment is part of the **operand**, not a `MOV ES, reg` instruction of its own. x86-16 reaches a
+  non-default segment through a segment register, so the value has to be moved into `ES` before the
+  access, and every gap between the two is a window for a later pass — scheduling, a spill reload, a
+  rematerialized address — to put something in. `MachineEmitter` writes the move immediately in front
+  of the instruction it belongs to; nothing upstream ever saw two things to separate. An x86
+  instruction has at most one memory operand, so at most one segment is ever in play;
+- a far pointer is **not** interchangeable with a near one. Only a load or a store directly through
+  one selects; `TryOperand` finds no register for it anywhere else, so a `GEP` on top of one, a BYREF
+  argument or a runtime-routine argument declines the whole function. That is not belt-and-braces:
+  passing `a%(0)` of an `AT` array to a BYREF `SUB` lowered cleanly and the two back ends then
+  disagreed about what the `SUB` had incremented, which is how the lowering came to refuse every use
+  of an element address that is not the element's own value.
+
+A constant offset folds into the displacement (`ES:[0020h]`), so a fixed-subscript sequence spends no
+address register at all. The segment does need one — there is no `MOV ES, imm` — and sixteen far
+stores in a row therefore supply sixteen independent `MOV reg, imm`, all of which the list scheduler
+happily hoists to the head of the block. `Spiller.RematerializeOne` now recomputes a
+`MOV reg, immediate` at each use for the same reason it already recomputed an `LEA`: it depends on
+nothing, so a copy beside the use is free, and every live range collapses to one instruction.
+
+`HUGE`, `VIRTUAL`, `EMS` and `XMS` still decline. One segment named at the declaration is not enough
+for them: `HUGE` steps the segment by `byteOffset >> 4` so a single array spans many, and `VIRTUAL`
+maps a 16 KiB EMS page pair into a window before each access.
 
 ## The x87 stack is not in the machine IR
 

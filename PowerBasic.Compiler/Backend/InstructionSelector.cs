@@ -513,6 +513,12 @@ public sealed class InstructionSelector {
         return this.SelectStore(store, block);
       case IrGep gep:
         return this.SelectGep(gep, block);
+      // a far pointer is not a value on this target - it is two of them, and there is no register pair
+      // to put them in that a later use could still read as one address. It is formed at the point of
+      // use instead (see PointerMemory), so the instruction itself emits nothing; a use that is not a
+      // load or a store finds no register for it and declines, which is the intended answer.
+      case IrFarPtr:
+        return true;
       case IrInlineAsm asm:
         return this.SelectInlineAsm(asm);
       case IrRet ret:
@@ -2444,6 +2450,8 @@ public sealed class InstructionSelector {
     // the register costs real allocations: it is live wherever the variable is used, a value used as a
     // memory BASE is the one thing the spiller cannot move, and any instruction clobbering the whole
     // register file in between then has nowhere to put it. Inline asm is exactly such an instruction.
+    if (pointer is IrFarPtr far)
+      return this.FarMemory(far, size);
     if (pointer is IrAlloca { Count: 1 } scalar && this._slots.TryGetValue(scalar, out var own))
       return new MOperand.StackSlot(own, size);
     if (this._vregs.TryGetValue(pointer, out var reg))
@@ -2459,6 +2467,38 @@ public sealed class InstructionSelector {
     }
     this.Decline($"pointer: {pointer.GetType().Name} has no register");
     return null;
+  }
+
+  /// <summary>
+  /// A <see cref="IrFarPtr"/> as the memory operand of the access that reads or writes through it:
+  /// <c>ES:[offset]</c>, with the segment named by the operand so the emitter loads <c>ES</c> right in
+  /// front of it.
+  ///
+  /// <para>
+  /// Both halves are materialized into registers here rather than reused from wherever the far pointer
+  /// was formed, because <c>MOV ES, imm</c> does not exist - a constant segment, which is what
+  /// <c>DIM a(...) AT &amp;HB800</c> gives, still has to travel through a general register. The offset
+  /// register is an ordinary memory base and the allocator constrains it accordingly; the segment
+  /// register is not, and is only required to be a word.
+  /// </para>
+  /// </summary>
+  private MOperand? FarMemory(IrFarPtr far, MRegSize size) {
+    if (!this.TryOperand(far.Segment, out var segment) || !this.TryOperand(far.Offset, out var offset))
+      return null;
+    var segmentReg = this.FreshVreg(IrType.I16);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [new MOperand.Register(segmentReg), segment],
+      MovEffect(new MOperand.Register(segmentReg), segment)));
+    // a constant offset is a DISPLACEMENT, not a register - ES:[0020h] is an addressing mode, and
+    // spending a register on it would cost one at every element of a fixed-subscript sequence
+    if (offset is MOperand.Immediate constant)
+      return new MOperand.Memory(null, null, 1, unchecked((short)constant.Value), size, segmentReg);
+    if (offset is not MOperand.Register offsetReg) {
+      var fresh = this.FreshVreg(IrType.I16);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [new MOperand.Register(fresh), offset],
+        MovEffect(new MOperand.Register(fresh), offset)));
+      offsetReg = new MOperand.Register(fresh);
+    }
+    return new MOperand.Memory(offsetReg.Reg, null, 1, 0, size, segmentReg);
   }
 
   private static bool IsAddressableGlobal(IrGlobalVariable global)

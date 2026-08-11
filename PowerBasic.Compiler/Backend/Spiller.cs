@@ -42,6 +42,14 @@ internal static class Spiller {
   /// copy immediately before each use makes every live range one instruction long, so no clobber can
   /// fall inside one. A definition already adjacent to all of its uses is left alone because moving
   /// it again cannot shorten anything.
+  ///
+  /// <para>
+  /// A <c>MOV reg, immediate</c> qualifies for the same reason and even more plainly - it depends on
+  /// nothing whatever. It matters because the SCHEDULER runs first and is free to hoist every such
+  /// move to the head of its block, all of them being ready at once: sixteen stores through a far
+  /// pointer supply sixteen independent constant loads, and a block that needs at most two registers
+  /// at a time then wants sixteen. Recomputing puts each back beside the one instruction that reads it.
+  /// </para>
   /// </summary>
   internal static bool RematerializeOne(MFunction function) {
     if (TryReloadAddressArgument(function))
@@ -49,9 +57,8 @@ internal static class Spiller {
 
     foreach (var block in function.Blocks)
       foreach (var instr in block.Instructions.ToList()) {
-        if (instr.Opcode != MOpcode.Lea
-            || instr.Operands is not [MOperand.Register { Reg: { IsVirtual: true } target },
-              MOperand.StackSlot or MOperand.DataOffset or MOperand.Memory])
+        if (instr.Operands is not [MOperand.Register { Reg: { IsVirtual: true } target }, { } source]
+            || !IsRecomputable(instr.Opcode, source))
           continue;
         if (DefinitionCount(function, target.VirtualId) != 1 || UseCount(function, target.VirtualId) == 0)
           continue;
@@ -62,6 +69,16 @@ internal static class Spiller {
       }
     return false;
   }
+
+  /// <summary>
+  /// Whether a two-operand definition can simply be written again wherever its value is wanted: an
+  /// address form, which recomputes from the frame, or a constant, which depends on nothing at all.
+  /// </summary>
+  private static bool IsRecomputable(MOpcode opcode, MOperand source) => opcode switch {
+    MOpcode.Lea => source is MOperand.StackSlot or MOperand.DataOffset or MOperand.Memory,
+    MOpcode.Mov => source is MOperand.Immediate,
+    _ => false,
+  };
 
   /// <summary>
   /// Shortens a read-only pointer parameter to one tiny live range per dereference. The pointer's
@@ -86,6 +103,7 @@ internal static class Spiller {
             ? memory with {
               Base = Replace(memory.Base, load.VirtualId, fresh),
               Index = Replace(memory.Index, load.VirtualId, fresh),
+              Segment = Replace(memory.Segment, load.VirtualId, fresh),
             }
             : operand).ToArray();
           block.Instructions[i] = new MInstr(instruction.Opcode, operands, instruction.Effect,
@@ -113,7 +131,8 @@ internal static class Spiller {
         switch (operand) {
           case MOperand.Register { Reg: { IsVirtual: true } register } when register.VirtualId == virtualId:
             return false;
-          case MOperand.Memory memory when Is(memory.Base, virtualId) || Is(memory.Index, virtualId):
+          case MOperand.Memory memory when Is(memory.Base, virtualId) || Is(memory.Index, virtualId)
+              || Is(memory.Segment, virtualId):
             found = true;
             break;
         }
@@ -123,7 +142,7 @@ internal static class Spiller {
 
   private static bool UsesAsAddress(MInstr instruction, int virtualId)
     => instruction.Operands.OfType<MOperand.Memory>()
-      .Any(memory => Is(memory.Base, virtualId) || Is(memory.Index, virtualId));
+      .Any(memory => Is(memory.Base, virtualId) || Is(memory.Index, virtualId) || Is(memory.Segment, virtualId));
 
   private static bool Is(MReg? register, int virtualId)
     => register is { IsVirtual: true } value && value.VirtualId == virtualId;
@@ -163,6 +182,7 @@ internal static class Spiller {
         case MOperand.Register { Reg: { IsVirtual: true } r } when r.VirtualId == virtualId:
         case MOperand.Memory { Base: { IsVirtual: true } b } when b.VirtualId == virtualId:
         case MOperand.Memory { Index: { IsVirtual: true } x } when x.VirtualId == virtualId:
+        case MOperand.Memory { Segment: { IsVirtual: true } g } when g.VirtualId == virtualId:
           return true;
       }
     return false;
@@ -207,6 +227,7 @@ internal static class Spiller {
       MOperand.Memory memory => memory with {
         Base = Replace(memory.Base, virtualId, replacement),
         Index = Replace(memory.Index, virtualId, replacement),
+        Segment = Replace(memory.Segment, virtualId, replacement),
       },
       _ => operand,
     }).ToArray();
@@ -336,6 +357,9 @@ internal static class Spiller {
           case MOperand.Memory memory when Is(memory.Index, virtualId):
             result = Wider(result, memory.Index!.Value.Size);
             break;
+          case MOperand.Memory memory when Is(memory.Segment, virtualId):
+            result = Wider(result, memory.Segment!.Value.Size);
+            break;
         }
     return result;
   }
@@ -419,7 +443,10 @@ internal static class Spiller {
       foreach (var operand in instr.Operands)
         if (operand is MOperand.Memory mem
             && ((mem.Base is { IsVirtual: true } b && b.VirtualId == virtualId)
-                || (mem.Index is { IsVirtual: true } x && x.VirtualId == virtualId)))
+                || (mem.Index is { IsVirtual: true } x && x.VirtualId == virtualId)
+                // the segment is moved into ES in front of the access, and MOV ES, r16 wants the
+                // value in a register there and then - it cannot be reached from a frame cell
+                || (mem.Segment is { IsVirtual: true } s && s.VirtualId == virtualId)))
           return false;
 
       var positions = Positions(instr, virtualId);

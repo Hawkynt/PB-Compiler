@@ -180,6 +180,41 @@ public sealed class IrGep : IrInstruction {
   public IrType? ElementType { get; }
 }
 
+/// <summary>
+/// A pointer that names its own SEGMENT: <c>segment:offset</c>, where every other pointer in this IR
+/// is an offset in whatever segment the target's default is (DS or SS on x86-16, the one flat space
+/// everywhere else).
+///
+/// <para>
+/// It exists for exactly one thing PowerBASIC can say and an ordinary pointer cannot: an array
+/// declared <c>DIM a(...) AT segment</c> is a VIEW of memory that is not the program's own - the text
+/// screen at <c>&amp;HB800</c>, a BIOS area, a buffer another program owns. Lowering such an element
+/// to a plain pointer does not merely lose the segment, it silently substitutes the default one, and
+/// the store lands in the program's own data. That is a miscompile no later stage can detect, which is
+/// why an <c>AT</c> array declined to lower at all until this instruction existed to carry it.
+/// </para>
+///
+/// <para>
+/// It is deliberately NOT interchangeable with an ordinary pointer. Only a <see cref="IrLoad"/> or
+/// <see cref="IrStore"/> directly through it means anything; a GEP on top of one, or passing it where a
+/// near pointer is expected, would drop the segment again. Every consumer that does not understand it
+/// therefore declines - the x86-16 selector has one case for it inside its address former and none
+/// anywhere else, and the C, LLVM and BASIC writers reject an instruction they have no case for.
+/// </para>
+/// </summary>
+public sealed class IrFarPtr : IrInstruction {
+  public IrFarPtr(IrValue segment, IrValue offset) : base(IrType.Ptr) {
+    this.AddOperand(segment);
+    this.AddOperand(offset);
+  }
+
+  /// <summary>The segment the offset is measured in (an <c>i16</c> paragraph number on x86-16).</summary>
+  public IrValue Segment => this.GetOperand(0);
+
+  /// <summary>The byte offset within <see cref="Segment"/>.</summary>
+  public IrValue Offset => this.GetOperand(1);
+}
+
 /// <summary>An SSA phi: picks an incoming value according to the predecessor control came from.</summary>
 public sealed class IrPhi : IrInstruction {
 

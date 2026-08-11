@@ -189,7 +189,7 @@ Worth stating plainly, because coverage numbers make the distance look shorter t
 **1. Coverage - every program on the IR path.** `BackendCoverageTests` ranks this over the whole
 corpus. As of this writing: **147 of 164 programs lower**, **244 of 246 functions select and
 allocate**, **145 of 147 module bodies** can be owned outright. The remaining lowering blockers are
-`ARRAY SORT`, `FIELD`, `CHAIN`, `DIM AT`, `VARPTR`/`CODEPTR32` and the pointer, BCD and
+`ARRAY SORT`, `FIELD`, `CHAIN`, `DIM HUGE`/`VIRTUAL`/`EMS`/`XMS`, `VARPTR`/`CODEPTR32` and the pointer, BCD and
 larger-UDT types; the remaining selection blockers are the unsigned
 float-to-integer casts, 64-bit truncation and widening, module globals needing the data-layout
 bridge, `IrSwitch`, a null pointer with no register, and a compare whose left operand is an
