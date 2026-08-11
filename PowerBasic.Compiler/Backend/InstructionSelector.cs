@@ -256,10 +256,19 @@ public sealed class InstructionSelector {
           // CMP wants a register on the left, and a constant there is not a dead end: comparing the
           // other way round asks the same question with the predicate mirrored - `5 > x` is `x < 5` -
           // so the operands swap and the condition follows them. Equality mirrors to itself.
-          if (rhs is not MOperand.Register)
-            return this.Decline("compare: neither operand is in a register");
-          (lhs, rhs) = (rhs, lhs);
-          cc = MapPredicate(Mirrored(cmp.Pred))!.Value;
+          if (rhs is MOperand.Register) {
+            (lhs, rhs) = (rhs, lhs);
+            cc = MapPredicate(Mirrored(cmp.Pred))!.Value;
+          } else {
+            // Neither side is in a register - two memory cells, or a constant against one. Mirroring
+            // cannot help when there is nothing to mirror ONTO, so the left operand is moved into a
+            // register and the comparison proceeds unmirrored. One MOV, and only on the shape that
+            // used to decline outright.
+            var held = this.FreshVreg(cmp.Lhs.Type);
+            var into = new MOperand.Register(held);
+            this._current.Instructions.Add(new MInstr(MOpcode.Mov, [into, lhs], MovEffect(into, lhs)));
+            lhs = into;
+          }
         }
         this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
           new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: false, WritesFlags: true,

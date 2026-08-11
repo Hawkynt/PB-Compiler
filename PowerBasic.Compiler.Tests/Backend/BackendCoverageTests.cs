@@ -470,6 +470,7 @@ public sealed class BackendCoverageTests {
     "DIFF33.BAS",
     "DIFF35.BAS",
     "DIFF36.BAS",
+    "DIFF37.BAS",
     "DIFF38.BAS",
     "DIFF39.BAS",
     "DIFF40.BAS",
