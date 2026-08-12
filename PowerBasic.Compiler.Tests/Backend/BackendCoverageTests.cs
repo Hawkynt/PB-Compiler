@@ -256,7 +256,9 @@ public sealed class BackendCoverageTests {
     // Then 257 -> 258 when EXIT FAR lowered, which is one program's whole gain: DIFF14 reached the IR
     // at all and its SUB selected. Its module body did not - the decline behind EXIT FAR was another
     // one, and this is what "the count moved by one" looks like when that happens.
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(259),
+    // Then 260 -> 261 with the memory-model array classes: DIFF17 was the LAST program the lowering
+    // declined, so this is the row where the lowering-decline histogram above becomes empty.
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(260),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
     Assert.That(census.ProcedureDeclines, Is.Empty,
       "a lowered named procedure no longer reaches the x86-16 back end:\n" + report);
@@ -280,7 +282,7 @@ public sealed class BackendCoverageTests {
     // 256 -> 257, and the gap closes: the last function that selected without routing did so because
     // SCHEDULING made the pressure. The scheduler now refuses a reordering that would keep more values
     // alive at once than the register file holds (MachineScheduler.CostsRegisters).
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(259),      "fewer selected functions survive register allocation than they used to:\n" + report);
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(260),      "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // The figure that matters for whole-program ownership: module bodies the back end compiles end
     // to end. It was zero until main became routable at all.
@@ -349,6 +351,7 @@ public sealed class BackendCoverageTests {
     "DIFF14.BAS",
     "DIFF15.BAS",
     "DIFF16.BAS",   // FIX (@) and BCD (@@): a scaled int64 cell and an f80 one
+    "DIFF17.BAS",   // DIM HUGE / DIM VIRTUAL: the DOS and EMS allocators, and FRE(-11)
     "DIFF18.BAS",
     "DIFF19.BAS",   // $ERROR STACK ON
     "DIFF20.BAS",   // FIELD, LSET/RSET and bare GET/PUT (main still declines on inline asm)
@@ -511,6 +514,7 @@ public sealed class BackendCoverageTests {
     "DIFF114.BAS",   // DIM ... AT segment (an ABSOLUTE array over the text screen)
     "DIFF15.BAS",
     "DIFF16.BAS",   // FIX (@) and BCD (@@): a scaled int64 cell and an f80 one
+    "DIFF17.BAS",   // DIM HUGE / DIM VIRTUAL: segment stepping and the EMS page window
     "DIFF18.BAS",
     "DIFF19.BAS",
     "DIFF20.BAS",   // the documented inline-asm string-manager ABI, called by name

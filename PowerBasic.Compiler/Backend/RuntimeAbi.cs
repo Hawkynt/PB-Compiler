@@ -685,6 +685,32 @@ internal static class RuntimeAbi {
     ["rt_arr_free_ptr"] = new("rt_arr_free_ptr",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.LowWord, Reg.CX)], _callerSaved),
 
+    // The MEMORY-MODEL array classes, transcribed from the ABI block at the head of
+    // DosRuntime.Ems.cs. HUGE takes conventional memory from DOS 48h and is addressed by stepping
+    // the segment; VIRTUAL/EMS/XMS take EMS pages and are addressed through the page frame.
+    //
+    //   HugeAlloc: DX:AX = byte count -> AX = segment      HugeFree: AX = segment (0 ok)
+    //   HugeZero:  AX = segment, CX:BX = byte count
+    //   EmsAlloc:  DX:AX = byte count -> AX = handle       EmsFree:  DX = handle (0 ok)
+    //   EmsFrame:  -> AX = page-frame segment              EmsZero:  DX = handle, CX:BX = byte count
+    //   EmsMap2:   DX = handle, BX = logical page          EmsFre:   -> DX:AX = free EMS bytes
+    //
+    // The byte counts are real PAIRS rather than LowWord: a HUGE array is over 64 KiB by the time it
+    // is worth declaring one, which is the whole point of the class.
+    ["rt_huge_alloc"] = new("rt_hugealloc", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
+    ["rt_huge_free"] = new("rt_hugefree", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_huge_zero"] = new("rt_hugezero",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Pair, Reg.BX, Reg.CX)], _callerSaved),
+    ["rt_ems_alloc"] = new("rt_emsalloc", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
+    ["rt_ems_free"] = new("rt_emsfree", [new(ArgKind.Word, Reg.DX)], _callerSaved),
+    ["rt_ems_frame"] = new("rt_emsframe", [], _callerSaved, Result: Reg.AX),
+    ["rt_ems_zero"] = new("rt_emszero",
+      [new(ArgKind.Word, Reg.DX), new(ArgKind.Pair, Reg.BX, Reg.CX)], _callerSaved),
+    ["rt_ems_map2"] = new("rt_emsmap2",
+      [new(ArgKind.Word, Reg.DX), new(ArgKind.Word, Reg.BX)], _callerSaved),
+    // FRE(-11): the free EMS byte count, a LONG, so the answer is the DX:AX pair
+    ["rt_ems_fre"] = new("rt_emsfre", [], _callerSaved, Result: Reg.AX, Answer: ResultKind.Pair),
+
     ["rt_array_sort_num"] = new("rt_sortnum", [], _callerSaved),
     ["rt_array_scan_num"] = new("rt_scannum", [], _callerSaved, Result: Reg.AX),
     ["rt_array_sort_str"] = new("rt_sortstr", [], _callerSaved),

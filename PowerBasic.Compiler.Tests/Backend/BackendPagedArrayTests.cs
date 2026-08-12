@@ -1,0 +1,142 @@
+using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Semantics;
+using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Tests.Exec;
+
+namespace PowerBasic.Compiler.Tests.Backend;
+
+/// <summary>
+/// The memory-model array classes through the IR and the x86-16 back end: <c>DIM HUGE</c>, which takes
+/// a DOS block and steps the segment per element, and the EMS-paged <c>VIRTUAL</c> / <c>EMS</c> /
+/// <c>XMS</c> family.
+///
+/// <para>
+/// HUGE is executed here; VIRTUAL is not, and the split is the emulator's rather than a choice.
+/// <see cref="Cpu8086"/> answers INT 21h/48h, so a DOS block really is allocated and the segment
+/// stepping is observable - which is the whole point, since an element past 64 KiB is exactly where a
+/// near address silently wraps and reads the wrong bytes back. It has no INT 67h, so an EMS array
+/// cannot run under it at all; the differential battery's DIFF17 is what exercises VIRTUAL, under a
+/// DOSBox configured with <c>ems=true</c>.
+/// </para>
+/// </summary>
+[TestFixture]
+public sealed class BackendPagedArrayTests {
+
+  /// <summary>
+  /// Elements on both sides of the 64 KiB boundary and a loop that walks across it. 16384 LONGs is
+  /// exactly 65536 bytes, so <c>h(16384)</c> is the first element of the second segment - a subscript
+  /// that answers whatever <c>h(0)</c> holds if the address arithmetic stayed 16-bit.
+  /// </summary>
+  private const string _hugeProgram = """
+    DIM HUGE h(0 TO 20000) AS LONG
+    h(0) = 11
+    h(16383) = 22
+    h(16384) = 33
+    h(20000) = 999
+    PRINT h(0); h(16383); h(16384); h(20000)
+    t& = 0
+    FOR i& = 16382 TO 16386
+      h(i&) = i& * 2
+      t& = t& + h(i&)
+    NEXT i&
+    PRINT t&
+    PRINT LBOUND(h); UBOUND(h)
+    ERASE h
+    DIM HUGE w(1 TO 40000) AS INTEGER
+    w(1) = 7
+    w(32768) = 8
+    w(40000) = 9
+    PRINT w(1); w(32768); w(40000); LBOUND(w); UBOUND(w)
+    """;
+
+  private static SemanticModel Bind(string source) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    return model;
+  }
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Execute_GivenAHugeArray_WhenRouted_ThenElementsAcrossSegmentsKeepTheirOwnValues(bool optimize) {
+    var routed = new CodeGenerator(Bind(_hugeProgram)) { Optimize = optimize, UseExperimentalBackend = true };
+
+    var cpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"),
+      "the module body must not fall back to the direct emitter - then this would test that instead");
+    Assert.That(cpu.Output.Replace("\r\n", "|"), Is.EqualTo(
+      " 11  22  33  999 | 163840 | 0  20000 | 7  8  9  1  40000 |"));
+  }
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Execute_GivenAHugeArray_WhenRouted_ThenItAgreesWithTheDirectEmitter(bool optimize) {
+    var direct = new CodeGenerator(Bind(_hugeProgram)) { Optimize = optimize, UseExperimentalBackend = false };
+    var routed = new CodeGenerator(Bind(_hugeProgram)) { Optimize = optimize, UseExperimentalBackend = true };
+
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+  }
+
+  /// <summary>
+  /// A VIRTUAL array cannot be executed here, but it can be LOWERED and ROUTED, and the two things
+  /// that could go silently wrong are visible without running it: the whole module body has to reach
+  /// the back end, and the window mapping has to be there.
+  /// </summary>
+  [Test]
+  public void Route_GivenAVirtualArray_ThenTheModuleBodyRoutesThroughTheEmsPageMapper() {
+    const string source = """
+      DIM VIRTUAL v(1 TO 50000) AS LONG
+      v(1) = 42
+      v(4097) = 4097
+      PRINT v(1); v(4097); FRE(-11) > 0
+      """;
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+
+    var image = routed.EmitExecutable();
+
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
+    Assert.That(image, Is.Not.Empty);
+  }
+
+  /// <summary>
+  /// The boundary of what lowers, pinned so widening it stays a deliberate act. Each of these is a
+  /// shape the DIRECT emitter refuses too, or one whose descriptor the two paths could not share -
+  /// and a decline costs coverage where a guess would cost correctness.
+  /// </summary>
+  [TestCase("DIM HUGE h(0 TO 3, 0 TO 3) AS LONG\nh(0, 0) = 1",
+    "rank above one: the direct emitter reports it unsupported")]
+  [TestCase("DIM HUGE h(0 TO 9) AS STRING\nh(0) = \"x\"",
+    "a string element is a heap handle, not storage")]
+  [TestCase("DIM HUGE h(0 TO 9) AS LONG\nREDIM PRESERVE h(0 TO 19)",
+    "PRESERVE would have to copy between two segment-stepped blocks")]
+  [TestCase("DIM EMS e(0 TO 9) AS LONG\ne(0) = 1\nERASE e",
+    "ERASE of an EMS array reclaims it as a heap block on the direct path")]
+  [TestCase("DIM HUGE h(0 TO 9) AS LONG\nCALL Bump(h(0))\nSUB Bump(BYREF n AS LONG)\n n = n + 1\nEND SUB",
+    "a far element address passed BYREF would arrive as a near one")]
+  [TestCase("DIM HUGE h(0 TO 9) AS LONG\nCALL Fill\nSUB Fill\n SHARED h()\n h(0) = 1\nEND SUB",
+    "the descriptor is a frame slot, so a procedure cannot share it")]
+  public void Lower_GivenAPagedArrayOutsideTheSubset_ThenDeclinesRatherThanGuessing(string source, string why) {
+    var module = IrLowering.TryLowerModule(Bind(source), out var reason);
+
+    Assert.That(module, Is.Null, $"{why}: expected a decline, got a lowered module");
+    Assert.That(reason, Is.Not.Null.And.Not.Empty);
+  }
+
+  /// <summary>
+  /// <c>FRE(-11)</c> is the free EMS byte count and lowers; every other FRE answers an advisory
+  /// constant after CONSUMING its argument, which is an ownership rule the IR does not model.
+  /// </summary>
+  [Test]
+  public void Lower_GivenFreOtherThanTheEmsForm_ThenDeclines() {
+    Assert.That(IrLowering.TryLowerModule(Bind("PRINT FRE(-11)"), out _), Is.Not.Null);
+    Assert.That(IrLowering.TryLowerModule(Bind("a$ = \"x\"\nPRINT FRE(a$)"), out var reason), Is.Null);
+    Assert.That(reason, Does.Contain("FRE"));
+  }
+}

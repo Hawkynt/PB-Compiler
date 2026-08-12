@@ -131,8 +131,8 @@ public sealed class BackendAbsoluteArrayTests {
   /// declines - and a decline costs coverage, where lowering an element access whose segment the IR
   /// cannot name costs correctness.
   /// </summary>
-  [TestCase("DIM HUGE h&(0 TO 99999)\nh&(0) = 1", "HUGE spans more segments than one AT names")]
-  [TestCase("DIM VIRTUAL v&(1 TO 50000)\nv&(1) = 1", "VIRTUAL is EMS-paged, not a fixed segment")]
+  // HUGE and VIRTUAL used to be here. They lower now - they were never about the AT segment, only
+  // about a segment computed per access, which IrFarPtr always allowed (BackendPagedArrayTests).
   [TestCase("s% = &HB800\nDIM DYNAMIC a%(0 TO 7) AT s%\na%(0) = 1", "a runtime AT segment")]
   [TestCase("DIM DYNAMIC a%(0 TO 7) AT &HB800\nERASE a%", "ERASE unmaps an AT array")]
   [TestCase("DIM DYNAMIC a%(0 TO 7) AT &HB800\nREDIM a%(0 TO 15)", "REDIM would allocate over the view")]
