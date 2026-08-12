@@ -9,6 +9,14 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// by the differential harness (tests/diff/DIFF62.BAS under pb35 chain and pb36 table);
 /// this pins that the table actually replaces the compare chain (an indexed indirect
 /// jump appears, and the dispatch is more compact than the chain).
+///
+/// <para>
+/// Every subject here comes from <c>INPUT</c>, and that is a requirement rather than a
+/// style: a subject assigned a literal is a value the optimizer can prove, so the whole
+/// SELECT folds to the one arm that can run and there is no dispatch left to assert
+/// about. A test written that way passes for a reason unrelated to its name - and the
+/// negative ones (no jump table, no mask, no tree) pass vacuously, which is worse.
+/// </para>
 /// </summary>
 [TestFixture]
 public sealed class SelectJumpTableTests {
@@ -35,7 +43,7 @@ public sealed class SelectJumpTableTests {
   }
 
   private const string _DenseSelect =
-    "x% = 4\n" +
+    "DIM x%\nINPUT x%\n" +
     "SELECT CASE x%\n" +
     "CASE 1\n PRINT \"a\"\n" +
     "CASE 2\n PRINT \"b\"\n" +
@@ -55,7 +63,7 @@ public sealed class SelectJumpTableTests {
   [Test]
   public void Emit_GivenSparseSelect_WhenPb36_ThenKeepsTheCompareChain() {
     // only two cases - below the table threshold, so the compare chain stays (no FF A7)
-    var pb36 = Compile("x% = 1\nSELECT CASE x%\nCASE 1\n PRINT \"a\"\nCASE 9\n PRINT \"b\"\nEND SELECT\nEND", Dialect.Pb36);
+    var pb36 = Compile("DIM x%\nINPUT x%\nSELECT CASE x%\nCASE 1\n PRINT \"a\"\nCASE 9\n PRINT \"b\"\nEND SELECT\nEND", Dialect.Pb36);
     Assert.That(Contains(pb36, 0xFF, 0xA7), Is.False);
   }
 
@@ -75,8 +83,7 @@ public sealed class SelectJumpTableTests {
   }
 
   private const string _DenseLongSelect =
-    "DIM x AS LONG\n" +
-    "x = 100000\n" +
+    "DIM x AS LONG\nINPUT x\n" +
     "SELECT CASE x\n" +
     "CASE 100000\n PRINT \"a\"\n" +
     "CASE 100001\n PRINT \"b\"\n" +
@@ -103,7 +110,7 @@ public sealed class SelectJumpTableTests {
 
   private const string _SparseTreeSelect =
     "$OPTIMIZE SPEED\n" +
-    "DIM x%\n x% = 300\n" +
+    "DIM x%\nINPUT x%\n" +
     "SELECT CASE x%\n" +
     "CASE 1\n PRINT \"a\"\n" +
     "CASE 100\n PRINT \"b\"\n" +
@@ -134,7 +141,7 @@ public sealed class SelectJumpTableTests {
     // (CASE 1, 8, 15 - only 3 values, so below the table's count>=4 gate) tests membership with a
     // bit mask: MOV AX, 4081h (bits 0,7,14 for 1,8,15 normalized to min 1) then SHR AX, CL (D3 E8)
     // and a bit-0 test - no per-value compare.
-    var img = Compile("$OPTIMIZE SPEED\nDIM x%\n x% = 8\nSELECT CASE x%\nCASE 1, 8, 15\n PRINT \"a\"\nCASE ELSE\n PRINT \"z\"\nEND SELECT\nEND", Dialect.Pb36);
+    var img = Compile("$OPTIMIZE SPEED\nDIM x%\nINPUT x%\nSELECT CASE x%\nCASE 1, 8, 15\n PRINT \"a\"\nCASE ELSE\n PRINT \"z\"\nEND SELECT\nEND", Dialect.Pb36);
     Assert.That(Contains(img, 0xB8, 0x81, 0x40), Is.True, "the compile-time membership mask 4081h is loaded (MOV AX, 4081h)");
     Assert.That(Contains(img, 0xD3, 0xE8), Is.True, "the mask is shifted by the subject (SHR AX, CL)");
   }
@@ -163,7 +170,7 @@ public sealed class SelectJumpTableTests {
   [Test]
   public void Emit_GivenTwoValueArm_WhenPb36Speed_ThenKeepsTheCompareChain() {
     // below three values the bit mask declines and the compare chain stays (no SHR AX, CL dispatch).
-    var img = Compile("$OPTIMIZE SPEED\nDIM x%\n x% = 8\nSELECT CASE x%\nCASE 1, 15\n PRINT \"a\"\nCASE ELSE\n PRINT \"z\"\nEND SELECT\nEND", Dialect.Pb36);
+    var img = Compile("$OPTIMIZE SPEED\nDIM x%\nINPUT x%\nSELECT CASE x%\nCASE 1, 15\n PRINT \"a\"\nCASE ELSE\n PRINT \"z\"\nEND SELECT\nEND", Dialect.Pb36);
     Assert.That(Contains(img, 0xB8, 0x81, 0x40), Is.False, "a two-value arm does not build a membership mask");
   }
 
@@ -214,7 +221,7 @@ public sealed class SelectJumpTableTests {
     // below the 8-distinct-value threshold the tree declines and the linear compare chain stays:
     // it loads each case value into AX (MOV AX, 012Ch = B8 2C 01) and compares against the subject
     // cell, so the CMP AX, 012Ch tree signature is absent.
-    var img = Compile("$OPTIMIZE SPEED\nDIM x%\n x% = 300\nSELECT CASE x%\nCASE 1\n PRINT \"a\"\nCASE 100\n PRINT \"b\"\nCASE 200\n PRINT \"c\"\nCASE 300\n PRINT \"d\"\nEND SELECT\nEND", Dialect.Pb36);
+    var img = Compile("$OPTIMIZE SPEED\nDIM x%\nINPUT x%\nSELECT CASE x%\nCASE 1\n PRINT \"a\"\nCASE 100\n PRINT \"b\"\nCASE 200\n PRINT \"c\"\nCASE 300\n PRINT \"d\"\nEND SELECT\nEND", Dialect.Pb36);
     Assert.That(Contains(img, 0x3D, 0x2C, 0x01), Is.False, "a few-case sparse SELECT keeps the compare chain, not the tree");
   }
 }

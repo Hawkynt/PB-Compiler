@@ -323,13 +323,25 @@ imply was all that remained - failed **109 tests**, and after `Ir/Passes/TailRec
   `aabbbb`. Every runtime call's staging moves claim the call's whole destination set for exactly this
   reason (`InstructionSelector.StagingDestinations`), and a hand-written sequence has to do the same.
 
-* **four SELECT tests can no longer observe what they assert**, and it is worth saying which way round
-  that is. `Emit_GivenDenseSelect`, `Emit_GivenDenseLongSelect`, `Emit_GivenSparseManyCaseSelect` and
-  `Emit_GivenSparseValueListArm` set the subject to a literal one line above the `SELECT`; SCCP
-  resolves the dispatch outright, so the whole statement is one `PRINT` and there is no dispatch left
-  to be a jump table. `Emit_GivenAscOfSingleCharMid` is the same shape - it tells a constant length
-  from a runtime one by `n% = 1`, which SCCP proves. These are not missing optimizations; the
-  discriminator is.
+* **five tests that could not observe what they assert - now FIXED, and the fix moved the count the
+  other way.** `Emit_GivenDenseSelect`, `Emit_GivenDenseLongSelect`, `Emit_GivenSparseManyCaseSelect`
+  and `Emit_GivenSparseValueListArm` set the subject to a literal one line above the `SELECT`; SCCP
+  resolved the dispatch outright, so the whole statement was one `PRINT` and there was nothing left to
+  be a jump table. `Emit_GivenAscOfSingleCharMid` was the same shape - it told a constant length from a
+  runtime one by `n% = 1`, which SCCP proves, and routed the two programs compiled to the SAME image,
+  so its inequality assertion failed for a reason that had nothing to do with the byte read.
+
+  All five now take their subject (and, for the last, its length) from `INPUT`, and their expectations
+  are re-derived against the DIRECT emitter, which is the reference. The negative twins went the same
+  way - `Emit_GivenSparseSelect`, `Emit_GivenTwoValueArm`, `Emit_GivenFewCaseSparseSelect` - because a
+  boundary test whose subject folds away proves nothing about the threshold either. Two consequences
+  worth recording. `Emit_GivenAscOfSingleCharMid` now PASSES routed: `StringByteRead` really does
+  implement the byte read, and only the discriminator was hiding it. And
+  `Emit_GivenFewCaseSparseSelect` now FAILS routed, which is the honest reading of a real difference:
+  it asserts the ABSENCE of `CMP AX, 012Ch`, the direct emitter's decision-tree signature, and the
+  routed path emits those bytes as an ordinary compare against a case constant. That discriminator is
+  specific to the direct emitter's two dispatch shapes and does not separate anything in a back end
+  that has neither.
 * **the SELECT dispatch family proper is NOT done** - `Emit_GivenConstantCaseRange`,
   `Emit_GivenWideSpanFewArmSelect`, `Emit_GivenWideWindowArm`, `Emit_GivenSparseSelectWithPerfectHash`,
   `Emit_GivenOrChainEqualityIf`, `Emit_GivenAndChainOfInequalities`. Those take their subject from

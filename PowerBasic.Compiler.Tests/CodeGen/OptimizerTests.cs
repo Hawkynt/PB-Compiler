@@ -1532,12 +1532,25 @@ public sealed class OptimizerTests {
   public void Emit_GivenAscOfSingleCharMid_WhenPb36_ThenReadsDirectlyNotViaSubstring() {
     // O0290: ASC(MID$(s$, i, 1)) with a compile-time length of 1 reads the byte directly (rt_charat),
     // a different code path than a runtime length which must allocate the substring (rt_strmid + rt_asc).
-    // The two therefore compile to different images. Correctness of the direct read (including the MID$
-    // clamp-to-1 / 0-past-the-end behaviour) is pinned by the differential DOSBox suite.
-    var direct = Compile("$OPTIMIZE SPEED\nDIM s$, n%, c%\nLINE INPUT s$\nn% = 1\nc% = ASC(MID$(s$, 1, 1))\nPRINT c%\nEND", Dialect.Pb36);
-    var runtime = Compile("$OPTIMIZE SPEED\nDIM s$, n%, c%\nLINE INPUT s$\nn% = 1\nc% = ASC(MID$(s$, 1, n%))\nPRINT c%\nEND", Dialect.Pb36);
-    Assert.That(direct.SequenceEqual(runtime), Is.False, "a constant length-1 ASC(MID$) takes the direct-read path, a runtime length does not");
+    // Correctness of the direct read (including the MID$ clamp-to-1 / 0-past-the-end behaviour) is
+    // pinned by the differential DOSBox suite.
+    //
+    // The length has to be genuinely unknown in the contrast program - `n% = 1` one line up is a value
+    // the optimizer can prove, so the two programs would differ only in whether they load an immediate
+    // or a cell, and an image-inequality assertion would hold whatever the lowering did. Both the index
+    // and the runtime length come from INPUT, and the assertion names the routine: rt_charat is emitted
+    // only when something calls it, so its presence IS the direct-read path being taken.
+    const string program = "$OPTIMIZE SPEED\nDIM s$, i%, n%, c%\nLINE INPUT s$\nINPUT i%\nINPUT n%\n";
+    var direct = Compile(program + "c% = ASC(MID$(s$, i%, 1))\nPRINT c%; n%\nEND", Dialect.Pb36);
+    var runtime = Compile(program + "c% = ASC(MID$(s$, i%, n%))\nPRINT c%; n%\nEND", Dialect.Pb36);
+    Assert.That(HasCharAtRoutine(direct), Is.True, "a length-1 ASC(MID$) reads the byte directly (rt_charat)");
+    Assert.That(HasCharAtRoutine(runtime), Is.False, "a runtime length must allocate the substring - no direct read");
   }
+
+  // rt_charat entry: PUSH BX / PUSH SI / PUSH ES / PUSH AX / TEST AX,AX = 53 56 06 50 85 C0. The
+  // routine is emitted only when referenced, so finding it means the direct-read path was taken.
+  private static bool HasCharAtRoutine(byte[] image)
+    => ContainsSeq(image, 0x53, 0x56, 0x06, 0x50, 0x85, 0xC0);
 
   [Test]
   public void Emit_GivenSingleCharInstr_WhenPb36_ThenScansBytesNotSubstring() {
