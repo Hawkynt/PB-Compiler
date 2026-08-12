@@ -9,11 +9,11 @@ passes; an empty box means nobody has checked yet, which is not the same as fail
 
 | | Dimension | Measured | Notes |
 |---|---|---|---|
-| [x] | Statement syntax and parameter combinations | 170 / 170 | all 170 accepted |
-| [x] | Lowers to the IR | 100 / 170 | 100 of 170 reach the IR; the rest decline by name, which is the documented subset |
+| [x] | Statement syntax and parameter combinations | 165 / 165 | all 165 accepted |
+| [x] | Lowers to the IR | 99 / 165 | 99 of 165 reach the IR; the rest decline by name, which is the documented subset |
 | [x] | Syntax errors in unreachable branches are ignored, and warned about | 1 / 1 | all 1 held |
 | [~] | Syntax errors on reachable flow fail | 0 / 1 | 1 not held: reachable malformed source was accepted |
-| [x] | Syntax belonging to another dialect is rejected | 132 / 132 | all 132 cleanly refused |
+| [x] | Syntax belonging to another dialect is rejected | 137 / 137 | all 137 cleanly refused |
 | [x] | Numeric typing follows the dialect | 18 / 18 | all 18 as claimed |
 | [x] | Runtime implementations follow the dialect | 2 / 2 | all 2 selected as the dialect requires |
 | [x] | Every runtime function's observable output | 27 / 27 | all 27 behaved as the language defines (1 skipped - not this dialect's) |

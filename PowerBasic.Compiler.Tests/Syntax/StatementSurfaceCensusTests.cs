@@ -96,7 +96,12 @@ public sealed class StatementSurfaceCensusTests {
   /// </summary>
   [Test]
   public void Compile_GivenEveryStatementForm_ThenReportsHowFarEachGets() {
-    var results = StatementSurface.All.Select(f => Measure(f, Dialect.Pb36)).ToList();
+    // Only the forms pb36 HAS. A statement of Microsoft's - VIEW PRINT, PCOPY, DIM SHARED - is not
+    // a gap in this compiler when compiling as PowerBASIC; it is the gate doing its job, and
+    // counting it here would report the fidelity fix as a regression.
+    var results = StatementSurface.All
+      .Where(f => StatementSurface.ShouldAccept(f, Dialect.Pb36))
+      .Select(f => Measure(f, Dialect.Pb36)).ToList();
     var report = new StringBuilder();
 
     foreach (var (section, forms) in StatementSurface.Sections) {

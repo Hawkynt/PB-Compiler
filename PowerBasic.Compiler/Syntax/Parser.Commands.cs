@@ -385,6 +385,8 @@ public sealed partial class Parser {
       this.Require(LanguageFeature.DelayStatement);   // Turbo Basic's; Microsoft BASIC has only SLEEP
     if (keyword == "REG")
       this.Require(LanguageFeature.RegStatement);     // PowerBASIC's register-block accessor
+    if (keyword == "PCOPY")
+      this.Require(LanguageFeature.PCopy);            // Microsoft's video-page copy; PBC answers "Undefined error"
     var pos = this.Advance().Position;
 
     if (keyword == "NAME") { // NAME old$ AS new$
@@ -409,12 +411,18 @@ public sealed partial class Parser {
       return new CommandStmt(pos, keyword, [addr, this.ParseExpression()]);
     }
 
+    // Plain VIEW - the graphics viewport - is in both lineages; these two sub-forms are not. PBC
+    // 3.0 and 3.5 answer either with '"(" expected', having already decided the next thing must be
+    // a viewport rectangle.
     if (keyword == "VIEW" && this.TryMatchKeyword("SCREEN"))
       keyword = "VIEW SCREEN";
-    else if (keyword == "VIEW" && this.TryMatchKeyword("TEXT"))
+    else if (keyword == "VIEW" && this.TryMatchKeyword("TEXT")) {
+      this.Require(LanguageFeature.ViewText);
       keyword = "VIEW TEXT";
-    else if (keyword == "VIEW" && this.TryMatchKeyword("PRINT"))
+    } else if (keyword == "VIEW" && this.TryMatchKeyword("PRINT")) {
+      this.Require(LanguageFeature.ViewPrint);
       keyword = "VIEW PRINT";
+    }
     else if (keyword == "PALETTE" && this.TryMatchKeyword("USING"))
       keyword = "PALETTE USING";
 

@@ -48,8 +48,8 @@ public sealed class BackendMemoryCompareTests {
   /// the other four - which a test of equality alone would call a pass.
   /// </summary>
   private const string _SOURCE = """
-    DIM SHARED a AS INTEGER
-    DIM SHARED b AS INTEGER
+    DIM a AS SHARED INTEGER
+    DIM b AS SHARED INTEGER
     DECLARE SUB Report()
     a = 3
     b = 7

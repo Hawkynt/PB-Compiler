@@ -15,7 +15,7 @@ empty column is work that is open rather than work that is done quietly.
 | [pb31](pb31/README.md) | 9/12 | x | x | ~ | x | x | x | x | x | ~ | ~ | x | x |
 | [pb32](pb32/README.md) | 9/12 | x | x | ~ | x | x | x | x | x | ~ | ~ | x | x |
 | [pb35](pb35/README.md) | 9/12 | x | x | ~ | x | x | x | x | x | ~ | ~ | x | x |
-| [pb36](pb36/README.md) | 9/12 | x | x | ~ | x | - | x | x | x | ~ | ~ | x | x |
+| [pb36](pb36/README.md) | 9/12 | x | x | ~ | x | x | x | x | x | ~ | ~ | x | x |
 | [basica](basica/README.md) | 10/12 | x | x | x | ~ | x | x | x | x | - | . | x | x |
 | [gw](gw/README.md) | 10/12 | x | x | x | ~ | x | x | x | x | - | . | x | x |
 | [qb10](qb10/README.md) | 11/12 | x | x | - | - | x | x | x | x | - | . | x | x |

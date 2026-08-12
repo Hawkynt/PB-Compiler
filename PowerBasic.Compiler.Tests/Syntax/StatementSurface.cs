@@ -161,7 +161,7 @@ internal static class StatementSurface {
     new("meta.option.cntlbreak.on", "$OPTION CNTLBREAK ON", MinMicrosoft: _noMicrosoft),
     new("meta.option.cntlbreak.off", "$OPTION CNTLBREAK OFF", MinMicrosoft: _noMicrosoft),
     new("meta.option.gosub", "$OPTION GOSUB", MinMicrosoft: _noMicrosoft),
-    new("meta.option.video", "$OPTION VIDEO", MinMicrosoft: _noMicrosoft),
+    new("meta.option.video", "$OPTION VIDEO", Dialect.Pb36, _noMicrosoft),   // PBC 3.0/3.5 take $OPTION SIGNED/GOSUB/CNTLBREAK and answer VIDEO "Syntax error"
     new("meta.stack", "$STACK 2048", MinMicrosoft: _noMicrosoft),
     new("meta.string.1", "$STRING 1", MinMicrosoft: _noMicrosoft),
     new("meta.string.2", "$STRING 2", MinMicrosoft: _noMicrosoft),
@@ -383,14 +383,18 @@ internal static class StatementSurface {
     new("put.graphics.verb", "PUT (0, 0), spr%, XOR", Preamble: "DIM spr%(64)"),
     // VIEW PRINT / VIEW TEXT / VIEW SCREEN and PALETTE USING had no forms at all, which is why the
     // census never noticed that VIEW PRINT's own row-range spelling did not parse
-    new("view.print", "VIEW PRINT"),
-    new("view.print.range", "VIEW PRINT 1 TO 20"),
+    // VIEW PRINT / VIEW TEXT / PCOPY / DIM SHARED are Microsoft's: PBC 3.0 and 3.5 answer the two
+    // VIEW forms '"(" expected' - their VIEW is the graphics viewport and nothing else - PCOPY
+    // "Undefined error", and DIM SHARED "Variable expected" at the SHARED. VIEW TEXT is nobody's:
+    // BC 4.50 and BC 7.10 reject it too, so it is pinned at this compiler's own dialect.
+    new("view.print", "VIEW PRINT", _noBorland, Dialect.Qb10),
+    new("view.print.range", "VIEW PRINT 1 TO 20", _noBorland, Dialect.Qb10),
     new("view.screen", "VIEW SCREEN (0, 0)-(10, 10)"),
-    new("view.text", "VIEW TEXT 1, 20"),
+    new("view.text", "VIEW TEXT 1, 20", Dialect.Pb36, _noMicrosoft),
     new("palette.using", "PALETTE USING pal%(0)", Preamble: "DIM pal%(16)"),
     new("window", "WINDOW (0, 0)-(319, 199)"),
     new("palette", "PALETTE 1, 2"),
-    new("pcopy", "PCOPY 0, 1"),
+    new("pcopy", "PCOPY 0, 1", _noBorland, Dialect.Qb10),
     new("width", "WIDTH 80"),
     new("sound", "SOUND 440, 3"),
     new("play", "PLAY \"CDE\""),
@@ -461,7 +465,7 @@ internal static class StatementSurface {
     new("shared.global.pb", "DIM g AS SHARED INTEGER\ng = 1", MinMicrosoft: _noMicrosoft),
     // DIM SHARED is Microsoft's spelling. Whether PowerBASIC rejects it is not established here, so
     // the entry stays permissive on the Borland side rather than pinning an unverified claim
-    new("shared.global.qb", "DIM SHARED g%\ng% = 1"),
+    new("shared.global.qb", "DIM SHARED g%\ng% = 1", _noBorland, Dialect.Qb10),
     // SHARED as a statement of its own, inside a procedure - the other two forms declare module-level
     // storage and merely contain the word. The exact compiled-dialect minimum remains permissive;
     // BASICA/GW-BASIC are excluded because they have no SUB procedures in which it could appear.
@@ -661,14 +665,10 @@ internal static class StatementSurface {
     "get.graphics",
     "put.graphics",
     "put.graphics.verb",
-    "view.print",
-    "view.print.range",
     "view.screen",
-    "view.text",
     "palette.using",
     "window",
     "palette",
-    "pcopy",
     "width",
     "sound",
     "play",
@@ -700,7 +700,6 @@ internal static class StatementSurface {
     "sub.byref",
     "declare.sub",
     "sub.byval",
-    "shared.global.qb",
     "shared.stmt",
     "static.local",
     "type.decl",
@@ -747,7 +746,6 @@ internal static class StatementSurface {
     "meta.option.cntlbreak.on",
     "meta.option.cntlbreak.off",
     "meta.option.gosub",
-    "meta.option.video",
     "meta.stack",
     "meta.string.1",
     "meta.string.2",
@@ -787,10 +785,16 @@ internal static class StatementSurface {
   ];
 
   private static readonly string[] _pairPds71 = [
+    "shared.global.qb",
+    "pcopy",
+    "view.print.range",
+    "view.print",
 
   ];
 
   private static readonly string[] _pairNeither = [
+    "meta.option.video",
+    "view.text",
     "ext",
     "destructure",
     "static.assert",

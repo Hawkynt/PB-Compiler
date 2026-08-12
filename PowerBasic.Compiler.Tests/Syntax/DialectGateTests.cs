@@ -549,6 +549,38 @@ public sealed class DialectGateTests {
   public void Gate_GivenAPublicDeclaration_WhenPb35_ThenStillAccepted()
     => AssertAccepted("PUBLIC p%", Dialect.Pb35);
 
+  /// <summary>
+  /// The other direction, which had nowhere to be recorded until the Borland gate table learned to
+  /// say "never": statements MICROSOFT has and Bob Zale's line does not. PBC 3.0 and 3.5 answer
+  /// VIEW PRINT with '"(" expected' - their VIEW is the graphics viewport and nothing else - PCOPY
+  /// with "Undefined error", and DIM SHARED with "Variable expected", pointing at the SHARED.
+  /// </summary>
+  [TestCase("VIEW PRINT", "VIEW PRINT")]
+  [TestCase("VIEW PRINT 1 TO 20", "VIEW PRINT")]
+  [TestCase("PCOPY 0, 1", "PCOPY")]
+  [TestCase("DIM SHARED g%\ng% = 1", "DIM SHARED")]
+  public void Gate_GivenAStatementOnlyMicrosoftEverHad_WhenPb35_ThenRefused(string source, string what) {
+    try {
+      var errors = Compile(source, Dialect.Pb35);
+      Assert.That(errors, Has.Some.Contains(what).And.Contains("not available in the PowerBASIC"),
+        $"expected a Borland-family gate for: {source}\ngot: {string.Join("; ", errors)}");
+    } catch (ParserException e) {
+      Assert.That(e.Message, Does.Contain(what).And.Contain("not available in the PowerBASIC"));
+    }
+  }
+
+  [TestCase("VIEW PRINT")]
+  [TestCase("VIEW PRINT 1 TO 20")]
+  [TestCase("PCOPY 0, 1")]
+  [TestCase("DIM SHARED g%\ng% = 1")]
+  public void Gate_GivenAStatementOnlyMicrosoftEverHad_WhenQuickBasic45_ThenStillAccepted(string source)
+    => AssertAccepted(source, Dialect.Qb45);
+
+  /// <summary>Plain VIEW is the graphics viewport, which both lineages have - only the sub-forms moved.</summary>
+  [Test]
+  public void Gate_GivenTheGraphicsViewport_WhenPb35_ThenStillAccepted()
+    => AssertAccepted("VIEW (0, 0)-(100, 100)", Dialect.Pb35);
+
   #endregion
 
   #region defaults

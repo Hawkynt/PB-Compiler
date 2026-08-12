@@ -628,9 +628,14 @@ public sealed partial class Parser {
   private void ValidateOptionMeta(Token command, IReadOnlyList<Token> arguments) {
     if (arguments is [{ Kind: TokenKind.Identifier } option]) {
       if (option.Text.Equals("SIGNED", StringComparison.OrdinalIgnoreCase)
-          || option.Text.Equals("GOSUB", StringComparison.OrdinalIgnoreCase)
-          || option.Text.Equals("VIDEO", StringComparison.OrdinalIgnoreCase))
+          || option.Text.Equals("GOSUB", StringComparison.OrdinalIgnoreCase))
         return;
+      // $OPTION itself is Bob Zale's and PBC 3.0 and 3.5 take SIGNED, GOSUB and CNTLBREAK - but not
+      // VIDEO, which they answer "Syntax error". Only the one argument is gated.
+      if (option.Text.Equals("VIDEO", StringComparison.OrdinalIgnoreCase)) {
+        this.Require(LanguageFeature.OptionVideo);
+        return;
+      }
     }
     if (arguments is [{ Kind: TokenKind.Identifier } cntlBreak, { Kind: TokenKind.Identifier } mode]
         && cntlBreak.Text.Equals("CNTLBREAK", StringComparison.OrdinalIgnoreCase)

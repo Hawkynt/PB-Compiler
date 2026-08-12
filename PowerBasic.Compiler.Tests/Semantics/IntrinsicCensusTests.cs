@@ -294,7 +294,12 @@ public sealed class IntrinsicCensusTests {
 
     foreach (var intrinsic in gated) {
       var feature = DialectFacts.IntrinsicGate(intrinsic.Name)!.Value;
-      var min = DialectFacts.MinimumDialect(feature);
+      // A null minimum means the Borland lineage never had the feature at all - no intrinsic is
+      // gated that way today, and there would be no "earlier dialect" to probe if one were.
+      if (DialectFacts.MinimumDialect(feature) is not { } min) {
+        report.AppendLine($"  ({intrinsic.Name} is not a Borland-lineage feature)");
+        continue;
+      }
       var below = PreviousBorland(min);
       if (below is null) {
         report.AppendLine($"  (no earlier dialect than {min} to test {intrinsic.Name} against)");

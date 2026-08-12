@@ -100,7 +100,7 @@ public sealed class BackendInlineAsmTests {
   [Test]
   public void InlineAsm_GivenItTouchesAModuleVariable_ThenBothPathsAgree() {
     const string source = """
-      DIM SHARED total AS INTEGER
+      DIM total AS SHARED INTEGER
       total = 3
       ! MOV AX, total
       ! ADD AX, 4

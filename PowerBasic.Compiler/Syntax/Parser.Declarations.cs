@@ -791,6 +791,8 @@ public sealed partial class Parser {
       // DIM SHARED x - the Microsoft spelling of module-shared storage, where PowerBASIC writes
       // DIM x AS SHARED type. The lookahead is what keeps 'DIM shared AS INTEGER' (a variable that
       // happens to be called SHARED) working: the prefix form is only taken when a NAME follows.
+      // PBC 3.0 and 3.5 answer it "Variable expected", pointing at the SHARED.
+      this.Require(LanguageFeature.DimShared);
       this.Advance();
       shared = true;
     }

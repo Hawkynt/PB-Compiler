@@ -166,6 +166,22 @@ public enum LanguageFeature {
   /// <summary>LOCAL as a declaration inside a procedure. BC answers it "Statement unrecognizable".</summary>
   LocalStorage,
 
+  // The other direction, which had nowhere to be recorded until the Borland table learned to say
+  // "never": statements MICROSOFT has and Bob Zale's line does not. PBC 3.0 and 3.5 answer VIEW
+  // PRINT and VIEW TEXT with "\"(\" expected" - their VIEW is the graphics viewport and nothing
+  // else - PCOPY with "Undefined error", and DIM SHARED with "Variable expected" at the SHARED.
+  ViewPrint,
+  PCopy,
+  DimShared,
+  /// <summary>
+  /// VIEW TEXT and $OPTION VIDEO, which NO oracle here accepts - not PBC 3.0 or 3.5, not BC 4.50, not BC
+  /// 7.10. They are pinned at pb36 rather than removed, which is this compiler's own dialect and
+  /// therefore a claim about nothing but itself; Turbo Basic cannot be asked, its oracle being
+  /// IDE-only, so the history is not pinned any deeper than it was measured.
+  /// </summary>
+  ViewText,
+  OptionVideo,
+
   /// <summary>
   /// <c>BYVAL</c> on a parameter of a procedure DEFINITION - <c>SUB S(BYVAL n%)</c>.
   ///
@@ -231,7 +247,7 @@ public enum LanguageFeature {
 /// </summary>
 public static class DialectFacts {
 
-  private static readonly Dictionary<LanguageFeature, (Dialect Min, string What)> _gates = new() {
+  private static readonly Dictionary<LanguageFeature, (Dialect? Min, string What)> _gates = new() {
     [LanguageFeature.InlineAsm] = (Dialect.Pb30, "inline assembler ('!' statements)"),
     [LanguageFeature.UnsignedTypes] = (Dialect.Pb30, "unsigned types (BYTE/WORD/DWORD, '?'/'??'/'???' suffixes)"),
     [LanguageFeature.QuadType] = (Dialect.Pb30, "QUAD (64-bit) type ('&&' suffix)"),
@@ -329,6 +345,11 @@ public static class DialectFacts {
     // needs a display), so the claim is pinned no further back than the dialect that does have it.
     [LanguageFeature.ExtStorage] = (Dialect.Pb36, "EXT storage declarations"),
     [LanguageFeature.LocalStorage] = (Dialect.Tb10, "LOCAL declarations"),
+    [LanguageFeature.ViewPrint] = (null, "VIEW PRINT"),
+    [LanguageFeature.PCopy] = (null, "PCOPY"),
+    [LanguageFeature.DimShared] = (null, "DIM SHARED (the Microsoft spelling; PowerBASIC writes DIM x AS SHARED t)"),
+    [LanguageFeature.ViewText] = (Dialect.Pb36, "VIEW TEXT"),
+    [LanguageFeature.OptionVideo] = (Dialect.Pb36, "$OPTION VIDEO"),
     [LanguageFeature.RegStatement] = (Dialect.Pb30, "the REG statement"),
     [LanguageFeature.ShiftRotateStatements] = (Dialect.Pb30, "the SHIFT / ROTATE statements"),
     [LanguageFeature.UnionType] = (Dialect.Pb30, "UNION (the overlapping variant of TYPE)"),
@@ -394,6 +415,9 @@ public static class DialectFacts {
     // illegal" and BC 7.10 compiles it - the boundary is between the two PDS releases, which is
     // where the oracles put it rather than where the manuals were consulted.
     [LanguageFeature.ByValParameter] = Dialect.Pds71,
+    [LanguageFeature.ViewPrint] = Dialect.Qb10,
+    [LanguageFeature.PCopy] = Dialect.Qb10,
+    [LanguageFeature.DimShared] = Dialect.Qb10,
   };
 
   /// <summary>Human-readable dialect name, e.g. "PB 3.5", "TB 1.1", "QB 4.5", "PDS 7.1", "GW-BASIC".</summary>
@@ -471,13 +495,20 @@ public static class DialectFacts {
   public static bool IsPbAtLeast(this Dialect dialect, Dialect min)
     => dialect.Family() == DialectFamily.Borland && dialect >= min;
 
-  /// <summary>Lowest dialect providing <paramref name="feature"/>.</summary>
-  public static Dialect MinimumDialect(LanguageFeature feature) => _gates[feature].Min;
+  /// <summary>Lowest Borland-lineage dialect providing <paramref name="feature"/>; null when that lineage never had it.</summary>
+  public static Dialect? MinimumDialect(LanguageFeature feature) => _gates[feature].Min;
 
+  /// <summary>
+  /// A null minimum in either table means the family never had the feature, which is how a
+  /// Microsoft-only statement is spelled: the Microsoft table says a version and the Borland one
+  /// says nothing. Until VIEW PRINT, PCOPY and DIM SHARED were measured, only the other direction
+  /// could be expressed - the Borland table was indexed unconditionally - so a statement Bob Zale's
+  /// compilers do not have had nowhere to be recorded and was quietly accepted everywhere.
+  /// </summary>
   public static bool IsAvailable(LanguageFeature feature, Dialect dialect)
     => dialect.Family() == DialectFamily.Microsoft
       ? _microsoftGates.TryGetValue(feature, out var min) && dialect >= min
-      : dialect >= _gates[feature].Min;
+      : _gates[feature].Min is { } borland && dialect >= borland;
 
   /// <summary>Diagnostic text: "X requires PowerBASIC 3.2 (current dialect: PB 3.0)".</summary>
   public static string RequirementMessage(LanguageFeature feature, Dialect dialect) {
@@ -486,7 +517,9 @@ public static class DialectFacts {
       return _microsoftGates.TryGetValue(feature, out var msMin)
         ? $"{what} requires {msMin.DisplayName()} (current dialect: {dialect.DisplayName()})"
         : $"{what} is not available in the Microsoft BASIC family (current dialect: {dialect.DisplayName()})";
-    return $"{what} requires PowerBASIC {(int)min / 10}.{(int)min % 10} (current dialect: {dialect.DisplayName()})";
+    return min is { } pb
+      ? $"{what} requires PowerBASIC {(int)pb / 10}.{(int)pb % 10} (current dialect: {dialect.DisplayName()})"
+      : $"{what} is not available in the PowerBASIC / Turbo Basic family (current dialect: {dialect.DisplayName()})";
   }
 
   /// <summary>Gate of an intrinsic function name; null when the intrinsic is available everywhere.</summary>

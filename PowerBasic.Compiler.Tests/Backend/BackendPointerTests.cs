@@ -227,7 +227,7 @@ public sealed class BackendPointerTests {
   public void VarPtr_GivenASharedVariable_ThenItAddressesTheModulesOwnDataCell() {
     var (direct, routed, names) = RunBothWays("""
       DECLARE FUNCTION Poked% ()
-      DIM SHARED g AS WORD
+      DIM g AS SHARED WORD
       g = 5
       PRINT Poked%()
       PRINT g
