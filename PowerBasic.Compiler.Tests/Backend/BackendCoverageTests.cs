@@ -634,5 +634,9 @@ public sealed class BackendCoverageTests {
     "STRHEAP.BAS",
     "STRINGS.BAS",
     "SUBFN.BAS",
+    // UIToFP (FILD reads signed, so an unsigned source stages one size larger with the top zeroed)
+    // and a compare-as-a-value whose left operand is an immediate, mirrored the way the branch
+    // path already mirrors it. With these the corpus is COMPLETE on selection and allocation.
+    "DIFF14.BAS",
   ];
 }

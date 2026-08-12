@@ -78,6 +78,50 @@ public sealed class InstructionSelector {
   public static MFunction? TrySelect(IrFunction fn, bool cpu386 = false) => TrySelect(fn, out _, cpu386);
 
   /// <summary>
+  /// Whether the function has inline-asm statements with other work BETWEEN them, which is the shape
+  /// this back end cannot honour.
+  ///
+  /// <para>
+  /// A single block is a barrier and selects fine, and so do several ADJACENT ones - <c>! DEC c</c>
+  /// followed by <c>! JNZ label</c> passes its flags along untouched. What breaks is state carried in
+  /// a REGISTER across BASIC code: LOWLEVEL.BAS sets <c>CX</c> to 5, runs <c>n = n + 1</c>, then
+  /// decrements <c>CX</c> and loops. The block is modelled as clobbering everything, which stops a
+  /// value living ACROSS it but does nothing to stop the allocator putting a temporary IN CX in the
+  /// middle - so the countdown is destroyed and the loop runs once. It printed 1 for 5.
+  /// </para>
+  ///
+  /// <para>
+  /// The direct emitter survives it by computing through AX and leaving CX alone, which is luck
+  /// rather than contract. The honest fix is for an asm block to declare the registers it defines and
+  /// for how long; until then this shape declines, because selecting it is worse than not selecting
+  /// it. It is the one decline here that exists to prevent a WRONG ANSWER rather than a crash.
+  /// </para>
+  /// </summary>
+  private static bool SeparatedInlineAsm(IrFunction fn) {
+    var blocksWithAsm = 0;
+    foreach (var block in fn.Blocks) {
+      var instructions = block.Instructions;
+      var first = -1;
+      var last = -1;
+      for (var i = 0; i < instructions.Count; ++i)
+        if (instructions[i] is IrInlineAsm) {
+          if (first < 0)
+            first = i;
+          last = i;
+        }
+      if (first < 0)
+        continue;
+      ++blocksWithAsm;
+      // within one block the asm has to be one unbroken run: anything computed between two of them
+      // is something the allocator may put in a register the second one expects to still hold.
+      for (var i = first; i <= last; ++i)
+        if (instructions[i] is not IrInlineAsm)
+          return true;
+    }
+    return blocksWithAsm > 1;
+  }
+
+  /// <summary>
   /// Selects a function into machine IR, reporting <paramref name="declineReason"/> - the construct that
   /// stopped it - when the result is null. The reason is what the coverage census reads to rank which
   /// widening buys the most eligible functions, so it names the IR construct, not the failing routine.
@@ -86,6 +130,10 @@ public sealed class InstructionSelector {
     declineReason = null;
     if (fn.IsDeclaration || fn.Entry is null) {
       declineReason = "declaration";
+      return null;
+    }
+    if (SeparatedInlineAsm(fn)) {
+      declineReason = "inline asm: two blocks with BASIC code between them (register state spans it)";
       return null;
     }
     var selector = new InstructionSelector(cpu386);
@@ -664,14 +712,32 @@ public sealed class InstructionSelector {
   /// count would need a loop, so it is declined, and a large count is left to the runtime rather than
   /// unrolled into a wall of instructions.
   /// </summary>
+  /// <summary>
+  /// The shift count as a compile-time number, seeing through the WIDENING the operand carries.
+  ///
+  /// <c>SHIFT LEFT s, 4</c> shifts a 32-bit value by a 16-bit constant, so the lowering widens the
+  /// count to match the value being shifted and the count arrives as <c>zext i16 4 to i32</c> - a
+  /// constant wearing a cast. Matching only the bare constant declined the statement over the cast
+  /// rather than over anything about the shift, which is what kept LOWLEVEL.BAS off the IR path.
+  /// Widening a constant cannot change it (the value is non-negative and the target is wider), so
+  /// the cast is peeled rather than folded.
+  /// </summary>
+  private static long? WideShiftCount(IrValue count) => count switch {
+    IrConstantInt c => c.Value,
+    IrCast { Op: IrCastOp.ZExt or IrCastOp.SExt, Value: IrConstantInt c } => c.Value,
+    // A TRUNC can change the value, so it is only safe where the result still fits.
+    IrCast { Op: IrCastOp.Trunc, Value: IrConstantInt c, Type: { } to } when c.Value >= 0 && c.Value < (1L << Math.Min(to.Bits, 62)) => c.Value,
+    _ => null,
+  };
+
   private bool SelectWideShift(IrBinary bin, MOpcode opcode, MBlock block) {
     // ...except by exactly sixteen, which is not a shift on a register pair at all: it is the two
     // halves changing places. That is two moves rather than the thirty-two shift/rotate steps the
     // bit-at-a-time loop would need, and it is how a segment and an offset are joined into one
     // DWORD (CODEPTR32) or taken apart again.
-    if (bin.Rhs is IrConstantInt { Value: 16 } && opcode is MOpcode.Shl or MOpcode.Shr)
+    if (WideShiftCount(bin.Rhs) is 16 && opcode is MOpcode.Shl or MOpcode.Shr)
       return this.SelectWideWordSwap(bin, opcode == MOpcode.Shl);
-    if (bin.Rhs is not IrConstantInt { Value: var count } || count is < 0 or > 8)
+    if (WideShiftCount(bin.Rhs) is not { } count || count is < 0 or > 8)
       return this.Decline($"32-bit binary: {bin.Op} (only a small constant count, not {bin.Rhs})");
     if (!this.TryOperandPair(bin.Lhs, out var lhsLo, out var lhsHi))
       return false;
@@ -1185,8 +1251,21 @@ public sealed class InstructionSelector {
       return this.Decline($"compare as a value: {cmp.Pred}");
     if (!this.TryOperand(cmp.Lhs, out var lhs) || !this.TryOperand(cmp.Rhs, out var rhs))
       return false;
-    if (lhs is not MOperand.Register)
-      return this.Decline("compare as a value: immediate left operand");
+    // CMP wants a register on the left. The same two answers the BRANCH path already gives: mirror
+    // the predicate onto the other operand when THAT one is a register (`5 > x` is `x < 5`, and the
+    // mirror is not the negation), and otherwise move the left side into one. Declining here was the
+    // last thing keeping DIFF14 off the back end.
+    if (lhs is not MOperand.Register) {
+      if (rhs is MOperand.Register) {
+        (lhs, rhs) = (rhs, lhs);
+        cc = MapPredicate(Mirrored(cmp.Pred))!.Value;
+      } else {
+        var held = this.FreshVreg(cmp.Lhs.Type);
+        var into = new MOperand.Register(held);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [into, lhs], MovEffect(into, lhs)));
+        lhs = into;
+      }
+    }
 
     this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
       new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: false, WritesFlags: true,
@@ -1259,18 +1338,36 @@ public sealed class InstructionSelector {
   /// so nothing is evaluated that the original would not have evaluated.
   /// </summary>
   private bool SelectSelect(IrSelect sel) {
-    if (IsWide(sel.Type) || sel.Type.IsFloat)
+    if (sel.Type.IsFloat)
       return this.Decline($"select: {sel.Type} result");
-    if (!this.TryOperand(sel.Condition, out var cond)
-        || !this.TryOperand(sel.IfTrue, out var ifTrue)
-        || !this.TryOperand(sel.IfFalse, out var ifFalse))
+    var wide = IsWide(sel.Type);
+    MOperand ifTrue, ifFalse, ifTrueHi = null!, ifFalseHi = null!;
+    if (wide) {
+      if (!this.TryOperandPair(sel.IfTrue, out ifTrue, out ifTrueHi)
+          || !this.TryOperandPair(sel.IfFalse, out ifFalse, out ifFalseHi))
+        return false;
+    } else if (!this.TryOperand(sel.IfTrue, out ifTrue) || !this.TryOperand(sel.IfFalse, out ifFalse)) {
+      return false;
+    }
+    if (!this.TryOperand(sel.Condition, out var cond))
       return false;
     if (cond is not MOperand.Register)
       return this.Decline("select: condition is not in a register");
 
-    var dest = this.FreshVreg(sel.Type);
-    this._vregs[sel] = dest;
-    var destOp = new MOperand.Register(dest);
+    // A 32-bit result is a register PAIR, so each arm moves twice - the diamond is the same shape,
+    // and both halves have to be written on both paths or the untouched one keeps whatever the
+    // other arm left in it.
+    MOperand.Register destHi = null!;
+    MOperand.Register destOp;
+    if (wide) {
+      var (lo, hi) = this.FreshPair(sel);
+      destOp = lo;
+      destHi = hi;
+    } else {
+      var dest = this.FreshVreg(sel.Type);
+      this._vregs[sel] = dest;
+      destOp = new MOperand.Register(dest);
+    }
 
     var falseBlock = new MBlock($"{this._current.Label}.selfalse{this._splitCount}");
     var doneBlock = new MBlock($"{this._current.Label}.seldone{this._splitCount}");
@@ -1281,6 +1378,8 @@ public sealed class InstructionSelector {
       new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
         ReadsMemory: false, WritesMemory: false)));
     this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ifTrue], MovEffect(destOp, ifTrue)));
+    if (wide)
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destHi, ifTrueHi], MovEffect(destHi, ifTrueHi)));
     this._current.Instructions.Add(new MInstr(MOpcode.Jcc, [new MOperand.LabelRef(doneBlock.Label)],
       new MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, WritesMemory: false),
       Condition.NotEqual));
@@ -1288,6 +1387,8 @@ public sealed class InstructionSelector {
     this._current.Successors.Add(falseBlock.Label);
 
     falseBlock.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ifFalse], MovEffect(destOp, ifFalse)));
+    if (wide)
+      falseBlock.Instructions.Add(new MInstr(MOpcode.Mov, [destHi, ifFalseHi], MovEffect(destHi, ifFalseHi)));
     falseBlock.Successors.Add(doneBlock.Label);
 
     this._function.Blocks.Add(falseBlock);
@@ -1466,6 +1567,10 @@ public sealed class InstructionSelector {
           && inner.Value.Type.IsIeeeFloat && inner.Users.Count == 1:
         return this.SelectRoundTripThroughQword(inner, cast);
       case IrCastOp.SIToFP when to.IsIeeeFloat:
+        return this.SelectIntToFloat(cast);
+      // The same routine: it stages an unsigned source one size larger with the extra half zeroed,
+      // which is what makes FILD's signed read give the unsigned value back.
+      case IrCastOp.UIToFP when to.IsIeeeFloat:
         return this.SelectIntToFloat(cast);
       case IrCastOp.FPToSIRound when from.IsIeeeFloat && to.IsInteger && to.Bits is 16 or 32:
         return this.SelectFloatToInt(cast);
@@ -2446,25 +2551,39 @@ public sealed class InstructionSelector {
     var from = cast.Value.Type;
     if (!from.IsInteger || from.Bits is not (16 or 32))
       return this.Decline($"floating point: {cast.Op} from {from}");
-    if (!from.Signed)
-      return this.Decline($"floating point: {cast.Op} from unsigned {from} (FILD is signed)");
-
+    // FILD reads a SIGNED integer, so an unsigned source is staged one size LARGER than itself with
+    // the extra half zeroed - the mirror of what SelectFloatToUnsigned does going the other way. A
+    // DWORD's 4294967295 is negative read as a signed dword and itself read as a signed qword; the
+    // zero above it is what makes the sign bit a value bit again.
+    var unsignedWiden = !from.Signed;
     var slot = this._function.StackSlots.Count;
     var wide = IsWide(from);
-    this._function.StackSlots.Add(wide ? 4 : 2);
+    this._function.StackSlots.Add((wide ? 4 : 2) * (unsignedWiden ? 2 : 1));
     var cell = new MOperand.StackSlot(slot, MRegSize.Word);
     if (wide) {
       if (!this.TryOperandPair(cast.Value, out var lo, out var hi))
         return false;
       this.StoreWord(cell, lo);
       this.StoreWord(Shifted(cell, 2), hi);
+      if (unsignedWiden) {
+        this.StoreWord(Shifted(cell, 4), new MOperand.Immediate(0));
+        this.StoreWord(Shifted(cell, 6), new MOperand.Immediate(0));
+      }
     } else {
       if (!this.TryOperand(cast.Value, out var value))
         return false;
       this.StoreWord(cell, value);
+      if (unsignedWiden)
+        this.StoreWord(Shifted(cell, 2), new MOperand.Immediate(0));
     }
 
-    this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(slot, wide ? MRegSize.Dword : MRegSize.Word), reads: true);
+    var read = (wide, unsignedWiden) switch {
+      (true, true) => MRegSize.Qword,
+      (true, false) => MRegSize.Dword,
+      (false, true) => MRegSize.Dword,
+      _ => MRegSize.Word,
+    };
+    this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(slot, read), reads: true);
     this.EmitX87(MOpcode.Fstp, this.FloatCell(cast), reads: false);
     return true;
   }

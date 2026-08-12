@@ -198,10 +198,13 @@ public sealed class BackendInlineAsmTests {
       PRINT n; r
       """;
 
-    Assert.That(Run(source, routed: false), Is.EqualTo("1  5"), "the direct emitter happens to leave CX alone");
-    Assert.That(Run(source, routed: true), Is.EqualTo("1  1"),
-      "KNOWN DEFECT: the allocator put n+1 in CX. When this starts failing, the defect is fixed - "
-      + "make it assert agreement instead of pinning the disagreement");
+    // Closed, and not by teaching the allocator to keep CX: the function DECLINES instead. An asm
+    // block still cannot say which registers it defines or for how long, so the shape that needs
+    // that promise is left to the direct emitter, which computes through AX and leaves CX alone.
+    // LOWLEVEL.BAS is the program that made this urgent - it printed 1 where 5 was right, and only
+    // reached the back end at all once two unrelated declines were widened.
+    Assert.That(Run(source, routed: true), Is.EqualTo("1  5"));
+    Assert.That(Run(source, routed: false), Is.EqualTo(Run(source, routed: true)));
   }
 
   /// <summary>
@@ -235,8 +238,27 @@ public sealed class BackendInlineAsmTests {
     Assert.That(jump.Operands.OfType<IrBlockAddress>().Single().Block,
       Is.SameAs(main.AddressTakenBlocks().Single()), "the target block, and it is address-taken");
 
-    var m = InstructionSelector.TrySelect(main, out var reason);
-    Assert.That(m, Is.Not.Null, $"selection declined: {reason}");
+    // This particular program keeps its countdown in CX ACROSS `n = n + 1`, so the function itself
+    // declines - see the test above. The label machinery is read from one whose asm is adjacent,
+    // which is the shape that does route.
+    Assert.That(InstructionSelector.TrySelect(main, out var reason), Is.Null);
+    Assert.That(reason, Does.Contain("inline asm"));
+
+    var adjacent = Binder.Bind(Parser.Parse(Lexer.Tokenize("""
+      DIM n AS INTEGER
+      DIM c AS INTEGER
+      n = 0
+      c = 5
+      AddLoop:
+      n = n + 1
+      ! DEC c
+      ! JNZ AddLoop
+      PRINT n
+      """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    var loop = IrLowering.TryLowerModule(adjacent, out _)!.Functions
+      .First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
+    var m = InstructionSelector.TrySelect(loop, out var loopReason);
+    Assert.That(m, Is.Not.Null, $"selection declined: {loopReason}");
     var block = m!.AllInstructions.Single(i => i.Opcode == MOpcode.InlineAsm
       && ((MOperand.InlineAsmText)i.Operands[0]).Names.Contains("AddLoop"));
     Assert.That(block.Operands[1], Is.InstanceOf<MOperand.BlockOffset>(),
