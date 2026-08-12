@@ -31,6 +31,12 @@ internal static class StatementSurface {
   /// <param name="MinBorland">First Turbo Basic / PowerBASIC dialect with the form; null if it never had it.</param>
   /// <param name="MinMicrosoft">First BASICA / GW / QB / PDS dialect with the form; null if it never had it.</param>
   /// <param name="Preamble">Declarations the form needs to bind (a file to be open, an array to exist).</param>
+  /// <param name="MaxMicrosoft">
+  /// Last Microsoft dialect with the form, for the one shape a minimum cannot express: a form the
+  /// family HAD and then lost. <c>?</c> as PRINT is it - BASICA and GW-BASIC expand it while
+  /// tokenizing a line, and the compilers that followed answer it "Invalid character", the
+  /// expansion having lived in the editor rather than in BC.
+  /// </param>
   /// <param name="OwnExtension">
   /// This compiler's own directive rather than any vintage dialect's, so no oracle is asked about
   /// it. <c>$COMPAT</c> is the case: the decompiler writes it so a cross-family program recompiles
@@ -44,7 +50,8 @@ internal static class StatementSurface {
     Dialect? MinBorland = Dialect.Tb10,
     Dialect? MinMicrosoft = Dialect.Basica,
     string Preamble = "",
-    bool OwnExtension = false);
+    bool OwnExtension = false,
+    Dialect? MaxMicrosoft = null);
 
   /// <summary>A form only Turbo Basic / PowerBASIC ever had.</summary>
   private static readonly Dialect? _noMicrosoft = null;
@@ -267,7 +274,7 @@ internal static class StatementSurface {
     new("print.string", "PRINT \"text\""),
     new("print.tab", "PRINT TAB(5); x%"),
     new("print.spc", "PRINT SPC(3); x%"),
-    new("print.question", "? x%"),
+    new("print.question", "? x%", MaxMicrosoft: Dialect.Gw),   // the interpreters expand it; BC 4.50 and 7.10 answer "Invalid character"
     new("print.file", "PRINT #1, x%", Preamble: "OPEN \"T.TXT\" FOR OUTPUT AS #1"),
     new("print.file.comma", "PRINT #1, x%, y%", Preamble: "OPEN \"T.TXT\" FOR OUTPUT AS #1"),
     new("write.file", "WRITE #1, x%", Preamble: "OPEN \"T.TXT\" FOR OUTPUT AS #1"),
@@ -575,7 +582,6 @@ internal static class StatementSurface {
     "print.string",
     "print.tab",
     "print.spc",
-    "print.question",
     "print.file",
     "print.file.comma",
     "write.file",
@@ -712,6 +718,7 @@ internal static class StatementSurface {
   ];
 
   private static readonly string[] _pairPb35 = [
+    "print.question",
     "open.access.and.lock",
     "meta.compat",
     "local.decl",
@@ -904,7 +911,10 @@ internal static class StatementSurface {
 
   /// <summary>Whether <paramref name="dialect"/> should accept <paramref name="form"/> at all.</summary>
   internal static bool ShouldAccept(Form form, Dialect dialect) {
-    var min = dialect.Family() == DialectFamily.Microsoft ? form.MinMicrosoft : form.MinBorland;
-    return min is { } floor && dialect >= floor;
+    var microsoft = dialect.Family() == DialectFamily.Microsoft;
+    var min = microsoft ? form.MinMicrosoft : form.MinBorland;
+    if (min is not { } floor || dialect < floor)
+      return false;
+    return !microsoft || form.MaxMicrosoft is not { } ceiling || dialect <= ceiling;
   }
 }

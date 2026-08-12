@@ -13,7 +13,13 @@ namespace PowerBasic.Compiler.Tests.Syntax;
 [TestFixture]
 public sealed class InvalidSyntaxSurfaceTests {
 
-  public sealed record InvalidForm(string Id, string Source);
+  /// <param name="BorlandOnly">
+  /// Invalid in Bob Zale's lineage only. <c>CALL DWORD</c> is the case: DWORD is a TYPE keyword
+  /// there, so the indirect call is missing its target, while to Microsoft it is an ordinary call
+  /// to a SUB that happens to be named DWORD - which BC compiles without complaint. Asking a
+  /// Microsoft oracle to reject it measures nothing.
+  /// </param>
+  public sealed record InvalidForm(string Id, string Source, bool BorlandOnly = false);
 
   internal static readonly InvalidForm[] Forms = [
     new("lexer.unexpected-character", "PRINT ~\n"),
@@ -34,7 +40,7 @@ public sealed class InvalidSyntaxSurfaceTests {
     new("declare-sub.missing-name", "DECLARE SUB (x%)\n"),
     new("sub.missing-parameter", "SUB S(\nEND SUB\n"),
     new("type-field.missing-type", "TYPE T\n  x AS\nEND TYPE\n"),
-    new("call-dword.missing-target", "CALL DWORD\n"),
+    new("call-dword.missing-target", "CALL DWORD\n", BorlandOnly: true),
     new("resume.too-many-targets", "RESUME first, second\n"),
     new("meta.unknown-command", "$WHATEVER 1\n"),
     new("meta.compile.bad-kind", "$COMPILE SOMETHING\n"),

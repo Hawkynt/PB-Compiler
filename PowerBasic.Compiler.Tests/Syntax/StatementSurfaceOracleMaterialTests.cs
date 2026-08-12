@@ -50,6 +50,10 @@ public sealed class StatementSurfaceOracleMaterialTests {
       }
 
       foreach (var invalid in InvalidSyntaxSurfaceTests.Forms) {
+        // Some invalidity is a property of ONE lineage's keywords rather than of BASIC: CALL DWORD
+        // is a missing target where DWORD is a type, and an ordinary call where it is not.
+        if (invalid.BorlandOnly && dialect.Family() == DialectFamily.Microsoft)
+          continue;
         var id = "invalid." + invalid.Id;
         var fileName = id + ".BAS";
         var source = dialect.IsGwBasica()
@@ -67,8 +71,10 @@ public sealed class StatementSurfaceOracleMaterialTests {
     File.WriteAllText(Path.Combine(output, "manifest.tsv"), manifest.ToString(), utf8);
     // Own-extension forms are deliberately absent: no oracle is asked about a directive this
     // compiler invented, so they are subtracted here rather than silently loosening the count.
-    var probed = forms.Count(f => !f.OwnExtension) + InvalidSyntaxSurfaceTests.Forms.Length;
-    Assert.That(rows, Is.EqualTo(probed * StatementSurface.AllDialects.Length));
+    var borland = StatementSurface.AllDialects.Count(d => d.Family() == DialectFamily.Borland);
+    var probed = forms.Count(f => !f.OwnExtension) + InvalidSyntaxSurfaceTests.Forms.Count(f => !f.BorlandOnly);
+    Assert.That(rows, Is.EqualTo(probed * StatementSurface.AllDialects.Length
+      + InvalidSyntaxSurfaceTests.Forms.Count(f => f.BorlandOnly) * borland));
   }
 
   private static string RepositoryRoot() {

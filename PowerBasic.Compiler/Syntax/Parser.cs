@@ -286,7 +286,7 @@ public sealed partial class Parser {
       TokenKind.MicrosoftMetaCommand => this.ParseMicrosoftCommentMeta(),
       TokenKind.NamedConstant => this.ParseEquate(),
       TokenKind.IntegerLiteral when atLineStart => new LabelStmt(this.Advance().Position, token.IntegerValue.ToString()),
-      TokenKind.Question => this.ParsePrint(false),
+      TokenKind.Question => this.ParseQuestionPrint(),
       TokenKind.At => this.ParseAssignment(), // @p = value
       TokenKind.Period when this._withSubjects.Count > 0 && this.Peek().Kind == TokenKind.Identifier => this.ParseAssignment(), // WITH: .member = value
       TokenKind.Identifier => this.ParseIdentifierStatement(atLineStart),
@@ -482,6 +482,20 @@ public sealed partial class Parser {
       default:
         return _commandKeywords.Contains(keyword) ? this.ParseCommand(keyword) : this.ParseBareCall();
     }
+  }
+
+  /// <summary>
+  /// <c>?</c> as PRINT. The interpreters have it - BASICA and GW-BASIC expand it as they tokenize a
+  /// line - and PowerBASIC has it, but the Microsoft COMPILERS do not: BC 4.50 and BC 7.10 both
+  /// answer it "Invalid character", because in that lineage the expansion lived in the editor and
+  /// never reached the compiler. It is the one form here that a family ACQUIRED and then lost, so
+  /// it is checked against the family boundary directly rather than through a minimum version.
+  /// </summary>
+  private Statement ParseQuestionPrint() {
+    if (this._dialect.Family() == DialectFamily.Microsoft && !this._dialect.IsGwBasica())
+      throw this.Error("? as PRINT is not available in the Microsoft compilers "
+        + $"(current dialect: {this._dialect.DisplayName()}); BASICA and GW-BASIC expand it, BC does not");
+    return this.ParsePrint(false);
   }
 
   private Statement ParseMeta() {
