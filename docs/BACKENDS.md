@@ -343,9 +343,10 @@ imply was all that remained - failed **109 tests**, and after `Ir/Passes/TailRec
   ```
 
   Each ingredient alone is fine, measured: a constant-bound `REDIM` pair with constant indices, a
-  constant-bound pair with a `FOR` loop writing `b(i)`, and a runtime-bound pair with constant
-  indices all behave routed. INTEGER temps fail exactly as LONG ones do, so the 32-bit paths are not
-  implicated either. The IR is clean throughout - two distinct `rt_arr_alloc(i32 6)` calls with
+  constant-bound pair with a `FOR` loop writing `b(i)`, a runtime-bound pair with constant indices,
+  and - the sharpest one - the SAME runtime-bound loop over a SINGLE dynamic array all behave
+  routed. It takes two of them. INTEGER temps fail exactly as LONG ones do, so the 32-bit paths are
+  not implicated either. The IR is clean throughout - two distinct `rt_arr_alloc(i32 6)` calls with
   separate results - so the divergence is below the IR, in how the routed path records or re-reads
   the block when the array's extent is not a compile-time constant.
 
