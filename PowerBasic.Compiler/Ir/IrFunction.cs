@@ -74,6 +74,18 @@ public sealed class IrFunction : IrGlobalValue {
   public IrBasicBlock CreateBlock(string label) => this.AddBlock(new IrBasicBlock(label));
 
   /// <summary>
+  /// Creates a fresh block and makes it the ENTRY, pushing the current one down. The old entry keeps
+  /// every instruction it had and simply gains a predecessor, which is what turns it into a loop
+  /// header - the shape tail-recursion elimination needs, since a phi has to name a block for the
+  /// value that arrives the first time round and the entry of a function has none.
+  /// </summary>
+  public IrBasicBlock CreateEntryBlock(string label) {
+    var block = new IrBasicBlock(label) { Parent = this };
+    this._blocks.Insert(0, block);
+    return block;
+  }
+
+  /// <summary>
   /// Removes a block from the function, dropping its instructions' uses of their operands.
   ///
   /// <para>

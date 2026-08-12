@@ -145,6 +145,11 @@ public sealed class IrPassManager {
     .AddWhen(optimizeForSpeed, "deadloop", DeadLoopElimination.Run)
     .Add("ifconv", IfConversion.Run)
     .Add("simplifycfg", SimplifyCfg.Run)
+    // AFTER simplifycfg, which is what puts a self-call and its return next to each other, and after
+    // mem2reg, without which the parameters are still allocas and there is nothing to phi. It runs in
+    // the pipeline rather than beside it so that the sweep FOLLOWING the inliner sees it: mutual
+    // recursion is inlined into self-recursion first, and this is what then turns it into a loop.
+    .Add("tailrec", TailRecursion.Run)
     // FunctionSummaries.RemoveDeadPureCalls deliberately does NOT run here. The analysis is right and
     // the removal is sound - a call to a body that writes nothing, whose result nothing reads, is not
     // observable - but DIFF113 declares `SUB Opaque(v&)` with an EMPTY body precisely to be an

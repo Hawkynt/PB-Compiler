@@ -292,7 +292,8 @@ has none, and a string variable already starts empty.
 **3. The OPTIMIZER - the gate nobody had written down, and the one that is now blocking.** Coverage
 and behavioural equivalence say a function CAN be routed; neither says anything about what is lost by
 routing it. Making pb36 route by default - the natural next step, and the one this document used to
-imply was all that remained - fails **109 tests**:
+imply was all that remained - failed **109 tests**, and after `Ir/Passes/TailRecursion.cs` it fails
+**96**. The count is the measure of the gate; the composition of it is what says which work is left:
 
 * **95 are assertions about emitted code** and read like a list of what pb36 is for: a string appended
   in place rather than reallocated, a SELECT dispatched through a table or a perfect hash instead of a
@@ -300,9 +301,17 @@ imply was all that remained - fails **109 tests**:
   range, a small counted loop unrolled, UDT copies moved a dword at a time.
 * **the optimization battery** (`tests/optimize`), which is the file where those expectations are
   declared rather than inferred.
-* **two that are not about quality at all**: `Execute_GivenDeepTailRecursion_WhenPb36_ThenConstantStack`
-  and its mutual-recursion twin. Tail-call elimination is a BEHAVIOURAL promise - without it a deep
-  recursion overflows the stack - and the routed path does not make it.
+* **two that were not about quality at all - now CLOSED.** `Execute_GivenDeepTailRecursion_WhenPb36_ThenConstantStack`
+  and its mutual-recursion twin: tail-call elimination is a BEHAVIOURAL promise, since without it a
+  deep recursion overflows. `TailRecursion` turns a self tail call into a loop, and the mutual form
+  needs no case of its own because the inliner makes it a self-call first and the sweep after
+  inlining is where the loop forms. 60000 levels deep and 120000 bounces both print DONE routed.
+* **one that is a BUG rather than a missing optimization**, and only default-routing found it:
+  `Execute_GivenOmittedAndFromEndBounds_WhenRun_ThenDefaultsApply`. `b() = a(TO 3)` over
+  `DIM a(1 TO 8)` yields 80 where 10 is right - the omitted lower bound comes back as the array's
+  UPPER bound. The other two slices in the same program are correct, and the corpus differential
+  never saw it because no corpus program slices with an omitted bound. It has to be chased before the
+  flip regardless of the optimizer work.
 
 The reason is structural rather than a list of missing passes. `CodeGen/`'s optimizations are
 interleaved with emission, which is the same property that makes byte-identity achievable; a function
@@ -312,8 +321,11 @@ OPTIMIZING path, and retiring it means the IR path must first earn those expecta
 inherit them.
 
 That is the honest state: the switch is safe to flip the moment `tests/optimize` and the `Emit_Given*`
-fixtures pass routed, and not before. The flip itself is one line
-(`CodeGenerator.UseExperimentalBackend`), it was tried, and it is reverted with the measurement kept.
+fixtures pass routed and the slice bug is fixed, and not before. The flip itself is one line
+(`CodeGenerator.UseExperimentalBackend`), it has been tried twice, and it is reverted with the
+measurement kept. The order that follows from the composition above: fix the bug, then take the 95 in
+whatever order the battery ranks them - each is a transform the direct emitter performs during
+emission and the IR pipeline has no equivalent of.
 
 **4. The golden gate - byte-identical output with the optimizer off.** This is the hard one, and it
 is the direct emitter's whole reason for existing: its optimizations are interleaved with emission
