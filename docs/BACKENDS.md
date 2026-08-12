@@ -307,11 +307,25 @@ imply was all that remained - failed **109 tests**, and after `Ir/Passes/TailRec
   needs no case of its own because the inliner makes it a self-call first and the sweep after
   inlining is where the loop forms. 60000 levels deep and 120000 bounces both print DONE routed.
 * **one that is a BUG rather than a missing optimization**, and only default-routing found it:
-  `Execute_GivenOmittedAndFromEndBounds_WhenRun_ThenDefaultsApply`. `b() = a(TO 3)` over
-  `DIM a(1 TO 8)` yields 80 where 10 is right - the omitted lower bound comes back as the array's
-  UPPER bound. The other two slices in the same program are correct, and the corpus differential
-  never saw it because no corpus program slices with an omitted bound. It has to be chased before the
-  flip regardless of the optimizer work.
+  `Execute_GivenOmittedAndFromEndBounds_WhenRun_ThenDefaultsApply`. Two array SLICES into two dynamic
+  arrays end up sharing memory - the second one's storage overlaps the first's, so writing the second
+  changes the first:
+
+  ```basic
+  DIM a(1 TO 8) AS INTEGER : FOR i = 1 TO 8 : a(i) = i * 10 : NEXT
+  DIM b() AS INTEGER, c() AS INTEGER
+  b() = a(TO 3)   ' 10 20 30
+  c() = a(6 TO)   ' 60 70 80   ...and b(0) is now 80, which is c(2)
+  ```
+
+  It is NOT the omitted bound, though that is what the failing assertion reads like: `b() = a(TO 3)`
+  alone is correct, and so is the whole program under the direct emitter. What is eliminated so far -
+  two plain `REDIM b(0 TO 2)` / `REDIM c(0 TO 2)` and the same pair with RUNTIME bounds
+  (`REDIM b(0 TO hi - lo)`) both behave correctly routed - which leaves something specific to the
+  slice desugaring's own shape rather than to REDIM. The corpus differential never saw it because no
+  corpus program takes two slices. It has to be chased before the flip regardless of the optimizer
+  work, and it is the more urgent of the two: an optimization that is missing costs speed, and this
+  costs the right answer.
 
 The reason is structural rather than a list of missing passes. `CodeGen/`'s optimizations are
 interleaved with emission, which is the same property that makes byte-identity achievable; a function
