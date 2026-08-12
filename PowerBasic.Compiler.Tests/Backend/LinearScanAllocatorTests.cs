@@ -58,6 +58,37 @@ public sealed class LinearScanAllocatorTests {
     Assert.That(alloc![0], Is.AnyOf(Reg.BX, Reg.SI, Reg.DI), "a value live across a call avoids the caller-saved registers");
   }
 
+  /// <summary>
+  /// A value the CALL left in <c>AX</c> is read a few instructions later, and an unrelated virtual is
+  /// defined in between. Nothing in the liveness model names that value - physical registers have no
+  /// intervals - so the allocator has to see the CARRIED span for itself and keep <c>AX</c> off the
+  /// intruder. The real shape is a rank-2 subscript computed through <c>rt_lmul</c>, where the
+  /// intruder arrives as a spill reload after scheduling.
+  /// </summary>
+  [Test]
+  public void Allocate_GivenAValueCarriedInAxAcrossAnUnrelatedDefinition_ThenTheIntruderAvoidsAx() {
+    var fn = new MFunction("t");
+    var block = new MBlock("entry");
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX));
+    block.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef("rt_lmul")], MInstrEffect.None,
+      clobbers: [Reg.AX, Reg.CX, Reg.DX]));
+    // an unrelated value defined between the call and the MOV that reads its result out of AX
+    block.Instructions.Add(new MInstr(MOpcode.Mov, [new MOperand.Register(MReg.Virtual(1)), new MOperand.Immediate(7)],
+      new MInstrEffect([0], [], false, false, false, false)));
+    block.Instructions.Add(new MInstr(MOpcode.Mov,
+      [new MOperand.Memory(MReg.Physical_(Reg.BP), null, 1, 4, MRegSize.Word), new MOperand.Register(MReg.Virtual(1))],
+      new MInstrEffect([], [1], false, false, false, true)));
+    block.Instructions.Add(new MInstr(MOpcode.Mov, [new MOperand.Register(MReg.Virtual(0)), ax],
+      new MInstrEffect([0], [1], false, false, false, false)));
+    fn.Blocks.Add(block);
+    fn.VirtualRegisterCount = 2;
+
+    var alloc = LinearScanAllocator.Allocate(fn, out var reason);
+
+    Assert.That(alloc, Is.Not.Null, reason);
+    Assert.That(alloc![1], Is.Not.EqualTo(Reg.AX), "AX still holds the call's result where this value is live");
+  }
+
   [Test]
   public void Allocate_GivenDisjointIntervals_ThenRegisterIsReused() {
     // two independent straight-line writes whose values never overlap can share one register

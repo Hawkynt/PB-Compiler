@@ -181,6 +181,14 @@ public sealed class MachineEmitter {
       case MOpcode.Adc: this.Emit2(ops[0], ops[1], asm.Adc, asm.Adc, asm.Adc, asm.Adc, asm.Adc); break;
       case MOpcode.Sbb: this.Emit2(ops[0], ops[1], asm.Sbb, asm.Sbb, asm.Sbb, asm.Sbb, asm.Sbb); break;
       case MOpcode.Cmp: this.Emit2(ops[0], ops[1], asm.Cmp, asm.Cmp, asm.Cmp, asm.Cmp, asm.Cmp); break;
+      // one operand is the accumulator form every 8086 has (DX:AX = AX * r/m16); two is the 80386's
+      // compact IMUL r16, r/m16, which the selector only chooses where the target has it
+      case MOpcode.Imul when ops.Count == 1:
+        if (this.ToSource(ops[0]) is Mem factor)
+          asm.Imul(factor);
+        else
+          asm.Imul(this.Reg(ops[0]));
+        break;
       case MOpcode.Imul:
         if (this.ToSource(ops[1]) is Mem im)
           asm.Imul(this.Reg(ops[0]), im);

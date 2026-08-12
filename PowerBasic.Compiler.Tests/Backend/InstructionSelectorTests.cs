@@ -174,4 +174,68 @@ public sealed class InstructionSelectorTests {
 
     Assert.That(InstructionSelector.TrySelect(fn), Is.Not.Null);
   }
+
+  private static IrFunction TimesConstant(short multiplier) {
+    var fn = new IrFunction("M", IrType.I16, [new IrArgument(IrType.I16, 0)]);
+    var entry = fn.CreateBlock("entry");
+    var product = entry.Append(new IrBinary(IrBinaryOp.Mul, fn.Parameters[0], new IrConstantInt(IrType.I16, multiplier)));
+    entry.Append(new IrRet(product));
+    return fn;
+  }
+
+  private static PowerBasic.Compiler.CodeGen.TargetCost Speed(PowerBasic.Compiler.CodeGen.CpuTier tier)
+    => new(tier, PowerBasic.Compiler.CodeGen.CostObjective.Speed);
+
+  /// <summary>
+  /// A 16-bit multiply is the accumulator form the 8086 actually has - <c>MOV AX,lhs; IMUL r16</c> -
+  /// and not the two-operand <c>IMUL r16,r/m16</c>, which is an 80386 encoding this back end used to
+  /// emit whatever <c>$CPU</c> said. The factor is a register because there is no immediate form, and
+  /// which one is the allocator's business.
+  /// </summary>
+  [Test]
+  public void TrySelect_GivenAWordMultiply_ThenTheAccumulatorFormAgainstAxAndDx() {
+    var m = InstructionSelector.TrySelect(TimesConstant(3));
+
+    Assert.That(m, Is.Not.Null);
+    var multiply = m!.AllInstructions.Single(i => i.Opcode == MOpcode.Imul);
+    Assert.That(multiply.Operands, Has.Count.EqualTo(1), "the accumulator IMUL names only its factor");
+    Assert.That(multiply.Operands[0], Is.InstanceOf<MOperand.Register>());
+    Assert.That(multiply.Clobbers, Does.Contain(Reg.AX).And.Contain(Reg.DX));
+    var intoAx = m.AllInstructions.Last(i => i.Opcode == MOpcode.Mov
+      && i.Operands[0] is MOperand.Register { Reg: { IsVirtual: false, Physical: Reg.AX } });
+    Assert.That(intoAx, Is.Not.Null, "the multiplicand is staged in AX");
+  }
+
+  /// <summary>
+  /// O0078: with a cost model in hand - which the code generator supplies only under
+  /// <c>$OPTIMIZE SPEED</c> - a constant multiplier of up to three set bits becomes shifts and adds.
+  /// Without one the compact multiply stays, because the chain is bigger and buys only cycles.
+  /// </summary>
+  [Test]
+  public void TrySelect_GivenAThreeBitMultiplierAndACostModel_ThenShiftsAndAddsInsteadOfImul() {
+    var decomposed = InstructionSelector.TrySelect(TimesConstant(11), cpu386: false,
+      cost: Speed(PowerBasic.Compiler.CodeGen.CpuTier.I8086));
+    var compact = InstructionSelector.TrySelect(TimesConstant(11));
+
+    Assert.That(decomposed, Is.Not.Null);
+    Assert.That(decomposed!.AllInstructions.Any(i => i.Opcode == MOpcode.Imul), Is.False, "11 = 8+2+1 needs no multiply");
+    Assert.That(decomposed.AllInstructions.Count(i => i.Opcode == MOpcode.Shl), Is.EqualTo(3), "one 1-bit shift per step");
+    Assert.That(compact!.AllInstructions.Any(i => i.Opcode == MOpcode.Imul), Is.True, "no cost model, no trade");
+  }
+
+  /// <summary>
+  /// The cost model decides the four-bit chain per target: ~eight instructions beat the 8086's
+  /// microcoded multiply and lose to the 386's, so the same multiplier decomposes on one and not the
+  /// other. Five set bits pay on neither.
+  /// </summary>
+  [TestCase(PowerBasic.Compiler.CodeGen.CpuTier.I8086, (short)23, false)]
+  [TestCase(PowerBasic.Compiler.CodeGen.CpuTier.I80386, (short)23, true)]
+  [TestCase(PowerBasic.Compiler.CodeGen.CpuTier.I8086, (short)341, true)]
+  public void TrySelect_GivenAWideMultiplierAndACostModel_ThenTheTierDecides(
+      PowerBasic.Compiler.CodeGen.CpuTier tier, short multiplier, bool keepsImul) {
+    var m = InstructionSelector.TrySelect(TimesConstant(multiplier), cpu386: false, cost: Speed(tier));
+
+    Assert.That(m, Is.Not.Null);
+    Assert.That(m!.AllInstructions.Any(i => i.Opcode == MOpcode.Imul), Is.EqualTo(keepsImul));
+  }
 }

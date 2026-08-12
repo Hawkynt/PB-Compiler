@@ -215,6 +215,29 @@ public sealed class BackendArrayElementTests {
   }
 
   /// <summary>
+  /// A rank-2 INTEGER array whose row-major index is a runtime product, written by nested counters.
+  /// The product goes through <c>rt_lmul</c>, so the subscript is a value the CALL leaves in
+  /// <c>DX:AX</c> - and the register allocator used to have no idea anything lived there, because
+  /// liveness tracks virtual registers only. Anything the scheduler issued between the call and the
+  /// MOV taking the result could become a reload when the spiller ran, and that reload was free to be
+  /// given <c>AX</c>: the row term vanished from every address, each row wrote over the first, and
+  /// <c>g(3,3)</c> read back 0 instead of 6.
+  /// </summary>
+  [Test]
+  public void Run_GivenARankTwoIntegerArrayWalkedByNestedCounters_ThenEachRowKeepsItsOwnAddresses() {
+    AssertAgreeAndRead("""
+      DIM g%(0 TO 3, 0 TO 3)
+      FOR r% = 0 TO 3
+        FOR c% = 0 TO 3
+          g%(r%, c%) = r% + c%
+        NEXT c%
+      NEXT r%
+      PRINT g%(3, 3); g%(0, 0); g%(1, 2)
+      """,
+      "6 0 3");
+  }
+
+  /// <summary>
   /// The selector's own answer for a stride that is not a power of two, which no BASIC program reaches
   /// - a record element travels as a byte offset the lowering already multiplied, and the only typed
   /// GEPs the lowering emits are over <c>ptr</c>. Asked directly, the selector must still multiply

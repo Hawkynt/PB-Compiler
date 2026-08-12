@@ -112,7 +112,7 @@ public sealed partial class CodeGenerator {
         continue;
       if (!byName.TryGetValue(proc.Name, out var irFn) || !this.ExternalCalleesResolve(irFn)
           || !this.DataGlobalsResolve(irFn)
-          || InstructionSelector.TrySelect(irFn, this._rt.Cpu386) is not { } mfn)
+          || InstructionSelector.TrySelect(irFn, this._rt.Cpu386, this.SelectionCost) is not { } mfn)
         continue;
       candidates.Add((proc, irFn, mfn));
     }
@@ -188,7 +188,7 @@ public sealed partial class CodeGenerator {
     if (!CalleeNames(main).All(n => routed.Keys.Any(p => p.Name.Equals(n, System.StringComparison.OrdinalIgnoreCase))))
       return null;
     if (!this.ExternalCalleesResolve(main) || !this.DataGlobalsResolve(main)
-        || InstructionSelector.TrySelect(main, this._rt.Cpu386) is not { } machine)
+        || InstructionSelector.TrySelect(main, this._rt.Cpu386, this.SelectionCost) is not { } machine)
       return null;
     MachineScheduler.Schedule(machine);
     if (LinearScanAllocator.Allocate(machine) is not { } alloc)
@@ -205,6 +205,15 @@ public sealed partial class CodeGenerator {
         asm.Jmp(this._rt.Exit);
       });
   }
+
+  /// <summary>
+  /// The cost model the instruction selector may spend bytes against, or null to keep the compact
+  /// form. It is handed over only under <c>$OPTIMIZE SPEED</c>, which is the same gate the direct
+  /// emitter's own byte-for-cycles trades sit behind: the two paths emit into one image and must make
+  /// the same trade, or the objective would mean one thing for a routed procedure and another for its
+  /// neighbour.
+  /// </summary>
+  private TargetCost? SelectionCost => this.Optimize && this.OptimizeSpeed ? this.Cost : null;
 
   private Asm.Label? _irDataPool;
   private Asm.Label? _irDataCursor;

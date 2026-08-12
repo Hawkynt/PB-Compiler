@@ -72,10 +72,22 @@ public sealed class InstructionSelector {
   /// </summary>
   private readonly bool _cpu386;
 
-  private InstructionSelector(bool cpu386) => this._cpu386 = cpu386;
+  /// <summary>
+  /// The target's cost model, supplied only when the caller wants the SPEED-objective selections that
+  /// trade bytes for cycles - today that is the constant-multiply decomposition
+  /// (<see cref="TryDecomposeConstantMultiply"/>). Null means "emit the compact form", which is what
+  /// every caller that has no opinion gets, so nothing changes for them.
+  /// </summary>
+  private readonly CodeGen.TargetCost? _cost;
+
+  private InstructionSelector(bool cpu386, CodeGen.TargetCost? cost) {
+    this._cpu386 = cpu386;
+    this._cost = cost;
+  }
 
   /// <summary>Selects a function into machine IR, or null if it contains a construct this stage cannot model.</summary>
-  public static MFunction? TrySelect(IrFunction fn, bool cpu386 = false) => TrySelect(fn, out _, cpu386);
+  public static MFunction? TrySelect(IrFunction fn, bool cpu386 = false, CodeGen.TargetCost? cost = null)
+    => TrySelect(fn, out _, cpu386, cost);
 
   /// <summary>
   /// Whether the function has inline-asm statements with other work BETWEEN them, which is the shape
@@ -126,7 +138,8 @@ public sealed class InstructionSelector {
   /// stopped it - when the result is null. The reason is what the coverage census reads to rank which
   /// widening buys the most eligible functions, so it names the IR construct, not the failing routine.
   /// </summary>
-  public static MFunction? TrySelect(IrFunction fn, out string? declineReason, bool cpu386 = false) {
+  public static MFunction? TrySelect(IrFunction fn, out string? declineReason, bool cpu386 = false,
+      CodeGen.TargetCost? cost = null) {
     declineReason = null;
     if (fn.IsDeclaration || fn.Entry is null) {
       declineReason = "declaration";
@@ -136,7 +149,7 @@ public sealed class InstructionSelector {
       declineReason = "inline asm: two blocks with BASIC code between them (register state spans it)";
       return null;
     }
-    var selector = new InstructionSelector(cpu386);
+    var selector = new InstructionSelector(cpu386, cost);
     var selected = selector.Run(fn);
     if (selected is null)
       declineReason = selector._decline ?? "unknown";
@@ -652,6 +665,10 @@ public sealed class InstructionSelector {
       return this.Decline($"binary: {bin.Op}");   // 16-bit unsigned divide / remainder
     if (IsWide(bin.Type))
       return this.SelectWideBinary(bin, opcode, block);
+    if (opcode == MOpcode.Imul && this.TryDecomposeConstantMultiply(bin))
+      return true;
+    if (opcode == MOpcode.Imul && bin.Type.Bits == 16)
+      return this.SelectAccumulatorMultiply(bin);
 
     // two-address form: dest = lhs; dest <op>= rhs
     var dest = this.FreshVreg(bin.Type);
@@ -670,6 +687,182 @@ public sealed class InstructionSelector {
       new MInstrEffect(WrittenRegs: [0], ReadRegs: rhs is MOperand.Register ? [0, 1] : [0],
         ReadsFlags: false, WritesFlags: true, ReadsMemory: rhs is MOperand.Memory, WritesMemory: false)));
     return true;
+  }
+
+  /// <summary>
+  /// A 16-bit multiply in the accumulator form every 8086 has: <c>MOV AX,lhs; IMUL r16</c>, taking the
+  /// product's low half back out of AX.
+  ///
+  /// The two-operand <c>IMUL r16, r/m16</c> this used to emit is <c>0F AF</c> - an 80386 encoding. On
+  /// the default 8086 target it is not an instruction at all, so a routed program that multiplied was
+  /// relying on the emulator being a 486. The accumulator form is what the part actually has and what
+  /// the direct emitter writes on every tier, so both paths now spell a multiply the same way - which
+  /// also makes the shape the optimizer's byte-pattern expectations name (<c>F7 /5</c>) the shape a
+  /// routed function emits.
+  ///
+  /// <para>
+  /// The shape is the one <see cref="SelectDivide"/> already uses for <c>IDIV</c>: the second operand
+  /// goes to a register (there is no immediate form), <c>AX</c> and <c>DX</c> are declared clobbers so
+  /// the allocator parks nothing live in them, and the result is copied straight back out. Only the
+  /// low half is read, which is exactly the modular product the IR's <c>mul i16</c> means.
+  /// </para>
+  ///
+  /// <para>
+  /// The factor is left to the allocator rather than pinned to the <c>BX</c> the direct emitter always
+  /// uses, and that is a measured decision: <c>BX</c> is one of only three registers that can address
+  /// memory, and pinning it across every multiply left the spill loop unable to place an address value
+  /// - the allocator retried past any useful bound. Matching the direct emitter's register exactly is
+  /// not worth a compiler that does not finish.
+  /// </para>
+  /// </summary>
+  private bool SelectAccumulatorMultiply(IrBinary bin) {
+    if (!this.TryOperand(bin.Lhs, out var lhs) || !this.TryOperand(bin.Rhs, out var rhsSource))
+      return false;
+    var factor = new MOperand.Register(this.FreshVreg(bin.Type));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [factor, rhsSource], MovEffect(factor, rhsSource)));
+
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [ax, lhs], MovEffect(ax, lhs),
+      condition: null, clobbers: [Reg.AX, Reg.DX]));
+    this._current.Instructions.Add(new MInstr(MOpcode.Imul, [factor],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false),
+      condition: null, clobbers: [Reg.AX, Reg.DX]));
+
+    var dest = this.FreshVreg(bin.Type);
+    this._vregs[bin] = dest;
+    var destOp = new MOperand.Register(dest);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ax], MovEffect(destOp, ax)));
+    return true;
+  }
+
+  /// <summary>
+  /// O0078 - a 16-bit multiply by a compile-time constant, decomposed into shifts and adds instead of
+  /// the multiply unit. The direct emitter does this while emitting (see
+  /// <c>CodeGenerator.TryEmitModularConstMul</c>); this is the same decomposition on the same terms,
+  /// so a routed function and a directly-emitted one make the same trade.
+  ///
+  /// <para>
+  /// <b>Why it is sound.</b> The IR's <c>mul i16</c> is modular, and every chain below reproduces the
+  /// product's low sixteen bits exactly: a power of two is one shift; <c>2^a + 2^b</c> is
+  /// <c>(x + x&lt;&lt;(a-b)) &lt;&lt; b</c>; a contiguous run of ones <c>2^a - 2^b</c> is
+  /// <c>(x&lt;&lt;(a-b) - x) &lt;&lt; b</c>; three and four set bits thread the running <c>x&lt;&lt;k</c>
+  /// through one temporary. Shifting past the width only feeds in zeroes, which is what the discarded
+  /// high bits of the multiply would have been.
+  /// </para>
+  ///
+  /// <para>
+  /// <b>What it deliberately refuses.</b> It only runs when a cost model was supplied, which the code
+  /// generator does only under <c>$OPTIMIZE SPEED</c> - the chain is BIGGER than the compact
+  /// <c>IMUL</c> and buys only cycles, so the default and SIZE keep the multiply. Four set bits are
+  /// additionally priced per target (<see cref="CodeGen.TargetCost.PreferShiftAddMultiply"/>): a win
+  /// against the 8086's ~124-cycle microcoded multiply, a loss against the 386's ten-ish. Five or more
+  /// never pay. Multipliers 0, 1 and -1 are left alone because they are <c>InstCombine</c>'s to fold
+  /// and folding them here would hide it. Negative multipliers are left alone too - the magnitude form
+  /// needs a trailing <c>NEG</c> and they are rare enough not to be worth a second shape to verify.
+  /// And any step needing a shift by more than four is refused outright, because this target is an
+  /// 8086: <c>SHL r,imm</c> above one is an 80186 encoding, so a shift is spelled as repeated
+  /// <c>SHL r,1</c> here and a long one would cost more bytes than the multiply it replaced.
+  /// </para>
+  /// </summary>
+  private bool TryDecomposeConstantMultiply(IrBinary bin) {
+    if (this._cost is not { } cost || IsWide(bin.Type) || !bin.Type.IsInteger || bin.Type.Bits != 16)
+      return false;
+    IrValue variable;
+    long raw;
+    if (bin.Rhs is IrConstantInt right) {
+      variable = bin.Lhs;
+      raw = right.Value;
+    } else if (bin.Lhs is IrConstantInt left) {
+      variable = bin.Rhs;
+      raw = left.Value;
+    } else {
+      return false;
+    }
+
+    var m = (short)(raw & 0xFFFF);
+    if (m <= 1)
+      return false;                                // 0/1/-1 are folds, negatives need a NEG
+    var mag = (uint)m;
+    var lo = System.Numerics.BitOperations.TrailingZeroCount(mag);
+    var setBits = System.Numerics.BitOperations.PopCount(mag);
+    var run = mag >> lo;
+
+    // the chain as (shiftOfTheRunningTerm, thenAddOrSubtractItIntoTheResult) steps, before the final
+    // <<lo that puts the factored-out power of two back
+    List<(int Shift, bool Subtract)> steps;
+    if (setBits == 1)
+      steps = [];
+    else if (setBits == 2)
+      steps = [(31 - System.Numerics.BitOperations.LeadingZeroCount(mag) - lo, false)];
+    else if (System.Numerics.BitOperations.IsPow2(run + 1))
+      steps = [(System.Numerics.BitOperations.TrailingZeroCount(run + 1), true)];
+    else if (setBits == 3 || (setBits == 4 && cost.PreferShiftAddMultiply(4)))
+      steps = [.. BitPositions(mag).Skip(1).Select(bit => (bit - lo, false))];
+    else
+      return false;
+
+    // a run of ones shifts the RESULT and subtracts the original; every other shape shifts the
+    // running term. Either way no single shift may exceed four - see the remarks above.
+    var deltas = steps.Select((s, i) => i == 0 ? s.Shift : s.Shift - steps[i - 1].Shift).Append(lo);
+    if (deltas.Any(d => d > 4))
+      return false;
+
+    var dest = this.FreshVreg(bin.Type);
+    this._vregs[bin] = dest;
+    var destOp = new MOperand.Register(dest);
+    if (!this.TryOperand(variable, out var source))
+      return false;
+    this.Add(MOpcode.Mov, destOp, source);
+
+    if (steps is [(var width, true)]) {            // 2^a - 2^b: shift the result, subtract the original
+      var original = new MOperand.Register(this.FreshVreg(bin.Type));
+      this.Add(MOpcode.Mov, original, destOp);
+      this.ShiftLeftBy(destOp, width);
+      this.Add(MOpcode.Sub, destOp, original);
+    } else if (steps.Count > 0) {                  // a sum of powers of two: thread x<<k through one temp
+      var running = new MOperand.Register(this.FreshVreg(bin.Type));
+      this.Add(MOpcode.Mov, running, destOp);
+      var shifted = 0;
+      foreach (var (shift, _) in steps) {
+        this.ShiftLeftBy(running, shift - shifted);
+        shifted = shift;
+        this.Add(MOpcode.Add, destOp, running);
+      }
+    }
+    this.ShiftLeftBy(destOp, lo);
+    return true;
+  }
+
+  /// <summary>The one-bit positions of <paramref name="value"/>, low to high.</summary>
+  private static IEnumerable<int> BitPositions(uint value) {
+    for (var bit = 0; bit < 32; ++bit)
+      if ((value & (1u << bit)) != 0)
+        yield return bit;
+  }
+
+  /// <summary>
+  /// Shifts a register left by a small constant as repeated <c>SHL r,1</c> - the only left shift an
+  /// 8086 has for a count above one is through <c>CL</c>, and a pinned register in the middle of an
+  /// arithmetic chain costs the allocator more than the bytes save.
+  /// </summary>
+  private void ShiftLeftBy(MOperand.Register register, int count) {
+    for (var i = 0; i < count; ++i)
+      this.Add(MOpcode.Shl, register, new MOperand.Immediate(1));
+  }
+
+  /// <summary>
+  /// Appends a two-address instruction of the decomposition chain. A MOV only writes its destination;
+  /// every other opcode here reads it as well, which is what the two-address form means.
+  /// </summary>
+  private void Add(MOpcode opcode, MOperand.Register dest, MOperand source) {
+    if (opcode == MOpcode.Mov) {
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, source], MovEffect(dest, source)));
+      return;
+    }
+    this._current.Instructions.Add(new MInstr(opcode, [dest, source],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [0, 1] : [0],
+        ReadsFlags: false, WritesFlags: true, ReadsMemory: source is MOperand.Memory, WritesMemory: false)));
   }
 
   /// <summary>
