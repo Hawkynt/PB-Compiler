@@ -75,6 +75,7 @@ public sealed class LinearScanAllocator {
     var byteRegisters = ByteRegisters(function);
     var clobbersAt = ClobbersByIndex(function);
     var pinnedAt = PinnedByIndex(function);
+    var inFlightAt = InFlightByIndex(function);
     var free = new List<Reg>(_pool);
     var active = new List<LivenessAnalysis.LiveInterval>();
 
@@ -84,6 +85,7 @@ public sealed class LinearScanAllocator {
           active.RemoveAt(a);
       var unsafeRegs = ClobberedOver(clobbersAt, interval.Start, interval.End);
       unsafeRegs.UnionWith(ClobberedOver(pinnedAt, interval.Start, interval.End - 1));
+      unsafeRegs.UnionWith(ClobberedOver(inFlightAt, interval.Start, interval.End));
       var legal = LegalFor(interval.VirtualId, addressing, byteRegisters);
       if (free.Count > active.Count && legal.Any(r => !unsafeRegs.Contains(r)))
         continue;
@@ -104,6 +106,7 @@ public sealed class LinearScanAllocator {
     var byteRegisters = ByteRegisters(function);     // byte values need AL/CL/DL/BL, which SI/DI do not have
     var clobbersAt = ClobbersByIndex(function);       // global instruction index -> registers a CALL there destroys
     var pinnedAt = PinnedByIndex(function);           // ...and the ones an ABI-pinned physical write lands in
+    var inFlightAt = InFlightByIndex(function);       // ...and the ones already carrying a value to a named reader
     var assignment = new Dictionary<int, Reg>();
     var free = new List<Reg>(_pool);                 // registers currently available, preferred order preserved
     var active = new List<LivenessAnalysis.LiveInterval>();  // live intervals holding a register, kept sorted by End
@@ -117,9 +120,11 @@ public sealed class LinearScanAllocator {
         }
 
       // registers destroyed by a CALL anywhere this value is live cannot hold it, and neither can one
-      // an ABI-PINNED write lands in while the value still has readers
+      // an ABI-PINNED write lands in while the value still has readers - nor one already in flight
+      // between where a physical value was produced and the instruction that names it
       var unsafeRegs = ClobberedOver(clobbersAt, interval.Start, interval.End);
       unsafeRegs.UnionWith(ClobberedOver(pinnedAt, interval.Start, interval.End - 1));
+      unsafeRegs.UnionWith(ClobberedOver(inFlightAt, interval.Start, interval.End));
       var legal = LegalFor(interval.VirtualId, addressVregs, byteRegisters);
       var slot = free.FindIndex(r => System.Array.IndexOf(legal, r) >= 0 && !unsafeRegs.Contains(r));
       if (slot < 0)
@@ -178,6 +183,87 @@ public sealed class LinearScanAllocator {
         ++index;
       }
     return map;
+  }
+
+  /// <summary>
+  /// Maps each global instruction index to the physical registers that are already CARRYING a value
+  /// there - one produced earlier and not yet consumed by the instruction that names it as a read.
+  ///
+  /// <para>
+  /// <see cref="PinnedByIndex"/> is the same idea seen from the other end and covers only half of it. A
+  /// pinned WRITE says "nothing of yours may survive this point"; a pinned READ says "something of mine
+  /// arrived earlier and must still be here", and nothing said that. The gap is the window between a
+  /// <c>CALL</c> and the <c>MOV v, AX</c> that takes its result out: the call's clobber list stops a
+  /// value living ACROSS the call, and the extraction move writes only a virtual, so an instruction
+  /// scheduled between the two looked free to take any register - including the <c>AX</c> the result is
+  /// sitting in.
+  /// </para>
+  ///
+  /// <para>
+  /// That is how two dynamic arrays came to share storage. <c>REDIM b(...)</c> lowers to
+  /// <c>CALL rt_arr_alloc</c> / <c>MOV v,AX</c>, the scheduler put an unrelated <c>MOV v2,[BP-2]</c>
+  /// between them (legal - it writes a virtual), the allocator gave v2 <c>AX</c>, and b's data pointer
+  /// became the frame word instead of the block. It then aliased whatever the NEXT allocation returned,
+  /// so writing the second array changed the first.
+  /// </para>
+  ///
+  /// <para>
+  /// The window is [producer + 1, reader - 1]: the producing instruction and the consuming one are the
+  /// two ends and neither is inside it, which keeps the extraction move itself free to be allocated the
+  /// very register it reads (<c>MOV AX, AX</c> costs nothing and is the coalescing the selector wants).
+  /// With no producer in the block the register came from outside it, and the window opens at the block.
+  /// </para>
+  /// </summary>
+  private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> InFlightByIndex(MFunction function) {
+    var map = new Dictionary<int, List<Reg>>();
+    var index = 0;
+    foreach (var block in function.Blocks) {
+      var producedAt = new Dictionary<Reg, int>();
+      var blockStart = index;
+      foreach (var instr in block.Instructions) {
+        foreach (var read in PhysicalReads(instr)) {
+          var from = producedAt.TryGetValue(read, out var producer) ? producer + 1 : blockStart;
+          for (var at = from; at < index; ++at) {
+            if (!map.TryGetValue(at, out var regs))
+              map[at] = regs = [];
+            if (!regs.Contains(read))
+              regs.Add(read);
+          }
+        }
+        foreach (var written in PhysicalWrites(instr))
+          producedAt[written] = index;
+        ++index;
+      }
+    }
+    return map.ToDictionary(entry => entry.Key, entry => (IReadOnlyList<Reg>)entry.Value);
+  }
+
+  /// <summary>The physical registers an instruction names as a read - an operand or an address part.</summary>
+  private static IEnumerable<Reg> PhysicalReads(MInstr instr) {
+    foreach (var operand in instr.Effect.ReadRegs)
+      if (operand < instr.Operands.Count
+          && instr.Operands[operand] is MOperand.Register { Reg: { IsVirtual: false } read })
+        yield return WholeRegister(read.Physical);
+    foreach (var operand in instr.Operands) {
+      if (operand is not MOperand.Memory memory)
+        continue;
+      if (memory.Base is { IsVirtual: false } baseRegister)
+        yield return WholeRegister(baseRegister.Physical);
+      if (memory.Index is { IsVirtual: false } indexRegister)
+        yield return WholeRegister(indexRegister.Physical);
+      if (memory.Segment is { IsVirtual: false } segmentRegister)
+        yield return WholeRegister(segmentRegister.Physical);
+    }
+  }
+
+  /// <summary>The physical registers an instruction ends the life of - a named write or a clobber.</summary>
+  private static IEnumerable<Reg> PhysicalWrites(MInstr instr) {
+    foreach (var operand in instr.Effect.WrittenRegs)
+      if (operand < instr.Operands.Count
+          && instr.Operands[operand] is MOperand.Register { Reg: { IsVirtual: false } written })
+        yield return WholeRegister(written.Physical);
+    foreach (var clobbered in instr.Clobbers)
+      yield return WholeRegister(clobbered);
   }
 
   /// <summary>The word register a byte half belongs to - writing <c>AL</c> destroys half of <c>AX</c>.</summary>

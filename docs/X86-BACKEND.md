@@ -1169,6 +1169,30 @@ own index, and a value whose live interval spans that index cannot be given it. 
 Together: **256/259 functions selected and routed, 156/159 module bodies, 159/165 programs lowered,
 293 corpus comparisons with no disagreement.** One census row, three gaps, and one latent miscompile
 that had been waiting for a change in register pressure to surface.
+
+## The other half of a pinned register: the one being READ
+
+`PinnedByIndex` says "nothing of yours may survive this point". It took two dynamic arrays sharing
+storage to notice that the opposite statement — "something of mine arrived earlier and must still be
+here" — was never made at all.
+
+A `REDIM` with a runtime bound is `CALL rt_arr_alloc` and then the `MOV v, AX` that takes the block
+address out of the result register. The call's clobber list stops a value living *across* the call,
+and the extraction move writes only a virtual, so an instruction scheduled between the two conflicts
+with nothing — which is exactly what the scheduler did with an unrelated `MOV v2, [BP-2]`. The
+allocator then gave `v2` the `AX` the result was sitting in, and the array's data pointer became the
+frame word: the constant `10`, which promptly aliased the next allocation's block.
+
+`InFlightByIndex` is the mirror. Every physical register named as a *read* is marked over
+`[producer + 1, reader - 1]` — the producing instruction being the nearest earlier named write or
+clobber, or the block head when there is none — and a value live anywhere inside that window cannot
+be allocated it. Both ends stay outside deliberately: the reader itself must remain free to take the
+register it reads, because `MOV AX, AX` is the coalescing every routed call result depends on.
+
+It needed a very particular shape to surface — a window, and something independent that the scheduler
+could put inside it — which is why the whole differential corpus ran clean over it and only two
+dynamic arrays in one body found it. `BackendDynamicArrayAliasTests` keeps both.
+
 ## Scheduling is not free on six registers
 
 `DIFF56`'s module body was the last function in the corpus that selected and did not allocate. It sums

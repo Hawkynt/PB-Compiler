@@ -306,57 +306,43 @@ imply was all that remained - failed **109 tests**, and after `Ir/Passes/TailRec
   deep recursion overflows. `TailRecursion` turns a self tail call into a loop, and the mutual form
   needs no case of its own because the inliner makes it a self-call first and the sweep after
   inlining is where the loop forms. 60000 levels deep and 120000 bounces both print DONE routed.
-* **one that is a BUG rather than a missing optimization**, and only default-routing found it:
-  `Execute_GivenOmittedAndFromEndBounds_WhenRun_ThenDefaultsApply`. Two array SLICES into two dynamic
-  arrays end up sharing memory - the second one's storage overlaps the first's, so writing the second
-  changes the first:
+* **one that was a BUG rather than a missing optimization** - now CLOSED, and only default-routing
+  found it: `Execute_GivenOmittedAndFromEndBounds_WhenRun_ThenDefaultsApply`. Two array SLICES into
+  two dynamic arrays ended up sharing memory, so writing the second changed the first:
 
   ```basic
   DIM a(1 TO 8) AS INTEGER : FOR i = 1 TO 8 : a(i) = i * 10 : NEXT
   DIM b() AS INTEGER, c() AS INTEGER
   b() = a(TO 3)   ' 10 20 30
-  c() = a(6 TO)   ' 60 70 80   ...and b(0) is now 80, which is c(2)
+  c() = a(6 TO)   ' 60 70 80   ...and b(0) was 80, which is c(2)
   ```
 
-  It is NOT the omitted bound, though that is what the failing assertion reads like: `b() = a(TO 3)`
-  alone is correct, and so is the whole program under the direct emitter.
+  The addresses said where to look. `VARPTR(b(0))` / `VARPTR(c(0))` are 0 and 6 under the direct
+  emitter - two 6-byte blocks, adjacent - and were **10 and 6** routed, so c's 6..11 overlapped b's
+  10..15. The heap was never confused: it handed out 0 then 6 in both builds. It was b's RECORDED
+  pointer that was wrong, and it was not about slices either - the desugaring written out by hand
+  reproduces it in plain BASIC from a runtime `REDIM` bound and a computed index, twice over.
 
-  Read the ADDRESSES and it is sharper still. `VARPTR(b(0))` / `VARPTR(c(0))` are 0 and 6 under the
-  direct emitter - two 6-byte blocks, adjacent - and **10 and 6** routed, so c's 6..11 overlaps b's
-  10..15 and `c(2)` IS `b(0)`. The allocator is not the one confused: it handed out 0 then 6, exactly
-  as it did for the direct build. It is B's pointer that is wrong, and wrong from the FIRST slice,
-  before the second one exists.
+  **The cause was register allocation, one level below anything the IR could show.** A `REDIM` is
+  `CALL rt_arr_alloc` followed by the `MOV v, AX` that takes the block address out of the result
+  register. The scheduler is free to put an unrelated instruction between the two - it writes a
+  VIRTUAL register, so it conflicts with nothing - and `LinearScanAllocator` modelled a physical
+  register being WRITTEN (`PinnedByIndex`) but never one being READ. Nothing said AX was occupied
+  between the call and its consumer, so the intervening `MOV v2, [BP-2]` was given AX, and b's data
+  pointer became the frame word that instruction had loaded: the constant `10`. Which then pointed
+  into the block the NEXT allocation returned.
 
-  **It is not about slices at all.** Writing the desugaring out by hand reproduces it in plain BASIC,
-  which collapses the search space to two ingredients that have to be present TOGETHER:
+  The fix is the missing half of the pinned-register model: `InFlightByIndex` marks each physical
+  register over `[producer + 1, reader - 1]`, so a value live anywhere in that window cannot be
+  allocated it. Both ends stay outside the window deliberately, which keeps the extraction move
+  itself free to coalesce into the register it reads. `BackendDynamicArrayAliasTests` holds the two
+  BASIC forms and the allocator's own statement of the rule.
 
-  ```basic
-  DIM a(1 TO 8) AS INTEGER : FOR i = 1 TO 8 : a(i) = i * 10 : NEXT
-  DIM b() AS INTEGER, c() AS INTEGER
-  lo1 = 1 : hi1 = 3
-  REDIM b(0 TO hi1 - lo1)                  ' a RUNTIME bound...
-  FOR i1 = lo1 TO hi1 : b(i1 - lo1) = a(i1) : NEXT   ' ...and a COMPUTED index
-  lo2 = 6 : hi2 = 8
-  REDIM c(0 TO hi2 - lo2)
-  FOR i2 = lo2 TO hi2 : c(i2 - lo2) = a(i2) : NEXT
-  PRINT b(0)                               ' 10 direct, 80 routed
-  ```
-
-  Each ingredient alone is fine, measured: a constant-bound `REDIM` pair with constant indices, a
-  constant-bound pair with a `FOR` loop writing `b(i)`, a runtime-bound pair with constant indices,
-  and - the sharpest one - the SAME runtime-bound loop over a SINGLE dynamic array all behave
-  routed. It takes two of them, and the second must actually be RE-DIMED: declaring `c()` and never
-  touching it leaves `b` correct, so it is not the descriptor allocas' mere existence. Nor is it
-  allocation order - REDIMing `c` FIRST and `b` second is correct, both arrays intact. The failing
-  arrangement is specifically the FIRST-DECLARED array being the first one re-DIMed, which points at
-  how the descriptor cells are assigned slots rather than at the allocator or the loop. INTEGER temps fail exactly as LONG ones do, so the 32-bit paths are
-  not implicated either. The IR is clean throughout - two distinct `rt_arr_alloc(i32 6)` calls with
-  separate results - so the divergence is below the IR, in how the routed path records or re-reads
-  the block when the array's extent is not a compile-time constant.
-
-  The corpus differential never saw it because no corpus program combines the two. It has to be
-  chased before the flip regardless of the optimizer work, and it is the more urgent of the two: an
-  optimization that is missing costs speed, and this costs the right answer.
+  It is worth recording why this took the census's whole battery to surface. Every ingredient alone
+  is correct routed - a constant-bound `REDIM` pair, a runtime-bound pair with constant indices, the
+  same runtime-bound loop over a SINGLE dynamic array, and REDIMing the second-declared array first.
+  The window has to exist, and something independent has to be schedulable into it. No corpus program
+  combines the two, which is why the differential never saw it.
 
 The reason is structural rather than a list of missing passes. `CodeGen/`'s optimizations are
 interleaved with emission, which is the same property that makes byte-identity achievable; a function
@@ -366,11 +352,11 @@ OPTIMIZING path, and retiring it means the IR path must first earn those expecta
 inherit them.
 
 That is the honest state: the switch is safe to flip the moment `tests/optimize` and the `Emit_Given*`
-fixtures pass routed and the slice bug is fixed, and not before. The flip itself is one line
+fixtures pass routed, and not before. The flip itself is one line
 (`CodeGenerator.UseExperimentalBackend`), it has been tried twice, and it is reverted with the
-measurement kept. The order that follows from the composition above: fix the bug, then take the 95 in
-whatever order the battery ranks them - each is a transform the direct emitter performs during
-emission and the IR pipeline has no equivalent of.
+measurement kept. With the aliasing bug closed, what remains is the 95, in whatever order the battery
+ranks them - each is a transform the direct emitter performs during emission and the IR pipeline has
+no equivalent of.
 
 **4. The golden gate - byte-identical output with the optimizer off.** This is the hard one, and it
 is the direct emitter's whole reason for existing: its optimizations are interleaved with emission
@@ -381,8 +367,8 @@ means either reproducing that byte-for-byte through the IR path, or deciding the
 behavioural rather than byte-exact - a decision about what the project promises, not a task.
 
 The honest summary: (1) is DONE on selection and allocation and has only deliberate declines left,
-(2) holds - the routed battery scores what the direct one does - (3) is the live blocker and the one
-with the most work in it, and (4) is a design decision that has been made: the contract is
+(2) holds - the routed battery scores what the direct one does - (3) is the live blocker, now purely
+a question of optimization quality, and (4) is a design decision that has been made: the contract is
 observational, so EXE byte-identity is an aim rather than a gate.
 
 ## Coverage and what is next
