@@ -1221,6 +1221,52 @@ that pressure is in the selector's output and no scheduling decision put it ther
 Selection stays at **257 of 259**, routing moves **256 → 257**, module ownership **156 → 157 of 159**,
 and allocation declines reach **zero for the whole corpus**. The execution differential moves to **295
 agreeing, 0 disagreeing**.
+
+### The value nobody could see: a physical register between its definition and its read
+
+Liveness here tracks **virtual** registers, which means the `DX:AX` a `CALL` leaves behind is not a
+value at all as far as the allocator is concerned. The selector emits the `MOV` that takes the result
+out immediately after the call, and that adjacency was doing all the work — nothing recorded it.
+
+Two stages happily break it. The scheduler may issue independent work in the gap, and the spiller may
+then turn that work into a **reload**, which is a brand-new virtual register with no reason not to be
+given `AX`. `LinearScanAllocator.CarriedByIndex` closes it: walking each block, it records the span
+between where a physical register was last defined (a named write or a clobber) and where an
+instruction reads it back, and any virtual interval overlapping that span may not use the register.
+It is the mirror image of `PinnedByIndex` — that one protects a value *from* a pinned write, this one
+protects the pinned write's value *until* it is read. The span is per block because this back end
+never carries a physical value across a branch.
+
+This is the fault [BACKENDS.md](BACKENDS.md) recorded as the array-slice aliasing bug, and it was not
+about slices, descriptors or allocation order. A rank-2 subscript is a runtime product, so it goes
+through `rt_lmul`; with the row term stored through whatever `AX` last held, every row wrote over the
+first. `tests/optimize/CODEGEN.BAS` printed `twodim 0` for 6, and two array slices appeared to share
+memory. `BackendArrayElementTests.Run_GivenARankTwoIntegerArrayWalkedByNestedCounters_…` is the
+program, `LinearScanAllocatorTests.Allocate_GivenAValueCarriedInAxAcrossAnUnrelatedDefinition_…` the
+mechanism.
+
+### A 16-bit multiply is the accumulator form, not the 386's two-operand one
+
+The selector mapped `mul i16` onto `IMUL r16, r/m16` — `0F AF`, an **80386** encoding. On the default
+`$CPU 8086` target that is not an instruction, so a routed program that multiplied was relying on the
+emulator being a 486. It now emits the accumulator form every 8086 has: the factor into a register
+(there is no immediate form), `MOV AX,lhs`, `IMUL r16`, and the low half back out, with `AX` and `DX`
+declared clobbers exactly as `SelectDivide` does for `IDIV`. That is the shape the direct emitter
+writes, so the optimizer's `F7 /5` expectations mean the same thing on both paths.
+
+The factor is deliberately **not** pinned to the `BX` the direct emitter always uses. Measured: `BX`
+is one of only three registers that can address memory on this target, and reserving it across every
+multiply left the spill loop with no way to place an address value — the allocator retried past any
+useful bound and the suite stopped finishing. Matching the register exactly is not worth that.
+
+On top of it, `InstructionSelector.TryDecomposeConstantMultiply` ports **O0078**: a constant multiplier
+of one, two or three set bits (or a contiguous run of ones) becomes shifts and adds, and four set bits
+are priced per target by `TargetCost.PreferShiftAddMultiply` — a win against the 8086's ~124-cycle
+multiply, a loss against the 386's. It only runs when the code generator hands over a cost model, which
+it does under `$OPTIMIZE SPEED` and nowhere else: the chain is *bigger* than the multiply and buys only
+cycles. Shifts are spelled as repeated `SHL r,1`, so a step needing more than four refuses outright
+rather than emitting an 80186 shift-by-immediate.
+
 ## `EXIT FAR`: PB's other non-local jump
 
 The keyword argues for the wrong reading. `EXIT FAR` is not a far **return** and pops nothing: `EXIT

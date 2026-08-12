@@ -293,7 +293,9 @@ has none, and a string variable already starts empty.
 and behavioural equivalence say a function CAN be routed; neither says anything about what is lost by
 routing it. Making pb36 route by default - the natural next step, and the one this document used to
 imply was all that remained - failed **109 tests**, and after `Ir/Passes/TailRecursion.cs` it fails
-**96**. The count is the measure of the gate; the composition of it is what says which work is left:
+**96** of the fixtures that ran at the time. Re-measured with the whole suite and an emulator present,
+the flip fails **107**, and the round below takes it to **104**. The count is the measure of the gate;
+the composition of it is what says which work is left:
 
 * **95 are assertions about emitted code** and read like a list of what pb36 is for: a string appended
   in place rather than reallocated, a SELECT dispatched through a table or a perfect hash instead of a
@@ -306,10 +308,10 @@ imply was all that remained - failed **109 tests**, and after `Ir/Passes/TailRec
   deep recursion overflows. `TailRecursion` turns a self tail call into a loop, and the mutual form
   needs no case of its own because the inliner makes it a self-call first and the sweep after
   inlining is where the loop forms. 60000 levels deep and 120000 bounces both print DONE routed.
-* **one that is a BUG rather than a missing optimization**, and only default-routing found it:
-  `Execute_GivenOmittedAndFromEndBounds_WhenRun_ThenDefaultsApply`. Two array SLICES into two dynamic
-  arrays end up sharing memory - the second one's storage overlaps the first's, so writing the second
-  changes the first:
+* **one that was a BUG rather than a missing optimization - now FIXED**, and only default-routing
+  found it: `Execute_GivenOmittedAndFromEndBounds_WhenRun_ThenDefaultsApply`. Two array SLICES into two
+  dynamic arrays ended up sharing memory - the second one's storage overlapped the first's, so writing
+  the second changed the first:
 
   ```basic
   DIM a(1 TO 8) AS INTEGER : FOR i = 1 TO 8 : a(i) = i * 10 : NEXT
@@ -342,35 +344,56 @@ imply was all that remained - failed **109 tests**, and after `Ir/Passes/TailRec
   PRINT b(0)                               ' 10 direct, 80 routed
   ```
 
-  Each ingredient alone is fine, measured: a constant-bound `REDIM` pair with constant indices, a
-  constant-bound pair with a `FOR` loop writing `b(i)`, a runtime-bound pair with constant indices,
-  and - the sharpest one - the SAME runtime-bound loop over a SINGLE dynamic array all behave
-  routed. It takes two of them, and the second must actually be RE-DIMED: declaring `c()` and never
-  touching it leaves `b` correct, so it is not the descriptor allocas' mere existence. Nor is it
-  allocation order - REDIMing `c` FIRST and `b` second is correct, both arrays intact. The failing
-  arrangement is specifically the FIRST-DECLARED array being the first one re-DIMed, which points at
-  how the descriptor cells are assigned slots rather than at the allocator or the loop. INTEGER temps fail exactly as LONG ones do, so the 32-bit paths are
-  not implicated either. The IR is clean throughout - two distinct `rt_arr_alloc(i32 6)` calls with
-  separate results - so the divergence is below the IR, in how the routed path records or re-reads
-  the block when the array's extent is not a compile-time constant.
+  **The answer was the REGISTER ALLOCATOR, and the descriptors were a red herring.** A rank-2
+  subscript - which is what the desugared slice loop computes - is a runtime product, so it goes
+  through `rt_lmul`, and the result comes back in `DX:AX`. Liveness tracks VIRTUAL registers only, so
+  that value has no interval at all: the selector emits the `MOV` taking it out immediately after the
+  `CALL`, and nothing but adjacency was protecting it. The scheduler issues independent work into the
+  gap, the spiller turns some of it into a reload, and the reload is a fresh virtual the allocator
+  cheerfully puts in `AX`. The row term then vanished from every address and each row overwrote the
+  first. `tests/optimize/CODEGEN.BAS` says it in one line - `twodim 0` where 6 is right - and that is
+  the shortest reproduction, with no slices in it.
 
-  The corpus differential never saw it because no corpus program combines the two. It has to be
-  chased before the flip regardless of the optimizer work, and it is the more urgent of the two: an
-  optimization that is missing costs speed, and this costs the right answer.
+  `LinearScanAllocator.CarriedByIndex` records the span between a physical register's definition (a
+  named write or a clobber) and the instruction that reads it, and no virtual interval overlapping
+  that span may use the register. Both programs are correct routed, at both optimization settings.
 
-The reason is structural rather than a list of missing passes. `CodeGen/`'s optimizations are
+The rest is structural rather than a list of missing passes. `CodeGen/`'s optimizations are
 interleaved with emission, which is the same property that makes byte-identity achievable; a function
 the back end owns never passes through them, and the IR pipeline's eleven passes are a different set
 aimed at a different problem. So the direct emitter is not only the fidelity path - it is the
 OPTIMIZING path, and retiring it means the IR path must first earn those expectations rather than
 inherit them.
 
+**Two things the count hides, both found by taking the flip seriously rather than by reading code.**
+
+* **An empty `SUB` is not an optimization barrier for the IR pipeline.** Most of the `Emit_Given*`
+  expectations keep their operands opaque by passing them to `SUB T(a%)` with an empty body. The
+  direct emitter cannot see through that; the inliner can, and once `T` is inlined the stores are dead
+  and the whole program folds to nothing. `x% = 11 : T x% : y% = x% * 3 : T y%` routes to an EMPTY
+  main, so the assertion about its multiply is asking a question about no code at all - which is why
+  so many of these read `851 -> 851 bytes` or `27 -> 27 bytes`. Removing the call is SOUND (an empty
+  body writes nothing, so nothing observable changes); the barrier is what is broken, and the fix is
+  either `NOINLINE` on `T` or a body the inliner must keep. It is the same finding recorded against
+  `FunctionSummaries.RemoveDeadPureCalls` and DIFF113, arriving from the other direction.
+
+* **`smaller-than-unoptimized` cannot hold for a routed function today, and not because of a missing
+  pass.** Routing runs `IrPassManager.Standard` whatever `Optimize` says, so the battery's two builds
+  of a routed scenario are the same build. Gating the pipeline on the flag is the obvious repair and
+  it does not work: the back end needs the optimizer to SELECT at all. `CHR$(64 + r%)` reaches
+  `rt_str_chr` as `add i32 64, (sext i16 %r)`, which `TryWordOperand` refuses because it can only
+  narrow a constant or an extension - the full pipeline gets past it by UNROLLING the loop until the
+  argument is a literal. Measured with the pipeline cut back to mem2reg + instcombine + sccp + dce +
+  simplifycfg, that program stops routing entirely. So the prerequisite is a selector that can narrow
+  an i32 it can prove fits a word, not a pipeline switch.
+
 That is the honest state: the switch is safe to flip the moment `tests/optimize` and the `Emit_Given*`
-fixtures pass routed and the slice bug is fixed, and not before. The flip itself is one line
-(`CodeGenerator.UseExperimentalBackend`), it has been tried twice, and it is reverted with the
-measurement kept. The order that follows from the composition above: fix the bug, then take the 95 in
-whatever order the battery ranks them - each is a transform the direct emitter performs during
-emission and the IR pipeline has no equivalent of.
+fixtures pass routed, and not before. The flip itself is one line
+(`CodeGenerator.UseExperimentalBackend`), it has been tried three times, and it is reverted with the
+measurement kept - **107 failures before this round, 104 after**, all of them assertions about emitted
+code. The order that follows from the composition above: give the `Emit_Given*` fixtures a barrier the
+inliner respects, then take the rest in whatever order the battery ranks them - each is a transform
+the direct emitter performs during emission and the IR pipeline has no equivalent of.
 
 **4. The golden gate - byte-identical output with the optimizer off.** This is the hard one, and it
 is the direct emitter's whole reason for existing: its optimizations are interleaved with emission
