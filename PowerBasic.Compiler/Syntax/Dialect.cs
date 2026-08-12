@@ -165,6 +165,8 @@ public enum LanguageFeature {
   ExtStorage,
   /// <summary>LOCAL as a declaration inside a procedure. BC answers it "Statement unrecognizable".</summary>
   LocalStorage,
+  /// <summary>OPEN's LOCK SHARED. Microsoft spells that mode as a bare SHARED and answers the pair "Syntax error"; LOCK READ / WRITE are in both lineages.</summary>
+  LockShared,
 
   // The other direction, which had nowhere to be recorded until the Borland table learned to say
   // "never": statements MICROSOFT has and Bob Zale's line does not. PBC 3.0 and 3.5 answer VIEW
@@ -345,6 +347,7 @@ public static class DialectFacts {
     // needs a display), so the claim is pinned no further back than the dialect that does have it.
     [LanguageFeature.ExtStorage] = (Dialect.Pb36, "EXT storage declarations"),
     [LanguageFeature.LocalStorage] = (Dialect.Tb10, "LOCAL declarations"),
+    [LanguageFeature.LockShared] = (Dialect.Tb10, "OPEN's LOCK SHARED (Microsoft spells that mode as a bare SHARED)"),
     [LanguageFeature.ViewPrint] = (null, "VIEW PRINT"),
     [LanguageFeature.PCopy] = (null, "PCOPY"),
     [LanguageFeature.DimShared] = (null, "DIM SHARED (the Microsoft spelling; PowerBASIC writes DIM x AS SHARED t)"),

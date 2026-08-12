@@ -13,7 +13,7 @@ passes; an empty box means nobody has checked yet, which is not the same as fail
 | [x] | Lowers to the IR | 134 / 205 | 134 of 205 reach the IR; the rest decline by name, which is the documented subset |
 | [-] | Syntax errors in unreachable branches are ignored, and warned about | - | no conditional compilation in this family; $STATIC/$DYNAMIC are storage directives, not branches |
 | [-] | Syntax errors on reachable flow fail | - | the dead-branch dimension's reason: no conditional compilation in this family; $STATIC/$DYNAMIC are storage directives, not branches |
-| [x] | Syntax belonging to another dialect is rejected | 97 / 97 | all 97 cleanly refused |
+| [x] | Syntax belonging to another dialect is rejected | 98 / 98 | all 98 cleanly refused |
 | [x] | Numeric typing follows the dialect | 18 / 18 | all 18 as claimed |
 | [x] | Runtime implementations follow the dialect | 2 / 2 | all 2 selected as the dialect requires |
 | [x] | Every runtime function's observable output | 27 / 27 | all 27 behaved as the language defines (1 skipped - not this dialect's) |

@@ -302,7 +302,11 @@ internal static class StatementSurface {
     new("open.access.readwrite", "OPEN \"T.DAT\" FOR RANDOM ACCESS READ WRITE AS #1 LEN = 8"),
     new("open.lock.shared", "OPEN \"T.TXT\" FOR INPUT SHARED AS #1"),
     new("open.lock.read", "OPEN \"T.TXT\" FOR INPUT LOCK READ AS #1"),
-    new("open.access.and.lock", "OPEN \"T.DAT\" FOR BINARY ACCESS READ WRITE LOCK SHARED AS #1"),
+    // LOCK SHARED is PowerBASIC's spelling of the sharing mode; Microsoft's BC wants the bare
+    // SHARED and answers the LOCK with "Syntax error". The bare form is accepted by BOTH, so it is
+    // the one that stays permissive - the same split as shared.global.pb / shared.global.qb.
+    new("open.access.and.lock", "OPEN \"T.DAT\" FOR BINARY ACCESS READ WRITE LOCK SHARED AS #1", MinMicrosoft: _noMicrosoft),
+    new("open.access.and.share", "OPEN \"T.DAT\" FOR BINARY ACCESS READ WRITE SHARED AS #1"),
     new("open.output.len", "OPEN \"T.TXT\" FOR OUTPUT AS #1 LEN = 128"),
     new("open.shorthand.as", "OPEN \"T.DAT\" AS #1"),
     new("open.shorthand.as.len", "OPEN \"T.DAT\" AS #1 LEN = 32"),
@@ -501,6 +505,7 @@ internal static class StatementSurface {
   }
 
   private static readonly string[] _pairBoth = [
+    "open.access.and.share",
     "let.implicit",
     "let.explicit",
     "let.string",
@@ -602,7 +607,6 @@ internal static class StatementSurface {
     "open.access.readwrite",
     "open.lock.shared",
     "open.lock.read",
-    "open.access.and.lock",
     "open.output.len",
     "open.shorthand.as",
     "open.shorthand.as.len",
@@ -708,6 +712,7 @@ internal static class StatementSurface {
   ];
 
   private static readonly string[] _pairPb35 = [
+    "open.access.and.lock",
     "meta.compat",
     "local.decl",
     "replace",

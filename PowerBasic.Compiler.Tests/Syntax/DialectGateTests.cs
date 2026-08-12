@@ -581,6 +581,26 @@ public sealed class DialectGateTests {
   public void Gate_GivenTheGraphicsViewport_WhenPb35_ThenStillAccepted()
     => AssertAccepted("VIEW (0, 0)-(100, 100)", Dialect.Pb35);
 
+  /// <summary>
+  /// LOCK SHARED is Bob Zale's pairing: to Microsoft, SHARED is a mode that stands WITHOUT the LOCK,
+  /// and BC answers the pair "Syntax error" while taking LOCK READ WRITE happily. The keyword is
+  /// therefore not gated - the spec is, which is the difference between this and rejecting a clause
+  /// QuickBASIC programs legitimately use.
+  /// </summary>
+  [Test]
+  public void Gate_GivenOpenLockShared_WhenPds71_ThenRefused()
+    => AssertNotInMicrosoftFamily("OPEN \"T.DAT\" FOR BINARY ACCESS READ WRITE LOCK SHARED AS #1\nCLOSE",
+      Dialect.Pds71, "LOCK SHARED");
+
+  [TestCase("OPEN \"T.DAT\" FOR BINARY ACCESS READ WRITE LOCK READ WRITE AS #1\nCLOSE")]
+  [TestCase("OPEN \"T.DAT\" FOR BINARY ACCESS READ WRITE SHARED AS #1\nCLOSE")]
+  public void Gate_GivenTheLockSpellingsMicrosoftHas_WhenPds71_ThenStillAccepted(string source)
+    => AssertAccepted(source, Dialect.Pds71);
+
+  [Test]
+  public void Gate_GivenOpenLockShared_WhenPb35_ThenStillAccepted()
+    => AssertAccepted("OPEN \"T.DAT\" FOR BINARY ACCESS READ WRITE LOCK SHARED AS #1\nCLOSE", Dialect.Pb35);
+
   #endregion
 
   #region defaults
