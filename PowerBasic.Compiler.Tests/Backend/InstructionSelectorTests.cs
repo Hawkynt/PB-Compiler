@@ -213,8 +213,8 @@ public sealed class InstructionSelectorTests {
   /// </summary>
   [Test]
   public void TrySelect_GivenAThreeBitMultiplierAndACostModel_ThenShiftsAndAddsInsteadOfImul() {
-    var decomposed = InstructionSelector.TrySelect(TimesConstant(11), cpu386: false,
-      cost: Speed(PowerBasic.Compiler.CodeGen.CpuTier.I8086));
+    var decomposed = InstructionSelector.TrySelect(TimesConstant(11),
+      new SelectionTarget(Cost: Speed(PowerBasic.Compiler.CodeGen.CpuTier.I8086)));
     var compact = InstructionSelector.TrySelect(TimesConstant(11));
 
     Assert.That(decomposed, Is.Not.Null);
@@ -233,7 +233,7 @@ public sealed class InstructionSelectorTests {
   [TestCase(PowerBasic.Compiler.CodeGen.CpuTier.I8086, (short)341, true)]
   public void TrySelect_GivenAWideMultiplierAndACostModel_ThenTheTierDecides(
       PowerBasic.Compiler.CodeGen.CpuTier tier, short multiplier, bool keepsImul) {
-    var m = InstructionSelector.TrySelect(TimesConstant(multiplier), cpu386: false, cost: Speed(tier));
+    var m = InstructionSelector.TrySelect(TimesConstant(multiplier), new SelectionTarget(Cost: Speed(tier)));
 
     Assert.That(m, Is.Not.Null);
     Assert.That(m!.AllInstructions.Any(i => i.Opcode == MOpcode.Imul), Is.EqualTo(keepsImul));

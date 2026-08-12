@@ -189,6 +189,9 @@ public sealed class MachineEmitter {
         else
           asm.Imul(this.Reg(ops[0]));
         break;
+      // TEST is CMP's bitwise twin - it sets the flags from an AND and keeps neither result, which is
+      // how a membership mask's bit 0 is asked about without destroying the mask
+      case MOpcode.Test: this.Emit2(ops[0], ops[1], asm.Test, asm.Test, asm.Test, asm.Test, asm.Test); break;
       case MOpcode.Imul:
         if (this.ToSource(ops[1]) is Mem im)
           asm.Imul(this.Reg(ops[0]), im);
@@ -205,9 +208,9 @@ public sealed class MachineEmitter {
         break;
       // the shifts take a memory destination too, which is what lets a spilled value be shifted in
       // place instead of blocking the whole function's allocation
-      case MOpcode.Shl: this.Shift(ops, asm.Shl, asm.Shl); break;
-      case MOpcode.Shr: this.Shift(ops, asm.Shr, asm.Shr); break;
-      case MOpcode.Sar: this.Shift(ops, asm.Sar, asm.Sar); break;
+      case MOpcode.Shl: this.Shift(ops, asm.Shl, asm.Shl, asm.Shl, asm.Shl); break;
+      case MOpcode.Shr: this.Shift(ops, asm.Shr, asm.Shr, asm.Shr, asm.Shr); break;
+      case MOpcode.Sar: this.Shift(ops, asm.Sar, asm.Sar, asm.Sar, asm.Sar); break;
       // the carry the neighbouring SHL/SHR left is rotated into the other half of a 32-bit shift
       case MOpcode.Rcl: asm.Rcl(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
       case MOpcode.Rcr: asm.Rcr(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
@@ -221,6 +224,7 @@ public sealed class MachineEmitter {
           asm.Jmp(this.Mem(ops[0]));
         break;
       case MOpcode.Jcc: asm.J(instr.Condition!.Value, this._labels[((MOperand.LabelRef)ops[0]).Name]); break;
+      case MOpcode.JmpIndexed: this.EmitIndexedJump(instr); break;
       case MOpcode.Call: {
         // with a resolver (the whole-program routing) the callee MUST be one it bound - anything else
         // is a routing bug; without one, the name is an external/runtime symbol resolved by name
@@ -269,13 +273,94 @@ public sealed class MachineEmitter {
     }
   }
 
-  /// <summary>A shift by a constant count, against a register or a frame cell.</summary>
-  private void Shift(IReadOnlyList<MOperand> ops, Action<Reg, int> onRegister, Action<Mem, int> onMemory) {
-    var count = (int)((MOperand.Immediate)ops[1]).Value;
+  /// <summary>
+  /// A shift against a register or a frame cell, by a constant count or by a VARIABLE one. The 8086
+  /// takes a variable count only in <c>CL</c>, so the count operand of that form is always that
+  /// register - what makes it worth having at all is that the shift amount can then be a value the
+  /// program computed, which is how a compile-time membership mask is brought down by the subject.
+  /// </summary>
+  private void Shift(IReadOnlyList<MOperand> ops, Action<Reg, int> onRegister, Action<Mem, int> onMemory,
+      Action<Reg, Reg> onRegisterByCount, Action<Mem, Reg> onMemoryByCount) {
+    if (ops[1] is MOperand.Register counter) {
+      var count = this.Resolve(counter.Reg);
+      if (ops[0] is MOperand.Register destination)
+        onRegisterByCount(this.Resolve(destination.Reg), count);
+      else
+        onMemoryByCount(this.Mem(ops[0]), count);
+      return;
+    }
+    var literal = (int)((MOperand.Immediate)ops[1]).Value;
     if (ops[0] is MOperand.Register register)
-      onRegister(this.Resolve(register.Reg), count);
+      onRegister(this.Resolve(register.Reg), literal);
     else
-      onMemory(this.Mem(ops[0]), count);
+      onMemory(this.Mem(ops[0]), literal);
+  }
+
+  /// <summary>
+  /// The indexed indirect jump and the <see cref="MOperand.BlockAddressTable"/> it reads, written as
+  /// one unit: the scaling, the jump, and then the table's own bytes, which sit behind the jump because
+  /// that is the only address a near <c>JMP word [BX + disp]</c> can reach.
+  ///
+  /// <para>
+  /// <c>BX</c> is not a choice. 16-bit addressing offers <c>BX</c>, <c>BP</c>, <c>SI</c> and <c>DI</c>
+  /// as a base, <c>BP</c> is the frame, and the index has to be scaled in place - so the index moves
+  /// there whatever register the allocator gave it. The moves are skipped when it is already right,
+  /// which is the coalescing the selector asks for by pinning the subject.
+  /// </para>
+  /// </summary>
+  private void EmitIndexedJump(MInstr instr) {
+    var asm = this._asm;
+    var table = (MOperand.BlockAddressTable)instr.Operands[1];
+    var index = this.Reg(instr.Operands[0]);
+    var addresses = asm.DefineLabel();
+
+    if (table.Keys is { } keys) {
+      // the key-verified form: the index is a HASH of the subject, collision-free on the case values
+      // and on nothing else, so the subject is kept aside and checked against the value keyed at the
+      // slot before the jump is taken. A slot no case hashes to keys 0 and points at the default, so a
+      // non-member that hashes there is right either way.
+      var keyTable = asm.DefineLabel();
+      var fallback = this._labels[((MOperand.LabelRef)instr.Operands[2]).Name];
+      if (index != Asm.Reg.AX)
+        asm.Mov(Asm.Reg.AX, index);
+      asm.Mov(Asm.Reg.CX, Asm.Reg.AX);               // CX keeps the subject for the verify
+      asm.And(Asm.Reg.AX, (Imm)table.KeyMask);
+      asm.Shl(Asm.Reg.AX, 1);                        // word-sized entries
+      asm.Mov(Asm.Reg.BX, Asm.Reg.AX);
+      asm.Cmp(Asm.Reg.CX, Asm.Mem.Word(Asm.Reg.BX, keyTable));
+      asm.Jne(fallback);
+      asm.Jmp(Asm.Mem.Word(Asm.Reg.BX, addresses));
+      asm.MarkLabel(keyTable);
+      asm.Dw([.. keys]);
+      this.EmitAddressTable(addresses, table);
+      return;
+    }
+
+    if (index != Asm.Reg.BX)
+      asm.Mov(Asm.Reg.BX, index);
+    if (table.ByteIndex is { } slots) {
+      // the compressed form: one byte per index naming a SLOT of the address table. BH is already zero
+      // - the bounds check ahead of this proved the index below the span, and a byte table is only
+      // built for a span that fits one - so writing BL alone leaves BX a valid slot number.
+      var byteTable = asm.DefineLabel();
+      asm.Mov(Asm.Reg.BL, Asm.Mem.Byte(Asm.Reg.BX, byteTable));
+      asm.Shl(Asm.Reg.BX, 1);
+      asm.Jmp(Asm.Mem.Word(Asm.Reg.BX, addresses));
+      asm.MarkLabel(byteTable);
+      asm.Db([.. slots]);
+      this.EmitAddressTable(addresses, table);
+      return;
+    }
+
+    asm.Shl(Asm.Reg.BX, 1);                          // word-sized entries
+    asm.Jmp(Asm.Mem.Word(Asm.Reg.BX, addresses));
+    this.EmitAddressTable(addresses, table);
+  }
+
+  private void EmitAddressTable(Label at, MOperand.BlockAddressTable table) {
+    this._asm.MarkLabel(at);
+    foreach (var block in table.Blocks)
+      this._asm.Dw(this._labels[block]);
   }
 
   /// <summary>Dispatches a two-operand instruction to the right Assembler overload by the operand shapes.</summary>

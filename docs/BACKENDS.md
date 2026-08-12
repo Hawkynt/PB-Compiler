@@ -321,10 +321,12 @@ has none, and a string variable already starts empty.
 **3. The OPTIMIZER - the gate nobody had written down, and the one that is now blocking.** Coverage
 and behavioural equivalence say a function CAN be routed; neither says anything about what is lost by
 routing it. Making pb36 route by default - the natural next step, and the one this document used to
-imply was all that remained - failed **109 tests**, and after `Ir/Passes/TailRecursion.cs` it fails
-**96** of the fixtures that ran at the time. Re-measured with the whole suite and an emulator present,
-the flip fails **107**, and the round below takes it to **104**. The count is the measure of the gate;
-the composition of it is what says which work is left:
+imply was all that remained - failed **109 tests**. Each family closed since then moved it:
+`Ir/Passes/TailRecursion.cs` took it to 96, the string passes to 92, the SELECT dispatch family to
+**85**. Those figures were each measured on the tree their author had, and the branches landed
+separately - so treat the chain as the shape of the progress and re-measure the number on the merged
+tree before quoting it. The count is the measure of the gate; the composition is what says which work
+is left:
 
 * **most are assertions about emitted code** and read like a list of what pb36 is for: a string appended
   in place rather than reallocated, a SELECT dispatched through a table or a perfect hash instead of a
@@ -373,14 +375,27 @@ the composition of it is what says which work is left:
   routed path emits those bytes as an ordinary compare against a case constant. That discriminator is
   specific to the direct emitter's two dispatch shapes and does not separate anything in a back end
   that has neither.
-* **the SELECT dispatch family proper is NOT done** - `Emit_GivenConstantCaseRange`,
+* **the SELECT dispatch family is now DONE** - `Emit_GivenConstantCaseRange`,
   `Emit_GivenWideSpanFewArmSelect`, `Emit_GivenWideWindowArm`, `Emit_GivenSparseSelectWithPerfectHash`,
-  `Emit_GivenOrChainEqualityIf`, `Emit_GivenAndChainOfInequalities`. Those take their subject from
-  `INPUT`, so the dispatch is real. What they need is machine-level and not a pass: a data table
-  emitted INSIDE the code stream, an indexed indirect `JMP word [BX+table]`, the byte-index table under
-  `$OPTIMIZE SIZE`, and a compile-time membership mask shifted by the subject (32-bit under
-  `$CPU 80386`). The machine IR has no operand for a table of block addresses and the selector is not
-  told the optimization objective, so both are prerequisites rather than details.
+  `Emit_GivenOrChainEqualityIf` and `Emit_GivenAndChainOfInequalities` all pass routed, and
+  `Emit_GivenOutOfRangeCheck` came with them. It took three pieces, and the first was the surprise:
+  there was no `IrSwitch` to select. The lowering renders `SELECT CASE` as the source reads - one block
+  per arm with its own compare tree - so `Ir/Passes/SwitchFormation.cs` reads a branch condition as the
+  SET of subject values that satisfy it, over closed intervals, and folds the chain back into one
+  switch; that single reading covers a value list, a range, and the `OR`/`AND` De Morgan pair.
+  `MOperand.BlockAddressTable` and `MOpcode.JmpIndexed` then put a table of block addresses in the code
+  stream (plain, byte-indexed under `$OPTIMIZE SIZE`, key-verified for the perfect hash), and
+  `Backend/SelectionTarget.cs` carries `$CPU` and `$OPTIMIZE` into the selector, which had never been
+  told the objective.
+
+  Left inside it: the balanced decision tree (every sparse SELECT in the corpus reaches the perfect
+  hash, which is constant time where a tree is logarithmic), 32-bit subjects (which still dispatch
+  through the compare chain), and one pair that cannot both pass -
+  `Emit_GivenBoundedRangeCheck` and `Emit_GivenOutOfRangeCheck` want opposite branch polarities from
+  what `SwitchFormation` makes structurally identical objects, and the polarity is a property of the
+  source's IF/ELSE order that `IrSwitch` deliberately does not carry. Before, both failed; now one
+  passes.
+
 * **the purity notion for runtime calls now exists - and `Emit_GivenLoopInvariantLen` is not what it
   buys.** `FunctionSummaries.IsPureExternal` / `IsSpeculatableExternal` is the checked list; `Gvn`
   numbers a call whose callee is on it and `Licm` hoists one, and everything else stays a wall. The
@@ -483,10 +498,10 @@ inherit them.
 That is the honest state: the switch is safe to flip the moment `tests/optimize` and the `Emit_Given*`
 fixtures pass routed, and not before. The flip itself is one line
 (`CodeGenerator.UseExperimentalBackend`), it has been tried three times, and it is reverted with the
-measurement kept - **107 failures before this round, 104 after**, all of them assertions about emitted
-code. The order that follows from the composition above: give the `Emit_Given*` fixtures a barrier the
-inliner respects, then take the rest in whatever order the battery ranks them - each is a transform
-the direct emitter performs during emission and the IR pipeline has no equivalent of.
+measurement kept. What remains is assertions about emitted code. The order that follows from the
+composition above: give the `Emit_Given*` fixtures a barrier the inliner respects - without one they
+measure an empty `main` - then take the rest in whatever order the battery ranks them, each being a
+transform the direct emitter performs during emission that the IR pipeline has no equivalent of.
 
 **4. The golden gate - byte-identical output with the optimizer off.** This is the hard one, and it
 is the direct emitter's whole reason for existing: its optimizations are interleaved with emission
