@@ -13,7 +13,7 @@ namespace PowerBasic.Compiler.Backend;
 /// Frame offsets are NOT resolved here - allocas become symbolic <see cref="MOperand.StackSlot"/>s and
 /// register binding happens in later stages.
 /// </summary>
-public sealed class InstructionSelector {
+public sealed partial class InstructionSelector {
 
   private readonly Dictionary<IrValue, MReg> _vregs = new(ReferenceEqualityComparer.Instance);
 
@@ -64,18 +64,21 @@ public sealed class InstructionSelector {
   private string? _decline;
 
   /// <summary>
-  /// True when the declared target is an 80386 or later, which is what decides whether a transcendental
-  /// is one instruction or a call - see <see cref="MathSequence"/>. It mirrors the direct emitter's
-  /// <c>_rt.Cpu386</c> and must be given the same answer, because the two paths emit into the SAME
-  /// image: a routed function computing SIN one way while a directly-emitted one computes it the other
-  /// is one program with two sines in it.
+  /// The instruction set and the optimization objective this selection is for - see
+  /// <see cref="SelectionTarget"/>. Both reach encoding decisions the IR cannot express: whether a
+  /// transcendental is one instruction or a call (<see cref="MathSequence"/>), and which shape a
+  /// <see cref="IrSwitch"/> dispatch takes.
   /// </summary>
-  private readonly bool _cpu386;
+  private readonly SelectionTarget _target;
 
-  private InstructionSelector(bool cpu386) => this._cpu386 = cpu386;
+  private InstructionSelector(SelectionTarget target) => this._target = target;
 
   /// <summary>Selects a function into machine IR, or null if it contains a construct this stage cannot model.</summary>
-  public static MFunction? TrySelect(IrFunction fn, bool cpu386 = false) => TrySelect(fn, out _, cpu386);
+  public static MFunction? TrySelect(IrFunction fn, bool cpu386 = false)
+    => TrySelect(fn, out _, new SelectionTarget(Cpu386: cpu386));
+
+  /// <summary>Selects a function into machine IR for a given target and objective, or null when it declines.</summary>
+  public static MFunction? TrySelect(IrFunction fn, SelectionTarget target) => TrySelect(fn, out _, target);
 
   /// <summary>
   /// Whether the function has inline-asm statements with other work BETWEEN them, which is the shape
@@ -126,7 +129,11 @@ public sealed class InstructionSelector {
   /// stopped it - when the result is null. The reason is what the coverage census reads to rank which
   /// widening buys the most eligible functions, so it names the IR construct, not the failing routine.
   /// </summary>
-  public static MFunction? TrySelect(IrFunction fn, out string? declineReason, bool cpu386 = false) {
+  public static MFunction? TrySelect(IrFunction fn, out string? declineReason, bool cpu386 = false)
+    => TrySelect(fn, out declineReason, new SelectionTarget(Cpu386: cpu386));
+
+  /// <summary>The same, for a given target and objective.</summary>
+  public static MFunction? TrySelect(IrFunction fn, out string? declineReason, SelectionTarget target) {
     declineReason = null;
     if (fn.IsDeclaration || fn.Entry is null) {
       declineReason = "declaration";
@@ -136,7 +143,7 @@ public sealed class InstructionSelector {
       declineReason = "inline asm: two blocks with BASIC code between them (register state spans it)";
       return null;
     }
-    var selector = new InstructionSelector(cpu386);
+    var selector = new InstructionSelector(target);
     var selected = selector.Run(fn);
     if (selected is null)
       declineReason = selector._decline ?? "unknown";
@@ -440,6 +447,11 @@ public sealed class InstructionSelector {
       AddSuccessor(this._current, target.Label);
       return true;
     }
+
+    // a shape that dispatches in constant (or logarithmic) time rather than a compare per case, when
+    // the case set and the objective warrant one - see InstructionSelector.Dispatch.cs
+    if (this.TrySelectDispatch(sw))
+      return true;
 
     return sw.Condition.Type.Bits == 32
       ? this.SelectWideSwitch(sw)
@@ -1632,7 +1644,7 @@ public sealed class InstructionSelector {
     if (callee.IsDeclaration) {
       if (NonLocalJumpIntrinsics.Contains(callee.Name))
         return this.SelectNonLocalJumpIntrinsic(call, callee);
-      if (MathSequence(callee.Name, this._cpu386) is { } sequence)
+      if (MathSequence(callee.Name, this._target.Cpu386) is { } sequence)
         return this.SelectMathIntrinsic(call, callee, sequence);
       if (callee.Name == "rt_str_concat_n")
         return this.SelectMultiConcat(call);

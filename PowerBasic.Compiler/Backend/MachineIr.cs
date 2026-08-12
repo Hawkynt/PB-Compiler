@@ -110,6 +110,46 @@ public abstract record MOperand {
   public sealed record BlockOffset(string Block) : MOperand;
 
   /// <summary>
+  /// A table of BLOCK ADDRESSES, assembled as DATA into the code stream immediately behind the
+  /// <see cref="MOpcode.JmpIndexed"/> that reads it. It is the one operand here that names several
+  /// points in this function's code at once, and the only reason a dispatch can be O(1) rather than a
+  /// compare per case.
+  ///
+  /// <para>
+  /// The table lives inside the code because that is the only place a near jump can reach it in one
+  /// instruction: <c>JMP word [BX + table]</c> takes a 16-bit displacement in the current segment, and
+  /// the segment the code is in is the one the assembler is filling. Nothing falls into it - the jump
+  /// in front is unconditional - and the block it sits in is closed by that jump, so no instruction can
+  /// be scheduled after the data.
+  /// </para>
+  ///
+  /// <para>
+  /// Three forms, which are the three shapes worth emitting on this target:
+  /// </para>
+  /// <list type="bullet">
+  /// <item><b>Plain.</b> <see cref="Blocks"/> alone: entry <c>i</c> is where index <c>i</c> jumps.
+  ///   Two bytes per index.</item>
+  /// <item><b>Byte-indexed</b> (<see cref="ByteIndex"/> set, the <c>$OPTIMIZE SIZE</c> form). Entry
+  ///   <c>i</c> of the byte table names a SLOT of <see cref="Blocks"/>, so a wide span with few
+  ///   distinct arms costs <c>span + 2*slots</c> bytes instead of <c>2*span</c>. It costs one extra
+  ///   load per dispatch, which is why it is not the default.</item>
+  /// <item><b>Key-verified</b> (<see cref="Keys"/> set, the perfect-hash form). The index is
+  ///   <c>subject AND <see cref="KeyMask"/></c>, which is collision-free on the case values and on
+  ///   nothing else - so the value keyed at the slot is compared against the subject first and a
+  ///   mismatch takes the default arm. An empty slot keys 0 and points at the default anyway.</item>
+  /// </list>
+  ///
+  /// <para>
+  /// A block this table names must still exist under its own label when emission gets there. That is
+  /// the machine-level twin of <see cref="Ir.IrFunction.AddressTakenBlocks"/>, and it holds here for a
+  /// different reason: the IR keeps a real CFG edge to every arm of an <see cref="Ir.IrSwitch"/>, so no
+  /// IR rewrite can drop one, and nothing after selection merges machine blocks.
+  /// </para>
+  /// </summary>
+  public sealed record BlockAddressTable(IReadOnlyList<string> Blocks,
+    IReadOnlyList<byte>? ByteIndex = null, IReadOnlyList<ushort>? Keys = null, int KeyMask = 0) : MOperand;
+
+  /// <summary>
   /// An incoming argument read straight out of the cell the caller pushed it into - <c>[BP+6]</c>.
   /// This is where a spilled parameter lives: it is already in the frame, it is never written (an IR
   /// argument is an SSA value), so the cheapest possible spill is to stop copying it into a register
@@ -137,7 +177,8 @@ public sealed class MInstr(MOpcode opcode, IReadOnlyList<MOperand> operands, MIn
   /// <summary>Physical registers this instruction destroys (a CALL's caller-saved set); a value live across it must avoid them.</summary>
   public IReadOnlyList<Reg> Clobbers { get; } = clobbers ?? [];
 
-  public bool IsTerminator => this.Opcode is MOpcode.Jmp or MOpcode.Jcc or MOpcode.Ret or MOpcode.JmpIndirect;
+  public bool IsTerminator => this.Opcode is MOpcode.Jmp or MOpcode.Jcc or MOpcode.Ret
+    or MOpcode.JmpIndirect or MOpcode.JmpIndexed;
 
   public override string ToString() => $"{this.Opcode} {string.Join(", ", this.Operands)}";
 }
@@ -177,6 +218,25 @@ public enum MOpcode {
   /// latched rather than a label anything here can name.
   /// </summary>
   JmpIndirect,
+  /// <summary>
+  /// The indexed indirect jump through a <see cref="MOperand.BlockAddressTable"/>, and the table
+  /// itself: <c>JMP word [BX + table]</c> followed by the table's bytes.
+  ///
+  /// <para>
+  /// Operand 0 is the register holding the index (or, for the key-verified form, the subject itself);
+  /// operand 1 is the table; operand 2 is the default arm, which only the key-verified form reads -
+  /// there the index is a hash and a mismatch has to go somewhere.
+  /// </para>
+  ///
+  /// <para>
+  /// The whole sequence is one instruction rather than a run of them because it is indivisible in a way
+  /// the def/use model cannot express: the address register is fixed at <c>BX</c> (16-bit addressing has
+  /// no other general base a displacement may join), the data follows the jump with no label of its own
+  /// until emission, and anything scheduled between the scaling and the jump would be scheduled into a
+  /// table. It carries its clobbers for the same reason every ABI-pinned sequence here does.
+  /// </para>
+  /// </summary>
+  JmpIndexed,
   /// <summary>
   /// x87. Floating point is computed on a stack, not in the register file, so these carry at most one
   /// MEMORY operand and the arithmetic forms carry none at all - they consume the two values the

@@ -456,6 +456,61 @@ target phis and general raw-I32 switches are separately selected, scheduled, and
 removes the last named-procedure decline in the current corpus: selection/routing moves **224 → 225 of
 240** with allocation declines still at zero.
 
+### A dispatch is not a compare chain — and it is not a pass either
+
+The compare chain above is correct for every switch and right for almost none of them. What pb36
+promises a `SELECT CASE` is O(1) dispatch, and the direct emitter delivers it five different ways
+(O0029/O0032/O0098/O0099/O0100/O0101). A routed function got none of them, and the reason was in two
+places at once.
+
+**The IR had no switch to select.** `IrLowering` renders `SELECT CASE` exactly as the source reads:
+one block per arm, each with its own `icmp`/`or` tree and its own `condbr`. By the time selection sees
+it there is no statement left — twelve compares in six blocks — and no amount of machine-level
+cleverness recovers a dispatch from that. `Ir/Passes/SwitchFormation.cs` puts it back: a branch
+condition is read as the SET of subject values that make it true, over closed intervals, so `x = k`,
+`x <> k`, `x >= lo AND x <= hi`, `OR` and `AND` all reduce to one algebra; the chain is then walked
+through its false edges and every arm's set folded into a single `IrSwitch`. Three source spellings
+collapse into the same object — a value list, a range (whose two signed compares intersect to one
+interval), and the `IF k = 1 OR …` / `IF k <> 2 AND …` De Morgan pair.
+
+**The selector had no objective and no operand for a table.** Both were prerequisites rather than
+details:
+
+- `MOperand.BlockAddressTable` is a table of block addresses assembled as DATA into the code stream,
+  immediately behind the `MOpcode.JmpIndexed` that reads it — the only place a near `JMP word [BX+t]`
+  can reach it. It has three forms: plain (one word per index), byte-indexed (one byte naming a slot,
+  the `$OPTIMIZE SIZE` compression) and key-verified (the perfect hash, where the index is
+  `subject AND (2^k − 1)` and the value keyed at the slot is checked before the jump is taken).
+  The whole idiom is ONE instruction because it is indivisible in a way the def/use model cannot
+  express: the base register is fixed at `BX` (16-bit addressing has no other), and anything scheduled
+  between the scaling and the jump would be scheduled into a table.
+- `SelectionTarget` carries `$CPU 80386` and the `$OPTIMIZE` objective into the selector, replacing the
+  bare `cpu386` flag. It is what lets a wide membership window decline without a 386, and the
+  byte-index table appear only under SIZE.
+
+`InstructionSelector.Dispatch.cs` then tries the shapes cheapest-answer-first — a contiguous run to one
+arm is an unsigned range test, a scattered set to one arm is a mask, several arms over a small span are
+a table, a wide separable set is a hash — and falls through to the compare chain for anything left,
+which is still the right answer for two or three cases.
+
+Every shape holds the subject in `AX` and works in `AX`/`BX`/`CX`, as the direct emitter's do, so that
+a resident `SI`/`DI` FOR counter survives. Fixed registers inside an allocated function have to be said
+twice: the instructions carry `Clobbers`, which denies those registers to any value live across the
+dispatch AND makes each instruction a scheduling barrier, so nothing independent can be moved into a
+sequence whose registers are already spoken for.
+
+One bug is worth recording because nothing about it looked like a dispatch. The chain walk marked a
+block consumed when it STEPPED INTO it rather than when it folded its test in, and a `CASE IS > 1000`
+arm evaluates perfectly well as a set of 31767 values before being rejected for being too wide — so the
+walk ended on a block it had already counted as deleted, which was the block the switch had just made
+its default. Every member reached its arm and every non-member fell into whatever followed. Only the
+default path was wrong, which is why three quarters of the fixture still passed.
+
+What is deliberately absent: a 32-bit subject (every shape indexes or masks a 16-bit value, and the
+guard proving a LONG equal to its own low word is not yet worth its bytes here), and the balanced
+decision tree (the corpus's sparse SELECTs all fall to the perfect hash, which is constant time where
+the tree is logarithmic).
+
 ### Binary-record strings and DX:AX runtime results
 
 The `MKI$`, `MKL$`, `MKDWD$`, `MKS$`, and `MKD$` runtime declarations and their

@@ -292,8 +292,9 @@ has none, and a string variable already starts empty.
 **3. The OPTIMIZER - the gate nobody had written down, and the one that is now blocking.** Coverage
 and behavioural equivalence say a function CAN be routed; neither says anything about what is lost by
 routing it. Making pb36 route by default - the natural next step, and the one this document used to
-imply was all that remained - failed **109 tests**, and after `Ir/Passes/TailRecursion.cs` it fails
-**96**. The count is the measure of the gate; the composition of it is what says which work is left:
+imply was all that remained - failed **109 tests**; after `Ir/Passes/TailRecursion.cs` 96, after
+`Ir/Passes/String*.cs` 92, and after the SELECT dispatch family **85**. The count is the measure of the
+gate; the composition of it is what says which work is left:
 
 * **most are assertions about emitted code** and read like a list of what pb36 is for: a string appended
   in place rather than reallocated, a SELECT dispatched through a table or a perfect hash instead of a
@@ -330,14 +331,30 @@ imply was all that remained - failed **109 tests**, and after `Ir/Passes/TailRec
   to be a jump table. `Emit_GivenAscOfSingleCharMid` is the same shape - it tells a constant length
   from a runtime one by `n% = 1`, which SCCP proves. These are not missing optimizations; the
   discriminator is.
-* **the SELECT dispatch family proper is NOT done** - `Emit_GivenConstantCaseRange`,
+* **the SELECT dispatch family is now CLOSED** - `Emit_GivenConstantCaseRange`,
   `Emit_GivenWideSpanFewArmSelect`, `Emit_GivenWideWindowArm`, `Emit_GivenSparseSelectWithPerfectHash`,
-  `Emit_GivenOrChainEqualityIf`, `Emit_GivenAndChainOfInequalities`. Those take their subject from
-  `INPUT`, so the dispatch is real. What they need is machine-level and not a pass: a data table
-  emitted INSIDE the code stream, an indexed indirect `JMP word [BX+table]`, the byte-index table under
-  `$OPTIMIZE SIZE`, and a compile-time membership mask shifted by the subject (32-bit under
-  `$CPU 80386`). The machine IR has no operand for a table of block addresses and the selector is not
-  told the optimization objective, so both are prerequisites rather than details.
+  `Emit_GivenOrChainEqualityIf`, `Emit_GivenAndChainOfInequalities`, and `Emit_GivenOutOfRangeCheck`
+  along with them. Those take their subject from `INPUT`, so the dispatch is real, and what they wanted
+  was in two places rather than one.
+
+  The IR had **no switch to select**. `IrLowering` renders `SELECT CASE` as the source reads - one block
+  per arm with its own `icmp`/`or` tree - so by selection there is no statement left, only twelve
+  compares in six blocks. `Ir/Passes/SwitchFormation.cs` reads a branch condition as the SET of subject
+  values that make it true, over closed intervals, and folds the whole chain into one `IrSwitch`; that
+  one reading covers a value list, a range (whose two signed compares intersect to an interval) and the
+  `IF k = 1 OR …` / `IF k <> 2 AND …` De Morgan pair, which are the same set seen from two sides.
+
+  The selector had **no operand for a table and no objective**. `MOperand.BlockAddressTable` +
+  `MOpcode.JmpIndexed` are a table of block addresses assembled into the code stream behind the jump
+  that reads it, in three forms - plain, byte-indexed (the `$OPTIMIZE SIZE` compression) and
+  key-verified (the perfect hash) - and `SelectionTarget` carries `$CPU` and `$OPTIMIZE` in, replacing
+  the bare `cpu386` flag. `InstructionSelector.Dispatch.cs` then picks between an unsigned range test, a
+  membership mask, a jump table, its byte-index form and the hash, and falls through to the compare
+  chain for anything left. Details in docs/X86-BACKEND.md.
+
+  Not done, and deliberately: a 32-bit subject (every shape indexes a 16-bit value), and the balanced
+  decision tree - the corpus's sparse SELECTs all reach the perfect hash, which is constant time where
+  the tree is logarithmic, and the one test that would measure a tree cannot observe it.
 * **`Emit_GivenLoopInvariantLen` needs a purity notion for runtime calls.** `LEN(s$)` lowers to
   `rt_str_len(rt_str_dup(s))` - allocate a copy, read its length, free it - which is observably a pure
   read of `s`, but LICM and GVN will not move or number a call and are right not to in general. It
@@ -398,9 +415,9 @@ inherit them.
 That is the honest state: the switch is safe to flip the moment `tests/optimize` and the `Emit_Given*`
 fixtures pass routed, and not before. The flip itself is one line
 (`CodeGenerator.UseExperimentalBackend`), it has been tried twice, and it is reverted with the
-measurement kept. With the aliasing bug closed, what remains is the 95, in whatever order the battery
-ranks them - each is a transform the direct emitter performs during emission and the IR pipeline has
-no equivalent of.
+measurement kept. With the string and SELECT families closed, what remains is the 85, in whatever order
+the battery ranks them - each is a transform the direct emitter performs during emission and the IR
+pipeline has no equivalent of.
 
 **4. The golden gate - byte-identical output with the optimizer off.** This is the hard one, and it
 is the direct emitter's whole reason for existing: its optimizations are interleaved with emission
