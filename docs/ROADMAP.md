@@ -166,10 +166,10 @@ battery, it currently reaches:
 
 | | |
 |---|---|
-| programs reaching the IR at all | 159 / 165 (4 of the rest the FRONT end rejects) |
-| functions selected | 257 / 259 |
-| functions routed (selected **and** allocated) | 257 / 259 |
-| whole module bodies the back end can own | 157 / 159 |
+| programs reaching the IR at all | 160 / 165 (4 of the rest the FRONT end rejects; the fifth is `DIM ... AT` with a non-default array class) |
+| functions selected | **261 / 261** |
+| functions routed (selected **and** allocated) | **261 / 261** |
+| whole module bodies the back end can own | **160 / 160** |
 
 **Every function the selector takes is now allocated.** The last one that was not was `DIFF56`'s module
 body — a 32-bit accumulation over a static array — and it took two independent repairs, one on each

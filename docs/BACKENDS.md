@@ -186,14 +186,34 @@ now pins both, in the DOS battery and in `CBackendTests`.
 Worth stating plainly, because coverage numbers make the distance look shorter than it is. Dropping
 `CodeGen/` needs THREE things, and only the first is being measured today.
 
-**1. Coverage - every program on the IR path.** `BackendCoverageTests` ranks this over the whole
-corpus. As of this writing: **147 of 164 programs lower**, **244 of 246 functions select and
-allocate**, **145 of 147 module bodies** can be owned outright. The remaining lowering blockers are
-`ARRAY SORT`, `FIELD`, `CHAIN`, `DIM HUGE`/`VIRTUAL`/`EMS`/`XMS`, `VARPTR`/`CODEPTR32` and the pointer, BCD and
-larger-UDT types; the remaining selection blockers are the unsigned
-float-to-integer casts, 64-bit truncation and widening, module globals needing the data-layout
-bridge, `IrSwitch`, a null pointer with no register, and a compare whose left operand is an
-immediate.
+**1. Coverage - every program on the IR path. Selection and allocation are DONE.** `BackendCoverageTests`
+ranks this over the whole corpus. As of this writing: **160 of 165 programs lower**, **261 of 261
+functions select and allocate**, and **160 of 160 module bodies** can be owned outright - every
+function that reaches the IR is compiled by the back end, with no allocation declines left.
+
+What remains is on the LOWERING side, and it is short: four programs the FRONT end rejects (so they
+are nobody's coverage), and one that declines on `DIM ... AT` with a non-default array CLASS. That
+last one is deliberate rather than pending - `HUGE` steps the segment by `byteOffset >> 4` so one
+array spans many of them, and `VIRTUAL` maps a 16 KiB EMS page pair into a window before each access,
+which needs the allocator, the page mapper and the far descriptor the DOS runtime holds. Half-building
+it would be worse than the honest decline.
+
+One decline was ADDED on purpose while closing the others, and it is the interesting one. A function
+whose inline-asm blocks have other work BETWEEN them now declines: `LOWLEVEL.BAS` counts `CX` down
+across `n = n + 1`, and an asm block is modelled as clobbering everything - which stops a value living
+ACROSS it but does nothing to stop the allocator putting a temporary IN `CX` in the middle. It printed
+1 where 5 was right, and only reached the back end at all once two unrelated declines were widened.
+The direct emitter survives by computing through AX, which is luck rather than contract. Until an asm
+block can declare the registers it defines and for how long, selecting that shape is worse than not.
+
+**Routing is not gated on the optimizer, and that is safe only because the gate is observational.**
+`CodeGenerator.Backend.cs` runs `IrPassManager.Standard(...)` whenever a function routes, so a
+`--no-optimize` build of a routed function is still optimized. It looks alarming written down - the
+historic dialects rest on "optimizer off means vintage behaviour" - but the thing that promise is
+about is BEHAVIOUR, and the evidence is the golden battery itself: `tests/diff` compiles pb35 with the
+optimizer OFF, and it passes routed. What would be a real problem is an optimization that changes an
+observable, and that is exactly what the battery is watching for. Worth knowing before reading
+`--no-optimize` as "nothing ran".
 
 **2. Fidelity - the routed path agreeing with the direct one everywhere. DONE.** The differential
 battery run with `PBC_X_BACKEND=1` scores **504 of 504** against the genuine vintage compilers -
