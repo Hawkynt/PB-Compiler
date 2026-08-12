@@ -31,12 +31,20 @@ internal static class StatementSurface {
   /// <param name="MinBorland">First Turbo Basic / PowerBASIC dialect with the form; null if it never had it.</param>
   /// <param name="MinMicrosoft">First BASICA / GW / QB / PDS dialect with the form; null if it never had it.</param>
   /// <param name="Preamble">Declarations the form needs to bind (a file to be open, an array to exist).</param>
+  /// <param name="OwnExtension">
+  /// This compiler's own directive rather than any vintage dialect's, so no oracle is asked about
+  /// it. <c>$COMPAT</c> is the case: the decompiler writes it so a cross-family program recompiles
+  /// with its source dialect's runtime, and that recompile is pb35 - so it must be accepted there,
+  /// while genuine PBC 3.50 of course answers it "Statement expected". Sending it to an oracle
+  /// measures nothing; the mismatch would be the feature working as designed.
+  /// </param>
   internal sealed record Form(
     string Id,
     string Body,
     Dialect? MinBorland = Dialect.Tb10,
     Dialect? MinMicrosoft = Dialect.Basica,
-    string Preamble = "");
+    string Preamble = "",
+    bool OwnExtension = false);
 
   /// <summary>A form only Turbo Basic / PowerBASIC ever had.</summary>
   private static readonly Dialect? _noMicrosoft = null;
@@ -66,14 +74,15 @@ internal static class StatementSurface {
     new("erase", "ERASE e%", Preamble: "DIM e%(4)"),
     new("redim", "REDIM f%(1 TO 4)"),
     new("redim.astype", "REDIM f(1 TO 4) AS LONG"),
-    // PRESERVE is PB 3.5 in Bob Zale's line and BASIC PDS 7.0 in Microsoft's; plain QuickBASIC REDIM
-    // never preserved anything
-    new("redim.preserve", "REDIM f(1 TO 4) AS LONG\nREDIM PRESERVE f(1 TO 8) AS LONG", Dialect.Pb35, Dialect.Pds70),
+    // PRESERVE is PB 3.5 in Bob Zale's line and BASIC PDS 7.1 in Microsoft's - BC 7.00 reads
+    // PRESERVE as the array's name and asks for the "(" that should follow it, while BC 7.10
+    // compiles it; plain QuickBASIC REDIM never preserved anything
+    new("redim.preserve", "REDIM f(1 TO 4) AS LONG\nREDIM PRESERVE f(1 TO 8) AS LONG", Dialect.Pb35, Dialect.Pds71),
     new("common", "COMMON c%"),
     // OPTION BASE is in every BASIC there has ever been, so both lineages stay at their oldest
     new("option.base", "OPTION BASE 1\nDIM ob%(4)"),
     new("public", "PUBLIC p%", MinMicrosoft: _noMicrosoft),
-    new("ext", "EXT e%", MinMicrosoft: _noMicrosoft),
+    new("ext", "EXT e%", Dialect.Pb36, _noMicrosoft),   // PBC 3.0 and 3.5 read EXT as a call and answer "Undefined SUB/FUNCTION reference"
     // DEFINT / DEFSNG / DEFDBL / DEFSTR are in every BASIC there has ever been
     new("deftype.int", "DEFINT A-C\nav = 1"),
     new("deftype.sng", "DEFSNG D-F\ndv = 1"),
@@ -106,7 +115,7 @@ internal static class StatementSurface {
     // books say - the census reports both and only one of them is this table's business.
     new("asc.assign", "s2$ = \"abc\"\nASC(s2$, 1) = 65", Dialect.Pb35, _noMicrosoft),
     new("chain", "CHAIN \"NEXT.EXE\""),
-    new("replace", "s3$ = \"aXa\"\nREPLACE \"X\" WITH \"Y\" IN s3$"),
+    new("replace", "s3$ = \"aXa\"\nREPLACE \"X\" WITH \"Y\" IN s3$", MinMicrosoft: _noMicrosoft),
     // ARRAY SCAN shares ARRAY SORT's keyword, parse site and gate, and the oracle agrees it shares
     // the answer too: 2 Severe Errors from BC 4.50, 1 from BC 1.00, clean under PBC 3.5.
     new("array.scan", "ARRAY SCAN a4%(), = 5, TO f4%", MinMicrosoft: _noMicrosoft, Preamble: "DIM a4%(4)"),
@@ -169,7 +178,7 @@ internal static class StatementSurface {
       Dialect.Pb35, _noMicrosoft),
     // pb35, matching the gate: $COMPAT is what the decompiler emits so a cross-family program
     // recompiles under --dialect pb35, which is what roundtrip-check.sh does.
-    new("meta.compat", "$COMPAT qb45", Dialect.Pb35, _noMicrosoft),
+    new("meta.compat", "$COMPAT qb45", Dialect.Pb35, _noMicrosoft, OwnExtension: true),
     new("require", "CALL S8(1)\nEND\nSUB S8(BYVAL n%)\n  REQUIRE n% > 0, \"positive\"\nEND SUB", Dialect.Pb36, _noMicrosoft),
     // and six more: the code-pointer trio, the single-line type alias (TYPE Name AS type - no
     // ALIAS keyword, which a guess would put there), DEFER and a coroutine YIELD
@@ -463,7 +472,7 @@ internal static class StatementSurface {
     // clause that would satisfy it. A suffixed name carries its type without a DIM, so both agree.
     new("shared.stmt", "h% = 0\nCALL S6\nEND\nSUB S6\n  SHARED h%\n  h% = 1\nEND SUB", MinMicrosoft: Dialect.Qb10),
     new("static.local", "CALL S4\nEND\nSUB S4\n  STATIC s%\n  s% = s% + 1\nEND SUB", MinMicrosoft: Dialect.Qb10),
-    new("local.decl", "CALL S5\nEND\nSUB S5\n  LOCAL l%\n  l% = 1\nEND SUB", MinMicrosoft: Dialect.Qb10),
+    new("local.decl", "CALL S5\nEND\nSUB S5\n  LOCAL l%\n  l% = 1\nEND SUB", MinMicrosoft: _noMicrosoft),
     // TYPE ... END TYPE is PB 3.0 in one line and QuickBASIC 4.0 in the other
     new("type.decl", "TYPE Pt\n  X AS INTEGER\n  Y AS INTEGER\nEND TYPE\nDIM p AS Pt\np.X = 1", Dialect.Pb30, Dialect.Qb40),
     // UNION is PowerBASIC's; QuickBASIC's TYPE has no overlapping variant
@@ -509,7 +518,6 @@ internal static class StatementSurface {
     "swap",
     "mid.assign",
     "chain",
-    "replace",
     "if.single",
     "if.else.single",
     "if.block",
@@ -695,15 +703,16 @@ internal static class StatementSurface {
     "shared.global.qb",
     "shared.stmt",
     "static.local",
-    "local.decl",
     "type.decl",
     "deftype",
     "def.fn",
   ];
 
   private static readonly string[] _pairPb35 = [
+    "meta.compat",
+    "local.decl",
+    "replace",
     "public",
-    "ext",
     "deftype.qud",
     "deftype.ext",
     "deftype.fix",
@@ -775,7 +784,6 @@ internal static class StatementSurface {
     "union.decl",
     // $COMPAT is the decompiler's directive and is available from pb35 - the dialect its
     // output is recompiled under - so it belongs on the PB 3.5 side, not in "neither".
-    "meta.compat",
   ];
 
   private static readonly string[] _pairPds71 = [
@@ -783,6 +791,7 @@ internal static class StatementSurface {
   ];
 
   private static readonly string[] _pairNeither = [
+    "ext",
     "destructure",
     "static.assert",
     "meta.cpu.80486",

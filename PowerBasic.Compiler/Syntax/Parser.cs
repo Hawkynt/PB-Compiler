@@ -375,11 +375,11 @@ public sealed partial class Parser {
       case "DEFSTR": return this.ParseDefType(BuiltinType.String);
       case "DEFFLX": this.Require(LanguageFeature.ExtendedNumericTypes); return this.ParseDefType(BuiltinType.Flex);
       case "DIM": return this.ParseDim(StorageClass.Dim);
-      case "LOCAL": return this.ParseDim(StorageClass.Local);
+      case "LOCAL": this.Require(LanguageFeature.LocalStorage); return this.ParseDim(StorageClass.Local);
       case "STATIC": return this.ParseDim(StorageClass.Static);
       case "SHARED": return this.ParseDim(StorageClass.Shared);
       case "PUBLIC": this.Require(LanguageFeature.PublicStorage); return this.ParseDim(StorageClass.Public);
-      case "EXT": this.Require(LanguageFeature.PublicStorage); return this.ParseDim(StorageClass.Ext);
+      case "EXT": this.Require(LanguageFeature.ExtStorage); return this.ParseDim(StorageClass.Ext);
       case "COMMON": return this.ParseDim(StorageClass.Common);
       case "REDIM": return this.ParseRedim();
       case "ERASE": return this.ParseErase();
@@ -418,6 +418,7 @@ public sealed partial class Parser {
       case "REPLACE": {
         // REPLACE find WITH with IN target: IN is this statement's delimiter, so the pb36
         // membership operator is suppressed while parsing the find/with expressions
+        this.Require(LanguageFeature.ReplaceStatement);
         var replacePos = this.Advance().Position;
         this._suppressInOperator = true;
         Expression find, with;

@@ -35,6 +35,10 @@ public sealed class StatementSurfaceOracleMaterialTests {
       Directory.CreateDirectory(directory);
 
       foreach (var form in forms) {
+        // A directive of this compiler's own is not a question a vintage compiler can answer: it
+        // will reject it, correctly, and that rejection is the feature rather than a divergence.
+        if (form.OwnExtension)
+          continue;
         var fileName = form.Id + ".BAS";
         File.WriteAllText(Path.Combine(directory, fileName),
           StatementSurface.OracleProgram(form, dialect), utf8);
@@ -61,8 +65,10 @@ public sealed class StatementSurfaceOracleMaterialTests {
     }
 
     File.WriteAllText(Path.Combine(output, "manifest.tsv"), manifest.ToString(), utf8);
-    Assert.That(rows, Is.EqualTo(
-      (forms.Count + InvalidSyntaxSurfaceTests.Forms.Length) * StatementSurface.AllDialects.Length));
+    // Own-extension forms are deliberately absent: no oracle is asked about a directive this
+    // compiler invented, so they are subtracted here rather than silently loosening the count.
+    var probed = forms.Count(f => !f.OwnExtension) + InvalidSyntaxSurfaceTests.Forms.Length;
+    Assert.That(rows, Is.EqualTo(probed * StatementSurface.AllDialects.Length));
   }
 
   private static string RepositoryRoot() {

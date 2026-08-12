@@ -156,9 +156,20 @@ public sealed class ParserDeclarationTests {
   [TestCase("STATIC i AS INTEGER", StorageClass.Static)]
   [TestCase("SHARED i AS INTEGER", StorageClass.Shared)]
   [TestCase("PUBLIC i AS INTEGER", StorageClass.Public)]
-  [TestCase("EXT i AS INTEGER", StorageClass.Ext)]
   public void Parse_GivenStorageKeyword_WhenParsed_ThenStorageClassMatches(string source, StorageClass expected)
     => Assert.That(ParseSingle<DimStmt>(source).Storage, Is.EqualTo(expected));
+
+  /// <summary>
+  /// EXT needs its own dialect: PBC 3.0 and 3.5 do not know the word - they read it as a call and
+  /// answer "Undefined SUB/FUNCTION reference" - so it is gated to pb36 and cannot be parsed under
+  /// the default dialect alongside the storage keywords above.
+  /// </summary>
+  [Test]
+  public void Parse_GivenExtStorage_WhenPb36_ThenStorageClassMatches() {
+    var statement = Parse("EXT i AS INTEGER", Dialect.Pb36).Statements.Single();
+    Assert.That(statement, Is.InstanceOf<DimStmt>());
+    Assert.That(((DimStmt)statement).Storage, Is.EqualTo(StorageClass.Ext));
+  }
 
   [Test]
   public void Parse_GivenCommonSharedBlock_WhenParsed_ThenBlockNameIsKept() {

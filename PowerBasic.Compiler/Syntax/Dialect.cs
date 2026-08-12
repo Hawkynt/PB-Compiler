@@ -159,6 +159,12 @@ public enum LanguageFeature {
   IterateStatement,
   ArraySortScan,
   BitStatements,
+  /// <summary>The REPLACE ... WITH ... IN statement. BC answers it "Equal sign missing", reading REPLACE as a variable.</summary>
+  ReplaceStatement,
+  /// <summary>EXT storage declarations, which PBC 3.0 and 3.5 do not know - separated from <see cref="PublicStorage"/>, which they do.</summary>
+  ExtStorage,
+  /// <summary>LOCAL as a declaration inside a procedure. BC answers it "Statement unrecognizable".</summary>
+  LocalStorage,
 
   /// <summary>
   /// <c>BYVAL</c> on a parameter of a procedure DEFINITION - <c>SUB S(BYVAL n%)</c>.
@@ -310,12 +316,19 @@ public static class DialectFacts {
     [LanguageFeature.DelayStatement] = (Dialect.Tb10, "DELAY"),
     [LanguageFeature.SharedTypeClause] = (Dialect.Tb10, "SHARED / STATIC inside a DIM type clause ('DIM x AS SHARED type')"),
     [LanguageFeature.ExtendedNumericTypes] = (Dialect.Tb10, "the extended numeric types (EXT / FIX / BCD / FLEX)"),
-    [LanguageFeature.PublicStorage] = (Dialect.Tb10, "PUBLIC / EXT storage declarations"),
+    [LanguageFeature.PublicStorage] = (Dialect.Tb10, "PUBLIC storage declarations"),
     [LanguageFeature.EquateStatement] = (Dialect.Tb10, "the equate statement ('%name = value')"),
     [LanguageFeature.IterateStatement] = (Dialect.Tb10, "ITERATE"),
     [LanguageFeature.ArraySortScan] = (Dialect.Tb10, "the ARRAY SORT / ARRAY SCAN statements"),
     [LanguageFeature.BitStatements] = (Dialect.Tb10, "the BIT SET / BIT RESET / BIT TOGGLE statements"),
     [LanguageFeature.ByValParameter] = (Dialect.Tb10, "a BYVAL parameter in a procedure definition"),
+    [LanguageFeature.ReplaceStatement] = (Dialect.Tb10, "the REPLACE ... WITH ... IN statement"),
+    // EXT parts company with PUBLIC, which it used to share a gate with: PBC 3.0 and 3.5 accept
+    // PUBLIC p% and answer EXT e% with "Undefined SUB/FUNCTION reference" - they do not know the
+    // word, and read it as a call. Turbo Basic cannot be asked here (its oracle is IDE-only and
+    // needs a display), so the claim is pinned no further back than the dialect that does have it.
+    [LanguageFeature.ExtStorage] = (Dialect.Pb36, "EXT storage declarations"),
+    [LanguageFeature.LocalStorage] = (Dialect.Tb10, "LOCAL declarations"),
     [LanguageFeature.RegStatement] = (Dialect.Pb30, "the REG statement"),
     [LanguageFeature.ShiftRotateStatements] = (Dialect.Pb30, "the SHIFT / ROTATE statements"),
     [LanguageFeature.UnionType] = (Dialect.Pb30, "UNION (the overlapping variant of TYPE)"),
@@ -334,6 +347,12 @@ public static class DialectFacts {
     // under --dialect pb35 with its own runtime semantics - "un-parses back to compile-clean PB 3.5"
     // is the contract, and roundtrip-check.sh recompiles at pb35 exactly. Gating it at pb36 made
     // BasicWriter's own output uncompilable by the gate that checks it (28 of the corpus failed).
+    // pb35, and genuine PBC 3.50 answers it "Error 418: Statement expected" - which is not a
+    // disagreement to fix but the definition of the thing: $COMPAT is THIS compiler's own directive,
+    // written by the decompiler so that a cross-family program recompiles with its source dialect's
+    // runtime, and the recompile is pb35 (scripts/roundtrip-check.sh). Gating it to pb36 made every
+    // round trip of a qb/tb/pds program fail to rebuild. It is excluded from the oracle probes
+    // instead, because a vintage compiler has nothing to say about a directive it never had.
     [LanguageFeature.CompatMeta] = (Dialect.Pb35, "$COMPAT metastatement"),
     // PB 3.0 per docs/DIALECTS.md, which lists "$DIM ALL/ARRAY" among that release's additions. The
     // argument was already validated; nothing checked the dialect, so Turbo Basic took it too.
@@ -360,7 +379,9 @@ public static class DialectFacts {
   /// </summary>
   private static readonly Dictionary<LanguageFeature, Dialect> _microsoftGates = new() {
     [LanguageFeature.TypeUnion] = Dialect.Qb40,        // TYPE...END TYPE (QB has no UNION; the binder rejects UNION separately)
-    [LanguageFeature.RedimPreserve] = Dialect.Pds70,   // REDIM with far strings; QB REDIM never preserves
+    // 7.1, not 7.0: BC 7.00 reads PRESERVE as the array's name and asks for the "(" that should
+    // follow it; BC 7.10 compiles it. Plain QuickBASIC REDIM never preserves anything.
+    [LanguageFeature.RedimPreserve] = Dialect.Pds71,
     [LanguageFeature.LongType] = Dialect.Qb10,        // QuickBASIC has LONG; BASICA and GW-BASIC do not
     [LanguageFeature.NamedLabels] = Dialect.Qb10,
     [LanguageFeature.BlockIf] = Dialect.Qb10,

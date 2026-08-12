@@ -523,6 +523,32 @@ public sealed class DialectGateTests {
   public void Gate_GivenAByValParameterOnAPrototype_WhenMicrosoftFamily_ThenStillAccepted(Dialect dialect)
     => AssertAccepted("DECLARE SUB Foo(BYVAL n%)\nEND", dialect);
 
+  /// <summary>
+  /// Two more the oracles moved out of the Microsoft family. BC answers REPLACE with "Equal sign
+  /// missing" - it reads the word as a variable - and LOCAL with "Statement unrecognizable".
+  /// </summary>
+  [TestCase("s$ = \"aXa\"\nREPLACE \"X\" WITH \"Y\" IN s$", "REPLACE")]
+  [TestCase("CALL S\nEND\nSUB S\n  LOCAL l%\n  l% = 1\nEND SUB", "LOCAL")]
+  public void Gate_GivenAStatementOnlyBorlandEverHad_WhenPds71_ThenRefused(string source, string what)
+    => AssertNotInMicrosoftFamily(source, Dialect.Pds71, what);
+
+  [TestCase("s$ = \"aXa\"\nREPLACE \"X\" WITH \"Y\" IN s$")]
+  [TestCase("CALL S\nEND\nSUB S\n  LOCAL l%\n  l% = 1\nEND SUB")]
+  public void Gate_GivenReplaceOrLocal_WhenPb35_ThenStillAccepted(string source)
+    => AssertAccepted(source, Dialect.Pb35);
+
+  /// <summary>
+  /// EXT parts company with PUBLIC, which it shared a gate with: PBC 3.0 and 3.5 take PUBLIC p% and
+  /// answer EXT e% with "Undefined SUB/FUNCTION reference", having read it as a call.
+  /// </summary>
+  [Test]
+  public void Gate_GivenAnExtDeclaration_WhenPb35_ThenRefused()
+    => AssertRejected("EXT e%", Dialect.Pb35, "PowerBASIC 3.6");
+
+  [Test]
+  public void Gate_GivenAPublicDeclaration_WhenPb35_ThenStillAccepted()
+    => AssertAccepted("PUBLIC p%", Dialect.Pb35);
+
   #endregion
 
   #region defaults
