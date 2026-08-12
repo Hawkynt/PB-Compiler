@@ -484,6 +484,45 @@ public sealed class DialectGateTests {
     Assert.That(Compile(source, Dialect.Pb35), Has.None.Contains("Microsoft BASIC family"));
   }
 
+  /// <summary>
+  /// BYVAL on a parameter of a procedure DEFINITION. BC 7.00 answers it with "Formal parameter
+  /// specification illegal" and BC 7.10 compiles it, so the Microsoft line acquires it at PDS 7.1 -
+  /// a boundary that was not looked for, but is what the two oracles say when asked separately.
+  ///
+  /// BASICA and GW-BASIC are not asked: they have no SUB at all, so they refuse the program one gate
+  /// earlier and would pass this for the wrong reason.
+  /// </summary>
+  [TestCase(Dialect.Qb10)]
+  [TestCase(Dialect.Qb45)]
+  [TestCase(Dialect.Pds70)]
+  public void Gate_GivenAByValParameterOnADefinition_WhenBeforePds71_ThenRefused(Dialect dialect) {
+    // Not AssertRejected: that one reads the Borland-side wording ("requires PowerBASIC"), and this
+    // is a version gate INSIDE the Microsoft family, which names the Microsoft version instead.
+    const string source = "CALL S(1)\nEND\nSUB S(BYVAL n%)\nEND SUB";
+    try {
+      var errors = Compile(source, dialect);
+      Assert.That(errors, Has.Some.Contains("BYVAL parameter").And.Contains("requires PDS 7.1"),
+        $"expected a PDS 7.1 gate under {dialect.DisplayName()}; got: {string.Join("; ", errors)}");
+    } catch (ParserException e) {
+      Assert.That(e.Message, Does.Contain("BYVAL parameter").And.Contain("requires PDS 7.1"));
+    }
+  }
+
+  /// <summary>
+  /// The three halves that must NOT move with it: PDS 7.1 itself, PowerBASIC, and - in every
+  /// Microsoft dialect - BYVAL on a DECLARE, which describes how a NON-BASIC routine is called and
+  /// which BC takes. Gating the word rather than the position would reject valid QuickBASIC.
+  /// </summary>
+  [TestCase(Dialect.Pds71)]
+  [TestCase(Dialect.Pb35)]
+  public void Gate_GivenAByValParameterOnADefinition_WhenTheDialectHasIt_ThenAccepted(Dialect dialect)
+    => AssertAccepted("CALL S(1)\nEND\nSUB S(BYVAL n%)\nEND SUB", dialect);
+
+  [TestCase(Dialect.Qb45)]
+  [TestCase(Dialect.Pds70)]
+  public void Gate_GivenAByValParameterOnAPrototype_WhenMicrosoftFamily_ThenStillAccepted(Dialect dialect)
+    => AssertAccepted("DECLARE SUB Foo(BYVAL n%)\nEND", dialect);
+
   #endregion
 
   #region defaults

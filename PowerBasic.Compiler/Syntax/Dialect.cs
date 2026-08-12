@@ -161,6 +161,17 @@ public enum LanguageFeature {
   BitStatements,
 
   /// <summary>
+  /// <c>BYVAL</c> on a parameter of a procedure DEFINITION - <c>SUB S(BYVAL n%)</c>.
+  ///
+  /// Only the definition. Microsoft's BC accepts <c>DECLARE SUB Foo(BYVAL n%)</c>, because there
+  /// BYVAL describes how a NON-BASIC routine is called, and rejects the same word in a SUB header
+  /// with "Formal parameter specification illegal" - a BASIC procedure in that lineage takes its
+  /// arguments by reference and there is no spelling that says otherwise. Both halves were read off
+  /// BC 7.00 rather than inferred, which is why the gate is this narrow.
+  /// </summary>
+  ByValParameter,
+
+  /// <summary>
   /// The PB 3.0 machine-level wave: REG, and the SHIFT / ROTATE STATEMENTS. Not to be confused with
   /// <see cref="ShiftRotateOps"/>, which is the PB 3.6 operator spelling of the same idea
   /// (<c>x &lt;&lt; 1</c>) - the statement came fifteen years earlier.
@@ -304,6 +315,7 @@ public static class DialectFacts {
     [LanguageFeature.IterateStatement] = (Dialect.Tb10, "ITERATE"),
     [LanguageFeature.ArraySortScan] = (Dialect.Tb10, "the ARRAY SORT / ARRAY SCAN statements"),
     [LanguageFeature.BitStatements] = (Dialect.Tb10, "the BIT SET / BIT RESET / BIT TOGGLE statements"),
+    [LanguageFeature.ByValParameter] = (Dialect.Tb10, "a BYVAL parameter in a procedure definition"),
     [LanguageFeature.RegStatement] = (Dialect.Pb30, "the REG statement"),
     [LanguageFeature.ShiftRotateStatements] = (Dialect.Pb30, "the SHIFT / ROTATE statements"),
     [LanguageFeature.UnionType] = (Dialect.Pb30, "UNION (the overlapping variant of TYPE)"),
@@ -357,6 +369,10 @@ public static class DialectFacts {
     [LanguageFeature.Procedures] = Dialect.Qb10,
     [LanguageFeature.ExitStatement] = Dialect.Qb10,
     [LanguageFeature.MicrosoftCommentMetaStatements] = Dialect.Qb10,
+    // BC 7.00 answers a BYVAL parameter on a definition with "Formal parameter specification
+    // illegal" and BC 7.10 compiles it - the boundary is between the two PDS releases, which is
+    // where the oracles put it rather than where the manuals were consulted.
+    [LanguageFeature.ByValParameter] = Dialect.Pds71,
   };
 
   /// <summary>Human-readable dialect name, e.g. "PB 3.5", "TB 1.1", "QB 4.5", "PDS 7.1", "GW-BASIC".</summary>

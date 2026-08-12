@@ -9,8 +9,8 @@ passes; an empty box means nobody has checked yet, which is not the same as fail
 
 | | Dimension | Measured | Notes |
 |---|---|---|---|
-| [x] | Statement syntax and parameter combinations | 258 / 258 | all 258 accepted |
-| [x] | Lowers to the IR | 176 / 258 | 176 of 258 reach the IR; the rest decline by name, which is the documented subset |
+| [x] | Statement syntax and parameter combinations | 259 / 259 | all 259 accepted |
+| [x] | Lowers to the IR | 177 / 259 | 177 of 259 reach the IR; the rest decline by name, which is the documented subset |
 | [~] | Syntax errors in unreachable branches are ignored, and warned about | 0 / 1 | 1 not held: accepted but silent - acceptance must be deliberate, not indistinguishable from not looking |
 | [x] | Syntax errors on reachable flow fail | 1 / 1 | all 1 held |
 | [x] | Syntax belonging to another dialect is rejected | 43 / 43 | all 43 cleanly refused |

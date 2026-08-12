@@ -365,9 +365,13 @@ internal static class StatementSurface {
     new("view", "VIEW (0, 0)-(319, 199)"),
     // GET/PUT's graphics form had no entry at all - the six get.*/put.* forms above are the FILE
     // statement of the same name, which is a different grammar reached by the same keyword
-    new("get.graphics", "GET (0, 0)-(3, 3), spr%(0)", Preamble: "DIM spr%(64)"),
-    new("put.graphics", "PUT (0, 0), spr%(0)", Preamble: "DIM spr%(64)"),
-    new("put.graphics.verb", "PUT (0, 0), spr%(0), XOR", Preamble: "DIM spr%(64)"),
+    // The buffer is the ARRAY, named bare. It used to be written spr%(0), which genuine PBC 3.50
+    // rejects with a syntax error under the subscript; spr%() then turned out to be a PB spelling
+    // that BC does not take, and one that PB itself refuses as soon as an action verb follows. The
+    // bare name is the one both lineages accept, which is how it was settled - by asking both.
+    new("get.graphics", "GET (0, 0)-(3, 3), spr%", Preamble: "DIM spr%(64)"),
+    new("put.graphics", "PUT (0, 0), spr%", Preamble: "DIM spr%(64)"),
+    new("put.graphics.verb", "PUT (0, 0), spr%, XOR", Preamble: "DIM spr%(64)"),
     // VIEW PRINT / VIEW TEXT / VIEW SCREEN and PALETTE USING had no forms at all, which is why the
     // census never noticed that VIEW PRINT's own row-range spelling did not parse
     new("view.print", "VIEW PRINT"),
@@ -425,11 +429,24 @@ internal static class StatementSurface {
   // ---- procedures and types ---------------------------------------------------------------------
 
   private static readonly Form[] _procedures = [
-    new("sub.call", "CALL S1(1)\nEND\nSUB S1(BYVAL n%)\nEND SUB", MinMicrosoft: Dialect.Qb10),
-    new("sub.call.bare", "S1 1\nEND\nSUB S1(BYVAL n%)\nEND SUB", MinMicrosoft: Dialect.Qb10),
-    new("function.call", "x% = F1%(1)\nEND\nFUNCTION F1%(BYVAL n%)\n  F1% = n%\nEND FUNCTION", MinMicrosoft: Dialect.Qb10),
+    // These four are about CALLING a procedure, and they used to declare their parameter BYVAL -
+    // which is PowerBASIC's spelling and which Microsoft's BC rejects outright ("Formal parameter
+    // specification illegal"), so the probe failed for a reason that has nothing to do with the form
+    // it names. The parameter mode is now its own form, sub.byval, and these say only what they mean.
+    //
+    // The DECLAREs are load-bearing for the same reason. Without one, BC reads `S1 1` as an
+    // assignment ("Equal sign missing") and `F1%(1)` as an undimensioned ARRAY - which then collides
+    // with the FUNCTION of that name ("Name of subprogram illegal"). A forward DECLARE is how
+    // Microsoft BASIC is written, and PowerBASIC accepts it too.
+    new("sub.call", "CALL S1(1)\nEND\nSUB S1(n%)\nEND SUB", MinMicrosoft: Dialect.Qb10),
+    new("sub.call.bare", "DECLARE SUB S1(n%)\nS1 1\nEND\nSUB S1(n%)\nEND SUB", MinMicrosoft: Dialect.Qb10),
+    new("function.call", "DECLARE FUNCTION F1%(n%)\nx% = F1%(1)\nEND\nFUNCTION F1%(n%)\n  F1% = n%\nEND FUNCTION", MinMicrosoft: Dialect.Qb10),
     new("sub.byref", "CALL S2(x%)\nEND\nSUB S2(n%)\n  n% = 1\nEND SUB", MinMicrosoft: Dialect.Qb10),
-    new("declare.sub", "DECLARE SUB S3(BYVAL n%)\nCALL S3(1)\nEND\nSUB S3(BYVAL n%)\nEND SUB", MinMicrosoft: Dialect.Qb10),
+    // BYVAL in a procedure DEFINITION is Bob Zale's, and Microsoft's line arrives at it late: BC 7.00
+    // answers "Formal parameter specification illegal" and BC 7.10 compiles it. Both halves are read
+    // off the oracles, which is also how the 7.0/7.1 boundary was found - it was not looked for.
+    new("sub.byval", "CALL S9(1)\nEND\nSUB S9(BYVAL n%)\nEND SUB", MinMicrosoft: Dialect.Pds71),
+    new("declare.sub", "DECLARE SUB S3(n%)\nCALL S3(1)\nEND\nSUB S3(n%)\nEND SUB", MinMicrosoft: Dialect.Qb10),
     // the two lineages spell module-shared storage differently - PowerBASIC puts SHARED in the type
     // clause, QuickBASIC puts it straight after DIM - so each family is asked for its own spelling
     new("shared.global.pb", "DIM g AS SHARED INTEGER\ng = 1", MinMicrosoft: _noMicrosoft),
@@ -439,7 +456,12 @@ internal static class StatementSurface {
     // SHARED as a statement of its own, inside a procedure - the other two forms declare module-level
     // storage and merely contain the word. The exact compiled-dialect minimum remains permissive;
     // BASICA/GW-BASIC are excluded because they have no SUB procedures in which it could appear.
-    new("shared.stmt", "DIM h%\nCALL S6\nEND\nSUB S6\n  SHARED h%\n  h% = 1\nEND SUB", MinMicrosoft: Dialect.Qb10),
+    // The scaffolding is an implicit module variable, because every explicit spelling is refused by
+    // one lineage or the other: PBC 3.50 rejects a type-id in the DIM of a SCALAR ("Error 525: Type
+    // id (?%&!#$) not allowed", though it allows one on an array), while BC needs the type from
+    // somewhere and answers a bare SHARED h with "AS clause required" - and PB then rejects the AS
+    // clause that would satisfy it. A suffixed name carries its type without a DIM, so both agree.
+    new("shared.stmt", "h% = 0\nCALL S6\nEND\nSUB S6\n  SHARED h%\n  h% = 1\nEND SUB", MinMicrosoft: Dialect.Qb10),
     new("static.local", "CALL S4\nEND\nSUB S4\n  STATIC s%\n  s% = s% + 1\nEND SUB", MinMicrosoft: Dialect.Qb10),
     new("local.decl", "CALL S5\nEND\nSUB S5\n  LOCAL l%\n  l% = 1\nEND SUB", MinMicrosoft: Dialect.Qb10),
     // TYPE ... END TYPE is PB 3.0 in one line and QuickBASIC 4.0 in the other
@@ -669,6 +691,7 @@ internal static class StatementSurface {
     "function.call",
     "sub.byref",
     "declare.sub",
+    "sub.byval",
     "shared.global.qb",
     "shared.stmt",
     "static.local",

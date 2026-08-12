@@ -13,7 +13,7 @@ passes; an empty box means nobody has checked yet, which is not the same as fail
 | [x] | Lowers to the IR | 101 / 171 | 101 of 171 reach the IR; the rest decline by name, which is the documented subset |
 | [x] | Syntax errors in unreachable branches are ignored, and warned about | 1 / 1 | all 1 held |
 | [~] | Syntax errors on reachable flow fail | 0 / 1 | 1 not held: reachable malformed source was accepted |
-| [x] | Syntax belonging to another dialect is rejected | 130 / 130 | all 130 cleanly refused |
+| [x] | Syntax belonging to another dialect is rejected | 131 / 131 | all 131 cleanly refused |
 | [x] | Numeric typing follows the dialect | 18 / 18 | all 18 as claimed |
 | [x] | Runtime implementations follow the dialect | 2 / 2 | all 2 selected as the dialect requires |
 | [x] | Every runtime function's observable output | 27 / 27 | all 27 behaved as the language defines (1 skipped - not this dialect's) |
