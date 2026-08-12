@@ -350,11 +350,24 @@ imply was all that remained - failed **109 tests**, and after `Ir/Passes/TailRec
   `$OPTIMIZE SIZE`, and a compile-time membership mask shifted by the subject (32-bit under
   `$CPU 80386`). The machine IR has no operand for a table of block addresses and the selector is not
   told the optimization objective, so both are prerequisites rather than details.
-* **`Emit_GivenLoopInvariantLen` needs a purity notion for runtime calls.** `LEN(s$)` lowers to
-  `rt_str_len(rt_str_dup(s))` - allocate a copy, read its length, free it - which is observably a pure
-  read of `s`, but LICM and GVN will not move or number a call and are right not to in general. It
-  wants a small, checked list of entries that are pure given their arguments, which is exactly the kind
-  of claim that miscompiles silently if it is one row too long.
+* **the purity notion for runtime calls now exists - and `Emit_GivenLoopInvariantLen` is not what it
+  buys.** `FunctionSummaries.IsPureExternal` / `IsSpeculatableExternal` is the checked list; `Gvn`
+  numbers a call whose callee is on it and `Licm` hoists one, and everything else stays a wall. The
+  list is eight rows, all of them float math intrinsics - `llvm.sqrt`, `sin`, `cos`, `tan`, `atan`,
+  `log`, `exp`, `pow`, one per PB intrinsic that reaches the IR that way. They take floats by value, so
+  no pointer reaches them and there is no memory to read, allocate or free; the x86-16 back end lowers
+  them to bare x87 or to `rt_sin`/`rt_cos`/`rt_tan`/`rt_pow`, which read only read-only constants and
+  raise no runtime error, and the C back end lowers them to `<math.h>`.
+
+  What the exercise settled is why `LEN(s$)` is NOT one of them. It lowers to
+  `rt_str_len(rt_str_dup(s))`, which reads as allocate-read-free and looks pure - but `rt_str_len` is
+  the DOS `rt_len`, and that entry FREES the handle before returning. That is the whole reason the
+  lowering puts an `rt_str_dup` on every read of a string variable. Numbering two of them would free
+  one block twice; hoisting one out of a loop would leave the body reading freed memory. `rt_str_dup`
+  fails the allocation test for the mirror reason - the copy is observed by whoever releases it. So
+  `Emit_GivenLoopInvariantLen` still fails routed, and it wants either an idiom pass that moves the
+  dup/len PAIR or a memory-dependence analysis, not a row on this list. A list that is one row too
+  long miscompiles silently; this was very nearly that row.
 * **the optimization battery** (`tests/optimize`), which is the file where those expectations are
   declared rather than inferred.
 * **two that were not about quality at all - now CLOSED.** `Execute_GivenDeepTailRecursion_WhenPb36_ThenConstantStack`
