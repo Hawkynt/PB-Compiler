@@ -68,6 +68,40 @@ public sealed class GvnTests {
   }
 
   [Test]
+  public void Run_MergesTwoCallsToAPureRuntimeEntry() {
+    // SQR(x) twice is one computation: llvm.sqrt takes a float by value, touches no memory and
+    // answers the same for the same bits, so the second call is redundant.
+    var x = new IrArgument(IrType.F64, 0, "x");
+    var fn = new IrFunction("f", IrType.F64, [x]);
+    var sqrt = new IrFunction("llvm.sqrt.f64", IrType.F64, [new IrArgument(IrType.F64, 0)]);
+    var b = new IrBuilder(fn.CreateBlock("entry"));
+    var first = b.Call(IrType.F64, sqrt, x);
+    var second = b.Call(IrType.F64, sqrt, x);
+    b.Ret(b.Binary(IrBinaryOp.FAdd, first, second));
+
+    Assert.That(Gvn.Run(fn), Is.EqualTo(1));
+    Assert.That(Count<IrCall>(fn), Is.EqualTo(1));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
+  public void Run_DoesNotMergeTwoCallsToAStringRuntimeEntry() {
+    // the boundary that keeps the purity list honest: rt_str_len looks like a pure read and is not
+    // one - the DOS entry FREES the handle it is given, so merging two of them would free one block
+    // twice. Nothing outside the checked list is numbered.
+    var p = new IrArgument(IrType.Ptr, 0, "p");
+    var fn = new IrFunction("f", IrType.I32, [p]);
+    var len = new IrFunction("rt_str_len", IrType.I32, [new IrArgument(IrType.Ptr, 0)]);
+    var b = new IrBuilder(fn.CreateBlock("entry"));
+    var first = b.Call(IrType.I32, len, p);
+    var second = b.Call(IrType.I32, len, p);
+    b.Ret(b.Add(first, second));
+
+    Assert.That(Gvn.Run(fn), Is.EqualTo(0));
+    Assert.That(Count<IrCall>(fn), Is.EqualTo(2));
+  }
+
+  [Test]
   public void Run_DoesNotMergeAcrossNonDominatingBlocks() {
     // identical adds on two sibling arms: neither dominates the other -> both survive
     var x = new IrArgument(IrType.I32, 0, "x");

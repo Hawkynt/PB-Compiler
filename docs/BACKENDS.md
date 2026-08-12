@@ -325,13 +325,25 @@ the composition of it is what says which work is left:
   `aabbbb`. Every runtime call's staging moves claim the call's whole destination set for exactly this
   reason (`InstructionSelector.StagingDestinations`), and a hand-written sequence has to do the same.
 
-* **four SELECT tests can no longer observe what they assert**, and it is worth saying which way round
-  that is. `Emit_GivenDenseSelect`, `Emit_GivenDenseLongSelect`, `Emit_GivenSparseManyCaseSelect` and
-  `Emit_GivenSparseValueListArm` set the subject to a literal one line above the `SELECT`; SCCP
-  resolves the dispatch outright, so the whole statement is one `PRINT` and there is no dispatch left
-  to be a jump table. `Emit_GivenAscOfSingleCharMid` is the same shape - it tells a constant length
-  from a runtime one by `n% = 1`, which SCCP proves. These are not missing optimizations; the
-  discriminator is.
+* **five tests that could not observe what they assert - now FIXED, and the fix moved the count the
+  other way.** `Emit_GivenDenseSelect`, `Emit_GivenDenseLongSelect`, `Emit_GivenSparseManyCaseSelect`
+  and `Emit_GivenSparseValueListArm` set the subject to a literal one line above the `SELECT`; SCCP
+  resolved the dispatch outright, so the whole statement was one `PRINT` and there was nothing left to
+  be a jump table. `Emit_GivenAscOfSingleCharMid` was the same shape - it told a constant length from a
+  runtime one by `n% = 1`, which SCCP proves, and routed the two programs compiled to the SAME image,
+  so its inequality assertion failed for a reason that had nothing to do with the byte read.
+
+  All five now take their subject (and, for the last, its length) from `INPUT`, and their expectations
+  are re-derived against the DIRECT emitter, which is the reference. The negative twins went the same
+  way - `Emit_GivenSparseSelect`, `Emit_GivenTwoValueArm`, `Emit_GivenFewCaseSparseSelect` - because a
+  boundary test whose subject folds away proves nothing about the threshold either. Two consequences
+  worth recording. `Emit_GivenAscOfSingleCharMid` now PASSES routed: `StringByteRead` really does
+  implement the byte read, and only the discriminator was hiding it. And
+  `Emit_GivenFewCaseSparseSelect` now FAILS routed, which is the honest reading of a real difference:
+  it asserts the ABSENCE of `CMP AX, 012Ch`, the direct emitter's decision-tree signature, and the
+  routed path emits those bytes as an ordinary compare against a case constant. That discriminator is
+  specific to the direct emitter's two dispatch shapes and does not separate anything in a back end
+  that has neither.
 * **the SELECT dispatch family proper is NOT done** - `Emit_GivenConstantCaseRange`,
   `Emit_GivenWideSpanFewArmSelect`, `Emit_GivenWideWindowArm`, `Emit_GivenSparseSelectWithPerfectHash`,
   `Emit_GivenOrChainEqualityIf`, `Emit_GivenAndChainOfInequalities`. Those take their subject from
@@ -340,11 +352,24 @@ the composition of it is what says which work is left:
   `$OPTIMIZE SIZE`, and a compile-time membership mask shifted by the subject (32-bit under
   `$CPU 80386`). The machine IR has no operand for a table of block addresses and the selector is not
   told the optimization objective, so both are prerequisites rather than details.
-* **`Emit_GivenLoopInvariantLen` needs a purity notion for runtime calls.** `LEN(s$)` lowers to
-  `rt_str_len(rt_str_dup(s))` - allocate a copy, read its length, free it - which is observably a pure
-  read of `s`, but LICM and GVN will not move or number a call and are right not to in general. It
-  wants a small, checked list of entries that are pure given their arguments, which is exactly the kind
-  of claim that miscompiles silently if it is one row too long.
+* **the purity notion for runtime calls now exists - and `Emit_GivenLoopInvariantLen` is not what it
+  buys.** `FunctionSummaries.IsPureExternal` / `IsSpeculatableExternal` is the checked list; `Gvn`
+  numbers a call whose callee is on it and `Licm` hoists one, and everything else stays a wall. The
+  list is eight rows, all of them float math intrinsics - `llvm.sqrt`, `sin`, `cos`, `tan`, `atan`,
+  `log`, `exp`, `pow`, one per PB intrinsic that reaches the IR that way. They take floats by value, so
+  no pointer reaches them and there is no memory to read, allocate or free; the x86-16 back end lowers
+  them to bare x87 or to `rt_sin`/`rt_cos`/`rt_tan`/`rt_pow`, which read only read-only constants and
+  raise no runtime error, and the C back end lowers them to `<math.h>`.
+
+  What the exercise settled is why `LEN(s$)` is NOT one of them. It lowers to
+  `rt_str_len(rt_str_dup(s))`, which reads as allocate-read-free and looks pure - but `rt_str_len` is
+  the DOS `rt_len`, and that entry FREES the handle before returning. That is the whole reason the
+  lowering puts an `rt_str_dup` on every read of a string variable. Numbering two of them would free
+  one block twice; hoisting one out of a loop would leave the body reading freed memory. `rt_str_dup`
+  fails the allocation test for the mirror reason - the copy is observed by whoever releases it. So
+  `Emit_GivenLoopInvariantLen` still fails routed, and it wants either an idiom pass that moves the
+  dup/len PAIR or a memory-dependence analysis, not a row on this list. A list that is one row too
+  long miscompiles silently; this was very nearly that row.
 * **the optimization battery** (`tests/optimize`), which is the file where those expectations are
   declared rather than inferred.
 * **two that were not about quality at all - now CLOSED.** `Execute_GivenDeepTailRecursion_WhenPb36_ThenConstantStack`

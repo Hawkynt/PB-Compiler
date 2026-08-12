@@ -562,6 +562,11 @@ A ported optimization records an **IR** row in its own document, which is what t
   an optimization barrier, and dropping the call hands the DIRECT emitter's optimizer code it could not
   previously see through. What it then does with it differs from the original - a finding about that
   optimizer rather than about this pass, and one that needs chasing before the consumer is turned on.
+  Its SECOND consumer is on: `IsPureExternal` / `IsSpeculatableExternal` name the externals `Gvn` may
+  number and `Licm` may hoist. Eight rows, all float math intrinsics, and the interesting part is what
+  is kept OFF - `rt_str_len` looks like a pure read and is not one, because the DOS entry frees the
+  handle it is given, which is why the lowering copies every read of a string variable in the first
+  place.
 - **O0225 SSA construction** — `Ir/IrDominators.cs` + `Ir/Passes/Mem2Reg.cs`, the same Cytron
   construction the direct tier has.
 
