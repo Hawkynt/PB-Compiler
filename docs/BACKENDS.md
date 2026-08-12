@@ -345,7 +345,8 @@ imply was all that remained - failed **109 tests**, and after `Ir/Passes/TailRec
   Each ingredient alone is fine, measured: a constant-bound `REDIM` pair with constant indices, a
   constant-bound pair with a `FOR` loop writing `b(i)`, a runtime-bound pair with constant indices,
   and - the sharpest one - the SAME runtime-bound loop over a SINGLE dynamic array all behave
-  routed. It takes two of them. INTEGER temps fail exactly as LONG ones do, so the 32-bit paths are
+  routed. It takes two of them, and the second must actually be RE-DIMED: declaring `c()` and never
+  touching it leaves `b` correct, so it is not the descriptor allocas' mere existence. INTEGER temps fail exactly as LONG ones do, so the 32-bit paths are
   not implicated either. The IR is clean throughout - two distinct `rt_arr_alloc(i32 6)` calls with
   separate results - so the divergence is below the IR, in how the routed path records or re-reads
   the block when the array's extent is not a compile-time constant.
