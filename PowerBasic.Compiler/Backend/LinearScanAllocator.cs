@@ -104,6 +104,7 @@ public sealed class LinearScanAllocator {
     var byteRegisters = ByteRegisters(function);     // byte values need AL/CL/DL/BL, which SI/DI do not have
     var clobbersAt = ClobbersByIndex(function);       // global instruction index -> registers a CALL there destroys
     var pinnedAt = PinnedByIndex(function);           // ...and the ones an ABI-pinned physical write lands in
+    var carriedAt = CarriedByIndex(function);         // ...and the ones already CARRYING a value there
     var assignment = new Dictionary<int, Reg>();
     var free = new List<Reg>(_pool);                 // registers currently available, preferred order preserved
     var active = new List<LivenessAnalysis.LiveInterval>();  // live intervals holding a register, kept sorted by End
@@ -120,6 +121,7 @@ public sealed class LinearScanAllocator {
       // an ABI-PINNED write lands in while the value still has readers
       var unsafeRegs = ClobberedOver(clobbersAt, interval.Start, interval.End);
       unsafeRegs.UnionWith(ClobberedOver(pinnedAt, interval.Start, interval.End - 1));
+      unsafeRegs.UnionWith(ClobberedOver(carriedAt, interval.Start, interval.End));
       var legal = LegalFor(interval.VirtualId, addressVregs, byteRegisters);
       var slot = free.FindIndex(r => System.Array.IndexOf(legal, r) >= 0 && !unsafeRegs.Contains(r));
       if (slot < 0)
@@ -178,6 +180,58 @@ public sealed class LinearScanAllocator {
         ++index;
       }
     return map;
+  }
+
+  /// <summary>
+  /// Maps each global instruction index to the physical registers already CARRYING a value there - the
+  /// span between where one was last written and where an instruction reads it back out.
+  ///
+  /// <para>
+  /// Liveness tracks virtual registers, so the <c>DX:AX</c> a CALL leaves behind is invisible: it has
+  /// no interval, and nothing stopped the allocator putting an unrelated value in <c>AX</c> between the
+  /// CALL and the <c>MOV</c> that takes the result. The selector emits those two adjacent, but adjacency
+  /// is not a property anything preserves - the scheduler may issue independent work between them, and
+  /// the spiller may then turn that work into a RELOAD, which is a fresh virtual with no reason not to
+  /// be given <c>AX</c>. That is how a rank-2 subscript computed through <c>rt_lmul</c> came to be
+  /// stored through whatever <c>AX</c> last held: the row term vanished, every row overwrote the first,
+  /// and <c>tests/optimize/CODEGEN.BAS</c> printed 0 where 6 was right.
+  /// </para>
+  ///
+  /// <para>
+  /// The span is per BLOCK: this back end never carries a physical value across a branch, so a read
+  /// with no definition before it in its own block names something the ABI put there (an incoming
+  /// argument), which is nobody's to reuse anyway. <see cref="PinnedByIndex"/> is the mirror image of
+  /// this - it protects a value from a pinned WRITE, where this protects the pinned write's value from
+  /// everything until it is read.
+  /// </para>
+  /// </summary>
+  private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> CarriedByIndex(MFunction function) {
+    var map = new Dictionary<int, List<Reg>>();
+    var index = 0;
+    foreach (var block in function.Blocks) {
+      var definedAt = new Dictionary<Reg, int>();
+      foreach (var instr in block.Instructions) {
+        // the read closes a span the previous definition opened - mark every index strictly inside it
+        foreach (var read in instr.Effect.ReadRegs)
+          if (read < instr.Operands.Count
+              && instr.Operands[read] is MOperand.Register { Reg: { IsVirtual: false } source }
+              && definedAt.TryGetValue(WholeRegister(source.Physical), out var from))
+            for (var at = from + 1; at <= index; ++at) {
+              if (!map.TryGetValue(at, out var live))
+                map[at] = live = [];
+              live.Add(WholeRegister(source.Physical));
+            }
+        // ...and then this instruction's own definitions open the next one
+        foreach (var written in instr.Effect.WrittenRegs)
+          if (written < instr.Operands.Count
+              && instr.Operands[written] is MOperand.Register { Reg: { IsVirtual: false } target })
+            definedAt[WholeRegister(target.Physical)] = index;
+        foreach (var clobbered in instr.Clobbers)
+          definedAt[WholeRegister(clobbered)] = index;
+        ++index;
+      }
+    }
+    return map.ToDictionary(e => e.Key, e => (IReadOnlyList<Reg>)e.Value);
   }
 
   /// <summary>The word register a byte half belongs to - writing <c>AL</c> destroys half of <c>AX</c>.</summary>
