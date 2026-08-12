@@ -12,6 +12,7 @@
  * ========================================================================== */
 #include "pbc_rt.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -60,6 +61,51 @@ void *rt_str_concat(void *a, void *b) {
   return s;
 }
 
+/* A whole concatenation chain built with one allocation: sum the operand lengths, reserve once,
+   copy each operand in order. It consumes every operand exactly as the chain of pairwise concats it
+   replaces would have done, so the result and the temporaries released are the same. */
+void *rt_str_concat_n(int32_t count, ...) {
+  va_list operands;
+  int32_t total = 0, i;
+  pb_str *s;
+  char *cursor;
+
+  va_start(operands, count);
+  for (i = 0; i < count; ++i)
+    total += rt_of(va_arg(operands, void *))->len;
+  va_end(operands);
+
+  s = rt_new(total);
+  cursor = s->data;
+  va_start(operands, count);
+  for (i = 0; i < count; ++i) {
+    pb_str *operand = rt_of(va_arg(operands, void *));
+    memcpy(cursor, operand->data, (size_t)operand->len);
+    cursor += operand->len;
+  }
+  va_end(operands);
+  return s;
+}
+
+/* Append onto a string the caller is the last owner of. The DOS runtime grows the block in place
+   when it is the topmost one, which is what makes a build loop linear; here the copy is what the
+   allocator gives and only the OWNERSHIP matters - the target is consumed, the source is not. */
+void *rt_str_append_var(void *target, void *source) {
+  pb_str *x = rt_of(target), *y = rt_of(source);
+  pb_str *s = rt_new(x->len + y->len);
+  memcpy(s->data, x->data, (size_t)x->len);
+  memcpy(s->data + x->len, y->data, (size_t)y->len);
+  return s;
+}
+
+void *rt_str_append_lit(void *target, void *bytes, int32_t len) {
+  pb_str *x = rt_of(target);
+  pb_str *s = rt_new(x->len + len);
+  memcpy(s->data, x->data, (size_t)x->len);
+  memcpy(s->data + x->len, (const char *)bytes, (size_t)len);
+  return s;
+}
+
 int32_t rt_str_len(void *s) { return rt_of(s)->len; }
 
 int32_t rt_str_compare(void *a, void *b) {
@@ -68,6 +114,15 @@ int32_t rt_str_compare(void *a, void *b) {
   int c = n ? memcmp(x->data, y->data, (size_t)n) : 0;
   if (c) return c < 0 ? -1 : 1;
   return x->len == y->len ? 0 : (x->len < y->len ? -1 : 1);
+}
+
+/* Equality only: 0 when the two strings are equal and 1 when they are not. Unequal lengths answer
+   without looking at a byte, which is the whole point of having a second entry - the ordering the
+   general compare walks the bytes for is not needed to decide `=` or `<>`. */
+int32_t rt_str_compare_eq(void *a, void *b) {
+  pb_str *x = rt_of(a), *y = rt_of(b);
+  if (x->len != y->len) return 1;
+  return x->len && memcmp(x->data, y->data, (size_t)x->len) ? 1 : 0;
 }
 
 /* An owned copy, so the value handed on is a temporary the consuming routines may free. Every
@@ -223,6 +278,15 @@ void *rt_str_chr(int32_t code) {
 int32_t rt_str_asc(void *s) {
   pb_str *x = rt_of(s);
   return x->len ? (unsigned char)x->data[0] : -1;   /* PB: ASC("") is -1 */
+}
+
+/* ASC(MID$(s$, i, 1)) as one read, matching the DOS rt_charat at both ends: the start clamps to 1
+   the way MID$ does, and an index past the end answers 0 - which is what ASC of the empty substring
+   MID$ would have produced there gives on that runtime. */
+int32_t rt_str_char_at(void *s, int32_t index) {
+  pb_str *x = rt_of(s);
+  if (index < 1) index = 1;
+  return index <= x->len ? (unsigned char)x->data[index - 1] : 0;
 }
 
 /* HEX$/OCT$/BIN$, all one routine, matching the DOS rt_radix exactly.

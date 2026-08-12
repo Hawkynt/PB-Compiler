@@ -295,10 +295,54 @@ routing it. Making pb36 route by default - the natural next step, and the one th
 imply was all that remained - failed **109 tests**, and after `Ir/Passes/TailRecursion.cs` it fails
 **96**. The count is the measure of the gate; the composition of it is what says which work is left:
 
-* **95 are assertions about emitted code** and read like a list of what pb36 is for: a string appended
+* **most are assertions about emitted code** and read like a list of what pb36 is for: a string appended
   in place rather than reallocated, a SELECT dispatched through a table or a perfect hash instead of a
   chain, a multiplier decomposed into shifts, a bounds check elided where the index is provably in
   range, a small counted loop unrolled, UDT copies moved a dword at a time.
+* **the STRING family is now CLOSED** - 14 of them, and the whole of `Ir/Passes/String*.cs`. Read as a
+  set they say what a string optimizer on a handle-based runtime has to know: a chain of three or more
+  concatenations builds with ONE allocation (`rt_str_concat_n`) instead of one per node; a
+  concatenation onto a dead temporary appends in place (`rt_str_append_var` / `rt_str_append_lit`)
+  rather than allocating a result and copying both sides; a comparison only ever tested against zero
+  goes to the equality entry that decides unequal lengths without reading a byte; emptiness is a null
+  handle rather than a call; a literal concatenation, a literal comparison and a zero-length substring
+  are answered at compile time; and `ASC(MID$(s$, i, 1))` reads the byte.
+
+  The one thing that made these passes rather than rewrites of the lowering is the ownership rule
+  `IrLowering` already states - a runtime entry CONSUMES its handle arguments. Every transform here is
+  an accounting change on that rule: `s$ = s$ + x$` makes a copy of `s$`, frees the original and
+  consumes the copy, which is the ORIGINAL being consumed with two extra steps, and removing them is
+  what turns the pairwise chain into an in-place append. Get it wrong and nothing says so until a
+  program churns enough to exhaust the 64 KiB heap, which is the same failure mode the lowering's own
+  free discipline was bought with.
+
+  One defect worth keeping, because it is about the back end rather than about strings. The staging
+  stores that fill `rt_catlist` carried no clobbers, so the SCHEDULER was free to move them above the
+  `MOV v, AX` that captures the PREVIOUS call's result; the spiller then put a reload inside that
+  window, and the last operand staged was the previous operand's handle - `a$ + (b$ + c$)` printed
+  `aabbbb`. Every runtime call's staging moves claim the call's whole destination set for exactly this
+  reason (`InstructionSelector.StagingDestinations`), and a hand-written sequence has to do the same.
+
+* **four SELECT tests can no longer observe what they assert**, and it is worth saying which way round
+  that is. `Emit_GivenDenseSelect`, `Emit_GivenDenseLongSelect`, `Emit_GivenSparseManyCaseSelect` and
+  `Emit_GivenSparseValueListArm` set the subject to a literal one line above the `SELECT`; SCCP
+  resolves the dispatch outright, so the whole statement is one `PRINT` and there is no dispatch left
+  to be a jump table. `Emit_GivenAscOfSingleCharMid` is the same shape - it tells a constant length
+  from a runtime one by `n% = 1`, which SCCP proves. These are not missing optimizations; the
+  discriminator is.
+* **the SELECT dispatch family proper is NOT done** - `Emit_GivenConstantCaseRange`,
+  `Emit_GivenWideSpanFewArmSelect`, `Emit_GivenWideWindowArm`, `Emit_GivenSparseSelectWithPerfectHash`,
+  `Emit_GivenOrChainEqualityIf`, `Emit_GivenAndChainOfInequalities`. Those take their subject from
+  `INPUT`, so the dispatch is real. What they need is machine-level and not a pass: a data table
+  emitted INSIDE the code stream, an indexed indirect `JMP word [BX+table]`, the byte-index table under
+  `$OPTIMIZE SIZE`, and a compile-time membership mask shifted by the subject (32-bit under
+  `$CPU 80386`). The machine IR has no operand for a table of block addresses and the selector is not
+  told the optimization objective, so both are prerequisites rather than details.
+* **`Emit_GivenLoopInvariantLen` needs a purity notion for runtime calls.** `LEN(s$)` lowers to
+  `rt_str_len(rt_str_dup(s))` - allocate a copy, read its length, free it - which is observably a pure
+  read of `s`, but LICM and GVN will not move or number a call and are right not to in general. It
+  wants a small, checked list of entries that are pure given their arguments, which is exactly the kind
+  of claim that miscompiles silently if it is one row too long.
 * **the optimization battery** (`tests/optimize`), which is the file where those expectations are
   declared rather than inferred.
 * **two that were not about quality at all - now CLOSED.** `Execute_GivenDeepTailRecursion_WhenPb36_ThenConstantStack`

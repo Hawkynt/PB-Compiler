@@ -30,10 +30,14 @@ typedef struct pb_str {
 /* --- strings ----------------------------------------------------------- */
 void *rt_str_const(void *bytes, int32_t len);
 void *rt_str_concat(void *a, void *b);
+void *rt_str_concat_n(int32_t count, ...);
+void *rt_str_append_var(void *target, void *source);
+void *rt_str_append_lit(void *target, void *bytes, int32_t len);
 void *rt_str_dup(void *s);
 void rt_str_free(void *s);
 int32_t rt_str_len(void *s);
 int32_t rt_str_compare(void *a, void *b);
+int32_t rt_str_compare_eq(void *a, void *b);
 void *rt_str_left(void *s, int32_t n);
 void *rt_str_right(void *s, int32_t n);
 void *rt_str_mid(void *s, int32_t start, int32_t len);
@@ -48,6 +52,7 @@ void *rt_str_string(int32_t n, int32_t ch);
 void *rt_str_string_s(int32_t n, void *s);
 void *rt_str_chr(int32_t code);
 int32_t rt_str_asc(void *s);
+int32_t rt_str_char_at(void *s, int32_t index);
 void *rt_str_hex(int32_t v);
 void *rt_str_oct(int32_t v);
 void *rt_str_bin(int32_t v);
