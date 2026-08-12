@@ -157,6 +157,15 @@ public sealed class IrPassManager {
     // could not previously see through. What it then does with it differs from the original, which is
     // a finding about that optimizer and not about this pass. Until that is chased down, the summaries
     // are available to callers and this consumer is off.
+    // The string passes are module passes because they mint module-level things - a runtime
+    // declaration, a pooled literal - which a function pass has no handle on. They run last, after
+    // the value passes have folded whatever the arguments were going to fold into.
+    .AddModulePass("strfold", StringConstantFold.Run)
+    .AddModulePass("strchain", StringConcatChain.Run)
+    .AddModulePass("strappend", StringAppendInPlace.Run)
+    .AddModulePass("strbyte", StringByteRead.Run)
+    .AddModulePass("strcmpeq", StringCompareEquality.Run)
+    .AddModulePass("strempty", StringEmptinessTest.Run)
     .AddModulePass("readonly-globals", ReadOnlyGlobals.Run)
     .AddModulePass("localize-globals", LocalizeGlobals.Run)
     .AddModulePass("ipconstprop", IpConstantProp.Run);

@@ -54,6 +54,8 @@ public sealed class LlvmEmitter {
         sb.Append(", ");
       sb.Append(Ty(fn.Parameters[i].Type)).Append(' ').Append(this.Ref(fn.Parameters[i]));
     }
+    if (fn.IsVarArgs)
+      sb.Append(fn.Parameters.Count > 0 ? ", ..." : "...");
     sb.Append(')');
     if (fn.IsDeclaration)
       return sb.Append('\n').ToString();
@@ -98,7 +100,9 @@ public sealed class LlvmEmitter {
       IrGep g => $"getelementptr {Ty(g.ElementType ?? IrType.I8)}, ptr {this.Ref(g.BasePtr)}, {Ty(g.ByteOffset.Type)} {this.Ref(g.ByteOffset)}",
       IrPhi p => $"phi {Ty(p.Type)} {this.PhiInputs(p)}",
       IrSelect sel => $"select i1 {this.Ref(sel.Condition)}, {Ty(sel.Type)} {this.Ref(sel.IfTrue)}, {Ty(sel.Type)} {this.Ref(sel.IfFalse)}",
-      IrCall call => $"call {Ty(call.Type)} {this.Ref(call.Callee)}({this.Args(call)})",
+      // a variadic callee needs its FUNCTION type spelled out at the call, which LLVM requires
+      // wherever the argument list cannot be read off the declaration
+      IrCall call => $"call {CalleeType(call)} {this.Ref(call.Callee)}({this.Args(call)})",
       IrRet r => r.HasValue ? $"ret {Ty(r.Value!.Type)} {this.Ref(r.Value)}" : "ret void",
       IrBr br => $"br label %{br.Target.Label}",
       IrCondBr cb => $"br i1 {this.Ref(cb.Condition)}, label %{cb.IfTrue.Label}, label %{cb.IfFalse.Label}",
@@ -114,6 +118,18 @@ public sealed class LlvmEmitter {
 
   private string Args(IrCall call) =>
     string.Join(", ", call.Args.Select(a => $"{Ty(a.Type)} {this.Ref(a)}"));
+
+  /// <summary>
+  /// What a call names between <c>call</c> and the callee: ordinarily the RESULT type, but for a
+  /// variadic callee the whole function type - which is what tells LLVM where the declared
+  /// parameters stop and the variadic ones begin.
+  /// </summary>
+  private static string CalleeType(IrCall call) {
+    if (call.Callee is not IrFunction { IsVarArgs: true } callee)
+      return Ty(call.Type);
+    var declared = string.Join(", ", callee.Parameters.Select(p => Ty(p.Type)));
+    return $"{Ty(callee.ReturnType)} ({(declared.Length > 0 ? declared + ", ..." : "...")})";
+  }
 
   private string EmitSwitch(IrSwitch sw) {
     var cases = string.Join(" ", sw.Cases.Select(c => $"{Ty(sw.Condition.Type)} {c.Value}, label %{c.Target.Label}"));

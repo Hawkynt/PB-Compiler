@@ -628,6 +628,23 @@ public sealed class IrBasicWriter {
       case "rt_str_concat":
         this._names[call] = $"({this.Ref(call.Args.ElementAt(0))} + {this.Ref(call.Args.ElementAt(1))})";
         return true;
+      // The optimizer's three concatenation shapes are all the one BASIC operator. Which runtime
+      // entry a chain went to is a statement about allocations and ownership, and neither has a
+      // spelling here - the same reason rt_str_dup renders as its argument.
+      case "rt_str_concat_n" when call.ArgCount >= 2:
+        this._names[call] = "(" + string.Join(" + ", call.Args.Skip(1).Select(this.Ref)) + ")";
+        return true;
+      // the one-byte read is the substring-and-ASC it replaced, written back out as that
+      case "rt_str_char_at" when call.ArgCount == 2:
+        this._names[call] = $"ASC(MID$({this.Ref(call.Args.ElementAt(0))}, {this.Ref(call.Args.ElementAt(1))}, 1))";
+        return true;
+      case "rt_str_append_var" when call.ArgCount == 2:
+        this._names[call] = $"({this.Ref(call.Args.ElementAt(0))} + {this.Ref(call.Args.ElementAt(1))})";
+        return true;
+      case "rt_str_append_lit" when call.ArgCount == 3
+          && call.Args.ElementAt(1) is IrGlobalVariable { Bytes: { } appended }:
+        this._names[call] = $"({this.Ref(call.Args.ElementAt(0))} + {Quote(System.Text.Encoding.ASCII.GetString(appended))})";
+        return true;
       // a copy of a string value is that value: BASIC assigns strings by value, so the ownership
       // bookkeeping the handle model needs has no spelling here and no need of one
       case "rt_str_dup":

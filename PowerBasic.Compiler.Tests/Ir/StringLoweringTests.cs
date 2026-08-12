@@ -54,7 +54,10 @@ public sealed class StringLoweringTests {
     Assert.That(module, Is.Not.Null);
     Assert.That(IrVerifier.Verify(module!), Is.Empty);
     var text = LlvmEmitter.Emit(module!);
-    Assert.That(text, Does.Contain("call i32 @rt_str_compare(ptr"));
+    // the equality entry rather than the three-way one: the answer is only tested against zero, so
+    // Ir.Passes.StringCompareEquality routes it to the routine that decides unequal lengths without
+    // reading a byte. An ordering comparison keeps rt_str_compare (SelectLoweringTests pins that).
+    Assert.That(text, Does.Contain("call i32 @rt_str_compare_eq(ptr"));
     Assert.That(text, Does.Contain("icmp eq i32"));
   }
 

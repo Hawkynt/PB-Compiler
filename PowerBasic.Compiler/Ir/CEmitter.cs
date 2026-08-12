@@ -110,10 +110,12 @@ public sealed class CEmitter {
     var sb = new StringBuilder();
     sb.Append(f.IsDeclaration ? "extern " : "").Append(Ty(f.ReturnType)).Append(' ').Append(FuncName(f)).Append('(');
     if (f.Parameters.Count == 0)
-      sb.Append("void");
+      sb.Append(f.IsVarArgs ? "" : "void");
     else
       for (var i = 0; i < f.Parameters.Count; ++i)
         sb.Append(i > 0 ? ", " : "").Append(Ty(f.Parameters[i].Type)).Append(" p").Append(i);
+    if (f.IsVarArgs)
+      sb.Append(f.Parameters.Count > 0 ? ", ..." : "...");
     return sb.Append(')').ToString();
   }
 

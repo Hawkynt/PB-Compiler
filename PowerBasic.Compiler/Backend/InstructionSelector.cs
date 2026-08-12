@@ -1634,6 +1634,8 @@ public sealed class InstructionSelector {
         return this.SelectNonLocalJumpIntrinsic(call, callee);
       if (MathSequence(callee.Name, this._cpu386) is { } sequence)
         return this.SelectMathIntrinsic(call, callee, sequence);
+      if (callee.Name == "rt_str_concat_n")
+        return this.SelectMultiConcat(call);
       if (RuntimeAbi.For(callee.Name) is { } routine)
         return this.SelectRuntimeCall(call, callee, routine);
       if (IsRuntimeName(callee.Name))
@@ -2270,6 +2272,72 @@ public sealed class InstructionSelector {
       this.EmitX87(MOpcode.Fld, rounded, reads: true);
     }
     this.EmitX87(MOpcode.Fstp, this.FloatCell(call), reads: false);
+    return true;
+  }
+
+  /// <summary>The runtime's multi-concat staging list holds this many handles (DosRuntime._STRCATN_MAX).</summary>
+  private const int _CATLIST_SLOTS = 64;
+
+  /// <summary>
+  /// The single-allocation concatenation builder, which is the one runtime entry whose ABI the table
+  /// cannot describe: it is VARIADIC, and it takes its operands in a runtime word array rather than
+  /// in registers. The count goes in <c>CX</c>, handle <c>i</c> into <c>rt_catlist[i]</c>, and the
+  /// result comes back in <c>AX</c> - exactly the sequence the direct emitter writes for pb36 O24.
+  ///
+  /// <para>
+  /// The staging area is a single global, which is safe for the same reason the direct emitter's use
+  /// of it is: every operand is a value already computed by the time this runs, the stores and the
+  /// call are adjacent, and the routine consumes the whole list before returning - so no second
+  /// builder can be part-way through it.
+  /// </para>
+  /// </summary>
+  private bool SelectMultiConcat(IrCall call) {
+    var args = call.Args.ToList();
+    if (args is not [IrConstantInt count, ..] || count.Value != args.Count - 1)
+      return this.Decline("call: rt_str_concat_n's leading count is not the number of operands that follow");
+    if (count.Value is < 1 or > _CATLIST_SLOTS)
+      return this.Decline($"call: rt_str_concat_n takes 1..{_CATLIST_SLOTS} operands, got {count.Value}");
+    if (call.Type.IsVoid || IsWide(call.Type) || RegSize(call.Type) != MRegSize.Word)
+      return this.Decline($"call: rt_str_concat_n answers with a string handle, but the call is typed {call.Type}");
+
+    // Every staging store claims the call's destination register, exactly as SelectRuntimeCall's
+    // moves do. It is not about CX: an instruction carrying a clobber is a scheduling barrier, and
+    // without one these stores are free to move ABOVE the MOV that captures the previous call's
+    // result out of AX. The spiller then inserts a reload before each of them - inside the window
+    // where AX still holds that result - and the last operand staged is the previous one's handle.
+    // `a$ + (b$ + c$)` printed "aabbbb" for exactly that reason.
+    IReadOnlyList<Reg> pending = [Reg.CX];
+    for (var i = 1; i < args.Count; ++i) {
+      if (!this.TryOperand(args[i], out var handle))
+        return false;
+      // through a register: x86 has no memory-to-memory MOV, and a spilled handle arrives as a cell
+      if (handle is not (MOperand.Register or MOperand.Immediate)) {
+        var staged = new MOperand.Register(this.FreshVreg(args[i].Type));
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [staged, handle], MovEffect(staged, handle),
+          condition: null, clobbers: pending));
+        handle = staged;
+      }
+      var slot = new MOperand.DataCell("rt_catlist", (i - 1) * 2, MRegSize.Word);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [slot, handle],
+        new MInstrEffect(WrittenRegs: [], ReadRegs: handle is MOperand.Register ? [1] : [],
+          ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: true),
+        condition: null, clobbers: pending));
+    }
+
+    var cx = new MOperand.Register(MReg.Physical_(Reg.CX, MRegSize.Word));
+    var operands = new MOperand.Immediate(count.Value);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [cx, operands], MovEffect(cx, operands),
+      condition: null, clobbers: pending));
+    this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef("rt_strcatn")],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: true, WritesMemory: true),
+      condition: null, clobbers: _callClobbers));
+
+    var result = this.FreshVreg(call.Type);
+    this._vregs[call] = result;
+    var destination = new MOperand.Register(result);
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destination, ax], MovEffect(destination, ax)));
     return true;
   }
 

@@ -229,6 +229,18 @@ internal static class RuntimeAbi {
     ["rt_str_concat"] = new("rt_strcat",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
 
+    // "StrCatVar: AX=target handle, DX=source handle -> AX". It grows the TARGET in place when the
+    // target is the topmost heap block and copies the source's bytes into it - so it consumes the
+    // target and BORROWS the source, which is what makes Ir.Passes.StringAppendInPlace drop the copy
+    // the lowering made of the source.
+    ["rt_str_append_var"] = new("rt_strcatvar",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
+    // "StrCatLit: AX=target handle, DS:SI=literal bytes, CX=length -> AX (consumes the target)". The
+    // literal never becomes a handle at all, which is the whole win over rt_strmem + rt_strcat; the
+    // routine pushes DS itself on its fallback path, so no segment preset is needed here.
+    ["rt_str_append_lit"] = new("rt_strcatlit",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Offset, Reg.SI), new(ArgKind.Word, Reg.CX)],
+      _callerSaved, Result: Reg.AX),
     // rt_str_dup(ptr) -> ptr is StrDup: "AX=handle -> AX=copy". The lowering puts one of these on
     // every read of a string variable or array element, which is what makes the consuming routines
     // above safe to call - see IrLowering.BorrowString
@@ -354,6 +366,14 @@ internal static class RuntimeAbi {
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.WidenedWord),
 
+    // "StrCmpEq: AX=left, DX=right -> AX=0 equal / 1 unequal (consumes both)" - the same call shape
+    // as rt_strcmp with a different answer, which is why only a caller that tests it against zero may
+    // be routed here (Ir.Passes.StringCompareEquality). The routine lives in its own trimmable runtime
+    // section, so naming it here is also what keeps that section in the image.
+    ["rt_str_compare_eq"] = new("rt_strcmpeq",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.WidenedWord),
+
     // "MidSet: AX=target handle, CX=start, BX=length limit, DX=value handle (in-place replace;
     // consumes the value handle only)". The IR declares a pointer result and the routine returns
     // none - but it replaces IN PLACE and preserves AX, so the target handle it was given is still
@@ -374,6 +394,13 @@ internal static class RuntimeAbi {
     // full caller-saved set already covers
     ["rt_str_ltrim"] = new("rt_ltrim", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     ["rt_str_rtrim"] = new("rt_rtrim", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+
+    // "CharAt: AX=handle, CX=1-based index -> AX=that byte, or 0 past the end (consumes)". It clamps
+    // the index below 1 exactly as rt_strmid does, which is what lets ASC(MID$(s$,i,1)) become one
+    // call (Ir.Passes.StringByteRead). Its own trimmable section, referenced only from here.
+    ["rt_str_char_at"] = new("rt_charat",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.WidenedWord),
 
     // "Asc: AX=handle -> AX=first byte or 0 (consumes)"; the IR types the result i32
     ["rt_str_asc"] = new("rt_asc", [new(ArgKind.Word, Reg.AX)], _callerSaved,
