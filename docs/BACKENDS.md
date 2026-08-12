@@ -289,7 +289,33 @@ The rule now written into the lowering, in the order it has to hold:
 `IrBasicWriter` renders none of it: releasing a handle has no BASIC spelling, exactly as `rt_str_dup`
 has none, and a string variable already starts empty.
 
-**3. The golden gate - byte-identical output with the optimizer off.** This is the hard one, and it
+**3. The OPTIMIZER - the gate nobody had written down, and the one that is now blocking.** Coverage
+and behavioural equivalence say a function CAN be routed; neither says anything about what is lost by
+routing it. Making pb36 route by default - the natural next step, and the one this document used to
+imply was all that remained - fails **109 tests**:
+
+* **95 are assertions about emitted code** and read like a list of what pb36 is for: a string appended
+  in place rather than reallocated, a SELECT dispatched through a table or a perfect hash instead of a
+  chain, a multiplier decomposed into shifts, a bounds check elided where the index is provably in
+  range, a small counted loop unrolled, UDT copies moved a dword at a time.
+* **the optimization battery** (`tests/optimize`), which is the file where those expectations are
+  declared rather than inferred.
+* **two that are not about quality at all**: `Execute_GivenDeepTailRecursion_WhenPb36_ThenConstantStack`
+  and its mutual-recursion twin. Tail-call elimination is a BEHAVIOURAL promise - without it a deep
+  recursion overflows the stack - and the routed path does not make it.
+
+The reason is structural rather than a list of missing passes. `CodeGen/`'s optimizations are
+interleaved with emission, which is the same property that makes byte-identity achievable; a function
+the back end owns never passes through them, and the IR pipeline's eleven passes are a different set
+aimed at a different problem. So the direct emitter is not only the fidelity path - it is the
+OPTIMIZING path, and retiring it means the IR path must first earn those expectations rather than
+inherit them.
+
+That is the honest state: the switch is safe to flip the moment `tests/optimize` and the `Emit_Given*`
+fixtures pass routed, and not before. The flip itself is one line
+(`CodeGenerator.UseExperimentalBackend`), it was tried, and it is reverted with the measurement kept.
+
+**4. The golden gate - byte-identical output with the optimizer off.** This is the hard one, and it
 is the direct emitter's whole reason for existing: its optimizations are interleaved with emission
 *on purpose*, because that is what makes byte-identity with genuine PBC achievable. An SSA
 middle-end that schedules and allocates registers does not naturally emit the same bytes as an
@@ -297,8 +323,10 @@ AX-serial emitter, and nothing about widening coverage moves this. Retiring `Cod
 means either reproducing that byte-for-byte through the IR path, or deciding the gate becomes
 behavioural rather than byte-exact - a decision about what the project promises, not a task.
 
-The honest summary: (1) is a grind that the census orders for you, (2) is a switch to flip and a
-battery to run once (1) is far enough along, and (3) is a design decision that has not been made.
+The honest summary: (1) is DONE on selection and allocation and has only deliberate declines left,
+(2) holds - the routed battery scores what the direct one does - (3) is the live blocker and the one
+with the most work in it, and (4) is a design decision that has been made: the contract is
+observational, so EXE byte-identity is an aim rather than a gate.
 
 ## Coverage and what is next
 
