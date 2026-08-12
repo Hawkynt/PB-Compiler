@@ -319,13 +319,24 @@ imply was all that remained - failed **109 tests**, and after `Ir/Passes/TailRec
   ```
 
   It is NOT the omitted bound, though that is what the failing assertion reads like: `b() = a(TO 3)`
-  alone is correct, and so is the whole program under the direct emitter. What is eliminated so far -
-  two plain `REDIM b(0 TO 2)` / `REDIM c(0 TO 2)` and the same pair with RUNTIME bounds
-  (`REDIM b(0 TO hi - lo)`) both behave correctly routed - which leaves something specific to the
-  slice desugaring's own shape rather than to REDIM. The corpus differential never saw it because no
-  corpus program takes two slices. It has to be chased before the flip regardless of the optimizer
-  work, and it is the more urgent of the two: an optimization that is missing costs speed, and this
-  costs the right answer.
+  alone is correct, and so is the whole program under the direct emitter.
+
+  Read the ADDRESSES and it is sharper still. `VARPTR(b(0))` / `VARPTR(c(0))` are 0 and 6 under the
+  direct emitter - two 6-byte blocks, adjacent - and **10 and 6** routed, so c's 6..11 overlaps b's
+  10..15 and `c(2)` IS `b(0)`. The allocator is not the one confused: it handed out 0 then 6, exactly
+  as it did for the direct build. It is B's pointer that is wrong, and wrong from the FIRST slice,
+  before the second one exists.
+
+  What is eliminated: two plain `REDIM b(0 TO 2)` / `REDIM c(0 TO 2)` report 0 and 6 routed, and the
+  same pair with RUNTIME bounds (`REDIM b(0 TO hi - lo)`) behaves too - so REDIM itself is fine and
+  the fault is in the slice desugaring's own shape (`Binder.cs`, the `GroupStmt` of lo/hi temps +
+  REDIM + copy loop). The IR is clean: a two-slice program lowers to two distinct
+  `rt_arr_alloc(i32 6)` calls with separate results. So the divergence is below the IR, in how the
+  routed path records the block it was given.
+
+  The corpus differential never saw it because no corpus program takes two slices. It has to be
+  chased before the flip regardless of the optimizer work, and it is the more urgent of the two: an
+  optimization that is missing costs speed, and this costs the right answer.
 
 The reason is structural rather than a list of missing passes. `CodeGen/`'s optimizations are
 interleaved with emission, which is the same property that makes byte-identity achievable; a function
