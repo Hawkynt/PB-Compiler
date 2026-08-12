@@ -846,9 +846,13 @@ happily hoists to the head of the block. `Spiller.RematerializeOne` now recomput
 `MOV reg, immediate` at each use for the same reason it already recomputed an `LEA`: it depends on
 nothing, so a copy beside the use is free, and every live range collapses to one instruction.
 
-`HUGE`, `VIRTUAL`, `EMS` and `XMS` still decline. One segment named at the declaration is not enough
-for them: `HUGE` steps the segment by `byteOffset >> 4` so a single array spans many, and `VIRTUAL`
-maps a 16 KiB EMS page pair into a window before each access.
+`HUGE`, `VIRTUAL`, `EMS` and `XMS` route through the same operand, and they are the case that shows
+the segment was never required to be constant — `FarMemory` materializes whatever value it is given.
+`HUGE` hands it `base + (byteOffset >> 4)`, recomputed per element; the paged classes hand it the EMS
+page-frame segment after `rt_emsmap2` has brought the right page pair into the window. The offset is
+split into its 16-bit halves rather than shifted at 32 bits, because `SelectWideShift` walks a
+register pair one bit per step and refuses a count above eight. See
+[BACKENDS.md](BACKENDS.md) for what those classes still refuse.
 ### A QUAD in storage, and the two instructions that move eight bytes
 
 A 64-bit integer has no register representation here - it would want four - so the selector used to

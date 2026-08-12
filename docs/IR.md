@@ -213,12 +213,14 @@ the program's own data instead, so each declines. So do `ERASE` and `REDIM` of a
 (one unmaps it, the other would allocate over the view), an `AT` segment that is not a
 compile-time constant, and a dynamic-string element type.
 
-Not yet: `GET`/`PUT` of UDT/string records (only fixed-size scalar records are modeled), and
-the memory-model array classes `HUGE`, `VIRTUAL`, `EMS` and `XMS`. Those need more than a
-segment named once at the declaration: `HUGE` steps the segment by `byteOffset >> 4` so one
-array spans many of them, and `VIRTUAL` maps a 16 KiB EMS page pair into a window before each
-access. Both need the allocator, the page mapper and the far descriptor the DOS runtime holds,
-none of which is modelled here.
+The memory-model classes `HUGE`, `VIRTUAL`, `EMS` and `XMS` use the same instruction, and they
+are what shows that its segment was never required to be a constant: `HUGE` computes
+`base + (byteOffset >> 4)` per element and the paged classes address the EMS page frame after
+mapping the right page pair into it, both through `rt_*` entries the direct emitter already
+calls (`IrLowering.PagedArrays.cs`). What they refuse - rank above one, `REDIM PRESERVE`, an
+array a procedure also reaches - is listed in [BACKENDS.md](BACKENDS.md).
+
+Not yet: `GET`/`PUT` of UDT/string records (only fixed-size scalar records are modeled).
 
 ## Optimization passes (`Ir/Passes/`)
 
@@ -348,8 +350,7 @@ IR writer has.
 ## Roadmap
 
 - the constructs that still decline: `PRINT USING`/`LPRINT`, `LSET`/`RSET`,
-  `DIM HUGE`/`VIRTUAL`/`EMS`/`XMS`, `HEX$` with a digit count, parts of the
-  `CommandStmt` family, and inline
+  `HEX$` with a digit count, parts of the `CommandStmt` family, and inline
   assembly (target-specific by definition - it will never lower).
   `ARRAY SORT` / `ARRAY SCAN` lower over a STATIC one-dimensional array; a dynamic
   one still declines, because its elements live in the far array heap whose segment

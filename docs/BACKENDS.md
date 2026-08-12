@@ -186,17 +186,46 @@ now pins both, in the DOS battery and in `CBackendTests`.
 Worth stating plainly, because coverage numbers make the distance look shorter than it is. Dropping
 `CodeGen/` needs THREE things, and only the first is being measured today.
 
-**1. Coverage - every program on the IR path. Selection and allocation are DONE.** `BackendCoverageTests`
-ranks this over the whole corpus. As of this writing: **160 of 165 programs lower**, **261 of 261
-functions select and allocate**, and **160 of 160 module bodies** can be owned outright - every
-function that reaches the IR is compiled by the back end, with no allocation declines left.
+**1. Coverage - every program on the IR path. Lowering, selection and allocation are DONE.**
+`BackendCoverageTests` ranks this over the whole corpus. As of this writing: **161 of 165 programs
+lower**, **261 of 262 functions select and allocate**, and **160 of 161 module bodies** can be owned
+outright. The remaining four programs are rejected by the FRONT end, so they are nobody's coverage,
+and the lowering-decline histogram is now EMPTY - there is no corpus program the IR path refuses.
 
-What remains is on the LOWERING side, and it is short: four programs the FRONT end rejects (so they
-are nobody's coverage), and one that declines on `DIM ... AT` with a non-default array CLASS. That
-last one is deliberate rather than pending - `HUGE` steps the segment by `byteOffset >> 4` so one
-array spans many of them, and `VIRTUAL` maps a 16 KiB EMS page pair into a window before each access,
-which needs the allocator, the page mapper and the far descriptor the DOS runtime holds. Half-building
-it would be worse than the honest decline.
+The last one to go was `DIM ... AT` with a non-default array CLASS, which this document called a
+deliberate decline on the grounds that `HUGE` steps the segment by `byteOffset >> 4` and `VIRTUAL`
+maps a 16 KiB EMS page pair into a window before each access. That reasoning was wrong in its premise
+and it is worth recording why, because the same premise could retire other work by mistake. Both are
+addressing arithmetic ending in a segment and a displacement, which is precisely what `IrFarPtr`
+carries - and it never required the segment to be a CONSTANT; `InstructionSelector.FarMemory`
+materializes whatever value it is given into a register in front of the access. The allocator, the
+page mapper and the zero fill are `rt_hugealloc` / `rt_emsalloc` / `rt_emsmap2` / `rt_emszero`, which
+the DOS runtime already exports and the direct emitter already calls, so the lowering calls the same
+entries through the same `RuntimeAbi` table every other runtime routine goes through. The "far
+descriptor the DOS runtime holds" was the only real claim in the paragraph, and it is a 20-byte DGROUP
+cell whose contents the routed path keeps in two frame slots instead - which is why an array a
+PROCEDURE also reaches still declines (below). `IrLowering.PagedArrays.cs` is the whole widening.
+
+DIFF17 now routes end to end, and the differential battery scores the same with it as without.
+
+What still declines inside those classes, each measured rather than assumed:
+
+| refused | why |
+|---|---|
+| rank above one, non-scalar or dynamic-string element | the DIRECT emitter refuses them too (`TryEmitLongBoundsAndByteCount`), so there is no behaviour to agree with |
+| `REDIM PRESERVE` | same - the copy would have to walk two segment-stepped or page-mapped blocks at once |
+| `ERASE` of an `EMS`/`XMS` array | the direct emitter has arms for `HUGE` and `VIRTUAL` and none for these two, so one falls through to the conventional reclaim and gives a 20-byte HV descriptor to the heap allocator. Reproducing that would copy a defect into a second place |
+| an array a PROCEDURE also reaches | the routed descriptor is two frame slots and the direct one is a DGROUP cell; two descriptors for one array agree about nothing. This is the only decline the shared-storage boundary causes, and it is the same one dynamic arrays have |
+| the ADDRESS of an element (BYREF, VARPTR, a record copy) | `IrFarPtr`'s own rule, unchanged: a far pointer used as a near one loses its segment silently |
+| `FRE` other than `FRE(-11)` | `FRE(-11)` is the free EMS byte count and is real information; every other spelling answers an advisory 32767 after CONSUMING a string argument, which is an ownership rule the IR does not model |
+
+Two implementation notes that cost time and would cost it again. The 32-bit offset is split into its
+16-bit halves and recombined the way the direct emitter's `SHR AX,n / SHL DX,16-n / OR AX,DX` does,
+not shifted at 32 bits: `SelectWideShift` walks a register pair one bit per step and caps the count at
+eight, so `lshr i32 x, 14` declines where the same value computed in halves selects. And the EMS
+window cache is `rt_ems_curhnd` / `rt_ems_curpage` - the runtime's own cells, read and written by both
+paths, because the page frame is one window for the whole image and a routed access that remapped it
+privately would leave a directly emitted one addressing the wrong page.
 
 One decline was ADDED on purpose while closing the others, and it is the interesting one. A function
 whose inline-asm blocks have other work BETWEEN them now declines: `LOWLEVEL.BAS` counts `CX` down

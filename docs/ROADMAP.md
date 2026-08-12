@@ -166,10 +166,10 @@ battery, it currently reaches:
 
 | | |
 |---|---|
-| programs reaching the IR at all | 160 / 165 (4 of the rest the FRONT end rejects; the fifth is `DIM ... AT` with a non-default array class) |
-| functions selected | **261 / 261** |
-| functions routed (selected **and** allocated) | **261 / 261** |
-| whole module bodies the back end can own | **160 / 160** |
+| programs reaching the IR at all | **161 / 165** — every one the FRONT end accepts; the other 4 it rejects |
+| functions selected | 261 / 262 |
+| functions routed (selected **and** allocated) | 261 / 262 |
+| whole module bodies the back end can own | 160 / 161 |
 
 **Every function the selector takes is now allocated.** The last one that was not was `DIFF56`'s module
 body — a 32-bit accumulation over a static array — and it took two independent repairs, one on each
@@ -590,8 +590,9 @@ Ranked by the census, what stands between that and full coverage:
    no equivalent, and routing without it would lose the caller's handler silently.
 2. A tail of statements: `LSET` / `RSET`, `DIM AT`, `HEX$` with a digit count, `PRINT USING` /
    `LPRINT`, `FIELD`, `CHAIN`, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
-2. A tail of statements: `LSET` / `RSET`, `DIM HUGE` / `VIRTUAL` / `EMS` / `XMS` (`DIM … AT` came
-   off this list - see the far-pointer note in [X86-BACKEND.md](X86-BACKEND.md)), `HEX$` with a digit count, `PRINT USING` /
+2. A tail of statements: `LSET` / `RSET` (`DIM … AT` and the memory-model classes `HUGE` /
+   `VIRTUAL` / `EMS` / `XMS` came off this list - see the far-pointer notes in
+   [X86-BACKEND.md](X86-BACKEND.md) and [BACKENDS.md](BACKENDS.md)), `HEX$` with a digit count, `PRINT USING` /
    `LPRINT`, `CODEPTR32`, `FIELD`, `CHAIN`, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
    metastatements. `ARRAY SORT` / `ARRAY SCAN` came off this list: the parameter block is a set of
    stores to NAMED runtime cells, which the IR addresses directly, and only the array DESCRIPTOR
