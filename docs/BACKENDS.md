@@ -327,14 +327,29 @@ imply was all that remained - failed **109 tests**, and after `Ir/Passes/TailRec
   as it did for the direct build. It is B's pointer that is wrong, and wrong from the FIRST slice,
   before the second one exists.
 
-  What is eliminated: two plain `REDIM b(0 TO 2)` / `REDIM c(0 TO 2)` report 0 and 6 routed, and the
-  same pair with RUNTIME bounds (`REDIM b(0 TO hi - lo)`) behaves too - so REDIM itself is fine and
-  the fault is in the slice desugaring's own shape (`Binder.cs`, the `GroupStmt` of lo/hi temps +
-  REDIM + copy loop). The IR is clean: a two-slice program lowers to two distinct
-  `rt_arr_alloc(i32 6)` calls with separate results. So the divergence is below the IR, in how the
-  routed path records the block it was given.
+  **It is not about slices at all.** Writing the desugaring out by hand reproduces it in plain BASIC,
+  which collapses the search space to two ingredients that have to be present TOGETHER:
 
-  The corpus differential never saw it because no corpus program takes two slices. It has to be
+  ```basic
+  DIM a(1 TO 8) AS INTEGER : FOR i = 1 TO 8 : a(i) = i * 10 : NEXT
+  DIM b() AS INTEGER, c() AS INTEGER
+  lo1 = 1 : hi1 = 3
+  REDIM b(0 TO hi1 - lo1)                  ' a RUNTIME bound...
+  FOR i1 = lo1 TO hi1 : b(i1 - lo1) = a(i1) : NEXT   ' ...and a COMPUTED index
+  lo2 = 6 : hi2 = 8
+  REDIM c(0 TO hi2 - lo2)
+  FOR i2 = lo2 TO hi2 : c(i2 - lo2) = a(i2) : NEXT
+  PRINT b(0)                               ' 10 direct, 80 routed
+  ```
+
+  Each ingredient alone is fine, measured: a constant-bound `REDIM` pair with constant indices, a
+  constant-bound pair with a `FOR` loop writing `b(i)`, and a runtime-bound pair with constant
+  indices all behave routed. INTEGER temps fail exactly as LONG ones do, so the 32-bit paths are not
+  implicated either. The IR is clean throughout - two distinct `rt_arr_alloc(i32 6)` calls with
+  separate results - so the divergence is below the IR, in how the routed path records or re-reads
+  the block when the array's extent is not a compile-time constant.
+
+  The corpus differential never saw it because no corpus program combines the two. It has to be
   chased before the flip regardless of the optimizer work, and it is the more urgent of the two: an
   optimization that is missing costs speed, and this costs the right answer.
 
