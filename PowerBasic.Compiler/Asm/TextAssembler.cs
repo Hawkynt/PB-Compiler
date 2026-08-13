@@ -34,6 +34,27 @@ public sealed class TextAssembler(Assembler target) {
     }
   }
 
+  /// <summary>
+  /// The 16-bit general-purpose registers one <c>!</c> statement touches: every register its text
+  /// NAMES (in any width - <c>AL</c> and <c>AH</c> are <c>AX</c>) plus the ones its mnemonic implies
+  /// without spelling them, such as <c>CX</c> for <c>LOOP</c> or <c>DX:AX</c> for <c>MUL</c>.
+  ///
+  /// <para>
+  /// This is the census a register allocator needs to know which registers are the assembly's rather
+  /// than its own (see <c>Backend/InlineAsmReservation</c>). It answers with the whole file when the
+  /// text does not tokenize, because a statement nobody can read is a statement that could touch
+  /// anything - though such a statement will not assemble either.
+  /// </para>
+  /// </summary>
+  public static IReadOnlyCollection<Reg> RegistersUsed(string line) {
+    ArgumentNullException.ThrowIfNull(line);
+    return LineParser.RegistersUsed(line);
+  }
+
+  /// <summary>The 16-bit general-purpose registers, the widest answer <see cref="RegistersUsed"/> can give.</summary>
+  public static IReadOnlyCollection<Reg> AllGeneralPurposeRegisters { get; } =
+    [Reg.AX, Reg.CX, Reg.DX, Reg.BX, Reg.SP, Reg.BP, Reg.SI, Reg.DI];
+
   private sealed class AsmSyntaxException(string message) : Exception(message);
 
   #region operand model
@@ -53,7 +74,7 @@ public sealed class TextAssembler(Assembler target) {
 
     private readonly record struct Token(TokenKind Kind, string Text, int Value);
 
-    private readonly List<Token> _tokens = [];
+    private readonly List<Token> _tokens;
     private readonly IAsmSymbolResolver? _resolver;
     private readonly Assembler _asm;
     private int _index;
@@ -61,12 +82,19 @@ public sealed class TextAssembler(Assembler target) {
     public LineParser(string line, IAsmSymbolResolver? resolver, Assembler target) {
       this._resolver = resolver;
       this._asm = target;
-      this.Tokenize(line);
+      this._tokens = Tokenize(line);
     }
 
     #region tokenizer
 
-    private void Tokenize(string line) {
+    /// <summary>
+    /// Splits one statement into tokens. Static because the register census
+    /// (<see cref="TextAssembler.RegistersUsed"/>) needs the parser's own idea of what an identifier
+    /// is without an assembler to emit into - scanning the text a second way is how the two answers
+    /// drift apart.
+    /// </summary>
+    private static List<Token> Tokenize(string line) {
+      var tokens = new List<Token>();
       var comment = line.IndexOf(';');
       if (comment >= 0)
         line = line[..comment];
@@ -80,18 +108,18 @@ public sealed class TextAssembler(Assembler target) {
         }
 
         switch (c) {
-          case ',': this._tokens.Add(new(TokenKind.Comma, ",", 0)); ++i; continue;
-          case ':': this._tokens.Add(new(TokenKind.Colon, ":", 0)); ++i; continue;
-          case '[': this._tokens.Add(new(TokenKind.LBracket, "[", 0)); ++i; continue;
-          case ']': this._tokens.Add(new(TokenKind.RBracket, "]", 0)); ++i; continue;
-          case '(': this._tokens.Add(new(TokenKind.LParen, "(", 0)); ++i; continue;
-          case ')': this._tokens.Add(new(TokenKind.RParen, ")", 0)); ++i; continue;
-          case '+': this._tokens.Add(new(TokenKind.Plus, "+", 0)); ++i; continue;
-          case '-': this._tokens.Add(new(TokenKind.Minus, "-", 0)); ++i; continue;
+          case ',': tokens.Add(new(TokenKind.Comma, ",", 0)); ++i; continue;
+          case ':': tokens.Add(new(TokenKind.Colon, ":", 0)); ++i; continue;
+          case '[': tokens.Add(new(TokenKind.LBracket, "[", 0)); ++i; continue;
+          case ']': tokens.Add(new(TokenKind.RBracket, "]", 0)); ++i; continue;
+          case '(': tokens.Add(new(TokenKind.LParen, "(", 0)); ++i; continue;
+          case ')': tokens.Add(new(TokenKind.RParen, ")", 0)); ++i; continue;
+          case '+': tokens.Add(new(TokenKind.Plus, "+", 0)); ++i; continue;
+          case '-': tokens.Add(new(TokenKind.Minus, "-", 0)); ++i; continue;
         }
 
         if (c == '&') {
-          i = this.TokenizeRadixNumber(line, i);
+          i = TokenizeRadixNumber(tokens, line, i);
           continue;
         }
 
@@ -104,7 +132,7 @@ public sealed class TextAssembler(Assembler target) {
           if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var value))
             throw new AsmSyntaxException($"Numeric literal '{text}' is out of range.");
 
-          this._tokens.Add(new(TokenKind.Number, text, value));
+          tokens.Add(new(TokenKind.Number, text, value));
           continue;
         }
 
@@ -119,17 +147,18 @@ public sealed class TextAssembler(Assembler target) {
           while (i < line.Length && line[i] is '%' or '&' or '!' or '#' or '?' or '$')
             ++i;
 
-          this._tokens.Add(new(TokenKind.Identifier, line[start..i], 0));
+          tokens.Add(new(TokenKind.Identifier, line[start..i], 0));
           continue;
         }
 
         throw new AsmSyntaxException($"Unexpected character '{c}'.");
       }
 
-      this._tokens.Add(new(TokenKind.End, "", 0));
+      tokens.Add(new(TokenKind.End, "", 0));
+      return tokens;
     }
 
-    private int TokenizeRadixNumber(string line, int i) {
+    private static int TokenizeRadixNumber(List<Token> tokens, string line, int i) {
       if (i + 1 >= line.Length)
         throw new AsmSyntaxException("Dangling '&'.");
 
@@ -160,7 +189,7 @@ public sealed class TextAssembler(Assembler target) {
       if (value > uint.MaxValue)
         throw new AsmSyntaxException($"Numeric literal '&{radixChar}{text}' is out of range.");
 
-      this._tokens.Add(new(TokenKind.Number, text, unchecked((int)value)));
+      tokens.Add(new(TokenKind.Number, text, unchecked((int)value)));
       return end;
     }
 
@@ -222,6 +251,71 @@ public sealed class TextAssembler(Assembler target) {
     #region operand parsing
 
     private static readonly Dictionary<string, Reg> _REGISTERS = Enum.GetValues<Reg>().ToDictionary(r => r.ToString(), r => r, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The registers a mnemonic uses without naming them. Everything here is architectural: a
+    /// <c>MOVSB</c> reads SI and writes DI whether or not the text says so, a <c>REP</c> prefix counts
+    /// down CX, and a <c>MUL</c> answers in DX:AX. A register census built only from the text would
+    /// call these free and let a later value be put in one.
+    /// </summary>
+    private static readonly Dictionary<string, Reg[]> _IMPLICIT_REGISTERS = new(StringComparer.OrdinalIgnoreCase) {
+      ["MOVSB"] = [Reg.SI, Reg.DI], ["MOVSW"] = [Reg.SI, Reg.DI], ["MOVSD"] = [Reg.SI, Reg.DI],
+      ["CMPSB"] = [Reg.SI, Reg.DI], ["CMPSW"] = [Reg.SI, Reg.DI], ["CMPSD"] = [Reg.SI, Reg.DI],
+      ["STOSB"] = [Reg.DI, Reg.AX], ["STOSW"] = [Reg.DI, Reg.AX], ["STOSD"] = [Reg.DI, Reg.AX],
+      ["LODSB"] = [Reg.SI, Reg.AX], ["LODSW"] = [Reg.SI, Reg.AX], ["LODSD"] = [Reg.SI, Reg.AX],
+      ["SCASB"] = [Reg.DI, Reg.AX], ["SCASW"] = [Reg.DI, Reg.AX], ["SCASD"] = [Reg.DI, Reg.AX],
+      ["REP"] = [Reg.CX], ["REPE"] = [Reg.CX], ["REPZ"] = [Reg.CX], ["REPNE"] = [Reg.CX], ["REPNZ"] = [Reg.CX],
+      ["LOOP"] = [Reg.CX], ["LOOPE"] = [Reg.CX], ["LOOPZ"] = [Reg.CX], ["LOOPNE"] = [Reg.CX], ["LOOPNZ"] = [Reg.CX],
+      ["JCXZ"] = [Reg.CX],
+      ["MUL"] = [Reg.AX, Reg.DX], ["IMUL"] = [Reg.AX, Reg.DX], ["DIV"] = [Reg.AX, Reg.DX], ["IDIV"] = [Reg.AX, Reg.DX],
+      ["CBW"] = [Reg.AX], ["CWD"] = [Reg.AX, Reg.DX],
+      ["XLAT"] = [Reg.AX, Reg.BX], ["XLATB"] = [Reg.AX, Reg.BX],
+      ["AAA"] = [Reg.AX], ["AAS"] = [Reg.AX], ["AAM"] = [Reg.AX], ["AAD"] = [Reg.AX],
+      ["DAA"] = [Reg.AX], ["DAS"] = [Reg.AX],
+      ["IN"] = [Reg.AX, Reg.DX], ["OUT"] = [Reg.AX, Reg.DX],
+      ["PUSHA"] = [Reg.AX, Reg.CX, Reg.DX, Reg.BX, Reg.SP, Reg.BP, Reg.SI, Reg.DI],
+      ["POPA"] = [Reg.AX, Reg.CX, Reg.DX, Reg.BX, Reg.SP, Reg.BP, Reg.SI, Reg.DI],
+    };
+
+    /// <summary>
+    /// Every 16-bit general-purpose register this statement names or implies - see
+    /// <see cref="TextAssembler.RegistersUsed"/>. Identifiers are classified exactly as
+    /// <see cref="ParseIdentifierOperand"/> classifies them, so what counts as a register here is what
+    /// the assembler will really assemble as one.
+    /// </summary>
+    public static IReadOnlyCollection<Reg> RegistersUsed(string line) {
+      List<Token> tokens;
+      try {
+        tokens = Tokenize(line);
+      } catch (AsmSyntaxException) {
+        return AllGeneralPurposeRegisters;
+      }
+
+      var used = new HashSet<Reg>();
+      foreach (var token in tokens) {
+        if (token.Kind != TokenKind.Identifier)
+          continue;
+        if (_REGISTERS.TryGetValue(token.Text, out var register)) {
+          if (WordFormOf(register) is { } word)
+            used.Add(word);
+          continue;
+        }
+        // not a register: a mnemonic, a prefix, or an operand name. Only the first two can be in the
+        // table, and a variable that happens to be spelled MUL only overstates the answer.
+        if (_IMPLICIT_REGISTERS.TryGetValue(token.Text, out var implied))
+          used.UnionWith(implied);
+      }
+      return used;
+    }
+
+    /// <summary>The 16-bit register a general-purpose name denotes (AH and EAX are both AX); null for anything else.</summary>
+    private static Reg? WordFormOf(Reg register) => register switch {
+      _ when register.IsWord() => register,
+      // the byte names are numbered AL CL DL BL AH CH DH BH, so the low two bits pick the word register
+      _ when register.IsByte() => (Reg)(0x10 | (register.Index() & 3)),
+      _ when register.IsDword() => (Reg)(0x10 | register.Index()),
+      _ => null,   // a segment, x87, MMX or SSE register is not the integer allocator's business
+    };
 
     private static readonly Dictionary<string, OperandSize> _SIZE_KEYWORDS = new(StringComparer.OrdinalIgnoreCase) {
       ["BYTE"] = OperandSize.Byte,

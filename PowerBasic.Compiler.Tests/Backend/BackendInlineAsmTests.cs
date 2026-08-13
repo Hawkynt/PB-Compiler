@@ -29,6 +29,28 @@ public sealed class BackendInlineAsmTests {
   }
 
   /// <summary>
+  /// The module body really goes through the back end - selected, scheduled and allocated. Without
+  /// this a behaviour test proves nothing about the routed path: a declined function falls back to
+  /// the direct emitter, and then both sides of the comparison are the same compiler. It matters most
+  /// for the register-pressure cases, where the honest failure mode of a reservation is "allocation
+  /// gave up" rather than "the answer was wrong".
+  /// </summary>
+  private static void AssertRoutes(string source) {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var module = IrLowering.TryLowerModule(model, out var why);
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+    IrPassManager.Standard().RunOnModule(module!);
+
+    var main = module!.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
+    var m = InstructionSelector.TrySelect(main, out var reason);
+    Assert.That(m, Is.Not.Null, $"selection declined: {reason}");
+    MachineScheduler.Schedule(m!);
+    Assert.That(LinearScanAllocator.Allocate(m!, out var noRegisters), Is.Not.Null,
+      $"allocation declined: {noRegisters}");
+  }
+
+  /// <summary>
   /// Without this, every test below could pass by falling back: when selection declines, the direct
   /// emitter takes the function and both sides of the comparison are the same compiler.
   /// </summary>
@@ -146,13 +168,11 @@ public sealed class BackendInlineAsmTests {
   /// would print 1, and one whose target was mis-resolved would not run at all.
   ///
   /// <para>
-  /// The counter is a BASIC VARIABLE rather than CX, and that is not incidental: a register set by
-  /// one <c>!</c> statement does NOT survive an intervening BASIC statement on the routed path,
-  /// because the allocator is free to put a temporary in it and has no way to know the asm cared.
-  /// That is a separate defect, it has nothing to do with labels (a block with no label in it loses
-  /// CX the same way), and it is pinned by
-  /// <see cref="InlineAsm_GivenARegisterHeldAcrossABasicStatement_ThenTheTwoPathsDisagree"/> rather
-  /// than smuggled into this reading of the branch.
+  /// The counter is a BASIC VARIABLE rather than CX, and that is not incidental: it keeps this test
+  /// about the BRANCH. Whether a register survives the intervening BASIC statement is a different
+  /// question, answered by
+  /// <see cref="InlineAsm_GivenARegisterHeldAcrossABasicStatement_ThenBothPathsAgree"/> and the tests
+  /// beside it.
   /// </para>
   /// </summary>
   [Test]
@@ -174,20 +194,18 @@ public sealed class BackendInlineAsmTests {
   }
 
   /// <summary>
-  /// The open defect the test above steps around, written down so it fails the day it is fixed
-  /// rather than being discovered by a program: a register an <c>!</c> statement loads is destroyed
-  /// by the next BASIC statement on the routed path. The direct emitter computes through AX and so
-  /// leaves CX alone by luck rather than by contract; the back end's allocator picks CX for a
-  /// temporary and the asm's value is gone.
+  /// The contract of <see cref="InlineAsmReservation"/> at its smallest: a register one <c>!</c>
+  /// statement loads is still there for the next one, with a BASIC statement in between.
   ///
   /// <para>
-  /// No label is involved - this is what binding one made REACHABLE for LOWLEVEL.BAS, not what it
-  /// introduced. LOWLEVEL still declines before it can be bitten (a 32-bit LShr), so the corpus
-  /// differential does not yet see this; whoever removes that decline must fix this first.
+  /// This used to be pinned as a DISAGREEMENT - the allocator put <c>n + 1</c> in CX and the routed
+  /// image printed <c>1  1</c> - and the direct emitter only got it right by computing through AX,
+  /// which is luck rather than contract. Both paths are now asserted against the exact value, not
+  /// merely against each other: two images that had both lost CX would agree too.
   /// </para>
   /// </summary>
   [Test]
-  public void InlineAsm_GivenARegisterHeldAcrossABasicStatement_ThenTheTwoPathsDisagree() {
+  public void InlineAsm_GivenARegisterHeldAcrossABasicStatement_ThenBothPathsAgree() {
     const string source = """
       DIM n AS INTEGER
       DIM r AS INTEGER
@@ -198,10 +216,193 @@ public sealed class BackendInlineAsmTests {
       PRINT n; r
       """;
 
-    Assert.That(Run(source, routed: false), Is.EqualTo("1  5"), "the direct emitter happens to leave CX alone");
-    Assert.That(Run(source, routed: true), Is.EqualTo("1  1"),
-      "KNOWN DEFECT: the allocator put n+1 in CX. When this starts failing, the defect is fixed - "
-      + "make it assert agreement instead of pinning the disagreement");
+    AssertRoutes(source);
+    Assert.That(Run(source, routed: true), Is.EqualTo("1  5"), "CX is the assembly's across the statement");
+    Assert.That(Run(source, routed: false), Is.EqualTo(Run(source, routed: true)));
+  }
+
+  /// <summary>
+  /// The same across SEVERAL statements, including ones that call the runtime. A PRINT goes through
+  /// AX in both emitters, so the register held here is one no fixed convention wants - which is
+  /// exactly the line the reservation draws: the allocator's choices are constrained, the ABI's are
+  /// not.
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenARegisterHeldAcrossSeveralBasicStatements_ThenBothPathsAgree() {
+    const string source = """
+      DIM n AS INTEGER
+      DIM m AS INTEGER
+      DIM r AS INTEGER
+      n = 0
+      m = 0
+      ! MOV CX, 7
+      n = n + 1
+      m = n * 3 + 2
+      n = m - n
+      ! MOV r, CX
+      PRINT n; m; r
+      """;
+
+    AssertRoutes(source);
+    Assert.That(Run(source, routed: true), Is.EqualTo("4  5  7"));
+    Assert.That(Run(source, routed: false), Is.EqualTo(Run(source, routed: true)));
+  }
+
+  /// <summary>Two registers at once, so a fix that reserved "the one register" would still be caught.</summary>
+  [Test]
+  public void InlineAsm_GivenTwoRegistersHeldAcrossABasicStatement_ThenBothSurvive() {
+    const string source = """
+      DIM n AS INTEGER
+      DIM r AS INTEGER
+      DIM s AS INTEGER
+      n = 2
+      ! MOV CX, 11
+      ! MOV DX, 22
+      n = n + 1
+      ! MOV r, CX
+      ! MOV s, DX
+      PRINT n; r; s
+      """;
+
+    AssertRoutes(source);
+    Assert.That(Run(source, routed: true), Is.EqualTo("3  11  22"));
+    Assert.That(Run(source, routed: false), Is.EqualTo(Run(source, routed: true)));
+  }
+
+  /// <summary>
+  /// The pressure case: the assembly holds four of the six allocatable registers across a BASIC
+  /// statement that wants more values live than the two remaining ones can carry. What this pins is
+  /// that the reservation is SPILLED AROUND rather than given up on - the values that cannot get a
+  /// register go to the frame, and the function still routes. Its failure mode is
+  /// <see cref="AssertRoutes"/> reporting "allocation declined", not a wrong answer; the arithmetic is
+  /// asserted anyway, because a spill that loses a value is the other way this could go wrong.
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenTheAsmHoldsMostOfTheRegisterFile_ThenTheBasicCodeSpillsAroundIt() {
+    const string source = """
+      DIM a AS INTEGER
+      DIM b AS INTEGER
+      DIM c AS INTEGER
+      DIM d AS INTEGER
+      DIM e AS INTEGER
+      DIM r AS INTEGER
+      a = 3 : b = 5 : c = 7 : d = 11 : e = 13
+      ! MOV AX, 100
+      ! MOV BX, 200
+      ! MOV CX, 300
+      ! MOV DX, 400
+      a = a * b + c * d - e * b + a * c
+      ! MOV r, CX
+      PRINT a; r
+      """;
+
+    AssertRoutes(source);
+    Assert.That(Run(source, routed: true), Is.EqualTo("48  300"));
+    Assert.That(Run(source, routed: false), Is.EqualTo(Run(source, routed: true)));
+  }
+
+  /// <summary>
+  /// A register held around a LOOP BACK EDGE, which is why the reservation is a reachability question
+  /// rather than a span of instruction indices: the <c>FOR</c>'s increment runs between one
+  /// <c>DEC CX</c> and the next while sitting AFTER it in the instruction stream. A first-to-last
+  /// reading of the same function leaves the increment free to take CX.
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenARegisterHeldAroundALoopBackEdge_ThenBothPathsAgree() {
+    const string source = """
+      DIM n AS INTEGER
+      DIM r AS INTEGER
+      DIM i AS INTEGER
+      n = 0
+      r = 0
+      ! MOV CX, 100
+      FOR i = 1 TO 3
+        n = n + i
+        ! DEC CX
+        ! MOV r, CX
+      NEXT i
+      PRINT n; r
+      """;
+
+    AssertRoutes(source);
+    Assert.That(Run(source, routed: true), Is.EqualTo("6  97"));
+    Assert.That(Run(source, routed: false), Is.EqualTo(Run(source, routed: true)));
+  }
+
+  /// <summary>
+  /// LOWLEVEL.BAS's own shape end to end: the asm loop whose body is a BASIC statement and whose
+  /// branch goes back to a BASIC label. Five iterations only happen if CX is the assembly's across
+  /// <c>n = n + 1</c>; a routed image that lost it prints 1.
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenTheLowlevelLoopShape_ThenTheRoutedImageCountsFiveTimes() {
+    const string source = """
+      DIM n AS INTEGER
+      n = 0
+      ! MOV CX, 5
+      AddLoop:
+      n = n + 1
+      ! DEC CX
+      ! JNZ AddLoop
+      PRINT n
+      """;
+
+    AssertRoutes(source);
+    Assert.That(Run(source, routed: true), Is.EqualTo("5"));
+    Assert.That(Run(source, routed: false), Is.EqualTo(Run(source, routed: true)));
+  }
+
+  /// <summary>
+  /// The reservation is not a tax on every function with a <c>!</c> in it. Where no register has to
+  /// survive - a run of consecutive asm statements, or the code after the last one - the allocator
+  /// keeps the whole file, and DIFF20.BAS (which routes today) depends on that.
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenNothingHasToSurvive_ThenNoRegisterIsReserved() {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("""
+      DIM n AS INTEGER
+      DIM r AS INTEGER
+      ! MOV CX, 5
+      ! MOV r, CX
+      n = r + 1
+      PRINT n
+      """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    var module = IrLowering.TryLowerModule(model, out var why);
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+
+    var main = module!.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
+    var m = InstructionSelector.TrySelect(main, out var reason);
+    Assert.That(m, Is.Not.Null, $"selection declined: {reason}");
+
+    Assert.That(InlineAsmReservation.Compute(m!), Is.Empty,
+      "the two asm statements are adjacent and nothing follows them, so CX is nobody's to hold");
+  }
+
+  /// <summary>
+  /// ...and where one does, the reservation names exactly the register the text does - not the whole
+  /// file, which would leave the intervening statement nowhere to compute.
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenARegisterMustSurvive_ThenOnlyThatRegisterIsReserved() {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("""
+      DIM n AS INTEGER
+      DIM r AS INTEGER
+      n = 0
+      ! MOV CX, 5
+      n = n + 1
+      ! MOV r, CX
+      PRINT n; r
+      """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    var module = IrLowering.TryLowerModule(model, out var why);
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+
+    var main = module!.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
+    var m = InstructionSelector.TrySelect(main, out var reason);
+    Assert.That(m, Is.Not.Null, $"selection declined: {reason}");
+
+    var reserved = InlineAsmReservation.Compute(m!);
+    Assert.That(reserved, Is.Not.Empty, "n = n + 1 sits between two statements that name CX");
+    Assert.That(reserved.Values.SelectMany(r => r).Distinct(), Is.EqualTo(new[] { Compiler.Asm.Reg.CX }));
   }
 
   /// <summary>

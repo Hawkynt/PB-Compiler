@@ -168,7 +168,8 @@ battery, it currently reaches:
 |---|---|
 | programs reaching the IR at all | 159 / 165 (4 of the rest the FRONT end rejects) |
 | functions selected | 257 / 259 |
-| functions routed (selected **and** allocated) | 257 / 259 |
+| programs reaching the IR at all | 159 / 165 |
+| functions selected | 258 / 259 || functions routed (selected **and** allocated) | 257 / 259 |
 | whole module bodies the back end can own | 157 / 159 |
 
 **Every function the selector takes is now allocated.** The last one that was not was `DIFF56`'s module
@@ -229,11 +230,21 @@ jump the CFG does not draw, and the address it needs is the `IrBlockAddress` an 
 `CODEPTR32` are already named by. Which makes the keep-alive rule automatic - the block is
 address-taken, so `SimplifyCfg` and `Sccp` may not merge or drop it.
 
-! **Open, and load-bearing:** a register an `!` statement loads does NOT survive an intervening BASIC
-statement on the routed path. The allocator is free to put a temporary in `CX` and has no way to know
-the text cared; the direct emitter leaves `CX` alone by luck rather than by contract. `LOWLEVEL.BAS`
-relies on exactly this and currently declines earlier, so the corpus differential does not see it -
-but removing that decline without fixing this turns it into a disagreement.
+**A register an `!` statement loads survives the BASIC statements between it and the next one.** PB
+compiles a statement at a time and keeps no BASIC value in a register across one, so
+`!MOV CX,5 / n = n + 1 / !DEC CX` counts five times; the allocator used to put `n + 1` in `CX` and it
+counted once. `InlineAsmReservation` states the rule the machine IR was missing: a register is the
+assembly's - and no value may be allocated into it - at every point REACHABLE FROM an `!` statement
+naming it that can also REACH one naming it again. Reachability rather than a range of line numbers,
+because a loop puts code between two executions of the same statement while it sits after it in the
+stream. `MInstrEffect`'s clobber list said only that nothing of *ours* survives the block; this is the
+opposite claim, and the allocator needs both.
+
+The registers a BASIC statement destroys by a FIXED convention - a runtime call's arguments, `DX:AX`
+around a divide - are not reserved, because they are not the allocator's choice and the direct emitter
+destroys the same ones in the same places. `TextAssembler.RegistersUsed` answers what a statement
+touches from the parser's own tokens plus the registers a mnemonic implies without spelling
+(`LOOP`/`REP` counting `CX` down, `MUL` answering in `DX:AX`).
 
 **Inline asm routes.** Getting there needed one more thing, and it was not in the asm path at all: a
 single-slot alloca is now addressed AS its slot rather than through the register its `LEA` put the

@@ -184,7 +184,16 @@ public sealed class LinearScanAllocator {
   private static Reg WholeRegister(Reg register)
     => register.IsByte() ? (Reg)(0x10 | (register.Index() & 0x03)) : register;
 
-  /// <summary>Maps each global instruction index (same numbering as the liveness pass) to the registers it clobbers.</summary>
+  /// <summary>
+  /// Maps each global instruction index (same numbering as the liveness pass) to the registers no
+  /// value may occupy across it: the ones the instruction CLOBBERS, plus the ones an inline-assembly
+  /// statement of this function OWNS there.
+  ///
+  /// The two are opposite claims and both are needed. A clobber says nothing of ours survives this
+  /// instruction; a reservation (see <see cref="InlineAsmReservation"/>) says something of THEIRS has
+  /// to - a register an <c>!</c> statement loaded and a later one reads is not free for a temporary in
+  /// between, however dead it looks to a pass that only reads machine operands.
+  /// </summary>
   private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> ClobbersByIndex(MFunction function) {
     var map = new Dictionary<int, IReadOnlyList<Reg>>();
     var index = 0;
@@ -194,6 +203,10 @@ public sealed class LinearScanAllocator {
           map[index] = instr.Clobbers;
         ++index;
       }
+
+    foreach (var (at, reserved) in InlineAsmReservation.Compute(function))
+      map[at] = map.TryGetValue(at, out var clobbered) ? [.. clobbered.Union(reserved)] : reserved;
+
     return map;
   }
 
