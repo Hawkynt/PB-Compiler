@@ -471,4 +471,5 @@ public sealed class TextAssemblerTests {
     => Assert.That(AssembleLine("CMOVG AX, [BX]"), Is.EqualTo(new byte[] { 0x0F, 0x4F, 0x07 }));
 
   #endregion
+
 }

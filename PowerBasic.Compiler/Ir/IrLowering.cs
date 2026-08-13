@@ -3545,13 +3545,31 @@ public sealed partial class IrLowering {
   /// <para>
   /// A shift count of 32 or more is answered ZERO rather than left to the back end. The emitter's
   /// loop shifts zeros in and lands on nothing; <c>lshr</c> by the width or beyond has no defined
-  /// answer, so the two would agree only by luck. The guard folds away whenever the count is a
-  /// literal, which it nearly always is.
+  /// answer, so the two would agree only by luck.
+  /// </para>
+  /// <para>
+  /// When the bit number is a LITERAL - which it nearly always is - that guard is decided HERE rather
+  /// than emitted for constant folding to remove later. A pass is not always run: a function holding
+  /// inline assembly or an error handler is skipped by the optimizer whole, and then what reaches the
+  /// back end is a compare, a select, and a shift whose count is a widening CAST of a number rather
+  /// than a number. That is what kept LOWLEVEL.BAS off the back end for the sake of <c>BIT(s, 2)</c>:
+  /// a 32-bit shift is built one bit at a time from a count the selector can read, and it could not
+  /// read this one. Lowering an answer nobody has to fold is cheaper than folding it everywhere.
   /// </para>
   /// </summary>
   private IrValue LowerBit(CallOrIndexExpr call) {
     var value = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), PbType.Long);
-    var index = this.Coerce(this.LowerExpr(call.Arguments[1]), this._model.TypeOf(call.Arguments[1]), PbType.Long);
+    var lowered = this.LowerExpr(call.Arguments[1]);
+    if (lowered is IrConstantInt literal) {
+      // the guard is UNSIGNED, so a negative literal is out of range rather than a small count
+      var count = (ulong)IrConstFold.Wrap(literal.Value, literal.Type);
+      return this.Coerce(count >= 32 ? new IrConstantInt(IrType.I32, 0) : this._b.Binary(IrBinaryOp.And,
+          this._b.Binary(IrBinaryOp.LShr, value, new IrConstantInt(IrType.I32, (long)count)),
+          new IrConstantInt(IrType.I32, 1)),
+        PbType.Long, this._model.TypeOf(call));
+    }
+
+    var index = this.Coerce(lowered, this._model.TypeOf(call.Arguments[1]), PbType.Long);
     var bit = this._b.Binary(IrBinaryOp.And,
       this._b.Binary(IrBinaryOp.LShr, value, index), new IrConstantInt(IrType.I32, 1));
     var inRange = this._b.Cmp(IrCmpPred.Ult, index, new IrConstantInt(IrType.I32, 32));
