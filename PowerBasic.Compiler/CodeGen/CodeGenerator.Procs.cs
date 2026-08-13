@@ -44,13 +44,40 @@ public sealed partial class CodeGenerator {
   private static bool CallerCleansStack(ProcedureSymbol proc) => proc.CallConv == CallConvention.Cdecl;
 
   /// <summary>
+  /// True when <paramref name="proc"/>'s convention is the ONE the x86-16 back end's
+  /// <see cref="Backend.MachineEmitter.EmitFunction"/> emits: arguments pushed left to right at
+  /// [BP+4..], callee-cleans via <c>RET n</c>, nothing in a register. That is BASIC and PASCAL.
+  ///
+  /// <para>
+  /// Everything else has to stay with the direct emitter, and not as a matter of code quality. A
+  /// register convention lays its leading parameters out at NEGATIVE offsets that only the direct
+  /// prologue's AX,DX,BX(,CX) spill ever fills, so the routed body reads its arguments out of an
+  /// uninitialized frame; CDECL/STDCALL reverse the push order the routed call site uses, so the
+  /// arguments swap; and CDECL's caller-cleans discipline is contradicted by the routed epilogue's
+  /// <c>RET n</c>, which pops them a second time.
+  /// </para>
+  /// </summary>
+  private static bool IsBackendAbiConvention(ProcedureSymbol proc)
+    => !IsRegisterConvention(proc) && !PushesRightToLeft(proc) && !CallerCleansStack(proc);
+
+  /// <summary>
   /// Assigns BP-relative offsets: parameters at [BP+4..] (pushed left to right -
   /// BASIC/PASCAL - so the last parameter sits at [BP+4]; CDECL/STDCALL push right
   /// to left, so the FIRST parameter sits at [BP+4]), stack locals below BP. STATIC
   /// variables and arrays use data segment slots instead.
+  ///
+  /// <para>
+  /// The register-convention parameter check lives here, and here rather than in
+  /// <see cref="EmitProcedure"/>, because this is the one function BOTH emission paths call - the
+  /// direct emitter and <see cref="EmitBackendFunction"/>. Raised on the emitting side only, the
+  /// rejection went missing for exactly the procedures the x86-16 back end took, which is a wrong
+  /// program compiling clean; a diagnostic about the ABI belongs where the ABI is decided.
+  /// </para>
   /// </summary>
   private int LayoutFrame(ProcedureSymbol proc) {
     this._frameLocalBytes = 0;
+    if (HasUnsupportedRegisterParam(proc))
+      this.Errors.Add(new(proc.Position, $"{proc.CallConv} {proc.Name}: a register-convention parameter must be word-sized (BYVAL <= 2 bytes or BYREF); LONG/float/UDT/string need the full per-compiler ABI rules"));
 
     // register-convention (WATCALL/FASTCALL) parameters arrive in registers; give them
     // negative slots at the top of the frame ([BP-2], [BP-4], ...) that the prologue fills
@@ -148,8 +175,6 @@ public sealed partial class CodeGenerator {
     this._userLabels = new(StringComparer.OrdinalIgnoreCase);
     var paramBytes = this.LayoutFrame(proc);
     this._currentParamBytes = paramBytes;
-    if (HasUnsupportedRegisterParam(proc))
-      this.Errors.Add(new(proc.Position, $"{proc.CallConv} {proc.Name}: a register-convention parameter must be word-sized (BYVAL <= 2 bytes or BYREF); LONG/float/UDT/string need the full per-compiler ABI rules"));
     this._epilogue = asm.DefineLabel($"p_{proc.Name}_end");
     this._trackResume = ContainsErrorHandling(proc.Body!);
 

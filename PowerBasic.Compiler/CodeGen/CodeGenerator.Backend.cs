@@ -128,6 +128,14 @@ public sealed partial class CodeGenerator {
       // model, and the selector declines them on their own.
       if (proc.IsExternal || proc.Body is null || ContainsErrorHandling(proc.Body))
         continue;
+      // The back end emits ONE ABI - left-to-right stack arguments, callee-cleans - so a procedure
+      // declared WATCALL/FASTCALL/CDECL/STDCALL is not routable, and silently was. Its frame is laid
+      // out for the declared convention while the routed prologue/epilogue implement the default one:
+      // a register convention's parameters end up at negative offsets nothing fills, CDECL/STDCALL's
+      // reversed push order swaps them, and CDECL's args get popped by both sides. See
+      // IsBackendAbiConvention.
+      if (!IsBackendAbiConvention(proc))
+        continue;
       if (proc.IsFunction && proc.ReturnType is not ScalarType { IsFloat: false, ByteSize: 2 or 4 }
                           and not ScalarType { IsFloat: true, ByteSize: 4 or 8 })
         continue;
