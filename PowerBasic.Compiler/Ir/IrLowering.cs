@@ -235,7 +235,7 @@ public sealed partial class IrLowering {
         return false;                                  // scalar parameters only
       args.Add(new IrArgument(p.ByVal ? pty : IrType.Ptr, args.Count, p.Name));  // BYREF parameters arrive as pointers
     }
-    fn = new IrFunction(proc.Name, ret, args);
+    fn = new IrFunction(proc.Name, ret, args) { NoInline = proc.NoInline };
     return true;
   }
 

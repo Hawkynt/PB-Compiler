@@ -161,6 +161,14 @@ public sealed class FunctionSummaries {
   /// This is the first consumer of the summaries and the reason they exist: a BASIC FUNCTION that only
   /// computes is exactly the shape the optimizer leaves behind after propagating its result away, and
   /// without a summary there is no way to tell it from one that prints.
+  ///
+  /// <para>
+  /// A <c>NOINLINE</c> callee is exempt. Dropping the call is SOUND - nothing observable changes - but
+  /// the modifier's contract is that the call survives, and the shape it most often guards is a
+  /// procedure that exists only to be a barrier: an empty <c>SUB</c> taking a variable BYREF so the
+  /// optimizer cannot know its value. Removing that call removes the barrier, and everything the
+  /// programmer wanted to inspect folds away behind it.
+  /// </para>
   /// </summary>
   public static int RemoveDeadPureCalls(IrModule module) {
     var summaries = Compute(module);
@@ -171,6 +179,7 @@ public sealed class FunctionSummaries {
       foreach (var instruction in function.AllInstructions.ToList())
         if (instruction is IrCall { Callee: IrFunction callee } call
             && call.HasNoUsers
+            && !callee.NoInline
             && summaries.For(callee).IsPure) {
           call.EraseFromParent();
           ++removed;

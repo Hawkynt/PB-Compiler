@@ -24,9 +24,11 @@ public sealed class LoopAlignmentTests {
   }
 
   // a CALL in the loop body keeps it off every register-resident / closed-form fast path,
-  // so it takes the general loop emitter whose top is alignment-padded
+  // so it takes the general loop emitter whose top is alignment-padded. NOINLINE is what makes
+  // the call a barrier: an empty body is absorbable at the call site, and an empty loop body
+  // leaves nothing to align.
   private const string _LOOP =
-    "DECLARE SUB Foo()\nDIM i%\nFOR i% = 1 TO 100\n CALL Foo\nNEXT\nEND\nSUB Foo()\nEND SUB\n";
+    "DECLARE SUB Foo()\nDIM i%\nFOR i% = 1 TO 100\n CALL Foo\nNEXT\nEND\nSUB Foo() NOINLINE\nEND SUB\n";
 
   private static int MaxNopRun(byte[] image) {
     int best = 0, run = 0;
