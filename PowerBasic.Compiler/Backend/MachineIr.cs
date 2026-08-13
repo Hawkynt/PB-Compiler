@@ -98,8 +98,16 @@ public abstract record MOperand {
   /// An inline-assembly block: the source text plus the BASIC names it refers to. The instruction's
   /// remaining operands are those names' machine locations in the SAME order, which is what lets the
   /// emitter build a resolver that answers from the ROUTED frame rather than the direct emitter's.
+  ///
+  /// <para>
+  /// <paramref name="Effect"/> is what the text does to the register file, read out of it by the
+  /// assembler at selection. The instruction's <see cref="MInstr.Clobbers"/> says only that nothing of
+  /// OURS survives the block; this says which registers are THEIRS, and for how long - see
+  /// <c>LinearScanAllocator.AsmHeldByIndex</c>, which is what keeps a countdown in <c>CX</c> alive
+  /// across the BASIC statement between the two <c>!</c> lines that set it and read it.
+  /// </para>
   /// </summary>
-  public sealed record InlineAsmText(string Text, IReadOnlyList<string> Names) : MOperand;
+  public sealed record InlineAsmText(string Text, IReadOnlyList<string> Names, AsmRegisterEffect Effect) : MOperand;
 
   /// <summary>
   /// The OFFSET of a basic block's own label - the machine form of the IR's <c>blockaddress</c>.
@@ -299,6 +307,26 @@ public sealed class MBlock(string label) {
   public string Label { get; } = label;
   public List<MInstr> Instructions { get; } = [];
   public List<string> Successors { get; } = [];
+
+  /// <summary>
+  /// Every label control can leave this block for: its CFG successors PLUS the BASIC labels an
+  /// inline-assembly block jumps to.
+  ///
+  /// <c>!JNZ AddLoop</c> is a transfer of control no graph here draws - the target is address-taken
+  /// and nothing else - so an analysis reading <see cref="Successors"/> alone does not see the loop it
+  /// closes, and would end a value's life at the last point the LAYOUT mentions it.
+  /// </summary>
+  public IEnumerable<string> SuccessorsWithAsmJumps() {
+    foreach (var successor in this.Successors)
+      yield return successor;
+    foreach (var instr in this.Instructions) {
+      if (instr.Opcode != MOpcode.InlineAsm)
+        continue;
+      foreach (var operand in instr.Operands)
+        if (operand is MOperand.BlockOffset target)
+          yield return target.Block;
+    }
+  }
 }
 
 /// <summary>A machine function: its blocks, the number of virtual registers selection minted, and the stack-slot table.</summary>

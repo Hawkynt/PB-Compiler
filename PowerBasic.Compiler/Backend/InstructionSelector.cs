@@ -89,50 +89,6 @@ public sealed partial class InstructionSelector {
   public static MFunction? TrySelect(IrFunction fn, SelectionTarget target) => TrySelect(fn, out _, target);
 
   /// <summary>
-  /// Whether the function has inline-asm statements with other work BETWEEN them, which is the shape
-  /// this back end cannot honour.
-  ///
-  /// <para>
-  /// A single block is a barrier and selects fine, and so do several ADJACENT ones - <c>! DEC c</c>
-  /// followed by <c>! JNZ label</c> passes its flags along untouched. What breaks is state carried in
-  /// a REGISTER across BASIC code: LOWLEVEL.BAS sets <c>CX</c> to 5, runs <c>n = n + 1</c>, then
-  /// decrements <c>CX</c> and loops. The block is modelled as clobbering everything, which stops a
-  /// value living ACROSS it but does nothing to stop the allocator putting a temporary IN CX in the
-  /// middle - so the countdown is destroyed and the loop runs once. It printed 1 for 5.
-  /// </para>
-  ///
-  /// <para>
-  /// The direct emitter survives it by computing through AX and leaving CX alone, which is luck
-  /// rather than contract. The honest fix is for an asm block to declare the registers it defines and
-  /// for how long; until then this shape declines, because selecting it is worse than not selecting
-  /// it. It is the one decline here that exists to prevent a WRONG ANSWER rather than a crash.
-  /// </para>
-  /// </summary>
-  private static bool SeparatedInlineAsm(IrFunction fn) {
-    var blocksWithAsm = 0;
-    foreach (var block in fn.Blocks) {
-      var instructions = block.Instructions;
-      var first = -1;
-      var last = -1;
-      for (var i = 0; i < instructions.Count; ++i)
-        if (instructions[i] is IrInlineAsm) {
-          if (first < 0)
-            first = i;
-          last = i;
-        }
-      if (first < 0)
-        continue;
-      ++blocksWithAsm;
-      // within one block the asm has to be one unbroken run: anything computed between two of them
-      // is something the allocator may put in a register the second one expects to still hold.
-      for (var i = first; i <= last; ++i)
-        if (instructions[i] is not IrInlineAsm)
-          return true;
-    }
-    return blocksWithAsm > 1;
-  }
-
-  /// <summary>
   /// Selects a function into machine IR, reporting <paramref name="declineReason"/> - the construct that
   /// stopped it - when the result is null. The reason is what the coverage census reads to rank which
   /// widening buys the most eligible functions, so it names the IR construct, not the failing routine.
@@ -145,10 +101,6 @@ public sealed partial class InstructionSelector {
     declineReason = null;
     if (fn.IsDeclaration || fn.Entry is null) {
       declineReason = "declaration";
-      return null;
-    }
-    if (SeparatedInlineAsm(fn)) {
-      declineReason = "inline asm: two blocks with BASIC code between them (register state spans it)";
       return null;
     }
     var selector = new InstructionSelector(target);
@@ -1135,12 +1087,32 @@ public sealed partial class InstructionSelector {
   /// It declares every register clobbered and memory both read and written. That is not a guess about
   /// what the text does - it is a refusal to guess: the allocator keeps nothing live across it and the
   /// scheduler moves nothing over it.
+  ///
+  /// <para>
+  /// The clobber list is only half the story, though, and the other half is the descriptor's
+  /// <see cref="AsmRegisterEffect"/>. "Nothing of yours survives this block" does not say "something of
+  /// mine must", so a countdown set in <c>CX</c> by one <c>!</c> statement and decremented by the next
+  /// one across a BASIC statement was destroyed by whatever the allocator put there in between. The
+  /// text is therefore READ - by the assembler that emits it, not by a scan - for the registers it
+  /// defines and consumes, and <c>LinearScanAllocator.AsmHeldByIndex</c> denies those to everyone else
+  /// over exactly the stretch between the two.
+  /// </para>
+  ///
+  /// <para>
+  /// A block that writes <c>BP</c> or <c>SP</c> declines instead. Those are not values in the register
+  /// file, they ARE the frame this back end laid out - every local, spill slot and parameter is
+  /// addressed through <c>BP</c> - so there is no allocation that could honour such a block.
+  /// </para>
   /// </summary>
   private bool SelectInlineAsm(IrInlineAsm asm) {
     if (!asm.Routable)
       return this.Decline("inline asm: a name in it is not a variable this pass could bind");
 
-    var operands = new List<MOperand> { new MOperand.InlineAsmText(asm.Text, asm.Names) };
+    var effect = TextAssembler.Analyze(asm.Text, new AsmNameKinds(asm));
+    if (effect.Defines.Contains(Reg.BP) || effect.Defines.Contains(Reg.SP))
+      return this.Decline("inline asm: the block writes BP or SP, which the frame is addressed through");
+
+    var operands = new List<MOperand> { new MOperand.InlineAsmText(asm.Text, asm.Names, effect) };
     foreach (var pointer in asm.Operands) {
       if (this.AsmCell(pointer) is not { } cell)
         return false;
@@ -1180,6 +1152,35 @@ public sealed partial class InstructionSelector {
   private MOperand? DeclineCell(IrValue pointer) {
     this.Decline($"inline asm: '{pointer.Name ?? pointer.GetType().Name}' has no frame cell to name");
     return null;
+  }
+
+  /// <summary>
+  /// Answers the effect analysis' questions about identifiers the same way <c>MachineEmitter</c>'s own
+  /// resolver will answer the real assembly: a name the lowering paired with a block is a code label,
+  /// any other bound name is storage, and an unbound one is a runtime export - code again.
+  ///
+  /// The VALUE it answers with is irrelevant (nothing is emitted here), but the KIND is not:
+  /// <c>JNZ [BP+0]</c> is not an instruction, so a label answered as memory fails the parse and the
+  /// statement reports itself as not understood - which would cost the very register promise this
+  /// analysis exists to make.
+  /// </summary>
+  private sealed class AsmNameKinds(IrInlineAsm asm) : IAsmSymbolResolver {
+
+    private readonly Assembler _labels = new();
+
+    public bool TryResolve(string name, out AsmSymbol symbol) {
+      var index = IndexOf(asm.Names, name);
+      var isCode = index < 0 || asm.Operands[index] is IrBlockAddress;
+      symbol = isCode ? AsmSymbol.OfLabel(this._labels.Lbl(name)) : AsmSymbol.OfMemory(Mem.Word(Reg.BP, 0));
+      return true;
+    }
+
+    private static int IndexOf(IReadOnlyList<string> names, string name) {
+      for (var i = 0; i < names.Count; ++i)
+        if (names[i].Equals(name, StringComparison.OrdinalIgnoreCase))
+          return i;
+      return -1;
+    }
   }
 
   private bool SelectStore(IrStore store, MBlock block) {

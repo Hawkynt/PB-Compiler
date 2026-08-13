@@ -96,7 +96,9 @@ public sealed class LivenessAnalysis {
       changed = false;
       for (var b = n - 1; b >= 0; --b) {
         var outSet = new HashSet<int>();
-        foreach (var s in blocks[b].Successors)
+        // including the edges an inline-asm jump makes: `!JNZ AddLoop` closes a loop the IR never drew
+        // an edge for, and a value live round it would otherwise die at its last LINEAR use
+        foreach (var s in blocks[b].SuccessorsWithAsmJumps())
           if (labelToBlock.TryGetValue(s, out var si))
             outSet.UnionWith(liveIn[si]);
         var inSet = new HashSet<int>(outSet);

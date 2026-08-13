@@ -19,12 +19,15 @@ namespace PowerBasic.Compiler.Tests.Backend;
 [TestFixture]
 public sealed class BackendInlineAsmTests {
 
-  private static string Run(string source, bool routed) {
+  private static string Run(string source, bool routed) => Run(source, routed, out _);
+
+  private static string Run(string source, bool routed, out bool ownsMain) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var cg = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = routed };
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
+    ownsMain = cg.BackendRoutedNames.Contains("main", StringComparer.OrdinalIgnoreCase);
     return Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|");
   }
 
@@ -146,13 +149,9 @@ public sealed class BackendInlineAsmTests {
   /// would print 1, and one whose target was mis-resolved would not run at all.
   ///
   /// <para>
-  /// The counter is a BASIC VARIABLE rather than CX, and that is not incidental: a register set by
-  /// one <c>!</c> statement does NOT survive an intervening BASIC statement on the routed path,
-  /// because the allocator is free to put a temporary in it and has no way to know the asm cared.
-  /// That is a separate defect, it has nothing to do with labels (a block with no label in it loses
-  /// CX the same way), and it is pinned by
-  /// <see cref="InlineAsm_GivenARegisterHeldAcrossABasicStatement_ThenTheTwoPathsDisagree"/> rather
-  /// than smuggled into this reading of the branch.
+  /// The counter is a BASIC VARIABLE rather than CX, which keeps this test about the branch: whether
+  /// a register survives the intervening BASIC statement is a separate promise, made by
+  /// <see cref="InlineAsm_GivenARegisterHeldAcrossABasicStatement_ThenTheRoutedPathKeepsIt"/>.
   /// </para>
   /// </summary>
   [Test]
@@ -174,20 +173,20 @@ public sealed class BackendInlineAsmTests {
   }
 
   /// <summary>
-  /// The open defect the test above steps around, written down so it fails the day it is fixed
-  /// rather than being discovered by a program: a register an <c>!</c> statement loads is destroyed
-  /// by the next BASIC statement on the routed path. The direct emitter computes through AX and so
-  /// leaves CX alone by luck rather than by contract; the back end's allocator picks CX for a
-  /// temporary and the asm's value is gone.
+  /// A register one <c>!</c> statement loads and a later one reads, with a BASIC statement in
+  /// between - the promise an asm block could not make until it could say which registers it defines
+  /// and for how long.
   ///
   /// <para>
-  /// No label is involved - this is what binding one made REACHABLE for LOWLEVEL.BAS, not what it
-  /// introduced. LOWLEVEL still declines before it can be bitten (a 32-bit LShr), so the corpus
-  /// differential does not yet see this; whoever removes that decline must fix this first.
+  /// The two paths agree, and what matters is WHY. They used to agree because the routed side declined
+  /// the whole function, so both numbers came from the same compiler; now the module body really is
+  /// the back end's - asserted here, or this would go on passing the day something quietly took the
+  /// routing away - and it keeps <c>CX</c> because the allocator was told the text is holding it,
+  /// rather than because the direct emitter happens to compute through AX.
   /// </para>
   /// </summary>
   [Test]
-  public void InlineAsm_GivenARegisterHeldAcrossABasicStatement_ThenTheTwoPathsDisagree() {
+  public void InlineAsm_GivenARegisterHeldAcrossABasicStatement_ThenTheRoutedPathKeepsIt() {
     const string source = """
       DIM n AS INTEGER
       DIM r AS INTEGER
@@ -198,13 +197,123 @@ public sealed class BackendInlineAsmTests {
       PRINT n; r
       """;
 
-    // Closed, and not by teaching the allocator to keep CX: the function DECLINES instead. An asm
-    // block still cannot say which registers it defines or for how long, so the shape that needs
-    // that promise is left to the direct emitter, which computes through AX and leaves CX alone.
-    // LOWLEVEL.BAS is the program that made this urgent - it printed 1 where 5 was right, and only
-    // reached the back end at all once two unrelated declines were widened.
-    Assert.That(Run(source, routed: true), Is.EqualTo("1  5"));
-    Assert.That(Run(source, routed: false), Is.EqualTo(Run(source, routed: true)));
+    var routed = Run(source, routed: true, out var ownsMain);
+
+    Assert.That(ownsMain, Is.True, "the back end compiled the module body, so the answer below is its own");
+    Assert.That(routed, Is.EqualTo("1  5"), "the 5 the asm put in CX survived n = n + 1");
+    Assert.That(Run(source, routed: false), Is.EqualTo(routed));
+  }
+
+  /// <summary>
+  /// ...and what still declines: a register carried across something that DESTROYS it. A runtime call
+  /// owns the whole caller-saved file, so no allocation can keep the 5 in <c>CX</c> over the
+  /// <c>PRINT</c> - there is nothing to choose, and the function goes back to the direct emitter whole
+  /// rather than being compiled to a guess.
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenARegisterHeldAcrossACall_ThenAllocationDeclines() {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("""
+      DIM n AS INTEGER
+      DIM r AS INTEGER
+      n = 7
+      ! MOV CX, 5
+      PRINT n
+      ! MOV r, CX
+      PRINT r
+      """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    var module = IrLowering.TryLowerModule(model, out var why);
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+    IrPassManager.Standard().RunOnModule(module!);
+
+    var main = module!.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
+    var m = InstructionSelector.TrySelect(main, out var selectionReason);
+    Assert.That(m, Is.Not.Null, $"selection declined: {selectionReason}");
+
+    MachineScheduler.Schedule(m!);
+    Assert.That(LinearScanAllocator.Allocate(m!, out var reason), Is.Null);
+    Assert.That(reason, Does.Contain("CX").And.Contain("destroys it"));
+  }
+
+  /// <summary>
+  /// The flags are the same kind of promise as a register and are carried the same way - which is why
+  /// the adjacent <c>! DEC c</c> / <c>! JNZ</c> pair above works. Put a comparison between them and
+  /// the promise cannot be kept: nothing can be ALLOCATED to the flags, so there is no reservation to
+  /// make and the function declines.
+  ///
+  /// <para>
+  /// It takes a comparison, and that is worth knowing rather than incidental: a plain <c>n = n + 1</c>
+  /// between the two is x87 loads and stores here, which leave the integer flags alone, so that
+  /// program keeps its promise and routes.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenFlagsHeldAcrossAComparison_ThenAllocationDeclines() {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("""
+      DIM n AS INTEGER
+      DIM c AS INTEGER
+      n = 0
+      c = 5
+      AddLoop:
+      ! DEC c
+      IF n = 0 THEN n = 1
+      ! JNZ AddLoop
+      PRINT n
+      """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    var module = IrLowering.TryLowerModule(model, out var why);
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+
+    var main = module!.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
+    var m = InstructionSelector.TrySelect(main, out var selectionReason);
+    Assert.That(m, Is.Not.Null, $"selection declined: {selectionReason}");
+
+    MachineScheduler.Schedule(m!);
+    Assert.That(LinearScanAllocator.Allocate(m!, out var reason), Is.Null);
+    Assert.That(reason, Does.Contain("flags"));
+  }
+
+  /// <summary>
+  /// A block that writes <c>BP</c> declines at selection. <c>BP</c> is not a value in the register
+  /// file, it is the frame every local, spill slot and parameter of a routed function is addressed
+  /// through, so no allocation could honour such a block.
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenAWriteToTheFramePointer_ThenSelectionDeclines() {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("""
+      DIM n AS INTEGER
+      n = 1
+      ! MOV BP, AX
+      PRINT n
+      """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    var module = IrLowering.TryLowerModule(model, out var why);
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+
+    var main = module!.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
+    Assert.That(InstructionSelector.TrySelect(main, out var reason), Is.Null);
+    Assert.That(reason, Does.Contain("BP or SP"));
+  }
+
+  /// <summary>
+  /// The corpus program the whole promise was written for, compiled and run end to end on both paths.
+  /// LOWLEVEL.BAS counts <c>CX</c> down across <c>n = n + 1</c> and prints the iteration count, so its
+  /// second line reads 5 only if the countdown survived the BASIC statement - the routed path printed
+  /// 1 for it, which is what a register the allocator felt free to reuse looks like from the outside.
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenLowLevelBas_ThenTheBackEndOwnsItAndTheLoopStillRunsFiveTimes() {
+    var root = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
+    var file = Path.Combine(root, "tests", "LOWLEVEL.BAS");
+    Assume.That(File.Exists(file), $"no corpus program at {file}");
+    var source = File.ReadAllText(file);
+
+    var routed = Run(source, routed: true, out var ownsMain);
+
+    Assert.That(ownsMain, Is.True, "the module body routes rather than falling back");
+    Assert.That(routed.Split('|')[1].Trim(), Is.EqualTo("5"), "the asm countdown drove five BASIC iterations");
+    Assert.That(routed, Is.EqualTo(Run(source, routed: false)));
+    Assert.That(routed.Replace("|", "\n").Replace(" ", ""),
+      Is.EqualTo(File.ReadAllText(Path.Combine(root, "tests", "LOWLEVEL.expected"))
+        .Trim().Replace("\r\n", "\n").Replace(" ", "")),
+      "...and the whole program still matches its golden output");
   }
 
   /// <summary>
@@ -238,32 +347,19 @@ public sealed class BackendInlineAsmTests {
     Assert.That(jump.Operands.OfType<IrBlockAddress>().Single().Block,
       Is.SameAs(main.AddressTakenBlocks().Single()), "the target block, and it is address-taken");
 
-    // This particular program keeps its countdown in CX ACROSS `n = n + 1`, so the function itself
-    // declines - see the test above. The label machinery is read from one whose asm is adjacent,
-    // which is the shape that does route.
-    Assert.That(InstructionSelector.TrySelect(main, out var reason), Is.Null);
-    Assert.That(reason, Does.Contain("inline asm"));
-
-    var adjacent = Binder.Bind(Parser.Parse(Lexer.Tokenize("""
-      DIM n AS INTEGER
-      DIM c AS INTEGER
-      n = 0
-      c = 5
-      AddLoop:
-      n = n + 1
-      ! DEC c
-      ! JNZ AddLoop
-      PRINT n
-      """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
-    var loop = IrLowering.TryLowerModule(adjacent, out _)!.Functions
-      .First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
-    var m = InstructionSelector.TrySelect(loop, out var loopReason);
-    Assert.That(m, Is.Not.Null, $"selection declined: {loopReason}");
+    // This program keeps its countdown in CX ACROSS `n = n + 1`, which used to decline the whole
+    // function; the allocator now knows the text is holding CX there, so it selects and routes like
+    // any other - and the jump target is still a code label rather than a frame cell.
+    var m = InstructionSelector.TrySelect(main, out var reason);
+    Assert.That(m, Is.Not.Null, $"selection declined: {reason}");
     var block = m!.AllInstructions.Single(i => i.Opcode == MOpcode.InlineAsm
       && ((MOperand.InlineAsmText)i.Operands[0]).Names.Contains("AddLoop"));
     Assert.That(block.Operands[1], Is.InstanceOf<MOperand.BlockOffset>(),
       "a jump target is a code label, not a frame cell");
-    Assert.That(LinearScanAllocator.Allocate(m), Is.Not.Null, "and it allocates, so the function routes");
+
+    MachineScheduler.Schedule(m);
+    Assert.That(LinearScanAllocator.Allocate(m, out var noRegisters), Is.Not.Null,
+      $"and it allocates, so the function routes: {noRegisters}");
   }
 
   /// <summary>

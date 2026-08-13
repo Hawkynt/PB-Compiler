@@ -9,7 +9,7 @@ namespace PowerBasic.Compiler.Asm;
 /// numeric literals use PB notation (decimal, <c>&amp;H</c>, <c>&amp;O</c>,
 /// <c>&amp;B</c>); <c>;</c> starts a comment.
 /// </summary>
-public sealed class TextAssembler(Assembler target) {
+public sealed partial class TextAssembler(Assembler target) {
 
   private readonly Assembler _target = target ?? throw new ArgumentNullException(nameof(target));
 
@@ -47,7 +47,7 @@ public sealed class TextAssembler(Assembler target) {
 
   #endregion
 
-  private sealed class LineParser {
+  private sealed partial class LineParser {
 
     private enum TokenKind { Identifier, Number, Comma, Colon, LBracket, RBracket, LParen, RParen, Plus, Minus, End }
 
