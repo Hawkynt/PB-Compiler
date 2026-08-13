@@ -625,9 +625,9 @@ Three things about it are worth carrying, each of which cost a wrong version fir
   none, `WordSizedRange` would keep its "the low half must be self-sufficient" opcode test and take the
   interval from the analysis instead of computing its own. That last wiring is NOT done.
 
-**A pre-existing miscompile turned up while measuring this, and it matters more than the assertions
-do:** the analysis makes traps disappear on purpose, so anything else that makes one disappear has to
-be told apart from it first.
+**Two pre-existing miscompiles turned up while measuring this, both in loop transforms, and one is
+still open.** They matter more than the assertions do: the analysis makes traps disappear on purpose,
+so anything else that makes one disappear has to be told apart from it first.
 
 * **`LoopUnroll` dropped a conditional preheader branch - FIXED.** It rewires the preheader to fall into
   the first unrolled copy by REPLACING its terminator, which is only right when that terminator is an
@@ -637,6 +637,28 @@ be told apart from it first.
   invisible until something puts a foldable condition in front of a countable loop, which eliding the
   bounds check does. `LoopUnroll.Match` now declines a non-`IrBr` preheader; the next sweep folds the
   condition and unrolls the survivor, so nothing is lost but the round trip.
+* **A `$ERROR OVERFLOW` trap is lost when `LoopUnswitch` clones a loop on the trap condition - OPEN,
+  and it is a routed miscompile rather than a quality gap.**
+
+  ```basic
+  $ERROR OVERFLOW ON
+  INPUT k%
+  FOR i% = 1 TO 100 : x% = k% + 1 : NEXT i%
+  ```
+
+  With `k% = 32767` the direct build prints `RUNTIME ERROR` and the routed build prints nothing. The
+  trap is present and reachable in the optimized IR - LICM hoists the invariant check out of the loop,
+  `LoopUnswitch` clones on it, and the true clone calls `rt_error(6)` - so the loss is below the IR.
+  Three things narrow it and are worth not re-establishing: it is not a polarity inversion (a
+  non-overflowing input correctly does not trap), it is not the range work (the same program built
+  from the tree before it behaves identically), and both straight-line overflow
+  (`INPUT k% : x% = k% + 1`) and a loop-VARIANT one (`x% = k% + i%`) trap correctly routed - which is
+  what leaves the hoist-and-unswitch shape.
+
+  `CountRaise6`/`CountRaise9` cannot be used to chase it. They count `B8 06 00`, which also matches an
+  entry in the MZ **relocation table** of every image, so a routed program with no raise at all still
+  scores 1 - and a routed raise does not score at all, because the routed path materializes
+  `rt_error`'s argument without a `MOV AX, imm`. Both halves of that were measured while chasing this.
 
 Four do not fit the table, and the first is not about quality at all.
 `Compile_GivenRegisterConventionWithLongParam_ThenDiagnostic` is the one to fix first: routing skips the
