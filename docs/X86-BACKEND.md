@@ -256,8 +256,9 @@ functions get genuine integer IR and the selector fires. The routing (`CodeGener
 
 - `BackendProcs` — `TryLowerModule` → standard IR passes → `IntegerRecovery` → standard passes →
   per-eligible-function `TrySelect` + `MachineScheduler.Schedule` + `LinearScanAllocator.Allocate`.
-- Eligible = a procedure with supported scalar BYVAL parameters/results, no procedure-local error
-  handling, and IR that fully selects + allocates. Unsupported constructs decline automatically. The back end owns the
+- Eligible = a procedure declared with the **default (BASIC/PASCAL) calling convention**, supported
+  scalar BYVAL parameters/results, no procedure-local error handling, and IR that fully selects +
+  allocates. Unsupported constructs decline automatically. The back end owns the
   **whole function via SSA** — no shared memory cells, so it never reads an optimizer-stale cell (the
   blocker the cell-sharing prototype hit).
 - The function is excluded from inlining (`CodeGenerator.cs:601` `isInlinable` predicate) and from the
@@ -265,6 +266,30 @@ functions get genuine integer IR and the selector fires. The routing (`CodeGener
   the call sites; `EmitBackendFunction` emits the standard prologue / argument loads / body / `RET n`.
 - Selection fixes for real IR: a register is materialized for an immediate `IMUL` multiplier (`a%*2`);
   argument vregs are numbered before phi vregs so argument `i` is vreg `i`.
+
+### One ABI, and the conventions that therefore cannot route (`CallingConventionTests`)
+
+`MachineEmitter.EmitFunction` implements exactly one calling convention: arguments pushed left to
+right at `[BP+4..]`, callee-cleans through `RET n`, nothing in a register. That is PowerBASIC's
+default (`BASIC`, and `PASCAL`, which is identical in every respect the frame cares about). The
+routing never asked, and every other convention was miscompiled the moment it routed:
+
+| declared | what routing produced |
+|---|---|
+| `WATCALL` / `FASTCALL` | `LayoutFrame` puts the leading parameters at NEGATIVE offsets, filled only by the direct prologue's `AX,DX,BX(,CX)` spill. The routed prologue has no spill, so the body reads its arguments out of an unwritten frame — the recursive probe printed ` 0` for a call that answers ` 13` |
+| `CDECL` / `STDCALL` | right-to-left push order. The routed call site pushes left to right into offsets laid out for the reverse, so the arguments swap — the same probe printed ` 12` |
+| `CDECL` | caller-cleans, contradicted by the routed epilogue's unconditional `RET n`: both sides pop the arguments |
+
+`IsBackendAbiConvention` is the gate, and it is written in terms of the two predicates the direct
+emitter already uses (`PushesRightToLeft`, `CallerCleansStack`) plus `IsRegisterConvention`, so a
+convention added later is excluded until someone states its stack discipline.
+
+The same omission cost a **diagnostic**. `HasUnsupportedRegisterParam` rejects a register-convention
+parameter that is not a single word (a `LONG`, a float, a UDT — the per-compiler size rules are
+deliberately not implemented), and it was raised inside `EmitProcedure`. Routing bypassed the whole
+function, so with `PBC_X_BACKEND=1` a program the compiler must reject compiled clean. The check now
+lives in `LayoutFrame`, which is the one function BOTH emission paths call: a diagnostic about the ABI
+belongs where the ABI is decided, not on one of the two sides that acts on it.
 
 ### The routed frame (`BackendFrameTests`)
 

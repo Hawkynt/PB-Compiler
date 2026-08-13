@@ -200,8 +200,21 @@ public sealed class CallingConventionTests {
     Assert.That(RunOptSpeed(source), Is.EqualTo(" 35\n"));
   }
 
-  [Test]
-  public void Compile_GivenRegisterConventionWithLongParam_ThenDiagnostic() {
+  private static (CodeGenerator Generator, byte[] Image) Compile(string source, bool routed) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model) { UseExperimentalBackend = routed };
+    return (generator, generator.EmitExecutable());
+  }
+
+  // Pinned for BOTH emission paths on purpose. The check used to live in the direct emitter's
+  // EmitProcedure, so with the x86-16 back end routing enabled (PBC_X_BACKEND / --x-backend) this
+  // program compiled clean - a rejected program silently accepted. It now sits in LayoutFrame, which
+  // both paths call.
+  [TestCase(true)]
+  [TestCase(false)]
+  public void Compile_GivenRegisterConventionWithLongParam_ThenDiagnostic(bool routed) {
     // a LONG does not fit the common-case word model; reject rather than silently miscompile
     const string source = """
       DECLARE FUNCTION f WATCALL (BYVAL x AS LONG) AS LONG
@@ -210,11 +223,69 @@ public sealed class CallingConventionTests {
         f = x
       END FUNCTION
       """;
-    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
-    var model = Binder.Bind(unit, Dialect.Pb36);
-    var generator = new CodeGenerator(model);
-    generator.EmitExecutable();
-    Assert.That(generator.Errors.Select(e => e.Message), Has.Some.Contains("word-sized"),
+    Assert.That(Compile(source, routed).Generator.Errors.Select(e => e.Message), Has.Some.Contains("word-sized"),
       "expected a diagnostic rejecting the non-word register-convention parameter");
+  }
+
+  /// <summary>
+  /// A procedure whose convention is not the one the x86-16 back end emits must stay with the direct
+  /// emitter. The back end's <c>MachineEmitter.EmitFunction</c> knows a single ABI - left-to-right
+  /// stack arguments at [BP+4..], callee-cleans - so routing WATCALL/FASTCALL (parameters laid out at
+  /// negative offsets only the direct prologue's register spill fills) or CDECL/STDCALL (reversed
+  /// push order, and CDECL's caller-cleans against the routed <c>RET n</c>) miscompiles the call.
+  /// </summary>
+  [TestCase("WATCALL")]
+  [TestCase("FASTCALL")]
+  [TestCase("CDECL")]
+  [TestCase("STDCALL")]
+  public void Compile_GivenNonDefaultConvention_WhenRoutingIsOn_ThenTheProcedureIsNotRouted(string convention) {
+    var source = $"""
+      DECLARE FUNCTION sub2 {convention} (BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
+      PRINT sub2(20, 7)
+      FUNCTION sub2 {convention} (BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
+        IF b <= 0 THEN
+          sub2 = a
+        ELSE
+          sub2 = sub2(a - 1, b - 1)
+        END IF
+      END FUNCTION
+      """;
+    var (routed, _) = Compile(source, routed: true);
+    Assert.That(routed.Errors, Is.Empty, "codegen: " + string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Not.Contain("sub2"),
+      $"{convention} is not the ABI the back end emits, so it must not be routed");
+  }
+
+  /// <summary>
+  /// The behavioural half of the routing rule, run on the in-process 8086 interpreter so it needs no
+  /// emulator: the recursion makes the self-call survive inlining, and every convention must answer
+  /// 13 whether routing is on or off. Before the fix the routed builds printed 0 (WATCALL/FASTCALL -
+  /// arguments read out of an unfilled frame) and 12 (CDECL/STDCALL - arguments swapped by the
+  /// reversed push order).
+  /// </summary>
+  [TestCase("WATCALL")]
+  [TestCase("FASTCALL")]
+  [TestCase("CDECL")]
+  [TestCase("STDCALL")]
+  [TestCase("")]
+  public void Execute_GivenRecursiveConventionFunction_WhenRoutedOrDirect_ThenSameResult(string convention) {
+    var source = $"""
+      DECLARE FUNCTION sub2 {convention} (BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
+      PRINT sub2(20, 7)
+      FUNCTION sub2 {convention} (BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
+        IF b <= 0 THEN
+          sub2 = a
+        ELSE
+          sub2 = sub2(a - 1, b - 1)
+        END IF
+      END FUNCTION
+      """;
+    var (routedGenerator, routedImage) = Compile(source, routed: true);
+    var (_, directImage) = Compile(source, routed: false);
+    Assert.That(routedGenerator.Errors, Is.Empty, "codegen: " + string.Join("; ", routedGenerator.Errors));
+    Assert.Multiple(() => {
+      Assert.That(Exec.Cpu8086.Run(directImage).Output.Trim(), Is.EqualTo("13"), "direct");
+      Assert.That(Exec.Cpu8086.Run(routedImage).Output.Trim(), Is.EqualTo("13"), "routed");
+    });
   }
 }
