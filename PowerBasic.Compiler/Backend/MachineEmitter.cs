@@ -199,6 +199,34 @@ public sealed class MachineEmitter {
           asm.Imul(this.Reg(ops[0]), this.Reg(ops[1]));
         break;
       case MOpcode.Lea: asm.Lea(this.Reg(ops[0]), this.Mem(ops[1])); break;
+      // the read-modify-write pair the peephole folds a load/add/store trio into - one instruction
+      // against the cell, and no register spent on a value nobody reads
+      case MOpcode.Inc:
+        if (ops[0] is MOperand.Register incReg)
+          asm.Inc(this.Resolve(incReg.Reg));
+        else
+          asm.Inc(this.Mem(ops[0]));
+        break;
+      case MOpcode.Dec:
+        if (ops[0] is MOperand.Register decReg)
+          asm.Dec(this.Resolve(decReg.Reg));
+        else
+          asm.Dec(this.Mem(ops[0]));
+        break;
+      // NEG is arithmetic AND a carry test in one: it sets CF for every operand but zero, which is the
+      // second half of the branchless SGN sequence
+      case MOpcode.Neg:
+        if (ops[0] is MOperand.Register negReg)
+          asm.Neg(this.Resolve(negReg.Reg));
+        else
+          asm.Neg(this.Mem(ops[0]));
+        break;
+      case MOpcode.Not:
+        if (ops[0] is MOperand.Register notReg)
+          asm.Not(this.Resolve(notReg.Reg));
+        else
+          asm.Not(this.Mem(ops[0]));
+        break;
       case MOpcode.Cwd: asm.Cwd(); break;
       case MOpcode.Idiv:
         if (this.ToSource(ops[0]) is Mem divisor)
@@ -248,6 +276,16 @@ public sealed class MachineEmitter {
       case MOpcode.Fstp: asm.Fstp(this.Mem(ops[0])); break;
       case MOpcode.Fild: asm.Fild(this.Mem(ops[0])); break;
       case MOpcode.Fistp: asm.Fistp(this.Mem(ops[0])); break;
+      // the memory forms: one operand, read straight out of its cell into the operation
+      case MOpcode.Fadd: asm.Fadd(this.Mem(ops[0])); break;
+      case MOpcode.Fsub: asm.Fsub(this.Mem(ops[0])); break;
+      case MOpcode.Fmul: asm.Fmul(this.Mem(ops[0])); break;
+      case MOpcode.Fdiv: asm.Fdiv(this.Mem(ops[0])); break;
+      case MOpcode.Fcomp: asm.Fcomp(this.Mem(ops[0])); break;
+      case MOpcode.Fiadd: asm.Fiadd(this.Mem(ops[0])); break;
+      case MOpcode.Fisub: asm.Fisub(this.Mem(ops[0])); break;
+      case MOpcode.Fimul: asm.Fimul(this.Mem(ops[0])); break;
+      case MOpcode.Fidiv: asm.Fidiv(this.Mem(ops[0])); break;
       case MOpcode.Faddp: asm.Faddp(); break;
       case MOpcode.Fsubp: asm.Fsubp(); break;
       case MOpcode.Fmulp: asm.Fmulp(); break;

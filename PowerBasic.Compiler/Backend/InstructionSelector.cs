@@ -160,6 +160,8 @@ public sealed partial class InstructionSelector {
         else
           this._vregs[phi] = this.FreshVreg(phi.Type);
 
+    this.CollectIdioms(fn);
+
     var mblocks = new Dictionary<string, MBlock>();
     foreach (var block in SelectionOrder(fn)) {
       var mblock = new MBlock(block.Label);
@@ -176,6 +178,8 @@ public sealed partial class InstructionSelector {
         }
         if (ReferenceEquals(instr, folded))
           continue;                 // the compare is folded into the conditional branch below
+        if (this._consumed.Contains(instr))
+          continue;                 // absorbed by a multi-instruction pattern that emits it later
         if (!this.SelectInstruction(instr, mblock))
           return null;
       }
@@ -188,6 +192,11 @@ public sealed partial class InstructionSelector {
       return null;
 
     this._function.VirtualRegisterCount = this._nextVreg;
+    // the encoding-level idioms, which only exist once every IR instruction has been given its own
+    // virtual register (see Peephole). Gated on the objective: with the optimizer off this stage must
+    // write what it would have written.
+    if (this._target.Optimize)
+      Peephole.Run(this._function);
     return this._function;
   }
 
@@ -612,6 +621,8 @@ public sealed partial class InstructionSelector {
   private bool SelectBinary(IrBinary bin, MBlock block) {
     if (bin.IsFloatOp)
       return this.Decline($"binary: float {bin.Op}");
+    if (this.TrySelectBranchlessAbs(bin) || this.TrySelectBranchlessSgn(bin))
+      return true;
     if (bin.Op is IrBinaryOp.SDiv or IrBinaryOp.SRem)
       return this.SelectDivide(bin, block);
     // A 32-bit UNSIGNED divide has its own runtime entries beside the signed pair, on the identical
@@ -1380,7 +1391,7 @@ public sealed partial class InstructionSelector {
   /// 32-bit order is decided by the high half and the low half is only a magnitude.
   /// </summary>
   private bool SelectWideCmpValue(IrCmp cmp) {
-    if (WideConditions(cmp.Pred) is not { } conditions)
+    if (WideConditions(this.PredicateOf(cmp)) is not { } conditions)
       return this.Decline($"compare as a value: 32-bit {cmp.Pred}");
     if (!this.TryOperandPair(cmp.Lhs, out var lhsLo, out var lhsHi)
         || !this.TryOperandPair(cmp.Rhs, out var rhsLo, out var rhsHi))
@@ -1448,8 +1459,9 @@ public sealed partial class InstructionSelector {
       return this.SelectFloatCmpValue(cmp);
     if (IsWide(cmp.Lhs.Type))
       return this.SelectWideCmpValue(cmp);
-    if (MapPredicate(cmp.Pred) is not { } cc)
-      return this.Decline($"compare as a value: {cmp.Pred}");
+    var pred = this.PredicateOf(cmp);
+    if (MapPredicate(pred) is not { } cc)
+      return this.Decline($"compare as a value: {pred}");
     if (!this.TryOperand(cmp.Lhs, out var lhs) || !this.TryOperand(cmp.Rhs, out var rhs))
       return false;
     // CMP wants a register on the left. The same two answers the BRANCH path already gives: mirror
@@ -1459,7 +1471,7 @@ public sealed partial class InstructionSelector {
     if (lhs is not MOperand.Register) {
       if (rhs is MOperand.Register) {
         (lhs, rhs) = (rhs, lhs);
-        cc = MapPredicate(Mirrored(cmp.Pred))!.Value;
+        cc = MapPredicate(Mirrored(pred))!.Value;
       } else {
         var held = this.FreshVreg(cmp.Lhs.Type);
         var into = new MOperand.Register(held);
@@ -1477,6 +1489,8 @@ public sealed partial class InstructionSelector {
   private bool SelectFloatCmpValue(IrCmp cmp) {
     if (MapFloatPredicate(cmp.Pred) is not { } cc)
       return this.Decline($"compare as a value: float {cmp.Pred}");
+    if (this.TrySelectFloatMemoryCompare(cmp, cc))
+      return true;
     if (!this.TryFloatOperand(cmp.Lhs, out var lhs) || !this.TryFloatOperand(cmp.Rhs, out var rhs))
       return false;
 
@@ -1542,12 +1556,17 @@ public sealed partial class InstructionSelector {
     if (sel.Type.IsFloat)
       return this.Decline($"select: {sel.Type} result");
     var wide = IsWide(sel.Type);
+    // the min/max canonicalization may have inverted the predicate this select's condition emits, in
+    // which case the arms go with it the other way round (see InstructionSelector.Idioms)
+    var (whenTrue, whenFalse) = this.HasSwappedArms(sel)
+      ? (sel.IfFalse, sel.IfTrue)
+      : (sel.IfTrue, sel.IfFalse);
     MOperand ifTrue, ifFalse, ifTrueHi = null!, ifFalseHi = null!;
     if (wide) {
-      if (!this.TryOperandPair(sel.IfTrue, out ifTrue, out ifTrueHi)
-          || !this.TryOperandPair(sel.IfFalse, out ifFalse, out ifFalseHi))
+      if (!this.TryOperandPair(whenTrue, out ifTrue, out ifTrueHi)
+          || !this.TryOperandPair(whenFalse, out ifFalse, out ifFalseHi))
         return false;
-    } else if (!this.TryOperand(sel.IfTrue, out ifTrue) || !this.TryOperand(sel.IfFalse, out ifFalse)) {
+    } else if (!this.TryOperand(whenTrue, out ifTrue) || !this.TryOperand(whenFalse, out ifFalse)) {
       return false;
     }
     if (!this.TryOperand(sel.Condition, out var cond))
@@ -1767,6 +1786,11 @@ public sealed partial class InstructionSelector {
           && cast.Value is IrCast { Op: IrCastOp.FPToSI, Type: { IsInteger: true, Bits: 64 } } inner
           && inner.Value.Type.IsIeeeFloat && inner.Users.Count == 1:
         return this.SelectRoundTripThroughQword(inner, cast);
+      // ...unless every consumer is a floating operation that can read the INTEGER out of memory, in
+      // which case the conversion is the operation's own and all this leaves behind is the cell to
+      // read it from (see InstructionSelector.Idioms)
+      case IrCastOp.SIToFP when to.IsIeeeFloat && this.StagesAsInteger(cast):
+        return true;
       case IrCastOp.SIToFP when to.IsIeeeFloat:
         return this.SelectIntToFloat(cast);
       // The same routine: it stages an unsigned source one size larger with the extra half zeroed,
@@ -2836,6 +2860,8 @@ public sealed partial class InstructionSelector {
       return this.Decline("floating point: MBF is not an x87 format");
     if (!_floatOps.TryGetValue(bin.Op, out var opcode))
       return this.Decline($"floating point: {bin.Op}");
+    if (this.TrySelectFloatMemoryBinary(bin))
+      return true;
     if (!this.TryFloatOperand(bin.Lhs, out var lhs) || !this.TryFloatOperand(bin.Rhs, out var rhs))
       return false;
 
