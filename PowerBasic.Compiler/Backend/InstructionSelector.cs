@@ -2545,10 +2545,11 @@ public sealed partial class InstructionSelector {
   /// A value as a WORD operand, narrowing a 32-bit one where that is sound.
   ///
   /// The IR types several things i32 that the runtime wants in a word register - a byte count, a PB
-  /// file number, an error code. Taking the low half is only sound when the high half is known to
-  /// carry nothing, which is exactly two cases: a constant that fits, and a value that was WIDENED
-  /// from 16 bits in the first place, where the narrowing simply undoes the extension. Anything else
-  /// declines rather than silently dropping the top word.
+  /// file number, a character code. Taking the low half is only sound when the high half is known to
+  /// carry nothing. Three shapes say so outright: a constant that fits, a value that was WIDENED from
+  /// 16 bits in the first place, and a runtime answer the ABI table declares a widened word. The
+  /// fourth is COMPUTED - see <see cref="WordSizedRange"/> - and it is the one that keeps selection
+  /// from depending on the optimizer. Anything else declines rather than silently dropping the top word.
   /// </summary>
   private bool TryWordOperand(IrValue value, string what, out MOperand operand) {
     operand = null!;
@@ -2592,13 +2593,141 @@ public sealed partial class InstructionSelector {
       IrCast { Op: IrCastOp.SExt or IrCastOp.ZExt } cast when !IsWide(cast.Value.Type) => cast.Value,
       _ => null,
     };
-    if (narrowed is null)
-      return this.Decline($"call: {what} (the IR types it 32-bit)");
+    if (narrowed is null) {
+      // The last chance before declining: arithmetic the selector can PROVE stays inside a word, whose
+      // low half is therefore the whole value. The wide form is still selected - this takes the low
+      // register of the pair it produced, which is exactly the 16-bit result, because the low half of
+      // an add/sub/and/or/xor depends only on the low halves of its operands.
+      if (WordSizedRange(value, _NARROWING_DEPTH) is not { } range
+          || range.Lo < short.MinValue || range.Hi > ushort.MaxValue)
+        return this.Decline($"call: {what} (the IR types it 32-bit)");
+      return this.TryOperandPair(value, out operand, out _);
+    }
     if (narrowed is IrConstantInt fits) {
       operand = new MOperand.Immediate(fits.Value);
       return true;
     }
     return this.TryOperand(narrowed, out operand);
+  }
+
+  /// <summary>
+  /// How far the word-size proof walks an expression before giving up. Every step is a real IR
+  /// operation, so a bound this small costs nothing a BASIC subscript or character code ever reaches,
+  /// and it keeps a shared sub-expression from being re-proved exponentially.
+  /// </summary>
+  private const int _NARROWING_DEPTH = 8;
+
+  /// <summary>
+  /// The interval a 32-bit value is PROVABLY confined to, or null when the selector cannot say - the
+  /// proof obligation behind narrowing an i32 to one word register.
+  ///
+  /// <para>
+  /// <b>The rule.</b> A value narrows only when narrowing cannot change what the consumer reads, and
+  /// the consumer here is a 16-bit register: it cannot see more than sixteen bits whatever is done.
+  /// So two things have to hold together, and each on its own is worthless.
+  /// </para>
+  /// <list type="number">
+  ///   <item><b>The low half must be self-sufficient.</b> Only operations whose low sixteen bits are a
+  ///   function of their operands' low sixteen bits qualify - <c>add</c>, <c>sub</c>, <c>and</c>,
+  ///   <c>or</c>, <c>xor</c>. A shift, a divide and a comparison do NOT commute with truncation, and
+  ///   neither does a LOAD: the high half of a value read out of a LONG variable is real data. A
+  ///   multiply would qualify on this count and is left out on the second one - no interval a product
+  ///   of two word-sized operands can be given fits a word often enough to be worth the arm.</item>
+  ///   <item><b>The value must fit.</b> Every leaf contributes a known interval - a constant its own
+  ///   value, a <c>sext</c>/<c>zext</c> from i8/i16 the span of the type it was widened from - and the
+  ///   operations propagate those intervals. The result must land inside
+  ///   <c>[short.MinValue, ushort.MaxValue]</c>, which is the same window the constant arm above
+  ///   already accepts: everything in it is carried whole by one word, signed at one end and unsigned
+  ///   at the other, and the caller decides which - as it already does for an immediate.</item>
+  /// </list>
+  ///
+  /// <para>
+  /// The second obligation is what makes this conservative rather than clever. <c>64 + i%</c> proves
+  /// out at <c>[-32704, 32831]</c> and narrows; <c>i% + j%</c> spans <c>[-65536, 65534]</c> and does
+  /// not, and neither does <c>i% - j%</c>, whose borrow reaches <c>-65535</c>. A one-word answer for
+  /// those would be a silent miscompile, so they keep their register pair and the caller declines.
+  /// </para>
+  ///
+  /// <para>
+  /// Where the interval overhangs the SIGNED word - the case <c>64 + i%</c> is in - the narrowed word
+  /// is what the direct emitter produces anyway: PB computes <c>64 + i%</c> in 16 bits and wraps, and
+  /// the low half of the 32-bit sum IS that wrapped result, bit for bit. Fidelity is the reason the
+  /// window is the union of the two words rather than either one alone.
+  /// </para>
+  /// </summary>
+  private static (long Lo, long Hi)? WordSizedRange(IrValue value, int depth) {
+    if (depth <= 0)
+      return null;
+    switch (value) {
+      // The bound is not about what fits a word - the caller decides that - it is about what fits the
+      // ARITHMETIC below: intervals are added and subtracted, and a 32-bit literal carried as a long
+      // wider than 32 bits could sum past a long's end and come back looking small.
+      case IrConstantInt { Value: >= int.MinValue and <= int.MaxValue } c:
+        return (c.Value, c.Value);
+      // i1 is deliberately absent: the IR reads a bool as 0/1 while this target holds BASIC truth as a
+      // full -1/0 word, so a zext of one is the one widening whose low half is NOT the IR's value.
+      case IrCast { Op: IrCastOp.SExt or IrCastOp.ZExt } cast
+          when cast.Value.Type is { IsInteger: true, Bits: 8 or 16 } source: {
+        var span = 1L << source.Bits;
+        return cast.Op == IrCastOp.SExt ? (-(span / 2), span / 2 - 1) : (0L, span - 1);
+      }
+      case IrBinary bin when IsWide(bin.Type): {
+        // An operand with NO interval is not fatal for AND, which is why the two sides travel as
+        // nullables: a mask bounds the result on its own, however unknown the value it masks.
+        var lhs = WordSizedRange(bin.Lhs, depth - 1);
+        var rhs = WordSizedRange(bin.Rhs, depth - 1);
+        if (bin.Op == IrBinaryOp.And)
+          return MaskedRange(lhs, rhs);
+        if (lhs is not { } left || rhs is not { } right)
+          return null;
+        return bin.Op switch {
+          IrBinaryOp.Add => (left.Lo + right.Lo, left.Hi + right.Hi),
+          IrBinaryOp.Sub => (left.Lo - right.Hi, left.Hi - right.Lo),
+          IrBinaryOp.Or or IrBinaryOp.Xor => MergedBitsRange(left, right),
+          _ => null,
+        };
+      }
+      default:
+        return null;
+    }
+  }
+
+  /// <summary>
+  /// The interval of <c>a AND b</c>. ONE non-negative operand is enough, and that is the whole point
+  /// of the arm: <c>x AND m</c> for <c>0 &lt;= m</c> clears every bit above m's highest whatever x is,
+  /// so the result is in <c>[0, m]</c> even when x is a LONG read out of storage whose high half is
+  /// real data. The AND has already discarded exactly what the narrowing would. With neither operand
+  /// known non-negative there is no bound to give - <c>-1 AND -1</c> is -1, sign bits and all - so the
+  /// proof stops.
+  /// </summary>
+  private static (long Lo, long Hi)? MaskedRange((long Lo, long Hi)? lhs, (long Lo, long Hi)? rhs) {
+    var left = lhs is { Lo: >= 0 } a ? a.Hi : (long?)null;
+    var right = rhs is { Lo: >= 0 } b ? b.Hi : (long?)null;
+    return (left, right) switch {
+      (not null, not null) => (0L, System.Math.Min(left.Value, right.Value)),
+      (not null, null) => (0L, left.Value),
+      (null, not null) => (0L, right.Value),
+      _ => null,
+    };
+  }
+
+  /// <summary>
+  /// The interval of <c>a OR b</c> / <c>a XOR b</c>: with both operands non-negative the result cannot
+  /// have a bit above the widest one either of them can have, so it is bounded by that bit width's
+  /// mask. A negative operand makes the result negative and the bound meaningless, so the proof stops.
+  /// </summary>
+  private static (long Lo, long Hi)? MergedBitsRange((long Lo, long Hi) lhs, (long Lo, long Hi) rhs) {
+    if (lhs.Lo < 0 || rhs.Lo < 0)
+      return null;
+    var widest = System.Math.Max(lhs.Hi, rhs.Hi);
+    // Above a word the mask is above a word too and the caller declines anyway; stopping here also
+    // keeps the doubling below away from the end of a long, where it would wrap and never terminate.
+    if (widest > ushort.MaxValue)
+      return null;
+    var mask = 0L;
+    while (mask < widest)
+      mask = mask * 2 + 1;
+    return (0L, mask);
   }
 
   /// <summary>Routes the console print routines at a PB file number (<c>rt_fselect</c>).</summary>

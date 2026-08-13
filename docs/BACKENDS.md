@@ -244,6 +244,40 @@ optimizer OFF, and it passes routed. What would be a real problem is an optimiza
 observable, and that is exactly what the battery is watching for. Worth knowing before reading
 `--no-optimize` as "nothing ran".
 
+**Selection used to be gated on the optimizer's AGGRESSIVENESS, which is a different and worse
+thing, and that is now fixed.** The observation above is about behaviour; this one was about
+coverage. `CHR$(64 + i%)` reaches `rt_str_chr` as `add i32 64, (sext i16 %i)`, and the argument slot
+is one word register - so the selector declined it, and the only reason the corpus did not notice is
+that `LoopUnroll` unrolled every instance until the character code was a literal. A back end whose
+coverage is a function of how hard the optimizer tried cannot be reasoned about: the same function
+routes or does not depending on a trip count.
+
+`InstructionSelector.WordSizedRange` is the fix, and the proof obligation is the whole of it. A
+32-bit value narrows to one word only when narrowing cannot change what the consumer reads, which
+takes two things at once. The operation must be one whose low sixteen bits are a function of its
+operands' low sixteen bits - `add`, `sub`, `and`, `or`, `xor`, the ones that commute with truncation;
+a shift, a divide and a LOAD do not. And the value must FIT: every leaf contributes an interval (a
+constant its own value, a `sext`/`zext` the span of the type it was widened from), the operations
+propagate them, and the result has to land in `[short.MinValue, ushort.MaxValue]` - the same window
+the constant arm already accepted, one word wide with the caller choosing the sign. `64 + i%` proves
+out at `[-32704, 32831]` and narrows; `i% - j%` reaches `-65535` and keeps its register pair. The
+`and` arm is the one that does not need both sides: `x AND 255` is in `[0, 255]` however unknown `x`
+is, because the mask has already discarded exactly what the narrowing would.
+
+Where the interval overhangs the SIGNED word, the narrowed word is what the direct emitter produces
+anyway - PB computes `64 + i%` in sixteen bits and wraps, and the low half of the 32-bit sum is that
+wrapped result bit for bit. That is why the window is the union of the two words rather than either
+one alone.
+
+The measurement is `BackendWordNarrowingTests`: the seven `BackendArrayElementTests` programs put
+through a deliberately weak pipeline (promote, combine, propagate, collect, tidy the CFG, no
+unrolling). Four of the seven declined before, all four on that one message; all seven select and
+allocate now. Corpus coverage under the FULL pipeline is unchanged at 261 of 262 - the optimizer was
+already rescuing every corpus instance, which is precisely why this had gone unnoticed - so the whole
+gain is that selection no longer depends on it. This is a narrow, local version of what
+`CodeGen/IntervalRange.cs` does for the direct emitter; the note at the end of this document about
+feeding those range facts into the IR is still the general answer.
+
 **2. Fidelity - the routed path agreeing with the direct one everywhere. DONE.** The differential
 battery run with `PBC_X_BACKEND=1` scores **504 of 504** against the genuine vintage compilers -
 the same score the direct path gets. Every program the back end owns produces output the oracle
