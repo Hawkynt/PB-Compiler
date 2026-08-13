@@ -323,10 +323,11 @@ and behavioural equivalence say a function CAN be routed; neither says anything 
 routing it. Making pb36 route by default - the natural next step, and the one this document used to
 imply was all that remained - failed **109 tests**. Each family closed since then moved it:
 `Ir/Passes/TailRecursion.cs` took it to 96, the string passes to 92, the SELECT dispatch family to
-**85**. Those figures were each measured on the tree their author had, and the branches landed
-separately - so treat the chain as the shape of the progress and re-measure the number on the merged
-tree before quoting it. The count is the measure of the gate; the composition is what says which work
-is left:
+**85**, and the fixture barrier below to **73** (measured on a merged tree: 80 before the barrier fix,
+73 after). Those figures were otherwise each measured on the tree their author had, and the branches
+landed separately - so treat the chain as the shape of the progress and re-measure the number on the
+merged tree before quoting it. The count is the measure of the gate; the composition is what says which
+work is left:
 
 * **most are assertions about emitted code** and read like a list of what pb36 is for: a string appended
   in place rather than reallocated, a SELECT dispatched through a table or a perfect hash instead of a
@@ -475,15 +476,33 @@ inherit them.
 
 **Two things the count hides, both found by taking the flip seriously rather than by reading code.**
 
-* **An empty `SUB` is not an optimization barrier for the IR pipeline.** Most of the `Emit_Given*`
-  expectations keep their operands opaque by passing them to `SUB T(a%)` with an empty body. The
-  direct emitter cannot see through that; the inliner can, and once `T` is inlined the stores are dead
-  and the whole program folds to nothing. `x% = 11 : T x% : y% = x% * 3 : T y%` routes to an EMPTY
-  main, so the assertion about its multiply is asking a question about no code at all - which is why
-  so many of these read `851 -> 851 bytes` or `27 -> 27 bytes`. Removing the call is SOUND (an empty
-  body writes nothing, so nothing observable changes); the barrier is what is broken, and the fix is
-  either `NOINLINE` on `T` or a body the inliner must keep. It is the same finding recorded against
-  `FunctionSummaries.RemoveDeadPureCalls` and DIFF113, arriving from the other direction.
+* **An empty `SUB` was not an optimization barrier for the IR pipeline - now it is, because `NOINLINE`
+  is.** Some `Emit_Given*` expectations keep their operands opaque by passing them to `SUB T(a%)` with
+  an empty body. The direct emitter cannot see through that (`AnalyzeInlinableLeaf` declines a body of
+  zero statements); the IR pipeline could, and once `T` was absorbed the stores were dead and the
+  program folded to nothing. `x% = 11 : T x% : y% = x% * 3 : T y%` routed to an EMPTY main, so the
+  assertion about its multiply asked a question about no code at all.
+
+  Removing the call is SOUND - an empty body writes nothing - so the repair is the barrier, not the
+  transform. `NOINLINE` already existed for exactly this and `tests/optimize/*.BAS` already used it;
+  what it lacked was any effect on the IR path. `IrFunction.NoInline` carries `ProcedureSymbol.NoInline`
+  through the lowering and `Inliner` declines such a callee. `FunctionSummaries.RemoveDeadPureCalls`
+  exempts it too - dropping a dead pure call to a barrier removes the barrier just as thoroughly as
+  inlining it - which changes nothing today, since that consumer is still off in the pipeline, but it
+  is half of what the comment there is waiting for: DIFF113's `SUB Opaque(v&)` is that same empty-body
+  barrier, and it can now say so. The fixtures then say `NOINLINE` where they meant "a real call": the
+  `_TOUCH` pair in `OptimizerTests`, the `SUB s(BYVAL n%)` helpers whose body IS the subject under test,
+  and `LoopAlignmentTests._LOOP`.
+
+  Two things worth keeping. Every barrier added this way leaves the DIRECT emitter byte-identical -
+  checked shape by shape - because the direct emitter already declined to inline all of them, so
+  nothing was re-baselined. And the honest size of the effect: **7 of the 80** routed failures were
+  this, not the "large share" the earlier note guessed. The `27 -> 27 bytes` battery rows are a
+  different cause entirely (the objective flags below), and reading them as empty-main artefacts is
+  what made the estimate too big.
+
+  It is the same finding recorded against `FunctionSummaries.RemoveDeadPureCalls` and DIFF113,
+  arriving from the other direction.
 
 * **`smaller-than-unoptimized` cannot hold for a routed function today, and not because of a missing
   pass.** Routing runs `IrPassManager.Standard` whatever `Optimize` says, so the battery's two builds
@@ -497,11 +516,34 @@ inherit them.
 
 That is the honest state: the switch is safe to flip the moment `tests/optimize` and the `Emit_Given*`
 fixtures pass routed, and not before. The flip itself is one line
-(`CodeGenerator.UseExperimentalBackend`), it has been tried three times, and it is reverted with the
-measurement kept. What remains is assertions about emitted code. The order that follows from the
-composition above: give the `Emit_Given*` fixtures a barrier the inliner respects - without one they
-measure an empty `main` - then take the rest in whatever order the battery ranks them, each being a
-transform the direct emitter performs during emission that the IR pipeline has no equivalent of.
+(`CodeGenerator.UseExperimentalBackend`), it has been tried four times, and it is reverted with the
+measurement kept.
+
+**The 73 that remain now measure something, and they sort into nine causes rather than a list.** With
+the barrier fixed, no `Emit_Given*` fixture is asking about an absent program - every failure below is
+a real difference between the two paths. Ordered by how many tests each accounts for:
+
+| cause | tests | what it is |
+|---|---|---|
+| peephole idioms the selector does not recognise | 19 | branchless `ABS`/`SGN`, the min/max diamond and the one-armed clamp, `TEST AX,imm` as a bit test, inline `XCHG` for `SWAP`, `INC [mem]` / `ADD [mem],imm`, one shared `IDIV` for adjacent `\` and `MOD`, ALU and x87 memory operands instead of staging through BX |
+| the direct emitter's loop-register model has no counterpart | 13 | SI/DI residency for counters and accumulators, the constant-limit immediate compare that rides on it, loop rotation and the count-down form |
+| `$ERROR OVERFLOW/BOUNDS` traps are not modelled | 8 | the range facts that elide a check are absent, and - the one to look at first - `Emit_GivenCheckedMultiplyByTwo` says a CHECKED multiply folded away entirely. `tests/dialects/pb36/README.md` regenerates under the flip with `'$ERROR OVERFLOW ON' and '$ERROR OVERFLOW OFF' produce the SAME image`, which reads as the trap being lost rather than merely re-encoded |
+| the objective flags do not reach the routed build | 6 + 2 batteries | `IrPassManager.Standard` runs whatever `Optimize`/`$OPTIMIZE` says, so the two builds a comparison makes are one build - which is where the batteries' twelve `smaller-than-unoptimized` rows come from. Also why `--no-optimize` no longer means faithful: `Emit_GivenDeadGlobalWithoutOptimize` and `Emit_GivenLatticeProvedComparison` assert the UNOPTIMIZED build keeps what the optimizer removes, and routed it does not |
+| `$CPU` tier does not reach instruction selection | 6 | 32-bit shift, `SHLD`, inline dword `OR`, `REP MOVSD`, the ESI/EDI LONG residency - and the same census file says `'$CPU 80286'` and `'$CPU 8086'` produce the same image |
+| no auto-vectorizer, no loop-top alignment | 6 | MMX/SSE2/AVX2/AVX-512 `PADDW`/`PMULLW`, the 586 NOP pad |
+| the interval lattice has no IR equivalent | 4 | range-known LONG compare/divide and DWORD multiply narrowing to 16 bits, the unsigned window compare |
+| dispatch shape | 3 | a 32-bit `SELECT` subject and `ON n GOTO` still take the compare chain; `Emit_GivenFewCaseSparseSelect` is the disagreement already recorded above |
+| dead procedures survive routing | 2 | a body the IR inliner absorbed is still emitted (`Emit_GivenNoInlineFunction`'s negative half, `Emit_GivenCodeptrCascadeUnderOptimize`) |
+
+Four do not fit the table, and the first is not about quality at all.
+`Compile_GivenRegisterConventionWithLongParam_ThenDiagnostic` is the one to fix first: routing skips the
+direct emitter's calling-convention validation, so a program that must be REJECTED compiles clean. A
+lost diagnostic is a correctness bug, and it is the only failure here that lets a wrong program
+through. Two are induction-variable strength reduction in both directions -
+`Emit_GivenArrayStoreForLoop` wants the pointer step the routed path does not make, and
+`Emit_GivenArrayReadLoop_WhenMultiStatementBody` wants it WITHHELD where the routed path makes it
+anyway. The fourth is `Emit_GivenLoopInvariantLen`, already explained above: it wants an idiom pass over
+the `dup`/`len` pair, not a purity row.
 
 **4. The golden gate - byte-identical output with the optimizer off.** This is the hard one, and it
 is the direct emitter's whole reason for existing: its optimizations are interleaved with emission
