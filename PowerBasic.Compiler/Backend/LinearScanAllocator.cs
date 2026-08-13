@@ -12,7 +12,7 @@ namespace PowerBasic.Compiler.Backend;
 /// allocator retries after rematerializing, directly spilling, or splitting one live range; it
 /// returns null only when none of those transformations can make progress.
 /// </summary>
-public sealed class LinearScanAllocator {
+public sealed partial class LinearScanAllocator {
 
   // Data values take AX/CX/DX first so the scarce addressing registers stay free; an address value (one
   // used as a memory base/index) must come from BX/SI/DI - in 16-bit mode AX/CX/DX/BP/SP cannot index
@@ -49,7 +49,15 @@ public sealed class LinearScanAllocator {
   /// </summary>
   public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function, out string? reason) {
     for (;;) {
-      if (TryAllocate(function) is { } assignment) {
+      // recomputed each round, because spilling renumbers the instructions the windows are measured in
+      var asmHeld = AsmHeldByIndex(function, out var asmConflict);
+      if (asmConflict is not null) {
+        // a register an inline-asm statement left for a later one, destroyed in between by something
+        // no allocation can move: there is nothing to choose, so the whole function goes back
+        reason = asmConflict;
+        return null;
+      }
+      if (TryAllocate(function, asmHeld) is { } assignment) {
         reason = null;
         return assignment;
       }
@@ -61,7 +69,7 @@ public sealed class LinearScanAllocator {
         continue;
       if (Spiller.SplitOne(function))
         continue;
-      reason = Blocker(function);
+      reason = Blocker(function, asmHeld);
       return null;
     }
   }
@@ -70,7 +78,7 @@ public sealed class LinearScanAllocator {
   /// What stopped the last sweep: the first interval that found no register, and the reason the
   /// spiller then refused to move it to memory.
   /// </summary>
-  private static string Blocker(MFunction function) {
+  private static string Blocker(MFunction function, IReadOnlyDictionary<int, IReadOnlyList<Reg>> asmHeld) {
     var addressing = AddressRegisters(function);
     var byteRegisters = ByteRegisters(function);
     var clobbersAt = ClobbersByIndex(function);
@@ -86,6 +94,7 @@ public sealed class LinearScanAllocator {
       var unsafeRegs = ClobberedOver(clobbersAt, interval.Start, interval.End);
       unsafeRegs.UnionWith(ClobberedOver(pinnedAt, interval.Start, interval.End - 1));
       unsafeRegs.UnionWith(ClobberedOver(inFlightAt, interval.Start, interval.End));
+      unsafeRegs.UnionWith(ClobberedOver(asmHeld, interval.Start, interval.End));
       var legal = LegalFor(interval.VirtualId, addressing, byteRegisters);
       if (free.Count > active.Count && legal.Any(r => !unsafeRegs.Contains(r)))
         continue;
@@ -100,7 +109,8 @@ public sealed class LinearScanAllocator {
   }
 
   /// <summary>One linear-scan sweep, with no spilling: null when some interval finds no register.</summary>
-  private static IReadOnlyDictionary<int, Reg>? TryAllocate(MFunction function) {
+  private static IReadOnlyDictionary<int, Reg>? TryAllocate(MFunction function,
+      IReadOnlyDictionary<int, IReadOnlyList<Reg>> asmHeld) {
     var intervals = LivenessAnalysis.Compute(function);
     var addressVregs = AddressRegisters(function);   // vregs that ever form a memory address -> need BX/SI/DI
     var byteRegisters = ByteRegisters(function);     // byte values need AL/CL/DL/BL, which SI/DI do not have
@@ -121,10 +131,12 @@ public sealed class LinearScanAllocator {
 
       // registers destroyed by a CALL anywhere this value is live cannot hold it, and neither can one
       // an ABI-PINNED write lands in while the value still has readers - nor one already in flight
-      // between where a physical value was produced and the instruction that names it
+      // between where a physical value was produced and the instruction that names it, nor one an
+      // inline-asm statement is holding for a later statement to read
       var unsafeRegs = ClobberedOver(clobbersAt, interval.Start, interval.End);
       unsafeRegs.UnionWith(ClobberedOver(pinnedAt, interval.Start, interval.End - 1));
       unsafeRegs.UnionWith(ClobberedOver(inFlightAt, interval.Start, interval.End));
+      unsafeRegs.UnionWith(ClobberedOver(asmHeld, interval.Start, interval.End));
       var legal = LegalFor(interval.VirtualId, addressVregs, byteRegisters);
       var slot = free.FindIndex(r => System.Array.IndexOf(legal, r) >= 0 && !unsafeRegs.Contains(r));
       if (slot < 0)
@@ -212,6 +224,13 @@ public sealed class LinearScanAllocator {
   /// two ends and neither is inside it, which keeps the extraction move itself free to be allocated the
   /// very register it reads (<c>MOV AX, AX</c> costs nothing and is the coalescing the selector wants).
   /// With no producer in the block the register came from outside it, and the window opens at the block.
+  /// </para>
+  ///
+  /// <para>
+  /// <see cref="AsmHeldByIndex"/> is the same window measured over the whole control-flow graph, for
+  /// the producer and reader an INLINE-ASSEMBLY statement can be. It is a separate analysis rather than
+  /// a widening of this one because an asm block's clobber list is conservative: this one may read a
+  /// clobber as "the old value ends here", and there it would end a promise the text is still keeping.
   /// </para>
   /// </summary>
   private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> InFlightByIndex(MFunction function) {

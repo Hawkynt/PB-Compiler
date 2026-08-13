@@ -1313,7 +1313,7 @@ out immediately after the call, and that adjacency was doing all the work — no
 
 Two stages happily break it. The scheduler may issue independent work in the gap, and the spiller may
 then turn that work into a **reload**, which is a brand-new virtual register with no reason not to be
-given `AX`. `LinearScanAllocator.CarriedByIndex` closes it: walking each block, it records the span
+given `AX`. `LinearScanAllocator.InFlightByIndex` closes it: walking each block, it records the span
 between where a physical register was last defined (a named write or a clobber) and where an
 instruction reads it back, and any virtual interval overlapping that span may not use the register.
 It is the mirror image of `PinnedByIndex` — that one protects a value *from* a pinned write, this one
@@ -1388,3 +1388,72 @@ of that program. What `EXIT FAR` does *through* the back end is verified by `Bac
 which runs both emitters over programs shaped to route: an unwind out of a loop, out of three nested
 frames, out of a `FUNCTION` that had already assigned its result (the caller never receives it — an
 unwind is not a return), and the same procedure returning normally on a call that does not fire one.
+
+## An inline-asm block can say which registers it defines, and for how long
+
+A clobber list says *nothing of yours survives this block*. What it does not say — and what the last
+declining function in the corpus needed — is *something of mine must*. `LOWLEVEL.BAS` sets `CX` to 5,
+runs `n = n + 1`, then decrements `CX` and loops: the allocator, told only that the block destroys
+everything, was free to put the `n + 1` temporary **in** `CX`, and the countdown ran once. It printed
+1 for 5, and the shape declined outright rather than being compiled to that.
+
+The fix is the declaration the decline's own comment asked for, taken from the text rather than from
+the programmer. `TextAssembler.Analyze` parses the statement with the tokenizer and operand parser
+that also **emit** it — only the parser knows that `MOV AL, ES:[BX]` reads `BX`, writes half of `AX`
+and touches no flags, and none of that is in the spelling of a name — and answers an
+`AsmRegisterEffect`. The three register sets in it are approximated in different directions, which is
+the whole of its correctness:
+
+| set | direction | getting it wrong |
+|---|---|---|
+| `Reads` | may read | under-claiming loses a value the text needed |
+| `Defines` | may write | under-claiming leaves a later read with no producer to protect |
+| `Kills` | **must** write | over-claiming ends a promise an earlier statement is still keeping |
+
+So a byte half (`MOV AL, …`) defines `AX` without killing it, and the `DX` of a one-operand `MUL` is
+defined without being killed because only the sixteen-bit form writes it. `AH`, `AL` and `EAX` are all
+`AX`: the resource being contended for is the word register the allocator hands out.
+
+`LinearScanAllocator.AsmHeldByIndex` then reserves each register over exactly the stretch between the
+statement that defines it and the one that reads it — the same `[producer + 1, reader − 1]` window
+`InFlightByIndex` opens for a call result, refused to every interval that overlaps it. It has to be
+its own analysis rather than a widening of that one, and the reason is the clobber list again: a
+`CALL`'s clobbers really do destroy what they name, so `InFlight` may read a clobber as a kill, while
+an asm block declares the whole file and writes almost none of it. Reading *its* clobbers as kills
+would end a promise the text is still keeping.
+
+### What it refuses, and the one thing it deliberately does not
+
+- **A destroyer in the window declines.** A `CALL` or an ABI-pinned write between the producer and the
+  reader is not a reservation problem — no allocation can answer it — so the function goes back to the
+  direct emitter whole.
+- **…unless the read was only inferred.** An `INT` is whatever its handler reads, and a `CALL` is
+  whatever the callee does; both are opaque, and an opaque statement is modelled as reading *and*
+  writing everything, which keeps a chain of producers and consumers unbroken across it. But a read
+  arrived at that way is the absence of information rather than evidence, and declining on it would
+  buy nothing: the direct emitter's own `PRINT` destroys the caller-saved file too. Such a read is cut
+  at the destroyer and protected only from there on. Without that distinction `LOWLEVEL` declines
+  anyway — its `INT &H10` would claim the `CX` of a loop that finished four `PRINT`s ago.
+- **A write to `BP` or `SP` declines at selection.** Those are not values in the register file, they
+  are the frame every local, spill slot and parameter is addressed through.
+- **The flags are carried like a register** — `! DEC CX` then `! JNZ AddLoop` is the same promise —
+  and something writing flags in between declines, since nothing can be allocated to them.
+- **Segment registers are not carried at all.** Neither path promises one survives a BASIC statement:
+  both reload `ES` immediately in front of a far access, which is where the value would go.
+
+An unlisted mnemonic and a line that does not parse both come out opaque, which is why the table may
+stay as short as the corpus needs. A family that is missing costs a decline, never a wrong answer.
+
+Two supporting corrections came with it, and both are the same mistake in different places: **an asm
+jump is an edge, and it leaves from its own instruction.** `!JNZ AddLoop` transfers control where no
+graph here draws an edge, so `MBlock.SuccessorsWithAsmJumps` supplies it to liveness — a value live
+round that loop used to die at its last *linear* use. Attaching it to the end of the block instead is
+not merely imprecise: `AddLoop:` in `LOWLEVEL` stands in front of the whole rest of the program, so
+the block is its own successor, `CX` came out live at every instruction after the loop as well, and
+the first `PRINT` past it declined the function for destroying a register nothing wanted.
+
+With this the corpus is **complete**: 161/165 programs lowered, **262/262 functions selected**,
+**262/262 routed**, **161/161 module bodies owned**, and both decline histograms empty. `LOWLEVEL.BAS`
+prints 5 through the routed path and matches its golden output line for line
+(`BackendInlineAsmTests.InlineAsm_GivenLowLevelBas_…`), and the test that used to record the defect now
+asserts the two paths agree for the better reason — the routed side really compiles the body.

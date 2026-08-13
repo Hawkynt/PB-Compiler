@@ -188,9 +188,10 @@ Worth stating plainly, because coverage numbers make the distance look shorter t
 
 **1. Coverage - every program on the IR path. Lowering, selection and allocation are DONE.**
 `BackendCoverageTests` ranks this over the whole corpus. As of this writing: **161 of 165 programs
-lower**, **261 of 262 functions select and allocate**, and **160 of 161 module bodies** can be owned
+lower**, **262 of 262 functions select and allocate**, and **161 of 161 module bodies** can be owned
 outright. The remaining four programs are rejected by the FRONT end, so they are nobody's coverage,
-and the lowering-decline histogram is now EMPTY - there is no corpus program the IR path refuses.
+and every decline histogram - lowering, selection and allocation alike - is now EMPTY: there is no
+corpus program or function the IR path refuses.
 
 The last one to go was `DIM ... AT` with a non-default array CLASS, which this document called a
 deliberate decline on the grounds that `HUGE` steps the segment by `byteOffset >> 4` and `VIRTUAL`
@@ -227,13 +228,17 @@ window cache is `rt_ems_curhnd` / `rt_ems_curpage` - the runtime's own cells, re
 paths, because the page frame is one window for the whole image and a routed access that remapped it
 privately would leave a directly emitted one addressing the wrong page.
 
-One decline was ADDED on purpose while closing the others, and it is the interesting one. A function
-whose inline-asm blocks have other work BETWEEN them now declines: `LOWLEVEL.BAS` counts `CX` down
-across `n = n + 1`, and an asm block is modelled as clobbering everything - which stops a value living
-ACROSS it but does nothing to stop the allocator putting a temporary IN `CX` in the middle. It printed
-1 where 5 was right, and only reached the back end at all once two unrelated declines were widened.
-The direct emitter survives by computing through AX, which is luck rather than contract. Until an asm
-block can declare the registers it defines and for how long, selecting that shape is worse than not.
+One decline was ADDED on purpose while closing the others, and it is the interesting one - and it has
+since been closed by doing what it said. A function whose inline-asm blocks had other work BETWEEN
+them used to decline: `LOWLEVEL.BAS` counts `CX` down across `n = n + 1`, and an asm block is modelled
+as clobbering everything - which stops a value living ACROSS it but does nothing to stop the allocator
+putting a temporary IN `CX` in the middle. It printed 1 where 5 was right. The direct emitter survives
+by computing through AX, which is luck rather than contract, so the answer was to make the contract
+real: an asm statement now declares the registers it defines and reads, read out of its text by the
+assembler that emits it, and the allocator reserves each one over the stretch between the statement
+that sets it and the one that reads it (docs/X86-BACKEND.md, "An inline-asm block can say which
+registers it defines"). What still declines is a register something in between DESTROYS - a call owns
+the whole caller-saved file, and no allocation can answer that.
 
 **Routing is not gated on the optimizer, and that is safe only because the gate is observational.**
 `CodeGenerator.Backend.cs` runs `IrPassManager.Standard(...)` whenever a function routes, so a

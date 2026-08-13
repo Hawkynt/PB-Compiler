@@ -258,7 +258,11 @@ public sealed class BackendCoverageTests {
     // one, and this is what "the count moved by one" looks like when that happens.
     // Then 260 -> 261 with the memory-model array classes: DIFF17 was the LAST program the lowering
     // declined, so this is the row where the lowering-decline histogram above becomes empty.
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(260),
+    // Then 261 -> 262, which empties the selection histogram too: an inline-asm statement now DECLARES
+    // the registers it defines and reads (the assembler reads them out of the text), so a countdown
+    // held in CX across a BASIC statement is a promise the allocator can keep instead of a shape that
+    // had to decline. LOWLEVEL.BAS was the last function on this list.
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(262),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
     Assert.That(census.ProcedureDeclines, Is.Empty,
       "a lowered named procedure no longer reaches the x86-16 back end:\n" + report);
@@ -282,7 +286,11 @@ public sealed class BackendCoverageTests {
     // 256 -> 257, and the gap closes: the last function that selected without routing did so because
     // SCHEDULING made the pressure. The scheduler now refuses a reordering that would keep more values
     // alive at once than the register file holds (MachineScheduler.CostsRegisters).
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(260),      "fewer selected functions survive register allocation than they used to:\n" + report);
+    // 261 -> 262, and the gap between selection and routing stays closed: a register an inline-asm
+    // statement holds for a later one is reserved over exactly the stretch between them, so the shape
+    // that needed it allocates rather than declining.
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(262),
+      "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // The figure that matters for whole-program ownership: module bodies the back end compiles end
     // to end. It was zero until main became routable at all.
@@ -463,7 +471,7 @@ public sealed class BackendCoverageTests {
     "INPUTS.BAS",
     "INTREG.BAS",   // REG / CALL INTERRUPT
     "LINKDEMO.BAS",
-    "LOWLEVEL.BAS",   // VARPTR; its main still declines at SELECTION on an asm label reference
+    "LOWLEVEL.BAS",   // VARPTR, and a countdown an inline-asm block holds in CX across BASIC code
     "MATHUNIT.BAS",
     "ONERR.BAS",
     "ONERRNXT.BAS",
@@ -642,5 +650,9 @@ public sealed class BackendCoverageTests {
     // and a compare-as-a-value whose left operand is an immediate, mirrored the way the branch
     // path already mirrors it. With these the corpus is COMPLETE on selection and allocation.
     "DIFF14.BAS",
+    // The last module body of all, and the one that took a promise rather than a widening: its
+    // countdown lives in CX across `n = n + 1`, so the asm statements had to be able to say which
+    // registers they define and read before the allocator could be trusted with the frame.
+    "LOWLEVEL.BAS",
   ];
 }
