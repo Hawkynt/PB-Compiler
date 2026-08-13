@@ -12,12 +12,15 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// that puts the next page on a round boundary. There is nothing to read a screen back from here,
 /// so the pages are written and read with POKE and PEEK through DEF SEG, which is the same memory
 /// the copy moves and therefore a fair test of it.
+///
+/// Compiled as QuickBASIC, because PCOPY is Microsoft's: genuine PBC 3.0 and 3.5 answer it
+/// "Undefined error", so no PowerBASIC dialect accepts the statement these tests are about.
 /// </summary>
 [TestFixture]
 public sealed class PCopyTests {
 
   private static string Run(string body) {
-    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(body + "\nEND\n", "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(body + "\nEND\n", "T.BAS", Dialect.Qb45), "T.BAS", Dialect.Qb45), Dialect.Qb45);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var cg = new CodeGenerator(model) { Optimize = true };
     var image = cg.EmitExecutable();

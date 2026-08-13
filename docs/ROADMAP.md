@@ -166,11 +166,10 @@ battery, it currently reaches:
 
 | | |
 |---|---|
-| programs reaching the IR at all | 159 / 165 (4 of the rest the FRONT end rejects) |
-| functions selected | 257 / 259 |
-| programs reaching the IR at all | 159 / 165 |
-| functions selected | 258 / 259 || functions routed (selected **and** allocated) | 257 / 259 |
-| whole module bodies the back end can own | 157 / 159 |
+| programs reaching the IR at all | **161 / 165** — every one the FRONT end accepts; the other 4 it rejects |
+| functions selected | **262 / 262** |
+| functions routed (selected **and** allocated) | **262 / 262** |
+| whole module bodies the back end can own | **161 / 161** |
 
 **Every function the selector takes is now allocated.** The last one that was not was `DIFF56`'s module
 body — a 32-bit accumulation over a static array — and it took two independent repairs, one on each
@@ -230,21 +229,13 @@ jump the CFG does not draw, and the address it needs is the `IrBlockAddress` an 
 `CODEPTR32` are already named by. Which makes the keep-alive rule automatic - the block is
 address-taken, so `SimplifyCfg` and `Sccp` may not merge or drop it.
 
-**A register an `!` statement loads survives the BASIC statements between it and the next one.** PB
-compiles a statement at a time and keeps no BASIC value in a register across one, so
-`!MOV CX,5 / n = n + 1 / !DEC CX` counts five times; the allocator used to put `n + 1` in `CX` and it
-counted once. `InlineAsmReservation` states the rule the machine IR was missing: a register is the
-assembly's - and no value may be allocated into it - at every point REACHABLE FROM an `!` statement
-naming it that can also REACH one naming it again. Reachability rather than a range of line numbers,
-because a loop puts code between two executions of the same statement while it sits after it in the
-stream. `MInstrEffect`'s clobber list said only that nothing of *ours* survives the block; this is the
-opposite claim, and the allocator needs both.
-
-The registers a BASIC statement destroys by a FIXED convention - a runtime call's arguments, `DX:AX`
-around a divide - are not reserved, because they are not the allocator's choice and the direct emitter
-destroys the same ones in the same places. `TextAssembler.RegistersUsed` answers what a statement
-touches from the parser's own tokens plus the registers a mnemonic implies without spelling
-(`LOOP`/`REP` counting `CX` down, `MUL` answering in `DX:AX`).
+**Closed:** a register an `!` statement loads now survives an intervening BASIC statement on the routed
+path. The allocator used to be free to put a temporary in `CX` with no way to know the text cared, and
+the direct emitter left `CX` alone by luck rather than by contract; the statement now DECLARES what it
+defines and reads - the assembler reads it out of the text - and the allocator reserves the register
+over the stretch between the two statements. `LOWLEVEL.BAS` relies on exactly this and routes whole,
+printing 5 where it printed 1. A register something in between destroys (a call owns the whole
+caller-saved file) still declines, because no allocation can answer that one.
 
 **Inline asm routes.** Getting there needed one more thing, and it was not in the asm path at all: a
 single-slot alloca is now addressed AS its slot rather than through the register its `LEA` put the
@@ -573,6 +564,11 @@ A ported optimization records an **IR** row in its own document, which is what t
   an optimization barrier, and dropping the call hands the DIRECT emitter's optimizer code it could not
   previously see through. What it then does with it differs from the original - a finding about that
   optimizer rather than about this pass, and one that needs chasing before the consumer is turned on.
+  Its SECOND consumer is on: `IsPureExternal` / `IsSpeculatableExternal` name the externals `Gvn` may
+  number and `Licm` may hoist. Eight rows, all float math intrinsics, and the interesting part is what
+  is kept OFF - `rt_str_len` looks like a pure read and is not one, because the DOS entry frees the
+  handle it is given, which is why the lowering copies every read of a string variable in the first
+  place.
 - **O0225 SSA construction** — `Ir/IrDominators.cs` + `Ir/Passes/Mem2Reg.cs`, the same Cytron
   construction the direct tier has.
 
@@ -601,8 +597,9 @@ Ranked by the census, what stands between that and full coverage:
    no equivalent, and routing without it would lose the caller's handler silently.
 2. A tail of statements: `LSET` / `RSET`, `DIM AT`, `HEX$` with a digit count, `PRINT USING` /
    `LPRINT`, `FIELD`, `CHAIN`, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
-2. A tail of statements: `LSET` / `RSET`, `DIM HUGE` / `VIRTUAL` / `EMS` / `XMS` (`DIM … AT` came
-   off this list - see the far-pointer note in [X86-BACKEND.md](X86-BACKEND.md)), `HEX$` with a digit count, `PRINT USING` /
+2. A tail of statements: `LSET` / `RSET` (`DIM … AT` and the memory-model classes `HUGE` /
+   `VIRTUAL` / `EMS` / `XMS` came off this list - see the far-pointer notes in
+   [X86-BACKEND.md](X86-BACKEND.md) and [BACKENDS.md](BACKENDS.md)), `HEX$` with a digit count, `PRINT USING` /
    `LPRINT`, `CODEPTR32`, `FIELD`, `CHAIN`, and the `$COMPILE` / `$IF` / `$LINK` / `$STRING`
    metastatements. `ARRAY SORT` / `ARRAY SCAN` came off this list: the parameter block is a set of
    stores to NAMED runtime cells, which the IR addresses directly, and only the array DESCRIPTOR

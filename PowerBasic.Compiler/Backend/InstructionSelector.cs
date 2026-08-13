@@ -13,7 +13,7 @@ namespace PowerBasic.Compiler.Backend;
 /// Frame offsets are NOT resolved here - allocas become symbolic <see cref="MOperand.StackSlot"/>s and
 /// register binding happens in later stages.
 /// </summary>
-public sealed class InstructionSelector {
+public sealed partial class InstructionSelector {
 
   private readonly Dictionary<IrValue, MReg> _vregs = new(ReferenceEqualityComparer.Instance);
 
@@ -64,31 +64,46 @@ public sealed class InstructionSelector {
   private string? _decline;
 
   /// <summary>
-  /// True when the declared target is an 80386 or later, which is what decides whether a transcendental
-  /// is one instruction or a call - see <see cref="MathSequence"/>. It mirrors the direct emitter's
-  /// <c>_rt.Cpu386</c> and must be given the same answer, because the two paths emit into the SAME
-  /// image: a routed function computing SIN one way while a directly-emitted one computes it the other
-  /// is one program with two sines in it.
+  /// The instruction set and the optimization objective this selection is for - see
+  /// <see cref="SelectionTarget"/>. Both reach encoding decisions the IR cannot express: whether a
+  /// transcendental is one instruction or a call (<see cref="MathSequence"/>), and which shape a
+  /// <see cref="IrSwitch"/> dispatch takes.
   /// </summary>
-  private readonly bool _cpu386;
+  private readonly SelectionTarget _target;
 
-  private InstructionSelector(bool cpu386) => this._cpu386 = cpu386;
+  /// <summary>
+  /// The target's cost model, carried on <see cref="SelectionTarget"/> and supplied only when the
+  /// caller wants the SPEED-objective selections that trade bytes for cycles - today the constant
+  /// multiply decomposition (<see cref="TryDecomposeConstantMultiply"/>). Null means "emit the compact
+  /// form", which is what every caller with no opinion gets, so nothing changes for them.
+  /// </summary>
+  private CodeGen.TargetCost? _cost => this._target.Cost;
+
+  private InstructionSelector(SelectionTarget target) => this._target = target;
 
   /// <summary>Selects a function into machine IR, or null if it contains a construct this stage cannot model.</summary>
-  public static MFunction? TrySelect(IrFunction fn, bool cpu386 = false) => TrySelect(fn, out _, cpu386);
+  public static MFunction? TrySelect(IrFunction fn, bool cpu386 = false)
+    => TrySelect(fn, out _, new SelectionTarget(Cpu386: cpu386));
+
+  /// <summary>Selects a function into machine IR for a given target and objective, or null when it declines.</summary>
+  public static MFunction? TrySelect(IrFunction fn, SelectionTarget target) => TrySelect(fn, out _, target);
 
   /// <summary>
   /// Selects a function into machine IR, reporting <paramref name="declineReason"/> - the construct that
   /// stopped it - when the result is null. The reason is what the coverage census reads to rank which
   /// widening buys the most eligible functions, so it names the IR construct, not the failing routine.
   /// </summary>
-  public static MFunction? TrySelect(IrFunction fn, out string? declineReason, bool cpu386 = false) {
+  public static MFunction? TrySelect(IrFunction fn, out string? declineReason, bool cpu386 = false)
+    => TrySelect(fn, out declineReason, new SelectionTarget(Cpu386: cpu386));
+
+  /// <summary>The same, for a given target and objective.</summary>
+  public static MFunction? TrySelect(IrFunction fn, out string? declineReason, SelectionTarget target) {
     declineReason = null;
     if (fn.IsDeclaration || fn.Entry is null) {
       declineReason = "declaration";
       return null;
     }
-    var selector = new InstructionSelector(cpu386);
+    var selector = new InstructionSelector(target);
     var selected = selector.Run(fn);
     if (selected is null)
       declineReason = selector._decline ?? "unknown";
@@ -393,6 +408,11 @@ public sealed class InstructionSelector {
       return true;
     }
 
+    // a shape that dispatches in constant (or logarithmic) time rather than a compare per case, when
+    // the case set and the objective warrant one - see InstructionSelector.Dispatch.cs
+    if (this.TrySelectDispatch(sw))
+      return true;
+
     return sw.Condition.Type.Bits == 32
       ? this.SelectWideSwitch(sw)
       : this.SelectNarrowSwitch(sw);
@@ -604,6 +624,10 @@ public sealed class InstructionSelector {
       return this.Decline($"binary: {bin.Op}");   // 16-bit unsigned divide / remainder
     if (IsWide(bin.Type))
       return this.SelectWideBinary(bin, opcode, block);
+    if (opcode == MOpcode.Imul && this.TryDecomposeConstantMultiply(bin))
+      return true;
+    if (opcode == MOpcode.Imul && bin.Type.Bits == 16)
+      return this.SelectAccumulatorMultiply(bin);
 
     // two-address form: dest = lhs; dest <op>= rhs
     var dest = this.FreshVreg(bin.Type);
@@ -622,6 +646,182 @@ public sealed class InstructionSelector {
       new MInstrEffect(WrittenRegs: [0], ReadRegs: rhs is MOperand.Register ? [0, 1] : [0],
         ReadsFlags: false, WritesFlags: true, ReadsMemory: rhs is MOperand.Memory, WritesMemory: false)));
     return true;
+  }
+
+  /// <summary>
+  /// A 16-bit multiply in the accumulator form every 8086 has: <c>MOV AX,lhs; IMUL r16</c>, taking the
+  /// product's low half back out of AX.
+  ///
+  /// The two-operand <c>IMUL r16, r/m16</c> this used to emit is <c>0F AF</c> - an 80386 encoding. On
+  /// the default 8086 target it is not an instruction at all, so a routed program that multiplied was
+  /// relying on the emulator being a 486. The accumulator form is what the part actually has and what
+  /// the direct emitter writes on every tier, so both paths now spell a multiply the same way - which
+  /// also makes the shape the optimizer's byte-pattern expectations name (<c>F7 /5</c>) the shape a
+  /// routed function emits.
+  ///
+  /// <para>
+  /// The shape is the one <see cref="SelectDivide"/> already uses for <c>IDIV</c>: the second operand
+  /// goes to a register (there is no immediate form), <c>AX</c> and <c>DX</c> are declared clobbers so
+  /// the allocator parks nothing live in them, and the result is copied straight back out. Only the
+  /// low half is read, which is exactly the modular product the IR's <c>mul i16</c> means.
+  /// </para>
+  ///
+  /// <para>
+  /// The factor is left to the allocator rather than pinned to the <c>BX</c> the direct emitter always
+  /// uses, and that is a measured decision: <c>BX</c> is one of only three registers that can address
+  /// memory, and pinning it across every multiply left the spill loop unable to place an address value
+  /// - the allocator retried past any useful bound. Matching the direct emitter's register exactly is
+  /// not worth a compiler that does not finish.
+  /// </para>
+  /// </summary>
+  private bool SelectAccumulatorMultiply(IrBinary bin) {
+    if (!this.TryOperand(bin.Lhs, out var lhs) || !this.TryOperand(bin.Rhs, out var rhsSource))
+      return false;
+    var factor = new MOperand.Register(this.FreshVreg(bin.Type));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [factor, rhsSource], MovEffect(factor, rhsSource)));
+
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [ax, lhs], MovEffect(ax, lhs),
+      condition: null, clobbers: [Reg.AX, Reg.DX]));
+    this._current.Instructions.Add(new MInstr(MOpcode.Imul, [factor],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false),
+      condition: null, clobbers: [Reg.AX, Reg.DX]));
+
+    var dest = this.FreshVreg(bin.Type);
+    this._vregs[bin] = dest;
+    var destOp = new MOperand.Register(dest);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ax], MovEffect(destOp, ax)));
+    return true;
+  }
+
+  /// <summary>
+  /// O0078 - a 16-bit multiply by a compile-time constant, decomposed into shifts and adds instead of
+  /// the multiply unit. The direct emitter does this while emitting (see
+  /// <c>CodeGenerator.TryEmitModularConstMul</c>); this is the same decomposition on the same terms,
+  /// so a routed function and a directly-emitted one make the same trade.
+  ///
+  /// <para>
+  /// <b>Why it is sound.</b> The IR's <c>mul i16</c> is modular, and every chain below reproduces the
+  /// product's low sixteen bits exactly: a power of two is one shift; <c>2^a + 2^b</c> is
+  /// <c>(x + x&lt;&lt;(a-b)) &lt;&lt; b</c>; a contiguous run of ones <c>2^a - 2^b</c> is
+  /// <c>(x&lt;&lt;(a-b) - x) &lt;&lt; b</c>; three and four set bits thread the running <c>x&lt;&lt;k</c>
+  /// through one temporary. Shifting past the width only feeds in zeroes, which is what the discarded
+  /// high bits of the multiply would have been.
+  /// </para>
+  ///
+  /// <para>
+  /// <b>What it deliberately refuses.</b> It only runs when a cost model was supplied, which the code
+  /// generator does only under <c>$OPTIMIZE SPEED</c> - the chain is BIGGER than the compact
+  /// <c>IMUL</c> and buys only cycles, so the default and SIZE keep the multiply. Four set bits are
+  /// additionally priced per target (<see cref="CodeGen.TargetCost.PreferShiftAddMultiply"/>): a win
+  /// against the 8086's ~124-cycle microcoded multiply, a loss against the 386's ten-ish. Five or more
+  /// never pay. Multipliers 0, 1 and -1 are left alone because they are <c>InstCombine</c>'s to fold
+  /// and folding them here would hide it. Negative multipliers are left alone too - the magnitude form
+  /// needs a trailing <c>NEG</c> and they are rare enough not to be worth a second shape to verify.
+  /// And any step needing a shift by more than four is refused outright, because this target is an
+  /// 8086: <c>SHL r,imm</c> above one is an 80186 encoding, so a shift is spelled as repeated
+  /// <c>SHL r,1</c> here and a long one would cost more bytes than the multiply it replaced.
+  /// </para>
+  /// </summary>
+  private bool TryDecomposeConstantMultiply(IrBinary bin) {
+    if (this._cost is not { } cost || IsWide(bin.Type) || !bin.Type.IsInteger || bin.Type.Bits != 16)
+      return false;
+    IrValue variable;
+    long raw;
+    if (bin.Rhs is IrConstantInt right) {
+      variable = bin.Lhs;
+      raw = right.Value;
+    } else if (bin.Lhs is IrConstantInt left) {
+      variable = bin.Rhs;
+      raw = left.Value;
+    } else {
+      return false;
+    }
+
+    var m = (short)(raw & 0xFFFF);
+    if (m <= 1)
+      return false;                                // 0/1/-1 are folds, negatives need a NEG
+    var mag = (uint)m;
+    var lo = System.Numerics.BitOperations.TrailingZeroCount(mag);
+    var setBits = System.Numerics.BitOperations.PopCount(mag);
+    var run = mag >> lo;
+
+    // the chain as (shiftOfTheRunningTerm, thenAddOrSubtractItIntoTheResult) steps, before the final
+    // <<lo that puts the factored-out power of two back
+    List<(int Shift, bool Subtract)> steps;
+    if (setBits == 1)
+      steps = [];
+    else if (setBits == 2)
+      steps = [(31 - System.Numerics.BitOperations.LeadingZeroCount(mag) - lo, false)];
+    else if (System.Numerics.BitOperations.IsPow2(run + 1))
+      steps = [(System.Numerics.BitOperations.TrailingZeroCount(run + 1), true)];
+    else if (setBits == 3 || (setBits == 4 && cost.PreferShiftAddMultiply(4)))
+      steps = [.. BitPositions(mag).Skip(1).Select(bit => (bit - lo, false))];
+    else
+      return false;
+
+    // a run of ones shifts the RESULT and subtracts the original; every other shape shifts the
+    // running term. Either way no single shift may exceed four - see the remarks above.
+    var deltas = steps.Select((s, i) => i == 0 ? s.Shift : s.Shift - steps[i - 1].Shift).Append(lo);
+    if (deltas.Any(d => d > 4))
+      return false;
+
+    var dest = this.FreshVreg(bin.Type);
+    this._vregs[bin] = dest;
+    var destOp = new MOperand.Register(dest);
+    if (!this.TryOperand(variable, out var source))
+      return false;
+    this.Add(MOpcode.Mov, destOp, source);
+
+    if (steps is [(var width, true)]) {            // 2^a - 2^b: shift the result, subtract the original
+      var original = new MOperand.Register(this.FreshVreg(bin.Type));
+      this.Add(MOpcode.Mov, original, destOp);
+      this.ShiftLeftBy(destOp, width);
+      this.Add(MOpcode.Sub, destOp, original);
+    } else if (steps.Count > 0) {                  // a sum of powers of two: thread x<<k through one temp
+      var running = new MOperand.Register(this.FreshVreg(bin.Type));
+      this.Add(MOpcode.Mov, running, destOp);
+      var shifted = 0;
+      foreach (var (shift, _) in steps) {
+        this.ShiftLeftBy(running, shift - shifted);
+        shifted = shift;
+        this.Add(MOpcode.Add, destOp, running);
+      }
+    }
+    this.ShiftLeftBy(destOp, lo);
+    return true;
+  }
+
+  /// <summary>The one-bit positions of <paramref name="value"/>, low to high.</summary>
+  private static IEnumerable<int> BitPositions(uint value) {
+    for (var bit = 0; bit < 32; ++bit)
+      if ((value & (1u << bit)) != 0)
+        yield return bit;
+  }
+
+  /// <summary>
+  /// Shifts a register left by a small constant as repeated <c>SHL r,1</c> - the only left shift an
+  /// 8086 has for a count above one is through <c>CL</c>, and a pinned register in the middle of an
+  /// arithmetic chain costs the allocator more than the bytes save.
+  /// </summary>
+  private void ShiftLeftBy(MOperand.Register register, int count) {
+    for (var i = 0; i < count; ++i)
+      this.Add(MOpcode.Shl, register, new MOperand.Immediate(1));
+  }
+
+  /// <summary>
+  /// Appends a two-address instruction of the decomposition chain. A MOV only writes its destination;
+  /// every other opcode here reads it as well, which is what the two-address form means.
+  /// </summary>
+  private void Add(MOpcode opcode, MOperand.Register dest, MOperand source) {
+    if (opcode == MOpcode.Mov) {
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, source], MovEffect(dest, source)));
+      return;
+    }
+    this._current.Instructions.Add(new MInstr(opcode, [dest, source],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [0, 1] : [0],
+        ReadsFlags: false, WritesFlags: true, ReadsMemory: source is MOperand.Memory, WritesMemory: false)));
   }
 
   /// <summary>
@@ -664,14 +864,32 @@ public sealed class InstructionSelector {
   /// count would need a loop, so it is declined, and a large count is left to the runtime rather than
   /// unrolled into a wall of instructions.
   /// </summary>
+  /// <summary>
+  /// The shift count as a compile-time number, seeing through the WIDENING the operand carries.
+  ///
+  /// <c>SHIFT LEFT s, 4</c> shifts a 32-bit value by a 16-bit constant, so the lowering widens the
+  /// count to match the value being shifted and the count arrives as <c>zext i16 4 to i32</c> - a
+  /// constant wearing a cast. Matching only the bare constant declined the statement over the cast
+  /// rather than over anything about the shift, which is what kept LOWLEVEL.BAS off the IR path.
+  /// Widening a constant cannot change it (the value is non-negative and the target is wider), so
+  /// the cast is peeled rather than folded.
+  /// </summary>
+  private static long? WideShiftCount(IrValue count) => count switch {
+    IrConstantInt c => c.Value,
+    IrCast { Op: IrCastOp.ZExt or IrCastOp.SExt, Value: IrConstantInt c } => c.Value,
+    // A TRUNC can change the value, so it is only safe where the result still fits.
+    IrCast { Op: IrCastOp.Trunc, Value: IrConstantInt c, Type: { } to } when c.Value >= 0 && c.Value < (1L << Math.Min(to.Bits, 62)) => c.Value,
+    _ => null,
+  };
+
   private bool SelectWideShift(IrBinary bin, MOpcode opcode, MBlock block) {
     // ...except by exactly sixteen, which is not a shift on a register pair at all: it is the two
     // halves changing places. That is two moves rather than the thirty-two shift/rotate steps the
     // bit-at-a-time loop would need, and it is how a segment and an offset are joined into one
     // DWORD (CODEPTR32) or taken apart again.
-    if (bin.Rhs is IrConstantInt { Value: 16 } && opcode is MOpcode.Shl or MOpcode.Shr)
+    if (WideShiftCount(bin.Rhs) is 16 && opcode is MOpcode.Shl or MOpcode.Shr)
       return this.SelectWideWordSwap(bin, opcode == MOpcode.Shl);
-    if (bin.Rhs is not IrConstantInt { Value: var count } || count is < 0 or > 8)
+    if (WideShiftCount(bin.Rhs) is not { } count || count is < 0 or > 8)
       return this.Decline($"32-bit binary: {bin.Op} (only a small constant count, not {bin.Rhs})");
     if (!this.TryOperandPair(bin.Lhs, out var lhsLo, out var lhsHi))
       return false;
@@ -869,12 +1087,32 @@ public sealed class InstructionSelector {
   /// It declares every register clobbered and memory both read and written. That is not a guess about
   /// what the text does - it is a refusal to guess: the allocator keeps nothing live across it and the
   /// scheduler moves nothing over it.
+  ///
+  /// <para>
+  /// The clobber list is only half the story, though, and the other half is the descriptor's
+  /// <see cref="AsmRegisterEffect"/>. "Nothing of yours survives this block" does not say "something of
+  /// mine must", so a countdown set in <c>CX</c> by one <c>!</c> statement and decremented by the next
+  /// one across a BASIC statement was destroyed by whatever the allocator put there in between. The
+  /// text is therefore READ - by the assembler that emits it, not by a scan - for the registers it
+  /// defines and consumes, and <c>LinearScanAllocator.AsmHeldByIndex</c> denies those to everyone else
+  /// over exactly the stretch between the two.
+  /// </para>
+  ///
+  /// <para>
+  /// A block that writes <c>BP</c> or <c>SP</c> declines instead. Those are not values in the register
+  /// file, they ARE the frame this back end laid out - every local, spill slot and parameter is
+  /// addressed through <c>BP</c> - so there is no allocation that could honour such a block.
+  /// </para>
   /// </summary>
   private bool SelectInlineAsm(IrInlineAsm asm) {
     if (!asm.Routable)
       return this.Decline("inline asm: a name in it is not a variable this pass could bind");
 
-    var operands = new List<MOperand> { new MOperand.InlineAsmText(asm.Text, asm.Names) };
+    var effect = TextAssembler.Analyze(asm.Text, new AsmNameKinds(asm));
+    if (effect.Defines.Contains(Reg.BP) || effect.Defines.Contains(Reg.SP))
+      return this.Decline("inline asm: the block writes BP or SP, which the frame is addressed through");
+
+    var operands = new List<MOperand> { new MOperand.InlineAsmText(asm.Text, asm.Names, effect) };
     foreach (var pointer in asm.Operands) {
       if (this.AsmCell(pointer) is not { } cell)
         return false;
@@ -914,6 +1152,35 @@ public sealed class InstructionSelector {
   private MOperand? DeclineCell(IrValue pointer) {
     this.Decline($"inline asm: '{pointer.Name ?? pointer.GetType().Name}' has no frame cell to name");
     return null;
+  }
+
+  /// <summary>
+  /// Answers the effect analysis' questions about identifiers the same way <c>MachineEmitter</c>'s own
+  /// resolver will answer the real assembly: a name the lowering paired with a block is a code label,
+  /// any other bound name is storage, and an unbound one is a runtime export - code again.
+  ///
+  /// The VALUE it answers with is irrelevant (nothing is emitted here), but the KIND is not:
+  /// <c>JNZ [BP+0]</c> is not an instruction, so a label answered as memory fails the parse and the
+  /// statement reports itself as not understood - which would cost the very register promise this
+  /// analysis exists to make.
+  /// </summary>
+  private sealed class AsmNameKinds(IrInlineAsm asm) : IAsmSymbolResolver {
+
+    private readonly Assembler _labels = new();
+
+    public bool TryResolve(string name, out AsmSymbol symbol) {
+      var index = IndexOf(asm.Names, name);
+      var isCode = index < 0 || asm.Operands[index] is IrBlockAddress;
+      symbol = isCode ? AsmSymbol.OfLabel(this._labels.Lbl(name)) : AsmSymbol.OfMemory(Mem.Word(Reg.BP, 0));
+      return true;
+    }
+
+    private static int IndexOf(IReadOnlyList<string> names, string name) {
+      for (var i = 0; i < names.Count; ++i)
+        if (names[i].Equals(name, StringComparison.OrdinalIgnoreCase))
+          return i;
+      return -1;
+    }
   }
 
   private bool SelectStore(IrStore store, MBlock block) {
@@ -1185,8 +1452,21 @@ public sealed class InstructionSelector {
       return this.Decline($"compare as a value: {cmp.Pred}");
     if (!this.TryOperand(cmp.Lhs, out var lhs) || !this.TryOperand(cmp.Rhs, out var rhs))
       return false;
-    if (lhs is not MOperand.Register)
-      return this.Decline("compare as a value: immediate left operand");
+    // CMP wants a register on the left. The same two answers the BRANCH path already gives: mirror
+    // the predicate onto the other operand when THAT one is a register (`5 > x` is `x < 5`, and the
+    // mirror is not the negation), and otherwise move the left side into one. Declining here was the
+    // last thing keeping DIFF14 off the back end.
+    if (lhs is not MOperand.Register) {
+      if (rhs is MOperand.Register) {
+        (lhs, rhs) = (rhs, lhs);
+        cc = MapPredicate(Mirrored(cmp.Pred))!.Value;
+      } else {
+        var held = this.FreshVreg(cmp.Lhs.Type);
+        var into = new MOperand.Register(held);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [into, lhs], MovEffect(into, lhs)));
+        lhs = into;
+      }
+    }
 
     this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
       new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: false, WritesFlags: true,
@@ -1259,18 +1539,36 @@ public sealed class InstructionSelector {
   /// so nothing is evaluated that the original would not have evaluated.
   /// </summary>
   private bool SelectSelect(IrSelect sel) {
-    if (IsWide(sel.Type) || sel.Type.IsFloat)
+    if (sel.Type.IsFloat)
       return this.Decline($"select: {sel.Type} result");
-    if (!this.TryOperand(sel.Condition, out var cond)
-        || !this.TryOperand(sel.IfTrue, out var ifTrue)
-        || !this.TryOperand(sel.IfFalse, out var ifFalse))
+    var wide = IsWide(sel.Type);
+    MOperand ifTrue, ifFalse, ifTrueHi = null!, ifFalseHi = null!;
+    if (wide) {
+      if (!this.TryOperandPair(sel.IfTrue, out ifTrue, out ifTrueHi)
+          || !this.TryOperandPair(sel.IfFalse, out ifFalse, out ifFalseHi))
+        return false;
+    } else if (!this.TryOperand(sel.IfTrue, out ifTrue) || !this.TryOperand(sel.IfFalse, out ifFalse)) {
+      return false;
+    }
+    if (!this.TryOperand(sel.Condition, out var cond))
       return false;
     if (cond is not MOperand.Register)
       return this.Decline("select: condition is not in a register");
 
-    var dest = this.FreshVreg(sel.Type);
-    this._vregs[sel] = dest;
-    var destOp = new MOperand.Register(dest);
+    // A 32-bit result is a register PAIR, so each arm moves twice - the diamond is the same shape,
+    // and both halves have to be written on both paths or the untouched one keeps whatever the
+    // other arm left in it.
+    MOperand.Register destHi = null!;
+    MOperand.Register destOp;
+    if (wide) {
+      var (lo, hi) = this.FreshPair(sel);
+      destOp = lo;
+      destHi = hi;
+    } else {
+      var dest = this.FreshVreg(sel.Type);
+      this._vregs[sel] = dest;
+      destOp = new MOperand.Register(dest);
+    }
 
     var falseBlock = new MBlock($"{this._current.Label}.selfalse{this._splitCount}");
     var doneBlock = new MBlock($"{this._current.Label}.seldone{this._splitCount}");
@@ -1281,6 +1579,8 @@ public sealed class InstructionSelector {
       new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
         ReadsMemory: false, WritesMemory: false)));
     this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ifTrue], MovEffect(destOp, ifTrue)));
+    if (wide)
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destHi, ifTrueHi], MovEffect(destHi, ifTrueHi)));
     this._current.Instructions.Add(new MInstr(MOpcode.Jcc, [new MOperand.LabelRef(doneBlock.Label)],
       new MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, WritesMemory: false),
       Condition.NotEqual));
@@ -1288,6 +1588,8 @@ public sealed class InstructionSelector {
     this._current.Successors.Add(falseBlock.Label);
 
     falseBlock.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ifFalse], MovEffect(destOp, ifFalse)));
+    if (wide)
+      falseBlock.Instructions.Add(new MInstr(MOpcode.Mov, [destHi, ifFalseHi], MovEffect(destHi, ifFalseHi)));
     falseBlock.Successors.Add(doneBlock.Label);
 
     this._function.Blocks.Add(falseBlock);
@@ -1467,6 +1769,10 @@ public sealed class InstructionSelector {
         return this.SelectRoundTripThroughQword(inner, cast);
       case IrCastOp.SIToFP when to.IsIeeeFloat:
         return this.SelectIntToFloat(cast);
+      // The same routine: it stages an unsigned source one size larger with the extra half zeroed,
+      // which is what makes FILD's signed read give the unsigned value back.
+      case IrCastOp.UIToFP when to.IsIeeeFloat:
+        return this.SelectIntToFloat(cast);
       case IrCastOp.FPToSIRound when from.IsIeeeFloat && to.IsInteger && to.Bits is 16 or 32:
         return this.SelectFloatToInt(cast);
       // The x87 stores only SIGNED integers, so an unsigned target is staged one size larger than
@@ -1527,8 +1833,10 @@ public sealed class InstructionSelector {
     if (callee.IsDeclaration) {
       if (NonLocalJumpIntrinsics.Contains(callee.Name))
         return this.SelectNonLocalJumpIntrinsic(call, callee);
-      if (MathSequence(callee.Name, this._cpu386) is { } sequence)
+      if (MathSequence(callee.Name, this._target.Cpu386) is { } sequence)
         return this.SelectMathIntrinsic(call, callee, sequence);
+      if (callee.Name == "rt_str_concat_n")
+        return this.SelectMultiConcat(call);
       if (RuntimeAbi.For(callee.Name) is { } routine)
         return this.SelectRuntimeCall(call, callee, routine);
       if (IsRuntimeName(callee.Name))
@@ -2168,14 +2476,81 @@ public sealed class InstructionSelector {
     return true;
   }
 
+  /// <summary>The runtime's multi-concat staging list holds this many handles (DosRuntime._STRCATN_MAX).</summary>
+  private const int _CATLIST_SLOTS = 64;
+
+  /// <summary>
+  /// The single-allocation concatenation builder, which is the one runtime entry whose ABI the table
+  /// cannot describe: it is VARIADIC, and it takes its operands in a runtime word array rather than
+  /// in registers. The count goes in <c>CX</c>, handle <c>i</c> into <c>rt_catlist[i]</c>, and the
+  /// result comes back in <c>AX</c> - exactly the sequence the direct emitter writes for pb36 O24.
+  ///
+  /// <para>
+  /// The staging area is a single global, which is safe for the same reason the direct emitter's use
+  /// of it is: every operand is a value already computed by the time this runs, the stores and the
+  /// call are adjacent, and the routine consumes the whole list before returning - so no second
+  /// builder can be part-way through it.
+  /// </para>
+  /// </summary>
+  private bool SelectMultiConcat(IrCall call) {
+    var args = call.Args.ToList();
+    if (args is not [IrConstantInt count, ..] || count.Value != args.Count - 1)
+      return this.Decline("call: rt_str_concat_n's leading count is not the number of operands that follow");
+    if (count.Value is < 1 or > _CATLIST_SLOTS)
+      return this.Decline($"call: rt_str_concat_n takes 1..{_CATLIST_SLOTS} operands, got {count.Value}");
+    if (call.Type.IsVoid || IsWide(call.Type) || RegSize(call.Type) != MRegSize.Word)
+      return this.Decline($"call: rt_str_concat_n answers with a string handle, but the call is typed {call.Type}");
+
+    // Every staging store claims the call's destination register, exactly as SelectRuntimeCall's
+    // moves do. It is not about CX: an instruction carrying a clobber is a scheduling barrier, and
+    // without one these stores are free to move ABOVE the MOV that captures the previous call's
+    // result out of AX. The spiller then inserts a reload before each of them - inside the window
+    // where AX still holds that result - and the last operand staged is the previous one's handle.
+    // `a$ + (b$ + c$)` printed "aabbbb" for exactly that reason.
+    IReadOnlyList<Reg> pending = [Reg.CX];
+    for (var i = 1; i < args.Count; ++i) {
+      if (!this.TryOperand(args[i], out var handle))
+        return false;
+      // through a register: x86 has no memory-to-memory MOV, and a spilled handle arrives as a cell
+      if (handle is not (MOperand.Register or MOperand.Immediate)) {
+        var staged = new MOperand.Register(this.FreshVreg(args[i].Type));
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [staged, handle], MovEffect(staged, handle),
+          condition: null, clobbers: pending));
+        handle = staged;
+      }
+      var slot = new MOperand.DataCell("rt_catlist", (i - 1) * 2, MRegSize.Word);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [slot, handle],
+        new MInstrEffect(WrittenRegs: [], ReadRegs: handle is MOperand.Register ? [1] : [],
+          ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: true),
+        condition: null, clobbers: pending));
+    }
+
+    var cx = new MOperand.Register(MReg.Physical_(Reg.CX, MRegSize.Word));
+    var operands = new MOperand.Immediate(count.Value);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [cx, operands], MovEffect(cx, operands),
+      condition: null, clobbers: pending));
+    this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef("rt_strcatn")],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: true, WritesMemory: true),
+      condition: null, clobbers: _callClobbers));
+
+    var result = this.FreshVreg(call.Type);
+    this._vregs[call] = result;
+    var destination = new MOperand.Register(result);
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destination, ax], MovEffect(destination, ax)));
+    return true;
+  }
+
   /// <summary>
   /// A value as a WORD operand, narrowing a 32-bit one where that is sound.
   ///
   /// The IR types several things i32 that the runtime wants in a word register - a byte count, a PB
-  /// file number, an error code. Taking the low half is only sound when the high half is known to
-  /// carry nothing, which is exactly two cases: a constant that fits, and a value that was WIDENED
-  /// from 16 bits in the first place, where the narrowing simply undoes the extension. Anything else
-  /// declines rather than silently dropping the top word.
+  /// file number, a character code. Taking the low half is only sound when the high half is known to
+  /// carry nothing. Three shapes say so outright: a constant that fits, a value that was WIDENED from
+  /// 16 bits in the first place, and a runtime answer the ABI table declares a widened word. The
+  /// fourth is COMPUTED - see <see cref="WordSizedRange"/> - and it is the one that keeps selection
+  /// from depending on the optimizer. Anything else declines rather than silently dropping the top word.
   /// </summary>
   private bool TryWordOperand(IrValue value, string what, out MOperand operand) {
     operand = null!;
@@ -2219,13 +2594,141 @@ public sealed class InstructionSelector {
       IrCast { Op: IrCastOp.SExt or IrCastOp.ZExt } cast when !IsWide(cast.Value.Type) => cast.Value,
       _ => null,
     };
-    if (narrowed is null)
-      return this.Decline($"call: {what} (the IR types it 32-bit)");
+    if (narrowed is null) {
+      // The last chance before declining: arithmetic the selector can PROVE stays inside a word, whose
+      // low half is therefore the whole value. The wide form is still selected - this takes the low
+      // register of the pair it produced, which is exactly the 16-bit result, because the low half of
+      // an add/sub/and/or/xor depends only on the low halves of its operands.
+      if (WordSizedRange(value, _NARROWING_DEPTH) is not { } range
+          || range.Lo < short.MinValue || range.Hi > ushort.MaxValue)
+        return this.Decline($"call: {what} (the IR types it 32-bit)");
+      return this.TryOperandPair(value, out operand, out _);
+    }
     if (narrowed is IrConstantInt fits) {
       operand = new MOperand.Immediate(fits.Value);
       return true;
     }
     return this.TryOperand(narrowed, out operand);
+  }
+
+  /// <summary>
+  /// How far the word-size proof walks an expression before giving up. Every step is a real IR
+  /// operation, so a bound this small costs nothing a BASIC subscript or character code ever reaches,
+  /// and it keeps a shared sub-expression from being re-proved exponentially.
+  /// </summary>
+  private const int _NARROWING_DEPTH = 8;
+
+  /// <summary>
+  /// The interval a 32-bit value is PROVABLY confined to, or null when the selector cannot say - the
+  /// proof obligation behind narrowing an i32 to one word register.
+  ///
+  /// <para>
+  /// <b>The rule.</b> A value narrows only when narrowing cannot change what the consumer reads, and
+  /// the consumer here is a 16-bit register: it cannot see more than sixteen bits whatever is done.
+  /// So two things have to hold together, and each on its own is worthless.
+  /// </para>
+  /// <list type="number">
+  ///   <item><b>The low half must be self-sufficient.</b> Only operations whose low sixteen bits are a
+  ///   function of their operands' low sixteen bits qualify - <c>add</c>, <c>sub</c>, <c>and</c>,
+  ///   <c>or</c>, <c>xor</c>. A shift, a divide and a comparison do NOT commute with truncation, and
+  ///   neither does a LOAD: the high half of a value read out of a LONG variable is real data. A
+  ///   multiply would qualify on this count and is left out on the second one - no interval a product
+  ///   of two word-sized operands can be given fits a word often enough to be worth the arm.</item>
+  ///   <item><b>The value must fit.</b> Every leaf contributes a known interval - a constant its own
+  ///   value, a <c>sext</c>/<c>zext</c> from i8/i16 the span of the type it was widened from - and the
+  ///   operations propagate those intervals. The result must land inside
+  ///   <c>[short.MinValue, ushort.MaxValue]</c>, which is the same window the constant arm above
+  ///   already accepts: everything in it is carried whole by one word, signed at one end and unsigned
+  ///   at the other, and the caller decides which - as it already does for an immediate.</item>
+  /// </list>
+  ///
+  /// <para>
+  /// The second obligation is what makes this conservative rather than clever. <c>64 + i%</c> proves
+  /// out at <c>[-32704, 32831]</c> and narrows; <c>i% + j%</c> spans <c>[-65536, 65534]</c> and does
+  /// not, and neither does <c>i% - j%</c>, whose borrow reaches <c>-65535</c>. A one-word answer for
+  /// those would be a silent miscompile, so they keep their register pair and the caller declines.
+  /// </para>
+  ///
+  /// <para>
+  /// Where the interval overhangs the SIGNED word - the case <c>64 + i%</c> is in - the narrowed word
+  /// is what the direct emitter produces anyway: PB computes <c>64 + i%</c> in 16 bits and wraps, and
+  /// the low half of the 32-bit sum IS that wrapped result, bit for bit. Fidelity is the reason the
+  /// window is the union of the two words rather than either one alone.
+  /// </para>
+  /// </summary>
+  private static (long Lo, long Hi)? WordSizedRange(IrValue value, int depth) {
+    if (depth <= 0)
+      return null;
+    switch (value) {
+      // The bound is not about what fits a word - the caller decides that - it is about what fits the
+      // ARITHMETIC below: intervals are added and subtracted, and a 32-bit literal carried as a long
+      // wider than 32 bits could sum past a long's end and come back looking small.
+      case IrConstantInt { Value: >= int.MinValue and <= int.MaxValue } c:
+        return (c.Value, c.Value);
+      // i1 is deliberately absent: the IR reads a bool as 0/1 while this target holds BASIC truth as a
+      // full -1/0 word, so a zext of one is the one widening whose low half is NOT the IR's value.
+      case IrCast { Op: IrCastOp.SExt or IrCastOp.ZExt } cast
+          when cast.Value.Type is { IsInteger: true, Bits: 8 or 16 } source: {
+        var span = 1L << source.Bits;
+        return cast.Op == IrCastOp.SExt ? (-(span / 2), span / 2 - 1) : (0L, span - 1);
+      }
+      case IrBinary bin when IsWide(bin.Type): {
+        // An operand with NO interval is not fatal for AND, which is why the two sides travel as
+        // nullables: a mask bounds the result on its own, however unknown the value it masks.
+        var lhs = WordSizedRange(bin.Lhs, depth - 1);
+        var rhs = WordSizedRange(bin.Rhs, depth - 1);
+        if (bin.Op == IrBinaryOp.And)
+          return MaskedRange(lhs, rhs);
+        if (lhs is not { } left || rhs is not { } right)
+          return null;
+        return bin.Op switch {
+          IrBinaryOp.Add => (left.Lo + right.Lo, left.Hi + right.Hi),
+          IrBinaryOp.Sub => (left.Lo - right.Hi, left.Hi - right.Lo),
+          IrBinaryOp.Or or IrBinaryOp.Xor => MergedBitsRange(left, right),
+          _ => null,
+        };
+      }
+      default:
+        return null;
+    }
+  }
+
+  /// <summary>
+  /// The interval of <c>a AND b</c>. ONE non-negative operand is enough, and that is the whole point
+  /// of the arm: <c>x AND m</c> for <c>0 &lt;= m</c> clears every bit above m's highest whatever x is,
+  /// so the result is in <c>[0, m]</c> even when x is a LONG read out of storage whose high half is
+  /// real data. The AND has already discarded exactly what the narrowing would. With neither operand
+  /// known non-negative there is no bound to give - <c>-1 AND -1</c> is -1, sign bits and all - so the
+  /// proof stops.
+  /// </summary>
+  private static (long Lo, long Hi)? MaskedRange((long Lo, long Hi)? lhs, (long Lo, long Hi)? rhs) {
+    var left = lhs is { Lo: >= 0 } a ? a.Hi : (long?)null;
+    var right = rhs is { Lo: >= 0 } b ? b.Hi : (long?)null;
+    return (left, right) switch {
+      (not null, not null) => (0L, System.Math.Min(left.Value, right.Value)),
+      (not null, null) => (0L, left.Value),
+      (null, not null) => (0L, right.Value),
+      _ => null,
+    };
+  }
+
+  /// <summary>
+  /// The interval of <c>a OR b</c> / <c>a XOR b</c>: with both operands non-negative the result cannot
+  /// have a bit above the widest one either of them can have, so it is bounded by that bit width's
+  /// mask. A negative operand makes the result negative and the bound meaningless, so the proof stops.
+  /// </summary>
+  private static (long Lo, long Hi)? MergedBitsRange((long Lo, long Hi) lhs, (long Lo, long Hi) rhs) {
+    if (lhs.Lo < 0 || rhs.Lo < 0)
+      return null;
+    var widest = System.Math.Max(lhs.Hi, rhs.Hi);
+    // Above a word the mask is above a word too and the caller declines anyway; stopping here also
+    // keeps the doubling below away from the end of a long, where it would wrap and never terminate.
+    if (widest > ushort.MaxValue)
+      return null;
+    var mask = 0L;
+    while (mask < widest)
+      mask = mask * 2 + 1;
+    return (0L, mask);
   }
 
   /// <summary>Routes the console print routines at a PB file number (<c>rt_fselect</c>).</summary>
@@ -2446,25 +2949,39 @@ public sealed class InstructionSelector {
     var from = cast.Value.Type;
     if (!from.IsInteger || from.Bits is not (16 or 32))
       return this.Decline($"floating point: {cast.Op} from {from}");
-    if (!from.Signed)
-      return this.Decline($"floating point: {cast.Op} from unsigned {from} (FILD is signed)");
-
+    // FILD reads a SIGNED integer, so an unsigned source is staged one size LARGER than itself with
+    // the extra half zeroed - the mirror of what SelectFloatToUnsigned does going the other way. A
+    // DWORD's 4294967295 is negative read as a signed dword and itself read as a signed qword; the
+    // zero above it is what makes the sign bit a value bit again.
+    var unsignedWiden = !from.Signed;
     var slot = this._function.StackSlots.Count;
     var wide = IsWide(from);
-    this._function.StackSlots.Add(wide ? 4 : 2);
+    this._function.StackSlots.Add((wide ? 4 : 2) * (unsignedWiden ? 2 : 1));
     var cell = new MOperand.StackSlot(slot, MRegSize.Word);
     if (wide) {
       if (!this.TryOperandPair(cast.Value, out var lo, out var hi))
         return false;
       this.StoreWord(cell, lo);
       this.StoreWord(Shifted(cell, 2), hi);
+      if (unsignedWiden) {
+        this.StoreWord(Shifted(cell, 4), new MOperand.Immediate(0));
+        this.StoreWord(Shifted(cell, 6), new MOperand.Immediate(0));
+      }
     } else {
       if (!this.TryOperand(cast.Value, out var value))
         return false;
       this.StoreWord(cell, value);
+      if (unsignedWiden)
+        this.StoreWord(Shifted(cell, 2), new MOperand.Immediate(0));
     }
 
-    this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(slot, wide ? MRegSize.Dword : MRegSize.Word), reads: true);
+    var read = (wide, unsignedWiden) switch {
+      (true, true) => MRegSize.Qword,
+      (true, false) => MRegSize.Dword,
+      (false, true) => MRegSize.Dword,
+      _ => MRegSize.Word,
+    };
+    this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(slot, read), reads: true);
     this.EmitX87(MOpcode.Fstp, this.FloatCell(cast), reads: false);
     return true;
   }
@@ -2655,9 +3172,17 @@ public sealed class InstructionSelector {
       case IrNullPtr:
         operand = new MOperand.Immediate(0);
         return true;
+      // A global's VALUE is its ADDRESS - MOV reg, OFFSET name - which is what DataOffset is. The
+      // test is IsAddressableGlobal rather than a fresh list of prefixes, and deliberately the same
+      // one PointerMemory uses to turn a global into a DataCell: having a cell and having an offset
+      // are the same fact, so a second spelling of the question could only drift away from the first
+      // and answer it differently for some name neither list was written with in mind.
+      case IrGlobalVariable g when IsAddressableGlobal(g):
+        operand = new MOperand.DataOffset(g.Name, 0);
+        return true;
       case IrGlobalVariable g:
         operand = null!;
-        return this.Decline($"operand: global '{g.Name}' (needs the data-layout bridge)");
+        return this.Decline($"operand: global '{g.Name}' (no module symbol to address)");
       default:
         if (this._vregs.TryGetValue(value, out var reg)) {
           operand = new MOperand.Register(reg);

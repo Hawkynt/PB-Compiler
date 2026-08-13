@@ -159,6 +159,41 @@ public enum LanguageFeature {
   IterateStatement,
   ArraySortScan,
   BitStatements,
+  /// <summary>The REPLACE ... WITH ... IN statement. BC answers it "Equal sign missing", reading REPLACE as a variable.</summary>
+  ReplaceStatement,
+  /// <summary>EXT storage declarations, which PBC 3.0 and 3.5 do not know - separated from <see cref="PublicStorage"/>, which they do.</summary>
+  ExtStorage,
+  /// <summary>LOCAL as a declaration inside a procedure. BC answers it "Statement unrecognizable".</summary>
+  LocalStorage,
+  /// <summary>OPEN's LOCK SHARED. Microsoft spells that mode as a bare SHARED and answers the pair "Syntax error"; LOCK READ / WRITE are in both lineages.</summary>
+  LockShared,
+
+  // The other direction, which had nowhere to be recorded until the Borland table learned to say
+  // "never": statements MICROSOFT has and Bob Zale's line does not. PBC 3.0 and 3.5 answer VIEW
+  // PRINT and VIEW TEXT with "\"(\" expected" - their VIEW is the graphics viewport and nothing
+  // else - PCOPY with "Undefined error", and DIM SHARED with "Variable expected" at the SHARED.
+  ViewPrint,
+  PCopy,
+  DimShared,
+  /// <summary>
+  /// VIEW TEXT and $OPTION VIDEO, which NO oracle here accepts - not PBC 3.0 or 3.5, not BC 4.50, not BC
+  /// 7.10. They are pinned at pb36 rather than removed, which is this compiler's own dialect and
+  /// therefore a claim about nothing but itself; Turbo Basic cannot be asked, its oracle being
+  /// IDE-only, so the history is not pinned any deeper than it was measured.
+  /// </summary>
+  ViewText,
+  OptionVideo,
+
+  /// <summary>
+  /// <c>BYVAL</c> on a parameter of a procedure DEFINITION - <c>SUB S(BYVAL n%)</c>.
+  ///
+  /// Only the definition. Microsoft's BC accepts <c>DECLARE SUB Foo(BYVAL n%)</c>, because there
+  /// BYVAL describes how a NON-BASIC routine is called, and rejects the same word in a SUB header
+  /// with "Formal parameter specification illegal" - a BASIC procedure in that lineage takes its
+  /// arguments by reference and there is no spelling that says otherwise. Both halves were read off
+  /// BC 7.00 rather than inferred, which is why the gate is this narrow.
+  /// </summary>
+  ByValParameter,
 
   /// <summary>
   /// The PB 3.0 machine-level wave: REG, and the SHIFT / ROTATE STATEMENTS. Not to be confused with
@@ -214,7 +249,7 @@ public enum LanguageFeature {
 /// </summary>
 public static class DialectFacts {
 
-  private static readonly Dictionary<LanguageFeature, (Dialect Min, string What)> _gates = new() {
+  private static readonly Dictionary<LanguageFeature, (Dialect? Min, string What)> _gates = new() {
     [LanguageFeature.InlineAsm] = (Dialect.Pb30, "inline assembler ('!' statements)"),
     [LanguageFeature.UnsignedTypes] = (Dialect.Pb30, "unsigned types (BYTE/WORD/DWORD, '?'/'??'/'???' suffixes)"),
     [LanguageFeature.QuadType] = (Dialect.Pb30, "QUAD (64-bit) type ('&&' suffix)"),
@@ -299,11 +334,25 @@ public static class DialectFacts {
     [LanguageFeature.DelayStatement] = (Dialect.Tb10, "DELAY"),
     [LanguageFeature.SharedTypeClause] = (Dialect.Tb10, "SHARED / STATIC inside a DIM type clause ('DIM x AS SHARED type')"),
     [LanguageFeature.ExtendedNumericTypes] = (Dialect.Tb10, "the extended numeric types (EXT / FIX / BCD / FLEX)"),
-    [LanguageFeature.PublicStorage] = (Dialect.Tb10, "PUBLIC / EXT storage declarations"),
+    [LanguageFeature.PublicStorage] = (Dialect.Tb10, "PUBLIC storage declarations"),
     [LanguageFeature.EquateStatement] = (Dialect.Tb10, "the equate statement ('%name = value')"),
     [LanguageFeature.IterateStatement] = (Dialect.Tb10, "ITERATE"),
     [LanguageFeature.ArraySortScan] = (Dialect.Tb10, "the ARRAY SORT / ARRAY SCAN statements"),
     [LanguageFeature.BitStatements] = (Dialect.Tb10, "the BIT SET / BIT RESET / BIT TOGGLE statements"),
+    [LanguageFeature.ByValParameter] = (Dialect.Tb10, "a BYVAL parameter in a procedure definition"),
+    [LanguageFeature.ReplaceStatement] = (Dialect.Tb10, "the REPLACE ... WITH ... IN statement"),
+    // EXT parts company with PUBLIC, which it used to share a gate with: PBC 3.0 and 3.5 accept
+    // PUBLIC p% and answer EXT e% with "Undefined SUB/FUNCTION reference" - they do not know the
+    // word, and read it as a call. Turbo Basic cannot be asked here (its oracle is IDE-only and
+    // needs a display), so the claim is pinned no further back than the dialect that does have it.
+    [LanguageFeature.ExtStorage] = (Dialect.Pb36, "EXT storage declarations"),
+    [LanguageFeature.LocalStorage] = (Dialect.Tb10, "LOCAL declarations"),
+    [LanguageFeature.LockShared] = (Dialect.Tb10, "OPEN's LOCK SHARED (Microsoft spells that mode as a bare SHARED)"),
+    [LanguageFeature.ViewPrint] = (null, "VIEW PRINT"),
+    [LanguageFeature.PCopy] = (null, "PCOPY"),
+    [LanguageFeature.DimShared] = (null, "DIM SHARED (the Microsoft spelling; PowerBASIC writes DIM x AS SHARED t)"),
+    [LanguageFeature.ViewText] = (Dialect.Pb36, "VIEW TEXT"),
+    [LanguageFeature.OptionVideo] = (Dialect.Pb36, "$OPTION VIDEO"),
     [LanguageFeature.RegStatement] = (Dialect.Pb30, "the REG statement"),
     [LanguageFeature.ShiftRotateStatements] = (Dialect.Pb30, "the SHIFT / ROTATE statements"),
     [LanguageFeature.UnionType] = (Dialect.Pb30, "UNION (the overlapping variant of TYPE)"),
@@ -322,6 +371,12 @@ public static class DialectFacts {
     // under --dialect pb35 with its own runtime semantics - "un-parses back to compile-clean PB 3.5"
     // is the contract, and roundtrip-check.sh recompiles at pb35 exactly. Gating it at pb36 made
     // BasicWriter's own output uncompilable by the gate that checks it (28 of the corpus failed).
+    // pb35, and genuine PBC 3.50 answers it "Error 418: Statement expected" - which is not a
+    // disagreement to fix but the definition of the thing: $COMPAT is THIS compiler's own directive,
+    // written by the decompiler so that a cross-family program recompiles with its source dialect's
+    // runtime, and the recompile is pb35 (scripts/roundtrip-check.sh). Gating it to pb36 made every
+    // round trip of a qb/tb/pds program fail to rebuild. It is excluded from the oracle probes
+    // instead, because a vintage compiler has nothing to say about a directive it never had.
     [LanguageFeature.CompatMeta] = (Dialect.Pb35, "$COMPAT metastatement"),
     // PB 3.0 per docs/DIALECTS.md, which lists "$DIM ALL/ARRAY" among that release's additions. The
     // argument was already validated; nothing checked the dialect, so Turbo Basic took it too.
@@ -348,7 +403,9 @@ public static class DialectFacts {
   /// </summary>
   private static readonly Dictionary<LanguageFeature, Dialect> _microsoftGates = new() {
     [LanguageFeature.TypeUnion] = Dialect.Qb40,        // TYPE...END TYPE (QB has no UNION; the binder rejects UNION separately)
-    [LanguageFeature.RedimPreserve] = Dialect.Pds70,   // REDIM with far strings; QB REDIM never preserves
+    // 7.1, not 7.0: BC 7.00 reads PRESERVE as the array's name and asks for the "(" that should
+    // follow it; BC 7.10 compiles it. Plain QuickBASIC REDIM never preserves anything.
+    [LanguageFeature.RedimPreserve] = Dialect.Pds71,
     [LanguageFeature.LongType] = Dialect.Qb10,        // QuickBASIC has LONG; BASICA and GW-BASIC do not
     [LanguageFeature.NamedLabels] = Dialect.Qb10,
     [LanguageFeature.BlockIf] = Dialect.Qb10,
@@ -357,6 +414,13 @@ public static class DialectFacts {
     [LanguageFeature.Procedures] = Dialect.Qb10,
     [LanguageFeature.ExitStatement] = Dialect.Qb10,
     [LanguageFeature.MicrosoftCommentMetaStatements] = Dialect.Qb10,
+    // BC 7.00 answers a BYVAL parameter on a definition with "Formal parameter specification
+    // illegal" and BC 7.10 compiles it - the boundary is between the two PDS releases, which is
+    // where the oracles put it rather than where the manuals were consulted.
+    [LanguageFeature.ByValParameter] = Dialect.Pds71,
+    [LanguageFeature.ViewPrint] = Dialect.Qb10,
+    [LanguageFeature.PCopy] = Dialect.Qb10,
+    [LanguageFeature.DimShared] = Dialect.Qb10,
   };
 
   /// <summary>Human-readable dialect name, e.g. "PB 3.5", "TB 1.1", "QB 4.5", "PDS 7.1", "GW-BASIC".</summary>
@@ -434,13 +498,20 @@ public static class DialectFacts {
   public static bool IsPbAtLeast(this Dialect dialect, Dialect min)
     => dialect.Family() == DialectFamily.Borland && dialect >= min;
 
-  /// <summary>Lowest dialect providing <paramref name="feature"/>.</summary>
-  public static Dialect MinimumDialect(LanguageFeature feature) => _gates[feature].Min;
+  /// <summary>Lowest Borland-lineage dialect providing <paramref name="feature"/>; null when that lineage never had it.</summary>
+  public static Dialect? MinimumDialect(LanguageFeature feature) => _gates[feature].Min;
 
+  /// <summary>
+  /// A null minimum in either table means the family never had the feature, which is how a
+  /// Microsoft-only statement is spelled: the Microsoft table says a version and the Borland one
+  /// says nothing. Until VIEW PRINT, PCOPY and DIM SHARED were measured, only the other direction
+  /// could be expressed - the Borland table was indexed unconditionally - so a statement Bob Zale's
+  /// compilers do not have had nowhere to be recorded and was quietly accepted everywhere.
+  /// </summary>
   public static bool IsAvailable(LanguageFeature feature, Dialect dialect)
     => dialect.Family() == DialectFamily.Microsoft
       ? _microsoftGates.TryGetValue(feature, out var min) && dialect >= min
-      : dialect >= _gates[feature].Min;
+      : _gates[feature].Min is { } borland && dialect >= borland;
 
   /// <summary>Diagnostic text: "X requires PowerBASIC 3.2 (current dialect: PB 3.0)".</summary>
   public static string RequirementMessage(LanguageFeature feature, Dialect dialect) {
@@ -449,7 +520,9 @@ public static class DialectFacts {
       return _microsoftGates.TryGetValue(feature, out var msMin)
         ? $"{what} requires {msMin.DisplayName()} (current dialect: {dialect.DisplayName()})"
         : $"{what} is not available in the Microsoft BASIC family (current dialect: {dialect.DisplayName()})";
-    return $"{what} requires PowerBASIC {(int)min / 10}.{(int)min % 10} (current dialect: {dialect.DisplayName()})";
+    return min is { } pb
+      ? $"{what} requires PowerBASIC {(int)pb / 10}.{(int)pb % 10} (current dialect: {dialect.DisplayName()})"
+      : $"{what} is not available in the PowerBASIC / Turbo Basic family (current dialect: {dialect.DisplayName()})";
   }
 
   /// <summary>Gate of an intrinsic function name; null when the intrinsic is available everywhere.</summary>

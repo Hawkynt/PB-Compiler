@@ -31,12 +31,27 @@ internal static class StatementSurface {
   /// <param name="MinBorland">First Turbo Basic / PowerBASIC dialect with the form; null if it never had it.</param>
   /// <param name="MinMicrosoft">First BASICA / GW / QB / PDS dialect with the form; null if it never had it.</param>
   /// <param name="Preamble">Declarations the form needs to bind (a file to be open, an array to exist).</param>
+  /// <param name="MaxMicrosoft">
+  /// Last Microsoft dialect with the form, for the one shape a minimum cannot express: a form the
+  /// family HAD and then lost. <c>?</c> as PRINT is it - BASICA and GW-BASIC expand it while
+  /// tokenizing a line, and the compilers that followed answer it "Invalid character", the
+  /// expansion having lived in the editor rather than in BC.
+  /// </param>
+  /// <param name="OwnExtension">
+  /// This compiler's own directive rather than any vintage dialect's, so no oracle is asked about
+  /// it. <c>$COMPAT</c> is the case: the decompiler writes it so a cross-family program recompiles
+  /// with its source dialect's runtime, and that recompile is pb35 - so it must be accepted there,
+  /// while genuine PBC 3.50 of course answers it "Statement expected". Sending it to an oracle
+  /// measures nothing; the mismatch would be the feature working as designed.
+  /// </param>
   internal sealed record Form(
     string Id,
     string Body,
     Dialect? MinBorland = Dialect.Tb10,
     Dialect? MinMicrosoft = Dialect.Basica,
-    string Preamble = "");
+    string Preamble = "",
+    bool OwnExtension = false,
+    Dialect? MaxMicrosoft = null);
 
   /// <summary>A form only Turbo Basic / PowerBASIC ever had.</summary>
   private static readonly Dialect? _noMicrosoft = null;
@@ -66,14 +81,15 @@ internal static class StatementSurface {
     new("erase", "ERASE e%", Preamble: "DIM e%(4)"),
     new("redim", "REDIM f%(1 TO 4)"),
     new("redim.astype", "REDIM f(1 TO 4) AS LONG"),
-    // PRESERVE is PB 3.5 in Bob Zale's line and BASIC PDS 7.0 in Microsoft's; plain QuickBASIC REDIM
-    // never preserved anything
-    new("redim.preserve", "REDIM f(1 TO 4) AS LONG\nREDIM PRESERVE f(1 TO 8) AS LONG", Dialect.Pb35, Dialect.Pds70),
+    // PRESERVE is PB 3.5 in Bob Zale's line and BASIC PDS 7.1 in Microsoft's - BC 7.00 reads
+    // PRESERVE as the array's name and asks for the "(" that should follow it, while BC 7.10
+    // compiles it; plain QuickBASIC REDIM never preserved anything
+    new("redim.preserve", "REDIM f(1 TO 4) AS LONG\nREDIM PRESERVE f(1 TO 8) AS LONG", Dialect.Pb35, Dialect.Pds71),
     new("common", "COMMON c%"),
     // OPTION BASE is in every BASIC there has ever been, so both lineages stay at their oldest
     new("option.base", "OPTION BASE 1\nDIM ob%(4)"),
     new("public", "PUBLIC p%", MinMicrosoft: _noMicrosoft),
-    new("ext", "EXT e%", MinMicrosoft: _noMicrosoft),
+    new("ext", "EXT e%", Dialect.Pb36, _noMicrosoft),   // PBC 3.0 and 3.5 read EXT as a call and answer "Undefined SUB/FUNCTION reference"
     // DEFINT / DEFSNG / DEFDBL / DEFSTR are in every BASIC there has ever been
     new("deftype.int", "DEFINT A-C\nav = 1"),
     new("deftype.sng", "DEFSNG D-F\ndv = 1"),
@@ -106,7 +122,7 @@ internal static class StatementSurface {
     // books say - the census reports both and only one of them is this table's business.
     new("asc.assign", "s2$ = \"abc\"\nASC(s2$, 1) = 65", Dialect.Pb35, _noMicrosoft),
     new("chain", "CHAIN \"NEXT.EXE\""),
-    new("replace", "s3$ = \"aXa\"\nREPLACE \"X\" WITH \"Y\" IN s3$"),
+    new("replace", "s3$ = \"aXa\"\nREPLACE \"X\" WITH \"Y\" IN s3$", MinMicrosoft: _noMicrosoft),
     // ARRAY SCAN shares ARRAY SORT's keyword, parse site and gate, and the oracle agrees it shares
     // the answer too: 2 Severe Errors from BC 4.50, 1 from BC 1.00, clean under PBC 3.5.
     new("array.scan", "ARRAY SCAN a4%(), = 5, TO f4%", MinMicrosoft: _noMicrosoft, Preamble: "DIM a4%(4)"),
@@ -152,7 +168,7 @@ internal static class StatementSurface {
     new("meta.option.cntlbreak.on", "$OPTION CNTLBREAK ON", MinMicrosoft: _noMicrosoft),
     new("meta.option.cntlbreak.off", "$OPTION CNTLBREAK OFF", MinMicrosoft: _noMicrosoft),
     new("meta.option.gosub", "$OPTION GOSUB", MinMicrosoft: _noMicrosoft),
-    new("meta.option.video", "$OPTION VIDEO", MinMicrosoft: _noMicrosoft),
+    new("meta.option.video", "$OPTION VIDEO", Dialect.Pb36, _noMicrosoft),   // PBC 3.0/3.5 take $OPTION SIGNED/GOSUB/CNTLBREAK and answer VIDEO "Syntax error"
     new("meta.stack", "$STACK 2048", MinMicrosoft: _noMicrosoft),
     new("meta.string.1", "$STRING 1", MinMicrosoft: _noMicrosoft),
     new("meta.string.2", "$STRING 2", MinMicrosoft: _noMicrosoft),
@@ -169,7 +185,7 @@ internal static class StatementSurface {
       Dialect.Pb35, _noMicrosoft),
     // pb35, matching the gate: $COMPAT is what the decompiler emits so a cross-family program
     // recompiles under --dialect pb35, which is what roundtrip-check.sh does.
-    new("meta.compat", "$COMPAT qb45", Dialect.Pb35, _noMicrosoft),
+    new("meta.compat", "$COMPAT qb45", Dialect.Pb35, _noMicrosoft, OwnExtension: true),
     new("require", "CALL S8(1)\nEND\nSUB S8(BYVAL n%)\n  REQUIRE n% > 0, \"positive\"\nEND SUB", Dialect.Pb36, _noMicrosoft),
     // and six more: the code-pointer trio, the single-line type alias (TYPE Name AS type - no
     // ALIAS keyword, which a guess would put there), DEFER and a coroutine YIELD
@@ -258,7 +274,7 @@ internal static class StatementSurface {
     new("print.string", "PRINT \"text\""),
     new("print.tab", "PRINT TAB(5); x%"),
     new("print.spc", "PRINT SPC(3); x%"),
-    new("print.question", "? x%"),
+    new("print.question", "? x%", MaxMicrosoft: Dialect.Gw),   // the interpreters expand it; BC 4.50 and 7.10 answer "Invalid character"
     new("print.file", "PRINT #1, x%", Preamble: "OPEN \"T.TXT\" FOR OUTPUT AS #1"),
     new("print.file.comma", "PRINT #1, x%, y%", Preamble: "OPEN \"T.TXT\" FOR OUTPUT AS #1"),
     new("write.file", "WRITE #1, x%", Preamble: "OPEN \"T.TXT\" FOR OUTPUT AS #1"),
@@ -293,7 +309,11 @@ internal static class StatementSurface {
     new("open.access.readwrite", "OPEN \"T.DAT\" FOR RANDOM ACCESS READ WRITE AS #1 LEN = 8"),
     new("open.lock.shared", "OPEN \"T.TXT\" FOR INPUT SHARED AS #1"),
     new("open.lock.read", "OPEN \"T.TXT\" FOR INPUT LOCK READ AS #1"),
-    new("open.access.and.lock", "OPEN \"T.DAT\" FOR BINARY ACCESS READ WRITE LOCK SHARED AS #1"),
+    // LOCK SHARED is PowerBASIC's spelling of the sharing mode; Microsoft's BC wants the bare
+    // SHARED and answers the LOCK with "Syntax error". The bare form is accepted by BOTH, so it is
+    // the one that stays permissive - the same split as shared.global.pb / shared.global.qb.
+    new("open.access.and.lock", "OPEN \"T.DAT\" FOR BINARY ACCESS READ WRITE LOCK SHARED AS #1", MinMicrosoft: _noMicrosoft),
+    new("open.access.and.share", "OPEN \"T.DAT\" FOR BINARY ACCESS READ WRITE SHARED AS #1"),
     new("open.output.len", "OPEN \"T.TXT\" FOR OUTPUT AS #1 LEN = 128"),
     new("open.shorthand.as", "OPEN \"T.DAT\" AS #1"),
     new("open.shorthand.as.len", "OPEN \"T.DAT\" AS #1 LEN = 32"),
@@ -365,19 +385,27 @@ internal static class StatementSurface {
     new("view", "VIEW (0, 0)-(319, 199)"),
     // GET/PUT's graphics form had no entry at all - the six get.*/put.* forms above are the FILE
     // statement of the same name, which is a different grammar reached by the same keyword
-    new("get.graphics", "GET (0, 0)-(3, 3), spr%(0)", Preamble: "DIM spr%(64)"),
-    new("put.graphics", "PUT (0, 0), spr%(0)", Preamble: "DIM spr%(64)"),
-    new("put.graphics.verb", "PUT (0, 0), spr%(0), XOR", Preamble: "DIM spr%(64)"),
+    // The buffer is the ARRAY, named bare. It used to be written spr%(0), which genuine PBC 3.50
+    // rejects with a syntax error under the subscript; spr%() then turned out to be a PB spelling
+    // that BC does not take, and one that PB itself refuses as soon as an action verb follows. The
+    // bare name is the one both lineages accept, which is how it was settled - by asking both.
+    new("get.graphics", "GET (0, 0)-(3, 3), spr%", Preamble: "DIM spr%(64)"),
+    new("put.graphics", "PUT (0, 0), spr%", Preamble: "DIM spr%(64)"),
+    new("put.graphics.verb", "PUT (0, 0), spr%, XOR", Preamble: "DIM spr%(64)"),
     // VIEW PRINT / VIEW TEXT / VIEW SCREEN and PALETTE USING had no forms at all, which is why the
     // census never noticed that VIEW PRINT's own row-range spelling did not parse
-    new("view.print", "VIEW PRINT"),
-    new("view.print.range", "VIEW PRINT 1 TO 20"),
+    // VIEW PRINT / VIEW TEXT / PCOPY / DIM SHARED are Microsoft's: PBC 3.0 and 3.5 answer the two
+    // VIEW forms '"(" expected' - their VIEW is the graphics viewport and nothing else - PCOPY
+    // "Undefined error", and DIM SHARED "Variable expected" at the SHARED. VIEW TEXT is nobody's:
+    // BC 4.50 and BC 7.10 reject it too, so it is pinned at this compiler's own dialect.
+    new("view.print", "VIEW PRINT", _noBorland, Dialect.Qb10),
+    new("view.print.range", "VIEW PRINT 1 TO 20", _noBorland, Dialect.Qb10),
     new("view.screen", "VIEW SCREEN (0, 0)-(10, 10)"),
-    new("view.text", "VIEW TEXT 1, 20"),
+    new("view.text", "VIEW TEXT 1, 20", Dialect.Pb36, _noMicrosoft),
     new("palette.using", "PALETTE USING pal%(0)", Preamble: "DIM pal%(16)"),
     new("window", "WINDOW (0, 0)-(319, 199)"),
     new("palette", "PALETTE 1, 2"),
-    new("pcopy", "PCOPY 0, 1"),
+    new("pcopy", "PCOPY 0, 1", _noBorland, Dialect.Qb10),
     new("width", "WIDTH 80"),
     new("sound", "SOUND 440, 3"),
     new("play", "PLAY \"CDE\""),
@@ -425,23 +453,41 @@ internal static class StatementSurface {
   // ---- procedures and types ---------------------------------------------------------------------
 
   private static readonly Form[] _procedures = [
-    new("sub.call", "CALL S1(1)\nEND\nSUB S1(BYVAL n%)\nEND SUB", MinMicrosoft: Dialect.Qb10),
-    new("sub.call.bare", "S1 1\nEND\nSUB S1(BYVAL n%)\nEND SUB", MinMicrosoft: Dialect.Qb10),
-    new("function.call", "x% = F1%(1)\nEND\nFUNCTION F1%(BYVAL n%)\n  F1% = n%\nEND FUNCTION", MinMicrosoft: Dialect.Qb10),
+    // These four are about CALLING a procedure, and they used to declare their parameter BYVAL -
+    // which is PowerBASIC's spelling and which Microsoft's BC rejects outright ("Formal parameter
+    // specification illegal"), so the probe failed for a reason that has nothing to do with the form
+    // it names. The parameter mode is now its own form, sub.byval, and these say only what they mean.
+    //
+    // The DECLAREs are load-bearing for the same reason. Without one, BC reads `S1 1` as an
+    // assignment ("Equal sign missing") and `F1%(1)` as an undimensioned ARRAY - which then collides
+    // with the FUNCTION of that name ("Name of subprogram illegal"). A forward DECLARE is how
+    // Microsoft BASIC is written, and PowerBASIC accepts it too.
+    new("sub.call", "CALL S1(1)\nEND\nSUB S1(n%)\nEND SUB", MinMicrosoft: Dialect.Qb10),
+    new("sub.call.bare", "DECLARE SUB S1(n%)\nS1 1\nEND\nSUB S1(n%)\nEND SUB", MinMicrosoft: Dialect.Qb10),
+    new("function.call", "DECLARE FUNCTION F1%(n%)\nx% = F1%(1)\nEND\nFUNCTION F1%(n%)\n  F1% = n%\nEND FUNCTION", MinMicrosoft: Dialect.Qb10),
     new("sub.byref", "CALL S2(x%)\nEND\nSUB S2(n%)\n  n% = 1\nEND SUB", MinMicrosoft: Dialect.Qb10),
-    new("declare.sub", "DECLARE SUB S3(BYVAL n%)\nCALL S3(1)\nEND\nSUB S3(BYVAL n%)\nEND SUB", MinMicrosoft: Dialect.Qb10),
+    // BYVAL in a procedure DEFINITION is Bob Zale's, and Microsoft's line arrives at it late: BC 7.00
+    // answers "Formal parameter specification illegal" and BC 7.10 compiles it. Both halves are read
+    // off the oracles, which is also how the 7.0/7.1 boundary was found - it was not looked for.
+    new("sub.byval", "CALL S9(1)\nEND\nSUB S9(BYVAL n%)\nEND SUB", MinMicrosoft: Dialect.Pds71),
+    new("declare.sub", "DECLARE SUB S3(n%)\nCALL S3(1)\nEND\nSUB S3(n%)\nEND SUB", MinMicrosoft: Dialect.Qb10),
     // the two lineages spell module-shared storage differently - PowerBASIC puts SHARED in the type
     // clause, QuickBASIC puts it straight after DIM - so each family is asked for its own spelling
     new("shared.global.pb", "DIM g AS SHARED INTEGER\ng = 1", MinMicrosoft: _noMicrosoft),
     // DIM SHARED is Microsoft's spelling. Whether PowerBASIC rejects it is not established here, so
     // the entry stays permissive on the Borland side rather than pinning an unverified claim
-    new("shared.global.qb", "DIM SHARED g%\ng% = 1"),
+    new("shared.global.qb", "DIM SHARED g%\ng% = 1", _noBorland, Dialect.Qb10),
     // SHARED as a statement of its own, inside a procedure - the other two forms declare module-level
     // storage and merely contain the word. The exact compiled-dialect minimum remains permissive;
     // BASICA/GW-BASIC are excluded because they have no SUB procedures in which it could appear.
-    new("shared.stmt", "DIM h%\nCALL S6\nEND\nSUB S6\n  SHARED h%\n  h% = 1\nEND SUB", MinMicrosoft: Dialect.Qb10),
+    // The scaffolding is an implicit module variable, because every explicit spelling is refused by
+    // one lineage or the other: PBC 3.50 rejects a type-id in the DIM of a SCALAR ("Error 525: Type
+    // id (?%&!#$) not allowed", though it allows one on an array), while BC needs the type from
+    // somewhere and answers a bare SHARED h with "AS clause required" - and PB then rejects the AS
+    // clause that would satisfy it. A suffixed name carries its type without a DIM, so both agree.
+    new("shared.stmt", "h% = 0\nCALL S6\nEND\nSUB S6\n  SHARED h%\n  h% = 1\nEND SUB", MinMicrosoft: Dialect.Qb10),
     new("static.local", "CALL S4\nEND\nSUB S4\n  STATIC s%\n  s% = s% + 1\nEND SUB", MinMicrosoft: Dialect.Qb10),
-    new("local.decl", "CALL S5\nEND\nSUB S5\n  LOCAL l%\n  l% = 1\nEND SUB", MinMicrosoft: Dialect.Qb10),
+    new("local.decl", "CALL S5\nEND\nSUB S5\n  LOCAL l%\n  l% = 1\nEND SUB", MinMicrosoft: _noMicrosoft),
     // TYPE ... END TYPE is PB 3.0 in one line and QuickBASIC 4.0 in the other
     new("type.decl", "TYPE Pt\n  X AS INTEGER\n  Y AS INTEGER\nEND TYPE\nDIM p AS Pt\np.X = 1", Dialect.Pb30, Dialect.Qb40),
     // UNION is PowerBASIC's; QuickBASIC's TYPE has no overlapping variant
@@ -466,6 +512,7 @@ internal static class StatementSurface {
   }
 
   private static readonly string[] _pairBoth = [
+    "open.access.and.share",
     "let.implicit",
     "let.explicit",
     "let.string",
@@ -487,7 +534,6 @@ internal static class StatementSurface {
     "swap",
     "mid.assign",
     "chain",
-    "replace",
     "if.single",
     "if.else.single",
     "if.block",
@@ -536,7 +582,6 @@ internal static class StatementSurface {
     "print.string",
     "print.tab",
     "print.spc",
-    "print.question",
     "print.file",
     "print.file.comma",
     "write.file",
@@ -568,7 +613,6 @@ internal static class StatementSurface {
     "open.access.readwrite",
     "open.lock.shared",
     "open.lock.read",
-    "open.access.and.lock",
     "open.output.len",
     "open.shorthand.as",
     "open.shorthand.as.len",
@@ -631,14 +675,10 @@ internal static class StatementSurface {
     "get.graphics",
     "put.graphics",
     "put.graphics.verb",
-    "view.print",
-    "view.print.range",
     "view.screen",
-    "view.text",
     "palette.using",
     "window",
     "palette",
-    "pcopy",
     "width",
     "sound",
     "play",
@@ -669,18 +709,21 @@ internal static class StatementSurface {
     "function.call",
     "sub.byref",
     "declare.sub",
-    "shared.global.qb",
+    "sub.byval",
     "shared.stmt",
     "static.local",
-    "local.decl",
     "type.decl",
     "deftype",
     "def.fn",
   ];
 
   private static readonly string[] _pairPb35 = [
+    "print.question",
+    "open.access.and.lock",
+    "meta.compat",
+    "local.decl",
+    "replace",
     "public",
-    "ext",
     "deftype.qud",
     "deftype.ext",
     "deftype.fix",
@@ -715,7 +758,6 @@ internal static class StatementSurface {
     "meta.option.cntlbreak.on",
     "meta.option.cntlbreak.off",
     "meta.option.gosub",
-    "meta.option.video",
     "meta.stack",
     "meta.string.1",
     "meta.string.2",
@@ -752,14 +794,20 @@ internal static class StatementSurface {
     "union.decl",
     // $COMPAT is the decompiler's directive and is available from pb35 - the dialect its
     // output is recompiled under - so it belongs on the PB 3.5 side, not in "neither".
-    "meta.compat",
   ];
 
   private static readonly string[] _pairPds71 = [
+    "shared.global.qb",
+    "pcopy",
+    "view.print.range",
+    "view.print",
 
   ];
 
   private static readonly string[] _pairNeither = [
+    "meta.option.video",
+    "view.text",
+    "ext",
     "destructure",
     "static.assert",
     "meta.cpu.80486",
@@ -863,7 +911,10 @@ internal static class StatementSurface {
 
   /// <summary>Whether <paramref name="dialect"/> should accept <paramref name="form"/> at all.</summary>
   internal static bool ShouldAccept(Form form, Dialect dialect) {
-    var min = dialect.Family() == DialectFamily.Microsoft ? form.MinMicrosoft : form.MinBorland;
-    return min is { } floor && dialect >= floor;
+    var microsoft = dialect.Family() == DialectFamily.Microsoft;
+    var min = microsoft ? form.MinMicrosoft : form.MinBorland;
+    if (min is not { } floor || dialect < floor)
+      return false;
+    return !microsoft || form.MaxMicrosoft is not { } ceiling || dialect <= ceiling;
   }
 }

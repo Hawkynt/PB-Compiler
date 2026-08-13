@@ -24,6 +24,30 @@ public sealed class IrFunction : IrGlobalValue {
   /// <summary>The formal parameters in signature order.</summary>
   public IReadOnlyList<IrArgument> Parameters => this._parameters;
 
+  /// <summary>
+  /// True when the declared parameters are only the FIXED prefix and a call may pass more.
+  ///
+  /// One runtime entry needs it and no BASIC procedure ever can: <c>rt_str_concat_n</c> takes an
+  /// operand count and then that many string handles, so its call sites differ in arity by design.
+  /// Everything else in the IR has a signature its calls must match, which is what the verifier and
+  /// both text emitters assume - hence a flag rather than a convention.
+  /// </summary>
+  public bool IsVarArgs { get; init; }
+
+  /// <summary>
+  /// True when the source declared the procedure <c>NOINLINE</c>: the optimizer must keep every call
+  /// to it a real call, so its emitted code stays inspectable.
+  ///
+  /// <para>
+  /// This is a contract with the PROGRAMMER rather than a fact about the body, which is why it lives
+  /// on the function instead of being rediscovered by <see cref="Passes.FunctionSummaries"/>. Without
+  /// it a procedure whose only purpose is to be a barrier - the empty <c>SUB</c> that makes an operand
+  /// opaque - is absorbed at its call sites, and the code the programmer wanted to look at stops
+  /// existing. The direct emitter honours the same flag in <c>AnalyzeInlinableLeaf</c>.
+  /// </para>
+  /// </summary>
+  public bool NoInline { get; init; }
+
   /// <summary>The basic blocks; the first is the entry.</summary>
   public IReadOnlyList<IrBasicBlock> Blocks => this._blocks;
 
@@ -72,6 +96,18 @@ public sealed class IrFunction : IrGlobalValue {
 
   /// <summary>Creates, appends and returns a fresh block with the given label.</summary>
   public IrBasicBlock CreateBlock(string label) => this.AddBlock(new IrBasicBlock(label));
+
+  /// <summary>
+  /// Creates a fresh block and makes it the ENTRY, pushing the current one down. The old entry keeps
+  /// every instruction it had and simply gains a predecessor, which is what turns it into a loop
+  /// header - the shape tail-recursion elimination needs, since a phi has to name a block for the
+  /// value that arrives the first time round and the entry of a function has none.
+  /// </summary>
+  public IrBasicBlock CreateEntryBlock(string label) {
+    var block = new IrBasicBlock(label) { Parent = this };
+    this._blocks.Insert(0, block);
+    return block;
+  }
 
   /// <summary>
   /// Removes a block from the function, dropping its instructions' uses of their operands.

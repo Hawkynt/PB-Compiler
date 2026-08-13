@@ -35,6 +35,10 @@ public sealed class StatementSurfaceOracleMaterialTests {
       Directory.CreateDirectory(directory);
 
       foreach (var form in forms) {
+        // A directive of this compiler's own is not a question a vintage compiler can answer: it
+        // will reject it, correctly, and that rejection is the feature rather than a divergence.
+        if (form.OwnExtension)
+          continue;
         var fileName = form.Id + ".BAS";
         File.WriteAllText(Path.Combine(directory, fileName),
           StatementSurface.OracleProgram(form, dialect), utf8);
@@ -46,6 +50,10 @@ public sealed class StatementSurfaceOracleMaterialTests {
       }
 
       foreach (var invalid in InvalidSyntaxSurfaceTests.Forms) {
+        // Some invalidity is a property of ONE lineage's keywords rather than of BASIC: CALL DWORD
+        // is a missing target where DWORD is a type, and an ordinary call where it is not.
+        if (invalid.BorlandOnly && dialect.Family() == DialectFamily.Microsoft)
+          continue;
         var id = "invalid." + invalid.Id;
         var fileName = id + ".BAS";
         var source = dialect.IsGwBasica()
@@ -61,8 +69,12 @@ public sealed class StatementSurfaceOracleMaterialTests {
     }
 
     File.WriteAllText(Path.Combine(output, "manifest.tsv"), manifest.ToString(), utf8);
-    Assert.That(rows, Is.EqualTo(
-      (forms.Count + InvalidSyntaxSurfaceTests.Forms.Length) * StatementSurface.AllDialects.Length));
+    // Own-extension forms are deliberately absent: no oracle is asked about a directive this
+    // compiler invented, so they are subtracted here rather than silently loosening the count.
+    var borland = StatementSurface.AllDialects.Count(d => d.Family() == DialectFamily.Borland);
+    var probed = forms.Count(f => !f.OwnExtension) + InvalidSyntaxSurfaceTests.Forms.Count(f => !f.BorlandOnly);
+    Assert.That(rows, Is.EqualTo(probed * StatementSurface.AllDialects.Length
+      + InvalidSyntaxSurfaceTests.Forms.Count(f => f.BorlandOnly) * borland));
   }
 
   private static string RepositoryRoot() {

@@ -565,8 +565,8 @@ public sealed class OptimizerTests {
   public void Emit_GivenLongDivideByConstantUnderCpu386_WhenPb36_ThenHardwareIdiv() {
     // a constant divisor of magnitude >= 2 drops the LongDiv runtime call for a 66 F7 IDIV;
     // the dividend is a SUB parameter with differing call args so it cannot be folded away
-    const string with386 = "$CPU 80386\n$OPTIMIZE SPEED\nDECLARE SUB d(BYVAL n AS LONG)\nd 100000007\nd 9\nEND\nSUB d(BYVAL n AS LONG)\nPRINT n \\ 7\nEND SUB";
-    const string no386 = "$OPTIMIZE SPEED\nDECLARE SUB d(BYVAL n AS LONG)\nd 100000007\nd 9\nEND\nSUB d(BYVAL n AS LONG)\nPRINT n \\ 7\nEND SUB";
+    const string with386 = "$CPU 80386\n$OPTIMIZE SPEED\nDECLARE SUB d(BYVAL n AS LONG)\nd 100000007\nd 9\nEND\nSUB d(BYVAL n AS LONG) NOINLINE\nPRINT n \\ 7\nEND SUB";
+    const string no386 = "$OPTIMIZE SPEED\nDECLARE SUB d(BYVAL n AS LONG)\nd 100000007\nd 9\nEND\nSUB d(BYVAL n AS LONG) NOINLINE\nPRINT n \\ 7\nEND SUB";
     Assert.That(CountDwordF7(Compile(with386, Dialect.Pb36)),
       Is.GreaterThan(CountDwordF7(Compile(no386, Dialect.Pb36))),
       "$CPU 80386 should add a 32-bit IDIV the runtime-call version lacks");
@@ -1349,7 +1349,7 @@ public sealed class OptimizerTests {
     // 100 \ k% keeps it
     const string counterDiv = "$OPTIMIZE SPEED\nFOR i% = 1 TO 10\nx% = 100 \\ i%\nNEXT i%\nPRINT x%\nEND";
     // a SUB parameter divisor (differing call args) is non-constant and not range-known
-    const string varDiv = "$OPTIMIZE SPEED\nDECLARE SUB d(BYVAL k AS INTEGER)\nd 3\nd 7\nEND\nSUB d(BYVAL k AS INTEGER)\nPRINT 100 \\ k\nEND SUB";
+    const string varDiv = "$OPTIMIZE SPEED\nDECLARE SUB d(BYVAL k AS INTEGER)\nd 3\nd 7\nEND\nSUB d(BYVAL k AS INTEGER) NOINLINE\nPRINT 100 \\ k\nEND SUB";
     Assert.That(CountTestBxBx(Compile(counterDiv, Dialect.Pb36)),
       Is.LessThan(CountTestBxBx(Compile(varDiv, Dialect.Pb36))),
       "a divisor whose counter range excludes zero should drop the divide-by-zero guard");
@@ -1532,12 +1532,25 @@ public sealed class OptimizerTests {
   public void Emit_GivenAscOfSingleCharMid_WhenPb36_ThenReadsDirectlyNotViaSubstring() {
     // O0290: ASC(MID$(s$, i, 1)) with a compile-time length of 1 reads the byte directly (rt_charat),
     // a different code path than a runtime length which must allocate the substring (rt_strmid + rt_asc).
-    // The two therefore compile to different images. Correctness of the direct read (including the MID$
-    // clamp-to-1 / 0-past-the-end behaviour) is pinned by the differential DOSBox suite.
-    var direct = Compile("$OPTIMIZE SPEED\nDIM s$, n%, c%\nLINE INPUT s$\nn% = 1\nc% = ASC(MID$(s$, 1, 1))\nPRINT c%\nEND", Dialect.Pb36);
-    var runtime = Compile("$OPTIMIZE SPEED\nDIM s$, n%, c%\nLINE INPUT s$\nn% = 1\nc% = ASC(MID$(s$, 1, n%))\nPRINT c%\nEND", Dialect.Pb36);
-    Assert.That(direct.SequenceEqual(runtime), Is.False, "a constant length-1 ASC(MID$) takes the direct-read path, a runtime length does not");
+    // Correctness of the direct read (including the MID$ clamp-to-1 / 0-past-the-end behaviour) is
+    // pinned by the differential DOSBox suite.
+    //
+    // The length has to be genuinely unknown in the contrast program - `n% = 1` one line up is a value
+    // the optimizer can prove, so the two programs would differ only in whether they load an immediate
+    // or a cell, and an image-inequality assertion would hold whatever the lowering did. Both the index
+    // and the runtime length come from INPUT, and the assertion names the routine: rt_charat is emitted
+    // only when something calls it, so its presence IS the direct-read path being taken.
+    const string program = "$OPTIMIZE SPEED\nDIM s$, i%, n%, c%\nLINE INPUT s$\nINPUT i%\nINPUT n%\n";
+    var direct = Compile(program + "c% = ASC(MID$(s$, i%, 1))\nPRINT c%; n%\nEND", Dialect.Pb36);
+    var runtime = Compile(program + "c% = ASC(MID$(s$, i%, n%))\nPRINT c%; n%\nEND", Dialect.Pb36);
+    Assert.That(HasCharAtRoutine(direct), Is.True, "a length-1 ASC(MID$) reads the byte directly (rt_charat)");
+    Assert.That(HasCharAtRoutine(runtime), Is.False, "a runtime length must allocate the substring - no direct read");
   }
+
+  // rt_charat entry: PUSH BX / PUSH SI / PUSH ES / PUSH AX / TEST AX,AX = 53 56 06 50 85 C0. The
+  // routine is emitted only when referenced, so finding it means the direct-read path was taken.
+  private static bool HasCharAtRoutine(byte[] image)
+    => ContainsSeq(image, 0x53, 0x56, 0x06, 0x50, 0x85, 0xC0);
 
   [Test]
   public void Emit_GivenSingleCharInstr_WhenPb36_ThenScansBytesNotSubstring() {
@@ -1831,7 +1844,7 @@ public sealed class OptimizerTests {
     // runtime-unknown operand (a BYVAL parameter, called with differing args so IPCP cannot prove
     // it constant either) keeps the register-to-register add - so it has one fewer immediate add.
     const string proven = "$OPTIMIZE SPEED\nb% = 5\nc% = 0\nFOR i% = 1 TO 10\n  c% = c% + b%\nNEXT i%\nPRINT c%\nEND";
-    const string runtime = "$OPTIMIZE SPEED\nDECLARE SUB t(BYVAL k%)\nt 5\nt 7\nEND\nSUB t(BYVAL k%)\n  c% = 0\n  FOR i% = 1 TO 10\n    c% = c% + k%\n  NEXT i%\n  PRINT c%\nEND SUB";
+    const string runtime = "$OPTIMIZE SPEED\nDECLARE SUB t(BYVAL k%)\nt 5\nt 7\nEND\nSUB t(BYVAL k%) NOINLINE\n  c% = 0\n  FOR i% = 1 TO 10\n    c% = c% + k%\n  NEXT i%\n  PRINT c%\nEND SUB";
     Assert.That(CountAddAxImm(Compile(proven, Dialect.Pb36)), Is.GreaterThan(CountAddAxImm(Compile(runtime, Dialect.Pb36))),
       "a proven-constant operand should fold into an immediate ALU op (ADD AX, imm); a runtime parameter cannot");
   }
@@ -1850,8 +1863,8 @@ public sealed class OptimizerTests {
     // a store to a direct-cell variable needs no address computation, so the value is no longer
     // parked (push ax / pop ax) across EmitPlace. The same stores to a BYREF parameter DO need a
     // pointer load, so the park stays - one extra push per store.
-    const string direct = "$OPTIMIZE SPEED\nDECLARE SUB s(x%)\ns 9\nEND\nSUB s(x%)\n  a% = x%\n  b% = x%\n  d% = x%\n  PRINT a%; b%; d%\nEND SUB";
-    const string byref = "$OPTIMIZE SPEED\nDECLARE SUB s(x%)\ns 9\nEND\nSUB s(x%)\n  x% = x% + 1\n  x% = x% + 1\n  x% = x% + 1\n  PRINT x%\nEND SUB";
+    const string direct = "$OPTIMIZE SPEED\nDECLARE SUB s(x%)\ns 9\nEND\nSUB s(x%) NOINLINE\n  a% = x%\n  b% = x%\n  d% = x%\n  PRINT a%; b%; d%\nEND SUB";
+    const string byref = "$OPTIMIZE SPEED\nDECLARE SUB s(x%)\ns 9\nEND\nSUB s(x%) NOINLINE\n  x% = x% + 1\n  x% = x% + 1\n  x% = x% + 1\n  PRINT x%\nEND SUB";
     Assert.That(CountPushAx(Compile(direct, Dialect.Pb36)), Is.LessThan(CountPushAx(Compile(byref, Dialect.Pb36))),
       "direct-cell stores drop the value park; BYREF stores keep it (one push per store)");
   }
@@ -2065,11 +2078,14 @@ public sealed class OptimizerTests {
   }
 
   // a BYREF call makes a variable opaque to SCCP so the O8 immediate path (not
-  // whole-expression constant folding) is what these byte-level tests exercise
+  // whole-expression constant folding) is what these byte-level tests exercise.
+  // NOINLINE is what makes it a barrier rather than a decoration: an EMPTY body is
+  // absorbable at every call site, and once absorbed the store is dead and the whole
+  // program folds to nothing - so the assertion below would be about no code at all.
   private const string _TOUCH = "DECLARE SUB T(a%)\n";
-  private const string _TOUCH_END = "\nSUB T(a%)\nEND SUB";
+  private const string _TOUCH_END = "\nSUB T(a%) NOINLINE\nEND SUB";
   private const string _TOUCHL = "DECLARE SUB TL(a&)\n";
-  private const string _TOUCHL_END = "\nSUB TL(a&)\nEND SUB";
+  private const string _TOUCHL_END = "\nSUB TL(a&) NOINLINE\nEND SUB";
 
   [Test]
   public void Emit_GivenBitwiseMaskConstant_WhenPb36_ThenFoldsToImmediateNoRegisterLoad() {
@@ -2088,8 +2104,8 @@ public sealed class OptimizerTests {
   public void Emit_GivenBinaryWithMemoryRightOperand_WhenPb36_ThenAluMemoryOperand() {
     // c% + n% with n% a direct-cell operand reads it as an ALU memory operand (ADD AX,[n%]), so it
     // needs no MOV BX,AX staging; an expression right operand (n% * i%) must still be staged via BX.
-    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%)\n  c% = 0\n  FOR i% = 1 TO 10\n    c% = c% + n%\n  NEXT i%\n  PRINT c%\nEND SUB";
-    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%)\n  c% = 0\n  FOR i% = 1 TO 10\n    c% = c% + (n% * i%)\n  NEXT i%\n  PRINT c%\nEND SUB";
+    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%) NOINLINE\n  c% = 0\n  FOR i% = 1 TO 10\n    c% = c% + n%\n  NEXT i%\n  PRINT c%\nEND SUB";
+    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%) NOINLINE\n  c% = 0\n  FOR i% = 1 TO 10\n    c% = c% + (n% * i%)\n  NEXT i%\n  PRINT c%\nEND SUB";
     Assert.That(CountMovBxAx(Compile(mem, Dialect.Pb36)), Is.LessThan(CountMovBxAx(Compile(staged, Dialect.Pb36))),
       "a direct-cell right operand is read as an ALU memory operand, not staged through BX");
   }
@@ -2107,8 +2123,8 @@ public sealed class OptimizerTests {
   public void Emit_GivenCompareWithMemoryRightOperand_WhenPb36_ThenCmpMemoryOperand() {
     // i% > n% with n% a direct cell compares it as a memory operand (CMP AX,[n%]); an expression
     // right operand (n% * i%) must be staged through BX first.
-    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%)\n  c% = 0\n  FOR i% = 1 TO 10\n    IF i% > n% THEN c% = c% + 1\n  NEXT i%\n  PRINT c%\nEND SUB";
-    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%)\n  c% = 0\n  FOR i% = 1 TO 10\n    IF i% > (n% * i%) THEN c% = c% + 1\n  NEXT i%\n  PRINT c%\nEND SUB";
+    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%) NOINLINE\n  c% = 0\n  FOR i% = 1 TO 10\n    IF i% > n% THEN c% = c% + 1\n  NEXT i%\n  PRINT c%\nEND SUB";
+    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%) NOINLINE\n  c% = 0\n  FOR i% = 1 TO 10\n    IF i% > (n% * i%) THEN c% = c% + 1\n  NEXT i%\n  PRINT c%\nEND SUB";
     Assert.That(CountCmpMem(Compile(mem, Dialect.Pb36)), Is.GreaterThan(CountCmpMem(Compile(staged, Dialect.Pb36))),
       "a direct-cell compare operand is read as a CMP memory operand (CMP AX,[n%]); a staged operand is CMP AX,BX");
   }
@@ -2126,8 +2142,8 @@ public sealed class OptimizerTests {
   public void Emit_GivenSelfModifyStore_WhenPb36_ThenMemoryReadModifyWrite() {
     // a% = a% + 1 on a non-resident direct cell becomes INC [a%] (one instruction); the same
     // increment of a DIFFERENT target (b% = a% + 1) cannot read-modify-write and uses load/inc/store.
-    const string rmw = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%)\n  a% = n%\n  a% = a% + 1\n  PRINT a%\nEND SUB";
-    const string nonrmw = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%)\n  a% = n%\n  b% = a% + 1\n  PRINT a%; b%\nEND SUB";
+    const string rmw = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%) NOINLINE\n  a% = n%\n  a% = a% + 1\n  PRINT a%\nEND SUB";
+    const string nonrmw = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%) NOINLINE\n  a% = n%\n  b% = a% + 1\n  PRINT a%; b%\nEND SUB";
     Assert.That(CountIncMem(Compile(rmw, Dialect.Pb36)), Is.GreaterThan(CountIncMem(Compile(nonrmw, Dialect.Pb36))),
       "a self-increment of a direct cell becomes INC [mem]; an increment into a different target does not");
   }
@@ -2145,8 +2161,8 @@ public sealed class OptimizerTests {
   public void Emit_GivenIncrWithAmount_WhenPb36_ThenMemoryAddImmediate() {
     // INCR a%, 5 on a non-resident direct cell becomes ADD [a%],5 (one immediate, no AX park);
     // INCR of an array element needs an address computation and stages the amount through AX.
-    const string direct = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  a% = n%\n  INCR a%, 5\n  INCR a%, 6\n  PRINT a%\nEND SUB";
-    const string array = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  DIM z%(0 TO 3)\n  z%(1) = n%\n  INCR z%(1), 5\n  INCR z%(1), 6\n  PRINT z%(1)\nEND SUB";
+    const string direct = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a% = n%\n  INCR a%, 5\n  INCR a%, 6\n  PRINT a%\nEND SUB";
+    const string array = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  DIM z%(0 TO 3)\n  z%(1) = n%\n  INCR z%(1), 5\n  INCR z%(1), 6\n  PRINT z%(1)\nEND SUB";
     Assert.That(CountAddMemImm(Compile(direct, Dialect.Pb36)), Is.GreaterThan(CountAddMemImm(Compile(array, Dialect.Pb36))),
       "INCR of a direct cell with a constant amount uses ADD [mem],imm; an array element does not");
   }
@@ -2164,8 +2180,8 @@ public sealed class OptimizerTests {
   public void Emit_GivenFloatBinaryWithDirectCellOperand_WhenPb36_ThenFpuMemoryOperand() {
     // r! = a! + b! with b! a direct cell adds it straight from memory (FADD m32); an expression
     // right operand (b! * a!) must be FLD-ed onto the stack and combined with FADDP.
-    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  a! = n%\n  b! = n% + 1\n  r! = a! + b!\n  r! = r! + b!\n  PRINT r!\nEND SUB";
-    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  a! = n%\n  b! = n% + 1\n  r! = a! + (b! * a!)\n  r! = r! + (b! * a!)\n  PRINT r!\nEND SUB";
+    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a! = n%\n  b! = n% + 1\n  r! = a! + b!\n  r! = r! + b!\n  PRINT r!\nEND SUB";
+    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a! = n%\n  b! = n% + 1\n  r! = a! + (b! * a!)\n  r! = r! + (b! * a!)\n  PRINT r!\nEND SUB";
     Assert.That(CountFaddMem(Compile(mem, Dialect.Pb36)), Is.GreaterThan(CountFaddMem(Compile(staged, Dialect.Pb36))),
       "a direct-cell float operand is added as an FPU memory operand (FADD m32); a staged operand uses FADDP");
   }
@@ -2183,8 +2199,8 @@ public sealed class OptimizerTests {
   public void Emit_GivenFloatCompareWithDirectCellOperand_WhenPb36_ThenFcompMemoryOperand() {
     // IF a! < b! with b! a direct cell compares it as an FPU memory operand (FCOMP m32); an
     // expression right operand (b! * a!) must be FLD-ed and compared with FXCH;FCOMPP.
-    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  a! = n%\n  b! = n% + 1\n  IF a! < b! THEN PRINT \"lt\"\n  IF a! > b! THEN PRINT \"gt\"\nEND SUB";
-    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  a! = n%\n  b! = n% + 1\n  IF a! < (b! * a!) THEN PRINT \"lt\"\n  IF a! > (b! * a!) THEN PRINT \"gt\"\nEND SUB";
+    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a! = n%\n  b! = n% + 1\n  IF a! < b! THEN PRINT \"lt\"\n  IF a! > b! THEN PRINT \"gt\"\nEND SUB";
+    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a! = n%\n  b! = n% + 1\n  IF a! < (b! * a!) THEN PRINT \"lt\"\n  IF a! > (b! * a!) THEN PRINT \"gt\"\nEND SUB";
     Assert.That(CountFcompMem(Compile(mem, Dialect.Pb36)), Is.GreaterThan(CountFcompMem(Compile(staged, Dialect.Pb36))),
       "a direct-cell float compare operand uses FCOMP m32; a staged operand uses FXCH;FCOMPP");
   }
@@ -2202,8 +2218,8 @@ public sealed class OptimizerTests {
   public void Emit_GivenFloatTimesIntegerCell_WhenPb36_ThenFpuIntegerMemoryOperand() {
     // x! = x! + i% with i% a signed-integer direct cell reads it with FIADD m16 (no AX load,
     // no FILD scratch); an expression right operand (i% + 1) must be loaded and FILD-ed.
-    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  x! = n%\n  i% = n% + 1\n  x! = x! + i%\n  x! = x! + i%\n  PRINT x!\nEND SUB";
-    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  x! = n%\n  i% = n% + 1\n  x! = x! + (i% + 1)\n  x! = x! + (i% + 1)\n  PRINT x!\nEND SUB";
+    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  x! = n%\n  i% = n% + 1\n  x! = x! + i%\n  x! = x! + i%\n  PRINT x!\nEND SUB";
+    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  x! = n%\n  i% = n% + 1\n  x! = x! + (i% + 1)\n  x! = x! + (i% + 1)\n  PRINT x!\nEND SUB";
     Assert.That(CountFiaddMem(Compile(mem, Dialect.Pb36)), Is.GreaterThan(CountFiaddMem(Compile(staged, Dialect.Pb36))),
       "a signed-integer direct-cell operand is added to a float with FIADD m16; a staged operand uses FILD;FADDP");
   }
@@ -2221,8 +2237,8 @@ public sealed class OptimizerTests {
   public void Emit_GivenFloatTimesConstant_WhenPb36_ThenFpuConstantMemoryOperand() {
     // r! = a! * 1.5 multiplies by the data-segment float constant in place (FMUL qword [f_n]);
     // an expression right operand (b! + b!) must be FLD-ed and combined with FMULP.
-    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  a! = n%\n  r! = a! * 1.5\n  r! = r! * 2.5\n  PRINT r!\nEND SUB";
-    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%)\n  a! = n%\n  b! = n% + 1\n  r! = a! * (b! + b!)\n  r! = r! * (b! + b!)\n  PRINT r!\nEND SUB";
+    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a! = n%\n  r! = a! * 1.5\n  r! = r! * 2.5\n  PRINT r!\nEND SUB";
+    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a! = n%\n  b! = n% + 1\n  r! = a! * (b! + b!)\n  r! = r! * (b! + b!)\n  PRINT r!\nEND SUB";
     Assert.That(CountFmulMem(Compile(mem, Dialect.Pb36)), Is.GreaterThan(CountFmulMem(Compile(staged, Dialect.Pb36))),
       "a float constant operand multiplies via an FPU memory operand (FMUL qword [f_n]); an expression operand uses FMULP");
   }
@@ -2241,8 +2257,8 @@ public sealed class OptimizerTests {
     // a LONG op (AND/OR/XOR) against a BYVAL direct-cell right operand loads it into BX:CX
     // straight from memory, skipping the push/pop staging of the left (MOV BX,AX); a BYREF
     // operand is not a direct cell and keeps staging. Two call sites defeat IPCP folding.
-    const string mem = "DECLARE SUB s(BYVAL a AS LONG, BYVAL b AS LONG)\ns 7, 3\ns 100, 200\nEND\nSUB s(BYVAL a AS LONG, BYVAL b AS LONG)\n  r& = a AND b\n  r& = r OR b\n  r& = r XOR b\n  PRINT r&\nEND SUB";
-    const string staged = "DECLARE SUB s(BYVAL a AS LONG, b AS LONG)\nDIM q AS LONG\nq = 3\ns 7, q\nq = 200\ns 100, q\nEND\nSUB s(BYVAL a AS LONG, b AS LONG)\n  r& = a AND b\n  r& = r OR b\n  r& = r XOR b\n  PRINT r&\nEND SUB";
+    const string mem = "DECLARE SUB s(BYVAL a AS LONG, BYVAL b AS LONG)\ns 7, 3\ns 100, 200\nEND\nSUB s(BYVAL a AS LONG, BYVAL b AS LONG) NOINLINE\n  r& = a AND b\n  r& = r OR b\n  r& = r XOR b\n  PRINT r&\nEND SUB";
+    const string staged = "DECLARE SUB s(BYVAL a AS LONG, b AS LONG)\nDIM q AS LONG\nq = 3\ns 7, q\nq = 200\ns 100, q\nEND\nSUB s(BYVAL a AS LONG, b AS LONG) NOINLINE\n  r& = a AND b\n  r& = r OR b\n  r& = r XOR b\n  PRINT r&\nEND SUB";
     Assert.That(CountMovBxAx(Compile(mem, Dialect.Pb36)), Is.LessThan(CountMovBxAx(Compile(staged, Dialect.Pb36))),
       "a LONG direct-cell right operand loads into BX:CX from memory; a BYREF operand stages through MOV BX,AX");
   }

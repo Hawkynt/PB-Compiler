@@ -56,10 +56,16 @@ public sealed class CEmitter {
   /// declines on. So the emitter says so instead.
   /// </para>
   /// <para>
-  /// Both entries are PRINT USING's: the numeric field formatter and LPRINT's printer routing.
-  /// A C implementation of either is a real piece of work rather than a shim - the formatter is a
-  /// whole fixed-point renderer with grouping and field overflow, and "the printer" has no meaning
-  /// on a hosted platform - so they are named here rather than approximated.
+  /// Two are PRINT USING's: the numeric field formatter and LPRINT's printer routing. A C
+  /// implementation of either is a real piece of work rather than a shim - the formatter is a whole
+  /// fixed-point renderer with grouping and field overflow, and "the printer" has no meaning on a
+  /// hosted platform - so they are named here rather than approximated.
+  /// </para>
+  /// <para>
+  /// The rest are CALL INTERRUPT's register file. Those are not missing work at all: a DOS software
+  /// interrupt is a request to code that only exists inside a DOS, so there is nothing for a hosted
+  /// C target to call and no shim that would be anything but a lie about what the program did. A
+  /// program using them is outside this target rather than ahead of it.
   /// </para>
   /// </summary>
   private static readonly HashSet<string> _notInTheCRuntime = new(StringComparer.Ordinal) {
@@ -68,6 +74,7 @@ public sealed class CEmitter {
     // runtime has no counterpart for - and cannot have as a stub, since the whole point is that
     // rt_print_* stop writing to stdout while it is on
     "rt_capture_begin", "rt_capture_end",
+    "rt_reg_set", "rt_reg_get", "rt_interrupt", "rt_interrupt_flags",
   };
 
   /// <summary>Renders <paramref name="module"/> as a self-contained C99 translation unit.</summary>
@@ -103,10 +110,12 @@ public sealed class CEmitter {
     var sb = new StringBuilder();
     sb.Append(f.IsDeclaration ? "extern " : "").Append(Ty(f.ReturnType)).Append(' ').Append(FuncName(f)).Append('(');
     if (f.Parameters.Count == 0)
-      sb.Append("void");
+      sb.Append(f.IsVarArgs ? "" : "void");
     else
       for (var i = 0; i < f.Parameters.Count; ++i)
         sb.Append(i > 0 ? ", " : "").Append(Ty(f.Parameters[i].Type)).Append(" p").Append(i);
+    if (f.IsVarArgs)
+      sb.Append(f.Parameters.Count > 0 ? ", ..." : "...");
     return sb.Append(')').ToString();
   }
 

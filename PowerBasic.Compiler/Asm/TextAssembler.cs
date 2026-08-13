@@ -9,7 +9,7 @@ namespace PowerBasic.Compiler.Asm;
 /// numeric literals use PB notation (decimal, <c>&amp;H</c>, <c>&amp;O</c>,
 /// <c>&amp;B</c>); <c>;</c> starts a comment.
 /// </summary>
-public sealed class TextAssembler(Assembler target) {
+public sealed partial class TextAssembler(Assembler target) {
 
   private readonly Assembler _target = target ?? throw new ArgumentNullException(nameof(target));
 
@@ -34,24 +34,8 @@ public sealed class TextAssembler(Assembler target) {
     }
   }
 
-  /// <summary>
-  /// The 16-bit general-purpose registers one <c>!</c> statement touches: every register its text
-  /// NAMES (in any width - <c>AL</c> and <c>AH</c> are <c>AX</c>) plus the ones its mnemonic implies
-  /// without spelling them, such as <c>CX</c> for <c>LOOP</c> or <c>DX:AX</c> for <c>MUL</c>.
-  ///
-  /// <para>
-  /// This is the census a register allocator needs to know which registers are the assembly's rather
-  /// than its own (see <c>Backend/InlineAsmReservation</c>). It answers with the whole file when the
-  /// text does not tokenize, because a statement nobody can read is a statement that could touch
-  /// anything - though such a statement will not assemble either.
-  /// </para>
-  /// </summary>
-  public static IReadOnlyCollection<Reg> RegistersUsed(string line) {
-    ArgumentNullException.ThrowIfNull(line);
-    return LineParser.RegistersUsed(line);
-  }
 
-  /// <summary>The 16-bit general-purpose registers, the widest answer <see cref="RegistersUsed"/> can give.</summary>
+  /// <summary>The 16-bit general-purpose registers - the widest answer any register census can give.</summary>
   public static IReadOnlyCollection<Reg> AllGeneralPurposeRegisters { get; } =
     [Reg.AX, Reg.CX, Reg.DX, Reg.BX, Reg.SP, Reg.BP, Reg.SI, Reg.DI];
 
@@ -68,7 +52,7 @@ public sealed class TextAssembler(Assembler target) {
 
   #endregion
 
-  private sealed class LineParser {
+  private sealed partial class LineParser {
 
     private enum TokenKind { Identifier, Number, Comma, Colon, LBracket, RBracket, LParen, RParen, Plus, Minus, End }
 
@@ -88,9 +72,9 @@ public sealed class TextAssembler(Assembler target) {
     #region tokenizer
 
     /// <summary>
-    /// Splits one statement into tokens. Static because the register census
-    /// (<see cref="TextAssembler.RegistersUsed"/>) needs the parser's own idea of what an identifier
-    /// is without an assembler to emit into - scanning the text a second way is how the two answers
+    /// Splits one statement into tokens. Static because the register effect analysis
+    /// (<see cref="TextAssembler.Analyze"/>) needs the parser's own idea of what an identifier is
+    /// without an assembler to emit into - scanning the text a second way is how the two answers
     /// drift apart.
     /// </summary>
     private static List<Token> Tokenize(string line) {
@@ -277,36 +261,6 @@ public sealed class TextAssembler(Assembler target) {
       ["POPA"] = [Reg.AX, Reg.CX, Reg.DX, Reg.BX, Reg.SP, Reg.BP, Reg.SI, Reg.DI],
     };
 
-    /// <summary>
-    /// Every 16-bit general-purpose register this statement names or implies - see
-    /// <see cref="TextAssembler.RegistersUsed"/>. Identifiers are classified exactly as
-    /// <see cref="ParseIdentifierOperand"/> classifies them, so what counts as a register here is what
-    /// the assembler will really assemble as one.
-    /// </summary>
-    public static IReadOnlyCollection<Reg> RegistersUsed(string line) {
-      List<Token> tokens;
-      try {
-        tokens = Tokenize(line);
-      } catch (AsmSyntaxException) {
-        return AllGeneralPurposeRegisters;
-      }
-
-      var used = new HashSet<Reg>();
-      foreach (var token in tokens) {
-        if (token.Kind != TokenKind.Identifier)
-          continue;
-        if (_REGISTERS.TryGetValue(token.Text, out var register)) {
-          if (WordFormOf(register) is { } word)
-            used.Add(word);
-          continue;
-        }
-        // not a register: a mnemonic, a prefix, or an operand name. Only the first two can be in the
-        // table, and a variable that happens to be spelled MUL only overstates the answer.
-        if (_IMPLICIT_REGISTERS.TryGetValue(token.Text, out var implied))
-          used.UnionWith(implied);
-      }
-      return used;
-    }
 
     /// <summary>The 16-bit register a general-purpose name denotes (AH and EAX are both AX); null for anything else.</summary>
     private static Reg? WordFormOf(Reg register) => register switch {

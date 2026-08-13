@@ -19,6 +19,7 @@ public sealed partial class DosRuntime {
 
   public Label PrintInt64 { get; private set; } = null!;
   public Label StrI64 { get; private set; } = null!;
+
   public Label AsciizLoad { get; private set; } = null!;
   public Label AsciizStore { get; private set; } = null!;
   public Label AsciizLen { get; private set; } = null!;

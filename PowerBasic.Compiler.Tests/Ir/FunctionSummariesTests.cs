@@ -86,6 +86,44 @@ public sealed class FunctionSummariesTests {
     Assert.That(FunctionSummaries.Compute(module).For(fn).IsPure, Is.False);
   }
 
+  /// <summary>
+  /// The checked exception to "a declaration is a wall": the float math intrinsics take their
+  /// arguments by value, so there is no memory they could reach - and a caller of one is no less
+  /// pure than it was.
+  /// </summary>
+  [Test]
+  public void Summary_GivenAMathIntrinsicDeclaration_ThenItIsPure() {
+    var module = new IrModule("t");
+    var sqrt = module.AddFunction(new IrFunction("llvm.sqrt.f80", IrType.F80, [new IrArgument(IrType.F80, 0)]));
+    var caller = Add(module, "Root", (entry, _) =>
+      entry.Append(new IrCall(IrType.F80, sqrt, [new IrConstantFloat(IrType.F80, 2)])));
+
+    var summaries = FunctionSummaries.Compute(module);
+    Assert.That(summaries.For(sqrt).IsPure, Is.True);
+    Assert.That(summaries.For(caller).IsPure, Is.True);
+  }
+
+  /// <summary>
+  /// The rows that are NOT on the list, and the reason the list is worth having: a string entry
+  /// consumes or allocates a handle, so it can neither be merged with another nor moved.
+  /// </summary>
+  [TestCase("rt_str_len")]
+  [TestCase("rt_str_dup")]
+  [TestCase("rt_print_nl")]
+  [TestCase("llvm.memcpy.p0.p0.i32")]
+  public void Summary_GivenARuntimeEntryThatIsNotPure_ThenItIsNotOnTheList(string name) {
+    Assert.That(FunctionSummaries.IsPureExternal(name), Is.False);
+    Assert.That(FunctionSummaries.IsSpeculatableExternal(name), Is.False);
+  }
+
+  [TestCase("llvm.sqrt.f64")]
+  [TestCase("llvm.sin.f32")]
+  [TestCase("llvm.pow.f80")]
+  public void Summary_GivenAMathIntrinsic_ThenItIsPureAtEveryWidth(string name) {
+    Assert.That(FunctionSummaries.IsPureExternal(name), Is.True);
+    Assert.That(FunctionSummaries.IsSpeculatableExternal(name), Is.True);
+  }
+
   [Test]
   public void DeadPureCall_GivenNothingUsesTheResult_ThenTheCallGoes() {
     var module = new IrModule("t");

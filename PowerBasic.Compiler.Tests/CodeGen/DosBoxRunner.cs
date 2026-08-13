@@ -28,67 +28,136 @@ public static class DosBoxRunner {
 
 
   /// <summary>
-  /// Whether this emulator refuses to start without a display, established by trying it once.
+  /// The ways of starting the emulator with nobody looking. A null value REMOVES the variable, so
+  /// each candidate is a complete statement about the environment rather than an edit to whatever
+  /// the caller happened to export.
   ///
-  /// Vanilla DOSBox is happy with SDL's dummy video driver. dosbox-staging builds an OpenGL
-  /// context before it reads any setting and aborts under that driver, so it needs a real X
-  /// server even though these tests never look at a window. Without this, pointing DOSBOX_EXE at
-  /// staging does not skip and does not warn - every execution test simply fails, which reads as
-  /// several hundred compiler regressions.
+  /// <para>
+  /// Every candidate removes DISPLAY, and that is the whole design rather than tidiness. "Headless"
+  /// cannot be established by looking for an error message, because the way this goes wrong is that
+  /// the emulator starts perfectly - on the user's desktop. A probe reading stderr for an abort
+  /// cannot tell that apart from success, and twice reported a configuration as working while it
+  /// opened a window per test on a machine somebody was using. With DISPLAY unset, no window is
+  /// POSSIBLE, so "it ran" is proof of the property being claimed.
+  /// </para>
   ///
-  /// Probed rather than matched against the version string: which build needs what is a property
-  /// of how it was compiled, and the name is only a guess about that.
+  /// <para>
+  /// The two dummy-driver entries are ALTERNATIVES, and setting both names at once is not a safe
+  /// way to cover both: SDL2 reads SDL_VIDEODRIVER, SDL3 reads SDL_VIDEO_DRIVER, and sdl2-compat -
+  /// which re-implements the SDL2 ABI over SDL3, so an unchanged emulator binary can find either
+  /// underneath it - honours the SDL2 name by selecting SDL2's dummy driver, which has no OpenGL
+  /// and aborts. Belt and braces is a WORSE configuration here than either belt alone.
+  /// </para>
   /// </summary>
-  private static readonly Lazy<bool> _needsDisplay = new(() => {
+  private static readonly (string Label, (string Name, string? Value)[] Vars)[] _candidates = [
+    ("SDL2's dummy video driver", [("SDL_VIDEODRIVER", "dummy"), ("SDL_VIDEO_DRIVER", null), ("DISPLAY", null)]),
+    ("SDL3's dummy video driver", [("SDL_VIDEO_DRIVER", "dummy"), ("SDL_VIDEODRIVER", null), ("DISPLAY", null)]),
+    ("SDL's offscreen video driver", [("SDL_VIDEODRIVER", "offscreen"), ("SDL_VIDEO_DRIVER", "offscreen"), ("DISPLAY", null)]),
+    ("no display at all", [("SDL_VIDEODRIVER", null), ("SDL_VIDEO_DRIVER", null), ("DISPLAY", null)]),
+  ];
+
+  /// <summary>Set to opt in to letting the emulator use the desktop when no headless way works.</summary>
+  private const string _ALLOW_DISPLAY = "PBC_ALLOW_DISPLAY";
+
+  /// <summary>
+  /// How to start the emulator so that nothing appears on screen, or null when there is no such way.
+  ///
+  /// <para>
+  /// Null does NOT fall back to the user's display. An emulator that cannot run headless is a
+  /// missing capability of this host, the same kind of thing as the emulator being absent, and the
+  /// execution tests skip for it - because the alternative is a suite that takes over the desktop
+  /// of whoever runs it, several hundred windows deep, as an unannounced consequence of a library
+  /// upgrade. <see cref="_ALLOW_DISPLAY"/> opts back in for anyone who does not mind.
+  /// </para>
+  /// </summary>
+  private static readonly Lazy<(string Label, (string Name, string? Value)[] Vars)?> _headless = new(() => {
+    // dosbox-staging on Windows quits before the autoexec under the dummy driver, so that host
+    // takes itself out of the choice entirely and is left exactly as the caller set it up.
     if (Executable == null || RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-      return false;
+      return ("the environment as given", []);
+    foreach (var candidate in _candidates)
+      if (StartsCleanly(candidate.Vars))
+        return candidate;
+    if (Environment.GetEnvironmentVariable(_ALLOW_DISPLAY) == "1")
+      return ("the desktop, by request", []);
+    return null;
+  });
+
+  /// <summary>
+  /// Whether the emulator gets past starting its video under <paramref name="vars"/>, probed with
+  /// `-c exit`. Every caller passes an environment with DISPLAY removed, which is what makes the
+  /// answer mean "headless" rather than merely "started".
+  ///
+  /// It is the ABORT that is being watched for, not the exit: an emulator that starts properly may
+  /// well sit there afterwards - dosbox-staging holds the window open when a command finishes too
+  /// quickly - so outliving the probe counts as success. Which makes the time bound part of the
+  /// test rather than a safety net, and it has to bound the READ as well as the wait: reading both
+  /// streams to the end first blocks until the emulator closes them, so a probe of an emulator
+  /// that works never returns at all. That deadlock is invisible in a test run. It looks like a
+  /// slow suite, right up until the run is killed with nothing to show.
+  /// </summary>
+  private static bool StartsCleanly((string Name, string? Value)[] vars) {
     try {
-      var probe = new ProcessStartInfo(Executable, "-c exit") {
+      var probe = new ProcessStartInfo(Executable!, "-c exit") {
         UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
       };
+      Apply(vars, probe);
+
+      var text = new System.Text.StringBuilder();
       using var process = Process.Start(probe)!;
-      var text = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
-      if (!process.WaitForExit(30000)) {
-        process.Kill(entireProcessTree: true);
-        return false;
+      void Collect(object _, DataReceivedEventArgs e) {
+        if (e.Data != null)
+          lock (text)
+            text.AppendLine(e.Data);
       }
-      return text.Contains("ABORT", StringComparison.OrdinalIgnoreCase)
-          || text.Contains("Could not initialize video", StringComparison.OrdinalIgnoreCase);
+      process.OutputDataReceived += Collect;
+      process.ErrorDataReceived += Collect;
+      process.BeginOutputReadLine();
+      process.BeginErrorReadLine();
+
+      var exited = process.WaitForExit(15000);
+      if (!exited) {
+        process.Kill(entireProcessTree: true);
+        process.WaitForExit(5000);
+      }
+      lock (text) {
+        var said = text.ToString();
+        return !said.Contains("ABORT", StringComparison.OrdinalIgnoreCase)
+            && !said.Contains("Could not initialize video", StringComparison.OrdinalIgnoreCase);
+      }
     } catch {
       return false;
     }
-  });
+  }
 
-  private static bool HasXvfb => File.Exists("/usr/bin/xvfb-run");
+  /// <summary>Sets or removes each named variable on <paramref name="psi"/> - a null value removes.</summary>
+  private static void Apply((string Name, string? Value)[] vars, ProcessStartInfo psi) {
+    foreach (var (name, value) in vars)
+      if (value == null)
+        psi.Environment.Remove(name);
+      else
+        psi.Environment[name] = value;
+  }
 
   /// <summary>
-  /// The wait a program gets, stretched when the emulator runs inside a virtual X server.
-  ///
-  /// 60 seconds is ample natively and tight under xvfb, which is several times slower - and the way
-  /// it fails is not "this test timed out". A program killed part-way writes a TRUNCATED output
-  /// file, and the assertion then reports a value that differs from the golden: a fidelity failure
-  /// that is nothing of the kind. The shell harness hit exactly this and blamed an unrelated
-  /// dialect for it, so the same allowance is made here.
+  /// The wait a program gets. No longer stretched for a virtual X server, because there is no
+  /// longer one to stretch for: an emulator that cannot run headless skips instead.
   /// </summary>
-  private static int Deadline(int timeoutMs) => _needsDisplay.Value ? timeoutMs * 5 : timeoutMs;
+  private static int Deadline(int timeoutMs) => timeoutMs;
 
   /// <summary>
-  /// A start-info for the emulator, wrapped in a virtual X server when it needs one.
+  /// A start-info for the emulator, started the way this host was found to accept.
   /// Every launch of DOSBox in the test suite must go through here - three fixtures used to build
   /// their own ProcessStartInfo and were the only ones still failing after this was introduced.
   /// </summary>
   public static ProcessStartInfo Launch(string arguments) {
-    if (!_needsDisplay.Value)
-      return new ProcessStartInfo(Executable!, arguments) { UseShellExecute = false };
+    Assume.That(_headless.Value, Is.Not.Null,
+      $"{Executable} has no way to run without a display on this host, so the execution tests skip "
+      + $"rather than open a window each. Set {_ALLOW_DISPLAY}=1 to let it use the desktop, or point "
+      + "DOSBOX_EXE at a build that runs headless.");
 
-    Assume.That(HasXvfb, Is.True,
-      $"{Executable} cannot start headless and xvfb-run is not installed - execution test skipped");
-    var psi = new ProcessStartInfo("/usr/bin/xvfb-run", $"-a \"{Executable}\" {arguments}") {
-      UseShellExecute = false,
-    };
-    // Dropped deliberately: callers set it to "dummy" for vanilla DOSBox, and keeping it would
-    // hand SDL the driver with no OpenGL inside the very X server provided to supply one.
-    psi.Environment.Remove("SDL_VIDEODRIVER");
+    var psi = new ProcessStartInfo(Executable!, arguments) { UseShellExecute = false };
+    Apply(_headless.Value!.Value.Vars, psi);
     return psi;
   }
 

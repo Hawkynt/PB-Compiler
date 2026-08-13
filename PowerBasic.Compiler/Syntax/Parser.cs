@@ -286,7 +286,7 @@ public sealed partial class Parser {
       TokenKind.MicrosoftMetaCommand => this.ParseMicrosoftCommentMeta(),
       TokenKind.NamedConstant => this.ParseEquate(),
       TokenKind.IntegerLiteral when atLineStart => new LabelStmt(this.Advance().Position, token.IntegerValue.ToString()),
-      TokenKind.Question => this.ParsePrint(false),
+      TokenKind.Question => this.ParseQuestionPrint(),
       TokenKind.At => this.ParseAssignment(), // @p = value
       TokenKind.Period when this._withSubjects.Count > 0 && this.Peek().Kind == TokenKind.Identifier => this.ParseAssignment(), // WITH: .member = value
       TokenKind.Identifier => this.ParseIdentifierStatement(atLineStart),
@@ -375,11 +375,11 @@ public sealed partial class Parser {
       case "DEFSTR": return this.ParseDefType(BuiltinType.String);
       case "DEFFLX": this.Require(LanguageFeature.ExtendedNumericTypes); return this.ParseDefType(BuiltinType.Flex);
       case "DIM": return this.ParseDim(StorageClass.Dim);
-      case "LOCAL": return this.ParseDim(StorageClass.Local);
+      case "LOCAL": this.Require(LanguageFeature.LocalStorage); return this.ParseDim(StorageClass.Local);
       case "STATIC": return this.ParseDim(StorageClass.Static);
       case "SHARED": return this.ParseDim(StorageClass.Shared);
       case "PUBLIC": this.Require(LanguageFeature.PublicStorage); return this.ParseDim(StorageClass.Public);
-      case "EXT": this.Require(LanguageFeature.PublicStorage); return this.ParseDim(StorageClass.Ext);
+      case "EXT": this.Require(LanguageFeature.ExtStorage); return this.ParseDim(StorageClass.Ext);
       case "COMMON": return this.ParseDim(StorageClass.Common);
       case "REDIM": return this.ParseRedim();
       case "ERASE": return this.ParseErase();
@@ -418,6 +418,7 @@ public sealed partial class Parser {
       case "REPLACE": {
         // REPLACE find WITH with IN target: IN is this statement's delimiter, so the pb36
         // membership operator is suppressed while parsing the find/with expressions
+        this.Require(LanguageFeature.ReplaceStatement);
         var replacePos = this.Advance().Position;
         this._suppressInOperator = true;
         Expression find, with;
@@ -481,6 +482,20 @@ public sealed partial class Parser {
       default:
         return _commandKeywords.Contains(keyword) ? this.ParseCommand(keyword) : this.ParseBareCall();
     }
+  }
+
+  /// <summary>
+  /// <c>?</c> as PRINT. The interpreters have it - BASICA and GW-BASIC expand it as they tokenize a
+  /// line - and PowerBASIC has it, but the Microsoft COMPILERS do not: BC 4.50 and BC 7.10 both
+  /// answer it "Invalid character", because in that lineage the expansion lived in the editor and
+  /// never reached the compiler. It is the one form here that a family ACQUIRED and then lost, so
+  /// it is checked against the family boundary directly rather than through a minimum version.
+  /// </summary>
+  private Statement ParseQuestionPrint() {
+    if (this._dialect.Family() == DialectFamily.Microsoft && !this._dialect.IsGwBasica())
+      throw this.Error("? as PRINT is not available in the Microsoft compilers "
+        + $"(current dialect: {this._dialect.DisplayName()}); BASICA and GW-BASIC expand it, BC does not");
+    return this.ParsePrint(false);
   }
 
   private Statement ParseMeta() {
@@ -627,9 +642,14 @@ public sealed partial class Parser {
   private void ValidateOptionMeta(Token command, IReadOnlyList<Token> arguments) {
     if (arguments is [{ Kind: TokenKind.Identifier } option]) {
       if (option.Text.Equals("SIGNED", StringComparison.OrdinalIgnoreCase)
-          || option.Text.Equals("GOSUB", StringComparison.OrdinalIgnoreCase)
-          || option.Text.Equals("VIDEO", StringComparison.OrdinalIgnoreCase))
+          || option.Text.Equals("GOSUB", StringComparison.OrdinalIgnoreCase))
         return;
+      // $OPTION itself is Bob Zale's and PBC 3.0 and 3.5 take SIGNED, GOSUB and CNTLBREAK - but not
+      // VIDEO, which they answer "Syntax error". Only the one argument is gated.
+      if (option.Text.Equals("VIDEO", StringComparison.OrdinalIgnoreCase)) {
+        this.Require(LanguageFeature.OptionVideo);
+        return;
+      }
     }
     if (arguments is [{ Kind: TokenKind.Identifier } cntlBreak, { Kind: TokenKind.Identifier } mode]
         && cntlBreak.Text.Equals("CNTLBREAK", StringComparison.OrdinalIgnoreCase)

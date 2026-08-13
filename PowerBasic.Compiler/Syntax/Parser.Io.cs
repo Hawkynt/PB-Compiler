@@ -164,7 +164,18 @@ public sealed partial class Parser {
     return "WRITE";
   }
 
-  private string ParseLockSpec() => this.TryMatchKeyword("SHARED") ? "SHARED" : this.ParseAccessSpec();
+  /// <summary>
+  /// The lock spec after OPEN's LOCK. READ / WRITE / READ WRITE are in both lineages, but LOCK
+  /// SHARED is Bob Zale's alone: to Microsoft, SHARED is a mode of its own that stands WITHOUT the
+  /// LOCK, and BC answers the pair with "Syntax error". So the keyword is not gated - the spec is.
+  /// </summary>
+  private string ParseLockSpec() {
+    if (!this.IsKeyword(0, "SHARED"))
+      return this.ParseAccessSpec();
+    this.Require(LanguageFeature.LockShared);
+    this.Advance();
+    return "SHARED";
+  }
 
   private Statement ParseClose() {
     var pos = this.Advance().Position;

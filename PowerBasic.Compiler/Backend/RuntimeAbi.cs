@@ -229,6 +229,18 @@ internal static class RuntimeAbi {
     ["rt_str_concat"] = new("rt_strcat",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
 
+    // "StrCatVar: AX=target handle, DX=source handle -> AX". It grows the TARGET in place when the
+    // target is the topmost heap block and copies the source's bytes into it - so it consumes the
+    // target and BORROWS the source, which is what makes Ir.Passes.StringAppendInPlace drop the copy
+    // the lowering made of the source.
+    ["rt_str_append_var"] = new("rt_strcatvar",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
+    // "StrCatLit: AX=target handle, DS:SI=literal bytes, CX=length -> AX (consumes the target)". The
+    // literal never becomes a handle at all, which is the whole win over rt_strmem + rt_strcat; the
+    // routine pushes DS itself on its fallback path, so no segment preset is needed here.
+    ["rt_str_append_lit"] = new("rt_strcatlit",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Offset, Reg.SI), new(ArgKind.Word, Reg.CX)],
+      _callerSaved, Result: Reg.AX),
     // rt_str_dup(ptr) -> ptr is StrDup: "AX=handle -> AX=copy". The lowering puts one of these on
     // every read of a string variable or array element, which is what makes the consuming routines
     // above safe to call - see IrLowering.BorrowString
@@ -354,6 +366,14 @@ internal static class RuntimeAbi {
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.WidenedWord),
 
+    // "StrCmpEq: AX=left, DX=right -> AX=0 equal / 1 unequal (consumes both)" - the same call shape
+    // as rt_strcmp with a different answer, which is why only a caller that tests it against zero may
+    // be routed here (Ir.Passes.StringCompareEquality). The routine lives in its own trimmable runtime
+    // section, so naming it here is also what keeps that section in the image.
+    ["rt_str_compare_eq"] = new("rt_strcmpeq",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.WidenedWord),
+
     // "MidSet: AX=target handle, CX=start, BX=length limit, DX=value handle (in-place replace;
     // consumes the value handle only)". The IR declares a pointer result and the routine returns
     // none - but it replaces IN PLACE and preserves AX, so the target handle it was given is still
@@ -374,6 +394,13 @@ internal static class RuntimeAbi {
     // full caller-saved set already covers
     ["rt_str_ltrim"] = new("rt_ltrim", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     ["rt_str_rtrim"] = new("rt_rtrim", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+
+    // "CharAt: AX=handle, CX=1-based index -> AX=that byte, or 0 past the end (consumes)". It clamps
+    // the index below 1 exactly as rt_strmid does, which is what lets ASC(MID$(s$,i,1)) become one
+    // call (Ir.Passes.StringByteRead). Its own trimmable section, referenced only from here.
+    ["rt_str_char_at"] = new("rt_charat",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.WidenedWord),
 
     // "Asc: AX=handle -> AX=first byte or 0 (consumes)"; the IR types the result i32
     ["rt_str_asc"] = new("rt_asc", [new(ArgKind.Word, Reg.AX)], _callerSaved,
@@ -657,6 +684,32 @@ internal static class RuntimeAbi {
       [new(ArgKind.Word, Reg.AX), new(ArgKind.LowWord, Reg.CX)], _callerSaved),
     ["rt_arr_free_ptr"] = new("rt_arr_free_ptr",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.LowWord, Reg.CX)], _callerSaved),
+
+    // The MEMORY-MODEL array classes, transcribed from the ABI block at the head of
+    // DosRuntime.Ems.cs. HUGE takes conventional memory from DOS 48h and is addressed by stepping
+    // the segment; VIRTUAL/EMS/XMS take EMS pages and are addressed through the page frame.
+    //
+    //   HugeAlloc: DX:AX = byte count -> AX = segment      HugeFree: AX = segment (0 ok)
+    //   HugeZero:  AX = segment, CX:BX = byte count
+    //   EmsAlloc:  DX:AX = byte count -> AX = handle       EmsFree:  DX = handle (0 ok)
+    //   EmsFrame:  -> AX = page-frame segment              EmsZero:  DX = handle, CX:BX = byte count
+    //   EmsMap2:   DX = handle, BX = logical page          EmsFre:   -> DX:AX = free EMS bytes
+    //
+    // The byte counts are real PAIRS rather than LowWord: a HUGE array is over 64 KiB by the time it
+    // is worth declaring one, which is the whole point of the class.
+    ["rt_huge_alloc"] = new("rt_hugealloc", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
+    ["rt_huge_free"] = new("rt_hugefree", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_huge_zero"] = new("rt_hugezero",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Pair, Reg.BX, Reg.CX)], _callerSaved),
+    ["rt_ems_alloc"] = new("rt_emsalloc", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
+    ["rt_ems_free"] = new("rt_emsfree", [new(ArgKind.Word, Reg.DX)], _callerSaved),
+    ["rt_ems_frame"] = new("rt_emsframe", [], _callerSaved, Result: Reg.AX),
+    ["rt_ems_zero"] = new("rt_emszero",
+      [new(ArgKind.Word, Reg.DX), new(ArgKind.Pair, Reg.BX, Reg.CX)], _callerSaved),
+    ["rt_ems_map2"] = new("rt_emsmap2",
+      [new(ArgKind.Word, Reg.DX), new(ArgKind.Word, Reg.BX)], _callerSaved),
+    // FRE(-11): the free EMS byte count, a LONG, so the answer is the DX:AX pair
+    ["rt_ems_fre"] = new("rt_emsfre", [], _callerSaved, Result: Reg.AX, Answer: ResultKind.Pair),
 
     ["rt_array_sort_num"] = new("rt_sortnum", [], _callerSaved),
     ["rt_array_scan_num"] = new("rt_scannum", [], _callerSaved, Result: Reg.AX),

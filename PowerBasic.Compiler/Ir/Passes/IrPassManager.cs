@@ -145,6 +145,11 @@ public sealed class IrPassManager {
     .AddWhen(optimizeForSpeed, "deadloop", DeadLoopElimination.Run)
     .Add("ifconv", IfConversion.Run)
     .Add("simplifycfg", SimplifyCfg.Run)
+    // AFTER simplifycfg, which is what puts a self-call and its return next to each other, and after
+    // mem2reg, without which the parameters are still allocas and there is nothing to phi. It runs in
+    // the pipeline rather than beside it so that the sweep FOLLOWING the inliner sees it: mutual
+    // recursion is inlined into self-recursion first, and this is what then turns it into a loop.
+    .Add("tailrec", TailRecursion.Run)
     // FunctionSummaries.RemoveDeadPureCalls deliberately does NOT run here. The analysis is right and
     // the removal is sound - a call to a body that writes nothing, whose result nothing reads, is not
     // observable - but DIFF113 declares `SUB Opaque(v&)` with an EMPTY body precisely to be an
@@ -152,6 +157,15 @@ public sealed class IrPassManager {
     // could not previously see through. What it then does with it differs from the original, which is
     // a finding about that optimizer and not about this pass. Until that is chased down, the summaries
     // are available to callers and this consumer is off.
+    // The string passes are module passes because they mint module-level things - a runtime
+    // declaration, a pooled literal - which a function pass has no handle on. They run last, after
+    // the value passes have folded whatever the arguments were going to fold into.
+    .AddModulePass("strfold", StringConstantFold.Run)
+    .AddModulePass("strchain", StringConcatChain.Run)
+    .AddModulePass("strappend", StringAppendInPlace.Run)
+    .AddModulePass("strbyte", StringByteRead.Run)
+    .AddModulePass("strcmpeq", StringCompareEquality.Run)
+    .AddModulePass("strempty", StringEmptinessTest.Run)
     .AddModulePass("readonly-globals", ReadOnlyGlobals.Run)
     .AddModulePass("localize-globals", LocalizeGlobals.Run)
     .AddModulePass("ipconstprop", IpConstantProp.Run);

@@ -13,6 +13,17 @@ public sealed partial class CodeGenerator {
   // register allocation (computed once); null until first queried. Empty unless UseExperimentalBackend.
   private Dictionary<ProcedureSymbol, (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)>? _backendProcs;
 
+  /// <summary>
+  /// What the x86-16 selector is compiling for: the instruction set the directives declared and the
+  /// objective they asked for. It is assembled here rather than passed piecemeal because both answers
+  /// have to match the direct emitter's exactly - the two paths emit into ONE image, so a routed
+  /// function assuming a 386 while a directly-emitted one does not is a program with two targets in it.
+  /// </summary>
+  private Backend.SelectionTarget SelectionTarget => new(
+    Cpu386: this._rt.Cpu386, Optimize: this.Optimize,
+    OptimizeSpeed: this.OptimizeSpeed, OptimizeSize: this.OptimizeSize,
+    Cost: this.SelectionCost);
+
   /// <summary>The module body compiled by the x86-16 back end, when the whole of it selects and allocates.</summary>
   private (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)? _backendMain;
 
@@ -79,6 +90,20 @@ public sealed partial class CodeGenerator {
     // IR does not delete it from the image - it only stops it being ROUTED. Measured, it cost six
     // corpus comparisons and saved nothing. It belongs where the IR IS the program, which is what
     // pbc --emit-c and --emit-llvm are, and that is where it runs.
+
+    // LAST of all, and after every other pass has run: a SELECT CASE that survived as a chain of
+    // compares becomes one IrSwitch, which is the only form the selector can turn into a table, a hash
+    // or a mask. It runs here rather than inside the standard pipeline because it is the shape the
+    // x86-16 dispatch selection consumes, and because it wants the chain in its FINAL form - SCCP may
+    // have folded arms away and the inliner may have brought new ones in. SimplifyCfg then collects the
+    // now-unreachable remains of the chain and Dce the compares that fed it.
+    if (this.Optimize)
+      foreach (var f in module.Functions)
+        if (!f.IsDeclaration && SwitchFormation.Run(f) > 0) {
+          SimplifyCfg.Run(f);
+          Dce.Run(f);
+        }
+
     var byName = new Dictionary<string, IrFunction>(System.StringComparer.OrdinalIgnoreCase);
     foreach (var f in module.Functions)
       if (!f.IsDeclaration)
@@ -112,7 +137,7 @@ public sealed partial class CodeGenerator {
         continue;
       if (!byName.TryGetValue(proc.Name, out var irFn) || !this.ExternalCalleesResolve(irFn)
           || !this.DataGlobalsResolve(irFn)
-          || InstructionSelector.TrySelect(irFn, this._rt.Cpu386) is not { } mfn)
+          || InstructionSelector.TrySelect(irFn, this.SelectionTarget) is not { } mfn)
         continue;
       candidates.Add((proc, irFn, mfn));
     }
@@ -137,7 +162,7 @@ public sealed partial class CodeGenerator {
 
     foreach (var (proc, _, mfn) in candidates) {
       MachineScheduler.Schedule(mfn);             // schedule first, then allocate the final order
-      if (LinearScanAllocator.Allocate(mfn) is not { } alloc)
+      if (LinearScanAllocator.Allocate(mfn, this.SelectionTarget) is not { } alloc)
         continue;                                 // a value live across a CALL has no register - decline
       this._backendProcs[proc] = (mfn, alloc);
     }
@@ -188,10 +213,10 @@ public sealed partial class CodeGenerator {
     if (!CalleeNames(main).All(n => routed.Keys.Any(p => p.Name.Equals(n, System.StringComparison.OrdinalIgnoreCase))))
       return null;
     if (!this.ExternalCalleesResolve(main) || !this.DataGlobalsResolve(main)
-        || InstructionSelector.TrySelect(main, this._rt.Cpu386) is not { } machine)
+        || InstructionSelector.TrySelect(main, this.SelectionTarget) is not { } machine)
       return null;
     MachineScheduler.Schedule(machine);
-    if (LinearScanAllocator.Allocate(machine) is not { } alloc)
+    if (LinearScanAllocator.Allocate(machine, this.SelectionTarget) is not { } alloc)
       return null;
     return this._backendMain = (machine, alloc);
   }
@@ -205,6 +230,15 @@ public sealed partial class CodeGenerator {
         asm.Jmp(this._rt.Exit);
       });
   }
+
+  /// <summary>
+  /// The cost model the instruction selector may spend bytes against, or null to keep the compact
+  /// form. It is handed over only under <c>$OPTIMIZE SPEED</c>, which is the same gate the direct
+  /// emitter's own byte-for-cycles trades sit behind: the two paths emit into one image and must make
+  /// the same trade, or the objective would mean one thing for a routed procedure and another for its
+  /// neighbour.
+  /// </summary>
+  private TargetCost? SelectionCost => this.Optimize && this.OptimizeSpeed ? this.Cost : null;
 
   private Asm.Label? _irDataPool;
   private Asm.Label? _irDataCursor;

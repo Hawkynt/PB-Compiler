@@ -210,13 +210,22 @@ public sealed partial class CodeGenerator {
       asm.Mov(Mem.Word(asm.Lbl("rt_gy2")), Reg.AX);
     }
 
-    if (this.EmitPlace(gg.Array) is not { } buffer) {
-      this.Unsupported(gg.Position, $"{(gg.IsGet ? "GET" : "PUT")} needs an array element to address, as in a%(0)");
+    // The buffer is normally written as the WHOLE array - spr%() - which is the only spelling
+    // genuine PBC 3.50 takes; it rejects spr%(0) outright. An element is still accepted here,
+    // because QuickBASIC's line writes one and the statement means the same thing either way:
+    // start the image at this address.
+    var whole = gg.Array is NameExpr or CallOrIndexExpr { Arguments.Count: 0 }
+                && model.VariableBindings.TryGetValue(gg.Array, out var array) && array.Type is ArrayType
+      ? array
+      : null;
+    var buffer = whole is not null ? this.ArrayBasePlace(whole, gg.Array) : this.EmitPlace(gg.Array);
+    if (buffer is not { } cell) {
+      this.Unsupported(gg.Position, $"{(gg.IsGet ? "GET" : "PUT")} needs an array to address, as in a%()");
       return;
     }
-    asm.Lea(Reg.AX, buffer.Cell);
+    asm.Lea(Reg.AX, cell.Cell);
     asm.Mov(Mem.Word(asm.Lbl("rt_gbufofs")), Reg.AX);
-    asm.Mov(Reg.AX, buffer.Far ? Reg.ES : Reg.DS);
+    asm.Mov(Reg.AX, cell.Far ? Reg.ES : Reg.DS);
     asm.Mov(Mem.Word(asm.Lbl("rt_gbufseg")), Reg.AX);
 
     if (gg.IsGet) {

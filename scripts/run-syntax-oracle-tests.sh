@@ -143,13 +143,26 @@ while IFS=$'\t' read -r dialect form expected source; do
     continue
   fi
 
+  # The verdict is the COMPILER'S OWN REPORT wherever there is one, because the artifact is not
+  # evidence: BC 4.50 writes T.OBJ for a program it has just answered with "1 Severe Error(s)", and
+  # LINK then builds an EXE from it. Reading the directory therefore called every qb* probe an
+  # ACCEPT - a syntax oracle that agrees with whatever it is asked, which is worse than none. BC 7.x
+  # withholds the object, which is why the fault stayed invisible on the PDS batteries.
   observed=reject
-  for artifact in T.EXE T.PBU T.PBC T.OBJ; do
-    if [ -f "$case_dir/$artifact" ]; then
-      observed=accept
-      break
-    fi
-  done
+  if [ -s "$case_dir/BCLOG.TXT" ]; then
+    severe=$(tr -d '\r' < "$case_dir/BCLOG.TXT" | sed -n 's/^ *\([0-9][0-9]*\)  *Severe.*/\1/p' | tail -1)
+    [ "${severe:-1}" = "0" ] && observed=accept
+  elif [ -s "$case_dir/PBCOUT.TXT" ]; then
+    grep -qE "Error [0-9]+:" "$case_dir/PBCOUT.TXT" || observed=accept
+  else
+    # An IDE-driven oracle (pb21, tb10, tb11) leaves no log to read, only what it built.
+    for artifact in T.EXE T.PBU T.PBC T.OBJ; do
+      if [ -f "$case_dir/$artifact" ]; then
+        observed=accept
+        break
+      fi
+    done
+  fi
   if [ "$observed" = "$expected" ]; then
     status=pass
     passes=$((passes + 1))

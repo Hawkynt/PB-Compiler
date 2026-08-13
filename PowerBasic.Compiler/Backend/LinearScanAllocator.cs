@@ -12,7 +12,7 @@ namespace PowerBasic.Compiler.Backend;
 /// allocator retries after rematerializing, directly spilling, or splitting one live range; it
 /// returns null only when none of those transformations can make progress.
 /// </summary>
-public sealed class LinearScanAllocator {
+public sealed partial class LinearScanAllocator {
 
   // Data values take AX/CX/DX first so the scarce addressing registers stay free; an address value (one
   // used as a memory base/index) must come from BX/SI/DI - in 16-bit mode AX/CX/DX/BP/SP cannot index
@@ -32,6 +32,34 @@ public sealed class LinearScanAllocator {
   private static readonly Reg[] _indexing = [Reg.SI, Reg.DI];
 
   /// <summary>
+  /// Where a value that is live all the way round a loop is asked for first under
+  /// <c>$OPTIMIZE SPEED</c> - the residency preference (docs/PB36.md O5).
+  ///
+  /// <para>
+  /// The reason is not that <c>SI</c> and <c>DI</c> are faster; every general register on this target
+  /// costs the same. It is that they are the two the FIXED-register sequences never claim: a multiply
+  /// or divide owns <c>AX</c> and <c>DX</c>, a variable shift owns <c>CL</c>, a dispatch works in
+  /// <c>AX</c>/<c>BX</c>/<c>CX</c>, and every runtime entry takes its arguments in named registers.
+  /// A value the whole loop reads is the value most likely to be standing in one of those spots when
+  /// the loop body needs it, so parking it where nothing is pinned is what keeps it in a register at
+  /// all rather than in its frame cell. It is also the shape the direct emitter emits (its counter
+  /// lives in <c>SI</c> and its second resident in <c>DI</c>), which is worth matching where the two
+  /// paths' output is compared by eye.
+  /// </para>
+  ///
+  /// <para>
+  /// It is a PREFERENCE and never a constraint, and the distinction is the whole safety argument.
+  /// <c>SI</c> and <c>DI</c> are two of the three registers that may address memory, so reserving one
+  /// across a loop is exactly the move that once left the spiller with nowhere to put an address
+  /// value. <see cref="TryResident"/> therefore falls back to the ordinary pool order for any value
+  /// the pair cannot take, and to the whole plain policy on the untouched function when the preferred
+  /// sweep does not answer at all - so the set of functions that allocate is unchanged and only the
+  /// assignment differs (<c>BackendResidencyTests</c> measures that over the corpus).
+  /// </para>
+  /// </summary>
+  private static readonly Reg[] _resident = [Reg.SI, Reg.DI];
+
+  /// <summary>
   /// Assigns each virtual register a physical register, or returns null when the live set still
   /// exceeds the register file after spilling what it can.
   ///
@@ -42,14 +70,74 @@ public sealed class LinearScanAllocator {
   /// </summary>
   public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function) => Allocate(function, out _);
 
+  /// <summary>The same, for a given target and objective - which is what turns the residency preference on.</summary>
+  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function, SelectionTarget target)
+    => Allocate(function, target, out _);
+
   /// <summary>
   /// The same, reporting WHY it gave up. Selection says why it declines a function; allocation used to
   /// just answer null, which left "register pressure" as the whole diagnosis for every function that
   /// selected and did not route - a black box in the middle of the coverage census.
   /// </summary>
-  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function, out string? reason) {
+  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function, out string? reason)
+    => Allocate(function, SelectionTarget.Baseline, out reason);
+
+  /// <summary>The same, for a given target and objective.</summary>
+  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function, SelectionTarget target, out string? reason) {
+    if (target is { Optimize: true, OptimizeSpeed: true } && TryResident(function) is { } resident) {
+      reason = null;
+      return resident;
+    }
+    return AllocatePlain(function, out reason);
+  }
+
+  /// <summary>
+  /// The <c>$OPTIMIZE SPEED</c> attempt: coalesce the out-of-SSA copies away, then allocate preferring
+  /// <c>SI</c>/<c>DI</c> for whatever is live all the way round a loop.
+  ///
+  /// <para>
+  /// It works on a COPY and commits only on success, which is the whole reason the two policies can be
+  /// tried in this order at all. Coalescing unions two live ranges, so the merged value must avoid the
+  /// clobbers of both and may find no register where the two halves each had one; the preference asks
+  /// for two of the three registers that can address memory. Either can cost an allocation that the
+  /// plain policy makes, and neither may - so the plain policy runs on the untouched function whenever
+  /// this one does not answer, and the set of functions that route is exactly what it was.
+  /// </para>
+  /// </summary>
+  private static IReadOnlyDictionary<int, Reg>? TryResident(MFunction function) {
+    var candidate = function.Clone();
+    CopyCoalescer.Run(candidate);
     for (;;) {
-      if (TryAllocate(function) is { } assignment) {
+      // recomputed each round: coalescing and spilling both move instructions, and an asm block's
+      // hold is an instruction range
+      var asmHeld = AsmHeldByIndex(candidate, out var asmConflict);
+      if (asmConflict is not null)
+        return null;                             // the plain policy reports it; this one just stands aside
+      if (LivenessAnalysis.LoopCarried(candidate) is { Count: > 0 } carried
+          && TryAllocate(candidate, asmHeld, carried) is { } assignment) {
+        function.Adopt(candidate);
+        return assignment;
+      }
+      if (TryAllocate(candidate, asmHeld) is { } plain) {
+        function.Adopt(candidate);
+        return plain;
+      }
+      if (!Spiller.RematerializeOne(candidate) && !Spiller.SpillOne(candidate) && !Spiller.SplitOne(candidate))
+        return null;
+    }
+  }
+
+  private static IReadOnlyDictionary<int, Reg>? AllocatePlain(MFunction function, out string? reason) {
+    for (;;) {
+      // recomputed each round, because spilling renumbers the instructions the windows are measured in
+      var asmHeld = AsmHeldByIndex(function, out var asmConflict);
+      if (asmConflict is not null) {
+        // a register an inline-asm statement left for a later one, destroyed in between by something
+        // no allocation can move: there is nothing to choose, so the whole function goes back
+        reason = asmConflict;
+        return null;
+      }
+      if (TryAllocate(function, asmHeld) is { } assignment) {
         reason = null;
         return assignment;
       }
@@ -61,7 +149,7 @@ public sealed class LinearScanAllocator {
         continue;
       if (Spiller.SplitOne(function))
         continue;
-      reason = Blocker(function);
+      reason = Blocker(function, asmHeld);
       return null;
     }
   }
@@ -70,20 +158,25 @@ public sealed class LinearScanAllocator {
   /// What stopped the last sweep: the first interval that found no register, and the reason the
   /// spiller then refused to move it to memory.
   /// </summary>
-  private static string Blocker(MFunction function) {
+  private static string Blocker(MFunction function, IReadOnlyDictionary<int, IReadOnlyList<Reg>> asmHeld) {
     var addressing = AddressRegisters(function);
     var byteRegisters = ByteRegisters(function);
     var clobbersAt = ClobbersByIndex(function);
     var pinnedAt = PinnedByIndex(function);
+    var inFlightAt = InFlightByIndex(function);
     var free = new List<Reg>(_pool);
     var active = new List<LivenessAnalysis.LiveInterval>();
+    var liveness = LivenessAnalysis.Analyze(function);
+    var liveAt = liveness.LiveAt;
 
-    foreach (var interval in LivenessAnalysis.Compute(function)) {
+    foreach (var interval in liveness.Intervals) {
       for (var a = active.Count - 1; a >= 0; --a)
         if (active[a].End < interval.Start)
           active.RemoveAt(a);
-      var unsafeRegs = ClobberedOver(clobbersAt, interval.Start, interval.End);
-      unsafeRegs.UnionWith(ClobberedOver(pinnedAt, interval.Start, interval.End - 1));
+      var unsafeRegs = ClobberedOver(clobbersAt, liveAt, interval, interval.End);
+      unsafeRegs.UnionWith(ClobberedOver(pinnedAt, liveAt, interval, interval.End - 1));
+      unsafeRegs.UnionWith(ClobberedOver(inFlightAt, liveAt, interval, interval.End));
+      unsafeRegs.UnionWith(ClobberedOver(asmHeld, liveAt, interval, interval.End));
       var legal = LegalFor(interval.VirtualId, addressing, byteRegisters);
       if (free.Count > active.Count && legal.Any(r => !unsafeRegs.Contains(r)))
         continue;
@@ -97,13 +190,22 @@ public sealed class LinearScanAllocator {
     return "no register assignment, and nothing left that can move to memory";
   }
 
-  /// <summary>One linear-scan sweep, with no spilling: null when some interval finds no register.</summary>
-  private static IReadOnlyDictionary<int, Reg>? TryAllocate(MFunction function) {
-    var intervals = LivenessAnalysis.Compute(function);
+  /// <summary>
+  /// One linear-scan sweep, with no spilling: null when some interval finds no register.
+  /// <paramref name="resident"/> is the set of values to offer <c>SI</c>/<c>DI</c> to first (empty
+  /// for the plain sweep); <paramref name="asmHeld"/> the registers an inline-asm statement is
+  /// holding for a later one to read.
+  /// </summary>
+  private static IReadOnlyDictionary<int, Reg>? TryAllocate(MFunction function,
+      IReadOnlyDictionary<int, IReadOnlyList<Reg>> asmHeld, HashSet<int>? resident = null) {
+    var liveness = LivenessAnalysis.Analyze(function);
+    var intervals = liveness.Intervals;
+    var liveAt = liveness.LiveAt;
     var addressVregs = AddressRegisters(function);   // vregs that ever form a memory address -> need BX/SI/DI
     var byteRegisters = ByteRegisters(function);     // byte values need AL/CL/DL/BL, which SI/DI do not have
     var clobbersAt = ClobbersByIndex(function);       // global instruction index -> registers a CALL there destroys
     var pinnedAt = PinnedByIndex(function);           // ...and the ones an ABI-pinned physical write lands in
+    var inFlightAt = InFlightByIndex(function);       // ...and the ones already carrying a value to a named reader
     var assignment = new Dictionary<int, Reg>();
     var free = new List<Reg>(_pool);                 // registers currently available, preferred order preserved
     var active = new List<LivenessAnalysis.LiveInterval>();  // live intervals holding a register, kept sorted by End
@@ -117,11 +219,22 @@ public sealed class LinearScanAllocator {
         }
 
       // registers destroyed by a CALL anywhere this value is live cannot hold it, and neither can one
-      // an ABI-PINNED write lands in while the value still has readers
-      var unsafeRegs = ClobberedOver(clobbersAt, interval.Start, interval.End);
-      unsafeRegs.UnionWith(ClobberedOver(pinnedAt, interval.Start, interval.End - 1));
+      // an ABI-PINNED write lands in while the value still has readers - nor one already in flight
+      // between where a physical value was produced and the instruction that names it, nor one an
+      // inline-asm statement is holding for a later statement to read
+      var unsafeRegs = ClobberedOver(clobbersAt, liveAt, interval, interval.End);
+      unsafeRegs.UnionWith(ClobberedOver(pinnedAt, liveAt, interval, interval.End - 1));
+      unsafeRegs.UnionWith(ClobberedOver(inFlightAt, liveAt, interval, interval.End));
+      unsafeRegs.UnionWith(ClobberedOver(asmHeld, liveAt, interval, interval.End));
       var legal = LegalFor(interval.VirtualId, addressVregs, byteRegisters);
-      var slot = free.FindIndex(r => System.Array.IndexOf(legal, r) >= 0 && !unsafeRegs.Contains(r));
+      bool Usable(Reg r) => System.Array.IndexOf(legal, r) >= 0 && !unsafeRegs.Contains(r);
+      var slot = -1;
+      if (resident is not null && resident.Contains(interval.VirtualId))
+        foreach (var preferred in _resident)
+          if (Usable(preferred) && (slot = free.IndexOf(preferred)) >= 0)
+            break;
+      if (slot < 0)
+        slot = free.FindIndex(Usable);              // the preference is spent - take the ordinary order
       if (slot < 0)
         return null;                                 // no suitable register free - spill needed
 
@@ -135,11 +248,23 @@ public sealed class LinearScanAllocator {
     return assignment;
   }
 
-  /// <summary>The set of physical registers any CALL destroys while a value spanning [start, end] is live.</summary>
-  private static HashSet<Reg> ClobberedOver(IReadOnlyDictionary<int, IReadOnlyList<Reg>> clobbersAt, int start, int end) {
+  /// <summary>
+  /// The set of physical registers destroyed at a point where <paramref name="interval"/>'s value is
+  /// really live, over <c>[interval.Start, end]</c>.
+  ///
+  /// <para>
+  /// The interval is the HULL of the value's live points, and an index inside it is not necessarily
+  /// one of them - a block laid out between a loop's head and its latch belongs to the hull whether or
+  /// not it belongs to the loop. Asking <see cref="LivenessAnalysis.Liveness.LiveAt"/> rather than the
+  /// hull is what lets a FOR counter keep its register across the <c>PRINT</c> that follows the loop:
+  /// the value is dead there, so the call destroying every register destroys nothing of its.
+  /// </para>
+  /// </summary>
+  private static HashSet<Reg> ClobberedOver(IReadOnlyDictionary<int, IReadOnlyList<Reg>> clobbersAt,
+      IReadOnlyList<HashSet<int>> liveAt, LivenessAnalysis.LiveInterval interval, int end) {
     var clobbered = new HashSet<Reg>();
-    for (var i = start; i <= end; ++i)
-      if (clobbersAt.TryGetValue(i, out var regs))
+    for (var i = interval.Start; i <= end; ++i)
+      if (clobbersAt.TryGetValue(i, out var regs) && i < liveAt.Count && liveAt[i].Contains(interval.VirtualId))
         clobbered.UnionWith(regs);
     return clobbered;
   }
@@ -180,20 +305,99 @@ public sealed class LinearScanAllocator {
     return map;
   }
 
+  /// <summary>
+  /// Maps each global instruction index to the physical registers that are already CARRYING a value
+  /// there - one produced earlier and not yet consumed by the instruction that names it as a read.
+  ///
+  /// <para>
+  /// <see cref="PinnedByIndex"/> is the same idea seen from the other end and covers only half of it. A
+  /// pinned WRITE says "nothing of yours may survive this point"; a pinned READ says "something of mine
+  /// arrived earlier and must still be here", and nothing said that. The gap is the window between a
+  /// <c>CALL</c> and the <c>MOV v, AX</c> that takes its result out: the call's clobber list stops a
+  /// value living ACROSS the call, and the extraction move writes only a virtual, so an instruction
+  /// scheduled between the two looked free to take any register - including the <c>AX</c> the result is
+  /// sitting in.
+  /// </para>
+  ///
+  /// <para>
+  /// That is how two dynamic arrays came to share storage. <c>REDIM b(...)</c> lowers to
+  /// <c>CALL rt_arr_alloc</c> / <c>MOV v,AX</c>, the scheduler put an unrelated <c>MOV v2,[BP-2]</c>
+  /// between them (legal - it writes a virtual), the allocator gave v2 <c>AX</c>, and b's data pointer
+  /// became the frame word instead of the block. It then aliased whatever the NEXT allocation returned,
+  /// so writing the second array changed the first.
+  /// </para>
+  ///
+  /// <para>
+  /// The window is [producer + 1, reader - 1]: the producing instruction and the consuming one are the
+  /// two ends and neither is inside it, which keeps the extraction move itself free to be allocated the
+  /// very register it reads (<c>MOV AX, AX</c> costs nothing and is the coalescing the selector wants).
+  /// With no producer in the block the register came from outside it, and the window opens at the block.
+  /// </para>
+  ///
+  /// <para>
+  /// <see cref="AsmHeldByIndex"/> is the same window measured over the whole control-flow graph, for
+  /// the producer and reader an INLINE-ASSEMBLY statement can be. It is a separate analysis rather than
+  /// a widening of this one because an asm block's clobber list is conservative: this one may read a
+  /// clobber as "the old value ends here", and there it would end a promise the text is still keeping.
+  /// </para>
+  /// </summary>
+  private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> InFlightByIndex(MFunction function) {
+    var map = new Dictionary<int, List<Reg>>();
+    var index = 0;
+    foreach (var block in function.Blocks) {
+      var producedAt = new Dictionary<Reg, int>();
+      var blockStart = index;
+      foreach (var instr in block.Instructions) {
+        foreach (var read in PhysicalReads(instr)) {
+          var from = producedAt.TryGetValue(read, out var producer) ? producer + 1 : blockStart;
+          for (var at = from; at < index; ++at) {
+            if (!map.TryGetValue(at, out var regs))
+              map[at] = regs = [];
+            if (!regs.Contains(read))
+              regs.Add(read);
+          }
+        }
+        foreach (var written in PhysicalWrites(instr))
+          producedAt[written] = index;
+        ++index;
+      }
+    }
+    return map.ToDictionary(entry => entry.Key, entry => (IReadOnlyList<Reg>)entry.Value);
+  }
+
+  /// <summary>The physical registers an instruction names as a read - an operand or an address part.</summary>
+  private static IEnumerable<Reg> PhysicalReads(MInstr instr) {
+    foreach (var operand in instr.Effect.ReadRegs)
+      if (operand < instr.Operands.Count
+          && instr.Operands[operand] is MOperand.Register { Reg: { IsVirtual: false } read })
+        yield return WholeRegister(read.Physical);
+    foreach (var operand in instr.Operands) {
+      if (operand is not MOperand.Memory memory)
+        continue;
+      if (memory.Base is { IsVirtual: false } baseRegister)
+        yield return WholeRegister(baseRegister.Physical);
+      if (memory.Index is { IsVirtual: false } indexRegister)
+        yield return WholeRegister(indexRegister.Physical);
+      if (memory.Segment is { IsVirtual: false } segmentRegister)
+        yield return WholeRegister(segmentRegister.Physical);
+    }
+  }
+
+  /// <summary>The physical registers an instruction ends the life of - a named write or a clobber.</summary>
+  private static IEnumerable<Reg> PhysicalWrites(MInstr instr) {
+    foreach (var operand in instr.Effect.WrittenRegs)
+      if (operand < instr.Operands.Count
+          && instr.Operands[operand] is MOperand.Register { Reg: { IsVirtual: false } written })
+        yield return WholeRegister(written.Physical);
+    foreach (var clobbered in instr.Clobbers)
+      yield return WholeRegister(clobbered);
+  }
+
   /// <summary>The word register a byte half belongs to - writing <c>AL</c> destroys half of <c>AX</c>.</summary>
   private static Reg WholeRegister(Reg register)
     => register.IsByte() ? (Reg)(0x10 | (register.Index() & 0x03)) : register;
 
-  /// <summary>
-  /// Maps each global instruction index (same numbering as the liveness pass) to the registers no
-  /// value may occupy across it: the ones the instruction CLOBBERS, plus the ones an inline-assembly
-  /// statement of this function OWNS there.
-  ///
-  /// The two are opposite claims and both are needed. A clobber says nothing of ours survives this
-  /// instruction; a reservation (see <see cref="InlineAsmReservation"/>) says something of THEIRS has
-  /// to - a register an <c>!</c> statement loaded and a later one reads is not free for a temporary in
-  /// between, however dead it looks to a pass that only reads machine operands.
-  /// </summary>
+  /// <summary>Maps each global instruction index (same numbering as the liveness pass) to the registers it clobbers.</summary>
   private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> ClobbersByIndex(MFunction function) {
     var map = new Dictionary<int, IReadOnlyList<Reg>>();
     var index = 0;
@@ -203,10 +407,6 @@ public sealed class LinearScanAllocator {
           map[index] = instr.Clobbers;
         ++index;
       }
-
-    foreach (var (at, reserved) in InlineAsmReservation.Compute(function))
-      map[at] = map.TryGetValue(at, out var clobbered) ? [.. clobbered.Union(reserved)] : reserved;
-
     return map;
   }
 

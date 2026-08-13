@@ -484,6 +484,123 @@ public sealed class DialectGateTests {
     Assert.That(Compile(source, Dialect.Pb35), Has.None.Contains("Microsoft BASIC family"));
   }
 
+  /// <summary>
+  /// BYVAL on a parameter of a procedure DEFINITION. BC 7.00 answers it with "Formal parameter
+  /// specification illegal" and BC 7.10 compiles it, so the Microsoft line acquires it at PDS 7.1 -
+  /// a boundary that was not looked for, but is what the two oracles say when asked separately.
+  ///
+  /// BASICA and GW-BASIC are not asked: they have no SUB at all, so they refuse the program one gate
+  /// earlier and would pass this for the wrong reason.
+  /// </summary>
+  [TestCase(Dialect.Qb10)]
+  [TestCase(Dialect.Qb45)]
+  [TestCase(Dialect.Pds70)]
+  public void Gate_GivenAByValParameterOnADefinition_WhenBeforePds71_ThenRefused(Dialect dialect) {
+    // Not AssertRejected: that one reads the Borland-side wording ("requires PowerBASIC"), and this
+    // is a version gate INSIDE the Microsoft family, which names the Microsoft version instead.
+    const string source = "CALL S(1)\nEND\nSUB S(BYVAL n%)\nEND SUB";
+    try {
+      var errors = Compile(source, dialect);
+      Assert.That(errors, Has.Some.Contains("BYVAL parameter").And.Contains("requires PDS 7.1"),
+        $"expected a PDS 7.1 gate under {dialect.DisplayName()}; got: {string.Join("; ", errors)}");
+    } catch (ParserException e) {
+      Assert.That(e.Message, Does.Contain("BYVAL parameter").And.Contain("requires PDS 7.1"));
+    }
+  }
+
+  /// <summary>
+  /// The three halves that must NOT move with it: PDS 7.1 itself, PowerBASIC, and - in every
+  /// Microsoft dialect - BYVAL on a DECLARE, which describes how a NON-BASIC routine is called and
+  /// which BC takes. Gating the word rather than the position would reject valid QuickBASIC.
+  /// </summary>
+  [TestCase(Dialect.Pds71)]
+  [TestCase(Dialect.Pb35)]
+  public void Gate_GivenAByValParameterOnADefinition_WhenTheDialectHasIt_ThenAccepted(Dialect dialect)
+    => AssertAccepted("CALL S(1)\nEND\nSUB S(BYVAL n%)\nEND SUB", dialect);
+
+  [TestCase(Dialect.Qb45)]
+  [TestCase(Dialect.Pds70)]
+  public void Gate_GivenAByValParameterOnAPrototype_WhenMicrosoftFamily_ThenStillAccepted(Dialect dialect)
+    => AssertAccepted("DECLARE SUB Foo(BYVAL n%)\nEND", dialect);
+
+  /// <summary>
+  /// Two more the oracles moved out of the Microsoft family. BC answers REPLACE with "Equal sign
+  /// missing" - it reads the word as a variable - and LOCAL with "Statement unrecognizable".
+  /// </summary>
+  [TestCase("s$ = \"aXa\"\nREPLACE \"X\" WITH \"Y\" IN s$", "REPLACE")]
+  [TestCase("CALL S\nEND\nSUB S\n  LOCAL l%\n  l% = 1\nEND SUB", "LOCAL")]
+  public void Gate_GivenAStatementOnlyBorlandEverHad_WhenPds71_ThenRefused(string source, string what)
+    => AssertNotInMicrosoftFamily(source, Dialect.Pds71, what);
+
+  [TestCase("s$ = \"aXa\"\nREPLACE \"X\" WITH \"Y\" IN s$")]
+  [TestCase("CALL S\nEND\nSUB S\n  LOCAL l%\n  l% = 1\nEND SUB")]
+  public void Gate_GivenReplaceOrLocal_WhenPb35_ThenStillAccepted(string source)
+    => AssertAccepted(source, Dialect.Pb35);
+
+  /// <summary>
+  /// EXT parts company with PUBLIC, which it shared a gate with: PBC 3.0 and 3.5 take PUBLIC p% and
+  /// answer EXT e% with "Undefined SUB/FUNCTION reference", having read it as a call.
+  /// </summary>
+  [Test]
+  public void Gate_GivenAnExtDeclaration_WhenPb35_ThenRefused()
+    => AssertRejected("EXT e%", Dialect.Pb35, "PowerBASIC 3.6");
+
+  [Test]
+  public void Gate_GivenAPublicDeclaration_WhenPb35_ThenStillAccepted()
+    => AssertAccepted("PUBLIC p%", Dialect.Pb35);
+
+  /// <summary>
+  /// The other direction, which had nowhere to be recorded until the Borland gate table learned to
+  /// say "never": statements MICROSOFT has and Bob Zale's line does not. PBC 3.0 and 3.5 answer
+  /// VIEW PRINT with '"(" expected' - their VIEW is the graphics viewport and nothing else - PCOPY
+  /// with "Undefined error", and DIM SHARED with "Variable expected", pointing at the SHARED.
+  /// </summary>
+  [TestCase("VIEW PRINT", "VIEW PRINT")]
+  [TestCase("VIEW PRINT 1 TO 20", "VIEW PRINT")]
+  [TestCase("PCOPY 0, 1", "PCOPY")]
+  [TestCase("DIM SHARED g%\ng% = 1", "DIM SHARED")]
+  public void Gate_GivenAStatementOnlyMicrosoftEverHad_WhenPb35_ThenRefused(string source, string what) {
+    try {
+      var errors = Compile(source, Dialect.Pb35);
+      Assert.That(errors, Has.Some.Contains(what).And.Contains("not available in the PowerBASIC"),
+        $"expected a Borland-family gate for: {source}\ngot: {string.Join("; ", errors)}");
+    } catch (ParserException e) {
+      Assert.That(e.Message, Does.Contain(what).And.Contain("not available in the PowerBASIC"));
+    }
+  }
+
+  [TestCase("VIEW PRINT")]
+  [TestCase("VIEW PRINT 1 TO 20")]
+  [TestCase("PCOPY 0, 1")]
+  [TestCase("DIM SHARED g%\ng% = 1")]
+  public void Gate_GivenAStatementOnlyMicrosoftEverHad_WhenQuickBasic45_ThenStillAccepted(string source)
+    => AssertAccepted(source, Dialect.Qb45);
+
+  /// <summary>Plain VIEW is the graphics viewport, which both lineages have - only the sub-forms moved.</summary>
+  [Test]
+  public void Gate_GivenTheGraphicsViewport_WhenPb35_ThenStillAccepted()
+    => AssertAccepted("VIEW (0, 0)-(100, 100)", Dialect.Pb35);
+
+  /// <summary>
+  /// LOCK SHARED is Bob Zale's pairing: to Microsoft, SHARED is a mode that stands WITHOUT the LOCK,
+  /// and BC answers the pair "Syntax error" while taking LOCK READ WRITE happily. The keyword is
+  /// therefore not gated - the spec is, which is the difference between this and rejecting a clause
+  /// QuickBASIC programs legitimately use.
+  /// </summary>
+  [Test]
+  public void Gate_GivenOpenLockShared_WhenPds71_ThenRefused()
+    => AssertNotInMicrosoftFamily("OPEN \"T.DAT\" FOR BINARY ACCESS READ WRITE LOCK SHARED AS #1\nCLOSE",
+      Dialect.Pds71, "LOCK SHARED");
+
+  [TestCase("OPEN \"T.DAT\" FOR BINARY ACCESS READ WRITE LOCK READ WRITE AS #1\nCLOSE")]
+  [TestCase("OPEN \"T.DAT\" FOR BINARY ACCESS READ WRITE SHARED AS #1\nCLOSE")]
+  public void Gate_GivenTheLockSpellingsMicrosoftHas_WhenPds71_ThenStillAccepted(string source)
+    => AssertAccepted(source, Dialect.Pds71);
+
+  [Test]
+  public void Gate_GivenOpenLockShared_WhenPb35_ThenStillAccepted()
+    => AssertAccepted("OPEN \"T.DAT\" FOR BINARY ACCESS READ WRITE LOCK SHARED AS #1\nCLOSE", Dialect.Pb35);
+
   #endregion
 
   #region defaults

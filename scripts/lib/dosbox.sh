@@ -16,12 +16,57 @@
 #     RELATIVE config path is simply not found. dosbox_conf_path fixes that.
 #   * staging builds an OpenGL context at startup, before it consults any setting,
 #     and aborts when there is none. SDL's dummy video driver has no OpenGL, so the
-#     usual headless recipe is exactly what kills it; it needs a real X server even
-#     though nothing is ever displayed.
+#     usual headless recipe may be exactly what kills it, and it then needs a real X
+#     server even though nothing is ever displayed.
+#
+# Which SDL reads that driver setting is not fixed either. SDL2 reads SDL_VIDEODRIVER
+# and SDL3 reads SDL_VIDEO_DRIVER, and an SDL2 emulator is no longer evidence of SDL2:
+# sdl2-compat re-implements the SDL2 ABI over SDL3, so a distribution can swap the
+# library underneath an unchanged binary. Setting only the SDL2 name then selects
+# nothing, the emulator opens the real backend, finds no GLX visual and aborts before
+# the autoexec - no output file, and every program reporting as though the ORACLE had
+# refused it.
+#
+# The two names are ALTERNATIVES and setting both is not a safe way to cover both:
+# sdl2-compat honours the SDL2 name by selecting SDL2's dummy driver, which has no
+# OpenGL and aborts. Belt and braces is a WORSE configuration than either belt alone,
+# so each is a candidate of its own and the working one is found by trying. Each
+# candidate also UNSETS the other name, so an exported leftover cannot interfere.
 
-# Whether the emulator can start without a display, established by trying it.
+# Every candidate also unsets DISPLAY, and that is the design rather than tidiness. "Headless"
+# cannot be established by looking for an error message, because the way this goes wrong is that
+# the emulator starts PERFECTLY - on the user's desktop. A probe reading stderr for an abort cannot
+# tell that apart from success, and twice reported a configuration as working while it opened a
+# window per program on a machine somebody was using. With DISPLAY unset no window is POSSIBLE, so
+# "it ran" is proof of the property being claimed.
+_DOSBOX_CANDIDATES=(
+  "-u DISPLAY -u SDL_VIDEO_DRIVER SDL_VIDEODRIVER=dummy"      # SDL2's spelling
+  "-u DISPLAY -u SDL_VIDEODRIVER SDL_VIDEO_DRIVER=dummy"      # SDL3's spelling
+  "-u DISPLAY SDL_VIDEODRIVER=offscreen SDL_VIDEO_DRIVER=offscreen"
+  "-u DISPLAY -u SDL_VIDEO_DRIVER -u SDL_VIDEODRIVER"         # no setting at all
+)
+
+# Whether the emulator gets past starting its video, probed with `-c exit`.
+#
+# It is the ABORT that is being watched for, not the exit: an emulator that starts properly
+# may well sit there afterwards - dosbox-staging holds its window open when a command
+# finishes too quickly - so outliving the `timeout` counts as success. The bound is part of
+# the test, not a safety net around it.
+#
+# Captured, not piped into grep: the probe aborts on purpose when it fails, and under
+# `set -o pipefail` the pipeline reports that abort rather than the match - a successful
+# detection would read as no detection at all.
+_dosbox_starts_cleanly() { # $@ = env assignments to launch under
+  local probe
+  probe=$(timeout 15 env "$@" "$DOSBOX" -c exit </dev/null 2>&1 || true)
+  ! printf '%s' "$probe" | grep -qiE "ABORT|Could not initialize video"
+}
+
+# How to start the emulator here, established by trying the ways in cost order.
 # Probed rather than matched against the version string: which build needs what is
-# a property of how it was compiled, and the name is only a guess about that.
+# a property of how it was compiled, and the name is only a guess about that. Each way
+# is probed UNDER THE ENVIRONMENT IT WOULD LAUNCH WITH - a probe that inherits a
+# different environment than the launch answers a question nobody asked.
 dosbox_detect_prefix() {
   DOSBOX_PREFIX=""
   # 120 seconds is ample for vanilla DOSBox and marginal under xvfb, which runs the
@@ -31,24 +76,29 @@ dosbox_detect_prefix() {
   # divergence that is not one. Two qb20 programs failed exactly that way in a full
   # run and passed on their own immediately after.
   DOSBOX_TICKS=600
-  local probe
-  # Captured, not piped into grep: the probe aborts on purpose when it fails, and
-  # under `set -o pipefail` the pipeline reports that abort rather than the match -
-  # a successful detection would read as no detection at all.
-  probe=$(timeout 30 "$DOSBOX" -c exit </dev/null 2>&1 || true)
-  printf '%s' "$probe" | grep -qiE "ABORT|Could not initialize video" || return 0
 
-  if command -v xvfb-run >/dev/null 2>&1; then
-    # SDL_VIDEODRIVER is dropped along the way: callers set it to "dummy" for
-    # vanilla DOSBox, and keeping it would hand SDL the driver with no OpenGL
-    # inside the very X server provided to supply one.
-    DOSBOX_PREFIX="env -u SDL_VIDEODRIVER xvfb-run -a"
-    DOSBOX_TICKS=3000
-    echo "$DOSBOX_FLAVOR needs a display: running it under xvfb-run (10 minute per-program limit)"
-  else
-    echo "::error::$DOSBOX_FLAVOR cannot start headless and xvfb-run is not installed"
-    exit 1
+  local candidate
+  for candidate in "${_DOSBOX_CANDIDATES[@]}"; do
+    # shellcheck disable=SC2086  # deliberately word-split: separate -u flags and assignments
+    if _dosbox_starts_cleanly $candidate; then
+      DOSBOX_PREFIX="env $candidate"
+      echo "$DOSBOX_FLAVOR starts headless with: env $candidate"
+      return 0
+    fi
+  done
+
+  # No headless way is a missing capability of this HOST, and it does not degrade into using the
+  # desktop: a battery of several hundred programs would then open a window each on the machine of
+  # whoever ran it, as an unannounced consequence of a library upgrade. xvfb-run is not a fallback
+  # either - it is only worth trying if it actually works, so it is a candidate like any other.
+  if [ "${PBC_ALLOW_DISPLAY:-}" = "1" ]; then
+    echo "::warning::$DOSBOX_FLAVOR has no headless mode here - using the desktop (PBC_ALLOW_DISPLAY=1)"
+    return 0
   fi
+  echo "::error::$DOSBOX_FLAVOR has no way to run without a display on this host."
+  echo "::error::Set PBC_ALLOW_DISPLAY=1 to let it use the desktop, or point DOSBOX_EXE at a build"
+  echo "::error::that runs headless (vanilla DOSBox does; dosbox-staging needs GLX)."
+  exit 1
 }
 
 # Stop a launched emulator AND everything it started.

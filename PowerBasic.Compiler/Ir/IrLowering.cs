@@ -15,7 +15,7 @@ namespace PowerBasic.Compiler.Ir;
 /// SELECT, I/O, intrinsics) makes that function decline, so the IR is only built for
 /// code it models exactly.
 /// </summary>
-public sealed class IrLowering {
+public sealed partial class IrLowering {
 
   private readonly SemanticModel _model;
   private readonly IReadOnlyDictionary<ProcedureSymbol, IrFunction>? _procMap;
@@ -235,7 +235,7 @@ public sealed class IrLowering {
         return false;                                  // scalar parameters only
       args.Add(new IrArgument(p.ByVal ? pty : IrType.Ptr, args.Count, p.Name));  // BYREF parameters arrive as pointers
     }
-    fn = new IrFunction(proc.Name, ret, args);
+    fn = new IrFunction(proc.Name, ret, args) { NoInline = proc.NoInline };
     return true;
   }
 
@@ -699,6 +699,13 @@ public sealed class IrLowering {
         ? this.AbsoluteElementAddress(expr, symbol, arr)
         : throw new IrLoweringException(
             $"the address of an element of the ABSOLUTE array {symbol.Name} (only a direct read or write of one lowers)");
+    // the memory-model classes reach their elements through a segment they compute per access, which
+    // is the same far pointer for the same reason - and no more usable as a near one
+    if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms)
+      return farAllowed
+        ? this.PagedElementAddress(expr, symbol, arr)
+        : throw new IrLoweringException(
+            $"the address of an element of the {symbol.ArrayClass} array {symbol.Name} (only a direct read or write of one lowers)");
     if (arr.IsDynamic)
       return this.DynamicElementAddress(expr, symbol, arr);
     if (arr.StaticBounds is not { } bounds || bounds.Count != expr.Arguments.Count)
@@ -1061,7 +1068,20 @@ public sealed class IrLowering {
         this.SlotFor(azSym), new IrConstantInt(IrType.I32, azTarget.Length), this.LowerStringExpr(a.Value));
       return;
     }
-    if (a.Target is CallOrIndexExpr indexed && this._model.VariableBindings.TryGetValue(indexed, out var arrSym) && arrSym.Type is ArrayType) {
+    if (a.Target is CallOrIndexExpr indexed && this._model.VariableBindings.TryGetValue(indexed, out var arrSym) && arrSym.Type is ArrayType arrTargetType) {
+      // An EMS-PAGED target is addressed AFTER its value, and the order is load-bearing rather than a
+      // preference: forming the address maps a page pair into the one window the program has, and
+      // evaluating the value can map a different one over it - so v(i) = v(j) across pages would store
+      // into whichever page the READ left behind. The direct emitter arrives at the same order for an
+      // unrelated reason ("evaluate the value first, it may clobber BX/ES, then address the target"),
+      // and agreeing with it is the point. HUGE needs none of this: it steps a segment and maps
+      // nothing, so its address survives anything the value does.
+      if (arrSym.ArrayClass is ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
+        var pagedValue = this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), arrTargetType.Element);
+        var (pagedAddress, _) = this.ElementDataAddress(indexed);
+        this._b.Store(pagedValue, pagedAddress);
+        return;
+      }
       var (address, element) = this.ElementDataAddress(indexed);
       if (element is StringType) {
         this._b.Store(this.LowerStringExpr(a.Value), address);   // a string array element holds an immutable handle
@@ -2184,6 +2204,15 @@ public sealed class IrLowering {
         throw new IrLoweringException($"REDIM of the ABSOLUTE array {v.Name}");
       if (v.ArrayBounds is not { } dims || dims.Count != arr.Rank)
         throw new IrLoweringException("REDIM rank mismatch");
+      // a memory-model array re-DIMs through its own allocator, not the far array heap. PRESERVE has
+      // no meaning there - the direct emitter refuses it too, and for the same reason: the copy would
+      // have to walk two segment-stepped or page-mapped blocks at once.
+      if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
+        if (r.Preserve)
+          throw new IrLoweringException($"REDIM PRESERVE on the {symbol.ArrayClass} array {v.Name}");
+        this.LowerPagedAllocation(symbol, arr, dims);
+        continue;
+      }
 
       var descriptor = this.DynDescriptor(symbol, arr.Rank);
       var isString = arr.Element is StringType;
@@ -2231,6 +2260,10 @@ public sealed class IrLowering {
       // and an unmapped array has no segment for a later access to name
       if (symbol.ArrayClass == ArrayClass.Absolute)
         throw new IrLoweringException($"ERASE of the ABSOLUTE array {symbol.Name}");
+      if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
+        this.LowerPagedErase(symbol, arr);
+        continue;
+      }
       if (!arr.IsDynamic) {
         // A static array is not freed - PB zeroes it where it stands, and the storage stays. The
         // direct emitter writes a REP STOSW over the word-rounded size; the portable spelling of
@@ -2628,24 +2661,23 @@ public sealed class IrLowering {
       return;
     }
 
-    // The MEMORY-MODEL classes stay out, and the reason is worth stating because letting them
-    // through costs nothing at the lowering and everything afterwards.
+    // An AT segment is what makes an array ABSOLUTE; the parser says so, so anything else carrying one
+    // is a shape this lowering has never seen and must not guess at.
     //
-    // What HUGE and VIRTUAL/EMS/XMS have in common is that an element of one is not at an address any
-    // ONE segment covers: HUGE steps the segment by (byteOffset >> 4) so a single array spans many of
-    // them, and VIRTUAL maps a 16 KiB EMS page pair into a window before each access. A segment named
-    // once at the declaration - which is all IrFarPtr carries, and all an AT array needs - is not
-    // enough for either; both need the allocator, the page mapper and the far descriptor the direct
-    // emitter's runtime holds, and none of that is modelled here.
-    //
-    // Measured rather than assumed. With this refusal removed for ABSOLUTE alone, and no far pointer
-    // to lower it to, DIM DYNAMIC ab(0 TO 7) AT &HB800 lowered to an ordinary dynamic-array
-    // descriptor, the AT segment never appeared in the IR at all, and the function SELECTED - so
-    // ab(0) = n was emitted as a store through an uninitialised near pointer instead of a write to
-    // video memory. It assembled, it routed, and it was wrong, which is the worst of the three
-    // outcomes available here.
-    if (d.AtAddress is not null || d.Class != ArrayClass.Default)
-      throw new IrLoweringException("DIM AT / non-default array class");
+    // The refusal it replaced covered ABSOLUTE too, and removing THAT half without an IrFarPtr to
+    // lower it to is what the instruction exists to prevent: DIM DYNAMIC ab(0 TO 7) AT &HB800 lowered
+    // to an ordinary dynamic-array descriptor, the AT segment never appeared in the IR at all, and the
+    // function SELECTED - so ab(0) = n was emitted as a store through an uninitialised near pointer
+    // instead of a write to video memory. It assembled, it routed, and it was wrong.
+    if (d.AtAddress is not null)
+      throw new IrLoweringException("DIM AT without the ABSOLUTE class");
+    // HUGE / VIRTUAL / EMS / XMS: storage from the DOS or EMS allocator rather than the array heap
+    if (d.Class is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
+      this.LowerPagedDim(d);
+      return;
+    }
+    if (d.Class != ArrayClass.Default)
+      throw new IrLoweringException($"DIM {d.Class} array class");
     // a DIM is just a declaration here; storage is allocated lazily on first use
   }
 
@@ -3430,6 +3462,7 @@ public sealed class IrLowering {
         new IrConstantInt(IrType.I16, Math.Max(this._model.TypeOf(call.Arguments[0]).Size, 1)),
         PbType.Integer, this._model.TypeOf(call)),
       "FREEFILE" => this._b.Call(IrType.I16, this.RuntimeFn("rt_freefile", IrType.I16)),
+      "FRE" => this.LowerFre(call),
       "CSRLIN" => this._b.Call(IrType.I16, this.RuntimeFn("rt_csrlin", IrType.I16)),
       "CONSIN" => this._b.Call(IrType.I16, this.RuntimeFn("rt_consin", IrType.I16)),
       "CONSOUT" => this._b.Call(IrType.I16, this.RuntimeFn("rt_consout", IrType.I16)),

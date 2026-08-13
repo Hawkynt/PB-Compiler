@@ -784,9 +784,21 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   public bool OptimizeSize { get; set; }
 
   /// <summary>
-  /// Opt-in: compile eligible pure-INTEGER functions through the in-house x86-16 back end
-  /// (docs/X86-BACKEND.md) - it owns the whole function via its SSA IR (no shared cells), so it never
-  /// reads an optimizer-stale cell. Default off; enabled for verification via PBC_X_BACKEND / --x-backend.
+  /// Opt-in: compile eligible functions through the in-house x86-16 back end (docs/X86-BACKEND.md) -
+  /// it owns the whole function via its SSA IR (no shared cells), so it never reads an optimizer-stale
+  /// cell. Default off; enabled for verification via PBC_X_BACKEND / --x-backend.
+  ///
+  /// <para>
+  /// <b>Default-on for pb36 was tried and reverted, and the measurement is the reason.</b> Coverage
+  /// and behavioural equivalence are both there - 261 of 261 functions select and allocate, and the
+  /// corpus differential finds no disagreement - but routing a function takes it away from the DIRECT
+  /// emitter's optimizer, which is where pb36's optimizations actually live. Making pb36 route by
+  /// default failed 109 tests: 95 of them assertions about emitted code (string append in place,
+  /// SELECT dispatch tables, multiplier decomposition, bounds-check elision, loop unrolling), the
+  /// optimization battery, and - the ones that settle it - the two that require TAIL RECURSION to run
+  /// in constant stack. That last pair is not code quality; it is a behavioural promise, and a deep
+  /// recursion would overflow without it. See docs/BACKENDS.md for what has to happen first.
+  /// </para>
   /// </summary>
   public bool UseExperimentalBackend { get; set; } = System.Environment.GetEnvironmentVariable("PBC_X_BACKEND") != null;
 

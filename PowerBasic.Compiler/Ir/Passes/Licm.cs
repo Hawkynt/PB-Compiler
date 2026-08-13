@@ -119,6 +119,10 @@ public static class Licm {
   private static bool IsSpeculatable(IrInstruction inst) => inst switch {
     IrBinary b => b.Op is not (IrBinaryOp.SDiv or IrBinaryOp.UDiv or IrBinaryOp.SRem or IrBinaryOp.URem or IrBinaryOp.FDiv),
     IrCmp or IrCast or IrGep => true,
-    _ => false,                                      // loads, calls, stores, allocas, phis, terminators
+    // A call is a wall except for the short checked list of runtime entries that are a function of
+    // their arguments and cannot fault - see FunctionSummaries.IsSpeculatableExternal for the
+    // argument per row, and for what is deliberately kept off it.
+    IrCall { Callee: IrFunction callee } => FunctionSummaries.IsSpeculatableExternal(callee.Name),
+    _ => false,                                      // loads, stores, allocas, phis, terminators
   };
 }

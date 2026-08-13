@@ -20,7 +20,7 @@ public sealed partial class Parser {
     var convention = CallConvention.Basic;
     for (;;) {
       if (parameters == null && this.Current.Kind == TokenKind.LParen) {
-        parameters = this.ParseParameterList();
+        parameters = this.ParseParameterList(definition: true);
         continue;
       }
       if (!this.TryParseProcedureModifier(ref isStatic, ref visibility, ref alias, ref convention, ref noInline))
@@ -48,7 +48,7 @@ public sealed partial class Parser {
     var convention = CallConvention.Basic;
     for (;;) {
       if (parameters == null && this.Current.Kind == TokenKind.LParen) {
-        parameters = this.ParseParameterList();
+        parameters = this.ParseParameterList(definition: true);
         continue;
       }
       if (this.TryMatchKeyword("AS")) {
@@ -165,7 +165,12 @@ public sealed partial class Parser {
     return new DeclareStmt(pos, isFunction, name.Text, name.Suffix, returnType, parameters, alias, convention);
   }
 
-  private List<Parameter> ParseParameterList() {
+  /// <param name="definition">
+  /// True for a SUB/FUNCTION HEADER, false for a DECLARE prototype. Only the header gates BYVAL:
+  /// Microsoft's BC takes it on a prototype, where it describes how a non-BASIC routine is called,
+  /// and rejects it on a definition.
+  /// </param>
+  private List<Parameter> ParseParameterList(bool definition = false) {
     this.Expect(TokenKind.LParen, "'('");
     var result = new List<Parameter>();
     if (this.Match(TokenKind.RParen))
@@ -178,7 +183,7 @@ public sealed partial class Parser {
         ++optionalDepth;
         this.Expect(TokenKind.Comma, "','");
       }
-      result.Add(this.ParseParameter(optionalDepth > 0));
+      result.Add(this.ParseParameter(optionalDepth > 0, definition));
     } while (this.Match(TokenKind.Comma) || this.Current.Kind == TokenKind.LBracket);
     while (optionalDepth-- > 0)
       this.Expect(TokenKind.RBracket, "']'");
@@ -200,8 +205,10 @@ public sealed partial class Parser {
 
   private int _anonymousParameters;
 
-  private Parameter ParseParameter(bool optional = false) {
+  private Parameter ParseParameter(bool optional = false, bool definition = false) {
     var byVal = this.TryMatchKeyword("BYVAL");
+    if (byVal && definition)
+      this.Require(LanguageFeature.ByValParameter);
     if (!byVal)
       this.TryMatchKeyword("BYREF");   // explicit spelling of the default (the back-emitter always writes one of the two)
     var seg = this.TryMatchKeyword("SEG");
@@ -784,6 +791,8 @@ public sealed partial class Parser {
       // DIM SHARED x - the Microsoft spelling of module-shared storage, where PowerBASIC writes
       // DIM x AS SHARED type. The lookahead is what keeps 'DIM shared AS INTEGER' (a variable that
       // happens to be called SHARED) working: the prefix form is only taken when a NAME follows.
+      // PBC 3.0 and 3.5 answer it "Variable expected", pointing at the SHARED.
+      this.Require(LanguageFeature.DimShared);
       this.Advance();
       shared = true;
     }

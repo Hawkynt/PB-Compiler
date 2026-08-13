@@ -98,8 +98,16 @@ public abstract record MOperand {
   /// An inline-assembly block: the source text plus the BASIC names it refers to. The instruction's
   /// remaining operands are those names' machine locations in the SAME order, which is what lets the
   /// emitter build a resolver that answers from the ROUTED frame rather than the direct emitter's.
+  ///
+  /// <para>
+  /// <paramref name="Effect"/> is what the text does to the register file, read out of it by the
+  /// assembler at selection. The instruction's <see cref="MInstr.Clobbers"/> says only that nothing of
+  /// OURS survives the block; this says which registers are THEIRS, and for how long - see
+  /// <c>LinearScanAllocator.AsmHeldByIndex</c>, which is what keeps a countdown in <c>CX</c> alive
+  /// across the BASIC statement between the two <c>!</c> lines that set it and read it.
+  /// </para>
   /// </summary>
-  public sealed record InlineAsmText(string Text, IReadOnlyList<string> Names) : MOperand;
+  public sealed record InlineAsmText(string Text, IReadOnlyList<string> Names, AsmRegisterEffect Effect) : MOperand;
 
   /// <summary>
   /// The OFFSET of a basic block's own label - the machine form of the IR's <c>blockaddress</c>.
@@ -108,6 +116,46 @@ public abstract record MOperand {
   /// function's own code, because every other transfer of control IS an instruction.
   /// </summary>
   public sealed record BlockOffset(string Block) : MOperand;
+
+  /// <summary>
+  /// A table of BLOCK ADDRESSES, assembled as DATA into the code stream immediately behind the
+  /// <see cref="MOpcode.JmpIndexed"/> that reads it. It is the one operand here that names several
+  /// points in this function's code at once, and the only reason a dispatch can be O(1) rather than a
+  /// compare per case.
+  ///
+  /// <para>
+  /// The table lives inside the code because that is the only place a near jump can reach it in one
+  /// instruction: <c>JMP word [BX + table]</c> takes a 16-bit displacement in the current segment, and
+  /// the segment the code is in is the one the assembler is filling. Nothing falls into it - the jump
+  /// in front is unconditional - and the block it sits in is closed by that jump, so no instruction can
+  /// be scheduled after the data.
+  /// </para>
+  ///
+  /// <para>
+  /// Three forms, which are the three shapes worth emitting on this target:
+  /// </para>
+  /// <list type="bullet">
+  /// <item><b>Plain.</b> <see cref="Blocks"/> alone: entry <c>i</c> is where index <c>i</c> jumps.
+  ///   Two bytes per index.</item>
+  /// <item><b>Byte-indexed</b> (<see cref="ByteIndex"/> set, the <c>$OPTIMIZE SIZE</c> form). Entry
+  ///   <c>i</c> of the byte table names a SLOT of <see cref="Blocks"/>, so a wide span with few
+  ///   distinct arms costs <c>span + 2*slots</c> bytes instead of <c>2*span</c>. It costs one extra
+  ///   load per dispatch, which is why it is not the default.</item>
+  /// <item><b>Key-verified</b> (<see cref="Keys"/> set, the perfect-hash form). The index is
+  ///   <c>subject AND <see cref="KeyMask"/></c>, which is collision-free on the case values and on
+  ///   nothing else - so the value keyed at the slot is compared against the subject first and a
+  ///   mismatch takes the default arm. An empty slot keys 0 and points at the default anyway.</item>
+  /// </list>
+  ///
+  /// <para>
+  /// A block this table names must still exist under its own label when emission gets there. That is
+  /// the machine-level twin of <see cref="Ir.IrFunction.AddressTakenBlocks"/>, and it holds here for a
+  /// different reason: the IR keeps a real CFG edge to every arm of an <see cref="Ir.IrSwitch"/>, so no
+  /// IR rewrite can drop one, and nothing after selection merges machine blocks.
+  /// </para>
+  /// </summary>
+  public sealed record BlockAddressTable(IReadOnlyList<string> Blocks,
+    IReadOnlyList<byte>? ByteIndex = null, IReadOnlyList<ushort>? Keys = null, int KeyMask = 0) : MOperand;
 
   /// <summary>
   /// An incoming argument read straight out of the cell the caller pushed it into - <c>[BP+6]</c>.
@@ -137,7 +185,8 @@ public sealed class MInstr(MOpcode opcode, IReadOnlyList<MOperand> operands, MIn
   /// <summary>Physical registers this instruction destroys (a CALL's caller-saved set); a value live across it must avoid them.</summary>
   public IReadOnlyList<Reg> Clobbers { get; } = clobbers ?? [];
 
-  public bool IsTerminator => this.Opcode is MOpcode.Jmp or MOpcode.Jcc or MOpcode.Ret or MOpcode.JmpIndirect;
+  public bool IsTerminator => this.Opcode is MOpcode.Jmp or MOpcode.Jcc or MOpcode.Ret
+    or MOpcode.JmpIndirect or MOpcode.JmpIndexed;
 
   public override string ToString() => $"{this.Opcode} {string.Join(", ", this.Operands)}";
 }
@@ -177,6 +226,25 @@ public enum MOpcode {
   /// latched rather than a label anything here can name.
   /// </summary>
   JmpIndirect,
+  /// <summary>
+  /// The indexed indirect jump through a <see cref="MOperand.BlockAddressTable"/>, and the table
+  /// itself: <c>JMP word [BX + table]</c> followed by the table's bytes.
+  ///
+  /// <para>
+  /// Operand 0 is the register holding the index (or, for the key-verified form, the subject itself);
+  /// operand 1 is the table; operand 2 is the default arm, which only the key-verified form reads -
+  /// there the index is a hash and a mismatch has to go somewhere.
+  /// </para>
+  ///
+  /// <para>
+  /// The whole sequence is one instruction rather than a run of them because it is indivisible in a way
+  /// the def/use model cannot express: the address register is fixed at <c>BX</c> (16-bit addressing has
+  /// no other general base a displacement may join), the data follows the jump with no label of its own
+  /// until emission, and anything scheduled between the scaling and the jump would be scheduled into a
+  /// table. It carries its clobbers for the same reason every ABI-pinned sequence here does.
+  /// </para>
+  /// </summary>
+  JmpIndexed,
   /// <summary>
   /// x87. Floating point is computed on a stack, not in the register file, so these carry at most one
   /// MEMORY operand and the arithmetic forms carry none at all - they consume the two values the
@@ -239,6 +307,26 @@ public sealed class MBlock(string label) {
   public string Label { get; } = label;
   public List<MInstr> Instructions { get; } = [];
   public List<string> Successors { get; } = [];
+
+  /// <summary>
+  /// Every label control can leave this block for: its CFG successors PLUS the BASIC labels an
+  /// inline-assembly block jumps to.
+  ///
+  /// <c>!JNZ AddLoop</c> is a transfer of control no graph here draws - the target is address-taken
+  /// and nothing else - so an analysis reading <see cref="Successors"/> alone does not see the loop it
+  /// closes, and would end a value's life at the last point the LAYOUT mentions it.
+  /// </summary>
+  public IEnumerable<string> SuccessorsWithAsmJumps() {
+    foreach (var successor in this.Successors)
+      yield return successor;
+    foreach (var instr in this.Instructions) {
+      if (instr.Opcode != MOpcode.InlineAsm)
+        continue;
+      foreach (var operand in instr.Operands)
+        if (operand is MOperand.BlockOffset target)
+          yield return target.Block;
+    }
+  }
 }
 
 /// <summary>A machine function: its blocks, the number of virtual registers selection minted, and the stack-slot table.</summary>
@@ -277,6 +365,45 @@ public sealed class MFunction(string name) {
   /// spiller to remember what it has already taken apart.
   /// </summary>
   public HashSet<int> SplitValues { get; } = [];
+
+  /// <summary>
+  /// A copy that can be transformed and thrown away. An <see cref="MInstr"/> is immutable, so only the
+  /// LISTS need duplicating - a pass that rewrites an instruction replaces the entry rather than
+  /// editing it. It exists for the one caller that has to be able to change its mind: the speed
+  /// objective's coalescing may cost an allocation the un-coalesced function had, and a decline is not
+  /// an acceptable price for a code-quality transform.
+  /// </summary>
+  public MFunction Clone() {
+    var copy = new MFunction(this.Name) {
+      VirtualRegisterCount = this.VirtualRegisterCount,
+      HasArgumentPlan = this.HasArgumentPlan,
+    };
+    copy.StackSlots.AddRange(this.StackSlots);
+    copy.ArgumentLoads.AddRange(this.ArgumentLoads);
+    copy.SplitValues.UnionWith(this.SplitValues);
+    foreach (var block in this.Blocks) {
+      var cloned = new MBlock(block.Label);
+      cloned.Instructions.AddRange(block.Instructions);
+      cloned.Successors.AddRange(block.Successors);
+      copy.Blocks.Add(cloned);
+    }
+    return copy;
+  }
+
+  /// <summary>Takes over another function's blocks and frame - how a discarded-or-kept transform commits.</summary>
+  public void Adopt(MFunction other) {
+    ArgumentNullException.ThrowIfNull(other);
+    this.VirtualRegisterCount = other.VirtualRegisterCount;
+    this.HasArgumentPlan = other.HasArgumentPlan;
+    this.StackSlots.Clear();
+    this.StackSlots.AddRange(other.StackSlots);
+    this.ArgumentLoads.Clear();
+    this.ArgumentLoads.AddRange(other.ArgumentLoads);
+    this.SplitValues.Clear();
+    this.SplitValues.UnionWith(other.SplitValues);
+    this.Blocks.Clear();
+    this.Blocks.AddRange(other.Blocks);
+  }
 
   public IEnumerable<MInstr> AllInstructions {
     get {

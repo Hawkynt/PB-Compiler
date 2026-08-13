@@ -35,6 +35,7 @@ public static class Inliner {
 
   private static bool IsInlinable(IrFunction callee, IrFunction caller) =>
     !callee.IsDeclaration
+    && !callee.NoInline                               // the source pinned it as a real call
     && !ReferenceEquals(callee, caller)               // no direct recursion
     && callee.AllInstructions.Count() <= MaxCalleeInstructions;
 

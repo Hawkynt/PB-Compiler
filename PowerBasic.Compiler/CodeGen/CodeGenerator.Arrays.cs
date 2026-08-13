@@ -747,6 +747,41 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
+  /// The address of an array's FIRST element, for the statements that take a whole array rather
+  /// than one of its elements - <c>GET (0,0)-(3,3), spr%()</c>.
+  ///
+  /// <para>
+  /// It is not the same question as indexing, which is why it is not spelled as an index of zero:
+  /// the first element is at the array's lower bound, whatever that is, and its address is the
+  /// array's own base with no bias to subtract and no bound to check. A static array is therefore
+  /// its slot, and a dynamic one is the descriptor's segment:offset - the same pair the indexed
+  /// path adds its computed offset to.
+  /// </para>
+  /// </summary>
+  private Place? ArrayBasePlace(VariableSymbol symbol, Expression at) {
+    var asm = this._asm;
+    if (symbol.Type is not ArrayType) {
+      this.Unsupported(at, $"{symbol.Name} is not an array");
+      return null;
+    }
+    // The paged classes address through a window that is mapped per ACCESS, so "the base" is not an
+    // address the caller could then walk - it is only meaningful one element at a time.
+    if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
+      this.Unsupported(at, $"a whole {symbol.ArrayClass} array as a buffer");
+      return null;
+    }
+    if (symbol.ArrayClass == ArrayClass.Stack)
+      return new(Mem.At(Reg.BP, symbol.Offset), false);
+    if (symbol.Type is ArrayType { StaticBounds: not null })
+      return new(Mem.At(this.SlotOf(symbol), 0), false);
+
+    var descriptor = this.DescriptorAccessorOf(symbol);
+    asm.Mov(Reg.BX, descriptor(2));
+    asm.Mov(Reg.ES, descriptor(0));
+    return new(Mem.At(Reg.BX).Es(), true);
+  }
+
+  /// <summary>
   /// HUGE/VIRTUAL element place (rank 1, LONG index). HUGE normalizes the
   /// 32-bit byte offset into segment + 0..15 offset (huge pointer arithmetic);
   /// VIRTUAL maps the 16 KiB EMS page pair holding the element into the frame.
