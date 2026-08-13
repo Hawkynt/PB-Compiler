@@ -362,11 +362,11 @@ and behavioural equivalence say a function CAN be routed; neither says anything 
 routing it. Making pb36 route by default - the natural next step, and the one this document used to
 imply was all that remained - failed **109 tests**. Each family closed since then moved it:
 `Ir/Passes/TailRecursion.cs` took it to 96, the string passes to 92, the SELECT dispatch family to
-**85**, and the fixture barrier below to **73** (measured on a merged tree: 80 before the barrier fix,
-73 after). Those figures were otherwise each measured on the tree their author had, and the branches
-landed separately - so treat the chain as the shape of the progress and re-measure the number on the
-merged tree before quoting it. The count is the measure of the gate; the composition is what says which
-work is left:
+**85**, the fixture barrier below to **73** (measured on a merged tree: 80 before the barrier fix,
+73 after), and the peephole idioms to **67 of 76** on the tree that measured them. Those figures were
+otherwise each measured on the tree their author had, and the branches landed separately - so treat
+the chain as the shape of the progress and re-measure the number on the merged tree before quoting it.
+The count is the measure of the gate; the composition is what says which work is left:
 
 * **most are assertions about emitted code** and read like a list of what pb36 is for: a string appended
   in place rather than reallocated, a SELECT dispatched through a table or a perfect hash instead of a
@@ -564,7 +564,7 @@ a real difference between the two paths. Ordered by how many tests each accounts
 
 | cause | tests | what it is |
 |---|---|---|
-| peephole idioms the selector does not recognise | 19 | branchless `ABS`/`SGN`, the min/max diamond and the one-armed clamp, `TEST AX,imm` as a bit test, inline `XCHG` for `SWAP`, `INC [mem]` / `ADD [mem],imm`, one shared `IDIV` for adjacent `\` and `MOD`, ALU and x87 memory operands instead of staging through BX |
+| peephole idioms the selector does not recognise | ~~19~~ **10** | mostly CLOSED - see "What the peephole row actually was" below. `Backend/Peephole.cs` and `InstructionSelector.Idioms.cs` took nine of the nineteen; the ten that remain are a different thing wearing the same label |
 | the direct emitter's loop-register model has no counterpart | 13 | SI/DI residency for counters and accumulators, the constant-limit immediate compare that rides on it, loop rotation and the count-down form |
 | `$ERROR OVERFLOW/BOUNDS` traps are not modelled | 8 → see below | the traps were always modelled; what was absent were the range facts that elide one. `Ir/Analysis/` now supplies them, and the two alarming-looking observations that led this row turned out to be fixtures that cannot see what they assert - both measured rather than argued |
 | the objective flags do not reach the routed build | 6 + 2 batteries | `IrPassManager.Standard` runs whatever `Optimize`/`$OPTIMIZE` says, so the two builds a comparison makes are one build - which is where the batteries' twelve `smaller-than-unoptimized` rows come from. Also why `--no-optimize` no longer means faithful: `Emit_GivenDeadGlobalWithoutOptimize` and `Emit_GivenLatticeProvedComparison` assert the UNOPTIMIZED build keeps what the optimizer removes, and routed it does not |
@@ -669,6 +669,69 @@ through. Two are induction-variable strength reduction in both directions -
 `Emit_GivenArrayReadLoop_WhenMultiStatementBody` wants it WITHHELD where the routed path makes it
 anyway. The fourth is `Emit_GivenLoopInvariantLen`, already explained above: it wants an idiom pass over
 the `dup`/`len` pair, not a purity row.
+
+### What the peephole row actually was
+
+Nine of the nineteen were what the row said, and they are closed. The other ten were three quite
+different things, and the distinction is worth keeping because the same mistake is available in every
+other row of the table: **a fixture that fails routed is not evidence of a missing optimization until
+somebody has looked at what routed emits.**
+
+The nine that were real, and where each landed:
+
+* **`Backend/Peephole.cs`** - a pass over the selected machine IR, run before scheduling and gated on
+  the optimizer. It folds an ALU operand read out of memory rather than staged through a register, a
+  cell read-modified-written in place (`INC [a]`, `ADD [a],imm`), and a bit test that never
+  materializes the masked value (`TEST x,mask`). Each is guarded by a census of the WHOLE function -
+  the value being removed is defined and read only by the instructions being rewritten - plus a
+  barrier scan for anything in between that writes memory, clobbers the file, or writes a register the
+  folded address is formed from. The addressing rule is the one with teeth: a register-formed address
+  folds only into the instruction immediately following the load, because a value used as a memory
+  base may live only in `BX`/`SI`/`DI` and cannot spill, so lengthening its range is precisely what
+  makes a function fail to allocate.
+* **`InstructionSelector.Idioms.cs`** - the patterns that span several IR instructions. Branchless
+  `ABS` (`CWD / XOR AX,DX / SUB AX,DX`) and `SGN` (`CWD / NEG AX / ADC DX,DX`), neither of which can be
+  written over virtual registers because `CWD` IS the sign mask and names `DX`; the min/max
+  canonicalization, which brings BASIC's four spellings of a maximum to one shape by reading reversed
+  arms as the negated predicate and relaxing a strict ordering to its or-equal twin (they differ only
+  where the operands are equal, and there both arms answer the same value); and the x87 memory
+  operands, where a literal multiplies out of the constant pool (`FMUL qword`) and a widened integer is
+  read as an integer (`FIADD word`) rather than converted into an 80-bit temporary first.
+
+The ten that were not, in three groups:
+
+1. **Six fixtures could not observe what they assert.** `Emit_GivenIntegerSgn`, the three
+   `Emit_GivenBitTest*` and two of the `Emit_GivenFloat*` call their subject `SUB` from exactly ONE
+   site, so interprocedural constant propagation proves the argument and the whole construct folds to
+   the arm it selects - the routed `SGN` image contains `B8 01 00`, the answer, and no sequence at all.
+   `NOINLINE` stops the body being absorbed; it does not stop the argument being known. This is the
+   same shape as the five fixtures repaired earlier in this document, and the repair is the same: a
+   second call site with a different argument, the assertion untouched. Four of the six then pass.
+   The other two are group 2.
+2. **Three assert a shape the routed path structurally does not produce, and producing it would be a
+   pessimization.** `Emit_GivenSelfModifyStore` and `Emit_GivenIncrWithAmount` want `INC [a%]` /
+   `ADD [a%],5` for a SUB-local the routed path promotes to a register - there is no cell to
+   read-modify-write, and the peephole that would do it is implemented and fires on globals and array
+   elements instead. `Emit_GivenScalarSwap` wants an inline `XCHG`; `SWAP x, y` between two
+   SSA-promoted locals is a rename and emits nothing. `Emit_GivenBinaryWithMemoryRightOperand` and
+   `Emit_GivenCompareWithMemoryRightOperand` are the same story from the other end: they count
+   `MOV BX,AX` stagings, and the routed path emits none in EITHER program, so the inequality cannot
+   hold. `Emit_GivenFloatBinaryWithDirectCellOperand` and `Emit_GivenFloatCompareWithDirectCellOperand`
+   want `FADD m32` / `FCOMP m32` between two intermediates this back end deliberately parks at the
+   x87's own 80-bit width (see `FloatCell`, where the reason is fidelity) - and `FADD` has no tbyte
+   form, so the memory operand is unreachable by construction rather than unimplemented.
+3. **One is a real gap with a real reason, and one is a third-party dependency.**
+   `Emit_GivenAdjacentDivAndMod` wants `q = n \ d : m = n MOD d` to share one `IDIV`. The two divides
+   are in DIFFERENT blocks - the division-by-zero guard the lowering emits splits them, and the trap
+   arm calls `rt_error`, which destroys the `DX` holding the remainder - so sharing needs the redundant
+   second guard removed first, which is a question about whether `rt_error` returns. Worth noting
+   separately: the routed divisor spills to a frame cell, so the image carries `F7 7E` (`IDIV word
+   [BP+d]`) where the fixture's byte pattern looks for `F7 F8..FF`; even a shared divide would not be
+   counted. And `Emit_GivenAbsIntrinsic` now passes its first two assertions and fails its third: the
+   explicit `IF a < 0 THEN a = -a` spelling never becomes a `select`, because `IfConversion` requires
+   BOTH arms of a diamond to be empty and this one negates. Speculating a single pure instruction out
+   of an arm would close it, but that is a change to a shared IR pass rather than to the back end, and
+   it would need a second selection pattern (`select(x < 0, 0 - x, x)`) to pay off.
 
 **4. The golden gate - byte-identical output with the optimizer off.** This is the hard one, and it
 is the direct emitter's whole reason for existing: its optimizations are interleaved with emission

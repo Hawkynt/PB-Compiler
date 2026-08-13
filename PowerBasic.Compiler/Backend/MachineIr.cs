@@ -256,6 +256,23 @@ public enum MOpcode {
   Faddp, Fsubp, Fmulp, Fdivp,
 
   /// <summary>
+  /// The MEMORY forms of the same four operations, plus the compare: <c>ST(0) op= [cell]</c>, with
+  /// nothing pushed and nothing popped. They exist because the pair form needs the second operand on
+  /// the stack and getting it there is an <c>FLD</c> - so <c>FLD a; FLD b; FADDP</c> and
+  /// <c>FLD a; FADD b</c> compute the same value, and the second is one instruction and one stack slot
+  /// shorter. The operand may only be a dword or a qword (an <c>FADD</c> has no tbyte form), which is
+  /// why an 80-bit intermediate still goes through the pair.
+  /// </summary>
+  Fadd, Fsub, Fmul, Fdiv, Fcomp,
+
+  /// <summary>
+  /// And the INTEGER memory forms - <c>ST(0) op= (real)[cell]</c> for a word or dword integer cell.
+  /// The x87 converts as it reads, so an integer operand of a floating expression needs neither a
+  /// <c>FILD</c> of its own nor the 80-bit temporary that would hold the converted value.
+  /// </summary>
+  Fiadd, Fisub, Fimul, Fidiv,
+
+  /// <summary>
   /// Compare ST(0) with ST(1) and pop both, copy the x87 status word into AX, then copy AH's
   /// condition bits into the integer flags. The explicit AX operand on the latter two instructions
   /// makes their hidden dependency visible to scheduling and allocation.
@@ -295,6 +312,8 @@ public static class MOpcodes {
   public static bool UsesX87(MOpcode opcode) => opcode is
     MOpcode.Fld or MOpcode.Fstp or MOpcode.Fild or MOpcode.Fistp
     or MOpcode.Faddp or MOpcode.Fsubp or MOpcode.Fmulp or MOpcode.Fdivp
+    or MOpcode.Fadd or MOpcode.Fsub or MOpcode.Fmul or MOpcode.Fdiv or MOpcode.Fcomp
+    or MOpcode.Fiadd or MOpcode.Fisub or MOpcode.Fimul or MOpcode.Fidiv
     or MOpcode.Fcompp or MOpcode.FstswAx
     or MOpcode.Fsqrt
     or MOpcode.Fsin or MOpcode.Fcos or MOpcode.Fptan or MOpcode.Fpatan or MOpcode.Fyl2x

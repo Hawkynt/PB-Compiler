@@ -48,6 +48,7 @@ both be first; the universal answer is inline-early / allocate-late.
 source → AST
        → typed SSA IR          [mem2reg, inline, SCCP, GVN, instcombine, LICM, DCE]   ← BUILT (Ir/)
        → instruction selection → x86-16 MachineFunction with VIRTUAL registers        ← STAGE 1-2
+       → encoding idioms (memory operands, read-modify-write, bit tests)               ← STAGE 2b
        → instruction scheduling on virtual-register machine instructions              ← STAGE 6
        → liveness / live intervals                                                     ← STAGE 3
        → linear-scan register allocation (vreg → AX/BX/CX/DX/SI/DI, spill on pressure) ← STAGE 4  ★ reassignment
@@ -139,6 +140,52 @@ core that the differential batteries exercise: `IrConstantInt`, `IrBinary` int o
 predecessor edges — out-of-SSA). Defer float (x87), strings and intrinsics to later
 stages; until then the backend declines functions containing them and the program falls
 back to the direct codegen.
+
+### Idioms — the two places a shape spans more than one instruction
+
+One SSA instruction at a time is the right default and the wrong answer for a handful of shapes,
+which split cleanly by *where the shape lives*.
+
+**In the IR** — `InstructionSelector.Idioms.cs`. The optimizer reduces several BASIC constructs to
+plain arithmetic, and this target has a shorter spelling for the result. `ABS(x)` arrives as
+`(x XOR (x >>a 15)) - (x >>a 15)` and is `CWD / XOR AX,DX / SUB AX,DX`; `SGN(x)` arrives as
+`(x > 0) - (x < 0)` and is `CWD / NEG AX / ADC DX,DX`. Both name `DX` and so cannot be written over
+virtual registers at all — `CWD` *is* the sign mask, and there is no other instruction on this part
+that produces one in a step. A float operation whose right operand is a literal or a widened integer
+reads that operand out of memory (`FMUL qword [.fc…]`, `FIADD word [cell]`) instead of pushing it,
+which also removes the conversion and the 80-bit temporary a widening would otherwise need.
+
+And the min/max canonicalization, which is not a shortening but a *unification*: a `select` whose two
+arms are its comparison's two operands is a minimum or a maximum, and BASIC has four spellings of each
+(`IF a > b THEN m = a ELSE m = b`, `MAX%(a, b)`, the one-armed clamp, `MIN%`). Reversing the arms is
+the same choice through the negated predicate, and a strict ordering may be relaxed to its or-equal
+twin because the two differ only where the operands are equal — where both arms answer the same value.
+Canonicalizing both brings the four to one shape, which is the shape the intrinsic and the direct
+emitter already produce.
+
+Each pattern is collected before the block walk, because a pattern is owned by its LAST instruction
+and the ones in front of it must be recognised as absorbed when the loop reaches them — which is
+earlier. Every absorbed instruction is single-use and pure by the test that put it there.
+
+**In the machine IR** — `Peephole.cs`, run at the end of selection. These shapes span instructions
+that came from *separate* IR instructions, so they only exist once selection is over: an ALU operand
+read straight from memory rather than staged through a register (`ADD d,[n]`), a cell read-modified-
+written in place (`INC [a]`, `ADD [a],imm`), and a bit test that never materializes the masked value
+(`TEST x,mask` for `MOV v,x / AND v,mask / CMP v,0`). All three are guarded by a census of the whole
+function — the value being removed is defined and read only by the instructions being rewritten — and
+by a barrier scan for anything in between that writes memory, clobbers the register file or writes a
+register the folded address is formed from.
+
+The addressing rule is the one that costs coverage if it is got wrong. A value used as a memory base
+or index may only live in `BX`/`SI`/`DI` and cannot itself move to memory
+(`LinearScanAllocator.LegalFor`), so lengthening such a value's live range is exactly the move that
+makes a function fail to allocate. A register-free cell — a frame slot, a parameter word, a module
+variable — lengthens nothing and folds at any distance; a register-formed address folds only into the
+instruction immediately following the load. The read-modify-write form has no such limit in the other
+direction, because it deletes two of the three accesses and the address register's range *shrinks*.
+
+Both stages are gated on `SelectionTarget.Optimize`: with the optimizer off, selection writes what it
+would have written.
 
 ## Liveness + linear-scan allocation (Stages 3-4)
 

@@ -784,6 +784,10 @@ public sealed class OptimizerTests {
   [Test]
   public void Emit_GivenBitTestCondition_WhenPb36_ThenTestNotAndPlusTest() {
     // O0081: IF x AND mask emits `test ax, mask` (A9 iw), not `and ax, mask` (83 E0 ib) + `test ax,ax`.
+    // TWO call sites with DIFFERENT arguments, here and in the two tests below: with one, constant
+    // propagation proves x% and the whole bit test folds to the arm it selects, so the assertion would
+    // be about no code at all. NOINLINE stops the body being absorbed; it does not stop the argument
+    // being known.
     static bool Has(byte[] img, params byte[] seq) {
       for (var i = 0; i <= img.Length - seq.Length; ++i) {
         var ok = true;
@@ -792,7 +796,7 @@ public sealed class OptimizerTests {
       }
       return false;
     }
-    var img = Compile("$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL x%)\nS 5\nEND\nSUB S(BYVAL x%) NOINLINE\nIF x% AND 4 THEN PRINT \"y\"\nEND SUB", Dialect.Pb36);
+    var img = Compile("$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL x%)\nS 5\nS 6\nEND\nSUB S(BYVAL x%) NOINLINE\nIF x% AND 4 THEN PRINT \"y\"\nEND SUB", Dialect.Pb36);
     Assert.That(Has(img, 0xA9, 0x04, 0x00), Is.True, "test ax, 4 - the bit test");
     Assert.That(Has(img, 0x83, 0xE0, 0x04), Is.False, "no and ax, 4 - the mask is not materialized");
   }
@@ -809,7 +813,7 @@ public sealed class OptimizerTests {
       }
       return false;
     }
-    const string head = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL x%)\nS 5\nEND\nSUB S(BYVAL x%) NOINLINE\n";
+    const string head = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL x%)\nS 5\nS 6\nEND\nSUB S(BYVAL x%) NOINLINE\n";
     var eq = Compile(head + "IF (x% AND 4) = 0 THEN PRINT \"y\" ELSE PRINT \"n\"\nEND SUB", Dialect.Pb36);
     var ne = Compile(head + "IF (x% AND 4) <> 0 THEN PRINT \"y\" ELSE PRINT \"n\"\nEND SUB", Dialect.Pb36);
     Assert.That(Has(eq, 0xA9, 0x04, 0x00), Is.True, "= 0: test ax, 4");
@@ -830,7 +834,7 @@ public sealed class OptimizerTests {
       }
       return false;
     }
-    const string head = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL x%)\nS 5\nEND\nSUB S(BYVAL x%) NOINLINE\n";
+    const string head = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL x%)\nS 5\nS 6\nEND\nSUB S(BYVAL x%) NOINLINE\n";
     var img = Compile(head + "IF x% AND 4 THEN PRINT \"y\"\nIF (x% AND 4) = 0 THEN PRINT \"n\"\nEND SUB", Dialect.Pb36);
     Assert.That(Has(img, 0x83, 0xE0, 0x04), Is.True, "the shared `x AND 4` is materialized for its CSE slot");
   }
@@ -890,8 +894,10 @@ public sealed class OptimizerTests {
       }
       return false;
     }
-    // A BYVAL parameter feeds SGN a runtime int16 without VAL (which would pull in the FPU on its own).
-    var img = Compile("$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL x%)\nS 3\nEND\nSUB S(BYVAL x%) NOINLINE\nPRINT SGN(x%)\nEND SUB", Dialect.Pb36);
+    // A BYVAL parameter feeds SGN a runtime int16 without VAL (which would pull in the FPU on its own),
+    // and TWO call sites with different arguments keep it runtime: with one, constant propagation
+    // proves x% and SGN folds to a literal, leaving no sequence to assert about.
+    var img = Compile("$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL x%)\nS 3\nS -4\nEND\nSUB S(BYVAL x%) NOINLINE\nPRINT SGN(x%)\nEND SUB", Dialect.Pb36);
     Assert.Multiple(() => {
       Assert.That(Has(img, 0x99, 0xF7, 0xD8), Is.True, "cwd; neg ax");
       Assert.That(Has(img, 0x11, 0xD2), Is.True, "adc dx,dx");
@@ -2217,9 +2223,11 @@ public sealed class OptimizerTests {
   [Test]
   public void Emit_GivenFloatTimesIntegerCell_WhenPb36_ThenFpuIntegerMemoryOperand() {
     // x! = x! + i% with i% a signed-integer direct cell reads it with FIADD m16 (no AX load,
-    // no FILD scratch); an expression right operand (i% + 1) must be loaded and FILD-ed.
-    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  x! = n%\n  i% = n% + 1\n  x! = x! + i%\n  x! = x! + i%\n  PRINT x!\nEND SUB";
-    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  x! = n%\n  i% = n% + 1\n  x! = x! + (i% + 1)\n  x! = x! + (i% + 1)\n  PRINT x!\nEND SUB";
+    // no FILD scratch); an expression right operand (i% + 1) must be loaded and FILD-ed. Two call
+    // sites with different arguments, here and below: with one, constant propagation proves n% and
+    // the whole body folds to a literal, leaving no operand to assert about.
+    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%) NOINLINE\n  x! = n%\n  i% = n% + 1\n  x! = x! + i%\n  x! = x! + i%\n  PRINT x!\nEND SUB";
+    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%) NOINLINE\n  x! = n%\n  i% = n% + 1\n  x! = x! + (i% + 1)\n  x! = x! + (i% + 1)\n  PRINT x!\nEND SUB";
     Assert.That(CountFiaddMem(Compile(mem, Dialect.Pb36)), Is.GreaterThan(CountFiaddMem(Compile(staged, Dialect.Pb36))),
       "a signed-integer direct-cell operand is added to a float with FIADD m16; a staged operand uses FILD;FADDP");
   }
@@ -2237,8 +2245,8 @@ public sealed class OptimizerTests {
   public void Emit_GivenFloatTimesConstant_WhenPb36_ThenFpuConstantMemoryOperand() {
     // r! = a! * 1.5 multiplies by the data-segment float constant in place (FMUL qword [f_n]);
     // an expression right operand (b! + b!) must be FLD-ed and combined with FMULP.
-    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a! = n%\n  r! = a! * 1.5\n  r! = r! * 2.5\n  PRINT r!\nEND SUB";
-    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a! = n%\n  b! = n% + 1\n  r! = a! * (b! + b!)\n  r! = r! * (b! + b!)\n  PRINT r!\nEND SUB";
+    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%) NOINLINE\n  a! = n%\n  r! = a! * 1.5\n  r! = r! * 2.5\n  PRINT r!\nEND SUB";
+    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%) NOINLINE\n  a! = n%\n  b! = n% + 1\n  r! = a! * (b! + b!)\n  r! = r! * (b! + b!)\n  PRINT r!\nEND SUB";
     Assert.That(CountFmulMem(Compile(mem, Dialect.Pb36)), Is.GreaterThan(CountFmulMem(Compile(staged, Dialect.Pb36))),
       "a float constant operand multiplies via an FPU memory operand (FMUL qword [f_n]); an expression operand uses FMULP");
   }
