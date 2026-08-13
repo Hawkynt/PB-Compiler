@@ -238,6 +238,10 @@ public sealed class BackendSpillTests {
   [Test]
   [CancelAfter(2_000)]
   public void Allocate_GivenMultipleDefinitionsStraddlingAClobber_ThenEliminatesTheOldInterval() {
+    // The first definition has to be READ after the CALL for this to be the shape it claims. Without
+    // the read it is a dead store, the value is not live where the clobber lands, and the allocator is
+    // right to keep it in a register and split nothing - which is what it does now that it asks
+    // liveness rather than the interval hull whether a clobber touches anything.
     var value = MReg.Virtual(0);
     var function = new MFunction("F") { VirtualRegisterCount = 1 };
     function.StackSlots.Add(2);
@@ -247,6 +251,9 @@ public sealed class BackendSpillTests {
       new MInstrEffect([0], [], false, false, false, false)));
     block.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef("rt")], MInstrEffect.None,
       clobbers: [Reg.AX, Reg.BX, Reg.CX, Reg.DX, Reg.SI, Reg.DI]));
+    block.Instructions.Add(new MInstr(MOpcode.Mov,
+      [new MOperand.StackSlot(0, MRegSize.Word), new MOperand.Register(value)],
+      new MInstrEffect([], [1], false, false, false, true)));
     block.Instructions.Add(new MInstr(MOpcode.Mov,
       [new MOperand.Register(value), new MOperand.Immediate(2)],
       new MInstrEffect([0], [], false, false, false, false)));

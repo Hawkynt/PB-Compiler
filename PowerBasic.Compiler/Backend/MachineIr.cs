@@ -338,6 +338,45 @@ public sealed class MFunction(string name) {
   /// </summary>
   public HashSet<int> SplitValues { get; } = [];
 
+  /// <summary>
+  /// A copy that can be transformed and thrown away. An <see cref="MInstr"/> is immutable, so only the
+  /// LISTS need duplicating - a pass that rewrites an instruction replaces the entry rather than
+  /// editing it. It exists for the one caller that has to be able to change its mind: the speed
+  /// objective's coalescing may cost an allocation the un-coalesced function had, and a decline is not
+  /// an acceptable price for a code-quality transform.
+  /// </summary>
+  public MFunction Clone() {
+    var copy = new MFunction(this.Name) {
+      VirtualRegisterCount = this.VirtualRegisterCount,
+      HasArgumentPlan = this.HasArgumentPlan,
+    };
+    copy.StackSlots.AddRange(this.StackSlots);
+    copy.ArgumentLoads.AddRange(this.ArgumentLoads);
+    copy.SplitValues.UnionWith(this.SplitValues);
+    foreach (var block in this.Blocks) {
+      var cloned = new MBlock(block.Label);
+      cloned.Instructions.AddRange(block.Instructions);
+      cloned.Successors.AddRange(block.Successors);
+      copy.Blocks.Add(cloned);
+    }
+    return copy;
+  }
+
+  /// <summary>Takes over another function's blocks and frame - how a discarded-or-kept transform commits.</summary>
+  public void Adopt(MFunction other) {
+    ArgumentNullException.ThrowIfNull(other);
+    this.VirtualRegisterCount = other.VirtualRegisterCount;
+    this.HasArgumentPlan = other.HasArgumentPlan;
+    this.StackSlots.Clear();
+    this.StackSlots.AddRange(other.StackSlots);
+    this.ArgumentLoads.Clear();
+    this.ArgumentLoads.AddRange(other.ArgumentLoads);
+    this.SplitValues.Clear();
+    this.SplitValues.UnionWith(other.SplitValues);
+    this.Blocks.Clear();
+    this.Blocks.AddRange(other.Blocks);
+  }
+
   public IEnumerable<MInstr> AllInstructions {
     get {
       foreach (var block in this.Blocks)

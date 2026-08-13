@@ -162,7 +162,7 @@ public sealed partial class CodeGenerator {
 
     foreach (var (proc, _, mfn) in candidates) {
       MachineScheduler.Schedule(mfn);             // schedule first, then allocate the final order
-      if (LinearScanAllocator.Allocate(mfn) is not { } alloc)
+      if (LinearScanAllocator.Allocate(mfn, this.SelectionTarget) is not { } alloc)
         continue;                                 // a value live across a CALL has no register - decline
       this._backendProcs[proc] = (mfn, alloc);
     }
@@ -216,7 +216,7 @@ public sealed partial class CodeGenerator {
         || InstructionSelector.TrySelect(main, this.SelectionTarget) is not { } machine)
       return null;
     MachineScheduler.Schedule(machine);
-    if (LinearScanAllocator.Allocate(machine) is not { } alloc)
+    if (LinearScanAllocator.Allocate(machine, this.SelectionTarget) is not { } alloc)
       return null;
     return this._backendMain = (machine, alloc);
   }

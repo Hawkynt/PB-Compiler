@@ -1388,3 +1388,55 @@ of that program. What `EXIT FAR` does *through* the back end is verified by `Bac
 which runs both emitters over programs shaped to route: an unwind out of a loop, out of three nested
 frames, out of a `FUNCTION` that had already assigned its result (the caller never receives it — an
 unwind is not a return), and the same procedure returning normally on a call that does not fire one.
+
+## Register residency: keeping a loop's counter and accumulator in registers
+
+pb36's O5 promises a hot loop counter in `SI` and a second hot local in `DI`, and a routed function got
+neither. Making the residency real took three pieces, and only the last is the preference the missing
+item was described as.
+
+**A loop-carried value was not even in a register.** Linear scan asks "does a `CALL` destroy a register
+anywhere this value is live" and answered it from the live INTERVAL, which is the hull of the value's
+live points over the laid-out instruction order. `IrLowering` emits a `FOR` as head / exit / body /
+latch, so the block holding the `PRINT` that follows the loop sits *inside* the hull of every value the
+loop carries - and that block calls the runtime, which clobbers everything. The counter was therefore
+spilled to a frame cell in every counted loop with a `PRINT` after it, which is most of them.
+`LivenessAnalysis.Analyze` now keeps the per-instruction marks the hull is made of, and the clobber
+question is asked of those. That is sound for that question and only that one: a value dead at `i` has
+no path from `i` to a use without an intervening definition, so nothing that instruction destroys is
+ever read back - while the hull still governs which values may share a register.
+
+**The register was copied in and out on every iteration.** Out-of-SSA gives a phi one virtual register
+for the value entering the loop and another for the value computed in the body, and a two-address
+machine adds a second copy in front of the increment, so `FOR i` came out as
+`MOV t, i / ADD t, 1 / MOV i, t` over two registers. No preference fixes that - the two ranges really
+do overlap. `Backend/CopyCoalescer.cs` merges them, on the standard rule: two values may share a
+register unless a DEFINITION of one lands where the other is still live, the copies between them
+excepted. An earlier version proved the weaker "equal wherever both are live" by forward dataflow and
+**miscompiled** - `MOV a, b / MOV b, c / use a` has the two provably equal at the second instruction,
+and merging makes that instruction destroy what the third one reads. The property has to be about
+definitions, not about points.
+
+**Then the preference.** `SI` and `DI` are not faster; they are the two that no fixed-register sequence
+claims - a multiply or divide owns `AX`/`DX`, a shift owns `CL`, a dispatch works in `AX`/`BX`/`CX`, and
+every runtime entry names its argument registers. A value the whole loop reads is the one most likely
+to be standing in one of those spots when the body needs it. `LivenessAnalysis.LoopCarried` names the
+values whose range covers a back edge, and the sweep offers them `SI`/`DI` first.
+
+All three ride on `$OPTIMIZE SPEED`, and none of them may cost an allocation - the rule this back end
+has already been bitten by once, when reserving one addressing register across every multiply left the
+spiller unable to place an address value. Coalescing unions two live ranges, so the merged value must
+dodge the clobbers of both; the preference asks for two of the three registers that can address memory.
+So the speed policy runs on a **copy** of the function and commits only if it allocates, and the plain
+policy then runs on the untouched original. `BackendResidencyTests` measures the consequence over every
+corpus function rather than trusting the argument: nothing that allocates under the baseline target
+declines under the speed one.
+
+What this does NOT reach, measured with pb36 routed by default:
+
+| still missing | why |
+|---|---|
+| a counter resident across a `PRINT` in the loop BODY | a routed `CALL` clobbers the whole register file. The direct emitter's O5 rests on the opposite claim - `CodeGenerator.Optimize.cs` states that `rt_print_i16`/`i32`, `rt_print_str`, newline, zone and `FSelect` all preserve `SI` and `DI` - but this document's own bar for narrowing a `RuntimeAbi` clobber set is a mechanical check of each routine's push/pop discipline, and there is none. Until there is, `Emit_GivenNumericPrintInLoopBody`, `Emit_GivenDoLoopTwoAccumulators` (whose second accumulator must survive the first `PRINT`), `Emit_GivenCountOnlyFor` and `Emit_GivenRegisterCounterFor` cannot pass |
+| `ESI`/`EDI` for a `LONG` counter under `$CPU 80386` | a 32-bit value is a register PAIR in this machine IR, so there is no dword physical register to prefer. `Emit_GivenLongForLoop` and `Emit_GivenLongAccumulatorLoop` want the 386 form and need 32-bit registers in `MachineIr` first |
+| whether the counter takes `SI` and the accumulator `DI` or the reverse | the direct emitter has two conventions - a `FOR` counter is its `SI` resident, while a `DO` loop's FIRST hot local is - and `Emit_GivenConditionalAccumulateLoop` and `Emit_GivenDoLoopAccumulator` therefore assert opposite assignments for two loops the machine IR cannot tell apart. Measured both ways round: the order of `_resident` moves which of the two passes, and nothing else |
+| two fixtures that measure no loop at all | `Emit_GivenAccumulatorLoop` and `Emit_GivenNestedIntegerLoops` are constant-folded to `PRINT 55` and `PRINT 288` by the IR pipeline in BOTH of their builds, so there is no loop left for residency to shrink - the same "measures an empty `main`" family docs/BACKENDS.md records |
