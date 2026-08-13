@@ -85,6 +85,15 @@ public static class LoopUnroll {
     var preheader = predecessors.SingleOrDefault(b => !ReferenceEquals(b, latch));
     if (preheader is null || predecessors.Count != 2)
       return null;
+    // The preheader is REWIRED to fall into the first unrolled copy (Retarget below), which replaces
+    // its terminator outright - so it has to be an unconditional branch, and a conditional one is not
+    // a shape to work around but a loop to leave alone until the branch resolves. It cost a
+    // miscompile to learn: LoopUnswitch clones a loop under a condition it could not fold, leaving a
+    // header whose preheader ends in `condbr c, this-clone, that-clone`; unrolling it dropped the
+    // condition and ran the clone specialized for the arm that was NOT taken. The next sweep folds
+    // the condition and unrolls the survivor, so nothing is lost but the round trip.
+    if (preheader.Terminator is not IrBr)
+      return null;
     if (ReferenceEquals(exit, header) || bodyBlocks.Contains(exit))
       return null;
     // only the header may be entered from outside the chain

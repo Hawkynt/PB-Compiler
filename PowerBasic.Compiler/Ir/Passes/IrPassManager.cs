@@ -111,6 +111,12 @@ public sealed class IrPassManager {
     .Add("instcombine", InstCombine.Run)
     .Add("sccp", Sccp.Run)
     .Add("correlate", CorrelatedValueProp.Run)
+    // AFTER sccp and correlate, and the order is the whole of it: the range analysis reasons about
+    // what an expression CAN be, so it wants the values that are already known to be one thing folded
+    // in first - a bounds check against a subscript sccp has resolved is not a range question at all.
+    // What is left after those two is the class this answers: a loop counter, an IF-joined variable,
+    // a masked or divided index - none of which is a constant, and all of which are bounded.
+    .Add("rangefold", RangeCheckElim.Run)
     // after SCCP, because a subscript is only constant once the index arithmetic has folded - and
     // before the value passes, so the elements it exposes get propagated like any other value
     .Add("sroa", ScalarReplaceArrays.Run)
