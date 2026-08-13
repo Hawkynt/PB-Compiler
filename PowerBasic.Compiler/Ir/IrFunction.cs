@@ -34,6 +34,20 @@ public sealed class IrFunction : IrGlobalValue {
   /// </summary>
   public bool IsVarArgs { get; init; }
 
+  /// <summary>
+  /// True when the source declared the procedure <c>NOINLINE</c>: the optimizer must keep every call
+  /// to it a real call, so its emitted code stays inspectable.
+  ///
+  /// <para>
+  /// This is a contract with the PROGRAMMER rather than a fact about the body, which is why it lives
+  /// on the function instead of being rediscovered by <see cref="Passes.FunctionSummaries"/>. Without
+  /// it a procedure whose only purpose is to be a barrier - the empty <c>SUB</c> that makes an operand
+  /// opaque - is absorbed at its call sites, and the code the programmer wanted to look at stops
+  /// existing. The direct emitter honours the same flag in <c>AnalyzeInlinableLeaf</c>.
+  /// </para>
+  /// </summary>
+  public bool NoInline { get; init; }
+
   /// <summary>The basic blocks; the first is the entry.</summary>
   public IReadOnlyList<IrBasicBlock> Blocks => this._blocks;
 
