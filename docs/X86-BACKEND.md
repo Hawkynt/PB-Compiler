@@ -991,6 +991,20 @@ laid out the frame - the machine emitter resolves them to the runtime's own labe
 string handle, calls `GetStrLoc` and reads the far pointer it answers with; every variable in that
 block, the handle included, already bound.
 
+### Open: inlining a callee that contains one throws
+
+`Ir/Passes/Inliner.Run` skips a callee with `HasErrorHandler` and does **not** skip one with
+`HasInlineAsm`, but `IrCloner` has no case for `IrInlineAsm` — it is deliberately opaque. So with
+routing on (`PBC_X_BACKEND=1`), any `!` block inside a SUB/FUNCTION small enough to inline aborts the
+compile with `InvalidOperationException: cannot clone IrInlineAsm`. It is a crash, not a wrong
+program, and it is invisible on the corpus because inline asm there sits in module bodies, which are
+never a callee. The direct emitter is unaffected.
+
+Two things are wrong behind it. The clone guard is the immediate one. The second: where the direct
+emitter reports an inline-asm parse failure as a diagnostic (`CodeGenerator.InlineAsm.cs`),
+`MachineEmitter.EmitInlineAsm` throws `NotSupportedException` — so even past the clone guard, a
+mistyped mnemonic in a routed function is an exception rather than an error message.
+
 ## The x87 stack is not in the machine IR
 
 `MInstrEffect` names registers, flags and memory. It has no name for the x87 stack, so nothing an x87
