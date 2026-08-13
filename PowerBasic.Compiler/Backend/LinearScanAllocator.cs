@@ -32,6 +32,34 @@ public sealed partial class LinearScanAllocator {
   private static readonly Reg[] _indexing = [Reg.SI, Reg.DI];
 
   /// <summary>
+  /// Where a value that is live all the way round a loop is asked for first under
+  /// <c>$OPTIMIZE SPEED</c> - the residency preference (docs/PB36.md O5).
+  ///
+  /// <para>
+  /// The reason is not that <c>SI</c> and <c>DI</c> are faster; every general register on this target
+  /// costs the same. It is that they are the two the FIXED-register sequences never claim: a multiply
+  /// or divide owns <c>AX</c> and <c>DX</c>, a variable shift owns <c>CL</c>, a dispatch works in
+  /// <c>AX</c>/<c>BX</c>/<c>CX</c>, and every runtime entry takes its arguments in named registers.
+  /// A value the whole loop reads is the value most likely to be standing in one of those spots when
+  /// the loop body needs it, so parking it where nothing is pinned is what keeps it in a register at
+  /// all rather than in its frame cell. It is also the shape the direct emitter emits (its counter
+  /// lives in <c>SI</c> and its second resident in <c>DI</c>), which is worth matching where the two
+  /// paths' output is compared by eye.
+  /// </para>
+  ///
+  /// <para>
+  /// It is a PREFERENCE and never a constraint, and the distinction is the whole safety argument.
+  /// <c>SI</c> and <c>DI</c> are two of the three registers that may address memory, so reserving one
+  /// across a loop is exactly the move that once left the spiller with nowhere to put an address
+  /// value. <see cref="TryResident"/> therefore falls back to the ordinary pool order for any value
+  /// the pair cannot take, and to the whole plain policy on the untouched function when the preferred
+  /// sweep does not answer at all - so the set of functions that allocate is unchanged and only the
+  /// assignment differs (<c>BackendResidencyTests</c> measures that over the corpus).
+  /// </para>
+  /// </summary>
+  private static readonly Reg[] _resident = [Reg.SI, Reg.DI];
+
+  /// <summary>
   /// Assigns each virtual register a physical register, or returns null when the live set still
   /// exceeds the register file after spilling what it can.
   ///
@@ -42,12 +70,64 @@ public sealed partial class LinearScanAllocator {
   /// </summary>
   public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function) => Allocate(function, out _);
 
+  /// <summary>The same, for a given target and objective - which is what turns the residency preference on.</summary>
+  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function, SelectionTarget target)
+    => Allocate(function, target, out _);
+
   /// <summary>
   /// The same, reporting WHY it gave up. Selection says why it declines a function; allocation used to
   /// just answer null, which left "register pressure" as the whole diagnosis for every function that
   /// selected and did not route - a black box in the middle of the coverage census.
   /// </summary>
-  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function, out string? reason) {
+  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function, out string? reason)
+    => Allocate(function, SelectionTarget.Baseline, out reason);
+
+  /// <summary>The same, for a given target and objective.</summary>
+  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function, SelectionTarget target, out string? reason) {
+    if (target is { Optimize: true, OptimizeSpeed: true } && TryResident(function) is { } resident) {
+      reason = null;
+      return resident;
+    }
+    return AllocatePlain(function, out reason);
+  }
+
+  /// <summary>
+  /// The <c>$OPTIMIZE SPEED</c> attempt: coalesce the out-of-SSA copies away, then allocate preferring
+  /// <c>SI</c>/<c>DI</c> for whatever is live all the way round a loop.
+  ///
+  /// <para>
+  /// It works on a COPY and commits only on success, which is the whole reason the two policies can be
+  /// tried in this order at all. Coalescing unions two live ranges, so the merged value must avoid the
+  /// clobbers of both and may find no register where the two halves each had one; the preference asks
+  /// for two of the three registers that can address memory. Either can cost an allocation that the
+  /// plain policy makes, and neither may - so the plain policy runs on the untouched function whenever
+  /// this one does not answer, and the set of functions that route is exactly what it was.
+  /// </para>
+  /// </summary>
+  private static IReadOnlyDictionary<int, Reg>? TryResident(MFunction function) {
+    var candidate = function.Clone();
+    CopyCoalescer.Run(candidate);
+    for (;;) {
+      // recomputed each round: coalescing and spilling both move instructions, and an asm block's
+      // hold is an instruction range
+      var asmHeld = AsmHeldByIndex(candidate, out var asmConflict);
+      if (asmConflict is not null)
+        return null;                             // the plain policy reports it; this one just stands aside
+      if (LivenessAnalysis.LoopCarried(candidate) is { Count: > 0 } carried
+          && TryAllocate(candidate, asmHeld, carried) is { } assignment) {
+        function.Adopt(candidate);
+        return assignment;
+      }
+      if (TryAllocate(candidate, asmHeld) is { } plain) {
+        function.Adopt(candidate);
+        return plain;
+      }
+      if (!Spiller.RematerializeOne(candidate) && !Spiller.SpillOne(candidate) && !Spiller.SplitOne(candidate))
+        return null;
+    }
+  }
+
+  private static IReadOnlyDictionary<int, Reg>? AllocatePlain(MFunction function, out string? reason) {
     for (;;) {
       // recomputed each round, because spilling renumbers the instructions the windows are measured in
       var asmHeld = AsmHeldByIndex(function, out var asmConflict);
@@ -86,15 +166,17 @@ public sealed partial class LinearScanAllocator {
     var inFlightAt = InFlightByIndex(function);
     var free = new List<Reg>(_pool);
     var active = new List<LivenessAnalysis.LiveInterval>();
+    var liveness = LivenessAnalysis.Analyze(function);
+    var liveAt = liveness.LiveAt;
 
-    foreach (var interval in LivenessAnalysis.Compute(function)) {
+    foreach (var interval in liveness.Intervals) {
       for (var a = active.Count - 1; a >= 0; --a)
         if (active[a].End < interval.Start)
           active.RemoveAt(a);
-      var unsafeRegs = ClobberedOver(clobbersAt, interval.Start, interval.End);
-      unsafeRegs.UnionWith(ClobberedOver(pinnedAt, interval.Start, interval.End - 1));
-      unsafeRegs.UnionWith(ClobberedOver(inFlightAt, interval.Start, interval.End));
-      unsafeRegs.UnionWith(ClobberedOver(asmHeld, interval.Start, interval.End));
+      var unsafeRegs = ClobberedOver(clobbersAt, liveAt, interval, interval.End);
+      unsafeRegs.UnionWith(ClobberedOver(pinnedAt, liveAt, interval, interval.End - 1));
+      unsafeRegs.UnionWith(ClobberedOver(inFlightAt, liveAt, interval, interval.End));
+      unsafeRegs.UnionWith(ClobberedOver(asmHeld, liveAt, interval, interval.End));
       var legal = LegalFor(interval.VirtualId, addressing, byteRegisters);
       if (free.Count > active.Count && legal.Any(r => !unsafeRegs.Contains(r)))
         continue;
@@ -108,10 +190,17 @@ public sealed partial class LinearScanAllocator {
     return "no register assignment, and nothing left that can move to memory";
   }
 
-  /// <summary>One linear-scan sweep, with no spilling: null when some interval finds no register.</summary>
+  /// <summary>
+  /// One linear-scan sweep, with no spilling: null when some interval finds no register.
+  /// <paramref name="resident"/> is the set of values to offer <c>SI</c>/<c>DI</c> to first (empty
+  /// for the plain sweep); <paramref name="asmHeld"/> the registers an inline-asm statement is
+  /// holding for a later one to read.
+  /// </summary>
   private static IReadOnlyDictionary<int, Reg>? TryAllocate(MFunction function,
-      IReadOnlyDictionary<int, IReadOnlyList<Reg>> asmHeld) {
-    var intervals = LivenessAnalysis.Compute(function);
+      IReadOnlyDictionary<int, IReadOnlyList<Reg>> asmHeld, HashSet<int>? resident = null) {
+    var liveness = LivenessAnalysis.Analyze(function);
+    var intervals = liveness.Intervals;
+    var liveAt = liveness.LiveAt;
     var addressVregs = AddressRegisters(function);   // vregs that ever form a memory address -> need BX/SI/DI
     var byteRegisters = ByteRegisters(function);     // byte values need AL/CL/DL/BL, which SI/DI do not have
     var clobbersAt = ClobbersByIndex(function);       // global instruction index -> registers a CALL there destroys
@@ -133,12 +222,19 @@ public sealed partial class LinearScanAllocator {
       // an ABI-PINNED write lands in while the value still has readers - nor one already in flight
       // between where a physical value was produced and the instruction that names it, nor one an
       // inline-asm statement is holding for a later statement to read
-      var unsafeRegs = ClobberedOver(clobbersAt, interval.Start, interval.End);
-      unsafeRegs.UnionWith(ClobberedOver(pinnedAt, interval.Start, interval.End - 1));
-      unsafeRegs.UnionWith(ClobberedOver(inFlightAt, interval.Start, interval.End));
-      unsafeRegs.UnionWith(ClobberedOver(asmHeld, interval.Start, interval.End));
+      var unsafeRegs = ClobberedOver(clobbersAt, liveAt, interval, interval.End);
+      unsafeRegs.UnionWith(ClobberedOver(pinnedAt, liveAt, interval, interval.End - 1));
+      unsafeRegs.UnionWith(ClobberedOver(inFlightAt, liveAt, interval, interval.End));
+      unsafeRegs.UnionWith(ClobberedOver(asmHeld, liveAt, interval, interval.End));
       var legal = LegalFor(interval.VirtualId, addressVregs, byteRegisters);
-      var slot = free.FindIndex(r => System.Array.IndexOf(legal, r) >= 0 && !unsafeRegs.Contains(r));
+      bool Usable(Reg r) => System.Array.IndexOf(legal, r) >= 0 && !unsafeRegs.Contains(r);
+      var slot = -1;
+      if (resident is not null && resident.Contains(interval.VirtualId))
+        foreach (var preferred in _resident)
+          if (Usable(preferred) && (slot = free.IndexOf(preferred)) >= 0)
+            break;
+      if (slot < 0)
+        slot = free.FindIndex(Usable);              // the preference is spent - take the ordinary order
       if (slot < 0)
         return null;                                 // no suitable register free - spill needed
 
@@ -152,11 +248,23 @@ public sealed partial class LinearScanAllocator {
     return assignment;
   }
 
-  /// <summary>The set of physical registers any CALL destroys while a value spanning [start, end] is live.</summary>
-  private static HashSet<Reg> ClobberedOver(IReadOnlyDictionary<int, IReadOnlyList<Reg>> clobbersAt, int start, int end) {
+  /// <summary>
+  /// The set of physical registers destroyed at a point where <paramref name="interval"/>'s value is
+  /// really live, over <c>[interval.Start, end]</c>.
+  ///
+  /// <para>
+  /// The interval is the HULL of the value's live points, and an index inside it is not necessarily
+  /// one of them - a block laid out between a loop's head and its latch belongs to the hull whether or
+  /// not it belongs to the loop. Asking <see cref="LivenessAnalysis.Liveness.LiveAt"/> rather than the
+  /// hull is what lets a FOR counter keep its register across the <c>PRINT</c> that follows the loop:
+  /// the value is dead there, so the call destroying every register destroys nothing of its.
+  /// </para>
+  /// </summary>
+  private static HashSet<Reg> ClobberedOver(IReadOnlyDictionary<int, IReadOnlyList<Reg>> clobbersAt,
+      IReadOnlyList<HashSet<int>> liveAt, LivenessAnalysis.LiveInterval interval, int end) {
     var clobbered = new HashSet<Reg>();
-    for (var i = start; i <= end; ++i)
-      if (clobbersAt.TryGetValue(i, out var regs))
+    for (var i = interval.Start; i <= end; ++i)
+      if (clobbersAt.TryGetValue(i, out var regs) && i < liveAt.Count && liveAt[i].Contains(interval.VirtualId))
         clobbered.UnionWith(regs);
     return clobbered;
   }
