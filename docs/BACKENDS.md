@@ -566,13 +566,77 @@ a real difference between the two paths. Ordered by how many tests each accounts
 |---|---|---|
 | peephole idioms the selector does not recognise | 19 | branchless `ABS`/`SGN`, the min/max diamond and the one-armed clamp, `TEST AX,imm` as a bit test, inline `XCHG` for `SWAP`, `INC [mem]` / `ADD [mem],imm`, one shared `IDIV` for adjacent `\` and `MOD`, ALU and x87 memory operands instead of staging through BX |
 | the direct emitter's loop-register model has no counterpart | 13 | SI/DI residency for counters and accumulators, the constant-limit immediate compare that rides on it, loop rotation and the count-down form |
-| `$ERROR OVERFLOW/BOUNDS` traps are not modelled | 8 | the range facts that elide a check are absent, and - the one to look at first - `Emit_GivenCheckedMultiplyByTwo` says a CHECKED multiply folded away entirely. `tests/dialects/pb36/README.md` regenerates under the flip with `'$ERROR OVERFLOW ON' and '$ERROR OVERFLOW OFF' produce the SAME image`, which reads as the trap being lost rather than merely re-encoded |
+| `$ERROR OVERFLOW/BOUNDS` traps are not modelled | 8 → see below | the traps were always modelled; what was absent were the range facts that elide one. `Ir/Analysis/` now supplies them, and the two alarming-looking observations that led this row turned out to be fixtures that cannot see what they assert - both measured rather than argued |
 | the objective flags do not reach the routed build | 6 + 2 batteries | `IrPassManager.Standard` runs whatever `Optimize`/`$OPTIMIZE` says, so the two builds a comparison makes are one build - which is where the batteries' twelve `smaller-than-unoptimized` rows come from. Also why `--no-optimize` no longer means faithful: `Emit_GivenDeadGlobalWithoutOptimize` and `Emit_GivenLatticeProvedComparison` assert the UNOPTIMIZED build keeps what the optimizer removes, and routed it does not |
 | `$CPU` tier does not reach instruction selection | 6 | 32-bit shift, `SHLD`, inline dword `OR`, `REP MOVSD`, the ESI/EDI LONG residency - and the same census file says `'$CPU 80286'` and `'$CPU 8086'` produce the same image |
 | no auto-vectorizer, no loop-top alignment | 6 | MMX/SSE2/AVX2/AVX-512 `PADDW`/`PMULLW`, the 586 NOP pad |
-| the interval lattice has no IR equivalent | 4 | range-known LONG compare/divide and DWORD multiply narrowing to 16 bits, the unsigned window compare |
+| the interval lattice has no IR equivalent | 4 | the LATTICE now exists (`Ir/Analysis/`); what these four still want is four SELECTOR features it would feed - range-known LONG compare/divide and DWORD multiply narrowing to 16 bits, and the unsigned window compare |
 | dispatch shape | 3 | a 32-bit `SELECT` subject and `ON n GOTO` still take the compare chain; `Emit_GivenFewCaseSparseSelect` is the disagreement already recorded above |
 | dead procedures survive routing | 2 | a body the IR inliner absorbed is still emitted (`Emit_GivenNoInlineFunction`'s negative half, `Emit_GivenCodeptrCascadeUnderOptimize`) |
+
+**The interval lattice now has an IR equivalent, and the two things that looked like lost traps are
+not.** Both were checked against a running program before anything was written, because the
+difference between "this optimization is missing" and "this program no longer raises Error 6" is the
+difference between a quality gap and a silent miscompile.
+
+* **`Emit_GivenCheckedMultiplyByTwo` is not a correctness bug.** `x% = 30000 : y% = x% * 2` under
+  `$ERROR OVERFLOW ON` routes to `call rt_error(6)` **unconditionally** - SCCP proves the product is
+  60000, the range check that guards it is therefore always true, and what is left is the raise with
+  no multiply in front of it. Both images print `RUNTIME ERROR` under DOSBox. The fixture asserts the
+  presence of `IMUL BX`, which is the direct emitter's signature for "the trap is still reachable" and
+  says nothing about a back end that answered the question at compile time.
+* **`'$ERROR OVERFLOW ON' and '$ERROR OVERFLOW OFF' produce the SAME image` is the same shape.** The
+  claim's body in `DialectMetaClaims` is `a = 100000 : b = 7 : c = a * b + a \ b`, which is constant
+  throughout: the routed module is one `rt_print_i32(714285)` either way, because no trap CAN fire and
+  eliding one that cannot is correct. The claim needs a body with a runtime operand before it measures
+  the directive rather than the constant folder.
+
+What was actually missing is now `Ir/Analysis/ValueRange.cs` (the lattice), `Ir/Analysis/IrRangeAnalysis.cs`
+(the analysis) and `Ir/Passes/RangeCheckElim.cs` (the consumer), run as `rangefold` after `sccp` and
+`correlate`. It is the direct emitter's O16 restated for SSA, in two halves that answer different
+questions: an optimistic fixpoint over the def-use graph with widening and a **narrowing** phase, and a
+per-block refinement from dominating conditional edges. The second half is where nearly everything
+comes from - `CorrelatedValueProp` generalized from "equals a constant" to every ordering predicate -
+because the fact that bounds a loop counter lives on the loop's own back edge, not in its definition.
+
+Three things about it are worth carrying, each of which cost a wrong version first.
+
+* **Widening alone is useless and the descending phase is not optional.** `FOR i% = 1 TO 10` closes its
+  latch with `i + 1`, which evaluated globally is `[2, 32768]`; that does not fit an `INTEGER`, so it
+  widens to the whole type, the counter's LOWER bound goes with it, and the subscript can no longer be
+  shown non-negative. A converged ascent is a post-fixpoint, so re-applying the transfer descends
+  towards the least fixpoint and never below it, which recovers `[1, 11]` - and with it every bounds
+  check in a counted loop.
+* **The signed overflow trap needs no special case, and the special case written for it was wrong.**
+  The lowering asks it as the sign rule `(~(l^r) & (sum^l)) < 0`, a fact about three CORRELATED values
+  that interval arithmetic genuinely loses. The first attempt matched that expression syntactically and
+  never fired once: `instcombine` had already folded the two `XOR`s into one. What decides it instead is
+  the **asymmetric** AND rule - `x & y` with `y` in `[0, 127]` is in `[0, 127]` however unknown `x` is -
+  which carries the bounded half through the conjunction and makes the comparison against zero fall
+  out. The same one-sided rule is why `a(x AND 7)` needs no bounds check.
+* **The proofs belong in the IR and not in the selector, and `InstructionSelector.WordSizedRange` is
+  the case for it rather than against it.** That routine is the right LAYER for the decision - "does
+  this fit one word" is a question about a 16-bit register and means nothing to the C emitter - but the
+  wrong layer for the PROOF. It can only walk pure dataflow eight steps through five opcodes, and it
+  cannot see a loop guard or an `IF` refinement at all, because those are properties of the CFG and the
+  selector is handed values. Growing it would mean rebuilding dominators and a fixpoint inside the
+  selector, per back end. The arrangement that follows is the one now in place: the analysis answers
+  intervals over `IrValue`, and a consumer adds whatever target rule it owns - `RangeCheckElim` adds
+  none, `WordSizedRange` would keep its "the low half must be self-sufficient" opcode test and take the
+  interval from the analysis instead of computing its own. That last wiring is NOT done.
+
+**A pre-existing miscompile turned up while measuring this, and it matters more than the assertions
+do:** the analysis makes traps disappear on purpose, so anything else that makes one disappear has to
+be told apart from it first.
+
+* **`LoopUnroll` dropped a conditional preheader branch - FIXED.** It rewires the preheader to fall into
+  the first unrolled copy by REPLACING its terminator, which is only right when that terminator is an
+  unconditional branch. `LoopUnswitch` produces headers whose preheader ends in
+  `condbr c, this-clone, that-clone`; unrolling one ran the clone specialized for the arm that was not
+  taken, and `$ERROR BOUNDS ON` over a counted loop then called `rt_error(9)` on every iteration. It is
+  invisible until something puts a foldable condition in front of a countable loop, which eliding the
+  bounds check does. `LoopUnroll.Match` now declines a non-`IrBr` preheader; the next sweep folds the
+  condition and unrolls the survivor, so nothing is lost but the round trip.
 
 Four do not fit the table, and the first is not about quality at all.
 `Compile_GivenRegisterConventionWithLongParam_ThenDiagnostic` is the one to fix first: routing skips the
@@ -641,8 +705,12 @@ Beyond widening that subset, the two items that would most change the picture:
   the corpus from 14 to 32 routed functions of 139. What ranks next is floating
   point (the x87 stack), strings (the runtime's handle representation), and the
   `main` body, which additionally needs the startup/exit sequence.
-- **Feeding the direct path's range facts into the IR.** The interval lattice
-  (`CodeGen/IntervalRange.cs`) proves things — bounds are in range, a divisor is
-  non-zero, a 32-bit operation fits 16 bits — that the IR currently rediscovers only
-  partially through SCCP and correlated value propagation. Those proofs are
-  target-independent and belong to every back end.
+- **Feeding the direct path's range facts into the IR — the analysis is DONE, one
+  consumer is not.** `Ir/Analysis/IrRangeAnalysis.cs` is the interval lattice restated
+  for SSA, and `Ir/Passes/RangeCheckElim.cs` spends it on the proofs that are pure
+  optimization for every back end at once: a subscript that cannot leave its
+  dimension, a sum that cannot overflow its type, a divisor that cannot be zero. What
+  it does not yet feed is the one proof that is target-specific in its *use* — "a
+  32-bit operation fits 16 bits" — which lives in `InstructionSelector.WordSizedRange`
+  and still computes its own, much weaker, interval. Rewiring that is the next
+  increment and the prerequisite for the four narrowing assertions in gate 3.
