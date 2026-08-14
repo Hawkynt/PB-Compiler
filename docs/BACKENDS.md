@@ -579,12 +579,14 @@ not.** Both were checked against a running program before anything was written, 
 difference between "this optimization is missing" and "this program no longer raises Error 6" is the
 difference between a quality gap and a silent miscompile.
 
-* **`Emit_GivenCheckedMultiplyByTwo` is not a correctness bug.** `x% = 30000 : y% = x% * 2` under
-  `$ERROR OVERFLOW ON` routes to `call rt_error(6)` **unconditionally** - SCCP proves the product is
-  60000, the range check that guards it is therefore always true, and what is left is the raise with
-  no multiply in front of it. Both images print `RUNTIME ERROR` under DOSBox. The fixture asserts the
-  presence of `IMUL BX`, which is the direct emitter's signature for "the trap is still reachable" and
-  says nothing about a back end that answered the question at compile time.
+* **`Emit_GivenCheckedMultiplyByTwo` is not a correctness bug *as written*, and the reason it is not is
+  the reason it could not see one.** `x% = 30000 : y% = x% * 2` under `$ERROR OVERFLOW ON` routes to
+  `call rt_error(6)` **unconditionally** - SCCP proves the product is 60000, the range check that guards
+  it is therefore always true, and what is left is the raise with no multiply in front of it. Both
+  images print `RUNTIME ERROR` under DOSBox. The fixture asserts the presence of `IMUL BX`, which is the
+  direct emitter's signature for "the trap is still reachable" and says nothing about a back end that
+  answered the question at compile time. Take the constant away and there IS a correctness bug behind
+  it - see "Two `$ERROR` traps the routed path loses" below.
 * **`'$ERROR OVERFLOW ON' and '$ERROR OVERFLOW OFF' produce the SAME image` is the same shape.** The
   claim's body in `DialectMetaClaims` is `a = 100000 : b = 7 : c = a * b + a \ b`, which is constant
   throughout: the routed module is one `rt_print_i32(714285)` either way, because no trap CAN fire and
@@ -655,20 +657,59 @@ so anything else that makes one disappear has to be told apart from it first.
   (`INPUT k% : x% = k% + 1`) and a loop-VARIANT one (`x% = k% + i%`) trap correctly routed - which is
   what leaves the hoist-and-unswitch shape.
 
-  `CountRaise6`/`CountRaise9` cannot be used to chase it. They count `B8 06 00`, which also matches an
-  entry in the MZ **relocation table** of every image, so a routed program with no raise at all still
-  scores 1 - and a routed raise does not score at all, because the routed path materializes
-  `rt_error`'s argument without a `MOV AX, imm`. Both halves of that were measured while chasing this.
+  `CountRaise6`/`CountRaise9` could not be used to chase it, and now they can. They counted `B8 06 00`,
+  which also matches an entry in the MZ **relocation table** of every image, so a routed program with no
+  raise at all still scored 1. The pattern now includes the `E8` that follows the load, which is what
+  makes the pair a raise rather than two coincident bytes, and a routed raise counts like a direct one -
+  a `MOV AX, 6 / CALL rt_error` is what both paths emit. That is what let the two traps below be
+  measured at all.
 
-Four do not fit the table, and the first is not about quality at all.
+Three do not fit the table, and the first is not about quality at all.
 `Compile_GivenRegisterConventionWithLongParam_ThenDiagnostic` is the one to fix first: routing skips the
 direct emitter's calling-convention validation, so a program that must be REJECTED compiles clean. A
 lost diagnostic is a correctness bug, and it is the only failure here that lets a wrong program
-through. Two are induction-variable strength reduction in both directions -
-`Emit_GivenArrayStoreForLoop` wants the pointer step the routed path does not make, and
-`Emit_GivenArrayReadLoop_WhenMultiStatementBody` wants it WITHHELD where the routed path makes it
-anyway. The fourth is `Emit_GivenLoopInvariantLen`, already explained above: it wants an idiom pass over
+through. One is induction-variable strength reduction WITHHELD -
+`Emit_GivenArrayReadLoop_WhenMultiStatementBody` wants it withheld where the routed path makes it
+anyway, which is the direct emitter's O6b applicability rule rather than a property of the program.
+The third is `Emit_GivenLoopInvariantLen`, already explained above: it wants an idiom pass over
 the `dup`/`len` pair, not a purity row.
+
+### Two `$ERROR` traps the routed path loses
+
+Both fall out of an argument to a `NOINLINE` SUB, which is what makes them invisible to the corpus: the
+differential battery's programs do not put a trapping value behind a parameter. Both are **lost traps**,
+not quality gaps - the direct build stops and the routed build prints - and both are open.
+
+```basic
+$ERROR OVERFLOW ON                    $OPTIMIZE SPEED : $ERROR BOUNDS ON
+DECLARE SUB s(BYVAL x%)               DECLARE SUB s(BYVAL m%)
+s 30000                               s 5
+s 7                                   s 3
+END                                   END
+SUB s(BYVAL x%) NOINLINE              SUB s(BYVAL m%) NOINLINE
+PRINT x% * 2                            DIM a%(1 TO 5), p%(1 TO 5), x%
+END SUB                                 FOR i% = 1 TO m% : x% = a%(p%(i%)) : NEXT i%
+                                        PRINT x%
+                                      END SUB
+```
+
+Direct prints `RUNTIME ERROR` for both. Routed prints `-5536` / `14` for the first and ` 0` twice for the
+second. Neither image contains an `rt_error` call at all - it is the CHECK that is gone, not the branch
+polarity, and the value is still read from the frame in both, so nothing was constant-folded around it.
+
+Three things narrow them and are worth not re-establishing. The same programs with the operand from
+`INPUT` instead of a parameter trap correctly on both paths, so what is wrong is what interprocedural
+propagation contributes: the operand's interval, `[7, 30000]` and `[0, 0]` respectively. Neither interval
+makes the check false. The first is *possible* overflow (`[14, 60000]` does not fit an `INTEGER`) and the
+second is *certain* out-of-range (`0` is below `a%`'s lower bound of 1) - so one elision is optimistic
+and the other has the wrong polarity, which is the shape of a signed/unsigned mix-up in the predicate
+the range consumer folds: a bounds check normalized to `idx - lbound` is `-1` here and is compared
+UNSIGNED, where an interval read as signed says `-1 <= 4` and answers "in range".
+
+`Emit_GivenCheckedMultiplyByTwo` is the fixture next to the first one, and it cannot see it: with the
+constant it asserted, SCCP answers the multiply and the fixture is about a program with no multiply in
+it. It now takes the multiplicand from `INPUT` - which traps correctly - so closing these two needs a
+test of their own rather than a repair to that one.
 
 ### What the peephole row actually was
 
@@ -712,8 +753,10 @@ The ten that were not, in three groups:
    pessimization.** `Emit_GivenSelfModifyStore` and `Emit_GivenIncrWithAmount` want `INC [a%]` /
    `ADD [a%],5` for a SUB-local the routed path promotes to a register - there is no cell to
    read-modify-write, and the peephole that would do it is implemented and fires on globals and array
-   elements instead. `Emit_GivenScalarSwap` wants an inline `XCHG`; `SWAP x, y` between two
-   SSA-promoted locals is a rename and emits nothing. `Emit_GivenBinaryWithMemoryRightOperand` and
+   elements instead. `Emit_GivenScalarSwap` wanted an inline `XCHG`; `SWAP x, y` between two
+   SSA-promoted locals is a rename and emits nothing - which is BETTER, and the fixture now says what
+   its name always did (the byte loop `rt_swap` is not linked in) against a UDT `SWAP`, which needs it,
+   so both paths pass. `Emit_GivenBinaryWithMemoryRightOperand` and
    `Emit_GivenCompareWithMemoryRightOperand` are the same story from the other end: they count
    `MOV BX,AX` stagings, and the routed path emits none in EITHER program, so the inequality cannot
    hold. `Emit_GivenFloatBinaryWithDirectCellOperand` and `Emit_GivenFloatCompareWithDirectCellOperand`
@@ -732,6 +775,53 @@ The ten that were not, in three groups:
    BOTH arms of a diamond to be empty and this one negates. Speculating a single pure instruction out
    of an arm would close it, but that is a change to a shared IR pass rather than to the back end, and
    it would need a second selection pattern (`select(x < 0, 0 - x, x)`) to pay off.
+
+### `OptimizerTests` routed: 46 of 188, and what the seven that closed had in common
+
+Seven of the forty-six were the fixture rather than the back end, and none of the seven needed a weaker
+assertion - each got a stronger one. They sort into three shapes, and the shapes are worth more than the
+list, because the same three are still available in the thirty-nine that remain.
+
+**The subject folded away.** `Emit_GivenOnGoto` dispatched on a parameter with ONE call site, so
+interprocedural propagation answered the `ON n% GOTO` and the SUB routed to a bare `RET`; the assertion
+about its jump table was about no code at all. Same for `Emit_GivenCheckedMultiplyByTwo` (`x% = 30000`),
+`Emit_GivenScalarSwap` (`x = 1 : y = 2`), `Emit_GivenPowerOfTwoDivides` (`a% = -29`), and both array
+loops, whose constant trip count is unrolled to constant subscripts. A second call site or an `INPUT`
+is the whole repair.
+
+**The discriminator named the direct emitter's spelling.** `TEST BX,BX` is how the direct emitter tests
+a divisor; a guard that reads the divisor out of its frame slot is the same guard and carries no `TEST`,
+so `Emit_GivenDivideByForCounter` was counting instruction selection. The Error-11 raise is the thing the
+optimization removes, and it counts the same on both paths - which additionally let the provable form be
+asserted to reach ZERO. `SHL AX,1` for a subscript scale names a register the allocator chose;
+`cmp dx,cx / cmp ax,bx` names one lowering of a 32-bit compare, where folding the constant operand into
+it (`cmp bx,0 / cmp cx,5`) is better and the shape that survives both is the high-word three-way test, a
+`JG` and a `JL` back to back. And a lone `0x87` byte "proving" an inline `XCHG` proves nothing at all: it
+occurs sixteen times in any image that links the number parser, and the claim in the fixture's own name
+is the ABSENCE OF `rt_swap`, which `DescribeImage().RuntimeLabels` answers for either back end.
+
+**The control was an objective flag.** "The same program without `$OPTIMIZE SPEED`" and "the same program
+under pb35" are proxies for *unoptimized* that hold only where the optimizations are gated on that flag;
+the routed middle end runs whatever the dialect says. The repair is the one `df0700b` established for the
+bounds-check family: the control becomes a program the optimization **cannot apply to** - a non-affine
+subscript for IVSR, a non-power-of-two divisor for the shift decomposition, a DOUBLE for the integer
+min/max fold - which is a stronger claim than "the flag was off", because it says the optimization
+recognises its own precondition.
+
+Of the thirty-nine left, six are `$CPU`-tier, eleven are the loop-register model, six are the objective
+flag reaching the routed build at all, and the remaining sixteen are the gaps this document already
+lists. Four of those sixteen legitimately pin the direct emitter's instruction selection and are expected
+to stay red until the flip retires them: `Emit_GivenSelfModifyStore`, `Emit_GivenIncrWithAmount` and the
+two `Emit_GivenFloat*DirectCellOperand` want memory operands for values the routed path keeps in
+registers, which is not something to reproduce.
+
+Two more are worth separating from the gap list because they now measure the property and fail on it.
+`Emit_GivenPowerOfTwoDivides` says, with an `INPUT` dividend and a non-power-of-two control, that the
+routed path emits four `IDIV`s where the direct one decomposes all four into shifts and masks - a real
+strength reduction the selector does not have. And `Emit_GivenArrayReadLoop_WhenBoundsChecking` demands
+a PESSIMIZATION: `a%(i%)` over `FOR i% = 1 TO 5` into `a%(1 TO 5)` is provably in range, and eliding its
+check is correct, so the fixture's claim that `$ERROR BOUNDS ON` must suppress the address optimization
+is the direct emitter's policy rather than a property of the program.
 
 **4. The golden gate - byte-identical output with the optimizer off.** This is the hard one, and it
 is the direct emitter's whole reason for existing: its optimizations are interleaved with emission

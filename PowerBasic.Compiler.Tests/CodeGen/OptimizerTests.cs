@@ -841,8 +841,17 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenOnGoto_WhenPb36_ThenJumpTableForFourTargetsChainForThree() {
-    // O0029: four+ targets dispatch through a jump table (a `cmp ax, count` bounds check); three keep the
-    // linear dec/JNZ chain, which has no such compare.
+    // O0029: four+ targets dispatch through a jump table (a `cmp ax, count` bounds check followed by an
+    // indexed indirect jump); three keep a linear compare chain, which has no table to jump through.
+    //
+    // TWO call sites with different arguments, because ONE lets interprocedural constant propagation
+    // prove n% and answer the dispatch outright - the whole SUB then folds to a bare RET and the
+    // assertions below are about no code at all.
+    //
+    // What says "there is a jump table" is the INDEXED INDIRECT JUMP (FF /4 through memory), not the
+    // absence of `cmp ax,3`. That absence is an artefact of the direct emitter spelling its chain
+    // `dec ax / jnz`: a chain that compares against the case constants instead - which is what an
+    // ordinary compare tree looks like - carries `cmp ax,3` while dispatching through no table at all.
     static bool Has(byte[] img, params byte[] seq) {
       for (var i = 0; i <= img.Length - seq.Length; ++i) {
         var ok = true;
@@ -851,11 +860,21 @@ public sealed class OptimizerTests {
       }
       return false;
     }
-    const string head = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL n%)\nS 1\nEND\nSUB S(BYVAL n%) NOINLINE\n";
+    // FF /4 with a memory mod field = JMP r/m16 through memory - the jump table's dispatch
+    static bool HasIndexedJump(byte[] img) {
+      for (var i = 0; i + 1 < img.Length; ++i)
+        if (img[i] == 0xFF && (img[i + 1] & 0x38) == 0x20 && (img[i + 1] & 0xC0) != 0xC0)
+          return true;
+      return false;
+    }
+    const string head = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL n%)\nS 1\nS 3\nEND\nSUB S(BYVAL n%) NOINLINE\n";
     var four = Compile(head + "ON n% GOTO a, b, c, d\nEXIT SUB\na: EXIT SUB\nb: EXIT SUB\nc: EXIT SUB\nd: EXIT SUB\nEND SUB", Dialect.Pb36);
     var three = Compile(head + "ON n% GOTO a, b, c\nEXIT SUB\na: EXIT SUB\nb: EXIT SUB\nc: EXIT SUB\nEND SUB", Dialect.Pb36);
-    Assert.That(Has(four, 0x83, 0xF8, 0x04), Is.True, "four targets: cmp ax,4 bounds check of the jump table");
-    Assert.That(Has(three, 0x83, 0xF8, 0x03), Is.False, "three targets: the dec/JNZ chain has no bounds compare");
+    Assert.Multiple(() => {
+      Assert.That(Has(four, 0x83, 0xF8, 0x04), Is.True, "four targets: cmp ax,4 bounds check of the jump table");
+      Assert.That(HasIndexedJump(four), Is.True, "four targets: the table is dispatched through an indexed indirect jump");
+      Assert.That(HasIndexedJump(three), Is.False, "three targets: a compare chain, so there is no table to jump through");
+    });
   }
 
   [Test]
@@ -869,18 +888,27 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenScalarSwap_WhenPb36_ThenInlineXchgNotRuntimeCall() {
-    // O0020: SWAP of two direct scalar cells exchanges them inline (mov/xchg/mov), so the image carries an
-    // xchg r16,r/m16 (0x87) and the rt_swap byte-loop routine is trimmed. The faithful build keeps rt_swap.
-    static bool Has(byte[] img, params byte[] seq) {
-      for (var i = 0; i <= img.Length - seq.Length; ++i) {
-        var ok = true;
-        for (var j = 0; j < seq.Length; ++j) if (img[i + j] != seq[j]) { ok = false; break; }
-        if (ok) return true;
-      }
-      return false;
-    }
-    var img = Compile("$OPTIMIZE SPEED\nDECLARE SUB S()\nS\nEND\nSUB S() NOINLINE\nDIM x AS INTEGER, y AS INTEGER\nx = 1 : y = 2\nSWAP x, y\nPRINT x; y\nEND SUB", Dialect.Pb36);
-    Assert.That(Has(img, 0x87), Is.True, "an inline xchg r16,r/m16 replaces the rt_swap call");
+    // O0020: SWAP of two scalars is exchanged inline, so the rt_swap byte-loop routine is never
+    // referenced and the runtime trimmer leaves it out of the image entirely. A SWAP whose operands are
+    // whole UDTs is the shape that genuinely needs the byte loop, and it links rt_swap in - which is what
+    // makes the absence above a measurement rather than an accident of trimming.
+    //
+    // The claim is the ABSENCE OF THE CALL, which is what the name says, not the presence of one
+    // particular exchange encoding. The old assertion looked for a lone 0x87 byte anywhere in the image:
+    // that is the direct emitter's `xchg r16,r/m16` and proves nearly nothing on its own (the same byte
+    // occurs 16 times in any image that links the number parser), and an exchange done by RENAMING the
+    // two values - which needs no instruction at all - is strictly better and would fail it.
+    //
+    // The scalars come from BYVAL parameters with two differing call sites: constants would be folded and
+    // one call site would let interprocedural constant propagation fold them anyway.
+    const string head = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL a%, BYVAL b%)\nS 1, 2\nS 7, 9\nEND\n";
+    var scalar = RuntimeSurface(head + "SUB S(BYVAL a%, BYVAL b%) NOINLINE\nSWAP a, b\nPRINT a; b\nEND SUB");
+    var record = RuntimeSurface("TYPE P\n  a AS INTEGER\n  b AS INTEGER\n  c AS INTEGER\n  d AS INTEGER\nEND TYPE\n"
+      + head + "SUB S(BYVAL a%, BYVAL b%) NOINLINE\nDIM u AS P, v AS P\nu.a = a% : v.a = b%\nSWAP u, v\nPRINT u.a; v.a\nEND SUB");
+    Assert.Multiple(() => {
+      Assert.That(scalar, Does.Not.Contain("rt_swap"), "a scalar SWAP is exchanged inline - the byte loop is not linked in");
+      Assert.That(record, Does.Contain("rt_swap"), "a UDT SWAP does need the byte loop - otherwise the absence above proves nothing");
+    });
   }
 
   [Test]
@@ -922,19 +950,40 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenLongMinMax_WhenPb36_ThenFoldsWithA32BitCompareNotTheFpu() {
-    // O0248: MAX/MIN over LONG arguments fold with a signed 32-bit compare (high word `cmp dx,cx`, low word
-    // `cmp ax,bx`) rather than the x87 round-trip. The high-word compare is the fold's signature.
-    static bool Has(byte[] img, params byte[] seq) {
-      for (var i = 0; i <= img.Length - seq.Length; ++i) {
-        var ok = true;
-        for (var j = 0; j < seq.Length; ++j) if (img[i + j] != seq[j]) { ok = false; break; }
-        if (ok) return true;
-      }
-      return false;
+    // O0248: MAX/MIN over LONG arguments fold with a signed 32-bit compare rather than the x87
+    // round-trip. Its signature is the HIGH-WORD THREE-WAY TEST - a JG and a JL back to back, which is
+    // what a 32-bit signed compare done in two halves needs and nothing else emits: greater decides,
+    // less decides, equal falls through to the unsigned low word.
+    //
+    // Which registers the two halves live in is an allocation decision, and folding a constant operand
+    // into the compare (`cmp bx,0` / `cmp cx,5` for MAX(a, 5)) is better than materializing it - so
+    // `cmp dx,cx` / `cmp ax,bx` named one lowering of the fold rather than the fold. The DOUBLE twin is
+    // the control: the same expression over reals has to go to the x87, and it adds the FCOM the LONG
+    // one does not.
+    static int JgJl(byte[] img) {
+      var count = 0;
+      for (var i = 0; i + 3 < img.Length; ++i)
+        if (img[i] == 0x7F && img[i + 2] == 0x7C)
+          ++count;
+      return count;
     }
-    var img = Compile("$OPTIMIZE SPEED\nDIM a AS LONG, b AS LONG, m AS LONG\nLINE INPUT z$\na = VAL(z$)\nb = 5\nm = MAX(a, b)\nPRINT m\nEND", Dialect.Pb36);
-    Assert.That(Has(img, 0x39, 0xCA), Is.True, "cmp dx,cx - the 32-bit fold's high-word compare");
-    Assert.That(Has(img, 0x39, 0xD8), Is.True, "cmp ax,bx - the low-word compare");
+    // FCOM/FCOMP (D8|DC /2 /3), FCOMPP (DE D9) and FTST (D9 E4) - the x87's compares
+    static int FpuCompares(byte[] img) {
+      var count = 0;
+      for (var i = 0; i + 1 < img.Length; ++i)
+        if ((img[i] is 0xD8 or 0xDC && (img[i + 1] & 0x38) is 0x10 or 0x18)
+            || (img[i] == 0xDE && img[i + 1] == 0xD9) || (img[i] == 0xD9 && img[i + 1] == 0xE4))
+          ++count;
+      return count;
+    }
+    const string body = "\nLINE INPUT z$\na = VAL(z$)\nb = 5\nm = MAX(a, b)\nPRINT m\nEND";
+    var longs = Compile("$OPTIMIZE SPEED\nDIM a AS LONG, b AS LONG, m AS LONG" + body, Dialect.Pb36);
+    var doubles = Compile("$OPTIMIZE SPEED\nDIM a AS DOUBLE, b AS DOUBLE, m AS DOUBLE" + body, Dialect.Pb36);
+    Assert.Multiple(() => {
+      Assert.That(JgJl(longs), Is.Positive, "the high-word three-way test - the 32-bit fold's signature");
+      Assert.That(JgJl(doubles), Is.Zero, "the DOUBLE form has no half-word compare to test three ways");
+      Assert.That(FpuCompares(longs), Is.LessThan(FpuCompares(doubles)), "the LONG fold adds no x87 compare; the DOUBLE one is nothing but");
+    });
   }
 
   [Test]
@@ -1115,6 +1164,21 @@ public sealed class OptimizerTests {
     generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     return generator.DescribeImage().Procedures.Select(p => p.Name);
+  }
+
+  /// <summary>
+  /// The <c>rt_*</c> runtime routines the emitted image actually links in. The trimmer binds a runtime
+  /// label only where something references it, so this is how a test says "that helper is not called"
+  /// without naming the instructions the call was replaced by - the same question on either back end.
+  /// </summary>
+  private static IReadOnlyCollection<string> RuntimeSurface(string source, Dialect dialect = Dialect.Pb36) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", dialect), "TEST.BAS", dialect);
+    var model = Binder.Bind(unit, dialect);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model);
+    generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+    return generator.DescribeImage().RuntimeLabels.Select(l => l.Name).ToList();
   }
 
   [Test]
@@ -1371,14 +1435,22 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenDivideByForCounter_WhenPb36_ThenZeroGuardElided() {
-    // 100 \ i% with i% a [1,10] counter (excludes 0) drops the TEST BX,BX zero guard;
-    // 100 \ k% keeps it
+    // 100 \ i% with i% a [1,10] counter (excludes 0) drops the divide-by-zero guard; 100 \ k% keeps it.
+    //
+    // What identifies the guard is the Error-11 RAISE it protects, not `TEST BX,BX`. That sequence is
+    // how the direct emitter happens to test the divisor - a guard that reads the divisor straight out
+    // of its frame slot (`cmp word [bp+n], 0`) is the same guard and carries no TEST at all - so the
+    // old counter measured the instruction selection rather than whether the check survived. The raise
+    // is the thing the optimization removes, so the provable form can be asserted to reach ZERO.
     const string counterDiv = "$OPTIMIZE SPEED\nFOR i% = 1 TO 10\nx% = 100 \\ i%\nNEXT i%\nPRINT x%\nEND";
     // a SUB parameter divisor (differing call args) is non-constant and not range-known
     const string varDiv = "$OPTIMIZE SPEED\nDECLARE SUB d(BYVAL k AS INTEGER)\nd 3\nd 7\nEND\nSUB d(BYVAL k AS INTEGER) NOINLINE\nPRINT 100 \\ k\nEND SUB";
-    Assert.That(CountTestBxBx(Compile(counterDiv, Dialect.Pb36)),
-      Is.LessThan(CountTestBxBx(Compile(varDiv, Dialect.Pb36))),
-      "a divisor whose counter range excludes zero should drop the divide-by-zero guard");
+    Assert.Multiple(() => {
+      Assert.That(CountRaise11(Compile(counterDiv, Dialect.Pb36)), Is.Zero,
+        "a divisor whose counter range excludes zero should drop the divide-by-zero guard");
+      Assert.That(CountRaise11(Compile(varDiv, Dialect.Pb36)), Is.Positive,
+        "an unknown divisor keeps it - otherwise the assertion above is measuring nothing");
+    });
   }
 
   [Test]
@@ -1776,15 +1848,6 @@ public sealed class OptimizerTests {
       "a chain containing a call operand is not pre-staged - it falls back off rt_strcatn for correctness");
   }
 
-  // 85 DB = TEST BX, BX - the divide-by-zero guard set up by EmitInt16DivideGuard
-  private static int CountTestBxBx(byte[] image) {
-    var count = 0;
-    for (var i = 0; i + 1 < image.Length; ++i)
-      if (image[i] == 0x85 && image[i + 1] == 0xDB)
-        ++count;
-    return count;
-  }
-
   // B8 nn 00 E8 = MOV AX, nn / CALL - the raise EmitRaiseWhen sets up, and the CALL is part of the
   // pattern rather than decoration. Scanning the whole image for a bare `MOV AX, 6` finds bytes that
   // are not that instruction at all: every program built here carries one such coincidence in the
@@ -1804,6 +1867,9 @@ public sealed class OptimizerTests {
 
   /// <summary>Error 9 (subscript out of range) raises.</summary>
   private static int CountRaise9(byte[] image) => CountRaise(image, 0x09);
+
+  /// <summary>Error 11 (division by zero) raises - the divide guard's payload.</summary>
+  private static int CountRaise11(byte[] image) => CountRaise(image, 0x0B);
 
   // F3 66 AB = REP STOSD (dword store)
   private static int CountRepStosd(byte[] image) {
@@ -1836,14 +1902,23 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenCheckedMultiplyByTwo_WhenPb36_ThenKeepsImulForOverflowTrap() {
-    // $ERROR OVERFLOW ON: a shift chain cannot raise error 6 on signed overflow,
-    // so the strength reducer must back off and keep the genuine IMUL (the
-    // integer formatter the PRINT pulls in uses no IMUL BX, so any F7 EB present
-    // is the multiply itself). Without the guard the multiply would be a bare SHL.
-    const string source = "$ERROR OVERFLOW ON\nx% = 30000\ny% = x% * 2\nPRINT y%\nEND";
-    var checked_ = Compile(source, Dialect.Pb36);
-    Assert.That(CountImulBx(checked_), Is.GreaterThanOrEqualTo(1),
-      "checked x% * 2 must keep IMUL BX for the error-6 overflow trap, not strength-reduce to a shift");
+    // $ERROR OVERFLOW ON: a shift chain cannot raise error 6 on signed overflow, so the strength reducer
+    // must back off and keep the genuine IMUL. What the multiply is FOR is the trap, so the trap is
+    // asserted too, against a twin that differs only in the directive.
+    //
+    // The multiplicand is INPUT-sourced. `x% = 30000` is a value SCCP proves: the product is then 60000
+    // at compile time, the range check that guards it is always true, and what is left is an
+    // unconditional raise with no multiply in front of it - so the assertion was about a program that
+    // no longer contains a multiply, on any back end that folds as hard.
+    const string body = "\nINPUT x%\ny% = x% * 2\nPRINT y%\nEND";
+    var checked_ = Compile("$ERROR OVERFLOW ON" + body, Dialect.Pb36);
+    var unchecked_ = Compile("$ERROR OVERFLOW OFF" + body, Dialect.Pb36);
+    Assert.Multiple(() => {
+      Assert.That(CountImulBx(checked_), Is.GreaterThanOrEqualTo(1),
+        "checked x% * 2 must keep IMUL BX for the error-6 overflow trap, not strength-reduce to a shift");
+      Assert.That(CountRaise6(checked_), Is.Positive, "and the trap the IMUL is kept for must be in the image");
+      Assert.That(CountRaise6(unchecked_), Is.Zero, "without the directive there is no trap - the control that makes the above a measurement");
+    });
   }
 
   [Test]
@@ -2385,28 +2460,22 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenArrayStoreForLoop_WhenPb36Speed_ThenFewerElementSizeMultiplies() {
-    // FOR i%=0 TO 9: a%(i%)=i%: NEXT - the normal loop body emits IMUL AX,AX,2
-    // (element size) per iteration to compute the array element address; O6b steps
-    // a DS-relative pointer by 2 instead, replacing each IMUL+MOV BX,AX with a
-    // PUSH/POP+ADD BX,2 sequence.  The PRINT after the loop still reads a%(3) the
-    // normal way (one IMUL), so we compare speed-vs-plain at the count level:
-    // speed should have exactly one (from PRINT), plain should have two (loop + PRINT).
-    const string body = """
-      DIM a%(0 TO 9)
-      FOR i% = 0 TO 9
-        a%(i%) = i%
-      NEXT i%
-      PRINT a%(3)
-      END
-      """;
-    var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
-    var plain = Compile(body, Dialect.Pb36);
-    // the pointer step itself is the signature of IVSR: ADD BX,2 walks the elements, and it
-    // appears only when the per-iteration address computation has been replaced by stepping.
-    // (Counting the subscript scale no longer discriminates - IVSR's one-time setup scales the
-    // base address with the same instruction the per-iteration path used to.)
-    Assert.That(CountPointerStepByTwo(speed), Is.GreaterThan(0), "O6b should step a pointer through the elements");
-    Assert.That(CountPointerStepByTwo(plain), Is.Zero, "without $OPTIMIZE SPEED each element address is recomputed");
+    // a%(i%) = i% over an affine subscript: O6b walks the elements instead of recomputing each address
+    // from the subscript, so the per-iteration scale by the element size disappears.
+    //
+    // What is compared is the SCALE, not the pointer step. `ADD BX,2` is the direct emitter's chosen
+    // walk; an emitter that keeps the address in another register, or that folds the step into the
+    // addressing mode, has done the same work and writes none of those bytes. And the control is a
+    // subscript nothing can step through (a%(p%(i%))) rather than the same program without
+    // $OPTIMIZE SPEED, which is a proxy for "the optimization did not run" that only holds where the
+    // optimizations are gated on that flag. The trip count is a runtime one, because a constant loop is
+    // unrolled to constant subscripts and leaves no scale in either program.
+    const string head = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL m%)\ns 9\ns 7\nEND\nSUB s(BYVAL m%) NOINLINE\nDIM a%(0 TO 9)\n";
+    const string tail = "\nPRINT a%(3)\nEND SUB";
+    var affine = Compile(head + "FOR i% = 0 TO m%\n  a%(i%) = i%\nNEXT i%" + tail, Dialect.Pb36);
+    var indirect = Compile(head + "DIM p%(0 TO 9)\nFOR i% = 0 TO m%\n  a%(p%(i%)) = i%\nNEXT i%" + tail, Dialect.Pb36);
+    Assert.That(CountElementScaleByTwoAnyRegister(affine), Is.LessThan(CountElementScaleByTwoAnyRegister(indirect)),
+      "O6b should walk the elements, dropping the per-iteration scale a non-affine subscript has to keep");
   }
 
   [Test]
@@ -2502,18 +2571,16 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenPowerOfTwoDivides_WhenPb36_ThenIdivDisappears() {
-    const string source = """
-      a% = -29
-      PRINT a% \ 8
-      PRINT a% MOD 8
-      PRINT a% \ 2
-      PRINT a% MOD 2
-      END
-      """;
-    var pb35 = Compile(source, Dialect.Pb35);
-    var pb36 = Compile(source, Dialect.Pb36);
-    Assert.That(CountIdivBx(pb36), Is.LessThan(CountIdivBx(pb35)),
-      "pb36 should shift/mask power-of-two \\ and MOD instead of IDIV BX");
+    // The dividend is INPUT-sourced and the control is a NON-power-of-two divisor, not the same program
+    // under pb35. `a% = -29` is a value any constant folder proves, so all four quotients were answered
+    // at compile time and neither build contained a divide to count; and "pb35" is a proxy for
+    // "unoptimized" that only holds where the optimizations are gated on the dialect's flag. What the
+    // optimization claims is about the DIVISOR, and that is what this compares.
+    const string head = "INPUT a%\nPRINT a% \\ ";
+    var powerOfTwo = Compile(head + "8\nPRINT a% MOD 8\nPRINT a% \\ 2\nPRINT a% MOD 2\nEND", Dialect.Pb36);
+    var other = Compile(head + "3\nPRINT a% MOD 3\nPRINT a% \\ 5\nPRINT a% MOD 5\nEND", Dialect.Pb36);
+    Assert.That(CountIdivBx(powerOfTwo), Is.LessThan(CountIdivBx(other)),
+      "pb36 should shift/mask power-of-two \\ and MOD instead of IDIV BX; a divisor it cannot decompose keeps the divide");
   }
 
   [Test]
@@ -2551,22 +2618,39 @@ public sealed class OptimizerTests {
     return count;
   }
 
+  /// <summary>
+  /// The same scale-by-two, on whichever register holds the subscript. Which register that is is an
+  /// allocation decision, so a test that means "the scale is still computed" cannot name AX: an emitter
+  /// that keeps the subscript in SI writes <c>SHL SI,1</c> and computes exactly as much.
+  /// </summary>
+  private static int CountElementScaleByTwoAnyRegister(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 2 < image.Length; ++i)
+      if (image[i] == 0x6B && (image[i + 1] & 0xC0) == 0xC0 && image[i + 2] == 0x02)  // IMUL r16,r16,2
+        ++count;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0xD1 && image[i + 1] is >= 0xE0 and <= 0xE7)                    // SHL r16,1
+        ++count;
+    return count;
+  }
+
   [Test]
   public void Emit_GivenArrayReadLoop_WhenPb36Speed_ThenPerIterationImulRemoved() {
-    // Without IVSR: x% = a%(i%) emits IMUL AX,AX,2 every iteration to scale the subscript.
-    // With IVSR: the address is pre-computed and stepped by 2 each iteration - no IMUL inside the loop.
-    // The array has elementSize=2 so the unoptimized subscript scale is exactly IMUL AX,AX,2.
-    const string body = "DIM a%(1 TO 10)\nDIM x%\nFOR i% = 1 TO 10\n  x% = a%(i%)\nNEXT i%\nPRINT x%\nEND";
-    var plain = Compile(body, Dialect.Pb36);
-    var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
-    Assert.Multiple(() => {
-      // the optimized loop must not contain the per-iteration element-scale IMUL
-      Assert.That(CountElementScaleByTwo(speed), Is.Zero,
-        "IVSR should eliminate the per-iteration subscript scale inside the x%=a%(i%) loop");
-      // without $OPTIMIZE SPEED the scaling IMUL must be present
-      Assert.That(CountElementScaleByTwo(plain), Is.GreaterThanOrEqualTo(1),
-        "without $OPTIMIZE SPEED the subscript scale must still be computed per iteration");
-    });
+    // x% = a%(i%) over an affine subscript scales i% by the element size every iteration unless IVSR
+    // pre-computes the address and steps it - which it can only do because the subscript IS the counter.
+    //
+    // The control is therefore a subscript that is NOT an affine function of the counter (a%(p%(i%))),
+    // which no strength reduction may step a pointer through, rather than the same program without
+    // $OPTIMIZE SPEED. An objective flag is a proxy for "the optimization did not run" that only holds
+    // where the optimizations are gated on it. Both loops take a runtime trip count from a NOINLINE SUB
+    // called twice: a constant one is unrolled to constant subscripts and there is no scale left in
+    // either program to compare.
+    const string head = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL m%)\ns 10\ns 8\nEND\nSUB s(BYVAL m%) NOINLINE\nDIM a%(1 TO 10)\n";
+    const string tail = "\nPRINT x%\nEND SUB";
+    var affine = Compile(head + "DIM x%\nFOR i% = 1 TO m%\n  x% = a%(i%)\nNEXT i%" + tail, Dialect.Pb36);
+    var indirect = Compile(head + "DIM p%(1 TO 10)\nDIM x%\nFOR i% = 1 TO m%\n  x% = a%(p%(i%))\nNEXT i%" + tail, Dialect.Pb36);
+    Assert.That(CountElementScaleByTwoAnyRegister(affine), Is.LessThan(CountElementScaleByTwoAnyRegister(indirect)),
+      "IVSR should eliminate the per-iteration subscript scale a non-affine subscript has to keep");
   }
 
   [Test]
