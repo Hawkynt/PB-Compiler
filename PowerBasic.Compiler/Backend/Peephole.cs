@@ -1,7 +1,7 @@
 namespace PowerBasic.Compiler.Backend;
 
 /// <summary>
-/// The idiom pass over the selected machine IR (docs/X86-BACKEND.md): three rewrites that are about
+/// The idiom pass over the selected machine IR (docs/X86-BACKEND.md): rewrites that are about
 /// x86 ENCODINGS rather than about the program, which is why none of them belongs in the IR.
 ///
 /// <list type="bullet">
@@ -13,6 +13,13 @@ namespace PowerBasic.Compiler.Backend;
 /// <item><b>A bit test.</b> <c>MOV v,x / AND v,mask / CMP v,0</c> is <c>TEST x,mask</c> - the flags
 ///   <c>TEST</c> writes are bit for bit the flags that sequence wrote, and the masked value nobody
 ///   else reads never has to exist.</item>
+/// <item><b>A copy chain.</b> <c>MOV v,src / MOV w,v</c> with nothing else naming <c>v</c> is
+///   <c>MOV w,src</c> - the intermediate register was a staging post nobody arrives at.</item>
+/// <item><b>The branch layout.</b> A <c>JMP</c> to the block laid out next is the fallthrough, and a
+///   <c>Jcc next / JMP away</c> pair is <c>J!cc away</c>: the same two successors reached by one
+///   instruction instead of two.</item>
+/// <item><b>The zero idiom.</b> <c>MOV r,0</c> is <c>XOR r,r</c> where the flags it dirties are
+///   dead - one byte shorter on a word register, three on a dword one.</item>
 /// </list>
 ///
 /// <para>
@@ -85,11 +92,18 @@ public static class Peephole {
         made += FoldBitTests(block, census);
         made += FoldReadModifyWrites(block, census);
         made += FoldMemorySources(block, census);
+        made += FoldCopyChains(block, census);
       }
       total += made;
       if (made == 0)
         break;
     }
+    // Neither of these removes a VALUE, so neither can expose a pattern for the rewrites above and
+    // neither belongs in their fixpoint. Straightening goes first because it deletes instructions the
+    // zero idiom's flag question then does not have to look past.
+    total += StraightenBranches(function);
+    foreach (var block in function.Blocks)
+      total += FoldZeroConstants(block);
     return total;
   }
 
@@ -173,6 +187,54 @@ public static class Peephole {
           ReadsFlags: user.Effect.ReadsFlags, WritesFlags: user.Effect.WritesFlags,
           ReadsMemory: true, WritesMemory: user.Effect.WritesMemory),
         user.Condition, user.Clobbers);
+      block.Instructions.RemoveAt(i);
+      --i;
+      ++made;
+    }
+    return made;
+  }
+
+  /// <summary>
+  /// <c>MOV v,src / MOV w,v</c> - a value staged into a register only to be copied straight on - is
+  /// <c>MOV w,src</c>. The source may be an immediate, which depends on nothing at all, or a register,
+  /// which the barrier scan requires nobody to write in between; a MEMORY source is left alone,
+  /// because forwarding a load into a plain copy buys nothing that
+  /// <see cref="FoldMemorySources"/> does not already buy where it counts.
+  /// </summary>
+  private static int FoldCopyChains(MBlock block, Census census) {
+    var made = 0;
+    for (var i = 0; i < block.Instructions.Count; ++i) {
+      var stage = block.Instructions[i];
+      if (stage.Opcode != MOpcode.Mov || stage.Condition is not null || stage.Clobbers.Count > 0
+          || stage.Operands is not [MOperand.Register { Reg: { IsVirtual: true } value }, var source])
+        continue;
+      if (source is not (MOperand.Immediate or MOperand.Register))
+        continue;
+      if (source is MOperand.Register { Reg: var from }
+          && (from.Equals(value) || from.Size != value.Size))
+        continue;                                // MOV v,v is no chain, and a resize is not a copy
+      if (!census.Exactly(value, definitions: 1, readers: 1))
+        continue;
+
+      var address = source is MOperand.Register register ? new List<MReg> { register.Reg } : [];
+      var consumer = FindSingleReader(block, i + 1, value, address);
+      if (consumer < 0)
+        continue;
+      var user = block.Instructions[consumer];
+      if (user.Opcode != MOpcode.Mov || user.Condition is not null || user.Clobbers.Count > 0
+          || user.Operands is not [MOperand.Register { Reg: var target }, MOperand.Register { Reg: var read }]
+          || !read.Equals(value) || target.Size != value.Size)
+        continue;
+      // MOV w,v where w IS the source register is a copy back to where the value came from: the
+      // register already holds it, so both instructions go and nothing takes their place.
+      var identity = source is MOperand.Register { Reg: var origin } && origin.Equals(target);
+
+      if (identity)
+        block.Instructions.RemoveAt(consumer);
+      else
+        block.Instructions[consumer] = new MInstr(MOpcode.Mov, [user.Operands[0], source],
+          new MInstrEffect(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [1] : [],
+            ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: false));
       block.Instructions.RemoveAt(i);
       --i;
       ++made;
@@ -339,5 +401,81 @@ public static class Peephole {
         return -1;
     }
     return -1;
+  }
+
+  /// <summary>The condition that is taken exactly where this one is not - the encoding's low bit.</summary>
+  private static Asm.Condition Inverted(Asm.Condition condition) => (Asm.Condition)((byte)condition ^ 1);
+
+  /// <summary>
+  /// The two rewrites that follow from the block ORDER, which is the order
+  /// <see cref="MachineEmitter"/> lays the blocks out in and therefore the order the labels land in:
+  /// a <c>JMP</c> to the block laid out next is the fallthrough and is deleted, and a
+  /// <c>Jcc next / JMP away</c> pair is <c>J!cc away</c>. Both leave the successor set alone - the
+  /// same two blocks are reachable on the same two conditions - and neither can be done during
+  /// selection, where a block's neighbour is not yet known.
+  ///
+  /// <para>
+  /// A pair whose two arms are the SAME block is left alone: it is degenerate and not this pass's to
+  /// reason about. An ABI-pinned branch is not - a jump writes no register, so its clobber list is a
+  /// barrier the pinned sequence's other members carry too; the inverted branch keeps it, and a
+  /// deleted one takes nothing with it that the instruction in front of it does not still say.
+  /// </para>
+  /// </summary>
+  private static int StraightenBranches(MFunction function) {
+    var made = 0;
+    for (var b = 0; b + 1 < function.Blocks.Count; ++b) {
+      var body = function.Blocks[b].Instructions;
+      var next = function.Blocks[b + 1].Label;
+
+      if (body.Count >= 2
+          && body[^1] is { Opcode: MOpcode.Jmp, Condition: null } away
+          && away.Operands is [MOperand.LabelRef elsewhere]
+          && body[^2] is { Opcode: MOpcode.Jcc, Condition: { } taken } branch
+          && branch.Operands is [MOperand.LabelRef whenTaken]
+          && whenTaken.Name == next && elsewhere.Name != next) {
+        body[^2] = new MInstr(MOpcode.Jcc, [elsewhere], branch.Effect, Inverted(taken), branch.Clobbers);
+        body.RemoveAt(body.Count - 1);
+        ++made;
+      }
+
+      if (body.Count >= 1
+          && body[^1] is { Opcode: MOpcode.Jmp, Condition: null } tail
+          && tail.Operands is [MOperand.LabelRef fallsInto] && fallsInto.Name == next) {
+        body.RemoveAt(body.Count - 1);
+        ++made;
+      }
+    }
+    return made;
+  }
+
+  /// <summary>
+  /// <c>MOV r,0</c> is <c>XOR r,r</c> - a byte shorter on a word register and three on a dword one,
+  /// and the same value either way. It is taken only where the flags <c>XOR</c> dirties are provably
+  /// dead, and only on a word or larger: the byte forms are both two bytes, so the rewrite would be
+  /// churn.
+  ///
+  /// <para>
+  /// The rewritten instruction names the register twice but declares no READ of it, which is the
+  /// truth - <c>XOR r,r</c> depends on nothing - and is what keeps the value's live range starting
+  /// here rather than reaching back for a definition that does not exist. Naming it twice does make
+  /// <see cref="Spiller"/> decline the value, and that is the right answer too: there is no
+  /// memory-to-memory <c>XOR</c>, so a spilled one would have to become the <c>MOV</c> again.
+  /// </para>
+  /// </summary>
+  private static int FoldZeroConstants(MBlock block) {
+    var made = 0;
+    for (var i = 0; i < block.Instructions.Count; ++i) {
+      var instr = block.Instructions[i];
+      if (instr.Opcode != MOpcode.Mov || instr.Condition is not null
+          || instr.Operands is not [MOperand.Register zero, MOperand.Immediate { Value: 0 }]
+          || zero.Reg.Size is not (MRegSize.Word or MRegSize.Dword)
+          || !FlagsDeadAfter(block, i + 1))
+        continue;
+      block.Instructions[i] = new MInstr(MOpcode.Xor, [zero, zero],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
+          ReadsMemory: false, WritesMemory: false), condition: null, instr.Clobbers);
+      ++made;
+    }
+    return made;
   }
 }

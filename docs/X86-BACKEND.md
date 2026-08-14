@@ -170,11 +170,12 @@ earlier. Every absorbed instruction is single-use and pure by the test that put 
 **In the machine IR** — `Peephole.cs`, run at the end of selection. These shapes span instructions
 that came from *separate* IR instructions, so they only exist once selection is over: an ALU operand
 read straight from memory rather than staged through a register (`ADD d,[n]`), a cell read-modified-
-written in place (`INC [a]`, `ADD [a],imm`), and a bit test that never materializes the masked value
-(`TEST x,mask` for `MOV v,x / AND v,mask / CMP v,0`). All three are guarded by a census of the whole
-function — the value being removed is defined and read only by the instructions being rewritten — and
-by a barrier scan for anything in between that writes memory, clobbers the register file or writes a
-register the folded address is formed from.
+written in place (`INC [a]`, `ADD [a],imm`), a bit test that never materializes the masked value
+(`TEST x,mask` for `MOV v,x / AND v,mask / CMP v,0`), and a copy chain that collapses to one copy
+(`MOV v,src / MOV w,v` is `MOV w,src`, and a copy straight back to its own source is nothing at all).
+All four are guarded by a census of the whole function — the value being removed is defined and read
+only by the instructions being rewritten — and by a barrier scan for anything in between that writes
+memory, clobbers the register file or writes a register the folded address is formed from.
 
 The addressing rule is the one that costs coverage if it is got wrong. A value used as a memory base
 or index may only live in `BX`/`SI`/`DI` and cannot itself move to memory
@@ -183,6 +184,22 @@ makes a function fail to allocate. A register-free cell — a frame slot, a para
 variable — lengthens nothing and folds at any distance; a register-formed address folds only into the
 instruction immediately following the load. The read-modify-write form has no such limit in the other
 direction, because it deletes two of the three accesses and the address register's range *shrinks*.
+
+Two more read the function as a **layout** rather than as a set of values, and so run once at the end
+rather than to a fixpoint with the others. `MachineEmitter` lays the blocks out in `MFunction.Blocks`
+order, which makes each block's neighbour a fact: a `JMP` to the block laid out next is the
+fallthrough and goes, and a `Jcc next / JMP away` pair is `J!cc away` — the same two successors on the
+same two conditions, one instruction instead of two. Neither can be done during selection, where a
+block does not yet know what follows it. A jump writes no register, so an ABI-pinned one (the switch
+dispatch's guard, which carries the pinned sequence's clobbers) folds like any other and the inverted
+branch keeps the list. The polarity a range test ends up with is therefore the layout's choice, not
+the shape's: `cmp ax,9 / jbe in` and `cmp ax,9 / ja else` are one unsigned compare either way.
+
+And last, `MOV r,0` is `XOR r,r` wherever the flags it dirties are provably dead — a byte shorter on a
+word register, three on a dword one, and left alone on a byte register where both spellings are two.
+The rewritten instruction names the register twice but declares no read of it, which is the truth and
+is what keeps liveness from reaching back for a definition that does not exist. Naming it twice does
+make `Spiller` decline the value, and that is right too: there is no memory-to-memory `XOR`.
 
 Both stages are gated on `SelectionTarget.Optimize`: with the optimizer off, selection writes what it
 would have written.

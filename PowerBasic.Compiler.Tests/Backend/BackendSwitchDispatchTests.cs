@@ -76,9 +76,14 @@ public sealed class BackendSwitchDispatchTests {
     """;
 
   [Test]
-  public void Dispatch_GivenAConstantCaseRange_WhenRouted_ThenOneUnsignedCompare()
-    => Assert.That(Contains(Compile(_range.Replace("{v}", "3")), 0x83, 0xF8, 0x09, 0x76), Is.True,
-      "CASE 0 TO 9 is one unsigned compare (cmp ax, 9 / jbe), not two signed ones");
+  public void Dispatch_GivenAConstantCaseRange_WhenRouted_ThenOneUnsignedCompare() {
+    // The polarity is the layout's to choose, not the shape's: `Peephole.StraightenBranches` inverts
+    // the branch whose taken arm is laid out next, so `cmp ax,9 / jbe in` and `cmp ax,9 / ja else`
+    // are the same single unsigned test reached two ways. What the fixture pins is that there IS one.
+    var img = Compile(_range.Replace("{v}", "3"));
+    Assert.That(Contains(img, 0x83, 0xF8, 0x09, 0x76) || Contains(img, 0x83, 0xF8, 0x09, 0x77), Is.True,
+      "CASE 0 TO 9 is one unsigned compare (cmp ax, 9 / jbe or ja), not two signed ones");
+  }
 
   [TestCase(-1L, "out")]
   [TestCase(0L, "in")]

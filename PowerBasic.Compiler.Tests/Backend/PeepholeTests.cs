@@ -40,6 +40,21 @@ public sealed class PeepholeTests {
     new MInstrEffect([], [], ReadsFlags: false, WritesFlags: true, ReadsMemory: true, WritesMemory: true),
     condition: null, clobbers: [Reg.AX, Reg.CX, Reg.DX]);
 
+  private static MInstr Set(int dest, long value) => new(MOpcode.Mov, [V(dest), new MOperand.Immediate(value)],
+    new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+      ReadsMemory: false, WritesMemory: false));
+
+  private static MInstr Copy(int dest, int source) => new(MOpcode.Mov, [V(dest), V(source)],
+    new MInstrEffect(WrittenRegs: [0], ReadRegs: [1], ReadsFlags: false, WritesFlags: false,
+      ReadsMemory: false, WritesMemory: false));
+
+  private static MInstr Jump(string target) => new(MOpcode.Jmp, [new MOperand.LabelRef(target)], MInstrEffect.None);
+
+  private static MInstr BranchTo(string target, Condition condition) => new(MOpcode.Jcc,
+    [new MOperand.LabelRef(target)],
+    new MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, WritesMemory: false),
+    condition);
+
   private static MFunction OneBlock(params MInstr[] instrs) {
     var fn = new MFunction("t") { VirtualRegisterCount = 16 };
     var block = new MBlock("entry");
@@ -49,6 +64,17 @@ public sealed class PeepholeTests {
   }
 
   private static List<MInstr> Body(MFunction fn) => fn.Blocks[0].Instructions;
+
+  /// <summary>A function of several blocks, laid out in the order given - which is the order the emitter uses.</summary>
+  private static MFunction Laid(params (string Label, MInstr[] Body)[] blocks) {
+    var fn = new MFunction("t") { VirtualRegisterCount = 16 };
+    foreach (var (label, body) in blocks) {
+      var block = new MBlock(label);
+      block.Instructions.AddRange(body);
+      fn.Blocks.Add(block);
+    }
+    return fn;
+  }
 
   [Test]
   public void Fold_GivenLoadReadOnlyByAnAluOp_WhenRun_ThenTheAluTakesTheMemoryOperand() {
@@ -179,5 +205,97 @@ public sealed class PeepholeTests {
       Branch());
 
     Assert.That(Peephole.Run(fn), Is.Zero);
+  }
+
+  [Test]
+  public void Fold_GivenACopyStagedIntoAnotherCopy_WhenRun_ThenOneCopyDoesTheWork() {
+    // MOV v1,v0 ; MOV v2,v1  ->  MOV v2,v0: the staging register is a post nobody arrives at
+    var fn = OneBlock(Copy(1, 0), Copy(2, 1), Store(Cell(0), 2));
+
+    Assert.That(Peephole.Run(fn), Is.EqualTo(1));
+    Assert.That(Body(fn), Has.Count.EqualTo(2));
+    Assert.That(Body(fn)[0].Operands, Is.EqualTo(new MOperand[] { V(2), V(0) }));
+  }
+
+  [Test]
+  public void Fold_GivenACopyBackToItsOwnSource_WhenRun_ThenBothCopiesGo() {
+    // MOV v1,v0 ; MOV v0,v1 - the register already holds the value, so neither instruction says anything
+    var fn = OneBlock(Copy(1, 0), Copy(0, 1), Store(Cell(0), 0));
+
+    Assert.That(Peephole.Run(fn), Is.EqualTo(1));
+    Assert.That(Body(fn), Has.Count.EqualTo(1));
+    Assert.That(Body(fn)[0].Opcode, Is.EqualTo(MOpcode.Mov));
+    Assert.That(Body(fn)[0].Operands[0], Is.EqualTo(Cell(0)));
+  }
+
+  [Test]
+  public void Fold_GivenAStagedCopyWithASecondReader_WhenRun_ThenBothCopiesStay() {
+    var fn = OneBlock(Copy(1, 0), Copy(2, 1), Store(Cell(0), 1));
+
+    Assert.That(Peephole.Run(fn), Is.Zero, "the staged value is read twice, so it has to exist");
+  }
+
+  [Test]
+  public void Fold_GivenAZeroConstantWhoseFlagsAreDead_WhenRun_ThenTheXorIdiom() {
+    // MOV v1,0 -> XOR v1,v1: one byte shorter, and the flags it dirties nobody reads
+    var fn = OneBlock(Set(1, 0), Call(), Store(Cell(0), 1));
+
+    Assert.That(Peephole.Run(fn), Is.EqualTo(1));
+    Assert.That(Body(fn)[0].Opcode, Is.EqualTo(MOpcode.Xor));
+    Assert.That(Body(fn)[0].Operands, Is.EqualTo(new MOperand[] { V(1), V(1) }));
+    Assert.That(Body(fn)[0].Effect.ReadRegs, Is.Empty, "XOR r,r depends on nothing, and liveness must say so");
+  }
+
+  [Test]
+  public void Fold_GivenAZeroConstantWhoseFlagsAreRead_WhenRun_ThenTheMoveStays() {
+    var fn = OneBlock(Set(1, 0), Branch(), Store(Cell(0), 1));
+
+    Assert.That(Peephole.Run(fn), Is.Zero, "the branch reads flags the MOV left alone");
+  }
+
+  [Test]
+  public void Fold_GivenANonZeroConstant_WhenRun_ThenTheMoveStays() {
+    var fn = OneBlock(Set(1, 1), Call(), Store(Cell(0), 1));
+
+    Assert.That(Peephole.Run(fn), Is.Zero, "only zero has a shorter spelling");
+  }
+
+  [Test]
+  public void Straighten_GivenAJumpToTheBlockLaidOutNext_WhenRun_ThenItBecomesTheFallthrough() {
+    var fn = Laid(("entry", [Call(), Jump("tail")]), ("tail", [Call()]));
+
+    Assert.That(Peephole.Run(fn), Is.EqualTo(1));
+    Assert.That(fn.Blocks[0].Instructions, Has.Count.EqualTo(1));
+  }
+
+  [Test]
+  public void Straighten_GivenAJumpPastTheBlockLaidOutNext_WhenRun_ThenTheJumpStays() {
+    var fn = Laid(("entry", [Call(), Jump("far")]), ("tail", [Call()]), ("far", [Call()]));
+
+    Assert.That(Peephole.Run(fn), Is.Zero);
+    Assert.That(fn.Blocks[0].Instructions[^1].Opcode, Is.EqualTo(MOpcode.Jmp));
+  }
+
+  [Test]
+  public void Straighten_GivenABranchTakenToTheNextBlock_WhenRun_ThenTheConditionIsInverted() {
+    // Jcc then / JMP else  ->  J!cc else, with the then arm reached by falling into it
+    var fn = Laid(("entry", [BranchTo("then", Condition.BelowOrEqual), Jump("else")]),
+      ("then", [Call()]), ("else", [Call()]));
+
+    Assert.That(Peephole.Run(fn), Is.EqualTo(1));
+    Assert.That(fn.Blocks[0].Instructions, Has.Count.EqualTo(1));
+    Assert.That(fn.Blocks[0].Instructions[0].Condition, Is.EqualTo(Condition.Above));
+    Assert.That(fn.Blocks[0].Instructions[0].Operands[0], Is.EqualTo(new MOperand.LabelRef("else")));
+  }
+
+  [Test]
+  public void Straighten_GivenABranchAwayFromTheNextBlock_WhenRun_ThenOnlyTheJumpFolds() {
+    // Jcc far / JMP next: the branch is already the one that leaves, so only the fallthrough goes
+    var fn = Laid(("entry", [BranchTo("far", Condition.BelowOrEqual), Jump("then")]),
+      ("then", [Call()]), ("far", [Call()]));
+
+    Assert.That(Peephole.Run(fn), Is.EqualTo(1));
+    Assert.That(fn.Blocks[0].Instructions, Has.Count.EqualTo(1));
+    Assert.That(fn.Blocks[0].Instructions[0].Condition, Is.EqualTo(Condition.BelowOrEqual), "not inverted");
   }
 }
