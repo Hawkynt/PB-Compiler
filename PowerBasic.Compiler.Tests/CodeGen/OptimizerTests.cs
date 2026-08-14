@@ -1275,13 +1275,20 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenForCounterIndexUnderBoundsOn_WhenPb36_ThenCheckElided() {
-    // a%(i%) with i% the in-bounds FOR counter drops its bounds check; a%(k%) keeps it.
-    // The store value is non-constant so the constant-fill idiom does not confound the count.
+    // a%(i%) with i% the in-bounds FOR counter drops its bounds check; an index nothing can pin down
+    // keeps it. The store value is non-constant so the constant-fill idiom does not confound the count.
+    //
+    // The control INPUTS its index rather than assigning it a constant. `k% = 5` looks like a defeat
+    // of the range lattice and is nothing of the kind - it is a value a constant propagator PROVES,
+    // so it measures which optimizer ran rather than whether the elision happened, and the routed
+    // path (whose IPCP does prove it) elided both and read as a regression while being strictly
+    // better. Unknown input is the only index that no correct optimizer may assume anything about.
     const string counterIdx = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(1 TO 10)\nFOR i% = 1 TO 10\na%(i%) = i%\nNEXT i%\nEND";
-    const string varIdx = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(1 TO 10)\nk% = 5\nFOR i% = 1 TO 10\na%(k%) = i%\nNEXT i%\nEND";
-    Assert.That(CountRaise9(Compile(counterIdx, Dialect.Pb36)),
-      Is.LessThan(CountRaise9(Compile(varIdx, Dialect.Pb36))),
+    const string varIdx = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(1 TO 10)\nINPUT k%\nFOR i% = 1 TO 10\na%(k%) = i%\nNEXT i%\nEND";
+    Assert.That(CountRaise9(Compile(counterIdx, Dialect.Pb36)), Is.Zero,
       "a FOR-counter index inside the array bounds should drop the Error-9 bounds check");
+    Assert.That(CountRaise9(Compile(varIdx, Dialect.Pb36)), Is.Positive,
+      "an unknown index keeps it - otherwise the assertion above is measuring nothing");
   }
 
   [Test]
@@ -1299,23 +1306,36 @@ public sealed class OptimizerTests {
   [Test]
   public void Emit_GivenMaskedAndModIndexUnderBoundsOn_WhenPb36_ThenInRangeCheckElided() {
     // a(x AND 7) is always in [0,7] (the mask keeps only the low bits); a(i% MOD 8) over a
-    // non-negative counter is in [0,7]. Both lie inside a(0 TO 7), so pb36 drops the Error-9
-    // bounds check that pb35 (no range lattice) keeps.
+    // non-negative counter is in [0,7]. Both lie inside a(0 TO 7), so the Error-9 bounds check drops.
+    //
+    // The control is an unknown index in the same array rather than the same program under pb35.
+    // Compiling for an older dialect is a proxy for "unoptimized" that only holds on the direct
+    // path, where the optimizations are gated on a flag pb36 turns on; the routed path runs its
+    // middle end whatever the dialect says, so it elided the pb35 build too and the strict
+    // inequality could not hold. What the optimization actually claims is about PROVABILITY, and
+    // that is what this now compares. Which dialects optimize is settled by the golden battery.
     const string andIdx = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(0 TO 7)\nFOR i% = 1 TO 50\na%(i% AND 7) = i%\nNEXT i%\nEND";
     const string modIdx = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(0 TO 7)\nFOR i% = 0 TO 50\na%(i% MOD 8) = i%\nNEXT i%\nEND";
-    Assert.That(CountRaise9(Compile(andIdx, Dialect.Pb36)), Is.LessThan(CountRaise9(Compile(andIdx, Dialect.Pb35))),
+    const string unknownIdx = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(0 TO 7)\nINPUT k%\nFOR i% = 1 TO 50\na%(k%) = i%\nNEXT i%\nEND";
+    Assert.That(CountRaise9(Compile(andIdx, Dialect.Pb36)), Is.Zero,
       "x AND 7 is always in [0,7] - the bounds check should drop");
-    Assert.That(CountRaise9(Compile(modIdx, Dialect.Pb36)), Is.LessThan(CountRaise9(Compile(modIdx, Dialect.Pb35))),
+    Assert.That(CountRaise9(Compile(modIdx, Dialect.Pb36)), Is.Zero,
       "i% MOD 8 over a non-negative counter is in [0,7] - the bounds check should drop");
+    Assert.That(CountRaise9(Compile(unknownIdx, Dialect.Pb36)), Is.Positive,
+      "an unknown index into the same array keeps the check");
   }
 
   [Test]
   public void Emit_GivenDividedIndexUnderBoundsOn_WhenPb36_ThenInRangeCheckElided() {
     // a(i% \ 2) over i% in [0,30] is in [0,15] (truncated divide is monotonic in the dividend),
-    // inside a(0 TO 15), so pb36 drops the Error-9 bounds check that pb35 keeps.
+    // inside a(0 TO 15), so the Error-9 bounds check drops. The control is an unknown index rather
+    // than the pb35 build, for the reason given on the masked/mod test above.
     const string idx = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(0 TO 15)\nFOR i% = 0 TO 30\na%(i% \\ 2) = i%\nNEXT i%\nEND";
-    Assert.That(CountRaise9(Compile(idx, Dialect.Pb36)), Is.LessThan(CountRaise9(Compile(idx, Dialect.Pb35))),
+    const string unknownIdx = "$ERROR BOUNDS ON\n$OPTIMIZE SPEED\nDIM a%(0 TO 15)\nINPUT k%\nFOR i% = 0 TO 30\na%(k%) = i%\nNEXT i%\nEND";
+    Assert.That(CountRaise9(Compile(idx, Dialect.Pb36)), Is.Zero,
       "i% \\ 2 over [0,30] is in [0,15] - the bounds check should drop");
+    Assert.That(CountRaise9(Compile(unknownIdx, Dialect.Pb36)), Is.Positive,
+      "an unknown index into the same array keeps the check");
   }
 
   [Test]
@@ -1765,23 +1785,25 @@ public sealed class OptimizerTests {
     return count;
   }
 
-  // B8 06 00 = MOV AX, 6 - the Error 6 (overflow) raise set up by EmitRaiseWhen
-  private static int CountRaise6(byte[] image) {
+  // B8 nn 00 E8 = MOV AX, nn / CALL - the raise EmitRaiseWhen sets up, and the CALL is part of the
+  // pattern rather than decoration. Scanning the whole image for a bare `MOV AX, 6` finds bytes that
+  // are not that instruction at all: every program built here carries one such coincidence in the
+  // linked runtime, so the count of a program whose check was ELIDED came back as 1 instead of 0.
+  // The comparisons below survived it only because they are relative and the error was a constant;
+  // an assertion that the check is GONE cannot be written against a helper that never returns zero.
+  private static int CountRaise(byte[] image, byte code) {
     var count = 0;
-    for (var i = 0; i + 2 < image.Length; ++i)
-      if (image[i] == 0xB8 && image[i + 1] == 0x06 && image[i + 2] == 0x00)
+    for (var i = 0; i + 3 < image.Length; ++i)
+      if (image[i] == 0xB8 && image[i + 1] == code && image[i + 2] == 0x00 && image[i + 3] == 0xE8)
         ++count;
     return count;
   }
 
-  // B8 09 00 = MOV AX, 9 - the Error 9 (subscript) raise set up by EmitRaiseWhen
-  private static int CountRaise9(byte[] image) {
-    var count = 0;
-    for (var i = 0; i + 2 < image.Length; ++i)
-      if (image[i] == 0xB8 && image[i + 1] == 0x09 && image[i + 2] == 0x00)
-        ++count;
-    return count;
-  }
+  /// <summary>Error 6 (overflow) raises.</summary>
+  private static int CountRaise6(byte[] image) => CountRaise(image, 0x06);
+
+  /// <summary>Error 9 (subscript out of range) raises.</summary>
+  private static int CountRaise9(byte[] image) => CountRaise(image, 0x09);
 
   // F3 66 AB = REP STOSD (dword store)
   private static int CountRepStosd(byte[] image) {
