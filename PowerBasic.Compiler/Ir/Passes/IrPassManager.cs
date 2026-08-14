@@ -92,6 +92,72 @@ public sealed class IrPassManager {
   }
 
   /// <summary>
+  /// What the x86-16 back end needs run before it can compile a function AT ALL, as opposed to what
+  /// makes the result better. This is the pipeline a <c>--no-optimize</c> routed build gets, so that
+  /// "the optimizer is off" is true of the routed path as well as the direct one.
+  ///
+  /// <para>
+  /// Four passes, and each is here because a CONSUMER demands the form it produces rather than
+  /// because it removes work. Each one was also LEFT OUT and the corpus re-measured, because an
+  /// argument for a pass is not evidence that anything needs it - the numbers below are functions
+  /// that select and allocate, out of 262, with that one pass removed (258 with all four):
+  /// </para>
+  /// <list type="bullet">
+  ///   <item><b>mem2reg</b> - SSA construction. It is a change of REPRESENTATION, not a strength
+  ///     reduction: the selector mints one virtual register per value and the allocator reasons over
+  ///     live intervals of those registers, and a program whose values all live in allocas has no
+  ///     intervals to reason about. It also makes the pipeline CHEAPER rather than dearer here, which
+  ///     is the tell - the raw lowering of a corpus main body carries 314 virtual registers and
+  ///     promoting brings it to 244, and the corpus takes three times as long to compile without it.
+  ///     <b>250 without.</b></item>
+  ///   <item><b>instcombine</b> - canonicalization, and the one that had to be MEASURED rather than
+  ///     argued. The selector is a pattern matcher, and its patterns are written against the canonical
+  ///     form: <see cref="Backend.InstructionSelector"/>'s <c>WordSizedRange</c> walks pure dataflow
+  ///     through five opcodes to decide whether a 32-bit value fits one word, and until the casts PB's
+  ///     float-shaped arithmetic leaves behind are folded together there is no such chain to walk.
+  ///     Without it <c>CHR$(64 + i%)</c> declines with "rt_str_chr takes a 32-bit value in a word
+  ///     register" and the whole module body goes back to the direct emitter. It is the least tidy
+  ///     member of the set - it folds constants too, which is optimization by any reading - but the
+  ///     alternative is a back end whose COVERAGE depends on the optimizer, which
+  ///     <c>BackendWordNarrowingTests</c> exists to rule out. <b>234 without.</b></item>
+  ///   <item><b>dce</b> - the second half of <see cref="IntegerRecovery"/>, which the routed path runs
+  ///     unconditionally. That rewrite leaves the float-shaped arithmetic it replaced STANDING beside
+  ///     the integer form it minted, so without a collector every recovered expression exists twice
+  ///     and the second copy is carried all the way into instruction selection. It is here as the
+  ///     other half of a transform, not as an optimization in its own right - and it is the weakest
+  ///     member of the set on the numbers, worth one module body. <b>257 without.</b></item>
+  ///   <item><b>simplifycfg</b> - and this one is here only BECAUSE instcombine is, which is worth
+  ///     stating because the reverse was assumed first and measured false. An unreachable block costs
+  ///     the selector nothing (it orders blocks by reverse postorder and leaves the rest where the
+  ///     function lists them), so on the raw lowering there is nothing to clean up. Once instcombine
+  ///     folds a comparison to a constant, though, the branch reading it is <c>condbr true, A, B</c> -
+  ///     and the selector has no encoding for a branch on something that is not a register, so it
+  ///     declines the whole function. It did, 44 times over the corpus. Collapsing such a branch is
+  ///     what SimplifyCfg does first. <b>214 without.</b></item>
+  /// </list>
+  ///
+  /// <para>
+  /// <b><c>sroa</c> + a second <c>mem2reg</c> were here and are not, which is the point of measuring.</b>
+  /// The argument for them is the same one mem2reg wins on - an alloca the lowering emits for a
+  /// fixed-size aggregate is one memory object, and splitting it is what lets the elements be promoted
+  /// at all - and it is a perfectly good argument that buys <b>nothing</b>: 258 and 157 with them,
+  /// 258 and 157 without, to the function. Running an optimization with the optimizer off wants better
+  /// evidence than a story.
+  /// </para>
+  /// <para>
+  /// Everything else in <see cref="Standard"/> is optimization and is off: unrolling, sccp, correlate,
+  /// rangefold, sroa, mem2reg2, reassociate, demote, phicong, gvn, memopt, dse, licm, unswitch,
+  /// closed-form, deadloop, ifconv, tailrec and the string/global module passes. So are the two steps
+  /// the caller runs around the pipeline - <c>Inliner</c> and <c>SwitchFormation</c>.
+  /// </para>
+  /// </summary>
+  public static IrPassManager Legalize() => new IrPassManager()
+    .Add("mem2reg", Mem2Reg.Run)
+    .Add("instcombine", InstCombine.Run)
+    .Add("dce", Dce.Run)
+    .Add("simplifycfg", SimplifyCfg.Run);
+
+  /// <summary>
   /// The default optimization pipeline: promote memory to registers, then iterate
   /// simplification, conditional constant propagation, value numbering and dead-code
   /// elimination to a fixpoint.
