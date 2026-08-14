@@ -333,4 +333,48 @@ public sealed class BackendDifferentialTests {
     Assert.That(direct.Trim(), Is.EqualTo("11  23  34  4"),
       "the row-major flattening reaches every element of the far-heap block");
   }
+
+  /// <summary>
+  /// A trap the program must take, taken. Everything else in this fixture compares two answers; this
+  /// one compares two NON-answers, and it is the case where agreeing by accident is easiest - a path
+  /// that drops the check prints the same nothing as a path that never armed it, and only running the
+  /// thing tells them apart.
+  ///
+  /// <para>
+  /// The overflow check on <c>k% + 1</c> does not depend on the counter, so the middle end hoists it
+  /// out of the loop and clones the loop on it. Both clones are then real code: one raises Error 6
+  /// every iteration, the other does nothing, and the branch in front of them is the only thing that
+  /// says which. A pass that deleted the empty one and the branch together left the program running to
+  /// completion with the trap unreachable - see DeadLoopEliminationTests.
+  /// </para>
+  /// <para>
+  /// The argument comes back through a NOINLINE function rather than being written down, and it is
+  /// called twice with different values: one call site would let interprocedural constant propagation
+  /// prove 32767 and fold the whole question away before any loop pass saw it.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Run_GivenAnOverflowTrapInsideALoop_ThenBothPathsRaiseIt() {
+    var (direct, routed, names) = RunBothWays("""
+      $ERROR OVERFLOW ON
+      $OPTIMIZE SPEED
+      DECLARE FUNCTION Given%(BYVAL v%)
+
+      k% = Given%(32767)
+      n% = Given%(1)
+      FOR i% = 1 TO 100
+        x% = k% + 1
+      NEXT i%
+      PRINT "not reached"; n%
+
+      FUNCTION Given%(BYVAL v%) NOINLINE
+        Given% = v%
+      END FUNCTION
+      """);
+
+    Assert.That(names, Does.Contain("main"));
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(direct, Does.Not.Contain("not reached"),
+      "32767 + 1 under $ERROR OVERFLOW ON must stop the program");
+  }
 }
