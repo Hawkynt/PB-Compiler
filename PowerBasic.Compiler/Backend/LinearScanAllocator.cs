@@ -107,7 +107,7 @@ public sealed partial class LinearScanAllocator {
   private static IReadOnlyDictionary<int, Reg>? TryResident(MFunction function) {
     var candidate = function.Clone();
     CopyCoalescer.Run(candidate);
-    for (;;) {
+    for (var budget = BudgetFor(candidate); budget > 0; --budget) {
       // recomputed each round: coalescing and spilling both move instructions, and an asm block's
       // hold is an instruction range
       var asmHeld = AsmHeldByIndex(candidate, out var asmConflict);
@@ -125,10 +125,39 @@ public sealed partial class LinearScanAllocator {
       if (!Spiller.RematerializeOne(candidate) && !Spiller.SpillOne(candidate) && !Spiller.SplitOne(candidate))
         return null;
     }
+    return null;
   }
 
+  /// <summary>How many moves the allocator may make in total, however large the function is.</summary>
+  private const int _MOVE_CEILING = 512;
+
+  /// <summary>
+  /// How many spiller moves one function may cost before the back end gives it back.
+  ///
+  /// <para>
+  /// Every round removes at most one value from the register file, so a converging allocation needs
+  /// well under one move per virtual register the function started with: measured over the whole
+  /// corpus with the optimizer on, the worst RATIO is 1.05 (on a twenty-register function, which is
+  /// what the constant term is for) and the worst COUNT is 186. The ceiling is roughly three times
+  /// that, and it is what stops a very large function paying a very large bill to be declined anyway.
+  /// </para>
+  /// <para>
+  /// It is a BOUND rather than a policy, and it exists because the spiller's moves are not all
+  /// self-limiting: rematerializing one operand of an instruction displaces another that was itself
+  /// rematerialized beside it, and splitting a range that still crosses a clobber splits it again -
+  /// each one a round that mints a register and settles nothing. Both need IR the optimizer never
+  /// saw, which is why nothing met them while every routed function had been optimized first
+  /// (docs/X86-BACKEND.md). Without a budget a <c>--no-optimize</c> routed build does not finish
+  /// compiling; with one the function is DECLINED, which is what the back end already does with
+  /// everything it cannot take, and the direct emitter - the faithful path, and the one the
+  /// optimizer-off promise is about - compiles it instead.
+  /// </para>
+  /// </summary>
+  private static int BudgetFor(MFunction function)
+    => Math.Min(function.VirtualRegisterCount + 64, _MOVE_CEILING);
+
   private static IReadOnlyDictionary<int, Reg>? AllocatePlain(MFunction function, out string? reason) {
-    for (;;) {
+    for (var budget = BudgetFor(function); budget > 0; --budget) {
       // recomputed each round, because spilling renumbers the instructions the windows are measured in
       var asmHeld = AsmHeldByIndex(function, out var asmConflict);
       if (asmConflict is not null) {
@@ -152,6 +181,8 @@ public sealed partial class LinearScanAllocator {
       reason = Blocker(function, asmHeld);
       return null;
     }
+    reason = "the spiller ran out of budget before the live set fitted the register file";
+    return null;
   }
 
   /// <summary>

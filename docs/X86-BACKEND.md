@@ -785,6 +785,30 @@ its frame cell, and every instruction that can legally name memory uses that cel
 - an immutable argument whose use cannot name its caller-owned cell directly reloads immediately
   before each use.
 
+**The spiller's moves are not all self-limiting, so the loop that applies them has a budget.**
+`LinearScanAllocator.BudgetFor` allows one move per virtual register the function started with, plus
+64, capped at 512 — the whole corpus needs at most 1.05 per register and at most 186 in absolute
+terms with the optimizer on, so nothing that routes today is anywhere near it. Past the budget the
+function is declined like any other the back end cannot take.
+
+It is a bound rather than a policy, and two measured shapes are why it has to exist. Rematerializing
+one operand of an instruction inserts its recomputed definition immediately in front of the use,
+which **displaces another operand that was itself rematerialized there** — `MOV [v_addr], v_const`
+reads a frame address and a constant, each is recomputable, and putting either one beside the store
+makes the other stop being "immediately preceded by its definition". The two then take turns for
+ever: one round per swap, one fresh virtual register per round, the instruction count never moving.
+Splitting has a milder version of the same problem, where a fresh range that still crosses a clobber
+is offered for splitting again. Neither is reachable while every function the back end takes has been
+through the optimizer first, which is why they surfaced only when `--no-optimize` stopped running it:
+before the legalization set settled, five corpus programs took longer than twelve seconds each and
+`ARRAY.BAS` did not finish at all. One is left over the whole corpus — `DIFF36`'s module body, at 256
+virtual registers — and it is declined rather than waited for.
+
+Refusing to rematerialize an already-rematerialized value is the obvious repair and it is **not**
+correct as stated: measured, it takes that same `DIFF36` body from 122 virtual registers to 296 with
+the optimizer ON and costs the allocation outright. The recomputation the ping-pong performs is doing
+real work as well as looping; what it needs is a rule that tells the two apart.
+
 Direct memory rewriting remains conservative: only instruction forms the emitter really has, and
 never two memory operands in one instruction. Every spill cell is allocated at the value's widest
 view, while each reference retains its own byte/word width. Machine booleans remain BASIC truth words
