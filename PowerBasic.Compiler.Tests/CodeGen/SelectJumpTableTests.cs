@@ -163,8 +163,11 @@ public sealed class SelectJumpTableTests {
     // O0032 range fold in SELECT: a constant `CASE 0 TO 9` becomes one unsigned compare
     // (subject - lo) <=u (hi - lo) - `cmp ax, 9 / jbe` (83 F8 09 76) - instead of two signed compares
     // (cmp / jl + cmp / jle). The subject is loaded into AX; lo = 0 here so no subtract is emitted.
+    // The polarity belongs to the arm order: the routed back end straightens `jbe arm / jmp else`
+    // into `ja else` where the arm is laid out next, which is the same single test read the other way.
     var img = Compile("$OPTIMIZE SPEED\nDIM x%\nINPUT x%\nSELECT CASE x%\nCASE 0 TO 9\n PRINT \"a\"\nCASE ELSE\n PRINT \"z\"\nEND SELECT\nEND", Dialect.Pb36);
-    Assert.That(Contains(img, 0x83, 0xF8, 0x09, 0x76), Is.True, "a constant CASE range folds to one unsigned compare (cmp ax, 9 / jbe)");
+    Assert.That(Contains(img, 0x83, 0xF8, 0x09, 0x76) || Contains(img, 0x83, 0xF8, 0x09, 0x77), Is.True,
+      "a constant CASE range folds to one unsigned compare (cmp ax, 9 / jbe or ja)");
   }
 
   [Test]

@@ -1528,10 +1528,13 @@ public sealed class OptimizerTests {
   [Test]
   public void Emit_GivenOutOfRangeCheck_WhenPb36_ThenSingleUnsignedCompare() {
     // O0032 range fold, OR/outside form: `x < 0 OR x > 15` is the complement of [0,15] and folds to
-    // one unsigned compare too. For `IF (...) THEN` the branch to the ELSE arm fires when the value is
-    // INSIDE the window, so it is `cmp ax, 15 / jbe` (83 F8 0F 76), the mirror of the AND form's `ja`.
+    // one unsigned compare too. Which way round the branch reads is the arm ORDER's business - the
+    // direct emitter branches to the ELSE arm (`cmp ax,15 / jbe`, 83 F8 0F 76) and the routed
+    // back end straightens the pair into its mirror (`ja`, 77) where the taken arm is laid out next -
+    // so what is pinned here is the ONE unsigned test, not the polarity a layout picked.
     var img = Compile("$OPTIMIZE SPEED\nDIM x%\nINPUT x%\nIF x% < 0 OR x% > 15 THEN PRINT \"o\" ELSE PRINT \"i\"\nEND", Dialect.Pb36);
-    Assert.That(ContainsSeq(img, 0x83, 0xF8, 0x0F, 0x76), Is.True, "the out-of-range OR folds to one unsigned compare (cmp ax, 15 / jbe)");
+    Assert.That(ContainsSeq(img, 0x83, 0xF8, 0x0F, 0x76) || ContainsSeq(img, 0x83, 0xF8, 0x0F, 0x77), Is.True,
+      "the out-of-range OR folds to one unsigned compare (cmp ax, 15 / jbe or ja)");
   }
 
   [Test]
