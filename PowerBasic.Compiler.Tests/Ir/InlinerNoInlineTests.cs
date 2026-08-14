@@ -81,4 +81,50 @@ public sealed class InlinerNoInlineTests {
     Assert.That(cg.DescribeImage().Procedures.Select(p => p.Name), Does.Contain("T"), "the barrier survives to the image");
     Assert.That(Cpu8086.Run(image).Output.Trim(), Is.EqualTo("33"));
   }
+
+  /// <summary>
+  /// A callee holding INLINE ASSEMBLY is not inlined either, and this is a crash rather than a
+  /// missed optimization: <c>IrCloner</c> has no case for <see cref="IrInlineAsm"/> - the block is
+  /// deliberately opaque, carrying its text and the operands the lowering bound - so the attempt
+  /// aborted the whole compile with "cannot clone IrInlineAsm" for any `!` inside a SUB small enough
+  /// to inline, valid assembly included.
+  ///
+  /// It stayed invisible because the corpus keeps its inline asm in module bodies, which are never a
+  /// callee. Declining costs nothing: the block is an optimization barrier wherever it sits.
+  /// </summary>
+  [Test]
+  public void Inline_GivenACalleeHoldingInlineAsm_ThenItIsLeftAloneRatherThanCloned() {
+    const string source = """
+      DECLARE SUB Poke8(BYVAL v%)
+      Poke8 7
+      PRINT "done"
+      END
+      SUB Poke8(BYVAL v%)
+        ! mov ax, 1
+      END SUB
+      """;
+    var module = IrLowering.TryLowerModule(Bind(source), out var why);
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+
+    Assert.That(() => Inliner.Run(module!), Throws.Nothing, "an asm body must not be cloned");
+    Assert.That(module!.Functions.Any(f => f.Name.Equals("Poke8", StringComparison.OrdinalIgnoreCase)),
+      Is.True, "the callee is still a function of its own");
+  }
+
+  /// <summary>And the whole compile survives it, routed - which is the shape that used to abort.</summary>
+  [Test]
+  public void Compile_GivenACalleeHoldingInlineAsm_WhenRouted_ThenItBuilds() {
+    var generator = new CodeGenerator(Bind("""
+      DECLARE SUB Poke8(BYVAL v%)
+      Poke8 7
+      PRINT "done"
+      END
+      SUB Poke8(BYVAL v%)
+        ! mov ax, 1
+      END SUB
+      """)) { UseExperimentalBackend = true, Optimize = true };
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(Cpu8086.Run(image).Output.Trim(), Is.EqualTo("done"));
+  }
 }

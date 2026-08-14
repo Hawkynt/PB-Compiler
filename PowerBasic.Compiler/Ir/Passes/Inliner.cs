@@ -36,6 +36,14 @@ public static class Inliner {
   private static bool IsInlinable(IrFunction callee, IrFunction caller) =>
     !callee.IsDeclaration
     && !callee.NoInline                               // the source pinned it as a real call
+    // ...and neither is a body holding inline assembly, for the same reason an error handler is not:
+    // IrCloner has no case for IrInlineAsm and throws. The block is deliberately OPAQUE - it carries
+    // its text and the operands the lowering bound, and nothing maps that through a clone - so the
+    // attempt aborted the whole compile with "cannot clone IrInlineAsm" on any `!` block inside a SUB
+    // small enough to inline, valid assembly included. Declining to inline it is the same trade
+    // HasErrorHandler already makes, and it costs nothing: the block is an optimization barrier
+    // wherever it sits.
+    && !callee.HasInlineAsm
     && !ReferenceEquals(callee, caller)               // no direct recursion
     && callee.AllInstructions.Count() <= MaxCalleeInstructions;
 
