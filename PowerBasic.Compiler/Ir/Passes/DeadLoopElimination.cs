@@ -26,6 +26,12 @@ namespace PowerBasic.Compiler.Ir.Passes;
 ///   what keeps the two from having to agree about arithmetic as well as about shape.</item>
 /// </list>
 /// <para>
+/// A fourth belongs with them and is about the rewire rather than the deletion: the preheader keeps
+/// every edge that did not go into the header. It is not always an unconditional branch - a loop
+/// <see cref="LoopUnswitch"/> has cloned is entered through a <c>condbr</c> choosing between the two
+/// copies - and rewiring by replacing that terminator deletes the OTHER copy along with this one.
+/// </para>
+/// <para>
 /// <b>Gated on <c>$OPTIMIZE SPEED</c>.</b> A DOS-era delay loop is precisely this shape written on
 /// purpose: <c>FOR i = 1 TO 30000 / NEXT</c> has no effect the IR can see and every effect the author
 /// wanted. Deleting it preserves every printed byte and destroys the program. PB spells the intent
@@ -52,6 +58,22 @@ public static class DeadLoopElimination {
       return false;
     var (_, preheader, _, exit, region, _, _, _) = loop;
 
+    // The preheader is rewired to reach the exit directly, and only the edges that went into the
+    // header may move: it can perfectly well end in a CONDITIONAL branch, which is exactly what
+    // LoopUnswitch leaves behind, and a rewire that replaced the terminator outright would drop the
+    // other clone on the floor. It cost a silent miscompile to learn - the same one LoopUnroll cost -
+    // and here it was worse than a wrong answer: an $ERROR OVERFLOW loop unswitches into a trapping
+    // copy and an empty one, this pass deleted the empty copy AND the branch that chose between them,
+    // and the program that had to raise Error 6 ran to completion.
+    var entryBranch = preheader.Terminator;
+    if (entryBranch is not (IrBr or IrCondBr))
+      return false;                                // a switch preheader: not a shape this rewires
+    // and the exit must not already be reachable from the preheader, in one step or none: after the
+    // rewire that block would enter the exit twice, and a phi there has room for one value per
+    // predecessor - which of the two it should carry is a question this pass cannot answer
+    if (ReferenceEquals(preheader, exit) || entryBranch.Successors.Any(s => ReferenceEquals(s, exit)))
+      return false;
+
     // nothing may jump into the middle of the region: the loop is deleted as a unit, and a block
     // outside it that branches to a block inside would be left pointing at nothing
     foreach (var block in fn.Blocks)
@@ -70,7 +92,7 @@ public static class DeadLoopElimination {
       }
 
     // the exit used to be reached from the header's false edge; now it is reached from the preheader
-    Retarget(preheader, exit);
+    Retarget(preheader, header, exit);
     foreach (var phi in exit.Instructions.OfType<IrPhi>())
       phi.RenameIncomingBlock(header, preheader);
     foreach (var block in region)
@@ -85,10 +107,22 @@ public static class DeadLoopElimination {
   private static bool HasEffect(IrInstruction instruction)
     => instruction is IrStore or IrCall or IrInlineAsm;
 
-  /// <summary>Points a block's terminator at <paramref name="target"/>, replacing whatever it was.</summary>
-  private static void Retarget(IrBasicBlock block, IrBasicBlock target) {
-    if (block.Terminator is { } existing)
-      existing.EraseFromParent();
-    block.Append(new IrBr(target));
+  /// <summary>
+  /// Sends every edge <paramref name="block"/> has into <paramref name="header"/> to
+  /// <paramref name="target"/> instead, and leaves the edges that went anywhere else exactly where
+  /// they were - the branch is EDITED, never replaced.
+  /// </summary>
+  private static void Retarget(IrBasicBlock block, IrBasicBlock header, IrBasicBlock target) {
+    switch (block.Terminator) {
+      case IrBr br:
+        br.Target = target;
+        break;
+      case IrCondBr conditional:
+        if (ReferenceEquals(conditional.IfTrue, header))
+          conditional.IfTrue = target;
+        if (ReferenceEquals(conditional.IfFalse, header))
+          conditional.IfFalse = target;
+        break;
+    }
   }
 }

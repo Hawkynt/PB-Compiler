@@ -136,6 +136,39 @@ public sealed class DeadLoopEliminationTests {
   }
 
   /// <summary>
+  /// The loop this pass may see is not always entered unconditionally, and the preheader's OTHER edge
+  /// is not this pass's to spend.
+  ///
+  /// <para>
+  /// <c>$ERROR OVERFLOW ON</c> puts a check in the loop body that does not depend on the counter, so
+  /// LICM hoists it and <see cref="LoopUnswitch"/> clones the loop on it: one copy that traps every
+  /// iteration and one that does nothing at all, chosen by a <c>condbr</c> in the preheader. The empty
+  /// copy is genuinely dead and deleting it is right - but rewiring the preheader by REPLACING its
+  /// terminator takes the branch with it, and the trapping copy becomes unreachable. The program then
+  /// runs to completion instead of raising Error 6, which is a silent miscompile: the whole point of
+  /// arming the check is that it fires.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void UnswitchedLoop_WhenTheEmptyCloneGoes_ThenTheTrappingCloneIsStillReached() {
+    var main = Optimized("""
+      $ERROR OVERFLOW ON
+      INPUT k%
+      FOR i% = 1 TO 100
+        x% = k% + 1
+      NEXT i%
+      PRINT "done"
+      END
+      """, forSpeed: true);
+
+    Assert.That(IrVerifier.Verify(main), Is.Empty);
+    Assert.That(main.AllInstructions.OfType<IrCall>().Any(call =>
+        (call.Callee as IrFunction)?.Name == "rt_error"
+        && call.Args.FirstOrDefault() is IrConstantInt { Value: 6 }), Is.True,
+      "the Error 6 raise must survive:\n" + IrPrinter.Print(main));
+  }
+
+  /// <summary>
   /// And whatever it deletes, the program still prints what it printed. Rendered back to BASIC and
   /// run, because deleting code is supposed to change the code.
   /// </summary>
