@@ -611,7 +611,7 @@ a real difference between the two paths. Ordered by how many tests each accounts
 |---|---|---|
 | peephole idioms the selector does not recognise | ~~19~~ **10** | mostly CLOSED - see "What the peephole row actually was" below. `Backend/Peephole.cs` and `InstructionSelector.Idioms.cs` took nine of the nineteen; the ten that remain are a different thing wearing the same label |
 | the direct emitter's loop-register model has no counterpart | 13 | SI/DI residency for counters and accumulators, the constant-limit immediate compare that rides on it, loop rotation and the count-down form |
-| `$ERROR OVERFLOW/BOUNDS` traps are not modelled | 8 → see below | the traps were always modelled; what was absent were the range facts that elide one. `Ir/Analysis/` now supplies them, and the two alarming-looking observations that led this row turned out to be fixtures that cannot see what they assert - both measured rather than argued |
+| `$ERROR OVERFLOW/BOUNDS` traps are not modelled | 8 → see below | the traps were modelled *in the module body* and, until `IrLowering.ArmedForProcedures`, armed in no procedure at all - so every trap a `SUB` or `FUNCTION` should have raised was simply absent. What was missing besides is the range facts that elide one, and `Ir/Analysis/` now supplies them |
 | ~~the objective flags do not reach the routed build~~ | 6 → **1** | mostly CLOSED - `IrPassManager.Legalize()` is what a routed `--no-optimize` build now runs, which un-merged the two builds a comparison makes (13 of the 15 battery rows, and `Emit_GivenLatticeProvedComparison`). What is left is `Emit_GivenDeadGlobalWithoutOptimize`, and it is a different thing wearing the same label: an unreferenced module variable disappears because the routed `main` never mentions it, so the codegen's data layout never hears of it - a question about who owns the data section, not about which passes ran |
 | `$CPU` tier does not reach instruction selection | 6 | 32-bit shift, `SHLD`, inline dword `OR`, `REP MOVSD`, the ESI/EDI LONG residency - and the same census file says `'$CPU 80286'` and `'$CPU 8086'` produce the same image |
 | no auto-vectorizer, no loop-top alignment | 6 | MMX/SSE2/AVX2/AVX-512 `PADDW`/`PMULLW`, the 586 NOP pad |
@@ -631,7 +631,7 @@ difference between a quality gap and a silent miscompile.
   images print `RUNTIME ERROR` under DOSBox. The fixture asserts the presence of `IMUL BX`, which is the
   direct emitter's signature for "the trap is still reachable" and says nothing about a back end that
   answered the question at compile time. Take the constant away and there IS a correctness bug behind
-  it - see "Two `$ERROR` traps the routed path loses" below.
+  it - see "Every `$ERROR` trap inside a PROCEDURE was absent" below, which is what it was.
 * **`'$ERROR OVERFLOW ON' and '$ERROR OVERFLOW OFF' produce the SAME image` is the same shape.** The
   claim's body in `DialectMetaClaims` is `a = 100000 : b = 7 : c = a * b + a \ b`, which is constant
   throughout: the routed module is one `rt_print_i32(714285)` either way, because no trap CAN fire and
@@ -719,11 +719,11 @@ anyway, which is the direct emitter's O6b applicability rule rather than a prope
 The third is `Emit_GivenLoopInvariantLen`, already explained above: it wants an idiom pass over
 the `dup`/`len` pair, not a purity row.
 
-### Two `$ERROR` traps the routed path loses
+### Every `$ERROR` trap inside a PROCEDURE was absent - FIXED
 
-Both fall out of an argument to a `NOINLINE` SUB, which is what makes them invisible to the corpus: the
-differential battery's programs do not put a trapping value behind a parameter. Both are **lost traps**,
-not quality gaps - the direct build stops and the routed build prints - and both are open.
+Both of the lost traps this section used to describe were one defect, and it was not in the range work
+at all. **`IrLowering` never armed any `$ERROR` check inside any procedure**, so the two programs below
+compiled with no trap in them to elide.
 
 ```basic
 $ERROR OVERFLOW ON                    $OPTIMIZE SPEED : $ERROR BOUNDS ON
@@ -738,23 +738,45 @@ END SUB                                 FOR i% = 1 TO m% : x% = a%(p%(i%)) : NEX
                                       END SUB
 ```
 
-Direct prints `RUNTIME ERROR` for both. Routed prints `-5536` / `14` for the first and ` 0` twice for the
-second. Neither image contains an `rt_error` call at all - it is the CHECK that is gone, not the branch
-polarity, and the value is still read from the frame in both, so nothing was constant-folded around it.
+Direct prints `RUNTIME ERROR` for both; routed printed `-5536` / `14` for the first and ` 0` twice for
+the second. `$ERROR BOUNDS/OVERFLOW/NUMERIC` were three `IrLowering` instance fields set by *executing*
+the metastatement, the directives live in the module body, and **every procedure is lowered by its own
+`IrLowering` whose fields start clear** - so a directive at the top of a file armed the check in `main`
+and nowhere else. `_checkStack` had the identical problem and had been given the identical fix long
+before, with a comment saying in as many words that the other three could not be accumulated that way;
+nothing then acted on it. `IrLowering.ArmedForProcedures` now folds the module-level `$ERROR` directives
+in source order and seeds a procedure's three flags from the result, which is exactly the state the
+direct emitter carries into the first procedure it emits (one positional field, module body first,
+nothing reset at a procedure boundary). A directive *inside* a body still toggles it from there.
 
-Three things narrow them and are worth not re-establishing. The same programs with the operand from
-`INPUT` instead of a parameter trap correctly on both paths, so what is wrong is what interprocedural
-propagation contributes: the operand's interval, `[7, 30000]` and `[0, 0]` respectively. Neither interval
-makes the check false. The first is *possible* overflow (`[14, 60000]` does not fit an `INTEGER`) and the
-second is *certain* out-of-range (`0` is below `a%`'s lower bound of 1) - so one elision is optimistic
-and the other has the wrong polarity, which is the shape of a signed/unsigned mix-up in the predicate
-the range consumer folds: a bounds check normalized to `idx - lbound` is `-1` here and is compared
-UNSIGNED, where an interval read as signed says `-1 <= 4` and answers "in range".
+**It is a middle-end defect, so `--emit-c` and `--emit-llvm` lost the same traps.** The first program's
+LLVM was one `shl i16 %x, 1` with no `rt_error` declared at all.
 
-`Emit_GivenCheckedMultiplyByTwo` is the fixture next to the first one, and it cannot see it: with the
-constant it asserted, SCCP answers the multiply and the fixture is about a program with no multiply in
-it. It now takes the multiplicand from `INPUT` - which traps correctly - so closing these two needs a
-test of their own rather than a repair to that one.
+Two things this cost, both worth keeping.
+
+* **The hypothesis it was a range-elision bug was wrong in every particular, and it survived because
+  nobody dumped the IR before the first pass.** The reasoning ran: interprocedural propagation supplies
+  the intervals `[7, 30000]` and `[0, 0]`, neither of which makes the check false, so one elision is
+  optimistic and the other is a signed/unsigned mix-up in a bounds check normalized to `idx - lbound`.
+  Every step of that is false. `IpConstantProp` propagates *constants* and says nothing when two call
+  sites disagree; `EmitBoundsCheck` emits `slt`/`sgt` against the bounds and normalizes nothing; and the
+  IR as it comes out of the lowering, before a single pass has run, is already `mul i16 %x, 2` with no
+  check anywhere near it. A pass cannot be blamed for removing something that was never emitted, and
+  the way to find that out is one dump of the unoptimized IR. `RangeCheckElim` was re-probed anyway,
+  by execution rather than by reading: a counted loop one past its dimension, the same loop counting
+  down past zero, the same loop inside a two-call-site SUB, `a%(k% AND 7)` over `a%(0 TO 7)`, and the
+  zero-divisor guard behind a parameter all agree with the direct emitter.
+* **The second reproduction was never a lost trap.** The module-level bounds program (the same loop
+  written outside a SUB) elides ONE of its two Error-9 raises routed and still stops - the elided one
+  guards `p%(i%)` with `i%` in `[1, 2]` against `p%`'s own `1 TO 2`, which is exactly the proof
+  `RangeCheckElim` exists to make. A raise count that differs from the direct emitter's is not evidence
+  of anything on its own; the program has to be RUN.
+
+`BackendErrorTrapTests` pins all of it by execution under the interpreter: the three arms
+(`OVERFLOW` over a multiply, `BOUNDS` over a subscript, `NUMERIC` over a wrapping FOR counter) each
+inside a two-call-site `NOINLINE` SUB, the `$ERROR OVERFLOW OFF` twin that says the trap belongs to the
+directive, and the module-level program above asserting that the provable check is STILL elided - so an
+over-conservative repair would fail there rather than pass quietly.
 
 ### What the peephole row actually was
 
