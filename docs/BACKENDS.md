@@ -220,6 +220,17 @@ What still declines inside those classes, each measured rather than assumed:
 | the ADDRESS of an element (BYREF, VARPTR, a record copy) | `IrFarPtr`'s own rule, unchanged: a far pointer used as a near one loses its segment silently |
 | `FRE` other than `FRE(-11)` | `FRE(-11)` is the free EMS byte count and is real information; every other spelling answers an advisory 32767 after CONSUMING a string argument, which is an ownership rule the IR does not model |
 
+**An empty decline histogram is not the same as "every shape is handled", and one shape RAISED rather
+than declining.** A narrow (`BYTE`/`WORD`/`INTEGER`) shift whose count the immediate encoding cannot
+carry - one the program computed, or a literal outside 1..31 - reached the assembler in a form it has
+no encoding for, so `SHIFT RIGHT a%, n%` and `SHIFT LEFT a%, 32` ended the COMPILATION with an
+exception instead of an answer or a decline. Both now take the `CL` form the direct emitter uses for
+every narrow shift (`InstructionSelector.SelectVariableShift`). It survived a green corpus and a green
+differential battery because every corpus shift by a runtime count is 32- or 64-bit, where
+`SelectWideShift` declines, and every narrow one is a literal in range - the shape simply is not in the
+corpus. A coverage census that only counts declines cannot see this class: the function neither routed
+nor declined, it threw.
+
 Two implementation notes that cost time and would cost it again. The 32-bit offset is split into its
 16-bit halves and recombined the way the direct emitter's `SHR AX,n / SHL DX,16-n / OR AX,DX` does,
 not shifted at 32 bits: `SelectWideShift` walks a register pair one bit per step and caps the count at
@@ -391,18 +402,39 @@ So the order is: widen, run the battery routed, and keep the widening only if th
 coverage number that went up while the battery went down is a worse position than before. The two
 faults that turned up this way were worth more than the two functions that found them.
 
-**The routed path needs a REAL 80-bit x87 for QUAD where the direct one does not**, and that is
-invisible on an accurate emulator. `DIFF15` (QUAD division and modulo) and `DIFF72` (`$CPU 80386`
-64-bit bitwise) pass routed under dosbox-staging and fail under vanilla DOSBox 0.74, which computes
-the x87 in 64-bit doubles: `73300775184` comes back as `...85`, and DIFF72's ~1e16 values differ in
-their last digit. The direct emitter passes both on the same emulator, because it does that
-arithmetic in memory-based four-word integer routines while the routed path goes through the x87 -
-where a 64-bit integer IS exact, on hardware with the 64-bit mantissa the part promises.
+**A QUAD answer that needs more than the FPU's mantissa comes out differently on the two paths**, and
+that is invisible on an accurate emulator. `DIFF15` (QUAD division and modulo) and `DIFF72`
+(`$CPU 80386` 64-bit bitwise) pass routed under dosbox-staging and fail under vanilla DOSBox 0.74,
+which computes the x87 in 64-bit doubles: `73300775184` comes back as `...85`, and DIFF72's ~1e16
+values differ in their last digit.
 
-So it is not a fidelity bug and not something to fix by rounding differently. It is a dependency
-the direct emitter does not have, and it belongs on the retirement checklist rather than in the
-failure column: after `CodeGen/` is gone, QUAD arithmetic is only as exact as the FPU underneath,
-which on period hardware includes PB's own emulator library for machines with no 8087 at all.
+**The direction is the opposite of what this paragraph used to claim, and the difference is decided
+before either back end runs.** It is the DIRECT path whose answer follows the FPU and the routed one
+that is FPU-independent, because the routed middle end answered the question at COMPILE time in exact
+64-bit integer arithmetic. Measured with a program that asks what the cell holds rather than what the
+expression prints:
+
+```basic
+y&& = 76861433640456465            ' 57 bits - more than a 53-bit mantissa carries
+PRINT y&& MOD 16                   ' direct 0, routed 1, under vanilla DOSBox
+```
+
+The literal reaches its cell through the x87 on the direct path (which is what genuine PBC does), so a
+53-bit FPU leaves `76861433640456464` there and every later exact integer operation reads the rounded
+operand; `instcombine` folds the routed program's `and i64` on the literals themselves and prints the
+answer. Take the constants away - the same values arriving through a two-call-site `NOINLINE` function -
+and **both paths print the rounded value and agree**, because then both are reading a cell the FPU
+filled. `Cpu8086` carries the full 64-bit mantissa, so both paths are exact there and the whole thing
+disappears, which is why no interpreter-driven test sees it.
+
+So it is still not a fidelity bug and still not something to fix by rounding differently - the routed
+answer is the arithmetically correct one, and it is the vintage compiler, on a narrow FPU, that is a
+digit out. It belongs on the retirement checklist rather than in the failure column: after `CodeGen/`
+is gone, a QUAD expression over runtime values is only as exact as the FPU underneath, which on period
+hardware includes PB's own emulator library for machines with no 8087 at all - while one over literals
+becomes exact, and `DIFF15`/`DIFF72` start passing on vanilla DOSBox. Fixing it the other way would mean
+making the middle end fold LESS exactly than it can, which would be a miscompile for `--emit-c` and
+`--emit-llvm`, where there is no 8087 to be faithful to.
 
 **String lifetime: the leak is closed, the convention is now stated.** This was not on the decline
 list - it is a concern rather than a construct, and only a coverage increment surfaced it.
