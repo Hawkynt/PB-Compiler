@@ -1699,3 +1699,45 @@ What this does NOT reach, measured with pb36 routed by default:
 | `ESI`/`EDI` for a `LONG` counter under `$CPU 80386` | a 32-bit value is a register PAIR in this machine IR, so there is no dword physical register to prefer. `Emit_GivenLongForLoop` and `Emit_GivenLongAccumulatorLoop` want the 386 form and need 32-bit registers in `MachineIr` first |
 | whether the counter takes `SI` and the accumulator `DI` or the reverse | the direct emitter has two conventions - a `FOR` counter is its `SI` resident, while a `DO` loop's FIRST hot local is - and `Emit_GivenConditionalAccumulateLoop` and `Emit_GivenDoLoopAccumulator` therefore assert opposite assignments for two loops the machine IR cannot tell apart. Measured both ways round: the order of `_resident` moves which of the two passes, and nothing else |
 | two fixtures that measure no loop at all | `Emit_GivenAccumulatorLoop` and `Emit_GivenNestedIntegerLoops` are constant-folded to `PRINT 55` and `PRINT 288` by the IR pipeline in BOTH of their builds, so there is no loop left for residency to shrink - the same "measures an empty `main`" family docs/BACKENDS.md records |
+
+## `FISTP` does not truncate, and routed `FIX` therefore did not either
+
+The selector took `SIToFP(FPToSI(x, i64), f)` — the pair `IrLowering` emits for `FIX` and, with a
+correction behind it, for `INT` — down a qword round trip: `FLD x; FISTP qword [cell];
+FILD qword [cell]; FSTP result`. Its own comment called that "truncation toward zero at 64-bit
+precision". It is not. **`FISTP` rounds by the x87 control word**, and nothing had touched that
+word, so it rounded to nearest with ties to even: routed `FIX(-1.5)` answered `-2`, and PB's answer
+is `-1`.
+
+The IR meant truncation and every other consumer of `FPToSI` reads it that way — `IrConstFold` folds
+it with a C cast, `CEmitter` writes one, `LlvmEmitter` writes `fptosi`. So this was a **selection**
+bug, not a lowering one, and neither `--emit-c` nor `--emit-llvm` was ever wrong.
+
+Nothing in the corpus could see it. Every `FIX` there has a constant argument, which the folder
+answers long before selection is reached, so the emitted image contains no conversion at all. The
+regression test therefore takes its subject from a `NOINLINE` function called from **five sites with
+five different values**, the smallest shape neither the folder nor IPCP can collapse, and it **runs**
+both images and diffs them rather than asserting on bytes — a byte assertion is exactly what let a
+plausible-looking sequence sit there.
+
+`FIX` now goes through **`rt_trunc`**, the routine the direct emitter's `FIX` already calls:
+`FRNDINT` under RC=11 with the caller's control word restored afterwards. A control-word bracket
+selected inline would have needed two new `MOpcode`s (the machine IR has no `FLDCW`/`FNSTCW` at all,
+so it cannot express a rounding mode today) and would have been just as correct on the values a
+qword holds — but the two paths emit into the **same image**, and one program must not truncate two
+ways. That is the argument `MathSequence` already makes about `SIN` under `$CPU 386`. Sharing the
+routine settles the magnitudes as well: `FRNDINT` answers `FIX(1E30)` with `1E30`, where any
+`FISTP`-based sequence stores the integer-indefinite value.
+
+The three roundings stay observably distinct, which is the point of the fix, and each value pins it:
+
+| | `-1.5` | `-2.5` | `1.5` | `2.5` | `-1.2` |
+|---|---|---|---|---|---|
+| `FIX` — toward zero, `rt_trunc` | -1 | -2 | 1 | 2 | -1 |
+| `INT` — floor, `rt_trunc` then `-1` when `x < trunc(x)` | -2 | -3 | 1 | 2 | -2 |
+| `CINT` — nearest, ties to even, `FISTP` | -2 | -2 | 2 | 2 | -1 |
+
+`INT` needed no change: its correction yields the floor under *any* rounding the round trip performs,
+which is why it was right while `FIX` was wrong. `CINT` is a different opcode — `FPToSIRound`, taken
+by `SelectFloatToInt` — and it wants precisely the nearest-with-ties-to-even that `FISTP` gives, so
+it is the one conversion here still allowed to store through one.
