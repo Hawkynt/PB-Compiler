@@ -1158,12 +1158,30 @@ public sealed partial class InstructionSelector {
   /// file, they ARE the frame this back end laid out - every local, spill slot and parameter is
   /// addressed through <c>BP</c> - so there is no allocation that could honour such a block.
   /// </para>
+  ///
+  /// <para>
+  /// And a block the assembler cannot ASSEMBLE declines here, which is the only place left where
+  /// declining is still possible. The lowering already proved the text parses, but it proved it
+  /// against its OWN stand-in symbols - a name that is neither a variable nor a label answers there as
+  /// memory and at emission as the runtime label it really is, and the two disagree about what is an
+  /// instruction. <c>! LEA BX, GetStrLoc</c> parses as <c>LEA BX, [BP+0]</c> and does not parse at all
+  /// as <c>LEA BX, &lt;label&gt;</c>; <c>INC</c>, <c>CMP</c> and <c>XCHG</c> against a documented string
+  /// export are the same shape. Each of those ENDED the compilation out of
+  /// <c>MachineEmitter.EmitInlineAsm</c>, where the direct emitter reports a diagnostic and carries on.
+  /// The parse therefore runs once more here, through <see cref="AsmNameKinds"/> - which answers the
+  /// same KINDS the emitter's own resolver will - and the failure becomes a decline, so the direct
+  /// emitter takes the function and issues exactly the diagnostic it always did.
+  /// </para>
   /// </summary>
   private bool SelectInlineAsm(IrInlineAsm asm) {
     if (!asm.Routable)
       return this.Decline("inline asm: a name in it is not a variable this pass could bind");
 
-    var effect = TextAssembler.Analyze(asm.Text, new AsmNameKinds(asm));
+    var kinds = new AsmNameKinds(asm);
+    if (!new TextAssembler(new Assembler()).TryParse(asm.Text, kinds, out var error))
+      return this.Decline($"inline asm: {error}");
+
+    var effect = TextAssembler.Analyze(asm.Text, kinds);
     if (effect.Defines.Contains(Reg.BP) || effect.Defines.Contains(Reg.SP))
       return this.Decline("inline asm: the block writes BP or SP, which the frame is addressed through");
 

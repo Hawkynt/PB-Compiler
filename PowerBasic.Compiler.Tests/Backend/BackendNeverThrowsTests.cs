@@ -240,6 +240,65 @@ public sealed class BackendNeverThrowsTests {
   }
 
   /// <summary>
+  /// The shapes that were found by this audit, each one a program that ENDED the compilation with a
+  /// stack trace before it was converted to a decline. They are held apart from the generator because
+  /// the assertion is stronger: the routed build must behave exactly like the unrouted one, which is
+  /// what a decline promises and a throw cannot.
+  /// </summary>
+  private static readonly (string Name, string Source)[] _formerlyRaised = [
+    // MachineEmitter.EmitInlineAsm. The lowering proved the text parses against its OWN stand-in
+    // symbols, where a name that is neither a variable nor a label answers as memory; at emission the
+    // same name is the runtime label it really is, and the two disagree about what is an instruction.
+    // LEA/INC/CMP/XCHG against a documented string-manager export are the four shapes that differ.
+    ("asm-lea-export", "DIM n%\nn% = 3\n! LEA BX, GetStrLoc\nPRINT n%\nEND\n"),
+    ("asm-inc-export", "DIM n%\nn% = 3\n! INC GetStrLoc\nPRINT n%\nEND\n"),
+    ("asm-cmp-export", "DIM n%\nn% = 3\n! CMP AX, GetStrLoc\nPRINT n%\nEND\n"),
+    ("asm-xchg-export", "DIM n%\nn% = 3\n! XCHG AX, GetStrLoc\nPRINT n%\nEND\n"),
+    // MachineEmitter.ResolveData. The IR names a module variable by its source spelling WITHOUT the
+    // type suffix and the binder's table is keyed WITH it, so these two symbols are one g.total. The
+    // resolver refuses to alias them and had nowhere to say so.
+    ("ambiguous-global", """
+      DIM total% : DIM total&
+      total% = 1 : total& = 2
+      CALL Bump
+      PRINT total%; total&
+      END
+      SUB Bump
+        SHARED total%, total&
+        total% = total% + 1
+        total& = total& + 1
+      END SUB
+      """),
+  ];
+
+  [Test]
+  public void FormerlyRaisingShapes_WhenCompiledRouted_ThenTheyDeclineAndBehaveLikeTheUnroutedBuild() {
+    var failures = new List<string>();
+    foreach (var (name, source) in _formerlyRaised)
+      foreach (var optimize in new[] { true, false }) {
+        var label = $"{name} ({(optimize ? "optimized" : "unoptimized")})";
+        if (RoutedCompileFailure(source, name + ".BAS", optimize) is { } e) {
+          failures.Add($"{label}: {Head(e)}");
+          continue;
+        }
+        // and the decline has to be a real fallback, not merely a non-crash: the direct emitter takes
+        // the function and the program is the one it always was, diagnostics included
+        SemanticModel Bind() => Binder.Bind(
+          Parser.Parse(Lexer.Tokenize(source, name + ".BAS", Dialect.Pb36), name + ".BAS", Dialect.Pb36), Dialect.Pb36);
+        var direct = new CodeGenerator(Bind()) { Optimize = optimize, UseExperimentalBackend = false };
+        var routed = new CodeGenerator(Bind()) { Optimize = optimize, UseExperimentalBackend = true };
+        var directImage = direct.EmitExecutable();
+        var routedImage = routed.EmitExecutable();
+        if (!directImage.SequenceEqual(routedImage))
+          failures.Add($"{label}: declined but produced a different image than the direct build");
+        if (direct.Errors.Count != routed.Errors.Count)
+          failures.Add($"{label}: direct reported {direct.Errors.Count} diagnostics, routed {routed.Errors.Count}");
+      }
+
+    Assert.That(failures, Is.Empty, "\n  " + string.Join("\n  ", failures));
+  }
+
+  /// <summary>
   /// And the corpus half needs the same guarantee: at least one corpus program must really route,
   /// otherwise a change that stops routing everything would leave this fixture green.
   /// </summary>

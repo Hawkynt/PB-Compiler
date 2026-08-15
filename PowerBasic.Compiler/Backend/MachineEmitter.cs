@@ -470,7 +470,9 @@ public sealed class MachineEmitter {
   /// </summary>
   private void EmitInlineAsm(Assembler asm, MInstr instr) {
     if (instr.Operands.Count == 0 || instr.Operands[0] is not MOperand.InlineAsmText descriptor)
-      throw new System.NotSupportedException("inline asm without its descriptor");
+      throw new BackendInvariantException("MachineEmitter.EmitInlineAsm",
+        "an MOpcode.InlineAsm instruction has no MOperand.InlineAsmText descriptor - "
+          + "InstructionSelector.SelectInlineAsm puts it at operand 0 and nothing removes it");
 
     var bound = new Dictionary<string, AsmSymbol>(StringComparer.OrdinalIgnoreCase);
     for (var i = 0; i < descriptor.Names.Count && i + 1 < instr.Operands.Count; ++i)
@@ -478,8 +480,13 @@ public sealed class MachineEmitter {
         ? AsmSymbol.OfLabel(this._labels[target.Block])
         : AsmSymbol.OfMemory(this.Mem(instr.Operands[i + 1]));
 
+    // Not a decline any more, and no longer reachable from unsupported text: SelectInlineAsm assembles
+    // the same statement through the same symbol KINDS and declines when it will not parse, so a
+    // failure here means the two resolvers disagreed about a name - which is a defect in this back end
+    // rather than a construct it does not cover.
     if (!new TextAssembler(asm).TryParse(descriptor.Text, new FrameResolver(bound, asm), out var error))
-      throw new System.NotSupportedException($"inline asm '{descriptor.Text.Trim()}': {error}");
+      throw new BackendInvariantException("MachineEmitter.EmitInlineAsm",
+        $"inline asm '{descriptor.Text.Trim()}' assembled at selection and not at emission: {error}");
   }
 
   /// <summary>
