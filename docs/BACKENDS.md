@@ -429,6 +429,63 @@ The rule now written into the lowering, in the order it has to hold:
 `IrBasicWriter` renders none of it: releasing a handle has no BASIC spelling, exactly as `rt_str_dup`
 has none, and a string variable already starts empty.
 
+**Rule 1 was stated and then broken in three places, and the first of them was a WRONG ANSWER rather
+than a leak.** All three were found the same way - by taking the subject out of a FILE instead of
+writing it down, which is what stops the comparison folding and the loop unrolling before anything is
+measured. The corpus contains all three constructs and noticed none of them.
+
+* **`SELECT CASE` over a string tested one borrowed handle in every arm - FIXED.** `LowerSelect`
+  evaluated the subject once and handed that same handle to `rt_str_compare` in each arm; the entry
+  consumes its arguments, so the second arm read a handle the first had released. It is not a random
+  wrong answer, which is what made it look like a dispatch fault: `rt_str_const` had meanwhile been
+  given the descriptor back, so the subject compared EQUAL to the very literal the second arm names.
+
+  ```basic
+  LINE INPUT #1, g$              ' "gamma"
+  SELECT CASE g$
+    CASE "alpha" : PRINT "A"
+    CASE "beta"  : PRINT "B"     ' <- routed answered this
+    CASE ELSE    : PRINT "?"     ' <- and this is right
+  END SELECT
+  ```
+
+  Two named arms are load-bearing; with one there is no later use to be wrong. Each comparison now
+  borrows its own copy and the subject's own handle is released at `sel.end`, where `EXIT SELECT`
+  also arrives. It reproduces with the optimizer OFF, which is what ruled out `SwitchFormation` and
+  the string passes before anything was read - and the IR *as lowered, before the first pass* already
+  showed the one `rt_str_dup` feeding two consumers.
+* **`MID$(s$,i,n) = v$` and `ASC(s$,i) = c` leaked the handle they replaced - FIXED.** Both read the
+  target as a borrowed COPY, hand that to the runtime and store the edited copy back, leaving the
+  handle the CELL still held released by nobody. `REPLACE` next door already called
+  `FreeReplacedString` for exactly this; the two now do the same. One block per statement, so only a
+  churning program says so: 600 edits of a 120-byte string is `OUT OF STRING SPACE` routed against a
+  direct build that finishes.
+
+`BackendStringLifetimeTests` pins all three by execution, and each case was checked to FAIL without
+the fix - the `SELECT` one in both optimizer states.
+
+**What is left is one cause at three write sites, and it is deliberately NOT fixed here: the handle a
+string ARRAY ELEMENT held is never released.** `a$(i) = v$`, `MID$(a$(i),…) = v$` and `ASC(a$(i),…) = c`
+all store over the element without freeing it, for static and dynamic arrays alike, and 600 iterations
+of any of them exhausts the heap routed where the direct emitter finishes.
+
+The repair is not the one-liner the scalar case was, and the reason is worth recording because it
+blocks the obvious version. A free is only sound once the element storage is NULL-INITIALISED (rule 2),
+and only two of the three storage kinds are: `rt_arr_alloc` zero-fills on both runtimes, and a global
+is zero in the data section, but a STATIC array is an `IrAlloca` and the C emitter renders that as a
+bare C array with no initialiser. The portable null-fill for it cannot be spelled as a byte-count
+`memset`, because `StringType.Size` is **2** - the DOS handle width, baked into the type model - while
+a C target's pointer is eight. That is not a new problem: `LowerErase` already memsets `arr.Size` bytes
+over a static string array and therefore under-clears it on a 64-bit C build today. Closing this
+properly wants a count-taking runtime zero-fill, the way `rt_arr_alloc_ptr` already takes a count
+rather than bytes, plus the matching releases in `ERASE` and in `REDIM PRESERVE` when it shrinks -
+three more sites, each of which can turn a leak into a double free.
+
+**All of it is middle-end, so `--emit-c` and `--emit-llvm` share every one.** The `SELECT` fault is a
+wrong answer there too; the leaks are invisible only because that runtime `malloc`s into a heap large
+enough never to notice, which is the same reason the C back end did not notice the original leak
+either.
+
 **3. The OPTIMIZER - the gate nobody had written down, and the one that is now blocking.** Coverage
 and behavioural equivalence say a function CAN be routed; neither says anything about what is lost by
 routing it. Making pb36 route by default - the natural next step, and the one this document used to
