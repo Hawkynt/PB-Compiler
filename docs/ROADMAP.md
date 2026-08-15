@@ -167,9 +167,23 @@ battery, it currently reaches:
 | | |
 |---|---|
 | programs reaching the IR at all | **161 / 165** — every one the FRONT end accepts; the other 4 it rejects |
-| functions selected | **262 / 262** |
-| functions routed (selected **and** allocated) | **262 / 262** |
-| whole module bodies the back end can own | **161 / 161** |
+| **functions ROUTED in production, `--optimize`** | **242 / 263** |
+| **functions ROUTED in production, `--no-optimize`** | **229 / 263** |
+| **whole module bodies the back end owns** | **156 / 161** |
+| functions the SELECTOR would take, if offered one | 262 / 262 |
+| module bodies the selector would take | 161 / 161 |
+
+The last two rows are what this table used to report as coverage, and they are not it.
+`CodeGenerator.BackendProcs` refuses a procedure on its SHAPE — a BYREF parameter, a string, QUAD,
+BYTE, FIX, EXT or record one, a non-default calling convention, error handling in the body — before
+the selector is asked, so a procedure it skips landed in neither half of the ratio and 262/262 meant
+"of the functions we attempted, how many succeeded". The routed rows come from the production code
+generator's own record of its own decision (`CodeGenerator.BackendDeclines`). Ranked, the remaining
+work is BYREF parameters (12 procedures in 12 programs, and 3 more module bodies stranded on them),
+STRING returns and parameters (3), a callee with no link symbol (2), and one procedure body the
+lowering refuses. Whole classes the corpus never exercises — QUAD, BYTE, FIX and EXT parameters and
+results, the four non-default conventions, error handling in a procedure body — are pinned one
+program each by `BackendRoutingGateTests`.
 
 **Every function the selector takes is now allocated.** The last one that was not was `DIFF56`'s module
 body — a 32-bit accumulation over a static array — and it took two independent repairs, one on each

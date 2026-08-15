@@ -1643,8 +1643,19 @@ not merely imprecise: `AddLoop:` in `LOWLEVEL` stands in front of the whole rest
 the block is its own successor, `CX` came out live at every instruction after the loop as well, and
 the first `PRINT` past it declined the function for destroying a register nothing wanted.
 
-With this the corpus is **complete**: 161/165 programs lowered, **262/262 functions selected**,
-**262/262 routed**, **161/161 module bodies owned**, and both decline histograms empty. `LOWLEVEL.BAS`
+With this the SELECTOR's reach over the corpus is complete: 161/165 programs lowered, **262/262
+functions selected**, **262/262 allocated**, **161/161 module bodies**, and both decline histograms
+empty.
+
+**That is not the same as coverage, and this paragraph used to say it was.** Those counts are taken
+over every function the lowering produced; the production routing refuses a procedure on its SHAPE
+before the selector is ever asked — a BYREF, string, QUAD, BYTE, FIX, EXT or record parameter, a
+non-default calling convention, error handling in the body — and a procedure it skips was in neither
+half of the ratio. Measured through the code generator itself, the corpus routes **242 of 263
+functions** with the optimizer on, **229 of 263** with it off, and **156 of 161 module bodies**
+(docs/BACKENDS.md, "1. Coverage"). The selector figures are still worth having: they say the selector
+refuses nothing the filter offers it, which is what makes the filter the frontier rather than a
+symptom. `LOWLEVEL.BAS`
 prints 5 through the routed path and matches its golden output line for line
 (`BackendInlineAsmTests.InlineAsm_GivenLowLevelBas_…`), and the test that used to record the defect now
 asserts the two paths agree for the better reason — the routed side really compiles the body.
