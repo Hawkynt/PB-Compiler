@@ -1,5 +1,6 @@
 using System.Text;
 using PowerBasic.Compiler.Backend;
+using PowerBasic.Compiler.CodeGen;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
@@ -9,14 +10,35 @@ namespace PowerBasic.Compiler.Tests.Backend;
 
 /// <summary>
 /// How much of the real corpus the in-house x86-16 back end can actually compile, and - for
-/// everything it cannot - which IR construct stopped it.
+/// everything it cannot - what stopped it.
 ///
 /// The back end is the retargetable path's fidelity proof (docs/X86-BACKEND.md): every function it
 /// selects is register-allocated and scheduled from SSA rather than emitted AX-serially by the
 /// direct codegen. Widening it is only worth doing in the order the corpus actually demands, so this
 /// fixture is the measurement that ranks the next increment - it prints a histogram of decline
-/// reasons over the DOS battery and pins the count that currently selects, so a regression in
+/// reasons over the DOS battery and pins the count that currently routes, so a regression in
 /// coverage fails rather than passing quietly.
+///
+/// <para>
+/// <b>The headline is what the PRODUCTION routing did, not what the selector would have done.</b>
+/// This fixture used to report 262/262 functions selected and 161/161 module bodies owned, and that
+/// pair was quoted as evidence that coverage was complete. It was not: it measured the SELECTOR over
+/// every function the lowering produced, while <see cref="CodeGenerator.BackendProcs"/> refuses a
+/// procedure on its SHAPE - a BYREF or string or QUAD or BYTE parameter, a non-default calling
+/// convention, error handling in the body - before the selector is asked at all. A procedure the
+/// filter skips appeared in neither the numerator nor the denominator, so the ratio measured "of the
+/// functions we attempted, how many succeeded", which is nearly a tautology. Today that costs
+/// nothing, because a skipped procedure falls back to the direct emitter; after <c>CodeGen/</c> is
+/// retired there is no fallback and each one is a compile failure. So the routed figure is now taken
+/// from <see cref="CodeGenerator.BackendDeclines"/>, which is the routing's own record of its own
+/// decision, and the selector figure is kept BESIDE it rather than in front of it.
+/// </para>
+///
+/// <para>
+/// The three outcomes are kept apart on purpose, because collapsing them is how a coverage number
+/// starts lying - and there is a fourth: the back end can THROW, producing no executable at all.
+/// A throw is neither a success nor a clean decline, so it gets its own list and its own assertion.
+/// </para>
 /// </summary>
 [TestFixture]
 public sealed class BackendCoverageTests {
@@ -28,13 +50,24 @@ public sealed class BackendCoverageTests {
     Dictionary<string, int> Declines, List<string> SelectionCases, List<string> ProgramsLowered,
     int ProgramsTotal, int ProgramsRejectedByFrontEnd, Dictionary<string, int> LoweringDeclines,
     Dictionary<string, int> ProcedureDeclines, Dictionary<string, int> AllocationDeclines,
-    List<string> AllocationCases);
+    List<string> AllocationCases,
+    // the production half: what CodeGenerator.BackendProcs/BackendMain really took, and why not
+    int Bodies, int Routed, int RoutedNoOptimize, List<string> MainBodiesNotRouted,
+    Dictionary<string, int> RoutingDeclines, Dictionary<string, HashSet<string>> RoutingDeclinePrograms,
+    List<string> RoutingDeclineCases, List<string> NotRoutedNames, List<string> ProcedureBodiesNotLowered,
+    List<string> ThrewPrograms, int ExternalDeclarations);
 
   /// <summary>
-  /// Runs the back end's own pipeline over every battery program and tallies what selects.
-  /// This mirrors <c>CodeGenerator.BackendProcs</c> exactly - lower, optimize, recover the integer
-  /// form of PB's float-shaped integer arithmetic, optimize again - so the numbers describe the
-  /// production routing rather than a laboratory setup.
+  /// Runs the back end over every battery program, twice over: once through the selector alone (what
+  /// the selector's reach is, over every function the lowering produced) and once through the WHOLE
+  /// production code generator with routing enabled (what the back end actually took, and why not).
+  ///
+  /// <para>
+  /// The second half is not a mirror of <c>CodeGenerator.BackendProcs</c> - it IS
+  /// <c>CodeGenerator.BackendProcs</c>, read back through <see cref="CodeGenerator.BackendDeclines"/>.
+  /// A census that re-derives the routing rule measures the rule it re-derived; this one cannot drift
+  /// from production because it has nothing of its own to drift.
+  /// </para>
   /// </summary>
   private static Census Measure() {
     var declines = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -49,10 +82,21 @@ public sealed class BackendCoverageTests {
     int functions = 0, selected = 0, allocated = 0, total = 0, rejected = 0;
     var mainBodies = new List<string>();
     var lowered = new List<string>();
+    // the production half
+    int bodies = 0, routed = 0, routedNoOptimize = 0, externalDeclarations = 0;
+    var mainBodiesNotRouted = new List<string>();
+    var routingDeclines = new Dictionary<string, int>(StringComparer.Ordinal);
+    var routingDeclinePrograms = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+    var routingDeclineCases = new List<string>();
+    var notRoutedNames = new List<string>();
+    var proceduresNotLowered = new List<string>();
+    var threw = new List<string>();
     var dir = Path.Combine(_repoRoot, "tests");
     if (!Directory.Exists(dir))
       return new(0, 0, 0, mainBodies, declines, selectionCases, lowered, 0, 0, loweringDeclines,
-        procedureDeclines, allocationDeclines, allocationCases);
+        procedureDeclines, allocationDeclines, allocationCases, 0, 0, 0, mainBodiesNotRouted,
+        routingDeclines, routingDeclinePrograms, routingDeclineCases, notRoutedNames,
+        proceduresNotLowered, threw, 0);
 
     // the whole corpus: the golden battery plus tests/diff, the 100+ differential programs
     foreach (var file in Directory.EnumerateFiles(dir, "*.BAS", SearchOption.AllDirectories)
@@ -87,6 +131,59 @@ public sealed class BackendCoverageTests {
         continue;
       }
       lowered.Add(name);
+
+      // ---- the production half: what the whole code generator really routed, and why not ----
+      //
+      // The denominator is the SOURCE, not the IR: every procedure that has a body plus this
+      // program's module body. It differs from the IR function count by exactly the procedures whose
+      // body the lowering refused - IrLowering leaves those a declaration, so they disappear from
+      // the IR entirely and a census over IR functions counts them in neither half. A procedure that
+      // stops existing must not raise a coverage ratio.
+      bodies += model.ProcedureList.Count(p => !p.IsExternal && p.Body is not null) + 1;
+      externalDeclarations += model.ProcedureList.Count(p => p.IsExternal || p.Body is null);
+      foreach (var (procName, procWhy) in module.ProcedureLoweringDeclines)
+        proceduresNotLowered.Add($"{Path.GetRelativePath(dir, file).Replace('\\', '/')}::{procName}: {procWhy}");
+
+      List<string> routedNames;
+      List<(string Name, string Reason)> routingDeclineList;
+      try {
+        var generator = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = true };
+        generator.EmitExecutable();
+        routedNames = generator.BackendRoutedNames.ToList();
+        routingDeclineList = generator.BackendDeclines.ToList();
+      } catch (Exception e) {
+        // The fourth outcome. A throw is no executable at all, so it is neither a routed function
+        // nor a clean decline, and counting it as either would flatter one column or the other.
+        threw.Add($"{Path.GetRelativePath(dir, file).Replace('\\', '/')}: {e.GetType().Name}: {e.Message}");
+        continue;
+      }
+      routed += routedNames.Count;
+      if (!routedNames.Contains("main", StringComparer.OrdinalIgnoreCase))
+        mainBodiesNotRouted.Add(name);
+      foreach (var (declinedName, declinedBecause) in routingDeclineList) {
+        if (routedNames.Contains(declinedName, StringComparer.OrdinalIgnoreCase))
+          continue;                                 // the fixpoint records a removal it later re-takes
+        var key = Summarize(declinedBecause);
+        routingDeclines[key] = routingDeclines.GetValueOrDefault(key) + 1;
+        (routingDeclinePrograms.TryGetValue(key, out var programs)
+          ? programs
+          : routingDeclinePrograms[key] = new(StringComparer.Ordinal)).Add(name);
+        routingDeclineCases.Add($"{Path.GetRelativePath(dir, file).Replace('\\', '/')}::{declinedName}: {declinedBecause}");
+        notRoutedNames.Add(declinedName);
+      }
+
+      // ...and the same question with the optimizer OFF, which is the harder and more honest one.
+      // The inliner absorbs a filtered callee into its caller, so an optimized main routes where an
+      // unoptimized one is stranded by the very call the filter refused - the flip has to survive
+      // BOTH, and the gap between the two figures is exactly how much of the routed number is on
+      // loan from the inliner.
+      try {
+        var unoptimized = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = true };
+        unoptimized.EmitExecutable();
+        routedNoOptimize += unoptimized.BackendRoutedNames.Count();
+      } catch (Exception e) {
+        threw.Add($"{Path.GetRelativePath(dir, file).Replace('\\', '/')} (--no-optimize): {e.GetType().Name}: {e.Message}");
+      }
 
       try {
         IrPassManager.Standard().RunOnModule(module);
@@ -129,7 +226,9 @@ public sealed class BackendCoverageTests {
     }
 
     return new(functions, selected, allocated, mainBodies, declines, selectionCases, lowered, total,
-      rejected, loweringDeclines, procedureDeclines, allocationDeclines, allocationCases);
+      rejected, loweringDeclines, procedureDeclines, allocationDeclines, allocationCases,
+      bodies, routed, routedNoOptimize, mainBodiesNotRouted, routingDeclines, routingDeclinePrograms,
+      routingDeclineCases, notRoutedNames, proceduresNotLowered, threw, externalDeclarations);
   }
 
   /// <summary>Collapses a decline message to its cause, so names/labels do not fragment the histogram.</summary>
@@ -175,9 +274,36 @@ public sealed class BackendCoverageTests {
       // end could ever be asked for: one the FRONT end rejects never reaches a lowering to decline.
       // Reported separately so the gap that is actually the back end's to close is legible.
       .AppendLine($"                     ({census.ProgramsRejectedByFrontEnd} of the rest are rejected by the front end and never reach the IR)")
+      // THE HEADLINE. What the production code generator routed, over what it would have to route
+      // once the direct emitter is gone: every procedure that has a body, plus one module body per
+      // program. Everything below this line is diagnosis of the gap.
+      .AppendLine($"functions ROUTED   : {census.Routed}/{census.Bodies} (production, --optimize; "
+                  + $"{census.RoutedNoOptimize}/{census.Bodies} with --no-optimize)")
+      .AppendLine($"module bodies OWNED: {census.ProgramsLowered.Count - census.MainBodiesNotRouted.Count}/{census.ProgramsLowered.Count} (production)")
+      .AppendLine($"                     ({census.ExternalDeclarations} EXTERNAL declarations have no body and are nobody's coverage)")
+      .AppendLine($"                     ({census.ThrewPrograms.Count} programs threw out of the back end - neither routed nor declined)")
+      .AppendLine("routing declines - what the PRODUCTION routing refused, by its own reason:")
+      .AppendLine("  (filter:    never offered to the selector - a shape the routed ABI cannot express)")
+      .AppendLine("  (lowering:  the procedure body never reached the IR)")
+      .AppendLine("  (selection: offered and refused by the instruction selector)")
+      .AppendLine("  (allocation: selected, but no register assignment exists)")
+      .AppendLine("  (routing:   stranded by a callee or an unaddressable symbol)");
+    foreach (var (reason, count) in census.RoutingDeclines.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal))
+      report.AppendLine($"  {count,5} in {census.RoutingDeclinePrograms[reason].Count,3} programs  {reason}");
+    foreach (var routingCase in census.RoutingDeclineCases)
+      report.AppendLine($"         {routingCase}");
+    foreach (var thrown in census.ThrewPrograms)
+      report.AppendLine($"  THREW  {thrown}");
+    foreach (var notLowered in census.ProcedureBodiesNotLowered)
+      report.AppendLine($"  BODY DID NOT LOWER  {notLowered}");
+
+    report
+      .AppendLine("--- the SELECTOR's own reach, over every function the lowering produced ---")
+      .AppendLine("    (this is the pair that used to be the headline; it says nothing about the")
+      .AppendLine("     procedures the filter never offers, which is why it can read 262/262)")
       .AppendLine($"functions selected : {census.Selected}/{census.Functions}")
-      .AppendLine($"functions routed   : {census.Allocated}/{census.Functions} (selected AND allocated)")
-      .AppendLine($"module bodies      : {census.MainBodies.Count}/{census.ProgramsLowered.Count} whole programs the back end can own")
+      .AppendLine($"functions allocated: {census.Allocated}/{census.Functions} (selected AND allocated)")
+      .AppendLine($"module bodies      : {census.MainBodies.Count}/{census.ProgramsLowered.Count} whole programs the selector can own")
       .AppendLine("lowering declines - what keeps a program off the IR path entirely:");
     foreach (var (reason, count) in census.LoweringDeclines.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal).Take(12))
       report.AppendLine($"  {count,5}  {reason}");
@@ -195,6 +321,51 @@ public sealed class BackendCoverageTests {
     foreach (var allocationCase in census.AllocationCases)
       report.AppendLine($"         {allocationCase}");
     TestContext.Out.Write(report.ToString());
+
+    // ---- the honest headline, and the assertions that keep it honest ----
+    //
+    // 242 of 263, not 262 of 262. The difference is not a regression and nothing got worse: it is
+    // what the number always was once the procedures the filter skips are counted as the declines
+    // they are. Ranked by how many procedures each class costs, over the corpus:
+    //
+    //   12  BYREF parameter (7 INTEGER, 3 SINGLE, 2 LONG)   filtered - never offered
+    //    3  a caller stranded by one of the above            routing  - a consequence, not a cause
+    //    2  STRING return type                              filtered
+    //    2  a callee with no link symbol                     routing
+    //    1  STRING parameter                                filtered
+    //    1  a procedure body the lowering refused            lowering - invisible before this census
+    //
+    // With --no-optimize the stranded-caller row goes from 3 to 13, because the inliner is what
+    // absorbs a filtered callee and lets its caller route anyway. That difference is the measure of
+    // how much of the optimized figure is on loan.
+    //
+    // Classes the corpus does NOT exercise are real all the same, and BackendRoutingGateTests holds
+    // one program each: QUAD and BYTE parameters and returns, UDT/FIX/EXT parameters, a
+    // CDECL/STDCALL/FASTCALL/WATCALL convention, and error handling inside a procedure body.
+    //
+    // A floor, so a widening may only raise it. Lowering it means the back end took less than it did.
+    Assert.That(census.Routed, Is.GreaterThanOrEqualTo(242),
+      $"the x86-16 back end now ROUTES fewer corpus functions than it used to ({census.Routed}/{census.Bodies}):\n" + report);
+    Assert.That(census.RoutedNoOptimize, Is.GreaterThanOrEqualTo(229),
+      "the x86-16 back end routes fewer corpus functions with --no-optimize than it used to:\n" + report);
+
+    // Pinned by name for the reason every other set here is: a count cannot tell "a program stopped
+    // routing" from "a program was added and never did".
+    Assert.That(census.MainBodiesNotRouted, Is.EquivalentTo(_mainBodiesNotRouted),
+      "the set of module bodies the PRODUCTION routing does not take has changed:\nactual: " +
+      string.Join(", ", census.MainBodiesNotRouted) + "\n" + report);
+
+    // A procedure whose body the lowering refuses is left a declaration, so it vanishes from the IR
+    // and every selector census stops counting it. Pinned so that vanishing can never again read as
+    // one fewer function to cover.
+    Assert.That(census.ProcedureBodiesNotLowered, Is.EquivalentTo(_procedureBodiesNotLowered),
+      "the set of procedure bodies the IR lowering refuses has changed:\nactual: " +
+      string.Join(", ", census.ProcedureBodiesNotLowered) + "\n" + report);
+
+    // The fourth outcome. A program that throws out of the back end produces no executable, so it is
+    // neither routed nor declined; if one appears it must be visible rather than averaged away.
+    Assert.That(census.ThrewPrograms, Is.Empty,
+      "a corpus program throws out of the x86-16 back end - that is neither coverage nor a decline:\n" + report);
 
     // A floor, not an exact count: widening the selector may only raise it, and a change that lowers
     // it has taken coverage away from the retargetable path - the thing this back end exists to grow.
@@ -318,6 +489,28 @@ public sealed class BackendCoverageTests {
   /// bodies below are: a count cannot tell a program that STOPPED lowering from one that was added
   /// and never did, and both move it by one.
   /// </summary>
+  /// <summary>
+  /// Every corpus module body the PRODUCTION routing does not take, with the reason. All five are
+  /// consequences rather than causes: four are stranded by a callee the filter refused, and the
+  /// fifth by a procedure body the lowering refused. Fix the cause and the body follows.
+  /// </summary>
+  private static readonly string[] _mainBodiesNotRouted = [
+    "DIFF12.BAS",     // calls Bump, a SUB with a BYREF INTEGER parameter
+    "DIFF14.BAS",     // calls Noisy, likewise
+    "DIFF19.BAS",     // calls Recurse, likewise
+    "LINKDEMO.BAS",   // calls AddInts/Bump/Greet, which are EXTERNAL and have no body here
+    "CODEGEN.BAS",    // calls SwapIsInline, whose body the lowering refused
+  ];
+
+  /// <summary>
+  /// Every procedure that HAS a body and whose body the IR lowering refused. Such a procedure is
+  /// left a declaration, so it leaves the IR entirely: it is in no selection histogram, no
+  /// allocation histogram, and neither half of a ratio taken over IR functions.
+  /// </summary>
+  private static readonly string[] _procedureBodiesNotLowered = [
+    "optimize/CODEGEN.BAS::SwapIsInline: unsupported lvalue",
+  ];
+
   private static readonly string[] _loweredToIr = [
     "ARRAY.BAS",
     "ARITH.BAS",

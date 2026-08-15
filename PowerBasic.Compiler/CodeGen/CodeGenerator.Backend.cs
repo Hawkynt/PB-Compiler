@@ -27,11 +27,87 @@ public sealed partial class CodeGenerator {
   /// <summary>The module body compiled by the x86-16 back end, when the whole of it selects and allocates.</summary>
   private (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)? _backendMain;
 
+  // every procedure (and the module body) the routing considered and did not take, with the reason
+  // the routing itself gave. Filled by BackendProcs/BackendMain as they decide; see BackendDeclines.
+  private readonly List<(string Name, string Reason)> _backendDeclines = [];
+
   private bool _backendMainKnown;
 
   // the IR module the routed functions came from - a back-end reference to a string literal names the
   // IR's global (".str0"), and the bytes behind it are what map it onto this codegen's literal pool
   private IrModule? _backendModule;
+
+  /// <summary>
+  /// How a type reads in a decline message. The census ranks the remaining work by these names, so
+  /// they are the SOURCE spellings rather than the class names of the type model.
+  /// </summary>
+  private static string DescribeType(PbType type) => type switch {
+    ScalarType s => s.Kind.ToString().ToUpperInvariant(),
+    StringType => "STRING",
+    FixedStringType => "STRING * n",
+    AsciizType => "ASCIIZ * n",
+    FlexType => "FLEX",
+    BcdType b => b.IsFixedPoint ? "FIX" : "BCD",
+    WideIntType w => $"INT{w.ByteSize * 8}",
+    PointerType => "pointer",
+    ProcPtrType => "delegate",
+    UdtType u => u.IsUnion ? "UNION" : "TYPE",
+    ArrayType => "array",
+    MbfType => "MBF float",
+    AnyType => "ANY",
+    _ => type.GetType().Name,
+  };
+
+  /// <summary>
+  /// Why <paramref name="proc"/> may not be OFFERED to the x86-16 back end - the SHAPE test that runs
+  /// before the lowering's verdict is consulted at all - or null when it is eligible.
+  ///
+  /// <para>
+  /// This is a named function rather than the chain of <c>continue</c>s it used to be inside
+  /// <see cref="BackendProcs"/>, because the coverage census has to be able to ASK it. A procedure
+  /// this filter rejects reaches neither selection nor allocation, so it appears in neither of their
+  /// histograms - and a census built on those alone counts it as neither a success nor a decline.
+  /// That is how a coverage number reaches 262/262 while whole constructs (a QUAD parameter, a BYTE
+  /// one, a string one) silently fall back to the direct emitter. After <c>CodeGen/</c> is retired
+  /// there is no fallback, so every reason below is a compile failure in waiting; the census counts
+  /// them as declines for exactly that reason.
+  /// </para>
+  /// </summary>
+  public static string? BackendFilterReason(ProcedureSymbol proc) {
+    if (proc.IsExternal || proc.Body is null)
+      return "filter: external declaration - there is no body here to route";
+    // Error handling in a PROCEDURE, unlike in the module body: the direct path saves and restores
+    // the caller's handler triple around such a body, and the routed prologue/epilogue has no
+    // equivalent bookkeeping yet.
+    if (ContainsErrorHandling(proc.Body))
+      return "filter: error handling in a procedure body (ON ERROR / RESUME / TRY)";
+    // The back end emits ONE ABI - left-to-right stack arguments, callee-cleans - so a procedure
+    // declared WATCALL/FASTCALL/CDECL/STDCALL is not routable, and silently was. Its frame is laid
+    // out for the declared convention while the routed prologue/epilogue implement the default one:
+    // a register convention's parameters end up at negative offsets nothing fills, CDECL/STDCALL's
+    // reversed push order swaps them, and CDECL's args get popped by both sides. See
+    // IsBackendAbiConvention.
+    if (!IsBackendAbiConvention(proc))
+      return $"filter: calling convention outside the routed ABI ({proc.CallConv})";
+    if (proc.IsFunction && proc.ReturnType is { } returnType && !IsBackendAbiType(returnType))
+      return $"filter: return type outside the routed ABI ({DescribeType(returnType)})";
+    foreach (var parameter in proc.Parameters) {
+      if (!parameter.ByVal)
+        return $"filter: BYREF parameter ({DescribeType(parameter.Type)})";
+      if (!IsBackendAbiType(parameter.Type))
+        return $"filter: parameter type outside the routed ABI ({DescribeType(parameter.Type)})";
+    }
+    return null;
+  }
+
+  /// <summary>
+  /// The value shapes the routed calling sequence can pass and return: a 16- or 32-bit integer (AX or
+  /// DX:AX) and a SINGLE or DOUBLE (ST(0)). Everything else - QUAD and BYTE among the scalars,
+  /// strings, FIX/BCD, records, arrays - has no routed convention yet.
+  /// </summary>
+  private static bool IsBackendAbiType(PbType type)
+    => type is ScalarType { IsFloat: false, ByteSize: 2 or 4 }
+            or ScalarType { IsFloat: true, ByteSize: 4 or 8 };
 
   /// <summary>
   /// The functions the x86-16 back end will compile in place of the direct codegen (docs/X86-BACKEND.md).
@@ -140,27 +216,32 @@ public sealed partial class CodeGenerator {
       // a scalar is one slot and is written before it is read - and the whole corpus now agrees.
       // Strings still stay out: they are runtime handles with ownership rules the back end does not
       // model, and the selector declines them on their own.
-      if (proc.IsExternal || proc.Body is null || ContainsErrorHandling(proc.Body))
+      //
+      // Every one of these rejections is RECORDED rather than merely skipped. A skipped procedure
+      // falls back to the direct emitter today and will be a compile failure once CodeGen/ is gone,
+      // so it belongs in the same census as a selection decline - see BackendFilterReason.
+      if (BackendFilterReason(proc) is { } filtered) {
+        this._backendDeclines.Add((proc.Name, filtered));
         continue;
-      // The back end emits ONE ABI - left-to-right stack arguments, callee-cleans - so a procedure
-      // declared WATCALL/FASTCALL/CDECL/STDCALL is not routable, and silently was. Its frame is laid
-      // out for the declared convention while the routed prologue/epilogue implement the default one:
-      // a register convention's parameters end up at negative offsets nothing fills, CDECL/STDCALL's
-      // reversed push order swaps them, and CDECL's args get popped by both sides. See
-      // IsBackendAbiConvention.
-      if (!IsBackendAbiConvention(proc))
+      }
+      if (!byName.TryGetValue(proc.Name, out var irFn)) {
+        this._backendDeclines.Add((proc.Name, module.ProcedureLoweringDeclines.TryGetValue(proc.Name, out var loweringWhy)
+          ? "lowering: " + loweringWhy
+          : "lowering: the IR module has no defined function of this name"));
         continue;
-      if (proc.IsFunction && proc.ReturnType is not ScalarType { IsFloat: false, ByteSize: 2 or 4 }
-                          and not ScalarType { IsFloat: true, ByteSize: 4 or 8 })
+      }
+      if (!this.ExternalCalleesResolve(irFn)) {
+        this._backendDeclines.Add((proc.Name, "routing: a callee has no link symbol - it is EXTERNAL, or its own body did not lower"));
         continue;
-      if (!proc.Parameters.All(p => p.ByVal && p.Type is
-            ScalarType { IsFloat: false, ByteSize: 2 or 4 }
-            or ScalarType { IsFloat: true, ByteSize: 4 or 8 }))
+      }
+      if (!this.DataGlobalsResolve(irFn)) {
+        this._backendDeclines.Add((proc.Name, "routing: a directly emitted procedure reads the DATA pool too"));
         continue;
-      if (!byName.TryGetValue(proc.Name, out var irFn) || !this.ExternalCalleesResolve(irFn)
-          || !this.DataGlobalsResolve(irFn)
-          || InstructionSelector.TrySelect(irFn, this.SelectionTarget) is not { } mfn)
+      }
+      if (InstructionSelector.TrySelect(irFn, out var declineReason, this.SelectionTarget) is not { } mfn) {
+        this._backendDeclines.Add((proc.Name, "selection: " + (declineReason ?? "unknown")));
         continue;
+      }
       candidates.Add((proc, irFn, mfn));
     }
 
@@ -174,8 +255,9 @@ public sealed partial class CodeGenerator {
     for (var changed = true; changed;) {
       changed = false;
       for (var i = candidates.Count - 1; i >= 0; --i) {
-        if (CalleeNames(candidates[i].Fn).All(routable.Contains))
+        if (CalleeNames(candidates[i].Fn).FirstOrDefault(n => !routable.Contains(n)) is not { } stranded)
           continue;
+        this._backendDeclines.Add((candidates[i].Proc.Name, $"routing: calls '{stranded}', which is not routed"));
         routable.Remove(candidates[i].Proc.Name);
         candidates.RemoveAt(i);
         changed = true;
@@ -184,8 +266,10 @@ public sealed partial class CodeGenerator {
 
     foreach (var (proc, _, mfn) in candidates) {
       MachineScheduler.Schedule(mfn);             // schedule first, then allocate the final order
-      if (LinearScanAllocator.Allocate(mfn, this.SelectionTarget) is not { } alloc)
+      if (LinearScanAllocator.Allocate(mfn, this.SelectionTarget, out var noRegisters) is not { } alloc) {
+        this._backendDeclines.Add((proc.Name, "allocation: " + (noRegisters ?? "unknown")));
         continue;                                 // a value live across a CALL has no register - decline
+      }
       this._backendProcs[proc] = (mfn, alloc);
     }
 
@@ -194,7 +278,8 @@ public sealed partial class CodeGenerator {
       changed = false;
       foreach (var (proc, fn, _) in candidates)
         if (this._backendProcs.ContainsKey(proc)
-            && !CalleeNames(fn).All(n => this._backendProcs.Keys.Any(p => p.Name.Equals(n, System.StringComparison.OrdinalIgnoreCase)))) {
+            && CalleeNames(fn).FirstOrDefault(n => !this._backendProcs.Keys.Any(p => p.Name.Equals(n, System.StringComparison.OrdinalIgnoreCase))) is { } stranded) {
+          this._backendDeclines.Add((proc.Name, $"routing: calls '{stranded}', which is not routed"));
           this._backendProcs.Remove(proc);
           changed = true;
         }
@@ -226,21 +311,61 @@ public sealed partial class CodeGenerator {
     // capture its own), and a handler is named by its block's offset. A PROCEDURE that arms one is
     // still excluded - the direct path additionally saves and restores the caller's handler triple
     // around such a body, and that bookkeeping has no equivalent here yet.
-    if (!this.UseExperimentalBackend || this._isUnit || this._allowExternalCalls
-        || this._backendModule is null
-        || model.MainBody.Any(s => s is Syntax.Ast.ChainStmt))
+    if (!this.UseExperimentalBackend)
       return null;
+    // The module body's own filter, recorded for the same reason a procedure's is: 161/161 owned
+    // bodies is a claim about the bodies the routing ATTEMPTED, and a main that calls an unrouted
+    // procedure inherits every blind spot the procedure filter has.
+    if (this._isUnit)
+      return this.DeclineMain("filter: a $COMPILE UNIT has no module body to own");
+    if (this._allowExternalCalls)
+      return this.DeclineMain("filter: external calls are enabled, so a callee may be imported");
+    if (this._backendModule is null)
+      return this.DeclineMain("lowering: the module did not lower to IR");
+    if (model.MainBody.Any(s => s is Syntax.Ast.ChainStmt))
+      return this.DeclineMain("filter: CHAIN is emitted around the body by the direct path");
     if (this._backendModule.FindFunction("main") is not { IsDeclaration: false } main)
-      return null;
-    if (!CalleeNames(main).All(n => routed.Keys.Any(p => p.Name.Equals(n, System.StringComparison.OrdinalIgnoreCase))))
-      return null;
-    if (!this.ExternalCalleesResolve(main) || !this.DataGlobalsResolve(main)
-        || InstructionSelector.TrySelect(main, this.SelectionTarget) is not { } machine)
-      return null;
+      return this.DeclineMain("lowering: the IR module has no main");
+    if (CalleeNames(main).FirstOrDefault(n => !routed.Keys.Any(p => p.Name.Equals(n, System.StringComparison.OrdinalIgnoreCase))) is { } stranded)
+      return this.DeclineMain($"routing: calls '{stranded}', which is not routed");
+    if (!this.ExternalCalleesResolve(main))
+      return this.DeclineMain("routing: a callee has no link symbol - it is EXTERNAL, or its own body did not lower");
+    if (!this.DataGlobalsResolve(main))
+      return this.DeclineMain("routing: a directly emitted procedure reads the DATA pool too");
+    if (InstructionSelector.TrySelect(main, out var declineReason, this.SelectionTarget) is not { } machine)
+      return this.DeclineMain("selection: " + (declineReason ?? "unknown"));
     MachineScheduler.Schedule(machine);
-    if (LinearScanAllocator.Allocate(machine, this.SelectionTarget) is not { } alloc)
-      return null;
+    if (LinearScanAllocator.Allocate(machine, this.SelectionTarget, out var noRegisters) is not { } alloc)
+      return this.DeclineMain("allocation: " + (noRegisters ?? "unknown"));
     return this._backendMain = (machine, alloc);
+  }
+
+  /// <summary>Records why the module body was not routed and answers "not routed", in one expression.</summary>
+  private (MFunction, IReadOnlyDictionary<int, Reg>)? DeclineMain(string reason) {
+    this._backendDeclines.Add(("main", reason));
+    return null;
+  }
+
+  /// <summary>
+  /// Every procedure the IR lowering produced that the back end did NOT route, with the reason the
+  /// routing itself gave - "filter: ..." for a shape never offered to the selector, "selection: ..."
+  /// for one the selector refused, "allocation: ..." for one that selected without allocating, and
+  /// "routing: ..." for one stranded by a callee or an unaddressable symbol. The module body appears
+  /// as <c>main</c>.
+  ///
+  /// <para>
+  /// This exists so a coverage census can be a report of the PRODUCTION decision instead of a second
+  /// implementation of it. A census that re-derives the routing rule measures the rule it re-derived,
+  /// which is how "262/262 functions selected" came to be quoted for a back end that never attempted
+  /// a QUAD, a BYTE or a string parameter at all.
+  /// </para>
+  /// </summary>
+  public IReadOnlyList<(string Name, string Reason)> BackendDeclines {
+    get {
+      _ = this.BackendProcs();
+      _ = this.BackendMain();
+      return this._backendDeclines;
+    }
   }
 
   /// <summary>Emits the module body from the back end, ending in the implicit END the direct path also emits.</summary>

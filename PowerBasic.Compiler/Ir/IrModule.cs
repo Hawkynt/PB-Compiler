@@ -30,6 +30,20 @@ public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialec
   public IReadOnlyList<IrFunction> Functions => this._functions;
   public IReadOnlyList<IrGlobalVariable> Globals => this._globals;
 
+  private readonly Dictionary<string, string> _procedureLoweringDeclines = new(StringComparer.OrdinalIgnoreCase);
+
+  /// <summary>
+  /// The procedures that HAVE a body in the source and whose body the lowering refused, by name, with
+  /// the reason. Such a procedure is left as a declaration - callers can still call it - so it
+  /// vanishes from <see cref="Functions"/>'s defined half and appears in no selection or allocation
+  /// census. Recording it is what stops a per-procedure lowering failure from reading as one fewer
+  /// function to cover rather than as one function not covered.
+  /// </summary>
+  public IReadOnlyDictionary<string, string> ProcedureLoweringDeclines => this._procedureLoweringDeclines;
+
+  internal void RecordProcedureLoweringDecline(string name, string reason)
+    => this._procedureLoweringDeclines[name] = reason;
+
   public IrFunction AddFunction(IrFunction function) {
     this._functions.Add(function);
     return function;
