@@ -863,6 +863,56 @@ than thrown (a runaway loop otherwise reports as "the interpreter cannot run thi
 defect wearing an excuse), and `BackendTruthValueTests.Select_GivenBooleanNotSpelledAsXorWithTrue`
 pins the operand itself. All four fail on an unfixed tree.
 
+### Two things the routed path gets RIGHT and the direct emitter does not
+
+Both were found by the same differential sweep and both are recorded here rather than fixed: the
+repair belongs to `CodeGen/`, and in one case it moves emitted bytes on the fidelity path.
+
+* **A recursive call whose result is combined with a value computed BEFORE it miscompiles from about
+  eight levels down, with the optimizer off.** PB promotes integral `+` to floating point, and with
+  `--no-optimize` `IntegerRecovery` does not run - so `Down& = n% + Down&(n% - 1)` leaves the LEFT
+  operand on the **x87 register stack across the CALL**:
+
+  ```
+  mov ax,[bp+4] ; mov ds:scratch,ax ; fild word [scratch]   <-- n% lives in ST(0) ...
+  ...                                                        ... across ...
+  call Down                                                  <-- ... this, which does it again
+  fild dword [scratch] ; faddp st(1),st
+  ```
+
+  The x87 stack is eight deep, so the recursion exhausts it. Genuine PBC 3.50 answers `28` and `45`
+  for `sum(1..7)` and `sum(1..9)`; our direct build answers `22` and `23`, and the routed build
+  answers `28` and `45`. `$STACK 16384` does not change it, which is what rules out the 8086 stack.
+  The same program with the optimizer **on** is correct on both paths, and writing the call through a
+  `LOCAL` temp first (`t& = Down&(n% - 1) : Down& = n% + t&`) is correct either way - so the shape is
+  exactly "an x87 intermediate live across a call".
+
+* **`RETURN <label>` is refused by the direct emitter and implemented by the routed one.**
+  `CodeGenerator` handles only `ReturnStmt { Target: null }`; anything else reports
+  `not yet generated: ReturnStmt`. Genuine PBC 3.50 compiles it and runs it, and the routed path
+  agrees with the oracle statement for statement. So under `PBC_X_BACKEND=1` a program compiles that
+  is otherwise rejected - the mirror image of the calling-convention diagnostic `708205f` closed, and
+  benign in the same way a missing feature is benign, but it is a difference in what the compiler
+  ACCEPTS and belongs on the retirement checklist rather than in a decline table.
+
+### One divergence with no answer: a `$ERROR` metastatement INSIDE a procedure body
+
+```basic
+$ERROR OVERFLOW ON
+SUB Unchecked(BYVAL x%) : $ERROR OVERFLOW OFF : PRINT x% * 2 : END SUB
+SUB Checked(BYVAL x%)   :                       PRINT x% * 2 : END SUB
+```
+
+The direct emitter's three flags are one positional field, so the `OFF` inside `Unchecked` leaks into
+`Checked` and neither traps. `IrLowering.ArmedForProcedures` folds only the **module-level**
+directives, so `Checked` is armed and the routed build stops there. Genuine PBC 3.50 settles nothing:
+it **rejects** the program (`Error 506: Declaration must precede statements`), so the construct is an
+extension of ours and neither reading is the faithful one. Recorded rather than changed - the routed
+reading (a directive inside a body is scoped to that body) is the more defensible of the two, and
+making the direct emitter agree would move bytes on the fidelity path for a construct the oracle does
+not accept. The ordinary shape - every `$ERROR` at module level, in any position relative to the
+procedure definitions - agrees on both paths.
+
 ### What the peephole row actually was
 
 Nine of the nineteen were what the row said, and they are closed. The other ten were three quite
