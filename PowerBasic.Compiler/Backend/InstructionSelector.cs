@@ -647,6 +647,11 @@ public sealed partial class InstructionSelector {
     if (!this.TryOperand(bin.Lhs, out var lhs) || !this.TryOperand(bin.Rhs, out var rhs))
       return false;
     this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, lhs], MovEffect(destOp, lhs)));
+    // a shift whose count is a value the program computed reads that count from CL and nowhere else,
+    // and so does one whose literal count is outside the immediate encoding's own 1..31 window
+    if (opcode is MOpcode.Shl or MOpcode.Shr or MOpcode.Sar
+        && rhs is not MOperand.Immediate { Value: >= 1 and <= 31 })
+      return this.SelectVariableShift(opcode, destOp, rhs, bin.Type);
     // the two-operand IMUL has no immediate form - materialize an immediate multiplier in a register
     if (opcode == MOpcode.Imul && rhs is MOperand.Immediate) {
       var tmp = new MOperand.Register(this.FreshVreg(bin.Type));
@@ -656,6 +661,45 @@ public sealed partial class InstructionSelector {
     this._current.Instructions.Add(new MInstr(opcode, [destOp, rhs],
       new MInstrEffect(WrittenRegs: [0], ReadRegs: rhs is MOperand.Register ? [0, 1] : [0],
         ReadsFlags: false, WritesFlags: true, ReadsMemory: rhs is MOperand.Memory, WritesMemory: false)));
+    return true;
+  }
+
+  /// <summary>
+  /// A byte- or word-wide shift whose COUNT the immediate form cannot carry: one the program computed,
+  /// or a literal outside the encoding's own 1..31 window. The 8086 has exactly one other form and it
+  /// reads the count from <c>CL</c>, so the count is staged there and the shift names that register;
+  /// the destination stays wherever the allocator put it.
+  ///
+  /// <para>
+  /// Both cases used to end the COMPILATION rather than the statement. A computed count reached
+  /// <see cref="Asm.Assembler"/> in whatever register the allocator had chosen ("variable shift counts
+  /// must be in CL") and a literal 32 or 40 reached it as an immediate ("shift count must be 1..31") -
+  /// so <c>SHIFT RIGHT a%, n%</c> and <c>SHIFT LEFT a%, 32</c> threw out of the back end. No corpus
+  /// program does either at 16 bits; the ones that shift by a runtime count are 32- and 64-bit, where
+  /// <see cref="SelectWideShift"/> declines instead, because a register pair has to walk a bit per step
+  /// and that needs a loop.
+  /// </para>
+  ///
+  /// <para>
+  /// The <c>CL</c> form is also what the DIRECT emitter writes for every narrow shift, count constant
+  /// or not (<c>CodeGenerator.EmitShiftRotate</c>), so an out-of-window count answers the same way on
+  /// both paths - whatever the part does with a count it was never masked to.
+  /// </para>
+  ///
+  /// <para>
+  /// The staging move writes a physical register, which is what <c>PinnedByIndex</c> reads to keep the
+  /// destination (and anything else live here) out of <c>CX</c>; the clobber on both instructions says
+  /// the same thing to the scheduler, so nothing lands between the staging and its reader.
+  /// </para>
+  /// </summary>
+  private bool SelectVariableShift(MOpcode opcode, MOperand.Register destination, MOperand count, IrType type) {
+    var staged = RegSize(type) == MRegSize.Byte ? Pinned(Reg.CL, MRegSize.Byte) : Pinned(Reg.CX);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [staged, count], MovEffect(staged, count),
+      condition: null, clobbers: [Reg.CX]));
+    this._current.Instructions.Add(new MInstr(opcode, [destination, Pinned(Reg.CL, MRegSize.Byte)],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false),
+      condition: null, clobbers: [Reg.CX]));
     return true;
   }
 

@@ -133,6 +133,74 @@ public sealed class BackendDifferentialTests {
     Assert.That(routed, Is.EqualTo(direct));
   }
 
+  /// <summary>
+  /// <c>SHIFT LEFT</c> / <c>SHIFT RIGHT</c> on a 16-bit variable by a count the program computed. The
+  /// 8086 takes a variable count only in <c>CL</c>, and the selector used to emit the shift against
+  /// whatever register the allocator had chosen - which the assembler refuses, so this program ended
+  /// the COMPILATION with an exception rather than with an answer or a decline.
+  ///
+  /// <para>
+  /// Nothing had met it because the corpus shifts by a runtime count only at 32 and 64 bits, where the
+  /// wide form declines instead. The counts here are taken through a two-call-site <c>NOINLINE</c>
+  /// function on purpose: one call site would let interprocedural propagation prove the count and turn
+  /// every shift back into the immediate form the bug is not in.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Run_GivenAShiftByAComputedCount_ThenBothPathsShiftByTheSameAmount() {
+    var (direct, routed, names) = RunBothWays("""
+      DECLARE FUNCTION Given%(BYVAL v%)
+
+      DIM a AS INTEGER, w AS WORD, n AS INTEGER
+      n = Given%(3)
+      a = Given%(-1234) : SHIFT RIGHT a, n
+      PRINT a;
+      a = Given%(-1234) : SHIFT LEFT a, n
+      PRINT a;
+      w = Given%(40000) : SHIFT RIGHT w, Given%(4)
+      PRINT w; n
+      END
+
+      FUNCTION Given%(BYVAL v%) NOINLINE
+        Given% = v%
+      END FUNCTION
+      """);
+
+    Assert.That(names, Does.Contain("main"), "the back end did not take the module body under test");
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(direct.Trim(), Is.EqualTo("8037 -9872  2500  3"),
+      "the right shift is logical, the count survives the shift, and both widths agree");
+  }
+
+  /// <summary>
+  /// The same statement with a LITERAL count the immediate encoding cannot carry. <c>SHL r16, imm8</c>
+  /// exists only for 1..31, so a count of 32 or 40 threw out of the assembler; the direct emitter puts
+  /// every narrow count in <c>CL</c> and never meets the limit. What the part then does with a count it
+  /// did not mask is a property of the part, so the assertion is only that the two paths agree.
+  /// </summary>
+  [Test]
+  public void Run_GivenAShiftByALiteralOutsideTheImmediateWindow_ThenBothPathsAgree() {
+    var (direct, routed, names) = RunBothWays("""
+      DECLARE FUNCTION Given%(BYVAL v%)
+
+      DIM a AS INTEGER
+      a = Given%(-1234) : SHIFT LEFT a, 32
+      PRINT a;
+      a = Given%(-1234) : SHIFT RIGHT a, 40
+      PRINT a;
+      a = Given%(-1234) : SHIFT LEFT a, 0
+      PRINT a
+      END
+
+      FUNCTION Given%(BYVAL v%) NOINLINE
+        Given% = v%
+      END FUNCTION
+      """);
+
+    Assert.That(names, Does.Contain("main"));
+    Assert.That(routed, Is.EqualTo(direct));
+  }
+
   [Test]
   public void Run_GivenASharedGlobal_ThenBothPathsAddressTheSameStorage() {
     var (direct, routed, names) = RunBothWays("""
