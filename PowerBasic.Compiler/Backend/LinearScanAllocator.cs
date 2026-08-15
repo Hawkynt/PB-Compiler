@@ -32,6 +32,25 @@ public sealed partial class LinearScanAllocator {
   private static readonly Reg[] _indexing = [Reg.SI, Reg.DI];
 
   /// <summary>
+  /// Registers that may be the BASE of an operand that also carries an index - the mirror of
+  /// <see cref="_indexing"/>, and smaller still. 16-bit addressing has exactly four base+index
+  /// encodings, <c>[BX+SI]</c>, <c>[BX+DI]</c>, <c>[BP+SI]</c> and <c>[BP+DI]</c>, so a base paired
+  /// with an index must be BX or the frame pointer, and BP is never allocated.
+  ///
+  /// <para>
+  /// Without this a base was drawn from <see cref="_addressing"/> like any other, and SI or DI is a
+  /// legal answer there - so an indexed access whose base was allocated after BX had gone would emit
+  /// <c>[SI+DI]</c> and end the compilation inside <c>MachineEmitter.EmitInstruction</c>, where
+  /// nothing can decline any more. Measured over the whole corpus, all 53 indexed operands do get BX
+  /// today, which is why nothing had met it: there is never more than one indexed base live at once,
+  /// and BX is simply the first addressing register the pool offers. That is luck rather than a
+  /// guarantee, and it is the same shape as the index-side defect recorded above - which also only
+  /// appeared once rematerialization changed the pressure.
+  /// </para>
+  /// </summary>
+  private static readonly Reg[] _indexedBase = [Reg.BX];
+
+  /// <summary>
   /// Where a value that is live all the way round a loop is asked for first under
   /// <c>$OPTIMIZE SPEED</c> - the residency preference (docs/PB36.md O5).
   ///
@@ -517,19 +536,27 @@ public sealed partial class LinearScanAllocator {
     return map;
   }
 
-  /// <summary>The virtual registers that appear as a memory operand's base or index (so they must be addressing-capable).</summary>
-  private static (HashSet<int> Base, HashSet<int> Index) AddressRegisters(MFunction function) {
+  /// <summary>
+  /// The virtual registers that appear as a memory operand's base or index (so they must be
+  /// addressing-capable), with the bases of INDEXED operands kept apart: those have a smaller legal
+  /// set still, because 16-bit addressing pairs an index only with BX or BP.
+  /// </summary>
+  private static (HashSet<int> Base, HashSet<int> Index, HashSet<int> IndexedBase) AddressRegisters(MFunction function) {
     var bases = new HashSet<int>();
     var indices = new HashSet<int>();
+    var indexedBases = new HashSet<int>();
     foreach (var instr in function.AllInstructions)
       foreach (var operand in instr.Operands)
         if (operand is MOperand.Memory mem) {
-          if (mem.Base is { IsVirtual: true } b)
+          if (mem.Base is { IsVirtual: true } b) {
             bases.Add(b.VirtualId);
+            if (mem.Index is not null)
+              indexedBases.Add(b.VirtualId);
+          }
           if (mem.Index is { IsVirtual: true } x)
             indices.Add(x.VirtualId);
         }
-    return (bases, indices);
+    return (bases, indices, indexedBases);
   }
 
   private static HashSet<int> ByteRegisters(MFunction function) {
@@ -550,12 +577,20 @@ public sealed partial class LinearScanAllocator {
     return result;
   }
 
-  /// <summary>The registers a value may occupy given how it is used to address memory.</summary>
-  private static Reg[] LegalFor(int virtualId, (HashSet<int> Base, HashSet<int> Index) addressing,
+  /// <summary>
+  /// The registers a value may occupy given how it is used to address memory. The order of the tests
+  /// is the order of increasing restriction, so a value used in two roles gets the intersection by
+  /// getting the narrowest: an index (SI/DI) before the base of an indexed operand (BX) before an
+  /// ordinary base (BX/SI/DI). A value that is both an index and an indexed base has no register at
+  /// all and takes the empty set, which declines the function.
+  /// </summary>
+  private static Reg[] LegalFor(int virtualId, (HashSet<int> Base, HashSet<int> Index, HashSet<int> IndexedBase) addressing,
       HashSet<int> byteRegisters) {
     if (byteRegisters.Contains(virtualId))
       return addressing.Base.Contains(virtualId) || addressing.Index.Contains(virtualId) ? [] : _bytePool;
-    return addressing.Index.Contains(virtualId) ? _indexing
+    if (addressing.Index.Contains(virtualId))
+      return addressing.IndexedBase.Contains(virtualId) ? [] : _indexing;
+    return addressing.IndexedBase.Contains(virtualId) ? _indexedBase
       : addressing.Base.Contains(virtualId) ? _addressing
       : _pool;
   }
