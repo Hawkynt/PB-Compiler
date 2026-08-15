@@ -73,7 +73,8 @@ public sealed partial class IrLowering {
     this._procMap = procMap;
     this._module = module;
     this._folder = new ConstantFolder(model.Equates);
-    this._checkStack = StackCheckArmed(model);
+    this._armed = ArmedForProcedures(model);
+    this._checkStack = this._armed.Stack;
   }
 
   /// <summary>Lowers just the main body into an <c>@main</c> function (no procedures), or null if unsupported.</summary>
@@ -241,6 +242,11 @@ public sealed partial class IrLowering {
 
   private void LowerProcedure(ProcedureSymbol proc, IrFunction fn) {
     this._resultVar = proc.IsFunction ? proc.Variables.GetValueOrDefault(proc.Name) : null;
+    // The module body's $ERROR directives reach here and nowhere else - a procedure gets its own
+    // IrLowering, so without this seeding every trap the program armed was silently absent from every
+    // procedure. A directive INSIDE the body still toggles it from here as the statements go by.
+    (this._checkBounds, this._checkOverflow, this._checkNumeric)
+      = (this._armed.Bounds, this._armed.Overflow, this._armed.Numeric);
     this.LowerBodyInto(fn, proc.Body!, proc);
   }
 
@@ -747,28 +753,58 @@ public sealed partial class IrLowering {
   /// $ERROR STACK ON: every procedure entry probes for headroom and raises Error 201 without it.
   ///
   /// <para>
-  /// Read from the DIRECTIVES rather than accumulated as the statements go by, which the three flags
-  /// above cannot be: each procedure is lowered by its own <see cref="IrLowering"/>, so a flag a
-  /// metastatement sets while the module body is being lowered has no way to reach one. The probe
-  /// belongs to the procedure prologue, so it needs an answer that survives that boundary.
+  /// Read from the DIRECTIVES rather than accumulated as the statements go by, for the reason
+  /// <see cref="ArmedForProcedures"/> spells out: each procedure is lowered by its own
+  /// <see cref="IrLowering"/>, so a flag a metastatement sets while the module body is being lowered
+  /// has no way to reach one.
   /// </para>
   /// </summary>
   private bool _checkStack;
 
+  /// <summary>The <c>$ERROR</c> traps a procedure body is compiled with (see <see cref="ArmedForProcedures"/>).</summary>
+  private readonly record struct ErrorChecks(bool Bounds, bool Overflow, bool Numeric, bool Stack);
+
+  /// <summary>What the module-level directives armed, read once and spent at each procedure's entry.</summary>
+  private readonly ErrorChecks _armed;
+
   /// <summary>
-  /// Whether <c>$ERROR STACK ON</c> (or <c>$ERROR ALL ON</c>) is the last word on the subject.
-  /// The direct emitter's flag is positional - whatever the metastatement handler last set while
-  /// emitting - which for a directive at the top of the file, where they all live, is this.
+  /// Which <c>$ERROR</c> traps are armed when a PROCEDURE body is lowered.
+  ///
+  /// <para>
+  /// <b>This cannot be accumulated as the statements go by, and pretending otherwise silently
+  /// disarmed every trap inside every procedure.</b> The directives live in the module body, and each
+  /// procedure is lowered by its own <see cref="IrLowering"/> instance whose flags start out clear -
+  /// so <c>$ERROR OVERFLOW ON</c> at the top of a file armed the check in the main body and nowhere
+  /// else. A <c>SUB</c> that multiplied its way past 32767 printed the wrapped number where the direct
+  /// emitter stops the program, and nothing downstream could tell: the trap was never lowered, so
+  /// there was no check for the range analysis to be blamed for eliding.
+  /// </para>
+  ///
+  /// <para>
+  /// The answer is the state the whole module body leaves behind, which is exactly what the direct
+  /// emitter carries into the first procedure it emits: its flags are one positional
+  /// <see cref="CodeGen.CodeGenerator"/> field set by the metastatement handler, the module body is
+  /// emitted first, and nothing resets them at a procedure boundary.
+  /// <see cref="SemanticModel.MetaStatements"/> holds the module-level directives in source order,
+  /// so folding them in order IS that state.
+  /// </para>
   /// </summary>
-  private static bool StackCheckArmed(SemanticModel model) {
-    var armed = false;
-    foreach (var meta in model.MetaStatements)
-      if (meta.Command.Equals("ERROR", StringComparison.OrdinalIgnoreCase)
-          && meta.Arguments is [{ } arm, { } state, ..]
-          && (arm.Text.Equals("STACK", StringComparison.OrdinalIgnoreCase)
-              || arm.Text.Equals("ALL", StringComparison.OrdinalIgnoreCase)))
-        armed = state.Text.Equals("ON", StringComparison.OrdinalIgnoreCase);
-    return armed;
+  private static ErrorChecks ArmedForProcedures(SemanticModel model) {
+    var (bounds, overflow, numeric, stack) = (false, false, false, false);
+    foreach (var meta in model.MetaStatements) {
+      if (!meta.Command.Equals("ERROR", StringComparison.OrdinalIgnoreCase)
+          || meta.Arguments is not [{ } arm, { } state, ..])
+        continue;
+      var on = state.Text.Equals("ON", StringComparison.OrdinalIgnoreCase);
+      switch (arm.Text.ToUpperInvariant()) {
+        case "BOUNDS": bounds = on; break;
+        case "OVERFLOW": overflow = on; break;
+        case "NUMERIC": numeric = on; break;
+        case "STACK": stack = on; break;
+        case "ALL": bounds = overflow = numeric = stack = on; break;
+      }
+    }
+    return new ErrorChecks(bounds, overflow, numeric, stack);
   }
 
   private DynArr DynDescriptor(VariableSymbol symbol, int rank) {
