@@ -131,9 +131,15 @@ public sealed partial class CodeGenerator {
     if (!this.UseExperimentalBackend)
       return this._backendProcs;
 
-    var module = IrLowering.TryLowerModule(model);
-    if (module is null)
+    var module = IrLowering.TryLowerModule(model, out var moduleDeclinedBecause);
+    if (module is null) {
+      // Every procedure in the program goes with it, and each is recorded rather than left out: a
+      // whole-module lowering failure costs the same coverage as a procedure-by-procedure one, and
+      // a census that only sees the module-level reason cannot say how much it cost.
+      foreach (var proc in model.ProcedureList)
+        this._backendDeclines.Add((proc.Name, "lowering: " + (moduleDeclinedBecause ?? "the module did not lower to IR")));
       return this._backendProcs;
+    }
     this._backendModule = module;
     // The routed path honours the optimizer flag like every other part of the compiler. Without this
     // a --no-optimize build of a routed function was still fully optimized, which made the two builds
