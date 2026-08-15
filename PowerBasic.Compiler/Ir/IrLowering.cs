@@ -1469,25 +1469,35 @@ public sealed partial class IrLowering {
   /// answer rather than a missing feature.
   /// </para>
   /// <para>
-  /// The operand is still never EVALUATED - which is what <c>VARSEG</c> is for - so the answer is
-  /// read off the symbol rather than off an address: the far array heap is one segment for the whole
-  /// image (<c>rt_arrseg</c>, the very cell the direct emitter loads <c>ES</c> from), and an
-  /// <c>AT</c> array's segment is the compile-time constant its <c>DIM</c> named. The paged classes
-  /// decline: their segment is recomputed per element from the byte offset or from the EMS window,
-  /// so there is no one answer to give and inventing one would be the same defect again.
+  /// The ANSWER is read off the symbol rather than off the address, because the far array heap is one
+  /// segment for the whole image (<c>rt_arrseg</c>, the very cell the direct emitter loads <c>ES</c>
+  /// from) and an <c>AT</c> array's segment is the compile-time constant its <c>DIM</c> named. The
+  /// operand is nevertheless ADDRESSED, and that is not decoration: <c>VARSEG(a%(Side%(1)))</c> calls
+  /// <c>Side%</c> once under genuine PBC 3.50 and once under the direct emitter, which forms the place
+  /// before asking which segment it is in. Answering from the symbol alone skipped the call, so a
+  /// subscript with a side effect - or a bounds check under <c>$ERROR BOUNDS ON</c> - simply did not
+  /// happen. The address itself is discarded and the pure half of it dies with DCE.
+  /// </para>
+  /// <para>
+  /// The paged classes decline: their segment is recomputed per element from the byte offset or from
+  /// the EMS window, so there is no one answer to give and inventing one would be the same defect
+  /// again. They decline BEFORE the address is formed, which is what a decline is for.
   /// </para>
   /// </summary>
   private IrValue SegmentOfStorage(Expression e) {
     if (e is CallOrIndexExpr indexed && this._model.VariableBindings.TryGetValue(indexed, out var array)
         && array.Type is ArrayType element) {
+      if (array.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms)
+        throw new IrLoweringException($"VARSEG of an element of the {array.ArrayClass} array {array.Name}");
+      this.ElementAddress(indexed, farAllowed: true);
       if (array.ArrayClass == ArrayClass.Absolute)
         return this._absoluteSegments.TryGetValue(array, out var segment)
           ? new IrConstantInt(IrType.I16, segment)
           : throw new IrLoweringException($"VARSEG of {array.Name} before its DIM ... AT was lowered");
-      if (array.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms)
-        throw new IrLoweringException($"VARSEG of an element of the {array.ArrayClass} array {array.Name}");
       if (element.IsDynamic)
         return this._b.Load(IrType.I16, this.ErrorCell("rt_arrseg", IrType.I16));
+    } else {
+      this.AddressOfStorage(e);
     }
     return this._b.Call(IrType.I16, this.RuntimeFn("rt_varseg", IrType.I16));
   }

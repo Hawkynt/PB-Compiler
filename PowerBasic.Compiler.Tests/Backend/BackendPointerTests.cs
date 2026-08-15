@@ -373,6 +373,43 @@ public sealed class BackendPointerTests {
   }
 
   /// <summary>
+  /// <c>VARSEG</c> ADDRESSES its operand, so a subscript with a side effect happens. The direct
+  /// emitter forms the place before asking which segment it is in, and genuine PBC 3.50 does the
+  /// same - the pb35 oracle prints <c>hits after varseg 1</c> for this program. Answering out of the
+  /// symbol alone skipped the call, and a <c>$ERROR BOUNDS ON</c> check with it.
+  ///
+  /// <para>
+  /// <c>VARPTR</c> is the control on the same line: it always evaluated, so the second count moving
+  /// by one and not by two is what says the fix landed on VARSEG and nowhere else.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void VarSeg_GivenASubscriptWithASideEffect_ThenTheSubscriptIsStillEvaluated() {
+    var (direct, routed, names) = RunBothWays("""
+      DECLARE FUNCTION Side%(BYVAL v%)
+      DIM hits AS SHARED INTEGER
+      DIM a%(0 TO 3)
+      DIM v AS INTEGER
+      hits = 0
+      a%(1) = 5
+      PRINT VARSEG(a%(Side%(1))) - VARSEG(v); hits;
+      PRINT CLNG(VARPTR(a%(Side%(1)))) - CLNG(VARPTR(a%(0))); hits
+      END
+
+      FUNCTION Side%(BYVAL v%) NOINLINE
+        SHARED hits AS INTEGER
+        hits = hits + 1
+        Side% = v%
+      END FUNCTION
+      """);
+
+    Assert.That(names, Does.Contain("main"));
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(routed.Trim(), Is.EqualTo("0  1  2  2"),
+      "the VARSEG subscript ran once, and the VARPTR one after it took the count to two");
+  }
+
+  /// <summary>
   /// The paged classes decline instead of answering. Their segment is recomputed per element - HUGE
   /// steps it by <c>byteOffset >> 4</c> and the EMS pair by which page is in the window - so there is
   /// no one segment to name, and inventing one would be the same defect the two cases above were.
