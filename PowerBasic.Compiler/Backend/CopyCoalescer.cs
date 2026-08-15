@@ -163,8 +163,8 @@ internal static class CopyCoalescer {
       }
     }
     // ArgumentLoads needs no rewriting: a value the prologue loads is never a merge candidate
-    if (function.SplitValues.Remove(from))
-      function.SplitValues.Add(to);
+    if (function.MovedValues.Remove(from))
+      function.MovedValues.Add(to);
     return removed;
   }
 

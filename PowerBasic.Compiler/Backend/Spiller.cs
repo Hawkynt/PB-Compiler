@@ -29,6 +29,62 @@ internal static class Spiller {
   ];
 
   /// <summary>
+  /// How far along the spiller is, as three counts that a move must lower to be worth applying. It is
+  /// the measure the allocator's loop is proved to terminate on - see
+  /// <c>LinearScanAllocator.AdvanceSpiller</c>, which states the argument each component carries.
+  /// </summary>
+  /// <param name="Untouched">
+  /// virtual registers still present that the spiller has not moved yet. Every move consumes its
+  /// subject - the id is replaced everywhere by fresh ones, or by a memory cell - and every id a move
+  /// mints is recorded in <see cref="MFunction.MovedValues"/> at birth, so a first move on a value
+  /// lowers this by one and nothing can ever raise it.
+  /// </param>
+  /// <param name="Crossings">
+  /// live ranges caught across an instruction that clobbers physical registers - the pressure this
+  /// target makes all by itself, since one <c>CALL</c> destroys the whole allocatable file. Splitting a
+  /// range is what removes one, so a split of a value the spiller has already moved has to show that it
+  /// removed one to be worth another cell.
+  /// </param>
+  /// <param name="Unsettled">
+  /// uses whose recomputable operand is still defined outside their preparation run. Rematerializing
+  /// settles every use of one value and, inserting at the FRONT of the run, unsettles none - so the
+  /// one move that may legitimately be repeated on a value it has already touched lowers this.
+  /// </param>
+  /// <param name="Present">
+  /// virtual registers present at all. Only a direct spill lowers it (it mints nothing and its subject
+  /// becomes a frame cell), which is what a repeat spill has to show for itself.
+  /// </param>
+  internal readonly record struct Progress(int Untouched, int Crossings, int Unsettled, int Present) {
+
+    public static Progress Of(MFunction function) {
+      var census = ValueCensus.Of(function);
+      var present = new HashSet<int>();
+      var mentioned = new List<int>();
+      var unsettled = 0;
+      foreach (var block in function.Blocks)
+        foreach (var instruction in block.Instructions) {
+          ValueCensus.Mentioned(instruction, mentioned);
+          present.UnionWith(mentioned);
+          if (instruction.Operands is [MOperand.Register { Reg: { IsVirtual: true } target }, { } source]
+              && IsRecomputable(instruction.Opcode, source)
+              && census.DefinitionsOf(target.VirtualId) == 1)
+            unsettled += UnsettledUses(census, instruction, target.VirtualId);
+        }
+      var clobbers = GetClobberIndices(function);
+      var crossings = LivenessAnalysis.Compute(function)
+        .Sum(interval => clobbers.Count(at => interval.Start < at && at < interval.End));
+      return new(present.Count(value => !function.MovedValues.Contains(value)), crossings, unsettled,
+        present.Count);
+    }
+
+    /// <summary>Whether this state is strictly closer to an allocation than <paramref name="other"/>.</summary>
+    public bool IsBelow(Progress other) => this.Untouched != other.Untouched ? this.Untouched < other.Untouched
+      : this.Crossings != other.Crossings ? this.Crossings < other.Crossings
+      : this.Unsettled != other.Unsettled ? this.Unsettled < other.Unsettled
+      : this.Present < other.Present;
+  }
+
+  /// <summary>
   /// Shortens one value's live range by RECOMPUTING it at each use instead of keeping it in a
   /// register, and returns whether it moved anything.
   ///
@@ -39,9 +95,10 @@ internal static class Spiller {
   /// the function selects but never routes.
   ///
   /// Recomputing is free of that problem because the LEA depends on nothing but BP: putting a fresh
-  /// copy immediately before each use makes every live range one instruction long, so no clobber can
-  /// fall inside one. A definition already adjacent to all of its uses is left alone because moving
-  /// it again cannot shorten anything.
+  /// copy in front of each use makes every live range as short as the use's own operand setup, so no
+  /// clobber can fall inside one. A definition already standing there is left alone because moving it
+  /// again cannot shorten anything - <see cref="UnsettledUses"/> is what that means exactly, and the
+  /// reason it is not simply "adjacent".
   ///
   /// <para>
   /// A <c>MOV reg, immediate</c> qualifies for the same reason and even more plainly - it depends on
@@ -55,16 +112,17 @@ internal static class Spiller {
     if (TryReloadAddressArgument(function))
       return true;
 
+    var census = ValueCensus.Of(function);
     foreach (var block in function.Blocks)
       foreach (var instr in block.Instructions.ToList()) {
         if (instr.Operands is not [MOperand.Register { Reg: { IsVirtual: true } target }, { } source]
             || !IsRecomputable(instr.Opcode, source))
           continue;
-        if (DefinitionCount(function, target.VirtualId) != 1 || UseCount(function, target.VirtualId) == 0)
+        if (census.DefinitionsOf(target.VirtualId) != 1 || census.UsesOf(target.VirtualId).Count == 0)
           continue;
-        if (AlreadyBesideItsUses(function, instr, target.VirtualId))
+        if (UnsettledUses(census, instr, target.VirtualId) == 0)
           continue;                              // nothing to gain, and re-doing it would never settle
-        Rematerialize(function, instr, target.VirtualId);
+        Rematerialize(function, census, instr, target.VirtualId);
         return true;
       }
     return false;
@@ -88,6 +146,7 @@ internal static class Spiller {
   /// the extra move exists only because an x86-16 memory base itself cannot be memory.
   /// </summary>
   private static bool TryReloadAddressArgument(MFunction function) {
+    var census = ValueCensus.Of(function);
     foreach (var load in function.ArgumentLoads.ToList()) {
       if (!IsAddressOnly(function, load.VirtualId))
         continue;
@@ -99,6 +158,7 @@ internal static class Spiller {
             continue;
 
           var fresh = MReg.Virtual(function.VirtualRegisterCount++, MRegSize.Word);
+          function.MovedValues.Add(fresh.VirtualId);
           var operands = instruction.Operands.Select(operand => operand is MOperand.Memory memory
             ? memory with {
               Base = Replace(memory.Base, load.VirtualId, fresh),
@@ -108,11 +168,9 @@ internal static class Spiller {
             : operand).ToArray();
           block.Instructions[i] = new MInstr(instruction.Opcode, operands, instruction.Effect,
             instruction.Condition, instruction.Clobbers);
-          block.Instructions.Insert(i, new MInstr(MOpcode.Mov, [new MOperand.Register(fresh),
-              new MOperand.ParamCell(load.ArgumentIndex, load.ByteDelta, MRegSize.Word)],
-            new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
-              ReadsMemory: true, WritesMemory: false),
-            condition: null, clobbers: WithPendingStaging(block, i, [])));
+          i = InsertPreparation(census, block, i, load.VirtualId, at => Reload(fresh,
+            new MOperand.ParamCell(load.ArgumentIndex, load.ByteDelta, MRegSize.Word),
+            WithPendingStaging(block, at, [])));
         }
 
       function.ArgumentLoads.Remove(load);
@@ -152,29 +210,169 @@ internal static class Spiller {
     => Is(register, virtualId) ? replacement : register;
 
   /// <summary>
-  /// Whether every use is already immediately preceded by its definition. Fresh-id rematerialization
-  /// leaves exactly this shape; admitting it again would replace one adjacent LEA with another forever.
+  /// Whether every use already has this value's definition inside its PREPARATION RUN - so
+  /// rematerializing it again could not shorten anything.
+  ///
+  /// <para>
+  /// The obvious test is physical adjacency ("is the definition the instruction immediately before the
+  /// use"), and it is the reason the spill loop used to run for ever. <c>MOV [v_addr], v_const</c> reads
+  /// a frame address and a constant, each is recomputable, and each can only be adjacent to the store
+  /// if the other is not: putting either one beside it DISPLACES the other, which then looks unsettled
+  /// and is rematerialized in its turn, one fresh virtual register per round and nothing ever
+  /// converging. Adjacency was only ever a proxy for the property that matters - that the value's live
+  /// range is as short as recomputing can make it - and it is the wrong proxy the moment an instruction
+  /// has two recomputable operands.
+  /// </para>
+  /// <para>
+  /// The run is the right one: an instruction that exists ONLY to prepare this use's operands does not
+  /// lengthen anything the allocator cares about, so a definition standing anywhere inside it is
+  /// settled. Two operands prepared for the same use are then BOTH settled and neither displaces the
+  /// other - which is what turns the ping-pong into two rounds.
+  /// </para>
   /// </summary>
-  private static bool AlreadyBesideItsUses(MFunction function, MInstr definition, int virtualId) {
-    foreach (var block in function.Blocks)
-      for (var i = 0; i < block.Instructions.Count; ++i) {
-        var instruction = block.Instructions[i];
-        if (ReferenceEquals(instruction, definition) || !Mentions(instruction, virtualId))
-          continue;
-        if (LivenessAnalysis.RegistersOf(instruction).Writes.Contains(virtualId))
-          continue;
-        if (i == 0 || !ReferenceEquals(block.Instructions[i - 1], definition))
-          return false;
-      }
-    return true;
+  private static int UnsettledUses(ValueCensus census, MInstr definition, int virtualId) {
+    if (census.PositionOf(definition) is not { } definedAt)
+      return 0;
+    var unsettled = 0;
+    foreach (var use in census.UsesOf(virtualId)) {
+      if (census.PositionOf(use) is not { } usedAt)
+        continue;
+      if (!ReferenceEquals(usedAt.Block, definedAt.Block) || definedAt.Index >= usedAt.Index
+          || definedAt.Index < PreparationStart(census, usedAt.Block, usedAt.Index, keepBelow: -1))
+        ++unsettled;
+    }
+    return unsettled;
   }
 
-  private static int DefinitionCount(MFunction function, int virtualId)
-    => function.AllInstructions.Count(i => LivenessAnalysis.RegistersOf(i).Writes.Contains(virtualId));
+  /// <summary>
+  /// Where the run of instructions that exist only to prepare the operands of the instruction at
+  /// <paramref name="useIndex"/> begins - and so where the spiller inserts one more of them.
+  ///
+  /// <para>
+  /// Inserting at the FRONT of the run rather than immediately before the use is the second half of the
+  /// termination argument (<c>LinearScanAllocator.AdvanceSpiller</c>): nothing then lands between an
+  /// already-settled definition and the use it was recomputed for, so settling one value never unsettles
+  /// another and the count of unsettled values cannot go back up.
+  /// </para>
+  /// <para>
+  /// <paramref name="keepBelow"/> is the value being moved, which the run may never be walked past: a
+  /// preparation instruction is allowed to READ it (a chained <c>LEA</c> off an address that is itself
+  /// being rematerialized), and inserting in front of that would put the new definition before a use
+  /// the caller has not rewritten yet. -1 when there is nothing to keep below, which is the query form.
+  /// </para>
+  /// </summary>
+  private static int PreparationStart(ValueCensus census, MBlock block, int useIndex, int keepBelow) {
+    var use = block.Instructions[useIndex];
+    var at = useIndex;
+    while (at > 0 && census.PreparesOnly(block.Instructions[at - 1], use)
+           && (keepBelow < 0 || !Mentions(block.Instructions[at - 1], keepBelow)))
+      --at;
+    return at;
+  }
 
-  private static int UseCount(MFunction function, int virtualId)
-    => function.AllInstructions.Count(i => !LivenessAnalysis.RegistersOf(i).Writes.Contains(virtualId)
-                                           && Mentions(i, virtualId));
+  /// <summary>
+  /// Puts a freshly minted definition where it belongs for the use at <paramref name="useIndex"/> and
+  /// answers the index it landed at, which the caller's descending scan resumes below.
+  /// </summary>
+  private static int InsertPreparation(ValueCensus census, MBlock block, int useIndex, int keepBelow,
+      Func<int, MInstr> definition) {
+    var at = PreparationStart(census, block, useIndex, keepBelow);
+    block.Instructions.Insert(at, definition(at));   // the pending staging is the one AT the insertion point
+    return at;
+  }
+
+  /// <summary>
+  /// Where every value is defined and used, and where every instruction sits, taken once per spiller
+  /// move. Both questions the settling rule asks - "does this instruction exist only to prepare that
+  /// one's operands" and "is the definition inside the use's preparation run" - are otherwise a walk of
+  /// the whole function EACH, which turns the measure into a quadratic on the function's size.
+  ///
+  /// <para>
+  /// The positions are a snapshot and the definition/use counts are not: a move rewrites operands and
+  /// inserts instructions as it goes, so <see cref="PositionOf"/> is only meaningful before one starts,
+  /// while <see cref="PreparesOnly"/> stays true throughout - a move only ever adds fresh values, which
+  /// the census does not know and therefore never mistakes for preparation.
+  /// </para>
+  /// </summary>
+  private sealed class ValueCensus {
+
+    private readonly Dictionary<int, (int Definitions, List<MInstr> Uses)> _values = [];
+    private readonly Dictionary<MInstr, (MBlock Block, int Index)> _positions =
+      new(ReferenceEqualityComparer.Instance);
+
+    public static ValueCensus Of(MFunction function) {
+      var census = new ValueCensus();
+      var mentioned = new List<int>();
+      foreach (var block in function.Blocks)
+        for (var i = 0; i < block.Instructions.Count; ++i) {
+          var instruction = block.Instructions[i];
+          census._positions[instruction] = (block, i);
+          var writes = LivenessAnalysis.RegistersOf(instruction).Writes;
+          Mentioned(instruction, mentioned);
+          foreach (var value in mentioned) {
+            if (!census._values.TryGetValue(value, out var entry))
+              census._values[value] = entry = (0, []);
+            if (writes.Contains(value))
+              census._values[value] = (entry.Definitions + 1, entry.Uses);
+            else
+              entry.Uses.Add(instruction);
+          }
+        }
+      return census;
+    }
+
+    public (MBlock Block, int Index)? PositionOf(MInstr instruction)
+      => this._positions.TryGetValue(instruction, out var position) ? position : null;
+
+    public IReadOnlyList<MInstr> UsesOf(int value)
+      => this._values.TryGetValue(value, out var entry) ? entry.Uses : [];
+
+    public int DefinitionsOf(int value)
+      => this._values.TryGetValue(value, out var entry) ? entry.Definitions : 0;
+
+    /// <summary>
+    /// Whether <paramref name="instruction"/> exists only to prepare an operand of <paramref name="use"/>:
+    /// it defines exactly one virtual register, and that register is named nowhere else at all.
+    /// </summary>
+    public bool PreparesOnly(MInstr instruction, MInstr use) {
+      if (instruction.Clobbers.Count > 0)
+        return false;                            // it destroys registers, so standing in front of it costs something
+      var writes = LivenessAnalysis.RegistersOf(instruction).Writes;
+      return writes.Count == 1 && this._values.TryGetValue(writes[0], out var value)
+        && value is { Definitions: 1, Uses.Count: 1 } && ReferenceEquals(value.Uses[0], use);
+    }
+
+    /// <summary>The virtual values the instruction names, each once - as an operand or inside an address.</summary>
+    public static void Mentioned(MInstr instruction, List<int> into) {
+      into.Clear();
+      foreach (var operand in instruction.Operands)
+        switch (operand) {
+          case MOperand.Register { Reg: { IsVirtual: true } register }:
+            Add(into, register.VirtualId);
+            break;
+          case MOperand.Memory memory:
+            if (memory.Base is { IsVirtual: true } baseRegister)
+              Add(into, baseRegister.VirtualId);
+            if (memory.Index is { IsVirtual: true } indexRegister)
+              Add(into, indexRegister.VirtualId);
+            if (memory.Segment is { IsVirtual: true } segmentRegister)
+              Add(into, segmentRegister.VirtualId);
+            break;
+        }
+    }
+
+    private static void Add(List<int> into, int value) {
+      if (!into.Contains(value))
+        into.Add(value);
+    }
+  }
+
+  /// <summary>A reload of one value out of a memory cell, the shape three of the spiller's moves insert.</summary>
+  private static MInstr Reload(MReg into, MOperand cell, IReadOnlyList<Asm.Reg> clobbers)
+    => new(MOpcode.Mov, [new MOperand.Register(into), cell],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+        ReadsMemory: true, WritesMemory: false),
+      condition: null, clobbers: clobbers);
 
   /// <summary>
   /// The physical registers a pending call's argument staging has already filled at this point in the
@@ -236,11 +434,11 @@ internal static class Spiller {
   }
 
   /// <summary>
-  /// Rebuilds the definition into a fresh virtual register immediately before every use, then drops
-  /// the original. A fresh id is essential: liveness has one interval per id, so copying the same
+  /// Rebuilds the definition into a fresh virtual register in front of every use, then drops the
+  /// original. A fresh id is essential: liveness has one interval per id, so copying the same
   /// definition with the same destination would still leave one interval spanning all calls.
   /// </summary>
-  private static void Rematerialize(MFunction function, MInstr definition, int virtualId) {
+  private static void Rematerialize(MFunction function, ValueCensus census, MInstr definition, int virtualId) {
     var target = ((MOperand.Register)definition.Operands[0]).Reg;
     foreach (var block in function.Blocks)
       for (var i = block.Instructions.Count - 1; i >= 0; --i) {
@@ -251,11 +449,12 @@ internal static class Spiller {
           continue;
 
         var fresh = MReg.Virtual(function.VirtualRegisterCount++, target.Size);
+        function.MovedValues.Add(fresh.VirtualId);
         block.Instructions[i] = ReplaceMentions(instr, virtualId, fresh);
         var operands = definition.Operands.ToArray();
         operands[0] = new MOperand.Register(fresh);
-        block.Instructions.Insert(i, new MInstr(definition.Opcode, operands, definition.Effect,
-          definition.Condition, WithPendingStaging(block, i, definition.Clobbers)));
+        i = InsertPreparation(census, block, i, virtualId, at => new MInstr(definition.Opcode, operands,
+          definition.Effect, definition.Condition, WithPendingStaging(block, at, definition.Clobbers)));
       }
 
     foreach (var block in function.Blocks)
@@ -283,44 +482,68 @@ internal static class Spiller {
   }
 
   /// <summary>
-  /// Shortens one value's live range when it cannot be rewritten as a memory operand directly. Every
-  /// definition writes the value to one frame cell; every use reloads it into its own fresh,
-  /// instruction-local virtual register. Multiple definitions occur after phi elimination, where each
-  /// predecessor copies its incoming value into the same virtual destination. This also handles shapes
-  /// such as <c>MOV value,[array-element]</c>: direct spilling would require an illegal memory-to-memory
-  /// MOV, while the explicit store/reloads are ordinary register-memory instructions.
+  /// Splits a range caught across a full-register clobber. That is the pressure this target creates all
+  /// by itself - one <c>CALL</c> destroys every allocatable register - and the fresh ranges a split
+  /// leaves usually no longer cross the call.
+  ///
+  /// <para>
+  /// "Usually" is the whole difficulty, and it is why the offer is NOT restricted to values the spiller
+  /// has not moved yet, as <see cref="SplitPressureOne"/> is: a definition that carries clobbers of its
+  /// own leaves its store and its reload straddling one, so the fresh range crosses a clobber too and is
+  /// offered again - and sometimes that second split is the one that lands, because the range it takes
+  /// apart is a different range. Which of the two it is cannot be told from here, so it is told from the
+  /// RESULT: <c>LinearScanAllocator.AdvanceSpiller</c> keeps a split of an already-moved value only when
+  /// it removed a crossing, and discards a re-split that settled nothing - which is also why this is a
+  /// separate move from the one below rather than its first half. A discarded move must leave the next
+  /// KIND to be tried, and a caller cannot try what it cannot name.
+  /// </para>
   /// </summary>
-  internal static bool SplitOne(MFunction function) {
+  internal static bool SplitCrossingOne(MFunction function) {
     var clobbers = GetClobberIndices(function);
-    var intervals = LivenessAnalysis.Compute(function);
-
-    // Values live across a full-register clobber first. That is the pressure this target creates all
-    // by itself - one CALL destroys every allocatable register - and splitting one is self-limiting,
-    // because the fresh ranges no longer cross the call.
-    if (TrySplitLongest(function,
-          intervals.Where(interval => clobbers.Any(at => interval.Start < at && at < interval.End))))
-      return true;
-
-    // Then plain pressure: no call anywhere near, simply more values wanted at once than there are
-    // registers. Four LONG accumulators are eight words on a six-register machine, and none of them
-    // can move to memory as it stands - a value loaded out of an array has a memory operand in its own
-    // defining instruction, so making it one too would be a memory-to-memory MOV. An explicit
-    // store/reload pair is two ordinary register-memory instructions and says the same thing.
-    return TrySplitLongest(function,
-      intervals.Where(interval => !function.SplitValues.Contains(interval.VirtualId)));
+    return TrySplitLongest(function, ValueCensus.Of(function), LivenessAnalysis.Compute(function)
+      .Where(interval => clobbers.Any(at => interval.Start < at && at < interval.End)));
   }
 
-  /// <summary>Splits the longest of the offered live ranges that can be split, if any can.</summary>
-  private static bool TrySplitLongest(MFunction function,
+  /// <summary>
+  /// Splits a range under plain pressure: no call anywhere near, simply more values wanted at once than
+  /// there are registers. Four LONG accumulators are eight words on a six-register machine, and none of
+  /// them can move to memory as it stands - a value loaded out of an array has a memory operand in its
+  /// own defining instruction, so making it one too would be a memory-to-memory MOV. An explicit
+  /// store/reload pair is two ordinary register-memory instructions and says the same thing.
+  ///
+  /// <para>
+  /// Only values the spiller has not moved yet are offered. Pressure has no self-limiting shape at all -
+  /// a range already taken apart is already as short as this move can make it - so a second attempt
+  /// could only add another cell and another pair of moves.
+  /// </para>
+  /// </summary>
+  internal static bool SplitPressureOne(MFunction function)
+    => TrySplitLongest(function, ValueCensus.Of(function), LivenessAnalysis.Compute(function)
+      .Where(interval => !function.MovedValues.Contains(interval.VirtualId)));
+
+  /// <summary>
+  /// Splits the longest of the offered live ranges that can be split, if any can - the shared half of
+  /// both splitting moves. Every definition writes the value to one frame cell; every use reloads it
+  /// into its own fresh, instruction-local virtual register. Multiple definitions occur after phi
+  /// elimination, where each predecessor copies its incoming value into the same virtual destination.
+  /// This also handles shapes such as <c>MOV value,[array-element]</c>: direct spilling would require an
+  /// illegal memory-to-memory MOV, while the explicit store/reloads are ordinary register-memory
+  /// instructions.
+  /// </summary>
+  private static bool TrySplitLongest(MFunction function, ValueCensus census,
       IEnumerable<LivenessAnalysis.LiveInterval> offered) {
+    // A value the spiller has not moved yet is offered before one it has, whatever their lengths: taking
+    // a range apart a second time is the move that may settle nothing at all, and the longest range in
+    // the function is exactly the one most likely to have been taken apart already.
     var candidates = offered
-      .OrderByDescending(interval => interval.End - interval.Start)
+      .OrderBy(interval => function.MovedValues.Contains(interval.VirtualId) ? 1 : 0)
+      .ThenByDescending(interval => interval.End - interval.Start)
       .ThenBy(interval => interval.VirtualId);
 
     foreach (var interval in candidates) {
       var argumentAt = function.ArgumentLoads.FindIndex(load => load.VirtualId == interval.VirtualId);
       if (argumentAt >= 0) {
-        if (TrySplitArgument(function, interval.VirtualId, function.ArgumentLoads[argumentAt]))
+        if (TrySplitArgument(function, census, interval.VirtualId, function.ArgumentLoads[argumentAt]))
           return true;
         continue;
       }
@@ -341,13 +564,10 @@ internal static class Spiller {
             continue;
 
           var fresh = MReg.Virtual(function.VirtualRegisterCount++, target.Size);
-          function.SplitValues.Add(fresh.VirtualId);
+          function.MovedValues.Add(fresh.VirtualId);
           block.Instructions[i] = ReplaceMentions(instruction, interval.VirtualId, fresh);
-          block.Instructions.Insert(i, new MInstr(MOpcode.Mov,
-            [new MOperand.Register(fresh), cell],
-            new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
-              ReadsMemory: true, WritesMemory: false),
-            condition: null, clobbers: WithPendingStaging(block, i, [])));
+          i = InsertPreparation(census, block, i, interval.VirtualId,
+            at => Reload(fresh, cell, WithPendingStaging(block, at, [])));
         }
 
       var stored = 0;
@@ -358,18 +578,15 @@ internal static class Spiller {
             continue;
           var readsOldValue = LivenessAnalysis.RegistersOf(instruction).Reads.Contains(interval.VirtualId);
           var fresh = MReg.Virtual(function.VirtualRegisterCount++, target.Size);
-          function.SplitValues.Add(fresh.VirtualId);
+          function.MovedValues.Add(fresh.VirtualId);
           block.Instructions[i] = ReplaceMentions(instruction, interval.VirtualId, fresh);
           block.Instructions.Insert(i + 1, new MInstr(MOpcode.Mov,
             [cell, new MOperand.Register(fresh)],
             new MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: false,
               ReadsMemory: false, WritesMemory: true)));
           if (readsOldValue)
-            block.Instructions.Insert(i, new MInstr(MOpcode.Mov,
-              [new MOperand.Register(fresh), cell],
-              new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
-                ReadsMemory: true, WritesMemory: false),
-              condition: null, clobbers: WithPendingStaging(block, i, [])));
+            i = InsertPreparation(census, block, i, interval.VirtualId,
+              at => Reload(fresh, cell, WithPendingStaging(block, at, [])));
           ++stored;
         }
       if (stored != definitions.Count)
@@ -384,7 +601,7 @@ internal static class Spiller {
   /// parameter spilling cannot handle a use that already has a memory operand, but an explicit reload
   /// keeps the eventual instruction register-memory and gives every use its own short live range.
   /// </summary>
-  private static bool TrySplitArgument(MFunction function, int virtualId,
+  private static bool TrySplitArgument(MFunction function, ValueCensus census, int virtualId,
       (int VirtualId, int ArgumentIndex, int ByteDelta) load) {
     if (function.AllInstructions.Any(instruction =>
           LivenessAnalysis.RegistersOf(instruction).Writes.Contains(virtualId)))
@@ -400,13 +617,11 @@ internal static class Spiller {
         if (!Mentions(instruction, virtualId))
           continue;
         var fresh = MReg.Virtual(function.VirtualRegisterCount++, size.Value);
-        function.SplitValues.Add(fresh.VirtualId);
+        function.MovedValues.Add(fresh.VirtualId);
         block.Instructions[i] = ReplaceMentions(instruction, virtualId, fresh);
-        block.Instructions.Insert(i, new MInstr(MOpcode.Mov,
-          [new MOperand.Register(fresh), new MOperand.ParamCell(load.ArgumentIndex, load.ByteDelta, size.Value)],
-          new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
-            ReadsMemory: true, WritesMemory: false),
-          condition: null, clobbers: WithPendingStaging(block, i, [])));
+        i = InsertPreparation(census, block, i, virtualId, at => Reload(fresh,
+          new MOperand.ParamCell(load.ArgumentIndex, load.ByteDelta, size.Value),
+          WithPendingStaging(block, at, [])));
         found = true;
       }
     if (!found)

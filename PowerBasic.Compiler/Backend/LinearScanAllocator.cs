@@ -83,12 +83,30 @@ public sealed partial class LinearScanAllocator {
     => Allocate(function, SelectionTarget.Baseline, out reason);
 
   /// <summary>The same, for a given target and objective.</summary>
-  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function, SelectionTarget target, out string? reason) {
-    if (target is { Optimize: true, OptimizeSpeed: true } && TryResident(function) is { } resident) {
+  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function, SelectionTarget target, out string? reason)
+    => Allocate(function, target, out reason, out _);
+
+  /// <summary>
+  /// The same, reporting how many SPILLER ROUNDS the allocation took - one per transformation the
+  /// spiller applied before the sweep succeeded - and optionally overriding the work budget.
+  ///
+  /// <para>
+  /// The count is the measurement behind the termination argument on <see cref="AdvanceSpiller"/>: it
+  /// is what a fixture asserts a bound on, so a loop that stops converging shows up as a number rather
+  /// than as a hang. <paramref name="moveBudget"/> exists for the same reason - a test that wants to
+  /// prove the loop settles on its own has to be able to lift the backstop that would otherwise decline
+  /// the function first.
+  /// </para>
+  /// </summary>
+  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function, SelectionTarget target,
+      out string? reason, out int rounds, int? moveBudget = null) {
+    rounds = 0;
+    if (target is { Optimize: true, OptimizeSpeed: true }
+        && TryResident(function, moveBudget, ref rounds) is { } resident) {
       reason = null;
       return resident;
     }
-    return AllocatePlain(function, out reason);
+    return AllocatePlain(function, moveBudget, ref rounds, out reason);
   }
 
   /// <summary>
@@ -104,10 +122,11 @@ public sealed partial class LinearScanAllocator {
   /// this one does not answer, and the set of functions that route is exactly what it was.
   /// </para>
   /// </summary>
-  private static IReadOnlyDictionary<int, Reg>? TryResident(MFunction function) {
+  private static IReadOnlyDictionary<int, Reg>? TryResident(MFunction function, int? moveBudget, ref int rounds) {
     var candidate = function.Clone();
     CopyCoalescer.Run(candidate);
-    for (var budget = BudgetFor(candidate); budget > 0; --budget) {
+    var progress = Spiller.Progress.Of(candidate);
+    for (var budget = moveBudget ?? BudgetFor(candidate); budget > 0; --budget) {
       // recomputed each round: coalescing and spilling both move instructions, and an asm block's
       // hold is an instruction range
       var asmHeld = AsmHeldByIndex(candidate, out var asmConflict);
@@ -122,8 +141,9 @@ public sealed partial class LinearScanAllocator {
         function.Adopt(candidate);
         return plain;
       }
-      if (!Spiller.RematerializeOne(candidate) && !Spiller.SpillOne(candidate) && !Spiller.SplitOne(candidate))
+      if (!AdvanceSpiller(candidate, ref progress))
         return null;
+      ++rounds;
     }
     return null;
   }
@@ -136,28 +156,28 @@ public sealed partial class LinearScanAllocator {
   ///
   /// <para>
   /// Every round removes at most one value from the register file, so a converging allocation needs
-  /// well under one move per virtual register the function started with: measured over the whole
-  /// corpus with the optimizer on, the worst RATIO is 1.05 (on a twenty-register function, which is
-  /// what the constant term is for) and the worst COUNT is 186. The ceiling is roughly three times
-  /// that, and it is what stops a very large function paying a very large bill to be declined anyway.
+  /// well under one move per virtual register the function started with. Measured over the whole corpus
+  /// with this bound lifted out of the way, the worst function takes 174 rounds with the optimizer on
+  /// and 174 with it off, well inside its own allowance; the constant term is for the small function
+  /// whose ratio is worst rather than whose count is.
   /// </para>
   /// <para>
-  /// It is a BOUND rather than a policy, and it exists because the spiller's moves are not all
-  /// self-limiting: rematerializing one operand of an instruction displaces another that was itself
-  /// rematerialized beside it, and splitting a range that still crosses a clobber splits it again -
-  /// each one a round that mints a register and settles nothing. Both need IR the optimizer never
-  /// saw, which is why nothing met them while every routed function had been optimized first
-  /// (docs/X86-BACKEND.md). Without a budget a <c>--no-optimize</c> routed build does not finish
-  /// compiling; with one the function is DECLINED, which is what the back end already does with
-  /// everything it cannot take, and the direct emitter - the faithful path, and the one the
-  /// optimizer-off promise is about - compiles it instead.
+  /// It is a BACKSTOP and no longer the thing that makes the loop stop: <see cref="AdvanceSpiller"/>
+  /// admits a move only when it lowers a measure that cannot go back up, so the loop terminates by
+  /// construction and this bound is never what ends it (<c>BackendSpillTerminationTests</c> measures
+  /// the corpus's worst round count with the optimizer on AND off, and it is far below the budget
+  /// either way). It stays because a bound whose only cost is a decline is cheap insurance on a
+  /// termination argument, and because it also caps the WORK a function may do before being declined
+  /// for reasons that have nothing to do with looping.
   /// </para>
   /// </summary>
   private static int BudgetFor(MFunction function)
     => Math.Min(function.VirtualRegisterCount + 64, _MOVE_CEILING);
 
-  private static IReadOnlyDictionary<int, Reg>? AllocatePlain(MFunction function, out string? reason) {
-    for (var budget = BudgetFor(function); budget > 0; --budget) {
+  private static IReadOnlyDictionary<int, Reg>? AllocatePlain(MFunction function, int? moveBudget,
+      ref int rounds, out string? reason) {
+    var progress = Spiller.Progress.Of(function);
+    for (var budget = moveBudget ?? BudgetFor(function); budget > 0; --budget) {
       // recomputed each round, because spilling renumbers the instructions the windows are measured in
       var asmHeld = AsmHeldByIndex(function, out var asmConflict);
       if (asmConflict is not null) {
@@ -170,19 +190,75 @@ public sealed partial class LinearScanAllocator {
         reason = null;
         return assignment;
       }
-      // recomputing a frame address is tried BEFORE spilling: it is the only move available for a
-      // value used as a memory base, which cannot go to memory itself
-      if (Spiller.RematerializeOne(function))
-        continue;
-      if (Spiller.SpillOne(function))
-        continue;
-      if (Spiller.SplitOne(function))
-        continue;
-      reason = Blocker(function, asmHeld);
-      return null;
+      if (!AdvanceSpiller(function, ref progress)) {
+        reason = Blocker(function, asmHeld);
+        return null;
+      }
+      ++rounds;
     }
     reason = "the spiller ran out of budget before the live set fitted the register file";
     return null;
+  }
+
+  /// <summary>
+  /// The spiller's moves, in the order the allocator offers them. Recomputing a frame address comes
+  /// BEFORE spilling: it is the only move available for a value used as a memory base, which cannot go
+  /// to memory itself. Splitting is two moves rather than one so that a rejected split of a range
+  /// caught across a clobber still leaves the pressure split to be tried.
+  /// </summary>
+  private static readonly Func<MFunction, bool>[] _spillerMoves =
+    [Spiller.RematerializeOne, Spiller.SpillOne, Spiller.SplitCrossingOne, Spiller.SplitPressureOne];
+
+  /// <summary>
+  /// Applies the first spiller move that gets the function measurably closer to an allocation, and
+  /// answers whether one did. This is where the loop is made to TERMINATE.
+  ///
+  /// <para>
+  /// <b>The measure.</b> <see cref="Spiller.Progress"/> is the quadruple (untouched values, clobber
+  /// crossings, unsettled uses, values present), ordered lexicographically, and a move is applied only
+  /// if it lowers it. All four are counts of things in the function, so the order is well-founded and
+  /// the loop cannot run longer than the initial measure - no counter required, and no move can be
+  /// admitted whose effect the measure does not see.
+  /// </para>
+  /// <para>
+  /// <b>Why each component is there.</b> Every move CONSUMES its subject: the id is replaced everywhere
+  /// by fresh ones (rematerialize, reload, split) or by a frame cell (spill), and every id a move mints
+  /// is recorded in <see cref="MFunction.MovedValues"/> at birth. So the FIRST move on any value lowers
+  /// the untouched count and nothing can ever raise it, which is the whole argument for every move that
+  /// happens once. The three moves that may legitimately repeat each need a component of their own:
+  /// splitting a range that still crosses a clobber has to remove a crossing; rematerializing a value
+  /// already moved settles at least one use and, inserting at the front of the use's preparation run,
+  /// unsettles none; spilling one lowers the number of values present, because it mints nothing and its
+  /// subject becomes memory.
+  /// </para>
+  /// <para>
+  /// <b>What used to happen instead.</b> Two of the three moves were not self-limiting.
+  /// <c>MOV [v_addr], v_const</c> has two recomputable operands and only one instruction slot next to
+  /// the store, so rematerializing either DISPLACED the other and the two swapped for ever, one fresh
+  /// virtual register per round with the instruction count never moving; and a split range that still
+  /// crossed a clobber was offered for splitting again. Both need IR the optimizer never saw, which is
+  /// why they surfaced only when <c>--no-optimize</c> stopped running it (docs/X86-BACKEND.md).
+  /// </para>
+  /// <para>
+  /// The move runs on a COPY, because "did this help" can only be asked of the result: a move that does
+  /// not lower the measure is discarded and the next kind offered, rather than being taken and paid
+  /// for. That is also what keeps the argument true of moves added later - a new one that settles
+  /// nothing simply never applies.
+  /// </para>
+  /// </summary>
+  private static bool AdvanceSpiller(MFunction function, ref Spiller.Progress progress) {
+    foreach (var move in _spillerMoves) {
+      var candidate = function.Clone();
+      if (!move(candidate))
+        continue;
+      var moved = Spiller.Progress.Of(candidate);
+      if (!moved.IsBelow(progress))
+        continue;
+      function.Adopt(candidate);
+      progress = moved;
+      return true;
+    }
+    return false;
   }
 
   /// <summary>

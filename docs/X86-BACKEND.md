@@ -785,29 +785,64 @@ its frame cell, and every instruction that can legally name memory uses that cel
 - an immutable argument whose use cannot name its caller-owned cell directly reloads immediately
   before each use.
 
-**The spiller's moves are not all self-limiting, so the loop that applies them has a budget.**
-`LinearScanAllocator.BudgetFor` allows one move per virtual register the function started with, plus
-64, capped at 512 — the whole corpus needs at most 1.05 per register and at most 186 in absolute
-terms with the optimizer on, so nothing that routes today is anywhere near it. Past the budget the
-function is declined like any other the back end cannot take.
+### The spill loop terminates because a measure falls, not because a counter runs out
 
-It is a bound rather than a policy, and two measured shapes are why it has to exist. Rematerializing
-one operand of an instruction inserts its recomputed definition immediately in front of the use,
-which **displaces another operand that was itself rematerialized there** — `MOV [v_addr], v_const`
-reads a frame address and a constant, each is recomputable, and putting either one beside the store
-makes the other stop being "immediately preceded by its definition". The two then take turns for
-ever: one round per swap, one fresh virtual register per round, the instruction count never moving.
-Splitting has a milder version of the same problem, where a fresh range that still crosses a clobber
-is offered for splitting again. Neither is reachable while every function the back end takes has been
-through the optimizer first, which is why they surfaced only when `--no-optimize` stopped running it:
-before the legalization set settled, five corpus programs took longer than twelve seconds each and
-`ARRAY.BAS` did not finish at all. One is left over the whole corpus — `DIFF36`'s module body, at 256
-virtual registers — and it is declined rather than waited for.
+Two of those moves used to undo each other. Rematerializing one operand of an instruction inserted its
+recomputed definition immediately in front of the use, which **displaced another operand that had been
+rematerialized there** — `MOV [v_addr], v_const` reads a frame address and a constant, each is
+recomputable, and putting either one beside the store made the other stop being "immediately preceded
+by its definition". The two then took turns for ever: one round per swap, one fresh virtual register
+per round, the instruction count never moving. Splitting had the milder version, where a fresh range
+that still crossed a clobber was offered for splitting again. Neither is reachable from IR the
+optimizer has been through, which is why they surfaced only when `--no-optimize` stopped running it:
+five corpus programs took longer than twelve seconds each and `ARRAY.BAS` did not finish at all.
 
-Refusing to rematerialize an already-rematerialized value is the obvious repair and it is **not**
-correct as stated: measured, it takes that same `DIFF36` body from 122 virtual registers to 296 with
-the optimizer ON and costs the allocation outright. The recomputation the ping-pong performs is doing
-real work as well as looping; what it needs is a rule that tells the two apart.
+**Adjacency was the wrong question.** It is a proxy for the property that matters — that recomputing
+the value again could not shorten its live range — and it is the wrong proxy the moment one
+instruction has two recomputable operands, because only one of them can be adjacent. The rule is now
+the **preparation run**: the stretch of instructions immediately before a use, each of which defines
+exactly one virtual register that is named nowhere else in the function and clobbers nothing. Those
+instructions exist only to make this one instruction's operands, so a definition standing anywhere
+inside the run is as close to its use as recomputing can put it. Two operands prepared for the same
+use are therefore *both* settled, and neither displaces the other.
+
+The second half is where a new definition is inserted: at the **front** of that run rather than
+immediately before the use. Nothing then lands between an already-settled definition and its use, so
+settling one value cannot unsettle another — the count of unsettled uses only ever falls.
+
+**`LinearScanAllocator.AdvanceSpiller` enforces that as a measure rather than trusting it.** Each move
+runs on a copy of the function and is kept only if it lowers `Spiller.Progress`, the lexicographic
+quadruple
+
+1. **untouched values** — virtual registers present that the spiller has not moved yet. Every move
+   *consumes* its subject (the id is replaced everywhere by fresh ones, or by a frame cell) and records
+   every id it mints in `MFunction.MovedValues` at birth, so a first move on a value lowers this and
+   nothing can raise it. This is the whole story for the two thirds of the work that never repeats;
+2. **clobber crossings** — live ranges caught across an instruction that destroys registers. This is
+   what a *repeat* split has to show for itself, and it is what tells the productive re-split of a
+   still-crossing range from the one that only adds a cell;
+3. **unsettled uses** — what a repeat rematerialization lowers, by the argument above;
+4. **values present** — what a repeat direct spill lowers, since it mints nothing and its subject
+   becomes memory.
+
+All four are counts of things in the function, so the order is well-founded and the loop cannot run
+longer than the initial measure. It also survives moves added later: one that settles nothing simply
+never applies. Splitting is two moves rather than one (`SplitCrossingOne`, `SplitPressureOne`) because
+a discarded move must leave the next *kind* to be tried, and a caller cannot try what it cannot name.
+
+`LinearScanAllocator.BudgetFor` — one move per virtual register the function started with, plus 64,
+capped at 512 — stays as a **backstop** rather than as the thing that stops the loop. Measured over the
+whole corpus with the budget lifted out of the way, the worst function needs **174** rounds with the
+optimizer on and **174** with it off (`DIFF14`'s module body), against a budget of 512 for a function
+that size; `BackendSpillTerminationTests` pins both numbers and fails if any function ever reaches its
+budget again.
+
+Refusing to rematerialize an already-rematerialized value was the obvious repair and was **not**
+correct: measured, it took `DIFF36`'s module body from 122 virtual registers to 296 with the optimizer
+ON and lost the allocation outright. The recomputation the ping-pong performs is doing real work as
+well as looping, and the preparation run is the rule that tells the two apart — with it, `DIFF36`'s
+body allocates unoptimized as well, which it did not before (257 → **258 of 258** selected functions
+allocating under `Legalize()`; 262 of 262 under `Standard()`, unchanged).
 
 Direct memory rewriting remains conservative: only instruction forms the emitter really has, and
 never two memory operands in one instruction. Every spill cell is allocated at the value's widest
@@ -1416,12 +1451,15 @@ pressure this target creates by itself, and splitting one is self-limiting becau
 longer cross the call. Plain pressure has no such shape: four `LONG` accumulators are eight words with
 no call anywhere near them, and each is defined by an instruction that already reads memory.
 
-`Spiller.SplitOne` now runs a second pass over ordinary live ranges once the clobber-crossing pass finds
-nothing. The order matters — a function that routes today takes exactly the transformation it took
-before, because the new pass is only reached where the old one gave up. Termination comes from
-`MFunction.SplitValues`, the set of virtual ids the splitter minted: re-splitting one of those could
-only add another store and another reload without shortening anything, so the second pass never offers
-one, and the set of ids it can offer therefore shrinks strictly with each split.
+`Spiller.SplitPressureOne` now runs over ordinary live ranges once the clobber-crossing pass
+(`SplitCrossingOne`) finds nothing. The order matters — a function that routes today takes exactly the
+transformation it took before, because the new pass is only reached where the old one gave up.
+Termination comes from `MFunction.MovedValues`, the set of virtual ids the spiller has already moved
+plus everything it minted: re-splitting one of those could only add another store and another reload
+without shortening anything, so the pressure pass never offers one, and the set of ids it can offer
+therefore shrinks strictly with each split. (The clobber-crossing pass *does* offer them, because there
+a second split is sometimes the one that lands — see "the spill loop terminates because a measure
+falls" above for how the two are told apart.)
 
 Both repairs are load-bearing and neither subsumes the other. The unrolled accumulation routes with the
 splitting pass alone, but at the cost of a store and a reload per element that the scheduler gate makes

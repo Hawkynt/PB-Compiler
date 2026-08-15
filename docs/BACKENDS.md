@@ -269,10 +269,11 @@ out of 262, with one pass removed - 258 with the whole set:
 | `sroa` + `mem2reg2` | **258** | nothing at all, to the function. They were in the set on the same kind of argument mem2reg wins on, and they are out |
 
 Coverage still falls a little, and where it does the direct emitter takes the function - which is the
-faithful path and the one the optimizer-off promise is about: 258 of 262 functions select and 257
-allocate under `Legalize()`, against 262 and 262 under `Standard()`; module bodies 157 against 161.
+faithful path and the one the optimizer-off promise is about: 258 of 262 functions select under
+`Legalize()`, against 262 under `Standard()`; module bodies 157 against 161.
 `BackendCorpusDifferentialTests` goes from 314 compilations and 299 agreements to 304 and 289, with
-**0 disagreements** either way.
+**0 disagreements** either way. Every function that selects now also allocates in both modes - it was
+257 of 258 unoptimized while the spill loop needed a work budget to stop.
 
 The honest asterisk on all of this is `instcombine`: it folds constants, so a routed `--no-optimize`
 build is not literally unoptimized. Splitting a canonicalization-only half out of that pass is the
@@ -283,11 +284,15 @@ depends on the optimizer, which `BackendWordNarrowingTests` exists to rule out.
 here used to say that gating "does not work" because the selector needs the optimizer to narrow
 `CHR$(64 + r%)` to a word - and that is true of the tree it was written on, but
 `InstructionSelector.WordSizedRange` closed it (below). What actually blocked the flag was one level
-further down: with the optimizer off, `LinearScanAllocator`'s spill loop does not terminate on a
-handful of corpus programs, because two of the spiller's moves undo each other (see
-docs/X86-BACKEND.md, "the spiller's moves are not all self-limiting"). The allocator therefore has a
-work budget and declines past it. Both shapes are pre-existing and neither is reachable from
-optimized IR, which is why nothing had met them.
+further down: with the optimizer off, `LinearScanAllocator`'s spill loop did not terminate on a
+handful of corpus programs, because two of the spiller's moves undid each other. Both shapes are
+pre-existing and neither is reachable from optimized IR, which is why nothing had met them.
+
+That is now a termination argument rather than a work budget: a spiller move is applied only when it
+lowers a measure that cannot rise again, so the loop is bounded by its own starting state and the
+budget is a backstop nothing reaches (see docs/X86-BACKEND.md, "the spill loop terminates because a
+measure falls"). Measured with the budget lifted, the worst corpus function needs 174 rounds with the
+optimizer on and 174 with it off.
 
 **Selection used to be gated on the optimizer's AGGRESSIVENESS, which is a different and worse
 thing, and that is now fixed.** The observation above is about behaviour; this one was about

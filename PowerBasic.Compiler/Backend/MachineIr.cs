@@ -374,16 +374,21 @@ public sealed class MFunction(string name) {
   public bool HasArgumentPlan { get; set; }
 
   /// <summary>
-  /// The virtual registers the spiller minted while splitting a live range - each one a reload or a
-  /// store standing beside the single instruction that wants the value.
+  /// Every virtual register the spiller has already MOVED - the subject of a rematerialization, a
+  /// direct spill, a reload or a live-range split, and every fresh id those moves minted.
   ///
-  /// It exists so splitting terminates. Splitting a value replaces it with fresh ids whose ranges are
-  /// one instruction long, so re-splitting one can only add another store and another reload without
-  /// shortening anything; a live range crossing a CALL states that on its own (the fresh range no
-  /// longer crosses one), but plain register pressure has no such self-limiting shape and needs the
-  /// spiller to remember what it has already taken apart.
+  /// <para>
+  /// It exists so the spill loop terminates, and it is the first half of the termination argument
+  /// spelled out on <c>LinearScanAllocator.AdvanceSpiller</c>: a move consumes its subject (the id is
+  /// replaced everywhere by fresh ones, or by a memory cell) and everything it mints is recorded here
+  /// at birth, so the number of virtual registers the spiller has NOT touched strictly decreases on
+  /// every first move and can never grow. Splitting under plain pressure is admitted only for an
+  /// untouched value for that reason - re-splitting one can only add another store and another reload
+  /// without shortening anything, and the fresh ranges a split leaves behind are already one
+  /// instruction long.
+  /// </para>
   /// </summary>
-  public HashSet<int> SplitValues { get; } = [];
+  public HashSet<int> MovedValues { get; } = [];
 
   /// <summary>
   /// A copy that can be transformed and thrown away. An <see cref="MInstr"/> is immutable, so only the
@@ -399,7 +404,7 @@ public sealed class MFunction(string name) {
     };
     copy.StackSlots.AddRange(this.StackSlots);
     copy.ArgumentLoads.AddRange(this.ArgumentLoads);
-    copy.SplitValues.UnionWith(this.SplitValues);
+    copy.MovedValues.UnionWith(this.MovedValues);
     foreach (var block in this.Blocks) {
       var cloned = new MBlock(block.Label);
       cloned.Instructions.AddRange(block.Instructions);
@@ -418,8 +423,8 @@ public sealed class MFunction(string name) {
     this.StackSlots.AddRange(other.StackSlots);
     this.ArgumentLoads.Clear();
     this.ArgumentLoads.AddRange(other.ArgumentLoads);
-    this.SplitValues.Clear();
-    this.SplitValues.UnionWith(other.SplitValues);
+    this.MovedValues.Clear();
+    this.MovedValues.UnionWith(other.MovedValues);
     this.Blocks.Clear();
     this.Blocks.AddRange(other.Blocks);
   }
