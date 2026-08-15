@@ -751,24 +751,37 @@ public sealed class BackendRuntimeCallTests {
   }
 
   /// <summary>
-  /// The table must not claim a routine it would render wrongly. <c>rt_str_i16</c> opens with a
-  /// <c>CWD</c>, so an unsigned WORD routed through it would print 65535 as -1 - so there is
-  /// deliberately no <c>rt_str_from_u16</c> entry, and STR$ of a WORD must DECLINE rather than reach
-  /// the signed routine. Declining costs coverage; the alternative costs correctness.
+  /// The table must not claim a routine it would render wrongly, and for a while that meant STR$ of a
+  /// WORD had to DECLINE: <c>rt_str_i16</c> opens with a <c>CWD</c>, so an unsigned WORD routed
+  /// through it prints 65535 as -1.
+  ///
+  /// <para>
+  /// Declining was the right answer to the wrong question. The 32-bit renderer answers correctly from
+  /// a ZEROED high half, which is the same <c>ArgKind.ZeroPair</c> the print side has always used for
+  /// <c>rt_print_u16</c> and the same <c>XOR DX,DX</c> the direct emitter writes - so the entry
+  /// exists, goes through <c>rt_str_i32</c>, and what must be pinned is which routine it reaches.
+  /// </para>
   /// </summary>
   [Test]
-  public void Select_GivenStrOfAnUnsignedWord_ThenDeclinesRatherThanSignExtend() {
-    var module = Optimized("""
+  public void Select_GivenStrOfAnUnsignedWord_ThenItRoutesThroughTheThirtyTwoBitRenderer() {
+    var m = Select("""
+      DECLARE FUNCTION G%(BYVAL v%)
       DIM w AS WORD
-      w = 65535
+      w = G%(30000) * 2
       PRINT STR$(w)
-      """);
-    var main = module.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
+      PRINT G%(1)
+      END
 
-    InstructionSelector.TrySelect(main, out var reason);
+      FUNCTION G%(BYVAL v%) NOINLINE
+        G% = v% + 0
+      END FUNCTION
+      """, "main");
 
-    Assert.That(reason, Does.Contain("rt_str_from_u16"),
-      "STR$ of a WORD must decline by name, not be routed through the signed entry");
+    var call = m.AllInstructions.First(i => i.Opcode == MOpcode.Call
+      && i.Operands[0] is MOperand.LabelRef { Name: "rt_str_i32" or "rt_str_i16" });
+
+    Assert.That(((MOperand.LabelRef)call.Operands[0]).Name, Is.EqualTo("rt_str_i32"),
+      "a WORD renders through the 32-bit routine; the 16-bit one would sign-extend it");
   }
 
   /// <summary>

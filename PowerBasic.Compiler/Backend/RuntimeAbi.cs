@@ -859,8 +859,13 @@ internal static class RuntimeAbi {
 
     // nothing else in the print family is listed
 
-    // deliberately NO rt_str_from_u16 entry: rt_str_i16 opens with a CWD, so routing an unsigned
-    // WORD through it would render 65535 as -1
+    // a BYTE is 0..255, so the signed 16-bit renderer answers correctly - the same reasoning
+    // rt_print_u8 above rests on, and the same case the direct emitter falls into for it
+    ["rt_str_from_u8"] = new("rt_str_i16", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    // A WORD does NOT go through rt_str_i16 - that entry opens with a CWD, so 65535 would render as
+    // -1. It takes the 32-bit one with a zeroed high half, which is the same ZeroPair the print side
+    // uses for rt_print_u16 and the same XOR DX,DX the direct emitter writes.
+    ["rt_str_from_u16"] = new("rt_str_i32", [new(ArgKind.ZeroPair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
     ["rt_str_from_i32"] = new("rt_str_i32", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
     // ...and for the same reason there is no rt_str_from_u32 through rt_str_i32: that entry renders
     // DX:AX SIGNED, so 4294967295 would come out as -1. A DWORD goes through the 64-bit one with a
