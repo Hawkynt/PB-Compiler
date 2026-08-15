@@ -1821,15 +1821,15 @@ public sealed partial class InstructionSelector {
       case IrCastOp.FPToSI when to.IsInteger && to.Bits == 64 && from.IsIeeeFloat
           && cast.Users is [IrCast { Op: IrCastOp.SIToFP, Type.IsIeeeFloat: true }]:
         return true;
-      // FIX and INT round a float toward zero by going through a 64-BIT integer, and the round trip
-      // is the whole operation - the i64 is never a value the program can see, only the shape the
-      // rounding takes. Selected as a pair, that is FISTP to a qword cell and FILD straight back,
-      // which is what the direct emitter writes; selected apart, the intermediate would need a
-      // four-register integer this back end does not have, and declines.
+      // FIX and INT truncate a float toward zero by going through a 64-BIT integer, and the round
+      // trip is the whole operation - the i64 is never a value the program can see, only the shape
+      // the truncation takes. Selected as a pair it becomes the rt_trunc the direct emitter calls;
+      // selected apart, the intermediate would need a four-register integer this back end does not
+      // have, and declines.
       case IrCastOp.SIToFP when to.IsIeeeFloat
           && cast.Value is IrCast { Op: IrCastOp.FPToSI, Type: { IsInteger: true, Bits: 64 } } inner
           && inner.Value.Type.IsIeeeFloat && inner.Users.Count == 1:
-        return this.SelectRoundTripThroughQword(inner, cast);
+        return this.SelectTruncationTowardZero(inner, cast);
       // ...unless every consumer is a floating operation that can read the INTEGER out of memory, in
       // which case the conversion is the operation's own and all this leaves behind is the cell to
       // read it from (see InstructionSelector.Idioms)
@@ -3027,28 +3027,51 @@ public sealed partial class InstructionSelector {
   }
 
   /// <summary>
-  /// An integer widened to a float. x87 reads its integers from memory, so the value is parked in a
-  /// frame cell first - a word for an INTEGER, both halves of the pair for a LONG - and <c>FILD</c>
-  /// reads it back at that width.
+  /// <c>SIToFP(FPToSI(x, i64), f)</c> - truncation toward zero, which is what the IR's
+  /// <see cref="IrCastOp.FPToSI"/> means everywhere else: the constant folder answers it with a C
+  /// cast, the C back end writes one, and LLVM's <c>fptosi</c> is defined that way.
+  ///
+  /// <para>
+  /// The x87 has <b>no truncating store</b>. <c>FISTP</c> rounds by the control word, which is
+  /// nearest-with-ties-to-even unless something changed it, so the qword round trip this used to
+  /// emit answered <c>FIX(-1.5)</c> with <c>-2</c> - PB's answer is <c>-1</c>. It was invisible
+  /// because every <c>FIX</c> in the corpus has a constant argument the folder reaches first.
+  /// </para>
+  ///
+  /// <para>
+  /// So it goes through <c>rt_trunc</c>, which is the routine the direct emitter's <c>FIX</c> calls:
+  /// <c>FRNDINT</c> under RC=11 with the caller's control word restored afterwards. Not because a
+  /// control-word bracket could not be selected here, but because the two paths emit into the SAME
+  /// image and one program must not truncate two ways - the argument
+  /// <see cref="MathSequence"/> already makes about SIN. Sharing the routine also settles the
+  /// magnitudes a qword cannot hold: <c>FRNDINT</c> answers <c>FIX(1E30)</c> with <c>1E30</c> where
+  /// <c>FISTP</c> stores the indefinite value.
+  /// </para>
+  ///
+  /// <para>
+  /// <c>INT</c> lowers through this same pair and stays correct across the change: it subtracts one
+  /// when <c>x &lt; trunc(x)</c>, which is the floor under any rounding the round trip performs.
+  /// <c>CINT</c> does not come here at all - it is <see cref="IrCastOp.FPToSIRound"/>, and
+  /// <see cref="SelectFloatToInt"/> wants exactly the nearest-with-ties-to-even <c>FISTP</c> gives.
+  /// </para>
   /// </summary>
-  /// <summary>
-  /// <c>SIToFP(FPToSI(x, i64), f)</c> - truncation toward zero at 64-bit precision, which the x87
-  /// does in two instructions through one qword frame cell. The intermediate integer is never
-  /// materialized, which is what makes this selectable at all: a 64-bit value has no register
-  /// representation here.
-  /// </summary>
-  private bool SelectRoundTripThroughQword(IrCast toInteger, IrCast backToFloat) {
+  private bool SelectTruncationTowardZero(IrCast toInteger, IrCast backToFloat) {
     if (!this.TryFloatOperand(toInteger.Value, out var source))
       return false;
-    var slot = this._function.StackSlots.Count;
-    this._function.StackSlots.Add(8);
     this.EmitX87(MOpcode.Fld, source, reads: true);
-    this.EmitX87(MOpcode.Fistp, new MOperand.StackSlot(slot, MRegSize.Qword), reads: false);
-    this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(slot, MRegSize.Qword), reads: true);
+    this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef("rt_trunc")],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: true, WritesMemory: true),
+      condition: null, clobbers: _callClobbers));
     this.EmitX87(MOpcode.Fstp, this.FloatCell(backToFloat), reads: false);
     return true;
   }
 
+  /// <summary>
+  /// An integer widened to a float. x87 reads its integers from memory, so the value is parked in a
+  /// frame cell first - a word for an INTEGER, both halves of the pair for a LONG - and <c>FILD</c>
+  /// reads it back at that width.
+  /// </summary>
   private bool SelectIntToFloat(IrCast cast) {
     var from = cast.Value.Type;
     if (!from.IsInteger || from.Bits is not (16 or 32))
