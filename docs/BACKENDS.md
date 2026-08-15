@@ -333,11 +333,22 @@ interval would be a lie.
 
 Nothing folds `sext i16 64` into an i32 constant until `instcombine` runs, which is exactly why this
 matters and exactly why it is invisible: `instcombine` is in `Legalize()`, so in production the leaf
-never fires. Take it out and the difference is the whole module body. `INPUT r% : PRINT CHR$(64 + r%)`
-compiled `--no-optimize` with `instcombine` removed from the legalization set is **byte-identical to
-the direct build without this fix** - `main` declines - and routes with it. That is the same program
-the `instcombine` row of the table above is justified by, so the two readings agree: the pass earns
-its place, and the selector's own proof should not have been depending on it to get there.
+never fires and no assertion moves. Take it out and the difference is the whole module body.
+`INPUT r% : PRINT CHR$(64 + r%)` compiled `--no-optimize` with `instcombine` removed from the
+legalization set is **byte-identical to the direct build without this fix** - `main` declines - and
+routes with it. That is the same program the `instcombine` row of the table above is justified by, so
+the two readings agree: the pass earns its place on its own merits, and selection is not allowed to be
+one of them.
+
+`BackendWordNarrowingTests` pins both halves, because an invariant with no test is a comment.
+`TrySelect_GivenTheOffsetStillWidened` is the leaf on hand-built IR and
+`TrySelect_GivenTheLegalizationSetWithoutInstCombine` is the program end to end; both decline with
+`rt_str_chr takes a 32-bit value in a word register` on a tree without the fix. The two signedness
+mismatches get a test each - `TrySelect_GivenASignExtendedUnsignedConstant` and
+`TrySelect_GivenAZeroExtendedSignedConstant` - and those two pass either way on purpose: the older
+code could not get them wrong because it never read the operand, so they pin the risk the change
+INTRODUCES rather than the bug it fixed. That is the arm where a wrong interval would elide a check
+instead of merely keeping one.
 
 **2. Fidelity - the routed path agreeing with the direct one everywhere. DONE.** The differential
 battery run with `PBC_X_BACKEND=1` scores **504 of 504** against the genuine vintage compilers -
