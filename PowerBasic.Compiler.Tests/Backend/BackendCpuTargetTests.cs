@@ -1,4 +1,7 @@
+using PowerBasic.Compiler.Backend;
 using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
 using PowerBasic.Compiler.Tests.Exec;
@@ -122,5 +125,80 @@ public sealed class BackendCpuTargetTests {
     var direct = Cpu8086.Run(Compile(source, routed: false));
     var routed = Cpu8086.Run(Compile(source, routed: true));
     Assert.That(routed.Output, Is.EqualTo(direct.Output), $"$CPU {cpu}");
+  }
+
+  /// <summary>
+  /// The 80186 shift-by-immediate, asserted where it can actually be seen.
+  ///
+  /// <para>
+  /// <c>C0</c>/<c>C1</c> - a shift by a constant count above one - is an 80186 instruction, and under
+  /// the default <c>$CPU 8086</c> the selector emitted it from three places: a narrow shift by a
+  /// literal, subscript scaling for a 4- or 8-byte element, and the sign smear of a widening. NO
+  /// ORACLE HERE CAN SEE THAT. <c>Cpu8086</c> implements <c>C0</c>/<c>C1</c> (its own case says "186
+  /// shift by immediate") and DOSBox emulates a 386, so every battery, golden and differential run
+  /// passes either way - which is why it went unnoticed and why a byte-pattern search of the image
+  /// would be the wrong test as well: <c>C1</c> is an ordinary byte and matches a displacement, a
+  /// literal or a string as readily as an opcode.
+  /// </para>
+  ///
+  /// <para>
+  /// So the assertion is made against the MACHINE IR, where a shift is a shift: after selection for an
+  /// 8086 target, no <c>SHL</c>/<c>SHR</c>/<c>SAR</c> may carry an immediate count other than one.
+  /// Everything larger is repeated single-bit steps or a count staged into <c>CL</c>, which is the
+  /// rule <c>CodeGenerator.EmitShiftLeft</c> states for the direct emitter.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Selection_GivenAn8086Target_ThenNoShiftCarriesAn80186ImmediateCount() {
+    // every shape that used to produce one: a literal narrow shift, an array of a 4-byte element
+    // (SHL 2) and of an 8-byte one (SHL 3), and INTEGER-to-LONG widening (SAR 15)
+    const string source = """
+      DECLARE FUNCTION Opaque%(BYVAL v%)
+      DIM w%, l&, d#, i%
+      DIM la&(0 TO 8), da#(0 TO 8)
+      w% = Opaque%(9)
+      SHIFT LEFT w%, 4
+      i% = Opaque%(2)
+      la&(i%) = 5 : da#(i%) = 2.5
+      l& = CLNG(Opaque%(-3)) * 2
+      PRINT w%; l&; la&(i%); da#(i%)
+      END
+      FUNCTION Opaque%(BYVAL v%) NOINLINE
+        Opaque% = v% + 1
+      END FUNCTION
+      """;
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "S.BAS", Dialect.Pb36), "S.BAS", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+
+    var generator = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = true };
+    generator.EmitExecutable();
+    // the program has to route, or this asserts about instructions nobody selected
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"), "the module body did not route");
+
+    var module = IrLowering.TryLowerModule(model);
+    Assert.That(module, Is.Not.Null);
+    IrPassManager.Standard().RunOnModule(module!);
+    foreach (var fn in module!.Functions)
+      if (!fn.IsDeclaration)
+        IntegerRecovery.Run(fn);
+    IrPassManager.Standard().RunOnModule(module);
+
+    var offenders = new List<string>();
+    var shifts = 0;
+    foreach (var fn in module.Functions) {
+      if (fn.IsDeclaration || InstructionSelector.TrySelect(fn, new SelectionTarget(Cpu386: false, Optimize: true)) is not { } machine)
+        continue;
+      foreach (var instr in machine.Blocks.SelectMany(b => b.Instructions)) {
+        if (instr.Opcode is not (MOpcode.Shl or MOpcode.Shr or MOpcode.Sar))
+          continue;
+        ++shifts;
+        if (instr.Operands[1] is MOperand.Immediate { Value: not 1 } count)
+          offenders.Add($"{fn.Name}: {instr.Opcode} by {count.Value}");
+      }
+    }
+
+    Assert.That(shifts, Is.GreaterThan(0), "no shift was selected at all - the program measures nothing");
+    Assert.That(offenders, Is.Empty,
+      "an 8086 target selected the 80186 shift-by-immediate:\n  " + string.Join("\n  ", offenders));
   }
 }
