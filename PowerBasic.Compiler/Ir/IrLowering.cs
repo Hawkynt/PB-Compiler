@@ -1200,7 +1200,14 @@ public sealed partial class IrLowering {
       : new IrConstantInt(IrType.I32, -1);             // -1 = replace to the end of the source slice
     var result = this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid_assign", IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I32, IrType.Ptr),
       current, start, length, this.LowerStringExpr(m.Value));
-    this._b.Store(result, this.StringTargetAddress(m.Target));
+    // The read above borrowed a COPY and the routine consumed that, so the handle the cell still
+    // holds is nobody's - freed here before the edited copy takes its place, exactly as REPLACE does.
+    // Without it every MID$ statement leaks one block, which only a program that churns notices:
+    // 600 in-place edits of a 120-byte string say OUT OF STRING SPACE where the direct emitter,
+    // whose rt_strassign frees through the cell, runs to the end.
+    var midSlot = this.StringTargetAddress(m.Target);
+    this.FreeReplacedString(midSlot);
+    this._b.Store(result, midSlot);
   }
 
   /// <summary>
@@ -1225,7 +1232,11 @@ public sealed partial class IrLowering {
     var poked = this._b.Call(IrType.Ptr,
       this.RuntimeFn("rt_str_asc_set", IrType.Ptr, IrType.Ptr, IrType.I16, IrType.I16),
       this.LowerStringExpr(asc.Target), index, code);
-    this._b.Store(poked, this.StringTargetAddress(asc.Target));
+    // as MID$ assignment above: the borrow is what the routine consumed, so the cell's own handle
+    // still has to go before the poked copy replaces it
+    var ascSlot = this.StringTargetAddress(asc.Target);
+    this.FreeReplacedString(ascSlot);
+    this._b.Store(poked, ascSlot);
   }
 
   /// <summary>
@@ -3176,6 +3187,11 @@ public sealed partial class IrLowering {
     if (!this.Terminated)
       this._b.Br(endsel);
     this._b.Position(endsel);
+    // The subject is evaluated ONCE and every arm borrows it (CompareToValue), so the one handle
+    // nothing consumed is the subject's own - released here, where every path through the block
+    // arrives. EXIT SELECT targets this block too, so the release is on that path as well.
+    if (subjectPb is StringType)
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr), subject);
   }
 
   private IrValue SelectorTest(IrValue subject, PbType subjectPb, CaseSelector selector) {
@@ -3193,7 +3209,13 @@ public sealed partial class IrLowering {
 
   private IrValue CompareToValue(IrValue subject, PbType subjectPb, CaseComparison op, Expression rightExpr) {
     if (subjectPb is StringType) {
-      var cmp = this._b.Call(IrType.I32, this.RuntimeFn("rt_str_compare", IrType.I32, IrType.Ptr, IrType.Ptr), subject, this.LowerStringExpr(rightExpr));
+      // rt_str_compare CONSUMES both handles, and a SELECT tests the one subject against every arm -
+      // so each test needs a copy of its own. Handing the subject itself over freed it in the first
+      // arm and left every later arm comparing a released handle: `SELECT CASE g$` with g$ = "gamma"
+      // over CASE "alpha" / CASE "beta" answered "beta", because rt_str_const took the descriptor the
+      // first comparison had just given back. The subject's own handle is released at sel.end.
+      var cmp = this._b.Call(IrType.I32, this.RuntimeFn("rt_str_compare", IrType.I32, IrType.Ptr, IrType.Ptr),
+        this.BorrowString(subject), this.LowerStringExpr(rightExpr));
       var spred = op switch {
         CaseComparison.Equal => IrCmpPred.Eq,
         CaseComparison.NotEqual => IrCmpPred.Ne,
