@@ -323,6 +323,22 @@ gain is that selection no longer depends on it. This is a narrow, local version 
 `CodeGen/IntervalRange.cs` does for the direct emitter; the note at the end of this document about
 feeding those range facts into the IR is still the general answer.
 
+**One leaf of that proof was still throwing away what it knew, and it is the leaf the legalization set
+is built around.** A `sext`/`zext` contributed the whole SPAN of the type it widens, whatever it was
+widening - so `sext i16 64` was `[-32768, 32767]` rather than `[64, 64]`, and `64 + i%` summed to
+`[-65536, 65534]` and declined. `WidenedRange` reads the operand's own interval instead, falling back
+to the span only where the conversion would not reproduce it: a `sext` of an UNSIGNED source turns
+40000 into -25536 and a `zext` of a SIGNED one turns -1 into 65535, and in both cases the operand's
+interval would be a lie.
+
+Nothing folds `sext i16 64` into an i32 constant until `instcombine` runs, which is exactly why this
+matters and exactly why it is invisible: `instcombine` is in `Legalize()`, so in production the leaf
+never fires. Take it out and the difference is the whole module body. `INPUT r% : PRINT CHR$(64 + r%)`
+compiled `--no-optimize` with `instcombine` removed from the legalization set is **byte-identical to
+the direct build without this fix** - `main` declines - and routes with it. That is the same program
+the `instcombine` row of the table above is justified by, so the two readings agree: the pass earns
+its place, and the selector's own proof should not have been depending on it to get there.
+
 **2. Fidelity - the routed path agreeing with the direct one everywhere. DONE.** The differential
 battery run with `PBC_X_BACKEND=1` scores **504 of 504** against the genuine vintage compilers -
 the same score the direct path gets. Every program the back end owns produces output the oracle
@@ -612,8 +628,8 @@ a real difference between the two paths. Ordered by how many tests each accounts
 | peephole idioms the selector does not recognise | ~~19~~ **10** | mostly CLOSED - see "What the peephole row actually was" below. `Backend/Peephole.cs` and `InstructionSelector.Idioms.cs` took nine of the nineteen; the ten that remain are a different thing wearing the same label |
 | the direct emitter's loop-register model has no counterpart | 13 | SI/DI residency for counters and accumulators, the constant-limit immediate compare that rides on it, loop rotation and the count-down form |
 | `$ERROR OVERFLOW/BOUNDS` traps are not modelled | 8 → see below | the traps were modelled *in the module body* and, until `IrLowering.ArmedForProcedures`, armed in no procedure at all - so every trap a `SUB` or `FUNCTION` should have raised was simply absent. What was missing besides is the range facts that elide one, and `Ir/Analysis/` now supplies them |
-| ~~the objective flags do not reach the routed build~~ | 6 → **1** | mostly CLOSED - `IrPassManager.Legalize()` is what a routed `--no-optimize` build now runs, which un-merged the two builds a comparison makes (13 of the 15 battery rows, and `Emit_GivenLatticeProvedComparison`). What is left is `Emit_GivenDeadGlobalWithoutOptimize`, and it is a different thing wearing the same label: an unreferenced module variable disappears because the routed `main` never mentions it, so the codegen's data layout never hears of it - a question about who owns the data section, not about which passes ran |
-| `$CPU` tier does not reach instruction selection | 6 | 32-bit shift, `SHLD`, inline dword `OR`, `REP MOVSD`, the ESI/EDI LONG residency - and the same census file says `'$CPU 80286'` and `'$CPU 8086'` produce the same image |
+| ~~the objective flags do not reach the routed build~~ | 6 → **1** | mostly CLOSED - `IrPassManager.Legalize()` is what a routed `--no-optimize` build now runs, which un-merged the two builds a comparison makes (13 of the 15 battery rows, and `Emit_GivenLatticeProvedComparison`); `$OPTIMIZE SIZE` then had to reach the INLINER too, which is a second flag on the same axis and one the pipeline switch does not carry - the direct emitter declines every call site under SIZE, and a routed caller that absorbed its callee anyway made one image answer the directive two ways (`Emit_GivenOptimizeSize`). What is left is `Emit_GivenDeadGlobalWithoutOptimize`, and it is a different thing wearing the same label: an unreferenced module variable disappears because the routed `main` never mentions it, so the codegen's data layout never hears of it - a question about who owns the data section, not about which passes ran |
+| `$CPU` tier does not reach instruction selection | 6 → **4** | 32-bit shift, `REP MOVSD`, the ESI/EDI LONG residency. The two QUAD rows were fixtures that could not observe - see below - and the same census file says `'$CPU 80286'` and `'$CPU 8086'` produce the same image |
 | no auto-vectorizer, no loop-top alignment | 6 | MMX/SSE2/AVX2/AVX-512 `PADDW`/`PMULLW`, the 586 NOP pad |
 | the interval lattice has no IR equivalent | 4 | the LATTICE now exists (`Ir/Analysis/`); what these four still want is four SELECTOR features it would feed - range-known LONG compare/divide and DWORD multiply narrowing to 16 bits, and the unsigned window compare |
 | dispatch shape | 3 | a 32-bit `SELECT` subject and `ON n GOTO` still take the compare chain; `Emit_GivenFewCaseSparseSelect` is the disagreement already recorded above |
@@ -890,6 +906,33 @@ a PESSIMIZATION: `a%(i%)` over `FOR i% = 1 TO 5` into `a%(1 TO 5)` is provably i
 check is correct, so the fixture's claim that `$ERROR BOUNDS ON` must suppress the address optimization
 is the direct emitter's policy rather than a property of the program.
 
+### What the `$CPU` row actually is
+
+Two of the six were the same mistake the peephole row was full of, and the other four are one missing
+thing rather than four. Every claim here is a byte count over two images.
+
+**Two could not observe what they assert, and are repaired.** `Emit_GivenQuadShiftUnderCpu386` set
+`x&& = 3` and `Emit_GivenQuadBitwiseUnderCpu386` gave both QUAD operands literals, so the statement is
+answered at compile time and the routed image holds the ANSWER - `SHIFT LEFT x&, 4` after `x& = 3`
+compiles to `B8 30 00`, which is `MOV AX, 48`, and there is no shift for a `66 C1` to be. Both now take
+their subject from `INPUT`, assertion untouched, and both pass. The interesting part is WHY: with a
+runtime operand the routed and direct images are **byte-identical**, because an `i64` is wider than a
+register pair and the function declines to route at all, so the `$CPU` tier reaches it the way it
+always did. These two never said anything about selection.
+
+**Four are real, and all four want `Backend/MachineIr.cs` widened.** A 32-bit value on this target is a
+PAIR of word registers (`TryOperandPair`, and the declines that read "has no register pair");
+`MRegSize.Dword` exists as an operand size and `LinearScanAllocator` allocates from the 16-bit file.
+`Emit_GivenLongShiftUnderCpu386` wants `66 C1` (`SHL r32, imm8`) and
+`Emit_GivenLongForLoop`/`Emit_GivenLongAccumulatorLoop` want a LONG local resident in `ESI`/`EDI`; each
+names a dword register as an operand, and no arrangement of two word registers is one. Measured with an
+`INPUT`-sourced value so nothing folds: routed emits no `66 C1` where direct emits one.
+`Emit_GivenUdtCopiesUnderCpu386` is the fourth and wants a different widening - the routed UDT copy is
+`llvm.memcpy` mapped onto `rt_memcpy` (`RuntimeAbi`), a CALL to a byte-wise `REP MOVSB`, and inlining a
+`REP MOVSD` in its place needs string-move opcodes and segment-register moves `MOpcode` does not have.
+Widening the runtime routine instead would satisfy the byte pattern while leaving the call in place,
+which is the wrong repair for a row about selection.
+
 **4. The golden gate - byte-identical output with the optimizer off.** This is the hard one, and it
 is the direct emitter's whole reason for existing: its optimizations are interleaved with emission
 *on purpose*, because that is what makes byte-identity with genuine PBC achievable. An SSA
@@ -954,5 +997,9 @@ Beyond widening that subset, the two items that would most change the picture:
   dimension, a sum that cannot overflow its type, a divisor that cannot be zero. What
   it does not yet feed is the one proof that is target-specific in its *use* — "a
   32-bit operation fits 16 bits" — which lives in `InstructionSelector.WordSizedRange`
-  and still computes its own, much weaker, interval. Rewiring that is the next
-  increment and the prerequisite for the four narrowing assertions in gate 3.
+  and still computes its own, much weaker, interval. It is one leaf less weak than it
+  was — a widened CONSTANT contributes its value rather than its type's span, which is
+  what keeps the proof from depending on `instcombine` having run — but it still cannot
+  see a loop guard or an `IF` refinement, because those are properties of the CFG.
+  Rewiring it onto the analysis is the next increment and the prerequisite for the four
+  narrowing assertions in gate 3.
