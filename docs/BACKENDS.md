@@ -810,6 +810,59 @@ inside a two-call-site `NOINLINE` SUB, the `$ERROR OVERFLOW OFF` twin that says 
 directive, and the module-level program above asserting that the provable check is STILL elided - so an
 over-conservative repair would fail there rather than pass quietly.
 
+### A bool CONSTANT was not this target's bool - FIXED, and it stopped a FOR loop terminating
+
+The x86-16 back end holds a bool as BASIC's truth: a **full word of -1 or 0** (`RegSize`,
+`SelectCmpValue`, and the `zext` arm that masks the low bit to turn one into the other). Every
+comparison it materializes obeys that. A bool **constant** did not: `TryOperand` turned
+`IrConstantInt(i1, 1)` into the immediate `1`, because it read the IR's spelling of truth rather than
+the target's.
+
+That is invisible for a branch or a `select`, which test non-zero, and wrong for every bitwise
+operation mixing a computed bool with a literal one. `xor i1 %c, true` - which is how **both**
+`IrLowering` and `InstCombine` spell a logical NOT - became `XOR reg, 1`, so the complement of -1 was
+-2. Still non-zero, so **a negated TRUE stayed TRUE**.
+
+What it cost is a non-terminating loop. `FOR i = a TO b STEP s` with a **runtime** step has no
+compile-time direction, so `LowerFor` asks the whole question:
+
+```
+continue = (s >= 0 AND i <= limit) OR (s < 0 AND i >= limit)
+```
+
+and the second conjunct's guard is the first one negated. With the negation stuck at TRUE, both arms
+stayed live and an **ascending** loop never reached its limit:
+
+```basic
+DECLARE FUNCTION Op%(BYVAL v%)
+DECLARE SUB Walk(BYVAL a%, BYVAL b%, BYVAL s%)
+Walk Op%(1), Op%(10), Op%(4)      ' direct: 1 5 9.   routed: 1 5 9 13 17 21 ... forever
+Walk Op%(10), Op%(1), Op%(-3)     ' correct on both paths, which is what hid it
+```
+
+Three things kept it out of sight. A **descending** loop was correct throughout, because the negation
+of FALSE is 1 and 1 is as true as -1. **Every counted loop in the corpus has a constant step**, which
+takes the one-comparison path and never builds the disjunction. And the zero-trip and one-trip forms
+of an ascending runtime-step loop are the same defect, so there was no shorter case to notice.
+
+It reproduces with the optimizer **on and off** - `instcombine`, which is in `Legalize()`, is one of
+the two things that spell a NOT this way - and over a LONG counter, a SINGLE counter and the module
+body as well as a procedure.
+
+**This one is NOT shared with `--emit-c` / `--emit-llvm`.** It is the selector's own representation
+choice: the C emitter writes an `i1` as C's `0`/`1` and its `^ 1` is a correct negation, which was
+checked by reading the emitted C for the failing program. That makes it the opposite of the `$ERROR`
+defect above, and worth saying out loud - "the middle end is shared" is a rule about where a bug
+lives, not a conclusion about every bug.
+
+`ImmediateOf` is the repair: a bool constant materializes as this target's truth (-1/0) and every
+other constant as itself, so `and`/`or`/`xor` are bitwise-consistent, `icmp` against a bool literal
+compares against the right word, and `zext` still masks to 0/1. `BackendLoopStepTests` runs the three
+loop shapes both ways under the interpreter with the fault **folded into the compared output** rather
+than thrown (a runaway loop otherwise reports as "the interpreter cannot run this image", which is the
+defect wearing an excuse), and `BackendTruthValueTests.Select_GivenBooleanNotSpelledAsXorWithTrue`
+pins the operand itself. All four fail on an unfixed tree.
+
 ### What the peephole row actually was
 
 Nine of the nineteen were what the row said, and they are closed. The other ten were three quite
