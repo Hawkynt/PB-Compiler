@@ -3210,9 +3210,32 @@ public sealed partial class InstructionSelector {
     new(WrittenRegs: [0], ReadRegs: rhs is MOperand.Register ? [0, 1] : [0],
       ReadsFlags: readsFlags, WritesFlags: writesFlags, ReadsMemory: rhs is MOperand.Memory, WritesMemory: false);
 
+  /// <summary>
+  /// A constant integer as an immediate, in THIS TARGET's spelling of it.
+  ///
+  /// <para>
+  /// <c>i1</c> is the one type whose IR value and machine value differ. The IR writes truth as 1;
+  /// every comparison this back end materializes writes BASIC's full word of -1 (see
+  /// <see cref="SelectCmpValue"/> and <see cref="RegSize"/>), and the whole file is built on that.
+  /// So a bool CONSTANT has to be widened to the same shape, or a bitwise operation mixing a
+  /// computed bool with a literal one answers a third thing: <c>xor i1 %c, true</c> - which is how
+  /// both <c>IrLowering</c> and <c>InstCombine</c> spell a logical NOT - became <c>XOR reg, 1</c>,
+  /// turning -1 into -2. Still non-zero, so the negation of a true condition stayed true.
+  /// </para>
+  /// <para>
+  /// What that cost: <c>FOR i = a TO b STEP s</c> with a RUNTIME step tests
+  /// <c>(s &gt;= 0 AND i &lt;= limit) OR (s &lt; 0 AND i &gt;= limit)</c>, and the second conjunct's
+  /// negated guard never went false - so an ASCENDING loop with a runtime step never terminated,
+  /// with the optimizer on or off. A descending one was correct throughout, which is what kept it
+  /// out of sight.
+  /// </para>
+  /// </summary>
+  private static MOperand.Immediate ImmediateOf(IrConstantInt constant)
+    => new(constant.Type.IsBool ? (constant.Value != 0 ? -1 : 0) : constant.Value);
+
   /// <summary>An SSA value as a machine operand: a constant is an immediate, anything else its virtual register.</summary>
   private MOperand Operand(IrValue value)
-    => value is IrConstantInt c ? new MOperand.Immediate(c.Value) : new MOperand.Register(this._vregs[value]);
+    => value is IrConstantInt c ? ImmediateOf(c) : new MOperand.Register(this._vregs[value]);
 
   /// <summary>
   /// An SSA value as a machine operand, declining instead of throwing when it has no virtual
@@ -3225,7 +3248,7 @@ public sealed partial class InstructionSelector {
   private bool TryOperand(IrValue value, out MOperand operand) {
     switch (value) {
       case IrConstantInt c:
-        operand = new MOperand.Immediate(c.Value);
+        operand = ImmediateOf(c);
         return true;
       // A null pointer IS zero on this target - a string handle of 0 is the empty string, which is
       // what a string variable holds before its first assignment.

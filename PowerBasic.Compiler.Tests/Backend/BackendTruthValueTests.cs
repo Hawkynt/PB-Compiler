@@ -99,6 +99,42 @@ public sealed class BackendTruthValueTests {
     Assert.That(asm.ToArray(), Is.Not.Empty);
   }
 
+  /// <summary>
+  /// The other half of the -1/0 convention, and the one that was missing: a bool CONSTANT is an
+  /// operand too, and it has to be spelled the same way the computed ones are.
+  ///
+  /// <para>
+  /// The IR writes truth as <c>i1 1</c>; this target writes it as a full word of -1. Materializing
+  /// the constant as the immediate <c>1</c> makes every bitwise operation mixing the two answer a
+  /// third thing - <c>xor i1 %c, true</c>, which is how both the lowering and instcombine spell a
+  /// logical NOT, turned -1 into -2 rather than into 0. Still non-zero, so a negated TRUE stayed
+  /// TRUE.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Select_GivenBooleanNotSpelledAsXorWithTrue_ThenTheConstantIsThisTargetsTruth() {
+    var (fn, a, b) = TwoArgFunction(IrType.I16);
+    var entry = fn.CreateBlock("entry");
+    var builder = new IrBuilder(entry);
+    var cond = builder.Cmp(IrCmpPred.Sgt, a, b);
+    var negated = entry.Append(new IrBinary(IrBinaryOp.Xor, cond, new IrConstantInt(IrType.I1, 1)));
+    builder.Ret(builder.SExt(negated, IrType.I16));
+
+    var m = InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(m, Is.Not.Null, reason);
+    var xorOperands = m!.AllInstructions
+      .Where(i => i.Opcode == MOpcode.Xor)
+      .Select(i => i.Operands[1])
+      .OfType<MOperand.Immediate>()
+      .Select(i => i.Value)
+      .ToList();
+    Assert.That(xorOperands, Is.Not.Empty, "the negation is still a XOR against a literal");
+    Assert.That(xorOperands, Has.All.EqualTo(-1),
+      "a bool true is a full word of -1 here, so XOR against it is the bitwise complement - "
+      + "XOR against 1 flips only the low bit and leaves -1 as -2, which still reads as TRUE");
+  }
+
   [Test]
   public void Select_GivenComparisonValueInALoop_ThenPhiCopiesLandAfterTheSplit() {
     // the regression the block cursor exists for: a phi's edge copies must be inserted in the block
