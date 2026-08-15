@@ -1515,6 +1515,32 @@ it does under `$OPTIMIZE SPEED` and nowhere else: the chain is *bigger* than the
 cycles. Shifts are spelled as repeated `SHL r,1`, so a step needing more than four refuses outright
 rather than emitting an 80186 shift-by-immediate.
 
+### The 80186 shift-by-immediate is still reachable from three other places - OPEN
+
+The care taken just above is local to the multiply decomposition, and the same encoding goes out
+unguarded elsewhere. `Assembler.Shift(op, Reg, int)` emits `D0`/`D1` for a count of one and `C0`/`C1`
+otherwise, and `C0`/`C1` are **80186** instructions - so on the default `$CPU 8086` target these three
+selections produce code the declared part does not have:
+
+| site | shape | count |
+|---|---|---|
+| `SelectBinary`, two-address arm | `SHIFT LEFT a%, 4` and every narrow shift by a literal | 2..31 |
+| `TryGepOffset` | scaling a subscript by a power-of-two element size | `SHL r, 2` for a 4-byte element, `3` for an 8-byte one |
+| `SelectCast` (`SExt` to a pair) | smearing the sign bit into the high word | `SAR hi, 15` |
+
+The direct emitter has a helper whose summary is the rule - "1-shifts up to four, CL beyond - never the
+186+ immediate form" (`CodeGenerator.EmitShiftLeft`) - and `EmitShiftRotate` puts every narrow count in
+`CL` whether it is constant or not, so the two paths disagree about the instruction set on a program as
+ordinary as an array of `LONG`.
+
+It is recorded rather than fixed because **no oracle in this project can see it**: `Cpu8086` implements
+`C0`/`C1` (its own case is labelled "186 shift by immediate") and DOSBox emulates a 386, so every
+battery, every golden and every differential run passes either way. It is the same class of defect as
+the `0F AF` multiply above, which was found by reading the encoding rather than by running anything.
+The repair is not free: counts above four have to be staged into `CL`, which adds a `CX` clobber to
+subscript scaling and sign extension - two of the hottest shapes the allocator sees - so it needs the
+spill loop re-measured over the corpus, not just a pattern change.
+
 ## `EXIT FAR`: PB's other non-local jump
 
 The keyword argues for the wrong reading. `EXIT FAR` is not a far **return** and pops nothing: `EXIT
