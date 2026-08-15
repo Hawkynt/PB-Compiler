@@ -67,7 +67,8 @@ internal static class Spiller {
           present.UnionWith(mentioned);
           if (instruction.Operands is [MOperand.Register { Reg: { IsVirtual: true } target }, { } source]
               && IsRecomputable(instruction.Opcode, source)
-              && census.DefinitionsOf(target.VirtualId) == 1)
+              && census.DefinitionsOf(target.VirtualId) == 1
+              && ReadsTheSameOperandsAtEveryUse(census, instruction, target.VirtualId))
             unsettled += UnsettledUses(census, instruction, target.VirtualId);
         }
       var clobbers = GetClobberIndices(function);
@@ -120,6 +121,8 @@ internal static class Spiller {
           continue;
         if (census.DefinitionsOf(target.VirtualId) != 1 || census.UsesOf(target.VirtualId).Count == 0)
           continue;
+        if (!ReadsTheSameOperandsAtEveryUse(census, instr, target.VirtualId))
+          continue;                              // an operand is rewritten in between - see below
         if (UnsettledUses(census, instr, target.VirtualId) == 0)
           continue;                              // nothing to gain, and re-doing it would never settle
         Rematerialize(function, census, instr, target.VirtualId);
@@ -137,6 +140,54 @@ internal static class Spiller {
     MOpcode.Mov => source is MOperand.Immediate,
     _ => false,
   };
+
+  /// <summary>
+  /// Whether recomputing the definition in front of each of its uses would read the same operands it
+  /// reads where it stands.
+  ///
+  /// <para>
+  /// A frame slot, a data offset and an immediate depend on nothing the program can write, so they
+  /// always would. <c>LEA d, [base+index]</c> does not: it reads two REGISTERS, and a copy placed
+  /// where either has been written again computes a different address. <c>b(i) = i AND 255</c> is that
+  /// shape - the counter is the element index AND the value the loop increments - and the scheduler
+  /// puts the store below the increment, so the recomputed address was <c>b(i+1)</c>: the whole array
+  /// shifted by one and one byte written past its end.
+  /// </para>
+  /// <para>
+  /// The test is therefore the straight line each copy would be inserted into. Every use has to sit in
+  /// the definition's own block, below it, with nothing in between writing an operand - and then no
+  /// control flow can reach the copy without passing the definition, so the two read the same thing.
+  /// A use anywhere else is refused rather than analysed: this runs inside the allocator's move loop
+  /// and a dominance walk per candidate is not what that loop can afford.
+  /// </para>
+  /// </summary>
+  private static bool ReadsTheSameOperandsAtEveryUse(ValueCensus census, MInstr definition, int virtualId) {
+    var operands = new HashSet<int>();
+    foreach (var operand in definition.Operands)
+      if (operand is MOperand.Memory memory) {
+        Name(operands, memory.Base);
+        Name(operands, memory.Index);
+        Name(operands, memory.Segment);
+      }
+    if (operands.Count == 0)
+      return true;
+    if (census.PositionOf(definition) is not { } definedAt)
+      return false;
+    foreach (var use in census.UsesOf(virtualId)) {
+      if (census.PositionOf(use) is not { } usedAt
+          || !ReferenceEquals(usedAt.Block, definedAt.Block) || usedAt.Index <= definedAt.Index)
+        return false;
+      for (var at = definedAt.Index + 1; at < usedAt.Index; ++at)
+        if (LivenessAnalysis.RegistersOf(definedAt.Block.Instructions[at]).Writes.Any(operands.Contains))
+          return false;
+    }
+    return true;
+  }
+
+  private static void Name(HashSet<int> into, MReg? register) {
+    if (register is { IsVirtual: true } value)
+      into.Add(value.VirtualId);
+  }
 
   /// <summary>
   /// Shortens a read-only pointer parameter to one tiny live range per dereference. The pointer's
@@ -207,7 +258,7 @@ internal static class Spiller {
     => register is { IsVirtual: true } value && value.VirtualId == virtualId;
 
   private static MReg? Replace(MReg? register, int virtualId, MReg replacement)
-    => Is(register, virtualId) ? replacement : register;
+    => Is(register, virtualId) ? replacement with { Size = register!.Value.Size } : register;
 
   /// <summary>
   /// Whether every use already has this value's definition inside its PREPARATION RUN - so
@@ -465,11 +516,23 @@ internal static class Spiller {
         }
   }
 
-  /// <summary>Replaces one virtual value everywhere an instruction names it, including addresses.</summary>
+  /// <summary>
+  /// Replaces one virtual value everywhere an instruction names it, including addresses - keeping the
+  /// WIDTH each mention already had.
+  ///
+  /// <para>
+  /// A virtual register can legitimately be named at two widths. Narrowing a word to a BYTE emits no
+  /// instruction at all: the selector re-names the same virtual register at byte width, because the
+  /// byte wanted is the low half of the word already holding it. Overwriting such a mention with the
+  /// DEFINITION's width turns <c>MOV [di], al</c> into <c>MOV [di], ax</c> against a byte cell, which
+  /// the assembler rejects outright - <c>f(i).A = i</c> for a BYTE field of a UDT array element, whose
+  /// index keeps the counter live long enough to be split.
+  /// </para>
+  /// </summary>
   private static MInstr ReplaceMentions(MInstr instruction, int virtualId, MReg replacement) {
     var operands = instruction.Operands.Select(operand => operand switch {
       MOperand.Register { Reg: { IsVirtual: true } register } when register.VirtualId == virtualId
-        => (MOperand)new MOperand.Register(replacement),
+        => (MOperand)new MOperand.Register(replacement with { Size = register.Size }),
       MOperand.Memory memory => memory with {
         Base = Replace(memory.Base, virtualId, replacement),
         Index = Replace(memory.Index, virtualId, replacement),

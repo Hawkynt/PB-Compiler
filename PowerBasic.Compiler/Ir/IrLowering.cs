@@ -160,10 +160,19 @@ public sealed partial class IrLowering {
     foreach (var proc in model.Procedures.Values) {
       if (proc.Body is not { } body)
         continue;
-      foreach (var node in CodeGen.OptReachability.DescendantNodes(body))
+      foreach (var node in CodeGen.OptReachability.DescendantNodes(body)) {
         if (node is Expression e && model.VariableBindings.TryGetValue(e, out var symbol)
             && symbol.Storage == VariableStorage.Global)
           used.Add(symbol);
+        // A REDIM names its array through a VariableDecl rather than an expression, so the walk above
+        // cannot see it. A SUB whose only mention of a module array is `REDIM PRESERVE a(...)` looked
+        // like a procedure that never touched it - and the array then got a private descriptor in the
+        // SUB and another in the module body, which is two different arrays wearing one name.
+        if (node is RedimStmt redim)
+          foreach (var declared in redim.Variables)
+            if (model.RedimBindings.TryGetValue(declared, out var target) && target.Storage == VariableStorage.Global)
+              used.Add(target);
+      }
     }
     return used;
   }
@@ -807,9 +816,26 @@ public sealed partial class IrLowering {
     return new ErrorChecks(bounds, overflow, numeric, stack);
   }
 
+  /// <summary>
+  /// The descriptor slots a dynamic (or ABSOLUTE, or paged) array is reached through: one far data
+  /// pointer plus a lower bound and a size per dimension, all of them THIS lowering's own frame.
+  ///
+  /// <para>
+  /// Which is why it declines when the array is shared storage. Every procedure is lowered by its own
+  /// <see cref="IrLowering"/>, so a module-level array a procedure also reaches would get one private
+  /// descriptor per procedure and the copies would agree about nothing: a routed <c>REDIM PRESERVE</c>
+  /// inside a <c>SUB</c> reallocated the block and wrote the new bounds into the SUB's frame, leaving
+  /// the module body still describing the old one - <c>UBOUND</c> answered 3 after a grow to 6, and the
+  /// enlarged block leaked. The same boundary is why <see cref="GlobalFor"/> refuses one and why a
+  /// directly emitted procedure sharing the array cannot be routed round either; the descriptor would
+  /// have to be a module cell in the codegen's own layout before this could lower.
+  /// </para>
+  /// </summary>
   private DynArr DynDescriptor(VariableSymbol symbol, int rank) {
     if (this._dynArrays.TryGetValue(symbol, out var existing))
       return existing;
+    if (this.NeedsSharedStorage(symbol))
+      throw new IrLoweringException($"the dynamic array {symbol.Name} is shared storage (its descriptor would be one frame slot per procedure)");
     // FarPtr, not Ptr: dynamic array storage comes out of the runtime's far array heap, and the cell
     // that holds the block address is the only place that fact is written down. Every read of it - a
     // load here, a phi mem2reg mints for it, a GEP off either - inherits the space from this type.
@@ -4160,10 +4186,35 @@ public sealed partial class IrLowering {
       if (element.Equals(paramType))
         return address;
     }
+    // A record MEMBER is storage like any other, and the callee writes THROUGH it. Falling to the
+    // temp copy below turned a BYREF parameter into a BYVAL one without saying so: `CALL Neg(r.A)`
+    // left `r.A` alone, where the direct emitter and genuine PBC 3.5 both negate it.
+    if (arg is MemberExpr member && this.IsAddressableMember(member, paramType))
+      return this.MemberLValue(member).Address;
     // a constant / expression / type-mismatched lvalue: materialize a temporary
     var temp = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(MapType(paramType)) { Name = "byref.tmp" });
     this._b.Store(this.Coerce(this.LowerExpr(arg), this._model.TypeOf(arg), paramType), temp);
     return temp;
+  }
+
+  /// <summary>
+  /// Whether a member access names a scalar field of the parameter's own type - asked WITHOUT forming
+  /// the address, because a shape that is not one has to reach the temp-copy fallback with nothing
+  /// emitted in front of it. The shapes accepted are exactly those
+  /// <see cref="MemberFieldAddress"/> can address; one it declines throws from there, which is the
+  /// whole function declining and is the honest answer.
+  /// </summary>
+  private bool IsAddressableMember(MemberExpr m, PbType paramType) {
+    if (this._model.VariableBindings.TryGetValue(m, out var flat))      // Max.X: one flat dotted variable
+      return flat.Type is ScalarType && flat.Type.Equals(paramType);
+    var udt = m.Target switch {
+      NameExpr when this._model.VariableBindings.TryGetValue(m.Target, out var baseSym) => baseSym.Type as UdtType,
+      CallOrIndexExpr ce when this._model.VariableBindings.TryGetValue(ce, out var arrSym)
+        => (arrSym.Type as ArrayType)?.Element as UdtType,
+      PtrDerefExpr deref => this._model.TypeOf(deref) as UdtType,
+      _ => null,
+    };
+    return udt?.FindField(m.Member) is { ElementCount: 1, Type: ScalarType field } && field.Equals(paramType);
   }
 
   private IrValue LowerUnary(UnaryExpr u) {
