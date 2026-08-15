@@ -652,8 +652,13 @@ internal static class Spiller {
               at => Reload(fresh, cell, WithPendingStaging(block, at, [])));
           ++stored;
         }
+      // Not a decline: the walk that found these definitions cannot lose one. The rewriting loop only
+      // replaces instructions NOT in the definition set and inserts around them, and PreparationStart
+      // refuses to walk past anything that mentions the value being moved.
       if (stored != definitions.Count)
-        throw new InvalidOperationException("spill definition disappeared while splitting its live range");
+        throw new BackendInvariantException("Spiller.SplitLiveRange",
+          $"{definitions.Count} definitions of v{interval.VirtualId} were found and {stored} stored - "
+            + "the rewriting between the two walks neither removes nor hides a definition");
       return true;
     }
     return false;
@@ -869,6 +874,7 @@ internal static class Spiller {
     MRegSize.Dword => 4,
     MRegSize.Qword => 8,
     MRegSize.Tbyte => 10,
-    _ => throw new ArgumentOutOfRangeException(nameof(size)),
+    _ => throw new BackendInvariantException("Spiller.StorageBytes",
+      $"MRegSize.{size} has no storage width, and the five members above are the whole enum"),
   };
 }
