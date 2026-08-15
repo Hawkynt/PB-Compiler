@@ -36,6 +36,73 @@ public sealed class BackendFloatWidthTests {
   private static void Agrees(string body) =>
     Assert.That(Run(body, routed: true), Is.EqualTo(Run(body, routed: false)));
 
+  /// <summary>
+  /// As <see cref="Agrees"/>, and additionally that the module body ROUTED - without which the two
+  /// builds are one build and the comparison holds by construction.
+  /// </summary>
+  private static void AgreesRouted(string body, string expected) {
+    var source = body + "\nEND\n";
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var routed = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = true };
+    routed.EmitExecutable();
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the back end did not take the module body under test");
+    Assert.That(Run(body, routed: true), Is.EqualTo(Run(body, routed: false)));
+    Assert.That(Run(body, routed: false), Is.EqualTo(expected), "and the answer is PB's");
+  }
+
+  /// <summary>
+  /// A value stored into a SINGLE is ROUNDED to a SINGLE, and stays rounded when it is widened back.
+  /// This back end parks every float in a ten-byte cell at the x87's own width on purpose, so an
+  /// <c>fptrunc</c> between two of those cells changed nothing at all - and once <c>mem2reg</c>
+  /// promotes the variable there is no four-byte cell left to do the rounding either.
+  ///
+  /// <para>
+  /// Widening the value back is what makes it observable: PRINT of a SINGLE shows seven significant
+  /// digits whatever the cell holds, so the SINGLE formatter cannot tell a rounded value from an
+  /// unrounded one. Genuine PBC 3.50 answers 1.66666662693024, which is the single nearest 5/3.
+  /// The operands come through a two-call-site NOINLINE function so nothing folds.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Store_GivenAQuotientInASingle_ThenTheCellHoldsOnlySinglePrecision() => AgreesRouted("""
+    DECLARE FUNCTION G%(BYVAL v%)
+    DIM p AS INTEGER, q AS INTEGER
+    DIM sg AS SINGLE, db AS DOUBLE
+    p = G%(5)
+    q = G%(3)
+    sg = p / q
+    db = sg
+    PRINT db
+    PRINT sg * 3
+    FUNCTION G%(BYVAL v%) NOINLINE
+      G% = v% + 0
+    END FUNCTION
+    """, "1.66666662693024 | 4.99999988079071");
+
+  /// <summary>
+  /// The same rounding, arrived at through a SINGLE array element rather than a scalar - the storage
+  /// kind is what decides whether a four-byte cell exists at all, and an element's does not get
+  /// promoted the way a scalar's does. The eighty-to-sixty-four rounding is NOT tested here: this
+  /// interpreter's x87 carries a double, so a DOUBLE and an EXTENDED are the same value to it and a
+  /// test of that width would measure nothing.
+  /// </summary>
+  [Test]
+  public void Store_GivenAQuotientInASingleArrayElement_ThenTheElementHoldsOnlySinglePrecision() => AgreesRouted("""
+    DECLARE FUNCTION G%(BYVAL v%)
+    DIM p AS INTEGER, q AS INTEGER
+    DIM a(1 TO 2) AS SINGLE
+    DIM db AS DOUBLE
+    p = G%(5)
+    q = G%(3)
+    a(1) = p / q
+    db = a(1)
+    PRINT db
+    FUNCTION G%(BYVAL v%) NOINLINE
+      G% = v% + 0
+    END FUNCTION
+    """, "1.66666662693024");
+
   [Test]
   public void Divide_GivenDoubleOperands_ThenTheRoutedPathKeepsTheSameDigits() => Agrees("""
     DIM a AS DOUBLE, b AS DOUBLE
