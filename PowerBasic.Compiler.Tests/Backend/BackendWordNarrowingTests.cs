@@ -75,6 +75,77 @@ public sealed class BackendWordNarrowingTests {
   }
 
   /// <summary>
+  /// The same sum with the constant still WIDENED - <c>add i32 (sext i16 64), (sext i16 %a)</c> - which
+  /// is how it comes out of the lowering, and how it stays until <c>instcombine</c> folds the cast.
+  ///
+  /// <para>
+  /// The leaf used to contribute the whole SPAN of the type it widens whatever it was widening, so
+  /// <c>sext i16 64</c> read as <c>[-32768, 32767]</c>, the sum reached <c>[-65536, 65534]</c> and the
+  /// argument declined. It is the same program as the test above and the same proof; the only
+  /// difference is which pass has run first, and selection is not allowed to depend on that
+  /// (<c>WidenedRange</c>).
+  /// </para>
+  /// </summary>
+  [Test]
+  public void TrySelect_GivenTheOffsetStillWidened_ThenTheConstantContributesItsValueAndNotItsTypesSpan() {
+    var fn = CallChrWith((entry, a, _) => entry.Append(new IrBinary(IrBinaryOp.Add,
+      entry.Append(new IrCast(IrCastOp.SExt, new IrConstantInt(IrType.I16, 64), IrType.I32)),
+      Widen(entry, a))));
+
+    var m = InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(m, Is.Not.Null, $"declined: {reason}");
+  }
+
+  /// <summary>
+  /// The first of the two signedness mismatches, and the reason reading the operand's interval is
+  /// guarded rather than unconditional. A <c>sext</c> of an UNSIGNED source does not reproduce its
+  /// operand: the top bit it reads as a sign is a value bit, so a <c>WORD</c> holding 40000 comes out
+  /// -25536. Believing the operand here would put the interval 65536 too high, and
+  /// <c>40000 - 10000 = 30000</c> would look like a word where the truth, -35536, is not one - which
+  /// is a value the caller would read as 30000 whichever sign it chose.
+  ///
+  /// <para>
+  /// This one does not fail on the tree before <c>WidenedRange</c>: the old code could not get it
+  /// wrong because it never looked at the operand at all. It pins the risk the change introduces, not
+  /// the bug it fixed.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void TrySelect_GivenASignExtendedUnsignedConstant_ThenTheOperandsIntervalIsNotBelieved() {
+    var fn = CallChrWith((entry, _, __) => entry.Append(new IrBinary(IrBinaryOp.Add,
+      entry.Append(new IrCast(IrCastOp.SExt, new IrConstantInt(IrType.U16, 40000), IrType.I32)),
+      new IrConstantInt(IrType.I32, -10000))));
+
+    var m = InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(m, Is.Null, "sign-extending 40000 gives -25536, so the sum is -35536 and not 30000");
+    Assert.That(reason, Does.Contain("the IR types it 32-bit"));
+  }
+
+  /// <summary>
+  /// The mirror mismatch: a <c>zext</c> of a SIGNED source does not reproduce its operand either -
+  /// -1 comes out 65535. Believing the operand would make <c>-1 + 1</c> read as <c>[0, 0]</c>, where
+  /// the honest answer is <c>[1, 65536]</c> and overflows the word by exactly one.
+  ///
+  /// <para>
+  /// Like its twin above, this passes on the tree before <c>WidenedRange</c> for the same reason, and
+  /// is here for the same one.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void TrySelect_GivenAZeroExtendedSignedConstant_ThenTheOperandsIntervalIsNotBelieved() {
+    var fn = CallChrWith((entry, _, __) => entry.Append(new IrBinary(IrBinaryOp.Add,
+      entry.Append(new IrCast(IrCastOp.ZExt, new IrConstantInt(IrType.I16, -1), IrType.I32)),
+      new IrConstantInt(IrType.I32, 1))));
+
+    var m = InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(m, Is.Null, "zero-extending -1 gives 65535, so the sum is 65536 and not 0");
+    Assert.That(reason, Does.Contain("the IR types it 32-bit"));
+  }
+
+  /// <summary>
   /// A mask, which is the other way a 32-bit value becomes word-sized: <c>x AND 255</c> is in
   /// <c>[0, 255]</c> whatever x is - even a LONG read out of memory, whose high half is real data.
   /// Narrowing here is sound because the AND has already discarded everything the narrowing would.
@@ -258,6 +329,50 @@ public sealed class BackendWordNarrowingTests {
       Assert.That(LinearScanAllocator.Allocate(machine!, out var noRegisters), Is.Not.Null, noRegisters);
     }
   }
+
+  /// <summary>
+  /// The same invariant one pass further down, and the one that says what the proof is FOR.
+  ///
+  /// <para>
+  /// <see cref="IrPassManager.Legalize"/> is the set a routed <c>--no-optimize</c> build runs, and its
+  /// own documentation justifies <c>instcombine</c> by exactly this program: without it
+  /// <c>CHR$(64 + r%)</c> declines and the whole module body goes back to the direct emitter, 234
+  /// functions of 262 instead of 258. That measurement is still true of the pass and no longer true of
+  /// the SELECTOR - the argument arrives as <c>add i32 (sext i16 64), (sext i16 %r)</c> whether or not
+  /// anything folded the cast, and the proof reads the constant either way.
+  /// </para>
+  ///
+  /// <para>
+  /// Which is the whole point: <c>instcombine</c> earns its place in the legalization set on its own
+  /// merits, and selection is not allowed to be one of them. The subject comes from <c>INPUT</c> so
+  /// there is no trip count to unroll and nothing to fold it away - the shape this fixture exists for.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void TrySelect_GivenTheLegalizationSetWithoutInstCombine_ThenTheCharacterCodeStillSelects() {
+    var module = IrLowering.TryLowerModule(Bind("INPUT r%\nPRINT CHR$(64 + r%)\nEND"), out var why);
+    Assert.That(module, Is.Not.Null, why);
+    for (var round = 0; round < 2; ++round) {
+      foreach (var f in module!.Functions)
+        if (!f.IsDeclaration)
+          IntegerRecovery.Run(f);
+      LegalizeWithoutCombining().RunOnModule(module);
+    }
+
+    var main = module!.Functions.Single(f => !f.IsDeclaration && f.Name == "main");
+    var machine = InstructionSelector.TrySelect(main, out var reason);
+
+    Assert.That(machine, Is.Not.Null, $"declined with no canonicalizer in front of it: {reason}");
+  }
+
+  /// <summary>
+  /// <see cref="IrPassManager.Legalize"/> with its canonicalizer removed - the one pass whose absence
+  /// leaves the widened constant standing for the selector to reason about.
+  /// </summary>
+  private static IrPassManager LegalizeWithoutCombining() => new IrPassManager()
+    .Add("mem2reg", Mem2Reg.Run)
+    .Add("dce", Dce.Run)
+    .Add("simplifycfg", SimplifyCfg.Run);
 
   /// <summary>The optimizer with everything that rewrites loops or reassociates arithmetic taken out.</summary>
   private static IrPassManager Reduced() => new IrPassManager()

@@ -1258,9 +1258,11 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenQuadBitwiseUnderCpu386_WhenPb36_ThenInlineDwordOps() {
-    // a QUAD OR runs inline as two 66 0B (OR EAX, m32) halves instead of the QuadOr call
-    const string with386 = "$CPU 80386\n$OPTIMIZE SPEED\nx&& = 1099511627775\ny&& = 76861433640456465\nPRINT x&& OR y&&\nEND";
-    const string no386 = "$OPTIMIZE SPEED\nx&& = 1099511627775\ny&& = 76861433640456465\nPRINT x&& OR y&&\nEND";
+    // a QUAD OR runs inline as two 66 0B (OR EAX, m32) halves instead of the QuadOr call.
+    // The operands come from INPUT because constant ones are not an OR at all: SCCP answers the
+    // whole statement at compile time and the assertion then asks about code that is not there.
+    const string with386 = "$CPU 80386\n$OPTIMIZE SPEED\nINPUT x&&\nINPUT y&&\nPRINT x&& OR y&&\nEND";
+    const string no386 = "$OPTIMIZE SPEED\nINPUT x&&\nINPUT y&&\nPRINT x&& OR y&&\nEND";
     Assert.That(CountDwordOrEax(Compile(with386, Dialect.Pb36)),
       Is.GreaterThan(CountDwordOrEax(Compile(no386, Dialect.Pb36))),
       "$CPU 80386 should add inline 32-bit OR halves the runtime-call version lacks");
@@ -1277,9 +1279,11 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenQuadShiftUnderCpu386_WhenPb36_ThenDoublePrecisionShld() {
-    // a constant-count QUAD SHIFT LEFT collapses the per-bit loop to a 66 0F A4 SHLD
-    const string with386 = "$CPU 80386\n$OPTIMIZE SPEED\nx&& = 3\nSHIFT LEFT x&&, 5\nPRINT x&&\nEND";
-    const string no386 = "$OPTIMIZE SPEED\nx&& = 3\nSHIFT LEFT x&&, 5\nPRINT x&&\nEND";
+    // a constant-count QUAD SHIFT LEFT collapses the per-bit loop to a 66 0F A4 SHLD.
+    // The COUNT is what this is about, so it stays constant; the VALUE comes from INPUT, because
+    // a constant one folds to the shifted answer and leaves no shift for the assertion to find.
+    const string with386 = "$CPU 80386\n$OPTIMIZE SPEED\nINPUT x&&\nSHIFT LEFT x&&, 5\nPRINT x&&\nEND";
+    const string no386 = "$OPTIMIZE SPEED\nINPUT x&&\nSHIFT LEFT x&&, 5\nPRINT x&&\nEND";
     Assert.That(CountShld(Compile(with386, Dialect.Pb36)),
       Is.GreaterThan(CountShld(Compile(no386, Dialect.Pb36))),
       "$CPU 80386 should add a 66 0F A4 SHLD the per-bit-loop version lacks");

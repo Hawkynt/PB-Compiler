@@ -2659,7 +2659,8 @@ public sealed partial class InstructionSelector {
   ///   multiply would qualify on this count and is left out on the second one - no interval a product
   ///   of two word-sized operands can be given fits a word often enough to be worth the arm.</item>
   ///   <item><b>The value must fit.</b> Every leaf contributes a known interval - a constant its own
-  ///   value, a <c>sext</c>/<c>zext</c> from i8/i16 the span of the type it was widened from - and the
+  ///   value, a <c>sext</c>/<c>zext</c> from i8/i16 whatever its operand can be shown to be, and
+  ///   failing that the span of the type it was widened from (<see cref="WidenedRange"/>) - and the
   ///   operations propagate those intervals. The result must land inside
   ///   <c>[short.MinValue, ushort.MaxValue]</c>, which is the same window the constant arm above
   ///   already accepts: everything in it is carried whole by one word, signed at one end and unsigned
@@ -2692,10 +2693,8 @@ public sealed partial class InstructionSelector {
       // i1 is deliberately absent: the IR reads a bool as 0/1 while this target holds BASIC truth as a
       // full -1/0 word, so a zext of one is the one widening whose low half is NOT the IR's value.
       case IrCast { Op: IrCastOp.SExt or IrCastOp.ZExt } cast
-          when cast.Value.Type is { IsInteger: true, Bits: 8 or 16 } source: {
-        var span = 1L << source.Bits;
-        return cast.Op == IrCastOp.SExt ? (-(span / 2), span / 2 - 1) : (0L, span - 1);
-      }
+          when cast.Value.Type is { IsInteger: true, Bits: 8 or 16 } source:
+        return WidenedRange(cast.Op, source, WordSizedRange(cast.Value, depth - 1));
       case IrBinary bin when IsWide(bin.Type): {
         // An operand with NO interval is not fatal for AND, which is why the two sides travel as
         // nullables: a mask bounds the result on its own, however unknown the value it masks.
@@ -2715,6 +2714,41 @@ public sealed partial class InstructionSelector {
       default:
         return null;
     }
+  }
+
+  /// <summary>
+  /// What a widening leaves of its operand's interval.
+  ///
+  /// <para>
+  /// The span of the source type is the floor of what can be said - a <c>sext i16</c> produces
+  /// something in <c>[-32768, 32767]</c> whatever it widens. What it used to be is ALL that was said,
+  /// and that threw away the one leaf that knows its value exactly: a widened CONSTANT. Nothing folds
+  /// <c>sext i16 64</c> into <c>i32 64</c> until <c>instcombine</c> runs, so under a reduced pipeline
+  /// <c>64 + i%</c> reaches here as two i16 spans and sums to <c>[-65536, 65534]</c> - which does not
+  /// fit a word, so the argument declined and the function did not route. Reading the operand's own
+  /// interval gives <c>[64, 64] + [-32768, 32767] = [-32704, 32831]</c>, which does.
+  /// </para>
+  ///
+  /// <para>
+  /// The operand's interval may only be used when the conversion REPRODUCES it, which is where the two
+  /// signedness mismatches bite. A <c>sext</c> of an unsigned source reads its top bit as a sign, so a
+  /// <c>WORD</c> holding 40000 comes out -25536 and the operand's <c>[40000, 40000]</c> would be a lie;
+  /// a <c>zext</c> of a signed source is the mirror, turning -1 into 65535. In each case the honest
+  /// answer is the span, which is what an unproven operand gets anyway.
+  /// </para>
+  /// </summary>
+  private static (long Lo, long Hi) WidenedRange(IrCastOp op, IrType source, (long Lo, long Hi)? inner) {
+    var span = 1L << source.Bits;
+    var whole = op == IrCastOp.SExt ? (Lo: -(span / 2), Hi: span / 2 - 1) : (Lo: 0L, Hi: span - 1);
+    if (inner is not { } value)
+      return whole;
+    var faithful = op == IrCastOp.SExt
+      ? source.Signed || (value.Lo >= 0 && value.Hi <= whole.Hi)   // the sign bit the extension reads is clear
+      : !source.Signed || value.Lo >= 0;                           // nothing negative to turn into a large positive
+    if (!faithful)
+      return whole;
+    var narrowed = (Lo: System.Math.Max(value.Lo, whole.Lo), Hi: System.Math.Min(value.Hi, whole.Hi));
+    return narrowed.Lo > narrowed.Hi ? whole : narrowed;
   }
 
   /// <summary>
