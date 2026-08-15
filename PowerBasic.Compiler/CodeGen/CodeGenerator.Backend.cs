@@ -85,7 +85,13 @@ public sealed partial class CodeGenerator {
     // sweep, because the point of inlining is not the call overhead - it is that the callee's body
     // becomes visible to the caller's optimizer, and nothing sees it until the passes run again.
     // A function whose only caller inlines it is then dead, which GlobalDce collects.
-    if (this.Optimize && Inliner.Run(module) > 0) {
+    //
+    // $OPTIMIZE SIZE never inlines, and the routed half of an image may not answer the directive
+    // differently from the directly-emitted half: the direct emitter declines every call site under
+    // it (see the note on O6's purge in CodeGenerator.Optimize.cs, which had to stop purging a callee
+    // it would no longer absorb), so a routed caller that absorbed its callee anyway would be one
+    // program compiled to two objectives.
+    if (this.Optimize && !this.OptimizeSize && Inliner.Run(module) > 0) {
       pipeline().RunOnModule(module);
       foreach (var f in module.Functions)
         if (!f.IsDeclaration)
