@@ -272,6 +272,137 @@ public sealed class BackendPointerTests {
       .Select(l => l.Trim()).ToArray(), Is.EqualTo(new[] { "0", "4" }));
   }
 
+  // ---- VARSEG of storage that is not in DS ----------------------------------
+  //
+  // VARSEG used to be one unconditional call to rt_varseg, which is MOV AX, DS - so it answered DS
+  // for arguments whose storage is somewhere else entirely, and never looked at the operand to find
+  // out. The direct emitter answers `place.Far ? ES : DS`, and genuine PBC 3.50 agrees with it: run
+  // through the pb35 oracle, VARSEG of a dynamic array's element is 3144 paragraphs above VARSEG of a
+  // scalar and an AT array's is the segment it names. The routed answer of 0 was a wrong address, and
+  // a DEF SEG built out of it reads and writes the program's own data.
+  //
+  // Each case below is a DIFFERENCE against a scalar's VARSEG rather than an absolute segment: the
+  // two back ends lay data out differently and only the relationship is a property of the language.
+
+  /// <summary>
+  /// A dynamic array's elements live in the far array heap, one segment for the whole image, which is
+  /// the <c>rt_arrseg</c> cell the direct emitter loads <c>ES</c> from before every element access.
+  /// The subscript comes back through a two-call-site <c>NOINLINE</c> function so nothing about the
+  /// access folds; the segment does not depend on it either way, which is the point.
+  /// </summary>
+  [Test]
+  public void VarSeg_GivenADynamicArrayElement_ThenItAnswersTheFarHeapSegmentRatherThanDs() {
+    var (direct, routed, names) = RunBothWays("""
+      DECLARE FUNCTION Given%(BYVAL v%)
+      DIM k AS INTEGER
+      DIM scal AS INTEGER
+      REDIM a%(0 TO 7)
+      k = Given%(2)
+      scal = Given%(1)
+      a%(k) = Given%(33)
+      PRINT VARSEG(a%(k)) - VARSEG(scal);
+      DEF SEG = VARSEG(a%(k))
+      PRINT PEEK(VARPTR(a%(k)));
+      DEF SEG
+      PRINT a%(k)
+      END
+
+      FUNCTION Given%(BYVAL v%) NOINLINE
+        Given% = v%
+      END FUNCTION
+      """);
+
+    Assert.That(names, Does.Contain("main"), "the back end did not take the module body under test");
+    Assert.That(routed, Is.EqualTo(direct));
+    // the far heap is 0x2000 paragraphs above DGROUP here, and PEEK through the pair reads the very
+    // byte the element holds - which is the half a DS-shaped answer got wrong
+    Assert.That(routed.Trim(), Is.EqualTo("8192  33  33"));
+  }
+
+  /// <summary>
+  /// <c>DIM ... AT</c> is the other far class, and its segment is the compile-time constant the
+  /// declaration named - so VARSEG of one of its elements is that segment and nothing else.
+  /// </summary>
+  [Test]
+  public void VarSeg_GivenAnAbsoluteArrayElement_ThenItAnswersTheSegmentTheDimNamed() {
+    var (direct, routed, names) = RunBothWays("""
+      DECLARE FUNCTION Given%(BYVAL v%)
+      DIM DYNAMIC vid%(0 TO 7) AT &HB800
+      DIM v AS INTEGER
+      v = Given%(1)
+      vid%(Given%(0)) = &H0F41
+      PRINT VARSEG(vid%(0)) - VARSEG(v)
+      END
+
+      FUNCTION Given%(BYVAL v%) NOINLINE
+        Given% = v%
+      END FUNCTION
+      """);
+
+    Assert.That(names, Does.Contain("main"));
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(routed.Trim(), Is.Not.EqualTo("0"), "an AT array is not in DGROUP, whatever DGROUP is");
+  }
+
+  /// <summary>
+  /// ...and the control: an ordinary scalar and a STATIC array element ARE in the data segment, so
+  /// the answer is still <c>DS</c> and the change did not make everything far.
+  /// </summary>
+  [Test]
+  public void VarSeg_GivenNearStorage_ThenItStillAnswersTheDataSegment() {
+    var (direct, routed, names) = RunBothWays("""
+      DECLARE FUNCTION Given%(BYVAL v%)
+      DIM a%(0 TO 7)
+      DIM v AS INTEGER
+      DIM s AS STRING
+      v = Given%(1)
+      s = "x"
+      a%(Given%(2)) = Given%(5)
+      PRINT VARSEG(a%(0)) - VARSEG(v); VARSEG(s) - VARSEG(v)
+      END
+
+      FUNCTION Given%(BYVAL v%) NOINLINE
+        Given% = v%
+      END FUNCTION
+      """);
+
+    Assert.That(names, Does.Contain("main"));
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(routed.Trim(), Is.EqualTo("0  0"),
+      "a static array's elements and a string's HANDLE are both in DGROUP");
+  }
+
+  /// <summary>
+  /// The paged classes decline instead of answering. Their segment is recomputed per element - HUGE
+  /// steps it by <c>byteOffset >> 4</c> and the EMS pair by which page is in the window - so there is
+  /// no one segment to name, and inventing one would be the same defect the two cases above were.
+  /// </summary>
+  [Test]
+  public void Lowering_GivenVarSegOfAPagedArrayElement_ThenItDeclines() {
+    Assert.That(DeclineReason("""
+      DIM HUGE h%(0 TO 40000)
+      h%(1) = 2
+      PRINT VARSEG(h%(1))
+      """), Is.EqualTo("VARSEG of an element of the Huge array h"));
+  }
+
+  /// <summary>
+  /// A PB pointer is a near cell here, so a far-heap address cannot be put in one: the segment is
+  /// dropped on the way in and every later use reads DGROUP. <c>@p</c> masked it - the promoted slot
+  /// still carried the far value, so the first dereference was right - and <c>@p[1]</c>, whose GEP
+  /// takes the pointer's own near type, read the program's data instead.
+  /// </summary>
+  [Test]
+  public void Lowering_GivenAPointerToADynamicArrayElement_ThenItDeclines() {
+    Assert.That(DeclineReason("""
+      DIM p AS INTEGER PTR
+      REDIM a%(0 TO 7)
+      a%(2) = 33
+      p = VARPTR32(a%(2))
+      PRINT @p[1]
+      """), Is.EqualTo("VARPTR32 of storage outside the default data segment"));
+  }
+
   /// <summary>
   /// A pointer made out of a NUMBER declines rather than lowering. The IR's pointer is a near offset
   /// and PB's is a seg:off pair, so a DWORD carries a segment this path has no way to honour;
