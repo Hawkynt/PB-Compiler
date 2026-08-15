@@ -89,8 +89,10 @@ public sealed partial class CodeGenerator {
     // IsBackendAbiConvention.
     if (!IsBackendAbiConvention(proc))
       return $"filter: calling convention outside the routed ABI ({proc.CallConv})";
-    if (proc.IsFunction && proc.ReturnType is { } returnType && !IsBackendAbiType(returnType))
-      return $"filter: return type outside the routed ABI ({DescribeType(returnType)})";
+    // a FUNCTION with no resolved return type is refused along with the rest, exactly as the pattern
+    // this replaced did - `null is not ScalarType{...}` was true, and the shape has no ABI either way
+    if (proc.IsFunction && (proc.ReturnType is not { } returnType || !IsBackendAbiType(returnType)))
+      return $"filter: return type outside the routed ABI ({(proc.ReturnType is null ? "unresolved" : DescribeType(proc.ReturnType))})";
     foreach (var parameter in proc.Parameters) {
       if (!parameter.ByVal)
         return $"filter: BYREF parameter ({DescribeType(parameter.Type)})";
