@@ -59,6 +59,14 @@ public sealed partial class CodeGenerator {
     if (module is null)
       return this._backendProcs;
     this._backendModule = module;
+    // The routed path honours the optimizer flag like every other part of the compiler. Without this
+    // a --no-optimize build of a routed function was still fully optimized, which made the two builds
+    // of a size comparison ONE build and made "optimizer off means vintage behaviour" - the promise
+    // the historic dialects rest on - true only of the functions the back end happened not to take.
+    // IrPassManager.Legalize states which passes survive the flag and why each one is not a choice.
+    var pipeline = this.Optimize
+      ? () => IrPassManager.Standard(this.OptimizeSpeed)
+      : (Func<IrPassManager>)IrPassManager.Legalize;
     // Recovery runs BEFORE the optimizer as well as after. PB's integral arithmetic is float-shaped
     // in the IR, and constant folding on a float tree is lossy where the integer answer is not:
     // 32767 * 32767 is 1073676289, which an f32's 24-bit mantissa cannot hold, so folding it as a
@@ -67,22 +75,22 @@ public sealed partial class CodeGenerator {
     foreach (var f in module.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);
-    IrPassManager.Standard(this.OptimizeSpeed).RunOnModule(module);
+    pipeline().RunOnModule(module);
     foreach (var f in module.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);                  // again: the optimizer can expose trees the first pass could not see
-    IrPassManager.Standard(this.OptimizeSpeed).RunOnModule(module);  // clean up the now-dead float ops
+    pipeline().RunOnModule(module);              // clean up the now-dead float ops
 
     // O0006 inlining. It runs LAST of the module-level steps and is followed by another full pass
     // sweep, because the point of inlining is not the call overhead - it is that the callee's body
     // becomes visible to the caller's optimizer, and nothing sees it until the passes run again.
     // A function whose only caller inlines it is then dead, which GlobalDce collects.
-    if (Inliner.Run(module) > 0) {
-      IrPassManager.Standard(this.OptimizeSpeed).RunOnModule(module);
+    if (this.Optimize && Inliner.Run(module) > 0) {
+      pipeline().RunOnModule(module);
       foreach (var f in module.Functions)
         if (!f.IsDeclaration)
           IntegerRecovery.Run(f);
-      IrPassManager.Standard(this.OptimizeSpeed).RunOnModule(module);
+      pipeline().RunOnModule(module);
     }
     // GlobalDce deliberately does NOT run here, though inlining leaves callees unreferenced and it
     // is the obvious next step. In this pipeline the IR module is not the whole program: anything

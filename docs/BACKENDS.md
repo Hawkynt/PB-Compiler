@@ -240,14 +240,54 @@ that sets it and the one that reads it (docs/X86-BACKEND.md, "An inline-asm bloc
 registers it defines"). What still declines is a register something in between DESTROYS - a call owns
 the whole caller-saved file, and no allocation can answer that.
 
-**Routing is not gated on the optimizer, and that is safe only because the gate is observational.**
-`CodeGenerator.Backend.cs` runs `IrPassManager.Standard(...)` whenever a function routes, so a
-`--no-optimize` build of a routed function is still optimized. It looks alarming written down - the
-historic dialects rest on "optimizer off means vintage behaviour" - but the thing that promise is
-about is BEHAVIOUR, and the evidence is the golden battery itself: `tests/diff` compiles pb35 with the
-optimizer OFF, and it passes routed. What would be a real problem is an optimization that changes an
-observable, and that is exactly what the battery is watching for. Worth knowing before reading
-`--no-optimize` as "nothing ran".
+**Routing now honours the optimizer flag, and the thing that made that hard was not what this
+document said it was.** `CodeGenerator.Backend.cs` used to run `IrPassManager.Standard(...)` whenever
+a function routed, so a `--no-optimize` build of a routed function was still fully optimized. That
+was defensible while the gate was observational - `tests/diff` compiles pb35 with the optimizer OFF
+and passed routed either way - but it made the battery's two builds of a routed scenario ONE build,
+and it made `--no-optimize` a false statement about a routed function.
+
+`IrPassManager.Legalize()` is the set that survives the flag, and it is four passes with one argument
+between them: each is here because a CONSUMER demands the FORM it produces. `mem2reg` is SSA
+construction, which is what the selector's virtual registers and the allocator's live intervals are
+defined over - and it makes the pipeline cheaper rather than dearer, which is the tell (a raw corpus
+module body carries 314 virtual registers and promoting brings it to 244). `dce` is the second half of
+`IntegerRecovery`, which the routed path runs unconditionally and which leaves the float-shaped
+arithmetic it replaced standing beside the integer form it minted. Everything else is off, including
+the `Inliner` and `SwitchFormation` steps the caller runs around the pipeline.
+
+**Every member was also LEFT OUT and the corpus re-measured**, which is the only thing that separates
+this from a list of nice arguments, and it moved the set twice. Functions that select and allocate,
+out of 262, with one pass removed - 258 with the whole set:
+
+| dropped | selects+allocates | what it costs |
+|---|---|---|
+| `instcombine` | **234** | the canonicalizer the selector pattern-matches against. `WordSizedRange` walks pure dataflow through five opcodes, and until the casts PB's float-shaped arithmetic leaves behind are folded together there is no chain to walk - `CHR$(64 + i%)` declines and takes the whole module body with it. Reads as pure optimization; is not optional |
+| `simplifycfg` | **214** | reads as legalization on the raw lowering and is NOT - an unreachable block costs the selector nothing. It becomes legalization the moment instcombine is present: a comparison folded to a constant leaves `condbr true, A, B` standing and the selector has no encoding for a branch on a non-register. 44 declines on that one message |
+| `mem2reg` | **250** | and three times the compile time |
+| `dce` | **257** | one module body - the weakest member of the set on the numbers, kept because it is the other half of a transform rather than a transform |
+| `sroa` + `mem2reg2` | **258** | nothing at all, to the function. They were in the set on the same kind of argument mem2reg wins on, and they are out |
+
+Coverage still falls a little, and where it does the direct emitter takes the function - which is the
+faithful path and the one the optimizer-off promise is about: 258 of 262 functions select and 257
+allocate under `Legalize()`, against 262 and 262 under `Standard()`; module bodies 157 against 161.
+`BackendCorpusDifferentialTests` goes from 314 compilations and 299 agreements to 304 and 289, with
+**0 disagreements** either way.
+
+The honest asterisk on all of this is `instcombine`: it folds constants, so a routed `--no-optimize`
+build is not literally unoptimized. Splitting a canonicalization-only half out of that pass is the
+work that would remove the asterisk; the alternative available today is a back end whose COVERAGE
+depends on the optimizer, which `BackendWordNarrowingTests` exists to rule out.
+
+**The prerequisite this document named was already closed; the real one was underneath.** The note
+here used to say that gating "does not work" because the selector needs the optimizer to narrow
+`CHR$(64 + r%)` to a word - and that is true of the tree it was written on, but
+`InstructionSelector.WordSizedRange` closed it (below). What actually blocked the flag was one level
+further down: with the optimizer off, `LinearScanAllocator`'s spill loop does not terminate on a
+handful of corpus programs, because two of the spiller's moves undo each other (see
+docs/X86-BACKEND.md, "the spiller's moves are not all self-limiting"). The allocator therefore has a
+work budget and declines past it. Both shapes are pre-existing and neither is reachable from
+optimized IR, which is why nothing had met them.
 
 **Selection used to be gated on the optimizer's AGGRESSIVENESS, which is a different and worse
 thing, and that is now fixed.** The observation above is about behaviour; this one was about
@@ -543,15 +583,20 @@ inherit them.
   It is the same finding recorded against `FunctionSummaries.RemoveDeadPureCalls` and DIFF113,
   arriving from the other direction.
 
-* **`smaller-than-unoptimized` cannot hold for a routed function today, and not because of a missing
-  pass.** Routing runs `IrPassManager.Standard` whatever `Optimize` says, so the battery's two builds
-  of a routed scenario are the same build. Gating the pipeline on the flag is the obvious repair and
-  it does not work: the back end needs the optimizer to SELECT at all. `CHR$(64 + r%)` reaches
-  `rt_str_chr` as `add i32 64, (sext i16 %r)`, which `TryWordOperand` refuses because it can only
-  narrow a constant or an extension - the full pipeline gets past it by UNROLLING the loop until the
-  argument is a literal. Measured with the pipeline cut back to mem2reg + instcombine + sccp + dce +
-  simplifycfg, that program stops routing entirely. So the prerequisite is a selector that can narrow
-  an i32 it can prove fits a word, not a pipeline switch.
+* **`smaller-than-unoptimized` now holds for a routed function - CLOSED.** Routing used to run
+  `IrPassManager.Standard` whatever `Optimize` said, so the battery's two builds of a routed scenario
+  were the same build; 15 of the 23 rows failed routed for that reason alone. Gating the pipeline on
+  the flag is the repair (above), and 13 of the 15 close with it. The two that do not are the two
+  things this back end does whatever the flag says: `UnreachableCodeDropped` (a block nothing reaches
+  is never emitted) and `ConstantExpressionFolded` (`instcombine` is in the legalization set, and
+  folding literals is what it does on the way past).
+
+  The note here used to say gating "does not work" because the back end needs the optimizer to SELECT
+  at all: `CHR$(64 + r%)` reaches `rt_str_chr` as `add i32 64, (sext i16 %r)`, which `TryWordOperand`
+  refused, and the full pipeline only got past it by UNROLLING the loop until the argument was a
+  literal. That was true when it was written and `InstructionSelector.WordSizedRange` closed it - the
+  same widening recorded under gate 1. It is worth keeping as a warning: a stated blocker outlives the
+  thing that caused it, and this one was quoted for as long as it took somebody to re-measure it.
 
 That is the honest state: the switch is safe to flip the moment `tests/optimize` and the `Emit_Given*`
 fixtures pass routed, and not before. The flip itself is one line
@@ -567,7 +612,7 @@ a real difference between the two paths. Ordered by how many tests each accounts
 | peephole idioms the selector does not recognise | ~~19~~ **10** | mostly CLOSED - see "What the peephole row actually was" below. `Backend/Peephole.cs` and `InstructionSelector.Idioms.cs` took nine of the nineteen; the ten that remain are a different thing wearing the same label |
 | the direct emitter's loop-register model has no counterpart | 13 | SI/DI residency for counters and accumulators, the constant-limit immediate compare that rides on it, loop rotation and the count-down form |
 | `$ERROR OVERFLOW/BOUNDS` traps are not modelled | 8 → see below | the traps were always modelled; what was absent were the range facts that elide one. `Ir/Analysis/` now supplies them, and the two alarming-looking observations that led this row turned out to be fixtures that cannot see what they assert - both measured rather than argued |
-| the objective flags do not reach the routed build | 6 + 2 batteries | `IrPassManager.Standard` runs whatever `Optimize`/`$OPTIMIZE` says, so the two builds a comparison makes are one build - which is where the batteries' twelve `smaller-than-unoptimized` rows come from. Also why `--no-optimize` no longer means faithful: `Emit_GivenDeadGlobalWithoutOptimize` and `Emit_GivenLatticeProvedComparison` assert the UNOPTIMIZED build keeps what the optimizer removes, and routed it does not |
+| ~~the objective flags do not reach the routed build~~ | 6 → **1** | mostly CLOSED - `IrPassManager.Legalize()` is what a routed `--no-optimize` build now runs, which un-merged the two builds a comparison makes (13 of the 15 battery rows, and `Emit_GivenLatticeProvedComparison`). What is left is `Emit_GivenDeadGlobalWithoutOptimize`, and it is a different thing wearing the same label: an unreferenced module variable disappears because the routed `main` never mentions it, so the codegen's data layout never hears of it - a question about who owns the data section, not about which passes ran |
 | `$CPU` tier does not reach instruction selection | 6 | 32-bit shift, `SHLD`, inline dword `OR`, `REP MOVSD`, the ESI/EDI LONG residency - and the same census file says `'$CPU 80286'` and `'$CPU 8086'` produce the same image |
 | no auto-vectorizer, no loop-top alignment | 6 | MMX/SSE2/AVX2/AVX-512 `PADDW`/`PMULLW`, the 586 NOP pad |
 | the interval lattice has no IR equivalent | 4 | the LATTICE now exists (`Ir/Analysis/`); what these four still want is four SELECTOR features it would feed - range-known LONG compare/divide and DWORD multiply narrowing to 16 bits, and the unsigned window compare |
