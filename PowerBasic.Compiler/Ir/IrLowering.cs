@@ -1857,13 +1857,20 @@ public sealed partial class IrLowering {
       throw new IrLoweringException("INPUT requires whole-module lowering");
     var file = input.FileNumber is { } fn ? this.FileNum(fn) : null;
 
-    // A console INPUT prompts once per STATEMENT, not once per variable it reads: with the
-    // program's own prompt string when it has one, else PB's bare "? " - which LINE INPUT does
-    // not print (it prompts only when told to).
-    if (file is null && (input.Prompt is not null || !input.IsLineInput)) {
-      var bytes = System.Text.Encoding.ASCII.GetBytes(input.Prompt ?? "? ");
-      var global = this._module.AddStringConstant(bytes);
-      this.EmitIo(null, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], global, new IrConstantInt(IrType.I32, bytes.Length));
+    // A console INPUT prompts once per STATEMENT, not once per variable it reads: the program's own
+    // prompt string when it has one, and PB's "? " when the punctuation after that prompt is a
+    // SEMICOLON - which is what the two spellings are FOR. A comma leaves the prompt standing alone
+    // (`INPUT "Name", n$` -> `Name`), a semicolon appends the question mark (`INPUT "Name"; n$` ->
+    // `Name? `), and a bare INPUT is the question mark by itself. LINE INPUT prompts only when it
+    // was given one, and takes the same semicolon rule when it was.
+    if (file is null) {
+      var suffix = (input.Prompt is null && !input.IsLineInput) || input.PromptSemicolon ? "? " : "";
+      var prompt = (input.Prompt ?? "") + suffix;
+      if (prompt.Length > 0) {
+        var bytes = System.Text.Encoding.ASCII.GetBytes(prompt);
+        var global = this._module.AddStringConstant(bytes);
+        this.EmitIo(null, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], global, new IrConstantInt(IrType.I32, bytes.Length));
+      }
     }
 
     foreach (var target in input.Targets) {
