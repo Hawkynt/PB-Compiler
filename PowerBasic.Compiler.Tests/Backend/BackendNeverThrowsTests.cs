@@ -20,6 +20,12 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// not a coverage measurement - it does not care whether anything routed - which is what lets it stay
 /// green while a conversion from throw to decline REDUCES coverage. That trade is the correct one.
 ///
+/// <see cref="BackendCoverageTests"/> reaches the same conclusion for the corpus half, from the other
+/// direction: its census counts a raise as the FOURTH outcome beside routed, declined and
+/// front-end-rejected, and fails on any. The two overlap on purpose - a census that also measures
+/// coverage cannot be read as a statement about crashes alone, and it is the generated half below
+/// that this fixture exists for.
+///
 /// Two populations, because the corpus alone is not enough. Every corpus program is a program someone
 /// wrote to work, so its operands are the shapes the selector already handles: every corpus shift is
 /// either 32-bit (where <c>SelectWideShift</c> declines) or a literal count in 1..31, which is why
