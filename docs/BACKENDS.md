@@ -165,6 +165,7 @@ cross-checking:
 | `EmitLlvmTests` | the IR path's LLVM output is accepted by `llvm-as` and lowered by `llc` |
 | `IrVerifier` | every pass leaves structurally valid, well-typed SSA |
 | `BackendCoverageTests` | how much of the corpus the in-house x86-16 back end takes, and what blocks the rest |
+| `BackendRoutingGateTests` | one program per construct, so a construct that silently STOPS routing is a red test rather than a quiet fallback |
 
 Any new back end should add one row to that table. The cross-check has already earned
 its keep. Running the DOS battery through both paths found five real defects that a
@@ -186,12 +187,61 @@ now pins both, in the DOS battery and in `CBackendTests`.
 Worth stating plainly, because coverage numbers make the distance look shorter than it is. Dropping
 `CodeGen/` needs THREE things, and only the first is being measured today.
 
-**1. Coverage - every program on the IR path. Lowering, selection and allocation are DONE.**
-`BackendCoverageTests` ranks this over the whole corpus. As of this writing: **161 of 165 programs
-lower**, **262 of 262 functions select and allocate**, and **161 of 161 module bodies** can be owned
-outright. The remaining four programs are rejected by the FRONT end, so they are nobody's coverage,
-and every decline histogram - lowering, selection and allocation alike - is now EMPTY: there is no
-corpus program or function the IR path refuses.
+**1. Coverage - every program on the IR path. NOT done, and the number that said it was measured the
+wrong thing.** `BackendCoverageTests` ranks this over the whole corpus, and it used to report **262 of
+262 functions select and allocate** and **161 of 161 module bodies** with every decline histogram
+empty. Both figures were real and neither was coverage. They measured the SELECTOR over every function
+the lowering produced, while `CodeGenerator.BackendProcs` refuses a procedure on its SHAPE - a BYREF
+parameter, a string, QUAD, BYTE, FIX, EXT or record one, a non-default calling convention, error
+handling in the body - BEFORE the selector is asked at all. A procedure the filter skips appeared in
+neither the numerator nor the denominator, so the ratio said "of the functions we attempted, how many
+succeeded", which is nearly a tautology. Today that is free, because a skipped procedure falls back to
+the direct emitter; the moment `CodeGen/` is deleted each one is a compile failure.
+
+The honest figures, taken from the production code generator itself rather than from a second
+implementation of its rule (`CodeGenerator.BackendDeclines`):
+
+| | |
+|---|---|
+| programs reaching the IR at all | **161 / 165** - the other four the FRONT end rejects |
+| functions ROUTED, `--optimize` | **242 / 263** |
+| functions ROUTED, `--no-optimize` | **229 / 263** |
+| module bodies owned | **156 / 161** |
+| ...of which the SELECTOR would take, if offered | 262 / 262, 161 / 161 |
+
+The denominator is the SOURCE - every procedure with a body plus one module body per program - not
+the IR function count, and the two differ by exactly the procedures whose body the lowering refused.
+`IrLowering` leaves such a procedure a declaration, so it disappears from the IR entirely and a census
+over IR functions counts it in neither half: a procedure that stops existing must not raise a coverage
+ratio. There is one in the corpus (`CODEGEN.BAS::SwapIsInline`, "unsupported lvalue"), and
+`IrModule.ProcedureLoweringDeclines` is what now says so.
+
+Ranked by what each class costs, over the corpus:
+
+| class | funcs | programs | outcome |
+|---|---|---|---|
+| BYREF parameter (7 INTEGER, 3 SINGLE, 2 LONG) | 12 | 12 | filtered - never offered to the selector |
+| a caller stranded by one of the above | 3 | 3 | routing - a consequence, not a cause |
+| STRING return type | 2 | 2 | filtered |
+| a callee with no link symbol (EXTERNAL, or its body did not lower) | 2 | 2 | routing |
+| STRING parameter | 1 | 1 | filtered |
+| a procedure body the lowering refused | 1 | 1 | lowering - invisible to any census over IR functions |
+
+With `--no-optimize` the stranded-caller row goes from 3 to 13, because the INLINER is what absorbs a
+filtered callee and lets its caller route in spite of it. That gap - 242 against 229 - is the measure
+of how much of the optimized figure is on loan, and it is why the routing gate compiles unoptimized.
+
+**Whole classes are absent from the corpus and are no less real.** `BackendRoutingGateTests` holds one
+program each and pins the routing's own reason for it: QUAD and BYTE parameters and results, STRING
+parameters and results, FIX and EXT parameters, a record parameter, `CDECL`/`STDCALL`/`FASTCALL`/
+`WATCALL`, error handling inside a procedure body, an array parameter (which stops the whole module
+lowering), and FIX arithmetic in a module body - eighteen rows, none of which the corpus would have
+noticed stopping or starting. Each compiles to an executable byte-identical to the unrouted build,
+because the module body is stranded by the very call the filter refused: one construct silently costs
+a whole program's routing today, and a compile error tomorrow.
+
+Every SELECTION and ALLOCATION decline histogram is empty, and that remains worth having - it says the
+selector refuses nothing the filter offers it. It is the filter that is the frontier.
 
 The last one to go was `DIM ... AT` with a non-default array CLASS, which this document called a
 deliberate decline on the grounds that `HUGE` steps the segment by `byteOffset >> 4` and `VIRTUAL`

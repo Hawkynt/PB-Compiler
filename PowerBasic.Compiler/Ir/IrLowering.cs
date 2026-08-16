@@ -142,8 +142,12 @@ public sealed partial class IrLowering {
         continue;                                      // no body to lower, and that is the point
       try {
         new IrLowering(model, procMap, module, shared, escapes).LowerProcedure(proc, irfn);
-      } catch (IrLoweringException) {
+      } catch (IrLoweringException e) {
         irfn.ClearBody();                              // leave it a declaration; callers can still call it
+        // ...and SAY SO. A cleared body leaves no trace in Functions' defined half, so a census over
+        // IR functions counts this procedure in neither its numerator nor its denominator - the
+        // procedure simply stops existing, and the coverage ratio goes UP because it did.
+        module.RecordProcedureLoweringDecline(proc.Name, e.Message);
       }
     }
     return module;
