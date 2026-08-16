@@ -1410,13 +1410,27 @@ public sealed partial class IrLowering {
   /// cast the IR does not have, and would be wrong to fake with a value whose segment nobody has
   /// said - so it declines.
   /// </para>
+  /// <para>
+  /// "Every near place" is the load-bearing half, and an element of a DYNAMIC array is not one: its
+  /// address is an offset into the far array heap, and a pointer variable is a near cell, so the
+  /// segment is dropped on the way in. <c>@p</c> then happened to read the right word only while the
+  /// promoted slot still carried the far value; <c>@p[1]</c> - a <c>GEP</c> the pointer's own near
+  /// type governs - read the program's data instead. The <c>AT</c> and paged classes already decline
+  /// one level down (<see cref="ElementAddress"/> with <c>farAllowed: false</c>); this is the case
+  /// that got through, because a far-heap pointer is an address SPACE rather than an
+  /// <see cref="IrFarPtr"/> and nothing was asking.
+  /// </para>
   /// </summary>
   private IrValue PointerValue(Expression e) {
     if (e is ByValArgExpr byVal)
       return this.PointerValue(byVal.Value);
     if (e is CallOrIndexExpr call && this._model.IntrinsicBindings.TryGetValue(call, out var intrinsic)
-        && intrinsic.Name.Equals("VARPTR32", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
-      return this.AddressOfStorage(call.Arguments[0]);
+        && intrinsic.Name.Equals("VARPTR32", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1) {
+      var address = this.AddressOfStorage(call.Arguments[0]);
+      return address.Type.IsFarPointer
+        ? throw new IrLoweringException("VARPTR32 of storage outside the default data segment")
+        : address;
+    }
     if (this._model.TypeOf(e) is not PointerType)
       throw new IrLoweringException("unsupported pointer value");
     if (e is NameExpr && this._model.VariableBindings.TryGetValue(e, out var symbol) && symbol.Type is PointerType)
@@ -1443,6 +1457,53 @@ public sealed partial class IrLowering {
     if (e is PtrDerefExpr deref)
       return this.DerefAddress(deref);
     throw new IrLoweringException("VARPTR of an expression that is not storage");
+  }
+
+  /// <summary>
+  /// The segment <c>VARSEG</c> answers for what <paramref name="e"/> names.
+  ///
+  /// <para>
+  /// This used to be <c>rt_varseg</c> unconditionally, and <c>rt_varseg</c> is two instructions -
+  /// <c>MOV AX, DS</c> and a <c>RET</c>. That is the right answer for every place a PB program can
+  /// name EXCEPT an array element, and the operand was never looked at, so <c>VARSEG</c> of an
+  /// element of a dynamic or <c>AT</c> array answered <c>DS</c>. The direct emitter answers
+  /// <c>place.Far ? ES : DS</c>, and genuine PBC 3.50 agrees with it: a dynamic array's elements are
+  /// in the far array heap and an <c>AT</c> array's are in the segment it names. A <c>DEF SEG</c>
+  /// built out of the wrong one reads and writes the program's own data instead, which is a wrong
+  /// answer rather than a missing feature.
+  /// </para>
+  /// <para>
+  /// The ANSWER is read off the symbol rather than off the address, because the far array heap is one
+  /// segment for the whole image (<c>rt_arrseg</c>, the very cell the direct emitter loads <c>ES</c>
+  /// from) and an <c>AT</c> array's segment is the compile-time constant its <c>DIM</c> named. The
+  /// operand is nevertheless ADDRESSED, and that is not decoration: <c>VARSEG(a%(Side%(1)))</c> calls
+  /// <c>Side%</c> once under genuine PBC 3.50 and once under the direct emitter, which forms the place
+  /// before asking which segment it is in. Answering from the symbol alone skipped the call, so a
+  /// subscript with a side effect - or a bounds check under <c>$ERROR BOUNDS ON</c> - simply did not
+  /// happen. The address itself is discarded and the pure half of it dies with DCE.
+  /// </para>
+  /// <para>
+  /// The paged classes decline: their segment is recomputed per element from the byte offset or from
+  /// the EMS window, so there is no one answer to give and inventing one would be the same defect
+  /// again. They decline BEFORE the address is formed, which is what a decline is for.
+  /// </para>
+  /// </summary>
+  private IrValue SegmentOfStorage(Expression e) {
+    if (e is CallOrIndexExpr indexed && this._model.VariableBindings.TryGetValue(indexed, out var array)
+        && array.Type is ArrayType element) {
+      if (array.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms)
+        throw new IrLoweringException($"VARSEG of an element of the {array.ArrayClass} array {array.Name}");
+      this.ElementAddress(indexed, farAllowed: true);
+      if (array.ArrayClass == ArrayClass.Absolute)
+        return this._absoluteSegments.TryGetValue(array, out var segment)
+          ? new IrConstantInt(IrType.I16, segment)
+          : throw new IrLoweringException($"VARSEG of {array.Name} before its DIM ... AT was lowered");
+      if (element.IsDynamic)
+        return this._b.Load(IrType.I16, this.ErrorCell("rt_arrseg", IrType.I16));
+    } else {
+      this.AddressOfStorage(e);
+    }
+    return this._b.Call(IrType.I16, this.RuntimeFn("rt_varseg", IrType.I16));
   }
 
   /// <summary>
@@ -3479,8 +3540,7 @@ public sealed partial class IrLowering {
         this._b.Cast(IrCastOp.PtrToInt, this.AddressOfStorage(call.Arguments[0]), IrType.U16),
         PbType.Word, this._model.TypeOf(call));
     if (name.Equals("VARSEG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
-      return this.Coerce(this._b.Call(IrType.I16, this.RuntimeFn("rt_varseg", IrType.I16)),
-        PbType.Integer, this._model.TypeOf(call));
+      return this.Coerce(this.SegmentOfStorage(call.Arguments[0]), PbType.Integer, this._model.TypeOf(call));
     // CODEPTR / CODEPTR32 of a LABEL. A label is a block here rather than a value, so the address is
     // the blockaddress the ON ERROR handler is already named by; CODEPTR32 pairs it with CS in the
     // high word, which is what the direct emitter writes and what makes the two paths store the same

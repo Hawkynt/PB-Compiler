@@ -1221,6 +1221,49 @@ computes integral `+`/`-`/`*` in floating point, `VARPTR` answers a `WORD`, and 
 only closes a float-shaped tree whose leaves are `sitofp` — an unsigned leaf (`uitofp u16 -> f80`)
 stops it, and the selector has no form for that conversion. Widening the addresses to `LONG` first
 (`p1 = VARPTR(a%(1))`) keeps the arithmetic on the integer path.
+
+### `VARSEG` is the other half of the pair, and it was answering `DS` for everything
+
+`VARPTR` above is careful about which cell it names. `VARSEG` was not careful about anything: it
+lowered to one unconditional `rt_varseg` — `MOV AX, DS` and a `RET` — and **never looked at its
+operand**. That is the right answer for every place a PB program can name except an array element,
+and it is wrong for two of those in opposite ways:
+
+| operand | direct (`place.Far ? ES : DS`) | routed, before | genuine PBC 3.50 |
+|---|---|---|---|
+| a scalar, a UDT field, a static array's element, a string's handle | `DS` | `DS` | the data segment |
+| an element of a DYNAMIC array | `[rt_arrseg]` | `DS` | `DS + 3144` |
+| an element of a `DIM … AT` array | the `AT` segment | `DS` | the `AT` segment |
+
+`DEF SEG = VARSEG(a%(k)) : PRINT PEEK(VARPTR(a%(k)))` over a dynamic array prints the element direct
+and a byte of the program's own data routed. Both non-DS rows are decided **before** any address is
+formed, which is what makes them cheap: the far array heap is one segment for the whole image (the
+very cell the direct emitter loads `ES` from), and an `AT` array's is the compile-time constant its
+`DIM` named. `HUGE`/`VIRTUAL`/`EMS`/`XMS` decline instead — their segment is recomputed per element
+from the byte offset or from the EMS window, so there is no one answer and inventing one would be the
+same defect again.
+
+The operand is nevertheless **addressed**, and that was the second half of the same fault. The
+lowering's comment said `VARSEG` never evaluates its operand — which is a reasonable thing to believe
+and is not what either reference does. `EmitVarPtrSeg` calls `EmitPlace` before asking about the
+segment, and the oracle agrees: `VARSEG(a%(Side%(1)))` calls `Side%` once. Answering out of the
+symbol alone skipped the call — and, in the loud version of the same omission, the `$ERROR BOUNDS ON`
+check on that subscript: `VARSEG(a%(9))` over `a%(0 TO 3)` stopped the direct build on Error 9 and let
+the routed one run to the end. A subscript that is not evaluated is a subscript that is not checked.
+The address is formed and discarded; the pure half dies with DCE.
+
+**And a pointer VARIABLE cannot hold a far-heap address at all.** `p = VARPTR32(a%(k))` over a
+dynamic array handed one to a near cell, so the address space was dropped on the way in. `@p` masked
+it — `mem2reg` had promoted the slot, so the first dereference still used the far value — and `@p[1]`,
+a `GEP` the pointer's own near type governs, read DGROUP: `33 44` direct, `33 -16448` routed. It
+declines now, the way the `AT` and paged classes already did one level down in `ElementAddress`; the
+reason it got through is that a far-heap pointer is an address SPACE rather than an `IrFarPtr`, and
+nothing on that path was asking.
+
+All of it is `IrLowering`, so the `VARSEG` half reached `--emit-c` and `--emit-llvm` too.
+`BackendPointerTests` holds the six cases, five of which fail on an unfixed tree; the near-storage
+row passes either way on purpose, since it is the one a heavy-handed repair would break.
+
 ## Dynamic array storage: an address space, not a pointer that happens to be elsewhere
 
 `rt_arr_alloc` was the last selection decline that read as a pure signature question. The IR declared
