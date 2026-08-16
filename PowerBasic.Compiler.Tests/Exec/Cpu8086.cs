@@ -1297,8 +1297,16 @@ public sealed class Cpu8086 {
     this.WriteDword(at + 4, (uint)(value >> 32));
   }
 
-  // an 80-bit extended value read into (and written from) a double - the mantissa bits that do not
-  // fit are exactly the approximation this interpreter is explicit about
+  // An 80-bit extended value read into (and written from) a double - the mantissa bits that do not
+  // fit are exactly the approximation this interpreter is explicit about.
+  //
+  // The SCALING is done with Math.ScaleB and not with a multiply by Math.Pow(2, n), which is not a
+  // tidy-up: the intermediate power overflows for a small magnitude long before the result would.
+  // 1E-300 has a binary exponent of -997, so writing it asked for 2^1060, got +infinity, and stored a
+  // mantissa of zero - the value came back as 0. Reading it back had the mirror fault, 2^-1060
+  // underflowing to zero. Every extended value below about 1E-289 was therefore ZERO to this
+  // interpreter, and only on the path that parks intermediates in ten-byte cells - which is the
+  // ROUTED one - so it read as a back-end miscompile of the tiny-magnitude cases.
   private double ReadExtended(int at) {
     var mantissa = this.ReadQword(at);
     var signExponent = this.ReadWord(at + 8);
@@ -1306,7 +1314,7 @@ public sealed class Cpu8086 {
     var negative = (signExponent & 0x8000) != 0;
     if (exponent == 0 && mantissa == 0)
       return negative ? -0.0 : 0.0;
-    var value = mantissa * Math.Pow(2, exponent - 16383 - 63);
+    var value = Math.ScaleB((double)mantissa, exponent - 16383 - 63);
     return negative ? -value : value;
   }
 
@@ -1319,7 +1327,7 @@ public sealed class Cpu8086 {
     var negative = value < 0;
     var magnitude = Math.Abs(value);
     var exponent = (int)Math.Floor(Math.Log2(magnitude));
-    var mantissa = (ulong)Math.Round(magnitude * Math.Pow(2, 63 - exponent));
+    var mantissa = (ulong)Math.Round(Math.ScaleB(magnitude, 63 - exponent));
     this.WriteQword(at, mantissa);
     this.WriteWord(at + 8, (ushort)((negative ? 0x8000 : 0) | (exponent + 16383)));
   }

@@ -287,4 +287,25 @@ public sealed class BackendFloatWidthTests {
       F! = v% / 3
     END FUNCTION
     """, "1.66666662693024 | 2.333333");
+
+  /// <summary>
+  /// A magnitude too small for the <b>interpreter's</b> 80-bit conversion to survive, which is not a
+  /// compiler question and read exactly like one. <c>Cpu8086</c> scaled by multiplying with
+  /// <c>Math.Pow(2, 63 - exponent)</c>: 1E-300 has a binary exponent of -997, so the power itself
+  /// overflowed to infinity and the stored mantissa was zero. Every extended value below about
+  /// 1E-289 was therefore ZERO to the oracle - and only on the path that parks intermediates in
+  /// ten-byte cells, so it presented as a routed miscompile of the tiny-magnitude cases and nowhere
+  /// else. Genuine PBC 3.50 answers 1E+300 and 2E+300 here (<c>scripts/diff-one.sh</c>).
+  /// </summary>
+  [Test]
+  public void Divide_GivenAMagnitudeBelowTheExtendedScalingLimit_ThenTheValueSurvivesTheTenByteCell() => AgreesRouted("""
+    DECLARE FUNCTION GD#(BYVAL v#)
+    DIM db AS DOUBLE
+    db = GD#(1E-300#)
+    PRINT 1 / db
+    PRINT GD#(2#) / db
+    FUNCTION GD#(BYVAL v#) NOINLINE
+      GD# = v# + 0#
+    END FUNCTION
+    """, "1E+300 | 2E+300");
 }
