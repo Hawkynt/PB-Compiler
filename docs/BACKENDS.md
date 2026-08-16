@@ -334,7 +334,9 @@ faithful path and the one the optimizer-off promise is about: 258 of 262 functio
 `Legalize()`, against 262 under `Standard()`; module bodies 157 against 161.
 `BackendCorpusDifferentialTests` goes from 314 compilations and 299 agreements to 304 and 289, with
 **0 disagreements** either way. Every function that selects now also allocates in both modes - it was
-257 of 258 unoptimized while the spill loop needed a work budget to stop.
+257 of 258 unoptimized while the spill loop needed a work budget to stop. (Re-measured on the tree
+carrying the WRITE and float-narrowing fixes below: **305 compilations, 290 agreements, 0
+disagreements**.)
 
 The honest asterisk on all of this is `instcombine`: it folds constants, so a routed `--no-optimize`
 build is not literally unoptimized. Splitting a canonicalization-only half out of that pass is the
@@ -1001,6 +1003,68 @@ loop shapes both ways under the interpreter with the fault **folded into the com
 than thrown (a runaway loop otherwise reports as "the interpreter cannot run this image", which is the
 defect wearing an excuse), and `BackendTruthValueTests.Select_GivenBooleanNotSpelledAsXorWithTrue`
 pins the operand itself. All four fail on an unfixed tree.
+
+### A narrowed float was not narrowed, so a SINGLE variable held eighty bits - FIXED
+
+Every float value in this back end lives in a **ten-byte** frame cell at the x87's own width, which is
+deliberate: PB computes a float expression at the register's width and lets the declared type pick only
+the FORMATTER, so rounding an INTERMEDIATE early is what makes `H?/3` print 66.66666 where PBC prints
+66.66667 (`FloatCell`). The note there says a store to a declared variable still rounds, because it goes
+through the variable's own four-byte cell.
+
+That stops being true the moment `mem2reg` promotes the variable. Then there is no four-byte cell, the
+`fptrunc x86_fp80 to float` the lowering emitted is the only thing left that says SINGLE, and
+`SelectFloatResize` implemented it as a copy from one ten-byte cell to another - which rounds nothing:
+
+```basic
+p = G%(5) : q = G%(3)     ' a two-call-site NOINLINE function, so nothing folds
+sg = p / q                ' SINGLE
+db = sg     : PRINT db    ' direct 1.66666662693024   routed 1.66666666666667
+PRINT sg * 3              ' direct 4.99999988079071   routed 5
+```
+
+An `FPTrunc` now round-trips through a cell of the TARGET width - the `FSTP m32 / FLD m32` pair the
+direct emitter writes - and `FPExt` is unchanged, the wider format holding the narrower one exactly. It
+reproduced with the optimizer **off** as well as on, and over an array element as well as a scalar.
+
+Two things kept it out of sight. `PRINT` of the SINGLE cannot see it: the SINGLE formatter shows seven
+significant digits whatever the cell holds, so the value has to be **widened back** before anything says
+so, and no PRINT-based test does that. And it is **not shared with `--emit-c` / `--emit-llvm`** - the
+`fptrunc` is present and correct in the IR both of them render, so this is the selector's own defect, the
+same shape as the bool-constant one above.
+
+### WRITE has its own numeric rule, and all three paths had a different piece of it wrong - FIXED
+
+`WRITE` renders a number as neither `PRINT` nor `STR$` does, and the differences are exactly where the
+defects were. Checked against genuine PBC 3.50 with `scripts/diff-one.sh`, over values taken through a
+function so nothing folds:
+
+| | PBC 3.50 | direct was | routed was |
+|---|---|---|---|
+| `WRITE sg` (SINGLE = 5/3) | `1.66666662693024` | correct | `1.666667` |
+| `WRITE wo` (WORD = 60000) | `60000` | `-5536` | — (declined) |
+| `WRITE dw` (DWORD = 3000000000) | `3000000000` | `-1294967296` | — |
+| `PRINT STR$(wo)` | ` 60000` | `-5536` | — |
+
+Every real goes through the **DOUBLE** formatter whatever its declared type - `1.66666662693024` is the
+single's exact value rendered at fifteen digits, and `PRINT sg` is `1.666667` for the same cell.
+`IrLowering.LowerWrite` called `LowerStrOf`, so it inherited STR$'s width rule; `LowerWriteNumber` is
+WRITE's own dispatch, transcribed from `EmitWrite` the way the print family already was.
+
+The unsigned half is a **direct-emitter fidelity defect** rather than a disagreement, and it survived
+because every battery program that shows an unsigned value PRINTS it - `PRINT` was right throughout.
+`EmitWrite` dispatched on width alone and reached the signed renderer for both unsigned widths; `STR$`
+had the DWORD arm and not the WORD one. `rt_str_i16` opens with a `CWD` and `rt_str_i32` reads `DX:AX`
+signed, so each needs the next size up with the extra half zeroed.
+
+That also retires a decline recorded as deliberate: there was no `rt_str_from_u16` row *because*
+`rt_str_i16` sign-extends, and the answer to that is the 32-bit renderer with a `ZeroPair` - the same
+one `rt_print_u16` has always used - rather than no renderer at all. `rt_str_from_u8` joins it (a BYTE
+is 0..255, so the signed 16-bit renderer is right for it), and STR$ of a WORD now routes.
+
+`BackendWriteTests` runs every width both ways under the interpreter, on the screen **and in a file**:
+the SINGLE divergence never reached stdout, only the bytes written, which is the shape a stdout-only
+comparison cannot see.
 
 ### Three things the routed path gets RIGHT and the direct emitter does not
 

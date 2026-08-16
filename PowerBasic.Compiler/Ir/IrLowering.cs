@@ -1740,10 +1740,38 @@ public sealed partial class IrLowering {
         continue;
       }
       this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr],
-        this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_ltrim", IrType.Ptr, IrType.Ptr), this.LowerStrOf(item)));
+        this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_ltrim", IrType.Ptr, IrType.Ptr), this.LowerWriteNumber(item)));
     }
 
     this.EmitIo(file, "print", "nl", IrType.Void, []);
+  }
+
+  /// <summary>
+  /// The text WRITE renders a NUMBER as, which is not the text STR$ renders it as. The difference is
+  /// the float widths: STR$ keeps the argument's display precision (<c>STR$(sg)</c> is seven
+  /// significant digits), while WRITE hands every real to the DOUBLE formatter whatever its declared
+  /// type. Genuine PBC 3.50 writes <c>1.66666662693024</c> for a SINGLE holding 5/3 - the single's
+  /// exact value rendered at fifteen digits - where it prints <c>1.666667</c> for the same cell, and
+  /// the direct emitter's <c>EmitWrite</c> says the same thing by falling every non-integer case into
+  /// <c>StrF64</c>. Routing through <c>LowerStrOf</c> instead made WRITE agree with STR$ and disagree
+  /// with both of them.
+  ///
+  /// <para>
+  /// The integer widths follow the same source: an unsigned type renders UNSIGNED, so a WORD holding
+  /// 60000 is not -5536 and a DWORD holding 3000000000 is not -1294967296.
+  /// </para>
+  /// </summary>
+  private IrValue LowerWriteNumber(Expression item) {
+    var stored = this._model.TypeOf(item);
+    if (Valued(stored) is not ScalarType s)
+      throw new IrLoweringException("WRITE of a non-numeric, non-string value");
+    // every real, and a QUAD, through the DOUBLE formatter - on the x87, at its own width
+    if (s.IsFloat || s.ByteSize == 8)
+      return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_from_double", IrType.Ptr, IrType.F80),
+        this.Coerce(this.LowerExpr(item), stored, PbType.Ext));
+    var (name, ty) = ($"rt_str_from_{(s.Signed ? "i" : "u")}{s.ByteSize * 8}", IrType.Integer(s.ByteSize * 8));
+    return this._b.Call(IrType.Ptr, this.RuntimeFn(name, IrType.Ptr, ty),
+      this.Coerce(this.LowerExpr(item), stored, s));
   }
 
   /// <summary>One of WRITE's fixed characters - the separator or a quote - through the literal pool.</summary>

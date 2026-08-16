@@ -2400,6 +2400,20 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   }
 
   /// <summary>WRITE [#n,] items: comma-delimited, strings quoted, numbers without padding.</summary>
+  /// <summary>
+  /// Stages the DWORD in DX:AX as a 64-bit integer on the x87, which is how an unsigned 32-bit value
+  /// reaches a renderer that would otherwise read it signed. The high half is written as zero rather
+  /// than sign-extended - that IS the zero extension.
+  /// </summary>
+  private void EmitZeroExtendedQuadOnX87() {
+    var asm = this._asm;
+    asm.Mov(Mem.Word(this.RtScratch), Reg.AX);
+    asm.Mov(Mem.Word(this.RtScratch, 2), Reg.DX);
+    asm.Mov(Mem.Word(this.RtScratch, 4), (Imm)0);
+    asm.Mov(Mem.Word(this.RtScratch, 6), (Imm)0);
+    asm.Fild(Mem.Qword(this.RtScratch));
+  }
+
   private void EmitWrite(WriteStmt write) {
     var asm = this._asm;
     if (write.FileNumber != null) {
@@ -2429,7 +2443,19 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         continue;
       }
       switch (kind) { // STR$-style text, leading space trimmed
+        // An UNSIGNED type renders unsigned, which this used to get wrong in both widths: genuine
+        // PBC 3.50 writes 60000 for a WORD and 3000000000 for a DWORD where the signed renderers
+        // answer -5536 and -1294967296. A BYTE is 0..255 and the signed 16-bit renderer is right for
+        // it, which is why the guards name the width as well as the sign.
+        case ValueKind.Int16 when model.TypeOf(item) is ScalarType { Signed: false, ByteSize: 2 }:
+          asm.Xor(Reg.DX, Reg.DX);
+          asm.Call(this._rt.StrI32);
+          break;
         case ValueKind.Int16: asm.Call(this._rt.StrI16); break;
+        case ValueKind.Int32 when model.TypeOf(item) is ScalarType { Signed: false }:
+          this.EmitZeroExtendedQuadOnX87();
+          asm.Call(this._rt.StrI64);
+          break;
         case ValueKind.Int32: asm.Call(this._rt.StrI32); break;
         default: asm.Call(this._rt.StrF64); break;
       }

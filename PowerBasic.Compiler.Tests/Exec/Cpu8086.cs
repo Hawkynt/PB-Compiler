@@ -32,7 +32,7 @@ public sealed class Cpu8086 {
   private byte _videoMode = 0x03;
   private readonly StringBuilder _output = new();
   private readonly StringBuilder _printer = new();
-  private readonly Dictionary<int, MemoryFile> _files = [];
+  private readonly Dictionary<int, OpenFile> _files = [];
   private readonly Dictionary<string, MemoryFile> _byName = new(StringComparer.OrdinalIgnoreCase);
 
   /// <summary>Directories the program has created; there is no host file system behind this.</summary>
@@ -43,6 +43,15 @@ public sealed class Cpu8086 {
   private sealed class MemoryFile {
     public string Name = "";
     public List<byte> Bytes = [];
+  }
+
+  /// <summary>
+  /// One DOS handle onto a file. The POSITION belongs to the handle rather than to the file, which is
+  /// what DOS does and what lets a program hold the same file open twice - one handle reading while
+  /// another writes - without the two silently sharing a cursor.
+  /// </summary>
+  private sealed class OpenFile {
+    public MemoryFile File = new();
     public int Position;
   }
 
@@ -88,6 +97,13 @@ public sealed class Cpu8086 {
   /// <summary>The raw bytes of a file the program created, or null if it made no such file.</summary>
   public byte[]? FileBytes(string name)
     => this._byName.TryGetValue(name, out var file) ? [.. file.Bytes] : null;
+
+  /// <summary>
+  /// Every file name the disk holds after the run. A comparison that names the files it will look at
+  /// can only see a difference in one of them; this is what lets a caller compare the whole disk, so
+  /// a program that writes under a name nobody thought of is still observed.
+  /// </summary>
+  public IEnumerable<string> FileNames => this._byName.Keys;
 
   /// <summary>Loads an MZ executable and runs it to termination (or until <paramref name="maxSteps"/> instructions).</summary>
   public static Cpu8086 Run(byte[] exe, int maxSteps = 20_000_000) {
@@ -1320,18 +1336,37 @@ public sealed class Cpu8086 {
         else if (handle == 4)                                  // PRN, which DOS opens for every program
           for (var i = 0; i < count; ++i)
             this._printer.Append((char)this.ReadByte(at + i));
-        else if (this._files.TryGetValue(handle, out var file))
-          for (var i = 0; i < count; ++i)
-            file.Bytes.Add(this.ReadByte(at + i));
+        // A write lands AT the file position and advances it - it does not append. Appending is what
+        // this did, and it is the same answer only while a program writes its records in order: a
+        // RANDOM PUT to record 3 before record 1 would have produced a file whose CONTENTS were right
+        // for a compiler that seeked to the wrong place. A gap past the end reads back as zeroes, and
+        // a write of zero bytes is DOS's own truncate-here, which is how SETEOF is spelled.
+        else if (this._files.TryGetValue(handle, out var open)) {
+          var bytes = open.File.Bytes;
+          while (bytes.Count < open.Position)
+            bytes.Add(0);
+          if (count == 0) {
+            bytes.RemoveRange(open.Position, bytes.Count - open.Position);
+          } else {
+            for (var i = 0; i < count; ++i, ++open.Position) {
+              var value = this.ReadByte(at + i);
+              if (open.Position < bytes.Count)
+                bytes[open.Position] = value;
+              else
+                bytes.Add(value);
+            }
+          }
+        }
         this._r[_AX] = count;
         this._cf = false;
         return;
       }
-      case 0x3C or 0x5B: {                                     // create file
+      case 0x3C or 0x5B: {                                     // create file - truncates an existing one
         var name = this.CString(Linear(this._ds, this._r[_DX]));
-        var file = new MemoryFile { Name = name };
-        this._byName[name] = file;
-        this._files[this._nextHandle] = file;
+        if (!this._byName.TryGetValue(name, out var file))
+          this._byName[name] = file = new MemoryFile { Name = name };
+        file.Bytes.Clear();
+        this._files[this._nextHandle] = new OpenFile { File = file };
         this._r[_AX] = (ushort)this._nextHandle++;
         this._cf = false;
         return;
@@ -1343,34 +1378,50 @@ public sealed class Cpu8086 {
           this._r[_AX] = 2;                                    // file not found
           return;
         }
-        file.Position = 0;
-        this._files[this._nextHandle] = file;
+        this._files[this._nextHandle] = new OpenFile { File = file };
         this._r[_AX] = (ushort)this._nextHandle++;
         this._cf = false;
         return;
       }
       case 0x3E: this._files.Remove(this._r[_BX]); this._cf = false; return;
       case 0x3F: {                                             // read
-        if (!this._files.TryGetValue(this._r[_BX], out var file)) { this._cf = true; this._r[_AX] = 6; return; }
+        if (!this._files.TryGetValue(this._r[_BX], out var open)) { this._cf = true; this._r[_AX] = 6; return; }
         var at = Linear(this._ds, this._r[_DX]);
-        var wanted = Math.Min(this._r[_CX], file.Bytes.Count - file.Position);
+        var wanted = Math.Max(0, Math.Min(this._r[_CX], open.File.Bytes.Count - open.Position));
         for (var i = 0; i < wanted; ++i)
-          this.WriteByte(at + i, file.Bytes[file.Position + i]);
-        file.Position += wanted;
+          this.WriteByte(at + i, open.File.Bytes[open.Position + i]);
+        open.Position += wanted;
         this._r[_AX] = (ushort)wanted;
         this._cf = false;
         return;
       }
       case 0x42: {                                             // seek
-        if (!this._files.TryGetValue(this._r[_BX], out var file)) { this._cf = true; this._r[_AX] = 6; return; }
+        if (!this._files.TryGetValue(this._r[_BX], out var open)) { this._cf = true; this._r[_AX] = 6; return; }
         var offset = (this._r[_CX] << 16) | this._r[_DX];
-        file.Position = this.Reg8(_AX) switch {
+        open.Position = this.Reg8(_AX) switch {
           0 => offset,
-          1 => file.Position + offset,
-          _ => file.Bytes.Count + offset,
+          1 => open.Position + offset,
+          _ => open.File.Bytes.Count + offset,
         };
-        this._r[_DX] = (ushort)(file.Position >> 16);
-        this._r[_AX] = (ushort)file.Position;
+        this._r[_DX] = (ushort)(open.Position >> 16);
+        this._r[_AX] = (ushort)open.Position;
+        this._cf = false;
+        return;
+      }
+      // rename. NAME old$ AS new$ is a DOS call the interpreter simply did not have, so every program
+      // using it stopped here rather than being compared.
+      case 0x56: {
+        var from = this.CString(Linear(this._ds, this._r[_DX]));
+        var to = this.CString(Linear(this._es, this._r[_DI]));
+        if (!this._byName.Remove(from, out var file) || this._byName.ContainsKey(to)) {
+          if (file is not null)
+            this._byName[from] = file;
+          this._cf = true;
+          this._r[_AX] = 2;
+          return;
+        }
+        file.Name = to;
+        this._byName[to] = file;
         this._cf = false;
         return;
       }

@@ -536,14 +536,17 @@ public sealed partial class CodeGenerator {
       case "STR$":
         this.EmitExpression(args[0]);
         switch (KindOf(model.TypeOf(args[0]))) {
+          // A WORD renders unsigned too, and used to not: rt_str_i16 opens with a CWD, so STR$ of a
+          // WORD holding 60000 answered "-5536" where genuine PBC 3.50 answers " 60000". The DWORD
+          // arm below had the same fault and had already been fixed; this is its missing twin.
+          case ValueKind.Int16 when model.TypeOf(args[0]) is ScalarType { Signed: false, ByteSize: 2 }:
+            asm.Xor(Reg.DX, Reg.DX);
+            asm.Call(this._rt.StrI32);
+            break;
           case ValueKind.Int16: asm.Call(this._rt.StrI16); break;
           case ValueKind.Int32 when model.TypeOf(args[0]) is ScalarType { Signed: false }:
             // DWORD renders unsigned: zero-extend into the 64-bit formatter
-            asm.Mov(Mem.Word(this.RtScratch), Reg.AX);
-            asm.Mov(Mem.Word(this.RtScratch, 2), Reg.DX);
-            asm.Mov(Mem.Word(this.RtScratch, 4), (Imm)0);
-            asm.Mov(Mem.Word(this.RtScratch, 6), (Imm)0);
-            asm.Fild(Mem.Qword(this.RtScratch));
+            this.EmitZeroExtendedQuadOnX87();
             asm.Call(this._rt.StrI64);
             break;
           case ValueKind.Int32: asm.Call(this._rt.StrI32); break;

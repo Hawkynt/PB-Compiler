@@ -3274,10 +3274,33 @@ public sealed partial class InstructionSelector {
         ReadsMemory: true, WritesMemory: false)));
 
   /// <summary>A float widened or narrowed to the other float format: the load and the store do it.</summary>
+  /// <summary>
+  /// <c>fpext</c> and <c>fptrunc</c>. Widening needs no instruction of its own - every float value
+  /// here lives in a ten-byte cell at the x87's own width, and the wider format holds the narrower
+  /// one exactly - but NARROWING has to round, and that is what a copy between two ten-byte cells
+  /// does not do.
+  ///
+  /// <para>
+  /// The round trip through a cell of the TARGET width <b>is</b> the rounding, and it is the
+  /// <c>FSTP m32 / FLD m32</c> pair the direct emitter writes when a value is stored into a SINGLE
+  /// variable. <see cref="FloatCell"/> explains why an INTERMEDIATE deliberately keeps all eighty
+  /// bits, and says a store to a declared variable rounds because it goes through the variable's own
+  /// cell - which stops being true the moment <c>mem2reg</c> promotes that variable, since then there
+  /// is no cell and the <c>fptrunc</c> the lowering emitted is the only thing left that says SINGLE.
+  /// Eliding it left <c>D! = p / q</c> holding the quotient at eighty bits: <c>1.66666666666667</c>
+  /// where PB (and the direct emitter) answer <c>1.66666662693024</c>.
+  /// </para>
+  /// </summary>
   private bool SelectFloatResize(IrCast cast) {
     if (!this.TryFloatOperand(cast.Value, out var source))
       return false;
     this.EmitX87(MOpcode.Fld, source, reads: true);
+    if (cast.Op == IrCastOp.FPTrunc && RegSize(cast.Type) is var narrow and (MRegSize.Dword or MRegSize.Qword)) {
+      var slot = this._function.StackSlots.Count;
+      this._function.StackSlots.Add(narrow == MRegSize.Dword ? 4 : 8);
+      this.EmitX87(MOpcode.Fstp, new MOperand.StackSlot(slot, narrow), reads: false);
+      this.EmitX87(MOpcode.Fld, new MOperand.StackSlot(slot, narrow), reads: true);
+    }
     this.EmitX87(MOpcode.Fstp, this.FloatCell(cast), reads: false);
     return true;
   }
