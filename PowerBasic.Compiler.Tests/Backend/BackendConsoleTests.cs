@@ -143,6 +143,36 @@ public sealed class BackendConsoleTests {
   }
 
   /// <summary>
+  /// A coordinate the selector cannot prove word-sized - a SINGLE, and a LONG past 16 bits. Both used
+  /// to take the whole module body off the IR path, because <c>rt_locate</c>'s argument slot is a word
+  /// register and the lowering handed it a 32-bit value; the coordinates are INTEGERs and now lower as
+  /// such. The rounding and the wrap are the direct emitter's, which is the reference.
+  /// </summary>
+  [TestCase(true)]
+  [TestCase(false)]
+  public void Run_GivenALocateWithANonWordCoordinate_ThenItRoutesAndAgrees(bool optimize) {
+    var run = RunBothWays("""
+      DECLARE FUNCTION Real!(BYVAL v!)
+      DECLARE FUNCTION Wide&(BYVAL v&)
+      LOCATE Real!(5.6), Real!(10.4)
+      PRINT "a";
+      LOCATE Wide&(65538), Wide&(65540)
+      PRINT "b";
+      END
+      FUNCTION Real!(BYVAL v!) NOINLINE
+        Real! = v!
+      END FUNCTION
+      FUNCTION Wide&(BYVAL v&) NOINLINE
+        Wide& = v&
+      END FUNCTION
+      """, optimize);
+
+    Assert.That(RowOf(run, "a"), Is.EqualTo(5), "CINT(5.6) is 6, and the row counts from one");
+    Assert.That(run.Screen.Split('|')[5].IndexOf('a'), Is.EqualTo(9), "CINT(10.4) is 10");
+    Assert.That(RowOf(run, "b"), Is.EqualTo(1), "65538 truncated to a word is 2");
+  }
+
+  /// <summary>
   /// The <c>$OPTIMIZE</c>-visible fold: an earlier LOCATE is dead when the next one covers everything
   /// it set. It is a whole-model pre-pass over the bound AST, so both paths inherit the same decision -
   /// which is worth a test precisely because it would be easy for the routed path to fold a second

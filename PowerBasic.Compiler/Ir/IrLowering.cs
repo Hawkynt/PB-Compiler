@@ -2999,13 +2999,18 @@ public sealed partial class IrLowering {
   /// argument lowers to a literal zero rather than to a read of the cursor.
   /// </summary>
   private void LowerLocate(CommandStmt cmd) {
+    // Both coordinates are INTEGERs, which is what the direct emitter coerces them to and what the
+    // runtime's two word registers hold. Lowering them as LONGs instead was faithful in its low half
+    // and unroutable in practice: the argument slot IS a word, so anything the selector could not
+    // prove word-sized - a subscripted coordinate, `i% * 3`, a SINGLE - declined and took the whole
+    // module body to the direct emitter with it.
     IrValue Argument(int index) =>
       cmd.Arguments.Count > index && cmd.Arguments[index] is { } e
-        ? this.Coerce(this.LowerExpr(e), this._model.TypeOf(e), PbType.Long)
-        : new IrConstantInt(IrType.I32, 0);
+        ? this.Coerce(this.LowerExpr(e), this._model.TypeOf(e), PbType.Integer)
+        : new IrConstantInt(IrType.I16, 0);
     if (cmd.Arguments.Count > 2)
       throw new IrLoweringException("LOCATE with a cursor-shape argument");
-    this._b.Call(IrType.Void, this.RuntimeFn("rt_locate", IrType.Void, IrType.I32, IrType.I32),
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_locate", IrType.Void, IrType.I16, IrType.I16),
       Argument(0), Argument(1));
   }
 
