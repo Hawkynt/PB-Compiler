@@ -952,9 +952,9 @@ than thrown (a runaway loop otherwise reports as "the interpreter cannot run thi
 defect wearing an excuse), and `BackendTruthValueTests.Select_GivenBooleanNotSpelledAsXorWithTrue`
 pins the operand itself. All four fail on an unfixed tree.
 
-### Two things the routed path gets RIGHT and the direct emitter does not
+### Three things the routed path gets RIGHT and the direct emitter does not
 
-Both were found by the same differential sweep and both are recorded here rather than fixed: the
+All three were found by a differential sweep and all three are recorded here rather than fixed: the
 repair belongs to `CodeGen/`, and in one case it moves emitted bytes on the fidelity path.
 
 * **A recursive call whose result is combined with a value computed BEFORE it miscompiles from about
@@ -983,6 +983,29 @@ repair belongs to `CodeGen/`, and in one case it moves emitted bytes on the fide
   is otherwise rejected - the mirror image of the calling-convention diagnostic `708205f` closed, and
   benign in the same way a missing feature is benign, but it is a difference in what the compiler
   ACCEPTS and belongs on the retirement checklist rather than in a decline table.
+
+* **An element of a DYNAMIC array passed BYREF loses the write.** The element is in the far array
+  heap and a BYREF argument here is a near offset, so the callee writes DGROUP at that offset and the
+  array is untouched:
+
+  ```basic
+  REDIM a%(0 TO 7)
+  a%(2) = 10
+  CALL Bump(a%(2)) : CALL Bump(a%(2))   ' SUB Bump (v AS INTEGER) : v = v + 1 : END SUB
+  PRINT a%(2)                           ' real 12, direct 10
+  ```
+
+  Genuine PBC 3.50 prints the incremented value, so it either passes a far pointer or copies the
+  element in and out; ours prints the original. The routed path prints the right answer, and it is
+  worth being precise about WHY, because the reason is not that it models this better: `BackendProcs`
+  never routes a procedure with a BYREF parameter, so the only routed shape is the one where the
+  INLINER absorbed the callee - and then there is no argument to pass and the increment lands on the
+  element's own far address. Where the callee stays a call, `main` declines and both builds are the
+  direct emitter's, which is why the two paths agree on `NOINLINE` and disagree without it.
+
+  So this is not a routed defect to fix; it is a `CodeGen/` fidelity bug that a routed build happens
+  to step around. Fixing it means copy-in/copy-out (or a far parameter) in the direct emitter, and
+  the routed side then wants the far-address decline the `AT` and paged classes already have.
 
 ### One divergence with no answer: a `$ERROR` metastatement INSIDE a procedure body
 
