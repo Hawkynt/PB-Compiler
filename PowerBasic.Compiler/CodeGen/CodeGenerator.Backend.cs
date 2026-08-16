@@ -242,8 +242,8 @@ public sealed partial class CodeGenerator {
         this._backendDeclines.Add((proc.Name, "routing: a callee has no link symbol - it is EXTERNAL, or its own body did not lower"));
         continue;
       }
-      if (!this.DataGlobalsResolve(irFn)) {
-        this._backendDeclines.Add((proc.Name, "routing: a directly emitted procedure reads the DATA pool too"));
+      if (!this.DataGlobalsResolve(irFn, out var unaddressable)) {
+        this._backendDeclines.Add((proc.Name, $"routing: global '{unaddressable}' has no cell the emitter can address"));
         continue;
       }
       if (InstructionSelector.TrySelect(irFn, out var declineReason, this.SelectionTarget) is not { } mfn) {
@@ -338,8 +338,8 @@ public sealed partial class CodeGenerator {
       return this.DeclineMain($"routing: calls '{stranded}', which is not routed");
     if (!this.ExternalCalleesResolve(main))
       return this.DeclineMain("routing: a callee has no link symbol - it is EXTERNAL, or its own body did not lower");
-    if (!this.DataGlobalsResolve(main))
-      return this.DeclineMain("routing: a directly emitted procedure reads the DATA pool too");
+    if (!this.DataGlobalsResolve(main, out var unaddressable))
+      return this.DeclineMain($"routing: global '{unaddressable}' has no cell the emitter can address");
     if (InstructionSelector.TrySelect(main, out var declineReason, this.SelectionTarget) is not { } machine)
       return this.DeclineMain("selection: " + (declineReason ?? "unknown"));
     MachineScheduler.Schedule(machine);
@@ -581,13 +581,15 @@ public sealed partial class CodeGenerator {
   /// <c>MachineEmitter.ResolveData</c> in both optimizer modes.
   /// </para>
   /// </summary>
-  private bool DataGlobalsResolve(IrFunction fn)
-    => fn.Blocks.SelectMany(b => b.Instructions)
-        .SelectMany(i => i.Operands)
-        .OfType<IrGlobalVariable>()
-        .Select(g => g.Name)
-        .Distinct(System.StringComparer.Ordinal)
-        .All(this.DataCellResolves);
+  private bool DataGlobalsResolve(IrFunction fn, out string? unaddressable) {
+    unaddressable = fn.Blocks.SelectMany(b => b.Instructions)
+      .SelectMany(i => i.Operands)
+      .OfType<IrGlobalVariable>()
+      .Select(g => g.Name)
+      .Distinct(System.StringComparer.Ordinal)
+      .FirstOrDefault(name => !this.DataCellResolves(name));
+    return unaddressable is null;
+  }
 
   /// <summary>
   /// Whether every EXTERNAL procedure <paramref name="fn"/> calls has a link symbol to call.

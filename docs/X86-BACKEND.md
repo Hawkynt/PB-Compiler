@@ -1176,7 +1176,8 @@ as routable and the failure arrived where nothing can decline.
 which already answered the same symbol KINDS the emitter's `FrameResolver` will, and was being used
 for the register-effect analysis only — and declines on a parse failure. The direct emitter then takes
 the function and issues exactly the diagnostic it always did; the routed and unrouted images are
-byte-identical for all four shapes. Coverage is unchanged (262/262 functions, 161/161 module bodies).
+byte-identical for all four shapes. Coverage is unchanged: 242/263 functions routed and 156/161 module
+bodies owned in production, 262/262 selected and allocated.
 
 ## The x87 stack is not in the machine IR
 
@@ -1596,8 +1597,9 @@ often. `ADD r,r; SBB r,r` is the same four bytes, needs no register and runs on 
 leaves the sign bit in `CF` and subtracting a register from itself is `-CF`. The two are joined by the
 flags the scheduler already models, exactly as `SelectWideShift`'s `SHL`/`RCL` steps are.
 
-Re-measured over the corpus, as the estimate demanded: coverage unchanged at 262/262 functions and
-161/161 module bodies, the differential at 305 participating / 290 agreeing / 0 disagreeing, and the
+Re-measured over the corpus, as the estimate demanded: coverage unchanged at 242/263 functions routed
+and 156/161 module bodies owned (262/262 selected and allocated), the differential at 305
+participating / 290 agreeing / 0 disagreeing, and the
 spiller's worst case 168 rounds optimized and 153 unoptimized - lower than the 174 recorded before,
 and nowhere near the budget.
 
