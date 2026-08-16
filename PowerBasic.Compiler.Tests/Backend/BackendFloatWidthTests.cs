@@ -224,4 +224,67 @@ public sealed class BackendFloatWidthTests {
       G% = v% + 0
     END FUNCTION
     """, ".666666686534882 | .666666686534882 | 2.00000005960464");
+
+  /// <summary>
+  /// A SINGLE loop counter is rounded to a SINGLE every time it is incremented, and the accumulated
+  /// difference is the whole observation: <c>FOR x! = 0 TO 1 STEP .1</c> summed to 4.50000026077032
+  /// on the direct path and under genuine PBC 3.50, and to 4.50000006705523 routed - the counter kept
+  /// at eighty bits. Once <c>mem2reg</c> promotes the counter its four-byte cell is gone and the
+  /// <c>fadd float</c> the lowering wrote is the only thing left that says SINGLE; the selector
+  /// computed it at the register's width and stored the result in a ten-byte cell.
+  /// </summary>
+  [Test]
+  public void For_GivenASingleCounter_ThenEachIncrementIsRoundedToASingle() => AgreesRouted("""
+    DIM x AS SINGLE, total AS DOUBLE
+    total = 0
+    FOR x = 0 TO 1 STEP .1
+      total = total + x
+    NEXT x
+    PRINT total
+    """, "4.50000026077032");
+
+  /// <summary>
+  /// A <c>%</c> equate holds an INTEGER. Genuine PBC 3.50 will not even accept a fractional one -
+  /// <c>%A = 3.75</c> is <c>Error 427: Integer constant expected</c> - and prints <c>0</c> for the
+  /// <c>%B = 1 / 3</c> it does accept. This compiler is a superset there, which is fine; it was TWO
+  /// supersets, the lowering carrying the folder's floating value where the direct emitter has always
+  /// read the integer one.
+  /// </summary>
+  [Test]
+  public void Equate_GivenAFractionalValue_ThenItHoldsTheIntegerPbWouldStore() => AgreesRouted("""
+    DECLARE FUNCTION G%(BYVAL v%)
+    %THIRD = 1 / 3
+    DIM sg AS SINGLE
+    sg = G%(1) / G%(3)
+    PRINT %THIRD
+    IF sg = %THIRD THEN PRINT "eq" ELSE PRINT "ne"
+    FUNCTION G%(BYVAL v%) NOINLINE
+      G% = v% + 0
+    END FUNCTION
+    """, "0 |ne");
+
+  /// <summary>
+  /// A SINGLE FUNCTION result is rounded to a SINGLE, and O0102's return-value forwarding was
+  /// dropping that: the epilogue's reload from the result variable's four-byte cell is not merely a
+  /// move, it is the rounding, so leaving the value in ST(0) returned all eighty bits.
+  /// <c>F! = v% / 3</c> handed back <c>1.66666666666667</c> under <c>--optimize</c> where the
+  /// unoptimized build, the routed back end and genuine PBC 3.50 all say <c>1.66666662693024</c>.
+  /// Both functions get two call sites, or interprocedural constant propagation proves the argument
+  /// and the whole thing folds to an answer neither back end computed.
+  /// </summary>
+  [Test]
+  public void Function_GivenASingleResult_ThenItIsRoundedToASingleUnderTheOptimizer() => AgreesRouted("""
+    DECLARE FUNCTION G%(BYVAL v%)
+    DECLARE FUNCTION F!(BYVAL v%)
+    DIM db AS DOUBLE
+    db = F!(G%(5))
+    PRINT db
+    PRINT F!(G%(7))
+    FUNCTION G%(BYVAL v%) NOINLINE
+      G% = v% + 0
+    END FUNCTION
+    FUNCTION F!(BYVAL v%) NOINLINE
+      F! = v% / 3
+    END FUNCTION
+    """, "1.66666662693024 | 2.333333");
 }

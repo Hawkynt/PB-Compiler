@@ -3473,15 +3473,26 @@ public sealed partial class IrLowering {
     }
   }
 
+  /// <summary>
+  /// A <c>%</c> equate, which holds an INTEGER whatever the expression that defined it looked like.
+  /// Genuine PBC 3.50 rejects a fractional one outright - <c>%A = 3.75</c> is
+  /// <c>Error 427: Integer constant expected</c> - and folds the ones it accepts to their integral
+  /// value: <c>%B = 1 / 3</c> compiles and prints <c>0</c>.
+  ///
+  /// <para>
+  /// This used to carry the folder's floating value through whenever it had one, which disagreed with
+  /// the direct emitter (it has always read <c>AsInteger</c>) on exactly the programs the real
+  /// compiler will not accept - <c>PRINT %B</c> was <c>.333333333333333</c> routed and <c>0</c>
+  /// directly. Being a superset is fine; being TWO supersets in one compiler is not.
+  /// </para>
+  /// </summary>
   private IrValue LowerNamedConstant(NamedConstantExpr nc) {
     if (!this._model.Equates.TryGetValue(nc.Name, out var value))
       throw new IrLoweringException($"unknown equate {nc.Name}");
+    if (!value.IsNumeric)
+      throw new IrLoweringException("non-numeric equate");
     var ty = MapType(this._model.TypeOf(nc));
-    if (value.Integer is { } n)
-      return new IrConstantInt(ty, n);
-    if (value.Float is { } f)
-      return new IrConstantFloat(ty, f);
-    throw new IrLoweringException("non-numeric equate");
+    return ty.IsFloat ? new IrConstantFloat(ty, value.AsInteger) : new IrConstantInt(ty, value.AsInteger);
   }
 
   private IrValue LowerNameRead(NameExpr name) {
