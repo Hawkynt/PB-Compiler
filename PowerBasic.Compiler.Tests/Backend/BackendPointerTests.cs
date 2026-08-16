@@ -410,6 +410,36 @@ public sealed class BackendPointerTests {
   }
 
   /// <summary>
+  /// The same omission in its loudest form: a subscript that is not evaluated is a subscript that is
+  /// not CHECKED. Under <c>$ERROR BOUNDS ON</c> the direct build stops on Error 9 and the routed one
+  /// ran to completion - a lost trap rather than a lost side effect, which is why this case is here
+  /// beside the counting one rather than instead of it.
+  /// </summary>
+  [Test]
+  public void VarSeg_GivenAnOutOfRangeSubscriptUnderBoundsChecking_ThenTheTrapStillFires() {
+    var (direct, routed, names) = RunBothWays("""
+      $ERROR BOUNDS ON
+      DECLARE FUNCTION Given%(BYVAL v%)
+      DIM a%(0 TO 3)
+      DIM v AS INTEGER
+      v = Given%(1)
+      a%(Given%(1)) = 5
+      PRINT "in range"; VARSEG(a%(Given%(1))) - VARSEG(v)
+      PRINT VARSEG(a%(Given%(9))) - VARSEG(v)
+      PRINT "not reached"
+      END
+
+      FUNCTION Given%(BYVAL v%) NOINLINE
+        Given% = v%
+      END FUNCTION
+      """);
+
+    Assert.That(names, Does.Contain("main"));
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(direct, Does.Contain("in range").And.Contain("RUNTIME ERROR").And.Not.Contain("not reached"));
+  }
+
+  /// <summary>
   /// The paged classes decline instead of answering. Their segment is recomputed per element - HUGE
   /// steps it by <c>byteOffset >> 4</c> and the EMS pair by which page is in the window - so there is
   /// no one segment to name, and inventing one would be the same defect the two cases above were.

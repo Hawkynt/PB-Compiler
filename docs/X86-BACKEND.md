@@ -1247,8 +1247,10 @@ The operand is nevertheless **addressed**, and that was the second half of the s
 lowering's comment said `VARSEG` never evaluates its operand — which is a reasonable thing to believe
 and is not what either reference does. `EmitVarPtrSeg` calls `EmitPlace` before asking about the
 segment, and the oracle agrees: `VARSEG(a%(Side%(1)))` calls `Side%` once. Answering out of the
-symbol alone skipped the call, and a `$ERROR BOUNDS ON` check on the same subscript with it. The
-address is formed and discarded; the pure half dies with DCE.
+symbol alone skipped the call — and, in the loud version of the same omission, the `$ERROR BOUNDS ON`
+check on that subscript: `VARSEG(a%(9))` over `a%(0 TO 3)` stopped the direct build on Error 9 and let
+the routed one run to the end. A subscript that is not evaluated is a subscript that is not checked.
+The address is formed and discarded; the pure half dies with DCE.
 
 **And a pointer VARIABLE cannot hold a far-heap address at all.** `p = VARPTR32(a%(k))` over a
 dynamic array handed one to a near cell, so the address space was dropped on the way in. `@p` masked
