@@ -794,9 +794,16 @@ public sealed partial class CodeGenerator {
         this.Coerce(model.TypeOf(args[0]), PbType.Long, args[0]);
         break;
 
+      // These three ROUND, which is the one thing they were not doing. Coerce converts an integer
+      // onto the x87 and then answers "both sides are floats" and returns, so CSNG left the value at
+      // the register's own width: CDBL(CSNG(2 / 3)) printed .666666666666666 where genuine PBC 3.50
+      // answers .666666686534882 - the single nearest 2/3, widened back. It stayed hidden because
+      // PRINT CSNG(x) shows seven digits whatever the cell holds, so the value has to be widened
+      // again before anything says so.
       case "CSNG" or "CDBL" or "CEXT":
         this.EmitExpression(args[0]);
         this.Coerce(model.TypeOf(args[0]), PbType.Double, args[0]);
+        this.NarrowFpuTo(model.TypeOf(call));
         break;
 
       case "CQUD": // round to the nearest 64-bit integer
@@ -1280,5 +1287,20 @@ public sealed partial class CodeGenerator {
       asm.Fstp(Mem.Qword(this.RtScratch));
       asm.Fld(Mem.Qword(this.RtScratch));
     }
+  }
+
+  /// <summary>
+  /// Rounds the value on top of the x87 to <paramref name="target"/>'s width, which is a round trip
+  /// through a cell of that width and nothing else - the same <c>FSTP m32 / FLD m32</c> pair a store
+  /// into a SINGLE variable performs. An EXT target is the register's own format and needs no
+  /// instruction; a non-float target is not this routine's business.
+  /// </summary>
+  private void NarrowFpuTo(PbType target) {
+    if (target is not ScalarType { IsFloat: true, ByteSize: var bytes and (4 or 8) })
+      return;
+    var asm = this._asm;
+    var cell = bytes == 4 ? Mem.Dword(this.RtScratch) : Mem.Qword(this.RtScratch);
+    asm.Fstp(cell);
+    asm.Fld(cell);
   }
 }

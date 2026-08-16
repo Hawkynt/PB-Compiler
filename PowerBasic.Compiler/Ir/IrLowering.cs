@@ -4034,8 +4034,14 @@ public sealed partial class IrLowering {
     var stored = this._model.TypeOf(arg);
     if (Valued(stored) is not ScalarType s)
       throw new IrLoweringException("STR$ of a non-numeric value");
+    // Only a SINGLE takes the seven-digit formatter. The test used to name the DOUBLE by its width
+    // and let everything else fall to the single, which put the two WIDER formats on the wrong side
+    // of it: STR$ of an EXT (ten bytes) and of a BCD (ten bytes of x87 too) rendered seven
+    // significant digits where genuine PBC 3.50 renders fifteen - STR$ of an EXT holding 5/3 came
+    // back "1.666667" against the oracle's "1.66666666666667". The direct emitter says the same
+    // thing the other way round, naming only ByteSize 4 and falling everything else to StrF64.
     var (name, ty) = s.IsFloat
-      ? (s.ByteSize == 8 ? ("rt_str_from_double", IrType.F80) : ("rt_str_from_single", IrType.F80))
+      ? (s.ByteSize == 4 ? ("rt_str_from_single", IrType.F80) : ("rt_str_from_double", IrType.F80))
       : ($"rt_str_from_{(s.Signed ? "i" : "u")}{s.ByteSize * 8}", IrType.Integer(s.ByteSize * 8));
     var value = this.Coerce(this.LowerExpr(arg), stored, s.IsFloat ? PbType.Ext : s);
     return this._b.Call(IrType.Ptr, this.RuntimeFn(name, IrType.Ptr, ty), value);
@@ -4654,10 +4660,20 @@ public sealed partial class IrLowering {
     var (a, b) = (Valued(left), Valued(right));
     if (a is not ScalarType sa || b is not ScalarType sb)
       throw new IrLoweringException("comparison of non-scalar operands");
-    if (sa.IsFloat || sb.IsFloat) {
-      var bytes = Math.Max(sa.IsFloat ? sa.ByteSize : 8, sb.IsFloat ? sb.ByteSize : 8);
-      return (new ScalarType(ScalarKind.Double, bytes, true, true), true, true);
-    }
+    // A float comparison happens at the x87's OWN width, never at the narrower operand's declared
+    // one. PB rounds a float when it is STORED and not before (see InstructionSelector.FloatCell), so
+    // a SINGLE cell and an unrounded eighty-bit intermediate are two different numbers and the
+    // compare has to be able to say so. Taking the max of the two DECLARED widths rounded the wider
+    // side down to meet the narrower: with sg holding the SINGLE 1/3,
+    //
+    //   IF sg = 1 / 3 THEN ...
+    //
+    // narrowed the folded quotient to a float as well, whereupon the two were bit-identical and the
+    // branch was taken. Genuine PBC 3.50 says they are NOT equal (oracle-checked), and so does the
+    // direct emitter, which compares whatever the x87 holds. Widening instead of narrowing costs
+    // nothing where both sides are the same width - the wider format holds the narrower exactly.
+    if (sa.IsFloat || sb.IsFloat)
+      return (PbType.Ext, true, true);
     // Integer comparison is NOT simply "signed if either side is". PB's rule turns on whether the
     // unsigned operand has a signed type wide enough to hold it, and the direct emitter states it at
     // CodeGenerator.Expressions' isComparison branch, which this mirrors:

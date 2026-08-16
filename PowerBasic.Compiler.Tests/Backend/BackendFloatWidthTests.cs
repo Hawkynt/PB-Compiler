@@ -159,4 +159,69 @@ public sealed class BackendFloatWidthTests {
     END FUNCTION
     PRINT Third
     """);
+
+  /// <summary>
+  /// Only a SINGLE renders through the seven-digit formatter. The lowering's test named the DOUBLE by
+  /// its byte size and let everything else fall to the single, which put the two WIDER formats on the
+  /// wrong side of it - <c>STR$</c> of an EXT holding 5/3 came back <c>1.666667</c>. Genuine PBC 3.50
+  /// answers <c>1.66666666666667</c> (checked with <c>scripts/diff-one.sh</c>), and so does the direct
+  /// emitter, whose dispatch names ByteSize 4 and falls everything else to the 64-bit renderer.
+  /// </summary>
+  [Test]
+  public void Str_GivenAnExtendedValue_ThenItRendersFifteenSignificantDigits() => AgreesRouted("""
+    DECLARE FUNCTION G%(BYVAL v%)
+    DIM ex AS EXT, sg AS SINGLE, db AS DOUBLE
+    ex = G%(5) / G%(3)
+    sg = G%(5) / G%(3)
+    db = G%(5) / G%(3)
+    PRINT STR$(ex)
+    PRINT STR$(db)
+    PRINT STR$(sg)
+    FUNCTION G%(BYVAL v%) NOINLINE
+      G% = v% + 0
+    END FUNCTION
+    """, "1.66666666666667| 1.66666666666667| 1.666667");
+
+  /// <summary>
+  /// A float comparison happens at the x87's own width, so a SINGLE cell and an unrounded quotient are
+  /// two different numbers. The lowering used to take the MAX of the two declared widths as the common
+  /// compare type, which for a SINGLE against a SINGLE-typed constant expression narrowed the constant
+  /// too - whereupon the two were bit-identical and <c>sg = 1 / 3</c> was TRUE. Genuine PBC 3.50 says
+  /// <c>ne</c> for both spellings, and it is the second that shows the rule is about width rather than
+  /// about folding: <c>.3333333</c> is a literal, not a quotient, and still is not the SINGLE 1/3.
+  /// </summary>
+  [Test]
+  public void Compare_GivenASingleCellAgainstAnUnroundedConstant_ThenTheyAreNotEqual() => AgreesRouted("""
+    DECLARE FUNCTION G%(BYVAL v%)
+    DIM sg AS SINGLE
+    sg = G%(1) / G%(3)
+    IF sg = 1 / 3 THEN PRINT "eq" ELSE PRINT "ne"
+    IF sg = .3333333 THEN PRINT "eqlit" ELSE PRINT "nelit"
+    IF sg < 1 / 3 THEN PRINT "lt" ELSE PRINT "nlt"
+    FUNCTION G%(BYVAL v%) NOINLINE
+      G% = v% + 0
+    END FUNCTION
+    """, "ne|nelit|nlt");
+
+  /// <summary>
+  /// <c>CSNG</c> rounds, which the direct emitter was not doing: its <c>Coerce</c> answers "both sides
+  /// are floats" and returns, so the value stayed at the register's own width. Genuine PBC 3.50 prints
+  /// <c>.666666686534882</c> for <c>CDBL(CSNG(2 / 3))</c> - the single nearest 2/3, widened back - and
+  /// <c>2.00000005960464</c> once that rounded value is multiplied by three and stored in a DOUBLE.
+  /// The routed path had it right from the start; both are checked here, and the value has to be
+  /// widened again before either says so, PRINT of a SINGLE showing seven digits whatever it holds.
+  /// </summary>
+  [Test]
+  public void Csng_GivenADoubleQuotient_ThenTheResultCarriesOnlySinglePrecision() => AgreesRouted("""
+    DECLARE FUNCTION G%(BYVAL v%)
+    DIM db AS DOUBLE, d2 AS DOUBLE
+    db = G%(2) / G%(3)
+    PRINT CDBL(CSNG(db))
+    PRINT CEXT(CSNG(db))
+    d2 = CSNG(db) * 3
+    PRINT d2
+    FUNCTION G%(BYVAL v%) NOINLINE
+      G% = v% + 0
+    END FUNCTION
+    """, ".666666686534882 | .666666686534882 | 2.00000005960464");
 }
