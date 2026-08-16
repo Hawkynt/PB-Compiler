@@ -227,6 +227,44 @@ when a proposed one would hold more values alive at once than six. Independence 
 are the same quantity read two ways, so a list scheduler maximizing the first is maximizing the second
 — see "Scheduling is not free on six registers" below.
 
+## The routed path DECLINES; it never THROWS
+
+This is the property everything else in this document rests on, and it is worth stating as a rule
+rather than leaving implicit in each stage.
+
+A construct the back end cannot compile must **decline**: `InstructionSelector.Decline`, a null from
+`LinearScanAllocator.Allocate`, an `IrLoweringException` caught by `IrLowering.TryLowerModule`. A
+decline is safe and it is *measured* - the direct emitter takes the function, and the refusal lands in
+`BackendCoverageTests`' histogram with a reason attached, where it can be ranked and closed.
+
+A **throw** is none of those things. It ends the compilation with a stack trace, emits no executable,
+produces no diagnostic, and is invisible to every census here, because the function neither routed nor
+declined. An empty decline histogram says nothing about it. And after `CodeGen/` is retired each one
+stops being a survivable fallback and becomes an unconditional compiler crash.
+
+Three consequences follow, and each is enforced rather than hoped for:
+
+* **The check belongs where declining is still possible.** By `MachineEmitter` the routing decision is
+  made and there is no fallback left - which is why the inline-asm parse moved into
+  `InstructionSelector.SelectInlineAsm` and why `CodeGenerator.DataGlobalsResolve` asks the resolver
+  about every global a function names before that function may route, rather than discovering at
+  emission that one has no cell.
+* **An invariant violation is loud, and says it is one.** `BackendInvariantException` exists so that
+  reading a stack trace tells "this program uses something we do not support" from "this back end has
+  a bug". Every message names the function that found the violation and states the invariant that was
+  broken, not only what was observed: *"operand 3 is not a source"* says where to look, *"the selector
+  emits only Register/Immediate/Memory operands into a source position"* says what to look for.
+* **The gate is `BackendNeverThrowsTests`, and half of it is generated.** Every corpus program is
+  compiled routed, optimized and unoptimized, and any unhandled exception fails. That half alone is
+  not enough: a corpus program is one somebody wrote to work, so its operands are the shapes the
+  selector already handles - every corpus shift is either 32-bit (where `SelectWideShift` declines) or
+  a literal count in 1..31, which is exactly why `SHIFT RIGHT a%, n%` reaching the assembler with no
+  encoding survived both a green corpus and a green differential battery. The generated half therefore
+  varies the axis the corpus holds constant: 30 construct bodies against 11 operand shapes - a runtime
+  value the optimizer cannot fold, and the literal boundaries of the encodings the selector picks
+  between - which is 990 routed compilations. Both halves carry a can-this-measure-anything test,
+  because a program that routes nothing compiles the same image twice and agrees by construction.
+
 ## Gating + verification
 
 The backend is an **optimiser** feature, so it is gated on the optimiser flags, not the
@@ -1114,19 +1152,32 @@ laid out the frame - the machine emitter resolves them to the runtime's own labe
 string handle, calls `GetStrLoc` and reads the far pointer it answers with; every variable in that
 block, the handle included, already bound.
 
-### Open: inlining a callee that contains one throws
+### Both halves of "inline asm throws" are now closed
 
-`Ir/Passes/Inliner.Run` skips a callee with `HasErrorHandler` and does **not** skip one with
-`HasInlineAsm`, but `IrCloner` has no case for `IrInlineAsm` — it is deliberately opaque. So with
-routing on (`PBC_X_BACKEND=1`), any `!` block inside a SUB/FUNCTION small enough to inline aborts the
-compile with `InvalidOperationException: cannot clone IrInlineAsm`. It is a crash, not a wrong
-program, and it is invisible on the corpus because inline asm there sits in module bodies, which are
-never a callee. The direct emitter is unaffected.
+`Ir/Passes/Inliner.Run` used not to skip a callee with `HasInlineAsm`, and `IrCloner` has no case for
+`IrInlineAsm` — it is deliberately opaque — so any `!` block inside a SUB small enough to inline
+aborted the compile with `cannot clone IrInlineAsm`. `IsInlinable` now declines such a callee, on the
+same argument `HasErrorHandler` already carried, and it costs nothing: the block is an optimization
+barrier wherever it sits.
 
-Two things are wrong behind it. The clone guard is the immediate one. The second: where the direct
-emitter reports an inline-asm parse failure as a diagnostic (`CodeGenerator.InlineAsm.cs`),
-`MachineEmitter.EmitInlineAsm` throws `NotSupportedException` — so even past the clone guard, a
-mistyped mnemonic in a routed function is an exception rather than an error message.
+The second half was the one this section named and did not fix. Where the direct emitter reports an
+inline-asm parse failure as a **diagnostic** (`CodeGenerator.InlineAsm.cs`), `MachineEmitter.EmitInlineAsm`
+threw `NotSupportedException` — so text the assembler cannot encode ended the compilation instead of
+producing an error message. It is a real program shape, not a hypothetical: `! LEA BX, GetStrLoc`
+does it, and so do `INC`, `CMP` and `XCHG` against any of the documented string-manager exports.
+
+The cause is two resolvers reaching different conclusions about one name. `IrLowering.LowerInlineAsm`
+already proves the text parses, but against **its own** stand-ins, where a name that is neither a
+variable nor a BASIC label answers as memory; at emission the same name is the runtime label it really
+is, and `LEA BX, [BP+0]` is an instruction while `LEA BX, <label>` is not. So the block was admitted
+as routable and the failure arrived where nothing can decline.
+
+`InstructionSelector.SelectInlineAsm` now assembles the statement once more through `AsmNameKinds` —
+which already answered the same symbol KINDS the emitter's `FrameResolver` will, and was being used
+for the register-effect analysis only — and declines on a parse failure. The direct emitter then takes
+the function and issues exactly the diagnostic it always did; the routed and unrouted images are
+byte-identical for all four shapes. Coverage is unchanged: 242/263 functions routed and 156/161 module
+bodies owned in production, 262/262 selected and allocated.
 
 ## The x87 stack is not in the machine IR
 
@@ -1558,12 +1609,12 @@ it does under `$OPTIMIZE SPEED` and nowhere else: the chain is *bigger* than the
 cycles. Shifts are spelled as repeated `SHL r,1`, so a step needing more than four refuses outright
 rather than emitting an 80186 shift-by-immediate.
 
-### The 80186 shift-by-immediate is still reachable from three other places - OPEN
+### The 80186 shift-by-immediate was reachable from three other places - CLOSED
 
-The care taken just above is local to the multiply decomposition, and the same encoding goes out
+The care taken just above was local to the multiply decomposition, and the same encoding went out
 unguarded elsewhere. `Assembler.Shift(op, Reg, int)` emits `D0`/`D1` for a count of one and `C0`/`C1`
-otherwise, and `C0`/`C1` are **80186** instructions - so on the default `$CPU 8086` target these three
-selections produce code the declared part does not have:
+otherwise, and `C0`/`C1` are **80186** instructions - so on the default `$CPU 8086` target three
+selections produced code the declared part does not have:
 
 | site | shape | count |
 |---|---|---|
@@ -1571,18 +1622,33 @@ selections produce code the declared part does not have:
 | `TryGepOffset` | scaling a subscript by a power-of-two element size | `SHL r, 2` for a 4-byte element, `3` for an 8-byte one |
 | `SelectCast` (`SExt` to a pair) | smearing the sign bit into the high word | `SAR hi, 15` |
 
-The direct emitter has a helper whose summary is the rule - "1-shifts up to four, CL beyond - never the
-186+ immediate form" (`CodeGenerator.EmitShiftLeft`) - and `EmitShiftRotate` puts every narrow count in
-`CL` whether it is constant or not, so the two paths disagree about the instruction set on a program as
-ordinary as an array of `LONG`.
+**No oracle in this project can see it**, which is why it survived: `Cpu8086` implements `C0`/`C1`
+(its own case is labelled "186 shift by immediate") and DOSBox emulates a 386, so every battery,
+golden and differential run passes either way. Same class as the `0F AF` multiply above, and found the
+same way - by reading the encoding rather than by running anything.
 
-It is recorded rather than fixed because **no oracle in this project can see it**: `Cpu8086` implements
-`C0`/`C1` (its own case is labelled "186 shift by immediate") and DOSBox emulates a 386, so every
-battery, every golden and every differential run passes either way. It is the same class of defect as
-the `0F AF` multiply above, which was found by reading the encoding rather than by running anything.
-The repair is not free: counts above four have to be staged into `CL`, which adds a `CX` clobber to
-subscript scaling and sign extension - two of the hottest shapes the allocator sees - so it needs the
-spill loop re-measured over the corpus, not just a pattern change.
+`InstructionSelector.SelectConstantShift` is now the one door for a constant count. Count one keeps
+`D0`/`D1`; an 80186-or-later target keeps the compact immediate; otherwise a count up to four becomes
+that many single-bit shifts and anything larger is staged into `CL`. That is the rule the direct
+emitter states for itself - "1-shifts up to four, CL beyond - never the 186+ immediate form"
+(`CodeGenerator.EmitShiftLeft`) - so the two paths now spell a narrow shift the same way.
+
+**The sign smear deliberately does not go through it**, and that is the half the repair estimate was
+about. Fifteen is the one count too large to unroll, so it would have taken the `CL` form and put a
+`CX` clobber on every widening of an INTEGER to a LONG - one of the shapes the allocator meets most
+often. `ADD r,r; SBB r,r` is the same four bytes, needs no register and runs on every part: the `ADD`
+leaves the sign bit in `CF` and subtracting a register from itself is `-CF`. The two are joined by the
+flags the scheduler already models, exactly as `SelectWideShift`'s `SHL`/`RCL` steps are.
+
+Re-measured over the corpus, as the estimate demanded: coverage unchanged at 242/263 functions routed
+and 156/161 module bodies owned (262/262 selected and allocated), the differential at 305
+participating / 290 agreeing / 0 disagreeing, and the
+spiller's worst case 168 rounds optimized and 153 unoptimized - lower than the 174 recorded before,
+and nowhere near the budget.
+
+The assertion is `BackendCpuTargetTests.Selection_GivenAn8086Target_ThenNoShiftCarriesAn80186ImmediateCount`,
+and it is made against the **machine IR** rather than the image on purpose: `C1` is an ordinary byte
+and a search of the executable matches a displacement, a literal or a string as readily as an opcode.
 
 ## `EXIT FAR`: PB's other non-local jump
 

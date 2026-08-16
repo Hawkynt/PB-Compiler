@@ -150,7 +150,10 @@ public sealed class MachineEmitter {
     foreach (var operand in instr.Operands)
       if (operand is MOperand.Memory { SegmentCell: { } name }) {
         if (cell is not null && cell != name)
-          throw new System.NotSupportedException($"one instruction cannot be relative to both {cell} and {name}");
+          throw new BackendInvariantException("MachineEmitter.LoadSegmentOverride",
+            $"one instruction is relative to both {cell} and {name}, and ES can only hold one - "
+              + "InstructionSelector.SegmentCellOf names a single cell (rt_arrseg), so two operands "
+              + "of one instruction can never disagree about it");
         cell = name;
       }
     if (cell is { } segment) {
@@ -258,8 +261,9 @@ public sealed class MachineEmitter {
         // is a routing bug; without one, the name is an external/runtime symbol resolved by name
         var callee = ((MOperand.LabelRef)ops[0]).Name;
         asm.Call(this._resolveCallee is { } resolve
-          ? resolve(callee) ?? throw new System.InvalidOperationException(
-              $"no label for callee '{callee}' - the routing admitted a call it cannot bind")
+          ? resolve(callee) ?? throw new BackendInvariantException("MachineEmitter.EmitInstruction",
+              $"no label for callee '{callee}' - CodeGenerator.ExternalCalleesResolve and the routing "
+                + "fixpoint admit a function only when every callee it names already has one")
           : asm.Lbl(callee));
         break;
       }
@@ -307,7 +311,11 @@ public sealed class MachineEmitter {
       case MOpcode.Fldl2e: asm.Fldl2e(); break;
       case MOpcode.Fldl2t: asm.Fldl2t(); break;
       case MOpcode.InlineAsm: this.EmitInlineAsm(asm, instr); break;
-      default: throw new System.NotSupportedException($"machine opcode {instr.Opcode} has no emission yet");
+      // Not a decline: the selector is the only producer of machine instructions, and every MOpcode it
+      // constructs has an arm above. Mul, Div and Pop are declared and never built.
+      default: throw new BackendInvariantException("MachineEmitter.EmitInstruction",
+        $"machine opcode {instr.Opcode} has no emission arm, and only this back end's own selector, "
+          + "peephole and spiller construct one");
     }
   }
 
@@ -417,7 +425,10 @@ public sealed class MachineEmitter {
       switch (this.ToSource(src)) {
         case Reg s: mr(m, s); break;
         case Imm i: mi(m, i); break;
-        default: throw new System.NotSupportedException("memory-to-memory machine instruction");
+        default: throw new BackendInvariantException("MachineEmitter.Emit2",
+          $"{dest} <- {src} is memory to memory - InstructionSelector.TryOperand yields only "
+            + "Immediate/DataOffset/Register, and Spiller.CanSpill refuses an instruction that "
+            + "already carries a cell");
       }
     }
   }
@@ -429,7 +440,11 @@ public sealed class MachineEmitter {
     MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell => this.Mem(operand),
     MOperand.DataOffset o => Imm.OffsetOf(this.DataLabel(o.Name), o.Disp),
     MOperand.BlockOffset b => Imm.OffsetOf(this._labels[b.Block]),
-    _ => throw new System.NotSupportedException($"operand {operand} is not a source"),
+    // LabelRef, InlineAsmText and BlockAddressTable are the unhandled kinds, and each occupies a
+    // fixed position of an opcode EmitInstruction dispatches before it reaches here
+    _ => throw new BackendInvariantException("MachineEmitter.ToSource",
+      $"operand {operand} is in a source position, where the selector emits only "
+        + "Register/Immediate/Memory/StackSlot/DataCell/ParamCell/DataOffset/BlockOffset"),
   };
 
   private Reg Reg(MOperand operand) => this.Resolve(((MOperand.Register)operand).Reg);
@@ -445,13 +460,17 @@ public sealed class MachineEmitter {
     var resolved = this.ResolveData(name);
     return resolved.Displacement == 0
       ? resolved.Label!
-      : throw new System.NotSupportedException($"data object '{name}' is not at its label's own offset");
+      : throw new BackendInvariantException("MachineEmitter.DataLabel",
+        $"data object '{name}' resolved to a cell {resolved.Displacement} bytes past its label, and "
+          + "an OFFSET has nowhere to carry that - every arm of CodeGenerator.ResolveDataCell answers "
+          + "with displacement zero");
   }
 
   private Mem ResolveData(string name)
     => this._resolveData?.Invoke(name)
-       ?? throw new System.InvalidOperationException(
-         $"no data cell for global '{name}' - the routing admitted a reference it cannot address");
+       ?? throw new BackendInvariantException("MachineEmitter.ResolveData",
+         $"no data cell for global '{name}' - CodeGenerator.DataGlobalsResolve asks the same resolver "
+           + "about every global a function names before that function is allowed to route");
 
   /// <summary>
   /// Assembles an inline-assembly block, answering the assembler's identifier questions from THIS
@@ -470,7 +489,9 @@ public sealed class MachineEmitter {
   /// </summary>
   private void EmitInlineAsm(Assembler asm, MInstr instr) {
     if (instr.Operands.Count == 0 || instr.Operands[0] is not MOperand.InlineAsmText descriptor)
-      throw new System.NotSupportedException("inline asm without its descriptor");
+      throw new BackendInvariantException("MachineEmitter.EmitInlineAsm",
+        "an MOpcode.InlineAsm instruction has no MOperand.InlineAsmText descriptor - "
+          + "InstructionSelector.SelectInlineAsm puts it at operand 0 and nothing removes it");
 
     var bound = new Dictionary<string, AsmSymbol>(StringComparer.OrdinalIgnoreCase);
     for (var i = 0; i < descriptor.Names.Count && i + 1 < instr.Operands.Count; ++i)
@@ -478,8 +499,13 @@ public sealed class MachineEmitter {
         ? AsmSymbol.OfLabel(this._labels[target.Block])
         : AsmSymbol.OfMemory(this.Mem(instr.Operands[i + 1]));
 
+    // Not a decline any more, and no longer reachable from unsupported text: SelectInlineAsm assembles
+    // the same statement through the same symbol KINDS and declines when it will not parse, so a
+    // failure here means the two resolvers disagreed about a name - which is a defect in this back end
+    // rather than a construct it does not cover.
     if (!new TextAssembler(asm).TryParse(descriptor.Text, new FrameResolver(bound, asm), out var error))
-      throw new System.NotSupportedException($"inline asm '{descriptor.Text.Trim()}': {error}");
+      throw new BackendInvariantException("MachineEmitter.EmitInlineAsm",
+        $"inline asm '{descriptor.Text.Trim()}' assembled at selection and not at emission: {error}");
   }
 
   /// <summary>
@@ -513,8 +539,11 @@ public sealed class MachineEmitter {
       Asm.Reg.CX => Asm.Reg.CL,
       Asm.Reg.DX => Asm.Reg.DL,
       Asm.Reg.BX => Asm.Reg.BL,
-      _ => throw new System.InvalidOperationException(
-        $"word register {physical} has no addressable low byte for an 8086 byte value"),
+      // LinearScanAllocator.ByteRegisters marks every vreg named at byte width anywhere and LegalFor
+      // then offers it only AX/CX/DX/BX; the byte-sized physicals the selector pins are CL and AL
+      _ => throw new BackendInvariantException("MachineEmitter.Resolve",
+        $"a byte value was allocated {physical}, which has no addressable low byte on an 8086 - "
+          + "the allocator offers a byte-sized value only AX, CX, DX and BX"),
     };
   }
 
@@ -526,7 +555,9 @@ public sealed class MachineEmitter {
     MOperand.Memory m when m.Index is { } x => Segmented(Sized(Asm.Mem.At(this.Resolve(m.Base!.Value), this.Resolve(x), m.Disp), m.Size), m),
     MOperand.Memory m when m.Base is { } b => Segmented(Sized(Asm.Mem.At(this.Resolve(b), m.Disp), m.Size), m),
     MOperand.Memory m => Segmented(Sized(Asm.Mem.At(m.Disp), m.Size), m),
-    _ => throw new System.NotSupportedException($"operand {operand} is not a memory reference"),
+    _ => throw new BackendInvariantException("MachineEmitter.Mem",
+      $"operand {operand} is in a memory position - every caller reaches here only after the operand "
+        + "failed an `is MOperand.Register` test or came from a selector site that supplies a cell"),
   };
 
   /// <summary>

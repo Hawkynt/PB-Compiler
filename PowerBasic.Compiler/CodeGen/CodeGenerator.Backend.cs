@@ -242,8 +242,8 @@ public sealed partial class CodeGenerator {
         this._backendDeclines.Add((proc.Name, "routing: a callee has no link symbol - it is EXTERNAL, or its own body did not lower"));
         continue;
       }
-      if (!this.DataGlobalsResolve(irFn)) {
-        this._backendDeclines.Add((proc.Name, "routing: a directly emitted procedure reads the DATA pool too"));
+      if (!this.DataGlobalsResolve(irFn, out var unaddressable)) {
+        this._backendDeclines.Add((proc.Name, $"routing: global '{unaddressable}' has no cell the emitter can address"));
         continue;
       }
       if (InstructionSelector.TrySelect(irFn, out var declineReason, this.SelectionTarget) is not { } mfn) {
@@ -338,8 +338,8 @@ public sealed partial class CodeGenerator {
       return this.DeclineMain($"routing: calls '{stranded}', which is not routed");
     if (!this.ExternalCalleesResolve(main))
       return this.DeclineMain("routing: a callee has no link symbol - it is EXTERNAL, or its own body did not lower");
-    if (!this.DataGlobalsResolve(main))
-      return this.DeclineMain("routing: a directly emitted procedure reads the DATA pool too");
+    if (!this.DataGlobalsResolve(main, out var unaddressable))
+      return this.DeclineMain($"routing: global '{unaddressable}' has no cell the emitter can address");
     if (InstructionSelector.TrySelect(main, out var declineReason, this.SelectionTarget) is not { } machine)
       return this.DeclineMain("selection: " + (declineReason ?? "unknown"));
     MachineScheduler.Schedule(machine);
@@ -471,7 +471,24 @@ public sealed partial class CodeGenerator {
   /// emitter uses for that symbol, so the two paths address the same storage. The IR names a global
   /// <c>g.&lt;name&gt;</c> and a STATIC local <c>static.&lt;procedure&gt;.&lt;name&gt;</c>.
   /// </summary>
-  private Asm.Mem? DataCellOf(string name) {
+  private Asm.Mem? DataCellOf(string name) => this.ResolveDataCell(name, materialize: true);
+
+  /// <summary>
+  /// Whether <see cref="DataCellOf"/> would find a cell for <paramref name="name"/> - the same
+  /// decision, taken at ROUTING time, where the answer can still be a decline.
+  ///
+  /// It runs the resolver in probe mode rather than duplicating its conditions, because the two must
+  /// never drift: the whole point is that what routing admits is exactly what emission can address.
+  /// Probe mode is needed because resolving MATERIALIZES - it mints the IR data pool's label, interns
+  /// a string literal, adds a float to the constant pool - and a function that resolves one reference
+  /// and then declines on the next must leave none of that behind in the image.
+  /// </summary>
+  private bool DataCellResolves(string name) => this.ResolveDataCell(name, materialize: false) is not null;
+
+  /// <summary>A stand-in for probe mode: only its NULLNESS is ever read there.</summary>
+  private static readonly Asm.Mem _ProbeCell = Asm.Mem.Word(0);
+
+  private Asm.Mem? ResolveDataCell(string name, bool materialize) {
     if (name.StartsWith("g.", System.StringComparison.Ordinal)) {
       var sourceName = name[2..];
       if (model.ModuleVariables.TryGetValue(sourceName, out var exact))
@@ -513,11 +530,15 @@ public sealed partial class CodeGenerator {
     if (name is ".data" or ".data_cursor" && !this.BackendOwnsData())
       return null;                                 // a procedure the direct emitter keeps reads DATA too
     if (name == ".data" && this._backendModule?.FindGlobal(".data") is { Bytes: { } dataBytes }) {
+      if (!materialize)
+        return _ProbeCell;
       this._irDataPool ??= this._asm.DefineLabel("ir_datapool");
       this._irDataBytes ??= dataBytes;
       return Asm.Mem.Word(this._irDataPool);
     }
     if (name == ".data_cursor") {
+      if (!materialize)
+        return _ProbeCell;
       this._irDataCursor ??= this._asm.DefineLabel("ir_dataptr");
       return Asm.Mem.Word(this._irDataCursor);
     }
@@ -525,13 +546,17 @@ public sealed partial class CodeGenerator {
     // pool, so the routed PRINT and a directly-emitted one share the identical pooled bytes
     if (name.StartsWith(".str", System.StringComparison.Ordinal)
         && this._backendModule?.FindGlobal(name) is { Bytes: { } bytes })
-      return Asm.Mem.Word(this.LiteralOf(System.Text.Encoding.ASCII.GetString(bytes)));
+      return materialize
+        ? Asm.Mem.Word(this.LiteralOf(System.Text.Encoding.ASCII.GetString(bytes)))
+        : _ProbeCell;
     // a float literal: the back end names it by its bits, and it resolves through this codegen's own
     // constant pool - which stores every float as a qword double, whatever its source precision
     if (name.StartsWith(".fc.", System.StringComparison.Ordinal)
         && long.TryParse(name[4..], System.Globalization.NumberStyles.HexNumber,
              System.Globalization.CultureInfo.InvariantCulture, out var bits))
-      return Asm.Mem.Qword(this.FloatConstOf(System.BitConverter.Int64BitsToDouble(bits)));
+      return materialize
+        ? Asm.Mem.Qword(this.FloatConstOf(System.BitConverter.Int64BitsToDouble(bits)))
+        : _ProbeCell;
     // a runtime data cell (rt_curout, rt_col, rt_colptr): the runtime binds these named labels, and
     // the back end addresses the very same ones the direct emitter does
     if (name.StartsWith("rt_", System.StringComparison.Ordinal))
@@ -540,17 +565,31 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
-  /// Whether <paramref name="fn"/> may be routed as far as DATA is concerned: either the back end owns
-  /// the pool, or this function never touches it. Asked at ROUTING time and not at emission, because
-  /// by emission the only answer left is an exception - DataCellOf handing back null there means "the
-  /// routing admitted a reference it cannot address", and a decline is what that should have been.
+  /// Whether EVERY global <paramref name="fn"/> names has a cell the emitter can address. Asked at
+  /// ROUTING time and not at emission, because by emission the only answer left is an exception -
+  /// <see cref="DataCellOf"/> handing back null there means "the routing admitted a reference it
+  /// cannot address", and a decline is what that should have been.
+  ///
+  /// <para>
+  /// It used to ask only about the DATA pool, and the rest of the resolver's refusals reached emission
+  /// and ended the compilation. The one a program can actually provoke is the ambiguous global: the IR
+  /// names a module variable by its source spelling WITHOUT the type suffix, and the binder's table is
+  /// keyed WITH it, so <c>DIM total%</c> beside <c>DIM total&amp;</c> gives two symbols for one
+  /// <c>g.total</c>. Resolving that to either would alias two variables onto one cell, so the resolver
+  /// is right to refuse - it simply had nowhere to say so. A rank-2 <c>SHARED</c> pair like that, read
+  /// and written from a SUB, raised "no data cell for global 'g.total'" out of
+  /// <c>MachineEmitter.ResolveData</c> in both optimizer modes.
+  /// </para>
   /// </summary>
-  private bool DataGlobalsResolve(IrFunction fn)
-    => this.BackendOwnsData()
-       || !fn.Blocks.SelectMany(b => b.Instructions)
-            .SelectMany(i => i.Operands)
-            .OfType<IrGlobalVariable>()
-            .Any(g => g.Name is ".data" or ".data_cursor");
+  private bool DataGlobalsResolve(IrFunction fn, out string? unaddressable) {
+    unaddressable = fn.Blocks.SelectMany(b => b.Instructions)
+      .SelectMany(i => i.Operands)
+      .OfType<IrGlobalVariable>()
+      .Select(g => g.Name)
+      .Distinct(System.StringComparer.Ordinal)
+      .FirstOrDefault(name => !this.DataCellResolves(name));
+    return unaddressable is null;
+  }
 
   /// <summary>
   /// Whether every EXTERNAL procedure <paramref name="fn"/> calls has a link symbol to call.

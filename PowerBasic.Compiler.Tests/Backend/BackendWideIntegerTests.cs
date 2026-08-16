@@ -83,8 +83,22 @@ public sealed class BackendWideIntegerTests {
     Assert.That(Opcodes(m!), Does.Contain(MOpcode.Sbb));
   }
 
+  /// <summary>
+  /// The high word of a widened INTEGER is the sign bit smeared over all sixteen bits, and it is
+  /// written <c>ADD r,r; SBB r,r</c> rather than the <c>SAR r,15</c> this used to assert.
+  ///
+  /// <para>
+  /// The change is not a style preference. <c>SAR r,15</c> assembles to <c>C1</c>, an <b>80186</b>
+  /// instruction, and the default target is an 8086 - so the old form put an instruction the declared
+  /// part does not have into every widening. It is also the one shift count in the selector too large
+  /// to unroll into single-bit steps, and staging 15 into <c>CL</c> would put a <c>CX</c> clobber on
+  /// one of the shapes the allocator meets most often. The pair is the same four bytes, needs no
+  /// register, and runs on every part: the <c>ADD</c> leaves the sign bit in <c>CF</c> and
+  /// <c>SBB r,r</c> is <c>-CF</c>.
+  /// </para>
+  /// </summary>
   [Test]
-  public void Select_GivenSignExtendToLong_ThenSmearsTheSignIntoTheHighWord() {
+  public void Select_GivenSignExtendToLong_ThenSmearsTheSignIntoTheHighWordWithoutAn80186Shift() {
     var fn = new IrFunction("F", IrType.I32, [new IrArgument(IrType.I16, 0)]);
     var entry = fn.CreateBlock("entry");
     var b = new IrBuilder(entry);
@@ -93,10 +107,16 @@ public sealed class BackendWideIntegerTests {
     var m = InstructionSelector.TrySelect(fn, out var reason);
 
     Assert.That(m, Is.Not.Null, reason);
-    var sar = m!.AllInstructions.FirstOrDefault(i => i.Opcode == MOpcode.Sar);
-    Assert.That(sar, Is.Not.Null, "sign extension smears the sign bit with SAR");
-    Assert.That(((MOperand.Immediate)sar!.Operands[1]).Value, Is.EqualTo(15),
-      "SAR by 15 fills the high word with copies of the sign bit");
+    var instructions = m!.AllInstructions.ToList();
+    var add = instructions.FindIndex(i => i.Opcode == MOpcode.Add
+      && i.Operands[0] is MOperand.Register d && i.Operands[1] is MOperand.Register s && d.Reg.Equals(s.Reg));
+    Assert.That(add, Is.GreaterThanOrEqualTo(0), "the sign smear doubles the copy so its sign lands in CF");
+    Assert.That(instructions[add + 1].Opcode, Is.EqualTo(MOpcode.Sbb),
+      "and subtracts the register from itself, which leaves -CF: 0FFFFh when negative, 0 when not");
+    Assert.That(instructions[add + 1].Effect.ReadsFlags, Is.True,
+      "the SBB has to declare the carry dependency, or the scheduler may put a flag writer between them");
+    Assert.That(instructions.Any(i => i.Opcode == MOpcode.Sar), Is.False,
+      "SAR r,15 is C1 - an 80186 encoding - and the default target is an 8086");
   }
 
   [Test]

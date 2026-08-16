@@ -166,10 +166,18 @@ public static class FloatDemotion {
     phi.EraseFromParent();
   }
 
+  /// <summary>
+  /// The operand of a two-operand user that is NOT the counter. Both call sites are inside the
+  /// <c>IrCmp</c> and <c>IrBinary</c> arms of <c>Rewrite</c>'s switch, so the fallthrough is an
+  /// internal-consistency failure rather than a shape this pass declines to handle - and it used to
+  /// throw with no message at all, which is the one thing an assertion must not do.
+  /// </summary>
   private static IrValue Other(IrInstruction instruction, IrPhi phi) => instruction switch {
     IrBinary b => ReferenceEquals(b.Lhs, phi) ? b.Rhs : b.Lhs,
     IrCmp c => ReferenceEquals(c.Lhs, phi) ? c.Rhs : c.Lhs,
-    _ => throw new System.InvalidOperationException(),
+    _ => throw new System.InvalidOperationException(
+      $"FloatDemotion.Other: {instruction.GetType().Name} has no second operand - it is called only "
+        + "from the IrCmp and IrBinary arms of Rewrite"),
   };
 
   /// <summary>The counter narrowed to the width the conversion it replaces was producing.</summary>

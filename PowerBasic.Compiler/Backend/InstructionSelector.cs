@@ -647,11 +647,13 @@ public sealed partial class InstructionSelector {
     if (!this.TryOperand(bin.Lhs, out var lhs) || !this.TryOperand(bin.Rhs, out var rhs))
       return false;
     this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, lhs], MovEffect(destOp, lhs)));
-    // a shift whose count is a value the program computed reads that count from CL and nowhere else,
-    // and so does one whose literal count is outside the immediate encoding's own 1..31 window
-    if (opcode is MOpcode.Shl or MOpcode.Shr or MOpcode.Sar
-        && rhs is not MOperand.Immediate { Value: >= 1 and <= 31 })
-      return this.SelectVariableShift(opcode, destOp, rhs, bin.Type);
+    // a shift by a constant takes whichever of the 8086's two forms the count fits; anything else -
+    // a count the program computed, or a literal outside the immediate encoding's own window - reads
+    // the count from CL and nowhere else
+    if (opcode is MOpcode.Shl or MOpcode.Shr or MOpcode.Sar)
+      return rhs is MOperand.Immediate { Value: >= 1 and <= 31 } literal
+        ? this.SelectConstantShift(opcode, destOp, (int)literal.Value, bin.Type)
+        : this.SelectVariableShift(opcode, destOp, rhs, bin.Type);
     // the two-operand IMUL has no immediate form - materialize an immediate multiplier in a register
     if (opcode == MOpcode.Imul && rhs is MOperand.Immediate) {
       var tmp = new MOperand.Register(this.FreshVreg(bin.Type));
@@ -700,6 +702,80 @@ public sealed partial class InstructionSelector {
       new MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: true,
         ReadsMemory: false, WritesMemory: false),
       condition: null, clobbers: [Reg.CX]));
+    return true;
+  }
+
+  /// <summary>
+  /// How many single-bit shifts are emitted rather than staging the count into <c>CL</c>. Four is the
+  /// direct emitter's own threshold ("1-shifts up to four, CL beyond - never the 186+ immediate form",
+  /// <c>CodeGenerator.EmitShiftLeft</c>), and matching it is what keeps a shift the same size on both
+  /// paths: a fifth <c>D1</c> costs two bytes and the <c>CL</c> staging costs three.
+  /// </summary>
+  private const int _MAX_UNROLLED_SHIFT = 4;
+
+  /// <summary>
+  /// A byte- or word-wide shift by a CONSTANT count, in a form the DECLARED part actually has.
+  ///
+  /// <para>
+  /// The 8086 has exactly two shift encodings: by one (<c>D0</c>/<c>D1</c>) and by <c>CL</c>
+  /// (<c>D2</c>/<c>D3</c>). The shift-by-immediate <c>C0</c>/<c>C1</c> is an <b>80186</b> instruction,
+  /// and this selector emitted it for every count above one - so under the default <c>$CPU 8086</c> a
+  /// routed program shifting by four produced bytes the declared part cannot execute. That was true of
+  /// three separate selections (this one, the subscript scaling in <see cref="TryGepOffset"/>, and the
+  /// sign smear in <c>SelectCast</c>) and it is the same class of defect as the <c>0F AF</c> multiply
+  /// <see cref="SelectAccumulatorMultiply"/> replaced: no oracle here can see it, because
+  /// <c>Cpu8086</c> implements <c>C0</c>/<c>C1</c> and DOSBox emulates a 386.
+  /// </para>
+  ///
+  /// <para>
+  /// So a small count becomes repeated single-bit shifts and a larger one goes through <c>CL</c> -
+  /// exactly the rule the direct emitter states - while an 80186-or-later target keeps the compact
+  /// immediate form. The threshold matters because the <c>CL</c> form is not free: it pins <c>CX</c>
+  /// across the staging and the shift, and subscript scaling is one of the hottest shapes the
+  /// allocator sees.
+  /// </para>
+  /// </summary>
+  /// <summary>
+  /// Turns a word register holding a value into that value's SIGN, smeared over all sixteen bits -
+  /// <c>0FFFFh</c> when it is negative and zero when it is not, which is the high half of a
+  /// sign-extension to a register pair.
+  ///
+  /// <para>
+  /// Written as <c>ADD r,r; SBB r,r</c> rather than the obvious <c>SAR r,15</c>, and not to save a
+  /// byte: <c>SAR r,15</c> is <c>C1</c>, an <b>80186</b> encoding, and this is the one shift count in
+  /// the selector too large for <see cref="_MAX_UNROLLED_SHIFT"/> single-bit steps. Staging 15 into
+  /// <c>CL</c> would be legal but would put a <c>CX</c> clobber on every widening of an INTEGER to a
+  /// LONG - one of the shapes the allocator meets most often. The pair costs the same four bytes as
+  /// the <c>CL</c> form, needs no register, and runs on every part: the <c>ADD</c> leaves the sign bit
+  /// in <c>CF</c> and the <c>SBB</c> of a register from itself is <c>-CF</c>.
+  /// </para>
+  ///
+  /// <para>
+  /// The two are joined by the FLAGS, which the scheduler models: the <c>SBB</c> declares
+  /// <c>ReadsFlags</c> and the <c>ADD</c> <c>WritesFlags</c>, exactly as the <c>SHL</c>/<c>RCL</c>
+  /// steps of <see cref="SelectWideShift"/> are joined, so nothing that writes flags can be moved
+  /// between them.
+  /// </para>
+  /// </summary>
+  private void EmitSignSmear(MOperand.Register register) {
+    this._current.Instructions.Add(new MInstr(MOpcode.Add, [register, register],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Sbb, [register, register],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: true, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false)));
+  }
+
+  private bool SelectConstantShift(MOpcode opcode, MOperand.Register destination, int count, IrType type) {
+    if (count == 1 || this._target.Cpu386) {
+      this.Add(opcode, destination, new MOperand.Immediate(count));
+      return true;
+    }
+    if (count > _MAX_UNROLLED_SHIFT)
+      return this.SelectVariableShift(opcode, destination, new MOperand.Immediate(count), type);
+    var one = new MOperand.Immediate(1);
+    for (var step = 0; step < count; ++step)
+      this.Add(opcode, destination, one);
     return true;
   }
 
@@ -1158,12 +1234,30 @@ public sealed partial class InstructionSelector {
   /// file, they ARE the frame this back end laid out - every local, spill slot and parameter is
   /// addressed through <c>BP</c> - so there is no allocation that could honour such a block.
   /// </para>
+  ///
+  /// <para>
+  /// And a block the assembler cannot ASSEMBLE declines here, which is the only place left where
+  /// declining is still possible. The lowering already proved the text parses, but it proved it
+  /// against its OWN stand-in symbols - a name that is neither a variable nor a label answers there as
+  /// memory and at emission as the runtime label it really is, and the two disagree about what is an
+  /// instruction. <c>! LEA BX, GetStrLoc</c> parses as <c>LEA BX, [BP+0]</c> and does not parse at all
+  /// as <c>LEA BX, &lt;label&gt;</c>; <c>INC</c>, <c>CMP</c> and <c>XCHG</c> against a documented string
+  /// export are the same shape. Each of those ENDED the compilation out of
+  /// <c>MachineEmitter.EmitInlineAsm</c>, where the direct emitter reports a diagnostic and carries on.
+  /// The parse therefore runs once more here, through <see cref="AsmNameKinds"/> - which answers the
+  /// same KINDS the emitter's own resolver will - and the failure becomes a decline, so the direct
+  /// emitter takes the function and issues exactly the diagnostic it always did.
+  /// </para>
   /// </summary>
   private bool SelectInlineAsm(IrInlineAsm asm) {
     if (!asm.Routable)
       return this.Decline("inline asm: a name in it is not a variable this pass could bind");
 
-    var effect = TextAssembler.Analyze(asm.Text, new AsmNameKinds(asm));
+    var kinds = new AsmNameKinds(asm);
+    if (!new TextAssembler(new Assembler()).TryParse(asm.Text, kinds, out var error))
+      return this.Decline($"inline asm: {error}");
+
+    var effect = TextAssembler.Analyze(asm.Text, kinds);
     if (effect.Defines.Contains(Reg.BP) || effect.Defines.Contains(Reg.SP))
       return this.Decline("inline asm: the block writes BP or SP, which the frame is addressed through");
 
@@ -1337,10 +1431,13 @@ public sealed partial class InstructionSelector {
     var scaled = new MOperand.Register(this.FreshVreg(IrType.I16));
     this._current.Instructions.Add(new MInstr(MOpcode.Mov, [scaled, indexReg], MovEffect(scaled, indexReg)));
     if ((stride & (stride - 1)) == 0) {
-      var shift = new MOperand.Immediate(System.Numerics.BitOperations.TrailingZeroCount(stride));
-      this._current.Instructions.Add(new MInstr(MOpcode.Shl, [scaled, shift],
-        new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
-          ReadsMemory: false, WritesMemory: false)));
+      // through SelectConstantShift rather than a bare immediate: SHL r, 2 for a 4-byte element and
+      // SHL r, 3 for an 8-byte one are 80186 encodings, and an array of LONG is as ordinary as a
+      // program gets - so under $CPU 8086 this was the commonest way to emit an instruction the
+      // declared part does not have
+      if (!this.SelectConstantShift(MOpcode.Shl, scaled,
+            System.Numerics.BitOperations.TrailingZeroCount(stride), IrType.I16))
+        return false;
     } else {
       // the two-operand IMUL has no immediate form on this target, as SelectBinary already found
       var multiplier = new MOperand.Register(this.FreshVreg(IrType.I16));
@@ -1714,9 +1811,7 @@ public sealed partial class InstructionSelector {
         }
         // sign-extend: copy the value and smear its sign bit over the whole high word
         this._current.Instructions.Add(new MInstr(MOpcode.Mov, [hi, source], MovEffect(hi, source)));
-        this._current.Instructions.Add(new MInstr(MOpcode.Sar, [hi, new MOperand.Immediate(15)],
-          new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
-            ReadsMemory: false, WritesMemory: false)));
+        this.EmitSignSmear(hi);
         return true;
       }
       // A BYTE is the low half of the word already holding the value, so narrowing to one is a
