@@ -19,8 +19,14 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 [TestFixture]
 public sealed class PCopyTests {
 
+  /// <summary>
+  /// Every program here prints its answer, and the console driver puts what it prints into the very
+  /// page these tests POKE - so the output is moved down to row 10 first, clear of the cells being
+  /// read back. Without it a program overwrites its own subject between two PEEKs of one PRINT.
+  /// </summary>
   private static string Run(string body) {
-    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(body + "\nEND\n", "T.BAS", Dialect.Qb45), "T.BAS", Dialect.Qb45), Dialect.Qb45);
+    var source = "LOCATE 10, 1\n" + body + "\nEND\n";
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Qb45), "T.BAS", Dialect.Qb45), Dialect.Qb45);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var cg = new CodeGenerator(model) { Optimize = true };
     var image = cg.EmitExecutable();

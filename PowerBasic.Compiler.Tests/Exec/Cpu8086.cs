@@ -191,6 +191,7 @@ public sealed class Cpu8086 {
 
   private void Load(byte[] exe) {
     this.InstallEnvironment();
+    this.InstallBiosDataArea();
     if (exe.Length < 0x1C || exe[0] != 'M' || exe[1] != 'Z') {
       // a COM-style image: no header, no relocations, everything in one segment at offset 0x100
       Array.Copy(exe, 0, this._memory, _PSP_SEGMENT * 16 + 0x100, exe.Length);
@@ -1794,8 +1795,10 @@ public sealed class Cpu8086 {
         var count = this._r[_CX];
         var at = Linear(this._ds, this._r[_DX]);
         if (handle is 1 or 2)
-          for (var i = 0; i < count; ++i)
+          for (var i = 0; i < count; ++i) {
             this._output.Append((char)this.ReadByte(at + i));
+            this.ConsoleWrite(this.ReadByte(at + i));      // and onto the text page, where DOS puts it
+          }
         else if (handle == 4)                                  // PRN, which DOS opens for every program
           for (var i = 0; i < count; ++i)
             this._printer.Append((char)this.ReadByte(at + i));
@@ -1940,8 +1943,10 @@ public sealed class Cpu8086 {
       case 0x58: this._cf = true; return;                      // UMB link/strategy: report unsupported
       case 0x09: {                                             // print '$'-terminated string
         var at = Linear(this._ds, this._r[_DX]);
-        for (var i = 0; this.ReadByte(at + i) != (byte)'$'; ++i)
+        for (var i = 0; this.ReadByte(at + i) != (byte)'$'; ++i) {
           this._output.Append((char)this.ReadByte(at + i));
+          this.ConsoleWrite(this.ReadByte(at + i));
+        }
         return;
       }
       default:
@@ -1951,21 +1956,180 @@ public sealed class Cpu8086 {
 
   private void Bios10() {
     switch (this.Reg8(4)) {
-      // set video mode. Nothing here draws, so the mode itself only has to be remembered for AH=0Fh;
-      // what matters is that a real BIOS CLEARS the frame buffer on a mode set, and a graphics test
-      // that read a stale pixel from a previous run would pass or fail for the wrong reason.
+      // set video mode. A real BIOS CLEARS the frame buffer on a mode set, and a test that read a
+      // stale pixel or a stale character from a previous statement would pass or fail for the wrong
+      // reason; the mode itself is remembered for AH=0Fh.
       case 0x00: {
         this._videoMode = this.Reg8(_AX);
+        this._memory[0x449] = this._videoMode;
         if (this._videoMode == 0x13)
           Array.Clear(this._memory, 0xA0000, 320 * 200);
+        else
+          this.ScrollWindow(0, 0, _SCREEN_ROWS - 1, _SCREEN_COLUMNS - 1, 0, _DEFAULT_ATTRIBUTE, false);
+        this._cursorRow = this._cursorColumn = 0;
         return;
       }
-      case 0x02 or 0x01 or 0x05 or 0x06 or 0x09 or 0x0A: return;   // cursor / scroll / attribute writes
-      case 0x03: this._r[_CX] = 0x0607; this._r[_DX] = 0; return;   // cursor at 0,0
-      case 0x0E: this._output.Append((char)this.Reg8(_AX)); return; // teletype
+      case 0x01 or 0x05: return;                                    // cursor shape / display page
+      case 0x02:                                                    // set cursor position (page BH)
+        this._cursorRow = this.Reg8(6);                             // DH
+        this._cursorColumn = this.Reg8(2);                          // DL
+        return;
+      case 0x03:                                                    // report cursor shape and position
+        this._r[_CX] = 0x0607;
+        this._r[_DX] = (ushort)((this._cursorRow << 8) | this._cursorColumn);
+        return;
+      case 0x06 or 0x07:                                            // scroll a window up / down
+        this.ScrollWindow(this.Reg8(5), this.Reg8(1), this.Reg8(6), this.Reg8(2),
+          this.Reg8(_AX), this.Reg8(7), this.Reg8(4) == 0x07);
+        return;
+      case 0x09 or 0x0A: {                                          // write a character CX times, cursor unmoved
+        var attribute = this.Reg8(4) == 0x09 ? this.Reg8(3) : (byte?)null;   // AH=0Ah keeps the cell's own
+        for (int i = 0, column = this._cursorColumn; i < this._r[_CX]; ++i, ++column)
+          this.PutCell(this._cursorRow, column, this.Reg8(_AX), attribute);
+        return;
+      }
+      case 0x0E:                                                    // teletype
+        this._output.Append((char)this.Reg8(_AX));
+        this.ConsoleWrite(this.Reg8(_AX));
+        return;
       // report the mode that was actually set, with the 80-column text default before any mode set
       case 0x0F: this._r[_AX] = (ushort)((80 << 8) | this._videoMode); this.SetReg8(7, 0); return;
       default: throw new Cpu8086Exception($"unhandled BIOS video call AH={this.Reg8(4):X2}h");
+    }
+  }
+
+  // ---- the text console -------------------------------------------------------------------------
+  //
+  // INT 10h's cursor calls used to be no-ops and AH=03h answered 0,0 whatever had been set, which
+  // made LOCATE, CLS and CSRLIN unobservable: a program could put its text anywhere on the screen and
+  // the interpreter reported the same run. That is the failure mode a differential test cannot
+  // survive - two builds agree because neither is being looked at. The 80x25 page at B800 is ordinary
+  // memory here, so modelling the cursor and rendering what DOS writes to the console into that page
+  // costs little and turns the whole text-screen domain into something a comparison can resolve.
+
+  private const ushort _TEXT_PAGE = 0xB800;
+  private const int _SCREEN_ROWS = 25, _SCREEN_COLUMNS = 80;
+  private const byte _DEFAULT_ATTRIBUTE = 0x07;
+
+  // The cursor lives where a real BIOS keeps it - the BIOS data area at 0040:0050, column then row -
+  // rather than in a field of its own. It has to: the $OPTION VIDEO print path reads those two bytes
+  // directly instead of asking INT 10h, so a cursor the interpreter held privately would leave every
+  // direct-video write landing at the top-left corner whatever LOCATE had said.
+  private const int _BDA_CURSOR = 0x450;
+
+  private byte _cursorRow {
+    get => this._memory[_BDA_CURSOR + 1];
+    set => this._memory[_BDA_CURSOR + 1] = value;
+  }
+
+  private byte _cursorColumn {
+    get => this._memory[_BDA_CURSOR];
+    set => this._memory[_BDA_CURSOR] = value;
+  }
+
+  /// <summary>The BIOS cursor after the run, 0-based - what <c>CSRLIN</c> and <c>POS</c> report on.</summary>
+  public (int Row, int Column) Cursor => (this._cursorRow, this._cursorColumn);
+
+  /// <summary>
+  /// The 80x25 text page as text, one string per row, right-trimmed - the screen a capture helper
+  /// would PEEK out of B800 after the program ended. A NUL cell reads as a space, because that is
+  /// what a blanked cell holds and what a real capture shows.
+  /// </summary>
+  public IReadOnlyList<string> Screen {
+    get {
+      var rows = new string[_SCREEN_ROWS];
+      for (var row = 0; row < _SCREEN_ROWS; ++row) {
+        var line = new StringBuilder(_SCREEN_COLUMNS);
+        for (var column = 0; column < _SCREEN_COLUMNS; ++column) {
+          var cell = this.ReadByte(Linear(_TEXT_PAGE, (ushort)((row * _SCREEN_COLUMNS + column) * 2)));
+          line.Append(cell == 0 ? ' ' : (char)cell);
+        }
+        rows[row] = line.ToString().TrimEnd();
+      }
+      return rows;
+    }
+  }
+
+  /// <summary>
+  /// The handful of BIOS data area cells a DOS program reads about the display: the video mode, the
+  /// column count, the last row, and the cursor (which lives here rather than in a field of this
+  /// class). A program that reads them out of 0040h finds an 80x25 colour text screen.
+  /// </summary>
+  private void InstallBiosDataArea() {
+    this._memory[0x449] = 0x03;                                    // 40:49 - the current video mode
+    this.WriteWord(0x44A, _SCREEN_COLUMNS);                        // 40:4A - columns on the screen
+    this._memory[0x484] = _SCREEN_ROWS - 1;                        // 40:84 - the last row, 0-based
+    this._cursorRow = this._cursorColumn = 0;                      // 40:50 - cursor, page 0
+  }
+
+  /// <summary>One character through the console driver: control codes act, everything else prints and advances.</summary>
+  private void ConsoleWrite(byte character) {
+    switch (character) {
+      case 13: this._cursorColumn = 0; return;                       // carriage return
+      case 10: this.ConsoleNewline(); return;                        // line feed
+      case 8: if (this._cursorColumn > 0) --this._cursorColumn; return;
+      case 7: return;                                                // BEL rings, it does not print
+      case 9:                                                        // the driver expands a tab to the next 8-stop
+        do
+          this.ConsoleWrite((byte)' ');
+        while (this._cursorColumn % 8 != 0);
+        return;
+      default: break;
+    }
+
+    this.PutCell(this._cursorRow, this._cursorColumn, character, _DEFAULT_ATTRIBUTE);
+    if (++this._cursorColumn < _SCREEN_COLUMNS)
+      return;
+    this._cursorColumn = 0;
+    this.ConsoleNewline();
+  }
+
+  /// <summary>Down one row, scrolling the page when the cursor is already on the last one.</summary>
+  private void ConsoleNewline() {
+    if (this._cursorRow + 1 < _SCREEN_ROWS) {
+      ++this._cursorRow;
+      return;
+    }
+    this.ScrollWindow(0, 0, _SCREEN_ROWS - 1, _SCREEN_COLUMNS - 1, 1, _DEFAULT_ATTRIBUTE, false);
+    this._cursorRow = _SCREEN_ROWS - 1;
+  }
+
+  /// <summary>A character (and optionally an attribute) into one cell; an off-page coordinate writes nothing.</summary>
+  private void PutCell(int row, int column, byte character, byte? attribute) {
+    if (row is < 0 or >= _SCREEN_ROWS || column is < 0 or >= _SCREEN_COLUMNS)
+      return;
+    var at = Linear(_TEXT_PAGE, (ushort)((row * _SCREEN_COLUMNS + column) * 2));
+    this.WriteByte(at, character);
+    if (attribute is { } value)
+      this.WriteByte(at + 1, value);
+  }
+
+  /// <summary>
+  /// INT 10h AH=06h/07h: scroll a rectangle of the text page, blanking the lines it vacates. A line
+  /// count of zero (or one covering the whole window) blanks all of it - which is how <c>CLS</c> is
+  /// written, and the reason clearing the screen is observable at all.
+  /// </summary>
+  private void ScrollWindow(int top, int left, int bottom, int right, int lines, byte attribute, bool down) {
+    top = Math.Clamp(top, 0, _SCREEN_ROWS - 1);
+    bottom = Math.Clamp(bottom, top, _SCREEN_ROWS - 1);
+    left = Math.Clamp(left, 0, _SCREEN_COLUMNS - 1);
+    right = Math.Clamp(right, left, _SCREEN_COLUMNS - 1);
+    var height = bottom - top + 1;
+    if (lines <= 0 || lines >= height)
+      lines = height;
+
+    for (var i = 0; i < height - lines; ++i) {
+      var target = down ? bottom - i : top + i;
+      var source = down ? target - lines : target + lines;
+      for (var column = left; column <= right; ++column) {
+        var from = Linear(_TEXT_PAGE, (ushort)((source * _SCREEN_COLUMNS + column) * 2));
+        this.PutCell(target, column, this.ReadByte(from), this.ReadByte(from + 1));
+      }
+    }
+    for (var i = 0; i < lines; ++i) {
+      var row = down ? top + i : bottom - i;
+      for (var column = left; column <= right; ++column)
+        this.PutCell(row, column, (byte)' ', attribute);
     }
   }
 
