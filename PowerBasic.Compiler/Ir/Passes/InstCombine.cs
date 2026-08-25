@@ -11,14 +11,23 @@ namespace PowerBasic.Compiler.Ir.Passes;
 public static class InstCombine {
 
   /// <summary>Simplifies the function in place; returns how many instructions were replaced.</summary>
-  public static int Run(IrFunction fn) {
+  public static int Run(IrFunction fn) => Run(fn, Simplify);
+
+  /// <summary>
+  /// Prepares faithful IR for selection while retaining comparisons as emitted. Constant address
+  /// arithmetic still has to collapse or large array programs produce a pathological machine graph;
+  /// leaving comparisons alone prevents that legalization from deciding source-level branches.
+  /// </summary>
+  public static int RunForFaithfulSelection(IrFunction fn) => Run(fn, SimplifyForFaithfulSelection);
+
+  private static int Run(IrFunction fn, Func<IrInstruction, IrValue?> simplify) {
     var replaced = 0;
     var worklist = new Queue<IrInstruction>(fn.AllInstructions);
     while (worklist.Count > 0) {
       var inst = worklist.Dequeue();
       if (inst.Parent is null)
         continue;                                    // already removed
-      var simpler = Simplify(inst);
+      var simpler = simplify(inst);
       if (simpler is null || ReferenceEquals(simpler, inst))
         continue;
 
@@ -40,6 +49,10 @@ public static class InstCombine {
   public static IrValue? Simplify(IrInstruction inst) {
     if (IrConstFold.TryFold(inst) is { } folded)
       return folded;
+    return SimplifyCanonical(inst);
+  }
+
+  private static IrValue? SimplifyCanonical(IrInstruction inst) {
     return inst switch {
       IrBinary b => SimplifyBinary(b),
       IrCmp c => SimplifyCmp(c),
@@ -49,6 +62,9 @@ public static class InstCombine {
       _ => null,
     };
   }
+
+  private static IrValue? SimplifyForFaithfulSelection(IrInstruction inst)
+    => inst is IrCmp { IsSourceCondition: true } ? null : Simplify(inst);
 
   /// <summary>
   /// <c>select true, a, b</c> is <c>a</c>, <c>select false, a, b</c> is <c>b</c>, and a select whose

@@ -203,6 +203,23 @@ public sealed class BackendRuntimeCallTests {
   }
 
   [Test]
+  public void Select_GivenNumericPrint_ThenItsVerifiedIndexRegistersRemainLive() {
+    var m = Select(_printingFunction, "main");
+    var calls = m.AllInstructions
+      .Where(instruction => instruction.Opcode == MOpcode.Call
+        && instruction.Operands is [MOperand.LabelRef { Name: "rt_print_i16" or "rt_print_nl" }])
+      .ToList();
+
+    Assert.That(calls, Is.Not.Empty);
+    Assert.That(calls, Has.All.Matches<MInstr>(instruction =>
+      instruction.Clobbers.Contains(Reg.AX)
+      && instruction.Clobbers.Contains(Reg.DX)
+      && !instruction.Clobbers.Contains(Reg.SI)
+      && !instruction.Clobbers.Contains(Reg.DI)),
+      "the hand-written numeric printers save/restore SI and DI around their work");
+  }
+
+  [Test]
   public void Select_GivenTheNewlineAfterThePrint_ThenCallsRtPrintNl() {
     var m = Select(_printingFunction, "Announce");
 
@@ -695,6 +712,52 @@ public sealed class BackendRuntimeCallTests {
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
     Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+  }
+
+  [Test]
+  public void Execute_GivenOddSizedUdtCopyUnderCpu386_ThenRoutedDwordAndTailMatchTheDirectEmitter() {
+    var source = "$CPU 80386\n$OPTIMIZE SPEED\n" + _udtCopyProgram;
+    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+
+    var directImage = direct.EmitExecutable();
+    var routedImage = routed.EmitExecutable();
+    var directCpu = Cpu8086.Run(directImage);
+    var routedCpu = Cpu8086.Run(routedImage);
+
+    Assert.Multiple(() => {
+      Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+      Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+      Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
+      Assert.That(Contains(routedImage, 0xF3, 0x66, 0xA5), Is.True,
+        "the routed rt_memcpy should widen its seven-byte copy to one DWORD and a three-byte tail");
+      Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+      Assert.That(routedCpu.Output.Trim().Replace(" ", ""), Is.EqualTo("-123987654250"));
+    });
+  }
+
+  [TestCase("$OPTIMIZE SPEED\n", false, TestName = "Copy_Given8086Speed_ThenNoRepMovsd")]
+  [TestCase("$CPU 80386\n$OPTIMIZE OFF\n", false, TestName = "Copy_Given386OptimizeOff_ThenNoRepMovsd")]
+  [TestCase("$CPU 80386\n$OPTIMIZE SPEED\n", true, TestName = "Copy_Given386Speed_ThenRepMovsd")]
+  public void Emit_GivenUdtCopy_WhenTargetChanges_ThenDwordCopyIsGated(string directives, bool expected) {
+    var generator = new CodeGenerator(Bind(directives + _udtCopyProgram)) {
+      UseExperimentalBackend = true,
+    };
+
+    var image = generator.EmitExecutable();
+
+    Assert.Multiple(() => {
+      Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+      Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
+      Assert.That(Contains(image, 0xF3, 0x66, 0xA5), Is.EqualTo(expected));
+    });
+  }
+
+  private static bool Contains(byte[] image, params byte[] sequence) {
+    for (var i = 0; i <= image.Length - sequence.Length; ++i)
+      if (image.AsSpan(i, sequence.Length).SequenceEqual(sequence))
+        return true;
+    return false;
   }
 
   [Test]

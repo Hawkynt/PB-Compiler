@@ -825,6 +825,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     ArgumentNullException.ThrowIfNull(libraries);
     omfLibraries ??= [];
     this._allowExternalCalls = units.Count > 0 || libraries.Count > 0 || omfLibraries.Count > 0;
+    var optimizeMeta = this.ResolveOptimizeMetastatement();
 
     // BASICA/GW dead interpreter text, decided before anything rewrites the body: which
     // DeferredSourceStmt nodes control cannot reach. Not gated on the optimizer - whether a program
@@ -865,16 +866,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // unrolling/inlining/const-fold - to group memory/ALU ops), every other optimized standalone keeps
     // the peephole (staging coalesce, CMP->TEST). Gated on the optimizer flags, not the dialect (the
     // optimizer is dialect-agnostic; SPEED merely defaults on for pb36).
-    // $OPTIMIZE SIZE|SPEED - one per module (PBC -OZF preselects SPEED). Resolved BEFORE the
-    // post-emit pass gates below so a metastatement (not just the CLI flag) arms them.
-    var optimizeMetas = model.MetaStatements.Where(m => m.Command.Equals("OPTIMIZE", StringComparison.OrdinalIgnoreCase)).ToList();
-    if (optimizeMetas.Count > 1)
-      this.Errors.Add(new(optimizeMetas[1].Position, "only one $OPTIMIZE per module"));
-    if (optimizeMetas.Count > 0 && optimizeMetas[0].Arguments is [{ } optMode, ..]) {
-      this.OptimizeSpeed = optMode.Text.Equals("SPEED", StringComparison.OrdinalIgnoreCase);
-      this.OptimizeSize = optMode.Text.Equals("SIZE", StringComparison.OrdinalIgnoreCase);
-    }
-
+    this.ResolveOptimizeObjective(optimizeMeta);
     var standalone = this.Optimize && !this._allowExternalCalls && !this._isUnit;
     asm.EnableSchedule = standalone && this.OptimizeSpeed;
     asm.EnablePeephole = standalone && !asm.EnableSchedule;
@@ -986,6 +978,13 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (this.BackendMain() is not null) {
       // the x86-16 back end owns the whole module body: its own prologue, its own frame, and the
       // implicit END emitted at its return sites (docs/X86-BACKEND.md)
+      //
+      // The direct procedure emitter runs after main and reads the FINAL lexical $ERROR state left by
+      // ApplyMeta. Routing main bypasses EmitStatement, so replay those metastatements here; otherwise
+      // a direct callee silently loses (among others) its $ERROR STACK probe and deep recursion walks
+      // through the data/code area instead of raising into main's routed handler.
+      foreach (var meta in model.MainBody.OfType<MetaStmt>())
+        this.ApplyMeta(meta);
       this.EmitBackendMain();
     } else {
       this.BeginFrame(skipZeroing: this.Optimize && !ContainsErrorHandling(model.MainBody));

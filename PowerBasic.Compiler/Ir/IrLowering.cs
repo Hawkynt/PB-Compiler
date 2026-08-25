@@ -601,6 +601,7 @@ public sealed partial class IrLowering {
     } else {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(MapType(symbol.Type)) { Name = symbol.Name });
     }
+    alloca.IsSourceVariable = true;
     this._addr[symbol] = alloca;
     return alloca;
   }
@@ -3377,9 +3378,11 @@ public sealed partial class IrLowering {
 
   private IrValue LowerCondition(Expression expr) {
     var value = this.LowerExpr(expr);
-    if (this._model.TypeOf(expr) is ScalarType { IsFloat: true })
-      return this._b.Cmp(IrCmpPred.Fone, value, new IrConstantFloat(value.Type, 0.0));
-    return this._b.Cmp(IrCmpPred.Ne, value, new IrConstantInt(value.Type, 0));
+    var comparison = this._model.TypeOf(expr) is ScalarType { IsFloat: true }
+      ? this._b.Cmp(IrCmpPred.Fone, value, new IrConstantFloat(value.Type, 0.0))
+      : this._b.Cmp(IrCmpPred.Ne, value, new IrConstantInt(value.Type, 0));
+    comparison.IsSourceCondition = true;
+    return comparison;
   }
 
   private IrValue LowerExpr(Expression expr) {

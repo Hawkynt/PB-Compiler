@@ -75,6 +75,22 @@ public sealed class BackendGlobalAccessTests {
     PRINT values(2)
     """;
 
+  private const string _sharedSwapProgram = """
+    $OPTIMIZE SPEED
+    DIM x AS SHARED INTEGER
+    DIM y AS SHARED INTEGER
+
+    SUB Show() NOINLINE
+      PRINT x; y
+    END SUB
+
+    READ x, y
+    SWAP x, y
+    Show
+    DATA 1, 2
+    END
+    """;
+
   private static SemanticModel Bind(string source) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
@@ -258,5 +274,33 @@ public sealed class BackendGlobalAccessTests {
       "the feature under test must not pass through the direct-emitter fallback");
     Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
     Assert.That(directCpu.Output.Trim().Replace("\r\n", "|"), Is.EqualTo("12  12 | 1  2  10  3  20"));
+  }
+
+  [Test]
+  public void Execute_GivenSharedScalarSwap_WhenRouted_ThenXchgUpdatesBothObservedCells() {
+    var direct = new CodeGenerator(Bind(_sharedSwapProgram)) {
+      Optimize = true,
+      OptimizeSpeed = true,
+      UseExperimentalBackend = false,
+    };
+    var routed = new CodeGenerator(Bind(_sharedSwapProgram)) {
+      Optimize = true,
+      OptimizeSpeed = true,
+      UseExperimentalBackend = true,
+    };
+
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedImage = routed.EmitExecutable();
+    var routedCpu = Cpu8086.Run(routedImage);
+
+    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.Multiple(() => {
+      Assert.That(routed.BackendRoutedNames, Is.SupersetOf(new[] { "Show", "main" }),
+        "both the exchange and its observer must stay on the routed path");
+      Assert.That(routedImage, Does.Contain((byte)0x87), "the crossed stores fold to XCHG r16,r/m16");
+      Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+      Assert.That(routedCpu.Output.Trim(), Is.EqualTo("2  1"));
+    });
   }
 }

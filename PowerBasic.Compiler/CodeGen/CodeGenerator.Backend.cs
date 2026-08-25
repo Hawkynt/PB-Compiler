@@ -254,16 +254,17 @@ public sealed partial class CodeGenerator {
     }
 
     // A selected function may CALL another procedure, and the two sides have to agree on the ABI.
-    // The back end emits (and expects) the stack convention, while OptRegParm may convert a
-    // directly-emitted procedure to the register convention - and it decides that AFTER this set is
-    // known (it skips exactly the routed procedures). The sound rule is therefore that a routed
-    // function may only call routed functions: both are then excluded from the conversion by
-    // construction. Dropping one can invalidate its callers, so it iterates to a fixpoint.
+    // The back end emits (and expects) the BASIC/PASCAL stack convention. SPEED optimization can
+    // convert a directly-emitted procedure through OptRegParm after this set is known, so that callee
+    // must route too. Otherwise an unambiguous direct BASIC/PASCAL callee remains stack-compatible.
+    // Dropping one can invalidate its callers, so this iterates.
     var routable = candidates.Select(c => c.Proc.Name).ToHashSet(System.StringComparer.OrdinalIgnoreCase);
     for (var changed = true; changed;) {
       changed = false;
       for (var i = candidates.Count - 1; i >= 0; --i) {
-        if (CalleeNames(candidates[i].Fn).FirstOrDefault(n => !routable.Contains(n)) is not { } stranded)
+        if (CalleeNames(candidates[i].Fn)
+            .FirstOrDefault(name => !routable.Contains(name) && !this.CanCallDirectCallee(name))
+            is not { } stranded)
           continue;
         this._backendDeclines.Add((candidates[i].Proc.Name, $"routing: calls '{stranded}', which is not routed"));
         routable.Remove(candidates[i].Proc.Name);
@@ -286,7 +287,9 @@ public sealed partial class CodeGenerator {
       changed = false;
       foreach (var (proc, fn, _) in candidates)
         if (this._backendProcs.ContainsKey(proc)
-            && CalleeNames(fn).FirstOrDefault(n => !this._backendProcs.Keys.Any(p => p.Name.Equals(n, System.StringComparison.OrdinalIgnoreCase))) is { } stranded) {
+            && CalleeNames(fn).FirstOrDefault(name =>
+              !this._backendProcs.Keys.Any(p => p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase))
+              && !this.CanCallDirectCallee(name)) is { } stranded) {
           this._backendDeclines.Add((proc.Name, $"routing: calls '{stranded}', which is not routed"));
           this._backendProcs.Remove(proc);
           changed = true;
@@ -297,17 +300,16 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
-  /// <summary>
   /// The module body, compiled by the x86-16 back end - the step from "the back end compiles some
   /// functions" to "the back end compiles a whole program". It is the same pipeline every routed
   /// procedure goes through, with three differences that all follow from main not being a procedure:
   /// it takes no arguments, it has no caller to RET to (it falls into the runtime's exit), and it is
   /// not in <c>ProcedureList</c>, so the routing has to look it up by name.
   ///
-  /// Everything it calls must itself be routed, for the ABI reason the procedure fixpoint already
-  /// covers: <c>OptRegParm</c> may convert a directly-emitted procedure to the register convention,
-  /// and the back end emits the stack one. Error handling and CHAIN disqualify it outright - both are
-  /// emitted around the body by the direct path, not inside it.
+  /// Under SPEED optimization, everything it calls must itself be routed, for the ABI reason the
+  /// procedure fixpoint already covers: <c>OptRegParm</c> may convert a direct procedure to registers.
+  /// Otherwise a locally defined BASIC/PASCAL callee keeps the same stack ABI and may remain on the
+  /// direct emitter. CHAIN still disqualifies main outright.
   /// </summary>
   private (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)? BackendMain() {
     if (this._backendMainKnown)
@@ -334,7 +336,9 @@ public sealed partial class CodeGenerator {
       return this.DeclineMain("filter: CHAIN is emitted around the body by the direct path");
     if (this._backendModule.FindFunction("main") is not { IsDeclaration: false } main)
       return this.DeclineMain("lowering: the IR module has no main");
-    if (CalleeNames(main).FirstOrDefault(n => !routed.Keys.Any(p => p.Name.Equals(n, System.StringComparison.OrdinalIgnoreCase))) is { } stranded)
+    if (CalleeNames(main).FirstOrDefault(name =>
+          !routed.Keys.Any(p => p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase))
+          && !this.CanCallDirectCallee(name)) is { } stranded)
       return this.DeclineMain($"routing: calls '{stranded}', which is not routed");
     if (!this.ExternalCalleesResolve(main))
       return this.DeclineMain("routing: a callee has no link symbol - it is EXTERNAL, or its own body did not lower");
@@ -383,7 +387,7 @@ public sealed partial class CodeGenerator {
       asm => {
         asm.Mov(Asm.Reg.AL, (Asm.Imm)0);
         asm.Jmp(this._rt.Exit);
-      });
+      }, alignLoops: this.Optimize && this.Cost.AlignHotLoops);
   }
 
   /// <summary>
@@ -454,8 +458,10 @@ public sealed partial class CodeGenerator {
       return this._asm.Lbl(name);
     var proc = model.ProcedureList.FirstOrDefault(p =>
       p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase) && this.BackendProcs().ContainsKey(p));
+    proc ??= this.DirectCalleeWithCompatibleAbi(name);
     // ...or an EXTERNAL procedure, which has no body here to route and needs none: ProcLabelOf gives
-    // it the link symbol its ALIAS names, exactly as a directly-emitted call to it would get.
+    // it the link symbol its ALIAS names, exactly as a directly-emitted call to it would get. An
+    // unoptimized local direct callee was resolved above through DirectCalleeWithCompatibleAbi.
     //
     // Only when external calls are ENABLED, though. Without that, ProcLabelOf hands back an ordinary
     // p_<name> that nothing will ever bind, and the assembler discovers it at the end - so the label
@@ -619,6 +625,27 @@ public sealed partial class CodeGenerator {
         .Select(f => f.Name);
 
   /// <summary>
+  /// Whether every defined callee uses the stack ABI emitted at this call site. Speed-optimized
+  /// direct callees are excluded because <see cref="OptRegParm"/> may convert them after routing is
+  /// decided; otherwise an unambiguous BASIC/PASCAL procedure remains stack-compatible.
+  /// </summary>
+  private bool CalleesHaveCompatibleAbi(IrFunction fn, Func<string, bool> isRouted)
+    => CalleeNames(fn).All(name => isRouted(name) || this.CanCallDirectCallee(name));
+
+  private bool CanCallDirectCallee(string name) => this.DirectCalleeWithCompatibleAbi(name) is not null;
+
+  private ProcedureSymbol? DirectCalleeWithCompatibleAbi(string name) {
+    if (this.Optimize && this.OptimizeSpeed)
+      return null;
+    var matches = model.ProcedureList
+      .Where(proc => !proc.IsExternal && proc.Body is not null
+        && proc.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase))
+      .Take(2)
+      .ToList();
+    return matches.Count == 1 && IsBackendAbiConvention(matches[0]) ? matches[0] : null;
+  }
+
+  /// <summary>
   /// The procedures the x86-16 back end compiled, by name. This is what a test asks instead of
   /// inferring routing from "the image changed" - the honest question is whether the back end took
   /// the function, and the answer must not depend on its output happening to differ.
@@ -640,6 +667,7 @@ public sealed partial class CodeGenerator {
     var paramOffsets = proc.Parameters.Select(p => p.Offset).ToArray();
     // a CALL needs the label the whole-program codegen bound for the callee (procedure labels live in
     // a different registry than Assembler.Lbl); the routing guarantees every callee is itself routed
-    MachineEmitter.EmitFunction(asm, mfn, alloc, paramOffsets, paramBytes, this.CalleeLabel, this.DataCellOf);
+    MachineEmitter.EmitFunction(asm, mfn, alloc, paramOffsets, paramBytes, this.CalleeLabel, this.DataCellOf,
+      alignLoops: this.Optimize && this.Cost.AlignHotLoops);
   }
 }

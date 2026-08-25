@@ -79,6 +79,21 @@ public sealed class BackendIdiomTests {
   }
 
   [Test]
+  public void Select_GivenDivAndModWithHiddenErrorFlow_ThenKeepsBothFaultingOperations() {
+    var fn = new IrFunction("F", IrType.I16,
+      [new IrArgument(IrType.I16, 0), new IrArgument(IrType.I16, 1)]) {
+      HasErrorHandler = true,
+    };
+    var entry = fn.CreateBlock("entry");
+    var quotient = entry.Append(new IrBinary(IrBinaryOp.SDiv, fn.Parameters[0], fn.Parameters[1]));
+    var remainder = entry.Append(new IrBinary(IrBinaryOp.SRem, fn.Parameters[0], fn.Parameters[1]));
+    entry.Append(new IrRet(entry.Append(new IrBinary(IrBinaryOp.Add, quotient, remainder))));
+
+    Assert.That(Opcodes(Select(fn)).Count(opcode => opcode == MOpcode.Idiv), Is.EqualTo(2),
+      "an error handler may resume between the source operations, so neither fault can disappear");
+  }
+
+  [Test]
   public void Select_GivenTheSgnShape_WhenOptimized_ThenCwdNegAdc() {
     // (x > 0) - (x < 0), the form the lowering gives SGN
     var fn = OneArg((entry, x) => {

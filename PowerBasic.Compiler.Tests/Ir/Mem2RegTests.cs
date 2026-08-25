@@ -61,4 +61,24 @@ public sealed class Mem2RegTests {
     Assert.That(Count<IrAlloca>(fn), Is.EqualTo(0));
     Assert.That(Count<IrPhi>(fn), Is.GreaterThanOrEqualTo(1));
   }
+
+  [Test]
+  public void RunForFaithfulSelection_GivenWriteOnlySourceAndTemporarySlots_ThenRetainsOnlySourceStorage() {
+    var fn = new IrFunction("main", IrType.Void);
+    var builder = new IrBuilder(fn.CreateBlock("entry"));
+    var source = builder.Alloca(IrType.I16);
+    source.IsSourceVariable = true;
+    builder.Store(new IrConstantInt(IrType.I16, 42), source);
+    var temporary = builder.Alloca(IrType.I16);
+    builder.Store(new IrConstantInt(IrType.I16, 7), temporary);
+    builder.Ret();
+
+    Mem2Reg.RunForFaithfulSelection(fn);
+
+    Assert.Multiple(() => {
+      Assert.That(fn.AllInstructions.OfType<IrAlloca>(), Is.EquivalentTo(new[] { source }));
+      Assert.That(fn.AllInstructions.OfType<IrStore>().Single().Pointer, Is.SameAs(source));
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    });
+  }
 }

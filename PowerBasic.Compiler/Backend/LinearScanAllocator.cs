@@ -6,7 +6,9 @@ namespace PowerBasic.Compiler.Backend;
 /// Stage 4 of the x86-16 back end (docs/X86-BACKEND.md): linear-scan register allocation. It sweeps
 /// the live intervals (stage 3) in start order, handing each virtual register a free physical
 /// register from <c>AX BX CX DX SI DI</c> (BP/SP are the frame, so reserved) and freeing it again when
-/// the interval ends. Two intervals that overlap in time therefore get distinct registers, while
+/// the interval ends. A target-gated dword interval aliases the corresponding 386 register
+/// (<c>EAX</c> through <c>EDI</c>) in that same allocation slot. Two intervals that overlap in time
+/// therefore get distinct registers, while
 /// disjoint intervals reuse one - this is where independent values land in independent registers, the
 /// reassignment the byte-level scheduler could never do. When a sweep cannot assign a value, the
 /// allocator retries after rematerializing, directly spilling, or splitting one live range; it
@@ -121,11 +123,11 @@ public sealed partial class LinearScanAllocator {
       out string? reason, out int rounds, int? moveBudget = null) {
     rounds = 0;
     if (target is { Optimize: true, OptimizeSpeed: true }
-        && TryResident(function, moveBudget, ref rounds) is { } resident) {
+        && TryResident(function, target, moveBudget, ref rounds) is { } resident) {
       reason = null;
       return resident;
     }
-    return AllocatePlain(function, moveBudget, ref rounds, out reason);
+    return AllocatePlain(function, target, moveBudget, ref rounds, out reason);
   }
 
   /// <summary>
@@ -141,7 +143,8 @@ public sealed partial class LinearScanAllocator {
   /// this one does not answer, and the set of functions that route is exactly what it was.
   /// </para>
   /// </summary>
-  private static IReadOnlyDictionary<int, Reg>? TryResident(MFunction function, int? moveBudget, ref int rounds) {
+  private static IReadOnlyDictionary<int, Reg>? TryResident(MFunction function, SelectionTarget target,
+      int? moveBudget, ref int rounds) {
     var candidate = function.Clone();
     CopyCoalescer.Run(candidate);
     var progress = Spiller.Progress.Of(candidate);
@@ -152,11 +155,11 @@ public sealed partial class LinearScanAllocator {
       if (asmConflict is not null)
         return null;                             // the plain policy reports it; this one just stands aside
       if (LivenessAnalysis.LoopCarried(candidate) is { Count: > 0 } carried
-          && TryAllocate(candidate, asmHeld, carried) is { } assignment) {
+          && TryAllocate(candidate, asmHeld, target, carried) is { } assignment) {
         function.Adopt(candidate);
         return assignment;
       }
-      if (TryAllocate(candidate, asmHeld) is { } plain) {
+      if (TryAllocate(candidate, asmHeld, target) is { } plain) {
         function.Adopt(candidate);
         return plain;
       }
@@ -193,8 +196,8 @@ public sealed partial class LinearScanAllocator {
   private static int BudgetFor(MFunction function)
     => Math.Min(function.VirtualRegisterCount + 64, _MOVE_CEILING);
 
-  private static IReadOnlyDictionary<int, Reg>? AllocatePlain(MFunction function, int? moveBudget,
-      ref int rounds, out string? reason) {
+  private static IReadOnlyDictionary<int, Reg>? AllocatePlain(MFunction function, SelectionTarget target,
+      int? moveBudget, ref int rounds, out string? reason) {
     var progress = Spiller.Progress.Of(function);
     for (var budget = moveBudget ?? BudgetFor(function); budget > 0; --budget) {
       // recomputed each round, because spilling renumbers the instructions the windows are measured in
@@ -205,12 +208,12 @@ public sealed partial class LinearScanAllocator {
         reason = asmConflict;
         return null;
       }
-      if (TryAllocate(function, asmHeld) is { } assignment) {
+      if (TryAllocate(function, asmHeld, target) is { } assignment) {
         reason = null;
         return assignment;
       }
       if (!AdvanceSpiller(function, ref progress)) {
-        reason = Blocker(function, asmHeld);
+        reason = Blocker(function, asmHeld, target);
         return null;
       }
       ++rounds;
@@ -284,12 +287,14 @@ public sealed partial class LinearScanAllocator {
   /// What stopped the last sweep: the first interval that found no register, and the reason the
   /// spiller then refused to move it to memory.
   /// </summary>
-  private static string Blocker(MFunction function, IReadOnlyDictionary<int, IReadOnlyList<Reg>> asmHeld) {
+  private static string Blocker(MFunction function, IReadOnlyDictionary<int, IReadOnlyList<Reg>> asmHeld,
+      SelectionTarget target) {
     var addressing = AddressRegisters(function);
     var byteRegisters = ByteRegisters(function);
     var clobbersAt = ClobbersByIndex(function);
     var pinnedAt = PinnedByIndex(function);
     var inFlightAt = InFlightByIndex(function);
+    var sizes = RegisterSizes(function);
     var free = new List<Reg>(_pool);
     var active = new List<LivenessAnalysis.LiveInterval>();
     var liveness = LivenessAnalysis.Analyze(function);
@@ -303,7 +308,8 @@ public sealed partial class LinearScanAllocator {
       unsafeRegs.UnionWith(ClobberedOver(pinnedAt, liveAt, interval, interval.End - 1));
       unsafeRegs.UnionWith(ClobberedOver(inFlightAt, liveAt, interval, interval.End));
       unsafeRegs.UnionWith(ClobberedOver(asmHeld, liveAt, interval, interval.End));
-      var legal = LegalFor(interval.VirtualId, addressing, byteRegisters);
+      var legal = LegalFor(interval.VirtualId, sizes.GetValueOrDefault(interval.VirtualId, MRegSize.Word),
+        addressing, byteRegisters, target);
       if (free.Count > active.Count && legal.Any(r => !unsafeRegs.Contains(r)))
         continue;
       var isAddress = addressing.Base.Contains(interval.VirtualId) || addressing.Index.Contains(interval.VirtualId);
@@ -323,7 +329,8 @@ public sealed partial class LinearScanAllocator {
   /// holding for a later one to read.
   /// </summary>
   private static IReadOnlyDictionary<int, Reg>? TryAllocate(MFunction function,
-      IReadOnlyDictionary<int, IReadOnlyList<Reg>> asmHeld, HashSet<int>? resident = null) {
+      IReadOnlyDictionary<int, IReadOnlyList<Reg>> asmHeld, SelectionTarget target,
+      HashSet<int>? resident = null) {
     var liveness = LivenessAnalysis.Analyze(function);
     var intervals = liveness.Intervals;
     var liveAt = liveness.LiveAt;
@@ -332,6 +339,8 @@ public sealed partial class LinearScanAllocator {
     var clobbersAt = ClobbersByIndex(function);       // global instruction index -> registers a CALL there destroys
     var pinnedAt = PinnedByIndex(function);           // ...and the ones an ABI-pinned physical write lands in
     var inFlightAt = InFlightByIndex(function);       // ...and the ones already carrying a value to a named reader
+    var sizes = RegisterSizes(function);
+    var dwordInductions = DwordInductionRegisters(function);
     var assignment = new Dictionary<int, Reg>();
     var free = new List<Reg>(_pool);                 // registers currently available, preferred order preserved
     var active = new List<LivenessAnalysis.LiveInterval>();  // live intervals holding a register, kept sorted by End
@@ -352,13 +361,18 @@ public sealed partial class LinearScanAllocator {
       unsafeRegs.UnionWith(ClobberedOver(pinnedAt, liveAt, interval, interval.End - 1));
       unsafeRegs.UnionWith(ClobberedOver(inFlightAt, liveAt, interval, interval.End));
       unsafeRegs.UnionWith(ClobberedOver(asmHeld, liveAt, interval, interval.End));
-      var legal = LegalFor(interval.VirtualId, addressVregs, byteRegisters);
+      var size = sizes.GetValueOrDefault(interval.VirtualId, MRegSize.Word);
+      var legal = LegalFor(interval.VirtualId, size, addressVregs, byteRegisters, target);
       bool Usable(Reg r) => System.Array.IndexOf(legal, r) >= 0 && !unsafeRegs.Contains(r);
       var slot = -1;
-      if (resident is not null && resident.Contains(interval.VirtualId))
-        foreach (var preferred in _resident)
+      if (resident is not null && resident.Contains(interval.VirtualId)) {
+        var preferences = size == MRegSize.Dword && !dwordInductions.Contains(interval.VirtualId)
+          ? _resident.Reverse()
+          : _resident;
+        foreach (var preferred in preferences)
           if (Usable(preferred) && (slot = free.IndexOf(preferred)) >= 0)
             break;
+      }
       if (slot < 0)
         slot = free.FindIndex(Usable);              // the preference is spent - take the ordinary order
       if (slot < 0)
@@ -366,7 +380,7 @@ public sealed partial class LinearScanAllocator {
 
       var reg = free[slot];
       free.RemoveAt(slot);
-      assignment[interval.VirtualId] = reg;
+      assignment[interval.VirtualId] = SizedRegister(reg, size);
       active.Add(interval);
       active.Sort((x, y) => x.End.CompareTo(y.End));
     }
@@ -519,9 +533,11 @@ public sealed partial class LinearScanAllocator {
       yield return WholeRegister(clobbered);
   }
 
-  /// <summary>The word register a byte half belongs to - writing <c>AL</c> destroys half of <c>AX</c>.</summary>
+  /// <summary>The word-sized allocation slot a byte or dword register aliases.</summary>
   private static Reg WholeRegister(Reg register)
-    => register.IsByte() ? (Reg)(0x10 | (register.Index() & 0x03)) : register;
+    => register.IsByte() ? (Reg)(0x10 | (register.Index() & 0x03))
+      : register.IsDword() ? (Reg)(0x10 | register.Index())
+      : register;
 
   /// <summary>Maps each global instruction index (same numbering as the liveness pass) to the registers it clobbers.</summary>
   private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> ClobbersByIndex(MFunction function) {
@@ -530,7 +546,7 @@ public sealed partial class LinearScanAllocator {
     foreach (var block in function.Blocks)
       foreach (var instr in block.Instructions) {
         if (instr.Clobbers.Count > 0)
-          map[index] = instr.Clobbers;
+          map[index] = instr.Clobbers.Select(WholeRegister).Distinct().ToList();
         ++index;
       }
     return map;
@@ -577,15 +593,52 @@ public sealed partial class LinearScanAllocator {
     return result;
   }
 
+  private static Dictionary<int, MRegSize> RegisterSizes(MFunction function) {
+    var sizes = new Dictionary<int, MRegSize>();
+    void Record(MReg? register) {
+      if (register is { IsVirtual: true } value)
+        sizes[value.VirtualId] = value.Size;
+    }
+    foreach (var instruction in function.AllInstructions)
+      foreach (var operand in instruction.Operands)
+        switch (operand) {
+          case MOperand.Register register:
+            Record(register.Reg);
+            break;
+          case MOperand.Memory memory:
+            Record(memory.Base);
+            Record(memory.Index);
+            Record(memory.Segment);
+            break;
+        }
+    return sizes;
+  }
+
   /// <summary>
-  /// The registers a value may occupy given how it is used to address memory. The order of the tests
-  /// is the order of increasing restriction, so a value used in two roles gets the intersection by
-  /// getting the narrowest: an index (SI/DI) before the base of an indexed operand (BX) before an
-  /// ordinary base (BX/SI/DI). A value that is both an index and an indexed base has no register at
-  /// all and takes the empty set, which declines the function.
+  /// Native dword values advanced by a constant. These are loop induction variables rather than
+  /// accumulators, so the residency convention gives them ESI first and the other carried dword EDI.
   /// </summary>
-  private static Reg[] LegalFor(int virtualId, (HashSet<int> Base, HashSet<int> Index, HashSet<int> IndexedBase) addressing,
-      HashSet<int> byteRegisters) {
+  private static HashSet<int> DwordInductionRegisters(MFunction function) => function.AllInstructions
+    .Where(instruction => instruction.Opcode is MOpcode.Add or MOpcode.Sub
+      && instruction.Operands is [MOperand.Register { Reg: { IsVirtual: true, Size: MRegSize.Dword } register },
+        MOperand.Immediate])
+    .Select(instruction => ((MOperand.Register)instruction.Operands[0]).Reg.VirtualId)
+    .ToHashSet();
+
+  /// <summary>
+  /// The allocation slots a value may occupy given its width and address uses. The address tests run
+  /// in increasing restriction, so a value used in two roles gets their intersection: an index
+  /// (SI/DI), an indexed base (BX), or an ordinary base (BX/SI/DI). Native dwords use the corresponding
+  /// 386 register alias and cannot form a 16-bit address.
+  /// </summary>
+  private static Reg[] LegalFor(int virtualId, MRegSize size,
+      (HashSet<int> Base, HashSet<int> Index, HashSet<int> IndexedBase) addressing,
+      HashSet<int> byteRegisters,
+      SelectionTarget target) {
+    if (size == MRegSize.Dword)
+      return target.Cpu386 && !addressing.Base.Contains(virtualId) && !addressing.Index.Contains(virtualId)
+        ? _pool
+        : [];
     if (byteRegisters.Contains(virtualId))
       return addressing.Base.Contains(virtualId) || addressing.Index.Contains(virtualId) ? [] : _bytePool;
     if (addressing.Index.Contains(virtualId))
@@ -595,8 +648,12 @@ public sealed partial class LinearScanAllocator {
       : _pool;
   }
 
+  private static Reg SizedRegister(Reg register, MRegSize size)
+    => size == MRegSize.Dword ? (Reg)(0x20 | register.Index()) : register;
+
   // keep the freed register in the pool's preferred order so allocation is deterministic
   private static void ReturnToPool(List<Reg> free, Reg reg) {
+    reg = WholeRegister(reg);
     var slot = System.Array.IndexOf(_pool, reg);
     var at = 0;
     while (at < free.Count && System.Array.IndexOf(_pool, free[at]) < slot)

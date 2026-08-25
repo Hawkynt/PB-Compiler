@@ -1,9 +1,11 @@
 using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Backend;
+using PowerBasic.Compiler.CodeGen;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Tests.Exec;
 
 namespace PowerBasic.Compiler.Tests.Backend;
 
@@ -33,6 +35,7 @@ public sealed class BackendResidencyTests {
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 
   private static readonly SelectionTarget _speed = new(Optimize: true, OptimizeSpeed: true);
+  private static readonly SelectionTarget _speed386 = new(Cpu386: true, Optimize: true, OptimizeSpeed: true);
 
   /// <summary>The module body of <paramref name="source"/>, selected and scheduled but not yet allocated.</summary>
   private static MFunction Select(string source, SelectionTarget target) {
@@ -60,6 +63,19 @@ public sealed class BackendResidencyTests {
   private const string _ACCUMULATING_LOOP =
     "$OPTIMIZE SPEED\ns% = 0\ni% = 1\nDO\n  s% = s% + i%\n  i% = i% + 1\nLOOP UNTIL i% > 10\nPRINT s%\nEND";
 
+  private const string _LONG_ACCUMULATING_LOOP = """
+    $CPU 80386
+    $OPTIMIZE SPEED
+    s& = 0
+    i& = 1
+    DO
+      s& = s& + i&
+      i& = i& + 1
+    LOOP UNTIL i& > 10
+    PRINT s&
+    END
+    """;
+
   [Test]
   public void Allocate_GivenLoopCarriedValues_WhenSpeed_ThenTheyLiveInSiAndDi() {
     var machine = Select(_ACCUMULATING_LOOP, _speed);
@@ -84,6 +100,134 @@ public sealed class BackendResidencyTests {
     Assert.That(allocation, Is.Not.Null, $"allocation declined: {reason}");
     Assert.That(allocation!.Values, Has.No.Member(Reg.SI).And.No.Member(Reg.DI),
       "without the speed objective the scarce addressing registers stay free");
+  }
+
+  [Test]
+  public void Allocate_GivenLongLoopCarriedValues_When386Speed_ThenTheyLiveInEsiAndEdi() {
+    var machine = Select(_LONG_ACCUMULATING_LOOP, _speed386);
+
+    var allocation = LinearScanAllocator.Allocate(machine, _speed386, out var reason);
+
+    Assert.That(allocation, Is.Not.Null, $"allocation declined: {reason}");
+    var carried = LivenessAnalysis.LoopCarried(machine);
+    var dwordResidents = machine.AllInstructions
+      .SelectMany(instruction => instruction.Operands)
+      .OfType<MOperand.Register>()
+      .Select(operand => operand.Reg)
+      .Where(register => register.IsVirtual && register.Size == MRegSize.Dword
+        && carried.Contains(register.VirtualId))
+      .Select(register => allocation![register.VirtualId])
+      .Distinct()
+      .ToList();
+    Assert.That(dwordResidents, Is.EquivalentTo(new[] { Reg.ESI, Reg.EDI }),
+      string.Join("\n", machine.AllInstructions));
+  }
+
+  [Test]
+  public void Execute_GivenRotatedPreTestedLoop_WhenRouted_ThenZeroAndPositiveTripsMatchDirect() {
+    const string source = """
+      $OPTIMIZE SPEED
+      DECLARE SUB Walk(BYVAL i%)
+      Walk 4
+      Walk 1
+      END
+      SUB Walk(BYVAL i%) NOINLINE
+        DO WHILE i% < 4
+          PRINT i%
+          i% = i% + 1
+        LOOP
+      END SUB
+      """;
+
+    static (byte[] Image, IReadOnlyList<string> Routes) Compile(string source, bool routed) {
+      var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36),
+        Dialect.Pb36);
+      Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+      var generator = new CodeGenerator(model) { UseExperimentalBackend = routed };
+      var image = generator.EmitExecutable();
+      Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+      return (image, generator.BackendRoutedNames.ToList());
+    }
+
+    var direct = Compile(source, routed: false);
+    var routed = Compile(source, routed: true);
+    var directOutput = Cpu8086.Run(direct.Image).Output;
+    var routedOutput = Cpu8086.Run(routed.Image).Output;
+    Assert.Multiple(() => {
+      Assert.That(routed.Routes, Does.Contain("Walk"), "the rotated procedure must not pass through fallback");
+      Assert.That(routedOutput, Is.EqualTo(directOutput));
+      Assert.That(routedOutput.Split("\r\n", StringSplitOptions.RemoveEmptyEntries)
+        .Select(line => line.Trim()), Is.EqualTo(new[] { "1", "2", "3" }));
+    });
+  }
+
+  [TestCase(false, true, true, TestName = "Select_Given8086Speed_ThenLongsRemainWordPairs")]
+  [TestCase(true, false, true, TestName = "Select_Given386OptimizeOff_ThenLongsRemainWordPairs")]
+  [TestCase(true, true, false, TestName = "Select_Given386WithoutSpeed_ThenLongsRemainWordPairs")]
+  public void Select_GivenTargetOutside386Speed_ThenNoNativeDwordRegisters(
+      bool cpu386, bool optimize, bool optimizeSpeed) {
+    var target = new SelectionTarget(Cpu386: cpu386, Optimize: optimize, OptimizeSpeed: optimizeSpeed);
+
+    var machine = Select(_LONG_ACCUMULATING_LOOP, target);
+
+    Assert.That(machine.AllInstructions
+      .SelectMany(instruction => instruction.Operands)
+      .OfType<MOperand.Register>()
+      .Any(operand => operand.Reg.IsVirtual && operand.Reg.Size == MRegSize.Dword), Is.False);
+  }
+
+  [Test]
+  public void Select_GivenLongLoopStartingFromRuntimePair_When386Speed_ThenWordPairFallbackStillSelects() {
+    const string source = """
+      $CPU 80386
+      $OPTIMIZE SPEED
+      INPUT s&
+      i% = 0
+      DO
+        s& = s& + 1
+        i% = i% + 1
+      LOOP UNTIL i% > 3
+      PRINT s&
+      END
+      """;
+
+    var machine = Select(source, _speed386);
+
+    Assert.That(machine.AllInstructions
+      .SelectMany(instruction => instruction.Operands)
+      .OfType<MOperand.Register>()
+      .Any(operand => operand.Reg.IsVirtual && operand.Reg.Size == MRegSize.Dword), Is.False,
+      "a pair-valued runtime result must keep the loop on the baseline representation");
+  }
+
+  [Test]
+  public void Allocate_GivenLongForWithNumericPrint_When386Speed_ThenDwordResidencySurvivesCalls() {
+    const string source = """
+      $CPU 80386
+      $OPTIMIZE SPEED
+      s& = 0
+      FOR i& = 1 TO 100
+        s& = s& + i&
+        PRINT s&
+      NEXT i&
+      PRINT s&
+      END
+      """;
+    var machine = Select(source, _speed386);
+
+    var allocation = LinearScanAllocator.Allocate(machine, _speed386, out var reason);
+
+    Assert.That(allocation, Is.Not.Null, $"allocation declined: {reason}");
+    var native = machine.AllInstructions
+      .SelectMany(instruction => instruction.Operands)
+      .OfType<MOperand.Register>()
+      .Select(operand => operand.Reg)
+      .Where(register => register.IsVirtual && register.Size == MRegSize.Dword)
+      .Select(register => allocation![register.VirtualId])
+      .Distinct()
+      .ToList();
+    Assert.That(native, Is.SupersetOf(new[] { Reg.ESI, Reg.EDI }),
+      string.Join("\n", machine.AllInstructions));
   }
 
   [Test]

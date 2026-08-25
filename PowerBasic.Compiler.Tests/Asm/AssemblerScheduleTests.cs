@@ -122,6 +122,21 @@ public sealed class AssemblerScheduleTests {
   }
 
   [Test]
+  public void RunSchedule_GivenHighDwordStoreBeforeQwordRead_ThenOrderIsPreserved() {
+    var asm = new Assembler { EnableSchedule = true };
+    asm.Shr(Reg.EDX, 5);
+    asm.Mov(Mem.Dword(Reg.BP, -8), Reg.EAX);
+    asm.Mov(Mem.Dword(Reg.BP, -4), Reg.EDX);
+    asm.Fild(Mem.Qword(Reg.BP, -8));
+
+    var bytes = asm.ToArray();
+    var highStore = IndexOf(bytes, [0x66, 0x89, 0x56, 0xFC]);
+    var qwordRead = IndexOf(bytes, [0xDF, 0x6E, 0xF8]);
+    Assert.That(highStore, Is.GreaterThanOrEqualTo(0).And.LessThan(qwordRead),
+      "the upper four bytes overlap the eight-byte FILD source");
+  }
+
+  [Test]
   public void RunSchedule_WhenDisabled_ThenStreamUntouched() {
     var asm = new Assembler();   // EnableSchedule = false
     asm.Mov(Reg.AX, Mem.Word(Reg.BP, 2));

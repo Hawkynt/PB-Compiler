@@ -18,13 +18,19 @@ public sealed partial class InstructionSelector {
   private readonly Dictionary<IrValue, MReg> _vregs = new(ReferenceEqualityComparer.Instance);
 
   /// <summary>
-  /// The HIGH word of a 32-bit value. x86-16 has no 32-bit register, so a LONG/DWORD lives in a
-  /// register <b>pair</b>: <see cref="_vregs"/> holds its low word and this its high one. Keeping the
-  /// halves as two ordinary virtual registers means the allocator needs no notion of pairing - it
-  /// allocates and spills them independently, and only the ABI-pinned spots (a LONG result in DX:AX)
-  /// name physical registers.
+  /// The HIGH word of a baseline 32-bit value: <see cref="_vregs"/> holds its low word and this its
+  /// high one. Keeping the halves as ordinary virtual registers means the allocator needs no notion
+  /// of pairing. Eligible loop-carried values instead occupy one native dword virtual register under
+  /// an optimized 386 SPEED target and therefore have no entry here.
   /// </summary>
   private readonly Dictionary<IrValue, MReg> _hiVregs = new(ReferenceEqualityComparer.Instance);
+
+  /// <summary>
+  /// Loop-carried 32-bit phis that may stay whole in a 386 register under the SPEED objective. Other
+  /// LONG values keep the baseline word-pair representation, so selecting a newer CPU cannot change
+  /// the 8086 ABI or make general allocation depend on paired registers.
+  /// </summary>
+  private readonly HashSet<IrPhi> _nativeDwordPhis = new(ReferenceEqualityComparer.Instance);
   private readonly Dictionary<IrAlloca, int> _slots = new(ReferenceEqualityComparer.Instance);
 
   /// <summary>
@@ -79,6 +85,9 @@ public sealed partial class InstructionSelector {
   /// </summary>
   private CodeGen.TargetCost? _cost => this._target.Cost;
 
+  private bool UsesNativeDwordRegisters
+    => this._target is { Cpu386: true, Optimize: true, OptimizeSpeed: true };
+
   private InstructionSelector(SelectionTarget target) => this._target = target;
 
   /// <summary>Selects a function into machine IR, or null if it contains a construct this stage cannot model.</summary>
@@ -125,6 +134,9 @@ public sealed partial class InstructionSelector {
   private MFunction? Run(IrFunction fn) {
     this._function = new MFunction(fn.Name) { HasArgumentPlan = true };
 
+    if (this.UsesNativeDwordRegisters && IrDominators.Build(fn) is { } dominators)
+      this._nativeDwordPhis.UnionWith(NativeDwordPhis(fn, dominators));
+
     // arguments take the FIRST virtual registers (so argument i is vreg i, which the emitter's ABI
     // prologue relies on to load argument i into allocation[i]); they are function live-ins
     for (var index = 0; index < fn.Parameters.Count; ++index) {
@@ -155,8 +167,12 @@ public sealed partial class InstructionSelector {
         if (phi.Type.IsFloat)
           this.FloatCell(phi);                 // a float lives in a frame cell, never a register: the
                                                // edge copies below are FLD/FSTP through it
-        else if (IsWide(phi.Type))
-          this.FreshPair(phi);                 // a 32-bit phi needs both halves, like any other LONG value
+        else if (IsWide(phi.Type)) {
+          if (this._nativeDwordPhis.Contains(phi))
+            this._vregs[phi] = this.FreshVreg(phi.Type);
+          else
+            this.FreshPair(phi);               // a baseline LONG still needs both word halves
+        }
         else
           this._vregs[phi] = this.FreshVreg(phi.Type);
 
@@ -192,6 +208,8 @@ public sealed partial class InstructionSelector {
       return null;
 
     this._function.VirtualRegisterCount = this._nextVreg;
+    if (this._target is { Optimize: true, OptimizeSpeed: true })
+      MachineLoopRotation.Run(this._function);
     // the encoding-level idioms, which only exist once every IR instruction has been given its own
     // virtual register (see Peephole). Gated on the objective: with the optimizer off this stage must
     // write what it would have written.
@@ -233,6 +251,40 @@ public sealed partial class InstructionSelector {
   }
 
   /// <summary>
+  /// Finds the loop-carried LONG phis whose complete recurrence can stay in native dwords. The set is
+  /// reduced to a fixed point: a phi remains only when every incoming value is a constant, another
+  /// remaining phi, or an arithmetic expression composed solely from those values. A runtime result,
+  /// load, argument, cast, or unsupported operation keeps that whole recurrence on word pairs.
+  /// </summary>
+  private static HashSet<IrPhi> NativeDwordPhis(IrFunction function, IrDominators dominators) {
+    var candidates = new HashSet<IrPhi>(ReferenceEqualityComparer.Instance);
+    foreach (var block in function.Blocks)
+      foreach (var phi in block.Phis)
+        if (IsWide(phi.Type)
+            && phi.IncomingBlocks.Any(predecessor => dominators.Dominates(block, predecessor)))
+          candidates.Add(phi);
+
+    bool IsNativeExpression(IrValue value) => value switch {
+      IrConstantInt => true,
+      IrPhi phi => candidates.Contains(phi),
+      IrBinary binary when binary.Op is IrBinaryOp.Add or IrBinaryOp.Sub
+          or IrBinaryOp.And or IrBinaryOp.Or or IrBinaryOp.Xor
+        => IsNativeExpression(binary.Lhs) && IsNativeExpression(binary.Rhs),
+      _ => false,
+    };
+
+    for (var changed = true; changed;) {
+      changed = false;
+      foreach (var phi in candidates.ToList())
+        if (phi.Operands.Any(value => !IsNativeExpression(value))) {
+          candidates.Remove(phi);
+          changed = true;
+        }
+    }
+    return candidates;
+  }
+
+  /// <summary>
   /// Out-of-SSA: for every phi, copy each incoming value into the phi's register at the end of the
   /// corresponding predecessor block (before its terminator). Conservatively declines when the copies
   /// on one edge form a cycle (a copy reads a register another copy on the same edge overwrites) - the
@@ -255,6 +307,12 @@ public sealed partial class InstructionSelector {
               continue;
             }
             if (IsWide(phi.Type)) {
+              if (this._vregs[phi].Size == MRegSize.Dword) {
+                if (!this.TryNativeDwordOperand(value, out var nativeSource))
+                  return this.Decline("phi: a native dword loop value has a non-dword incoming edge");
+                copies.Add((this._vregs[phi], nativeSource));
+                continue;
+              }
               // both halves of a 32-bit phi are copied on the edge, low then high
               if (!this.TryOperandPair(value, out var lowSource, out var highSource))
                 return false;
@@ -633,6 +691,8 @@ public sealed partial class InstructionSelector {
       return this.SelectWideRuntimeBinary(bin, bin.Op == IrBinaryOp.UDiv ? "rt_uldiv" : "rt_ulmod");
     if (!TryMapBinary(bin.Op, out var opcode))
       return this.Decline($"binary: {bin.Op}");   // 16-bit unsigned divide / remainder
+    if (IsQuad(bin.Type))
+      return this.SelectQwordBinary(bin, opcode);
     if (IsWide(bin.Type))
       return this.SelectWideBinary(bin, opcode, block);
     if (opcode == MOpcode.Imul && this.TryDecomposeConstantMultiply(bin))
@@ -776,6 +836,108 @@ public sealed partial class InstructionSelector {
     var one = new MOperand.Immediate(1);
     for (var step = 0; step < count; ++step)
       this.Add(opcode, destination, one);
+    return true;
+  }
+
+  /// An optimized 386 applies a QUAD bitwise operation as two dword halves. QUAD values already live
+  /// in exact eight-byte frame cells because four allocatable word registers would consume the whole
+  /// 16-bit register file; EAX is therefore only an instruction-local bridge between those cells.
+  /// Its AX overlap is declared as a clobber so allocation cannot keep a live word there.
+  /// </summary>
+  private bool SelectQwordBinary(IrBinary bin, MOpcode opcode) {
+    if (opcode is MOpcode.Shl or MOpcode.Shr or MOpcode.Sar)
+      return this.SelectQwordShift(bin, opcode);
+    if (this._target is not { Cpu386: true, Optimize: true }
+        || opcode is not (MOpcode.And or MOpcode.Or or MOpcode.Xor))
+      return this.Decline($"64-bit binary: {bin.Op} (needs the direct runtime path)");
+    if (!this.TryQwordSlot(bin.Lhs, out var lhs) || !this.TryQwordSlot(bin.Rhs, out var rhs))
+      return false;
+
+    var result = this._function.StackSlots.Count;
+    this._function.StackSlots.Add(8);
+    this._qslots[bin] = result;
+    var eax = new MOperand.Register(MReg.Physical_(Reg.EAX, MRegSize.Dword));
+    Reg[] clobbers = [Reg.AX];
+    for (var offset = 0; offset <= 4; offset += 4) {
+      var left = new MOperand.StackSlot(lhs, MRegSize.Dword, offset);
+      var right = new MOperand.StackSlot(rhs, MRegSize.Dword, offset);
+      var destination = new MOperand.StackSlot(result, MRegSize.Dword, offset);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [eax, left],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+          ReadsMemory: true, WritesMemory: false), condition: null, clobbers: clobbers));
+      this._current.Instructions.Add(new MInstr(opcode, [eax, right],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+          ReadsMemory: true, WritesMemory: false), condition: null, clobbers: clobbers));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destination, eax],
+        new MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: false,
+          ReadsMemory: false, WritesMemory: true), condition: null, clobbers: clobbers));
+    }
+    return true;
+  }
+
+  /// <summary>
+  /// An optimized 386 shifts a QUAD by moving its two dword halves through EDX:EAX. Counts 1..31 can
+  /// cross the half boundary with one SHLD/SHRD and one ordinary shift; zero and counts at least 32
+  /// stay on the direct path because the processor masks them and would change BASIC's loop semantics.
+  /// </summary>
+  private bool SelectQwordShift(IrBinary bin, MOpcode opcode) {
+    if (this._target is not { Cpu386: true, Optimize: true }
+        || opcode is not (MOpcode.Shl or MOpcode.Shr)
+        || WideShiftCount(bin.Rhs) is not { } count || count is < 1 or > 31)
+      return this.Decline($"64-bit shift: {bin.Op} (needs an optimized 386 constant count 1..31)");
+    if (!this.TryQwordSlot(bin.Lhs, out var source))
+      return false;
+
+    var result = this._function.StackSlots.Count;
+    this._function.StackSlots.Add(8);
+    this._qslots[bin] = result;
+    var eax = new MOperand.Register(MReg.Physical_(Reg.EAX, MRegSize.Dword));
+    var edx = new MOperand.Register(MReg.Physical_(Reg.EDX, MRegSize.Dword));
+    var immediate = new MOperand.Immediate(count);
+    Reg[] clobbers = [Reg.AX, Reg.DX];
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov,
+      [eax, new MOperand.StackSlot(source, MRegSize.Dword)],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+        ReadsMemory: true, WritesMemory: false), condition: null, clobbers: clobbers));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov,
+      [edx, new MOperand.StackSlot(source, MRegSize.Dword, 4)],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+        ReadsMemory: true, WritesMemory: false), condition: null, clobbers: clobbers));
+
+    var (doubleOpcode, doubleDestination, doubleSource, singleOpcode, singleDestination) =
+      opcode == MOpcode.Shl
+        ? (MOpcode.Shld, edx, eax, MOpcode.Shl, eax)
+        : (MOpcode.Shrd, eax, edx, MOpcode.Shr, edx);
+    this._current.Instructions.Add(new MInstr(doubleOpcode,
+      [doubleDestination, doubleSource, immediate],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false), condition: null, clobbers: clobbers));
+    this._current.Instructions.Add(new MInstr(singleOpcode, [singleDestination, immediate],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false), condition: null, clobbers: clobbers));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov,
+      [new MOperand.StackSlot(result, MRegSize.Dword), eax],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: false,
+        ReadsMemory: false, WritesMemory: true), condition: null, clobbers: clobbers));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov,
+      [new MOperand.StackSlot(result, MRegSize.Dword, 4), edx],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: false,
+        ReadsMemory: false, WritesMemory: true), condition: null, clobbers: clobbers));
+    return true;
+  }
+
+  /// <summary>A qword cell for a loaded/derived QUAD, or a newly staged literal.</summary>
+  private bool TryQwordSlot(IrValue value, out int slot) {
+    if (this._qslots.TryGetValue(value, out slot))
+      return true;
+    if (value is not IrConstantInt { Type: { IsInteger: true, Bits: 64 }, Value: var constant })
+      return this.Decline($"64-bit operand: {value.GetType().Name} has no cell");
+
+    slot = this._function.StackSlots.Count;
+    this._function.StackSlots.Add(8);
+    var cell = new MOperand.StackSlot(slot, MRegSize.Word);
+    for (var offset = 0; offset < 8; offset += 2)
+      this.StoreWord(Shifted(cell, offset), new MOperand.Immediate((short)(constant >> (offset * 8))));
     return true;
   }
 
@@ -961,6 +1123,18 @@ public sealed partial class InstructionSelector {
   /// divide and the shifts need a runtime helper or a CL count and are declined.
   /// </summary>
   private bool SelectWideBinary(IrBinary bin, MOpcode opcode, MBlock block) {
+    if (this.UsesNativeDwordRegisters
+        && opcode is MOpcode.Add or MOpcode.Sub or MOpcode.And or MOpcode.Or or MOpcode.Xor
+        && this.TryNativeDwordOperand(bin.Lhs, out var nativeLhs)
+        && this.TryNativeDwordOperand(bin.Rhs, out var nativeRhs)) {
+      var destination = this.FreshVreg(bin.Type);
+      this._vregs[bin] = destination;
+      var destinationOperand = new MOperand.Register(destination);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destinationOperand, nativeLhs],
+        MovEffect(destinationOperand, nativeLhs)));
+      this.Add(opcode, destinationOperand, nativeRhs);
+      return true;
+    }
     if (opcode is MOpcode.Shl or MOpcode.Shr or MOpcode.Sar)
       return this.SelectWideShift(bin, opcode, block);
     var high = opcode switch {
@@ -1014,6 +1188,9 @@ public sealed partial class InstructionSelector {
   };
 
   private bool SelectWideShift(IrBinary bin, MOpcode opcode, MBlock block) {
+    if (this._target is { Cpu386: true, Optimize: true }
+        && WideShiftCount(bin.Rhs) is { } nativeCount && nativeCount is >= 1 and <= 31)
+      return this.SelectNativeWideShift(bin, opcode, nativeCount);
     // ...except by exactly sixteen, which is not a shift on a register pair at all: it is the two
     // halves changing places. That is two moves rather than the thirty-two shift/rotate steps the
     // bit-at-a-time loop would need, and it is how a segment and an offset are joined into one
@@ -1042,6 +1219,33 @@ public sealed partial class InstructionSelector {
         new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: true, WritesFlags: true,
           ReadsMemory: false, WritesMemory: false)));
     }
+    return true;
+  }
+
+  /// <summary>
+  /// A 386 shifts a staged LONG in one operand-size-prefixed instruction. The rest of the back end
+  /// deliberately represents an i32 as two word registers; a four-byte frame cell is the lossless
+  /// bridge to the native dword instruction without teaching allocation that those two resources are
+  /// one register. Staging also works under register pressure because the shift accepts memory.
+  /// </summary>
+  private bool SelectNativeWideShift(IrBinary bin, MOpcode opcode, long count) {
+    if (!this.TryOperandPair(bin.Lhs, out var lhsLo, out var lhsHi))
+      return false;
+
+    var slot = this._function.StackSlots.Count;
+    this._function.StackSlots.Add(4);
+    var lowCell = new MOperand.StackSlot(slot, MRegSize.Word);
+    var highCell = new MOperand.StackSlot(slot, MRegSize.Word, 2);
+    var dword = new MOperand.StackSlot(slot, MRegSize.Dword);
+    this.StoreWord(lowCell, lhsLo);
+    this.StoreWord(highCell, lhsHi);
+    this._current.Instructions.Add(new MInstr(opcode, [dword, new MOperand.Immediate(count)],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: true, WritesMemory: true)));
+
+    var (destLo, destHi) = this.FreshPair(bin);
+    this.LoadWord(destLo, lowCell);
+    this.LoadWord(destHi, highCell);
     return true;
   }
 
@@ -1112,10 +1316,9 @@ public sealed partial class InstructionSelector {
   /// comes back in <c>AX</c>, and the remainder in <c>DX</c>.
   ///
   /// PowerBASIC raises Error 11 on a zero divisor, and that guard is part of the language rather than
-  /// an <c>$ERROR</c> option - so only a <b>non-zero compile-time constant</b> divisor is selected
-  /// here, which is precisely the case where the direct emitter also drops the guard (O0220): a
-  /// constant that cannot be zero cannot trap. A runtime 16-bit divisor still declines; the 32-bit
-  /// helper owns the guard and calls <c>rt_raise</c> with Error 11.
+  /// an <c>$ERROR</c> option. The lowering emits the guard, so a runtime divisor is safe here and a
+  /// known nonzero constant lets the optimizer erase it. A literal <c>-1</c> still declines because
+  /// <c>MININT / -1</c> overflows the hardware instruction.
   /// </summary>
   private bool SelectDivide(IrBinary bin, MBlock block) {
     if (IsWide(bin.Type))
@@ -1136,7 +1339,8 @@ public sealed partial class InstructionSelector {
     // the divisor must be a register - IDIV has no immediate form, whether the value came from a
     // constant or from a variable
     var divisorReg = new MOperand.Register(this.FreshVreg(bin.Type));
-    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [divisorReg, divisorSource], MovEffect(divisorReg, divisorSource)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [divisorReg, divisorSource],
+      MovEffect(divisorReg, divisorSource)));
 
     // AX is written here, not by an allocated vreg - so it is declared a clobber too, which is what
     // keeps the allocator from parking some other live value (or the dividend itself) in AX
@@ -1151,13 +1355,20 @@ public sealed partial class InstructionSelector {
         ReadsMemory: false, WritesMemory: false),
       condition: null, clobbers: [Reg.AX, Reg.DX]));
 
-    // quotient in AX, remainder in DX
-    var dest = this.FreshVreg(bin.Type);
-    this._vregs[bin] = dest;
-    var destOp = new MOperand.Register(dest);
-    var result = new MOperand.Register(MReg.Physical_(bin.Op == IrBinaryOp.SDiv ? Reg.AX : Reg.DX, MRegSize.Word));
-    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, result], MovEffect(destOp, result)));
+    // One IDIV computes both answers. When the collector found a dominated matching operation,
+    // capture both physical results now and let the block loop skip the second IR instruction.
+    Capture(bin);
+    if (this._sharedDivRem.TryGetValue(bin, out var paired))
+      Capture(paired);
     return true;
+
+    void Capture(IrBinary value) {
+      var destination = new MOperand.Register(this.FreshVreg(value.Type));
+      this._vregs[value] = destination.Reg;
+      var physical = value.Op == IrBinaryOp.SDiv ? Reg.AX : Reg.DX;
+      var result = new MOperand.Register(MReg.Physical_(physical, MRegSize.Word));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destination, result], MovEffect(destination, result)));
+    }
   }
 
   private bool SelectAlloca(IrAlloca alloca, MBlock block) {
@@ -1336,6 +1547,14 @@ public sealed partial class InstructionSelector {
     if (store.Value.Type.IsFloat)
       return this.Decline($"floating point: {store.Value.Type} through the scalar path");
     if (IsWide(store.Value.Type)) {
+      if (this.TryNativeDwordOperand(store.Value, out var native)) {
+        if (this.PointerMemory(store.Pointer, MRegSize.Dword) is not { } cell)
+          return false;
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [cell, native],
+          new MInstrEffect([], native is MOperand.Register ? [1] : [], false, false, false,
+            WritesMemory: true)));
+        return true;
+      }
       if (this.PointerMemory(store.Pointer, MRegSize.Word) is not { } lowCell)
         return false;
       if (!this.TryOperandPair(store.Value, out var lo, out var hi))
@@ -1515,9 +1734,9 @@ public sealed partial class InstructionSelector {
   };
 
   /// <summary>
-  /// A 32-bit comparison materialized as PowerBASIC's -1/0 truth value. There is no 32-bit CMP on this
-  /// target, so it becomes a compare of the high words, then - only when those are equal - a compare of
-  /// the low ones:
+  /// A 32-bit comparison materialized as PowerBASIC's -1/0 truth value. An eligible 386-resident value
+  /// uses one native CMP; the baseline pair becomes a compare of the high words, then - only when those
+  /// are equal - a compare of the low ones:
   /// <code>
   ///   CMP hiL, hiR
   ///   Jcc  true          ; the high words already settle it
@@ -1532,6 +1751,14 @@ public sealed partial class InstructionSelector {
   /// 32-bit order is decided by the high half and the low half is only a magnitude.
   /// </summary>
   private bool SelectWideCmpValue(IrCmp cmp) {
+    if (this.UsesNativeDwordRegisters
+        && MapPredicate(this.PredicateOf(cmp)) is { } nativeCondition
+        && this.TryNativeDwordOperand(cmp.Lhs, out var nativeLhs)
+        && this.TryNativeDwordOperand(cmp.Rhs, out var nativeRhs)
+        && nativeLhs is MOperand.Register) {
+      this.EmitCompare(nativeLhs, nativeRhs);
+      return this.MaterializeCondition(cmp, nativeCondition);
+    }
     if (WideConditions(this.PredicateOf(cmp)) is not { } conditions)
       return this.Decline($"compare as a value: 32-bit {cmp.Pred}");
     if (!this.TryOperandPair(cmp.Lhs, out var lhsLo, out var lhsHi)
@@ -1814,6 +2041,8 @@ public sealed partial class InstructionSelector {
         this.EmitSignSmear(hi);
         return true;
       }
+      case IrCastOp.SExt or IrCastOp.ZExt when IsQuad(to) && IsWide(from):
+        return this.SelectWideToQword(cast);
       // A BYTE is the low half of the word already holding the value, so narrowing to one is a
       // change of VIEW rather than of content: the same virtual register, named at byte width. That
       // is the same reinterpretation the runtime-call staging does when it needs AL out of AX, and
@@ -3209,6 +3438,35 @@ public sealed partial class InstructionSelector {
   }
 
   /// <summary>
+  /// Extends a LONG/DWORD register pair into the qword-cell representation used for a signed QUAD.
+  /// The low dword is copied word for word; the upper dword is either zero or the source sign word
+  /// repeated twice. No 64-bit register is created or required.
+  /// </summary>
+  private bool SelectWideToQword(IrCast cast) {
+    if (!this.TryOperandPair(cast.Value, out var low, out var high))
+      return false;
+    var slot = this._function.StackSlots.Count;
+    this._function.StackSlots.Add(8);
+    this._qslots[cast] = slot;
+    var cell = new MOperand.StackSlot(slot, MRegSize.Word);
+    this.StoreWord(cell, low);
+    this.StoreWord(Shifted(cell, 2), high);
+
+    MOperand extension = new MOperand.Immediate(0);
+    if (cast.Op == IrCastOp.SExt) {
+      var sign = new MOperand.Register(this.FreshVreg(IrType.I16));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [sign, high], MovEffect(sign, high)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Sar, [sign, new MOperand.Immediate(15)],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+          ReadsMemory: false, WritesMemory: false)));
+      extension = sign;
+    }
+    this.StoreWord(Shifted(cell, 4), extension);
+    this.StoreWord(Shifted(cell, 6), extension);
+    return true;
+  }
+
+  /// <summary>
   /// A float rounded into an integer, which is what BASIC does on assignment (<c>n% = 2.7</c> is 3).
   /// <c>FISTP</c> rounds by the x87 control word, and the runtime leaves it at its default of nearest
   /// with ties to even - so the instruction IS the semantics, no bias sequence needed.
@@ -3364,7 +3622,7 @@ public sealed partial class InstructionSelector {
 
   private MReg FreshVreg(IrType type) => MReg.Virtual(this._nextVreg++, RegSize(type));
 
-  /// <summary>True for a 32-bit integer, which this target holds in a register pair.</summary>
+  /// <summary>True for a 32-bit integer, represented by a baseline pair or an eligible 386 dword.</summary>
   private static bool IsWide(IrType type) => type.IsInteger && type.Bits == 32;
 
   /// <summary>Mints the low/high register pair for a 32-bit value and records both halves.</summary>
@@ -3383,12 +3641,42 @@ public sealed partial class InstructionSelector {
       hi = new MOperand.Immediate((short)((c.Value >> 16) & 0xFFFF));
       return true;
     }
+    if (this.UsesNativeDwordRegisters
+        && this._vregs.TryGetValue(value, out var native) && native.Size == MRegSize.Dword) {
+      var slot = this._function.StackSlots.Count;
+      this._function.StackSlots.Add(4);
+      var cell = new MOperand.StackSlot(slot, MRegSize.Dword);
+      var source = new MOperand.Register(native);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [cell, source],
+        new MInstrEffect([], [1], false, false, false, WritesMemory: true)));
+      lo = new MOperand.StackSlot(slot, MRegSize.Word);
+      hi = new MOperand.StackSlot(slot, MRegSize.Word, 2);
+      return true;
+    }
     lo = hi = null!;
     if (!this._vregs.TryGetValue(value, out var loReg) || !this._hiVregs.TryGetValue(value, out var hiReg))
       return this.Decline($"32-bit operand: {value.GetType().Name} has no register pair");
     lo = new MOperand.Register(loReg);
     hi = new MOperand.Register(hiReg);
     return true;
+  }
+
+  /// <summary>A whole 386 dword operand, without manufacturing one from a baseline word pair.</summary>
+  private bool TryNativeDwordOperand(IrValue value, out MOperand operand) {
+    if (!this.UsesNativeDwordRegisters) {
+      operand = null!;
+      return false;
+    }
+    if (value is IrConstantInt constant) {
+      operand = new MOperand.Immediate((int)constant.Value);
+      return true;
+    }
+    if (this._vregs.TryGetValue(value, out var register) && register.Size == MRegSize.Dword) {
+      operand = new MOperand.Register(register);
+      return true;
+    }
+    operand = null!;
+    return false;
   }
 
   private static MInstrEffect PairEffect(MOperand rhs, bool readsFlags, bool writesFlags) =>

@@ -11,13 +11,9 @@ namespace PowerBasic.Compiler.Backend;
 /// instruction selection, liveness, linear-scan allocation, emission and scheduling build on it.
 /// </summary>
 /// <summary>
-/// An operand's width. <c>Qword</c> never names a register on this target - x86-16 has none - but it
-/// does name a memory cell: a DOUBLE, and the qword form of an x87 load or store.
-/// </summary>
-/// <summary>
-/// The width of an operand. The three wide ones never name a REGISTER on a 16-bit machine - they
-/// only ever describe a memory reference an x87 instruction reaches: a SINGLE is a dword, a DOUBLE a
-/// qword, and an EXTENDED a tbyte. Writing one through a narrower reference stores part of a value.
+/// The width of an operand. <c>Dword</c> names either a memory cell or a target-gated 386 register;
+/// <c>Qword</c> and <c>Tbyte</c> name memory only. Writing through a narrower reference stores part of
+/// a value.
 /// </summary>
 public enum MRegSize { Byte, Word, Dword, Qword, Tbyte }
 
@@ -207,15 +203,17 @@ public readonly record struct MInstrEffect(
 
 /// <summary>The x86-16 opcodes the selector targets; each maps to an <see cref="Assembler"/> method at emission.</summary>
 public enum MOpcode {
-  Mov, Lea,
+  Mov, Xchg, Lea,
   Add, Sub, And, Or, Xor, Cmp, Test,
-  /// <summary>The carry-chain halves of 32-bit add/subtract: a LONG lives in a register pair on this target.</summary>
+  /// <summary>The carry-chain halves of baseline 32-bit add/subtract over a LONG register pair.</summary>
   Adc, Sbb,
   Imul, Mul, Idiv, Div,
   Neg, Not, Inc, Dec,
   /// <summary>Sign-extend AX into DX:AX - the dividend a 16-bit IDIV consumes.</summary>
   Cwd,
   Shl, Shr, Sar,
+  /// <summary>386 double-precision shifts across two register halves.</summary>
+  Shld, Shrd,
   /// <summary>Rotate-through-carry, the second half of a 32-bit shift on a register pair.</summary>
   Rcl, Rcr,
   Push, Pop,

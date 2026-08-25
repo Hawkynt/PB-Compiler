@@ -31,12 +31,20 @@ public sealed class BackendCpuTargetTests {
   private static readonly (string Name, byte[] Bytes)[] _x387 =
     [("FSIN", [0xD9, 0xFE]), ("FCOS", [0xD9, 0xFF])];
 
-  private static byte[] Compile(string source, bool routed) {
-    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+  private static byte[] Compile(string source, bool routed) => Compile(source, routed, []);
+
+  private static byte[] Compile(string source, bool routed, params string[] requiredRoutes) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var cg = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = routed };
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
+    if (routed) {
+      Assert.That(cg.BackendRoutedNames, Does.Contain("main"), "the test must exercise routed code");
+      foreach (var requiredRoute in requiredRoutes)
+        Assert.That(cg.BackendRoutedNames, Does.Contain(requiredRoute), $"{requiredRoute} did not route");
+    }
     return image;
   }
 
@@ -95,10 +103,9 @@ public sealed class BackendCpuTargetTests {
   /// about opcodes that did not survive execution would be worth nothing.
   ///
   /// <para>
-  /// Only the 8086 target is run. A <c>$CPU 80386</c> image carries 32-bit operand prefixes that the
-  /// test CPU does not implement - the same opcode-66 limitation the corpus differential already
-  /// records - so there is no way to execute one here. The 386 target is checked by the opcode
-  /// assertions above and by nothing else, and that is a gap rather than a pass.
+  /// Only the 8086 target is run here. Focused tests below execute the emitted 386 integer subset;
+  /// the transcendental image can use additional operand-prefixed forms outside that bounded model,
+  /// so its target choice remains pinned by the opcode assertions above.
   /// </para>
   /// </summary>
   [TestCase("8086")]
@@ -200,5 +207,136 @@ public sealed class BackendCpuTargetTests {
     Assert.That(shifts, Is.GreaterThan(0), "no shift was selected at all - the program measures nothing");
     Assert.That(offenders, Is.Empty,
       "an 8086 target selected the 80186 shift-by-immediate:\n  " + string.Join("\n  ", offenders));
+  }
+
+  [TestCase("LEFT", "1", 16, "65536")]
+  [TestCase("LEFT", "1", 31, "-2147483648")]
+  [TestCase("RIGHT", "-2147483648", 31, "1")]
+  [TestCase("RIGHT", "-1", 15, "131071")]
+  public void LongShift_GivenA386RoutedBackend_ThenMatchesThe8086DirectBoundaryValue(
+      string direction, string value, int count, string expected) {
+    const string source = """
+      $CPU {0}
+      $OPTIMIZE SPEED
+      DECLARE FUNCTION Shifted&(BYVAL x&)
+      PRINT Shifted&({1})
+      PRINT Shifted&(5)
+      END
+      FUNCTION Shifted&(BYVAL x&) NOINLINE
+        SHIFT {2} x&, {3}
+        Shifted& = x&
+      END FUNCTION
+      """;
+
+    var direct = Cpu8086.Run(Compile(string.Format(source, "8086", value, direction, count), routed: false));
+    var routedImage = Compile(string.Format(source, "80386", value, direction, count), routed: true, "Shifted");
+    Assert.That(Contains(routedImage, [0x66, 0xC1]), Is.True, "the routed function did not use a dword shift");
+    var routed = Cpu8086.Run(routedImage);
+
+    Assert.Multiple(() => {
+      Assert.That(direct.Output.Split("\r\n", StringSplitOptions.RemoveEmptyEntries)[0].Trim(),
+        Is.EqualTo(expected), "direct boundary result");
+      Assert.That(routed.Output, Is.EqualTo(direct.Output), "routed");
+    });
+  }
+
+  [Test]
+  public void LongLoop_GivenA386SpeedTarget_ThenRoutedEsiAndEdiResidencyMatchesTheDirectEmitter() {
+    const string source = """
+      $CPU 80386
+      $OPTIMIZE SPEED
+      s& = 0
+      FOR i& = 1 TO 100
+        s& = s& + i&
+        PRINT s&
+      NEXT i&
+      PRINT s&
+      END
+      """;
+    var direct = Cpu8086.Run(Compile(source, routed: false));
+    var routedImage = Compile(source, routed: true);
+    var routed = Cpu8086.Run(routedImage);
+
+    Assert.Multiple(() => {
+      Assert.That(Contains(routedImage, [0x66, 0x83, 0xC6]), Is.True,
+        "the routed LONG counter should increment in ESI");
+      Assert.That(Contains(routedImage, [0x66, 0x01, 0xF7]), Is.True,
+        "the routed LONG accumulator should add ESI directly into EDI");
+      Assert.That(routed.Output, Is.EqualTo(direct.Output));
+      var lines = routed.Output.Split("\r\n", StringSplitOptions.RemoveEmptyEntries)
+        .Select(line => line.Trim())
+        .ToList();
+      Assert.That(lines, Has.Count.EqualTo(101));
+      Assert.That(lines[0], Is.EqualTo("1"));
+      Assert.That(lines[^1], Is.EqualTo("5050"));
+    });
+  }
+
+  [Test]
+  public void LongDivide_GivenA386Target_ThenDirectCdqIdivAndRoutedRuntimeAgree() {
+    const string source = """
+      $CPU 80386
+      $OPTIMIZE SPEED
+      DECLARE SUB Report(BYVAL n&)
+      Report 100000007
+      Report -100000007
+      Report -8
+      END
+      SUB Report(BYVAL n&) NOINLINE
+        PRINT n& \ 7; n& MOD 7; n& \ -7; n& MOD -7
+      END SUB
+      """;
+    var directImage = Compile(source, routed: false);
+    var routedImage = Compile(source, routed: true, "Report");
+
+    Assert.Multiple(() => {
+      Assert.That(Contains(directImage, [0x66, 0x99]), Is.True, "the direct 386 path should sign-extend EAX with CDQ");
+      Assert.That(Contains(directImage, [0x66, 0xF7]), Is.True, "the direct 386 path should use dword IDIV");
+      Assert.That(Cpu8086.Run(routedImage).Output, Is.EqualTo(Cpu8086.Run(directImage).Output));
+    });
+  }
+
+  [Test]
+  public void LongRotate_GivenA386Target_ThenDirectAndRoutedBoundaryPatternsAgree() {
+    const string source = """
+      $CPU 80386
+      $OPTIMIZE SPEED
+      x& = &H12345678
+      ROTATE LEFT x&, 8
+      PRINT x&
+      ROTATE RIGHT x&, 16
+      PRINT x&
+      END
+      """;
+    var directImage = Compile(source, routed: false);
+    var routedImage = Compile(source, routed: true);
+
+    var direct = Cpu8086.Run(directImage).Output;
+    var routed = Cpu8086.Run(routedImage).Output;
+    Assert.Multiple(() => {
+      Assert.That(direct, Is.EqualTo(" 878082066 \r\n 2014458966 \r\n"));
+      Assert.That(routed, Is.EqualTo(direct));
+    });
+  }
+
+  [Test]
+  public void ConstantArrayFill_GivenA386Target_ThenRepStosdBroadcastsEveryWord() {
+    const string source = """
+      $CPU 80386
+      $OPTIMIZE SPEED
+      DIM a%(1 TO 5)
+      FOR i% = 1 TO 5
+        a%(i%) = -5
+      NEXT i%
+      PRINT a%(1); a%(3); a%(5)
+      END
+      """;
+    var image = Compile(source, routed: false);
+
+    Assert.Multiple(() => {
+      Assert.That(Contains(image, [0xF3, 0x66, 0xAB]), Is.True,
+        "the 386 constant-fill optimization should use REP STOSD");
+      Assert.That(Cpu8086.Run(image).Output, Is.EqualTo("-5 -5 -5 \r\n"));
+    });
   }
 }

@@ -15,6 +15,10 @@ public static class IfConversion {
     foreach (var block in fn.Blocks.ToList()) {
       if (block.Parent is null || block.Terminator is not IrCondBr cb || ReferenceEquals(cb.IfTrue, cb.IfFalse))
         continue;
+      if (TryConvertAbs(fn, block, cb)) {
+        ++converted;
+        continue;
+      }
       if (!IsEmptyForward(cb.IfTrue, out var mergeFromT) || !IsEmptyForward(cb.IfFalse, out var mergeFromE))
         continue;
       if (!ReferenceEquals(mergeFromT, mergeFromE))
@@ -47,6 +51,53 @@ public static class IfConversion {
       ++converted;
     }
     return converted;
+  }
+
+  /// <summary>
+  /// Converts <c>IF x &lt; 0 THEN x = -x</c>'s one-instruction diamond to the canonical
+  /// <c>mask = x &gt;&gt;s 15; (x XOR mask) - mask</c> form. A general non-empty arm is not safe to
+  /// speculate; this exact wrapping integer negation is, and overflow-checked lowering has extra
+  /// control flow so it deliberately cannot match.
+  /// </summary>
+  private static bool TryConvertAbs(IrFunction fn, IrBasicBlock block, IrCondBr branch) {
+    if (branch.Condition is not IrCmp {
+          Pred: IrCmpPred.Slt,
+          Lhs: { Type: { IsInteger: true, Signed: true, Bits: 16 } } source,
+          Rhs: IrConstantInt { Value: 0 },
+        })
+      return false;
+    if (branch.IfTrue.Instructions is not
+        [IrBinary { Op: IrBinaryOp.Sub, Lhs: IrConstantInt { Value: 0 } } negated, IrBr negativeJump]
+        || !ReferenceEquals(negated.Rhs, source)
+        || branch.IfFalse.Instructions is not [IrBr nonNegativeJump]
+        || !ReferenceEquals(negativeJump.Target, nonNegativeJump.Target))
+      return false;
+
+    var merge = negativeJump.Target;
+    if (!SinglePred(branch.IfTrue, block) || !SinglePred(branch.IfFalse, block))
+      return false;
+    var predecessors = merge.Predecessors.ToHashSet(ReferenceEqualityComparer.Instance);
+    if (predecessors.Count != 2 || !predecessors.Contains(branch.IfTrue) || !predecessors.Contains(branch.IfFalse))
+      return false;
+    if (merge.Phis.ToList() is not [var phi]
+        || !ReferenceEquals(phi.IncomingFrom(branch.IfTrue), negated)
+        || !ReferenceEquals(phi.IncomingFrom(branch.IfFalse), source))
+      return false;
+
+    var mask = block.InsertBefore(
+      new IrBinary(IrBinaryOp.AShr, source, new IrConstantInt(source.Type, 15)), branch);
+    var inverted = block.InsertBefore(new IrBinary(IrBinaryOp.Xor, source, mask), branch);
+    var absolute = block.InsertBefore(new IrBinary(IrBinaryOp.Sub, inverted, mask), branch);
+    phi.ReplaceAllUsesWith(absolute);
+    phi.EraseFromParent();
+    branch.EraseFromParent();
+    block.Append(new IrBr(merge));
+    foreach (var dead in new[] { branch.IfTrue, branch.IfFalse }) {
+      foreach (var instruction in dead.Instructions.ToList())
+        instruction.EraseFromParent();
+      fn.RemoveBlock(dead);
+    }
+    return true;
   }
 
   /// <summary>True if a block's only instruction is an unconditional branch; outputs its target.</summary>

@@ -1,6 +1,7 @@
 using PowerBasic.Compiler.CodeGen;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Tests.Exec;
 
 namespace PowerBasic.Compiler.Tests.Backend;
 
@@ -20,20 +21,16 @@ namespace PowerBasic.Compiler.Tests.Backend;
 ///
 /// <para>
 /// <b>Two signals, on purpose.</b> <c>BackendRoutedNames</c> is the honest question - did the back
-/// end take this function - and the IMAGE comparison is the observable one. A construct that stops
-/// routing without anything else changing produces an executable byte-identical to the unrouted
-/// build, which is precisely the signature of a silent fallback and is what makes "coverage is
-/// complete" survivable as a claim. Both are asserted, because either alone can be satisfied without
-/// the other: a routing table can name a function the emitter never reached, and two builds can
-/// differ for a reason that has nothing to do with routing.
+/// end take this function - and execution equivalence is the observable one. A declined procedure
+/// may coexist with a routed caller when their stack ABI is shared, so byte identity no longer means
+/// whole-program fallback. Both signals are asserted: a routing table can name a function the emitter
+/// never reached, while a mixed routed/direct image must still behave like the direct build.
 /// </para>
 ///
 /// <para>
-/// <b>The optimizer is OFF here, and that is load-bearing.</b> With it on, the IR inliner absorbs a
-/// filtered callee into its caller, so the module body routes anyway and the image differs - which
-/// makes a filtered procedure look like a routed program. Compiling <c>--no-optimize</c> is what
-/// leaves the call standing, strands the caller on it, and lets the byte-identical image say what it
-/// means. It is also the state the historic dialects compile in.
+/// <b>The optimizer is OFF here, and that is load-bearing.</b> It keeps the call standing so the test
+/// observes the routed/direct ABI boundary rather than an inliner absorbing the declined procedure.
+/// It is also the state the historic dialects compile in.
 /// </para>
 ///
 /// <para>
@@ -117,13 +114,9 @@ public sealed class BackendRoutingGateTests {
   /// ABI classes first (a parameter or result shape the routed calling sequence cannot express),
   /// then the calling conventions, then the two that are not about the ABI at all.
   ///
-  /// <para>
-  /// Every one of these compiles to an executable byte-identical to the unrouted build - the whole
-  /// program falls back, because the module body is stranded by the very call the filter refused.
-  /// That is the cost of each row, stated in the only currency that matters after the direct emitter
-  /// is gone: today one construct silently costs a whole program's routing, and tomorrow it is a
-  /// compile error.
-  /// </para>
+  /// <para>Every row must decline with the recorded reason and remain behaviorally equivalent to the
+  /// direct build. A BASIC/PASCAL procedure may be emitted directly while its caller routes through
+  /// their shared stack ABI; unsupported conventions still strand the caller.</para>
   /// </summary>
   private static readonly Construct[] _declines = [
     new("BYREF parameter", """
@@ -270,7 +263,8 @@ public sealed class BackendRoutingGateTests {
   }
 
   /// <summary>Compiles the program twice, routed and direct, and reports what the routing did.</summary>
-  private static (IReadOnlyList<string> Routed, string? Reason, bool ImagesIdentical) Compile(Construct construct) {
+  private static (IReadOnlyList<string> Routed, string? Reason, bool ImagesIdentical,
+    byte[] DirectImage, byte[] RoutedImage) Compile(Construct construct) {
     var generator = new CodeGenerator(Bind(construct.Source)) { Optimize = false, UseExperimentalBackend = true };
     var routedImage = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "routed: " + string.Join("; ", generator.Errors));
@@ -281,12 +275,13 @@ public sealed class BackendRoutingGateTests {
       .Where(d => d.Name.Equals(construct.Subject, StringComparison.OrdinalIgnoreCase))
       .Select(d => d.Reason)
       .FirstOrDefault();
-    return (generator.BackendRoutedNames.ToList(), reason, routedImage.SequenceEqual(directImage));
+    return (generator.BackendRoutedNames.ToList(), reason, routedImage.SequenceEqual(directImage),
+      directImage, routedImage);
   }
 
   [TestCaseSource(nameof(_routes))]
   public void Compile_GivenARoutedConstruct_WhenRoutingIsEnabled_ThenTheBackEndTakesItAndTheImageChanges(Construct construct) {
-    var (routed, _, identical) = Compile(construct);
+    var (routed, _, identical, _, _) = Compile(construct);
 
     Assert.Multiple(() => {
       Assert.That(routed.Contains(construct.Subject, StringComparer.OrdinalIgnoreCase), Is.True,
@@ -298,8 +293,11 @@ public sealed class BackendRoutingGateTests {
   }
 
   [TestCaseSource(nameof(_declines))]
-  public void Compile_GivenAConstructTheRoutingRefuses_WhenRoutingIsEnabled_ThenItSaysWhyAndFallsBackWhole(Construct construct) {
-    var (routed, reason, identical) = Compile(construct);
+  public void Compile_GivenAConstructTheRoutingRefuses_WhenRoutingIsEnabled_ThenItSaysWhyAndRemainsEquivalent(
+    Construct construct) {
+    var (routed, reason, identical, directImage, routedImage) = Compile(construct);
+    var direct = Cpu8086.Run(directImage);
+    var mixed = Cpu8086.Run(routedImage);
 
     Assert.Multiple(() => {
       Assert.That(routed.Contains(construct.Subject, StringComparer.OrdinalIgnoreCase), Is.False,
@@ -307,11 +305,11 @@ public sealed class BackendRoutingGateTests {
         + "be held to routing rather than merely to declining");
       Assert.That(reason, Is.EqualTo(construct.Reason),
         $"'{construct.Subject}' still does not route, but for a different reason than recorded");
-      // the whole program falls back, and the byte-identical image is what that looks like from
-      // outside. Once CodeGen/ is gone there is nothing to fall back TO.
-      Assert.That(identical, Is.True,
-        $"'{construct.Subject}' does not route, yet the image differs from the unrouted build - "
-        + "something else in this program routed, and this case no longer measures the construct");
+      if (routed.Count == 0)
+        Assert.That(identical, Is.True,
+          "when the back end takes no function, the executable must remain the direct build");
+      Assert.That((mixed.Output, mixed.ExitCode), Is.EqualTo((direct.Output, direct.ExitCode)),
+        $"'{construct.Subject}' declined, but the mixed routed/direct image changed behavior");
     });
   }
 }

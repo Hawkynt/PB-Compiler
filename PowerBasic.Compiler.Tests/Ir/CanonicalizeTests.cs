@@ -62,4 +62,22 @@ public sealed class CanonicalizeTests {
 
     Assert.That(IrPrinter.Print(fn), Does.Contain("and i32 %x, 6"));
   }
+
+  [Test]
+  public void RunForFaithfulSelection_GivenConstantComparison_ThenRetainsTheComparison() {
+    var fn = new IrFunction("main", IrType.I1);
+    var builder = new IrBuilder(fn.CreateBlock("entry"));
+    var comparison = builder.Cmp(IrCmpPred.Slt,
+      new IrConstantInt(IrType.I16, 200), new IrConstantInt(IrType.I16, 300));
+    comparison.IsSourceCondition = true;
+    builder.Ret(comparison);
+
+    InstCombine.RunForFaithfulSelection(fn);
+
+    Assert.Multiple(() => {
+      Assert.That(fn.AllInstructions.OfType<IrCmp>().Single(), Is.SameAs(comparison));
+      Assert.That(fn.AllInstructions.OfType<IrRet>().Single().Value, Is.SameAs(comparison));
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    });
+  }
 }

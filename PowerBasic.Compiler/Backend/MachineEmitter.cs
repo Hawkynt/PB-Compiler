@@ -72,10 +72,16 @@ public sealed class MachineEmitter {
   /// RET to a caller, it falls into the runtime's exit - so the frame teardown and <c>RET n</c> would
   /// be both wrong and unreachable.
   /// </param>
+  /// <param name="alignLoops">
+  /// NOP-pads backward-edge targets to a 16-byte boundary. The target cost model enables this only
+  /// for the 486+ SPEED objective; placing the pad before the label means it runs on entry, not on
+  /// each back-edge.
+  /// </param>
   public static void EmitFunction(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
       int[] paramOffsets, int paramBytes, Func<string, Label?>? resolveCallee = null,
-      Func<string, Mem?>? resolveData = null, Action<Assembler>? onReturn = null) {
+      Func<string, Mem?>? resolveData = null, Action<Assembler>? onReturn = null, bool alignLoops = false) {
     var emitter = new MachineEmitter(asm, function, allocation, resolveCallee, resolveData, paramOffsets);
+    var loopHeaders = alignLoops ? FindLoopHeaders(function) : null;
 
     asm.Push(Asm.Reg.BP);
     asm.Mov(Asm.Reg.BP, Asm.Reg.SP);
@@ -115,6 +121,8 @@ public sealed class MachineEmitter {
         asm.Mov(allocation[i], Asm.Mem.Word(Asm.Reg.BP, paramOffsets[i]));
 
     foreach (var block in function.Blocks) {
+      if (loopHeaders?.Contains(block.Label) == true)
+        asm.AlignCode(16);
       asm.MarkLabel(emitter._labels[block.Label]);
       foreach (var instr in block.Instructions)
         if (instr.Opcode == MOpcode.Ret)
@@ -125,6 +133,22 @@ public sealed class MachineEmitter {
         else
           emitter.EmitInstruction(instr);
     }
+  }
+
+  /// <summary>
+  /// Finds loop headers from machine layout: a successor at or before its predecessor is a backward
+  /// edge, and its target is the block a repeated iteration re-enters.
+  /// </summary>
+  private static HashSet<string> FindLoopHeaders(MFunction function) {
+    var positions = function.Blocks
+      .Select((block, index) => (block.Label, Index: index))
+      .ToDictionary(item => item.Label, item => item.Index, StringComparer.Ordinal);
+    var headers = new HashSet<string>(StringComparer.Ordinal);
+    for (var index = 0; index < function.Blocks.Count; ++index)
+      foreach (var successor in function.Blocks[index].SuccessorsWithAsmJumps())
+        if (positions.TryGetValue(successor, out var target) && target <= index)
+          headers.Add(successor);
+    return headers;
   }
 
   private void EmitEpilogue(int paramBytes) {
@@ -175,6 +199,18 @@ public sealed class MachineEmitter {
     this.LoadSegmentOverride(instr);
     switch (instr.Opcode) {
       case MOpcode.Mov: this.Emit2(ops[0], ops[1], asm.Mov, asm.Mov, asm.Mov, asm.Mov, asm.Mov); break;
+      case MOpcode.Xchg:
+        if (ops[0] is MOperand.Register exchangeRegister) {
+          switch (this.ToSource(ops[1])) {
+            case Reg register: asm.Xchg(this.Resolve(exchangeRegister.Reg), register); break;
+            case Mem memory: asm.Xchg(this.Resolve(exchangeRegister.Reg), memory); break;
+            default: throw new System.NotSupportedException("XCHG requires a register and a register or memory");
+          }
+        } else if (ops[1] is MOperand.Register sourceRegister)
+          asm.Xchg(this.Mem(ops[0]), this.Resolve(sourceRegister.Reg));
+        else
+          throw new System.NotSupportedException("XCHG cannot exchange two memory operands");
+        break;
       case MOpcode.Add: this.Emit2(ops[0], ops[1], asm.Add, asm.Add, asm.Add, asm.Add, asm.Add); break;
       case MOpcode.Sub: this.Emit2(ops[0], ops[1], asm.Sub, asm.Sub, asm.Sub, asm.Sub, asm.Sub); break;
       case MOpcode.And: this.Emit2(ops[0], ops[1], asm.And, asm.And, asm.And, asm.And, asm.And); break;
@@ -242,6 +278,8 @@ public sealed class MachineEmitter {
       case MOpcode.Shl: this.Shift(ops, asm.Shl, asm.Shl, asm.Shl, asm.Shl); break;
       case MOpcode.Shr: this.Shift(ops, asm.Shr, asm.Shr, asm.Shr, asm.Shr); break;
       case MOpcode.Sar: this.Shift(ops, asm.Sar, asm.Sar, asm.Sar, asm.Sar); break;
+      case MOpcode.Shld: asm.Shld(this.Reg(ops[0]), this.Reg(ops[1]), this.Immediate(ops[2])); break;
+      case MOpcode.Shrd: asm.Shrd(this.Reg(ops[0]), this.Reg(ops[1]), this.Immediate(ops[2])); break;
       // the carry the neighbouring SHL/SHR left is rotated into the other half of a 32-bit shift
       case MOpcode.Rcl: asm.Rcl(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
       case MOpcode.Rcr: asm.Rcr(this.Reg(ops[0]), (int)((MOperand.Immediate)ops[1]).Value); break;
@@ -448,6 +486,8 @@ public sealed class MachineEmitter {
   };
 
   private Reg Reg(MOperand operand) => this.Resolve(((MOperand.Register)operand).Reg);
+
+  private int Immediate(MOperand operand) => (int)((MOperand.Immediate)operand).Value;
 
   /// <summary>A module variable's cell, as the whole-program codegen lays it out (plus any word offset).</summary>
   private Mem DataCell(MOperand.DataCell cell) {

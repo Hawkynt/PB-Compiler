@@ -324,29 +324,28 @@ public sealed class BackendCoverageTests {
 
     // ---- the honest headline, and the assertions that keep it honest ----
     //
-    // 242 of 263, not 262 of 262. The difference is not a regression and nothing got worse: it is
+    // 245 of 263, not 262 of 262. The difference is not a regression and nothing got worse: it is
     // what the number always was once the procedures the filter skips are counted as the declines
     // they are. Ranked by how many procedures each class costs, over the corpus:
     //
     //   12  BYREF parameter (7 INTEGER, 3 SINGLE, 2 LONG)   filtered - never offered
-    //    3  a caller stranded by one of the above            routing  - a consequence, not a cause
     //    2  STRING return type                              filtered
     //    2  a callee with no link symbol                     routing
     //    1  STRING parameter                                filtered
     //    1  a procedure body the lowering refused            lowering - invisible before this census
     //
-    // With --no-optimize the stranded-caller row goes from 3 to 13, because the inliner is what
-    // absorbs a filtered callee and lets its caller route anyway. That difference is the measure of
-    // how much of the optimized figure is on loan.
+    // A non-SPEED BASIC/PASCAL caller can call a direct callee through their shared stack ABI, so
+    // BYREF procedures no longer strand their module bodies. External declarations and procedure
+    // bodies that did not lower still have no linkable local body and keep their callers direct.
     //
     // Classes the corpus does NOT exercise are real all the same, and BackendRoutingGateTests holds
     // one program each: QUAD and BYTE parameters and returns, UDT/FIX/EXT parameters, a
     // CDECL/STDCALL/FASTCALL/WATCALL convention, and error handling inside a procedure body.
     //
     // A floor, so a widening may only raise it. Lowering it means the back end took less than it did.
-    Assert.That(census.Routed, Is.GreaterThanOrEqualTo(242),
+    Assert.That(census.Routed, Is.GreaterThanOrEqualTo(245),
       $"the x86-16 back end now ROUTES fewer corpus functions than it used to ({census.Routed}/{census.Bodies}):\n" + report);
-    Assert.That(census.RoutedNoOptimize, Is.GreaterThanOrEqualTo(229),
+    Assert.That(census.RoutedNoOptimize, Is.GreaterThanOrEqualTo(242),
       "the x86-16 back end routes fewer corpus functions with --no-optimize than it used to:\n" + report);
 
     // Pinned by name for the reason every other set here is: a count cannot tell "a program stopped
@@ -490,14 +489,11 @@ public sealed class BackendCoverageTests {
   /// and never did, and both move it by one.
   /// </summary>
   /// <summary>
-  /// Every corpus module body the PRODUCTION routing does not take, with the reason. All five are
-  /// consequences rather than causes: four are stranded by a callee the filter refused, and the
-  /// fifth by a procedure body the lowering refused. Fix the cause and the body follows.
+  /// Every corpus module body the PRODUCTION routing does not take, with the reason. Both are
+  /// consequences rather than causes: one is stranded by external declarations with no local body,
+  /// and the other by a procedure body the lowering refused. Fix the cause and the body follows.
   /// </summary>
   private static readonly string[] _mainBodiesNotRouted = [
-    "DIFF12.BAS",     // calls Bump, a SUB with a BYREF INTEGER parameter
-    "DIFF14.BAS",     // calls Noisy, likewise
-    "DIFF19.BAS",     // calls Recurse, likewise
     "LINKDEMO.BAS",   // calls AddInts/Bump/Greet, which are EXTERNAL and have no body here
     "CODEGEN.BAS",    // calls SwapIsInline, whose body the lowering refused
   ];

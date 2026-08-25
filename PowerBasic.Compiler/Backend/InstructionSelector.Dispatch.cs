@@ -6,8 +6,9 @@ namespace PowerBasic.Compiler.Backend;
 /// <summary>
 /// Selection of an <see cref="IrSwitch"/> into a dispatch that is not a compare per case: an unsigned
 /// range test, a compile-time membership mask, a word jump table, its byte-indexed compression, or a
-/// key-verified perfect hash. This is the machine-level half of what <c>Ir/Passes/SwitchFormation.cs</c>
-/// recovered - the pass says WHICH values go where, this file says how an 8086 gets there.
+/// key-verified perfect hash, or a balanced sparse decision tree. This is the machine-level half of
+/// what <c>Ir/Passes/SwitchFormation.cs</c> recovered - the pass says WHICH values go where, this file
+/// says how an 8086 gets there.
 ///
 /// <para>
 /// It lives here rather than in a pass because every one of these shapes is a statement about the
@@ -22,8 +23,9 @@ namespace PowerBasic.Compiler.Backend;
 /// <b>The shapes are tried cheapest-answer-first</b>, and the order is what makes each one's gate
 /// simple: a contiguous run to one arm is a range and never anything else; a scattered set to one arm
 /// is a mask; several arms over a small span are a table; a wide span whose values separate under a low
-/// bit mask is a hash. Anything left falls through to the compare chain, which is what the selector
-/// already did and remains the right answer for two or three cases.
+/// bit mask is a hash; a many-case set no constant-time shape can cover is a balanced tree. Anything
+/// left falls through to the compare chain, which is what the selector already did and remains the
+/// right answer for a few cases.
 /// </para>
 ///
 /// <para>
@@ -37,13 +39,10 @@ namespace PowerBasic.Compiler.Backend;
 /// </para>
 ///
 /// <para>
-/// <b>What is deliberately not here.</b> A 32-bit subject dispatches through the existing high/low
-/// compare chain: every shape below indexes or masks a 16-bit value, and the direct emitter reaches a
-/// LONG subject only by first proving it equal to its own low word - a guard that is worth its bytes
-/// there because the table is unconditional, and is not yet worth them here. A balanced decision tree
-/// for a sparse set is also absent: the corpus's sparse SELECTs all fall to the perfect hash, which is
-/// constant time where the tree is logarithmic, and the one test that would measure the tree cannot
-/// observe it (its subject is a literal, which SCCP resolves before selection ever runs).
+/// <b>What is deliberately not here.</b> A sparse 32-bit subject still dispatches through the existing
+/// high/low compare chain: the tree below compares a 16-bit value, while a LONG needs a sign-extension
+/// guard before that is sound. Dense LONG sets do have a table path because subtracting the minimum
+/// reduces their bounded window to a guarded word index.
 /// </para>
 /// </summary>
 public sealed partial class InstructionSelector {
@@ -58,17 +57,23 @@ public sealed partial class InstructionSelector {
   /// <summary>The widest span a dense table covers: past it the table is mostly default entries.</summary>
   private const int _MAX_TABLE_SPAN = 256;
 
-  /// <summary>How many table entries one case value may buy before the table stops being dense enough to pay.</summary>
+  /// <summary>
+  /// How many table entries one case value may buy before the table stops being dense enough to pay.
+  /// </summary>
   private const int _TABLE_DENSITY = 4;
 
   /// <summary>The smallest set the perfect hash will look at, and the widest mask it will try.</summary>
   private const int _MIN_HASH_CASES = 8;
   private const int _MAX_HASH_BITS = 8;
 
+  /// <summary>The direct emitter's break-even point for a balanced sparse decision tree.</summary>
+  private const int _MIN_TREE_CASES = 8;
+
   // the registers each shape works in; a value live across the dispatch must avoid exactly these
   private static readonly IReadOnlyList<Reg> _rangeRegisters = [Reg.AX];
   private static readonly IReadOnlyList<Reg> _maskRegisters = [Reg.AX, Reg.CX];
   private static readonly IReadOnlyList<Reg> _tableRegisters = [Reg.AX, Reg.BX];
+  private static readonly IReadOnlyList<Reg> _wideTableRegisters = [Reg.AX, Reg.BX, Reg.DX];
   private static readonly IReadOnlyList<Reg> _hashRegisters = [Reg.AX, Reg.BX, Reg.CX];
 
   /// <summary>
@@ -77,17 +82,17 @@ public sealed partial class InstructionSelector {
   /// control leaves the IR predecessor from and therefore where its phi copies belong.
   /// </summary>
   private bool TrySelectDispatch(IrSwitch sw) {
-    if (!this._target.Optimize || sw.Condition.Type.Bits != 16)
-      return false;
-    if (!this.TryOperand(sw.Condition, out var operand) || operand is not MOperand.Register subject)
+    if (!this._target.Optimize || sw.Condition.Type.Bits is not (16 or 32))
       return false;
 
     // first case naming a value wins, which is what SELECT CASE means and what IrSwitch already promises
     var arms = new List<(long Value, string Target)>();
     var seen = new HashSet<long>();
-    foreach (var (value, target) in sw.Cases)
-      if (seen.Add(unchecked((short)value)))
-        arms.Add((unchecked((short)value), target.Label));
+    foreach (var (value, target) in sw.Cases) {
+      var normalized = sw.Condition.Type.Bits == 16 ? unchecked((short)value) : unchecked((int)value);
+      if (seen.Add(normalized))
+        arms.Add((normalized, target.Label));
+    }
     if (arms.Count < _MIN_DISPATCH_CASES)
       return false;
 
@@ -97,11 +102,14 @@ public sealed partial class InstructionSelector {
     var span = max - min + 1;
     var targets = arms.Select(a => a.Target).Distinct(System.StringComparer.Ordinal).ToList();
 
-    var selected =
+    var selected = sw.Condition.Type.Bits == 32
+      ? this.TryWideTableDispatch(sw.Condition, arms, min, max, span, fallback)
+      : this.TryOperand(sw.Condition, out var operand) && operand is MOperand.Register subject && (
       this.TryRangeDispatch(subject, arms, targets, min, span, fallback)
       || this.TryMaskDispatch(subject, arms, targets, min, max, fallback)
       || this.TryTableDispatch(subject, arms, min, max, span, fallback)
-      || this.TryHashDispatch(subject, arms, fallback);
+      || this.TryHashDispatch(subject, arms, fallback)
+      || this.TryTreeDispatch(subject, arms, fallback));
     if (!selected)
       return false;
 
@@ -200,9 +208,57 @@ public sealed partial class InstructionSelector {
   /// </summary>
   private bool TryTableDispatch(MOperand.Register subject, List<(long Value, string Target)> arms,
       long min, long max, long span, string fallback) {
-    if (arms.Count < _TABLE_DENSITY || span > _MAX_TABLE_SPAN || span > _TABLE_DENSITY * (long)arms.Count)
+    if (!IsDenseTable(arms, span))
       return false;
 
+    this.EmitDispatchSubject(subject, min, _tableRegisters);
+    this.EmitDispatchCompare(span, _tableRegisters);
+    this.EmitDispatchBranch(Condition.AboveOrEqual, fallback, _tableRegisters);
+    this.EmitIndexedJump(this.BuildDispatchTable(arms, min, max, span, fallback), fallback, _tableRegisters);
+    return true;
+  }
+
+  /// <summary>
+  /// A LONG table uses the same bounded low-word index as a word table, but first subtracts the
+  /// minimum from the full DX:AX pair. A zero high word proves the normalized index fits in AX; the
+  /// ordinary unsigned span check then distinguishes the table window from the rest of that word.
+  /// </summary>
+  private bool TryWideTableDispatch(IrValue condition, List<(long Value, string Target)> arms,
+      long min, long max, long span, string fallback) {
+    if (!IsDenseTable(arms, span) || !this.TryOperandPair(condition, out var low, out var high))
+      return false;
+
+    var ax = Pinned(Reg.AX);
+    var dx = Pinned(Reg.DX);
+    this.EmitPinned(MOpcode.Mov, [ax, low], DispatchMovEffect(low), _wideTableRegisters);
+    this.EmitPinned(MOpcode.Mov, [dx, high], DispatchMovEffect(high), _wideTableRegisters);
+    if (min != 0) {
+      var bits = unchecked((uint)(int)min);
+      this.EmitPinned(MOpcode.Sub, [ax, WordImmediate((ushort)bits)],
+        new MInstrEffect([0], [0], ReadsFlags: false, WritesFlags: true,
+          ReadsMemory: false, WritesMemory: false), _wideTableRegisters);
+      this.EmitPinned(MOpcode.Sbb, [dx, WordImmediate((ushort)(bits >> 16))],
+        new MInstrEffect([0], [0], ReadsFlags: true, WritesFlags: true,
+          ReadsMemory: false, WritesMemory: false), _wideTableRegisters);
+    }
+    this.EmitPinned(MOpcode.Test, [dx, dx],
+      new MInstrEffect([], [0, 1], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false), _wideTableRegisters);
+    this.EmitDispatchBranch(Condition.NotEqual, fallback, _wideTableRegisters);
+    this.ContinueDispatch("table.word", _wideTableRegisters);
+
+    this.EmitDispatchCompare(span, _wideTableRegisters);
+    this.EmitDispatchBranch(Condition.AboveOrEqual, fallback, _wideTableRegisters);
+    this.EmitIndexedJump(this.BuildDispatchTable(arms, min, max, span, fallback), fallback, _wideTableRegisters);
+    return true;
+  }
+
+  private static bool IsDenseTable(List<(long Value, string Target)> arms, long span)
+    => arms.Count >= _TABLE_DENSITY && span <= _MAX_TABLE_SPAN && span <= _TABLE_DENSITY * (long)arms.Count;
+
+  /// <summary>Builds the dense target vector, or SIZE's byte indirection over its distinct targets.</summary>
+  private MOperand.BlockAddressTable BuildDispatchTable(List<(long Value, string Target)> arms,
+      long min, long max, long span, string fallback) {
     var armOf = arms.ToDictionary(a => a.Value, a => a.Target);
     var slotOf = new Dictionary<string, int>(System.StringComparer.Ordinal);
     var slots = new List<string>();
@@ -217,16 +273,9 @@ public sealed partial class InstructionSelector {
       index[value - min] = (byte)slot;
     }
 
-    var compressed = this._target.OptimizeSize && slots.Count <= 256 && span > 2L * slots.Count;
-    var table = compressed
+    return this._target.OptimizeSize && slots.Count <= 256 && span > 2L * slots.Count
       ? new MOperand.BlockAddressTable(slots, index)
       : new MOperand.BlockAddressTable([.. index.Select(slot => slots[slot])]);
-
-    this.EmitDispatchSubject(subject, min, _tableRegisters);
-    this.EmitDispatchCompare(span, _tableRegisters);
-    this.EmitDispatchBranch(Condition.AboveOrEqual, fallback, _tableRegisters);
-    this.EmitIndexedJump(table, fallback, _tableRegisters);
-    return true;
   }
 
   /// <summary>
@@ -269,10 +318,82 @@ public sealed partial class InstructionSelector {
     return true;
   }
 
+  /// <summary>
+  /// A large sparse set that cannot use a table or perfect hash is searched by signed comparisons
+  /// against successive medians. Each source value is compared once somewhere in the tree, while a
+  /// lookup takes logarithmic rather than linear comparisons. The equal and greater branches are
+  /// consecutive terminators so they consume the same CMP flags and remain pinned by the scheduler.
+  /// </summary>
+  private bool TryTreeDispatch(MOperand.Register subject, List<(long Value, string Target)> arms,
+      string fallback) {
+    if (!this._target.OptimizeSpeed || arms.Count < _MIN_TREE_CASES)
+      return false;
+
+    var root = this._current;
+    var points = arms.OrderBy(arm => arm.Value).ToList();
+
+    MBlock NewNode() {
+      var node = new MBlock($"{root.Label}.tree{this._splitCount++}");
+      this._function.Blocks.Add(node);
+      return node;
+    }
+
+    void Build(MBlock node, int low, int high) {
+      this._current = node;
+      var middle = (low + high) / 2;
+      var point = points[middle];
+      this.EmitCompare(subject, WordImmediate(unchecked((ushort)point.Value)));
+      this.EmitBranch(Condition.Equal, point.Target);
+      AddSuccessor(node, point.Target);
+
+      var hasLeft = low < middle;
+      var hasRight = middle < high;
+      if (!hasLeft && !hasRight) {
+        this.EmitJump(fallback);
+        AddSuccessor(node, fallback);
+        return;
+      }
+
+      var left = hasLeft ? NewNode() : null;
+      var right = hasRight ? NewNode() : null;
+      if (left is { } leftNode && right is { } rightNode) {
+        this.EmitBranch(Condition.Greater, rightNode.Label);
+        AddSuccessor(node, rightNode.Label);
+        this.EmitJump(leftNode.Label);
+        AddSuccessor(node, leftNode.Label);
+      } else if (left is { } onlyLeft) {
+        this.EmitBranch(Condition.Greater, fallback);
+        AddSuccessor(node, fallback);
+        this.EmitJump(onlyLeft.Label);
+        AddSuccessor(node, onlyLeft.Label);
+      } else {
+        this.EmitBranch(Condition.Less, fallback);
+        AddSuccessor(node, fallback);
+        this.EmitJump(right!.Label);
+        AddSuccessor(node, right.Label);
+      }
+
+      if (left is { })
+        Build(left, low, middle - 1);
+      if (right is { })
+        Build(right, middle + 1, high);
+    }
+
+    Build(root, 0, points.Count - 1);
+    this._current = root;
+    return true;
+  }
+
   // ---- the pieces every shape is built from --------------------------------
 
   private static MOperand.Register Pinned(Reg register, MRegSize size = MRegSize.Word)
     => new(MReg.Physical_(register, size));
+
+  private static MInstrEffect DispatchMovEffect(MOperand source)
+    => new(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [1] : [],
+      ReadsFlags: false, WritesFlags: false,
+      ReadsMemory: source is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell,
+      WritesMemory: false);
 
   /// <summary>Appends one instruction of a dispatch, claiming the registers the whole sequence works in.</summary>
   private void EmitPinned(MOpcode opcode, IReadOnlyList<MOperand> operands, MInstrEffect effect,

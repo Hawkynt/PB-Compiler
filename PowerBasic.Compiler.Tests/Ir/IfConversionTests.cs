@@ -65,6 +65,36 @@ public sealed class IfConversionTests {
   }
 
   [Test]
+  public void Run_GivenAConditionalNegateDiamond_ThenCanonicalizesBranchlessAbs() {
+    var x = new IrArgument(IrType.I16, 0, "x");
+    var fn = new IrFunction("abs", IrType.I16, [x]);
+    var entry = fn.CreateBlock("entry");
+    var negative = fn.CreateBlock("negative");
+    var nonNegative = fn.CreateBlock("nonnegative");
+    var merge = fn.CreateBlock("merge");
+    var condition = new IrBuilder(entry).Cmp(IrCmpPred.Slt, x, new IrConstantInt(IrType.I16, 0));
+    new IrBuilder(entry).CondBr(condition, negative, nonNegative);
+    var negated = new IrBuilder(negative).Sub(new IrConstantInt(IrType.I16, 0), x);
+    new IrBuilder(negative).Br(merge);
+    new IrBuilder(nonNegative).Br(merge);
+    var result = new IrBuilder(merge).Phi(IrType.I16);
+    result.AddIncoming(negated, negative);
+    result.AddIncoming(x, nonNegative);
+    new IrBuilder(merge).Ret(result);
+
+    var converted = IfConversion.Run(fn);
+
+    Assert.That(converted, Is.EqualTo(1));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.Multiple(() => {
+      Assert.That(fn.AllInstructions.OfType<IrCondBr>(), Is.Empty);
+      Assert.That(fn.AllInstructions.OfType<IrPhi>(), Is.Empty);
+      Assert.That(fn.AllInstructions.OfType<IrBinary>().Select(binary => binary.Op),
+        Is.SupersetOf(new[] { IrBinaryOp.AShr, IrBinaryOp.Xor, IrBinaryOp.Sub }));
+    });
+  }
+
+  [Test]
   public void Pipeline_LoweredIfElseAssignment_BecomesBranchless() {
     var unit = Parser.Parse(Lexer.Tokenize("c% = 1\nIF c% THEN\n  y% = 7\nELSE\n  y% = 9\nEND IF\nz% = y% + 1\nEND", "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var fn = IrLowering.TryLowerMainBody(Binder.Bind(unit, Dialect.Pb35))!;

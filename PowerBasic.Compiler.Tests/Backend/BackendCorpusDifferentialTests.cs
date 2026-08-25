@@ -89,6 +89,8 @@ public sealed class BackendCorpusDifferentialTests {
     var disagreements = new List<Disagreement>();
     var reasons = new Dictionary<string, int>(StringComparer.Ordinal);
     var compileCases = new List<string>();
+    var unroutedCases = new List<string>();
+    var notComparedCases = new List<string>();
 
     foreach (var file in Directory.EnumerateFiles(dir, "*.BAS", SearchOption.AllDirectories)
                .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)) {
@@ -129,8 +131,11 @@ public sealed class BackendCorpusDifferentialTests {
 
       // a program the back end takes nothing of compares the direct emitter with itself - true, but
       // it measures nothing, so it is not counted as agreement
-      if (!routedNames.Any())
+      if (!routedNames.Any()) {
+        unroutedCases.Add($"{Path.GetRelativePath(dir, file).Replace('\\', '/')} " +
+          $"({(optimize ? "optimized" : "unoptimized")})");
         return;
+      }
       ++routedSomething;
 
       var directRun = Observe(directImage, out var directWhy);
@@ -139,6 +144,8 @@ public sealed class BackendCorpusDifferentialTests {
         ++notCompared;
         var reason = Summarize(directRun is null ? "direct: " + directWhy : "routed: " + routedWhy);
         reasons[reason] = reasons.GetValueOrDefault(reason) + 1;
+        notComparedCases.Add($"{Path.GetRelativePath(dir, file).Replace('\\', '/')} " +
+          $"({(optimize ? "optimized" : "unoptimized")}): {reason}");
         return;
       }
 
@@ -160,6 +167,10 @@ public sealed class BackendCorpusDifferentialTests {
       report.AppendLine($"  {count,5}  {reason}");
     foreach (var compileCase in compileCases)
       report.AppendLine($"         {compileCase}");
+    foreach (var unroutedCase in unroutedCases)
+      report.AppendLine($"UNROUTED {unroutedCase}");
+    foreach (var notComparedCase in notComparedCases)
+      report.AppendLine($"NOT COMPARED {notComparedCase}");
     foreach (var d in disagreements.Take(5))
       report.AppendLine($"DISAGREEMENT {d.Program}:{Difference(d.Direct, d.Routed)}");
     TestContext.Out.Write(report.ToString());
@@ -194,12 +205,16 @@ public sealed class BackendCorpusDifferentialTests {
     // Binary-record conversion adds DIFF58 in both modes; DIFF08 also routes in both modes but reaches
     // an executor-only DOS device-information limitation. That yields four participants and two agreements.
     // Segmented raw-memory comparison adds DIFF10 in both modes, and both executions agree.
-    // Segmented memcpy/memset adds DIFF23 and DIFF74 in both modes. Three executions agree; the
-    // fourth reaches an existing direct-emitter opcode limitation, so it is not counted as agreement.
-    Assert.That(routedSomething, Is.GreaterThanOrEqualTo(266),
+    // Segmented memcpy/memset adds DIFF23 and DIFF74 in both modes. The executable 386 subset, DOS
+    // device query, self-EXEC transition and EMS page frame now cover every remaining participant:
+    // Mixed unoptimized calls into ABI-compatible direct callees add three more programs:
+    // 317 compilations execute, 317 agree, and none stop at an emulator boundary.
+    Assert.That(routedSomething, Is.GreaterThanOrEqualTo(317),
       "the back end participated in fewer compilations than it used to:\n" + report);
-    Assert.That(agreed, Is.GreaterThanOrEqualTo(256),
+    Assert.That(agreed, Is.GreaterThanOrEqualTo(317),
       "fewer programs were compared than used to be:\n" + report);
+    Assert.That(notCompared, Is.Zero,
+      "a participating corpus program stopped before its behavior could be compared:\n" + report);
 
     // and a known defect that quietly starts agreeing is worth knowing about too - it means either it
     // was fixed (delete the entry) or the comparison stopped reaching it (a worse problem)

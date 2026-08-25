@@ -67,4 +67,30 @@ public sealed class InterpreterSanityTests {
       NEXT i%
       """).TrimEnd('\r', '\n'), Is.EqualTo(" 1  2  3 "));
   }
+
+  [Test]
+  public void Run_GivenConsoleDeviceQueries_ThenStandardInputAndOutputAreConsoles() {
+    Assert.That(Run("PRINT CONSIN; CONSOUT"), Is.EqualTo("-1 -1 \r\n"));
+  }
+
+  [Test]
+  public void Run_GivenInvalidEmsRequests_ThenTheLimmStatusCodesIdentifyEachBoundary() {
+    Assert.That(Run("""
+      REG 1, &H4300
+      REG 2, 0
+      CALL INTERRUPT &H67
+      PRINT ASC(MKI$(REG(1)), 2)
+      REG 1, &H4404
+      REG 2, 0
+      REG 4, 1
+      CALL INTERRUPT &H67
+      PRINT ASC(MKI$(REG(1)), 2)
+      REG 1, &H4400
+      REG 2, 0
+      REG 4, 999
+      CALL INTERRUPT &H67
+      PRINT ASC(MKI$(REG(1)), 2)
+      END
+      """), Is.EqualTo(" 137 \r\n 139 \r\n 131 \r\n"));
+  }
 }
