@@ -83,9 +83,12 @@ public sealed class BackendArrayUdtDifferentialTests {
       END SUB
       """ + _OPAQUE);
 
-    Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct, Is.EqualTo("-5 -1 -2"));
+    Assert.Multiple(() => {
+      Assert.That(names, Does.Contain("main"));
+      Assert.That(names, Does.Contain("Neg"), "the near numeric BYREF callee must route");
+      Assert.That(routed, Is.EqualTo(direct));
+      Assert.That(direct, Is.EqualTo("-5 -1 -2"));
+    });
   }
 
   /// <summary>

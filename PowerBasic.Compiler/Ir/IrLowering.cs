@@ -4276,10 +4276,15 @@ public sealed partial class IrLowering {
       return this.PointerValue(byVal.Value);
     if (arg is NameExpr && this._model.VariableBindings.TryGetValue(arg, out var sym) && sym.Type.Equals(paramType))
       return this.SlotFor(sym);
-    if (arg is CallOrIndexExpr indexed && this._model.VariableBindings.TryGetValue(indexed, out var arrSym) && arrSym.Type is ArrayType) {
+    if (arg is CallOrIndexExpr indexed
+        && this._model.VariableBindings.TryGetValue(indexed, out var arrSym)
+        && arrSym.Type is ArrayType) {
       var (address, element) = this.ElementAddress(indexed);
-      if (element.Equals(paramType))
+      if (element.Equals(paramType)) {
+        if (address.Type.IsFarPointer)
+          throw new IrLoweringException("far pointer passed BYREF to a near parameter");
         return address;
+      }
     }
     // A record MEMBER is storage like any other, and the callee writes THROUGH it. Falling to the
     // temp copy below turned a BYREF parameter into a BYVAL one without saying so: `CALL Neg(r.A)`

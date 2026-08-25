@@ -94,9 +94,12 @@ public sealed partial class CodeGenerator {
     if (proc.IsFunction && (proc.ReturnType is not { } returnType || !IsBackendAbiType(returnType)))
       return $"filter: return type outside the routed ABI ({(proc.ReturnType is null ? "unresolved" : DescribeType(proc.ReturnType))})";
     foreach (var parameter in proc.Parameters) {
-      if (!parameter.ByVal)
+      // A near BYREF argument is always one pointer word on this ABI. The pointee still has to be a
+      // value shape the selector can load and store exactly; strings, records and other ownership- or
+      // layout-bearing types remain fenced until their own ABI work lands.
+      if (!parameter.ByVal && !IsBackendAbiType(parameter.Type))
         return $"filter: BYREF parameter ({DescribeType(parameter.Type)})";
-      if (!IsBackendAbiType(parameter.Type))
+      if (parameter.ByVal && !IsBackendAbiType(parameter.Type))
         return $"filter: parameter type outside the routed ABI ({DescribeType(parameter.Type)})";
     }
     return null;
@@ -104,8 +107,9 @@ public sealed partial class CodeGenerator {
 
   /// <summary>
   /// The value shapes the routed calling sequence can pass and return: a 16- or 32-bit integer (AX or
-  /// DX:AX) and a SINGLE or DOUBLE (ST(0)). Everything else - QUAD and BYTE among the scalars,
-  /// strings, FIX/BCD, records, arrays - has no routed convention yet.
+  /// DX:AX) and a SINGLE or DOUBLE (ST(0)). The same shapes may be the storage behind a one-word near
+  /// BYREF pointer. Everything else - QUAD and BYTE among the scalars, strings, FIX/BCD, records,
+  /// arrays - has no routed convention yet.
   /// </summary>
   private static bool IsBackendAbiType(PbType type)
     => type is ScalarType { IsFloat: false, ByteSize: 2 or 4 }
