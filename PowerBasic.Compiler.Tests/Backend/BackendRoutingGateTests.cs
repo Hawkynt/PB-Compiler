@@ -75,6 +75,15 @@ public sealed class BackendRoutingGateTests {
       END FUNCTION
       PRINT F(1)
       """, "F"),
+    new("BYREF INTEGER parameter", """
+      FUNCTION F(a%) AS INTEGER
+        a% = a% + 1
+        F = a%
+      END FUNCTION
+      DIM v%
+      v% = 1
+      PRINT F(v%); v%
+      """, "F"),
     new("a SUB with no parameters", """
       SUB S
         PRINT 7
@@ -119,14 +128,6 @@ public sealed class BackendRoutingGateTests {
   /// their shared stack ABI; unsupported conventions still strand the caller.</para>
   /// </summary>
   private static readonly Construct[] _declines = [
-    new("BYREF parameter", """
-      FUNCTION F(a%) AS INTEGER
-        F = a% + 1
-      END FUNCTION
-      DIM v%
-      v% = 1
-      PRINT F(v%)
-      """, "F", "filter: BYREF parameter (INTEGER)"),
     new("QUAD parameter and result", """
       FUNCTION F(BYVAL a&&) AS QUAD
         F = a&& + 1

@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-08-25 10:13 UTC by index_codebase.py.
+Generated 2026-08-25 12:42 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-742 files, 8038 symbols.
+743 files, 8053 symbols.
 
 ## PowerBasic.Compiler.Tests/Asm/
 
@@ -127,21 +127,34 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `Windowed()` — PowerBasic.Compiler.Tests/Backend/BackendArraySortTests.cs:284
 - method `Repeatedly()` — PowerBasic.Compiler.Tests/Backend/BackendArraySortTests.cs:331
 
-### BackendArrayUdtDifferentialTests.cs  `C#, 220 lines`
+### BackendArrayUdtDifferentialTests.cs  `C#, 223 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:5
 - class `BackendArrayUdtDifferentialTests` — Arrays and user-defined types through both back ends, run and compared - the shapes a sweep of the — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:21
 - method `Execute` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:37
 - method `q` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:68
 - method `Neg` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:80
-- method `f` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:102
-- method `b(0 TO 999)` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:138
-- method `src(0 TO 50)` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:161
-- method `g(r, c)` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:174
-- method `a()` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:203
-- method `a(1)` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:207
-- method `Grow(Op%(8))` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:208
-- method `a(1)` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:209
-- method `Grow` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:210
+- method `f` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:105
+- method `b(0 TO 999)` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:141
+- method `src(0 TO 50)` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:164
+- method `g(r, c)` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:177
+- method `a()` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:206
+- method `a(1)` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:210
+- method `Grow(Op%(8))` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:211
+- method `a(1)` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:212
+- method `Grow` — PowerBasic.Compiler.Tests/Backend/BackendArrayUdtDifferentialTests.cs:213
+
+### BackendByRefRoutingTests.cs  `C#, 222 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendByRefRoutingTests.cs:5
+- class `BackendByRefRoutingTests` — End-to-end coverage for near numeric BYREF parameters on the routed x86-16 stack ABI. The IR — PowerBasic.Compiler.Tests/Backend/BackendByRefRoutingTests.cs:14
+- method `Bump(n AS INTEGER)` — PowerBasic.Compiler.Tests/Backend/BackendByRefRoutingTests.cs:19
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendByRefRoutingTests.cs:121
+- method `Mutate(a AS INTEGER, b AS INTEGER)` — PowerBasic.Compiler.Tests/Backend/BackendByRefRoutingTests.cs:122
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendByRefRoutingTests.cs:143
+- method `Bump(value AS LONG)` — PowerBasic.Compiler.Tests/Backend/BackendByRefRoutingTests.cs:144
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendByRefRoutingTests.cs:168
+- method `CountDown(n AS INTEGER, total AS LONG)` — PowerBasic.Compiler.Tests/Backend/BackendByRefRoutingTests.cs:169
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendByRefRoutingTests.cs:195
+- method `Bump(value AS INTEGER)` — PowerBasic.Compiler.Tests/Backend/BackendByRefRoutingTests.cs:200
 
 ### BackendCallRoutingTests.cs  `C#, 292 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:9
@@ -182,7 +195,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `Show(string text, int from, int at)` — PowerBasic.Compiler.Tests/Backend/BackendCorpusDifferentialTests.cs:238
 - method `OneLine(string text, int limit)` — PowerBasic.Compiler.Tests/Backend/BackendCorpusDifferentialTests.cs:249
 
-### BackendCoverageTests.cs  `C#, 848 lines`
+### BackendCoverageTests.cs  `C#, 846 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:8
 - class `BackendCoverageTests` — How much of the real corpus the in-house x86-16 back end can actually compile, and - for — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:43
 - record `Census` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:48
@@ -266,19 +279,19 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `BackendErrorTrapTests` — The $ERROR traps a program arms, inside a PROCEDURE, through the IR path - the case where — PowerBasic.Compiler.Tests/Backend/BackendErrorTrapTests.cs:35
 - field `source` — PowerBasic.Compiler.Tests/Backend/BackendErrorTrapTests.cs:208
 
-### BackendExitFarTests.cs  `C#, 289 lines`
+### BackendExitFarTests.cs  `C#, 288 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:5
 - class `BackendExitFarTests` — EXIT FAR compiled by the x86-16 back end, and executed. — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:24
 - method `Leave()` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:57
-- method `Noisy(BYVAL n%)` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:80
-- method `Counter()` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:104
-- method `Maybe(BYVAL n%)` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:152
-- method `Leave()` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:176
-- method `Quiet()` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:202
-- method `Quiet` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:209
-- method `Outer()` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:241
-- method `Churn(BYVAL n%)` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:269
-- method `Churn` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:278
+- method `Noisy(BYVAL n%)` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:79
+- method `Counter()` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:103
+- method `Maybe(BYVAL n%)` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:151
+- method `Leave()` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:175
+- method `Quiet()` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:201
+- method `Quiet` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:208
+- method `Outer()` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:240
+- method `Churn(BYVAL n%)` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:268
+- method `Churn` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:277
 
 ### BackendFieldTests.cs  `C#, 246 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendFieldTests.cs:9
@@ -453,13 +466,15 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendRoundingTests.cs:7
 - class `BackendRoundingTests` — The three roundings PowerBASIC keeps apart on purpose, measured on the x86-16 back end by — PowerBasic.Compiler.Tests/Backend/BackendRoundingTests.cs:29
 
-### BackendRoutingGateTests.cs  `C#, 316 lines`
+### BackendRoutingGateTests.cs  `C#, 317 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:5
 - class `BackendRoutingGateTests` — One tiny program per construct, compiled twice - with routing on and with routing off - so that a — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:41
 - record `Construct` — how the case reads in the test list. — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:48
 - method `ToString()` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:49
 - method `F(BYVAL a%)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:55
-- method `F(a%)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:123
+- method `F(v%)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:85
+- method `a(1 TO 4)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:115
+- method `F(BYVAL a&&)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:132
 
 ### BackendRuntimeCallTests.cs  `C#, 958 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:9
@@ -3400,18 +3415,18 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(d > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:704
 - method `if(d < bounds.Count - 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:708
 
-### CodeGenerator.Backend.cs  `C#, 674 lines`
+### CodeGenerator.Backend.cs  `C#, 678 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:7
 - class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:9
-- method `if(!f.IsDeclaration)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:181
-- method `if(!f.IsDeclaration && SwitchFormation.Run(f) > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:200
-- method `if(CalleeNames(candidates[i].Fn) .FirstOrDefault(name => !routable.Cont…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:265
-- method `if(this._backendProcs.ContainsKey(proc) && CalleeNames(fn).FirstOrDefau…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:289
-- method `ContainsDataRead(i.Then)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:438
-- method `ContainsDataRead(f.Body)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:441
-- method `ContainsDataRead(d.Body)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:443
-- method `foreach(var symbol in procedure.Variables.Values)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:515
-- method `if(symbol.Storage == VariableStorage.Static && IrLowering.StaticGlobalN…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:523
+- method `if(!f.IsDeclaration)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:185
+- method `if(!f.IsDeclaration && SwitchFormation.Run(f) > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:204
+- method `if(CalleeNames(candidates[i].Fn) .FirstOrDefault(name => !routable.Cont…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:269
+- method `if(this._backendProcs.ContainsKey(proc) && CalleeNames(fn).FirstOrDefau…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:293
+- method `ContainsDataRead(i.Then)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:442
+- method `ContainsDataRead(f.Body)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:445
+- method `ContainsDataRead(d.Body)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:447
+- method `foreach(var symbol in procedure.Variables.Values)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:519
+- method `if(symbol.Storage == VariableStorage.Static && IrLowering.StaticGlobalN…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:527
 
 ### CodeGenerator.Data.cs  `C#, 75 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Data.cs:3
@@ -4775,7 +4790,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `IrLoweringException($"{symbol.ArrayClass} array rank mismatch")` — PowerBasic.Compiler/Ir/IrLowering.PagedArrays.cs:218
 - method `IrLoweringException($"element of {symbol.Name} before its DIM was lowered")` — PowerBasic.Compiler/Ir/IrLowering.PagedArrays.cs:222
 
-### IrLowering.cs  `C#, 4729 lines`
+### IrLowering.cs  `C#, 4734 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrLowering.cs:4
 - class `IrLowering` — Lowers a bound program into the IR in clang-style alloca/load/store form: every — PowerBasic.Compiler/Ir/IrLowering.cs:18
 - record `DataLayout` — PowerBasic.Compiler/Ir/IrLowering.cs:64
@@ -4944,13 +4959,15 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `IrLoweringException("UDT comparison of non-UDT")` — PowerBasic.Compiler/Ir/IrLowering.cs:4103
 - method `IrLoweringException($"unsupported call/index {call.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:4230
 - method `IrLoweringException("SUB used in expression position")` — PowerBasic.Compiler/Ir/IrLowering.cs:4232
-- method `if(!resultTy.IsFloat)` — PowerBasic.Compiler/Ir/IrLowering.cs:4363
-- method `IrLoweringException("integer exponentiation")` — PowerBasic.Compiler/Ir/IrLowering.cs:4364
-- method `IrLoweringException( "$ERROR OVERFLOW ON over a 64-bit multiply (there is no wider integ…` — PowerBasic.Compiler/Ir/IrLowering.cs:4454
-- method `IrLoweringException($"$ERROR {arm} ON arms a runtime trap the IR lowering does not emit")` — PowerBasic.Compiler/Ir/IrLowering.cs:4550
-- method `IrLoweringException($"metastatement ${meta.Command}")` — PowerBasic.Compiler/Ir/IrLowering.cs:4552
-- method `IrLoweringException("comparison of non-scalar operands")` — PowerBasic.Compiler/Ir/IrLowering.cs:4583
-- method `IrLoweringException("coercion between non-scalar types")` — PowerBasic.Compiler/Ir/IrLowering.cs:4669
+- method `if(address.Type.IsFarPointer)` — PowerBasic.Compiler/Ir/IrLowering.cs:4284
+- method `IrLoweringException("far pointer passed BYREF to a near parameter")` — PowerBasic.Compiler/Ir/IrLowering.cs:4285
+- method `if(!resultTy.IsFloat)` — PowerBasic.Compiler/Ir/IrLowering.cs:4368
+- method `IrLoweringException("integer exponentiation")` — PowerBasic.Compiler/Ir/IrLowering.cs:4369
+- method `IrLoweringException( "$ERROR OVERFLOW ON over a 64-bit multiply (there is no wider integ…` — PowerBasic.Compiler/Ir/IrLowering.cs:4459
+- method `IrLoweringException($"$ERROR {arm} ON arms a runtime trap the IR lowering does not emit")` — PowerBasic.Compiler/Ir/IrLowering.cs:4555
+- method `IrLoweringException($"metastatement ${meta.Command}")` — PowerBasic.Compiler/Ir/IrLowering.cs:4557
+- method `IrLoweringException("comparison of non-scalar operands")` — PowerBasic.Compiler/Ir/IrLowering.cs:4588
+- method `IrLoweringException("coercion between non-scalar types")` — PowerBasic.Compiler/Ir/IrLowering.cs:4674
 
 ### IrModule.cs  `C#, 80 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrModule.cs:2

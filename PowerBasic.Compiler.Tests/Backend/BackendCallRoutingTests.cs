@@ -185,7 +185,7 @@ public sealed class BackendCallRoutingTests {
   }
 
   [Test]
-  public void Execute_GivenUnoptimizedRoutedMainCallingDirectBasicCallee_ThenStackAbiMatches() {
+  public void Execute_GivenUnoptimizedRoutedMainCallingRoutedByRefCallee_ThenStackAbiMatches() {
     const string source = """
       DECLARE SUB Touch(v%)
       DIM a AS INTEGER
@@ -206,15 +206,15 @@ public sealed class BackendCallRoutingTests {
 
     Assert.Multiple(() => {
       Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
-      Assert.That(routed.BackendRoutedNames, Does.Not.Contain("Touch"),
-        "the BYREF callee stays on the direct emitter");
+      Assert.That(routed.BackendRoutedNames, Does.Contain("Touch"),
+        "the near numeric BYREF callee must route with its caller");
       Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
       Assert.That(routedCpu.Output.Trim(), Is.EqualTo("8"));
     });
   }
 
   [Test]
-  public void Execute_GivenSizeOptimizedRoutedMainCallingDirectBasicCallee_ThenStackAbiMatches() {
+  public void Execute_GivenSizeOptimizedRoutedMainCallingRecursiveByRefCallee_ThenStackAbiMatches() {
     const string source = """
       DECLARE SUB CountDown(v%)
       DIM a AS INTEGER
@@ -243,8 +243,8 @@ public sealed class BackendCallRoutingTests {
 
     Assert.Multiple(() => {
       Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
-      Assert.That(routed.BackendRoutedNames, Does.Not.Contain("CountDown"),
-        "the recursive BYREF callee stays on the direct emitter");
+      Assert.That(routed.BackendRoutedNames, Does.Contain("CountDown"),
+        "the recursive near numeric BYREF callee must route");
       Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
     });
   }

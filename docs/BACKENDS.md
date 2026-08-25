@@ -191,12 +191,13 @@ Worth stating plainly, because coverage numbers make the distance look shorter t
 wrong thing.** `BackendCoverageTests` ranks this over the whole corpus, and it used to report **262 of
 262 functions select and allocate** and **161 of 161 module bodies** with every decline histogram
 empty. Both figures were real and neither was coverage. They measured the SELECTOR over every function
-the lowering produced, while `CodeGenerator.BackendProcs` refuses a procedure on its SHAPE - a BYREF
-parameter, a string, QUAD, BYTE, FIX, EXT or record one, a non-default calling convention, error
-handling in the body - BEFORE the selector is asked at all. A procedure the filter skips appeared in
-neither the numerator nor the denominator, so the ratio said "of the functions we attempted, how many
-succeeded", which is nearly a tautology. Today that is free, because a skipped procedure falls back to
-the direct emitter; the moment `CodeGen/` is deleted each one is a compile failure.
+the lowering produced, while `CodeGenerator.BackendProcs` refuses a procedure on its SHAPE - a string,
+QUAD, BYTE, FIX, EXT or record value, an unsupported BYREF pointee, a non-default calling convention,
+or error handling in the body - BEFORE the selector is asked at all. A procedure the filter skips
+appeared in neither the numerator nor the denominator, so the ratio said "of the functions we
+attempted, how many succeeded", which is nearly a tautology. Today that is free, because a skipped
+procedure falls back to the direct emitter; the moment `CodeGen/` is deleted each one is a compile
+failure.
 
 The honest figures, taken from the production code generator itself rather than from a second
 implementation of its rule (`CodeGenerator.BackendDeclines`):
@@ -204,9 +205,9 @@ implementation of its rule (`CodeGenerator.BackendDeclines`):
 | | |
 |---|---|
 | programs reaching the IR at all | **161 / 165** - the other four the FRONT end rejects |
-| functions ROUTED, `--optimize` | **242 / 263** |
-| functions ROUTED, `--no-optimize` | **229 / 263** |
-| module bodies owned | **156 / 161** |
+| functions ROUTED, `--optimize` | **257 / 263** |
+| functions ROUTED, `--no-optimize` | **254 / 263** |
+| module bodies owned | **159 / 161** |
 | ...of which the SELECTOR would take, if offered | 262 / 262, 161 / 161 |
 
 The denominator is the SOURCE - every procedure with a body plus one module body per program - not
@@ -220,25 +221,27 @@ Ranked by what each class costs, over the corpus:
 
 | class | funcs | programs | outcome |
 |---|---|---|---|
-| BYREF parameter (7 INTEGER, 3 SINGLE, 2 LONG) | 12 | 12 | filtered - never offered to the selector |
-| a caller stranded by one of the above | 3 | 3 | routing - a consequence, not a cause |
 | STRING return type | 2 | 2 | filtered |
 | a callee with no link symbol (EXTERNAL, or its body did not lower) | 2 | 2 | routing |
 | STRING parameter | 1 | 1 | filtered |
 | a procedure body the lowering refused | 1 | 1 | lowering - invisible to any census over IR functions |
 
-With `--no-optimize` the stranded-caller row goes from 3 to 13, because the INLINER is what absorbs a
-filtered callee and lets its caller route in spite of it. That gap - 242 against 229 - is the measure
-of how much of the optimized figure is on loan, and it is why the routing gate compiles unoptimized.
+Near BYREF INTEGER/WORD/LONG/DWORD/SINGLE/DOUBLE parameters are no longer in that table: all 12 corpus
+procedures now route through one-word near pointers, taking production from 245/263 to 257/263
+optimized and from 242/263 to 254/263 unoptimized. `BackendByRefRoutingTests` pins write-through,
+same-cell aliasing, recursive forwarding, every admitted numeric type, both optimizer modes, and the
+SPEED fixpoint that requires both caller and callee to route. The remaining 257/254 gap is still how
+much of the optimized figure is on loan from inlining, which is why the routing gate also compiles
+unoptimized.
 
 **Whole classes are absent from the corpus and are no less real.** `BackendRoutingGateTests` holds one
 program each and pins the routing's own reason for it: QUAD and BYTE parameters and results, STRING
 parameters and results, FIX and EXT parameters, a record parameter, `CDECL`/`STDCALL`/`FASTCALL`/
 `WATCALL`, error handling inside a procedure body, an array parameter (which stops the whole module
-lowering), and FIX arithmetic in a module body - eighteen rows, none of which the corpus would have
-noticed stopping or starting. Each compiles to an executable byte-identical to the unrouted build,
-because the module body is stranded by the very call the filter refused: one construct silently costs
-a whole program's routing today, and a compile error tomorrow.
+lowering), and FIX arithmetic in a module body - seventeen decline rows, none of which the corpus
+would have noticed stopping or starting. Each compiles to an executable byte-identical to the
+unrouted build, because the module body is stranded by the very call the filter refused: one
+construct silently costs a whole program's routing today, and a compile error tomorrow.
 
 Every SELECTION and ALLOCATION decline histogram is empty, and that remains worth having - it says the
 selector refuses nothing the filter offers it. It is the filter that is the frontier.
@@ -1100,16 +1103,14 @@ repair belongs to `CodeGen/`, and in one case it moves emitted bytes on the fide
   ```
 
   Genuine PBC 3.50 prints the incremented value, so it either passes a far pointer or copies the
-  element in and out; ours prints the original. The routed path prints the right answer, and it is
-  worth being precise about WHY, because the reason is not that it models this better: `BackendProcs`
-  never routes a procedure with a BYREF parameter, so the only routed shape is the one where the
-  INLINER absorbed the callee - and then there is no argument to pass and the increment lands on the
-  element's own far address. Where the callee stays a call, `main` declines and both builds are the
-  direct emitter's, which is why the two paths agree on `NOINLINE` and disagree without it.
+  element in and out; the direct emitter prints the original. Numeric BYREF procedures can now route,
+  but this call still cannot: `IrLowering.AddressOfArgument` rejects the dynamic element's
+  `IrType.FarPtr` instead of narrowing it to the callee's near `Ptr` and silently losing `rt_arrseg`.
+  The whole module therefore falls back to the direct path and inherits its known wrong result.
 
-  So this is not a routed defect to fix; it is a `CodeGen/` fidelity bug that a routed build happens
-  to step around. Fixing it means copy-in/copy-out (or a far parameter) in the direct emitter, and
-  the routed side then wants the far-address decline the `AT` and paged classes already have.
+  Fixing the fidelity bug means copy-in/copy-out or a far-parameter ABI in both emitters. Until that
+  lands, `BackendByRefRoutingTests` pins the honest decline in both optimizer modes; routing a near
+  offset into DGROUP would raise coverage by producing the wrong program.
 
 ### One divergence with no answer: a `$ERROR` metastatement INSIDE a procedure body
 

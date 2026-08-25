@@ -70,9 +70,8 @@ public sealed class BackendExitFarTests {
       """, "before|in sub|landed", "main", "Leave");
 
   /// <summary>
-  /// Three frames deep, all abandoned at once - the shape DIFF14 uses, with BYVAL parameters so the
-  /// whole-program routing takes the procedure (a BYREF parameter keeps it out for reasons that have
-  /// nothing to do with this statement).
+  /// Three frames deep, all abandoned at once - the shape DIFF14 uses. BYVAL keeps this case focused
+  /// on the non-local jump; near numeric BYREF procedures have their own routed ABI coverage.
   /// </summary>
   [Test]
   public void Route_GivenNestedCalls_ThenEveryFrameBetweenIsAbandonedAtOnce() =>
