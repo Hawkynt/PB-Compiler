@@ -1333,15 +1333,24 @@ public sealed partial class IrLowering {
   }
 
   private void LowerSwap(SwapStmt sw) {
-    var (leftAddr, leftType) = this.LValue(sw.Left);
-    var (rightAddr, rightType) = this.LValue(sw.Right);
+    var (leftAddr, leftType) = this.SwapLValue(sw.Left);
+    var (rightAddr, rightType) = this.SwapLValue(sw.Right);
     if (!leftType.Equals(rightType))
       throw new IrLoweringException("SWAP of differently-typed operands");
-    var ty = MapType(leftType);
+    // A dynamic string cell owns its runtime handle. Exchanging the two raw handles transfers that
+    // ownership exactly once; LowerStringExpr would duplicate them, and freeing either one here would
+    // invalidate the handle just moved into the other cell.
+    var ty = leftType is StringType ? IrType.Ptr : MapType(leftType);
     var leftVal = this._b.Load(ty, leftAddr);
     var rightVal = this._b.Load(ty, rightAddr);
     this._b.Store(rightVal, leftAddr);
     this._b.Store(leftVal, rightAddr);
+  }
+
+  /// <summary>The storage address and type of a SWAP operand, including a dynamic-string handle cell.</summary>
+  private (IrValue Address, PbType Type) SwapLValue(Expression target) {
+    var type = this._model.TypeOf(target);
+    return type is StringType ? (this.StringTargetAddress(target), type) : this.LValue(target);
   }
 
   /// <summary>The storage address and element type of a scalar lvalue (a variable or a static-array element).</summary>

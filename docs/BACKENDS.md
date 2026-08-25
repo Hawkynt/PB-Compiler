@@ -205,34 +205,38 @@ implementation of its rule (`CodeGenerator.BackendDeclines`):
 | | |
 |---|---|
 | programs reaching the IR at all | **161 / 165** - the other four the FRONT end rejects |
-| functions ROUTED, `--optimize` | **257 / 263** |
-| functions ROUTED, `--no-optimize` | **254 / 263** |
-| module bodies owned | **159 / 161** |
-| ...of which the SELECTOR would take, if offered | 262 / 262, 161 / 161 |
+| functions ROUTED, `--optimize` | **259 / 263** |
+| functions ROUTED, `--no-optimize` | **255 / 263** |
+| module bodies owned | **160 / 161** |
+| ...of which the SELECTOR would take, if offered | 263 / 263, 161 / 161 |
 
 The denominator is the SOURCE - every procedure with a body plus one module body per program - not
-the IR function count, and the two differ by exactly the procedures whose body the lowering refused.
-`IrLowering` leaves such a procedure a declaration, so it disappears from the IR entirely and a census
-over IR functions counts it in neither half: a procedure that stops existing must not raise a coverage
-ratio. There is one in the corpus (`CODEGEN.BAS::SwapIsInline`, "unsupported lvalue"), and
-`IrModule.ProcedureLoweringDeclines` is what now says so.
+the IR function count. The two used to differ when a procedure body failed lowering and disappeared
+from the IR entirely. They are equal now: no corpus procedure body is refused, while
+`IrModule.ProcedureLoweringDeclines` and the pinned empty census set keep that fact observable.
 
 Ranked by what each class costs, over the corpus:
 
 | class | funcs | programs | outcome |
 |---|---|---|---|
 | STRING return type | 2 | 2 | filtered |
-| a callee with no link symbol (EXTERNAL, or its body did not lower) | 2 | 2 | routing |
+| a callee with no link symbol (EXTERNAL) | 1 | 1 | routing |
 | STRING parameter | 1 | 1 | filtered |
-| a procedure body the lowering refused | 1 | 1 | lowering - invisible to any census over IR functions |
 
 Near BYREF INTEGER/WORD/LONG/DWORD/SINGLE/DOUBLE parameters are no longer in that table: all 12 corpus
 procedures now route through one-word near pointers, taking production from 245/263 to 257/263
 optimized and from 242/263 to 254/263 unoptimized. `BackendByRefRoutingTests` pins write-through,
 same-cell aliasing, recursive forwarding, every admitted numeric type, both optimizer modes, and the
-SPEED fixpoint that requires both caller and callee to route. The remaining 257/254 gap is still how
+SPEED fixpoint that requires both caller and callee to route. The remaining 259/255 gap is still how
 much of the optimized figure is on loan from inlining, which is why the routing gate also compiles
 unoptimized.
+
+Dynamic-string `SWAP` removes the former invisible lowering row. The IR loads the raw handle from
+each owner cell and crosses the stores; it neither borrows a duplicate nor frees a handle because the
+operation transfers ownership. Local cells and far dynamic string-array elements agree with the
+direct emitter in both optimizer modes. `SwapIsInline` therefore adds one routed procedure in both
+modes; its SPEED caller adds the second optimized gain, moving 257/254 to 259/255 and module ownership
+from 159/161 to 160/161. Selection and allocation move from 262/262 to 263/263.
 
 **Whole classes are absent from the corpus and are no less real.** `BackendRoutingGateTests` holds one
 program each and pins the routing's own reason for it: QUAD and BYTE parameters and results, STRING

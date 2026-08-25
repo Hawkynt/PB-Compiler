@@ -5,13 +5,18 @@ using PowerBasic.Compiler.Syntax;
 
 namespace PowerBasic.Compiler.Tests.Ir;
 
-/// <summary>SWAP statement lowering (exchange of two scalar lvalues).</summary>
+/// <summary>SWAP statement lowering (exchange of equally typed lvalues).</summary>
 [TestFixture]
 public sealed class SwapLoweringTests {
 
   private static IrFunction? Lower(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     return IrLowering.TryLowerMainBody(Binder.Bind(unit, Dialect.Pb35));
+  }
+
+  private static IrModule? LowerModule(string source) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
+    return IrLowering.TryLowerModule(Binder.Bind(unit, Dialect.Pb35));
   }
 
   [Test]
@@ -39,5 +44,13 @@ public sealed class SwapLoweringTests {
 
     Assert.That(fn, Is.Not.Null);
     Assert.That(IrVerifier.Verify(fn!), Is.Empty);
+  }
+
+  [Test]
+  public void Swap_GivenTwoDynamicStrings_WhenLowered_ThenTheirHandleCellsAreExchanged() {
+    var module = LowerModule("a$ = \"left\"\nb$ = \"right\"\nSWAP a$, b$\nPRINT a$; b$\nEND");
+
+    Assert.That(module, Is.Not.Null);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
   }
 }

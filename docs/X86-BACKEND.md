@@ -1656,9 +1656,9 @@ often. `ADD r,r; SBB r,r` is the same four bytes, needs no register and runs on 
 leaves the sign bit in `CF` and subtracting a register from itself is `-CF`. The two are joined by the
 flags the scheduler already models, exactly as `SelectWideShift`'s `SHL`/`RCL` steps are.
 
-Re-measured on 2026-08-25: production routes 257/263 functions optimized and 254/263 unoptimized, and
-owns 159/161 module bodies. The selector and allocator take 262/262 optimized functions; the
-unoptimized allocator takes 258/258. The execution differential is 317 participating / 317 agreeing /
+Re-measured on 2026-08-25: production routes 259/263 functions optimized and 255/263 unoptimized, and
+owns 160/161 module bodies. The optimized selector and allocator take 263/263 functions. The
+execution differential is 317 participating / 317 agreeing /
 0 emulator-limited / 0 disagreeing, and the spiller's worst case is 168 rounds optimized and 153
 unoptimized - lower than the 174 recorded before, and nowhere near the budget.
 
@@ -1767,8 +1767,8 @@ not merely imprecise: `AddLoop:` in `LOWLEVEL` stands in front of the whole rest
 the block is its own successor, `CX` came out live at every instruction after the loop as well, and
 the first `PRINT` past it declined the function for destroying a register nothing wanted.
 
-With this the SELECTOR's reach over the corpus is complete: 161/165 programs lowered, **262/262
-functions selected**, **262/262 allocated**, **161/161 module bodies**, and both decline histograms
+With this the SELECTOR's reach over the corpus is complete: 161/165 programs lowered, **263/263
+functions selected**, **263/263 allocated**, **161/161 module bodies**, and both decline histograms
 empty.
 
 **That is not the same as coverage, and this paragraph used to say it was.** Those counts are taken
@@ -1776,10 +1776,12 @@ over every function the lowering produced; the production routing refuses a proc
 before the selector is ever asked — a string, QUAD, BYTE, FIX, EXT or record value, an unsupported
 BYREF pointee, a non-default calling convention, or error handling in the body — and a procedure it
 skips was in neither half of the ratio. Measured through the code generator itself, the corpus routes
-**257 of 263 functions** with the optimizer on, **254 of 263** with it off, and **159 of 161 module
-bodies** (docs/BACKENDS.md, "1. Coverage"). Near numeric BYREF parameters account for the latest 12
+**259 of 263 functions** with the optimizer on, **255 of 263** with it off, and **160 of 161 module
+bodies** (docs/BACKENDS.md, "1. Coverage"). Near numeric BYREF parameters account for 12 recently
 routed procedures: the one-word pointer enters at the direct BASIC/PASCAL frame offset, and the IR
-loads and stores through it. The selector figures are still worth having: they say the selector
+loads and stores through it. Dynamic-string `SWAP` then removes the last procedure-body lowering
+decline by crossing the raw owner-cell handles without copying or freeing either one. The selector
+figures are still worth having: they say the selector
 refuses nothing the filter offers it, which is what makes the filter the frontier rather than a
 symptom. `LOWLEVEL.BAS`
 prints 5 through the routed path and matches its golden output line for line
