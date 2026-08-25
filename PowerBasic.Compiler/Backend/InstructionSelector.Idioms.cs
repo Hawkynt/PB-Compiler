@@ -32,6 +32,12 @@ public sealed partial class InstructionSelector {
   /// </summary>
   private readonly Dictionary<IrCmp, IrCmpPred> _canonicalPredicate = new(ReferenceEqualityComparer.Instance);
 
+  /// <summary>
+  /// The dominating half of a signed DIV/MOD pair and the other result it owns. One IDIV computes
+  /// both answers, so the first instruction captures AX and DX and the block loop skips the second.
+  /// </summary>
+  private readonly Dictionary<IrBinary, IrBinary> _sharedDivRem = new(ReferenceEqualityComparer.Instance);
+
   /// <summary>The min/max selects whose arms go with that relabelled predicate the other way round.</summary>
   private readonly HashSet<IrSelect> _swappedArms = new(ReferenceEqualityComparer.Instance);
 
@@ -68,7 +74,8 @@ public sealed partial class InstructionSelector {
   private void CollectIdioms(IrFunction function) {
     if (!this._target.Optimize)
       return;
-    foreach (var block in function.Blocks)
+    this.CollectSharedDivRem(function);
+    foreach (var block in function.Blocks) {
       foreach (var instr in block.Instructions) {
         switch (instr) {
           case IrSelect select when MinMaxForm(select) is var (cmp, pred, swap):
@@ -89,6 +96,40 @@ public sealed partial class InstructionSelector {
             break;
         }
       }
+    }
+  }
+
+  /// <summary>
+  /// Pairs one signed quotient and remainder over identical 16-bit SSA operands when the first
+  /// operation dominates the second. The lowering puts a zero-divisor guard in front of each, so an
+  /// adjacent BASIC pair normally occupies two IR blocks even though the values themselves are pure.
+  /// </summary>
+  private void CollectSharedDivRem(IrFunction function) {
+    if (function.HasErrorHandler || function.HasInlineAsm)
+      return;
+    if (IrDominators.Build(function) is not { } dominators)
+      return;
+    var candidates = dominators.ReversePostorder
+      .SelectMany(block => block.Instructions.OfType<IrBinary>())
+      .Where(binary => binary.Type.IsInteger && binary.Type.Bits == 16
+        && binary.Op is IrBinaryOp.SDiv or IrBinaryOp.SRem)
+      .ToList();
+    for (var i = 0; i < candidates.Count; ++i) {
+      var first = candidates[i];
+      if (this._consumed.Contains(first))
+        continue;
+      for (var j = i + 1; j < candidates.Count; ++j) {
+        var second = candidates[j];
+        if (first.Op == second.Op || this._consumed.Contains(second)
+            || first.Parent is null || second.Parent is null
+            || !dominators.Dominates(first.Parent, second.Parent)
+            || !SameValue(first.Lhs, second.Lhs) || !SameValue(first.Rhs, second.Rhs))
+          continue;
+        this._sharedDivRem[first] = second;
+        this._consumed.Add(second);
+        break;
+      }
+    }
   }
 
   /// <summary>The predicate to emit for a comparison - its own, unless the min/max rule relabelled it.</summary>

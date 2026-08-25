@@ -19,10 +19,10 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// <c>CHAIN "T.EXE"</c>, the next pass sees what this one left.
 ///
 /// <para>
-/// The interpreter has no EXEC, so the run always ends on the <c>INT 21h/4Bh</c> that hands the
-/// machine over - which is fine, because everything CHAIN promises has already happened by then.
-/// The handoff file is lifted off the first machine's disk and put on the second's, which is
-/// precisely what DOS does between two images.
+/// The explicit-disk interpreter overload registers no EXEC target, so the run ends on the
+/// <c>INT 21h/4Bh</c> handoff. The test lifts the handoff file off the first machine and puts it on the
+/// second. A separate test uses the default self-target mapping and follows the DOS transition in one
+/// run, so both the protocol halves and the complete behavior stay independently observable.
 /// </para>
 /// </summary>
 [TestFixture]
@@ -68,7 +68,7 @@ public sealed class BackendChainTests {
   /// <summary>Runs the image twice, carrying the handoff file from the first pass into the second.</summary>
   private static (string First, byte[] Handoff, string Second) ChainToSelf(byte[] image) {
     var first = Cpu8086.Run(image, new Dictionary<string, byte[]>(), out var fault);
-    Assert.That(fault, Is.Not.Null, "the first pass is expected to stop on the EXEC this interpreter has no answer for");
+    Assert.That(fault, Is.Not.Null, "the explicit-disk run should stop at its unavailable EXEC target");
     var handoff = first.FileBytes(_handoffFile);
     Assert.That(handoff, Is.Not.Null, "CHAIN wrote no handoff file at all");
 
@@ -104,6 +104,21 @@ public sealed class BackendChainTests {
     // the values themselves, not merely "the same as the other back end": an INTEGER, a LONG, a
     // DOUBLE and a STRING all survived the handoff
     Assert.That(Lines(second), Is.EqualTo(new[] { "second pass", "1  123456  2.5", "hello chain" }));
+  }
+
+  [Test]
+  public void Run_GivenTheSelfTargetIsAvailable_ThenExecCompletesBothChainPasses() {
+    var (image, routed) = Compile(_chainToSelf, backend: true);
+    Assert.That(routed, Does.Contain("main"));
+
+    var cpu = Cpu8086.Run(image);
+
+    Assert.Multiple(() => {
+      Assert.That(Lines(cpu.Output),
+        Is.EqualTo(new[] { "first pass", "second pass", "1  123456  2.5", "hello chain" }));
+      Assert.That(cpu.FileBytes(_handoffFile), Is.Null, "the child should consume and delete the handoff");
+      Assert.That(cpu.ExitCode, Is.Zero);
+    });
   }
 
   [Test]

@@ -221,10 +221,13 @@ public sealed class SelectJumpTableTests {
 
   [Test]
   public void Emit_GivenFewCaseSparseSelect_WhenPb36Speed_ThenKeepsTheCompareChain() {
-    // below the 8-distinct-value threshold the tree declines and the linear compare chain stays:
-    // it loads each case value into AX (MOV AX, 012Ch = B8 2C 01) and compares against the subject
-    // cell, so the CMP AX, 012Ch tree signature is absent.
+    // Below the 8-distinct-value threshold every non-linear dispatch declines. Direct code loads
+    // constants before comparing while routed code keeps the subject in a register, so a whole-image
+    // CMP encoding cannot distinguish their chains; the MIR threshold is pinned in BackendSwitchTests.
     var img = Compile("$OPTIMIZE SPEED\nDIM x%\nINPUT x%\nSELECT CASE x%\nCASE 1\n PRINT \"a\"\nCASE 100\n PRINT \"b\"\nCASE 200\n PRINT \"c\"\nCASE 300\n PRINT \"d\"\nEND SELECT\nEND", Dialect.Pb36);
-    Assert.That(Contains(img, 0x3D, 0x2C, 0x01), Is.False, "a few-case sparse SELECT keeps the compare chain, not the tree");
+    Assert.Multiple(() => {
+      Assert.That(Contains(img, 0xFF, 0xA7), Is.False, "a sparse four-case SELECT has no indexed table");
+      Assert.That(Contains(img, 0xD3, 0xE8), Is.False, "and no membership-mask dispatch");
+    });
   }
 }

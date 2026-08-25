@@ -24,6 +24,19 @@ public sealed class OptimizerTests {
     return exe;
   }
 
+  private static byte[] CompileWithBackend(string source, Dialect dialect) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", dialect), "TEST.BAS", dialect);
+    var model = Binder.Bind(unit, dialect);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model) { UseExperimentalBackend = true };
+    var exe = generator.EmitExecutable();
+    Assert.Multiple(() => {
+      Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+      Assert.That(generator.BackendRoutedNames, Does.Contain("main"), "the shape test must exercise routed code");
+    });
+    return exe;
+  }
+
   private static string Ascii(byte[] image) => System.Text.Encoding.ASCII.GetString(image);
 
   private const string _HELLO = "PRINT \"Hello, World!\"\nEND";
@@ -206,6 +219,32 @@ public sealed class OptimizerTests {
     var sized = Compile("$OPTIMIZE SIZE\n" + body);
     var plain = Compile(body);
     Assert.That(sized.Length, Is.LessThan(plain.Length), $"SIZE image ({sized.Length}) must undercut the default ({plain.Length})");
+  }
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Emit_GivenOptimizeOff_WhenComparedWithDisabledOptimizer_ThenImagesMatch(bool useBackend) {
+    const string body = "DIM total AS INTEGER\nFOR i% = 1 TO 4\n  total = total + i%\nNEXT i%\nPRINT total\nEND";
+
+    static byte[] CompileCase(string source, bool useBackend, bool? optimize, out IReadOnlyList<string> routed) {
+      var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
+      var model = Binder.Bind(unit, Dialect.Pb36);
+      Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+      var generator = new CodeGenerator(model) { UseExperimentalBackend = useBackend };
+      if (optimize is { } enabled)
+        generator.Optimize = enabled;
+      var image = generator.EmitExecutable();
+      Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+      routed = generator.BackendRoutedNames.ToList();
+      return image;
+    }
+
+    var fromDirective = CompileCase("$OPTIMIZE OFF\n" + body, useBackend, null, out var directiveRoutes);
+    var fromProperty = CompileCase(body, useBackend, false, out var propertyRoutes);
+
+    Assert.That(fromDirective, Is.EqualTo(fromProperty), "$OPTIMIZE OFF must disable every optimization stage");
+    if (useBackend)
+      Assert.That(directiveRoutes, Is.EquivalentTo(propertyRoutes), "the directive must not change backend eligibility");
   }
 
   [Test]
@@ -534,21 +573,30 @@ public sealed class OptimizerTests {
   [Test]
   public void Emit_GivenUdtCopiesUnderCpu386_WhenPb36_ThenDwordMoves() {
     const string source = "$CPU 80386\nTYPE T\n  x AS LONG\n  y AS LONG\nEND TYPE\nDIM a AS T\nDIM b AS T\na.x = 1\nb = a\nPRINT b.x\nEND";
-    var image = Compile(source, Dialect.Pb36);
-    // REP MOVSD = F3 66 A5
-    var found = false;
-    for (var i = 0; i + 2 < image.Length; ++i)
-      found |= image[i] == 0xF3 && image[i + 1] == 0x66 && image[i + 2] == 0xA5;
-    Assert.That(found, Is.True, "$CPU 80386 + pb36 should emit REP MOVSD block copies");
+    var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model) { UseExperimentalBackend = true };
+    var image = generator.EmitExecutable();
+
+    Assert.Multiple(() => {
+      Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+      Assert.That(generator.BackendRoutedNames, Does.Contain("main"),
+        "the REP MOVSD must remain present when the main body comes from the x86-16 backend");
+      Assert.That(ContainsSeq(image, 0xF3, 0x66, 0xA5), Is.True,
+        "$CPU 80386 + pb36 should emit REP MOVSD block copies");
+    });
   }
 
   [Test]
   public void Emit_GivenLongShiftUnderCpu386_WhenPb36_ThenSingleDwordShift() {
     // a constant-count LONG SHIFT collapses the per-bit loop to one 66 C1 dword shift
-    const string with386 = "$CPU 80386\n$OPTIMIZE SPEED\nx& = 3\nSHIFT LEFT x&, 4\nPRINT x&\nEND";
-    const string no386 = "$OPTIMIZE SPEED\nx& = 3\nSHIFT LEFT x&, 4\nPRINT x&\nEND";
+    const string body = "$OPTIMIZE SPEED\nDECLARE FUNCTION Shifted&(BYVAL x&)\n"
+      + "PRINT Shifted&(3); Shifted&(5)\nEND\n"
+      + "FUNCTION Shifted&(BYVAL x&) NOINLINE\nSHIFT LEFT x&, 4\nShifted& = x&\nEND FUNCTION";
+    var with386 = "$CPU 80386\n" + body;
     Assert.That(CountDwordShiftImm(Compile(with386, Dialect.Pb36)),
-      Is.GreaterThan(CountDwordShiftImm(Compile(no386, Dialect.Pb36))),
+      Is.GreaterThan(CountDwordShiftImm(Compile(body, Dialect.Pb36))),
       "$CPU 80386 should add a 32-bit dword shift the per-bit-loop version lacks");
   }
 
@@ -685,11 +733,14 @@ public sealed class OptimizerTests {
   public void Emit_GivenPreTestedDoLoop_WhenPb36Speed_ThenRotatedConditionAtBothEnds() {
     // O0062: under $OPTIMIZE SPEED a pre-tested DO WHILE is rotated to an entry guard plus a bottom
     // test, so the loop bound is compared at BOTH ends (twice) and the per-iteration JMP disappears.
-    // A PRINT body keeps the loop off the register-counter path, so only rotation differs.
-    static int CmpBound(byte[] img) {   // cmp ax, 03E8h = 3D E8 03
+    // The routed allocator may hold the value in any word register; numeric PRINT now proves SI/DI
+    // preservation, so the SPEED build in particular can compare SI directly.
+    static int CmpBound(byte[] img) {
       var n = 0;
-      for (var i = 0; i < img.Length - 2; ++i)
-        if (img[i] == 0x3D && img[i + 1] == 0xE8 && img[i + 2] == 0x03)
+      for (var i = 0; i < img.Length - 3; ++i)
+        if ((img[i] == 0x3D && img[i + 1] == 0xE8 && img[i + 2] == 0x03)
+            || (img[i] == 0x81 && (img[i + 1] & 0xF8) == 0xF8
+              && img[i + 2] == 0xE8 && img[i + 3] == 0x03))
           ++n;
       return n;
     }
@@ -1031,7 +1082,7 @@ public sealed class OptimizerTests {
     static int Idivs(byte[] img) {
       var n = 0;
       for (var i = 0; i < img.Length - 1; ++i)
-        if (img[i] == 0xF7 && img[i + 1] is >= 0xF8 and <= 0xFF)   // IDIV r16 (modrm reg field 7)
+        if (img[i] == 0xF7 && (img[i + 1] & 0x38) == 0x38)        // IDIV r/m16 (F7 /7)
           ++n;
       return n;
     }
@@ -1258,13 +1309,26 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenQuadBitwiseUnderCpu386_WhenPb36_ThenInlineDwordOps() {
-    // a QUAD OR runs inline as two 66 0B (OR EAX, m32) halves instead of the QuadOr call.
-    // The operands come from INPUT because constant ones are not an OR at all: SCCP answers the
-    // whole statement at compile time and the assertion then asks about code that is not there.
-    const string with386 = "$CPU 80386\n$OPTIMIZE SPEED\nINPUT x&&\nINPUT y&&\nPRINT x&& OR y&&\nEND";
-    const string no386 = "$OPTIMIZE SPEED\nINPUT x&&\nINPUT y&&\nPRINT x&& OR y&&\nEND";
-    Assert.That(CountDwordOrEax(Compile(with386, Dialect.Pb36)),
-      Is.GreaterThan(CountDwordOrEax(Compile(no386, Dialect.Pb36))),
+    // a QUAD OR runs inline as two 66 0B (OR EAX, m32) halves instead of the QuadOr call
+    const string body = "$OPTIMIZE SPEED\nDECLARE SUB Bits(BYVAL a&, BYVAL b&)\nBits -1, 7\nBits -2, 1\nEND\n"
+      + "SUB Bits(BYVAL a&, BYVAL b&) NOINLINE\nx&& = a&\ny&& = b&\nPRINT x&& OR y&&\nEND SUB";
+    var with386 = "$CPU 80386\n" + body;
+
+    static (byte[] Image, IReadOnlyList<string> Routes) CompileRouted(string source) {
+      var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
+      var model = Binder.Bind(unit, Dialect.Pb36);
+      Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+      var generator = new CodeGenerator(model) { UseExperimentalBackend = true };
+      var image = generator.EmitExecutable();
+      Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+      return (image, generator.BackendRoutedNames.ToList());
+    }
+
+    var native = CompileRouted(with386);
+    var baseline = CompileRouted(body);
+    Assert.That(native.Routes, Does.Contain("Bits"), "the dword operations must come from routed code");
+    Assert.That(CountDwordOrEax(native.Image),
+      Is.GreaterThan(CountDwordOrEax(baseline.Image)),
       "$CPU 80386 should add inline 32-bit OR halves the runtime-call version lacks");
   }
 
@@ -1279,13 +1343,25 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenQuadShiftUnderCpu386_WhenPb36_ThenDoublePrecisionShld() {
-    // a constant-count QUAD SHIFT LEFT collapses the per-bit loop to a 66 0F A4 SHLD.
-    // The COUNT is what this is about, so it stays constant; the VALUE comes from INPUT, because
-    // a constant one folds to the shifted answer and leaves no shift for the assertion to find.
-    const string with386 = "$CPU 80386\n$OPTIMIZE SPEED\nINPUT x&&\nSHIFT LEFT x&&, 5\nPRINT x&&\nEND";
-    const string no386 = "$OPTIMIZE SPEED\nINPUT x&&\nSHIFT LEFT x&&, 5\nPRINT x&&\nEND";
-    Assert.That(CountShld(Compile(with386, Dialect.Pb36)),
-      Is.GreaterThan(CountShld(Compile(no386, Dialect.Pb36))),
+    // a constant-count QUAD SHIFT LEFT collapses the per-bit loop to a 66 0F A4 SHLD
+    const string body = "$OPTIMIZE SPEED\nDECLARE SUB Shifted(BYVAL a&)\nShifted 3\nShifted 5\nEND\n"
+      + "SUB Shifted(BYVAL a&) NOINLINE\nx&& = a&\nSHIFT LEFT x&&, 5\nPRINT x&&\nEND SUB";
+
+    static (byte[] Image, IReadOnlyList<string> Routes) CompileRouted(string source) {
+      var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
+      var model = Binder.Bind(unit, Dialect.Pb36);
+      Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+      var generator = new CodeGenerator(model) { UseExperimentalBackend = true };
+      var image = generator.EmitExecutable();
+      Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+      return (image, generator.BackendRoutedNames.ToList());
+    }
+
+    var native = CompileRouted("$CPU 80386\n" + body);
+    var baseline = CompileRouted(body);
+    Assert.That(native.Routes, Does.Contain("Shifted"), "the SHLD must come from routed code");
+    Assert.That(CountShld(native.Image),
+      Is.GreaterThan(CountShld(baseline.Image)),
       "$CPU 80386 should add a 66 0F A4 SHLD the per-bit-loop version lacks");
   }
 
@@ -2015,9 +2091,9 @@ public sealed class OptimizerTests {
     // a LONG FOR counter over an SI-clean body lives in the 32-bit register ESI under $CPU 80386:
     // the increment is ADD ESI, imm (66 83 C6), absent without $CPU 80386 (the counter then lives
     // in its 4-byte memory cell). The "true win" of the 386 path - a full LONG local in a register.
-    const string body = "$OPTIMIZE SPEED\ns& = 0\nFOR i& = 1 TO 10\n  s& = s& + i&\n  PRINT s&\nNEXT i&\nPRINT s&\nEND";
-    var with386 = Compile("$CPU 80386\n" + body, Dialect.Pb36);
-    var no386 = Compile(body, Dialect.Pb36);
+    const string body = "$OPTIMIZE SPEED\ns& = 0\nFOR i& = 1 TO 100\n  s& = s& + i&\n  PRINT s&\nNEXT i&\nPRINT s&\nEND";
+    var with386 = CompileWithBackend("$CPU 80386\n" + body, Dialect.Pb36);
+    var no386 = CompileWithBackend(body, Dialect.Pb36);
     Assert.That(CountAddEsiImm(with386), Is.GreaterThan(CountAddEsiImm(no386)),
       "a LONG FOR counter should increment in ESI (66 83 C6) under $CPU 80386");
   }
@@ -2025,19 +2101,20 @@ public sealed class OptimizerTests {
   [Test]
   public void Emit_GivenLongAccumulatorLoop_WhenCpu386Speed_ThenAccumulatorInEdi() {
     // a hot LONG accumulator joins the ESI counter in EDI under $CPU 80386 - two full LONG locals
-    // resident at once. The accumulator is loaded into EDI (66 8B 3E); a loop that only prints the
-    // counter has no LONG accumulator and so no EDI load.
-    const string withAcc = "$CPU 80386\n$OPTIMIZE SPEED\ns& = 0\nFOR i& = 1 TO 10\n  s& = s& + i&\n  PRINT s&\nNEXT i&\nPRINT s&\nEND";
-    const string noAcc = "$CPU 80386\n$OPTIMIZE SPEED\nFOR i& = 1 TO 10\n  PRINT i&\nNEXT i&\nEND";
-    Assert.That(CountMovEdiMem(Compile(withAcc, Dialect.Pb36)), Is.GreaterThan(CountMovEdiMem(Compile(noAcc, Dialect.Pb36))),
-      "a LONG accumulator joins the ESI counter in EDI (66 8B 3E) under $CPU 80386");
+    // resident at once. Its loop update is ADD EDI,ESI (66 01 F7); a loop that only prints the
+    // counter has no LONG accumulator and so no such operation.
+    const string withAcc = "$CPU 80386\n$OPTIMIZE SPEED\ns& = 0\nFOR i& = 1 TO 100\n  s& = s& + i&\n  PRINT s&\nNEXT i&\nPRINT s&\nEND";
+    const string noAcc = "$CPU 80386\n$OPTIMIZE SPEED\nFOR i& = 1 TO 100\n  PRINT i&\nNEXT i&\nEND";
+    Assert.That(CountAddEdiEsi(CompileWithBackend(withAcc, Dialect.Pb36)),
+      Is.GreaterThan(CountAddEdiEsi(CompileWithBackend(noAcc, Dialect.Pb36))),
+      "a LONG accumulator joins the ESI counter in EDI (66 01 F7) under $CPU 80386");
   }
 
-  // 66 8B 3E = MOV EDI, [disp16] (operand-size-prefixed) - loading a LONG accumulator into EDI
-  private static int CountMovEdiMem(byte[] image) {
+  // 66 01 F7 = ADD EDI, ESI (operand-size-prefixed) - the update of an EDI-resident LONG accumulator
+  private static int CountAddEdiEsi(byte[] image) {
     var count = 0;
     for (var i = 0; i + 2 < image.Length; ++i)
-      if (image[i] == 0x66 && image[i + 1] == 0x8B && image[i + 2] == 0x3E)
+      if (image[i] == 0x66 && image[i + 1] == 0x01 && image[i + 2] == 0xF7)
         ++count;
     return count;
   }

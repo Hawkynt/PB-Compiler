@@ -5,9 +5,10 @@ using PowerBasic.Compiler.Ir;
 namespace PowerBasic.Compiler.Tests.Backend;
 
 /// <summary>
-/// 32-bit values on a 16-bit target. x86-16 has no 32-bit register, so a LONG/DWORD lives in a
-/// register <b>pair</b>: the selector mints two ordinary virtual registers per value, which keeps the
-/// allocator free of any pairing concept - it places and frees the halves like anything else.
+/// 32-bit values on a 16-bit target. The baseline representation of a LONG/DWORD is a register
+/// <b>pair</b>: the selector mints two ordinary virtual registers per value, which keeps the allocator
+/// free of any pairing concept. Optimized 386 SPEED loops may instead keep a proven-safe recurrence
+/// in one native dword register; arguments, runtime-derived values, and other fallbacks retain pairs.
 ///
 /// This matters for correctness, not just coverage. Before the pair lowering, a 32-bit load minted a
 /// single <c>Dword</c>-sized virtual register and emitted one <c>MOV</c> - and since the emitter
@@ -132,6 +133,85 @@ public sealed class BackendWideIntegerTests {
     Assert.That(Opcodes(m!), Does.Not.Contain(MOpcode.Sar), "an unsigned widening has no sign to smear");
     Assert.That(m!.AllInstructions.Any(i => i.Opcode == MOpcode.Mov && i.Operands[1] is MOperand.Immediate { Value: 0 }),
       "the high word is cleared");
+  }
+
+  [TestCase(IrBinaryOp.Shl, 1, MOpcode.Shl)]
+  [TestCase(IrBinaryOp.Shl, 16, MOpcode.Shl)]
+  [TestCase(IrBinaryOp.LShr, 31, MOpcode.Shr)]
+  [TestCase(IrBinaryOp.AShr, 15, MOpcode.Sar)]
+  public void Select_Given386ConstantLongShift_ThenUsesOneDwordMemoryInstruction(
+      IrBinaryOp operation, int count, MOpcode expected) {
+    var fn = WideFunction((b, slot) => {
+      var value = b.Load(IrType.I32, slot);
+      b.Store(b.Binary(operation, value, new IrConstantInt(IrType.I32, count)), slot);
+      b.Ret();
+    }, IrType.Void);
+
+    var m = InstructionSelector.TrySelect(fn, out var reason,
+      new SelectionTarget(Cpu386: true, Optimize: true));
+
+    Assert.That(m, Is.Not.Null, reason);
+    var shift = m!.AllInstructions.SingleOrDefault(i => i.Opcode == expected
+      && i.Operands[0] is MOperand.StackSlot { Size: MRegSize.Dword });
+    Assert.That(shift, Is.Not.Null, "the 386 path should shift one staged dword");
+    Assert.That(((MOperand.Immediate)shift!.Operands[1]).Value, Is.EqualTo(count));
+  }
+
+  [TestCase(false, false)]
+  [TestCase(false, true)]
+  [TestCase(true, false)]
+  public void Select_GivenTargetWithoutOptimized386_ThenKeepsTheWordCarryChain(bool cpu386, bool optimize) {
+    var fn = WideFunction((b, slot) => {
+      var value = b.Load(IrType.I32, slot);
+      b.Store(b.Shl(value, new IrConstantInt(IrType.I32, 4)), slot);
+      b.Ret();
+    }, IrType.Void);
+
+    var m = InstructionSelector.TrySelect(fn, out var reason, new SelectionTarget(Cpu386: cpu386, Optimize: optimize));
+
+    Assert.That(m, Is.Not.Null, reason);
+    Assert.That(m!.AllInstructions.Any(i => i.Opcode == MOpcode.Shl
+      && i.Operands[0] is MOperand.StackSlot { Size: MRegSize.Dword }), Is.False,
+      "an 8086 image must not contain an operand-size-prefixed shift");
+    Assert.That(Opcodes(m), Does.Contain(MOpcode.Rcl), "the high word receives carry from the low word");
+  }
+
+  [TestCase(0, true)]
+  [TestCase(32, false)]
+  public void Select_Given386CountOutsideNativeRange_ThenDoesNotUseAMaskedDwordShift(int count, bool selects) {
+    var fn = WideFunction((b, slot) => {
+      var value = b.Load(IrType.I32, slot);
+      b.Store(b.Shl(value, new IrConstantInt(IrType.I32, count)), slot);
+      b.Ret();
+    }, IrType.Void);
+
+    var m = InstructionSelector.TrySelect(fn, out _, new SelectionTarget(Cpu386: true, Optimize: true));
+
+    Assert.That(m is not null, Is.EqualTo(selects));
+    Assert.That(m?.AllInstructions.Any(i => i.Opcode == MOpcode.Shl
+      && i.Operands[0] is MOperand.StackSlot { Size: MRegSize.Dword }), Is.Not.True,
+      "counts outside 1..31 must keep source-level semantics instead of using the CPU's masked count");
+  }
+
+  [Test]
+  public void Emit_Given386ConstantLongShift_ThenWritesAnOperandSizePrefixedShift() {
+    var fn = WideFunction((b, slot) => {
+      var value = b.Load(IrType.I32, slot);
+      b.Store(b.Shl(value, new IrConstantInt(IrType.I32, 4)), slot);
+      b.Ret();
+    }, IrType.Void);
+    var target = new SelectionTarget(Cpu386: true, Optimize: true);
+    var m = InstructionSelector.TrySelect(fn, out var reason, target);
+    Assert.That(m, Is.Not.Null, reason);
+    var alloc = LinearScanAllocator.Allocate(m!, target);
+    Assert.That(alloc, Is.Not.Null);
+    var asm = new Assembler();
+
+    MachineEmitter.EmitFunction(asm, m!, alloc!, [], 0);
+
+    var bytes = asm.ToArray();
+    Assert.That(bytes.Zip(bytes.Skip(1), (a, b) => (a, b)),
+      Has.Some.EqualTo(((byte)0x66, (byte)0xC1)), "SHL dword [BP+n],4 is 66 C1 /4 ib");
   }
 
   [Test]

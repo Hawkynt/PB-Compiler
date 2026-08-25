@@ -42,8 +42,7 @@ public sealed partial class DosRuntime {
     asm.Push(Reg.ES);
     asm.Mov(Reg.DS, Reg.DX);
     asm.Mov(Reg.ES, Reg.BX);
-    asm.Rep();
-    asm.Movsb();
+    this.EmitRepMovsbWidened(asm);
     asm.Pop(Reg.ES);
     asm.Pop(Reg.DS);
     asm.Ret();

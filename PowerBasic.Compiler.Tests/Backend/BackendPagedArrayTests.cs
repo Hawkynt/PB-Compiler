@@ -12,12 +12,10 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// <c>XMS</c> family.
 ///
 /// <para>
-/// HUGE is executed here; VIRTUAL is not, and the split is the emulator's rather than a choice.
-/// <see cref="Cpu8086"/> answers INT 21h/48h, so a DOS block really is allocated and the segment
-/// stepping is observable - which is the whole point, since an element past 64 KiB is exactly where a
-/// near address silently wraps and reads the wrong bytes back. It has no INT 67h, so an EMS array
-/// cannot run under it at all; the differential battery's DIFF17 is what exercises VIRTUAL, under a
-/// DOSBox configured with <c>ems=true</c>.
+/// Both models execute here. <see cref="Cpu8086"/> answers INT 21h/48h for HUGE blocks and models the
+/// LIM EMS 41h-45h services for VIRTUAL storage. Tests therefore observe segment stepping past 64 KiB,
+/// page-frame remapping past each 16 KiB page, write-back, allocation counts and release—not only the
+/// presence of the relevant calls.
 /// </para>
 /// </summary>
 [TestFixture]
@@ -48,6 +46,22 @@ public sealed class BackendPagedArrayTests {
     w(32768) = 8
     w(40000) = 9
     PRINT w(1); w(32768); w(40000); LBOUND(w); UBOUND(w)
+    """;
+
+  private const string _virtualProgram = """
+    before& = FRE(-11)
+    DIM VIRTUAL v(1 TO 10000) AS LONG
+    during& = FRE(-11)
+    v(1) = 11
+    v(4096) = 22
+    v(4097) = 33
+    v(8192) = 44
+    v(8193) = 55
+    v(10000) = 66
+    PRINT v(1); v(4096); v(4097); v(8192); v(8193); v(10000)
+    PRINT before& - during&
+    ERASE v
+    PRINT FRE(-11) - before&
     """;
 
   private static SemanticModel Bind(string source) {
@@ -83,10 +97,29 @@ public sealed class BackendPagedArrayTests {
     Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
   }
 
+  [Test]
+  public void Execute_GivenAVirtualArray_WhenRouted_ThenMappedPagesAndFreeCountMatchTheDirectEmitter() {
+    var direct = new CodeGenerator(Bind(_virtualProgram)) { Optimize = true, UseExperimentalBackend = false };
+    var routed = new CodeGenerator(Bind(_virtualProgram)) { Optimize = true, UseExperimentalBackend = true };
+    var directImage = direct.EmitExecutable();
+    var routedImage = routed.EmitExecutable();
+
+    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
+
+    var directCpu = Cpu8086.Run(directImage);
+    var routedCpu = Cpu8086.Run(routedImage);
+    Assert.Multiple(() => {
+      Assert.That(directCpu.Output.Replace("\r\n", "|"),
+        Is.EqualTo(" 11  22  33  44  55  66 | 65536 | 0 |"));
+      Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+    });
+  }
+
   /// <summary>
-  /// A VIRTUAL array cannot be executed here, but it can be LOWERED and ROUTED, and the two things
-  /// that could go silently wrong are visible without running it: the whole module body has to reach
-  /// the back end, and the window mapping has to be there.
+  /// The structural half of VIRTUAL coverage: the whole module body has to reach the back end and the
+  /// window mapping has to be present, independently of the executable behavior test above.
   /// </summary>
   [Test]
   public void Route_GivenAVirtualArray_ThenTheModuleBodyRoutesThroughTheEmsPageMapper() {

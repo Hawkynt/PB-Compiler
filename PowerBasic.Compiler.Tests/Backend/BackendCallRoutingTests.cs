@@ -16,10 +16,11 @@ namespace PowerBasic.Compiler.Tests.Backend;
 ///
 /// Two things have to hold for a call to be sound here. The ABI must match on both sides - the back
 /// end emits the BASIC/PASCAL convention (arguments pushed left to right, callee cleans with
-/// <c>RET n</c>), so a routed function may only call procedures that are themselves routed, since
-/// those are exactly the ones excluded from the register-parameter conversion. And nothing may sit
-/// in a register across the call: this ABI preserves no register at all, so the allocator has to
-/// refuse such a function rather than let a value be destroyed.
+/// <c>RET n</c>). An optimized routed function may only call procedures that are themselves routed,
+/// since those are exactly the ones excluded from the register-parameter conversion. With optimization
+/// off, a directly emitted BASIC/PASCAL callee keeps the same stack ABI and is therefore compatible.
+/// Nothing may sit in a register across any call: this ABI preserves no register at all, so the
+/// allocator has to refuse such a function rather than let a value be destroyed.
 /// </summary>
 [TestFixture]
 public sealed class BackendCallRoutingTests {
@@ -181,6 +182,86 @@ public sealed class BackendCallRoutingTests {
     // the two images would be identical. (Equality of OUTPUT is what the DOSBox battery verifies.)
     Assert.That(routedImage, Is.Not.EqualTo(directImage),
       "the back end did not compile anything - the call-containing function fell back to the direct codegen");
+  }
+
+  [Test]
+  public void Execute_GivenUnoptimizedRoutedMainCallingDirectBasicCallee_ThenStackAbiMatches() {
+    const string source = """
+      DECLARE SUB Touch(v%)
+      DIM a AS INTEGER
+      a = 7
+      Touch a
+      PRINT a
+      END
+
+      SUB Touch(v%)
+        v% = v% + 1
+      END SUB
+      """;
+    var direct = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = false };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = true };
+
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.Multiple(() => {
+      Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
+      Assert.That(routed.BackendRoutedNames, Does.Not.Contain("Touch"),
+        "the BYREF callee stays on the direct emitter");
+      Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+      Assert.That(routedCpu.Output.Trim(), Is.EqualTo("8"));
+    });
+  }
+
+  [Test]
+  public void Execute_GivenSizeOptimizedRoutedMainCallingDirectBasicCallee_ThenStackAbiMatches() {
+    const string source = """
+      DECLARE SUB CountDown(v%)
+      DIM a AS INTEGER
+      a = 2
+      CountDown a
+      END
+
+      SUB CountDown(v%)
+        PRINT v%
+        IF v% > 0 THEN CountDown v% - 1
+      END SUB
+      """;
+    var direct = new CodeGenerator(Bind(source)) {
+      Optimize = true,
+      OptimizeSize = true,
+      UseExperimentalBackend = false,
+    };
+    var routed = new CodeGenerator(Bind(source)) {
+      Optimize = true,
+      OptimizeSize = true,
+      UseExperimentalBackend = true,
+    };
+
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.Multiple(() => {
+      Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
+      Assert.That(routed.BackendRoutedNames, Does.Not.Contain("CountDown"),
+        "the recursive BYREF callee stays on the direct emitter");
+      Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+    });
+  }
+
+  [Test]
+  public void Route_GivenUnoptimizedMainCallingUnresolvedDeclaration_ThenDeclinesTheCaller() {
+    var generator = new CodeGenerator(Bind("""
+      DECLARE FUNCTION Imported%(BYVAL v%)
+      PRINT Imported%(1)
+      END
+      """)) {
+      Optimize = false,
+      UseExperimentalBackend = true,
+    };
+
+    Assert.That(generator.BackendRoutedNames, Does.Not.Contain("main"),
+      "a compatible calling convention cannot create a missing external definition");
   }
 
   [Test]

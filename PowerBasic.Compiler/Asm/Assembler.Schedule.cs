@@ -14,10 +14,13 @@ public sealed partial class Assembler {
   /// </summary>
   public bool EnableSchedule { get; set; }
 
-  /// <summary>A recorded instruction's data dependencies: which word registers / flags / memory it reads and writes.</summary>
+  /// <summary>
+  /// A recorded instruction's data dependencies: which word registers, flags, and memory it reads
+  /// and writes.
+  /// </summary>
   private readonly record struct SchedInstr(
     int Start, int Length, ushort Reads, ushort Writes, bool ReadsFlags, bool WritesFlags,
-    bool MemRead, bool MemWrite, object? MemBase, int MemDisp) {
+    bool MemRead, bool MemWrite, object? MemBase, int MemDisp, int MemBytes) {
     public bool TouchesMemory => this.MemRead || this.MemWrite;
   }
 
@@ -37,10 +40,12 @@ public sealed partial class Assembler {
 
   private void RecordSchedReg(int start, ushort reads, ushort writes, bool readsFlags, bool writesFlags) {
     if (this.RecordingSched)
-      (this._schedInstrs ??= []).Add(new(start, this.Position - start, reads, writes, readsFlags, writesFlags, false, false, null, 0));
+      (this._schedInstrs ??= []).Add(new(start, this.Position - start, reads, writes, readsFlags,
+        writesFlags, false, false, null, 0, 0));
   }
 
-  private void RecordSchedMem(int start, ushort reads, ushort writes, bool readsFlags, bool writesFlags, bool memRead, bool memWrite, Mem mem) {
+  private void RecordSchedMem(int start, ushort reads, ushort writes, bool readsFlags, bool writesFlags,
+      bool memRead, bool memWrite, Mem mem) {
     if (!this.RecordingSched)
       return;
     // address registers are read to form the effective address
@@ -54,7 +59,11 @@ public sealed partial class Assembler {
       : null;
     if (mem.Index is null && mem.Base is { } onlyBase && onlyBase is not Reg.BP)
       memBase = null;        // [BX]/[SI]/[DI] without a label: unknown
-    (this._schedInstrs ??= []).Add(new(start, this.Position - start, reads, writes, readsFlags, writesFlags, memRead, memWrite, memBase, mem.Displacement));
+    // An unsized operand gets its width from the opcode. Use the largest scalar width rather than
+    // inventing a narrow one that could make two overlapping accesses appear independent.
+    var bytes = mem.Size == OperandSize.None ? (int)OperandSize.Tbyte : (int)mem.Size;
+    (this._schedInstrs ??= []).Add(new(start, this.Position - start, reads, writes, readsFlags,
+      writesFlags, memRead, memWrite, memBase, mem.Displacement, bytes));
   }
 
   /// <summary>
@@ -145,10 +154,15 @@ public sealed partial class Assembler {
       return true;                                  // an indexed/unknown reference aliases everything
     if (!ReferenceEquals(a.MemBase, b.MemBase) && !a.MemBase.Equals(b.MemBase))
       return false;                                 // distinct cells (different label / stack base)
-    return System.Math.Abs(a.MemDisp - b.MemDisp) < 4;   // same cell base: overlap within a dword
+    var aStart = (long)a.MemDisp;
+    var bStart = (long)b.MemDisp;
+    return aStart < bStart + b.MemBytes && bStart < aStart + a.MemBytes;
   }
 
-  /// <summary>Rewrites the bytes of a window in the scheduled order (the window has no internal labels/fixups, so positions outside are untouched).</summary>
+  /// <summary>
+  /// Rewrites the bytes of a window in the scheduled order. The window has no internal labels or
+  /// fixups, so positions outside it are untouched.
+  /// </summary>
   private void PermuteWindow(List<SchedInstr> window, int[] order) {
     var start = window[0].Start;
     var blocks = window.Select(w => this._buffer.GetRange(w.Start, w.Length)).ToList();

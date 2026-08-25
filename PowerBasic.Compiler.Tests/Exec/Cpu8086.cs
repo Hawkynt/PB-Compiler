@@ -23,8 +23,12 @@ namespace PowerBasic.Compiler.Tests.Exec;
 public sealed class Cpu8086 {
 
   private const int _MEMORY = 1 << 20;                 // one megabyte, the real-mode address space
+  private const int _MAX_EXEC_DEPTH = 32;
+  private const int _EMS_PAGE_SIZE = 16 * 1024;
+  private const int _EMS_TOTAL_PAGES = 256;             // four MiB, enough to expose allocation changes
   private const ushort _PSP_SEGMENT = 0x0100;
   private const ushort _LOAD_SEGMENT = 0x0110;         // DOS loads the image one PSP (16 paragraphs) up
+  private const ushort _EMS_FRAME_SEGMENT = 0xE000;
 
   private readonly byte[] _memory = new byte[_MEMORY];
 
@@ -34,11 +38,17 @@ public sealed class Cpu8086 {
   private readonly StringBuilder _printer = new();
   private readonly Dictionary<int, OpenFile> _files = [];
   private readonly Dictionary<string, MemoryFile> _byName = new(StringComparer.OrdinalIgnoreCase);
+  private readonly Dictionary<string, byte[]> _executables = new(StringComparer.OrdinalIgnoreCase);
+  private readonly Dictionary<ushort, byte[]> _emsHandles = [];
+  private readonly EmsMapping?[] _emsMappings = new EmsMapping?[4];
 
   /// <summary>Directories the program has created; there is no host file system behind this.</summary>
   private readonly HashSet<string> _directories = new(StringComparer.OrdinalIgnoreCase);
   private int _nextHandle = 5;                          // 0..4 are the standard handles
   private ushort _nextFreeSegment = 0x2000;             // where INT 21h/48h hands out blocks
+  private ushort _nextEmsHandle = 1;
+  private int _execDepth;
+  private byte _childExitCode;
 
   private sealed class MemoryFile {
     public string Name = "";
@@ -55,8 +65,11 @@ public sealed class Cpu8086 {
     public int Position;
   }
 
+  private readonly record struct EmsMapping(ushort Handle, ushort LogicalPage);
+
   // registers, in the encoding order the ModRM byte uses
   private readonly ushort[] _r = new ushort[8];         // AX CX DX BX SP BP SI DI
+  private readonly ushort[] _rh = new ushort[8];        // high halves for the executable 386 subset
   private ushort _cs, _ds, _es, _ss, _ip;
   private bool _cf, _zf, _sf, _of, _pf, _af, _df;
   private bool _halted;
@@ -108,6 +121,7 @@ public sealed class Cpu8086 {
   /// <summary>Loads an MZ executable and runs it to termination (or until <paramref name="maxSteps"/> instructions).</summary>
   public static Cpu8086 Run(byte[] exe, int maxSteps = 20_000_000) {
     var cpu = new Cpu8086();
+    cpu._executables["T.EXE"] = exe;                    // the test harness runs each image under this DOS name
     cpu.Load(exe);
     cpu.Execute(maxSteps);
     return cpu;
@@ -118,12 +132,11 @@ public sealed class Cpu8086 {
   /// rather than throwing what stopped the program - the machine comes back either way.
   ///
   /// <para>
-  /// Both halves exist for CHAIN, which cannot be watched any other way here. A CHAIN writes its
-  /// COMMON handoff and then EXECs, and there is no EXEC in this interpreter - so the run always ends
-  /// on that, and what has to be inspected is the file it left behind. The next image absorbs that
-  /// file before its first statement, so it has to be back on the disk before that image starts.
-  /// Loudness is preserved where it matters: <paramref name="fault"/> still names what stopped the
-  /// run, and a caller that ignores it is asserting on a program that did not finish.
+  /// This overload deliberately registers no executable target. A CHAIN therefore stops at its EXEC,
+  /// letting a test inspect the COMMON handoff and feed it to a separately started image. The simpler
+  /// overload registers its image as <c>T.EXE</c> and follows a self-CHAIN end to end. Loudness is
+  /// preserved in both forms: <paramref name="fault"/> names an unavailable target or other boundary,
+  /// and a caller that ignores it is asserting on a program that did not finish.
   /// </para>
   /// </summary>
   public static Cpu8086 Run(byte[] exe, IReadOnlyDictionary<string, byte[]> disk,
@@ -223,6 +236,31 @@ public sealed class Cpu8086 {
     throw new Cpu8086Exception($"ran {maxSteps} instructions without terminating (runaway program?)");
   }
 
+  private void ExecuteChild(byte[] image) {
+    if (this._execDepth >= _MAX_EXEC_DEPTH)
+      throw new Cpu8086Exception($"EXEC nesting exceeded {_MAX_EXEC_DEPTH} images");
+
+    var child = new Cpu8086 { _execDepth = this._execDepth + 1 };
+    foreach (var (name, file) in this._byName)
+      child._byName[name] = file;
+    foreach (var (name, executable) in this._executables)
+      child._executables[name] = executable;
+    foreach (var directory in this._directories)
+      child._directories.Add(directory);
+
+    child.Load(image);
+    child.Execute(20_000_000);
+
+    this._output.Append(child._output);
+    this._printer.Append(child._printer);
+    this._byName.Clear();
+    foreach (var (name, file) in child._byName)
+      this._byName[name] = file;
+    this._directories.Clear();
+    this._directories.UnionWith(child._directories);
+    this._childExitCode = (byte)child.ExitCode;
+  }
+
   // ---- memory ---------------------------------------------------------------------------------
 
   private static int Linear(ushort segment, ushort offset) => (segment * 16 + offset) & (_MEMORY - 1);
@@ -266,6 +304,13 @@ public sealed class Cpu8086 {
       this._r[index] = (ushort)((this._r[index] & 0xFF00) | value);
     else
       this._r[index - 4] = (ushort)((this._r[index - 4] & 0x00FF) | (value << 8));
+  }
+
+  private uint Reg32(int index) => this._r[index] | ((uint)this._rh[index] << 16);
+
+  private void SetReg32(int index, uint value) {
+    this._r[index] = (ushort)value;
+    this._rh[index] = (ushort)(value >> 16);
   }
 
   // ---- ModRM ----------------------------------------------------------------------------------
@@ -331,6 +376,13 @@ public sealed class Cpu8086 {
     this._cf = this._of = false;
     this._zf = value == 0;
     this._sf = (value & 0x8000) != 0;
+    this._pf = Parity((byte)value);
+  }
+
+  private void SetLogicFlags32(uint value) {
+    this._cf = this._of = false;
+    this._zf = value == 0;
+    this._sf = (value & 0x80000000) != 0;
     this._pf = Parity((byte)value);
   }
 
@@ -465,6 +517,7 @@ public sealed class Cpu8086 {
   private void Step() {
     this._segmentOverride = null;
     var repeat = 0;                                     // 0 none, 1 REPNZ, 2 REPZ
+    var operand32 = false;
     byte opcode;
     for (;;) {
       opcode = this.Fetch();
@@ -473,10 +526,16 @@ public sealed class Cpu8086 {
         case 0x2E: this._segmentOverride = this._cs; continue;
         case 0x36: this._segmentOverride = this._ss; continue;
         case 0x3E: this._segmentOverride = this._ds; continue;
+        case 0x66: operand32 = true; continue;
         case 0xF2: repeat = 1; continue;
         case 0xF3: repeat = 2; continue;
       }
       break;
+    }
+
+    if (operand32) {
+      this.StepDword(opcode, repeat);
+      return;
     }
 
     switch (opcode) {
@@ -681,14 +740,214 @@ public sealed class Cpu8086 {
       case 0xFD: this._df = true; return;
 
       case 0x0F: this.TwoByte(); return;
-      case 0xF6 or 0xF7: this.Group3(opcode, repeat); return;
+      case 0xF6 or 0xF7: this.Group3(opcode); return;
       case 0xFE or 0xFF: this.Group45(opcode); return;
       // POP r/m16. The compiler emits it for ON ERROR's handler save/restore and for DRAW's
       // no-update prefix, and the interpreter simply had no case for it.
       case 0x8F: { var (mode, _, address) = this.ModRm(); this.SetRm16(mode, address, this.Pop()); return; }
 
       default:
-        throw new Cpu8086Exception($"unimplemented opcode {opcode:X2} at {this._cs:X4}:{this._ip - 1:X4}");
+        throw new Cpu8086Exception(
+          $"unimplemented opcode {opcode:X2} at {this._cs:X4}:{this._ip - 1:X4} " +
+          $"SP={this._r[_SP]:X4} BP={this._r[_BP]:X4}");
+    }
+  }
+
+  /// <summary>
+  /// The operand-size-prefixed operations required by the executable 386 differentials: static
+  /// zero-fill and copies, native LONG loop arithmetic, LONG shifts, and QUAD bitwise/shift halves.
+  /// Every other 32-bit encoding is still rejected loudly; this subset grows only alongside compiler
+  /// output with a behavioral oracle.
+  /// </summary>
+  private void StepDword(byte opcode, int repeat) {
+    if (opcode is >= 0xB8 and <= 0xBF && repeat == 0) { // MOV r32,imm32
+      var low = this.FetchWord();
+      var high = this.FetchWord();
+      this.SetReg32(opcode - 0xB8, low | ((uint)high << 16));
+      return;
+    }
+    if (opcode is >= 0x00 and <= 0x3B && (opcode & 7) is 1 or 3 && repeat == 0) {
+      var operation = opcode >> 3;
+      var (mode, register, address) = this.ModRm();
+      var toRegister = (opcode & 2) != 0;
+      var left = toRegister ? this.Reg32(register) : this.GetRm32(mode, address);
+      var right = toRegister ? this.GetRm32(mode, address) : this.Reg32(register);
+      var result = this.Alu32(operation, left, right);
+      if (operation != 7) {
+        if (toRegister)
+          this.SetReg32(register, result);
+        else
+          this.SetRm32(mode, address, result);
+      }
+      return;
+    }
+    if (opcode is 0x81 or 0x83 && repeat == 0) {       // ALU r/m32,imm32/sign-extended imm8
+      var (mode, operation, address) = this.ModRm();
+      var immediate = opcode == 0x83
+        ? unchecked((uint)(int)(sbyte)this.Fetch())
+        : this.FetchWord() | ((uint)this.FetchWord() << 16);
+      var result = this.Alu32(operation, this.GetRm32(mode, address), immediate);
+      if (operation != 7)
+        this.SetRm32(mode, address, result);
+      return;
+    }
+    if (opcode == 0xC7 && repeat == 0) {               // MOV r/m32,imm32
+      var (mode, operation, address) = this.ModRm();
+      if (operation != 0)
+        throw new Cpu8086Exception($"unimplemented dword C7 operation /{operation}");
+      var value = this.FetchWord() | ((uint)this.FetchWord() << 16);
+      this.SetRm32(mode, address, value);
+      return;
+    }
+    if (opcode == 0x8B && repeat == 0) {                 // MOV r32,m32
+      var (mode, register, address) = this.ModRm();
+      this.SetReg32(register, this.GetRm32(mode, address));
+      return;
+    }
+    if (opcode == 0x89 && repeat == 0) {                 // MOV m32,r32
+      var (mode, register, address) = this.ModRm();
+      this.SetRm32(mode, address, this.Reg32(register));
+      return;
+    }
+    if (opcode == 0xA1 && repeat == 0) {                 // MOV EAX,moffs32
+      this.SetReg32(_AX, this.ReadDword(Linear(this.DataSegment, this.FetchWord())));
+      return;
+    }
+    if (opcode == 0xA3 && repeat == 0) {                 // MOV moffs32,EAX
+      this.WriteDword(Linear(this.DataSegment, this.FetchWord()), this.Reg32(_AX));
+      return;
+    }
+    if (opcode == 0xA5 && repeat == 2) {                 // REP MOVSD copies DS:SI to ES:DI
+      var step = (ushort)(this._df ? -4 : 4);
+      while (this._r[_CX] != 0) {
+        var source = Linear(this.DataSegment, this._r[_SI]);
+        var destination = Linear(this._es, this._r[_DI]);
+        this.WriteDword(destination, this.ReadDword(source));
+        this._r[_SI] += step;
+        this._r[_DI] += step;
+        --this._r[_CX];
+      }
+      return;
+    }
+    if (opcode == 0xAB && repeat == 2) {                 // REP STOSD stores EAX into ES:EDI
+      var value = this.Reg32(_AX);
+      while (this._r[_CX] != 0) {
+        this.WriteDword(Linear(this._es, this._r[_DI]), value);
+        this._r[_DI] += (ushort)(this._df ? -4 : 4);
+        --this._r[_CX];
+      }
+      return;
+    }
+    if (opcode == 0x99 && repeat == 0) {                 // CDQ: sign-extend EAX into EDX:EAX
+      this.SetReg32(_DX, (this.Reg32(_AX) & 0x80000000) != 0 ? uint.MaxValue : 0);
+      return;
+    }
+    if (opcode == 0xF7 && repeat == 0) {
+      this.Group3Dword();
+      return;
+    }
+    if (opcode == 0xC1 && repeat == 0) {                 // SHL/SHR/SAR dword,imm8
+      var (mode, operation, address) = this.ModRm();
+      var count = this.Fetch();
+      var value = mode == 3 ? this.Reg32(address) : this.ReadDword(address);
+      var result = this.Shift32(operation, value, count);
+      if (mode == 3)
+        this.SetReg32(address, result);
+      else
+        this.WriteDword(address, result);
+      return;
+    }
+    if (opcode == 0x0F && repeat == 0) {
+      this.StepDwordTwoByte();
+      return;
+    }
+    throw new Cpu8086Exception($"unimplemented opcode 66 {opcode:X2} at {this._cs:X4}:{this._ip - 2:X4}");
+  }
+
+  private void StepDwordTwoByte() {
+    var opcode = this.Fetch();
+    if (opcode is not (0xA4 or 0xAC))
+      throw new Cpu8086Exception($"unimplemented opcode 66 0F {opcode:X2}");
+
+    var (mode, source, destination) = this.ModRm();
+    if (mode != 3)
+      throw new Cpu8086Exception("only register dword SHLD/SHRD is supported");
+    var count = this.Fetch() & 0x1F;
+    if (count == 0)
+      return;
+
+    var original = this.Reg32(destination);
+    var other = this.Reg32(source);
+    var result = opcode == 0xA4
+      ? original << count | other >> (32 - count)
+      : original >> count | other << (32 - count);
+    this._cf = opcode == 0xA4
+      ? ((original >> (32 - count)) & 1) != 0
+      : ((original >> (count - 1)) & 1) != 0;
+    this.SetReg32(destination, result);
+    this._zf = result == 0;
+    this._sf = (result & 0x80000000) != 0;
+    this._pf = Parity((byte)result);
+    if (count == 1)
+      this._of = opcode == 0xA4
+        ? this._sf ^ this._cf
+        : ((original ^ result) & 0x80000000) != 0;
+  }
+
+  /// <summary>The operand-size-prefixed TEST/NOT/NEG/MUL/IMUL/DIV/IDIV group.</summary>
+  private void Group3Dword() {
+    var (mode, operation, address) = this.ModRm();
+    var operand = this.GetRm32(mode, address);
+    switch (operation) {
+      case 0 or 1:                                      // TEST r/m32,imm32
+        this.SetLogicFlags32(operand & (this.FetchWord() | ((uint)this.FetchWord() << 16)));
+        return;
+      case 2:                                           // NOT
+        this.SetRm32(mode, address, ~operand);
+        return;
+      case 3:                                           // NEG
+        this.SetRm32(mode, address, this.Sub32(0, operand, false));
+        return;
+      case 4: {                                         // MUL EDX:EAX = EAX * r/m32
+        var product = (ulong)this.Reg32(_AX) * operand;
+        this.SetReg32(_AX, (uint)product);
+        this.SetReg32(_DX, (uint)(product >> 32));
+        this._cf = this._of = (product >> 32) != 0;
+        return;
+      }
+      case 5: {                                         // IMUL EDX:EAX = EAX * r/m32
+        var product = (long)(int)this.Reg32(_AX) * (int)operand;
+        var low = (uint)product;
+        this.SetReg32(_AX, low);
+        this.SetReg32(_DX, (uint)((ulong)product >> 32));
+        this._cf = this._of = product != (long)(int)low;
+        return;
+      }
+      case 6: {                                         // DIV EDX:EAX / r/m32
+        if (operand == 0)
+          throw new Cpu8086Exception("divide by zero (dword DIV)");
+        var dividend = ((ulong)this.Reg32(_DX) << 32) | this.Reg32(_AX);
+        var quotient = dividend / operand;
+        if (quotient > uint.MaxValue)
+          throw new Cpu8086Exception("divide overflow (dword DIV)");
+        this.SetReg32(_AX, (uint)quotient);
+        this.SetReg32(_DX, (uint)(dividend % operand));
+        return;
+      }
+      default: {                                        // IDIV EDX:EAX / r/m32
+        var divisor = (int)operand;
+        if (divisor == 0)
+          throw new Cpu8086Exception("divide by zero (dword IDIV)");
+        var dividend = ((long)(int)this.Reg32(_DX) << 32) | this.Reg32(_AX);
+        if (dividend == long.MinValue && divisor == -1)
+          throw new Cpu8086Exception("divide overflow (dword IDIV)");
+        var quotient = dividend / divisor;
+        if (quotient is < int.MinValue or > int.MaxValue)
+          throw new Cpu8086Exception("divide overflow (dword IDIV)");
+        this.SetReg32(_AX, (uint)(int)quotient);
+        this.SetReg32(_DX, (uint)(int)(dividend % divisor));
+        return;
+      }
     }
   }
 
@@ -1145,6 +1404,107 @@ public sealed class Cpu8086 {
     return value;
   }
 
+  private uint Shift32(int operation, uint value, int count) {
+    var masked = count & 0x1F;
+    var original = value;
+    for (var i = 0; i < masked; ++i)
+      switch (operation) {
+        case 0:
+          this._cf = (value & 0x80000000) != 0;
+          value = value << 1 | (this._cf ? 1U : 0);
+          break;
+        case 1:
+          this._cf = (value & 1) != 0;
+          value = value >> 1 | (this._cf ? 0x80000000U : 0);
+          break;
+        case 2: {
+          var carry = this._cf;
+          this._cf = (value & 0x80000000) != 0;
+          value = value << 1 | (carry ? 1U : 0);
+          break;
+        }
+        case 3: {
+          var carry = this._cf;
+          this._cf = (value & 1) != 0;
+          value = value >> 1 | (carry ? 0x80000000U : 0);
+          break;
+        }
+        case 4 or 6: this._cf = (value & 0x80000000) != 0; value <<= 1; break;
+        case 5: this._cf = (value & 1) != 0; value >>= 1; break;
+        case 7: this._cf = (value & 1) != 0; value = (uint)((int)value >> 1); break;
+        default: throw new Cpu8086Exception($"unimplemented dword shift operation /{operation}");
+      }
+    if (masked == 0)
+      return value;
+    if (operation < 4) {
+      if (masked == 1)
+        this._of = operation is 0 or 2
+          ? ((value & 0x80000000) != 0) ^ this._cf
+          : ((value >> 31) ^ ((value >> 30) & 1)) != 0;
+      return value;
+    }
+    this._zf = value == 0;
+    this._sf = (value & 0x80000000) != 0;
+    this._pf = Parity((byte)value);
+    if (masked == 1)
+      this._of = operation switch {
+        4 or 6 => this._sf ^ this._cf,
+        5 => (original & 0x80000000) != 0,
+        7 => false,
+        _ => this._of,
+      };
+    return value;
+  }
+
+  private uint GetRm32(int mode, int address) => mode == 3 ? this.Reg32(address) : this.ReadDword(address);
+
+  private void SetRm32(int mode, int address, uint value) {
+    if (mode == 3)
+      this.SetReg32(address, value);
+    else
+      this.WriteDword(address, value);
+  }
+
+  private uint Add32(uint left, uint right, bool carry) {
+    var sum = (ulong)left + right + (carry ? 1UL : 0UL);
+    var result = (uint)sum;
+    this._cf = sum > uint.MaxValue;
+    this._af = ((left ^ right ^ result) & 0x10) != 0;
+    this._of = (~(left ^ right) & (left ^ result) & 0x80000000) != 0;
+    this._zf = result == 0;
+    this._sf = (result & 0x80000000) != 0;
+    this._pf = Parity((byte)result);
+    return result;
+  }
+
+  private uint Sub32(uint left, uint right, bool borrow) {
+    var difference = (long)left - right - (borrow ? 1L : 0L);
+    var result = (uint)difference;
+    this._cf = difference < 0;
+    this._af = ((left ^ right ^ result) & 0x10) != 0;
+    this._of = ((left ^ right) & (left ^ result) & 0x80000000) != 0;
+    this._zf = result == 0;
+    this._sf = (result & 0x80000000) != 0;
+    this._pf = Parity((byte)result);
+    return result;
+  }
+
+  private uint Alu32(int operation, uint left, uint right) => operation switch {
+    0 => this.Add32(left, right, false),
+    1 => Logic32(this, left | right),
+    2 => this.Add32(left, right, this._cf),
+    3 => this.Sub32(left, right, this._cf),
+    4 => Logic32(this, left & right),
+    5 => this.Sub32(left, right, false),
+    6 => Logic32(this, left ^ right),
+    _ => this.Sub32(left, right, false),
+  };
+
+  private static uint Logic32(Cpu8086 cpu, uint value) {
+    cpu.SetLogicFlags32(value);
+    return value;
+  }
+
   private byte Shift8(int op, byte value, int count) {
     for (var i = 0; i < (count & 0x1F); ++i)
       switch (op) {
@@ -1164,7 +1524,7 @@ public sealed class Cpu8086 {
     return value;
   }
 
-  private void Group3(byte opcode, int repeat) {
+  private void Group3(byte opcode) {
     var (mode, op, address) = this.ModRm();
     var wide = (opcode & 1) != 0;
     switch (op) {
@@ -1240,7 +1600,6 @@ public sealed class Cpu8086 {
         return;
       }
     }
-    _ = repeat;
   }
 
   private void Group45(byte opcode) {
@@ -1313,6 +1672,7 @@ public sealed class Cpu8086 {
   private void Interrupt(byte number) {
     switch (number) {
       case 0x21: this.Dos(); return;
+      case 0x67: this.Ems(); return;
       case 0x10: this.Bios10(); return;
       case 0x20: this._halted = true; return;
       case 0x1A: this._r[_CX] = this._r[_DX] = 0; return;      // clock ticks - a fixed zero time
@@ -1320,12 +1680,115 @@ public sealed class Cpu8086 {
     }
   }
 
+  private void Ems() {
+    switch (this.Reg8(4)) {
+      case 0x41:                                                // get page-frame segment
+        this._r[_BX] = _EMS_FRAME_SEGMENT;
+        this.SetReg8(4, 0);
+        return;
+      case 0x42: {                                              // get unallocated and total pages
+        var allocated = this._emsHandles.Values.Sum(storage => storage.Length / _EMS_PAGE_SIZE);
+        this._r[_BX] = (ushort)(_EMS_TOTAL_PAGES - allocated);
+        this._r[_DX] = _EMS_TOTAL_PAGES;
+        this.SetReg8(4, 0);
+        return;
+      }
+      case 0x43: this.AllocateEmsPages(); return;
+      case 0x44: this.MapEmsPage(); return;
+      case 0x45: this.ReleaseEmsHandle(); return;
+      default: throw new Cpu8086Exception($"unhandled INT 67h (AX={this._r[_AX]:X4})");
+    }
+  }
+
+  private void AllocateEmsPages() {
+    var pages = this._r[_BX];
+    var allocated = this._emsHandles.Values.Sum(storage => storage.Length / _EMS_PAGE_SIZE);
+    if (pages == 0) {
+      this.SetReg8(4, 0x89);                                    // zero pages requested
+      return;
+    }
+    if (pages > _EMS_TOTAL_PAGES) {
+      this.SetReg8(4, 0x87);                                    // request exceeds total pages
+      return;
+    }
+    if (pages > _EMS_TOTAL_PAGES - allocated) {
+      this.SetReg8(4, 0x88);                                    // insufficient free pages
+      return;
+    }
+    while (this._emsHandles.ContainsKey(this._nextEmsHandle))
+      ++this._nextEmsHandle;
+    this._emsHandles[this._nextEmsHandle] = new byte[pages * _EMS_PAGE_SIZE];
+    this._r[_DX] = this._nextEmsHandle++;
+    this.SetReg8(4, 0);
+  }
+
+  private void MapEmsPage() {
+    var physicalPage = this.Reg8(_AX);
+    if (physicalPage >= this._emsMappings.Length) {
+      this.SetReg8(4, 0x8B);                                    // invalid physical page
+      return;
+    }
+    var handle = this._r[_DX];
+    if (!this._emsHandles.TryGetValue(handle, out var storage)) {
+      this.SetReg8(4, 0x83);                                    // invalid handle
+      return;
+    }
+    var logicalPage = this._r[_BX];
+    if (logicalPage >= storage.Length / _EMS_PAGE_SIZE) {
+      this.SetReg8(4, 0x8A);                                    // logical page outside allocation
+      return;
+    }
+
+    this.FlushEmsMapping(physicalPage);
+    Array.Copy(storage, logicalPage * _EMS_PAGE_SIZE, this._memory,
+      _EMS_FRAME_SEGMENT * 16 + physicalPage * _EMS_PAGE_SIZE, _EMS_PAGE_SIZE);
+    this._emsMappings[physicalPage] = new(handle, logicalPage);
+    this.SetReg8(4, 0);
+  }
+
+  private void ReleaseEmsHandle() {
+    var handle = this._r[_DX];
+    if (!this._emsHandles.ContainsKey(handle)) {
+      this.SetReg8(4, 0x83);                                    // invalid handle
+      return;
+    }
+    for (var physicalPage = 0; physicalPage < this._emsMappings.Length; ++physicalPage) {
+      if (this._emsMappings[physicalPage] is not { Handle: var mapped } || mapped != handle)
+        continue;
+      this.FlushEmsMapping(physicalPage);
+      this._emsMappings[physicalPage] = null;
+    }
+    this._emsHandles.Remove(handle);
+    this.SetReg8(4, 0);
+  }
+
+  private void FlushEmsMapping(int physicalPage) {
+    if (this._emsMappings[physicalPage] is not { } mapping
+        || !this._emsHandles.TryGetValue(mapping.Handle, out var storage))
+      return;
+    Array.Copy(this._memory, _EMS_FRAME_SEGMENT * 16 + physicalPage * _EMS_PAGE_SIZE,
+      storage, mapping.LogicalPage * _EMS_PAGE_SIZE, _EMS_PAGE_SIZE);
+  }
+
   private void Dos() {
     var ah = this.Reg8(4);
     switch (ah) {
       case 0x30: this._r[_AX] = 0x0006; return;                // DOS 6.0
       case 0x25 or 0x35: return;                               // set/get interrupt vector - nothing to do here
+      case 0x4B: {                                             // load and execute a child program
+        var subfunction = this.Reg8(_AX);
+        if (subfunction != 0)
+          throw new Cpu8086Exception($"unhandled DOS EXEC AL={subfunction:X2}h");
+        var name = this.CString(Linear(this._ds, this._r[_DX]));
+        if (!this._executables.TryGetValue(name, out var image))
+          throw new Cpu8086Exception($"unavailable EXEC target {name}");
+        this.ExecuteChild(image);
+        this._r[_AX] = 0;
+        this._cf = false;
+        return;
+      }
       case 0x4C: this.ExitCode = this.Reg8(_AX); this._halted = true; return;
+      case 0x4D: this._r[_AX] = this._childExitCode; this._cf = false; return;
       case 0x40: {                                             // write BX=handle, CX=count, DS:DX=buffer
         var handle = this._r[_BX];
         var count = this._r[_CX];
@@ -1428,6 +1891,23 @@ public sealed class Cpu8086 {
       case 0x41: {                                             // delete
         this._byName.Remove(this.CString(Linear(this._ds, this._r[_DX])));
         this._cf = false;
+        return;
+      }
+      case 0x44: {                                             // IOCTL get device information
+        var subfunction = this.Reg8(_AX);
+        if (subfunction != 0)
+          throw new Cpu8086Exception($"unhandled DOS IOCTL AL={subfunction:X2}h");
+        var handle = this._r[_BX];
+        if (handle <= 4) {
+          this._r[_DX] = 0x0080;                               // standard handles are character devices
+          this._cf = false;
+        } else if (this._files.ContainsKey(handle)) {
+          this._r[_DX] = 0;                                    // disk file
+          this._cf = false;
+        } else {
+          this._r[_AX] = 6;                                    // invalid handle
+          this._cf = true;
+        }
         return;
       }
       case 0x48: {                                             // allocate paragraphs

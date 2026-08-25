@@ -1,3 +1,4 @@
+using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Backend;
 using PowerBasic.Compiler.CodeGen;
 using PowerBasic.Compiler.Ir;
@@ -23,6 +24,13 @@ public sealed class BackendQuadPrintTests {
     return model;
   }
 
+  private static bool Contains(byte[] image, params byte[] pattern) {
+    for (var i = 0; i <= image.Length - pattern.Length; ++i)
+      if (image.AsSpan(i, pattern.Length).SequenceEqual(pattern))
+        return true;
+    return false;
+  }
+
   private static MFunction Select(string source) {
     var module = IrLowering.TryLowerModule(Bind(source), out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
@@ -36,6 +44,144 @@ public sealed class BackendQuadPrintTests {
     var machine = InstructionSelector.TrySelect(main, out var reason);
     Assert.That(machine, Is.Not.Null, $"selection declined: {reason}");
     return machine!;
+  }
+
+  private static IrFunction QwordBitwiseFunction(IrBinaryOp operation) {
+    var fn = new IrFunction("F", IrType.Void);
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    var left = entry.Append(new IrAlloca(IrType.I64));
+    var right = entry.Append(new IrAlloca(IrType.I64));
+    var result = entry.Append(new IrAlloca(IrType.I64));
+    var lhs = entry.Append(new IrLoad(IrType.I64, left));
+    var rhs = entry.Append(new IrLoad(IrType.I64, right));
+    var binary = entry.Append(new IrBinary(operation, lhs, rhs));
+    entry.Append(new IrStore(binary, result));
+    entry.Append(new IrRet());
+    return fn;
+  }
+
+  private static IrFunction QwordShiftFunction(IrBinaryOp operation, long count) {
+    var fn = new IrFunction("F", IrType.Void);
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    var source = entry.Append(new IrAlloca(IrType.I64));
+    var result = entry.Append(new IrAlloca(IrType.I64));
+    var value = entry.Append(new IrLoad(IrType.I64, source));
+    var shifted = entry.Append(new IrBinary(operation, value, new IrConstantInt(IrType.I64, count)));
+    entry.Append(new IrStore(shifted, result));
+    entry.Append(new IrRet());
+    return fn;
+  }
+
+  [TestCase(IrBinaryOp.And, MOpcode.And, 0x23)]
+  [TestCase(IrBinaryOp.Or, MOpcode.Or, 0x0B)]
+  [TestCase(IrBinaryOp.Xor, MOpcode.Xor, 0x33)]
+  public void Select_Given386QuadBitwiseOperation_ThenUsesTwoDwordHalves(
+      IrBinaryOp operation, MOpcode expected, byte encoding) {
+    var target = new SelectionTarget(Cpu386: true, Optimize: true);
+    var machine = InstructionSelector.TrySelect(QwordBitwiseFunction(operation), out var reason, target);
+
+    Assert.That(machine, Is.Not.Null, reason);
+    var native = machine!.AllInstructions.Where(i => i.Opcode == expected
+      && i.Operands is [MOperand.Register { Reg: { Physical: Reg.EAX, Size: MRegSize.Dword } },
+        MOperand.StackSlot { Size: MRegSize.Dword }]).ToList();
+    Assert.That(native, Has.Count.EqualTo(2), "one operation per 32-bit half");
+
+    var allocation = LinearScanAllocator.Allocate(machine, target);
+    Assert.That(allocation, Is.Not.Null);
+    var assembler = new Assembler();
+    MachineEmitter.EmitFunction(assembler, machine, allocation!, [], 0);
+    var bytes = assembler.ToArray();
+    Assert.That(bytes.Zip(bytes.Skip(1), (a, b) => (a, b)),
+      Has.Some.EqualTo(((byte)0x66, encoding)), "the selected dword operation must reach the encoder");
+  }
+
+  [TestCase(false, false)]
+  [TestCase(false, true)]
+  [TestCase(true, false)]
+  public void Select_GivenTargetWithoutOptimized386_ThenDeclinesQuadBitwise(bool cpu386, bool optimize) {
+    var machine = InstructionSelector.TrySelect(QwordBitwiseFunction(IrBinaryOp.Or), out _,
+      new SelectionTarget(Cpu386: cpu386, Optimize: optimize));
+
+    Assert.That(machine, Is.Null, "the baseline path must stay with the direct emitter's QUAD runtime call");
+  }
+
+  [TestCase(IrCastOp.SExt, true)]
+  [TestCase(IrCastOp.ZExt, false)]
+  public void Select_GivenLongExtendedToQuad_ThenFillsTheUpperDwordExactly(IrCastOp operation, bool signed) {
+    var argument = new IrArgument(IrType.I32, 0);
+    var fn = new IrFunction("F", IrType.Void, [argument]);
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    var destination = entry.Append(new IrAlloca(IrType.I64));
+    var extended = entry.Append(new IrCast(operation, argument, IrType.I64));
+    entry.Append(new IrStore(extended, destination));
+    entry.Append(new IrRet());
+
+    var machine = InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(machine, Is.Not.Null, reason);
+    var upperStores = machine!.AllInstructions.Where(i => i is {
+      Opcode: MOpcode.Mov,
+      Operands: [MOperand.StackSlot { Disp: 4 or 6 }, _],
+    }).ToList();
+    Assert.That(upperStores, Has.Count.EqualTo(2));
+    if (signed) {
+      Assert.That(machine.AllInstructions, Has.Some.Matches<MInstr>(i => i.Opcode == MOpcode.Sar
+        && i.Operands[1] is MOperand.Immediate { Value: 15 }), "the source sign fills both upper words");
+      Assert.That(upperStores.Select(i => i.Operands[1]), Is.All.TypeOf<MOperand.Register>());
+    } else {
+      Assert.That(upperStores.Select(i => i.Operands[1]),
+        Is.All.EqualTo(new MOperand.Immediate(0)), "zero extension clears both upper words");
+    }
+  }
+
+  [TestCase(IrBinaryOp.Shl, MOpcode.Shld, Reg.EDX, Reg.EAX, 0xA4, 1)]
+  [TestCase(IrBinaryOp.Shl, MOpcode.Shld, Reg.EDX, Reg.EAX, 0xA4, 15)]
+  [TestCase(IrBinaryOp.Shl, MOpcode.Shld, Reg.EDX, Reg.EAX, 0xA4, 16)]
+  [TestCase(IrBinaryOp.Shl, MOpcode.Shld, Reg.EDX, Reg.EAX, 0xA4, 31)]
+  [TestCase(IrBinaryOp.LShr, MOpcode.Shrd, Reg.EAX, Reg.EDX, 0xAC, 1)]
+  [TestCase(IrBinaryOp.LShr, MOpcode.Shrd, Reg.EAX, Reg.EDX, 0xAC, 15)]
+  [TestCase(IrBinaryOp.LShr, MOpcode.Shrd, Reg.EAX, Reg.EDX, 0xAC, 16)]
+  [TestCase(IrBinaryOp.LShr, MOpcode.Shrd, Reg.EAX, Reg.EDX, 0xAC, 31)]
+  public void Select_Given386QuadShift_ThenUsesOneDwordDoubleShift(IrBinaryOp operation,
+      MOpcode expected, Reg destination, Reg source, byte encoding, long count) {
+    var target = new SelectionTarget(Cpu386: true, Optimize: true);
+    var machine = InstructionSelector.TrySelect(QwordShiftFunction(operation, count), out var reason, target);
+
+    Assert.That(machine, Is.Not.Null, reason);
+    var shift = machine!.AllInstructions.Single(i => i.Opcode == expected);
+    Assert.That(shift.Operands, Is.EqualTo(new MOperand[] {
+      new MOperand.Register(MReg.Physical_(destination, MRegSize.Dword)),
+      new MOperand.Register(MReg.Physical_(source, MRegSize.Dword)),
+      new MOperand.Immediate(count),
+    }));
+
+    var allocation = LinearScanAllocator.Allocate(machine, target);
+    Assert.That(allocation, Is.Not.Null);
+    var assembler = new Assembler();
+    MachineEmitter.EmitFunction(assembler, machine, allocation!, [], 0);
+    var bytes = assembler.ToArray();
+    Assert.That(Contains(bytes, 0x66, 0x0F, encoding), Is.True,
+      "the dword double shift must reach the encoder");
+  }
+
+  [TestCase(false, false, 1)]
+  [TestCase(false, true, 1)]
+  [TestCase(true, false, 1)]
+  [TestCase(true, true, 0)]
+  [TestCase(true, true, 32)]
+  public void Select_GivenUnsupportedTargetOrCount_ThenDeclinesQuadShift(bool cpu386, bool optimize, long count) {
+    var machine = InstructionSelector.TrySelect(QwordShiftFunction(IrBinaryOp.Shl, count), out _,
+      new SelectionTarget(Cpu386: cpu386, Optimize: optimize));
+
+    Assert.That(machine, Is.Null, "only optimized 386 counts 1..31 may use the native double shift");
+  }
+
+  [Test]
+  public void Select_GivenArithmeticQuadShift_ThenDeclinesNativeLogicalPath() {
+    var target = new SelectionTarget(Cpu386: true, Optimize: true);
+    var machine = InstructionSelector.TrySelect(QwordShiftFunction(IrBinaryOp.AShr, 5), out _, target);
+
+    Assert.That(machine, Is.Null, "BASIC SHIFT RIGHT is logical; arithmetic i64 shifts need separate semantics");
   }
 
   [Test]
@@ -177,5 +323,81 @@ public sealed class BackendQuadPrintTests {
     Assert.That(directRun.FileContent("R.TXT"), Is.EqualTo(" 73300775185 \r\n 73300775185 \r\n"),
       "FILD/FISTP must retain all 64 integer bits while the direct path evaluates the expression");
     Assert.That(routedRun.FileContent("R.TXT"), Is.EqualTo(directRun.FileContent("R.TXT")));
+  }
+
+  [Test]
+  public void Print_Given386QuadBitwiseOperations_WhenRun_ThenRoutedAndDirectResultsAgree() {
+    const string source = """
+      $CPU 80386
+      $OPTIMIZE SPEED
+      DECLARE SUB Bits(BYVAL a&, BYVAL b&)
+      Bits -1, 2147483647
+      Bits -2, 1
+      END
+      SUB Bits(BYVAL a&, BYVAL b&) NOINLINE
+        x&& = a&
+        y&& = b&
+        PRINT x&& AND y&&
+        PRINT x&& OR y&&
+        PRINT x&& XOR y&&
+      END SUB
+      """;
+
+    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var directImage = direct.EmitExecutable();
+    var routedImage = routed.EmitExecutable();
+
+    Assert.That(routed.BackendRoutedNames, Is.SupersetOf(new[] { "main", "Bits" }),
+      "the test must not pass through fallback");
+    foreach (var opcode in new byte[] { 0x23, 0x0B, 0x33 })
+      Assert.That(routedImage.Zip(routedImage.Skip(1), (a, b) => (a, b)),
+        Has.Some.EqualTo(((byte)0x66, opcode)), $"missing dword opcode {opcode:X2}");
+
+    var directRun = Cpu8086.Run(directImage);
+    var routedRun = Cpu8086.Run(routedImage);
+    Assert.Multiple(() => {
+      Assert.That(directRun.Output,
+        Is.EqualTo(" 2147483647 \r\n-1 \r\n-2147483648 \r\n 0 \r\n-1 \r\n-1 \r\n"));
+      Assert.That(routedRun.Output, Is.EqualTo(directRun.Output));
+    });
+  }
+
+  [Test]
+  public void Print_Given386QuadShifts_WhenRun_ThenRoutedAndDirectResultsAgree() {
+    const string source = """
+      $CPU 80386
+      $OPTIMIZE SPEED
+      DECLARE SUB Shifted(BYVAL a&)
+      Shifted -1
+      Shifted 2147483647
+      END
+      SUB Shifted(BYVAL a&) NOINLINE
+        x&& = a&
+        SHIFT LEFT x&&, 5
+        PRINT x&&
+        x&& = a&
+        SHIFT RIGHT x&&, 5
+        PRINT x&&
+      END SUB
+      """;
+
+    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var directImage = direct.EmitExecutable();
+    var routedImage = routed.EmitExecutable();
+
+    Assert.That(routed.BackendRoutedNames, Is.SupersetOf(new[] { "main", "Shifted" }),
+      "the test must not pass through fallback");
+    Assert.That(Contains(routedImage, 0x66, 0x0F, 0xA4), Is.True, "missing dword SHLD");
+    Assert.That(Contains(routedImage, 0x66, 0x0F, 0xAC), Is.True, "missing dword SHRD");
+
+    var directRun = Cpu8086.Run(directImage);
+    var routedRun = Cpu8086.Run(routedImage);
+    Assert.Multiple(() => {
+      Assert.That(directRun.Output,
+        Is.EqualTo("-32 \r\n 5.76460752303424E+17 \r\n 68719476704 \r\n 67108863 \r\n"));
+      Assert.That(routedRun.Output, Is.EqualTo(directRun.Output));
+    });
   }
 }

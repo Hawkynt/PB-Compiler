@@ -1,3 +1,4 @@
+using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Backend;
 using PowerBasic.Compiler.CodeGen;
 using PowerBasic.Compiler.Ir;
@@ -154,6 +155,70 @@ public sealed class BackendSwitchTests {
     Assert.That(machine!.AllInstructions.SelectMany(instruction => instruction.Operands)
       .OfType<MOperand.Immediate>().Select(immediate => unchecked((ushort)immediate.Value)),
       Does.Contain(ushort.MaxValue));
+  }
+
+  [Test]
+  public void Select_GivenEightSparseWordCasesForSpeed_ThenBuildsABalancedDecisionTree() {
+    var selector = new IrArgument(IrType.I16, 0, "selector");
+    var fn = new IrFunction("DispatchTree", IrType.Void, [selector]);
+    var entry = fn.CreateBlock("entry");
+    var @default = fn.CreateBlock("default");
+    new IrBuilder(@default).Ret();
+    var sw = new IrSwitch(selector, @default);
+    foreach (var value in new[] { 1, 100, 200, 300, 400, 500, 556, 600 }) {
+      var target = fn.CreateBlock($"case{value}");
+      new IrBuilder(target).Ret();
+      sw.AddCase(value, target);
+    }
+    entry.Append(sw);
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+
+    var machine = InstructionSelector.TrySelect(fn, out var reason,
+      new SelectionTarget(Optimize: true, OptimizeSpeed: true));
+
+    Assert.That(machine, Is.Not.Null, $"tree switch declined: {reason}");
+    var root = machine!.Blocks.Single(block => block.Label == "entry");
+    Assert.Multiple(() => {
+      Assert.That(root.Instructions.Where(instruction => instruction.Opcode == MOpcode.Jcc)
+        .Select(instruction => instruction.Condition),
+        Is.EqualTo(new[] { Condition.Equal, Condition.Greater }),
+        "the root first handles equality, then divides the remaining values around its median");
+      Assert.That(machine.Blocks.Count(block => block.Instructions.Any(
+          instruction => instruction.Opcode == MOpcode.Cmp)),
+        Is.EqualTo(8), "each case value is one decision-tree node");
+    });
+  }
+
+  [Test]
+  public void Select_GivenFourSparseWordCasesForSpeed_ThenKeepsTheEqualityChain() {
+    var selector = new IrArgument(IrType.I16, 0, "selector");
+    var fn = new IrFunction("DispatchChain", IrType.Void, [selector]);
+    var entry = fn.CreateBlock("entry");
+    var @default = fn.CreateBlock("default");
+    new IrBuilder(@default).Ret();
+    var sw = new IrSwitch(selector, @default);
+    foreach (var value in new[] { 1, 100, 200, 300 }) {
+      var target = fn.CreateBlock($"case{value}");
+      new IrBuilder(target).Ret();
+      sw.AddCase(value, target);
+    }
+    entry.Append(sw);
+
+    var machine = InstructionSelector.TrySelect(fn,
+      new SelectionTarget(Optimize: true, OptimizeSpeed: true));
+
+    Assert.That(machine, Is.Not.Null);
+    var decisions = machine!.AllInstructions.Where(instruction => instruction.Opcode == MOpcode.Jcc)
+      .Select(instruction => instruction.Condition!.Value).ToList();
+    Assert.Multiple(() => {
+      Assert.That(decisions, Has.Count.EqualTo(4));
+      Assert.That(decisions.Distinct(),
+        Is.SubsetOf(new[] { Condition.Equal, Condition.NotEqual }),
+        "a short chain needs equality decisions only, allowing layout to invert fallthroughs");
+      Assert.That(machine.Blocks.Count(block => block.Instructions.Any(
+          instruction => instruction.Opcode == MOpcode.Cmp)),
+        Is.EqualTo(4));
+    });
   }
 
   [TestCase(false)]

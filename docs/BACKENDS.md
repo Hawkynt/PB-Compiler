@@ -308,40 +308,13 @@ was defensible while the gate was observational - `tests/diff` compiles pb35 wit
 and passed routed either way - but it made the battery's two builds of a routed scenario ONE build,
 and it made `--no-optimize` a false statement about a routed function.
 
-`IrPassManager.Legalize()` is the set that survives the flag, and it is four passes with one argument
-between them: each is here because a CONSUMER demands the FORM it produces. `mem2reg` is SSA
-construction, which is what the selector's virtual registers and the allocator's live intervals are
-defined over - and it makes the pipeline cheaper rather than dearer, which is the tell (a raw corpus
-module body carries 314 virtual registers and promoting brings it to 244). `dce` is the second half of
-`IntegerRecovery`, which the routed path runs unconditionally and which leaves the float-shaped
-arithmetic it replaced standing beside the integer form it minted. Everything else is off, including
-the `Inliner` and `SwitchFormation` steps the caller runs around the pipeline.
-
-**Every member was also LEFT OUT and the corpus re-measured**, which is the only thing that separates
-this from a list of nice arguments, and it moved the set twice. Functions that select and allocate,
-out of 262, with one pass removed - 258 with the whole set:
-
-| dropped | selects+allocates | what it costs |
-|---|---|---|
-| `instcombine` | **234** | the canonicalizer the selector pattern-matches against. `WordSizedRange` walks pure dataflow through five opcodes, and until the casts PB's float-shaped arithmetic leaves behind are folded together there is no chain to walk - `CHR$(64 + i%)` declines and takes the whole module body with it. Reads as pure optimization; is not optional |
-| `simplifycfg` | **214** | reads as legalization on the raw lowering and is NOT - an unreachable block costs the selector nothing. It becomes legalization the moment instcombine is present: a comparison folded to a constant leaves `condbr true, A, B` standing and the selector has no encoding for a branch on a non-register. 44 declines on that one message |
-| `mem2reg` | **250** | and three times the compile time |
-| `dce` | **257** | one module body - the weakest member of the set on the numbers, kept because it is the other half of a transform rather than a transform |
-| `sroa` + `mem2reg2` | **258** | nothing at all, to the function. They were in the set on the same kind of argument mem2reg wins on, and they are out |
-
-Coverage still falls a little, and where it does the direct emitter takes the function - which is the
-faithful path and the one the optimizer-off promise is about: 258 of 262 functions select under
-`Legalize()`, against 262 under `Standard()`; module bodies 157 against 161.
-`BackendCorpusDifferentialTests` goes from 314 compilations and 299 agreements to 304 and 289, with
-**0 disagreements** either way. Every function that selects now also allocates in both modes - it was
-257 of 258 unoptimized while the spill loop needed a work budget to stop. (Re-measured on the tree
-carrying the WRITE and float-narrowing fixes below: **305 compilations, 290 agreements, 0
-disagreements**.)
-
-The honest asterisk on all of this is `instcombine`: it folds constants, so a routed `--no-optimize`
-build is not literally unoptimized. Splitting a canonicalization-only half out of that pass is the
-work that would remove the asterisk; the alternative available today is a back end whose COVERAGE
-depends on the optimizer, which `BackendWordNarrowingTests` exists to rule out.
+`IrPassManager.Legalize()` is the set that survives the flag, and each member is present because the
+selector consumes the form it produces. Its faithful `mem2reg` variant builds SSA for compiler
+temporaries while retaining BASIC source variables whose observable storage must survive. Its
+faithful `instcombine` variant canonicalizes address and arithmetic shapes without folding a
+comparison that came from a source condition. DCE removes legalization residue, and CFG
+simplification removes the constant branches canonicalization can expose. Everything else is off,
+including the module and interprocedural passes, `Inliner`, and `SwitchFormation`.
 
 **The prerequisite this document named was already closed; the real one was underneath.** The note
 here used to say that gating "does not work" because the selector needs the optimizer to narrow
@@ -354,8 +327,16 @@ pre-existing and neither is reachable from optimized IR, which is why nothing ha
 That is now a termination argument rather than a work budget: a spiller move is applied only when it
 lowers a measure that cannot rise again, so the loop is bounded by its own starting state and the
 budget is a backstop nothing reaches (see docs/X86-BACKEND.md, "the spill loop terminates because a
-measure falls"). Measured with the budget lifted, the worst corpus function needs 174 rounds with the
-optimizer on and 174 with it off.
+measure falls"). The first budget-free measurement reached 174 rounds in both modes; the 2026-08-25
+combined-tree remeasurement lowers those maxima to 168 optimized and 153 unoptimized.
+
+Turning off inlining initially cost six corpus participants. The replacement is an ABI fact rather
+than an optimization: `OptRegParm` can rewrite a direct BASIC/PASCAL callee only under SPEED
+optimization, so an unoptimized or non-SPEED routed caller may call that local direct body through
+their shared stack convention. Unresolved declarations, ambiguous overloads and SPEED-mode direct
+callees still decline. This also found a state handoff bug: routed `main` must replay its final lexical
+`$ERROR` metastatements for direct procedures emitted afterwards, or a direct recursive callee loses
+`$ERROR STACK ON` and corrupts memory instead of raising Error 201.
 
 **Selection used to be gated on the optimizer's AGGRESSIVENESS, which is a different and worse
 thing, and that is now fixed.** The observation above is about behaviour; this one was about
@@ -623,11 +604,10 @@ The count is the measure of the gate; the composition is what says which work is
   boundary test whose subject folds away proves nothing about the threshold either. Two consequences
   worth recording. `Emit_GivenAscOfSingleCharMid` now PASSES routed: `StringByteRead` really does
   implement the byte read, and only the discriminator was hiding it. And
-  `Emit_GivenFewCaseSparseSelect` now FAILS routed, which is the honest reading of a real difference:
-  it asserts the ABSENCE of `CMP AX, 012Ch`, the direct emitter's decision-tree signature, and the
-  routed path emits those bytes as an ordinary compare against a case constant. That discriminator is
-  specific to the direct emitter's two dispatch shapes and does not separate anything in a back end
-  that has neither.
+  `Emit_GivenFewCaseSparseSelect` now uses a backend-neutral boundary: four sparse cases must use
+  neither a table nor a mask. The old absence check for `CMP AX, 012Ch` was the direct emitter's
+  decision-tree signature, but the same bytes are an ordinary equality-chain comparison in the routed
+  path and therefore did not distinguish the intended shapes.
 * **the SELECT dispatch family is now DONE** - `Emit_GivenConstantCaseRange`,
   `Emit_GivenWideSpanFewArmSelect`, `Emit_GivenWideWindowArm`, `Emit_GivenSparseSelectWithPerfectHash`,
   `Emit_GivenOrChainEqualityIf` and `Emit_GivenAndChainOfInequalities` all pass routed, and
@@ -641,9 +621,9 @@ The count is the measure of the gate; the composition is what says which work is
   `Backend/SelectionTarget.cs` carries `$CPU` and `$OPTIMIZE` into the selector, which had never been
   told the objective.
 
-  Left inside it: the balanced decision tree (every sparse SELECT in the corpus reaches the perfect
-  hash, which is constant time where a tree is logarithmic), 32-bit subjects (which still dispatch
-  through the compare chain), and one pair that cannot both pass -
+  Dense LONG subjects now subtract their 32-bit minimum, reject a nonzero high-word index, and use the
+  same bounded table; sparse sets of eight or more INTEGER cases now use a balanced signed decision
+  tree. Sparse LONG subjects retain the high/low compare chain. One pair still cannot both pass -
   `Emit_GivenBoundedRangeCheck` and `Emit_GivenOutOfRangeCheck` want opposite branch polarities from
   what `SwitchFormation` makes structurally identical objects, and the polarity is a property of the
   source's IF/ELSE order that `IrSwitch` deliberately does not carry. Before, both failed; now one
@@ -776,21 +756,29 @@ fixtures pass routed, and not before. The flip itself is one line
 (`CodeGenerator.UseExperimentalBackend`), it has been tried four times, and it is reverted with the
 measurement kept.
 
-**The 73 that remain now measure something, and they sort into nine causes rather than a list.** With
-the barrier fixed, no `Emit_Given*` fixture is asking about an absent program - every failure below is
-a real difference between the two paths. Ordered by how many tests each accounts for:
+**The current forced-backend CodeGen gate has 36 failures.** The 2026-08-25 remeasurement has 774
+passing cases among 810 executed, nine fewer failures than the 2026-08-14 gate. The count below is a live backlog of
+code-quality and image-shape differences, not a coverage proxy: the corpus has 317 participating
+compilations, all 317 execute and agree, with zero emulator-limited cases and zero disagreements. The
+test CPU now covers the emitted 386 dword subset, DOS device queries and self-EXEC, and the LIM EMS
+page-frame services used by the runtime. Ordered by the broad cause each failure exposes. The ordinary
+full suite is green at 4,701 passed, 12 skipped and zero failed; forcing routing across that entire
+suite produces 4,665 passes, the same 36 failures and 12 skips.
 
 | cause | tests | what it is |
 |---|---|---|
-| peephole idioms the selector does not recognise | ~~19~~ **10** | mostly CLOSED - see "What the peephole row actually was" below. `Backend/Peephole.cs` and `InstructionSelector.Idioms.cs` took nine of the nineteen; the ten that remain are a different thing wearing the same label |
-| the direct emitter's loop-register model has no counterpart | 13 | SI/DI residency for counters and accumulators, the constant-limit immediate compare that rides on it, loop rotation and the count-down form |
-| `$ERROR OVERFLOW/BOUNDS` traps are not modelled | 8 → see below | the traps were modelled *in the module body* and, until `IrLowering.ArmedForProcedures`, armed in no procedure at all - so every trap a `SUB` or `FUNCTION` should have raised was simply absent. What was missing besides is the range facts that elide one, and `Ir/Analysis/` now supplies them |
-| ~~the objective flags do not reach the routed build~~ | 6 → **1** | mostly CLOSED - `IrPassManager.Legalize()` is what a routed `--no-optimize` build now runs, which un-merged the two builds a comparison makes (13 of the 15 battery rows, and `Emit_GivenLatticeProvedComparison`); `$OPTIMIZE SIZE` then had to reach the INLINER too, which is a second flag on the same axis and one the pipeline switch does not carry - the direct emitter declines every call site under SIZE, and a routed caller that absorbed its callee anyway made one image answer the directive two ways (`Emit_GivenOptimizeSize`). What is left is `Emit_GivenDeadGlobalWithoutOptimize`, and it is a different thing wearing the same label: an unreferenced module variable disappears because the routed `main` never mentions it, so the codegen's data layout never hears of it - a question about who owns the data section, not about which passes ran |
-| `$CPU` tier does not reach instruction selection | 6 → **4** | 32-bit shift, `REP MOVSD`, the ESI/EDI LONG residency. The two QUAD rows were fixtures that could not observe - see below - and the same census file says `'$CPU 80286'` and `'$CPU 8086'` produce the same image |
-| no auto-vectorizer, no loop-top alignment | 6 | MMX/SSE2/AVX2/AVX-512 `PADDW`/`PMULLW`, the 586 NOP pad |
-| the interval lattice has no IR equivalent | 4 | the LATTICE now exists (`Ir/Analysis/`); what these four still want is four SELECTOR features it would feed - range-known LONG compare/divide and DWORD multiply narrowing to 16 bits, and the unsigned window compare |
-| dispatch shape | 3 | a 32-bit `SELECT` subject and `ON n GOTO` still take the compare chain; `Emit_GivenFewCaseSparseSelect` is the disagreement already recorded above |
-| dead procedures survive routing | 2 | a body the IR inliner absorbed is still emitted (`Emit_GivenNoInlineFunction`'s negative half, `Emit_GivenCodeptrCascadeUnderOptimize`) |
+| memory peephole shapes | **6** | locals promoted to SSA have no cell for `INC [cell]` / `ADD [cell],imm`; other cases ask for a memory operand where the routed path needs no staging, or an x87 m32 operand where values deliberately remain tbyte |
+| the direct emitter's loop-register model has no counterpart | **9** | SI/DI residency, immediate loop limits, one IVSR applicability boundary and small-trip unrolling still differ; canonical pre-tested loop rotation, count-down loops and native 386 LONG recurrences are closed |
+| range narrowing and checked-bounds shape parity | **5** | the interval lattice and trap semantics are present; these cases ask for 16-bit lowering of range-proved LONG/DWORD operations or the direct emitter's checked-array address spelling |
+| constant/immediate machine idioms | **7** | constant ALU operands, zero tests, modular increment and power-of-two division still select equivalent but different instruction sequences |
+| optimized/unoptimized battery parity | **2** | the two aggregate batteries contain several direct-emitter size and byte-shape expectations; executable behavior is covered separately by the differential gates |
+| no auto-vectorizer | **4** | MMX/SSE2/AVX2/AVX-512 `PADDW`; routed 486+/586 SPEED loop headers already receive the same one-time 16-byte NOP alignment as the direct emitter |
+| descriptor purity/hoisting | **1** | `LEN` is still read repeatedly because the IR lacks the direct emitter's descriptor-read invariant |
+| dead procedures survive routing | **2** | a body the IR inliner absorbed is still emitted (`Emit_GivenNoInlineFunction` and `Emit_GivenCodeptrCascadeUnderOptimize`) |
+
+The previously listed `$CPU` and dispatch rows are closed: native dword/QUAD operations and target-gated
+`REP MOVSD` are selected, while dense LONG tables, sparse INTEGER trees and indexed `ON n GOTO` all
+have executable direct-vs-routed differentials.
 
 **The interval lattice now has an IR equivalent, and the two things that looked like lost traps are
 not.** Both were checked against a running program before anything was written, because the
@@ -845,9 +833,9 @@ Three things about it are worth carrying, each of which cost a wrong version fir
   none, `WordSizedRange` would keep its "the low half must be self-sufficient" opcode test and take the
   interval from the analysis instead of computing its own. That last wiring is NOT done.
 
-**Two pre-existing miscompiles turned up while measuring this, both in loop transforms, and one is
-still open.** They matter more than the assertions do: the analysis makes traps disappear on purpose,
-so anything else that makes one disappear has to be told apart from it first.
+**Two pre-existing miscompiles turned up while measuring this, both in loop transforms, and both are
+fixed.** They matter more than the assertions do: the analysis makes traps disappear on purpose, so
+anything else that makes one disappear has to be told apart from it first.
 
 * **`LoopUnroll` dropped a conditional preheader branch - FIXED.** It rewires the preheader to fall into
   the first unrolled copy by REPLACING its terminator, which is only right when that terminator is an
@@ -857,8 +845,8 @@ so anything else that makes one disappear has to be told apart from it first.
   invisible until something puts a foldable condition in front of a countable loop, which eliding the
   bounds check does. `LoopUnroll.Match` now declines a non-`IrBr` preheader; the next sweep folds the
   condition and unrolls the survivor, so nothing is lost but the round trip.
-* **A `$ERROR OVERFLOW` trap is lost when `LoopUnswitch` clones a loop on the trap condition - OPEN,
-  and it is a routed miscompile rather than a quality gap.**
+* **A `$ERROR OVERFLOW` trap was lost after `LoopUnswitch` cloned a loop on the trap condition -
+  FIXED.**
 
   ```basic
   $ERROR OVERFLOW ON
@@ -866,14 +854,16 @@ so anything else that makes one disappear has to be told apart from it first.
   FOR i% = 1 TO 100 : x% = k% + 1 : NEXT i%
   ```
 
-  With `k% = 32767` the direct build prints `RUNTIME ERROR` and the routed build prints nothing. The
-  trap is present and reachable in the optimized IR - LICM hoists the invariant check out of the loop,
-  `LoopUnswitch` clones on it, and the true clone calls `rt_error(6)` - so the loss is below the IR.
-  Three things narrow it and are worth not re-establishing: it is not a polarity inversion (a
-  non-overflowing input correctly does not trap), it is not the range work (the same program built
-  from the tree before it behaves identically), and both straight-line overflow
-  (`INPUT k% : x% = k% + 1`) and a loop-VARIANT one (`x% = k% + i%`) trap correctly routed - which is
-  what leaves the hoist-and-unswitch shape.
+  With `k% = 32767` the direct build printed `RUNTIME ERROR` and the routed build continued. LICM
+  hoisted the invariant check, and `LoopUnswitch` correctly made a true clone containing
+  `rt_error(6)` and an effect-free false clone. On the next fixpoint sweep,
+  `DeadLoopElimination` deleted the false clone by replacing its preheader's whole terminator. That
+  preheader was the conditional chooser SHARED with the true clone, so replacing it also made the
+  Error-6 clone unreachable; `SimplifyCfg` then collected it. `DeadLoopElimination` now rewires only
+  an unconditional preheader whose sole target is the loop being deleted, the same safety condition
+  already enforced by `LoopUnroll`. A final-IR regression pins the surviving `rt_error`, and an 8086
+  behavioral regression pins both sides of the boundary: 32767 traps and 1 continues, direct and
+  routed alike. The fix also makes three former forced-backend overflow-check shape cases pass.
 
   `CountRaise6`/`CountRaise9` could not be used to chase it, and now they can. They counted `B8 06 00`,
   which also matches an entry in the MZ **relocation table** of every image, so a routed program with no
@@ -882,14 +872,14 @@ so anything else that makes one disappear has to be told apart from it first.
   a `MOV AX, 6 / CALL rt_error` is what both paths emit. That is what let the two traps below be
   measured at all.
 
-Three do not fit the table, and the first is not about quality at all.
-`Compile_GivenRegisterConventionWithLongParam_ThenDiagnostic` is the one to fix first: routing skips the
-direct emitter's calling-convention validation, so a program that must be REJECTED compiles clean. A
-lost diagnostic is a correctness bug, and it is the only failure here that lets a wrong program
-through. One is induction-variable strength reduction WITHHELD -
-`Emit_GivenArrayReadLoop_WhenMultiStatementBody` wants it withheld where the routed path makes it
-anyway, which is the direct emitter's O6b applicability rule rather than a property of the program.
-The third is `Emit_GivenLoopInvariantLen`, already explained above: it wants an idiom pass over
+Three do not fit the table. The prior correctness outlier is fixed:
+`Compile_GivenRegisterConventionWithLongParam_ThenDiagnostic` now validates in the shared live-procedure
+frame layout before either emitter is selected; the routed path also declines every calling convention
+whose ABI it does not implement. Two remaining cases are induction-variable strength reduction in both
+directions -
+`Emit_GivenArrayStoreForLoop` wants the pointer step the routed path does not make, and
+`Emit_GivenArrayReadLoop_WhenMultiStatementBody` wants it WITHHELD where the routed path makes it
+anyway. The third is `Emit_GivenLoopInvariantLen`, already explained above: it wants an idiom pass over
 the `dup`/`len` pair, not a purity row.
 
 ### Every `$ERROR` trap inside a PROCEDURE was absent - FIXED
@@ -1141,17 +1131,19 @@ procedure definitions - agrees on both paths.
 
 ### What the peephole row actually was
 
-Nine of the nineteen were what the row said, and they are closed. The other ten were three quite
-different things, and the distinction is worth keeping because the same mistake is available in every
-other row of the table: **a fixture that fails routed is not evidence of a missing optimization until
-somebody has looked at what routed emits.**
+That row is down from nineteen failures to six. The distinction behind the reduction is worth keeping:
+**a fixture that fails routed is not evidence of a missing optimization until somebody has looked at
+what routed emits.** Several fixtures called a `NOINLINE` subject from one constant call site, so
+interprocedural propagation removed the construct they meant to inspect; adding a second distinct call
+made the original assertions meaningful.
 
-The nine that were real, and where each landed:
+The real transforms, and where each landed:
 
 * **`Backend/Peephole.cs`** - a pass over the selected machine IR, run before scheduling and gated on
   the optimizer. It folds an ALU operand read out of memory rather than staged through a register, a
-  cell read-modified-written in place (`INC [a]`, `ADD [a],imm`), and a bit test that never
-  materializes the masked value (`TEST x,mask`). Each is guarded by a census of the WHOLE function -
+  cell read-modified-written in place (`INC [a]`, `ADD [a],imm`), a bit test that never materializes
+  the masked value (`TEST x,mask`), and crossed scalar loads/stores folded to `XCHG reg,[cell]`. Each is
+  guarded by a census of the WHOLE function -
   the value being removed is defined and read only by the instructions being rewritten - plus a
   barrier scan for anything in between that writes memory, clobbers the file, or writes a register the
   folded address is formed from. The addressing rule is the one with teeth: a register-formed address
@@ -1165,44 +1157,20 @@ The nine that were real, and where each landed:
   arms as the negated predicate and relaxing a strict ordering to its or-equal twin (they differ only
   where the operands are equal, and there both arms answer the same value); and the x87 memory
   operands, where a literal multiplies out of the constant pool (`FMUL qword`) and a widened integer is
-  read as an integer (`FIADD word`) rather than converted into an 80-bit temporary first.
+  read as an integer (`FIADD word`) rather than converted into an 80-bit temporary first. It also pairs
+  a dominated signed quotient and remainder over the same SSA operands: the first `IDIV` captures both
+  `AX` and `DX`, while error-handler and inline-asm functions retain both faulting operations.
+* **`Ir/Passes/IfConversion.cs`** - the exact one-instruction diamond from
+  `IF a < 0 THEN a = -a` canonicalizes to the same shift/XOR/subtract form as `ABS(a)`, after which the
+  selector emits its accumulator idiom. Checked overflow adds control flow and deliberately does not
+  match.
 
-The ten that were not, in three groups:
-
-1. **Six fixtures could not observe what they assert.** `Emit_GivenIntegerSgn`, the three
-   `Emit_GivenBitTest*` and two of the `Emit_GivenFloat*` call their subject `SUB` from exactly ONE
-   site, so interprocedural constant propagation proves the argument and the whole construct folds to
-   the arm it selects - the routed `SGN` image contains `B8 01 00`, the answer, and no sequence at all.
-   `NOINLINE` stops the body being absorbed; it does not stop the argument being known. This is the
-   same shape as the five fixtures repaired earlier in this document, and the repair is the same: a
-   second call site with a different argument, the assertion untouched. Four of the six then pass.
-   The other two are group 2.
-2. **Three assert a shape the routed path structurally does not produce, and producing it would be a
-   pessimization.** `Emit_GivenSelfModifyStore` and `Emit_GivenIncrWithAmount` want `INC [a%]` /
-   `ADD [a%],5` for a SUB-local the routed path promotes to a register - there is no cell to
-   read-modify-write, and the peephole that would do it is implemented and fires on globals and array
-   elements instead. `Emit_GivenScalarSwap` wanted an inline `XCHG`; `SWAP x, y` between two
-   SSA-promoted locals is a rename and emits nothing - which is BETTER, and the fixture now says what
-   its name always did (the byte loop `rt_swap` is not linked in) against a UDT `SWAP`, which needs it,
-   so both paths pass. `Emit_GivenBinaryWithMemoryRightOperand` and
-   `Emit_GivenCompareWithMemoryRightOperand` are the same story from the other end: they count
-   `MOV BX,AX` stagings, and the routed path emits none in EITHER program, so the inequality cannot
-   hold. `Emit_GivenFloatBinaryWithDirectCellOperand` and `Emit_GivenFloatCompareWithDirectCellOperand`
-   want `FADD m32` / `FCOMP m32` between two intermediates this back end deliberately parks at the
-   x87's own 80-bit width (see `FloatCell`, where the reason is fidelity) - and `FADD` has no tbyte
-   form, so the memory operand is unreachable by construction rather than unimplemented.
-3. **One is a real gap with a real reason, and one is a third-party dependency.**
-   `Emit_GivenAdjacentDivAndMod` wants `q = n \ d : m = n MOD d` to share one `IDIV`. The two divides
-   are in DIFFERENT blocks - the division-by-zero guard the lowering emits splits them, and the trap
-   arm calls `rt_error`, which destroys the `DX` holding the remainder - so sharing needs the redundant
-   second guard removed first, which is a question about whether `rt_error` returns. Worth noting
-   separately: the routed divisor spills to a frame cell, so the image carries `F7 7E` (`IDIV word
-   [BP+d]`) where the fixture's byte pattern looks for `F7 F8..FF`; even a shared divide would not be
-   counted. And `Emit_GivenAbsIntrinsic` now passes its first two assertions and fails its third: the
-   explicit `IF a < 0 THEN a = -a` spelling never becomes a `select`, because `IfConversion` requires
-   BOTH arms of a diamond to be empty and this one negates. Speculating a single pure instruction out
-   of an arm would close it, but that is a change to a shared IR pass rather than to the back end, and
-   it would need a second selection pattern (`select(x < 0, 0 - x, x)`) to pay off.
+The six remaining failures assert memory shapes the routed program structurally does not produce.
+`Emit_GivenSelfModifyStore` and `Emit_GivenIncrWithAmount` want `INC [a%]` / `ADD [a%],5` for a local
+promoted to a register. `Emit_GivenBinaryWithMemoryRightOperand` and
+`Emit_GivenCompareWithMemoryRightOperand` count staging moves that the routed path omits entirely.
+The two float-memory cases want `FADD m32` / `FCOMP m32` over intermediates the back end deliberately
+keeps at the x87's 80-bit width; those instructions have no tbyte operand form.
 
 ### `OptimizerTests` routed: 46 of 188, and what the seven that closed had in common
 

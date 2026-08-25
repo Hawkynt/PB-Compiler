@@ -20,6 +20,8 @@ namespace PowerBasic.Compiler.Backend;
 ///   instruction instead of two.</item>
 /// <item><b>The zero idiom.</b> <c>MOV r,0</c> is <c>XOR r,r</c> where the flags it dirties are
 ///   dead - one byte shorter on a word register, three on a dword one.</item>
+/// <item><b>A scalar exchange.</b> Two loads followed by the crossed stores produced by <c>SWAP</c>
+///   become one load, <c>XCHG reg,[right]</c>, and the remaining store.</item>
 /// </list>
 ///
 /// <para>
@@ -33,7 +35,7 @@ namespace PowerBasic.Compiler.Backend;
 /// </para>
 ///
 /// <para>
-/// <b>Why each is sound.</b> All three rest on the same two facts, read from a census of the WHOLE
+/// <b>Why each is sound.</b> They rest on the same two facts, read from a census of the WHOLE
 /// function rather than from the block: the value being eliminated is defined only by the instructions
 /// being rewritten, and read only by them - so no other block can observe it. Between the instructions
 /// of a pattern nothing may write memory, clobber the register file (a CALL, an ABI-pinned sequence,
@@ -89,6 +91,7 @@ public static class Peephole {
       var census = Census.Of(function);
       var made = 0;
       foreach (var block in function.Blocks) {
+        made += FoldSwaps(block, census);
         made += FoldBitTests(block, census);
         made += FoldReadModifyWrites(block, census);
         made += FoldMemorySources(block, census);
@@ -272,6 +275,52 @@ public static class Peephole {
           && address.Contains(written.Reg))
         return true;
     return false;
+  }
+
+  /// <summary>
+  /// <c>MOV a,[left] / MOV b,[right] / MOV [left],b / MOV [right],a</c> becomes
+  /// <c>MOV a,[left] / XCHG a,[right] / MOV [left],a</c>. Both temporaries must belong only to the
+  /// exchange, and register-formed addresses may not depend on either value being replaced.
+  /// </summary>
+  private static int FoldSwaps(MBlock block, Census census) {
+    var made = 0;
+    for (var i = 0; i + 3 < block.Instructions.Count; ++i) {
+      var loadLeft = block.Instructions[i];
+      var loadRight = block.Instructions[i + 1];
+      var storeLeft = block.Instructions[i + 2];
+      var storeRight = block.Instructions[i + 3];
+      if (loadLeft.Opcode != MOpcode.Mov || loadLeft.Operands is not
+          [MOperand.Register { Reg: { IsVirtual: true } leftValue }, var leftCell]
+          || !IsMemory(leftCell)
+          || loadRight.Opcode != MOpcode.Mov || loadRight.Operands is not
+          [MOperand.Register { Reg: { IsVirtual: true } rightValue }, var rightCell]
+          || !IsMemory(rightCell) || leftCell.Equals(rightCell))
+        continue;
+      if (storeLeft.Opcode != MOpcode.Mov || storeLeft.Operands is not
+          [var writtenLeft, MOperand.Register { Reg: var fromRight }]
+          || !writtenLeft.Equals(leftCell) || !fromRight.Equals(rightValue)
+          || storeRight.Opcode != MOpcode.Mov || storeRight.Operands is not
+          [var writtenRight, MOperand.Register { Reg: var fromLeft }]
+          || !writtenRight.Equals(rightCell) || !fromLeft.Equals(leftValue))
+        continue;
+      if (!census.Exactly(leftValue, definitions: 1, readers: 1)
+          || !census.Exactly(rightValue, definitions: 1, readers: 1))
+        continue;
+      var addresses = AddressRegisters(leftCell).Concat(AddressRegisters(rightCell)).ToHashSet();
+      if (addresses.Contains(leftValue) || addresses.Contains(rightValue))
+        continue;
+
+      var held = new MOperand.Register(leftValue);
+      block.Instructions[i + 1] = new MInstr(MOpcode.Xchg, [held, rightCell],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: false,
+          ReadsMemory: true, WritesMemory: true));
+      block.Instructions[i + 2] = new MInstr(MOpcode.Mov, [leftCell, held],
+        new MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: false,
+          ReadsMemory: false, WritesMemory: true));
+      block.Instructions.RemoveAt(i + 3);
+      ++made;
+    }
+    return made;
   }
 
   /// <summary>

@@ -218,6 +218,46 @@ public sealed class BackendSwitchDispatchTests {
       Assert.That(Run(_table, subject, size: true), Is.EqualTo(expected), "size");
     });
 
+  private const string _longTable = """
+    DIM x AS LONG
+    READ x
+    SELECT CASE x
+      CASE 100000
+        PRINT "a"
+      CASE 100001
+        PRINT "b"
+      CASE 100002
+        PRINT "c"
+      CASE 100003
+        PRINT "d"
+      CASE 100004
+        PRINT "e"
+      CASE ELSE
+        PRINT "z"
+    END SELECT
+    DATA {v}
+    END
+    """;
+
+  [Test]
+  public void Dispatch_GivenADenseLongTable_WhenRouted_ThenHighWordGuardPrecedesIndexedJump() {
+    var image = Compile(_longTable.Replace("{v}", "100002"));
+    Assert.Multiple(() => {
+      Assert.That(Contains(image, 0x85, 0xD2), Is.True, "test dx, dx rejects an index outside one word");
+      Assert.That(Contains(image, 0xFF, 0xA7), Is.True, "an in-range low word indexes the address table");
+    });
+  }
+
+  [TestCase(99999L, "z")]
+  [TestCase(100000L, "a")]
+  [TestCase(100002L, "c")]
+  [TestCase(100004L, "e")]
+  [TestCase(100005L, "z")]
+  [TestCase(165536L, "z")]
+  [TestCase(-1L, "z")]
+  public void Dispatch_GivenADenseLongTable_WhenRun_ThenBothWordsBoundTheIndex(long subject, string expected)
+    => Assert.That(Run(_longTable, subject), Is.EqualTo(expected));
+
   // ---- the perfect hash: too wide to tabulate, separable by low bits -------
 
   private const string _hash = """
@@ -268,6 +308,45 @@ public sealed class BackendSwitchDispatchTests {
   [TestCase(0L, "z")]
   public void Dispatch_GivenASparseSeparableSet_WhenRun_ThenOnlyTheKeyedValueMatches(long subject, string expected)
     => Assert.That(Run(_hash, subject), Is.EqualTo(expected));
+
+  private const string _tree = """
+    DIM x AS INTEGER
+    READ x
+    SELECT CASE x
+      CASE 1
+        PRINT "a"
+      CASE 100
+        PRINT "b"
+      CASE 200
+        PRINT "c"
+      CASE 300
+        PRINT "d"
+      CASE 400
+        PRINT "e"
+      CASE 500
+        PRINT "f"
+      CASE 556
+        PRINT "g"
+      CASE 600
+        PRINT "h"
+      CASE ELSE
+        PRINT "z"
+    END SELECT
+    DATA {v}
+    END
+    """;
+
+  [TestCase(-1L, "z")]
+  [TestCase(1L, "a")]
+  [TestCase(200L, "c")]
+  [TestCase(300L, "d")]
+  [TestCase(400L, "e")]
+  [TestCase(556L, "g")]
+  [TestCase(600L, "h")]
+  [TestCase(601L, "z")]
+  public void Dispatch_GivenABalancedSparseTree_WhenRun_ThenEveryPartitionReachesItsArm(
+      long subject, string expected)
+    => Assert.That(Run(_tree, subject), Is.EqualTo(expected));
 
   // ---- what the dispatch declines -----------------------------------------
 

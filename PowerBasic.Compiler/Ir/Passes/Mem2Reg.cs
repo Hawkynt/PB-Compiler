@@ -13,11 +13,17 @@ namespace PowerBasic.Compiler.Ir.Passes;
 public static class Mem2Reg {
 
   /// <summary>Promotes every promotable alloca in the function; returns how many were promoted.</summary>
-  public static int Run(IrFunction fn) {
+  public static int Run(IrFunction fn) => Run(fn, preserveWriteOnlySourceVariables: false);
+
+  /// <summary>Retains a BASIC variable that is written but never read, as faithful emission requires.</summary>
+  public static int RunForFaithfulSelection(IrFunction fn)
+    => Run(fn, preserveWriteOnlySourceVariables: true);
+
+  private static int Run(IrFunction fn, bool preserveWriteOnlySourceVariables) {
     if (fn.Entry is null)
       return 0;
     var dom = IrDominators.Build(fn)!;
-    var allocas = CollectPromotable(fn);
+    var allocas = CollectPromotable(fn, preserveWriteOnlySourceVariables);
     if (allocas.Count == 0)
       return 0;
 
@@ -34,11 +40,15 @@ public static class Mem2Reg {
     return allocas.Count;
   }
 
-  private static List<IrAlloca> CollectPromotable(IrFunction fn) {
+  private static List<IrAlloca> CollectPromotable(IrFunction fn, bool preserveWriteOnlySourceVariables) {
     var result = new List<IrAlloca>();
-    foreach (var inst in fn.AllInstructions.ToList())
-      if (inst is IrAlloca a && IsPromotable(a))
-        result.Add(a);
+    foreach (var inst in fn.AllInstructions.ToList()) {
+      if (inst is not IrAlloca a || !IsPromotable(a))
+        continue;
+      if (preserveWriteOnlySourceVariables && a.IsSourceVariable && !a.Users.OfType<IrLoad>().Any())
+        continue;
+      result.Add(a);
+    }
     return result;
   }
 

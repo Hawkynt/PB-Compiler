@@ -56,6 +56,9 @@ public sealed class IrBinary : IrInstruction {
 public sealed class IrCmp : IrInstruction {
   public IrCmpPred Pred { get; }
 
+  /// <summary>True for the final truth-to-zero comparison emitted from a BASIC control condition.</summary>
+  public bool IsSourceCondition { get; set; }
+
   public IrCmp(IrCmpPred pred, IrValue lhs, IrValue rhs) : base(IrType.I1) {
     this.Pred = pred;
     this.AddOperand(lhs);
@@ -87,6 +90,9 @@ public sealed class IrAlloca(IrType allocated) : IrInstruction(IrType.Ptr) {
 
   /// <summary>The number of elements; greater than one for an array allocation.</summary>
   public int Count { get; init; } = 1;
+
+  /// <summary>True when this slot represents a BASIC variable rather than lowering scaffolding.</summary>
+  public bool IsSourceVariable { get; set; }
 }
 
 /// <summary>Loads a value of <see cref="Type"/> from a pointer: <c>result = load type, ptr</c>.</summary>

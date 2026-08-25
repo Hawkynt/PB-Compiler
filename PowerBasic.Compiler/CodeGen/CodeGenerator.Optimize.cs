@@ -25,6 +25,32 @@ public sealed partial class CodeGenerator {
   /// </summary>
   public bool Optimize { get; set; } = model.Dialect == Dialect.Pb36;
 
+  /// <summary>
+  /// Validates the module's single <c>$OPTIMIZE</c> directive and applies PB 3.6's OFF mode before any
+  /// optimizer can run. SPEED/SIZE are applied later: historically they steer emission and the
+  /// backend, while moving them ahead of the direct inliner changes its established pass order.
+  /// </summary>
+  private MetaStmt? ResolveOptimizeMetastatement() {
+    var metas = model.MetaStatements
+      .Where(m => m.Command.Equals("OPTIMIZE", StringComparison.OrdinalIgnoreCase))
+      .ToList();
+    if (metas.Count > 1)
+      this.Errors.Add(new(metas[1].Position, "only one $OPTIMIZE per module"));
+    var meta = metas.FirstOrDefault();
+    if (meta?.Arguments is [{ } mode, ..]
+        && mode.Text.Equals("OFF", StringComparison.OrdinalIgnoreCase))
+      this.Optimize = false;
+    return meta;
+  }
+
+  /// <summary>Applies SPEED/SIZE after AST optimization but before backend selection and emission.</summary>
+  private void ResolveOptimizeObjective(MetaStmt? meta) {
+    if (meta?.Arguments is not [{ } mode, ..])
+      return;
+    this.OptimizeSpeed = mode.Text.Equals("SPEED", StringComparison.OrdinalIgnoreCase);
+    this.OptimizeSize = mode.Text.Equals("SIZE", StringComparison.OrdinalIgnoreCase);
+  }
+
   private ConstantFolder? _pb36Folder;
   private ConstantFolder OptFolder => this._pb36Folder ??= new(model.Equates, model.EnumMembers, this.ResolveUnrollCounter);
 

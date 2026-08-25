@@ -87,9 +87,9 @@ public sealed class IrCloner {
 
   private IrInstruction CloneInstruction(IrInstruction inst) => inst switch {
     IrBinary b => new IrBinary(b.Op, this.Map(b.Lhs), this.Map(b.Rhs)),
-    IrCmp c => new IrCmp(c.Pred, this.Map(c.Lhs), this.Map(c.Rhs)),
+    IrCmp c => new IrCmp(c.Pred, this.Map(c.Lhs), this.Map(c.Rhs)) { IsSourceCondition = c.IsSourceCondition },
     IrCast x => new IrCast(x.Op, this.Map(x.Value), x.Type),
-    IrAlloca a => new IrAlloca(a.Allocated) { Count = a.Count },
+    IrAlloca a => new IrAlloca(a.Allocated) { Count = a.Count, IsSourceVariable = a.IsSourceVariable },
     IrLoad l => new IrLoad(l.Type, this.Map(l.Pointer)),
     IrStore s => new IrStore(this.Map(s.Value), this.Map(s.Pointer)),
     IrGep g => g.ElementType is { } et ? new IrGep(this.Map(g.BasePtr), this.Map(g.ByteOffset), et) : new IrGep(this.Map(g.BasePtr), this.Map(g.ByteOffset)),

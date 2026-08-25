@@ -9,6 +9,22 @@ namespace PowerBasic.Compiler.Tests.Ir;
 [TestFixture]
 public sealed class IrPassManagerTests {
 
+  [TestCase(false)]
+  [TestCase(true)]
+  public void AddModulePassWhen_GivenACondition_ThenRunsOnlyWhenEnabled(bool enabled) {
+    var module = new IrModule("test");
+    var calls = 0;
+    var manager = new IrPassManager()
+      .AddModulePassWhen(enabled, "probe", _ => {
+        ++calls;
+        return 0;
+      });
+
+    manager.RunOnModule(module);
+
+    Assert.That(calls, Is.EqualTo(enabled ? 1 : 0));
+  }
+
   private static IrFunction Lower(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     return IrLowering.TryLowerMainBody(Binder.Bind(unit, Dialect.Pb35))!;

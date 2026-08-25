@@ -170,24 +170,26 @@ internal static class RuntimeAbi {
     Reg? Result = null, (Reg Dest, Reg Source)[]? Presets = null, bool FileSelect = false,
     ResultKind Answer = ResultKind.Word, (Reg Dest, int Value)[]? Constants = null);
 
-  // The print routines all save and restore every register they touch, so they are in fact
-  // register-transparent - but "in fact" is not the same as "provably", and a clobber claim that is
-  // one register too small miscompiles a value that is never recomputed. The set is therefore the
-  // full caller-saved file, which is always sound: the allocator then simply refuses to keep any
-  // value in a register across the call. Narrowing it is a real optimization, and it needs a
-  // mechanical check of the routine's push/pop discipline standing behind it, not a reading.
+  // The conservative default is the full caller-saved file: a clobber claim one register too small
+  // miscompiles a value that is never recomputed. A narrower set is used only where tests and runtime
+  // inspection establish balanced saves for the excluded registers.
   private static readonly Reg[] _callerSaved = [Reg.AX, Reg.BX, Reg.CX, Reg.DX, Reg.SI, Reg.DI];
+
+  // These three numeric-print entries have balanced SI/DI saves in their runtime bodies. Keeping the
+  // arithmetic registers conservative while exposing that verified index-register preservation is
+  // what lets an optimized 386 loop retain an ESI counter and EDI accumulator across PRINT.
+  private static readonly Reg[] _numericPrintClobbers = [Reg.AX, Reg.BX, Reg.CX, Reg.DX];
 
   private static readonly Dictionary<string, Routine> _routines = new(StringComparer.Ordinal) {
     // rt_print_str(ptr text, i32 length) -> SI = OFFSET text, CX = length (DosRuntime.EmitPrintStr)
     ["rt_print_str"] = new("rt_print_str",
       [new(ArgKind.Offset, Reg.SI), new(ArgKind.Word, Reg.CX)], _callerSaved),
     // rt_print_i16(i16) -> AX (EmitPrintInt16: CWD then straight into the 32-bit printer)
-    ["rt_print_i16"] = new("rt_print_i16", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_print_i16"] = new("rt_print_i16", [new(ArgKind.Word, Reg.AX)], _numericPrintClobbers),
     // rt_print_i32(i32) -> DX:AX, the convention the direct emitter pushes into it
-    ["rt_print_i32"] = new("rt_print_i32", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved),
+    ["rt_print_i32"] = new("rt_print_i32", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _numericPrintClobbers),
     // rt_print_nl() -> no arguments (EmitPrintNewLine)
-    ["rt_print_nl"] = new("rt_print_nl", [], _callerSaved),
+    ["rt_print_nl"] = new("rt_print_nl", [], _numericPrintClobbers),
     // a comma separator advances to the next 14-column zone; the IR spells it after the source
     // syntax, the runtime after what it does
     ["rt_print_comma"] = new("rt_print_zone", [], _callerSaved),

@@ -101,6 +101,28 @@ public sealed class DeadLoopEliminationTests {
   }
 
   /// <summary>
+  /// Unswitching gives the overflow and non-overflow loops one conditional preheader. Deleting the
+  /// empty clone must not replace that chooser and make the clone containing <c>rt_error</c>
+  /// unreachable.
+  /// </summary>
+  [Test]
+  public void UnswitchClone_GivenTheOtherCloneRaises_ThenTheSharedPreheaderIsNotRetargeted() {
+    var main = Optimized("""
+      $ERROR OVERFLOW ON
+      INPUT k%
+      FOR i% = 1 TO 100
+        x% = k% + 1
+      NEXT i%
+      PRINT "survived"
+      END
+      """, forSpeed: true);
+
+    Assert.That(main.AllInstructions.OfType<IrCall>()
+      .Any(call => (call.Callee as IrFunction)?.Name == "rt_error"), Is.True,
+      "the optimized IR must retain the loop-invariant Error 6 path:\n" + IrPrinter.Print(main));
+  }
+
+  /// <summary>
   /// The loops that must survive SPEED: one whose body prints, and one whose counter is read after
   /// it. Neither is unobservable, and a pass that deleted either would still pass a test that only
   /// looked at delay loops.

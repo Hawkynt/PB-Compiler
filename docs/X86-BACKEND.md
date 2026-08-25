@@ -48,7 +48,7 @@ both be first; the universal answer is inline-early / allocate-late.
 source → AST
        → typed SSA IR          [mem2reg, inline, SCCP, GVN, instcombine, LICM, DCE]   ← BUILT (Ir/)
        → instruction selection → x86-16 MachineFunction with VIRTUAL registers        ← STAGE 1-2
-       → encoding idioms (memory operands, read-modify-write, bit tests)               ← STAGE 2b
+       → machine transforms (SPEED loop rotation, encoding idioms)                    ← STAGE 2b
        → instruction scheduling on virtual-register machine instructions              ← STAGE 6
        → liveness / live intervals                                                     ← STAGE 3
        → linear-scan register allocation (vreg → AX/BX/CX/DX/SI/DI, spill on pressure) ← STAGE 4  ★ reassignment
@@ -116,15 +116,16 @@ emitter writes inline. Three pieces of machinery make that possible:
 A target-level IR over virtual registers, distinct from the SSA IR. Sketch:
 
 - `MReg` — a register operand: either a virtual id (`v0, v1, …`, unbounded) or a physical
-  `Reg` (`AX..DI`), plus a size (byte/word/dword). Allocation rewrites virtual → physical.
+  `Reg` (`AX..DI`, or target-gated `EAX..EDI`), plus a size (byte/word/dword). Allocation
+  rewrites virtual → physical while preserving those aliases as one register-file slot.
 - `MOperand` — `MReg` | immediate | memory (`[base+index*scale+disp]`, base/index are
   `MReg`, plus an optional **segment**) | label/global | stack-slot (for spills and allocas).
-  `MReg`) | label/global | stack-slot (for spills and allocas). A memory operand may name a
   **segment cell**: a runtime word holding the segment the address is relative to, for the one
   memory that is not the program's own (the far array heap at `rt_arrseg`, which is what an IR
   pointer in address space 1 points into — docs/IR.md). The emitter reloads `ES` from that cell
   immediately before the access and prefixes the operand with `ES:`, after scheduling and
-  allocation, so the load and its use are adjacent bytes and no call can be moved between them.- `MInstr` — an opcode (`Mov, Add, Sub, Imul, Cmp, Test, Lea, Shl, …, Jcc, Jmp, Call,
+  allocation, so the load and its use are adjacent bytes and no call can be moved between them.
+- `MInstr` — an opcode (`Mov, Add, Sub, Imul, Cmp, Test, Lea, Shl, …, Jcc, Jmp, Call,
   Ret, Push, Pop`) + operands + a per-opcode **def/use descriptor** (the same shape the
   scheduler already consumes), so liveness, allocation and scheduling all read one model.
 - `MBlock` (label + `MInstr` list + successors), `MFunction` (blocks, virtual-reg count,
@@ -137,9 +138,8 @@ fresh virtual registers (the SSA value → its defining vreg). Start with the in
 core that the differential batteries exercise: `IrConstantInt`, `IrBinary` int ops,
 `IrCmp`+`IrCondBr` (compare→`Jcc`), `IrBr`, `IrLoad`/`IrStore`/`IrGep`/`IrAlloca`,
 `IrCall`/`IrRet`, `IrCast` int width changes, `IrPhi` (lowered to parallel copies on
-predecessor edges — out-of-SSA). Defer float (x87), strings and intrinsics to later
-stages; until then the backend declines functions containing them and the program falls
-back to the direct codegen.
+predecessor edges — out-of-SSA), plus the x87, runtime-call, string and intrinsic forms
+documented below. A construct without an exact lowering still declines rather than guessing.
 
 ### Idioms — the two places a shape spans more than one instruction
 
@@ -147,7 +147,9 @@ One SSA instruction at a time is the right default and the wrong answer for a ha
 which split cleanly by *where the shape lives*.
 
 **In the IR** — `InstructionSelector.Idioms.cs`. The optimizer reduces several BASIC constructs to
-plain arithmetic, and this target has a shorter spelling for the result. `ABS(x)` arrives as
+plain arithmetic, and this target has a shorter spelling for the result. `IfConversion` first turns
+the explicit `IF x < 0 THEN x = -x` diamond into the same canonical form as the intrinsic. `ABS(x)`
+arrives as
 `(x XOR (x >>a 15)) - (x >>a 15)` and is `CWD / XOR AX,DX / SUB AX,DX`; `SGN(x)` arrives as
 `(x > 0) - (x < 0)` and is `CWD / NEG AX / ADC DX,DX`. Both name `DX` and so cannot be written over
 virtual registers at all — `CWD` *is* the sign mask, and there is no other instruction on this part
@@ -172,10 +174,11 @@ that came from *separate* IR instructions, so they only exist once selection is 
 read straight from memory rather than staged through a register (`ADD d,[n]`), a cell read-modified-
 written in place (`INC [a]`, `ADD [a],imm`), a bit test that never materializes the masked value
 (`TEST x,mask` for `MOV v,x / AND v,mask / CMP v,0`), and a copy chain that collapses to one copy
-(`MOV v,src / MOV w,v` is `MOV w,src`, and a copy straight back to its own source is nothing at all).
-All four are guarded by a census of the whole function — the value being removed is defined and read
-only by the instructions being rewritten — and by a barrier scan for anything in between that writes
-memory, clobbers the register file or writes a register the folded address is formed from.
+(`MOV v,src / MOV w,v` is `MOV w,src`, and a copy straight back to its own source is nothing at all),
+and crossed scalar loads/stores folded to `XCHG reg,[cell]`. All five are guarded by a census of the whole
+function — the value being removed is defined and read only by the instructions being rewritten — and
+by a barrier scan for anything in between that writes memory, clobbers the register file or writes a
+register the folded address is formed from.
 
 The addressing rule is the one that costs coverage if it is got wrong. A value used as a memory base
 or index may only live in `BX`/`SI`/`DI` and cannot itself move to memory
@@ -208,7 +211,8 @@ would have written.
 
 Compute live intervals over the machine function (backward dataflow; SSA + dominators
 make this exact). Linear-scan assigns virtual registers to `{AX,BX,CX,DX,SI,DI}` (BP/SP
-reserved for the frame), spilling the furthest-next-use interval to a stack slot on
+reserved for the frame), with eligible 386 dwords using the corresponding `E*` alias, and spills the
+furthest-next-use interval to a stack slot on
 pressure. This is where **register reassignment happens for real**: independent values
 land in distinct physical registers, so `x=x*2+7 : y=y*3+15` keeps `x` and `y` apart.
 Constraints handled here: `Imul`/`Mul`/`Div` implicit `AX`/`DX`, shift-count in `CL`,
@@ -284,7 +288,8 @@ All six stages are implemented and unit-tested (the pipeline runs end to end:
 LinearScanAllocator → MachineEmitter → Assembler → machine code`):
 
 - **Stage 1 — MachineIR** (`Backend/MachineIr.cs`). ✅
-- **Stage 2 — instruction selection** (`Backend/InstructionSelector.cs`), the corpus-covered integer,
+- **Stage 2 — instruction selection and target-gated machine transforms**
+  (`Backend/InstructionSelector.cs`, `Backend/MachineLoopRotation.cs`), the corpus-covered integer,
   x87 and runtime-call forms; declines unsupported shapes. ✅
 - **Stage 3 — liveness / live intervals** (`Backend/LivenessAnalysis.cs`). ✅
 - **Stage 4 — linear-scan allocation** (`Backend/LinearScanAllocator.cs`), with BX/SI/DI address
@@ -463,11 +468,18 @@ Two soundness rules make that safe:
   as scratch and may use `SI`/`DI` for loop residency without saving them. The `MInstr` declares all
   six, so the allocator refuses to keep any value in a register across the call and — having no
   spilling yet — declines the function instead of letting a value be destroyed.
-- **A routed function may only call routed functions.** The two sides must agree on the ABI, and
-  `OptRegParm` may convert a directly-emitted procedure to the register convention — a decision it
-  makes *after* this set is known, since it skips exactly the routed procedures. Requiring callees to
-  be routed makes both sides stack-convention by construction. Dropping one invalidates its callers,
-  so the routing iterates to a fixpoint.
+- **A SPEED-optimized routed function may only call routed functions.** The two sides must agree on the
+  ABI, and `OptRegParm` may convert a directly-emitted procedure to the register convention after this
+  set is known. That conversion does not run when optimization is off or has a non-SPEED objective, so
+  a routed caller may then call one unambiguous, locally defined BASIC/PASCAL procedure through the
+  shared stack convention. An unresolved declaration is still refused. Routing iterates to a fixpoint
+  in every mode.
+
+The mixed unoptimized case exposed one more state boundary. A routed `main` bypasses the direct
+emitter's statement walk, but direct procedures are emitted afterwards and read the final lexical
+`$ERROR` state that walk normally leaves behind. The routed branch now replays those metastatements;
+without it a direct recursive callee lost `$ERROR STACK ON`, overwrote memory, and jumped into data
+instead of raising Error 201 into main's routed handler.
 
 A `CALL` also needs the callee's real `Label`: procedure labels are minted with `DefineLabel`, a
 different registry from `Assembler.Lbl`, so looking the name up there would create a fresh,
@@ -617,8 +629,8 @@ details:
 
 `InstructionSelector.Dispatch.cs` then tries the shapes cheapest-answer-first — a contiguous run to one
 arm is an unsigned range test, a scattered set to one arm is a mask, several arms over a small span are
-a table, a wide separable set is a hash — and falls through to the compare chain for anything left,
-which is still the right answer for two or three cases.
+a table, a wide separable set is a hash, and eight or more remaining word cases form a balanced signed
+decision tree — then falls through to the compare chain for a few cases.
 
 Every shape holds the subject in `AX` and works in `AX`/`BX`/`CX`, as the direct emitter's do, so that
 a resident `SI`/`DI` FOR counter survives. Fixed registers inside an allocated function have to be said
@@ -633,10 +645,9 @@ walk ended on a block it had already counted as deleted, which was the block the
 its default. Every member reached its arm and every non-member fell into whatever followed. Only the
 default path was wrong, which is why three quarters of the fixture still passed.
 
-What is deliberately absent: a 32-bit subject (every shape indexes or masks a 16-bit value, and the
-guard proving a LONG equal to its own low word is not yet worth its bytes here), and the balanced
-decision tree (the corpus's sparse SELECTs all fall to the perfect hash, which is constant time where
-the tree is logarithmic).
+Dense 32-bit subjects use the same table after subtracting the LONG minimum through `DX:AX`: a nonzero
+high word rejects the index before the low-word span check. Sparse LONG subjects deliberately retain
+the high/low compare chain; the balanced tree compares signed words and cannot discard the high half.
 
 ### Binary-record strings and DX:AX runtime results
 
@@ -712,9 +723,14 @@ names its registers in its operands, so this is where two mechanisms have to car
   before allocation, virtual work moved into a pinned sequence could later receive the pinned
   register and overwrite its argument or result.
 
-The inline 16-bit form selects only a **non-zero compile-time constant** divisor. A constant that is
-not zero cannot trap, exactly where the direct emitter drops the Error 11 guard (`O0220`); `-1`
-declines because `MININT \ -1` would overflow the hardware `IDIV`.
+The inline 16-bit form accepts a runtime divisor because the lowering has already emitted the Error 11
+zero guard; a known nonzero constant lets the optimizer erase that guard. A literal `-1` still declines
+because `MININT \ -1` overflows the hardware `IDIV`.
+
+An adjacent signed quotient and remainder over the same SSA operands share that one `IDIV`: the first
+operation captures both `AX` and `DX`, even when the lowering's duplicate zero-divisor guards put the
+second operation in a dominated block. Functions with `ON ERROR` or inline assembly keep both divides,
+because hidden control flow can resume between the two source operations.
 
 Signed 32-bit `SDiv`/`SRem` instead use the runtime convention the direct emitter already relies on:
 dividend in `DX:AX`, divisor in `CX:BX`, result in `DX:AX`, through `rt_ldiv`/`rt_lmod`. The shared
@@ -1176,8 +1192,8 @@ as routable and the failure arrived where nothing can decline.
 which already answered the same symbol KINDS the emitter's `FrameResolver` will, and was being used
 for the register-effect analysis only — and declines on a parse failure. The direct emitter then takes
 the function and issues exactly the diagnostic it always did; the routed and unrouted images are
-byte-identical for all four shapes. Coverage is unchanged: 242/263 functions routed and 156/161 module
-bodies owned in production, 262/262 selected and allocated.
+byte-identical for all four shapes. At that stage coverage stayed at 242/263 functions routed and
+156/161 module bodies owned in production, with 262/262 selected and allocated.
 
 ## The x87 stack is not in the machine IR
 
@@ -1560,9 +1576,9 @@ splitting pass alone, but at the cost of a store and a reload per element that t
 unnecessary; a procedure holding four `LONG` accumulators at once declines with the gate alone, because
 that pressure is in the selector's output and no scheduling decision put it there.
 
-Selection stays at **257 of 259**, routing moves **256 → 257**, module ownership **156 → 157 of 159**,
-and allocation declines reach **zero for the whole corpus**. The execution differential moves to **295
-agreeing, 0 disagreeing**.
+At that stage selection stayed at **257 of 259**, routing moved **256 → 257**, module ownership moved
+**156 → 157 of 159**, and allocation declines reached **zero for the whole corpus**. The execution
+differential moved to **295 agreeing, 0 disagreeing**; the current census is recorded below.
 
 ### The value nobody could see: a physical register between its definition and its read
 
@@ -1640,11 +1656,11 @@ often. `ADD r,r; SBB r,r` is the same four bytes, needs no register and runs on 
 leaves the sign bit in `CF` and subtracting a register from itself is `-CF`. The two are joined by the
 flags the scheduler already models, exactly as `SelectWideShift`'s `SHL`/`RCL` steps are.
 
-Re-measured over the corpus, as the estimate demanded: coverage unchanged at 242/263 functions routed
-and 156/161 module bodies owned (262/262 selected and allocated), the differential at 305
-participating / 290 agreeing / 0 disagreeing, and the
-spiller's worst case 168 rounds optimized and 153 unoptimized - lower than the 174 recorded before,
-and nowhere near the budget.
+Re-measured on 2026-08-25: production routes 245/263 functions optimized and 242/263 unoptimized, and
+owns 159/161 module bodies. The selector and allocator take 262/262 optimized functions; the
+unoptimized allocator takes 258/258. The execution differential is 317 participating / 317 agreeing /
+0 emulator-limited / 0 disagreeing, and the spiller's worst case is 168 rounds optimized and 153
+unoptimized - lower than the 174 recorded before, and nowhere near the budget.
 
 The assertion is `BackendCpuTargetTests.Selection_GivenAn8086Target_ThenNoShiftCarriesAn80186ImmediateCount`,
 and it is made against the **machine IR** rather than the image on purpose: `C1` is an ordinary byte
@@ -1678,14 +1694,13 @@ reference elsewhere is `undefined label`), so the lowering's guard for it is def
 path. Nothing renders it back to BASIC and nothing emits it in C: the arm is a frame capture, and that
 has no spelling in either.
 
-`DIFF14.BAS` reaches the IR with this — **160/165 programs lowered, 258/261 functions selected, 257
-routed** — and then stops again, twice over, which is worth recording rather than rounding off. Its
-module body declines at `UIToFP u32 -> f80` (`USING$` of a `DWORD`), and its `SUB Noisy(n%)` takes a
-**BYREF** parameter, which `BackendProcs` excludes from whole-program routing regardless; a routed
-`main` may only call routed procedures, so closing either one alone would change nothing. The corpus
-differential is therefore unmoved at **293 agreeing, 0 disagreeing** — the back end still takes nothing
-of that program. What `EXIT FAR` does *through* the back end is verified by `BackendExitFarTests`,
-which runs both emitters over programs shaped to route: an unwind out of a loop, out of three nested
+`DIFF14.BAS` also has a `SUB Noisy(n%)` with a **BYREF** parameter, which `BackendProcs` excludes from
+whole-procedure routing. Its caller can nevertheless route whenever register-parameter conversion is
+inactive: unoptimized and non-SPEED optimized builds call the direct BASIC/PASCAL body through the
+shared stack ABI. That restored the optimized half of this corpus program without pretending the
+callee itself was eligible. What `EXIT FAR` does *through* the back end is
+verified by `BackendExitFarTests`, which runs both emitters over programs shaped to route: an unwind
+out of a loop, out of three nested
 frames, out of a `FUNCTION` that had already assigned its result (the caller never receives it — an
 unwind is not a return), and the same procedure returning normally on a call that does not fire one.
 
@@ -1811,12 +1826,29 @@ policy then runs on the untouched original. `BackendResidencyTests` measures the
 corpus function rather than trusting the argument: nothing that allocates under the baseline target
 declines under the speed one.
 
+**The 386 extension keeps only proven recurrences whole.** Under an optimized `$CPU 80386` SPEED
+target, a loop-carried LONG phi whose complete incoming expression is constants and supported dword
+arithmetic uses one virtual dword and is offered `ESI`/`EDI`. The eligibility set is reduced to a
+fixed point: a load, argument, runtime result, cast or unsupported operation on any incoming edge
+keeps the recurrence on the established word-pair representation. Calls still use the 16-bit ABI;
+the selector stages a native dword to a frame cell when it must supply the low/high words. This closes
+the `Emit_GivenLongForLoop`, `Emit_GivenLongAccumulatorLoop` and 386 constant-limit cases without
+making baseline allocation depend on paired physical registers.
+
+**Canonical pre-tested loops rotate after out-of-SSA.** `MachineLoopRotation` recognizes only a
+three-instruction `CMP/Jcc/Jmp` header with one preheader, one latch and exactly one arm that reaches
+that latch. It keeps the header as the zero-trip guard, replaces the latch's jump back to it with a
+copy of the guard, and sends the continuing edge directly to the body. Running after phi edge copies
+is the key: the latch has already installed the next value in the phi register, so the copied compare
+tests exactly what the next header visit would have tested. Computed guards and multi-backedge loops
+do not match. The transform is SPEED-only and closes both routed `DO WHILE` and register-counter `FOR`
+rotation shapes.
+
 What this does NOT reach, measured with pb36 routed by default:
 
 | still missing | why |
 |---|---|
-| a counter resident across a `PRINT` in the loop BODY | a routed `CALL` clobbers the whole register file. The direct emitter's O5 rests on the opposite claim - `CodeGenerator.Optimize.cs` states that `rt_print_i16`/`i32`, `rt_print_str`, newline, zone and `FSelect` all preserve `SI` and `DI` - but this document's own bar for narrowing a `RuntimeAbi` clobber set is a mechanical check of each routine's push/pop discipline, and there is none. Until there is, `Emit_GivenNumericPrintInLoopBody`, `Emit_GivenDoLoopTwoAccumulators` (whose second accumulator must survive the first `PRINT`), `Emit_GivenCountOnlyFor` and `Emit_GivenRegisterCounterFor` cannot pass |
-| `ESI`/`EDI` for a `LONG` counter under `$CPU 80386` | a 32-bit value is a register PAIR in this machine IR, so there is no dword physical register to prefer. `Emit_GivenLongForLoop` and `Emit_GivenLongAccumulatorLoop` want the 386 form and need 32-bit registers in `MachineIr` first |
+| a counter resident across every `PRINT` form in the loop body | runtime inspection and tests now prove `rt_print_i16`, `rt_print_i32` and newline preserve `SI`/`DI`, which closes the count-only and two-accumulator cases and lets native LONG values survive numeric output. String-variable output, comma zones and file selection retain the conservative full clobber set; the remaining numeric-print shape fixture also needs separate instruction-shape parity |
 | whether the counter takes `SI` and the accumulator `DI` or the reverse | the direct emitter has two conventions - a `FOR` counter is its `SI` resident, while a `DO` loop's FIRST hot local is - and `Emit_GivenConditionalAccumulateLoop` and `Emit_GivenDoLoopAccumulator` therefore assert opposite assignments for two loops the machine IR cannot tell apart. Measured both ways round: the order of `_resident` moves which of the two passes, and nothing else |
 | two fixtures that measure no loop at all | `Emit_GivenAccumulatorLoop` and `Emit_GivenNestedIntegerLoops` are constant-folded to `PRINT 55` and `PRINT 288` by the IR pipeline in BOTH of their builds, so there is no loop left for residency to shrink - the same "measures an empty `main`" family docs/BACKENDS.md records |
 

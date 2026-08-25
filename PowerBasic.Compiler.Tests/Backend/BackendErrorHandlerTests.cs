@@ -26,19 +26,20 @@ namespace PowerBasic.Compiler.Tests.Backend;
 [TestFixture]
 public sealed class BackendErrorHandlerTests {
 
-  private static (string Output, IEnumerable<string> Routed) Run(string source, bool routed) {
+  private static (string Output, IEnumerable<string> Routed) Run(
+      string source, bool routed, bool optimize = true) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var cg = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = routed };
+    var cg = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = routed };
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"), cg.BackendRoutedNames.ToList());
   }
 
-  private static void BothPathsAgree(string source, string expected) {
-    var (routed, names) = Run(source, routed: true);
+  private static void BothPathsAgree(string source, string expected, bool optimize = true) {
+    var (routed, names) = Run(source, routed: true, optimize);
     Assert.That(names, Does.Contain("main"), "the back end has to have taken the module body");
-    Assert.That(routed, Is.EqualTo(Run(source, routed: false).Output), "the two emitters disagree");
+    Assert.That(routed, Is.EqualTo(Run(source, routed: false, optimize).Output), "the two emitters disagree");
     Assert.That(routed, Is.EqualTo(expected));
   }
 
@@ -113,6 +114,50 @@ public sealed class BackendErrorHandlerTests {
       ON ERROR GOTO 0
       END
       """, "one|two");
+
+  [Test]
+  public void Route_GivenUnoptimizedHandlerAndDirectCalleeRaise_ThenUnwindsToRoutedMain() =>
+    BothPathsAgree("""
+      DECLARE SUB Boom(v%)
+      ON ERROR GOTO Trap
+      DIM value AS INTEGER
+      Boom value
+      PRINT "not reached"
+      END
+
+      SUB Boom(v%)
+        ERROR 7
+      END SUB
+
+      Trap:
+      PRINT "err"; ERR
+      RESUME Done
+      Done:
+      PRINT "done"
+      END
+      """, "err 7 |done", optimize: false);
+
+  [Test]
+  public void Route_GivenUnoptimizedDirectCalleeStackTrap_ThenUnwindsToRoutedMain() =>
+    BothPathsAgree("""
+      $ERROR STACK ON
+      DECLARE SUB Recurse(d%)
+      ON ERROR GOTO Trap
+      Recurse 1
+      PRINT "not reached"
+      END
+
+      SUB Recurse(d%)
+        Recurse d% + 1
+      END SUB
+
+      Trap:
+      PRINT "err"; ERR
+      RESUME Done
+      Done:
+      PRINT "done"
+      END
+      """, "err 201 |done", optimize: false);
 
   /// <summary>Two handlers in sequence: the second arming has to replace the first, not stack on it.</summary>
   [Test]
