@@ -14,7 +14,20 @@ namespace PowerBasic.Compiler.Tests.Backend;
 [TestFixture, Category("Probe")]
 public sealed class Wave3SweepHarness {
 
-  private sealed record Behaviour(string Output, string Screen, string Cursor, string Printer, string Files, int ExitCode);
+  private sealed record Behaviour(string Output, string Screen, string Attributes, string Cursor, string Printer,
+    string Files, int ExitCode);
+
+  /// <summary>
+  /// The ATTRIBUTE half of the text page. <see cref="Cpu8086.Screen"/> reads the character cells only,
+  /// so a COLOR statement given the wrong arguments moves no character and is invisible to it - the
+  /// same blind spot the screen comparison was added to close, one byte over.
+  /// </summary>
+  private static string Attributes(Cpu8086 cpu) {
+    var sb = new StringBuilder();
+    for (var cell = 0; cell < 80 * 25; ++cell)
+      sb.Append(cpu.MemoryAt(0xB800, cell * 2 + 1).ToString("X2"));
+    return sb.ToString();
+  }
 
   private static Behaviour? Observe(byte[] image, IReadOnlyDictionary<string, byte[]> disk, out string why) {
     why = "";
@@ -24,8 +37,8 @@ public sealed class Wave3SweepHarness {
       var files = new StringBuilder();
       foreach (var name in cpu.FileNames.OrderBy(n => n, StringComparer.OrdinalIgnoreCase))
         files.Append(name).Append('=').Append(Dump(cpu.FileBytes(name)!)).Append('\n');
-      return new(cpu.Output, string.Join("\n", cpu.Screen), cpu.Cursor.ToString(), cpu.PrinterOutput,
-        files.ToString(), cpu.ExitCode);
+      return new(cpu.Output, string.Join("\n", cpu.Screen), Attributes(cpu), cpu.Cursor.ToString(),
+        cpu.PrinterOutput, files.ToString(), cpu.ExitCode);
     } catch (Cpu8086Exception e) {
       why = e.Message;
       return null;
@@ -39,16 +52,19 @@ public sealed class Wave3SweepHarness {
     return sb.ToString();
   }
 
-  private static Dialect DialectOf(string text) {
+  /// <summary>The dialects a probe declares with a <c>@dialect a,b</c> header comment; pb36 alone by default.</summary>
+  private static IReadOnlyList<Dialect> DialectsOf(string text) {
     foreach (var line in text.Split('\n').Take(6)) {
       var at = line.IndexOf("@dialect ", StringComparison.OrdinalIgnoreCase);
       if (at < 0)
         continue;
-      var name = line[(at + 9)..].Trim();
-      if (Enum.TryParse<Dialect>(name, ignoreCase: true, out var dialect))
-        return dialect;
+      var named = line[(at + 9)..].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(name => Enum.TryParse<Dialect>(name, ignoreCase: true, out var d) ? d : (Dialect?)null)
+        .OfType<Dialect>().ToList();
+      if (named.Count > 0)
+        return named;
     }
-    return Dialect.Pb36;
+    return [Dialect.Pb36];
   }
 
   [Test]
@@ -62,16 +78,15 @@ public sealed class Wave3SweepHarness {
     foreach (var file in Directory.EnumerateFiles(dir!, "*.BAS", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal)) {
       var name = Path.GetFileName(file);
       var text = File.ReadAllText(file);
-      var dialect = DialectOf(text);
 
       // any *.DAT sitting beside the probe is seeded on the disk under its own name
       var disk = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
       foreach (var seed in Directory.EnumerateFiles(Path.GetDirectoryName(file)!, Path.GetFileNameWithoutExtension(file) + ".*.SEED"))
         disk[Path.GetFileName(seed)[(Path.GetFileNameWithoutExtension(file).Length + 1)..^5]] = File.ReadAllBytes(seed);
 
-      SemanticModel Bind() => Binder.Bind(Parser.Parse(Lexer.Tokenize(text, name, dialect), name, dialect), dialect);
-
+      foreach (var dialect in DialectsOf(text))
       foreach (var optimize in new[] { true, false }) {
+        SemanticModel Bind() => Binder.Bind(Parser.Parse(Lexer.Tokenize(text, name, dialect), name, dialect), dialect);
         var tag = $"{name} {dialect} {(optimize ? "O" : "-")}";
         ++ran;
         byte[] directImage, routedImage;
@@ -116,6 +131,7 @@ public sealed class Wave3SweepHarness {
         report.AppendLine($"DISAGREE {tag} [{string.Join(",", routedNames)}]");
         Show(report, "output", directRun.Output, routedRun.Output);
         Show(report, "screen", directRun.Screen, routedRun.Screen);
+        Show(report, "attrib", directRun.Attributes, routedRun.Attributes);
         Show(report, "cursor", directRun.Cursor, routedRun.Cursor);
         Show(report, "printer", directRun.Printer, routedRun.Printer);
         Show(report, "files", directRun.Files, routedRun.Files);
