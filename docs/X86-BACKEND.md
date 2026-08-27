@@ -547,9 +547,9 @@ path alongside the battle-tested direct codegen). With it **forced on, all 241 d
 are byte-identical to the genuine compilers** — every eligible integer function across the corpus is
 compiled by the back end (register-allocated and scheduled), output-identical to the oracle — and the
 2135 unit tests pass with it off (no-op). So register reassignment + instruction scheduling now reach
-real programs through the in-house back end, end to end, oracle-verified. Widening eligibility (float/
-x87 results, string/array params, the main body) is future work; the integer-function path is live and
-verified.
+real programs through the in-house back end, end to end, oracle-verified. At that stage, widening
+eligibility (float/x87 results, string/array params, the main body) was future work; the
+integer-function path was live and verified.
 
 ### The data-layout bridge: globals, shared arrays, and STATIC locals
 
@@ -1656,7 +1656,7 @@ often. `ADD r,r; SBB r,r` is the same four bytes, needs no register and runs on 
 leaves the sign bit in `CF` and subtracting a register from itself is `-CF`. The two are joined by the
 flags the scheduler already models, exactly as `SelectWideShift`'s `SHL`/`RCL` steps are.
 
-Re-measured on 2026-08-25: production routes 259/263 functions optimized and 255/263 unoptimized, and
+Re-measured on 2026-08-27: production routes 262/263 functions optimized and 258/263 unoptimized, and
 owns 160/161 module bodies. The optimized selector and allocator take 263/263 functions. The
 execution differential is 317 participating / 317 agreeing /
 0 emulator-limited / 0 disagreeing, and the spiller's worst case is 168 rounds optimized and 153
@@ -1773,20 +1773,23 @@ empty.
 
 **That is not the same as coverage, and this paragraph used to say it was.** Those counts are taken
 over every function the lowering produced; the production routing refuses a procedure on its SHAPE
-before the selector is ever asked — a string, QUAD, BYTE, FIX, EXT or record value, an unsupported
+before the selector is ever asked — a QUAD, BYTE, FIX, EXT or record value, an unsupported
 BYREF pointee, a non-default calling convention, or error handling in the body — and a procedure it
 skips was in neither half of the ratio. Measured through the code generator itself, the corpus routes
-**259 of 263 functions** with the optimizer on, **255 of 263** with it off, and **160 of 161 module
+**262 of 263 functions** with the optimizer on, **258 of 263** with it off, and **160 of 161 module
 bodies** (docs/BACKENDS.md, "1. Coverage"). Near numeric BYREF parameters account for 12 recently
 routed procedures: the one-word pointer enters at the direct BASIC/PASCAL frame offset, and the IR
 loads and stores through it. Dynamic-string `SWAP` then removes the last procedure-body lowering
-decline by crossing the raw owner-cell handles without copying or freeing either one. The selector
-figures are still worth having: they say the selector
-refuses nothing the filter offers it, which is what makes the filter the frontier rather than a
+decline by crossing the raw owner-cell handles without copying or freeing either one. Dynamic-string
+procedure parameters and results add three more routed corpus functions: handles travel as one-word
+arguments/results, while the IR releases BYVAL parameters, locals, copy-in temporaries and discarded
+results at their ownership boundaries. The selector figures are still worth having: they say the
+selector refuses nothing the filter offers it, which is what makes the filter the frontier rather than a
 symptom. `LOWLEVEL.BAS`
 prints 5 through the routed path and matches its golden output line for line
 (`BackendInlineAsmTests.InlineAsm_GivenLowLevelBas_…`), and the test that used to record the defect now
 asserts the two paths agree for the better reason — the routed side really compiles the body.
+
 ## Register residency: keeping a loop's counter and accumulator in registers
 
 pb36's O5 promises a hot loop counter in `SI` and a second hot local in `DI`, and a routed function got

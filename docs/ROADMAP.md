@@ -167,24 +167,31 @@ battery, it currently reaches:
 | | |
 |---|---|
 | programs reaching the IR at all | **161 / 165** — every one the FRONT end accepts; the other 4 it rejects |
-| **functions ROUTED in production, `--optimize`** | **259 / 263** |
-| **functions ROUTED in production, `--no-optimize`** | **255 / 263** |
+| **functions ROUTED in production, `--optimize`** | **262 / 263** |
+| **functions ROUTED in production, `--no-optimize`** | **258 / 263** |
 | **whole module bodies the back end owns** | **160 / 161** |
 | functions the SELECTOR would take, if offered one | 263 / 263 |
 | module bodies the selector would take | 161 / 161 |
 
 The last two rows are what this table used to report as coverage, and they are not it.
-`CodeGenerator.BackendProcs` refuses a procedure on its SHAPE — strings, QUAD, BYTE, FIX, EXT or
+`CodeGenerator.BackendProcs` refuses a procedure on its SHAPE — QUAD, BYTE, FIX, EXT or
 record values, an unsupported BYREF pointee, a non-default calling convention, or error handling in
 the body — before the selector is asked, so a procedure it skips lands in neither half of the ratio
 and 263/263 means "of the functions we attempted, how many succeeded". The routed rows come from the
 production code generator's own record of its own decision (`CodeGenerator.BackendDeclines`). Ranked,
-the remaining corpus work is STRING returns and parameters (3) and one caller with no linkable
-EXTERNAL callee. Near BYREF INTEGER/WORD/LONG/DWORD/SINGLE/DOUBLE
+the only remaining corpus routing gap is one caller with no linkable EXTERNAL callee. Near BYREF
+INTEGER/WORD/LONG/DWORD/SINGLE/DOUBLE
 parameters now route through one-word pointers and are pinned by mutation, aliasing, recursion,
 optimizer-mode execution, and the SPEED caller/callee fixpoint. Whole classes the corpus never
 exercises — QUAD, BYTE, FIX and EXT parameters and results, the four non-default conventions, error
 handling in a procedure body — remain pinned one program each by `BackendRoutingGateTests`.
+
+Dynamic STRING procedure values use the same one-word stack/AX representation as the direct emitter.
+The IR now makes the non-representational part of that ABI explicit: BYVAL transfers ownership to the
+callee, BYREF passes the owner cell, results transfer back to the caller, and locals, copy-in
+temporaries, discarded results and BYVAL parameters are each released at their ownership boundary.
+That routes the two string-returning corpus functions and the one string-parameter procedure in both
+optimizer modes.
 
 Dynamic-string `SWAP` now transfers the two raw runtime handles between their owner cells, including
 far string-array elements, without duplicating or freeing either handle. That removes the last

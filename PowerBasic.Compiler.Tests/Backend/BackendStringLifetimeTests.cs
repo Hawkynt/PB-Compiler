@@ -224,4 +224,148 @@ public sealed class BackendStringLifetimeTests {
     Assert.That(direct, Does.Contain("two:one"));
     Assert.That(routed, Is.EqualTo(direct));
   }
+
+  [TestCase(true,
+    TestName = "Run_GivenStringParametersAndResult_WhenOptimized_ThenTheProcedureABITransfersOwnership")]
+  [TestCase(false,
+    TestName = "Run_GivenStringParametersAndResult_WhenUnoptimized_ThenTheProcedureABITransfersOwnership")]
+  public void Run_GivenStringParametersAndResult_ThenTheProcedureAbiTransfersOwnership(bool optimize) {
+    var (direct, routed, names) = RunBothWays("""
+      DECLARE SUB Mutate(value$)
+      DECLARE FUNCTION Join$(BYVAL left$, right$)
+      DIM text AS STRING
+      text = "A"
+      PRINT Join$(text, "B"); ":"; text
+      CALL Mutate(text)
+      PRINT text
+      END
+      SUB Mutate(value$) NOINLINE
+        value$ = value$ + "!"
+      END SUB
+      FUNCTION Join$(BYVAL left$, right$) NOINLINE
+        DIM local AS STRING
+        local = left$ + right$
+        Join$ = local
+      END FUNCTION
+      """, optimize);
+
+    Assert.That(names, Is.SupersetOf(new[] { "Mutate", "Join", "main" }),
+      "both string conventions and their caller must stay on the routed path");
+    Assert.That(direct.Replace("\r\n", "|").Trim(), Is.EqualTo("AB:A|A!|"));
+    Assert.That(routed, Is.EqualTo(direct));
+  }
+
+  [Test]
+  public void Run_GivenStringArrayElementsPassedByRef_ThenNearWritesThroughAndFarCopiesIn() {
+    var (direct, routed, names) = RunBothWays("""
+      DECLARE SUB Mutate(value$)
+      DIM nearValues$(1 TO 2)
+      nearValues$(2) = "near"
+      CALL Mutate(nearValues$(2))
+      DIM farValues$()
+      REDIM farValues$(1 TO 2)
+      farValues$(2) = "far"
+      CALL Mutate(farValues$(2))
+      PRINT nearValues$(2); ":"; farValues$(2)
+      END
+      SUB Mutate(value$) NOINLINE
+        value$ = value$ + "!"
+      END SUB
+      """, optimize: true);
+
+    Assert.That(names, Is.SupersetOf(new[] { "Mutate", "main" }));
+    Assert.That(direct.Trim(), Is.EqualTo("near!:far"),
+      "a near element is an addressable lvalue; a far element uses BASIC's copy-in temporary");
+    Assert.That(routed, Is.EqualTo(direct));
+  }
+
+  [TestCase(true, TestName = "Run_GivenOwnedStringsInRepeatedCalls_WhenOptimized_ThenEveryReturnReleasesThem")]
+  [TestCase(false, TestName = "Run_GivenOwnedStringsInRepeatedCalls_WhenUnoptimized_ThenEveryReturnReleasesThem")]
+  public void Run_GivenOwnedStringsInRepeatedCalls_ThenEveryReturnReleasesThem(bool optimize) {
+    var (direct, routed, names) = RunBothWays("""
+      DECLARE SUB Work(BYVAL seed$)
+      OPEN "D.TXT" FOR OUTPUT AS #1
+      PRINT #1, "0123456789012345678901234567890123456789"
+      PRINT #1, "400"
+      CLOSE #1
+      OPEN "D.TXT" FOR INPUT AS #1
+      LINE INPUT #1, seed$
+      INPUT #1, count%
+      CLOSE #1
+      FOR i% = 1 TO count%
+        CALL Work(seed$)
+      NEXT i%
+      PRINT "done"
+      END
+      SUB Work(BYVAL seed$) NOINLINE
+        DIM local AS STRING
+        local = seed$ + seed$ + seed$ + seed$ + seed$
+      END SUB
+      """, optimize);
+
+    Assert.That(names, Is.SupersetOf(new[] { "Work", "main" }));
+    Assert.That(direct, Does.Contain("done"));
+    Assert.That(routed, Does.Not.Contain("OUT OF STRING SPACE"),
+      "each call owns both its BYVAL copy and its local result, so each return must release both");
+    Assert.That(routed, Is.EqualTo(direct));
+  }
+
+  [Test]
+  public void Run_GivenRepeatedByRefStringExpressions_ThenTheCallerReleasesEachCopyInTemporary() {
+    var (direct, routed, names) = RunBothWays("""
+      DECLARE SUB Observe(value$)
+      OPEN "D.TXT" FOR OUTPUT AS #1
+      PRINT #1, "0123456789012345678901234567890123456789"
+      PRINT #1, "300"
+      CLOSE #1
+      OPEN "D.TXT" FOR INPUT AS #1
+      LINE INPUT #1, seed$
+      INPUT #1, count%
+      CLOSE #1
+      seed$ = seed$ + seed$ + seed$
+      FOR i% = 1 TO count%
+        CALL Observe(seed$ + "")
+      NEXT i%
+      PRINT "done"
+      END
+      SUB Observe(value$) NOINLINE
+      END SUB
+      """, optimize: true);
+
+    Assert.That(names, Is.SupersetOf(new[] { "Observe", "main" }));
+    Assert.That(direct, Does.Contain("done"));
+    Assert.That(routed, Does.Not.Contain("OUT OF STRING SPACE"),
+      "a BYREF expression is a caller-owned copy-in temporary and must be released after the call");
+    Assert.That(routed, Is.EqualTo(direct));
+  }
+
+  [Test]
+  public void Run_GivenDiscardedStringFunctionResults_ThenEveryOwnedResultIsReleased() {
+    var (direct, routed, names) = RunBothWays("""
+      DECLARE FUNCTION Make$(seed$)
+      OPEN "D.TXT" FOR OUTPUT AS #1
+      PRINT #1, "0123456789012345678901234567890123456789"
+      PRINT #1, "300"
+      CLOSE #1
+      OPEN "D.TXT" FOR INPUT AS #1
+      LINE INPUT #1, seed$
+      INPUT #1, count%
+      CLOSE #1
+      seed$ = seed$ + seed$ + seed$
+      FOR i% = 1 TO count%
+        CALL Make$(seed$)
+      NEXT i%
+      PRINT "done"
+      END
+      FUNCTION Make$(seed$) NOINLINE
+        Make$ = seed$
+      END FUNCTION
+      """, optimize: true);
+
+    Assert.That(names, Is.SupersetOf(new[] { "Make", "main" }));
+    Assert.That(direct, Does.Contain("done"));
+    Assert.That(routed, Does.Not.Contain("OUT OF STRING SPACE"),
+      "a statement-position string result has no later consumer, so the caller owns its release");
+    Assert.That(routed, Is.EqualTo(direct));
+  }
 }

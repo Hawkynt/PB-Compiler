@@ -191,8 +191,8 @@ Worth stating plainly, because coverage numbers make the distance look shorter t
 wrong thing.** `BackendCoverageTests` ranks this over the whole corpus, and it used to report **262 of
 262 functions select and allocate** and **161 of 161 module bodies** with every decline histogram
 empty. Both figures were real and neither was coverage. They measured the SELECTOR over every function
-the lowering produced, while `CodeGenerator.BackendProcs` refuses a procedure on its SHAPE - a string,
-QUAD, BYTE, FIX, EXT or record value, an unsupported BYREF pointee, a non-default calling convention,
+the lowering produced, while `CodeGenerator.BackendProcs` refuses a procedure on its SHAPE - a QUAD,
+BYTE, FIX, EXT or record value, an unsupported BYREF pointee, a non-default calling convention,
 or error handling in the body - BEFORE the selector is asked at all. A procedure the filter skips
 appeared in neither the numerator nor the denominator, so the ratio said "of the functions we
 attempted, how many succeeded", which is nearly a tautology. Today that is free, because a skipped
@@ -205,8 +205,8 @@ implementation of its rule (`CodeGenerator.BackendDeclines`):
 | | |
 |---|---|
 | programs reaching the IR at all | **161 / 165** - the other four the FRONT end rejects |
-| functions ROUTED, `--optimize` | **259 / 263** |
-| functions ROUTED, `--no-optimize` | **255 / 263** |
+| functions ROUTED, `--optimize` | **262 / 263** |
+| functions ROUTED, `--no-optimize` | **258 / 263** |
 | module bodies owned | **160 / 161** |
 | ...of which the SELECTOR would take, if offered | 263 / 263, 161 / 161 |
 
@@ -219,17 +219,21 @@ Ranked by what each class costs, over the corpus:
 
 | class | funcs | programs | outcome |
 |---|---|---|---|
-| STRING return type | 2 | 2 | filtered |
 | a callee with no link symbol (EXTERNAL) | 1 | 1 | routing |
-| STRING parameter | 1 | 1 | filtered |
 
 Near BYREF INTEGER/WORD/LONG/DWORD/SINGLE/DOUBLE parameters are no longer in that table: all 12 corpus
 procedures now route through one-word near pointers, taking production from 245/263 to 257/263
 optimized and from 242/263 to 254/263 unoptimized. `BackendByRefRoutingTests` pins write-through,
 same-cell aliasing, recursive forwarding, every admitted numeric type, both optimizer modes, and the
-SPEED fixpoint that requires both caller and callee to route. The remaining 259/255 gap is still how
-much of the optimized figure is on loan from inlining, which is why the routing gate also compiles
-unoptimized.
+SPEED fixpoint that requires both caller and callee to route.
+
+Dynamic strings now close the next three corpus rows. A BYVAL argument hands its owned one-word handle
+to the callee; BYREF hands the near address of the caller's handle cell; and a function returns an
+owned handle in AX. The IR releases BYVAL parameters and local dynamic strings on every return,
+releases copy-in temporaries after their call, and releases a string result discarded in statement
+position. That moves production to 262/263 optimized and 258/263 unoptimized. The remaining 262/258
+gap is how much of the optimized figure is on loan from inlining, which is why the routing gate also
+compiles unoptimized.
 
 Dynamic-string `SWAP` removes the former invisible lowering row. The IR loads the raw handle from
 each owner cell and crosses the stores; it neither borrows a duplicate nor frees a handle because the
@@ -239,10 +243,10 @@ modes; its SPEED caller adds the second optimized gain, moving 257/254 to 259/25
 from 159/161 to 160/161. Selection and allocation move from 262/262 to 263/263.
 
 **Whole classes are absent from the corpus and are no less real.** `BackendRoutingGateTests` holds one
-program each and pins the routing's own reason for it: QUAD and BYTE parameters and results, STRING
-parameters and results, FIX and EXT parameters, a record parameter, `CDECL`/`STDCALL`/`FASTCALL`/
+program each and pins the routing's own reason for it: QUAD and BYTE parameters and results, FIX and
+EXT parameters, a record parameter, `CDECL`/`STDCALL`/`FASTCALL`/
 `WATCALL`, error handling inside a procedure body, an array parameter (which stops the whole module
-lowering), and FIX arithmetic in a module body - seventeen decline rows, none of which the corpus
+lowering), and FIX arithmetic in a module body - fifteen decline rows, none of which the corpus
 would have noticed stopping or starting. Each compiles to an executable byte-identical to the
 unrouted build, because the module body is stranded by the very call the filter refused: one
 construct silently costs a whole program's routing today, and a compile error tomorrow.

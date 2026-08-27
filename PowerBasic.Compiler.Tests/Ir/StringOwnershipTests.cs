@@ -102,4 +102,75 @@ public sealed class StringOwnershipTests {
       .Select(c => (c.Callee as IrFunction)?.Name).ToList();
     Assert.That(calls, Does.Contain("rt_str_dup"), "the copy is what makes the consuming print safe");
   }
+
+  [Test]
+  public void Lower_GivenByRefStringStorageAndAnExpression_ThenOnlyTheExpressionNeedsAnOwnedTemporary() {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("""
+      DECLARE SUB Touch(value$)
+      DIM text AS STRING
+      text = "a"
+      CALL Touch(text)
+      CALL Touch(text + "b")
+      END
+      SUB Touch(value$)
+        PRINT LEN(value$)
+      END SUB
+      """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    var module = IrLowering.TryLowerModule(model, out var why);
+
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+    var mainCalls = module!.FindFunction("main")!.AllInstructions.OfType<IrCall>()
+      .Select(call => (call.Callee as IrFunction)?.Name).ToList();
+    Assert.Multiple(() => {
+      Assert.That(mainCalls.Count(name => name == "rt_str_dup"), Is.EqualTo(1),
+        "passing the variable itself BYREF must not leak a duplicate; only concatenation reads it");
+      Assert.That(mainCalls.Count(name => name == "rt_str_free"), Is.EqualTo(2),
+        "one free replaces text's old value and one releases the expression's BYREF temporary");
+    });
+  }
+
+  [Test]
+  public void Lower_GivenOwnedProcedureStringsAndTwoReturns_ThenEachReturnReleasesTheLocalAndByValParameter() {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("""
+      DECLARE SUB Work(BYVAL input$)
+      CALL Work("x")
+      END
+      SUB Work(BYVAL input$)
+        DIM local AS STRING
+        local = input$ + "y"
+        IF LEN(local) > 1 THEN EXIT SUB
+        PRINT local
+      END SUB
+      """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    var module = IrLowering.TryLowerModule(model, out var why);
+
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+    var work = module!.FindFunction("Work")!;
+    var returnBlocks = work.Blocks.Where(block => block.Terminator is IrRet).ToList();
+    Assert.That(returnBlocks, Has.Count.EqualTo(2),
+      "the explicit and fall-through exits are distinct ownership boundaries");
+    Assert.That(returnBlocks, Has.All.Matches<IrBasicBlock>(block => block.Instructions.OfType<IrCall>()
+      .Select(call => (call.Callee as IrFunction)?.Name).TakeLast(2)
+      .SequenceEqual(new[] { "rt_str_free", "rt_str_free" })),
+      "each return must release the local string and the owned BYVAL parameter");
+  }
+
+  [Test]
+  public void Lower_GivenADiscardedStringFunctionResult_ThenTheCallerReleasesTheOwnedHandle() {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("""
+      DECLARE FUNCTION Make$()
+      CALL Make$()
+      END
+      FUNCTION Make$()
+        Make$ = "made"
+      END FUNCTION
+      """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    var module = IrLowering.TryLowerModule(model, out var why);
+
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+    var mainCalls = module!.FindFunction("main")!.AllInstructions.OfType<IrCall>()
+      .Select(call => (call.Callee as IrFunction)?.Name).ToList();
+    Assert.That(mainCalls.TakeLast(2), Is.EqualTo(new[] { "Make", "rt_str_free" }),
+      "a call statement has no consumer to inherit the returned handle");
+  }
 }
