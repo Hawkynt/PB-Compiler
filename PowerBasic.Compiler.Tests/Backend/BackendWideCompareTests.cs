@@ -31,6 +31,23 @@ public sealed class BackendWideCompareTests {
   }
 
   /// <summary>
+  /// As <see cref="Run"/>, but it also says the module body ROUTED. A comparison the router declined
+  /// is the direct emitter twice over, which agrees with itself by construction and measures nothing -
+  /// and a decline is exactly what a future change to the selector would produce silently.
+  /// </summary>
+  private static string RunRouted(string source, bool optimize) {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var cg = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = true };
+    var image = cg.EmitExecutable();
+    Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
+    Assert.That(cg.BackendRoutedNames, Does.Contain("main"),
+      $"the back end did not take the module body (optimize={optimize}), so nothing routed here: "
+      + string.Join("; ", cg.BackendDeclines.Select(d => d.Name + ": " + d.Reason)));
+    return Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|");
+  }
+
+  /// <summary>
   /// Without this, the cases below could all pass by falling back: when selection declines the direct
   /// emitter takes the function and both sides of the comparison are the same compiler.
   /// </summary>
@@ -111,7 +128,7 @@ public sealed class BackendWideCompareTests {
   /// The direct emitter decided a 32-bit ordering by the SIGN of <c>left - right</c>, which is right
   /// only while that subtraction stays in range: <c>-2147483648&amp; - 3&amp;</c> is <c>+2147483645</c>,
   /// whose sign says "greater". <c>-2147483648&amp; &lt; 3&amp;</c> therefore answered 0 where genuine
-  /// PBC 3.50 answers -1 (<c>scripts/diff-one.sh tests/diff/DIFF98.BAS pb35</c>), in every dialect
+  /// PBC 3.50 answers -1 (<c>scripts/diff-one.sh tests/diff/DIFF115.BAS pb35</c>), in every dialect
   /// and both optimizer settings; the routed path was right throughout.
   /// </para>
   /// </summary>
@@ -142,7 +159,7 @@ public sealed class BackendWideCompareTests {
     foreach (var optimize in new[] { true, false }) {
       var direct = Run(source, routed: false, optimize);
       Assert.That(direct, Is.EqualTo(expected), $"direct, optimize={optimize}: {left} vs {right}");
-      Assert.That(Run(source, routed: true, optimize), Is.EqualTo(direct),
+      Assert.That(RunRouted(source, optimize), Is.EqualTo(direct),
         $"routed, optimize={optimize}: {left} vs {right}");
     }
   }
@@ -178,7 +195,7 @@ public sealed class BackendWideCompareTests {
     foreach (var optimize in new[] { true, false }) {
       var direct = Run(source, routed: false, optimize);
       Assert.That(direct, Is.EqualTo(expected), $"direct, optimize={optimize}: {left} vs {right}");
-      Assert.That(Run(source, routed: true, optimize), Is.EqualTo(direct),
+      Assert.That(RunRouted(source, optimize), Is.EqualTo(direct),
         $"routed, optimize={optimize}: {left} vs {right}");
     }
   }
