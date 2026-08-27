@@ -1700,36 +1700,37 @@ public sealed partial class CodeGenerator {
         break;
       }
       case BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual or BinaryOp.GreaterEqual: {
-        // sign of (left - right); fine for in-range operands (full backend adds overflow-safe compare)
+        // The ordering is read out of the SUB/SBB's OWN flags with JL/JGE, which is SF != OF - the
+        // only signed test that survives a difference the type cannot hold. Testing the sign of the
+        // difference instead (JS on the high word) is right for in-range operands and wrong for the
+        // rest: -2147483648& < 3& subtracts to +2147483645, whose sign says "greater", and PBC 3.50
+        // answers -1 where that says 0. MOV imm sets no flags, so the -1 can be staged between the
+        // SBB and the branch; the zero fact, which only > and <= need, is taken afterwards from the
+        // low half kept in BX ORed with the high half - by then the arithmetic flags are spent.
         var jump = b.Op;
         var done = asm.DefineLabel();
         asm.Sub(Reg.AX, Reg.BX);
         asm.Sbb(Reg.DX, Reg.CX);
-        asm.Or(Reg.AX, Reg.DX);    // combine for zero detection
-        asm.Mov(Reg.BX, Reg.AX);
+        asm.Mov(Reg.BX, Reg.AX);   // low half of the difference, for the zero test below
         asm.Mov(Reg.AX, -1);
         switch (jump) {
           case BinaryOp.Less:
-            asm.Test(Reg.DX, Reg.DX);
-            asm.Js(done);
+            asm.Jl(done);
             break;
           case BinaryOp.GreaterEqual:
-            asm.Test(Reg.DX, Reg.DX);
-            asm.Jns(done);
+            asm.Jge(done);
             break;
           case BinaryOp.Greater: {
             var no = asm.DefineLabel();
-            asm.Test(Reg.DX, Reg.DX);
-            asm.Js(no);
-            asm.Test(Reg.BX, Reg.BX);
+            asm.Jl(no);
+            asm.Or(Reg.BX, Reg.DX);
             asm.Jnz(done);
             asm.MarkLabel(no);
             break;
           }
           case BinaryOp.LessEqual: {
-            asm.Test(Reg.DX, Reg.DX);
-            asm.Js(done);
-            asm.Test(Reg.BX, Reg.BX);
+            asm.Jl(done);
+            asm.Or(Reg.BX, Reg.DX);
             asm.Jz(done);
             break;
           }
