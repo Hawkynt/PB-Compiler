@@ -10,9 +10,9 @@ namespace PowerBasic.Compiler.Ir;
 /// flow becomes explicit blocks and branches. A later mem2reg pass promotes the
 /// allocas to SSA. <see cref="TryLowerModule"/> lowers the whole program - the main
 /// body as <c>@main</c> plus each user SUB/FUNCTION whose signature and body fit the
-/// supported subset (scalar BYVAL parameters, scalar/void returns, direct calls).
-/// Anything outside the subset (BYREF/array/string parameters, arrays, UDTs, GOTO,
-/// SELECT, I/O, intrinsics) makes that function decline, so the IR is only built for
+/// supported subset. It models numeric, pointer, record and dynamic-string procedure values,
+/// including BYREF addresses and the ownership transfers required by BYVAL strings and results.
+/// Anything outside the subset leaves that function as a declaration, so the IR is only built for
 /// code it models exactly.
 /// </summary>
 public sealed partial class IrLowering {
@@ -434,12 +434,38 @@ public sealed partial class IrLowering {
   private IrBasicBlock NewBlock(string hint) => this._fn.CreateBlock($"{hint}{this._seq++}");
 
   private void ReturnFromFunction() {
+    this.ReleaseOwnedProcedureStrings();
     if (this._resultVar is not null)
       this._b.Ret(this._b.Load(this._resultVar.Type is StringType ? IrType.Ptr : MapType(this._resultVar.Type),
         this.SlotFor(this._resultVar)));
     else
       this._b.Ret();
   }
+
+  /// <summary>
+  /// Releases the dynamic-string cells this procedure owns before every return. A local owns the
+  /// handle currently stored in its slot, as does a BYVAL string parameter: its caller handed an
+  /// owned value over. A BYREF parameter names somebody else's slot and a function result transfers
+  /// its handle back to the caller, so neither belongs in this teardown.
+  /// </summary>
+  private void ReleaseOwnedProcedureStrings() {
+    if (this._proc is null)
+      return;
+
+    var seen = new HashSet<VariableSymbol>(ReferenceEqualityComparer.Instance);
+    foreach (var symbol in this._proc.Variables.Values)
+      if (symbol is { Storage: VariableStorage.Local, Type: StringType }
+          && !ReferenceEquals(symbol, this._resultVar) && seen.Add(symbol))
+        this.FreeOwnedStringSlot(this.SlotFor(symbol));
+    foreach (var parameter in this._proc.Parameters)
+      if (parameter is { ByVal: true, Type: StringType } && seen.Add(parameter))
+        this.FreeOwnedStringSlot(this.SlotFor(parameter));
+  }
+
+  /// <summary>Consumes the one owned handle stored in a dynamic-string cell.</summary>
+  private void FreeOwnedStringSlot(IrValue slot)
+    => this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr),
+      this._b.Load(IrType.Ptr, slot));
 
   /// <summary>
   /// Lowers one <c>!</c> statement, binding every BASIC identifier it mentions to the storage that
@@ -3271,7 +3297,9 @@ public sealed partial class IrLowering {
   private void LowerCallStatement(CallStmt c) {
     if (this._procMap is null || !this._model.CallBindings.TryGetValue(c, out var proc) || !this._procMap.TryGetValue(proc, out var callee))
       throw new IrLoweringException($"call to unsupported procedure {c.Name}");
-    this.EmitCall(callee, proc, c.Arguments);
+    var result = this.EmitCall(callee, proc, c.Arguments);
+    if (proc is { IsFunction: true, ReturnType: StringType })
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr), result);
   }
 
   private void LowerSelect(SelectStmt s) {
@@ -4248,14 +4276,29 @@ public sealed partial class IrLowering {
   /// slot, exactly as PB materializes one - the callee may write through it, but nothing outside
   /// can observe that write.
   /// </summary>
-  private IrValue StringArgument(Expression argument, bool byVal) {
+  private IrValue StringArgument(Expression argument, bool byVal, List<IrValue> temporaries) {
+    if (!byVal) {
+      if (argument is NameExpr && this._model.VariableBindings.TryGetValue(argument, out var sym)
+          && sym.Type is StringType)
+        return this.SlotFor(sym);
+      if (argument is CallOrIndexExpr indexed
+          && this._model.VariableBindings.TryGetValue(indexed, out var array)
+          && array.Type is ArrayType { Element: StringType }) {
+        var address = this.ElementAddress(indexed).Address;
+        if (!address.Type.IsFarPointer)
+          return address;
+        // A BASIC BYREF parameter carries only a near offset. A far array element therefore follows
+        // the direct emitter's ordinary non-near-lvalue rule below: copy it into a near temporary,
+        // let the callee mutate that copy, then release it without writing it back.
+      }
+    }
+
     var handle = this.LowerStringExpr(argument);
     if (byVal)
       return handle;
-    if (argument is NameExpr && this._model.VariableBindings.TryGetValue(argument, out var sym) && sym.Type is StringType)
-      return this.SlotFor(sym);
     var temp = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.Ptr) { Name = "str.arg" });
     this._b.Store(handle, temp);
+    temporaries.Add(temp);
     return temp;
   }
 
@@ -4263,17 +4306,21 @@ public sealed partial class IrLowering {
     if (arguments.Count != proc.Parameters.Count)
       throw new IrLoweringException("argument count mismatch (optional/CDECL not modelled)");
     var args = new List<IrValue>(arguments.Count);
+    var stringTemporaries = new List<IrValue>();
     for (var i = 0; i < arguments.Count; ++i) {
       var p = proc.Parameters[i];
       args.Add(p.Type is UdtType
         ? this.UdtAddress(arguments[i])                 // a record argument passes its address (BYVAL callee copies, BYREF uses it)
         : p.Type is StringType
-          ? this.StringArgument(arguments[i], p.ByVal)
+          ? this.StringArgument(arguments[i], p.ByVal, stringTemporaries)
         : p.ByVal
           ? this.Coerce(this.LowerExpr(arguments[i]), this._model.TypeOf(arguments[i]), p.Type)
           : this.AddressOfArgument(arguments[i], p.Type));
     }
-    return this._b.Call(callee.ReturnType, callee, args);
+    var result = this._b.Call(callee.ReturnType, callee, args);
+    foreach (var temporary in stringTemporaries)
+      this.FreeOwnedStringSlot(temporary);
+    return result;
   }
 
   /// <summary>A pointer to a BYREF argument: the variable's own slot when the type matches, else a temp copy.</summary>

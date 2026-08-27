@@ -84,6 +84,27 @@ public sealed class BackendRoutingGateTests {
       v% = 1
       PRINT F(v%); v%
       """, "F"),
+    new("BYVAL STRING parameter", """
+      FUNCTION F(BYVAL a$) AS INTEGER
+        F = LEN(a$)
+      END FUNCTION
+      PRINT F("ab")
+      """, "F"),
+    new("BYREF STRING parameter", """
+      SUB S(a$)
+        a$ = a$ + "!"
+      END SUB
+      DIM v AS STRING
+      v = "ab"
+      S v
+      PRINT v
+      """, "S"),
+    new("STRING result", """
+      FUNCTION F(BYVAL a%) AS STRING
+        F = "x"
+      END FUNCTION
+      PRINT F(1)
+      """, "F"),
     new("a SUB with no parameters", """
       SUB S
         PRINT 7
@@ -120,7 +141,8 @@ public sealed class BackendRoutingGateTests {
 
   /// <summary>
   /// Constructs the routing refuses, with the reason it recorded. Ordered the way the work is: the
-  /// ABI classes first (a parameter or result shape the routed calling sequence cannot express),
+  /// remaining ABI classes first (a parameter or result shape the routed calling sequence cannot
+  /// express),
   /// then the calling conventions, then the two that are not about the ABI at all.
   ///
   /// <para>Every row must decline with the recorded reason and remain behaviorally equivalent to the
@@ -154,18 +176,6 @@ public sealed class BackendRoutingGateTests {
       END FUNCTION
       PRINT F(3)
       """, "F", "filter: return type outside the routed ABI (BYTE)"),
-    new("STRING parameter", """
-      FUNCTION F(BYVAL a$) AS INTEGER
-        F = LEN(a$)
-      END FUNCTION
-      PRINT F("ab")
-      """, "F", "filter: parameter type outside the routed ABI (STRING)"),
-    new("STRING result", """
-      FUNCTION F(BYVAL a%) AS STRING
-        F = "x"
-      END FUNCTION
-      PRINT F(1)
-      """, "F", "filter: return type outside the routed ABI (STRING)"),
     // BYREF, because BYVAL of a record is refused by the DIRECT emitter too ("not yet generated:
     // load of UdtType") - it is not a routing class at all, and a gate case that fails on both paths
     // would measure the front end. BYREF is how the corpus passes a record, and it is the shape the

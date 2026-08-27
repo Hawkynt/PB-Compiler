@@ -185,7 +185,10 @@ Supported today:
   **`TYPE` record** parameters (passed as a pointer; BYREF accesses the caller's storage,
   BYVAL `llvm.memcpy`s a private copy on entry) and **string** parameters and results
   (a string is its runtime handle - BYVAL passes the handle, BYREF a pointer to the
-  caller's handle slot); direct calls, and a parameterless FUNCTION called by naming it
+  caller's handle slot). Ownership is explicit at procedure boundaries: every return
+  releases local and BYVAL strings, the caller releases copy-in temporaries and ignored
+  string results, and a returned handle transfers to its consumer; direct calls, and a
+  parameterless FUNCTION called by naming it
   (`PRINT Counter%`). A procedure with an unsupported body is kept as a declaration.
 - **storage that outlives a frame**: a `STATIC` local and any module-level variable a
   procedure touches become module globals, so every function reaches the same cell. A

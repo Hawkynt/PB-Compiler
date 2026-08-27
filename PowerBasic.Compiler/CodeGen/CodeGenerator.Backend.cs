@@ -95,8 +95,9 @@ public sealed partial class CodeGenerator {
       return $"filter: return type outside the routed ABI ({(proc.ReturnType is null ? "unresolved" : DescribeType(proc.ReturnType))})";
     foreach (var parameter in proc.Parameters) {
       // A near BYREF argument is always one pointer word on this ABI. The pointee still has to be a
-      // value shape the selector can load and store exactly; strings, records and other ownership- or
-      // layout-bearing types remain fenced until their own ABI work lands.
+      // value shape the selector can load and store exactly; dynamic strings now use that word as a
+      // handle with ownership expressed in the IR, while records and other layout-bearing types stay
+      // fenced until their own ABI work lands.
       if (!parameter.ByVal && !IsBackendAbiType(parameter.Type))
         return $"filter: BYREF parameter ({DescribeType(parameter.Type)})";
       if (parameter.ByVal && !IsBackendAbiType(parameter.Type))
@@ -107,13 +108,14 @@ public sealed partial class CodeGenerator {
 
   /// <summary>
   /// The value shapes the routed calling sequence can pass and return: a 16- or 32-bit integer (AX or
-  /// DX:AX) and a SINGLE or DOUBLE (ST(0)). The same shapes may be the storage behind a one-word near
-  /// BYREF pointer. Everything else - QUAD and BYTE among the scalars, strings, FIX/BCD, records,
-  /// arrays - has no routed convention yet.
+  /// DX:AX), a SINGLE or DOUBLE (ST(0)), and a dynamic-string handle (AX). The same shapes may be the
+  /// storage behind a one-word near BYREF pointer. Everything else - QUAD and BYTE among the scalars,
+  /// FIX/BCD, records and arrays - has no routed convention yet.
   /// </summary>
   private static bool IsBackendAbiType(PbType type)
     => type is ScalarType { IsFloat: false, ByteSize: 2 or 4 }
-            or ScalarType { IsFloat: true, ByteSize: 4 or 8 };
+            or ScalarType { IsFloat: true, ByteSize: 4 or 8 }
+            or StringType;
 
   /// <summary>
   /// The functions the x86-16 back end will compile in place of the direct codegen (docs/X86-BACKEND.md).
@@ -226,8 +228,9 @@ public sealed partial class CodeGenerator {
       // and the routed prologue never zeroed the frame, which PB requires and the direct path does
       // with REP STOSW (see MachineEmitter.EmitFunction). Both are fixed, both show only on an array -
       // a scalar is one slot and is written before it is read - and the whole corpus now agrees.
-      // Strings still stay out: they are runtime handles with ownership rules the back end does not
-      // model, and the selector declines them on their own.
+      // Dynamic strings use one-word handles too. Their ownership transfers and releases are made
+      // explicit by IrLowering, so the selector sees the same ordinary pointer load/store/call shapes
+      // it already handles rather than having to invent a second lifetime model.
       //
       // Every one of these rejections is RECORDED rather than merely skipped. A skipped procedure
       // falls back to the direct emitter today and will be a compile failure once CodeGen/ is gone,

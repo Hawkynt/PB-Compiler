@@ -24,7 +24,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// This fixture used to report 262/262 functions selected and 161/161 module bodies owned, and that
 /// pair was quoted as evidence that coverage was complete. It was not: it measured the SELECTOR over
 /// every function the lowering produced, while <see cref="CodeGenerator.BackendProcs"/> refuses a
-/// procedure on its SHAPE - an unsupported BYREF pointee, string, QUAD or BYTE parameter, a
+/// procedure on its SHAPE - an unsupported BYREF pointee, QUAD, BYTE, FIX, EXT or record value, a
 /// non-default calling convention, error handling in the body - before the selector is asked at all.
 /// A procedure the filter skips appeared in neither the numerator nor the denominator, so the ratio
 /// measured "of the functions we attempted, how many succeeded", which is nearly a tautology. Today that costs
@@ -324,26 +324,26 @@ public sealed class BackendCoverageTests {
 
     // ---- the honest headline, and the assertions that keep it honest ----
     //
-    // 259 of 263, not 263 of 263. The difference is not a regression and nothing got worse: it is
+    // 262 of 263, not 263 of 263. The difference is not a regression and nothing got worse: it is
     // what the number always was once the procedures the filter skips are counted as the declines
     // they are. Ranked by how many procedures each class costs, over the corpus:
     //
-    //    2  STRING return type                              filtered
     //    1  a callee with no link symbol                     routing
-    //    1  STRING parameter                                filtered
     //
     // A non-SPEED BASIC/PASCAL caller can call a direct callee through their shared stack ABI, so
-    // near numeric BYREF procedures no longer decline or strand their module bodies. External
-    // declarations still have no linkable local body and keep their callers direct.
+    // near numeric and dynamic-string BYREF procedures no longer decline or strand their module
+    // bodies. String BYVAL handles and results use the same one-word ABI with ownership releases
+    // explicit in the IR. External declarations still have no linkable local body and keep their
+    // callers direct.
     //
     // Classes the corpus does NOT exercise are real all the same, and BackendRoutingGateTests holds
     // one program each: QUAD and BYTE parameters and returns, UDT/FIX/EXT parameters, a
     // CDECL/STDCALL/FASTCALL/WATCALL convention, and error handling inside a procedure body.
     //
     // A floor, so a widening may only raise it. Lowering it means the back end took less than it did.
-    Assert.That(census.Routed, Is.GreaterThanOrEqualTo(259),
+    Assert.That(census.Routed, Is.GreaterThanOrEqualTo(262),
       $"the x86-16 back end now ROUTES fewer corpus functions than it used to ({census.Routed}/{census.Bodies}):\n" + report);
-    Assert.That(census.RoutedNoOptimize, Is.GreaterThanOrEqualTo(255),
+    Assert.That(census.RoutedNoOptimize, Is.GreaterThanOrEqualTo(258),
       "the x86-16 back end routes fewer corpus functions with --no-optimize than it used to:\n" + report);
 
     // Pinned by name for the reason every other set here is: a count cannot tell "a program stopped
