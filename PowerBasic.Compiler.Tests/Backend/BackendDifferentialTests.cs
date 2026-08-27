@@ -238,6 +238,43 @@ public sealed class BackendDifferentialTests {
     Assert.That(direct.Trim(), Is.EqualTo("32767  2"), "the divide is unsigned, so 65535 \\ 2 is 32767");
   }
 
+  /// <summary>
+  /// A LONG result computed BEFORE the statement that ends the function, so it has to survive a call.
+  /// The spill is fine; putting it back was not. <c>MOV AX, v</c> was the last mention of <c>AX</c> in
+  /// the block - a <c>RET</c> declared no reads - so nothing said <c>AX</c> was occupied, and the
+  /// allocator gave it to the very next value: the reload of the HIGH half. The emitted tail read
+  /// <c>MOV AX,[lo] / MOV AX,AX / MOV AX,[hi] / MOV DX,AX</c>, the high word overwriting the low one on
+  /// the way out, and the function answered 0 for every input in both optimizer modes.
+  ///
+  /// <para>
+  /// The INTEGER twin was always right, and that is the tell rather than a coincidence: one register
+  /// means no second reload to be given the first one's.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Run_GivenALongResultSetBeforeTheLastStatement_ThenTheWholeValueComesBack() {
+    var (direct, routed, names) = RunBothWays("""
+      DECLARE FUNCTION Given%(BYVAL v%)
+      DECLARE FUNCTION Bumped&(BYVAL a&)
+
+      PRINT Bumped&(Given%(1000))
+      PRINT Bumped&(Given%(3))
+      END
+
+      FUNCTION Given%(BYVAL v%) NOINLINE
+        Given% = v%
+      END FUNCTION
+      FUNCTION Bumped&(BYVAL a&) NOINLINE
+        Bumped& = a& + 1
+        PRINT "out";
+      END FUNCTION
+      """);
+
+    Assert.That(names, Does.Contain("Bumped"), "the back end did not take the function under test");
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(direct.Replace("\r", "").Trim(), Is.EqualTo("out 1001 \nout 4"));
+  }
+
   [Test]
   public void Run_GivenASharedGlobal_ThenBothPathsAddressTheSameStorage() {
     var (direct, routed, names) = RunBothWays("""

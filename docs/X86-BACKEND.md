@@ -751,6 +751,31 @@ both result words back into virtual registers. Runtime divisors are safe here be
 the language path: zero calls `rt_raise` with Error 11, signed division truncates toward zero, the
 remainder takes the dividend's sign, and `MINLONG \ -1` retains the established wrapped result.
 
+### A RET reads the registers the result leaves in
+
+The same missing half again, at the other end of the function. `InFlightByIndex` protects a physical
+register over the window between the instruction that fills it and the instruction that names it as a
+read — and a `RET` named none, so the `MOV AX, v` that places a result was the last mention of `AX` in
+the block and the allocator was free to hand `AX` to a value defined after it. It did, on the very next
+instruction:
+
+```basic
+FUNCTION Bumped&(BYVAL a&) NOINLINE
+  Bumped& = a& + 1
+  PRINT "out";            ' the result has to survive a call, so it spills
+END FUNCTION
+```
+
+The two reloads came back as `MOV AX,[lo] / MOV AX,AX / MOV AX,[hi] / MOV DX,AX` — the high word
+overwriting the low one on the way out — and the function answered 0 for every input, in both optimizer
+modes. The INTEGER twin was always right, which is the tell rather than a coincidence: one register
+means no second reload to be given the first one's.
+
+`SelectRet` now builds the `RET` with its result registers as operands it READS
+(`InstructionSelector.ReturningIn`). The emitter never looks at a `RET`'s operands — it special-cases
+the opcode and writes the epilogue — so they exist purely for the analyses, which is where the gap was.
+A float result rides the x87 stack and a `SUB` returns nothing, so both keep the bare form.
+
 ### A memory access that says it touches no memory
 
 The scheduler has exactly one aliasing rule — order any pair where at least one side writes memory —

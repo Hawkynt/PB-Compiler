@@ -3593,7 +3593,7 @@ public sealed partial class InstructionSelector {
       var dx = new MOperand.Register(MReg.Physical_(Reg.DX, MRegSize.Word));
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [ax, lo], MovEffect(ax, lo)));
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dx, hi], MovEffect(dx, hi)));
-      this._current.Instructions.Add(new MInstr(MOpcode.Ret, [], MInstrEffect.None));
+      this._current.Instructions.Add(ReturningIn(ax, dx));
       return true;
     }
     if (ret.HasValue && ret.Value is { Type.IsFloat: true } floating) {
@@ -3612,11 +3612,37 @@ public sealed partial class InstructionSelector {
       if (!this.TryOperand(value, out var src))
         return false;
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [axOp, src], MovEffect(axOp, src)));
+      this._current.Instructions.Add(ReturningIn(axOp));
+      return true;
     }
 
     this._current.Instructions.Add(new MInstr(MOpcode.Ret, [], MInstrEffect.None));
     return true;
   }
+
+  /// <summary>
+  /// A <c>RET</c> that says which physical registers the result is leaving in. The emitter never looks
+  /// at a RET's operands - it special-cases the opcode and writes the epilogue - so these are here for
+  /// the ANALYSES, and one of them needs them badly.
+  ///
+  /// <para>
+  /// <c>LinearScanAllocator.InFlightByIndex</c> protects a physical register over the window between
+  /// the instruction that fills it and the instruction that names it as a read. Without a reader there
+  /// is no window: the <c>MOV AX, v</c> that places a result was the last mention of AX in the block,
+  /// so the allocator was free to hand AX to a value defined after it. It did, on the very next
+  /// instruction. <c>FUNCTION Live&amp;(BYVAL a&amp;) : Live&amp; = a&amp; + 1 : PRINT "out" : END FUNCTION</c>
+  /// spills the result across the PRINT, and the two reloads come back as
+  /// <c>MOV AX,[lo] / MOV AX,AX / MOV AX,[hi] / MOV DX,AX</c> - the high half overwriting the low one
+  /// on the way out. The function returned 0 for every input, in both optimizer modes.
+  /// </para>
+  /// <para>
+  /// A float result rides the x87 stack and a SUB returns nothing, so both keep the bare form.
+  /// </para>
+  /// </summary>
+  private static MInstr ReturningIn(params MOperand.Register[] registers)
+    => new(MOpcode.Ret, registers,
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [.. Enumerable.Range(0, registers.Length)],
+        ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: false));
 
   // ---- operand / vreg helpers -------------------------------------------------------------------
 
