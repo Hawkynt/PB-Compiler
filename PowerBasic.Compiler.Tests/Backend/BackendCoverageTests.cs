@@ -300,7 +300,7 @@ public sealed class BackendCoverageTests {
     report
       .AppendLine("--- the SELECTOR's own reach, over every function the lowering produced ---")
       .AppendLine("    (this is the pair that used to be the headline; it says nothing about the")
-      .AppendLine("     procedures the filter never offers, which is why it can read 262/262)")
+      .AppendLine("     procedures the filter never offers, which is why it can read 263/263)")
       .AppendLine($"functions selected : {census.Selected}/{census.Functions}")
       .AppendLine($"functions allocated: {census.Allocated}/{census.Functions} (selected AND allocated)")
       .AppendLine($"module bodies      : {census.MainBodies.Count}/{census.ProgramsLowered.Count} whole programs the selector can own")
@@ -324,28 +324,26 @@ public sealed class BackendCoverageTests {
 
     // ---- the honest headline, and the assertions that keep it honest ----
     //
-    // 257 of 263, not 262 of 262. The difference is not a regression and nothing got worse: it is
+    // 259 of 263, not 263 of 263. The difference is not a regression and nothing got worse: it is
     // what the number always was once the procedures the filter skips are counted as the declines
     // they are. Ranked by how many procedures each class costs, over the corpus:
     //
     //    2  STRING return type                              filtered
-    //    2  a callee with no link symbol                     routing
+    //    1  a callee with no link symbol                     routing
     //    1  STRING parameter                                filtered
-    //    1  a procedure body the lowering refused            lowering - invisible before this census
     //
     // A non-SPEED BASIC/PASCAL caller can call a direct callee through their shared stack ABI, so
     // near numeric BYREF procedures no longer decline or strand their module bodies. External
-    // declarations and procedure bodies that did not lower still have no linkable local body and
-    // keep their callers direct.
+    // declarations still have no linkable local body and keep their callers direct.
     //
     // Classes the corpus does NOT exercise are real all the same, and BackendRoutingGateTests holds
     // one program each: QUAD and BYTE parameters and returns, UDT/FIX/EXT parameters, a
     // CDECL/STDCALL/FASTCALL/WATCALL convention, and error handling inside a procedure body.
     //
     // A floor, so a widening may only raise it. Lowering it means the back end took less than it did.
-    Assert.That(census.Routed, Is.GreaterThanOrEqualTo(257),
+    Assert.That(census.Routed, Is.GreaterThanOrEqualTo(259),
       $"the x86-16 back end now ROUTES fewer corpus functions than it used to ({census.Routed}/{census.Bodies}):\n" + report);
-    Assert.That(census.RoutedNoOptimize, Is.GreaterThanOrEqualTo(254),
+    Assert.That(census.RoutedNoOptimize, Is.GreaterThanOrEqualTo(255),
       "the x86-16 back end routes fewer corpus functions with --no-optimize than it used to:\n" + report);
 
     // Pinned by name for the reason every other set here is: a count cannot tell "a program stopped
@@ -432,7 +430,9 @@ public sealed class BackendCoverageTests {
     // the registers it defines and reads (the assembler reads them out of the text), so a countdown
     // held in CX across a BASIC statement is a promise the allocator can keep instead of a shape that
     // had to decline. LOWLEVEL.BAS was the last function on this list.
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(262),
+    // Then 262 -> 263 when SWAP exchanged dynamic-string handle cells directly, so
+    // CODEGEN.BAS::SwapIsInline stopped disappearing from the IR before selection.
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(263),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
     Assert.That(census.ProcedureDeclines, Is.Empty,
       "a lowered named procedure no longer reaches the x86-16 back end:\n" + report);
@@ -459,7 +459,8 @@ public sealed class BackendCoverageTests {
     // 261 -> 262, and the gap between selection and routing stays closed: a register an inline-asm
     // statement holds for a later one is reserved over exactly the stretch between them, so the shape
     // that needed it allocates rather than declining.
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(262),
+    // 262 -> 263 keeps it closed: the newly lowered string-handle SWAP also allocates.
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(263),
       "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // The figure that matters for whole-program ownership: module bodies the back end compiles end
@@ -489,13 +490,12 @@ public sealed class BackendCoverageTests {
   /// and never did, and both move it by one.
   /// </summary>
   /// <summary>
-  /// Every corpus module body the PRODUCTION routing does not take, with the reason. Both are
-  /// consequences rather than causes: one is stranded by external declarations with no local body,
-  /// and the other by a procedure body the lowering refused. Fix the cause and the body follows.
+  /// Every corpus module body the PRODUCTION routing does not take, with the reason. The remaining
+  /// one is stranded by external declarations with no local body; fixing their link inputs is what
+  /// would let the caller route.
   /// </summary>
   private static readonly string[] _mainBodiesNotRouted = [
     "LINKDEMO.BAS",   // calls AddInts/Bump/Greet, which are EXTERNAL and have no body here
-    "CODEGEN.BAS",    // calls SwapIsInline, whose body the lowering refused
   ];
 
   /// <summary>
@@ -503,9 +503,7 @@ public sealed class BackendCoverageTests {
   /// left a declaration, so it leaves the IR entirely: it is in no selection histogram, no
   /// allocation histogram, and neither half of a ratio taken over IR functions.
   /// </summary>
-  private static readonly string[] _procedureBodiesNotLowered = [
-    "optimize/CODEGEN.BAS::SwapIsInline: unsupported lvalue",
-  ];
+  private static readonly string[] _procedureBodiesNotLowered = [];
 
   private static readonly string[] _loweredToIr = [
     "ARRAY.BAS",

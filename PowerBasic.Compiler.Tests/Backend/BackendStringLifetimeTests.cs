@@ -191,4 +191,37 @@ public sealed class BackendStringLifetimeTests {
     Assert.That(routed, Does.Not.Contain("OUT OF STRING SPACE"), "the routed build leaked one block per ASC assignment");
     Assert.That(routed, Is.EqualTo(direct));
   }
+
+  [TestCase(true, TestName = "Run_GivenDynamicStringSwap_WhenOptimized_ThenHandlesTransferWithoutFallback")]
+  [TestCase(false, TestName = "Run_GivenDynamicStringSwap_WhenUnoptimized_ThenHandlesTransferWithoutFallback")]
+  public void Run_GivenDynamicStringSwap_WhenCompiled_ThenHandlesTransferWithoutFallback(bool optimize) {
+    var (direct, routed, names) = RunBothWays("""
+      DECLARE SUB Exchange()
+      Exchange
+      END
+      SUB Exchange() NOINLINE
+        DIM left$, right$
+        left$ = "left" : right$ = "right"
+        SWAP left$, right$
+        PRINT left$; ":"; right$
+        DIM empty$, filled$
+        filled$ = "full"
+        SWAP empty$, filled$
+        SWAP empty$, empty$
+        PRINT "["; empty$; "]["; filled$; "]"
+        DIM items$()
+        REDIM items$(1 TO 2)
+        items$(1) = "one" : items$(2) = "two"
+        SWAP items$(1), items$(2)
+        PRINT items$(1); ":"; items$(2)
+      END SUB
+      """, optimize);
+
+    Assert.That(names, Is.SupersetOf(new[] { "Exchange", "main" }),
+      "the string handle exchange and its caller must stay on the routed path");
+    Assert.That(direct, Does.Contain("right:left"));
+    Assert.That(direct, Does.Contain("[full][]"));
+    Assert.That(direct, Does.Contain("two:one"));
+    Assert.That(routed, Is.EqualTo(direct));
+  }
 }
