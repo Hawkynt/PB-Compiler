@@ -26,6 +26,41 @@ SINGLE" - giving the temporary a SINGLE type rounds it, giving it an EXT type ch
 Only rendering the arithmetic inline, so PB types the expression from its operands as the original
 does, would be faithful. `pb36/DIFF35.BAS` is a known writer gap for that reason.
 
+### The direct emitter holds an integral operand on the x87 stack across a CALL — eight deep and it is silently wrong
+
+**Open, oracle-confirmed, not fixed here.** PB computes integral `+`/`-`/`*` in floating point, and
+`CodeGenerator` evaluates the LEFT operand onto the x87 stack before evaluating the right. When the
+right operand contains a CALL, the left operand stays on that stack across it — and the 8087 has eight
+registers. The eighth pending value overflows the stack and the answer is quietly wrong; there is no
+trap, no diagnostic, and nothing in the corpus nests that deep.
+
+Two reproductions, both diffed against genuine PBC 3.50 with `scripts/diff-one.sh … pb35`:
+
+| program | PBC 3.50 | `pbc` direct | routed |
+|---|---|---|---|
+| eight distinct nested `Ax% = n% + A(x+1)%(n% + 1)`, no recursion | **45** | 52 | 45 |
+| `SumI% = n% + SumI%(n% - 1)` at `n% = 20` | **210** | 245 | 210 |
+
+The threshold is exactly the register file: `n% = 6` is right, `n% = 7` is wrong. Two spellings that
+avoid holding anything across the call are right at any depth — `SumI% = SumI%(n% - 1) + n%` (the call
+first) and `inner = SumI%(n% - 1) : SumI% = n% + inner`. `A1` disassembles to
+
+```
+    fild  [scratch]        ; ST(0) = n%    <-- pushed here
+    ...
+    call  A2               ; <-- and still here
+    fild  [scratch]        ; ST(0) = the result
+    faddp st, st(1)
+```
+
+so the fix is to spill `ST(0)` to a frame temp around a call in the right operand and reload after.
+That is faithful — PBC 3.50 evidently does it, which is why it answers 45 — but it changes the bytes of
+every `a + f(x)` in the corpus, so it needs the full 504-case differential battery to land rather than a
+unit test. It is recorded here rather than attempted because it is a task of its own size.
+
+The routed path is correct on both programs: it computes in integers after `IntegerRecovery` and spills
+to the frame, so it has no eight-value ceiling.
+
 ## A. Foreign-object interop / ABI (the active frontier)
 
 Extends the OMF reader/linker + calling-convention work already landed.
