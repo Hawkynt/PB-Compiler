@@ -739,6 +739,36 @@ both result words back into virtual registers. Runtime divisors are safe here be
 the language path: zero calls `rt_raise` with Error 11, signed division truncates toward zero, the
 remainder takes the dividend's sign, and `MINLONG \ -1` retains the established wrapped result.
 
+### A memory access that says it touches no memory
+
+The scheduler has exactly one aliasing rule — order any pair where at least one side writes memory —
+and it reads that rule out of each instruction's `MInstrEffect`. The rule is therefore only as good
+as the descriptors, and one class of them was silent. `MOperand.DataCell`, `MOperand.StackSlot` and
+`MOperand.ParamCell` are memory accesses that **name** their address instead of holding it in a
+register; a dozen effect builders in `InstructionSelector` tested `operand is MOperand.Memory`, which
+is the register-addressed form alone. `MOperand.IsMemoryAccess()` is now the one place the question
+is answered (`Peephole` and `Spiller` already had private copies of the correct predicate — they call
+the shared one).
+
+What it cost, and why nothing had seen it. The 16-bit load path hard-codes `ReadsMemory: true` and
+never asks; the 32-bit one goes through `MovEffect`, which did. So a LONG global loaded, added to and
+stored back had its *reload* hoisted above the store to the very same cell:
+
+```basic
+SUB Bump() NOINLINE
+  STATIC acc AS LONG
+  acc = acc + 10
+  PRINT acc;              ' routed printed the PREVIOUS call's total
+END SUB
+```
+
+Three things had to coincide for the corpus to miss it: the value must be 32 bits (an INTEGER
+accumulator is right), it must live in a `DataCell` rather than a promoted alloca (a `STATIC`, a
+`SHARED` or a `GLOBAL` — `mem2reg` removes everything else), and the reload must survive to
+scheduling, which with the optimizer **on** it usually does not. `BackendMemoryOrderingTests` pins
+both the behaviour and the descriptor invariant it rests on. This is scheduling, so it is the x86-16
+back end's alone — `--emit-c` and `--emit-llvm` consume the IR, which was correct throughout.
+
 ### Selection is not routing
 
 The census reports two numbers, because the first overstates the second: `BackendProcs` also

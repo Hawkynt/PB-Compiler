@@ -138,8 +138,7 @@ public static class Peephole {
          && this.Uses.GetValueOrDefault(register.VirtualId) == readers;
   }
 
-  private static bool IsMemory(MOperand operand) => operand
-    is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell;
+  private static bool IsMemory(MOperand operand) => operand.IsMemoryAccess();
 
   /// <summary>The registers a memory operand's effective address is formed from (empty for a direct cell).</summary>
   private static List<MReg> AddressRegisters(MOperand cell) {
