@@ -32,7 +32,13 @@ public sealed class BackendCorpusDifferentialTests {
   private static readonly string _repoRoot =
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 
-  private sealed record Behaviour(string Output, string Files, int ExitCode);
+  /// <summary>
+  /// What a run can be observed to have done. <c>Screen</c> is the 80x25 text page, and it is a
+  /// separate observation rather than a nicety: <c>LOCATE</c>, <c>CLS</c> and a line wrap move
+  /// characters around without changing one byte of the stream, so two builds that put the same text
+  /// in different places agree about everything <c>Output</c> can be asked.
+  /// </summary>
+  private sealed record Behaviour(string Output, string Screen, string Files, int ExitCode);
 
   private sealed record Disagreement(string Program, Behaviour Direct, Behaviour Routed, string Routed64);
 
@@ -46,7 +52,7 @@ public sealed class BackendCorpusDifferentialTests {
         if (cpu.FileContent(name) is { } content)
           files.Append(name).Append('=').Append(content).Append('\n');
       }
-      return new(cpu.Output, files.ToString(), cpu.ExitCode);
+      return new(cpu.Output, string.Join("\n", cpu.Screen), files.ToString(), cpu.ExitCode);
     } catch (Cpu8086Exception e) {
       why = e.Message;
       return null;
@@ -241,6 +247,7 @@ public sealed class BackendCorpusDifferentialTests {
       return $"\n  {what} differs at {at}:\n    direct: {Show(a, from, at)}\n    routed: {Show(b, from, at)}";
     }
     return Window(direct.Output, routed.Output, "output")
+      + Window(direct.Screen, routed.Screen, "screen")
       + Window(direct.Files, routed.Files, "files")
       + (direct.ExitCode == routed.ExitCode ? "" : $"\n  exit code {direct.ExitCode} against {routed.ExitCode}");
   }
