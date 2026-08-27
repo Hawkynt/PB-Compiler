@@ -188,6 +188,18 @@ variable — lengthens nothing and folds at any distance; a register-formed addr
 instruction immediately following the load. The read-modify-write form has no such limit in the other
 direction, because it deletes two of the three accesses and the address register's range *shrinks*.
 
+"A copy straight back to its own source is nothing at all" holds only while the register is
+**virtual**, and that qualification was missing. A virtual keeps its identity: the allocator gives it
+an interval spanning every mention, so a value something still reads later still interferes. A
+physical register has neither an id nor an interval — it is protected only over the window between
+the instruction that fills it and the instruction that reads it out (`InFlightByIndex`), and deleting
+both ends of the copy deletes the window. `PassW% = a \ 2` is the shape that showed it: an unsigned
+16-bit divide widens and goes through `rt_ldiv`, which answers in `DX:AX`; the selector copies the
+pair out and copies the low half back into `AX` for the `RET`, and folding those two away left `AX`
+mentioned *nowhere* between the call and the return — so the allocator gave `AX` to the unused high
+half and `MOV AX, DX` overwrote the answer on its way out. The function returned 0 for every input,
+with the optimizer on and only with it on, since the pass is gated on it.
+
 Two more read the function as a **layout** rather than as a set of values, and so run once at the end
 rather than to a fixpoint with the others. `MachineEmitter` lays the blocks out in `MFunction.Blocks`
 order, which makes each block's neighbour a fact: a `JMP` to the block laid out next is the

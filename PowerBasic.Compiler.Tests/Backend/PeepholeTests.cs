@@ -235,6 +235,36 @@ public sealed class PeepholeTests {
     Assert.That(Peephole.Run(fn), Is.Zero, "the staged value is read twice, so it has to exist");
   }
 
+  /// <summary>
+  /// The same copy-back shape on a PHYSICAL register, where "the register already holds the value" is
+  /// true and still not enough. A virtual keeps its identity - the allocator gives it an interval over
+  /// every mention, so a value read later still interferes. A physical register has no id and no
+  /// interval: it is protected only over the window between the instruction that fills it and the one
+  /// that reads it out, and deleting both ends deletes the window.
+  ///
+  /// <para>
+  /// `PassW% = a \ 2` is where it showed. <c>rt_ldiv</c> answers in DX:AX, the selector copies the pair
+  /// out and copies the low half back into AX for the RET, and folding those two away left AX mentioned
+  /// nowhere between the call and the return - so the allocator gave AX to the unused high half and
+  /// <c>MOV AX, DX</c> overwrote the result on the way out. The function answered 0 for every input.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Fold_GivenACopyBackToAPhysicalRegister_WhenRun_ThenBothCopiesStay() {
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX));
+    var outOfAx = new MInstr(MOpcode.Mov, [V(1), ax],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [1], ReadsFlags: false, WritesFlags: false,
+        ReadsMemory: false, WritesMemory: false));
+    var backIntoAx = new MInstr(MOpcode.Mov, [ax, V(1)],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [1], ReadsFlags: false, WritesFlags: false,
+        ReadsMemory: false, WritesMemory: false));
+    var fn = OneBlock(outOfAx, backIntoAx, new MInstr(MOpcode.Ret, [], MInstrEffect.None));
+
+    Assert.That(Peephole.Run(fn), Is.Zero,
+      "removing both leaves nothing saying AX is occupied between the producer and the return");
+    Assert.That(Body(fn), Has.Count.EqualTo(3));
+  }
+
   [Test]
   public void Fold_GivenAZeroConstantWhoseFlagsAreDead_WhenRun_ThenTheXorIdiom() {
     // MOV v1,0 -> XOR v1,v1: one byte shorter, and the flags it dirties nobody reads
