@@ -1,6 +1,7 @@
 using System.Text;
 using PowerBasic.Compiler.Backend;
 using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Emit;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
@@ -46,13 +47,50 @@ public sealed class BackendCoverageTests {
   private static readonly string _repoRoot =
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 
+  /// <summary>
+  /// Builds the corpus-local PBU inputs named by $LINK, using the same optimizer/backend settings as
+  /// the executable being measured. A linked program measured without its declared input is not a
+  /// production routing attempt: every imported label is necessarily absent before selection starts.
+  /// </summary>
+  private static IReadOnlyList<PbuFile> CompileLinkedUnits(SemanticModel model, string corpusRoot,
+      bool optimize) {
+    var units = new List<PbuFile>();
+    foreach (var meta in model.MetaStatements.Where(m => m.Command == "LINK")) {
+      if (meta.Arguments is not [{ Kind: TokenKind.StringLiteral } target]
+          || !target.Text.EndsWith(".PBU", StringComparison.OrdinalIgnoreCase))
+        continue;
+      var unitName = Path.GetFileNameWithoutExtension(target.Text);
+      var unitPath = Directory.EnumerateFiles(corpusRoot, "*.BAS", SearchOption.AllDirectories)
+        .FirstOrDefault(path => Path.GetFileNameWithoutExtension(path)
+          .Equals(unitName, StringComparison.OrdinalIgnoreCase));
+      if (unitPath is null)
+        continue;
+      var text = File.ReadAllText(unitPath);
+      var unitModel = Binder.Bind(
+        Parser.Parse(Lexer.Tokenize(text, Path.GetFileName(unitPath), Dialect.Pb36),
+          Path.GetFileName(unitPath), Dialect.Pb36), Dialect.Pb36);
+      if (unitModel.Errors.Count > 0)
+        continue;
+      var generator = new CodeGenerator(unitModel) {
+        Optimize = optimize,
+        UseExperimentalBackend = true,
+      };
+      var unit = generator.EmitUnit(unitName.ToUpperInvariant());
+      if (generator.Errors.Count == 0)
+        units.Add(unit);
+    }
+    return units;
+  }
+
   private sealed record Census(int Functions, int Selected, int Allocated, List<string> MainBodies,
     Dictionary<string, int> Declines, List<string> SelectionCases, List<string> ProgramsLowered,
     int ProgramsTotal, int ProgramsRejectedByFrontEnd, Dictionary<string, int> LoweringDeclines,
     Dictionary<string, int> ProcedureDeclines, Dictionary<string, int> AllocationDeclines,
     List<string> AllocationCases,
     // the production half: what CodeGenerator.BackendProcs/BackendMain really took, and why not
-    int Bodies, int Routed, int RoutedNoOptimize, List<string> MainBodiesNotRouted,
+    int Bodies, int Routed, int RoutedNoOptimize,
+    Dictionary<string, int> RoutingDeclinesNoOptimize, List<string> RoutingDeclineCasesNoOptimize,
+    List<string> MainBodiesNotRouted,
     Dictionary<string, int> RoutingDeclines, Dictionary<string, HashSet<string>> RoutingDeclinePrograms,
     List<string> RoutingDeclineCases, List<string> NotRoutedNames, List<string> ProcedureBodiesNotLowered,
     List<string> ThrewPrograms, int ExternalDeclarations);
@@ -86,15 +124,18 @@ public sealed class BackendCoverageTests {
     int bodies = 0, routed = 0, routedNoOptimize = 0, externalDeclarations = 0;
     var mainBodiesNotRouted = new List<string>();
     var routingDeclines = new Dictionary<string, int>(StringComparer.Ordinal);
+    var routingDeclinesNoOptimize = new Dictionary<string, int>(StringComparer.Ordinal);
     var routingDeclinePrograms = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
     var routingDeclineCases = new List<string>();
+    var routingDeclineCasesNoOptimize = new List<string>();
     var notRoutedNames = new List<string>();
     var proceduresNotLowered = new List<string>();
     var threw = new List<string>();
     var dir = Path.Combine(_repoRoot, "tests");
     if (!Directory.Exists(dir))
       return new(0, 0, 0, mainBodies, declines, selectionCases, lowered, 0, 0, loweringDeclines,
-        procedureDeclines, allocationDeclines, allocationCases, 0, 0, 0, mainBodiesNotRouted,
+        procedureDeclines, allocationDeclines, allocationCases, 0, 0, 0,
+        routingDeclinesNoOptimize, routingDeclineCasesNoOptimize, mainBodiesNotRouted,
         routingDeclines, routingDeclinePrograms, routingDeclineCases, notRoutedNames,
         proceduresNotLowered, threw, 0);
 
@@ -147,8 +188,9 @@ public sealed class BackendCoverageTests {
       List<string> routedNames;
       List<(string Name, string Reason)> routingDeclineList;
       try {
+        var linkedUnits = CompileLinkedUnits(model, dir, optimize: true);
         var generator = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = true };
-        generator.EmitExecutable();
+        generator.EmitExecutable(linkedUnits, []);
         routedNames = generator.BackendRoutedNames.ToList();
         routingDeclineList = generator.BackendDeclines.ToList();
       } catch (Exception e) {
@@ -178,9 +220,19 @@ public sealed class BackendCoverageTests {
       // BOTH, and the gap between the two figures is exactly how much of the routed number is on
       // loan from the inliner.
       try {
+        var linkedUnits = CompileLinkedUnits(model, dir, optimize: false);
         var unoptimized = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = true };
-        unoptimized.EmitExecutable();
-        routedNoOptimize += unoptimized.BackendRoutedNames.Count();
+        unoptimized.EmitExecutable(linkedUnits, []);
+        var unoptimizedRoutedNames = unoptimized.BackendRoutedNames.ToList();
+        routedNoOptimize += unoptimizedRoutedNames.Count;
+        foreach (var (declinedName, declinedBecause) in unoptimized.BackendDeclines) {
+          if (unoptimizedRoutedNames.Contains(declinedName, StringComparer.OrdinalIgnoreCase))
+            continue;
+          var key = Summarize(declinedBecause);
+          routingDeclinesNoOptimize[key] = routingDeclinesNoOptimize.GetValueOrDefault(key) + 1;
+          routingDeclineCasesNoOptimize.Add(
+            $"{Path.GetRelativePath(dir, file).Replace('\\', '/')}::{declinedName}: {declinedBecause}");
+        }
       } catch (Exception e) {
         threw.Add($"{Path.GetRelativePath(dir, file).Replace('\\', '/')} (--no-optimize): {e.GetType().Name}: {e.Message}");
       }
@@ -227,8 +279,9 @@ public sealed class BackendCoverageTests {
 
     return new(functions, selected, allocated, mainBodies, declines, selectionCases, lowered, total,
       rejected, loweringDeclines, procedureDeclines, allocationDeclines, allocationCases,
-      bodies, routed, routedNoOptimize, mainBodiesNotRouted, routingDeclines, routingDeclinePrograms,
-      routingDeclineCases, notRoutedNames, proceduresNotLowered, threw, externalDeclarations);
+      bodies, routed, routedNoOptimize, routingDeclinesNoOptimize, routingDeclineCasesNoOptimize,
+      mainBodiesNotRouted, routingDeclines, routingDeclinePrograms, routingDeclineCases,
+      notRoutedNames, proceduresNotLowered, threw, externalDeclarations);
   }
 
   /// <summary>Collapses a decline message to its cause, so names/labels do not fragment the histogram.</summary>
@@ -292,6 +345,12 @@ public sealed class BackendCoverageTests {
       report.AppendLine($"  {count,5} in {census.RoutingDeclinePrograms[reason].Count,3} programs  {reason}");
     foreach (var routingCase in census.RoutingDeclineCases)
       report.AppendLine($"         {routingCase}");
+    report.AppendLine("routing declines with --no-optimize:");
+    foreach (var (reason, count) in census.RoutingDeclinesNoOptimize
+               .OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal))
+      report.AppendLine($"  {count,5}  {reason}");
+    foreach (var routingCase in census.RoutingDeclineCasesNoOptimize)
+      report.AppendLine($"         {routingCase}");
     foreach (var thrown in census.ThrewPrograms)
       report.AppendLine($"  THREW  {thrown}");
     foreach (var notLowered in census.ProcedureBodiesNotLowered)
@@ -324,26 +383,24 @@ public sealed class BackendCoverageTests {
 
     // ---- the honest headline, and the assertions that keep it honest ----
     //
-    // 262 of 263, not 263 of 263. The difference is not a regression and nothing got worse: it is
-    // what the number always was once the procedures the filter skips are counted as the declines
-    // they are. Ranked by how many procedures each class costs, over the corpus:
-    //
-    //    1  a callee with no link symbol                     routing
+    // The linked-input census supplies MATHUNIT.PBU when it measures LINKDEMO, exactly as pbc does
+    // for the source's $LINK directive. That closes the final optimized routing gap; EXTERNAL
+    // declarations remain excluded from the denominator because they have no body in this module.
     //
     // A non-SPEED BASIC/PASCAL caller can call a direct callee through their shared stack ABI, so
     // near numeric and dynamic-string BYREF procedures no longer decline or strand their module
     // bodies. String BYVAL handles and results use the same one-word ABI with ownership releases
-    // explicit in the IR. External declarations still have no linkable local body and keep their
-    // callers direct.
+    // explicit in the IR. A linked BASIC/PASCAL declaration crosses that same stack ABI; an
+    // alternate convention still declines per callee rather than being admitted by a global flag.
     //
     // Classes the corpus does NOT exercise are real all the same, and BackendRoutingGateTests holds
     // one program each: QUAD and BYTE parameters and returns, UDT/FIX/EXT parameters, a
     // CDECL/STDCALL/FASTCALL/WATCALL convention, and error handling inside a procedure body.
     //
     // A floor, so a widening may only raise it. Lowering it means the back end took less than it did.
-    Assert.That(census.Routed, Is.GreaterThanOrEqualTo(262),
+    Assert.That(census.Routed, Is.GreaterThanOrEqualTo(263),
       $"the x86-16 back end now ROUTES fewer corpus functions than it used to ({census.Routed}/{census.Bodies}):\n" + report);
-    Assert.That(census.RoutedNoOptimize, Is.GreaterThanOrEqualTo(258),
+    Assert.That(census.RoutedNoOptimize, Is.GreaterThanOrEqualTo(259),
       "the x86-16 back end routes fewer corpus functions with --no-optimize than it used to:\n" + report);
 
     // Pinned by name for the reason every other set here is: a count cannot tell "a program stopped
@@ -490,13 +547,10 @@ public sealed class BackendCoverageTests {
   /// and never did, and both move it by one.
   /// </summary>
   /// <summary>
-  /// Every corpus module body the PRODUCTION routing does not take, with the reason. The remaining
-  /// one is stranded by external declarations with no local body; fixing their link inputs is what
-  /// would let the caller route.
+  /// Every corpus module body the PRODUCTION routing does not take. Empty once the census supplies
+  /// every corpus-local PBU named by $LINK.
   /// </summary>
-  private static readonly string[] _mainBodiesNotRouted = [
-    "LINKDEMO.BAS",   // calls AddInts/Bump/Greet, which are EXTERNAL and have no body here
-  ];
+  private static readonly string[] _mainBodiesNotRouted = [];
 
   /// <summary>
   /// Every procedure that HAS a body and whose body the IR lowering refused. Such a procedure is

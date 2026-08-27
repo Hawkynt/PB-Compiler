@@ -1656,8 +1656,8 @@ often. `ADD r,r; SBB r,r` is the same four bytes, needs no register and runs on 
 leaves the sign bit in `CF` and subtracting a register from itself is `-CF`. The two are joined by the
 flags the scheduler already models, exactly as `SelectWideShift`'s `SHL`/`RCL` steps are.
 
-Re-measured on 2026-08-27: production routes 262/263 functions optimized and 258/263 unoptimized, and
-owns 160/161 module bodies. The optimized selector and allocator take 263/263 functions. The
+Re-measured on 2026-08-27: production routes 263/263 functions optimized and 259/263 unoptimized, and
+owns 161/161 module bodies. The optimized selector and allocator take 263/263 functions. The
 execution differential is 317 participating / 317 agreeing /
 0 emulator-limited / 0 disagreeing, and the spiller's worst case is 168 rounds optimized and 153
 unoptimized - lower than the 174 recorded before, and nowhere near the budget.
@@ -1776,15 +1776,20 @@ over every function the lowering produced; the production routing refuses a proc
 before the selector is ever asked — a QUAD, BYTE, FIX, EXT or record value, an unsupported
 BYREF pointee, a non-default calling convention, or error handling in the body — and a procedure it
 skips was in neither half of the ratio. Measured through the code generator itself, the corpus routes
-**262 of 263 functions** with the optimizer on, **258 of 263** with it off, and **160 of 161 module
+**263 of 263 functions** with the optimizer on, **259 of 263** with it off, and **161 of 161 module
 bodies** (docs/BACKENDS.md, "1. Coverage"). Near numeric BYREF parameters account for 12 recently
 routed procedures: the one-word pointer enters at the direct BASIC/PASCAL frame offset, and the IR
 loads and stores through it. Dynamic-string `SWAP` then removes the last procedure-body lowering
 decline by crossing the raw owner-cell handles without copying or freeing either one. Dynamic-string
 procedure parameters and results add three more routed corpus functions: handles travel as one-word
 arguments/results, while the IR releases BYVAL parameters, locals, copy-in temporaries and discarded
-results at their ownership boundaries. The selector figures are still worth having: they say the
-selector refuses nothing the filter offers it, which is what makes the filter the frontier rather than a
+results at their ownership boundaries. The final optimized gap closed when a linked BASIC/PASCAL
+external declaration stopped disqualifying its caller wholesale: the census builds the PBU named by
+`$LINK`, and `LINKDEMO` routes through numeric, BYREF, nested and dynamic-string unit calls in both
+optimizer modes. Alternate external conventions still decline per callee before selection. The four
+remaining unoptimized gaps are two phi edge-copy cycles, one `FPToSI f80 -> i64`, and one `f32`
+`select`. The selector figures are still worth having: they say the optimized selector refuses nothing
+the filter offers it, which makes the filter the frontier rather than a
 symptom. `LOWLEVEL.BAS`
 prints 5 through the routed path and matches its golden output line for line
 (`BackendInlineAsmTests.InlineAsm_GivenLowLevelBas_…`), and the test that used to record the defect now

@@ -81,6 +81,15 @@ public sealed partial class CodeGenerator {
     // equivalent bookkeeping yet.
     if (ContainsErrorHandling(proc.Body))
       return "filter: error handling in a procedure body (ON ERROR / RESUME / TRY)";
+    return BackendAbiReason(proc);
+  }
+
+  /// <summary>
+  /// Why a procedure signature cannot cross the routed BASIC/PASCAL stack ABI, or null when it can.
+  /// Kept apart from <see cref="BackendFilterReason"/> because an EXTERNAL declaration has no body to
+  /// route but its signature still governs a routed caller's argument order, cleanup and result.
+  /// </summary>
+  private static string? BackendAbiReason(ProcedureSymbol proc) {
     // The back end emits ONE ABI - left-to-right stack arguments, callee-cleans - so a procedure
     // declared WATCALL/FASTCALL/CDECL/STDCALL is not routable, and silently was. Its frame is laid
     // out for the declared convention while the routed prologue/epilogue implement the default one:
@@ -92,7 +101,8 @@ public sealed partial class CodeGenerator {
     // a FUNCTION with no resolved return type is refused along with the rest, exactly as the pattern
     // this replaced did - `null is not ScalarType{...}` was true, and the shape has no ABI either way
     if (proc.IsFunction && (proc.ReturnType is not { } returnType || !IsBackendAbiType(returnType)))
-      return $"filter: return type outside the routed ABI ({(proc.ReturnType is null ? "unresolved" : DescribeType(proc.ReturnType))})";
+      return $"filter: return type outside the routed ABI "
+        + $"({(proc.ReturnType is null ? "unresolved" : DescribeType(proc.ReturnType))})";
     foreach (var parameter in proc.Parameters) {
       // A near BYREF argument is always one pointer word on this ABI. The pointee still has to be a
       // value shape the selector can load and store exactly; dynamic strings now use that word as a
@@ -133,9 +143,9 @@ public sealed partial class CodeGenerator {
     // A $COMPILE UNIT can be routed. It was excluded along with _allowExternalCalls, and the reason
     // does not hold for procedures: a unit exports its procedures with the STACK convention (they are
     // called from outside, so OptRegParm never converts them), which is exactly the ABI this back end
-    // emits. An external callee is handled by the routing fixpoint already - a function may only be
-    // routed if every callee is routed, so a call to an imported procedure excludes it by
-    // construction rather than by this flag.
+    // emits. Imported calls are checked individually after lowering: a linked BASIC/PASCAL
+    // declaration crosses the routed ABI, while a missing link input or another convention declines
+    // its caller before selection.
     if (!this.UseExperimentalBackend)
       return this._backendProcs;
 
@@ -245,8 +255,8 @@ public sealed partial class CodeGenerator {
           : "lowering: the IR module has no defined function of this name"));
         continue;
       }
-      if (!this.ExternalCalleesResolve(irFn)) {
-        this._backendDeclines.Add((proc.Name, "routing: a callee has no link symbol - it is EXTERNAL, or its own body did not lower"));
+      if (this.ExternalCalleeDecline(irFn) is { } externalDecline) {
+        this._backendDeclines.Add((proc.Name, externalDecline));
         continue;
       }
       if (!this.DataGlobalsResolve(irFn, out var unaddressable)) {
@@ -335,8 +345,6 @@ public sealed partial class CodeGenerator {
     // procedure inherits every blind spot the procedure filter has.
     if (this._isUnit)
       return this.DeclineMain("filter: a $COMPILE UNIT has no module body to own");
-    if (this._allowExternalCalls)
-      return this.DeclineMain("filter: external calls are enabled, so a callee may be imported");
     if (this._backendModule is null)
       return this.DeclineMain("lowering: the module did not lower to IR");
     if (model.MainBody.Any(s => s is Syntax.Ast.ChainStmt))
@@ -347,8 +355,8 @@ public sealed partial class CodeGenerator {
           !routed.Keys.Any(p => p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase))
           && !this.CanCallDirectCallee(name)) is { } stranded)
       return this.DeclineMain($"routing: calls '{stranded}', which is not routed");
-    if (!this.ExternalCalleesResolve(main))
-      return this.DeclineMain("routing: a callee has no link symbol - it is EXTERNAL, or its own body did not lower");
+    if (this.ExternalCalleeDecline(main) is { } externalDecline)
+      return this.DeclineMain(externalDecline);
     if (!this.DataGlobalsResolve(main, out var unaddressable))
       return this.DeclineMain($"routing: global '{unaddressable}' has no cell the emitter can address");
     if (InstructionSelector.TrySelect(main, out var declineReason, this.SelectionTarget) is not { } machine)
@@ -605,22 +613,31 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
-  /// Whether every EXTERNAL procedure <paramref name="fn"/> calls has a link symbol to call.
+  /// Why an EXTERNAL procedure called by <paramref name="fn"/> cannot cross the routed ABI or resolve
+  /// to a linker-visible label, or null when every declaration is callable.
   ///
   /// The selector routes such a call the way it routes a defined one, because an imported procedure
-  /// has an ordinary PB signature - but only the code generator knows whether the name resolves. A
-  /// declaration that is neither a runtime routine nor a procedure this model declares has no label
-  /// at all, and emitting the call would throw where declining costs one function.
+  /// has an ordinary PB signature - but only the code generator knows whether link inputs are enabled
+  /// and whether that declaration uses the same stack ABI. A declaration that has neither a compatible
+  /// signature nor a linker-visible label declines here, before emission can fail or miscompile it.
   /// </summary>
-  private bool ExternalCalleesResolve(IrFunction fn)
-    => fn.Blocks.SelectMany(b => b.Instructions)
+  private string? ExternalCalleeDecline(IrFunction fn) {
+    foreach (var callee in fn.Blocks.SelectMany(b => b.Instructions)
         .OfType<IrCall>()
         .Select(c => c.Callee)
         .OfType<IrFunction>()
         .Where(f => f.IsDeclaration
                     && !f.Name.StartsWith("rt_", System.StringComparison.Ordinal)
-                    && !f.Name.StartsWith("llvm.", System.StringComparison.Ordinal))
-        .All(f => this.CalleeLabel(f.Name) is not null);
+                    && !f.Name.StartsWith("llvm.", System.StringComparison.Ordinal))) {
+      var external = model.ProcedureList.FirstOrDefault(p => p.IsExternal
+        && p.Name.Equals(callee.Name, System.StringComparison.OrdinalIgnoreCase));
+      if (external is not null && BackendAbiReason(external) is { } abiReason)
+        return $"routing: external callee '{callee.Name}' {abiReason["filter: ".Length..]}";
+      if (this.CalleeLabel(callee.Name) is null)
+        return "routing: a callee has no link symbol - it is EXTERNAL, or its own body did not lower";
+    }
+    return null;
+  }
 
   /// <summary>The names of the defined functions <paramref name="fn"/> calls directly (its ABI partners).</summary>
   private static IEnumerable<string> CalleeNames(IrFunction fn)
