@@ -1,4 +1,4 @@
-' Differential battery 98: signed LONG ordering where the difference does not fit a LONG.
+' Differential battery 115: signed LONG ordering where the difference does not fit a LONG.
 ' A 32-bit ordering decided by the SIGN of (left - right) is right only while that subtraction
 ' stays in range: -2147483648& - 3& is +2147483645, whose sign says "greater". PBC 3.50 answers
 ' -1 for -2147483648& < 3&, so the ordering has to come from the subtraction's own overflow-aware
