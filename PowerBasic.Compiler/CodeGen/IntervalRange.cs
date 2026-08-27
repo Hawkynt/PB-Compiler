@@ -189,10 +189,28 @@ public static class IntervalRangeAnalysis {
   private static void Run(IReadOnlyList<Statement> body, Dictionary<VariableSymbol, ValueFacts> env, Scope scope,
       Dictionary<Statement, IReadOnlyDictionary<VariableSymbol, ValueFacts>>? points) {
     foreach (var s in body) {
-      points?.TryAdd(s, Clone(env));                  // snapshot the entry environment
+      if (points != null && !IsLoop(s))
+        points.TryAdd(s, Clone(env));                 // snapshot the entry environment
       Transfer(s, env, scope, points);
     }
   }
+
+  /// <summary>
+  /// A statement whose recorded program point is NOT its entry environment, because the emitter reads
+  /// that point while emitting something the loop re-executes - the pre/post test, which runs again on
+  /// every back edge with loop-carried values.
+  ///
+  /// <para>
+  /// <see cref="TransferLoop"/> is the sole author of a loop's point and writes the widened invariant
+  /// there for exactly this reason. It only runs when the loop is analyzable, though, and the entry
+  /// snapshot taken in front of it survived when it did not - so a loop whose body the analysis
+  /// refuses (a procedure call, <c>INPUT</c>, <c>EXIT SUB</c>, <c>GOTO</c>, ...) left its test reading
+  /// the values that held BEFORE the loop. <c>i = 0 : WHILE i &lt; 3 : i = i + 1 : Note i : WEND</c>
+  /// folded <c>i &lt; 3</c> to a constant TRUE (O16 <c>TryEmitRangeComparison</c>, <c>MOV AX,-1</c>) and
+  /// the program never terminated. No entry at all is the honest answer: absence means Top.
+  /// </para>
+  /// </summary>
+  private static bool IsLoop(Statement s) => s is ForStmt or DoLoopStmt;
 
   private static void Transfer(Statement s, Dictionary<VariableSymbol, ValueFacts> env, Scope scope,
       Dictionary<Statement, IReadOnlyDictionary<VariableSymbol, ValueFacts>>? points) {

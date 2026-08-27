@@ -138,8 +138,7 @@ public static class Peephole {
          && this.Uses.GetValueOrDefault(register.VirtualId) == readers;
   }
 
-  private static bool IsMemory(MOperand operand) => operand
-    is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell;
+  private static bool IsMemory(MOperand operand) => operand.IsMemoryAccess();
 
   /// <summary>The registers a memory operand's effective address is formed from (empty for a direct cell).</summary>
   private static List<MReg> AddressRegisters(MOperand cell) {
@@ -231,6 +230,18 @@ public static class Peephole {
       // MOV w,v where w IS the source register is a copy back to where the value came from: the
       // register already holds it, so both instructions go and nothing takes their place.
       var identity = source is MOperand.Register { Reg: var origin } && origin.Equals(target);
+      // ...but only when the register is VIRTUAL. "Nothing takes their place" is the whole claim, and
+      // for a physical register nothing is exactly what says it is occupied. A virtual keeps its
+      // identity - the allocator gives it an interval spanning every mention, and a value it still
+      // reads later still interferes. A physical register has no id and no interval: it is protected
+      // only over the window between the instruction that fills it and the instruction that reads it
+      // out (LinearScanAllocator.InFlightByIndex), and deleting both ends of the copy deletes the
+      // window. `PassW% = a \ 2` is the shape: rt_ldiv answers in DX:AX, the pair is copied out and
+      // the low half copied back into AX for the RET, and folding those two away left AX mentioned
+      // NOWHERE between the call and the return - so the allocator handed AX to the (dead) high half
+      // and `MOV AX, DX` overwrote the result on its way out. The function returned 0 for every input.
+      if (identity && !target.IsVirtual)
+        continue;
 
       if (identity)
         block.Instructions.RemoveAt(consumer);

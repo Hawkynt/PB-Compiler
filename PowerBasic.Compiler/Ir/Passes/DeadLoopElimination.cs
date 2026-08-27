@@ -82,6 +82,30 @@ public static class DeadLoopElimination {
           if (region.Contains(successor) && !ReferenceEquals(successor, header))
             return false;
 
+    // ...and nothing may LEAVE it except by the one door the rewire reopens - the header's exit edge,
+    // which becomes the preheader's. Two shapes break that, and the corpus contains neither:
+    //
+    // * a block inside that RETURNS. `EXIT SUB` / `EXIT FUNCTION` written inside the loop lowers to a
+    //   `ret` in the middle of the region, and `CollectRegion` absorbs it happily because a `ret` has
+    //   no successors to walk. Deleting the region deletes the early return with it, so a procedure
+    //   that had to leave on the first iteration ran on to its final PRINT instead.
+    // * a block inside that branches straight to the EXIT - which is what `EXIT LOOP` is. That edge is
+    //   a second predecessor of the exit block, and the rewire below only renames the HEADER's
+    //   incoming in the exit's phis: the break's incoming is left naming a block that no longer
+    //   exists, and the value the exit reads is whichever one the phi still holds.
+    //
+    // A terminator is otherwise not an effect - the branching is exactly what is being deleted - which
+    // is why this is a reachability rule rather than a row in HasEffect.
+    foreach (var block in region) {
+      if (block.Terminator is not { } leaving || leaving is IrRet or IrUnreachable)
+        return false;
+      if (ReferenceEquals(block, header))
+        continue;                                  // the header's exit edge IS the door
+      foreach (var successor in leaving.Successors)
+        if (!region.Contains(successor))
+          return false;
+    }
+
     foreach (var block in region)
       foreach (var instruction in block.Instructions) {
         if (HasEffect(instruction))

@@ -339,7 +339,7 @@ public sealed partial class InstructionSelector {
       foreach (var (dest, source) in copies) {
         var copy = new MInstr(MOpcode.Mov, [new MOperand.Register(dest), source],
           new MInstrEffect(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [1] : [],
-            ReadsFlags: false, WritesFlags: false, ReadsMemory: source is MOperand.Memory, WritesMemory: false));
+            ReadsFlags: false, WritesFlags: false, ReadsMemory: source.IsMemoryAccess(), WritesMemory: false));
         mblock.Instructions.Insert(insertAt++, copy);
       }
       foreach (var (destination, source) in floatCopies) {
@@ -396,7 +396,7 @@ public sealed partial class InstructionSelector {
         }
         this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
           new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: false, WritesFlags: true,
-            ReadsMemory: lhs is MOperand.Memory || rhs is MOperand.Memory, WritesMemory: false)));
+            ReadsMemory: lhs.IsMemoryAccess() || rhs.IsMemoryAccess(), WritesMemory: false)));
         this._current.Instructions.Add(new MInstr(MOpcode.Jcc, [new MOperand.LabelRef(cond.IfTrue.Label)],
           new MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, WritesMemory: false), cc));
         this._current.Instructions.Add(new MInstr(MOpcode.Jmp, [new MOperand.LabelRef(cond.IfFalse.Label)], MInstrEffect.None));
@@ -722,7 +722,7 @@ public sealed partial class InstructionSelector {
     }
     this._current.Instructions.Add(new MInstr(opcode, [destOp, rhs],
       new MInstrEffect(WrittenRegs: [0], ReadRegs: rhs is MOperand.Register ? [0, 1] : [0],
-        ReadsFlags: false, WritesFlags: true, ReadsMemory: rhs is MOperand.Memory, WritesMemory: false)));
+        ReadsFlags: false, WritesFlags: true, ReadsMemory: rhs.IsMemoryAccess(), WritesMemory: false)));
     return true;
   }
 
@@ -1114,7 +1114,7 @@ public sealed partial class InstructionSelector {
     }
     this._current.Instructions.Add(new MInstr(opcode, [dest, source],
       new MInstrEffect(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [0, 1] : [0],
-        ReadsFlags: false, WritesFlags: true, ReadsMemory: source is MOperand.Memory, WritesMemory: false)));
+        ReadsFlags: false, WritesFlags: true, ReadsMemory: source.IsMemoryAccess(), WritesMemory: false)));
   }
 
   /// <summary>
@@ -1816,7 +1816,7 @@ public sealed partial class InstructionSelector {
   private void EmitCompare(MOperand left, MOperand right)
     => this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [left, right],
       new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(left, right), ReadsFlags: false, WritesFlags: true,
-        ReadsMemory: left is MOperand.Memory || right is MOperand.Memory, WritesMemory: false)));
+        ReadsMemory: left.IsMemoryAccess() || right.IsMemoryAccess(), WritesMemory: false)));
 
   private void EmitBranch(Condition condition, string target)
     => this._current.Instructions.Add(new MInstr(MOpcode.Jcc, [new MOperand.LabelRef(target)],
@@ -1850,7 +1850,7 @@ public sealed partial class InstructionSelector {
 
     this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
       new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: false, WritesFlags: true,
-        ReadsMemory: lhs is MOperand.Memory || rhs is MOperand.Memory, WritesMemory: false)));
+        ReadsMemory: lhs.IsMemoryAccess() || rhs.IsMemoryAccess(), WritesMemory: false)));
     return this.MaterializeCondition(cmp, cc);
   }
 
@@ -3593,7 +3593,7 @@ public sealed partial class InstructionSelector {
       var dx = new MOperand.Register(MReg.Physical_(Reg.DX, MRegSize.Word));
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [ax, lo], MovEffect(ax, lo)));
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dx, hi], MovEffect(dx, hi)));
-      this._current.Instructions.Add(new MInstr(MOpcode.Ret, [], MInstrEffect.None));
+      this._current.Instructions.Add(ReturningIn(ax, dx));
       return true;
     }
     if (ret.HasValue && ret.Value is { Type.IsFloat: true } floating) {
@@ -3612,11 +3612,37 @@ public sealed partial class InstructionSelector {
       if (!this.TryOperand(value, out var src))
         return false;
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [axOp, src], MovEffect(axOp, src)));
+      this._current.Instructions.Add(ReturningIn(axOp));
+      return true;
     }
 
     this._current.Instructions.Add(new MInstr(MOpcode.Ret, [], MInstrEffect.None));
     return true;
   }
+
+  /// <summary>
+  /// A <c>RET</c> that says which physical registers the result is leaving in. The emitter never looks
+  /// at a RET's operands - it special-cases the opcode and writes the epilogue - so these are here for
+  /// the ANALYSES, and one of them needs them badly.
+  ///
+  /// <para>
+  /// <c>LinearScanAllocator.InFlightByIndex</c> protects a physical register over the window between
+  /// the instruction that fills it and the instruction that names it as a read. Without a reader there
+  /// is no window: the <c>MOV AX, v</c> that places a result was the last mention of AX in the block,
+  /// so the allocator was free to hand AX to a value defined after it. It did, on the very next
+  /// instruction. <c>FUNCTION Live&amp;(BYVAL a&amp;) : Live&amp; = a&amp; + 1 : PRINT "out" : END FUNCTION</c>
+  /// spills the result across the PRINT, and the two reloads come back as
+  /// <c>MOV AX,[lo] / MOV AX,AX / MOV AX,[hi] / MOV DX,AX</c> - the high half overwriting the low one
+  /// on the way out. The function returned 0 for every input, in both optimizer modes.
+  /// </para>
+  /// <para>
+  /// A float result rides the x87 stack and a SUB returns nothing, so both keep the bare form.
+  /// </para>
+  /// </summary>
+  private static MInstr ReturningIn(params MOperand.Register[] registers)
+    => new(MOpcode.Ret, registers,
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [.. Enumerable.Range(0, registers.Length)],
+        ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: false));
 
   // ---- operand / vreg helpers -------------------------------------------------------------------
 
@@ -3681,7 +3707,7 @@ public sealed partial class InstructionSelector {
 
   private static MInstrEffect PairEffect(MOperand rhs, bool readsFlags, bool writesFlags) =>
     new(WrittenRegs: [0], ReadRegs: rhs is MOperand.Register ? [0, 1] : [0],
-      ReadsFlags: readsFlags, WritesFlags: writesFlags, ReadsMemory: rhs is MOperand.Memory, WritesMemory: false);
+      ReadsFlags: readsFlags, WritesFlags: writesFlags, ReadsMemory: rhs.IsMemoryAccess(), WritesMemory: false);
 
   /// <summary>
   /// A constant integer as an immediate, in THIS TARGET's spelling of it.
@@ -3843,7 +3869,7 @@ public sealed partial class InstructionSelector {
 
   private static MInstrEffect MovEffect(MOperand.Register dest, MOperand src)
     => new(WrittenRegs: [0], ReadRegs: src is MOperand.Register ? [1] : [],
-        ReadsFlags: false, WritesFlags: false, ReadsMemory: src is MOperand.Memory, WritesMemory: false);
+        ReadsFlags: false, WritesFlags: false, ReadsMemory: src.IsMemoryAccess(), WritesMemory: false);
 
   private static bool TryMapBinary(IrBinaryOp op, out MOpcode opcode) {
     opcode = op switch {

@@ -161,6 +161,31 @@ public abstract record MOperand {
   /// parameter offsets the prologue uses.
   /// </summary>
   public sealed record ParamCell(int ArgumentIndex, int ByteDelta, MRegSize Size = MRegSize.Word) : MOperand;
+
+  /// <summary>
+  /// Whether this operand is an ACCESS to memory rather than a value or an address - the question
+  /// every <see cref="MInstrEffect.ReadsMemory"/> is really asking.
+  ///
+  /// <para>
+  /// It lives here because it was written down four times elsewhere and one of the copies was
+  /// <c>operand is Memory</c> alone, which is only the register-addressed form: a <see cref="DataCell"/>,
+  /// a <see cref="StackSlot"/> and a <see cref="ParamCell"/> are all real accesses that happen to name
+  /// their address instead of holding it in a register. An effect descriptor built on the narrow test
+  /// reported that a 32-bit load out of a global touched no memory at all, and
+  /// <see cref="MachineScheduler"/> - whose only aliasing rule is "order anything against a write" -
+  /// therefore hoisted it above the store to the very same cell.
+  /// </para>
+  /// <para>
+  /// <see cref="DataOffset"/> and <see cref="LabelRef"/> are deliberately excluded: they are an
+  /// address as a VALUE (<c>MOV SI, OFFSET s</c>), which reads nothing.
+  /// </para>
+  /// </summary>
+  /// <remarks>
+  /// A method rather than a property because <see cref="MOperand"/> is a record: a public property
+  /// joins the generated <c>ToString</c>, and every decline message, dump and test that renders an
+  /// operand would carry it.
+  /// </remarks>
+  public bool IsMemoryAccess() => this is Memory or StackSlot or DataCell or ParamCell;
 }
 
 /// <summary>

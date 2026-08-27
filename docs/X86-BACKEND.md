@@ -188,6 +188,18 @@ variable — lengthens nothing and folds at any distance; a register-formed addr
 instruction immediately following the load. The read-modify-write form has no such limit in the other
 direction, because it deletes two of the three accesses and the address register's range *shrinks*.
 
+"A copy straight back to its own source is nothing at all" holds only while the register is
+**virtual**, and that qualification was missing. A virtual keeps its identity: the allocator gives it
+an interval spanning every mention, so a value something still reads later still interferes. A
+physical register has neither an id nor an interval — it is protected only over the window between
+the instruction that fills it and the instruction that reads it out (`InFlightByIndex`), and deleting
+both ends of the copy deletes the window. `PassW% = a \ 2` is the shape that showed it: an unsigned
+16-bit divide widens and goes through `rt_ldiv`, which answers in `DX:AX`; the selector copies the
+pair out and copies the low half back into `AX` for the `RET`, and folding those two away left `AX`
+mentioned *nowhere* between the call and the return — so the allocator gave `AX` to the unused high
+half and `MOV AX, DX` overwrote the answer on its way out. The function returned 0 for every input,
+with the optimizer on and only with it on, since the pass is gated on it.
+
 Two more read the function as a **layout** rather than as a set of values, and so run once at the end
 rather than to a fixpoint with the others. `MachineEmitter` lays the blocks out in `MFunction.Blocks`
 order, which makes each block's neighbour a fact: a `JMP` to the block laid out next is the
@@ -738,6 +750,61 @@ pair-call selector pins all four argument registers, declares the caller-saved c
 both result words back into virtual registers. Runtime divisors are safe here because the helper owns
 the language path: zero calls `rt_raise` with Error 11, signed division truncates toward zero, the
 remainder takes the dividend's sign, and `MINLONG \ -1` retains the established wrapped result.
+
+### A RET reads the registers the result leaves in
+
+The same missing half again, at the other end of the function. `InFlightByIndex` protects a physical
+register over the window between the instruction that fills it and the instruction that names it as a
+read — and a `RET` named none, so the `MOV AX, v` that places a result was the last mention of `AX` in
+the block and the allocator was free to hand `AX` to a value defined after it. It did, on the very next
+instruction:
+
+```basic
+FUNCTION Bumped&(BYVAL a&) NOINLINE
+  Bumped& = a& + 1
+  PRINT "out";            ' the result has to survive a call, so it spills
+END FUNCTION
+```
+
+The two reloads came back as `MOV AX,[lo] / MOV AX,AX / MOV AX,[hi] / MOV DX,AX` — the high word
+overwriting the low one on the way out — and the function answered 0 for every input, in both optimizer
+modes. The INTEGER twin was always right, which is the tell rather than a coincidence: one register
+means no second reload to be given the first one's.
+
+`SelectRet` now builds the `RET` with its result registers as operands it READS
+(`InstructionSelector.ReturningIn`). The emitter never looks at a `RET`'s operands — it special-cases
+the opcode and writes the epilogue — so they exist purely for the analyses, which is where the gap was.
+A float result rides the x87 stack and a `SUB` returns nothing, so both keep the bare form.
+
+### A memory access that says it touches no memory
+
+The scheduler has exactly one aliasing rule — order any pair where at least one side writes memory —
+and it reads that rule out of each instruction's `MInstrEffect`. The rule is therefore only as good
+as the descriptors, and one class of them was silent. `MOperand.DataCell`, `MOperand.StackSlot` and
+`MOperand.ParamCell` are memory accesses that **name** their address instead of holding it in a
+register; a dozen effect builders in `InstructionSelector` tested `operand is MOperand.Memory`, which
+is the register-addressed form alone. `MOperand.IsMemoryAccess()` is now the one place the question
+is answered (`Peephole` and `Spiller` already had private copies of the correct predicate — they call
+the shared one).
+
+What it cost, and why nothing had seen it. The 16-bit load path hard-codes `ReadsMemory: true` and
+never asks; the 32-bit one goes through `MovEffect`, which did. So a LONG global loaded, added to and
+stored back had its *reload* hoisted above the store to the very same cell:
+
+```basic
+SUB Bump() NOINLINE
+  STATIC acc AS LONG
+  acc = acc + 10
+  PRINT acc;              ' routed printed the PREVIOUS call's total
+END SUB
+```
+
+Three things had to coincide for the corpus to miss it: the value must be 32 bits (an INTEGER
+accumulator is right), it must live in a `DataCell` rather than a promoted alloca (a `STATIC`, a
+`SHARED` or a `GLOBAL` — `mem2reg` removes everything else), and the reload must survive to
+scheduling, which with the optimizer **on** it usually does not. `BackendMemoryOrderingTests` pins
+both the behaviour and the descriptor invariant it rests on. This is scheduling, so it is the x86-16
+back end's alone — `--emit-c` and `--emit-llvm` consume the IR, which was correct throughout.
 
 ### Selection is not routing
 

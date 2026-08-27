@@ -191,6 +191,101 @@ public sealed class DeadLoopEliminationTests {
   }
 
   /// <summary>
+  /// A loop is not unobservable just because its body writes nothing: the body can LEAVE. An
+  /// <c>EXIT SUB</c> inside the loop lowers to a <c>ret</c> in the middle of the region, and
+  /// <c>CountedLoop.CollectRegion</c> absorbs that block without complaint because a <c>ret</c> has no
+  /// successors to walk. Deleting the region deleted the early return with it, so a procedure that had
+  /// to leave on the first iteration ran on to its final <c>PRINT</c> instead.
+  ///
+  /// <para>
+  /// Asserted on the emitted program rather than on the shape, because the whole defect is that the
+  /// shape looked fine: it produced a well-formed function that returned down the wrong path.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void LoopWithAnEarlyReturn_WhenOptimizingForSpeed_ThenTheReturnSurvives() {
+    const string source = """
+      $OPTIMIZE SPEED
+      DECLARE FUNCTION Given%(BYVAL v%)
+      DECLARE SUB Walk(BYVAL n%)
+      Walk Given%(2)
+      Walk Given%(7)
+      END
+
+      FUNCTION Given%(BYVAL v%) NOINLINE
+        Given% = v%
+      END FUNCTION
+      SUB Walk(BYVAL n%) NOINLINE
+        DIM i AS INTEGER
+        FOR i = 1 TO 10
+          IF n% > 5 THEN
+            EXIT SUB
+          END IF
+        NEXT i
+        PRINT "done"; n%
+      END SUB
+      """;
+
+    Assert.That(RunBothWays(source), Is.EqualTo("done 2"),
+      "n = 7 leaves on the first iteration, so only the n = 2 call may print");
+  }
+
+  /// <summary>
+  /// The same rule from the other side: <c>EXIT LOOP</c> is a second edge from inside the region to
+  /// the exit block, and both the deletion and <see cref="LoopUnswitch"/>'s clone-and-rewire assume
+  /// the header's edge is the only one. Unswitching appended LCSSA phis with exactly two incomings -
+  /// one per cloned header - and left the break's own incoming naming a block the rewrite had deleted,
+  /// so the exit carried a phi with no incomings at all: <c>i</c> read back as 0 for every input, on
+  /// IR the verifier rejects.
+  /// </summary>
+  [Test]
+  public void LoopWithABreakToItsExit_WhenOptimizingForSpeed_ThenTheCounterIsWhatTheBreakLeft() {
+    const string source = """
+      $OPTIMIZE SPEED
+      DECLARE FUNCTION Given%(BYVAL v%)
+      DECLARE SUB Walk(BYVAL n%)
+      Walk Given%(2)
+      Walk Given%(7)
+      END
+
+      FUNCTION Given%(BYVAL v%) NOINLINE
+        Given% = v%
+      END FUNCTION
+      SUB Walk(BYVAL n%) NOINLINE
+        DIM i AS INTEGER
+        i = 0
+        WHILE i < 10
+          i = i + 1
+          IF n% > 5 THEN
+            EXIT LOOP
+          END IF
+        WEND
+        PRINT "done"; n%; i
+      END SUB
+      """;
+
+    Assert.That(RunBothWays(source), Is.EqualTo("done 2  10 |done 7  1"),
+      "the loop runs out for n = 2 and breaks on the first iteration for n = 7");
+  }
+
+  /// <summary>
+  /// Runs the program through BOTH back ends and asserts they agree, answering with what they printed.
+  /// The routed path is where these two defects lived; the direct emitter is the reference.
+  /// </summary>
+  private static string RunBothWays(string source) {
+    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var directImage = direct.EmitExecutable();
+    var routedImage = routed.EmitExecutable();
+    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("Walk"), "the back end did not take the procedure under test");
+    var directOutput = Cpu8086.Run(directImage).Output.Trim().Replace("\r\n", "|");
+    Assert.That(Cpu8086.Run(routedImage).Output.Trim().Replace("\r\n", "|"), Is.EqualTo(directOutput));
+    return directOutput;
+  }
+
+  /// <summary>
   /// And whatever it deletes, the program still prints what it printed. Rendered back to BASIC and
   /// run, because deleting code is supposed to change the code.
   /// </summary>

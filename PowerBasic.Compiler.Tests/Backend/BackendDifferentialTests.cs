@@ -201,6 +201,80 @@ public sealed class BackendDifferentialTests {
     Assert.That(routed, Is.EqualTo(direct));
   }
 
+  /// <summary>
+  /// A routed FUNCTION whose result comes back out of a runtime helper's own register pair. An
+  /// unsigned 16-bit divide widens to 32 bits and goes through <c>rt_ldiv</c>, which answers in DX:AX;
+  /// the selector copies the pair into virtual registers and copies the low half back into AX for the
+  /// RET, and the peephole's copy-back fold deleted BOTH of those moves on the grounds that AX already
+  /// held the value. Nothing then said AX was occupied between the call and the return, so the
+  /// allocator gave AX to the unused high half and <c>MOV AX, DX</c> overwrote the answer on its way
+  /// out: <c>PassW%</c> returned 0 for every input.
+  ///
+  /// <para>
+  /// Two call sites with different arguments, through a <c>NOINLINE</c> function, because one would let
+  /// interprocedural propagation fold the divide away entirely. The optimizer must be ON - the fold is
+  /// gated on it - which is what <see cref="RunBothWays"/> already does.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Run_GivenAResultReturnedThroughARuntimeRegisterPair_ThenTheAnswerSurvivesTheReturn() {
+    var (direct, routed, names) = RunBothWays("""
+      DECLARE FUNCTION Given%(BYVAL v%)
+      DECLARE FUNCTION Half%(BYVAL a AS WORD)
+
+      PRINT Half%(Given%(-1)); Half%(Given%(4))
+      END
+
+      FUNCTION Given%(BYVAL v%) NOINLINE
+        Given% = v%
+      END FUNCTION
+      FUNCTION Half%(BYVAL a AS WORD) NOINLINE
+        Half% = a \ 2
+      END FUNCTION
+      """);
+
+    Assert.That(names, Does.Contain("Half"), "the back end did not take the function under test");
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(direct.Trim(), Is.EqualTo("32767  2"), "the divide is unsigned, so 65535 \\ 2 is 32767");
+  }
+
+  /// <summary>
+  /// A LONG result computed BEFORE the statement that ends the function, so it has to survive a call.
+  /// The spill is fine; putting it back was not. <c>MOV AX, v</c> was the last mention of <c>AX</c> in
+  /// the block - a <c>RET</c> declared no reads - so nothing said <c>AX</c> was occupied, and the
+  /// allocator gave it to the very next value: the reload of the HIGH half. The emitted tail read
+  /// <c>MOV AX,[lo] / MOV AX,AX / MOV AX,[hi] / MOV DX,AX</c>, the high word overwriting the low one on
+  /// the way out, and the function answered 0 for every input in both optimizer modes.
+  ///
+  /// <para>
+  /// The INTEGER twin was always right, and that is the tell rather than a coincidence: one register
+  /// means no second reload to be given the first one's.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Run_GivenALongResultSetBeforeTheLastStatement_ThenTheWholeValueComesBack() {
+    var (direct, routed, names) = RunBothWays("""
+      DECLARE FUNCTION Given%(BYVAL v%)
+      DECLARE FUNCTION Bumped&(BYVAL a&)
+
+      PRINT Bumped&(Given%(1000))
+      PRINT Bumped&(Given%(3))
+      END
+
+      FUNCTION Given%(BYVAL v%) NOINLINE
+        Given% = v%
+      END FUNCTION
+      FUNCTION Bumped&(BYVAL a&) NOINLINE
+        Bumped& = a& + 1
+        PRINT "out";
+      END FUNCTION
+      """);
+
+    Assert.That(names, Does.Contain("Bumped"), "the back end did not take the function under test");
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(direct.Replace("\r", "").Trim(), Is.EqualTo("out 1001 \nout 4"));
+  }
+
   [Test]
   public void Run_GivenASharedGlobal_ThenBothPathsAddressTheSameStorage() {
     var (direct, routed, names) = RunBothWays("""

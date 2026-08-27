@@ -859,8 +859,7 @@ internal static class Spiller {
     return positions;
   }
 
-  private static bool IsMemory(MOperand operand)
-    => operand is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell;
+  private static bool IsMemory(MOperand operand) => operand.IsMemoryAccess();
 
   private static MOperand WithSize(MOperand cell, MRegSize size) => cell switch {
     MOperand.StackSlot stack => stack with { Size = size },
