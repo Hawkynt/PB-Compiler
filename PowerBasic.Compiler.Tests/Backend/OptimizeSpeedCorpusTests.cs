@@ -34,7 +34,8 @@ public sealed class OptimizeSpeedCorpusTests {
   private static readonly string[] _fileNames =
     ["OUT.TXT", "RESULT.TXT", "T.TXT", "TEST.TXT", "TMP.TXT", "DATA.TXT", "O.TXT", "SCREEN.TXT"];
 
-  private sealed record Behaviour(string Output, string Files, int ExitCode);
+  /// <summary>The 80x25 text page is part of this, because LOCATE and a line wrap move characters without changing the stream.</summary>
+  private sealed record Behaviour(string Output, string Screen, string Files, int ExitCode);
 
   private static Behaviour? Observe(byte[] image) {
     try {
@@ -43,7 +44,7 @@ public sealed class OptimizeSpeedCorpusTests {
       foreach (var name in _fileNames)
         if (cpu.FileContent(name) is { } content)
           files.Append(name).Append('=').Append(content).Append('\n');
-      return new(cpu.Output, files.ToString(), cpu.ExitCode);
+      return new(cpu.Output, string.Join("\n", cpu.Screen), files.ToString(), cpu.ExitCode);
     } catch (Cpu8086Exception) {
       return null;                                  // outside the emulator's reach; never counted either way
     }

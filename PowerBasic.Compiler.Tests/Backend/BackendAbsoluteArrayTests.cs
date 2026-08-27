@@ -27,8 +27,15 @@ public sealed class BackendAbsoluteArrayTests {
   /// Writes 0x4142 and 0x3039 into the text screen through an AT array, reads them back as bytes with
   /// PEEK, and prints both. The values are chosen so every byte is distinct and non-zero: a store that
   /// went to the wrong segment leaves zeros here, and zeros are what an unwritten cell reads as.
+  ///
+  /// <para>
+  /// The opening <c>LOCATE</c> is load-bearing: what the program prints goes through the console
+  /// driver into this very page, at the top-left corner, so without it the output overwrites the
+  /// cells the assertions read - and between two PEEKs of one PRINT statement at that.
+  /// </para>
   /// </summary>
   private const string _videoProgram = """
+    LOCATE 10, 1
     DIM DYNAMIC vid%(0 TO 7) AT &HB800
     vid%(0) = 16706
     vid%(7) = 12345
@@ -86,6 +93,7 @@ public sealed class BackendAbsoluteArrayTests {
   [Test]
   public void Execute_GivenTwoAtArraysOverOneSegment_ThenTheirLowerBoundsBiasTheSameBytes() {
     const string source = """
+      LOCATE 10, 1
       DIM DYNAMIC vid%(0 TO 7) AT &HB800
       DIM DYNAMIC alt%(4 TO 7) AT &HB800
       vid%(0) = 111

@@ -1857,13 +1857,20 @@ public sealed partial class IrLowering {
       throw new IrLoweringException("INPUT requires whole-module lowering");
     var file = input.FileNumber is { } fn ? this.FileNum(fn) : null;
 
-    // A console INPUT prompts once per STATEMENT, not once per variable it reads: with the
-    // program's own prompt string when it has one, else PB's bare "? " - which LINE INPUT does
-    // not print (it prompts only when told to).
-    if (file is null && (input.Prompt is not null || !input.IsLineInput)) {
-      var bytes = System.Text.Encoding.ASCII.GetBytes(input.Prompt ?? "? ");
-      var global = this._module.AddStringConstant(bytes);
-      this.EmitIo(null, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], global, new IrConstantInt(IrType.I32, bytes.Length));
+    // A console INPUT prompts once per STATEMENT, not once per variable it reads: the program's own
+    // prompt string when it has one, and PB's "? " when the punctuation after that prompt is a
+    // SEMICOLON - which is what the two spellings are FOR. A comma leaves the prompt standing alone
+    // (`INPUT "Name", n$` -> `Name`), a semicolon appends the question mark (`INPUT "Name"; n$` ->
+    // `Name? `), and a bare INPUT is the question mark by itself. LINE INPUT prompts only when it
+    // was given one, and takes the same semicolon rule when it was.
+    if (file is null) {
+      var suffix = (input.Prompt is null && !input.IsLineInput) || input.PromptSemicolon ? "? " : "";
+      var prompt = (input.Prompt ?? "") + suffix;
+      if (prompt.Length > 0) {
+        var bytes = System.Text.Encoding.ASCII.GetBytes(prompt);
+        var global = this._module.AddStringConstant(bytes);
+        this.EmitIo(null, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], global, new IrConstantInt(IrType.I32, bytes.Length));
+      }
     }
 
     foreach (var target in input.Targets) {
@@ -2992,13 +2999,18 @@ public sealed partial class IrLowering {
   /// argument lowers to a literal zero rather than to a read of the cursor.
   /// </summary>
   private void LowerLocate(CommandStmt cmd) {
+    // Both coordinates are INTEGERs, which is what the direct emitter coerces them to and what the
+    // runtime's two word registers hold. Lowering them as LONGs instead was faithful in its low half
+    // and unroutable in practice: the argument slot IS a word, so anything the selector could not
+    // prove word-sized - a subscripted coordinate, `i% * 3`, a SINGLE - declined and took the whole
+    // module body to the direct emitter with it.
     IrValue Argument(int index) =>
       cmd.Arguments.Count > index && cmd.Arguments[index] is { } e
-        ? this.Coerce(this.LowerExpr(e), this._model.TypeOf(e), PbType.Long)
-        : new IrConstantInt(IrType.I32, 0);
+        ? this.Coerce(this.LowerExpr(e), this._model.TypeOf(e), PbType.Integer)
+        : new IrConstantInt(IrType.I16, 0);
     if (cmd.Arguments.Count > 2)
       throw new IrLoweringException("LOCATE with a cursor-shape argument");
-    this._b.Call(IrType.Void, this.RuntimeFn("rt_locate", IrType.Void, IrType.I32, IrType.I32),
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_locate", IrType.Void, IrType.I16, IrType.I16),
       Argument(0), Argument(1));
   }
 
