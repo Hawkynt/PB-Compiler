@@ -155,6 +155,41 @@ public sealed class IntervalRangeTests {
     Assert.That(At(points, model.MainBody[0], "x"), Is.Null);
   }
 
+  /// <summary>
+  /// A loop's own program point is the widened invariant, never the pre-loop environment - and that
+  /// has to hold for a loop the analysis CANNOT model as well as for one it can. The emitter reads
+  /// this point while emitting the loop's pre-test, which runs again on every back edge, so an entry
+  /// snapshot there is a statement about the first iteration presented as one about all of them.
+  ///
+  /// <para>
+  /// <c>i% = 0 : WHILE i% &lt; 3 : i% = i% + 1 : Note i% : WEND</c> is the shape: the call makes the
+  /// body unanalyzable, so <c>TransferLoop</c> - the only writer of a loop's point - never ran, and
+  /// the snapshot taken in front of it survived saying <c>i = [0,0]</c>. O16's
+  /// <c>TryEmitRangeComparison</c> then folded <c>i% &lt; 3</c> to a constant TRUE (<c>MOV AX,-1</c>)
+  /// and the program never terminated. No entry at all is the honest answer; absence means Top.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void ProgramPoints_GivenALoopTheAnalysisRefuses_ThenItsOwnPointIsNotThePreLoopEnvironment() {
+    var (_, model) = BindUnit("DECLARE SUB Note(BYVAL v%)\ni% = 0\nWHILE i% < 3\ni% = i% + 1\nNote i%\nWEND\nEND\nSUB Note(BYVAL v%)\nEND SUB");
+    var points = IntervalRangeAnalysis.AnalyzeProgramPoints(model.MainBody, model);
+    var loop = model.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.DoLoopStmt>().Single();
+
+    Assert.That(At(points, loop, "i"), Is.Null,
+      "the loop test re-runs with loop-carried values, so the pre-loop range must not be readable here");
+  }
+
+  /// <summary>The twin: a loop the analysis DOES model still records the widened invariant, so precision is not the price.</summary>
+  [Test]
+  public void ProgramPoints_GivenALoopTheAnalysisModels_ThenItsOwnPointIsTheWidenedInvariant() {
+    var (_, model) = BindUnit("i% = 0\nWHILE i% < 3\ni% = i% + 1\nWEND\nEND");
+    var points = IntervalRangeAnalysis.AnalyzeProgramPoints(model.MainBody, model);
+    var loop = model.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.DoLoopStmt>().Single();
+
+    Assert.That(At(points, loop, "i"), Is.Not.EqualTo(Interval.Of(0)),
+      "an analyzable loop widens its counter rather than reporting the value it entered with");
+  }
+
   [Test]
   public void Refine_GivenGuardedComparison_ThenArmRangeTightens() {
     // x% is [0,100] after the first IF; inside `IF x% < 50 THEN` it is refined to [0,49]
