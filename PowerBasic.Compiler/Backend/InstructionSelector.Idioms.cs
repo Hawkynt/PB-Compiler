@@ -334,7 +334,7 @@ public sealed partial class InstructionSelector {
 
     this.EmitX87(MOpcode.Fld, lhs, reads: true);
     this.EmitX87(opcode, cell, reads: true);
-    this.EmitX87(MOpcode.Fstp, this.FloatCell(bin), reads: false);
+    this.PopRounded(bin.Type, this.FloatCell(bin));    // the same width rule the staged form obeys
     return true;
   }
 

@@ -1094,6 +1094,93 @@ is 0..255, so the signed 16-bit renderer is right for it), and STR$ of a WORD no
 the SINGLE divergence never reached stdout, only the bytes written, which is the shape a stdout-only
 comparison cannot see.
 
+### Where a float gets rounded - six more, and one of them was the interpreter - FIXED
+
+The narrowing defect above turned out to be one instance of a question the whole float domain keeps
+asking, and the sweep that followed it asked the question in 249 programs (plus 148 across every
+advertised dialect), over operands taken from a two-call-site `NOINLINE` function so nothing folds,
+with the optimizer both on and off and under `$CPU 8086` and `80386`. Every answer below is genuine
+PBC 3.50's, taken with `scripts/diff-one.sh`, and **three of the six turned out to be the direct
+emitter's**:
+
+| | PBC 3.50 | direct was | routed was |
+|---|---|---|---|
+| `STR$(ex)` (EXT = 5/3) | `1.66666666666667` | correct | `1.666667` |
+| `IF sg = 1 / 3` (sg = the SINGLE 1/3) | `ne` | correct | `eq` |
+| `FOR x! = 0 TO 1 STEP .1`, summed | `4.50000026077032` | correct | `4.50000006705523` |
+| `PRINT %B` (`%B = 1 / 3`) | `0` | correct | `.333333333333333` |
+| `CDBL(CSNG(2 / 3))` | `.666666686534882` | `.666666666666666` | correct |
+| `db = F!(...)` (a SINGLE FUNCTION) | `1.66666662693024` | `1.66666666666667` **optimized** | correct |
+
+* **`STR$` named the DOUBLE by its byte size** and let everything else fall to the SINGLE formatter,
+  which puts the two WIDER formats on the wrong side of the test - an EXT and a BCD are ten bytes
+  each. The direct emitter's dispatch names ByteSize 4 and falls everything else to the 64-bit
+  renderer, which is the same rule stated so that adding a width cannot break it.
+
+* **A float comparison was run at the narrower operand's declared width.** `CommonCompareType` took
+  the max of the two, so a SINGLE against a SINGLE-typed constant expression narrowed the CONSTANT
+  too, whereupon the two were bit-identical. PB rounds a float when it STORES it and not before, so
+  a comparison happens at the x87's own width; the common type is EXT, and widening costs nothing
+  where the operands already agree. Note the second row is decided by WIDTH and not by folding:
+  `IF sg = .3333333` is `ne` as well, and a literal is not a quotient.
+
+* **`fptrunc` was only half the narrowing rule.** A float instruction the IR types f32 or f64 is not
+  an intermediate PB left wide - the lowering types every ordinary PB float expression `x86_fp80`
+  and says where a rounding happens by writing a NARROW type - so `fadd float` has to round too. A
+  SINGLE `FOR` counter is exactly that shape once `mem2reg` has taken its four-byte cell away. The
+  round trip is now one helper, `PopRounded`, shared by the resize, both float-binary forms, the
+  integer-to-float conversion and the math intrinsics - the last of which had been writing it out by
+  hand, which is how the others got missed. C and LLVM round an `fadd float` by definition, so this
+  one is the x86-16 selector's alone.
+
+* **A `%` equate holds an INTEGER.** PBC 3.50 rejects a fractional one outright
+  (`%A = 3.75` is `Error 427: Integer constant expected`) and prints `0` for the `%B = 1 / 3` it does
+  accept. The lowering carried the folder's floating value where the direct emitter has always read
+  `AsInteger`. Being a superset of the real compiler is fine; being two different supersets in one
+  compiler is not.
+
+* **`CSNG`/`CDBL`/`CEXT` rounded nothing** in the direct emitter: `Coerce` answers "both sides are
+  floats" and returns. It hid behind the formatter - `PRINT CSNG(x)` is seven digits whatever the
+  cell holds - so the value has to be widened again before anything says so.
+
+* **O0102's return-value forwarding admitted float results** on the grounds that the epilogue's
+  `FLD` would have put the value in ST(0) anyway. That reload comes from the result variable's own
+  four- or eight-byte cell, so it is not a move: it is the rounding that makes a SINGLE FUNCTION
+  answer a SINGLE. This is the direct emitter's and moves optimized bytes only - the unoptimized
+  epilogue was right throughout.
+
+**And the sixth was `Cpu8086`, which is the reason it is worth writing down.** `db = GD#(1E-300#) :
+PRINT 1 / db` printed `1E+300` directly and `0` routed. Neither back end was wrong:
+`WriteExtended` scaled by multiplying with `Math.Pow(2, 63 - exponent)`, and 1E-300 has a binary
+exponent of -997, so the POWER overflowed to infinity long before the product would have and the
+stored mantissa was zero (`ReadExtended` had the mirror fault). Every extended value below about
+1E-289 was therefore ZERO to the oracle - **and only on the path that parks intermediates in ten-byte
+cells**, which is what made an interpreter defect present as a routed miscompile of exactly the
+tiny-magnitude cases. Both now scale with `Math.ScaleB`. When a divergence is confined to one
+magnitude range, suspect the instrument.
+
+### Float facts the sweep settled that NEITHER path gets right
+
+Recorded rather than fixed: each is a fidelity gap against PBC 3.50 that the direct and routed paths
+share, so none of them is a retirement blocker - but none of them is closed either.
+
+* **`MOD` on reals answers 0.** Genuine PBC 3.50 gives the real remainder at every width -
+  `7.5## MOD 2##` is `1.5`, `-7.5 MOD 2` is `-1.5` - where both of our paths convert the operands to
+  integers first and answer `0`. This is a binder/lowering question, not a back-end one.
+* **A SINGLE-typed expression sometimes prints through the DOUBLE formatter.** `PRINT sg * 3` with
+  `sg = 5/3` is ` 5 ` on the oracle and `4.99999988079071` on both of ours; `PRINT sg + sg` is right
+  on all three. The VALUE agrees (`d2 = sg * 3` matches) - it is the result TYPE of SINGLE ⊗ INTEGER
+  that decides the formatter, and `Binder.ArithmeticResultType` says DOUBLE where PB says SINGLE.
+  `MAX`/`MIN` over two SINGLE-typed arguments has the mirror fault in the other direction (ours
+  prints seven digits, the oracle fifteen).
+* **The fifteenth digit of a DOUBLE below 1.** `PRINT 2 / 3` through runtime operands is
+  `.666666666666667` on the oracle and `.666666666666666` on both of ours, while `5 / 3` agrees at
+  `1.66666666666667`. Same emulated FPU on both sides, so it is the renderer rather than the value.
+
+The declines the sweep found are coverage rather than correctness, and all are float-shaped: a
+BYREF SINGLE or DOUBLE parameter, an EXT parameter or FUNCTION result, unary minus / `ABS` / `SGN`
+over a float, and `MIN`/`MAX`/`ROUND` of one.
+
 ### Three things the routed path gets RIGHT and the direct emitter does not
 
 All three were found by a differential sweep and all three are recorded here rather than fixed: the

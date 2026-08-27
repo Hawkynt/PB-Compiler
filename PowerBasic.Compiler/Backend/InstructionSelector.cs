@@ -2857,14 +2857,7 @@ public sealed partial class InstructionSelector {
     // the direct emitter writes right after the FYL2X. Keeping all eighty bits looks more accurate
     // and is less faithful: LOG(2.718281828459045#) is .9999999999999999 at eighty bits and 1 once
     // rounded to a double, and genuine QuickBASIC prints 1. Four battery programs turned on it.
-    if (call.Type.Bits < 80) {
-      var narrow = this._function.StackSlots.Count;
-      this._function.StackSlots.Add(call.Type.Bits / 8);
-      var rounded = new MOperand.StackSlot(narrow, RegSize(call.Type));
-      this.EmitX87(MOpcode.Fstp, rounded, reads: false);
-      this.EmitX87(MOpcode.Fld, rounded, reads: true);
-    }
-    this.EmitX87(MOpcode.Fstp, this.FloatCell(call), reads: false);
+    this.PopRounded(call.Type, this.FloatCell(call));
     return true;
   }
 
@@ -3272,7 +3265,9 @@ public sealed partial class InstructionSelector {
     // The op itself touches neither memory nor registers; what it touches is the x87 stack, which the
     // scheduler orders by opcode (MOpcodes.UsesX87) because no effect descriptor can name it.
     this._current.Instructions.Add(new MInstr(opcode, [], MInstrEffect.None));
-    this.EmitX87(MOpcode.Fstp, this.FloatCell(bin), reads: false);
+    // ...and the result goes back at the width the IR gave it, which for PB's own expressions is the
+    // x87's own and costs nothing. See PopRounded for why a NARROWER one is not an intermediate.
+    this.PopRounded(bin.Type, this.FloatCell(bin));
     return true;
   }
 
@@ -3433,7 +3428,9 @@ public sealed partial class InstructionSelector {
       _ => MRegSize.Word,
     };
     this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(slot, read), reads: true);
-    this.EmitX87(MOpcode.Fstp, this.FloatCell(cast), reads: false);
+    // A conversion INTO a narrow float rounds like any other narrow float result: a LONG above 2^24
+    // has no exact SINGLE, and sitofp says which one it becomes (see PopRounded).
+    this.PopRounded(cast.Type, this.FloatCell(cast));
     return true;
   }
 
@@ -3553,14 +3550,43 @@ public sealed partial class InstructionSelector {
     if (!this.TryFloatOperand(cast.Value, out var source))
       return false;
     this.EmitX87(MOpcode.Fld, source, reads: true);
-    if (cast.Op == IrCastOp.FPTrunc && RegSize(cast.Type) is var narrow and (MRegSize.Dword or MRegSize.Qword)) {
+    this.PopRounded(cast.Type, this.FloatCell(cast));
+    return true;
+  }
+
+  /// <summary>
+  /// Pops the x87 top into <paramref name="destination"/> at the width <paramref name="type"/> names,
+  /// which for anything narrower than the register's own eighty bits means a round trip through a cell
+  /// of that width first - the <c>FSTP m32 / FLD m32</c> pair the direct emitter writes when a value
+  /// is stored into a SINGLE variable.
+  ///
+  /// <para>
+  /// This is the one place the ten-byte cell doctrine has to be read carefully.
+  /// <see cref="FloatCell"/> parks every value at the x87's own width because PB computes an
+  /// expression at the register's width and lets the declared type pick only the FORMATTER - which is
+  /// why <c>H? / 3</c> prints 66.66667 and not 66.66666. That is a statement about the IR the lowering
+  /// writes, and the lowering says it by TYPING those intermediates <c>x86_fp80</c>: every ordinary PB
+  /// float expression comes through as f80 arithmetic with an <c>fptrunc</c> at the store. So a value
+  /// the IR types f32 or f64 is not an intermediate PB left wide - it is a place the front end (or a
+  /// middle-end pass) has already decided a rounding happens, and dropping it is a miscompile in the
+  /// other direction.
+  /// </para>
+  /// <para>
+  /// Both spellings of that decision were being ignored. <c>fptrunc</c> was one, and a float
+  /// arithmetic instruction typed narrower than f80 is the other: <c>FOR x! = 0 TO 1 STEP .1</c>
+  /// increments through <c>fadd float</c> - the counter is a SINGLE and <c>mem2reg</c> has taken its
+  /// four-byte cell away - and computing that at eighty bits accumulated a different sum, 4.5000000670
+  /// against the 4.5000002607 genuine PBC 3.50 and the direct emitter both answer.
+  /// </para>
+  /// </summary>
+  private void PopRounded(IrType type, MOperand destination) {
+    if (RegSize(type) is var narrow and (MRegSize.Dword or MRegSize.Qword)) {
       var slot = this._function.StackSlots.Count;
       this._function.StackSlots.Add(narrow == MRegSize.Dword ? 4 : 8);
       this.EmitX87(MOpcode.Fstp, new MOperand.StackSlot(slot, narrow), reads: false);
       this.EmitX87(MOpcode.Fld, new MOperand.StackSlot(slot, narrow), reads: true);
     }
-    this.EmitX87(MOpcode.Fstp, this.FloatCell(cast), reads: false);
-    return true;
+    this.EmitX87(MOpcode.Fstp, destination, reads: false);
   }
 
   private void StoreWord(MOperand cell, MOperand value)

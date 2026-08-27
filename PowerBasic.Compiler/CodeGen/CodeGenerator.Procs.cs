@@ -303,6 +303,14 @@ public sealed partial class CodeGenerator {
       this._currentStatement = last;                                  // keep interval facts at the right point
       this.EmitExpression(last.Value);
       this.Coerce(model.TypeOf(last.Value), resultVar!.Type, last.Value);   // now in AX / DX:AX, or ST(0) for a float
+      // ...and for a float the skipped round trip was not only a move. The result variable's cell is
+      // four or eight bytes wide, so storing into it and loading it back ROUNDS - which is the whole
+      // of what makes a SINGLE FUNCTION answer a SINGLE. Leaving ST(0) alone returned the eighty-bit
+      // value instead: FUNCTION F! (v%) : F! = v% / 3 handed back 1.66666666666667 under --optimize
+      // where the unoptimized build, the routed back end and genuine PBC 3.50 all say
+      // 1.66666662693024. The scratch round trip costs the same two instructions the slot did and
+      // still skips the frame slot, so the optimization keeps what it was for.
+      this.NarrowFpuTo(resultVar.Type);
     } else
       foreach (var statement in proc.Body!)
         this.EmitStatement(statement);
