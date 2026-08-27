@@ -34,14 +34,28 @@ public sealed class RoutedUnitTests {
     FUNCTION Poly%(BYVAL x%)
       Poly% = x% * x% + 3 * x% - 2
     END FUNCTION
+
+    SUB Bump(x%)
+      x% = x% + 7
+    END SUB
+
+    FUNCTION Greet$(name$)
+      Greet$ = "HI " + name$ + "!"
+    END FUNCTION
     """;
 
   private const string _main = """
     DECLARE FUNCTION AddInts%(BYVAL a%, BYVAL b%)
     DECLARE FUNCTION Poly%(BYVAL x%)
+    DECLARE SUB Bump(x%)
+    DECLARE FUNCTION Greet$(name$)
 
     PRINT AddInts%(2, 3)
     PRINT Poly%(5)
+    n% = 35
+    CALL Bump(n%)
+    PRINT n%
+    PRINT Greet$("UNIT")
     END
     """;
 
@@ -71,12 +85,20 @@ public sealed class RoutedUnitTests {
     return PbuFile.Read(stream);
   }
 
-  private static string LinkAndRun(PbuFile unit) {
-    var generator = new CodeGenerator(Bind(_main, "MAIN.BAS")) { Optimize = true };
-    var exe = generator.EmitExecutable([unit], []);
+  private static string LinkAndRun(IReadOnlyList<PbuFile> units, IReadOnlyList<PblFile> libraries,
+      bool routed, bool optimize, out IReadOnlyList<string> routedNames) {
+    var generator = new CodeGenerator(Bind(_main, "MAIN.BAS")) {
+      Optimize = optimize,
+      UseExperimentalBackend = routed,
+    };
+    var exe = generator.EmitExecutable(units, libraries);
     Assert.That(generator.Errors, Is.Empty, "link: " + string.Join("; ", generator.Errors));
+    routedNames = generator.BackendRoutedNames.ToList();
     return Cpu8086.Run(exe).Output.Trim().Replace("\r\n", "|");
   }
+
+  private static string LinkAndRun(PbuFile unit)
+    => LinkAndRun([unit], [], routed: false, optimize: true, out _);
 
   [Test]
   public void EmitUnit_GivenTheBackEnd_ThenItRoutesTheUnitsProcedures() {
@@ -94,7 +116,27 @@ public sealed class RoutedUnitTests {
     Assert.That(names, Is.Not.Empty, "nothing routed, so this proves nothing");
     Assert.That(routed, Is.EqualTo(plain));
     // PB pads a positive number with a leading sign space and a trailing one
-    Assert.That(routed, Is.EqualTo("5 | 38"));
+    Assert.That(routed, Is.EqualTo("5 | 38 | 42 |HI UNIT!"));
+  }
+
+  [TestCase(false, false)]
+  [TestCase(false, true)]
+  [TestCase(true, false)]
+  [TestCase(true, true)]
+  public void EmitExecutable_GivenLinkedDefaultAbiProcedures_WhenBackEndEnabled_ThenMainRoutesAndMatchesDirect(
+      bool inLibrary, bool optimize) {
+    var unit = CompileUnit(routed: true, out _);
+    var units = inLibrary ? Array.Empty<PbuFile>() : [unit];
+    IReadOnlyList<PblFile> libraries = inLibrary ? [new PblFile { Units = { unit } }] : [];
+    var direct = LinkAndRun(units, libraries, routed: false, optimize, out _);
+    var routed = LinkAndRun(units, libraries, routed: true, optimize, out var routedNames);
+
+    Assert.Multiple(() => {
+      Assert.That(routedNames, Does.Contain("main"),
+        "a linked BASIC/PASCAL declaration has the same stack ABI as the routed call site");
+      Assert.That(routed, Is.EqualTo(direct));
+      Assert.That(routed, Is.EqualTo("5 | 38 | 42 |HI UNIT!"));
+    });
   }
 
   /// <summary>Every procedure stays exported: routing must not change what the unit offers.</summary>

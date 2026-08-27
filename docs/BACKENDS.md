@@ -205,9 +205,9 @@ implementation of its rule (`CodeGenerator.BackendDeclines`):
 | | |
 |---|---|
 | programs reaching the IR at all | **161 / 165** - the other four the FRONT end rejects |
-| functions ROUTED, `--optimize` | **262 / 263** |
-| functions ROUTED, `--no-optimize` | **258 / 263** |
-| module bodies owned | **160 / 161** |
+| functions ROUTED, `--optimize` | **263 / 263** |
+| functions ROUTED, `--no-optimize` | **259 / 263** |
+| module bodies owned | **161 / 161** |
 | ...of which the SELECTOR would take, if offered | 263 / 263, 161 / 161 |
 
 The denominator is the SOURCE - every procedure with a body plus one module body per program - not
@@ -215,11 +215,14 @@ the IR function count. The two used to differ when a procedure body failed lower
 from the IR entirely. They are equal now: no corpus procedure body is refused, while
 `IrModule.ProcedureLoweringDeclines` and the pinned empty census set keep that fact observable.
 
-Ranked by what each class costs, over the corpus:
+The optimized production gap is empty. The unoptimized frontier is measured separately rather than
+hidden behind the optimized total:
 
 | class | funcs | programs | outcome |
 |---|---|---|---|
-| a callee with no link symbol (EXTERNAL) | 1 | 1 | routing |
+| phi edge-copy cycle needs a temporary | 2 | 2 | selection |
+| `FPToSI f80 -> i64` | 1 | 1 | selection |
+| `select` with an `f32` result | 1 | 1 | selection |
 
 Near BYREF INTEGER/WORD/LONG/DWORD/SINGLE/DOUBLE parameters are no longer in that table: all 12 corpus
 procedures now route through one-word near pointers, taking production from 245/263 to 257/263
@@ -231,9 +234,14 @@ Dynamic strings now close the next three corpus rows. A BYVAL argument hands its
 to the callee; BYREF hands the near address of the caller's handle cell; and a function returns an
 owned handle in AX. The IR releases BYVAL parameters and local dynamic strings on every return,
 releases copy-in temporaries after their call, and releases a string result discarded in statement
-position. That moves production to 262/263 optimized and 258/263 unoptimized. The remaining 262/258
-gap is how much of the optimized figure is on loan from inlining, which is why the routing gate also
-compiles unoptimized.
+position. At that stage production reached 262/263 optimized and 258/263 unoptimized. The routing gate
+also compiles unoptimized so an optimizer-erased backend limitation remains visible.
+
+Linked BASIC/PASCAL declarations close the final optimized row. The census now builds the corpus-local
+PBU named by `$LINK`, so `LINKDEMO` is measured with the same `MATHUNIT.PBU` input the driver supplies.
+Its numeric, BYREF, nested-call and dynamic-string calls use the routed stack ABI in both optimizer
+modes, through either a PBU or a PBL. External CDECL/STDCALL/FASTCALL/WATCALL declarations still
+decline per callee before selection; merely having a link input no longer rejects the entire module.
 
 Dynamic-string `SWAP` removes the former invisible lowering row. The IR loads the raw handle from
 each owner cell and crosses the stores; it neither borrows a duplicate nor frees a handle because the
@@ -251,8 +259,8 @@ would have noticed stopping or starting. Each compiles to an executable byte-ide
 unrouted build, because the module body is stranded by the very call the filter refused: one
 construct silently costs a whole program's routing today, and a compile error tomorrow.
 
-Every SELECTION and ALLOCATION decline histogram is empty, and that remains worth having - it says the
-selector refuses nothing the filter offers it. It is the filter that is the frontier.
+The optimized SELECTION and ALLOCATION decline histograms are empty, and that remains worth having.
+The separately reported unoptimized histogram names the four optimizer-dependent selector gaps above.
 
 The last one to go was `DIM ... AT` with a non-default array CLASS, which this document called a
 deliberate decline on the grounds that `HUGE` steps the segment by `byteOffset >> 4` and `VIRTUAL`

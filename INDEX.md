@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-08-27 08:38 UTC by index_codebase.py.
+Generated 2026-08-27 12:34 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-743 files, 8063 symbols.
+743 files, 8067 symbols.
 
 ## PowerBasic.Compiler.Tests/Asm/
 
@@ -195,20 +195,21 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `Show(string text, int from, int at)` — PowerBasic.Compiler.Tests/Backend/BackendCorpusDifferentialTests.cs:238
 - method `OneLine(string text, int limit)` — PowerBasic.Compiler.Tests/Backend/BackendCorpusDifferentialTests.cs:249
 
-### BackendCoverageTests.cs  `C#, 844 lines`
-- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:8
-- class `BackendCoverageTests` — How much of the real corpus the in-house x86-16 back end can actually compile, and - for — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:43
-- record `Census` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:48
-- method `new(0, 0, 0, mainBodies, declines, selectionCases, lowered, 0, 0, loweri…` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:96
-- method `if(model.Errors.Count > 0)` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:110
-- method `if(routedNames.Contains(declinedName, StringComparer.OrdinalIgnoreCase))` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:164
-- method `foreach(var f in module.Functions)` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:190
-- method `foreach` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:197
-- method `if(InstructionSelector.TrySelect(fn, out var reason) is { } machine)` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:202
-- method `if(LinearScanAllocator.Allocate(machine, out var noRegisters) is not nu…` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:208
-- method `if(fn.Name.Equals("main", StringComparison.OrdinalIgnoreCase))` — a module body that selects AND allocates is a whole program the back end can own — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:211
-- method `if(!fn.Name.Equals("main", StringComparison.OrdinalIgnoreCase))` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:222
-- method `new` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:227
+### BackendCoverageTests.cs  `C#, 898 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:9
+- class `BackendCoverageTests` — How much of the real corpus the in-house x86-16 back end can actually compile, and - for — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:44
+- record `Census` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:84
+- method `new(0, 0, 0, mainBodies, declines, selectionCases, lowered, 0, 0, loweri…` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:136
+- method `if(model.Errors.Count > 0)` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:151
+- method `if(routedNames.Contains(declinedName, StringComparer.OrdinalIgnoreCase))` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:206
+- method `foreach(var (declinedName, declinedBecause) in unoptimized.BackendDeclines)` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:228
+- method `foreach(var f in module.Functions)` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:242
+- method `foreach` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:249
+- method `if(InstructionSelector.TrySelect(fn, out var reason) is { } machine)` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:254
+- method `if(LinearScanAllocator.Allocate(machine, out var noRegisters) is not nu…` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:260
+- method `if(fn.Name.Equals("main", StringComparison.OrdinalIgnoreCase))` — a module body that selects AND allocates is a whole program the back end can own — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:263
+- method `if(!fn.Name.Equals("main", StringComparison.OrdinalIgnoreCase))` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:274
+- method `new` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:279
 
 ### BackendCpuTargetTests.cs  `C#, 343 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendCpuTargetTests.cs:8
@@ -1030,12 +1031,14 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `LEN(r$)` — PowerBasic.Compiler.Tests/CodeGen/MultiConcatTests.cs:82
 - field `source` — output-equivalence: the optimized (pb36) and unoptimized (pb35) builds produce identical text. — PowerBasic.Compiler.Tests/CodeGen/MultiConcatTests.cs:146
 
-### OmfLinkTests.cs  `C#, 60 lines`
+### OmfLinkTests.cs  `C#, 82 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:7
 - class `OmfLinkTests` — End-to-end external OMF object linking (docs/LINKER.md, M1): a BASIC program — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:17
 - method `Record(0x80, Str("ADDONE"))` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:34
 - field `source` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:46
 - method `addone(41)` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:48
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:62
+- method `addone(41)` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:64
 
 ### OptDeadGlobalsTests.cs  `C#, 267 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/OptDeadGlobalsTests.cs:5
@@ -1495,11 +1498,12 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `ROUND(n)` — PowerBasic.Compiler.Tests/CodeGen/RoundIntrinsicTests.cs:75
 - method `ROUND(2.718281828, p)` — PowerBasic.Compiler.Tests/CodeGen/RoundIntrinsicTests.cs:84
 
-### RoutedUnitTests.cs  `C#, 113 lines`
+### RoutedUnitTests.cs  `C#, 155 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/RoutedUnitTests.cs:6
 - class `RoutedUnitTests` — A $COMPILE UNIT compiled through the x86-16 back end, linked, and run. — PowerBasic.Compiler.Tests/CodeGen/RoutedUnitTests.cs:23
-- class `MemorySource` — """; — PowerBasic.Compiler.Tests/CodeGen/RoutedUnitTests.cs:47
-- method `TryReadSource(string name, string? includedFrom, out string sourceText, out string…` — PowerBasic.Compiler.Tests/CodeGen/RoutedUnitTests.cs:49
+- method `Bump` — PowerBasic.Compiler.Tests/CodeGen/RoutedUnitTests.cs:37
+- class `MemorySource` — """; — PowerBasic.Compiler.Tests/CodeGen/RoutedUnitTests.cs:61
+- method `TryReadSource(string name, string? includedFrom, out string sourceText, out string…` — PowerBasic.Compiler.Tests/CodeGen/RoutedUnitTests.cs:63
 
 ### ScalarLivenessTests.cs  `C#, 91 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/ScalarLivenessTests.cs:5
@@ -1596,20 +1600,20 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(exe[i] == 0x1D && exe[i + 1] == 0x4B)` — PowerBasic.Compiler.Tests/CodeGen/TryCatchTests.cs:366
 - field `source` — Arms an ON ERROR handler, runs a clean TRY, then faults after END TRY: — PowerBasic.Compiler.Tests/CodeGen/TryCatchTests.cs:384
 
-### UnitLinkTests.cs  `C#, 244 lines`
+### UnitLinkTests.cs  `C#, 250 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:5
 - class `UnitLinkTests` — $COMPILE UNIT / $LINK end to end: unit emission (exports, imports, fixups, — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:13
 - method `Bump` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:23
 - class `MemorySourceProvider` — region helpers — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:48
 - method `TryReadSource(string name, string? includedFrom, out string sourceText, out string…` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:50
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:118
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:135
-- method `Dummy` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:138
-- field `mismatched` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:172
-- field `callsMissing` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:185
-- method `Missing(x%)` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:186
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:199
-- method `Missing(x%)` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:200
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:119
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:136
+- method `Dummy` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:139
+- field `mismatched` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:173
+- field `callsMissing` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:186
+- method `Missing(x%)` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:187
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:200
+- method `Missing(x%)` — PowerBasic.Compiler.Tests/CodeGen/UnitLinkTests.cs:201
 
 ### XmsEmsArrayTests.cs  `C#, 143 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/XmsEmsArrayTests.cs:4
@@ -3424,18 +3428,18 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(d > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:704
 - method `if(d < bounds.Count - 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:708
 
-### CodeGenerator.Backend.cs  `C#, 681 lines`
+### CodeGenerator.Backend.cs  `C#, 698 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:7
 - class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:9
-- method `if(!f.IsDeclaration)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:187
-- method `if(!f.IsDeclaration && SwitchFormation.Run(f) > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:206
-- method `if(CalleeNames(candidates[i].Fn) .FirstOrDefault(name => !routable.Cont…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:272
-- method `if(this._backendProcs.ContainsKey(proc) && CalleeNames(fn).FirstOrDefau…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:296
-- method `ContainsDataRead(i.Then)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:445
-- method `ContainsDataRead(f.Body)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:448
-- method `ContainsDataRead(d.Body)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:450
-- method `foreach(var symbol in procedure.Variables.Values)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:522
-- method `if(symbol.Storage == VariableStorage.Static && IrLowering.StaticGlobalN…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:530
+- method `if(!f.IsDeclaration)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:197
+- method `if(!f.IsDeclaration && SwitchFormation.Run(f) > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:216
+- method `if(CalleeNames(candidates[i].Fn) .FirstOrDefault(name => !routable.Cont…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:282
+- method `if(this._backendProcs.ContainsKey(proc) && CalleeNames(fn).FirstOrDefau…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:306
+- method `ContainsDataRead(i.Then)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:453
+- method `ContainsDataRead(f.Body)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:456
+- method `ContainsDataRead(d.Body)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:458
+- method `foreach(var symbol in procedure.Variables.Values)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:530
+- method `if(symbol.Storage == VariableStorage.Static && IrLowering.StaticGlobalN…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:538
 
 ### CodeGenerator.Data.cs  `C#, 75 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Data.cs:3

@@ -56,4 +56,26 @@ public sealed class OmfLinkTests {
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     Assert.That(DosBoxRunner.Normalize(DosBoxRunner.Run(exe)), Is.EqualTo(" 42\n"));
   }
+
+  [Test]
+  public void Route_GivenCdeclObjectLinked_WhenBackEndEnabled_ThenMainDeclinesWithTheConventionReason() {
+    const string source = """
+      DECLARE FUNCTION addone CDECL ALIAS "_addone" (BYVAL x AS LONG) AS LONG
+      PRINT addone(41)
+      END
+      """;
+    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
+    var model = Binder.Bind(unit, Dialect.Pb35);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model) { UseExperimentalBackend = true };
+
+    generator.EmitExecutable([AddOneUnit()], []);
+
+    Assert.Multiple(() => {
+      Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+      Assert.That(generator.BackendRoutedNames, Does.Not.Contain("main"));
+      Assert.That(generator.BackendDeclines.Any(d => d.Name == "main" && d.Reason.Contains("Cdecl")),
+        Is.True, string.Join("; ", generator.BackendDeclines));
+    });
+  }
 }

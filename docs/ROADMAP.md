@@ -167,9 +167,9 @@ battery, it currently reaches:
 | | |
 |---|---|
 | programs reaching the IR at all | **161 / 165** — every one the FRONT end accepts; the other 4 it rejects |
-| **functions ROUTED in production, `--optimize`** | **262 / 263** |
-| **functions ROUTED in production, `--no-optimize`** | **258 / 263** |
-| **whole module bodies the back end owns** | **160 / 161** |
+| **functions ROUTED in production, `--optimize`** | **263 / 263** |
+| **functions ROUTED in production, `--no-optimize`** | **259 / 263** |
+| **whole module bodies the back end owns** | **161 / 161** |
 | functions the SELECTOR would take, if offered one | 263 / 263 |
 | module bodies the selector would take | 161 / 161 |
 
@@ -178,8 +178,11 @@ The last two rows are what this table used to report as coverage, and they are n
 record values, an unsupported BYREF pointee, a non-default calling convention, or error handling in
 the body — before the selector is asked, so a procedure it skips lands in neither half of the ratio
 and 263/263 means "of the functions we attempted, how many succeeded". The routed rows come from the
-production code generator's own record of its own decision (`CodeGenerator.BackendDeclines`). Ranked,
-the only remaining corpus routing gap is one caller with no linkable EXTERNAL callee. Near BYREF
+production code generator's own record of its own decision (`CodeGenerator.BackendDeclines`). The
+optimized corpus gap is now empty: `LINKDEMO` routes when the census supplies the `MATHUNIT.PBU` named
+by its `$LINK`, while incompatible external conventions still decline individually. With optimization
+off, four selector gaps remain: two phi edge-copy cycles, one `FPToSI f80 -> i64`, and one `f32`
+`select`. Near BYREF
 INTEGER/WORD/LONG/DWORD/SINGLE/DOUBLE
 parameters now route through one-word pointers and are pinned by mutation, aliasing, recursion,
 optimizer-mode execution, and the SPEED caller/callee fixpoint. Whole classes the corpus never
