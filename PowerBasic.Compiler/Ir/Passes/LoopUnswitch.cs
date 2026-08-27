@@ -113,6 +113,24 @@ public static class LoopUnswitch {
           if (body.Contains(successor))
             return null;
 
+    // ...and the header's false edge must be the region's ONLY way to the exit. The doc comment above
+    // says "one exit" and this is where that is now checked rather than assumed: the traversal skips a
+    // successor that IS the exit (line 73), so a body block branching straight there - which is what
+    // `EXIT LOOP` / `EXIT DO` is - kept the loop matchable while giving the exit a second predecessor
+    // inside the region.
+    //
+    // Both halves of the rewrite are built on the single edge. The LCSSA phis appended below take
+    // exactly two incomings, one per cloned HEADER, so a value that also arrives over the break edge
+    // has no operand for it; and the break's own incoming in any phi the exit already carried still
+    // names a block the clone-and-delete removes, leaving a phi with no incomings at all. That is
+    // what `WHILE i < 10 : i = i + 1 : IF n > 5 THEN EXIT LOOP : WEND : PRINT i` produced - `i` read
+    // as 0 for every input, and IR the verifier rejects.
+    foreach (var block in body)
+      if (block.Terminator is { } leaving)
+        foreach (var successor in leaving.Successors)
+          if (ReferenceEquals(successor, exit))
+            return null;
+
     return new(header, body, latch, preheader, exit, inner, inner.Condition);
   }
 

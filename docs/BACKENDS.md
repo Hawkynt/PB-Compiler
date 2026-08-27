@@ -717,6 +717,25 @@ The count is the measure of the gate; the composition is what says which work is
   in `DX:AX` - the same unprotected window, the row term vanishing from every address. Two very
   different-looking programs, one cause, which is what a missing half of a register model looks like.
 
+* **A loop the program LEAVES is not a loop the loop passes may treat as closed - two of them did, and
+  both cost a wrong answer under `$OPTIMIZE SPEED`.** `EXIT SUB` and `EXIT LOOP` written inside a loop
+  are ordinary BASIC and absent from the corpus's routed half, which is the whole reason this stood.
+
+  `CountedLoop.CollectRegion` walks SUCCESSORS, so a block whose terminator is a `ret` joins the region
+  without objection - it has none to walk - and a block branching straight to the loop's exit is
+  skipped rather than refused. Both leave the region by a door the region's consumers do not know
+  about, and each consumer broke on its own terms. `DeadLoopElimination` rewires the preheader to the
+  exit and deletes the region: with an `EXIT SUB` inside, the early `ret` went with it, and
+  `SUB Walk(BYVAL n%)` that had to leave on the first iteration ran on to its final `PRINT`.
+  `LoopUnswitch` clones the region twice and appends an LCSSA phi in the exit with exactly two
+  incomings, one per cloned header: with an `EXIT LOOP` inside, the break's own incoming still named a
+  block the clone-and-delete had removed, so the exit carried **a phi with no incomings at all** -
+  `PRINT i` after the loop answered 0 for every input, on IR `IrVerifier` rejects.
+
+  Both now state the rule the doc comments already claimed: control may leave the region only by the
+  header's exit edge. `DeadLoopEliminationTests` holds the two BASIC programs and runs them through
+  both back ends.
+
 
 The rest is structural rather than a list of missing passes. `CodeGen/`'s optimizations are
 interleaved with emission, which is the same property that makes byte-identity achievable; a function
