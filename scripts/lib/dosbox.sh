@@ -46,20 +46,36 @@ _DOSBOX_CANDIDATES=(
   "-u DISPLAY -u SDL_VIDEO_DRIVER -u SDL_VIDEODRIVER"         # no setting at all
 )
 
-# Whether the emulator gets past starting its video, probed with `-c exit`.
+# Whether the emulator RAN A PROGRAM, established by making it write a file.
 #
-# It is the ABORT that is being watched for, not the exit: an emulator that starts properly
-# may well sit there afterwards - dosbox-staging holds its window open when a command
-# finishes too quickly - so outliving the `timeout` counts as success. The bound is part of
-# the test, not a safety net around it.
+# The absence of an abort is not the same question, and answering that one instead has a
+# false positive that costs a whole battery. Under `xvfb-run`, dosbox-staging 0.82.2 neither
+# aborts nor complains about video - it starts, reaches gallium, and then hangs BEFORE
+# `[autoexec]` runs at all (measured 2026-08-27: 60s bound, nothing written). An abort-watching
+# probe scores that as working. Every program then sits until its tick limit and yields a
+# truncated or absent RESULT.TXT, which this harness reports as an output difference - a
+# fidelity divergence that is not one, in whichever dialect happened to be running.
 #
-# Captured, not piped into grep: the probe aborts on purpose when it fails, and under
-# `set -o pipefail` the pipeline reports that abort rather than the match - a successful
-# detection would read as no detection at all.
+# So the probe asks the emulator to DO something. A candidate passes only when the file its
+# autoexec writes comes back with the expected contents, which no amount of starting-and-hanging
+# can fake. Outliving the bound is still permitted - staging holds its window open when a command
+# finishes too quickly - but only if the file is there, so the timeout is no longer evidence of
+# anything on its own.
+#
+# The mount is the probe directory itself, so nothing is written inside the repo.
 _dosbox_starts_cleanly() { # $@ = env assignments to launch under
-  local probe
-  probe=$(timeout 15 env "$@" "$DOSBOX" -c exit </dev/null 2>&1 || true)
-  ! printf '%s' "$probe" | grep -qiE "ABORT|Could not initialize video"
+  local dir conf
+  dir=$(mktemp -d) || return 1
+  conf="$dir/probe.conf"
+  printf '[autoexec]\nmount c "%s"\nc:\necho headless > PROBE.TXT\nexit\n' "$dir" > "$conf"
+  # In a subshell with its stderr closed: a candidate that fails does so by SIGABRT, and the
+  # shell announces a killed job on ITS stderr, which redirecting the command alone leaves visible.
+  # The probe is expected to fail for most candidates, so that notice is noise on every run.
+  ( timeout 20 env "$@" "$DOSBOX" -conf "$conf" </dev/null >/dev/null 2>&1 || true ) 2>/dev/null
+  local ok=1
+  grep -qi headless "$dir/PROBE.TXT" 2>/dev/null && ok=0
+  rm -rf "$dir"
+  return $ok
 }
 
 # How to start the emulator here, established by trying the ways in cost order.
