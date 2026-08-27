@@ -1234,6 +1234,66 @@ repair belongs to `CodeGen/`, and in one case it moves emitted bytes on the fide
   lands, `BackendByRefRoutingTests` pins the honest decline in both optimizer modes; routing a near
   offset into DGROUP would raise coverage by producing the wrong program.
 
+### Re-sweeping the four domains that were swept with a BLIND oracle
+
+Three of the defects the correctness sweep found were in the **oracle**, and each was found after
+several domains had already been declared clean:
+
+1. the interpreter's disk answered an append where a position was asked for, so a `PUT` to the wrong
+   record produced identical file bytes;
+2. the corpus differential compared the output STREAM and never the SCREEN, so `LOCATE`, `CLS` and a
+   line wrap moved characters without changing a byte it could see;
+3. every extended value below about 1E-289 read as zero on one path.
+
+A clean result from a sweep run before those is not evidence about the compiler; it is a measurement
+of the instrument. **Strings**, **arrays/UDTs**, **error handling and control flow** and **integer
+arithmetic** were therefore run again through the oracle as it now stands - stdout, the text page,
+the attribute plane, the cursor, the printer, the whole disk, and the exit code, with the router's
+own decline reasons printed beside every result so a program that agreed because it never routed is
+visible instead of counted.
+
+The probes take every value from a `NOINLINE` FUNCTION called from two or more sites with different
+arguments, or off a seeded disk file, because the corpus writes constants and constants fold before
+selection. Both optimizer settings, and the cross-dialect probes under pb20/pb30/pb35/pb36/qb45/pds71
+(where NOINLINE does not exist, so the disk is the only source folding cannot see through).
+
+| domain | compilations | routed | declined | agreed | disagreed |
+|---|---|---|---|---|---|
+| strings | 58 | 52 | 6 | **52** | 0 |
+| arrays and UDTs | 48 | 40 | 6 | 35 | 5 |
+| error handling and control flow | 24 | 22 | 2 | **22** | 0 |
+| integer arithmetic | 36 | 34 | 2 | **34** | 0 |
+| cross-dialect (six dialects each) | 48 | 32 | 16 | **32** | 0 |
+| recursion, narrowing the above | 20 | 20 | 0 | 14 | 6 |
+| **total** | **234** | **200** | **32** | **189** | **11** |
+
+Nothing was left unmeasured: every routed compilation ran to completion on both paths.
+
+**All eleven disagreements are one already-recorded defect**, the direct emitter's x87 operand held
+across a CALL (`docs/ROADMAP.md`), rediscovered independently: `Walk& = n% + Walk&(n% - 1)` is right
+to depth 6 and wrong from 7, which is the register file. The routed path is correct on every one of
+them. **No routed defect was found in any of the four domains.** That is the finding, and it is what
+the retirement case rests on for these domains - it is not a substitute for the coverage the decline
+column records.
+
+Two DIRECT-emitter fidelity defects fell out of the sweep and are fixed here, both confirmed against
+genuine PBC 3.50 with `scripts/diff-one.sh … pb35` and both with the routed path already right:
+
+* **A signed LONG ordering whose difference does not fit a LONG answered backwards.**
+  `EmitInt32Op` decided the order by the SIGN of `left - right`; `-2147483648& - 3&` is `+2147483645`,
+  whose sign says "greater", so `-2147483648& < 3&` answered 0 where PBC 3.50 answers -1 - in every
+  dialect and both optimizer settings. It now branches on the subtraction's own `JL`/`JGE`, which is
+  `SF != OF`. `tests/diff/DIFF115.BAS`; `BackendWideCompareTests` already listed the
+  `2147483647 / -2147483648` pair and measured nothing, because it writes its operands down and the
+  optimizer folds the comparison before either back end is asked.
+
+* **A decimal literal wider than QUAD threw out of the lexer.** `long.Parse` on the digits raised an
+  unhandled `OverflowException` from inside the tokenizer, ending the compilation with a stack trace.
+  To PB such a literal is simply a float: PBC 3.50 prints `9223372036854775808` as
+  `9.22337203685478E+18`. `tests/diff/DIFF116.BAS`.
+
+The sweep driver is `Wave3SweepHarness` (`Probe` category, self-skipping without `PBC_PROBE_DIR`).
+
 ### One divergence with no answer: a `$ERROR` metastatement INSIDE a procedure body
 
 ```basic
