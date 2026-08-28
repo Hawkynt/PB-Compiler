@@ -1,19 +1,19 @@
 namespace PowerBasic.Compiler.Runtime;
 
 /// <summary>
-/// What code generation does when an instruction belongs to an ISA family that is not part of the
-/// selected hardware target. <see cref="Native"/> and <see cref="Emulate"/> are deliberate overrides:
-/// they apply even when the target would normally choose the other path. <see cref="Error"/> likewise
-/// forbids an instruction even on hardware that could execute it.
+/// What code generation does only when an instruction is not natively supported by the selected
+/// hardware target. Native support always wins: ERROR is a "no fallback allowed" policy, not an
+/// instruction blacklist. NATIVE is the deliberate escape hatch that emits an unsupported encoding;
+/// EMULATE deliberately avoids it and uses compiler/runtime lowering.
 /// </summary>
 public enum IsaFallbackMode : byte {
   /// <summary>Use native code when legal; otherwise use the compiler's normal exact fallback or diagnostic.</summary>
   Auto,
-  /// <summary>Always emit the native instruction encoding. The resulting binary may require newer hardware than $CPU.</summary>
+  /// <summary>Emit the native instruction even when the declared target does not advertise it.</summary>
   Native,
-  /// <summary>Always lower to an architecture-independent compiler/runtime implementation.</summary>
+  /// <summary>Lower to an architecture-independent compiler/runtime implementation when native support is absent (or when explicitly forced for testing).</summary>
   Emulate,
-  /// <summary>Reject the instruction at compile time.</summary>
+  /// <summary>When native support is absent, reject instead of synthesizing a fallback.</summary>
   Error,
 }
 
@@ -49,7 +49,7 @@ public sealed class RuntimeIsaPolicy {
     return this.TryGet("DEFAULT", out mode) ? mode : IsaFallbackMode.Auto;
   }
 
-  /// <summary>Resolves x87 independently because it is a coprocessor architecture, not a RuntimeCpuFeatures bit.</summary>
+  /// <summary>Resolves x87 independently because it has PB-compatible $FLOAT policy spellings in addition to $ISA.</summary>
   public IsaFallbackMode ResolveX87(string mnemonic) {
     if (this.TryGet(mnemonic, out var mode))
       return mode;
