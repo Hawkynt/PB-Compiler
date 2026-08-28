@@ -4718,6 +4718,28 @@ public sealed partial class IrLowering {
       // effective dialect onto IrModule before lowering any statement, so the directive itself has
       // no instruction to emit and every detached back end can still make the dialect-aware choice.
       case "COMPAT":
+      // $DYNAMIC / $STATIC choose the storage CLASS of every array DIMed after them, and the BINDER
+      // is what reads them: it carries the mode across the declarations and marks each array symbol
+      // accordingly, so by the time a statement reaches this lowering the decision has already been
+      // taken and is in the symbol. There is nothing left to emit, and the array that follows lowers
+      // as the class it was bound to.
+      case "DYNAMIC":
+      case "STATIC":
+      // $OPTION is four arms and not one of them is a statement. SIGNED changes the RESULT TYPE the
+      // binder gives VARPTR/VARSEG and their relatives; VIDEO sets model.FastVideo, which the codegen
+      // reads off the MODEL; CNTLBREAK installs an INT 23h handler from a codegen PRE-PASS over
+      // model.MetaStatements; GOSUB permits a spelling and emits nothing anywhere. All four are
+      // therefore already in force for a routed module body, which never executes the statement list -
+      // the same argument $STRING above is ignored on, and it has to be made per arm rather than for
+      // the keyword, because an arm that WERE a statement would be silently dropped here.
+      case "OPTION":
+      // $STACK n sizes the image's stack segment, which the codegen reads from model.MetaStatements
+      // before it emits anything - the same pre-pass $STRING goes through, for the same reason.
+      case "STACK":
+      // $DIM ALL / $DIM ARRAY would require a declaration before use. Neither back end implements it
+      // and the direct emitter emits nothing for it, so ignoring it here is the direct path's own
+      // behaviour rather than a new claim.
+      case "DIM":
         return;
       // $ERROR BOUNDS ON: every subscript is checked against its dimension and Error 9 raised when it
       // falls outside - the same guard CodeGenerator.Arrays emits when CheckBounds is set
