@@ -303,4 +303,52 @@ public sealed class BackendFloatTests {
     Assert.That(image, Is.Not.Empty);
     Assert.That(routed.BackendRoutedNames, Does.Contain("Scaled"), "the back end did not take the float function");
   }
+
+  /// <summary>
+  /// <c>MIN</c>/<c>MAX</c> is a fold of compare-and-<c>select</c>, so over floats it asks for a
+  /// <c>select</c> with a float RESULT - the one arm <see cref="InstructionSelector"/> did not have.
+  /// It is the same diamond the integer form uses, with each side an <c>FLD</c>/<c>FSTP</c> through
+  /// the select's own frame cell instead of a <c>MOV</c> into its register, because a float on this
+  /// target is never in a register at all.
+  ///
+  /// <para>
+  /// The operands come out of <c>DATA</c>: written as literals the whole fold is constant and the
+  /// select never reaches selection. Both optimizer settings, because with the optimizer on the
+  /// integer recovery pass usually turns an integer-typed fold back into an integer select and the
+  /// float arm only shows with it off.
+  /// </para>
+  /// </summary>
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Execute_GivenMinMaxOverSingles_WhenRouted_ThenTheFloatSelectAgreesWithTheDirectBuild(bool optimize) {
+    const string source = """
+      DIM a AS SINGLE, b AS SINGLE
+      READ a
+      READ b
+      PRINT MAX(a, b)
+      PRINT MIN(a, b)
+      PRINT MAX(a, a)
+      DATA 3.5, 8.25
+      """;
+
+    var module = IrLowering.TryLowerModule(Bind(source), out var why);
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+    Assert.That(module!.Functions.SelectMany(f => f.AllInstructions).OfType<IrSelect>().Any(s => s.Type.IsFloat),
+      "the program has to have produced a float select for this to be measuring one");
+
+    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
+    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+
+    Assert.Multiple(() => {
+      Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
+      Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
+      Assert.That(routed.BackendRoutedNames, Does.Contain("main"), $"the module body did not route (optimize={optimize})");
+      Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+      // MAX of equal operands keeps the FIRST, which is the tie rule both paths fold by
+      Assert.That(string.Join(" ", routedCpu.Output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)),
+        Is.EqualTo("8.25 3.5 3.5"));
+    });
+  }
 }

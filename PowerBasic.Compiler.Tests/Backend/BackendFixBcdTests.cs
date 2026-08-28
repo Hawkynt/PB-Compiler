@@ -145,4 +145,46 @@ public sealed class BackendFixBcdTests {
         .Where(n => n is not null && n.StartsWith("rt_fix", StringComparison.Ordinal)),
       Is.EqualTo(new[] { "rt_fix_up", "rt_fix_down" }), "one scaling per FIX access, none for BCD");
   }
+
+  /// <summary>
+  /// The same round trip with the optimizer OFF, which is where the two qword conversions had to be
+  /// selected rather than folded away. <c>DIFF16</c> declined here on <c>FPToSI f80 -&gt; i64</c> - the
+  /// store half - and then, once that landed, on the <c>SIToFP i64 -&gt; f80</c> the load half needs,
+  /// which had been unreachable behind it.
+  ///
+  /// <para>
+  /// The value comes out of <c>DATA</c>: written as a literal the store folds, and a FIX literal is
+  /// the one shape that still does not route (see <c>BackendRoutingGateTests</c>, "module body: FIX
+  /// arithmetic"), so the test would measure the fold rather than the conversion either way.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Route_GivenAFixRoundTripUnoptimized_ThenBothQwordConversionsSelect() {
+    const string source = """
+      DIM x AS DOUBLE
+      READ x
+      f@ = x
+      PRINT f@
+      PRINT f@ * 2
+      DATA 1.23456
+      """;
+
+    (string Output, IEnumerable<string> Routed) Compile(bool routed) {
+      var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36),
+        Dialect.Pb36);
+      Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+      var cg = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = routed };
+      var image = cg.EmitExecutable();
+      Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
+      return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"), cg.BackendRoutedNames.ToList());
+    }
+
+    var (output, names) = Compile(routed: true);
+
+    Assert.Multiple(() => {
+      Assert.That(names, Does.Contain("main"), "the unoptimized FIX round trip did not route");
+      Assert.That(output, Is.EqualTo(Compile(routed: false).Output), "the two emitters disagree");
+      Assert.That(output, Is.EqualTo("1.23 | 2.46"), "quantized at the store, then read back and doubled");
+    });
+  }
 }
