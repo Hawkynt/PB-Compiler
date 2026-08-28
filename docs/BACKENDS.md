@@ -490,6 +490,34 @@ becomes exact, and `DIFF15`/`DIFF72` start passing on vanilla DOSBox. Fixing it 
 making the middle end fold LESS exactly than it can, which would be a miscompile for `--emit-c` and
 `--emit-llvm`, where there is no 8087 to be faithful to.
 
+### The sixteen routed battery failures, settled without dosbox-staging
+
+The retirement gate used to end "and 504/504 on both batteries under dosbox-staging". **That cannot be
+measured on this host by any automated route**, so the clause is settled by evidence instead.
+
+*Why the run is impossible here.* Three of the four headless candidates abort immediately (`rc=134`).
+The fourth, `xvfb-run`, is worse than useless: staging 0.82.2 starts under it, reaches gallium, and
+hangs **before `[autoexec]` runs at all** - measured with a conf whose autoexec writes a file and
+exits, 60s bound, the file never written. It prints no abort, so an abort-watching probe scores it as
+working; the probe now requires the emulator to have written a file precisely because of this.
+
+*What the sixteen actually are.* Split by whether the direct battery fails the same program:
+
+| | programs | meaning |
+|---|---|---|
+| fail on **both** paths | `qb40`/`qb45` `DIFF01`, `DIFF02` (8) | shared `LOG`/`EXP` x87 error - **says nothing about retirement**, since dropping `CodeGen/` cannot change a failure both paths already have |
+| fail **routed only** | `pb35`/`pb36` `DIFF15`, `DIFF72` (8) | the QUAD case above |
+
+So the retirement-relevant delta is two programs, not sixteen.
+
+*The evidence that those two are the emulator.* `BackendCorpusDifferentialTests` compiles every
+program under `tests/` - `tests/diff/` included, so `DIFF15` and `DIFF72` among them - both ways and
+runs both under `Cpu8086`, which carries the full 64-bit mantissa. It reports **325 ran both ways and
+AGREED, 0 disagreed, and 0 not compared**, so neither program was skipped. Both paths therefore behave
+identically on an accurate FPU, and the divergence exists only under an emulator whose x87 is narrower
+than the hardware PB targeted. That is the same conclusion the analysis above reaches, arrived at by
+running the programs rather than by reasoning about them.
+
 **String lifetime: the leak is closed, the convention is now stated.** This was not on the decline
 list - it is a concern rather than a construct, and only a coverage increment surfaced it.
 
