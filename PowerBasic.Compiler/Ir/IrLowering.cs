@@ -2334,6 +2334,13 @@ public sealed partial class IrLowering {
   private void LowerReadInto(Expression target) {
     var (blob, cursor) = this.DataGlobals();
     var off = this._b.Load(IrType.I32, cursor);
+    // READ past the last DATA item is PB error 4, and it has to be raised BEFORE the length prefix is
+    // read: the cursor is then standing on whatever follows the blob, so an unchecked read takes two
+    // bytes of the next global as an item length and hands the target a value out of nowhere. The
+    // direct emitter's rt_readdata compares rt_dataptr against rt_dataend for exactly this; the blob's
+    // extent is a compile-time constant here, so the comparison is against its length.
+    this.RaiseWhen(this._b.Cmp(IrCmpPred.Uge, off, new IrConstantInt(IrType.I32, this.GetDataLayout().Blob.Length)),
+      4, "outofdata");
     var len = this._b.ZExt(this._b.Load(IrType.I16, this._b.Gep(blob, off)), IrType.I32);       // 2-byte length prefix
     var dataPtr = this._b.Gep(blob, this._b.Add(off, new IrConstantInt(IrType.I32, 2)));
     // rt_str_from_fixed rather than rt_str_const, and the difference is where the bytes ARE: a
