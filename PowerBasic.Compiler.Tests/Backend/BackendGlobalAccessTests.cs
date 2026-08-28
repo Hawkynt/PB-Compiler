@@ -204,18 +204,68 @@ public sealed class BackendGlobalAccessTests {
       "the pool is INDEXED rather than loaded whole, so it is taken as an address");
   }
 
+  /// <summary>
+  /// Two pools are only sound while nothing uses both, so a DATA reader the routing CANNOT take
+  /// costs the pool to every other reader. <c>Grab</c> here arms an error handler, which the
+  /// procedure filter refuses outright, and it READs - so leaving the module body routed would have
+  /// it advancing <c>ir_dataptr</c> while <c>Grab</c> consults <c>rt_dataptr</c>. The whole
+  /// arrangement is refused, and refused at ROUTING time: by emission the only answer left would be
+  /// an exception, because <c>DataCellOf</c> has no cell to hand back and <c>MachineEmitter</c>
+  /// raises on null.
+  ///
+  /// <para>
+  /// The subject used to be a SUB that merely was never CALLED, which no longer demonstrates
+  /// anything: an uncalled procedure routes like any other, and both readers then land on the same
+  /// side, which is the arrangement this guard exists to permit. The split has to be forced by a
+  /// reader that genuinely cannot route.
+  /// </para>
+  /// </summary>
   [Test]
   public void Route_GivenAProcedureTheDirectEmitterKeepsAlsoReadingData_ThenNothingRoutes() {
-    // Two pools are only sound while nothing uses both. Here `Grab` is never called, so the direct
-    // emitter compiles it, and it READs - which would leave the module body advancing ir_dataptr
-    // while `Grab` consults rt_dataptr. The whole arrangement is refused, and refused HERE: by
-    // emission the only answer left would be an exception, because DataCellOf has no cell to hand
-    // back and MachineEmitter raises on null.
     const string source = """
       DIM s AS STRING
       READ s
       PRINT s
       DATA one, two
+      END
+
+      SUB Grab
+        DIM t AS STRING
+        ON ERROR GOTO Failed
+        READ t
+        PRINT t
+        EXIT SUB
+      Failed:
+        RESUME NEXT
+      END SUB
+      """;
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+
+    var image = routed.EmitExecutable();
+
+    Assert.Multiple(() => {
+      Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+      Assert.That(routed.BackendRoutedNames, Does.Not.Contain("Grab"),
+        "the premise: the error handler keeps this procedure on the direct emitter");
+      Assert.That(routed.BackendRoutedNames, Does.Not.Contain("main"));
+      Assert.That(image, Is.Not.Empty);
+    });
+  }
+
+  /// <summary>
+  /// The other side of the same rule: when every DATA reader routes, they all use the IR's pool and
+  /// its index cursor, and the arrangement is sound. This is the case the old guard refused - it
+  /// asked whether any PROCEDURE reads DATA, which made a reading SUB unaddressable, which declined
+  /// it, which was the only reason the two pools could have disagreed.
+  /// </summary>
+  [Test]
+  public void Route_GivenEveryDataReaderRouting_ThenTheyShareTheBackEndsPool() {
+    const string source = """
+      DIM s AS STRING
+      READ s
+      PRINT s
+      DATA one, two
+      Grab
       END
 
       SUB Grab
@@ -226,12 +276,12 @@ public sealed class BackendGlobalAccessTests {
       """;
     var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
 
-    var image = routed.EmitExecutable();
+    _ = routed.EmitExecutable();
 
     Assert.Multiple(() => {
       Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-      Assert.That(routed.BackendRoutedNames, Does.Not.Contain("main"));
-      Assert.That(image, Is.Not.Empty);
+      Assert.That(routed.BackendRoutedNames, Does.Contain("Grab"));
+      Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
     });
   }
 

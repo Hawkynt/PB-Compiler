@@ -178,6 +178,17 @@ public sealed class BackendRoutingGateTests {
       READ s
       PRINT s
       """, "main"),
+    // READ inside a PROCEDURE. Both the SUB and the module body route, and they must: one pool and
+    // one cursor means every reader has to be on the same side.
+    new("procedure: READ from DATA", """
+      DATA 1, 2
+      SUB S
+        DIM i%
+        READ i%
+        PRINT i%
+      END SUB
+      S
+      """, "S"),
   ];
 
   /// <summary>
