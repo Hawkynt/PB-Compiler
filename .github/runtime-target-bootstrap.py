@@ -61,8 +61,13 @@ public readonly record struct RuntimeTarget(RuntimeCpuFeatures Features) {
   public bool HasAvx512 => this.Features.HasFlag(RuntimeCpuFeatures.Avx512);
   public bool HasAes => this.Features.HasFlag(RuntimeCpuFeatures.Aes);
 
+  /// <summary>The full 16-bit GP register pool except SP, which is never allocator scratch.</summary>
   public IReadOnlyList<Reg> WordGeneralPurposeRegisters => _wordGprs;
+
+  /// <summary>The 386+ aliases of the GP register pool; empty on an older target.</summary>
   public IReadOnlyList<Reg> DwordGeneralPurposeRegisters => this.Has32BitGeneralPurpose ? _dwordGprs : _none;
+
+  /// <summary>The widest declared vector register class.</summary>
   public IReadOnlyList<Reg> VectorRegisters => this.HasAvx512 ? _zmm
     : this.HasAvx2 ? _ymm
     : this.HasSse2 ? _xmm
@@ -100,7 +105,7 @@ public readonly record struct RuntimeTarget(RuntimeCpuFeatures Features) {
     if (text == "P6")
       return 686;
     if (int.TryParse(text, out var numeric)) {
-      if (numeric >= 80000)
+      if (numeric >= 8000)
         numeric %= 1000;
       return numeric;
     }
@@ -130,9 +135,9 @@ public sealed partial class DosRuntime {
 
   /// <summary>
   /// Emits a vector prefix for a forward copy and leaves CX as the scalar remainder. The borrowed
-  /// vector register is spilled to SS and restored, so this does not change the runtime ABI. MMX is
-  /// deliberately excluded because it aliases the x87 stack and arbitrary runtime calls may have a
-  /// live floating-point stack.
+  /// vector register is spilled to a private runtime cell and restored, so this does not change the
+  /// runtime ABI. MMX is deliberately excluded because it aliases the x87 stack and arbitrary runtime
+  /// calls may have live floating-point values.
   /// </summary>
   private void EmitVectorCopyPrefix(Assembler asm) {
     var width = this.Target.MaxVectorWidthBytes;
@@ -141,12 +146,9 @@ public sealed partial class DosRuntime {
 
     var scalarTail = asm.DefineLabel();
     var loop = asm.DefineLabel();
-    asm.Cmp(Reg.CX, width * 2);
+    var spill = Mem.At(asm.Lbl("rt_vecscratch"));
+    asm.Cmp(Reg.CX, width * 2);                    // amortize save/restore over at least two vectors
     asm.Jb(scalarTail);
-    asm.Push(Reg.BP);
-    asm.Mov(Reg.BP, Reg.SP);
-    asm.Sub(Reg.SP, width);
-    var spill = Mem.At(Reg.BP, -width).Ss();
     EmitVectorStore(asm, spill, vector);
 
     asm.MarkLabel(loop);
@@ -159,8 +161,6 @@ public sealed partial class DosRuntime {
     asm.Jae(loop);
 
     EmitVectorLoad(asm, vector, spill);
-    asm.Mov(Reg.SP, Reg.BP);
-    asm.Pop(Reg.BP);
     asm.MarkLabel(scalarTail);
   }
 
@@ -176,12 +176,9 @@ public sealed partial class DosRuntime {
     var unitsPerVector = width / unitBytes;
     var scalarTail = asm.DefineLabel();
     var loop = asm.DefineLabel();
+    var spill = Mem.At(asm.Lbl("rt_vecscratch"));
     asm.Cmp(Reg.CX, unitsPerVector * 2);
     asm.Jb(scalarTail);
-    asm.Push(Reg.BP);
-    asm.Mov(Reg.BP, Reg.SP);
-    asm.Sub(Reg.SP, width);
-    var spill = Mem.At(Reg.BP, -width).Ss();
     EmitVectorStore(asm, spill, vector);
     EmitVectorZero(asm, vector);
 
@@ -193,8 +190,6 @@ public sealed partial class DosRuntime {
     asm.Jae(loop);
 
     EmitVectorLoad(asm, vector, spill);
-    asm.Mov(Reg.SP, Reg.BP);
-    asm.Pop(Reg.BP);
     asm.MarkLabel(scalarTail);
   }
 
@@ -238,11 +233,11 @@ public sealed partial class DosRuntime {
 
   private static void EmitVectorZero(Assembler asm, Reg vector) {
     if (vector.IsZmm())
-      asm.EvexPacked(0xEF, vector, vector, vector);
+      asm.EvexPacked(0xEF, vector, vector, vector);   // VPXOR zmm,zmm,zmm
     else if (vector.IsYmm())
-      asm.VexPacked(0xEF, vector, vector, vector);
+      asm.VexPacked(0xEF, vector, vector, vector);    // VPXOR ymm,ymm,ymm
     else
-      asm.PxorX(vector, vector);
+      asm.PxorX(vector, vector);                      // PXOR xmm,xmm
   }
 }
 ''')
@@ -268,7 +263,7 @@ replace_once(
     "    this._rt.Cpu386 = this.Optimize && this.Cpu386;\n    this._rt.EmitEntry(asm, userMain);",
     "    this._rt.Target = this.Optimize ? this.RuntimeTargetForRuntime() : RuntimeTarget.Baseline;\n    this._rt.EmitEntry(asm, userMain);")
 
-# Target floors are cumulative: Pentium inherits 486 and 386 instructions/registers.
+# CPU floors are cumulative. Pentium targets may use 486 and 386 instructions/registers too.
 replace_once(
     "PowerBasic.Compiler/CodeGen/CodeGenerator.Optimize.cs",
     '    && level.Text is "80386" or "80486" or "386" or "486");',
@@ -277,6 +272,94 @@ replace_once(
     "PowerBasic.Compiler/CodeGen/CodeGenerator.Optimize.cs",
     '    && level.Text is "80486" or "486");',
     '    && level.Text is "80486" or "80586" or "486" or "586" or "PENTIUM");')
+
+# SIMD memory instructions need segment overrides before the mandatory/VEX/EVEX prefix. The runtime
+# immediately depends on ES:DI stores, but this also fixes explicit SIMD assembly using non-DS memory.
+simd = "PowerBasic.Compiler/Asm/Assembler.Simd.cs"
+replace_once(simd,
+'''  private void MmxRegMem(byte op, Reg dest, Mem src) {
+    this.EmitByte(0x0F);''',
+'''  private void MmxRegMem(byte op, Reg dest, Mem src) {
+    this.EmitSegmentPrefix(src);
+    this.EmitByte(0x0F);''')
+replace_once(simd,
+'''  private void Sse2RegMem(byte op, Reg dest, Mem src) {
+    this.EmitByte(0x66);''',
+'''  private void Sse2RegMem(byte op, Reg dest, Mem src) {
+    this.EmitSegmentPrefix(src);
+    this.EmitByte(0x66);''')
+replace_once(simd,
+'''  public void Movdqu(Reg dst, Mem src) {
+    this.EmitByte(0xF3);''',
+'''  public void Movdqu(Reg dst, Mem src) {
+    this.EmitSegmentPrefix(src);
+    this.EmitByte(0xF3);''')
+replace_once(simd,
+'''  public void MovdquStore(Mem dst, Reg src) {
+    this.EmitByte(0xF3);''',
+'''  public void MovdquStore(Mem dst, Reg src) {
+    this.EmitSegmentPrefix(dst);
+    this.EmitByte(0xF3);''')
+replace_once(simd,
+'''  public void VexPacked(byte op, Reg dest, Reg src1, Mem src2) {
+    this.VexPrefix(src1, dest.IsYmm());''',
+'''  public void VexPacked(byte op, Reg dest, Reg src1, Mem src2) {
+    this.EmitSegmentPrefix(src2);
+    this.VexPrefix(src1, dest.IsYmm());''')
+replace_once(simd,
+'''  public void Vmovdqa(Reg dest, Mem src) {
+    this.VexPrefix(Reg.AL, dest.IsYmm());''',
+'''  public void Vmovdqa(Reg dest, Mem src) {
+    this.EmitSegmentPrefix(src);
+    this.VexPrefix(Reg.AL, dest.IsYmm());''')
+replace_once(simd,
+'''  public void VmovdqaStore(Mem dest, Reg src) {
+    this.VexPrefix(Reg.AL, src.IsYmm());''',
+'''  public void VmovdqaStore(Mem dest, Reg src) {
+    this.EmitSegmentPrefix(dest);
+    this.VexPrefix(Reg.AL, src.IsYmm());''')
+replace_once(simd,
+'''  public void Vmovdqu(Reg dest, Mem src) {
+    this.VexPrefix(Reg.AL, dest.IsYmm(), pp: 0b10);''',
+'''  public void Vmovdqu(Reg dest, Mem src) {
+    this.EmitSegmentPrefix(src);
+    this.VexPrefix(Reg.AL, dest.IsYmm(), pp: 0b10);''')
+replace_once(simd,
+'''  public void VmovdquStore(Mem dest, Reg src) {
+    this.VexPrefix(Reg.AL, src.IsYmm(), pp: 0b10);''',
+'''  public void VmovdquStore(Mem dest, Reg src) {
+    this.EmitSegmentPrefix(dest);
+    this.VexPrefix(Reg.AL, src.IsYmm(), pp: 0b10);''')
+replace_once(simd,
+'''  public void EvexPacked(byte op, Reg dest, Reg src1, Mem src2) {
+    this.EvexPrefix(src1);''',
+'''  public void EvexPacked(byte op, Reg dest, Reg src1, Mem src2) {
+    this.EmitSegmentPrefix(src2);
+    this.EvexPrefix(src1);''')
+replace_once(simd,
+'''  public void Vmovdqa512(Reg dest, Mem src) {
+    this.EvexPrefix(Reg.AL);''',
+'''  public void Vmovdqa512(Reg dest, Mem src) {
+    this.EmitSegmentPrefix(src);
+    this.EvexPrefix(Reg.AL);''')
+replace_once(simd,
+'''  public void Vmovdqa512Store(Mem dest, Reg src) {
+    this.EvexPrefix(Reg.AL);''',
+'''  public void Vmovdqa512Store(Mem dest, Reg src) {
+    this.EmitSegmentPrefix(dest);
+    this.EvexPrefix(Reg.AL);''')
+replace_once(simd,
+'''  public void Vmovdqu512(Reg dest, Mem src) {
+    this.EvexPrefix(Reg.AL, pp: 0b10);''',
+'''  public void Vmovdqu512(Reg dest, Mem src) {
+    this.EmitSegmentPrefix(src);
+    this.EvexPrefix(Reg.AL, pp: 0b10);''')
+replace_once(simd,
+'''  public void Vmovdqu512Store(Mem dest, Reg src) {
+    this.EvexPrefix(Reg.AL, pp: 0b10);''',
+'''  public void Vmovdqu512Store(Mem dest, Reg src) {
+    this.EmitSegmentPrefix(dest);
+    this.EvexPrefix(Reg.AL, pp: 0b10);''')
 
 p = Path("PowerBasic.Compiler/Runtime/DosRuntime.cs")
 text = p.read_text()
@@ -291,6 +374,10 @@ needle = "  private void EmitRepStoswZeroWidened(Assembler asm) {\n"
 if text.count(needle) != 1:
     raise SystemExit("DosRuntime.cs: zero-word helper anchor drifted")
 text = text.replace(needle, needle + "    this.EmitVectorZeroPrefix(asm, unitBytes: 2);\n")
+replace_data = '    this._scratch = this.ZeroBlob(asm, "rt_scratch", 16);'
+if text.count(replace_data) != 1:
+    raise SystemExit("DosRuntime.cs: core-data anchor drifted")
+text = text.replace(replace_data, replace_data + '\n    if (this.Target.MaxVectorWidthBytes >= 16)\n      this.ZeroBlob(asm, "rt_vecscratch", this.Target.MaxVectorWidthBytes);')
 p.write_text(text)
 
 # Centralize plain forward REP MOVSB sites. If the most recent explicit direction change is STD,
@@ -413,6 +500,33 @@ public sealed class RuntimeTargetTests {
 }
 ''')
 
+Path("PowerBasic.Compiler.Tests/Asm/AssemblerSimdSegmentTests.cs").write_text(r'''using PowerBasic.Compiler.Asm;
+
+namespace PowerBasic.Compiler.Tests.Asm;
+
+[TestFixture]
+public sealed class AssemblerSimdSegmentTests {
+  [TestCaseSource(nameof(Cases))]
+  public void SimdMemory_GivenSegmentOverride_ThenPrefixPrecedesTheInstruction(Action<Assembler> emit, byte[] expected) {
+    var asm = new Assembler();
+    emit(asm);
+    Assert.That(asm.ToArray(), Is.EqualTo(expected));
+  }
+
+  private static IEnumerable<TestCaseData> Cases() {
+    yield return new TestCaseData(
+      (Action<Assembler>)(asm => asm.MovdquStore(Mem.At(Reg.DI).Es(), Reg.XMM0)),
+      new byte[] { 0x26, 0xF3, 0x0F, 0x7F, 0x05 }).SetName("SSE2_store_preserves_ES_override");
+    yield return new TestCaseData(
+      (Action<Assembler>)(asm => asm.VmovdquStore(Mem.At(Reg.DI).Es(), Reg.YMM0)),
+      new byte[] { 0x26, 0xC5, 0x86, 0x7F, 0x05 }).SetName("AVX_store_preserves_ES_override");
+    yield return new TestCaseData(
+      (Action<Assembler>)(asm => asm.Vmovdqu512Store(Mem.At(Reg.DI).Es(), Reg.ZMM0)),
+      new byte[] { 0x26, 0x62, 0xF1, 0x06, 0x40, 0x7F, 0x05 }).SetName("AVX512_store_preserves_ES_override");
+  }
+}
+''')
+
 Path("docs/optimizations/R0005-runtime-target-specialization.md").write_text(r'''# R0005 — target-specialized runtime primitives
 
 | | |
@@ -426,6 +540,7 @@ Path("docs/optimizations/R0005-runtime-target-specialization.md").write_text(r''
 - **Must** propagate the declared CPU floor and feature flags to every runtime section through one normalized target object.
 - **Must** treat newer CPU floors cumulatively: a Pentium target also has the 386/486 instruction and register set.
 - **Must** preserve the runtime ABI while using wider registers; any XMM/YMM/ZMM scratch register borrowed by a helper is saved and restored.
+- **Must** preserve far-memory semantics: SIMD loads/stores honor DS/ES/SS/FS/GS overrides before mandatory, VEX, or EVEX prefixes.
 - **Must** leave `--no-optimize` on the faithful scalar runtime and preserve observable program behaviour.
 - **Should** route forward runtime block copies and zero fills through shared target-aware primitives instead of maintaining local `REP MOVSB`/`STOSB` copies.
 - **Could** add target-specific implementations for scanning, formatting, or arithmetic routines when a newer ISA has a semantically exact win.
@@ -443,13 +558,13 @@ Long forward copies and zero fills select the widest declared, safe register wid
 | AVX2 | 32 bytes | YMM bulk + 386 tail |
 | AVX-512 | 64 bytes | ZMM bulk + 386 tail |
 
-Vectorization starts only at two complete vectors, so tiny strings do not pay the spill/restore overhead. The scratch vector is spilled to `SS`, used for the copy/fill, then restored before the scalar tail. This makes the wider register set an implementation detail rather than an undocumented ABI clobber.
+Vectorization starts only at two complete vectors, so tiny strings do not pay the save/restore overhead. The scratch vector is saved in a target-sized private runtime cell, used for the copy/fill, then restored before the scalar tail. The cell is emitted only for vector targets, so faithful and non-vector images do not acquire dead data.
 
 The feature hierarchy is normalized once: AVX2 implies SSE2, AVX-512 implies AVX2+SSE2, and AES implies the XMM/SSE2 register state. `$CPU 80586` without an extension still enables the inherited 386 DWORD path.
 
 ## Verification
 
-`RuntimeTargetTests` pins both halves of the contract: the target object exposes the expected GP/vector register sets, and compiled string-runtime images contain the expected `MOVSD`, `MOVDQU`, VEX `VMOVDQU`, or EVEX `VMOVDQU32` encoding. A companion test verifies that `--no-optimize` suppresses the target-specialized runtime. Existing differential and execution batteries cover scalar/386 behavioural equivalence; DOSBox does not execute SSE/AVX, so those paths are encoding-verified like R0004.
+`RuntimeTargetTests` pins both halves of the contract: the target object exposes the expected GP/vector register sets, and compiled string-runtime images contain the expected `MOVSD`, `MOVDQU`, VEX `VMOVDQU`, or EVEX `VMOVDQU32` encoding. `AssemblerSimdSegmentTests` pins the otherwise easy-to-miss ES override used by runtime copies. A companion runtime test verifies that `--no-optimize` suppresses the target-specialized runtime. Existing differential and execution batteries cover scalar/386 behavioural equivalence; DOSBox does not execute SSE/AVX, so those paths are encoding-verified like R0004.
 ''')
 
 index = Path("docs/optimizations/README.md")
