@@ -91,8 +91,11 @@ void *rt_str_mkdwd(int32_t v);
 void *rt_str_mks(float v);
 void *rt_str_mkd(double v);
 int16_t rt_str_cvi(void *s);
-int16_t rt_str_cvbyt(void *s);
-int16_t rt_str_cvwrd(void *s);
+/* CVBYT and CVWRD read UNSIGNED cells - a WORD's 50000 is 50000, not -15536 - and the IR
+   declares them u16, so the C signature has to say so too or the emitted prototype conflicts
+   with this header and the translation unit will not build. */
+uint16_t rt_str_cvbyt(void *s);
+uint16_t rt_str_cvwrd(void *s);
 int32_t rt_str_cvl(void *s);
 int32_t rt_str_cvdwd(void *s);
 float rt_str_cvs(void *s);

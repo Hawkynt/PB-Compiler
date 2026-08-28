@@ -191,6 +191,12 @@ public static class IrConstFold {
       // the rounding conversion folds by the same rule the hardware applies: nearest, ties to even
       case IrCastOp.FPToSIRound when cast.Value is IrConstantFloat c && InLongRange(c.Value):
         return new IrConstantInt(to, Wrap((long)Math.Round(c.Value, MidpointRounding.ToEven), to));
+      // FPToUIRound is deliberately NOT folded here, and neither was FPToUI before it. Folding it is
+      // correct arithmetic and would be an improvement, but it removes the cast that currently stops
+      // IrBasicWriter rendering DIFF05, DIFF58 and DIFF61 - and rendering those three exposes a
+      // separate, undiagnosed gap in how the writer materializes UNSIGNED arithmetic into declared
+      // pb35 variables (a WORD that wraps, a DWORD compared against a signed operand). The fold
+      // belongs with the fix for that, not ahead of it.
       // bitcast reinterprets the bit pattern between same-width int and float
       case IrCastOp.BitCast when cast.Value is IrConstantFloat cf && to.IsInteger && to.Bits == 32:
         return new IrConstantInt(to, BitConverter.SingleToInt32Bits((float)cf.Value));

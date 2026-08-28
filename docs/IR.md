@@ -460,13 +460,29 @@ LLVM's `fptosi` both truncate. The IR therefore has to say which it means, and
 | operation | meaning | emitted by | native | C | LLVM |
 |---|---|---|---|---|---|
 | `FPToSI` | truncate toward zero | `FIX`, `INT` | (declines) | `(int)x` | `fptosi` |
-| `FPToSIRound` | round to nearest, ties to even | assignment to an integer variable, `CINT`/`CLNG`/`CWRD`/`CBYT`/`CDWD` | `FISTP` through a dword cell | `(int)llrint(x)` | `llvm.rint` then `fptosi` |
+| `FPToSIRound` | round to nearest, ties to even | assignment to a signed integer variable, `CINT`/`CLNG` | `FISTP` through a dword cell | `(int)llrint(x)` | `llvm.rint` then `fptosi` |
+| `FPToUI` | truncate toward zero, unsigned | (nothing today) | (declines) | `(unsigned)x` | `fptoui` |
+| `FPToUIRound` | round to nearest, ties to even, unsigned | assignment to a `BYTE`/`WORD`/`DWORD` variable, `CBYT`/`CWRD`/`CDWD` | `FISTP` through a cell one size larger | `(unsigned)llrint(x)` | `llvm.rint` then `fptoui` |
 
 The two disagree on every value with a fraction, which is the kind of difference that shows up as a
 wrong number in program output rather than as a crash — the IR path used to emit the truncating one
 for both. Nothing names a rounding *mode*: nearest-ties-to-even is where the runtime leaves the x87
 control word, and it is what `llvm.rint` follows under the default mode, so the paths agree without
 having to be told.
+
+**The unsigned row is the same lesson, learned twice.** Splitting the signed pair left the unsigned
+one unsplit, so an assignment to a `BYTE` lowered to the *truncating* `FPToUI` — and the three back
+ends then disagreed about what that meant. The x86-16 selector answered it with `FISTP`, which
+rounds, so it was right by accident; a C cast and `fptoui` did what the opcode said and answered 3
+where PowerBASIC answers 4. Genuine PBC 3.5 rounds a real into a `BYTE`, a `WORD` and a `DWORD`
+exactly as it rounds one into an `INTEGER` — nearest with ties to even, oracle-verified across the
+boundaries in `tests/diff/DIFF117.BAS` (0.5 → 0, 1.5 → 2, 2.5 → 2, 3.5 → 4, 100001.5 → 100002).
+
+It hid because **no routed-vs-direct comparison in this repository could see it**: both sides of one
+are x86-16, and both round. `tests/UNSIGN.BAS` is the program that can — it has a golden output, so
+`CBackendTests` builds it through the C back end and diffs it against the DOS one, and it reports
+` 1 1 1 2` against ` 2 2 2 2` the moment the rounding is taken back out. There was no such program
+before, in a corpus of 22 battery programs and 114 differential ones.
 
 `IntegerRecovery` accepts both spellings as the closing conversion of a float-shaped integer tree.
 Whether it rounds or truncates cannot matter there — the recovered tree is integer-valued either way.

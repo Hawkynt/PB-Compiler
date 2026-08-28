@@ -107,14 +107,18 @@ public sealed class LlvmEmitter {
   }
 
   private string EmitInstruction(IrInstruction inst) {
-    // BASIC's assignment conversion ROUNDS a real into an integer, and `fptosi` truncates - so the
-    // rounding has to be done first and explicitly. llvm.rint rounds by the current mode, which is
-    // nearest-ties-to-even, the same rule the x87 default applies on the native path.
-    if (inst is IrCast { Op: IrCastOp.FPToSIRound } round) {
+    // BASIC's assignment conversion ROUNDS a real into an integer, and `fptosi`/`fptoui` truncate -
+    // so the rounding has to be done first and explicitly. llvm.rint rounds by the current mode,
+    // which is nearest-ties-to-even, the same rule the x87 default applies on the native path.
+    //
+    // Both signednesses, because PB rounds either way: its `b?? = 3.5` is 4 exactly as its
+    // `i% = 3.5` is, oracle-verified against genuine PBC 3.5 for BYTE, WORD and DWORD.
+    if (inst is IrCast { Op: IrCastOp.FPToSIRound or IrCastOp.FPToUIRound } round) {
       var floatType = Ty(round.Value.Type);
       var rounded = "%rint." + this._slot++.ToString(CultureInfo.InvariantCulture);
+      var convert = round.Op == IrCastOp.FPToSIRound ? "fptosi" : "fptoui";
       return $"{rounded} = call {floatType} @llvm.rint.{Suffix(round.Value.Type)}({floatType} {this.Ref(round.Value)})"
-        + "\n  " + $"{this.Ref(round)} = fptosi {floatType} {rounded} to {Ty(round.Type)}";
+        + "\n  " + $"{this.Ref(round)} = {convert} {floatType} {rounded} to {Ty(round.Type)}";
     }
     var lhs = inst.Type.IsVoid ? "" : this.Ref(inst) + " = ";
     return lhs + inst switch {

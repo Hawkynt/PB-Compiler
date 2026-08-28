@@ -2170,7 +2170,11 @@ public sealed partial class InstructionSelector {
       // The x87 stores only SIGNED integers, so an unsigned target is staged one size larger than
       // itself: a WORD's 65535 does not fit a signed word but fits a signed dword, and a DWORD's
       // 4294967295 needs the qword store. The bits that come back are the value either way.
-      case IrCastOp.FPToUI when from.IsIeeeFloat && to.IsInteger && to.Bits is 8 or 16 or 32:
+      //
+      // The ROUNDING opcode, and only it. FISTP rounds, so this sequence never was the truncating
+      // FPToUI it used to be matched on - it is the unsigned twin of SelectFloatToInt, and a plain
+      // FPToUI now declines rather than being answered with a conversion that rounds.
+      case IrCastOp.FPToUIRound when from.IsIeeeFloat && to.IsInteger && to.Bits is 8 or 16 or 32:
         return this.SelectFloatToUnsigned(cast);
       case IrCastOp.FPExt or IrCastOp.FPTrunc when from.IsIeeeFloat && to.IsIeeeFloat:
         return this.SelectFloatResize(cast);
@@ -3495,8 +3499,10 @@ public sealed partial class InstructionSelector {
   }
 
   /// <summary>
-  /// A float truncated to an UNSIGNED integer. See the note at the call site for why the staging
-  /// cell is a size larger than the destination; everything else is <see cref="SelectFloatToInt"/>.
+  /// A float ROUNDED into an UNSIGNED integer - <c>FISTP</c>, nearest with ties to even, exactly as
+  /// <see cref="SelectFloatToInt"/> does for a signed one, because PB rounds either way (its
+  /// <c>b?? = 3.5</c> is 4, oracle-verified against genuine PBC 3.5 for BYTE, WORD and DWORD). See
+  /// the note at the call site for why the staging cell is a size larger than the destination.
   /// </summary>
   private bool SelectFloatToUnsigned(IrCast cast) {
     if (!this.TryFloatOperand(cast.Value, out var source))

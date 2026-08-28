@@ -135,16 +135,31 @@ public sealed class CEmitter {
 
   private static string Signature(IrFunction f) {
     var sb = new StringBuilder();
-    sb.Append(f.IsDeclaration ? "extern " : "").Append(Ty(f.ReturnType)).Append(' ').Append(FuncName(f)).Append('(');
+    sb.Append(f.IsDeclaration ? "extern " : "").Append(SignatureTy(f.ReturnType)).Append(' ').Append(FuncName(f)).Append('(');
     if (f.Parameters.Count == 0)
       sb.Append(f.IsVarArgs ? "" : "void");
     else
       for (var i = 0; i < f.Parameters.Count; ++i)
-        sb.Append(i > 0 ? ", " : "").Append(Ty(f.Parameters[i].Type)).Append(" p").Append(i);
+        sb.Append(i > 0 ? ", " : "").Append(SignatureTy(f.Parameters[i].Type)).Append(" p").Append(i);
     if (f.IsVarArgs)
       sb.Append(f.Parameters.Count > 0 ? ", ..." : "...");
     return sb.Append(')').ToString();
   }
+
+  /// <summary>
+  /// The C spelling used in a SIGNATURE, where the IR type's signedness has to survive.
+  ///
+  /// <para>
+  /// Everywhere else this back end declares an integer in its signed form and casts to
+  /// <see cref="UTy"/> at each operation that needs an unsigned reading, which is a free choice
+  /// because the bits are the same. A prototype is not free: <c>runtime/pbc_rt.h</c> declares
+  /// <c>rt_print_u8(uint8_t)</c>, and a re-declaration as <c>int8_t</c> is a conflicting type that
+  /// the C compiler REJECTS - so every program printing a BYTE, WORD or DWORD emitted a translation
+  /// unit that would not build. It hid because no battery program with a golden output has an
+  /// unsigned value in it, which is the same blind spot that hid the rounding above.
+  /// </para>
+  /// </summary>
+  private static string SignatureTy(IrType t) => t.IsUnsigned ? UTy(t) : Ty(t);
 
   /// <summary>PB's <c>main</c> is the program body, not C's entry point - the shim calls it.</summary>
   private static string FuncName(IrFunction f) =>
@@ -513,6 +528,10 @@ public sealed class CEmitter {
       // a C cast truncates, so the rounding conversion has to say so: llrint rounds to nearest with
       // ties to even under the default rounding mode, which is the one BASIC assignment uses
       IrCastOp.FPToSIRound => $"({Ty(c.Type)})llrint({v})",
+      // ...and the unsigned target rounds too: PB's b?? = 3.5 is 4, the same as its i% = 3.5. The
+      // plain cast below is the TRUNCATING conversion and answers 3, which is what this arm emitted
+      // while the two conversions shared one opcode.
+      IrCastOp.FPToUIRound => $"({Ty(c.Type)})({UTy(c.Type)})llrint({v})",
       IrCastOp.UIToFP => $"({Ty(c.Type)})({UTy(from)}){v}",
       IrCastOp.FPToUI => $"({Ty(c.Type)})({UTy(c.Type)}){v}",
       IrCastOp.IntToPtr => $"(void *)(intptr_t){v}",

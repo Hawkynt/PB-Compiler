@@ -28,6 +28,22 @@ public enum IrCastOp {
   /// default, which is what the runtime leaves the control word set to.
   /// </summary>
   FPToSIRound,
+
+  /// <summary>
+  /// The same rounding conversion into an UNSIGNED integer. It is spelled separately from
+  /// <see cref="FPToUI"/> for exactly the reason <see cref="FPToSIRound"/> is spelled separately from
+  /// <see cref="FPToSI"/>, and leaving the pair unsplit had exactly the consequence that argument
+  /// predicts: PowerBASIC's <c>b?? = 3.5</c> is 4 (the genuine PBC 3.5 oracle says so for BYTE, WORD
+  /// and DWORD alike), the x86-16 selector's <c>FISTP</c> rounded and answered 4, and a C cast and
+  /// LLVM's <c>fptoui</c> both truncate and answered 3.
+  ///
+  /// <para>
+  /// That divergence was invisible to every routed-vs-direct comparison in this repository, because
+  /// both sides of one are x86-16. Naming the rounding in the IR is what stops each back end guessing
+  /// - which is the whole reason the signed pair is two opcodes.
+  /// </para>
+  /// </summary>
+  FPToUIRound,
   FPTrunc, FPExt,
   IntToPtr, PtrToInt, BitCast,
   /// <summary>Microsoft Binary Format → IEEE, the conversion a load of an MBF cell performs.</summary>
