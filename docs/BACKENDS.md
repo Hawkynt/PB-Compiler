@@ -204,16 +204,23 @@ implementation of its rule (`CodeGenerator.BackendDeclines`):
 
 | | |
 |---|---|
-| programs reaching the IR at all | **168 / 170** - the other two the FRONT end rejects |
-| functions ROUTED, `--optimize` | **317 / 318** |
-| functions ROUTED, `--no-optimize` | **313 / 318** |
-| module bodies owned | **168 / 168** |
-| ...of which the SELECTOR would take, if offered | 317 / 317, 168 / 168 |
+| programs reaching the IR at all | **169 / 171** - the other two the FRONT end rejects |
+| functions ROUTED, `--optimize` | **320 / 320** |
+| functions ROUTED, `--no-optimize` | **320 / 320** |
+| module bodies owned | **169 / 169** |
+| ...of which the SELECTOR would take, if offered | 320 / 320, 169 / 169 |
 
 The denominator is the SOURCE - every procedure with a body plus one module body per program - not
 the IR function count. The two used to differ when a procedure body failed lowering and disappeared
 from the IR entirely, and `IrModule.ProcedureLoweringDeclines` plus the pinned census set keep that
-observable: one corpus procedure body is refused, `WEIRD.BAS::Test_OnGosub` (`ON … GOSUB`).
+observable. It is empty: the last refused body was `WEIRD.BAS::Test_OnGosub` (`ON … GOSUB`), and the
+lowering now has an arm for it.
+
+**The two figures are the same figure, and that is the point of the second one.** `--no-optimize` was
+the mode with the weaker coverage for as long as the four gaps below stood, and all four turned out to
+be selection arms rather than anything the passes were doing - so what the optimizer was buying was not
+coverage but the accident of folding the shapes away before the selector met them. Only four
+`EXTERNAL` declarations are outside the ratio, and they have no body here to route.
 
 **These figures were 263/263 and 161/161 as recently as this document's previous revision, and the
 difference is not a widening - it is the census learning to read two of the programs it was counting.**
@@ -224,14 +231,51 @@ forty-nine procedures they contain and the only `ON … GOSUB` in the corpus. Fi
 fixtures had the same gap. This is the third time this ratio has turned out to be taken over the wrong
 denominator, and the pattern each time is the same: the number was true about what it measured.
 
-The optimized production gap is empty. The unoptimized frontier is measured separately rather than
-hidden behind the optimized total:
+Both production gaps are now empty, and the unoptimized one closed last. What was in it, and what each
+one cost to close, because three of the four are worth knowing about individually:
 
-| class | funcs | programs | outcome |
+| class | funcs | programs | how it closed |
 |---|---|---|---|
-| phi edge-copy cycle needs a temporary | 2 | 2 | selection |
-| `FPToSI f80 -> i64` | 1 | 1 | selection |
-| `select` with an `f32` result | 1 | 1 | selection |
+| phi edge-copy cycle needs a temporary | 2 | 2 | `DIFF39`, `DIFF49` - and the decline was over-broad |
+| `FPToSI f80 -> i64` | 1 | 1 | `DIFF16` - a FIX cell is a scaled int64 the program KEEPS |
+| `SIToFP i64 -> f80` | 1 | 1 | the row above EXPOSED it: the FIX load half |
+| `select` with an `f32` result | 1 | 1 | `CODEGEN.BAS` - the diamond, through a frame cell |
+
+**The edge-copy decline was not testing for a cycle.** The copies a CFG edge carries are a PARALLEL
+copy - every phi reads the values the predecessor ENDS with - and the old test asked whether a copy's
+source was ANY other copy's destination. That is true of `a <- b` beside `b <- c`, which needs nothing
+but the other order, so acyclic edges declined alongside cyclic ones.
+`InstructionSelector.SequenceEdgeCopies` sequentializes instead: a copy may be written once no copy
+still waiting reads the register it overwrites, which orders every acyclic edge and leaves exactly the
+cycles. A cycle is broken by copying one destination's incoming value into a fresh virtual register
+first and rewriting every remaining reader of it, which is the classic swap-through-a-temporary. Not an
+`XCHG`: the values are virtual here, so an exchange would have to be undone in the allocator's terms,
+and a value the spiller puts in the frame has no exchange instruction at all. The register is minted at
+SELECTION, so it is an ordinary value the allocator sees from the start - not a spiller-minted one, and
+so deliberately not a member of `MFunction.MovedValues`, whose whole meaning is "already moved once
+during spilling". `BackendPhiSwapTests` pins both halves: a swap costs three moves and really performs
+the exchange, and an edge that only needed ordering mints nothing.
+
+**The two qword conversions are one shape read in both directions, and the second is the worked
+example this document already warns about.** A FIX cell holds the value scaled by `pbvFixDigits` as an
+int64, so the store path is `FPToSI f80 -> i64` ending in storage rather than in a matching `SIToFP` -
+a qword frame cell, the only place this target holds a 64-bit integer. It goes through `rt_trunc` for
+the reason the existing `SIToFP(FPToSI(x))` pair does: `FISTP` rounds by the control word, and
+`FPToSI` means toward zero everywhere else in this compiler. That costs a call the direct emitter's FIX
+store does not make - `rt_fixup` has already applied `FRNDINT` by then - and it is emitted anyway,
+because the arm is `FPToSI` in general and not the FIX idiom in particular. Enabling it moved
+`DIFF16::main`'s decline one instruction later, to the `SIToFP i64 -> f80` of the LOAD path, which had
+been unreachable behind it: a widening making the next blocker visible, exactly as `FPToUI` did.
+
+**`ON n GOSUB` is `ON n GOTO`'s switch over the `GOSUB` machinery**, with one thing that decides
+whether it is correct: the return id is pushed INSIDE each arm rather than once in front of the
+dispatch (`IrLowering.GosubArm`). The default arm is PB's fall-through and never returns, so a push in
+front would leave an id on the shadow stack whenever the selector is out of range - and the next
+`RETURN` anywhere in the procedure would come back to the `ON` statement instead of to its own caller.
+All the arms share ONE id, because they share one continuation, which is what a GOSUB's return address
+is. `tests/diff/DIFF119.BAS` is the oracle: the selector comes out of `DATA` so nothing folds the
+dispatch, every arm is taken plus 0 and past-the-end, and a plain `GOSUB` written behind the dispatch
+is what catches an unbalanced return stack.
 
 Near BYREF INTEGER/WORD/LONG/DWORD/SINGLE/DOUBLE parameters are no longer in that table: all 12 corpus
 procedures now route through one-word near pointers, taking production from 245/263 to 257/263
@@ -1402,8 +1446,9 @@ Fixing it moved two numbers that had been quoted as evidence:
 | module bodies owned | 165 / 165 | **167 / 167** |
 | procedure bodies the lowering refuses | none | `WEIRD.BAS::Test_OnGosub` (`ON … GOSUB`) |
 
-(`tests/diff/DIFF118.BAS` then adds one program and one module body of its own, which is where the
-317 / 318 and 168 / 168 quoted at the top of this document come from.)
+(`tests/diff/DIFF118.BAS` and `DIFF119.BAS` then add a program and a module body each, and the five
+declines that remained have since closed, which together is the difference between this row and the
+320 / 320 and 169 / 169 quoted at the top of this document.)
 
 `MINI.BAS` and `WEIRD.BAS` `$INCLUDE "TESTLIB.BI"`, so their equates were unbound, they bound with
 errors, and every one of those fixtures dropped them through its "the front end rejects it" arm —

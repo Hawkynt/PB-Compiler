@@ -10,7 +10,7 @@ passes; an empty box means nobody has checked yet, which is not the same as fail
 | | Dimension | Measured | Notes |
 |---|---|---|---|
 | [x] | Statement syntax and parameter combinations | 207 / 207 | all 207 accepted |
-| [x] | Lowers to the IR | 136 / 207 | 136 of 207 reach the IR; the rest decline by name, which is the documented subset |
+| [x] | Lowers to the IR | 137 / 207 | 137 of 207 reach the IR; the rest decline by name, which is the documented subset |
 | [-] | Syntax errors in unreachable branches are ignored, and warned about | - | no conditional compilation in this family; $STATIC/$DYNAMIC are storage directives, not branches |
 | [-] | Syntax errors on reachable flow fail | - | the dead-branch dimension's reason: no conditional compilation in this family; $STATIC/$DYNAMIC are storage directives, not branches |
 | [x] | Syntax belonging to another dialect is rejected | 96 / 96 | all 96 cleanly refused |

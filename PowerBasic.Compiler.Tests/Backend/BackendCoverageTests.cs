@@ -402,10 +402,15 @@ public sealed class BackendCoverageTests {
     // CDECL/STDCALL/FASTCALL/WATCALL convention, and error handling inside a procedure body.
     //
     // A floor, so a widening may only raise it. Lowering it means the back end took less than it did.
-    Assert.That(census.Routed, Is.GreaterThanOrEqualTo(265),
+    Assert.That(census.Routed, Is.GreaterThanOrEqualTo(320),
       $"the x86-16 back end now ROUTES fewer corpus functions than it used to ({census.Routed}/{census.Bodies}):\n" + report);
-    Assert.That(census.RoutedNoOptimize, Is.GreaterThanOrEqualTo(261),
+    // ...and the two figures are now the SAME, which is the fact the flag was gated for: the last
+    // four optimizer-dependent gaps (an edge copy cycle, FPToSI/SIToFP over a qword, an f32 select)
+    // were all selection arms rather than anything the passes were doing.
+    Assert.That(census.RoutedNoOptimize, Is.GreaterThanOrEqualTo(320),
       "the x86-16 back end routes fewer corpus functions with --no-optimize than it used to:\n" + report);
+    Assert.That(census.RoutingDeclinesNoOptimize.Keys.Where(reason => !reason.StartsWith("filter: external declaration", StringComparison.Ordinal)),
+      Is.Empty, "an unoptimized routing decline other than a bodiless EXTERNAL declaration is back:\n" + report);
 
     // Pinned by name for the reason every other set here is: a count cannot tell "a program stopped
     // routing" from "a program was added and never did".
@@ -493,7 +498,7 @@ public sealed class BackendCoverageTests {
     // had to decline. LOWLEVEL.BAS was the last function on this list.
     // Then 262 -> 263 when SWAP exchanged dynamic-string handle cells directly, so
     // CODEGEN.BAS::SwapIsInline stopped disappearing from the IR before selection.
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(265),
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(320),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
     Assert.That(census.ProcedureDeclines, Is.Empty,
       "a lowered named procedure no longer reaches the x86-16 back end:\n" + report);
@@ -521,7 +526,7 @@ public sealed class BackendCoverageTests {
     // statement holds for a later one is reserved over exactly the stretch between them, so the shape
     // that needed it allocates rather than declining.
     // 262 -> 263 keeps it closed: the newly lowered string-handle SWAP also allocates.
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(265),
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(320),
       "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // The figure that matters for whole-program ownership: module bodies the back end compiles end
@@ -567,10 +572,16 @@ public sealed class BackendCoverageTests {
   /// their equates were unbound, they bound with errors, and both were counted as "the front end
   /// rejects it" - out of BOTH halves of every ratio. That took 49 procedures and the corpus's only
   /// <c>ON … GOSUB</c> with them, so the headline read 267/267 over a corpus that was two programs
-  /// short of itself. It is 316/317 over the whole one, and this is the one that is missing.
+  /// short of itself.
+  /// </para>
+  /// <para>
+  /// It is empty again, and this time because the construct lowers: <c>ON n GOSUB</c> is the
+  /// <c>ON n GOTO</c> switch with a return id pushed inside each arm (<c>IrLowering.GosubArm</c>).
+  /// <c>tests/diff/DIFF119.BAS</c> is the oracle for it, and <c>BackendOnGosubTests</c> pins the
+  /// fall-through and the shared return stack.
   /// </para>
   /// </summary>
-  private static readonly string[] _procedureBodiesNotLowered = ["WEIRD.BAS::Test_OnGosub: ON ... GOSUB"];
+  private static readonly string[] _procedureBodiesNotLowered = [];
 
   private static readonly string[] _loweredToIr = [
     "ARRAY.BAS",
@@ -612,6 +623,7 @@ public sealed class BackendCoverageTests {
     // truncation disagree - the oracle gate for IrCastOp.FPToUIRound
     "DIFF117.BAS",
     "DIFF118.BAS",
+    "DIFF119.BAS",   // ON n GOSUB: the dispatch, its fall-through, and the shared return stack
     // EXIT FAR: the unwind point and the jump through it, as intrinsics the back end expands inline;
     // both the module body and its near numeric BYREF procedure route.
     "DIFF14.BAS",
@@ -787,6 +799,7 @@ public sealed class BackendCoverageTests {
     // truncation disagree - the oracle gate for IrCastOp.FPToUIRound
     "DIFF117.BAS",
     "DIFF118.BAS",
+    "DIFF119.BAS",   // ON n GOSUB: the dispatch, its fall-through, and the shared return stack
     "DIFF15.BAS",
     "DIFF16.BAS",   // FIX (@) and BCD (@@): a scaled int64 cell and an f80 one
     "DIFF17.BAS",   // DIM HUGE / DIM VIRTUAL: segment stepping and the EMS page window

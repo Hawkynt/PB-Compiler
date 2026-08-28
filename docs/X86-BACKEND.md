@@ -559,6 +559,30 @@ block**. Appends go through a block cursor, and the out-of-SSA phi copies for an
 inserted in whichever machine block control finally *leaves* from — not the one it entered. Getting
 that wrong would put a loop-carried copy on an unreachable path, so it has its own regression test.
 
+**An edge's phi copies are a parallel copy, and writing them out is a scheduling problem.** Every phi
+on one edge reads the values the predecessor *ends* with, so a sequence of `MOV`s is only faithful in
+an order where no copy overwrites a register a later one still has to read.
+`InstructionSelector.SequenceEdgeCopies` finds one: a copy is ready once no copy still waiting reads
+its destination. That orders every acyclic edge — which used to decline anyway, because the old test
+asked whether a source was *any* destination, and `a <- b` beside `b <- c` satisfies that while needing
+nothing but the other order.
+
+What no order can answer is a **cycle**, of which the two-value swap is the smallest; it is what a
+loop-carried exchange writes, and `DIFF39` and `DIFF49` write it with the optimizer off. One value has
+to be held outside the cycle while the rest move over it, so the cycle is broken by copying one
+destination's incoming value into a fresh virtual register *first* and rewriting every remaining reader
+of it. That saving copy is emitted before anything overwrites the register it reads, which is what
+makes it a save rather than a second reader, and a cycle cannot re-form because the scratch is never
+itself a destination — so at most one scratch per cycle is minted.
+
+A scratch rather than `XCHG`: these are virtual registers, so an exchange would have to be undone in
+the allocator's terms rather than the selector's, and a value the spiller has put in the frame has no
+exchange instruction at all. Because it is minted at *selection*, it is an ordinary value the allocator
+sees from the start — not a spiller-minted one, and so deliberately not a member of
+`MFunction.MovedValues`, whose meaning is "already moved once during spilling" and which the spill
+loop's termination measure reads (see "the spill loop terminates because a measure falls"). Adding a
+value before the loop starts raises the measure's starting point; it cannot stop it falling.
+
 A later `sext` of such a comparison costs nothing: the value is already a full word of `-1`/`0`,
 which is exactly what the widening would have produced.
 
@@ -1885,8 +1909,12 @@ external declaration stopped disqualifying its caller wholesale: the census buil
 `$LINK`, and `LINKDEMO` routes through numeric, BYREF, nested and dynamic-string unit calls in both
 optimizer modes. Near CDECL/STDCALL external calls now route with their declared order and cleanup;
 FASTCALL/WATCALL externals still decline per callee before selection. The four
-remaining unoptimized gaps are two phi edge-copy cycles, one `FPToSI f80 -> i64`, and one `f32`
-`select`. The selector figures are still worth having: they say the optimized selector refuses nothing
+unoptimized gaps that remained - two phi edge-copy cycles, one `FPToSI f80 -> i64`, one `f32` `select` -
+have since closed, and closing them made the two figures the same one: all four were selection arms,
+so what the optimizer had been supplying was the accident of folding those shapes away rather than any
+coverage of its own. `ON n GOSUB`, the last construct the lowering had no arm for, closed with them, and
+the corpus now routes **320 of 320 functions in both optimizer modes** over **169 of 169 module
+bodies**. The selector figures are still worth having: they say the optimized selector refuses nothing
 the filter offers it, which makes the filter the frontier rather than a
 symptom. `LOWLEVEL.BAS`
 prints 5 through the routed path and matches its golden output line for line
