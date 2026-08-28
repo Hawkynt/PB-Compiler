@@ -2,7 +2,7 @@ using PowerBasic.Compiler.Asm;
 
 namespace PowerBasic.Compiler.Runtime;
 
-/// <summary>Instruction-set extensions the selected DOS target explicitly permits.</summary>
+/// <summary>Instruction-set extensions/coprocessors the selected DOS target explicitly permits.</summary>
 [Flags]
 public enum RuntimeCpuFeatures : ulong {
   None = 0,
@@ -28,12 +28,16 @@ public enum RuntimeCpuFeatures : ulong {
   Avx512Dq = 1UL << 19,
   Avx512Bw = 1UL << 20,
   Avx512Vl = 1UL << 21,
+  X87 = 1UL << 22,
 }
 
 /// <summary>
 /// Normalized compile-time x86 target shared by runtime specialization and inline-assembly validation.
-/// <see cref="CpuLevel"/> uses the conventional generation number (86/186/286/386/486/586/686),
-/// while extension tokens opt into later ISA groups independently.
+/// <see cref="CpuLevel"/> is the minimum integer core generation (86/186/286/386/486/586/686).
+/// Feature requirements may be used without naming a generation: <c>$CPU SSE2</c> means "any x86
+/// CPU with SSE2", and prerequisite core capabilities are inferred transitively. Conversely
+/// <c>$CPU 8086</c> plus <c>$ISA AVX512 EMULATE</c> keeps an actual 8086 hardware target and lowers
+/// AVX-512 in software.
 /// </summary>
 public readonly record struct RuntimeTarget(int CpuLevel, RuntimeCpuFeatures Features) {
   private static readonly IReadOnlyList<Reg> _wordGprs = Array.AsReadOnly([
@@ -73,6 +77,7 @@ public readonly record struct RuntimeTarget(int CpuLevel, RuntimeCpuFeatures Fea
   public bool HasAvx2 => this.Has(RuntimeCpuFeatures.Avx2);
   public bool HasAvx512 => this.Has(RuntimeCpuFeatures.Avx512F);
   public bool HasAes => this.Has(RuntimeCpuFeatures.Aes);
+  public bool HasX87 => this.Has(RuntimeCpuFeatures.X87);
 
   public IReadOnlyList<Reg> WordGeneralPurposeRegisters => _wordGprs;
   public IReadOnlyList<Reg> DwordGeneralPurposeRegisters => this.Has32BitGeneralPurpose ? _dwordGprs : _none;
@@ -88,24 +93,33 @@ public readonly record struct RuntimeTarget(int CpuLevel, RuntimeCpuFeatures Fea
   /// </summary>
   public int MaxRuntimeBulkVectorWidthBytes => this.HasAvx512 ? 64 : this.HasAvx ? 32 : this.HasSse2 ? 16 : 0;
 
+  /// <summary>
+  /// Builds a target from an optional generation token followed by feature requirements. If the first
+  /// token is itself a feature (<c>$CPU SSE2</c>), there is no explicit generation floor; the lowest
+  /// core capable of satisfying the requested ISA is inferred.
+  /// </summary>
   public static RuntimeTarget For(string? cpu, IEnumerable<string>? featureTokens = null) {
-    var level = ParseCpuLevel(cpu);
-    var features = RuntimeCpuFeatures.None;
-    if (level >= 386)
-      features |= RuntimeCpuFeatures.GeneralPurpose32;
-    if (level >= 486)
-      features |= RuntimeCpuFeatures.I486;
-    if (level >= 686)
-      features |= RuntimeCpuFeatures.P6;
+    var tokens = new List<string>();
+    if (!string.IsNullOrWhiteSpace(cpu))
+      tokens.Add(cpu!);
+    if (featureTokens != null)
+      tokens.AddRange(featureTokens.Where(t => !string.IsNullOrWhiteSpace(t)));
 
-    // PB uses the first CPU token as the integer floor and remaining tokens as optional extensions.
-    // Keep the historic 586 floor for SIMD feature tokens: "$CPU 8086 AVX" must not create registers
-    // the selected architecture cannot expose.
-    if (level >= 586)
-      foreach (var token in featureTokens ?? [])
-        features |= ParseFeature(token);
+    var level = 86;
+    var featureStart = 0;
+    if (tokens.Count > 0 && TryParseCpuLevel(tokens[0], out var parsedLevel)) {
+      level = parsedLevel;
+      featureStart = 1;
+    }
 
-    return new(level, Normalize(features));
+    var features = FeaturesForCpuLevel(level);
+    for (var i = featureStart; i < tokens.Count; ++i)
+      features |= ParseFeature(tokens[i]);
+
+    features = Normalize(features);
+    level = Math.Max(level, MinimumCpuLevel(features));
+    features = Normalize(features | FeaturesForCpuLevel(level));
+    return new(level, features);
   }
 
   public string DescribeMissing(RuntimeCpuFeatures required) {
@@ -117,10 +131,44 @@ public readonly record struct RuntimeTarget(int CpuLevel, RuntimeCpuFeatures Fea
       .Select(DisplayName));
   }
 
+  private static RuntimeCpuFeatures FeaturesForCpuLevel(int level) {
+    var features = RuntimeCpuFeatures.None;
+    if (level >= 386)
+      features |= RuntimeCpuFeatures.GeneralPurpose32;
+    if (level >= 486)
+      features |= RuntimeCpuFeatures.I486;
+    if (level >= 586)
+      features |= RuntimeCpuFeatures.X87; // Pentium and later integrate the x87 FPU.
+    if (level >= 686)
+      features |= RuntimeCpuFeatures.P6;
+    return features;
+  }
+
+  private static int MinimumCpuLevel(RuntimeCpuFeatures features) {
+    if ((features & (RuntimeCpuFeatures.Sse | RuntimeCpuFeatures.Sse2 | RuntimeCpuFeatures.Sse3 |
+        RuntimeCpuFeatures.Ssse3 | RuntimeCpuFeatures.Sse41 | RuntimeCpuFeatures.Sse42 |
+        RuntimeCpuFeatures.Popcnt | RuntimeCpuFeatures.Aes | RuntimeCpuFeatures.Pclmulqdq |
+        RuntimeCpuFeatures.Avx | RuntimeCpuFeatures.Avx2 | RuntimeCpuFeatures.Fma |
+        RuntimeCpuFeatures.Bmi1 | RuntimeCpuFeatures.Bmi2 | RuntimeCpuFeatures.Avx512F |
+        RuntimeCpuFeatures.Avx512Dq | RuntimeCpuFeatures.Avx512Bw | RuntimeCpuFeatures.Avx512Vl |
+        RuntimeCpuFeatures.P6)) != 0)
+      return 686;
+    if ((features & RuntimeCpuFeatures.Mmx) != 0)
+      return 586;
+    if ((features & RuntimeCpuFeatures.I486) != 0)
+      return 486;
+    if ((features & RuntimeCpuFeatures.GeneralPurpose32) != 0)
+      return 386;
+    // X87 by itself may mean an 8087 attached to an 8086, so it imposes no integer-core floor.
+    return 86;
+  }
+
   private static RuntimeCpuFeatures Normalize(RuntimeCpuFeatures value) {
     if ((value & RuntimeCpuFeatures.Avx512F) != 0)
       value |= RuntimeCpuFeatures.Avx2 | RuntimeCpuFeatures.Avx;
     if ((value & RuntimeCpuFeatures.Avx2) != 0)
+      value |= RuntimeCpuFeatures.Avx;
+    if ((value & RuntimeCpuFeatures.Fma) != 0)
       value |= RuntimeCpuFeatures.Avx;
     if ((value & RuntimeCpuFeatures.Avx) != 0)
       value |= RuntimeCpuFeatures.Sse2 | RuntimeCpuFeatures.Sse;
@@ -142,6 +190,7 @@ public readonly record struct RuntimeTarget(int CpuLevel, RuntimeCpuFeatures Fea
   private static RuntimeCpuFeatures ParseFeature(string raw) {
     var feature = raw.Trim().Replace("-", "", StringComparison.Ordinal).Replace(".", "", StringComparison.Ordinal).ToUpperInvariant();
     return feature switch {
+      "X87" or "8087" or "NPX" or "FPU" => RuntimeCpuFeatures.X87,
       "MMX" => RuntimeCpuFeatures.Mmx,
       "SSE" => RuntimeCpuFeatures.Sse,
       "SSE2" => RuntimeCpuFeatures.Sse2,
@@ -165,15 +214,12 @@ public readonly record struct RuntimeTarget(int CpuLevel, RuntimeCpuFeatures Fea
     };
   }
 
-  private static int ParseCpuLevel(string? cpu) {
+  private static bool TryParseCpuLevel(string? cpu, out int level) {
     var text = cpu?.Trim().ToUpperInvariant() ?? string.Empty;
-    if (text is "PENTIUM" or "P5")
-      return 586;
-    if (text is "P6" or "PENTIUMPRO")
-      return 686;
-    if (!int.TryParse(text, out var numeric))
-      return 86;
-    return numeric switch {
+    if (text is "PENTIUM" or "P5") { level = 586; return true; }
+    if (text is "P6" or "PENTIUMPRO") { level = 686; return true; }
+    if (!int.TryParse(text, out var numeric)) { level = 86; return false; }
+    level = numeric switch {
       86 or 8086 => 86,
       186 or 80186 => 186,
       286 or 80286 => 286,
@@ -184,12 +230,14 @@ public readonly record struct RuntimeTarget(int CpuLevel, RuntimeCpuFeatures Fea
       _ when numeric > 80686 => 686,
       _ => numeric,
     };
+    return true;
   }
 
   private static string DisplayName(RuntimeCpuFeatures feature) => feature switch {
     RuntimeCpuFeatures.GeneralPurpose32 => "80386",
     RuntimeCpuFeatures.I486 => "80486",
     RuntimeCpuFeatures.P6 => "P6/686",
+    RuntimeCpuFeatures.X87 => "x87/NPX",
     RuntimeCpuFeatures.Sse41 => "SSE4.1",
     RuntimeCpuFeatures.Sse42 => "SSE4.2",
     RuntimeCpuFeatures.Avx512F => "AVX-512F",
