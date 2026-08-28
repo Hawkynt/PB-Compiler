@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Asm;
+using PowerBasic.Compiler.Runtime;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
 using PowerBasic.Compiler.Syntax.Ast;
@@ -24,6 +25,11 @@ public sealed partial class CodeGenerator {
   /// caveat: reordering must not be observable through a fault's resume point).
   /// </summary>
   private void ScheduleInlineAsmBlocks() {
+    // EmitExecutable calls this before the runtime entry/procedure sections are generated. Configure
+    // the normalized target here even when scheduling itself is disabled, so every runtime partial
+    // sees the same architecture/feature surface.
+    this._rt.Target = this.Optimize ? this.RuntimeTargetForRuntime() : RuntimeTarget.Baseline;
+
     if (!this.Optimize || !this.OptimizeSpeed || model.Dialect != Dialect.Pb36)
       return;
 
