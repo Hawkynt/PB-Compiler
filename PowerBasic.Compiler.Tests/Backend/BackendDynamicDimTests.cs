@@ -63,6 +63,28 @@ public sealed class BackendDynamicDimTests {
     END
     """;
 
+  /// <summary>
+  /// The boundary on the other side: <c>DIM b%()</c> names an array and deliberately does NOT size
+  /// it - the <c>REDIM</c> behind it is what allocates. Its bound list is EMPTY rather than absent,
+  /// so a declaration-allocates rule that reads "has bounds" instead of "has bounds to allocate
+  /// from" sizes it to nothing and takes the whole module's lowering down with a rank mismatch.
+  /// </summary>
+  private const string _dimWithoutBoundsThenRedim = """
+    OPEN "OUT.TXT" FOR OUTPUT AS #1
+    PRINT #1, "4"
+    CLOSE #1
+    DIM n AS INTEGER
+    OPEN "OUT.TXT" FOR INPUT AS #1
+    INPUT #1, n
+    CLOSE #1
+    DIM b%()
+    REDIM b%(1 TO n)
+    b%(1) = 5
+    b%(2) = 6
+    PRINT b%(1); b%(2)
+    END
+    """;
+
   private static SemanticModel Bind(string source) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36),
       Dialect.Pb36);
@@ -75,6 +97,7 @@ public sealed class BackendDynamicDimTests {
 
   [TestCase(_dimWithARuntimeBound, "7 11")]
   [TestCase(_dimThenComputedIndex, "3 12")]
+  [TestCase(_dimWithoutBoundsThenRedim, "5 6")]
   public void Execute_GivenADimWithARuntimeBoundAndNoRedim_WhenRouted_ThenMainRoutesAndAgrees(
       string source, string expected) {
     foreach (var optimize in new[] { false, true }) {

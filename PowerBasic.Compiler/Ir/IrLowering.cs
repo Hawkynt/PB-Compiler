@@ -2996,8 +2996,10 @@ public sealed partial class IrLowering {
     // shape (`gep: non-register base`) and the corpus therefore never noticed, but `--emit-c` and
     // `--emit-llvm` have no fallback and emitted the null store.
     foreach (var v in d.Variables) {
-      if (v.ArrayBounds is not { } dims)
-        continue;                                    // a scalar declaration allocates nothing here
+      // No bounds at all is a scalar; an EMPTY bound list is `DIM b() AS INTEGER`, which declares the
+      // array and deliberately does not size it - the REDIM that follows is what allocates.
+      if (v.ArrayBounds is not { Count: > 0 } dims)
+        continue;
       if (this.ArrayVariable(v) is not { Type: ArrayType { IsDynamic: true } arr } symbol)
         continue;                                    // static array or scalar: laid out at compile time
       if (dims.Count != arr.Rank)
