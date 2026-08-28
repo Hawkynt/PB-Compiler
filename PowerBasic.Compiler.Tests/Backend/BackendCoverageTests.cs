@@ -146,8 +146,12 @@ public sealed class BackendCoverageTests {
       var name = Path.GetFileName(file);
       SemanticModel model;
       try {
-        var text = File.ReadAllText(file);
-        model = Binder.Bind(Parser.Parse(Lexer.Tokenize(text, name, Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
+        // Preprocessor.Expand rather than Lexer.Tokenize: it is what resolves $INCLUDE and picks a
+        // $IF branch, and tokenizing directly made the two INCLUDE-using corpus programs bind with
+        // errors - counted as "the front end rejects it" and dropped out of BOTH sides of the ratio,
+        // which is the same way a census stops being coverage that this fixture already exists to fix
+        model = Binder.Bind(Parser.Parse(Preprocessor.Expand(file, new FileSourceProvider(), Dialect.Pb36),
+          name, Dialect.Pb36), Dialect.Pb36);
         if (model.Errors.Count > 0) {
           ++rejected;                           // a program the front end rejects is not the back end's business
           continue;
@@ -556,8 +560,17 @@ public sealed class BackendCoverageTests {
   /// Every procedure that HAS a body and whose body the IR lowering refused. Such a procedure is
   /// left a declaration, so it leaves the IR entirely: it is in no selection histogram, no
   /// allocation histogram, and neither half of a ratio taken over IR functions.
+  ///
+  /// <para>
+  /// This was empty, and it was empty because the census tokenized each corpus file instead of
+  /// running the preprocessor over it. WEIRD.BAS and MINI.BAS <c>$INCLUDE "TESTLIB.BI"</c>, so
+  /// their equates were unbound, they bound with errors, and both were counted as "the front end
+  /// rejects it" - out of BOTH halves of every ratio. That took 49 procedures and the corpus's only
+  /// <c>ON … GOSUB</c> with them, so the headline read 267/267 over a corpus that was two programs
+  /// short of itself. It is 316/317 over the whole one, and this is the one that is missing.
+  /// </para>
   /// </summary>
-  private static readonly string[] _procedureBodiesNotLowered = [];
+  private static readonly string[] _procedureBodiesNotLowered = ["WEIRD.BAS::Test_OnGosub: ON ... GOSUB"];
 
   private static readonly string[] _loweredToIr = [
     "ARRAY.BAS",
@@ -717,6 +730,8 @@ public sealed class BackendCoverageTests {
     "LINKDEMO.BAS",
     "LOWLEVEL.BAS",   // VARPTR, and a countdown an inline-asm block holds in CX across BASIC code
     "MATHUNIT.BAS",
+    "MINI.BAS",       // $INCLUDE - absent until the census ran the preprocessor rather than the lexer
+    "WEIRD.BAS",      // $INCLUDE plus a $IF chain; brings 49 procedures and the corpus's only ON…GOSUB
     "ONERR.BAS",
     "ONERRNXT.BAS",
     "CODEGEN.BAS",
@@ -905,5 +920,10 @@ public sealed class BackendCoverageTests {
     // countdown lives in CX across `n = n + 1`, so the asm statements had to be able to say which
     // registers they define and read before the allocator could be trusted with the frame.
     "LOWLEVEL.BAS",
+    // Neither of these is a widening: both were absent because the census tokenized the source
+    // instead of expanding it, so their $INCLUDE went unresolved and the front end rejected them.
+    // They routed all along.
+    "MINI.BAS",
+    "WEIRD.BAS",
   ];
 }
