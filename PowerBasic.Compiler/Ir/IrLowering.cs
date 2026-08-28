@@ -2287,32 +2287,20 @@ public sealed partial class IrLowering {
   }
 
   private static void GatherData(IReadOnlyList<Statement> statements, List<byte> blob, Dictionary<string, int> labels) {
-    foreach (var s in statements)
-      switch (s) {
-        case LabelStmt l:
-          labels[l.Name] = blob.Count;                 // RESTORE <label> rewinds to the first DATA item at/after the label
-          break;
-        case DataStmt d:
-          foreach (var item in d.Items) {
-            var bytes = System.Text.Encoding.ASCII.GetBytes(item);
-            if (bytes.Length > 0xFFFF)
-              throw new IrLoweringException("DATA item exceeds 64KB");
-            blob.Add((byte)(bytes.Length & 0xFF));
-            blob.Add((byte)((bytes.Length >> 8) & 0xFF));
-            blob.AddRange(bytes);
-          }
-          break;
-        case IfStmt i:
-          GatherData(i.Then, blob, labels);
-          foreach (var (_, body) in i.ElseIfs) GatherData(body, blob, labels);
-          if (i.Else is { } e) GatherData(e, blob, labels);
-          break;
-        case ForStmt f: GatherData(f.Body, blob, labels); break;
-        case DoLoopStmt dl: GatherData(dl.Body, blob, labels); break;
-        case SelectStmt sel:
-          foreach (var arm in sel.Arms) GatherData(arm.Body, blob, labels);
-          break;
+    // the walk is Runtime.DataPool's, shared with the direct emitter - see the type's own note for
+    // why one reading of it is the point rather than a tidiness
+    foreach (var (label, item) in Runtime.DataPool.Walk(statements)) {
+      if (label is not null) {
+        labels[label] = blob.Count;                    // RESTORE <label> rewinds to the first DATA item at/after the label
+        continue;
       }
+      var bytes = System.Text.Encoding.ASCII.GetBytes(item!);
+      if (bytes.Length > 0xFFFF)
+        throw new IrLoweringException("DATA item exceeds 64KB");
+      blob.Add((byte)(bytes.Length & 0xFF));
+      blob.Add((byte)((bytes.Length >> 8) & 0xFF));
+      blob.AddRange(bytes);
+    }
   }
 
   /// <summary>The shared DATA blob and read cursor, created on the module on first use.</summary>

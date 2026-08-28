@@ -19,17 +19,15 @@ public sealed partial class CodeGenerator {
     this._dataItems = [];
     this._dataLabelOffsets = new(StringComparer.OrdinalIgnoreCase);
     var offset = 0;
-    foreach (var statement in model.MainBody)
-      switch (statement) {
-        case LabelStmt label:
-          this._dataLabelOffsets[label.Name] = offset;
-          break;
-        case DataStmt data:
-          foreach (var item in data.Items) {
-            this._dataItems.Add(item);
-            offset += 2 + item.Length;
-          }
-          break;
+    // Runtime.DataPool.Walk rather than a loop over MainBody: DATA is not executable, so a statement
+    // written inside an IF/FOR/DO/SELECT block still contributes to the pool - which this walked past,
+    // giving a program that reads such an item the NEXT one instead, or Error 4 when there was none.
+    foreach (var (label, item) in Runtime.DataPool.Walk(model.MainBody))
+      if (label is not null)
+        this._dataLabelOffsets[label] = offset;
+      else {
+        this._dataItems.Add(item!);
+        offset += 2 + item!.Length;
       }
   }
 

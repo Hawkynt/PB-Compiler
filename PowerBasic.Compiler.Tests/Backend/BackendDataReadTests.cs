@@ -112,4 +112,48 @@ public sealed class BackendDataReadTests {
     Assert.That(direct, Does.Contain("hello"));
     Assert.That(direct, Does.Contain("world"));
   }
+
+  /// <summary>
+  /// <c>DATA</c> is not executable, so a statement written inside a block still contributes to the
+  /// module's one pool in source order, and a label written there still names the offset it stands
+  /// at. The direct emitter walked only the top level of the module body and the IR lowering
+  /// recursed, so the two built different pools out of one program: the direct build answered this
+  /// <c>1 2 9 11</c> and refused <c>RESTORE Inner</c> as unsupported.
+  ///
+  /// <para>
+  /// Genuine PBC 3.50 answers <c>1 2 7 8</c> - the routed path was the right one
+  /// (<c>tests/diff/DIFF118.BAS</c> holds the oracle comparison).
+  /// </para>
+  /// </summary>
+  [TestCase(true, TestName = "Run_GivenDataInsideABlock_WhenOptimized_ThenItIsInThePoolInSourceOrder")]
+  [TestCase(false, TestName = "Run_GivenDataInsideABlock_WhenUnoptimized_ThenItIsInThePoolInSourceOrder")]
+  public void Run_GivenDataInsideABlock_ThenItIsInThePoolInSourceOrder(bool optimize) {
+    var (direct, routed, names) = RunBothWays("""
+      DIM x AS INTEGER
+      DIM a AS INTEGER
+      DIM b AS INTEGER
+      DIM c AS INTEGER
+      DIM d AS INTEGER
+      DATA 1, 2
+      x = 0
+      IF x = 0 THEN
+      Inner:
+        DATA 7, 8
+      END IF
+      FOR x = 1 TO 1
+        DATA 9
+      NEXT x
+      READ a, b, c, d
+      PRINT a; b; c; d
+      RESTORE Inner
+      READ a, b
+      PRINT a; b
+      END
+      """, optimize);
+
+    Assert.That(names, Does.Contain("main"));
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(direct.Replace("\r", ""), Is.EqualTo(" 1  2  7  8 \n 7  8 \n"),
+      "the nested items are in the pool where they are written, and the nested label points at them");
+  }
 }
