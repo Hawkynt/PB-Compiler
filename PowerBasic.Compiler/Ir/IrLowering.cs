@@ -417,7 +417,9 @@ public sealed partial class IrLowering {
   private static bool ContainsGosub(IReadOnlyList<Statement> statements) {
     foreach (var s in statements)
       switch (s) {
-        case GosubStmt or GosubPtrStmt: return true;   // both push a return id onto the same stack
+        // all three push a return id onto the same stack - the dispatched form no less than the two
+        // that name their destination, since what it dispatches to is a GOSUB
+        case GosubStmt or GosubPtrStmt or OnGotoStmt { IsGosub: true }: return true;
         case IfStmt i when ContainsGosub(i.Then) || i.ElseIfs.Any(e => ContainsGosub(e.Body)) || (i.Else is { } el && ContainsGosub(el)):
           return true;
         case ForStmt f when ContainsGosub(f.Body): return true;
@@ -2254,22 +2256,54 @@ public sealed partial class IrLowering {
   }
 
   private void LowerOnGoto(OnGotoStmt o) {
-    if (o.IsGosub)
-      throw new IrLoweringException("ON ... GOSUB");
     if (this._model.TypeOf(o.Selector) is not ScalarType { IsFloat: false })
       throw new IrLoweringException("ON GOTO with a non-integer selector");
     // The direct emitter always coerces ON GOTO/GOSUB to INTEGER before dispatch. That truncation is
     // observable: 65537& selects arm 1, not the default. Put the historical word rule in the
     // target-independent IR instead of making every back end rediscover it.
     var selector = this.Coerce(this.LowerExpr(o.Selector), this._model.TypeOf(o.Selector), PbType.Integer);
-    var fallthrough = this.NewBlock("on.next");        // out-of-range selector falls through (PB semantics)
+    // Out of range - 0, or past the last label - falls through to the next statement, which is also
+    // where a GOSUB variant's RETURN comes back to. One block therefore serves both, and the switch's
+    // default arm is what PB's fall-through IS.
+    var fallthrough = this.NewBlock("on.next");
+    if (o.IsGosub && this._gosubSp is null)
+      throw new IrLoweringException("ON ... GOSUB without return-stack setup");
+    // Every arm of a GOSUB variant returns to the SAME place, so they share one continuation and
+    // therefore one return id.
+    var id = o.IsGosub ? ++this._gosubSeq : 0;
     var sw = this._b.Switch(selector, fallthrough);
     for (var k = 0; k < o.Targets.Count; ++k) {
       if (!this._labels.TryGetValue(o.Targets[k], out var target))
-        throw new IrLoweringException($"ON GOTO to unknown label {o.Targets[k]}");
-      sw.AddCase(k + 1, target);                       // selector is 1-based
+        throw new IrLoweringException($"ON {(o.IsGosub ? "GOSUB" : "GOTO")} to unknown label {o.Targets[k]}");
+      sw.AddCase(k + 1, o.IsGosub ? this.GosubArm(o.Targets[k], target, id) : target);  // selector is 1-based
     }
+    if (o.IsGosub)
+      this._gosubConts.Add((id, fallthrough));
     this._b.Position(fallthrough);
+  }
+
+  /// <summary>
+  /// One arm of an <c>ON n GOSUB</c>: the push half of an ordinary <see cref="LowerGosub"/>, in a
+  /// block of its own so the dispatch reaches it by the very switch <c>ON n GOTO</c> uses.
+  ///
+  /// <para>
+  /// The id is pushed IN the arm rather than once in front of the switch, and that is the whole reason
+  /// the arms exist. The default arm is a fall-through that never returns, so a push in front of the
+  /// dispatch would leave an id on the shadow stack whenever the selector is out of range - and the
+  /// next <c>RETURN</c> anywhere in the procedure would then dispatch back to this statement instead
+  /// of to its own caller.
+  /// </para>
+  /// </summary>
+  private IrBasicBlock GosubArm(string name, IrBasicBlock target, int id) {
+    var saved = this._b.Block!;
+    var arm = this.NewBlock($"on.gosub.{name}.");       // numbered: one label may be an arm of two dispatches
+    this._b.Position(arm);
+    var sp = this._b.Load(IrType.I32, this._gosubSp!);
+    this._b.Store(new IrConstantInt(IrType.I32, id), this._b.Gep(this._gosubStack!, sp, IrType.I32));
+    this._b.Store(this._b.Add(sp, new IrConstantInt(IrType.I32, 1)), this._gosubSp!);
+    this._b.Br(target);
+    this._b.Position(saved);
+    return arm;
   }
 
   // ---- DATA / READ / RESTORE ----------------------------------------------

@@ -286,9 +286,15 @@ public sealed partial class InstructionSelector {
 
   /// <summary>
   /// Out-of-SSA: for every phi, copy each incoming value into the phi's register at the end of the
-  /// corresponding predecessor block (before its terminator). Conservatively declines when the copies
-  /// on one edge form a cycle (a copy reads a register another copy on the same edge overwrites) - the
-  /// swap would need a temporary, a later refinement.
+  /// corresponding predecessor block (before its terminator).
+  ///
+  /// <para>
+  /// The copies on one edge are a PARALLEL copy - they all read the values the predecessor ends with -
+  /// so writing them out one after another is only correct in an order where no copy overwrites a
+  /// register a later one still has to read. <see cref="SequenceEdgeCopies"/> finds such an order, and
+  /// mints a scratch register for the one shape that has none: a cycle, of which the two-value swap is
+  /// the smallest.
+  /// </para>
   /// </summary>
   private bool InsertPhiCopies(IrFunction fn, Dictionary<string, MBlock> mblocks) {
     foreach (var predBlock in fn.Blocks) {
@@ -327,16 +333,11 @@ public sealed partial class InstructionSelector {
       if (copies.Count == 0 && floatCopies.Count == 0)
         continue;
 
-      // a cycle on this edge (one copy's source is another copy's destination) needs a temporary - decline
-      var destinations = copies.Select(c => c.Dest).ToHashSet();
-      if (copies.Any(c => c.Source is MOperand.Register r && destinations.Contains(r.Reg) && !r.Reg.Equals(c.Dest)))
-        return this.Decline("phi: copy cycle on an edge (a swap needs a temporary)");
-
       var mblock = mblocks[predBlock.Label];
       var insertAt = mblock.Instructions.FindIndex(i => i.IsTerminator);
       if (insertAt < 0)
         insertAt = mblock.Instructions.Count;
-      foreach (var (dest, source) in copies) {
+      foreach (var (dest, source) in this.SequenceEdgeCopies(copies)) {
         var copy = new MInstr(MOpcode.Mov, [new MOperand.Register(dest), source],
           new MInstrEffect(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [1] : [],
             ReadsFlags: false, WritesFlags: false, ReadsMemory: source.IsMemoryAccess(), WritesMemory: false));
@@ -352,6 +353,96 @@ public sealed partial class InstructionSelector {
 
     return true;
   }
+
+  /// <summary>
+  /// Puts the parallel copy on one CFG edge into an order that can be written out one instruction at a
+  /// time. A copy may be emitted once no copy still waiting reads the register it overwrites; that
+  /// rule alone orders every acyclic edge, which is nearly all of them - and used to be a decline,
+  /// because the old test asked whether a source was ANY destination rather than whether the copies
+  /// could be ordered at all.
+  ///
+  /// <para>
+  /// What no order can answer is a CYCLE - <c>a &lt;- b</c> beside <c>b &lt;- a</c>, the loop-carried
+  /// swap <c>DIFF39</c> and <c>DIFF49</c> write when their counters exchange residency. One value has
+  /// to be kept somewhere outside the cycle while the rest move over it, so the cycle is broken by
+  /// copying one destination's incoming value into a fresh virtual register FIRST and rewriting every
+  /// remaining reader of it to read that register instead. The saving copy is appended before anything
+  /// that overwrites the register it reads, which is what makes it a save rather than a second reader.
+  /// </para>
+  ///
+  /// <para>
+  /// A scratch register rather than <c>XCHG</c>: the values here are virtual, so an exchange would have
+  /// to be undone in the allocator's terms rather than the selector's, and a value spilled to the frame
+  /// has no exchange instruction at all. The register is minted at selection, so it is an ordinary
+  /// value the allocator sees from the start - not a spiller-minted one, and so not a member of
+  /// <see cref="MFunction.MovedValues"/>, whose whole meaning is "already moved once during spilling".
+  /// </para>
+  ///
+  /// <para>
+  /// Termination: every pass either removes a copy from the pending set or breaks one cycle by making
+  /// one register unread, and a broken cycle cannot re-form because the scratch register is never a
+  /// destination. So at most one scratch per cycle is minted, and the loop is bounded by the number of
+  /// copies on the edge.
+  /// </para>
+  /// </summary>
+  private List<(MReg Dest, MOperand Source)> SequenceEdgeCopies(List<(MReg Dest, MOperand Source)> copies) {
+    var pending = new List<(MReg Dest, MOperand Source)>(copies);
+    var ordered = new List<(MReg Dest, MOperand Source)>(copies.Count);
+    while (pending.Count > 0) {
+      var ready = -1;
+      for (var i = 0; i < pending.Count && ready < 0; ++i) {
+        var overwritten = pending[i].Dest;
+        var stillNeeded = false;
+        for (var j = 0; j < pending.Count && !stillNeeded; ++j)
+          stillNeeded = j != i && ReadsRegister(pending[j].Source, overwritten);
+        if (!stillNeeded)
+          ready = i;
+      }
+      if (ready >= 0) {
+        ordered.Add(pending[ready]);
+        pending.RemoveAt(ready);
+        continue;
+      }
+      // Every remaining destination is still read by another remaining copy, so the pending set is a
+      // union of cycles. Lift one register out of its cycle into a scratch and the cycle opens.
+      var held = pending[0].Dest;
+      var scratch = MReg.Virtual(this._nextVreg++, held.Size);
+      ordered.Add((scratch, new MOperand.Register(held)));
+      for (var j = 0; j < pending.Count; ++j)
+        pending[j] = (pending[j].Dest, RenameRegister(pending[j].Source, held, scratch));
+    }
+    return ordered;
+  }
+
+  /// <summary>
+  /// Whether an operand's value depends on a register - as the value itself, or as part of the
+  /// effective address of a memory reference (which is the same set <see cref="LivenessAnalysis"/>
+  /// counts as reads). Size is deliberately not part of the comparison: a byte view and a word view of
+  /// one virtual register are the same storage, and overwriting either destroys the other.
+  /// </summary>
+  private static bool ReadsRegister(MOperand operand, MReg register) => operand switch {
+    MOperand.Register r => SameRegister(r.Reg, register),
+    MOperand.Memory m => (m.Base is { } b && SameRegister(b, register))
+      || (m.Index is { } x && SameRegister(x, register))
+      || (m.Segment is { } s && SameRegister(s, register)),
+    _ => false,
+  };
+
+  /// <summary>The same operand reading <paramref name="to"/> wherever it read <paramref name="from"/>, at the width it read it.</summary>
+  private static MOperand RenameRegister(MOperand operand, MReg from, MReg to) => operand switch {
+    MOperand.Register r when SameRegister(r.Reg, from) => new MOperand.Register(to with { Size = r.Reg.Size }),
+    MOperand.Memory m => m with {
+      Base = m.Base is { } b && SameRegister(b, from) ? to with { Size = b.Size } : m.Base,
+      Index = m.Index is { } x && SameRegister(x, from) ? to with { Size = x.Size } : m.Index,
+      Segment = m.Segment is { } s && SameRegister(s, from) ? to with { Size = s.Size } : m.Segment,
+    },
+    _ => operand,
+  };
+
+  /// <summary>Whether two references name the same storage, whatever width each reads it at.</summary>
+  private static bool SameRegister(MReg left, MReg right)
+    => left.IsVirtual == right.IsVirtual
+       && (left.IsVirtual ? left.VirtualId == right.VirtualId : left.Physical == right.Physical);
 
   /// <summary>The compare that feeds a block's conditional-branch terminator and nothing else (so it folds into the branch), or null.</summary>
   private static IrCmp? FoldedCompare(IrBasicBlock block)
@@ -1921,8 +2012,8 @@ public sealed partial class InstructionSelector {
   /// so nothing is evaluated that the original would not have evaluated.
   /// </summary>
   private bool SelectSelect(IrSelect sel) {
-    if (sel.Type.IsFloat)
-      return this.Decline($"select: {sel.Type} result");
+    if (sel.Type.IsFloat)          // MBF never gets this far - RefusesMbf turns it away at the dispatch
+      return this.SelectFloatSelect(sel);
     var wide = IsWide(sel.Type);
     // the min/max canonicalization may have inverted the predicate this select's condition emits, in
     // which case the arms go with it the other way round (see InstructionSelector.Idioms)
@@ -1977,6 +2068,65 @@ public sealed partial class InstructionSelector {
     falseBlock.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ifFalse], MovEffect(destOp, ifFalse)));
     if (wide)
       falseBlock.Instructions.Add(new MInstr(MOpcode.Mov, [destHi, ifFalseHi], MovEffect(destHi, ifFalseHi)));
+    falseBlock.Successors.Add(doneBlock.Label);
+
+    this._function.Blocks.Add(falseBlock);
+    this._function.Blocks.Add(doneBlock);
+    this._current = doneBlock;
+    return true;
+  }
+
+  /// <summary>
+  /// The same diamond for a float result, with the one difference that decides the whole shape: a
+  /// float on this target never lives in a register, so each arm is a load-and-store through the x87
+  /// into the select's own frame cell rather than a <c>MOV</c> into its virtual register.
+  ///
+  /// <para>
+  /// The cell is taken ONCE, before either arm, so both arms write the same slot - the mistake the
+  /// wide integer arm's comment already warns about, where a half written on one path only keeps
+  /// whatever the other path left. And <c>FLD</c>/<c>FSTP</c> leave the CPU flags alone (the x87 has
+  /// a status word of its own), which is what lets the compare stay in front of the true arm and the
+  /// conditional jump behind it, exactly as the integer form does.
+  /// </para>
+  ///
+  /// <para>
+  /// The IR reaches here from <c>MAX</c>/<c>MIN</c> and any other empty diamond <c>IfConversion</c>
+  /// folds, with the result still at the width PB computed it. Optimized, the integer recovery pass
+  /// usually turns the pair back into an integer select first, which is why this only showed as a
+  /// decline with <c>--no-optimize</c> - selection is not allowed to depend on that.
+  /// </para>
+  /// </summary>
+  private bool SelectFloatSelect(IrSelect sel) {
+    var (whenTrue, whenFalse) = this.HasSwappedArms(sel)
+      ? (sel.IfFalse, sel.IfTrue)
+      : (sel.IfTrue, sel.IfFalse);
+    if (!this.TryFloatOperand(whenTrue, out var ifTrue) || !this.TryFloatOperand(whenFalse, out var ifFalse))
+      return false;
+    if (!this.TryOperand(sel.Condition, out var cond))
+      return false;
+    if (cond is not MOperand.Register)
+      return this.Decline("select: condition is not in a register");
+
+    var destination = this.FloatCell(sel);
+    var falseBlock = new MBlock($"{this._current.Label}.selfalse{this._splitCount}");
+    var doneBlock = new MBlock($"{this._current.Label}.seldone{this._splitCount}");
+    ++this._splitCount;
+
+    var zero = new MOperand.Immediate(0);
+    this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [cond, zero],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false)));
+    this.EmitX87(MOpcode.Fld, ifTrue, reads: true);
+    this.EmitX87(MOpcode.Fstp, destination, reads: false);
+    this._current.Instructions.Add(new MInstr(MOpcode.Jcc, [new MOperand.LabelRef(doneBlock.Label)],
+      new MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, WritesMemory: false),
+      Condition.NotEqual));
+    this._current.Successors.Add(doneBlock.Label);
+    this._current.Successors.Add(falseBlock.Label);
+
+    this._current = falseBlock;
+    this.EmitX87(MOpcode.Fld, ifFalse, reads: true);
+    this.EmitX87(MOpcode.Fstp, destination, reads: false);
     falseBlock.Successors.Add(doneBlock.Label);
 
     this._function.Blocks.Add(falseBlock);
@@ -2145,6 +2295,12 @@ public sealed partial class InstructionSelector {
       case IrCastOp.FPToSI when to.IsInteger && to.Bits == 64 && from.IsIeeeFloat
           && cast.Users is [IrCast { Op: IrCastOp.SIToFP, Type.IsIeeeFloat: true }]:
         return true;
+      // ...and when the i64 is a value the program KEEPS - a FIX cell is a scaled int64, so the
+      // conversion ends in storage rather than in a matching SIToFP - it becomes a qword cell of its
+      // own. The truncation still goes through rt_trunc for the reason the pair below does: FISTP
+      // rounds by the control word, and FPToSI means toward zero everywhere else in this compiler.
+      case IrCastOp.FPToSI when IsQuad(to) && from.IsIeeeFloat:
+        return this.SelectTruncationToQword(cast);
       // FIX and INT truncate a float toward zero by going through a 64-BIT integer, and the round
       // trip is the whole operation - the i64 is never a value the program can see, only the shape
       // the truncation takes. Selected as a pair it becomes the rt_trunc the direct emitter calls;
@@ -3421,12 +3577,54 @@ public sealed partial class InstructionSelector {
   }
 
   /// <summary>
+  /// A float truncated toward zero into a QUAD the program keeps - the store half of a <c>FIX</c>
+  /// cell, whose contents are the value scaled by <c>pbvFixDigits</c> and held as an int64.
+  /// <see cref="SelectTruncationTowardZero"/> is the same conversion whose result goes straight back
+  /// to a float; this one ends in the qword cell every other 64-bit value in this back end lives in,
+  /// so <see cref="SelectQwordStore"/> and the QUAD argument path can read it.
+  ///
+  /// <para>
+  /// <c>rt_trunc</c> for the reason stated there: <c>FISTP</c> rounds by the control word, so a bare
+  /// qword store would answer <c>FIX(-1.5)</c> with <c>-2</c>. It costs a call the direct emitter's
+  /// FIX store does not make - <c>rt_fixup</c> has already applied <c>FRNDINT</c> by the time the
+  /// value arrives, so the truncation finds nothing to remove - and it is emitted anyway, because
+  /// this arm is <see cref="IrCastOp.FPToSI"/> in general and not the FIX idiom in particular. A
+  /// conversion that happens to be exact must not be the reason a rounding one is selected.
+  /// </para>
+  /// </summary>
+  private bool SelectTruncationToQword(IrCast cast) {
+    if (!this.TryFloatOperand(cast.Value, out var source))
+      return false;
+    var slot = this._function.StackSlots.Count;
+    this._function.StackSlots.Add(8);
+    this._qslots[cast] = slot;
+    this.EmitX87(MOpcode.Fld, source, reads: true);
+    this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef("rt_trunc")],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: true, WritesMemory: true),
+      condition: null, clobbers: _callClobbers));
+    this.EmitX87(MOpcode.Fistp, new MOperand.StackSlot(slot, MRegSize.Qword), reads: false);
+    return true;
+  }
+
+  /// <summary>
   /// An integer widened to a float. x87 reads its integers from memory, so the value is parked in a
   /// frame cell first - a word for an INTEGER, both halves of the pair for a LONG - and <c>FILD</c>
   /// reads it back at that width.
   /// </summary>
   private bool SelectIntToFloat(IrCast cast) {
     var from = cast.Value.Type;
+    // A QUAD is already in a qword cell rather than in registers - the only integer width on this
+    // target that is - so FILD reads it where it lies and there is nothing to stage. This is the load
+    // half of a FIX cell (its contents scaled back down by rt_fixdn afterwards), and the mirror of
+    // SelectTruncationToQword. Signed only, which IsQuad is: FILD reads the eight bytes as signed.
+    if (IsQuad(from)) {
+      if (!this.TryQwordSlot(cast.Value, out var qslot))
+        return false;
+      this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(qslot, MRegSize.Qword), reads: true);
+      this.PopRounded(cast.Type, this.FloatCell(cast));
+      return true;
+    }
     if (!from.IsInteger || from.Bits is not (16 or 32))
       return this.Decline($"floating point: {cast.Op} from {from}");
     // FILD reads a SIGNED integer, so an unsigned source is staged one size LARGER than itself with
