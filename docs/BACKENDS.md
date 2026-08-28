@@ -1507,13 +1507,21 @@ naming - which used to render an unnamed operand as `%undef`, producing a module
 assembles and computes something else. That is the one outcome worse than a raise.
 
 `EmitterNeverThrowsTests` is the gate, in the two populations
-`BackendNeverThrowsTests` argues for: 330 corpus emissions and 1008 generated ones
-(42 construct bodies x 4 runtime-operand shapes x 3 dialects x both emitters), each
-one a `pbc --emit-c`/`--emit-llvm` run that must answer 0 with a translation unit or 1
-with a name. Each half carries its own can-this-measure-anything companion - every
-generated body must bind, more than half of the generated emissions must reach an
-emitter, and each emitter must render more than 50 corpus programs - because a matrix
-that all stops at the lowering would stay green through any change to either emitter.
+`BackendNeverThrowsTests` argues for: 334 corpus emissions and 1032 generated ones
+(43 construct bodies x 4 runtime-operand shapes x 3 dialects x both emitters), each one
+a `pbc --emit-c`/`--emit-llvm` run that must answer 0 with a translation unit or 1 with
+a name. The operand is always derived from `INPUT` rather than a `NOINLINE` helper,
+because `INPUT` is the one opaque source that exists in every dialect and a literal
+folds under SCCP long before an emitter sees it.
+
+Each half carries its own can-this-measure-anything companion, because a matrix that
+all stops at the lowering would stay green through any change to either emitter: every
+generated body must bind (a body the front end rejects varies nothing while looking
+like coverage), more than half the generated emissions must reach an emitter (71 of 86
+do), and each emitter must render more than 50 corpus programs (142 C, 153 LLVM). One
+shape had to be replaced after it was written, which is what that companion is for:
+`DEF SEG = &HB800 : PEEK(n%)` lowers to a NEAR access and renders, so it would have sat
+in the fixture looking like far-pointer coverage and been none.
 
 Beyond widening that subset, the two items that would most change the picture:
 
