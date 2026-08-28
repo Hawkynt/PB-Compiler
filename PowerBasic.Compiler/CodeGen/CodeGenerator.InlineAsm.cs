@@ -68,8 +68,16 @@ public sealed partial class CodeGenerator {
   }
 
   private void EmitInlineAsm(InlineAsmStmt ia) {
+    var resolver = new InlineAsmResolver(this);
+    var target = this.RuntimeTargetForRuntime();
+    if (this.TryEmitTargetedInlineAsm(ia.Text, resolver, target, out var targetedError)) {
+      if (targetedError != null)
+        this.Errors.Add(new(ia.Position, $"inline asm '{ia.Text.Trim()}': {targetedError}"));
+      return;
+    }
+
     this._textAssembler ??= new(this._asm);
-    if (!this._textAssembler.TryParse(ia.Text, new InlineAsmResolver(this), out var error))
+    if (!this._textAssembler.TryParse(ia.Text, resolver, out var error))
       this.Errors.Add(new(ia.Position, $"inline asm '{ia.Text.Trim()}': {error}"));
   }
 
