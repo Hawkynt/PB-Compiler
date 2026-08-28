@@ -204,16 +204,25 @@ implementation of its rule (`CodeGenerator.BackendDeclines`):
 
 | | |
 |---|---|
-| programs reaching the IR at all | **161 / 165** - the other four the FRONT end rejects |
-| functions ROUTED, `--optimize` | **263 / 263** |
-| functions ROUTED, `--no-optimize` | **259 / 263** |
-| module bodies owned | **161 / 161** |
-| ...of which the SELECTOR would take, if offered | 263 / 263, 161 / 161 |
+| programs reaching the IR at all | **168 / 170** - the other two the FRONT end rejects |
+| functions ROUTED, `--optimize` | **317 / 318** |
+| functions ROUTED, `--no-optimize` | **313 / 318** |
+| module bodies owned | **168 / 168** |
+| ...of which the SELECTOR would take, if offered | 317 / 317, 168 / 168 |
 
 The denominator is the SOURCE - every procedure with a body plus one module body per program - not
 the IR function count. The two used to differ when a procedure body failed lowering and disappeared
-from the IR entirely. They are equal now: no corpus procedure body is refused, while
-`IrModule.ProcedureLoweringDeclines` and the pinned empty census set keep that fact observable.
+from the IR entirely, and `IrModule.ProcedureLoweringDeclines` plus the pinned census set keep that
+observable: one corpus procedure body is refused, `WEIRD.BAS::Test_OnGosub` (`ON … GOSUB`).
+
+**These figures were 263/263 and 161/161 as recently as this document's previous revision, and the
+difference is not a widening - it is the census learning to read two of the programs it was counting.**
+It bound each corpus file with `Lexer.Tokenize`, which does not reach `Preprocessor.Expand`, so
+`MINI.BAS` and `WEIRD.BAS` never resolved their `$INCLUDE "TESTLIB.BI"`, bound with unbound equates,
+and were discarded as front-end rejections - out of BOTH halves of every ratio, along with the
+forty-nine procedures they contain and the only `ON … GOSUB` in the corpus. Five more corpus-wide
+fixtures had the same gap. This is the third time this ratio has turned out to be taken over the wrong
+denominator, and the pattern each time is the same: the number was true about what it measured.
 
 The optimized production gap is empty. The unoptimized frontier is measured separately rather than
 hidden behind the optimized total:
@@ -1295,6 +1304,111 @@ genuine PBC 3.50 with `scripts/diff-one.sh … pb35` and both with the routed pa
   `9.22337203685478E+18`. `tests/diff/DIFF116.BAS`.
 
 The sweep driver is `Wave3SweepHarness` (`Probe` category, self-skipping without `PBC_PROBE_DIR`).
+
+### Sweeping the declarative surface: `DATA`, `DEF FN`, the metastatements and the print/convert tail
+
+Eleven domains in, the constructs nobody had pointed a differential at were the ones that are not
+expressions: the `DATA` pool, `DEF FN` and the `DEF`*type* letters, conditional compilation and the
+`%` equates, `SELECT CASE` over a subject that is neither a string nor an INTEGER, `SWAP`/`LSET`/
+`RSET`/`TAB`/`SPC`/`PRINT USING`, `VAL`/`STR$`/`HEX$`/`OCT$`/`BIN$` and the `&H`/`&O`/`&B` literals,
+and `RANDOMIZE`/`RND`. Every subject came out of a seeded file or a two-site `NOINLINE` FUNCTION, over
+both optimizer settings.
+
+| | domain probes | narrowing the disagreements |
+|---|---|---|
+| compilations | 94 | 26 |
+| routed | 50 | 26 |
+| declined (fell back to the direct emitter) | 36 | 0 |
+| agreed, after the fixes below | 48 | 26 |
+| unmeasured | 2 | 0 |
+| disagreed, before them | 4 | 12 |
+
+Eight further programs went to the genuine PBC 3.50 oracle through `scripts/diff-one.sh … pb35`,
+because two paths agreeing says nothing about whether either is right — and on this surface that
+mattered twice: it is what settled `READ` past the end (PB raises Error 4 and leaves the target
+alone) and what settled a nested `DATA` statement (PB collects it). The two `unmeasured` rows are one
+probe whose DIRECT image needs more than 8M interpreted instructions; its shorter twin measures the
+same `VAL` inputs.
+
+**One routed defect, and it was a wrong answer before it was a missing diagnostic.** `IrLowering`'s
+`READ` had no end-of-pool check at all, where the direct emitter's `rt_readdata` compares `rt_dataptr`
+against `rt_dataend`. Past the last item the cursor stands on whatever global follows the blob and its
+first two bytes are read as an item LENGTH, so the target is filled from an unrelated object and the
+cursor advances by however much that said. Genuine PBC raises Error 4 and leaves the target alone. It
+is middle-end, so `--emit-c` and `--emit-llvm` walked off the blob too.
+
+**Two direct-emitter defects, both with the routed path already right.**
+
+* **The DATA pool was built from the top level of the module body only.** `DATA` is not executable, so
+  a statement inside an `IF`, `FOR`, `DO` or `SELECT` block still contributes to the pool in source
+  order — which `IrLowering.GatherData` did and `CodeGenerator.EnsureDataPool` did not. One program
+  therefore had two different pools depending on the back end: `DATA 1,2 / IF x=0 THEN / DATA 7,8 /
+  END IF` reads `1 2 7 8` under PBC 3.50 and under the routed build, and ran out of data entirely
+  under the direct one. `RESTORE` to a label written inside a block was refused outright. The walk is
+  now one reading, `Runtime.DataPool.Walk`, beside `UsingFormat` and for the same stated reason.
+  `tests/diff/DIFF118.BAS`.
+* **The inliner bound a BYREF parameter by aliasing the argument's cell without checking its type.**
+  A real call compares the two and copies a mismatch into a hidden temp of the parameter's width;
+  `TryEmitInlinedFunction` asked only whether the argument was a near lvalue, so `Twice#(i%)` pointed a
+  DOUBLE parameter at two bytes and doubled six bytes of the frame — `1.42986060318503E-315` for 32,
+  and `238551072` at LONG width. Optimized builds only, which is every pb36 build. Genuine PBC rejects
+  the mismatch (`Error 481: Parameter mismatch - may need ByCopy`), so this is a region only we accept
+  and the non-inlined build is the whole of the available reference; the corpus's one `DEF FN` takes an
+  INTEGER and is given an INTEGER, which is the shape that was already right. The predicate now lives
+  in `OptInlining.InlinableByRefArgument` because the reachability purge has to agree with it exactly.
+
+**The fourth disagreement was the instrument, and it had been wrong for every probe ever run through
+it.** `Preprocessor.Expand` is its own entry point; `Lexer.Tokenize` does not reach it. Both
+differential harnesses — and, it turned out, the coverage census and five more corpus-wide fixtures —
+read each file through the lexer, so a `$IF` chain compiled with *every* arm live and an `$INCLUDE`
+resolved to nothing. A probe written to compare the two paths on conditional compilation reported
+agreement over a program with all three arms emitted in sequence.
+
+Fixing it moved two numbers that had been quoted as evidence:
+
+| measured on one tree, with and without the fix | before | after |
+|---|---|---|
+| corpus differential comparisons | 325 | **329** |
+| functions ROUTED (`--optimize`) | 267 / 267 | **316 / 317** |
+| functions ROUTED (`--no-optimize`) | 263 / 267 | **312 / 317** |
+| module bodies owned | 165 / 165 | **167 / 167** |
+| procedure bodies the lowering refuses | none | `WEIRD.BAS::Test_OnGosub` (`ON … GOSUB`) |
+
+(`tests/diff/DIFF118.BAS` then adds one program and one module body of its own, which is where the
+317 / 318 and 168 / 168 quoted at the top of this document come from.)
+
+`MINI.BAS` and `WEIRD.BAS` `$INCLUDE "TESTLIB.BI"`, so their equates were unbound, they bound with
+errors, and every one of those fixtures dropped them through its "the front end rejects it" arm —
+out of *both* halves of every ratio. Forty-nine procedures went with them, and so did the corpus's
+only `ON … GOSUB`, which is the one construct that could have said "a procedure body still does not
+reach the IR". Nothing about the back end moved: both programs routed all along.
+
+**What this surface has no routed coverage for at all**, each a clean decline that falls back to the
+direct emitter today and a compile failure the day `CodeGen/` goes:
+
+| construct | the lowering's own reason |
+|---|---|
+| `RND`, `TIMER` | `unbound name` — the intrinsics are not lowered |
+| `RANDOMIZE` | `unsupported statement` |
+| `SWAP` of two UDTs | `unsupported lvalue` |
+| `$DYNAMIC`, `$STATIC`, `$OPTION` | `metastatement $X` — the default-decline arm, though neither of the first two has runtime semantics |
+| `READ`/`RESTORE` inside a PROCEDURE | `global '.data_cursor' has no cell the emitter can address` |
+| `READ` into a fixed-length string, a UDT with a fixed-string field | `non-scalar UDT field` |
+| file `INPUT` of a QUAD or a BYTE | `rt_finput_i64` / `rt_finput_u8` are not in the runtime ABI table |
+
+**And what neither path implements**, found the same way and reported rather than fixed: `DATE$`,
+`TIME$` and `FORMAT$` do not exist (`DATE$` binds as an undeclared string variable and prints empty);
+`$SEGMENT` does not parse; `SELECT CASE` over a QUAD subject ends the compilation with
+`not yet generated: SelectStmt`; and `RESTORE <label>` from inside a `SUB` is `undefined label`. The
+`PRINT USING` gaps a probe turns up — `$$`, `**`, `+`/trailing `-` and `^^^^` printing as the literal
+characters — are the ones `Runtime.UsingFormat` already documents as deliberately not modelled, and
+the two paths agree on all of them.
+
+Everything else agreed, and agreed with the vintage oracle where a program could be put to it:
+`VAL` on malformed, spaced and radix input, `STR$` round trips, `HEX$`/`OCT$`/`BIN$`, the `&H`/`&O`/
+`&B` literals, `LSET`/`RSET` including truncation, typed `READ`s with `RESTORE <label>`, `SELECT CASE`
+over SINGLE/DOUBLE/LONG, `SWAP` at every scalar width and on array elements, `TAB`/`SPC` at their
+boundaries, and the `PRINT USING` numeric fields that are implemented.
 
 ### One divergence with no answer: a `$ERROR` metastatement INSIDE a procedure body
 
