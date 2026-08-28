@@ -76,6 +76,9 @@ public readonly struct Mem {
 
   public Mem WithSize(OperandSize size) => this with { Size = size };
 
+  /// <summary>Returns the same addressing expression displaced by <paramref name="delta"/> bytes.</summary>
+  public Mem Offset(int delta) => this with { Displacement = checked(this.Displacement + delta) };
+
   /// <summary>Applies a segment override prefix to this operand.</summary>
   public Mem Seg(Reg segment) => segment.IsSegment()
     ? this with { Segment = segment }
