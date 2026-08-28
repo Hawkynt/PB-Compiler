@@ -2180,10 +2180,11 @@ public sealed partial class InstructionSelector {
   }
 
   /// <summary>
-  /// A direct call to a defined procedure, in the BASIC/PASCAL convention the direct codegen emits:
-  /// arguments pushed <b>left to right</b>, <c>CALL</c>, and the callee cleaning them with its
-  /// <c>RET n</c> - so a back-end function and a directly-emitted one call each other unchanged.
-  /// The result arrives in <c>AX</c>.
+  /// A direct near call using the convention recorded on <see cref="IrCall"/>. BASIC/PASCAL push
+  /// argument groups left to right and let the callee clean; CDECL/STDCALL push them right to left,
+  /// with CDECL alone restoring SP in the caller. Register conventions remain an explicit decline
+  /// until their argument staging is represented in machine IR. Integer results arrive in AX or
+  /// DX:AX and IEEE results in ST(0).
   ///
   /// The call is marked as clobbering every allocatable register, which is the truth on this ABI
   /// (a callee owns AX-DX as scratch and may use SI/DI for loop residency without saving them).
@@ -2220,8 +2221,8 @@ public sealed partial class InstructionSelector {
     // A declaration is one of two very different things. A RUNTIME routine has a hand-written body
     // with a register convention, and reaching it needs an entry in the ABI table - anything not
     // listed declines, which is the signal the coverage census reads. An EXTERNAL user procedure has
-    // no body HERE but an ordinary PB signature, supplied by another object file and resolved by the
-    // linker; it takes the same stack convention a defined procedure does, so it takes the same path.
+    // no body HERE but a source-declared ABI, supplied by another object file and resolved by the
+    // linker; its IrCall convention chooses the ordinary stack-call path below.
     if (callee.IsDeclaration) {
       if (NonLocalJumpIntrinsics.Contains(callee.Name))
         return this.SelectNonLocalJumpIntrinsic(call, callee);
@@ -2238,45 +2239,35 @@ public sealed partial class InstructionSelector {
         && RegSize(call.Type) != MRegSize.Word)
       return this.Decline($"call: {callee.Name} returns {call.Type} (unsupported result shape)");
 
-    foreach (var arg in call.Args) {
-      if (arg.Type.IsIeeeFloat) {
-        if (!this.TryFloatOperand(arg, out var source))
-          return false;
-        var bytes = arg.Type.Bits / 8;
-        if (bytes is not (4 or 8))
-          return this.Decline($"call: {callee.Name} takes {arg.Type} (only SINGLE/DOUBLE arguments)");
-        // Intermediates live in 80-bit cells. Storing to the parameter's declared width is both the
-        // ABI representation and its required rounding boundary; pushing words from the TBYTE cell
-        // itself would pass the x87 encoding as though it were IEEE bits.
-        var staged = this._function.StackSlots.Count;
-        this._function.StackSlots.Add(bytes);
-        this.EmitX87(MOpcode.Fld, source, reads: true);
-        this.EmitX87(MOpcode.Fstp, new MOperand.StackSlot(staged, RegSize(arg.Type)), reads: false);
-        for (var offset = bytes - 2; offset >= 0; offset -= 2)
-          this._current.Instructions.Add(PushOf(
-            new MOperand.StackSlot(staged, MRegSize.Word, offset)));
-        continue;
-      }
-      if (IsWide(arg.Type)) {
-        // a 32-bit argument occupies two stack words, and the callee reads its LOW half at the
-        // parameter's own offset - the stack grows down, so the high half is pushed first
-        if (!this.TryOperandPair(arg, out var argLo, out var argHi))
-          return false;
-        this._current.Instructions.Add(PushOf(argHi));
-        this._current.Instructions.Add(PushOf(argLo));
-        continue;
-      }
-      if (RegSize(arg.Type) != MRegSize.Word)
-        return this.Decline($"call: {callee.Name} takes {arg.Type} (word arguments only)");
-      if (!this.TryOperand(arg, out var pushed))
+    var abi = X86CallAbi.For(call.Convention);
+    if (abi.Distance != X86CallDistance.Near)
+      return this.Decline($"call: {callee.Name} uses a far return address");
+    if (abi.ArgumentRegisters.Count > 0)
+      return this.Decline($"call: {callee.Name} uses {call.Convention} register arguments");
+
+    var arguments = abi.StackArgumentOrder == X86StackArgumentOrder.RightToLeft
+      ? call.Args.Reverse()
+      : call.Args;
+    var stackBytes = 0;
+    foreach (var arg in arguments) {
+      if (!this.PushStackCallArgument(arg, callee.Name, out var argumentBytes))
         return false;
-      this._current.Instructions.Add(PushOf(pushed));
+      stackBytes += argumentBytes;
     }
 
     this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef(callee.Name)],
       new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
         ReadsMemory: true, WritesMemory: true),
       condition: null, clobbers: _callClobbers));
+
+    if (abi.StackCleanup == X86StackCleanup.Caller && stackBytes > 0) {
+      var sp = new MOperand.Register(MReg.Physical_(Reg.SP, MRegSize.Word));
+      this._current.Instructions.Add(new MInstr(MOpcode.Add,
+        [sp, new MOperand.Immediate(stackBytes)],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+          ReadsMemory: false, WritesMemory: false),
+        condition: null, clobbers: [Reg.SP]));
+    }
 
     if (call.Type.IsVoid)
       return true;
@@ -2305,6 +2296,45 @@ public sealed partial class InstructionSelector {
     var destOp = new MOperand.Register(dest);
     var ax = new MOperand.Register(MReg.Physical_(Reg.AX, RegSize(call.Type)));
     this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ax], MovEffect(destOp, ax)));
+    return true;
+  }
+
+  private bool PushStackCallArgument(IrValue argument, string calleeName, out int bytes) {
+    bytes = 0;
+    if (argument.Type.IsIeeeFloat) {
+      if (!this.TryFloatOperand(argument, out var source))
+        return false;
+      bytes = argument.Type.Bits / 8;
+      if (bytes is not (4 or 8))
+        return this.Decline($"call: {calleeName} takes {argument.Type} (only SINGLE/DOUBLE arguments)");
+      // Intermediates live in 80-bit cells. Storing to the parameter's declared width is both the
+      // ABI representation and its required rounding boundary; pushing words from the TBYTE cell
+      // itself would pass the x87 encoding as though it were IEEE bits.
+      var staged = this._function.StackSlots.Count;
+      this._function.StackSlots.Add(bytes);
+      this.EmitX87(MOpcode.Fld, source, reads: true);
+      this.EmitX87(MOpcode.Fstp, new MOperand.StackSlot(staged, RegSize(argument.Type)), reads: false);
+      for (var offset = bytes - 2; offset >= 0; offset -= 2)
+        this._current.Instructions.Add(PushOf(
+          new MOperand.StackSlot(staged, MRegSize.Word, offset)));
+      return true;
+    }
+    if (IsWide(argument.Type)) {
+      // A 32-bit argument occupies two stack words, and the callee reads its LOW half at the
+      // parameter's own offset - the stack grows down, so the high half is pushed first.
+      if (!this.TryOperandPair(argument, out var argumentLo, out var argumentHi))
+        return false;
+      this._current.Instructions.Add(PushOf(argumentHi));
+      this._current.Instructions.Add(PushOf(argumentLo));
+      bytes = 4;
+      return true;
+    }
+    if (RegSize(argument.Type) != MRegSize.Word)
+      return this.Decline($"call: {calleeName} takes {argument.Type} (word arguments only)");
+    if (!this.TryOperand(argument, out var pushed))
+      return false;
+    this._current.Instructions.Add(PushOf(pushed));
+    bytes = 2;
     return true;
   }
 

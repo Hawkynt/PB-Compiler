@@ -101,8 +101,9 @@ constrains what foreign code can be linked and is the crux of the whole feature.
 
 - **cdecl (C).** Caller pushes args right-to-left and cleans the stack; result in
   `AX`/`DX:AX`; publics are decorated with a leading underscore (`_Foo`). We already
-  emit the CDECL convention and support `ALIAS`, so a `DECLARE ... CDECL ALIAS "_Foo"`
-  call needs no codegen change — just symbol resolution. **Caveat:** a C library
+  emit the CDECL convention and support `ALIAS`; both the direct emitter and an IR-routed caller
+  therefore cross a `DECLARE ... CDECL ALIAS "_Foo"` boundary with the same order and cleanup.
+  **Caveat:** a C library
   routine that calls `malloc`/`printf`/… drags in the **C runtime**, so its CRT
   `.LIB` (or a no-CRT/freestanding build) must be linked too; the CRT also wants its
   startup/`DGROUP` init. M1 scope = self-contained, no-CRT objects (hand-asm or
@@ -225,8 +226,8 @@ we already apply to our own sections.
   `.LIB` (page-walked members); `OmfToPbu` lowers a module to a synthetic unit so the
   existing `Linker` lays it out and resolves it. `$LINK "x.OBJ"`/`"x.LIB"` is wired in
   the driver; `DECLARE ... CDECL ALIAS "_sym"` names the external public (the codegen
-  external label now uses the alias). End-to-end test: a BASIC program links a leaf
-  cdecl object and calls it under DOSBox (`addone(41)` → `42`). Far (`Base16`/
+  external label now uses the alias). End-to-end tests call leaf CDECL objects from both emission
+  paths, including a routed two-argument subtraction that makes order observable. Far (`Base16`/
   `Pointer32`) and data-segment fixups are now lowered into the single 64 KiB segment
   (a far reference's segment becomes the load segment); only genuinely >64 KiB
   multi-segment objects remain unsupported.

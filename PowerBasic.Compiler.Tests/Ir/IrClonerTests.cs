@@ -52,4 +52,20 @@ public sealed class IrClonerTests {
     Assert.That(IrPrinter.Print(dest), Does.Contain("add i32 21, 21"));   // seeded operand used
     Assert.That(IrPrinter.Print(src), Does.Contain("add i32 %p, %p"));    // original untouched
   }
+
+  [Test]
+  public void Clone_GivenNonDefaultCallConvention_ThenPreservesItsAbiIdentity() {
+    var callee = new IrFunction("foreign", IrType.Void);
+    var src = new IrFunction("src", IrType.Void);
+    var entry = src.CreateBlock("entry");
+    entry.Append(new IrCall(IrType.Void, callee, [], IrCallConvention.Cdecl));
+    entry.Append(new IrRet());
+    var dest = new IrFunction("dest", IrType.Void);
+
+    IrCloner.Clone(dest, src.Blocks.ToList(), new(ReferenceEqualityComparer.Instance), "c.");
+
+    Assert.That(dest.Blocks.Single().Instructions.OfType<IrCall>().Single().Convention,
+      Is.EqualTo(IrCallConvention.Cdecl));
+    Assert.That(IrPrinter.Print(dest), Does.Contain("call cdecl void @foreign()"));
+  }
 }

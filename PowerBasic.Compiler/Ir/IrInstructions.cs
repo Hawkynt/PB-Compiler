@@ -283,14 +283,26 @@ public sealed class IrSelect : IrInstruction {
   public IrValue IfFalse => this.GetOperand(2);
 }
 
-/// <summary>A call: <c>[result =] call callee(args...)</c>. The callee is an operand (so indirect calls are uniform).</summary>
+/// <summary>
+/// Source-level calling-convention identity carried through target-neutral IR. A target maps this
+/// identity to its concrete argument locations, stack order and cleanup rules.
+/// </summary>
+public enum IrCallConvention { Basic, Cdecl, Stdcall, Pascal, Fastcall, Watcall }
+
+/// <summary>
+/// A call: <c>[result =] call callee(args...)</c>. The callee is an operand, so indirect calls are
+/// uniform.
+/// </summary>
 public sealed class IrCall : IrInstruction {
-  public IrCall(IrType resultType, IrValue callee, IReadOnlyList<IrValue> args) : base(resultType) {
+  public IrCall(IrType resultType, IrValue callee, IReadOnlyList<IrValue> args,
+      IrCallConvention convention = IrCallConvention.Basic) : base(resultType) {
+    this.Convention = convention;
     this.AddOperand(callee);
     foreach (var a in args)
       this.AddOperand(a);
   }
 
+  public IrCallConvention Convention { get; }
   public IrValue Callee => this.GetOperand(0);
   public IEnumerable<IrValue> Args => this.Operands.Skip(1);
   public int ArgCount => this.Operands.Count - 1;

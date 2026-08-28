@@ -80,7 +80,7 @@ public sealed class IrPrinter {
       IrFarPtr f => $"farptr {f.Segment.Type} {this.Ref(f.Segment)}:{f.Offset.Type} {this.Ref(f.Offset)}",
       IrPhi p => $"phi {p.Type} {this.PrintPhiInputs(p)}",
       IrSelect sel => $"select i1 {this.Ref(sel.Condition)}, {sel.Type} {this.Ref(sel.IfTrue)}, {sel.Type} {this.Ref(sel.IfFalse)}",
-      IrCall call => $"call {call.Type} {this.Ref(call.Callee)}({this.PrintArgs(call)})",
+      IrCall call => $"call{CallConventionOf(call)} {call.Type} {this.Ref(call.Callee)}({this.PrintArgs(call)})",
       IrRet r => r.HasValue ? $"ret {r.Value!.Type} {this.Ref(r.Value)}" : "ret void",
       IrBr br => $"br label %{br.Target.Label}",
       IrCondBr cb => $"br i1 {this.Ref(cb.Condition)}, label %{cb.IfTrue.Label}, label %{cb.IfFalse.Label}",
@@ -96,6 +96,9 @@ public sealed class IrPrinter {
 
   private string PrintArgs(IrCall call) =>
     string.Join(", ", call.Args.Select(a => $"{a.Type} {this.Ref(a)}"));
+
+  private static string CallConventionOf(IrCall call)
+    => call.Convention == IrCallConvention.Basic ? "" : $" {call.Convention.ToString().ToLowerInvariant()}";
 
   private string PrintSwitch(IrSwitch sw) {
     var cases = string.Join(" ", sw.Cases.Select(c => $"{sw.Condition.Type} {c.Value}, label %{c.Target.Label}"));

@@ -97,6 +97,9 @@ model.
   keeps use-lists exact. Instruction set: binary arithmetic/bitwise, `icmp`/`fcmp`,
   the LLVM cast set, `alloca`/`load`/`store`/byte-`gep`, `phi`, `call`, and the
   terminators `ret`/`br`/`condbr`/`switch`/`unreachable`.
+- `IrCall` — carries source calling-convention identity independently of the callee operand. Back ends
+  map BASIC/PASCAL/CDECL/STDCALL/FASTCALL/WATCALL to target-specific locations and cleanup; cloning
+  preserves the identity and the IR printer spells non-default conventions explicitly.
 - `IrBasicBlock` — ends in exactly one terminator; predecessors are derived from
   sibling terminators so CFG edges never drift.
 - `IrFunction` / `IrModule` — signature + blocks; globals + functions.

@@ -14,9 +14,9 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// in-house x86-16 back end could only take leaf functions, which is most of why so little of the
 /// corpus routed through it (see <see cref="BackendCoverageTests"/>).
 ///
-/// Two things have to hold for a call to be sound here. The ABI must match on both sides - the back
-/// end emits the BASIC/PASCAL convention (arguments pushed left to right, callee cleans with
-/// <c>RET n</c>). An optimized routed function may only call procedures that are themselves routed,
+/// Two things have to hold for a call to be sound here. The ABI must match on both sides: routed
+/// definitions use BASIC/PASCAL, while an <see cref="IrCall"/> may select another declared stack ABI.
+/// An optimized routed function may only call procedures that are themselves routed,
 /// since those are exactly the ones excluded from the register-parameter conversion. With optimization
 /// off, a directly emitted BASIC/PASCAL callee keeps the same stack ABI and is therefore compatible.
 /// Nothing may sit in a register across any call: this ABI preserves no register at all, so the
@@ -69,6 +69,74 @@ public sealed class BackendCallRoutingTests {
     Assert.That(selected.AllInstructions.First(i => i.Opcode == MOpcode.Call).Clobbers,
       Is.SupersetOf(new[] { Reg.AX, Reg.SI, Reg.DI }),
       "this ABI preserves nothing, so the call must declare it destroys the register file");
+  }
+
+  [TestCase(IrCallConvention.Cdecl, true)]
+  [TestCase(IrCallConvention.Stdcall, false)]
+  public void Select_GivenRightToLeftStackConvention_ThenReversesArgumentGroupsAndUsesDeclaredCleanup(
+      IrCallConvention convention, bool callerCleans) {
+    // Given a foreign two-argument declaration whose operand values make stack order observable.
+    var module = new IrModule("t");
+    var callee = module.AddFunction(new IrFunction("foreign", IrType.Void,
+      [new IrArgument(IrType.I16, 0), new IrArgument(IrType.I16, 1)]));
+    var fn = module.AddFunction(new IrFunction("main", IrType.Void));
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    entry.Append(new IrCall(IrType.Void, callee,
+      [new IrConstantInt(IrType.I16, 11), new IrConstantInt(IrType.I16, 22)], convention));
+    entry.Append(new IrRet());
+
+    // When the call is selected, the last source argument is pushed first.
+    var selected = InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(selected, Is.Not.Null, $"declined: {reason}");
+    var instructions = selected!.AllInstructions.ToList();
+    var pushes = instructions.Where(i => i.Opcode == MOpcode.Push).ToList();
+    Assert.Multiple(() => {
+      Assert.That(pushes, Has.Count.EqualTo(2));
+      Assert.That(pushes[0].Operands[0], Is.EqualTo(new MOperand.Immediate(22)));
+      Assert.That(pushes[1].Operands[0], Is.EqualTo(new MOperand.Immediate(11)));
+      Assert.That(instructions.Any(i => i.Opcode == MOpcode.Add
+        && i.Operands[0] is MOperand.Register { Reg.IsVirtual: false, Reg.Physical: Reg.SP }
+        && i.Operands[1] is MOperand.Immediate { Value: 4 }), Is.EqualTo(callerCleans));
+    });
+  }
+
+  [Test]
+  public void Select_GivenCdeclWideArguments_ThenReversesGroupsWithoutReversingWords() {
+    var module = new IrModule("t");
+    var callee = module.AddFunction(new IrFunction("foreign", IrType.Void,
+      [new IrArgument(IrType.I32, 0), new IrArgument(IrType.I32, 1)]));
+    var fn = module.AddFunction(new IrFunction("main", IrType.Void));
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    entry.Append(new IrCall(IrType.Void, callee,
+      [new IrConstantInt(IrType.I32, 0x11112222), new IrConstantInt(IrType.I32, 0x33334444)],
+      IrCallConvention.Cdecl));
+    entry.Append(new IrRet());
+
+    var selected = InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(selected, Is.Not.Null, $"declined: {reason}");
+    var pushes = selected!.AllInstructions.Where(i => i.Opcode == MOpcode.Push)
+      .Select(i => ((MOperand.Immediate)i.Operands[0]).Value)
+      .ToList();
+    Assert.That(pushes, Is.EqualTo(new long[] { 0x3333, 0x4444, 0x1111, 0x2222 }));
+    Assert.That(selected.AllInstructions.Any(i => i.Opcode == MOpcode.Add
+      && i.Operands[1] is MOperand.Immediate { Value: 8 }), Is.True);
+  }
+
+  [TestCase(IrCallConvention.Fastcall)]
+  [TestCase(IrCallConvention.Watcall)]
+  public void Select_GivenRegisterConvention_ThenDeclinesExplicitly(IrCallConvention convention) {
+    var module = new IrModule("t");
+    var callee = module.AddFunction(new IrFunction("foreign", IrType.Void,
+      [new IrArgument(IrType.I16, 0)]));
+    var fn = module.AddFunction(new IrFunction("main", IrType.Void));
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    entry.Append(new IrCall(IrType.Void, callee, [new IrConstantInt(IrType.I16, 1)], convention));
+    entry.Append(new IrRet());
+
+    Assert.That(InstructionSelector.TrySelect(fn, out var reason), Is.Null);
+    Assert.That(reason, Does.Contain("register arguments"));
   }
 
   [Test]

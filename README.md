@@ -571,7 +571,7 @@ next free number rather than displacing anything.
 | ⬜ | [O0279](docs/optimizations/O0279-whole-program-devirtualization.md) | Whole-program devirtualization | When the complete set of possible targets of an indirect call is known, the call can be resolved statically. |
 | ⬜ | [O0280](docs/optimizations/O0280-argument-structure-reduction.md) | Argument structure reduction | A procedure that takes a whole `TYPE` (or a descriptor) but reads only two of its fields does not need the aggregate. |
 | ⬜ | [O0281](docs/optimizations/O0281-return-structure-reduction.md) | Return structure reduction | A `FUNCTION` returning a `TYPE` by value (or a tuple — `FUNCTION DivMod(...) AS (LONG, LONG)`) writes the whole aggregate through a struct return. |
-| ⬜ | [O0282](docs/optimizations/O0282-internal-calling-convention.md) | Internal calling-convention specialization | When the compiler owns every call site, the calling convention is an implementation detail it may choose per procedure:. |
+| ⬜ | [O0282](docs/optimizations/O0282-internal-calling-convention.md) | Internal calling-convention specialization | When the compiler owns every call site, the calling convention is an implementation detail it may choose per procedure. |
 | ⬜ | [O0283](docs/optimizations/O0283-context-sensitive-cloning.md) | Context-sensitive cloning | Interprocedural facts are joined over all callers, so one imprecise caller destroys the precision for everybody. |
 | ⬜ | [O0284](docs/optimizations/O0284-semantic-function-merging.md) | Semantic function merging | O0040 merges procedures whose bytes are identical. |
 | ⬜ | [O0285](docs/optimizations/O0285-constant-data-merging.md) | Program-wide constant data merging | O0011 packs *string* literals within one compilation. |

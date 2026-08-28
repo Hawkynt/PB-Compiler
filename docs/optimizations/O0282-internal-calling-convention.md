@@ -34,6 +34,7 @@ q&, r& = DivMod(x&, y&)
 
 - The same ownership proof [O0021](O0021-register-parameters.md) uses: every
   call site visible, no address taken, nothing linked that could call by name.
-- A per-procedure convention record threaded through both the call site and the
-  frame layout — the mechanism exists (`ConventionRegisters`), the policy does
-  not.
+- A per-procedure convention decision threaded through both call sites and frame layout. Declared
+  identity now survives on `IrCall`, and `X86CallAbi` describes stack order, cleanup, distance and
+  register slots. The missing part is the costed private-ABI policy plus routed register-argument
+  definitions; `OptRegParm` remains the implemented word-sized special case.
