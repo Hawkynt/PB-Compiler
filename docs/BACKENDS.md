@@ -432,6 +432,28 @@ it, and `--emit-c` and `--emit-llvm` emitted the null store. `AllocateDynamicArr
 `REDIM` and by the `DIM` of a dynamic array, which is what the direct emitter already does: `EmitDim`
 and `REDIM` without `PRESERVE` both reach `EmitClassedAllocation`.
 
+**File `INPUT` of a `QUAD`, `BYTE`, `WORD` or `DWORD` now routes, and closing it found a miscompile in
+the entry that was already there.** The IR declares `rt_finput_i64` and its three neighbours because
+the same declarations feed the C back end; the DOS runtime composed an entry only for `i16`, `i32` and
+the floats, so those four declined with "not in the runtime ABI table". What each one had to be is
+decided by where the direct emitter's `Coerce` narrows the VAL'd number for that target type, and the
+four are not one shape: a BYTE and a WORD are both `ValueKind.Int16` there and share the 16-bit entry,
+differing only in how much of `AX` the caller keeps; a DWORD takes the 32-bit one; and a QUAD stays on
+the x87, because 64 bits of integer have no register pair on this target - only a qword frame cell -
+and anything that touched a DOUBLE on the way in would drop eleven mantissa bits. Two new answer kinds
+carry those last two (`ResultKind.LowByte`, `ResultKind.St0ToQword`); the qword cell is the same one
+`SelectQwordLoad` mints, so the result is an ordinary 64-bit value every later store already reads.
+
+The defect underneath: **`rt_inp_i16` narrowed with a 16-bit `FISTP` and `rt_inp_i32` with a 32-bit
+one, and `FISTP` does not wrap.** Given a value its destination cannot hold it writes the INDEFINITE -
+`8000h` in a word, `8000_0000h` in a dword - so `INPUT #1, a%` on 40000 answered -32768 routed where
+PB wraps to -25536, and `INPUT #1, l&` on 3000000000 answered -2147483648 where PB wraps to
+-1294967296. The direct emitter stores through one size more and keeps the low half for exactly this
+reason and says so in a comment; both entries now do the same. That also makes the signed and unsigned
+32-bit arms one routine, which is why there is no `rt_inp_u32`. It was invisible because both entries
+are called only from the routed path and every INPUT any test had written was in range - the
+in-range answer is identical either way.
+
 **An empty decline histogram is not the same as "every shape is handled", and one shape RAISED rather
 than declining.** A narrow (`BYTE`/`WORD`/`INTEGER`) shift whose count the immediate encoding cannot
 carry - one the program computed, or a literal outside 1..31 - reached the assembler in a form it has

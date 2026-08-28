@@ -2887,6 +2887,10 @@ public sealed partial class InstructionSelector {
       => this.Decline($"call: {callee.Name} answers with scratch binary32, but the call is typed {call.Type}"),
     RuntimeAbi.ResultKind.ScratchF64 when !call.Type.IsIeeeFloat || call.Type.Bits is not (64 or 80)
       => this.Decline($"call: {callee.Name} answers with scratch binary64, but the call is typed {call.Type}"),
+    RuntimeAbi.ResultKind.LowByte when !call.Type.IsInteger || RegSize(call.Type) != MRegSize.Byte
+      => this.Decline($"call: {callee.Name} answers with a byte, but the call is typed {call.Type}"),
+    RuntimeAbi.ResultKind.St0ToQword when !call.Type.IsInteger || call.Type.Bits != 64
+      => this.Decline($"call: {callee.Name} answers on the x87 into a qword cell, but the call is typed {call.Type}"),
     RuntimeAbi.ResultKind.Word when IsWide(call.Type) || RegSize(call.Type) != MRegSize.Word
       => this.Decline($"call: {callee.Name} returns {call.Type} (word results only)"),
     _ => true,
@@ -2944,10 +2948,36 @@ public sealed partial class InstructionSelector {
       return true;
     }
 
+    // The x87 is holding an INTEGER here, not a float, so the answer is popped with FISTP into a
+    // qword frame cell rather than with FSTP into a float one - the same cell SelectQwordLoad mints
+    // and TryQwordSlot looks values up in, which is what makes the result an ordinary 64-bit value
+    // every later store and conversion already knows how to read.
+    if (routine.Answer == RuntimeAbi.ResultKind.St0ToQword) {
+      var qslot = this._function.StackSlots.Count;
+      this._function.StackSlots.Add(8);
+      this._qslots[call] = qslot;
+      this.EmitX87(MOpcode.Fistp, new MOperand.StackSlot(qslot, MRegSize.Qword), reads: false);
+      return true;
+    }
+
     if (routine.Answer is RuntimeAbi.ResultKind.ScratchF32 or RuntimeAbi.ResultKind.ScratchF64) {
       var size = routine.Answer == RuntimeAbi.ResultKind.ScratchF32 ? MRegSize.Dword : MRegSize.Qword;
       this.EmitX87(MOpcode.Fld, new MOperand.DataCell("rt_scratch", 0, size), reads: true);
       this.EmitX87(MOpcode.Fstp, this.FloatCell(call), reads: false);
+      return true;
+    }
+
+    // A BYTE result keeps the low half of the answer register. The routine computed a whole word -
+    // there is no narrower thing for it to have computed - and the discard is the same one the direct
+    // emitter makes when it stores AL into a BYTE cell.
+    if (routine.Answer == RuntimeAbi.ResultKind.LowByte) {
+      if (routine.Result!.Value != Reg.AX)
+        return this.Decline($"call: {routine.Label} answers with a byte outside AL");
+      var byteDest = this.FreshVreg(call.Type);
+      this._vregs[call] = byteDest;
+      var byteOp = new MOperand.Register(byteDest);
+      var al = new MOperand.Register(MReg.Physical_(Reg.AL, MRegSize.Byte));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [byteOp, al], MovEffect(byteOp, al)));
       return true;
     }
 

@@ -69,6 +69,9 @@ public sealed partial class DosRuntime {
   /// <summary>INPUT of a number: AX = PB file number (0 = console) -> AX (or DX:AX) = the value.</summary>
   public Label InputI16 { get; private set; } = null!;
   public Label InputI32 { get; private set; } = null!;
+
+  /// <summary>INPUT of a QUAD: the rounded value left ON the x87, where a QUAD lives on this target.</summary>
+  public Label InputI64 { get; private set; } = null!;
   public Label InputFlt { get; private set; } = null!;
 
   /// <summary>
@@ -545,22 +548,52 @@ public sealed partial class DosRuntime {
     // AX = the PB file number on entry (0 is the console), which is exactly what rt_ftoken wants.
     // FISTP rounds with whatever control word is current, which is the same rounding an assignment
     // of a DOUBLE to an INTEGER gets - nearest, ties to even.
+    //
+    // Each entry stores through ONE SIZE MORE than the value it keeps, which is the direct emitter's
+    // own arrangement (CodeGenerator.Coerce, "store through 32 bits so out-of-range values wrap like
+    // a genuine 16-bit store") and not a detail. FISTP does not wrap: given a value its destination
+    // cannot hold it writes the INDEFINITE - 8000h in a word, 8000_0000h in a dword - so a 16-bit
+    // FISTP answered `INPUT #1, a%` on 40000 with -32768 where PB wraps to -25536, and a 32-bit one
+    // answered `INPUT #1, l&` on 3000000000 with -2147483648 where PB wraps to -1294967296. Storing
+    // wider and keeping the low half IS the wrap, by construction.
     this.InputI16 = asm.MarkLabel("rt_inp_i16");
     {
       asm.Call(asm.Lbl("rt_ftoken"));
       asm.Call(asm.Lbl("rt_val"));          // AX = handle -> ST0, handle consumed
-      asm.Fistp(Mem.Word(asm.Lbl("rt_scratch")));
+      asm.Fistp(Mem.Dword(asm.Lbl("rt_scratch")));
       asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_scratch")));
       asm.Ret();
     }
 
+    // One entry for LONG and DWORD alike. The direct emitter's two Coerce arms differ only in the
+    // WIDTH they store through, and now that the signed one goes through 64 bits to wrap, the
+    // unsigned one - which went through 64 bits all along, so that 4000000000 is a value rather than
+    // the indefinite - is the same three instructions.
     this.InputI32 = asm.MarkLabel("rt_inp_i32");
     {
       asm.Call(asm.Lbl("rt_ftoken"));
       asm.Call(asm.Lbl("rt_val"));
-      asm.Fistp(Mem.Dword(asm.Lbl("rt_scratch")));
+      asm.Fistp(Mem.Qword(asm.Lbl("rt_scratch")));
       asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_scratch")));
       asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_scratch"), 2));
+      asm.Ret();
+    }
+
+    // A QUAD answers ON the x87, rounded to an integer, because that is where a QUAD lives on this
+    // target - a 64-bit integer has no register pair here, only a qword cell, and the caller's own
+    // FISTP is what fills it. The FISTP/FILD round trip is the direct emitter's Coerce(Double, Quad)
+    // verbatim. It has to be 64 bits wide at every step: a QUAD carries as many mantissa bits as the
+    // x87 itself has, and anything that touched a DOUBLE on the way would drop eleven of them.
+    //
+    // A BYTE and a WORD need no entry of their own: both narrow through the 16-bit one above, which
+    // is the case the direct emitter falls into for them too (a BYTE and a WORD are both
+    // ValueKind.Int16 there), and the caller keeps AL or AX from it.
+    this.InputI64 = asm.MarkLabel("rt_inp_i64");
+    {
+      asm.Call(asm.Lbl("rt_ftoken"));
+      asm.Call(asm.Lbl("rt_val"));
+      asm.Fistp(Mem.Qword(asm.Lbl("rt_scratch")));
+      asm.Fild(Mem.Qword(asm.Lbl("rt_scratch")));
       asm.Ret();
     }
 

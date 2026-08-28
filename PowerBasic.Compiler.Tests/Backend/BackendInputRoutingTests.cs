@@ -134,6 +134,91 @@ public sealed class BackendInputRoutingTests {
   }
 
   /// <summary>
+  /// The four widths the routed path could not read at all: their runtime entries were declared -
+  /// the same declarations feed the C back end, where they exist - and the DOS runtime composed one
+  /// only for <c>i16</c>, <c>i32</c> and the floats, so <c>INPUT #1, q&amp;&amp;</c> declined with
+  /// "not in the runtime ABI table".
+  ///
+  /// <para>
+  /// What each one had to be is decided by where the direct emitter's <c>Coerce</c> narrows the
+  /// VAL'd number for that target type, and the four are not one shape: a BYTE and a WORD are both
+  /// <c>ValueKind.Int16</c> there and share the 16-bit entry, a DWORD takes the UNSIGNED arm because
+  /// a signed 32-bit <c>FISTP</c> answers 8000_0000h for 4000000000, and a QUAD stays on the x87
+  /// because 64 bits of integer have no register pair on this target and a DOUBLE would drop eleven
+  /// mantissa bits on the way.
+  /// </para>
+  ///
+  /// <para>
+  /// Every value here is past the signed range of its own width, which is the only place the choice
+  /// of arm is observable at all.
+  /// </para>
+  /// </summary>
+  private static readonly (string Name, string Source, string Expected)[] _unsignedAndQuadPrograms = [
+    ("byte past the signed range", InputProgram("BYTE", "200"), "200"),
+    ("byte at the top", InputProgram("BYTE", "255"), "255"),
+    ("word past the signed range", InputProgram("WORD", "65535"), "65535"),
+    ("word past a signed word by one", InputProgram("WORD", "32768"), "32768"),
+    ("dword past the signed range", InputProgram("DWORD", "4000000000"), "4000000000"),
+    ("dword at the top", InputProgram("DWORD", "4294967295"), "4294967295"),
+    ("quad that a LONG cannot hold", InputProgram("QUAD", "8589934592"), "8589934592"),
+    // 57 significant bits: more than a DOUBLE's 53, so a QUAD that went anywhere near one on the way
+    // in comes back with the last digits wrong
+    ("quad past a double's mantissa", InputProgram("QUAD", "76861433640456465"), null!),
+  ];
+
+  private static string InputProgram(string type, string literal) => $"""
+    OPEN "OUT.TXT" FOR OUTPUT AS #1
+    PRINT #1, "{literal}"
+    CLOSE #1
+    DIM v AS {type}
+    OPEN "OUT.TXT" FOR INPUT AS #1
+    INPUT #1, v
+    CLOSE #1
+    PRINT v
+    END
+    """;
+
+  /// <summary>
+  /// The defect the widths above exposed, and it was in the entry that had been there all along.
+  /// <c>rt_inp_i16</c> narrowed with a 16-bit <c>FISTP</c> and <c>rt_inp_i32</c> with a 32-bit one -
+  /// and <c>FISTP</c> does not wrap. Given a value its destination cannot hold it writes the
+  /// INDEFINITE, so <c>INPUT #1, a%</c> on 40000 answered -32768 where PB wraps to -25536. Both now
+  /// store through one size more and keep the low half, which is what the direct emitter's
+  /// <c>Coerce</c> does and says it does.
+  /// </summary>
+  private static readonly (string Name, string Source, string Expected)[] _outOfRangePrograms = [
+    ("integer above the signed range", InputProgram("INTEGER", "40000"), "-25536"),
+    ("integer below it", InputProgram("INTEGER", "-40000"), "25536"),
+    ("long above the signed range", InputProgram("LONG", "3000000000"), "-1294967296"),
+  ];
+
+  [Test]
+  public void Input_GivenAByteWordDwordOrQuad_ThenTheRoutedProgramRoutesAndMatchesTheDirectEmitter() {
+    AssertRoutedMatchesDirect(_unsignedAndQuadPrograms);
+  }
+
+  [Test]
+  public void Input_GivenAValuePastTheTargetsSignedRange_ThenItWrapsAsTheDirectEmitterWraps() {
+    AssertRoutedMatchesDirect(_outOfRangePrograms);
+  }
+
+  private static void AssertRoutedMatchesDirect((string Name, string Source, string Expected)[] programs) {
+    foreach (var (name, source, expected) in programs)
+      foreach (var optimize in new[] { false, true }) {
+        var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
+        var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
+        var directOutput = Cpu8086.Run(direct.EmitExecutable()).Output;
+        var routedOutput = Cpu8086.Run(routed.EmitExecutable()).Output;
+
+        Assert.That(routed.BackendRoutedNames, Does.Contain("main"),
+          $"'{name}' was not routed (optimize={optimize}), so this compares the direct emitter with itself");
+        Assert.That(routedOutput, Is.EqualTo(directOutput), $"'{name}' (optimize={optimize})");
+        if (expected is not null)
+          Assert.That(routedOutput.Trim(), Is.EqualTo(expected), $"'{name}' (optimize={optimize})");
+      }
+  }
+
+  /// <summary>
   /// Narrowing to a BYTE, which is a change of VIEW rather than of content - the low half of the word
   /// already holding the value. A truncation that masked the wrong half, or that widened instead,
   /// would show up here as soon as the value exceeds a byte.
