@@ -65,7 +65,8 @@ public sealed class OptimizeSpeedCorpusTests {
       var text = File.ReadAllText(file);
 
       SemanticModel Bind()
-        => Binder.Bind(Parser.Parse(Lexer.Tokenize(text, name, Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
+        // the preprocessor, not the lexer - see BackendCoverageTests for what tokenizing directly costs
+        => Binder.Bind(Parser.Parse(Preprocessor.Expand(file, new FileSourceProvider(), Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
 
       byte[] plain, fast;
       try {

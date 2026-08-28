@@ -318,7 +318,9 @@ public sealed class BackendNeverThrowsTests {
       var name = Path.GetFileName(file);
       SemanticModel bound;
       try {
-        bound = Binder.Bind(Parser.Parse(Lexer.Tokenize(File.ReadAllText(file), name, Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
+        // the preprocessor, not the lexer: $INCLUDE and $IF are resolved there, and tokenizing
+        // directly left the two INCLUDE-using corpus programs binding with errors and skipped
+        bound = Binder.Bind(Parser.Parse(Preprocessor.Expand(file, new FileSourceProvider(), Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
       } catch (Exception) {
         continue;
       }
