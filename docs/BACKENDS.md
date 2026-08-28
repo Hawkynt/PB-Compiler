@@ -277,6 +277,28 @@ is. `tests/diff/DIFF119.BAS` is the oracle: the selector comes out of `DATA` so 
 dispatch, every arm is taken plus 0 and past-the-end, and a plain `GOSUB` written behind the dispatch
 is what catches an unbalanced return stack.
 
+**And DIFF119 was arranged around a defect rather than exposing it, which is the more interesting
+half.** It puts the dispatch and a plain `GOSUB` together in the MODULE body, and gives the procedure
+only the dispatch. Write both in a procedure with ONE call site - so the inliner absorbs it - and the
+copy in `main` names the CALLEE's phi: `--emit-llvm` raised `LlvmEmitter.Ref … (IrPhi is none)`,
+`--emit-c` wrote an undeclared identifier into C that does not compile, and the routed path declined
+`main` with `operand: IrPhi has no register`.
+
+`IrCloner` was cloning block by block in `source` order and passing an unmapped operand through
+unchanged - which is right for a genuinely external value and silently wrong for one inside the
+region. Block order is CREATION order and not dominance order: `EnsureGosubDispatch` builds its block
+lazily, so the phi that carries a GOSUB's answer is appended BEHIND every continuation that reads it.
+The cloner now re-reads every cloned instruction's operands from its source once the value map is
+complete (`IrCloner.ResolveOperands`), which cannot depend on the order at all.
+
+**`IrVerifier` should have caught this and did not, and that is a second finding.** It skipped an
+operand whose defining instruction has no parent block, in the same clause as the constants and
+arguments that really do impose no constraint. While the callee still existed the dominance rule did
+flag it - and then `GlobalDce` removed the callee, the phi's parent went null, and the driver's final
+`IrVerifier.Verify(module)` passed a module carrying a cross-function reference straight to two back
+ends. A detached operand and one defined in another function are both errors now
+(`IrVerifier.VerifyOperandIsOwned`).
+
 Near BYREF INTEGER/WORD/LONG/DWORD/SINGLE/DOUBLE parameters are no longer in that table: all 12 corpus
 procedures now route through one-word near pointers, taking production from 245/263 to 257/263
 optimized and from 242/263 to 254/263 unoptimized. `BackendByRefRoutingTests` pins write-through,

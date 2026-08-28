@@ -1,4 +1,6 @@
 using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
 using PowerBasic.Compiler.Tests.Exec;
@@ -157,6 +159,93 @@ public sealed class BackendOnGosubTests {
         Assert.That(Numbers(routed.Output), Is.EqualTo(expected), $"optimize={optimize}");
       });
     }
+  }
+
+  /// <summary>
+  /// The dispatch AND a plain <c>GOSUB</c> behind it, inside a procedure with exactly ONE call site -
+  /// so the inliner absorbs the whole thing into <c>main</c>, which is the condition this shape needs
+  /// to go wrong. <c>DIFF119</c> writes the same pair, but in the module body and with the procedure
+  /// carrying only the dispatch; that arrangement was chosen around this defect rather than the defect
+  /// being fixed.
+  ///
+  /// <para>
+  /// A <c>GOSUB</c> continuation reads the value the shared dispatch phi carries, and the dispatch
+  /// block is built lazily - so it sits BEHIND every continuation in block order, and the cloner used
+  /// to leave the copy naming the callee's own phi. The routed path then declined <c>main</c> with
+  /// "operand: IrPhi has no register", and both other back ends were worse: see
+  /// <c>Emit_GivenTheInlinedDispatchAndGosub_WhenRendered_ThenBothEmittersProduceIt</c>.
+  /// </para>
+  /// </summary>
+  private static string DispatchesThenGosubsInsideAnInlinedProcedure(int selector) => $"""
+    SUB Pick(BYVAL n AS INTEGER)
+      DIM hit AS INTEGER
+      hit = 0
+      ON n GOSUB one, two
+      GOSUB tail
+      PRINT n; hit
+      EXIT SUB
+    one:
+      hit = 1
+      RETURN
+    two:
+      hit = 2
+      RETURN
+    tail:
+      hit = hit + 100
+      RETURN
+    END SUB
+    DIM n AS INTEGER
+    READ n
+    Pick n
+    DATA {selector}
+    """;
+
+  [TestCase(0, "0 100")]
+  [TestCase(1, "1 101")]
+  [TestCase(2, "2 102")]
+  [TestCase(5, "5 100")]
+  public void Execute_GivenTheDispatchAndAGosubInlinedIntoMain_WhenRouted_ThenMainRoutesAndAgrees(
+      int selector, string expected) {
+    foreach (var optimize in new[] { false, true }) {
+      var source = DispatchesThenGosubsInsideAnInlinedProcedure(selector);
+      var (direct, routed, routedNames) = Execute(source, optimize);
+
+      Assert.Multiple(() => {
+        Assert.That(routedNames, Does.Contain("main"), $"the module body did not route (optimize={optimize})");
+        Assert.That(Numbers(routed.Output), Is.EqualTo(Numbers(direct.Output)),
+          $"routed and direct disagree (optimize={optimize})");
+        Assert.That(Numbers(routed.Output), Is.EqualTo(expected), $"optimize={optimize}");
+      });
+    }
+  }
+
+  /// <summary>
+  /// The same program through the two back ends that have no fallback. The defect is in the shared
+  /// middle end, so it was never a routing question: <c>LlvmEmitter</c> raised
+  /// <c>BackendInvariantException</c> on an operand <c>AssignNames</c> had never seen, and
+  /// <c>CEmitter</c> - which names operands positionally - quietly wrote an undeclared identifier and
+  /// produced C that does not compile.
+  /// </summary>
+  [Test]
+  public void Emit_GivenTheInlinedDispatchAndGosub_WhenRendered_ThenBothEmittersProduceIt() {
+    var model = Bind(DispatchesThenGosubsInsideAnInlinedProcedure(1));
+    var module = IrLowering.TryLowerModule(model)!;
+    var pipeline = IrPassManager.Standard();
+    pipeline.RunOnModule(module);
+    Inliner.Run(module);
+    pipeline.RunOnModule(module);
+    GlobalDce.Run(module);
+
+    Assert.Multiple(() => {
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+      Assert.That(LlvmEmitter.TryEmit(module, "x86_64-unknown-linux-gnu", out var llvmRefused),
+        Is.Not.Null, "LLVM declined: " + llvmRefused);
+      Assert.That(CEmitter.TryEmit(module, out var cRefused), Is.Not.Null, "C declined: " + cRefused);
+    });
+    // an undeclared name is the C emitter's rendering of an operand it cannot see; the LLVM one is
+    // '%<?>', which is what IrPrinter writes for the same thing
+    Assert.That(CEmitter.TryEmit(module, out _), Does.Not.Contain("<?>"));
+    Assert.That(LlvmEmitter.TryEmit(module, "x86_64-unknown-linux-gnu", out _), Does.Not.Contain("<?>"));
   }
 
   [TestCase(false)]
