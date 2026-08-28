@@ -16,7 +16,34 @@ public sealed class LlvmEmitter {
   private readonly Dictionary<IrValue, string> _names = new(ReferenceEqualityComparer.Instance);
   private int _slot;
 
-  /// <summary>Emits a complete module, optionally with a target triple/datalayout header.</summary>
+  /// <summary>
+  /// Emits a complete module, or returns null and reports WHICH construct this back end has no
+  /// rendering for.
+  ///
+  /// <para>
+  /// This is the entry a compilation driver uses, and the reason is that nothing catches a throw
+  /// behind it: the x86-16 path can decline a function and let the direct emitter take it, but a
+  /// <c>.ll</c> module has no second producer. A refusal that names the construct is the whole value
+  /// this back end can offer for a program it cannot render - the same shape
+  /// <see cref="IrLowering.TryLowerModule(Semantics.SemanticModel, out string?)"/> already has for
+  /// the stage before it.
+  /// </para>
+  /// </summary>
+  public static string? TryEmit(IrModule module, string? targetTriple, out string? declinedBecause) {
+    declinedBecause = null;
+    try {
+      return Emit(module, targetTriple);
+    } catch (EmitDeclinedException e) {
+      declinedBecause = e.Message;
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// Emits a complete module, optionally with a target triple/datalayout header, raising
+  /// <see cref="EmitDeclinedException"/> for a construct outside what this back end renders. Callers
+  /// that cannot state in advance that a module is renderable want <see cref="TryEmit"/> instead.
+  /// </summary>
   public static string Emit(IrModule module, string? targetTriple = null) {
     var sb = new StringBuilder();
     sb.Append("; ModuleID = '").Append(module.Name).Append("'\n");
@@ -109,7 +136,7 @@ public sealed class LlvmEmitter {
       IrSwitch sw => this.EmitSwitch(sw),
       IrIndirectBr ib => $"indirectbr ptr {this.Ref(ib.Address)}, [ {string.Join(", ", ib.Targets.Select(t => "label %" + t.Label))} ]",
       IrUnreachable => "unreachable",
-      _ => throw new InvalidOperationException($"cannot emit {inst.GetType().Name} as LLVM"),
+      _ => throw EmitDeclinedException.For("LLVM emission", inst),
     };
   }
 
@@ -143,9 +170,18 @@ public sealed class LlvmEmitter {
     IrUndef => "undef",
     // an ON ERROR handler's address; the enclosing function is never optimized, so LLVM's
     // requirement that a blockaddress-taken block stay intact is met by construction
-    IrBlockAddress ba => $"blockaddress(@{ba.Block.Parent?.Name}, %{ba.Block.Label})",
+    IrBlockAddress ba => $"blockaddress(@{ba.Block.Parent?.Name ?? throw new Backend.BackendInvariantException(
+      "LLVM back end", "LlvmEmitter.Ref",
+      "a block whose address is taken belongs to a function (IrFunction.AddBlock sets Parent)")}, %{ba.Block.Label})",
     IrGlobalValue gv => "@" + gv.Name,
-    _ => this._names.TryGetValue(value, out var n) ? n : "%undef",
+    // Not "%undef": AssignNames names every parameter and every non-void instruction of the function
+    // before a line of it is emitted, so a value with no name here is one from ANOTHER function, or a
+    // void instruction read as an operand - both IR the verifier rejects. Rendering it as undef
+    // produced a module that assembles and computes something else, which is the one outcome worse
+    // than a stack trace.
+    _ => this._names.TryGetValue(value, out var n) ? n
+      : throw new Backend.BackendInvariantException("LLVM back end", "LlvmEmitter.Ref",
+          $"every operand is a constant, a global, or a value named by AssignNames ({value.GetType().Name} is none)"),
   };
 
   /// <summary>
@@ -160,8 +196,9 @@ public sealed class LlvmEmitter {
   private static string Ty(IrType t) => t.Kind switch {
     IrTypeKind.Void => "void",
     IrTypeKind.Int => "i" + t.Bits,
-    IrTypeKind.Float when t.IsMbf => throw new NotSupportedException(
-      $"Microsoft Binary Format ({t}) has no LLVM type - convert to IEEE with MbfToFP before emission"),
+    IrTypeKind.Float when t.IsMbf => throw new EmitDeclinedException(
+      $"LLVM emission: a value in Microsoft Binary Format ({t}), which has no LLVM type "
+      + "- it has to be converted to IEEE with MbfToFP before emission"),
     IrTypeKind.Float => t.Bits switch { 32 => "float", 64 => "double", 80 => "x86_fp80", _ => "fp" + t.Bits },
     IrTypeKind.Ptr => "ptr",
     _ => "void",

@@ -193,8 +193,19 @@ public static class Driver {
         }
         // the same optimized IR, rendered for whichever back end was asked for: LLVM text for
         // the native toolchain, or C99 for any C compiler (docs/BACKENDS.md)
+        //
+        // Neither has a fallback the way the x86-16 path has the direct emitter, so a construct the
+        // emitter cannot render is reported here, naming it - which is the entire value of declining
+        // rather than raising, and the same answer the lowering's own refusal gets six lines above.
         var emittedC = dumpStage == "--emit-c";
-        var text = emittedC ? CEmitter.Emit(module) : LlvmEmitter.Emit(module, "x86_64-unknown-linux-gnu");
+        var text = emittedC
+          ? CEmitter.TryEmit(module, out var refused)
+          : LlvmEmitter.TryEmit(module, "x86_64-unknown-linux-gnu", out refused);
+        if (text is null) {
+          stderr.WriteLine($"pbc: {dumpStage}: {refused ?? "unsupported construct"} "
+            + "- outside what this back end renders (see docs/BACKENDS.md)");
+          return 1;
+        }
         if (output != null) {
           File.WriteAllText(output, text);
           stdout.WriteLine($"{Path.GetFileName(output)}: {text.Length} bytes of {(emittedC ? "C" : "LLVM IR")}");
