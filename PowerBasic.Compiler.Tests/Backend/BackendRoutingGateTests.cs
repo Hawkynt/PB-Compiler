@@ -171,6 +171,13 @@ public sealed class BackendRoutingGateTests {
       SWAP p, q
       PRINT p.a; q.a
       """, "main"),
+    // READ into a FIXED-length string: a buffer to pad into, not a handle cell to store
+    new("module body: READ into a fixed string", """
+      DATA ab
+      DIM s AS STRING * 4
+      READ s
+      PRINT s
+      """, "main"),
   ];
 
   /// <summary>

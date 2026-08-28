@@ -2416,6 +2416,17 @@ public sealed partial class IrLowering {
       this._b.Store(handle, address);                  // a string item is stored as its handle
       return;
     }
+    // A FIXED-length string is a buffer rather than a handle cell, so the item is padded or truncated
+    // into its bytes - the same store INPUT makes into the same kind of target, and the same one an
+    // ordinary assignment makes. Without it a `READ s` into `DIM s AS STRING * 5` fell through to the
+    // numeric path below, where the buffer is not an lvalue it can name, and the whole module went
+    // with it.
+    if (elementType is FixedStringType fixedString && sym is not null) {
+      var address = target is CallOrIndexExpr fixedElement ? this.ElementAddress(fixedElement).Address : this.SlotFor(sym);
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_str_to_fixed", IrType.Void, IrType.Ptr, IrType.I32, IrType.Ptr),
+        address, new IrConstantInt(IrType.I32, fixedString.Length), handle);
+      return;
+    }
     var value = this._b.Call(IrType.F64, this.RuntimeFn("rt_str_val", IrType.F64, IrType.Ptr), handle);  // parse a numeric item
     var (addr, type) = this.LValue(target);
     this._b.Store(this.Coerce(value, PbType.Double, type), addr);

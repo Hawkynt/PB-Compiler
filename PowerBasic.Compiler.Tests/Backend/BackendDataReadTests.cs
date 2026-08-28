@@ -156,4 +156,30 @@ public sealed class BackendDataReadTests {
     Assert.That(direct.Replace("\r", ""), Is.EqualTo(" 1  2  7  8 \n 7  8 \n"),
       "the nested items are in the pool where they are written, and the nested label points at them");
   }
+
+  /// <summary>
+  /// A <c>READ</c> into a FIXED-length string. The item is padded or truncated into the buffer, the
+  /// same store <c>INPUT</c> and an ordinary assignment make into one. It used to fall through to
+  /// the numeric path, where a fixed buffer is not an lvalue the lowering can name, and the whole
+  /// module went down with the "unsupported lvalue" that raised.
+  /// </summary>
+  [TestCase(true, TestName = "Run_GivenAReadIntoAFixedString_WhenOptimized_ThenTheItemIsPaddedIntoTheBuffer")]
+  [TestCase(false, TestName = "Run_GivenAReadIntoAFixedString_WhenUnoptimized_ThenTheItemIsPaddedIntoTheBuffer")]
+  public void Run_GivenAReadIntoAFixedString_ThenTheItemIsPaddedIntoTheBuffer(bool optimize) {
+    var (direct, routed, names) = RunBothWays("""
+      DATA ab, abcdefg
+      DIM s AS STRING * 4
+      READ s
+      PRINT "["; s; "]"
+      READ s
+      PRINT "["; s; "]"
+      END
+      """, optimize);
+
+    Assert.That(names, Does.Contain("main"));
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(direct.Replace("\r", ""), Is.EqualTo("[ab  ]\n[abcd]\n"),
+      "a short item is blank-padded to the declared width and a long one is truncated to it");
+  }
+
 }
