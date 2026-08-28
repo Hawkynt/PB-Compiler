@@ -160,6 +160,17 @@ public sealed class BackendRoutingGateTests {
       RANDOMIZE
       PRINT RND(1, 6) >= 1
       """, "main"),
+    // A record has no single value to load, so SWAP of one is three block copies through a frame
+    // temporary rather than the load/store pair a scalar gets.
+    new("module body: SWAP of a record", """
+      TYPE R
+        a AS INTEGER
+      END TYPE
+      DIM p AS R, q AS R
+      p.a = 1 : q.a = 2
+      SWAP p, q
+      PRINT p.a; q.a
+      """, "main"),
   ];
 
   /// <summary>

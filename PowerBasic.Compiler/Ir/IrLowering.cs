@@ -1374,6 +1374,24 @@ public sealed partial class IrLowering {
   }
 
   private void LowerSwap(SwapStmt sw) {
+    // A RECORD has no single value to load, so the exchange is three block copies through a frame
+    // temporary rather than a load/store pair. That is the same observable exchange the direct
+    // emitter's byte-wise rt_swap performs, and it is correct when both operands name the SAME
+    // storage, which a two-copy version would not be. A dynamic-string FIELD inside the record moves
+    // with its bytes: the handle changes owner exactly once, which is what the scalar string case
+    // below does for the same reason.
+    if (this._model.TypeOf(sw.Left) is UdtType record) {
+      if (!record.Equals(this._model.TypeOf(sw.Right)))
+        throw new IrLoweringException("SWAP of differently-typed operands");
+      var left = this.UdtAddress(sw.Left);
+      var right = this.UdtAddress(sw.Right);
+      var temp = this._entry.InsertAt(this._entryAllocaCount++,
+        new IrAlloca(IrType.I8) { Count = Math.Max(record.Size, 1), Name = "swap.tmp" });
+      this.CopyBlock(temp, left, record.Size);
+      this.CopyBlock(left, right, record.Size);
+      this.CopyBlock(right, temp, record.Size);
+      return;
+    }
     var (leftAddr, leftType) = this.SwapLValue(sw.Left);
     var (rightAddr, rightType) = this.SwapLValue(sw.Right);
     if (!leftType.Equals(rightType))
@@ -1387,6 +1405,12 @@ public sealed partial class IrLowering {
     this._b.Store(rightVal, leftAddr);
     this._b.Store(leftVal, rightAddr);
   }
+
+  /// <summary>A fixed-size block copy, the one spelling every record-sized move in this lowering uses.</summary>
+  private void CopyBlock(IrValue destination, IrValue source, int bytes)
+    => this._b.Call(IrType.Void,
+      this.RuntimeFn("llvm.memcpy.p0.p0.i32", IrType.Void, IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I1),
+      destination, source, new IrConstantInt(IrType.I32, bytes), IrBuilder.ConstBool(false));
 
   /// <summary>The storage address and type of a SWAP operand, including a dynamic-string handle cell.</summary>
   private (IrValue Address, PbType Type) SwapLValue(Expression target) {
