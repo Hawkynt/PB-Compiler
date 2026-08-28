@@ -32,7 +32,8 @@ public enum RuntimeCpuFeatures : ulong {
 
 /// <summary>
 /// Normalized compile-time x86 target shared by runtime specialization and inline-assembly validation.
-/// The numeric CPU level controls the integer/register floor; extension tokens opt into later ISA groups.
+/// <see cref="CpuLevel"/> uses the conventional generation number (86/186/286/386/486/586/686),
+/// while extension tokens opt into later ISA groups independently.
 /// </summary>
 public readonly record struct RuntimeTarget(int CpuLevel, RuntimeCpuFeatures Features) {
   private static readonly IReadOnlyList<Reg> _wordGprs = Array.AsReadOnly([
@@ -55,7 +56,7 @@ public readonly record struct RuntimeTarget(int CpuLevel, RuntimeCpuFeatures Fea
   ]);
   private static readonly IReadOnlyList<Reg> _none = Array.Empty<Reg>();
 
-  public static RuntimeTarget Baseline => new(8086, RuntimeCpuFeatures.None);
+  public static RuntimeTarget Baseline => new(86, RuntimeCpuFeatures.None);
 
   public bool Has(RuntimeCpuFeatures feature) => (this.Features & feature) == feature;
   public bool Has32BitGeneralPurpose => this.Has(RuntimeCpuFeatures.GeneralPurpose32);
@@ -97,9 +98,9 @@ public readonly record struct RuntimeTarget(int CpuLevel, RuntimeCpuFeatures Fea
     if (level >= 686)
       features |= RuntimeCpuFeatures.P6;
 
-    // PB uses the first CPU token as the integer floor and the remaining tokens as optional ISA
-    // extensions. Keep the historic 586 floor for SIMD extensions: a contradictory "$CPU 8086 AVX"
-    // must not silently create registers the selected architecture cannot have.
+    // PB uses the first CPU token as the integer floor and remaining tokens as optional extensions.
+    // Keep the historic 586 floor for SIMD feature tokens: "$CPU 8086 AVX" must not create registers
+    // the selected architecture cannot expose.
     if (level >= 586)
       foreach (var token in featureTokens ?? [])
         features |= ParseFeature(token);
@@ -171,9 +172,9 @@ public readonly record struct RuntimeTarget(int CpuLevel, RuntimeCpuFeatures Fea
     if (text is "P6" or "PENTIUMPRO")
       return 686;
     if (!int.TryParse(text, out var numeric))
-      return 8086;
+      return 86;
     return numeric switch {
-      86 or 8086 => 8086,
+      86 or 8086 => 86,
       186 or 80186 => 186,
       286 or 80286 => 286,
       386 or 80386 => 386,
