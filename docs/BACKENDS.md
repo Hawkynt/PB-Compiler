@@ -420,6 +420,18 @@ What still declines inside those classes, each measured rather than assumed:
 | the ADDRESS of an element (BYREF, VARPTR, a record copy) | `IrFarPtr`'s own rule, unchanged: a far pointer used as a near one loses its segment silently |
 | `FRE` other than `FRE(-11)` | `FRE(-11)` is the free EMS byte count and is real information; every other spelling answers an advisory 32767 after CONSUMING a string argument, which is an ownership rule the IR does not model |
 
+**A `DIM` whose bound is not a constant was allocating nothing at all, and the routed decline was
+hiding it.** `INPUT n% : DIM a%(1 TO n%)` makes a DYNAMIC array whose only allocation point is the
+declaration - there need be no `REDIM` anywhere - and `IrLowering.LowerDim` ended in the comment "a
+DIM is just a declaration here; storage is allocated lazily on first use". That is true of a STATIC
+array, whose storage is laid out at compile time, and of a dynamic one it was not lazy allocation but
+no allocation: the descriptor's data cell stayed null and `a%(1) = 7` compiled to
+`getelementptr i8, ptr null, i32 2` and a store through it. The selector declined that shape
+(`gep: non-register base` - the null base folds to an immediate), which is why no DOS program ever ran
+it, and `--emit-c` and `--emit-llvm` emitted the null store. `AllocateDynamicArray` is now shared by
+`REDIM` and by the `DIM` of a dynamic array, which is what the direct emitter already does: `EmitDim`
+and `REDIM` without `PRESERVE` both reach `EmitClassedAllocation`.
+
 **An empty decline histogram is not the same as "every shape is handled", and one shape RAISED rather
 than declining.** A narrow (`BYTE`/`WORD`/`INTEGER`) shift whose count the immediate encoding cannot
 carry - one the program computed, or a literal outside 1..31 - reached the assembler in a form it has
