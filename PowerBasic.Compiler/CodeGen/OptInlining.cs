@@ -66,13 +66,30 @@ public static class OptInlining {
     // is a CallOrIndexExpr (with args) or a bare NameExpr (parameterless).
     if (proc.IsFunction && node is CallStmt)
       return false;
-    // a BYREF argument inlines only as a near lvalue (its address is passed); otherwise the
+    // a BYREF argument inlines only when its address IS the parameter's storage; otherwise the
     // emitter falls back to a real call, so the body must survive
     for (var i = 0; i < args.Count; ++i)
-      if (!proc.Parameters[i].ByVal && !isNearLValue(args[i]))
+      if (!proc.Parameters[i].ByVal && !InlinableByRefArgument(args[i], proc.Parameters[i], model, isNearLValue))
         return false;
     return true;
   }
+
+  /// <summary>
+  /// Whether a BYREF argument can be bound the only way the inliner knows how - by handing the body
+  /// the address of the argument's own cell.
+  ///
+  /// <para>
+  /// Two conditions, and the second is the one that was missing. The cell has to be a NEAR lvalue,
+  /// because the parameter slot the body reads through is one word. And it has to already hold the
+  /// PARAMETER's type: a real call compares the two and, when they differ, evaluates the argument,
+  /// coerces it and copies it into a hidden temp of the parameter's width
+  /// (<c>CodeGenerator.EmitArgumentPush</c>). The inliner had no such arm, so <c>f#(i%)</c> pointed a
+  /// DOUBLE parameter at a two-byte INTEGER cell and the body read six bytes of whatever followed it.
+  /// </para>
+  /// </summary>
+  public static bool InlinableByRefArgument(Expression arg, VariableSymbol parameter, SemanticModel model,
+      Func<Expression, bool> isNearLValue)
+    => isNearLValue(arg) && Equals(model.TypeOf(arg), parameter.Type);
 
   private static IReadOnlyList<Expression> ArgsOf(object node) => node switch {
     CallStmt c => c.Arguments,

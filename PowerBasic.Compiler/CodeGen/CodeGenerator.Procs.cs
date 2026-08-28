@@ -699,10 +699,11 @@ public sealed partial class CodeGenerator {
       return false;
     if (this.AnalyzeInlinableLeaf(proc) is not { } leaf)
       return false;
-    // a BYREF argument inlines by passing its address, so it must be a near lvalue; otherwise
-    // (a literal/expression a real call would copy into a temp) decline and emit a real call
+    // a BYREF argument inlines by passing its address, so it must be a near lvalue AND already hold
+    // the parameter's type; otherwise (a literal/expression, or a narrower cell a real call would
+    // coerce into a hidden copy-in temp - see EmitArgumentPush) decline and emit a real call
     for (var i = 0; i < args.Count; ++i)
-      if (!proc.Parameters[i].ByVal && !this.IsNearLValue(args[i]))
+      if (!proc.Parameters[i].ByVal && !OptInlining.InlinableByRefArgument(args[i], proc.Parameters[i], model, this.IsNearLValue))
         return false;
     var (body, resultSymbol, locals, site, lastResultWrite, resultWrites) = leaf;
 
