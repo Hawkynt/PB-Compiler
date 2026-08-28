@@ -64,8 +64,12 @@ public sealed class IrBuilder {
   // ---- ssa / calls ---------------------------------------------------------
 
   public IrPhi Phi(IrType type) => this.Target.AppendPhi(new IrPhi(type));
-  public IrCall Call(IrType resultType, IrValue callee, params IrValue[] args) => this.Emit(new IrCall(resultType, callee, args));
-  public IrCall Call(IrType resultType, IrValue callee, IReadOnlyList<IrValue> args) => this.Emit(new IrCall(resultType, callee, args));
+  public IrCall Call(IrType resultType, IrValue callee, params IrValue[] args)
+    => this.Emit(new IrCall(resultType, callee, args));
+  public IrCall Call(IrType resultType, IrValue callee, IReadOnlyList<IrValue> args)
+    => this.Emit(new IrCall(resultType, callee, args));
+  public IrCall Call(IrType resultType, IrValue callee, IrCallConvention convention,
+      IReadOnlyList<IrValue> args) => this.Emit(new IrCall(resultType, callee, args, convention));
 
   // ---- terminators ---------------------------------------------------------
 

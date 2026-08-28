@@ -4,6 +4,7 @@ using PowerBasic.Compiler.Emit;
 using PowerBasic.Compiler.Emit.Omf;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Tests.Exec;
 
 namespace PowerBasic.Compiler.Tests.CodeGen;
 
@@ -68,6 +69,33 @@ public sealed class StdcallPascalTests {
     var exe = generator.EmitExecutable([AddOneStdUnit()], []);
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     Assert.That(DosBoxRunner.Normalize(DosBoxRunner.Run(exe)), Is.EqualTo(" 42\n 100\n 7\n"));
+  }
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Route_GivenStdcallObjectLinked_WhenCalledTwice_ThenMainRoutesAndStackStaysBalanced(
+      bool optimize) {
+    const string source = """
+      DECLARE FUNCTION addone STDCALL ALIAS "_addone@4" (BYVAL x AS LONG) AS LONG
+      PRINT addone(41)
+      PRINT addone(99)
+      PRINT 7
+      END
+      """;
+    var (model, _) = Compile(source);
+    var generator = new CodeGenerator(model) {
+      Optimize = optimize,
+      UseExperimentalBackend = true,
+    };
+
+    var exe = generator.EmitExecutable([AddOneStdUnit()], []);
+    var output = Cpu8086.Run(exe).Output.Trim().Replace("\r\n", "|");
+
+    Assert.Multiple(() => {
+      Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+      Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
+      Assert.That(output, Is.EqualTo("42 | 100 | 7"));
+    });
   }
 
   // Given DECLAREs that differ only by calling convention,

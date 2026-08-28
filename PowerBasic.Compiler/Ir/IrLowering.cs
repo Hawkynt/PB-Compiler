@@ -4346,11 +4346,21 @@ public sealed partial class IrLowering {
           ? this.Coerce(this.LowerExpr(arguments[i]), this._model.TypeOf(arguments[i]), p.Type)
           : this.AddressOfArgument(arguments[i], p.Type));
     }
-    var result = this._b.Call(callee.ReturnType, callee, args);
+    var result = this._b.Call(callee.ReturnType, callee, IrConventionOf(proc.CallConv), args);
     foreach (var temporary in stringTemporaries)
       this.FreeOwnedStringSlot(temporary);
     return result;
   }
+
+  private static IrCallConvention IrConventionOf(CallConvention convention) => convention switch {
+    CallConvention.Basic => IrCallConvention.Basic,
+    CallConvention.Cdecl => IrCallConvention.Cdecl,
+    CallConvention.Stdcall => IrCallConvention.Stdcall,
+    CallConvention.Pascal => IrCallConvention.Pascal,
+    CallConvention.Fastcall => IrCallConvention.Fastcall,
+    CallConvention.Watcall => IrCallConvention.Watcall,
+    _ => throw new ArgumentOutOfRangeException(nameof(convention), convention, null),
+  };
 
   /// <summary>A pointer to a BYREF argument: the variable's own slot when the type matches, else a temp copy.</summary>
   private IrValue AddressOfArgument(Expression arg, PbType paramType) {

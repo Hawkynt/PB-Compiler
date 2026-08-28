@@ -66,6 +66,14 @@ to the frame, so it has no eight-value ceiling.
 Extends the OMF reader/linker + calling-convention work already landed.
 
 ### Must
+- **Routed near stack ABIs. Done for callers.** `IrCall` now preserves the declared BASIC, PASCAL,
+  CDECL, STDCALL, FASTCALL or WATCALL identity. The x86-16 descriptor maps order, cleanup, distance and
+  register slots; routed CDECL/STDCALL callers use right-to-left argument groups and CDECL caller
+  cleanup. Non-BASIC/PASCAL procedure definitions and register-argument call selection remain below.
+- **Vendor-specific register ABI identities.** The current BASIC `FASTCALL` surface names the
+  repository's established AX/DX/BX convention, but Microsoft and Borland register conventions are not
+  interchangeable across compiler versions. Split those identities, decoration rules and size classes
+  before claiming bit-exact foreign FASTCALL compatibility; keep WATCALL distinct.
 - **C++ name mangling / demangling.** Today only case-sensitive resolution +
   `ALIAS`. To link C++ objects we must resolve (and ideally demangle for
   diagnostics) the mangled publics of MSVC, Borland and Watcom — each scheme
@@ -215,7 +223,8 @@ the body — before the selector is asked, so a procedure it skips lands in neit
 and 263/263 means "of the functions we attempted, how many succeeded". The routed rows come from the
 production code generator's own record of its own decision (`CodeGenerator.BackendDeclines`). The
 optimized corpus gap is now empty: `LINKDEMO` routes when the census supplies the `MATHUNIT.PBU` named
-by its `$LINK`, while incompatible external conventions still decline individually. With optimization
+by its `$LINK`; near CDECL/STDCALL declarations route too, while register conventions still decline
+individually. With optimization
 off, four selector gaps remain: two phi edge-copy cycles, one `FPToSI f80 -> i64`, and one `f32`
 `select`. Near BYREF
 INTEGER/WORD/LONG/DWORD/SINGLE/DOUBLE

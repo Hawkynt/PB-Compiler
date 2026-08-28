@@ -29,17 +29,25 @@ public sealed class OmfLinkTests {
   private static readonly byte[] _addOne =
     [0x55, 0x8B, 0xEC, 0x8B, 0x46, 0x04, 0x8B, 0x56, 0x06, 0x05, 0x01, 0x00, 0x83, 0xD2, 0x00, 0x5D, 0xC3];
 
-  private static PbuFile AddOneUnit() {
+  // leaf cdecl FUNCTION sub2(BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER -> a - b
+  private static readonly byte[] _subTwo =
+    [0x55, 0x8B, 0xEC, 0x8B, 0x46, 0x04, 0x2B, 0x46, 0x06, 0x5D, 0xC3];
+
+  private static PbuFile ObjectUnit(string moduleName, string symbol, byte[] code) {
     byte[] obj = [
-      .. Record(0x80, Str("ADDONE")),
+      .. Record(0x80, Str(moduleName)),
       .. Record(0x96, Str("_TEXT"), Str("CODE")),
-      .. Record(0x98, [0x28], U16(_addOne.Length), [1], [2], [0]),
-      .. Record(0x90, [0], [1], Str("_addone"), U16(0), [0]),
-      .. Record(0xA0, [1], U16(0), _addOne),
+      .. Record(0x98, [0x28], U16(code.Length), [1], [2], [0]),
+      .. Record(0x90, [0], [1], Str(symbol), U16(0), [0]),
+      .. Record(0xA0, [1], U16(0), code),
       .. Record(0x8A, [0]),
     ];
     return OmfToPbu.Convert(OmfReader.ReadObject(obj));
   }
+
+  private static PbuFile AddOneUnit() => ObjectUnit("ADDONE", "_addone", _addOne);
+
+  private static PbuFile SubTwoUnit() => ObjectUnit("SUBTWO", "_sub2", _subTwo);
 
   [Test]
   public void Execute_GivenCdeclObjectLinked_WhenCalled_ThenForeignCodeRuns() {
@@ -57,25 +65,36 @@ public sealed class OmfLinkTests {
     Assert.That(DosBoxRunner.Normalize(DosBoxRunner.Run(exe)), Is.EqualTo(" 42\n"));
   }
 
-  [Test]
-  public void Route_GivenCdeclObjectLinked_WhenBackEndEnabled_ThenMainDeclinesWithTheConventionReason() {
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Route_GivenCdeclObjectLinked_WhenBackEndEnabled_ThenMainRoutesAndMatchesDirect(bool optimize) {
     const string source = """
-      DECLARE FUNCTION addone CDECL ALIAS "_addone" (BYVAL x AS LONG) AS LONG
-      PRINT addone(41)
+      DECLARE FUNCTION sub2 CDECL ALIAS "_sub2" (BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
+      PRINT sub2(20, 7)
+      PRINT sub2(100, 9)
       END
       """;
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var model = Binder.Bind(unit, Dialect.Pb35);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { UseExperimentalBackend = true };
+    var directGenerator = new CodeGenerator(model) { Optimize = optimize };
+    var direct = directGenerator.EmitExecutable([SubTwoUnit()], []);
+    Assert.That(directGenerator.Errors, Is.Empty, "direct: " + string.Join("; ", directGenerator.Errors));
 
-    generator.EmitExecutable([AddOneUnit()], []);
+    var routedGenerator = new CodeGenerator(model) {
+      Optimize = optimize,
+      UseExperimentalBackend = true,
+    };
+    var routed = routedGenerator.EmitExecutable([SubTwoUnit()], []);
+    var directOutput = Exec.Cpu8086.Run(direct).Output.Trim().Replace("\r\n", "|");
+    var routedOutput = Exec.Cpu8086.Run(routed).Output.Trim().Replace("\r\n", "|");
 
     Assert.Multiple(() => {
-      Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
-      Assert.That(generator.BackendRoutedNames, Does.Not.Contain("main"));
-      Assert.That(generator.BackendDeclines.Any(d => d.Name == "main" && d.Reason.Contains("Cdecl")),
-        Is.True, string.Join("; ", generator.BackendDeclines));
+      Assert.That(routedGenerator.Errors, Is.Empty,
+        "routed: " + string.Join("; ", routedGenerator.Errors));
+      Assert.That(routedGenerator.BackendRoutedNames, Does.Contain("main"));
+      Assert.That(routedOutput, Is.EqualTo(directOutput));
+      Assert.That(routedOutput, Is.EqualTo("13 | 91"));
     });
   }
 }

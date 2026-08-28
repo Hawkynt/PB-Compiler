@@ -240,8 +240,10 @@ also compiles unoptimized so an optimizer-erased backend limitation remains visi
 Linked BASIC/PASCAL declarations close the final optimized row. The census now builds the corpus-local
 PBU named by `$LINK`, so `LINKDEMO` is measured with the same `MATHUNIT.PBU` input the driver supplies.
 Its numeric, BYREF, nested-call and dynamic-string calls use the routed stack ABI in both optimizer
-modes, through either a PBU or a PBL. External CDECL/STDCALL/FASTCALL/WATCALL declarations still
-decline per callee before selection; merely having a link input no longer rejects the entire module.
+modes, through either a PBU or a PBL. Routed calls to near CDECL and STDCALL declarations now preserve
+their IR convention identity, push argument groups right-to-left, and apply caller/callee cleanup as
+declared. FASTCALL/WATCALL external calls still decline per callee until register-argument staging is
+selectable; merely having a link input no longer rejects the entire module.
 
 Dynamic-string `SWAP` removes the former invisible lowering row. The IR loads the raw handle from
 each owner cell and crosses the stores; it neither borrows a duplicate nor frees a handle because the

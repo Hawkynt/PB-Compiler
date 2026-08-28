@@ -386,22 +386,31 @@ functions get genuine integer IR and the selector fires. The routing (`CodeGener
 - Selection fixes for real IR: a register is materialized for an immediate `IMUL` multiplier (`a%*2`);
   argument vregs are numbered before phi vregs so argument `i` is vreg `i`.
 
-### One ABI, and the conventions that therefore cannot route (`CallingConventionTests`)
+### Definition ABI and call-site ABIs (`CallingConventionTests`, `BackendCallRoutingTests`)
 
 `MachineEmitter.EmitFunction` implements exactly one calling convention: arguments pushed left to
 right at `[BP+4..]`, callee-cleans through `RET n`, nothing in a register. That is PowerBASIC's
-default (`BASIC`, and `PASCAL`, which is identical in every respect the frame cares about). The
-routing never asked, and every other convention was miscompiled the moment it routed:
+default (`BASIC`, and `PASCAL`, which is identical in every respect the frame cares about). Procedure
+**definitions** using another convention therefore still decline. The former selector also assumed
+that same convention at every ordinary call site, which miscompiled foreign stack calls:
 
 | declared | what routing produced |
 |---|---|
 | `WATCALL` / `FASTCALL` | `LayoutFrame` puts the leading parameters at NEGATIVE offsets, filled only by the direct prologue's `AX,DX,BX(,CX)` spill. The routed prologue has no spill, so the body reads its arguments out of an unwritten frame — the recursive probe printed ` 0` for a call that answers ` 13` |
-| `CDECL` / `STDCALL` | right-to-left push order. The routed call site pushes left to right into offsets laid out for the reverse, so the arguments swap — the same probe printed ` 12` |
-| `CDECL` | caller-cleans, contradicted by the routed epilogue's unconditional `RET n`: both sides pop the arguments |
+| `CDECL` / `STDCALL` definition | the routed frame would still lay parameters out for left-to-right arguments rather than the declared right-to-left order |
+| `CDECL` definition | the routed epilogue would still emit callee cleanup instead of an ordinary `RET` |
 
 `IsBackendAbiConvention` is the gate, and it is written in terms of the two predicates the direct
 emitter already uses (`PushesRightToLeft`, `CallerCleansStack`) plus `IsRegisterConvention`, so a
 convention added later is excluded until someone states its stack discipline.
+
+Calls are now distinct from definitions. `IrCall.Convention` carries BASIC, PASCAL, CDECL, STDCALL,
+FASTCALL or WATCALL identity through cloning and optimization. `X86CallAbi` maps that identity to near
+or far return-address width, stack order, cleanup ownership and argument registers. `SelectCall`
+consumes the four near stack-only descriptors: CDECL and STDCALL reverse argument **groups** while
+preserving each multiword value's high-to-low word order, and CDECL emits `ADD SP,n` immediately after
+the call. FASTCALL/WATCALL descriptors name the existing DOS register orders but deliberately decline
+until their staging path is selectable.
 
 The same omission cost a **diagnostic**. `HasUnsupportedRegisterParam` rejects a register-convention
 parameter that is not a single word (a `LONG`, a float, a UDT — the per-compiler size rules are
@@ -468,11 +477,10 @@ calls to defined procedures from exactly the functions the routing does take.
 
 ### Calls (the widening that ranking bought)
 
-`SelectCall` handles a direct call to a **defined** procedure in the convention the direct codegen
-emits — arguments pushed **left to right**, `CALL`, callee cleans with `RET n` — so a back-end
-function and a directly-emitted one call each other unchanged. The result arrives in `AX` and is
-copied into the call's own virtual register, which costs nothing when the allocator puts it back in
-`AX`.
+`SelectCall` handles a direct call to a defined procedure or linker-resolved declaration. It reads the
+convention recorded on `IrCall`: BASIC/PASCAL push argument groups **left to right** and let the callee
+clean, CDECL/STDCALL push them **right to left**, and CDECL restores SP in the caller. Integer results
+arrive in `AX` or `DX:AX`; IEEE results arrive in `ST(0)`.
 
 Two soundness rules make that safe:
 
@@ -1853,7 +1861,8 @@ arguments/results, while the IR releases BYVAL parameters, locals, copy-in tempo
 results at their ownership boundaries. The final optimized gap closed when a linked BASIC/PASCAL
 external declaration stopped disqualifying its caller wholesale: the census builds the PBU named by
 `$LINK`, and `LINKDEMO` routes through numeric, BYREF, nested and dynamic-string unit calls in both
-optimizer modes. Alternate external conventions still decline per callee before selection. The four
+optimizer modes. Near CDECL/STDCALL external calls now route with their declared order and cleanup;
+FASTCALL/WATCALL externals still decline per callee before selection. The four
 remaining unoptimized gaps are two phi edge-copy cycles, one `FPToSI f80 -> i64`, and one `f32`
 `select`. The selector figures are still worth having: they say the optimized selector refuses nothing
 the filter offers it, which makes the filter the frontier rather than a

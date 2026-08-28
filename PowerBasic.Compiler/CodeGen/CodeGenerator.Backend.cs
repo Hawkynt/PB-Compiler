@@ -4,6 +4,7 @@ using PowerBasic.Compiler.Backend;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
+using PowerBasic.Compiler.Syntax.Ast;
 
 namespace PowerBasic.Compiler.CodeGen;
 
@@ -85,7 +86,7 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
-  /// Why a procedure signature cannot cross the routed BASIC/PASCAL stack ABI, or null when it can.
+  /// Why a procedure definition cannot use the routed BASIC/PASCAL frame ABI, or null when it can.
   /// Kept apart from <see cref="BackendFilterReason"/> because an EXTERNAL declaration has no body to
   /// route but its signature still governs a routed caller's argument order, cleanup and result.
   /// </summary>
@@ -98,6 +99,20 @@ public sealed partial class CodeGenerator {
     // IsBackendAbiConvention.
     if (!IsBackendAbiConvention(proc))
       return $"filter: calling convention outside the routed ABI ({proc.CallConv})";
+    return BackendAbiShapeReason(proc);
+  }
+
+  /// <summary>
+  /// Why a call site cannot use a declared external ABI. All near stack conventions are selectable;
+  /// FASTCALL/WATCALL still decline until the selector stages their register arguments.
+  /// </summary>
+  private static string? BackendCallAbiReason(ProcedureSymbol proc) {
+    if (proc.CallConv is CallConvention.Fastcall or CallConvention.Watcall)
+      return $"filter: register calling convention outside the routed call ABI ({proc.CallConv})";
+    return BackendAbiShapeReason(proc);
+  }
+
+  private static string? BackendAbiShapeReason(ProcedureSymbol proc) {
     // a FUNCTION with no resolved return type is refused along with the rest, exactly as the pattern
     // this replaced did - `null is not ScalarType{...}` was true, and the shape has no ABI either way
     if (proc.IsFunction && (proc.ReturnType is not { } returnType || !IsBackendAbiType(returnType)))
@@ -144,8 +159,8 @@ public sealed partial class CodeGenerator {
     // does not hold for procedures: a unit exports its procedures with the STACK convention (they are
     // called from outside, so OptRegParm never converts them), which is exactly the ABI this back end
     // emits. Imported calls are checked individually after lowering: a linked BASIC/PASCAL
-    // declaration crosses the routed ABI, while a missing link input or another convention declines
-    // its caller before selection.
+    // declaration crosses a selectable stack ABI, while a missing link input or register convention
+    // declines its caller before selection.
     if (!this.UseExperimentalBackend)
       return this._backendProcs;
 
@@ -617,9 +632,9 @@ public sealed partial class CodeGenerator {
   /// to a linker-visible label, or null when every declaration is callable.
   ///
   /// The selector routes such a call the way it routes a defined one, because an imported procedure
-  /// has an ordinary PB signature - but only the code generator knows whether link inputs are enabled
-  /// and whether that declaration uses the same stack ABI. A declaration that has neither a compatible
-  /// signature nor a linker-visible label declines here, before emission can fail or miscompile it.
+  /// has a source-declared signature and convention - but only the code generator knows whether link
+  /// inputs are enabled and whether that ABI is selectable. A declaration that has neither a compatible
+  /// call shape nor a linker-visible label declines here, before emission can fail or miscompile it.
   /// </summary>
   private string? ExternalCalleeDecline(IrFunction fn) {
     foreach (var callee in fn.Blocks.SelectMany(b => b.Instructions)
@@ -631,7 +646,7 @@ public sealed partial class CodeGenerator {
                     && !f.Name.StartsWith("llvm.", System.StringComparison.Ordinal))) {
       var external = model.ProcedureList.FirstOrDefault(p => p.IsExternal
         && p.Name.Equals(callee.Name, System.StringComparison.OrdinalIgnoreCase));
-      if (external is not null && BackendAbiReason(external) is { } abiReason)
+      if (external is not null && BackendCallAbiReason(external) is { } abiReason)
         return $"routing: external callee '{callee.Name}' {abiReason["filter: ".Length..]}";
       if (this.CalleeLabel(callee.Name) is null)
         return "routing: a callee has no link symbol - it is EXTERNAL, or its own body did not lower";
