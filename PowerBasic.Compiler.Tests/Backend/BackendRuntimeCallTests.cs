@@ -341,6 +341,26 @@ public sealed class BackendRuntimeCallTests {
     Assert.That(routed.BackendRoutedNames, Does.Contain("Announce"), "the back end did not take the printing function");
   }
 
+  /// <summary>
+  /// Every label the bridge names has to be one the DOS runtime really defines.
+  ///
+  /// <para>
+  /// <c>Assembler.Lbl</c> MINTS a label for any name, so a wrong or stale row here used to hand the
+  /// emitter a perfectly good <c>Label</c> that nothing would ever bind, and the failure surfaced as
+  /// "referenced but never bound" while the fixups resolved - after every routing decision, naming a
+  /// symbol rather than the row that invented it, and taking the whole compilation with it.
+  /// <c>CalleeLabel</c> now asks the runtime first and declines when the answer is no, which costs one
+  /// function; this asks the same question over the whole table, where a stale row fails a test the
+  /// moment it is written rather than the first time a program happens to call it.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void RuntimeAbi_WhenCheckedAgainstTheRuntime_ThenEveryLabelItNamesIsDefined() {
+    Assert.That(CodeGenerator.UnboundRuntimeCallees, Is.Empty,
+      "RuntimeAbi names routines the DOS runtime does not define; a call to one would fail at link "
+      + "time, and the routed function that made it now declines instead");
+  }
+
   [Test]
   public void Emit_GivenARoutedPrintingFunction_ThenTheRuntimeTrimmerStillKeepsThePrintSections() {
     // the trimmer seeds from the labels emitted code references, and a back-end CALL references the

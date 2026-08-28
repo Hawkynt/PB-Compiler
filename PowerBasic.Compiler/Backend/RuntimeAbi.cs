@@ -884,4 +884,13 @@ internal static class RuntimeAbi {
 
   /// <summary>The convention for the named runtime declaration, or null when the bridge does not cover it.</summary>
   internal static Routine? For(string name) => _routines.GetValueOrDefault(name);
+
+  /// <summary>
+  /// Every DOS label a row here can make the back end CALL. Each is a claim that
+  /// <see cref="Runtime.DosRuntime"/> defines a routine by that name, and a wrong claim used to be
+  /// invisible until the linker met it - so it is checked against the runtime instead
+  /// (<c>CodeGenerator.UnboundRuntimeCallees</c>).
+  /// </summary>
+  internal static IEnumerable<string> Labels =>
+    _routines.Values.Select(r => r.Label).Append(FileSelectLabel).Distinct(StringComparer.OrdinalIgnoreCase);
 }
