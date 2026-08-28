@@ -104,6 +104,30 @@ public sealed class LexerTests {
     Assert.That(t[0].IntegerValue, Is.EqualTo(expected));
   }
 
+  /// <summary>
+  /// Past QUAD a decimal literal is a FLOAT, which is what PBC 3.50 does with it: it prints
+  /// 9223372036854775808 as 9.22337203685478E+18 and 99999999999999999999 as 1E+20
+  /// (tests/diff/DIFF116.BAS). The lexer used to hand the digits to long.Parse unconditionally and
+  /// throw an OverflowException out of the tokenizer, which ended the whole compilation with a
+  /// stack trace rather than with a program or a diagnostic.
+  /// </summary>
+  [TestCase("9223372036854775808", 9223372036854775808.0)]
+  [TestCase("99999999999999999999", 1e20)]
+  [TestCase("12345678901234567890123", 1.2345678901234568e22)]
+  public void Tokenize_GivenADecimalIntegerWiderThanQuad_WhenLexed_ThenItIsAFloatLiteral(string src, double expected) {
+    var t = LexLine(src);
+    Assert.That(t, Has.Length.EqualTo(1));
+    Assert.That(t[0].Kind, Is.EqualTo(TokenKind.FloatLiteral));
+    Assert.That(t[0].FloatValue, Is.EqualTo(expected).Within(Math.Abs(expected) * 1e-12));
+  }
+
+  [TestCase("9223372036854775807", 9223372036854775807L)]   // the last one that still fits
+  public void Tokenize_GivenTheWidestIntegerLiteral_WhenLexed_ThenItIsStillAnInteger(string src, long expected) {
+    var t = LexLine(src);
+    Assert.That(t[0].Kind, Is.EqualTo(TokenKind.IntegerLiteral));
+    Assert.That(t[0].IntegerValue, Is.EqualTo(expected));
+  }
+
   [TestCase("&H0", 0L)]
   [TestCase("&HFF", 255L)]
   [TestCase("&hff", 255L)]

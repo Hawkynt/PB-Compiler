@@ -187,6 +187,8 @@ public sealed class IrBasicWriterCensusTests {
     "pb36/DIFF109.BAS",
     "pb36/DIFF110.BAS",
     "pb36/DIFF112.BAS",
+    "pb36/DIFF115.BAS",
+    "pb36/DIFF116.BAS",
     "pb36/DIFF15.BAS",
     "pb36/DIFF18.BAS",
     "pb36/DIFF22.BAS",

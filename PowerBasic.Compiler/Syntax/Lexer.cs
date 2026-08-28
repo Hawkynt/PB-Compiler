@@ -425,10 +425,12 @@ public sealed class Lexer {
     if (suffix is TypeSuffix.Single or TypeSuffix.Double or TypeSuffix.Ext)
       isFloat = true;
 
-    if (!isFloat) {
-      var value = long.Parse(text, CultureInfo.InvariantCulture);
+    // A decimal literal wider than QUAD is a FLOAT to PB, not an error: PBC 3.50 prints
+    // 9223372036854775808 as 9.22337203685478E+18 and 99999999999999999999 as 1E+20. TryParse
+    // rather than Parse because the failure is a language rule here, not an exceptional case -
+    // long.Parse threw out of the LEXER and killed the compiler with a stack trace.
+    if (!isFloat && long.TryParse(text, CultureInfo.InvariantCulture, out var value))
       return new(TokenKind.IntegerLiteral, text, position, suffix, IntegerValue: value);
-    }
 
     var normalized = hasExponent ? text.Replace('D', 'E').Replace('d', 'E') : text;
     if (normalized.EndsWith('.'))

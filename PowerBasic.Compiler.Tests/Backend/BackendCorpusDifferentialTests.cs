@@ -215,9 +215,11 @@ public sealed class BackendCorpusDifferentialTests {
     // device query, self-EXEC transition and EMS page frame now cover every remaining participant:
     // Mixed unoptimized calls into ABI-compatible direct callees add three more programs:
     // 317 compilations execute, 317 agree, and none stop at an emulator boundary.
-    Assert.That(routedSomething, Is.GreaterThanOrEqualTo(317),
+    // DIFF115 (signed LONG ordering across an overflowing difference) and DIFF116 (decimal literals
+    // wider than QUAD) route in both modes: 321 compilations execute and 321 agree.
+    Assert.That(routedSomething, Is.GreaterThanOrEqualTo(321),
       "the back end participated in fewer compilations than it used to:\n" + report);
-    Assert.That(agreed, Is.GreaterThanOrEqualTo(317),
+    Assert.That(agreed, Is.GreaterThanOrEqualTo(321),
       "fewer programs were compared than used to be:\n" + report);
     Assert.That(notCompared, Is.Zero,
       "a participating corpus program stopped before its behavior could be compared:\n" + report);
