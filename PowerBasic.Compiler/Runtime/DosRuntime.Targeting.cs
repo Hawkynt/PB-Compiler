@@ -74,7 +74,7 @@ public sealed partial class DosRuntime {
   /// <summary>Zero-fills CX bytes at ES:DI, using vector, DWORD, then byte stores as available.</summary>
   private void EmitRepStosbZeroWidened(Assembler asm) {
     this.EmitVectorZeroPrefix(asm, unitBytes: 1);
-    if (!this.Cpu386) {
+    if (!this.Target.Has32BitGeneralPurpose) {
       asm.Xor(Reg.AL, Reg.AL);
       asm.Rep();
       asm.Stosb();
