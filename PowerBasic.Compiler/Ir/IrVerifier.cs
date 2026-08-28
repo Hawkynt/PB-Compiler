@@ -137,6 +137,12 @@ public sealed class IrVerifier {
   /// </para>
   /// </summary>
   private bool VerifyOperandIsOwned(IrValue operand) {
+    // A float CONSTANT carrying an integer type is not a value any target can produce: there is no
+    // cell to stage it from, and a back end that names it anyway prints the double's bit pattern as
+    // an integer. It reached two of them - `1.5@` lowered as the FIX cell it is stored INTO rather
+    // than at the width it is computed at - so the check is here rather than left to a reader.
+    if (operand is IrConstantFloat && !operand.Type.IsFloat)
+      this.Error($"float constant carrying the non-float type {operand.Type}");
     if (operand is not IrInstruction def)
       return true;                                   // constants, args, globals and blocks define nothing here
     if (def.Parent is not { } defBlock) {

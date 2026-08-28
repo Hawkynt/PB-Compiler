@@ -330,9 +330,9 @@ from 159/161 to 160/161. Selection and allocation move from 262/262 to 263/263.
 **Whole classes are absent from the corpus and are no less real.** `BackendRoutingGateTests` holds one
 program each and pins the routing's own reason for it: QUAD and BYTE parameters and results, FIX and
 EXT parameters, a record parameter, `CDECL`/`STDCALL`/`FASTCALL`/
-`WATCALL`, error handling inside a procedure body, an array parameter (which stops the whole module
-lowering), and FIX arithmetic in a module body - fifteen decline rows, none of which the corpus
-would have noticed stopping or starting. Each compiles to an executable byte-identical to the
+`WATCALL`, error handling inside a procedure body, and an array parameter (which stops the whole
+module lowering) - fourteen decline rows, none of which the corpus would have noticed stopping or
+starting. FIX arithmetic in a module body was the fifteenth and has moved to the routing list. Each compiles to an executable byte-identical to the
 unrouted build, because the module body is stranded by the very call the filter refused: one
 construct silently costs a whole program's routing today, and a compile error tomorrow.
 
@@ -453,6 +453,21 @@ reason and says so in a comment; both entries now do the same. That also makes t
 32-bit arms one routine, which is why there is no `rt_inp_u32`. It was invisible because both entries
 are called only from the routed path and every INPUT any test had written was in range - the
 in-range answer is identical either way.
+
+**A FIX literal was built as the CELL it is stored into rather than at the width it is computed at,
+and the routed decline was the only back end that noticed.** `MapType` gives `1.5@` the type `i64` -
+correctly, a FIX cell is a scaled int64 - and `LowerExpr` then built the constant with that type while
+holding a float: an `IrConstantFloat` carrying an `i64`. The x86-16 selector declined it ("64-bit
+operand: IrConstantFloat has no cell"); `--emit-c` and `--emit-llvm` rendered the double's BIT PATTERN
+as an integer, so `v@ = 1.5@ : PRINT v@` printed `4.6E+16`. The literal now lowers at the x87's own
+width and reaches the cell through the same `rt_fix_up` every other value stored to one goes through,
+and `IrVerifier` rejects a float constant carrying a non-float type.
+
+It is deliberately NOT the direct emitter's compile-time decimal fold against a hard-coded 100
+(`CodeGenerator.Places`, "FIX literal stores round DECIMALLY at compile time"). That fold is a defect
+`BackendFixBcdTests` already declines to reproduce - with `pbvFixDigits` at 4 it writes the two-digit
+scaling and reads it back at four - and the two agree wherever the scale is the default the fold
+assumes.
 
 **An empty decline histogram is not the same as "every shape is handled", and one shape RAISED rather
 than declining.** A narrow (`BYTE`/`WORD`/`INTEGER`) shift whose count the immediate encoding cannot

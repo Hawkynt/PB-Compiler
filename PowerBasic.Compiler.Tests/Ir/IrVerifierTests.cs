@@ -158,6 +158,22 @@ public sealed class IrVerifierTests {
     Assert.That(IrVerifier.Verify(fn), Has.Some.Contains("is detached"));
   }
 
+  /// <summary>
+  /// A float CONSTANT carrying an integer type. No target can produce one - there is no cell to stage
+  /// it from - and a back end that names it anyway writes the double's bit pattern as an integer,
+  /// which is what <c>1.5@</c> did: the FIX literal was built as the i64 CELL it is stored into rather
+  /// than at the width it is computed at, and printed 4.6E+16.
+  /// </summary>
+  [Test]
+  public void Verify_GivenAFloatConstantWithAnIntegerType_ReportsError() {
+    var fn = new IrFunction("mistyped", IrType.Void);
+    var b = new IrBuilder(fn.CreateBlock("entry"));
+    b.Add(new IrConstantFloat(IrType.I64, 1.5), new IrConstantInt(IrType.I64, 1));
+    b.Ret();
+
+    Assert.That(IrVerifier.Verify(fn), Has.Some.Contains("float constant carrying the non-float type"));
+  }
+
   /// <summary>The same hole seen from the other side: the definition is in a block of ANOTHER function.</summary>
   [Test]
   public void Verify_GivenAnOperandDefinedInAnotherFunction_ReportsError() {

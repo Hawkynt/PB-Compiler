@@ -86,6 +86,34 @@ public sealed class BackendFixBcdTests {
       PRINT SIZEOF(b@@); SIZEOF(c@@)
       """, "1.5625 | .09375 | 24 | 10  10");
 
+  /// <summary>
+  /// A literal written with the FIX suffix, which is the shape that did not route - and it was a
+  /// lowering fault wearing a selection message. <c>MapType</c> gives <c>1.5@</c> the type i64,
+  /// because that is what the CELL is, and the lowering built the constant as that type while holding
+  /// a float: an <c>IrConstantFloat</c> carrying an i64. The x86-16 selector declined it ("64-bit
+  /// operand: IrConstantFloat has no cell") and the other two back ends, which have no such
+  /// scepticism, printed the double's bit pattern read as an integer - <c>4.6E+16</c> for 1.5.
+  ///
+  /// <para>
+  /// The literal now lowers at the width it is COMPUTED at and reaches the cell through the same
+  /// <c>rt_fix_up</c> every other value stored to one goes through. Deliberately NOT the direct
+  /// emitter's compile-time decimal fold against a hard-coded 100
+  /// (<c>CodeGenerator.Places</c>, "FIX literal stores round DECIMALLY at compile time"): that fold
+  /// is the defect <see cref="Route_GivenPbvFixDigitsChanged_ThenLaterFixStoresQuantizeAtTheNewScale"/>
+  /// already declines to reproduce, and the two agree wherever the scale is the default it assumes.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Route_GivenFixSuffixedLiterals_ThenTheyReachTheCellThroughTheRuntimeScaling() =>
+    BothPathsAgree("""
+      v@ = 1.5@
+      PRINT v@
+      w@ = 2@
+      PRINT w@
+      PRINT v@ + w@
+      PRINT v@ * w@
+      """, "1.5 | 2 | 3.5 | 3");
+
   /// <summary>A FIX cell is eight bytes and a BCD cell ten - the sizes the two types are declared at.</summary>
   [Test]
   public void Route_GivenSizeof_ThenFixIsEightBytesAndBcdTen() =>

@@ -3554,6 +3554,8 @@ public sealed partial class IrLowering {
 
   private IrValue LowerExpr(Expression expr) {
     switch (expr) {
+      case IntegerLiteralExpr lit when this._model.TypeOf(lit) is BcdType bcdInt:
+        return this.Coerce(new IrConstantFloat(IrType.F80, lit.Value), PbType.Ext, bcdInt);
       case IntegerLiteralExpr lit:
         return new IrConstantInt(MapType(this._model.TypeOf(lit)), lit.Value);
       case FloatLiteralExpr lit: {
@@ -3562,6 +3564,15 @@ public sealed partial class IrLowering {
         // SINGLE. Quantize at the source boundary before a later FPExt can make the wider container
         // preserve bits the original literal never had. This mirrors the direct emitter exactly.
         var value = type is ScalarType { Kind: ScalarKind.Single } ? (float)lit.Value : lit.Value;
+        // A FIX literal is not a float value with a float type. Its CELL holds the number scaled by
+        // ten to the pbvFixDigits power - a count the runtime owns - so the constant is built at the
+        // x87's own width and converted into the cell by the same rt_fix_up every other value stored
+        // to one goes through. Building it AS the cell handed every consumer an IrConstantFloat
+        // carrying an i64: the x86-16 selector declined it ("64-bit operand: IrConstantFloat has no
+        // cell") and the other two back ends rendered the double's BIT PATTERN as an integer, so
+        // `v@ = 1.5@ : PRINT v@` printed 4.6E+16.
+        if (type is BcdType bcd)
+          return this.Coerce(new IrConstantFloat(IrType.F80, value), PbType.Ext, bcd);
         return new IrConstantFloat(MapType(type), value);
       }
       case NamedConstantExpr nc:
