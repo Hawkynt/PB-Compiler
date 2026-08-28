@@ -2252,15 +2252,15 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         break;
 
       case "RANDOMIZE": {
-        if (cmd.Arguments.Count >= 1 && cmd.Arguments[0] is { } seed) {
-          this.EmitExpression(seed);
-          this.Coerce(model.TypeOf(seed), PbType.Long, seed);
-        } else {
-          asm.Xor(Reg.AH, Reg.AH);
-          asm.Int(0x1A);
-          asm.Mov(Reg.AX, Reg.DX);
-          asm.Mov(Reg.DX, Reg.CX);
+        // No argument: the BIOS tick counter, which rt_randomize reads and stores. It moved out of
+        // here into the runtime because the routed path has no way to spell an INT, and one seed cell
+        // filled two ways is the kind of difference nothing observes until the sequences diverge.
+        if (cmd.Arguments.Count == 0 || cmd.Arguments[0] is not { } seed) {
+          asm.Call(this._rt.Randomize);
+          break;
         }
+        this.EmitExpression(seed);
+        this.Coerce(model.TypeOf(seed), PbType.Long, seed);
         asm.Mov(Mem.Word(asm.Lbl("rt_rndseed")), Reg.AX);
         asm.Mov(Mem.Word(asm.Lbl("rt_rndseed"), 2), Reg.DX);
         break;

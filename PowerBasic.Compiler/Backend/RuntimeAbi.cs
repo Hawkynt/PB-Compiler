@@ -571,6 +571,14 @@ internal static class RuntimeAbi {
     // "Rnd: -> ST0 = next SINGLE in [0,1)"
     ["rt_rnd"] = new("rt_rnd", [], _callerSaved, Answer: ResultKind.St0),
 
+    // "Timer: -> ST0 = BIOS tick count / 18.2065 (seconds since midnight)"
+    ["rt_timer"] = new("rt_timer", [], _callerSaved, Answer: ResultKind.St0),
+
+    // "Randomize: reseeds rt_rndseed from the BIOS tick counter" - the ARGUMENTLESS form only; a
+    // seed the program supplies is a plain store into the same cell and needs no routine. Both paths
+    // call this one, because a program must not seed two ways.
+    ["rt_randomize"] = new("rt_randomize", [], _callerSaved),
+
     // "RND(a, z): DX:AX=lower, CX:BX=upper -> DX:AX = lower + trunc(rnd * (upper-lower+1))"
     ["rt_rnd_range"] = new("rt_rndrange",
       [new(ArgKind.Pair, Reg.AX, Reg.DX), new(ArgKind.Pair, Reg.BX, Reg.CX)],

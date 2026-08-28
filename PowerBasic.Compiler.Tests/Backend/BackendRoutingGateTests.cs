@@ -137,6 +137,29 @@ public sealed class BackendRoutingGateTests {
       FOR i% = 1 TO 4 : a(i%) = i% * 2 : NEXT
       PRINT a(3)
       """, "main"),
+    // RND and TIMER written WITHOUT parentheses. The binder leaves a bare intrinsic a NameExpr, so
+    // these do not reach the intrinsic-call path at all - they used to arrive as "unbound name RND"
+    // and take the whole module with them, while RND(0) a line above routed perfectly well.
+    new("module body: bare RND", """
+      DIM x AS SINGLE
+      x = RND
+      PRINT x < 1
+      """, "main"),
+    new("module body: bare TIMER", """
+      DIM t AS SINGLE
+      t = TIMER
+      PRINT t >= 0
+      """, "main"),
+    // RANDOMIZE in both spellings: a seed the program supplies is a store into the runtime's own
+    // seed cell, and the argumentless form is the routine that reads the BIOS clock into it.
+    new("module body: RANDOMIZE with a seed", """
+      RANDOMIZE 7
+      PRINT RND(1, 6) >= 1
+      """, "main"),
+    new("module body: RANDOMIZE with no seed", """
+      RANDOMIZE
+      PRINT RND(1, 6) >= 1
+      """, "main"),
   ];
 
   /// <summary>

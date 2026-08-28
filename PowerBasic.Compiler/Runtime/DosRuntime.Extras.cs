@@ -14,6 +14,7 @@ namespace PowerBasic.Compiler.Runtime;
 ///   AscSet:      AX=handle (not consumed), CX=position (1-based), DL=code
 ///                (in-place byte poke; out-of-range positions are ignored)
 ///   RndRange:    DX:AX=lower, CX:BX=upper -> DX:AX = LONG in [lower, upper]
+///   Randomize:   - reseeds rt_rndseed from the BIOS tick counter (RANDOMIZE with no argument)
 /// </summary>
 public sealed partial class DosRuntime {
 
@@ -25,6 +26,7 @@ public sealed partial class DosRuntime {
   public Label AsciizLen { get; private set; } = null!;
   public Label AscSet { get; private set; } = null!;
   public Label RndRange { get; private set; } = null!;
+  public Label Randomize { get; private set; } = null!;
 
   private void EmitExtraProcedures(Assembler asm) {
     this.EmitPrintInt64(asm);
@@ -32,6 +34,7 @@ public sealed partial class DosRuntime {
     this.EmitAsciizProcedures(asm);
     this.EmitAscSet(asm);
     this.EmitRndRange(asm);
+    this.EmitRandomize(asm);
   }
 
   /// <summary>ST0 (integral, popped) -> "[ |-]digits[ ]" on the current output (QUAD print).</summary>
@@ -269,6 +272,33 @@ public sealed partial class DosRuntime {
 
     asm.Pop(Reg.CX);
     asm.Pop(Reg.BX);
+    asm.Ret();
+  }
+
+  /// <summary>
+  /// <c>RANDOMIZE</c> with no argument: the BIOS tick counter becomes the new seed, low word first,
+  /// which is the LONG the counter already is.
+  ///
+  /// <para>
+  /// It is a routine rather than four inline instructions because both back ends need it and there is
+  /// exactly one seed. The direct emitter used to write the sequence inline and the routed path had no
+  /// way to spell an <c>INT 1Ah</c> at all; giving each its own copy would be two statements of the
+  /// same fact, and the seeded form - a plain store of a LONG into <c>rt_rndseed</c> - is deliberately
+  /// NOT routed through here, because that one really is the same instruction on both paths.
+  /// </para>
+  /// </summary>
+  private void EmitRandomize(Assembler asm) {
+    this.Randomize = asm.MarkLabel("rt_randomize");
+    asm.Push(Reg.AX);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.DX);
+    asm.Xor(Reg.AH, Reg.AH);
+    asm.Int(0x1A);                                   // CX:DX = ticks since midnight
+    asm.Mov(Mem.Word(asm.Lbl("rt_rndseed")), Reg.DX);
+    asm.Mov(Mem.Word(asm.Lbl("rt_rndseed"), 2), Reg.CX);
+    asm.Pop(Reg.DX);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.AX);
     asm.Ret();
   }
 }
