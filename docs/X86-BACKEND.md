@@ -838,6 +838,28 @@ It is deliberately a short explicit table rather than a convention: each entry i
 specific hand-written assembly routine, and a wrong claim miscompiles silently. Everything unlisted
 declines by name, so the census keeps ranking what to add next. Two supporting pieces came with it:
 
+**And a claim about a routine that does not exist now fails where it is made.** `Assembler.Lbl` mints
+a label for *any* name, so `CalleeLabel` used to hand the emitter a perfectly good `Label` for any
+`rt_`-prefixed spelling and a stale row surfaced as "referenced but never bound" while the fixups
+resolved — after every routing decision, naming a symbol rather than the row that invented it, and
+taking the whole compilation with it. `CalleeLabel` now asks `RuntimeTrimmer`'s probe emission, which
+already knows exactly which `rt_` labels the runtime defines, and answers null when the name is not
+one.
+
+The routing then has to ask the same question, because `ExternalCalleeDecline` skips `rt_` names
+entirely and would let the refusal reach `MachineEmitter`, where nothing can decline any more.
+`UndefinedRuntimeCallee` asks it of the **selected machine code** rather than of the IR, and that is
+the point: the label a call carries is the selector's choice, not the IR's name — the bridge maps
+`rt_str_from_i16` onto the runtime's `rt_str_i16`, and the selector names routines no IR declaration
+mentions at all (`rt_trunc`, `rt_lmul`, `rt_pow2`). Asking the machine code covers both without a
+second list to keep in step.
+
+`BackendRuntimeCallTests` reads `CodeGenerator.UnboundRuntimeCallees` so a stale row fails a test the
+moment it is written rather than the first time some program happens to call it. Checked both ways
+with `rt_str_from_i16` pointed at a nonexistent label: the fixture reports it, and a `STR$` program
+compiles with `main` declining rather than raising out of the emitter. Costs nothing — the corpus
+census is unchanged at 263/263 functions and 161/161 module bodies.
+
 - **`MOperand.DataOffset`** — the *address* of a data object rather than its contents. It resolves
   through the same codegen-owned data resolver as `DataCell`, so a routed `PRINT "HI"` takes the
   offset of the identical pooled literal a directly-emitted one would.

@@ -386,8 +386,8 @@ public sealed class BackendPrintUsingTests {
     var module = IrLowering.TryLowerModule(Bind("""PRINT USING "##.##"; 3.14159"""));
     Assert.That(module, Is.Not.Null);
 
-    Assert.That(() => CEmitter.Emit(module!),
-      Throws.TypeOf<NotSupportedException>().With.Message.Contains("rt_using_field"));
+    Assert.That(CEmitter.TryEmit(module!, out var why), Is.Null);
+    Assert.That(why, Does.Contain("rt_using_field"));
   }
 
   [Test]
@@ -398,8 +398,8 @@ public sealed class BackendPrintUsingTests {
     var module = IrLowering.TryLowerModule(Bind("""s$ = USING$("##.##", 3.14159)"""));
     Assert.That(module, Is.Not.Null);
 
-    Assert.That(() => CEmitter.Emit(module!),
-      Throws.TypeOf<NotSupportedException>().With.Message.Contains("rt_capture_begin"));
+    Assert.That(CEmitter.TryEmit(module!, out var why), Is.Null);
+    Assert.That(why, Does.Contain("rt_capture_begin"));
   }
 
   #endregion

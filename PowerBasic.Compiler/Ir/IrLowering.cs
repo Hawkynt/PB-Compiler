@@ -1967,7 +1967,13 @@ public sealed partial class IrLowering {
     if (s.IsFloat)
       return s.ByteSize switch { 4 => ("single", IrType.F32), 8 => ("double", IrType.F64), _ => ("ext", IrType.F80) };
     var bits = s.ByteSize * 8;
-    return ($"{(s.Signed ? "i" : "u")}{bits}", IrType.Integer(bits));
+    // The signedness belongs in the TYPE and not only in the name. IrType.Integer defaults to signed,
+    // so rt_print_u8 was declared taking an i8 while runtime/pbc_rt.h declares it taking a uint8_t -
+    // and a C prototype that contradicts the header is a conflicting type the C compiler rejects, so
+    // every program printing a BYTE, WORD or DWORD emitted a translation unit that would not build.
+    // Nothing else reads it: IR type equality deliberately ignores signedness, and the x86-16 bridge
+    // keys on the routine NAME.
+    return ($"{(s.Signed ? "i" : "u")}{bits}", IrType.Integer(bits, s.Signed));
   }
 
   /// <summary>Finds or declares an external runtime function by name and signature.</summary>
@@ -4817,7 +4823,10 @@ public sealed partial class IrLowering {
       this.RaiseWhen(this.OutsideIntegerRange(value, st), 6, "overflow");
     if (st.Signed && this._model.EffectiveDialect.IsBascomRuntime())
       return this._b.Call(toTy, this.RuntimeFn("rt_round_half_away", toTy, value.Type), value);
-    return this._b.Cast(st.Signed ? IrCastOp.FPToSIRound : IrCastOp.FPToUI, value, toTy);
+    // Both arms ROUND. The unsigned one is a separate opcode rather than the truncating FPToUI for
+    // the reason the signed pair is two opcodes: PB's b?? = 3.5 is 4 exactly as its i% = 3.5 is, and
+    // spelling it FPToUI made the C and LLVM back ends answer 3 while the x86-16 one answered 4.
+    return this._b.Cast(st.Signed ? IrCastOp.FPToSIRound : IrCastOp.FPToUIRound, value, toTy);
   }
 
   /// <summary>

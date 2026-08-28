@@ -1473,6 +1473,58 @@ Both emitters DECLINE rather than emit something that compiles and misbehaves, a
 already gives when the lowering declines. A FAILURE there means emitted C that
 disagrees with the DOS golden, which is the only thing that fixture exists to catch.
 
+### These two back ends decline; they never throw
+
+The rule the x86-16 path states for itself ([X86-BACKEND.md](X86-BACKEND.md)) binds
+here **more** tightly, not less. There a decline is caught by `CodeGenerator` and the
+direct emitter compiles the function instead, so a throw was a crash where a
+survivable fallback would have done. `CEmitter` and `LlvmEmitter` have *no fallback at
+all*: a C translation unit and a `.ll` module have exactly one producer each, so the
+named refusal is the entire value either can offer for a program it cannot render, and
+a throw produces no output, no actionable exit code and no name for what stopped it.
+
+So the shape is the one `IrLowering` already has for the stage before: `TryEmit`
+returns null and reports which construct, `pbc` prints it and answers 1, and
+`EmitDeclinedException` is an implementation detail of that channel rather than
+something a caller sees. `Emit` remains for callers that can state in advance that a
+module renders (most of the lowering fixtures), exactly as `IrTypeMapper.Map` sits
+beside `TryMap`.
+
+What declines, measured rather than assumed - the corpus figures are what
+`EmitterNeverThrowsTests` reports:
+
+| construct | C | LLVM | why |
+|---|---|---|---|
+| Microsoft Binary Format (`mbf32`/`mbf64`) | declines | declines | a DOS storage encoding with no C or LLVM type; `MbfToFP` has to run first. Unreachable through `pbc` today - the lowering refuses an MBF lvalue first - so it is reached only through the emitters' own API |
+| the address of a basic block | declines | renders | `ON ERROR` arms a handler with one and `CODEPTR32` of a label is one; standard C has no such value (see above) |
+| `IrFarPtr` | declines | declines | a segment:offset pointer (`DIM … AT`, a segmented access); flattening it to a near pointer silently substitutes the default segment |
+| `IrInlineAsm` | declines | declines | x86-16 machine code by definition |
+| `IrIndirectBr` | (unreachable) | renders | `GOTO DWORD`/`GOSUB DWORD`. LLVM has `indirectbr`; the C arm exists but nothing reaches it, because the address such a branch jumps to is a block address, which the row above declines first. Plain `GOSUB` is a `switch` and renders in both |
+| `rt_using_field`, `rt_lprint_*`, `rt_capture_*`, `rt_reg_*`, `rt_interrupt*` | declines | renders | `runtime/pbc_rt.c` has no entry, and a stub would lie about what the program did |
+
+Two failures that are NOT declines, and are spelled apart from them so a stack trace
+can be read: `BackendInvariantException` now carries the back end's name and covers
+the C emitter's block-label table and name sanitizer, and the LLVM emitter's operand
+naming - which used to render an unnamed operand as `%undef`, producing a module that
+assembles and computes something else. That is the one outcome worse than a raise.
+
+`EmitterNeverThrowsTests` is the gate, in the two populations
+`BackendNeverThrowsTests` argues for: 334 corpus emissions and 1032 generated ones
+(43 construct bodies x 4 runtime-operand shapes x 3 dialects x both emitters), each one
+a `pbc --emit-c`/`--emit-llvm` run that must answer 0 with a translation unit or 1 with
+a name. The operand is always derived from `INPUT` rather than a `NOINLINE` helper,
+because `INPUT` is the one opaque source that exists in every dialect and a literal
+folds under SCCP long before an emitter sees it.
+
+Each half carries its own can-this-measure-anything companion, because a matrix that
+all stops at the lowering would stay green through any change to either emitter: every
+generated body must bind (a body the front end rejects varies nothing while looking
+like coverage), more than half the generated emissions must reach an emitter (71 of 86
+do), and each emitter must render more than 50 corpus programs (142 C, 153 LLVM). One
+shape had to be replaced after it was written, which is what that companion is for:
+`DEF SEG = &HB800 : PEEK(n%)` lowers to a NEAR access and renders, so it would have sat
+in the fixture looking like far-pointer coverage and been none.
+
 Beyond widening that subset, the two items that would most change the picture:
 
 - **A native IR → x86-16 back end** that reproduces the same program output for a

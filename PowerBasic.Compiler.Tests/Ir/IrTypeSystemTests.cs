@@ -198,8 +198,14 @@ public sealed class IrTypeSystemTests {
     var module = new IrModule("m");
     module.AddFunction(fn);
 
-    Assert.That(() => LlvmEmitter.Emit(module), Throws.TypeOf<NotSupportedException>());
-    Assert.That(() => CEmitter.Emit(module), Throws.TypeOf<NotSupportedException>());
+    // ...and the refusal is a DECLINE that names the format, not a raise: neither emitter has a
+    // fallback behind it, so the name is the only thing a caller can act on.
+    Assert.Multiple(() => {
+      Assert.That(LlvmEmitter.TryEmit(module, null, out var llvmWhy), Is.Null);
+      Assert.That(llvmWhy, Does.Contain("Microsoft Binary Format"));
+      Assert.That(CEmitter.TryEmit(module, out var cWhy), Is.Null);
+      Assert.That(cWhy, Does.Contain("Microsoft Binary Format"));
+    });
   }
 
   #endregion

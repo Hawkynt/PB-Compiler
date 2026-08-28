@@ -77,7 +77,34 @@ public sealed class CEmitter {
     "rt_reg_set", "rt_reg_get", "rt_interrupt", "rt_interrupt_flags",
   };
 
-  /// <summary>Renders <paramref name="module"/> as a self-contained C99 translation unit.</summary>
+  /// <summary>
+  /// Renders <paramref name="module"/> as a self-contained C99 translation unit, or returns null and
+  /// reports WHICH construct this back end has no rendering for.
+  ///
+  /// <para>
+  /// This is the entry a compilation driver uses, and the reason is that nothing catches a throw
+  /// behind it: the x86-16 path can decline a function and let the direct emitter take it, but a C
+  /// translation unit has no second producer. A refusal that names the construct is the whole value
+  /// this back end can offer for a program it cannot render - the same shape
+  /// <see cref="IrLowering.TryLowerModule(Semantics.SemanticModel, out string?)"/> already has for
+  /// the stage before it.
+  /// </para>
+  /// </summary>
+  public static string? TryEmit(IrModule module, out string? declinedBecause) {
+    declinedBecause = null;
+    try {
+      return Emit(module);
+    } catch (EmitDeclinedException e) {
+      declinedBecause = e.Message;
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// Renders <paramref name="module"/> as a self-contained C99 translation unit, raising
+  /// <see cref="EmitDeclinedException"/> for a construct outside what this back end renders. Callers
+  /// that cannot state in advance that a module is renderable want <see cref="TryEmit"/> instead.
+  /// </summary>
   public static string Emit(IrModule module) {
     var sb = new StringBuilder();
     sb.Append("/* Generated from ").Append(module.Name).Append(" by pbc --emit-c. */\n");
@@ -108,16 +135,31 @@ public sealed class CEmitter {
 
   private static string Signature(IrFunction f) {
     var sb = new StringBuilder();
-    sb.Append(f.IsDeclaration ? "extern " : "").Append(Ty(f.ReturnType)).Append(' ').Append(FuncName(f)).Append('(');
+    sb.Append(f.IsDeclaration ? "extern " : "").Append(SignatureTy(f.ReturnType)).Append(' ').Append(FuncName(f)).Append('(');
     if (f.Parameters.Count == 0)
       sb.Append(f.IsVarArgs ? "" : "void");
     else
       for (var i = 0; i < f.Parameters.Count; ++i)
-        sb.Append(i > 0 ? ", " : "").Append(Ty(f.Parameters[i].Type)).Append(" p").Append(i);
+        sb.Append(i > 0 ? ", " : "").Append(SignatureTy(f.Parameters[i].Type)).Append(" p").Append(i);
     if (f.IsVarArgs)
       sb.Append(f.Parameters.Count > 0 ? ", ..." : "...");
     return sb.Append(')').ToString();
   }
+
+  /// <summary>
+  /// The C spelling used in a SIGNATURE, where the IR type's signedness has to survive.
+  ///
+  /// <para>
+  /// Everywhere else this back end declares an integer in its signed form and casts to
+  /// <see cref="UTy"/> at each operation that needs an unsigned reading, which is a free choice
+  /// because the bits are the same. A prototype is not free: <c>runtime/pbc_rt.h</c> declares
+  /// <c>rt_print_u8(uint8_t)</c>, and a re-declaration as <c>int8_t</c> is a conflicting type that
+  /// the C compiler REJECTS - so every program printing a BYTE, WORD or DWORD emitted a translation
+  /// unit that would not build. It hid because no battery program with a golden output has an
+  /// unsigned value in it, which is the same blind spot that hid the rounding above.
+  /// </para>
+  /// </summary>
+  private static string SignatureTy(IrType t) => t.IsUnsigned ? UTy(t) : Ty(t);
 
   /// <summary>PB's <c>main</c> is the program body, not C's entry point - the shim calls it.</summary>
   private static string FuncName(IrFunction f) =>
@@ -157,8 +199,9 @@ public sealed class CEmitter {
   private static string Ty(IrType t) => t.Kind switch {
     IrTypeKind.Void => "void",
     IrTypeKind.Ptr => "void *",
-    IrTypeKind.Float when t.IsMbf => throw new NotSupportedException(
-      $"Microsoft Binary Format ({t}) has no C type - convert to IEEE with MbfToFP before emission"),
+    IrTypeKind.Float when t.IsMbf => throw new EmitDeclinedException(
+      $"C emission: a value in Microsoft Binary Format ({t}), which has no C type "
+      + "- it has to be converted to IEEE with MbfToFP before emission"),
     IrTypeKind.Float => t.Bits switch { 32 => "float", 64 => "double", _ => "long double" },
     _ => t.Bits switch { 1 => "int8_t", 8 => "int8_t", 16 => "int16_t", 32 => "int32_t", _ => "int64_t" },
   };
@@ -167,6 +210,13 @@ public sealed class CEmitter {
   private static string UTy(IrType t) => t.Bits switch { 1 or 8 => "uint8_t", 16 => "uint16_t", 32 => "uint32_t", _ => "uint64_t" };
 
   private static string Sanitize(string name) {
+    // Not a decline: every IrFunction and IrGlobalVariable is constructed with a name (the procedure's
+    // own, the literal "main", or a synthesized g./static./.str one), so an empty one is a broken
+    // promise of the LOWERING rather than a program this back end cannot render - and it has to say
+    // which, or it reads as an IndexOutOfRangeException from inside a string builder.
+    if (name.Length == 0)
+      throw new Backend.BackendInvariantException("C back end", "CEmitter.Sanitize",
+        "every IR function and global is constructed with a non-empty name");
     var sb = new StringBuilder(name.Length);
     foreach (var c in name)
       sb.Append(char.IsAsciiLetterOrDigit(c) ? c : '_');
@@ -243,7 +293,16 @@ public sealed class CEmitter {
     return Signature(f) + " {\n" + decls + body + "}\n";
   }
 
-  private string Label(IrBasicBlock b) => this._labels[b];
+  /// <summary>
+  /// The C label of <paramref name="b"/>. Every block of the function being emitted was numbered at
+  /// the top of <see cref="EmitFunction"/>, and a terminator naming a block of ANOTHER function is IR
+  /// the verifier rejects - so a miss is a broken invariant rather than an unsupported construct, and
+  /// is spelled as one instead of arriving as a KeyNotFoundException.
+  /// </summary>
+  private string Label(IrBasicBlock b) =>
+    this._labels.TryGetValue(b, out var label) ? label
+      : throw new Backend.BackendInvariantException("C back end", "CEmitter.Label",
+          $"every branch target belongs to the function being emitted (block '{b.Name}' does not)");
 
   private void EmitInstruction(StringBuilder sb, IrInstruction inst, IrBasicBlock block) {
     var lhs = inst.Type.Kind == IrTypeKind.Void ? "" : this.Name(inst) + " = ";
@@ -289,7 +348,8 @@ public sealed class CEmitter {
       case IrCall c: {
         var callee = c.Callee is IrFunction target ? FuncName(target) : "(*(void (*)())" + this.Ref(c.Callee) + ")";
         if (_notInTheCRuntime.Contains(callee))
-          throw new NotSupportedException($"C emission: {callee} has no entry in runtime/pbc_rt.c");
+          throw new EmitDeclinedException(
+            $"C emission: a call to {callee}, which runtime/pbc_rt.c has no entry for");
         var args = c.Args.Select(this.Ref).ToList();
         if (callee is "memcpy" or "memset" && args.Count == 4)
           args.RemoveAt(3);                          // LLVM's trailing is-volatile flag
@@ -349,7 +409,7 @@ public sealed class CEmitter {
         break;
 
       default:
-        throw new NotSupportedException($"C emission: {inst.GetType().Name}");
+        throw EmitDeclinedException.For("C emission", inst);
     }
   }
 
@@ -468,6 +528,10 @@ public sealed class CEmitter {
       // a C cast truncates, so the rounding conversion has to say so: llrint rounds to nearest with
       // ties to even under the default rounding mode, which is the one BASIC assignment uses
       IrCastOp.FPToSIRound => $"({Ty(c.Type)})llrint({v})",
+      // ...and the unsigned target rounds too: PB's b?? = 3.5 is 4, the same as its i% = 3.5. The
+      // plain cast below is the TRUNCATING conversion and answers 3, which is what this arm emitted
+      // while the two conversions shared one opcode.
+      IrCastOp.FPToUIRound => $"({Ty(c.Type)})({UTy(c.Type)})llrint({v})",
       IrCastOp.UIToFP => $"({Ty(c.Type)})({UTy(from)}){v}",
       IrCastOp.FPToUI => $"({Ty(c.Type)})({UTy(c.Type)}){v}",
       IrCastOp.IntToPtr => $"(void *)(intptr_t){v}",
@@ -491,9 +555,11 @@ public sealed class CEmitter {
     // value (GCC's '&&label' is an extension, and even with it the non-local jump ON ERROR performs
     // needs setjmp/longjmp rather than a computed goto), so this declines instead of naming the
     // block and emitting something that compiles but does not handle errors.
-    IrBlockAddress => throw new NotSupportedException(
-      "C emission: the address of a basic block (ON ERROR arms a handler with one). "
-      + "A non-local jump from an arbitrary fault point needs setjmp/longjmp, which this emitter does not model yet."),
+    IrBlockAddress => throw new EmitDeclinedException(
+      "C emission: the address of a basic block - ON ERROR arms a handler with one, and CODEPTR32 of "
+      + "a label is one. GCC's '&&label' is an extension, and even with it the jump ON ERROR performs "
+      + "is non-local, from an arbitrary fault point, so it needs setjmp/longjmp rather than a "
+      + "computed goto - which this emitter does not model yet."),
     // a global's IR value is its ADDRESS: a byte blob is an array (which decays), a scalar
     // global is a plain object whose address has to be taken
     // a global's IR value is its ADDRESS: an array (byte blob or element array) decays, a

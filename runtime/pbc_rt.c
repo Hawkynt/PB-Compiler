@@ -440,8 +440,8 @@ static void rt_cv(void *s, void *out, int32_t n) {
 }
 
 int16_t rt_str_cvi(void *s) { int16_t v; rt_cv(s, &v, 2); return v; }
-int16_t rt_str_cvbyt(void *s) { uint8_t v; rt_cv(s, &v, 1); return (int16_t)v; }
-int16_t rt_str_cvwrd(void *s) { int16_t v; rt_cv(s, &v, 2); return v; }
+uint16_t rt_str_cvbyt(void *s) { uint8_t v; rt_cv(s, &v, 1); return (uint16_t)v; }
+uint16_t rt_str_cvwrd(void *s) { uint16_t v; rt_cv(s, &v, 2); return v; }
 int32_t rt_str_cvl(void *s) { int32_t v; rt_cv(s, &v, 4); return v; }
 int32_t rt_str_cvdwd(void *s) { int32_t v; rt_cv(s, &v, 4); return v; }
 float rt_str_cvs(void *s) { float v; rt_cv(s, &v, 4); return v; }

@@ -398,9 +398,9 @@ public sealed class BackendCoverageTests {
     // CDECL/STDCALL/FASTCALL/WATCALL convention, and error handling inside a procedure body.
     //
     // A floor, so a widening may only raise it. Lowering it means the back end took less than it did.
-    Assert.That(census.Routed, Is.GreaterThanOrEqualTo(263),
+    Assert.That(census.Routed, Is.GreaterThanOrEqualTo(265),
       $"the x86-16 back end now ROUTES fewer corpus functions than it used to ({census.Routed}/{census.Bodies}):\n" + report);
-    Assert.That(census.RoutedNoOptimize, Is.GreaterThanOrEqualTo(259),
+    Assert.That(census.RoutedNoOptimize, Is.GreaterThanOrEqualTo(261),
       "the x86-16 back end routes fewer corpus functions with --no-optimize than it used to:\n" + report);
 
     // Pinned by name for the reason every other set here is: a count cannot tell "a program stopped
@@ -489,7 +489,7 @@ public sealed class BackendCoverageTests {
     // had to decline. LOWLEVEL.BAS was the last function on this list.
     // Then 262 -> 263 when SWAP exchanged dynamic-string handle cells directly, so
     // CODEGEN.BAS::SwapIsInline stopped disappearing from the IR before selection.
-    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(263),
+    Assert.That(census.Selected, Is.GreaterThanOrEqualTo(265),
       "the x86-16 back end now compiles fewer corpus functions than it used to:\n" + report);
     Assert.That(census.ProcedureDeclines, Is.Empty,
       "a lowered named procedure no longer reaches the x86-16 back end:\n" + report);
@@ -517,7 +517,7 @@ public sealed class BackendCoverageTests {
     // statement holds for a later one is reserved over exactly the stretch between them, so the shape
     // that needed it allocates rather than declining.
     // 262 -> 263 keeps it closed: the newly lowered string-handle SWAP also allocates.
-    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(263),
+    Assert.That(census.Allocated, Is.GreaterThanOrEqualTo(265),
       "fewer selected functions survive register allocation than they used to:\n" + report);
 
     // The figure that matters for whole-program ownership: module bodies the back end compiles end
@@ -595,6 +595,9 @@ public sealed class BackendCoverageTests {
     "DIFF114.BAS",   // DIM ... AT segment (an ABSOLUTE array over the text screen)
     "DIFF115.BAS",   // signed LONG ordering whose difference does not fit a LONG
     "DIFF116.BAS",   // decimal literals wider than QUAD, which PB reads as floats
+    // a runtime real assigned to an UNSIGNED integer, at the .5 boundaries where rounding and
+    // truncation disagree - the oracle gate for IrCastOp.FPToUIRound
+    "DIFF117.BAS",
     // EXIT FAR: the unwind point and the jump through it, as intrinsics the back end expands inline;
     // both the module body and its near numeric BYREF procedure route.
     "DIFF14.BAS",
@@ -725,6 +728,7 @@ public sealed class BackendCoverageTests {
     "STRHEAP.BAS",
     "STRINGS.BAS",
     "SUBFN.BAS",
+    "UNSIGN.BAS",
   ];
 
   private static readonly string[] _ownedMainBodies = [
@@ -763,6 +767,9 @@ public sealed class BackendCoverageTests {
     "DIFF114.BAS",   // DIM ... AT segment (an ABSOLUTE array over the text screen)
     "DIFF115.BAS",   // signed LONG ordering whose difference does not fit a LONG
     "DIFF116.BAS",   // decimal literals wider than QUAD, which PB reads as floats
+    // a runtime real assigned to an UNSIGNED integer, at the .5 boundaries where rounding and
+    // truncation disagree - the oracle gate for IrCastOp.FPToUIRound
+    "DIFF117.BAS",
     "DIFF15.BAS",
     "DIFF16.BAS",   // FIX (@) and BCD (@@): a scaled int64 cell and an f80 one
     "DIFF17.BAS",   // DIM HUGE / DIM VIRTUAL: segment stepping and the EMS page window
@@ -889,6 +896,7 @@ public sealed class BackendCoverageTests {
     "STRHEAP.BAS",
     "STRINGS.BAS",
     "SUBFN.BAS",
+    "UNSIGN.BAS",
     // UIToFP (FILD reads signed, so an unsigned source stages one size larger with the top zeroed)
     // and a compare-as-a-value whose left operand is an immediate, mirrored the way the branch
     // path already mirrors it. With these the corpus is COMPLETE on selection and allocation.

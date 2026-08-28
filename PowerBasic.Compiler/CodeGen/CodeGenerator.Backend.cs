@@ -282,6 +282,10 @@ public sealed partial class CodeGenerator {
         this._backendDeclines.Add((proc.Name, "selection: " + (declineReason ?? "unknown")));
         continue;
       }
+      if (UndefinedRuntimeCallee(mfn) is { } undefined) {
+        this._backendDeclines.Add((proc.Name, $"routing: calls '{undefined}', which the DOS runtime does not define"));
+        continue;
+      }
       candidates.Add((proc, irFn, mfn));
     }
 
@@ -376,6 +380,8 @@ public sealed partial class CodeGenerator {
       return this.DeclineMain($"routing: global '{unaddressable}' has no cell the emitter can address");
     if (InstructionSelector.TrySelect(main, out var declineReason, this.SelectionTarget) is not { } machine)
       return this.DeclineMain("selection: " + (declineReason ?? "unknown"));
+    if (UndefinedRuntimeCallee(machine) is { } undefined)
+      return this.DeclineMain($"routing: calls '{undefined}', which the DOS runtime does not define");
     MachineScheduler.Schedule(machine);
     if (LinearScanAllocator.Allocate(machine, this.SelectionTarget, out var noRegisters) is not { } alloc)
       return this.DeclineMain("allocation: " + (noRegisters ?? "unknown"));
@@ -484,8 +490,15 @@ public sealed partial class CodeGenerator {
   /// what seeds the pb36 runtime trimmer - so a section only the routed function calls is kept.
   /// </summary>
   private Asm.Label? CalleeLabel(string name) {
+    // ...but only when the runtime really has it. Asm.Lbl MINTS a label for any name, so a wrong or
+    // stale RuntimeAbi row used to hand back a perfectly good Label that nothing would ever bind, and
+    // the failure surfaced as "referenced but never bound" at LINK time - after every routing
+    // decision, a long way from the row that caused it, and with the whole compilation to lose. The
+    // probe emission the pb36 trimmer already keeps knows exactly which rt_ labels the runtime
+    // defines, so the question is asked here, where the answer can still be a decline that costs one
+    // function.
     if (name.StartsWith("rt_", System.StringComparison.Ordinal))
-      return this._asm.Lbl(name);
+      return RuntimeTrimmer.Instance.ProviderOf.ContainsKey(name) ? this._asm.Lbl(name) : null;
     var proc = model.ProcedureList.FirstOrDefault(p =>
       p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase) && this.BackendProcs().ContainsKey(p));
     proc ??= this.DirectCalleeWithCompatibleAbi(name);
@@ -501,6 +514,47 @@ public sealed partial class CodeGenerator {
         p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase) && p.IsExternal);
     return proc is null ? null : this.ProcLabelOf(proc);
   }
+
+  /// <summary>
+  /// The first <c>rt_</c> routine <paramref name="machine"/> CALLs that the DOS runtime does not
+  /// define, or null when every one of them exists.
+  ///
+  /// <para>
+  /// Asked after SELECTION rather than of the IR, because the label a call carries is the selector's
+  /// choice and not the IR's name: the bridge maps <c>rt_str_from_i16</c> onto the runtime's
+  /// <c>rt_str_i16</c>, and the selector also names routines no IR declaration mentions at all
+  /// (<c>rt_trunc</c>, <c>rt_lmul</c>, <c>rt_pow2</c>). Asking the machine code is what makes the
+  /// question cover both without a second list to keep in step.
+  /// </para>
+  /// <para>
+  /// It has to be asked HERE and not left to emission, which is what
+  /// <see cref="ExternalCalleeDecline"/> already does for a user procedure - it skips <c>rt_</c> names
+  /// entirely, so a stale bridge row reached <c>MachineEmitter</c>, where nothing can decline any
+  /// more.
+  /// </para>
+  /// </summary>
+  private static string? UndefinedRuntimeCallee(Backend.MFunction machine)
+    => machine.AllInstructions
+      .SelectMany(instruction => instruction.Operands)
+      .OfType<Backend.MOperand.LabelRef>()
+      .Select(label => label.Name)
+      .Where(name => name.StartsWith("rt_", System.StringComparison.Ordinal))
+      .Distinct(System.StringComparer.OrdinalIgnoreCase)
+      .FirstOrDefault(name => !RuntimeTrimmer.Instance.ProviderOf.ContainsKey(name));
+
+  /// <summary>
+  /// Every routine <see cref="Backend.RuntimeAbi"/> claims the DOS runtime provides and it does not.
+  ///
+  /// <para>
+  /// Empty is the invariant, and it is exposed rather than merely asserted because the alternative
+  /// place to find out is a link error inside whichever program first calls the routine - long after
+  /// the routing decision, and naming a symbol rather than the table row that invented it. A fixture
+  /// reading this catches a stale row the moment it is written; <see cref="CalleeLabel"/> catches the
+  /// same thing at compile time and turns it into one declined function.
+  /// </para>
+  /// </summary>
+  public static IReadOnlyList<string> UnboundRuntimeCallees =>
+    [.. Backend.RuntimeAbi.Labels.Where(name => !RuntimeTrimmer.Instance.ProviderOf.ContainsKey(name))];
 
   /// <summary>
   /// The cell a back-end-emitted access to a module variable resolves to: exactly the one the direct

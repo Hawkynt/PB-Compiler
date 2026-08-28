@@ -22,9 +22,21 @@ namespace PowerBasic.Compiler.Backend;
 /// for.
 /// </para>
 /// </summary>
-public sealed class BackendInvariantException(string where, string invariant)
-  : System.InvalidOperationException($"x86-16 back end invariant broken in {where}: {invariant}") {
+public sealed class BackendInvariantException : System.InvalidOperationException {
+
+  /// <summary>An invariant broken inside the x86-16 back end.</summary>
+  public BackendInvariantException(string where, string invariant)
+    : this("x86-16 back end", where, invariant) { }
+
+  /// <summary>
+  /// An invariant broken inside <paramref name="backEnd"/>. The C and LLVM emitters draw the same
+  /// distinction between a construct they cannot render (<see cref="Ir.EmitDeclinedException"/>) and
+  /// a promise their own earlier stage broke, so they share this type rather than growing a second
+  /// one that says the same thing.
+  /// </summary>
+  public BackendInvariantException(string backEnd, string where, string invariant)
+    : base($"{backEnd} invariant broken in {where}: {invariant}") => this.Where = where;
 
   /// <summary>The function that detected the violation.</summary>
-  public string Where { get; } = where;
+  public string Where { get; }
 }

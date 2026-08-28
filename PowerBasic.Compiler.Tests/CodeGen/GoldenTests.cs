@@ -44,6 +44,7 @@ public sealed class GoldenTests {
   [TestCase("RANDFILE")]
   [TestCase("PRTUSING")]
   [TestCase("INPUTS")]
+  [TestCase("UNSIGN")]
   public void Golden_GivenSource_WhenRunUnderDosBox_ThenOutputMatchesExpected(string name) {
     var source = Path.Combine(TestsDirectory, name + ".BAS");
     var expectedFile = Path.Combine(TestsDirectory, name + ".expected");

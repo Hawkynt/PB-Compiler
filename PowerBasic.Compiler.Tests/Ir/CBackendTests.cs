@@ -92,17 +92,15 @@ public sealed class CBackendTests {
     Directory.CreateDirectory(work);
     try {
       var csource = Path.Combine(work, "prog.c");
-      string emitted;
-      try {
-        emitted = CEmitter.Emit(module!);
-      } catch (NotSupportedException declined) {
-        // The emitter DECLINING a construct it does not model is the same kind of answer as the
-        // lowering declining a program outside its subset, three lines above - and a decline is not
-        // a disagreement. Counting it as a failure makes "not implemented yet" indistinguishable
-        // from "emitted C that behaves differently from the DOS golden", which is the only thing
-        // this fixture exists to catch. Narrow on purpose: a compile error or a mismatched output
-        // still fails, because those ARE disagreements.
-        Assume.That(false, $"{program}: {declined.Message}");
+      // The emitter DECLINING a construct it does not model is the same kind of answer as the
+      // lowering declining a program outside its subset, three lines above - and a decline is not a
+      // disagreement. Counting it as a failure makes "not implemented yet" indistinguishable from
+      // "emitted C that behaves differently from the DOS golden", which is the only thing this
+      // fixture exists to catch. Narrow on purpose: a compile error or a mismatched output still
+      // fails, because those ARE disagreements - and so does any RAISE, which is neither.
+      var emitted = CEmitter.TryEmit(module!, out var declined);
+      if (emitted is null) {
+        Assume.That(false, $"{program}: {declined}");
         return;
       }
       File.WriteAllText(csource, emitted);
