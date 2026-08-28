@@ -165,7 +165,9 @@ public sealed class CBackendTests {
   private static SemanticModel Bind(string path) {
     var name = Path.GetFileName(path);
     var text = File.ReadAllText(path);
-    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(text, name, Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
+    // the preprocessor, not the lexer - see BackendCoverageTests for what tokenizing directly costs
+    var model = Binder.Bind(
+      Parser.Parse(Preprocessor.Expand(path, new FileSourceProvider(), Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     return model;
   }

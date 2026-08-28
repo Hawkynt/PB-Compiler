@@ -41,7 +41,9 @@ public sealed class UnoptimizedByteCompatibilityTests {
                .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)) {
       var name = Path.GetFileName(file);
       var text = File.ReadAllText(file);
-      SemanticModel Bind() => Binder.Bind(Parser.Parse(Lexer.Tokenize(text, name, Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
+      // the preprocessor, not the lexer - see BackendCoverageTests for what tokenizing directly costs
+      SemanticModel Bind() => Binder.Bind(
+        Parser.Parse(Preprocessor.Expand(file, new FileSourceProvider(), Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
       try {
         if (Bind().Errors.Count > 0)
           continue;

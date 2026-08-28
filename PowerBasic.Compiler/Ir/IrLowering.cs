@@ -2287,32 +2287,20 @@ public sealed partial class IrLowering {
   }
 
   private static void GatherData(IReadOnlyList<Statement> statements, List<byte> blob, Dictionary<string, int> labels) {
-    foreach (var s in statements)
-      switch (s) {
-        case LabelStmt l:
-          labels[l.Name] = blob.Count;                 // RESTORE <label> rewinds to the first DATA item at/after the label
-          break;
-        case DataStmt d:
-          foreach (var item in d.Items) {
-            var bytes = System.Text.Encoding.ASCII.GetBytes(item);
-            if (bytes.Length > 0xFFFF)
-              throw new IrLoweringException("DATA item exceeds 64KB");
-            blob.Add((byte)(bytes.Length & 0xFF));
-            blob.Add((byte)((bytes.Length >> 8) & 0xFF));
-            blob.AddRange(bytes);
-          }
-          break;
-        case IfStmt i:
-          GatherData(i.Then, blob, labels);
-          foreach (var (_, body) in i.ElseIfs) GatherData(body, blob, labels);
-          if (i.Else is { } e) GatherData(e, blob, labels);
-          break;
-        case ForStmt f: GatherData(f.Body, blob, labels); break;
-        case DoLoopStmt dl: GatherData(dl.Body, blob, labels); break;
-        case SelectStmt sel:
-          foreach (var arm in sel.Arms) GatherData(arm.Body, blob, labels);
-          break;
+    // the walk is Runtime.DataPool's, shared with the direct emitter - see the type's own note for
+    // why one reading of it is the point rather than a tidiness
+    foreach (var (label, item) in Runtime.DataPool.Walk(statements)) {
+      if (label is not null) {
+        labels[label] = blob.Count;                    // RESTORE <label> rewinds to the first DATA item at/after the label
+        continue;
       }
+      var bytes = System.Text.Encoding.ASCII.GetBytes(item!);
+      if (bytes.Length > 0xFFFF)
+        throw new IrLoweringException("DATA item exceeds 64KB");
+      blob.Add((byte)(bytes.Length & 0xFF));
+      blob.Add((byte)((bytes.Length >> 8) & 0xFF));
+      blob.AddRange(bytes);
+    }
   }
 
   /// <summary>The shared DATA blob and read cursor, created on the module on first use.</summary>
@@ -2334,6 +2322,13 @@ public sealed partial class IrLowering {
   private void LowerReadInto(Expression target) {
     var (blob, cursor) = this.DataGlobals();
     var off = this._b.Load(IrType.I32, cursor);
+    // READ past the last DATA item is PB error 4, and it has to be raised BEFORE the length prefix is
+    // read: the cursor is then standing on whatever follows the blob, so an unchecked read takes two
+    // bytes of the next global as an item length and hands the target a value out of nowhere. The
+    // direct emitter's rt_readdata compares rt_dataptr against rt_dataend for exactly this; the blob's
+    // extent is a compile-time constant here, so the comparison is against its length.
+    this.RaiseWhen(this._b.Cmp(IrCmpPred.Uge, off, new IrConstantInt(IrType.I32, this.GetDataLayout().Blob.Length)),
+      4, "outofdata");
     var len = this._b.ZExt(this._b.Load(IrType.I16, this._b.Gep(blob, off)), IrType.I32);       // 2-byte length prefix
     var dataPtr = this._b.Gep(blob, this._b.Add(off, new IrConstantInt(IrType.I32, 2)));
     // rt_str_from_fixed rather than rt_str_const, and the difference is where the bytes ARE: a

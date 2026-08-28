@@ -44,14 +44,22 @@ public sealed class SwitchFormationTests {
 
   private static IrSwitch? FormAndFind(string source) => FormAndFind(source, out _);
 
-  /// <summary>A SELECT over a subject the folder cannot resolve - the only kind with a dispatch left.</summary>
+  /// <summary>
+  /// A SELECT over a subject the folder cannot resolve - the only kind with a dispatch left.
+  ///
+  /// <para>
+  /// INPUT rather than READ, because <c>Run_GivenSeveralArms</c> counts the compares left in the
+  /// function and a READ now carries one of its own: the end-of-DATA check that raises Error 4. That
+  /// compare is nothing to do with the dispatch, and a test that cannot tell the two apart stops
+  /// measuring the pass the moment anything else in the program compares.
+  /// </para>
+  /// </summary>
   private static string Select(string arms) => $"""
     DIM x AS INTEGER
-    READ x
+    INPUT x
     SELECT CASE x
     {arms}
     END SELECT
-    DATA 3
     END
     """;
 

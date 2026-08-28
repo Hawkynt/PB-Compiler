@@ -78,6 +78,10 @@ public sealed class Wave3SweepHarness {
     foreach (var file in Directory.EnumerateFiles(dir!, "*.BAS", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal)) {
       var name = Path.GetFileName(file);
       var text = File.ReadAllText(file);
+      // the whole front end, not just the lexer: Preprocessor.Expand is its own entry point and is
+      // what resolves $INCLUDE and selects a $IF branch. Tokenizing directly splices EVERY branch in,
+      // so a probe written to compare the two paths on conditional compilation compared two builds of
+      // a program neither compiler would ever produce - and both agreed, because both were wrong.
 
       // any *.DAT sitting beside the probe is seeded on the disk under its own name
       var disk = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
@@ -86,7 +90,8 @@ public sealed class Wave3SweepHarness {
 
       foreach (var dialect in DialectsOf(text))
       foreach (var optimize in new[] { true, false }) {
-        SemanticModel Bind() => Binder.Bind(Parser.Parse(Lexer.Tokenize(text, name, dialect), name, dialect), dialect);
+        SemanticModel Bind() => Binder.Bind(
+          Parser.Parse(Preprocessor.Expand(file, new FileSourceProvider(), dialect), name, dialect), dialect);
         var tag = $"{name} {dialect} {(optimize ? "O" : "-")}";
         ++ran;
         byte[] directImage, routedImage;

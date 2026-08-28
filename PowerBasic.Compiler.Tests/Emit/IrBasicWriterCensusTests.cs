@@ -34,7 +34,8 @@ public sealed class IrBasicWriterCensusTests {
       var name = Path.GetFileName(file);
       IrModule? module;
       try {
-        var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(File.ReadAllText(file), name, Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
+        // the preprocessor, not the lexer - see BackendCoverageTests for what tokenizing directly costs
+        var model = Binder.Bind(Parser.Parse(Preprocessor.Expand(file, new FileSourceProvider(), Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
         if (model.Errors.Count > 0)
           continue;
         module = IrLowering.TryLowerModule(model, out _);
@@ -99,7 +100,7 @@ public sealed class IrBasicWriterCensusTests {
       var dialect = DialectFacts.TryParse(folder, out var parsed) ? parsed : Dialect.Pb36;
       string rendered;
       try {
-        var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(File.ReadAllText(file), name, dialect), name, dialect), dialect);
+        var model = Binder.Bind(Parser.Parse(Preprocessor.Expand(file, new FileSourceProvider(), dialect), name, dialect), dialect);
         if (model.Errors.Count > 0) {
           skipped.Add($"{dialect.CanonicalName()}/{name}: does not bind - {model.Errors[0].Message}");
           continue;

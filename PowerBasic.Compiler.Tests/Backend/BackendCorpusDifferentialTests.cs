@@ -101,10 +101,14 @@ public sealed class BackendCorpusDifferentialTests {
     foreach (var file in Directory.EnumerateFiles(dir, "*.BAS", SearchOption.AllDirectories)
                .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)) {
       var name = Path.GetFileName(file);
-      SemanticModel Bind() {
-        var text = File.ReadAllText(file);
-        return Binder.Bind(Parser.Parse(Lexer.Tokenize(text, name, Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
-      }
+      // Preprocessor.Expand, not Lexer.Tokenize: it is its own entry point, and it is what resolves
+      // $INCLUDE and picks a $IF branch. Tokenizing the file directly spliced EVERY branch of a
+      // conditional in and left every $INCLUDE unresolved, so WEIRD.BAS and DIFF10.BAS were compared
+      // as programs neither compiler produces - and the two INCLUDE-using ones bound with errors and
+      // were dropped by the "the front end rejects it" arm, silently, as though they had been measured.
+      SemanticModel Bind()
+        => Binder.Bind(Parser.Parse(Preprocessor.Expand(file, new FileSourceProvider(), Dialect.Pb36), name, Dialect.Pb36),
+             Dialect.Pb36);
 
       foreach (var optimize in new[] { true, false })
         Compare(optimize);
