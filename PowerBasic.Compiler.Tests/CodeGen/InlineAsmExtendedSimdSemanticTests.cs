@@ -36,6 +36,24 @@ public sealed class InlineAsmExtendedSimdSemanticTests {
   }
 
   [Test]
+  public void PsignD_GivenNegativeSign_ThenNegatesDataLane() {
+    var output = Run("""
+      DIM result&
+      ! MOV EAX, -7
+      ! MOVD XMM0, EAX
+      ! MOV EAX, -1
+      ! MOVD XMM1, EAX
+      ! PSIGND XMM0, XMM1
+      ! MOVD EAX, XMM0
+      ! MOV result&, EAX
+      IF result& = 7 THEN PRINT "OK" ELSE PRINT "BAD"
+      """);
+
+    Assert.That(output, Does.Contain("OK"));
+    Assert.That(output, Does.Not.Contain("BAD"));
+  }
+
+  [Test]
   public void Pmulld_GivenNegativeProduct_ThenReturnsLowDword() {
     var output = Run("""
       DIM result&
@@ -102,6 +120,40 @@ public sealed class InlineAsmExtendedSimdSemanticTests {
       ! MOVD EAX, XMM0
       ! MOV result&, EAX
       IF result& = -1 THEN PRINT "OK" ELSE PRINT "BAD"
+      """);
+
+    Assert.That(output, Does.Contain("OK"));
+    Assert.That(output, Does.Not.Contain("BAD"));
+  }
+
+  [Test]
+  public void Pcmpgtq_GivenGreaterPositiveQword_ThenProducesAllOnes() {
+    var output = Run("""
+      DIM result&
+      ! MOV EAX, 5
+      ! MOVD XMM0, EAX
+      ! MOV EAX, 3
+      ! MOVD XMM1, EAX
+      ! PCMPGTQ XMM0, XMM1
+      ! MOVD EAX, XMM0
+      ! MOV result&, EAX
+      IF result& = -1 THEN PRINT "OK" ELSE PRINT "BAD"
+      """);
+
+    Assert.That(output, Does.Contain("OK"));
+    Assert.That(output, Does.Not.Contain("BAD"));
+  }
+
+  [Test]
+  public void Phminposuw_GivenZeroInThirdLane_ThenReturnsValueAndFirstIndex() {
+    var output = Run("""
+      DIM result&
+      ! MOV EAX, 327690
+      ! MOVD XMM1, EAX
+      ! PHMINPOSUW XMM0, XMM1
+      ! MOVD EAX, XMM0
+      ! MOV result&, EAX
+      IF result& = 131072 THEN PRINT "OK" ELSE PRINT "BAD"
       """);
 
     Assert.That(output, Does.Contain("OK"));
