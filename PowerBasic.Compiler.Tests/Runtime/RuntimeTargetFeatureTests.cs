@@ -6,14 +6,17 @@ namespace PowerBasic.Compiler.Tests.Runtime;
 [TestFixture]
 public sealed class RuntimeTargetFeatureTests {
   [Test]
-  public void Baseline_DoesNotAcceptExtensionTokens() {
+  public void ExplicitFloor_WithLaterFeatureRequirements_RaisesMinimumHardware() {
     var target = RuntimeTarget.For("8086", ["MMX", "SSE2", "AVX512"]);
 
     Assert.Multiple(() => {
-      Assert.That(target.CpuLevel, Is.EqualTo(86));
-      Assert.That(target.Features, Is.EqualTo(RuntimeCpuFeatures.None));
-      Assert.That(target.DwordGeneralPurposeRegisters, Is.Empty);
-      Assert.That(target.VectorRegisters, Is.Empty);
+      Assert.That(target.CpuLevel, Is.GreaterThanOrEqualTo(686));
+      Assert.That(target.Has32BitGeneralPurpose, Is.True);
+      Assert.That(target.HasMmx, Is.True);
+      Assert.That(target.HasSse2, Is.True);
+      Assert.That(target.HasAvx512, Is.True);
+      Assert.That(target.DwordGeneralPurposeRegisters, Does.Contain(Reg.EDI));
+      Assert.That(target.VectorRegisters, Does.Contain(Reg.ZMM7));
     });
   }
 
