@@ -868,7 +868,7 @@ public sealed partial class IrLowering {
     if (this._dynArrays.TryGetValue(symbol, out var existing))
       return existing;
     if (this.NeedsSharedStorage(symbol))
-      throw new IrLoweringException($"the dynamic array {symbol.Name} is shared storage (its descriptor would be one frame slot per procedure)");
+      return this._dynArrays[symbol] = this.SharedDynDescriptor(symbol, rank);
     // FarPtr, not Ptr: dynamic array storage comes out of the runtime's far array heap, and the cell
     // that holds the block address is the only place that fact is written down. Every read of it - a
     // load here, a phi mem2reg mints for it, a GEP off either - inherits the space from this type.
@@ -882,6 +882,49 @@ public sealed partial class IrLowering {
     var descriptor = new DynArr(data, lo, size);
     this._dynArrays[symbol] = descriptor;
     return descriptor;
+  }
+
+  /// <summary>
+  /// The same descriptor for an array whose storage is SHARED, held in module globals rather than
+  /// this lowering's frame so that every procedure reaching the array describes the same block.
+  ///
+  /// <para>
+  /// Frame slots are what made this decline before, and the defect that bought the guard was real: a
+  /// routed <c>REDIM PRESERVE</c> inside a <c>SUB</c> reallocated the block and wrote the new bounds
+  /// into the SUB's frame, leaving the module body still describing the old one - <c>UBOUND</c>
+  /// answered 3 after a grow to 6, and the enlarged block leaked. Naming the fields as module globals
+  /// removes the cause rather than the symptom: there is one <c>.data</c>, one <c>.lo</c> and one
+  /// <c>.size</c> per dimension for the whole program, and the name is derived from the symbol so
+  /// every <see cref="IrLowering"/> instance resolves to the identical globals.
+  /// </para>
+  /// <para>
+  /// These are the ROUTED path's own cells and deliberately not the direct emitter's descriptor,
+  /// whose layout is one packed block (segment, offset, element size, rank, then a word lower bound
+  /// and extent per dimension). Two independent descriptors are only safe while nothing uses both,
+  /// which is exactly the bargain <c>.data</c>/<c>.data_cursor</c> already strike with the DATA pool -
+  /// and it is enforced the same way, by <c>SharedDynArrayUsersRouteTogether</c> re-deciding a split
+  /// routing once every routing decision is in. Sharing the direct emitter's block instead would
+  /// remove that condition, and wants the field widths and order this descriptor does not have.
+  /// </para>
+  /// </summary>
+  private DynArr SharedDynDescriptor(VariableSymbol symbol, int rank) {
+    var stem = ".dyn." + (symbol.Storage == VariableStorage.Static
+      ? StaticGlobalName(this._proc, symbol)
+      : "g." + symbol.Name);
+
+    IrValue Cell(string field, IrType type) {
+      var name = $"{stem}.{field}";
+      return this._module!.FindGlobal(name)
+        ?? this._module.AddGlobal(new IrGlobalVariable(name, type) { Count = 1 });
+    }
+
+    var lo = new IrValue[rank];
+    var size = new IrValue[rank];
+    for (var k = 0; k < rank; ++k) {
+      lo[k] = Cell($"lo{k}", IrType.I32);
+      size[k] = Cell($"size{k}", IrType.I32);
+    }
+    return new DynArr(Cell("data", IrType.FarPtr), lo, size);
   }
 
   /// <summary>The address of one element of a runtime-allocated dynamic array (row-major flattening).</summary>

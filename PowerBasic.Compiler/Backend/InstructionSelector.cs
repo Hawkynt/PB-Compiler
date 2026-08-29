@@ -4147,7 +4147,11 @@ public sealed partial class InstructionSelector {
        || global.Name.StartsWith("rt_", System.StringComparison.Ordinal)
        // the IR's own DATA pool and read cursor, emitted beside the direct emitter's pair rather
        // than shared with it - see CodeGenerator.DataCellOf
-       || global.Name is ".data" or ".data_cursor";
+       || global.Name is ".data" or ".data_cursor"
+       // and its own descriptor for a SHARED dynamic array, on the same terms: cells the routed path
+       // owns outright, kept apart from the direct emitter's packed block, and only ever live when
+       // every user of the array routed (CodeGenerator.SharedDynArrayUsersRouteTogether)
+       || global.Name.StartsWith(".dyn.", System.StringComparison.Ordinal);
 
   /// <summary>The same cell shifted by <paramref name="delta"/> bytes - the high word of a 32-bit access.</summary>
   private static MOperand Shifted(MOperand cell, int delta) => cell switch {
