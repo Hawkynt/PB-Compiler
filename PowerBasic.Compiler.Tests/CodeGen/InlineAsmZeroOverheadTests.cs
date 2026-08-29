@@ -28,45 +28,53 @@ public sealed class InlineAsmZeroOverheadTests {
   }
 
   [Test]
-  public void OptimizeSpeed_GivenIdentityPblendw_ThenRemovesNativeSse41Encoding() {
-    const string source = "$CPU SSE41\n! PBLENDW XMM0, XMM0, 170\nEND\n";
-    var plain = Compile(source, speed: false, out var plainImage);
-    var fast = Compile(source, speed: true, out var fastImage);
-    byte[] native = [0x66, 0x0F, 0x3A, 0x0E, 0xC0, 0xAA];
+  public void OptimizeSpeed_GivenZeroCountShift_ThenRemovesInstructionWithoutChangingFlags() {
+    var plain = Compile("$CPU 8086\n! SHL AX, 0\nEND\n", speed: false, out var plainImage);
+    var fast = Compile("$CPU 8086\n! SHL AX, 0\nEND\n", speed: true, out var fastImage);
 
     Assert.Multiple(() => {
       Assert.That(plain.Errors, Is.Empty, string.Join("; ", plain.Errors));
       Assert.That(fast.Errors, Is.Empty, string.Join("; ", fast.Errors));
-      Assert.That(Contains(plainImage, native), Is.True, "control build did not contain the PBLENDW encoding");
-      Assert.That(Contains(fastImage, native), Is.False, "identity PBLENDW survived $OPTIMIZE SPEED");
       Assert.That(fastImage.Length, Is.LessThan(plainImage.Length));
     });
   }
 
   [Test]
-  public void OptimizeSpeed_GivenUnsupportedIdentityWithErrorPolicy_ThenStillDiagnosesTargetViolation() {
-    var generator = Compile("$CPU 8086\n$ISA SSE41 ERROR\n! PBLENDW XMM0, XMM0, 0\nEND\n", speed: true, out _);
-
-    Assert.That(generator.Errors.Any(e => e.Message.Contains("forbids emulation", StringComparison.OrdinalIgnoreCase)), Is.True,
-      string.Join("; ", generator.Errors));
-  }
-
-  [Test]
-  public void OptimizeSpeed_GivenExplicitNativeIdentity_ThenHonorsNativePolicyAndKeepsInstruction() {
-    var generator = Compile("$CPU SSE41\n$ISA SSE41 NATIVE\n! PBLENDW XMM0, XMM0, 170\nEND\n", speed: true, out var image);
-    byte[] native = [0x66, 0x0F, 0x3A, 0x0E, 0xC0, 0xAA];
+  public void OptimizeSpeed_GivenNativeSse2SelfMove_ThenRemovesWholeEncoding() {
+    const string source = "$CPU 80586 SSE2\n! MOVDQA XMM0, XMM0\nEND\n";
+    var plain = Compile(source, speed: false, out var plainImage);
+    var fast = Compile(source, speed: true, out var fastImage);
+    byte[] native = [0x66, 0x0F, 0x6F, 0xC0];
 
     Assert.Multiple(() => {
-      Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
-      Assert.That(Contains(image, native), Is.True, "explicit NATIVE policy must retain the hardware instruction");
+      Assert.That(plain.Errors, Is.Empty, string.Join("; ", plain.Errors));
+      Assert.That(fast.Errors, Is.Empty, string.Join("; ", fast.Errors));
+      Assert.That(Contains(plainImage, native), Is.True, "control build did not contain MOVDQA XMM0,XMM0");
+      Assert.That(Contains(fastImage, native), Is.False, "identity MOVDQA survived $OPTIMIZE SPEED");
+      Assert.That(fastImage.Length, Is.LessThan(plainImage.Length));
     });
   }
 
   [Test]
-  public void OptimizeSpeed_GivenEmulatedIdentityOn8086_ThenNeedsNoVirtualIsaStateOrFallback() {
-    var generator = Compile("$CPU 8086\n$ISA SSE41 EMULATE\n! PBLENDW XMM0, XMM0, 170\nEND\n", speed: true, out _);
+  public void OptimizeSpeed_GivenSse41IdentityOn8086_ThenCollapsesBeforeVirtualIsaAllocation() {
+    const string source = "$CPU 8086\n! PBLENDW XMM0, XMM0, 170\nEND\n";
+    var plain = Compile(source, speed: false, out var plainImage);
+    var fast = Compile(source, speed: true, out var fastImage);
 
-    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.Multiple(() => {
+      Assert.That(plain.Errors, Is.Empty, string.Join("; ", plain.Errors));
+      Assert.That(fast.Errors, Is.Empty, string.Join("; ", fast.Errors));
+      Assert.That(fastImage.Length, Is.LessThan(plainImage.Length),
+        "identity should disappear before allocating/emitting the virtual SIMD bank");
+    });
+  }
+
+  [Test]
+  public void OptimizeSpeed_GivenWrongRegisterClass_ThenDoesNotHideOperandDiagnostic() {
+    var generator = Compile("$CPU 8086\n! PBLENDW AX, AX, 0\nEND\n", speed: true, out _);
+
+    Assert.That(generator.Errors, Is.Not.Empty,
+      "typed no-op recognition must not turn malformed inline assembly into an accepted program");
   }
 
   private static bool Contains(ReadOnlySpan<byte> haystack, ReadOnlySpan<byte> needle) {
