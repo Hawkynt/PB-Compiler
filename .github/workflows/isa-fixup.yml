@@ -1,0 +1,89 @@
+name: isa-fixup
+
+on:
+  push:
+    branches:
+      - feature/runtime-target-specialization
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: feature/runtime-target-specialization
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Fix ISA virtualization compilation and routing
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          root = Path('.')
+
+          p = root / 'PowerBasic.Compiler/Asm/TextAssembler.Virtualization.cs'
+          text = p.read_text()
+          text = text.replace(
+              'private IReadOnlyList<ParsedAsmOperand> ParseOperandsForVirtualization()',
+              'internal IReadOnlyList<ParsedAsmOperand> ParseOperandsForVirtualization()')
+          p.write_text(text)
+
+          numeric = re.compile(r'-?(?:0x[0-9A-Fa-f]+|\d+)\Z')
+          call = re.compile(r'this\._asm\.(Mov|Cmp|Test|Add|Sub|And|Or|Xor|Adc|Sbb)\(([^;]*?)\);')
+
+          def cast_immediates(path):
+              text = path.read_text()
+              def repl(m):
+                  args = m.group(2)
+                  if ',' not in args:
+                      return m.group(0)
+                  lhs, rhs = args.rsplit(',', 1)
+                  value = rhs.strip()
+                  if not numeric.fullmatch(value):
+                      return m.group(0)
+                  imm = f'(Imm)({value})' if value.startswith('-') else f'(Imm){value}'
+                  return f'this._asm.{m.group(1)}({lhs}, {imm});'
+              path.write_text(call.sub(repl, text))
+
+          gp = root / 'PowerBasic.Compiler/CodeGen/CodeGenerator.InlineAsmGp32Virtualization.cs'
+          vec = root / 'PowerBasic.Compiler/CodeGen/CodeGenerator.InlineAsmVirtualization.cs'
+          cast_immediates(gp)
+          cast_immediates(vec)
+
+          text = vec.read_text()
+          old = '''    error = null;\n    if (IsX87InlineMnemonic(instruction.Mnemonic) || !IsVectorMnemonic(instruction.Mnemonic))\n      return false;'''
+          new = '''    error = null;\n    if (this.TryEmitVirtualGp32Instruction(instruction, resolver, target, out error))\n      return true;\n    if (IsX87InlineMnemonic(instruction.Mnemonic) || !IsVectorMnemonic(instruction.Mnemonic))\n      return false;'''
+          if old not in text:
+              raise SystemExit('virtual instruction routing anchor not found')
+          vec.write_text(text.replace(old, new))
+
+          p = root / 'PowerBasic.Compiler/CodeGen/CodeGenerator.InlineAsm.cs'
+          text = p.read_text()
+          old = 'this._rt.Target = this.Optimize ? this.RuntimeTargetForRuntime() : RuntimeTarget.Baseline;'
+          new = 'this._rt.Target = this.RuntimeTargetForRuntime();'
+          if old not in text:
+              raise SystemExit('runtime target anchor not found')
+          p.write_text(text.replace(old, new))
+      - name: Restore and smoke-build
+        shell: bash
+        run: |
+          dotnet restore PB-Compiler.slnx
+          dotnet build PB-Compiler.slnx --configuration Release --no-restore || true
+      - name: Commit fixup and remove workflow
+        shell: bash
+        run: |
+          rm .github/workflows/isa-fixup.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "Fix ISA virtualization compilation and routing"
+          git push origin HEAD:feature/runtime-target-specialization
