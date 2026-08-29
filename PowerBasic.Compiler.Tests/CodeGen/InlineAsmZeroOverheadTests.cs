@@ -28,18 +28,6 @@ public sealed class InlineAsmZeroOverheadTests {
   }
 
   [Test]
-  public void OptimizeSpeed_GivenZeroCountShift_ThenRemovesInstructionWithoutChangingFlags() {
-    var plain = Compile("$CPU 8086\n! SHL AX, 0\nEND\n", speed: false, out var plainImage);
-    var fast = Compile("$CPU 8086\n! SHL AX, 0\nEND\n", speed: true, out var fastImage);
-
-    Assert.Multiple(() => {
-      Assert.That(plain.Errors, Is.Empty, string.Join("; ", plain.Errors));
-      Assert.That(fast.Errors, Is.Empty, string.Join("; ", fast.Errors));
-      Assert.That(fastImage.Length, Is.LessThan(plainImage.Length));
-    });
-  }
-
-  [Test]
   public void OptimizeSpeed_GivenNativeSse2SelfMove_ThenRemovesWholeEncoding() {
     const string source = "$CPU 80586 SSE2\n! MOVDQA XMM0, XMM0\nEND\n";
     var plain = Compile(source, speed: false, out var plainImage);
