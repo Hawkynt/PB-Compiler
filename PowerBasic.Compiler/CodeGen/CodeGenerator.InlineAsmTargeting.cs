@@ -74,6 +74,10 @@ public sealed partial class CodeGenerator {
     if (mnemonic is "MOVDQA" or "MOVDQU")
       return RuntimeCpuFeatures.Sse2;
 
+    // PADDQ/PSUBQ were introduced by SSE2 even in their MMX-register encoding.
+    if (mnemonic is "PADDQ" or "PSUBQ")
+      return RuntimeCpuFeatures.Sse2;
+
     if (IsLegacyPackedInteger(mnemonic))
       return text.Contains("XMM", StringComparison.Ordinal) ? RuntimeCpuFeatures.Sse2 : RuntimeCpuFeatures.Mmx;
 
@@ -85,8 +89,11 @@ public sealed partial class CodeGenerator {
       return RuntimeCpuFeatures.Sse42;
 
     if (mnemonic.StartsWith('V')) {
-      if (text.Contains("ZMM", StringComparison.Ordinal))
-        return RuntimeCpuFeatures.Avx512F;
+      if (text.Contains("ZMM", StringComparison.Ordinal)) {
+        var needsBw = mnemonic is "VPADDB" or "VPADDW" or "VPSUBB" or "VPSUBW" or "VPMULLW"
+          or "VPCMPEQB" or "VPCMPEQW" or "VPCMPGTB" or "VPCMPGTW";
+        return RuntimeCpuFeatures.Avx512F | (needsBw ? RuntimeCpuFeatures.Avx512Bw : RuntimeCpuFeatures.None);
+      }
       if (text.Contains("YMM", StringComparison.Ordinal) && mnemonic is not ("VMOVDQA" or "VMOVDQU"))
         return RuntimeCpuFeatures.Avx2;
       return RuntimeCpuFeatures.Avx;
@@ -190,9 +197,10 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
-  /// Lazily emits an embedded runtime replacement for MOVSD / REP MOVSD. Two MOVSW operations are
-  /// bit-for-bit equivalent to one MOVSD for either DF direction and do not alter flags. The REP form
-  /// loops on CX directly, so even CX &gt; 32767 is handled without a lossy "CX *= 2" transformation.
+  /// Lazily emits an embedded 8086 replacement for MOVSD / REP MOVSD. A complete dword is staged in
+  /// AX:DX before either destination word is written, preserving MOVSD overlap semantics. Direction
+  /// is applied once per dword rather than by chaining MOVSW, so DF=1 accesses [SI..SI+3] exactly as
+  /// real MOVSD does. AX/DX/BX and all flags are restored; REP consumes CX exactly like hardware.
   /// </summary>
   private Label EnsureInlineAsmMovsdCompat(bool repeated) {
     var helper = this._asm.Lbl(repeated ? "rt_asm_compat_rep_movsd" : "rt_asm_compat_movsd");
@@ -202,23 +210,61 @@ public sealed partial class CodeGenerator {
     var over = this._asm.DefineLabel();
     this._asm.Jmp(over);
     this._asm.MarkLabel(helper);
-    if (!repeated) {
-      this._asm.Movsw();
-      this._asm.Movsw();
-      this._asm.Ret();
-    } else {
-      var loop = this._asm.DefineLabel();
-      var done = this._asm.DefineLabel();
-      this._asm.Jcxz(done);
-      this._asm.MarkLabel(loop);
-      this._asm.Movsw();
-      this._asm.Movsw();
-      this._asm.Loop(loop);
-      this._asm.MarkLabel(done);
-      this._asm.Ret();
-    }
+
+    this._asm.Push(Reg.AX);
+    this._asm.Push(Reg.DX);
+    this._asm.Push(Reg.BX);
+    this._asm.Pushf();
+    this._asm.Pop(Reg.BX); // persistent copy of the incoming flags/DF
+
+    var backward = this._asm.DefineLabel();
+    var restore = this._asm.DefineLabel();
+    var forwardLoop = this._asm.DefineLabel();
+    var backwardLoop = this._asm.DefineLabel();
+
+    if (repeated)
+      this._asm.Jcxz(restore);
+    this._asm.Test(Reg.BX, 0x0400);
+    this._asm.Jnz(backward);
+
+    this._asm.MarkLabel(forwardLoop);
+    EmitOneMovsdCompat(this._asm, decrement: false);
+    if (repeated)
+      this._asm.Loop(forwardLoop);
+    else
+      this._asm.Jmp(restore);
+    if (repeated)
+      this._asm.Jmp(restore);
+
+    this._asm.MarkLabel(backward);
+    this._asm.MarkLabel(backwardLoop);
+    EmitOneMovsdCompat(this._asm, decrement: true);
+    if (repeated)
+      this._asm.Loop(backwardLoop);
+
+    this._asm.MarkLabel(restore);
+    this._asm.Push(Reg.BX);
+    this._asm.Popf();
+    this._asm.Pop(Reg.BX);
+    this._asm.Pop(Reg.DX);
+    this._asm.Pop(Reg.AX);
+    this._asm.Ret();
     this._asm.MarkLabel(over);
     return helper;
+  }
+
+  private static void EmitOneMovsdCompat(Assembler asm, bool decrement) {
+    asm.Mov(Reg.AX, Mem.Word(Reg.SI));
+    asm.Mov(Reg.DX, Mem.Word(Reg.SI, 2));
+    asm.Mov(Mem.Word(Reg.DI).Es(), Reg.AX);
+    asm.Mov(Mem.Word(Reg.DI, 2).Es(), Reg.DX);
+    if (decrement) {
+      asm.Sub(Reg.SI, 4);
+      asm.Sub(Reg.DI, 4);
+    } else {
+      asm.Add(Reg.SI, 4);
+      asm.Add(Reg.DI, 4);
+    }
   }
 
   private bool ProbeInline(string text, InlineAsmResolver resolver, out string? error) {
@@ -339,9 +385,9 @@ public sealed partial class CodeGenerator {
     if ((required & (RuntimeCpuFeatures.Mmx | RuntimeCpuFeatures.Sse | RuntimeCpuFeatures.Sse2 | RuntimeCpuFeatures.Sse3
         | RuntimeCpuFeatures.Ssse3 | RuntimeCpuFeatures.Sse41 | RuntimeCpuFeatures.Sse42 | RuntimeCpuFeatures.Avx
         | RuntimeCpuFeatures.Avx2 | RuntimeCpuFeatures.Avx512F)) != 0)
-      return "No scalar fallback is emitted because the instruction exposes architectural vector-register state across inline-asm statements.";
+      return "No semantics-preserving vector emulator is registered for this opcode/operand form.";
     if (ContainsDwordGp(instruction.Operands))
-      return "The instruction uses 32-bit architectural register state which does not exist on this target.";
+      return "No semantics-preserving GP32 emulator is registered for this opcode/operand form.";
     return "No semantics-preserving compatibility lowering is registered for this opcode/operand form.";
   }
 
