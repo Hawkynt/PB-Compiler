@@ -42,10 +42,12 @@ public sealed partial class CodeGenerator {
     switch (operands[1]) {
       case TextAssembler.ParsedAsmRegister source when source.Register.IsXmm() || allowMmx && source.Register.IsMmx():
         if (source.Register.IsMmx() != destination.Register.IsMmx()) { error = "SIMD operand register classes differ"; return true; }
-        this.EmitNativeExtendedSimdRegReg(mnemonic, destination.Register, source.Register);
+        if (!this.EmitNativeExtendedSimdRegReg(mnemonic, destination.Register, source.Register))
+          error = $"native extended-SIMD emitter has no {mnemonic} register lowering";
         return true;
       case TextAssembler.ParsedAsmMemory source:
-        this.EmitNativeExtendedSimdRegMem(mnemonic, destination.Register, source.Memory);
+        if (!this.EmitNativeExtendedSimdRegMem(mnemonic, destination.Register, source.Memory))
+          error = $"native extended-SIMD emitter has no {mnemonic} memory lowering";
         return true;
       default:
         error = $"{mnemonic} expects register or memory source";
@@ -53,37 +55,67 @@ public sealed partial class CodeGenerator {
     }
   }
 
-  private void EmitNativeExtendedSimdRegReg(string mnemonic, Reg d, Reg s) {
+  private bool EmitNativeExtendedSimdRegReg(string mnemonic, Reg d, Reg s) {
     switch (mnemonic) {
-      case "PABSB": this._asm.Pabsb(d, s); break; case "PABSW": this._asm.Pabsw(d, s); break; case "PABSD": this._asm.Pabsd(d, s); break;
-      case "PSHUFB": this._asm.Pshufb(d, s); break;
-      case "PHADDW": this._asm.Phaddw(d, s); break; case "PHADDD": this._asm.Phaddd(d, s); break; case "PHADDSW": this._asm.Phaddsw(d, s); break;
-      case "PHSUBW": this._asm.Phsubw(d, s); break; case "PHSUBD": this._asm.Phsubd(d, s); break; case "PHSUBSW": this._asm.Phsubsw(d, s); break;
-      case "PMADDUBSW": this._asm.Pmaddubsw(d, s); break; case "PMULHRSW": this._asm.Pmulhrsw(d, s); break;
-      case "PSIGNB": this._asm.Psignb(d, s); break; case "PSIGNW": this._asm.Psignw(d, s); break; case "PSIGND": this._asm.Psignd(d, s); break;
-      case "PMULLD": this._asm.Pmulld(d, s); break;
-      case "PMINSB": this._asm.Pminsb(d, s); break; case "PMAXSB": this._asm.Pmaxsb(d, s); break;
-      case "PMINUW": this._asm.Pminuw(d, s); break; case "PMAXUW": this._asm.Pmaxuw(d, s); break;
-      case "PMINUD": this._asm.Pminud(d, s); break; case "PMAXUD": this._asm.Pmaxud(d, s); break;
-      case "PCMPEQQ": this._asm.Pcmpeqq(d, s); break; case "PACKUSDW": this._asm.Packusdw(d, s); break; case "PHMINPOSUW": this._asm.Phminposuw(d, s); break;
-      case "PCMPGTQ": this._asm.Pcmpgtq(d, s); break;
+      case "PABSB": this._asm.Pabsb(d, s); return true;
+      case "PABSW": this._asm.Pabsw(d, s); return true;
+      case "PABSD": this._asm.Pabsd(d, s); return true;
+      case "PSHUFB": this._asm.Pshufb(d, s); return true;
+      case "PHADDW": this._asm.Phaddw(d, s); return true;
+      case "PHADDD": this._asm.Phaddd(d, s); return true;
+      case "PHADDSW": this._asm.Phaddsw(d, s); return true;
+      case "PHSUBW": this._asm.Phsubw(d, s); return true;
+      case "PHSUBD": this._asm.Phsubd(d, s); return true;
+      case "PHSUBSW": this._asm.Phsubsw(d, s); return true;
+      case "PMADDUBSW": this._asm.Pmaddubsw(d, s); return true;
+      case "PMULHRSW": this._asm.Pmulhrsw(d, s); return true;
+      case "PSIGNB": this._asm.Psignb(d, s); return true;
+      case "PSIGNW": this._asm.Psignw(d, s); return true;
+      case "PSIGND": this._asm.Psignd(d, s); return true;
+      case "PMULLD": this._asm.Pmulld(d, s); return true;
+      case "PMINSB": this._asm.Pminsb(d, s); return true;
+      case "PMAXSB": this._asm.Pmaxsb(d, s); return true;
+      case "PMINUW": this._asm.Pminuw(d, s); return true;
+      case "PMAXUW": this._asm.Pmaxuw(d, s); return true;
+      case "PMINUD": this._asm.Pminud(d, s); return true;
+      case "PMAXUD": this._asm.Pmaxud(d, s); return true;
+      case "PCMPEQQ": this._asm.Pcmpeqq(d, s); return true;
+      case "PACKUSDW": this._asm.Packusdw(d, s); return true;
+      case "PHMINPOSUW": this._asm.Phminposuw(d, s); return true;
+      case "PCMPGTQ": this._asm.Pcmpgtq(d, s); return true;
+      default: return false;
     }
   }
 
-  private void EmitNativeExtendedSimdRegMem(string mnemonic, Reg d, Mem s) {
+  private bool EmitNativeExtendedSimdRegMem(string mnemonic, Reg d, Mem s) {
     switch (mnemonic) {
-      case "PABSB": this._asm.Pabsb(d, s); break; case "PABSW": this._asm.Pabsw(d, s); break; case "PABSD": this._asm.Pabsd(d, s); break;
-      case "PSHUFB": this._asm.Pshufb(d, s); break;
-      case "PHADDW": this._asm.Phaddw(d, s); break; case "PHADDD": this._asm.Phaddd(d, s); break; case "PHADDSW": this._asm.Phaddsw(d, s); break;
-      case "PHSUBW": this._asm.Phsubw(d, s); break; case "PHSUBD": this._asm.Phsubd(d, s); break; case "PHSUBSW": this._asm.Phsubsw(d, s); break;
-      case "PMADDUBSW": this._asm.Pmaddubsw(d, s); break; case "PMULHRSW": this._asm.Pmulhrsw(d, s); break;
-      case "PSIGNB": this._asm.Psignb(d, s); break; case "PSIGNW": this._asm.Psignw(d, s); break; case "PSIGND": this._asm.Psignd(d, s); break;
-      case "PMULLD": this._asm.Pmulld(d, s); break;
-      case "PMINSB": this._asm.Pminsb(d, s); break; case "PMAXSB": this._asm.Pmaxsb(d, s); break;
-      case "PMINUW": this._asm.Pminuw(d, s); break; case "PMAXUW": this._asm.Pmaxuw(d, s); break;
-      case "PMINUD": this._asm.Pminud(d, s); break; case "PMAXUD": this._asm.Pmaxud(d, s); break;
-      case "PCMPEQQ": this._asm.Pcmpeqq(d, s); break; case "PACKUSDW": this._asm.Packusdw(d, s); break; case "PHMINPOSUW": this._asm.Phminposuw(d, s); break;
-      case "PCMPGTQ": this._asm.Pcmpgtq(d, s); break;
+      case "PABSB": this._asm.Pabsb(d, s); return true;
+      case "PABSW": this._asm.Pabsw(d, s); return true;
+      case "PABSD": this._asm.Pabsd(d, s); return true;
+      case "PSHUFB": this._asm.Pshufb(d, s); return true;
+      case "PHADDW": this._asm.Phaddw(d, s); return true;
+      case "PHADDD": this._asm.Phaddd(d, s); return true;
+      case "PHADDSW": this._asm.Phaddsw(d, s); return true;
+      case "PHSUBW": this._asm.Phsubw(d, s); return true;
+      case "PHSUBD": this._asm.Phsubd(d, s); return true;
+      case "PHSUBSW": this._asm.Phsubsw(d, s); return true;
+      case "PMADDUBSW": this._asm.Pmaddubsw(d, s); return true;
+      case "PMULHRSW": this._asm.Pmulhrsw(d, s); return true;
+      case "PSIGNB": this._asm.Psignb(d, s); return true;
+      case "PSIGNW": this._asm.Psignw(d, s); return true;
+      case "PSIGND": this._asm.Psignd(d, s); return true;
+      case "PMULLD": this._asm.Pmulld(d, s); return true;
+      case "PMINSB": this._asm.Pminsb(d, s); return true;
+      case "PMAXSB": this._asm.Pmaxsb(d, s); return true;
+      case "PMINUW": this._asm.Pminuw(d, s); return true;
+      case "PMAXUW": this._asm.Pmaxuw(d, s); return true;
+      case "PMINUD": this._asm.Pminud(d, s); return true;
+      case "PMAXUD": this._asm.Pmaxud(d, s); return true;
+      case "PCMPEQQ": this._asm.Pcmpeqq(d, s); return true;
+      case "PACKUSDW": this._asm.Packusdw(d, s); return true;
+      case "PHMINPOSUW": this._asm.Phminposuw(d, s); return true;
+      case "PCMPGTQ": this._asm.Pcmpgtq(d, s); return true;
+      default: return false;
     }
   }
 
@@ -103,10 +135,12 @@ public sealed partial class CodeGenerator {
     switch (operands[1]) {
       case TextAssembler.ParsedAsmRegister source when source.Register.IsXmm() || allowMmx && source.Register.IsMmx():
         if (source.Register.IsMmx() != destination.Register.IsMmx()) { error = "SIMD operand register classes differ"; return true; }
-        this.EmitNativeExtendedSimdImmediateReg(mnemonic, destination.Register, source.Register, control);
+        if (!this.EmitNativeExtendedSimdImmediateReg(mnemonic, destination.Register, source.Register, control))
+          error = $"native extended-SIMD emitter has no {mnemonic} immediate register lowering";
         return true;
       case TextAssembler.ParsedAsmMemory source:
-        this.EmitNativeExtendedSimdImmediateMem(mnemonic, destination.Register, source.Memory, control);
+        if (!this.EmitNativeExtendedSimdImmediateMem(mnemonic, destination.Register, source.Memory, control))
+          error = $"native extended-SIMD emitter has no {mnemonic} immediate memory lowering";
         return true;
       default:
         error = $"{mnemonic} expects register or memory second operand";
@@ -114,21 +148,27 @@ public sealed partial class CodeGenerator {
     }
   }
 
-  private void EmitNativeExtendedSimdImmediateReg(string mnemonic, Reg d, Reg s, byte imm) {
+  private bool EmitNativeExtendedSimdImmediateReg(string mnemonic, Reg d, Reg s, byte imm) {
     switch (mnemonic) {
-      case "PALIGNR": this._asm.Palignr(d, s, imm); break;
-      case "PBLENDW": this._asm.Pblendw(d, s, imm); break;
-      case "PCMPESTRI": this._asm.Pcmpestri(d, s, imm); break; case "PCMPESTRM": this._asm.Pcmpestrm(d, s, imm); break;
-      case "PCMPISTRI": this._asm.Pcmpistri(d, s, imm); break; case "PCMPISTRM": this._asm.Pcmpistrm(d, s, imm); break;
+      case "PALIGNR": this._asm.Palignr(d, s, imm); return true;
+      case "PBLENDW": this._asm.Pblendw(d, s, imm); return true;
+      case "PCMPESTRI": this._asm.Pcmpestri(d, s, imm); return true;
+      case "PCMPESTRM": this._asm.Pcmpestrm(d, s, imm); return true;
+      case "PCMPISTRI": this._asm.Pcmpistri(d, s, imm); return true;
+      case "PCMPISTRM": this._asm.Pcmpistrm(d, s, imm); return true;
+      default: return false;
     }
   }
 
-  private void EmitNativeExtendedSimdImmediateMem(string mnemonic, Reg d, Mem s, byte imm) {
+  private bool EmitNativeExtendedSimdImmediateMem(string mnemonic, Reg d, Mem s, byte imm) {
     switch (mnemonic) {
-      case "PALIGNR": this._asm.Palignr(d, s, imm); break;
-      case "PBLENDW": this._asm.Pblendw(d, s, imm); break;
-      case "PCMPESTRI": this._asm.Pcmpestri(d, s, imm); break; case "PCMPESTRM": this._asm.Pcmpestrm(d, s, imm); break;
-      case "PCMPISTRI": this._asm.Pcmpistri(d, s, imm); break; case "PCMPISTRM": this._asm.Pcmpistrm(d, s, imm); break;
+      case "PALIGNR": this._asm.Palignr(d, s, imm); return true;
+      case "PBLENDW": this._asm.Pblendw(d, s, imm); return true;
+      case "PCMPESTRI": this._asm.Pcmpestri(d, s, imm); return true;
+      case "PCMPESTRM": this._asm.Pcmpestrm(d, s, imm); return true;
+      case "PCMPISTRI": this._asm.Pcmpistri(d, s, imm); return true;
+      case "PCMPISTRM": this._asm.Pcmpistrm(d, s, imm); return true;
+      default: return false;
     }
   }
 
