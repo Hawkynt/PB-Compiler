@@ -10,22 +10,33 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// </summary>
 public static class Inliner {
 
-  private const int MaxCalleeInstructions = 64;     // keep code growth bounded
+  private const int DefaultMaxCalleeInstructions = 64;
+  private const int SpeedMaxCalleeInstructions = 256;
 
-  /// <summary>Inlines eligible direct calls across the module; returns how many were inlined.</summary>
-  public static int Run(IrModule module) {
+  /// <summary>
+  /// Inlines eligible direct calls across the module; returns how many were inlined. SPEED accepts a
+  /// larger body because eliminating call/argument/return overhead and exposing the body to the rest
+  /// of the SSA pipeline matters more than code growth. <c>NOINLINE</c> remains an absolute contract.
+  /// </summary>
+  public static int Run(IrModule module, bool optimizeForSpeed = false) {
     var inlined = 0;
+    var maxCalleeInstructions = optimizeForSpeed ? SpeedMaxCalleeInstructions : DefaultMaxCalleeInstructions;
     foreach (var fn in module.Functions) {
       // A function with an armed error handler is not duplicable, in either direction. Its blocks are
       // the target of a jump the CFG does not show, and IrBlockAddress is a CONSTANT - IrCloner maps
       // values, so a cloned handler address still points at the original function's block, which the
       // emitter then cannot find. Inlining into such a caller is no better: the handler's saved frame
       // describes a frame whose contents just changed underneath it.
-      if (fn.IsDeclaration || fn.HasErrorHandler)
+      //
+      // Inline assembly is the same kind of wall. It may name the caller's frame slots and BASIC
+      // labels, so changing that frame by cloning another body into it is not a transformation the IR
+      // can prove safe. The ordinary function pipeline already skips such bodies; the module inliner
+      // must honour the same boundary rather than sneaking around it.
+      if (fn.IsDeclaration || fn.HasErrorHandler || fn.HasInlineAsm)
         continue;
       foreach (var call in fn.AllInstructions.OfType<IrCall>().ToList())
         if (call.Parent is not null && call.Callee is IrFunction callee
-            && !callee.HasErrorHandler && IsInlinable(callee, fn)) {
+            && !callee.HasErrorHandler && IsInlinable(callee, fn, maxCalleeInstructions)) {
           InlineCall(call, callee, fn, inlined);
           ++inlined;
         }
@@ -33,7 +44,7 @@ public static class Inliner {
     return inlined;
   }
 
-  private static bool IsInlinable(IrFunction callee, IrFunction caller) =>
+  private static bool IsInlinable(IrFunction callee, IrFunction caller, int maxCalleeInstructions) =>
     !callee.IsDeclaration
     && !callee.NoInline                               // the source pinned it as a real call
     // ...and neither is a body holding inline assembly, for the same reason an error handler is not:
@@ -45,7 +56,7 @@ public static class Inliner {
     // wherever it sits.
     && !callee.HasInlineAsm
     && !ReferenceEquals(callee, caller)               // no direct recursion
-    && callee.AllInstructions.Count() <= MaxCalleeInstructions;
+    && callee.AllInstructions.Count() <= maxCalleeInstructions;
 
   private static void InlineCall(IrCall call, IrFunction callee, IrFunction caller, int id) {
     var host = call.Parent!;
