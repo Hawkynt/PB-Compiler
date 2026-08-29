@@ -32,7 +32,7 @@ public sealed partial class TextAssembler {
   }
 
   private sealed partial class LineParser {
-    private IReadOnlyList<ParsedAsmOperand> ParseOperandsForVirtualization() {
+    internal IReadOnlyList<ParsedAsmOperand> ParseOperandsForVirtualization() {
       if (this.Current.Kind != TokenKind.Identifier)
         throw new AsmSyntaxException("Internal operand parser lost its synthetic mnemonic.");
       _ = this.Next();
