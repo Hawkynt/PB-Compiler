@@ -227,6 +227,20 @@ public sealed class BackendRoutingGateTests {
       v@ = 1.5@
       PRINT v@
       """, "main"),
+    // An INTEGER widened straight to a QUAD. There were arms for 16->32 and 32->64 and this is
+    // neither, so it declined - and only with the optimizer OFF, because instcombine otherwise splits
+    // it into the two steps that exist. The sign matters and is what the negative helper value is
+    // here for: a zero-extension would answer 65534 for -2.
+    new("module body: INTEGER widened to QUAD", """
+      DECLARE FUNCTION N%(BYVAL k%)
+      DIM q AS QUAD
+      q = N%(0)
+      PRINT q
+      END
+      FUNCTION N%(BYVAL k%) NOINLINE
+        N% = k% * 3 - 2
+      END FUNCTION
+      """, "main"),
   ];
 
   /// <summary>
@@ -240,6 +254,36 @@ public sealed class BackendRoutingGateTests {
   /// their shared stack ABI; unsupported conventions still strand the caller.</para>
   /// </summary>
   private static readonly Construct[] _declines = [
+    // The two the full-wave sweep turned up, both reachable ONLY with the optimizer off - with it on,
+    // the constant folds or instcombine rewrites the shape away. Neither is a correctness bug: the
+    // module declines and the direct emitter compiles it, and the sweep found the two builds identical.
+    // They are coverage, and after CodeGen/ is deleted a decline is a compile failure, so they are the
+    // next increment. 64-bit ADD is the larger of the two - QUAD arithmetic wants the runtime helper
+    // pair the direct emitter already calls.
+    new("module body: QUAD arithmetic on a runtime value", """
+      DECLARE FUNCTION N%(BYVAL k%)
+      DIM q AS QUAD
+      q = 1234567890
+      q = q * 3 + N%(2)
+      PRINT q
+      END
+      FUNCTION N%(BYVAL k%) NOINLINE
+        N% = k% * 3 - 2
+      END FUNCTION
+      """, "main", "selection: 64-bit binary: Add (needs the direct runtime path)"),
+    // ABS of a float clears the sign bit through an integer of the same width, so the lowering emits a
+    // BitCast pair that the selector has no arm for. FABS would avoid the bitcast entirely, but the
+    // bit-twiddle is what --emit-c and --emit-llvm render, so changing it is a middle-end decision
+    // rather than a selector one.
+    new("module body: ABS of a SINGLE", """
+      DECLARE FUNCTION R!(BYVAL k%)
+      x! = R!(6)
+      PRINT ABS(x!)
+      END
+      FUNCTION R!(BYVAL k%) NOINLINE
+        R! = k% / 3
+      END FUNCTION
+      """, "main", "selection: cast: BitCast f32 -> i32"),
     new("QUAD parameter and result", """
       FUNCTION F(BYVAL a&&) AS QUAD
         F = a&& + 1
