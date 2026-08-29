@@ -2,6 +2,22 @@ namespace PowerBasic.Compiler.Asm;
 
 public sealed partial class Assembler {
 
+  /// <summary>MOVUPS with an explicit memory-segment prefix when present. MOVUPS is bit-preserving and needs only SSE.</summary>
+  public void MovupsTarget(Reg destination, Mem source) {
+    this.EmitSegmentPrefix(source);
+    this.EmitByte(0x0F);
+    this.EmitByte(0x10);
+    this.EmitModRmMemory(destination.Index(), source);
+  }
+
+  /// <summary>MOVUPS store with an explicit memory-segment prefix when present.</summary>
+  public void MovupsTargetStore(Mem destination, Reg source) {
+    this.EmitSegmentPrefix(destination);
+    this.EmitByte(0x0F);
+    this.EmitByte(0x11);
+    this.EmitModRmMemory(source.Index(), destination);
+  }
+
   /// <summary>MOVDQU with an explicit memory-segment prefix when present.</summary>
   public void MovdquTarget(Reg destination, Mem source) {
     this.EmitSegmentPrefix(source);
@@ -52,7 +68,7 @@ public sealed partial class Assembler {
     this.EmitModRmMemory(source.Index(), destination);
   }
 
-  /// <summary>Zeros an XMM/YMM/ZMM register using the cheapest ISA-appropriate xor idiom.</summary>
+  /// <summary>Zeros an XMM/YMM/ZMM register using an ISA-minimal xor idiom.</summary>
   public void VectorZeroTarget(Reg vector) {
     if (vector.IsZmm()) {
       // VXORPS zmm,zmm,zmm: EVEX.512.0F.W0 57 /r. AVX-512F is sufficient.
@@ -68,6 +84,11 @@ public sealed partial class Assembler {
       this.EmitModRmRegister(vector.Index(), vector);
       return;
     }
-    this.PxorX(vector, vector); // SSE2 PXOR xmm,xmm
+
+    // XORPS xmm,xmm is available in SSE1. Runtime bulk zeroing is type-agnostic, so the floating
+    // spelling is just as bit-exact as PXOR and lets an SSE-only target participate.
+    this.EmitByte(0x0F);
+    this.EmitByte(0x57);
+    this.EmitModRmRegister(vector.Index(), vector);
   }
 }
