@@ -39,9 +39,9 @@ public sealed partial class CodeGenerator {
     }
 
     // Once target-policy diagnostics and an explicit NATIVE request have been honoured, SPEED may
-    // erase a provable architectural identity. The predicate is deliberately flag- and fault-aware,
-    // so this is a genuine zero-overhead abstraction rather than a heuristic peephole.
-    if (this.Optimize && this.OptimizeSpeed && IsZeroOverheadInlineAsmIdentity(instruction))
+    // erase a provable architectural identity. Typed parsing inside the predicate prevents malformed
+    // assembly from being accepted merely because its tokens resemble a no-op.
+    if (this.Optimize && this.OptimizeSpeed && this.IsZeroOverheadInlineAsmIdentity(instruction, resolver))
       return true;
 
     // Native capability always wins for AUTO. Extended SSSE3/SSE4 instructions use the dedicated
