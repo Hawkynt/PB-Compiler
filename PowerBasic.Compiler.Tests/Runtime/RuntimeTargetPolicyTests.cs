@@ -55,6 +55,13 @@ public sealed class RuntimeTargetPolicyTests {
   }
 
   [Test]
+  public void InlinePolicy_OptimizeSpeedDoesNotHideUnsupportedIdentityInstruction() {
+    var generator = Compile("$CPU 8086\n$OPTIMIZE SPEED\n$ISA SSE4.1 ERROR\n! PMINUD XMM0, XMM0\nEND\n");
+    Assert.That(generator.Errors.Any(e => e.Message.Contains("forbids emulation", StringComparison.OrdinalIgnoreCase)), Is.True,
+      string.Join("; ", generator.Errors));
+  }
+
+  [Test]
   public void InlinePolicy_EmulateSse2On8086_DoesNotEmitNativePxorEncoding() {
     var generator = Compile("$CPU 8086\n$ISA SSE2 EMULATE\n! PXOR XMM0, XMM0\nEND\n", out var exe);
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
