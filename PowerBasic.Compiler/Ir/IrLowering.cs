@@ -1085,6 +1085,14 @@ public sealed partial class IrLowering {
       case CommandStmt { Keyword: "SHIFT LEFT" or "SHIFT RIGHT" } shift: this.LowerShift(shift); break;
       case CommandStmt { Keyword: "ROTATE LEFT" or "ROTATE RIGHT" } rotate: this.LowerRotate(rotate); break;
       case CommandStmt { Keyword: "LOCATE" } locate: this.LowerLocate(locate); break;
+      // CLS with no argument: the same argumentless runtime routine the direct emitter calls, so the
+      // two paths clear and home the cursor identically. The one-argument spelling (CLS 0/1/2, which
+      // PB reads as which region to clear) is deliberately left to decline rather than lowered to the
+      // same call: the direct emitter ignores the argument, and quietly inheriting that here would
+      // bake a suspected fidelity bug into a second path instead of leaving it visible.
+      case CommandStmt { Keyword: "CLS", Arguments.Count: 0 }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_cls", IrType.Void));
+        break;
       // ERRCLEAR: forget the last fault, so a later ERR read sees zero rather than a stale code
       case CommandStmt { Keyword: "ERRCLEAR" }:
         this._b.Store(new IrConstantInt(IrType.I16, 0), this.RuntimeCell("rt_err", IrType.I16));

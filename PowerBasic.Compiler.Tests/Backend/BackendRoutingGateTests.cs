@@ -178,6 +178,13 @@ public sealed class BackendRoutingGateTests {
       READ s
       PRINT s
       """, "main"),
+    // CLS, which had no lowering at all and therefore took the whole module with it. Ordinary enough
+    // that its absence is worth a row: no corpus program reaches it in a routable position, so the
+    // census read 321/321 while `CLS` on its own line declined everything around it.
+    new("module body: CLS", """
+      CLS
+      PRINT 7
+      """, "main"),
     // A module-level DYNAMIC array a procedure also REDIMs. Both sides route, and they must, for the
     // reason the DATA pool has: the descriptor is the routed path's own cells and the direct
     // emitter's is a packed block, so a REDIM on one side and an UBOUND on the other would consult

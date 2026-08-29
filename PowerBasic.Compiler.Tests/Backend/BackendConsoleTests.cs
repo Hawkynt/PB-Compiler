@@ -219,24 +219,31 @@ public sealed class BackendConsoleTests {
   }
 
   /// <summary>
-  /// <c>CLS</c> homes the cursor and blanks the page - both of which are only visible on the screen.
-  /// It does not lower, so this measures the direct build against itself and is here to say so: the
-  /// routing decline is the assertion, and a CLS that starts lowering will fail this test rather than
-  /// slip past unmeasured.
+  /// <c>CLS</c> homes the cursor and blanks the page - both of which are only visible on the screen,
+  /// which is why this is a screen comparison and not an output one.
+  ///
+  /// <para>
+  /// It used to be a decline test, and said so: "a CLS that starts lowering will fail this test rather
+  /// than slip past unmeasured". It started lowering, and it did fail. The lowering is a call to the
+  /// same argumentless <c>rt_cls</c> the direct emitter calls, so what is asserted now is the thing
+  /// the decline was standing in for - both builds blank the same page and leave the cursor in the
+  /// same place. <see cref="RunBothWays"/> checks that <c>main</c> really routed, so this cannot
+  /// quietly go back to comparing the direct build with itself.
+  /// </para>
   /// </summary>
-  [Test]
-  public void Run_GivenCls_ThenItStillDeclinesToRouteAndTheScreenIsBlanked() {
-    const string source = """
+  [TestCase(true)]
+  [TestCase(false)]
+  public void Run_GivenCls_ThenBothPathsBlankTheScreenAndHomeTheCursor(bool optimize) {
+    var run = RunBothWays("""
       PRINT "before"
       CLS
       PRINT "after";
-      """;
-    var routed = new CodeGenerator(Bind(source, Dialect.Pb36)) { Optimize = true, UseExperimentalBackend = true };
-    var cpu = Cpu8086.Run(routed.EmitExecutable());
+      """, optimize);
 
-    Assert.That(routed.BackendRoutedNames, Does.Not.Contain("main"), "CLS does not lower; if it starts to, compare the screens here");
-    Assert.That(cpu.Screen[0], Is.EqualTo("after"), "CLS blanked what came before it and put the cursor home");
-    Assert.That(cpu.Output, Does.Contain("before"), "and stdout, which is what a text diff sees, kept it");
+    Assert.That(run.Screen.Split('|')[0], Is.EqualTo("after"),
+      "CLS blanked what came before it and put the cursor home");
+    Assert.That(run.Output, Does.Contain("before"),
+      "and stdout, which is what a text diff sees, kept it");
   }
 
   /// <summary>

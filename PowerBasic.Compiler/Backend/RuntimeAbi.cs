@@ -615,6 +615,10 @@ internal static class RuntimeAbi {
     // call this one, because a program must not seed two ways.
     ["rt_randomize"] = new("rt_randomize", [], _callerSaved),
 
+    // "Cls: clears the text page and homes the cursor" - the same routine the direct emitter calls,
+    // so the two paths cannot disagree about where the cursor ends up.
+    ["rt_cls"] = new("rt_cls", [], _callerSaved),
+
     // "RND(a, z): DX:AX=lower, CX:BX=upper -> DX:AX = lower + trunc(rnd * (upper-lower+1))"
     ["rt_rnd_range"] = new("rt_rndrange",
       [new(ArgKind.Pair, Reg.AX, Reg.DX), new(ArgKind.Pair, Reg.BX, Reg.CX)],
