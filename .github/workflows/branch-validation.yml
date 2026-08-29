@@ -1,0 +1,26 @@
+name: Stacked intrinsics validation
+
+on:
+  push:
+    branches: [feature/intrinsics-zero-overhead]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-focused-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Restore
+        run: dotnet restore PB-Compiler.slnx
+      - name: Build
+        run: dotnet build PB-Compiler.slnx --configuration Release --no-restore
+      - name: Focused intrinsic and target tests
+        run: >
+          dotnet test PowerBasic.Compiler.Tests
+          --configuration Release --no-build
+          --filter "FullyQualifiedName~InlineAsmZeroOverheadTests|FullyQualifiedName~InlineAsmExtendedSimdSemanticTests|FullyQualifiedName~RuntimeTargetPolicyTests|FullyQualifiedName~AssemblerSsse3Sse4Tests"
