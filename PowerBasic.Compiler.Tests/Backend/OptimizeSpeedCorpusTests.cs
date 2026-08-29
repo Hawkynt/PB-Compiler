@@ -111,4 +111,80 @@ public sealed class OptimizeSpeedCorpusTests {
     Assert.That(speedChangedTheImage, Is.GreaterThan(0),
       "SPEED changed no image at all, so this fixture proved nothing");
   }
+
+  /// <summary>
+  /// The optimizer may change the code however it likes and must not change what the program does -
+  /// the same contract as the test above, over the axis that actually removes work.
+  ///
+  /// <para>
+  /// This asks a question no other corpus fixture asks. The back-end differential compares the two
+  /// EMITTERS, so a middle-end pass that is wrong in a way both of them inherit agrees with itself;
+  /// the test above compares two OBJECTIVES, both of them optimized. Neither reaches a transform that
+  /// only runs when <c>Optimize</c> is on, and most of this project's optimizer-dependent defects
+  /// lived exactly there - a rematerialized address recomputed after its index changed, an inliner
+  /// aliasing a BYREF argument's cell, <c>IrCloner</c> orphaning a phi when a callee was absorbed.
+  /// </para>
+  /// <para>
+  /// It could not be run corpus-wide until both modes routed the same code: while the unoptimized
+  /// build declined functions the optimized one took, a disagreement could always be the direct
+  /// emitter answering for one side. Both are 321/321 now, so the comparison is between two routed
+  /// builds of the same program and nothing else.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Corpus_WhenCompiledWithoutTheOptimizer_ThenEveryProgramBehavesAsItDidWithIt() {
+    var dir = Path.Combine(_repoRoot, "tests");
+    Assume.That(Directory.Exists(dir), "no tests/*.BAS corpus present");
+
+    var compared = 0;
+    var optimizerChangedTheImage = 0;
+    var differed = new List<string>();
+
+    foreach (var file in Directory.EnumerateFiles(dir, "*.BAS", SearchOption.AllDirectories)
+               .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)) {
+      var name = Path.GetFileName(file);
+
+      SemanticModel Bind()
+        => Binder.Bind(Parser.Parse(Preprocessor.Expand(file, new FileSourceProvider(), Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
+
+      byte[] off, on;
+      try {
+        if (Bind().Errors.Count > 0)
+          continue;
+        var a = new CodeGenerator(Bind()) { Optimize = false, UseExperimentalBackend = true };
+        var b = new CodeGenerator(Bind()) { Optimize = true, UseExperimentalBackend = true };
+        off = a.EmitExecutable();
+        on = b.EmitExecutable();
+        if (a.Errors.Count > 0 || b.Errors.Count > 0)
+          continue;
+      } catch (Exception) {
+        continue;
+      }
+
+      if (!off.AsSpan().SequenceEqual(on))
+        ++optimizerChangedTheImage;
+
+      var before = Observe(off);
+      var after = Observe(on);
+      if (before is null || after is null)
+        continue;
+
+      ++compared;
+      if (before != after)
+        differed.Add($"  {Path.GetRelativePath(dir, file).Replace('\\', '/')}\n" +
+                     $"    optimizer off: {before}\n" +
+                     $"    optimizer on : {after}");
+    }
+
+    TestContext.Out.WriteLine($"programs compared            : {compared}");
+    TestContext.Out.WriteLine($"programs the optimizer changed: {optimizerChangedTheImage}");
+
+    Assert.That(differed, Is.Empty,
+      $"the optimizer changed what {differed.Count} program(s) do:\n" + string.Join("\n", differed));
+
+    Assert.That(compared, Is.GreaterThanOrEqualTo(120),
+      "far fewer programs ran than used to - the fixture has stopped measuring anything");
+    Assert.That(optimizerChangedTheImage, Is.GreaterThan(0),
+      "the optimizer changed no image at all, so this fixture proved nothing");
+  }
 }
