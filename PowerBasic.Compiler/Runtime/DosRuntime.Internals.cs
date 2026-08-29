@@ -42,8 +42,9 @@ public sealed partial class DosRuntime {
   public static string? InternalVariableLabel(string name)
     => InternalVariables.TryGetValue(name, out var iv) ? iv.Label : null;
 
-  /// <summary>Refreshes the screen-state internal variables from the BIOS data area (entry stub).</summary>
+  /// <summary>Refreshes target CPU state and screen-state internal variables at startup.</summary>
   private void EmitInternalsInit(Assembler asm) {
+    this.EmitTargetCpuStateInit(asm);
     asm.Push(Reg.ES);
     asm.Mov(Reg.AX, 0x40);
     asm.Mov(Reg.ES, Reg.AX);
