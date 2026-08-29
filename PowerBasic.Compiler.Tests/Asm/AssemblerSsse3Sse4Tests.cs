@@ -78,7 +78,7 @@ public sealed class AssemblerSsse3Sse4Tests {
 
   [Test]
   public void Ssse3_MemorySource_EmitsSegmentPrefixBeforeMandatory66() {
-    Assert.That(Assemble(a => a.Pshufb(Reg.XMM0, Mem.Qword(Reg.BP, 0).WithSegment(Reg.ES))),
+    Assert.That(Assemble(a => a.Pshufb(Reg.XMM0, Mem.Qword(Reg.BP, 0).Es())),
       Is.EqualTo(new byte[] { 0x26, 0x66, 0x0F, 0x38, 0x00, 0x46, 0x00 }));
   }
 }
