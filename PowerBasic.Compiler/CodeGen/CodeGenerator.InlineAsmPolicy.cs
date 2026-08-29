@@ -50,6 +50,8 @@ public sealed partial class CodeGenerator {
     if (!x87 && required == RuntimeCpuFeatures.None)
       return false;
 
+    if (this.TryEmitVirtualCrc32Instruction(instruction, resolver, target, out error))
+      return true;
     if (this.TryEmitVirtualGp32ExtendedInstruction(instruction, resolver, target, out error))
       return true;
     if (this.TryEmitVirtualGp32ArithmeticInstruction(instruction, resolver, target, out error))
