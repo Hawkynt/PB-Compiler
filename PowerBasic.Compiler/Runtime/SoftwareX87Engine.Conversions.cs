@@ -117,6 +117,11 @@ public sealed partial class SoftwareX87Engine {
     this._asm.Or(this.Scratch(destination + Meta, OperandSize.Word), ClassInfinity);
     this._asm.Jmp(done);
     this._asm.MarkLabel(nan);
+    var quiet80 = this._asm.DefineLabel();
+    this._asm.Test(this.Scratch(destination + Sig3, OperandSize.Word), 0x4000);
+    this._asm.J(Condition.NotEqual, quiet80);
+    this._asm.Or(this.Scratch(destination + Meta, OperandSize.Word), SignalingNaNMask);
+    this._asm.MarkLabel(quiet80);
     this._asm.Or(this.Scratch(destination + Meta, OperandSize.Word), ClassNaN);
     this._asm.Or(this.Scratch(destination + Sig3, OperandSize.Word), 0xC000); // canonical quiet NaN/int bit
     this._asm.MarkLabel(done);
@@ -169,6 +174,11 @@ public sealed partial class SoftwareX87Engine {
     this._asm.Mov(this.Scratch(destination + Sig3, OperandSize.Word), 0x8000);
     this._asm.Jmp(done);
     this._asm.MarkLabel(nan);
+    var quiet32 = this._asm.DefineLabel();
+    this._asm.Test(Reg.DX, 0x0040);
+    this._asm.J(Condition.NotEqual, quiet32);
+    this._asm.Or(this.Scratch(destination + Meta, OperandSize.Word), SignalingNaNMask);
+    this._asm.MarkLabel(quiet32);
     this._asm.Or(Reg.DX, 0x00C0);
     this._asm.Or(this.Scratch(destination + Meta, OperandSize.Word), ClassNaN);
 
@@ -238,6 +248,11 @@ public sealed partial class SoftwareX87Engine {
     this._asm.Mov(this.Scratch(destination + Sig3, OperandSize.Word), 0x8000);
     this._asm.Jmp(done);
     this._asm.MarkLabel(nan);
+    var quiet64 = this._asm.DefineLabel();
+    this._asm.Test(this.Scratch(destination + Sig3, OperandSize.Word), 0x0008);
+    this._asm.J(Condition.NotEqual, quiet64);
+    this._asm.Or(this.Scratch(destination + Meta, OperandSize.Word), SignalingNaNMask);
+    this._asm.MarkLabel(quiet64);
     this._asm.Or(this.Scratch(destination + Meta, OperandSize.Word), ClassNaN);
     this._asm.Or(this.Scratch(destination + Sig3, OperandSize.Word), 0x0018); // hidden + quiet payload before shift
 
@@ -302,6 +317,11 @@ public sealed partial class SoftwareX87Engine {
     this.BuildExtendedSignExponent(source, 0x7FFF, ScratchC + 8); this._asm.Jmp(emit);
 
     this._asm.MarkLabel(nan);
+    var quietStore80 = this._asm.DefineLabel();
+    this._asm.Test(this.Scratch(source + Meta, OperandSize.Word), SignalingNaNMask);
+    this._asm.J(Condition.Equal, quietStore80);
+    this.RaiseException(StatusInvalid);
+    this._asm.MarkLabel(quietStore80);
     for (var i = 0; i < 4; ++i) {
       this._asm.Mov(Reg.AX, this.Scratch(source + i * 2, OperandSize.Word));
       this._asm.Mov(this.Scratch(ScratchC + i * 2, OperandSize.Word), Reg.AX);
@@ -321,11 +341,11 @@ public sealed partial class SoftwareX87Engine {
     this._asm.MarkLabel(underflow);
     this._asm.Mov(Reg.CX, -16382); this._asm.Sub(Reg.CX, this.Scratch(ScratchC + Exponent, OperandSize.Word));
     this.ShiftCanonicalRightSticky(ScratchC, Reg.CX, round: true);
-    this.BuildExtendedSignExponent(source, 0, ScratchC + 8); this.SetStatusBits(0x0030); this._asm.Jmp(emit);
+    this.BuildExtendedSignExponent(source, 0, ScratchC + 8); this.RaiseExceptions(StatusUnderflow | StatusPrecision); this._asm.Jmp(emit);
     this._asm.MarkLabel(overflow);
     for (var i = 0; i < 3; ++i) this._asm.Mov(this.Scratch(ScratchC + i * 2, OperandSize.Word), 0);
     this._asm.Mov(this.Scratch(ScratchC + 6, OperandSize.Word), 0x8000);
-    this.BuildExtendedSignExponent(source, 0x7FFF, ScratchC + 8); this.SetStatusBits(0x0028);
+    this.BuildExtendedSignExponent(source, 0x7FFF, ScratchC + 8); this.RaiseExceptions(StatusOverflow | StatusPrecision);
 
     this._asm.MarkLabel(emit);
     for (var i = 0; i < 5; ++i) {
@@ -356,6 +376,11 @@ public sealed partial class SoftwareX87Engine {
     this.ZeroIeeeScratch(bits); this.SetIeeeExponent(bits, bits == 32 ? 255 : 2047); this.ApplyIeeeSign(source, bits); this._asm.Jmp(done);
 
     this._asm.MarkLabel(nan);
+    var quietStoreIeee = this._asm.DefineLabel();
+    this._asm.Test(this.Scratch(source + Meta, OperandSize.Word), SignalingNaNMask);
+    this._asm.J(Condition.Equal, quietStoreIeee);
+    this.RaiseException(StatusInvalid);
+    this._asm.MarkLabel(quietStoreIeee);
     this.ZeroIeeeScratch(bits);
     if (bits == 32) this._asm.Mov(this.Scratch(ScratchC, OperandSize.Word), 1);
     else this._asm.Mov(this.Scratch(ScratchC, OperandSize.Word), 1);
@@ -389,14 +414,14 @@ public sealed partial class SoftwareX87Engine {
     this._asm.Mov(Reg.AX, Reg.DX); this._asm.Add(Reg.AX, bias); this.SetIeeeExponentFromAx(bits);
     this._asm.Jmp(pack);
     this._asm.MarkLabel(subnormal);
-    this.SetIeeeExponent(bits, 0); this.SetStatusBits(0x0030);
+    this.SetIeeeExponent(bits, 0); this.RaiseExceptions(StatusUnderflow | StatusPrecision);
 
     this._asm.MarkLabel(pack);
     this.PackRetainedMantissaToIeee(bits);
     this.ApplyIeeeSign(source, bits); this._asm.Jmp(done);
 
     this._asm.MarkLabel(emitInf);
-    this.ZeroIeeeScratch(bits); this.SetIeeeExponent(bits, bits == 32 ? 255 : 2047); this.ApplyIeeeSign(source, bits); this.SetStatusBits(0x0028);
+    this.ZeroIeeeScratch(bits); this.SetIeeeExponent(bits, bits == 32 ? 255 : 2047); this.ApplyIeeeSign(source, bits); this.RaiseExceptions(StatusOverflow | StatusPrecision);
 
     this._asm.MarkLabel(done);
     var words = bits / 16;
@@ -454,7 +479,7 @@ public sealed partial class SoftwareX87Engine {
     this._asm.MarkLabel(invalid);
     for (var i = 0; i < words; ++i) this._asm.Mov(destination.Offset(i * 2).WithSize(OperandSize.Word), 0);
     this._asm.Mov(destination.Offset((words - 1) * 2).WithSize(OperandSize.Word), 0x8000);
-    this.SetStatusBits(0x0001);
+    this.RaiseException(StatusInvalid);
     this._asm.MarkLabel(done);
   }
 
@@ -510,7 +535,7 @@ public sealed partial class SoftwareX87Engine {
   private void RoundShiftedMagnitude(int value, Mem guard, Mem sticky) {
     var noDiscard = this._asm.DefineLabel(); var increment = this._asm.DefineLabel(); var done = this._asm.DefineLabel();
     this._asm.Mov(Reg.AX, guard); this._asm.Or(Reg.AX, sticky); this._asm.J(Condition.Equal, noDiscard);
-    this.SetStatusBits(0x0020); // precision/inexact
+    this.RaiseException(StatusPrecision);
     this._asm.Mov(Reg.AX, this.Control); this._asm.Mov(Reg.DX, Reg.AX);
     for (var i = 0; i < 10; ++i) this._asm.Shr(Reg.DX, 1);
     this._asm.And(Reg.DX, 3);
