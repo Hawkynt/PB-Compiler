@@ -42,20 +42,6 @@ public sealed partial class CodeGenerator {
       case "MOVDQU":
         return operands.Count == 2 && SameVector(operands[0], operands[1], xmmOnly: true);
 
-      // A zero-count scalar shift/rotate is architecturally a no-op, including EFLAGS. Only GP
-      // register forms are accepted here; memory operands are retained because the access can fault.
-      case "SHL":
-      case "SAL":
-      case "SHR":
-      case "SAR":
-      case "ROL":
-      case "ROR":
-      case "RCL":
-      case "RCR":
-        return operands.Count == 2
-          && operands[0] is TextAssembler.ParsedAsmRegister r && IsGp(r.Register)
-          && IsImmediateZero(operands[1]);
-
       // PBLENDW never changes flags. With equal XMM inputs it is an identity for every valid imm8.
       // With a zero mask it is also an identity when the ignored source is a register; a memory
       // source is retained because the architectural read can fault.
@@ -67,6 +53,7 @@ public sealed partial class CodeGenerator {
           && (d.Register == s.Register || unchecked((byte)immediate.Value) == 0);
 
       // PALIGNR d,d,0 selects the unshifted low half of d:d, i.e. d itself, and does not set flags.
+      // The zero-immediate PALIGNR form is accepted by the dedicated extended-SIMD encoder/emulator.
       case "PALIGNR":
         return operands.Count == 3
           && SameVector(operands[0], operands[1], xmmOnly: false)
