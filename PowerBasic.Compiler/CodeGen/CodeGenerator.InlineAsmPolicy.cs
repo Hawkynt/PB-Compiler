@@ -47,9 +47,21 @@ public sealed partial class CodeGenerator {
 
     if (this.TryEmitVirtualGp32ExtendedInstruction(instruction, resolver, target, out error))
       return true;
+    if (this.TryEmitVirtualGp32ArithmeticInstruction(instruction, resolver, target, out error))
+      return true;
+    if (this.TryEmitVirtualGp32StringInstruction(instruction, target, out error))
+      return true;
     if (this.TryEmitVirtualGp32Instruction(instruction, resolver, target, out error))
       return true;
+
+    // PACKSSDW has a subtle signed saturation boundary; keep its exact lowering ahead of the generic
+    // packed-SIMD scalarizer so the generic pack implementation can never shadow it.
+    if (this.TryEmitVirtualVectorFixup(instruction, resolver, target, out error))
+      return true;
     if (this.TryEmitVirtualInstruction(instruction, resolver, target, out error))
+      return true;
+
+    if (x87 && this.TryEmitSoftwareX87Instruction(instruction, resolver, target, out error))
       return true;
 
     // Exact scalar lowerings cover forms that do not need persistent virtual architectural state.
