@@ -2193,6 +2193,12 @@ public sealed partial class InstructionSelector {
       }
       case IrCastOp.SExt or IrCastOp.ZExt when IsQuad(to) && IsWide(from):
         return this.SelectWideToQword(cast);
+      // An INTEGER straight into a QUAD, which `q = q * 3 + n%` asks for. There are arms for 16->32
+      // and for 32->64 and this is neither, so it declined - and only with the OPTIMIZER OFF, because
+      // instcombine otherwise splits the widening into the two steps that do exist. The composition
+      // is the same one instcombine performs, done here so the shape does not depend on it.
+      case IrCastOp.SExt or IrCastOp.ZExt when IsQuad(to) && from.IsInteger && from.Bits == 16:
+        return this.SelectWordToQword(cast);
       // A BYTE is the low half of the word already holding the value, so narrowing to one is a
       // change of VIEW rather than of content: the same virtual register, named at byte width. That
       // is the same reinterpretation the runtime-call staging does when it needs AL out of AX, and
@@ -3701,6 +3707,36 @@ public sealed partial class InstructionSelector {
   /// The low dword is copied word for word; the upper dword is either zero or the source sign word
   /// repeated twice. No 64-bit register is created or required.
   /// </summary>
+  /// <summary>
+  /// A 16-bit integer widened straight to a QUAD: the low word is the value, and the three words
+  /// above it are the extension - the sign smeared across all of them for <c>SExt</c>, zero for
+  /// <c>ZExt</c>. Written as one step rather than by minting an intermediate 32-bit pair, because the
+  /// pair would exist only to be stored and would cost two registers to say what one already says.
+  /// </summary>
+  private bool SelectWordToQword(IrCast cast) {
+    if (!this.TryOperand(cast.Value, out var source))
+      return false;
+    var slot = this._function.StackSlots.Count;
+    this._function.StackSlots.Add(8);
+    this._qslots[cast] = slot;
+    var cell = new MOperand.StackSlot(slot, MRegSize.Word);
+    this.StoreWord(cell, source);
+
+    MOperand extension = new MOperand.Immediate(0);
+    if (cast.Op == IrCastOp.SExt) {
+      var sign = new MOperand.Register(this.FreshVreg(IrType.I16));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [sign, source], MovEffect(sign, source)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Sar, [sign, new MOperand.Immediate(15)],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+          ReadsMemory: false, WritesMemory: false)));
+      extension = sign;
+    }
+    this.StoreWord(Shifted(cell, 2), extension);
+    this.StoreWord(Shifted(cell, 4), extension);
+    this.StoreWord(Shifted(cell, 6), extension);
+    return true;
+  }
+
   private bool SelectWideToQword(IrCast cast) {
     if (!this.TryOperandPair(cast.Value, out var low, out var high))
       return false;
