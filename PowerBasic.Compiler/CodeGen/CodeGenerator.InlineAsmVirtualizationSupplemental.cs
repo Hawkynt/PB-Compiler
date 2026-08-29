@@ -90,7 +90,6 @@ public sealed partial class CodeGenerator {
       this.LoadWord(state, Reg.BX, output, offset + 2);
       this.LoadWord(state, Reg.DX, signs, offset + 2);
       this.LoadWord(state, Reg.CX, signs, offset);
-      this._asm.Mov(Reg.DX, Reg.DX);
       this._asm.Or(Reg.CX, Reg.DX);
       this._asm.J(Condition.Equal, zero);
       this._asm.Test(Reg.DX, Reg.DX);
