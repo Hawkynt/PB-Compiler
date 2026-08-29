@@ -23,6 +23,8 @@ public sealed partial class SoftwareX87Engine : IX87InstructionSink {
   internal const ushort ClassZero = 0x0002;
   internal const ushort ClassInfinity = 0x0004;
   internal const ushort ClassNaN = 0x0006;
+  /// <summary>Canonical NaNs retain whether the source was signaling even though the payload is quieted.</summary>
+  internal const ushort SignalingNaNMask = 0x0010;
 
   internal const int ScratchA = 0;
   internal const int ScratchB = 12;
@@ -32,7 +34,13 @@ public sealed partial class SoftwareX87Engine : IX87InstructionSink {
   internal const int ScratchGuardB = 58;
   internal const int ScratchWide = 68;   // eight words for 64x64 product / long division
   internal const int ScratchMisc = 84;
-  private const int ScratchBytes = 192;
+  internal const int Math0 = 112;
+  internal const int Math1 = 124;
+  internal const int Math2 = 136;
+  internal const int Math3 = 148;
+  internal const int Math4 = 160;
+  internal const int Math5 = 172;
+  private const int ScratchBytes = 224;
 
   private readonly Assembler _asm;
   private readonly TextAssembler _textAssembler;
