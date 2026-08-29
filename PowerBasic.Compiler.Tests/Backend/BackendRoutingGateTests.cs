@@ -189,6 +189,16 @@ public sealed class BackendRoutingGateTests {
       END SUB
       S
       """, "S"),
+    // The last decline the SELECTOR made rather than the filter, and it was a lowering fault wearing
+    // a selection message. A FIX cell is a scaled int64, so `MapType` gives `1.5@` the type i64 and
+    // `LowerExpr` built it as an `IrConstantFloat` - a float constant carrying an integer type, which
+    // no cell can be staged from. The literal now lowers at the width it is COMPUTED at and reaches
+    // the cell through the same `rt_fix_up` every other value stored to one goes through.
+    new("module body: FIX arithmetic", """
+      DIM v@
+      v@ = 1.5@
+      PRINT v@
+      """, "main"),
   ];
 
   /// <summary>
@@ -310,20 +320,6 @@ public sealed class BackendRoutingGateTests {
       v%(1) = 9
       S v%()
       """, "S", "lowering: call to unsupported procedure S"),
-    // The one decline here the SELECTOR makes rather than the filter, and the reason moved once the
-    // qword conversions landed: both halves of a FIX cell now select, and what stops this program is
-    // the LITERAL. A FIX cell is a scaled int64, so `MapType` gives `1.5@` the type `i64` while
-    // `LowerExpr` builds it as an `IrConstantFloat` - a float constant carrying an integer type, which
-    // no cell can be staged from. Nor could one be: the scale is ten to the power of `pbvFixDigits`, a
-    // RUNTIME cell, which is the whole reason the conversions are `rt_fixup`/`rt_fixdn` calls rather
-    // than arithmetic. So the literal has to lower through that pair like any other value, and until
-    // it does this construct declines. Not in the corpus - DIFF16's FIX values are not literals -
-    // which is exactly what this fixture exists for.
-    new("module body: FIX arithmetic", """
-      DIM v@
-      v@ = 1.5@
-      PRINT v@
-      """, "main", "selection: 64-bit operand: IrConstantFloat has no cell"),
   ];
 
   private static SemanticModel Bind(string source) {

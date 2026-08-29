@@ -53,6 +53,50 @@ public sealed class IrClonerTests {
     Assert.That(IrPrinter.Print(src), Does.Contain("add i32 %p, %p"));    // original untouched
   }
 
+  /// <summary>
+  /// A definition whose block was CREATED after the block using it. Block order is creation order and
+  /// not dominance order, so this is an ordinary shape rather than a contrived one: a block built
+  /// lazily is appended behind blocks it dominates, which is exactly what
+  /// <c>IrLowering.EnsureGosubDispatch</c> does - its phi dominates every <c>gosub.cont</c> block and
+  /// is created after all of them.
+  ///
+  /// <para>
+  /// The clone must name the COPY of that definition. Passing the original through - which is what an
+  /// unmapped operand does - hands the copy a value defined in another function, and neither back end
+  /// can render it: <c>--emit-llvm</c> raised on an unnamed operand and <c>--emit-c</c> wrote an
+  /// undeclared identifier.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Clone_GivenAValueDefinedInABlockCreatedLater_ThenTheCopyNamesTheCopy() {
+    var src = new IrFunction("src", IrType.Void);
+    var entry = src.CreateBlock("entry");
+    var use = src.CreateBlock("use");                  // created BEFORE the block that dominates it
+    var def = src.CreateBlock("def");
+    new IrBuilder(entry).Br(def);
+    var bd = new IrBuilder(def);
+    var carried = bd.Phi(IrType.I32);
+    carried.AddIncoming(IrBuilder.ConstI32(7), entry);
+    var doubled = bd.Add(carried, carried);
+    bd.Br(use);
+    var bu = new IrBuilder(use);
+    bu.Add(carried, doubled);                          // both operands are defined "later" in block order
+    bu.Ret();
+    Assert.That(IrVerifier.Verify(src), Is.Empty, "the source itself must be valid");
+
+    var dest = new IrFunction("dest", IrType.Void);
+    var map = IrCloner.Clone(dest, src.Blocks.ToList(), new(ReferenceEqualityComparer.Instance), "c.");
+
+    var clonedUse = map[use].Instructions.OfType<IrBinary>().Single();
+    Assert.Multiple(() => {
+      Assert.That(IrVerifier.Verify(dest), Is.Empty);
+      Assert.That(clonedUse.Lhs, Is.Not.SameAs(carried));
+      Assert.That(clonedUse.Lhs, Is.SameAs(map[def].Phis.Single()));
+      Assert.That(clonedUse.Rhs, Is.Not.SameAs(doubled));
+      Assert.That(clonedUse.Rhs, Is.SameAs(map[def].Instructions.OfType<IrBinary>().Single()));
+    });
+  }
+
   [Test]
   public void Clone_GivenNonDefaultCallConvention_ThenPreservesItsAbiIdentity() {
     var callee = new IrFunction("foreign", IrType.Void);

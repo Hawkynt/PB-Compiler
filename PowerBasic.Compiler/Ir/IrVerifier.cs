@@ -96,6 +96,8 @@ public sealed class IrVerifier {
       for (var i = 0; i < phi.IncomingBlocks.Count; ++i) {
         var value = phi.GetOperand(i);
         var predBlock = phi.IncomingBlocks[i];
+        if (!this.VerifyOperandIsOwned(value))
+          continue;
         if (value is IrInstruction def && def.Parent is { } defBlock
             && !ReferenceEqualities(defBlock, predBlock) && !this._dom.Dominates(defBlock, predBlock))
           this.Error($"phi incoming value does not dominate predecessor '{predBlock.Label}'");
@@ -105,6 +107,8 @@ public sealed class IrVerifier {
 
     var useBlock = inst.Parent!;
     foreach (var operand in inst.Operands) {
+      if (!this.VerifyOperandIsOwned(operand))
+        continue;
       if (operand is not IrInstruction def || def.Parent is not { } defBlock)
         continue;                                    // constants, args, globals impose no constraint
       if (ReferenceEqualities(defBlock, useBlock)) {
@@ -114,6 +118,42 @@ public sealed class IrVerifier {
         this.Error($"operand defined in '{defBlock.Label}' does not dominate use in '{useBlock.Label}'");
       }
     }
+  }
+
+  /// <summary>
+  /// Whether an instruction operand is a definition this function still owns, reporting it when it is
+  /// not. The dominance rules below can only speak about a definition that is IN the function, and the
+  /// two ways one can fail to be are both real defects rather than theoretical ones: an instruction
+  /// detached from its block (<see cref="IrInstruction.Parent"/> null) has no definition point at all,
+  /// and one whose block belongs to ANOTHER function is a cross-function reference - which is what a
+  /// clone that failed to remap an operand produces.
+  ///
+  /// <para>
+  /// Both used to read as "constants, args, globals impose no constraint" and were skipped in silence.
+  /// That is how an inlined body kept a reference to the CALLEE's phi through to the back ends: while
+  /// the callee still existed the dominance check happened to flag it, and the moment
+  /// <c>GlobalDce</c> removed the callee the operand's parent went null and the module verified
+  /// clean.
+  /// </para>
+  /// </summary>
+  private bool VerifyOperandIsOwned(IrValue operand) {
+    // A float CONSTANT carrying an integer type is not a value any target can produce: there is no
+    // cell to stage it from, and a back end that names it anyway prints the double's bit pattern as
+    // an integer. It reached two of them - `1.5@` lowered as the FIX cell it is stored INTO rather
+    // than at the width it is computed at - so the check is here rather than left to a reader.
+    if (operand is IrConstantFloat && !operand.Type.IsFloat)
+      this.Error($"float constant carrying the non-float type {operand.Type}");
+    if (operand is not IrInstruction def)
+      return true;                                   // constants, args, globals and blocks define nothing here
+    if (def.Parent is not { } defBlock) {
+      this.Error($"operand '{def.GetType().Name}' is detached: it belongs to no block, so it has no definition point");
+      return false;
+    }
+    if (!ReferenceEquals(defBlock.Parent, this._fn)) {
+      this.Error($"operand '{def.GetType().Name}' is defined in block '{defBlock.Label}' of another function");
+      return false;
+    }
+    return true;
   }
 
   private void VerifyTypes(IrInstruction inst) {

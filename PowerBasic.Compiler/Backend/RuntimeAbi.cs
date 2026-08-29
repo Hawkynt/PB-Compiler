@@ -157,6 +157,21 @@ internal static class RuntimeAbi {
 
     /// <summary>An IEEE binary64 bit pattern written to <c>rt_scratch</c>.</summary>
     ScratchF64,
+
+    /// <summary>
+    /// An 8-bit answer in the low half of <see cref="Routine.Result"/>. A BYTE has no register pair
+    /// and no word of its own here - <c>RegSize</c> makes it a byte register - so <see cref="Word"/>
+    /// cannot describe it even though the routine really did compute a whole word.
+    /// </summary>
+    LowByte,
+
+    /// <summary>
+    /// An INTEGRAL answer left on the x87 stack for a call the IR types 64-bit, popped into the
+    /// call's own qword frame cell. That cell is the only place this target holds a 64-bit integer
+    /// (see <c>InstructionSelector.SelectQwordLoad</c>), and the x87 is the only thing that can carry
+    /// one intact: a QUAD has as many mantissa bits as the register file it travels in.
+    /// </summary>
+    St0ToQword,
   }
 
   /// <summary>
@@ -567,6 +582,27 @@ internal static class RuntimeAbi {
       Result: Reg.AX, Answer: ResultKind.Pair),
     ["rt_input_i32"] = new("rt_inp_i32", [], _callerSaved, Result: Reg.AX,
       Answer: ResultKind.Pair, Constants: [(Reg.AX, 0)]),
+
+    // The unsigned widths, and what decides each is where the direct emitter's Coerce narrows the
+    // VAL'd number for that target type. A BYTE and a WORD are both ValueKind.Int16 there, so both
+    // take the 16-bit entry and differ only in how much of AX the caller keeps; a DWORD takes the
+    // 32-bit one, whose two arms are one sequence once the signed one wraps through 64 bits as PB
+    // does; and a QUAD stays on the x87, which is the only place this target can hold 64 bits of
+    // integer at once.
+    ["rt_finput_u8"] = new("rt_inp_i16", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.LowByte),
+    ["rt_input_u8"] = new("rt_inp_i16", [], _callerSaved, Result: Reg.AX,
+      Answer: ResultKind.LowByte, Constants: [(Reg.AX, 0)]),
+    ["rt_finput_u16"] = new("rt_inp_i16", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    ["rt_input_u16"] = new("rt_inp_i16", [], _callerSaved, Result: Reg.AX, Constants: [(Reg.AX, 0)]),
+    ["rt_finput_u32"] = new("rt_inp_i32", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.Pair),
+    ["rt_input_u32"] = new("rt_inp_i32", [], _callerSaved, Result: Reg.AX,
+      Answer: ResultKind.Pair, Constants: [(Reg.AX, 0)]),
+    ["rt_finput_i64"] = new("rt_inp_i64", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.St0ToQword),
+    ["rt_input_i64"] = new("rt_inp_i64", [], _callerSaved, Result: Reg.AX,
+      Answer: ResultKind.St0ToQword, Constants: [(Reg.AX, 0)]),
 
     // "Rnd: -> ST0 = next SINGLE in [0,1)"
     ["rt_rnd"] = new("rt_rnd", [], _callerSaved, Answer: ResultKind.St0),

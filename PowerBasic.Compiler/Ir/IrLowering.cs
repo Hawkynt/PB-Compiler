@@ -2506,42 +2506,58 @@ public sealed partial class IrLowering {
         continue;
       }
 
-      var descriptor = this.DynDescriptor(symbol, arr.Rank);
-      var isString = arr.Element is StringType;
-      // REDIM PRESERVE carries the old contents over, so the OLD extent has to be read out of the
-      // descriptor BEFORE the new bounds overwrite it. An array that was never allocated reads zero
-      // in every size cell, which is the "nothing to preserve" the direct emitter spells as a
-      // segment-word test.
-      var oldCount = r.Preserve ? this.DynElementCount(descriptor, arr.Rank) : null;
-
-      IrValue? count = null;
-      for (var k = 0; k < dims.Count; ++k) {
-        var (lower, upper) = dims[k];
-        var lo = lower is null
-          ? new IrConstantInt(IrType.I32, 0)
-          : this.Coerce(this.LowerExpr(lower), this._model.TypeOf(lower), PbType.Long);
-        var hi = this.Coerce(this.LowerExpr(upper), this._model.TypeOf(upper), PbType.Long);
-        var size = this._b.Add(this._b.Sub(hi, lo), new IrConstantInt(IrType.I32, 1));
-        this._b.Store(lo, descriptor.Lo[k]);
-        this._b.Store(size, descriptor.Size[k]);
-        count = count is null ? size : this._b.Mul(count, size);
-      }
-
-      IrValue data;
-      if (r.Preserve) {                                // realloc keeps the existing prefix (mem2reg seeds the unallocated slot to null = fresh malloc)
-        var old = this._b.Load(IrType.FarPtr, descriptor.Data);
-        data = isString
-          ? this._b.Call(IrType.FarPtr, this.RuntimeFn("rt_arr_realloc_ptr", IrType.FarPtr, IrType.FarPtr, IrType.I32, IrType.I32),
-              old, oldCount!, count!)
-          : this._b.Call(IrType.FarPtr, this.RuntimeFn("rt_arr_realloc", IrType.FarPtr, IrType.FarPtr, IrType.I32, IrType.I32),
-              old, this.ArrayBytes(oldCount!, arr), this.ArrayBytes(count!, arr));
-      } else {
-        data = isString
-          ? this._b.Call(IrType.FarPtr, this.RuntimeFn("rt_arr_alloc_ptr", IrType.FarPtr, IrType.I32), count!)      // count target-pointers
-          : this._b.Call(IrType.FarPtr, this.RuntimeFn("rt_arr_alloc", IrType.FarPtr, IrType.I32), this.ArrayBytes(count!, arr));
-      }
-      this._b.Store(data, descriptor.Data);
+      this.AllocateDynamicArray(symbol, arr, dims, r.Preserve);
     }
+  }
+
+  /// <summary>
+  /// Records a dynamic array's bounds in its descriptor and gives it a block off the far array heap.
+  ///
+  /// <para>
+  /// Shared by <c>REDIM</c> and by the <c>DIM</c> of an array that turned out to be dynamic, because
+  /// on this target they are the same operation - the direct emitter's <c>EmitDim</c> and its
+  /// <c>REDIM</c> without <c>PRESERVE</c> both reach <c>EmitClassedAllocation</c>. A DIM that did not
+  /// allocate is not a missing optimization: the descriptor's data cell then still reads null, and
+  /// <c>a(1) = 7</c> stores through it.
+  /// </para>
+  /// </summary>
+  private void AllocateDynamicArray(VariableSymbol symbol, ArrayType arr,
+      IReadOnlyList<(Expression? Lower, Expression Upper)> dims, bool preserve) {
+    var descriptor = this.DynDescriptor(symbol, arr.Rank);
+    var isString = arr.Element is StringType;
+    // REDIM PRESERVE carries the old contents over, so the OLD extent has to be read out of the
+    // descriptor BEFORE the new bounds overwrite it. An array that was never allocated reads zero
+    // in every size cell, which is the "nothing to preserve" the direct emitter spells as a
+    // segment-word test.
+    var oldCount = preserve ? this.DynElementCount(descriptor, arr.Rank) : null;
+
+    IrValue? count = null;
+    for (var k = 0; k < dims.Count; ++k) {
+      var (lower, upper) = dims[k];
+      var lo = lower is null
+        ? new IrConstantInt(IrType.I32, 0)
+        : this.Coerce(this.LowerExpr(lower), this._model.TypeOf(lower), PbType.Long);
+      var hi = this.Coerce(this.LowerExpr(upper), this._model.TypeOf(upper), PbType.Long);
+      var size = this._b.Add(this._b.Sub(hi, lo), new IrConstantInt(IrType.I32, 1));
+      this._b.Store(lo, descriptor.Lo[k]);
+      this._b.Store(size, descriptor.Size[k]);
+      count = count is null ? size : this._b.Mul(count, size);
+    }
+
+    IrValue data;
+    if (preserve) {                                  // realloc keeps the existing prefix (mem2reg seeds the unallocated slot to null = fresh malloc)
+      var old = this._b.Load(IrType.FarPtr, descriptor.Data);
+      data = isString
+        ? this._b.Call(IrType.FarPtr, this.RuntimeFn("rt_arr_realloc_ptr", IrType.FarPtr, IrType.FarPtr, IrType.I32, IrType.I32),
+            old, oldCount!, count!)
+        : this._b.Call(IrType.FarPtr, this.RuntimeFn("rt_arr_realloc", IrType.FarPtr, IrType.FarPtr, IrType.I32, IrType.I32),
+            old, this.ArrayBytes(oldCount!, arr), this.ArrayBytes(count!, arr));
+    } else {
+      data = isString
+        ? this._b.Call(IrType.FarPtr, this.RuntimeFn("rt_arr_alloc_ptr", IrType.FarPtr, IrType.I32), count!)      // count target-pointers
+        : this._b.Call(IrType.FarPtr, this.RuntimeFn("rt_arr_alloc", IrType.FarPtr, IrType.I32), this.ArrayBytes(count!, arr));
+    }
+    this._b.Store(data, descriptor.Data);
   }
 
   private void LowerErase(EraseStmt e) {
@@ -2970,7 +2986,26 @@ public sealed partial class IrLowering {
     }
     if (d.Class != ArrayClass.Default)
       throw new IrLoweringException($"DIM {d.Class} array class");
-    // a DIM is just a declaration here; storage is allocated lazily on first use
+
+    // A STATIC array is laid out at compile time and the declaration emits nothing. A DYNAMIC one -
+    // which on the default class means a bound that is not a compile-time constant - has to be
+    // ALLOCATED here, exactly as a REDIM without PRESERVE allocates it, because there may be no
+    // REDIM at all: `INPUT n% : DIM a%(1 TO n%) : a%(1) = 7` is the whole program. Leaving it to
+    // "the first use" was not a lazy allocation but no allocation, and the descriptor's data cell
+    // stayed null - so the store went through a null far pointer. The x86-16 selector declined the
+    // shape (`gep: non-register base`) and the corpus therefore never noticed, but `--emit-c` and
+    // `--emit-llvm` have no fallback and emitted the null store.
+    foreach (var v in d.Variables) {
+      // No bounds at all is a scalar; an EMPTY bound list is `DIM b() AS INTEGER`, which declares the
+      // array and deliberately does not size it - the REDIM that follows is what allocates.
+      if (v.ArrayBounds is not { Count: > 0 } dims)
+        continue;
+      if (this.ArrayVariable(v) is not { Type: ArrayType { IsDynamic: true } arr } symbol)
+        continue;                                    // static array or scalar: laid out at compile time
+      if (dims.Count != arr.Rank)
+        throw new IrLoweringException("DIM rank mismatch");
+      this.AllocateDynamicArray(symbol, arr, dims, preserve: false);
+    }
   }
 
   /// <summary>
@@ -3519,6 +3554,8 @@ public sealed partial class IrLowering {
 
   private IrValue LowerExpr(Expression expr) {
     switch (expr) {
+      case IntegerLiteralExpr lit when this._model.TypeOf(lit) is BcdType bcdInt:
+        return this.Coerce(new IrConstantFloat(IrType.F80, lit.Value), PbType.Ext, bcdInt);
       case IntegerLiteralExpr lit:
         return new IrConstantInt(MapType(this._model.TypeOf(lit)), lit.Value);
       case FloatLiteralExpr lit: {
@@ -3527,6 +3564,15 @@ public sealed partial class IrLowering {
         // SINGLE. Quantize at the source boundary before a later FPExt can make the wider container
         // preserve bits the original literal never had. This mirrors the direct emitter exactly.
         var value = type is ScalarType { Kind: ScalarKind.Single } ? (float)lit.Value : lit.Value;
+        // A FIX literal is not a float value with a float type. Its CELL holds the number scaled by
+        // ten to the pbvFixDigits power - a count the runtime owns - so the constant is built at the
+        // x87's own width and converted into the cell by the same rt_fix_up every other value stored
+        // to one goes through. Building it AS the cell handed every consumer an IrConstantFloat
+        // carrying an i64: the x86-16 selector declined it ("64-bit operand: IrConstantFloat has no
+        // cell") and the other two back ends rendered the double's BIT PATTERN as an integer, so
+        // `v@ = 1.5@ : PRINT v@` printed 4.6E+16.
+        if (type is BcdType bcd)
+          return this.Coerce(new IrConstantFloat(IrType.F80, value), PbType.Ext, bcd);
         return new IrConstantFloat(MapType(type), value);
       }
       case NamedConstantExpr nc:

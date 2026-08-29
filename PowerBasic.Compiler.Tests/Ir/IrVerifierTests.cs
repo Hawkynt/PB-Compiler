@@ -136,6 +136,62 @@ public sealed class IrVerifierTests {
     Assert.That(IrVerifier.Verify(fn), Has.Some.Contains("duplicate switch case bit pattern"));
   }
 
+  /// <summary>
+  /// An operand whose definition is no longer in any block. It has no definition point, so no
+  /// dominance question about it has an answer - and the verifier used to skip exactly this case in
+  /// silence, alongside the constants and arguments that really do impose no constraint. That silence
+  /// is what let an inlined body keep a reference to the callee's phi all the way to the back ends:
+  /// while the callee still existed the dominance rule flagged it, and the moment <c>GlobalDce</c>
+  /// removed the callee the operand's parent went null and the module verified clean.
+  /// </summary>
+  [Test]
+  public void Verify_GivenAnOperandDetachedFromItsBlock_ReportsError() {
+    var fn = new IrFunction("detached", IrType.Void);
+    var entry = fn.CreateBlock("entry");
+    var b = new IrBuilder(entry);
+    var value = b.Add(IrBuilder.ConstI32(1), IrBuilder.ConstI32(2));
+    var reader = b.Add(value, IrBuilder.ConstI32(3));
+    b.Ret();
+    entry.Remove(value);                                             // detached, but 'reader' still names it
+    Assert.That(reader.Lhs, Is.SameAs(value));
+
+    Assert.That(IrVerifier.Verify(fn), Has.Some.Contains("is detached"));
+  }
+
+  /// <summary>
+  /// A float CONSTANT carrying an integer type. No target can produce one - there is no cell to stage
+  /// it from - and a back end that names it anyway writes the double's bit pattern as an integer,
+  /// which is what <c>1.5@</c> did: the FIX literal was built as the i64 CELL it is stored into rather
+  /// than at the width it is computed at, and printed 4.6E+16.
+  /// </summary>
+  [Test]
+  public void Verify_GivenAFloatConstantWithAnIntegerType_ReportsError() {
+    var fn = new IrFunction("mistyped", IrType.Void);
+    var b = new IrBuilder(fn.CreateBlock("entry"));
+    b.Add(new IrConstantFloat(IrType.I64, 1.5), new IrConstantInt(IrType.I64, 1));
+    b.Ret();
+
+    Assert.That(IrVerifier.Verify(fn), Has.Some.Contains("float constant carrying the non-float type"));
+  }
+
+  /// <summary>The same hole seen from the other side: the definition is in a block of ANOTHER function.</summary>
+  [Test]
+  public void Verify_GivenAnOperandDefinedInAnotherFunction_ReportsError() {
+    var other = new IrFunction("other", IrType.Void);
+    var otherEntry = other.CreateBlock("entry");
+    var bo = new IrBuilder(otherEntry);
+    var foreign = bo.Add(IrBuilder.ConstI32(1), IrBuilder.ConstI32(2));
+    bo.Ret();
+
+    var fn = new IrFunction("borrower", IrType.Void);
+    var entry = fn.CreateBlock("entry");
+    var b = new IrBuilder(entry);
+    b.Add(foreign, IrBuilder.ConstI32(3));
+    b.Ret();
+
+    Assert.That(IrVerifier.Verify(fn), Has.Some.Contains("of another function"));
+  }
+
   private static IrFunction SwitchFunction(IrType conditionType, params long[] cases) {
     var condition = new IrArgument(conditionType, 0, "condition");
     var fn = new IrFunction("switch_test", IrType.Void, [condition]);

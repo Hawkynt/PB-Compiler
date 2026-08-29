@@ -5,14 +5,28 @@ namespace PowerBasic.Compiler.Ir;
 /// internal value and block reference. External operands (values defined outside the
 /// cloned region, e.g. arguments seeded in the value map, globals, constants) pass
 /// through unchanged. Used by the inliner (and available for loop unrolling): it is the
-/// reusable structural primitive for duplicating IR. Three passes handle SSA back-edges
-/// correctly - clone the blocks, clone the instructions (phis as empty shells), then
-/// fill phi incomings once every value exists.
+/// reusable structural primitive for duplicating IR. Four passes handle SSA forward and
+/// back references correctly - clone the blocks, clone the instructions (phis as empty
+/// shells), re-resolve every cloned operand once the value map is complete, then fill phi
+/// incomings.
+///
+/// <para>
+/// The third pass is what makes the order of <c>source</c> irrelevant, and it is not
+/// decoration. Block order is CREATION order, which is not dominance order: a block built
+/// lazily - <c>IrLowering.EnsureGosubDispatch</c> is the one in production - is appended
+/// after blocks it dominates, so an instruction cloned in pass 2 can name a value whose
+/// clone does not exist yet. <see cref="Map"/> passes an unmapped value through unchanged,
+/// which is right for a genuinely external operand and silently wrong for one inside the
+/// region: the copy then reads the ORIGINAL's value, across a function boundary. Rewriting
+/// every operand from its source once the map is complete cannot get that wrong, and costs
+/// one pass over instructions that are already in hand.
+/// </para>
 /// </summary>
 public sealed class IrCloner {
 
   private readonly Dictionary<IrValue, IrValue> _values;
   private readonly Dictionary<IrBasicBlock, IrBasicBlock> _blocks = new(ReferenceEqualityComparer.Instance);
+  private readonly List<(IrInstruction Source, IrInstruction Clone)> _cloned = [];
 
   private IrCloner(Dictionary<IrValue, IrValue> seed) => this._values = seed;
 
@@ -42,6 +56,7 @@ public sealed class IrCloner {
       cloner._blocks[block] = into.CreateBlock(labelPrefix + block.Label);
     foreach (var block in source)
       cloner.CloneInstructions(block);
+    cloner.ResolveOperands();
     foreach (var block in source)
       cloner.FillPhis(block);
     return cloner._blocks;
@@ -71,9 +86,27 @@ public sealed class IrCloner {
       }
       var cloned = this.CloneInstruction(inst);
       dst.Append(cloned);
+      this._cloned.Add((inst, cloned));
       if (!inst.Type.IsVoid)
         this._values[inst] = cloned;
     }
+  }
+
+  /// <summary>
+  /// Re-reads every cloned instruction's operands from its source, now that every value in the region
+  /// has a clone. Only a forward reference actually moves - <see cref="IrInstruction.SetOperand"/> is a
+  /// no-op when the value is already the one it maps to - so this is a repair of pass 2 rather than a
+  /// second mapping of it. Block ADDRESSES are skipped: <see cref="Map"/> mints a fresh
+  /// <see cref="IrBlockAddress"/> on every call, and pass 2 already had the complete block map.
+  /// </summary>
+  private void ResolveOperands() {
+    foreach (var (source, clone) in this._cloned)
+      for (var i = 0; i < source.Operands.Count; ++i) {
+        var operand = source.GetOperand(i);
+        if (operand is IrBlockAddress)
+          continue;
+        clone.SetOperand(i, this.Map(operand));
+      }
   }
 
   private void FillPhis(IrBasicBlock src) {

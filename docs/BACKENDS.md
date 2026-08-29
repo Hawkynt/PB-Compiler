@@ -277,6 +277,28 @@ is. `tests/diff/DIFF119.BAS` is the oracle: the selector comes out of `DATA` so 
 dispatch, every arm is taken plus 0 and past-the-end, and a plain `GOSUB` written behind the dispatch
 is what catches an unbalanced return stack.
 
+**And DIFF119 was arranged around a defect rather than exposing it, which is the more interesting
+half.** It puts the dispatch and a plain `GOSUB` together in the MODULE body, and gives the procedure
+only the dispatch. Write both in a procedure with ONE call site - so the inliner absorbs it - and the
+copy in `main` names the CALLEE's phi: `--emit-llvm` raised `LlvmEmitter.Ref … (IrPhi is none)`,
+`--emit-c` wrote an undeclared identifier into C that does not compile, and the routed path declined
+`main` with `operand: IrPhi has no register`.
+
+`IrCloner` was cloning block by block in `source` order and passing an unmapped operand through
+unchanged - which is right for a genuinely external value and silently wrong for one inside the
+region. Block order is CREATION order and not dominance order: `EnsureGosubDispatch` builds its block
+lazily, so the phi that carries a GOSUB's answer is appended BEHIND every continuation that reads it.
+The cloner now re-reads every cloned instruction's operands from its source once the value map is
+complete (`IrCloner.ResolveOperands`), which cannot depend on the order at all.
+
+**`IrVerifier` should have caught this and did not, and that is a second finding.** It skipped an
+operand whose defining instruction has no parent block, in the same clause as the constants and
+arguments that really do impose no constraint. While the callee still existed the dominance rule did
+flag it - and then `GlobalDce` removed the callee, the phi's parent went null, and the driver's final
+`IrVerifier.Verify(module)` passed a module carrying a cross-function reference straight to two back
+ends. A detached operand and one defined in another function are both errors now
+(`IrVerifier.VerifyOperandIsOwned`).
+
 Near BYREF INTEGER/WORD/LONG/DWORD/SINGLE/DOUBLE parameters are no longer in that table: all 12 corpus
 procedures now route through one-word near pointers, taking production from 245/263 to 257/263
 optimized and from 242/263 to 254/263 unoptimized. `BackendByRefRoutingTests` pins write-through,
@@ -308,9 +330,9 @@ from 159/161 to 160/161. Selection and allocation move from 262/262 to 263/263.
 **Whole classes are absent from the corpus and are no less real.** `BackendRoutingGateTests` holds one
 program each and pins the routing's own reason for it: QUAD and BYTE parameters and results, FIX and
 EXT parameters, a record parameter, `CDECL`/`STDCALL`/`FASTCALL`/
-`WATCALL`, error handling inside a procedure body, an array parameter (which stops the whole module
-lowering), and FIX arithmetic in a module body - fifteen decline rows, none of which the corpus
-would have noticed stopping or starting. Each compiles to an executable byte-identical to the
+`WATCALL`, error handling inside a procedure body, and an array parameter (which stops the whole
+module lowering) - fourteen decline rows, none of which the corpus would have noticed stopping or
+starting. FIX arithmetic in a module body was the fifteenth and has moved to the routing list. Each compiles to an executable byte-identical to the
 unrouted build, because the module body is stranded by the very call the filter refused: one
 construct silently costs a whole program's routing today, and a compile error tomorrow.
 
@@ -397,6 +419,55 @@ What still declines inside those classes, each measured rather than assumed:
 | an array a PROCEDURE also reaches | the routed descriptor is two frame slots and the direct one is a DGROUP cell; two descriptors for one array agree about nothing. This is the only decline the shared-storage boundary causes, and it is the same one dynamic arrays have — though *that* half was a claim rather than a fact until `DynDescriptor` was made to ask. It mints its slots directly and never went through `SlotFor`/`GlobalFor`, where the guard lives, so a module-level dynamic array a `SUB` re-DIMed got one private descriptor per procedure: `REDIM PRESERVE a(1 TO 6)` inside the SUB allocated a new block and wrote the new bounds where nothing else read them, and the module body went on answering `UBOUND` 3 and addressing the freed block. The escape analysis could not have said otherwise either — a `REDIM` names its array through a `VariableDecl` and the walk only looked at expressions, so a SUB whose only mention of the array is the REDIM read as one that never touched it |
 | the ADDRESS of an element (BYREF, VARPTR, a record copy) | `IrFarPtr`'s own rule, unchanged: a far pointer used as a near one loses its segment silently |
 | `FRE` other than `FRE(-11)` | `FRE(-11)` is the free EMS byte count and is real information; every other spelling answers an advisory 32767 after CONSUMING a string argument, which is an ownership rule the IR does not model |
+
+**A `DIM` whose bound is not a constant was allocating nothing at all, and the routed decline was
+hiding it.** `INPUT n% : DIM a%(1 TO n%)` makes a DYNAMIC array whose only allocation point is the
+declaration - there need be no `REDIM` anywhere - and `IrLowering.LowerDim` ended in the comment "a
+DIM is just a declaration here; storage is allocated lazily on first use". That is true of a STATIC
+array, whose storage is laid out at compile time, and of a dynamic one it was not lazy allocation but
+no allocation: the descriptor's data cell stayed null and `a%(1) = 7` compiled to
+`getelementptr i8, ptr null, i32 2` and a store through it. The selector declined that shape
+(`gep: non-register base` - the null base folds to an immediate), which is why no DOS program ever ran
+it, and `--emit-c` and `--emit-llvm` emitted the null store. `AllocateDynamicArray` is now shared by
+`REDIM` and by the `DIM` of a dynamic array, which is what the direct emitter already does: `EmitDim`
+and `REDIM` without `PRESERVE` both reach `EmitClassedAllocation`.
+
+**File `INPUT` of a `QUAD`, `BYTE`, `WORD` or `DWORD` now routes, and closing it found a miscompile in
+the entry that was already there.** The IR declares `rt_finput_i64` and its three neighbours because
+the same declarations feed the C back end; the DOS runtime composed an entry only for `i16`, `i32` and
+the floats, so those four declined with "not in the runtime ABI table". What each one had to be is
+decided by where the direct emitter's `Coerce` narrows the VAL'd number for that target type, and the
+four are not one shape: a BYTE and a WORD are both `ValueKind.Int16` there and share the 16-bit entry,
+differing only in how much of `AX` the caller keeps; a DWORD takes the 32-bit one; and a QUAD stays on
+the x87, because 64 bits of integer have no register pair on this target - only a qword frame cell -
+and anything that touched a DOUBLE on the way in would drop eleven mantissa bits. Two new answer kinds
+carry those last two (`ResultKind.LowByte`, `ResultKind.St0ToQword`); the qword cell is the same one
+`SelectQwordLoad` mints, so the result is an ordinary 64-bit value every later store already reads.
+
+The defect underneath: **`rt_inp_i16` narrowed with a 16-bit `FISTP` and `rt_inp_i32` with a 32-bit
+one, and `FISTP` does not wrap.** Given a value its destination cannot hold it writes the INDEFINITE -
+`8000h` in a word, `8000_0000h` in a dword - so `INPUT #1, a%` on 40000 answered -32768 routed where
+PB wraps to -25536, and `INPUT #1, l&` on 3000000000 answered -2147483648 where PB wraps to
+-1294967296. The direct emitter stores through one size more and keeps the low half for exactly this
+reason and says so in a comment; both entries now do the same. That also makes the signed and unsigned
+32-bit arms one routine, which is why there is no `rt_inp_u32`. It was invisible because both entries
+are called only from the routed path and every INPUT any test had written was in range - the
+in-range answer is identical either way.
+
+**A FIX literal was built as the CELL it is stored into rather than at the width it is computed at,
+and the routed decline was the only back end that noticed.** `MapType` gives `1.5@` the type `i64` -
+correctly, a FIX cell is a scaled int64 - and `LowerExpr` then built the constant with that type while
+holding a float: an `IrConstantFloat` carrying an `i64`. The x86-16 selector declined it ("64-bit
+operand: IrConstantFloat has no cell"); `--emit-c` and `--emit-llvm` rendered the double's BIT PATTERN
+as an integer, so `v@ = 1.5@ : PRINT v@` printed `4.6E+16`. The literal now lowers at the x87's own
+width and reaches the cell through the same `rt_fix_up` every other value stored to one goes through,
+and `IrVerifier` rejects a float constant carrying a non-float type.
+
+It is deliberately NOT the direct emitter's compile-time decimal fold against a hard-coded 100
+(`CodeGenerator.Places`, "FIX literal stores round DECIMALLY at compile time"). That fold is a defect
+`BackendFixBcdTests` already declines to reproduce - with `pbvFixDigits` at 4 it writes the two-digit
+scaling and reads it back at four - and the two agree wherever the scale is the default the fold
+assumes.
 
 **An empty decline histogram is not the same as "every shape is handled", and one shape RAISED rather
 than declining.** A narrow (`BYTE`/`WORD`/`INTEGER`) shift whose count the immediate encoding cannot
