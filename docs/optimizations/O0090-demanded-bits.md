@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | 🟡 Partial — discarded high-bit AND/OR/XOR work eliminated under `$OPTIMIZE SPEED` |
 | **Stage** | IR mid-end |
+| **Implementation** | `PowerBasic.Compiler/Ir/Passes/DemandedBits.cs` |
 | **Related** | [O0016](O0016-value-fact-analysis.md), [O0057](O0057-storage-narrowing.md), [O0089](O0089-extension-elimination.md) |
 
 ## The idea
