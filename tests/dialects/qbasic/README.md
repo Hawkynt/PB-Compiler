@@ -10,7 +10,7 @@ passes; an empty box means nobody has checked yet, which is not the same as fail
 | | Dimension | Measured | Notes |
 |---|---|---|---|
 | [x] | Statement syntax and parameter combinations | 205 / 205 | all 205 accepted |
-| [x] | Lowers to the IR | 137 / 205 | 137 of 205 reach the IR; the rest decline by name, which is the documented subset |
+| [x] | Lowers to the IR | 138 / 205 | 138 of 205 reach the IR; the rest decline by name, which is the documented subset |
 | [-] | Syntax errors in unreachable branches are ignored, and warned about | - | QBasic syntax-checks the whole program rather than deferring per line, so no line goes unparsed |
 | [-] | Syntax errors on reachable flow fail | - | the dead-branch dimension's reason: QBasic syntax-checks the whole program rather than deferring per line, so no line goes unparsed |
 | [x] | Syntax belonging to another dialect is rejected | 98 / 98 | all 98 cleanly refused |
