@@ -241,6 +241,22 @@ public sealed class BackendRoutingGateTests {
         N% = k% * 3 - 2
       END FUNCTION
       """, "main"),
+    // ABS of a float clears the sign bit through an integer of the same width, so the lowering emits
+    // a BitCast pair. That bit-twiddle is what --emit-c and --emit-llvm render, so the shape stays
+    // and the selector learns it rather than the middle end being changed to suit one target: the
+    // value is stored at SINGLE width - which is the only point its 32-bit pattern exists, an
+    // intermediate float otherwise living in a TBYTE cell - and read back as a word pair.
+    //
+    // The negative input is the assertion. ABS of a positive number is the identity, so a broken
+    // sign-clear passes on it.
+    new("module body: ABS of a SINGLE", """
+      DECLARE FUNCTION R!(BYVAL k%)
+      PRINT ABS(R!(0)); ABS(R!(9))
+      END
+      FUNCTION R!(BYVAL k%) NOINLINE
+        R! = (k% - 4) / 3
+      END FUNCTION
+      """, "main"),
   ];
 
   /// <summary>
@@ -271,19 +287,21 @@ public sealed class BackendRoutingGateTests {
         N% = k% * 3 - 2
       END FUNCTION
       """, "main", "selection: 64-bit binary: Add (needs the direct runtime path)"),
-    // ABS of a float clears the sign bit through an integer of the same width, so the lowering emits a
-    // BitCast pair that the selector has no arm for. FABS would avoid the bitcast entirely, but the
-    // bit-twiddle is what --emit-c and --emit-llvm render, so changing it is a middle-end decision
-    // rather than a selector one.
-    new("module body: ABS of a SINGLE", """
-      DECLARE FUNCTION R!(BYVAL k%)
-      x! = R!(6)
-      PRINT ABS(x!)
+    // The DOUBLE twin of the SINGLE ABS that now routes. Its BitCast selects; what stops it is the
+    // AND against the sign mask, and that lands in the SAME place QUAD arithmetic does. 64-bit
+    // AND/OR/XOR select only under $CPU 386 with the optimizer on (SelectQwordBinary applies them as
+    // two dword halves); everything else in the family wants the runtime helpers the direct emitter
+    // calls. So this row and the one above are one item, not two.
+    new("module body: ABS of a DOUBLE", """
+      DECLARE FUNCTION D#(BYVAL k%)
+      DIM v AS DOUBLE
+      v = D#(0)
+      PRINT ABS(v)
       END
-      FUNCTION R!(BYVAL k%) NOINLINE
-        R! = k% / 3
+      FUNCTION D#(BYVAL k%) NOINLINE
+        D# = (k% - 4) / 3
       END FUNCTION
-      """, "main", "selection: cast: BitCast f32 -> i32"),
+      """, "main", "selection: 64-bit binary: And (needs the direct runtime path)"),
     new("QUAD parameter and result", """
       FUNCTION F(BYVAL a&&) AS QUAD
         F = a&& + 1

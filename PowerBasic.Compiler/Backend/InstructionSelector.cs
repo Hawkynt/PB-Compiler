@@ -2191,6 +2191,59 @@ public sealed partial class InstructionSelector {
         this.EmitSignSmear(hi);
         return true;
       }
+      // A SINGLE reinterpreted as the integer of the same width, and back. The lowering emits this
+      // pair to clear a float's sign bit for ABS - `bitcast -> and 0x7FFFFFFF -> bitcast` - and the
+      // bit-twiddle is what --emit-c and --emit-llvm render, so the shape stays and the selector
+      // learns it rather than the middle end being changed to suit one target.
+      //
+      // The four-byte slot is the whole mechanism: an intermediate float lives in a TBYTE cell at the
+      // x87's own width, and its SINGLE bit pattern only exists once something stores it at four
+      // bytes. That is the same store PopRounded makes, for the same reason.
+      case IrCastOp.BitCast when from.IsFloat && from.Bits == 32 && IsWide(to): {
+        if (!this.TryFloatOperand(cast.Value, out var source))
+          return false;
+        this.EmitX87(MOpcode.Fld, source, reads: true);
+        var slot = this._function.StackSlots.Count;
+        this._function.StackSlots.Add(4);
+        this.EmitX87(MOpcode.Fstp, new MOperand.StackSlot(slot, MRegSize.Dword), reads: false);
+        var word = new MOperand.StackSlot(slot, MRegSize.Word);
+        var (lo, hi) = this.FreshPair(cast);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lo, word], MovEffect(lo, word)));
+        var above = Shifted(word, 2);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [hi, above], MovEffect(hi, above)));
+        return true;
+      }
+      case IrCastOp.BitCast when from.IsInteger && IsWide(from) && to.IsFloat && to.Bits == 32: {
+        if (!this.TryOperandPair(cast.Value, out var low, out var high))
+          return false;
+        var slot = this._function.StackSlots.Count;
+        this._function.StackSlots.Add(4);
+        var word = new MOperand.StackSlot(slot, MRegSize.Word);
+        this.StoreWord(word, low);
+        this.StoreWord(Shifted(word, 2), high);
+        this.EmitX87(MOpcode.Fld, new MOperand.StackSlot(slot, MRegSize.Dword), reads: true);
+        this.EmitX87(MOpcode.Fstp, this.FloatCell(cast), reads: false);
+        return true;
+      }
+      // The DOUBLE twin of the pair above, and simpler: a QUAD already lives in a qword frame cell,
+      // so the eight-byte store IS the result and no register pair is minted for it.
+      case IrCastOp.BitCast when from.IsFloat && from.Bits == 64 && IsQuad(to): {
+        if (!this.TryFloatOperand(cast.Value, out var source))
+          return false;
+        this.EmitX87(MOpcode.Fld, source, reads: true);
+        var slot = this._function.StackSlots.Count;
+        this._function.StackSlots.Add(8);
+        this.EmitX87(MOpcode.Fstp, new MOperand.StackSlot(slot, MRegSize.Qword), reads: false);
+        this._qslots[cast] = slot;
+        return true;
+      }
+      case IrCastOp.BitCast when from.IsInteger && IsQuad(from) && to.IsFloat && to.Bits == 64: {
+        if (!this.TryQwordSlot(cast.Value, out var source))
+          return false;
+        this.EmitX87(MOpcode.Fld, new MOperand.StackSlot(source, MRegSize.Qword), reads: true);
+        this.EmitX87(MOpcode.Fstp, this.FloatCell(cast), reads: false);
+        return true;
+      }
       case IrCastOp.SExt or IrCastOp.ZExt when IsQuad(to) && IsWide(from):
         return this.SelectWideToQword(cast);
       // An INTEGER straight into a QUAD, which `q = q * 3 + n%` asks for. There are arms for 16->32
