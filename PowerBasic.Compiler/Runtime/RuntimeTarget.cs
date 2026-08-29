@@ -88,10 +88,11 @@ public readonly record struct RuntimeTarget(int CpuLevel, RuntimeCpuFeatures Fea
     : _none;
 
   /// <summary>
-  /// Widest vector width usable by the runtime's byte-preserving bulk-move primitives. MMX is not
-  /// selected here because it aliases x87 state; SSE without SSE2 has XMM registers but not MOVDQU.
+  /// Widest vector width usable by the runtime's byte-preserving bulk primitives. MMX is deliberately
+  /// excluded because it aliases x87 state. SSE1 is sufficient: MOVUPS/XORPS are bit-preserving, so
+  /// integer payloads do not require SSE2 just because the opcode happens to have a floating spelling.
   /// </summary>
-  public int MaxRuntimeBulkVectorWidthBytes => this.HasAvx512 ? 64 : this.HasAvx ? 32 : this.HasSse2 ? 16 : 0;
+  public int MaxRuntimeBulkVectorWidthBytes => this.HasAvx512 ? 64 : this.HasAvx ? 32 : this.HasSse ? 16 : 0;
 
   /// <summary>
   /// Builds a target from an optional generation token followed by feature requirements. If the first
