@@ -63,6 +63,8 @@ public sealed partial class CodeGenerator {
     // packed-SIMD scalarizer so the generic pack implementation can never shadow it.
     if (this.TryEmitVirtualVectorFixup(instruction, resolver, target, out error))
       return true;
+    if (this.TryEmitVirtualHorizontalInstruction(instruction, resolver, out error))
+      return true;
     if (this.TryEmitVirtualSupplementalInstruction(instruction, resolver, out error))
       return true;
     if (this.TryEmitVirtualExtendedInstruction(instruction, resolver, out error))
