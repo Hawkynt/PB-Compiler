@@ -585,7 +585,7 @@ public sealed partial class IrLowering {
     // PRINT pbvFixDigits said, against the direct emitter's 2.
     if (symbol.Storage == VariableStorage.Global
         && Runtime.DosRuntime.InternalVariableLabel(symbol.Name) is { } internalCell)
-      return this.ErrorCell(internalCell, MapType(symbol.Type));
+      return this.RuntimeCell(internalCell, MapType(symbol.Type));
     // A PB data pointer is a 4-byte seg:off cell and the IR's pointer is the 2-byte near offset the
     // whole program shares a segment for, so the two layouts differ. That costs nothing while the
     // cell is this lowering's own frame slot, and everything the moment a DIRECTLY EMITTED procedure
@@ -1044,7 +1044,7 @@ public sealed partial class IrLowering {
       case CommandStmt { Keyword: "LOCATE" } locate: this.LowerLocate(locate); break;
       // ERRCLEAR: forget the last fault, so a later ERR read sees zero rather than a stale code
       case CommandStmt { Keyword: "ERRCLEAR" }:
-        this._b.Store(new IrConstantInt(IrType.I16, 0), this.ErrorCell("rt_err", IrType.I16));
+        this._b.Store(new IrConstantInt(IrType.I16, 0), this.RuntimeCell("rt_err", IrType.I16));
         break;
       case CommandStmt { Keyword: "KILL", Arguments: [{ } file] }:
         this._b.Call(IrType.Void, this.RuntimeFn("rt_kill", IrType.Void, IrType.Ptr), this.LowerStringExpr(file));
@@ -1052,7 +1052,7 @@ public sealed partial class IrLowering {
       // DEF SEG = n stores the word; bare DEF SEG puts DS back, which only the runtime can say
       case DefSegStmt { Segment: { } segment }:
         this._b.Store(this.Coerce(this.LowerExpr(segment), this._model.TypeOf(segment), PbType.Integer),
-          this.ErrorCell("rt_defseg", IrType.I16));
+          this.RuntimeCell("rt_defseg", IrType.I16));
         break;
       case DefSegStmt:
         this._b.Call(IrType.Void, this.RuntimeFn("rt_defseg_reset", IrType.Void));
@@ -1118,6 +1118,19 @@ public sealed partial class IrLowering {
       case CommandStmt { Keyword: "POKE", Arguments: [{ } pokeSegment, { } pokeOffset, { } pokeSegValue] }:
         this.SetDefaultSegment(pokeSegment);
         this.LowerPoke(pokeOffset, pokeSegValue);
+        break;
+      // RANDOMIZE n: the seed cell takes the LONG the program named, which is the same pair of word
+      // stores the direct emitter writes into the same cell - so both paths draw one sequence from
+      // one seed. RANDOMIZE with no argument seeds from the BIOS tick counter, which is a routine
+      // (rt_randomize) precisely because it is the half that cannot be written as a store.
+      case CommandStmt { Keyword: "RANDOMIZE" } randomize:
+        if (randomize.Arguments is [{ } seed])
+          this._b.Store(this.Coerce(this.LowerExpr(seed), this._model.TypeOf(seed), PbType.Long),
+            this.RuntimeCell("rt_rndseed", IrType.I32));
+        else if (randomize.Arguments.Count <= 1)
+          this._b.Call(IrType.Void, this.RuntimeFn("rt_randomize", IrType.Void));
+        else
+          throw new IrLoweringException("unsupported statement: RANDOMIZE with more than one seed");
         break;
       // CommandStmt is a catch-all for a dozen unrelated statements (KILL, POKE, OUT, RANDOMIZE...),
       // so it names the keyword: "unsupported statement: CommandStmt" ranks nothing
@@ -1361,6 +1374,24 @@ public sealed partial class IrLowering {
   }
 
   private void LowerSwap(SwapStmt sw) {
+    // A RECORD has no single value to load, so the exchange is three block copies through a frame
+    // temporary rather than a load/store pair. That is the same observable exchange the direct
+    // emitter's byte-wise rt_swap performs, and it is correct when both operands name the SAME
+    // storage, which a two-copy version would not be. A dynamic-string FIELD inside the record moves
+    // with its bytes: the handle changes owner exactly once, which is what the scalar string case
+    // below does for the same reason.
+    if (this._model.TypeOf(sw.Left) is UdtType record) {
+      if (!record.Equals(this._model.TypeOf(sw.Right)))
+        throw new IrLoweringException("SWAP of differently-typed operands");
+      var left = this.UdtAddress(sw.Left);
+      var right = this.UdtAddress(sw.Right);
+      var temp = this._entry.InsertAt(this._entryAllocaCount++,
+        new IrAlloca(IrType.I8) { Count = Math.Max(record.Size, 1), Name = "swap.tmp" });
+      this.CopyBlock(temp, left, record.Size);
+      this.CopyBlock(left, right, record.Size);
+      this.CopyBlock(right, temp, record.Size);
+      return;
+    }
     var (leftAddr, leftType) = this.SwapLValue(sw.Left);
     var (rightAddr, rightType) = this.SwapLValue(sw.Right);
     if (!leftType.Equals(rightType))
@@ -1374,6 +1405,12 @@ public sealed partial class IrLowering {
     this._b.Store(rightVal, leftAddr);
     this._b.Store(leftVal, rightAddr);
   }
+
+  /// <summary>A fixed-size block copy, the one spelling every record-sized move in this lowering uses.</summary>
+  private void CopyBlock(IrValue destination, IrValue source, int bytes)
+    => this._b.Call(IrType.Void,
+      this.RuntimeFn("llvm.memcpy.p0.p0.i32", IrType.Void, IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I1),
+      destination, source, new IrConstantInt(IrType.I32, bytes), IrBuilder.ConstBool(false));
 
   /// <summary>The storage address and type of a SWAP operand, including a dynamic-string handle cell.</summary>
   private (IrValue Address, PbType Type) SwapLValue(Expression target) {
@@ -1537,7 +1574,7 @@ public sealed partial class IrLowering {
           ? new IrConstantInt(IrType.I16, segment)
           : throw new IrLoweringException($"VARSEG of {array.Name} before its DIM ... AT was lowered");
       if (element.IsDynamic)
-        return this._b.Load(IrType.I16, this.ErrorCell("rt_arrseg", IrType.I16));
+        return this._b.Load(IrType.I16, this.RuntimeCell("rt_arrseg", IrType.I16));
     } else {
       this.AddressOfStorage(e);
     }
@@ -2063,7 +2100,7 @@ public sealed partial class IrLowering {
       this._b.Br(block);                               // fall through into the label
     this._b.Position(block);
     if (this._errorHandling && label.Name.All(char.IsAsciiDigit) && int.TryParse(label.Name, out var line))
-      this._b.Store(new IrConstantInt(IrType.I16, (short)(line & 0xFFFF)), this.ErrorCell("rt_erl", IrType.I16));
+      this._b.Store(new IrConstantInt(IrType.I16, (short)(line & 0xFFFF)), this.RuntimeCell("rt_erl", IrType.I16));
   }
 
   private void LowerGoto(GotoStmt g) {
@@ -2379,6 +2416,17 @@ public sealed partial class IrLowering {
       this._b.Store(handle, address);                  // a string item is stored as its handle
       return;
     }
+    // A FIXED-length string is a buffer rather than a handle cell, so the item is padded or truncated
+    // into its bytes - the same store INPUT makes into the same kind of target, and the same one an
+    // ordinary assignment makes. Without it a `READ s` into `DIM s AS STRING * 5` fell through to the
+    // numeric path below, where the buffer is not an lvalue it can name, and the whole module went
+    // with it.
+    if (elementType is FixedStringType fixedString && sym is not null) {
+      var address = target is CallOrIndexExpr fixedElement ? this.ElementAddress(fixedElement).Address : this.SlotFor(sym);
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_str_to_fixed", IrType.Void, IrType.Ptr, IrType.I32, IrType.Ptr),
+        address, new IrConstantInt(IrType.I32, fixedString.Length), handle);
+      return;
+    }
     var value = this._b.Call(IrType.F64, this.RuntimeFn("rt_str_val", IrType.F64, IrType.Ptr), handle);  // parse a numeric item
     var (addr, type) = this.LValue(target);
     this._b.Store(this.Coerce(value, PbType.Double, type), addr);
@@ -2569,7 +2617,7 @@ public sealed partial class IrLowering {
   /// allocation with nothing in the machine IR looking wrong.
   /// </summary>
   private void StoreArpb(string field, IrValue value)
-    => this._b.Store(value, this.ErrorCell(field, IrType.I16));
+    => this._b.Store(value, this.RuntimeCell(field, IrType.I16));
 
   /// <summary>
   /// Fills a runtime array descriptor and answers its address - the one part of ARRAY SORT the IR
@@ -2634,21 +2682,21 @@ public sealed partial class IrLowering {
     var (kind, size, load) = element;
 
     this.StoreArpb("rt_arpb", this.DescriptorOf(shape, forTagArray: false));
-    this._b.Store(new IrConstantInt(IrType.I8, kind), this.ErrorCell("rt_num_kind", IrType.I8));
-    this._b.Store(new IrConstantInt(IrType.I8, size), this.ErrorCell("rt_num_size", IrType.I8));
-    this._b.Store(new IrConstantInt(IrType.I8, load), this.ErrorCell("rt_num_load", IrType.I8));
+    this._b.Store(new IrConstantInt(IrType.I8, kind), this.RuntimeCell("rt_num_kind", IrType.I8));
+    this._b.Store(new IrConstantInt(IrType.I8, size), this.RuntimeCell("rt_num_size", IrType.I8));
+    this._b.Store(new IrConstantInt(IrType.I8, load), this.RuntimeCell("rt_num_load", IrType.I8));
     this.StoreStartAndCount(array, shape, count);
 
     if (tagArray is null) {
-      this._b.Store(new IrConstantInt(IrType.I16, 0), this.ErrorCell("rt_num_tagdesc", IrType.I16));
+      this._b.Store(new IrConstantInt(IrType.I16, 0), this.RuntimeCell("rt_num_tagdesc", IrType.I16));
       return;
     }
     // the tag array shares the KEY's start index but has its own lower bound and element size, which
     // is why it needs a descriptor of its own rather than an offset off the key's
     var tagShape = this.SortOperand(tagArray);
-    this._b.Store(this.DescriptorOf(tagShape, forTagArray: true), this.ErrorCell("rt_num_tagdesc", IrType.I16));
+    this._b.Store(this.DescriptorOf(tagShape, forTagArray: true), this.RuntimeCell("rt_num_tagdesc", IrType.I16));
     this._b.Store(new IrConstantInt(IrType.I16, Math.Max(tagShape.Type.Element.Size, 1)),
-      this.ErrorCell("rt_num_tagsize", IrType.I16));
+      this.RuntimeCell("rt_num_tagsize", IrType.I16));
   }
 
   /// <summary>The string parameter block: descriptor, range, the FROM/TO character window and the collate table.</summary>
@@ -2685,7 +2733,7 @@ public sealed partial class IrLowering {
       return;
     }
     this.StoreNumericHeader(sort.Array, shape, sort.Count, sort.FromPos, sort.TagArray);
-    this._b.Store(new IrConstantInt(IrType.I8, sort.Descend ? 1 : 0), this.ErrorCell("rt_num_desc", IrType.I8));
+    this._b.Store(new IrConstantInt(IrType.I8, sort.Descend ? 1 : 0), this.RuntimeCell("rt_num_desc", IrType.I8));
     this._b.Call(IrType.Void, this.RuntimeFn("rt_array_sort_num", IrType.Void));
   }
 
@@ -2714,11 +2762,11 @@ public sealed partial class IrLowering {
       this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr), match);
     } else {
       this.StoreNumericHeader(scan.Array, shape, scan.Count, scan.FromPos, null);
-      this._b.Store(new IrConstantInt(IrType.I8, ScanRelop(scan.Op)), this.ErrorCell("rt_num_relop", IrType.I8));
+      this._b.Store(new IrConstantInt(IrType.I8, ScanRelop(scan.Op)), this.RuntimeCell("rt_num_relop", IrType.I8));
       // the match is compared as an ELEMENT, so it is coerced to the element type and stored as its
       // raw bytes - the staging cell reads it back with the same FILD/FLD the elements go through
       this._b.Store(this.Coerce(this.LowerExpr(scan.Match), this._model.TypeOf(scan.Match), shape.Type.Element),
-        this.ErrorCell("rt_num_match", MapType(shape.Type.Element)));
+        this.RuntimeCell("rt_num_match", MapType(shape.Type.Element)));
       found = this._b.Call(IrType.I16, this.RuntimeFn("rt_array_scan_num", IrType.I16));
     }
 
@@ -3541,7 +3589,7 @@ public sealed partial class IrLowering {
     }
     if (!this._model.VariableBindings.TryGetValue(name, out var symbol))
       return this.LowerErrorPseudoVariable(name.Name)
-        ?? this.LowerNullaryIntrinsicName(name.Name)
+        ?? this.LowerNullaryIntrinsicName(name)
         ?? throw new IrLoweringException($"unbound name {name.Name}");
     return this._b.Load(MapType(symbol.Type), this.SlotFor(symbol));
   }
@@ -3559,13 +3607,23 @@ public sealed partial class IrLowering {
   /// turn a bare name into a call, so it reaches the lowering as an unbound name - the same route
   /// the error pseudo-variables take, and for the same reason.
   /// </summary>
-  private IrValue? LowerNullaryIntrinsicName(string name) => name.ToUpperInvariant() switch {
+  private IrValue? LowerNullaryIntrinsicName(NameExpr name) => name.Name.ToUpperInvariant() switch {
     // "FREEFILE: no arguments -> AX = the lowest unused file number" - it raises an I/O error itself
     // when all fifteen are taken, so there is nothing to check here
     "FREEFILE" => this._b.Call(IrType.I16, this.RuntimeFn("rt_freefile", IrType.I16)),
     "CSRLIN" => this._b.Call(IrType.I16, this.RuntimeFn("rt_csrlin", IrType.I16)),
     "CONSIN" => this._b.Call(IrType.I16, this.RuntimeFn("rt_consin", IrType.I16)),
     "CONSOUT" => this._b.Call(IrType.I16, this.RuntimeFn("rt_consout", IrType.I16)),
+    // RND written without parentheses is the same routine RND(n) calls - one generator on one seed
+    // cell, so a program that writes both spellings still draws ONE sequence. It answers on the x87
+    // and is taken at DOUBLE width, exactly as LowerRnd takes it.
+    "RND" => this.Coerce(this._b.Call(IrType.F64, this.RuntimeFn("rt_rnd", IrType.F64)),
+      PbType.Double, this._model.TypeOf(name)),
+    // TIMER: seconds since midnight off the BIOS tick counter. The value is a clock reading rather
+    // than an arithmetic result, so taking it at DOUBLE and narrowing to the intrinsic's declared
+    // SINGLE is the same answer the direct emitter's FSTP of ST0 into a SINGLE cell gives.
+    "TIMER" => this.Coerce(this._b.Call(IrType.F64, this.RuntimeFn("rt_timer", IrType.F64)),
+      PbType.Double, this._model.TypeOf(name)),
     _ => null,
   };
 
@@ -3580,16 +3638,18 @@ public sealed partial class IrLowering {
     };
     if (cell is null)
       return null;
-    var read = this._b.Load(type, this.ErrorCell(cell, type));
+    var read = this._b.Load(type, this.RuntimeCell(cell, type));
     // ERL is a LONG in PB even though the runtime keeps a word - the direct emitter widens with CWD
     return name.Equals("ERL", StringComparison.OrdinalIgnoreCase) ? this._b.SExt(read, IrType.I32) : read;
   }
 
   /// <summary>
-  /// One of the runtime's error cells as an IR global, named exactly as the runtime labels it so the
-  /// back end's data-cell bridge resolves it to the very storage the direct emitter uses.
+  /// One of the runtime's own data cells as an IR global, named exactly as the runtime labels it so
+  /// the back end's data-cell bridge resolves it to the very storage the direct emitter uses. The
+  /// error triple was the first of them and gave this its old name; the random seed, the segment
+  /// registers and the array-primitive parameter block all reach the same storage the same way.
   /// </summary>
-  private IrGlobalVariable ErrorCell(string name, IrType type) {
+  private IrGlobalVariable RuntimeCell(string name, IrType type) {
     if (this._module is null)
       throw new IrLoweringException($"{name} requires whole-module lowering");
     return this._module.FindGlobal(name)
@@ -3692,7 +3752,7 @@ public sealed partial class IrLowering {
       return this.Coerce(this._b.Call(IrType.I16, this.RuntimeFn("rt_codeseg", IrType.I16)),
         PbType.Integer, this._model.TypeOf(call));
     if (name.Equals("STRSEG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
-      return this.Coerce(this._b.Load(IrType.I16, this.ErrorCell("rt_strseg", IrType.I16)),
+      return this.Coerce(this._b.Load(IrType.I16, this.RuntimeCell("rt_strseg", IrType.I16)),
         PbType.Integer, this._model.TypeOf(call));
     if (name.Equals("REG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this._b.Call(IrType.I16, this.RuntimeFn("rt_reg_get", IrType.I16, IrType.I16),
@@ -3869,7 +3929,7 @@ public sealed partial class IrLowering {
   /// <summary>Stores a segment into the <c>rt_defseg</c> cell - what <c>DEF SEG = n</c> does, shared with it.</summary>
   private void SetDefaultSegment(Expression segment)
     => this._b.Store(this.Coerce(this.LowerExpr(segment), this._model.TypeOf(segment), PbType.Integer),
-        this.ErrorCell("rt_defseg", IrType.I16));
+        this.RuntimeCell("rt_defseg", IrType.I16));
 
   /// <summary>LBOUND/UBOUND of an array dimension: a compile-time constant for static arrays, a descriptor read for dynamic ones.</summary>
   private IrValue LowerArrayBound(CallOrIndexExpr call, bool upper) {
@@ -4658,6 +4718,28 @@ public sealed partial class IrLowering {
       // effective dialect onto IrModule before lowering any statement, so the directive itself has
       // no instruction to emit and every detached back end can still make the dialect-aware choice.
       case "COMPAT":
+      // $DYNAMIC / $STATIC choose the storage CLASS of every array DIMed after them, and the BINDER
+      // is what reads them: it carries the mode across the declarations and marks each array symbol
+      // accordingly, so by the time a statement reaches this lowering the decision has already been
+      // taken and is in the symbol. There is nothing left to emit, and the array that follows lowers
+      // as the class it was bound to.
+      case "DYNAMIC":
+      case "STATIC":
+      // $OPTION is four arms and not one of them is a statement. SIGNED changes the RESULT TYPE the
+      // binder gives VARPTR/VARSEG and their relatives; VIDEO sets model.FastVideo, which the codegen
+      // reads off the MODEL; CNTLBREAK installs an INT 23h handler from a codegen PRE-PASS over
+      // model.MetaStatements; GOSUB permits a spelling and emits nothing anywhere. All four are
+      // therefore already in force for a routed module body, which never executes the statement list -
+      // the same argument $STRING above is ignored on, and it has to be made per arm rather than for
+      // the keyword, because an arm that WERE a statement would be silently dropped here.
+      case "OPTION":
+      // $STACK n sizes the image's stack segment, which the codegen reads from model.MetaStatements
+      // before it emits anything - the same pre-pass $STRING goes through, for the same reason.
+      case "STACK":
+      // $DIM ALL / $DIM ARRAY would require a declaration before use. Neither back end implements it
+      // and the direct emitter emits nothing for it, so ignoring it here is the direct path's own
+      // behaviour rather than a new claim.
+      case "DIM":
         return;
       // $ERROR BOUNDS ON: every subscript is checked against its dimension and Error 9 raised when it
       // falls outside - the same guard CodeGenerator.Arrays emits when CheckBounds is set

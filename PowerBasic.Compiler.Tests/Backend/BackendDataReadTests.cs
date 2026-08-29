@@ -156,4 +156,77 @@ public sealed class BackendDataReadTests {
     Assert.That(direct.Replace("\r", ""), Is.EqualTo(" 1  2  7  8 \n 7  8 \n"),
       "the nested items are in the pool where they are written, and the nested label points at them");
   }
+
+  /// <summary>
+  /// A <c>READ</c> into a FIXED-length string. The item is padded or truncated into the buffer, the
+  /// same store <c>INPUT</c> and an ordinary assignment make into one. It used to fall through to
+  /// the numeric path, where a fixed buffer is not an lvalue the lowering can name, and the whole
+  /// module went down with the "unsupported lvalue" that raised.
+  /// </summary>
+  [TestCase(true, TestName = "Run_GivenAReadIntoAFixedString_WhenOptimized_ThenTheItemIsPaddedIntoTheBuffer")]
+  [TestCase(false, TestName = "Run_GivenAReadIntoAFixedString_WhenUnoptimized_ThenTheItemIsPaddedIntoTheBuffer")]
+  public void Run_GivenAReadIntoAFixedString_ThenTheItemIsPaddedIntoTheBuffer(bool optimize) {
+    var (direct, routed, names) = RunBothWays("""
+      DATA ab, abcdefg
+      DIM s AS STRING * 4
+      READ s
+      PRINT "["; s; "]"
+      READ s
+      PRINT "["; s; "]"
+      END
+      """, optimize);
+
+    Assert.That(names, Does.Contain("main"));
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(direct.Replace("\r", ""), Is.EqualTo("[ab  ]\n[abcd]\n"),
+      "a short item is blank-padded to the declared width and a long one is truncated to it");
+  }
+
+  /// <summary>
+  /// <c>READ</c> and <c>RESTORE</c> inside a PROCEDURE. The pool is one per program and the cursor is
+  /// one cell, so a routed SUB and a routed module body walk the same items in the same order - which
+  /// is the whole assertion here: the SUB's read continues where the module body's left off, and the
+  /// SUB's RESTORE is visible to the module body afterwards.
+  ///
+  /// <para>
+  /// This used to decline, and for a reason that created itself. The two paths keep separate pools,
+  /// so the routing refused to own the DATA cells whenever any PROCEDURE read from one - which made
+  /// <c>.data_cursor</c> unaddressable, which declined the SUB, which was the only thing that could
+  /// have made the pools disagree. Both the SUB and the module body were lost to a conflict that
+  /// existed only because they had been declined.
+  /// </para>
+  /// </summary>
+  [TestCase(true, TestName = "Run_GivenAReadInsideAProcedure_WhenOptimized_ThenItSharesTheModuleCursor")]
+  [TestCase(false, TestName = "Run_GivenAReadInsideAProcedure_WhenUnoptimized_ThenItSharesTheModuleCursor")]
+  public void Run_GivenAReadInsideAProcedure_ThenItSharesTheModuleCursor(bool optimize) {
+    var (direct, routed, names) = RunBothWays("""
+      DATA 11, 22, 33
+      DECLARE SUB Take()
+      DIM v AS INTEGER
+      SUB Take()
+        DIM a AS INTEGER
+        DIM b AS INTEGER
+        READ a
+        PRINT "sub"; a
+        RESTORE
+        READ b
+        PRINT "sub"; b
+      END SUB
+      READ v
+      PRINT "main"; v
+      Take
+      READ v
+      PRINT "main"; v
+      END
+      """, optimize);
+
+    Assert.Multiple(() => {
+      Assert.That(names, Does.Contain("Take"),
+        "the procedure did not route, so nothing here measures a shared cursor");
+      Assert.That(names, Does.Contain("main"));
+      Assert.That(routed, Is.EqualTo(direct));
+      Assert.That(direct.Replace("\r", ""), Is.EqualTo("main 11 \nsub 22 \nsub 11 \nmain 22 \n"),
+        "one cursor: the SUB continues where main stopped, and its RESTORE rewinds main's next read");
+    });
+  }
 }

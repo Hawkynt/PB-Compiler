@@ -314,6 +314,60 @@ would have noticed stopping or starting. Each compiles to an executable byte-ide
 unrouted build, because the module body is stranded by the very call the filter refused: one
 construct silently costs a whole program's routing today, and a compile error tomorrow.
 
+**Six constructs the routed path declined OUTRIGHT now route, and none of them was in the corpus
+either.** A sweep of the declarative surface - rather than of the programs to hand - found them; each
+was harmless while `CodeGen/` exists and a compile failure the day it does not.
+
+| construct | what it was | what it is |
+|---|---|---|
+| `RND`, `TIMER` without parentheses | `unbound name RND` | the binder leaves a bare intrinsic a `NameExpr`, so it never reached the intrinsic-call path at all - while `RND(0)` a line above lowered perfectly well. Both are now nullary intrinsic names, beside `FREEFILE` and `CSRLIN` |
+| `RANDOMIZE` | `unsupported statement` | a seed the program names is a plain store into the runtime's own `rt_rndseed`; the argumentless form seeds from the BIOS tick counter, which is now `rt_randomize` - a routine, and one BOTH paths call, because a program must not seed two ways |
+| `SWAP` of a record | `unsupported lvalue` | three block copies through a frame temporary, which is also what keeps `SWAP p, p` correct where a two-copy version would not be |
+| `READ` into a `STRING * n` | `unsupported lvalue` | the item is padded or truncated into the buffer, the same store `INPUT` already made into one; it had been falling through to the numeric path |
+| `READ` / `RESTORE` inside a procedure | `global '.data_cursor' has no cell` | see below - this one is the interesting one |
+| `$DYNAMIC`, `$STATIC`, `$OPTION`, `$DIM`, `$STACK` | `metastatement $…` | not one of them is an instruction: they are consumed by the binder, by a model flag, or by a codegen pre-pass over `model.MetaStatements`, all of which a routed module body already gets |
+
+**The DATA one had been declining over a conflict its own declining created.** The two paths keep
+separate pools - the IR's cursor is an INDEX into its own blob and `rt_dataptr` is an absolute pointer
+into `rt_datapool` - so what must never happen is a program reading through both. The guard asked
+whether any PROCEDURE reads DATA and, if one did, made `.data_cursor` unaddressable. That declined the
+procedure, which was the only thing that could have made the pools disagree, and it declined the
+module body with it: a `SUB` containing one `READ` cost the whole program its routing.
+
+The rule is about how many FUNCTIONS read DATA rather than about which ones, and it cannot be settled
+before selection and allocation have had their say - so it is granted optimistically and CHECKED once
+the last routing decision is in. A split set of readers discards the routing and decides it again with
+the pool left to the direct emitter, which is the state the old rule assumed in advance. The check has
+to run before `OptRegParm`, which mutates the model's calling conventions on the strength of the
+routing: recomputing after it would lower a model the first pass never saw.
+
+Two things turned up alongside. `ContainsDataRead` named the compound statements it descended into -
+IF, FOR, DO, SELECT - and therefore not `TRY`, so a `READ` inside a `TRY` block read as a body with no
+DATA in it, which is the one answer that turns this guard into a miscompile; it now walks with
+`OptReachability.DescendantNodes`. And `Cpu8086`'s INT 1Ah answered a fixed zero, so a clock that never
+moves cannot be told from a routine that answers a constant - a back end that dropped `TIMER` entirely
+would have passed. It now advances one tick per read, which also gives `rt_delay` and `rt_sound` a
+counter that reaches their budget instead of spinning.
+
+**What `RND` is NOT held to, stated plainly.** The routed and direct builds draw the same sequence from
+the same seed, and that is the whole contract these tests assert. Matching GENUINE PBC 3.50 is a
+separate claim and it is false: from seed 7 the oracle draws `.7670898` where this compiler draws
+`.5970459` (measured with `scripts/diff-one.sh`). Reproducing Zale's generator is a fidelity item for
+the DIRECT emitter, which is the path held to the oracle. `tests/diff/DIFF120.BAS` therefore carries
+only the half the oracle does agree with - a seeded sequence replays, every draw is in range,
+`RND(a, z)` is bounded - and it passes both ways. `RANDOMIZE` with no argument is deliberately absent
+from it: genuine PBC PROMPTS for the seed and waits, so a battery program containing one never
+finishes and measures nothing.
+
+Still declining, and measured rather than assumed: `INPUT #n` of a QUAD, BYTE, WORD or DWORD
+(`rt_finput_i64` / `rt_finput_u8` / `rt_finput_u16` / `rt_finput_u32` are declared by the IR - the same
+declarations feed the C back end - and the DOS runtime composes an entry only for `i16`, `i32` and the
+floats). Closing it wants either those entries written to mirror the direct emitter's width-specific
+`Coerce`, or `INPUT` re-shaped to read every number as `VAL` of a token and convert - which is what the
+direct emitter does at its call site, and would change the C back end's output as well. And `DIM` of a
+`$DYNAMIC` array with no `REDIM` after it declines at `gep: non-register base`, which is a dynamic-array
+gap the metastatement work exposed rather than caused.
+
 The optimized SELECTION and ALLOCATION decline histograms are empty, and that remains worth having.
 The separately reported unoptimized histogram names the four optimizer-dependent selector gaps above.
 

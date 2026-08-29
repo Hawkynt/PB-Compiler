@@ -74,6 +74,9 @@ public sealed class Cpu8086 {
   private bool _cf, _zf, _sf, _of, _pf, _af, _df;
   private bool _halted;
 
+  /// <summary>The BIOS tick counter INT 1Ah answers with, advanced one tick per read.</summary>
+  private uint _ticks;
+
   private const int _AX = 0, _CX = 1, _DX = 2, _BX = 3, _SP = 4, _BP = 5, _SI = 6, _DI = 7;
 
   /// <summary>Everything the program wrote to stdout/stderr, in order.</summary>
@@ -1684,7 +1687,17 @@ public sealed class Cpu8086 {
       case 0x67: this.Ems(); return;
       case 0x10: this.Bios10(); return;
       case 0x20: this._halted = true; return;
-      case 0x1A: this._r[_CX] = this._r[_DX] = 0; return;      // clock ticks - a fixed zero time
+      // The BIOS tick counter. It ADVANCES by one tick per read rather than standing at zero, which
+      // is what makes TIMER observable here at all: a clock that never moves cannot be told apart
+      // from a routine that answers a constant, so a back end that dropped the read entirely would
+      // have passed. It also gives the runtime's busy-waits (rt_delay, rt_sound) a counter that
+      // eventually reaches their budget instead of spinning forever.
+      case 0x1A:
+        ++this._ticks;
+        this._r[_CX] = (ushort)(this._ticks >> 16);
+        this._r[_DX] = (ushort)this._ticks;
+        this.SetReg8(0, 0);                                    // AL = 0: midnight has not passed
+        return;
       default: throw new Cpu8086Exception($"unhandled INT {number:X2}h (AX={this._r[_AX]:X4})");
     }
   }

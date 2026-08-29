@@ -137,6 +137,58 @@ public sealed class BackendRoutingGateTests {
       FOR i% = 1 TO 4 : a(i%) = i% * 2 : NEXT
       PRINT a(3)
       """, "main"),
+    // RND and TIMER written WITHOUT parentheses. The binder leaves a bare intrinsic a NameExpr, so
+    // these do not reach the intrinsic-call path at all - they used to arrive as "unbound name RND"
+    // and take the whole module with them, while RND(0) a line above routed perfectly well.
+    new("module body: bare RND", """
+      DIM x AS SINGLE
+      x = RND
+      PRINT x < 1
+      """, "main"),
+    new("module body: bare TIMER", """
+      DIM t AS SINGLE
+      t = TIMER
+      PRINT t >= 0
+      """, "main"),
+    // RANDOMIZE in both spellings: a seed the program supplies is a store into the runtime's own
+    // seed cell, and the argumentless form is the routine that reads the BIOS clock into it.
+    new("module body: RANDOMIZE with a seed", """
+      RANDOMIZE 7
+      PRINT RND(1, 6) >= 1
+      """, "main"),
+    new("module body: RANDOMIZE with no seed", """
+      RANDOMIZE
+      PRINT RND(1, 6) >= 1
+      """, "main"),
+    // A record has no single value to load, so SWAP of one is three block copies through a frame
+    // temporary rather than the load/store pair a scalar gets.
+    new("module body: SWAP of a record", """
+      TYPE R
+        a AS INTEGER
+      END TYPE
+      DIM p AS R, q AS R
+      p.a = 1 : q.a = 2
+      SWAP p, q
+      PRINT p.a; q.a
+      """, "main"),
+    // READ into a FIXED-length string: a buffer to pad into, not a handle cell to store
+    new("module body: READ into a fixed string", """
+      DATA ab
+      DIM s AS STRING * 4
+      READ s
+      PRINT s
+      """, "main"),
+    // READ inside a PROCEDURE. Both the SUB and the module body route, and they must: one pool and
+    // one cursor means every reader has to be on the same side.
+    new("procedure: READ from DATA", """
+      DATA 1, 2
+      SUB S
+        DIM i%
+        READ i%
+        PRINT i%
+      END SUB
+      S
+      """, "S"),
   ];
 
   /// <summary>

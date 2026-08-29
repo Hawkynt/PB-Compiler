@@ -350,6 +350,54 @@ public sealed partial class CodeGenerator {
   private (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)? BackendMain() {
     if (this._backendMainKnown)
       return this._backendMain;
+    var answer = this.RouteMain();
+    // The DATA invariant, checked where the last routing decision has been taken and not before.
+    // BackendOwnsData grants the pool optimistically when more than one function reads from it,
+    // because whether they all route is not knowable until selection and allocation have had their
+    // say - and refusing in advance is what used to decline the very functions whose declining was
+    // the only conflict. If the readers ended up SPLIT, the whole routing is decided again with the
+    // pool left to the direct emitter, which is the state that was assumed before. Nothing has been
+    // emitted at this point: the routing resolves data cells in probe mode, and the labels and bytes
+    // are minted by DataCellOf during emission, which happens after this returns.
+    if (this._backendDataOwnershipDenied || this.DataReadersRouteTogether())
+      return answer;
+    this._backendDataOwnershipDenied = true;
+    this._backendProcs = null;
+    this._backendModule = null;
+    this._backendMain = null;
+    this._backendDeclines.Clear();
+    return this.RouteMain();
+  }
+
+  /// <summary>
+  /// Whether every function that reads DATA reached the same side. A reader left on the direct
+  /// emitter alongside a routed one is two cursors over one program: the IR's is an index into its
+  /// own blob and <c>rt_dataptr</c> is an absolute pointer, so each would advance a cell the other
+  /// never consults.
+  /// </summary>
+  private bool DataReadersRouteTogether() {
+    if (!this.UseExperimentalBackend || this._backendProcs is null)
+      return true;
+    var routed = 0;
+    var direct = 0;
+    if (ContainsDataRead(model.MainBody)) {
+      if (this._backendMain is null)
+        ++direct;
+      else
+        ++routed;
+    }
+    foreach (var proc in model.ProcedureList) {
+      if (proc.Body is not { } body || !ContainsDataRead(body))
+        continue;
+      if (this._backendProcs.ContainsKey(proc))
+        ++routed;
+      else
+        ++direct;
+    }
+    return routed == 0 || direct == 0;
+  }
+
+  private (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)? RouteMain() {
     this._backendMainKnown = true;
     var routed = this.BackendProcs();               // also lowers the module and fills _backendModule
     // Error handling used to disqualify the module body outright. It no longer does: the selector
@@ -459,30 +507,52 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
-  /// Whether the back end may own the DATA pool: only when no procedure the direct emitter might
-  /// still compile reads from one. The two paths keep SEPARATE pools and cursors, so a program that
-  /// read through both would advance one and consult the other.
+  /// Whether the back end may own the DATA pool. The two paths keep SEPARATE pools and cursors - the
+  /// IR's cursor is an INDEX into its own blob and the direct emitter's <c>rt_dataptr</c> is an
+  /// absolute pointer into <c>rt_datapool</c> - so what must never happen is a program reading
+  /// through BOTH: one advances while the other is consulted.
+  ///
+  /// <para>
+  /// The rule is therefore about how many FUNCTIONS read DATA, not about which ones. With at most
+  /// one reader in the whole program there is nothing to disagree with: the reader either routes and
+  /// uses the IR's pair, or it does not and the IR's pair is never referenced, in which case the
+  /// codegen never even mints the labels (<see cref="ResolveDataCell"/> materializes them lazily, and
+  /// only for a routed reference).
+  /// </para>
+  /// <para>
+  /// This used to be "no PROCEDURE reads DATA", which is the same rule for the case where main is the
+  /// only reader and a self-defeating one everywhere else: a <c>SUB</c> containing a <c>READ</c> made
+  /// <c>.data_cursor</c> unaddressable, which declined the SUB, which was the only reason the pools
+  /// could have disagreed. Both the SUB and the module body were lost to a conflict neither would
+  /// have had.
+  /// </para>
+  /// <para>
+  /// With TWO or more readers the answer is granted OPTIMISTICALLY, because it cannot be taken here:
+  /// it has to hold for every reader after selection and allocation have had their say, and this
+  /// question is asked before them. <see cref="DataReadersRouteTogether"/> checks it once the last
+  /// decision is in, and a split routing is decided again with this denied - which is the state the
+  /// old rule assumed in advance.
+  /// </para>
   /// </summary>
-  private bool BackendOwnsData()
-    => model.ProcedureList.All(p => p.Body is null || !ContainsDataRead(p.Body));
+  private bool BackendOwnsData() => !this._backendDataOwnershipDenied;
 
-  private static bool ContainsDataRead(IReadOnlyList<Syntax.Ast.Statement> body) {
-    foreach (var statement in body)
-      switch (statement) {
-        case Syntax.Ast.ReadStmt or Syntax.Ast.RestoreStmt:
-          return true;
-        case Syntax.Ast.IfStmt i when ContainsDataRead(i.Then)
-            || i.ElseIfs.Any(a => ContainsDataRead(a.Body)) || (i.Else is { } e && ContainsDataRead(e)):
-          return true;
-        case Syntax.Ast.ForStmt f when ContainsDataRead(f.Body):
-          return true;
-        case Syntax.Ast.DoLoopStmt d when ContainsDataRead(d.Body):
-          return true;
-        case Syntax.Ast.SelectStmt sel when sel.Arms.Any(a => ContainsDataRead(a.Body)):
-          return true;
-      }
-    return false;
-  }
+  /// <summary>
+  /// Set when a first routing pass left the DATA readers split, so the second must leave the pool to
+  /// the direct emitter. It only ever moves from false to true, which is what bounds the re-decision
+  /// at one repeat.
+  /// </summary>
+  private bool _backendDataOwnershipDenied;
+
+  /// <summary>
+  /// Whether a statement list contains a <c>READ</c> or <c>RESTORE</c> anywhere inside it, at any
+  /// nesting depth. It walks with <see cref="OptReachability.DescendantNodes"/> rather than by naming
+  /// the compound statements it should descend into: the hand-written version knew about IF, FOR,
+  /// DO and SELECT and therefore not about TRY, and a <c>READ</c> inside a <c>TRY</c> block read as a
+  /// body with no DATA in it - which is the one answer that turns this guard into a miscompile.
+  /// </summary>
+  private static bool ContainsDataRead(IReadOnlyList<Syntax.Ast.Statement> body)
+    => body.Any(statement => statement is Syntax.Ast.ReadStmt or Syntax.Ast.RestoreStmt
+      || OptReachability.DescendantNodes(statement).Any(n => n is Syntax.Ast.ReadStmt or Syntax.Ast.RestoreStmt));
 
   /// <summary>
   /// The label a back-end-emitted CALL targets. A user procedure's label is the one the whole-program
@@ -747,7 +817,19 @@ public sealed partial class CodeGenerator {
     this.BackendProcs().Keys.Select(p => p.Name).Concat(this.BackendMain() is null ? [] : ["main"]);
 
   /// <summary>True when <paramref name="proc"/> is compiled by the x86-16 back end (so it is excluded from inlining and the register-parameter convention, and emitted via the back end).</summary>
-  private bool IsBackendRouted(ProcedureSymbol proc) => this.UseExperimentalBackend && this.BackendProcs().ContainsKey(proc);
+  /// <summary>
+  /// Whether the back end took <paramref name="proc"/>. It settles the MODULE BODY first, which looks
+  /// redundant and is not: the DATA re-decision in <see cref="BackendMain"/> can discard and recompute
+  /// the whole procedure set, and this question's first caller is <c>OptRegParm</c>, which MUTATES
+  /// the model's calling conventions on the strength of the answer. Recomputing after that would
+  /// lower a model the first pass never saw.
+  /// </summary>
+  private bool IsBackendRouted(ProcedureSymbol proc) {
+    if (!this.UseExperimentalBackend)
+      return false;
+    _ = this.BackendMain();
+    return this.BackendProcs().ContainsKey(proc);
+  }
 
   /// <summary>Emits a back-end-compiled function: its standard stack-ABI prologue/body/epilogue from the selected, allocated machine IR.</summary>
   private void EmitBackendFunction(ProcedureSymbol proc) {

@@ -258,8 +258,8 @@ public sealed partial class IrLowering {
   /// </para>
   /// </summary>
   private void MapEmsWindow(IrValue handle, IrValue page) {
-    var currentPage = this.ErrorCell("rt_ems_curpage", IrType.I16);
-    var currentHandle = this.ErrorCell("rt_ems_curhnd", IrType.I16);
+    var currentPage = this.RuntimeCell("rt_ems_curpage", IrType.I16);
+    var currentHandle = this.RuntimeCell("rt_ems_curhnd", IrType.I16);
     var stale = this._b.Or(
       this._b.Cmp(IrCmpPred.Ne, page, this._b.Load(IrType.I16, currentPage)),
       this._b.Cmp(IrCmpPred.Ne, handle, this._b.Load(IrType.I16, currentHandle)));
