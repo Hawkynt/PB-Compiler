@@ -118,7 +118,7 @@ public sealed partial class DosRuntime {
     else if (vector.IsYmm())
       asm.VmovdquTarget(vector, source);
     else
-      asm.MovdquTarget(vector, source);
+      asm.MovupsTarget(vector, source); // SSE1 is sufficient for an untyped 16-byte copy.
   }
 
   private static void StoreVector(Assembler asm, Mem destination, Reg vector) {
@@ -127,6 +127,6 @@ public sealed partial class DosRuntime {
     else if (vector.IsYmm())
       asm.VmovdquTargetStore(destination, vector);
     else
-      asm.MovdquTargetStore(destination, vector);
+      asm.MovupsTargetStore(destination, vector);
   }
 }
