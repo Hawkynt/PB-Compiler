@@ -36,18 +36,17 @@ public sealed partial class SoftwareX87Engine {
     this._asm.MarkLabel(over);
   }
 
-  private void CallMath(Label? procedure, int left, int right, int result) {
-    this.EnsureMathProcedures();
+  private void CallMath(Label procedure, int left, int right, int result) {
     this.CopyScratch(left, Math0);
     this.CopyScratch(right, Math1);
-    this._asm.Call(procedure!);
+    this._asm.Call(procedure);
     this.CopyScratch(Math2, result);
   }
 
-  private void MathAdd(int left, int right, int result) => this.CallMath(this._mathAdd, left, right, result);
-  private void MathSub(int left, int right, int result) => this.CallMath(this._mathSub, left, right, result);
-  private void MathMul(int left, int right, int result) => this.CallMath(this._mathMul, left, right, result);
-  private void MathDiv(int left, int right, int result) => this.CallMath(this._mathDiv, left, right, result);
+  private void MathAdd(int left, int right, int result) { this.EnsureMathProcedures(); this.CallMath(this._mathAdd!, left, right, result); }
+  private void MathSub(int left, int right, int result) { this.EnsureMathProcedures(); this.CallMath(this._mathSub!, left, right, result); }
+  private void MathMul(int left, int right, int result) { this.EnsureMathProcedures(); this.CallMath(this._mathMul!, left, right, result); }
+  private void MathDiv(int left, int right, int result) { this.EnsureMathProcedures(); this.CallMath(this._mathDiv!, left, right, result); }
 
   private void LoadCanonical(int destination, short exponent, ushort meta, ulong significand) {
     this._asm.Mov(this.Scratch(destination + Sig0, OperandSize.Word), (int)(significand & 0xFFFF));
