@@ -359,9 +359,15 @@ public sealed partial class CodeGenerator {
     // pool left to the direct emitter, which is the state that was assumed before. Nothing has been
     // emitted at this point: the routing resolves data cells in probe mode, and the labels and bytes
     // are minted by DataCellOf during emission, which happens after this returns.
-    if (this._backendDataOwnershipDenied || this.DataReadersRouteTogether())
+    // The same bargain is struck for a SHARED dynamic array's descriptor, and it is checked here for
+    // the same reason: the routed cells and the direct emitter's packed block are two descriptions of
+    // one array, so a split set of users would have a REDIM on one side and an UBOUND on the other.
+    var dataSplit = !this._backendDataOwnershipDenied && !this.DataReadersRouteTogether();
+    var dynSplit = !this._backendDynArrayOwnershipDenied && !this.SharedDynArrayUsersRouteTogether();
+    if (!dataSplit && !dynSplit)
       return answer;
-    this._backendDataOwnershipDenied = true;
+    this._backendDataOwnershipDenied |= dataSplit;
+    this._backendDynArrayOwnershipDenied |= dynSplit;
     this._backendProcs = null;
     this._backendModule = null;
     this._backendMain = null;
@@ -493,6 +499,16 @@ public sealed partial class CodeGenerator {
   /// is the INDEX of the first item rather than an address.
   /// </summary>
   private void EmitBackendDataPool(Asm.Assembler asm) {
+    // One dword per shared dynamic-array descriptor field: the far pointer is a segment/offset pair
+    // and both the lower bound and the extent are 32-bit, which is what the IR loads and stores
+    // through them. Zeroed, because an unallocated array's descriptor reads as a null block and the
+    // bounds are written before any read of them.
+    foreach (var (_, label) in this._irDynCells.OrderBy(e => e.Key, System.StringComparer.Ordinal)) {
+      asm.Align(2);
+      asm.MarkLabel(label);
+      asm.Dw(0);
+      asm.Dw(0);
+    }
     if (this._irDataCursor is { } cursor) {
       asm.Align(2);
       asm.MarkLabel(cursor);
@@ -535,6 +551,85 @@ public sealed partial class CodeGenerator {
   /// </para>
   /// </summary>
   private bool BackendOwnsData() => !this._backendDataOwnershipDenied;
+
+  /// <summary>The IR's descriptor cells for shared dynamic arrays, one per field, minted on demand.</summary>
+  private readonly Dictionary<string, Asm.Label> _irDynCells = new(System.StringComparer.Ordinal);
+
+  /// <summary>
+  /// Whether the routed path may keep its own descriptors for shared dynamic arrays - granted
+  /// optimistically and withdrawn if the users turn out to be split. See
+  /// <see cref="SharedDynArrayUsersRouteTogether"/>.
+  /// </summary>
+  private bool BackendOwnsSharedDynArrays() => !this._backendDynArrayOwnershipDenied;
+
+  /// <summary>
+  /// Set when a first routing pass left the users of a shared dynamic array split, so the second must
+  /// leave its descriptor to the direct emitter. Moves only from false to true, which bounds the
+  /// re-decision at one repeat.
+  /// </summary>
+  private bool _backendDynArrayOwnershipDenied;
+
+  /// <summary>
+  /// Whether every reader of every SHARED dynamic array ended up on the same side of the routing.
+  ///
+  /// <para>
+  /// The routed descriptor is the IR's own cells (<c>.dyn.g.a.data</c> and friends) and the direct
+  /// emitter's is its packed block; each is written by the code that allocates through it. A routed
+  /// <c>REDIM</c> and a directly emitted <c>UBOUND</c> would therefore consult different descriptions
+  /// of the same array, which is the very defect the old unconditional decline was protecting
+  /// against - so a split set is refused here and the whole array goes back to the direct emitter.
+  /// </para>
+  /// <para>
+  /// It is asked AFTER selection and allocation, because until those have had their say there is no
+  /// answer: a function can still be dropped for a reason that has nothing to do with arrays.
+  /// </para>
+  /// </summary>
+  private bool SharedDynArrayUsersRouteTogether() {
+    if (!this.UseExperimentalBackend || this._backendProcs is null)
+      return true;
+    foreach (var symbol in model.ModuleVariables.Values) {
+      if (symbol.Type is not ArrayType { IsDynamic: true })
+        continue;
+      var routed = 0;
+      var direct = 0;
+      if (ReferencesVariable(model.MainBody, symbol.Name)) {
+        if (this._backendMain is null)
+          ++direct;
+        else
+          ++routed;
+      }
+      foreach (var proc in model.ProcedureList) {
+        if (proc.Body is not { } body || !ReferencesVariable(body, symbol.Name))
+          continue;
+        if (this._backendProcs.ContainsKey(proc))
+          ++routed;
+        else
+          ++direct;
+      }
+      if (routed > 0 && direct > 0)
+        return false;
+    }
+    return true;
+  }
+
+  /// <summary>
+  /// Whether a statement list names <paramref name="name"/> anywhere inside it, at any nesting depth.
+  ///
+  /// It walks with <see cref="OptReachability.DescendantNodes"/> rather than naming the compound
+  /// statements to descend into, for the reason <see cref="ContainsDataRead"/> records: a hand-written
+  /// walk knew about IF, FOR, DO and SELECT and therefore not about TRY, and the one answer that turns
+  /// a guard like this into a miscompile is a false "not used here".
+  /// </summary>
+  private static bool ReferencesVariable(IReadOnlyList<Syntax.Ast.Statement> body, string name) {
+    bool Names(object node) => node switch {
+      Syntax.Ast.NameExpr n => n.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase),
+      Syntax.Ast.CallOrIndexExpr c => c.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase),
+      // ERASE needs no case of its own: it holds its arrays as NameExpr, which the walk already sees.
+      Syntax.Ast.DimStmt d => d.Variables.Any(v => v.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase)),
+      _ => false,
+    };
+    return body.Any(statement => Names(statement) || OptReachability.DescendantNodes(statement).Any(Names));
+  }
 
   /// <summary>
   /// Set when a first routing pass left the DATA readers split, so the second must leave the pool to
@@ -701,6 +796,21 @@ public sealed partial class CodeGenerator {
         return _ProbeCell;
       this._irDataCursor ??= this._asm.DefineLabel("ir_dataptr");
       return Asm.Mem.Word(this._irDataCursor);
+    }
+    // A shared dynamic array's descriptor field. Like the DATA pool these are the IR's OWN cells and
+    // not the direct emitter's packed descriptor, so the two must never both be live for one array -
+    // SharedDynArrayUsersRouteTogether is what enforces that, and denying it here is what makes the
+    // second routing pass leave the array to the direct emitter.
+    if (name.StartsWith(".dyn.", System.StringComparison.Ordinal)) {
+      if (!this.BackendOwnsSharedDynArrays())
+        return null;
+      if (!materialize)
+        return _ProbeCell;
+      if (!this._irDynCells.TryGetValue(name, out var label)) {
+        label = this._asm.DefineLabel("ir_" + name[1..].Replace('.', '_'));
+        this._irDynCells[name] = label;
+      }
+      return Asm.Mem.Word(label);
     }
     // a string constant the IR interned (".str0"): its bytes go through this codegen's own literal
     // pool, so the routed PRINT and a directly-emitted one share the identical pooled bytes

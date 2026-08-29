@@ -178,6 +178,27 @@ public sealed class BackendRoutingGateTests {
       READ s
       PRINT s
       """, "main"),
+    // A module-level DYNAMIC array a procedure also REDIMs. Both sides route, and they must, for the
+    // reason the DATA pool has: the descriptor is the routed path's own cells and the direct
+    // emitter's is a packed block, so a REDIM on one side and an UBOUND on the other would consult
+    // two descriptions of one array. It used to take the WHOLE MODULE off the routed path, because
+    // the descriptor was frame slots and every procedure is lowered by its own IrLowering - a routed
+    // REDIM PRESERVE inside a SUB wrote the new bounds into the SUB's frame and the module body went
+    // on describing the old block. Naming the fields as module globals removes the cause; a split set
+    // of users is refused by SharedDynArrayUsersRouteTogether rather than by declining in advance.
+    new("shared dynamic array a procedure REDIMs", """
+      $DYNAMIC
+      DECLARE SUB Grow(BYVAL n%)
+      DIM a() AS SHARED INTEGER
+      REDIM a(1 TO 2)
+      a(1) = 7 : a(2) = 8
+      Grow 5
+      PRINT LBOUND(a); UBOUND(a); a(1); a(2)
+      END
+      SUB Grow(BYVAL n%)
+        REDIM PRESERVE a(1 TO n%)
+      END SUB
+      """, "main"),
     // READ inside a PROCEDURE. Both the SUB and the module body route, and they must: one pool and
     // one cursor means every reader has to be on the same side.
     new("procedure: READ from DATA", """
