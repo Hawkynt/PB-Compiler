@@ -95,14 +95,33 @@ public sealed class BackendQuadPrintTests {
       Has.Some.EqualTo(((byte)0x66, encoding)), "the selected dword operation must reach the encoder");
   }
 
+  /// <summary>
+  /// The baseline path stays with the direct emitter's QUAD runtime call - and now REACHES it by
+  /// routing, instead of by declining the function to the direct emitter wholesale.
+  ///
+  /// <para>
+  /// This used to assert the decline, and the assertion was stricter than the rule it was written
+  /// for. What the rule is about is the CODE: an inline word-wise expansion is twelve instructions
+  /// against one call, which is a real cost under <c>$OPTIMIZE SIZE</c>, and both paths emit into one
+  /// image, so a routed QUAD `OR` expanding inline while a directly emitted one calls <c>rt_qor</c>
+  /// would be two shapes for one operation. Calling the same routine satisfies all of that. What the
+  /// rule was NOT about is whether the function routes, and after <c>CodeGen/</c> is deleted a decline
+  /// stops being a fallback and becomes a compile failure.
+  /// </para>
+  /// </summary>
   [TestCase(false, false)]
   [TestCase(false, true)]
   [TestCase(true, false)]
-  public void Select_GivenTargetWithoutOptimized386_ThenDeclinesQuadBitwise(bool cpu386, bool optimize) {
-    var machine = InstructionSelector.TrySelect(QwordBitwiseFunction(IrBinaryOp.Or), out _,
+  public void Select_GivenTargetWithoutOptimized386_ThenCallsTheQuadRuntimeRoutine(bool cpu386, bool optimize) {
+    var machine = InstructionSelector.TrySelect(QwordBitwiseFunction(IrBinaryOp.Or), out var reason,
       new SelectionTarget(Cpu386: cpu386, Optimize: optimize));
 
-    Assert.That(machine, Is.Null, "the baseline path must stay with the direct emitter's QUAD runtime call");
+    Assert.That(machine, Is.Not.Null, reason);
+    Assert.That(machine!.AllInstructions.Any(i => i.Opcode == MOpcode.Call
+        && i.Operands is [MOperand.LabelRef { Name: "rt_qor" }]), Is.True,
+      "the baseline path must reach the direct emitter's QUAD runtime routine, not expand inline");
+    Assert.That(machine.AllInstructions.Any(i => i.Opcode == MOpcode.Or), Is.False,
+      "and must not also compute it itself");
   }
 
   [TestCase(IrCastOp.SExt, true)]

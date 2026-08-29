@@ -257,6 +257,20 @@ public sealed class BackendRoutingGateTests {
         R! = (k% - 4) / 3
       END FUNCTION
       """, "main"),
+    // The DOUBLE twin. Its AND against the sign mask is a 64-bit bitwise operation, which on a target
+    // without an optimized 386 now reaches the direct emitter's own rt_qand/rt_qor/rt_qxor rather than
+    // declining the whole module - the routine is the same one either path calls, so there is still
+    // one shape for the operation in the image.
+    new("module body: ABS of a DOUBLE", """
+      DECLARE FUNCTION D#(BYVAL k%)
+      DIM v AS DOUBLE
+      v = D#(0)
+      PRINT ABS(v)
+      END
+      FUNCTION D#(BYVAL k%) NOINLINE
+        D# = (k% - 4) / 3
+      END FUNCTION
+      """, "main"),
   ];
 
   /// <summary>
@@ -287,21 +301,6 @@ public sealed class BackendRoutingGateTests {
         N% = k% * 3 - 2
       END FUNCTION
       """, "main", "selection: 64-bit binary: Add (needs the direct runtime path)"),
-    // The DOUBLE twin of the SINGLE ABS that now routes. Its BitCast selects; what stops it is the
-    // AND against the sign mask, and that lands in the SAME place QUAD arithmetic does. 64-bit
-    // AND/OR/XOR select only under $CPU 386 with the optimizer on (SelectQwordBinary applies them as
-    // two dword halves); everything else in the family wants the runtime helpers the direct emitter
-    // calls. So this row and the one above are one item, not two.
-    new("module body: ABS of a DOUBLE", """
-      DECLARE FUNCTION D#(BYVAL k%)
-      DIM v AS DOUBLE
-      v = D#(0)
-      PRINT ABS(v)
-      END
-      FUNCTION D#(BYVAL k%) NOINLINE
-        D# = (k% - 4) / 3
-      END FUNCTION
-      """, "main", "selection: 64-bit binary: And (needs the direct runtime path)"),
     new("QUAD parameter and result", """
       FUNCTION F(BYVAL a&&) AS QUAD
         F = a&& + 1
