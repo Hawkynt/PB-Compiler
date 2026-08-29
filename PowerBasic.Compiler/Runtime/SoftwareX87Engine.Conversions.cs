@@ -382,8 +382,10 @@ public sealed partial class SoftwareX87Engine {
     this.RaiseException(StatusInvalid);
     this._asm.MarkLabel(quietStoreIeee);
     this.ZeroIeeeScratch(bits);
-    if (bits == 32) this._asm.Mov(this.Scratch(ScratchC, OperandSize.Word), 1);
-    else this._asm.Mov(this.Scratch(ScratchC, OperandSize.Word), 1);
+    if (bits == 32)
+      this._asm.Or(this.Scratch(ScratchD + 2, OperandSize.Word), 0x0040); // qNaN bit, keeps exponent payload nonzero
+    else
+      this._asm.Or(this.Scratch(ScratchD + 6, OperandSize.Word), 0x0008); // qNaN bit
     this.SetIeeeExponent(bits, bits == 32 ? 255 : 2047); this.ApplyIeeeSign(source, bits); this._asm.Jmp(done);
 
     this._asm.MarkLabel(finite);
