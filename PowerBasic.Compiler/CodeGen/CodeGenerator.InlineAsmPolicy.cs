@@ -30,16 +30,21 @@ public sealed partial class CodeGenerator {
     }
 
     if (mode == IsaFallbackMode.Native) {
+      if (this.TryEmitNativeExtendedSimdInstruction(instruction, resolver, out error))
+        return true;
       this._textAssembler ??= new(this._asm);
       if (!this._textAssembler.TryParse(line, resolver, out error))
         error = $"native emission failed: {error}";
       return true;
     }
 
-    // Native capability always wins for AUTO. EMULATE intentionally does not take this shortcut so
-    // the software implementation can be regression-tested on modern development machines.
-    if (mode == IsaFallbackMode.Auto && nativelySupported)
+    // Native capability always wins for AUTO. Extended SSSE3/SSE4 instructions use the dedicated
+    // 0F38/0F3A encoders because the historical TextAssembler table predates those maps.
+    if (mode == IsaFallbackMode.Auto && nativelySupported) {
+      if (this.TryEmitNativeExtendedSimdInstruction(instruction, resolver, out error))
+        return true;
       return false;
+    }
 
     // A baseline instruction with no feature requirement has no alternate architecture to emulate.
     if (!x87 && required == RuntimeCpuFeatures.None)
