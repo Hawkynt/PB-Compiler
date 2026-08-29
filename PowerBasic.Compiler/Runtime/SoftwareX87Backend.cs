@@ -152,6 +152,7 @@ public sealed class SoftwareX87Backend {
     switch (operands[0]) {
       case TextAssembler.ParsedAsmSt st:
         if (st.Register.Index is < 0 or > 7) { error = "ST index must be 0..7"; return false; }
+        // Stage before push because logical stack shifting changes ST(i).
         this.CopySlotToScratch(st.Register.Index, 0);
         this.EmitPushEmpty();
         this.CopyScratchToSlot(0, 0);
