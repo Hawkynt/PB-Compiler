@@ -17,7 +17,9 @@ public sealed partial class CodeGenerator {
       return false;
 
     var x87 = IsX87InlineMnemonic(instruction.Mnemonic);
-    var required = x87 ? RuntimeCpuFeatures.X87 : RequiredFeature(instruction);
+    var required = x87
+      ? RuntimeCpuFeatures.X87
+      : RequiredFeature(instruction) | RequiredBitManipulationFeature(instruction);
     var policy = this.RuntimeIsaPolicyForRuntime();
     var mode = x87 ? policy.ResolveX87(instruction.Mnemonic) : policy.Resolve(instruction.Mnemonic, required);
     var nativelySupported = required == RuntimeCpuFeatures.None || target.Has(required);
@@ -30,6 +32,8 @@ public sealed partial class CodeGenerator {
     }
 
     if (mode == IsaFallbackMode.Native) {
+      if (this.TryEmitNativeBitManipulationInstruction(instruction, resolver, out error))
+        return true;
       if (this.TryEmitNativeExtendedSimdInstruction(instruction, resolver, out error))
         return true;
       this._textAssembler ??= new(this._asm);
@@ -38,9 +42,11 @@ public sealed partial class CodeGenerator {
       return true;
     }
 
-    // Native capability always wins for AUTO. Extended SSSE3/SSE4 instructions use the dedicated
-    // 0F38/0F3A encoders because the historical TextAssembler table predates those maps.
+    // Native capability always wins for AUTO. Extended scalar/SIMD instructions use dedicated
+    // encoders because the historical TextAssembler table predates those opcode maps.
     if (mode == IsaFallbackMode.Auto && nativelySupported) {
+      if (this.TryEmitNativeBitManipulationInstruction(instruction, resolver, out error))
+        return true;
       if (this.TryEmitNativeExtendedSimdInstruction(instruction, resolver, out error))
         return true;
       return false;
@@ -50,6 +56,8 @@ public sealed partial class CodeGenerator {
     if (!x87 && required == RuntimeCpuFeatures.None)
       return false;
 
+    if (this.TryEmitVirtualBitManipulationInstruction(instruction, resolver, target, out error))
+      return true;
     if (this.TryEmitVirtualGp32ExtendedInstruction(instruction, resolver, target, out error))
       return true;
     if (this.TryEmitVirtualGp32ArithmeticInstruction(instruction, resolver, target, out error))
