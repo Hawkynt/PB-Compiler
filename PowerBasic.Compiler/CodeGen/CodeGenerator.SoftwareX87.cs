@@ -4,20 +4,23 @@ namespace PowerBasic.Compiler.CodeGen;
 
 public sealed partial class CodeGenerator {
   /// <summary>
-  /// Inline-asm entry point for the software x87 backend. The actual instruction emission is shared
-  /// with the assembler-wide <see cref="SoftwareX87Backend"/> so compiler-generated floating point
-  /// and runtime floating point use exactly the same virtual stack and 80-bit arithmetic engine.
+  /// Inline-asm entry point for the canonical software x87 engine. The same instance is installed as
+  /// the assembler-wide sink, so after software mode is selected compiler-generated floating point,
+  /// runtime floating point and user inline x87 all share one stack/control/status image.
   /// </summary>
   private bool TryEmitSoftwareX87Instruction(InlineInstruction instruction, InlineAsmResolver resolver, RuntimeTarget target, out string? error) {
     error = null;
-    var backend = this.EnsureSoftwareX87Backend();
-    if (!backend.TryEmitInline(instruction.Mnemonic, instruction.Operands, resolver, out error))
-      error ??= $"software x87 backend does not implement {instruction.Mnemonic}";
+    var engine = this.EnsureSoftwareX87Engine();
+    if (!engine.TryEmitInline(instruction.Mnemonic, instruction.Operands, resolver, out error))
+      error ??= $"software x87 engine does not implement {instruction.Mnemonic}";
     return true;
   }
 
-  private SoftwareX87Backend? _softwareX87Backend;
+  private SoftwareX87Engine? _softwareX87Engine;
 
-  private SoftwareX87Backend EnsureSoftwareX87Backend() =>
-    this._softwareX87Backend ??= new SoftwareX87Backend(this._asm);
+  private SoftwareX87Engine EnsureSoftwareX87Engine() {
+    var engine = this._softwareX87Engine ??= new SoftwareX87Engine(this._asm);
+    this._asm.X87Sink = engine;
+    return engine;
+  }
 }
