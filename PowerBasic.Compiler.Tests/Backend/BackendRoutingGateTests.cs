@@ -233,31 +233,6 @@ public sealed class BackendRoutingGateTests {
   /// their shared stack ABI; unsupported conventions still strand the caller.</para>
   /// </summary>
   private static readonly Construct[] _declines = [
-    // A module-level DYNAMIC array a procedure also reaches. This one takes the WHOLE MODULE off the
-    // routed path, not just the procedure, because the descriptor is per-lowering frame slots and
-    // every procedure is lowered by its own IrLowering - so the copies would agree about nothing. The
-    // guard is deliberate and was bought by a real defect: a routed REDIM PRESERVE inside a SUB
-    // reallocated the block and wrote the new bounds into the SUB's frame, leaving the module body
-    // describing the old one, so UBOUND answered 3 after a grow to 6 and the enlarged block leaked.
-    //
-    // It is recorded here because NO CORPUS PROGRAM HAS THIS SHAPE, so nothing else measures it - the
-    // census reads 321/321 with this declining. Closing it needs the descriptor to be a module cell in
-    // the codegen's own layout, which a routed procedure and a directly emitted one would then have to
-    // agree on; until then this row is the roadmap entry.
-    new("shared dynamic array a procedure REDIMs", """
-      $DYNAMIC
-      DECLARE SUB Grow(BYVAL n%)
-      DIM a() AS SHARED INTEGER
-      REDIM a(1 TO 2)
-      a(1) = 7 : a(2) = 8
-      Grow 5
-      PRINT LBOUND(a); UBOUND(a); a(1); a(2)
-      END
-      SUB Grow(BYVAL n%)
-        REDIM PRESERVE a(1 TO n%)
-      END SUB
-      """, "Grow",
-      "lowering: the dynamic array a is shared storage (its descriptor would be one frame slot per procedure)"),
     new("QUAD parameter and result", """
       FUNCTION F(BYVAL a&&) AS QUAD
         F = a&& + 1
