@@ -25,10 +25,9 @@ public sealed partial class CodeGenerator {
   /// caveat: reordering must not be observable through a fault's resume point).
   /// </summary>
   private void ScheduleInlineAsmBlocks() {
-    // EmitExecutable calls this before the runtime entry/procedure sections are generated. Configure
-    // the normalized target here even when scheduling itself is disabled, so every runtime partial
-    // sees the same architecture/feature surface.
-    this._rt.Target = this.Optimize ? this.RuntimeTargetForRuntime() : RuntimeTarget.Baseline;
+    // Target legality is a compile contract, not an optimization. Runtime specialization therefore
+    // sees $CPU even at $OPTIMIZE OFF; only scheduling itself remains optimization-gated.
+    this._rt.Target = this.RuntimeTargetForRuntime();
 
     if (!this.Optimize || !this.OptimizeSpeed || model.Dialect != Dialect.Pb36)
       return;
