@@ -935,11 +935,69 @@ public sealed partial class InstructionSelector {
   /// 16-bit register file; EAX is therefore only an instruction-local bridge between those cells.
   /// Its AX overlap is declared as a clobber so allocation cannot keep a live word there.
   /// </summary>
+  /// <summary>
+  /// A QUAD bitwise operation on a target without an optimized 386, done the way the direct emitter
+  /// does it: through the runtime's own <c>rt_q0 = rt_q0 OP rt_q1</c> routines.
+  ///
+  /// <para>
+  /// The inline word-wise form would work - a bitwise operator has no carry between its halves, so
+  /// four steps compute what a 386 does in two - but <c>BackendQuadPrintTests</c> states the policy
+  /// outright: the baseline path stays with the direct emitter's QUAD runtime call. On an 8086 that
+  /// is twelve instructions against one, which is a real cost under <c>$OPTIMIZE SIZE</c>, and both
+  /// paths emit into ONE image, so a routed QUAD `OR` expanding inline while a directly emitted one
+  /// calls <c>rt_qor</c> is two answers to a question that should have one shape.
+  /// </para>
+  /// <para>
+  /// So the routing is what changes, not the code that gets emitted. The operands are copied into the
+  /// runtime's two eight-byte cells a word at a time, the routine is called, and the answer is copied
+  /// out of <c>rt_q0</c>. The routine preserves registers; the clobber list is the ordinary
+  /// caller-saved set regardless, because claiming FEWER clobbers than a call really makes is the one
+  /// direction that miscompiles.
+  /// </para>
+  /// </summary>
+  private bool SelectQwordBitwiseCall(IrBinary bin, string label) {
+    if (!this.TryQwordSlot(bin.Lhs, out var lhs) || !this.TryQwordSlot(bin.Rhs, out var rhs))
+      return false;
+
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+    void Copy(MOperand from, MOperand to) {
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [ax, from],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+          ReadsMemory: true, WritesMemory: false)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [to, ax],
+        new MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: false,
+          ReadsMemory: false, WritesMemory: true)));
+    }
+
+    for (var offset = 0; offset < 8; offset += 2) {
+      Copy(new MOperand.StackSlot(lhs, MRegSize.Word, offset), new MOperand.DataCell("rt_q0", offset, MRegSize.Word));
+      Copy(new MOperand.StackSlot(rhs, MRegSize.Word, offset), new MOperand.DataCell("rt_q1", offset, MRegSize.Word));
+    }
+
+    this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef(label)],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: true, WritesMemory: true),
+      condition: null, clobbers: _callClobbers));
+
+    var result = this._function.StackSlots.Count;
+    this._function.StackSlots.Add(8);
+    this._qslots[bin] = result;
+    for (var offset = 0; offset < 8; offset += 2)
+      Copy(new MOperand.DataCell("rt_q0", offset, MRegSize.Word), new MOperand.StackSlot(result, MRegSize.Word, offset));
+    return true;
+  }
+
   private bool SelectQwordBinary(IrBinary bin, MOpcode opcode) {
     if (opcode is MOpcode.Shl or MOpcode.Shr or MOpcode.Sar)
       return this.SelectQwordShift(bin, opcode);
-    if (this._target is not { Cpu386: true, Optimize: true }
-        || opcode is not (MOpcode.And or MOpcode.Or or MOpcode.Xor))
+    if (opcode is MOpcode.And or MOpcode.Or or MOpcode.Xor
+        && this._target is not { Cpu386: true, Optimize: true })
+      return this.SelectQwordBitwiseCall(bin, opcode switch {
+        MOpcode.And => "rt_qand",
+        MOpcode.Or => "rt_qor",
+        _ => "rt_qxor",
+      });
+    if (opcode is not (MOpcode.And or MOpcode.Or or MOpcode.Xor))
       return this.Decline($"64-bit binary: {bin.Op} (needs the direct runtime path)");
     if (!this.TryQwordSlot(bin.Lhs, out var lhs) || !this.TryQwordSlot(bin.Rhs, out var rhs))
       return false;
