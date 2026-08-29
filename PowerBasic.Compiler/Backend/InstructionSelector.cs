@@ -955,7 +955,37 @@ public sealed partial class InstructionSelector {
   /// direction that miscompiles.
   /// </para>
   /// </summary>
-  private bool SelectQwordBitwiseCall(IrBinary bin, string label) {
+  /// <summary>The QUAD operations the x87 performs directly; divide and remainder are not among them.</summary>
+  private static readonly Dictionary<IrBinaryOp, MOpcode> _qwordX87Ops = new() {
+    [IrBinaryOp.Add] = MOpcode.Faddp,
+    [IrBinaryOp.Sub] = MOpcode.Fsubp,
+    [IrBinaryOp.Mul] = MOpcode.Fmulp,
+  };
+
+  /// <summary>
+  /// <c>FILD lhs; FILD rhs; F&lt;op&gt;P; FISTP result</c> - the same stack form
+  /// <see cref="SelectFloatBinary"/> uses, over integers. Pushing the left operand first leaves it in
+  /// ST(1), which is the order the popping arithmetic computes (<c>FSUBP</c> is ST(1) - ST(0)), so
+  /// subtraction comes out the right way round.
+  /// </summary>
+  private bool SelectQwordX87(IrBinary bin, MOpcode opcode) {
+    if (!this.TryQwordSlot(bin.Lhs, out var lhs) || !this.TryQwordSlot(bin.Rhs, out var rhs))
+      return false;
+
+    this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(lhs, MRegSize.Qword), reads: true);
+    this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(rhs, MRegSize.Qword), reads: true);
+    // The operation touches neither memory nor registers; what it touches is the x87 stack, which the
+    // scheduler orders by opcode (MOpcodes.UsesX87) because no effect descriptor can name it.
+    this._current.Instructions.Add(new MInstr(opcode, [], MInstrEffect.None));
+
+    var result = this._function.StackSlots.Count;
+    this._function.StackSlots.Add(8);
+    this._qslots[bin] = result;
+    this.EmitX87(MOpcode.Fistp, new MOperand.StackSlot(result, MRegSize.Qword), reads: false);
+    return true;
+  }
+
+  private bool SelectQwordRuntimeCall(IrBinary bin, string label) {
     if (!this.TryQwordSlot(bin.Lhs, out var lhs) || !this.TryQwordSlot(bin.Rhs, out var rhs))
       return false;
 
@@ -992,11 +1022,21 @@ public sealed partial class InstructionSelector {
       return this.SelectQwordShift(bin, opcode);
     if (opcode is MOpcode.And or MOpcode.Or or MOpcode.Xor
         && this._target is not { Cpu386: true, Optimize: true })
-      return this.SelectQwordBitwiseCall(bin, opcode switch {
+      return this.SelectQwordRuntimeCall(bin, opcode switch {
         MOpcode.And => "rt_qand",
         MOpcode.Or => "rt_qor",
         _ => "rt_qxor",
       });
+    // Add, Sub and Mul go on the x87, which is where the direct emitter does them too: an 80-bit
+    // mantissa carries a 64-bit integer exactly, so FILD/F<op>P/FISTP is the arithmetic and not an
+    // approximation of it. (This is the same FISTP whose ROUNDING made FIX wrong - it cannot round
+    // here, because every value it stores is an integer the register already holds exactly.)
+    if (_qwordX87Ops.TryGetValue(bin.Op, out var x87))
+      return this.SelectQwordX87(bin, x87);
+    // Divide and remainder are not x87 operations at all - BASIC's \ truncates toward zero over 64
+    // bits - so they take the runtime's own routines, the same pair the direct emitter calls.
+    if (bin.Op is IrBinaryOp.SDiv or IrBinaryOp.SRem)
+      return this.SelectQwordRuntimeCall(bin, bin.Op == IrBinaryOp.SDiv ? "rt_qdiv" : "rt_qmod");
     if (opcode is not (MOpcode.And or MOpcode.Or or MOpcode.Xor))
       return this.Decline($"64-bit binary: {bin.Op} (needs the direct runtime path)");
     if (!this.TryQwordSlot(bin.Lhs, out var lhs) || !this.TryQwordSlot(bin.Rhs, out var rhs))
@@ -1472,6 +1512,12 @@ public sealed partial class InstructionSelector {
   private bool SelectDivide(IrBinary bin, MBlock block) {
     if (IsWide(bin.Type))
       return this.SelectWideDivide(bin);
+    // A QUAD divide is not an x87 operation - BASIC's \ truncates toward zero over 64 bits - so it
+    // goes to the runtime's own rt_qdiv/rt_qmod, which is where the direct emitter sends it too.
+    // This is the divide path rather than SelectQwordBinary, so the 64-bit case has to be named here
+    // as well or it never reaches it.
+    if (IsQuad(bin.Type))
+      return this.SelectQwordRuntimeCall(bin, bin.Op == IrBinaryOp.SDiv ? "rt_qdiv" : "rt_qmod");
     if (bin.Type.Bits != 16)
       return this.Decline($"binary: {bin.Op} on {bin.Type} (16-bit only)");
     // No constant-divisor restriction any more: the Error 11 guard is emitted by the LOWERING, as a

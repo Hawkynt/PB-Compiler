@@ -271,6 +271,23 @@ public sealed class BackendRoutingGateTests {
         D# = (k% - 4) / 3
       END FUNCTION
       """, "main"),
+    // QUAD add, subtract, multiply, divide and remainder. The first three go on the x87, which is
+    // where the direct emitter does them too - an 80-bit mantissa carries a 64-bit integer exactly -
+    // and the last two take the runtime's rt_qdiv/rt_qmod, because BASIC's \ truncates toward zero
+    // and that is not an x87 operation. The negative operand is the assertion for the pair: it pins
+    // the truncation direction and the remainder taking the DIVIDEND's sign.
+    new("module body: QUAD arithmetic on a runtime value", """
+      DECLARE FUNCTION N%(BYVAL k%)
+      DIM q AS QUAD, r AS QUAD
+      q = 1234567890
+      q = q * 3 + N%(2)
+      r = 0 - q
+      PRINT q; r; q \ 5; q MOD 7; r \ 5; r MOD 7
+      END
+      FUNCTION N%(BYVAL k%) NOINLINE
+        N% = k% * 3 - 2
+      END FUNCTION
+      """, "main"),
   ];
 
   /// <summary>
@@ -284,23 +301,6 @@ public sealed class BackendRoutingGateTests {
   /// their shared stack ABI; unsupported conventions still strand the caller.</para>
   /// </summary>
   private static readonly Construct[] _declines = [
-    // The two the full-wave sweep turned up, both reachable ONLY with the optimizer off - with it on,
-    // the constant folds or instcombine rewrites the shape away. Neither is a correctness bug: the
-    // module declines and the direct emitter compiles it, and the sweep found the two builds identical.
-    // They are coverage, and after CodeGen/ is deleted a decline is a compile failure, so they are the
-    // next increment. 64-bit ADD is the larger of the two - QUAD arithmetic wants the runtime helper
-    // pair the direct emitter already calls.
-    new("module body: QUAD arithmetic on a runtime value", """
-      DECLARE FUNCTION N%(BYVAL k%)
-      DIM q AS QUAD
-      q = 1234567890
-      q = q * 3 + N%(2)
-      PRINT q
-      END
-      FUNCTION N%(BYVAL k%) NOINLINE
-        N% = k% * 3 - 2
-      END FUNCTION
-      """, "main", "selection: 64-bit binary: Add (needs the direct runtime path)"),
     new("QUAD parameter and result", """
       FUNCTION F(BYVAL a&&) AS QUAD
         F = a&& + 1
