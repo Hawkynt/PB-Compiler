@@ -31,14 +31,14 @@ public sealed class RuntimeTargetFeatureTests {
   }
 
   [Test]
-  public void Sse_DoesNotInventSse2() {
+  public void Sse_DoesNotInventSse2_ButCanUseBitwiseXmmBulkMoves() {
     var target = RuntimeTarget.For("80586", ["SSE"]);
 
     Assert.Multiple(() => {
       Assert.That(target.HasSse, Is.True);
       Assert.That(target.HasSse2, Is.False);
       Assert.That(target.VectorRegisters, Does.Contain(Reg.XMM7));
-      Assert.That(target.MaxRuntimeBulkVectorWidthBytes, Is.Zero);
+      Assert.That(target.MaxRuntimeBulkVectorWidthBytes, Is.EqualTo(16));
     });
   }
 
@@ -80,6 +80,14 @@ public sealed class RuntimeTargetFeatureTests {
       Assert.That(target.VectorRegisters, Does.Contain(Reg.ZMM7));
       Assert.That(target.DwordGeneralPurposeRegisters, Does.Contain(Reg.EDI));
     });
+  }
+
+  [Test]
+  public void SegmentSafeSse1Store_EmitsEsBeforeOpcodeEscape() {
+    var asm = new Assembler();
+    asm.MovupsTargetStore(Mem.At(Reg.DI).Es(), Reg.XMM0);
+
+    Assert.That(asm.ToArray(), Is.EqualTo(new byte[] { 0x26, 0x0F, 0x11, 0x05 }));
   }
 
   [Test]
