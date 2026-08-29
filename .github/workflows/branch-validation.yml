@@ -31,16 +31,18 @@ jobs:
 
           engine = Path('PowerBasic.Compiler/Runtime/SoftwareX87Engine.cs')
           text = engine.read_text()
-          old = '''      (0xD8, >= 0xC0 and <= 0xF8) => this.EmitArithmeticStack(opcode, modRmBase, register.Index),
-      (0xDC, >= 0xC0 and <= 0xF8) => this.EmitArithmeticStack(opcode, modRmBase, register.Index),
-      (0xDE, 0xC0 or 0xC8 or 0xE0 or 0xE8 or 0xF0 or 0xF8) => this.EmitArithmeticPop(modRmBase, register.Index),
-      (0xD8, 0xD0) => this.EmitCompareStack(register.Index, popCount: 0, unordered: false),
-      (0xD8, 0xD8) => this.EmitCompareStack(register.Index, popCount: 1, unordered: false),'''
-          new = '''      (0xD8, 0xD0) => this.EmitCompareStack(register.Index, popCount: 0, unordered: false),
-      (0xD8, 0xD8) => this.EmitCompareStack(register.Index, popCount: 1, unordered: false),
-      (0xD8, >= 0xC0 and <= 0xF8) => this.EmitArithmeticStack(opcode, modRmBase, register.Index),
-      (0xDC, >= 0xC0 and <= 0xF8) => this.EmitArithmeticStack(opcode, modRmBase, register.Index),
-      (0xDE, 0xC0 or 0xC8 or 0xE0 or 0xE8 or 0xF0 or 0xF8) => this.EmitArithmeticPop(modRmBase, register.Index),'''
+          old = '\n'.join([
+              '      (0xD8, >= 0xC0 and <= 0xF8) => this.EmitArithmeticStack(opcode, modRmBase, register.Index),',
+              '      (0xDC, >= 0xC0 and <= 0xF8) => this.EmitArithmeticStack(opcode, modRmBase, register.Index),',
+              '      (0xDE, 0xC0 or 0xC8 or 0xE0 or 0xE8 or 0xF0 or 0xF8) => this.EmitArithmeticPop(modRmBase, register.Index),',
+              '      (0xD8, 0xD0) => this.EmitCompareStack(register.Index, popCount: 0, unordered: false),',
+              '      (0xD8, 0xD8) => this.EmitCompareStack(register.Index, popCount: 1, unordered: false),'])
+          new = '\n'.join([
+              '      (0xD8, 0xD0) => this.EmitCompareStack(register.Index, popCount: 0, unordered: false),',
+              '      (0xD8, 0xD8) => this.EmitCompareStack(register.Index, popCount: 1, unordered: false),',
+              '      (0xD8, >= 0xC0 and <= 0xF8) => this.EmitArithmeticStack(opcode, modRmBase, register.Index),',
+              '      (0xDC, >= 0xC0 and <= 0xF8) => this.EmitArithmeticStack(opcode, modRmBase, register.Index),',
+              '      (0xDE, 0xC0 or 0xC8 or 0xE0 or 0xE8 or 0xF0 or 0xF8) => this.EmitArithmeticPop(modRmBase, register.Index),'])
           if old not in text:
               raise SystemExit('expected SoftwareX87Engine switch block not found')
           engine.write_text(text.replace(old, new))
