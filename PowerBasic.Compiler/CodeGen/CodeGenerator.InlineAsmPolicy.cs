@@ -62,8 +62,8 @@ public sealed partial class CodeGenerator {
     if (!x87 && required == RuntimeCpuFeatures.None)
       return false;
 
-    // GP32 needs to run before vector virtualization: MOVD bridges virtual EAX..EDI into MMX/XMM,
-    // while ordinary dword integer instructions operate on the same shadow high words.
+    if (this.TryEmitVirtualGp32ExtendedInstruction(instruction, resolver, target, out error))
+      return true;
     if (this.TryEmitVirtualGp32Instruction(instruction, resolver, target, out error))
       return true;
     if (this.TryEmitVirtualInstruction(instruction, resolver, target, out error))
