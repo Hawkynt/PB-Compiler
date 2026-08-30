@@ -54,6 +54,12 @@ public sealed class RuntimeTargetPolicyTests {
   }
 
   [Test]
+  public void InlinePolicy_SeparatorSpellingOnSupportedSse41Target_DoesNotRejectNativeInstruction() {
+    var generator = Compile("$CPU SSE4.1\n$ISA SSE4.1 = ERROR\n! PMINUD XMM0, XMM0\nEND\n");
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+  }
+
+  [Test]
   public void InlinePolicy_ErrorOnUnsupportedSse2Target_RejectsInsteadOfEmulating() {
     var generator = Compile("$CPU 8086\n$ISA SSE2 ERROR\n! PXOR XMM0, XMM0\nEND\n");
     Assert.That(generator.Errors.Any(e => e.Message.Contains("forbids emulation", StringComparison.OrdinalIgnoreCase)), Is.True,
