@@ -62,6 +62,20 @@ public sealed class RuntimeTargetPolicyTests {
   }
 
   [Test]
+  public void InlinePolicy_OptimizeSpeedErasesLegacySimdIdentityAfterValidation() {
+    var plain = Compile("$CPU SSE2\n! MOVDQA XMM0, XMM0\nEND\n", out var plainExe);
+    var speed = Compile("$CPU SSE2\n$OPTIMIZE SPEED\n! MOVDQA XMM0, XMM0\nEND\n", out var speedExe);
+
+    Assert.Multiple(() => {
+      Assert.That(plain.Errors, Is.Empty, string.Join("; ", plain.Errors));
+      Assert.That(speed.Errors, Is.Empty, string.Join("; ", speed.Errors));
+      Assert.That(Contains(plainExe, [0x66, 0x0F, 0x6F, 0xC0]), Is.True, "baseline build should contain MOVDQA XMM0,XMM0");
+      Assert.That(Contains(speedExe, [0x66, 0x0F, 0x6F, 0xC0]), Is.False, "$OPTIMIZE SPEED left a redundant SIMD self-move in the executable");
+      Assert.That(speedExe.Length, Is.LessThan(plainExe.Length), "zero-overhead identity elimination did not reduce emitted code");
+    });
+  }
+
+  [Test]
   public void InlinePolicy_EmulateSse2On8086_DoesNotEmitNativePxorEncoding() {
     var generator = Compile("$CPU 8086\n$ISA SSE2 EMULATE\n! PXOR XMM0, XMM0\nEND\n", out var exe);
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
