@@ -76,32 +76,32 @@ public sealed class InlineAsmPackedStringSemanticTests {
     Assert.That(output, Does.Not.Contain("BAD"));
   }
 
-  [TestCase(-2, 2)]
-  [TestCase(2, 2)]
-  [TestCase(-1000, 16)]
-  [TestCase(1000, 16)]
-  [TestCase(int.MinValue, 16)]
+  [TestCase(-1, 16)]
+  [TestCase(1, 16)]
+  [TestCase(-2, 0)]
+  [TestCase(2, 0)]
+  [TestCase(-1000, 0)]
+  [TestCase(1000, 0)]
   public void Pcmpestri_GivenExplicitLength_ThenUsesSaturatedAbsoluteValue(int length, int expectedIndex) {
     var output = Run($$"""
       DIM result&
       ! MOV EAX, 16961
       ! MOVD XMM1, EAX
-      ! MOV EAX, 65
+      ! MOV EAX, 66
       ! MOVD XMM2, EAX
       ! MOV EAX, {{length}}
       ! MOV EDX, 1
       ! PCMPESTRI XMM1, XMM2, 0
       ! MOV result&, ECX
-      IF result& = {{expectedIndex == 2 ? 0 : 0}} THEN PRINT "OK" ELSE PRINT "BAD"
+      IF result& = {{expectedIndex}} THEN PRINT "OK" ELSE PRINT "BAD"
       """);
 
-    // For all these lengths the first element remains valid, so equal-any finds 'A' at B[0].
     Assert.That(output, Does.Contain("OK"));
     Assert.That(output, Does.Not.Contain("BAD"));
   }
 
   [Test]
-  public void Pcmpestri_GivenNegativeLengthWhoseMagnitudeIsZeroImpossible_ThenZeroLengthProducesNoMatch() {
+  public void Pcmpestri_GivenExplicitZeroLength_ThenProducesNoMatch() {
     var output = Run("""
       DIM result&
       ! MOV EAX, 65
@@ -229,6 +229,24 @@ public sealed class InlineAsmPackedStringSemanticTests {
       ! PCMPISTRI XMM1, XMM2, 8
       ! MOV result&, ECX
       IF result& = 0 THEN PRINT "OK" ELSE PRINT "BAD"
+      """);
+
+    Assert.That(output, Does.Contain("OK"));
+    Assert.That(output, Does.Not.Contain("BAD"));
+  }
+
+  [Test]
+  public void Pcmpistrm_GivenImplicitEqualAnyBytes_ThenReturnsBitMaskInXmm0() {
+    var output = Run("""
+      DIM result&
+      ! MOV EAX, 16961
+      ! MOVD XMM1, EAX
+      ! MOV EAX, 4276803
+      ! MOVD XMM2, EAX
+      ! PCMPISTRM XMM1, XMM2, 0
+      ! MOVD EAX, XMM0
+      ! MOV result&, EAX
+      IF result& = 6 THEN PRINT "OK" ELSE PRINT "BAD"
       """);
 
     Assert.That(output, Does.Contain("OK"));
