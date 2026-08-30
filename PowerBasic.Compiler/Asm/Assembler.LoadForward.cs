@@ -3,10 +3,10 @@ namespace PowerBasic.Compiler.Asm;
 public sealed partial class Assembler {
 
   /// <summary>
-  /// When set, a load of a frame cell whose current contents are already known - still in the
-  /// register that stored them, or a constant just written there - is replaced by the cheaper
-  /// form or removed outright. Off by default; the optimizer turns it on for the optimized
-  /// standalone image.
+  /// When set, loads of cells whose current contents are already known are replaced by cheaper forms
+  /// or removed outright. The same recorded stream also removes a redundant zero test when an earlier
+  /// arithmetic instruction already left ZF/SF/PF describing the unchanged result. Off by default;
+  /// the optimizer turns it on for the optimized standalone image.
   /// </summary>
   public bool EnableLoadForwarding { get; set; }
 
@@ -15,10 +15,12 @@ public sealed partial class Assembler {
   /// <summary>
   /// Redundant-load elimination over the recorded stream. Three shapes, all of them "the value
   /// is already available, so do not go to memory for it" - the last thing standing between the
-  /// emitted code and a hand-written one wherever a value passes through a frame slot (a CSE
-  /// define feeding its use, a constant feeding a register, a spill feeding its reload):
+  /// emitted code and a hand-written one wherever a value passes through a frame slot or direct
+  /// variable cell (a CSE define feeding its use, a constant feeding a register, a spill feeding
+  /// its reload):
   /// <list type="bullet">
   ///   <item><c>MOV [BP-8],AX … MOV AX,[BP-8]</c> - the reload is dead, and disappears.</item>
+  ///   <item><c>MOV [variable],AX … MOV AX,[variable]</c> - the direct-variable reload disappears too.</item>
   ///   <item><c>MOV [BP-8],AX … MOV DI,[BP-8]</c> - becomes <c>MOV DI,AX</c>: a register move
   ///     instead of a memory read, and a byte shorter.</item>
   ///   <item><c>MOV WORD PTR [BP-8],7 … MOV DI,[BP-8]</c> - becomes <c>MOV DI,7</c>.</item>
@@ -26,12 +28,12 @@ public sealed partial class Assembler {
   ///
   /// Deliberately narrow, because every mistake here is a miscompile:
   /// <list type="bullet">
-  ///   <item>Only BP-relative cells. They are SS-relative, so unlike a <c>[label]</c> cell no
-  ///     intervening segment load can re-point them.</item>
+  ///   <item>Only BP-relative cells and unprefixed direct-label cells. A segment override changes
+  ///     which direct cell an instruction addresses, so those forms never qualify.</item>
   ///   <item>The store and the load must be linked by an unbroken chain of RECORDED, byte-adjacent
-  ///     instructions: a gap means an unrecorded one (a call, inline asm, a string op) sat between
-  ///     them, and that ends the scan. Conditional jumps ARE recorded - they read the flags and
-  ///     clobber nothing - so the scan sees through them.</item>
+  ///     instructions: a gap means an unrecorded one (a call, inline asm, segment-register load,
+  ///     string op) sat between them, and that ends the scan. Conditional jumps ARE recorded - they
+  ///     read the flags and clobber nothing - so the scan sees through them.</item>
   ///   <item>No bound label in between: something could branch in and reach the load without ever
   ///     having run the store. With that ruled out, the only way to reach the load is to fall
   ///     through from the store, which is what makes looking across a branch sound.</item>
@@ -60,7 +62,7 @@ public sealed partial class Assembler {
     var updates = new List<(int Index, int Length, int? Source)>();
 
     for (var i = 0; i < recs.Count; ++i) {
-      var source = this.FrameCellRegister(recs[i], store: true);
+      var source = this.ForwardableCellRegister(recs[i], store: true);
       var constant = source is null ? this.FrameCellImmediate(recs[i], patched) : null;
       if (source is null && constant is null)
         continue;
@@ -72,7 +74,7 @@ public sealed partial class Assembler {
           break;                                            // a branch could land here
         var later = recs[j];
 
-        if (this.FrameCellRegister(later, store: false) is { } loaded
+        if (this.ForwardableCellRegister(later, store: false) is { } loaded
             && later.MemDisp == recs[i].MemDisp && Equals(later.MemBase, recs[i].MemBase)
             && rewritten.Add(later.Start)) {
           // the load's own bytes are replaced in place and any surplus is cut from its tail
@@ -100,33 +102,180 @@ public sealed partial class Assembler {
       }
     }
 
-    if (patches.Count == 0 && cuts.Count == 0)
-      return;
-    foreach (var (index, length, held) in updates)          // records describe the new instructions
-      recs[index] = recs[index] with {
-        Length = length,
-        Reads = held is { } from ? (ushort)(1 << from) : (ushort)0,
-        MemRead = false, MemWrite = false, MemBase = null, MemDisp = 0,
-      };
-    foreach (var (position, bytes) in patches)              // patch at original offsets first
-      for (var k = 0; k < bytes.Length; ++k)
-        this._buffer[position + k] = bytes[k];
-    cuts.Sort((left, right) => right.Start.CompareTo(left.Start));   // then cut, high offsets first
-    foreach (var (start, length) in cuts)
-      if (length > 0)
-        this.RemoveBytes(start, length);
+    if (patches.Count > 0 || cuts.Count > 0) {
+      foreach (var (index, length, held) in updates)        // records describe the new instructions
+        recs[index] = recs[index] with {
+          Length = length,
+          Reads = held is { } from ? (ushort)(1 << from) : (ushort)0,
+          MemRead = false, MemWrite = false, MemBase = null, MemDisp = 0,
+        };
+      foreach (var (position, bytes) in patches)            // patch at original offsets first
+        for (var k = 0; k < bytes.Length; ++k)
+          this._buffer[position + k] = bytes[k];
+      cuts.Sort((left, right) => right.Start.CompareTo(left.Start));   // then cut, high offsets first
+      foreach (var (start, length) in cuts)
+        if (length > 0)
+          this.RemoveBytes(start, length);
+    }
+
+    this.RunFlagReuse();
   }
 
   /// <summary>
-  /// The register slot of a plain word <c>MOV</c> between a register and a BP-relative frame
-  /// cell - the source of a store, the destination of a load - or null for anything else. The
-  /// opcode is read from the buffer, so a prefixed form (segment override, 66h operand size)
-  /// never matches.
+  /// O0081: remove a zero test when the last flag-writing instruction already left ZF/SF/PF
+  /// describing the same, still-unchanged register value. Only branches that consume exactly one of
+  /// those result flags qualify; CF/OF-based and signed-order conditions deliberately keep the test.
+  /// The scan has the same barriers as load forwarding: an unrecorded instruction or an intervening
+  /// label ends the proof.
   /// </summary>
-  private int? FrameCellRegister(SchedInstr instr, bool store) {
+  private void RunFlagReuse() {
+    if (this._schedInstrs is not { Count: > 1 } recs)
+      return;
+
+    recs.Sort((left, right) => left.Start.CompareTo(right.Start));
+    var labels = this.BoundLabelPositions();
+    var removals = new List<(int Start, int Length)>();
+
+    for (var i = 1; i + 1 < recs.Count; ++i) {
+      var test = recs[i];
+      if (this.ZeroTestRegister(test) is not { } tested)
+        continue;
+      if (labels.Contains(test.Start))
+        continue;                                           // another path may enter at the test
+
+      var branch = recs[i + 1];
+      if (branch.Start != test.Start + test.Length || labels.Contains(branch.Start)
+          || !this.IsZeroSignParityBranch(branch))
+        continue;
+
+      var bit = (ushort)(1 << tested);
+      var cursor = test.Start;
+      var reusable = false;
+      for (var j = i - 1; j >= 0; --j) {
+        var prior = recs[j];
+        if (prior.Start + prior.Length != cursor || labels.Contains(cursor))
+          break;                                            // gap/entry point destroys dominance
+        if ((prior.Writes & bit) != 0 && !prior.WritesFlags)
+          break;                                            // value changed without matching flags
+        if (prior.WritesFlags) {
+          reusable = this.SetsValueFlags(prior, tested);
+          break;                                            // the closest flag writer owns EFLAGS
+        }
+        cursor = prior.Start;
+      }
+
+      if (reusable)
+        removals.Add((test.Start, test.Length));
+    }
+
+    removals.Sort((left, right) => right.Start.CompareTo(left.Start));
+    foreach (var (start, length) in removals)
+      this.RemoveBytes(start, length);
+  }
+
+  /// <summary>
+  /// The register slot tested for zero by a word <c>CMP r,0</c>, <c>TEST r,r</c> or <c>OR r,r</c>;
+  /// null for every other instruction. Byte/dword forms stay conservative for now.
+  /// </summary>
+  private int? ZeroTestRegister(SchedInstr instr) {
+    if (instr.MemRead || instr.MemWrite || instr.Length < 2 || instr.Start + instr.Length > this._buffer.Count)
+      return null;
+    var op = this._buffer[instr.Start];
+
+    if (op is 0x81 or 0x83) {
+      var modrm = this._buffer[instr.Start + 1];
+      if ((modrm & 0xC0) != 0xC0 || ((modrm >> 3) & 7) != 7)
+        return null;
+      if (op == 0x83)
+        return instr.Length == 3 && this._buffer[instr.Start + 2] == 0 ? modrm & 7 : null;
+      return instr.Length == 4 && this._buffer[instr.Start + 2] == 0 && this._buffer[instr.Start + 3] == 0
+        ? modrm & 7 : null;
+    }
+
+    if (op == 0x3D)
+      return instr.Length == 3 && this._buffer[instr.Start + 1] == 0 && this._buffer[instr.Start + 2] == 0 ? 0 : null;
+
+    if (op is 0x85 or 0x09) {
+      var modrm = this._buffer[instr.Start + 1];
+      return (modrm & 0xC0) == 0xC0 && ((modrm >> 3) & 7) == (modrm & 7) ? modrm & 7 : null;
+    }
+
+    return null;
+  }
+
+  /// <summary>True when the branch consumes only ZF, SF or PF, all defined directly from a result.</summary>
+  private bool IsZeroSignParityBranch(SchedInstr instr) {
+    if (!instr.ReadsFlags || instr.WritesFlags || instr.Length < 2 || instr.Start + instr.Length > this._buffer.Count)
+      return false;
+    var op = this._buffer[instr.Start];
+    int condition;
+    if (op is >= 0x70 and <= 0x7F)
+      condition = op & 0x0F;                                // includes the inverted 8086 long-Jcc prefix
+    else if (op == 0x0F && instr.Length >= 4 && this._buffer[instr.Start + 1] is >= 0x80 and <= 0x8F)
+      condition = this._buffer[instr.Start + 1] & 0x0F;
+    else
+      return false;
+    return condition is 0x4 or 0x5 or 0x8 or 0x9 or 0xA or 0xB;
+  }
+
+  /// <summary>
+  /// True when <paramref name="instr"/> is a word arithmetic instruction whose ZF/SF/PF describe
+  /// the final value in <paramref name="register"/>. The allow-list excludes operations such as
+  /// IMUL whose recorded "writes flags" means only CF/OF are defined.
+  /// </summary>
+  private bool SetsValueFlags(SchedInstr instr, int register) {
+    if (!instr.WritesFlags || (instr.Writes & (ushort)(1 << register)) == 0
+        || instr.Length < 1 || instr.Start + instr.Length > this._buffer.Count)
+      return false;
+
+    var op = this._buffer[instr.Start];
+    if (op is >= 0x40 and <= 0x4F)
+      return (op & 7) == register;                           // INC/DEC r16
+
+    if (op is 0x01 or 0x03 or 0x09 or 0x0B or 0x11 or 0x13 or 0x19 or 0x1B
+        or 0x21 or 0x23 or 0x29 or 0x2B or 0x31 or 0x33) {
+      var modrm = this._buffer[instr.Start + 1];
+      var destination = (op & 2) != 0 ? (modrm >> 3) & 7 : modrm & 7;
+      return destination == register;
+    }
+
+    if (op is 0x05 or 0x0D or 0x15 or 0x1D or 0x25 or 0x2D or 0x35)
+      return register == 0;                                 // accumulator-immediate ALU
+
+    if (op is 0x81 or 0x83) {
+      var modrm = this._buffer[instr.Start + 1];
+      return (modrm & 0xC0) == 0xC0 && ((modrm >> 3) & 7) != 7 && (modrm & 7) == register;
+    }
+
+    if (op == 0xF7 && instr.Length >= 2) {
+      var modrm = this._buffer[instr.Start + 1];
+      return (modrm & 0xF8) == 0xD8 && (modrm & 7) == register;  // NEG r16
+    }
+
+    if (op is 0xD1 or 0xC1 && instr.Length >= 2) {
+      var modrm = this._buffer[instr.Start + 1];
+      var operation = (modrm >> 3) & 7;
+      return (modrm & 0xC0) == 0xC0 && operation is 4 or 5 or 7 && (modrm & 7) == register;
+    }
+
+    return false;
+  }
+
+  /// <summary>
+  /// The register slot of a plain word <c>MOV</c> between a register and a forwardable cell - the
+  /// source of a store, the destination of a load - or null for anything else. BP-relative cells use
+  /// the ordinary 89/8B encodings; direct AX stores additionally use the A3 accumulator short form.
+  /// Prefixed forms never match.
+  /// </summary>
+  private int? ForwardableCellRegister(SchedInstr instr, bool store) {
     if (store ? !instr.MemWrite || instr.MemRead : !instr.MemRead || instr.MemWrite)
       return null;
-    if (!IsFrameCell(instr) || !this.HasOpcode(instr, store ? (byte)0x89 : (byte)0x8B))
+    if (!this.IsForwardableCell(instr))
+      return null;
+
+    if (store && instr.MemBase is Label && this.HasOpcode(instr, 0xA3))
+      return 0;                                             // MOV [label],AX accumulator short form
+    if (!this.HasOpcode(instr, store ? (byte)0x89 : (byte)0x8B))
       return null;
     var modrm = this._buffer[instr.Start + 1];
     return (modrm & 0xC0) == 0xC0 ? null : (modrm >> 3) & 7;   // mod=11 is register-to-register
@@ -135,10 +284,8 @@ public sealed partial class Assembler {
   /// <summary>
   /// The 16-bit immediate of <c>MOV WORD PTR [BP+d],imm16</c>, or null for anything else - and null
   /// as well when a pending fixup covers those two bytes, because then they are not the immediate
-  /// yet. A <c>MOV WORD PTR [BP-88],OFFSET pool+21</c> is emitted with a zero placeholder and the
-  /// address written in when the label resolves, so reading the buffer here answers 0 for a cell
-  /// that will hold an address, and forwarding that 0 into the reload is a miscompile. It cost
-  /// DATAREAD.BAS a garbage string at -O1 and nothing at all at -O0, the pass being off there.
+  /// yet. Immediate forwarding deliberately remains frame-only: a direct-cell store also carries an
+  /// address fixup, and separating address fixups from value fixups is unnecessary for O0083.
   /// </summary>
   private ushort? FrameCellImmediate(SchedInstr instr, HashSet<int> patched) {
     if (!instr.MemWrite || instr.MemRead || !IsFrameCell(instr) || !this.HasOpcode(instr, 0xC7))
@@ -152,11 +299,17 @@ public sealed partial class Assembler {
                   | (this._buffer[instr.Start + instr.Length - 1] << 8));
   }
 
-  /// <summary>Only the frame: BP-relative cells are SS-relative, so no segment load can re-point them.</summary>
+  private bool IsForwardableCell(SchedInstr instr) =>
+    IsFrameCell(instr) || instr.MemBase is Label && !this.HasSegmentOverride(instr);
+
+  /// <summary>Only the frame is inherently SS-relative; direct labels qualify only without a segment override.</summary>
   private static bool IsFrameCell(SchedInstr instr) => "BP".Equals(instr.MemBase);
 
+  private bool HasSegmentOverride(SchedInstr instr) => instr.Length > 0 && this._buffer[instr.Start] is
+    0x26 or 0x2E or 0x36 or 0x3E or 0x64 or 0x65;
+
   private bool HasOpcode(SchedInstr instr, byte opcode) =>
-    instr.Length is >= 3 and <= 6
+    instr.Length is >= 2 and <= 6
     && instr.Start + instr.Length <= this._buffer.Count
     && this._buffer[instr.Start] == opcode;
 }
