@@ -83,16 +83,18 @@ public sealed class FlagReuseTests {
   }
 
   [Test]
-  public void Reuse_GivenEntryLabelAtTest_WhenAssembled_ThenCompareKept() {
+  public void Reuse_GivenReachableEntryLabelAtTest_WhenAssembled_ThenCompareKept() {
     var asm = new Assembler { EnableLoadForwarding = true };
     var test = asm.DefineLabel();
     var done = asm.DefineLabel();
     asm.Sub(Reg.AX, (Imm)1);
-    asm.MarkLabel(test);                          // another path could enter without running SUB
+    asm.MarkLabel(test);                          // another path can enter without running SUB
     asm.Cmp(Reg.AX, (Imm)0);
     asm.Jz(done);
     asm.Mov(Reg.BX, (Imm)7);
     asm.MarkLabel(done);
+    asm.Ret();
+    asm.Jmp(test);                                // make test a real control-flow target
 
     var image = asm.ToArray();
     Assert.That(IndexOf(image, [0x83, 0xF8, 0x00]), Is.GreaterThanOrEqualTo(0));
