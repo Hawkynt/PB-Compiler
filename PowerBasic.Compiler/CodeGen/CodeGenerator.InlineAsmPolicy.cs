@@ -23,10 +23,17 @@ public sealed partial class CodeGenerator {
     var nativelySupported = required == RuntimeCpuFeatures.None || target.Has(required);
 
     if (mode == IsaFallbackMode.Error) {
-      if (nativelySupported)
-        return false;
-      error = $"{instruction.Mnemonic} requires {target.DescribeMissing(required)}; ISA policy forbids emulation";
-      return true;
+      if (!nativelySupported) {
+        error = $"{instruction.Mnemonic} requires {target.DescribeMissing(required)}; ISA policy forbids emulation";
+        return true;
+      }
+
+      // ERROR forbids fallback; it does not bypass the dedicated native encoder. The historical
+      // TextAssembler table predates the 0F38/0F3A maps, so a supported SSSE3/SSE4 instruction must
+      // still route through the native extended-SIMD backend rather than falling through as unknown.
+      if (this.TryEmitNativeExtendedSimdInstruction(instruction, resolver, out error))
+        return true;
+      return false;
     }
 
     // Target-dependent identities are safe to erase only after the policy above had an opportunity to
