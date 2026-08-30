@@ -5,17 +5,18 @@ public sealed partial class Assembler {
   private bool _encodingSelectionRan;
 
   /// <summary>
-  /// O0092, target-independent shrink wins used by the SPEED scheduler:
+  /// O0092, flag-safe encoding choices used by the SPEED scheduler:
   /// <list type="bullet">
-  ///   <item><c>ADD r16,1</c> / <c>SUB r16,1</c> become one-byte <c>INC</c>/<c>DEC</c> when CF is
-  ///     unobservable before a later instruction fully redefines the arithmetic flags.</item>
+  ///   <item>On the default pre-386 target, <c>ADD r16,1</c> / <c>SUB r16,1</c> become one-byte
+  ///     <c>INC</c>/<c>DEC</c> when CF is unobservable before a later instruction fully redefines
+  ///     the arithmetic flags. 386+ keeps ADD/SUB: the byte saving is no longer a universal SPEED
+  ///     win once execution/dependency costs matter more than the early prefetch queue.</item>
   ///   <item><c>MOV r16,0</c> becomes <c>XOR r16,r16</c> when the MOV's preserved incoming flags are
   ///     likewise unobservable before a full flag definition.</item>
   /// </list>
   ///
-  /// Both choices shrink the stream and are at least as fast on the 8086-class targets this scheduler
-  /// serves. The legality proof is intentionally stronger than necessary: any recorded flag read,
-  /// any unrecorded instruction gap, or reaching the end of the recorded run before a complete flag
+  /// The legality proof is intentionally stronger than necessary: any recorded flag read, any
+  /// unrecorded instruction gap, or reaching the end of the recorded run before a complete flag
   /// definition makes the transform decline. That preserves exact machine-level flag behaviour for
   /// inline asm and callers as well as BASIC control flow.
   /// </summary>
@@ -27,11 +28,16 @@ public sealed partial class Assembler {
       return;
 
     recs.Sort((left, right) => left.Start.CompareTo(right.Start));
-    this.SelectIncDec(recs);
+    // The source language exposes 8086, 386, 486 and 586 floors (no distinct 286 directive today).
+    // Allow386Jcc is therefore the assembler's already-established boundary between the byte-starved
+    // default target and every later selectable core. Keep this decision narrow instead of inventing
+    // a second CPU/cost model inside the assembler.
+    if (!this.Allow386Jcc)
+      this.SelectIncDec(recs);
 
-    // INC/DEC deliberately preserve CF. Re-sort after their cuts and only then decide whether a
-    // MOV-zero may become XOR, so an ADD/SUB-1 that was shortened can no longer masquerade as the
-    // full flag-kill that justified changing the earlier MOV's flag behaviour.
+    // INC/DEC deliberately preserve CF. Re-sort after any early-target cuts and only then decide
+    // whether a MOV-zero may become XOR, so an ADD/SUB-1 that was shortened can no longer masquerade
+    // as the full flag-kill that justified changing the earlier MOV's flag behaviour.
     recs.Sort((left, right) => left.Start.CompareTo(right.Start));
     this.SelectZeroIdioms(recs);
   }
