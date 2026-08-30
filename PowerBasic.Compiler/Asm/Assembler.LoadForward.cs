@@ -39,10 +39,14 @@ public sealed partial class Assembler {
   ///     scan.</item>
   /// </list>
   /// Runs before <see cref="RunSchedule"/>, whose window permutation would invalidate the very
-  /// records this reads; every cut goes through <see cref="RemoveBytes"/>, which slides those
-  /// records along with the labels and fixups.
+  /// records this reads. <see cref="RunPeephole"/> runs first and repairs the same records for any
+  /// destination/length rewrite it makes; every later cut goes through <see cref="RemoveBytes"/>,
+  /// which slides the records along with labels and fixups.
   /// </summary>
   public void RunLoadForwarding() {
+    // The peephole is also length-changing and may retarget a MOV destination. It must consume its
+    // original PeepInstr stream before forwarding can rewrite MOV loads into different shapes.
+    this.RunPeephole();
     if (!this.EnableLoadForwarding || this._loadForwardingRan)
       return;
     this._loadForwardingRan = true;
