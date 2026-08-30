@@ -2,12 +2,20 @@ namespace PowerBasic.Compiler.Asm;
 
 public sealed partial class Assembler {
 
+  private bool _enablePeephole;
+
   /// <summary>
   /// When set, the instruction methods record their boundaries so <see cref="RunPeephole"/>
   /// can rewrite the image before fixups are resolved. Off by default (most callers want the
-  /// faithful stream); the optimizer turns it on for the program image.
+  /// faithful stream); the optimizer turns it on for the program image. Scheduling implies this
+  /// pre-pass: scheduling a non-canonical stream while deliberately retaining removable staging
+  /// copies and long zero-tests is strictly worse, and the peephole now keeps scheduler records
+  /// exact after every rewrite.
   /// </summary>
-  public bool EnablePeephole { get; set; }
+  public bool EnablePeephole {
+    get => this._enablePeephole || this.EnableSchedule;
+    set => this._enablePeephole = value;
+  }
 
   private enum PeepKind : byte { MovRegImm, MovRegReg, MovRegMem, PopReg, CmpRegZero }
 
