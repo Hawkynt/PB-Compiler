@@ -109,11 +109,13 @@ public sealed partial class Assembler {
     return true;
   }
 
-  /// <summary>Recognizes a numeric <c>MOV r16,0</c>; label/fixup immediates cannot match.</summary>
+  /// <summary>Recognizes a numeric <c>MOV r16,0</c>; unresolved label immediates are rejected.</summary>
   private bool TryMovWordZero(SchedInstr instr, out int register) {
     register = 0;
     if (instr.Length != 3 || instr.MemRead || instr.MemWrite || instr.Start + 3 > this._buffer.Count)
       return false;
+    if (this._fixups.Any(fixup => fixup.Position >= instr.Start && fixup.Position < instr.Start + instr.Length))
+      return false;                                        // OFFSET label uses zero placeholder bytes pre-resolution
     var opcode = this._buffer[instr.Start];
     if (opcode is < 0xB8 or > 0xBF || this._buffer[instr.Start + 1] != 0 || this._buffer[instr.Start + 2] != 0)
       return false;
