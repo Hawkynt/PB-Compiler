@@ -43,7 +43,7 @@ public sealed class SoftwareX87Backend {
     switch (mnemonic) {
       case "FINIT" or "FNINIT": return this.EmitInit(operands, out error);
       case "FCLEX" or "FNCLEX": return this.EmitClearExceptions(operands, out error);
-      case "FWAIT" or "WAIT": return this.RequireNoOperands(operands, out error);
+      case "FWAIT" or "WAIT": return RequireNoOperands(operands, out error);
       case "FCHS": return this.EmitSignChange(operands, clear: false, out error);
       case "FABS": return this.EmitSignChange(operands, clear: true, out error);
       case "FLDZ": return this.EmitConstant(operands, 0x0000, 0, 0, 0, 0, out error);

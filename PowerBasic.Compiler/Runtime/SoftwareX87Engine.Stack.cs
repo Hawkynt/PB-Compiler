@@ -205,7 +205,10 @@ public sealed partial class SoftwareX87Engine {
 
   private void EmitPushFromConstant(string mnemonic) {
     this.EmitPushEmpty();
-    (short exp, ushort meta, ushort w0, ushort w1, ushort w2, ushort w3) = mnemonic switch {
+    // Named tuple rather than a deconstruction: a deconstructing declaration does not carry its
+    // element types into the switch arms, so every literal below stayed int and none of them
+    // converted to the short/ushort the Mov word operands need.
+    (short exp, ushort meta, ushort w0, ushort w1, ushort w2, ushort w3) c = mnemonic switch {
       "FLDZ" => (0, ClassZero, 0, 0, 0, 0),
       "FLD1" => (0, ClassFinite, 0, 0, 0, 0x8000),
       "FLDPI" => (1, ClassFinite, 0xC235, 0x2168, 0xDAA2, 0xC90F),
@@ -215,12 +218,12 @@ public sealed partial class SoftwareX87Engine {
       "FLDLN2" => (-1, ClassFinite, 0x79AC, 0xD1CF, 0x17F7, 0xB172),
       _ => throw new ArgumentOutOfRangeException(nameof(mnemonic)),
     };
-    this._asm.Mov(this.Slot(0, Sig0, OperandSize.Word), w0);
-    this._asm.Mov(this.Slot(0, Sig1, OperandSize.Word), w1);
-    this._asm.Mov(this.Slot(0, Sig2, OperandSize.Word), w2);
-    this._asm.Mov(this.Slot(0, Sig3, OperandSize.Word), w3);
-    this._asm.Mov(this.Slot(0, Exponent, OperandSize.Word), exp);
-    this._asm.Mov(this.Slot(0, Meta, OperandSize.Word), meta);
+    this._asm.Mov(this.Slot(0, Sig0, OperandSize.Word), c.w0);
+    this._asm.Mov(this.Slot(0, Sig1, OperandSize.Word), c.w1);
+    this._asm.Mov(this.Slot(0, Sig2, OperandSize.Word), c.w2);
+    this._asm.Mov(this.Slot(0, Sig3, OperandSize.Word), c.w3);
+    this._asm.Mov(this.Slot(0, Exponent, OperandSize.Word), c.exp);
+    this._asm.Mov(this.Slot(0, Meta, OperandSize.Word), c.meta);
   }
 
   private bool EmitLoadStack(int index) {

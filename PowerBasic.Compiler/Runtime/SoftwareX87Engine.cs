@@ -144,11 +144,13 @@ public sealed partial class SoftwareX87Engine : IX87InstructionSink {
       (0xDD, 0xC0) => this.EmitFree(register.Index),
       (0xDD, 0xD0) => this.EmitStoreStack(register.Index, pop: false),
       (0xDD, 0xD8) => this.EmitStoreStack(register.Index, pop: true),
+      // FCOM (D8 /2) and FCOMP (D8 /3) sit inside the D8 C0..F8 arithmetic range, so they have
+      // to be matched before it or the switch arm below swallows them.
+      (0xD8, 0xD0) => this.EmitCompareStack(register.Index, popCount: 0, unordered: false),
+      (0xD8, 0xD8) => this.EmitCompareStack(register.Index, popCount: 1, unordered: false),
       (0xD8, >= 0xC0 and <= 0xF8) => this.EmitArithmeticStack(opcode, modRmBase, register.Index),
       (0xDC, >= 0xC0 and <= 0xF8) => this.EmitArithmeticStack(opcode, modRmBase, register.Index),
       (0xDE, 0xC0 or 0xC8 or 0xE0 or 0xE8 or 0xF0 or 0xF8) => this.EmitArithmeticPop(modRmBase, register.Index),
-      (0xD8, 0xD0) => this.EmitCompareStack(register.Index, popCount: 0, unordered: false),
-      (0xD8, 0xD8) => this.EmitCompareStack(register.Index, popCount: 1, unordered: false),
       (0xDD, 0xE0) => this.EmitCompareStack(register.Index, popCount: 0, unordered: true),
       (0xDD, 0xE8) => this.EmitCompareStack(register.Index, popCount: 1, unordered: true),
       _ => false,
