@@ -3,9 +3,10 @@ using PowerBasic.Compiler.Asm;
 namespace PowerBasic.Compiler.Tests.Asm;
 
 /// <summary>
-/// Redundant-load elimination: <c>MOV [cell],R … MOV R,[cell]</c> leaves R already holding the
-/// value, so the reload is dead. Deliberately narrow - the cases it must DECLINE are as much the
-/// specification as the case it takes.
+/// Redundant-load and dead-store elimination over BP-relative frame cells:
+/// <c>MOV [cell],R … MOV R,[cell]</c> leaves R already holding the value, so the reload is dead,
+/// and a store the next store to the same cell fully overwrites is dead too. Deliberately narrow -
+/// the cases the pass must DECLINE are as much the specification as the cases it takes.
 /// </summary>
 [TestFixture]
 public sealed class LoadForwardingTests {
@@ -16,6 +17,15 @@ public sealed class LoadForwardingTests {
       if (image[i] == 0x8B && image[i + 1] == 0x46 && image[i + 2] == 0xF8)
         return true;
     return false;
+  }
+
+  /// <summary>Count register-to-word stores MOV [BP-8],r16 (89 /r, disp8 F8).</summary>
+  private static int CountRegisterStores(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 2 < image.Length; ++i)
+      if (image[i] == 0x89 && (image[i + 1] & 0xC7) == 0x46 && image[i + 2] == 0xF8)
+        ++count;
+    return count;
   }
 
   private static Assembler Store() {
@@ -103,6 +113,86 @@ public sealed class LoadForwardingTests {
     asm.Mov(Reg.AX, Mem.Word(Reg.BP, -8));
     var image = asm.ToArray();
     Assert.That(image[^2..], Is.EqualTo(new byte[] { 0x89, 0xC8 }), "MOV AX,CX - not AX,AX");
+  }
+
+  [Test]
+  public void DeadStore_GivenSameCellOverwrittenBeforeAnyRead_WhenAssembled_ThenOlderStoreRemoved() {
+    var asm = Store();
+    asm.Mov(Reg.DX, Reg.BX);                    // unrelated register work does not observe the cell
+    asm.Mov(Mem.Word(Reg.BP, -8), Reg.CX);      // complete overwrite
+    var image = asm.ToArray();
+    Assert.That(CountRegisterStores(image), Is.EqualTo(1), "only the final MOV [BP-8],CX survives");
+  }
+
+  [Test]
+  public void DeadStore_GivenOnlyReaderWasForwarded_WhenAssembled_ThenOlderStoreBecomesDead() {
+    // O0034 first rewrites MOV DX,[BP-8] to MOV DX,AX. O0065 can then see that nothing observes
+    // the frame cell before the CX overwrite and remove the otherwise pointless first store.
+    var asm = Store();
+    asm.Mov(Reg.DX, Mem.Word(Reg.BP, -8));
+    asm.Mov(Mem.Word(Reg.BP, -8), Reg.CX);
+    var image = asm.ToArray();
+    Assert.Multiple(() => {
+      Assert.That(CountRegisterStores(image), Is.EqualTo(1));
+      Assert.That(image[..2], Is.EqualTo(new byte[] { 0x89, 0xC2 }), "forwarded MOV DX,AX remains");
+    });
+  }
+
+  [Test]
+  public void DeadStore_GivenSurvivingAliasingRead_WhenAssembled_ThenOlderStoreKept() {
+    var asm = Store();
+    asm.Add(Reg.DX, Mem.Word(Reg.BP, -8));       // observes the old AX value in memory
+    asm.Mov(Mem.Word(Reg.BP, -8), Reg.CX);
+    Assert.That(CountRegisterStores(asm.ToArray()), Is.EqualTo(2));
+  }
+
+  [Test]
+  public void DeadStore_GivenReadAfterSourceRegisterChanged_WhenAssembled_ThenOlderStoreKept() {
+    // the load cannot forward because AX was overwritten; it remains a real memory observation.
+    var asm = Store();
+    asm.Mov(Reg.AX, Reg.BX);
+    asm.Mov(Reg.DX, Mem.Word(Reg.BP, -8));
+    asm.Mov(Mem.Word(Reg.BP, -8), Reg.CX);
+    Assert.That(CountRegisterStores(asm.ToArray()), Is.EqualTo(2));
+  }
+
+  [Test]
+  public void DeadStore_GivenPartialOverwrite_WhenAssembled_ThenOlderWordStoreKept() {
+    // conservative boundary: a byte write is not accepted as a complete replacement of the word.
+    var asm = Store();
+    asm.Mov(Mem.Byte(Reg.BP, -8), (Imm)1);
+    asm.Mov(Mem.Word(Reg.BP, -8), Reg.CX);
+    Assert.That(CountRegisterStores(asm.ToArray()), Is.EqualTo(2));
+  }
+
+  [Test]
+  public void DeadStore_GivenReadModifyWrite_WhenAssembled_ThenOlderStoreKept() {
+    // ADD [BP-8],1 needs the value written by the first MOV; it is not a killing store.
+    var asm = Store();
+    asm.Add(Mem.Word(Reg.BP, -8), (Imm)1);
+    asm.Mov(Mem.Word(Reg.BP, -8), Reg.CX);
+    Assert.That(CountRegisterStores(asm.ToArray()), Is.EqualTo(2));
+  }
+
+  [Test]
+  public void DeadStore_GivenLabelBeforeOverwrite_WhenAssembled_ThenOlderStoreKept() {
+    var asm = Store();
+    var entry = asm.DefineLabel();
+    asm.MarkLabel(entry);                       // another path may enter the region here
+    asm.Mov(Mem.Word(Reg.BP, -8), Reg.CX);
+    Assert.That(CountRegisterStores(asm.ToArray()), Is.EqualTo(2));
+  }
+
+  [Test]
+  public void DeadStore_GivenCallBeforeOverwrite_WhenAssembled_ThenOlderStoreKept() {
+    var asm = Store();
+    var target = asm.DefineLabel();
+    asm.Call(target);                           // unrecorded barrier may observe/mutate memory
+    asm.Mov(Mem.Word(Reg.BP, -8), Reg.CX);
+    asm.Ret();
+    asm.MarkLabel(target);
+    asm.Ret();
+    Assert.That(CountRegisterStores(asm.ToArray()), Is.EqualTo(2));
   }
 
   [Test]
