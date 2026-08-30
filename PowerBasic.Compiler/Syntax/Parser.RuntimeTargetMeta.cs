@@ -100,8 +100,11 @@ public sealed partial class Parser {
       }
 
       if (!prefix.Text.Equals("AVX", StringComparison.OrdinalIgnoreCase) || i + 2 >= arguments.Count
-          || arguments[i + 1].Kind != TokenKind.Minus
-          || arguments[i + 2] is not { Kind: TokenKind.IntegerLiteral, IntegerValue: 512 } width)
+          || arguments[i + 1].Kind != TokenKind.Minus)
+        continue;
+
+      var width = arguments[i + 2];
+      if (width.Kind != TokenKind.IntegerLiteral || width.IntegerValue != 512)
         continue;
 
       arguments[i] = new(TokenKind.Identifier, prefix.Text + "-" + width.Text, prefix.Position);
