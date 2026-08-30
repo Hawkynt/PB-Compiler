@@ -9,6 +9,8 @@ public sealed class ParserRuntimeTargetMetaTests {
   [TestCase("$CPU AVX-512")]
   [TestCase("$CPU 80586 SSE2")]
   [TestCase("$ISA SSE4.2 ERROR")]
+  [TestCase("$ISA SSE4.1 = ERROR")]
+  [TestCase("$ISA SSE4.2, EMULATE")]
   [TestCase("$ISA PMINUD EMULATE")]
   [TestCase("$ISA DEFAULT AUTO")]
   [TestCase("$FPU NATIVE")]
