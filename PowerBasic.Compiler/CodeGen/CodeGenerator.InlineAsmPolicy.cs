@@ -29,6 +29,12 @@ public sealed partial class CodeGenerator {
       return true;
     }
 
+    // Target-dependent identities are safe to erase only after the policy above had an opportunity to
+    // reject an unsupported instruction. This keeps $ISA ... ERROR diagnostics observable while still
+    // letting AUTO/EMULATE/NATIVE collapse a semantically empty abstraction under $OPTIMIZE SPEED.
+    if (this.Optimize && this.OptimizeSpeed && InlineAsmCanonicalizer.IsPolicyValidatedRedundant(line))
+      return true;
+
     if (mode == IsaFallbackMode.Native) {
       if (this.TryEmitNativeExtendedSimdInstruction(instruction, resolver, out error))
         return true;
