@@ -113,10 +113,10 @@ public sealed partial class TextAssembler(Assembler target) {
             ++i;
 
           var text = line[start..i];
-          if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var value))
+          if (!uint.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var value))
             throw new AsmSyntaxException($"Numeric literal '{text}' is out of range.");
 
-          tokens.Add(new(TokenKind.Number, text, value));
+          tokens.Add(new(TokenKind.Number, text, unchecked((int)value)));
           continue;
         }
 
