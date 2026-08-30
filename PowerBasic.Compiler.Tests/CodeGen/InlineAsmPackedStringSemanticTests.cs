@@ -180,7 +180,7 @@ public sealed class InlineAsmPackedStringSemanticTests {
   [TestCase(0, 1)]
   [TestCase(16, 65534)]
   [TestCase(32, 1)]
-  [TestCase(48, 65534)]
+  [TestCase(48, 0)]
   public void Pcmpestrm_GivenPolarityMode_ThenProducesIntelIntRes2(int polarity, int expected) {
     var output = Run($$"""
       DIM result&
@@ -194,6 +194,26 @@ public sealed class InlineAsmPackedStringSemanticTests {
       ! AND EAX, 65535
       ! MOV result&, EAX
       IF result& = {{expected}} THEN PRINT "OK" ELSE PRINT "BAD"
+      """);
+
+    Assert.That(output, Does.Contain("OK"));
+    Assert.That(output, Does.Not.Contain("BAD"));
+  }
+
+  [Test]
+  public void Pcmpestrm_GivenMaskedNegativeEqualEach_ThenInvalidSecondStringLanesKeepIntRes1Bits() {
+    var output = Run("""
+      DIM result&
+      ! MOV EAX, 65
+      ! MOVD XMM1, EAX
+      ! MOVD XMM2, EAX
+      ! MOV EAX, 1
+      ! MOV EDX, 1
+      ! PCMPESTRM XMM1, XMM2, 56
+      ! MOVD EAX, XMM0
+      ! AND EAX, 65535
+      ! MOV result&, EAX
+      IF result& = 65534 THEN PRINT "OK" ELSE PRINT "BAD"
       """);
 
     Assert.That(output, Does.Contain("OK"));
