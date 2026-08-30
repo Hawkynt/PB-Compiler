@@ -74,4 +74,54 @@ public sealed class AssemblerPeepholeTests {
     }
     Assert.That(Assemble(true, Emit), Is.EqualTo(Assemble(false, Emit)), "a label on the copy blocks coalescing");
   }
+
+  [Test]
+  public void Peephole_GivenSchedulerEnabled_WhenCopyCoalesces_ThenRetargetedDependencyIsPreserved() {
+    // The scheduler prefers memory operations. If the coalesced producer still claimed to write AX,
+    // the store reading DX would look independent and move before MOV DX,1234h. The repaired write
+    // set must pin producer -> consumer while still allowing ordinary scheduling around them.
+    var asm = new Assembler { EnableSchedule = true };
+    asm.Mov(Reg.AX, 0x1234);                   // coalesces to MOV DX,1234h
+    asm.Mov(Reg.DX, Reg.AX);                   // removed
+    asm.Mov(Reg.AX, 7);                        // kills the old intermediate
+    asm.Mov(Mem.Word(Reg.BP, -2), Reg.DX);     // memory-priority consumer of the NEW destination
+    asm.Add(Reg.BX, Reg.CX);
+
+    var image = asm.ToArray();
+    var producer = IndexOf(image, [0xBA, 0x34, 0x12]);
+    var consumer = IndexOf(image, [0x89, 0x56, 0xFE]);
+    Assert.Multiple(() => {
+      Assert.That(IndexOf(image, [0x89, 0xC2]), Is.EqualTo(-1), "MOV DX,AX staging copy is gone under SPEED-style scheduling");
+      Assert.That(producer, Is.GreaterThanOrEqualTo(0).And.LessThan(consumer), "the retargeted DX def dominates its scheduled use");
+    });
+  }
+
+  [Test]
+  public void Peephole_GivenSchedulerEnabled_WhenCompareZeroShrinks_ThenSchedulerSeesNewLength() {
+    // CMP BX,0 shrinks from three bytes to TEST BX,BX. Its scheduler record must shrink too;
+    // otherwise the following load appears to overlap the old three-byte record and the scheduling
+    // window breaks instead of hoisting the independent memory operation.
+    var asm = new Assembler { EnableSchedule = true };
+    asm.Cmp(Reg.BX, (Imm)0);
+    asm.Mov(Reg.AX, Mem.Word(Reg.BP, 2));
+    asm.Add(Reg.CX, Reg.DX);
+
+    var image = asm.ToArray();
+    Assert.Multiple(() => {
+      Assert.That(image[..3], Is.EqualTo(new byte[] { 0x8B, 0x46, 0x02 }), "the independent load still schedules first");
+      Assert.That(IndexOf(image, [0x85, 0xDB]), Is.GreaterThanOrEqualTo(0), "CMP BX,0 became TEST BX,BX");
+      Assert.That(IndexOf(image, [0x83, 0xFB, 0x00]), Is.EqualTo(-1));
+    });
+  }
+
+  private static int IndexOf(byte[] haystack, byte[] needle) {
+    for (var i = 0; i + needle.Length <= haystack.Length; ++i) {
+      var hit = true;
+      for (var k = 0; k < needle.Length; ++k)
+        if (haystack[i + k] != needle[k]) { hit = false; break; }
+      if (hit)
+        return i;
+    }
+    return -1;
+  }
 }
