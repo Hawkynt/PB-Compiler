@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial (a peephole coalesces the ABI-staging copy when the intermediate register dies immediately; the allocator-driven coalescing over interference info is not wired) |
+| **Status** | 🟡 Partial (a peephole coalesces the ABI-staging copy when the intermediate register dies immediately, including under `$OPTIMIZE SPEED`; allocator-driven coalescing over interference info is not wired) |
 | **Stage** | Register allocation / assembler peephole |
-| **Related** | [O0027](O0027-copy-propagation.md), [O0058](O0058-386-register-allocation.md), [O0072](O0072-register-reassignment.md) |
+| **Related** | [O0027](O0027-copy-propagation.md), [O0038](O0038-instruction-scheduling.md), [O0058](O0058-386-register-allocation.md), [O0072](O0072-register-reassignment.md) |
 
 ## The idea
 
@@ -48,11 +48,28 @@ The common shape the doc's "Today" pictures — a value staged through a registe
 that is then copied to its real home and never read again (`MOV R,SRC … MOV R2,R`
 where `R` dies at the copy) — is coalesced to `MOV R2,SRC` by the assembler
 peephole (`RunPeephole` in `Asm/Assembler.Peephole.cs`, the copy-forwarding
-triple), removing the ABI-staging move. Gated `standalone && !EnableSchedule`
-(`CodeGenerator.cs`); covered by `AssemblerPeepholeTests`
-(`Peephole_GivenRegisterStagedThenRegisterDies_…`, and the `…IntermediateStillLive…`
-decline). This achieves the doc's observable *effect* for the local case without
-an allocator.
+triple), removing the ABI-staging move.
+
+The peephole now composes with [O0038](O0038-instruction-scheduling.md) instead of
+being disabled by `$OPTIMIZE SPEED`. Scheduling implies the canonical peephole
+pre-pass; every destination rewrite repairs the corresponding scheduler def/use
+record (`AX` → `DX` changes the write set to DX), and every shrink such as
+`CMP r,0` → `TEST r,r` repairs the recorded instruction length before scheduling.
+Load forwarding likewise invokes the peephole before it can turn a recorded MOV
+load into a different instruction shape. The final order is therefore:
+
+1. shrink/canonicalize the original emitted stream;
+2. forward redundant loads over the repaired records;
+3. schedule the surviving instruction blocks.
+
+That makes SPEED keep both optimizations rather than choosing one. Covered by
+`AssemblerPeepholeTests`, including a dependency regression where a memory-priority
+consumer would be hoisted before a coalesced producer if the write set remained
+stale, plus a length regression proving scheduling still sees an adjacent window
+after `CMP r,0` shrinks.
+
+This achieves the doc's observable *effect* for the local case without an
+allocator.
 
 ## Still planned
 
