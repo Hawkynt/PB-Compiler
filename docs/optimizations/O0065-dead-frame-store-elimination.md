@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned (blocked on instruction recording) |
+| **Status** | 🟡 Partial (same-block overwritten frame stores are removed; whole-procedure last-store proof still needs complete memory recording/private temp metadata) |
 | **Stage** | Assembler |
 | **Related** | [O0034](O0034-redundant-load-elimination.md), [O0038](O0038-instruction-scheduling.md), [O0060](O0060-memory-ssa.md) |
 
@@ -44,20 +44,60 @@ Skip:
 Skip:
 ```
 
-## Why it is blocked
+## Now
 
-Proving the store dead means proving that **nothing else touches the cell**, and
-the def/use records the assembler keeps do not cover every instruction that can
-reach memory: `LEA`, `PUSH mem`, the `ADD [mem],imm` read-modify-write forms and
-the indirect jumps all touch memory unrecorded. A whole-procedure "no reader"
-scan over the records alone is therefore unsound.
+The late assembler pass implements the recording-proven local form of dead-store
+elimination and deliberately composes it **after** O0034 load forwarding.
 
-Note that this does **not** affect load forwarding itself, which requires an
-unbroken chain of *recorded*, byte-adjacent instructions between store and load —
-an unrecorded instruction is precisely what ends its scan.
+A plain full-word frame store is removed when all of these are true:
 
-## What it needs
+- it is `MOV [BP+disp], r16` or `MOV WORD PTR [BP+disp], imm16`;
+- a later plain full-word `MOV` reaches the **same** BP-relative cell by uninterrupted
+  fall-through and completely overwrites it;
+- no surviving memory read that may alias the cell occurs first;
+- no label appears at the first store or between the stores;
+- there is no unrecorded gap such as a call or inline-asm instruction;
+- a partial write, read-modify-write operation, or unknown alias declines the proof.
 
-Either recording those forms too, or having the code generator declare the
-compiler-temp region of the frame (so the assembler knows which cells are
-private to it). Either unblocks the pass.
+This means the useful composition works automatically:
+
+```asm
+    mov     [bp-8], ax
+    mov     dx, [bp-8]       ; O0034 -> mov dx,ax
+    mov     [bp-8], cx       ; complete overwrite
+```
+
+becomes
+
+```asm
+    mov     dx, ax
+    mov     [bp-8], cx
+```
+
+O0034 first removes the only actual frame read; O0065 then sees that the older
+store is unobservable before the replacement store and removes it. Multiple
+consecutive stores cascade naturally, keeping only the value that can still be
+observed.
+
+The implementation lives in `Assembler.LoadForward.cs`, sharing the same
+`SchedInstr` memory identity and `MemMayAlias` rules as forwarding and scheduling.
+All byte cuts use the common `RemoveBytes` path, so labels, fixups, relocations and
+instruction-record offsets remain synchronized.
+
+## Still blocked
+
+The stronger whole-procedure claim from the original design is **not** made yet.
+Proving that a final store is dead merely because no later *recorded* instruction
+reads it is unsound: `LEA`, `PUSH mem`, read-modify-write memory forms, indirect
+operations and other unrecorded instructions may still observe the cell.
+
+That is why the max-scan example above can still retain its final per-iteration
+CSE store when there is no later overwrite. Finishing that form needs either:
+
+- complete memory def/use recording for every instruction shape that can observe a
+  frame cell, or
+- code-generator metadata declaring which frame range contains compiler-private
+  spill/CSE temporaries whose addresses never escape.
+
+Until one of those exists, the pass stops at every record gap and never treats
+"no later recorded read" as proof of death.
