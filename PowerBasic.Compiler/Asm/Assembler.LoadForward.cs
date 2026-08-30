@@ -3,10 +3,13 @@ namespace PowerBasic.Compiler.Asm;
 public sealed partial class Assembler {
 
   /// <summary>
-  /// When set, loads of cells whose current contents are already known are replaced by cheaper forms
-  /// or removed outright. The same recorded stream also removes a redundant zero test when an earlier
-  /// arithmetic instruction already left ZF/SF/PF describing the unchanged result. Off by default;
-  /// the optimizer turns it on for the optimized standalone image.
+  /// When set, a load of a frame cell whose current contents are already known - still in the
+  /// register that stored them, or a constant just written there - is replaced by the cheaper
+  /// form or removed outright. The same recorded stream also drops an earlier plain word store
+  /// when a later plain word store fully overwrites that frame cell before any surviving read,
+  /// and removes a redundant zero test when an earlier arithmetic instruction already left
+  /// ZF/SF/PF describing the unchanged result. Off by default; the optimizer turns it on for
+  /// the optimized standalone image.
   /// </summary>
   public bool EnableLoadForwarding { get; set; }
 
@@ -26,6 +29,12 @@ public sealed partial class Assembler {
   ///   <item><c>MOV WORD PTR [BP-8],7 … MOV DI,[BP-8]</c> - becomes <c>MOV DI,7</c>.</item>
   /// </list>
   ///
+  /// After those rewrites, <see cref="RunDeadFrameStoreElimination"/> consumes the repaired records:
+  /// if a plain word store is fully overwritten by another plain word store to the same frame cell
+  /// before any surviving read, the first store is unobservable and disappears as well. This is the
+  /// straight-line, recording-proven subset of O0065; a final store that is merely never read later
+  /// still needs complete memory recording or a compiler-private-frame declaration.
+  ///
   /// Deliberately narrow, because every mistake here is a miscompile:
   /// <list type="bullet">
   ///   <item>Only BP-relative cells and unprefixed direct-label cells. A segment override changes
@@ -38,7 +47,8 @@ public sealed partial class Assembler {
   ///     having run the store. With that ruled out, the only way to reach the load is to fall
   ///     through from the store, which is what makes looking across a branch sound.</item>
   ///   <item>Any write to the source register, or any store that may alias the cell, ends the
-  ///     scan.</item>
+  ///     forwarding scan. Dead-store elimination separately stops at any surviving aliasing read
+  ///     or at any write that is not an exact full-word replacement.</item>
   /// </list>
   /// Runs before <see cref="RunSchedule"/>, whose window permutation would invalidate the very
   /// records this reads. <see cref="RunPeephole"/> runs first and repairs the same records for any
@@ -122,8 +132,69 @@ public sealed partial class Assembler {
           this.RemoveBytes(start, length);
     }
 
+    // O0065 composes after O0034: a load that was the only reader may have just become a register
+    // move (or disappeared), exposing the older frame store as dead before the next overwrite.
+    this.RunDeadFrameStoreElimination(recs);
     this.RunFlagReuse();
   }
+
+  /// <summary>
+  /// O0065, conservative local form: removes <c>MOV [BP-d],...</c> when another plain word MOV to
+  /// exactly the same cell is reached by uninterrupted fall-through before any surviving read.
+  /// A record gap, a bound label, an aliasing read, a partial/RMW write or an unknown alias ends the
+  /// proof. This deliberately does not claim that a store with no later recorded reader is dead:
+  /// unrecorded memory forms can still observe it, which is the whole-procedure blocker documented
+  /// by O0065.
+  /// </summary>
+  private void RunDeadFrameStoreElimination(List<SchedInstr> recs) {
+    if (recs.Count < 2)
+      return;
+
+    recs.Sort((left, right) => left.Start.CompareTo(right.Start));
+    var labels = this.BoundLabelPositions();
+    var cuts = new List<(int Start, int Length)>();
+    var dead = new HashSet<int>();
+
+    for (var i = 0; i < recs.Count - 1; ++i) {
+      var store = recs[i];
+      if (!this.IsPlainWordFrameStore(store) || labels.Contains(store.Start) || dead.Contains(store.Start))
+        continue;
+
+      for (var j = i + 1; j < recs.Count; ++j) {
+        var later = recs[j];
+        if (later.Start != recs[j - 1].Start + recs[j - 1].Length)
+          break;                                            // unrecorded memory/call/asm barrier
+        if (labels.Contains(later.Start))
+          break;                                            // another control-flow path may enter here
+
+        if (later.MemRead && MemMayAlias(store, later))
+          break;                                            // some surviving operation observes the old value
+        if (!later.MemWrite || !MemMayAlias(store, later))
+          continue;
+
+        // Only an exact full-word plain MOV kills the old store. A byte store or an RMW operation
+        // reads/retains some of the previous value, and an unknown alias gives us no overwrite proof.
+        if (this.IsPlainWordFrameStore(later) && SameFrameCell(store, later)) {
+          cuts.Add((store.Start, store.Length));
+          dead.Add(store.Start);
+        }
+        break;
+      }
+    }
+
+    cuts.Sort((left, right) => right.Start.CompareTo(left.Start));
+    foreach (var (start, length) in cuts)
+      this.RemoveBytes(start, length);
+  }
+
+  /// <summary>A plain word MOV that completely defines one BP-relative frame cell.</summary>
+  private bool IsPlainWordFrameStore(SchedInstr instr) =>
+    instr.MemWrite && !instr.MemRead && instr.MemBytes == 2 && IsFrameCell(instr)
+    && (this.HasOpcode(instr, 0x89) || this.HasOpcode(instr, 0xC7));
+
+  private static bool SameFrameCell(SchedInstr left, SchedInstr right) =>
+    left.MemBytes == right.MemBytes && left.MemDisp == right.MemDisp
+    && Equals(left.MemBase, right.MemBase);
 
   /// <summary>
   /// O0081: remove a zero test when the last flag-writing instruction already left ZF/SF/PF
