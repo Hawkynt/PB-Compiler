@@ -53,13 +53,22 @@ A plain full-word frame store is removed when all of these are true:
 
 - it is `MOV [BP+disp], r16` or `MOV WORD PTR [BP+disp], imm16`;
 - a later plain full-word `MOV` reaches the **same** BP-relative cell by uninterrupted
-  fall-through and completely overwrites it;
+  straight-line fall-through and completely overwrites it;
 - no surviving memory read that may alias the cell occurs first;
+- no conditional branch occurs between the stores — its taken path could skip the
+  replacement, leaving the older value observable;
 - no label appears at the first store or between the stores;
 - there is no unrecorded gap such as a call or inline-asm instruction;
 - a partial write, read-modify-write operation, or unknown alias declines the proof.
 
-This means the useful composition works automatically:
+The branch rule is intentionally stricter than O0034 forwarding. A forwarded load
+*in the fall-through path* of a conditional branch is reached only after the older
+store and can safely use its register value. Dead-store elimination asks a different
+question: whether the **later overwrite is guaranteed to execute**. A conditional
+branch makes that false, so it terminates the DSE scan even when its target lies
+beyond the overwrite.
+
+This means the useful straight-line composition works automatically:
 
 ```asm
     mov     [bp-8], ax
@@ -99,5 +108,5 @@ CSE store when there is no later overwrite. Finishing that form needs either:
 - code-generator metadata declaring which frame range contains compiler-private
   spill/CSE temporaries whose addresses never escape.
 
-Until one of those exists, the pass stops at every record gap and never treats
-"no later recorded read" as proof of death.
+Until one of those exists, the pass stops at every conditional branch and every
+record gap and never treats "no later recorded read" as proof of death.
