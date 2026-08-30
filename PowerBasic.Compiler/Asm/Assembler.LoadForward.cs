@@ -42,13 +42,15 @@ public sealed partial class Assembler {
   ///   <item>The store and the load must be linked by an unbroken chain of RECORDED, byte-adjacent
   ///     instructions: a gap means an unrecorded one (a call, inline asm, segment-register load,
   ///     string op) sat between them, and that ends the scan. Conditional jumps ARE recorded - they
-  ///     read the flags and clobber nothing - so the scan sees through them.</item>
+  ///     read the flags and clobber nothing - so load forwarding may see through their
+  ///     fall-through path.</item>
   ///   <item>No bound label in between: something could branch in and reach the load without ever
   ///     having run the store. With that ruled out, the only way to reach the load is to fall
-  ///     through from the store, which is what makes looking across a branch sound.</item>
+  ///     through from the store, which is what makes forwarding across a branch sound.</item>
   ///   <item>Any write to the source register, or any store that may alias the cell, ends the
-  ///     forwarding scan. Dead-store elimination separately stops at any surviving aliasing read
-  ///     or at any write that is not an exact full-word replacement.</item>
+  ///     forwarding scan. Dead-store elimination separately stops at every conditional branch as
+  ///     well as any surviving aliasing read or non-exact overwrite: unlike a forwarded load in the
+  ///     branch's fall-through, a later overwrite is not guaranteed to execute if the branch is taken.</item>
   /// </list>
   /// Runs before <see cref="RunSchedule"/>, whose window permutation would invalidate the very
   /// records this reads. <see cref="RunPeephole"/> runs first and repairs the same records for any
@@ -140,11 +142,11 @@ public sealed partial class Assembler {
 
   /// <summary>
   /// O0065, conservative local form: removes <c>MOV [BP-d],...</c> when another plain word MOV to
-  /// exactly the same cell is reached by uninterrupted fall-through before any surviving read.
-  /// A record gap, a bound label, an aliasing read, a partial/RMW write or an unknown alias ends the
-  /// proof. This deliberately does not claim that a store with no later recorded reader is dead:
-  /// unrecorded memory forms can still observe it, which is the whole-procedure blocker documented
-  /// by O0065.
+  /// exactly the same cell is reached by one straight-line fall-through path before any surviving
+  /// read. A record gap, bound label, conditional branch, aliasing read, partial/RMW write or unknown
+  /// alias ends the proof. This deliberately does not claim that a store with no later recorded
+  /// reader is dead: unrecorded memory forms can still observe it, which is the whole-procedure
+  /// blocker documented by O0065.
   /// </summary>
   private void RunDeadFrameStoreElimination(List<SchedInstr> recs) {
     if (recs.Count < 2)
@@ -166,6 +168,8 @@ public sealed partial class Assembler {
           break;                                            // unrecorded memory/call/asm barrier
         if (labels.Contains(later.Start))
           break;                                            // another control-flow path may enter here
+        if (this.IsConditionalJump(later))
+          break;                                            // taken path may skip the would-be overwrite
 
         if (later.MemRead && MemMayAlias(store, later))
           break;                                            // some surviving operation observes the old value
@@ -185,6 +189,19 @@ public sealed partial class Assembler {
     cuts.Sort((left, right) => right.Start.CompareTo(left.Start));
     foreach (var (start, length) in cuts)
       this.RemoveBytes(start, length);
+  }
+
+  /// <summary>
+  /// A recorded conditional branch. The default 8086 long-Jcc spelling begins with the inverted
+  /// short Jcc over a near JMP, while 386+ can use 0F 8x directly; either form splits control flow
+  /// and therefore terminates the straight-line dead-store proof.
+  /// </summary>
+  private bool IsConditionalJump(SchedInstr instr) {
+    if (!instr.ReadsFlags || instr.Length < 2 || instr.Start + instr.Length > this._buffer.Count)
+      return false;
+    var opcode = this._buffer[instr.Start];
+    return opcode is >= 0x70 and <= 0x7F
+      || opcode == 0x0F && instr.Length >= 4 && this._buffer[instr.Start + 1] is >= 0x80 and <= 0x8F;
   }
 
   /// <summary>A plain word MOV that completely defines one BP-relative frame cell.</summary>
