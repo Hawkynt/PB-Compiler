@@ -404,7 +404,8 @@ public sealed partial class CodeGenerator {
     var unchanged = this._asm.DefineLabel();
     var loop = this._asm.DefineLabel();
     var finish = this._asm.DefineLabel();
-    this._asm.Jcxz(unchanged);
+    this._asm.Cmp(Reg.CX, 0);
+    this._asm.J(Condition.Equal, unchanged);
 
     if (mnemonic is "RCL" or "RCR") {
       this._asm.Push(this.GpScratch(state, GpArithFlags));
