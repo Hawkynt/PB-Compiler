@@ -37,7 +37,7 @@ public sealed class InlineAsmHorizontalSimdSemanticTests {
   }
 
   [Test]
-  public void Psubd_GivenAdjacentDwords_ThenSubtractsInSourceOrder() {
+  public void Phsubd_GivenAdjacentDwords_ThenSubtractsInSourceOrder() {
     var output = Run("""
       DIM result&
       ! MOV EAX, 10
