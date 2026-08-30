@@ -75,7 +75,7 @@ public sealed class InlineAsmIsaCoverageTests {
 
   private static CodeGenerator Compile(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "isa-coverage.bas", Dialect.Pb36), "isa-coverage.bas", Dialect.Pb36);
-    var model = Binder.Bind(unit, Dialect.Pb36);
+    var model = PowerBasic.Compiler.Semantics.Binder.Bind(unit, Dialect.Pb36);
     if (model.Errors.Count != 0)
       throw new AssertionException("bind: " + string.Join("; ", model.Errors));
     var generator = new CodeGenerator(model) { Optimize = false };
