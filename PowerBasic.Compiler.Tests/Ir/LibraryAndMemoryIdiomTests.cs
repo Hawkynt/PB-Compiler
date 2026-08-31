@@ -9,7 +9,7 @@ public sealed class LibraryAndMemoryIdiomTests {
 
   [Test]
   public void FillLoop_GivenAUnitStrideByteStore_ThenItBecomesMemset() {
-    var module = new IrModule();
+    var module = new IrModule("test");
     var fn = module.AddFunction(new IrFunction("fill", IrType.Void));
     BuildFillLoop(fn, new IrConstantInt(IrType.I8, 0x5a), 12);
 
@@ -23,7 +23,7 @@ public sealed class LibraryAndMemoryIdiomTests {
 
   [Test]
   public void CopyLoop_GivenDistinctAllocations_ThenItBecomesMemcpy() {
-    var module = new IrModule();
+    var module = new IrModule("test");
     var fn = module.AddFunction(new IrFunction("copy", IrType.Void));
     var pre = fn.AddBlock(new IrBasicBlock("pre"));
     var source = pre.Append(new IrAlloca(IrType.I8) { Count = 6 });
@@ -44,7 +44,7 @@ public sealed class LibraryAndMemoryIdiomTests {
 
   [Test]
   public void CopyLoop_GivenTheSameAllocationOnBothSides_ThenItIsNotGuessedNonOverlapping() {
-    var module = new IrModule();
+    var module = new IrModule("test");
     var fn = module.AddFunction(new IrFunction("overlap", IrType.Void));
     var pre = fn.AddBlock(new IrBasicBlock("pre"));
     var buffer = pre.Append(new IrAlloca(IrType.I8) { Count = 6 });

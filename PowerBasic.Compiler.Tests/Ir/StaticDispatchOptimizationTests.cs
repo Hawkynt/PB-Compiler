@@ -9,7 +9,7 @@ public sealed class StaticDispatchOptimizationTests {
 
   [Test]
   public void SortedConstantSearch_GivenEightUniqueKeys_ThenItBecomesABalancedDecisionTree() {
-    var module = new IrModule();
+    var module = new IrModule("test");
     var fn = BuildSearch(module, "sorted", [1, 3, 5, 7, 9, 11, 13, 15]);
 
     Assert.That(StaticSearchRecognition.Run(module), Is.EqualTo(1));
@@ -23,7 +23,7 @@ public sealed class StaticDispatchOptimizationTests {
 
   [Test]
   public void UnsortedConstantSearch_GivenAUniqueStaticSet_ThenItBecomesVerifiedSwitchDispatch() {
-    var module = new IrModule();
+    var module = new IrModule("test");
     var fn = BuildSearch(module, "set", [17, 2, 91, 4, 33]);
 
     Assert.That(StaticSearchRecognition.Run(module), Is.EqualTo(1));
@@ -38,7 +38,7 @@ public sealed class StaticDispatchOptimizationTests {
 
   [Test]
   public void StaticSearch_GivenDuplicateKeys_ThenFirstMatchSemanticsPreventRewriting() {
-    var module = new IrModule();
+    var module = new IrModule("test");
     var fn = BuildSearch(module, "duplicates", [1, 4, 4, 7, 9, 12, 20, 30]);
 
     Assert.That(StaticSearchRecognition.Run(module), Is.Zero);

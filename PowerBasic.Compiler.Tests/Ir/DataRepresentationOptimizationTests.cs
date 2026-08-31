@@ -9,7 +9,7 @@ public sealed class DataRepresentationOptimizationTests {
 
   [Test]
   public void BooleanGlobalArray_GivenOnlyZeroAndMinusOneStores_ThenItPacksToBits() {
-    var module = new IrModule();
+    var module = new IrModule("test");
     var flags = module.AddGlobal(new IrGlobalVariable("flags", IrType.I16) {
       Count = 32,
       IsZeroInitialized = true,
@@ -36,7 +36,7 @@ public sealed class DataRepresentationOptimizationTests {
 
   [Test]
   public void BooleanGlobalArray_GivenAThirdStoredValue_ThenItsRepresentationStaysObservable() {
-    var module = new IrModule();
+    var module = new IrModule("test");
     var flags = module.AddGlobal(new IrGlobalVariable("flags", IrType.I16) {
       Count = 32,
       IsZeroInitialized = true,
@@ -53,7 +53,7 @@ public sealed class DataRepresentationOptimizationTests {
 
   [Test]
   public void PureByteFunction_GivenRepeatedDynamicCalls_ThenACompleteTableReplacesTheCalls() {
-    var module = new IrModule();
+    var module = new IrModule("test");
     var x = new IrArgument(IrType.U8, 0, "x");
     var transform = module.AddFunction(new IrFunction("transform", IrType.U8, [x]));
     var body = transform.AddBlock(new IrBasicBlock("entry"));
@@ -85,7 +85,7 @@ public sealed class DataRepresentationOptimizationTests {
 
   [Test]
   public void IdentityByteTable_GivenAByteBoundedIndex_ThenTheLoadAndTableDisappear() {
-    var module = new IrModule();
+    var module = new IrModule("test");
     var table = module.AddGlobal(new IrGlobalVariable("identity", IrType.U8) {
       Bytes = [.. Enumerable.Range(0, 256).Select(index => (byte)index)],
       Count = 256,
@@ -110,7 +110,7 @@ public sealed class DataRepresentationOptimizationTests {
 
   [Test]
   public void GeneratedLookupTable_GivenAnArithmeticFormula_ThenTheReversePassDoesNotUndoGeneration() {
-    var module = new IrModule();
+    var module = new IrModule("test");
     module.AddGlobal(new IrGlobalVariable(".lut.keep", IrType.U8) {
       Bytes = [.. Enumerable.Range(0, 256).Select(index => (byte)(index ^ 0x5a))],
       Count = 256,
