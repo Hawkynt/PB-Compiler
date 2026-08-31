@@ -18,6 +18,7 @@ public static class SimplifyCfg {
     do {
       changed = false;
       total += FoldBranches(fn, ref changed);
+      total += ThreadBranchesThroughPhis(fn, ref changed);
       total += RemoveUnreachable(fn, ref changed);
       total += RemoveTrivialPhis(fn, ref changed);
       total += MergeSingleSuccessorBlocks(fn, ref changed);
@@ -48,6 +49,73 @@ public static class SimplifyCfg {
       changed = true;
     }
     return folded;
+  }
+
+  /// <summary>
+  /// Threads an unconditional predecessor around a phi-only branch block when that predecessor's
+  /// incoming value makes the branch constant. This is deliberately edge-local: no instruction is
+  /// speculated or duplicated, and a block containing anything between its phis and terminator is
+  /// left for a stronger jump-threading pass.
+  /// </summary>
+  private static int ThreadBranchesThroughPhis(IrFunction fn, ref bool changed) {
+    var threaded = 0;
+    foreach (var block in fn.Blocks.ToList()) {
+      if (block.Terminator is not IrCondBr cb
+          || cb.Condition is not IrPhi condition
+          || !ReferenceEquals(condition.Parent, block))
+        continue;
+
+      var phis = block.Phis.ToList();
+      if (block.Instructions.Count != phis.Count + 1)
+        continue;                                      // never bypass executable work
+
+      foreach (var pred in block.Predecessors.ToList()) {
+        if (pred.Terminator is not IrBr br || !ReferenceEquals(br.Target, block))
+          continue;                                    // one edge only: no critical-edge surgery here
+        if (condition.IncomingFrom(pred) is not IrConstantInt incoming)
+          continue;
+
+        var target = incoming.IsZero ? cb.IfFalse : cb.IfTrue;
+        if (ReferenceEquals(target, block) || ReferenceEquals(target, pred))
+          continue;                                    // keep loop/self-edge shapes for dedicated passes
+        if (!TryTranslateSuccessorPhis(block, pred, target, out var translated))
+          continue;
+
+        // The old path was pred -> block -> target. A target phi therefore saw the value attached to
+        // `block`; after threading it must see that same value as evaluated on `pred`. When that value
+        // is itself one of block's phis, its pred-specific incoming is exactly that edge value.
+        foreach (var (phi, value) in translated)
+          phi.AddIncoming(value, pred);
+        foreach (var phi in phis)
+          phi.RemoveIncoming(pred);
+        br.Target = target;
+
+        ++threaded;
+        changed = true;
+      }
+    }
+    return threaded;
+  }
+
+  private static bool TryTranslateSuccessorPhis(
+      IrBasicBlock block,
+      IrBasicBlock pred,
+      IrBasicBlock target,
+      out List<(IrPhi Phi, IrValue Value)> translated) {
+    translated = [];
+    foreach (var phi in target.Phis) {
+      if (phi.IncomingFrom(block) is not { } value)
+        return false;                                  // malformed/unsupported edge: do not guess
+
+      if (value is IrInstruction { Parent: { } valueBlock } && ReferenceEquals(valueBlock, block)) {
+        if (value is not IrPhi sourcePhi || sourcePhi.IncomingFrom(pred) is not { } incoming)
+          return false;                                // a non-phi local would have to be cloned
+        value = incoming;
+      }
+
+      translated.Add((phi, value));
+    }
+    return true;
   }
 
   private static int RemoveUnreachable(IrFunction fn, ref bool changed) {
