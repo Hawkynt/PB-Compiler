@@ -62,7 +62,7 @@ public sealed class OffsetInductionCongruenceTests {
     Assert.That(IrVerifier.Verify(loop.Fn), Is.Empty);
     Assert.That(loop.Offset.Parent, Is.Null);
     Assert.That(store.Value, Is.SameAs(loop.Leader), "(j - 100) should become i once j is represented as i + 100");
-    Assert.That(loop.Fn.AllInstructions.OfType<IrPhi>(), Has.Count.EqualTo(1));
+    Assert.That(loop.Fn.AllInstructions.OfType<IrPhi>().ToList(), Has.Count.EqualTo(1));
   }
 
   [Test]
