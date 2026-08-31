@@ -24,14 +24,8 @@ jobs:
 
           p = Path('PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs')
           text = p.read_text()
-          old = '''  private Backend.SelectionTarget SelectionTarget => new(
-    Cpu386: this._rt.Cpu386, Optimize: this.Optimize,
-    OptimizeSpeed: this.OptimizeSpeed, OptimizeSize: this.OptimizeSize,
-    Cost: this.SelectionCost);'''
-          new = '''  private Backend.SelectionTarget SelectionTarget => new(
-    Cpu386: this._rt.Cpu386, Optimize: this.Optimize,
-    OptimizeSpeed: this.OptimizeSpeed, OptimizeSize: this.OptimizeSize,
-    Cost: this.SelectionCost, CpuLevel: this._rt.Target.CpuLevel);'''
+          old = '  private Backend.SelectionTarget SelectionTarget => new(\n    Cpu386: this._rt.Cpu386, Optimize: this.Optimize,\n    OptimizeSpeed: this.OptimizeSpeed, OptimizeSize: this.OptimizeSize,\n    Cost: this.SelectionCost);'
+          new = '  private Backend.SelectionTarget SelectionTarget => new(\n    Cpu386: this._rt.Cpu386, Optimize: this.Optimize,\n    OptimizeSpeed: this.OptimizeSpeed, OptimizeSize: this.OptimizeSize,\n    Cost: this.SelectionCost, CpuLevel: this._rt.Target.CpuLevel);'
           if text.count(old) != 1:
               raise SystemExit(f'CodeGenerator.Backend target anchor count = {text.count(old)}')
           p.write_text(text.replace(old, new))
