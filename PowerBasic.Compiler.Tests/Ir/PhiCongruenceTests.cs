@@ -48,12 +48,18 @@ public sealed class PhiCongruenceTests {
     Assert.That(first.Parent, Is.Not.Null);
   }
 
+  /// <summary>
+  /// Equal steps from different starting values are the offset case, not a distinct induction: the
+  /// second counter is the first plus a constant, so it is folded away and rebuilt where it is read.
+  /// Only a different STEP keeps two counters apart - see the test below.
+  /// </summary>
   [Test]
-  public void Phis_GivenDifferentStartingValues_ThenBothSurvive() {
-    var (fn, _, second) = TwinCounters(secondStart: 100, secondStep: 1);
+  public void Phis_GivenDifferentStartingValues_ThenTheOffsetOneIsFolded() {
+    var (fn, first, second) = TwinCounters(secondStart: 100, secondStep: 1);
 
-    Assert.That(PhiCongruence.Run(fn), Is.Zero);
-    Assert.That(second.Parent, Is.Not.Null);
+    Assert.That(PhiCongruence.Run(fn), Is.EqualTo(1));
+    Assert.That(second.Parent, Is.Null);
+    Assert.That(first.Parent, Is.Not.Null);
   }
 
   [Test]

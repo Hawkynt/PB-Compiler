@@ -1,8 +1,9 @@
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
-/// O0111 — redundant induction-variable elimination, in the form that covers the case actually seen:
-/// two loop-carried values that advance in lockstep are one value written twice.
+/// O0111 — redundant induction-variable elimination. Equal loop-carried values are merged outright;
+/// same-width integer recurrences with the same constant step and a constant start offset are reduced
+/// to one carried phi plus a derived <c>leader + delta</c> value.
 ///
 /// <para>
 /// It is <see cref="Gvn"/> for phis, which GVN itself cannot do. GVN numbers an instruction from its
@@ -11,29 +12,40 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// entirely and two identical induction variables survive it untouched.
 /// </para>
 /// <para>
-/// The way out is to assume congruence and then break it. Every phi in a block starts in one class
-/// with the others of its type; a class splits whenever two of its members disagree on some
-/// predecessor, where "disagree" means their incoming values are neither identical nor in the same
-/// class. Repeating until nothing splits leaves classes whose members are provably equal — including
-/// the cyclic cases, which is the whole point. Starting pessimistically (nothing congruent until
-/// proven) can never conclude anything about a cycle, because the proof is circular.
+/// The way out for equal phis is to assume congruence and then break it. Every phi in a block starts
+/// in one class with the others of its type; a class splits whenever two of its members disagree on
+/// some predecessor, where "disagree" means their incoming values are neither identical nor in the
+/// same class. Repeating until nothing splits leaves classes whose members are provably equal —
+/// including the cyclic cases, which is the whole point. Starting pessimistically (nothing congruent
+/// until proven) can never conclude anything about a cycle, because the proof is circular.
 /// </para>
 /// <para>
-/// DOS-era BASIC produces these by hand: an index and an offset maintained side by side while walking
-/// two parallel arrays. The lowering produces them too, wherever the same counter is read in two
-/// shapes.
+/// The offset case is deliberately narrower than a general SCEV analysis. If two integer phis have
+/// constant starts and recurrences <c>next = phi + step</c> on the same two edges, with the same
+/// constant step, then their bit-pattern difference is invariant under the IR's wrapping arithmetic:
+/// <c>right[n] = left[n] + (right[0] - left[0]) mod 2^width</c>. Replacing the second phi by that
+/// derived value removes one loop-carried register and lets InstCombine cancel common offsets.
 /// </para>
 /// </summary>
 public static class PhiCongruence {
 
-  /// <summary>Merges congruent phis in <paramref name="fn"/>; returns how many were eliminated.</summary>
+  private sealed record AffineIv(
+    IrPhi Phi,
+    IrBasicBlock Entry,
+    IrBasicBlock Latch,
+    IrConstantInt Start,
+    IrConstantInt Step);
+
+  /// <summary>Merges congruent/constant-offset induction phis in <paramref name="fn"/>; returns how many were eliminated.</summary>
   public static int Run(IrFunction fn) {
     if (fn.HasErrorHandler || fn.HasInlineAsm)
       return 0;                                  // control can arrive where the CFG does not say
 
     var eliminated = 0;
-    foreach (var block in fn.Blocks.ToList())
+    foreach (var block in fn.Blocks.ToList()) {
       eliminated += MergeIn(block);
+      eliminated += MergeOffsetInductions(block);
+    }
     return eliminated;
   }
 
@@ -78,6 +90,96 @@ public static class PhiCongruence {
       }
     }
     return eliminated;
+  }
+
+  /// <summary>
+  /// Reduces two affine recurrences with the same step to one carried phi plus a constant offset.
+  /// Phi users are left alone: an incoming value is evaluated on a predecessor edge, and moving a
+  /// header-defined derived value onto an arbitrary phi edge needs a dominance/LCSSA rewrite rather
+  /// than this local canonicalization.
+  /// </summary>
+  private static int MergeOffsetInductions(IrBasicBlock block) {
+    var phis = block.Instructions.OfType<IrPhi>().ToList();
+    if (phis.Count < 2)
+      return 0;
+
+    var eliminated = 0;
+    for (var i = 0; i < phis.Count; ++i) {
+      var leader = phis[i];
+      if (leader.Parent is null || MatchAffineIv(leader) is not { } left)
+        continue;
+
+      for (var j = i + 1; j < phis.Count; ++j) {
+        var candidate = phis[j];
+        if (candidate.Parent is null || MatchAffineIv(candidate) is not { } right)
+          continue;
+        if (!Equals(left.Phi.Type, right.Phi.Type)
+            || !ReferenceEquals(left.Entry, right.Entry)
+            || !ReferenceEquals(left.Latch, right.Latch)
+            || left.Step.ZeroExtended != right.Step.ZeroExtended)
+          continue;
+        if (candidate.Users.Any(user => user is IrPhi))
+          continue;
+
+        var deltaValue = IrConstFold.Wrap(unchecked(right.Start.Value - left.Start.Value), candidate.Type);
+        var delta = new IrConstantInt(candidate.Type, deltaValue);
+        IrValue replacement = leader;
+        if (!delta.IsZero) {
+          var derived = new IrBinary(IrBinaryOp.Add, leader, delta);
+          var firstNonPhi = block.Instructions.First(inst => inst is not IrPhi);
+          block.InsertBefore(derived, firstNonPhi);
+          replacement = derived;
+        }
+
+        candidate.ReplaceAllUsesWith(replacement);
+        candidate.EraseFromParent();
+        ++eliminated;
+      }
+    }
+    return eliminated;
+  }
+
+  private static AffineIv? MatchAffineIv(IrPhi phi) {
+    if (!phi.Type.IsInteger || phi.IncomingBlocks.Count != 2)
+      return null;
+
+    IrBasicBlock? entry = null;
+    IrBasicBlock? latch = null;
+    IrConstantInt? start = null;
+    IrConstantInt? step = null;
+
+    foreach (var predecessor in phi.IncomingBlocks) {
+      var incoming = phi.IncomingFrom(predecessor)!;
+      if (TryMatchStep(incoming, phi, predecessor) is { } incomingStep) {
+        if (latch is not null)
+          return null;
+        latch = predecessor;
+        step = incomingStep;
+        continue;
+      }
+
+      if (incoming is not IrConstantInt incomingStart || entry is not null || !Equals(incomingStart.Type, phi.Type))
+        return null;
+      entry = predecessor;
+      start = incomingStart;
+    }
+
+    return entry is not null && latch is not null && start is not null && step is not null && !step.IsZero
+      ? new(phi, entry, latch, start, step)
+      : null;
+  }
+
+  private static IrConstantInt? TryMatchStep(IrValue value, IrPhi phi, IrBasicBlock predecessor) {
+    if (value is not IrBinary { Op: IrBinaryOp.Add } add || !ReferenceEquals(add.Parent, predecessor))
+      return null;
+
+    IrConstantInt? step = null;
+    if (ReferenceEquals(add.Lhs, phi) && add.Rhs is IrConstantInt rhs)
+      step = rhs;
+    else if (ReferenceEquals(add.Rhs, phi) && add.Lhs is IrConstantInt lhs)
+      step = lhs;
+
+    return step is not null && Equals(step.Type, phi.Type) ? step : null;
   }
 
   /// <summary>
