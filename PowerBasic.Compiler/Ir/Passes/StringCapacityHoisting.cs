@@ -202,7 +202,9 @@ public static class StringCapacityHoisting {
       default:
         return null;
     }
-    return count is > 0 and <= int.MaxValue ? (int)count : null;
+    // Operators, not a relational pattern: a pattern needs its constants to already be Int128,
+    // and neither 0 nor int.MaxValue is one, which is CS9135.
+    return count > 0 && count <= int.MaxValue ? (int)count : null;
   }
 
   private static IrFunction Declare(IrModule module, string name, IrType returnType, params IrType[] parameters)
