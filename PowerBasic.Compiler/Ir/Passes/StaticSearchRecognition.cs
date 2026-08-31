@@ -11,15 +11,7 @@ public static class StaticSearchRecognition {
   private const int _MIN_BINARY_KEYS = 8;
   private const int _MIN_STATIC_KEYS = 4;
 
-  private sealed record Search(
-    IrGlobalVariable Table,
-    IrValue Key,
-    IrLoad Load,
-    IrGep Gep,
-    IrCmp Comparison,
-    IrCondBr Branch,
-    IrBasicBlock Found,
-    long[] Keys);
+  private sealed record Search(IrValue Key, long[] Keys);
 
   /// <summary>Rewrites recognized searches; returns the number replaced.</summary>
   public static int Run(IrModule module) {
@@ -59,8 +51,7 @@ public static class StaticSearchRecognition {
         continue;
 
       var found = branch.IfTrue;
-      var nextBlock = branch.IfFalse;
-      if (!ReferenceEquals(nextBlock, loop.Latch)
+      if (!ReferenceEquals(branch.IfFalse, loop.Latch)
           || found.Terminator is not IrRet { HasValue: true, Value: { } returned }
           || !ReferenceEquals(returned, loop.Counter))
         continue;
@@ -76,7 +67,7 @@ public static class StaticSearchRecognition {
       if (loop.Counter.Users.Any(user => user.Parent is not null && !loop.Region.Contains(user.Parent)))
         continue;
 
-      search = new(table, key, load, gep, comparison, branch, found, keys);
+      search = new(key, keys);
       return true;
     }
     return false;
@@ -84,12 +75,26 @@ public static class StaticSearchRecognition {
 
   private static bool TryLoadAndKey(IrCmp comparison, IrPhi counter, out IrGlobalVariable table,
       out IrGep gep, out IrLoad load, out IrValue key) {
-    (IrValue candidateLoad, key) = comparison.Lhs is IrLoad ? (comparison.Lhs, comparison.Rhs)
-      : comparison.Rhs is IrLoad ? (comparison.Rhs, comparison.Lhs) : (null!, null!);
+    IrValue candidateLoad;
+    IrValue candidateKey;
+    if (comparison.Lhs is IrLoad) {
+      candidateLoad = comparison.Lhs;
+      candidateKey = comparison.Rhs;
+    } else if (comparison.Rhs is IrLoad) {
+      candidateLoad = comparison.Rhs;
+      candidateKey = comparison.Lhs;
+    } else {
+      table = null!;
+      gep = null!;
+      load = null!;
+      key = null!;
+      return false;
+    }
+
     if (candidateLoad is not IrLoad read || read.Pointer is not IrGep indexed
         || indexed.BasePtr is not IrGlobalVariable global || !ReferenceEquals(indexed.ByteOffset, counter)
         || indexed.ElementType is null || !indexed.ElementType.SameStorage(global.ValueType)
-        || !read.Type.SameStorage(global.ValueType) || !key.Type.SameStorage(global.ValueType)) {
+        || !read.Type.SameStorage(global.ValueType) || !candidateKey.Type.SameStorage(global.ValueType)) {
       table = null!;
       gep = null!;
       load = null!;
@@ -99,6 +104,7 @@ public static class StaticSearchRecognition {
     table = global;
     gep = indexed;
     load = read;
+    key = candidateKey;
     return true;
   }
 
@@ -130,8 +136,7 @@ public static class StaticSearchRecognition {
   }
 
   private static void Rewrite(IrFunction function, CountedLoop loop, Search search) {
-    var sorted = StrictlySorted(search.Keys);
-    if (sorted && search.Keys.Length >= _MIN_BINARY_KEYS) {
+    if (StrictlySorted(search.Keys) && search.Keys.Length >= _MIN_BINARY_KEYS) {
       var root = BuildBinary(function, loop.Exit, search.Key, search.Keys, loop.Counter.Type, 0, search.Keys.Length - 1);
       ((IrBr)loop.Preheader.Terminator!).Target = root;
     } else {
@@ -178,6 +183,6 @@ public static class StaticSearchRecognition {
 
   private static long Signed(long pattern, int bits) {
     var sign = 1L << (bits - 1);
-    return ((pattern ^ sign) - sign);
+    return (pattern ^ sign) - sign;
   }
 }
