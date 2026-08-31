@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟨 Partial — `SimplifyCfg` threads unconditional predecessors around PHI-only conditional blocks when the incoming `i1` is constant; general expression folding, critical edges and code duplication remain planned |
 | **Stage** | SSA mid-end |
 | **Related** | [O0017](O0017-sccp.md), [O0045](O0045-ir-correlated-value-propagation.md), [O0106](O0106-trace-formation.md) |
 
@@ -16,8 +16,30 @@ incoming edge removes the test entirely on those paths.
       x = 1              x = 2
          \                 /
           v = phi(1, 2)
-          if v = 1 ...          <- decided on both edges
+          if v ...              <- decided on both edges
 ```
+
+## Implemented slice
+
+`SimplifyCfg` now handles the no-duplication form directly. For an unconditional
+predecessor `P` of a block `B`, it redirects `P` to the selected successor when:
+
+- `B` consists only of leading phi nodes and an `IrCondBr`;
+- the branch condition is one of those phis;
+- the condition's incoming value from `P` is a constant `i1`;
+- the selected successor is neither `P` nor `B`; and
+- every successor phi can be translated without cloning a value defined in `B`.
+
+Successor phis are updated edge-by-edge. If a successor receives one of `B`'s
+phis, the new `P` edge receives that phi's incoming value from `P`, preserving
+the exact SSA value that would have flowed through the original two-edge path.
+The removed `P -> B` incoming entries are then deleted from `B`'s phis and the
+existing CFG cleanup collects any newly unreachable/trivial blocks.
+
+This is intentionally conservative. A block containing executable work is not
+bypassed, even when that work is pure, because doing so would require proving it
+unneeded or cloning/speculating it. Likewise the first slice does not split
+critical edges or rewrite predecessor terminators other than a single `IrBr`.
 
 ## Applies to
 
@@ -25,33 +47,22 @@ incoming edge removes the test entirely on those paths.
 DIM c%, mode%, r%
 IF c% > 0 THEN mode% = 1 ELSE mode% = 2
 ' ... straight-line code ...
-IF mode% = 1 THEN r% = 10 ELSE r% = 20
+IF mode% THEN r% = 10 ELSE r% = 20
 ```
 
-## Today
+When lowering exposes the second condition directly as a boolean phi, each
+incoming edge can now bypass its redundant test.
 
-`mode%` is a phi with two constant inputs; SCCP cannot lower it to a single
-constant (the inputs disagree), so the second `IF` is emitted and branched on.
+## Still planned
 
-## Planned
+- Fold comparisons and other side-effect-free expressions whose operands become
+  constant after substituting predecessor-specific phi inputs.
+- Split/redirect critical predecessor edges safely.
+- Duplicate a small profitable join block under a code-size budget when the
+  deciding expression is not the only executable instruction.
+- Integrate profitability/frequency information with [O0106](O0106-trace-formation.md)
+  if/when trace formation exists.
 
-The second test is folded on each path, and the two assignments to `r%` move
-into the arms of the first `IF`:
-
-```basic
-IF c% > 0 THEN
-  mode% = 1 : r% = 10
-ELSE
-  mode% = 2 : r% = 20
-END IF
-```
-
-## What it needs
-
-- Either **jump threading on the SSA form** (duplicate the join per incoming
-  edge when the branch becomes decidable) or the trace/superblock machinery of
-  [O0106](O0106-trace-formation.md) — they are the same transformation seen from
-  two directions.
-- A duplication budget, and phi updates for every successor of the split block.
-- It subsumes a common DOS-era idiom: a "mode" flag set once and tested
-  repeatedly afterwards.
+The broader forms are conventional jump threading. The implemented slice stays
+inside `SimplifyCfg` because it is purely a CFG/phi rewrite and requires no new
+path-sensitive value lattice.
