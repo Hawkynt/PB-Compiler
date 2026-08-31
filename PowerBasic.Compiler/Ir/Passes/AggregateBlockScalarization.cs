@@ -76,7 +76,7 @@ public static class AggregateBlockScalarization {
         && (sourceAlloca.Allocated != IrType.I8 || sourceAlloca.Count != bytes))
       return false;
 
-    if (!TryCompleteLayout(bytes, destination, source as IrAlloca, out var layout))
+    if (!TryCompleteLayout(bytes, destination as IrAlloca, source as IrAlloca, out var layout))
       return false;
 
     var block = call.Parent;
