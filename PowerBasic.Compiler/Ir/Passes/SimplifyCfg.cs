@@ -19,8 +19,11 @@ public static class SimplifyCfg {
       total += FoldBranches(fn, ref changed);
       total += ThreadBranchesThroughPhis(fn, ref changed);
       total += RemoveUnreachable(fn, ref changed);
-      total += RemoveTrivialPhis(fn, ref changed);
+      // Forwarding blocks go before trivial-phi removal: collapsing a successor phi first can
+      // leave the bridge phi used by a non-phi, which permanently blocks the elision below and
+      // strands the empty bridge block in the CFG.
       total += EliminateForwardingBlocks(fn, ref changed);
+      total += RemoveTrivialPhis(fn, ref changed);
       total += MergeSingleSuccessorBlocks(fn, ref changed);
     } while (changed);
     return total;
