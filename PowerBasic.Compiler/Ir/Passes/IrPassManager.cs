@@ -195,6 +195,14 @@ public sealed class IrPassManager {
     // come after SCCP (which supplies the constants it folds together) and before GVN (which is the
     // pass that benefits)
     .Add("reassociate", Reassociate.Run)
+    // Saturate local pure integer trees before numbering them. Unlike InstCombine/Reassociate this
+    // does not commit to a rewrite order: equivalent forms coexist under a hard candidate budget and
+    // only the cheapest one is rebuilt.
+    .Add("eqsat", EqualitySaturation.Run)
+    // Constant arithmetic lowering is separated from the algebraic search because its contract is
+    // stronger: every admitted 16-bit formula is exhaustively checked before it may replace DIV/MOD
+    // or a multiply.
+    .Add("verified-arith", VerifiedArithmeticLowering.Run)
     // GVN cannot number a phi - a loop phi's operands include the value coming back round the latch,
     // which is derived from the phi itself - so congruent induction variables survive it untouched
     // after mem2reg has made the counter a phi, and before the value passes, so the integer form is
