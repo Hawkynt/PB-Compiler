@@ -196,12 +196,22 @@ public static class InstCombine {
     if (c.Lhs is IrConstant && c.Rhs is not IrConstant)
       return new IrCmp(Swap(c.Pred), c.Rhs, c.Lhs);
 
+    // i1 has only the bit patterns false/true. Equality against either constant is therefore either
+    // the value itself or its logical complement; no compare instruction is needed.
+    if (c.Pred is IrCmpPred.Eq or IrCmpPred.Ne
+        && c.Lhs.Type.IsBool
+        && c.Rhs is IrConstantInt boolConstant) {
+      var rhsIsTrue = !boolConstant.IsZero;
+      var returnsOperand = (c.Pred == IrCmpPred.Eq) == rhsIsTrue;
+      return returnsOperand ? c.Lhs : NegateBool(c.Lhs, c.IsSourceCondition);
+    }
+
     // (zext/sext i1 %b) != 0  ->  %b   and   (zext/sext i1 %b) == 0  ->  !%b
     // this collapses the "relational then compare-to-zero" shape every BASIC condition lowers to
     if (c.Pred is IrCmpPred.Ne or IrCmpPred.Eq) {
       var widened = AsWidenedBool(c.Lhs, c.Rhs) ?? AsWidenedBool(c.Rhs, c.Lhs);
       if (widened is { } b)
-        return c.Pred == IrCmpPred.Ne ? b : new IrBinary(IrBinaryOp.Xor, b, new IrConstantInt(IrType.I1, 1));
+        return c.Pred == IrCmpPred.Ne ? b : NegateBool(b, c.IsSourceCondition);
     }
 
     if (!ReferenceEquals(c.Lhs, c.Rhs))
@@ -213,6 +223,31 @@ public static class InstCombine {
       _ => null,                                      // float x==x is false for NaN; do not fold
     };
   }
+
+  /// <summary>
+  /// Produces logical NOT of an i1. Integer comparisons stay comparisons with the complementary
+  /// predicate so branch fusion can consume them directly. Ordered floating predicates deliberately
+  /// do not use that shortcut: NaN makes the complement of an ordered predicate unordered-inclusive.
+  /// </summary>
+  private static IrValue NegateBool(IrValue value, bool isSourceCondition) {
+    if (value is IrCmp cmp && InvertInteger(cmp.Pred) is { } inverse)
+      return new IrCmp(inverse, cmp.Lhs, cmp.Rhs) { IsSourceCondition = isSourceCondition };
+    return new IrBinary(IrBinaryOp.Xor, value, new IrConstantInt(IrType.I1, 1));
+  }
+
+  private static IrCmpPred? InvertInteger(IrCmpPred p) => p switch {
+    IrCmpPred.Eq => IrCmpPred.Ne,
+    IrCmpPred.Ne => IrCmpPred.Eq,
+    IrCmpPred.Slt => IrCmpPred.Sge,
+    IrCmpPred.Sle => IrCmpPred.Sgt,
+    IrCmpPred.Sgt => IrCmpPred.Sle,
+    IrCmpPred.Sge => IrCmpPred.Slt,
+    IrCmpPred.Ult => IrCmpPred.Uge,
+    IrCmpPred.Ule => IrCmpPred.Ugt,
+    IrCmpPred.Ugt => IrCmpPred.Ule,
+    IrCmpPred.Uge => IrCmpPred.Ult,
+    _ => null,
+  };
 
   /// <summary>If <paramref name="maybeCast"/> is a zext/sext of an i1 and <paramref name="maybeZero"/> is 0, returns the i1 source.</summary>
   private static IrValue? AsWidenedBool(IrValue maybeCast, IrValue maybeZero) =>
