@@ -1,4 +1,4 @@
-name: PR52 CPU backend patch
+name: PR52 Cpu386 audit
 
 on:
   push:
@@ -6,58 +6,19 @@ on:
       - feature/intrinsic-zero-overhead-optimization
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  patch:
-    if: github.event.head_commit.message != '+ Apply CPU generation backend matrix'
+  audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply focused target-generation patch
+      - name: List legacy CPU generation gates
         shell: bash
         run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          p = Path('PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs')
-          text = p.read_text()
-          old = '  private Backend.SelectionTarget SelectionTarget => new(\n    Cpu386: this._rt.Cpu386, Optimize: this.Optimize,\n    OptimizeSpeed: this.OptimizeSpeed, OptimizeSize: this.OptimizeSize,\n    Cost: this.SelectionCost);'
-          new = '  private Backend.SelectionTarget SelectionTarget => new(\n    Cpu386: this._rt.Cpu386, Optimize: this.Optimize,\n    OptimizeSpeed: this.OptimizeSpeed, OptimizeSize: this.OptimizeSize,\n    Cost: this.SelectionCost, CpuLevel: this._rt.Target.CpuLevel);'
-          if text.count(old) != 1:
-              raise SystemExit(f'CodeGenerator.Backend target anchor count = {text.count(old)}')
-          p.write_text(text.replace(old, new))
-
-          p = Path('PowerBasic.Compiler/Backend/InstructionSelector.cs')
-          text = p.read_text()
-          property_old = 'this._target is { Cpu386: true, Optimize: true, OptimizeSpeed: true }'
-          property_new = 'this._target is { Cpu386OrLater: true, Optimize: true, OptimizeSpeed: true }'
-          if text.count(property_old) != 1:
-              raise SystemExit(f'InstructionSelector native-dword anchor count = {text.count(property_old)}')
-          text = text.replace(property_old, property_new)
-          text = text.replace('this._target.Cpu386', 'this._target.Cpu386OrLater')
-          shift_old = 'if (count == 1 || this._target.Cpu386OrLater) {'
-          if text.count(shift_old) != 1:
-              raise SystemExit(f'InstructionSelector constant-shift anchor count = {text.count(shift_old)}')
-          text = text.replace(shift_old, 'if (count == 1 || this._target.Cpu186OrLater) {')
-          p.write_text(text)
-
-          p = Path('PowerBasic.Compiler.Tests/Exec/Cpu8086.cs')
-          text = p.read_text()
-          loop_old = 'for (var i = 0; i < (count & 0x1F); ++i)'
-          flags_old = 'if ((count & 0x1F) != 0 && op >= 4) {'
-          if text.count(loop_old) != 2 or text.count(flags_old) != 2:
-              raise SystemExit(f'Cpu8086 shift anchors loops={text.count(loop_old)} flags={text.count(flags_old)}')
-          text = text.replace(loop_old, 'for (var i = 0; i < count; ++i)')
-          text = text.replace(flags_old, 'if (count != 0 && op >= 4) {')
-          p.write_text(text)
-          PY
-
-          git config user.name Hawkynt
-          git config user.email github@synthelicz.de
-          git add PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs PowerBasic.Compiler/Backend/InstructionSelector.cs PowerBasic.Compiler.Tests/Exec/Cpu8086.cs
-          git diff --cached --check
-          git commit -m '+ Apply CPU generation backend matrix'
-          git push origin HEAD:${GITHUB_REF_NAME}
+          echo '--- exact Cpu386 identifiers ---'
+          rg -n '\bCpu386\b' PowerBasic.Compiler PowerBasic.Compiler.Tests docs || true
+          echo '--- lowercase cpu386 identifiers ---'
+          rg -n '\bcpu386\b' PowerBasic.Compiler PowerBasic.Compiler.Tests docs || true
