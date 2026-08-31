@@ -1,14 +1,22 @@
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
-/// Promotes stack slots to SSA registers: an alloca whose only uses are direct
-/// loads and stores is replaced by values flowing through phi nodes placed at the
-/// iterated dominance frontier of its stores (the classic Cytron construction).
-/// This turns the lowering's trivially-correct alloca/load/store form into real SSA,
-/// which is what every downstream value-based pass (SCCP, GVN, instcombine) needs.
+/// Promotes stack slots to SSA registers: an alloca whose only uses are direct,
+/// storage-compatible loads and stores is replaced by values flowing through phi nodes placed at the
+/// iterated dominance frontier of its stores (the classic Cytron construction). This turns the
+/// lowering's trivially-correct alloca/load/store form into real SSA, which is what every downstream
+/// value-based pass (SCCP, GVN, instcombine) needs.
 ///
 /// PB zero-initializes variables, so a slot with no reaching store reads as the
 /// zero constant of its type — never undef.
+///
+/// <para>
+/// Direct pointer use alone is not sufficient under opaque pointers. Packed UDT backing is an
+/// <c>alloca i8, N</c>, and its offset-zero field may be loaded/stored as <c>i16</c> or <c>i32</c>.
+/// UNION fields make this especially easy to hit because all views start at offset zero. Promoting
+/// such a byte backing slot as though it were an i8 scalar changes storage semantics, so every access
+/// must have the allocation's storage shape before this pass owns it.
+/// </para>
 /// </summary>
 public static class Mem2Reg {
 
@@ -52,16 +60,22 @@ public static class Mem2Reg {
     return result;
   }
 
-  /// <summary>An alloca is promotable when every use is a load of it or a store into it (never its stored value).</summary>
+  /// <summary>
+  /// An alloca is promotable when every use is a direct load/store through it and every access has
+  /// the slot's storage type. Signed/unsigned integer views are storage-compatible; wider/narrower
+  /// aggregate field views are not.
+  /// </summary>
   private static bool IsPromotable(IrAlloca a) {
     foreach (var user in a.Users)
       switch (user) {
-        case IrLoad load when ReferenceEquals(load.Pointer, a):
+        case IrLoad load when ReferenceEquals(load.Pointer, a) && load.Type.SameStorage(a.Allocated):
           break;
-        case IrStore store when ReferenceEquals(store.Pointer, a) && !ReferenceEquals(store.Value, a):
+        case IrStore store when ReferenceEquals(store.Pointer, a)
+          && !ReferenceEquals(store.Value, a)
+          && store.Value.Type.SameStorage(a.Allocated):
           break;
         default:
-          return false;                              // gep, escape, or address stored elsewhere
+          return false;                              // gep, escape, incompatible view, or address stored elsewhere
       }
     return true;
   }
