@@ -28,4 +28,4 @@ jobs:
       - name: Build
         run: dotnet build PB-Compiler.slnx --configuration Release --no-restore
       - name: ISA slice
-        run: dotnet test PowerBasic.Compiler.Tests --configuration Release --no-build --filter "FullyQualifiedName~InlineAsmCryptoSemanticTests|FullyQualifiedName~AssemblerCryptoExtensionsTests|FullyQualifiedName~InlineAsmGp32SemanticTests|FullyQualifiedName~InlineAsmPopcnt"
+        run: dotnet test PowerBasic.Compiler.Tests --configuration Release --no-build --filter "FullyQualifiedName~InlineAsmCryptoSemanticTests|FullyQualifiedName~AssemblerCryptoExtensionsTests|FullyQualifiedName~InlineAsmGp32SemanticTests|FullyQualifiedName~InlineAsmPopcnt|FullyQualifiedName~InlineAsmBmi|FullyQualifiedName~AssemblerBmiTests|FullyQualifiedName~InlineAsm8086ShiftTests|FullyQualifiedName~InlineAsmIsaCoverageTests"
