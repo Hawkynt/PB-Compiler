@@ -19,7 +19,7 @@ public sealed partial class CodeGenerator {
     var x87 = IsX87InlineMnemonic(instruction.Mnemonic);
     var required = x87 ? RuntimeCpuFeatures.X87 : RequiredFeature(instruction);
     if (!x87)
-      required |= RequiredSupplementalFeature(instruction) | RequiredCryptoFeature(instruction);
+      required |= RequiredSupplementalFeature(instruction) | RequiredCryptoFeature(instruction) | RequiredBmiFeature(instruction);
     var policy = this.RuntimeIsaPolicyForRuntime();
     var mode = x87 ? policy.ResolveX87(instruction.Mnemonic) : policy.Resolve(instruction.Mnemonic, required);
     var nativelySupported = required == RuntimeCpuFeatures.None || target.Has(required);
@@ -31,11 +31,13 @@ public sealed partial class CodeGenerator {
       }
 
       // ERROR forbids fallback; it does not bypass dedicated extension encoders. The historical
-      // TextAssembler table predates POPCNT/AES/PCLMUL and the 0F38/0F3A SIMD maps, so supported
+      // TextAssembler table predates POPCNT/AES/PCLMUL/BMI and the 0F38/0F3A SIMD maps, so supported
       // extensions must still route through their native backends rather than fall through as unknown.
       if (this.TryEmitNativeCpuExtensionInstruction(instruction, resolver, out error))
         return true;
       if (this.TryEmitNativeCryptoInstruction(instruction, resolver, out error))
+        return true;
+      if (this.TryEmitNativeBmiInstruction(instruction, resolver, out error))
         return true;
       if (this.TryEmitNativeExtendedSimdInstruction(instruction, resolver, out error))
         return true;
@@ -53,6 +55,8 @@ public sealed partial class CodeGenerator {
         return true;
       if (this.TryEmitNativeCryptoInstruction(instruction, resolver, out error))
         return true;
+      if (this.TryEmitNativeBmiInstruction(instruction, resolver, out error))
+        return true;
       if (this.TryEmitNativeExtendedSimdInstruction(instruction, resolver, out error))
         return true;
       this._textAssembler ??= new(this._asm);
@@ -67,6 +71,8 @@ public sealed partial class CodeGenerator {
       if (this.TryEmitNativeCpuExtensionInstruction(instruction, resolver, out error))
         return true;
       if (this.TryEmitNativeCryptoInstruction(instruction, resolver, out error))
+        return true;
+      if (this.TryEmitNativeBmiInstruction(instruction, resolver, out error))
         return true;
       if (this.TryEmitNativeExtendedSimdInstruction(instruction, resolver, out error))
         return true;
@@ -84,6 +90,8 @@ public sealed partial class CodeGenerator {
     if (this.TryEmitVirtualPopcntInstruction(instruction, resolver, target, out error))
       return true;
     if (this.TryEmitVirtualCryptoInstruction(instruction, resolver, target, out error))
+      return true;
+    if (this.TryEmitVirtualBmiInstruction(instruction, resolver, target, out error))
       return true;
     if (this.TryEmitVirtualGp32RotateFixedInstruction(instruction, resolver, target, out error))
       return true;
