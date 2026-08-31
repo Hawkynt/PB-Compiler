@@ -109,10 +109,11 @@ public sealed class IrPassManager {
   /// <para>
   /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
   /// unrolling, sccp, correlate, pointer checks, integer/float range folds, overflow coalescing,
-  /// sroa, aggregate-sroa, mem2reg2, reassociate, equality saturation, verified arithmetic lowering,
-  /// demote, phicong, gvn, memopt, dse, licm, unswitch, closed-form, deadloop, ifconv, tailrec and
-  /// the string/global module passes. So are the two steps the caller runs around the pipeline -
-  /// <c>Inliner</c> and <c>SwitchFormation</c>.
+  /// sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery, equality saturation,
+  /// verified arithmetic lowering, demote, phicong, gvn, memory specialization, memopt, dse, licm,
+  /// reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the string/global
+  /// module passes. So are the two steps the caller runs around the pipeline - <c>Inliner</c> and
+  /// <c>SwitchFormation</c>.
   /// </para>
   /// </summary>
   public static IrPassManager Legalize() => new IrPassManager()
@@ -129,8 +130,9 @@ public sealed class IrPassManager {
   /// <para>
   /// <paramref name="optimizeForSpeed"/> reflects <c>$OPTIMIZE SPEED</c>. SPEED may spend code size to
   /// erase abstraction overhead: it runs demanded-bit cleanup, admits larger callees to the inliner,
-  /// and removes semantically dead loops. The ordinary optimization objective keeps the conservative
-  /// size budget and preserves empty loops because they may be intentional delay loops.
+  /// recognizes library loops, generates lookup tables, compiles static searches, and removes
+  /// semantically dead loops. The ordinary optimization objective keeps the conservative size budget
+  /// and preserves empty loops because they may be intentional delay loops.
   /// </para>
   /// <para>
   /// <paramref name="dataLayoutTarget"/> supplies facts that are not properties of target-neutral IR:
@@ -202,6 +204,9 @@ public sealed class IrPassManager {
     // O0359: arithmetic identities used for lowering DIV/MOD and non-trivial constant multiplies are
     // admitted only after exhaustive verification over the complete 16-bit input domain.
     .Add("verified-arith", VerifiedArithmeticLowering.Run)
+    // Horner recovery wants the canonical integer expression after reassociation, while its result is
+    // still early enough for GVN and DCE to collect the now-dead literal power tree.
+    .Add("polynomial", PolynomialEvaluation.Run)
     // GVN cannot number a phi - a loop phi's operands include the value coming back round the latch,
     // which is derived from the phi itself - so congruent induction variables survive it untouched
     // after mem2reg has made the counter a phi, and before the value passes, so the integer form is
@@ -209,9 +214,15 @@ public sealed class IrPassManager {
     .Add("demote", FloatDemotion.Run)
     .Add("phicong", PhiCongruence.Run)
     .Add("gvn", Gvn.Run)
+    // tiny intrinsic expansion is deliberately after GVN: one canonical memcpy/memset call is easier
+    // to reason about than the byte load/store sequence it expands into.
+    .Add("memsize", MemoryRoutineSpecialization.Run)
     .Add("memopt", RedundantMemory.Run)
     .Add("dse", DeadStoreElim.Run)
     .Add("licm", Licm.Run)
+    // Exact reciprocal reuse runs after LICM, so an invariant divisor that is already representable as
+    // a constant has reached the place where the repeated divisions are visible together.
+    .Add("reciprocal-reuse", ReciprocalSequenceReuse.Run)
     // AFTER licm, and that ordering is the whole composition: `IF mode THEN` inside a loop lowers to
     // a COMPARE computed in the loop, and a condition defined inside the region cannot be specialized
     // by cloning - each clone gets its own copy of the compare, so binding the original to a constant
@@ -244,6 +255,14 @@ public sealed class IrPassManager {
     // every successful inline immediately triggers another function sweep over the exposed body.
     .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "inline-speed",
       module => Inliner.Run(module, optimizeForSpeed: true))
+    // The advanced data/search passes run before the string passes: searches need the original static
+    // table shape, bitset packing needs whole-module escape information, and generated tables must
+    // exist before the ordinary global cleanup gets a chance to remove what became unused.
+    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "libcalls", LibraryCallRecognition.Run)
+    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "static-search", StaticSearchRecognition.Run)
+    .AddModulePassWhen(includeModulePasses, "bitsets", BitsetSubstitution.Run)
+    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "lutgen", LookupTableGeneration.Run)
+    .AddModulePassWhen(includeModulePasses, "lutelim", LookupTableElimination.Run)
     // The string passes are module passes because they mint module-level things - a runtime
     // declaration, a pooled literal - which a function pass has no handle on. They run last, after
     // the value passes have folded whatever the arguments were going to fold into.
