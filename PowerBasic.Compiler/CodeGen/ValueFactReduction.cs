@@ -341,7 +341,7 @@ public static class ValueFactReduction {
       return KnownBits.Unknown;
     var lowMask = count >= 64 ? ulong.MaxValue : (1UL << count) - 1;
     var bits = unchecked((ulong)c.Residue) & lowMask;
-    return new(bits, ~bits & lowMask).Narrow(width);
+    return new KnownBits(bits, ~bits & lowMask).Narrow(width);
   }
 
   private static Congruence CongruenceFromBits(KnownBits bits, int width, bool signed) {
