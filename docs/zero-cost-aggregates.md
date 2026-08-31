@@ -9,6 +9,7 @@ PowerBASIC source abstractions should not imply runtime machinery merely because
 - PB/CC 3.6 generic procedures and generic `TYPE`s are monomorphized before IR lowering. Emitted IR contains concrete specializations, not runtime generic dispatch, boxing, type descriptors, or generic dictionaries.
 - Type aliases have no runtime representation of their own.
 - Non-escaping packed `TYPE` storage may be scalar-replaced when every observed field access names a statically known, independent byte region. The resulting typed scalar slots are then eligible for `mem2reg`, so ordinary field reads and writes can become SSA values.
+- `mem2reg` must prove that every direct load/store has the promoted slot's storage type. Direct use alone is insufficient with opaque pointers: a packed `alloca i8, N` can be the offset-zero address of an `INTEGER`, `LONG`, or overlapping `UNION` view.
 - Small-array scalar replacement must prove that every access has the array element's storage type. An `alloca i8, N` is not sufficient evidence that the object is a `BYTE[N]`; packed UDTs use the same backing representation.
 - Overlapping aggregate regions must remain shared storage. This is required for `UNION` aliasing and type-punning semantics and prevents scalar replacement from inventing independent values for bytes that are intentionally the same bytes.
 - Aggregate scalar replacement must refuse storage whose address escapes, whose offset is dynamic or out of bounds, or whose users require whole-object identity.
