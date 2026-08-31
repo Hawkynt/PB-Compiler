@@ -51,9 +51,6 @@ public sealed partial class DosRuntime {
   /// <summary>pb36 P3 gate: virtual BSS only applies to directly written images (the $LINK path lays out its own image).</summary>
   public bool EnableBss { get; set; }
 
-  /// <summary>Legacy compatibility gate. New runtime code should query <see cref="Target"/>.</summary>
-  public bool Cpu386 { get; set; }
-
   /// <summary>R1 ($OPTION VIDEO): console PRINT writes glyphs straight into B800 text memory - the classic direct-video speedup. The fast path handles the common straight text run (printables only, no line wrap); control characters, wraps and non-console handles keep the exact DOS path, and the BIOS cursor is resynced so mixed output stays coherent.</summary>
   public bool EnableFastVideo { get; set; }
 

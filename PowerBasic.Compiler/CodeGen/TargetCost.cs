@@ -188,12 +188,15 @@ public sealed class TargetCost {
 
   /// <summary>The cost model implied by a <c>$CPU</c> floor and an <c>$OPTIMIZE</c> objective. The four
   /// metastatement CPU spellings map to their tier; anything else is the 8086 default.</summary>
-  public static TargetCost For(bool cpu386, bool cpu486, bool cpu586, bool optimizeSpeed, bool optimizeSize) {
-    var tier =
-      cpu586 ? CpuTier.Pentium :
-      cpu486 ? CpuTier.I80486 :
-      cpu386 ? CpuTier.I80386 :
-      CpuTier.I8086;
+  public static TargetCost For(int cpuLevel, bool optimizeSpeed, bool optimizeSize) {
+    var tier = cpuLevel switch {
+      >= 686 => CpuTier.P6,
+      >= 586 => CpuTier.Pentium,
+      >= 486 => CpuTier.I80486,
+      >= 386 => CpuTier.I80386,
+      >= 286 => CpuTier.I80286,
+      _ => CpuTier.I8086,
+    };
     var objective =
       optimizeSize ? CostObjective.Size :
       optimizeSpeed ? CostObjective.Speed :

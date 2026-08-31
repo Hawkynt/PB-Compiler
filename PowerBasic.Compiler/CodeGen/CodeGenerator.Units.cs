@@ -88,7 +88,7 @@ public sealed partial class CodeGenerator {
   /// <summary>The unit-style CPU/feature requirement flags derived from $CPU (listing/header reporting).</summary>
   private PbuCpuFlags CpuRequirementFlags() {
     var flags = PbuCpuFlags.None;
-    if (this.Cpu386)
+    if (this.Has32BitCpu)
       flags |= PbuCpuFlags.Needs386;
     if (this.Cpu486)
       flags |= PbuCpuFlags.Needs386; // 486 still requires (at least) a 386

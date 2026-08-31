@@ -613,7 +613,7 @@ public sealed partial class CodeGenerator {
       case BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Eqv or BinaryOp.Imp:
         // pb36 C1 ($CPU 80386): a 64-bit bitwise op runs inline as two 32-bit halves
         // instead of a runtime call - bitwise ops can't trap, so no error path is lost
-        if (this.Optimize && this.Cpu386)
+        if (this.Optimize && this.Has32BitCpu)
           this.EmitQuad386Bitwise(b.Op);
         else
           this.EmitQuadMemoryOp(b.Op switch {
@@ -1278,7 +1278,7 @@ public sealed partial class CodeGenerator {
   private void EmitInt16CompareResult(Func<Assembler, Action<Label>> jump, Condition condition) {
     var asm = this._asm;
     // pb36 C1 ($CPU 80386): branchless SETcc - AL = 0/1, widen, negate to 0/-1
-    if (this.Optimize && this.Cpu386) {
+    if (this.Optimize && this.Has32BitCpu) {
       asm.Setcc(condition, Reg.AL);
       asm.Mov(Reg.AH, (Imm)0);  // MOV leaves the SETcc result intact
       asm.Neg(Reg.AX);
@@ -1604,7 +1604,7 @@ public sealed partial class CodeGenerator {
         }
         // pb36 C1 ($CPU 80386): low-32-bit product via one IMUL EAX, EBX -
         // identical to rt_lmul's result, dropping the runtime helper
-        if (this.Optimize && this.Cpu386) {
+        if (this.Optimize && this.Has32BitCpu) {
           var sc = this._scratch;
           asm.Mov(Mem.Word(sc), Reg.AX);
           asm.Mov(Mem.Word(sc, 2), Reg.DX);
@@ -1649,7 +1649,7 @@ public sealed partial class CodeGenerator {
         // toward zero and the remainder takes the dividend's sign - exactly PB's
         // \ and MOD. The constant >= 2 gate rules out divide-by-zero (error 11)
         // and the MININT \ -1 overflow, so no trap path is lost.
-        if (this.Optimize && this.Cpu386
+        if (this.Optimize && this.Has32BitCpu
             && this.OptFolder.TryFold(b.Right) is { Integer: { } divisor } && Math.Abs(divisor) >= 2) {
           var sc = this._scratch;
           asm.Mov(Mem.Word(sc), Reg.AX);

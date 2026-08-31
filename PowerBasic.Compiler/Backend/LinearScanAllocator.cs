@@ -636,7 +636,7 @@ public sealed partial class LinearScanAllocator {
       HashSet<int> byteRegisters,
       SelectionTarget target) {
     if (size == MRegSize.Dword)
-      return target.Cpu386 && !addressing.Base.Contains(virtualId) && !addressing.Index.Contains(virtualId)
+      return target.Cpu386OrLater && !addressing.Base.Contains(virtualId) && !addressing.Index.Contains(virtualId)
         ? _pool
         : [];
     if (byteRegisters.Contains(virtualId))

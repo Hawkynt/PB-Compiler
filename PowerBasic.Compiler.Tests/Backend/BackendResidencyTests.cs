@@ -35,7 +35,7 @@ public sealed class BackendResidencyTests {
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 
   private static readonly SelectionTarget _speed = new(Optimize: true, OptimizeSpeed: true);
-  private static readonly SelectionTarget _speed386 = new(Cpu386: true, Optimize: true, OptimizeSpeed: true);
+  private static readonly SelectionTarget _speed386 = new(CpuLevel: 386, Optimize: true, OptimizeSpeed: true);
 
   /// <summary>The module body of <paramref name="source"/>, selected and scheduled but not yet allocated.</summary>
   private static MFunction Select(string source, SelectionTarget target) {
@@ -165,8 +165,8 @@ public sealed class BackendResidencyTests {
   [TestCase(true, false, true, TestName = "Select_Given386OptimizeOff_ThenLongsRemainWordPairs")]
   [TestCase(true, true, false, TestName = "Select_Given386WithoutSpeed_ThenLongsRemainWordPairs")]
   public void Select_GivenTargetOutside386Speed_ThenNoNativeDwordRegisters(
-      bool cpu386, bool optimize, bool optimizeSpeed) {
-    var target = new SelectionTarget(Cpu386: cpu386, Optimize: optimize, OptimizeSpeed: optimizeSpeed);
+      bool target386, bool optimize, bool optimizeSpeed) {
+    var target = new SelectionTarget(CpuLevel: target386 ? 386 : 86, Optimize: optimize, OptimizeSpeed: optimizeSpeed);
 
     var machine = Select(_LONG_ACCUMULATING_LOOP, target);
 

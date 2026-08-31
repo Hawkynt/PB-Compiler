@@ -91,8 +91,8 @@ public sealed partial class InstructionSelector {
   private InstructionSelector(SelectionTarget target) => this._target = target;
 
   /// <summary>Selects a function into machine IR, or null if it contains a construct this stage cannot model.</summary>
-  public static MFunction? TrySelect(IrFunction fn, bool cpu386 = false)
-    => TrySelect(fn, out _, new SelectionTarget(Cpu386: cpu386));
+  public static MFunction? TrySelect(IrFunction fn)
+    => TrySelect(fn, out _, SelectionTarget.Baseline);
 
   /// <summary>Selects a function into machine IR for a given target and objective, or null when it declines.</summary>
   public static MFunction? TrySelect(IrFunction fn, SelectionTarget target) => TrySelect(fn, out _, target);
@@ -102,8 +102,8 @@ public sealed partial class InstructionSelector {
   /// stopped it - when the result is null. The reason is what the coverage census reads to rank which
   /// widening buys the most eligible functions, so it names the IR construct, not the failing routine.
   /// </summary>
-  public static MFunction? TrySelect(IrFunction fn, out string? declineReason, bool cpu386 = false)
-    => TrySelect(fn, out declineReason, new SelectionTarget(Cpu386: cpu386));
+  public static MFunction? TrySelect(IrFunction fn, out string? declineReason)
+    => TrySelect(fn, out declineReason, SelectionTarget.Baseline);
 
   /// <summary>The same, for a given target and objective.</summary>
   public static MFunction? TrySelect(IrFunction fn, out string? declineReason, SelectionTarget target) {
@@ -1021,7 +1021,7 @@ public sealed partial class InstructionSelector {
     if (opcode is MOpcode.Shl or MOpcode.Shr or MOpcode.Sar)
       return this.SelectQwordShift(bin, opcode);
     if (opcode is MOpcode.And or MOpcode.Or or MOpcode.Xor
-        && this._target is not { Cpu386: true, Optimize: true })
+        && this._target is not { Cpu386OrLater: true, Optimize: true })
       return this.SelectQwordRuntimeCall(bin, opcode switch {
         MOpcode.And => "rt_qand",
         MOpcode.Or => "rt_qor",
@@ -1070,7 +1070,7 @@ public sealed partial class InstructionSelector {
   /// stay on the direct path because the processor masks them and would change BASIC's loop semantics.
   /// </summary>
   private bool SelectQwordShift(IrBinary bin, MOpcode opcode) {
-    if (this._target is not { Cpu386: true, Optimize: true }
+    if (this._target is not { Cpu386OrLater: true, Optimize: true }
         || opcode is not (MOpcode.Shl or MOpcode.Shr)
         || WideShiftCount(bin.Rhs) is not { } count || count is < 1 or > 31)
       return this.Decline($"64-bit shift: {bin.Op} (needs an optimized 386 constant count 1..31)");
@@ -1377,7 +1377,7 @@ public sealed partial class InstructionSelector {
   };
 
   private bool SelectWideShift(IrBinary bin, MOpcode opcode, MBlock block) {
-    if (this._target is { Cpu386: true, Optimize: true }
+    if (this._target is { Cpu386OrLater: true, Optimize: true }
         && WideShiftCount(bin.Rhs) is { } nativeCount && nativeCount is >= 1 and <= 31)
       return this.SelectNativeWideShift(bin, opcode, nativeCount);
     // ...except by exactly sixteen, which is not a shift on a register pair at all: it is the two
@@ -3197,16 +3197,16 @@ public sealed partial class InstructionSelector {
   /// not have to agree.
   /// </para>
   /// </summary>
-  private static (MOpcode[] Before, string? Call)? MathSequence(string name, bool cpu386) {
+  private static (MOpcode[] Before, string? Call)? MathSequence(string name, bool use386Instructions) {
     var bare = name.StartsWith("llvm.", StringComparison.Ordinal) ? name[5..] : name;
     var cut = bare.IndexOf(".f", StringComparison.Ordinal);
     return (cut > 0 ? bare[..cut] : bare) switch {
       "sqrt" => ([MOpcode.Fsqrt], null),
-      "sin" => cpu386 ? ([MOpcode.Fsin], null) : ([], "rt_sin"),
-      "cos" => cpu386 ? ([MOpcode.Fcos], null) : ([], "rt_cos"),
+      "sin" => use386Instructions ? ([MOpcode.Fsin], null) : ([], "rt_sin"),
+      "cos" => use386Instructions ? ([MOpcode.Fcos], null) : ([], "rt_cos"),
       // FPTAN; FSTP ST(0) is the 387 reading - discard what was pushed, keep the tangent under it.
       // An 8087's FPTAN leaves a ratio, not a tangent, and is only defined on [0, pi/4] besides.
-      "tan" => cpu386 ? ([MOpcode.Fptan, MOpcode.FstpSt0], null) : ([], "rt_tan"),
+      "tan" => use386Instructions ? ([MOpcode.Fptan, MOpcode.FstpSt0], null) : ([], "rt_tan"),
       "atan" => ([MOpcode.Fld1, MOpcode.Fpatan], null),
       "log" => ([MOpcode.Fldln2, MOpcode.Fxch, MOpcode.Fyl2x], null),
       "log2" => ([MOpcode.Fld1, MOpcode.Fxch, MOpcode.Fyl2x], null),

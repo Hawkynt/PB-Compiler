@@ -668,7 +668,7 @@ details:
   express: the base register is fixed at `BX` (16-bit addressing has no other), and anything scheduled
   between the scaling and the jump would be scheduled into a table.
 - `SelectionTarget` carries `$CPU 80386` and the `$OPTIMIZE` objective into the selector, replacing the
-  bare `cpu386` flag. It is what lets a wide membership window decline without a 386, and the
+  bare generation boolean. It is what lets a wide membership window decline without a 386, and the
   byte-index table appear only under SIZE.
 
 `InstructionSelector.Dispatch.cs` then tries the shapes cheapest-answer-first — a contiguous run to one

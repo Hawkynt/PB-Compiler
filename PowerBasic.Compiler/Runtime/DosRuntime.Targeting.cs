@@ -8,10 +8,7 @@ public sealed partial class DosRuntime {
   /// <summary>The normalized architecture/feature surface available to every emitted runtime section.</summary>
   public RuntimeTarget Target {
     get => this._target;
-    set {
-      this._target = value;
-      this.Cpu386 = value.Has32BitGeneralPurpose;
-    }
+    set => this._target = value;
   }
 
   /// <summary>

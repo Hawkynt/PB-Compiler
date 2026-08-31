@@ -193,7 +193,7 @@ public sealed class BackendCpuTargetTests {
     var offenders = new List<string>();
     var shifts = 0;
     foreach (var fn in module.Functions) {
-      if (fn.IsDeclaration || InstructionSelector.TrySelect(fn, new SelectionTarget(Cpu386: false, Optimize: true)) is not { } machine)
+      if (fn.IsDeclaration || InstructionSelector.TrySelect(fn, new SelectionTarget(CpuLevel: 86, Optimize: true)) is not { } machine)
         continue;
       foreach (var instr in machine.Blocks.SelectMany(b => b.Instructions)) {
         if (instr.Opcode is not (MOpcode.Shl or MOpcode.Shr or MOpcode.Sar))

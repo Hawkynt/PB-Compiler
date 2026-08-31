@@ -156,7 +156,7 @@ public sealed partial class InstructionSelector {
     if (!this._target.OptimizeSpeed || targets.Count != 1)
       return false;
     var window = max - min;
-    if (window > 31 || (window > 15 && !this._target.Cpu386))
+    if (window > 31 || (window > 15 && !this._target.Cpu386OrLater))
       return false;
 
     var wide = window > 15;

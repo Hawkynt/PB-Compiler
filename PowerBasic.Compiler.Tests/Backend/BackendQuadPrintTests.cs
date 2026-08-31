@@ -77,7 +77,7 @@ public sealed class BackendQuadPrintTests {
   [TestCase(IrBinaryOp.Xor, MOpcode.Xor, 0x33)]
   public void Select_Given386QuadBitwiseOperation_ThenUsesTwoDwordHalves(
       IrBinaryOp operation, MOpcode expected, byte encoding) {
-    var target = new SelectionTarget(Cpu386: true, Optimize: true);
+    var target = new SelectionTarget(CpuLevel: 386, Optimize: true);
     var machine = InstructionSelector.TrySelect(QwordBitwiseFunction(operation), out var reason, target);
 
     Assert.That(machine, Is.Not.Null, reason);
@@ -112,9 +112,9 @@ public sealed class BackendQuadPrintTests {
   [TestCase(false, false)]
   [TestCase(false, true)]
   [TestCase(true, false)]
-  public void Select_GivenTargetWithoutOptimized386_ThenCallsTheQuadRuntimeRoutine(bool cpu386, bool optimize) {
+  public void Select_GivenTargetWithoutOptimized386_ThenCallsTheQuadRuntimeRoutine(bool target386, bool optimize) {
     var machine = InstructionSelector.TrySelect(QwordBitwiseFunction(IrBinaryOp.Or), out var reason,
-      new SelectionTarget(Cpu386: cpu386, Optimize: optimize));
+      new SelectionTarget(CpuLevel: target386 ? 386 : 86, Optimize: optimize));
 
     Assert.That(machine, Is.Not.Null, reason);
     Assert.That(machine!.AllInstructions.Any(i => i.Opcode == MOpcode.Call
@@ -163,7 +163,7 @@ public sealed class BackendQuadPrintTests {
   [TestCase(IrBinaryOp.LShr, MOpcode.Shrd, Reg.EAX, Reg.EDX, 0xAC, 31)]
   public void Select_Given386QuadShift_ThenUsesOneDwordDoubleShift(IrBinaryOp operation,
       MOpcode expected, Reg destination, Reg source, byte encoding, long count) {
-    var target = new SelectionTarget(Cpu386: true, Optimize: true);
+    var target = new SelectionTarget(CpuLevel: 386, Optimize: true);
     var machine = InstructionSelector.TrySelect(QwordShiftFunction(operation, count), out var reason, target);
 
     Assert.That(machine, Is.Not.Null, reason);
@@ -188,16 +188,16 @@ public sealed class BackendQuadPrintTests {
   [TestCase(true, false, 1)]
   [TestCase(true, true, 0)]
   [TestCase(true, true, 32)]
-  public void Select_GivenUnsupportedTargetOrCount_ThenDeclinesQuadShift(bool cpu386, bool optimize, long count) {
+  public void Select_GivenUnsupportedTargetOrCount_ThenDeclinesQuadShift(bool target386, bool optimize, long count) {
     var machine = InstructionSelector.TrySelect(QwordShiftFunction(IrBinaryOp.Shl, count), out _,
-      new SelectionTarget(Cpu386: cpu386, Optimize: optimize));
+      new SelectionTarget(CpuLevel: target386 ? 386 : 86, Optimize: optimize));
 
     Assert.That(machine, Is.Null, "only optimized 386 counts 1..31 may use the native double shift");
   }
 
   [Test]
   public void Select_GivenArithmeticQuadShift_ThenDeclinesNativeLogicalPath() {
-    var target = new SelectionTarget(Cpu386: true, Optimize: true);
+    var target = new SelectionTarget(CpuLevel: 386, Optimize: true);
     var machine = InstructionSelector.TrySelect(QwordShiftFunction(IrBinaryOp.AShr, 5), out _, target);
 
     Assert.That(machine, Is.Null, "BASIC SHIFT RIGHT is logical; arithmetic i64 shifts need separate semantics");
