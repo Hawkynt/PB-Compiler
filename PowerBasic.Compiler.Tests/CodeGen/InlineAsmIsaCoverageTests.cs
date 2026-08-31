@@ -16,7 +16,7 @@ public sealed class InlineAsmIsaCoverageTests {
   );
 
   private static readonly string[] _targets = [
-    "8086", "386", "P6", "SSE2", "SSSE3", "SSE4.1", "SSE4.2", "AVX", "AVX2", "AVX512",
+    "8086", "386", "P6", "SSE2", "SSSE3", "SSE4.1", "SSE4.2", "POPCNT", "AVX", "AVX2", "AVX512",
   ];
 
   private static readonly string[] _policies = ["AUTO", "NATIVE", "EMULATE", "ERROR"];
@@ -24,7 +24,7 @@ public sealed class InlineAsmIsaCoverageTests {
   [Test]
   public void AdvertisedExtendedIntegerInstructions_GivenTargetPolicyMatrix_ThenEveryInstructionHasAnExplicitResolution() {
     var advertised = DiscoverAdvertisedInstructions();
-    Assert.That(advertised, Is.Not.Empty, "extended SIMD encoder discovery returned no instructions");
+    Assert.That(advertised, Is.Not.Empty, "extended integer/SIMD encoder discovery returned no instructions");
 
     var failures = new List<string>();
     foreach (var instruction in advertised)
@@ -37,6 +37,7 @@ public sealed class InlineAsmIsaCoverageTests {
 
   private static IReadOnlyList<AdvertisedInstruction> DiscoverAdvertisedInstructions() {
     var classifiers = new[] {
+      (Method: Classifier("IsPopcnt"), Feature: "POPCNT", Required: RuntimeCpuFeatures.Popcnt),
       (Method: Classifier("IsSsse3"), Feature: "SSSE3", Required: RuntimeCpuFeatures.Ssse3),
       (Method: Classifier("IsSse41"), Feature: "SSE4.1", Required: RuntimeCpuFeatures.Sse41),
       (Method: Classifier("IsSse42"), Feature: "SSE4.2", Required: RuntimeCpuFeatures.Sse42),
@@ -55,9 +56,11 @@ public sealed class InlineAsmIsaCoverageTests {
         continue;
 
       var hasImmediate = overloads.Any(method => method.GetParameters().LastOrDefault()?.ParameterType == typeof(byte));
-      var operands = mnemonic == "CRC32"
-        ? "EAX, AL"
-        : hasImmediate ? "XMM0, XMM1, 0" : "XMM0, XMM1";
+      var operands = mnemonic switch {
+        "POPCNT" => "AX, BX",
+        "CRC32" => "EAX, AL",
+        _ => hasImmediate ? "XMM0, XMM1, 0" : "XMM0, XMM1",
+      };
       result.Add(new(mnemonic, classifier.Feature, classifier.Required, operands));
     }
 
