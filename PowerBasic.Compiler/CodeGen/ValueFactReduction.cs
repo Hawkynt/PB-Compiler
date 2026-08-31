@@ -138,12 +138,12 @@ public static class ValueFactReduction {
 
   /// <summary>Transfer for one integral AST binary operator.</summary>
   public static ValueFacts Binary(BinaryOp op, ValueFacts left, ValueFacts right, int width, bool signed) {
-    left = Reduce(left, width, signed);
-    right = Reduce(right, width, signed);
-
     if (op is BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
         or BinaryOp.LessEqual or BinaryOp.GreaterEqual)
       return Compare(op, left, right, width);
+
+    left = Reduce(left, width, signed);
+    right = Reduce(right, width, signed);
 
     var range = op switch {
       BinaryOp.Add => left.Range.Add(right.Range),
@@ -154,6 +154,7 @@ public static class ValueFactReduction {
       BinaryOp.And => left.Range.And(right.Range),
       _ => Interval.Top,
     };
+    range = FitOrTop(range, width, signed); // a mathematical range that can wrap is not a runtime range
 
     var exactShift = ExactInt(right);
     var bits = op switch {
@@ -165,9 +166,9 @@ public static class ValueFactReduction {
       BinaryOp.Add => AddSub(left.Bits, right.Bits, width, subtract: false),
       BinaryOp.Subtract => AddSub(left.Bits, right.Bits, width, subtract: true),
       BinaryOp.Multiply => MultiplyBits(left, right, width),
-      BinaryOp.ShiftLeft when exactShift is >= 0 and < 64 => left.Bits.ShiftLeft((int)exactShift),
-      BinaryOp.ShiftRightArith when exactShift is >= 0 and < 64 => ShiftRight(left.Bits, (int)exactShift, width, arithmetic: true),
-      BinaryOp.ShiftRightLogical when exactShift is >= 0 and < 64 => ShiftRight(left.Bits, (int)exactShift, width, arithmetic: false),
+      BinaryOp.ShiftLeft when exactShift is >= 0 and < width => left.Bits.ShiftLeft((int)exactShift),
+      BinaryOp.ShiftRightArith when exactShift is >= 0 and < width => ShiftRight(left.Bits, (int)exactShift, width, arithmetic: true),
+      BinaryOp.ShiftRightLogical when exactShift is >= 0 and < width => ShiftRight(left.Bits, (int)exactShift, width, arithmetic: false),
       BinaryOp.RotateLeft when exactShift is >= 0 => Rotate(left.Bits, (int)exactShift, width, left: true),
       BinaryOp.RotateRight when exactShift is >= 0 => Rotate(left.Bits, (int)exactShift, width, left: false),
       BinaryOp.IntegerDivide when exactShift is { } divisor && divisor > 0 && IsPowerOfTwo(divisor)
@@ -186,6 +187,8 @@ public static class ValueFactReduction {
           => ModuloCongruence(left.Mod, Math.Abs(divisor)),
       _ => Congruence.Unknown,
     };
+    if (range.IsTop && !IsPowerOfTwo(mod.Modulus))
+      mod = Congruence.Unknown; // non-power-of-two congruence is not invariant under 2^width wrap
 
     return Reduce(new(range, bits.Narrow(width), mod), width, signed);
   }
@@ -193,14 +196,18 @@ public static class ValueFactReduction {
   /// <summary>Transfer for integer unary negation.</summary>
   public static ValueFacts Negate(ValueFacts value, int width, bool signed) {
     value = Reduce(value, width, signed);
-    return Reduce(new(value.Range.Negate(), AddSub(KnownBits.Of(0, width), value.Bits, width, subtract: true), value.Mod.Negate()), width, signed);
+    var range = FitOrTop(value.Range.Negate(), width, signed);
+    var bits = AddSub(KnownBits.Of(0, width), value.Bits, width, subtract: true);
+    var mod = range.IsTop && !IsPowerOfTwo(value.Mod.Modulus) ? Congruence.Unknown : value.Mod.Negate();
+    return Reduce(new(range, bits, mod), width, signed);
   }
 
-  /// <summary>Transfer for PB's bitwise NOT.</summary>
+  /// <summary>Transfer for PB's fixed-width bitwise NOT.</summary>
   public static ValueFacts Not(ValueFacts value, int width, bool signed) {
     value = Reduce(value, width, signed);
-    var range = value.Range.IsTop ? Interval.Top : new Interval(SafeNot(value.Range.Hi), SafeNot(value.Range.Lo));
-    return Reduce(new(range, value.Bits.Not().Narrow(width), Congruence.Unknown), width, signed);
+    // The bit transfer is exact. Deriving the numeric range back from those bits is safer than
+    // applying C#'s 64-bit ~ to a narrower unsigned value and then pretending it did not wrap.
+    return Reduce(new(Interval.Top, value.Bits.Not().Narrow(width), Congruence.Unknown), width, signed);
   }
 
   /// <summary>Facts for an unknown comparison: PB truth is exactly 0 or -1.</summary>
@@ -212,10 +219,10 @@ public static class ValueFactReduction {
       BinaryOp.NotEqual when Disjoint(left.Range, right.Range) => true,
       BinaryOp.Equal when ExactInt(left) is { } l && ExactInt(right) is { } r => l == r,
       BinaryOp.NotEqual when ExactInt(left) is { } l && ExactInt(right) is { } r => l != r,
-      BinaryOp.Equal when ExactInt(left) is { } lc && !right.Allows(lc, width) => false,
-      BinaryOp.Equal when ExactInt(right) is { } rc && !left.Allows(rc, width) => false,
-      BinaryOp.NotEqual when ExactInt(left) is { } lc && !right.Allows(lc, width) => true,
-      BinaryOp.NotEqual when ExactInt(right) is { } rc && !left.Allows(rc, width) => true,
+      BinaryOp.Equal when ExactInt(left) is { } lc && !right.Allows(lc, 64) => false,
+      BinaryOp.Equal when ExactInt(right) is { } rc && !left.Allows(rc, 64) => false,
+      BinaryOp.NotEqual when ExactInt(left) is { } lc && !right.Allows(lc, 64) => true,
+      BinaryOp.NotEqual when ExactInt(right) is { } rc && !left.Allows(rc, 64) => true,
       BinaryOp.Less when Finite(left.Range, right.Range) && left.Range.Hi < right.Range.Lo => true,
       BinaryOp.Less when Finite(left.Range, right.Range) && left.Range.Lo >= right.Range.Hi => false,
       BinaryOp.LessEqual when Finite(left.Range, right.Range) && left.Range.Hi <= right.Range.Lo => true,
@@ -230,10 +237,14 @@ public static class ValueFactReduction {
   }
 
   private static KnownBits MultiplyBits(ValueFacts left, ValueFacts right, int width) {
-    if (ExactInt(right) is { } r && TryPowerOfTwoMagnitude(r, out var shift))
-      return left.Bits.ShiftLeft(shift).Narrow(width);
-    if (ExactInt(left) is { } l && TryPowerOfTwoMagnitude(l, out shift))
-      return right.Bits.ShiftLeft(shift).Narrow(width);
+    if (ExactInt(right) is { } r && TryPowerOfTwoMagnitude(r, out var shift)) {
+      var shifted = left.Bits.ShiftLeft(shift).Narrow(width);
+      return r < 0 ? AddSub(KnownBits.Of(0, width), shifted, width, subtract: true) : shifted;
+    }
+    if (ExactInt(left) is { } l && TryPowerOfTwoMagnitude(l, out shift)) {
+      var shifted = right.Bits.ShiftLeft(shift).Narrow(width);
+      return l < 0 ? AddSub(KnownBits.Of(0, width), shifted, width, subtract: true) : shifted;
+    }
     return left.Bits.Multiply(right.Bits, width).Narrow(width);
   }
 
@@ -332,8 +343,12 @@ public static class ValueFactReduction {
     bits = bits.Narrow(width);
     var mask = Mask(width);
     var known = (bits.Ones | bits.Zeros) & mask;
-    if (known == mask)
-      return Congruence.Of(signed ? SignExtend(bits.Ones & mask, width) : (long)(bits.Ones & mask));
+    if (known == mask) {
+      var valueBits = bits.Ones & mask;
+      if (!signed && width == 64 && (valueBits & (1UL << 63)) != 0)
+        return Congruence.Unknown; // Congruence's long payload cannot spell this unsigned value
+      return Congruence.Of(signed ? SignExtend(valueBits, width) : (long)valueBits);
+    }
 
     var count = 0;
     while (count < width && count < 62 && (known & (1UL << count)) != 0)
@@ -395,9 +410,16 @@ public static class ValueFactReduction {
     return valid ? result : a;
   }
 
+  private static Interval FitOrTop(Interval range, int width, bool signed) {
+    if (range.IsTop)
+      return range;
+    var type = TypeRange(width, signed);
+    return type.IsTop || (range.Lo >= type.Lo && range.Hi <= type.Hi) ? range : Interval.Top;
+  }
+
   private static Interval TypeRange(int width, bool signed) {
     if (width >= 64)
-      return signed ? Interval.Top : Interval.Top;
+      return Interval.Top;
     if (signed) {
       var sign = 1L << (width - 1);
       return new(-sign, sign - 1);
@@ -411,7 +433,6 @@ public static class ValueFactReduction {
   private static long? ExactInt(ValueFacts facts) => !facts.Range.IsTop && facts.Range.Lo == facts.Range.Hi ? facts.Range.Lo : facts.Mod.IsExact ? facts.Mod.Residue : null;
   private static int BitValues(KnownBits bits, ulong mask) => (bits.Ones & mask) != 0 ? 0b10 : (bits.Zeros & mask) != 0 ? 0b01 : 0b11;
   private static bool IsPowerOfTwo(long value) => value > 0 && (value & (value - 1)) == 0;
-  private static long SafeNot(long value) => unchecked(~value);
 
   private static ulong Mask(int width) => width >= 64 ? ulong.MaxValue : (1UL << width) - 1;
 
