@@ -36,7 +36,7 @@ public static class LibraryCallRecognition {
       return false;
 
     var stores = loop.Region.SelectMany(block => block.Instructions).OfType<IrStore>().ToList();
-    if (stores.Count != 1 || stores[0].Type != IrType.Void)
+    if (stores.Count != 1)
       return false;
     var store = stores[0];
     if (!TryIndexedByte(store.Pointer, loop.Counter, out var targetBase, out var targetGep)
@@ -50,23 +50,17 @@ public static class LibraryCallRecognition {
       if (block.Terminator is { } terminator)
         allowed.Add(terminator);
 
-    IrFunction callee;
-    IrValue[] args;
-    if (store.Value is IrLoad load && TryIndexedByte(load.Pointer, loop.Counter, out var sourceBase, out var sourceGep)
-        && load.Type.Bits == 8 && load.Users.Count == 1 && ReferenceEquals(load.Users[0], store)
-        && !DefinedInside(sourceBase, loop.Region) && ProvenDisjoint(targetBase, sourceBase)) {
+    var isCopy = false;
+    IrValue? sourceBase = null;
+    if (store.Value is IrLoad load && TryIndexedByte(load.Pointer, loop.Counter, out var copyBase, out var sourceGep)
+        && load.Type.IsInteger && load.Type.Bits == 8 && load.Users.Count == 1 && ReferenceEquals(load.Users[0], store)
+        && !DefinedInside(copyBase, loop.Region) && ProvenDisjoint(targetBase, copyBase)) {
+      isCopy = true;
+      sourceBase = copyBase;
       allowed.Add(load);
       allowed.Add(sourceGep);
-      callee = MemoryIntrinsic(module, _MEMCPY);
-      args = [Start(loop, targetBase, initial), Start(loop, sourceBase, initial),
-        new IrConstantInt(IrType.I32, loop.Trips), new IrConstantInt(IrType.I1, 0)];
-    } else {
-      if (store.Value.Type.Bits != 8 || DefinedInside(store.Value, loop.Region))
-        return false;
-      callee = MemoryIntrinsic(module, _MEMSET);
-      args = [Start(loop, targetBase, initial), store.Value,
-        new IrConstantInt(IrType.I32, loop.Trips), new IrConstantInt(IrType.I1, 0)];
-    }
+    } else if (!store.Value.Type.IsInteger || store.Value.Type.Bits != 8 || DefinedInside(store.Value, loop.Region))
+      return false;
 
     if (loop.Region.SelectMany(block => block.Instructions).Any(instruction => !allowed.Contains(instruction)))
       return false;
@@ -74,8 +68,12 @@ public static class LibraryCallRecognition {
       if (!instruction.Type.IsVoid && instruction.Users.Any(user => user.Parent is not null && !loop.Region.Contains(user.Parent)))
         return false;
 
-    var preheader = loop.Preheader;
-    preheader.InsertBefore(new IrCall(IrType.Void, callee, args), preBranch);
+    var callee = MemoryIntrinsic(module, isCopy ? _MEMCPY : _MEMSET);
+    var target = Start(loop, targetBase, initial);
+    IrValue[] args = isCopy
+      ? [target, Start(loop, sourceBase!, initial), new IrConstantInt(IrType.I32, loop.Trips), new IrConstantInt(IrType.I1, 0)]
+      : [target, store.Value, new IrConstantInt(IrType.I32, loop.Trips), new IrConstantInt(IrType.I1, 0)];
+    loop.Preheader.InsertBefore(new IrCall(IrType.Void, callee, args), preBranch);
     preBranch.Target = loop.Exit;
     foreach (var block in loop.Region.ToList())
       function.RemoveBlock(block);
