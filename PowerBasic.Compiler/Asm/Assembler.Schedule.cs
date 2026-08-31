@@ -85,6 +85,10 @@ public sealed partial class Assembler {
   /// window needs no position fixups - the window length is unchanged and nothing inside is referenced.
   /// </summary>
   public void RunSchedule() {
+    // The scheduler is the first pass that may reorder instructions, so every shrink-only rewrite
+    // must have consumed and repaired its records before we inspect them. RunLoadForwarding invokes
+    // the peephole too; this call covers assembler users that enable scheduling without forwarding.
+    this.RunPeephole();
     if (!this.EnableSchedule || this._scheduleRan)
       return;
     this._scheduleRan = true;

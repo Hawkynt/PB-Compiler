@@ -2,12 +2,20 @@ namespace PowerBasic.Compiler.Asm;
 
 public sealed partial class Assembler {
 
+  private bool _enablePeephole;
+
   /// <summary>
   /// When set, the instruction methods record their boundaries so <see cref="RunPeephole"/>
   /// can rewrite the image before fixups are resolved. Off by default (most callers want the
-  /// faithful stream); the optimizer turns it on for the program image.
+  /// faithful stream); the optimizer turns it on for the program image. Scheduling implies this
+  /// pre-pass: scheduling a non-canonical stream while deliberately retaining removable staging
+  /// copies and long zero-tests is strictly worse, and the peephole now keeps scheduler records
+  /// exact after every rewrite.
   /// </summary>
-  public bool EnablePeephole { get; set; }
+  public bool EnablePeephole {
+    get => this._enablePeephole || this.EnableSchedule;
+    set => this._enablePeephole = value;
+  }
 
   private enum PeepKind : byte { MovRegImm, MovRegReg, MovRegMem, PopReg, CmpRegZero }
 
@@ -35,7 +43,13 @@ public sealed partial class Assembler {
   /// R2 is value-identical even when R2 appears in the address. Whole instructions are removed and
   /// every label/fixup/relocation position past each cut is decremented, so <see cref="ToArray"/>'s
   /// relative resolution stays correct (shrinking only tightens short jumps, never breaks them).
-  /// Idempotent and a no-op unless <see cref="EnablePeephole"/> recorded the stream.
+  ///
+  /// When scheduling is enabled as well, every accepted rewrite also updates the scheduler's
+  /// def/use record before any bytes move. This is not optional bookkeeping: after
+  /// <c>MOV AX,src ; MOV DX,AX</c> becomes <c>MOV DX,src</c>, a later consumer depends on DX,
+  /// not AX. Leaving the old write-set behind would let the scheduler hoist that consumer ahead of
+  /// its producer. CMP-to-TEST likewise shortens its recorded instruction length from three/four
+  /// bytes to two so the scheduler still sees an adjacent, non-overlapping stream.
   /// </summary>
   public void RunPeephole() {
     if (!this.EnablePeephole || this._peepholeRan)
@@ -64,6 +78,7 @@ public sealed partial class Assembler {
         var index = a.Dst.Index();
         patches.Add((a.Start, a.Dst.IsByte() ? (byte)0x84 : (byte)0x85));
         patches.Add((a.Start + 1, (byte)(0xC0 | (index << 3) | index)));
+        this.UpdateSchedForPeephole(a.Start, 2);
         if (a.Length > 2)
           removals.Add((a.Start + 2, a.Length - 2));
         continue;
@@ -112,6 +127,7 @@ public sealed partial class Assembler {
           break;
       }
 
+      this.UpdateSchedForPeephole(a.Start, a.Length, intermediate, target);
       removals.Add((b.Start, b.Length));
       consumedEnd = c.Start;
     }
@@ -125,6 +141,25 @@ public sealed partial class Assembler {
     removals.Sort((left, right) => right.Start.CompareTo(left.Start));   // apply high offsets first
     foreach (var (start, length) in removals)
       this.RemoveBytes(start, length);
+  }
+
+  /// <summary>
+  /// Keeps the scheduler descriptor of an instruction changed by the peephole consistent with the
+  /// bytes it will see. The peephole records only word MOVs, so retargeting changes exactly one
+  /// register-def bit; the source/address reads and memory effects are unchanged.
+  /// </summary>
+  private void UpdateSchedForPeephole(int start, int length, Reg? oldDestination = null, Reg? newDestination = null) {
+    if (this._schedInstrs is not { } sched)
+      return;
+    var index = sched.FindIndex(record => record.Start == start);
+    if (index < 0)
+      return;
+
+    var record = sched[index];
+    var writes = record.Writes;
+    if (oldDestination is { } oldReg && newDestination is { } newReg)
+      writes = (ushort)((writes & ~RegBit(oldReg)) | RegBit(newReg));
+    sched[index] = record with { Length = length, Writes = writes };
   }
 
   /// <summary>Offsets every bound label is sitting on (named labels and every fixup target).</summary>
@@ -176,8 +211,7 @@ public sealed partial class Assembler {
         this._segmentRelocations[i] -= length;
 
     // the instruction records carry positions as well, and a pass that cuts before another one
-    // reads them (load forwarding runs ahead of the scheduler) must leave them describing the
-    // buffer they actually sit in
+    // reads them must leave them describing the buffer they actually sit in
     if (this._schedInstrs is { } sched) {
       sched.RemoveAll(record => record.Start >= start && record.Start < end);
       for (var i = 0; i < sched.Count; ++i)
