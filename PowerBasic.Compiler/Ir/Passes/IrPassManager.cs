@@ -108,9 +108,10 @@ public sealed class IrPassManager {
   /// </list>
   /// <para>
   /// Everything else in <see cref="Standard"/> is optimization and is off: unrolling, sccp, correlate,
-  /// rangefold, sroa, mem2reg2, reassociate, demote, phicong, gvn, memopt, dse, licm, unswitch,
-  /// closed-form, deadloop, ifconv, tailrec and the string/global module passes. So are the two steps
-  /// the caller runs around the pipeline - <c>Inliner</c> and <c>SwitchFormation</c>.
+  /// pointer checks, integer/float range folds, overflow coalescing, sroa, mem2reg2, reassociate,
+  /// demote, phicong, gvn, memopt, dse, licm, unswitch, closed-form, deadloop, ifconv, tailrec and the
+  /// string/global module passes. So are the two steps the caller runs around the pipeline -
+  /// <c>Inliner</c> and <c>SwitchFormation</c>.
   /// </para>
   /// </summary>
   public static IrPassManager Legalize() => new IrPassManager()
@@ -140,12 +141,21 @@ public sealed class IrPassManager {
     .Add("instcombine", InstCombine.Run)
     .Add("sccp", Sccp.Run)
     .Add("correlate", CorrelatedValueProp.Run)
+    // O0351 shares the dominator-scoped edge facts with correlation, but only explicit pointer-null
+    // tests count: dereferencing address zero is not a fault on PB's DOS memory model.
+    .Add("ptrcheck", PointerCheckElim.Run)
     // AFTER sccp and correlate, and the order is the whole of it: the range analysis reasons about
     // what an expression CAN be, so it wants the values that are already known to be one thing folded
     // in first - a bounds check against a subscript sccp has resolved is not a range question at all.
     // What is left after those two is the class this answers: a loop counter, an IF-joined variable,
     // a masked or divided index - none of which is a constant, and all of which are bounded.
     .Add("rangefold", RangeCheckElim.Run)
+    // O0352 is the NaN-aware adjunct to the integer lattice. It deliberately handles only floats
+    // whose provenance proves they are ordinary numbers (not an arbitrary float that could be NaN).
+    .Add("conversion-rangefold", ConversionRangeCheckElim.Run)
+    // O0350 runs after the proofs that can delete individual Error 6 checks. Only the remaining
+    // consecutive guards need coalescing, and the pass itself refuses to speculate side effects.
+    .Add("overflow-coalesce", OverflowCheckCoalescing.Run)
     // after SCCP, because a subscript is only constant once the index arithmetic has folded - and
     // before the value passes, so the elements it exposes get propagated like any other value
     .Add("sroa", ScalarReplaceArrays.Run)
@@ -198,6 +208,9 @@ public sealed class IrPassManager {
     .AddModulePassWhen(includeModulePasses, "strfold", StringConstantFold.Run)
     .AddModulePassWhen(includeModulePasses, "strchain", StringConcatChain.Run)
     .AddModulePassWhen(includeModulePasses, "strappend", StringAppendInPlace.Run)
+    // O0353 consumes the exact-trip append shape produced immediately above and batches its suffix
+    // into REPEAT$ + one concatenation in the preheader, so no per-iteration capacity check remains.
+    .AddModulePassWhen(includeModulePasses, "strcapacity", StringCapacityHoisting.Run)
     .AddModulePassWhen(includeModulePasses, "strbyte", StringByteRead.Run)
     .AddModulePassWhen(includeModulePasses, "strcmpeq", StringCompareEquality.Run)
     .AddModulePassWhen(includeModulePasses, "strempty", StringEmptinessTest.Run)
