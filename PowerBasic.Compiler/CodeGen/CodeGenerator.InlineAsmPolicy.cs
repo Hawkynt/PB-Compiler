@@ -16,6 +16,9 @@ public sealed partial class CodeGenerator {
     if (instruction.Mnemonic.Length == 0)
       return false;
 
+    if (this.TryEmit8086CompatibleShift(instruction, resolver, target, out error))
+      return true;
+
     var x87 = IsX87InlineMnemonic(instruction.Mnemonic);
     var required = x87 ? RuntimeCpuFeatures.X87 : RequiredFeature(instruction);
     if (!x87)
@@ -137,6 +140,75 @@ public sealed partial class CodeGenerator {
       ? "x87 software emulation backend is not available for this instruction"
       : $"no semantics-preserving emulator is registered for {instruction.Mnemonic}";
     return true;
+  }
+
+  /// <summary>
+  /// The 8086/8088 have D0/D1 count-one and D2/D3 CL-count shifts/rotates. C0/C1 with an arbitrary
+  /// immediate count arrived with the 80186. CL forms stay native; multi-bit immediates are expanded
+  /// to repeated count-one operations so an 8086 target never receives a later-generation opcode.
+  /// </summary>
+  private bool TryEmit8086CompatibleShift(InlineInstruction instruction, InlineAsmResolver resolver,
+      RuntimeTarget target, out string? error) {
+    error = null;
+    if (target.CpuLevel >= 186 || !IsLegacyShiftOrRotate(instruction.Mnemonic))
+      return false;
+
+    this._textAssembler ??= new(this._asm);
+    if (!this._textAssembler.TryParseOperands(instruction.Operands, resolver, out var operands, out error))
+      return true;
+
+    // CL is a genuine 8086 form and count=1 is D0/D1. Dword operands belong to GP32 virtualization.
+    if (operands.Count != 2 || operands[1] is not TextAssembler.ParsedAsmImmediate immediate || immediate.Value == 1)
+      return false;
+    if (immediate.Value is < 1 or > 31) {
+      error = "shift/rotate count must be 1..31";
+      return true;
+    }
+
+    switch (operands[0]) {
+      case TextAssembler.ParsedAsmRegister { Register: var register } when register.IsByte() || register.IsWord():
+        for (var i = 0; i < immediate.Value; ++i)
+          this.Emit8086ShiftOne(instruction.Mnemonic, register);
+        return true;
+
+      case TextAssembler.ParsedAsmMemory { Memory: var memory }
+          when memory.Size is OperandSize.Byte or OperandSize.Word:
+        for (var i = 0; i < immediate.Value; ++i)
+          this.Emit8086ShiftOne(instruction.Mnemonic, memory);
+        return true;
+
+      default:
+        return false;
+    }
+  }
+
+  private static bool IsLegacyShiftOrRotate(string mnemonic) => mnemonic is
+    "SHL" or "SAL" or "SHR" or "SAR" or "ROL" or "ROR" or "RCL" or "RCR";
+
+  private void Emit8086ShiftOne(string mnemonic, Reg destination) {
+    switch (mnemonic) {
+      case "SHL" or "SAL": this._asm.Shl(destination, 1); break;
+      case "SHR": this._asm.Shr(destination, 1); break;
+      case "SAR": this._asm.Sar(destination, 1); break;
+      case "ROL": this._asm.Rol(destination, 1); break;
+      case "ROR": this._asm.Ror(destination, 1); break;
+      case "RCL": this._asm.Rcl(destination, 1); break;
+      case "RCR": this._asm.Rcr(destination, 1); break;
+      default: throw new InvalidOperationException($"not a legacy shift/rotate mnemonic: {mnemonic}");
+    }
+  }
+
+  private void Emit8086ShiftOne(string mnemonic, Mem destination) {
+    switch (mnemonic) {
+      case "SHL" or "SAL": this._asm.Shl(destination, 1); break;
+      case "SHR": this._asm.Shr(destination, 1); break;
+      case "SAR": this._asm.Sar(destination, 1); break;
+      case "ROL": this._asm.Rol(destination, 1); break;
+      case "ROR": this._asm.Ror(destination, 1); break;
+      case "RCL": this._asm.Rcl(destination, 1); break;
+      case "RCR": this._asm.Rcr(destination, 1); break;
+      default: throw new InvalidOperationException($"not a legacy shift/rotate mnemonic: {mnemonic}");
+    }
   }
 
   private static bool IsX87InlineMnemonic(string mnemonic) => mnemonic is
