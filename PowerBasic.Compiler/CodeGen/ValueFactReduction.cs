@@ -17,13 +17,18 @@ public static class ValueFactReduction {
       return facts;
 
     var range = facts.Range;
-    var validRange = true;
-    if (!range.IsTop)
-      range = Intersect(range, TypeRange(width, signed), out validRange);
-    if (!validRange)
-      return ValueFacts.Unknown;
+    // The interval payload is signed long. It can represent the low half of U64, but never a value
+    // with bit 63 set. Keep the bit domain in that case and drop only the unrepresentable interval.
+    if (!signed && width == 64 && !range.IsTop && range.Lo < 0)
+      range = Interval.Top;
+    else if (!range.IsTop) {
+      range = Intersect(range, TypeRange(width, signed), out var validTypeRange);
+      if (!validTypeRange)
+        return ValueFacts.Unknown;
+    }
+
     var bits = facts.Bits.Narrow(width);
-    var mod = facts.Mod;
+    var mod = Canonical(facts.Mod);
 
     for (var iteration = 0; iteration < 4; ++iteration) {
       var before = new ValueFacts(range, bits, mod);
@@ -33,7 +38,7 @@ public static class ValueFactReduction {
       if ((bits.Ones & bits.Zeros & Mask(width)) != 0)
         return ValueFacts.Unknown;
 
-      range = Intersect(range, RangeFromBits(bits, width, signed), out validRange);
+      range = Intersect(range, RangeFromBits(bits, width, signed), out var validRange);
       if (!validRange)
         return ValueFacts.Unknown;
       range = RestrictToCongruence(range, mod, out validRange);
@@ -139,14 +144,16 @@ public static class ValueFactReduction {
     return result;
   }
 
-  /// <summary>Transfer for one integral AST binary operator.</summary>
+  /// <summary>Transfer for one fixed-width integral AST binary operator.</summary>
   public static ValueFacts Binary(BinaryOp op, ValueFacts left, ValueFacts right, int width, bool signed) {
     if (op is BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
         or BinaryOp.LessEqual or BinaryOp.GreaterEqual)
-      return Compare(op, left, right, width);
+      return Compare(op, left, width, signed, right, width, signed, width);
 
     left = Reduce(left, width, signed);
     right = Reduce(right, width, signed);
+    var exactCount = ExactInt(right);
+    var shiftCount = exactCount is >= 0 and < 64 ? (int?)exactCount : null;
 
     var range = op switch {
       BinaryOp.Add => left.Range.Add(right.Range),
@@ -155,11 +162,13 @@ public static class ValueFactReduction {
       BinaryOp.IntegerDivide => left.Range.Divide(right.Range),
       BinaryOp.Modulo => left.Range.Modulo(right.Range),
       BinaryOp.And => left.Range.And(right.Range),
+      BinaryOp.ShiftLeft when shiftCount is { } count && count < width => ShiftLeftRange(left.Range, count),
+      BinaryOp.ShiftRightArith when shiftCount is { } count && count < width => ShiftRightArithmeticRange(left.Range, count),
+      BinaryOp.ShiftRightLogical when shiftCount is { } count && count < width => ShiftRightLogicalRange(left.Range, count, width),
       _ => Interval.Top,
     };
-    range = FitOrTop(range, width, signed); // a mathematical range that can wrap is not a runtime range
+    range = FitOrTop(range, width, signed); // a mathematical range that can wrap is not a runtime interval yet
 
-    var exactShift = ExactInt(right);
     var bits = op switch {
       BinaryOp.And => left.Bits.And(right.Bits),
       BinaryOp.Or => left.Bits.Or(right.Bits),
@@ -169,12 +178,12 @@ public static class ValueFactReduction {
       BinaryOp.Add => AddSub(left.Bits, right.Bits, width, subtract: false),
       BinaryOp.Subtract => AddSub(left.Bits, right.Bits, width, subtract: true),
       BinaryOp.Multiply => MultiplyBits(left, right, width),
-      BinaryOp.ShiftLeft when exactShift is { } shl && shl >= 0 && shl < width => left.Bits.ShiftLeft((int)shl),
-      BinaryOp.ShiftRightArith when exactShift is { } ashr && ashr >= 0 && ashr < width => ShiftRight(left.Bits, (int)ashr, width, arithmetic: true),
-      BinaryOp.ShiftRightLogical when exactShift is { } lshr && lshr >= 0 && lshr < width => ShiftRight(left.Bits, (int)lshr, width, arithmetic: false),
-      BinaryOp.RotateLeft when exactShift is { } rol && rol >= 0 => Rotate(left.Bits, (int)rol, width, left: true),
-      BinaryOp.RotateRight when exactShift is { } ror && ror >= 0 => Rotate(left.Bits, (int)ror, width, left: false),
-      BinaryOp.IntegerDivide when exactShift is { } divisor && divisor > 0 && IsPowerOfTwo(divisor)
+      BinaryOp.ShiftLeft when shiftCount is { } count && count < width => left.Bits.ShiftLeft(count),
+      BinaryOp.ShiftRightArith when shiftCount is { } count && count < width => ShiftRight(left.Bits, count, width, arithmetic: true),
+      BinaryOp.ShiftRightLogical when shiftCount is { } count && count < width => ShiftRight(left.Bits, count, width, arithmetic: false),
+      BinaryOp.RotateLeft when ExactRotateCount(exactCount, width) is { } count => Rotate(left.Bits, count, width, left: true),
+      BinaryOp.RotateRight when ExactRotateCount(exactCount, width) is { } count => Rotate(left.Bits, count, width, left: false),
+      BinaryOp.IntegerDivide when exactCount is { } divisor && divisor > 0 && IsPowerOfTwo(divisor)
           && left.Range is { Lo: >= 0 } => ShiftRight(left.Bits, BitOperations.TrailingZeroCount((ulong)divisor), width, arithmetic: false),
       _ => KnownBits.Unknown,
     };
@@ -183,17 +192,55 @@ public static class ValueFactReduction {
       BinaryOp.Add => left.Mod.Add(right.Mod),
       BinaryOp.Subtract => left.Mod.Subtract(right.Mod),
       BinaryOp.Multiply => left.Mod.Multiply(right.Mod),
-      BinaryOp.ShiftLeft when exactShift is >= 0 and < 63 => left.Mod.Multiply(Congruence.Of(1L << (int)exactShift)),
-      BinaryOp.IntegerDivide when exactShift is { } divisor && divisor > 0 && IsPowerOfTwo(divisor)
+      BinaryOp.ShiftLeft when shiftCount is { } count && count < 63
+        => left.Mod.Multiply(Congruence.Of(1L << count)),
+      BinaryOp.IntegerDivide when exactCount is { } divisor && divisor > 0 && IsPowerOfTwo(divisor)
           && left.Range is { Lo: >= 0 } => DivideCongruenceByPowerOfTwo(left.Mod, divisor),
-      BinaryOp.Modulo when exactShift is { } divisor && divisor != 0 && left.Range is { Lo: >= 0 }
-          => ModuloCongruence(left.Mod, Math.Abs(divisor)),
+      BinaryOp.Modulo when exactCount is { } divisor && divisor is not 0 and not long.MinValue
+          && left.Range is { Lo: >= 0 } => ModuloCongruence(left.Mod, Math.Abs(divisor)),
       _ => Congruence.Unknown,
     };
     if (range.IsTop && !IsPowerOfTwo(mod.Modulus))
       mod = Congruence.Unknown; // non-power-of-two congruence is not invariant under 2^width wrap
 
     return Reduce(new(range, bits.Narrow(width), mod), width, signed);
+  }
+
+  /// <summary>
+  /// Width-aware comparison transfer. The result is PB's 16-bit-style truth value, but each operand
+  /// is reduced in its own type domain; a LONG comparison must never truncate its facts to the width
+  /// of the boolean result.
+  /// </summary>
+  public static ValueFacts Compare(BinaryOp op,
+      ValueFacts left, int leftWidth, bool leftSigned,
+      ValueFacts right, int rightWidth, bool rightSigned,
+      int resultWidth) {
+    if (leftWidth > 0)
+      left = Reduce(left, leftWidth, leftSigned);
+    if (rightWidth > 0)
+      right = Reduce(right, rightWidth, rightSigned);
+
+    bool? result = op switch {
+      BinaryOp.Equal when Disjoint(left.Range, right.Range) => false,
+      BinaryOp.NotEqual when Disjoint(left.Range, right.Range) => true,
+      BinaryOp.Equal when ExactInt(left) is { } l && ExactInt(right) is { } r => l == r,
+      BinaryOp.NotEqual when ExactInt(left) is { } l && ExactInt(right) is { } r => l != r,
+      BinaryOp.Equal when ExactInt(left) is { } lc && !right.Allows(lc, WidthForAllows(rightWidth)) => false,
+      BinaryOp.Equal when ExactInt(right) is { } rc && !left.Allows(rc, WidthForAllows(leftWidth)) => false,
+      BinaryOp.NotEqual when ExactInt(left) is { } lc && !right.Allows(lc, WidthForAllows(rightWidth)) => true,
+      BinaryOp.NotEqual when ExactInt(right) is { } rc && !left.Allows(rc, WidthForAllows(leftWidth)) => true,
+      BinaryOp.Less when Finite(left.Range, right.Range) && left.Range.Hi < right.Range.Lo => true,
+      BinaryOp.Less when Finite(left.Range, right.Range) && left.Range.Lo >= right.Range.Hi => false,
+      BinaryOp.LessEqual when Finite(left.Range, right.Range) && left.Range.Hi <= right.Range.Lo => true,
+      BinaryOp.LessEqual when Finite(left.Range, right.Range) && left.Range.Lo > right.Range.Hi => false,
+      BinaryOp.Greater when Finite(left.Range, right.Range) && left.Range.Lo > right.Range.Hi => true,
+      BinaryOp.Greater when Finite(left.Range, right.Range) && left.Range.Hi <= right.Range.Lo => false,
+      BinaryOp.GreaterEqual when Finite(left.Range, right.Range) && left.Range.Lo >= right.Range.Hi => true,
+      BinaryOp.GreaterEqual when Finite(left.Range, right.Range) && left.Range.Hi < right.Range.Lo => false,
+      _ => null,
+    };
+    var width = resultWidth is > 0 and <= 64 ? resultWidth : 16;
+    return result is { } known ? ValueFacts.Of(known ? -1 : 0, width) : Truth(width);
   }
 
   /// <summary>Transfer for integer unary negation.</summary>
@@ -215,29 +262,6 @@ public static class ValueFactReduction {
 
   /// <summary>Facts for an unknown comparison: PB truth is exactly 0 or -1.</summary>
   public static ValueFacts Truth(int width) => Reduce(new(new Interval(-1, 0), KnownBits.Unknown, Congruence.Unknown), width, signed: true);
-
-  private static ValueFacts Compare(BinaryOp op, ValueFacts left, ValueFacts right, int width) {
-    bool? result = op switch {
-      BinaryOp.Equal when Disjoint(left.Range, right.Range) => false,
-      BinaryOp.NotEqual when Disjoint(left.Range, right.Range) => true,
-      BinaryOp.Equal when ExactInt(left) is { } l && ExactInt(right) is { } r => l == r,
-      BinaryOp.NotEqual when ExactInt(left) is { } l && ExactInt(right) is { } r => l != r,
-      BinaryOp.Equal when ExactInt(left) is { } lc && !right.Allows(lc, 64) => false,
-      BinaryOp.Equal when ExactInt(right) is { } rc && !left.Allows(rc, 64) => false,
-      BinaryOp.NotEqual when ExactInt(left) is { } lc && !right.Allows(lc, 64) => true,
-      BinaryOp.NotEqual when ExactInt(right) is { } rc && !left.Allows(rc, 64) => true,
-      BinaryOp.Less when Finite(left.Range, right.Range) && left.Range.Hi < right.Range.Lo => true,
-      BinaryOp.Less when Finite(left.Range, right.Range) && left.Range.Lo >= right.Range.Hi => false,
-      BinaryOp.LessEqual when Finite(left.Range, right.Range) && left.Range.Hi <= right.Range.Lo => true,
-      BinaryOp.LessEqual when Finite(left.Range, right.Range) && left.Range.Lo > right.Range.Hi => false,
-      BinaryOp.Greater when Finite(left.Range, right.Range) && left.Range.Lo > right.Range.Hi => true,
-      BinaryOp.Greater when Finite(left.Range, right.Range) && left.Range.Hi <= right.Range.Lo => false,
-      BinaryOp.GreaterEqual when Finite(left.Range, right.Range) && left.Range.Lo >= right.Range.Hi => true,
-      BinaryOp.GreaterEqual when Finite(left.Range, right.Range) && left.Range.Hi < right.Range.Lo => false,
-      _ => null,
-    };
-    return result is { } known ? ValueFacts.Of(known ? -1 : 0, width) : Truth(width);
-  }
 
   private static KnownBits MultiplyBits(ValueFacts left, ValueFacts right, int width) {
     if (ExactInt(right) is { } r && TryPowerOfTwoMagnitude(r, out var shift)) {
@@ -278,6 +302,45 @@ public static class ValueFactReduction {
       return Congruence.Unknown;
     var residue = c.Residue % divisor;
     return Congruence.Of(residue < 0 ? residue + divisor : residue);
+  }
+
+  private static Interval ShiftLeftRange(Interval range, int count) {
+    if (range.IsTop)
+      return Interval.Top;
+    var factor = BigInteger.One << count;
+    var lo = new BigInteger(range.Lo) * factor;
+    var hi = new BigInteger(range.Hi) * factor;
+    return TryInterval(lo, hi);
+  }
+
+  private static Interval ShiftRightArithmeticRange(Interval range, int count) {
+    if (range.IsTop)
+      return Interval.Top;
+    return count == 0 ? range : new(range.Lo >> count, range.Hi >> count);
+  }
+
+  private static Interval ShiftRightLogicalRange(Interval range, int count, int width) {
+    if (range.IsTop)
+      return Interval.Top;
+    if (count == 0)
+      return range;
+
+    ulong Bits(long value) => unchecked((ulong)value) & Mask(width);
+    if (range.Lo >= 0)
+      return new((long)(Bits(range.Lo) >> count), (long)(Bits(range.Hi) >> count));
+    if (range.Hi < 0)
+      return new((long)(Bits(range.Lo) >> count), (long)(Bits(range.Hi) >> count));
+
+    // Signed interval crosses zero: negative inputs map to the upper half after a logical shift,
+    // positive inputs to the lower half. Their convex hull is the whole shifted bit domain.
+    var max = Mask(width) >> count;
+    return max <= long.MaxValue ? new(0, (long)max) : Interval.Top;
+  }
+
+  private static int? ExactRotateCount(long? count, int width) {
+    if (count is not { } c || c < 0 || width <= 0)
+      return null;
+    return (int)(c % width);
   }
 
   private static KnownBits BitsFromRange(Interval range, int width) {
@@ -370,18 +433,18 @@ public static class ValueFactReduction {
     if (a.IsExact) return b.Allows(a.Residue) ? a : Congruence.Unknown;
     if (b.IsExact) return a.Allows(b.Residue) ? b : Congruence.Unknown;
 
-    var g = Gcd(a.Modulus, b.Modulus);
-    var diff = b.Residue - a.Residue;
+    var g = BigInteger.GreatestCommonDivisor(a.Modulus, b.Modulus);
+    var diff = new BigInteger(b.Residue) - a.Residue;
     if (diff % g != 0)
       return Congruence.Unknown;
 
-    var m1 = new BigInteger(a.Modulus / g);
-    var m2 = new BigInteger(b.Modulus / g);
+    var m1 = new BigInteger(a.Modulus) / g;
+    var m2 = new BigInteger(b.Modulus) / g;
     var lcm = m1 * b.Modulus;
     if (lcm > long.MaxValue)
-      return a.Modulus >= b.Modulus ? a : b; // either fact alone remains sound
+      return a.Modulus >= b.Modulus ? a : b; // either fact alone remains a sound over-approximation
 
-    var rhs = new BigInteger(diff / g);
+    var rhs = diff / g;
     var inverse = ModInverse(m1, m2);
     var t = Mod(rhs * inverse, m2);
     var solution = Mod(new BigInteger(a.Residue) + new BigInteger(a.Modulus) * t, lcm);
@@ -418,6 +481,8 @@ public static class ValueFactReduction {
   private static Interval FitOrTop(Interval range, int width, bool signed) {
     if (range.IsTop)
       return range;
+    if (!signed && width == 64)
+      return range.Lo >= 0 ? range : Interval.Top;
     var type = TypeRange(width, signed);
     return type.IsTop || (range.Lo >= type.Lo && range.Hi <= type.Hi) ? range : Interval.Top;
   }
@@ -432,12 +497,16 @@ public static class ValueFactReduction {
     return new(0, (long)((1UL << width) - 1));
   }
 
+  private static Interval TryInterval(BigInteger lo, BigInteger hi)
+    => lo < long.MinValue || hi > long.MaxValue ? Interval.Top : new((long)lo, (long)hi);
+
   private static KnownBits Meet(KnownBits a, KnownBits b) => new(a.Ones | b.Ones, a.Zeros | b.Zeros);
   private static bool Disjoint(Interval a, Interval b) => !a.IsTop && !b.IsTop && (a.Hi < b.Lo || b.Hi < a.Lo);
   private static bool Finite(Interval a, Interval b) => !a.IsTop && !b.IsTop;
   private static long? ExactInt(ValueFacts facts) => !facts.Range.IsTop && facts.Range.Lo == facts.Range.Hi ? facts.Range.Lo : facts.Mod.IsExact ? facts.Mod.Residue : null;
   private static int BitValues(KnownBits bits, ulong mask) => (bits.Ones & mask) != 0 ? 0b10 : (bits.Zeros & mask) != 0 ? 0b01 : 0b11;
   private static bool IsPowerOfTwo(long value) => value > 0 && (value & (value - 1)) == 0;
+  private static int WidthForAllows(int width) => width is > 0 and <= 64 ? width : 64;
 
   private static ulong Mask(int width) => width >= 64 ? ulong.MaxValue : (1UL << width) - 1;
 
@@ -450,15 +519,12 @@ public static class ValueFactReduction {
     return unchecked((long)((bits ^ sign) - sign));
   }
 
-  private static long Gcd(long a, long b) {
-    a = Math.Abs(a);
-    b = Math.Abs(b);
-    while (b != 0)
-      (a, b) = (b, a % b);
-    return a;
-  }
+  private static Congruence Canonical(Congruence c)
+    => c.IsExact || c.IsUnknown ? c : Normalize(c.Modulus, c.Residue);
 
   private static Congruence Normalize(long modulus, long residue) {
+    if (modulus == long.MinValue)
+      return Congruence.Unknown;
     modulus = Math.Abs(modulus);
     if (modulus == 0) return Congruence.Of(residue);
     if (modulus == 1) return Congruence.Unknown;
@@ -467,11 +533,15 @@ public static class ValueFactReduction {
   }
 
   private static BigInteger Mod(BigInteger value, BigInteger modulus) {
+    if (modulus == 1)
+      return BigInteger.Zero;
     var result = value % modulus;
     return result.Sign < 0 ? result + modulus : result;
   }
 
   private static BigInteger ModInverse(BigInteger value, BigInteger modulus) {
+    if (modulus == 1)
+      return BigInteger.Zero;
     var t = BigInteger.Zero;
     var newT = BigInteger.One;
     var r = modulus;
