@@ -65,20 +65,20 @@ public sealed partial class CodeGenerator {
           error = $"{mnemonic} expects r32, r/m32";
           return true;
         }
-        if (sourceRegister is { } source) {
+        if (sourceRegister is { } registerSource) {
           switch (mnemonic) {
-            case "BLSI": this._asm.Blsi(destination, source); break;
-            case "BLSMSK": this._asm.Blsmsk(destination, source); break;
-            case "BLSR": this._asm.Blsr(destination, source); break;
-            default: this._asm.Tzcnt(destination, source); break;
+            case "BLSI": this._asm.Blsi(destination, registerSource); break;
+            case "BLSMSK": this._asm.Blsmsk(destination, registerSource); break;
+            case "BLSR": this._asm.Blsr(destination, registerSource); break;
+            default: this._asm.Tzcnt(destination, registerSource); break;
           }
         } else {
-          var source = sourceMemory!.Value;
+          var memorySource = sourceMemory!.Value;
           switch (mnemonic) {
-            case "BLSI": this._asm.Blsi(destination, source); break;
-            case "BLSMSK": this._asm.Blsmsk(destination, source); break;
-            case "BLSR": this._asm.Blsr(destination, source); break;
-            default: this._asm.Tzcnt(destination, source); break;
+            case "BLSI": this._asm.Blsi(destination, memorySource); break;
+            case "BLSMSK": this._asm.Blsmsk(destination, memorySource); break;
+            case "BLSR": this._asm.Blsr(destination, memorySource); break;
+            default: this._asm.Tzcnt(destination, memorySource); break;
           }
         }
         return true;
@@ -91,20 +91,20 @@ public sealed partial class CodeGenerator {
           error = $"{mnemonic} expects r32, r/m32, r32";
           return true;
         }
-        if (sourceRegister is { } source) {
+        if (sourceRegister is { } registerSource) {
           switch (mnemonic) {
-            case "BZHI": this._asm.Bzhi(destination, source, control); break;
-            case "SARX": this._asm.Sarx(destination, source, control); break;
-            case "SHLX": this._asm.Shlx(destination, source, control); break;
-            default: this._asm.Shrx(destination, source, control); break;
+            case "BZHI": this._asm.Bzhi(destination, registerSource, control); break;
+            case "SARX": this._asm.Sarx(destination, registerSource, control); break;
+            case "SHLX": this._asm.Shlx(destination, registerSource, control); break;
+            default: this._asm.Shrx(destination, registerSource, control); break;
           }
         } else {
-          var source = sourceMemory!.Value;
+          var memorySource = sourceMemory!.Value;
           switch (mnemonic) {
-            case "BZHI": this._asm.Bzhi(destination, source, control); break;
-            case "SARX": this._asm.Sarx(destination, source, control); break;
-            case "SHLX": this._asm.Shlx(destination, source, control); break;
-            default: this._asm.Shrx(destination, source, control); break;
+            case "BZHI": this._asm.Bzhi(destination, memorySource, control); break;
+            case "SARX": this._asm.Sarx(destination, memorySource, control); break;
+            case "SHLX": this._asm.Shlx(destination, memorySource, control); break;
+            default: this._asm.Shrx(destination, memorySource, control); break;
           }
         }
         return true;
@@ -261,7 +261,6 @@ public sealed partial class CodeGenerator {
         this.SaveBmiFlags(state);
         this.EmitBextr(state);
         this.WriteDwordPlace(state, DwordPlace.Of(destination), BmiC, target);
-        // CF/OF are cleared and ZF is defined. SF/PF/AF are undefined; preserving them is the least surprising lowering.
         this.RestoreBmiResultFlags(state, BmiC, 0xF7BE, setSign: false, carryMode: 0, sourceOffset: BmiA);
         return true;
       }
@@ -433,7 +432,7 @@ public sealed partial class CodeGenerator {
     this._asm.Push(Reg.AX);
     this._asm.Push(Reg.DX);
     this._asm.Mov(Reg.AX, this.GpScratch(state, BmiFlags));
-    this._asm.And(Reg.AX, 0xFFBE); // clear only defined CF/ZF; preserve undefined OF/SF/PF/AF.
+    this._asm.And(Reg.AX, 0xFFBE);
     var sourceNonzero = this._asm.DefineLabel();
     this._asm.Mov(Reg.DX, this.GpScratch(state, BmiA));
     this._asm.Or(Reg.DX, this.GpScratch(state, BmiA + 2));
@@ -523,8 +522,6 @@ public sealed partial class CodeGenerator {
         this.StageDword(state, new TextAssembler.ParsedAsmRegister(Reg.EDX), BmiA, target);
         this.StageDword(state, multiplier, BmiB, target);
         this.EmitMulx(state);
-        // Intel specifies operand 1 as high and operand 2 as low. Write low first so identical
-        // destinations retain the high half, exactly matching hardware alias semantics.
         this.WriteDwordPlace(state, DwordPlace.Of(lowDestination), BmiC, target);
         this.WriteDwordPlace(state, DwordPlace.Of(destination), BmiD, target);
         this._asm.Popf();
@@ -599,7 +596,7 @@ public sealed partial class CodeGenerator {
     this._asm.Push(Reg.DX);
     this._asm.Pushf();
     this._asm.Pop(Reg.AX);
-    this._asm.And(Reg.AX, 0xF73E); // clear defined CF/ZF/SF/OF; preserve undefined PF/AF.
+    this._asm.And(Reg.AX, 0xF73E);
     this._asm.Mov(Reg.DX, this.GpScratch(state, BmiC));
     this._asm.Or(Reg.DX, this.GpScratch(state, BmiC + 2));
     var nonzero = this._asm.DefineLabel();
@@ -701,7 +698,6 @@ public sealed partial class CodeGenerator {
   }
 
   private void EmitMulx(VirtualIsaState state) {
-    // Four 16x16 products; C=low32, D=high32. No 32-bit hardware is required.
     this._asm.Push(Reg.AX);
     this._asm.Push(Reg.BX);
     this._asm.Push(Reg.DX);
