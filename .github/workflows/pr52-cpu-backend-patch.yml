@@ -1,4 +1,4 @@
-name: PR52 Cpu386 audit
+name: PR52 CPU target migration
 
 on:
   push:
@@ -6,19 +6,293 @@ on:
       - feature/intrinsic-zero-overhead-optimization
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  audit:
+  migrate:
+    if: github.event.head_commit.message != '+ Remove legacy Cpu386 target gates'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: List legacy CPU generation gates
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Migrate generation gates
         shell: bash
         run: |
-          echo '--- exact Cpu386 identifiers ---'
-          grep -RInE '\bCpu386\b' PowerBasic.Compiler PowerBasic.Compiler.Tests docs || true
-          echo '--- lowercase cpu386 identifiers ---'
-          grep -RInE '\bcpu386\b' PowerBasic.Compiler PowerBasic.Compiler.Tests docs || true
+          python - <<'PY'
+          import base64
+          import re
+          from pathlib import Path
+
+          selection_target = 'bmFtZXNwYWNlIFBvd2VyQmFzaWMuQ29tcGlsZXIuQmFja2VuZDsKCi8vLyA8c3VtbWFyeT4KLy8vIFdoYXQgdGhlIGluc3RydWN0aW9uIHNlbGVjdG9yIGlzIGNvbXBpbGluZyBmb3I6IHRoZSBDUFUgZ2VuZXJhdGlvbiBpdCBtYXkgYXNzdW1lIGFuZCB0aGUKLy8vIG9wdGltaXphdGlvbiBvYmplY3RpdmUgaXQgaXMgdHJhZGluZyBhZ2FpbnN0LiBCb3RoIGFyZSBwcm9wZXJ0aWVzIG9mIHRoZSB3aG9sZSBjb21waWxhdGlvbiByYXRoZXIKLy8vIHRoYW4gb2YgYW4gaW5kaXZpZHVhbCBmdW5jdGlvbjsgdGhlIElSIHJlbWFpbnMgdGFyZ2V0LWluZGVwZW5kZW50LgovLy8gPC9zdW1tYXJ5PgovLy8gPHBhcmFtIG5hbWU9Ik9wdGltaXplIj53aGV0aGVyIG9wdGltaXphdGlvbiBpcyBlbmFibGVkPC9wYXJhbT4KLy8vIDxwYXJhbSBuYW1lPSJPcHRpbWl6ZVNwZWVkIj53aGV0aGVyIHNwZWVkIGlzIHByZWZlcnJlZDwvcGFyYW0+Ci8vLyA8cGFyYW0gbmFtZT0iT3B0aW1pemVTaXplIj53aGV0aGVyIHNpemUgaXMgcHJlZmVycmVkPC9wYXJhbT4KLy8vIDxwYXJhbSBuYW1lPSJDb3N0Ij5vcHRpb25hbCB0YXJnZXQgaW5zdHJ1Y3Rpb24gY29zdCBtb2RlbDwvcGFyYW0+Ci8vLyA8cGFyYW0gbmFtZT0iQ3B1TGV2ZWwiPm5vcm1hbGl6ZWQgeDg2IGdlbmVyYXRpb246IDg2LCAxODYsIDI4NiwgMzg2LCA0ODYsIDU4NiBvciA2ODY8L3BhcmFtPgpwdWJsaWMgcmVhZG9ubHkgcmVjb3JkIHN0cnVjdCBTZWxlY3Rpb25UYXJnZXQoCiAgYm9vbCBPcHRpbWl6ZSA9IGZhbHNlLAogIGJvb2wgT3B0aW1pemVTcGVlZCA9IGZhbHNlLAogIGJvb2wgT3B0aW1pemVTaXplID0gZmFsc2UsCiAgQ29kZUdlbi5UYXJnZXRDb3N0PyBDb3N0ID0gbnVsbCwKICBpbnQgQ3B1TGV2ZWwgPSA4NikgewoKICAvLy8gPHN1bW1hcnk+V2hldGhlciA4MDE4NiBpbnN0cnVjdGlvbnMgbWF5IGJlIHNlbGVjdGVkLjwvc3VtbWFyeT4KICBwdWJsaWMgYm9vbCBDcHUxODZPckxhdGVyID0+IHRoaXMuQ3B1TGV2ZWwgPj0gMTg2OwoKICAvLy8gPHN1bW1hcnk+V2hldGhlciA4MDI4NiBpbnN0cnVjdGlvbnMgYW5kIHNlbWFudGljcyBtYXkgYmUgc2VsZWN0ZWQuPC9zdW1tYXJ5PgogIHB1YmxpYyBib29sIENwdTI4Nk9yTGF0ZXIgPT4gdGhpcy5DcHVMZXZlbCA+PSAyODY7CgogIC8vLyA8c3VtbWFyeT5XaGV0aGVyIDgwMzg2IGluc3RydWN0aW9ucyBhbmQgMzItYml0IGdlbmVyYWwtcHVycG9zZSByZWdpc3RlcnMgbWF5IGJlIHNlbGVjdGVkLjwvc3VtbWFyeT4KICBwdWJsaWMgYm9vbCBDcHUzODZPckxhdGVyID0+IHRoaXMuQ3B1TGV2ZWwgPj0gMzg2OwoKICAvLy8gPHN1bW1hcnk+V2hldGhlciA4MDQ4NiBpbnN0cnVjdGlvbnMgbWF5IGJlIHNlbGVjdGVkLjwvc3VtbWFyeT4KICBwdWJsaWMgYm9vbCBDcHU0ODZPckxhdGVyID0+IHRoaXMuQ3B1TGV2ZWwgPj0gNDg2OwoKICAvLy8gPHN1bW1hcnk+V2hldGhlciBQZW50aXVtLzgwNTg2IGluc3RydWN0aW9ucyBtYXkgYmUgc2VsZWN0ZWQuPC9zdW1tYXJ5PgogIHB1YmxpYyBib29sIENwdTU4Nk9yTGF0ZXIgPT4gdGhpcy5DcHVMZXZlbCA+PSA1ODY7CgogIC8vLyA8c3VtbWFyeT5XaGV0aGVyIFA2LzgwNjg2IGluc3RydWN0aW9ucyBtYXkgYmUgc2VsZWN0ZWQuPC9zdW1tYXJ5PgogIHB1YmxpYyBib29sIENwdTY4Nk9yTGF0ZXIgPT4gdGhpcy5DcHVMZXZlbCA+PSA2ODY7CgogIC8vLyA8c3VtbWFyeT5BbiA4MDg2IHdpdGggbm8gb3B0aW1pemF0aW9uIC0gd2hhdCBhIGhhbmQtYnVpbHQgdGVzdCBmdW5jdGlvbiBpcyBzZWxlY3RlZCBmb3IuPC9zdW1tYXJ5PgogIHB1YmxpYyBzdGF0aWMgU2VsZWN0aW9uVGFyZ2V0IEJhc2VsaW5lIHsgZ2V0OyB9ID0gbmV3KCk7Cn0K'
+          Path('PowerBasic.Compiler/Backend/SelectionTarget.cs').write_bytes(base64.b64decode(selection_target))
+
+          def replace(path, old, new, count=None):
+              p = Path(path)
+              text = p.read_text()
+              actual = text.count(old)
+              if count is not None and actual != count:
+                  raise SystemExit(f'{path}: expected {count} occurrences, found {actual}: {old!r}')
+              if actual == 0:
+                  raise SystemExit(f'{path}: replacement anchor not found: {old!r}')
+              p.write_text(text.replace(old, new))
+
+          def transform(path, fn):
+              p = Path(path)
+              old = p.read_text()
+              new = fn(old)
+              if new == old:
+                  raise SystemExit(f'{path}: transform made no change')
+              p.write_text(new)
+
+          transform('PowerBasic.Compiler/Backend/InstructionSelector.cs', lambda t: t
+              .replace('public static MFunction? TrySelect(IrFunction fn, bool cpu386 = false)\n    => TrySelect(fn, out _, new SelectionTarget(Cpu386: cpu386));', 'public static MFunction? TrySelect(IrFunction fn)\n    => TrySelect(fn, out _, SelectionTarget.Baseline);')
+              .replace('public static MFunction? TrySelect(IrFunction fn, out string? declineReason, bool cpu386 = false)\n    => TrySelect(fn, out declineReason, new SelectionTarget(Cpu386: cpu386));', 'public static MFunction? TrySelect(IrFunction fn, out string? declineReason)\n    => TrySelect(fn, out declineReason, SelectionTarget.Baseline);')
+              .replace('Cpu386: true', 'Cpu386OrLater: true')
+              .replace('bool cpu386)', 'bool use386Instructions)')
+              .replace('cpu386 ?', 'use386Instructions ?'))
+          replace('PowerBasic.Compiler/Backend/LinearScanAllocator.cs', 'target.Cpu386 &&', 'target.Cpu386OrLater &&', 1)
+          replace('PowerBasic.Compiler/Backend/InstructionSelector.Dispatch.cs', '!this._target.Cpu386)', '!this._target.Cpu386OrLater)', 1)
+
+          transform('PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs', lambda t: t.replace('    Cpu386: this._rt.Cpu386, Optimize: this.Optimize,\n', '    Optimize: this.Optimize,\n'))
+          transform('PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs', lambda t: t.replace('this._rt.Cpu386', 'this._rt.Target.Has32BitGeneralPurpose'))
+
+          codegen_files = [
+              'PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs',
+              'PowerBasic.Compiler/CodeGen/CodeGenerator.Places.cs',
+              'PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs',
+              'PowerBasic.Compiler/CodeGen/CodeGenerator.Expressions.cs',
+              'PowerBasic.Compiler/CodeGen/CodeGenerator.LowLevel.cs',
+              'PowerBasic.Compiler/CodeGen/CodeGenerator.cs',
+              'PowerBasic.Compiler/CodeGen/CodeGenerator.Optimize.cs',
+          ]
+          for path in codegen_files:
+              p = Path(path)
+              text = p.read_text().replace('this.Cpu386', 'this.Has32BitCpu')
+              p.write_text(text)
+
+          p = Path('PowerBasic.Compiler/CodeGen/CodeGenerator.Optimize.cs')
+          text = p.read_text()
+          pattern = re.compile(r'  /// <summary>True when \$CPU 80386.*?  private bool Cpu386 =>.*?\n\n', re.S)
+          text, n = pattern.subn('  /// <summary>The normalized integer-core generation selected by $CPU.</summary>\n  private int CpuLevel => this.RuntimeTargetForRuntime().CpuLevel;\n\n  /// <summary>True when 32-bit general-purpose instructions are legal.</summary>\n  private bool Has32BitCpu => this.CpuLevel >= 386;\n\n', text, count=1)
+          if n != 1:
+              raise SystemExit(f'CodeGenerator.Optimize.cs: Cpu386 property block replacements={n}')
+          text = text.replace('TargetCost.For(this.Has32BitCpu, this.Cpu486, this.Cpu586, this.OptimizeSpeed, this.OptimizeSize)', 'TargetCost.For(this.CpuLevel, this.OptimizeSpeed, this.OptimizeSize)')
+          p.write_text(text)
+
+          replace('PowerBasic.Compiler/CodeGen/CodeGenerator.cs', 'this._rt.Cpu386 = this.Optimize && this.Has32BitCpu;', 'this._rt.Target = this.RuntimeTargetForRuntime();', 1)
+
+          transform('PowerBasic.Compiler/Runtime/DosRuntime.Targeting.cs', lambda t: t.replace('    set {\n      this._target = value;\n      this.Cpu386 = value.Has32BitGeneralPurpose;\n    }', '    set => this._target = value;'))
+          transform('PowerBasic.Compiler/Runtime/DosRuntime.Core.cs', lambda t: t.replace('  /// <summary>Legacy compatibility gate. New runtime code should query <see cref="Target"/>.</summary>\n  public bool Cpu386 { get; set; }\n\n', ''))
+          transform('PowerBasic.Compiler/Runtime/DosRuntime.Math.cs', lambda t: t.replace('old exact-string Cpu386 test', 'old exact-string 386-generation test'))
+
+          p = Path('PowerBasic.Compiler/CodeGen/TargetCost.cs')
+          text = p.read_text()
+          old = '''  public static TargetCost For(bool cpu386, bool cpu486, bool cpu586, bool optimizeSpeed, bool optimizeSize) {\n    var tier =\n      cpu586 ? CpuTier.Pentium :\n      cpu486 ? CpuTier.I80486 :\n      cpu386 ? CpuTier.I80386 :\n      CpuTier.I8086;'''
+          new = '''  public static TargetCost For(int cpuLevel, bool optimizeSpeed, bool optimizeSize) {\n    var tier = cpuLevel switch {\n      >= 686 => CpuTier.P6,\n      >= 586 => CpuTier.Pentium,\n      >= 486 => CpuTier.I80486,\n      >= 386 => CpuTier.I80386,\n      >= 286 => CpuTier.I80286,\n      _ => CpuTier.I8086,\n    };'''
+          if old not in text:
+              raise SystemExit('TargetCost.For old signature/body not found')
+          p.write_text(text.replace(old, new))
+
+          p = Path('PowerBasic.Compiler.Tests/CodeGen/TargetCostTests.cs')
+          text = p.read_text()
+          replacements = {
+            'TargetCost.For(false, false, false, false, false)': 'TargetCost.For(86, false, false)',
+            'TargetCost.For(true, false, false, false, false)': 'TargetCost.For(386, false, false)',
+            'TargetCost.For(true, true, false, false, false)': 'TargetCost.For(486, false, false)',
+            'TargetCost.For(true, true, true, false, false)': 'TargetCost.For(586, false, false)',
+            'TargetCost.For(false, false, false, true, false)': 'TargetCost.For(86, true, false)',
+            'TargetCost.For(false, false, false, false, true)': 'TargetCost.For(86, false, true)',
+          }
+          for old, new in replacements.items():
+              text = text.replace(old, new)
+          anchor = 'Assert.That(TargetCost.For(386, false, false).Tier, Is.EqualTo(CpuTier.I80386));'
+          text = text.replace(anchor, 'Assert.That(TargetCost.For(286, false, false).Tier, Is.EqualTo(CpuTier.I80286));\n      ' + anchor)
+          text = text.replace('Assert.That(TargetCost.For(586, false, false).Tier, Is.EqualTo(CpuTier.Pentium));', 'Assert.That(TargetCost.For(586, false, false).Tier, Is.EqualTo(CpuTier.Pentium));\n      Assert.That(TargetCost.For(686, false, false).Tier, Is.EqualTo(CpuTier.P6));')
+          p.write_text(text)
+
+          test_files = [
+              'PowerBasic.Compiler.Tests/Backend/BackendResidencyTests.cs',
+              'PowerBasic.Compiler.Tests/Backend/BackendCpuTargetTests.cs',
+              'PowerBasic.Compiler.Tests/Backend/BackendWideIntegerTests.cs',
+              'PowerBasic.Compiler.Tests/Backend/BackendQuadPrintTests.cs',
+          ]
+          for path in test_files:
+              p = Path(path)
+              text = p.read_text()
+              text = text.replace('Cpu386: true', 'CpuLevel: 386').replace('Cpu386: false', 'CpuLevel: 86')
+              text = text.replace('bool cpu386', 'bool target386').replace('Cpu386: cpu386', 'CpuLevel: target386 ? 386 : 86')
+              p.write_text(text)
+
+          p = Path('PowerBasic.Compiler.Tests/Exec/Cpu8086.cs')
+          text = p.read_text()
+          if text.count('for (var i = 0; i < (count & 0x1F); ++i)') != 2 or text.count('if ((count & 0x1F) != 0 && op >= 4) {') != 2:
+              raise SystemExit('Cpu8086 shift-count anchors changed')
+          text = text.replace('for (var i = 0; i < (count & 0x1F); ++i)', 'for (var i = 0; i < count; ++i)')
+          text = text.replace('if ((count & 0x1F) != 0 && op >= 4) {', 'if (count != 0 && op >= 4) {')
+          p.write_text(text)
+
+          p = Path('PowerBasic.Compiler.Tests/CodeGen/InlineAsm8086ShiftTests.cs')
+          text = p.read_text()
+          old = '    var (image, _) = Compile("8086", "! SHR AX, 3\\nEND\\n");\n\n    Assert.That(ContainsSequence(image, [0xD1, 0xE8, 0xD1, 0xE8, 0xD1, 0xE8]), Is.True,\n      "8086 immediate shift should lower to repeated count-one instructions");\n    Assert.That(ContainsSequence(image, [0xC1, 0xE8, 0x03]), Is.False,\n      "C1 /5 ib is an 80186+ encoding and must not leak into an 8086 target");'
+          new = '    var (image, _) = Compile("8086", "! MOV AX, 4660\\n! SHR AX, 3\\n! MOV BX, 22136\\nEND\\n");\n\n    Assert.That(ContainsSequence(image, [0xB8, 0x34, 0x12, 0xD1, 0xE8, 0xD1, 0xE8, 0xD1, 0xE8, 0xBB, 0x78, 0x56]), Is.True,\n      "the anchored inline-asm sequence must contain only 8086 count-one encodings");'
+          if old not in text:
+              raise SystemExit('InlineAsm 8086 test block not found')
+          text = text.replace(old, new)
+          text = text.replace('var (image, _) = Compile("186", "! SHR AX, 3\\nEND\\n");\n    Assert.That(ContainsSequence(image, [0xC1, 0xE8, 0x03]), Is.True);', 'var (image, _) = Compile("186", "! MOV AX, 4660\\n! SHR AX, 3\\n! MOV BX, 22136\\nEND\\n");\n    Assert.That(ContainsSequence(image, [0xB8, 0x34, 0x12, 0xC1, 0xE8, 0x03, 0xBB, 0x78, 0x56]), Is.True);')
+          p.write_text(text)
+
+          p = Path('docs/X86-BACKEND.md')
+          text = p.read_text().replace('bare `cpu386` flag', 'bare generation boolean')
+          p.write_text(text)
+
+          matrix = r'''using PowerBasic.Compiler.Backend;
+using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Passes;
+using PowerBasic.Compiler.Semantics;
+using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Tests.Exec;
+
+namespace PowerBasic.Compiler.Tests.Backend;
+
+[TestFixture]
+public sealed class BackendCpuGenerationMatrixTests {
+  private static SemanticModel Bind(string source) {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "cpu-matrix.bas", Dialect.Pb36), "cpu-matrix.bas", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    return model;
+  }
+
+  [TestCase(86)]
+  [TestCase(186)]
+  [TestCase(286)]
+  [TestCase(386)]
+  [TestCase(486)]
+  [TestCase(586)]
+  [TestCase(686)]
+  public void SelectionTarget_GivenGeneration_ThenCapabilityFloorsAreMonotonic(int level) {
+    var target = new SelectionTarget(CpuLevel: level);
+    Assert.Multiple(() => {
+      Assert.That(target.CpuLevel, Is.EqualTo(level));
+      Assert.That(target.Cpu186OrLater, Is.EqualTo(level >= 186));
+      Assert.That(target.Cpu286OrLater, Is.EqualTo(level >= 286));
+      Assert.That(target.Cpu386OrLater, Is.EqualTo(level >= 386));
+      Assert.That(target.Cpu486OrLater, Is.EqualTo(level >= 486));
+      Assert.That(target.Cpu586OrLater, Is.EqualTo(level >= 586));
+      Assert.That(target.Cpu686OrLater, Is.EqualTo(level >= 686));
+    });
+  }
+
+  [TestCase(86, false)]
+  [TestCase(186, true)]
+  [TestCase(286, true)]
+  [TestCase(386, true)]
+  [TestCase(486, true)]
+  [TestCase(586, true)]
+  [TestCase(686, true)]
+  public void Selection_GivenGeneration_ThenConstantShiftUsesLegalTier(int level, bool immediateAllowed) {
+    const string source = """
+      $OPTIMIZE SPEED
+      DECLARE FUNCTION Given%(BYVAL v%)
+      DIM a AS INTEGER
+      a = Given%(4096)
+      SHIFT RIGHT a, 3
+      PRINT a; Given%(7)
+      END
+      FUNCTION Given%(BYVAL v%) NOINLINE
+        Given% = v%
+      END FUNCTION
+      """;
+    var module = IrLowering.TryLowerModule(Bind(source), out var why);
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+    foreach (var function in module!.Functions)
+      if (!function.IsDeclaration)
+        IntegerRecovery.Run(function);
+    IrPassManager.Standard(optimizeSpeed: true).RunOnModule(module);
+    var main = module.FindFunction("main");
+    Assert.That(main, Is.Not.Null);
+    var machine = InstructionSelector.TrySelect(main!, out var reason,
+      new SelectionTarget(CpuLevel: level, Optimize: true, OptimizeSpeed: true));
+    Assert.That(machine, Is.Not.Null, $"selection declined: {reason}");
+    var counts = machine!.AllInstructions
+      .Where(i => i.Opcode == MOpcode.Shr && i.Operands.Count == 2)
+      .Select(i => i.Operands[1])
+      .OfType<MOperand.Immediate>()
+      .Select(i => (int)i.Value)
+      .ToArray();
+    if (immediateAllowed)
+      Assert.That(counts, Does.Contain(3), $"{level} should use the 80186+ immediate-count form");
+    else {
+      Assert.That(counts, Has.No.Member(3), "8086 must not select an 80186 C0/C1 count");
+      Assert.That(counts.Count(c => c == 1), Is.GreaterThanOrEqualTo(3));
+    }
+  }
+
+  [TestCase("8086")]
+  [TestCase("186")]
+  [TestCase("286")]
+  [TestCase("386")]
+  [TestCase("486")]
+  [TestCase("586")]
+  [TestCase("686")]
+  public void Execute_GivenGeneration_ThenRoutedBackendMatchesDirectEmitter(string cpu) {
+    var source = $$"""
+      $CPU {{cpu}}
+      $OPTIMIZE SPEED
+      DECLARE FUNCTION Given%(BYVAL v%)
+      DIM a AS INTEGER
+      a = Given%(4096)
+      SHIFT RIGHT a, 3
+      PRINT a; Given%(7)
+      END
+      FUNCTION Given%(BYVAL v%) NOINLINE
+        Given% = v%
+      END FUNCTION
+      """;
+    static (byte[] Image, IReadOnlyCollection<string> Routes) Compile(string source, bool routed) {
+      var generator = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = routed };
+      var image = generator.EmitExecutable();
+      Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+      return (image, generator.BackendRoutedNames.ToArray());
+    }
+    var direct = Compile(source, false);
+    var routed = Compile(source, true);
+    var expected = Cpu8086.Run(direct.Image).Output;
+    var actual = Cpu8086.Run(routed.Image).Output;
+    Assert.Multiple(() => {
+      Assert.That(routed.Routes, Does.Contain("main"), $"{cpu}: main fell back to direct codegen");
+      Assert.That(actual, Is.EqualTo(expected), $"{cpu}: routed/direct output differs");
+      Assert.That(actual.Trim(), Is.EqualTo("512  7"));
+    });
+  }
+}
+'''
+          Path('PowerBasic.Compiler.Tests/Backend/BackendCpuGenerationMatrixTests.cs').write_text(matrix)
+
+          source_roots = ['PowerBasic.Compiler', 'PowerBasic.Compiler.Tests', 'docs']
+          offenders = []
+          exact = re.compile(r'\bCpu386\b')
+          legacy_lower = re.compile(r'\bcpu386\b')
+          for root in source_roots:
+              for path in Path(root).rglob('*'):
+                  if path.is_file() and path.suffix in {'.cs', '.md'}:
+                      data = path.read_text(errors='ignore')
+                      if exact.search(data) or legacy_lower.search(data):
+                          offenders.append(str(path))
+          if offenders:
+              raise SystemExit('legacy Cpu386 identifiers remain: ' + ', '.join(offenders))
+          PY
+
+          dotnet restore PB-Compiler.slnx
+          dotnet build PB-Compiler.slnx --configuration Release --no-restore
+          dotnet test PowerBasic.Compiler.Tests --configuration Release --no-build --filter "FullyQualifiedName~BackendCpuGenerationMatrixTests|FullyQualifiedName~BackendCpuTargetTests|FullyQualifiedName~BackendResidencyTests|FullyQualifiedName~BackendWideIntegerTests|FullyQualifiedName~BackendQuadPrintTests|FullyQualifiedName~InlineAsm8086ShiftTests|FullyQualifiedName~TargetCostTests"
+          git diff --check
+          git config user.name Hawkynt
+          git config user.email github@synthelicz.de
+          git add PowerBasic.Compiler PowerBasic.Compiler.Tests docs
+          git commit -m '+ Remove legacy Cpu386 target gates'
+          git push origin HEAD:${GITHUB_REF_NAME}
