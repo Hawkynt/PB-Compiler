@@ -14,10 +14,16 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// </para>
 ///
 /// <para>
+/// <see cref="AggregateBlockScalarization"/> runs first to decompose exact whole-record copies and
+/// equality tests whose surrounding typed accesses prove a complete byte layout. Anything it cannot
+/// prove remains a whole-object user and therefore keeps the aggregate materialized here.
+/// </para>
+///
+/// <para>
 /// Overlap is a hard boundary rather than an optimization opportunity. UNION fields deliberately
 /// alias the same bytes, so two distinct accessed regions that intersect keep their shared backing
-/// store. Likewise, a dynamic offset, an escaping pointer, a whole-object operation, or an access
-/// outside the allocation makes the object ineligible.
+/// store. Likewise, a dynamic offset, an escaping pointer, a remaining whole-object operation, or an
+/// access outside the allocation makes the object ineligible.
 /// </para>
 /// </summary>
 public static class ScalarReplaceAggregates {
@@ -30,7 +36,7 @@ public static class ScalarReplaceAggregates {
     if (fn.HasErrorHandler)
       return 0;
 
-    var split = 0;
+    var split = AggregateBlockScalarization.Run(fn);
     foreach (var block in fn.Blocks.ToList())
       foreach (var instruction in block.Instructions.ToList())
         if (instruction is IrAlloca { Allocated: var allocated, Count: > 1 } alloca
