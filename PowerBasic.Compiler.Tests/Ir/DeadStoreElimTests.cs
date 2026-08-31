@@ -60,6 +60,24 @@ public sealed class DeadStoreElimTests {
   }
 
   [Test]
+  public void PartialOverwriteAtSameAddress_DoesNotKillWiderStore() {
+    var word = new IrArgument(IrType.I16, 0, "word");
+    var lowByte = new IrArgument(IrType.I8, 1, "lowByte");
+    var fn = new IrFunction("f", IrType.Void, [word, lowByte]);
+    var b = new IrBuilder(fn.CreateBlock("entry"));
+    var p = b.Alloca(IrType.I16);
+    b.Store(word, p);
+    b.Store(lowByte, p);             // same start, but one byte of the original word remains live
+    b.Ret();
+
+    var removed = DeadStoreElim.Run(fn);
+
+    Assert.That(removed, Is.EqualTo(0));
+    Assert.That(fn.AllInstructions.OfType<IrStore>().Count(), Is.EqualTo(2));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
   public void Pipeline_DoubleAssignedArrayElement_DropsTheDeadStore() {
     var unit = Parser.Parse(Lexer.Tokenize("DIM a%(0 TO 3)\na%(1) = 1\na%(1) = 2\nx% = a%(1)\nEND", "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var fn = IrLowering.TryLowerMainBody(Binder.Bind(unit, Dialect.Pb35))!;

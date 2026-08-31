@@ -86,6 +86,28 @@ public sealed class RedundantMemoryTests {
   }
 
   [Test]
+  public void InterveningPartialOverlap_InvalidatesForwardedValue() {
+    var original = new IrArgument(IrType.I16, 0, "original");
+    var patch = new IrArgument(IrType.I8, 1, "patch");
+    var fn = new IrFunction("f", IrType.I16, [original, patch]);
+    var b = new IrBuilder(fn.CreateBlock("entry"));
+    var storage = b.Alloca(IrType.I16);
+    var word = b.Gep(storage, IrBuilder.ConstI32(0));
+    var highByte = b.Gep(storage, IrBuilder.ConstI32(1));
+    b.Store(original, word);
+    var before = b.Load(IrType.I16, word);
+    b.Store(patch, highByte);             // overlaps the second byte of the cached word
+    var after = b.Load(IrType.I16, word);
+    b.Ret(b.Add(before, after));
+
+    var removed = RedundantMemory.Run(fn);
+
+    Assert.That(removed, Is.EqualTo(1));  // the first load forwards, the post-patch load must remain
+    Assert.That(fn.AllInstructions.OfType<IrLoad>().Count(), Is.EqualTo(1));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
   public void Pipeline_ArrayStoreThenRead_FoldsThroughMemory() {
     var unit = Parser.Parse(Lexer.Tokenize("DIM a%(0 TO 3)\na%(1) = 5\nx% = a%(1)\nEND", "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var fn = IrLowering.TryLowerMainBody(Binder.Bind(unit, Dialect.Pb35))!;

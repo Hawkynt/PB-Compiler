@@ -2,9 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned as a shared analysis (ad-hoc alias tests exist in [O0047](O0047-ir-redundant-memory.md), [O0048](O0048-ir-dead-store-elimination.md) and the scheduler) |
+| **Status** | 🟨 Basic width-aware IR analysis implemented; type-based and allocation-site layers remain planned |
 | **Stage** | Analysis infrastructure |
-| **Related** | [O0060](O0060-memory-ssa.md), [O0140](O0140-load-store-motion.md), [O0152](O0152-vector-alias-versioning.md), [O0161](O0161-function-summaries.md) |
+| **Source** | `Ir/Analysis/IrAliasAnalysis.cs` |
+| **Related** | [O0060](O0060-memory-ssa.md), [O0140](O0140-load-store-motion.md), [O0152](O0152-vector-alias-versioning.md), [O0161](O0161-function-summaries.md), [O0172](O0172-loop-dependence-analysis.md) |
 | **Split into** | [O0262](O0262-type-based-alias.md), [O0263](O0263-allocation-site-alias.md) |
 
 ## The idea
@@ -12,44 +13,58 @@
 Most advanced optimizations refuse to fire without an answer to "can these two
 accesses touch the same byte?". Three layers, in increasing precision:
 
-1. **Basic** — distinguish storage *kinds*: a local, a module global, a static
-   array, a dynamic array's data, string heap storage, an `AT`-placed cell, the
-   stack. Different kinds cannot alias unless an address escapes.
+1. **Basic** — distinguish storage objects and byte ranges. Distinct local
+   allocations and distinct globals do not alias; constant GEPs are reduced to
+   root + byte offset; the access width decides whether two offsets overlap.
 2. **Type-based** — two accesses through incompatible element types cannot
    alias, where BASIC's semantics permit that conclusion (PB has no unions of
    convenience except `UNION` itself, which must be excluded).
-3. **Allocation-site** — two independently `DIM`ed arrays or independently
+3. **Allocation-site** — two independently `DIM`ed dynamic arrays or independently
    allocated strings are distinct objects, and stay distinct through copies of
    their descriptors.
 
 PB is a good candidate: its aliasing entry points are **few and explicit** —
 `VARPTR`/`STRPTR` escape, `BYREF` parameters, `@p` stores, `PEEK`/`POKE` after
-`DEF SEG`, inline asm, external unit calls — so everything else is provably
-non-aliasing by construction.
+`DEF SEG`, inline asm, external unit calls — so everything else can eventually
+be made precise without pretending arbitrary pointers are independent.
 
-## Applies to
+## Implemented basic layer
 
-```basic
-DIM a%(0 TO 99), b%(0 TO 99), i%
-FOR i% = 0 TO 99
-  b%(i%) = a%(i%) * 2        ' distinct arrays: no dependence at all
-NEXT
-```
+`IrAliasAnalysis` answers `NoAlias`, `MayAlias`, `PartialAlias` or `MustAlias`
+for two typed memory accesses. A query is a pointer **and its access type**: the
+width is essential because a two-byte access at offset 0 overlaps a two-byte
+access at offset 1 even though the starting pointers differ.
 
-## Today
+The current provenance model deliberately recognizes only facts carried directly
+by the IR:
 
-Each pass makes its own conservative guess; the scheduler's model, for example,
-knows only "direct cell / `[BP+disp]` / unknown-indexed".
+- distinct `alloca` roots are disjoint;
+- distinct global-variable roots are disjoint;
+- nested constant byte-offset GEPs are flattened;
+- constant element-indexed GEPs are scaled when the element has a
+  target-independent width;
+- unknown/dynamic offsets, pointer-sized elements, BYREF/loaded pointers, casts
+  and explicit far pointers conservatively answer `MayAlias`.
 
-## Planned
+`RedundantMemory` ([O0047](O0047-ir-redundant-memory.md)) and `DeadStoreElim`
+([O0048](O0048-ir-dead-store-elimination.md)) are the first consumers. This also
+fixes two width bugs in their former private alias tests: a partial overlapping
+store now invalidates a cached wider load, and a narrow store at the same start
+address no longer kills a wider earlier store unless it covers the whole range.
 
-One oracle, consulted by CSE, LICM, dead stores, vectorization, scheduling and
-memory SSA — with the escape facts computed once per body.
+## Why it matters for the loop family
 
-## What it needs
+The next layer is [O0172](O0172-loop-dependence-analysis.md): affine loop-access
+analysis needs an oracle for whether two base objects can alias before solving
+subscript equations has any meaning. Once that exists, loop interchange, tiling,
+distribution/fusion and vector alias versioning can share the same legality facts
+instead of each inventing a syntactic proxy.
 
-- An escape analysis over the AST (the reflective node walk
-  [O0022](O0022-dead-procedure-elimination.md) uses is the right instrument) plus
-  the call summaries of [O0161](O0161-function-summaries.md).
-- A conservative default that is *cheap to state*: unknown ⇒ may alias, so every
-  consumer stays correct while the precision improves.
+## Still planned
+
+- Escape-aware allocation-site provenance for dynamic arrays, strings and heap
+  objects.
+- PB-safe type-based alias rules, with explicit `UNION` exclusions.
+- Call Mod/Ref facts from [O0161](O0161-function-summaries.md).
+- A memory-SSA consumer layer ([O0060](O0060-memory-ssa.md)) so alias facts can
+  drive motion and elimination across basic blocks.

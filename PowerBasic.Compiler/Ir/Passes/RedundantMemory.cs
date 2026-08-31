@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -5,10 +7,9 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// promotable scalars, for the addresses that stay in memory (array elements, BYREF
 /// targets). Within a block it forwards a load from the value most recently stored to
 /// the same address, and reuses an earlier load of an unchanged address. Run after GVN
-/// so congruent address computations are already one SSA value; addresses are then
-/// compared by reference plus a small sound alias test (distinct allocas never alias;
-/// the same base at distinct constant offsets never aliases). Any may-aliasing store or
-/// any call conservatively invalidates the affected cache entries.
+/// so congruent address computations are already one SSA value; intervening writes are
+/// disambiguated by the shared width-aware <see cref="IrAliasAnalysis"/>. Any may-aliasing
+/// store or any call conservatively invalidates the affected cache entries.
 /// </summary>
 public static class RedundantMemory {
 
@@ -37,8 +38,8 @@ public static class RedundantMemory {
           }
           case IrStore store: {
             var p = store.Pointer;
-            Invalidate(stored, p);
-            Invalidate(loaded, p);
+            Invalidate(stored, p, store.Value.Type);
+            Invalidate(loaded, p, store.Value.Type);
             stored[p] = store.Value;
             break;
           }
@@ -52,22 +53,9 @@ public static class RedundantMemory {
     return removed;
   }
 
-  private static void Invalidate(Dictionary<IrValue, IrValue> cache, IrValue stored) {
+  private static void Invalidate(Dictionary<IrValue, IrValue> cache, IrValue writtenPointer, IrType writtenType) {
     foreach (var key in cache.Keys.ToList())
-      if (MayAlias(key, stored))
+      if (IrAliasAnalysis.MayAlias(key, cache[key].Type, writtenPointer, writtenType))
         cache.Remove(key);
   }
-
-  private static bool MayAlias(IrValue a, IrValue b) {
-    if (ReferenceEquals(a, b))
-      return true;
-    var (baseA, offA) = Decompose(a);
-    var (baseB, offB) = Decompose(b);
-    if (ReferenceEquals(baseA, baseB))
-      return !(offA.HasValue && offB.HasValue) || offA == offB;   // same base: alias unless distinct constant offsets
-    return baseA is not IrAlloca || baseB is not IrAlloca;          // distinct stack slots never alias
-  }
-
-  private static (IrValue Base, long? ConstOffset) Decompose(IrValue p) =>
-    p is IrGep g ? (g.BasePtr, g.ByteOffset is IrConstantInt c ? c.Value : null) : (p, 0L);
 }
