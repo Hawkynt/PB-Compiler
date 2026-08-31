@@ -5,9 +5,9 @@ using PowerBasic.Compiler.Syntax;
 namespace PowerBasic.Compiler.Tests.CodeGen;
 
 /// <summary>
-/// O16 interval lattice: the value type's arithmetic (sound over-approximation, Top on overflow)
-/// and the forward range-propagation analysis over a bound statement list. This is the
-/// prerequisite analysis for type narrowing; it is exercised in isolation, with no codegen wiring.
+/// O16 value facts: interval arithmetic plus the forward reduced-product analysis over a bound
+/// statement list. The interval domain remains a sound runtime-value over-approximation; when
+/// arithmetic wraps, exact known bits may recover the exact wrapped value instead of staying Top.
 /// </summary>
 [TestFixture]
 public sealed class IntervalRangeTests {
@@ -115,10 +115,10 @@ public sealed class IntervalRangeTests {
     Assert.That(RangeOf("y% = a% + 1\nEND", "y"), Is.Null);
 
   [Test]
-  public void Analyze_GivenIntegerOverflow_ThenTopNotMathRange() =>
-    // 30000 + 30000 = 60000 overflows INTEGER (wraps to -5536); the lattice must NOT report
-    // [60000,60000] - it drops y% to Top so a consumer never trusts a wrapped value
-    Assert.That(RangeOf("x% = 30000\ny% = x% + 30000\nEND", "y"), Is.Null);
+  public void Analyze_GivenIntegerOverflow_ThenExactWrappedRangeRecoveredFromBits() {
+    // The mathematical interval 60000 is invalid for INTEGER, but fixed-width known-bit transfer
+    // computes the actual two's-complement result exactly: 60000 mod 2^16 = -5536.
+    Assert.That(RangeOf("x% = 30000\ny% = x% + 30000\nEND", "y"), Is.EqualTo(Interval.Of(-5536)));
 
   [Test]
   public void Analyze_GivenLongHoldsWiderRange_ThenTracked() =>
@@ -191,21 +191,22 @@ public sealed class IntervalRangeTests {
   }
 
   [Test]
-  public void Refine_GivenGuardedComparison_ThenArmRangeTightens() {
-    // x% is [0,100] after the first IF; inside `IF x% < 50 THEN` it is refined to [0,49]
+  public void Refine_GivenGuardedComparison_ThenCrossDomainFactsSelectReachableJoinedValue() {
+    // The preceding IF leaves x% in the set {0,100}. The interval alone says [0,100], but the
+    // joined congruence/bit facts retain the hole. Under x% < 50 the only reachable value is 0.
     var (_, model) = BindUnit("x% = 0\nIF c% > 0 THEN x% = 100\nIF x% < 50 THEN\nq% = x%\nEND IF\nEND");
     var points = IntervalRangeAnalysis.AnalyzeProgramPoints(model.MainBody, model);
     var guard = (PowerBasic.Compiler.Syntax.Ast.IfStmt)model.MainBody[2];
-    Assert.That(At(points, guard.Then[0], "x"), Is.EqualTo(new Interval(0, 49)));
+    Assert.That(At(points, guard.Then[0], "x"), Is.EqualTo(Interval.Of(0)));
   }
 
   [Test]
-  public void Refine_GivenGuardElse_ThenComplementTightens() {
-    // the ELSE of `IF x% < 50` sees x% >= 50, so [0,100] tightens to [50,100]
+  public void Refine_GivenGuardElse_ThenCrossDomainFactsSelectOtherJoinedValue() {
+    // The ELSE requires x% >= 50; from the joined set {0,100}, that leaves exactly 100.
     var (_, model) = BindUnit("x% = 0\nIF c% > 0 THEN x% = 100\nIF x% < 50 THEN\nq% = 1\nELSE\nq% = x%\nEND IF\nEND");
     var points = IntervalRangeAnalysis.AnalyzeProgramPoints(model.MainBody, model);
     var guard = (PowerBasic.Compiler.Syntax.Ast.IfStmt)model.MainBody[2];
-    Assert.That(At(points, guard.Else![0], "x"), Is.EqualTo(new Interval(50, 100)));
+    Assert.That(At(points, guard.Else![0], "x"), Is.EqualTo(Interval.Of(100)));
   }
 
   [Test]
@@ -379,8 +380,8 @@ public sealed class IntervalRangeTests {
 
   [Test]
   public void Bits_GivenWrappingArithmetic_ThenLowBitsSurvive() {
-    // 30000 + 30000 wraps, so the RANGE is unknowable - but wrapping is modulo 2^16, which leaves
-    // every low bit exactly where it was, so the bits stay exact
+    // 30000 + 30000 wraps, so the mathematical interval 60000 is invalid; the bit transfer is
+    // modulo 2^16 and therefore remains exact, which may now recover the wrapped interval too.
     var bits = BitsOf("x% = 30000\ny% = x% + 30000\nEND", "y");
     Assert.That(bits.Allows(unchecked((short)60000), 16), Is.True);
     Assert.That(bits.Allows(0, 16), Is.False);
