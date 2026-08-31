@@ -77,6 +77,8 @@ public sealed partial class CodeGenerator {
       return true;
     if (this.TryEmitVirtualPopcntInstruction(instruction, resolver, target, out error))
       return true;
+    if (this.TryEmitVirtualGp32RotateFixedInstruction(instruction, resolver, target, out error))
+      return true;
     if (this.TryEmitVirtualGp32ExtendedInstruction(instruction, resolver, target, out error))
       return true;
     if (this.TryEmitVirtualGp32ArithmeticInstruction(instruction, resolver, target, out error))
