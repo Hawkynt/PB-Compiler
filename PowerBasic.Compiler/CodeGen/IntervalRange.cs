@@ -78,10 +78,9 @@ public readonly record struct Interval(long Lo, long Hi) {
 }
 
 /// <summary>
-/// What the analysis knows about one value: its range AND its bits. The two domains answer
-/// different questions and neither subsumes the other - an interval proves <c>x MOD 2</c> is never
-/// 2, while only the bits prove <c>(x \ 2) * 2</c> is never 1 (it spans nearly the whole type, but
-/// its low bit is always 0). Consumers ask whichever one their question needs.
+/// What the analysis knows about one integer value: a range, known one/zero bits, and an affine
+/// congruence. No one domain subsumes the others, so <see cref="ValueFactReduction"/> treats them as
+/// a reduced product: facts discovered in any domain are fed back into the other two until stable.
 /// </summary>
 public readonly record struct ValueFacts(Interval Range, KnownBits Bits, Congruence Mod) {
   public static readonly ValueFacts Unknown = new(Interval.Top, KnownBits.Unknown, Congruence.Unknown);
@@ -102,23 +101,21 @@ public readonly record struct ValueFacts(Interval Range, KnownBits Bits, Congrue
 }
 
 /// <summary>
-/// O16 forward interval propagation over a bound statement list: the range tag every tracked
-/// scalar carries at every program point. It is the prerequisite for type narrowing (a LONG that
-/// provably fits a narrower type) and for dropping the checks the FOR-counter lattice cannot
-/// reach. Modelled: scalar-integer assignment / INCR, IF and SELECT CASE arms (each refined by
-/// what its own test proves) with their joins, and FOR/DO loops by a fixpoint with widening.
+/// O16 forward value propagation over a bound statement list. Every tracked integer carries a
+/// reduced product of interval, known-bit and congruence facts at each program point. It is the
+/// prerequisite for type narrowing, bounds/check elimination, comparison folding and target-specific
+/// instruction selection.
 ///
 /// A statement that is not modelled invalidates only what it can actually write: a call reaches
 /// module-level data, this frame's parameters and whatever the statement names, but not the
 /// procedure's private locals - unless the body takes an address, stores through a pointer,
 /// POKEs, runs inline assembly or captures the frame in a lambda / nested procedure, in which
 /// case everything is dropped. Anything else unmodelled, and every label in a body that contains
-/// a jump, resets the whole environment. Every rule is an over-approximation, so a consumer that
-/// acts only when the whole interval qualifies stays sound; absence from the environment means
-/// <see cref="Interval.Top"/> (unknown).
+/// a jump, resets the whole environment. Every rule is an over-approximation; absence from the
+/// environment remains the conventional representation of completely unknown facts.
 /// </summary>
 public static class IntervalRangeAnalysis {
-  /// <summary>The per-variable interval environment after executing <paramref name="body"/>.</summary>
+  /// <summary>The per-variable value-fact environment after executing <paramref name="body"/>.</summary>
   public static IReadOnlyDictionary<VariableSymbol, ValueFacts> Analyze(IReadOnlyList<Statement> body, SemanticModel model) {
     var env = new Dictionary<VariableSymbol, ValueFacts>(ReferenceEqualityComparer.Instance);
     Run(body, env, ScopeOf(body, model), null);
@@ -154,8 +151,6 @@ public static class IntervalRangeAnalysis {
         case InlineAsmStmt:
         case PtrDerefExpr:
         case CommandStmt { Keyword: "POKE" or "POKE$" or "PEEK" or "PEEK$" }:
-        // a lambda or a nested SUB/FUNCTION captures this frame's locals BYREF, so calling it
-        // writes them from the outside - the same hazard as a taken address
         case LambdaExpr or SubDecl or FunctionDecl:
           escapes = true;
           break;
@@ -173,10 +168,9 @@ public static class IntervalRangeAnalysis {
   }
 
   /// <summary>
-  /// The interval environment at the ENTRY of each statement (keyed by statement reference,
-  /// recursively into IF arms) - so a consumer can read a variable's proven range at a specific
-  /// use site (e.g. to narrow a LONG operation or drop a check). A statement absent from the map
-  /// was unreachable to the analysis; a variable absent from a statement's environment is Top.
+  /// The value-fact environment at the ENTRY of each statement (keyed by statement reference,
+  /// recursively into IF arms). A statement absent from the map was unreachable to the analysis;
+  /// a variable absent from a statement's environment is completely unknown.
   /// </summary>
   public static IReadOnlyDictionary<Statement, IReadOnlyDictionary<VariableSymbol, ValueFacts>>
       AnalyzeProgramPoints(IReadOnlyList<Statement> body, SemanticModel model) {
@@ -186,11 +180,18 @@ public static class IntervalRangeAnalysis {
     return points;
   }
 
+  /// <summary>
+  /// Evaluates an arbitrary integer expression in an already-computed program-point environment.
+  /// This is the single query the emitter uses when a target instruction can exploit value shape.
+  /// </summary>
+  public static ValueFacts Evaluate(Expression expression, IReadOnlyDictionary<VariableSymbol, ValueFacts> environment, SemanticModel model)
+    => Eval(expression, environment, model);
+
   private static void Run(IReadOnlyList<Statement> body, Dictionary<VariableSymbol, ValueFacts> env, Scope scope,
       Dictionary<Statement, IReadOnlyDictionary<VariableSymbol, ValueFacts>>? points) {
     foreach (var s in body) {
       if (points != null && !IsLoop(s))
-        points.TryAdd(s, Clone(env));                 // snapshot the entry environment
+        points.TryAdd(s, Clone(env));
       Transfer(s, env, scope, points);
     }
   }
@@ -198,17 +199,9 @@ public static class IntervalRangeAnalysis {
   /// <summary>
   /// A statement whose recorded program point is NOT its entry environment, because the emitter reads
   /// that point while emitting something the loop re-executes - the pre/post test, which runs again on
-  /// every back edge with loop-carried values.
-  ///
-  /// <para>
-  /// <see cref="TransferLoop"/> is the sole author of a loop's point and writes the widened invariant
-  /// there for exactly this reason. It only runs when the loop is analyzable, though, and the entry
-  /// snapshot taken in front of it survived when it did not - so a loop whose body the analysis
-  /// refuses (a procedure call, <c>INPUT</c>, <c>EXIT SUB</c>, <c>GOTO</c>, ...) left its test reading
-  /// the values that held BEFORE the loop. <c>i = 0 : WHILE i &lt; 3 : i = i + 1 : Note i : WEND</c>
-  /// folded <c>i &lt; 3</c> to a constant TRUE (O16 <c>TryEmitRangeComparison</c>, <c>MOV AX,-1</c>) and
-  /// the program never terminated. No entry at all is the honest answer: absence means Top.
-  /// </para>
+  /// every back edge with loop-carried values. <see cref="TransferLoop"/> is the sole author of a
+  /// loop's point and writes the widened invariant there. A loop the analysis refuses has no point,
+  /// which is the honest Top answer rather than its first-iteration pre-loop state.
   /// </summary>
   private static bool IsLoop(Statement s) => s is ForStmt or DoLoopStmt;
 
@@ -223,10 +216,11 @@ public static class IntervalRangeAnalysis {
       case IncrDecrStmt { Target: NameExpr t } id
           when IntVar(t, model) is { } sym && (id.Amount == null || CallFree(id.Amount, model)): {
         var cur = env.TryGetValue(sym, out var iv) ? iv : ValueFacts.Unknown;
-        var amount = id.Amount == null ? ValueFacts.Of(1, 64) : Eval(id.Amount, env, model);
+        var amount = id.Amount == null ? ValueFacts.Of(1, WidthOf(sym.Type)) : Eval(id.Amount, env, model);
+        var width = WidthOf(sym.Type);
         var stepped = new ValueFacts(
           id.Increment ? cur.Range.Add(amount.Range) : cur.Range.Subtract(amount.Range),
-          cur.Bits.AddSub(amount.Bits, subtract: !id.Increment),
+          ValueFactReduction.AddSub(cur.Bits, amount.Bits, width, subtract: !id.Increment),
           id.Increment ? cur.Mod.Add(amount.Mod) : cur.Mod.Subtract(amount.Mod));
         Set(env, sym, StoreInto(stepped, sym.Type));
         return;
@@ -247,28 +241,20 @@ public static class IntervalRangeAnalysis {
         RefineForCondition(elseEnv, iff.Condition, whenTrue: false, model);
         if (iff.Else != null)
           Run(iff.Else, elseEnv, scope, points);
-        results.Add(elseEnv);                          // Else, or (no Else) the not-taken fallthrough
+        results.Add(elseEnv);
         Replace(env, JoinAll(results));
         return;
       }
-      // a FOR loop: the counter is bounded by [From,To]; the body's loop-carried effect is found
-      // by a fixpoint with widening (accumulators widen to Top; values recomputed from the counter
-      // stay bounded). Only fires when the body is itself call-free.
       case ForStmt f when IntVar(f.Variable, model) is { } ctr
           && CallFree(f.From, model) && CallFree(f.To, model) && BodyCallFree(f.Body, model): {
         var range = Eval(f.From, env, model).Range.Join(Eval(f.To, env, model).Range);
         TransferLoop(f, f.Body, ctr, range, env, scope, points);
         return;
       }
-      // a DO/WHILE loop: no counter, so just the fixpoint-with-widening over a call-free body
       case DoLoopStmt d when (d.PreCondition == null || CallFree(d.PreCondition, model))
           && (d.PostCondition == null || CallFree(d.PostCondition, model)) && BodyCallFree(d.Body, model):
         TransferLoop(d, d.Body, null, Interval.Top, env, scope, points);
         return;
-      // SELECT CASE: each arm is entered only when the subject matches one of its selectors, so
-      // the arm body sees the subject narrowed to the hull of those selectors (exactly the IF-arm
-      // refinement, generalized to a selector list). Arms are independent; their exits join, plus
-      // the no-match fall-through when there is no CASE ELSE.
       case SelectStmt sel when CallFree(sel.Subject, model)
           && sel.Arms.All(a => a.Selectors.All(sl => SelectorCallFree(sl, model))): {
         var subject = IntVar(sel.Subject, model);
@@ -281,49 +267,29 @@ public static class IntervalRangeAnalysis {
           results.Add(armEnv);
         }
         if (!sel.Arms.Any(a => a.Selectors.Count == 0))
-          results.Add(Clone(env));                     // no CASE ELSE: nothing may match
+          results.Add(Clone(env));
         Replace(env, JoinAll(results));
         return;
       }
-
-      // a call-free PRINT writes no scalar variable - keep the environment intact
       case PrintStmt p when (p.FileNumber == null || CallFree(p.FileNumber, model))
           && (p.UsingFormat == null || CallFree(p.UsingFormat, model))
           && p.Items.All(i => i.Value == null || CallFree(i.Value, model)):
         return;
-      // a label is a join point for every jump that targets it, so what was true on the way here
-      // says nothing about the state a GOTO/RESUME arrives with
       case LabelStmt:
         if (scope.Jumps)
           env.Clear();
         return;
-
-      // statements that write no scalar variable - keep the environment intact
       case MetaStmt or EquateStmt or DefTypeStmt or DataStmt or EndStmt:
         return;
-      // A procedure call is not a wall. It can write module-level data, anything reached through
-      // its own arguments and any parameter cell of this frame (a BYREF one aliases the caller's
-      // variable) - but it cannot see this scope's other locals, so those keep their ranges across
-      // it. That only holds while no address escaped anywhere in the body; when one did, the call
-      // could write anything and the environment is cleared as before.
       case CallStmt or AssignStmt or IncrDecrStmt or PrintStmt when !scope.Escapes:
         KillReachableByCall(s, env, model);
         return;
-
       default:
-        // an unmodelled statement may write tracked variables (INPUT, a jump, inline asm, ...)
-        // - drop to the sound conservative fixpoint: everything unknown
         env.Clear();
         return;
     }
   }
 
-  /// <summary>
-  /// Invalidates exactly what a call inside <paramref name="s"/> can reach: every variable that is
-  /// not a private local of this frame, plus every variable the statement names (an argument may
-  /// be passed BYREF, and the statement's own assignment target is named too). Only called when no
-  /// address escaped in this body - see <see cref="Scope.Escapes"/>.
-  /// </summary>
   private static void KillReachableByCall(Statement s, Dictionary<VariableSymbol, ValueFacts> env, SemanticModel model) {
     foreach (var v in env.Keys.ToList())
       if (v.Storage != VariableStorage.Local || v.IsShared)
@@ -333,24 +299,17 @@ public static class IntervalRangeAnalysis {
         env.Remove(named);
   }
 
-  /// <summary>True when every expression of a CASE selector is call-free (so matching it cannot itself change the state).</summary>
   private static bool SelectorCallFree(CaseSelector selector, SemanticModel model)
     => (selector.Value == null || CallFree(selector.Value, model))
        && (selector.RangeUpper == null || CallFree(selector.RangeUpper, model));
 
-  /// <summary>
-  /// Narrows <paramref name="subject"/> to the hull of the ranges its selectors admit - the arm
-  /// runs when ANY selector matches, so the union (over-approximated by the hull) is what the body
-  /// can see. A selector whose bound is not evaluable yields no refinement at all (Top), which is
-  /// the sound answer for "this arm might be entered with anything".
-  /// </summary>
   private static void RefineForSelectors(Dictionary<VariableSymbol, ValueFacts> env, VariableSymbol subject,
       IReadOnlyList<CaseSelector> selectors, SemanticModel model) {
     Interval? admitted = null;
     foreach (var selector in selectors) {
       var one = SelectorRange(selector, env, model);
       if (one is not { } iv)
-        return;                                        // an unbounded selector - keep what we knew
+        return;
       admitted = admitted is { } sofar ? sofar.Join(iv) : iv;
     }
     if (admitted is not { } range)
@@ -361,33 +320,31 @@ public static class IntervalRangeAnalysis {
       SetRange(env, subject, refined);
   }
 
-  /// <summary>The values one CASE selector admits: <c>CASE v</c>, <c>CASE lo TO hi</c> or <c>CASE IS &lt;op&gt; v</c>.</summary>
   private static Interval? SelectorRange(CaseSelector selector, IReadOnlyDictionary<VariableSymbol, ValueFacts> env, SemanticModel model) {
     if (selector.Value is not { } value)
       return null;
     var low = Eval(value, env, model).Range;
     if (low.IsTop)
       return null;
-    if (selector.RangeUpper is { } upper) {            // CASE lo TO hi
+    if (selector.RangeUpper is { } upper) {
       var high = Eval(upper, env, model).Range;
       return high.IsTop ? null : new Interval(low.Lo, high.Hi);
     }
-    return selector.IsComparison switch {              // CASE IS <relation> v
+    return selector.IsComparison switch {
       null or CaseComparison.Equal => low,
       CaseComparison.Less => new Interval(long.MinValue, low.Hi - 1),
       CaseComparison.LessEqual => new Interval(long.MinValue, low.Hi),
       CaseComparison.Greater => new Interval(low.Lo + 1, long.MaxValue),
       CaseComparison.GreaterEqual => new Interval(low.Lo, long.MaxValue),
-      _ => null,                                       // NotEqual is a hole, not an interval
+      _ => null,
     };
   }
 
-  /// <summary>A modulus that divides some 2^n, so wrapping cannot move a value off its residue.</summary>
   private static bool IsPowerOfTwo(long m) => m > 0 && (m & (m - 1)) == 0;
 
-  /// <summary>The width in bits of an expression's own type; 0 when it is not a sized integer.</summary>
-  private static int WidthOf(Expression e, SemanticModel model) =>
-    model.TypeOf(e) is ScalarType { IsFloat: false, ByteSize: var n } ? n * 8 : 0;
+  private static int WidthOf(Expression e, SemanticModel model) => WidthOf(model.TypeOf(e));
+  private static int WidthOf(PbType type) => type is ScalarType { IsFloat: false, ByteSize: var n } ? n * 8 : 0;
+  private static bool SignedOf(Expression e, SemanticModel model) => model.TypeOf(e) is not ScalarType { IsFloat: false, Signed: false };
 
   private static ValueFacts Eval(Expression e, IReadOnlyDictionary<VariableSymbol, ValueFacts> env, SemanticModel model) {
     switch (e) {
@@ -397,15 +354,27 @@ public static class IntervalRangeAnalysis {
         return env.TryGetValue(sym, out var iv) ? iv : ValueFacts.Unknown;
       case UnaryExpr { Op: UnaryOp.Negate, Operand: { } operand }: {
         var inner = Eval(operand, env, model);
-        return new(inner.Range.Negate(), KnownBits.Unknown, inner.Mod.Negate());
+        var width = WidthOf(e, model);
+        return width > 0
+          ? ValueFactReduction.Negate(inner, width, SignedOf(e, model))
+          : new(inner.Range.Negate(), KnownBits.Unknown, inner.Mod.Negate());
       }
-      case UnaryExpr { Op: UnaryOp.Not, Operand: { } notOperand }:
-        // NOT is exact on bits, and PB's NOT is the bitwise complement (-x-1) on the range
-        return new(Interval.Top, Eval(notOperand, env, model).Bits.Not().Narrow(WidthOf(e, model)), Congruence.Unknown);
+      case UnaryExpr { Op: UnaryOp.Not, Operand: { } notOperand }: {
+        var inner = Eval(notOperand, env, model);
+        var width = WidthOf(e, model);
+        return width > 0
+          ? ValueFactReduction.Not(inner, width, SignedOf(e, model))
+          : ValueFacts.Unknown;
+      }
       case BinaryExpr b: {
         var l = Eval(b.Left, env, model);
         var r = Eval(b.Right, env, model);
         var width = WidthOf(b, model);
+        if (width > 0)
+          return ValueFactReduction.Binary(b.Op, l, r, width, SignedOf(b, model));
+
+        // PB-lineage + - * may still be float-promoted here. Keep the established mathematical
+        // range and residue transfer; there is no integer bit-pattern until a later integral store.
         var range = b.Op switch {
           BinaryOp.Add => l.Range.Add(r.Range),
           BinaryOp.Subtract => l.Range.Subtract(r.Range),
@@ -415,9 +384,6 @@ public static class IntervalRangeAnalysis {
           BinaryOp.And => l.Range.And(r.Range),
           _ => Interval.Top,
         };
-        // Bits survive what ranges do not: two's-complement wrapping is arithmetic modulo 2^n, so
-        // the low bits of a wrapped result are still exactly the low bits of the true one. Only
-        // the range has to be discarded when it leaves the type.
         var bits = b.Op switch {
           BinaryOp.And => l.Bits.And(r.Bits),
           BinaryOp.Or => l.Bits.Or(r.Bits),
@@ -425,14 +391,8 @@ public static class IntervalRangeAnalysis {
           BinaryOp.Add => l.Bits.AddSub(r.Bits, subtract: false),
           BinaryOp.Subtract => l.Bits.AddSub(r.Bits, subtract: true),
           BinaryOp.Multiply => l.Bits.Multiply(r.Bits, width),
-          BinaryOp.ShiftLeft when r.Range is { Lo: var sl, Hi: var sh } && sl == sh => l.Bits.ShiftLeft((int)sl),
-          BinaryOp.ShiftRightArith when r.Range is { Lo: var al, Hi: var ah } && al == ah => l.Bits.ShiftRight((int)al, width, arithmetic: true),
-          BinaryOp.ShiftRightLogical when r.Range is { Lo: var ll, Hi: var lh } && ll == lh => l.Bits.ShiftRight((int)ll, width, arithmetic: false),
           _ => KnownBits.Unknown,
         };
-        // Congruences, like bits, survive wrapping only when the modulus divides 2^width - which
-        // is exactly what the power-of-two check below asks. Otherwise a wrapped value can land on
-        // any residue, so the fact is dropped with the range.
         var mod = b.Op switch {
           BinaryOp.Add => l.Mod.Add(r.Mod),
           BinaryOp.Subtract => l.Mod.Subtract(r.Mod),
@@ -441,7 +401,7 @@ public static class IntervalRangeAnalysis {
         };
         var fitted = FitOrTop(range, model.TypeOf(b));
         if (fitted.IsTop && !IsPowerOfTwo(mod.Modulus))
-          mod = Congruence.Unknown;                    // the value may have wrapped off its residue
+          mod = Congruence.Unknown;
         return new(fitted, bits.Narrow(width), mod);
       }
       default:
@@ -449,18 +409,8 @@ public static class IntervalRangeAnalysis {
     }
   }
 
-  /// <summary>
-  /// Narrow a variable's interval by a comparison condition known to hold (<paramref
-  /// name="whenTrue"/>) or not hold inside an IF arm - "x OP const" or "const OP x" with x a
-  /// tracked integer variable. Sound: the branch guarantees the (possibly negated) comparison, so
-  /// x lies in the intersection of its incoming range and the comparison's implied range.
-  /// </summary>
   private static void RefineForCondition(Dictionary<VariableSymbol, ValueFacts> env, Expression cond,
       bool whenTrue, SemanticModel model) {
-    // A composite condition refines through the side that is decided by it: "A AND B" being TRUE
-    // means both held, "A OR B" being FALSE means neither did, and NOT flips the question. That
-    // needs each operand to be a truth value (-1/0), since PB's AND/OR are bitwise - "3 AND 5" is
-    // 1 without either operand being a condition at all.
     switch (cond) {
       case BinaryExpr { Op: BinaryOp.And } and2 when whenTrue && IsTruthValued(and2.Left) && IsTruthValued(and2.Right):
         RefineForCondition(env, and2.Left, whenTrue: true, model);
@@ -485,8 +435,6 @@ public static class IntervalRangeAnalysis {
     else return;
     if (!whenTrue)
       op = NegateCompare(op);
-    // a variable's value always lies inside its type, so that is the range a refinement
-    // starts from - it turns a one-sided test (x% <= 5) into a usable two-sided interval
     var cur = env.TryGetValue(v, out var iv) ? iv.Range : TypeRange(v.Type);
     Interval? refined = op switch {
       BinaryOp.Less => new Interval(cur.Lo, Math.Min(cur.Hi, c - 1)),
@@ -494,18 +442,12 @@ public static class IntervalRangeAnalysis {
       BinaryOp.Greater => new Interval(Math.Max(cur.Lo, c + 1), cur.Hi),
       BinaryOp.GreaterEqual => new Interval(Math.Max(cur.Lo, c), cur.Hi),
       BinaryOp.Equal => new Interval(Math.Max(cur.Lo, c), Math.Min(cur.Hi, c)),
-      _ => null,                                       // NotEqual is a hole, not an interval; a
-                                                       // bitwise op is not a condition at all
+      _ => null,
     };
     if (refined is { IsEmpty: false } narrowed)
       SetRange(env, v, narrowed);
   }
 
-  /// <summary>
-  /// True when <paramref name="e"/> can only be one of PB's truth values (-1 / 0): a comparison,
-  /// or a bitwise combination of such. Only then does "the whole thing is true/false" say anything
-  /// about the operands - for arbitrary integers AND/OR/NOT are just bit twiddling.
-  /// </summary>
   private static bool IsTruthValued(Expression e) => e switch {
     BinaryExpr { Op: BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
       or BinaryOp.LessEqual or BinaryOp.GreaterEqual } => true,
@@ -519,7 +461,7 @@ public static class IntervalRangeAnalysis {
     BinaryOp.Greater => BinaryOp.Less,
     BinaryOp.LessEqual => BinaryOp.GreaterEqual,
     BinaryOp.GreaterEqual => BinaryOp.LessEqual,
-    _ => op,                                           // Equal / NotEqual are symmetric
+    _ => op,
   };
 
   private static BinaryOp NegateCompare(BinaryOp op) => op switch {
@@ -532,8 +474,6 @@ public static class IntervalRangeAnalysis {
     _ => op,
   };
 
-  /// <summary>The representable range of an integer type; Top for floats, QUAD, or anything else
-  /// (so it never clamps a value we cannot bound). Integer arithmetic wraps within this range.</summary>
   private static Interval TypeRange(PbType type) => type switch {
     ScalarType { IsFloat: false, ByteSize: 1, Signed: true } => new(-128, 127),
     ScalarType { IsFloat: false, ByteSize: 1, Signed: false } => new(0, 255),
@@ -544,19 +484,16 @@ public static class IntervalRangeAnalysis {
     _ => Interval.Top,
   };
 
-  /// <summary>
-  /// What a variable of <paramref name="type"/> holds after storing <paramref name="facts"/>: the
-  /// range only survives when it fits (a store that wraps makes it a fiction), while the bits
-  /// simply narrow to the type's width - wrapping cannot disturb them.
-  /// </summary>
   private static ValueFacts StoreInto(ValueFacts facts, PbType type) {
     var fitted = FitOrTop(facts.Range, type);
+    var width = WidthOf(type);
     var mod = fitted.IsTop && !IsPowerOfTwo(facts.Mod.Modulus) ? Congruence.Unknown : facts.Mod;
-    return new(fitted, facts.Bits.Narrow(type is ScalarType { IsFloat: false, ByteSize: var n } ? n * 8 : 0), mod);
+    var stored = new ValueFacts(fitted, facts.Bits.Narrow(width), mod);
+    return type is ScalarType { IsFloat: false, Signed: var signed } && width > 0
+      ? ValueFactReduction.Reduce(stored, width, signed)
+      : stored;
   }
 
-  /// <summary>The interval unchanged when it fits the type's representable range; otherwise Top -
-  /// a value that overflows the type wraps to something the lattice cannot predict.</summary>
   private static Interval FitOrTop(Interval iv, PbType type) {
     if (iv.IsTop)
       return Interval.Top;
@@ -564,14 +501,11 @@ public static class IntervalRangeAnalysis {
     return iv.Lo >= t.Lo && iv.Hi <= t.Hi ? iv : Interval.Top;
   }
 
-  /// <summary>The bound symbol when <paramref name="e"/> is a scalar non-float integer variable.</summary>
   private static VariableSymbol? IntVar(Expression e, SemanticModel model)
     => e is NameExpr && model.VariableBindings.TryGetValue(e, out var s)
        && s.Type is ScalarType { IsFloat: false }
        ? s : null;
 
-  /// <summary>True when no user-procedure call appears in the tree (a call could write a tracked
-  /// variable by-ref).</summary>
   private static bool CallFree(Expression e, SemanticModel model) => e switch {
     _ when model.CallBindings.ContainsKey(e) || model.ProcPtrCalls.ContainsKey(e) => false,
     UnaryExpr u => CallFree(u.Operand, model),
@@ -582,14 +516,6 @@ public static class IntervalRangeAnalysis {
     _ => true,
   };
 
-  /// <summary>
-  /// Analyze a loop body: compute the body-entry invariant by a fixpoint with widening (so it
-  /// terminates), record per-program-point environments inside the body using that invariant, and
-  /// leave <paramref name="env"/> as the post-loop state (0 iterations joined with the body's
-  /// effect). A FOR counter is pinned to its <paramref name="counterRange"/> at body entry and
-  /// removed (Top) after the loop; loop-carried accumulators widen to Top, values recomputed each
-  /// iteration from the counter stay bounded.
-  /// </summary>
   private static void TransferLoop(Statement self, IReadOnlyList<Statement> body, VariableSymbol? counter,
       Interval counterRange, Dictionary<VariableSymbol, ValueFacts> env, Scope scope,
       Dictionary<Statement, IReadOnlyDictionary<VariableSymbol, ValueFacts>>? points) {
@@ -602,7 +528,7 @@ public static class IntervalRangeAnalysis {
       var exit = Clone(inv);
       Run(body, exit, scope, null);
       if (counter != null)
-        SetRange(exit, counter, counterRange);       // the counter is back in range at re-entry
+        SetRange(exit, counter, counterRange);
       var widened = WidenEnv(inv, JoinAll([entry, exit]));
       if (EnvEquals(widened, inv))
         break;
@@ -610,23 +536,19 @@ public static class IntervalRangeAnalysis {
     }
 
     if (points != null) {
-      // the loop's OWN condition is re-evaluated every iteration with loop-carried values, so it
-      // must see the invariant (widened), NOT the pre-loop entry env that Run recorded.
       points[self] = Clone(inv);
       var bodyEnv = Clone(inv);
-      Run(body, bodyEnv, scope, points);             // per-point envs inside the body
+      Run(body, bodyEnv, scope, points);
     }
 
     var afterExit = Clone(inv);
     Run(body, afterExit, scope, null);
-    var after = JoinAll([entry, afterExit]);          // 0 iterations, or the body's exit
+    var after = JoinAll([entry, afterExit]);
     if (counter != null)
-      after.Remove(counter);                          // post-loop counter value is not tracked
+      after.Remove(counter);
     Replace(env, after);
   }
 
-  /// <summary>Interval widening: an endpoint that grew jumps to +/-infinity, so the fixpoint
-  /// terminates after a bounded number of rounds.</summary>
   private static Interval Widen(Interval old, Interval candidate) {
     if (old.IsTop)
       return Interval.Top;
@@ -639,8 +561,6 @@ public static class IntervalRangeAnalysis {
       Dictionary<VariableSymbol, ValueFacts> candidate) {
     var result = new Dictionary<VariableSymbol, ValueFacts>(ReferenceEqualityComparer.Instance);
     foreach (var kv in candidate) {
-      // the range widens (so the fixpoint terminates); the bits only ever merge, which is already
-      // monotone - a loop-carried value keeps "always even" even as its range gives up
       var range = old.TryGetValue(kv.Key, out var o) ? Widen(o.Range, kv.Value.Range) : kv.Value.Range;
       var bits = old.TryGetValue(kv.Key, out var ob) ? ob.Bits.Join(kv.Value.Bits) : kv.Value.Bits;
       var mod = old.TryGetValue(kv.Key, out var om) ? om.Mod.Join(kv.Value.Mod) : kv.Value.Mod;
@@ -680,20 +600,21 @@ public static class IntervalRangeAnalysis {
         case MetaStmt or EquateStmt or DefTypeStmt or DataStmt or EndStmt or LabelStmt:
           break;
         default:
-          return false;                               // a call / unmodelled statement -> not analyzable
+          return false;
       }
     return true;
   }
 
-  /// <summary>Store what is known, or drop the variable when nothing is (absence = unknown).</summary>
   private static void Set(Dictionary<VariableSymbol, ValueFacts> env, VariableSymbol sym, ValueFacts facts) {
+    var width = WidthOf(sym.Type);
+    if (width > 0 && sym.Type is ScalarType { Signed: var signed })
+      facts = ValueFactReduction.Reduce(facts, width, signed);
     if (facts.IsUnknown)
       env.Remove(sym);
     else
       env[sym] = facts;
   }
 
-  /// <summary>Stores a range while keeping whatever was known about the bits (a refinement narrows one domain).</summary>
   private static void SetRange(Dictionary<VariableSymbol, ValueFacts> env, VariableSymbol sym, Interval range) {
     var known = env.TryGetValue(sym, out var k) ? k : ValueFacts.Unknown;
     Set(env, sym, new(range, known.Bits, known.Mod));
@@ -708,8 +629,6 @@ public static class IntervalRangeAnalysis {
       env[kv.Key] = kv.Value;
   }
 
-  /// <summary>Join environments: a variable known in every branch joins to the hull; a variable
-  /// missing (Top) in any branch is unknown after the merge, so it is dropped.</summary>
   private static Dictionary<VariableSymbol, ValueFacts> JoinAll(List<Dictionary<VariableSymbol, ValueFacts>> envs) {
     var result = new Dictionary<VariableSymbol, ValueFacts>(ReferenceEqualityComparer.Instance);
     if (envs.Count == 0)
@@ -721,8 +640,13 @@ public static class IntervalRangeAnalysis {
         if (!envs[i].TryGetValue(kv.Key, out var other)) { inAll = false; break; }
         joined = joined.Join(other);
       }
-      if (inAll && !joined.IsUnknown)
-        result[kv.Key] = joined;
+      if (inAll && !joined.IsUnknown) {
+        var width = WidthOf(kv.Key.Type);
+        if (width > 0 && kv.Key.Type is ScalarType { Signed: var signed })
+          joined = ValueFactReduction.Reduce(joined, width, signed);
+        if (!joined.IsUnknown)
+          result[kv.Key] = joined;
+      }
     }
     return result;
   }
