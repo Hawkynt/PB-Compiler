@@ -117,16 +117,17 @@ public sealed class ValueFactReductionTests {
   }
 
   [Test]
-  public void Evaluate_GivenExpressionAtProgramPoint_ThenEmitterStyleQueryGetsReducedFacts() {
-    var (_, model) = Bind("x% = a% AND 1\ny% = x% + 1\nEND");
+  public void Evaluate_GivenFixedWidthExpressionAtProgramPoint_ThenEmitterStyleQueryGetsReducedFacts() {
+    var (_, model) = Bind("x% = a% AND 1\ny% = x% XOR 1\nEND");
     var points = IntervalRangeAnalysis.AnalyzeProgramPoints(model.MainBody, model);
     var statement = (AssignStmt)model.MainBody[1];
     var env = points[statement];
 
     var facts = IntervalRangeAnalysis.Evaluate(statement.Value, env, model);
 
-    Assert.That(facts.Range, Is.EqualTo(new Interval(1, 2)));
-    Assert.That(facts.Bits.Zeros & 0xfffcUL, Is.EqualTo(0xfffcUL));
+    Assert.That(facts.Range, Is.EqualTo(new Interval(0, 1)));
+    Assert.That(facts.Bits.Zeros & 0xfffeUL, Is.EqualTo(0xfffeUL));
+    Assert.That(ValueFactReduction.OnlyBitMayBeOne(facts, bit: 0, width: 16), Is.True);
   }
 
   private static (CompilationUnit Unit, SemanticModel Model) Bind(string source) {
