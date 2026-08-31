@@ -497,7 +497,7 @@ public static class OptCommonSubexpr {
   private sealed class State(SemanticModel model, bool allowModular) {
     public readonly Result Out = new();
 
-    // key -> slot index (assigned the first time a key is reused; shared across runs)
+    // key -> slot index within the current top-level lifetime run
     private readonly Dictionary<string, int> _slotOfKey = new(StringComparer.Ordinal);
     // key -> the inputs it reads, for write-invalidation
     private readonly Dictionary<string, HashSet<VariableSymbol>> _inputsOfKey = new(StringComparer.Ordinal);
@@ -506,6 +506,8 @@ public static class OptCommonSubexpr {
 
     // live within the current straight-line run: key -> the node currently holding the value
     private Dictionary<string, Expression> _live = new(StringComparer.Ordinal);
+    private int _nextSlot;
+    private int _runDepth;
 
     public void Run(IReadOnlyList<Statement> statements) => this.RunInheriting(statements, new(StringComparer.Ordinal));
 
@@ -513,9 +515,14 @@ public static class OptCommonSubexpr {
     private void RunInheriting(IReadOnlyList<Statement> statements, Dictionary<string, Expression> inherited) {
       var savedLive = this._live;
       this._live = inherited;
-      foreach (var statement in statements)
-        this.Walk(statement);
-      this._live = savedLive;
+      ++this._runDepth;
+      try {
+        foreach (var statement in statements)
+          this.Walk(statement);
+      } finally {
+        --this._runDepth;
+        this._live = savedLive;
+      }
     }
 
     private void Walk(Statement statement) {
@@ -615,10 +622,11 @@ public static class OptCommonSubexpr {
 
         default:
           // a barrier ends the run; sub-blocks are their own runs
-          this._live.Clear();
-          foreach (var block in ChildBlocks(statement))
+          this.EndRun();
+          foreach (var block in ChildBlocks(statement)) {
             this.Run(block);
-          this._live.Clear();
+            this.EndRun();
+          }
           return;
       }
     }
@@ -706,9 +714,24 @@ public static class OptCommonSubexpr {
     private int SlotFor(string key) {
       if (this._slotOfKey.TryGetValue(key, out var slot))
         return slot;
-      slot = this.Out.SlotCount++;
+      slot = this._nextSlot++;
       this._slotOfKey[key] = slot;
+      this.Out.SlotCount = Math.Max(this.Out.SlotCount, this._nextSlot);
       return slot;
+    }
+
+    /// <summary>
+    /// Ends the current live CSE run. A top-level run has no saved dominating cache,
+    /// so all of its physical slots are dead and can be reused by the next run. Nested
+    /// inherited runs keep monotonic slot assignment because an outer value may still be
+    /// consumed by a sibling path after the nested analysis returns.
+    /// </summary>
+    private void EndRun() {
+      this._live.Clear();
+      if (this._runDepth != 1)
+        return;
+      this._slotOfKey.Clear();
+      this._nextSlot = 0;
     }
 
     private void InvalidateAfterWrite(Expression target) {
@@ -744,7 +767,7 @@ public static class OptCommonSubexpr {
     private void RetainPastMerge(List<IReadOnlyList<Statement>> branches) {
       foreach (var branch in branches)
         if (!this.IsRetainableBranch(branch)) {
-          this._live.Clear();
+          this.EndRun();
           return;
         }
 
