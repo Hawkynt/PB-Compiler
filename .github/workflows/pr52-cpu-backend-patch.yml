@@ -19,6 +19,6 @@ jobs:
         shell: bash
         run: |
           echo '--- exact Cpu386 identifiers ---'
-          rg -n '\bCpu386\b' PowerBasic.Compiler PowerBasic.Compiler.Tests docs || true
+          grep -RInE '\bCpu386\b' PowerBasic.Compiler PowerBasic.Compiler.Tests docs || true
           echo '--- lowercase cpu386 identifiers ---'
-          rg -n '\bcpu386\b' PowerBasic.Compiler PowerBasic.Compiler.Tests docs || true
+          grep -RInE '\bcpu386\b' PowerBasic.Compiler PowerBasic.Compiler.Tests docs || true
