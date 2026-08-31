@@ -140,6 +140,94 @@ public sealed class AggregateZeroCostTests {
   }
 
   [Test]
+  public void Pipeline_GivenWholeRecordCopyWithCompleteLayout_WhenOptimized_ThenTheCopyDisappearsIntoSsa() {
+    // Given a whole-record assignment whose source and destination scalar accesses together describe
+    // every byte of the packed record.
+    var module = Optimize("""
+      TYPE Point
+        X AS INTEGER
+        Y AS INTEGER
+      END TYPE
+      PRINT CopyProbe%(3, 4)
+      END
+      FUNCTION CopyProbe%(BYVAL x%, BYVAL y%)
+        DIM a AS Point
+        DIM b AS Point
+        a.X = x%
+        a.Y = y%
+        b = a
+        CopyProbe% = b.X + b.Y
+      END FUNCTION
+      """);
+    var probe = module.Functions.Single(f => f.Name.Equals("CopyProbe", StringComparison.OrdinalIgnoreCase));
+
+    // The memcpy becomes typed loads/stores at the copy point; aggregate SROA plus mem2reg then make
+    // both records ordinary SSA values.
+    Assert.Multiple(() => {
+      Assert.That(probe.AllInstructions.OfType<IrCall>().Any(c => c.Callee is IrFunction { Name: "llvm.memcpy.p0.p0.i32" }), Is.False);
+      Assert.That(probe.AllInstructions.OfType<IrAlloca>().Any(a => a.Allocated == IrType.I8 && a.Count == 4), Is.False);
+      Assert.That(probe.AllInstructions.OfType<IrGep>(), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void Pipeline_GivenIntegerRecordEqualityWithCompleteLayout_WhenOptimized_ThenMemCompareScalarizes() {
+    // Given raw-byte equality over a packed integer-only record. Integer equality is bit equality, so
+    // comparing every independent region is exactly the same observation as comparing all four bytes.
+    var module = Optimize("""
+      TYPE Point
+        X AS INTEGER
+        Y AS INTEGER
+      END TYPE
+      PRINT EqualProbe%(3, 4)
+      END
+      FUNCTION EqualProbe%(BYVAL x%, BYVAL y%)
+        DIM a AS Point
+        DIM b AS Point
+        a.X = x%
+        a.Y = 7
+        b.X = y%
+        b.Y = 7
+        IF a = b THEN EqualProbe% = 1 ELSE EqualProbe% = 0
+      END FUNCTION
+      """);
+    var probe = module.Functions.Single(f => f.Name.Equals("EqualProbe", StringComparison.OrdinalIgnoreCase));
+
+    Assert.Multiple(() => {
+      Assert.That(probe.AllInstructions.OfType<IrCall>().Any(c => c.Callee is IrFunction { Name: "rt_mem_compare" }), Is.False);
+      Assert.That(probe.AllInstructions.OfType<IrAlloca>().Any(a => a.Allocated == IrType.I8 && a.Count == 4), Is.False);
+      Assert.That(probe.AllInstructions.OfType<IrGep>(), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void Pipeline_GivenFloatingRecordEquality_WhenOptimized_ThenRawByteComparisonIsPreserved() {
+    // IEEE numeric equality would make +0 and -0 equal and treats NaNs specially; whole-record
+    // equality is byte equality, so a floating field is not scalarized until a raw-bit comparison
+    // representation is available.
+    var module = Optimize("""
+      TYPE Sample
+        Value AS SINGLE
+      END TYPE
+      PRINT FloatEqual%(1!, 2!)
+      END
+      FUNCTION FloatEqual%(BYVAL x AS SINGLE, BYVAL y AS SINGLE)
+        DIM a AS Sample
+        DIM b AS Sample
+        a.Value = x
+        b.Value = y
+        IF a = b THEN FloatEqual% = 1 ELSE FloatEqual% = 0
+      END FUNCTION
+      """);
+    var probe = module.Functions.Single(f => f.Name.Equals("FloatEqual", StringComparison.OrdinalIgnoreCase));
+
+    Assert.Multiple(() => {
+      Assert.That(probe.AllInstructions.OfType<IrCall>().Any(c => c.Callee is IrFunction { Name: "rt_mem_compare" }), Is.True);
+      Assert.That(probe.AllInstructions.OfType<IrAlloca>().Any(a => a.Allocated == IrType.I8 && a.Count == 4), Is.True);
+    });
+  }
+
+  [Test]
   public void Pipeline_GivenGenericTypeInstance_WhenOptimized_ThenMonomorphizationAddsNoRuntimeRepresentation() {
     // Given a PB 3.6 generic TYPE instantiated at LONG inside a function.
     var module = Optimize("""
@@ -216,6 +304,34 @@ public sealed class AggregateZeroCostTests {
       Assert.That(probe.AllInstructions.OfType<IrAlloca>().Any(a => a.Allocated == IrType.I8 && a.Count == 4), Is.True);
       Assert.That(probe.AllInstructions.OfType<IrCall>(), Is.Empty);
       Assert.That(IrVerifier.Verify(probe), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void Pipeline_GivenWholeUnionCopyAcrossDifferentViews_WhenOptimized_ThenMemcpyAndSharedStorageRemain() {
+    // The source writes the LONG view while the destination reads INTEGER. Those regions overlap with
+    // incompatible extents, so decomposing the copy into independent scalar slots would destroy the
+    // very aliasing UNION exists to expose.
+    var module = Optimize("""
+      UNION Overlay
+        I AS INTEGER
+        L AS LONG
+      END UNION
+      PRINT UnionCopy&(7)
+      END
+      FUNCTION UnionCopy&(BYVAL x&)
+        DIM a AS Overlay
+        DIM b AS Overlay
+        a.L = x&
+        b = a
+        UnionCopy& = b.I
+      END FUNCTION
+      """);
+    var probe = module.Functions.Single(f => f.Name.Equals("UnionCopy", StringComparison.OrdinalIgnoreCase));
+
+    Assert.Multiple(() => {
+      Assert.That(probe.AllInstructions.OfType<IrCall>().Any(c => c.Callee is IrFunction { Name: "llvm.memcpy.p0.p0.i32" }), Is.True);
+      Assert.That(probe.AllInstructions.OfType<IrAlloca>().Count(a => a.Allocated == IrType.I8 && a.Count == 4), Is.EqualTo(2));
     });
   }
 }
