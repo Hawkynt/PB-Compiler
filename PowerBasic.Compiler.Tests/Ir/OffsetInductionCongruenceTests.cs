@@ -8,6 +8,7 @@ public sealed class OffsetInductionCongruenceTests {
 
   private sealed record LoopFixture(
     IrFunction Fn,
+    IrArgument Sink,
     IrBasicBlock Header,
     IrBasicBlock Body,
     IrBasicBlock Exit,
@@ -18,7 +19,8 @@ public sealed class OffsetInductionCongruenceTests {
 
   private static LoopFixture CreateLoop(long leaderStart, long offsetStart, long leaderStep = 1, long offsetStep = 1, IrType? type = null) {
     type ??= IrType.I16;
-    var fn = new IrFunction("f", IrType.Void);
+    var sink = new IrArgument(IrType.Ptr, 0, "sink");
+    var fn = new IrFunction("f", IrType.Void, [sink]);
     var entry = fn.CreateBlock("entry");
     var head = fn.CreateBlock("head");
     var body = fn.CreateBlock("body");
@@ -40,18 +42,15 @@ public sealed class OffsetInductionCongruenceTests {
     j.AddIncoming(new IrConstantInt(type, offsetStart), entry);
     j.AddIncoming(nextJ, body);
 
-    return new(fn, head, body, exit, i, j, nextI, nextJ);
+    return new(fn, sink, head, body, exit, i, j, nextI, nextJ);
   }
 
   [Test]
   public void Phis_GivenConstantOffsetAndEqualStep_ThenOffsetUseCancelsBackToLeader() {
     var loop = CreateLoop(leaderStart: 0, offsetStart: 100);
-    var sink = new IrArgument(IrType.Ptr, 0, "sink");
-    // IrFunction arguments are immutable, so use a global-shaped pointer value as the observable sink.
-    var sinkValue = new IrGlobal("sink", IrType.I16);
     var normalized = new IrBinary(IrBinaryOp.Sub, loop.Offset, new IrConstantInt(IrType.I16, 100));
     loop.Body.InsertBefore(normalized, loop.NextLeader);
-    var store = new IrStore(normalized, sinkValue);
+    var store = new IrStore(normalized, loop.Sink);
     loop.Body.InsertBefore(store, loop.NextLeader);
 
     Assert.That(IrVerifier.Verify(loop.Fn), Is.Empty);
@@ -123,7 +122,7 @@ public sealed class OffsetInductionCongruenceTests {
   [Test]
   public void Phis_GivenOffsetPhiFeedsAnotherPhi_ThenLocalPassRefusesEdgeRewrite() {
     var loop = CreateLoop(leaderStart: 0, offsetStart: 100);
-    var exitPhi = loop.Exit.InsertPhi(new IrPhi(IrType.I16));
+    var exitPhi = loop.Exit.AppendPhi(new IrPhi(IrType.I16));
     exitPhi.AddIncoming(loop.Offset, loop.Header);
 
     Assert.That(IrVerifier.Verify(loop.Fn), Is.Empty);
