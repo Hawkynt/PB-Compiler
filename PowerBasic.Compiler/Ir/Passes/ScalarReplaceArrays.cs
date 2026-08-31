@@ -13,8 +13,17 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// <para>
 /// The conditions are narrow and each is load-bearing. The address must not escape (a call receiving
 /// it can do anything to it); every access must be at a constant, in-range, element-aligned offset
-/// (a computed subscript could name any element, so splitting would lose the connection); and the
-/// array must be small, because the point is to expose values, not to mint fifty variables.
+/// (a computed subscript could name any element, so splitting would lose the connection); every
+/// memory access must have the element's storage type; and the array must be small, because the point
+/// is to expose values, not to mint fifty variables.
+/// </para>
+///
+/// <para>
+/// The storage-type proof is what distinguishes an array from packed aggregate backing. A packed
+/// <c>TYPE</c> is also lowered as <c>alloca i8, N</c>, but a field inside it may be read as <c>i16</c>
+/// or <c>i32</c>. Treating that wider field as one BYTE array element would silently shrink its
+/// storage under opaque pointers. Aggregate scalar replacement is a separate proof with byte-region
+/// overlap rules; this pass handles actual homogeneous arrays only.
 /// </para>
 /// </summary>
 public static class ScalarReplaceArrays {
@@ -33,7 +42,7 @@ public static class ScalarReplaceArrays {
     return split;
   }
 
-  /// <summary>Whether this alloca is a small, non-escaping array reached only at constant offsets.</summary>
+  /// <summary>Whether this alloca is a small, non-escaping homogeneous array reached only at constant offsets.</summary>
   private static bool Splittable(IrAlloca alloca, out int stride) {
     stride = SizeOf(alloca.Allocated);
     if (alloca.Count is < 2 or > _MAX_ELEMENTS || stride == 0)
@@ -42,11 +51,11 @@ public static class ScalarReplaceArrays {
     foreach (var user in alloca.Users)
       switch (user) {
         // element zero, reached through the array pointer itself
-        case IrLoad or IrStore when Reads(user, alloca):
+        case IrLoad or IrStore when AccessMatchesElement(user, alloca, alloca.Allocated):
           continue;
         case IrGep gep when Offset(gep, stride) is >= 0 && Offset(gep, stride) < alloca.Count:
           foreach (var indexed in gep.Users)
-            if (indexed is not (IrLoad or IrStore) || !Reads(indexed, gep))
+            if (!AccessMatchesElement(indexed, gep, alloca.Allocated))
               return false;
           continue;
         default:
@@ -55,10 +64,16 @@ public static class ScalarReplaceArrays {
     return true;
   }
 
-  /// <summary>True when the instruction uses <paramref name="pointer"/> as an ADDRESS, not as a value.</summary>
-  private static bool Reads(IrInstruction instruction, IrValue pointer) => instruction switch {
-    IrLoad load => ReferenceEquals(load.Pointer, pointer),
-    IrStore store => ReferenceEquals(store.Pointer, pointer) && !ReferenceEquals(store.Value, pointer),
+  /// <summary>
+  /// True when the instruction uses <paramref name="pointer"/> as an address and accesses exactly the
+  /// array element's storage shape. Signed and unsigned integer views are storage-compatible; a wider
+  /// field access is not.
+  /// </summary>
+  private static bool AccessMatchesElement(IrInstruction instruction, IrValue pointer, IrType elementType) => instruction switch {
+    IrLoad load => ReferenceEquals(load.Pointer, pointer) && load.Type.SameStorage(elementType),
+    IrStore store => ReferenceEquals(store.Pointer, pointer)
+      && !ReferenceEquals(store.Value, pointer)
+      && store.Value.Type.SameStorage(elementType),
     _ => false,
   };
 
