@@ -16,7 +16,10 @@ public static class ValueFactReduction {
     if (width is <= 0 or > 64)
       return facts;
 
-    var range = Intersect(facts.Range, TypeRange(width, signed), out var validRange);
+    var range = facts.Range;
+    var validRange = true;
+    if (!range.IsTop)
+      range = Intersect(range, TypeRange(width, signed), out validRange);
     if (!validRange)
       return ValueFacts.Unknown;
     var bits = facts.Bits.Narrow(width);
@@ -166,11 +169,11 @@ public static class ValueFactReduction {
       BinaryOp.Add => AddSub(left.Bits, right.Bits, width, subtract: false),
       BinaryOp.Subtract => AddSub(left.Bits, right.Bits, width, subtract: true),
       BinaryOp.Multiply => MultiplyBits(left, right, width),
-      BinaryOp.ShiftLeft when exactShift is >= 0 and < width => left.Bits.ShiftLeft((int)exactShift),
-      BinaryOp.ShiftRightArith when exactShift is >= 0 and < width => ShiftRight(left.Bits, (int)exactShift, width, arithmetic: true),
-      BinaryOp.ShiftRightLogical when exactShift is >= 0 and < width => ShiftRight(left.Bits, (int)exactShift, width, arithmetic: false),
-      BinaryOp.RotateLeft when exactShift is >= 0 => Rotate(left.Bits, (int)exactShift, width, left: true),
-      BinaryOp.RotateRight when exactShift is >= 0 => Rotate(left.Bits, (int)exactShift, width, left: false),
+      BinaryOp.ShiftLeft when exactShift is { } shl && shl >= 0 && shl < width => left.Bits.ShiftLeft((int)shl),
+      BinaryOp.ShiftRightArith when exactShift is { } ashr && ashr >= 0 && ashr < width => ShiftRight(left.Bits, (int)ashr, width, arithmetic: true),
+      BinaryOp.ShiftRightLogical when exactShift is { } lshr && lshr >= 0 && lshr < width => ShiftRight(left.Bits, (int)lshr, width, arithmetic: false),
+      BinaryOp.RotateLeft when exactShift is { } rol && rol >= 0 => Rotate(left.Bits, (int)rol, width, left: true),
+      BinaryOp.RotateRight when exactShift is { } ror && ror >= 0 => Rotate(left.Bits, (int)ror, width, left: false),
       BinaryOp.IntegerDivide when exactShift is { } divisor && divisor > 0 && IsPowerOfTwo(divisor)
           && left.Range is { Lo: >= 0 } => ShiftRight(left.Bits, BitOperations.TrailingZeroCount((ulong)divisor), width, arithmetic: false),
       _ => KnownBits.Unknown,
@@ -298,6 +301,8 @@ public static class ValueFactReduction {
   }
 
   private static Interval RangeFromBits(KnownBits bits, int width, bool signed) {
+    if (bits.IsUnknown)
+      return Interval.Top;
     bits = bits.Narrow(width);
     var mask = Mask(width);
     var unknown = ~(bits.Ones | bits.Zeros) & mask;
