@@ -1,0 +1,268 @@
+name: PR52 CPU backend patch
+
+on:
+  push:
+    branches:
+      - feature/intrinsic-zero-overhead-optimization
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != '+ Apply CPU generation backend matrix'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply focused target-generation patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, count=None):
+              p = Path(path)
+              text = p.read_text()
+              actual = text.count(old)
+              if count is not None and actual != count:
+                  raise SystemExit(f"{path}: expected {count} occurrences, found {actual}: {old!r}")
+              if actual == 0:
+                  raise SystemExit(f"{path}: replacement anchor not found: {old!r}")
+              p.write_text(text.replace(old, new))
+
+          Path('PowerBasic.Compiler/Backend/SelectionTarget.cs').write_text('''namespace PowerBasic.Compiler.Backend;
+
+/// <summary>
+/// What the instruction selector is compiling for: the CPU generation it may assume and the
+/// optimization objective it is trading against. The IR is target-independent; this value is the
+/// contract that keeps the routed x86-16 path on the same machine as the direct emitter.
+/// </summary>
+/// <param name="Cpu386">
+/// Compatibility flag for existing callers. New whole-program callers also pass <paramref name="CpuLevel"/>;
+/// when this flag is true the effective level is at least 386.
+/// </param>
+/// <param name="Optimize">whether optimization is enabled</param>
+/// <param name="OptimizeSpeed">whether speed is preferred</param>
+/// <param name="OptimizeSize">whether size is preferred</param>
+/// <param name="Cost">optional target cost model used for cycle-vs-byte choices</param>
+/// <param name="CpuLevel">normalized x86 generation: 86, 186, 286, 386, 486, 586 or 686</param>
+public readonly record struct SelectionTarget(
+  bool Cpu386 = false,
+  bool Optimize = false,
+  bool OptimizeSpeed = false,
+  bool OptimizeSize = false,
+  CodeGen.TargetCost? Cost = null,
+  int CpuLevel = 86) {
+
+  /// <summary>The normalized generation after honoring the historical <see cref="Cpu386"/> flag.</summary>
+  public int EffectiveCpuLevel => Math.Max(this.CpuLevel, this.Cpu386 ? 386 : 86);
+
+  public bool Cpu186OrLater => this.EffectiveCpuLevel >= 186;
+  public bool Cpu286OrLater => this.EffectiveCpuLevel >= 286;
+  public bool Cpu386OrLater => this.EffectiveCpuLevel >= 386;
+  public bool Cpu486OrLater => this.EffectiveCpuLevel >= 486;
+  public bool Cpu586OrLater => this.EffectiveCpuLevel >= 586;
+  public bool Cpu686OrLater => this.EffectiveCpuLevel >= 686;
+
+  /// <summary>An 8086 with no optimization - what a hand-built test function is selected for.</summary>
+  public static SelectionTarget Baseline { get; } = new();
+}
+''')
+
+          replace(
+              'PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs',
+              '''  private Backend.SelectionTarget SelectionTarget => new(\n    Cpu386: this._rt.Cpu386, Optimize: this.Optimize,\n    OptimizeSpeed: this.OptimizeSpeed, OptimizeSize: this.OptimizeSize,\n    Cost: this.SelectionCost);''',
+              '''  private Backend.SelectionTarget SelectionTarget => new(\n    Cpu386: this._rt.Cpu386, Optimize: this.Optimize,\n    OptimizeSpeed: this.OptimizeSpeed, OptimizeSize: this.OptimizeSize,\n    Cost: this.SelectionCost, CpuLevel: this._rt.Target.CpuLevel);''',
+              1)
+
+          p = Path('PowerBasic.Compiler/Backend/InstructionSelector.cs')
+          text = p.read_text()
+          text = text.replace('this._target.Cpu386', 'this._target.Cpu386OrLater')
+          text = text.replace('Cpu386: true', 'Cpu386OrLater: true')
+          old = 'if (count == 1 || this._target.Cpu386OrLater) {'
+          if text.count(old) != 1:
+              raise SystemExit(f'InstructionSelector constant-shift anchor count = {text.count(old)}')
+          text = text.replace(old, 'if (count == 1 || this._target.Cpu186OrLater) {')
+          p.write_text(text)
+
+          p = Path('PowerBasic.Compiler.Tests/Exec/Cpu8086.cs')
+          text = p.read_text()
+          old_loop = 'for (var i = 0; i < (count & 0x1F); ++i)'
+          old_flags = 'if ((count & 0x1F) != 0 && op >= 4) {'
+          if text.count(old_loop) != 2 or text.count(old_flags) != 2:
+              raise SystemExit(f'Cpu8086 shift anchors: loops={text.count(old_loop)}, flags={text.count(old_flags)}')
+          text = text.replace(old_loop, 'for (var i = 0; i < count; ++i)')
+          text = text.replace(old_flags, 'if (count != 0 && op >= 4) {')
+          p.write_text(text)
+
+          p = Path('PowerBasic.Compiler.Tests/CodeGen/InlineAsm8086ShiftTests.cs')
+          text = p.read_text()
+          old = '''  [Test]\n  public void ShrWordByImmediateThree_Given8086Target_ThenUsesThreeD1InstructionsNot186C1() {\n    var (image, _) = Compile("8086", "! SHR AX, 3\\nEND\\n");\n\n    Assert.That(ContainsSequence(image, [0xD1, 0xE8, 0xD1, 0xE8, 0xD1, 0xE8]), Is.True,\n      "8086 immediate shift should lower to repeated count-one instructions");\n    Assert.That(ContainsSequence(image, [0xC1, 0xE8, 0x03]), Is.False,\n      "C1 /5 ib is an 80186+ encoding and must not leak into an 8086 target");\n  }\n\n  [Test]\n  public void ShrWordByImmediateThree_Given186Target_ThenKeepsCompactC1Encoding() {\n    var (image, _) = Compile("186", "! SHR AX, 3\\nEND\\n");\n    Assert.That(ContainsSequence(image, [0xC1, 0xE8, 0x03]), Is.True);\n  }'''
+          new = '''  [Test]\n  public void ShrWordByImmediateThree_Given8086Target_ThenUsesThreeD1InstructionsNot186C1() {\n    var (image, _) = Compile("8086", "! MOV AX, 4660\\n! SHR AX, 3\\n! MOV BX, 22136\\nEND\\n");\n\n    Assert.That(ContainsSequence(image, [0xB8, 0x34, 0x12, 0xD1, 0xE8, 0xD1, 0xE8, 0xD1, 0xE8, 0xBB, 0x78, 0x56]), Is.True,\n      "the anchored inline-asm sequence must contain only 8086 count-one encodings");\n  }\n\n  [Test]\n  public void ShrWordByImmediateThree_Given186Target_ThenKeepsCompactC1Encoding() {\n    var (image, _) = Compile("186", "! MOV AX, 4660\\n! SHR AX, 3\\n! MOV BX, 22136\\nEND\\n");\n    Assert.That(ContainsSequence(image, [0xB8, 0x34, 0x12, 0xC1, 0xE8, 0x03, 0xBB, 0x78, 0x56]), Is.True);\n  }'''
+          if text.count(old) != 1:
+              raise SystemExit('InlineAsm8086ShiftTests anchored replacement not found')
+          p.write_text(text.replace(old, new))
+
+          Path('PowerBasic.Compiler.Tests/Backend/BackendCpuTargetTests.cs').write_text(r'''using PowerBasic.Compiler.Backend;
+using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Passes;
+using PowerBasic.Compiler.Semantics;
+using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Tests.Exec;
+
+namespace PowerBasic.Compiler.Tests.Backend;
+
+[TestFixture]
+public sealed class BackendCpuTargetTests {
+  private static SemanticModel Bind(string source) {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "cpu-target.bas", Dialect.Pb36), "cpu-target.bas", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    return model;
+  }
+
+  private static MFunction SelectShift(SelectionTarget target) {
+    const string source = """
+      $OPTIMIZE SPEED
+      DECLARE FUNCTION Given%(BYVAL v%)
+      DIM a AS INTEGER
+      a = Given%(4096)
+      SHIFT RIGHT a, 3
+      PRINT a; Given%(7)
+      END
+      FUNCTION Given%(BYVAL v%) NOINLINE
+        Given% = v%
+      END FUNCTION
+      """;
+
+    var module = IrLowering.TryLowerModule(Bind(source), out var why);
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+    foreach (var function in module!.Functions)
+      if (!function.IsDeclaration)
+        IntegerRecovery.Run(function);
+    IrPassManager.Standard(target.OptimizeSpeed).RunOnModule(module);
+    foreach (var function in module.Functions)
+      if (!function.IsDeclaration)
+        IntegerRecovery.Run(function);
+    IrPassManager.Standard(target.OptimizeSpeed).RunOnModule(module);
+
+    var main = module.FindFunction("main");
+    Assert.That(main, Is.Not.Null);
+    var machine = InstructionSelector.TrySelect(main!, out var reason, target);
+    Assert.That(machine, Is.Not.Null, $"selection declined: {reason}");
+    return machine!;
+  }
+
+  [TestCase(86)]
+  [TestCase(186)]
+  [TestCase(286)]
+  [TestCase(386)]
+  [TestCase(486)]
+  [TestCase(586)]
+  [TestCase(686)]
+  public void SelectionTarget_GivenCpuGeneration_ThenCapabilityFloorsAreMonotonic(int level) {
+    var target = new SelectionTarget(CpuLevel: level);
+
+    Assert.Multiple(() => {
+      Assert.That(target.EffectiveCpuLevel, Is.EqualTo(level));
+      Assert.That(target.Cpu186OrLater, Is.EqualTo(level >= 186));
+      Assert.That(target.Cpu286OrLater, Is.EqualTo(level >= 286));
+      Assert.That(target.Cpu386OrLater, Is.EqualTo(level >= 386));
+      Assert.That(target.Cpu486OrLater, Is.EqualTo(level >= 486));
+      Assert.That(target.Cpu586OrLater, Is.EqualTo(level >= 586));
+      Assert.That(target.Cpu686OrLater, Is.EqualTo(level >= 686));
+    });
+  }
+
+  [Test]
+  public void SelectionTarget_GivenLegacyCpu386Flag_ThenExistingCallersStillMean386() {
+    var target = new SelectionTarget(Cpu386: true);
+    Assert.That(target.EffectiveCpuLevel, Is.EqualTo(386));
+    Assert.That(target.Cpu386OrLater, Is.True);
+  }
+
+  [TestCase(86, false)]
+  [TestCase(186, true)]
+  [TestCase(286, true)]
+  [TestCase(386, true)]
+  [TestCase(486, true)]
+  [TestCase(586, true)]
+  [TestCase(686, true)]
+  public void Selection_GivenCpuGeneration_ThenConstantShiftUsesOnlyLegalEncodingTier(int level, bool hasImmediateShift) {
+    var machine = SelectShift(new SelectionTarget(CpuLevel: level, Optimize: true, OptimizeSpeed: true));
+    var counts = machine.AllInstructions
+      .Where(instruction => instruction.Opcode == MOpcode.Shr && instruction.Operands.Count == 2)
+      .Select(instruction => instruction.Operands[1])
+      .OfType<MOperand.Immediate>()
+      .Select(immediate => (int)immediate.Value)
+      .ToArray();
+
+    if (hasImmediateShift)
+      Assert.That(counts, Does.Contain(3), $"{level} should keep the 80186+ immediate-count form");
+    else {
+      Assert.That(counts, Has.No.Member(3), "8086 must not select C0/C1 immediate-count shifts");
+      Assert.That(counts.Count(count => count == 1), Is.GreaterThanOrEqualTo(3),
+        "the 8086 lowering should use legal count-one operations instead");
+    }
+  }
+
+  [TestCase("8086")]
+  [TestCase("186")]
+  [TestCase("286")]
+  [TestCase("386")]
+  [TestCase("486")]
+  [TestCase("586")]
+  [TestCase("686")]
+  public void Execute_GivenCpuGeneration_ThenRoutedIrBackendMatchesDirectEmitter(string cpu) {
+    var source = $$"""
+      $CPU {{cpu}}
+      $OPTIMIZE SPEED
+      DECLARE FUNCTION Given%(BYVAL v%)
+      DIM a AS INTEGER
+      a = Given%(4096)
+      SHIFT RIGHT a, 3
+      PRINT a; Given%(7)
+      END
+      FUNCTION Given%(BYVAL v%) NOINLINE
+        Given% = v%
+      END FUNCTION
+      """;
+
+    static (byte[] Image, IReadOnlyCollection<string> Routes) Compile(string source, bool routed) {
+      var generator = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = routed };
+      var image = generator.EmitExecutable();
+      Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+      return (image, generator.BackendRoutedNames.ToArray());
+    }
+
+    var direct = Compile(source, routed: false);
+    var routed = Compile(source, routed: true);
+    var directOutput = Cpu8086.Run(direct.Image).Output;
+    var routedOutput = Cpu8086.Run(routed.Image).Output;
+
+    Assert.Multiple(() => {
+      Assert.That(routed.Routes, Does.Contain("main"), $"{cpu}: module body fell back to the direct emitter");
+      Assert.That(routedOutput, Is.EqualTo(directOutput), $"{cpu}: routed/direct observable behavior differs");
+      Assert.That(routedOutput.Trim(), Is.EqualTo("512  7"));
+    });
+  }
+}
+''')
+
+          p = Path('.github/workflows/pr52-validation.yml')
+          text = p.read_text()
+          old = 'FullyQualifiedName~InlineAsm8086ShiftTests|FullyQualifiedName~InlineAsmIsaCoverageTests'
+          new = old + '|FullyQualifiedName~BackendCpuTargetTests'
+          if text.count(old) != 1:
+              raise SystemExit('validation filter anchor not found')
+          p.write_text(text.replace(old, new))
+          PY
+
+          git config user.name Hawkynt
+          git config user.email github@synthelicz.de
+          git add -A
+          git diff --cached --check
+          git commit -m '+ Apply CPU generation backend matrix'
+          git push origin HEAD:${GITHUB_REF_NAME}
