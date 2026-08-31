@@ -162,14 +162,17 @@ public sealed partial class Assembler {
     sched[index] = record with { Length = length, Writes = writes };
   }
 
-  /// <summary>Offsets every bound label is sitting on (named labels and every fixup target).</summary>
+  /// <summary>Offsets of every non-constant label bound into the image, including anonymous labels.</summary>
   private HashSet<int> BoundLabelPositions() {
     var positions = new HashSet<int>();
+    foreach (var label in this._boundLabels)
+      if (label.IsBound && !label.IsConstant)
+        positions.Add(label.Position);
     foreach (var label in this._namedLabels.Values)
-      if (label.IsBound)
+      if (label.IsBound && !label.IsConstant)
         positions.Add(label.Position);
     foreach (var fixup in this._fixups)
-      if (fixup.Target.IsBound)
+      if (fixup.Target.IsBound && !fixup.Target.IsConstant)
         positions.Add(fixup.Target.Position);
 
     return positions;
