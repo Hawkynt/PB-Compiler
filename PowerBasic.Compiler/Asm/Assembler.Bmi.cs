@@ -100,10 +100,14 @@ public sealed partial class Assembler {
   public void Shrx(Reg destination, Reg source, Reg count) => this.BmiVexRegRm(0xF7, 3, destination, count, source);
   public void Shrx(Reg destination, Mem source, Reg count) => this.BmiVexRegRm(0xF7, 3, destination, count, source);
 
-  public void Mulx(Reg lowDestination, Reg highDestination, Reg source) =>
-    this.BmiVexRegRm(0xF6, 3, lowDestination, highDestination, source);
-  public void Mulx(Reg lowDestination, Reg highDestination, Mem source) =>
-    this.BmiVexRegRm(0xF6, 3, lowDestination, highDestination, source);
+  /// <summary>
+  /// MULX high32, low32, r/m32. Intel encodes the high destination in ModRM.reg and the low
+  /// destination in VEX.vvvv; if both destinations name the same register the high half wins.
+  /// </summary>
+  public void Mulx(Reg highDestination, Reg lowDestination, Reg source) =>
+    this.BmiVexRegRm(0xF6, 3, highDestination, lowDestination, source);
+  public void Mulx(Reg highDestination, Reg lowDestination, Mem source) =>
+    this.BmiVexRegRm(0xF6, 3, highDestination, lowDestination, source);
 
   public void Rorx(Reg destination, Reg source, byte count) {
     RequireDwordGp(destination, nameof(destination));
