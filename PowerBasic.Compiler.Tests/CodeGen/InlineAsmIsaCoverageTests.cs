@@ -16,7 +16,7 @@ public sealed class InlineAsmIsaCoverageTests {
   );
 
   private static readonly string[] _targets = [
-    "8086", "386", "P6", "SSE2", "SSSE3", "SSE4.1", "SSE4.2", "POPCNT", "AVX", "AVX2", "AVX512",
+    "8086", "386", "P6", "SSE2", "SSSE3", "SSE4.1", "SSE4.2", "POPCNT", "AES", "PCLMUL", "BMI1", "BMI2", "AVX", "AVX2", "AVX512",
   ];
 
   private static readonly string[] _policies = ["AUTO", "NATIVE", "EMULATE", "ERROR"];
@@ -38,6 +38,10 @@ public sealed class InlineAsmIsaCoverageTests {
   private static IReadOnlyList<AdvertisedInstruction> DiscoverAdvertisedInstructions() {
     var classifiers = new[] {
       (Method: Classifier("IsPopcnt"), Feature: "POPCNT", Required: RuntimeCpuFeatures.Popcnt),
+      (Method: Classifier("IsAesInstruction"), Feature: "AES", Required: RuntimeCpuFeatures.Aes),
+      (Method: Classifier("IsPclmulInstruction"), Feature: "PCLMUL", Required: RuntimeCpuFeatures.Pclmulqdq),
+      (Method: Classifier("IsBmi1"), Feature: "BMI1", Required: RuntimeCpuFeatures.Bmi1),
+      (Method: Classifier("IsBmi2"), Feature: "BMI2", Required: RuntimeCpuFeatures.Bmi2),
       (Method: Classifier("IsSsse3"), Feature: "SSSE3", Required: RuntimeCpuFeatures.Ssse3),
       (Method: Classifier("IsSse41"), Feature: "SSE4.1", Required: RuntimeCpuFeatures.Sse41),
       (Method: Classifier("IsSse42"), Feature: "SSE4.2", Required: RuntimeCpuFeatures.Sse42),
@@ -55,17 +59,26 @@ public sealed class InlineAsmIsaCoverageTests {
       if (classifier.Method is null)
         continue;
 
-      var hasImmediate = overloads.Any(method => method.GetParameters().LastOrDefault()?.ParameterType == typeof(byte));
-      var operands = mnemonic switch {
-        "POPCNT" => "AX, BX",
-        "CRC32" => "EAX, AL",
-        _ => hasImmediate ? "XMM0, XMM1, 0" : "XMM0, XMM1",
-      };
+      var operands = SampleOperands(mnemonic, overloads);
       result.Add(new(mnemonic, classifier.Feature, classifier.Required, operands));
     }
 
     return result.OrderBy(item => item.Feature).ThenBy(item => item.Mnemonic).ToArray();
   }
+
+  private static string SampleOperands(string mnemonic, MethodInfo[] overloads) => mnemonic switch {
+    "POPCNT" => "EAX, EBX",
+    "CRC32" => "EAX, AL",
+    "AESKEYGENASSIST" or "PCLMULQDQ" => "XMM0, XMM1, 1",
+    "AESIMC" or "AESENC" or "AESENCLAST" or "AESDEC" or "AESDECLAST" => "XMM0, XMM1",
+    "ANDN" or "BEXTR" or "BZHI" or "PDEP" or "PEXT" or "SARX" or "SHLX" or "SHRX" => "EAX, ECX, EDX",
+    "MULX" => "EAX, ECX, EBX",
+    "RORX" => "EAX, ECX, 7",
+    "BLSI" or "BLSMSK" or "BLSR" or "TZCNT" => "EAX, ECX",
+    _ => overloads.Any(method => method.GetParameters().LastOrDefault()?.ParameterType == typeof(byte))
+      ? "XMM0, XMM1, 0"
+      : "XMM0, XMM1",
+  };
 
   private static MethodInfo Classifier(string name) =>
     typeof(CodeGenerator).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)
