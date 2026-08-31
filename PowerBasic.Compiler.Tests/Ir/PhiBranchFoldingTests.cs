@@ -39,10 +39,10 @@ public sealed class PhiBranchFoldingTests {
     Assert.That(test.Parent, Is.Null, "the now-unreachable decision block should be collected");
     var branch = entry.Terminator as IrCondBr;
     Assert.That(branch, Is.Not.Null);
-    Assert.That((branch!.IfTrue.Terminator as IrRet)?.Value, Is.TypeOf<IrConstantInt>()
-      .And.Property(nameof(IrConstantInt.Value)).EqualTo(11));
-    Assert.That((branch.IfFalse.Terminator as IrRet)?.Value, Is.TypeOf<IrConstantInt>()
-      .And.Property(nameof(IrConstantInt.Value)).EqualTo(22));
+    Assert.That((branch!.IfTrue.Terminator as IrRet)?.Value, Is.TypeOf<IrConstantInt>());
+    Assert.That(((IrConstantInt)((IrRet)branch.IfTrue.Terminator!).Value!).Value, Is.EqualTo(11));
+    Assert.That((branch.IfFalse.Terminator as IrRet)?.Value, Is.TypeOf<IrConstantInt>());
+    Assert.That(((IrConstantInt)((IrRet)branch.IfFalse.Terminator!).Value!).Value, Is.EqualTo(22));
   }
 
   [Test]
@@ -81,9 +81,9 @@ public sealed class PhiBranchFoldingTests {
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
     Assert.That(known.Successors.Single(), Is.SameAs(yes));
     var resultPhi = yes.Phis.Single();
-    Assert.That(resultPhi.IncomingFrom(known), Is.TypeOf<IrConstantInt>()
-      .And.Property(nameof(IrConstantInt.Value)).EqualTo(10),
+    Assert.That(resultPhi.IncomingFrom(known), Is.TypeOf<IrConstantInt>(),
       "the bypass edge must receive the predecessor-specific value, not the phi defined in test");
+    Assert.That(((IrConstantInt)resultPhi.IncomingFrom(known)!).Value, Is.EqualTo(10));
     Assert.That(resultPhi.IncomingBlocks, Does.Contain(known));
   }
 
