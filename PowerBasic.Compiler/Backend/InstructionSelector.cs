@@ -86,7 +86,7 @@ public sealed partial class InstructionSelector {
   private CodeGen.TargetCost? _cost => this._target.Cost;
 
   private bool UsesNativeDwordRegisters
-    => this._target is { Cpu386: true, Optimize: true, OptimizeSpeed: true };
+    => this._target is { Cpu386OrLater: true, Optimize: true, OptimizeSpeed: true };
 
   private InstructionSelector(SelectionTarget target) => this._target = target;
 
@@ -918,7 +918,7 @@ public sealed partial class InstructionSelector {
   }
 
   private bool SelectConstantShift(MOpcode opcode, MOperand.Register destination, int count, IrType type) {
-    if (count == 1 || this._target.Cpu386) {
+    if (count == 1 || this._target.Cpu186OrLater) {
       this.Add(opcode, destination, new MOperand.Immediate(count));
       return true;
     }
@@ -2549,7 +2549,7 @@ public sealed partial class InstructionSelector {
     if (callee.IsDeclaration) {
       if (NonLocalJumpIntrinsics.Contains(callee.Name))
         return this.SelectNonLocalJumpIntrinsic(call, callee);
-      if (MathSequence(callee.Name, this._target.Cpu386) is { } sequence)
+      if (MathSequence(callee.Name, this._target.Cpu386OrLater) is { } sequence)
         return this.SelectMathIntrinsic(call, callee, sequence);
       if (callee.Name == "rt_str_concat_n")
         return this.SelectMultiConcat(call);

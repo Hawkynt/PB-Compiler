@@ -1398,7 +1398,7 @@ public sealed class Cpu8086 {
   }
 
   private ushort Shift16(int op, ushort value, int count) {
-    for (var i = 0; i < (count & 0x1F); ++i)
+    for (var i = 0; i < count; ++i)
       switch (op) {
         case 0: this._cf = (value & 0x8000) != 0; value = (ushort)((value << 1) | (this._cf ? 1 : 0)); break;   // ROL
         case 1: this._cf = (value & 1) != 0; value = (ushort)((value >> 1) | (this._cf ? 0x8000 : 0)); break;   // ROR
@@ -1408,7 +1408,7 @@ public sealed class Cpu8086 {
         case 5: this._cf = (value & 1) != 0; value = (ushort)(value >> 1); break;
         default: this._cf = (value & 1) != 0; value = (ushort)((short)value >> 1); break;                        // SAR
       }
-    if ((count & 0x1F) != 0 && op >= 4) {
+    if (count != 0 && op >= 4) {
       this._zf = value == 0;
       this._sf = (value & 0x8000) != 0;
       this._pf = Parity((byte)value);
@@ -1518,7 +1518,7 @@ public sealed class Cpu8086 {
   }
 
   private byte Shift8(int op, byte value, int count) {
-    for (var i = 0; i < (count & 0x1F); ++i)
+    for (var i = 0; i < count; ++i)
       switch (op) {
         case 0: this._cf = (value & 0x80) != 0; value = (byte)((value << 1) | (this._cf ? 1 : 0)); break;
         case 1: this._cf = (value & 1) != 0; value = (byte)((value >> 1) | (this._cf ? 0x80 : 0)); break;
@@ -1528,7 +1528,7 @@ public sealed class Cpu8086 {
         case 5: this._cf = (value & 1) != 0; value = (byte)(value >> 1); break;
         default: this._cf = (value & 1) != 0; value = (byte)((sbyte)value >> 1); break;
       }
-    if ((count & 0x1F) != 0 && op >= 4) {
+    if (count != 0 && op >= 4) {
       this._zf = value == 0;
       this._sf = (value & 0x80) != 0;
       this._pf = Parity(value);
