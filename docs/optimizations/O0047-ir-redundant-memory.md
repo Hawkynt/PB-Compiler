@@ -5,7 +5,7 @@
 | **Status** | ✅ Implemented (intra-block) |
 | **Stage** | IR mid-end, after GVN |
 | **Source** | `Ir/Passes/RedundantMemory.cs` |
-| **Related** | [O0042](O0042-ir-mem2reg.md), [O0046](O0046-ir-gvn.md), [O0048](O0048-ir-dead-store-elimination.md) |
+| **Related** | [O0042](O0042-ir-mem2reg.md), [O0046](O0046-ir-gvn.md), [O0048](O0048-ir-dead-store-elimination.md), [O0171](O0171-alias-analysis.md) |
 
 ## What it is
 
@@ -17,8 +17,8 @@ it:
 - **reuses** an earlier load of an address nothing has written since.
 
 It runs after [GVN](O0046-ir-gvn.md) so that congruent address computations are
-already a single SSA value, which makes address comparison a reference check
-plus a small sound alias test.
+already a single SSA value. Intervening writes are checked with the shared
+width-aware alias analysis ([O0171](O0171-alias-analysis.md)).
 
 ## Sample
 
@@ -55,8 +55,9 @@ t% = 84
 
 ## Why it is safe
 
-The alias test is sound and deliberately small: distinct allocas never alias, and
-the same base at distinct constant offsets never aliases. Any **may-aliasing**
-store, and any **call** (which could read or write memory), conservatively
-invalidates the affected cache entries — so a forwarded value is only ever one
-that nothing in between could have changed.
+The cache is invalidated by any intervening store whose **byte range may
+alias** the cached access, and by every call (which could read or write memory).
+The access width is part of the alias query: a byte store at `p + 1` therefore
+invalidates a cached 16-bit load at `p`, while adjacent non-overlapping ranges
+remain independent. Distinct stack allocations and distinct globals are proven
+disjoint; dynamic or otherwise unknown addresses conservatively invalidate.
