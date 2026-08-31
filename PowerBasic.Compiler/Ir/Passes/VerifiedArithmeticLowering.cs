@@ -112,11 +112,13 @@ public static class VerifiedArithmeticLowering {
   private static bool VerifyMultiply(short factor, MultiplyPlan plan) {
     for (var raw = 0; raw <= ushort.MaxValue; ++raw) {
       var x = (ushort)raw;
-      var shifted = (ushort)(x << plan.Shift);
-      var candidate = plan.Subtract ? (ushort)(shifted - x) : (ushort)(shifted + x);
+      var shifted = unchecked((ushort)(x << plan.Shift));
+      var candidate = plan.Subtract
+        ? unchecked((ushort)(shifted - x))
+        : unchecked((ushort)(shifted + x));
       if (plan.Negate)
-        candidate = (ushort)-candidate;
-      var expected = (ushort)(x * unchecked((ushort)factor));
+        candidate = unchecked((ushort)-candidate);
+      var expected = unchecked((ushort)(x * unchecked((ushort)factor)));
       if (candidate != expected)
         return false;
     }
@@ -142,17 +144,17 @@ public static class VerifiedArithmeticLowering {
 
   private static bool VerifySignedDivisor(short divisor, int shift) {
     var mask = (1 << shift) - 1;
-    for (var raw = short.MinValue; raw <= short.MaxValue; ++raw) {
+    for (var raw = (int)short.MinValue; raw <= short.MaxValue; ++raw) {
       var x = (short)raw;
       var sign = (short)(x >> 15);
-      var adjusted = (short)(x + (sign & mask));
+      var adjusted = unchecked((short)(x + (sign & mask)));
       var quotient = (short)(adjusted >> shift);
       if (divisor < 0)
-        quotient = (short)-quotient;
+        quotient = unchecked((short)-quotient);
       if (quotient != x / divisor)
         return false;
-      var product = (short)(quotient * divisor);
-      var candidateRemainder = (short)(x - product);
+      var product = unchecked((short)(quotient * divisor));
+      var candidateRemainder = unchecked((short)(x - product));
       if (candidateRemainder != x % divisor)
         return false;
     }
