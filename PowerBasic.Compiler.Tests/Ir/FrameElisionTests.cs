@@ -29,7 +29,7 @@ public sealed class FrameElisionTests {
   public void IsCandidate_GivenSurvivingArrayStorage_ThenRequiresFrame() {
     var function = new IrFunction("F", IrType.Void);
     var entry = function.CreateBlock("entry");
-    entry.Append(new IrAlloca(IrType.I16, 8));
+    entry.Append(new IrAlloca(IrType.I16) { Count = 8 });
     entry.Append(new IrRet());
 
     Assert.That(FrameElision.IsCandidate(function), Is.False);
