@@ -3,14 +3,14 @@ using PowerBasic.Compiler.Asm;
 namespace PowerBasic.Compiler.Tests.Asm;
 
 /// <summary>
-/// Redundant-load elimination: <c>MOV [BP-d],R … MOV R,[BP-d]</c> leaves R already holding the
+/// Redundant-load elimination: <c>MOV [cell],R … MOV R,[cell]</c> leaves R already holding the
 /// value, so the reload is dead. Deliberately narrow - the cases it must DECLINE are as much the
 /// specification as the case it takes.
 /// </summary>
 [TestFixture]
 public sealed class LoadForwardingTests {
 
-  /// <summary>MOV AX,[BP-8] - the reload under test (8B 46 F8).</summary>
+  /// <summary>MOV AX,[BP-8] - the frame reload under test (8B 46 F8).</summary>
   private static bool HasReload(byte[] image) {
     for (var i = 0; i + 2 < image.Length; ++i)
       if (image[i] == 0x8B && image[i + 1] == 0x46 && image[i + 2] == 0xF8)
@@ -129,12 +129,13 @@ public sealed class LoadForwardingTests {
   }
 
   [Test]
-  public void Forward_GivenDataSegmentCell_WhenAssembled_ThenReloadKept() {
-    // only BP-relative (SS) cells qualify: a [label] cell can be re-pointed by a segment load
+  public void Forward_GivenDirectVariableCell_WhenAssembled_ThenReloadRemoved() {
+    // O0083: an ordinary BASIC variable is a direct DS-relative label. With no unrecorded
+    // instruction between the store and load, DS cannot have changed and AX still has the value.
     var asm = new Assembler { EnableLoadForwarding = true };
     var cell = asm.DefineLabel();
-    asm.Mov(Mem.Word(cell), Reg.AX);
-    asm.Mov(Reg.AX, Mem.Word(cell));
+    asm.Mov(Mem.Word(cell), Reg.AX);             // A3 cell
+    asm.Mov(Reg.AX, Mem.Word(cell));             // 8B 06 cell - dead
     asm.Ret();
     asm.MarkLabel(cell);
     asm.Dw(0);
@@ -143,7 +144,50 @@ public sealed class LoadForwardingTests {
     for (var i = 0; i + 1 < image.Length; ++i)
       if (image[i] == 0x8B && image[i + 1] == 0x06)
         ++loads;
-    Assert.That(loads, Is.EqualTo(1), "the DS-relative reload is kept");
+    Assert.That(loads, Is.Zero, "the direct-variable reload is removed");
+  }
+
+  [Test]
+  public void Forward_GivenDirectVariableLoadedIntoDifferentRegister_WhenAssembled_ThenRegisterMove() {
+    var asm = new Assembler { EnableLoadForwarding = true };
+    var cell = asm.DefineLabel();
+    asm.Mov(Mem.Word(cell), Reg.AX);
+    asm.Mov(Reg.DX, Mem.Word(cell));
+    asm.Ret();
+    asm.MarkLabel(cell);
+    asm.Dw(0);
+    var image = asm.ToArray();
+    Assert.That(IndexOf(image, [0x89, 0xC2]), Is.GreaterThanOrEqualTo(0), "MOV DX,AX replaces the memory load");
+  }
+
+  [Test]
+  public void Forward_GivenDirectVariableWithSegmentOverride_WhenAssembled_ThenReloadKept() {
+    // an explicit segment changes the addressed cell; keep the operation rather than treating the
+    // label identity alone as sufficient.
+    var asm = new Assembler { EnableLoadForwarding = true };
+    var cell = asm.DefineLabel();
+    asm.Mov(Mem.Word(cell).Es(), Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(cell).Es());
+    asm.Ret();
+    asm.MarkLabel(cell);
+    asm.Dw(0);
+    var image = asm.ToArray();
+    Assert.That(IndexOf(image, [0x26, 0x8B, 0x06]), Is.GreaterThanOrEqualTo(0), "ES-relative reload survives");
+  }
+
+  [Test]
+  public void Forward_GivenSegmentRegisterChangeBetweenDirectAccesses_WhenAssembled_ThenReloadKept() {
+    // MOV DS,... is intentionally unrecorded and therefore splits the proof chain.
+    var asm = new Assembler { EnableLoadForwarding = true };
+    var cell = asm.DefineLabel();
+    asm.Mov(Mem.Word(cell), Reg.AX);
+    asm.Mov(Reg.DS, Reg.BX);
+    asm.Mov(Reg.AX, Mem.Word(cell));
+    asm.Ret();
+    asm.MarkLabel(cell);
+    asm.Dw(0);
+    var image = asm.ToArray();
+    Assert.That(IndexOf(image, [0x8B, 0x06]), Is.GreaterThanOrEqualTo(0), "reload after changing DS survives");
   }
 
   [Test]
@@ -152,5 +196,16 @@ public sealed class LoadForwardingTests {
     asm.Mov(Mem.Word(Reg.BP, -8), Reg.AX);
     asm.Mov(Reg.AX, Mem.Word(Reg.BP, -8));
     Assert.That(HasReload(asm.ToArray()), Is.True);
+  }
+
+  private static int IndexOf(byte[] haystack, byte[] needle) {
+    for (var i = 0; i + needle.Length <= haystack.Length; ++i) {
+      var hit = true;
+      for (var k = 0; k < needle.Length; ++k)
+        if (haystack[i + k] != needle[k]) { hit = false; break; }
+      if (hit)
+        return i;
+    }
+    return -1;
   }
 }

@@ -79,6 +79,15 @@ public sealed class OptimizationBatteryTests {
     ["fistp-dword"] = [0xDB, 0x1E],      // FISTP dword [mem] - and coming back out
   };
 
+  // Raw absence of a one-byte opcode is not meaningful: an address, displacement or immediate can
+  // contain the same byte. Use a surrounding instruction signature where the battery asks that such
+  // an opcode disappear. CWD in the parity scenario belongs to the signed MOD power-of-two bias path,
+  // whose next instruction is AND DX,imm8 (83 E2 xx); SGN's intentional CWD/NEG/ADC remains detectable
+  // through the ordinary one-byte presence assertion above.
+  private static readonly Dictionary<string, byte[]> _absenceSignatures = new(StringComparer.OrdinalIgnoreCase) {
+    ["cwd"] = [0x99, 0x83, 0xE2],
+  };
+
   /// <summary>One annotated scenario: a NOINLINE procedure plus what is expected of its code.</summary>
   private sealed record Scenario(string Name, string What, string Expect, string Status, IReadOnlyList<string> Asserts, int Line) {
     public bool IsRoadmap => this.Status.Equals("roadmap", StringComparison.OrdinalIgnoreCase);
@@ -249,6 +258,9 @@ public sealed class OptimizationBatteryTests {
       case "absent": {
         if (!_patterns.TryGetValue(argument, out var pattern))
           return (false, $"unknown byte pattern '{argument}' (known: {string.Join(", ", _patterns.Keys.Order())})");
+        if (verb.Equals("absent", StringComparison.OrdinalIgnoreCase)
+            && _absenceSignatures.TryGetValue(argument, out var absenceSignature))
+          pattern = absenceSignature;
         var found = code.IndexOf(pattern) >= 0;
         var want = verb.Equals("present", StringComparison.OrdinalIgnoreCase);
         return (found == want, found ? $"{argument} is present" : $"{argument} is absent");

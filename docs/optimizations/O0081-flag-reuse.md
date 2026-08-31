@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — `CMP reg,0 → TEST reg,reg` ships (`Assembler.Peephole.cs`), and `IF x AND mask` — bare or compared against zero — emits `TEST ax, mask` in codegen rather than `AND` + a separate test; the general "reuse the ZF a preceding `ADD/SUB/OR/XOR/INC/DEC/NEG` already set" peephole does not |
+| **Status** | ✅ Done — `CMP reg,0 → TEST reg,reg`, bit-test conditions, and late reuse of ZF/SF/PF from a preceding result-producing ALU instruction all ship |
 | **Stage** | Assembler peephole + codegen |
 | **Related** | [O0008](O0008-peephole-zero-idiom.md), [O0031](O0031-branch-fusion.md), [O0038](O0038-instruction-scheduling.md) |
 
@@ -12,10 +12,10 @@ Two related rewrites:
 
 1. `CMP r,0` → `TEST r,r` (or the existing `OR r,r`) — two bytes instead of
    three or four, same ZF/SF.
-2. **Redundant compare elimination**: `ADD`, `SUB`, `AND`, `OR`, `XOR`, `INC`,
-   `DEC` and `NEG` already set ZF/SF from their result. A `CMP result,0` that
-   follows one of them with nothing in between that writes flags is pure
-   redundancy.
+2. **Redundant compare elimination**: `ADD`, `SUB`, `AND`, `OR`, `XOR`, `ADC`,
+   `SBB`, `INC`, `DEC`, `NEG` and fixed-count `SHL`/`SHR`/`SAR` already set
+   ZF/SF/PF from their result. A zero test of that unchanged result is redundant
+   when the following branch consumes only one of those flags.
 
 ## Applies to
 
@@ -25,7 +25,7 @@ n% = n% - 1
 IF n% = 0 THEN PRINT "done"
 ```
 
-## Today
+## Before
 
 ```asm
     mov     ax, [n]
@@ -52,7 +52,7 @@ Runtime-identical to `and ax,mask; test ax,ax` (the branch reads the same ZF; th
 result is never stored), and it leaves `AX` holding `x` unmodified. Applies to an
 int16 `AND` whose other operand folds to a constant and whose value is not also wanted
 for CSE; recognized in `EmitConditionalBranch` before the comparison-fusion path, so it
-survives into the `$OPTIMIZE SPEED` scheduler's stream (unlike the peephole below).
+survives into the `$OPTIMIZE SPEED` scheduler's stream (unlike the older peephole below).
 
 The explicit forms `(x AND mask) = 0` and `(x AND mask) <> 0` are the same bit test —
 comparing against zero asks exactly what `TEST` already answers — so they take the same
@@ -61,7 +61,7 @@ single instruction and differ only in which way the branch goes:
 ```asm
     mov     ax, [x]
     test    ax, mask
-    jnz     Else             ; `= 0`  falls through when the bit is clear
+    jnz     Else             ; `= 0` falls through when the bit is clear
     ; ... or `jz Else` for `<> 0`
 ```
 
@@ -69,27 +69,37 @@ The comparison is recognized with either operand order (`0 = (x AND mask)` too),
 zero side is whatever the constant folder reduces to zero, not just a literal `0`.
 
 Both forms back off when the `AND` is CSE'd: a second use of the same `x AND mask` needs
-the value, so it is materialized normally. Verified by a DOSBox self-diff over seven masks
-(three bare, four compared, all distinct so none is CSE'd) plus an `absent and-ax-imm8`
-assertion, and by unit tests pinning `test ax,4` present / `and ax,4` absent for each form
-— and one pinning the opposite for the deliberately-CSE'd case.
+the value, so it is materialized normally.
 
-## Planned
+## Now — result flags survive flag-neutral work
+
+The assembler's recorded def/use stream runs after expression lowering, CSE, inlining and
+load forwarding. That makes the common store/reload shape visible as exactly what a human
+would write:
 
 ```asm
-    mov     ax, [n]
     dec     ax
     mov     [n], ax          ; MOV does not touch flags
-    jnz     Skip
+    jnz     Skip             ; DEC's ZF is still the answer
 ```
 
-## What it needs
+`RunLoadForwarding` first removes the redundant `mov ax,[n]`; its O0081 follow-up then
+removes a word `CMP r,0`, `TEST r,r` or `OR r,r` when all of the following are proven:
 
-- The assembler's existing **def/use records** (`Asm/Assembler.Schedule.cs`)
-  already track `readsFlags`/`writesFlags` per instruction; the pass is a scan
-  for a flag-setting instruction whose flags survive to the compare.
-- The same narrowness rules as [O0034](O0034-redundant-load-elimination.md): an
-  unbroken chain of recorded, byte-adjacent instructions and **no bound label**
-  in between, because something could branch in with different flags.
-- `INC`/`DEC` do **not** write CF, so a following unsigned condition (`JB`/`JA`)
-  may not reuse them — only the ZF/SF conditions qualify.
+- the closest preceding flag writer also writes the tested register and is one of the
+  operations whose ZF/SF/PF are defined from its final result;
+- every instruction between producer and test is recorded, byte-adjacent and does not
+  overwrite that register or the flags;
+- no label enters between producer and test, and the test itself is not an alternate entry;
+- the immediately following conditional branch reads only ZF, SF or PF (`JZ/JNZ`,
+  `JS/JNS`, `JP/JNP`).
+
+The pass intentionally does **not** reuse CF/OF for a zero comparison. `SUB AX,1` and
+`CMP AX,0` may produce the same ZF/SF/PF, but their carry flags mean different things.
+Likewise signed ordering branches need OF in addition to SF, so they keep the explicit
+comparison. Variable-count shifts are excluded because a runtime count of zero leaves
+EFLAGS unchanged.
+
+Calls, inline assembly, segment-register changes and every other unrecorded instruction
+are barriers. This is conservative by construction: a missing optimization costs bytes;
+a guessed flag lifetime costs correctness.

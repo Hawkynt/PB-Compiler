@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned (the frame-slot case exists — [O0034](O0034-redundant-load-elimination.md); the variable case does not) |
-| **Stage** | Emitter |
+| **Status** | ✅ Done — frame slots and ordinary unprefixed direct-variable cells forward through the assembler's recorded stream |
+| **Stage** | Assembler |
 | **Related** | [O0034](O0034-redundant-load-elimination.md), [O0084](O0084-cross-statement-register-caching.md), [O0027](O0027-copy-propagation.md) |
 
 ## The idea
@@ -21,11 +21,11 @@ The same shape appears whenever consecutive statements touch the same variable,
 which in generated BASIC code is most of them — `n% = n% + 1 : IF n% = 0 …`
 stores and reloads `n%` for no reason at all.
 
-[O0034](O0034-redundant-load-elimination.md) does exactly this for `[BP+d]`
-frame cells at the assembler level. Direct variable cells (`[label]`) are
-excluded there because a segment load could re-point them — which means the
-*emitter*, which knows no segment change happened, is the right place for the
-general case.
+[O0034](O0034-redundant-load-elimination.md) originally did this only for `[BP+d]`
+frame cells. The same recorded instruction chain is sufficient for ordinary direct
+variables too: a segment-register load, call, inline-asm block or other opaque operation
+is not recorded and therefore breaks the chain before a DS-relative access can be
+forwarded across it.
 
 ## Applies to
 
@@ -35,7 +35,7 @@ x% = a% + b%
 y% = x% * 2
 ```
 
-## Today
+## Before
 
 ```asm
     mov     ax, [a]
@@ -46,7 +46,7 @@ y% = x% * 2
     mov     [y], ax
 ```
 
-## Planned
+## Now
 
 ```asm
     mov     ax, [a]
@@ -56,11 +56,31 @@ y% = x% * 2
     mov     [y], ax
 ```
 
-## What it needs
+## How it is proven
 
-- A small **accumulator-contents** model in the emitter: which variable's value
-  AX currently holds, invalidated by any call, branch, label, `POKE`, inline
-  asm, or write to that variable (directly or through an alias).
-- It composes with [O0084](O0084-cross-statement-register-caching.md), which is
-  the same idea generalized to a register that is *kept* rather than
-  opportunistically reused.
+`RunLoadForwarding` recognizes a plain word `MOV` store into either:
+
+- a BP-relative frame cell, whose segment is inherently SS; or
+- an **unprefixed direct label** — the ordinary representation of a BASIC scalar
+  variable in the program data segment.
+
+It then scans forward only through an unbroken, byte-adjacent sequence of recorded
+instructions. The load can become:
+
+- nothing, when it reloads into the register that still holds the value;
+- a register move, when another register needs the value; or
+- for frame slots whose last store was an immediate, a direct immediate load.
+
+The proof stops on a label, a write to the held register, a possibly-aliasing store, or
+any unrecorded instruction. That last rule is what makes direct variables safe: `MOV DS,…`,
+a call, inline asm, string machinery and other opaque operations all create a gap, so the
+optimizer never assumes the same segment or memory contents survived them.
+
+Explicit segment overrides (`ES:[label]`, `CS:[label]`, and so on) deliberately do not
+qualify. Immediate forwarding also remains frame-only; a direct-label immediate store
+contains an address fixup as well as the value, and O0083 does not need to distinguish the
+two to remove the overwhelmingly common register store/reload pair.
+
+The pass composes directly with [O0081](O0081-flag-reuse.md): once a redundant variable
+reload disappears, an earlier `ADD`/`SUB`/`DEC` can remain the live producer of ZF/SF/PF
+for the following branch, allowing the subsequent zero test to disappear too.
