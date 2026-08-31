@@ -80,7 +80,10 @@ public static class AggregateBlockScalarization {
       return false;
 
     var block = call.Parent;
-    if (block is null || IndexOf(block, call) is not var at || at < 0)
+    if (block is null)
+      return false;
+    var at = IndexOf(block, call);
+    if (at < 0)
       return false;
 
     // Load the complete source value before writing any destination region. memcpy requires
@@ -125,7 +128,10 @@ public static class AggregateBlockScalarization {
       return false;                                  // float equality is not raw-bit equality
 
     var block = call.Parent;
-    if (block is null || IndexOf(block, call) is not var at || at < 0)
+    if (block is null)
+      return false;
+    var at = IndexOf(block, call);
+    if (at < 0)
       return false;
 
     IrValue? allEqual = null;
@@ -174,8 +180,14 @@ public static class AggregateBlockScalarization {
   /// </summary>
   private static bool TryCompleteLayout(int bytes, IrAlloca? first, IrAlloca? second, out List<Region> layout) {
     layout = [];
-    foreach (var alloca in new[] { first, second }.Where(a => a is not null).Distinct(ReferenceEqualityComparer.Instance)) {
-      if (!TryObservedRegions(alloca!, out var observed))
+    var allocas = new List<IrAlloca>(2);
+    if (first is not null)
+      allocas.Add(first);
+    if (second is not null && !allocas.Any(existing => ReferenceEquals(existing, second)))
+      allocas.Add(second);
+
+    foreach (var alloca in allocas) {
+      if (!TryObservedRegions(alloca, out var observed))
         return false;
       layout.AddRange(observed);
     }
