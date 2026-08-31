@@ -21,8 +21,10 @@ public static class MachineScheduler {
   /// </summary>
   private const int _registerFile = 6;
 
-  /// <summary>Reorders the non-terminator instructions of every block by their data dependencies.</summary>
+  /// <summary>Runs target combines, then reorders non-terminators by their data dependencies.</summary>
   public static void Schedule(MFunction function) {
+    MachineCombiner.Run(function);
+    SuperoptimizedPeepholes.Run(function);
     foreach (var block in function.Blocks)
       ScheduleBlock(block);
   }
