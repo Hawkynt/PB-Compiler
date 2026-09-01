@@ -38,10 +38,23 @@ jobs:
 
           script = '\n'.join(body) + '\n'
           restore = 'dotnet restore PB-Compiler.slnx'
-          correction = "sed -i 's/IrPassManager.Standard(optimizeSpeed: true)/IrPassManager.Standard(optimizeForSpeed: true)/' PowerBasic.Compiler.Tests/Backend/BackendCpuGenerationMatrixTests.cs\n" + restore
+          correction = "sed -i 's/IrPassManager.Standard(optimizeSpeed: true)/IrPassManager.Standard(optimizeForSpeed: true)/' PowerBasic.Compiler.Tests/Backend/BackendCpuGenerationMatrixTests.cs\npython /tmp/fix-inline-shift-test.py\n" + restore
           if restore not in script:
               raise SystemExit('restore anchor changed')
           script = script.replace(restore, correction, 1)
           Path('/tmp/apply-cpu-normalization.sh').write_text(script)
+
+          fix = r'''from pathlib import Path
+p = Path('PowerBasic.Compiler.Tests/CodeGen/InlineAsm8086ShiftTests.cs')
+text = p.read_text()
+old8086 = ''' + repr('''  [Test]\n  public void ShrWordByImmediateThree_Given8086Target_ThenUsesThreeD1InstructionsNot186C1() {\n    var (image, _) = Compile("8086", "! SHR AX, 3\\nEND\\n");\n\n    Assert.That(ContainsSequence(image, [0xD1, 0xE8, 0xD1, 0xE8, 0xD1, 0xE8]), Is.True,\n      "8086 immediate shift should lower to repeated count-one instructions");\n    Assert.That(ContainsSequence(image, [0xC1, 0xE8, 0x03]), Is.False,\n      "C1 /5 ib is an 80186+ encoding and must not leak into an 8086 target");\n  }\n''') + r'''
+new8086 = ''' + repr('''  [Test]\n  public void ShrWordByImmediateThree_Given8086Target_ThenUsesThreeD1InstructionsNot186C1() {\n    var (image, _) = Compile("8086", "! MOV AX, 4660\\n! SHR AX, 3\\n! MOV BX, 22136\\nEND\\n");\n\n    Assert.That(ContainsSequence(image, [\n      0xB8, 0x34, 0x12,\n      0xD1, 0xE8, 0xD1, 0xE8, 0xD1, 0xE8,\n      0xBB, 0x78, 0x56,\n    ]), Is.True, "the anchored inline-asm sequence must contain only 8086 count-one encodings");\n  }\n''') + r'''
+old186 = ''' + repr('''  [Test]\n  public void ShrWordByImmediateThree_Given186Target_ThenKeepsCompactC1Encoding() {\n    var (image, _) = Compile("186", "! SHR AX, 3\\nEND\\n");\n    Assert.That(ContainsSequence(image, [0xC1, 0xE8, 0x03]), Is.True);\n  }\n''') + r'''
+new186 = ''' + repr('''  [Test]\n  public void ShrWordByImmediateThree_Given186Target_ThenKeepsCompactC1Encoding() {\n    var (image, _) = Compile("186", "! MOV AX, 4660\\n! SHR AX, 3\\n! MOV BX, 22136\\nEND\\n");\n    Assert.That(ContainsSequence(image, [\n      0xB8, 0x34, 0x12, 0xC1, 0xE8, 0x03, 0xBB, 0x78, 0x56,\n    ]), Is.True);\n  }\n''') + r'''
+if text.count(old8086) != 1 or text.count(old186) != 1:
+    raise SystemExit('inline shift regression anchors changed')
+p.write_text(text.replace(old8086, new8086).replace(old186, new186))
+'''
+          Path('/tmp/fix-inline-shift-test.py').write_text(fix)
           PY
           bash /tmp/apply-cpu-normalization.sh
