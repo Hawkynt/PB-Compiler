@@ -63,8 +63,10 @@ public static class ScalarReplaceAggregates {
           break;
 
         case IrGep { ElementType: null, ByteOffset: IrConstantInt constant } gep:
-          if (gep.Users.Count == 0)
-            return false;
+          // A preceding fold can leave the address calculation behind after all of its memory users
+          // disappeared. The GEP itself has no side effect and Split removes it with the aggregate,
+          // so an empty use-list says nothing about aliasing and must not make an otherwise-local
+          // record look as though its address escaped.
           foreach (var indexed in gep.Users) {
             if (!TryAccessRegion(indexed, gep, constant.Value, alloca.Count, out var region))
               return false;
