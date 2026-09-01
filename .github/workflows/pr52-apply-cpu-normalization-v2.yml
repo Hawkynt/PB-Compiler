@@ -37,9 +37,11 @@ jobs:
               body.append(line[10:] if line.startswith('          ') else '')
 
           script = '\n'.join(body) + '\n'
-          script = script.replace(
-              'IrPassManager.Standard(optimizeSpeed: true)',
-              'IrPassManager.Standard(optimizeForSpeed: true)')
+          restore = 'dotnet restore PB-Compiler.slnx'
+          correction = "sed -i 's/IrPassManager.Standard(optimizeSpeed: true)/IrPassManager.Standard(optimizeForSpeed: true)/' PowerBasic.Compiler.Tests/Backend/BackendCpuGenerationMatrixTests.cs\n" + restore
+          if restore not in script:
+              raise SystemExit('restore anchor changed')
+          script = script.replace(restore, correction, 1)
           Path('/tmp/apply-cpu-normalization.sh').write_text(script)
           PY
           bash /tmp/apply-cpu-normalization.sh
