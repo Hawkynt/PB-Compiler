@@ -134,25 +134,23 @@ public sealed class BackendRuntimeCallTests {
     END FUNCTION
     """;
 
+  // Spare is deliberately never observed. That one-byte proof gap keeps the seven-byte block copy
+  // materialized under optimization without introducing a user call that would make main unroutable.
+  // B spans offsets 3..6, so the 386 DWORD + three-byte-tail path must copy the tail correctly for
+  // the printed LONG to survive.
   private const string _udtCopyProgram = """
     TYPE Odd7
       A AS INTEGER
+      Spare AS BYTE
       B AS LONG
-      C AS BYTE
     END TYPE
-    DECLARE SUB KeepOdd7(value AS Odd7)
     DIM sourceValue AS Odd7
     DIM copiedValue AS Odd7
     sourceValue.A = -123
     sourceValue.B = 987654
-    sourceValue.C = 250
     copiedValue = sourceValue
-    PRINT copiedValue.A; copiedValue.B; copiedValue.C
-    KeepOdd7 copiedValue
+    PRINT copiedValue.A; copiedValue.B
     END
-
-    SUB KeepOdd7(value AS Odd7) NOINLINE
-    END SUB
     """;
 
   private const string _staticEraseProgram = """
@@ -764,7 +762,7 @@ public sealed class BackendRuntimeCallTests {
       Assert.That(Contains(routedImage, 0xF3, 0x66, 0xA5), Is.True,
         "the routed rt_memcpy should widen its seven-byte copy to one DWORD and a three-byte tail");
       Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
-      Assert.That(routedCpu.Output.Trim().Replace(" ", ""), Is.EqualTo("-123987654250"));
+      Assert.That(routedCpu.Output.Trim().Replace(" ", ""), Is.EqualTo("-123987654"));
     });
   }
 
