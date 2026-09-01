@@ -83,6 +83,7 @@ public static class Peephole {
   /// <summary>Rewrites the idioms above in place; the number of rewrites made.</summary>
   public static int Run(MFunction function) {
     ArgumentNullException.ThrowIfNull(function);
+    MachineOptimizationState.Mark(function);
     var total = 0;
     // Each rewrite removes a value, so the census changes and a pattern may only now be visible: a
     // load folded into an ADD can leave that ADD the middle of a read-modify-write. The bound is a
@@ -107,6 +108,11 @@ public static class Peephole {
     total += StraightenBranches(function);
     foreach (var block in function.Blocks)
       total += FoldZeroConstants(block);
+    // O0356/O0355 are selected-machine transforms too, but deliberately come after the general
+    // peepholes: they consume the final two-address/physical-encoding shapes and still run before
+    // scheduling and allocation can make a rewrite more expensive.
+    total += MachineCombiner.Run(function);
+    total += SuperoptimizedPeepholes.Run(function);
     return total;
   }
 
