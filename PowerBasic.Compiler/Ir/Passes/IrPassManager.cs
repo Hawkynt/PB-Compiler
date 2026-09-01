@@ -107,11 +107,11 @@ public sealed class IrPassManager {
   ///   <item><b>simplifycfg</b> removes constant branch forms the selector cannot encode directly.</item>
   /// </list>
   /// <para>
-  /// Everything else in <see cref="Standard"/> is optimization and is off: unrolling, sccp, correlate,
-  /// pointer checks, integer/float range folds, overflow coalescing, sroa, aggregate-sroa,
-  /// mem2reg2, reassociate, demote, phicong, gvn, memopt, dse, licm, unswitch, closed-form,
-  /// deadloop, ifconv, tailrec and the string/global module passes. So are the two steps the
-  /// caller runs around the pipeline - <c>Inliner</c> and <c>SwitchFormation</c>.
+  /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
+  /// unrolling, sccp, correlate, pointer checks, integer/float range folds, overflow coalescing,
+  /// sroa, aggregate-sroa, mem2reg2, reassociate, demote, phicong, gvn, memopt, dse, licm, unswitch,
+  /// closed-form, deadloop, ifconv, tailrec and the string/global module passes. So are the two
+  /// steps the caller runs around the pipeline - <c>Inliner</c> and <c>SwitchFormation</c>.
   /// </para>
   /// </summary>
   public static IrPassManager Legalize() => new IrPassManager()
@@ -131,10 +131,33 @@ public sealed class IrPassManager {
   /// can be a delay loop, and <see cref="DeadLoopElimination"/> is the one transform here whose
   /// correctness argument rests on the author not having meant it.
   /// </para>
+  /// <para>
+  /// <paramref name="dataLayoutTarget"/> supplies facts that are not properties of target-neutral IR:
+  /// pointer storage width, vector width and cache geometry. O0324-O0326 stay disabled when those facts
+  /// are absent rather than guessing a target. The remaining O0320-O0323 and O0327-O0329 are guarded
+  /// entirely by IR provenance/escape/dependence proofs and therefore run on every optimized target.
+  /// </para>
   /// </summary>
-  public static IrPassManager Standard(bool optimizeForSpeed = false, bool includeModulePasses = true)
+  public static IrPassManager Standard(bool optimizeForSpeed = false, bool includeModulePasses = true,
+      IrDataLayoutTarget? dataLayoutTarget = null)
     => new IrPassManager()
     .Add("mem2reg", Mem2Reg.Run)
+    // O0320-O0329 have to see the explicit memory graph and the original counted-loop shape. Run the
+    // aggregate transforms before AoS->SoA destroys record identity, then the loop/data transforms,
+    // and only then unroll. Every one declines escaped/opaque storage rather than speculating aliasing.
+    .Add("structpack", StructurePackingByRange.Run)
+    .Add("fieldreorder", FieldReordering.Run)
+    .Add("hotcold", HotColdFieldSplitting.Run)
+    .Add("aos2soa", ArrayOfStructsToStructOfArrays.Run)
+    .Add("transpose", DataTransposition.Run)
+    .Add("arrayfusion", TemporaryArrayFusion.Run)
+    .Add("arraycontract", ArrayContraction.Run)
+    .AddWhen(dataLayoutTarget?.PointerBits > 16, "ptrcompress",
+      fn => PointerCompression.Run(fn, dataLayoutTarget!.PointerBits))
+    .AddWhen(dataLayoutTarget?.CacheSizeBytes > 0, "cachepad",
+      fn => CacheConflictPadding.Run(fn, dataLayoutTarget!.CacheSizeBytes, dataLayoutTarget.CacheLineBytes))
+    .AddWhen(dataLayoutTarget?.VectorBytes > 1, "arraypad",
+      fn => ArrayPaddingAlignment.Run(fn, dataLayoutTarget!.VectorBytes))
     // unrolling goes early, right after values reach SSA: a fully unrolled loop turns its counter
     // into a constant in every copy, which is what gives the rest of the pipeline something to fold
     .Add("unroll", LoopUnroll.Run)
