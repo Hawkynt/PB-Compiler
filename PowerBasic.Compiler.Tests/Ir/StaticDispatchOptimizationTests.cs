@@ -16,7 +16,7 @@ public sealed class StaticDispatchOptimizationTests {
     Assert.Multiple(() => {
       Assert.That(fn.Blocks.Any(block => block.Label.StartsWith("bsearch.", StringComparison.Ordinal)), Is.True);
       Assert.That(fn.AllInstructions.OfType<IrLoad>(), Is.Empty);
-      Assert.That(HasBackEdge(fn), Is.False);
+      Assert.That(HasCycle(fn), Is.False, "the search loop should have become an acyclic decision tree");
       Assert.That(IrVerifier.Verify(fn), Is.Empty);
     });
   }
@@ -42,7 +42,7 @@ public sealed class StaticDispatchOptimizationTests {
     var fn = BuildSearch(module, "duplicates", [1, 4, 4, 7, 9, 12, 20, 30]);
 
     Assert.That(StaticSearchRecognition.Run(module), Is.Zero);
-    Assert.That(HasBackEdge(fn), Is.True);
+    Assert.That(HasCycle(fn), Is.True, "the declined linear search must retain its counted loop");
   }
 
   [Test]
@@ -106,9 +106,25 @@ public sealed class StaticDispatchOptimizationTests {
     return fn;
   }
 
-  private static bool HasBackEdge(IrFunction fn) {
-    var order = fn.Blocks.Select((block, index) => (block, index))
-      .ToDictionary(item => item.block, item => item.index, ReferenceEqualityComparer.Instance);
-    return fn.Blocks.Any(block => block.Successors.Any(successor => order[successor] <= order[block]));
+  private static bool HasCycle(IrFunction fn) {
+    var visited = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance);
+    var active = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance);
+    foreach (var block in fn.Blocks)
+      if (Visit(block))
+        return true;
+    return false;
+
+    bool Visit(IrBasicBlock block) {
+      if (visited.Contains(block))
+        return false;
+      if (!active.Add(block))
+        return true;
+      foreach (var successor in block.Successors)
+        if (Visit(successor))
+          return true;
+      active.Remove(block);
+      visited.Add(block);
+      return false;
+    }
   }
 }
