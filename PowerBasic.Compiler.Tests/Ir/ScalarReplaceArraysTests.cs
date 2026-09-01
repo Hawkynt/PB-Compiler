@@ -153,4 +153,24 @@ public sealed class ScalarReplaceArraysTests {
 
     Assert.That(Split(module), Is.Zero);
   }
+
+  /// <summary>
+  /// Opaque pointers permit a word store through an i8-array address. That store spans two elements,
+  /// so treating it as the write of element zero would drop the high byte when the array is split.
+  /// O0339's tiny memcpy expansion exposed exactly this shape for packed UDT storage.
+  /// </summary>
+  [Test]
+  public void Split_GivenAByteArrayWithAWideStore_ThenItDeclines() {
+    var fn = new IrFunction("wide", IrType.Void);
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    var bytes = entry.Append(new IrAlloca(IrType.I8) { Count = 4 });
+    entry.Append(new IrStore(new IrConstantInt(IrType.I16, -123), bytes));
+    var second = entry.Append(new IrGep(bytes, new IrConstantInt(IrType.I32, 1)));
+    entry.Append(new IrLoad(IrType.I8, second));
+    entry.Append(new IrRet());
+
+    Assert.That(ScalarReplaceArrays.Run(fn), Is.Zero,
+      "a wider access aliases adjacent byte elements and cannot be scalarized one byte at a time");
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
 }

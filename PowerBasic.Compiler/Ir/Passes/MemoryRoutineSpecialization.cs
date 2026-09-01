@@ -2,12 +2,13 @@ namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
 /// O0339 — specializes tiny constant-size LLVM memory intrinsics into straight-line byte accesses.
-/// Medium and large transfers stay as intrinsics so the target-specific selector/runtime keeps its
-/// existing widened REP and alignment policy.
+/// The target-neutral threshold deliberately stops at four bytes: that covers the motivating two-word
+/// record copy without stealing 7/8-byte transfers from the target-specific REP/MOVSD cost policy.
+/// Larger transfers stay as intrinsics so the selector/runtime can choose with actual CPU knowledge.
 /// </summary>
 public static class MemoryRoutineSpecialization {
 
-  private const int _MAX_INLINE_BYTES = 8;
+  private const int _MAX_INLINE_BYTES = 4;
   private const string _MEMCPY = "llvm.memcpy.p0.p0.i32";
   private const string _MEMSET = "llvm.memset.p0.i32";
 
