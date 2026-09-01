@@ -92,25 +92,21 @@ public static class LoopInterchange {
         || innerPreheaderInstructions[0] is not IrBr innerEntry
         || CountedLoop.Match(fn, innerEntry.Target) is not { } inner
         || !ReferenceEquals(inner.Preheader, outerBranch.IfTrue)
-        || !ReferenceEquals(inner.Exit, outer.Latch)
         || inner.Header.Terminator is not IrCondBr innerBranch
-        || inner.Region.Count != 2
-        || !inner.Region.Contains(inner.Header)
-        || !inner.Region.Contains(inner.Latch)
-        || outer.Region.Count != 5
-        || !outer.Region.SetEquals([outer.Header, inner.Preheader, inner.Header, inner.Latch, outer.Latch]))
+        || !TryPerfectBody(outer, inner, innerBranch, out var bodyBlock, out var bodySharesLatch))
       return null;
 
     if (!TryCounter(outer, out var outerCounter, out var outerNext)
         || !TryCounter(inner, out var innerCounter, out var innerNext))
       return null;
 
-    if (!HeaderIsControlOnly(outer, outerNext: null)
-        || !HeaderIsControlOnly(inner, outerNext: null)
+    if (!HeaderIsControlOnly(outer)
+        || !HeaderIsControlOnly(inner)
         || !LatchIsControlOnly(outer.Latch, outerNext)
         || !ReferenceEquals(innerNext.Parent, inner.Latch)
         || inner.Latch.Terminator is not IrBr innerBack
-        || !ReferenceEquals(innerBack.Target, inner.Header))
+        || !ReferenceEquals(innerBack.Target, inner.Header)
+        || (!bodySharesLatch && !LatchIsControlOnly(inner.Latch, innerNext)))
       return null;
 
     var carriers = outer.Header.Phis
@@ -119,7 +115,7 @@ public static class LoopInterchange {
     if (carriers.Any(phi => !IsInnerExitCarrier(phi, outer, inner)))
       return null;
 
-    var body = inner.Latch.Instructions
+    var body = bodyBlock.Instructions
       .Where(instruction => !instruction.IsTerminator && !ReferenceEquals(instruction, innerNext))
       .ToList();
     if (body.Any(instruction => !IsReorderableBodyInstruction(instruction)))
@@ -138,7 +134,43 @@ public static class LoopInterchange {
       outerCounter, innerCounter, carriers, accesses);
   }
 
-  private static bool HeaderIsControlOnly(CountedLoop loop, IrBinary? outerNext) {
+  /// <summary>
+  /// Matches either the compact hand-built test form where the inner body is also its latch, or the
+  /// shape <see cref="IrLowering"/> actually emits: preheader -> header -> body -> increment/latch,
+  /// with the inner exit forwarding to the outer increment block. Keeping both forms makes the
+  /// legality tests small without accidentally testing a CFG the front end never produces.
+  /// </summary>
+  private static bool TryPerfectBody(CountedLoop outer, CountedLoop inner, IrCondBr innerBranch,
+      out IrBasicBlock body, out bool bodySharesLatch) {
+    body = innerBranch.IfTrue;
+    bodySharesLatch = ReferenceEquals(body, inner.Latch);
+
+    if (ReferenceEquals(inner.Exit, outer.Latch)) {
+      return bodySharesLatch
+        && inner.Region.Count == 2
+        && inner.Region.SetEquals([inner.Header, inner.Latch])
+        && outer.Region.Count == 5
+        && outer.Region.SetEquals([outer.Header, inner.Preheader, inner.Header, inner.Latch, outer.Latch]);
+    }
+
+    if (bodySharesLatch
+        || inner.Region.Count != 3
+        || !inner.Region.SetEquals([inner.Header, body, inner.Latch])
+        || body.Terminator is not IrBr bodyToLatch
+        || !ReferenceEquals(bodyToLatch.Target, inner.Latch)
+        || inner.Exit.Instructions.Count != 1
+        || inner.Exit.Instructions[0] is not IrBr exitToOuterLatch
+        || !ReferenceEquals(exitToOuterLatch.Target, outer.Latch)
+        || outer.Region.Count != 7
+        || !outer.Region.SetEquals([
+          outer.Header, inner.Preheader, inner.Header, body, inner.Latch, inner.Exit, outer.Latch,
+        ]))
+      return false;
+
+    return true;
+  }
+
+  private static bool HeaderIsControlOnly(CountedLoop loop) {
     var ordinary = loop.Header.Instructions
       .Where(instruction => instruction is not IrPhi && !instruction.IsTerminator)
       .ToList();
@@ -176,33 +208,27 @@ public static class LoopInterchange {
         || !Equals(stepConstant.Type, loop.Counter.Type))
       return false;
 
+    var first = Signed(start);
     var step = Signed(stepConstant);
     if (step == 0)
       return false;
 
-    var current = Signed(start);
-    var minimum = current;
-    var maximum = current;
-    var allowed = ValueRange.OfType(loop.Counter.Type);
-    if (!allowed.Contains(current))
+    long final;
+    try {
+      final = checked(first + checked(step * loop.Trips));
+    } catch (OverflowException) {
       return false;
-
-    for (long iteration = 0; iteration < loop.Trips; ++iteration) {
-      long advanced;
-      try {
-        advanced = checked(current + step);
-      } catch (OverflowException) {
-        return false;
-      }
-      if (!allowed.Contains(advanced))
-        return false;                         // interchange never models a wrapping FOR counter
-      current = advanced;
-      minimum = Math.Min(minimum, current);
-      maximum = Math.Max(maximum, current);
     }
 
-    counter = new(start, stepConstant, step, minimum, maximum,
-      new IrConstantInt(loop.Counter.Type, current));
+    // A constant-step recurrence is monotone in mathematical integers. If both endpoints fit the
+    // signed machine type, every intermediate value fits too; no million-iteration re-simulation is
+    // needed just to establish the same fact CountedLoop already proved about the trip count.
+    var allowed = ValueRange.OfType(loop.Counter.Type);
+    if (!allowed.Contains(first) || !allowed.Contains(final))
+      return false;
+
+    counter = new(start, stepConstant, step, Math.Min(first, final), Math.Max(first, final),
+      new IrConstantInt(loop.Counter.Type, final));
     next = recurrence;
     return true;
   }
