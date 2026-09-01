@@ -35,8 +35,8 @@ public static class LookupTableElimination {
     foreach (var gep in accesses.Select(access => access.Gep).Distinct().ToList())
       if (gep.HasNoUsers)
         gep.EraseFromParent();
-    if (!global.HasNoUsers)
-      return false;
+    System.Diagnostics.Debug.Assert(global.HasNoUsers,
+      "the readonly-use proof must account for every table reference before the global is removed");
     module.RemoveGlobal(global);
     return true;
   }
