@@ -5,23 +5,24 @@ namespace PowerBasic.Compiler.Backend;
 /// <summary>
 /// Local stack-slot forwarding after spilling and allocation. This is intentionally conservative:
 /// facts never cross a basic-block boundary, call, inline assembly, or unknown memory write, and a
-/// register-backed fact dies as soon as that physical register is overwritten.
+/// register-backed fact dies as soon as that physical register is overwritten. Only stack slots
+/// appended by allocation/spilling are eligible; selector-owned frame cells are outside the pass.
 /// </summary>
 public static class LateLoadStoreOptimization {
 
   public static int Run(MFunction function, IReadOnlyDictionary<int, Reg> allocation) {
     ArgumentNullException.ThrowIfNull(function);
     ArgumentNullException.ThrowIfNull(allocation);
-    if (!MachineOptimizationState.IsMarked(function))
+    if (!MachineOptimizationState.TryGetFirstSpillSlot(function, out var firstSpillSlot))
       return 0;
 
     var changed = 0;
     foreach (var block in function.Blocks)
-      changed += RunBlock(block, allocation);
+      changed += RunBlock(block, allocation, firstSpillSlot);
     return changed;
   }
 
-  private static int RunBlock(MBlock block, IReadOnlyDictionary<int, Reg> allocation) {
+  private static int RunBlock(MBlock block, IReadOnlyDictionary<int, Reg> allocation, int firstSpillSlot) {
     var known = new Dictionary<SlotKey, KnownValue>();
     var output = new List<MInstr?>();
     var changed = 0;
@@ -30,7 +31,7 @@ public static class LateLoadStoreOptimization {
       var emitted = original;
       var omit = false;
 
-      if (TryLoad(original, out var loadDestination, out var loadSlot)) {
+      if (TryLoad(original, firstSpillSlot, out var loadDestination, out var loadSlot)) {
         var key = SlotKey.Of(loadSlot);
         if (known.TryGetValue(key, out var value)) {
           var destination = Resolve(loadDestination, allocation);
@@ -49,7 +50,7 @@ public static class LateLoadStoreOptimization {
           // alive against a later overwrite.
           MarkOverlappingReads(known, key);
         }
-      } else if (TryStore(original, allocation, out var storeSlot, out var source)) {
+      } else if (TryStore(original, allocation, firstSpillSlot, out var storeSlot, out var source)) {
         var key = SlotKey.Of(storeSlot);
         InvalidateOverlaps(known, key, keepExact: true);
         if (known.TryGetValue(key, out var previous) && SameValue(previous.Source, source)) {
@@ -87,9 +88,11 @@ public static class LateLoadStoreOptimization {
     return changed;
   }
 
-  private static bool TryLoad(MInstr instruction, out MReg destination, out MOperand.StackSlot slot) {
+  private static bool TryLoad(MInstr instruction, int firstSpillSlot,
+      out MReg destination, out MOperand.StackSlot slot) {
     if (instruction.Opcode == MOpcode.Mov
-        && instruction.Operands is [MOperand.Register { Reg: var register }, MOperand.StackSlot stack]) {
+        && instruction.Operands is [MOperand.Register { Reg: var register }, MOperand.StackSlot stack]
+        && stack.Index >= firstSpillSlot) {
       destination = register;
       slot = stack;
       return true;
@@ -99,16 +102,18 @@ public static class LateLoadStoreOptimization {
     return false;
   }
 
-  private static bool TryStore(MInstr instruction, IReadOnlyDictionary<int, Reg> allocation,
+  private static bool TryStore(MInstr instruction, IReadOnlyDictionary<int, Reg> allocation, int firstSpillSlot,
       out MOperand.StackSlot slot, out MOperand source) {
     if (instruction.Opcode == MOpcode.Mov
-        && instruction.Operands is [MOperand.StackSlot stack, MOperand.Immediate immediate]) {
+        && instruction.Operands is [MOperand.StackSlot stack, MOperand.Immediate immediate]
+        && stack.Index >= firstSpillSlot) {
       slot = stack;
       source = immediate;
       return true;
     }
     if (instruction.Opcode == MOpcode.Mov
         && instruction.Operands is [MOperand.StackSlot stack, MOperand.Register { Reg: var register }]
+        && stack.Index >= firstSpillSlot
         && Resolve(register, allocation) is { } physical) {
       slot = stack;
       source = new MOperand.Register(MReg.Physical_(physical, register.Size));
