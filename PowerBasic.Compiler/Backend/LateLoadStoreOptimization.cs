@@ -12,6 +12,9 @@ public static class LateLoadStoreOptimization {
   public static int Run(MFunction function, IReadOnlyDictionary<int, Reg> allocation) {
     ArgumentNullException.ThrowIfNull(function);
     ArgumentNullException.ThrowIfNull(allocation);
+    if (!MachineOptimizationState.IsMarked(function))
+      return 0;
+
     var changed = 0;
     foreach (var block in function.Blocks)
       changed += RunBlock(block, allocation);
@@ -40,11 +43,10 @@ public static class LateLoadStoreOptimization {
                 ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: false));
           }
           ++changed;
-        } else if (known.TryGetValue(key, out var readValue)) {
-          known[key] = readValue with { ReadSinceStore = true };
         }
       } else if (TryStore(original, allocation, out var storeSlot, out var source)) {
         var key = SlotKey.Of(storeSlot);
+        InvalidateOverlaps(known, key, keepExact: true);
         if (known.TryGetValue(key, out var previous) && SameValue(previous.Source, source)) {
           omit = true;
           ++changed;
@@ -58,8 +60,7 @@ public static class LateLoadStoreOptimization {
         }
       } else {
         foreach (var slot in original.Operands.OfType<MOperand.StackSlot>())
-          if (known.TryGetValue(SlotKey.Of(slot), out var value))
-            known[SlotKey.Of(slot)] = value with { ReadSinceStore = true };
+          MarkOverlappingReads(known, SlotKey.Of(slot));
 
         if (original.Opcode is MOpcode.Call or MOpcode.InlineAsm || original.IsTerminator)
           known.Clear();
@@ -129,17 +130,47 @@ public static class LateLoadStoreOptimization {
       known.Remove(key);
   }
 
+  private static void InvalidateOverlaps(Dictionary<SlotKey, KnownValue> known, SlotKey written, bool keepExact) {
+    foreach (var key in known.Keys.Where(key => key.Overlaps(written) && (!keepExact || key != written)).ToArray())
+      known.Remove(key);
+  }
+
+  private static void MarkOverlappingReads(Dictionary<SlotKey, KnownValue> known, SlotKey read) {
+    foreach (var key in known.Keys.Where(key => key.Overlaps(read)).ToArray())
+      known[key] = known[key] with { ReadSinceStore = true };
+  }
+
   private static bool SameValue(MOperand left, MOperand right) => (left, right) switch {
     (MOperand.Immediate a, MOperand.Immediate b) => a.Value == b.Value,
     (MOperand.Register a, MOperand.Register b) => a.Reg.Physical == b.Reg.Physical && a.Reg.Size == b.Reg.Size,
     _ => false,
   };
 
-  private static Reg? Resolve(MReg register, IReadOnlyDictionary<int, Reg> allocation)
-    => register.IsVirtual ? allocation.GetValueOrDefault(register.VirtualId) : register.Physical;
+  private static Reg? Resolve(MReg register, IReadOnlyDictionary<int, Reg> allocation) {
+    if (!register.IsVirtual)
+      return register.Physical;
+    return allocation.TryGetValue(register.VirtualId, out var physical) ? physical : null;
+  }
 
   private readonly record struct SlotKey(int Index, int Disp, MRegSize Size) {
     public static SlotKey Of(MOperand.StackSlot slot) => new(slot.Index, slot.Disp, slot.Size);
+
+    public bool Overlaps(SlotKey other) {
+      if (this.Index != other.Index)
+        return false;
+      var thisEnd = this.Disp + Bytes(this.Size);
+      var otherEnd = other.Disp + Bytes(other.Size);
+      return this.Disp < otherEnd && other.Disp < thisEnd;
+    }
+
+    private static int Bytes(MRegSize size) => size switch {
+      MRegSize.Byte => 1,
+      MRegSize.Word => 2,
+      MRegSize.Dword => 4,
+      MRegSize.Qword => 8,
+      MRegSize.Tbyte => 10,
+      _ => throw new ArgumentOutOfRangeException(nameof(size)),
+    };
   }
 
   private readonly record struct KnownValue(MOperand Source, int StoreOutputIndex, bool ReadSinceStore);
