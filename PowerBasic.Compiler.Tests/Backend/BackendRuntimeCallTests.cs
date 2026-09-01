@@ -99,6 +99,7 @@ public sealed class BackendRuntimeCallTests {
       A AS INTEGER
       B AS LONG
     END TYPE
+    DECLARE SUB KeepPair(value AS Pair)
     DIM leftValue AS Pair
     DIM rightValue AS Pair
     leftValue.A = 1
@@ -108,6 +109,11 @@ public sealed class BackendRuntimeCallTests {
     PRINT leftValue = rightValue
     rightValue.B = 70001
     PRINT leftValue <> rightValue
+    KeepPair leftValue
+    END
+
+    SUB KeepPair(value AS Pair) NOINLINE
+    END SUB
     """;
 
   private const string _localUdtCompareProgram = """
@@ -134,6 +140,7 @@ public sealed class BackendRuntimeCallTests {
       B AS LONG
       C AS BYTE
     END TYPE
+    DECLARE SUB KeepOdd7(value AS Odd7)
     DIM sourceValue AS Odd7
     DIM copiedValue AS Odd7
     sourceValue.A = -123
@@ -141,6 +148,11 @@ public sealed class BackendRuntimeCallTests {
     sourceValue.C = 250
     copiedValue = sourceValue
     PRINT copiedValue.A; copiedValue.B; copiedValue.C
+    KeepOdd7 copiedValue
+    END
+
+    SUB KeepOdd7(value AS Odd7) NOINLINE
+    END SUB
     """;
 
   private const string _staticEraseProgram = """
