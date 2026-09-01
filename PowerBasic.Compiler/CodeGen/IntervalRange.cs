@@ -218,10 +218,9 @@ public static class IntervalRangeAnalysis {
         var cur = env.TryGetValue(sym, out var iv) ? iv : ValueFacts.Unknown;
         var amount = id.Amount == null ? ValueFacts.Of(1, WidthOf(sym.Type)) : Eval(id.Amount, env, model);
         var width = WidthOf(sym.Type);
-        var stepped = new ValueFacts(
-          id.Increment ? cur.Range.Add(amount.Range) : cur.Range.Subtract(amount.Range),
-          ValueFactReduction.AddSub(cur.Bits, amount.Bits, width, subtract: !id.Increment),
-          id.Increment ? cur.Mod.Add(amount.Mod) : cur.Mod.Subtract(amount.Mod));
+        var signed = sym.Type is not ScalarType { Signed: false };
+        var stepped = ValueFactReduction.Binary(
+          id.Increment ? BinaryOp.Add : BinaryOp.Subtract, cur, amount, width, signed);
         Set(env, sym, StoreInto(stepped, sym.Type));
         return;
       }
@@ -370,8 +369,16 @@ public static class IntervalRangeAnalysis {
         var l = Eval(b.Left, env, model);
         var r = Eval(b.Right, env, model);
         var width = WidthOf(b, model);
-        if (width > 0)
+        if (width > 0) {
+          if (b.Op is BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
+              or BinaryOp.LessEqual or BinaryOp.GreaterEqual)
+            return ValueFactReduction.Compare(
+              b.Op,
+              l, WidthOf(b.Left, model), SignedOf(b.Left, model),
+              r, WidthOf(b.Right, model), SignedOf(b.Right, model),
+              width);
           return ValueFactReduction.Binary(b.Op, l, r, width, SignedOf(b, model));
+        }
 
         // PB-lineage + - * may still be float-promoted here. Keep the established mathematical
         // range and residue transfer; there is no integer bit-pattern until a later integral store.
@@ -485,8 +492,11 @@ public static class IntervalRangeAnalysis {
   };
 
   private static ValueFacts StoreInto(ValueFacts facts, PbType type) {
+    var sourceRangeTracked = !facts.Range.IsTop;
     var fitted = FitOrTop(facts.Range, type);
     var width = WidthOf(type);
+    if (fitted.IsTop && sourceRangeTracked && width > 0)
+      fitted = TypeRange(type); // narrowing/wrapping store still leaves a value inside the destination type
     var mod = fitted.IsTop && !IsPowerOfTwo(facts.Mod.Modulus) ? Congruence.Unknown : facts.Mod;
     var stored = new ValueFacts(fitted, facts.Bits.Narrow(width), mod);
     return type is ScalarType { IsFloat: false, Signed: var signed } && width > 0
