@@ -11,7 +11,7 @@ public static class StaticSearchRecognition {
   private const int _MIN_BINARY_KEYS = 8;
   private const int _MIN_STATIC_KEYS = 4;
 
-  private sealed record Search(IrValue Key, long[] Keys);
+  private sealed record Search(IrValue Key, long[] Keys, bool Unsigned);
 
   /// <summary>Rewrites recognized searches; returns the number replaced.</summary>
   public static int Run(IrModule module) {
@@ -67,7 +67,7 @@ public static class StaticSearchRecognition {
       if (loop.Counter.Users.Any(user => user.Parent is not null && !loop.Region.Contains(user.Parent)))
         continue;
 
-      search = new(key, keys);
+      search = new(key, keys, table.ValueType.IsUnsigned);
       return true;
     }
     return false;
@@ -137,7 +137,8 @@ public static class StaticSearchRecognition {
 
   private static void Rewrite(IrFunction function, CountedLoop loop, Search search) {
     if (StrictlySorted(search.Keys) && search.Keys.Length >= _MIN_BINARY_KEYS) {
-      var root = BuildBinary(function, loop.Exit, search.Key, search.Keys, loop.Counter.Type, 0, search.Keys.Length - 1);
+      var root = BuildBinary(function, loop.Exit, search.Key, search.Keys, search.Unsigned,
+        loop.Counter.Type, 0, search.Keys.Length - 1);
       ((IrBr)loop.Preheader.Terminator!).Target = root;
     } else {
       var dispatch = new IrSwitch(search.Key, loop.Exit);
@@ -152,7 +153,7 @@ public static class StaticSearchRecognition {
   }
 
   private static IrBasicBlock BuildBinary(IrFunction function, IrBasicBlock failure, IrValue key, long[] keys,
-      IrType resultType, int lo, int hi) {
+      bool unsigned, IrType resultType, int lo, int hi) {
     if (lo > hi)
       return failure;
     var mid = lo + ((hi - lo) >> 1);
@@ -161,10 +162,10 @@ public static class StaticSearchRecognition {
     var constant = new IrConstantInt(key.Type, keys[mid]);
     var equal = node.Append(new IrCmp(IrCmpPred.Eq, key, constant));
     node.Append(new IrCondBr(equal, Hit(function, resultType, mid), order));
-    var less = order.Append(new IrCmp(key.Type.IsUnsigned ? IrCmpPred.Ult : IrCmpPred.Slt, key, constant));
+    var less = order.Append(new IrCmp(unsigned ? IrCmpPred.Ult : IrCmpPred.Slt, key, constant));
     order.Append(new IrCondBr(less,
-      BuildBinary(function, failure, key, keys, resultType, lo, mid - 1),
-      BuildBinary(function, failure, key, keys, resultType, mid + 1, hi)));
+      BuildBinary(function, failure, key, keys, unsigned, resultType, lo, mid - 1),
+      BuildBinary(function, failure, key, keys, unsigned, resultType, mid + 1, hi)));
     return node;
   }
 
