@@ -1,0 +1,45 @@
+name: PR52 apply CPU normalization v2
+
+on:
+  push:
+    branches:
+      - feature/intrinsic-zero-overhead-optimization
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Apply corrected source-only normalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path('.github/workflows/pr52-apply-cpu-normalization.yml').read_text().splitlines()
+          start = next(i for i, line in enumerate(source) if line == '        run: |') + 1
+          body = []
+          for line in source[start:]:
+              if line and not line.startswith('          '):
+                  break
+              body.append(line[10:] if line.startswith('          ') else '')
+
+          script = '\n'.join(body) + '\n'
+          script = script.replace(
+              'IrPassManager.Standard(optimizeSpeed: true)',
+              'IrPassManager.Standard(optimizeForSpeed: true)')
+          Path('/tmp/apply-cpu-normalization.sh').write_text(script)
+          PY
+          bash /tmp/apply-cpu-normalization.sh
