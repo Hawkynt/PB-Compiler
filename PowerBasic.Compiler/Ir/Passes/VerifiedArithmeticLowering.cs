@@ -9,7 +9,7 @@ public static class VerifiedArithmeticLowering {
 
   private static readonly Dictionary<short, MultiplyPlan?> _multiplyPlans = [];
   private static readonly Dictionary<short, bool> _signedDivisors = [];
-  private static readonly Lock _verificationLock = new();
+  private static readonly object _verificationLock = new();
 
   /// <summary>Rewrites verified constant multiplies and signed power-of-two divisions/remainders.</summary>
   public static int Run(IrFunction function) {
