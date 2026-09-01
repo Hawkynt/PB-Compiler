@@ -22,8 +22,9 @@ index is provably in the byte domain. It recognizes four exact total functions:
 constant, identity, `index XOR mask`, and wrapping `index + constant`.
 
 Generated `.lut.*` objects are deliberately excluded so O0332 and O0333 do not
-immediately undo each other. The table is removed only when every use is an
-eligible indexed load and the address does not escape.
+immediately undo each other. The table is removed only after a whole-object proof
+has accounted for every use as an eligible indexed load and the address does not
+escape; the rewrite therefore does not have a partial-mutation refusal path.
 
 ## Applies to
 
