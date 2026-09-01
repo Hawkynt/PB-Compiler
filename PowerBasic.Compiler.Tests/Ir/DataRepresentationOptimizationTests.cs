@@ -151,6 +151,28 @@ public sealed class DataRepresentationOptimizationTests {
   }
 
   [Test]
+  public void IdentityByteTable_GivenAStorageCompatibleButDifferentlySignedIndex_ThenItDeclines() {
+    var module = new IrModule("test");
+    var table = module.AddGlobal(new IrGlobalVariable("signedIdentity", IrType.I8) {
+      Bytes = [.. Enumerable.Range(0, 256).Select(index => (byte)index)],
+      Count = 256,
+      IsZeroInitialized = false,
+    });
+    var index = new IrArgument(IrType.U8, 0, "index");
+    var fn = module.AddFunction(new IrFunction("read", IrType.I8, [index]));
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    var widened = entry.Append(new IrCast(IrCastOp.ZExt, index, IrType.I16));
+    var at = entry.Append(new IrGep(table, widened, IrType.I8));
+    var load = entry.Append(new IrLoad(IrType.I8, at));
+    entry.Append(new IrRet(load));
+
+    Assert.That(LookupTableElimination.Run(module), Is.Zero,
+      "v1 must preserve exact IR type metadata rather than replacing an I8 load with a U8 index");
+    Assert.That(module.FindGlobal("signedIdentity"), Is.Not.Null);
+    Assert.That(fn.AllInstructions.OfType<IrLoad>().Single(), Is.SameAs(load));
+  }
+
+  [Test]
   public void GeneratedLookupTable_GivenAnArithmeticFormula_ThenTheReversePassDoesNotUndoGeneration() {
     var module = new IrModule("test");
     module.AddGlobal(new IrGlobalVariable(".lut.keep", IrType.U8) {
