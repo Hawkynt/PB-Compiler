@@ -131,8 +131,7 @@ public sealed class LoopDependenceAnalysisTests {
 
     Assert.That(info.IsComplete, Is.True);
     Assert.That(info.HasLoopCarriedDependence, Is.True);
-    Assert.That(info.Dependences, Has.Some.Matches<IrLoopDependence>(d =>
-      d.Kind == IrDependenceKind.Output && d.Distance == 1));
+    Assert.That(info.Dependences.Any(d => d.Kind == IrDependenceKind.Output && d.Distance == 1), Is.True);
   }
 
   [Test]
