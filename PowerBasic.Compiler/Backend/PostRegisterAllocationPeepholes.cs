@@ -74,7 +74,11 @@ public static class PostRegisterAllocationPeepholes {
       return true;
     }
 
-    if (firstPhysical == secondPhysical && secondSource is MOperand.Register or MOperand.Immediate
+    // Do not erase an overwritten MEMORY read here. Ordinary compiler memory is non-volatile, but PB
+    // can address absolute/far hardware locations as well; O0357 is a register-allocation peephole, not
+    // a dead-I/O-access pass. Register/immediate staging is the intended post-RA case.
+    if (firstPhysical == secondPhysical && firstSource is MOperand.Register or MOperand.Immediate
+        && secondSource is MOperand.Register or MOperand.Immediate
         && (secondSource is not MOperand.Register { Reg: var read } || Resolve(read, allocation) != firstPhysical)) {
       removeFirst = true;
       return true;
