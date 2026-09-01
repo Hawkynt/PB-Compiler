@@ -26,7 +26,7 @@ public static class LookupTableGeneration {
         || !function.ReturnType.IsInteger || function.ReturnType.Bits != 8
         || function.Blocks.Count != 1 || function.Entry is not { } entry
         || entry.Instructions.Count(instruction => !instruction.IsTerminator) < _MIN_BODY_COST
-        || entry.Terminator is not IrRet { HasValue: true } ret)
+        || entry.Terminator is not IrRet { HasValue: true })
       return false;
 
     var calls = module.Functions
@@ -52,8 +52,9 @@ public static class LookupTableGeneration {
         Count = _DOMAIN,
         IsZeroInitialized = false,
       });
-    } else if (table.Bytes is null || !table.Bytes.SequenceEqual(bytes))
-      return false;                                  // never silently reuse a same-named different object
+    } else if (!table.ValueType.SameStorage(IrType.I8) || table.Count != _DOMAIN || table.IsZeroInitialized
+               || table.Bytes is null || !table.Bytes.SequenceEqual(bytes))
+      return false;                                  // never silently reuse a same-named object with a different layout/value
 
     foreach (var call in calls) {
       var block = call.Parent;
