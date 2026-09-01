@@ -18,7 +18,7 @@ public static class EqualitySaturation {
     foreach (var root in function.AllInstructions.OfType<IrBinary>().ToArray()) {
       if (root.Parent is null || !Eligible(root))
         continue;
-      var context = new Context();
+      var context = new Context(root);
       var initial = context.Import(root, isRoot: true);
       var best = Saturate(initial, context);
       if (Cost(best) >= Cost(initial) || best.Equals(initial))
@@ -107,6 +107,7 @@ public static class EqualitySaturation {
         if (b.Left.Equals(b.Right)) yield return b.Left;
         if (Absorbs(b.Left, b.Right, IrBinaryOp.Or)) yield return b.Left;
         if (Absorbs(b.Right, b.Left, IrBinaryOp.Or)) yield return b.Right;
+        // (a | b) & (a | c) -> a | (b & c)
         if (TryFactor(b, IrBinaryOp.Or, context) is { } factoredAnd) yield return factoredAnd;
         break;
       case IrBinaryOp.Or:
@@ -116,6 +117,7 @@ public static class EqualitySaturation {
         if (b.Left.Equals(b.Right)) yield return b.Left;
         if (Absorbs(b.Left, b.Right, IrBinaryOp.And)) yield return b.Left;
         if (Absorbs(b.Right, b.Left, IrBinaryOp.And)) yield return b.Right;
+        // (a & b) | (a & c) -> a & (b | c)
         if (TryFactor(b, IrBinaryOp.And, context) is { } factoredOr) yield return factoredOr;
         break;
       case IrBinaryOp.Xor:
@@ -137,6 +139,8 @@ public static class EqualitySaturation {
     }
 
     if (IsAssociativeCommutative(b.Op)) {
+      // Both associativity directions are admitted. The bounded equality class keeps this from turning
+      // a long chain into an unbounded rewrite loop, while extraction chooses the cheapest endpoint.
       if (b.Left is Binary left && left.Op == b.Op)
         yield return new Binary(b.Op, type, left.Left, new Binary(b.Op, type, left.Right, b.Right));
       if (b.Right is Binary right && right.Op == b.Op)
@@ -202,9 +206,9 @@ public static class EqualitySaturation {
   private static bool TryEvaluate(IrBinaryOp op, IrType type, long left, long right, out long result) {
     result = 0;
     switch (op) {
-      case IrBinaryOp.Add: result = left + right; break;
-      case IrBinaryOp.Sub: result = left - right; break;
-      case IrBinaryOp.Mul: result = left * right; break;
+      case IrBinaryOp.Add: result = unchecked(left + right); break;
+      case IrBinaryOp.Sub: result = unchecked(left - right); break;
+      case IrBinaryOp.Mul: result = unchecked(left * right); break;
       case IrBinaryOp.And: result = left & right; break;
       case IrBinaryOp.Or: result = left | right; break;
       case IrBinaryOp.Xor: result = left ^ right; break;
@@ -230,7 +234,7 @@ public static class EqualitySaturation {
   private sealed record Constant(IrType Type, long Value) : Expr(Type);
   private sealed record Binary(IrBinaryOp Op, IrType Type, Expr Left, Expr Right) : Expr(Type);
 
-  private sealed class Context {
+  private sealed class Context(IrBinary root) {
     private readonly Dictionary<IrValue, Leaf> _leaves = new(ReferenceEqualityComparer.Instance);
     private int _nextLeaf;
 
