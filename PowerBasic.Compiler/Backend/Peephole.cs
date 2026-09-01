@@ -108,11 +108,6 @@ public static class Peephole {
     total += StraightenBranches(function);
     foreach (var block in function.Blocks)
       total += FoldZeroConstants(block);
-    // O0356/O0355 are selected-machine transforms too, but deliberately come after the general
-    // peepholes: they consume the final two-address/physical-encoding shapes and still run before
-    // scheduling and allocation can make a rewrite more expensive.
-    total += MachineCombiner.Run(function);
-    total += SuperoptimizedPeepholes.Run(function);
     return total;
   }
 
