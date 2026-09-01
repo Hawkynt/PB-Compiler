@@ -22,6 +22,24 @@ public sealed class StaticDispatchOptimizationTests {
   }
 
   [Test]
+  public void SortedConstantSearch_GivenASignedTableAndUnsignedCompatibleKey_ThenOrderingStaysSigned() {
+    var module = new IrModule("test");
+    var fn = BuildSearch(module, "signed", IrType.I8, IrType.U8, [0x80, 0xff, 0, 1, 2, 3, 4, 5]);
+
+    Assert.That(StaticSearchRecognition.Run(module), Is.EqualTo(1));
+    var ordering = fn.Blocks
+      .Where(block => block.Label.StartsWith("bsearch.order.", StringComparison.Ordinal))
+      .SelectMany(block => block.Instructions.OfType<IrCmp>())
+      .ToList();
+    Assert.Multiple(() => {
+      Assert.That(ordering, Is.Not.Empty);
+      Assert.That(ordering, Has.All.Matches<IrCmp>(comparison => comparison.Pred == IrCmpPred.Slt),
+        "the table's signed ordering defines the binary-search relation even when the key type is unsigned");
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    });
+  }
+
+  [Test]
   public void UnsortedConstantSearch_GivenAUniqueStaticSet_ThenItBecomesVerifiedSwitchDispatch() {
     var module = new IrModule("test");
     var fn = BuildSearch(module, "set", [17, 2, 91, 4, 33]);
@@ -74,13 +92,16 @@ public sealed class StaticDispatchOptimizationTests {
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
   }
 
-  private static IrFunction BuildSearch(IrModule module, string name, byte[] keys) {
-    var table = module.AddGlobal(new IrGlobalVariable($"{name}.keys", IrType.U8) {
+  private static IrFunction BuildSearch(IrModule module, string name, byte[] keys)
+    => BuildSearch(module, name, IrType.U8, IrType.U8, keys);
+
+  private static IrFunction BuildSearch(IrModule module, string name, IrType tableType, IrType keyType, byte[] keys) {
+    var table = module.AddGlobal(new IrGlobalVariable($"{name}.keys", tableType) {
       Bytes = keys,
       Count = keys.Length,
       IsZeroInitialized = false,
     });
-    var key = new IrArgument(IrType.U8, 0, "key");
+    var key = new IrArgument(keyType, 0, "key");
     var fn = module.AddFunction(new IrFunction(name, IrType.I16, [key]));
     var pre = fn.AddBlock(new IrBasicBlock("pre"));
     var header = fn.AddBlock(new IrBasicBlock("header"));
@@ -93,8 +114,8 @@ public sealed class StaticDispatchOptimizationTests {
     var counter = header.AppendPhi(new IrPhi(IrType.I16));
     var inRange = header.Append(new IrCmp(IrCmpPred.Slt, counter, new IrConstantInt(IrType.I16, keys.Length)));
     header.Append(new IrCondBr(inRange, body, exit));
-    var at = body.Append(new IrGep(table, counter, IrType.U8));
-    var current = body.Append(new IrLoad(IrType.U8, at));
+    var at = body.Append(new IrGep(table, counter, tableType));
+    var current = body.Append(new IrLoad(tableType, at));
     var equal = body.Append(new IrCmp(IrCmpPred.Eq, current, key));
     body.Append(new IrCondBr(equal, found, latch));
     found.Append(new IrRet(counter));
