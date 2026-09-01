@@ -49,7 +49,8 @@ public static class LookupTableElimination {
         return false;
       foreach (var indexed in gep.Users.ToList()) {
         if (indexed.Parent?.Parent is { HasErrorHandler: true } or { HasInlineAsm: true }
-            || indexed is not IrLoad load || !ReferenceEquals(load.Pointer, gep) || load.Type.Bits != 8)
+            || indexed is not IrLoad load || !ReferenceEquals(load.Pointer, gep) || load.Type.Bits != 8
+            || !load.Type.Equals(index.Type))
           return false;
         accesses.Add(new(load, gep, index));
       }
