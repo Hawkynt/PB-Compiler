@@ -43,6 +43,11 @@ public static class LateLoadStoreOptimization {
                 ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: false));
           }
           ++changed;
+        } else {
+          // A differently-sized access to the same spill slot is a real memory read. It cannot be
+          // forwarded from an exact-value fact, but it must still keep an overlapping earlier store
+          // alive against a later overwrite.
+          MarkOverlappingReads(known, key);
         }
       } else if (TryStore(original, allocation, out var storeSlot, out var source)) {
         var key = SlotKey.Of(storeSlot);
