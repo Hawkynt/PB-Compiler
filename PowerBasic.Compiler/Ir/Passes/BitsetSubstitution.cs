@@ -45,8 +45,8 @@ public static class BitsetSubstitution {
     foreach (var gep in geps)
       if (gep.HasNoUsers)
         gep.EraseFromParent();
-    if (!global.HasNoUsers)
-      return false;                                  // defensive: the proof and rewrite must agree exactly
+    System.Diagnostics.Debug.Assert(global.HasNoUsers,
+      "the whole-program access proof must account for every use before the representation changes");
 
     module.RemoveGlobal(global);
     module.AddGlobal(replacement);
@@ -68,14 +68,14 @@ public static class BitsetSubstitution {
               return false;
           }
           break;
-        case IrLoad load when ReferenceEquals(load.Pointer, global):
+        case IrLoad load when ReferenceEquals(load.Pointer, global) && load.Type.SameStorage(IrType.I16):
           accesses.Add(new(load, new IrConstantInt(IrType.I16, 0)));
           break;
         case IrStore store when ReferenceEquals(store.Pointer, global) && BooleanStore(store):
           accesses.Add(new(store, new IrConstantInt(IrType.I16, 0)));
           break;
         default:
-          return false;                              // address escape, byte GEP, or whole-array operation
+          return false;                              // address escape, differently typed access, or whole-array operation
       }
     }
     return accesses.Count > 0;
