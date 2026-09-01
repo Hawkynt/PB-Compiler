@@ -59,13 +59,19 @@ public readonly record struct Interval(long Lo, long Hi) {
     } catch (OverflowException) { return Top; }
   }
 
-  /// <summary>PB's truncated MOD: |result| &lt; |k| and the result takes the dividend's sign, so
-  /// it lies in [-(|k|-1), |k|-1], tightened to [0, |k|-1] when the dividend is provably &gt;= 0.
-  /// Only a constant divisor is modelled.</summary>
+  /// <summary>
+  /// PB's truncated MOD: the result is either zero or has the dividend's sign, and its magnitude is
+  /// smaller than the divisor's. A finite divisor interval that excludes zero therefore gives a
+  /// finite remainder bound even when the divisor is not constant.
+  /// </summary>
   public Interval Modulo(Interval o) {
-    if (o.Lo != o.Hi || o.Lo == 0) return Top;
-    var bound = Math.Abs(o.Lo) - 1;
-    return this.Lo >= 0 ? new(0, bound) : new(-bound, bound);
+    if (this.IsTop || o.IsTop || o.Contains(0)) return Top;
+    static ulong Magnitude(long value) => value == long.MinValue ? 1UL << 63 : (ulong)Math.Abs(value);
+    var magnitude = Math.Max(Magnitude(o.Lo), Magnitude(o.Hi));
+    var bound = (long)Math.Min(magnitude - 1, (ulong)long.MaxValue);
+    if (this.Lo >= 0) return new(0, bound);
+    if (this.Hi <= 0) return new(-bound, 0);
+    return new(-bound, bound);
   }
 
   /// <summary>Bitwise AND with a non-negative constant mask keeps only the mask's bits, so the
@@ -122,27 +128,12 @@ public static class IntervalRangeAnalysis {
     return env;
   }
 
-  /// <summary>
-  /// The analysis context: the bound model plus whether this body contains anything that can
-  /// write memory the analysis cannot name - an address-taking intrinsic (VARPTR/STRPTR/...),
-  /// a pointer store, POKE or inline assembly. When it does, a call may reach even a private
-  /// local, so calls invalidate everything; when it does not (the overwhelmingly common case),
-  /// a call can only touch module-level data, parameters and its own arguments.
-  /// </summary>
   private readonly record struct Scope(SemanticModel Model, bool Escapes, bool Jumps);
 
-  /// <summary>Intrinsics that hand out the address of a variable, after which any call may write it.</summary>
   private static readonly HashSet<string> _addressIntrinsics = new(StringComparer.OrdinalIgnoreCase) {
     "VARPTR", "VARPTR32", "VARSEG", "STRPTR", "STRPTR32", "CODEPTR", "CODEPTR32",
   };
 
-  /// <summary>
-  /// Scans <paramref name="body"/> once for the two facts the kill-set reasoning needs: whether an
-  /// address escapes (an address-taking intrinsic, a pointer store, POKE, inline assembly, or a
-  /// lambda / nested procedure capturing this frame) and whether control can jump to a label
-  /// (GOTO/GOSUB/ON..GOTO/RESUME/ON ERROR). Uses the reflective node walk, so it is complete by
-  /// construction: a newly added AST node cannot silently introduce either hazard.
-  /// </summary>
   private static Scope ScopeOf(IReadOnlyList<Statement> body, SemanticModel model) {
     var escapes = false;
     var jumps = false;
@@ -167,11 +158,6 @@ public static class IntervalRangeAnalysis {
     return new(model, escapes, jumps);
   }
 
-  /// <summary>
-  /// The value-fact environment at the ENTRY of each statement (keyed by statement reference,
-  /// recursively into IF arms). A statement absent from the map was unreachable to the analysis;
-  /// a variable absent from a statement's environment is completely unknown.
-  /// </summary>
   public static IReadOnlyDictionary<Statement, IReadOnlyDictionary<VariableSymbol, ValueFacts>>
       AnalyzeProgramPoints(IReadOnlyList<Statement> body, SemanticModel model) {
     var points = new Dictionary<Statement, IReadOnlyDictionary<VariableSymbol, ValueFacts>>(ReferenceEqualityComparer.Instance);
@@ -180,10 +166,6 @@ public static class IntervalRangeAnalysis {
     return points;
   }
 
-  /// <summary>
-  /// Evaluates an arbitrary integer expression in an already-computed program-point environment.
-  /// This is the single query the emitter uses when a target instruction can exploit value shape.
-  /// </summary>
   public static ValueFacts Evaluate(Expression expression, IReadOnlyDictionary<VariableSymbol, ValueFacts> environment, SemanticModel model)
     => Eval(expression, environment, model);
 
@@ -196,13 +178,6 @@ public static class IntervalRangeAnalysis {
     }
   }
 
-  /// <summary>
-  /// A statement whose recorded program point is NOT its entry environment, because the emitter reads
-  /// that point while emitting something the loop re-executes - the pre/post test, which runs again on
-  /// every back edge with loop-carried values. <see cref="TransferLoop"/> is the sole author of a
-  /// loop's point and writes the widened invariant there. A loop the analysis refuses has no point,
-  /// which is the honest Top answer rather than its first-iteration pre-loop state.
-  /// </summary>
   private static bool IsLoop(Statement s) => s is ForStmt or DoLoopStmt;
 
   private static void Transfer(Statement s, Dictionary<VariableSymbol, ValueFacts> env, Scope scope,
@@ -393,8 +368,6 @@ public static class IntervalRangeAnalysis {
           return ValueFactReduction.Binary(b.Op, l, r, width, SignedOf(b, model));
         }
 
-        // PB-lineage + - * may still be float-promoted here. Keep the established mathematical
-        // range and residue transfer; there is no integer bit-pattern until a later integral store.
         var range = b.Op switch {
           BinaryOp.Add => l.Range.Add(r.Range),
           BinaryOp.Subtract => l.Range.Subtract(r.Range),
@@ -473,7 +446,6 @@ public static class IntervalRangeAnalysis {
       or BinaryOp.LessEqual or BinaryOp.GreaterEqual } => true,
     BinaryExpr { Op: BinaryOp.And or BinaryOp.Or or BinaryOp.Xor } b => IsTruthValued(b.Left) && IsTruthValued(b.Right),
     UnaryExpr { Op: UnaryOp.Not } u => IsTruthValued(u.Operand),
-    IfExpr => true,
     _ => false,
   };
 
@@ -510,7 +482,7 @@ public static class IntervalRangeAnalysis {
     var fitted = FitOrTop(facts.Range, type);
     var width = WidthOf(type);
     if (fitted.IsTop && sourceRangeTracked && width > 0)
-      fitted = TypeRange(type); // narrowing/wrapping store still leaves a value inside the destination type
+      fitted = TypeRange(type);
     var mod = fitted.IsTop && !IsPowerOfTwo(facts.Mod.Modulus) ? Congruence.Unknown : facts.Mod;
     var stored = new ValueFacts(fitted, facts.Bits.Narrow(width), mod);
     return type is ScalarType { IsFloat: false, Signed: var signed } && width > 0
