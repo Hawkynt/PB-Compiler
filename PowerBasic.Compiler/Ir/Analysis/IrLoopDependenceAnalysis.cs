@@ -106,7 +106,7 @@ public static class IrLoopDependenceAnalysis {
     AffineAddress? AddressOf(IrLoopMemoryAccess access) {
       if (addresses.TryGetValue(access, out var cached))
         return cached;
-      var address = TryAddress(loop, access, start, step, out var matched) ? matched : null;
+      AffineAddress? address = TryAddress(loop, access, start, step, out var matched) ? matched : null;
       addresses[access] = address;
       return address;
     }
