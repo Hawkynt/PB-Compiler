@@ -152,6 +152,7 @@ public static class ValueFactReduction {
 
     left = Reduce(left, width, signed);
     right = Reduce(right, width, signed);
+    var inputsRangeTracked = !left.Range.IsTop && !right.Range.IsTop;
     var exactCount = ExactInt(right);
     var shiftCount = exactCount is >= 0 and < 64 ? (int?)exactCount : null;
 
@@ -167,7 +168,17 @@ public static class ValueFactReduction {
       BinaryOp.ShiftRightLogical when shiftCount is { } count && count < width => ShiftRightLogicalRange(left.Range, count, width),
       _ => Interval.Top,
     };
-    range = FitOrTop(range, width, signed); // a mathematical range that can wrap is not a runtime interval yet
+    range = FitOrTop(range, width, signed);
+
+    // A finite fixed-width input domain is closed under these operations. If the precise
+    // mathematical hull wrapped (ADD/SUB/MUL/SHL) or the interval domain has no useful transfer
+    // of its own (OR/XOR/EQV/IMP/rotate), do not throw the range information away: the runtime
+    // result is still inside the result type. Start with that type range and let known bits and
+    // congruence reduce it further. This is deliberately not applied to DIV/MOD, whose divisor
+    // may include zero and whose successful-result set needs its own transfer rather than a fake
+    // proof about a potentially trapping calculation.
+    if (range.IsTop && inputsRangeTracked && IsRangeClosedFixedWidth(op))
+      range = TypeRange(width, signed);
 
     var bits = op switch {
       BinaryOp.And => left.Bits.And(right.Bits),
@@ -247,6 +258,8 @@ public static class ValueFactReduction {
   public static ValueFacts Negate(ValueFacts value, int width, bool signed) {
     value = Reduce(value, width, signed);
     var range = FitOrTop(value.Range.Negate(), width, signed);
+    if (range.IsTop && !value.Range.IsTop)
+      range = TypeRange(width, signed); // fixed-width two's-complement negation still produces a value in the type
     var bits = AddSub(KnownBits.Of(0, width), value.Bits, width, subtract: true);
     var mod = range.IsTop && !IsPowerOfTwo(value.Mod.Modulus) ? Congruence.Unknown : value.Mod.Negate();
     return Reduce(new(range, bits, mod), width, signed);
@@ -255,13 +268,20 @@ public static class ValueFactReduction {
   /// <summary>Transfer for PB's fixed-width bitwise NOT.</summary>
   public static ValueFacts Not(ValueFacts value, int width, bool signed) {
     value = Reduce(value, width, signed);
-    // The bit transfer is exact. Deriving the numeric range back from those bits is safer than
-    // applying C#'s 64-bit ~ to a narrower unsigned value and then pretending it did not wrap.
-    return Reduce(new(Interval.Top, value.Bits.Not().Narrow(width), Congruence.Unknown), width, signed);
+    // The bit transfer is exact. A finite input interval must remain range-tracked: NOT cannot
+    // escape the fixed-width result type even when the bit-derived interval is otherwise weak.
+    var range = value.Range.IsTop ? Interval.Top : TypeRange(width, signed);
+    return Reduce(new(range, value.Bits.Not().Narrow(width), Congruence.Unknown), width, signed);
   }
 
   /// <summary>Facts for an unknown comparison: PB truth is exactly 0 or -1.</summary>
   public static ValueFacts Truth(int width) => Reduce(new(new Interval(-1, 0), KnownBits.Unknown, Congruence.Unknown), width, signed: true);
+
+  private static bool IsRangeClosedFixedWidth(BinaryOp op) => op is
+    BinaryOp.Add or BinaryOp.Subtract or BinaryOp.Multiply
+      or BinaryOp.And or BinaryOp.Or or BinaryOp.Xor or BinaryOp.Eqv or BinaryOp.Imp
+      or BinaryOp.ShiftLeft or BinaryOp.ShiftRightArith or BinaryOp.ShiftRightLogical
+      or BinaryOp.RotateLeft or BinaryOp.RotateRight;
 
   private static KnownBits MultiplyBits(ValueFacts left, ValueFacts right, int width) {
     if (ExactInt(right) is { } r && TryPowerOfTwoMagnitude(r, out var shift)) {
