@@ -52,6 +52,21 @@ public sealed class DataRepresentationOptimizationTests {
   }
 
   [Test]
+  public void BooleanGlobalArray_GivenAByteTypedDirectRead_ThenItIsNotReinterpretedAsABooleanElement() {
+    var module = new IrModule("test");
+    var flags = module.AddGlobal(new IrGlobalVariable("flags", IrType.I16) {
+      Count = 32,
+      IsZeroInitialized = true,
+    });
+    var fn = module.AddFunction(new IrFunction("f", IrType.I8));
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    entry.Append(new IrRet(entry.Append(new IrLoad(IrType.I8, flags))));
+
+    Assert.That(BitsetSubstitution.Run(module), Is.Zero);
+    Assert.That(module.FindGlobal("flags")!.ValueType.SameStorage(IrType.I16), Is.True);
+  }
+
+  [Test]
   public void PureByteFunction_GivenRepeatedDynamicCalls_ThenACompleteTableReplacesTheCalls() {
     var module = new IrModule("test");
     var x = new IrArgument(IrType.U8, 0, "x");
@@ -81,6 +96,33 @@ public sealed class DataRepresentationOptimizationTests {
       Assert.That(caller.AllInstructions.OfType<IrLoad>().Count(), Is.EqualTo(2));
       Assert.That(IrVerifier.Verify(caller), Is.Empty);
     });
+  }
+
+  [Test]
+  public void PureByteFunction_GivenAConflictingSameNamedTableLayout_ThenItDoesNotReuseIt() {
+    var module = new IrModule("test");
+    module.AddGlobal(new IrGlobalVariable(".lut.identityTransform", IrType.I16) {
+      Bytes = [.. Enumerable.Range(0, 256).Select(index => (byte)index)],
+      Count = 256,
+      IsZeroInitialized = false,
+    });
+    var x = new IrArgument(IrType.U8, 0, "x");
+    var transform = module.AddFunction(new IrFunction("identityTransform", IrType.U8, [x]));
+    var body = transform.AddBlock(new IrBasicBlock("entry"));
+    IrValue value = x;
+    for (var i = 0; i < 6; ++i)
+      value = body.Append(new IrBinary(IrBinaryOp.Xor, value, new IrConstantInt(IrType.U8, 0)));
+    body.Append(new IrRet(value));
+
+    var input = new IrArgument(IrType.U8, 0, "input");
+    var caller = module.AddFunction(new IrFunction("caller", IrType.U8, [input]));
+    var entry = caller.AddBlock(new IrBasicBlock("entry"));
+    var first = entry.Append(new IrCall(IrType.U8, transform, [input]));
+    var second = entry.Append(new IrCall(IrType.U8, transform, [input]));
+    entry.Append(new IrRet(entry.Append(new IrBinary(IrBinaryOp.Xor, first, second))));
+
+    Assert.That(LookupTableGeneration.Run(module), Is.Zero);
+    Assert.That(caller.AllInstructions.OfType<IrCall>().Count(), Is.EqualTo(2));
   }
 
   [Test]
@@ -114,6 +156,7 @@ public sealed class DataRepresentationOptimizationTests {
     module.AddGlobal(new IrGlobalVariable(".lut.keep", IrType.U8) {
       Bytes = [.. Enumerable.Range(0, 256).Select(index => (byte)(index ^ 0x5a))],
       Count = 256,
+      IsZeroInitialized = false,
     });
 
     Assert.That(LookupTableElimination.Run(module), Is.Zero);
