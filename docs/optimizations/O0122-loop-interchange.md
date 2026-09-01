@@ -2,52 +2,142 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟨 Partial — conservative two-level IR interchange implemented; general dependence-direction vectors and richer nests remain |
 | **Stage** | Mid-end |
+| **Source** | `Ir/Passes/LoopInterchange.cs` |
+| **Verified by** | `PowerBasic.Compiler.Tests/Ir/LoopInterchangeTests.cs` |
 | **Related** | [O0062](O0062-loop-restructuring.md), [O0110](O0110-general-induction-variables.md), [O0172](O0172-loop-dependence-analysis.md) |
 
 ## The idea
 
 Swapping the nesting order of two loops changes a strided traversal into a
-contiguous one. PowerBASIC arrays are **column-major** in the classic layout, so
-`a(i, j)` with `j` innermost strides by the row length, while `i` innermost
-walks adjacent elements — a difference between a pointer increment and a
-multiply-and-add per access.
-
-## Applies to
+contiguous one. PowerBASIC's documented multidimensional-array representation
+is **column-major**: the first subscript varies fastest. For a correctly lowered
+`a(i, j)`, an innermost `j` therefore strides by the first dimension while an
+innermost `i` walks adjacent elements.
 
 ```basic
-DIM a%(0 TO 99, 0 TO 99), i%, j%, s%
+DIM a%(0 TO 99, 0 TO 99), i%, j%
 FOR i% = 0 TO 99
   FOR j% = 0 TO 99
-    s% = s% + a%(i%, j%)     ' strided
+    a%(i%, j%) = 1           ' strided in PowerBASIC's column-major layout
   NEXT
 NEXT
 ```
 
-## Today
-
-Each access recomputes the flattened index; the walk jumps by a row each step,
-so no pointer stepping applies.
-
-## Planned
+becomes
 
 ```basic
 FOR j% = 0 TO 99
   FOR i% = 0 TO 99
-    s% = s% + a%(i%, j%)     ' contiguous: the inner loop steps by one element
+    a%(i%, j%) = 1           ' first subscript now innermost
   NEXT
 NEXT
 ```
 
-which then qualifies for [O0030](O0030-induction-variable-strength-reduction.md)
-pointer stepping and, on a wide target, for vectorization.
+when the dependence facts permit it.
 
-## What it needs
+## Implemented IR slice
 
-- **Dependence analysis** ([O0172](O0172-loop-dependence-analysis.md)):
-  interchange is legal only when no dependence direction vector forbids it.
-- Both counters' **post-loop values** must be preserved — PB leaves them live,
-  so the interchange must reproduce exactly the same final values.
-- Rectangular bounds (the inner limit must not depend on the outer counter), or
-  the interchange changes the iteration set.
+`LoopInterchange` recognizes a deliberately strict canonical nest:
+
+- two `CountedLoop`s with constant, non-wrapping integer start/limit/step;
+- a rectangular iteration space — the inner start/limit/step are constants and
+  therefore cannot depend on the outer counter;
+- the inner loop is the only body of the outer loop;
+- the innermost body is one basic block;
+- no calls, inline assembly, integer/floating division/remainder, or other
+  instruction whose ordering may expose a trap or side effect outside the
+  memory model;
+- body-produced SSA values do not escape the nest.
+
+The CFG does **not** need to be cloned. A perfect canonical nest already has the
+same block topology after interchange. The pass keeps the blocks and body in
+place, creates new induction phis/tests/increments, and swaps which source
+counter occupies the outer and inner loop-control positions.
+
+### Memory legality
+
+The pass forms a two-counter affine byte address for each body load/store:
+
+`root + outerStride * outerIteration + innerStride * innerIteration + constant`
+
+Every intermediate integer expression must stay within its signed IR type for
+the whole rectangle; a potentially wrapping expression declines.
+
+O0171 is used first for distinct-object disambiguation. Read/read pairs do not
+constrain execution order. This first O0122 slice is deliberately stricter than
+the full O0172 design for writes:
+
+- if a write may alias a *different* access site, interchange declines until
+  nested direction vectors are available;
+- a write's own two-dimensional address must be injective over the rectangle;
+- the GCD of the two byte strides must be at least the access width, so distinct
+  starts cannot partially overlap.
+
+This proves the supported copy/fill/elementwise shapes without treating an
+unknown dependence as independence.
+
+### Profitability
+
+Profitability follows the **actual IR address coefficients**, not a hard-coded
+array-layout assumption. For every memory access the pass compares the absolute
+byte displacement produced by advancing the current inner counter with the
+one produced by advancing the current outer counter. Interchange happens only
+when the summed proposed inner displacement is strictly smaller.
+
+That makes the optimization target-independent and prevents a second swap on
+the next pass-manager fixpoint iteration.
+
+### Post-loop counters
+
+PowerBASIC leaves `FOR` counters live after `NEXT`. The pass preserves that
+observable state:
+
+- uses of the old outer counter outside the nest become its proven final
+  constant;
+- the common mem2reg carrier phi that exposes the final inner counter after the
+  outer loop is recognized, replaced by the inner counter's proven final
+  constant, and removed.
+
+If a more complicated carried value participates in the loop, this slice
+backs off.
+
+## Important existing layout issue
+
+The language contract and the current IR lowering disagree today. PowerBASIC's
+reference documentation specifies column-major storage (first subscript fastest),
+but `IrLowering` currently flattens static multidimensional indexes from
+`k = 0` upward as:
+
+`flat = flat * size[k] + rel`
+
+which makes the **last** subscript fastest (row-major). `docs/IR.md` describes
+that current implementation as row-major.
+
+O0122 intentionally does not conceal or compensate for that compatibility bug:
+its profitability decision follows whatever byte strides the IR actually has.
+Correcting multidimensional array layout is a separate semantic change and
+should receive its own oracle/VARPTR/interoperability validation.
+
+## Still planned
+
+- Extend O0172 from one-level distances to full nested dependence direction
+  vectors, then use the standard lexicographic-permutation legality rule.
+- Support multiple potentially-aliasing access sites when those direction
+  vectors prove the swapped order legal.
+- Support larger/multi-block perfect nests and selected imperfect nests.
+- Preserve general LCSSA/reduction values rather than declining when a body
+  result escapes.
+- Combine the legality result with [O0174](O0174-target-cost-models.md) for
+  cache-line/vector-width-aware profitability rather than byte stride alone.
+
+## References / design basis
+
+LLVM's LoopInterchange implementation uses the standard rule for a perfect
+nest: after permuting dependence-vector columns, no row may have `>` as its
+leftmost non-`=` direction. It also separates legality from profitability and
+conservatively rejects loop structures it does not understand. This
+implementation uses those rules as a behavioral/design reference only; it is
+independently structured for PB-Compiler's IR and no LLVM implementation code
+or comments are copied.
