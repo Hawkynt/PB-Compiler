@@ -1,0 +1,104 @@
+name: PR52 apply CPU normalization v4
+
+on:
+  push:
+    branches:
+      - feature/intrinsic-zero-overhead-optimization
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Apply and validate normalized CPU targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path('.github/workflows/pr52-apply-cpu-normalization.yml').read_text().splitlines()
+          start = next(i for i, line in enumerate(source) if line == '        run: |') + 1
+          body = []
+          for line in source[start:]:
+              if line and not line.startswith('          '):
+                  break
+              body.append(line[10:] if line.startswith('          ') else '')
+
+          script = '\n'.join(body) + '\n'
+          restore = 'dotnet restore PB-Compiler.slnx'
+          if restore not in script:
+              raise SystemExit('restore anchor changed')
+          script = script.replace(restore, 'python /tmp/pr52-normalization-preflight.py\n' + restore, 1)
+          Path('/tmp/apply-cpu-normalization.sh').write_text(script)
+
+          Path('/tmp/pr52-normalization-preflight.py').write_text(r'''from pathlib import Path
+
+          def replace(path, old, new, count=1):
+              p = Path(path)
+              text = p.read_text()
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(f'{path}: expected {count} occurrences, found {actual}: {old!r}')
+              p.write_text(text.replace(old, new))
+
+          # Generated matrix used an obsolete named argument.
+          replace(
+              'PowerBasic.Compiler.Tests/Backend/BackendCpuGenerationMatrixTests.cs',
+              'IrPassManager.Standard(optimizeSpeed: true)',
+              'IrPassManager.Standard(optimizeForSpeed: true)')
+
+          # Anchor inline-asm encoding assertions to the emitted statement rather than scanning unrelated runtime bytes.
+          p = Path('PowerBasic.Compiler.Tests/CodeGen/InlineAsm8086ShiftTests.cs')
+          text = p.read_text()
+          old8086 = '''  [Test]\n  public void ShrWordByImmediateThree_Given8086Target_ThenUsesThreeD1InstructionsNot186C1() {\n    var (image, _) = Compile("8086", "! SHR AX, 3\\nEND\\n");\n\n    Assert.That(ContainsSequence(image, [0xD1, 0xE8, 0xD1, 0xE8, 0xD1, 0xE8]), Is.True,\n      "8086 immediate shift should lower to repeated count-one instructions");\n    Assert.That(ContainsSequence(image, [0xC1, 0xE8, 0x03]), Is.False,\n      "C1 /5 ib is an 80186+ encoding and must not leak into an 8086 target");\n  }\n'''
+          new8086 = '''  [Test]\n  public void ShrWordByImmediateThree_Given8086Target_ThenUsesThreeD1InstructionsNot186C1() {\n    var (image, _) = Compile("8086", "! MOV AX, 4660\\n! SHR AX, 3\\n! MOV BX, 22136\\nEND\\n");\n\n    Assert.That(ContainsSequence(image, [\n      0xB8, 0x34, 0x12,\n      0xD1, 0xE8, 0xD1, 0xE8, 0xD1, 0xE8,\n      0xBB, 0x78, 0x56,\n    ]), Is.True, "the anchored inline-asm sequence must contain only 8086 count-one encodings");\n  }\n'''
+          old186 = '''  [Test]\n  public void ShrWordByImmediateThree_Given186Target_ThenKeepsCompactC1Encoding() {\n    var (image, _) = Compile("186", "! SHR AX, 3\\nEND\\n");\n    Assert.That(ContainsSequence(image, [0xC1, 0xE8, 0x03]), Is.True);\n  }\n'''
+          new186 = '''  [Test]\n  public void ShrWordByImmediateThree_Given186Target_ThenKeepsCompactC1Encoding() {\n    var (image, _) = Compile("186", "! MOV AX, 4660\\n! SHR AX, 3\\n! MOV BX, 22136\\nEND\\n");\n    Assert.That(ContainsSequence(image, [\n      0xB8, 0x34, 0x12, 0xC1, 0xE8, 0x03, 0xBB, 0x78, 0x56,\n    ]), Is.True);\n  }\n'''
+          if text.count(old8086) != 1 or text.count(old186) != 1:
+              raise SystemExit('inline shift regression anchors changed')
+          p.write_text(text.replace(old8086, new8086).replace(old186, new186))
+
+          # RuntimeTarget is the legality/capability contract. Widened/vector bulk kernels remain optimizer choices.
+          replace(
+              'PowerBasic.Compiler/Runtime/DosRuntime.Targeting.cs',
+              '''  public RuntimeTarget Target {\n    get => this._target;\n    set => this._target = value;\n  }\n\n''',
+              '''  public RuntimeTarget Target {\n    get => this._target;\n    set => this._target = value;\n  }\n\n  /// <summary>\n  /// Enables optimizer-selected widened/vector bulk runtime kernels. <see cref="Target"/> remains the\n  /// unconditional legality contract used by runtime state setup and inline assembly; this switch only\n  /// controls whether equivalent but larger/faster bulk implementations are worth emitting.\n  /// </summary>\n  public bool EnableTargetOptimizations { get; set; }\n\n''')
+          replace(
+              'PowerBasic.Compiler/Runtime/DosRuntime.Targeting.cs',
+              '''  private void EmitVectorCopyPrefix(Assembler asm) {\n    var width = this.Target.MaxRuntimeBulkVectorWidthBytes;\n''',
+              '''  private void EmitVectorCopyPrefix(Assembler asm) {\n    if (!this.EnableTargetOptimizations)\n      return;\n    var width = this.Target.MaxRuntimeBulkVectorWidthBytes;\n''')
+          replace(
+              'PowerBasic.Compiler/Runtime/DosRuntime.Targeting.cs',
+              '''  private void EmitVectorZeroPrefix(Assembler asm, int unitBytes) {\n    var width = this.Target.MaxRuntimeBulkVectorWidthBytes;\n''',
+              '''  private void EmitVectorZeroPrefix(Assembler asm, int unitBytes) {\n    if (!this.EnableTargetOptimizations)\n      return;\n    var width = this.Target.MaxRuntimeBulkVectorWidthBytes;\n''')
+          replace(
+              'PowerBasic.Compiler/Runtime/DosRuntime.Targeting.cs',
+              '    if (!this.Target.Has32BitGeneralPurpose) {\n      asm.Xor(Reg.AL, Reg.AL);',
+              '    if (!this.EnableTargetOptimizations || !this.Target.Has32BitGeneralPurpose) {\n      asm.Xor(Reg.AL, Reg.AL);')
+          replace(
+              'PowerBasic.Compiler/Runtime/DosRuntime.Core.cs',
+              '    if (!this.Target.Has32BitGeneralPurpose) {\n      asm.Rep();\n      asm.Movsb();',
+              '    if (!this.EnableTargetOptimizations || !this.Target.Has32BitGeneralPurpose) {\n      asm.Rep();\n      asm.Movsb();')
+          replace(
+              'PowerBasic.Compiler/Runtime/DosRuntime.Core.cs',
+              '    if (!this.Target.Has32BitGeneralPurpose) {\n      asm.Xor(Reg.AX, Reg.AX);',
+              '    if (!this.EnableTargetOptimizations || !this.Target.Has32BitGeneralPurpose) {\n      asm.Xor(Reg.AX, Reg.AX);')
+          replace(
+              'PowerBasic.Compiler/CodeGen/CodeGenerator.cs',
+              '''    this._rt.EnableFastVideo = model.FastVideo;   // R1: $OPTION VIDEO direct-video console PRINT\n    this._rt.Target = this.RuntimeTargetForRuntime();\n''',
+              '''    this._rt.EnableFastVideo = model.FastVideo;   // R1: $OPTION VIDEO direct-video console PRINT\n    this._rt.EnableTargetOptimizations = this.Optimize;\n    this._rt.Target = this.RuntimeTargetForRuntime();\n''')
+          ''')
+          PY
+          bash /tmp/apply-cpu-normalization.sh
