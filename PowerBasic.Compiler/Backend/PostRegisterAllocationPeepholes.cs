@@ -8,6 +8,9 @@ public static class PostRegisterAllocationPeepholes {
   public static int Run(MFunction function, IReadOnlyDictionary<int, Reg> allocation) {
     ArgumentNullException.ThrowIfNull(function);
     ArgumentNullException.ThrowIfNull(allocation);
+    if (!MachineOptimizationState.IsMarked(function))
+      return 0;
+
     var changed = 0;
     foreach (var block in function.Blocks)
       for (var i = 0; i < block.Instructions.Count;) {
@@ -94,6 +97,9 @@ public static class PostRegisterAllocationPeepholes {
   private static bool SamePhysical(MReg left, MReg right, IReadOnlyDictionary<int, Reg> allocation)
     => Resolve(left, allocation) is { } a && Resolve(right, allocation) is { } b && a == b && left.Size == right.Size;
 
-  private static Reg? Resolve(MReg register, IReadOnlyDictionary<int, Reg> allocation)
-    => register.IsVirtual ? allocation.GetValueOrDefault(register.VirtualId) : register.Physical;
+  private static Reg? Resolve(MReg register, IReadOnlyDictionary<int, Reg> allocation) {
+    if (!register.IsVirtual)
+      return register.Physical;
+    return allocation.TryGetValue(register.VirtualId, out var physical) ? physical : null;
+  }
 }
