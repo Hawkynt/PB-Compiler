@@ -317,7 +317,8 @@ internal static class DataLayoutTransformCore {
             || !logical.Terms.TryGetValue(rowTerm!, out var rowCoefficient)
             || Math.Abs(rowCoefficient) != rowElements) { ok = false; break; }
         logical.Terms[rowTerm!] = Math.Sign(rowCoefficient) * physicalRow;
-        if (!RewriteAccess(access, replacement, ScaleCopy(logical, elementBytes))) { ok = false; break; }
+        var scaled = TryScaleCopy(logical, elementBytes);
+        if (scaled is null || !RewriteAccess(access, replacement, scaled)) { ok = false; break; }
       }
       if (!ok) {
         replacement.EraseFromParent();
@@ -364,7 +365,8 @@ internal static class DataLayoutTransformCore {
         var other = elements.Terms.FirstOrDefault(pair => !ReferenceEquals(pair.Key, rowTerm) && Math.Abs(pair.Value) == 1);
         if (other.Key is null) { ok = false; break; }
         elements.Terms[other.Key] = Math.Sign(other.Value) * rows;
-        if (!RewriteAccess(access, replacement, ScaleCopy(elements, elementBytes))) { ok = false; break; }
+        var scaled = TryScaleCopy(elements, elementBytes);
+        if (scaled is null || !RewriteAccess(access, replacement, scaled)) { ok = false; break; }
       }
       if (!ok) {
         replacement.EraseFromParent();
@@ -382,7 +384,7 @@ internal static class DataLayoutTransformCore {
     if (fn.Entry is null)
       return 0;
     var loops = fn.Blocks.Select(h => CountedLoop.Match(fn, h)).Where(l => l is not null).Cast<CountedLoop>().ToList();
-    if (loops.Count < 2)
+    if (loops.Count < 2 || IrDominators.Build(fn) is not { } dom)
       return 0;
     var changed = 0;
     foreach (var root in fn.Entry.Instructions.OfType<IrAlloca>().ToList()) {
@@ -401,14 +403,17 @@ internal static class DataLayoutTransformCore {
         continue;
       var producer = producerMatches[0];
       var consumer = consumerMatches[0];
-      if (ReferenceEquals(producer, consumer) || producer.Trips != consumer.Trips)
+      if (ReferenceEquals(producer, consumer) || producer.Trips != consumer.Trips
+          || !SameCounterSequence(producer, consumer))
         continue;
-      if (!DominatesBefore(fn, producer.Exit, consumer.Header))
+      if (!dom.Dominates(producer.Exit, consumer.Header) || !TransparentPath(producer.Exit, consumer.Header))
         continue;
       if (!SameIterationAddress(stores[0], producer.Counter, loads[0], consumer.Counter, elementBytes))
         continue;
       var store = (IrStore)stores[0].Instruction;
       var load = (IrLoad)loads[0].Instruction;
+      if (store.Parent is null || !dom.Dominates(store.Parent, producer.Latch))
+        continue; // every temporary element must actually be produced on every iteration.
       if (!TryClonePureValue(store.Value, producer, consumer, load, out var forwarded)) {
         Dce.Run(fn);
         continue;
@@ -448,6 +453,8 @@ internal static class DataLayoutTransformCore {
         var outsideLoads = accesses.Where(a => a.Instruction is IrLoad && (a.Instruction.Parent is not { } b || !loop.Region.Contains(b))).ToList();
         if (insideStores.Count != 1 || insideLoads.Count != 1 || outsideStores.Count != 1 || outsideLoads.Count != 1)
           continue;
+        if (!TryCounterProgression(loop, out var firstCounter, out var step) || step != 1)
+          continue; // distance-one contraction currently models an advancing one-element window only.
         var current = IndexOf(insideStores[0], loop.Counter, elementBytes);
         var previous = IndexOf(insideLoads[0], loop.Counter, elementBytes);
         if (current is null || previous is null || current.Value - previous.Value != 1)
@@ -455,13 +462,24 @@ internal static class DataLayoutTransformCore {
         if (!ConstantElement(outsideStores[0], elementBytes, out var initialIndex)
             || !ConstantElement(outsideLoads[0], elementBytes, out var finalIndex))
           continue;
-        if (initialIndex != previous.Value || finalIndex != initialIndex + loop.Trips)
+        long expectedInitial;
+        long expectedFinal;
+        try {
+          expectedInitial = checked(firstCounter + previous.Value);
+          expectedFinal = checked(firstCounter + current.Value + checked((loop.Trips - 1) * step));
+        } catch (OverflowException) {
+          continue;
+        }
+        if (initialIndex != expectedInitial || finalIndex != expectedFinal)
           continue;
         var seedStore = (IrStore)outsideStores[0].Instruction;
         var recurrenceStore = (IrStore)insideStores[0].Instruction;
         var previousLoad = (IrLoad)insideLoads[0].Instruction;
         var finalLoad = (IrLoad)outsideLoads[0].Instruction;
-        if (recurrenceStore.Parent is null || !dom.Dominates(recurrenceStore.Parent, loop.Latch))
+        if (seedStore.Parent is null || recurrenceStore.Parent is null || finalLoad.Parent is null
+            || !dom.Dominates(seedStore.Parent, loop.Preheader)
+            || !dom.Dominates(recurrenceStore.Parent, loop.Latch)
+            || !dom.Dominates(loop.Exit, finalLoad.Parent))
           continue;
 
         var phi = loop.Header.AppendPhi(new IrPhi(root.Allocated) { Name = (root.Name ?? "array") + ".window" });
@@ -526,17 +544,19 @@ internal static class DataLayoutTransformCore {
     }
     if (shape.Fields.All(f => newOffsets[f] == f.Offset))
       return 0;
+    var rewrites = new Dictionary<Access, Linear>();
     foreach (var field in shape.Fields)
       foreach (var access in field.Accesses) {
         var index = access.Bytes.Clone();
         index.Constant -= field.Offset;
-        if (!index.DivideExact(shape.Stride))
+        if (!index.DivideExact(shape.Stride) || TryScaleCopy(index, shape.Stride) is not { } bytes)
           return 0;
-        var bytes = ScaleCopy(index, shape.Stride);
         bytes.Constant += newOffsets[field];
-        if (!RewriteAccess(access, shape.Root, bytes))
-          return 0;
+        rewrites[access] = bytes;
       }
+    foreach (var (access, bytes) in rewrites)
+      if (!RewriteAccess(access, shape.Root, bytes))
+        return 0;
     CleanupDeadGeps(shape.Root);
     return 1;
   }
@@ -551,12 +571,9 @@ internal static class DataLayoutTransformCore {
     var hot = shape.Fields.Where(f => !cold.Contains(f)).ToList();
     if (cold.Count == 0 || hot.Count == 0)
       return 0;
-    var entry = shape.Root.Parent!;
     var hotStride = hot.Sum(f => f.Size);
-    var hotRoot = InsertAllocaAfter(shape.Root, IrType.I8, checked(shape.Elements * hotStride), (shape.Root.Name ?? "record") + ".hot");
-    var coldRoots = new Dictionary<Field, IrAlloca>();
-    foreach (var field in cold)
-      coldRoots[field] = InsertAllocaAfter(hotRoot, field.Type, shape.Elements, $"{shape.Root.Name ?? "record"}.{field.Offset}.cold");
+    var indexes = new Dictionary<Access, Linear>();
+    var hotBytes = new Dictionary<Access, Linear>();
     var hotOffset = new Dictionary<Field, long>();
     long offset = 0;
     foreach (var field in hot.OrderBy(f => f.Offset)) {
@@ -569,18 +586,29 @@ internal static class DataLayoutTransformCore {
         index.Constant -= field.Offset;
         if (!index.DivideExact(shape.Stride))
           return 0;
+        if (cold.Contains(field))
+          indexes[access] = index;
+        else {
+          if (TryScaleCopy(index, hotStride) is not { } bytes)
+            return 0;
+          bytes.Constant += hotOffset[field];
+          hotBytes[access] = bytes;
+        }
+      }
+
+    var hotRoot = InsertAllocaAfter(shape.Root, IrType.I8, checked(shape.Elements * hotStride), (shape.Root.Name ?? "record") + ".hot");
+    var coldRoots = new Dictionary<Field, IrAlloca>();
+    foreach (var field in cold)
+      coldRoots[field] = InsertAllocaAfter(hotRoot, field.Type, shape.Elements, $"{shape.Root.Name ?? "record"}.{field.Offset}.cold");
+    foreach (var field in shape.Fields)
+      foreach (var access in field.Accesses)
         if (cold.Contains(field)) {
-          if (BuildLinear(access.Instruction.Parent!, access.Instruction, index) is not { } indexValue)
+          if (BuildLinear(access.Instruction.Parent!, access.Instruction, indexes[access]) is not { } indexValue)
             return 0;
           var pointer = access.Instruction.Parent!.InsertBefore(new IrGep(coldRoots[field], indexValue, field.Type), access.Instruction);
           SetPointer(access.Instruction, pointer);
-        } else {
-          var bytes = ScaleCopy(index, hotStride);
-          bytes.Constant += hotOffset[field];
-          if (!RewriteAccess(access, hotRoot, bytes))
-            return 0;
-        }
-      }
+        } else if (!RewriteAccess(access, hotRoot, hotBytes[access]))
+          return 0;
     CleanupDeadGeps(shape.Root);
     if (shape.Root.HasNoUsers)
       shape.Root.EraseFromParent();
@@ -588,7 +616,6 @@ internal static class DataLayoutTransformCore {
   }
 
   private static bool Pack(RecordShape shape, IReadOnlyDictionary<Field, IrType> packedTypes) {
-    var packedSize = new Dictionary<Field, int>();
     var packedOffset = new Dictionary<Field, long>();
     long stride = 0;
     foreach (var field in shape.Fields.OrderBy(f => f.Offset)) {
@@ -596,21 +623,25 @@ internal static class DataLayoutTransformCore {
       if (size is null)
         return false;
       packedOffset[field] = stride;
-      packedSize[field] = size.Value;
       stride += size.Value;
     }
     if (stride <= 0 || stride >= shape.Stride)
       return false;
+    var rewrittenOffsets = new Dictionary<Access, Linear>();
+    foreach (var field in shape.Fields)
+      foreach (var access in field.Accesses) {
+        var index = access.Bytes.Clone();
+        index.Constant -= field.Offset;
+        if (!index.DivideExact(shape.Stride) || TryScaleCopy(index, stride) is not { } bytes)
+          return false;
+        bytes.Constant += packedOffset[field];
+        rewrittenOffsets[access] = bytes;
+      }
+
     var root = InsertAllocaAfter(shape.Root, IrType.I8, checked(shape.Elements * (int)stride), (shape.Root.Name ?? "record") + ".packed");
     foreach (var field in shape.Fields)
       foreach (var access in field.Accesses.ToList()) {
-        var index = access.Bytes.Clone();
-        index.Constant -= field.Offset;
-        if (!index.DivideExact(shape.Stride))
-          return false;
-        var bytes = ScaleCopy(index, stride);
-        bytes.Constant += packedOffset[field];
-        if (BuildLinear(access.Instruction.Parent!, access.Instruction, bytes) is not { } byteOffset)
+        if (BuildLinear(access.Instruction.Parent!, access.Instruction, rewrittenOffsets[access]) is not { } byteOffset)
           return false;
         var pointer = access.Instruction.Parent!.InsertBefore(new IrGep(root, byteOffset), access.Instruction);
         var storedType = packedTypes[field];
@@ -874,11 +905,9 @@ internal static class DataLayoutTransformCore {
     return block.InsertAt(at + 1, new IrAlloca(type) { Count = count, Name = name });
   }
 
-  private static Linear ScaleCopy(Linear source, long factor) {
+  private static Linear? TryScaleCopy(Linear source, long factor) {
     var result = source.Clone();
-    if (!result.Scale(factor))
-      throw new OverflowException();
-    return result;
+    return result.Scale(factor) ? result : null;
   }
 
   private static long Gcd(long a, long b) {
@@ -899,11 +928,13 @@ internal static class DataLayoutTransformCore {
     IrValue? candidateTerm = null;
     foreach (var access in accesses) {
       var elements = access.Bytes.Clone();
-      if (!elements.DivideExact(elementBytes) || elements.Terms.Count < 2 || elements.Constant != 0)
+      if (!elements.DivideExact(elementBytes) || elements.Terms.Count != 2 || elements.Constant != 0)
         return false;
-      var strided = elements.Terms.Where(pair => Math.Abs(pair.Value) > 1).OrderBy(pair => Math.Abs(pair.Value)).FirstOrDefault();
-      if (strided.Key is null)
+      var stridedTerms = elements.Terms.Where(pair => Math.Abs(pair.Value) > 1).ToList();
+      var unitTerms = elements.Terms.Where(pair => Math.Abs(pair.Value) == 1).ToList();
+      if (stridedTerms.Count != 1 || unitTerms.Count != 1)
         return false;
+      var strided = stridedTerms[0];
       var stride = Math.Abs(strided.Value);
       if (candidate == 0) { candidate = stride; candidateTerm = strided.Key; }
       else if (candidate != stride || !ReferenceEquals(candidateTerm, strided.Key))
@@ -917,8 +948,34 @@ internal static class DataLayoutTransformCore {
     return rows >= 2;
   }
 
-  private static bool DominatesBefore(IrFunction fn, IrBasicBlock first, IrBasicBlock second)
-    => IrDominators.Build(fn)?.Dominates(first, second) == true;
+  private static bool SameCounterSequence(CountedLoop first, CountedLoop second)
+    => first.Counter.Type.SameStorage(second.Counter.Type)
+       && TryCounterProgression(first, out var firstStart, out var firstStep)
+       && TryCounterProgression(second, out var secondStart, out var secondStep)
+       && firstStart == secondStart && firstStep == secondStep;
+
+  private static bool TryCounterProgression(CountedLoop loop, out long start, out long step) {
+    start = step = 0;
+    if (loop.Counter.IncomingFrom(loop.Preheader) is not IrConstantInt initial
+        || loop.Counter.IncomingFrom(loop.Latch) is not IrBinary { Op: IrBinaryOp.Add } next
+        || !ReferenceEquals(next.Lhs, loop.Counter) || next.Rhs is not IrConstantInt increment)
+      return false;
+    start = CountedLoop.Truncate(loop.Counter.Type, initial.Value);
+    step = CountedLoop.Truncate(loop.Counter.Type, increment.Value);
+    return step != 0;
+  }
+
+  private static bool TransparentPath(IrBasicBlock from, IrBasicBlock to) {
+    var seen = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance);
+    for (var current = from; !ReferenceEquals(current, to);) {
+      if (!seen.Add(current) || current.Terminator is not IrBr branch)
+        return false;
+      if (current.Instructions.Any(i => !ReferenceEquals(i, current.Terminator) && i is not IrPhi))
+        return false;
+      current = branch.Target;
+    }
+    return true;
+  }
 
   private static bool SameIterationAddress(Access first, IrPhi firstCounter, Access second, IrPhi secondCounter, int elementBytes) {
     var a = first.Bytes.Clone();
@@ -959,7 +1016,7 @@ internal static class DataLayoutTransformCore {
       if (current is IrInstruction instruction && instruction.Parent is not { })
         return false;
       if (current is IrInstruction outside && !producer.Region.Contains(outside.Parent!)) {
-        result = current; // a dominating invariant produced outside the producer loop.
+        result = current; // producer operands defined outside the loop dominate its body; the transparent-gap proof keeps them valid here.
         return true;
       }
       var block = before.Parent!;
