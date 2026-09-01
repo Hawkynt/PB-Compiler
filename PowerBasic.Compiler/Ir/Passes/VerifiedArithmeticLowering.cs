@@ -9,6 +9,7 @@ public static class VerifiedArithmeticLowering {
 
   private static readonly Dictionary<short, MultiplyPlan?> _multiplyPlans = [];
   private static readonly Dictionary<short, bool> _signedDivisors = [];
+  private static readonly Lock _verificationLock = new();
 
   /// <summary>Rewrites verified constant multiplies and signed power-of-two divisions/remainders.</summary>
   public static int Run(IrFunction function) {
@@ -82,11 +83,14 @@ public static class VerifiedArithmeticLowering {
   private static IrConstantInt C(IrType type, long value) => new(type, IrConstFold.Wrap(value, type));
 
   private static bool TryVerifiedMultiplyPlan(short factor, out MultiplyPlan plan) {
-    if (!_multiplyPlans.TryGetValue(factor, out var cached)) {
-      cached = CreateMultiplyPlan(factor);
-      if (cached is { } candidate && !VerifyMultiply(factor, candidate))
-        cached = null;
-      _multiplyPlans[factor] = cached;
+    MultiplyPlan? cached;
+    lock (_verificationLock) {
+      if (!_multiplyPlans.TryGetValue(factor, out cached)) {
+        cached = CreateMultiplyPlan(factor);
+        if (cached is { } candidate && !VerifyMultiply(factor, candidate))
+          cached = null;
+        _multiplyPlans[factor] = cached;
+      }
     }
     plan = cached ?? default;
     return cached is not null;
@@ -99,7 +103,7 @@ public static class VerifiedArithmeticLowering {
     if (IsPowerOfTwo(magnitude))
       return null;
 
-    for (var shift = 1; shift < 15; ++shift) {
+    for (var shift = 1; shift < 16; ++shift) {
       var power = 1 << shift;
       if (magnitude == power + 1)
         return new(shift, Subtract: false, Negate: factor < 0);
@@ -135,9 +139,12 @@ public static class VerifiedArithmeticLowering {
       return false;
     shift = System.Numerics.BitOperations.TrailingZeroCount((uint)magnitude);
 
-    if (!_signedDivisors.TryGetValue(divisor, out var verified)) {
-      verified = VerifySignedDivisor(divisor, shift);
-      _signedDivisors[divisor] = verified;
+    bool verified;
+    lock (_verificationLock) {
+      if (!_signedDivisors.TryGetValue(divisor, out verified)) {
+        verified = VerifySignedDivisor(divisor, shift);
+        _signedDivisors[divisor] = verified;
+      }
     }
     return verified;
   }
