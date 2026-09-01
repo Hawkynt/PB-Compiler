@@ -87,7 +87,8 @@ public sealed class ValueFactRangePropagationTests {
     Assert.That(facts, Is.Not.Null);
     Assert.That(facts!.Value.Range.IsTop, Is.False,
       "a conditional expression must join its branch facts rather than erase a tracked input range");
-    Assert.That(facts.Value.Range, Is.EqualTo(new Interval(0, 7)));
+    Assert.That(facts.Value.Range, Is.EqualTo(new Interval(1, 7)),
+      "the joined bit/congruence facts retain that every possible branch value is odd");
   }
 
   [Test]
