@@ -28,7 +28,7 @@ public static class ValueFactReduction {
     }
 
     var bits = facts.Bits.Narrow(width);
-    var mod = Canonical(facts.Mod);
+    var mod = CanonicalForWidth(facts.Mod, width, signed);
 
     for (var iteration = 0; iteration < 4; ++iteration) {
       var before = new ValueFacts(range, bits, mod);
@@ -537,6 +537,16 @@ public static class ValueFactReduction {
     bits &= mask;
     var sign = 1UL << (width - 1);
     return unchecked((long)((bits ^ sign) - sign));
+  }
+
+  private static Congruence CanonicalForWidth(Congruence c, int width, bool signed) {
+    c = Canonical(c);
+    if (!c.IsExact)
+      return c;
+    if (width >= 64)
+      return !signed && c.Residue < 0 ? Congruence.Unknown : c;
+    var bits = unchecked((ulong)c.Residue) & Mask(width);
+    return Congruence.Of(signed ? SignExtend(bits, width) : (long)bits);
   }
 
   private static Congruence Canonical(Congruence c)
