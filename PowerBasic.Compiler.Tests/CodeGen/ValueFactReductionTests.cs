@@ -64,6 +64,57 @@ public sealed class ValueFactReductionTests {
   }
 
   [Test]
+  public void Add_GivenExactResultWraps_WhenReduced_ThenEveryDomainNamesTheRuntimeValue() {
+    var result = ValueFactReduction.Binary(
+      BinaryOp.Add, ValueFacts.Of(30000, 16), ValueFacts.Of(30000, 16), 16, signed: true);
+
+    Assert.Multiple(() => {
+      Assert.That(result.Range, Is.EqualTo(Interval.Of(-5536)));
+      Assert.That(result.Bits.Allows(-5536, 16), Is.True);
+      Assert.That(result.Bits.Allows(0, 16), Is.False);
+      Assert.That(result.Mod.IsExact, Is.True);
+      Assert.That(result.Mod.Residue, Is.EqualTo(-5536));
+    });
+  }
+
+  [Test]
+  public void Divide_GivenFiniteDivisorRangeExcludingZero_ThenResultRangeRemainsFinite() {
+    var result = ValueFactReduction.Binary(
+      BinaryOp.IntegerDivide,
+      new(new Interval(-100, 100), KnownBits.Unknown, Congruence.Unknown),
+      new(new Interval(2, 4), KnownBits.Unknown, Congruence.Unknown),
+      16,
+      signed: true);
+
+    Assert.That(result.Range, Is.EqualTo(new Interval(-50, 50)));
+  }
+
+  [Test]
+  public void Modulo_GivenFiniteNonconstantDivisorRangeExcludingZero_ThenResultRangeRemainsFinite() {
+    var result = ValueFactReduction.Binary(
+      BinaryOp.Modulo,
+      new(new Interval(-100, 100), KnownBits.Unknown, Congruence.Unknown),
+      new(new Interval(2, 4), KnownBits.Unknown, Congruence.Unknown),
+      16,
+      signed: true);
+
+    Assert.That(result.Range, Is.EqualTo(new Interval(-3, 3)));
+  }
+
+  [TestCase(BinaryOp.IntegerDivide)]
+  [TestCase(BinaryOp.Modulo)]
+  public void DivMod_GivenDivisorRangeMayContainZero_ThenRangeStaysUnknown(BinaryOp op) {
+    var result = ValueFactReduction.Binary(
+      op,
+      new(new Interval(-100, 100), KnownBits.Unknown, Congruence.Unknown),
+      new(new Interval(-1, 1), KnownBits.Unknown, Congruence.Unknown),
+      16,
+      signed: true);
+
+    Assert.That(result.Range.IsTop, Is.True);
+  }
+
+  [Test]
   public void Multiply_GivenNegativePowerOfTwo_ThenKnownBitsIncludeNegation() {
     var result = ValueFactReduction.Binary(
       BinaryOp.Multiply, ValueFacts.Of(3, 16), ValueFacts.Of(-2, 16), 16, signed: true);
