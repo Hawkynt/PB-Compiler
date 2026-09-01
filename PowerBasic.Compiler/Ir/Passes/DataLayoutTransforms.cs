@@ -66,7 +66,7 @@ internal static class DataLayoutTransformCore {
 
   private sealed class Linear {
     public Dictionary<IrValue, long> Terms { get; } = new(ReferenceEqualityComparer.Instance);
-    public long Constant { get; private set; }
+    public long Constant { get; set; }
 
     public Linear(long constant = 0) => this.Constant = constant;
 
@@ -249,11 +249,9 @@ internal static class DataLayoutTransformCore {
               var block = load.Parent!;
               var encoded = block.InsertBefore(new IrLoad(IrType.U16, narrowPtr), load);
               var isNull = block.InsertBefore(new IrCmp(IrCmpPred.Eq, encoded, new IrConstantInt(IrType.U16, ushort.MaxValue)), load);
-              IrValue index = targetIndexBits(regionElement) > 16
-                ? block.InsertBefore(new IrCast(IrCastOp.ZExt, encoded, IrType.I32), load)
-                : encoded;
+              var index = block.InsertBefore(new IrCast(IrCastOp.ZExt, encoded, IrType.I32), load);
               var target = block.InsertBefore(new IrGep(region, index, regionElement), load);
-              var value = block.InsertBefore(new IrSelect(isNull, new IrNullPtr(), target), load);
+              var value = block.InsertBefore(new IrSelect(isNull, new IrNullPtr(target.Type), target), load);
               load.ReplaceAllUsesWith(value);
               load.EraseFromParent();
               break;
@@ -267,8 +265,6 @@ internal static class DataLayoutTransformCore {
       ++changed;
     }
     return changed;
-
-    static int targetIndexBits(IrType _) => 32;
   }
 
   internal static int PadScalarArrays(IrFunction fn, int vectorBytes) {
@@ -311,9 +307,9 @@ internal static class DataLayoutTransformCore {
       if (rowBytes % cacheSizeBytes != 0)
         continue;
       var padBytes = Math.Max(elementBytes, cacheLineBytes > 0 ? Gcd(cacheLineBytes, elementBytes) : elementBytes);
-      var padElements = Math.Max(1, padBytes / elementBytes);
+      var padElements = Math.Max(1L, padBytes / elementBytes);
       var physicalRow = rowElements + padElements;
-      var replacement = InsertAllocaAfter(root, root.Allocated, checked(rows * physicalRow), (root.Name ?? "array") + ".cachepad");
+      var replacement = InsertAllocaAfter(root, root.Allocated, checked((int)(rows * physicalRow)), (root.Name ?? "array") + ".cachepad");
       var ok = true;
       foreach (var access in accesses) {
         var logical = access.Bytes.Clone();
