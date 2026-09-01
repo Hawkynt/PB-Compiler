@@ -28,7 +28,6 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import base64
-          import re
 
           base_workflow = Path('.github/workflows/pr52-apply-cpu-normalization.yml').read_text().splitlines()
           start = next(i for i, line in enumerate(base_workflow) if line == '        run: |') + 1
@@ -44,11 +43,17 @@ jobs:
           Path('/tmp/apply-cpu-normalization.sh').write_text(
               script.replace(restore, 'python /tmp/pr52-normalization-preflight.py\n' + restore, 1))
 
-          v4 = Path('.github/workflows/pr52-apply-cpu-normalization-v4.yml').read_text()
-          match = re.search(r"echo '([^']+)' \\| base64 -d > /tmp/pr52-normalization-preflight.py", v4)
-          if match is None:
-              raise SystemExit('v4 payload anchor changed')
-          preflight = base64.b64decode(match.group(1)).decode()
+          lines = Path('.github/workflows/pr52-apply-cpu-normalization-v4.yml').read_text().splitlines()
+          candidates = [line.strip() for line in lines if "base64 -d > /tmp/pr52-normalization-preflight.py" in line]
+          if len(candidates) != 1:
+              raise SystemExit(f'expected one v4 payload line, found {len(candidates)}')
+          line = candidates[0]
+          prefix = "echo '"
+          suffix = "' | base64 -d > /tmp/pr52-normalization-preflight.py"
+          if not line.startswith(prefix) or not line.endswith(suffix):
+              raise SystemExit('v4 payload line shape changed')
+          payload = line[len(prefix):-len(suffix)]
+          preflight = base64.b64decode(payload, validate=True).decode()
           broken = "''''    this._rt.EnableFastVideo"
           fixed = "'''    this._rt.EnableFastVideo"
           if preflight.count(broken) != 1:
