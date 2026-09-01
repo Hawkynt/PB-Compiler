@@ -54,11 +54,15 @@ public sealed class ArithmeticIdiomOptimizationTests {
     entry.Append(new IrRet(entry.Append(new IrBinary(IrBinaryOp.FAdd, left, right))));
 
     Assert.That(ReciprocalSequenceReuse.Run(fn), Is.EqualTo(2));
+    var multiplies = fn.AllInstructions.OfType<IrBinary>()
+      .Where(binary => binary.Op == IrBinaryOp.FMul)
+      .ToList();
     Assert.Multiple(() => {
       Assert.That(fn.AllInstructions.OfType<IrBinary>().Any(binary => binary.Op == IrBinaryOp.FDiv), Is.False);
-      Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(binary => binary.Op == IrBinaryOp.FMul), Is.EqualTo(2));
-      Assert.That(fn.AllInstructions.OfType<IrConstantFloat>(), Is.Empty,
-        "constants are operands rather than instructions; this guards against inventing a runtime reciprocal");
+      Assert.That(multiplies, Has.Count.EqualTo(2));
+      Assert.That(multiplies, Has.All.Matches<IrBinary>(binary =>
+        binary.Rhs is IrConstantFloat { Value: 0.125 }),
+        "both divisions should use the exact reciprocal constant rather than a runtime reciprocal");
       Assert.That(IrVerifier.Verify(fn), Is.Empty);
     });
   }
