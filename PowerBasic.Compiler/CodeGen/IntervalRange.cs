@@ -63,7 +63,7 @@ public readonly record struct Interval(long Lo, long Hi) {
   /// it lies in [-(|k|-1), |k|-1], tightened to [0, |k|-1] when the dividend is provably &gt;= 0.
   /// Only a constant divisor is modelled.</summary>
   public Interval Modulo(Interval o) {
-    if (o.Lo != o.Hi || o.Lo == 0) return Top;       // only a constant non-zero divisor
+    if (o.Lo != o.Hi || o.Lo == 0) return Top;
     var bound = Math.Abs(o.Lo) - 1;
     return this.Lo >= 0 ? new(0, bound) : new(-bound, bound);
   }
@@ -349,6 +349,10 @@ public static class IntervalRangeAnalysis {
     switch (e) {
       case IntegerLiteralExpr lit:
         return ValueFacts.Of(lit.Value, WidthOf(lit, model));
+      case NamedConstantExpr c when model.Equates.TryGetValue(c.Name, out var equate) && equate.Integer is { } value:
+        return ValueFacts.Of(value, WidthOf(c, model));
+      case NameExpr n when model.EnumMembers.TryGetValue(n.Name, out var enumValue):
+        return ValueFacts.Of(enumValue, WidthOf(n, model));
       case NameExpr n when IntVar(n, model) is { } sym:
         return env.TryGetValue(sym, out var iv) ? iv : ValueFacts.Unknown;
       case UnaryExpr { Op: UnaryOp.Negate, Operand: { } operand }: {
@@ -364,6 +368,15 @@ public static class IntervalRangeAnalysis {
         return width > 0
           ? ValueFactReduction.Not(inner, width, SignedOf(e, model))
           : ValueFacts.Unknown;
+      }
+      case IfExpr conditional: {
+        var whenTrue = Eval(conditional.WhenTrue, env, model);
+        var whenFalse = Eval(conditional.WhenFalse, env, model);
+        var joined = whenTrue.Join(whenFalse);
+        var width = WidthOf(conditional, model);
+        return width > 0 && model.TypeOf(conditional) is ScalarType { Signed: var signed }
+          ? ValueFactReduction.Reduce(joined, width, signed)
+          : joined;
       }
       case BinaryExpr b: {
         var l = Eval(b.Left, env, model);
@@ -460,6 +473,7 @@ public static class IntervalRangeAnalysis {
       or BinaryOp.LessEqual or BinaryOp.GreaterEqual } => true,
     BinaryExpr { Op: BinaryOp.And or BinaryOp.Or or BinaryOp.Xor } b => IsTruthValued(b.Left) && IsTruthValued(b.Right),
     UnaryExpr { Op: UnaryOp.Not } u => IsTruthValued(u.Operand),
+    IfExpr => true,
     _ => false,
   };
 
@@ -520,6 +534,7 @@ public static class IntervalRangeAnalysis {
     _ when model.CallBindings.ContainsKey(e) || model.ProcPtrCalls.ContainsKey(e) => false,
     UnaryExpr u => CallFree(u.Operand, model),
     BinaryExpr b => CallFree(b.Left, model) && CallFree(b.Right, model),
+    IfExpr t => CallFree(t.Condition, model) && CallFree(t.WhenTrue, model) && CallFree(t.WhenFalse, model),
     CallOrIndexExpr c => c.Arguments.All(a => CallFree(a, model)),
     MemberExpr m => CallFree(m.Target, model),
     ByValArgExpr v => CallFree(v.Value, model),
