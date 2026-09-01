@@ -20,8 +20,10 @@ replace a sequence whose target-independent IR representation was already lost.
   proven dead and using `s` as an address cannot create a new register-class
   constraint.
 
-The pass runs from the existing optimizer-gated `Peephole.Run`, after ordinary
-machine peepholes and before scheduling/register allocation.
+Optimized instruction selection marks the machine function in `Peephole.Run`.
+`MachineScheduler.Schedule` consumes that marker to run O0355/O0356 immediately
+before scheduling; unoptimized and hand-built scheduler inputs therefore retain
+the scheduler's previous behaviour.
 
 ## Applies to
 
