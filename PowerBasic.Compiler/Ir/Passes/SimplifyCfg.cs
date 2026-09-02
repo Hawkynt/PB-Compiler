@@ -199,6 +199,12 @@ public static class SimplifyCfg {
       var phis = block.Phis.ToList();
       if (block.Instructions.Count != phis.Count + 1)
         continue;                                      // only phis plus the forwarding branch
+      // A bridge that carries no phi is an EMPTY block, and removing one is MergeSingleSuccessorBlocks'
+      // job, not this pass's. Doing it here also rewrites edges the loop passes still need: an empty
+      // preheader or unroll stub folded away leaves a header whose phi the next unswitch/unroll clone
+      // cannot remap, and it emits `%x = add %x, ...` - a value that is its own operand.
+      if (phis.Count == 0)
+        continue;
 
       var succ = br.Target;
       var preds = block.Predecessors.ToList();
