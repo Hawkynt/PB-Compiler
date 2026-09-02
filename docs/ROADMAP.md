@@ -201,6 +201,54 @@ front-ends:
 ## Won't (for now)
 - Win16 / protected-mode targets; 32-bit OMF.
 
+## The direct tier's own optimizer and assembler
+
+Two pieces of work that are deliberately not IR work, recorded here because the porting ledger below
+would otherwise read as the whole optimizer story.
+
+### O0016 value facts are a reduced product, not three lattices side by side
+
+**Done.** `ValueFacts` carried an interval, a known-bit set and a congruence next to each other, and
+every consumer asked whichever domain happened to answer its question. `CodeGen/ValueFactReduction.cs`
+now reduces the three against each other to a local fixpoint before anyone sees them: `[0,1]` proves
+every bit above bit 0 is zero, a mod-8 residue fixes three low bits, and fixed low bits in turn imply
+a power-of-two congruence. `IntervalRange` routes its binary, negate, `NOT`, compare and store-join
+transfers through that reduction instead of computing an interval and discarding what the other two
+domains would have added.
+
+Contradiction is a first-class answer rather than a narrower lie: a range that leaves its declared
+type's bounds, or a bit set demanding a bit be both one and zero, collapses to `ValueFacts.Unknown`.
+One representational hole is recorded rather than papered over - the interval payload is a signed
+`long` and cannot represent an unsigned 64-bit value with bit 63 set, so that case keeps the bit
+domain and drops only the interval.
+
+This is a pre-emission lattice the DIRECT emitter consults (`CodeGenerator.FactsOf` /
+`LatticeFactsOf`), gated on `--optimize`. The IR's own range reasoning is `Sccp`,
+`CorrelatedValueProp` and `RangeCheckElim` - separate passes with separate proofs, sharing nothing
+with this one.
+
+### O0092: flag-safe zero and INC/DEC encodings, chosen after scheduling
+
+**Done for two idiom families.** `Asm/Assembler.EncodingSelect.cs` runs once the SPEED scheduler has
+fixed the instruction order and rewrites two shapes in the emitted buffer: `ADD r16,1` / `SUB r16,1`
+become one-byte `INC` / `DEC`, and `MOV r16,0` becomes `XOR r16,r16`.
+
+Both change the flags, so both are legal only where that difference cannot be observed, and the proof
+is deliberately stronger than it has to be: a later instruction must FULLY redefine the arithmetic
+flags before any recorded read of them, and any recorded flag read, any gap in the recorded run, or
+reaching the end of the run without a complete redefinition makes the rewrite decline. That keeps
+machine-level flag behaviour exact for inline asm and for callers, not merely for BASIC control flow.
+
+The INC/DEC half is gated on the pre-386 target - `Allow386Jcc` is the assembler's already-established
+boundary between the byte-starved default and every later selectable core - because the byte saving
+stops being a universal SPEED win once execution and dependency cost matter more than the prefetch
+queue. The order between the two families is load-bearing: INC/DEC runs first and the run is re-sorted
+afterwards, so an `ADD`-1 that has just become a CF-preserving `INC` can no longer be mistaken for the
+full flag kill that would have justified turning an earlier `MOV` into an `XOR`.
+
+Still missing is the general case this is named for: a per-target encoding competition that costs
+every alternative encoding against the selected CPU, rather than two hand-written families.
+
 ## The IR path towards output parity with the direct emitter
 
 The retargetable path (`Ir/` -> `Backend/`, gated behind `--x-backend`) is meant to eventually
@@ -537,6 +585,183 @@ programs that read them routed: `ERL` was never recorded at a numeric line label
 internal variable (`pbvFixDigits`, `pbvScrnCols`, …) was given a private frame slot instead of the
 runtime cell it names.
 
+### One alias analysis for every memory pass, and a dependence analysis nothing consults yet
+
+**The alias analysis is done and shared; the dependence analysis is done and unused.**
+
+`Ir/Analysis/IrAliasAnalysis.cs` answers over `(pointer, access type)` pairs rather than over
+pointers, which is the whole point: two two-byte accesses at offsets zero and one overlap although
+their start addresses differ, and the pointer-only tests each memory pass used to carry said they
+were unrelated. It decomposes an address into a root plus a constant byte displacement, treats two
+independently allocated stack objects or two distinct globals as different objects, and answers
+`MayAlias` for everything else - BYREF arguments, loaded pointers, casts, explicit far pointers,
+dynamic offsets. The provenance model is deliberately that small: it recognizes only facts the IR
+itself guarantees. `RedundantMemory`, `DeadStoreElim` and the data-layout transforms now all ask it,
+and `CompletelyOverwrites` is what lets dead-store elimination drop a store the next one fully covers
+rather than only one it starts at the same address as.
+
+`Ir/Analysis/IrLoopDependenceAnalysis.cs` (O0172) is the second half, and it has **no consumer in the
+compiler** - only `LoopDependenceAnalysisTests` calls it. It recognizes byte addresses affine in a
+counted loop's canonical counter, `base + stride*iteration + constant`, through constant
+add/subtract/multiply/shift and safe signed widening, and refuses any intermediate whose arithmetic is
+not provably wrap-free over the whole iteration domain. Equal-stride pairs are solved exactly,
+including access width, so overlapping byte ranges give exact distances; unequal strides get the
+classical GCD test plus a bounded interval test, either of which can DISPROVE a dependence, and if
+both admit a solution the bounded Diophantine problem is left unknown for a later SIV/MIV layer.
+`IrLoopDependenceInfo.IsComplete` is the safety boundary a consumer has to respect: the proven
+dependences may be used for costing or diagnostics at any time, but their ABSENCE may only be read as
+independence when the result is complete.
+
+The transform that would consume it, conservative loop interchange, is written and is **not merged** -
+it lives on `origin/feature/ir-loop-interchange`, not on `main`, and O0122 is therefore still open.
+This is analysis paid for ahead of its first customer.
+
+### Pure forwarding blocks come out of the CFG
+
+**Done.** `SimplifyCfg.EliminateForwardingBlocks` deletes a block that holds only phis and an
+unconditional branch: incoming edges are retargeted at the successor and the successor's phis are
+expanded to the predecessor-specific values that used to flow through the bridge. It refuses
+everything that would need a value materialized on a critical edge, an instruction cloned, or a loop
+header rewritten - an address-taken block, the entry, a predecessor that is also the successor, a
+switch or indirect predecessor edge, a predecessor that already reaches the successor, or a bridge phi
+with any user that is not a phi in the successor.
+
+Two orderings are load-bearing, and each was found by breaking something:
+
+- **it runs before trivial-phi removal.** Collapsing a successor phi first can leave the bridge phi
+  used by a non-phi, which trips this pass's own live-bridge guard - and then the empty block is
+  stranded in the graph for good.
+- **a bridge carrying no phi is left alone.** That is just an empty block, and it is the
+  single-predecessor merge's job. Folding it away here rewrites edges the loop passes still depend
+  on: an empty preheader or unroll stub that disappears leaves a header phi the next unswitch or
+  unroll clone cannot remap, and what comes out is a binary whose operand is itself. The selector then
+  refuses the function, which cost two corpus programs.
+
+### O0320-O0329: the data layout itself becomes an IR decision
+
+**Done for private storage - and three of the ten never run in production.**
+`Ir/Passes/DataLayoutTransforms.cs` is ten passes over one core: `ArrayOfStructsToStructOfArrays`
+(O0320), `FieldReordering` (O0321), `HotColdFieldSplitting` (O0322), `StructurePackingByRange`
+(O0323), `PointerCompression` (O0324), `ArrayPaddingAlignment` (O0325), `CacheConflictPadding`
+(O0326), `DataTransposition` (O0327), `TemporaryArrayFusion` (O0328), `ArrayContraction` (O0329).
+
+They are registered at the FRONT of `IrPassManager.Standard`, right after `mem2reg` and before
+`unroll`, and the order inside that block is the argument for it: these passes need the explicit
+memory graph and the ORIGINAL counted-loop shape, the aggregate rewrites have to run before AoS→SoA
+destroys record identity, and unrolling afterwards is what folds the addresses they produced. Every
+one declines escaped or opaque storage rather than speculating about aliasing, which is why they are
+confined to private fixed-size storage and say nothing about a `DIM SHARED` array.
+
+Three of them need facts target-neutral IR does not have - pointer storage width, vector width, cache
+geometry - and take them from an `IrDataLayoutTarget`. **No production caller supplies one.**
+`CodeGenerator.Backend.cs` calls `IrPassManager.Standard(this.OptimizeSpeed)` and leaves the parameter
+null, so `ptrcompress`, `arraypad` and `cachepad` never register on the routed x86-16 path and are
+reached only by `DataLayoutTransformsTests`. Declining rather than guessing a target is the right
+default - a layout pass that assumes the wrong pointer width miscompiles silently - but O0324/O0325/
+O0326 are implemented and unreached, not implemented and running.
+
+### O0330-O0339: idioms the middle end can now name
+
+**Done, and every one of them is deliberately partial.** Each pass takes a narrow shape it can prove
+and leaves the general case to a later layer, which is the same trade the string passes made:
+
+- **O0330 library-call recognition** - `LibraryCallRecognition`, a SPEED-only module pass. A canonical
+  counted byte fill or copy loop becomes `llvm.memset` / `llvm.memcpy`. The matcher is narrower than a
+  general loop-idiom pass on purpose: one byte per iteration, unit positive stride, no other effects,
+  and `memcpy` only when distinct storage objects prove the two sides cannot overlap.
+- **O0331 bitset substitution** - `BitsetSubstitution`, a module pass at every optimization level. A
+  non-escaping zero-initialized global INTEGER Boolean array is packed to one bit per element, and the
+  proof is strict: every access a direct element GEP, every stored value exactly 0 or -1.
+- **O0332 lookup-table generation** and **O0333 lookup-table elimination** - `LookupTableGeneration`
+  (SPEED-only) evaluates a sufficiently expensive pure one-byte function over all 256 inputs and turns
+  its call sites into indexed loads; `LookupTableElimination` runs the other way at every level,
+  deleting a 256-byte read-only table whose every entry follows a formula never dearer than the load
+  it replaces - constant, identity, XOR-mask or add-constant. The pair is not a contradiction: one
+  mints a table where the body is expensive, the other removes one whose body turns out not to be.
+  Float tables wait for an evaluator with the runtime's exact FP semantics.
+- **O0334 binary-search recognition** and **O0335 perfect-hash dispatch** - one pass,
+  `StaticSearchRecognition` (SPEED-only). A counted linear search over a read-only constant integer
+  table becomes a balanced binary-search CFG when the table is strictly sorted and unique, and an
+  `IrSwitch` otherwise - which reaches the target's existing perfect-hash dispatch selection for free.
+  The switch default is the mandatory verification/failure path, so no key is ever assumed present.
+- **O0336 FSM compilation** stays partial with no pass of its own: single-value classification chains
+  fall out of the same `IrSwitch` recovery, while table-driven and multi-state machines remain planned.
+- **O0337 polynomial evaluation** - `PolynomialEvaluation`. One-variable INTEGER polynomials go to
+  Horner form where that removes multiplications. Floating point is excluded, not forgotten:
+  reassociation changes the rounding and the IR has no fast-math contract to authorize it. It is
+  placed after `reassociate` so it sees the canonical expression, and early enough that GVN and DCE
+  collect the now-dead literal power tree.
+- **O0338 reciprocal sequence reuse** - `ReciprocalSequenceReuse`, after LICM so an invariant divisor
+  has already been hoisted where the repeated divisions are visible together. Only an EXACT
+  power-of-two constant divisor is taken, because `x / d` and `x * (1/d)` need not round identically
+  for anything else, and general reuse needs the same fast-math contract O0337 is waiting for.
+
+**O0339 memory-routine specialization is the one that is not in the pipeline at all**, and that is a
+decision rather than an oversight. `MemoryRoutineSpecialization` runs in the LATE BACKEND stage, from
+`CodeGenerator.Backend.cs`, after the last middle-end sweep and beside `SwitchFormation`, for the same
+reason: it wants the FINAL shape. Expanding a tiny `memcpy` into byte loads and stores hides the
+aggregate behind it from `AggregateBlockScalarization` / `ScalarReplaceAggregates`, which would
+otherwise prove the record's byte partition and delete the copy AND its storage outright - a strictly
+better answer than open-coding it. Run it in the standard pipeline and it wins the race against the
+transform that would have made it unnecessary. Once the optimizer has had every chance at the copy,
+whatever is left is a real transfer worth specializing. Its threshold stops at four bytes, which
+covers the motivating two-word record copy without stealing 7- and 8-byte transfers from the
+target-specific REP/MOVSD cost policy, and it declines volatile transfers and far pointers.
+
+### O0354-O0359: saturation and verification in the IR, four passes below it
+
+**Done.** Two of the six are IR passes in `IrPassManager.Standard`; four are machine-level and could
+never have been anything else.
+
+`EqualitySaturation` (O0354) is the one that is not another sequential canonicalizer. Instead of
+committing to the first matching rewrite, it keeps the whole local equivalence class of a pure integer
+expression tree alive under a hard budget - 256 candidates, 8 rounds - and extracts the cheapest
+result, replacing a root only when the winner is strictly cheaper. Shared subexpressions are leaves in
+its cost model, so it never assumes an instruction can disappear while another user still needs it.
+`VerifiedArithmeticLowering` (O0359) strength-reduces 16-bit constant multiplies and signed
+power-of-two divides and remainders only after the candidate formula has been checked over the
+COMPLETE 16-bit input domain. The verifier is part of the compiler, not of a design document: adding a
+clever formula without proving every input simply leaves the candidate unavailable.
+
+Below selection, `MachineScheduler` now runs `MachineCombiner` (O0356) and `SuperoptimizedPeepholes`
+(O0355) before it schedules, and `MachineEmitter` runs `PostRegisterAllocationPeepholes` (O0357),
+`LateLoadStoreOptimization` (O0358) and then O0357 again, because forwarding a spill slot leaves
+self-copies the first sweep could not have seen. `SuperoptimizedPeepholes` searches a tiny x86-16
+instruction vocabulary once at startup, proves each candidate over all 65,536 word inputs and keeps
+only strictly cheaper replacements, so the hot path is a table lookup and no SMT solver becomes a
+compiler dependency; it applies a replacement only where the flag difference is unobservable.
+
+What makes those four safe is `MachineOptimizationState`, and it is worth naming. The optimizer-on
+decision reaches the late pipeline through a `ConditionalWeakTable` marker attached by `Peephole.Run`,
+which the selector invokes only for optimized selections - rather than by baking a code-generation
+policy bit into `MFunction`. The same marker records the function's stack-slot count AT SELECTION, so
+O0358 knows exactly which slots were appended by allocation and spilling and can confine itself to
+that compiler-private region instead of guessing from size. Selector-owned frame cells are outside the
+pass entirely, and no fact it learns crosses a block boundary, a call, inline assembly or an unknown
+memory write.
+
+### O0070: frame elision proved twice, once on each side of the ABI
+
+**Done for parameterless frame-free procedures.** `Ir/Passes/FrameElision.IsCandidate` is the
+middle-end half and is a pure eligibility question: after scalar replacement and mem2reg, a function
+with no surviving `IrAlloca` owns no fixed local stack storage. Calls do not invalidate that - they
+move SP while they execute but leave nothing persistent in THIS function's frame - and a function with
+an error handler or inline asm is refused outright. That is all it claims, and claiming no more is
+what keeps it target-neutral: it says nothing about the ABI and nothing about spills, because an SSA
+IR that knew about `[BP+disp]` would have an x86 addressing mode baked into it.
+
+`CodeGenerator.Backend.cs` gates the answer on `this.Optimize` and hands it to `MachineEmitter` as
+`allowFrameElision`, and `MachineEmitter.CanElideFrame` re-checks the FINAL machine function before
+acting: no parameters, no parameter bytes, no stack slots at all after allocation and spilling, no
+`InlineAsm`, and no operand that is a `StackSlot` or a `ParamCell`. Only then are the `PUSH BP` /
+`MOV BP,SP` omitted. Keeping the two proofs apart is the design; collapsing them into one would put
+the ABI into the IR or the SSA reasoning into the emitter.
+
+The consequence is that this only ever fires on a leaf-shaped, argument-free procedure today. A
+routed procedure WITH stack parameters still needs BP to address them, because the emitter's argument
+loads and frame cells are written against it, and a frame-pointer-free addressing mode off SP is a
+separate piece of work.
+
 ### Wider integers and SIMD as IR operations - not started
 
 The IR has no integer tier above the dialects' own widths and no vector type; `MRegSize` reads
@@ -564,18 +789,23 @@ Measured by `OptimizationPortingLedgerTests`, which reads the Stage of every doc
 
 | | |
 |---|---|
-| documented optimizations with a Stage | 420 |
-| machine-level (not IR work at all) | **290** |
-| portable to the IR | **126** |
-| …already expressed on the IR | 20 |
-| …still to port | **110**, of which **20** now carry an `IR` row |
+| documented optimizations with a Stage | 421 |
+| machine-level (not IR work at all) | **292** |
+| portable to the IR | **129** |
+| …already expressed on the IR | 21 |
+| …still to port | **108**, of which **25** now carry an `IR` row |
 
-So the target is 110, not 420 — and the bulk of it is one category, *Mid-end* (52). The ledger is a
-test with floors, so the portable share cannot shrink by reclassification instead of movement.
+So the target is 108, not 421 — and the bulk of it is still one category, *Mid-end* (52). The ledger
+is a test with floors, so the portable share cannot shrink by reclassification instead of movement.
 
 A ported optimization records an **IR** row in its own document, which is what the ledger counts.
 `Stage` says where an optimization was *first* written and never changes; the `IR` row says where it
-*also* lives now, and only grows. Ported so far:
+*also* lives now, and only grows. **41** documents now carry one — more than the 25 above, because
+sixteen optimizations whose Stage is machine-level (constant folding, CSE, inlining, unrolling, LICM,
+the O0320-O0327 layout family, O0350/O0352/O0353) grew an IR expression as well; the Stage field
+records where they were born, not where they now also live.
+
+Ported so far:
 
 - **O0001 constant folding** — `Sccp` + `InstCombine` + `IrConstFold`.
 - **O0002 dead-code elimination** — `Dce` + `DeadStoreElim`.
@@ -585,10 +815,6 @@ A ported optimization records an **IR** row in its own document, which is what t
   another full pass sweep: the point of inlining is not the call overhead but that the callee body
   becomes visible to the caller's optimizer, and nothing sees it until the passes run again.
 - **O0007 loop unrolling** — `Ir/Passes/LoopUnroll.cs`, in the standard pipeline.
-- **O0132 whole-loop compile-time evaluation** — nobody wrote a pass for it; it falls out of
-  unrolling composing with the constant propagation and dead-code elimination already there.
-  `FOR i = 1 TO 5 / s = s + i / NEXT / PRINT s` becomes `PRINT 15`.
-
 - **O0018 interprocedural constant propagation** and **O0159 return-value propagation** —
   `Ir/Passes/IpConstantProp.cs`, the two directions of the same fixpoint. In: a parameter every
   visible call passes the same literal for *is* that literal. Out: a function whose every `ret`
@@ -644,6 +870,40 @@ A ported optimization records an **IR** row in its own document, which is what t
   place.
 - **O0225 SSA construction** — `Ir/IrDominators.cs` + `Ir/Passes/Mem2Reg.cs`, the same Cytron
   construction the direct tier has.
+- **O0185 CSE past a merge**, **O0186 CSE into a loop preheader** and **O0188 CSE of an IF
+  condition** — no pass of their own either. All three are the direct tier PROVING, by walking the
+  writes, that nothing between the two computations disturbed an input; in SSA that proof is the
+  dominance relation `Gvn` already keys on, so the three shapes are one rule.
+- **O0012 float demotion** — `Ir/Passes/FloatDemotion.cs`, the FOR-counter case, after `Mem2Reg` has
+  made the counter a phi. It is sound only where the counter is BOUNDED: integer arithmetic wraps
+  where the float form the lowering emitted does not.
+- **O0114 loop unswitching** — `Ir/Passes/LoopUnswitch.cs`, and its placement after `Licm` is the
+  composition, not a detail: a condition defined inside the loop cannot be specialized by cloning,
+  because each clone gets its own copy of it.
+- **O0134 recurrence shortening** — `Ir/Passes/RecurrenceClosedForm.cs`, the closed-form half only,
+  for a constant step: an accumulator whose only work is adding a constant is `start + step * trips`.
+  The general recurrence is not covered.
+- **O0407 dead loop elimination** — `Ir/Passes/DeadLoopElimination.cs`, SPEED-only and immediately
+  after `closed-form`, which is what empties the loop it then deletes. It is off under the ordinary
+  objective because an empty loop may be an intentional delay loop.
+- **O0350 overflow-check coalescing**, **O0351 pointer-check elimination**, **O0352 conversion range-
+  check elimination** and **O0353 string capacity hoisting** — `OverflowCheckCoalescing`,
+  `PointerCheckElim`, `ConversionRangeCheckElim` and `StringCapacityHoisting`. The ordering carries
+  the reasoning: O0350 runs after the proofs that can delete individual Error 6 checks outright, so
+  only genuinely consecutive guards are left to coalesce, and it refuses to speculate a side effect
+  across one. O0351 shares the dominator-scoped edge facts with `CorrelatedValueProp` but counts only
+  explicit pointer-null tests, because dereferencing address zero is not a fault on PB's DOS memory
+  model. O0352 is the NaN-aware adjunct to the integer lattice and takes only floats whose provenance
+  proves they are ordinary numbers. O0353 consumes the exact-trip append shape `strappend` produces
+  immediately above it.
+- **O0320-O0329** — the data-layout family, one section of its own above; all ten carry an `IR` row,
+  including the three the routed path never registers.
+
+One piece of bookkeeping is outstanding and is recorded rather than quietly fixed: **O0330-O0339,
+O0354 and O0359 are implemented on the IR** — the sections above name the passes and where they run —
+**but their documents do not carry an `IR` row yet**, so the ledger does not count them and reports 41
+where a dozen more have landed. The row is the ratchet the whole measurement rests on; the count is
+wrong in the safe direction, but it is wrong.
 
 O0132 is the argument for the whole exercise: a ported optimization that *enables* another without
 further work is the compounding the retargetable path was supposed to get.
