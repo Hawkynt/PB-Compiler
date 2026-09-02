@@ -35,7 +35,7 @@ public sealed class LoopInterchangeLoweringTests {
     Dce.Run(fn);
 
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
-    Assert.That(fn.Blocks.Count(block => block.Name.Contains("for.body", StringComparison.Ordinal)), Is.EqualTo(2),
+    Assert.That(fn.Blocks.Count(block => block.Label.Contains("for.body", StringComparison.Ordinal)), Is.EqualTo(2),
       "real lowering keeps body blocks separate from FOR increment/latch blocks");
 
     Assert.That(LoopInterchange.Run(fn), Is.EqualTo(1));
