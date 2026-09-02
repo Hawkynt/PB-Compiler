@@ -2,8 +2,11 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial — non-escaping zero-initialized `INTEGER` Boolean globals are bit-packed when every access preserves Boolean semantics |
 | **Stage** | Whole-program data layout |
+| **Source** | `Ir/Passes/BitsetSubstitution.cs` |
+| **Gate** | `--optimize` |
+| **Verified by** | `DataRepresentationOptimizationTests` |
 | **Related** | [O0155](O0155-bit-plane-transformation.md), [O0323](O0323-structure-packing-by-range.md), [O0099](O0099-bit-test-dispatch.md) |
 
 ## The idea
@@ -13,6 +16,17 @@ An array of Booleans (or of a very small domain) stored one element per
 storage by 16× — which on a 64 KiB-segment machine can be the difference between
 fitting and not — and makes whole-array operations single bitwise instructions.
 
+## Implemented v1
+
+`BitsetSubstitution` rewrites a zero-initialized global `INTEGER` array to byte
+storage with one bit per logical element when all uses are visible to the module
+pass and every store is exactly `0` or `-1`.
+
+Each read becomes byte-index calculation, mask/test, and reconstruction of PB's
+`0`/`-1` Boolean value. Each write becomes a byte read-modify-write. Differently
+typed direct accesses, address escapes, error-handler/inline-asm functions, and
+non-Boolean stores make the pass decline.
+
 ## Applies to
 
 ```basic
@@ -21,14 +35,15 @@ seen%(k%) = -1
 IF seen%(k%) THEN ...
 ```
 
-packs to 8 KB, and `ERASE` becomes a `REP STOSW` over 8 KB rather than 128 KB.
+packs to 8 KB; ordinary element access uses shift/mask operations instead of a
+16-bit array load/store.
 
-## What it needs
+## Still planned
 
-- Proof that **every** stored value is 0 or −1 (or fits the small domain) across
-  the whole program ([O0158](O0158-interprocedural-range-propagation.md)).
-- A representation change: each access becomes an index shift, a mask and a bit
-  test or a read-modify-write — cheap, but not free, so the trade is size and
-  whole-array speed against per-element cost.
-- Non-observability, as for every layout change
-  ([O0321](O0321-field-reordering.md)).
+- Small domains wider than one bit.
+- Packing locals and other storage classes where whole-program observability is
+  not required.
+- Cost-model decisions for cases where per-element access dominates storage
+  pressure.
+- Whole-array operations such as `ERASE` specialized directly to the packed
+  representation.

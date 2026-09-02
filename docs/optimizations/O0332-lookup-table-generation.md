@@ -2,8 +2,11 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial — repeated dynamic calls to sufficiently expensive pure one-byte integer functions can become a complete 256-byte table |
 | **Stage** | Mid-end |
+| **Source** | `Ir/Passes/LookupTableGeneration.cs` |
+| **Gate** | `--optimize` + `$OPTIMIZE SPEED` |
+| **Verified by** | `DataRepresentationOptimizationTests` |
 | **Related** | [O0025](O0025-pure-function-folding.md), [O0132](O0132-compile-time-loop-evaluation.md), [O0333](O0333-lookup-table-elimination.md) |
 
 ## The idea
@@ -11,26 +14,34 @@
 A **pure** function over a **small domain** can be evaluated at compile time for
 every input and emitted as a table. The call becomes an indexed load.
 
-The purity analysis and the interpreter already exist
-([O0025](O0025-pure-function-folding.md)); what is missing is the decision to
-run them over the whole domain rather than at one constant call site.
+## Implemented v1
+
+`LookupTableGeneration` handles a deliberately narrow, bit-exact case: one
+8-bit integer parameter, one 8-bit integer result, one basic block, and an
+integer-only expression subset (`+`, `-`, `*`, bitwise ops, integer comparisons,
+selects and integer casts). It evaluates all 256 input bit patterns itself.
+
+A table is generated only when there are at least two calls and at least one is
+dynamic; trivial bodies are rejected so a 256-byte object is not emitted for a
+cheaper calculation. Existing same-named globals are reused only when their
+layout and all 256 bytes match exactly.
 
 ## Applies to
 
 ```basic
-FUNCTION SinTab%(BYVAL deg%)        ' pure, domain 0..359
-  SinTab% = INT(SIN(deg% * 3.14159 / 180) * 1024)
+FUNCTION Scramble&&(BYVAL x??)
+  ' representative small-domain pure integer transform
 END FUNCTION
-
-PRINT SinTab%(angle%)               ' any angle: a call today
 ```
 
-## What it needs
+Repeated runtime calls over a byte-valued input can become indexed loads from a
+compiler-generated `.lut.*` object.
 
-- A **domain bound** — from the parameter's proven range
-  ([O0158](O0158-interprocedural-range-propagation.md)) or a declaration — and a
-  size budget: 360 words is an obvious win, 65 536 words is not.
-- Extending the evaluator past its integer-only subset if the function uses
-  floats, with the same bit-exactness discipline.
-- The reverse trade is real too, and target-dependent
-  ([O0333](O0333-lookup-table-elimination.md)).
+## Still planned
+
+- Ranges other than the full byte domain, using proven parameter ranges.
+- Wider result types where the table-size budget still wins.
+- Multi-block pure functions and reuse of the broader compile-time evaluator.
+- Floating-point tables once the evaluator can reproduce the runtime's exact FP
+  semantics.
+- A target cost model rather than the current conservative body/call threshold.
