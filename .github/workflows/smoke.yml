@@ -1,0 +1,22 @@
+name: Smoke
+
+# The fast tier, on every push to a working branch: one OS, fast tests only, no coverage, no
+# package-README check. It answers "is what I just pushed broken?" in minutes; ci.yml on the pull
+# request is the gate that runs the full matrix and every category.
+#
+# Never on main: that branch takes changes through pull requests, which already ran the full gate.
+on:
+  push:
+    branches-ignore: [main, master]
+  workflow_dispatch: {}
+
+jobs:
+  smoke:
+    uses: Hawkynt/RepositoryTemplate/.github/workflows/dotnet-smoke.yml@v1
+    with:
+      solution: PB-Compiler.slnx
+      test-target: PowerBasic.Compiler.Tests
+      dotnet-version: '10.0.x'
+      # Slow covers the corpus-wide batteries; Performance is the wall-clock tier. TestCategory,
+      # not Category: the latter filters the reporting and still executes the excluded fixtures.
+      test-args: '--filter "TestCategory!=Slow&TestCategory!=Performance"'
