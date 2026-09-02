@@ -215,8 +215,6 @@ public sealed class IrPassManager {
     .Add("phicong", PhiCongruence.Run)
     .Add("gvn", Gvn.Run)
     // tiny intrinsic expansion is deliberately after GVN: one canonical memcpy/memset call is easier
-    // to reason about than the byte load/store sequence it expands into.
-    .Add("memsize", MemoryRoutineSpecialization.Run)
     .Add("memopt", RedundantMemory.Run)
     .Add("dse", DeadStoreElim.Run)
     .Add("licm", Licm.Run)
