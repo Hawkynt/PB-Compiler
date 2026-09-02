@@ -137,6 +137,116 @@ public sealed class AssemblerScheduleTests {
   }
 
   [Test]
+  public void EncodingSelection_GivenAddOneAndFlagsKilled_WhenScheduled_ThenUsesInc() {
+    var asm = new Assembler { EnableSchedule = true };
+    asm.Add(Reg.AX, (Imm)1);                    // 83 C0 01 -> INC AX when CF dies
+    asm.Mov(Reg.BX, Reg.CX);                    // flag-transparent
+    asm.Cmp(Reg.DX, Reg.SI);                    // full independent flag definition
+    var bytes = asm.ToArray();
+    Assert.Multiple(() => {
+      Assert.That(Array.IndexOf(bytes, (byte)0x40), Is.GreaterThanOrEqualTo(0), "INC AX emitted");
+      Assert.That(IndexOf(bytes, [0x83, 0xC0, 0x01]), Is.EqualTo(-1), "ADD AX,1 removed");
+    });
+  }
+
+  [Test]
+  public void EncodingSelection_GivenSubOneAndFlagsKilled_WhenScheduled_ThenUsesDec() {
+    var asm = new Assembler { EnableSchedule = true };
+    asm.Sub(Reg.DX, (Imm)1);                    // 83 EA 01 -> DEC DX
+    asm.Mov(Reg.BX, Reg.CX);
+    asm.Test(Reg.AX, Reg.AX);                   // full independent flag definition
+    var bytes = asm.ToArray();
+    Assert.Multiple(() => {
+      Assert.That(Array.IndexOf(bytes, (byte)0x4A), Is.GreaterThanOrEqualTo(0), "DEC DX emitted");
+      Assert.That(IndexOf(bytes, [0x83, 0xEA, 0x01]), Is.EqualTo(-1));
+    });
+  }
+
+  [Test]
+  public void EncodingSelection_GivenAddOneThenCarryConsumer_WhenScheduled_ThenKeepsAdd() {
+    var asm = new Assembler { EnableSchedule = true };
+    asm.Add(Reg.AX, (Imm)1);                    // CF from this ADD is consumed
+    asm.Adc(Reg.BX, Reg.CX);
+    asm.Cmp(Reg.DX, Reg.SI);
+    var bytes = asm.ToArray();
+    Assert.That(IndexOf(bytes, [0x83, 0xC0, 0x01]), Is.GreaterThanOrEqualTo(0),
+      "INC would preserve the incoming CF instead of producing ADD's carry");
+  }
+
+  [Test]
+  public void EncodingSelection_GivenAddOneAcrossPartialFlagWriter_WhenFullKillFollows_ThenUsesInc() {
+    var asm = new Assembler { EnableSchedule = true };
+    asm.Add(Reg.AX, (Imm)1);
+    asm.Inc(Reg.BX);                          // changes most flags but preserves CF; no read yet
+    asm.Cmp(Reg.DX, Reg.SI);                  // finally kills CF as well
+    var bytes = asm.ToArray();
+    Assert.That(IndexOf(bytes, [0x83, 0xC0, 0x01]), Is.EqualTo(-1));
+  }
+
+  [Test]
+  public void EncodingSelection_GivenMovZeroAndFlagsKilled_WhenScheduled_ThenUsesXorZeroIdiom() {
+    var asm = new Assembler { EnableSchedule = true };
+    asm.Mov(Reg.AX, (Imm)0);                   // B8 0000 -> XOR AX,AX
+    asm.Mov(Reg.BX, Reg.CX);
+    asm.Cmp(Reg.DX, Reg.SI);
+    var bytes = asm.ToArray();
+    Assert.Multiple(() => {
+      Assert.That(IndexOf(bytes, [0x31, 0xC0]), Is.GreaterThanOrEqualTo(0));
+      Assert.That(IndexOf(bytes, [0xB8, 0x00, 0x00]), Is.EqualTo(-1));
+    });
+  }
+
+  [Test]
+  public void EncodingSelection_GivenMovZeroAcrossIncBeforeFullKill_WhenScheduled_ThenUsesXor() {
+    var asm = new Assembler { EnableSchedule = true };
+    asm.Mov(Reg.DI, (Imm)0);
+    asm.Inc(Reg.BX);                          // preserves CF, so the proof must continue
+    asm.Test(Reg.AX, Reg.AX);                 // full flag definition finally kills every difference
+    var bytes = asm.ToArray();
+    Assert.That(IndexOf(bytes, [0x31, 0xFF]), Is.GreaterThanOrEqualTo(0), "XOR DI,DI");
+  }
+
+  [Test]
+  public void EncodingSelection_GivenMovZeroThenFlagRead_WhenScheduled_ThenKeepsMov() {
+    var asm = new Assembler { EnableSchedule = true };
+    var done = asm.DefineLabel();
+    asm.Test(Reg.DX, Reg.DX);                  // flags intentionally live across MOV
+    asm.Mov(Reg.AX, (Imm)0);                   // MOV must preserve those flags
+    asm.Jz(done);
+    asm.Cmp(Reg.BX, Reg.CX);
+    asm.MarkLabel(done);
+    asm.Ret();
+    Assert.That(IndexOf(asm.ToArray(), [0xB8, 0x00, 0x00]), Is.GreaterThanOrEqualTo(0));
+  }
+
+  [Test]
+  public void EncodingSelection_GivenMovLabelOffsetPlaceholderZero_WhenScheduled_ThenKeepsFixupBackedMov() {
+    var asm = new Assembler { EnableSchedule = true };
+    var cell = asm.DefineLabel();
+    asm.Mov(Reg.AX, Imm.OffsetOf(cell));        // buffer contains 0000 until fixup resolution
+    asm.Mov(Reg.BX, Reg.CX);
+    asm.Cmp(Reg.DX, Reg.SI);
+    asm.Ret();
+    asm.MarkLabel(cell);
+    asm.Dw(0x1234);
+    var bytes = asm.ToArray();
+    Assert.That(bytes[0], Is.EqualTo(0xB8), "an unresolved OFFSET is not the numeric zero idiom");
+  }
+
+  [Test]
+  public void EncodingSelection_GivenUnrecordedBarrierBeforeFlagKill_WhenScheduled_ThenKeepsMovZero() {
+    var asm = new Assembler { EnableSchedule = true };
+    var callee = asm.DefineLabel();
+    asm.Mov(Reg.AX, (Imm)0);
+    asm.Call(callee);                           // record gap: callee/inline asm may observe flags
+    asm.Cmp(Reg.DX, Reg.SI);
+    asm.Ret();
+    asm.MarkLabel(callee);
+    asm.Ret();
+    Assert.That(IndexOf(asm.ToArray(), [0xB8, 0x00, 0x00]), Is.GreaterThanOrEqualTo(0));
+  }
+
+  [Test]
   public void RunSchedule_WhenDisabled_ThenStreamUntouched() {
     var asm = new Assembler();   // EnableSchedule = false
     asm.Mov(Reg.AX, Mem.Word(Reg.BP, 2));

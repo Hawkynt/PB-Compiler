@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Implemented for one-element sliding-window recurrences |
 | **Stage** | Mid-end |
+| **IR** | ✅ `Ir/Passes/DataLayoutTransforms.cs` — recognizes `t(i) = f(t(i-1), …)` with one seed and one final-element read, replaces the previous-element load with a loop-carried phi, and removes the array traffic/storage |
 | **Related** | [O0328](O0328-temporary-array-fusion.md), [O0138](O0138-overlapping-load-combining.md), [O0290](O0290-loop-temporary-reuse.md) |
 
 ## The idea
@@ -36,3 +37,8 @@ becomes a single running scalar.
   makes it one of the more tractable members of that family.
 - It composes with [O0138](O0138-overlapping-load-combining.md), which carries
   the same window in registers without changing the storage.
+
+The current IR pass implements the common distance-one recurrence. It requires
+exactly one seed store before the counted loop, one previous-element load and
+one current-element store inside it, and one final-element load afterwards.
+Wider windows remain planned rather than being approximated.

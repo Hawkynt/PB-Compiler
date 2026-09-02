@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial — byte-granular integer narrowing implemented; sub-byte coalescing remains planned |
 | **Stage** | Whole-program data layout |
+| **IR** | 🟡 `Ir/Passes/DataLayoutTransforms.cs` — joins `IrRangeAnalysis` facts for every store to a private integer field, narrows storage to 8/16/32 bits when safe, and inserts truncation/extension at the record boundary |
 | **Related** | [O0057](O0057-storage-narrowing.md), [O0016](O0016-value-fact-analysis.md), [O0321](O0321-field-reordering.md) |
 
 ## The idea
@@ -36,3 +37,7 @@ packs to a single byte per record.
   for large arrays and loses for hot scalars — the same emitter-versus-analysis
   split [O0057](O0057-storage-narrowing.md) describes.
 - Layout-observability rules as in [O0321](O0321-field-reordering.md).
+
+The current IR transform stops at byte-addressable storage. It can turn an
+`INTEGER` field proven to stay in `0..7` into an unsigned byte, but it does not
+yet coalesce several such ranges into one shared bit-field byte/word.

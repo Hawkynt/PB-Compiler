@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial — same-region pointer-array compression implemented |
 | **Stage** | Whole-program data layout |
+| **IR** | 🟡 `Ir/Passes/DataLayoutTransforms.cs` — when an explicit target pointer width is greater than 16 bits, a private pointer array whose non-null values are all typed GEPs into one proven region is stored as `u16` indices with `65535` as null and reconstructed on load |
 | **Related** | [O0323](O0323-structure-packing-by-range.md), [O0057](O0057-storage-narrowing.md), [docs/FORMATS.md](../FORMATS.md) |
 
 ## The idea
@@ -34,3 +35,8 @@ END TYPE
 - Widening on dereference, and correct handling of the null representation.
 - `VARPTR32`/`STRPTR32` and any pointer that escapes to an external unit must
   keep the full form.
+
+The current IR implementation covers pointer arrays because their element
+provenance is explicit in typed GEPs. Compressing a pointer *field inside an
+opaque packed UDT byte buffer* needs equivalent pointer-field provenance from
+lowering before it can be done without guessing the source type.
