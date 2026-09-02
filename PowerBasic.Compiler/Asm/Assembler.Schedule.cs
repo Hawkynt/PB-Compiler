@@ -91,6 +91,12 @@ public sealed partial class Assembler {
     this.RunPeephole();
     if (!this.EnableSchedule || this._scheduleRan)
       return;
+
+    // O0092 is a shrink-only canonicalization over these same def/use records. Run it before any
+    // permutation so its flag-liveness walk follows emitted fall-through order and so the scheduler
+    // consumes the repaired instruction lengths/effects (INC/DEC and XOR-zero forms).
+    this.RunEncodingSelection();
+
     this._scheduleRan = true;
     if (this._schedInstrs is not { Count: > 2 } recs)
       return;

@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Implemented for private packed scalar records |
 | **Stage** | Binder layout |
+| **IR** | ✅ `Ir/Passes/DataLayoutTransforms.cs` — infers complete non-overlapping field coverage, weights static reads/writes, and rewrites all affine field offsets without changing record stride |
 | **Related** | [O0322](O0322-hot-cold-field-splitting.md), [O0163](O0163-dead-field-elimination.md), [O0320](O0320-aos-to-soa.md) |
 
 ## The idea
@@ -37,3 +38,7 @@ small displacements.
   a layout for hardware registers and file formats, and any type using them —
   or written to a file, `FIELD`ed, or shared with an external unit — is off
   limits ([O0260](O0260-escape-analysis.md)).
+
+The IR implementation uses static access counts rather than profile data and
+requires the complete packed record to be represented by analyzable scalar
+loads/stores. Any opaque/escaping use makes the pass decline.

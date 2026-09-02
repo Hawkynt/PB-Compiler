@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Implemented for private zero-based affine 2D scalar arrays |
 | **Stage** | Whole-program data layout |
+| **IR** | ✅ `Ir/Passes/DataLayoutTransforms.cs` — recovers row/column coefficients and transposes storage when a counted innermost loop walks the strided dimension; opaque/escaping layouts decline |
 | **Related** | [O0320](O0320-aos-to-soa.md), [O0122](O0122-loop-interchange.md), [O0144](O0144-interleaved-access-vectorization.md) |
 
 ## The idea
@@ -35,3 +36,8 @@ NEXT
 - For SCREEN 13 pixel arrays the "layout" is fixed by the hardware
   ([R0002](R0002-fast-graphics.md)) and the transform is illegal by definition —
   a useful reminder that some arrays are memory-mapped contracts, not data.
+
+The current transform intentionally restricts itself to zero-based, affine 2D
+private arrays and exact counted loops. Non-zero lower bounds and competing
+traversal orders remain outside this first implementation rather than being
+silently remapped from incomplete information.

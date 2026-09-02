@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Implemented for private fixed-size packed scalar record arrays |
 | **Stage** | Whole-program data layout |
+| **IR** | ✅ `Ir/Passes/DataLayoutTransforms.cs` — recovers affine record stride/field offsets from byte GEPs, rejects escaping or overlapping storage, then replaces the record buffer with one typed array per field |
 | **Related** | [O0059](O0059-scalar-replacement.md), [O0163](O0163-dead-field-elimination.md), [O0026](O0026-auto-vectorization.md), [O0144](O0144-interleaved-access-vectorization.md) |
 
 ## The idea
@@ -37,3 +38,8 @@ NEXT
   correct, but the cost model must account for it.
 - The transposition is a **representation change**, so every access site,
   `REDIM`, `ERASE` and bounds check has to follow it.
+
+The IR implementation deliberately takes the narrow safe subset: fixed-size stack
+storage, scalar field loads/stores, affine byte offsets, and no opaque use of the
+record pointer. Dynamic/far arrays and whole-record operations therefore decline
+rather than exposing a representation mismatch.

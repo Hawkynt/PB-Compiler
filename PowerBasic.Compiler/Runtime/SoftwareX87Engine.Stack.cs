@@ -205,25 +205,22 @@ public sealed partial class SoftwareX87Engine {
 
   private void EmitPushFromConstant(string mnemonic) {
     this.EmitPushEmpty();
-    // Named tuple rather than a deconstruction: a deconstructing declaration does not carry its
-    // element types into the switch arms, so every literal below stayed int and none of them
-    // converted to the short/ushort the Mov word operands need.
-    (short exp, ushort meta, ushort w0, ushort w1, ushort w2, ushort w3) c = mnemonic switch {
-      "FLDZ" => (0, ClassZero, 0, 0, 0, 0),
-      "FLD1" => (0, ClassFinite, 0, 0, 0, 0x8000),
-      "FLDPI" => (1, ClassFinite, 0xC235, 0x2168, 0xDAA2, 0xC90F),
-      "FLDL2E" => (0, ClassFinite, 0xF0BC, 0x5C17, 0x3B29, 0xB8AA),
-      "FLDL2T" => (1, ClassFinite, 0x8AFE, 0xCD1B, 0x784B, 0xD49A),
-      "FLDLG2" => (-2, ClassFinite, 0xF799, 0xFBCF, 0x9A84, 0x9A20),
-      "FLDLN2" => (-1, ClassFinite, 0x79AC, 0xD1CF, 0x17F7, 0xB172),
+    (short exp, ushort meta, ushort w0, ushort w1, ushort w2, ushort w3) = mnemonic switch {
+      "FLDZ" => ((short)0, ClassZero, (ushort)0, (ushort)0, (ushort)0, (ushort)0),
+      "FLD1" => ((short)0, ClassFinite, (ushort)0, (ushort)0, (ushort)0, (ushort)0x8000),
+      "FLDPI" => ((short)1, ClassFinite, (ushort)0xC235, (ushort)0x2168, (ushort)0xDAA2, (ushort)0xC90F),
+      "FLDL2E" => ((short)0, ClassFinite, (ushort)0xF0BC, (ushort)0x5C17, (ushort)0x3B29, (ushort)0xB8AA),
+      "FLDL2T" => ((short)1, ClassFinite, (ushort)0x8AFE, (ushort)0xCD1B, (ushort)0x784B, (ushort)0xD49A),
+      "FLDLG2" => ((short)-2, ClassFinite, (ushort)0xF799, (ushort)0xFBCF, (ushort)0x9A84, (ushort)0x9A20),
+      "FLDLN2" => ((short)-1, ClassFinite, (ushort)0x79AC, (ushort)0xD1CF, (ushort)0x17F7, (ushort)0xB172),
       _ => throw new ArgumentOutOfRangeException(nameof(mnemonic)),
     };
-    this._asm.Mov(this.Slot(0, Sig0, OperandSize.Word), c.w0);
-    this._asm.Mov(this.Slot(0, Sig1, OperandSize.Word), c.w1);
-    this._asm.Mov(this.Slot(0, Sig2, OperandSize.Word), c.w2);
-    this._asm.Mov(this.Slot(0, Sig3, OperandSize.Word), c.w3);
-    this._asm.Mov(this.Slot(0, Exponent, OperandSize.Word), c.exp);
-    this._asm.Mov(this.Slot(0, Meta, OperandSize.Word), c.meta);
+    this._asm.Mov(this.Slot(0, Sig0, OperandSize.Word), w0);
+    this._asm.Mov(this.Slot(0, Sig1, OperandSize.Word), w1);
+    this._asm.Mov(this.Slot(0, Sig2, OperandSize.Word), w2);
+    this._asm.Mov(this.Slot(0, Sig3, OperandSize.Word), w3);
+    this._asm.Mov(this.Slot(0, Exponent, OperandSize.Word), exp);
+    this._asm.Mov(this.Slot(0, Meta, OperandSize.Word), meta);
   }
 
   private bool EmitLoadStack(int index) {

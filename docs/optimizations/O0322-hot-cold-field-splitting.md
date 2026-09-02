@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Implemented for private packed scalar record arrays |
 | **Stage** | Whole-program data layout |
+| **IR** | ✅ `Ir/Passes/DataLayoutTransforms.cs` — static access weights keep hot fields in a smaller packed record and split sufficiently cold fields into side arrays keyed by the same element index |
 | **Related** | [O0321](O0321-field-reordering.md), [O0320](O0320-aos-to-soa.md), [O0163](O0163-dead-field-elimination.md) |
 
 ## The idea
@@ -37,3 +38,8 @@ Split, the hot array is 1.6 KB and the cold one is paged or heap-allocated.
   cost of the second indirection on every cold access.
 - Access-frequency data; without a profile, "large fixed-length string" versus
   "scalar" is already a usable static heuristic.
+
+The current IR tier implements the scalar fixed-size case and uses a conservative
+static threshold (`coldWeight * 4 <= hottestWeight`). Fixed strings and other
+opaque field representations remain outside the transform until their accesses
+carry equivalent scalar layout provenance.

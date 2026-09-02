@@ -144,8 +144,8 @@ public sealed partial class SoftwareX87Engine : IX87InstructionSink {
       (0xDD, 0xC0) => this.EmitFree(register.Index),
       (0xDD, 0xD0) => this.EmitStoreStack(register.Index, pop: false),
       (0xDD, 0xD8) => this.EmitStoreStack(register.Index, pop: true),
-      // FCOM (D8 /2) and FCOMP (D8 /3) sit inside the D8 C0..F8 arithmetic range, so they have
-      // to be matched before it or the switch arm below swallows them.
+      // D8 D0/D8 are compare encodings and sit inside the broad D8 C0..F8 arithmetic range.
+      // Match them first or the specific arms are statically unreachable and, worse, decode wrong.
       (0xD8, 0xD0) => this.EmitCompareStack(register.Index, popCount: 0, unordered: false),
       (0xD8, 0xD8) => this.EmitCompareStack(register.Index, popCount: 1, unordered: false),
       (0xD8, >= 0xC0 and <= 0xF8) => this.EmitArithmeticStack(opcode, modRmBase, register.Index),

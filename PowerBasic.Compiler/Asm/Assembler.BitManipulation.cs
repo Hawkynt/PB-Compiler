@@ -1,7 +1,8 @@
 namespace PowerBasic.Compiler.Asm;
 
-/// <summary>POPCNT encoder used by target-aware inline assembly.</summary>
+/// <summary>Scalar bit-manipulation encoders that post-date the historical inline-assembler table.</summary>
 public sealed partial class Assembler {
+
   /// <summary>POPCNT r16/r32, r16/r32 (F3 0F B8 /r; operand size selects 16 or 32 bits).</summary>
   public void Popcnt(Reg destination, Reg source) {
     RequireWordOrDword(destination, nameof(destination));

@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned (386-era and later targets only) |
+| **Status** | ✅ Implemented for private affine 2D scalar arrays when cache geometry is supplied |
 | **Stage** | Data layout |
+| **IR** | ✅ `Ir/Passes/DataLayoutTransforms.cs` — detects row strides that are exact cache-size multiples, adds physical row padding, and rewrites affine element addresses; disabled when the target has no cache model |
 | **Related** | [O0325](O0325-array-padding-alignment.md), [O0124](O0124-loop-tiling.md), [O0174](O0174-target-cost-models.md) |
 
 ## The idea
@@ -31,3 +32,7 @@ NEXT
 - The same non-observability rules as
   [O0325](O0325-array-padding-alignment.md): `UBOUND`, `ERASE`, file records and
   `VARPTR` arithmetic must not see the pad.
+
+The IR pass therefore has no default cache constants. A caller must supply the
+cache size (and optionally line size) through `IrDataLayoutTarget`; otherwise it
+is not inserted into the standard pipeline.

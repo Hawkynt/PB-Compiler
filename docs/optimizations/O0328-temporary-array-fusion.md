@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Implemented for pure single-producer/single-consumer counted loops |
 | **Stage** | Mid-end |
+| **IR** | ✅ `Ir/Passes/DataLayoutTransforms.cs` — proves equal trip counts and same-index access, clones only pure producer value DAGs into the consumer, checks loaded memory against loop writes with `IrAliasAnalysis`, then removes the temporary load/store/allocation |
 | **Related** | [O0062](O0062-loop-restructuring.md), [O0329](O0329-array-contraction.md), [O0286](O0286-allocation-elimination.md) |
 
 ## The idea
@@ -39,3 +40,9 @@ FOR i% = 0 TO 999 : out%(i%) = src%(i%) * 2 + 1 : NEXT
   [O0329](O0329-array-contraction.md).
 - On a 64 KiB-segment target, deleting a 2 KB temporary is also a data-segment
   saving, not only a speed one.
+
+This first IR implementation does not physically splice the CFGs together. It
+performs the equivalent value fusion for the strict profitable case: the
+producer expression is recreated at the consumer iteration and the first loop's
+now-dead computation is removed by DCE. Calls, side effects, ambiguous aliases,
+multiple consumers and mismatched index expressions all decline.

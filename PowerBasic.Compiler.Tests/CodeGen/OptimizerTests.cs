@@ -2016,7 +2016,7 @@ public sealed class OptimizerTests {
   public void Emit_GivenConditionalAccumulateLoop_WhenPb36Speed_ThenCounterInSi() {
     // a FOR loop whose body is a clean IF (SI-clean condition + scalar-assign arm) keeps the
     // counter in SI: the increment becomes ADD SI, imm (83 C6), which a memory-cell counter lacks.
-    const string body = "s% = 0\nFOR i% = 1 TO 10\n  IF i% > 5 THEN s% = s% + i%\nNEXT i%\nPRINT s%\nEND";
+    const string body = "s% = 0\nFOR i% = 1 TO 20 STEP 2\n  IF i% > 5 THEN s% = s% + i%\nNEXT i%\nPRINT s%\nEND";
     var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
     var plain = Compile(body, Dialect.Pb36);
     Assert.That(CountAddSiImm(speed), Is.GreaterThan(CountAddSiImm(plain)),
@@ -2069,8 +2069,8 @@ public sealed class OptimizerTests {
     // a PRINT of plain numeric items (and string literals, whose SI load is saved/restored) leaves
     // SI/DI intact, so a FOR counter over a printing body stays in SI (ADD SI, imm). A non-literal
     // string item (a string variable) prints via a path that may clobber SI, blocking residency.
-    const string numeric = "$OPTIMIZE SPEED\ns% = 0\nFOR i% = 1 TO 10\n  s% = s% + i%\n  PRINT \"v=\"; s%\nNEXT i%\nEND";
-    const string stringVar = "$OPTIMIZE SPEED\nz$ = \"v=\"\ns% = 0\nFOR i% = 1 TO 10\n  s% = s% + i%\n  PRINT z$; s%\nNEXT i%\nEND";
+    const string numeric = "$OPTIMIZE SPEED\ns% = 0\nFOR i% = 1 TO 20 STEP 2\n  s% = s% + i%\n  PRINT \"v=\"; s%\nNEXT i%\nEND";
+    const string stringVar = "$OPTIMIZE SPEED\nz$ = \"v=\"\ns% = 0\nFOR i% = 1 TO 20 STEP 2\n  s% = s% + i%\n  PRINT z$; s%\nNEXT i%\nEND";
     Assert.That(CountAddSiImm(Compile(numeric, Dialect.Pb36)), Is.GreaterThan(CountAddSiImm(Compile(stringVar, Dialect.Pb36))),
       "a numeric/literal PRINT keeps the FOR counter in SI; a string-variable item blocks residency");
   }
@@ -2080,8 +2080,8 @@ public sealed class OptimizerTests {
     // an INTEGER SELECT CASE dispatches through AX/BX/DX (jump table or compare chain), never the
     // index registers, so a FOR counter over a SELECT body stays in SI (ADD SI, imm). A STRING
     // SELECT (string compares touch SI) is not SI-clean and blocks residency.
-    const string intSel = "$OPTIMIZE SPEED\ns% = 0\nFOR i% = 1 TO 10\n  SELECT CASE i%\n  CASE 1, 3, 5\n    s% = s% + i%\n  CASE ELSE\n    s% = s% - 1\n  END SELECT\nNEXT i%\nPRINT s%\nEND";
-    const string strSel = "$OPTIMIZE SPEED\nz$ = \"a\"\ns% = 0\nFOR i% = 1 TO 10\n  SELECT CASE z$\n  CASE \"a\"\n    s% = s% + i%\n  END SELECT\nNEXT i%\nPRINT s%\nEND";
+    const string intSel = "$OPTIMIZE SPEED\ns% = 0\nFOR i% = 1 TO 20 STEP 2\n  SELECT CASE i%\n  CASE 1, 3, 5\n    s% = s% + i%\n  CASE ELSE\n    s% = s% - 1\n  END SELECT\nNEXT i%\nPRINT s%\nEND";
+    const string strSel = "$OPTIMIZE SPEED\nz$ = \"a\"\ns% = 0\nFOR i% = 1 TO 20 STEP 2\n  SELECT CASE z$\n  CASE \"a\"\n    s% = s% + i%\n  END SELECT\nNEXT i%\nPRINT s%\nEND";
     Assert.That(CountAddSiImm(Compile(intSel, Dialect.Pb36)), Is.GreaterThan(CountAddSiImm(Compile(strSel, Dialect.Pb36))),
       "an integer SELECT body keeps the FOR counter in SI; a string SELECT blocks residency");
   }
@@ -2128,7 +2128,9 @@ public sealed class OptimizerTests {
     return count;
   }
 
-  // 83 C6 = ADD SI, imm8 - the increment of an SI-resident FOR counter
+  // 83 C6 = ADD SI, imm8 - the increment of an SI-resident FOR counter. The programs above
+  // step by two on purpose: a step of one now picks the one-byte INC SI, and a single opcode
+  // byte cannot be told from string data by a scan of the image.
   private static int CountAddSiImm(byte[] image) {
     var count = 0;
     for (var i = 0; i + 1 < image.Length; ++i)
