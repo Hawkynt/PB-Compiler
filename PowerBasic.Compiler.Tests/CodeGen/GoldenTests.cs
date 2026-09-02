@@ -8,7 +8,7 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// Source-to-DOSBox golden tests: every tests/NAME.BAS is compiled through the
 /// full pipeline and its DOSBox stdout compared with tests/NAME.expected.
 /// </summary>
-[TestFixture]
+[TestFixture, Category("Slow")]
 [NonParallelizable]
 public sealed class GoldenTests {
 

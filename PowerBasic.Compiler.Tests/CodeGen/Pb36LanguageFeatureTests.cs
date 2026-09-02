@@ -10,7 +10,7 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// DOSBox. Skipped when DOSBox is unavailable. These prove the new sugar lowers
 /// to the same observable behavior the hand-written equivalent would produce.
 /// </summary>
-[TestFixture]
+[TestFixture, Category("Slow")]
 [NonParallelizable]
 public sealed class Pb36LanguageFeatureTests {
 

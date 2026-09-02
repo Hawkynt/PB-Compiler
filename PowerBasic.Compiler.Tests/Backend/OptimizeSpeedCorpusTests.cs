@@ -25,7 +25,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// emulator run, which is the right price for a test whose value is in the ones where it does.
 /// </para>
 /// </summary>
-[TestFixture]
+[TestFixture, Category("Slow")]
 public sealed class OptimizeSpeedCorpusTests {
 
   private static readonly string _repoRoot =

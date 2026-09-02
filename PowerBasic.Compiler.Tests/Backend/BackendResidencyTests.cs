@@ -28,7 +28,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// The fourth claim is the one the RULES of this back end care about most and it is measured over the
 /// whole corpus rather than asserted: a preference must never cost a function its allocation.
 /// </summary>
-[TestFixture]
+[TestFixture, Category("Slow")]
 public sealed class BackendResidencyTests {
 
   private static readonly string _repoRoot =

@@ -9,7 +9,7 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// True end-to-end tests: AST -> binder -> code generator -> MZ EXE -> DOSBox.
 /// Skipped when DOSBox is unavailable.
 /// </summary>
-[TestFixture]
+[TestFixture, Category("Slow")]
 [NonParallelizable]
 public sealed class ExecutionTests {
 

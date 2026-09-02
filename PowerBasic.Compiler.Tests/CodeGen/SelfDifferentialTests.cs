@@ -14,7 +14,7 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// ourselves and needs only DOSBox, so it covers the combinations the oracle batteries do not -
 /// notably a NON-pb35 dialect with the optimizer ON, which no other harness compiles.
 /// </summary>
-[TestFixture]
+[TestFixture, Category("Slow")]
 public sealed class SelfDifferentialTests {
 
   /// <summary>One program, and the dialect whose arithmetic makes it interesting.</summary>

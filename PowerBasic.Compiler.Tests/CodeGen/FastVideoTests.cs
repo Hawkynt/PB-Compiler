@@ -10,7 +10,7 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// text screen into SCREEN.TXT after the program ran unredirected, so the OBSERVABLE screen
 /// is compared between the direct-video and the plain DOS/BIOS build.
 /// </summary>
-[TestFixture]
+[TestFixture, Category("Slow")]
 [NonParallelizable]
 public sealed class FastVideoTests {
 

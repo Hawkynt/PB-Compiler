@@ -34,7 +34,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// constant: the same construct with a RUNTIME operand instead of a constant, and with constants
 /// outside the range the immediate form can carry.
 /// </summary>
-[TestFixture]
+[TestFixture, Category("Slow")]
 public sealed class BackendNeverThrowsTests {
 
   private static readonly string _repoRoot =

@@ -10,7 +10,7 @@ namespace PowerBasic.Compiler.Tests.Dialects;
 /// A hand-maintained checklist is accurate on the day it is written and silently stops being so; one
 /// that is regenerated and compared cannot claim a dimension holds after the code stopped holding it.
 /// </summary>
-[TestFixture]
+[TestFixture, Category("Slow")]
 public sealed class DialectBatteryTests {
 
   private static readonly string _root = Path.GetFullPath(Path.Combine(
