@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial — vector-tail padding implemented; base alignment remains planned |
 | **Stage** | Data layout |
+| **IR** | 🟡 `Ir/Passes/DataLayoutTransforms.cs` — with an explicit target vector width, private scalar arrays are physically rounded up to a whole vector while logical indexing remains unchanged |
 | **Related** | [O0139](O0139-alignment-versioning.md), [O0026](O0026-auto-vectorization.md), [O0252](O0252-safe-overread-versioning.md) |
 
 ## The idea
@@ -35,3 +36,7 @@ DIM a%(0 TO 999)             ' 1 000 elements: 250 MMX vectors exactly, if align
   file must keep its declared size.
 - The size cost is bounded by one vector per array — negligible for large
   arrays, and not worth it for tiny ones.
+
+The IR currently has no alignment property on `IrAlloca`, so only the second
+half is implemented here. The transform is target-gated and applies only to
+private arrays, making the extra physical tail unobservable to source semantics.
