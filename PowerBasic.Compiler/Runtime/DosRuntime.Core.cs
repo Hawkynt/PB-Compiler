@@ -64,7 +64,7 @@ public sealed partial class DosRuntime {
   /// </summary>
   private void EmitRepMovsbWidened(Assembler asm) {
     this.EmitVectorCopyPrefix(asm);
-    if (!this.Target.Has32BitGeneralPurpose) {
+    if (!this.Use32BitFastPath) {
       asm.Rep();
       asm.Movsb();
       return;
@@ -85,7 +85,7 @@ public sealed partial class DosRuntime {
   /// </summary>
   private void EmitRepStoswZeroWidened(Assembler asm) {
     this.EmitVectorZeroPrefix(asm, unitBytes: 2);
-    if (!this.Target.Has32BitGeneralPurpose) {
+    if (!this.Use32BitFastPath) {
       asm.Xor(Reg.AX, Reg.AX);
       asm.Rep();
       asm.Stosw();

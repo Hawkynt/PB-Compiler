@@ -900,6 +900,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._rt.EnableUmb = this.Optimize && !this._allowExternalCalls && !this._isUnit;   // C6: HUGE-array heap prefers upper memory
     this._rt.EnableFastVideo = model.FastVideo;   // R1: $OPTION VIDEO direct-video console PRINT
     this._rt.Target = this.RuntimeTargetForRuntime();
+    // $CPU says what the runtime MAY encode, $OPTIMIZE says whether it may trade bytes for cycles.
+    // Keeping the second out of the target is what lets $FLOAT NPX still reach native x87 with the
+    // optimizer off, while a copy stays the copy the user wrote.
+    this._rt.EnableTargetOptimizations = this.Optimize;
     this._rt.EmitEntry(asm, userMain);
 
     // pb36 (docs/PB36.md P1): the runtime is emitted AFTER user code, trimmed

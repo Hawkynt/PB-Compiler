@@ -12,12 +12,28 @@ public sealed partial class DosRuntime {
   }
 
   /// <summary>
+  /// Whether the runtime may trade bytes for cycles - widening a bulk step, taking a native 32-bit
+  /// divide instead of the legacy one. This is the <c>$OPTIMIZE</c> question and is deliberately
+  /// separate from <see cref="Target"/>, which answers the <c>$CPU</c>/<c>$FLOAT</c> one. The two
+  /// must not be conflated: with optimization off the runtime still honours the declared target for
+  /// what it may legally encode - native x87 for <c>$FLOAT NPX</c>, the SSE/AVX architectural state -
+  /// yet must not rewrite a copy the user did not ask to have rewritten.
+  /// </summary>
+  public bool EnableTargetOptimizations { get; set; }
+
+  /// <summary>True when a 32-bit-wide step is both encodable on the target and wanted here.</summary>
+  private bool Use32BitFastPath => this.EnableTargetOptimizations && this.Target.Has32BitGeneralPurpose;
+
+  /// <summary>The bulk vector width to use, or zero when this compilation declines the trade.</summary>
+  private int BulkVectorWidthBytes => this.EnableTargetOptimizations ? this.Target.MaxRuntimeBulkVectorWidthBytes : 0;
+
+  /// <summary>
   /// Copies as many complete vectors as worthwhile from DS:SI to ES:DI, leaves the byte remainder in
   /// CX and preserves the vector register it borrows. The save lives on SS rather than in runtime BSS,
   /// so even the entry-time BSS zeroer can use the same machinery safely.
   /// </summary>
   private void EmitVectorCopyPrefix(Assembler asm) {
-    var width = this.Target.MaxRuntimeBulkVectorWidthBytes;
+    var width = this.BulkVectorWidthBytes;
     if (width < 16 || PreferredBulkVector(this.Target) is not { } vector)
       return;
 
@@ -45,7 +61,7 @@ public sealed partial class DosRuntime {
   /// is left holding the scalar tail. The borrowed vector register is restored exactly.
   /// </summary>
   private void EmitVectorZeroPrefix(Assembler asm, int unitBytes) {
-    var width = this.Target.MaxRuntimeBulkVectorWidthBytes;
+    var width = this.BulkVectorWidthBytes;
     if (width < 16 || PreferredBulkVector(this.Target) is not { } vector)
       return;
 
@@ -71,7 +87,7 @@ public sealed partial class DosRuntime {
   /// <summary>Zero-fills CX bytes at ES:DI, using vector, DWORD, then byte stores as available.</summary>
   private void EmitRepStosbZeroWidened(Assembler asm) {
     this.EmitVectorZeroPrefix(asm, unitBytes: 1);
-    if (!this.Target.Has32BitGeneralPurpose) {
+    if (!this.Use32BitFastPath) {
       asm.Xor(Reg.AL, Reg.AL);
       asm.Rep();
       asm.Stosb();

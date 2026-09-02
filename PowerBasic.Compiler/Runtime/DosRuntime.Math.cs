@@ -157,8 +157,9 @@ public sealed partial class DosRuntime {
     asm.MarkLabel(divisorOk);
 
     // Any normalized 386-or-newer target gets the native 32-bit divide, including 586+ targets
-    // that the old exact-string 386-generation test accidentally classified as pre-386.
-    if (this.Target.Has32BitGeneralPurpose) {
+    // that the old exact-string 386-generation test accidentally classified as pre-386 - but only
+    // when optimization is on, because the legacy routine computes the same quotient more slowly.
+    if (this.Use32BitFastPath) {
       var legacy = asm.DefineLabel();
       var fast = asm.DefineLabel();
       asm.Mov(Mem.Word(this._scratch), Reg.BX);
