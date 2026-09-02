@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial (flag-safe zero idioms and early-target INC/DEC selection are wired; general per-target encoding competition remains) |
 | **Stage** | Emitter / assembler |
 | **Related** | [O0035](O0035-jump-relaxation.md), [O0038](O0038-instruction-scheduling.md), [O0174](O0174-target-cost-models.md) |
 | **Split into** | [O0244](O0244-microop-selection.md), [O0245](O0245-decode-width-scheduling.md), [O0246](O0246-move-elimination-aware.md) |
@@ -33,10 +33,81 @@ unit is the bottleneck.
 
 Every emitted instruction — this is a selection policy, not a pattern.
 
-## What it needs
+## Now
 
-- [O0174](O0174-target-cost-models.md), with a per-target table of encoding
-  costs, and a size-versus-speed knob wired to `$OPTIMIZE SIZE`/`SPEED`.
-- Length-changing selection forces re-layout of everything after it (the same
-  problem [O0072](O0072-register-reassignment.md) documents), so it belongs in
-  the assembler's fixup pass rather than in an after-the-fact peephole.
+`Assembler.EncodingSelect.cs` performs two shrink-only choices immediately before
+the `$OPTIMIZE SPEED` instruction scheduler consumes its def/use records.
+
+### Zero materialization
+
+A numeric word-register zero load:
+
+```asm
+    mov     ax, 0            ; 3 bytes, preserves flags
+    ...                      ; no flag reader
+    cmp     dx, si           ; independently replaces arithmetic flags
+```
+
+becomes:
+
+```asm
+    xor     ax, ax           ; 2 bytes
+    ...
+    cmp     dx, si
+```
+
+This is legal only when the pass can prove the changed flags are dead. It walks
+the byte-adjacent recorded stream until a complete independent arithmetic flag
+definition. A conditional branch, `ADC`/`SBB`, any other recorded flag read, an
+unrecorded gap (`CALL`, inline asm, etc.), or the end of the run before such a
+kill makes it decline.
+
+An unresolved `MOV AX, OFFSET label` is explicitly excluded. Its immediate bytes
+are zero placeholders before fixup resolution and are **not** the numeric value
+zero; treating those bytes as a zero idiom would replace an address with zero.
+
+### `ADD/SUB r,1` versus `INC/DEC`
+
+On the default pre-386 target, when CF is dead by the same forward proof:
+
+```asm
+    add     ax, 1            ; 83 C0 01
+    sub     dx, 1            ; 83 EA 01
+```
+
+become the one-byte encodings:
+
+```asm
+    inc     ax               ; 40
+    dec     dx               ; 4A
+```
+
+`INC`/`DEC` preserve CF while `ADD`/`SUB` define it, so a carry consumer before a
+full flag kill blocks the rewrite. A later `INC`/`DEC` is not accepted as a full
+kill either, because it preserves exactly the flag whose difference matters.
+
+The optimization is deliberately **not** applied for a selectable 386-or-later
+CPU floor under SPEED. On early byte/prefetch-bound machines the two-byte saving
+is the dominant win; later cores make flag dependencies and execution behavior
+part of the cost. The compiler already exposes the 8086-vs-386+ boundary to the
+assembler, so this pass uses that existing target fact rather than inventing a
+second microarchitecture model.
+
+Every rewrite repairs the scheduler record (length, register/flag effects) and
+all shrinking goes through the common `RemoveBytes` machinery, so labels, fixups,
+relocations and later instruction positions remain synchronized.
+
+## Still planned
+
+The general O0092 policy is larger than these two choices:
+
+- use [O0174](O0174-target-cost-models.md) directly for competing accumulator,
+  ModRM, microcoded and decomposed forms;
+- account for decode width and micro-op count on Pentium/P6-class targets;
+- make move-elimination and register reassignment costs part of encoding choice;
+- perform choices that require changing register assignment/layout, not only
+  shrink-only substitutions over an already emitted stream.
+
+Length-changing selection still belongs before final layout/fixup resolution;
+this implementation establishes that late-assembler path for the cases whose
+legality can be proven from the existing def/use stream.
