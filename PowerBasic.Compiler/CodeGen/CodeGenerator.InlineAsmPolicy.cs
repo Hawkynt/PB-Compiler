@@ -42,6 +42,12 @@ public sealed partial class CodeGenerator {
       return true;
     }
 
+    // Once target-policy diagnostics and an explicit NATIVE request have been honoured, SPEED may
+    // erase a provable architectural identity. Typed parsing inside the predicate prevents malformed
+    // assembly from being accepted merely because its tokens resemble a no-op.
+    if (this.Optimize && this.OptimizeSpeed && this.IsZeroOverheadInlineAsmIdentity(instruction, resolver))
+      return true;
+
     // Native capability always wins for AUTO. Extended scalar/SIMD instructions use dedicated
     // encoders because the historical TextAssembler table predates those opcode maps.
     if (mode == IsaFallbackMode.Auto && nativelySupported) {
@@ -67,9 +73,11 @@ public sealed partial class CodeGenerator {
     if (this.TryEmitVirtualGp32Instruction(instruction, resolver, target, out error))
       return true;
 
-    // PACKSSDW has a subtle signed saturation boundary; keep its exact lowering ahead of the generic
-    // packed-SIMD scalarizer so the generic pack implementation can never shadow it.
+    // PACKSSDW has a subtle signed saturation boundary; keep its exact lowering ahead of every generic
+    // packed-SIMD scalarizer so no broader emulator can accidentally shadow its boundary semantics.
     if (this.TryEmitVirtualVectorFixup(instruction, resolver, target, out error))
+      return true;
+    if (this.TryEmitVirtualExtendedVectorInstruction(instruction, resolver, target, out error))
       return true;
     if (this.TryEmitVirtualInstruction(instruction, resolver, target, out error))
       return true;
