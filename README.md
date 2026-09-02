@@ -339,7 +339,7 @@ next free number rather than displacing anything.
 | ⬜ | [O0067](docs/optimizations/O0067-if-chain-jump-table.md) | `IF`-chain → jump table | A chain of mutually exclusive `IF x = k` tests dispatches like a dense `SELECT CASE`. |
 | ⬜ | [O0068](docs/optimizations/O0068-array-zero-fill-elision.md) | Array zero-fill elision | Skip an array's allocation zero-fill when an initializing loop provably dominates every read. |
 | ⬜ | [O0069](docs/optimizations/O0069-dead-parameter-elimination.md) | Dead parameters & call-shape cloning | Drop parameters no callee reads; clone a procedure for a single dominant argument shape. |
-| ⬜ | [O0070](docs/optimizations/O0070-leaf-frame-elision.md) | Leaf-frame elision | A procedure with no locals, strings or GOSUB skips the whole BP frame. |
+| 🟡 | [O0070](docs/optimizations/O0070-leaf-frame-elision.md) | Leaf-frame elision | IR-routed procedures with no surviving fixed stack slots can omit the BP frame; 8086 stack-parameter cases still need BP. |
 | ⬜ | [O0071](docs/optimizations/O0071-segment-register-allocation.md) | Segment-register allocation | Pin ES to the string/array heap across a statement run instead of reloading per access. |
 | ⬜ | [O0072](docs/optimizations/O0072-register-reassignment.md) | Register reassignment | Break the AX-centric serialization so independent statement chains interleave across registers. |
 | ⬜ | [O0073](docs/optimizations/O0073-algorithmic-idiom-catalog.md) | Wider idiom catalog | MIN/MAX scans, bubble-sort shapes → `ARRAY SORT`, series and fill recognitions beyond the first wave. |

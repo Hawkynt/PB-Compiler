@@ -10,9 +10,10 @@ namespace PowerBasic.Compiler.CodeGen;
 
 public sealed partial class CodeGenerator {
 
-  // eligible functions compiled by the x86-16 back end, with their selected+scheduled machine IR and
-  // register allocation (computed once); null until first queried. Empty unless UseExperimentalBackend.
-  private Dictionary<ProcedureSymbol, (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)>? _backendProcs;
+  // eligible functions compiled by the x86-16 back end, with their selected+scheduled machine IR,
+  // register allocation, and the middle-end proof that no fixed local frame storage survived.
+  // null until first queried. Empty unless UseExperimentalBackend.
+  private Dictionary<ProcedureSymbol, (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc, bool ElideFrame)>? _backendProcs;
 
   /// <summary>
   /// What the x86-16 selector is compiling for: the instruction set the directives declared and the
@@ -151,7 +152,7 @@ public sealed partial class CodeGenerator {
   /// an optimizer-stale cell; the function is excluded from inlining and the register-parameter
   /// convention so its emitted stack ABI matches the call sites. Gated on the opt-in flag.
   /// </summary>
-  private Dictionary<ProcedureSymbol, (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)> BackendProcs() {
+  private Dictionary<ProcedureSymbol, (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc, bool ElideFrame)> BackendProcs() {
     if (this._backendProcs is not null)
       return this._backendProcs;
     this._backendProcs = new(ReferenceEqualityComparer.Instance);
@@ -309,13 +310,16 @@ public sealed partial class CodeGenerator {
       }
     }
 
-    foreach (var (proc, _, mfn) in candidates) {
+    foreach (var (proc, irFn, mfn) in candidates) {
       MachineScheduler.Schedule(mfn);             // schedule first, then allocate the final order
       if (LinearScanAllocator.Allocate(mfn, this.SelectionTarget, out var noRegisters) is not { } alloc) {
         this._backendDeclines.Add((proc.Name, "allocation: " + (noRegisters ?? "unknown")));
         continue;                                 // a value live across a CALL has no register - decline
       }
-      this._backendProcs[proc] = (mfn, alloc);
+      // O0070 is optimizer-gated here, after the last middle-end sweep. The IR proof deliberately
+      // says nothing about the ABI or future spills; MachineEmitter re-checks both against the final
+      // machine function before actually omitting BP.
+      this._backendProcs[proc] = (mfn, alloc, this.Optimize && FrameElision.IsCandidate(irFn));
     }
 
     // an allocation failure can strand a caller whose callee is no longer routed - re-check
@@ -941,9 +945,9 @@ public sealed partial class CodeGenerator {
     return this.BackendProcs().ContainsKey(proc);
   }
 
-  /// <summary>Emits a back-end-compiled function: its standard stack-ABI prologue/body/epilogue from the selected, allocated machine IR.</summary>
+  /// <summary>Emits a back-end-compiled function, eliding its BP frame only when O0070's IR and final-machine proofs both hold.</summary>
   private void EmitBackendFunction(ProcedureSymbol proc) {
-    var (mfn, alloc) = this.BackendProcs()[proc];
+    var (mfn, alloc, elideFrame) = this.BackendProcs()[proc];
     var asm = this._asm;
     var paramBytes = this.LayoutFrame(proc);       // assigns each parameter its [BP+offset] and returns the byte count to clean
     if (this.Optimize && this.Cpu486)
@@ -953,6 +957,6 @@ public sealed partial class CodeGenerator {
     // a CALL needs the label the whole-program codegen bound for the callee (procedure labels live in
     // a different registry than Assembler.Lbl); the routing guarantees every callee is itself routed
     MachineEmitter.EmitFunction(asm, mfn, alloc, paramOffsets, paramBytes, this.CalleeLabel, this.DataCellOf,
-      alignLoops: this.Optimize && this.Cost.AlignHotLoops);
+      alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: elideFrame);
   }
 }

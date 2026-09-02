@@ -52,13 +52,18 @@ public sealed class MachineEmitter {
   }
 
   /// <summary>
-  /// Emits a complete function with the standard PowerBASIC stack ABI: a <c>PUSH BP; MOV BP,SP</c>
-  /// prologue (matching the caller's frame view, so <paramref name="paramOffsets"/> - the existing
-  /// codegen's <c>[BP+disp]</c> for each parameter - are valid), the incoming arguments loaded into
-  /// their allocated registers, the body, and an epilogue that preserves the result in AX, DX:AX, or
-  /// ST(0) and cleans <paramref name="paramBytes"/> of arguments (<c>RET n</c>). The body's IrRet
-  /// already moved the result into its ABI location, so each return site falls into the shared
-  /// epilogue sequence.
+  /// Emits a complete function with the standard PowerBASIC stack ABI. Normally that means a
+  /// <c>PUSH BP; MOV BP,SP</c> prologue (matching the caller's frame view, so
+  /// <paramref name="paramOffsets"/> - the existing codegen's <c>[BP+disp]</c> for each parameter -
+  /// are valid), incoming argument loads, the body, and the matching epilogue.
+  ///
+  /// <para>
+  /// O0070 may omit the BP frame when the middle end has requested it and the FINAL machine function
+  /// proves the request survived selection and allocation: no stack parameters, no alloca/spill slots,
+  /// no frame operands and no inline assembly. The final check is load-bearing. An IR function can be
+  /// frame-free and still acquire a spill during register allocation, which immediately makes the
+  /// frame necessary again.
+  /// </para>
   /// </summary>
   /// <param name="resolveCallee">
   /// Maps a called function's name to the <see cref="Label"/> the whole-program codegen bound for it.
@@ -77,35 +82,43 @@ public sealed class MachineEmitter {
   /// for the 486+ SPEED objective; placing the pad before the label means it runs on entry, not on
   /// each back-edge.
   /// </param>
+  /// <param name="allowFrameElision">
+  /// The optimized IR proved that the function owns no fixed local stack storage. The emitter still
+  /// re-checks the final machine function and target ABI before acting on that proof.
+  /// </param>
   public static void EmitFunction(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
       int[] paramOffsets, int paramBytes, Func<string, Label?>? resolveCallee = null,
-      Func<string, Mem?>? resolveData = null, Action<Assembler>? onReturn = null, bool alignLoops = false) {
+      Func<string, Mem?>? resolveData = null, Action<Assembler>? onReturn = null, bool alignLoops = false,
+      bool allowFrameElision = false) {
     var emitter = new MachineEmitter(asm, function, allocation, resolveCallee, resolveData, paramOffsets);
     var loopHeaders = alignLoops ? FindLoopHeaders(function) : null;
+    var elideFrame = CanElideFrame(function, paramOffsets, paramBytes, allowFrameElision);
 
-    asm.Push(Asm.Reg.BP);
-    asm.Mov(Asm.Reg.BP, Asm.Reg.SP);
-    var frame = 0;
-    foreach (var size in function.StackSlots)
-      frame += (size + 1) & ~1;                      // word-aligned space for allocas / spills
-    if (frame > 0) {
-      asm.Sub(Asm.Reg.SP, (Imm)frame);
-      // PB gives every local a zero start, and the frame is where the locals live - the direct path
-      // spells this REP STOSW over the whole frame and so does this one. Skipping it is not a size
-      // optimization here, it is a miscompile: a SUB with DIM a%(0 TO 49) that writes one element and
-      // sums all fifty read forty-nine words of whatever the last call left on the stack. That is
-      // exactly how it was found, and it read as plausible numbers rather than as a crash.
-      //
-      // It has to happen before the arguments are loaded, because it clobbers AX, CX, DI and ES - at
-      // this point no allocated register holds anything yet. Spill slots get zeroed along with the
-      // allocas; they are written before they are read, so it costs only the instruction.
-      asm.Push(Asm.Reg.DS);
-      asm.Pop(Asm.Reg.ES);
-      asm.Mov(Asm.Reg.DI, Asm.Reg.SP);
-      asm.Mov(Asm.Reg.CX, (Imm)(frame / 2));
-      asm.Xor(Asm.Reg.AX, Asm.Reg.AX);
-      asm.Rep();
-      asm.Stosw();
+    if (!elideFrame) {
+      asm.Push(Asm.Reg.BP);
+      asm.Mov(Asm.Reg.BP, Asm.Reg.SP);
+      var frame = 0;
+      foreach (var size in function.StackSlots)
+        frame += (size + 1) & ~1;                      // word-aligned space for allocas / spills
+      if (frame > 0) {
+        asm.Sub(Asm.Reg.SP, (Imm)frame);
+        // PB gives every local a zero start, and the frame is where the locals live - the direct path
+        // spells this REP STOSW over the whole frame and so does this one. Skipping it is not a size
+        // optimization here, it is a miscompile: a SUB with DIM a%(0 TO 49) that writes one element and
+        // sums all fifty read forty-nine words of whatever the last call left on the stack. That is
+        // exactly how it was found, and it read as plausible numbers rather than as a crash.
+        //
+        // It has to happen before the arguments are loaded, because it clobbers AX, CX, DI and ES - at
+        // this point no allocated register holds anything yet. Spill slots get zeroed along with the
+        // allocas; they are written before they are read, so it costs only the instruction.
+        asm.Push(Asm.Reg.DS);
+        asm.Pop(Asm.Reg.ES);
+        asm.Mov(Asm.Reg.DI, Asm.Reg.SP);
+        asm.Mov(Asm.Reg.CX, (Imm)(frame / 2));
+        asm.Xor(Asm.Reg.AX, Asm.Reg.AX);
+        asm.Rep();
+        asm.Stosw();
+      }
     }
 
     // the caller pushed the arguments; load each into the register the allocator gave its vreg.
@@ -128,11 +141,33 @@ public sealed class MachineEmitter {
         if (instr.Opcode == MOpcode.Ret)
           if (onReturn is not null)
             onReturn(asm);                           // the module body leaves through the runtime's exit
+          else if (elideFrame)
+            emitter.EmitReturn(paramBytes);          // no BP state exists; return straight to the caller
           else
             emitter.EmitEpilogue(paramBytes);        // result already in AX; tear the frame down and RET n
         else
           emitter.EmitInstruction(instr);
     }
+  }
+
+  /// <summary>
+  /// Whether the machine function still satisfies the middle-end frame-free proof after instruction
+  /// selection and register allocation. The current 8086 stack ABI cannot address ordinary incoming
+  /// parameters through SP, so any stack parameter keeps BP even though the SSA parameter itself is
+  /// frame-free. A later register ABI or explicit SP-copy plan can relax that condition here without
+  /// teaching the target-neutral analysis about 8086 addressing modes.
+  /// </summary>
+  private static bool CanElideFrame(MFunction function, int[] paramOffsets, int paramBytes, bool requested) {
+    if (!requested || paramOffsets.Length != 0 || paramBytes != 0 || function.StackSlots.Count != 0
+        || function.ArgumentLoads.Count != 0)
+      return false;
+    foreach (var instruction in function.AllInstructions) {
+      if (instruction.Opcode == MOpcode.InlineAsm)
+        return false;
+      if (instruction.Operands.Any(operand => operand is MOperand.StackSlot or MOperand.ParamCell))
+        return false;
+    }
+    return true;
   }
 
   /// <summary>
@@ -154,6 +189,10 @@ public sealed class MachineEmitter {
   private void EmitEpilogue(int paramBytes) {
     this._asm.Mov(Asm.Reg.SP, Asm.Reg.BP);
     this._asm.Pop(Asm.Reg.BP);
+    this.EmitReturn(paramBytes);
+  }
+
+  private void EmitReturn(int paramBytes) {
     if (paramBytes > 0)
       this._asm.Ret((ushort)paramBytes);
     else

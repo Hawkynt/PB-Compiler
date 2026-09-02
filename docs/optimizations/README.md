@@ -130,7 +130,7 @@ Conventions used on every page:
 | ✅ | [O0067](O0067-if-chain-jump-table.md) | `IF`-chain → jump table |
 | 🟡 | [O0068](O0068-array-zero-fill-elision.md) | Array zero-fill elision |
 | ⬜ | [O0069](O0069-dead-parameter-elimination.md) | Dead parameters & call-shape cloning |
-| ⬜ | [O0070](O0070-leaf-frame-elision.md) | Leaf-frame elision |
+| 🟡 | [O0070](O0070-leaf-frame-elision.md) | Leaf-frame elision |
 | ⬜ | [O0071](O0071-segment-register-allocation.md) | Segment-register allocation |
 | ⬜ | [O0072](O0072-register-reassignment.md) | Register reassignment |
 | ⬜ | [O0073](O0073-algorithmic-idiom-catalog.md) | Wider idiom catalog |

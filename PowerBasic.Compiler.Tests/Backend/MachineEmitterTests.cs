@@ -111,12 +111,66 @@ public sealed class MachineEmitterTests {
     Assert.That(alloc, Is.Not.Null);
 
     var asm = new Assembler();
-    // the two BYVAL word parameters sit at [BP+4] and [BP+6]; the function cleans 4 bytes on return
-    MachineEmitter.EmitFunction(asm, m!, alloc!, [4, 6], 4);
+    // the two BYVAL word parameters sit at [BP+4] and [BP+6]; 8086 cannot address them as [SP+disp],
+    // so even an IR frame-elision request must retain BP and clean 4 bytes on return
+    MachineEmitter.EmitFunction(asm, m!, alloc!, [4, 6], 4, allowFrameElision: true);
     var bytes = asm.ToArray();
 
     Assert.That(bytes[0], Is.EqualTo((byte)0x55), "PUSH BP opens the frame");
     Assert.That(IndexOf(bytes, [0xC2, 0x04, 0x00]), Is.GreaterThanOrEqualTo(0), "RET 4 cleans the two word arguments");
+  }
+
+  [Test]
+  public void EmitFunction_GivenFrameFreeParameterlessProcedure_ThenOmitsTheBpFrame() {
+    var fn = new IrFunction("F", IrType.Void);
+    fn.CreateBlock("entry").Append(new IrRet());
+    var machine = InstructionSelector.TrySelect(fn);
+    Assert.That(machine, Is.Not.Null);
+    var allocation = LinearScanAllocator.Allocate(machine!);
+    Assert.That(allocation, Is.Not.Null);
+
+    var asm = new Assembler();
+    MachineEmitter.EmitFunction(asm, machine!, allocation!, [], 0, allowFrameElision: true);
+
+    Assert.That(asm.ToArray(), Is.EqualTo(new byte[] { 0xC3 }), "RET is the complete function");
+  }
+
+  [Test]
+  public void EmitFunction_GivenFinalSpillOrAllocaSlot_ThenKeepsTheFrame() {
+    var fn = new IrFunction("F", IrType.Void);
+    var entry = fn.CreateBlock("entry");
+    entry.Append(new IrAlloca(IrType.I16));
+    entry.Append(new IrRet());
+    var machine = InstructionSelector.TrySelect(fn);
+    Assert.That(machine, Is.Not.Null);
+    var allocation = LinearScanAllocator.Allocate(machine!);
+    Assert.That(allocation, Is.Not.Null);
+    Assert.That(machine!.StackSlots, Is.Not.Empty);
+
+    var asm = new Assembler();
+    MachineEmitter.EmitFunction(asm, machine, allocation!, [], 0, allowFrameElision: true);
+
+    Assert.That(asm.ToArray()[0], Is.EqualTo((byte)0x55), "PUSH BP remains because a frame slot survived");
+  }
+
+  [Test]
+  public void EmitFunction_GivenFrameFreeNonLeaf_ThenCallAloneDoesNotForceAFrame() {
+    var function = new MFunction("F");
+    var block = new MBlock("entry");
+    block.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef("rt")], MInstrEffect.None,
+      clobbers: [Reg.AX, Reg.CX, Reg.DX]));
+    block.Instructions.Add(new MInstr(MOpcode.Ret, [], MInstrEffect.None));
+    function.Blocks.Add(block);
+
+    var asm = new Assembler();
+    MachineEmitter.EmitFunction(asm, function, new Dictionary<int, Reg>(), [], 0, allowFrameElision: true);
+    asm.MarkLabel(asm.Lbl("rt"));
+    var bytes = asm.ToArray();
+
+    Assert.Multiple(() => {
+      Assert.That(bytes[0], Is.EqualTo((byte)0xE8), "CALL is the first instruction, not PUSH BP");
+      Assert.That(bytes, Does.Contain((byte)0xC3), "the function still returns normally");
+    });
   }
 
   [Test]
