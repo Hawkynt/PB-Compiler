@@ -1,6 +1,12 @@
 namespace PowerBasic.Compiler.Asm;
 
 public sealed partial class Assembler {
+  /// <summary>
+  /// Optional software-x87 instruction sink. When set, every public x87 API delegates to this sink
+  /// instead of writing an ESC opcode, so existing compiler/runtime emission code needs no duplicate
+  /// floating-point path.
+  /// </summary>
+  public IX87InstructionSink? X87Sink { get; set; }
 
   #region load / store
 
@@ -64,14 +70,12 @@ public sealed partial class Assembler {
 
   public void Fxch() => this.Fxch(St.St1);
   public void Fxch(St other) => this.FpuStack(0xD9, 0xC8, other);
-
   public void Ffree(St target) => this.FpuStack(0xDD, 0xC0, target);
 
   #endregion
 
   #region arithmetic
 
-  // /digit for the D8/DC memory and register forms
   private const int _FPU_ADD = 0;
   private const int _FPU_MUL = 1;
   private const int _FPU_COM = 2;
@@ -135,15 +139,13 @@ public sealed partial class Assembler {
 
   private void FpuArithmetic(int operation, St destination, St source) {
     if (destination.Index == 0) {
-      this.EmitByte(0xD8);
-      this.EmitByte((byte)(0xC0 | operation << 3 | source.Index));
+      this.FpuSimple(0xD8, (byte)(0xC0 | operation << 3 | source.Index));
       return;
     }
 
     if (source.Index != 0)
       throw new ArgumentException($"FPU arithmetic needs ST(0) as one operand, got ST({destination.Index}), ST({source.Index}).", nameof(source));
 
-    // the DC forms swap the reversed-operation opcode slots for SUB/DIV
     var dcOperation = operation switch {
       _FPU_SUB => _FPU_SUBR,
       _FPU_SUBR => _FPU_SUB,
@@ -154,8 +156,7 @@ public sealed partial class Assembler {
     if (dcOperation is _FPU_COM or _FPU_COMP)
       throw new ArgumentException("FCOM/FCOMP have no ST(i), ST(0) form.", nameof(destination));
 
-    this.EmitByte(0xDC);
-    this.EmitByte((byte)(0xC0 | dcOperation << 3 | destination.Index));
+    this.FpuSimple(0xDC, (byte)(0xC0 | dcOperation << 3 | destination.Index));
   }
 
   #endregion
@@ -169,7 +170,6 @@ public sealed partial class Assembler {
       default: throw new ArgumentException($"FCOM {source}: reals are dword or qword.", nameof(source));
     }
   }
-
   public void Fcom() => this.Fcom(St.St1);
   public void Fcom(St other) => this.FpuStack(0xD8, 0xD0, other);
 
@@ -180,11 +180,9 @@ public sealed partial class Assembler {
       default: throw new ArgumentException($"FCOMP {source}: reals are dword or qword.", nameof(source));
     }
   }
-
   public void Fcomp() => this.Fcomp(St.St1);
   public void Fcomp(St other) => this.FpuStack(0xD8, 0xD8, other);
-
-  public void Fcompp() { this.EmitByte(0xDE); this.EmitByte(0xD9); }
+  public void Fcompp() => this.FpuSimple(0xDE, 0xD9);
 
   public void Ficom(Mem source) => this.FpuIntegerArithmetic(_FPU_COM, source);
   public void Ficomp(Mem source) => this.FpuIntegerArithmetic(_FPU_COMP, source);
@@ -193,96 +191,109 @@ public sealed partial class Assembler {
   public void Fucom(St other) => this.FpuStack(0xDD, 0xE0, other);
   public void Fucomp() => this.Fucomp(St.St1);
   public void Fucomp(St other) => this.FpuStack(0xDD, 0xE8, other);
-  public void Fucompp() { this.EmitByte(0xDA); this.EmitByte(0xE9); }
-
-  public void Ftst() { this.EmitByte(0xD9); this.EmitByte(0xE4); }
+  public void Fucompp() => this.FpuSimple(0xDA, 0xE9);
+  public void Ftst() => this.FpuSimple(0xD9, 0xE4);
 
   #endregion
 
   #region transcendental and unary operations
 
-  public void Fchs() { this.EmitByte(0xD9); this.EmitByte(0xE0); }
-  public void Fabs() { this.EmitByte(0xD9); this.EmitByte(0xE1); }
-  public void Fsqrt() { this.EmitByte(0xD9); this.EmitByte(0xFA); }
-  public void Frndint() { this.EmitByte(0xD9); this.EmitByte(0xFC); }
-  public void Fscale() { this.EmitByte(0xD9); this.EmitByte(0xFD); }
-  public void Fprem() { this.EmitByte(0xD9); this.EmitByte(0xF8); }
-  public void Fprem1() { this.EmitByte(0xD9); this.EmitByte(0xF5); }
-  public void Fptan() { this.EmitByte(0xD9); this.EmitByte(0xF2); }
-  public void Fpatan() { this.EmitByte(0xD9); this.EmitByte(0xF3); }
-  public void F2xm1() { this.EmitByte(0xD9); this.EmitByte(0xF0); }
-  public void Fyl2x() { this.EmitByte(0xD9); this.EmitByte(0xF1); }
-  public void Fyl2xp1() { this.EmitByte(0xD9); this.EmitByte(0xF9); }
-  public void Fsin() { this.EmitByte(0xD9); this.EmitByte(0xFE); }
-  public void Fcos() { this.EmitByte(0xD9); this.EmitByte(0xFF); }
-  public void Fsincos() { this.EmitByte(0xD9); this.EmitByte(0xFB); }
+  public void Fchs() => this.FpuSimple(0xD9, 0xE0);
+  public void Fabs() => this.FpuSimple(0xD9, 0xE1);
+  public void Fsqrt() => this.FpuSimple(0xD9, 0xFA);
+  public void Frndint() => this.FpuSimple(0xD9, 0xFC);
+  public void Fscale() => this.FpuSimple(0xD9, 0xFD);
+  public void Fprem() => this.FpuSimple(0xD9, 0xF8);
+  public void Fprem1() => this.FpuSimple(0xD9, 0xF5);
+  public void Fptan() => this.FpuSimple(0xD9, 0xF2);
+  public void Fpatan() => this.FpuSimple(0xD9, 0xF3);
+  public void F2xm1() => this.FpuSimple(0xD9, 0xF0);
+  public void Fyl2x() => this.FpuSimple(0xD9, 0xF1);
+  public void Fyl2xp1() => this.FpuSimple(0xD9, 0xF9);
+  public void Fsin() => this.FpuSimple(0xD9, 0xFE);
+  public void Fcos() => this.FpuSimple(0xD9, 0xFF);
+  public void Fsincos() => this.FpuSimple(0xD9, 0xFB);
 
   #endregion
 
   #region constants
 
-  public void Fldz() { this.EmitByte(0xD9); this.EmitByte(0xEE); }
-  public void Fld1() { this.EmitByte(0xD9); this.EmitByte(0xE8); }
-  public void Fldpi() { this.EmitByte(0xD9); this.EmitByte(0xEB); }
-  public void Fldl2e() { this.EmitByte(0xD9); this.EmitByte(0xEA); }
-  public void Fldl2t() { this.EmitByte(0xD9); this.EmitByte(0xE9); }
-  public void Fldlg2() { this.EmitByte(0xD9); this.EmitByte(0xEC); }
-  public void Fldln2() { this.EmitByte(0xD9); this.EmitByte(0xED); }
+  public void Fldz() => this.FpuSimple(0xD9, 0xEE);
+  public void Fld1() => this.FpuSimple(0xD9, 0xE8);
+  public void Fldpi() => this.FpuSimple(0xD9, 0xEB);
+  public void Fldl2e() => this.FpuSimple(0xD9, 0xEA);
+  public void Fldl2t() => this.FpuSimple(0xD9, 0xE9);
+  public void Fldlg2() => this.FpuSimple(0xD9, 0xEC);
+  public void Fldln2() => this.FpuSimple(0xD9, 0xED);
 
   #endregion
 
   #region control
 
-  public void Finit() { this.EmitByte(0x9B); this.Fninit(); }
-  public void Fninit() { this.EmitByte(0xDB); this.EmitByte(0xE3); }
+  public void Finit() { this.Fwait(); this.Fninit(); }
+  public void Fninit() => this.FpuSimple(0xDB, 0xE3);
+  public void Fclex() { this.Fwait(); this.Fnclex(); }
+  public void Fnclex() => this.FpuSimple(0xDB, 0xE2);
 
-  public void Fclex() { this.EmitByte(0x9B); this.Fnclex(); }
-  public void Fnclex() { this.EmitByte(0xDB); this.EmitByte(0xE2); }
+  public void FstswAx() { this.Fwait(); this.FnstswAx(); }
+  public void FnstswAx() => this.FpuSimple(0xDF, 0xE0);
 
-  public void FstswAx() { this.EmitByte(0x9B); this.FnstswAx(); }
-  public void FnstswAx() { this.EmitByte(0xDF); this.EmitByte(0xE0); }
-
-  public void Fstsw(Mem destination) { this.EmitByte(0x9B); this.Fnstsw(destination); }
+  public void Fstsw(Mem destination) { this.Fwait(); this.Fnstsw(destination); }
   public void Fnstsw(Mem destination) => this.FpuWordControl(0xDD, 7, destination, "FSTSW");
 
-  public void Fstcw(Mem destination) { this.EmitByte(0x9B); this.Fnstcw(destination); }
+  public void Fstcw(Mem destination) { this.Fwait(); this.Fnstcw(destination); }
   public void Fnstcw(Mem destination) => this.FpuWordControl(0xD9, 7, destination, "FSTCW");
   public void Fldcw(Mem source) => this.FpuWordControl(0xD9, 5, source, "FLDCW");
 
   private void FpuWordControl(byte opcode, int regField, Mem memory, string mnemonic) {
     if (memory.Size is not (OperandSize.None or OperandSize.Word))
       throw new ArgumentException($"{mnemonic} {memory}: operand is a word.", nameof(memory));
-
     this.FpuMemory(opcode, regField, memory);
   }
 
-  public void Fincstp() { this.EmitByte(0xD9); this.EmitByte(0xF7); }
-  public void Fdecstp() { this.EmitByte(0xD9); this.EmitByte(0xF6); }
-  public void Fwait() => this.EmitByte(0x9B);
+  public void Fincstp() => this.FpuSimple(0xD9, 0xF7);
+  public void Fdecstp() => this.FpuSimple(0xD9, 0xF6);
+  public void Fwait() {
+    if (this.X87Sink is { } sink) {
+      sink.EmitWait();
+      return;
+    }
+    this.EmitByte(0x9B);
+  }
 
   #endregion
 
   #region encoding helpers
 
   private void FpuMemory(byte opcode, int regField, Mem memory) {
+    if (this.X87Sink?.TryEmitMemory(opcode, regField, memory) is true)
+      return;
+
     var start = this.Position;
     this.EmitSegmentPrefix(memory);
     this.EmitByte(opcode);
     this.EmitModRmMemory(regField, memory);
-    // C3 x87 scheduling: record with the FPU-stack pseudo-resource so all FPU instructions
-    // keep their exact relative order (RAW+WAW on the pseudo-slot) while independent integer
-    // work schedules around them. The memory cell is recorded conservatively as read AND
-    // written (covers FLD reads, FST/FSTP/FIST writes and read-modify arithmetic alike).
-    // Segment-overridden operands stay unrecorded - they remain scheduling barriers.
     if (memory.Segment is null)
       this.RecordSchedMem(start, _FPUSTACK, _FPUSTACK, false, false, memRead: true, memWrite: true, memory);
   }
 
   private void FpuStack(byte opcode, byte modRmBase, St register) {
+    if (this.X87Sink?.TryEmitStack(opcode, modRmBase, register) is true)
+      return;
+
     var start = this.Position;
     this.EmitByte(opcode);
     this.EmitByte((byte)(modRmBase + register.Index));
-    // pure stack manipulation: ordered against every other FPU op, transparent to integers
+    this.RecordSchedReg(start, _FPUSTACK, _FPUSTACK, false, false);
+  }
+
+  private void FpuSimple(byte opcode, byte modRm) {
+    if (this.X87Sink?.TryEmitSimple(opcode, modRm) is true)
+      return;
+
+    var start = this.Position;
+    this.EmitByte(opcode);
+    this.EmitByte(modRm);
     this.RecordSchedReg(start, _FPUSTACK, _FPUSTACK, false, false);
   }
 

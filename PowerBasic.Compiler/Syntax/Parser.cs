@@ -593,6 +593,13 @@ public sealed partial class Parser {
         this.Require(LanguageFeature.DimMetaStatement);
         RequireOneOf(command, arguments, "ALL", "ARRAY");
         return;
+      // Runtime-target directives. The code generator owns their meaning (see
+      // CodeGenerator.RuntimeTarget.cs); the parser only has to accept the shapes it emits
+      // diagnostics for, so a bad mode is reported there rather than as a syntax error.
+      case "ISA" when arguments.Count >= 2:
+      case "FPU" or "X87" when arguments.Count >= 1:
+      case "FLOAT" when arguments.Count >= 1:
+        return;
       case "COMPAT":
         this.Require(LanguageFeature.CompatMeta);
         if (arguments is not [{ Kind: TokenKind.Identifier } dialect]
@@ -632,6 +639,13 @@ public sealed partial class Parser {
     if (arguments is [{ Kind: TokenKind.IntegerLiteral } cpu, ..]
         && cpu.IntegerValue == 80586
         && arguments.Skip(1).All(argument => argument.Kind == TokenKind.Identifier && features.Contains(argument.Text))) {
+      this.Require(LanguageFeature.ExtendedMetaArguments);
+      return;
+    }
+    // A bare feature list names the tier by capability instead of by number - RuntimeTarget.For
+    // raises the CPU level to the minimum those features imply, so $CPU SSE2 is $CPU 80586 SSE2.
+    if (arguments.Count > 0
+        && arguments.All(argument => argument.Kind == TokenKind.Identifier && features.Contains(argument.Text))) {
       this.Require(LanguageFeature.ExtendedMetaArguments);
       return;
     }

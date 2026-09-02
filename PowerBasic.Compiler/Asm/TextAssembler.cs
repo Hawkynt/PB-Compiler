@@ -113,10 +113,14 @@ public sealed partial class TextAssembler(Assembler target) {
             ++i;
 
           var text = line[start..i];
-          if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var value))
+          // A 32-bit immediate is a bit pattern, not a signed value: 2147483648 is what the operand
+          // of `MOV EAX, -2147483648` reads as before the sign is applied, and it does not fit an
+          // int. Accept anything addressable in 32 bits and keep the pattern.
+          if (!long.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed)
+              || parsed > uint.MaxValue)
             throw new AsmSyntaxException($"Numeric literal '{text}' is out of range.");
 
-          tokens.Add(new(TokenKind.Number, text, value));
+          tokens.Add(new(TokenKind.Number, text, unchecked((int)parsed)));
           continue;
         }
 

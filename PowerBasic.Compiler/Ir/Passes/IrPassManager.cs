@@ -126,10 +126,10 @@ public sealed class IrPassManager {
   /// elimination to a fixpoint.
   ///
   /// <para>
-  /// <paramref name="optimizeForSpeed"/> reflects <c>$OPTIMIZE SPEED</c>. Only one pass reads it and
-  /// the reason is specific to that pass rather than to a size/speed trade: a loop that does nothing
-  /// can be a delay loop, and <see cref="DeadLoopElimination"/> is the one transform here whose
-  /// correctness argument rests on the author not having meant it.
+  /// <paramref name="optimizeForSpeed"/> reflects <c>$OPTIMIZE SPEED</c>. SPEED may spend code size to
+  /// erase abstraction overhead: it runs demanded-bit cleanup, admits larger callees to the inliner,
+  /// and removes semantically dead loops. The ordinary optimization objective keeps the conservative
+  /// size budget and preserves empty loops because they may be intentional delay loops.
   /// </para>
   /// <para>
   /// <paramref name="dataLayoutTarget"/> supplies facts that are not properties of target-neutral IR:
@@ -162,6 +162,10 @@ public sealed class IrPassManager {
     // into a constant in every copy, which is what gives the rest of the pipeline something to fold
     .Add("unroll", LoopUnroll.Run)
     .Add("instcombine", InstCombine.Run)
+    // Demand is a property of uses, so run it after canonicalization has exposed truncations and
+    // before value numbering hashes work that may disappear entirely. It is SPEED-only because the
+    // ordinary objective is deliberately conservative about compile-time/code-shape expansion.
+    .AddWhen(optimizeForSpeed, "demandedbits", DemandedBits.Run)
     .Add("sccp", Sccp.Run)
     .Add("correlate", CorrelatedValueProp.Run)
     // O0351 shares the dominator-scoped edge facts with correlation, but only explicit pointer-null
@@ -229,6 +233,10 @@ public sealed class IrPassManager {
     // could not previously see through. What it then does with it differs from the original, which is
     // a finding about that optimizer and not about this pass. Until that is chased down, the summaries
     // are available to callers and this consumer is off.
+    // SPEED inlining is a module pass so it can see the call graph after the first function fixpoint;
+    // every successful inline immediately triggers another function sweep over the exposed body.
+    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "inline-speed",
+      module => Inliner.Run(module, optimizeForSpeed: true))
     // The string passes are module passes because they mint module-level things - a runtime
     // declaration, a pooled literal - which a function pass has no handle on. They run last, after
     // the value passes have folded whatever the arguments were going to fold into.

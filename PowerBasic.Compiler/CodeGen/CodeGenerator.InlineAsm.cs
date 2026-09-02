@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Asm;
+using PowerBasic.Compiler.Runtime;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
 using PowerBasic.Compiler.Syntax.Ast;
@@ -24,6 +25,10 @@ public sealed partial class CodeGenerator {
   /// caveat: reordering must not be observable through a fault's resume point).
   /// </summary>
   private void ScheduleInlineAsmBlocks() {
+    // Target legality is a compile contract, not an optimization. Runtime specialization therefore
+    // sees $CPU even at $OPTIMIZE OFF; only scheduling itself remains optimization-gated.
+    this._rt.Target = this.RuntimeTargetForRuntime();
+
     if (!this.Optimize || !this.OptimizeSpeed || model.Dialect != Dialect.Pb36)
       return;
 
@@ -68,8 +73,21 @@ public sealed partial class CodeGenerator {
   }
 
   private void EmitInlineAsm(InlineAsmStmt ia) {
+    var resolver = new InlineAsmResolver(this);
+    var target = this.RuntimeTargetForRuntime();
+    if (this.TryEmitPolicyInlineAsm(ia.Text, resolver, target, out var policyError)) {
+      if (policyError != null)
+        this.Errors.Add(new(ia.Position, $"inline asm '{ia.Text.Trim()}': {policyError}"));
+      return;
+    }
+    if (this.TryEmitTargetedInlineAsm(ia.Text, resolver, target, out var targetedError)) {
+      if (targetedError != null)
+        this.Errors.Add(new(ia.Position, $"inline asm '{ia.Text.Trim()}': {targetedError}"));
+      return;
+    }
+
     this._textAssembler ??= new(this._asm);
-    if (!this._textAssembler.TryParse(ia.Text, new InlineAsmResolver(this), out var error))
+    if (!this._textAssembler.TryParse(ia.Text, resolver, out var error))
       this.Errors.Add(new(ia.Position, $"inline asm '{ia.Text.Trim()}': {error}"));
   }
 

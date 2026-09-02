@@ -97,8 +97,29 @@ public sealed partial class Assembler {
     foreach (var (dup, survivorStart) in folds.OrderByDescending(f => f.Dup.Start.Position)) {
       var start = dup.Start.Position;
       var length = dup.End.Position - start;
+      // Folding moves the entry label onto the survivor, which sits BELOW the region being cut, so
+      // every jump to it grows. A short displacement that no longer reaches would be reported as an
+      // out-of-range fixup at ToArray, and nothing here can widen it after the fact - so a fold that
+      // would strand one is skipped and the duplicate simply stays.
+      if (!ShortJumpsStillReach())
+        continue;
       this.RemoveBytes(start, length);
       dup.Entry.Position = survivorStart.Position;   // survivors sit below every removed duplicate
+
+      bool ShortJumpsStillReach() {
+        var end = start + length;
+        var target = survivorStart.Position;         // below the cut, so the cut does not move it
+        foreach (var f in this._fixups) {
+          if (f.Kind != FixupKind.Rel8 || !ReferenceEquals(f.Target, dup.Entry))
+            continue;
+          if (f.Position >= start && f.Position < end)
+            continue;                                // removed along with the region
+          var position = f.Position >= end ? f.Position - length : f.Position;
+          if (target + f.Addend - (position + 1) is < sbyte.MinValue or > sbyte.MaxValue)
+            return false;
+        }
+        return true;
+      }
     }
   }
 }
