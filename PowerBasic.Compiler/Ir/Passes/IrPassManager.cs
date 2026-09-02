@@ -110,10 +110,10 @@ public sealed class IrPassManager {
   /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
   /// unrolling, sccp, correlate, pointer checks, integer/float range folds, overflow coalescing,
   /// sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery, equality saturation,
-  /// verified arithmetic lowering, demote, phicong, gvn, memory specialization, memopt, dse, licm,
-  /// reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the string/global
-  /// module passes. So are the two steps the caller runs around the pipeline - <c>Inliner</c> and
-  /// <c>SwitchFormation</c>.
+  /// verified arithmetic lowering, demote, phicong, gvn, memory specialization, memopt, dse,
+  /// interchange, licm, reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the
+  /// string/global module passes. So are the two steps the caller runs around the pipeline -
+  /// <c>Inliner</c> and <c>SwitchFormation</c>.
   /// </para>
   /// </summary>
   public static IrPassManager Legalize() => new IrPassManager()
@@ -217,6 +217,11 @@ public sealed class IrPassManager {
     // tiny intrinsic expansion is deliberately after GVN: one canonical memcpy/memset call is easier
     .Add("memopt", RedundantMemory.Run)
     .Add("dse", DeadStoreElim.Run)
+    // O0122 must see the original two-counter affine address arithmetic. LICM is allowed to hoist the
+    // outer-counter part of an inner-loop address into its preheader, which is profitable but turns a
+    // rectangular affine expression into a loop-local pointer root this first interchange slice quite
+    // correctly refuses. Interchange therefore goes immediately before LICM.
+    .Add("interchange", LoopInterchange.Run)
     .Add("licm", Licm.Run)
     // Exact reciprocal reuse runs after LICM, so an invariant divisor that is already representable as
     // a constant has reached the place where the repeated divisions are visible together.

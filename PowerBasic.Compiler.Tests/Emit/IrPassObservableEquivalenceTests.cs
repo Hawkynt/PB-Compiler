@@ -34,6 +34,7 @@ public sealed class IrPassObservableEquivalenceTests {
     ("gvn", Gvn.Run),
     ("memopt", RedundantMemory.Run),
     ("dse", DeadStoreElim.Run),
+    ("interchange", LoopInterchange.Run),
     ("licm", Licm.Run),
     ("dce", Dce.Run),
     ("ifconv", IfConversion.Run),
