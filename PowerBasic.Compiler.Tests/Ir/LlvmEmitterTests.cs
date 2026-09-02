@@ -64,6 +64,22 @@ public sealed class LlvmEmitterTests {
   }
 
   [Test]
+  public void Emit_LoadAndStoreWithoutAlignmentFacts_UseConservativeByteAlignment() {
+    var p = new IrArgument(IrType.Ptr, 0, "p");
+    var v = new IrArgument(IrType.I32, 1, "v");
+    var fn = new IrFunction("memory", IrType.I32, [p, v]);
+    var b = new IrBuilder(fn.CreateBlock("entry"));
+    b.Store(v, p);
+    b.Ret(b.Load(IrType.I32, p));
+
+    var text = LlvmEmitter.Emit(fn);
+    Assert.Multiple(() => {
+      Assert.That(text, Does.Contain("store i32 %v, ptr %p, align 1"));
+      Assert.That(text, Does.Contain("load i32, ptr %p, align 1"));
+    });
+  }
+
+  [Test]
   public void LlvmAs_AcceptsTheEmittedModule() {
     RequireTool("llvm-as");
     var module = LowerOptimizeToModule(

@@ -177,6 +177,7 @@ public sealed class IrBasicWriterCensusTests {
     "pb36/DIFF04.BAS",
     "pb36/DIFF06.BAS",
     "pb36/DIFF09.BAS",   // data pointers: @p reads and writes render as the loads and stores they are
+    "pb36/DIFF10.BAS",   // optimizer now leaves a writer-supported scalar form
     "pb36/DIFF100.BAS",
     "pb36/DIFF101.BAS",
     "pb36/DIFF102.BAS",
@@ -193,6 +194,7 @@ public sealed class IrBasicWriterCensusTests {
     "pb36/DIFF15.BAS",
     "pb36/DIFF18.BAS",
     "pb36/DIFF22.BAS",
+    "pb36/DIFF23.BAS",   // unsigned BYTE constants retain their positive value when written back
     "pb36/DIFF24.BAS",
     "pb36/DIFF25.BAS",
     "pb36/DIFF26.BAS",

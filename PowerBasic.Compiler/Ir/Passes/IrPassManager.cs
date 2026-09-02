@@ -108,10 +108,10 @@ public sealed class IrPassManager {
   /// </list>
   /// <para>
   /// Everything else in <see cref="Standard"/> is optimization and is off: unrolling, sccp, correlate,
-  /// pointer checks, integer/float range folds, overflow coalescing, sroa, mem2reg2, reassociate,
-  /// demote, phicong, gvn, memopt, dse, licm, unswitch, closed-form, deadloop, ifconv, tailrec and the
-  /// string/global module passes. So are the two steps the caller runs around the pipeline -
-  /// <c>Inliner</c> and <c>SwitchFormation</c>.
+  /// pointer checks, integer/float range folds, overflow coalescing, sroa, aggregate-sroa,
+  /// mem2reg2, reassociate, demote, phicong, gvn, memopt, dse, licm, unswitch, closed-form,
+  /// deadloop, ifconv, tailrec and the string/global module passes. So are the two steps the
+  /// caller runs around the pipeline - <c>Inliner</c> and <c>SwitchFormation</c>.
   /// </para>
   /// </summary>
   public static IrPassManager Legalize() => new IrPassManager()
@@ -159,6 +159,10 @@ public sealed class IrPassManager {
     // after SCCP, because a subscript is only constant once the index arithmetic has folded - and
     // before the value passes, so the elements it exposes get propagated like any other value
     .Add("sroa", ScalarReplaceArrays.Run)
+    // packed TYPE storage is also an alloca i8,N, but its fields are typed byte regions rather than
+    // homogeneous elements. Keep the proofs separate: arrays use element stride, aggregates use
+    // region bounds and reject overlap so UNION aliasing remains shared storage.
+    .Add("aggregate-sroa", ScalarReplaceAggregates.Run)
     .Add("mem2reg2", Mem2Reg.Run)
     // canonicalizes associative chains so GVN hashes two equal expressions the same way; it must
     // come after SCCP (which supplies the constants it folds together) and before GVN (which is the

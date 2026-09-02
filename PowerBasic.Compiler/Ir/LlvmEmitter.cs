@@ -126,8 +126,11 @@ public sealed class LlvmEmitter {
       IrCmp c => $"{(IsFloatPred(c.Pred) ? "fcmp" : "icmp")} {Mnemonic(c.Pred)} {Ty(c.Lhs.Type)} {this.Ref(c.Lhs)}, {this.Ref(c.Rhs)}",
       IrCast c => $"{Mnemonic(c.Op)} {Ty(c.Value.Type)} {this.Ref(c.Value)} to {Ty(c.Type)}",
       IrAlloca a => a.Count > 1 ? $"alloca {Ty(a.Allocated)}, i32 {a.Count}" : $"alloca {Ty(a.Allocated)}",
-      IrLoad l => $"load {Ty(l.Type)}, ptr {this.Ref(l.Pointer)}",
-      IrStore s => $"store {Ty(s.Value.Type)} {this.Ref(s.Value)}, ptr {this.Ref(s.Pointer)}",
+      // The IR has deliberately opaque pointers and no alignment fact. Packed UDT members may begin
+      // at any byte offset, so claiming LLVM's omitted/ABI alignment would be unsound. align 1 is the
+      // strongest statement that is valid for every IR load/store; later alignment analysis may raise it.
+      IrLoad l => $"load {Ty(l.Type)}, ptr {this.Ref(l.Pointer)}, align 1",
+      IrStore s => $"store {Ty(s.Value.Type)} {this.Ref(s.Value)}, ptr {this.Ref(s.Pointer)}, align 1",
       IrGep g => $"getelementptr {Ty(g.ElementType ?? IrType.I8)}, ptr {this.Ref(g.BasePtr)}, {Ty(g.ByteOffset.Type)} {this.Ref(g.ByteOffset)}",
       IrPhi p => $"phi {Ty(p.Type)} {this.PhiInputs(p)}",
       IrSelect sel => $"select i1 {this.Ref(sel.Condition)}, {Ty(sel.Type)} {this.Ref(sel.IfTrue)}, {Ty(sel.Type)} {this.Ref(sel.IfFalse)}",

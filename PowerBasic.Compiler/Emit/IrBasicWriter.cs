@@ -246,7 +246,13 @@ public sealed class IrBasicWriter {
 
   /// <summary>An integer literal, with the suffix that gives it the right width.</summary>
   private static string Literal(IrConstantInt c) {
-    var text = c.Value.ToString(CultureInfo.InvariantCulture);
+    // The IR stores integer constants as bit patterns. For u8/u16 the signed long view can therefore
+    // be negative (BYTE 250 is the pattern also seen as i8 -6), while PB35 can spell the unsigned
+    // value losslessly as an ordinary positive INTEGER/LONG literal. Wider unsigned constants keep
+    // the existing raw spelling until the writer has a proven pb35 form for the DWORD/QWORD range.
+    var text = c.Type.IsUnsigned && c.Type.Bits <= 16
+      ? c.ZeroExtended.ToString(CultureInfo.InvariantCulture)
+      : c.Value.ToString(CultureInfo.InvariantCulture);
     return c.Type.Bits switch {
       <= 16 => text,
       32 => text + "&",
