@@ -2,34 +2,45 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Implemented |
 | **Stage** | After register allocation |
 | **Related** | [O0085](O0085-copy-coalescing.md), [O0034](O0034-redundant-load-elimination.md), [O0356](O0356-machine-combiner.md) |
 
 ## The idea
 
 Once **physical** registers are assigned, patterns appear that no earlier pass
-could see: a `MOV` whose source and destination turned out to be the same
-register, two spills to the same slot, an addressing mode that became available
-because the index landed in BX.
+could see. Two unrelated virtual registers can become the same physical
+register, a copy can become a self-move, or a short save/restore pair can become
+an identity.
 
-The load-forwarding pass ([O0034](O0034-redundant-load-elimination.md)) is
-already a member of this family — it runs on the final stream and reasons about
-concrete registers.
+`Backend/PostRegisterAllocationPeepholes.cs` reads the allocator's final
+virtual-to-physical map without introducing another machine representation. It
+currently removes:
+
+- `MOV` instructions whose source and destination resolve to the same physical
+  register;
+- adjacent `PUSH r / POP r` identities;
+- copy-back and duplicate-copy pairs exposed by allocation;
+- overwritten register/immediate staging moves when the first value is never
+  observable.
+
+The pass deliberately refuses to delete an overwritten **memory load**. PB can
+address absolute/far hardware memory, so O0357 does not silently turn a
+register-allocation cleanup into a dead-I/O-read optimization.
 
 ## Applies to
 
 ```asm
-    mov     ax, ax           ; became a no-op after allocation
-    mov     [bp-4], ax
-    mov     ax, [bp-4]       ; already removed by O0034
+    mov     ax, ax           ; two virtual values coalesced to AX
 ```
 
-## What it needs
+which disappears after allocation.
 
-- An allocator to run after ([O0058](O0058-386-register-allocation.md)); with
-  today's fixed SI/DI residency the opportunities are few, which is why the
-  existing pass targets frame slots rather than registers.
-- The same narrowness discipline as
-  [O0034](O0034-redundant-load-elimination.md): recorded, adjacent, label-free
-  ranges only — a mistake at this level is a miscompile.
+## Safety and limits
+
+- Only adjacent local windows are rewritten.
+- Conditional instructions and instructions carrying explicit clobbers are
+  excluded.
+- Memory reads are not deleted by the overwritten-copy rule.
+- The pass is optimizer-gated through the same selection marker as the existing
+  machine peepholes; `$OPTIMIZE OFF` therefore keeps the faithful stream.

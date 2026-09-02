@@ -24,6 +24,9 @@ public sealed class MachineEmitter {
   private MachineEmitter(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
       Func<string, Label?>? resolveCallee = null, Func<string, Mem?>? resolveData = null,
       int[]? paramOffsets = null) {
+    PostRegisterAllocationPeepholes.Run(function, allocation);
+    LateLoadStoreOptimization.Run(function, allocation);
+    PostRegisterAllocationPeepholes.Run(function, allocation);
     this._asm = asm;
     this._allocation = allocation;
     this._resolveCallee = resolveCallee;
