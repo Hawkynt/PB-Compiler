@@ -404,7 +404,10 @@ public sealed partial class CodeGenerator {
     var unchanged = this._asm.DefineLabel();
     var loop = this._asm.DefineLabel();
     var finish = this._asm.DefineLabel();
-    this._asm.Jcxz(unchanged);
+    // Not JCXZ: it only reaches a signed byte, and the rotate body below is longer than that.
+    // The flags it would have preserved are held in GpArithFlags and restored past this branch.
+    this._asm.Or(Reg.CX, Reg.CX);
+    this._asm.J(Condition.Equal, unchanged);
 
     if (mnemonic is "RCL" or "RCR") {
       this._asm.Push(this.GpScratch(state, GpArithFlags));
