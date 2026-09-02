@@ -109,9 +109,10 @@ public sealed class IrPassManager {
   /// <para>
   /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
   /// unrolling, sccp, correlate, pointer checks, integer/float range folds, overflow coalescing,
-  /// sroa, aggregate-sroa, mem2reg2, reassociate, demote, phicong, gvn, memopt, dse, licm, unswitch,
-  /// closed-form, deadloop, ifconv, tailrec and the string/global module passes. So are the two
-  /// steps the caller runs around the pipeline - <c>Inliner</c> and <c>SwitchFormation</c>.
+  /// sroa, aggregate-sroa, mem2reg2, reassociate, equality saturation, verified arithmetic lowering,
+  /// demote, phicong, gvn, memopt, dse, licm, unswitch, closed-form, deadloop, ifconv, tailrec and
+  /// the string/global module passes. So are the two steps the caller runs around the pipeline -
+  /// <c>Inliner</c> and <c>SwitchFormation</c>.
   /// </para>
   /// </summary>
   public static IrPassManager Legalize() => new IrPassManager()
@@ -195,13 +196,11 @@ public sealed class IrPassManager {
     // come after SCCP (which supplies the constants it folds together) and before GVN (which is the
     // pass that benefits)
     .Add("reassociate", Reassociate.Run)
-    // Saturate local pure integer trees before numbering them. Unlike InstCombine/Reassociate this
-    // does not commit to a rewrite order: equivalent forms coexist under a hard candidate budget and
-    // only the cheapest one is rebuilt.
+    // O0354: unlike the sequential canonicalizers above, local equality saturation keeps several
+    // equivalent pure-integer forms alive under a hard budget and extracts the cheapest result.
     .Add("eqsat", EqualitySaturation.Run)
-    // Constant arithmetic lowering is separated from the algebraic search because its contract is
-    // stronger: every admitted 16-bit formula is exhaustively checked before it may replace DIV/MOD
-    // or a multiply.
+    // O0359: arithmetic identities used for lowering DIV/MOD and non-trivial constant multiplies are
+    // admitted only after exhaustive verification over the complete 16-bit input domain.
     .Add("verified-arith", VerifiedArithmeticLowering.Run)
     // GVN cannot number a phi - a loop phi's operands include the value coming back round the latch,
     // which is derived from the phi itself - so congruent induction variables survive it untouched
