@@ -404,7 +404,10 @@ public sealed partial class CodeGenerator {
     var unchanged = this._asm.DefineLabel();
     var loop = this._asm.DefineLabel();
     var finish = this._asm.DefineLabel();
-    this._asm.Jcxz(unchanged);
+    // Not JCXZ: it only reaches a signed byte, and the rotate body below is longer than that.
+    // The flags it would have preserved are held in GpArithFlags and restored past this branch.
+    this._asm.Or(Reg.CX, Reg.CX);
+    this._asm.J(Condition.Equal, unchanged);
 
     if (mnemonic is "RCL" or "RCR") {
       this._asm.Push(this.GpScratch(state, GpArithFlags));
@@ -444,18 +447,28 @@ public sealed partial class CodeGenerator {
       this._asm.Pushf(); this._asm.Pop(Reg.AX);
       this._asm.And(Reg.AX, 1); this._asm.Mov(carry, Reg.AX);
     }
-    this.WriteDwordPlace(state, destination, GpArithA, target);
-    this.RestoreRotateFlags(state, mnemonic, high, count, carry);
+    this.ComputeRotateFlags(state, mnemonic, high, count, carry);
     this._asm.Jmp(finish);
 
     this._asm.MarkLabel(unchanged);
-    this._asm.Push(this.GpScratch(state, GpArithFlags)); this._asm.Popf();
+    this._asm.Mov(Reg.AX, this.GpScratch(state, GpArithFlags));
+    this._asm.Mov(this.GpScratch(state, GpMergedFlagsScratch), Reg.AX);
+
     this._asm.MarkLabel(finish);
     this._asm.Pop(Reg.DX); this._asm.Pop(Reg.CX); this._asm.Pop(Reg.AX);
+    // The write comes AFTER the saved registers are back: EAX's low half IS AX, so storing the
+    // result before the pop only for the pop to put the old value back left every rotate with an
+    // unrotated low word. The flags land last because the write does not disturb them.
+    this.WriteDwordPlace(state, destination, GpArithA, target);
+    this._asm.Push(this.GpScratch(state, GpMergedFlagsScratch)); this._asm.Popf();
     return true;
   }
 
-  private void RestoreRotateFlags(VirtualIsaState state, string mnemonic, Mem resultHigh, Mem count, Mem carry) {
+  /// <summary>
+  /// Builds the flag word the rotate must leave behind into <c>GpMergedFlagsScratch</c>. It does not
+  /// install it: the caller has saved registers still to restore, and the destination still to write.
+  /// </summary>
+  private void ComputeRotateFlags(VirtualIsaState state, string mnemonic, Mem resultHigh, Mem count, Mem carry) {
     var merged = this.GpScratch(state, GpMergedFlagsScratch);
     this._asm.Mov(Reg.AX, this.GpScratch(state, GpArithFlags));
     this._asm.And(Reg.AX, 0xF7FE); // clear OF/CF only
@@ -486,7 +499,6 @@ public sealed partial class CodeGenerator {
     this._asm.Mov(Reg.AX, this.GpScratch(state, GpArithFlags));
     this._asm.And(Reg.AX, 0x0800); this._asm.Or(merged, Reg.AX);
     this._asm.MarkLabel(push);
-    this._asm.Push(merged); this._asm.Popf();
   }
 
   #endregion
