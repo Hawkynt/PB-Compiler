@@ -2,32 +2,36 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
-| **Stage** | After register allocation |
+| **Status** | ✅ Implemented |
+| **Stage** | After register allocation/spilling |
 | **Related** | [O0065](O0065-dead-frame-store-elimination.md), [O0086](O0086-spill-slot-reuse.md), [O0034](O0034-redundant-load-elimination.md) |
 
 ## The idea
 
 Spilling **creates** memory traffic that the mid-end never saw, and some of it is
-immediately redundant: a spill followed by a reload with nothing in between, two
-spills of the same value to different slots, a reload of a value that is still
-live in another register.
+immediately redundant: a reload when the spilled value is still known in a
+physical register, a repeated store of the same value, or a spill overwritten
+before anyone reads it.
 
-Removing it requires knowing which cells are compiler-private, which is exactly
-the information [O0065](O0065-dead-frame-store-elimination.md) is blocked on.
+`Backend/LateLoadStoreOptimization.cs` performs local value forwarding over
+allocator-owned `MOperand.StackSlot`s after register allocation. It can replace a
+reload by a register/immediate move, remove an exact redundant reload/store, and
+delete an unread spill store overwritten by a later one.
 
-## Applies to
+The compiler-private region is identified without guessing: when optimized
+instruction selection finishes, `MachineOptimizationState` records the current
+stack-slot count. Allocation/spilling only appends slots, so indices at or above
+that boundary are spill slots. Selector-owned allocas, x87/QUAD staging cells and
+other source-level frame storage are therefore outside this pass.
 
-```asm
-    mov     [bp-8], ax       ; spill
-    ...                      ; a region that never reads [bp-8]
-    mov     ax, [bp-8]       ; reload — both are dead if AX survived
-```
+## Safety and limits
 
-## What it needs
-
-- The code generator to **declare the compiler-temp region** of the frame, so a
-  whole-procedure "no other reader" scan is sound — the unblocking step named in
-  [O0065](O0065-dead-frame-store-elimination.md).
-- Complete instruction recording, including the forms that currently escape it
-  (`LEA`, `PUSH mem`, read-modify-write ALU ops, indirect jumps).
+- Facts are block-local and die at calls, inline assembly, terminators, unknown
+  memory writes, and physical-register clobbers.
+- Stack-slot keys include slot, displacement and width.
+- Overlapping accesses are tracked by byte range. A partial word load from a
+  dword spill marks the whole overlapping earlier store as observed, preventing
+  an unsafe later dead-store deletion.
+- Only allocator-created slots participate; source/selector frame cells do not.
+- The pass is optimizer-gated and runs immediately before emission, after the
+  allocator has created the traffic it is meant to remove.

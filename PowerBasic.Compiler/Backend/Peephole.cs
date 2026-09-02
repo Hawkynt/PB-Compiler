@@ -83,6 +83,7 @@ public static class Peephole {
   /// <summary>Rewrites the idioms above in place; the number of rewrites made.</summary>
   public static int Run(MFunction function) {
     ArgumentNullException.ThrowIfNull(function);
+    MachineOptimizationState.Mark(function);
     var total = 0;
     // Each rewrite removes a value, so the census changes and a pattern may only now be visible: a
     // load folded into an ADD can leave that ADD the middle of a read-modify-write. The bound is a

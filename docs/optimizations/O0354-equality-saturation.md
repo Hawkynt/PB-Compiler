@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Implemented (bounded local saturation) |
 | **Stage** | Mid-end |
 | **Related** | [O0043](O0043-ir-instcombine.md), [O0061](O0061-reassociation.md), [O0355](O0355-superoptimized-peepholes.md), [O0174](O0174-target-cost-models.md) |
 
@@ -10,25 +10,38 @@
 
 Rewrite rules applied in sequence are **order-dependent**: applying one can
 destroy the opportunity for another, and the peephole pass has to guess a good
-order. An **e-graph** avoids the guess by representing *all* equivalent forms of
-an expression at once, saturating them with the rewrite rules, and then
-extracting the cheapest form under the target cost model.
+order. Equality saturation avoids that commitment by retaining equivalent forms
+long enough to explore competing rewrite paths and then extracting a cheapest
+representative.
+
+PB-Compiler implements the useful bounded form of that idea in
+`Ir/Passes/EqualitySaturation.cs`: pure integer expression trees are imported
+into a local immutable expression graph, rewrites are explored in every subtree
+for at most 8 rounds / 256 candidates, and the lowest-operation-count form is
+rebuilt only when it is strictly cheaper. Shared SSA expressions are leaves, so
+the extractor never prices an instruction as removable while another user still
+needs it.
+
+The rule set currently covers wrap-correct integer identities, cancellation,
+absorption, reassociation, and both distributive factoring directions. Floating
+point, division/remainder, memory, calls, and other side-effecting IR are outside
+the saturation domain.
 
 ## Applies to
 
 ```basic
-DIM x%, r%
-r% = (x% * 2 + x%) \ 3       ' = x%; only visible if the rules apply in one order
+DIM a%, b%, c%, r%
+r% = (a% AND b%) OR (a% AND c%)
+' becomes a% AND (b% OR c%)
 ```
 
-## What it needs
+## Safety and limits
 
-- An e-graph implementation and a rule set — the rules themselves already exist
-  scattered across [O0043](O0043-ir-instcombine.md),
-  [O0076](O0076-algebraic-identities.md),
-  [O0004](O0004-strength-reduction.md) and the peephole.
-- A **cost function**, which is exactly [O0174](O0174-target-cost-models.md):
-  extraction is only as good as the cost model it optimizes against.
-- Wrap-correctness on every rule, per dialect — the rewrite set is where the
-  `32767 + 18` class of bug ([O0001](O0001-constant-folding.md)) would reappear
-  at scale if the rules were stated naively.
+- Integer constant evaluation uses the IR type width and two's-complement wrap.
+- Candidate/round budgets make compile time deterministic and prevent rewrite
+  cycles from exploding.
+- Only single-use nested `IrBinary` nodes are imported; shared nodes remain SSA
+  leaves.
+- Extraction currently minimizes IR operation count, not a target-specific
+  instruction cost. Target-specific combining remains O0356.
+- The implementation is self-contained; no e-graph or SMT package is required.

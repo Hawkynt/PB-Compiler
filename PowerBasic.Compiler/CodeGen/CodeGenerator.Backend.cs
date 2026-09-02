@@ -234,6 +234,17 @@ public sealed partial class CodeGenerator {
           Dce.Run(f);
         }
 
+    // O0339 runs here rather than inside the standard pipeline for the same reason
+    // SwitchFormation does: it wants the FINAL shape. Expanding a tiny memcpy into byte
+    // loads and stores hides the aggregate behind it from scalar replacement, which would
+    // otherwise delete the copy and its storage outright - a strictly better answer than
+    // open-coding it. Once the optimizer has had every chance at the copy, whatever is left
+    // is a real transfer worth specializing.
+    if (this.Optimize)
+      foreach (var f in module.Functions)
+        if (!f.IsDeclaration)
+          MemoryRoutineSpecialization.Run(f);
+
     var byName = new Dictionary<string, IrFunction>(System.StringComparer.OrdinalIgnoreCase);
     foreach (var f in module.Functions)
       if (!f.IsDeclaration)

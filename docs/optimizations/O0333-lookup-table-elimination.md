@@ -2,36 +2,45 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial — total read-only byte tables are eliminated when all 256 entries are an exact constant, identity, XOR-mask or add-constant formula |
 | **Stage** | Mid-end |
+| **Source** | `Ir/Passes/LookupTableElimination.cs` |
+| **Gate** | `--optimize` |
+| **Verified by** | `DataRepresentationOptimizationTests` |
 | **Related** | [O0332](O0332-lookup-table-generation.md), [O0174](O0174-target-cost-models.md), [O0004](O0004-strength-reduction.md) |
 
 ## The idea
 
-The reverse trade. A table lookup was the right answer in 1990, when a multiply
-cost 120 cycles and memory was fast relative to the CPU. On a modern host the
-ratio is inverted: a cache miss costs hundreds of cycles and the arithmetic is
-free.
+The reverse trade. Where a table's contents are a **simple function of the
+index**, recomputing can beat loading — and the table itself disappears from the
+image.
 
-Where a table's contents are a **simple function of the index**, recomputing can
-beat loading — and the table itself disappears from the image.
+## Implemented v1
+
+`LookupTableElimination` considers only read-only 256-byte objects whose every
+index is provably in the byte domain. It recognizes four exact total functions:
+constant, identity, `index XOR mask`, and wrapping `index + constant`.
+
+Generated `.lut.*` objects are deliberately excluded so O0332 and O0333 do not
+immediately undo each other. The table is removed only after a whole-object proof
+has accounted for every use as an eligible indexed load and the address does not
+escape; the rewrite therefore does not have a partial-mutation refusal path.
 
 ## Applies to
 
 ```basic
-DIM sq%(0 TO 255), i%
-FOR i% = 0 TO 255 : sq%(i%) = i% * i% : NEXT     ' a table of squares
-...
-PRINT sq%(n%)                                     ' -> PRINT n% * n%
+DIM identity?(0 TO 255)
+FOR i% = 0 TO 255 : identity?(i%) = i% : NEXT
+PRINT identity?(n??)
 ```
 
-## What it needs
+For a byte-bounded `n`, the load can become `n` directly and the table vanishes.
 
-- Recognition that the table is a **pure function of its index**, provable by
-  running [O0332](O0332-lookup-table-generation.md)'s machinery backwards over
-  the initializing loop.
-- The decision is entirely a **cost-model** question
-  ([O0174](O0174-target-cost-models.md)) and the answer differs by target: on an
-  8086 with no cache the table usually wins; on the C back end targeting a modern
-  host it usually loses.
-- The table must not be written elsewhere, and must not escape.
+## Still planned
+
+- Richer arithmetic/bitwise formula recovery, including useful polynomial forms.
+- Initializer-loop recognition rather than requiring an already-materialized
+  constant object.
+- Target-aware profitability; some 8086 formulas are slower than a table load,
+  while the same formula is effectively free on a modern host.
+- Wider tables/domains under an explicit size/cost budget.

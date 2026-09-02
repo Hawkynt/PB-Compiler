@@ -50,12 +50,6 @@ public sealed partial class CodeGenerator {
       return false;
     }
 
-    // Target-dependent identities are safe to erase only after the policy above had an opportunity to
-    // reject an unsupported instruction. This keeps $ISA ... ERROR diagnostics observable while still
-    // letting AUTO/EMULATE/NATIVE collapse a semantically empty abstraction under $OPTIMIZE SPEED.
-    if (this.Optimize && this.OptimizeSpeed && InlineAsmCanonicalizer.IsPolicyValidatedRedundant(line))
-      return true;
-
     if (mode == IsaFallbackMode.Native) {
       if (this.TryEmitNativeBitManipulationInstruction(instruction, resolver, out error))
         return true;
@@ -72,6 +66,12 @@ public sealed partial class CodeGenerator {
         error = $"native emission failed: {error}";
       return true;
     }
+
+    // Once target-policy diagnostics and an explicit NATIVE request have been honoured, SPEED may
+    // erase a provable architectural identity. Typed parsing inside the predicate prevents malformed
+    // assembly from being accepted merely because its tokens resemble a no-op.
+    if (this.Optimize && this.OptimizeSpeed && this.IsZeroOverheadInlineAsmIdentity(instruction, resolver))
+      return true;
 
     // Native capability always wins for AUTO. Extensions absent from the historical TextAssembler
     // table use dedicated encoders so target policy and native byte generation share one resolution.
@@ -114,19 +114,17 @@ public sealed partial class CodeGenerator {
     if (this.TryEmitVirtualGp32Instruction(instruction, resolver, target, out error))
       return true;
 
-    // PACKSSDW has a subtle signed saturation boundary; keep its exact lowering ahead of the generic
-    // packed-SIMD scalarizer so the generic pack implementation can never shadow it.
+    // PACKSSDW has a subtle signed saturation boundary; keep its exact lowering ahead of every generic
+    // packed-SIMD scalarizer so no broader emulator can accidentally shadow its boundary semantics.
     if (this.TryEmitVirtualVectorFixup(instruction, resolver, target, out error))
       return true;
-    if (this.TryEmitVirtualShuffleInstruction(instruction, resolver, out error))
+    if (this.TryEmitVirtualExtendedVectorInstruction(instruction, resolver, target, out error))
       return true;
-    if (this.TryEmitVirtualSsse3ArithmeticInstruction(instruction, resolver, out error))
-      return true;
+    // The horizontal and SSSE3-arithmetic lowerings above cover PHADD/PHSUB/PMADDUBSW/PMULHRSW,
+    // which the extended-vector emulator does not implement; every mnemonic both know is left to it.
     if (this.TryEmitVirtualHorizontalInstruction(instruction, resolver, out error))
       return true;
-    if (this.TryEmitVirtualSupplementalInstruction(instruction, resolver, out error))
-      return true;
-    if (this.TryEmitVirtualExtendedInstruction(instruction, resolver, out error))
+    if (this.TryEmitVirtualSsse3ArithmeticInstruction(instruction, resolver, out error))
       return true;
     if (this.TryEmitVirtualInstruction(instruction, resolver, target, out error))
       return true;

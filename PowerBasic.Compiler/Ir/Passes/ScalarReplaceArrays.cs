@@ -53,7 +53,8 @@ public static class ScalarReplaceArrays {
         // element zero, reached through the array pointer itself
         case IrLoad or IrStore when AccessMatchesElement(user, alloca, alloca.Allocated):
           continue;
-        case IrGep gep when Offset(gep, stride) is >= 0 && Offset(gep, stride) < alloca.Count:
+        case IrGep gep when (gep.ElementType is null || gep.ElementType.SameStorage(alloca.Allocated))
+            && Offset(gep, stride) is >= 0 && Offset(gep, stride) < alloca.Count:
           foreach (var indexed in gep.Users)
             if (!AccessMatchesElement(indexed, gep, alloca.Allocated))
               return false;

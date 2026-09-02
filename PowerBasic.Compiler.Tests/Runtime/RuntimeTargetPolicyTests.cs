@@ -106,6 +106,42 @@ public sealed class RuntimeTargetPolicyTests {
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
   }
 
+  // The patterns below were pinned as unit tests on the branch's string canonicalizer. That second
+  // recognizer is gone - one implementation now answers the question - so they are pinned here
+  // instead, against the recognizer that survived, end to end through the ISA policy.
+  [TestCase("$CPU SSE2", "PAND XMM1, XMM1")]
+  [TestCase("$CPU SSE2", "POR MM2, MM2")]
+  [TestCase("$CPU SSE4.1", "PMAXUD XMM2, XMM2")]
+  [TestCase("$CPU SSE4.1", "PMINUD XMM2, XMM2")]
+  [TestCase("$CPU SSE4.1", "PBLENDW XMM4, XMM4, 170")]
+  [TestCase("$CPU SSE2", "XCHG AX, AX")]
+  [TestCase("$CPU SSE2", "MOVQ MM0, MM0")]
+  [TestCase("$CPU SSSE3", "PALIGNR XMM0, XMM0, 0")]
+  public void InlinePolicy_OptimizeSpeedErasesValidatedIdentity(string cpu, string instruction) {
+    var plain = Compile($"{cpu}\n! {instruction}\nEND\n", out var plainExe);
+    var speed = Compile($"{cpu}\n$OPTIMIZE SPEED\n! {instruction}\nEND\n", out var speedExe);
+
+    Assert.Multiple(() => {
+      Assert.That(plain.Errors, Is.Empty, string.Join("; ", plain.Errors));
+      Assert.That(speed.Errors, Is.Empty, string.Join("; ", speed.Errors));
+      Assert.That(speedExe.Length, Is.LessThan(plainExe.Length), $"$OPTIMIZE SPEED did not erase the identity {instruction}");
+    });
+  }
+
+  [TestCase("$CPU SSE2", "PXOR XMM0, XMM0")]
+  [TestCase("$CPU SSE4.2", "PCMPEQQ XMM0, XMM0")]
+  [TestCase("$CPU SSE4.1", "PMAXUD XMM2, XMM3")]
+  public void InlinePolicy_OptimizeSpeedKeepsArchitecturallyObservableInstruction(string cpu, string instruction) {
+    var plain = Compile($"{cpu}\n! {instruction}\nEND\n", out var plainExe);
+    var speed = Compile($"{cpu}\n$OPTIMIZE SPEED\n! {instruction}\nEND\n", out var speedExe);
+
+    Assert.Multiple(() => {
+      Assert.That(plain.Errors, Is.Empty, string.Join("; ", plain.Errors));
+      Assert.That(speed.Errors, Is.Empty, string.Join("; ", speed.Errors));
+      Assert.That(speedExe.Length, Is.GreaterThanOrEqualTo(plainExe.Length), $"$OPTIMIZE SPEED erased {instruction}, which is architecturally observable");
+    });
+  }
+
   private static CodeGenerator Compile(string source) => Compile(source, out _);
 
   private static CodeGenerator Compile(string source, out byte[] executable) {

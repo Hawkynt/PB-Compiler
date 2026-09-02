@@ -2,34 +2,43 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial — profitable one-variable integer polynomials are rewritten to Horner form; Estrin and floating-point reassociation remain planned |
 | **Stage** | Mid-end |
+| **Source** | `Ir/Passes/PolynomialEvaluation.cs` |
+| **Gate** | `--optimize` |
+| **Verified by** | `ArithmeticIdiomOptimizationTests` |
 | **Related** | [O0061](O0061-reassociation.md), [O0121](O0121-reduction-tree-balancing.md), [O0343](O0343-transcendental-specialization.md) |
 
 ## The idea
 
-`a*x^3 + b*x^2 + c*x + d` evaluated literally costs three powers and three
-multiplies. **Horner's** form — `((a*x + b)*x + c)*x + d` — costs three multiplies
-and three adds in a compact serial chain, and **Estrin's** form splits it into
-independent sub-expressions that a superscalar target can overlap.
+`a*x^3 + b*x^2 + c*x + d` evaluated literally repeats powers and multiplies.
+Horner's form — `((a*x + b)*x + c)*x + d` — minimizes multiplies in a compact
+serial chain, while Estrin can expose more instruction-level parallelism on
+wider targets.
 
-The choice between them is a target question: Horner for a machine with one ALU
-and no pipelining (an 8086), Estrin where instruction-level parallelism exists.
+## Implemented v1
+
+`PolynomialEvaluation` recognizes integer-only expression trees made from
+constants, one variable, `+`, `-` and `*`, up to degree eight. It reconstructs
+the coefficient vector modulo the integer bit width and emits Horner form only
+when the original tree uses more multiplications than the polynomial degree.
+
+Because integer arithmetic here is exact modulo 2^n, this does not need a
+fast-math contract. Floating-point expressions are deliberately rejected.
 
 ## Applies to
 
 ```basic
-DIM x!, y!
-y! = a! * x! ^ 3 + b! * x! ^ 2 + c! * x! + d!
+y& = x& * x& * x& + 3 * x& * x& + 5 * x& + 7
 ```
 
-## What it needs
+when the IR exposes the repeated literal powers as ordinary integer multiply/add
+trees.
 
-- Recognition of a polynomial in one variable, including the `^` forms — which
-  on the float path are `rt_pow` calls, so the rewrite also removes those.
-- **Float rewriting changes rounding**: Horner's form is not bit-identical to
-  the naive evaluation, so this belongs behind an explicit fast-math mode
-  ([O0344](O0344-fp-reassociation.md)) unless the operands are exactly
-  representable.
-- Integer polynomials have no such restriction — reassociation is exact modulo
-  2ⁿ ([O0061](O0061-reassociation.md)).
+## Still planned
+
+- Estrin decomposition using target latency/throughput information.
+- Recognition of `^`/power-helper forms.
+- Floating-point Horner/Estrin behind explicit reassociation/fast-math semantics.
+- Higher degrees when a cost model justifies the compile-time analysis and code
+  growth.

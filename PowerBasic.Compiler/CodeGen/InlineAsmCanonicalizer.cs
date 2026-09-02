@@ -4,8 +4,9 @@ namespace PowerBasic.Compiler.CodeGen;
 
 /// <summary>
 /// Removes register-only inline-assembly instructions whose architectural result is provably identical
-/// to doing nothing. Target-dependent identities are deliberately separated from the pre-policy pass:
-/// optimization must never hide an ISA-policy or target-legality diagnostic.
+/// to doing nothing, before any target policy has been resolved. Only baseline forms belong here:
+/// anything target-dependent is left to the post-policy recognizer, because optimization must never
+/// hide an ISA-policy or target-legality diagnostic.
 /// </summary>
 public static class InlineAsmCanonicalizer {
   /// <summary>True when <paramref name="line"/> is a baseline side-effect-free register identity.</summary>
@@ -13,26 +14,6 @@ public static class InlineAsmCanonicalizer {
     if (!TryInstruction(line, out var mnemonic, out var operands))
       return false;
     return mnemonic == "MOV" && operands.Length == 2 && SameBaselineGp(operands[0], operands[1]);
-  }
-
-  /// <summary>
-  /// True for target-dependent register identities that may only be erased after ISA policy has been
-  /// resolved. None of these instructions modify integer flags; VEX/EVEX forms are excluded because
-  /// upper-lane clearing can be architecturally observable.
-  /// </summary>
-  public static bool IsPolicyValidatedRedundant(string line) {
-    if (!TryInstruction(line, out var mnemonic, out var operands) || mnemonic.StartsWith('V'))
-      return false;
-
-    if (mnemonic is "MOVDQA" or "MOVDQU" or "PAND" or "POR"
-        or "PMINSB" or "PMINSD" or "PMINUW" or "PMINUD"
-        or "PMAXSB" or "PMAXSD" or "PMAXUW" or "PMAXUD")
-      return operands.Length == 2 && SameVectorRegister(operands[0], operands[1]);
-
-    if (mnemonic == "PBLENDW")
-      return operands.Length == 3 && SameVectorRegister(operands[0], operands[1]);
-
-    return false;
   }
 
   private static bool TryInstruction(string line, out string mnemonic, out string[] operands) {
@@ -61,8 +42,4 @@ public static class InlineAsmCanonicalizer {
   private static bool SameBaselineGp(string first, string second) =>
     Enum.TryParse<Reg>(first, true, out var a) && Enum.TryParse<Reg>(second, true, out var b) && a == b
     && (a.IsByte() || a.IsWord());
-
-  private static bool SameVectorRegister(string first, string second) =>
-    Enum.TryParse<Reg>(first, true, out var a) && Enum.TryParse<Reg>(second, true, out var b) && a == b
-    && (a.IsMmx() || a.IsXmm());
 }
