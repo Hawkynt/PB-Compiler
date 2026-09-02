@@ -10,7 +10,7 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// as the pairwise StrCat chain. Execution under DOSBox is skipped when DOSBox is unavailable; the
 /// firing/structure assertions live in <see cref="OptimizerTests"/>.
 /// </summary>
-[TestFixture]
+[TestFixture, Category("Slow")]
 [NonParallelizable]
 public sealed class MultiConcatTests {
 

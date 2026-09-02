@@ -33,7 +33,7 @@ namespace PowerBasic.Compiler.Tests.Emit;
 /// failure diagnosable rather than merely alarming.
 /// </para>
 /// </summary>
-[TestFixture]
+[TestFixture, Category("Slow")]
 public sealed class DirectOptimizerOnRenderedBasicTests {
 
   private static readonly string _repoRoot =

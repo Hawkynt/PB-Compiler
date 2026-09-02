@@ -26,7 +26,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 ///     one of the two paths and fails the fixture.</item>
 /// </list>
 /// </summary>
-[TestFixture]
+[TestFixture, Category("Slow")]
 public sealed class BackendCorpusDifferentialTests {
 
   private static readonly string _repoRoot =

@@ -41,7 +41,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// A throw is neither a success nor a clean decline, so it gets its own list and its own assertion.
 /// </para>
 /// </summary>
-[TestFixture]
+[TestFixture, Category("Slow")]
 public sealed class BackendCoverageTests {
 
   private static readonly string _repoRoot =

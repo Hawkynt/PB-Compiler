@@ -22,7 +22,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// to show up as an absurd round count or a hang, never as a tidy decline - and pin the corpus's worst
 /// round count with the optimizer both on and off.
 /// </summary>
-[TestFixture]
+[TestFixture, Category("Slow")]
 public sealed class BackendSpillTerminationTests {
 
   private static readonly string _repoRoot =

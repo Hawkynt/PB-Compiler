@@ -22,7 +22,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// (<see cref="BackendCorpusDifferentialTests"/>), and this fixture records the size delta so the
 /// claim stays a measurement rather than a memory.
 /// </summary>
-[TestFixture]
+[TestFixture, Category("Slow")]
 public sealed class UnoptimizedByteCompatibilityTests {
 
   private static readonly string _repoRoot =

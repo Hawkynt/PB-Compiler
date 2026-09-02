@@ -9,7 +9,7 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// (probed 1996-12-16 build): division result typing, float literal
 /// precision, exponent display format and VAL radix/exponent parsing.
 /// </summary>
-[TestFixture]
+[TestFixture, Category("Slow")]
 [NonParallelizable]
 public sealed class Pb35FidelityTests {
 
