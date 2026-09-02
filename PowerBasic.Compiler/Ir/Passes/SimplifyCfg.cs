@@ -1,12 +1,11 @@
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
-/// Control-flow graph cleanup. Two safe, high-value transforms that tighten the many
-/// trivial blocks the lowering emits (if.next, do.latch, for.inc, ...):
-///   1. trivial-phi elimination - a phi whose inputs are all the same value is that value;
-///   2. single-predecessor merge - a block ending in an unconditional branch to a successor
-///      that has only this predecessor is spliced into it, deleting the edge and the block.
-/// Runs to an internal fixpoint and reports the number of simplifications.
+/// Control-flow graph cleanup. Safe, high-value canonicalizations tighten the many trivial blocks
+/// the lowering and earlier optimization passes emit (if.next, do.latch, for.inc, ...). The pass
+/// folds branches, removes dead/trivial SSA structure, threads proven branch edges, eliminates pure
+/// forwarding blocks, and merges single-predecessor runs. It runs to an internal fixpoint and reports
+/// the number of simplifications.
 /// </summary>
 public static class SimplifyCfg {
 
@@ -20,6 +19,10 @@ public static class SimplifyCfg {
       total += FoldBranches(fn, ref changed);
       total += ThreadBranchesThroughPhis(fn, ref changed);
       total += RemoveUnreachable(fn, ref changed);
+      // Forwarding blocks go before trivial-phi removal: collapsing a successor phi first can
+      // leave the bridge phi used by a non-phi, which permanently blocks the elision below and
+      // strands the empty bridge block in the CFG.
+      total += EliminateForwardingBlocks(fn, ref changed);
       total += RemoveTrivialPhis(fn, ref changed);
       total += MergeSingleSuccessorBlocks(fn, ref changed);
     } while (changed);
@@ -177,6 +180,107 @@ public static class SimplifyCfg {
         return null;                                 // two distinct inputs: a real merge
     }
     return only;
+  }
+
+  /// <summary>
+  /// Removes a block that contains only phis followed by an unconditional branch. Incoming edges are
+  /// redirected to the successor, and successor phis are expanded to the predecessor-specific values
+  /// that flowed through the removed block. The transform deliberately refuses edges/uses that would
+  /// require critical-edge values, instruction cloning, or loop-header surgery.
+  /// </summary>
+  private static int EliminateForwardingBlocks(IrFunction fn, ref bool changed) {
+    var eliminated = 0;
+    var addressed = fn.AddressTakenBlocks();
+    foreach (var block in fn.Blocks.ToList()) {
+      if (block.Parent is null || ReferenceEquals(block, fn.Entry) || addressed.Contains(block)
+          || block.Terminator is not IrBr br || ReferenceEquals(br.Target, block))
+        continue;
+
+      var phis = block.Phis.ToList();
+      if (block.Instructions.Count != phis.Count + 1)
+        continue;                                      // only phis plus the forwarding branch
+      // A bridge that carries no phi is an EMPTY block, and removing one is MergeSingleSuccessorBlocks'
+      // job, not this pass's. Doing it here also rewrites edges the loop passes still need: an empty
+      // preheader or unroll stub folded away leaves a header whose phi the next unswitch/unroll clone
+      // cannot remap, and it emits `%x = add %x, ...` - a value that is its own operand.
+      if (phis.Count == 0)
+        continue;
+
+      var succ = br.Target;
+      var preds = block.Predecessors.ToList();
+      if (preds.Count == 0 || ReferenceEquals(succ, fn.Entry) || preds.Any(pred => ReferenceEquals(pred, succ)))
+        continue;                                      // unreachable/entry/back-edge shapes stay canonical
+      if (preds.Any(pred => !CanRetarget(pred.Terminator, block)))
+        continue;                                      // switch/indirect edges need their own rewrite API
+      if (preds.Any(pred => pred.Successors.Any(s => ReferenceEquals(s, succ))))
+        continue;                                      // would create two edges from one predecessor to succ
+      if (phis.Any(phi => phi.Users.Any(user => user is not IrPhi usePhi || !ReferenceEquals(usePhi.Parent, succ))))
+        continue;                                      // a live bridge phi would have to move or be cloned
+      if (!TryTranslateForwardedPhis(block, preds, succ, out var translated))
+        continue;
+
+      foreach (var (phi, pred, value) in translated)
+        phi.AddIncoming(value, pred);
+      foreach (var phi in succ.Phis)
+        phi.RemoveIncoming(block);
+      foreach (var pred in preds)
+        Retarget(pred.Terminator!, block, succ);
+
+      foreach (var inst in block.Instructions.ToList())
+        inst.EraseFromParent();
+      fn.RemoveBlock(block);
+
+      ++eliminated;
+      changed = true;
+    }
+    return eliminated;
+  }
+
+  private static bool TryTranslateForwardedPhis(
+      IrBasicBlock block,
+      IReadOnlyList<IrBasicBlock> preds,
+      IrBasicBlock succ,
+      out List<(IrPhi Phi, IrBasicBlock Pred, IrValue Value)> translated) {
+    translated = [];
+    foreach (var phi in succ.Phis) {
+      if (phi.IncomingFrom(block) is not { } throughBlock)
+        return false;
+
+      foreach (var pred in preds) {
+        var value = throughBlock;
+        if (value is IrInstruction { Parent: { } valueBlock } && ReferenceEquals(valueBlock, block)) {
+          if (value is not IrPhi bridgePhi || bridgePhi.IncomingFrom(pred) is not { } incoming)
+            return false;
+          value = incoming;
+        }
+        if (value is IrInstruction { Parent: { } translatedBlock } && ReferenceEquals(translatedBlock, block))
+          return false;                                // bridge-phi cycles/chains need a stronger translator
+        translated.Add((phi, pred, value));
+      }
+    }
+    return true;
+  }
+
+  private static bool CanRetarget(IrInstruction? terminator, IrBasicBlock from) => terminator switch {
+    IrBr br => ReferenceEquals(br.Target, from),
+    IrCondBr cb => ReferenceEquals(cb.IfTrue, from) || ReferenceEquals(cb.IfFalse, from),
+    _ => false,
+  };
+
+  private static void Retarget(IrInstruction terminator, IrBasicBlock from, IrBasicBlock to) {
+    switch (terminator) {
+      case IrBr br when ReferenceEquals(br.Target, from):
+        br.Target = to;
+        break;
+      case IrCondBr cb:
+        if (ReferenceEquals(cb.IfTrue, from))
+          cb.IfTrue = to;
+        if (ReferenceEquals(cb.IfFalse, from))
+          cb.IfFalse = to;
+        break;
+      default:
+        throw new InvalidOperationException("prechecked forwarding edge cannot be retargeted");
+    }
   }
 
   private static int MergeSingleSuccessorBlocks(IrFunction fn, ref bool changed) {
