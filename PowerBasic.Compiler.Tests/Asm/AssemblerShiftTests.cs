@@ -11,6 +11,18 @@ public sealed class AssemblerShiftTests {
     return asm.ToArray();
   }
 
+  /// <summary>
+  /// The same for a target that HAS the 80186 immediate-count shift and rotate. A bare assembler
+  /// builds for an 8086, whose group 2 is only the count-one D0/D1 and the CL-count D2/D3, so a test
+  /// of the C0/C1 form has to declare the target that has it - the way the near-conditional-jump
+  /// tests declare <c>Allow386Jcc</c>.
+  /// </summary>
+  private static byte[] Assemble186(Action<Assembler> emit) {
+    var asm = new Assembler { Allow186ImmediateShifts = true };
+    emit(asm);
+    return asm.ToArray();
+  }
+
   #region operation digits
 
   private static IEnumerable<TestCaseData> ShiftByOneCases() {
@@ -37,11 +49,37 @@ public sealed class AssemblerShiftTests {
 
   [Test]
   public void Shl_GivenImmediateCount_WhenAssembled_ThenC1Form()
-    => Assert.That(Assemble(a => a.Shl(Reg.AX, 5)), Is.EqualTo(new byte[] { 0xC1, 0xE0, 0x05 }));
+    => Assert.That(Assemble186(a => a.Shl(Reg.AX, 5)), Is.EqualTo(new byte[] { 0xC1, 0xE0, 0x05 }));
 
   [Test]
   public void Shl_GivenByteRegisterImmediateCount_WhenAssembled_ThenC0Form()
-    => Assert.That(Assemble(a => a.Shl(Reg.AL, 3)), Is.EqualTo(new byte[] { 0xC0, 0xE0, 0x03 }));
+    => Assert.That(Assemble186(a => a.Shl(Reg.AL, 3)), Is.EqualTo(new byte[] { 0xC0, 0xE0, 0x03 }));
+
+  /// <summary>
+  /// The default target has no C0/C1, so a multi-bit immediate count becomes that many count-one
+  /// instructions rather than a later-generation opcode in an image that says it is an 8086.
+  /// </summary>
+  [Test]
+  public void Shr_GivenImmediateCountOnAn8086_WhenAssembled_ThenRepeatedD1Form()
+    => Assert.That(Assemble(a => a.Shr(Reg.AX, 3)),
+      Is.EqualTo(new byte[] { 0xD1, 0xE8, 0xD1, 0xE8, 0xD1, 0xE8 }));
+
+  [Test]
+  public void Shl_GivenByteRegisterImmediateCountOnAn8086_WhenAssembled_ThenRepeatedD0Form()
+    => Assert.That(Assemble(a => a.Shl(Reg.AL, 2)), Is.EqualTo(new byte[] { 0xD0, 0xE0, 0xD0, 0xE0 }));
+
+  /// <summary>
+  /// RCR expands too. Rotating through the carry n times IS n single-bit rotates through the carry,
+  /// so the expansion carries the same bit chain the one-instruction form would have.
+  /// </summary>
+  [Test]
+  public void Rcr_GivenImmediateCountOnAn8086_WhenAssembled_ThenRepeatedD1Form()
+    => Assert.That(Assemble(a => a.Rcr(Reg.BX, 2)), Is.EqualTo(new byte[] { 0xD1, 0xDB, 0xD1, 0xDB }));
+
+  [Test]
+  public void Shr_GivenWordMemoryImmediateCountOnAn8086_WhenAssembled_ThenRepeatedD1Form()
+    => Assert.That(Assemble(a => a.Shr(Mem.Word(Reg.BX), 2)),
+      Is.EqualTo(new byte[] { 0xD1, 0x2F, 0xD1, 0x2F }));
 
   [Test]
   public void Shld_GivenDwordRegisters_WhenAssembled_Then66_0F_A4()
@@ -92,7 +130,7 @@ public sealed class AssemblerShiftTests {
 
   [Test]
   public void Shr_GivenWordMemoryImmediateCount_WhenAssembled_ThenC1Form()
-    => Assert.That(Assemble(a => a.Shr(Mem.Word(Reg.BX), 4)), Is.EqualTo(new byte[] { 0xC1, 0x2F, 0x04 }));
+    => Assert.That(Assemble186(a => a.Shr(Mem.Word(Reg.BX), 4)), Is.EqualTo(new byte[] { 0xC1, 0x2F, 0x04 }));
 
   [Test]
   public void Shl_GivenUnsizedMemory_WhenAssembled_ThenThrows()

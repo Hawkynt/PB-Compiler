@@ -904,6 +904,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // Keeping the second out of the target is what lets $FLOAT NPX still reach native x87 with the
     // optimizer off, while a copy stays the copy the user wrote.
     this._rt.EnableTargetOptimizations = this.Optimize;
+    // The immediate-count shift and rotate (C0/C1 ib) is 80186, and the runtime is where it leaked:
+    // an array index scaled by SHL BX,2 is a C1 in an image whose declared target is an 8086. This
+    // sits after the target is known because SelectionTarget reads it, and before the first byte is
+    // emitted; it deliberately reuses the selector's notion of the CPU floor rather than a second one.
+    asm.Allow186ImmediateShifts = this.SelectionTarget.Cpu186OrLater;
     this._rt.EmitEntry(asm, userMain);
 
     // pb36 (docs/PB36.md P1): the runtime is emitted AFTER user code, trimmed

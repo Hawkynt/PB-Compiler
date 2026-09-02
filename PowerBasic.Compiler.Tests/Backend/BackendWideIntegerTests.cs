@@ -205,7 +205,10 @@ public sealed class BackendWideIntegerTests {
     Assert.That(m, Is.Not.Null, reason);
     var alloc = LinearScanAllocator.Allocate(m!, target);
     Assert.That(alloc, Is.Not.Null);
-    var asm = new Assembler();
+    // The emitter has to build for the same core the selection assumed. Selecting for a 386 and
+    // emitting into a default (8086) assembler is a program with two targets in it: the selector
+    // keeps the one compact shift and the assembler then expands it into four count-one ones.
+    var asm = new Assembler { Allow186ImmediateShifts = target.Cpu186OrLater };
 
     MachineEmitter.EmitFunction(asm, m!, alloc!, [], 0);
 

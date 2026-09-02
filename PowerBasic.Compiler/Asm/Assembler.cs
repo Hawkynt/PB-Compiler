@@ -326,6 +326,24 @@ public sealed partial class Assembler {
   public bool Allow386Jcc { get; set; }
 
   /// <summary>
+  /// Whether the target may execute an 80186 immediate-count shift or rotate (<c>C0</c>/<c>C1 /n ib</c>).
+  /// Off by default, for the reason <see cref="Allow386Jcc"/> is: the default target is an 8086, whose
+  /// group-2 forms are only the count-one <c>D0</c>/<c>D1</c> and the CL-count <c>D2</c>/<c>D3</c>.
+  /// With this clear a multi-bit immediate count is emitted as that many count-one instructions.
+  ///
+  /// <para>
+  /// The expansion is exact rather than approximate. Each of the eight operations is defined as its
+  /// own single-bit step applied n times, so the result, CF and the carry chain <c>RCL</c>/<c>RCR</c>
+  /// ride on are identical; OF is the only difference and the immediate form leaves it undefined for
+  /// every count above one, so nothing conforming can observe it. The CL form is deliberately NOT
+  /// used as a shortcut for a large count: it would put a CX clobber on an instruction whose caller
+  /// asked for none. That trade needs register liveness and is therefore made a level up, in
+  /// <c>InstructionSelector.SelectConstantShift</c>, which stages CL past four steps.
+  /// </para>
+  /// </summary>
+  public bool Allow186ImmediateShifts { get; set; }
+
+  /// <summary>
   /// Short-jump relaxation over the finished stream, iterated to fixpoint (each shrink can
   /// bring further jumps into short range). Every cut goes through the peephole's
   /// RemoveBytes, which slides all labels/fixups/relocations past it, so downstream offsets
