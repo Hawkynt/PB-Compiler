@@ -175,7 +175,7 @@ public sealed class O0355O0358MachineOptimizationTests {
       Store(slot, new MOperand.Immediate(0x55667788)));
     MarkOptimized(function);
 
-    Assert.That(LateLoadStoreOptimization.Run(function, []), Is.EqualTo(1));
+    Assert.That(LateLoadStoreOptimization.Run(function, new Dictionary<int, Reg>()), Is.EqualTo(1));
     Assert.That(function.Blocks[0].Instructions, Has.Count.EqualTo(1));
     Assert.That(((MOperand.Immediate)function.Blocks[0].Instructions[0].Operands[1]).Value, Is.EqualTo(0x55667788));
   }

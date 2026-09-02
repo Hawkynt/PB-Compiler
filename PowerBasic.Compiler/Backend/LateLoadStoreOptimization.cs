@@ -112,10 +112,10 @@ public static class LateLoadStoreOptimization {
       return true;
     }
     if (instruction.Opcode == MOpcode.Mov
-        && instruction.Operands is [MOperand.StackSlot stack, MOperand.Register { Reg: var register }]
-        && stack.Index >= firstSpillSlot
+        && instruction.Operands is [MOperand.StackSlot target, MOperand.Register { Reg: var register }]
+        && target.Index >= firstSpillSlot
         && Resolve(register, allocation) is { } physical) {
-      slot = stack;
+      slot = target;
       source = new MOperand.Register(MReg.Physical_(physical, register.Size));
       return true;
     }
