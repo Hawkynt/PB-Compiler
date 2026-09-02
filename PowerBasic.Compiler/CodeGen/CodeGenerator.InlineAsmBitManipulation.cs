@@ -37,9 +37,13 @@ public sealed partial class CodeGenerator {
           when dword ? source.Register.IsDword() : source.Register.IsWord():
         this._asm.Popcnt(destination.Register, source.Register);
         return true;
+      // An unsized operand takes its width from the register, as it does everywhere else in
+      // assembly syntax: `POPCNT EAX, total&` names a LONG the resolver hands over without a size.
       case TextAssembler.ParsedAsmMemory source
-          when source.Memory.Size == (dword ? OperandSize.Dword : OperandSize.Word):
-        this._asm.Popcnt(destination.Register, source.Memory);
+          when source.Memory.Size is OperandSize.None
+               || source.Memory.Size == (dword ? OperandSize.Dword : OperandSize.Word):
+        this._asm.Popcnt(destination.Register,
+          source.Memory.WithSize(dword ? OperandSize.Dword : OperandSize.Word));
         return true;
       default:
         error = $"POPCNT source width must match the {(dword ? "32" : "16")}-bit destination";
@@ -138,7 +142,8 @@ public sealed partial class CodeGenerator {
 
   private bool IsPopcntSource(TextAssembler.ParsedAsmOperand source, bool dword) => source switch {
     TextAssembler.ParsedAsmRegister r => dword ? r.Register.IsDword() : r.Register.IsWord(),
-    TextAssembler.ParsedAsmMemory m => m.Memory.Size == (dword ? OperandSize.Dword : OperandSize.Word),
+    TextAssembler.ParsedAsmMemory m => m.Memory.Size is OperandSize.None
+                                       || m.Memory.Size == (dword ? OperandSize.Dword : OperandSize.Word),
     _ => false,
   };
 

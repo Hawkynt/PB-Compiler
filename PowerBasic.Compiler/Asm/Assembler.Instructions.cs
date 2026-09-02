@@ -978,27 +978,8 @@ public sealed partial class Assembler {
   public void Loopne(Label target) => this.ShortBranch(0xE0, target);
   public void Jcxz(Label target) => this.ShortBranch(0xE3, target);
 
-  /// <summary>
-  /// LOOP/LOOPE/LOOPNE/JCXZ exist only with a signed-byte displacement - there is no near form to
-  /// relax into. When the body has outgrown that range the branch bounces through a near JMP:
-  /// the short branch takes a two-byte hop to the trampoline, the fall-through skips over it.
-  /// Emitted only for a bound target that genuinely cannot be reached, so code that already fit
-  /// keeps exactly the encoding it had.
-  /// </summary>
   private void ShortBranch(byte opcode, Label target) {
     ArgumentNullException.ThrowIfNull(target);
-    if (target.IsBound && !FitsSByte(target.Position - (this.Position + 2))) {
-      var trampoline = this.DefineLabel();
-      var past = this.DefineLabel();
-      this.EmitByte(opcode);
-      this.EmitRel8(trampoline);
-      this.JmpShort(past);
-      this.MarkLabel(trampoline);
-      this.JmpNear(target);
-      this.MarkLabel(past);
-      return;
-    }
-
     this.EmitByte(opcode);
     this.EmitRel8(target);
   }
