@@ -815,10 +815,6 @@ Ported so far:
   another full pass sweep: the point of inlining is not the call overhead but that the callee body
   becomes visible to the caller's optimizer, and nothing sees it until the passes run again.
 - **O0007 loop unrolling** — `Ir/Passes/LoopUnroll.cs`, in the standard pipeline.
-- **O0132 whole-loop compile-time evaluation** — nobody wrote a pass for it; it falls out of
-  unrolling composing with the constant propagation and dead-code elimination already there.
-  `FOR i = 1 TO 5 / s = s + i / NEXT / PRINT s` becomes `PRINT 15`.
-
 - **O0018 interprocedural constant propagation** and **O0159 return-value propagation** —
   `Ir/Passes/IpConstantProp.cs`, the two directions of the same fixpoint. In: a parameter every
   visible call passes the same literal for *is* that literal. Out: a function whose every `ret`
