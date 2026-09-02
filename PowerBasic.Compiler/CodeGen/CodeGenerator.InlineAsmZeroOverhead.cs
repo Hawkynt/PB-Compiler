@@ -38,6 +38,26 @@ public sealed partial class CodeGenerator {
 
       case "MOVQ":
         return operands.Count == 2 && SameVector(operands[0], operands[1], xmmOnly: false);
+
+      // x AND x and x OR x are x, and no packed logical touches the integer flags. Both have MMX
+      // and XMM forms, so neither lane width is restricted here.
+      case "PAND":
+      case "POR":
+        return operands.Count == 2 && SameVector(operands[0], operands[1], xmmOnly: false);
+
+      // MIN/MAX of a register against itself is that register. These are the SSE4.1 members of the
+      // family, which exist only in the XMM encoding; the MMX-capable PMINUB/PMAXUB/PMINSW/PMAXSW
+      // are deliberately absent because the historical assembler table already lowers them.
+      case "PMINSB":
+      case "PMINSD":
+      case "PMINUW":
+      case "PMINUD":
+      case "PMAXSB":
+      case "PMAXSD":
+      case "PMAXUW":
+      case "PMAXUD":
+        return operands.Count == 2 && SameVector(operands[0], operands[1], xmmOnly: true);
+
       case "MOVDQA":
       case "MOVDQU":
         return operands.Count == 2 && SameVector(operands[0], operands[1], xmmOnly: true);

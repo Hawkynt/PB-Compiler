@@ -1088,13 +1088,13 @@ public sealed partial class CodeGenerator {
           // (rt_trig, BL selects the function); on a 386 the single instruction is kept, since there
           // the processor has it and it is both smaller and faster.
           case "SIN":
-            if (this._rt.Cpu386)
+            if (this._rt.Target.Has32BitGeneralPurpose)
               asm.Fsin();
             else
               asm.Call(this._rt.Sin);
             break;
           case "COS":
-            if (this._rt.Cpu386)
+            if (this._rt.Target.Has32BitGeneralPurpose)
               asm.Fcos();
             else
               asm.Call(this._rt.Cos);
@@ -1103,7 +1103,7 @@ public sealed partial class CodeGenerator {
             // FPTAN; FSTP ST(0) is the 387 reading - discard what was pushed, keep the tangent
             // under it. An 8087 pushes X and leaves Y beneath, so the same pair keeps Y, and its
             // FPTAN is only defined on [0, pi/4] besides; below a 386 the reduction is the answer.
-            if (this._rt.Cpu386) {
+            if (this._rt.Target.Has32BitGeneralPurpose) {
               asm.Fptan();
               asm.Fstp(St.St0);
             } else

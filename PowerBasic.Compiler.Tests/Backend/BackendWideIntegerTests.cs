@@ -148,7 +148,7 @@ public sealed class BackendWideIntegerTests {
     }, IrType.Void);
 
     var m = InstructionSelector.TrySelect(fn, out var reason,
-      new SelectionTarget(Cpu386: true, Optimize: true));
+      new SelectionTarget(CpuLevel: 386, Optimize: true));
 
     Assert.That(m, Is.Not.Null, reason);
     var shift = m!.AllInstructions.SingleOrDefault(i => i.Opcode == expected
@@ -160,14 +160,14 @@ public sealed class BackendWideIntegerTests {
   [TestCase(false, false)]
   [TestCase(false, true)]
   [TestCase(true, false)]
-  public void Select_GivenTargetWithoutOptimized386_ThenKeepsTheWordCarryChain(bool cpu386, bool optimize) {
+  public void Select_GivenTargetWithoutOptimized386_ThenKeepsTheWordCarryChain(bool target386, bool optimize) {
     var fn = WideFunction((b, slot) => {
       var value = b.Load(IrType.I32, slot);
       b.Store(b.Shl(value, new IrConstantInt(IrType.I32, 4)), slot);
       b.Ret();
     }, IrType.Void);
 
-    var m = InstructionSelector.TrySelect(fn, out var reason, new SelectionTarget(Cpu386: cpu386, Optimize: optimize));
+    var m = InstructionSelector.TrySelect(fn, out var reason, new SelectionTarget(CpuLevel: target386 ? 386 : 86, Optimize: optimize));
 
     Assert.That(m, Is.Not.Null, reason);
     Assert.That(m!.AllInstructions.Any(i => i.Opcode == MOpcode.Shl
@@ -185,7 +185,7 @@ public sealed class BackendWideIntegerTests {
       b.Ret();
     }, IrType.Void);
 
-    var m = InstructionSelector.TrySelect(fn, out _, new SelectionTarget(Cpu386: true, Optimize: true));
+    var m = InstructionSelector.TrySelect(fn, out _, new SelectionTarget(CpuLevel: 386, Optimize: true));
 
     Assert.That(m is not null, Is.EqualTo(selects));
     Assert.That(m?.AllInstructions.Any(i => i.Opcode == MOpcode.Shl
@@ -200,12 +200,15 @@ public sealed class BackendWideIntegerTests {
       b.Store(b.Shl(value, new IrConstantInt(IrType.I32, 4)), slot);
       b.Ret();
     }, IrType.Void);
-    var target = new SelectionTarget(Cpu386: true, Optimize: true);
+    var target = new SelectionTarget(CpuLevel: 386, Optimize: true);
     var m = InstructionSelector.TrySelect(fn, out var reason, target);
     Assert.That(m, Is.Not.Null, reason);
     var alloc = LinearScanAllocator.Allocate(m!, target);
     Assert.That(alloc, Is.Not.Null);
-    var asm = new Assembler();
+    // The emitter has to build for the same core the selection assumed. Selecting for a 386 and
+    // emitting into a default (8086) assembler is a program with two targets in it: the selector
+    // keeps the one compact shift and the assembler then expands it into four count-one ones.
+    var asm = new Assembler { Allow186ImmediateShifts = target.Cpu186OrLater };
 
     MachineEmitter.EmitFunction(asm, m!, alloc!, [], 0);
 

@@ -15,13 +15,15 @@ public sealed class TargetCostTests {
   [Test]
   public void For_GivenCpuAndOptimizeFlags_WhenBuilt_ThenMapsToTierAndObjective() {
     Assert.Multiple(() => {
-      Assert.That(TargetCost.For(false, false, false, false, false).Tier, Is.EqualTo(CpuTier.I8086));
-      Assert.That(TargetCost.For(true, false, false, false, false).Tier, Is.EqualTo(CpuTier.I80386));
-      Assert.That(TargetCost.For(true, true, false, false, false).Tier, Is.EqualTo(CpuTier.I80486));
-      Assert.That(TargetCost.For(true, true, true, false, false).Tier, Is.EqualTo(CpuTier.Pentium));
-      Assert.That(TargetCost.For(false, false, false, true, false).Objective, Is.EqualTo(CostObjective.Speed));
-      Assert.That(TargetCost.For(false, false, false, false, true).Objective, Is.EqualTo(CostObjective.Size));
-      Assert.That(TargetCost.For(false, false, false, false, false).Objective, Is.EqualTo(CostObjective.Balanced));
+      Assert.That(TargetCost.For(86, false, false).Tier, Is.EqualTo(CpuTier.I8086));
+      Assert.That(TargetCost.For(286, false, false).Tier, Is.EqualTo(CpuTier.I80286));
+      Assert.That(TargetCost.For(386, false, false).Tier, Is.EqualTo(CpuTier.I80386));
+      Assert.That(TargetCost.For(486, false, false).Tier, Is.EqualTo(CpuTier.I80486));
+      Assert.That(TargetCost.For(586, false, false).Tier, Is.EqualTo(CpuTier.Pentium));
+      Assert.That(TargetCost.For(686, false, false).Tier, Is.EqualTo(CpuTier.P6));
+      Assert.That(TargetCost.For(86, true, false).Objective, Is.EqualTo(CostObjective.Speed));
+      Assert.That(TargetCost.For(86, false, true).Objective, Is.EqualTo(CostObjective.Size));
+      Assert.That(TargetCost.For(86, false, false).Objective, Is.EqualTo(CostObjective.Balanced));
     });
   }
 

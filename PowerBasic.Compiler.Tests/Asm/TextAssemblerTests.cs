@@ -17,8 +17,8 @@ public sealed class TextAssemblerTests {
     public bool TryResolve(string name, out AsmSymbol symbol) => this._symbols.TryGetValue(name, out symbol);
   }
 
-  private static byte[] AssembleLine(string line, IAsmSymbolResolver? resolver = null) {
-    var asm = new Assembler();
+  private static byte[] AssembleLine(string line, IAsmSymbolResolver? resolver = null, bool cpu186 = false) {
+    var asm = new Assembler { Allow186ImmediateShifts = cpu186 };
     var text = new TextAssembler(asm);
     Assert.That(text.TryParse(line, resolver, out var error), Is.True, error);
     return asm.ToArray();
@@ -152,7 +152,12 @@ public sealed class TextAssemblerTests {
 
   [Test]
   public void TryParse_GivenShiftByImmediate_WhenParsed_ThenC1Form()
-    => Assert.That(AssembleLine("SHR BX, 3"), Is.EqualTo(new byte[] { 0xC1, 0xEB, 0x03 }));
+    => Assert.That(AssembleLine("SHR BX, 3", cpu186: true), Is.EqualTo(new byte[] { 0xC1, 0xEB, 0x03 }));
+
+  /// <summary>The same line for the default target, which has no C1: three count-one shifts.</summary>
+  [Test]
+  public void TryParse_GivenShiftByImmediateOnAn8086_WhenParsed_ThenRepeatedD1Form()
+    => Assert.That(AssembleLine("SHR BX, 3"), Is.EqualTo(new byte[] { 0xD1, 0xEB, 0xD1, 0xEB, 0xD1, 0xEB }));
 
   [Test]
   public void TryParse_GivenPushSegment_WhenParsed_ThenDedicatedOpcode()

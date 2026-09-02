@@ -102,7 +102,7 @@ public sealed partial class CodeGenerator {
     // CX-times per-word loop. The count must be a constant in range because the 386
     // masks it to 5 bits (a count >= 32 would differ from the unmasked loop). SHIFT
     // RIGHT here is logical (the loop uses SHR), matching genuine PBC.
-    if (size == 4 && this.Optimize && this.Cpu386
+    if (size == 4 && this.Optimize && this.Has32BitCpu
         && this.OptFolder.TryFold(count) is { Integer: { } cnt } && cnt is >= 1 and <= 31) {
       var dword = Adjust(place.Cell, 0, OperandSize.Dword);
       switch (rotate, left) {
@@ -120,7 +120,7 @@ public sealed partial class CodeGenerator {
     // Count < 32 keeps both the 386 masking and the SHLD/SHRD semantics exact; counts
     // >= 32 (which cross the dword boundary) and rotates stay on the loop. SHIFT RIGHT is
     // logical (SHR high half), matching the loop and genuine PBC.
-    if (size == 8 && !rotate && this.Optimize && this.Cpu386
+    if (size == 8 && !rotate && this.Optimize && this.Has32BitCpu
         && this.OptFolder.TryFold(count) is { Integer: { } cnt8 } && cnt8 is >= 1 and <= 31) {
       var dwLo = Adjust(place.Cell, 0, OperandSize.Dword);
       var dwHi = Adjust(place.Cell, 4, OperandSize.Dword);

@@ -302,11 +302,11 @@ public sealed partial class CodeGenerator {
 
   #region C1/R3 - block-move widening
 
-  /// <summary>True when $CPU 80386 (or higher) is selected - 32-bit string ops are legal.</summary>
-  private bool Cpu386 => model.MetaStatements.Any(m =>
-    m.Command.Equals("CPU", StringComparison.OrdinalIgnoreCase)
-    && m.Arguments is [{ } level, ..]
-    && level.Text is "80386" or "80486" or "386" or "486");
+  /// <summary>The normalized integer-core generation selected by $CPU.</summary>
+  private int CpuLevel => this.RuntimeTargetForRuntime().CpuLevel;
+
+  /// <summary>True when 32-bit general-purpose instructions are legal.</summary>
+  private bool Has32BitCpu => this.CpuLevel >= 386;
 
   /// <summary>True when $CPU 80486 selected - C2 alignment and 486-only opcodes (BSWAP) become legal.</summary>
   private bool Cpu486 => model.MetaStatements.Any(m =>
@@ -335,7 +335,7 @@ public sealed partial class CodeGenerator {
   /// objective. Profitability-gated passes query this instead of hard-coding a tier threshold; it emits
   /// nothing, so reading it never affects output (only a pass acting on an answer does, and each is
   /// <see cref="Optimize"/>-gated).</summary>
-  private TargetCost Cost => TargetCost.For(this.Cpu386, this.Cpu486, this.Cpu586, this.OptimizeSpeed, this.OptimizeSize);
+  private TargetCost Cost => TargetCost.For(this.CpuLevel, this.OptimizeSpeed, this.OptimizeSize);
 
   /// <summary>
   /// True when a <c>$CPU 80586 &lt;feature&gt; ...</c> metastatement requests the named SIMD
@@ -373,7 +373,7 @@ public sealed partial class CodeGenerator {
       return;
     }
 
-    if (this.Cpu386 && byteCount >= 8) {
+    if (this.Has32BitCpu && byteCount >= 8) {
       asm.Mov(Reg.CX, byteCount / 4);
       asm.Rep();
       asm.Movsd();
@@ -1416,7 +1416,7 @@ public sealed partial class CodeGenerator {
   /// would be observable to a handler).
   /// </summary>
   private bool TryEmitForLongCounterInRegister(ForStmt f, VariableSymbol counter, Mem cell, long step) {
-    if (!this.Optimize || !this.OptimizeSpeed || !this.Cpu386)
+    if (!this.Optimize || !this.OptimizeSpeed || !this.Has32BitCpu)
       return false;
     if (counter.Type is not ScalarType { ByteSize: 4, Signed: true, IsFloat: false })
       return false;
@@ -2381,7 +2381,7 @@ public sealed partial class CodeGenerator {
         // pb36 C1 ($CPU 80386): broadcast the 16-bit fill value into both halves of EAX
         // and store two elements per REP STOSD, with a trailing STOSW for an odd count -
         // same words written, about twice as fast.
-        if (this.Optimize && this.Cpu386 && values.Count >= 4) {
+        if (this.Optimize && this.Has32BitCpu && values.Count >= 4) {
           var word = (ushort)(short)fillValue;
           asm.Mov(Reg.EAX, (Imm)(((int)word << 16) | word));
           asm.Mov(Reg.CX, (Imm)(values.Count / 2));

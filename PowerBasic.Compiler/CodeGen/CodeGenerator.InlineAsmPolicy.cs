@@ -16,23 +16,48 @@ public sealed partial class CodeGenerator {
     if (instruction.Mnemonic.Length == 0)
       return false;
 
+    if (this.TryEmit8086CompatibleShift(instruction, resolver, target, out error))
+      return true;
+
     var x87 = IsX87InlineMnemonic(instruction.Mnemonic);
-    var required = x87
-      ? RuntimeCpuFeatures.X87
-      : RequiredFeature(instruction) | RequiredBitManipulationFeature(instruction);
+    var required = x87 ? RuntimeCpuFeatures.X87 : RequiredFeature(instruction);
+    if (!x87)
+      required |= RequiredBitManipulationFeature(instruction) | RequiredSupplementalFeature(instruction)
+        | RequiredCryptoFeature(instruction) | RequiredBmiFeature(instruction);
     var policy = this.RuntimeIsaPolicyForRuntime();
     var mode = x87 ? policy.ResolveX87(instruction.Mnemonic) : policy.Resolve(instruction.Mnemonic, required);
     var nativelySupported = required == RuntimeCpuFeatures.None || target.Has(required);
 
     if (mode == IsaFallbackMode.Error) {
-      if (nativelySupported)
-        return false;
-      error = $"{instruction.Mnemonic} requires {target.DescribeMissing(required)}; ISA policy forbids emulation";
-      return true;
+      if (!nativelySupported) {
+        error = $"{instruction.Mnemonic} requires {target.DescribeMissing(required)}; ISA policy forbids emulation";
+        return true;
+      }
+
+      // ERROR forbids fallback; it does not bypass dedicated extension encoders. The historical
+      // TextAssembler table predates POPCNT/AES/PCLMUL/BMI and the 0F38/0F3A SIMD maps, so supported
+      // extensions must still route through their native backends rather than fall through as unknown.
+      if (this.TryEmitNativeBitManipulationInstruction(instruction, resolver, out error))
+        return true;
+      if (this.TryEmitNativeCpuExtensionInstruction(instruction, resolver, out error))
+        return true;
+      if (this.TryEmitNativeCryptoInstruction(instruction, resolver, out error))
+        return true;
+      if (this.TryEmitNativeBmiInstruction(instruction, resolver, out error))
+        return true;
+      if (this.TryEmitNativeExtendedSimdInstruction(instruction, resolver, out error))
+        return true;
+      return false;
     }
 
     if (mode == IsaFallbackMode.Native) {
       if (this.TryEmitNativeBitManipulationInstruction(instruction, resolver, out error))
+        return true;
+      if (this.TryEmitNativeCpuExtensionInstruction(instruction, resolver, out error))
+        return true;
+      if (this.TryEmitNativeCryptoInstruction(instruction, resolver, out error))
+        return true;
+      if (this.TryEmitNativeBmiInstruction(instruction, resolver, out error))
         return true;
       if (this.TryEmitNativeExtendedSimdInstruction(instruction, resolver, out error))
         return true;
@@ -48,10 +73,16 @@ public sealed partial class CodeGenerator {
     if (this.Optimize && this.OptimizeSpeed && this.IsZeroOverheadInlineAsmIdentity(instruction, resolver))
       return true;
 
-    // Native capability always wins for AUTO. Extended scalar/SIMD instructions use dedicated
-    // encoders because the historical TextAssembler table predates those opcode maps.
+    // Native capability always wins for AUTO. Extensions absent from the historical TextAssembler
+    // table use dedicated encoders so target policy and native byte generation share one resolution.
     if (mode == IsaFallbackMode.Auto && nativelySupported) {
       if (this.TryEmitNativeBitManipulationInstruction(instruction, resolver, out error))
+        return true;
+      if (this.TryEmitNativeCpuExtensionInstruction(instruction, resolver, out error))
+        return true;
+      if (this.TryEmitNativeCryptoInstruction(instruction, resolver, out error))
+        return true;
+      if (this.TryEmitNativeBmiInstruction(instruction, resolver, out error))
         return true;
       if (this.TryEmitNativeExtendedSimdInstruction(instruction, resolver, out error))
         return true;
@@ -63,6 +94,16 @@ public sealed partial class CodeGenerator {
       return false;
 
     if (this.TryEmitVirtualBitManipulationInstruction(instruction, resolver, target, out error))
+      return true;
+    if (this.TryEmitVirtualPackedStringInstruction(instruction, resolver, target, out error))
+      return true;
+    if (this.TryEmitVirtualCrc32Instruction(instruction, resolver, target, out error))
+      return true;
+    if (this.TryEmitVirtualPopcntInstruction(instruction, resolver, target, out error))
+      return true;
+    if (this.TryEmitVirtualCryptoInstruction(instruction, resolver, target, out error))
+      return true;
+    if (this.TryEmitVirtualBmiInstruction(instruction, resolver, target, out error))
       return true;
     if (this.TryEmitVirtualGp32ExtendedInstruction(instruction, resolver, target, out error))
       return true;
@@ -78,6 +119,12 @@ public sealed partial class CodeGenerator {
     if (this.TryEmitVirtualVectorFixup(instruction, resolver, target, out error))
       return true;
     if (this.TryEmitVirtualExtendedVectorInstruction(instruction, resolver, target, out error))
+      return true;
+    // The horizontal and SSSE3-arithmetic lowerings above cover PHADD/PHSUB/PMADDUBSW/PMULHRSW,
+    // which the extended-vector emulator does not implement; every mnemonic both know is left to it.
+    if (this.TryEmitVirtualHorizontalInstruction(instruction, resolver, out error))
+      return true;
+    if (this.TryEmitVirtualSsse3ArithmeticInstruction(instruction, resolver, out error))
       return true;
     if (this.TryEmitVirtualInstruction(instruction, resolver, target, out error))
       return true;
@@ -98,6 +145,75 @@ public sealed partial class CodeGenerator {
       ? "x87 software emulation backend is not available for this instruction"
       : $"no semantics-preserving emulator is registered for {instruction.Mnemonic}";
     return true;
+  }
+
+  /// <summary>
+  /// The 8086/8088 have D0/D1 count-one and D2/D3 CL-count shifts/rotates. C0/C1 with an arbitrary
+  /// immediate count arrived with the 80186. CL forms stay native; multi-bit immediates are expanded
+  /// to repeated count-one operations so an 8086 target never receives a later-generation opcode.
+  /// </summary>
+  private bool TryEmit8086CompatibleShift(InlineInstruction instruction, InlineAsmResolver resolver,
+      RuntimeTarget target, out string? error) {
+    error = null;
+    if (target.CpuLevel >= 186 || !IsLegacyShiftOrRotate(instruction.Mnemonic))
+      return false;
+
+    this._textAssembler ??= new(this._asm);
+    if (!this._textAssembler.TryParseOperands(instruction.Operands, resolver, out var operands, out error))
+      return true;
+
+    // CL is a genuine 8086 form and count=1 is D0/D1. Dword operands belong to GP32 virtualization.
+    if (operands.Count != 2 || operands[1] is not TextAssembler.ParsedAsmImmediate immediate || immediate.Value == 1)
+      return false;
+    if (immediate.Value is < 1 or > 31) {
+      error = "shift/rotate count must be 1..31";
+      return true;
+    }
+
+    switch (operands[0]) {
+      case TextAssembler.ParsedAsmRegister { Register: var register } when register.IsByte() || register.IsWord():
+        for (var i = 0; i < immediate.Value; ++i)
+          this.Emit8086ShiftOne(instruction.Mnemonic, register);
+        return true;
+
+      case TextAssembler.ParsedAsmMemory { Memory: var memory }
+          when memory.Size is OperandSize.Byte or OperandSize.Word:
+        for (var i = 0; i < immediate.Value; ++i)
+          this.Emit8086ShiftOne(instruction.Mnemonic, memory);
+        return true;
+
+      default:
+        return false;
+    }
+  }
+
+  private static bool IsLegacyShiftOrRotate(string mnemonic) => mnemonic is
+    "SHL" or "SAL" or "SHR" or "SAR" or "ROL" or "ROR" or "RCL" or "RCR";
+
+  private void Emit8086ShiftOne(string mnemonic, Reg destination) {
+    switch (mnemonic) {
+      case "SHL" or "SAL": this._asm.Shl(destination, 1); break;
+      case "SHR": this._asm.Shr(destination, 1); break;
+      case "SAR": this._asm.Sar(destination, 1); break;
+      case "ROL": this._asm.Rol(destination, 1); break;
+      case "ROR": this._asm.Ror(destination, 1); break;
+      case "RCL": this._asm.Rcl(destination, 1); break;
+      case "RCR": this._asm.Rcr(destination, 1); break;
+      default: throw new InvalidOperationException($"not a legacy shift/rotate mnemonic: {mnemonic}");
+    }
+  }
+
+  private void Emit8086ShiftOne(string mnemonic, Mem destination) {
+    switch (mnemonic) {
+      case "SHL" or "SAL": this._asm.Shl(destination, 1); break;
+      case "SHR": this._asm.Shr(destination, 1); break;
+      case "SAR": this._asm.Sar(destination, 1); break;
+      case "ROL": this._asm.Rol(destination, 1); break;
+      case "ROR": this._asm.Ror(destination, 1); break;
+      case "RCL": this._asm.Rcl(destination, 1); break;
+      case "RCR": this._asm.Rcr(destination, 1); break;
+      default: throw new InvalidOperationException($"not a legacy shift/rotate mnemonic: {mnemonic}");
+    }
   }
 
   private static bool IsX87InlineMnemonic(string mnemonic) => mnemonic is

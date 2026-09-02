@@ -692,17 +692,30 @@ public sealed partial class Assembler {
     if (count is < 1 or > 31)
       throw new ArgumentOutOfRangeException(nameof(count), count, "Shift count must be 1..31.");
 
-    this.EmitOperandSizePrefixIf(destination.IsDword());
-    if (count == 1) {
-      this.EmitByte(destination.IsByte() ? (byte)0xD0 : (byte)0xD1);
-      this.EmitModRmRegister(operation, destination);
+    if (count > 1 && !this.Allow186ImmediateShifts) {
+      // C0/C1 ib is 80186. An 8086 spells the same operation as its single-bit step, n times.
+      for (var step = 0; step < count; ++step) {
+        this.EmitOperandSizePrefixIf(destination.IsDword());
+        this.EmitByte(destination.IsByte() ? (byte)0xD0 : (byte)0xD1);
+        this.EmitModRmRegister(operation, destination);
+      }
     } else {
-      this.EmitByte(destination.IsByte() ? (byte)0xC0 : (byte)0xC1);
-      this.EmitModRmRegister(operation, destination);
-      this.EmitByte((byte)count);
+      this.EmitOperandSizePrefixIf(destination.IsDword());
+      if (count == 1) {
+        this.EmitByte(destination.IsByte() ? (byte)0xD0 : (byte)0xD1);
+        this.EmitModRmRegister(operation, destination);
+      } else {
+        this.EmitByte(destination.IsByte() ? (byte)0xC0 : (byte)0xC1);
+        this.EmitModRmRegister(operation, destination);
+        this.EmitByte((byte)count);
+      }
     }
 
-    // an immediate-count shift reads and writes the destination and writes flags
+    // an immediate-count shift reads and writes the destination and writes flags. An 8086 expansion
+    // is recorded as ONE instruction spanning all of its steps: the def/use summary of the group is
+    // exactly the summary of the instruction it replaces, and the scheduler moves a record as one
+    // opaque byte block - which is what keeps a flag writer from being interleaved between two RCL
+    // steps, where it would break the carry chain the expansion rides on.
     this.RecordSchedReg(start, RegBit(destination), RegBit(destination), false, true);
   }
 
@@ -725,18 +738,29 @@ public sealed partial class Assembler {
     if (count is < 1 or > 31)
       throw new ArgumentOutOfRangeException(nameof(count), count, "Shift count must be 1..31.");
 
-    this.EmitSegmentPrefix(destination);
-    this.EmitOperandSizePrefixIf(size == OperandSize.Dword);
-    if (count == 1) {
-      this.EmitByte(size == OperandSize.Byte ? (byte)0xD0 : (byte)0xD1);
-      this.EmitModRmMemory(operation, destination);
+    if (count > 1 && !this.Allow186ImmediateShifts) {
+      // C0/C1 ib is 80186. An 8086 spells the same operation as its single-bit step, n times.
+      for (var step = 0; step < count; ++step) {
+        this.EmitSegmentPrefix(destination);
+        this.EmitOperandSizePrefixIf(size == OperandSize.Dword);
+        this.EmitByte(size == OperandSize.Byte ? (byte)0xD0 : (byte)0xD1);
+        this.EmitModRmMemory(operation, destination);
+      }
     } else {
-      this.EmitByte(size == OperandSize.Byte ? (byte)0xC0 : (byte)0xC1);
-      this.EmitModRmMemory(operation, destination);
-      this.EmitByte((byte)count);
+      this.EmitSegmentPrefix(destination);
+      this.EmitOperandSizePrefixIf(size == OperandSize.Dword);
+      if (count == 1) {
+        this.EmitByte(size == OperandSize.Byte ? (byte)0xD0 : (byte)0xD1);
+        this.EmitModRmMemory(operation, destination);
+      } else {
+        this.EmitByte(size == OperandSize.Byte ? (byte)0xC0 : (byte)0xC1);
+        this.EmitModRmMemory(operation, destination);
+        this.EmitByte((byte)count);
+      }
     }
 
-    // a memory shift reads and writes the cell and writes flags
+    // a memory shift reads and writes the cell and writes flags; an 8086 expansion is one record
+    // over all of its steps, for the reason given on the register form above
     this.RecordSchedMem(start, 0, 0, false, true, true, true, destination);
   }
 

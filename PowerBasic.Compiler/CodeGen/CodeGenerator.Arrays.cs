@@ -512,7 +512,7 @@ public sealed partial class CodeGenerator {
       // a trailing STOSW for the odd leftover word - same byte count as the REP STOSW,
       // about twice as fast. The result (all zeros) is identical.
       var fillBytes = ((arrayType.Size + 1) / 2) * 2;   // exactly what REP STOSW covers
-      if (this.Optimize && this.Cpu386 && fillBytes >= 8) {
+      if (this.Optimize && this.Has32BitCpu && fillBytes >= 8) {
         asm.Xor(Reg.EAX, Reg.EAX);
         asm.Mov(Reg.CX, (Imm)(fillBytes / 4));
         asm.Rep();

@@ -1,42 +1,39 @@
 namespace PowerBasic.Compiler.Backend;
 
 /// <summary>
-/// What the instruction selector is compiling FOR: the instruction set it may assume and the
-/// objective it is trading against. Both are properties of the whole compilation rather than of the
-/// function, and both are already decided by the directives the front end read
-/// (<c>$CPU 80386</c>, <c>$OPTIMIZE SIZE|SPEED|OFF</c>) - this is only how they reach the back end.
-///
-/// <para>
-/// It exists because the IR is deliberately target-independent and objective-free, and a few
-/// decisions genuinely are neither. A dispatch is the clearest case: whether a <c>SELECT CASE</c>
-/// becomes a word jump table, the byte-index table that is smaller and one load slower, a membership
-/// mask that needs a 32-bit shift, or the compare chain that beats all of them for three arms is not
-/// a question about the program - the IR is the same either way - but about which of those the
-/// machine can encode and which the user asked for. Answering it in a pass would mean the pass
-/// deciding an encoding it cannot see.
-/// </para>
-///
-/// <para>
-/// <see cref="Cpu386"/> mirrors the direct emitter's <c>_rt.Cpu386</c> and MUST be given the same
-/// answer: the two paths emit into one image, so a routed function that assumes a 386 while a
-/// directly-emitted one does not is a program that runs on two different machines.
-/// </para>
+/// What the instruction selector is compiling for: the CPU generation it may assume and the
+/// optimization objective it is trading against. Both are properties of the whole compilation rather
+/// than of an individual function; the IR remains target-independent.
 /// </summary>
-/// <param name="Cpu386">the declared target is an 80386 or later (<c>$CPU 80386</c>)</param>
-/// <param name="Optimize">optimization is on at all - with it off nothing here may change the code the selector would otherwise write</param>
-/// <param name="OptimizeSpeed">favour speed over size (<c>$OPTIMIZE SPEED</c>)</param>
-/// <param name="OptimizeSize">favour size over speed (<c>$OPTIMIZE SIZE</c>)</param>
-/// <param name="Cost">
-/// the target's instruction cost model, non-null only when the caller wants the selections that trade
-/// bytes for cycles (the constant-multiply decomposition). It rides here rather than as a second
-/// parameter because it answers the same question the flags do - what this target is being asked for.
-/// </param>
+/// <param name="Optimize">whether optimization is enabled</param>
+/// <param name="OptimizeSpeed">whether speed is preferred</param>
+/// <param name="OptimizeSize">whether size is preferred</param>
+/// <param name="Cost">optional target instruction cost model</param>
+/// <param name="CpuLevel">normalized x86 generation: 86, 186, 286, 386, 486, 586 or 686</param>
 public readonly record struct SelectionTarget(
-  bool Cpu386 = false,
   bool Optimize = false,
   bool OptimizeSpeed = false,
   bool OptimizeSize = false,
-  CodeGen.TargetCost? Cost = null) {
+  CodeGen.TargetCost? Cost = null,
+  int CpuLevel = 86) {
+
+  /// <summary>Whether 80186 instructions may be selected.</summary>
+  public bool Cpu186OrLater => this.CpuLevel >= 186;
+
+  /// <summary>Whether 80286 instructions and semantics may be selected.</summary>
+  public bool Cpu286OrLater => this.CpuLevel >= 286;
+
+  /// <summary>Whether 80386 instructions and 32-bit general-purpose registers may be selected.</summary>
+  public bool Cpu386OrLater => this.CpuLevel >= 386;
+
+  /// <summary>Whether 80486 instructions may be selected.</summary>
+  public bool Cpu486OrLater => this.CpuLevel >= 486;
+
+  /// <summary>Whether Pentium/80586 instructions may be selected.</summary>
+  public bool Cpu586OrLater => this.CpuLevel >= 586;
+
+  /// <summary>Whether P6/80686 instructions may be selected.</summary>
+  public bool Cpu686OrLater => this.CpuLevel >= 686;
 
   /// <summary>An 8086 with no optimization - what a hand-built test function is selected for.</summary>
   public static SelectionTarget Baseline { get; } = new();

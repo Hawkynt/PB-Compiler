@@ -22,9 +22,9 @@ public sealed partial class CodeGenerator {
   /// function assuming a 386 while a directly-emitted one does not is a program with two targets in it.
   /// </summary>
   private Backend.SelectionTarget SelectionTarget => new(
-    Cpu386: this._rt.Cpu386, Optimize: this.Optimize,
+    Optimize: this.Optimize,
     OptimizeSpeed: this.OptimizeSpeed, OptimizeSize: this.OptimizeSize,
-    Cost: this.SelectionCost);
+    Cost: this.SelectionCost, CpuLevel: this._rt.Target.CpuLevel);
 
   /// <summary>The module body compiled by the x86-16 back end, when the whole of it selects and allocates.</summary>
   private (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)? _backendMain;

@@ -1011,19 +1011,29 @@ public sealed class OptimizerTests {
     // `cmp dx,cx` / `cmp ax,bx` named one lowering of the fold rather than the fold. The DOUBLE twin is
     // the control: the same expression over reals has to go to the x87, and it adds the FCOM the LONG
     // one does not.
+    //
+    // THE X87 HALF USED TO BE COUNTED AND COULD NOT BE. It scanned the whole image for D8|DC /2 /3,
+    // DE D9 and D9 E4, and both images are mostly the shared runtime, in which those two bytes turn up
+    // constantly without being an instruction: `mov [1BDC],bx` is `89 1E DC 1B`, and `DC` followed by a
+    // byte whose reg field is 3 is a "match". The numbers it produced were 13 for the LONG image and 14
+    // for the DOUBLE - it passed by ONE, and every one of those counts was a displacement byte. The real
+    // difference the assertion names is 1 against 0 and was never visible above that floor.
+    //
+    // It is not a close call that got closer, it is a coin flip. Adding ELEVEN characters to the string
+    // literal in the PRINT below - which cannot reach the fold - takes the LONG count from 13 to 16 and
+    // fails the assertion, on a compiler with nothing else changed. Any commit that moves the runtime a
+    // few bytes lands somewhere else in the same lottery.
+    //
+    // So the count is gone and nothing is lost with it: the JG/JL signature below is what distinguishes
+    // the two lowerings ("nothing else emits" it), it is asserted in both directions, and the exact form
+    // of the fold is pinned byte-for-byte against the integer diamond by
+    // Emit_GivenLongDiamond_WhenPb36_ThenFoldsToTheSameCodeAsTheLongMaxIntrinsic, which needs no scan at
+    // all. Restoring an x87 assertion here needs something that can tell an instruction from a
+    // coincidence - an instruction-boundary walk - not a wider byte net.
     static int JgJl(byte[] img) {
       var count = 0;
       for (var i = 0; i + 3 < img.Length; ++i)
         if (img[i] == 0x7F && img[i + 2] == 0x7C)
-          ++count;
-      return count;
-    }
-    // FCOM/FCOMP (D8|DC /2 /3), FCOMPP (DE D9) and FTST (D9 E4) - the x87's compares
-    static int FpuCompares(byte[] img) {
-      var count = 0;
-      for (var i = 0; i + 1 < img.Length; ++i)
-        if ((img[i] is 0xD8 or 0xDC && (img[i + 1] & 0x38) is 0x10 or 0x18)
-            || (img[i] == 0xDE && img[i + 1] == 0xD9) || (img[i] == 0xD9 && img[i + 1] == 0xE4))
           ++count;
       return count;
     }
@@ -1033,7 +1043,6 @@ public sealed class OptimizerTests {
     Assert.Multiple(() => {
       Assert.That(JgJl(longs), Is.Positive, "the high-word three-way test - the 32-bit fold's signature");
       Assert.That(JgJl(doubles), Is.Zero, "the DOUBLE form has no half-word compare to test three ways");
-      Assert.That(FpuCompares(longs), Is.LessThan(FpuCompares(doubles)), "the LONG fold adds no x87 compare; the DOUBLE one is nothing but");
     });
   }
 

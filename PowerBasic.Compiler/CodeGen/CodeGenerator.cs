@@ -890,7 +890,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // The near conditional jump (0F 8x) is 80386. Without this the assembler had no idea what it
     // was building for and emitted it regardless, which is fine for anything relaxation could pull
     // back into a byte and an invalid instruction for anything it could not.
-    asm.Allow386Jcc = this.Cpu386;
+    asm.Allow386Jcc = this.Has32BitCpu;
     // S3 SIZE: identical procedures fold to one copy (entry labels re-bound to the survivor)
     asm.EnableTailMerge = standalone && this.OptimizeSize;
     var userMain = asm.DefineLabel("user_main");
@@ -899,7 +899,16 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._rt.EnableBss = this.Optimize && !this._allowExternalCalls && !this._isUnit;
     this._rt.EnableUmb = this.Optimize && !this._allowExternalCalls && !this._isUnit;   // C6: HUGE-array heap prefers upper memory
     this._rt.EnableFastVideo = model.FastVideo;   // R1: $OPTION VIDEO direct-video console PRINT
-    this._rt.Cpu386 = this.Optimize && this.Cpu386;
+    this._rt.Target = this.RuntimeTargetForRuntime();
+    // $CPU says what the runtime MAY encode, $OPTIMIZE says whether it may trade bytes for cycles.
+    // Keeping the second out of the target is what lets $FLOAT NPX still reach native x87 with the
+    // optimizer off, while a copy stays the copy the user wrote.
+    this._rt.EnableTargetOptimizations = this.Optimize;
+    // The immediate-count shift and rotate (C0/C1 ib) is 80186, and the runtime is where it leaked:
+    // an array index scaled by SHL BX,2 is a C1 in an image whose declared target is an 8086. This
+    // sits after the target is known because SelectionTarget reads it, and before the first byte is
+    // emitted; it deliberately reuses the selector's notion of the CPU floor rather than a second one.
+    asm.Allow186ImmediateShifts = this.SelectionTarget.Cpu186OrLater;
     this._rt.EmitEntry(asm, userMain);
 
     // pb36 (docs/PB36.md P1): the runtime is emitted AFTER user code, trimmed
@@ -3989,7 +3998,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private (int Min, int Span, long Mask, bool Wide)? MaskFor(List<int> values) {
     int min = values.Min(), max = values.Max();
     var span = max - min;
-    if (span > 31 || (span > 15 && !this.Cpu386))
+    if (span > 31 || (span > 15 && !this.Has32BitCpu))
       return null;
     long mask = 0;
     foreach (var v in values)

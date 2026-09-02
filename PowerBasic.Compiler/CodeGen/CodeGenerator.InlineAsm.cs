@@ -18,58 +18,75 @@ public sealed partial class CodeGenerator {
   /// constants.
   /// </summary>
   /// <summary>
-  /// pb36 inline-asm scheduling pre-pass: reorders maximal runs of consecutive single-instruction
-  /// <c>!</c> statements in the main body and every procedure body to group memory/ALU operations
-  /// (see <see cref="InlineAsmScheduler"/>) - dependency-preserving and therefore output-identical.
+  /// pb36 inline-asm optimization pre-pass: erases provable register-only identities, then reorders
+  /// maximal runs of consecutive single-instruction <c>!</c> statements to group memory/ALU operations
+  /// (see <see cref="InlineAsmScheduler"/>). Both transformations are output-preserving.
   /// Gated to $OPTIMIZE SPEED on pb36 with no error handler in scope (the "special environment"
-  /// caveat: reordering must not be observable through a fault's resume point).
+  /// caveat: removing/reordering an instruction must not be observable through a fault's resume point).
   /// </summary>
   private void ScheduleInlineAsmBlocks() {
     // Target legality is a compile contract, not an optimization. Runtime specialization therefore
-    // sees $CPU even at $OPTIMIZE OFF; only scheduling itself remains optimization-gated.
+    // sees $CPU even at $OPTIMIZE OFF; only canonicalization/scheduling remain optimization-gated.
     this._rt.Target = this.RuntimeTargetForRuntime();
 
     if (!this.Optimize || !this.OptimizeSpeed || model.Dialect != Dialect.Pb36)
       return;
 
     if (!ContainsErrorHandling(model.MainBody)) {
-      var reordered = ReorderInlineAsmRuns(model.MainBody);
-      if (!ReferenceEquals(reordered, model.MainBody)) {
+      var optimized = OptimizeInlineAsmRuns(model.MainBody);
+      if (!ReferenceEquals(optimized, model.MainBody)) {
         model.MainBody.Clear();
-        model.MainBody.AddRange(reordered);
+        model.MainBody.AddRange(optimized);
       }
     }
     foreach (var proc in model.ProcedureList)
       if (proc.Body is { } body && !ContainsErrorHandling(body))
-        proc.Body = ReorderInlineAsmRuns(body);
+        proc.Body = OptimizeInlineAsmRuns(body);
   }
 
-  /// <summary>Returns <paramref name="body"/> with each consecutive inline-asm run reordered by the scheduler (the same list when nothing changed).</summary>
-  private static IReadOnlyList<Statement> ReorderInlineAsmRuns(IReadOnlyList<Statement> body) {
-    List<Statement>? result = null;
+  /// <summary>
+  /// Returns <paramref name="body"/> with redundant inline-asm identities removed and remaining runs
+  /// dependency-scheduled. Returns the original list when neither transformation changes it.
+  /// </summary>
+  private static IReadOnlyList<Statement> OptimizeInlineAsmRuns(IReadOnlyList<Statement> body) {
+    var output = new List<Statement>(body.Count);
+    var changed = false;
     var i = 0;
     while (i < body.Count) {
       if (body[i] is not InlineAsmStmt) {
-        ++i;
+        output.Add(body[i++]);
         continue;
       }
+
       var j = i;
       while (j < body.Count && body[j] is InlineAsmStmt)
         ++j;
-      var runLength = j - i;
-      if (runLength >= 3) {
-        var lines = new string[runLength];
-        for (var k = 0; k < runLength; ++k)
-          lines[k] = ((InlineAsmStmt)body[i + k]).Text;
-        if (InlineAsmScheduler.Schedule(lines) is { } order) {
-          result ??= [.. body];
-          for (var k = 0; k < runLength; ++k)
-            result[i + k] = body[i + order[k]];
+
+      var run = new List<Statement>(j - i);
+      for (var k = i; k < j; ++k) {
+        var statement = (InlineAsmStmt)body[k];
+        if (InlineAsmCanonicalizer.IsRedundant(statement.Text)) {
+          changed = true;
+          continue;
         }
+        run.Add(statement);
+      }
+
+      if (run.Count >= 3) {
+        var lines = run.Cast<InlineAsmStmt>().Select(statement => statement.Text).ToArray();
+        if (InlineAsmScheduler.Schedule(lines) is { } order) {
+          for (var k = 0; k < order.Length; ++k)
+            output.Add(run[order[k]]);
+          changed = true;
+        } else {
+          output.AddRange(run);
+        }
+      } else {
+        output.AddRange(run);
       }
       i = j;
     }
-    return result ?? body;
+    return changed ? output : body;
   }
 
   private void EmitInlineAsm(InlineAsmStmt ia) {
