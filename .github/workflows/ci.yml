@@ -108,7 +108,7 @@ jobs:
         run: >
           dotnet test PowerBasic.Compiler.Tests
           --configuration Release --no-build
-          --filter "Category!=Performance"
+          --filter "TestCategory!=Performance"
           --logger "trx;LogFileName=core-tests.trx"
 
       # Failures surface as check-run annotations so they are diagnosable
