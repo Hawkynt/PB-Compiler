@@ -112,7 +112,7 @@ public sealed class DynamicArrayLoweringTests {
   }
 
   [Test]
-  public void MultiDimRedim_FlattensRowMajor() {
+  public void MultiDimRedim_FlattensFirstSubscriptFastest() {
     var module = LowerModule("REDIM g%(1 TO 2, 1 TO 3)\ng%(1, 2) = 7\ny% = g%(1, 2)\nEND", optimize: false);
 
     Assert.That(module, Is.Not.Null);
