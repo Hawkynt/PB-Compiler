@@ -215,7 +215,7 @@ public sealed class BackendArrayElementTests {
   }
 
   /// <summary>
-  /// A rank-2 INTEGER array whose row-major index is a runtime product, written by nested counters.
+  /// A rank-2 INTEGER array whose flattened index is a runtime product, written by nested counters.
   /// The product goes through <c>rt_lmul</c>, so the subscript is a value the CALL leaves in
   /// <c>DX:AX</c> - and the register allocator used to have no idea anything lived there, because
   /// liveness tracks virtual registers only. Anything the scheduler issued between the call and the

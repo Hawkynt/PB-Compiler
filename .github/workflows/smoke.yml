@@ -10,36 +10,7 @@ on:
     branches-ignore: [main, master]
   workflow_dispatch: {}
 
-permissions:
-  contents: write
-
 jobs:
-  patch-array-layout-docs:
-    if: "${{ github.event.head_commit.message == 'chore: apply guarded array-layout docs patch' }}"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: fix/powerbasic-column-major-arrays
-          fetch-depth: 0
-
-      - name: Apply exact-match docs patch
-        run: python scripts/apply-array-layout-doc-fix.py
-
-      - name: Restore workflow and remove helper
-        run: |
-          git show origin/main:.github/workflows/smoke.yml > .github/workflows/smoke.yml
-          git rm scripts/apply-array-layout-doc-fix.py
-
-      - name: Commit documentation correction
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .github/workflows/smoke.yml docs/IR.md PowerBasic.Compiler.Tests/Backend/BackendArrayElementTests.cs
-          git diff --cached --check
-          git commit -m "docs: describe PowerBASIC multidimensional layout"
-          git push origin HEAD:fix/powerbasic-column-major-arrays
-
   smoke:
     uses: Hawkynt/RepositoryTemplate/.github/workflows/dotnet-smoke.yml@v1
     with:
