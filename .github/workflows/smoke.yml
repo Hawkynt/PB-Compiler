@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   patch-column-major-ir:
-    if: github.event.head_commit.message == 'chore: apply guarded IR layout patch'
+    if: "${{ github.event.head_commit.message == 'chore: apply guarded IR layout patch' }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
