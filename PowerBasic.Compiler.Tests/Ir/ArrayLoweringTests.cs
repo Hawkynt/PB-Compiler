@@ -28,7 +28,7 @@ public sealed class ArrayLoweringTests {
   }
 
   [Test]
-  public void Lower_TwoDimensionalArray_FlattensRowMajor() {
+  public void Lower_TwoDimensionalArray_FlattensFirstSubscriptFastest() {
     var fn = Lower("DIM g%(1 TO 2, 1 TO 3)\ng%(1, 2) = 7\ny% = g%(1, 2)");
 
     Assert.That(fn, Is.Not.Null);
