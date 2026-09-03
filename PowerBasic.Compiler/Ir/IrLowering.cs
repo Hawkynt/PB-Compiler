@@ -738,7 +738,7 @@ public sealed partial class IrLowering {
     return (address, element);
   }
 
-  /// <summary>The address of one array element, by row-major flattening of the index list.</summary>
+  /// <summary>The address of one array element in PowerBASIC's first-subscript-fastest layout.</summary>
   private (IrValue Address, PbType Element) ElementAddress(CallOrIndexExpr expr, bool farAllowed = false) {
     if (!this._model.VariableBindings.TryGetValue(expr, out var symbol) || symbol.Type is not ArrayType arr)
       throw new IrLoweringException($"not an array element: {expr.Name}");
@@ -760,25 +760,33 @@ public sealed partial class IrLowering {
       throw new IrLoweringException("rank mismatch");
     var basePtr = this.SlotFor(symbol);
 
-    IrValue? flat = null;
+    // Evaluate subscripts in source order, because a subscript expression may call a function or
+    // otherwise have observable effects. Only after all relative indexes exist do we fold them from
+    // the last dimension inward: rel0 + size0 * (rel1 + size1 * (...)). PowerBASIC stores the first
+    // subscript contiguously, so dimension zero has element stride one.
+    var relative = new IrValue[bounds.Count];
     for (var k = 0; k < bounds.Count; ++k) {
       var idx = this.Coerce(this.LowerExpr(expr.Arguments[k]), this._model.TypeOf(expr.Arguments[k]), PbType.Long);
       if (this._checkBounds)
         this.EmitBoundsCheck(idx, new IrConstantInt(IrType.I32, bounds[k].Lower), new IrConstantInt(IrType.I32, bounds[k].Upper));
-      var rel = this._b.Sub(idx, new IrConstantInt(IrType.I32, bounds[k].Lower));
+      relative[k] = this._b.Sub(idx, new IrConstantInt(IrType.I32, bounds[k].Lower));
+    }
+
+    IrValue flat = relative[^1];
+    for (var k = bounds.Count - 2; k >= 0; --k) {
       var size = bounds[k].Upper - bounds[k].Lower + 1;
-      flat = flat is null ? rel : this._b.Add(this._b.Mul(flat, new IrConstantInt(IrType.I32, size)), rel);
+      flat = this._b.Add(this._b.Mul(flat, new IrConstantInt(IrType.I32, size)), relative[k]);
     }
 
     if (arr.Element is StringType)
-      return (this._b.Gep(basePtr, flat!, IrType.Ptr), arr.Element);   // ptr-element stride is target-dependent: typed GEP
-    var byteOffset = this._b.Mul(flat!, new IrConstantInt(IrType.I32, arr.Element.Size));
+      return (this._b.Gep(basePtr, flat, IrType.Ptr), arr.Element);   // ptr-element stride is target-dependent: typed GEP
+    var byteOffset = this._b.Mul(flat, new IrConstantInt(IrType.I32, arr.Element.Size));
     return (this._b.Gep(basePtr, byteOffset), arr.Element);
   }
 
   // A dynamic array is a runtime-allocated buffer plus a bound descriptor: the data
   // pointer and, per dimension, the lower bound and size each live in their own
-  // promotable scalar slot. Sizes feed row-major flattening and the allocation count.
+  // promotable scalar slot. Sizes feed first-subscript-fastest flattening and the allocation count.
   private readonly record struct DynArr(IrValue Data, IrValue[] Lo, IrValue[] Size);
   private readonly Dictionary<VariableSymbol, DynArr> _dynArrays = new(ReferenceEqualityComparer.Instance);
 
@@ -927,14 +935,17 @@ public sealed partial class IrLowering {
     return new DynArr(Cell("data", IrType.FarPtr), lo, size);
   }
 
-  /// <summary>The address of one element of a runtime-allocated dynamic array (row-major flattening).</summary>
+  /// <summary>The address of one runtime-allocated element in PowerBASIC's first-subscript-fastest layout.</summary>
   private (IrValue Address, PbType Element) DynamicElementAddress(CallOrIndexExpr expr, VariableSymbol symbol, ArrayType arr) {
     if (expr.Arguments.Count != arr.Rank)
       throw new IrLoweringException("dynamic array rank mismatch");
     var descriptor = this.DynDescriptor(symbol, arr.Rank);
     var data = this._b.Load(IrType.FarPtr, descriptor.Data);
 
-    IrValue? flat = null;
+    // Preserve source-order evaluation just as the direct emitter does. Descriptor extents are read
+    // afterwards for the reverse Horner fold, so changing the physical layout never reorders a call
+    // nested inside a subscript expression.
+    var relative = new IrValue[arr.Rank];
     for (var k = 0; k < arr.Rank; ++k) {
       var idx = this.Coerce(this.LowerExpr(expr.Arguments[k]), this._model.TypeOf(expr.Arguments[k]), PbType.Long);
       var lo = this._b.Load(IrType.I32, descriptor.Lo[k]);
@@ -944,18 +955,21 @@ public sealed partial class IrLowering {
         var size = this._b.Load(IrType.I32, descriptor.Size[k]);
         this.EmitBoundsCheck(idx, lo, this._b.Sub(this._b.Add(lo, size), new IrConstantInt(IrType.I32, 1)));
       }
-      var rel = this._b.Sub(idx, lo);
-      flat = flat is null ? rel : this._b.Add(this._b.Mul(flat, this._b.Load(IrType.I32, descriptor.Size[k])), rel);
+      relative[k] = this._b.Sub(idx, lo);
     }
 
+    IrValue flat = relative[^1];
+    for (var k = arr.Rank - 2; k >= 0; --k)
+      flat = this._b.Add(this._b.Mul(flat, this._b.Load(IrType.I32, descriptor.Size[k])), relative[k]);
+
     if (arr.Element is StringType)
-      return (this._b.Gep(data, flat!, IrType.Ptr), arr.Element);
-    return (this._b.Gep(data, this._b.Mul(flat!, new IrConstantInt(IrType.I32, arr.Element.Size))), arr.Element);
+      return (this._b.Gep(data, flat, IrType.Ptr), arr.Element);
+    return (this._b.Gep(data, this._b.Mul(flat, new IrConstantInt(IrType.I32, arr.Element.Size))), arr.Element);
   }
 
   /// <summary>
-  /// The address of one element of a <c>DIM ... AT segment</c> array: the same row-major flattening
-  /// every other array gets, ending in a FAR pointer rather than a near one.
+  /// The address of one element of a <c>DIM ... AT segment</c> array: the same PowerBASIC
+  /// first-subscript-fastest flattening every other array gets, ending in a FAR pointer rather than a near one.
   ///
   /// <para>
   /// The offset is truncated to 16 bits deliberately. Address arithmetic within a segment wraps at 64
@@ -977,7 +991,7 @@ public sealed partial class IrLowering {
       throw new IrLoweringException("ABSOLUTE array rank mismatch");
 
     var descriptor = this.DynDescriptor(symbol, arr.Rank);
-    IrValue? flat = null;
+    var relative = new IrValue[arr.Rank];
     for (var k = 0; k < arr.Rank; ++k) {
       var idx = this.Coerce(this.LowerExpr(expr.Arguments[k]), this._model.TypeOf(expr.Arguments[k]), PbType.Long);
       var lo = this._b.Load(IrType.I32, descriptor.Lo[k]);
@@ -985,11 +999,14 @@ public sealed partial class IrLowering {
         var size = this._b.Load(IrType.I32, descriptor.Size[k]);
         this.EmitBoundsCheck(idx, lo, this._b.Sub(this._b.Add(lo, size), new IrConstantInt(IrType.I32, 1)));
       }
-      var rel = this._b.Sub(idx, lo);
-      flat = flat is null ? rel : this._b.Add(this._b.Mul(flat, this._b.Load(IrType.I32, descriptor.Size[k])), rel);
+      relative[k] = this._b.Sub(idx, lo);
     }
 
-    var offset = this._b.Trunc(this._b.Mul(flat!, new IrConstantInt(IrType.I32, Math.Max(arr.Element.Size, 1))), IrType.I16);
+    IrValue flat = relative[^1];
+    for (var k = arr.Rank - 2; k >= 0; --k)
+      flat = this._b.Add(this._b.Mul(flat, this._b.Load(IrType.I32, descriptor.Size[k])), relative[k]);
+
+    var offset = this._b.Trunc(this._b.Mul(flat, new IrConstantInt(IrType.I32, Math.Max(arr.Element.Size, 1))), IrType.I16);
     return (this._b.FarPtr(new IrConstantInt(IrType.I16, segment), offset), arr.Element);
   }
 
