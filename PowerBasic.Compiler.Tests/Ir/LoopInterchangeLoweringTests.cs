@@ -21,7 +21,7 @@ public sealed class LoopInterchangeLoweringTests {
       DIM i%, j%
       FOR i% = 0 TO 31
         FOR j% = 0 TO 31
-          dst%(j%, i%) = src%(j%, i%)
+          dst%(i%, j%) = src%(i%, j%)
         NEXT j%
       NEXT i%
       """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
