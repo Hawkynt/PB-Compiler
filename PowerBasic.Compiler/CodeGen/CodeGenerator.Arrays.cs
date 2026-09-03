@@ -792,7 +792,7 @@ public sealed partial class CodeGenerator {
   private Place? EmitHugeOrVirtualElementPlace(IReadOnlyList<Expression> indexes, VariableSymbol symbol, ArrayType arrayType, Expression at) {
     var asm = this._asm;
     if (indexes.Count != 1) {
-      this.Unsupported(ix, "multi-dimensional UDT field array");
+      this.Unsupported(at, $"{symbol.ArrayClass} array {symbol.Name} with {indexes.Count} indexes (only rank 1 is supported)");
       return null;
     }
     var descriptor = this.SlotOf(symbol);
