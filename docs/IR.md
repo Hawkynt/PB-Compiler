@@ -128,7 +128,7 @@ Supported today:
   `rt_str_compare`), **`GOTO`/labels**, **`ON … GOTO`** (lowered to a `switch`),
   **`GOSUB`/`RETURN`** (a fixed-depth return-id stack + a shared dispatch `switch`, so
   nested GOSUBs return LIFO; `RETURN <label>` pops then jumps to the explicit label);
-- static arrays (1-D and multi-dimensional, row-major byte GEP); **string arrays**
+- static arrays (1-D and multi-dimensional, PowerBASIC first-subscript-fastest byte GEP); **string arrays**
   (a buffer of pointer handles addressed by a typed, element-indexed GEP so the index
   scales by the target pointer size rather than the DOS 2-byte handle width);
 - **dynamic (`REDIM`'d) arrays** (1-D and multi-dimensional): a runtime-allocated buffer
@@ -139,7 +139,7 @@ Supported today:
   lowering forming `count * elementSize` itself at 32 bits (`IrLowering.ArrayBytes`). The
   `_ptr` variants — `rt_arr_alloc_ptr`, `rt_arr_realloc_ptr`, `rt_arr_free_ptr` — take element
   **counts** instead, because their element is a target pointer whose width only the runtime
-  knows. Element access is row-major flattened relative to the bounds;
+  knows. Element access uses PowerBASIC's first-subscript-fastest flattening relative to the bounds;
   `LBOUND`/`UBOUND` fold to constants for static arrays and read the descriptor for dynamic;
 - **strings** via a runtime-handle ABI (`rt_str_*`): assignment, `&` concat, all
   comparisons, `LEN`, `LEFT$`/`RIGHT$`/`MID$`, `CHR$`/`ASC`, `STR$`/`VAL`,

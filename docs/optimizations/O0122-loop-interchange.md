@@ -103,22 +103,18 @@ observable state:
 If a more complicated carried value participates in the loop, this slice
 backs off.
 
-## Important existing layout issue
+## Array layout contract
 
-The language contract and the current IR lowering disagree today. PowerBASIC's
-reference documentation specifies column-major storage (first subscript fastest),
-but `IrLowering` currently flattens static multidimensional indexes from
-`k = 0` upward as:
+Both lowering paths now use PowerBASIC's documented **first-subscript-fastest**
+physical layout. Static and dynamic multidimensional addresses therefore agree
+with the language ABI rather than merely agreeing with each other. The semantic
+fix is regression-tested through `VARPTR` byte deltas, two-dimensional
+`REDIM PRESERVE`, and the genuine-PBC differential array battery (`DIFF56`).
 
-`flat = flat * size[k] + rel`
-
-which makes the **last** subscript fastest (row-major). `docs/IR.md` describes
-that current implementation as row-major.
-
-O0122 intentionally does not conceal or compensate for that compatibility bug:
-its profitability decision follows whatever byte strides the IR actually has.
-Correcting multidimensional array layout is a separate semantic change and
-should receive its own oracle/VARPTR/interoperability validation.
+O0122 still deliberately reads the byte strides present in IR instead of
+hard-coding a source-language dimension order. That keeps the transformation
+usable for pointer/record access patterns and for future targets whose IR may
+contain storage not originating from a BASIC array.
 
 ## Still planned
 

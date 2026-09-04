@@ -347,8 +347,9 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
-  /// REDIM PRESERVE (conventional dynamic arrays; the spec allows changing the
-  /// outermost bound only - the contents prefix carries over byte-for-byte).
+  /// REDIM PRESERVE (conventional dynamic arrays). PowerBASIC permits only the upper bound of the
+  /// last/outer dimension to change, and with first-subscript-fastest storage that dimension is the
+  /// slowest-varying one, so the preserved contents are exactly a byte prefix of the resized block.
   /// The old block stays in the bump allocator (documented leak).
   /// </summary>
   private void EmitRedimPreserve(VariableSymbol symbol, IReadOnlyList<(Expression? Lower, Expression Upper)> bounds, SourcePosition position) {
@@ -598,9 +599,9 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
-  /// Address of an array element: row-major linear index scaled by the element
-  /// size. Static arrays resolve to [BX + label - bias]; dynamic arrays load ES
-  /// from the descriptor and resolve to ES:[BX + offset].
+  /// Address of a PowerBASIC array element: first-subscript-fastest linear index scaled by the
+  /// element size. Static arrays resolve to [BX + label - bias]; dynamic arrays load ES from the
+  /// descriptor and resolve to ES:[BX + offset].
   /// </summary>
   /// <summary>
   /// pb36 O6: folds an all-constant subscript list into the flattened element index, so its
@@ -623,11 +624,11 @@ public sealed partial class CodeGenerator {
     return true;
   }
 
-  /// <summary>The element stride of each dimension, row-major - the multipliers of the flattened index.</summary>
+  /// <summary>The element stride of each dimension in PowerBASIC's first-subscript-fastest layout.</summary>
   private static int[] StridesOf(IReadOnlyList<(int Lower, int Upper)> bounds) {
     var strides = new int[bounds.Count];
     var stride = 1;
-    for (var d = bounds.Count - 1; d >= 0; --d) {
+    for (var d = 0; d < bounds.Count; ++d) {
       strides[d] = stride;
       stride *= bounds[d].Upper - bounds[d].Lower + 1;
     }
@@ -720,7 +721,10 @@ public sealed partial class CodeGenerator {
       return new(Mem.At(Reg.BX, this.SlotOf(symbol), -bias * elementSize), false);
     }
 
-    // dynamic (or parameter) arrays: Horner over the descriptor extents
+    // Dynamic (or parameter) arrays evaluate subscripts in source order, then fold them from the
+    // last dimension back to the first. Pushing each relative index keeps observable call/order
+    // semantics unchanged while producing PowerBASIC's first-subscript-fastest address:
+    // rel0 + extent0 * (rel1 + extent1 * (...)).
     var descriptor = this.DescriptorAccessorOf(symbol);
     for (var d = 0; d < indexes.Count; ++d) {
       this.EmitInt16Argument(indexes[d]);
@@ -729,14 +733,13 @@ public sealed partial class CodeGenerator {
         asm.Cmp(Reg.AX, descriptor(8 + d * 4 + 2));
         this.EmitRaiseWhen(asm.Jb, 9);
       }
-      if (d > 0) {
-        asm.Mov(Reg.CX, Reg.AX);
-        asm.Pop(Reg.AX);
-        asm.Imul(Reg.AX, descriptor(8 + d * 4 + 2));
-        asm.Add(Reg.AX, Reg.CX);
-      }
-      if (d < indexes.Count - 1)
-        asm.Push(Reg.AX);
+      asm.Push(Reg.AX);
+    }
+    asm.Pop(Reg.AX);
+    for (var d = indexes.Count - 2; d >= 0; --d) {
+      asm.Imul(Reg.AX, descriptor(8 + d * 4 + 2));
+      asm.Pop(Reg.BX);
+      asm.Add(Reg.AX, Reg.BX);
     }
     if (elementSize != 1)
       this.EmitIndexScale(elementSize);
