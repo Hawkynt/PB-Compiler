@@ -1,13 +1,19 @@
 # The DOS-era BASIC family — cross-dialect matrix
 
-Groundwork for cross-compiling the other BASIC dialects of the PB era with the
-same `--dialect` mechanism (and the same oracle-driven differential harness)
-already used for the PowerBASIC lineage. Everything in this document is
-**research from period documentation and folklore** — none of it is
-oracle-verified yet. The verification path is the same as for PB: drop the
-genuine interpreter/compiler into `tools/<dialect>/`, write
-`tests/diff/<dialect>/*.BAS` batteries, and make the outputs byte-identical
-before claiming support (see "Oracles & harness" below).
+The other BASIC dialects of the PB era, cross-compiled through the same
+`--dialect` mechanism and held to the same oracle-driven differential harness as
+the PowerBASIC lineage. This began as research from period documentation and
+folklore; the verification path it proposed - drop the genuine
+interpreter/compiler into `tools/<dialect>/`, write `tests/diff/<dialect>/*.BAS`
+batteries, make the outputs byte-identical before claiming support - has since
+been walked for every dialect in it.
+
+**All twelve are oracle-verified and ACTIVE**: BASICA, GW-BASIC, QuickBASIC 1.0
+through 4.5, QBasic, BASIC PDS 7.0 and 7.1, and Turbo Basic 1.0 and 1.1. What is
+still research rather than measurement is called out where it appears; the
+"Oracles & harness" table below records what each oracle is and what its
+batteries proved. Read the feature matrix as the map and that table as the
+evidence.
 
 ## Lineage
 
@@ -132,8 +138,16 @@ output files, and nothing in this repository compares compiled bytes.
 | `tb11` | `TB.EXE` 1.1 | `tests/diff/tb11/oracle.conf`: AUTOTYPE menu drive (Options→EXE file, Load, Compile, Quit), fully headless | **ACTIVE** - `--dialect tb11` implemented; 3 batteries byte-identical (formatting/typing, strings/math, control flow) |
 | `tb10` | `TB.EXE` 1.0 | same AUTOTYPE drive as tb11 | **ACTIVE** - `--dialect tb10`; the tb11 battery runs byte-identical against the genuine TB 1.0 (1.1 was a bugfix release; no observable language delta in the covered surface) |
 | `qbasic` | `QBASIC.EXE` 1.1 | `tests/diff/qbasic/oracle.interpreter`: `QBASIC /RUN T.BAS` (interpreter oracle) | **ACTIVE** - `--dialect qbasic` (reuses the QB 4.5 IEEE runtime); `tools/qbasic-toolchain.tar.enc` staged; `qbasic/DIFF01` byte-identical |
-| `pds71` | `BC.EXE` 7.10 + `LINK` 5.10 | `tests/diff/pds71/oracle.conf`: `BC /O` + `LINK ...,BCL71ENR.LIB;` against the full install in `tools/pds71/bc7/` | **ACTIVE** - `--dialect pds71`; the qb45 battery runs byte-identical; one verified runtime delta vs QB 4.5: DOUBLE display went back to 15 significant digits (`1D15` shows `1D+15`, QB shows `1000000000000000`) |
-| `pds70` | `BC.EXE` 7.00 + `LINK` | `tests/diff/pds70/oracle.conf`: `BC /O` + `BCL70ENR.LIB` from the SETUP /BATCH install (`tools/pds70/bc7/`, binaries in `BIN`, not `BINB`) | **ACTIVE** - `--dialect pds70`; the pds71 battery runs byte-identical (7.0 and 7.1 share the runtime model incl. the 15-digit DOUBLE). The earlier "hang": the 7.0 disks ship SZDD-compressed files under PLAIN names (BC.EXE was really BC.EX$) - UNPACK.EXE fixes them |
+| `pds71` | `BC.EXE` 7.10 + `LINK` | `tests/diff/pds71/oracle.conf`: `BC T.BAS,T.OBJ,NUL/E/X/W;` then `LINK` with an EMPTY library field, `LIB` and `PATH` pointing at `BC7\LIB` | **ACTIVE** - `--dialect pds71`; the qb45 battery runs byte-identical; one verified runtime delta vs QB 4.5: DOUBLE display went back to 15 significant digits (`1D15` shows `1D+15`, QB shows `1000000000000000`) |
+| `pds70` | `BC.EXE` 7.00 + `LINK` | same template as `pds71` | **ACTIVE** - `--dialect pds70`; the pds71 battery runs byte-identical (7.0 and 7.1 share the runtime model incl. the 15-digit DOUBLE) |
+
+The PDS templates compile **without** `/O` and name no library, which is the
+whole trick: `BC` emits a default-library record for `brt7xenr`, and that runtime
+module is not on the distribution media at all - SETUP builds it at install time,
+which `scripts/stage-pds.sh` does with `BUILDRTM`. Putting `BC7\LIB` on the PATH
+is what lets the linker and then the program find it. See `tools/README.md`; both
+batteries also spent a long time skipping for a recorded reason that turned out
+to be wrong in both halves.
 | `gw` | `GWBASIC.EXE` | `tests/diff/gw/oracle.interpreter` (interpreter oracle) | **ACTIVE** - `--dialect gw` (MBF floats, line numbers); `gw/DIFF01` byte-identical. `basica` likewise ACTIVE (language-identical) |
 
 `scripts/run-diff-tests.sh` discovers `tests/diff/<dialect>/` batteries

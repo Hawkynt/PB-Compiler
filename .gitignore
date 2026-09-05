@@ -91,6 +91,10 @@ TestResults/
 ## SFX stubs (pre-published, large binaries)
 **/stubs/
 
+## Python bytecode
+__pycache__/
+*.py[cod]
+
 ## OS files
 .DS_Store
 Thumbs.db
@@ -121,26 +125,10 @@ build/
 *.PBL
 UNITTEST.LOG
 dosbox*.conf
-tools/dosbox/
-tools/pb35/
-tools/pb30/
-tools/pb31/
-tools/pb32/
-tools/pb2x/
-tools/pb20/
-tools/pb21/
-tools/qb10/
-tools/qb20/
-tools/qb30/
-tools/qb40/
-tools/qb45/
-tools/tb10/
-tools/tb11/
-tools/pds70/
-tools/pds71/
-tools/_downloads/
 
-# raw oracle binaries stay out of the repo (proprietary); only the AES-encrypted
-# toolchain tarballs are tracked, decrypted at run time with PB_TOOLCHAIN_KEY.
+# Raw oracle binaries stay out of the repo (proprietary); only the AES-encrypted
+# toolchain tarballs are tracked, decrypted into tools/<dialect>/ at run time with
+# PB_TOOLCHAIN_KEY. One glob covers every slot - naming them individually only ever
+# went stale, and the emulator and download scratch directories live here too.
 tools/*/
 !tools/*-toolchain.tar.enc

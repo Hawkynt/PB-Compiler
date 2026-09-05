@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | 🟡 Partial (equality `=` / `<>` short-circuit on length **and** widened content compare; the ordering forms `<` / `>` still compare byte-wise) |
 | **Stage** | Runtime + emitter |
+| **IR** | ✅ `Ir/Passes/StringCompareEquality.cs` — registered as `strcmpeq` in `IrPassManager.Standard()`, covering the same equality half as the emitter. `rt_str_compare` walks bytes to the first difference so it can say which string sorts first; `=` and `<>` never need that ordering, and unequal lengths settle it without reading a byte. The rewrite is a callee swap - same handles, same registers, same consumption - so the whole soundness condition is that the answer is only ever tested against zero |
 | **Related** | [O0181](O0181-empty-string-comparison.md), [O0180](O0180-string-length-caching.md), [R0003](R0003-string-engine.md) |
 
 ## Now

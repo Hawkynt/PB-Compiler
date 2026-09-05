@@ -1,3 +1,17 @@
+# Roadmap — the open frontier, and what closing each item took
+
+The running engineering log: what is still open, what is done, and - for the
+done ones - the evidence and the wrong turns, because a finding recorded without
+its false starts invites the next person to take them again.
+
+Entries are grouped by frontier (foreign-object interop, the BASIC features
+codegen still rejects, dialect front-end completeness, the two optimizer tiers)
+and each opens with its state in bold: **Done**, **Open**, or done in a named
+partial sense. Claims here are measured - a differential count against the
+genuine compiler, a named battery, an emitted instruction - not estimated.
+
+For the per-optimization catalogue see [docs/optimizations/](optimizations/README.md);
+for the requirements this works towards, [REQUIREMENTS.md](../REQUIREMENTS.md).
 
 ### Float precision: the declared type picks the formatter, it does not round the value
 

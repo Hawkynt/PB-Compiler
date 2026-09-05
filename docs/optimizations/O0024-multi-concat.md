@@ -7,6 +7,7 @@
 | **Source** | `CodeGen` — `FlattenStringConcat`, `EmitMultiConcat`; runtime `rt_strcatn`, `rt_catlist`, `rt_strcopyinto` |
 | **Gate** | `--optimize` |
 | **Verified by** | `tests/diff/DIFF94/95/107/108.BAS` (rerouted through the single-alloc path) |
+| **IR** | ✅ `Ir/Passes/StringConcatChain.cs` — registered as `strchain` in `IrPassManager.Standard()`. Pairwise lowering of `a$ + b$ + c$ + d$` allocates a result per node and copies the growing prefix into each, O(n²) bytes moved for O(n) of output; `rt_str_concat_n` sums the lengths, reserves once and copies each operand in once. The flattening descends into an operand only when that operand is a concatenation whose ONLY reader is this one - a shared intermediate is a value the program uses twice, and a chain that consumed it would leave the other reader holding a freed handle |
 | **Related** | [O0009](O0009-string-temp-economy.md), [R0003](R0003-string-engine.md) |
 
 ## What it is

@@ -162,13 +162,15 @@ jobs:
         run: bash scripts/run-diff-tests.sh
 
       # Performance tier - advisory by definition (STANDARD.md: wall-clock
-      # assertions never block a merge).
+      # assertions never block a merge). TestCategory, not Category: the latter
+      # narrows the REPORTING and still executes every fixture, which is how this
+      # step used to re-run the whole suite behind continue-on-error.
       - name: Performance tests
         continue-on-error: true
         run: >
           dotnet test PowerBasic.Compiler.Tests
           --configuration Release --no-build
-          --filter "Category=Performance"
+          --filter "TestCategory=Performance"
           --logger "trx;LogFileName=perf-tests.trx"
 
       - name: Upload test results

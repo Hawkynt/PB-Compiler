@@ -7,6 +7,7 @@
 | **Source** | `CodeGen/CodeGenerator.cs`, `CodeGen/CodeGenerator.Procs.cs` |
 | **Gate** | `--optimize` |
 | **Verified by** | `tests/diff/DIFF29.BAS` (self-recursion + blocked twins), `DIFF87.BAS` (mutual recursion, differing argument counts, a deliberately non-tail call) |
+| **IR** | ✅ `Ir/Passes/TailRecursion.cs` — the self-call half, registered as `tailrec` in `IrPassManager.Standard()`. A new entry block is pushed in front of the old one, which becomes a loop header; each parameter turns into a phi taking the original argument on the way in and the call's argument on the way round, and the call plus its return become a branch back. Not a size or speed optimization: without it a deep recursion overflows, which is why the routed path had to earn this one rather than inherit it (`BackendTailRecursionTests`) |
 | **Related** | [O0006](O0006-inlining.md), [O0070](O0070-leaf-frame-elision.md) |
 | **Split into** | [O0213](O0213-cross-procedure-tail-call.md) |
 

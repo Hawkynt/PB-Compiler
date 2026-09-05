@@ -855,13 +855,16 @@ execution tests.
 | `tests/` | PowerBASIC test battery executed under DOSBox (incl. `tests/diff/` differential oracles) |
 | `scripts/` | DOSBox integration & differential harness |
 | `docs/` | Dialect matrices, quirks, the `pb36` design, and [one page per optimization](docs/optimizations/README.md) |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | The open frontier, and the evidence behind each closed item |
+| [`INDEX.md`](INDEX.md) | Symbol locator - every type, method and global with its `file:line` |
 
 ## Contributing
 
 Contributions are welcome. The bar is the same one the project holds itself to:
 historic-dialect changes must stay byte-identical under the differential harness,
 and the test suite (NUnit, Given-When-Then) must stay green. Start with
-[REQUIREMENTS.md](REQUIREMENTS.md) and the docs above.
+[REQUIREMENTS.md](REQUIREMENTS.md) and the docs above; [docs/ROADMAP.md](docs/ROADMAP.md)
+carries the open items and what closing the earlier ones actually took.
 
 ## Support
 

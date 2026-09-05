@@ -10,6 +10,11 @@ PowerBASIC 3.5 source (`.BAS`, `.SUB`, `.INC`, `.BI`) into DOS MZ executables
 (`.EXE`), compiled units (`.PBU`) and unit libraries (`.PBL`) which run
 unchanged under DOSBox / real DOS on 16-bit real-mode x86.
 
+PB 3.5 is the reference point rather than the boundary: `--dialect` reaches back
+to Turbo Basic 1.0 and across to the Microsoft line (BASICA/GW-BASIC through
+QuickBASIC to BASIC PDS 7.1), each verified against its own genuine compiler or
+interpreter (M13, M14).
+
 ## Stakeholders & context
 
 - Retro-computing developers maintaining PB 3.5 codebases (e.g.
@@ -65,12 +70,25 @@ unchanged under DOSBox / real DOS on 16-bit real-mode x86.
   format used by PB-SvgaLibrary; harness fails on `[FAIL]`, crash or hang.
 - **M12** Compile the PB-SvgaLibrary test battery (the "weirdest features"
   acceptance gate) and run it green under DOSBox.
-- **M13** Dialect selection `--dialect pb20|pb21|pb30|pb31|pb32|pb35`
-  (default pb35) with a data-driven gate table; using a newer feature under an
-  older dialect diagnoses "X requires PowerBASIC a.b (current dialect: PB c.d)".
-- **M14** Differential verification: `scripts/run-diff-tests.sh` compiles
-  `tests/diff/*.BAS` with both the genuine `PBC.EXE` 3.50 and `pbc`; the
-  programs' `RESULT.TXT` outputs must match byte for byte.
+- **M13** Dialect selection `--dialect` (default `pb35`) with a data-driven gate
+  table, across both BASIC families: Turbo Basic / PowerBASIC (`tb10`, `tb11`,
+  `pb20`, `pb21`, `pb30`, `pb31`, `pb32`, `pb35`, `pb36`) and Microsoft
+  (`basica`, `gw`, `qb10`, `qb20`, `qb30`, `qb40`, `qb45`, `qbasic`, `pds70`,
+  `pds71`). Using a newer feature under an older dialect diagnoses "X requires
+  PowerBASIC a.b (current dialect: PB c.d)"; using one family's syntax under the
+  other diagnoses "X is not available in the ... family". `pb36` is the
+  envisioned successor (docs/PB36.md) - a strict superset of pb35 that adds
+  language surface and defaults the optimizer on.
+- **M14** Differential verification: `scripts/run-diff-tests.sh` compiles each
+  battery with both `pbc` and the genuine vintage compiler or interpreter for
+  that dialect, then byte-compares `RESULT.TXT`. Every program is additionally
+  round-tripped - emitted back to PB 3.5 source, recompiled under `pb35` with the
+  optimizer on, and re-run - and must still match the oracle. The proprietary
+  oracles ride in the repo only as encrypted archives (`tools/README.md`); the
+  batteries skip cleanly without `PB_TOOLCHAIN_KEY`.
+- **M15** Foreign object interop: the OMF reader and linker consume genuine
+  16-bit C objects and libraries from Borland C++ 3.1, Turbo C 2.0, Watcom
+  C/C++ 10.0a and Microsoft C 6.0 (`docs/LINKER.md`, `CInteropTests`).
 
 ### Should
 
@@ -88,7 +106,11 @@ unchanged under DOSBox / real DOS on 16-bit real-mode x86.
 
 - **C1** `$COM` serial I/O statements (`OPEN "COM1:…"`).
 - **C2** Listing/map file output, `$DEBUG` symbolic info.
-- **C3** Optimizations: constant folding, dead-code elimination, peephole.
+- **C3** ~~Optimizations: constant folding, dead-code elimination, peephole.~~
+  Delivered and long since overtaken: an SSA mid-end (`Ir/Passes/`) feeding the
+  C and LLVM back ends, plus emitter, peephole, scheduler and layout tiers. The
+  catalogue is `docs/optimizations/` - one document per optimization, with the
+  stage each is implemented at and whether it has moved to the IR.
 
 ### Won't (this project)
 

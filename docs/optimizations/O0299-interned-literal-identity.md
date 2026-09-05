@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | ✅ Subsumed — the only reachable case constant-folds, and that is now pinned (`LiteralStringComparisonFoldTests`); no dedicated pass is wanted |
 | **Stage** | Emitter |
+| **IR** | ✅ `Ir/Passes/StringConstantFold.cs` — the same `strfold` pass folds a comparison between two literals to a number on the IR, which is the only reachable case this document records as subsumed |
 | **Related** | [O0011](O0011-literal-overlap-pooling.md), [O0298](O0298-string-compare-length-guard.md) |
 
 ## The idea

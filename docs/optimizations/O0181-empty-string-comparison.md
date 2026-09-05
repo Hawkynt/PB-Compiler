@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | ✅ Done |
 | **Stage** | Emitter |
+| **IR** | ✅ `Ir/Passes/StringEmptinessTest.cs` — registered as `strempty` in `IrPassManager.Standard()`. A PB string is empty exactly when its handle is null, since the allocator answers a zero-length request with handle 0, so both spellings the language offers (`s$ = ""` and `LEN(s$) = 0`) reduce to the same null test and compile to the same image. Restricted to a BORROW of storage: a borrow can simply not be taken, whereas a temporary is a handle someone must release, and inserting the free would give back what the test just saved |
 | **Related** | [O0178](O0178-empty-string-simplification.md), [O0180](O0180-string-length-caching.md), [O0031](O0031-branch-fusion.md) |
 
 ## The idea
@@ -45,7 +46,7 @@ LOOP UNTIL s$ = ""
 — and with [O0031](O0031-branch-fusion.md) the `OR`'s flags drive the loop's
 branch directly (`TryEmitCompareAsBranch`), so no truth value is materialized.
 When the comparison is used as a value instead of a branch, the ZF is turned
-into `0`/`-1` by the ordinary [O0088](O0088-branchless-boolean.md) path.
+into `0`/`-1` by the ordinary [O0088](O0088-boolean-materialization-sbb.md) path.
 
 The **`LEN(s$) = 0` / `LEN(s$) <> 0`** spelling of the same test folds to the same
 handle test (`TryEmitLenEmptyTest`), collapsing the `rt_len` call and its compare

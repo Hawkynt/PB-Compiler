@@ -1,177 +1,142 @@
-# CI/CD Pipeline — {{REPO}}
+# CI/CD pipeline — PB-Compiler
 
-> Everything in this folder is the automated pipeline for this repository.
-> Workflows live here, their helper scripts live in `scripts/`.
->
-> This is a **reusable template**. Before first use, fill in every `{{TOKEN}}`
-> placeholder (see [Placeholders](#placeholders)) and grep the workflows for
-> `# TODO:` to find each substitution site.
+Four workflows, one shared build block, three helper scripts. This is the
+repository's own pipeline, filled in from the shared Hawkynt template; the
+template itself and the family standard it implements live in
+[`Hawkynt/RepositoryTemplate`](https://github.com/Hawkynt/RepositoryTemplate),
+which `smoke.yml` calls directly.
 
-## What this does
-
-Three workflows, one shared build block, three helper scripts:
-
-| File                            | Trigger                             | Purpose                                   |
-|---------------------------------|-------------------------------------|-------------------------------------------|
-| `ci.yml`                        | push + PR + `workflow_call`         | Build + categorised test tiers + coverage |
-| `ci.generic.yml`                | push + PR + `workflow_call`         | Toolchain-agnostic CI skeleton (non-.NET) |
-| `release.yml`                   | **manual dispatch**                 | Package + publish, then tag `vyyyyMMdd` |
-| `nightly.yml`                   | successful CI run on `main`         | Publish `nightly-yyyyMMdd` prerelease   |
-| `_build.yml`                    | `workflow_call` (internal)          | Generic publish/packaging building block  |
-| `scripts/version.pl`            | invoked by the workflows            | Stamp each csproj's own `<Version>` + build |
-| `scripts/update-changelog.mjs`  | invoked by the workflows            | Bucketise commits into CHANGELOG.md       |
-| `scripts/prune-nightlies.mjs`   | invoked by the workflows            | 3-gen (GFS) retention of nightlies        |
-
-> `ci.yml` is the .NET pipeline. For anything else (Go / TS-JS / Perl / PHP /
-> Batch / PowerShell / Docker / LaTeX-PDF / docs / C++ / Asm / …), use
-> `ci.generic.yml` instead (rename it to `ci.yml`) and fill in its build/test
-> placeholders — snippets for each toolchain are in the file header.
->
-> **Minimum-viable CI is an invariant** (STANDARD.md §4): the required step
-> must perform at least one real verification (compiler, interpreter syntax
-> pass, linter, renderer, or test run). The generic template's placeholder
-> steps therefore **fail until replaced** — a CI that is green without
-> checking anything is forbidden.
+| File                           | Trigger                                  | Purpose                                              |
+| ------------------------------ | ---------------------------------------- | ---------------------------------------------------- |
+| `smoke.yml`                    | push to any branch except `main`          | Fast tier: one OS, fast tests, minutes                |
+| `ci.yml`                       | pull request + `workflow_call` + dispatch | Syntax oracle, then the full matrix and every battery |
+| `nightly.yml`                  | push to `main` + dispatch                 | Publish the `nightly-yyyyMMdd` prerelease             |
+| `release.yml`                  | **manual dispatch**                       | Run CI, package, publish, tag `vyyyyMMdd`             |
+| `_build.yml`                   | `workflow_call` (internal)                | The single publish/packaging block                    |
+| `scripts/version.pl`           | invoked by `_build.yml`                   | Stamp each csproj's own `<Version>`                   |
+| `scripts/update-changelog.mjs` | invoked by nightly + release              | Bucketise commits into `CHANGELOG.md` / release notes |
+| `scripts/prune-nightlies.mjs`  | invoked by `nightly.yml`                  | 3-generation (GFS) retention of nightlies             |
 
 ## How it works
 
 ```
-                push / PR
-                    │
-                    ▼
-            ┌───────────────┐
-            │    ci.yml     │──► tiered tests on ubuntu + windows
-            └───┬───────┬───┘    + coverage on ubuntu
-                │       │
-   dispatch ────┤       │  on success on main (default branch)
-                ▼       ▼
-        ┌──────────┐  ┌─────────────┐
-        │ release  │  │  nightly    │
-        │  .yml    │  │   .yml      │
-        └────┬─────┘  └─────┬───────┘
-             │              │
-             ▼              ▼
-        (both call _build.yml)
-             │              │
-             │   Packages the build into shippable artifacts
-             │   (your repo plugs its packaging into _build.yml's
-             │   clearly-marked TODO steps).
-             ▼              ▼
-  publish + tag vyyyyMMdd  nightly-yyyyMMdd (prerelease)
-                                │
-                                ▼
-                       scripts/prune-nightlies.mjs
-                       (GFS: 7 daily + 4 weekly + 3 monthly)
+   push to a working branch          pull request
+              │                            │
+              ▼                            ▼
+       ┌────────────┐              ┌──────────────┐
+       │ smoke.yml  │              │    ci.yml    │──► syntax-oracle job (required)
+       │ ubuntu     │              │              │──► test job: ubuntu + windows
+       │ fast tests │              └──────────────┘
+       └────────────┘                     │
+                                          │ merge
+                                          ▼
+                                     push to main
+                                          │
+   manual dispatch ───┐                   │
+                      ▼                   ▼
+              ┌────────────┐      ┌──────────────┐
+              │ release.yml│      │ nightly.yml  │
+              └─────┬──────┘      └──────┬───────┘
+                    │  (both call _build.yml)     │
+                    ▼                             ▼
+          publish + tag vyyyyMMdd    nightly-yyyyMMdd (prerelease)
+                                                  │
+                                                  ▼
+                                       prune-nightlies.mjs
+                                       (7 daily + 4 weekly + 3 monthly)
 ```
 
-## Test tiers
+`_build.yml` publishes self-contained `pbc` binaries for `win-x64` and
+`linux-x64`. This repo ships no NuGet packages, so `push-nuget` stays false
+everywhere except a manual release, where there is nothing to push.
 
-`ci.yml` runs the test suite in tiers, split by trait/category filter:
+## What ci.yml actually runs
 
-| Category           | Runs on every PR?      | Purpose                              |
-|--------------------|------------------------|--------------------------------------|
-| _default_          | ✓ (must pass)          | Unit tests, no external tools        |
-| `EndToEnd`         | ✓ (allow-fail)         | Round-trip through real external CLIs|
-| `OsIntegration`    | ✓ (allow-fail)         | Host-OS facilities / binary shell-out|
-| `PolyglotInterop`  | ✓ (allow-fail)         | Other-language readers (Py/Perl/...) |
-| `Performance`      | ✓ (allow-fail)         | Wall-clock timing asserts (flaky on shared runners) |
+Two jobs. **`syntax-oracle`** is deliberately separate and required: it feeds
+every project statement form to genuine PBC 3.50 and BASIC PDS 7.0/7.1 under
+DOSBox, so an unrelated failure in the ordinary suite cannot quietly skip the
+historical accept/reject contract. It needs the `PB_TOOLCHAIN_KEY` secret (see
+`tools/README.md`).
 
-Core tests are **required**; the external-tool tiers are **advisory**
-(`continue-on-error: true`) so an unavailable CLI on a runner doesn't block a
-merge. Generalise the category names to whatever your suite uses, but keep the
-required-vs-advisory split: the required tier's filter EXCLUDES every advisory
-category, and each advisory tier INCLUDES exactly one.
+**`test`** runs on ubuntu + windows:
 
-## What it's for
+| Step                        | Required? | What it proves                                            |
+| --------------------------- | --------- | --------------------------------------------------------- |
+| Core tests                  | ✓         | The NUnit suite, plus the DOSBox execution tests on Linux  |
+| Round-trip back-emitter gate| ✓ (Linux) | Every corpus program emit-basic's back to compiling pb35   |
+| DOS golden battery          | advisory  | `tests/*.BAS` through the CLI and DOSBox vs `*.expected`   |
+| Differential oracle battery | advisory  | `tests/diff/**` vs the genuine vintage compilers           |
+| Performance tests           | advisory  | Wall-clock assertions (`Performance` category)             |
 
-- Every PR is built and tested on ubuntu + windows before it can merge.
-- Every merge to `main` (the canonical default branch — rename old `master` repos, STANDARD.md §2) produces a **tested** nightly prerelease.
-- A **manual dispatch** cuts a stable release from artifacts built by `_build.yml`, then tags the dated `vyyyyMMdd` Release at that commit.
-- Old nightlies are auto-pruned on a **Grandfather-Father-Son** schedule.
+The advisory steps carry `continue-on-error: true`: an emulator quirk or an
+absent oracle toolchain must not block a merge, and a wall-clock assertion on a
+shared runner never gates anything.
 
-## Why it's built this way
+> **`TestCategory`, never `Category`.** The NUnit VSTest adapter exposes the
+> trait as `TestCategory`. A `Category=` filter still *executes* the fixtures it
+> claims to exclude and only narrows the reporting, which is how the core tier
+> once ran the whole suite twice.
 
-- **No cron triggers.** Event-driven only — CI fires on PRs, nightlies fire when CI passes on main, stable releases fire on manual dispatch.
-- **Files drive versions, per-package, never tags.** Each csproj keeps its own `<Version>`; `version.pl --stamp` appends the commit count. There is no single repo version, so the repo-level Release/tag is the date marker `vyyyyMMdd`.
-- **Release calls CI via `workflow_call`.** Calling ci.yml explicitly keeps tests and releases in lockstep with zero copy-paste.
-- **Nightly builds from the `workflow_run` payload's SHA**, not branch tip — so a nightly is always a build of code CI actually validated.
-- **`_build.yml` is the single packaging block**, shared by release and nightly so they never diverge. It runs on windows-latest by default because one Windows host can publish for both Windows and Linux targets without cross-runner artifact passing (switch to ubuntu-latest if you only need Linux).
-- **3-generation (GFS) retention**, not "keep last N". GFS guarantees at least one build per week for a month and one per month for a quarter.
+The suite currently defines `Slow` and `Probe`. `smoke.yml` excludes `Slow` (the
+corpus-wide batteries) and `Performance` so the fast tier stays fast; `ci.yml`
+runs everything.
 
-## Placeholders
+## Why it is built this way
 
-Fill these in across the workflow files (grep for `# TODO:`):
-
-| Token               | Meaning                                                        |
-|---------------------|----------------------------------------------------------------|
-| `{{REPO}}`          | The repository name (this README's title).                     |
-| `{{SOLUTION}}`      | The `.sln` / `.slnx` to restore + build.                       |
-| `{{PROJECT}}`       | The project to publish/pack (e.g. `MyApp/MyApp.csproj`).        |
-| `{{TEST_PROJECT}}`  | The test project / dir `dotnet test` runs.                     |
-| `{{PACKAGE}}`       | The product / artifact base name + display name.               |
-| `{{DOTNET_VERSION}}`| The SDK channel to install (default `10.0.x`).                 |
+- **No cron.** Event-driven only: smoke on push, CI on pull requests, nightlies
+  on merges to `main`, stable releases on manual dispatch.
+- **Files drive versions, never tags.** Each csproj keeps its own `<Version>`
+  and `version.pl --stamp` appends the commit count. There is no single repo
+  version, so the repo-level tag is the date marker `vyyyyMMdd`.
+- **`release.yml` calls `ci.yml` via `workflow_call`**, so tests and releases
+  stay in lockstep with no copy-paste.
+- **`_build.yml` is the only packaging block**, shared by release and nightly so
+  the two cannot diverge.
+- **GFS retention, not "keep last N".** Grandfather-Father-Son guarantees at
+  least one build per week for a month and one per month for a quarter.
 
 ## Scripts
 
 ### `version.pl`
 
-The one versioner, identical in every repo. Each package's version is derived
-from the **nearest declaration — whatever is in place**, first hit wins:
-
-1. the manifest's own field — `*.csproj`/`*.fsproj`/`*.vbproj` (`<Version>`),
-   `package.json` & `composer.json` (`"version"`), `*.pm` (`$VERSION`)
-2. the nearest **ancestor** `Directory.Build.props`/`.targets` `<Version>`
-   (MSBuild inheritance, .NET only)
-3. the repo-root `VERSION` file
-
-BUILD = commits touching the **declaring file's parent folder** (recursive,
-`git rev-list --count HEAD -- <dir>`; a repo-root declaration ⇒ whole-repo
-count). `--stamp` rewrites the **declaring** files only, so inheritance stays
-intact. Composition respects the ecosystem: .NET/Perl get `X.Y.Z.BUILD`,
-semver (node/php) get `X.Y.Z+BUILD` (build-metadata). Repos with no
-version-bearing file (e.g. Go — versioned by tags) are left untouched.
-
-> **NuGet packages: prefer own folder + own `<Version>`.** An untouched folder
-> composes the *identical* version on the next release, so the push step's
-> `--skip-duplicate` re-uses the already-published package instead of
-> re-uploading it (`C--FrameworkExtensions` relies on this heavily). A
-> centralised props/VERSION declaration is a valid starting point, but it
-> bumps *all* heirs on every commit below it — migrate to per-package folders
-> once a repo ships more than one package.
+Each package's version comes from the nearest declaration, first hit wins: the
+manifest's own `<Version>`, then the nearest ancestor
+`Directory.Build.props`/`.targets`, then a repo-root `VERSION` file. Here that
+resolves to `Directory.Build.props`. BUILD is the commit count touching the
+declaring file's parent folder, so a root-level declaration means the whole-repo
+count. `--stamp` rewrites only the declaring files, leaving MSBuild inheritance
+intact.
 
 ```
-perl .github/workflows/scripts/version.pl --stamp  # rewrite the version in every DECLARING file
-perl .github/workflows/scripts/version.pl --build  # print the repo-wide build number (commit count)
-perl .github/workflows/scripts/version.pl --list   # "<file>\t<effective-version>" per package,
-                                                   # inherited ones annotated with their source
+perl .github/workflows/scripts/version.pl --stamp  # rewrite every declaring file
+perl .github/workflows/scripts/version.pl --build  # print the build number
+perl .github/workflows/scripts/version.pl --list   # per-package effective versions
 ```
-
-> There is no single repo version. Stable releases are tagged with a **date
-> marker** `vyyyyMMdd`, not a version.
 
 ### `update-changelog.mjs`
 
-Prepends a new section to `CHANGELOG.md` and/or writes release-notes bodies (`--notes <file>`). Commit-subject convention: `+` Added, `*` Changed, `#` Fixed, `-` Removed, `!` TODO, anything else → Other.
+Prepends a section to `CHANGELOG.md` and/or writes a release-notes body
+(`--notes <file>`), bucketing commit subjects by their prefix: `+` Added,
+`*` Changed, `#` Fixed, `-` Removed, `!` TODO, anything else Other.
 
-Changelog semantics (the contract — see STANDARD.md §4):
-
-- **Releases** measure from the last **stable** tag (`v[0-9]*`) → a release's notes contain *everything since the last release*; same-day `nightly-*` tags never swallow part of the range.
-- **Nightlies** measure from the nearest tag of any kind → a nightly's notes contain *only the delta since the previous nightly* (or release, whichever is nearer). `nightly.yml` passes `--notes-only` so `CHANGELOG.md` is only ever committed by `release.yml`.
-- The workflow's own `* update changelog for vyyyyMMdd` commits are filtered out of all notes (`isChangelogCommit`), and `release.yml` tags the release **on** that commit — bookkeeping never pollutes the next range.
+- **Releases** measure from the last stable tag (`v[0-9]*`), so a release's
+  notes carry everything since the previous release and a same-day `nightly-*`
+  tag cannot swallow part of the range.
+- **Nightlies** measure from the nearest tag of any kind, so a nightly carries
+  only the delta since the previous one. `nightly.yml` passes `--notes-only`;
+  `CHANGELOG.md` is committed by `release.yml` alone.
+- The workflow's own `* update changelog for vyyyyMMdd` commits are filtered out
+  of every range (`isChangelogCommit`), and `release.yml` tags **on** that
+  commit, so bookkeeping never pollutes the next range.
 
 ### `prune-nightlies.mjs`
 
-GFS retention with `DAILY_KEEP=7`, `WEEKLY_KEEP=4`, `MONTHLY_KEEP=3`. Dry-run with `--dry-run`. Invariant: the **newest** nightly is always kept (even with a misconfigured daily quota) — the next nightly's changelog delta is measured against its tag, so deleting it would re-report already-published changes.
-
-## Who maintains this
-
-This is the shared template for the Hawkynt repo family. When changing it,
-prototype in the template then mirror the change to the consuming repos.
+GFS retention with `DAILY_KEEP=7`, `WEEKLY_KEEP=4`, `MONTHLY_KEEP=3`; `--dry-run`
+to preview. The newest nightly is always kept even under a misconfigured quota,
+because the next nightly's changelog delta is measured from its tag.
 
 ## Release artifacts
 
-| Artifact                                 | Produced by          |
-|------------------------------------------|----------------------|
-| `app-artifacts` (binaries, optional)     | release + nightly    |
-| `nuget-packages` (`*.nupkg`, optional)   | release + nightly    |
-| Coverage HTML report                     | ci.yml (coverage job)|
+| Artifact                                    | Produced by       |
+| ------------------------------------------- | ----------------- |
+| `app-artifacts` — self-contained `pbc` for win-x64 + linux-x64 | release + nightly |

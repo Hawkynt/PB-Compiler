@@ -6,17 +6,49 @@ that dialect, then byte-compares the output. Those vintage compilers are
 proprietary, so the raw binaries never live in the repository — only an
 **AES-256-encrypted tarball per dialect** does:
 
+All nineteen are listed below; the harness globs `tools/*-toolchain.tar.enc` and
+takes the dialect from the file name, so an archive with no `tests/diff/<dialect>/`
+battery beside it is decrypted and then never used.
+
+### PowerBASIC / Turbo Basic (Borland lineage)
+
 | File                       | Dialect          | Genuine oracle                                  |
 | -------------------------- | ---------------- | ----------------------------------------------- |
 | `pb35-toolchain.tar.enc`   | `pb35` (default) | PowerBASIC 3.50 `PBC.EXE`                       |
 | `pb30-toolchain.tar.enc`   | `pb30`           | PowerBASIC 3.0c `PBC.EXE`                       |
 | `pb21-toolchain.tar.enc`   | `pb21`           | PowerBASIC 2.10 `PB.EXE` (IDE, autotype-driven - needs dosbox-staging or DOSBox-X) |
-| `qb45-toolchain.tar.enc`   | `qb45`           | QuickBASIC 4.5 `BC`/`LINK`/`LIB` + `BCOM45.LIB` |
-| `tb10-toolchain.tar.enc`   | `tb10`           | Turbo Basic 1.0 `TB.EXE`                        |
-| `tb11-toolchain.tar.enc`   | `tb11`           | Turbo Basic 1.1 `TB.EXE`                        |
+| `tb10-toolchain.tar.enc`   | `tb10`           | Turbo Basic 1.0 `TB.EXE` (IDE, autotype-driven) |
+| `tb11-toolchain.tar.enc`   | `tb11`           | Turbo Basic 1.1 `TB.EXE` (IDE, autotype-driven) |
+
+### QuickBASIC and BASIC PDS (Microsoft lineage)
+
+Each drives a compile-then-link pair from its battery's `oracle.conf`; the
+compiler's name moved twice across the line (`BASCOM` -> `QB` -> `BC`), and each
+version links against its own `BCOMnn.LIB`.
+
+| File                       | Dialect          | Genuine oracle                                                  |
+| -------------------------- | ---------------- | --------------------------------------------------------------- |
+| `qb10-toolchain.tar.enc`   | `qb10`           | QuickBASIC 1.0 `BASCOM.EXE` + `LINK` + `BCOM10.LIB`             |
+| `qb20-toolchain.tar.enc`   | `qb20`           | QuickBASIC 2.0 `QB.EXE` + `LINK` + `BCOM20.LIB`                 |
+| `qb30-toolchain.tar.enc`   | `qb30`           | QuickBASIC 3.0 `QB.EXE` + `LINK` + `BCOM30.LIB`                 |
+| `qb40-toolchain.tar.enc`   | `qb40`           | QuickBASIC 4.0 `BC.EXE` + `LINK` + `BCOM40.LIB`                 |
+| `qb45-toolchain.tar.enc`   | `qb45`           | QuickBASIC 4.5 `BC`/`LINK`/`LIB` + `BCOM45.LIB`                 |
+| `pds70-toolchain.tar.enc`  | `pds70`          | BASIC PDS 7.0 `BC7\BIN\BC.EXE` + `LINK`, runtime module built at stage time |
+| `pds71-toolchain.tar.enc`  | `pds71`          | BASIC PDS 7.1 `BC7\BIN\BC.EXE` + `LINK`, runtime module built at stage time |
+
+### Interpreters (no compiler ships at all)
+
+| File                       | Dialect          | Genuine oracle                                  |
+| -------------------------- | ---------------- | ----------------------------------------------- |
 | `gw-toolchain.tar.enc`     | `gw`             | GW-BASIC interpreter `GWBASIC.EXE`              |
-| `basica-toolchain.tar.enc` | `basica`         | BASICA interpreter `BASICA.COM`                 |
+| `basica-toolchain.tar.enc` | `basica`         | `GWBASIC.EXE` - see below                       |
 | `qbasic-toolchain.tar.enc` | `qbasic`         | QBasic interpreter `QBASIC.EXE` (MS-DOS 5.0+)   |
+
+Genuine IBM `BASICA.COM` is only a launcher for the machine's IBM ROM BASIC, so
+it runs on neither a clone nor DOSBox. GW-BASIC is IBM BASICA plus Cassette BASIC
+in one self-contained interpreter and is language-identical, so the `basica` slot
+stages `GWBASIC.EXE` too - `tests/diff/basica/oracle.interpreter` says so at the
+point of use.
 
 ### C compilers (OMF object interop)
 
