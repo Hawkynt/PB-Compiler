@@ -1,8 +1,8 @@
 name: Nightly
 
-# Fires automatically after CI passes on main/master. A red CI run never produces
-# a nightly, so the "latest nightly" always points at tested code. Builds the
-# exact SHA CI validated (not branch tip). Does NOT push to NuGet.
+# Fires on every push to main - which, under the branch ruleset, means a merged
+# pull request whose CI run was already green. Builds that exact SHA rather than
+# whatever the branch tip has become. Does NOT push to NuGet.
 on:
   push:
     branches: [main]
