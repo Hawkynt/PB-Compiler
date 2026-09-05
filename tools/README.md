@@ -41,8 +41,14 @@ version links against its own `BCOMnn.LIB`.
 | File                       | Dialect          | Genuine oracle                                  |
 | -------------------------- | ---------------- | ----------------------------------------------- |
 | `gw-toolchain.tar.enc`     | `gw`             | GW-BASIC interpreter `GWBASIC.EXE`              |
-| `basica-toolchain.tar.enc` | `basica`         | BASICA interpreter `BASICA.COM`                 |
+| `basica-toolchain.tar.enc` | `basica`         | `GWBASIC.EXE` - see below                       |
 | `qbasic-toolchain.tar.enc` | `qbasic`         | QBasic interpreter `QBASIC.EXE` (MS-DOS 5.0+)   |
+
+Genuine IBM `BASICA.COM` is only a launcher for the machine's IBM ROM BASIC, so
+it runs on neither a clone nor DOSBox. GW-BASIC is IBM BASICA plus Cassette BASIC
+in one self-contained interpreter and is language-identical, so the `basica` slot
+stages `GWBASIC.EXE` too - `tests/diff/basica/oracle.interpreter` says so at the
+point of use.
 
 ### C compilers (OMF object interop)
 

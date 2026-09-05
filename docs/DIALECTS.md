@@ -3,7 +3,7 @@
 Sources: PowerBASIC.GER FAQ (pbhq.de, sections 1.6–1.8), the PB 3.5 README
 ("What's New in PowerBASIC 3.5"), the PB statement reference (manmrk pbs.htm),
 and the original PB 3.5 Reference/User guides. The compiler selects a dialect
-via `--dialect pb20|pb21|pb30|pb31|pb32|pb35|pb36` (default `pb35`; `pb36` is
+via `--dialect tb10|tb11|pb20|pb21|pb30|pb31|pb32|pb35|pb36` (default `pb35`; `pb36` is
 the language-extension superset that adds new syntax and presets the optimizer on
 - the optimizer itself is a separate, dialect-agnostic axis, see docs/PB36.md);
 features below
