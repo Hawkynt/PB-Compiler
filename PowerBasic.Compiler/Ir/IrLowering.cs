@@ -2593,11 +2593,24 @@ public sealed partial class IrLowering {
       IReadOnlyList<(Expression? Lower, Expression Upper)> dims, bool preserve) {
     var descriptor = this.DynDescriptor(symbol, arr.Rank);
     var isString = arr.Element is StringType;
-    // REDIM PRESERVE carries the old contents over, so the OLD extent has to be read out of the
-    // descriptor BEFORE the new bounds overwrite it. An array that was never allocated reads zero
-    // in every size cell, which is the "nothing to preserve" the direct emitter spells as a
-    // segment-word test.
+    // REDIM PRESERVE carries the old contents over, so all OLD descriptor values that are needed
+    // after the rewrite are captured before the first new bound is stored.
     var oldCount = preserve ? this.DynElementCount(descriptor, arr.Rank) : null;
+    var old = preserve ? this._b.Load(IrType.FarPtr, descriptor.Data) : null;
+
+    // A far-heap pointer value is its OFFSET tagged with address space; offset zero is a valid first
+    // allocation, so `old != null` cannot tell an allocated array from a never-allocated one. The
+    // descriptor's size cells are zero before allocation and every valid allocated dimension has a
+    // positive extent, making the already-captured element count the shape witness.
+    void RaisePreserveShapeWhen(IrValue mismatch) {
+      var check = this.NewBlock("redim.preserve.shape.allocated");
+      var next = this.NewBlock("redim.preserve.shape.next");
+      this._b.CondBr(this._b.Cmp(IrCmpPred.Ne, oldCount!, new IrConstantInt(IrType.I32, 0)), check, next);
+      this._b.Position(check);
+      this.RaiseWhen(mismatch, 9, "redim.preserve.shape");
+      this._b.Br(next);
+      this._b.Position(next);
+    }
 
     IrValue? count = null;
     for (var k = 0; k < dims.Count; ++k) {
@@ -2605,21 +2618,34 @@ public sealed partial class IrLowering {
       var lo = lower is null
         ? new IrConstantInt(IrType.I32, 0)
         : this.Coerce(this.LowerExpr(lower), this._model.TypeOf(lower), PbType.Long);
+
+      if (preserve) {
+        // PowerBASIC permits no lower-bound change under PRESERVE. RaisePreserveShapeWhen guards the
+        // comparison with oldCount: a zero count means there is no old shape and this is a fresh REDIM.
+        var oldLo = this._b.Load(IrType.I32, descriptor.Lo[k]);
+        RaisePreserveShapeWhen(this._b.Cmp(IrCmpPred.Ne, lo, oldLo));
+      }
+      this._b.Store(lo, descriptor.Lo[k]);
+
       var hi = this.Coerce(this.LowerExpr(upper), this._model.TypeOf(upper), PbType.Long);
       var size = this._b.Add(this._b.Sub(hi, lo), new IrConstantInt(IrType.I32, 1));
-      this._b.Store(lo, descriptor.Lo[k]);
+      if (preserve && k < dims.Count - 1) {
+        // With the lower bound already proven identical, an identical extent is exactly an identical
+        // upper bound. Only the final dimension is allowed to differ.
+        var oldSize = this._b.Load(IrType.I32, descriptor.Size[k]);
+        RaisePreserveShapeWhen(this._b.Cmp(IrCmpPred.Ne, size, oldSize));
+      }
       this._b.Store(size, descriptor.Size[k]);
       count = count is null ? size : this._b.Mul(count, size);
     }
 
     IrValue data;
-    if (preserve) {                                  // realloc keeps the existing prefix (mem2reg seeds the unallocated slot to null = fresh malloc)
-      var old = this._b.Load(IrType.FarPtr, descriptor.Data);
+    if (preserve) {                                  // realloc keeps the existing prefix; oldCount controls how much is copied
       data = isString
         ? this._b.Call(IrType.FarPtr, this.RuntimeFn("rt_arr_realloc_ptr", IrType.FarPtr, IrType.FarPtr, IrType.I32, IrType.I32),
-            old, oldCount!, count!)
+            old!, oldCount!, count!)
         : this._b.Call(IrType.FarPtr, this.RuntimeFn("rt_arr_realloc", IrType.FarPtr, IrType.FarPtr, IrType.I32, IrType.I32),
-            old, this.ArrayBytes(oldCount!, arr), this.ArrayBytes(count!, arr));
+            old!, this.ArrayBytes(oldCount!, arr), this.ArrayBytes(count!, arr));
     } else {
       data = isString
         ? this._b.Call(IrType.FarPtr, this.RuntimeFn("rt_arr_alloc_ptr", IrType.FarPtr, IrType.I32), count!)      // count target-pointers
