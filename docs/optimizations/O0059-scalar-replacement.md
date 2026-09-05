@@ -93,6 +93,22 @@ that every access has the array element's storage type. This matters because pac
 looks like `alloca i8, N`; without the access-width proof an INTEGER field inside a packed record could
 be mistaken for one BYTE array element under opaque pointers.
 
+## What "zero cost" claims, and what it does not
+
+Zero cost means the *abstraction* adds no runtime representation or dispatch when a concrete
+representation is known at compile time - no descriptors, tags, boxing, dictionaries or generic
+machinery. It does not mean the language's observable semantics become free. A `BYVAL` aggregate
+still denotes a snapshot, a `UNION` still denotes aliased storage, and a dynamic string still has
+its ordinary runtime behaviour. Generic `TYPE`s and procedures are monomorphized before IR lowering
+(docs/PB36.md) and type aliases are spellings rather than types, so neither survives into the IR to
+be optimized away in the first place.
+
+So a whole-record operation can vanish from the final IR without vanishing semantically. For a
+proven complete layout the `memcpy` becomes typed loads at the copy point plus stores into
+independent fields; `Mem2Reg` then promotes the destination. When later value propagation deletes
+those stores it is because the scalar data flow already carries the same copied values - not because
+the copy was declared unnecessary.
+
 ## Still partial
 
 O0059 remains partial rather than complete because useful cases still require stronger proofs or a raw
