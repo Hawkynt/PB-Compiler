@@ -365,7 +365,8 @@ public sealed partial class CodeGenerator {
     var oldBytes = this.AllocTemp(2);
     var oldOffset = this.AllocTemp(2);
 
-    // old byte count (0 when never allocated)
+    // Measure the old block before touching any descriptor field. A never-allocated array has no
+    // shape to preserve, so its byte count is zero and every shape check below is skipped.
     var unallocated = asm.DefineLabel();
     var measured = asm.DefineLabel();
     asm.Cmp(Mem.Word(descriptor), (Imm)0);
@@ -382,7 +383,43 @@ public sealed partial class CodeGenerator {
     asm.Mov(Reg.AX, Mem.Word(descriptor, 2));
     asm.Mov(oldOffset, Reg.AX);
 
-    this.EmitArrayAllocation(symbol, bounds, position, reclaimOld: false);
+    asm.Mov(Mem.Word(descriptor, 4), elementSize);
+    asm.Mov(Mem.Word(descriptor, 6), bounds.Count);
+
+    // PowerBASIC permits PRESERVE to change only the upper bound of the LAST dimension. Evaluate
+    // every source expression exactly once and in source order. Each descriptor field is overwritten
+    // only after it has either been proven equal to the old one or (last upper bound) is allowed to
+    // differ. Consequently an Error 9 leaves every field examined so far semantically unchanged.
+    for (var d = 0; d < bounds.Count; ++d) {
+      var (lower, upper) = bounds[d];
+      if (lower != null)
+        this.EmitInt16Argument(lower);
+      else
+        asm.Xor(Reg.AX, Reg.AX);
+
+      var lowerOk = asm.DefineLabel();
+      asm.Cmp(Mem.Word(descriptor), (Imm)0);
+      asm.Je(lowerOk);
+      asm.Cmp(Reg.AX, Mem.Word(descriptor, 8 + d * 4));
+      this.EmitRaiseWhen(asm.Je, 9);
+      asm.MarkLabel(lowerOk);
+      asm.Mov(Mem.Word(descriptor, 8 + d * 4), Reg.AX);
+
+      this.EmitInt16Argument(upper);
+      asm.Sub(Reg.AX, Mem.Word(descriptor, 8 + d * 4));
+      asm.Inc(Reg.AX);
+      if (d < bounds.Count - 1) {
+        var extentOk = asm.DefineLabel();
+        asm.Cmp(Mem.Word(descriptor), (Imm)0);
+        asm.Je(extentOk);
+        asm.Cmp(Reg.AX, Mem.Word(descriptor, 8 + d * 4 + 2));
+        this.EmitRaiseWhen(asm.Je, 9);
+        asm.MarkLabel(extentOk);
+      }
+      asm.Mov(Mem.Word(descriptor, 8 + d * 4 + 2), Reg.AX);
+    }
+
+    this.EmitArrayAllocationFromDescriptor(symbol, bounds.Count);
 
     // copy min(old, new) bytes inside the array heap segment
     var copyDone = asm.DefineLabel();
@@ -439,9 +476,19 @@ public sealed partial class CodeGenerator {
       asm.Mov(Mem.Word(descriptor, 8 + d * 4 + 2), Reg.AX);
     }
 
+    this.EmitArrayAllocationFromDescriptor(symbol, bounds.Count, skipZeroFill);
+  }
+
+  /// <summary>Allocates from bounds already materialized in the descriptor, without evaluating them again.</summary>
+  private void EmitArrayAllocationFromDescriptor(VariableSymbol symbol, int rank, bool skipZeroFill = false) {
+    var asm = this._asm;
+    var arrayType = (ArrayType)symbol.Type;
+    var descriptor = this.SlotOf(symbol);
+    var elementSize = Math.Max(arrayType.Element.Size, 1);
+
     // total elements (16-bit product) * element size -> DX:AX bytes
     asm.Mov(Reg.AX, Mem.Word(descriptor, 8 + 2));
-    for (var d = 1; d < bounds.Count; ++d)
+    for (var d = 1; d < rank; ++d)
       asm.Imul(Reg.AX, Mem.Word(descriptor, 8 + d * 4 + 2));
     asm.Mov(Reg.CX, elementSize);
     asm.Mul(Reg.CX);

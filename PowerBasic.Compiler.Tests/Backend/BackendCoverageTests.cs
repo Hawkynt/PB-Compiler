@@ -625,6 +625,7 @@ public sealed class BackendCoverageTests {
     "DIFF118.BAS",
     "DIFF119.BAS",   // ON n GOSUB: the dispatch, its fall-through, and the shared return stack
     "DIFF120.BAS",   // RANDOMIZE, RND and TIMER
+    "DIFF121.BAS",   // REDIM PRESERVE reshape: the runtime Error 9 and the trap that reads it
     // EXIT FAR: the unwind point and the jump through it, as intrinsics the back end expands inline;
     // both the module body and its near numeric BYREF procedure route.
     "DIFF14.BAS",
@@ -802,6 +803,7 @@ public sealed class BackendCoverageTests {
     "DIFF118.BAS",
     "DIFF119.BAS",   // ON n GOSUB: the dispatch, its fall-through, and the shared return stack
     "DIFF120.BAS",   // RANDOMIZE, RND and TIMER
+    "DIFF121.BAS",   // REDIM PRESERVE reshape: the runtime Error 9 and the trap that reads it
     "DIFF15.BAS",
     "DIFF16.BAS",   // FIX (@) and BCD (@@): a scaled int64 cell and an f80 one
     "DIFF17.BAS",   // DIM HUGE / DIM VIRTUAL: segment stepping and the EMS page window
