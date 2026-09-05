@@ -21,7 +21,8 @@
 # a missing toolchain indistinguishable from the fidelity divergence this
 # harness exists to catch. A FAIL now always means the oracle ran and disagreed.
 #
-# WHICH EMULATOR MATTERS, and a score is meaningless without naming one:
+# WHICH EMULATOR MATTERS, and a score is meaningless without naming one. Measured
+# 2026-08-07, before the PDS batteries were staged:
 #
 #   vanilla DOSBox 0.74-3   472 pass /  8 fail / 5 skip
 #   dosbox-staging 0.82     496 pass /  0 fail / 2 skip
@@ -34,8 +35,10 @@
 # for a quick check - just do not read its 8 failures as a fidelity gap.
 #
 # Staging needs an X server (see scripts/lib/dosbox.sh); DOSBOX_EXE is still all a
-# caller sets. The remaining 2 skips are pds70 and pds71, whose oracles are an
-# SZDD-compressed and an OS/2 binary respectively.
+# caller sets. Those 2 remaining skips were pds70 and pds71, and BOTH NOW RUN: the
+# recorded reason (an SZDD-compressed and an OS/2 binary) was wrong in both halves
+# - the PDS 7.x tools are bound executables whose DOS half is a real program, and
+# the staged copies were corrupt rather than the wrong build. See tools/README.md.
 #
 # The proprietary toolchains are NOT in the repo: place PBC.EXE 3.50 in
 # tools/pb35/ (or point PB35_DIR at it). Without it this harness SKIPS with
