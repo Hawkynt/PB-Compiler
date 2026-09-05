@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | ✅ Implemented (`$OPTION VIDEO`) |
 | **Stage** | Runtime + emitter |
-| **Source** | `Runtime/DosRuntime.cs`, `CodeGen/CodeGenerator.cs`, `Semantics/SemanticModel.cs` |
+| **Source** | `Runtime/DosRuntime.Print.cs` (the B800h writer), `Runtime/DosRuntime.Internals.cs`, `CodeGen/CodeGenerator.cs`, `Semantics/SemanticModel.cs` |
 | **Gate** | `$OPTION VIDEO` |
 | **Verified by** | the screen-capture oracle (2026-07) — a BASIC helper PEEKs B800 text memory into `SCREEN.TXT` after an unredirected run |
 | **Related** | [R0002](R0002-fast-graphics.md), [P0007](P0007-trivial-io-lowering.md) |

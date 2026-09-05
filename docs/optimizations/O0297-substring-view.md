@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | 🟡 Partial (the single-character `ASC(MID$(s$, i, 1))` / `ASC(s$, i)` view is a direct byte read; the general compare/print view is not) |
 | **Stage** | Mid-end + emitter |
+| **IR** | ✅ `Ir/Passes/StringByteRead.cs` — registered as `strbyte` in `IrPassManager.Standard()`, for the single-character case. `ASC(MID$(s$, i, 1))` lowers to a substring allocation whose only reader is `ASC`, so the heap is entered and left again for one byte; `rt_charat` reads it out of the source buffer. The two agree at every boundary - both clamp a start below 1 to 1, both answer 0 past the end, both consume the handle - and the length must be the CONSTANT 1, since proving a runtime length equal to 1 is SCCP's job |
 | **Related** | [O0286](O0286-allocation-elimination.md), [O0293](O0293-copy-on-write-elision.md), [O0298](O0298-string-compare-length-guard.md) |
 
 ## The idea

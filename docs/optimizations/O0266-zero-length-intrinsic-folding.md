@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | ✅ Done |
 | **Stage** | Emitter |
+| **IR** | ✅ `Ir/Passes/StringConstantFold.cs` — registered as `strfold` in `IrPassManager.Standard()`. A PB string is a runtime HANDLE, so a zero-length substring is spelled as a call and neither `Sccp` nor `InstCombine` can reach it: they reason about values, not about what a particular runtime routine means. The fold has to account for the handles the call was going to eat - it cancels the borrow an argument came from, or frees it where the call stood. Getting that wrong reads as OUT OF STRING SPACE much later, not as a leak |
 | **Related** | [O0178](O0178-empty-string-simplification.md), [O0001](O0001-constant-folding.md), [O0016](O0016-value-fact-analysis.md), [O0180](O0180-string-length-caching.md), [O0181](O0181-empty-string-comparison.md) |
 | **Split from** | [O0178](O0178-empty-string-simplification.md) |
 
