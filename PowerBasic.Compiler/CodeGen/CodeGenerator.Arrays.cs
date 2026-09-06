@@ -245,7 +245,7 @@ public sealed partial class CodeGenerator {
       this.EmitExpression(lower);
       this.Coerce(model.TypeOf(lower), PbType.Long, lower);
     } else {
-      asm.Xor(Reg.AX, Reg.AX);
+      asm.Mov(Reg.AX, model.OptionBase);
       asm.Xor(Reg.DX, Reg.DX);
     }
     asm.Mov(Mem.Word(descriptor, 8), Reg.AX);
@@ -330,7 +330,7 @@ public sealed partial class CodeGenerator {
         this.EmitInt16Argument(lower);
         asm.Mov(Mem.Word(descriptor, 8 + d * 4), Reg.AX);
       } else
-        asm.Mov(Mem.Word(descriptor, 8 + d * 4), (Imm)0);
+        asm.Mov(Mem.Word(descriptor, 8 + d * 4), model.OptionBase);
       this.EmitInt16Argument(upper);
       asm.Sub(Reg.AX, Mem.Word(descriptor, 8 + d * 4));
       asm.Inc(Reg.AX);
@@ -395,7 +395,7 @@ public sealed partial class CodeGenerator {
       if (lower != null)
         this.EmitInt16Argument(lower);
       else
-        asm.Xor(Reg.AX, Reg.AX);
+        asm.Mov(Reg.AX, model.OptionBase);
 
       var lowerOk = asm.DefineLabel();
       asm.Cmp(Mem.Word(descriptor), (Imm)0);
@@ -469,7 +469,7 @@ public sealed partial class CodeGenerator {
         this.EmitInt16Argument(lower);
         asm.Mov(Mem.Word(descriptor, 8 + d * 4), Reg.AX);
       } else
-        asm.Mov(Mem.Word(descriptor, 8 + d * 4), (Imm)0);
+        asm.Mov(Mem.Word(descriptor, 8 + d * 4), model.OptionBase);
       this.EmitInt16Argument(upper);
       asm.Sub(Reg.AX, Mem.Word(descriptor, 8 + d * 4));
       asm.Inc(Reg.AX);
