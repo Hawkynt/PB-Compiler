@@ -1,0 +1,31 @@
+name: Apply OPTION BASE dynamic-array fix
+
+on:
+  push:
+    branches: [fix/option-base-dynamic-arrays]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "${{ github.event.head_commit.message == 'chore: run OPTION BASE dynamic-array patch' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/option-base-dynamic-arrays
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Apply exact-match patch
+        run: python scripts/apply-option-base-dynamic-arrays.py
+      - name: Commit patch
+        run: |
+          git diff --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add PowerBasic.Compiler/Semantics/SemanticModel.cs PowerBasic.Compiler/Semantics/Binder.cs PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs PowerBasic.Compiler/Ir/IrLowering.cs PowerBasic.Compiler/Ir/IrLowering.PagedArrays.cs PowerBasic.Compiler.Tests/Backend/BackendArrayLayoutTests.cs
+          git commit -m "fix: honor OPTION BASE in dynamic arrays"
+          git push origin HEAD:fix/option-base-dynamic-arrays
