@@ -377,7 +377,7 @@ public sealed partial class CodeGenerator {
     // are minted by DataCellOf during emission, which happens after this returns.
     // The same bargain is struck for a SHARED dynamic array's descriptor, and it is checked here for
     // the same reason: the routed cells and the direct emitter's packed block are two descriptions of
-    // one array, so a split set of users would have a REDIM on one side and a UBOUND on the other.
+    // one array, so a split set of users would have a REDIM on one side and an UBOUND on the other.
     var dataSplit = !this._backendDataOwnershipDenied && !this.DataReadersRouteTogether();
     var dynSplit = !this._backendDynArrayOwnershipDenied && !this.SharedDynArrayUsersRouteTogether();
     if (!dataSplit && !dynSplit)
@@ -765,11 +765,9 @@ public sealed partial class CodeGenerator {
       if (model.ModuleVariables.TryGetValue(sourceName, out var exact))
         return this.TryDirectCell(exact);
       // IR globals use the source spelling without its type suffix for readability, while the
-      // binder's module table is keyed WITH it, so <c>DIM total%</c> beside <c>DIM total&amp;</c> gives two symbols for one
-      // <c>g.total</c>. Resolving that to either would alias two variables onto one cell, so the resolver
-      // is right to refuse - it simply had nowhere to say so. A rank-2 <c>SHARED</c> pair like that, read
-      // and written from a SUB, raised "no data cell for global 'g.total'" out of
-      // <c>MachineEmitter.ResolveData</c> in both optimizer modes.
+      // binder's module table is keyed by the canonical suffixed spelling (total%, total&, ...).
+      // Resolve that spelling only when it identifies one symbol; two differently typed globals
+      // with the same base name are ambiguous and must remain unroutable rather than aliasing.
       var matches = model.ModuleVariables.Values
         .Where(symbol => symbol.Name.Equals(sourceName, System.StringComparison.OrdinalIgnoreCase))
         .Take(2)
