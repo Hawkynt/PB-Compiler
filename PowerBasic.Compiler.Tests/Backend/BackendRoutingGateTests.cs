@@ -75,6 +75,25 @@ public sealed class BackendRoutingGateTests {
       END FUNCTION
       PRINT F(1)
       """, "F"),
+    // EXT definitions use the same x87 value channel as the narrower reals, but keep the full
+    // 10-byte stack representation. The direct main deliberately stays the caller here: the routed
+    // call pusher still declines f80, so this row proves the definition-side boundary independently -
+    // two TBYTE parameters are read at their real offsets and the answer returns in ST(0).
+    new("EXT parameters and result definition", """
+      FUNCTION F(BYVAL a##, BYVAL b##) AS EXT
+        F = a## * 2 + b##
+      END FUNCTION
+      DIM x##, y##
+      x## = 1.25
+      y## = 2.5
+      PRINT F(x##, y##)
+      """, "F"),
+    new("EXT result definition", """
+      FUNCTION F(BYVAL a%) AS EXT
+        F = a% / 2
+      END FUNCTION
+      PRINT F(3)
+      """, "F"),
     new("BYREF INTEGER parameter", """
       FUNCTION F(a%) AS INTEGER
         a% = a% + 1
@@ -365,19 +384,6 @@ public sealed class BackendRoutingGateTests {
       DIM v@
       PRINT F(v@)
       """, "F", "filter: parameter type outside the routed ABI (FIX)"),
-    new("EXT parameter", """
-      FUNCTION F(BYVAL a##) AS INTEGER
-        F = 1
-      END FUNCTION
-      DIM v##
-      PRINT F(v##)
-      """, "F", "filter: parameter type outside the routed ABI (EXT)"),
-    new("EXT result", """
-      FUNCTION F(BYVAL a%) AS EXT
-        F = a%
-      END FUNCTION
-      PRINT F(3)
-      """, "F", "filter: return type outside the routed ABI (EXT)"),
     new("FASTCALL convention", """
       SUB S FASTCALL (BYVAL a%)
         PRINT a%
