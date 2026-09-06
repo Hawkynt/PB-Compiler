@@ -472,6 +472,7 @@ public sealed class Binder {
 
         case CommandStmt { Keyword: "OPTION BASE" } ob when ob.Arguments is [IntegerLiteralExpr { Value: 0 or 1 } b]:
           this._optionBase = (int)b.Value;
+          this._model.OptionBase = this._optionBase;
           break;
 
         // Anything else is not a base the language has. Letting it through silently would be the
