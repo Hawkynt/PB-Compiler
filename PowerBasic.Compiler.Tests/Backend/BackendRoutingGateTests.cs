@@ -111,6 +111,35 @@ public sealed class BackendRoutingGateTests {
       END SUB
       S
       """, "S"),
+    // The selector already emits right-to-left stack arguments for both conventions. Definition-side
+    // routing now uses LayoutFrame's matching offsets, and CDECL emits a bare RET because its caller
+    // owns stack cleanup; STDCALL keeps RET n.
+    new("CDECL convention", """
+      SUB S CDECL (BYVAL a%, BYVAL b%)
+        PRINT a%; b%
+      END SUB
+      S 1, 2
+      """, "S"),
+    new("STDCALL convention", """
+      SUB S STDCALL (BYVAL a%, BYVAL b%)
+        PRINT a%; b%
+      END SUB
+      S 1, 2
+      """, "S"),
+    // A BYREF record is one near pointer on this ABI; the layout never crosses the boundary, so member
+    // uses lower to ordinary typed GEP/load/store against the caller's storage. BackendRecordParameter-
+    // RoutingTests executes the routed image against the direct one, offsets and write-back included.
+    new("BYREF record parameter", """
+      TYPE T
+        a AS INTEGER
+      END TYPE
+      FUNCTION F(p AS T) AS INTEGER
+        F = p.a
+      END FUNCTION
+      DIM q AS T
+      q.a = 2
+      PRINT F(q)
+      """, "F"),
     new("module body: INTEGER arithmetic", """
       DIM n AS INTEGER
       n = 6
@@ -293,8 +322,7 @@ public sealed class BackendRoutingGateTests {
   /// <summary>
   /// Constructs the routing refuses, with the reason it recorded. Ordered the way the work is: the
   /// remaining ABI classes first (a parameter or result shape the routed calling sequence cannot
-  /// express),
-  /// then the calling conventions, then the two that are not about the ABI at all.
+  /// express), then register calling conventions, then the two that are not about the ABI at all.
   ///
   /// <para>Every row must decline with the recorded reason and remain behaviorally equivalent to the
   /// direct build. A BASIC/PASCAL procedure may be emitted directly while its caller routes through
@@ -327,21 +355,9 @@ public sealed class BackendRoutingGateTests {
       END FUNCTION
       PRINT F(3)
       """, "F", "filter: return type outside the routed ABI (BYTE)"),
-    // BYREF, because BYVAL of a record is refused by the DIRECT emitter too ("not yet generated:
-    // load of UdtType") - it is not a routing class at all, and a gate case that fails on both paths
-    // would measure the front end. BYREF is how the corpus passes a record, and it is the shape the
-    // routed ABI has no convention for.
-    new("record parameter", """
-      TYPE T
-        a AS INTEGER
-      END TYPE
-      FUNCTION F(p AS T) AS INTEGER
-        F = p.a
-      END FUNCTION
-      DIM q AS T
-      q.a = 2
-      PRINT F(q)
-      """, "F", "filter: BYREF parameter (TYPE)"),
+    // Records have no row here any more. BYREF records route (see the routing list above), and BYVAL
+    // of a record is refused by the DIRECT emitter too ("not yet generated: load of UdtType"), so it
+    // is not a routing class at all - a gate case failing on both paths would measure the front end.
     new("FIX parameter", """
       FUNCTION F(BYVAL a@) AS INTEGER
         F = 1
@@ -362,18 +378,6 @@ public sealed class BackendRoutingGateTests {
       END FUNCTION
       PRINT F(3)
       """, "F", "filter: return type outside the routed ABI (EXT)"),
-    new("CDECL convention", """
-      SUB S CDECL (BYVAL a%)
-        PRINT a%
-      END SUB
-      S 1
-      """, "S", "filter: calling convention outside the routed ABI (Cdecl)"),
-    new("STDCALL convention", """
-      SUB S STDCALL (BYVAL a%)
-        PRINT a%
-      END SUB
-      S 1
-      """, "S", "filter: calling convention outside the routed ABI (Stdcall)"),
     new("FASTCALL convention", """
       SUB S FASTCALL (BYVAL a%)
         PRINT a%

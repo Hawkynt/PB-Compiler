@@ -228,16 +228,15 @@ public sealed class CallingConventionTests {
   }
 
   /// <summary>
-  /// A procedure whose convention is not the one the x86-16 back end emits must stay with the direct
-  /// emitter. The back end's <c>MachineEmitter.EmitFunction</c> knows a single ABI - left-to-right
-  /// stack arguments at [BP+4..], callee-cleans - so routing WATCALL/FASTCALL (parameters laid out at
-  /// negative offsets only the direct prologue's register spill fills) or CDECL/STDCALL (reversed
-  /// push order, and CDECL's caller-cleans against the routed <c>RET n</c>) miscompiles the call.
+  /// A procedure whose parameters do not reach the frame the way the routed prologue expects must
+  /// stay with the direct emitter. That is now only the register conventions: WATCALL/FASTCALL lay
+  /// arguments at negative offsets which only the direct prologue's register spill fills, so routing
+  /// them reads an unfilled frame. The stack-only conventions no longer belong here - the back end
+  /// emits their right-to-left order and their respective cleanup, so they route; see
+  /// <see cref="Compile_GivenStackConvention_WhenRoutingIsOn_ThenTheProcedureIsRouted"/>.
   /// </summary>
   [TestCase("WATCALL")]
   [TestCase("FASTCALL")]
-  [TestCase("CDECL")]
-  [TestCase("STDCALL")]
   public void Compile_GivenNonDefaultConvention_WhenRoutingIsOn_ThenTheProcedureIsNotRouted(string convention) {
     var source = $"""
       DECLARE FUNCTION sub2 {convention} (BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
@@ -254,6 +253,31 @@ public sealed class CallingConventionTests {
     Assert.That(routed.Errors, Is.Empty, "codegen: " + string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Not.Contain("sub2"),
       $"{convention} is not the ABI the back end emits, so it must not be routed");
+  }
+
+  /// <summary>
+  /// The other half of the same rule: the stack-only conventions do route. Pinning this keeps the
+  /// routing from silently regressing to the direct emitter, which would still pass the behavioural
+  /// test below while quietly leaving the class unrouted.
+  /// </summary>
+  [TestCase("CDECL")]
+  [TestCase("STDCALL")]
+  public void Compile_GivenStackConvention_WhenRoutingIsOn_ThenTheProcedureIsRouted(string convention) {
+    var source = $"""
+      DECLARE FUNCTION sub2 {convention} (BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
+      PRINT sub2(20, 7)
+      FUNCTION sub2 {convention} (BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
+        IF b <= 0 THEN
+          sub2 = a
+        ELSE
+          sub2 = sub2(a - 1, b - 1)
+        END IF
+      END FUNCTION
+      """;
+    var (routed, _) = Compile(source, routed: true);
+    Assert.That(routed.Errors, Is.Empty, "codegen: " + string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("sub2"),
+      $"{convention} is a stack-only convention the back end emits, so it must route");
   }
 
   /// <summary>

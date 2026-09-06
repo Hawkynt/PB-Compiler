@@ -87,18 +87,13 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
-  /// Why a procedure definition cannot use the routed BASIC/PASCAL frame ABI, or null when it can.
-  /// Kept apart from <see cref="BackendFilterReason"/> because an EXTERNAL declaration has no body to
-  /// route but its signature still governs a routed caller's argument order, cleanup and result.
+  /// Why a procedure definition cannot use the routed frame ABI, or null when it can. All near
+  /// stack-only conventions are supported: BASIC/PASCAL push left-to-right, CDECL/STDCALL push
+  /// right-to-left, and CDECL is caller-clean. FASTCALL/WATCALL remain fenced until the routed
+  /// prologue can spill their incoming register arguments into the frame cells LayoutFrame assigns.
   /// </summary>
   private static string? BackendAbiReason(ProcedureSymbol proc) {
-    // The back end emits ONE ABI - left-to-right stack arguments, callee-cleans - so a procedure
-    // declared WATCALL/FASTCALL/CDECL/STDCALL is not routable, and silently was. Its frame is laid
-    // out for the declared convention while the routed prologue/epilogue implement the default one:
-    // a register convention's parameters end up at negative offsets nothing fills, CDECL/STDCALL's
-    // reversed push order swaps them, and CDECL's args get popped by both sides. See
-    // IsBackendAbiConvention.
-    if (!IsBackendAbiConvention(proc))
+    if (proc.CallConv is CallConvention.Fastcall or CallConvention.Watcall)
       return $"filter: calling convention outside the routed ABI ({proc.CallConv})";
     return BackendAbiShapeReason(proc);
   }
@@ -120,10 +115,14 @@ public sealed partial class CodeGenerator {
       return $"filter: return type outside the routed ABI "
         + $"({(proc.ReturnType is null ? "unresolved" : DescribeType(proc.ReturnType))})";
     foreach (var parameter in proc.Parameters) {
-      // A near BYREF argument is always one pointer word on this ABI. The pointee still has to be a
-      // value shape the selector can load and store exactly; dynamic strings now use that word as a
-      // handle with ownership expressed in the IR, while records and other layout-bearing types stay
-      // fenced until their own ABI work lands.
+      // A BYREF record crosses the ABI as exactly one near pointer. The record's layout never crosses
+      // the call boundary: IrLowering binds that pointer as the caller's storage and lowers every
+      // member use to ordinary typed GEP/load/store operations. BYVAL records remain fenced because
+      // their required copy-in is different ABI semantics.
+      if (!parameter.ByVal && parameter.Type is UdtType)
+        continue;
+      // Every other near BYREF argument is one pointer word too, but its pointee must be a value shape
+      // the routed lowering already models. Dynamic strings use the word as a handle-cell pointer.
       if (!parameter.ByVal && !IsBackendAbiType(parameter.Type))
         return $"filter: BYREF parameter ({DescribeType(parameter.Type)})";
       if (parameter.ByVal && !IsBackendAbiType(parameter.Type))
@@ -135,8 +134,8 @@ public sealed partial class CodeGenerator {
   /// <summary>
   /// The value shapes the routed calling sequence can pass and return: a 16- or 32-bit integer (AX or
   /// DX:AX), a SINGLE or DOUBLE (ST(0)), and a dynamic-string handle (AX). The same shapes may be the
-  /// storage behind a one-word near BYREF pointer. Everything else - QUAD and BYTE among the scalars,
-  /// FIX/BCD, records and arrays - has no routed convention yet.
+  /// storage behind a one-word near BYREF pointer. Records are supported only BYREF (their ABI value
+  /// is that pointer); QUAD, BYTE, FIX/BCD, EXT and array values still need their own routed ABI work.
   /// </summary>
   private static bool IsBackendAbiType(PbType type)
     => type is ScalarType { IsFloat: false, ByteSize: 2 or 4 }
@@ -302,9 +301,9 @@ public sealed partial class CodeGenerator {
     }
 
     // A selected function may CALL another procedure, and the two sides have to agree on the ABI.
-    // The back end emits (and expects) the BASIC/PASCAL stack convention. SPEED optimization can
-    // convert a directly-emitted procedure through OptRegParm after this set is known, so that callee
-    // must route too. Otherwise an unambiguous direct BASIC/PASCAL callee remains stack-compatible.
+    // Stack-only conventions are represented on IrCall and selected from X86CallAbi. SPEED
+    // optimization can still convert a directly-emitted procedure through OptRegParm after this set
+    // is known, so an unrouted local callee must remain one of the direct-compatible conventions.
     // Dropping one can invalidate its callers, so this iterates.
     var routable = candidates.Select(c => c.Proc.Name).ToHashSet(System.StringComparer.OrdinalIgnoreCase);
     for (var changed = true; changed;) {
@@ -960,14 +959,15 @@ public sealed partial class CodeGenerator {
   private void EmitBackendFunction(ProcedureSymbol proc) {
     var (mfn, alloc, elideFrame) = this.BackendProcs()[proc];
     var asm = this._asm;
-    var paramBytes = this.LayoutFrame(proc);       // assigns each parameter its [BP+offset] and returns the byte count to clean
+    var paramBytes = this.LayoutFrame(proc);       // assigns each parameter its [BP+offset]
     if (this.Optimize && this.Cpu486)
       asm.AlignCode(16);
     asm.MarkLabel(this.ProcLabelOf(proc));
     var paramOffsets = proc.Parameters.Select(p => p.Offset).ToArray();
-    // a CALL needs the label the whole-program codegen bound for the callee (procedure labels live in
-    // a different registry than Assembler.Lbl); the routing guarantees every callee is itself routed
-    MachineEmitter.EmitFunction(asm, mfn, alloc, paramOffsets, paramBytes, this.CalleeLabel, this.DataCellOf,
+    // LayoutFrame already reflects the declared stack order. CDECL differs only in cleanup ownership:
+    // its caller restores SP after the call, so the routed epilogue must emit RET rather than RET n.
+    var calleeCleanupBytes = CallerCleansStack(proc) ? 0 : paramBytes;
+    MachineEmitter.EmitFunction(asm, mfn, alloc, paramOffsets, calleeCleanupBytes, this.CalleeLabel, this.DataCellOf,
       alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: elideFrame);
   }
 }
