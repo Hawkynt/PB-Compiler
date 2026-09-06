@@ -41,7 +41,7 @@ replace(
     '''    var lower = this._optionBase;\n    int upper;\n    if (v.ArrayBounds is [var (lowerExpr, upperExpr)] && this._folder.TryFold(upperExpr)?.Integer is { } u) {\n''',
     '''    var lower = this.ArrayOptionBase(v);\n    int upper;\n    if (v.ArrayBounds is [var (lowerExpr, upperExpr)] && this._folder.TryFold(upperExpr)?.Integer is { } u) {\n''')
 
-# Direct backend: normalize at the declaration boundary, then keep all existing allocator fallbacks at base zero.
+# Direct backend: normalize at the declaration boundary, then keep allocator-internal null fallbacks at base zero.
 replace(
     'PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs',
     '''      this.EmitClassedAllocation(symbol, v.ArrayBounds, dim.AtAddress, dim.Position, skipZero);\n''',
@@ -59,24 +59,27 @@ replace(
     '''      if (lower != null)\n        this.EmitInt16Argument(lower);\n      else\n        asm.Mov(Reg.AX, model.OptionBase);\n\n      var lowerOk = asm.DefineLabel();\n''',
     '''      if (lower != null)\n        this.EmitInt16Argument(lower);\n      else\n        asm.Xor(Reg.AX, Reg.AX);\n\n      var lowerOk = asm.DefineLabel();\n''')
 
-# Routed conventional arrays: normalize each source declaration before allocation.
+# Routed conventional arrays: rank checks use the source shape (normalization never changes rank),
+# while allocation consumes the declaration's normalized bounds.
 replace(
     'PowerBasic.Compiler/Ir/IrLowering.cs',
-    '''      if (v.ArrayBounds is not { Count: > 0 } dims)\n        continue;\n      if (this.ArrayVariable(v) is not { Type: ArrayType arr } symbol || !arr.IsDynamic)\n        continue;                                    // static array or scalar: laid out at compile time\n      if (dims.Count != arr.Rank)\n        throw new IrLoweringException("DIM rank mismatch");\n      this.AllocateDynamicArray(symbol, arr, dims, preserve: false);\n''',
-    '''      if (v.ArrayBounds is not { Count: > 0 })\n        continue;\n      if (this.ArrayVariable(v) is not { Type: ArrayType arr } symbol || !arr.IsDynamic)\n        continue;                                    // static array or scalar: laid out at compile time\n      var dims = this._model.ArrayBoundsOf(v);\n      if (dims.Count != arr.Rank)\n        throw new IrLoweringException("DIM rank mismatch");\n      this.AllocateDynamicArray(symbol, arr, dims, preserve: false);\n''')
-
+    '      this.AllocateDynamicArray(symbol, arr, dims, preserve: false);\n',
+    '      this.AllocateDynamicArray(symbol, arr, this._model.ArrayBoundsOf(v), preserve: false);\n')
 replace(
     'PowerBasic.Compiler/Ir/IrLowering.cs',
-    '''      if (v.ArrayBounds is not { } dims || dims.Count != arr.Rank)\n        throw new IrLoweringException("REDIM rank mismatch");\n''',
-    '''      if (v.ArrayBounds == null)\n        throw new IrLoweringException("REDIM without bounds");\n      var dims = this._model.ArrayBoundsOf(v);\n      if (dims.Count != arr.Rank)\n        throw new IrLoweringException("REDIM rank mismatch");\n''')
-
+    '        this.LowerPagedAllocation(symbol, arr, dims);\n',
+    '        this.LowerPagedAllocation(symbol, arr, this._model.ArrayBoundsOf(v));\n')
+replace(
+    'PowerBasic.Compiler/Ir/IrLowering.cs',
+    '      this.AllocateDynamicArray(symbol, arr, dims, r.Preserve);\n',
+    '      this.AllocateDynamicArray(symbol, arr, this._model.ArrayBoundsOf(v), r.Preserve);\n')
 replace('PowerBasic.Compiler/Ir/IrLowering.cs', '? new IrConstantInt(IrType.I32, this._model.OptionBase)\n', '? new IrConstantInt(IrType.I32, 0)\n')
 
-# Routed paged DIM has its own entry point; REDIM already comes through LowerRedim above.
+# Routed paged DIM has its own entry point; REDIM is normalized above.
 replace(
     'PowerBasic.Compiler/Ir/IrLowering.PagedArrays.cs',
-    '''      if (v.ArrayBounds is not { } dims)\n        throw new IrLoweringException($"DIM {d.Class} {v.Name} without array bounds");\n      if (this.ArrayVariable(v) is not { Type: ArrayType arr } symbol)\n        throw new IrLoweringException($"DIM {d.Class}: no array symbol for {v.Name}");\n      this.LowerPagedAllocation(symbol, arr, dims);\n''',
-    '''      if (v.ArrayBounds == null)\n        throw new IrLoweringException($"DIM {d.Class} {v.Name} without array bounds");\n      if (this.ArrayVariable(v) is not { Type: ArrayType arr } symbol)\n        throw new IrLoweringException($"DIM {d.Class}: no array symbol for {v.Name}");\n      this.LowerPagedAllocation(symbol, arr, this._model.ArrayBoundsOf(v));\n''')
+    '      this.LowerPagedAllocation(symbol, arr, dims);\n',
+    '      this.LowerPagedAllocation(symbol, arr, this._model.ArrayBoundsOf(v));\n')
 replace('PowerBasic.Compiler/Ir/IrLowering.PagedArrays.cs', '? new IrConstantInt(IrType.I32, this._model.OptionBase)\n', '? new IrConstantInt(IrType.I32, 0)\n')
 
 # Pin the lexical transition: the initial dynamic DIM is base 0, the later REDIM is base 1.
@@ -85,7 +88,6 @@ replace(
     '''  [Test]\n  public void OptionBaseOne_DynamicDimAndRedimPreserve_UseOneAsEveryImplicitLowerBound() {\n''',
     '''  [Test]\n  public void OptionBaseChangedBetweenDynamicDimAndRedim_IsCapturedPerDeclaration() {\n    var (direct, routed, names) = RunBothWays("""\n      DIM a%(2)\n      PRINT LBOUND(a%)\n      PRINT UBOUND(a%)\n      OPTION BASE 1\n      REDIM a%(3)\n      PRINT LBOUND(a%)\n      PRINT UBOUND(a%)\n      """);\n\n    Assert.That(names, Does.Contain("main"));\n    Assert.That(routed, Is.EqualTo(direct));\n    Assert.That(Lines(routed), Is.EqualTo(new[] { "0", "2", "1", "3" }));\n  }\n\n  [Test]\n  public void OptionBaseOne_DynamicDimAndRedimPreserve_UseOneAsEveryImplicitLowerBound() {\n''')
 
-# Keep the existing semantics-test documentation honest about static vs runtime bounds.
 replace(
     'PowerBasic.Compiler.Tests/Semantics/OptionBaseTests.cs',
     '''/// The statement is read by the binder's module pre-pass rather than by the code generator, because\n/// it has to take effect on DIMs that come after it in the file but are processed in the same sweep.\n/// Nothing is emitted for it: by the time the code generator runs, the bounds already carry the\n/// answer. That is why the runtime checks below ask LBOUND and UBOUND rather than looking at bytes.\n''',
