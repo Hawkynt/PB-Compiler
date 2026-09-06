@@ -2,35 +2,36 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
-| **Stage** | Mid-end |
+| **Status** | 🟨 Partial — proven NaN/sign/finiteness facts and integer-derived ranges are implemented |
+| **Stage** | IR middle end |
+| **Gate** | Ordinary optimizer; SPEED may add its explicit relaxed-FP assumptions |
+| **IR** | `FpSimplify` + `FpDomainAnalysis` consuming `IrRangeAnalysis` |
 | **Related** | [O0016](O0016-value-fact-analysis.md), [O0012](O0012-float-demotion.md), [C0003](C0003-x87-scheduling.md) |
 
-## The idea
+## What is implemented
 
-Float code carries defensive cases — NaN checks, sign tests, zero comparisons —
-that value facts can often decide. Where a value is provably **finite,
-non-negative or non-NaN**, the corresponding branch and its `FSTSW`/`SAHF` round
-trip disappear.
+`FpSimplify` decides ordered self-comparisons and comparisons with zero when the
+result follows from proven value facts. Sources include finite integer-to-float
+conversions, branch-refined integer ranges, exact constants, widening casts,
+conservative narrowing-cast facts, squares, and square roots whose arguments are
+known to be inside the defined non-negative domain.
 
-The x87 comparison protocol is what makes this worth doing: every float compare
-costs a status-word store and a flag transfer, so removing one removes five
-instructions, not one.
+The branch/value facts come from the existing `IrRangeAnalysis`. The small
+`FpDomainAnalysis` layer adapts those facts through integer-to-float conversion
+and supported affine FP expressions; it does not duplicate CFG range analysis.
 
-## Applies to
+## Strictness
 
-```basic
-DIM x!, y!
-x! = a! * a!                 ' provably non-negative
-IF x! >= 0 THEN y! = SQR(x!) ' the test is always true
-```
+Strict optimization does not let algebraically collapsed endpoints prove that
+all intermediate operations remained finite or nonzero. The domain evaluator
+walks supported F32/F64 expressions node-by-node and preserves each declared
+rounding point. Extended x87 precision is declined rather than approximated with
+a host `double`.
 
-## What it needs
+Under SPEED, explicit relaxed-FP assumptions can strengthen the same queries.
 
-- A **float fact domain** alongside the integer lattice
-  ([O0016](O0016-value-fact-analysis.md)): sign, finiteness, NaN-freedom,
-  exact-integer-ness — the last of which
-  [O0012](O0012-float-demotion.md) already reasons about informally.
-- Care with the x87's 80-bit intermediates: a value that is finite in a register
-  can overflow when stored, so the facts must be tracked per *storage width*,
-  not per value.
+## Remaining scope
+
+A full IEEE abstract domain for arbitrary float inputs, CFG joins, signed zero,
+subnormal categories and exponent bounds remains future work. The current pass
+folds only classifications it can prove with the implemented facts.

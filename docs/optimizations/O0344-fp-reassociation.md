@@ -2,41 +2,36 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned — fast-math mode only |
-| **Stage** | Mid-end |
+| **Status** | 🟨 Partial — local single-use `FAdd`/`FMul` chains are balanced; loop-reduction restructuring remains separate work |
+| **Stage** | IR middle end |
+| **Gate** | Optimizer + `$OPTIMIZE SPEED` / `-OZF` |
+| **IR** | `FpFastMath` with `IrFastMathFlags.Reassociate` |
 | **Related** | [O0121](O0121-reduction-tree-balancing.md), [O0061](O0061-reassociation.md), [O0312](O0312-parallel-reduction.md) |
 
-## The idea
+## What is implemented
 
-Rebalancing a float reduction into a tree, or splitting it into several
-accumulators, exposes the parallelism that
-[O0120](O0120-multiple-accumulators.md) and
-[O0145](O0145-vector-reduction.md) need — and which float chains otherwise
-forbid entirely.
+`FpFastMath` recognizes serial same-block floating `FAdd` and `FMul` trees of
+4–32 leaves. Internal nodes must be single-use so the rewrite does not duplicate
+work. When the current depth is worse than a balanced tree, it rebuilds the tree
+while preserving the original left-to-right leaf order.
 
-## Applies to
-
-```basic
-DIM i%, s!, a!(0 TO 999)
-FOR i% = 0 TO 999
-  s! = s! + a!(i%)           ' a serial float dependency chain
-NEXT
+```text
+(((a+b)+c)+d)  ->  (a+b) + (c+d)
 ```
 
-## Why it is gated
+Every generated arithmetic instruction carries only the floating permissions
+applicable to arithmetic; reciprocal/approx-function permissions do not leak
+onto the new nodes.
 
-Floating-point addition is **not associative**: `(a+b)+c` and `a+(b+c)` differ,
-and the difference shows up in printed output. For the historic dialects that is
-a fidelity failure, not a rounding tolerance — the whole project is built on
-byte-identical output.
+## Why SPEED only
 
-So it is available only under an explicit fast-math declaration, and never for a
-dialect under oracle verification. The integer counterpart
-([O0061](O0061-reassociation.md)) has no such restriction, because integer
-arithmetic *is* associative modulo 2ⁿ.
+Floating addition and multiplication are not generally associative. Balancing
+changes rounding points, so ordinary optimization cannot perform this rewrite.
+`reassoc` is an explicit numerical permission, emitted to LLVM as such.
 
-## What it needs
+## Remaining scope
 
-- The FP mode model shared with [O0340](O0340-fma-contraction.md) and
-  [O0341](O0341-reciprocal-approximation.md).
-- A statement in the docs of exactly what a fast-math build no longer promises.
+This pass balances expression trees that already exist. Turning a loop-carried
+floating reduction into several accumulators or a parallel reduction tree is a
+loop transform with additional dependence/profitability questions and remains
+with [O0121](O0121-reduction-tree-balancing.md) / [O0312](O0312-parallel-reduction.md).

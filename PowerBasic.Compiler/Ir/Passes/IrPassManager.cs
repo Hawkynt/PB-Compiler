@@ -131,9 +131,10 @@ public sealed class IrPassManager {
   /// <para>
   /// <paramref name="optimizeForSpeed"/> reflects <c>$OPTIMIZE SPEED</c>. SPEED may spend code size to
   /// erase abstraction overhead: it runs demanded-bit cleanup, admits larger callees to the inliner,
-  /// recognizes library loops, generates lookup tables, compiles static searches, and removes
-  /// semantically dead loops. The ordinary optimization objective keeps the conservative size budget
-  /// and preserves empty loops because they may be intentional delay loops.
+  /// recognizes library loops, generates lookup tables, compiles static searches, removes semantically
+  /// dead loops, and grants the relaxed floating-point contract used by O0340-O0345/O0343. The ordinary
+  /// optimization objective keeps strict FP semantics, the conservative size budget, and preserves
+  /// empty loops because they may be intentional delay loops.
   /// </para>
   /// <para>
   /// <paramref name="dataLayoutTarget"/> supplies facts that are not properties of target-neutral IR:
@@ -141,9 +142,14 @@ public sealed class IrPassManager {
   /// are absent rather than guessing a target. The remaining O0320-O0323 and O0327-O0329 are guarded
   /// entirely by IR provenance/escape/dependence proofs and therefore run on every optimized target.
   /// </para>
+  /// <para>
+  /// <paramref name="enableFpLookupTables"/> is a backend capability, not another numerical mode. It
+  /// allows O0343 to materialize typed floating constant tables when the selected backend can carry
+  /// them; range-specialized polynomial kernels remain available under SPEED without it.
+  /// </para>
   /// </summary>
   public static IrPassManager Standard(bool optimizeForSpeed = false, bool includeModulePasses = true,
-      IrDataLayoutTarget? dataLayoutTarget = null)
+      IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false)
     => new IrPassManager()
     .Add("mem2reg", Mem2Reg.Run)
     // O0320-O0329 have to see the explicit memory graph and the original counted-loop shape. Run the
@@ -195,10 +201,18 @@ public sealed class IrPassManager {
     // region bounds and reject overlap so UNION aliasing remains shared storage.
     .Add("aggregate-sroa", ScalarReplaceAggregates.Run)
     .Add("mem2reg2", Mem2Reg.Run)
+    // O0346/O0347 consume strict FP facts here, including branch-refined integer ranges at conversion
+    // sites. SPEED supplies its explicit no-NaN/no-inf assumptions without changing strict defaults.
+    .Add("fpsimplify", fn => FpSimplify.Run(fn,
+      optimizeForSpeed ? IrFastMathFlags.Fast : IrFastMathFlags.None))
     // canonicalizes associative chains so GVN hashes two equal expressions the same way; it must
     // come after SCCP (which supplies the constants it folds together) and before GVN (which is the
     // pass that benefits)
     .Add("reassociate", Reassociate.Run)
+    // O0340-O0345 are legal only after SPEED grants the relaxed FP contract. The pass annotates each
+    // operation with only the flags that apply to it; targets remain responsible for target-specific
+    // FMA/reciprocal/rsqrt lowering.
+    .AddWhen(optimizeForSpeed, "fpfast", fn => FpFastMath.Run(fn, IrFastMathFlags.Fast))
     // O0354: unlike the sequential canonicalizers above, local equality saturation keeps several
     // equivalent pure-integer forms alive under a hard budget and extracts the cheapest result.
     .Add("eqsat", EqualitySaturation.Run)
@@ -266,6 +280,11 @@ public sealed class IrPassManager {
     .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "static-search", StaticSearchRecognition.Run)
     .AddModulePassWhen(includeModulePasses, "bitsets", BitsetSubstitution.Run)
     .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "lutgen", LookupTableGeneration.Run)
+    // O0343 shares the existing integer range lattice. A discrete integer-backed FP domain becomes a
+    // typed table only when the backend advertises that storage capability; narrow continuous domains
+    // can still become Taylor/Horner kernels under SPEED.
+    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "fpdomain",
+      module => FpDomainSpecialization.Run(module, enableFpLookupTables))
     .AddModulePassWhen(includeModulePasses, "lutelim", LookupTableElimination.Run)
     // The string passes are module passes because they mint module-level things - a runtime
     // declaration, a pooled literal - which a function pass has no handle on. They run last, after

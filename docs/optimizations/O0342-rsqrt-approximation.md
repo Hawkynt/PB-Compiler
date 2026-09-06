@@ -2,34 +2,36 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned — fast-math mode only |
-| **Stage** | Emitter |
+| **Status** | 🟨 Partial — `1/SQR(x)` exposes reciprocal + approximate-function legality; hardware rsqrt/refinement is target-selected |
+| **Stage** | IR middle end + target lowering |
+| **Gate** | Optimizer + `$OPTIMIZE SPEED` / `-OZF` |
+| **IR** | `FpFastMath`: `sqrt` gets `afn`, the enclosing `FDiv` gets `arcp`; LLVM receives both permissions |
 | **Related** | [O0341](O0341-reciprocal-approximation.md), [O0343](O0343-transcendental-specialization.md) |
 
-## The idea
+## What is implemented
 
-`1 / SQR(x)` — the normalization step of every vector length computation — maps
-onto a hardware reciprocal-square-root estimate plus Newton-Raphson refinement,
-instead of a square root followed by a division.
+For the canonical `1 / sqrt(x)` shape the two operations carry the freedoms a
+target optimizer needs to recognize reciprocal-square-root lowering:
 
-On the x87 both `FSQRT` and `FDIV` are slow, so even without an estimate
-instruction the *algebraic* rewrite (compute `1/SQR(x)` once and multiply)
-already pays where the value is reused.
+- the `sqrt` call is permitted to use an approximate implementation (`afn`);
+- the division is permitted to use a reciprocal (`arcp`).
 
-## Applies to
+LLVM therefore sees the complete relaxed contract and may select an rsqrt
+estimate/refinement sequence when the target has one. The target-neutral IR does
+not pretend that the 16-bit x87 has such an instruction.
 
 ```basic
 DIM x!, y!, len!, nx!, ny!
 len! = SQR(x! * x! + y! * y!)
 nx! = x! / len!
-ny! = y! / len!              ' two divides by the same root
+ny! = y! / len!
 ```
 
-## What it needs
+Repeated division by the same computed length can additionally be reduced by
+[O0345](O0345-common-denominator-factoring.md).
 
-- Fast-math mode for the estimate form
-  ([O0340](O0340-fma-contraction.md)); the reuse form
-  ([O0338](O0338-reciprocal-sequence-reuse.md)) needs it too, since `x * (1/L)`
-  is not `x / L` bit for bit.
-- Zero and negative inputs must behave as PB's `SQR` does — including raising
-  the same error — which the estimate path does not do on its own.
+## Boundary
+
+This pass does not manufacture a target-specific `rsqrt` intrinsic, nor does it
+bypass PowerBASIC error behavior in strict mode. Without SPEED neither `afn` nor
+`arcp` is present, so the ordinary `SQR` + division semantics remain required.

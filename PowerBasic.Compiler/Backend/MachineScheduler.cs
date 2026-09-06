@@ -24,6 +24,10 @@ public static class MachineScheduler {
   /// <summary>Runs optimizer-gated target combines, then reorders non-terminators by their dependencies.</summary>
   public static void Schedule(MFunction function) {
     if (MachineOptimizationState.IsMarked(function)) {
+      // O0348/O0349 live here rather than in selection: only after all IR instructions have become
+      // one machine stream can a private TBYTE spill/reload pair be recognized. Run before any
+      // reordering so the x87 stack proof describes the selector's source-order expression tree.
+      X87StackOptimizer.Run(function);
       MachineCombiner.Run(function);
       SuperoptimizedPeepholes.Run(function);
     }

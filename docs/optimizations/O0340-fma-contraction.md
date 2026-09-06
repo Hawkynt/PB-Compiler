@@ -2,36 +2,39 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned — hosted back ends only (no x86 FMA before Haswell; the x87 has none) |
-| **Stage** | Emitter |
+| **Status** | ✅ Implemented as an IR/LLVM contraction permission; target lowering decides whether an FMA exists |
+| **Stage** | IR middle end + LLVM back end |
+| **Gate** | Optimizer + `$OPTIMIZE SPEED` / `-OZF` |
+| **IR** | `IrFastMathFlags.AllowContract`, applied by `FpFastMath`; emitted as LLVM `contract` |
 | **Related** | [O0344](O0344-fp-reassociation.md), [O0347](O0347-mixed-precision.md), [docs/BACKENDS.md](../BACKENDS.md) |
 
-## The idea
+## What is implemented
 
-`a*b + c` becomes a single fused multiply-add: one instruction, one rounding
-instead of two — usually *more* accurate, but **different**.
+`FpFastMath` marks eligible floating multiply/add operations with the precise
+**contraction** permission when the SPEED objective is active. `LlvmEmitter`
+spells that as LLVM's `contract` fast-math flag, so the LLVM target optimizer may
+form an FMA where its target and cost model support one.
 
-## Applies to
+The IR does **not** invent an FMA instruction on the 16-bit x87 route. The x87
+has no fused multiply-add operation, so there is nothing profitable to select
+there; carrying the legality as an IR property keeps the middle end target
+neutral.
 
 ```basic
 DIM a!, b!, c!, r!
 r! = a! * b! + c!
 ```
 
-## Why it needs a fast-math mode
+Under ordinary optimization the multiply and add carry no fast-math flags and
+the two-rounding computation remains required. Under SPEED, contraction is an
+explicitly permitted numerical change.
 
-The result differs from the two-step computation, because the intermediate
-product is not rounded. "Usually more accurate" is not the same as "identical",
-and this compiler's bar for the DOS targets is **byte-identical output against
-the genuine compiler** — which has no FMA and rounds twice.
+## Why the gate is semantic
 
-So: available only on the hosted back ends, only under an explicit fast-math
-declaration, and never for a dialect under oracle verification.
+An FMA rounds once while separate multiply/add rounds twice. The result can
+therefore differ even when both answers are finite and close. This is not a
+peephole that is safe to enable merely because a target has FMA hardware.
 
-## What it needs
-
-- An FP mode model — strict (the default, bit-exact) versus fast (contraction,
-  reassociation, reciprocals allowed) — shared with
-  [O0341](O0341-reciprocal-approximation.md) and
-  [O0344](O0344-fp-reassociation.md).
-- Target detection for the FMA instruction set on the C/LLVM path.
+The permission follows the optimization objective rather than the source
+dialect: strict optimization stays strict; SPEED grants the relaxed floating
+contract. No external dependency is required.

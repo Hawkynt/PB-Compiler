@@ -2,33 +2,42 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned (the ordering pseudo-resource exists — [C0003](C0003-x87-scheduling.md)) |
-| **Stage** | Emitter |
+| **Status** | 🟨 Partial — depth-proven expression-tree stackification implemented; arbitrary subtree reordering/FXCH synthesis remains future work |
+| **Stage** | Machine IR, after selection and before ordinary scheduling/allocation |
+| **Gate** | Optimizer (`MachineOptimizationState`) |
+| **Source** | `Backend/X87StackOptimizer.cs`, invoked by `MachineScheduler` for optimizer-marked functions |
 | **Related** | [C0003](C0003-x87-scheduling.md), [O0349](O0349-x87-value-retention.md), [O0013](O0013-promotion-lowering.md) |
 
-## The idea
+## What is implemented
 
-The x87 is a **stack** machine, so the evaluation order determines how many
-`FXCH` instructions, spills and reloads a expression costs. Choosing an order
-that keeps operands in the right stack positions — the classic Ershov-numbering
-problem for a stack machine — removes them.
+The selector intentionally starts from an empty-x87-stack form: each floating
+SSA result is stored in a private TBYTE frame slot and reloaded when consumed.
+`X87StackOptimizer` recognizes the selected shape for `left op right` and keeps
+the completed left subtree resident while evaluating the right subtree.
 
-[C0003](C0003-x87-scheduling.md) makes the FPU instructions *schedulable around*
-integer work; this is about the FPU sequence itself.
-
-## Applies to
+Before doing so it simulates the right subtree's x87 stack effect. With the
+retained left value occupying one register, the maximum depth must stay within
+the architectural eight-register stack. Calls, inline assembly, terminators,
+physical clobbers and unmodelled x87 stack operations stop the transform.
 
 ```basic
 DIM a!, b!, c!, d!, r!
-r! = (a! + b!) * (c! + d!)   ' two sub-trees competing for the stack top
+r! = (a! + b!) * (c! + d!)
 ```
 
-## What it needs
+For the ordinary selected tree this removes the intermediate TBYTE stores and
+reloads while leaving the arithmetic operation order unchanged.
 
-- An evaluation-order chooser over the expression tree, aware of the eight-deep
-  stack and of which forms take a memory operand directly (`FADD [mem]` costs no
-  stack slot at all).
-- The **exactness constraint**: reordering float operations changes nothing
-  here, because the *operations* are unchanged — only where their operands sit.
-  That is what separates this from [O0344](O0344-fp-reassociation.md), which is
-  fast-math-only.
+## Exactness
+
+This is distinct from [O0344](O0344-fp-reassociation.md). O0348 does not change
+which floating operations are performed or their parenthesization; it changes
+where an intermediate lives. SINGLE/DOUBLE spill/reload pairs are not removed,
+because those stores are required rounding points.
+
+## Remaining scope
+
+The pass does not yet choose between alternate evaluation orders or synthesize
+`FXCH` to realize a lower-Ershov-number ordering. It therefore implements the
+safe stackification/value-placement subset rather than claiming a complete x87
+expression scheduler.

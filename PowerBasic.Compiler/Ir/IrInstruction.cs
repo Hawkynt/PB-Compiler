@@ -17,6 +17,13 @@ public abstract class IrInstruction : IrValue {
   /// <summary>This instruction's operands, in fixed positional order.</summary>
   public IReadOnlyList<IrValue> Operands => this._operands;
 
+  /// <summary>
+  /// Floating-point semantic freedoms attached to this operation. Strict is the default; the SPEED
+  /// objective grants flags only to operations for which the corresponding relaxed rewrite is legal.
+  /// Non-floating instructions leave this at <see cref="IrFastMathFlags.None"/>.
+  /// </summary>
+  public IrFastMathFlags FastMathFlags { get; set; }
+
   /// <summary>True for control-flow terminators (the required last instruction of a block).</summary>
   public virtual bool IsTerminator => false;
 

@@ -2,31 +2,38 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned — fast-math mode only |
-| **Stage** | Emitter |
+| **Status** | 🟨 Partial — IR legality and LLVM target freedom implemented; estimate/refinement sequence remains target-selected |
+| **Stage** | IR middle end + target lowering |
+| **Gate** | Optimizer + `$OPTIMIZE SPEED` / `-OZF` |
+| **IR** | `IrFastMathFlags.AllowReciprocal`, applied to `FDiv` by `FpFastMath`; emitted as LLVM `arcp` |
 | **Related** | [O0338](O0338-reciprocal-sequence-reuse.md), [O0340](O0340-fma-contraction.md), [O0342](O0342-rsqrt-approximation.md) |
 
-## The idea
+## What is implemented
 
-Replace a division with an approximate reciprocal plus one or two
-Newton-Raphson refinement steps. On hardware with a fast reciprocal estimate
-(`RCPPS` and friends) this is several times faster than a true divide; the x87
-has `FDIV` only, so the DOS targets gain nothing.
+The middle end records that an eligible division may be transformed through a
+reciprocal. On the LLVM path this is emitted as `arcp`, which gives the target
+optimizer permission to choose a reciprocal estimate and whatever refinement
+sequence is appropriate for the selected ISA and precision.
 
-## Applies to
+`FpFastMath` also consumes the same legality directly for repeated divisions by
+the same SSA divisor: [O0345](O0345-common-denominator-factoring.md) creates one
+`1/d` and replaces the other divisions by multiplications.
 
 ```basic
 DIM a!, b!, r!
 r! = a! / b!
 ```
 
-## What it needs
+The 16-bit x87 route does not synthesize an estimate: there is no x87 reciprocal
+estimate instruction, and replacing `FDIV` by a software Newton sequence would
+not be a general win.
 
-- **Fast-math mode.** The refined result is accurate to within an ULP or two,
-  not exact — so it changes printed output and is inadmissible under the
-  differential oracle. Same gate as [O0340](O0340-fma-contraction.md).
-- A refinement-count policy: one step for single precision, two for double,
-  chosen by the required accuracy.
-- Special values (zero, infinity, denormals) must still behave, which the naive
-  estimate-plus-refine sequence does **not** guarantee — a guard or a fallback is
-  part of the lowering, not an afterthought.
+## Still target-specific
+
+The IR intentionally does not hard-code "one Newton step for SINGLE, two for
+DOUBLE". Estimate accuracy, denormal behavior and the profitable refinement
+count are target properties. LLVM receives the legality contract; its target
+lowering owns that choice.
+
+Ordinary optimization carries no `arcp` flag, so exact division remains
+required there.

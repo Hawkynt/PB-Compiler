@@ -167,23 +167,53 @@ public static class Driver {
           stderr.WriteLine($"pbc: {dumpStage}: {declined ?? "unsupported construct"} - outside the IR lowering's subset (see docs/IR.md)");
           return 1;
         }
-        var pipeline = IrPassManager.Standard();
+
+        // The hosted backends must make the same optimizer-objective decision as CodeGenerator. The
+        // CLI seeds the defaults, then the source's single $OPTIMIZE directive wins exactly as it does
+        // on the native path. SPEED is therefore a semantic policy shared by every dialect, not a
+        // separate hosted-only fast-math switch.
+        var optimizeMetas = model.MetaStatements
+          .Where(meta => meta.Command.Equals("OPTIMIZE", StringComparison.OrdinalIgnoreCase))
+          .ToList();
+        if (optimizeMetas.Count > 1) {
+          stderr.WriteLine($"error: {optimizeMetas[1].Position}: only one $OPTIMIZE per module");
+          return 1;
+        }
+        // Unlike --emit-basic, which reproduces the source at its dialect's faithfulness level, the
+        // hosted IR backends exist to show the optimized module. They therefore optimize for every
+        // dialect; only an explicit --no-optimize or $OPTIMIZE OFF turns that off.
+        var hostedOptimize = optimize ?? true;
+        var hostedSpeed = optimizeSpeed;
+        if (optimizeMetas.FirstOrDefault()?.Arguments is [{ } mode, ..]) {
+          if (mode.Text.Equals("OFF", StringComparison.OrdinalIgnoreCase))
+            hostedOptimize = false;
+          hostedSpeed = mode.Text.Equals("SPEED", StringComparison.OrdinalIgnoreCase);
+        }
+
+        var pipeline = hostedOptimize
+          ? IrPassManager.Standard(optimizeForSpeed: hostedSpeed,
+              enableFpLookupTables: dumpStage == "--emit-llvm")
+          : IrPassManager.Legalize();
         pipeline.RunOnModule(module);
-        // PB computes integral +/-/* in floating point (for PRINT precision); where the result is
-        // stored back to an integer the mod-2^N equivalence lets us recover the integer form, so
-        // the emitted C/LLVM squares an int as `x * x`, not `(int)((float)x * (float)x)`. Same
-        // sequence the x86-16 back end uses - recover, then re-run to clean up the dead float ops.
-        foreach (var f in module.Functions)
-          if (!f.IsDeclaration)
-            IntegerRecovery.Run(f);
-        pipeline.RunOnModule(module);
-        Inliner.Run(module);
-        pipeline.RunOnModule(module);              // re-optimize the inlined bodies
-        foreach (var f in module.Functions)
-          if (!f.IsDeclaration)
-            IntegerRecovery.Run(f);                // inlining can expose more float-form integer trees
-        pipeline.RunOnModule(module);
-        GlobalDce.Run(module);                     // drop functions/globals left unreferenced by inlining + DCE
+
+        if (hostedOptimize) {
+          // PB computes integral +/-/* in floating point (for PRINT precision); where the result is
+          // stored back to an integer the mod-2^N equivalence lets us recover the integer form, so
+          // the emitted C/LLVM squares an int as `x * x`, not `(int)((float)x * (float)x)`. Same
+          // sequence the x86-16 back end uses - recover, then re-run to clean up the dead float ops.
+          foreach (var f in module.Functions)
+            if (!f.IsDeclaration)
+              IntegerRecovery.Run(f);
+          pipeline.RunOnModule(module);
+          Inliner.Run(module);
+          pipeline.RunOnModule(module);              // re-optimize the inlined bodies
+          foreach (var f in module.Functions)
+            if (!f.IsDeclaration)
+              IntegerRecovery.Run(f);                // inlining can expose more float-form integer trees
+          pipeline.RunOnModule(module);
+          GlobalDce.Run(module);                     // drop functions/globals left unreferenced by inlining + DCE
+        }
+
         var verifyErrors = IrVerifier.Verify(module);
         if (verifyErrors.Count > 0) {
           stderr.WriteLine($"pbc: {dumpStage}: internal error, optimized IR failed verification:");
@@ -426,6 +456,9 @@ public static class Driver {
     w.WriteLine("  -I <dir>       additional $INCLUDE search directory");
     w.WriteLine("  --dialect <d>  language level: tb1x|pb2x..pb35 (default)|pb36 (optimizer)|qb1x..qb45|pds7x");
     w.WriteLine("  -G386          allow 80386 instructions (PBC.EXE compatibility)");
+    w.WriteLine("  -OZF           prefer SPEED; enables size-for-speed and relaxed-FP transforms when optimizing");
+    w.WriteLine("  --optimize     enable the optimizer for any dialect");
+    w.WriteLine("  --no-optimize  disable optimization even for pb36 / $OPTIMIZE SPEED");
     w.WriteLine("  --dump-tokens  stop after lexing/preprocessing and list tokens");
     w.WriteLine("  --dump-ast     stop after parsing");
     w.WriteLine("  --dump-bind    stop after semantic analysis");

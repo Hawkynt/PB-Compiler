@@ -55,6 +55,8 @@ public sealed class LlvmEmitter {
       if (g.Bytes is { } bytes)
         sb.Append('@').Append(g.Name).Append(" = private constant [").Append(bytes.Length).Append(" x i8] c\"")
           .Append(EscapeBytes(bytes)).Append("\"\n");
+      else if (g.FloatingValues is { } values)
+        EmitFloatingGlobal(sb, g, values);
       else
         sb.Append('@').Append(g.Name).Append(" = global ")
           .Append(g.Count > 1 ? $"[{g.Count} x {Ty(g.ValueType)}]" : Ty(g.ValueType))
@@ -67,6 +69,22 @@ public sealed class LlvmEmitter {
       sb.Append(new LlvmEmitter().EmitFunction(module.Functions[i]));
     }
     return sb.ToString();
+  }
+
+  private static void EmitFloatingGlobal(StringBuilder sb, IrGlobalVariable global, IReadOnlyList<double> values) {
+    if (!global.ValueType.IsIeeeFloat || global.ValueType.Bits is not (32 or 64) || values.Count != global.Count)
+      throw new Backend.BackendInvariantException("LLVM back end", "LlvmEmitter.EmitFloatingGlobal",
+        "a typed floating initializer has matching binary32/binary64 element type and element count");
+    var type = Ty(global.ValueType);
+    sb.Append('@').Append(global.Name).Append(" = private constant [").Append(values.Count).Append(" x ")
+      .Append(type).Append("] [");
+    for (var i = 0; i < values.Count; ++i) {
+      if (i > 0)
+        sb.Append(", ");
+      var value = global.ValueType.Bits == 32 ? (double)(float)values[i] : values[i];
+      sb.Append(type).Append(' ').Append(FormatFloat(value));
+    }
+    sb.Append("]\n");
   }
 
   /// <summary>Emits a single function as a self-contained module fragment.</summary>
@@ -122,8 +140,10 @@ public sealed class LlvmEmitter {
     }
     var lhs = inst.Type.IsVoid ? "" : this.Ref(inst) + " = ";
     return lhs + inst switch {
+      IrBinary b when b.IsFloatOp => $"{Mnemonic(b.Op)}{FastMath(b)} {Ty(b.Type)} {this.Ref(b.Lhs)}, {this.Ref(b.Rhs)}",
       IrBinary b => $"{Mnemonic(b.Op)} {Ty(b.Type)} {this.Ref(b.Lhs)}, {this.Ref(b.Rhs)}",
-      IrCmp c => $"{(IsFloatPred(c.Pred) ? "fcmp" : "icmp")} {Mnemonic(c.Pred)} {Ty(c.Lhs.Type)} {this.Ref(c.Lhs)}, {this.Ref(c.Rhs)}",
+      IrCmp c when IsFloatPred(c.Pred) => $"fcmp{FastMath(c)} {Mnemonic(c.Pred)} {Ty(c.Lhs.Type)} {this.Ref(c.Lhs)}, {this.Ref(c.Rhs)}",
+      IrCmp c => $"icmp {Mnemonic(c.Pred)} {Ty(c.Lhs.Type)} {this.Ref(c.Lhs)}, {this.Ref(c.Rhs)}",
       IrCast c => $"{Mnemonic(c.Op)} {Ty(c.Value.Type)} {this.Ref(c.Value)} to {Ty(c.Type)}",
       IrAlloca a => a.Count > 1 ? $"alloca {Ty(a.Allocated)}, i32 {a.Count}" : $"alloca {Ty(a.Allocated)}",
       // The IR has deliberately opaque pointers and no alignment fact. Packed UDT members may begin
@@ -136,7 +156,7 @@ public sealed class LlvmEmitter {
       IrSelect sel => $"select i1 {this.Ref(sel.Condition)}, {Ty(sel.Type)} {this.Ref(sel.IfTrue)}, {Ty(sel.Type)} {this.Ref(sel.IfFalse)}",
       // a variadic callee needs its FUNCTION type spelled out at the call, which LLVM requires
       // wherever the argument list cannot be read off the declaration
-      IrCall call => $"call {CalleeType(call)} {this.Ref(call.Callee)}({this.Args(call)})",
+      IrCall call => $"call{FastMath(call)} {CalleeType(call)} {this.Ref(call.Callee)}({this.Args(call)})",
       IrRet r => r.HasValue ? $"ret {Ty(r.Value!.Type)} {this.Ref(r.Value)}" : "ret void",
       IrBr br => $"br label %{br.Target.Label}",
       IrCondBr cb => $"br i1 {this.Ref(cb.Condition)}, label %{cb.IfTrue.Label}, label %{cb.IfFalse.Label}",
@@ -145,6 +165,25 @@ public sealed class LlvmEmitter {
       IrUnreachable => "unreachable",
       _ => throw EmitDeclinedException.For("LLVM emission", inst),
     };
+  }
+
+  /// <summary>LLVM spelling of the exact per-instruction floating-point relaxation contract.</summary>
+  private static string FastMath(IrInstruction instruction) {
+    var flags = instruction.FastMathFlags;
+    if (flags == IrFastMathFlags.None)
+      return "";
+    if ((flags & IrFastMathFlags.Fast) == IrFastMathFlags.Fast)
+      return " fast";
+
+    var names = new List<string>(7);
+    if ((flags & IrFastMathFlags.Reassociate) != 0) names.Add("reassoc");
+    if ((flags & IrFastMathFlags.NoNaNs) != 0) names.Add("nnan");
+    if ((flags & IrFastMathFlags.NoInfs) != 0) names.Add("ninf");
+    if ((flags & IrFastMathFlags.NoSignedZeros) != 0) names.Add("nsz");
+    if ((flags & IrFastMathFlags.AllowReciprocal) != 0) names.Add("arcp");
+    if ((flags & IrFastMathFlags.AllowContract) != 0) names.Add("contract");
+    if ((flags & IrFastMathFlags.ApproxFunc) != 0) names.Add("afn");
+    return names.Count == 0 ? "" : " " + string.Join(" ", names);
   }
 
   private string PhiInputs(IrPhi phi) =>
