@@ -132,14 +132,16 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
-  /// The value shapes the routed calling sequence can pass and return: a 16- or 32-bit integer (AX or
-  /// DX:AX), a SINGLE or DOUBLE (ST(0)), and a dynamic-string handle (AX). The same shapes may be the
-  /// storage behind a one-word near BYREF pointer. Records are supported only BYREF (their ABI value
-  /// is that pointer); QUAD, BYTE, FIX/BCD, EXT and array values still need their own routed ABI work.
+  /// The value shapes a routed procedure definition can receive or return: a 16- or 32-bit integer
+  /// (AX or DX:AX), SINGLE/DOUBLE/EXT reals (ST(0)), and a dynamic-string handle (AX). EXT is already
+  /// represented by an f80/TBYTE parameter cell and ST(0) return in the machine back end; routed call
+  /// sites still need their separate ten-byte push support before an IR caller can invoke one directly.
+  /// Records are supported only BYREF (their ABI value is one near pointer). QUAD, BYTE, FIX/BCD and
+  /// array values still need routed ABI work.
   /// </summary>
   private static bool IsBackendAbiType(PbType type)
     => type is ScalarType { IsFloat: false, ByteSize: 2 or 4 }
-            or ScalarType { IsFloat: true, ByteSize: 4 or 8 }
+            or ScalarType { IsFloat: true, ByteSize: 4 or 8 or 10 }
             or StringType;
 
   /// <summary>

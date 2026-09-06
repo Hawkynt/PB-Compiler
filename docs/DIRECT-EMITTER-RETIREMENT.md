@@ -26,7 +26,7 @@ The remaining pinned blockers are:
 - QUAD parameters/results;
 - BYTE parameters/results;
 - FIX parameters;
-- EXT parameters/results;
+- EXT routed call arguments (the selector still needs ten-byte stack staging for f80); 
 - FASTCALL/WATCALL procedure definitions and register-argument calls;
 - procedure-local error handling (`ON ERROR` / `RESUME` / `TRY`) including caller-handler preservation;
 - array parameters;
@@ -38,6 +38,7 @@ Closed so far:
 
 - CDECL/STDCALL procedure definitions — the selector already emitted right-to-left stack arguments; definition-side routing takes `LayoutFrame`'s matching offsets, and CDECL emits a bare `RET` because its caller owns cleanup while STDCALL keeps `RET n`. Proven by `BackendStackConventionRoutingTests`, which executes routed against direct in both optimizer modes, and by the recursive convention case in `CallingConventionTests`.
 - BYREF record parameters — a record crosses the call as one near pointer and its layout never crosses the boundary, so member uses lower to ordinary typed GEP/load/store against the caller's storage. Proven by `BackendRecordParameterRoutingTests`, which covers member offsets and write-back through the pointer.
+- EXT procedure definitions — f80 parameters already address their caller-owned TBYTE cells directly and real results already leave the routed function in ST(0). `BackendExtendedParameterRoutingTests` exercises two ten-byte parameters plus an EXT result across a mixed direct-caller/routed-callee boundary in both optimizer modes. The remaining EXT work is only routed call-side ten-byte argument staging.
 
 BYVAL records are deliberately absent from both lists: the direct emitter refuses them as well ("not yet generated: load of UdtType"), so they are a front-end gap rather than a routing class, and they do not block retirement.
 
