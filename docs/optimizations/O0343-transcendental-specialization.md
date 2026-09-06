@@ -2,37 +2,44 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
-| **Stage** | Emitter + runtime |
+| **Status** | ✅ Implemented for range-driven LUT/polynomial specialization plus target `afn` fallback |
+| **Stage** | IR middle end + target lowering |
+| **Gate** | Optimizer + `$OPTIMIZE SPEED` / `-OZF` |
+| **IR** | `FpDomainAnalysis`, `FpDomainSpecialization`, `FpFastMath` |
 | **Related** | [O0337](O0337-polynomial-evaluation.md), [O0332](O0332-lookup-table-generation.md), [O0341](O0341-reciprocal-approximation.md) |
 
-## The idea
+## What is implemented
 
-`SIN`, `COS`, `EXP`, `LOG` and `ATN` are computed to full precision by the x87
-or by a runtime routine. When the compiler knows the **argument range** or the
-**required precision**, a cheaper approximation is exact enough:
+O0343 consumes the same branch-refined `IrRangeAnalysis` facts already used for
+bounds and overflow reasoning; there is no independent floating range engine.
+`FpDomainAnalysis` adapts an integer SSA range through integer-to-float casts and
+simple affine floating arithmetic.
 
-- an angle already reduced to `0..2π` skips the range reduction;
-- a result immediately truncated to an integer needs only that many bits;
-- a small domain becomes a table ([O0332](O0332-lookup-table-generation.md)).
+SPEED then has three progressively more general choices:
 
-The classic demo-effect case — `INT(SIN(a) * 256)` in a loop — needs about nine
-bits of the result.
+1. **Finite discrete domain.** If the argument is provably derived from one
+   integer SSA value with at most 256 possible values, the compiler evaluates
+   the function at compile time and creates a typed FP lookup table when the
+   backend advertises typed constant-table support. A narrow floating interval
+   by itself is *not* enough — `[0,1]` still contains many floating values.
+2. **Narrow continuous kernel.** Proven small intervals use independently
+   derived Taylor/Horner kernels: `SIN`, `COS`, `ATN`, `EXP`, and `LOG` close to
+   one have conservative kernel domains.
+3. **General call.** Otherwise the call remains, but `FpFastMath` marks a known
+   math intrinsic `afn`, allowing target-specific approximation.
 
-## Applies to
+The LLVM hosted path enables typed FP tables. Native x87 currently keeps the
+same range-specialized polynomial path but leaves typed table generation off,
+because its synthesized-global data-cell route does not yet materialize these
+arrays.
 
-```basic
-DIM a%, s%
-FOR a% = 0 TO 359
-  s% = INT(SIN(a% * 3.14159 / 180) * 256)
-NEXT
-```
+## Numerical contract
 
-## What it needs
+The lookup evaluator uses `System.Math` only as a compile-time SPEED oracle. It
+is not used by strict constant folding and is not claimed bit-identical to PBC's
+x87/runtime transcendental implementation. The polynomial coefficients are
+mathematical series constants independently derived from the functions rather
+than copied from an implementation.
 
-- The **required-precision** analysis: how many bits of the result any consumer
-  observes ([O0090](O0090-demanded-bits.md) is the integer form of the same
-  question).
-- Fast-math gating wherever the approximation is not bit-identical to the x87
-  result, which is nearly always — so on the oracle-verified dialects this is a
-  fast-math feature, and on `pb36` an opt-in.
+Ordinary optimization never runs `FpDomainSpecialization` and carries no `afn`
+permission.

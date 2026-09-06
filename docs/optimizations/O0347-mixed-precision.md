@@ -2,38 +2,38 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
-| **Stage** | Mid-end |
+| **Status** | 🟨 Partial — one exact binary32 multiply narrowing is implemented; general error-budget analysis remains planned |
+| **Stage** | IR middle end |
+| **Gate** | Ordinary optimizer for the exact case |
+| **IR** | `FpSimplify.NarrowDemandedPrecision` |
 | **Related** | [O0012](O0012-float-demotion.md), [O0057](O0057-storage-narrowing.md), [O0346](O0346-fp-classification-simplification.md) |
 
-## The idea
+## What is implemented
 
-Compute parts of an expression at **narrower precision** where error analysis
-proves it acceptable: `SINGLE` instead of `DOUBLE`, or `DOUBLE` instead of `EXT`.
-The saving is memory traffic and — on the x87 — the load/store width, since the
-arithmetic itself always happens at 80 bits internally.
+The middle end recognizes this exact shape:
 
-The related and more valuable case is the one
-[O0012](O0012-float-demotion.md) already implements: values that are not really
-floats at all.
-
-## Applies to
-
-```basic
-DIM acc AS DOUBLE, i%
-FOR i% = 0 TO 999
-  acc = acc + tiny!(i%)      ' SINGLE inputs, DOUBLE accumulator
-NEXT
+```text
+fptrunc (fmul (fpext a:f32 to f64), (fpext b:f32 to f64)) to f32
 ```
 
-Here the *accumulator* genuinely wants the extra precision — which is the point:
-narrowing must be proven, not assumed.
+when both source operands are proven finite/non-NaN. It replaces the sequence
+with an `fmul f32` directly.
 
-## What it needs
+This is not an approximation. Two binary32 significands need at most 48 bits
+for an exact product, while binary64 has 53 significand bits, so the widened
+multiply introduces no intermediate rounding before the final binary32 round.
+The direct binary32 multiply therefore has the same final result for the proven
+finite case.
 
-- A real **error analysis**, not a heuristic. On the x87 the intermediate
-  precision is set by the control word, so narrowing the storage does not narrow
-  the computation — which makes the analysis subtler than on a machine with
-  per-instruction precision.
-- Fast-math gating wherever the narrowing changes the observable result, which
-  for PRINT-visible values it usually does.
+Because it is exact, this subset belongs in ordinary optimization and does not
+require SPEED.
+
+## Deliberate boundary
+
+Addition/subtraction are not generalized by analogy: widened addition followed
+by narrowing can encounter double-rounding cases. Accumulators, chained
+operations and arbitrary `DOUBLE -> SINGLE` demotion need a real propagated
+error budget and are not claimed by this implementation.
+
+The broader "this value is really an integer" case remains
+[O0012](O0012-float-demotion.md).

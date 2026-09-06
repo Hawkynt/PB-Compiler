@@ -80,11 +80,12 @@ public sealed class IrCloner {
     var dst = this._blocks[src];
     foreach (var inst in src.Instructions) {
       if (inst is IrPhi phi) {
-        var clone = dst.AppendPhi(new IrPhi(phi.Type));   // incomings filled in the third pass
+        var clone = dst.AppendPhi(new IrPhi(phi.Type) { FastMathFlags = phi.FastMathFlags }); // incomings filled in pass 4
         this._values[inst] = clone;
         continue;
       }
       var cloned = this.CloneInstruction(inst);
+      cloned.FastMathFlags = inst.FastMathFlags;
       dst.Append(cloned);
       this._cloned.Add((inst, cloned));
       if (!inst.Type.IsVoid)
