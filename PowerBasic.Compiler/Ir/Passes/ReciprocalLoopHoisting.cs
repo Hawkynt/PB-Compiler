@@ -79,6 +79,18 @@ internal static class ReciprocalLoopHoisting {
         || !loop.Body.Contains(parent))
       return false;
 
+    // The entry guard protects the zero-trip case, but it must not turn an inner conditional use into
+    // an unconditional evaluation on every entered iteration. Keep this slice deliberately canonical:
+    // the reciprocal has to be the first real operation in the body block selected directly by the
+    // header. Then every non-zero iteration would have evaluated it immediately anyway; the transform
+    // only changes "once per iteration" into "once before the first iteration".
+    if (loop.Header.Terminator is not IrCondBr entryBranch)
+      return false;
+    var firstBody = loop.BodyOnTrue ? entryBranch.IfTrue : entryBranch.IfFalse;
+    if (!ReferenceEquals(parent, firstBody)
+        || !ReferenceEquals(parent.Instructions.FirstOrDefault(instruction => instruction is not IrPhi), binary))
+      return false;
+
     if (binary.Rhs is IrInstruction divisorInstruction) {
       if (divisorInstruction.Parent is not { } divisorBlock
           || loop.Body.Contains(divisorBlock)
