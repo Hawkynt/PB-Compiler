@@ -20,8 +20,12 @@ SPEED then has three progressively more general choices:
 1. **Finite discrete domain.** If the argument is provably derived from one
    integer SSA value with at most 256 possible values, the compiler evaluates
    the function at compile time and creates a typed FP lookup table when the
-   backend advertises typed constant-table support. A narrow floating interval
-   by itself is *not* enough — `[0,1]` still contains many floating values.
+   backend advertises typed constant-table support. The integer source width is
+   irrelevant: after subtracting the proven lower bound, the exact `0..N-1`
+   index is normalized to `U16`, widening narrow sources and truncating wider
+   `LONG`/DWORD/QUAD sources only after the range proof. A narrow floating
+   interval by itself is *not* enough — `[0,1]` still contains many floating
+   values.
 2. **Narrow continuous kernel.** Proven small intervals use independently
    derived Taylor/Horner kernels: `SIN`, `COS`, `ATN`, `EXP`, and `LOG` close to
    one have conservative kernel domains.
