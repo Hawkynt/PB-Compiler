@@ -15,11 +15,12 @@ namespace PowerBasic.Compiler.Ir.Passes;
 ///
 /// <para>
 /// The transform is deliberately narrower than a generic trap merger. Both trap blocks must be the
-/// exact <c>rt_error(6)</c> shape emitted by <c>IrLowering.RaiseWhen</c>, and every instruction made
-/// speculative must be pure and non-trapping. Stores, loads, calls, division/remainder and arbitrary
-/// control flow stop the chain. Functions with an ON ERROR handler never reach this pass because the
-/// pass manager excludes them; that is essential, since otherwise moving the point at which Error 6
-/// is raised would change RESUME semantics.
+/// exact <c>rt_error(6)</c> shape emitted by <c>IrLowering.RaiseWhen</c>, the first trap and continuation
+/// must belong exclusively to that guard region, and every instruction made speculative must be pure
+/// and non-trapping. Stores, loads, calls, division/remainder and arbitrary control flow stop the chain.
+/// Functions with an ON ERROR handler never reach this pass because the pass manager excludes them;
+/// that is essential, since otherwise moving the point at which Error 6 is raised would change RESUME
+/// semantics.
 /// </para>
 /// </summary>
 public static class OverflowCheckCoalescing {
@@ -45,6 +46,13 @@ public static class OverflowCheckCoalescing {
         if (ErrorCode(first.Trap, middle) != _OVERFLOW_ERROR
             || ErrorCode(second.Trap, second.Continuation) != _OVERFLOW_ERROR)
           continue;
+
+        // firstOverflow is only meaningful on executions that passed through this guard. If either
+        // the trap or the continuation has another predecessor, moving that value into `middle`
+        // changes an unrelated path or can make a non-dominating definition into an SSA operand.
+        if (!HasExactlyPredecessors(first.Trap, block)
+            || !HasExactlyPredecessors(middle, block, first.Trap))
+          continue;
         if (!SafeToSpeculate(middle, second.Branch))
           continue;
 
@@ -54,6 +62,12 @@ public static class OverflowCheckCoalescing {
 
         first.Branch.EraseFromParent();
         block.Append(new IrBr(middle));
+
+        // The first trap is now unreachable. Phi nodes model only reachable predecessor edges in this
+        // IR, so retaining its incoming value would make an otherwise legal coalescing fail verification.
+        foreach (var phi in middle.Phis)
+          phi.RemoveIncoming(first.Trap);
+
         ++changed;
         progress = true;
         break; // the CFG changed; restart from a fresh structural view
@@ -89,6 +103,12 @@ public static class OverflowCheckCoalescing {
       && call.GetOperand(1) is IrConstantInt code
         ? checked((int)code.Value)
         : null;
+  }
+
+  private static bool HasExactlyPredecessors(IrBasicBlock block, params IrBasicBlock[] expected) {
+    var actual = block.Predecessors.ToArray();
+    return actual.Length == expected.Length
+      && actual.All(predecessor => expected.Any(candidate => ReferenceEquals(predecessor, candidate)));
   }
 
   private static bool SafeToSpeculate(IrBasicBlock block, IrInstruction terminator) {
