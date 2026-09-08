@@ -18,6 +18,9 @@ public sealed class IrFunction : IrGlobalValue {
         this.AddParameter(p);
   }
 
+  /// <summary>The module that owns this function, or null while it is standalone.</summary>
+  public IrModule? Module { get; internal set; }
+
   /// <summary>The declared return type (<see cref="IrType.Void"/> for a SUB).</summary>
   public IrType ReturnType { get; }
 

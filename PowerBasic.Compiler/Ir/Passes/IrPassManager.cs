@@ -22,6 +22,9 @@ public sealed class IrPassManager {
   /// <summary>When true, verifies the function after each pass and throws on any error.</summary>
   public bool VerifyEachPass { get; set; }
 
+  /// <summary>The optimization objective this pipeline applies; propagated to the module for late passes.</summary>
+  public bool OptimizeForSpeed { get; init; }
+
   public IrPassManager Add(string name, Func<IrFunction, int> pass) {
     this._passes.Add((name, pass));
     return this;
@@ -82,6 +85,7 @@ public sealed class IrPassManager {
   /// and the second interprocedural sweep is followed by another function sweep for what it exposed.
   /// </summary>
   public void RunOnModule(IrModule module) {
+    module.OptimizeForSpeed = this.OptimizeForSpeed;
     RunFunctions();
     foreach (var (_, run) in this._modulePasses)
       if (run(module) > 0)
@@ -149,7 +153,7 @@ public sealed class IrPassManager {
   /// </summary>
   public static IrPassManager Standard(bool optimizeForSpeed = false, bool includeModulePasses = true,
       IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false)
-    => new IrPassManager()
+    => new IrPassManager { OptimizeForSpeed = optimizeForSpeed }
     .Add("mem2reg", Mem2Reg.Run)
     // O0320-O0329 have to see the explicit memory graph and the original counted-loop shape. Run the
     // aggregate transforms before AoS->SoA destroys record identity, then the loop/data transforms,
