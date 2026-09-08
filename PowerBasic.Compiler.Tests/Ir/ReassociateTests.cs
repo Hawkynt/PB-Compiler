@@ -56,6 +56,24 @@ public sealed class ReassociateTests {
   }
 
   [Test]
+  public void Chain_GivenEarlierBinarySubexpression_ThenStableSsaOrderExposesItToGvn() {
+    // The already-canonical a+b has only two leaves, so reassociation never rebuilds it. Its operands
+    // still have to establish the function-wide order; otherwise the first 3-leaf chain would keep
+    // its source order c+a+b and hide the existing a+b from GVN.
+    var (fn, entry, a, b) = Function();
+    var c = fn.AddParameter(new IrArgument(IrType.I16, 2, "c"));
+
+    entry.Append(new IrBinary(IrBinaryOp.Add, a, b));
+    var inner = entry.Append(new IrBinary(IrBinaryOp.Add, c, a));
+    var chain = entry.Append(new IrBinary(IrBinaryOp.Add, inner, b));
+    entry.Append(new IrRet(chain));
+
+    Assert.That(Gvn.Run(fn), Is.Zero, "the source tree contains no repeated binary expression");
+    Assert.That(Reassociate.Run(fn), Is.EqualTo(1), "c+a+b should canonicalize to a+b+c by stable SSA order");
+    Assert.That(Gvn.Run(fn), Is.GreaterThan(0), "the rebuilt a+b subtree should reuse the earlier value");
+  }
+
+  [Test]
   public void Chain_GivenItRunsTwice_ThenTheSecondRunChangesNothing() {
     var (fn, entry, a, b) = Function();
     var inner = entry.Append(new IrBinary(IrBinaryOp.Mul, b, Const(3)));
