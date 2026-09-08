@@ -24,7 +24,7 @@ public static class HotColdFieldSplitting {
   public static int Run(IrFunction fn) => DataLayoutTransformCore.RewriteRecordArrays(fn, DataLayoutTransformCore.RecordMode.HotCold);
 }
 
-/// <summary>O0323 — narrows private integer record fields when every stored value fits a smaller integer storage type.</summary>
+/// <summary>O0323 — packs private integer record fields to the smallest proven byte or sub-byte representation.</summary>
 public static class StructurePackingByRange {
   public static int Run(IrFunction fn) => DataLayoutTransformCore.PackRecordFields(fn);
 }
@@ -135,6 +135,7 @@ internal static class DataLayoutTransformCore {
   }
 
   private sealed record RecordShape(IrAlloca Root, long Stride, int Elements, List<Field> Fields);
+  private readonly record struct BitField(int Width, bool Signed);
 
   internal static int RewriteRecordArrays(IrFunction fn, RecordMode mode) {
     if (fn.Entry is null)
@@ -161,8 +162,9 @@ internal static class DataLayoutTransformCore {
       if (!TryRecordShape(fn, root, out var shape) || !ExactFields(shape!))
         continue;
       var packedTypes = new Dictionary<Field, IrType>();
+      var bitFields = new Dictionary<Field, BitField>();
       foreach (var field in shape!.Fields) {
-        if (!field.Type.IsInteger || field.Type.Bits <= 8 || field.Accesses.All(a => !a.IsStore)) {
+        if (!field.Type.IsInteger || field.Accesses.All(a => !a.IsStore)) {
           packedTypes[field] = field.Type;
           continue;
         }
@@ -175,11 +177,16 @@ internal static class DataLayoutTransformCore {
           }
           range = range.Join(ranges.RangeAt(store.Value, store.Parent));
         }
-        packedTypes[field] = Narrowest(field.Type, range);
+        var subByteWidth = SubByteWidth(range);
+        if (subByteWidth > 0) {
+          packedTypes[field] = IrType.I8;
+          bitFields[field] = new BitField(subByteWidth, range.Lo < 0);
+        } else
+          packedTypes[field] = Narrowest(field.Type, range);
       }
-      if (packedTypes.All(pair => pair.Key.Type.SameStorage(pair.Value)))
+      if (bitFields.Count == 0 && packedTypes.All(pair => pair.Key.Type.SameStorage(pair.Value)))
         continue;
-      if (Pack(shape, packedTypes))
+      if (Pack(shape, packedTypes, bitFields))
         ++changed;
     }
     return changed;
@@ -615,16 +622,30 @@ internal static class DataLayoutTransformCore {
     return 1;
   }
 
-  private static bool Pack(RecordShape shape, IReadOnlyDictionary<Field, IrType> packedTypes) {
+  private static bool Pack(RecordShape shape, IReadOnlyDictionary<Field, IrType> packedTypes,
+      IReadOnlyDictionary<Field, BitField> bitFields) {
     var packedOffset = new Dictionary<Field, long>();
-    long stride = 0;
+    var bitOffset = new Dictionary<Field, int>();
+    long bitCursor = 0;
     foreach (var field in shape.Fields.OrderBy(f => f.Offset)) {
+      if (bitFields.TryGetValue(field, out var bitField)) {
+        var withinByte = (int)(bitCursor & 7);
+        if (withinByte + bitField.Width > 8)
+          bitCursor = (bitCursor + 7) & ~7L;
+        packedOffset[field] = bitCursor >> 3;
+        bitOffset[field] = (int)(bitCursor & 7);
+        bitCursor += bitField.Width;
+        continue;
+      }
+
+      bitCursor = (bitCursor + 7) & ~7L;
       var size = IrAliasAnalysis.StorageBytes(packedTypes[field]);
       if (size is null)
         return false;
-      packedOffset[field] = stride;
-      stride += size.Value;
+      packedOffset[field] = bitCursor >> 3;
+      bitCursor += checked(size.Value * 8L);
     }
+    var stride = (bitCursor + 7) >> 3;
     if (stride <= 0 || stride >= shape.Stride)
       return false;
     var rewrittenOffsets = new Dictionary<Access, Linear>();
@@ -644,6 +665,11 @@ internal static class DataLayoutTransformCore {
         if (BuildLinear(access.Instruction.Parent!, access.Instruction, rewrittenOffsets[access]) is not { } byteOffset)
           return false;
         var pointer = access.Instruction.Parent!.InsertBefore(new IrGep(root, byteOffset), access.Instruction);
+        if (bitFields.TryGetValue(field, out var bitField)) {
+          RewriteBitFieldAccess(access, pointer, bitOffset[field], bitField);
+          continue;
+        }
+
         var storedType = packedTypes[field];
         if (access.Instruction is IrLoad load) {
           if (storedType.SameStorage(load.Type)) {
@@ -671,6 +697,63 @@ internal static class DataLayoutTransformCore {
     if (shape.Root.HasNoUsers)
       shape.Root.EraseFromParent();
     return true;
+  }
+
+  private static void RewriteBitFieldAccess(Access access, IrValue pointer, int bitOffset, BitField bitField) {
+    var mask = (1 << bitField.Width) - 1;
+    switch (access.Instruction) {
+      case IrLoad load: {
+        var block = load.Parent!;
+        IrValue value = block.InsertBefore(new IrLoad(IrType.I8, pointer), load);
+        if (bitOffset != 0)
+          value = block.InsertBefore(new IrBinary(IrBinaryOp.LShr, value, new IrConstantInt(IrType.I8, bitOffset)), load);
+        value = block.InsertBefore(new IrBinary(IrBinaryOp.And, value, new IrConstantInt(IrType.I8, mask)), load);
+        if (bitField.Signed) {
+          var signShift = 8 - bitField.Width;
+          value = block.InsertBefore(new IrBinary(IrBinaryOp.Shl, value, new IrConstantInt(IrType.I8, signShift)), load);
+          value = block.InsertBefore(new IrBinary(IrBinaryOp.AShr, value, new IrConstantInt(IrType.I8, signShift)), load);
+        }
+        if (load.Type.Bits > 8)
+          value = block.InsertBefore(new IrCast(bitField.Signed ? IrCastOp.SExt : IrCastOp.ZExt, value, load.Type), load);
+        else if (load.Type.Bits < 8)
+          value = block.InsertBefore(new IrCast(IrCastOp.Trunc, value, load.Type), load);
+        load.ReplaceAllUsesWith(value);
+        load.EraseFromParent();
+        break;
+      }
+      case IrStore store: {
+        var block = store.Parent!;
+        IrValue value = store.Value;
+        if (value.Type.Bits > 8)
+          value = block.InsertBefore(new IrCast(IrCastOp.Trunc, value, IrType.I8), store);
+        else if (value.Type.Bits < 8)
+          value = block.InsertBefore(new IrCast(IrCastOp.ZExt, value, IrType.I8), store);
+        value = block.InsertBefore(new IrBinary(IrBinaryOp.And, value, new IrConstantInt(IrType.I8, mask)), store);
+        if (bitOffset != 0)
+          value = block.InsertBefore(new IrBinary(IrBinaryOp.Shl, value, new IrConstantInt(IrType.I8, bitOffset)), store);
+        var old = block.InsertBefore(new IrLoad(IrType.I8, pointer), store);
+        var fieldMask = mask << bitOffset;
+        var preserved = block.InsertBefore(new IrBinary(IrBinaryOp.And, old,
+          new IrConstantInt(IrType.I8, 0xff ^ fieldMask)), store);
+        var merged = block.InsertBefore(new IrBinary(IrBinaryOp.Or, preserved, value), store);
+        block.InsertBefore(new IrStore(merged, pointer), store);
+        store.EraseFromParent();
+        break;
+      }
+    }
+  }
+
+  private static int SubByteWidth(ValueRange range) {
+    if (range.IsTop || range.IsEmpty)
+      return 0;
+    for (var bits = 1; bits < 8; ++bits)
+      if (range.Lo < 0) {
+        var limit = 1L << (bits - 1);
+        if (range.Lo >= -limit && range.Hi < limit)
+          return bits;
+      } else if (range.Hi < 1L << bits)
+        return bits;
+    return 0;
   }
 
   private static IrType Narrowest(IrType original, ValueRange range) {
