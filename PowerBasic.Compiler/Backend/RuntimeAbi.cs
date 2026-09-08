@@ -246,8 +246,7 @@ internal static class RuntimeAbi {
     ["rt_str_concat"] = new("rt_strcat",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
 
-    // "StrCatVar: AX=target handle, DX=source handle -> AX". It grows the TARGET in place when the
-    // target is the topmost heap block and copies the source's bytes into it - so it consumes the
+    // "StrCatVar: AX=target handle, DX=source handle -> AX". It grows the TARGET in place when it is the topmost heap block and copies the source's bytes into it - so it consumes the
     // target and BORROWS the source, which is what makes Ir.Passes.StringAppendInPlace drop the copy
     // the lowering made of the source.
     ["rt_str_append_var"] = new("rt_strcatvar",
@@ -472,7 +471,7 @@ internal static class RuntimeAbi {
     // AX = position or 0 (consumes both)". INSTR ANY and VERIFY are the same routine under one flag,
     // which is a CONSTANT at every call site - so it is a preset here rather than an argument, and
     // the two spellings become two entries over one label. The answer is a word the IR types i32,
-    // hence the CWD the direct emitter writes after the call.
+    // hence the CWD the emitter writes after the call.
     ["rt_str_scanset"] = new("rt_scanset",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX), new(ArgKind.Word, Reg.CX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.WidenedWord, Constants: [(Reg.BX, 0)]),
@@ -708,8 +707,10 @@ internal static class RuntimeAbi {
     // it. On this target that scaling is a 32-bit doubling, which is the whole body of the shim.
     //
     //   "rt_arr_alloc:     DX:AX = byte count  -> AX = offset within rt_arrseg (zero-filled)"
+    //   "rt_arr_alloc_nz:  DX:AX = byte count  -> AX = offset within rt_arrseg (not initialized)"
     //   "rt_arr_alloc_ptr: DX:AX = element count -> the same, for a block of target pointers"
     ["rt_arr_alloc"] = new("rt_arr_alloc", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
+    ["rt_arr_alloc_nz"] = new("rt_arr_alloc_nz", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
     ["rt_arr_alloc_ptr"] = new("rt_arr_alloc_ptr", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
 
     //   "rt_arr_realloc: BX = old block, CX = old byte count, DX:AX = new byte count -> AX = new block"
