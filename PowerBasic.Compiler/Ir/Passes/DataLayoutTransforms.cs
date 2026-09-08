@@ -1005,8 +1005,15 @@ internal static class DataLayoutTransformCore {
 
   private static bool TryClonePureValue(IrValue value, CountedLoop producer, CountedLoop consumer, IrInstruction before, out IrValue? clone) {
     var cache = new Dictionary<IrValue, IrValue>(ReferenceEqualityComparer.Instance) { [producer.Counter] = consumer.Counter };
-    var writes = producer.Region.Concat(consumer.Region)
-      .SelectMany(b => b.Instructions).OfType<IrStore>().ToList();
+    var regionInstructions = producer.Region.Concat(consumer.Region)
+      .SelectMany(b => b.Instructions).ToList();
+    var writes = regionInstructions.OfType<IrStore>().ToList();
+    var hasOpaqueWrites = regionInstructions.Any(i => i switch {
+      IrInlineAsm => true,
+      IrCall { Callee: IrFunction callee } when callee.IsDeclaration && FunctionSummaries.IsPureExternal(callee.Name) => false,
+      IrCall => true,
+      _ => false,
+    });
     return Clone(value, out clone, 0);
 
     bool Clone(IrValue current, out IrValue? result, int depth) {
@@ -1033,7 +1040,7 @@ internal static class DataLayoutTransformCore {
           break;
         case IrLoad load:
           if (!ClonePointer(load.Pointer, out var pointer, depth + 1)) return false;
-          if (writes.Any(w => IrAliasAnalysis.MayAlias(pointer!, load.Type, w.Pointer, w.Value.Type))) return false;
+          if (hasOpaqueWrites || writes.Any(w => IrAliasAnalysis.MayAlias(pointer!, load.Type, w.Pointer, w.Value.Type))) return false;
           result = block.InsertBefore(new IrLoad(load.Type, pointer!), before);
           break;
         default:
