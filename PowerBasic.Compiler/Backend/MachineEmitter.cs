@@ -347,17 +347,22 @@ public sealed class MachineEmitter {
         break;
       case MOpcode.Jcc: asm.J(instr.Condition!.Value, this._labels[((MOperand.LabelRef)ops[0]).Name]); break;
       case MOpcode.JmpIndexed: this.EmitIndexedJump(instr); break;
-      case MOpcode.Call: {
-        // with a resolver (the whole-program routing) the callee MUST be one it bound - anything else
-        // is a routing bug; without one, the name is an external/runtime symbol resolved by name
-        var callee = ((MOperand.LabelRef)ops[0]).Name;
-        asm.Call(this._resolveCallee is { } resolve
-          ? resolve(callee) ?? throw new BackendInvariantException("MachineEmitter.EmitInstruction",
-              $"no label for callee '{callee}' - CodeGenerator.ExternalCalleesResolve and the routing "
-                + "fixpoint admit a function only when every callee it names already has one")
-          : asm.Lbl(callee));
+      case MOpcode.Call:
+        switch (ops[0]) {
+          case MOperand.LabelRef direct:
+            asm.Call(this.ResolveCallee(direct.Name));
+            break;
+          case MOperand.Register indirect:
+            asm.Call(this.Resolve(indirect.Reg));
+            break;
+          case MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell:
+            asm.Call(this.Mem(ops[0]));
+            break;
+          default:
+            throw new BackendInvariantException("MachineEmitter.EmitInstruction",
+              $"CALL target {ops[0]} is neither a direct code label nor a word register/memory operand");
+        }
         break;
-      }
       case MOpcode.Push:
         switch (this.ToSource(ops[0])) {
           case Reg r: asm.Push(r); break;
@@ -518,7 +523,7 @@ public sealed class MachineEmitter {
         case Imm i: mi(m, i); break;
         default: throw new BackendInvariantException("MachineEmitter.Emit2",
           $"{dest} <- {src} is memory to memory - InstructionSelector.TryOperand yields only "
-            + "Immediate/DataOffset/Register, and Spiller.CanSpill refuses an instruction that "
+            + "Immediate/DataOffset/LabelRef/Register, and Spiller.CanSpill refuses an instruction that "
             + "already carries a cell");
       }
     }
@@ -531,11 +536,12 @@ public sealed class MachineEmitter {
     MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell => this.Mem(operand),
     MOperand.DataOffset o => Imm.OffsetOf(this.DataLabel(o.Name), o.Disp),
     MOperand.BlockOffset b => Imm.OffsetOf(this._labels[b.Block]),
-    // LabelRef, InlineAsmText and BlockAddressTable are the unhandled kinds, and each occupies a
-    // fixed position of an opcode EmitInstruction dispatches before it reaches here
+    MOperand.LabelRef label => Imm.OffsetOf(this.ResolveCallee(label.Name)),
+    // InlineAsmText and BlockAddressTable are the unhandled kinds, and each occupies a fixed position
+    // of an opcode EmitInstruction dispatches before it reaches here.
     _ => throw new BackendInvariantException("MachineEmitter.ToSource",
       $"operand {operand} is in a source position, where the selector emits only "
-        + "Register/Immediate/Memory/StackSlot/DataCell/ParamCell/DataOffset/BlockOffset"),
+        + "Register/Immediate/Memory/StackSlot/DataCell/ParamCell/DataOffset/BlockOffset/LabelRef"),
   };
 
   private Reg Reg(MOperand operand) => this.Resolve(((MOperand.Register)operand).Reg);
@@ -558,6 +564,17 @@ public sealed class MachineEmitter {
           + "an OFFSET has nowhere to carry that - every arm of CodeGenerator.ResolveDataCell answers "
           + "with displacement zero");
   }
+
+  /// <summary>
+  /// Resolves a direct callee or function address through the same whole-program label map. With no
+  /// resolver this is the standalone/test path, where a named assembler label is sufficient.
+  /// </summary>
+  private Label ResolveCallee(string name)
+    => this._resolveCallee is { } resolve
+      ? resolve(name) ?? throw new BackendInvariantException("MachineEmitter.ResolveCallee",
+          $"no label for callee '{name}' - CodeGenerator routing admits a function address or direct "
+            + "call only when that procedure has a code label")
+      : this._asm.Lbl(name);
 
   private Mem ResolveData(string name)
     => this._resolveData?.Invoke(name)
