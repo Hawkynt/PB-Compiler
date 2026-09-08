@@ -135,4 +135,26 @@ public sealed class InductionVariableSimplificationTests {
     Assert.That(twice.Parent, Is.SameAs(loop.Latch));
     Assert.That(carried.IncomingFrom(loop.Latch), Is.SameAs(twice));
   }
+
+  [Test]
+  public void StandardPipeline_GivenLongAffineLoop_ThenRunsO0062AndKeepsIrValid() {
+    var loop = CreateLoop(limit: 32);
+    var scaled = new IrBinary(IrBinaryOp.Mul, loop.Counter, new IrConstantInt(IrType.I16, 3));
+    loop.Body.InsertBefore(scaled, loop.Body.Terminator!);
+    var derived = new IrBinary(IrBinaryOp.Add, scaled, new IrConstantInt(IrType.I16, 7));
+    loop.Body.InsertBefore(derived, loop.Body.Terminator!);
+    var store = new IrStore(derived, loop.Sink);
+    loop.Body.InsertBefore(store, loop.Body.Terminator!);
+
+    var passes = IrPassManager.Standard(includeModulePasses: false);
+    passes.VerifyEachPass = true;
+    passes.RunToFixpoint(loop.Fn);
+
+    Assert.That(IrVerifier.Verify(loop.Fn), Is.Empty);
+    var iv = loop.Header.Phis.Single(phi => !ReferenceEquals(phi, loop.Counter));
+    Assert.That(store.Value, Is.SameAs(iv));
+    Assert.That(((IrConstantInt)iv.IncomingFrom(loop.Entry)!).Value, Is.EqualTo(7));
+    Assert.That(loop.Fn.AllInstructions.OfType<IrBinary>().Any(binary => binary.Op == IrBinaryOp.Mul), Is.False,
+      "the standard pipeline must reach O0062 and remove the per-iteration constant multiply");
+  }
 }
