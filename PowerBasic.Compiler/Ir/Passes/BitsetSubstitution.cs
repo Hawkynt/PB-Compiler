@@ -1,13 +1,16 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
 /// O0331 — packs a non-escaping zero-initialized global INTEGER Boolean array into one bit per
-/// element. The v1 proof is intentionally strict: every access must be a direct element GEP and every
-/// stored value must be exactly 0 or -1.
+/// element. Every access must preserve Boolean semantics; stores may be literal 0/-1 or an SSA value
+/// whose range is proven to contain only those two values.
 /// </summary>
 public static class BitsetSubstitution {
 
   private const int _MIN_ELEMENTS = 8;
+  private const string _MEMSET = "llvm.memset.p0.i32";
 
   private sealed record Access(IrInstruction Instruction, IrValue Index);
 
@@ -24,7 +27,7 @@ public static class BitsetSubstitution {
   private static bool TryPack(IrModule module, IrGlobalVariable global) {
     if (!global.ValueType.SameStorage(IrType.I16) || global.Count < _MIN_ELEMENTS || global.Bytes is not null
         || !global.IsZeroInitialized || global.Name.StartsWith("rt_", StringComparison.Ordinal)
-        || !Collect(global, out var accesses, out var geps))
+        || !Collect(global, out var accesses, out var geps, out var zeroFills))
       return false;
 
     var replacement = new IrGlobalVariable(global.Name, IrType.I8) {
@@ -42,6 +45,9 @@ public static class BitsetSubstitution {
           break;
       }
 
+    foreach (var zeroFill in zeroFills)
+      RewriteZeroFill(zeroFill, replacement);
+
     foreach (var gep in geps)
       if (gep.HasNoUsers)
         gep.EraseFromParent();
@@ -53,9 +59,12 @@ public static class BitsetSubstitution {
     return true;
   }
 
-  private static bool Collect(IrGlobalVariable global, out List<Access> accesses, out List<IrGep> geps) {
+  private static bool Collect(IrGlobalVariable global, out List<Access> accesses, out List<IrGep> geps,
+      out List<IrCall> zeroFills) {
     accesses = [];
     geps = [];
+    zeroFills = [];
+    var ranges = new Dictionary<IrFunction, IrRangeAnalysis?>();
     foreach (var user in global.Users.ToList()) {
       if (Opaque(user))
         return false;
@@ -64,31 +73,35 @@ public static class BitsetSubstitution {
                                                                && gep.ByteOffset.Type.IsInteger:
           geps.Add(gep);
           foreach (var indexed in gep.Users.ToList()) {
-            if (!TryAccess(indexed, gep, gep.ByteOffset, accesses))
+            if (!TryAccess(indexed, gep, gep.ByteOffset, accesses, ranges))
               return false;
           }
           break;
         case IrLoad load when ReferenceEquals(load.Pointer, global) && load.Type.SameStorage(IrType.I16):
           accesses.Add(new(load, new IrConstantInt(IrType.I16, 0)));
           break;
-        case IrStore store when ReferenceEquals(store.Pointer, global) && BooleanStore(store):
+        case IrStore store when ReferenceEquals(store.Pointer, global) && BooleanStore(store, ranges):
           accesses.Add(new(store, new IrConstantInt(IrType.I16, 0)));
           break;
+        case IrCall call when WholeArrayZero(call, global):
+          zeroFills.Add(call);
+          break;
         default:
-          return false;                              // address escape, differently typed access, or whole-array operation
+          return false;                              // address escape, differently typed access, or unknown whole-array operation
       }
     }
     return accesses.Count > 0;
   }
 
-  private static bool TryAccess(IrInstruction instruction, IrGep pointer, IrValue index, List<Access> accesses) {
+  private static bool TryAccess(IrInstruction instruction, IrGep pointer, IrValue index, List<Access> accesses,
+      Dictionary<IrFunction, IrRangeAnalysis?> ranges) {
     if (Opaque(instruction))
       return false;
     switch (instruction) {
       case IrLoad load when ReferenceEquals(load.Pointer, pointer) && load.Type.SameStorage(IrType.I16):
         accesses.Add(new(load, index));
         return true;
-      case IrStore store when ReferenceEquals(store.Pointer, pointer) && BooleanStore(store):
+      case IrStore store when ReferenceEquals(store.Pointer, pointer) && BooleanStore(store, ranges):
         accesses.Add(new(store, index));
         return true;
       default:
@@ -96,9 +109,38 @@ public static class BitsetSubstitution {
     }
   }
 
-  private static bool BooleanStore(IrStore store)
-    => store.Value is IrConstantInt constant && constant.Type.SameStorage(IrType.I16)
-       && constant.ZeroExtended is 0 or 0xffff;
+  private static bool BooleanStore(IrStore store, Dictionary<IrFunction, IrRangeAnalysis?> ranges) {
+    if (!store.Value.Type.SameStorage(IrType.I16))
+      return false;
+    if (store.Value is IrConstantInt constant)
+      return constant.ZeroExtended is 0 or 0xffff;
+
+    var block = store.Parent;
+    var function = block?.Parent;
+    if (block is null || function is null)
+      return false;
+    if (!ranges.TryGetValue(function, out var analysis)) {
+      analysis = IrRangeAnalysis.Build(function);
+      ranges.Add(function, analysis);
+    }
+    if (analysis is null)
+      return false;
+
+    var range = analysis.RangeAt(store.Value, block);
+    return !range.IsEmpty && range.Lo >= -1 && range.Hi <= 0;
+  }
+
+  private static bool WholeArrayZero(IrCall call, IrGlobalVariable global) {
+    if (call.Callee is not IrFunction { Name: _MEMSET } || !call.Type.IsVoid || call.ArgCount != 4)
+      return false;
+
+    var args = call.Args.ToArray();
+    return ReferenceEquals(args[0], global)
+           && args[1] is IrConstantInt fill && fill.Type.SameStorage(IrType.I8) && fill.IsZero
+           && args[2] is IrConstantInt bytes && bytes.Type.SameStorage(IrType.I32)
+              && bytes.ZeroExtended == (ulong)global.Count * 2UL
+           && args[3] is IrConstantInt volatility && volatility.Type.IsBool && volatility.IsZero;
+  }
 
   private static bool Opaque(IrInstruction instruction)
     => instruction.Parent?.Parent is { HasErrorHandler: true } or { HasInlineAsm: true };
@@ -119,13 +161,27 @@ public static class BitsetSubstitution {
     var block = store.Parent!;
     var (address, mask) = AddressAndMask(block, store, packed, index);
     var old = block.InsertBefore(new IrLoad(IrType.I8, address), store);
-    var set = ((IrConstantInt)store.Value).ZeroExtended != 0;
-    IrValue value = set
-      ? block.InsertBefore(new IrBinary(IrBinaryOp.Or, old, mask), store)
-      : block.InsertBefore(new IrBinary(IrBinaryOp.And, old,
-          block.InsertBefore(new IrBinary(IrBinaryOp.Xor, mask, new IrConstantInt(IrType.I8, 0xff)), store)), store);
+    IrValue value;
+    if (store.Value is IrConstantInt constant) {
+      value = constant.ZeroExtended != 0
+        ? block.InsertBefore(new IrBinary(IrBinaryOp.Or, old, mask), store)
+        : block.InsertBefore(new IrBinary(IrBinaryOp.And, old,
+            block.InsertBefore(new IrBinary(IrBinaryOp.Xor, mask, new IrConstantInt(IrType.I8, 0xff)), store)), store);
+    } else {
+      var invertedMask = block.InsertBefore(
+        new IrBinary(IrBinaryOp.Xor, mask, new IrConstantInt(IrType.I8, 0xff)), store);
+      var cleared = block.InsertBefore(new IrBinary(IrBinaryOp.And, old, invertedMask), store);
+      var narrowed = block.InsertBefore(new IrCast(IrCastOp.Trunc, store.Value, IrType.I8), store);
+      var selected = block.InsertBefore(new IrBinary(IrBinaryOp.And, narrowed, mask), store);
+      value = block.InsertBefore(new IrBinary(IrBinaryOp.Or, cleared, selected), store);
+    }
     block.InsertBefore(new IrStore(value, address), store);
     store.EraseFromParent();
+  }
+
+  private static void RewriteZeroFill(IrCall call, IrGlobalVariable packed) {
+    call.SetOperand(1, packed);                       // operand zero is the callee
+    call.SetOperand(3, new IrConstantInt(call.GetOperand(3).Type, packed.Count));
   }
 
   private static (IrValue Address, IrValue Mask) AddressAndMask(IrBasicBlock block, IrInstruction anchor,
