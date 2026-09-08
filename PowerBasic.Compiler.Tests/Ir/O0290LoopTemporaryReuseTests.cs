@@ -1,5 +1,7 @@
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
+using PowerBasic.Compiler.Semantics;
+using PowerBasic.Compiler.Syntax;
 
 namespace PowerBasic.Compiler.Tests.Ir;
 
@@ -53,6 +55,42 @@ public sealed class O0290LoopTemporaryReuseTests {
       Assert.That(fixture.Allocation.Parent, Is.SameAs(fixture.Body));
       Assert.That(fixture.Free.Parent, Is.SameAs(fixture.Body));
       Assert.That(IrVerifier.Verify(fixture.Function), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void Run_GivenLoweredRedimEraseInsideFor_ThenMatchesTheRealForAndConstantExtentShape() {
+    const string source = """
+      FOR i% = 1 TO 4
+        REDIM a%(0 TO 0)
+        a%(0) = i%
+        x% = a%(0)
+        ERASE a%
+      NEXT i%
+      END
+      """;
+    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
+    var module = IrLowering.TryLowerModule(Binder.Bind(unit, Dialect.Pb35));
+
+    Assert.That(module, Is.Not.Null);
+    var function = module!.Functions.Single(fn => fn.Name == "main");
+    Mem2Reg.Run(function);
+    var allocation = function.AllInstructions.OfType<IrCall>()
+      .Single(call => call.Callee is IrFunction { Name: "rt_arr_alloc" });
+    var free = function.AllInstructions.OfType<IrCall>()
+      .Single(call => call.Callee is IrFunction { Name: "rt_arr_free" });
+
+    var changed = LoopTemporaryReuse.Run(function);
+
+    Assert.Multiple(() => {
+      Assert.That(changed, Is.EqualTo(1));
+      Assert.That(allocation.Parent, Is.Not.Null);
+      Assert.That(free.Parent, Is.Not.Null.And.Not.SameAs(allocation.Parent));
+      Assert.That(allocation.GetOperand(1), Is.InstanceOf<IrConstantInt>());
+      Assert.That(((IrConstantInt)allocation.GetOperand(1)).Value, Is.EqualTo(2));
+      Assert.That(free.GetOperand(2), Is.InstanceOf<IrConstantInt>());
+      Assert.That(((IrConstantInt)free.GetOperand(2)).Value, Is.EqualTo(2));
+      Assert.That(IrVerifier.Verify(function), Is.Empty);
     });
   }
 
