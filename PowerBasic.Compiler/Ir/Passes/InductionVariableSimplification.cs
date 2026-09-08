@@ -13,15 +13,18 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// </para>
 /// <para>
 /// This is deliberately not a general Scalar-Evolution implementation. The accepted expression tree
-/// contains only the loop counter, same-width integer constants, add/sub, and multiplication where
-/// one side is constant. Values from other phis, casts, divisions, shifts, calls and memory are
-/// rejected. A candidate that directly feeds a phi is also rejected because phi operands are evaluated
-/// on predecessor edges; rewriting such an edge needs a separate LCSSA/dominance transform.
+/// contains only the loop counter, same-width integer constants, add/sub, multiplication where one
+/// side is constant, and a constant left shift (the canonical form InstCombine and verified arithmetic
+/// lowering use for power-of-two scaling). Values from other phis, casts, division/right shifts,
+/// calls and memory are rejected. A candidate that directly feeds a phi is also rejected because phi
+/// operands are evaluated on predecessor edges; rewriting such an edge needs a separate LCSSA/dominance
+/// transform.
 /// </para>
 /// <para>
 /// Profitability is equally conservative: a one-add offset such as <c>i + 3</c> is left alone because
-/// turning one add into another add plus a carried phi buys nothing. Constant scaling (except by 0/1)
-/// and expression trees containing at least two arithmetic operations are reduced.
+/// turning one add into another add plus a carried phi buys nothing. Non-trivial constant scaling and
+/// expression trees containing at least two arithmetic operations are reduced; a scale that collapses
+/// to zero modulo the type width becomes a constant instead.
 /// </para>
 /// </summary>
 public static class InductionVariableSimplification {
@@ -126,6 +129,10 @@ public static class InductionVariableSimplification {
 
       case IrBinaryOp.Mul when !right.DependsOnCounter:
         affine = Scale(left, right.Offset, type, left.Cost + right.Cost + 1);
+        return true;
+
+      case IrBinaryOp.Shl when !right.DependsOnCounter && right.Offset >= 0 && right.Offset < type.Bits:
+        affine = Scale(left, unchecked(1L << (int)right.Offset), type, left.Cost + right.Cost + 1);
         return true;
 
       default:
