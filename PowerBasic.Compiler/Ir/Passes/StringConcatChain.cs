@@ -30,10 +30,16 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// </para>
 ///
 /// <para>
-/// Runs BEFORE <see cref="StringAppendInPlace"/>: one allocation for the whole chain beats a series
-/// of in-place appends, and the append pass would otherwise consume the shapes this one is looking
-/// for. Two operands are left alone - the builder's fixed cost is not worth paying for a single
-/// concatenation, which is the boundary the direct emitter draws in the same place.
+/// O0294 gets first refusal through <see cref="StringBuilderRecognition"/>. A loop-carried chain is
+/// different from an ordinary expression: rebuilding it once per iteration with <c>rt_str_concat_n</c>
+/// still recopies the growing prefix. The builder recognizer turns the safe variable/literal suffix
+/// into append calls before this pass considers the remaining trees.
+/// </para>
+///
+/// <para>
+/// Runs BEFORE <see cref="StringAppendInPlace"/>: one allocation for an ordinary whole chain beats a
+/// series of in-place appends. Two operands are left alone - the builder's fixed cost is not worth
+/// paying for a single concatenation, which is the boundary the direct emitter draws in the same place.
 /// </para>
 /// </summary>
 public static class StringConcatChain {
@@ -46,10 +52,10 @@ public static class StringConcatChain {
   /// <summary>The runtime's staging list holds this many handles; a longer chain stays pairwise.</summary>
   private const int _MAX_OPERANDS = 64;
 
-  /// <summary>Collapses qualifying chains; the number collapsed.</summary>
+  /// <summary>Runs O0294 first, then collapses the remaining qualifying ordinary chains.</summary>
   public static int Run(IrModule module) {
     ArgumentNullException.ThrowIfNull(module);
-    var collapsed = 0;
+    var changed = StringBuilderRecognition.Run(module);
     foreach (var function in module.Functions.ToList()) {
       if (function.IsDeclaration || function.HasErrorHandler || function.HasInlineAsm)
         continue;
@@ -61,10 +67,10 @@ public static class StringConcatChain {
         if (Flatten(call) is not { } leaves)
           continue;
         Collapse(module, call, leaves);
-        ++collapsed;
+        ++changed;
       }
     }
-    return collapsed;
+    return changed;
   }
 
   private static bool IsConcat(IrValue value)
