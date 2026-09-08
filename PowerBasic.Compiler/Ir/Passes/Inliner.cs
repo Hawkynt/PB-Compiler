@@ -12,15 +12,27 @@ public static class Inliner {
 
   private const int DefaultMaxCalleeInstructions = 64;
   private const int SpeedMaxCalleeInstructions = 256;
+  private const int ProfileMaxCalleeInstructions = 512;
+  private const int SpeedProfileMaxCalleeInstructions = 1024;
+  private const ulong DefaultProfileGrowthPenalty = 8;
+  private const ulong SpeedProfileGrowthPenalty = 4;
 
   /// <summary>
   /// Inlines eligible direct calls across the module; returns how many were inlined. SPEED accepts a
   /// larger body because eliminating call/argument/return overhead and exposing the body to the rest
   /// of the SSA pipeline matters more than code growth. <c>NOINLINE</c> remains an absolute contract.
   /// </summary>
-  public static int Run(IrModule module, bool optimizeForSpeed = false) {
+  /// <param name="module">The module whose direct calls may be substituted.</param>
+  /// <param name="optimizeForSpeed">Whether code growth is traded more aggressively for runtime work.</param>
+  /// <param name="callEdgeCount">
+  /// Optional profile lookup for a call edge. A returned count is the observed execution count for
+  /// that exact call site; <see langword="null"/> means no profile is available for the site and keeps
+  /// the ordinary static budget. An explicit zero means the profiled edge was never taken and therefore
+  /// earns no inline budget. O0268 can supply this lookup once profile loading/stable identities exist;
+  /// keeping the lookup abstract here avoids coupling the inliner to that representation.
+  /// </param>
+  public static int Run(IrModule module, bool optimizeForSpeed = false, Func<IrCall, ulong?>? callEdgeCount = null) {
     var inlined = 0;
-    var maxCalleeInstructions = optimizeForSpeed ? SpeedMaxCalleeInstructions : DefaultMaxCalleeInstructions;
     foreach (var fn in module.Functions) {
       // A function with an armed error handler is not duplicable, in either direction. Its blocks are
       // the target of a jump the CFG does not show, and IrBlockAddress is a CONSTANT - IrCloner maps
@@ -36,12 +48,36 @@ public static class Inliner {
         continue;
       foreach (var call in fn.AllInstructions.OfType<IrCall>().ToList())
         if (call.Parent is not null && call.Callee is IrFunction callee
-            && !callee.HasErrorHandler && IsInlinable(callee, fn, maxCalleeInstructions)) {
+            && !callee.HasErrorHandler
+            && IsInlinable(callee, fn, InlineBudgetFor(call, optimizeForSpeed, callEdgeCount?.Invoke(call)))) {
           InlineCall(call, callee, fn, inlined);
           ++inlined;
         }
     }
     return inlined;
+  }
+
+  /// <summary>
+  /// Converts one edge count into the maximum body growth that edge has earned. The static inliner is
+  /// deliberately binary: a callee is either under 64/256 instructions or it is not. A profile lets
+  /// the budget follow payoff instead. Each execution is credited with two target-neutral units for
+  /// eliminating CALL/RET plus one for every argument transfer; the accumulated credit is divided by
+  /// a code-growth penalty and capped so even pathological profiles cannot inline an arbitrarily large
+  /// body. SPEED halves the penalty and raises the cap, matching its existing willingness to spend size.
+  /// </summary>
+  private static int InlineBudgetFor(IrCall call, bool optimizeForSpeed, ulong? edgeCount) {
+    if (edgeCount is null)
+      return optimizeForSpeed ? SpeedMaxCalleeInstructions : DefaultMaxCalleeInstructions;
+
+    var payoffPerExecution = 2UL + (ulong)call.ArgCount;
+    var count = edgeCount.Value;
+    var weightedPayoff = count > ulong.MaxValue / payoffPerExecution
+      ? ulong.MaxValue
+      : count * payoffPerExecution;
+    var growthPenalty = optimizeForSpeed ? SpeedProfileGrowthPenalty : DefaultProfileGrowthPenalty;
+    var earnedBudget = weightedPayoff / growthPenalty;
+    var hardCap = optimizeForSpeed ? SpeedProfileMaxCalleeInstructions : ProfileMaxCalleeInstructions;
+    return (int)Math.Min((ulong)hardCap, earnedBudget);
   }
 
   private static bool IsInlinable(IrFunction callee, IrFunction caller, int maxCalleeInstructions) =>
