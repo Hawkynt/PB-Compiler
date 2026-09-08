@@ -129,6 +129,14 @@ public static class FpFastMath {
     foreach (var division in divisions) {
       if (ReferenceEquals(division, retained))
         continue;
+
+      if (IsOne(division.Lhs)) {
+        division.ReplaceAllUsesWith(reciprocal);
+        division.EraseFromParent();
+        ++changes;
+        continue;
+      }
+
       var product = block.InsertBefore(new IrBinary(IrBinaryOp.FMul, division.Lhs, reciprocal) {
         FastMathFlags = ArithmeticFlags(division.FastMathFlags | flags),
       }, division);
