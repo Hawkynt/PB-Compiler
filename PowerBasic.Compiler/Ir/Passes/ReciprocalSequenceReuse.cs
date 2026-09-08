@@ -89,7 +89,8 @@ public static class ReciprocalSequenceReuse {
           .Where(division => InstructionDominates(candidate, division, dominators)
                              && IsCallFreeBetween(candidate, division))
           .ToList();
-        if (sequence.Count <= (bestSequence?.Count ?? 1) || !IsProfitable(fn, sequence, dominators, costModel))
+        if (sequence.Count <= (bestSequence?.Count ?? 1)
+            || !IsProfitable(fn, candidate, sequence, dominators, costModel))
           continue;
         bestAnchor = candidate;
         bestSequence = sequence;
@@ -106,15 +107,16 @@ public static class ReciprocalSequenceReuse {
   }
 
   private static bool IsProfitable(
-      IrFunction fn, IReadOnlyList<IrBinary> sequence, IrDominators dominators, IIrArithmeticCostModel? costModel) {
-    if (costModel is null || costModel.PreferReciprocalReuse(sequence[0].Type, sequence.Count))
+      IrFunction fn, IrBinary anchor, IReadOnlyList<IrBinary> sequence,
+      IrDominators dominators, IIrArithmeticCostModel? costModel) {
+    if (costModel is null || costModel.PreferReciprocalReuse(anchor.Type, sequence.Count))
       return true;
 
     // A target may reject the static shape yet accept the same rewrite once a proven counted loop lets
     // guarded hoisting pay the reciprocal only once. ProjectedDivisionCount returns a value only when
     // every priced division executes every iteration and the generated reciprocal is itself hoistable.
-    return ReciprocalLoopHoisting.ProjectedDivisionCount(fn, sequence, dominators) is { } dynamicCount
-      && costModel.PreferReciprocalReuse(sequence[0].Type, dynamicCount);
+    return ReciprocalLoopHoisting.ProjectedDivisionCount(fn, anchor, sequence, dominators) is { } dynamicCount
+      && costModel.PreferReciprocalReuse(anchor.Type, dynamicCount);
   }
 
   private static int RewriteRelaxedSequence(IrBinary anchor, IReadOnlyList<IrBinary> sequence) {
