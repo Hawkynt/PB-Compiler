@@ -169,24 +169,36 @@ public static class FpSimplify {
     return new(defined, defined && source.Finite, defined, defined && source.Positive, defined && source.Positive);
   }
 
+  /// <summary>
+  /// Narrows one binary32 operation that was performed in binary64 and immediately rounded back to
+  /// binary32. For round-to-nearest IEEE arithmetic, binary64 has enough precision that the two-step
+  /// result is the correctly rounded binary32 result for add/subtract/multiply/divide when both inputs
+  /// are binary32 values. We still require strict finite/non-NaN facts so changing the operation width
+  /// cannot alter NaN payload/signalling behavior; division additionally requires a non-zero divisor.
+  /// </summary>
   private static int NarrowDemandedPrecision(IrFunction function, IrFastMathFlags assumptions) {
     var changes = 0;
     foreach (var trunc in function.AllInstructions.OfType<IrCast>().ToList()) {
-      if (trunc.Parent is null || trunc is not { Op: IrCastOp.FPTrunc, Type.Bits: 32 }
-          || trunc.Value is not IrBinary { Op: IrBinaryOp.FMul, Type.Bits: 64, Users.Count: 1 } wide
+      if (trunc.Parent is null || trunc is not { Op: IrCastOp.FPTrunc, Type: var narrowType }
+          || narrowType != IrType.F32
+          || trunc.Value is not IrBinary { Op: IrBinaryOp.FAdd or IrBinaryOp.FSub or IrBinaryOp.FMul or IrBinaryOp.FDiv,
+            Type: var wideType, Users.Count: 1 } wide
+          || wideType != IrType.F64
           || !ReferenceEquals(wide.Parent, trunc.Parent)
-          || wide.Lhs is not IrCast { Op: IrCastOp.FPExt, Type.Bits: 64 } left || left.Value.Type.Bits != 32
-          || wide.Rhs is not IrCast { Op: IrCastOp.FPExt, Type.Bits: 64 } right || right.Value.Type.Bits != 32)
+          || wide.Lhs is not IrCast { Op: IrCastOp.FPExt, Type: var leftWideType } left
+          || leftWideType != IrType.F64 || left.Value.Type != IrType.F32
+          || wide.Rhs is not IrCast { Op: IrCastOp.FPExt, Type: var rightWideType } right
+          || rightWideType != IrType.F64 || right.Value.Type != IrType.F32)
         continue;
 
       var memo = new Dictionary<IrValue, Facts>(ReferenceEqualityComparer.Instance);
       var leftFacts = FactsOf(left.Value, assumptions, memo, []);
       var rightFacts = FactsOf(right.Value, assumptions, memo, []);
-      if (!leftFacts.Finite || !leftFacts.NonNaN || !rightFacts.Finite || !rightFacts.NonNaN)
+      if (!leftFacts.Finite || !leftFacts.NonNaN || !rightFacts.Finite || !rightFacts.NonNaN
+          || wide.Op == IrBinaryOp.FDiv && !rightFacts.NonZero)
         continue;
 
-      var block = trunc.Parent;
-      var narrow = block.InsertBefore(new IrBinary(IrBinaryOp.FMul, left.Value, right.Value) {
+      var narrow = trunc.Parent.InsertBefore(new IrBinary(wide.Op, left.Value, right.Value) {
         FastMathFlags = wide.FastMathFlags,
       }, trunc);
       trunc.ReplaceAllUsesWith(narrow);
