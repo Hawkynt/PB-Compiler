@@ -561,7 +561,6 @@ static int rt_getfield(char *buf, size_t cap, int wholeLine) {
   return c != EOF || n > 0;
 }
 
-
 static double rt_input_num(void) {
   char buf[128];
   rt_getfield(buf, sizeof buf, 0);
@@ -808,6 +807,14 @@ void *rt_arr_alloc(int32_t bytes) {
   void *p = rt_xalloc(n ? n : 1);
   memset(p, 0, n ? n : 1);                    /* PB arrays start zeroed */
   return p;
+}
+
+/* O0068 has already proved every requested byte is overwritten before any read. Keep the same
+   size clamping and non-null zero-size allocation contract as rt_arr_alloc, but deliberately skip
+   initialization: malloc/rt_xalloc storage is indeterminate until the fill loop writes it. */
+void *rt_arr_alloc_nz(int32_t bytes) {
+  size_t n = (size_t)(bytes < 0 ? 0 : bytes);
+  return rt_xalloc(n ? n : 1);
 }
 
 void *rt_arr_alloc_ptr(int32_t count) {
