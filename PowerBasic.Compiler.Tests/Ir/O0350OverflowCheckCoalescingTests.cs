@@ -79,4 +79,42 @@ public sealed class O0350OverflowCheckCoalescingTests {
     Assert.That(guarded.Terminator, Is.TypeOf<IrCondBr>());
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
   }
+
+  [Test]
+  public void GivenContinuationPhiForTrapEdge_WhenCoalescing_ThenDeadTrapIncomingIsRemoved() {
+    var firstOverflow = new IrArgument(IrType.I1, 0, "firstOverflow");
+    var secondOverflow = new IrArgument(IrType.I1, 1, "secondOverflow");
+    var x = new IrArgument(IrType.I16, 2, "x");
+    var fn = new IrFunction("f", IrType.Void, [firstOverflow, secondOverflow, x]);
+    var error = new IrFunction("rt_error", IrType.Void, [new IrArgument(IrType.I32, 0)]);
+    var entry = fn.CreateBlock("entry");
+    var firstTrap = fn.CreateBlock("first.trap");
+    var middle = fn.CreateBlock("middle");
+    var secondTrap = fn.CreateBlock("second.trap");
+    var exit = fn.CreateBlock("exit");
+
+    new IrBuilder(entry).CondBr(firstOverflow, firstTrap, middle);
+    var firstTrapBuilder = new IrBuilder(firstTrap);
+    firstTrapBuilder.Call(IrType.Void, error, IrBuilder.ConstI32(6));
+    firstTrapBuilder.Br(middle);
+    var middleBuilder = new IrBuilder(middle);
+    var merged = middleBuilder.Phi(IrType.I16);
+    merged.AddIncoming(x, entry);
+    merged.AddIncoming(new IrConstantInt(IrType.I16, 0), firstTrap);
+    middleBuilder.Add(merged, new IrConstantInt(IrType.I16, 1));
+    middleBuilder.CondBr(secondOverflow, secondTrap, exit);
+    var secondTrapBuilder = new IrBuilder(secondTrap);
+    secondTrapBuilder.Call(IrType.Void, error, IrBuilder.ConstI32(6));
+    secondTrapBuilder.Br(exit);
+    new IrBuilder(exit).Ret();
+
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+
+    var changed = OverflowCheckCoalescing.Run(fn);
+
+    Assert.That(changed, Is.EqualTo(1));
+    Assert.That(merged.IncomingBlocks, Has.Count.EqualTo(1));
+    Assert.That(merged.IncomingBlocks[0], Is.SameAs(entry));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
 }
