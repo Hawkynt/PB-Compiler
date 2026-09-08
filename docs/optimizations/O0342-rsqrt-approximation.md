@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Partial — `1/SQR(x)` exposes reciprocal + approximate-function legality; hardware rsqrt/refinement is target-selected |
+| **Status** | 🟨 Partial — canonical `1/SQR(x)` now exposes LLVM's current rsqrt contract; hardware rsqrt/refinement remains target-selected |
 | **Stage** | IR middle end + target lowering |
 | **Gate** | Optimizer + `$OPTIMIZE SPEED` / `-OZF` |
-| **IR** | `FpFastMath`: `sqrt` gets `afn`, the enclosing `FDiv` gets `arcp`; LLVM receives both permissions |
+| **IR** | `FpFastMath`: canonical rsqrt gives `sqrt` `contract+afn` and its `FDiv` `arcp+contract+afn`; LLVM receives the complete pattern-specific permission set |
 | **Related** | [O0341](O0341-reciprocal-approximation.md), [O0343](O0343-transcendental-specialization.md) |
 
 ## What is implemented
@@ -13,12 +13,19 @@
 For the canonical `1 / sqrt(x)` shape the two operations carry the freedoms a
 target optimizer needs to recognize reciprocal-square-root lowering:
 
-- the `sqrt` call is permitted to use an approximate implementation (`afn`);
-- the division is permitted to use a reciprocal (`arcp`).
+- the `sqrt` call is permitted to participate in the contraction and to use an
+  approximate implementation (`contract`, `afn`);
+- the division is permitted to use a reciprocal, participate in the contraction,
+  and use the approximate rsqrt path (`arcp`, `contract`, `afn`).
 
-LLVM therefore sees the complete relaxed contract and may select an rsqrt
-estimate/refinement sequence when the target has one. The target-neutral IR does
-not pretend that the 16-bit x87 has such an instruction.
+The extra permissions are shape-specific: ordinary division does not acquire `afn`,
+and an unrelated math call does not acquire `contract`. `FpFastMath` also never
+manufactures a permission that the selected optimization objective did not grant.
+
+This matches current LLVM rsqrt formation: contraction legality is carried on both
+the division and square root, while target lowering decides whether the available
+accuracy contract permits a native estimate or requires a refinement sequence. The
+target-neutral IR does not pretend that the 16-bit x87 has an rsqrt instruction.
 
 ```basic
 DIM x!, y!, len!, nx!, ny!
@@ -33,5 +40,6 @@ Repeated division by the same computed length can additionally be reduced by
 ## Boundary
 
 This pass does not manufacture a target-specific `rsqrt` intrinsic, nor does it
-bypass PowerBASIC error behavior in strict mode. Without SPEED neither `afn` nor
-`arcp` is present, so the ordinary `SQR` + division semantics remain required.
+bypass PowerBASIC error behavior in strict mode. Without SPEED none of `afn`,
+`arcp`, or `contract` is present, so the ordinary `SQR` + division semantics remain
+required.

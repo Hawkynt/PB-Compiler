@@ -141,13 +141,22 @@ public static class FpFastMath {
 
   private static bool IsOne(IrValue value) => value is IrConstantFloat { Value: 1.0 };
 
+  private static bool IsRsqrtDivision(IrBinary binary)
+    => binary.Op == IrBinaryOp.FDiv && IsOne(binary.Lhs)
+       && binary.Rhs is IrCall call && IrFpMath.TryGet(call, out var kind)
+       && kind == IrFpMathFunction.Sqrt;
+
+  private static bool IsRsqrtSqrt(IrCall call)
+    => call.Users.Any(user => user is IrBinary binary && ReferenceEquals(binary.Rhs, call)
+      && IsRsqrtDivision(binary));
+
   private static int Annotate(IrFunction function, IrFastMathFlags flags) {
     var changes = 0;
     foreach (var instruction in function.AllInstructions) {
       var applicable = instruction switch {
         IrBinary binary when binary.IsFloatOp && binary.Type.IsIeeeFloat => FlagsForBinary(binary, flags),
         IrCmp cmp when cmp.Pred is >= IrCmpPred.Foeq and <= IrCmpPred.Foge => FlagsForCompare(flags),
-        IrCall call when IrFpMath.TryGet(call, out _) => FlagsForMathCall(flags),
+        IrCall call when IrFpMath.TryGet(call, out _) => FlagsForMathCall(call, flags),
         _ => IrFastMathFlags.None,
       };
       var missing = applicable & ~instruction.FastMathFlags;
@@ -163,13 +172,23 @@ public static class FpFastMath {
 
   private static IrFastMathFlags FlagsForBinary(IrBinary binary, IrFastMathFlags flags) {
     var common = ArithmeticFlags(flags);
-    return binary.Op == IrBinaryOp.FDiv ? common | (flags & IrFastMathFlags.AllowReciprocal) : common;
+    if (binary.Op != IrBinaryOp.FDiv)
+      return common;
+
+    var applicable = common | (flags & IrFastMathFlags.AllowReciprocal);
+    if (IsRsqrtDivision(binary) && (flags & IrFastMathFlags.AllowContract) != 0)
+      applicable |= flags & IrFastMathFlags.ApproxFunc;
+    return applicable;
   }
 
   private static IrFastMathFlags FlagsForCompare(IrFastMathFlags flags)
     => flags & (IrFastMathFlags.NoNaNs | IrFastMathFlags.NoInfs | IrFastMathFlags.NoSignedZeros);
 
-  private static IrFastMathFlags FlagsForMathCall(IrFastMathFlags flags)
-    => flags & (IrFastMathFlags.NoNaNs | IrFastMathFlags.NoInfs | IrFastMathFlags.NoSignedZeros
+  private static IrFastMathFlags FlagsForMathCall(IrCall call, IrFastMathFlags flags) {
+    var applicable = flags & (IrFastMathFlags.NoNaNs | IrFastMathFlags.NoInfs | IrFastMathFlags.NoSignedZeros
       | IrFastMathFlags.ApproxFunc);
+    if (IsRsqrtSqrt(call))
+      applicable |= flags & IrFastMathFlags.AllowContract;
+    return applicable;
+  }
 }
