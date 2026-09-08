@@ -3,22 +3,25 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// <summary>
 /// O0338 — reuses reciprocals across repeated IEEE divisions. Strict floating point only admits
 /// exact power-of-two constant reciprocals; divisions carrying <see cref="IrFastMathFlags.AllowReciprocal"/>
-/// may additionally share one runtime reciprocal across dominated, call-free CFG regions.
+/// may additionally share one runtime reciprocal across dominated, call-free CFG regions. A supplied
+/// target cost model decides when that legal rewrite is actually profitable.
 /// </summary>
 public static class ReciprocalSequenceReuse {
 
-  /// <summary>Rewrites profitable reciprocal groups; returns the number of original divisions replaced.</summary>
-  public static int Run(IrFunction fn) {
+  /// <summary>Rewrites profitable reciprocal groups; returns the number of divisions replaced or hoisted.</summary>
+  public static int Run(IrFunction fn, IIrArithmeticCostModel? costModel = null) {
     ArgumentNullException.ThrowIfNull(fn);
     if (fn.HasErrorHandler || fn.HasInlineAsm)
       return 0;
 
-    var replaced = RewriteExactConstantGroups(fn);
+    var changed = RewriteExactConstantGroups(fn);
     if (fn.Entry is null)
-      return replaced;
+      return changed;
 
     var dominators = IrDominators.Build(fn)!;
-    return replaced + RewriteRelaxedGroups(fn, dominators);
+    changed += RewriteRelaxedGroups(fn, dominators, costModel);
+    changed += ReciprocalLoopHoisting.Run(fn);
+    return changed;
   }
 
   private static int RewriteExactConstantGroups(IrFunction fn) {
@@ -54,7 +57,7 @@ public static class ReciprocalSequenceReuse {
     return replaced;
   }
 
-  private static int RewriteRelaxedGroups(IrFunction fn, IrDominators dominators) {
+  private static int RewriteRelaxedGroups(IrFunction fn, IrDominators dominators, IIrArithmeticCostModel? costModel) {
     var groups = new List<List<IrBinary>>();
     foreach (var division in fn.AllInstructions.OfType<IrBinary>().Where(IsRelaxedDivision).ToList()) {
       var group = groups.FirstOrDefault(candidate => SameDivisor(candidate[0].Rhs, division.Rhs));
@@ -66,11 +69,11 @@ public static class ReciprocalSequenceReuse {
 
     var replaced = 0;
     foreach (var group in groups.Where(group => group.Count > 1))
-      replaced += RewriteRelaxedGroup(group, dominators);
+      replaced += RewriteRelaxedGroup(group, dominators, costModel);
     return replaced;
   }
 
-  private static int RewriteRelaxedGroup(List<IrBinary> group, IrDominators dominators) {
+  private static int RewriteRelaxedGroup(List<IrBinary> group, IrDominators dominators, IIrArithmeticCostModel? costModel) {
     var remaining = group
       .Where(division => division.Parent is { } block && dominators.IsReachable(block))
       .ToList();
@@ -84,7 +87,8 @@ public static class ReciprocalSequenceReuse {
           .Where(division => InstructionDominates(candidate, division, dominators)
                              && IsCallFreeBetween(candidate, division))
           .ToList();
-        if (sequence.Count <= (bestSequence?.Count ?? 1))
+        if (sequence.Count <= (bestSequence?.Count ?? 1)
+            || costModel is not null && !costModel.PreferReciprocalReuse(candidate.Type, sequence.Count))
           continue;
         bestAnchor = candidate;
         bestSequence = sequence;
@@ -130,7 +134,7 @@ public static class ReciprocalSequenceReuse {
   }
 
   private static bool IsRelaxedDivision(IrBinary binary)
-    => binary is { Op: IrBinaryOp.FDiv, Type: { Kind: IrTypeKind.Float, Format: IrFloatFormat.Ieee, Bits: 32 or 64 } }
+    => binary is { Op: IrBinaryOp.FDiv, Type: { Kind: IrTypeKind.Float, Format: IrFloatFormat.Ieee, Bits: 32 or 64 or 80 } }
        && (binary.FastMathFlags & IrFastMathFlags.AllowReciprocal) != 0;
 
   private static bool SameDivisor(IrValue left, IrValue right) {
@@ -229,13 +233,13 @@ public static class ReciprocalSequenceReuse {
 
   private static (int Bits, long Pattern) Key(IrConstantFloat value) => value.Type.Bits switch {
     32 => (32, BitConverter.SingleToInt32Bits((float)value.Value)),
-    64 => (64, BitConverter.DoubleToInt64Bits(value.Value)),
-    _ => (value.Type.Bits, 0),
+    64 or 80 => (value.Type.Bits, BitConverter.DoubleToInt64Bits(value.Value)),
+    _ => (value.Type.Bits, BitConverter.DoubleToInt64Bits(value.Value)),
   };
 
   private static bool TryReciprocal(IrConstantFloat divisor, out double reciprocal) {
     reciprocal = 0;
-    if (divisor.Type is not { Kind: IrTypeKind.Float, Format: IrFloatFormat.Ieee, Bits: 32 or 64 }
+    if (divisor.Type is not { Kind: IrTypeKind.Float, Format: IrFloatFormat.Ieee, Bits: 32 or 64 or 80 }
         || divisor.Value == 0 || !double.IsFinite(divisor.Value) || !IsPowerOfTwo(divisor))
       return false;
 
@@ -253,6 +257,8 @@ public static class ReciprocalSequenceReuse {
       return exponent == 0 ? fraction != 0 && (fraction & (fraction - 1)) == 0 : fraction == 0;
     }
 
+    // IrConstantFloat currently carries a binary64 payload even when typed f80. A power of two in that
+    // payload is also an exact x87 value, and its reciprocal is exact as long as the payload can hold it.
     var bits = (ulong)BitConverter.DoubleToInt64Bits(Math.Abs(value.Value)) & 0x7fff_ffff_ffff_ffffUL;
     var doubleExponent = bits & 0x7ff0_0000_0000_0000UL;
     var doubleFraction = bits & 0x000f_ffff_ffff_ffffUL;
