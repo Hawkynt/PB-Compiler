@@ -7,6 +7,10 @@ namespace PowerBasic.Compiler.Tests.Ir;
 [TestFixture]
 public sealed class ArithmeticIdiomOptimizationTests {
 
+  private sealed class NeverReuseCost : IIrArithmeticCostModel {
+    public bool PreferReciprocalReuse(IrType type, int divisionCount) => false;
+  }
+
   [Test]
   public void IntegerCubic_GivenRepeatedLiteralPowers_ThenHornerUsesFewerMultiplies() {
     var x = new IrArgument(IrType.I16, 0, "x");
@@ -63,6 +67,28 @@ public sealed class ArithmeticIdiomOptimizationTests {
       Assert.That(multiplies, Has.All.Matches<IrBinary>(binary =>
         binary.Rhs is IrConstantFloat { Value: 0.125 }),
         "both divisions should use the exact reciprocal constant rather than a runtime reciprocal");
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void RepeatedDivision_GivenAnExactF80PowerOfTwo_ThenTheExtendedOperationsUseAnExactReciprocal() {
+    var x = new IrArgument(IrType.F80, 0, "x");
+    var y = new IrArgument(IrType.F80, 1, "y");
+    var fn = new IrFunction("scale80", IrType.F80, [x, y]);
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    var left = entry.Append(new IrBinary(IrBinaryOp.FDiv, x, new IrConstantFloat(IrType.F80, 8.0)));
+    var right = entry.Append(new IrBinary(IrBinaryOp.FDiv, y, new IrConstantFloat(IrType.F80, 8.0)));
+    entry.Append(new IrRet(entry.Append(new IrBinary(IrBinaryOp.FAdd, left, right))));
+
+    Assert.That(ReciprocalSequenceReuse.Run(fn), Is.EqualTo(2));
+
+    var multiplies = fn.AllInstructions.OfType<IrBinary>().Where(binary => binary.Op == IrBinaryOp.FMul).ToList();
+    Assert.Multiple(() => {
+      Assert.That(fn.AllInstructions.OfType<IrBinary>().Any(binary => binary.Op == IrBinaryOp.FDiv), Is.False);
+      Assert.That(multiplies, Has.Count.EqualTo(2));
+      Assert.That(multiplies, Has.All.Matches<IrBinary>(binary =>
+        binary.Type.Equals(IrType.F80) && binary.Rhs is IrConstantFloat { Type: { Bits: 80 }, Value: 0.125 }));
       Assert.That(IrVerifier.Verify(fn), Is.Empty);
     });
   }
@@ -148,6 +174,50 @@ public sealed class ArithmeticIdiomOptimizationTests {
   }
 
   [Test]
+  public void RepeatedDivision_GivenArcpF80AcrossDominatedBlocks_ThenTheRuntimeReciprocalKeepsExtendedType() {
+    var x = new IrArgument(IrType.F80, 0, "x");
+    var y = new IrArgument(IrType.F80, 1, "y");
+    var divisor = new IrArgument(IrType.F80, 2, "d");
+    var fn = new IrFunction("crossBlock80", IrType.F80, [x, y, divisor]);
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    var next = fn.AddBlock(new IrBasicBlock("next"));
+    var left = entry.Append(new IrBinary(IrBinaryOp.FDiv, x, divisor) { FastMathFlags = IrFastMathFlags.AllowReciprocal });
+    entry.Append(new IrBr(next));
+    var right = next.Append(new IrBinary(IrBinaryOp.FDiv, y, divisor) { FastMathFlags = IrFastMathFlags.AllowReciprocal });
+    next.Append(new IrRet(next.Append(new IrBinary(IrBinaryOp.FAdd, left, right))));
+
+    Assert.That(ReciprocalSequenceReuse.Run(fn), Is.EqualTo(2));
+
+    var reciprocal = fn.AllInstructions.OfType<IrBinary>().Single(binary => binary.Op == IrBinaryOp.FDiv);
+    Assert.Multiple(() => {
+      Assert.That(reciprocal.Type, Is.EqualTo(IrType.F80));
+      Assert.That(reciprocal.Lhs, Is.TypeOf<IrConstantFloat>());
+      Assert.That(((IrConstantFloat)reciprocal.Lhs).Type, Is.EqualTo(IrType.F80));
+      Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(binary => binary.Op == IrBinaryOp.FMul), Is.EqualTo(2));
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void RepeatedDivision_GivenTargetCostDeclinesReuse_ThenArcpAloneDoesNotForceTheTransform() {
+    var x = new IrArgument(IrType.F64, 0, "x");
+    var y = new IrArgument(IrType.F64, 1, "y");
+    var divisor = new IrArgument(IrType.F64, 2, "d");
+    var fn = new IrFunction("costed", IrType.F64, [x, y, divisor]);
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    var left = entry.Append(new IrBinary(IrBinaryOp.FDiv, x, divisor) { FastMathFlags = IrFastMathFlags.AllowReciprocal });
+    var right = entry.Append(new IrBinary(IrBinaryOp.FDiv, y, divisor) { FastMathFlags = IrFastMathFlags.AllowReciprocal });
+    entry.Append(new IrRet(entry.Append(new IrBinary(IrBinaryOp.FAdd, left, right))));
+
+    Assert.That(ReciprocalSequenceReuse.Run(fn, new NeverReuseCost()), Is.Zero);
+    Assert.Multiple(() => {
+      Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(binary => binary.Op == IrBinaryOp.FDiv), Is.EqualTo(2));
+      Assert.That(fn.AllInstructions.OfType<IrBinary>().Any(binary => binary.Op == IrBinaryOp.FMul), Is.False);
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    });
+  }
+
+  [Test]
   public void RepeatedDivision_GivenBitIdenticalNonExactConstantsAndArcp_ThenOneRuntimeReciprocalIsShared() {
     var x = new IrArgument(IrType.F64, 0, "x");
     var y = new IrArgument(IrType.F64, 1, "y");
@@ -222,6 +292,48 @@ public sealed class ArithmeticIdiomOptimizationTests {
     Assert.That(ReciprocalSequenceReuse.Run(fn), Is.Zero);
     Assert.Multiple(() => {
       Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(binary => binary.Op == IrBinaryOp.FDiv), Is.EqualTo(2));
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void RepeatedDivision_GivenAnInvariantDivisorInACanonicalLoop_ThenReciprocalIsLazilyHoistedBehindEntryGuard() {
+    var x = new IrArgument(IrType.F64, 0, "x");
+    var y = new IrArgument(IrType.F64, 1, "y");
+    var divisor = new IrArgument(IrType.F64, 2, "d");
+    var fn = new IrFunction("loop", IrType.Void, [x, y, divisor]);
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    var header = fn.AddBlock(new IrBasicBlock("header"));
+    var body = fn.AddBlock(new IrBasicBlock("body"));
+    var exit = fn.AddBlock(new IrBasicBlock("exit"));
+    entry.Append(new IrBr(header));
+
+    var counter = header.AppendPhi(new IrPhi(IrType.I16));
+    counter.AddIncoming(new IrConstantInt(IrType.I16, 0), entry);
+    var test = header.Append(new IrCmp(IrCmpPred.Slt, counter, new IrConstantInt(IrType.I16, 4)));
+    header.Append(new IrCondBr(test, body, exit));
+
+    var left = body.Append(new IrBinary(IrBinaryOp.FDiv, x, divisor) { FastMathFlags = IrFastMathFlags.AllowReciprocal });
+    var right = body.Append(new IrBinary(IrBinaryOp.FDiv, y, divisor) { FastMathFlags = IrFastMathFlags.AllowReciprocal });
+    body.Append(new IrBinary(IrBinaryOp.FAdd, left, right));
+    var next = body.Append(new IrBinary(IrBinaryOp.Add, counter, new IrConstantInt(IrType.I16, 1)));
+    body.Append(new IrBr(header));
+    counter.AddIncoming(next, body);
+    exit.Append(new IrRet());
+
+    Assert.That(ReciprocalSequenceReuse.Run(fn), Is.EqualTo(3));
+
+    var init = fn.Blocks.Single(block => block.Label.StartsWith("recip.init", StringComparison.Ordinal));
+    var reciprocal = init.Instructions.OfType<IrBinary>().Single(binary => binary.Op == IrBinaryOp.FDiv);
+    Assert.Multiple(() => {
+      Assert.That(entry.Terminator, Is.TypeOf<IrCondBr>(), "the original zero-trip test must guard reciprocal formation");
+      Assert.That(((IrCondBr)entry.Terminator!).IfFalse, Is.SameAs(exit));
+      Assert.That(((IrCondBr)entry.Terminator!).IfTrue, Is.SameAs(init));
+      Assert.That(counter.IncomingBlocks, Does.Contain(init));
+      Assert.That(counter.IncomingBlocks, Does.Not.Contain(entry));
+      Assert.That(reciprocal.Rhs, Is.SameAs(divisor));
+      Assert.That(body.Instructions.OfType<IrBinary>().Count(binary => binary.Op == IrBinaryOp.FMul), Is.EqualTo(2));
+      Assert.That(body.Instructions.OfType<IrBinary>().Any(binary => binary.Op == IrBinaryOp.FDiv), Is.False);
       Assert.That(IrVerifier.Verify(fn), Is.Empty);
     });
   }
