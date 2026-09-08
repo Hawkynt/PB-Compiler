@@ -112,8 +112,13 @@ public static class ReciprocalSequenceReuse {
   private static bool IsProfitable(
       IrFunction fn, IReadOnlyList<IrBinary> sequence,
       IrDominators dominators, IIrArithmeticCostModel? costModel) {
+    if (costModel is null)
+      return true;
+
     var anchor = sequence[0];
-    if (costModel is null || costModel.PreferReciprocalReuse(anchor.Type, sequence.Count))
+    if (IsOne(anchor.Lhs))
+      return costModel.PreferExistingReciprocalUse(anchor.Type, sequence.Count - 1);
+    if (costModel.PreferReciprocalReuse(anchor.Type, sequence.Count))
       return true;
 
     // A target may reject the static shape yet accept the same rewrite once a proven counted loop lets
