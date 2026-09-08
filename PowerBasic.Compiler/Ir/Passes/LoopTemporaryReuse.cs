@@ -70,9 +70,10 @@ public static class LoopTemporaryReuse {
 
     var allocation = allocations[0];
     var free = frees[0];
-    if (!allocation.Type.IsFarPointer || allocation.GetOperand(1) is not IrConstantInt { Value: > 0 } size
+    if (!allocation.Type.IsFarPointer
+        || !TryConstantInteger(allocation.GetOperand(1), out var size) || size <= 0
         || !ReferenceEquals(free.GetOperand(1), allocation)
-        || free.GetOperand(2) is not IrConstantInt freedSize || freedSize.Value != size.Value)
+        || !TryConstantInteger(free.GetOperand(2), out var freedSize) || freedSize != size)
       return false;
 
     var positions = body.Instructions.Select((instruction, index) => (instruction, index))
@@ -80,7 +81,7 @@ public static class LoopTemporaryReuse {
     var allocationIndex = positions[allocation];
     var freeIndex = positions[free];
     if (allocationIndex >= freeIndex || !PrivateWithinLifetime(allocation, free, body, positions, allocationIndex, freeIndex)
-        || !ReadsSeeCurrentIterationWrites(allocation, body, allocationIndex, freeIndex, size.Value))
+        || !ReadsSeeCurrentIterationWrites(allocation, body, allocationIndex, freeIndex, size))
       return false;
 
     // Resolve every insertion point before mutating either block. Apart from being tidier, this means
@@ -88,6 +89,12 @@ public static class LoopTemporaryReuse {
     var exitAnchor = loop.Exit.Instructions.FirstOrDefault(instruction => instruction is not IrPhi);
     if (exitAnchor is null)
       return false;
+
+    // Lowering intentionally leaves REDIM's constant extent arithmetic in explicit IR until the
+    // ordinary constant folder runs. O0290 runs before unrolling and therefore before that fold; make
+    // the lifetime-moved calls independent of their old body-local arithmetic before moving them.
+    allocation.SetOperand(1, new IrConstantInt(allocation.GetOperand(1).Type, size));
+    free.SetOperand(2, new IrConstantInt(free.GetOperand(2).Type, size));
 
     body.Remove(allocation);
     loop.Preheader.InsertBefore(allocation, preBranch);
@@ -98,6 +105,46 @@ public static class LoopTemporaryReuse {
 
   private static bool IsCall(IrCall call, string name, int arguments)
     => call.Callee is IrFunction callee && callee.Name == name && call.ArgCount == arguments;
+
+  /// <summary>
+  /// Resolves the small pure integer expression family REDIM lowering uses for constant bounds. This
+  /// is not a second general constant folder: it recursively supplies constant operands to the shared
+  /// <see cref="IrConstFold"/> rules, so wrapping, cast and invalid-operation semantics stay identical.
+  /// </summary>
+  private static bool TryConstantInteger(IrValue value, out long constant) {
+    switch (value) {
+      case IrConstantInt immediate:
+        constant = immediate.Value;
+        return true;
+
+      case IrBinary binary
+          when TryConstantInteger(binary.Lhs, out var left) && TryConstantInteger(binary.Rhs, out var right): {
+        var candidate = new IrBinary(binary.Op,
+          new IrConstantInt(binary.Lhs.Type, left), new IrConstantInt(binary.Rhs.Type, right));
+        var folded = IrConstFold.TryFold(candidate) as IrConstantInt;
+        candidate.DropOperandUses();
+        if (folded is not null) {
+          constant = folded.Value;
+          return true;
+        }
+        break;
+      }
+
+      case IrCast cast when TryConstantInteger(cast.Value, out var operand): {
+        var candidate = new IrCast(cast.Op, new IrConstantInt(cast.Value.Type, operand), cast.Type);
+        var folded = IrConstFold.TryFold(candidate) as IrConstantInt;
+        candidate.DropOperandUses();
+        if (folded is not null) {
+          constant = folded.Value;
+          return true;
+        }
+        break;
+      }
+    }
+
+    constant = 0;
+    return false;
+  }
 
   /// <summary>
   /// Proves the allocation address cannot survive an iteration or be observed as an identity. Derived
