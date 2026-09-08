@@ -8,7 +8,7 @@ namespace PowerBasic.Compiler.Tests.Ir;
 public sealed class ArithmeticIdiomOptimizationTests {
 
   [Test]
-  public void IntegerCubic_GivenRepeatedLiteralPowers_ThenHornerUsesFewerMultiplies() {
+  public void IntegerCubic_GivenRepeatedLiteralPowers_ThenHornerElidesMonicMultiply() {
     var x = new IrArgument(IrType.I16, 0, "x");
     var fn = new IrFunction("poly", IrType.I16, [x]);
     var entry = fn.AddBlock(new IrBasicBlock("entry"));
@@ -25,6 +25,50 @@ public sealed class ArithmeticIdiomOptimizationTests {
     Assert.That(PolynomialEvaluation.Run(fn), Is.EqualTo(1));
     Dce.Run(fn);
     Assert.Multiple(() => {
+      Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(binary => binary.Op == IrBinaryOp.Mul), Is.EqualTo(2));
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void IntegerDegreeSeven_GivenEstrinIsParetoBetter_ThenMultiplyDependencyDepthIsReduced() {
+    var x = new IrArgument(IrType.I16, 0, "x");
+    var fn = new IrFunction("estrin", IrType.I16, [x]);
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    IrValue polynomial = new IrConstantInt(IrType.I16, 1);
+    polynomial = entry.Append(new IrBinary(IrBinaryOp.Add, polynomial, x));
+    for (var degree = 2; degree <= 7; ++degree)
+      polynomial = entry.Append(new IrBinary(IrBinaryOp.Add, polynomial, Power(entry, x, degree)));
+    var ret = entry.Append(new IrRet(polynomial));
+
+    Assert.That(PolynomialEvaluation.Run(fn), Is.EqualTo(1));
+    Dce.Run(fn);
+
+    Assert.Multiple(() => {
+      Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(binary => binary.Op == IrBinaryOp.Mul), Is.EqualTo(5));
+      Assert.That(MultiplyDepth(ret.Value!), Is.EqualTo(3));
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void SharedSquare_GivenExternalUser_ThenUnremovableMultiplyIsNotPricedAsSavings() {
+    var x = new IrArgument(IrType.I16, 0, "x");
+    var fn = new IrFunction("shared", IrType.I16, [x]);
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    var x2 = entry.Append(new IrBinary(IrBinaryOp.Mul, x, x));
+    var twoX2 = entry.Append(new IrBinary(IrBinaryOp.Mul, x2, new IrConstantInt(IrType.I16, 2)));
+    var threeX = entry.Append(new IrBinary(IrBinaryOp.Mul, x, new IrConstantInt(IrType.I16, 3)));
+    var terms = entry.Append(new IrBinary(IrBinaryOp.Add, twoX2, threeX));
+    var root = entry.Append(new IrBinary(IrBinaryOp.Add, terms, new IrConstantInt(IrType.I16, 4)));
+    var squareIsNonZero = entry.Append(new IrCmp(IrCmpPred.Ne, x2, new IrConstantInt(IrType.I16, 0)));
+    var selected = entry.Append(new IrSelect(squareIsNonZero, root, new IrConstantInt(IrType.I16, 0)));
+    entry.Append(new IrRet(selected));
+
+    Assert.That(PolynomialEvaluation.Run(fn), Is.Zero,
+      "the shared x*x remains live, so Horner would not reduce the function's multiplication count");
+    Assert.Multiple(() => {
+      Assert.That(root.Parent, Is.SameAs(entry));
       Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(binary => binary.Op == IrBinaryOp.Mul), Is.EqualTo(3));
       Assert.That(IrVerifier.Verify(fn), Is.Empty);
     });
@@ -79,5 +123,19 @@ public sealed class ArithmeticIdiomOptimizationTests {
 
     Assert.That(ReciprocalSequenceReuse.Run(fn), Is.Zero);
     Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(binary => binary.Op == IrBinaryOp.FDiv), Is.EqualTo(2));
+  }
+
+  private static IrValue Power(IrBasicBlock block, IrValue value, int degree) {
+    IrValue result = value;
+    for (var power = 1; power < degree; ++power)
+      result = block.Append(new IrBinary(IrBinaryOp.Mul, result, value));
+    return result;
+  }
+
+  private static int MultiplyDepth(IrValue value) {
+    if (value is not IrBinary binary)
+      return 0;
+    var childDepth = Math.Max(MultiplyDepth(binary.Lhs), MultiplyDepth(binary.Rhs));
+    return childDepth + (binary.Op == IrBinaryOp.Mul ? 1 : 0);
   }
 }
