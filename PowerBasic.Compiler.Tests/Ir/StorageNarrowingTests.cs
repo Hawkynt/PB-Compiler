@@ -68,6 +68,36 @@ public sealed class StorageNarrowingTests {
   }
 
   [Test]
+  public void O0057_PromotedMergeValue_UsesNarrowPhiAndExtendsOnceAtTheBoundary() {
+    var condition = new IrArgument(IrType.I1, 0, "condition");
+    var fn = new IrFunction("f", IrType.I32, [condition]);
+    var entry = fn.CreateBlock("entry");
+    var yes = fn.CreateBlock("yes");
+    var no = fn.CreateBlock("no");
+    var merge = fn.CreateBlock("merge");
+    entry.Append(new IrCondBr(condition, yes, no));
+    yes.Append(new IrBr(merge));
+    no.Append(new IrBr(merge));
+    var value = merge.AppendPhi(new IrPhi(IrType.I32) { Name = "value" });
+    value.AddIncoming(new IrConstantInt(IrType.I32, 12), yes);
+    value.AddIncoming(new IrConstantInt(IrType.I32, 200), no);
+    var plusOne = merge.Append(new IrBinary(IrBinaryOp.Add, value, new IrConstantInt(IrType.I32, 1)));
+    merge.Append(new IrRet(plusOne));
+
+    Assert.That(StorageNarrowing.Run(fn, minimumIntegerBits: 8), Is.EqualTo(1));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+
+    var narrowPhi = merge.Phis.Single();
+    Assert.That(narrowPhi.Type, Is.EqualTo(IrType.U8));
+    Assert.That(yes.Instructions.OfType<IrCast>().Single().Op, Is.EqualTo(IrCastOp.Trunc));
+    Assert.That(no.Instructions.OfType<IrCast>().Single().Op, Is.EqualTo(IrCastOp.Trunc));
+    var extension = merge.Instructions.OfType<IrCast>().Single(c => c.Op == IrCastOp.ZExt);
+    Assert.That(extension.Value, Is.SameAs(narrowPhi));
+    Assert.That(extension.Type, Is.EqualTo(IrType.I32));
+    Assert.That(plusOne.Lhs, Is.SameAs(extension), "users must keep the original arithmetic width");
+  }
+
+  [Test]
   public void O0057_AddressObservableStorage_IsNotNarrowed() {
     var fn = new IrFunction("f", IrType.Void);
     var entry = fn.CreateBlock("entry");
