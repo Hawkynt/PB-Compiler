@@ -61,11 +61,14 @@ public sealed class MachineEmitter {
   /// are valid), incoming argument loads, the body, and the matching epilogue.
   ///
   /// <para>
-  /// O0070 may omit the BP frame when the middle end has requested it and the FINAL machine function
-  /// proves the request survived selection and allocation: no stack parameters, no alloca/spill slots,
-  /// no frame operands and no inline assembly. The final check is load-bearing. An IR function can be
-  /// frame-free and still acquire a spill during register allocation, which immediately makes the
-  /// frame necessary again.
+  /// O0070 may omit the persistent BP frame when the middle end has requested it and the FINAL machine
+  /// function proves the request survived selection and allocation: no alloca/spill slots, no body
+  /// operand that still needs BP, and no inline assembly. Stack parameters do not by themselves force
+  /// a persistent frame. On 8086, used register-resident parameters are staged through a short
+  /// <c>PUSH BP; MOV BP,SP</c> entry window and BP is restored immediately after the loads. If spilling
+  /// turns a parameter back into a <see cref="MOperand.ParamCell"/>, the final proof rejects elision and
+  /// the ordinary frame remains. The final check is load-bearing: an IR function can be frame-free and
+  /// still acquire target-specific frame state after selection or allocation.
   /// </para>
   /// </summary>
   /// <param name="resolveCallee">
@@ -95,11 +98,17 @@ public sealed class MachineEmitter {
       bool allowFrameElision = false) {
     var emitter = new MachineEmitter(asm, function, allocation, resolveCallee, resolveData, paramOffsets);
     var loopHeaders = alignLoops ? FindLoopHeaders(function) : null;
-    var elideFrame = CanElideFrame(function, paramOffsets, paramBytes, allowFrameElision);
+    var elideFrame = CanElideFrame(function, allowFrameElision);
+    var loadArgumentsThroughFrame = elideFrame && (function.HasArgumentPlan
+      ? function.ArgumentLoads.Any(load => allocation.ContainsKey(load.VirtualId))
+      : paramOffsets.Length != 0);
 
-    if (!elideFrame) {
+    if (!elideFrame || loadArgumentsThroughFrame) {
       asm.Push(Asm.Reg.BP);
       asm.Mov(Asm.Reg.BP, Asm.Reg.SP);
+    }
+
+    if (!elideFrame) {
       var frame = 0;
       foreach (var size in function.StackSlots)
         frame += (size + 1) & ~1;                      // word-aligned space for allocas / spills
@@ -136,6 +145,9 @@ public sealed class MachineEmitter {
       for (var i = 0; i < paramOffsets.Length; ++i)
         asm.Mov(allocation[i], Asm.Mem.Word(Asm.Reg.BP, paramOffsets[i]));
 
+    if (loadArgumentsThroughFrame)
+      asm.Pop(Asm.Reg.BP);                           // parameter staging is done; the body owns no frame state
+
     foreach (var block in function.Blocks) {
       if (loopHeaders?.Contains(block.Label) == true)
         asm.AlignCode(16);
@@ -155,14 +167,13 @@ public sealed class MachineEmitter {
 
   /// <summary>
   /// Whether the machine function still satisfies the middle-end frame-free proof after instruction
-  /// selection and register allocation. The current 8086 stack ABI cannot address ordinary incoming
-  /// parameters through SP, so any stack parameter keeps BP even though the SSA parameter itself is
-  /// frame-free. A later register ABI or explicit SP-copy plan can relax that condition here without
-  /// teaching the target-neutral analysis about 8086 addressing modes.
+  /// selection and register allocation. Incoming stack parameters are not persistent frame state:
+  /// register-resident values can be copied through BP at entry and BP restored before the body starts.
+  /// A parameter that remains a <see cref="MOperand.ParamCell"/> in the body still needs BP throughout,
+  /// as does any alloca/spill slot or inline assembly.
   /// </summary>
-  private static bool CanElideFrame(MFunction function, int[] paramOffsets, int paramBytes, bool requested) {
-    if (!requested || paramOffsets.Length != 0 || paramBytes != 0 || function.StackSlots.Count != 0
-        || function.ArgumentLoads.Count != 0)
+  private static bool CanElideFrame(MFunction function, bool requested) {
+    if (!requested || function.StackSlots.Count != 0)
       return false;
     foreach (var instruction in function.AllInstructions) {
       if (instruction.Opcode == MOpcode.InlineAsm)
