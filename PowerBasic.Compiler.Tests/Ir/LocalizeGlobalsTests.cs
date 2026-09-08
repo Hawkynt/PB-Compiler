@@ -6,7 +6,7 @@ namespace PowerBasic.Compiler.Tests.Ir;
 /// <summary>
 /// O0278 — global variable localization. The interesting condition is not "only one function uses
 /// it", which is insufficient on its own: a global keeps its value between calls and a local does
-/// not, so the pass also has to prove the incoming value is dead.
+/// not, so the pass also has to prove the incoming value is dead and that invocations cannot overlap.
 /// </summary>
 [TestFixture]
 public sealed class LocalizeGlobalsTests {
@@ -94,5 +94,51 @@ public sealed class LocalizeGlobalsTests {
     entry.Append(new IrRet());
 
     Assert.That(LocalizeGlobals.Run(module), Is.Zero);
+  }
+
+  [Test]
+  public void Global_GivenTheUserCallsItself_ThenItStaysGlobal() {
+    var (module, global, fn, entry) = Program();
+    entry.Append(new IrStore(Const(1), global));
+    entry.Append(new IrCall(IrType.Void, fn, []));
+    entry.Append(new IrLoad(IrType.I16, global));
+    entry.Append(new IrRet());
+
+    Assert.That(LocalizeGlobals.Run(module), Is.Zero,
+      "recursive invocations share one global but would receive separate allocas");
+    Assert.That(module.Globals, Does.Contain(global));
+  }
+
+  [Test]
+  public void Global_GivenTheUserIsMutuallyRecursive_ThenItStaysGlobal() {
+    var (module, global, fn, entry) = Program();
+    var helper = module.AddFunction(new IrFunction("Helper", IrType.Void));
+    var helperEntry = helper.AddBlock(new IrBasicBlock("entry"));
+
+    entry.Append(new IrStore(Const(1), global));
+    entry.Append(new IrCall(IrType.Void, helper, []));
+    entry.Append(new IrLoad(IrType.I16, global));
+    entry.Append(new IrRet());
+    helperEntry.Append(new IrCall(IrType.Void, fn, []));
+    helperEntry.Append(new IrRet());
+
+    Assert.That(LocalizeGlobals.Run(module), Is.Zero,
+      "a cycle through another procedure is re-entry just as direct recursion is");
+    Assert.That(module.Globals, Does.Contain(global));
+  }
+
+  [Test]
+  public void Global_GivenTheUserAddressEscapes_ThenItStaysGlobal() {
+    var (module, global, fn, entry) = Program();
+    var callbackHost = module.AddFunction(new IrFunction("callback_host", IrType.Void, [new IrArgument(IrType.Ptr, 0)]));
+
+    entry.Append(new IrStore(Const(1), global));
+    entry.Append(new IrCall(IrType.Void, callbackHost, [fn]));
+    entry.Append(new IrLoad(IrType.I16, global));
+    entry.Append(new IrRet());
+
+    Assert.That(LocalizeGlobals.Run(module), Is.Zero,
+      "an escaped procedure address could be called back before the current invocation returns");
+    Assert.That(module.Globals, Does.Contain(global));
   }
 }
