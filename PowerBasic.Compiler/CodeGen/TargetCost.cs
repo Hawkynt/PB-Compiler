@@ -1,3 +1,6 @@
+using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Passes;
+
 namespace PowerBasic.Compiler.CodeGen;
 
 /// <summary>The microarchitecture floor a program is compiled for (the <c>$CPU</c> family).</summary>
@@ -39,7 +42,7 @@ public enum CostObjective {
 /// <c>Optimize</c>-gated. Cycle figures are representative period numbers for the named core (Intel timing
 /// tables): exactness is not the point, the ordering of the trade-offs across tiers is.
 /// </remarks>
-public sealed class TargetCost {
+public sealed class TargetCost : IIrArithmeticCostModel {
   public CpuTier Tier { get; }
   public CostObjective Objective { get; }
 
@@ -93,6 +96,35 @@ public sealed class TargetCost {
     _ => 20,
   };
 
+  /// <summary>
+  /// Representative x87 multiply latency used by O0338. The early entries model an 8087/80287/80387
+  /// attached to the corresponding integer core; the later entries model the integrated 486/Pentium/P6
+  /// FPUs. They are deliberately conservative register-operation figures: the cost model needs the
+  /// generation ordering and the reciprocal break-even point, not a promise about one exact stepping.
+  /// </summary>
+  public int X87MultiplyCycles => this.Tier switch {
+    CpuTier.I8086 => 145,
+    CpuTier.I80286 => 145,
+    CpuTier.I80386 => 57,
+    CpuTier.I80486 => 16,
+    CpuTier.Pentium => 3,
+    _ => 4,
+  };
+
+  /// <summary>
+  /// Representative x87 divide latency paired with <see cref="X87MultiplyCycles"/>. FDIV remains much
+  /// slower than FMUL across the supported generations, but on the discrete early coprocessors one
+  /// reciprocal plus two multiplies still loses; that is why O0338 cannot use one global threshold.
+  /// </summary>
+  public int X87DivideCycles => this.Tier switch {
+    CpuTier.I8086 => 203,
+    CpuTier.I80286 => 203,
+    CpuTier.I80386 => 91,
+    CpuTier.I80486 => 73,
+    CpuTier.Pentium => 39,
+    _ => 39,
+  };
+
   /// <summary>Representative cost of a shift/add pair, the currency multiply decomposition trades a
   /// <c>MUL</c> for. One cycle on everything from the 386 up; the 8086's barrel-less shifter makes even this
   /// several cycles, but still an order below its multiply.</summary>
@@ -115,6 +147,19 @@ public sealed class TargetCost {
   /// </remarks>
   public bool PreferShiftAddMultiply(int setBits) =>
     setBits >= 1 && 2 * setBits * this.ShiftAddCycles < this.Mul16Cycles;
+
+  /// <summary>
+  /// O0338's target-specific break-even: <c>N * FDIV</c> versus one reciprocal <c>FDIV</c> plus
+  /// <c>N * FMUL</c>. Only SPEED asks to trade numerical reproducibility/code shape for cycles; strict
+  /// exact-constant reciprocals never query this because their rewrite is semantics-preserving.
+  /// </summary>
+  public bool PreferReciprocalReuse(IrType type, int divisionCount) {
+    if (this.Objective != CostObjective.Speed || divisionCount < 2
+        || type is not { Kind: IrTypeKind.Float, Format: IrFloatFormat.Ieee, Bits: 32 or 64 or 80 })
+      return false;
+    return (long)divisionCount * this.X87DivideCycles
+      > this.X87DivideCycles + (long)divisionCount * this.X87MultiplyCycles;
+  }
 
   /// <summary>True when writing an 8-bit sub-register (packing two BYTE locals into <c>AL</c>/<c>AH</c>,
   /// O0058) is a net win: on the byte-starved early parts it saves real bytes and a full-width move, but on a
