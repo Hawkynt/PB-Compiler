@@ -111,10 +111,9 @@ public sealed class IrPassManager {
   /// unrolling, sccp, correlate, pointer checks, integer/float range folds, overflow coalescing,
   /// sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery, equality saturation,
   /// verified arithmetic lowering, demote, phicong, gvn, memopt, dse, interchange, licm,
-  /// reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the string/global
-  /// module passes. So are the steps the caller runs around the pipeline - <c>Inliner</c>,
-  /// <c>SwitchFormation</c> and <c>MemoryRoutineSpecialization</c>, the last of which is not in
-  /// <see cref="Standard"/> at all because it wants the final shape (see CodeGenerator.Backend).
+  /// reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec, switch formation and the
+  /// string/global module passes. Caller-only late specialization such as
+  /// <c>MemoryRoutineSpecialization</c> is off as well (see CodeGenerator.Backend).
   /// </para>
   /// </summary>
   public static IrPassManager Legalize() => new IrPassManager()
@@ -262,6 +261,11 @@ public sealed class IrPassManager {
     // the pipeline rather than beside it so that the sweep FOLLOWING the inliner sees it: mutual
     // recursion is inlined into self-recursion first, and this is what then turns it into a loop.
     .Add("tailrec", TailRecursion.Run)
+    // O0067/O0336 recover the final dispatch only after the value and CFG transforms have had their
+    // first chance at the compare chain. This is target-neutral: it creates IrSwitch; selection still
+    // decides whether that becomes a jump table, hash, mask or compare tree. The fixpoint's next sweep
+    // collects comparisons made dead by replacing the chain terminator.
+    .Add("switchform", SwitchFormation.Run)
     // FunctionSummaries.RemoveDeadPureCalls deliberately does NOT run here. The analysis is right and
     // the removal is sound - a call to a body that writes nothing, whose result nothing reads, is not
     // observable - but DIFF113 declares `SUB Opaque(v&)` with an EMPTY body precisely to be an
