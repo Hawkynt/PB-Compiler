@@ -5,8 +5,9 @@ namespace PowerBasic.Compiler.Backend;
 /// <summary>
 /// Local stack-slot forwarding after spilling and allocation. This is intentionally conservative:
 /// facts never cross a basic-block boundary, call, inline assembly, or unknown memory write, and a
-/// register-backed fact dies as soon as that physical register is overwritten. Only stack slots
-/// appended by allocation/spilling are eligible; selector-owned frame cells are outside the pass.
+/// register-backed fact dies as soon as that physical register or an overlapping subregister is
+/// overwritten. Only stack slots appended by allocation/spilling are eligible; selector-owned frame
+/// cells are outside the pass.
 /// </summary>
 public static class LateLoadStoreOptimization {
 
@@ -34,7 +35,7 @@ public static class LateLoadStoreOptimization {
       if (TryLoad(original, firstSpillSlot, out var loadDestination, out var loadSlot)) {
         var key = SlotKey.Of(loadSlot);
         if (known.TryGetValue(key, out var value)) {
-          var destination = Resolve(loadDestination, allocation);
+          var destination = ResolveForEmission(loadDestination, allocation);
           if (value.Source is MOperand.Register { Reg: var held } && destination is { } d && held.Physical == d) {
             omit = true;
           } else {
@@ -114,7 +115,7 @@ public static class LateLoadStoreOptimization {
     if (instruction.Opcode == MOpcode.Mov
         && instruction.Operands is [MOperand.StackSlot target, MOperand.Register { Reg: var register }]
         && target.Index >= firstSpillSlot
-        && Resolve(register, allocation) is { } physical) {
+        && ResolveForEmission(register, allocation) is { } physical) {
       slot = target;
       source = new MOperand.Register(MReg.Physical_(physical, register.Size));
       return true;
@@ -130,13 +131,13 @@ public static class LateLoadStoreOptimization {
     foreach (var operandIndex in instruction.Effect.WrittenRegs)
       if (operandIndex >= 0 && operandIndex < instruction.Operands.Count
           && instruction.Operands[operandIndex] is MOperand.Register { Reg: var register }
-          && Resolve(register, allocation) is { } physical)
+          && ResolveForEmission(register, allocation) is { } physical)
         written.Add(physical);
     if (written.Count == 0)
       return;
 
     foreach (var key in known.Where(pair => pair.Value.Source is MOperand.Register { Reg: var register }
-        && written.Contains(register.Physical)).Select(pair => pair.Key).ToArray())
+        && written.Any(write => RegistersOverlap(register.Physical, write))).Select(pair => pair.Key).ToArray())
       known.Remove(key);
   }
 
@@ -156,10 +157,60 @@ public static class LateLoadStoreOptimization {
     _ => false,
   };
 
-  private static Reg? Resolve(MReg register, IReadOnlyDictionary<int, Reg> allocation) {
-    if (!register.IsVirtual)
-      return register.Physical;
-    return allocation.TryGetValue(register.VirtualId, out var physical) ? physical : null;
+  /// <summary>
+  /// Resolves the register exactly as <see cref="MachineEmitter"/> will name it. Byte virtuals are
+  /// allocated in AX/CX/DX/BX but emitted through their low-byte aliases AL/CL/DL/BL; keeping that
+  /// distinction here is what lets the value facts participate in precise physical-alias tracking.
+  /// </summary>
+  private static Reg? ResolveForEmission(MReg register, IReadOnlyDictionary<int, Reg> allocation) {
+    var physical = register.IsVirtual
+      ? allocation.TryGetValue(register.VirtualId, out var allocated) ? allocated : (Reg?)null
+      : register.Physical;
+    if (physical is not { } resolved)
+      return null;
+    if (register.Size != MRegSize.Byte || resolved.IsByte())
+      return resolved;
+    return resolved switch {
+      Reg.AX => Reg.AL,
+      Reg.CX => Reg.CL,
+      Reg.DX => Reg.DL,
+      Reg.BX => Reg.BL,
+      _ => null,
+    };
+  }
+
+  /// <summary>
+  /// Whether two architectural register names cover at least one common bit. x86 names several
+  /// slices of the same storage independently (AL/AH/AX/EAX, etc.), so equality of <see cref="Reg"/>
+  /// is insufficient after register allocation.
+  /// </summary>
+  private static bool RegistersOverlap(Reg left, Reg right) {
+    if (left == right)
+      return true;
+    return RegisterSlice.TryOf(left, out var a) && RegisterSlice.TryOf(right, out var b) && a.Overlaps(b);
+  }
+
+  private readonly record struct RegisterSlice(int Bank, int FirstBit, int EndBit) {
+    public static bool TryOf(Reg register, out RegisterSlice slice) {
+      var index = register.Index();
+      if (register.IsByte()) {
+        slice = index < 4 ? new(index, 0, 8) : new(index - 4, 8, 16);
+        return true;
+      }
+      if (register.IsWord()) {
+        slice = new(index, 0, 16);
+        return true;
+      }
+      if (register.IsDword()) {
+        slice = new(index, 0, 32);
+        return true;
+      }
+      slice = default;
+      return false;
+    }
+
+    public bool Overlaps(RegisterSlice other)
+      => this.Bank == other.Bank && this.FirstBit < other.EndBit && other.FirstBit < this.EndBit;
   }
 
   private readonly record struct SlotKey(int Index, int Disp, MRegSize Size) {
