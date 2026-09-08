@@ -105,6 +105,8 @@ public sealed class LlvmEmitter {
     if (fn.IsDeclaration)
       return sb.Append('\n').ToString();
 
+    if (ReciprocalEstimates(fn) is { } reciprocalEstimates)
+      sb.Append(" \"reciprocal-estimates\"=\"").Append(reciprocalEstimates).Append('"');
     sb.Append(" {\n");
     foreach (var block in fn.Blocks) {
       sb.Append(block.Label).Append(":\n");
@@ -184,6 +186,31 @@ public sealed class LlvmEmitter {
     if ((flags & IrFastMathFlags.AllowContract) != 0) names.Add("contract");
     if ((flags & IrFastMathFlags.ApproxFunc) != 0) names.Add("afn");
     return names.Count == 0 ? "" : " " + string.Join(" ", names);
+  }
+
+  /// <summary>
+  /// Requests LLVM's target-selected reciprocal estimate only where the IR has already granted both
+  /// reciprocal substitution and non-infinite operands. LLVM's SelectionDAG uses this function
+  /// attribute to override target defaults; the per-instruction fast-math flags remain the legality gate.
+  /// </summary>
+  private static string? ReciprocalEstimates(IrFunction function) {
+    var f32 = false;
+    var f64 = false;
+    const IrFastMathFlags required = IrFastMathFlags.AllowReciprocal | IrFastMathFlags.NoInfs;
+    foreach (var division in function.AllInstructions.OfType<IrBinary>()) {
+      if (division.Op != IrBinaryOp.FDiv || (division.FastMathFlags & required) != required)
+        continue;
+      switch (division.Type.Bits) {
+        case 32: f32 = true; break;
+        case 64: f64 = true; break;
+      }
+    }
+    return (f32, f64) switch {
+      (true, true) => "divf,divd",
+      (true, false) => "divf",
+      (false, true) => "divd",
+      _ => null,
+    };
   }
 
   private string PhiInputs(IrPhi phi) =>
