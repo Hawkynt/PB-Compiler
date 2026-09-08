@@ -12,6 +12,8 @@ public static class FpFastMath {
     | IrFastMathFlags.NoNaNs | IrFastMathFlags.NoInfs | IrFastMathFlags.NoSignedZeros
     | IrFastMathFlags.AllowContract;
 
+  private readonly record struct SignedValue(IrValue Value, bool Negative);
+
   public static int Run(IrFunction function, IrFastMathFlags flags) {
     if (flags == IrFastMathFlags.None || function.HasErrorHandler || function.HasInlineAsm)
       return 0;
@@ -27,45 +29,100 @@ public static class FpFastMath {
 
   private static int Reassociate(IrFunction function, IrFastMathFlags flags) {
     var changes = 0;
+    var allowSubtraction = (flags & IrFastMathFlags.NoSignedZeros) != 0;
     foreach (var block in function.Blocks)
       foreach (var root in block.Instructions.OfType<IrBinary>().Reverse().ToList()) {
-        if (root.Parent is null || root.Op is not (IrBinaryOp.FAdd or IrBinaryOp.FMul)
-            || !root.Type.IsIeeeFloat || !IsChainRoot(root))
+        if (root.Parent is null || !root.Type.IsIeeeFloat)
           continue;
-        var leaves = new List<IrValue>();
-        if (!Flatten(root, root.Op, block, leaves, isRoot: true)
-            || leaves.Count < 4 || leaves.Count > _MAX_REASSOC_LEAVES
-            || ChainDepth(root, root.Op, block, isRoot: true) <= BalancedDepth(leaves.Count))
+
+        if (root.Op == IrBinaryOp.FMul) {
+          if (!IsProductRoot(root))
+            continue;
+          var leaves = new List<IrValue>();
+          var nodes = new List<IrBinary>();
+          if (!FlattenProduct(root, block, leaves, nodes, isRoot: true)
+              || leaves.Count < 4 || leaves.Count > _MAX_REASSOC_LEAVES
+              || ProductDepth(root, block, isRoot: true) <= BalancedDepth(leaves.Count))
+            continue;
+          var replacement = BuildBalancedProduct(block, root, leaves, 0, leaves.Count,
+            ArithmeticFlags(root.FastMathFlags | flags));
+          ReplaceTree(root, replacement, nodes);
+          ++changes;
           continue;
-        var replacement = BuildBalanced(block, root, root.Op, leaves, 0, leaves.Count,
+        }
+
+        if (!IsSumOp(root.Op, allowSubtraction) || !IsSumRoot(root, allowSubtraction))
+          continue;
+        var signedLeaves = new List<SignedValue>();
+        var sumNodes = new List<IrBinary>();
+        if (!FlattenSum(root, block, signedLeaves, sumNodes, negative: false,
+              allowSubtraction: allowSubtraction, isRoot: true)
+            || signedLeaves.Count < 4 || signedLeaves.Count > _MAX_REASSOC_LEAVES
+            || SumDepth(root, block, allowSubtraction, isRoot: true) <= BalancedDepth(signedLeaves.Count))
+          continue;
+        var signedReplacement = BuildBalancedSum(block, root, signedLeaves, 0, signedLeaves.Count,
           ArithmeticFlags(root.FastMathFlags | flags));
-        root.ReplaceAllUsesWith(replacement);
-        root.EraseFromParent();
+        System.Diagnostics.Debug.Assert(!signedReplacement.Negative);
+        ReplaceTree(root, signedReplacement.Value, sumNodes);
         ++changes;
       }
     return changes;
   }
 
-  private static bool IsChainRoot(IrBinary node)
-    => node.Users.Count != 1 || node.Users[0] is not IrBinary parent || parent.Op != node.Op
+  private static bool IsProductRoot(IrBinary node)
+    => node.Users.Count != 1 || node.Users[0] is not IrBinary parent || parent.Op != IrBinaryOp.FMul
        || !ReferenceEquals(parent.Parent, node.Parent);
 
-  private static bool Flatten(IrValue value, IrBinaryOp op, IrBasicBlock block, List<IrValue> leaves,
-      bool isRoot = false) {
+  private static bool IsSumRoot(IrBinary node, bool allowSubtraction)
+    => node.Users.Count != 1 || node.Users[0] is not IrBinary parent
+       || !ReferenceEquals(parent.Parent, node.Parent) || !IsSumOp(parent.Op, allowSubtraction);
+
+  private static bool IsSumOp(IrBinaryOp op, bool allowSubtraction)
+    => op == IrBinaryOp.FAdd || allowSubtraction && op == IrBinaryOp.FSub;
+
+  private static bool FlattenProduct(IrValue value, IrBasicBlock block, List<IrValue> leaves,
+      List<IrBinary> nodes, bool isRoot = false) {
     if (leaves.Count > _MAX_REASSOC_LEAVES)
       return false;
-    if (value is IrBinary inner && inner.Op == op && ReferenceEquals(inner.Parent, block)
-        && (isRoot || inner.Users.Count == 1))
-      return Flatten(inner.Lhs, op, block, leaves) && Flatten(inner.Rhs, op, block, leaves);
+    if (value is IrBinary { Op: IrBinaryOp.FMul } inner && ReferenceEquals(inner.Parent, block)
+        && (isRoot || inner.Users.Count == 1)) {
+      nodes.Add(inner);
+      return FlattenProduct(inner.Lhs, block, leaves, nodes)
+        && FlattenProduct(inner.Rhs, block, leaves, nodes);
+    }
     leaves.Add(value);
     return true;
   }
 
-  private static int ChainDepth(IrValue value, IrBinaryOp op, IrBasicBlock block, bool isRoot = false) {
-    if (value is not IrBinary inner || inner.Op != op || !ReferenceEquals(inner.Parent, block)
+  private static bool FlattenSum(IrValue value, IrBasicBlock block, List<SignedValue> leaves,
+      List<IrBinary> nodes, bool negative, bool allowSubtraction, bool isRoot = false) {
+    if (leaves.Count > _MAX_REASSOC_LEAVES)
+      return false;
+    if (value is IrBinary inner && ReferenceEquals(inner.Parent, block)
+        && IsSumOp(inner.Op, allowSubtraction) && (isRoot || inner.Users.Count == 1)) {
+      nodes.Add(inner);
+      if (!FlattenSum(inner.Lhs, block, leaves, nodes, negative, allowSubtraction))
+        return false;
+      var rhsNegative = inner.Op == IrBinaryOp.FSub ? !negative : negative;
+      return FlattenSum(inner.Rhs, block, leaves, nodes, rhsNegative, allowSubtraction);
+    }
+    leaves.Add(new SignedValue(value, negative));
+    return true;
+  }
+
+  private static int ProductDepth(IrValue value, IrBasicBlock block, bool isRoot = false) {
+    if (value is not IrBinary { Op: IrBinaryOp.FMul } inner || !ReferenceEquals(inner.Parent, block)
         || (!isRoot && inner.Users.Count != 1))
       return 0;
-    return 1 + Math.Max(ChainDepth(inner.Lhs, op, block), ChainDepth(inner.Rhs, op, block));
+    return 1 + Math.Max(ProductDepth(inner.Lhs, block), ProductDepth(inner.Rhs, block));
+  }
+
+  private static int SumDepth(IrValue value, IrBasicBlock block, bool allowSubtraction, bool isRoot = false) {
+    if (value is not IrBinary inner || !ReferenceEquals(inner.Parent, block)
+        || !IsSumOp(inner.Op, allowSubtraction) || (!isRoot && inner.Users.Count != 1))
+      return 0;
+    return 1 + Math.Max(SumDepth(inner.Lhs, block, allowSubtraction),
+      SumDepth(inner.Rhs, block, allowSubtraction));
   }
 
   private static int BalancedDepth(int leaves) {
@@ -75,14 +132,34 @@ public static class FpFastMath {
     return depth;
   }
 
-  private static IrValue BuildBalanced(IrBasicBlock block, IrInstruction anchor, IrBinaryOp op,
+  private static IrValue BuildBalancedProduct(IrBasicBlock block, IrInstruction anchor,
       IReadOnlyList<IrValue> leaves, int start, int count, IrFastMathFlags flags) {
     if (count == 1)
       return leaves[start];
     var leftCount = count / 2;
-    var left = BuildBalanced(block, anchor, op, leaves, start, leftCount, flags);
-    var right = BuildBalanced(block, anchor, op, leaves, start + leftCount, count - leftCount, flags);
-    return block.InsertBefore(new IrBinary(op, left, right) { FastMathFlags = flags }, anchor);
+    var left = BuildBalancedProduct(block, anchor, leaves, start, leftCount, flags);
+    var right = BuildBalancedProduct(block, anchor, leaves, start + leftCount, count - leftCount, flags);
+    return block.InsertBefore(new IrBinary(IrBinaryOp.FMul, left, right) { FastMathFlags = flags }, anchor);
+  }
+
+  private static SignedValue BuildBalancedSum(IrBasicBlock block, IrInstruction anchor,
+      IReadOnlyList<SignedValue> leaves, int start, int count, IrFastMathFlags flags) {
+    if (count == 1)
+      return leaves[start];
+    var leftCount = count / 2;
+    var left = BuildBalancedSum(block, anchor, leaves, start, leftCount, flags);
+    var right = BuildBalancedSum(block, anchor, leaves, start + leftCount, count - leftCount, flags);
+    var op = left.Negative == right.Negative ? IrBinaryOp.FAdd : IrBinaryOp.FSub;
+    var value = block.InsertBefore(new IrBinary(op, left.Value, right.Value) { FastMathFlags = flags }, anchor);
+    return new SignedValue(value, left.Negative);
+  }
+
+  private static void ReplaceTree(IrBinary root, IrValue replacement, IReadOnlyList<IrBinary> nodes) {
+    root.ReplaceAllUsesWith(replacement);
+    root.EraseFromParent();
+    foreach (var node in nodes)
+      if (!ReferenceEquals(node, root) && node.Parent is not null && node.HasNoUsers)
+        node.EraseFromParent();
   }
 
   private static int FactorCommonDenominators(IrFunction function, IrFastMathFlags flags) {
