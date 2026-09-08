@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial (the model and query interface exist — `TargetCost` — and back the hot-loop-alignment decision; the branch/branchless, unroll-factor and encoding passes are wired to it as they land) — **the prerequisite for most of the other planned passes** |
+| **Status** | 🟡 Partial (the model and query interface exist — `TargetCost` — and live passes consume them as target-sensitive transforms land) — **the prerequisite for most of the other planned passes** |
 | **Stage** | Compiler infrastructure |
-| **Related** | [O0078](O0078-multiply-decomposition.md), [O0092](O0092-encoding-selection.md), [O0129](O0129-unroll-factor-cost-model.md), [O0147](O0147-vector-width-cost-model.md), [O0177](O0177-cycle-estimate-battery.md) |
+| **Related** | [O0078](O0078-multiply-decomposition.md), [O0092](O0092-encoding-selection.md), [O0129](O0129-unroll-factor-cost-model.md), [O0147](O0147-vector-width-cost-model.md), [O0177](O0177-cycle-estimate-battery.md), [O0338](O0338-reciprocal-sequence-reuse.md) |
 
 ## The idea
 
@@ -46,19 +46,24 @@ doc opens with:
 - `MacroFusionMatters` — true from the Pentium, false earlier. Backs O0109.
 - `Mul16Cycles`/`Div16Cycles`/`ShiftAddCycles` — the latencies that price the
   multiply/divide-decomposition rewrites (O0078/O0056) per tier.
+- `X87MultiplyCycles`/`X87DivideCycles` and `PreferReciprocalReuse(type, count)` —
+  representative x87-generation costs and the O0338 break-even query. The routed
+  x86 SPEED pipeline passes this model into the middle end through
+  `IIrArithmeticCostModel`; exact power-of-two reciprocal rewrites do not need a
+  profitability permission because they preserve strict semantics and replace
+  FDIV by the cheaper FMUL on every modelled tier.
 
-**Measured 2026-08-06: 3 of the 14 query members have a call site.** `AlignHotLoops`,
-`MaxFullUnrollTrips` and `PreferShiftAddMultiply` are consumed; `NoBranchPredictor`,
-`BranchMispredictPenalty`, `PrefetchBound`, `Mul16Cycles`, `Div16Cycles`,
-`ShiftAddCycles`, `SubRegisterPackingProfitable`, `MacroFusionMatters`,
-`PreferLoopInstruction`, `PreferBranchless` and `UnrollFactor` have none.
+As of 2026-09-08, live consumers include `AlignHotLoops`, `MaxFullUnrollTrips`,
+`PreferShiftAddMultiply`, and `PreferReciprocalReuse`. The x87 cycle properties
+feed the reciprocal query internally rather than being second pass-level policy
+entry points. Other answers below remain ready for their planned consumers.
 
 Read the "backs O00xx" lines above as *what each answer is for*, not as wiring that
-exists — the passes they name (O0058's sub-register packing, O0109's fusion
-placement, the branchless halves of O0094/O0108/O0248, the partial-unroll factor of
-O0129) are themselves unbuilt, which is why nothing calls in yet. The model is not
-the blocker it is sometimes taken for: it is built, tested (`TargetCostTests`) and
-ready, and each of those passes brings its own consumer when it lands.
+necessarily exists — the passes they name (O0058's sub-register packing, O0109's
+fusion placement, the branchless halves of O0094/O0108/O0248, the partial-unroll
+factor of O0129) bring their own consumer when they land. The model is not the
+blocker it is sometimes taken for: it is built, tested (`TargetCostTests`) and
+ready.
 
 One member is deliberately not consulted where it might look like it should be. The
 branchless ABS that ships (`TryEmitBranchlessAbsIf`, O0249) does not ask
@@ -70,10 +75,15 @@ replaces on every tier. An idiom that wins everywhere needs no cost question.
   size-bound.
 - `UnrollFactor(trip, bodyBytes)` — scales with the tier, clamps to the fetch
   window, and prefers a factor dividing the trip count. Backs O0129.
-- `AlignHotLoops` — the first live consumer: the 16-byte hot-loop pad (C2) now
-  asks the model (speed objective on a 486+) instead of hard-coding
-  `OptimizeSpeed && (Cpu486 || Cpu586)`. Output is byte-identical (the pad is
-  NOP-only and the golden gate still holds at 250/250).
+- `AlignHotLoops` — the 16-byte hot-loop pad asks the model (speed objective on a
+  486+) instead of hard-coding `OptimizeSpeed && (Cpu486 || Cpu586)`.
+
+O0338 also demonstrates why the cost interface belongs above individual machine
+instructions. A pair of divisions can be below the reciprocal break-even on an
+8087-class FPU, while the same pair inside a four-trip counted loop becomes eight
+dynamic divisions and is profitable once guarded hoisting pays the reciprocal
+only once. The mid-end combines the target query with its exact `CountedLoop`
+proof; the target model itself stays ignorant of CFG shape.
 
 The model emits nothing, so consulting it never changes output on its own — only
 a pass acting on an answer does, and every such pass stays `Optimize`-gated.
