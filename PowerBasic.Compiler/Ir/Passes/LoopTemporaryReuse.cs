@@ -51,11 +51,11 @@ public static class LoopTemporaryReuse {
     if (exitPredecessors.Count != 1 || !ReferenceEquals(exitPredecessors[0], loop.Header))
       return false;
 
-    // Nothing observable may be pulled across the allocation when it moves to the preheader. The
-    // counted-loop matcher already made the comparison/counter exact; keep this slice to that pure
-    // header rather than trying to classify arbitrary loads or calls here.
-    if (loop.Header.Instructions.Any(instruction => instruction is not IrPhi and not IrCmp and not IrBinary
-          and not IrCast and not IrSelect and not IrCondBr))
+    // Hoisting changes the relative order only against the header. Keep that header to phi selection,
+    // the CountedLoop matcher’s own comparison and its branch; admitting arbitrary "pure-looking"
+    // arithmetic here would also admit operations whose exceptional behaviour can precede OOM.
+    if (loop.Header.Instructions.Any(instruction => instruction is not IrPhi
+          && !ReferenceEquals(instruction, loop.Test) && instruction is not IrCondBr))
       return false;
 
     var calls = body.Instructions.OfType<IrCall>().ToList();
