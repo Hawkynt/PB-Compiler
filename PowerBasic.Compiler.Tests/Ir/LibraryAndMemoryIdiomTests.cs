@@ -62,42 +62,132 @@ public sealed class LibraryAndMemoryIdiomTests {
   }
 
   [Test]
-  public void Memcpy_GivenFourConstantBytes_ThenTheCallIsExpandedStraightLine() {
+  public void Memcpy_GivenSixConstantBytes_ThenTheCallUsesThreeWordMoves() {
     var memcpy = new IrFunction("llvm.memcpy.p0.p0.i32", IrType.Void, [
       new IrArgument(IrType.Ptr, 0), new IrArgument(IrType.Ptr, 1),
       new IrArgument(IrType.I32, 2), new IrArgument(IrType.I1, 3),
     ]);
     var fn = new IrFunction("tiny", IrType.Void);
     var entry = fn.AddBlock(new IrBasicBlock("entry"));
-    var source = entry.Append(new IrAlloca(IrType.I8) { Count = 4 });
-    var target = entry.Append(new IrAlloca(IrType.I8) { Count = 4 });
+    var source = entry.Append(new IrAlloca(IrType.I8) { Count = 6 });
+    var target = entry.Append(new IrAlloca(IrType.I8) { Count = 6 });
     entry.Append(new IrCall(IrType.Void, memcpy, [target, source,
-      new IrConstantInt(IrType.I32, 4), new IrConstantInt(IrType.I1, 0)]));
+      new IrConstantInt(IrType.I32, 6), new IrConstantInt(IrType.I1, 0)]));
     entry.Append(new IrRet());
 
     Assert.That(MemoryRoutineSpecialization.Run(fn), Is.EqualTo(1));
     Assert.That(fn.AllInstructions.OfType<IrCall>(), Is.Empty);
-    Assert.That(fn.AllInstructions.OfType<IrLoad>().Count(), Is.EqualTo(4));
-    Assert.That(fn.AllInstructions.OfType<IrStore>().Count(), Is.EqualTo(4));
+    var loads = fn.AllInstructions.OfType<IrLoad>().ToList();
+    var stores = fn.AllInstructions.OfType<IrStore>().ToList();
+    Assert.That(loads.Count, Is.EqualTo(3));
+    Assert.That(stores.Count, Is.EqualTo(3));
+    Assert.That(loads.All(load => Equals(load.Type, IrType.I16)), Is.True);
+    Assert.That(stores.All(store => Equals(store.Value.Type, IrType.I16)), Is.True);
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
   }
 
   [Test]
-  public void Memcpy_GivenNineBytes_ThenTheRuntimeFormSurvives() {
+  public void Memcpy_GivenSevenConstantBytes_ThenTheRuntimeFormSurvives() {
     var memcpy = new IrFunction("llvm.memcpy.p0.p0.i32", IrType.Void, [
       new IrArgument(IrType.Ptr, 0), new IrArgument(IrType.Ptr, 1),
       new IrArgument(IrType.I32, 2), new IrArgument(IrType.I1, 3),
     ]);
     var fn = new IrFunction("medium", IrType.Void);
     var entry = fn.AddBlock(new IrBasicBlock("entry"));
-    var source = entry.Append(new IrAlloca(IrType.I8) { Count = 9 });
-    var target = entry.Append(new IrAlloca(IrType.I8) { Count = 9 });
+    var source = entry.Append(new IrAlloca(IrType.I8) { Count = 7 });
+    var target = entry.Append(new IrAlloca(IrType.I8) { Count = 7 });
     entry.Append(new IrCall(IrType.Void, memcpy, [target, source,
-      new IrConstantInt(IrType.I32, 9), new IrConstantInt(IrType.I1, 0)]));
+      new IrConstantInt(IrType.I32, 7), new IrConstantInt(IrType.I1, 0)]));
     entry.Append(new IrRet());
 
     Assert.That(MemoryRoutineSpecialization.Run(fn), Is.Zero);
     Assert.That(fn.AllInstructions.OfType<IrCall>().Count(), Is.EqualTo(1));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
+  public void Memcpy_GivenVolatileFlag_ThenTheRuntimeFormSurvives() {
+    var memcpy = new IrFunction("llvm.memcpy.p0.p0.i32", IrType.Void, [
+      new IrArgument(IrType.Ptr, 0), new IrArgument(IrType.Ptr, 1),
+      new IrArgument(IrType.I32, 2), new IrArgument(IrType.I1, 3),
+    ]);
+    var fn = new IrFunction("volatile_copy", IrType.Void);
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    var source = entry.Append(new IrAlloca(IrType.I8) { Count = 2 });
+    var target = entry.Append(new IrAlloca(IrType.I8) { Count = 2 });
+    entry.Append(new IrCall(IrType.Void, memcpy, [target, source,
+      new IrConstantInt(IrType.I32, 2), new IrConstantInt(IrType.I1, 1)]));
+    entry.Append(new IrRet());
+
+    Assert.That(MemoryRoutineSpecialization.Run(fn), Is.Zero);
+    Assert.That(fn.AllInstructions.OfType<IrCall>().Count(), Is.EqualTo(1));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
+  public void Memset_GivenEightConstantBytes_ThenTheCallUsesFourWordStores() {
+    var memset = new IrFunction("llvm.memset.p0.i32", IrType.Void, [
+      new IrArgument(IrType.Ptr, 0), new IrArgument(IrType.I8, 1),
+      new IrArgument(IrType.I32, 2), new IrArgument(IrType.I1, 3),
+    ]);
+    var fn = new IrFunction("constant_fill", IrType.Void);
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    var target = entry.Append(new IrAlloca(IrType.I8) { Count = 8 });
+    entry.Append(new IrCall(IrType.Void, memset, [target, new IrConstantInt(IrType.I8, 0x5a),
+      new IrConstantInt(IrType.I32, 8), new IrConstantInt(IrType.I1, 0)]));
+    entry.Append(new IrRet());
+
+    Assert.That(MemoryRoutineSpecialization.Run(fn), Is.EqualTo(1));
+    Assert.That(fn.AllInstructions.OfType<IrCall>(), Is.Empty);
+    var stores = fn.AllInstructions.OfType<IrStore>().ToList();
+    Assert.That(stores.Count, Is.EqualTo(4));
+    Assert.That(stores.All(store => Equals(store.Value.Type, IrType.I16)), Is.True);
+    Assert.That(stores.All(store => store.Value is IrConstantInt constant && constant.ZeroExtended == 0x5a5aUL), Is.True);
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
+  public void Memset_GivenFourDynamicBytes_ThenTheCallKeepsByteStores() {
+    var memset = new IrFunction("llvm.memset.p0.i32", IrType.Void, [
+      new IrArgument(IrType.Ptr, 0), new IrArgument(IrType.I8, 1),
+      new IrArgument(IrType.I32, 2), new IrArgument(IrType.I1, 3),
+    ]);
+    var fn = new IrFunction("dynamic_fill", IrType.Void);
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    var fillCell = entry.Append(new IrAlloca(IrType.I8));
+    var fill = entry.Append(new IrLoad(IrType.I8, fillCell));
+    var target = entry.Append(new IrAlloca(IrType.I8) { Count = 4 });
+    entry.Append(new IrCall(IrType.Void, memset, [target, fill,
+      new IrConstantInt(IrType.I32, 4), new IrConstantInt(IrType.I1, 0)]));
+    entry.Append(new IrRet());
+
+    Assert.That(MemoryRoutineSpecialization.Run(fn), Is.EqualTo(1));
+    Assert.That(fn.AllInstructions.OfType<IrCall>(), Is.Empty);
+    var stores = fn.AllInstructions.OfType<IrStore>().ToList();
+    Assert.That(stores.Count, Is.EqualTo(4));
+    Assert.That(stores.All(store => ReferenceEquals(store.Value, fill)), Is.True,
+      "a dynamic byte must not grow arithmetic just to synthesize a repeated word");
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
+  public void Memset_GivenFiveDynamicBytes_ThenTheRuntimeFormSurvives() {
+    var memset = new IrFunction("llvm.memset.p0.i32", IrType.Void, [
+      new IrArgument(IrType.Ptr, 0), new IrArgument(IrType.I8, 1),
+      new IrArgument(IrType.I32, 2), new IrArgument(IrType.I1, 3),
+    ]);
+    var fn = new IrFunction("dynamic_fill", IrType.Void);
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    var fillCell = entry.Append(new IrAlloca(IrType.I8));
+    var fill = entry.Append(new IrLoad(IrType.I8, fillCell));
+    var target = entry.Append(new IrAlloca(IrType.I8) { Count = 5 });
+    entry.Append(new IrCall(IrType.Void, memset, [target, fill,
+      new IrConstantInt(IrType.I32, 5), new IrConstantInt(IrType.I1, 0)]));
+    entry.Append(new IrRet());
+
+    Assert.That(MemoryRoutineSpecialization.Run(fn), Is.Zero);
+    Assert.That(fn.AllInstructions.OfType<IrCall>().Count(), Is.EqualTo(1));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
   }
 
   private static void BuildFillLoop(IrFunction fn, IrValue value, int trips) {
