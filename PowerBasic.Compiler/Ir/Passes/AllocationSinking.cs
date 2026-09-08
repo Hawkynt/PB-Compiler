@@ -102,8 +102,8 @@ public static class AllocationSinking {
   }
 
   private static bool SafeToCross(IrBasicBlock block, IrCall allocation, IrCondBr branch) {
-    var start = block.Instructions.IndexOf(allocation);
-    var end = block.Instructions.IndexOf(branch);
+    var start = IndexOf(block.Instructions, allocation);
+    var end = IndexOf(block.Instructions, branch);
     if (start < 0 || end <= start)
       return false;
 
@@ -119,6 +119,13 @@ public static class AllocationSinking {
         return false;
     }
     return true;
+  }
+
+  private static int IndexOf(IReadOnlyList<IrInstruction> instructions, IrInstruction target) {
+    for (var i = 0; i < instructions.Count; ++i)
+      if (ReferenceEquals(instructions[i], target))
+        return i;
+    return -1;
   }
 
   private static bool IsFreeNull(IrInstruction instruction)
