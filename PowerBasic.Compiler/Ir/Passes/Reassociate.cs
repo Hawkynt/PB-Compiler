@@ -34,7 +34,7 @@ public static class Reassociate {
       return 0;                                    // a fault can enter anywhere - see IrFunction
 
     var rewritten = 0;
-    var ids = new Dictionary<IrValue, int>(ReferenceEqualityComparer.Instance);
+    var ids = StableValueIds(fn);
 
     // Outermost first: a root's chain swallows the inner nodes, so visiting them again afterwards
     // would only re-canonicalize what is already canonical.
@@ -97,8 +97,27 @@ public static class Reassociate {
   };
 
   /// <summary>
-  /// A stable order for the non-constant leaves. It only has to be a total order that two equal
-  /// chains agree on — first seen wins, so the numbering is deterministic within a function.
+  /// Gives every SSA value a deterministic function-local id before any chain is inspected. Arguments
+  /// come first in signature order, then instruction results in block/instruction order, matching the
+  /// stable order in which the IR itself is printed. Pre-ranking matters: a two-operand value such as
+  /// <c>a+b</c> is already canonical and is never rebuilt, but its operands still have to determine the
+  /// order of a later <c>c+a+b</c> chain if reassociation is to expose that existing subexpression.
+  /// </summary>
+  private static Dictionary<IrValue, int> StableValueIds(IrFunction fn) {
+    var ids = new Dictionary<IrValue, int>(ReferenceEqualityComparer.Instance);
+    foreach (var parameter in fn.Parameters)
+      ids[parameter] = ids.Count;
+    foreach (var block in fn.Blocks)
+      foreach (var instruction in block.Instructions)
+        if (!instruction.Type.IsVoid)
+          ids[instruction] = ids.Count;
+    return ids;
+  }
+
+  /// <summary>
+  /// Returns the stable id of a non-constant leaf. Values introduced while this invocation is
+  /// rebuilding an earlier chain are appended deterministically; the rebuilt root inherits the id of
+  /// the root it replaces so later chains see the same ordering again on the next pass iteration.
   /// </summary>
   private static int RankOf(IrValue value, Dictionary<IrValue, int> ids)
     => ids.TryGetValue(value, out var id) ? id : ids[value] = ids.Count;
@@ -122,10 +141,9 @@ public static class Reassociate {
       } else
         others.Add(leaf);
 
-    // Ranks are assigned HERE, walking the list in order, not lazily inside the comparator: a sort
-    // calls its comparator in an unspecified sequence, so numbering on demand would hand out ids in
-    // an order that depends on the sort's internals and the "already canonical" test below would
-    // never settle.
+    // Ranks are assigned before sorting, including the rare values created by an earlier rebuild in
+    // this same invocation. Never assign them lazily inside the comparator: a sort calls its comparer
+    // in an unspecified sequence, which would make the chosen order depend on the sort's internals.
     foreach (var leaf in others)
       RankOf(leaf, ids);
     others.Sort((a, b) => ids[a].CompareTo(ids[b]));
@@ -143,8 +161,12 @@ public static class Reassociate {
 
     var block = root.Parent!;
     var accumulator = ordered[0];
+    IrBinary? rebuiltRoot = null;
     for (var i = 1; i < ordered.Count; ++i)
-      accumulator = block.InsertBefore(new IrBinary(root.Op, accumulator, ordered[i]), root);
+      accumulator = rebuiltRoot = block.InsertBefore(new IrBinary(root.Op, accumulator, ordered[i]), root);
+
+    if (rebuiltRoot is not null && ids.TryGetValue(root, out var rootId))
+      ids[rebuiltRoot] = rootId;
 
     root.ReplaceAllUsesWith(accumulator);
     root.EraseFromParent();
