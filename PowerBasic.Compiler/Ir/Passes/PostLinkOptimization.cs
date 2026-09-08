@@ -135,7 +135,7 @@ public static class PostLinkOptimization {
       candidate.AddRange(chain.Blocks);
 
     var candidateFallthrough = FallthroughWeight(candidate, weights);
-    var selected = candidateFallthrough > originalFallthrough ? candidate : originalOrder;
+    IReadOnlyList<int> selected = candidateFallthrough > originalFallthrough ? candidate : originalOrder;
     var selectedFallthrough = Math.Max(candidateFallthrough, originalFallthrough);
     return BuildPlan(fn, blocks, indexOf, selected, totalWeight, originalFallthrough, selectedFallthrough);
   }
