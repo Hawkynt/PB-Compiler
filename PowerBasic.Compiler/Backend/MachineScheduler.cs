@@ -149,20 +149,32 @@ public static class MachineScheduler {
     // assigned the pinned register and overwrite a prepared runtime argument or implicit result.
     if (a.Clobbers.Count > 0 || b.Clobbers.Count > 0)
       return true;
-    // the x87 stack is a resource no effect descriptor names, so two instructions that use it are
-    // ordered against each other whatever their operands say - see MOpcodes.UsesX87
-    if (MOpcodes.UsesX87(a.Opcode) && MOpcodes.UsesX87(b.Opcode))
+    // The x87 stack is a resource no ordinary effect descriptor names. O0349's generated FLD ST(i)
+    // duplicate deliberately reuses InlineAsm because the emitter already has the exact instruction;
+    // recognize that canonical no-name form here so it participates in the same pseudo dependency.
+    if (UsesX87(a) && UsesX87(b))
       return true;
     // register RAW / WAR / WAW
     if (ka.Writes.Overlaps(kb.Reads) || ka.Writes.Overlaps(kb.Writes) || ka.Reads.Overlaps(kb.Writes))
       return true;
     // flags
-    if ((a.Effect.WritesFlags && (b.Effect.ReadsFlags || b.Effect.WritesFlags)) || (a.Effect.ReadsFlags && b.Effect.WritesFlags))
+    if ((a.Effect.WritesFlags && (b.Effect.ReadsFlags || b.Effect.WritesFlags))
+        || a.Effect.ReadsFlags && b.Effect.WritesFlags)
       return true;
     // memory - conservative: any pair where at least one writes is ordered (no aliasing analysis here)
     var aMem = a.Effect.ReadsMemory || a.Effect.WritesMemory;
     var bMem = b.Effect.ReadsMemory || b.Effect.WritesMemory;
     return (a.Effect.WritesMemory && bMem) || (aMem && b.Effect.WritesMemory);
+  }
+
+  private static bool UsesX87(MInstr instruction) {
+    if (MOpcodes.UsesX87(instruction.Opcode))
+      return true;
+    if (instruction is not { Opcode: MOpcode.InlineAsm,
+        Operands: [MOperand.InlineAsmText { Names: { Count: 0 }, Text: var text }] })
+      return false;
+    return text.Length == 9 && text.StartsWith("FLD ST(", StringComparison.Ordinal)
+      && text[7] is >= '0' and <= '7' && text[8] == ')';
   }
 
   // the registers an instruction reads/writes as scheduler keys (virtual id, or a distinct key per physical register)
