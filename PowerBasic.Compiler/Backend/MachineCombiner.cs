@@ -13,21 +13,23 @@ public static class MachineCombiner {
   public static int Run(MFunction function) {
     ArgumentNullException.ThrowIfNull(function);
     var addressValues = AddressConstrainedValues(function);
+    var blocksByLabel = function.Blocks.ToDictionary(block => block.Label, StringComparer.Ordinal);
     var changed = 0;
     foreach (var block in function.Blocks) {
-      changed += CombineCompareZero(block);
+      changed += CombineCompareZero(block, blocksByLabel);
       changed += CombineAddressArithmetic(block, addressValues);
     }
     return changed;
   }
 
-  private static int CombineCompareZero(MBlock block) {
+  private static int CombineCompareZero(MBlock block, IReadOnlyDictionary<string, MBlock> blocksByLabel) {
     var changed = 0;
     for (var i = 0; i < block.Instructions.Count; ++i) {
       var instruction = block.Instructions[i];
       if (instruction.Opcode != MOpcode.Cmp || instruction.Condition is not null
           || instruction.Clobbers.Count != 0
-          || instruction.Operands is not [MOperand.Register { Reg: var value }, MOperand.Immediate { Value: 0 }])
+          || instruction.Operands is not [MOperand.Register { Reg: var value }, MOperand.Immediate { Value: 0 }]
+          || !AuxiliaryFlagUnobservableAfter(block, i, blocksByLabel))
         continue;
 
       var register = new MOperand.Register(value);
@@ -89,6 +91,44 @@ public static class MachineCombiner {
     => register.IsVirtual
       ? addressValues.Contains(register.VirtualId)
       : register.Physical is Reg.BX or Reg.BP or Reg.SI or Reg.DI;
+
+  /// <summary>
+  /// <c>CMP r,0</c> and <c>TEST r,r</c> agree on every flag consumed by Jcc and carry-chain
+  /// instructions, but TEST leaves AF undefined while CMP against zero clears it. Inline assembly can
+  /// observe AF through LAHF/PUSHF, including in a successor block, so only replace the compare when
+  /// every reachable flag read before AF is definitely overwritten is one of the equivalent consumers.
+  /// </summary>
+  private static bool AuxiliaryFlagUnobservableAfter(MBlock block, int index,
+      IReadOnlyDictionary<string, MBlock> blocksByLabel) {
+    var visited = new HashSet<string>(StringComparer.Ordinal);
+    return Scan(block, index + 1);
+
+    bool Scan(MBlock current, int start) {
+      if (start == 0 && !visited.Add(current.Label))
+        return true;
+
+      for (var i = start; i < current.Instructions.Count; ++i) {
+        var instruction = current.Instructions[i];
+        if (instruction.Effect.ReadsFlags && !ReadsOnlyCompareTestEquivalentFlags(instruction))
+          return false;
+        if (OverwritesAuxiliaryFlag(instruction))
+          return true;
+      }
+
+      foreach (var successor in current.SuccessorsWithAsmJumps()) {
+        if (!blocksByLabel.TryGetValue(successor, out var successorBlock) || !Scan(successorBlock, 0))
+          return false;
+      }
+      return true;
+    }
+  }
+
+  private static bool ReadsOnlyCompareTestEquivalentFlags(MInstr instruction)
+    => instruction.Opcode is MOpcode.Jcc or MOpcode.Adc or MOpcode.Sbb or MOpcode.Rcl or MOpcode.Rcr;
+
+  private static bool OverwritesAuxiliaryFlag(MInstr instruction)
+    => instruction.Opcode is MOpcode.Add or MOpcode.Adc or MOpcode.Sub or MOpcode.Sbb or MOpcode.Cmp
+      or MOpcode.Neg or MOpcode.Inc or MOpcode.Dec or MOpcode.Sahf;
 
   private static bool FlagsDeadAfter(MBlock block, int index) {
     for (var i = index + 1; i < block.Instructions.Count; ++i) {
