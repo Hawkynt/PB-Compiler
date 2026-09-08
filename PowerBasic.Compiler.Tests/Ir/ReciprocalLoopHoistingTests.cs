@@ -3,9 +3,13 @@ using PowerBasic.Compiler.Ir.Passes;
 
 namespace PowerBasic.Compiler.Tests.Ir;
 
-/// <summary>O0338 guarded loop-hoisting legality tests.</summary>
+/// <summary>O0338 guarded loop-hoisting legality and profitability tests.</summary>
 [TestFixture]
 public sealed class ReciprocalLoopHoistingTests {
+
+  private sealed class MinimumEightReuseCost : IIrArithmeticCostModel {
+    public bool PreferReciprocalReuse(IrType type, int divisionCount) => divisionCount >= 8;
+  }
 
   [Test]
   public void RepeatedDivision_GivenAnInnerConditionalUse_ThenLazyHoistingDoesNotSpeculateItToLoopEntry() {
@@ -51,6 +55,47 @@ public sealed class ReciprocalLoopHoistingTests {
       Assert.That(((IrConstantFloat)reciprocal.Lhs).Value, Is.EqualTo(1.0));
       Assert.That(entry.Terminator, Is.TypeOf<IrBr>());
       Assert.That(fn.Blocks.Any(block => block.Label.StartsWith("recip.init", StringComparison.Ordinal)), Is.False);
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void RepeatedDivision_GivenKnownTripsThatAmortizeTheReciprocal_ThenCostingUsesDynamicLoopCount() {
+    var x = new IrArgument(IrType.F64, 0, "x");
+    var y = new IrArgument(IrType.F64, 1, "y");
+    var divisor = new IrArgument(IrType.F64, 2, "d");
+    var fn = new IrFunction("amortizedLoop", IrType.Void, [x, y, divisor]);
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    var header = fn.AddBlock(new IrBasicBlock("header"));
+    var body = fn.AddBlock(new IrBasicBlock("body"));
+    var exit = fn.AddBlock(new IrBasicBlock("exit"));
+    entry.Append(new IrBr(header));
+
+    var counter = header.AppendPhi(new IrPhi(IrType.I16));
+    counter.AddIncoming(new IrConstantInt(IrType.I16, 0), entry);
+    var test = header.Append(new IrCmp(IrCmpPred.Slt, counter, new IrConstantInt(IrType.I16, 4)));
+    header.Append(new IrCondBr(test, body, exit));
+
+    var left = body.Append(new IrBinary(IrBinaryOp.FDiv, x, divisor) {
+      FastMathFlags = IrFastMathFlags.AllowReciprocal,
+    });
+    var right = body.Append(new IrBinary(IrBinaryOp.FDiv, y, divisor) {
+      FastMathFlags = IrFastMathFlags.AllowReciprocal,
+    });
+    body.Append(new IrBinary(IrBinaryOp.FAdd, left, right));
+    var next = body.Append(new IrBinary(IrBinaryOp.Add, counter, new IrConstantInt(IrType.I16, 1)));
+    body.Append(new IrBr(header));
+    counter.AddIncoming(next, body);
+    exit.Append(new IrRet());
+
+    Assert.That(ReciprocalSequenceReuse.Run(fn, new MinimumEightReuseCost()), Is.EqualTo(3),
+      "two static divisions are not profitable to this model, but four proven trips make eight dynamic divisions");
+
+    var init = fn.Blocks.Single(block => block.Label.StartsWith("recip.init", StringComparison.Ordinal));
+    Assert.Multiple(() => {
+      Assert.That(init.Instructions.OfType<IrBinary>().Count(binary => binary.Op == IrBinaryOp.FDiv), Is.EqualTo(1));
+      Assert.That(body.Instructions.OfType<IrBinary>().Count(binary => binary.Op == IrBinaryOp.FMul), Is.EqualTo(2));
+      Assert.That(body.Instructions.OfType<IrBinary>().Any(binary => binary.Op == IrBinaryOp.FDiv), Is.False);
       Assert.That(IrVerifier.Verify(fn), Is.Empty);
     });
   }
