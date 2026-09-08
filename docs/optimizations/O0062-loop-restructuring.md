@@ -2,13 +2,15 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — `DO`/`FOR` rotation and adjacent-`FOR` fusion are done; induction-variable simplification and the wider-counter/runtime-step `FOR` rotation remain |
+| **Status** | 🟡 Partial — `DO`/`FOR` rotation, affine integer IV simplification and adjacent-`FOR` fusion are done; wider-counter/runtime-step `FOR` rotation and general SCEV-style IV handling remain |
 | **Stage** | Mid-end / emitter |
-| **Related** | [O0028](O0028-loop-invariant-code-motion.md), [O0030](O0030-induction-variable-strength-reduction.md), [O0007](O0007-loop-unrolling.md) |
+| **IR** | ✅ `Ir/Passes/InductionVariableSimplification.cs` — profitable same-width integer `a*i+b` values over a canonical counted loop become loop-carried recurrences; wired as `ivsimplify` immediately before `phicong` |
+| **Verified by** | `PowerBasic.Compiler.Tests/Ir/InductionVariableSimplificationTests.cs` — affine recurrence, modulo-width wrap, nonlinear/cheap/phi-edge declines, and standard-pipeline verification |
+| **Related** | [O0028](O0028-loop-invariant-code-motion.md), [O0030](O0030-induction-variable-strength-reduction.md), [O0007](O0007-loop-unrolling.md), [O0111](O0111-redundant-induction-variables.md) |
 
 ## The idea
 
-Three classic loop transforms that the current pipeline does not do:
+O0062 groups three classic loop transforms:
 
 1. **Rotation** — a pre-test loop (`test; body; jmp test`) becomes
    `if !test goto end; do body while test`, which costs one branch per iteration
@@ -55,6 +57,38 @@ shared-accumulator case. A regression test confirms the merge fires and the carr
 case does not. Runs under `--optimize` (the golden gate, being `--no-optimize`,
 never fuses).
 
+## IR induction-variable simplification
+
+For a canonical counted SSA loop with
+
+```text
+i[n+1] = i[n] + step
+```
+
+an integer expression `f(i) = scale*i + offset` obeys
+
+```text
+f(i[n+1]) = f(i[n]) + scale*step
+```
+
+in the IR's fixed-width wrapping arithmetic. `InductionVariableSimplification`
+uses that identity to replace profitable derived values such as `2*i+3` with a
+header phi initialized once in the preheader and one constant add in the latch.
+The multiply and address/value arithmetic inside the body then become dead and
+are collected by the normal value passes.
+
+The accepted slice is intentionally proof-friendly: the counter and constants
+must have the same integer width, and the expression tree may contain only
+`add`, `sub`, and multiplication with one constant side. Nonlinear expressions
+such as `i*i`, casts, divisions, shifts, calls, memory-derived values and direct
+phi-edge users decline. A cheap `i + constant` also stays as-is because replacing
+one add with another add plus extra loop-carried state is not profitable. If the
+affine scale wraps to zero, the derived value collapses to a constant instead.
+
+The pass runs immediately before O0111 `phicong`. That ordering is deliberate:
+O0062 creates derived recurrences; O0111 can then coalesce recurrences that are
+equal or differ only by a constant offset instead of carrying redundant phis.
+
 ## `DO` and `FOR` rotation
 
 `FOR` loops rotate the same way: the register-resident SI-counter path
@@ -100,8 +134,11 @@ zero-trip cases; a regression test confirms the bound is compared at both ends.
   x87 compares) would each need its inverse form at the bottom. The
   constant-step, register-resident Int16 and `LONG` counters (the common cases)
   already rotate.
-- **Induction-variable simplification** — derived IVs (`j = 2*i + 3`) rewritten as
-  their own incrementally-updated variables and redundant ones coalesced.
+- **General IV analysis** — the implemented IR slice handles constant-coefficient,
+  same-width integer affine values of a canonical counted counter. Runtime
+  coefficients, casted/mixed-width recurrences, non-constant starts/steps and
+  general Scalar-Evolution equivalence remain the wider [O0110](O0110-general-induction-variables.md)
+  problem.
 - **Wider fusion** — the current pass rejects a subscript that is not exactly the
   counter (`a(i-1)`, `a(2*i)`) and any non-counter-indexed access, so a
   cross-iteration or affine-index dependence declines rather than being proven
