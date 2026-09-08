@@ -14,6 +14,13 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// left behind cannot be observed, so there is nothing for the local to fail to remember.
 /// </para>
 /// <para>
+/// The procedure must also be non-reentrant. Recursive invocations overlap rather than follow one
+/// another, and all of them observe the same global storage; replacing that storage with one alloca
+/// per invocation would split the state. The pass therefore rejects direct and mutual recursion,
+/// indirect-call paths it cannot prove harmless, and escaping procedure addresses that could be used
+/// as callbacks.
+/// </para>
+/// <para>
 /// The rest is the usual escape check. Every use must be a direct load or store — an address handed
 /// to a call, stored anywhere, or indexed into means the users are not enumerable and the "only one
 /// function" claim is about the ones this pass can see rather than about the program.
@@ -31,7 +38,7 @@ public static class LocalizeGlobals {
         continue;                                  // a runtime cell is shared with code the IR cannot see
       if (SoleUser(global) is not { } fn || fn.HasErrorHandler || fn.HasInlineAsm)
         continue;
-      if (fn.Entry is null || !WritesBeforeReading(global, fn.Entry))
+      if (fn.Entry is null || MayBeReentered(fn) || !WritesBeforeReading(global, fn.Entry))
         continue;
 
       Localize(module, global, fn);
@@ -63,6 +70,35 @@ public static class LocalizeGlobals {
     IrStore store => ReferenceEquals(store.Pointer, global) && !ReferenceEquals(store.Value, global),
     _ => false,
   };
+
+  /// <summary>
+  /// True when another invocation of <paramref name="function"/> may overlap this one. Stack-local
+  /// storage cannot replace one shared global in that case: an inner invocation would get a different
+  /// alloca instead of observing and updating the outer invocation's storage.
+  /// </summary>
+  private static bool MayBeReentered(IrFunction function) {
+    if (function.Users.Any(user =>
+        user is not IrCall call
+        || !ReferenceEquals(call.Callee, function)
+        || call.Operands.Skip(1).Any(operand => ReferenceEquals(operand, function))))
+      return true;                                  // its address escapes, so it can be used as a callback
+
+    var seen = new HashSet<IrFunction>(ReferenceEqualityComparer.Instance) { function };
+    var pending = new Stack<IrFunction>();
+    pending.Push(function);
+
+    while (pending.TryPop(out var current))
+      foreach (var call in current.AllInstructions.OfType<IrCall>()) {
+        if (call.Callee is not IrFunction callee)
+          return true;                              // an indirect call could come back here
+        if (ReferenceEquals(callee, function))
+          return true;                              // direct recursion or a mutual-recursion cycle
+        if (!callee.IsDeclaration && seen.Add(callee))
+          pending.Push(callee);
+      }
+
+    return false;
+  }
 
   /// <summary>
   /// True when the entry block stores to the global before any load of it — which is what makes the
