@@ -184,9 +184,31 @@ public static class InductionVariableSimplification {
       replacement = derived;
     }
 
+    var left = root.Lhs;
+    var right = root.Rhs;
     root.ReplaceAllUsesWith(replacement);
-    if (root.HasNoUsers)
-      root.EraseFromParent();
+    if (!root.HasNoUsers)
+      return;
+
+    root.EraseFromParent();
+    EraseDeadArithmetic(left);
+    EraseDeadArithmetic(right);
+  }
+
+  /// <summary>
+  /// Removes only pure arithmetic that became unused because an affine root disappeared. This keeps
+  /// nested canonical forms such as <c>(i &lt;&lt; 1) + i + 3</c> from being reconsidered as separate
+  /// derived IVs later in the same candidate snapshot; ordinary DCE remains responsible for everything
+  /// outside this expression tree.
+  /// </summary>
+  private static void EraseDeadArithmetic(IrValue value) {
+    if (value is not IrBinary { Parent: not null, HasNoUsers: true } binary)
+      return;
+    var left = binary.Lhs;
+    var right = binary.Rhs;
+    binary.EraseFromParent();
+    EraseDeadArithmetic(left);
+    EraseDeadArithmetic(right);
   }
 
   private static long WrapAdd(long left, long right, IrType type)
