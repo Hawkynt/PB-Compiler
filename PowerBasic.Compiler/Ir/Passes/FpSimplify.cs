@@ -4,13 +4,21 @@ namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
 /// O0346/O0347 — strict floating classification simplification and proven mixed-precision narrowing.
-/// Branch-refined integer ranges strengthen classification only at integer-to-float conversion sites;
-/// algebraically collapsed FP intervals are deliberately not treated as strict finite/non-zero proofs,
+/// Branch-refined integer ranges strengthen classification at integer-to-float conversion sites, while
+/// <see cref="FpDomainAnalysis"/> carries those ranges through supported binary32/binary64 expressions.
+/// Algebraically collapsed FP intervals are deliberately not treated as strict finite/non-zero proofs,
 /// because an intermediate FP operation may overflow or underflow before the algebraic result is formed.
 /// </summary>
 public static class FpSimplify {
 
-  private readonly record struct Facts(bool NonNaN, bool Finite, bool NonNegative, bool Positive, bool NonZero);
+  private readonly record struct Facts(
+    bool NonNaN,
+    bool Finite,
+    bool NonNegative,
+    bool NonPositive,
+    bool Positive,
+    bool Negative,
+    bool NonZero);
 
   public static int Run(IrFunction function) => Run(function, IrFastMathFlags.None);
 
@@ -18,19 +26,20 @@ public static class FpSimplify {
     if (function.HasErrorHandler || function.HasInlineAsm)
       return 0;
     var ranges = IrRangeAnalysis.Build(function);
-    var changes = SimplifyClassifications(function, assumptions, ranges);
+    var domains = FpDomainAnalysis.Build(function);
+    var changes = SimplifyClassifications(function, assumptions, ranges, domains);
     changes += NarrowDemandedPrecision(function, assumptions);
     return changes;
   }
 
   private static int SimplifyClassifications(IrFunction function, IrFastMathFlags assumptions,
-      IrRangeAnalysis? ranges) {
+      IrRangeAnalysis? ranges, FpDomainAnalysis? domains) {
     var changes = 0;
     var memo = new Dictionary<IrValue, Facts>(ReferenceEqualityComparer.Instance);
     foreach (var cmp in function.AllInstructions.OfType<IrCmp>().ToList()) {
       if (cmp.Parent is null || cmp.Pred is < IrCmpPred.Foeq or > IrCmpPred.Foge)
         continue;
-      if (TryDecide(cmp, assumptions, ranges, memo) is not { } answer)
+      if (TryDecide(cmp, assumptions, ranges, domains, memo) is not { } answer)
         continue;
       cmp.ReplaceAllUsesWith(new IrConstantInt(IrType.I1, answer ? 1 : 0));
       cmp.EraseFromParent();
@@ -40,7 +49,7 @@ public static class FpSimplify {
   }
 
   private static bool? TryDecide(IrCmp cmp, IrFastMathFlags assumptions, IrRangeAnalysis? ranges,
-      Dictionary<IrValue, Facts> memo) {
+      FpDomainAnalysis? domains, Dictionary<IrValue, Facts> memo) {
     if (ReferenceEquals(cmp.Lhs, cmp.Rhs)) {
       var facts = FactsOf(cmp.Lhs, assumptions, memo, []);
       return cmp.Pred switch {
@@ -51,16 +60,28 @@ public static class FpSimplify {
       };
     }
 
+    if (cmp.Parent is { } comparisonBlock && domains is not null
+        && TryDecideDomains(cmp.Pred, domains.DomainAt(cmp.Lhs, comparisonBlock),
+          domains.DomainAt(cmp.Rhs, comparisonBlock)) is { } domainAnswer)
+      return domainAnswer;
+
     IrValue value;
     IrCmpPred predicate;
-    if (IsZero(cmp.Rhs)) {
+    double constant;
+    if (cmp.Rhs is IrConstantFloat rightConstant) {
       value = cmp.Lhs;
       predicate = cmp.Pred;
-    } else if (IsZero(cmp.Lhs)) {
+      constant = rightConstant.Value;
+    } else if (cmp.Lhs is IrConstantFloat leftConstant) {
       value = cmp.Rhs;
       predicate = Flip(cmp.Pred);
+      constant = leftConstant.Value;
     } else
       return null;
+
+    // Every predicate represented by IrCmpPred is ordered, so a NaN operand makes it false.
+    if (double.IsNaN(constant))
+      return false;
 
     var factsOfValue = FactsOf(value, assumptions, memo, []);
     if (ranges is not null && cmp.Parent is { } block
@@ -70,9 +91,11 @@ public static class FpSimplify {
         factsOfValue = factsOfValue with {
           NonNaN = true,
           Finite = true,
-          NonNegative = range.Lo >= 0,
-          Positive = range.Lo > 0,
-          NonZero = range.Lo > 0 || range.Hi < 0,
+          NonNegative = factsOfValue.NonNegative || range.Lo >= 0,
+          NonPositive = factsOfValue.NonPositive || range.Hi <= 0,
+          Positive = factsOfValue.Positive || range.Lo > 0,
+          Negative = factsOfValue.Negative || range.Hi < 0,
+          NonZero = factsOfValue.NonZero || range.Lo > 0 || range.Hi < 0,
         };
       }
     }
@@ -83,10 +106,31 @@ public static class FpSimplify {
     if (!factsOfValue.NonNaN)
       return null;
 
+    if (double.IsPositiveInfinity(constant))
+      return factsOfValue.Finite ? predicate switch {
+        IrCmpPred.Fone or IrCmpPred.Folt or IrCmpPred.Fole => true,
+        IrCmpPred.Foeq or IrCmpPred.Fogt or IrCmpPred.Foge => false,
+        _ => null,
+      } : null;
+    if (double.IsNegativeInfinity(constant))
+      return factsOfValue.Finite ? predicate switch {
+        IrCmpPred.Fone or IrCmpPred.Fogt or IrCmpPred.Foge => true,
+        IrCmpPred.Foeq or IrCmpPred.Folt or IrCmpPred.Fole => false,
+        _ => null,
+      } : null;
+    if (constant != 0.0)
+      return null;
+
     if (factsOfValue.Positive || (factsOfValue.NonNegative && factsOfValue.NonZero))
       return predicate switch {
         IrCmpPred.Fogt or IrCmpPred.Foge or IrCmpPred.Fone => true,
         IrCmpPred.Folt or IrCmpPred.Fole or IrCmpPred.Foeq => false,
+        _ => null,
+      };
+    if (factsOfValue.Negative || (factsOfValue.NonPositive && factsOfValue.NonZero))
+      return predicate switch {
+        IrCmpPred.Folt or IrCmpPred.Fole or IrCmpPred.Fone => true,
+        IrCmpPred.Fogt or IrCmpPred.Foge or IrCmpPred.Foeq => false,
         _ => null,
       };
     if (factsOfValue.NonNegative)
@@ -95,6 +139,38 @@ public static class FpSimplify {
         IrCmpPred.Folt => false,
         _ => null,
       };
+    if (factsOfValue.NonPositive)
+      return predicate switch {
+        IrCmpPred.Fole => true,
+        IrCmpPred.Fogt => false,
+        _ => null,
+      };
+    return null;
+  }
+
+  private static bool? TryDecideDomains(IrCmpPred predicate, FpDomainAnalysis.Domain left,
+      FpDomainAnalysis.Domain right) {
+    if (!left.IsKnown || !right.IsKnown)
+      return null;
+
+    var disjoint = left.Hi < right.Lo || right.Hi < left.Lo;
+    var sameSingleton = left.Lo == left.Hi && right.Lo == right.Hi && left.Lo == right.Lo;
+    return predicate switch {
+      IrCmpPred.Foeq => disjoint ? false : sameSingleton ? true : null,
+      IrCmpPred.Fone => disjoint ? true : sameSingleton ? false : null,
+      IrCmpPred.Folt => Order(left, right, strict: true),
+      IrCmpPred.Fole => Order(left, right, strict: false),
+      IrCmpPred.Fogt => Order(right, left, strict: true),
+      IrCmpPred.Foge => Order(right, left, strict: false),
+      _ => null,
+    };
+  }
+
+  private static bool? Order(FpDomainAnalysis.Domain left, FpDomainAnalysis.Domain right, bool strict) {
+    if (strict ? left.Hi < right.Lo : left.Hi <= right.Lo)
+      return true;
+    if (strict ? left.Lo >= right.Hi : left.Lo > right.Hi)
+      return false;
     return null;
   }
 
@@ -105,8 +181,6 @@ public static class FpSimplify {
     IrCmpPred.Foge => IrCmpPred.Fole,
     _ => predicate,
   };
-
-  private static bool IsZero(IrValue value) => value is IrConstantFloat { Value: 0.0 };
 
   private static Facts FactsOf(IrValue value, IrFastMathFlags assumptions,
       Dictionary<IrValue, Facts> memo, HashSet<IrValue> visiting) {
@@ -142,31 +216,51 @@ public static class FpSimplify {
   private static Facts ConstantFacts(double value) {
     var nonNaN = !double.IsNaN(value);
     var finite = double.IsFinite(value);
-    return new(nonNaN, finite, nonNaN && value >= 0.0, nonNaN && value > 0.0, nonNaN && value != 0.0);
+    return new(
+      nonNaN,
+      finite,
+      nonNaN && value >= 0.0,
+      nonNaN && value <= 0.0,
+      nonNaN && value > 0.0,
+      nonNaN && value < 0.0,
+      nonNaN && value != 0.0);
   }
 
   private static Facts IntegerCastFacts(IrCast cast) {
     if (cast.Value is IrConstantInt constant) {
       if (cast.Op == IrCastOp.UIToFP) {
-        var value = constant.ZeroExtended;
-        return new(true, true, true, value != 0, value != 0);
+        var unsignedValue = constant.ZeroExtended;
+        return new(true, true, true, unsignedValue == 0, unsignedValue != 0, false, unsignedValue != 0);
       }
-      return new(true, true, constant.Value >= 0, constant.Value > 0, constant.Value != 0);
+      var signedValue = SignedValue(constant);
+      return new(true, true, signedValue >= 0, signedValue <= 0,
+        signedValue > 0, signedValue < 0, signedValue != 0);
     }
     return cast.Op == IrCastOp.UIToFP
-      ? new(true, true, true, false, false)
-      : new(true, true, false, false, false);
+      ? new(true, true, true, false, false, false, false)
+      : new(true, true, false, false, false, false, false);
+  }
+
+  private static long SignedValue(IrConstantInt constant) {
+    if (constant.Type.Bits >= 64)
+      return constant.Value;
+    var shift = 64 - constant.Type.Bits;
+    return unchecked((long)(constant.ZeroExtended << shift)) >> shift;
   }
 
   private static Facts TruncatedFacts(Facts source)
-    => new(source.NonNaN, false, source.NonNegative, false, false);
+    => new(source.NonNaN, false, source.NonNegative, source.NonPositive, false, false, false);
 
-  private static Facts SquareFacts(Facts source)
-    => new(source.NonNaN, false, source.NonNaN, false, false);
+  private static Facts SquareFacts(Facts source) {
+    var zero = source.NonNaN && source.NonNegative && source.NonPositive;
+    return new(source.NonNaN, false, source.NonNaN, zero, false, false, false);
+  }
 
   private static Facts SqrtFacts(Facts source) {
     var defined = source.NonNaN && source.NonNegative;
-    return new(defined, defined && source.Finite, defined, defined && source.Positive, defined && source.Positive);
+    var zero = defined && source.NonPositive;
+    return new(defined, defined && source.Finite, defined, zero,
+      defined && source.Positive, false, defined && source.Positive);
   }
 
   private static int NarrowDemandedPrecision(IrFunction function, IrFastMathFlags assumptions) {
