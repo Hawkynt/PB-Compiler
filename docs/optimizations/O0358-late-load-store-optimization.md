@@ -28,6 +28,10 @@ other source-level frame storage are therefore outside this pass.
 
 - Facts are block-local and die at calls, inline assembly, terminators, unknown
   memory writes, and physical-register clobbers.
+- Register-backed facts use the exact emitted register slice. Byte virtuals
+  allocated in `AX`/`CX`/`DX`/`BX` are tracked as `AL`/`CL`/`DL`/`BL`, and an
+  overlapping partial-register write (`AH` into `AX`, `AX` into `EAX`, etc.)
+  invalidates the fact while disjoint byte slices such as `AL` and `AH` do not.
 - Stack-slot keys include slot, displacement and width.
 - Overlapping accesses are tracked by byte range. A partial word load from a
   dword spill marks the whole overlapping earlier store as observed, preventing
