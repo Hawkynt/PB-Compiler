@@ -110,7 +110,10 @@ public static class StringConstantFold {
     if (LiteralOperand(call, 1) is not { } left || LiteralOperand(call, 2) is not { } right)
       return false;
 
-    var ordering = Compare(left.Bytes, right.Bytes);
+    // O0299: AddStringConstant interns identical literal bytes to one IrGlobalVariable. Once both
+    // producers name that same canonical pool entry, equality is established by identity and no byte
+    // needs to be inspected even by the middle-end. Different pool entries still fold by content.
+    var ordering = ReferenceEquals(left.Global, right.Global) ? 0 : Compare(left.Bytes, right.Bytes);
     // the equality entry answers 0 or 1, the general one -1, 0 or 1 - each folds to what it would
     // itself have returned, so a reader of either sees no change
     var answer = equalityOnly ? (ordering == 0 ? 0 : 1) : ordering;
@@ -164,17 +167,17 @@ public static class StringConstantFold {
        ?? module.AddFunction(new IrFunction(_FREE, IrType.Void, [new IrArgument(IrType.Ptr, 0)]));
 
   /// <summary>The literal an operand was produced by, when it is one and nothing else reads it.</summary>
-  private static (IrCall Call, byte[] Bytes)? LiteralOperand(IrCall call, int index) {
+  private static (IrCall Call, IrGlobalVariable Global, byte[] Bytes)? LiteralOperand(IrCall call, int index) {
     if (call.GetOperand(index) is not IrCall { Callee: IrFunction { Name: _CONST } } producer)
       return null;
     if (producer.Users.Count != 1 || producer.ArgCount != 2)
       return null;                     // a second reader means a second handle, which one call cannot make
-    if (producer.GetOperand(1) is not IrGlobalVariable { Bytes: { } bytes })
+    if (producer.GetOperand(1) is not IrGlobalVariable { Bytes: { } bytes } global)
       return null;
     // the length travels beside the pointer and the fold uses the BYTES, so a length that disagrees
     // with them is not something to guess about
     return producer.GetOperand(2) is IrConstantInt count && count.Value == bytes.Length
-      ? (producer, bytes)
+      ? (producer, global, bytes)
       : null;
   }
 
