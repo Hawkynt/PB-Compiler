@@ -11,4 +11,11 @@ public interface IIrArithmeticCostModel {
   /// division plus the same number of multiplies is profitable for <paramref name="type"/>.
   /// </summary>
   bool PreferReciprocalReuse(IrType type, int divisionCount);
+
+  /// <summary>
+  /// True when a reciprocal has already been computed and replacing <paramref name="divisionCount"/> later
+  /// divisions by multiplies using that value is profitable. The conservative default declines, so existing
+  /// external/custom cost models do not silently acquire a new target assumption when this query is added.
+  /// </summary>
+  bool PreferExistingReciprocalUse(IrType type, int divisionCount) => false;
 }
