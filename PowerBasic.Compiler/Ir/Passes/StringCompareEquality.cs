@@ -20,12 +20,14 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// </para>
 ///
 /// <para>
-/// The swap is refused unless EVERY user of the result is an <c>icmp eq/ne</c> against zero. A user
-/// that asks anything else about the number reads an ordering the equality entry does not compute:
-/// <c>rt_str_compare(a, b) &lt; 0</c> is "a sorts first", while the equality entry answers 1 for any
-/// inequality in either direction, so the same expression would become "a and b differ". One such
-/// user is enough to keep the call where it is, because the result is a single value and both
-/// spellings cannot be had from it.
+/// The swap is refused when ANY user of the result asks for ordering rather than merely
+/// <c>icmp eq/ne</c> against zero. A result with no users is safe too: after CFG/value simplification
+/// the consuming call can remain solely for its string-lifetime side effects, and both entries consume
+/// the same handles. A user that asks anything else about the number reads an ordering the equality
+/// entry does not compute: <c>rt_str_compare(a, b) &lt; 0</c> is "a sorts first", while the equality
+/// entry answers 1 for any inequality in either direction, so the same expression would become "a and
+/// b differ". One such user is enough to keep the call where it is, because the result is a single
+/// value and both spellings cannot be had from it.
 /// </para>
 /// </summary>
 public static class StringCompareEquality {
@@ -47,7 +49,7 @@ public static class StringCompareEquality {
       foreach (var call in function.AllInstructions.OfType<IrCall>().ToList()) {
         if (call.Callee is not IrFunction { Name: _GENERAL } || call.ArgCount != 2)
           continue;
-        if (call.Users.Count == 0 || !call.Users.All(IsEqualityTest))
+        if (!call.Users.All(IsEqualityTest))
           continue;
         equalityOnly ??= DeclareEqualityEntry(module);
         call.SetOperand(0, equalityOnly);
