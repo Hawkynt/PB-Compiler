@@ -25,10 +25,20 @@ public sealed class O0355O0358MachineOptimizationTests {
       new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
         ReadsMemory: false, WritesMemory: false));
 
+  private static MInstr Increment(int destination)
+    => new(MOpcode.Inc, [V(destination)],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false));
+
   private static MInstr Compare(int value, long immediate)
     => new(MOpcode.Cmp, [V(value), new MOperand.Immediate(immediate)],
       new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
         ReadsMemory: false, WritesMemory: false));
+
+  private static MInstr Branch(Condition condition)
+    => new(MOpcode.Jcc, [new MOperand.LabelRef("target")],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: true, WritesFlags: false,
+        ReadsMemory: false, WritesMemory: false), condition);
 
   private static MInstr Call()
     => new(MOpcode.Call, [new MOperand.LabelRef("rt_x")],
@@ -60,6 +70,23 @@ public sealed class O0355O0358MachineOptimizationTests {
 
     Assert.That(SuperoptimizedPeepholes.Run(function), Is.Zero);
     Assert.That(function.Blocks[0].Instructions[0].Opcode, Is.EqualTo(MOpcode.Add));
+  }
+
+  [Test]
+  public void Superoptimizer_GivenPartialFlagWriterBeforeCarryRead_WhenRun_ThenAddIsKept() {
+    var function = OneBlock(Add(0, 1), Increment(1), Branch(Condition.Carry));
+
+    Assert.That(SuperoptimizedPeepholes.Run(function), Is.Zero,
+      "INC preserves CF, so it cannot prove the ADD carry dead before JC");
+    Assert.That(function.Blocks[0].Instructions[0].Opcode, Is.EqualTo(MOpcode.Add));
+  }
+
+  [Test]
+  public void Superoptimizer_GivenPartialFlagWriterThenFullOverwrite_WhenRun_ThenAddCanStillShrink() {
+    var function = OneBlock(Add(0, 1), Increment(1), Compare(2, 7));
+
+    Assert.That(SuperoptimizedPeepholes.Run(function), Is.EqualTo(1));
+    Assert.That(function.Blocks[0].Instructions[0].Opcode, Is.EqualTo(MOpcode.Inc));
   }
 
   [Test]
