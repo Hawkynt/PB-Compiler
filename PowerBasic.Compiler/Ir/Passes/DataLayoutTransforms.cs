@@ -503,6 +503,8 @@ internal static class DataLayoutTransformCore {
   }
 
   private static int ToSoa(RecordShape shape) {
+    if (shape.Root.Name?.EndsWith(".hot", StringComparison.Ordinal) == true)
+      return 0; // O0322 selected this grouping; the following O0320 pass must not immediately undo it.
     if (shape.Elements < 16 || shape.Fields.Count < 2)
       return 0;
     var entry = shape.Root.Parent!;
@@ -567,7 +569,7 @@ internal static class DataLayoutTransformCore {
     var max = shape.Fields.Max(f => f.Weight);
     if (max <= 0)
       return 0;
-    var cold = shape.Fields.Where(f => f.Weight * 4 <= max).ToHashSet();
+    var cold = shape.Fields.Where(f => (long)f.Weight * 4 <= max).ToHashSet();
     var hot = shape.Fields.Where(f => !cold.Contains(f)).ToList();
     if (cold.Count == 0 || hot.Count == 0)
       return 0;
