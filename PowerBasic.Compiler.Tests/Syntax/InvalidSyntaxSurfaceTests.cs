@@ -37,6 +37,7 @@ public sealed class InvalidSyntaxSurfaceTests {
     new("pset.missing-coordinate", "PSET (,0)\n"),
     new("dim.missing-upper-bound", "DIM a%(1 TO)\n"),
     new("redim-preserve.missing-array", "REDIM PRESERVE\n"),
+    new("redim.rank-change", "$DYNAMIC\nDIM a%(4)\nREDIM a%(4, 4)\n"),
     new("declare-sub.missing-name", "DECLARE SUB (x%)\n"),
     new("sub.missing-parameter", "SUB S(\nEND SUB\n"),
     new("type-field.missing-type", "TYPE T\n  x AS\nEND TYPE\n"),

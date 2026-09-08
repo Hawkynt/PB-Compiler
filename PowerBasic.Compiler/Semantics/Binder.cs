@@ -2580,6 +2580,8 @@ public sealed class Binder {
             }
           } else if (symbol.Type is ArrayType { IsDynamic: false })
             this.Error(redim.Position, $"REDIM on static array {v.Name} (use $DYNAMIC)");
+          else if (symbol.Type is ArrayType array && (v.ArrayBounds?.Count ?? 0) != array.Rank)
+            this.Error(v.Position, $"REDIM of {v.Name} changes array rank from {array.Rank} to {v.ArrayBounds?.Count ?? 0}");
           else
             this._model.RedimBindings[v] = symbol;
         }
