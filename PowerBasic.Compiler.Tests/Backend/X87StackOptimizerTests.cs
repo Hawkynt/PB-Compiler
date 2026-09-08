@@ -2,7 +2,7 @@ using PowerBasic.Compiler.Backend;
 
 namespace PowerBasic.Compiler.Tests.Backend;
 
-/// <summary>O0348/O0349 — conservative x87 stackification/value retention after selection.</summary>
+/// <summary>O0348/O0349 — conservative x87 stack scheduling/value retention after selection.</summary>
 [TestFixture]
 public sealed class X87StackOptimizerTests {
 
@@ -16,6 +16,15 @@ public sealed class X87StackOptimizerTests {
 
   private static MOperand.DataCell Data(string name) => new(name, 0, MRegSize.Qword);
   private static MOperand.StackSlot Temp(int index) => new(index, MRegSize.Tbyte);
+
+  private static List<MInstr> DeepSum(string prefix, int depth) {
+    var instructions = new List<MInstr>();
+    for (var i = 0; i < depth; ++i)
+      instructions.Add(Load(Data(prefix + i)));
+    for (var i = 1; i < depth; ++i)
+      instructions.Add(Op(MOpcode.Faddp));
+    return instructions;
+  }
 
   private static (MFunction Function, MBlock Block) OneBlock(params MInstr[] instructions) {
     var function = new MFunction("f");
@@ -86,16 +95,79 @@ public sealed class X87StackOptimizerTests {
     });
   }
 
-  [Test]
-  public void Scheduling_GivenRightSubtreeWouldOverflowWithResidentLeft_ThenTreeIsNotStackified() {
+  [TestCase(MOpcode.Faddp)]
+  [TestCase(MOpcode.Fmulp)]
+  public void Scheduling_GivenRightSubtreeWouldOverflowWithResidentLeftAndRootIsCommutative_ThenRightRunsFirst(
+      MOpcode rootOpcode) {
     var left = Temp(0);
     var right = Temp(1);
     var result = Temp(2);
     var instructions = new List<MInstr> { Load(Data("a")), Store(left) };
-    for (var i = 0; i < 8; ++i)
-      instructions.Add(Load(Data("r" + i)));
-    for (var i = 0; i < 7; ++i)
-      instructions.Add(Op(MOpcode.Faddp));
+    instructions.AddRange(DeepSum("r", 8));
+    instructions.Add(Store(right));
+    instructions.Add(Load(left));
+    instructions.Add(Load(right));
+    instructions.Add(Op(rootOpcode));
+    instructions.Add(Store(result));
+    var (function, block) = OneBlock([.. instructions]);
+
+    Assert.That(X87StackOptimizer.Run(function), Is.GreaterThanOrEqualTo(1));
+
+    Assert.Multiple(() => {
+      Assert.That(block.Instructions[0].Operands[0], Is.EqualTo(Data("r0")),
+        "the higher-pressure right subtree must execute first");
+      Assert.That(block.Instructions.FindIndex(instruction => instruction.Operands.Contains(Data("a"))),
+        Is.GreaterThan(0));
+      Assert.That(block.Instructions.Any(instruction => instruction.Opcode == MOpcode.Fstp
+        && instruction.Operands[0].Equals(left)), Is.False);
+      Assert.That(block.Instructions.Any(instruction => instruction.Opcode == MOpcode.Fld
+        && instruction.Operands[0].Equals(left)), Is.False);
+      Assert.That(block.Instructions.Any(instruction => instruction.Opcode == MOpcode.Fstp
+        && instruction.Operands[0].Equals(right)), Is.False);
+      Assert.That(block.Instructions.Any(instruction => instruction.Opcode == MOpcode.Fld
+        && instruction.Operands[0].Equals(right)), Is.False);
+      Assert.That(block.Instructions.Any(instruction => instruction.Opcode == MOpcode.Fxch), Is.False);
+    });
+  }
+
+  [TestCase(MOpcode.Fsubp)]
+  [TestCase(MOpcode.Fdivp)]
+  public void Scheduling_GivenRightSubtreeRunsFirstAndRootIsNonCommutative_ThenFxchRestoresOperandOrder(
+      MOpcode rootOpcode) {
+    var left = Temp(0);
+    var right = Temp(1);
+    var result = Temp(2);
+    var instructions = new List<MInstr> { Load(Data("a")), Store(left) };
+    instructions.AddRange(DeepSum("r", 8));
+    instructions.Add(Store(right));
+    instructions.Add(Load(left));
+    instructions.Add(Load(right));
+    instructions.Add(Op(rootOpcode));
+    instructions.Add(Store(result));
+    var (function, block) = OneBlock([.. instructions]);
+
+    Assert.That(X87StackOptimizer.Run(function), Is.GreaterThanOrEqualTo(1));
+
+    var root = block.Instructions.FindIndex(instruction => instruction.Opcode == rootOpcode);
+    Assert.Multiple(() => {
+      Assert.That(block.Instructions[0].Operands[0], Is.EqualTo(Data("r0")));
+      Assert.That(root, Is.GreaterThan(0));
+      Assert.That(block.Instructions[root - 1].Opcode, Is.EqualTo(MOpcode.Fxch),
+        "right-first FSUBP/FDIVP require ST(1)=left and ST(0)=right");
+      Assert.That(block.Instructions.Count(instruction => instruction.Opcode == MOpcode.Fxch), Is.EqualTo(1));
+      Assert.That(block.Instructions.Any(instruction => instruction.Opcode == MOpcode.Fstp
+        && (instruction.Operands[0].Equals(left) || instruction.Operands[0].Equals(right))), Is.False);
+    });
+  }
+
+  [Test]
+  public void Scheduling_GivenBothSubtreeOrdersWouldOverflow_ThenParentSpillsArePreserved() {
+    var left = Temp(0);
+    var right = Temp(1);
+    var result = Temp(2);
+    var instructions = DeepSum("l", 8);
+    instructions.Add(Store(left));
+    instructions.AddRange(DeepSum("r", 8));
     instructions.Add(Store(right));
     instructions.Add(Load(left));
     instructions.Add(Load(right));
@@ -110,6 +182,10 @@ public sealed class X87StackOptimizerTests {
         && instruction.Operands[0].Equals(left)), Is.True);
       Assert.That(block.Instructions.Any(instruction => instruction.Opcode == MOpcode.Fld
         && instruction.Operands[0].Equals(left)), Is.True);
+      Assert.That(block.Instructions.Any(instruction => instruction.Opcode == MOpcode.Fstp
+        && instruction.Operands[0].Equals(right)), Is.True);
+      Assert.That(block.Instructions.Any(instruction => instruction.Opcode == MOpcode.Fld
+        && instruction.Operands[0].Equals(right)), Is.True);
     });
   }
 

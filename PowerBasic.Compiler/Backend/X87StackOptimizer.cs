@@ -2,9 +2,9 @@ namespace PowerBasic.Compiler.Backend;
 
 /// <summary>
 /// O0348/O0349 — conservative x87 expression-stack scheduling and value retention after instruction
-/// selection. This pass keeps source evaluation order: it stackifies private TBYTE temporaries and
-/// retains a completed left subtree while the right subtree executes when an explicit depth proof says
-/// the eight-register x87 stack cannot overflow.
+/// selection. Private TBYTE temporaries are stackified whenever the eight-register depth can be
+/// proven safe. For adjacent pure x87 subtrees, O0348 also chooses the lower-pressure evaluation order
+/// and inserts FXCH when a non-commutative root needs the original operand order restored.
 ///
 /// <para>
 /// Selection deliberately begins from the simple form where every floating SSA result is materialized
@@ -13,14 +13,17 @@ namespace PowerBasic.Compiler.Backend;
 /// rounding point and is never removed.
 /// </para>
 /// <para>
-/// Calls, inline assembly, terminators, clobbers and unmodelled x87 operations stop retention. The
-/// pass therefore does not guess stack effects, synthesize FXCH-based reordering, or cross a required
-/// precision boundary merely to save a temporary.
+/// Reordering is deliberately narrower than retention: both subtrees must be contiguous, fully-modelled
+/// x87 code with no stores, calls, inline assembly, terminators or physical clobbers. That proves moving
+/// the right subtree before the left cannot move a side effect. Unknown x87 stack effects remain a
+/// hard barrier.
 /// </para>
 /// </summary>
 public static class X87StackOptimizer {
 
   private const int _X87_DEPTH = 8;
+
+  private readonly record struct Subtree(int Start, int End, int Peak);
 
   /// <summary>Stackifies eligible x87 temporaries; returns the number of spill/reload groups removed.</summary>
   public static int Run(MFunction function) {
@@ -67,8 +70,10 @@ public static class X87StackOptimizer {
 
   /// <summary>
   /// Rewrites the selector shape
-  /// <c>left; FSTP A; right; FSTP B; FLD A; FLD B; FopP</c> by retaining A below the complete right
-  /// subtree and B on top. The root arithmetic remains in place and sees ST(1)=left, ST(0)=right.
+  /// <c>left; FSTP A; right; FSTP B; FLD A; FLD B; FopP</c>. The normal form retains A below the
+  /// right subtree. If both subtrees are pure and evaluating right first strictly lowers the measured
+  /// peak depth, their order is exchanged; FSUBP/FDIVP then receive one FXCH so ST(1)=left and
+  /// ST(0)=right at the root.
   /// </summary>
   private static int RetainTreeValues(MBlock block, IReadOnlyDictionary<int, int> uses) {
     var made = 0;
@@ -82,7 +87,23 @@ public static class X87StackOptimizer {
         continue;
 
       var leftWriter = FindWriter(block, loadedLeft, root - 4);
-      if (leftWriter < 0 || !FitsWithOneResident(block, leftWriter + 1, root - 3))
+      if (leftWriter < 0)
+        continue;
+
+      var keepLeftFirst = FitsWithOneResident(block, leftWriter + 1, root - 3);
+      if (TryProfileSubtree(block, leftWriter, out var left)
+          && TryProfileSubtree(block, root - 3, out var profiledRight)
+          && profiledRight.Start == leftWriter + 1) {
+        var leftFirstPeak = Math.Max(left.Peak, 1 + profiledRight.Peak);
+        var rightFirstPeak = Math.Max(profiledRight.Peak, 1 + left.Peak);
+        if (rightFirstPeak <= _X87_DEPTH && rightFirstPeak < leftFirstPeak) {
+          root = ScheduleRightFirst(block, root, left, profiledRight);
+          ++made;
+          continue;
+        }
+      }
+
+      if (!keepLeftFirst)
         continue;
 
       block.Instructions.RemoveAt(root - 1);   // FLD right
@@ -94,6 +115,69 @@ public static class X87StackOptimizer {
     }
     return made;
   }
+
+  private static int ScheduleRightFirst(MBlock block, int root, Subtree left, Subtree right) {
+    var rootInstruction = block.Instructions[root];
+    var replacement = new List<MInstr>(
+      (right.End - right.Start) + (left.End - left.Start) + (NeedsExchange(rootInstruction.Opcode) ? 2 : 1));
+    replacement.AddRange(block.Instructions.GetRange(right.Start, right.End - right.Start));
+    replacement.AddRange(block.Instructions.GetRange(left.Start, left.End - left.Start));
+    if (NeedsExchange(rootInstruction.Opcode))
+      replacement.Add(new MInstr(MOpcode.Fxch, [], MInstrEffect.None));
+    replacement.Add(rootInstruction);
+
+    block.Instructions.RemoveRange(left.Start, root - left.Start + 1);
+    block.Instructions.InsertRange(left.Start, replacement);
+    return left.Start + replacement.Count - 1;
+  }
+
+  private static bool TryProfileSubtree(MBlock block, int closingStore, out Subtree subtree) {
+    subtree = default;
+    var needed = 1;
+    var start = -1;
+
+    for (var i = closingStore - 1; i >= 0; --i) {
+      var instruction = block.Instructions[i];
+      if (!CanReorder(instruction) || StackDelta(instruction) is not { } delta)
+        return false;
+      needed -= delta;
+      if (needed < 0)
+        return false;
+      if (needed == 0) {
+        start = i;
+        break;
+      }
+    }
+
+    if (start < 0)
+      return false;
+
+    var depth = 0;
+    var maximum = 0;
+    for (var i = start; i < closingStore; ++i) {
+      var instruction = block.Instructions[i];
+      if (!CanReorder(instruction) || StackDelta(instruction) is not { } delta
+          || delta < 0 && depth < -delta)
+        return false;
+      depth += delta;
+      maximum = Math.Max(maximum, depth);
+      if (maximum > _X87_DEPTH)
+        return false;
+    }
+
+    if (depth != 1)
+      return false;
+
+    subtree = new Subtree(start, closingStore, maximum);
+    return true;
+  }
+
+  private static bool CanReorder(MInstr instruction)
+    => instruction.Opcode is not (MOpcode.Call or MOpcode.InlineAsm)
+      && !instruction.IsTerminator
+      && instruction.Clobbers.Count == 0
+      && !instruction.Effect.WritesMemory
+      && MOpcodes.UsesX87(instruction.Opcode);
 
   private static int FindWriter(MBlock block, MOperand.StackSlot slot, int from) {
     for (var i = from; i >= 0; --i) {
@@ -138,12 +222,15 @@ public static class X87StackOptimizer {
     MOpcode.Faddp or MOpcode.Fsubp or MOpcode.Fmulp or MOpcode.Fdivp => -1,
     MOpcode.Fadd or MOpcode.Fsub or MOpcode.Fmul or MOpcode.Fdiv
       or MOpcode.Fiadd or MOpcode.Fisub or MOpcode.Fimul or MOpcode.Fidiv
-      or MOpcode.Fsqrt or MOpcode.Fsin or MOpcode.Fcos => 0,
+      or MOpcode.Fsqrt or MOpcode.Fsin or MOpcode.Fcos or MOpcode.Fxch => 0,
     _ => null,
   };
 
   private static bool IsPoppingBinary(MOpcode opcode)
     => opcode is MOpcode.Faddp or MOpcode.Fsubp or MOpcode.Fmulp or MOpcode.Fdivp;
+
+  private static bool NeedsExchange(MOpcode opcode)
+    => opcode is MOpcode.Fsubp or MOpcode.Fdivp;
 
   private static bool TryStore(MInstr instruction, out MOperand.StackSlot slot) {
     if (instruction is { Opcode: MOpcode.Fstp, Operands: [MOperand.StackSlot candidate] }
