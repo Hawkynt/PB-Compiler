@@ -109,12 +109,12 @@ public sealed class IrPassManager {
   /// <para>
   /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
   /// unrolling, sccp, correlate, pointer checks, integer/float range folds, overflow coalescing,
-  /// sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery, equality saturation,
-  /// verified arithmetic lowering, demote, phicong, gvn, memopt, dse, interchange, licm,
-  /// reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the string/global
-  /// module passes. So are the steps the caller runs around the pipeline - <c>Inliner</c>,
-  /// <c>SwitchFormation</c> and <c>MemoryRoutineSpecialization</c>, the last of which is not in
-  /// <see cref="Standard"/> at all because it wants the final shape (see CodeGenerator.Backend).
+  /// sroa, aggregate-sroa, mem2reg2, ownership elision, reassociate, polynomial recovery,
+  /// equality saturation, verified arithmetic lowering, demote, phicong, gvn, memopt, dse,
+  /// interchange, licm, reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the
+  /// string/global module passes. So are the steps the caller runs around the pipeline -
+  /// <c>Inliner</c>, <c>SwitchFormation</c> and <c>MemoryRoutineSpecialization</c>, the last of which
+  /// is not in <see cref="Standard"/> at all because it wants the final shape (see CodeGenerator.Backend).
   /// </para>
   /// </summary>
   public static IrPassManager Legalize() => new IrPassManager()
@@ -201,6 +201,9 @@ public sealed class IrPassManager {
     // region bounds and reject overlap so UNION aliasing remains shared storage.
     .Add("aggregate-sroa", ScalarReplaceAggregates.Run)
     .Add("mem2reg2", Mem2Reg.Run)
+    // O0291 is an ownership transform, not generic call DCE. It wants local string storage promoted
+    // to SSA first, so exact use-lists expose a copied owner's nested borrows and matching release.
+    .Add("ownership-elision", HandleOwnershipElision.Run)
     // O0346/O0347 consume strict FP facts here, including branch-refined integer ranges at conversion
     // sites. SPEED supplies its explicit no-NaN/no-inf assumptions without changing strict defaults.
     .Add("fpsimplify", fn => FpSimplify.Run(fn,
