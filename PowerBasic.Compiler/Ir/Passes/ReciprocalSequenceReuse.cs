@@ -57,7 +57,8 @@ public static class ReciprocalSequenceReuse {
     return replaced;
   }
 
-  private static int RewriteRelaxedGroups(IrFunction fn, IrDominators dominators, IIrArithmeticCostModel? costModel) {
+  private static int RewriteRelaxedGroups(
+      IrFunction fn, IrDominators dominators, IIrArithmeticCostModel? costModel) {
     var groups = new List<List<IrBinary>>();
     foreach (var division in fn.AllInstructions.OfType<IrBinary>().Where(IsRelaxedDivision).ToList()) {
       var group = groups.FirstOrDefault(candidate => SameDivisor(candidate[0].Rhs, division.Rhs));
@@ -69,11 +70,12 @@ public static class ReciprocalSequenceReuse {
 
     var replaced = 0;
     foreach (var group in groups.Where(group => group.Count > 1))
-      replaced += RewriteRelaxedGroup(group, dominators, costModel);
+      replaced += RewriteRelaxedGroup(fn, group, dominators, costModel);
     return replaced;
   }
 
-  private static int RewriteRelaxedGroup(List<IrBinary> group, IrDominators dominators, IIrArithmeticCostModel? costModel) {
+  private static int RewriteRelaxedGroup(
+      IrFunction fn, List<IrBinary> group, IrDominators dominators, IIrArithmeticCostModel? costModel) {
     var remaining = group
       .Where(division => division.Parent is { } block && dominators.IsReachable(block))
       .ToList();
@@ -87,8 +89,7 @@ public static class ReciprocalSequenceReuse {
           .Where(division => InstructionDominates(candidate, division, dominators)
                              && IsCallFreeBetween(candidate, division))
           .ToList();
-        if (sequence.Count <= (bestSequence?.Count ?? 1)
-            || costModel is not null && !costModel.PreferReciprocalReuse(candidate.Type, sequence.Count))
+        if (sequence.Count <= (bestSequence?.Count ?? 1) || !IsProfitable(fn, sequence, dominators, costModel))
           continue;
         bestAnchor = candidate;
         bestSequence = sequence;
@@ -102,6 +103,18 @@ public static class ReciprocalSequenceReuse {
     }
 
     return replaced;
+  }
+
+  private static bool IsProfitable(
+      IrFunction fn, IReadOnlyList<IrBinary> sequence, IrDominators dominators, IIrArithmeticCostModel? costModel) {
+    if (costModel is null || costModel.PreferReciprocalReuse(sequence[0].Type, sequence.Count))
+      return true;
+
+    // A target may reject the static shape yet accept the same rewrite once a proven counted loop lets
+    // guarded hoisting pay the reciprocal only once. ProjectedDivisionCount returns a value only when
+    // every priced division executes every iteration and the generated reciprocal is itself hoistable.
+    return ReciprocalLoopHoisting.ProjectedDivisionCount(fn, sequence, dominators) is { } dynamicCount
+      && costModel.PreferReciprocalReuse(sequence[0].Type, dynamicCount);
   }
 
   private static int RewriteRelaxedSequence(IrBinary anchor, IReadOnlyList<IrBinary> sequence) {
