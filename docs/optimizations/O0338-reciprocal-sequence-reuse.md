@@ -2,74 +2,132 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — exact strict reciprocals plus `arcp`-authorized reuse across dominated call-free CFG regions |
+| **Status** | ✅ Implemented — strict exact reciprocals, `arcp` reuse, guarded canonical-loop hoisting, target cost hook, and F80/x87 support |
 | **Stage** | Mid-end |
-| **Source** | `Ir/Passes/ReciprocalSequenceReuse.cs` |
-| **Gate** | `--optimize`; general reciprocal reuse additionally requires `$OPTIMIZE SPEED` / `-OZF` or an explicit `AllowReciprocal` flag |
-| **Verified by** | `ArithmeticIdiomOptimizationTests` |
-| **Related** | [O0028](O0028-loop-invariant-code-motion.md), [O0341](O0341-reciprocal-approximation.md), [O0345](O0345-common-denominator-factoring.md) |
+| **Source** | `Ir/Passes/ReciprocalSequenceReuse.cs`, `Ir/Passes/ReciprocalLoopHoisting.cs` |
+| **Gate** | `--optimize`; non-exact/runtime reciprocal reuse additionally requires `$OPTIMIZE SPEED` / `-OZF` or an explicit `AllowReciprocal` flag |
+| **Verified by** | `ArithmeticIdiomOptimizationTests`, `TargetCostTests` |
+| **Related** | [O0028](O0028-loop-invariant-code-motion.md), [O0174](O0174-target-cost-model.md), [O0341](O0341-reciprocal-approximation.md), [O0345](O0345-common-denominator-factoring.md) |
 
 ## The idea
 
-Dividing repeatedly by the **same invariant** value can compute or reuse a
-reciprocal and multiply instead. On x87, `FDIV` is substantially slower than
-`FMUL`.
+Dividing repeatedly by the **same invariant** value can compute or reuse a reciprocal and multiply instead.
+That is worthwhile only when two independent questions both answer yes:
 
-## What is implemented
+1. is `x / d -> x * (1/d)` numerically legal for this operation, and
+2. is one divide plus the resulting multiplies cheaper on the selected target than the original divides?
 
-Strict floating point keeps the exact case from v1: repeated F32/F64 division
-by the same finite nonzero power-of-two constant whose reciprocal is also
-representable and finite. The pass substitutes that exact reciprocal constant
-directly, so no relaxed numerical contract is needed.
+O0338 keeps those questions separate. Strict arithmetic gets only provably exact constant reciprocals;
+relaxed arithmetic consumes `AllowReciprocal`, and a target may additionally supply O0174 profitability data.
 
-When a division carries `IrFastMathFlags.AllowReciprocal`, O0338 can also reuse
-a runtime `1/d` for non-power-of-two constants and dynamic SSA divisors. One
-eligible division must dominate the others that reuse its reciprocal, and every
-CFG path between them must be call-free. The reciprocal is materialized at the
-first dominating division rather than speculated into an earlier block. If that
-division is already `1/d`, it is retained as the shared reciprocal.
+## Strict exact reciprocals
 
-Bit-identical F32/F64 constants are grouped even when lowering produced separate
-`IrConstantFloat` objects. Dynamic divisors require identical SSA value identity.
-Generated multiplies retain the arithmetic fast-math freedoms from their source
-divisions, but do not inherit `arcp` or approximate-function flags.
-
-O0345 performs the same-block common-denominator case earlier in the SPEED
-pipeline. O0338 runs after LICM and extends reuse across blocks where dominance
-proves that sharing does not introduce a speculative reciprocal evaluation.
-
-## Applies to
-
-Strict exact case:
+Repeated F32, F64, or F80 division by the same finite nonzero power-of-two constant becomes multiplication
+by its exact reciprocal. No fast-math permission is required because both the divisor and reciprocal are
+exact binary powers of two.
 
 ```basic
 a! = x! / 8!
 b! = y! / 8!
 ```
 
-where the IEEE reciprocal `0.125` is exact.
+becomes the IR equivalent of two multiplies by `0.125`.
 
-With `$OPTIMIZE SPEED`, a dominated sequence may additionally become:
+`IrConstantFloat` currently stores its payload in a .NET `double`, including when typed F80. Therefore the
+strict F80 path covers the full set of power-of-two constants representable by the current IR literal payload;
+the resulting value is exact when embedded in x87 extended precision. This is a literal-representation limit,
+not an O0338 numerical approximation. Dynamic F80 values do not have that limitation.
+
+## `arcp`-authorized runtime reuse
+
+When an `FDiv` carries `IrFastMathFlags.AllowReciprocal`, O0338 may form one runtime `1/d` and use it for
+multiple divisions. This applies to F32/F64/F80, non-power-of-two constants, and dynamic SSA divisors.
+
+Within an ordinary CFG region, the first reused division must dominate every later one and every path between
+them must be call-free. That prevents the pass from speculating a reciprocal into a sibling branch or moving it
+across a call that may disturb the floating-point environment. If the dominating operation is already `1/d`,
+that value is retained instead of creating another division.
+
+Bit-identical constants are grouped even when lowering produced different `IrConstantFloat` objects; dynamic
+divisors require the same SSA value. Generated multiplies inherit arithmetic fast-math freedoms but not
+`arcp`/approximate-function-only flags.
+
+LLVM's `arcp` contract is the normative behavioral boundary: it permits treating `a / b` as `a * (1.0 / b)`
+and permits the resulting form to participate in code motion. No LLVM implementation code is copied.
+
+## Guarded/lazy loop hoisting
+
+A shared reciprocal inside a loop is still one divide **per iteration**. Ordinary LICM cannot simply move it to
+the preheader because a zero-trip loop would then execute `1/d` even though the original program executed no
+division.
+
+For the canonical counted-loop shape, O0338 instead clones the loop-entry comparison into the preheader:
 
 ```text
-x/d; ...; y/d  ->  r = 1/d; x*r; ...; y*r
+preheader:
+  if !entry-test -> exit
+  else -> recip.init
+
+recip.init:
+  r = 1/d
+  -> header
+
+header:
+  original loop test
+  ...
 ```
 
-provided no call lies on a path from the first reused division to the later one.
-Sibling branches are deliberately left alone because neither division dominates
-the other.
+The reciprocal is evaluated only on the edge that actually enters the loop. Header phi entry edges are renamed
+from the old preheader to `recip.init`, so SSA remains valid. The current transform deliberately requires:
 
-## Numerical contract
+- one natural-loop header and one outside preheader,
+- one header-controlled exit and no other loop exits,
+- a header consisting of phis plus the comparison/conditional branch,
+- no calls in the loop,
+- an invariant divisor available before the preheader,
+- no exit phis and no loop-header phi values used outside the loop.
 
-LLVM's `arcp` fast-math flag explicitly permits treating `a / b` as
-`a * (1.0 / b)`. PB-Compiler represents the same permission as
-`IrFastMathFlags.AllowReciprocal`; ordinary optimized code does not receive it.
-The strict power-of-two path remains bit-exact and does not depend on `arcp`.
+Those restrictions make the CFG rewrite transactional and avoid inventing broad SSA-repair machinery merely to
+force a match. More complicated multi-exit or live-out loops are a different transform, not a silently weaker
+proof.
 
-## Still planned
+## Target-specific profitability
 
-- Guarded/lazy hoisting into a loop preheader so sibling or zero-trip loop paths
-  can share a reciprocal without introducing an unconditional evaluation.
-- Cost-model decisions for targets where reciprocal formation or register
-  pressure changes the trade.
-- Extended/x87 formats once exact representability is defined in the IR.
+`IIrArithmeticCostModel` is the target-neutral interface consumed by O0338. O0174's `TargetCost` implements it
+using representative x87 generation costs and compares:
+
+```text
+N * FDIV    versus    FDIV + N * FMUL
+```
+
+under the SPEED objective. The resulting conservative break-even points are intentionally target-dependent:
+
+| Target tier | Representative FMUL | Representative FDIV | Minimum repeated divides |
+|---|---:|---:|---:|
+| 8087 / 80287 class | 145 | 203 | 4 |
+| 80387 class | 57 | 91 | 3 |
+| 80486 class | 16 | 73 | 2 |
+| Pentium / P6 class | 3–4 | 39 | 2 |
+
+The figures are cost-model inputs, not cycle-exact promises for every stepping or operand class. Their purpose is
+to preserve the historically important ordering: reciprocal reuse that clearly wins on an integrated 486/Pentium
+FPU need not win for only two divisions on an early discrete coprocessor. Size/balanced objectives decline the
+non-exact widening rewrite.
+
+`IrPassManager.Standard` accepts the arithmetic cost model explicitly. Target-neutral/hosted callers that do not
+have one retain the legal transform once SPEED supplied `arcp`; target pipelines can pass O0174 to make the
+choice machine-specific.
+
+## Interaction with O0345
+
+O0345 handles the local common-denominator form under SPEED. O0338 runs later, after LICM, so invariant divisor
+computations are already exposed and reuse can extend across dominated blocks or be guarded-hoisted out of a
+canonical loop.
+
+## Deliberate boundaries
+
+- Native 80-bit literal payloads beyond binary64's exponent/significand range require a richer IR constant type;
+  runtime F80 reciprocal reuse itself already supports x87 extended values.
+- Multi-entry/multi-exit loops and loops with live-out header phis are declined rather than repaired speculatively.
+- Exact target timings can be refined as individual backend CPU models become more detailed; the legality proof is
+  independent of those estimates.
