@@ -101,9 +101,24 @@ public static class PostRegisterAllocationPeepholes {
   private static bool SamePhysical(MReg left, MReg right, IReadOnlyDictionary<int, Reg> allocation)
     => Resolve(left, allocation) is { } a && Resolve(right, allocation) is { } b && a == b && left.Size == right.Size;
 
+  /// <summary>
+  /// Resolves the register exactly as <see cref="MachineEmitter"/> will emit it. The allocator stores a
+  /// byte virtual as its containing word register (AX/CX/DX/BX), but emission names the addressable low
+  /// byte. Comparing the container here would miss self-copies such as <c>v:byte(AX) &lt;- AL</c> and,
+  /// worse, could let the overwritten-copy rule delete the definition feeding that apparent copy.
+  /// </summary>
   private static Reg? Resolve(MReg register, IReadOnlyDictionary<int, Reg> allocation) {
-    if (!register.IsVirtual)
-      return register.Physical;
-    return allocation.TryGetValue(register.VirtualId, out var physical) ? physical : null;
+    Reg? physical = register.IsVirtual
+      ? allocation.TryGetValue(register.VirtualId, out var allocated) ? allocated : null
+      : register.Physical;
+    if (physical is not { } resolved || register.Size != MRegSize.Byte || resolved.IsByte())
+      return physical;
+    return resolved switch {
+      Reg.AX => Reg.AL,
+      Reg.CX => Reg.CL,
+      Reg.DX => Reg.DL,
+      Reg.BX => Reg.BL,
+      _ => null,
+    };
   }
 }
