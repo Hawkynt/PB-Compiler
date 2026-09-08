@@ -356,9 +356,8 @@ internal static class DataLayoutTransformCore {
         continue;
       if (!TryCommonTwoDimensionalShape(accesses, elementBytes, root.Count, out var columns, out var rows, out var rowTerm))
         continue;
-      var inner = loops.FirstOrDefault(loop => accesses.Any(a => a.Instruction.Parent is { } b && loop.Region.Contains(b))
-        && ReferenceEquals(loop.Counter, rowTerm));
-      if (inner is null)
+      if (!loops.Any(loop => ReferenceEquals(loop.Counter, rowTerm)
+          && IsInnermostTraversal(loop, loops, accesses)))
         continue;
 
       var replacement = InsertAllocaAfter(root, root.Allocated, root.Count, (root.Name ?? "array") + ".transpose");
@@ -1032,6 +1031,12 @@ internal static class DataLayoutTransformCore {
     rowTerm = candidateTerm;
     return rows >= 2;
   }
+
+  private static bool IsInnermostTraversal(CountedLoop loop, IReadOnlyList<CountedLoop> loops, IReadOnlyList<Access> accesses)
+    => accesses.Any(a => a.Instruction.Parent is { } block && loop.Region.Contains(block))
+       && !loops.Any(nested => !ReferenceEquals(nested, loop)
+         && loop.Region.Contains(nested.Header)
+         && accesses.Any(a => a.Instruction.Parent is { } block && nested.Region.Contains(block)));
 
   private static bool SameCounterSequence(CountedLoop first, CountedLoop second)
     => first.Counter.Type.SameStorage(second.Counter.Type)
