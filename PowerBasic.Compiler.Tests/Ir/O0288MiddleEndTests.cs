@@ -1,5 +1,7 @@
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
+using PowerBasic.Compiler.Semantics;
+using PowerBasic.Compiler.Syntax;
 
 namespace PowerBasic.Compiler.Tests.Ir;
 
@@ -153,6 +155,30 @@ public sealed class O0288MiddleEndTests {
     Assert.That(AllocationSinking.Run(fn), Is.Zero);
     Assert.That(entry.Instructions.OfType<IrCall>().Single(), Is.SameAs(text));
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
+  public void AllocationSinking_GivenLoweredDocumentedStringPattern_WhenRunAfterMem2Reg_ThenItSinks() {
+    const string source = """
+      SUB RareMessage(BYVAL err%)
+        DIM msg$
+        msg$ = "operation failed: code "
+        IF err% THEN PRINT msg$; err%
+      END SUB
+      """;
+    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
+    var model = Binder.Bind(unit, Dialect.Pb35);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var module = IrLowering.TryLowerModule(model, out var why);
+    Assert.That(module, Is.Not.Null, "lowering declined: " + why);
+    var function = module!.Functions.Single(fn =>
+      fn.Name.Equals("RareMessage", StringComparison.OrdinalIgnoreCase));
+
+    Mem2Reg.Run(function);
+    var changed = AllocationSinking.Run(function);
+
+    Assert.That(changed, Is.EqualTo(1), IrPrinter.Print(function));
+    Assert.That(IrVerifier.Verify(function), Is.Empty);
   }
 
   private static IrFunction StringAllocator() => new("rt_str_const", IrType.Ptr, [
