@@ -28,6 +28,50 @@ internal static class ReciprocalLoopHoisting {
     return moved;
   }
 
+  /// <summary>
+  /// Returns how many original divisions a reciprocal would replace dynamically if <paramref name="divisions"/>
+  /// were first shared and then guarded-hoisted out of a known-trip loop. Null means the sequence is not a
+  /// hoist shape whose dynamic count can be proved.
+  ///
+  /// <para>
+  /// This is the profitability bridge to O0174. A pair of divisions may lose against one FDIV plus two FMULs
+  /// on an 8087, yet win when the loop executes four times because the hoisted FDIV is paid once while all eight
+  /// original divisions disappear. Only blocks that dominate the latch are counted, so an inner conditional
+  /// cannot inflate the estimate with executions it may never take.
+  /// </para>
+  /// </summary>
+  internal static int? ProjectedDivisionCount(
+      IrFunction fn, IReadOnlyList<IrBinary> divisions, IrDominators dominators) {
+    if (divisions.Count < 2)
+      return null;
+
+    var anchor = divisions[0];
+    foreach (var loop in DetectLoops(fn, dominators)) {
+      if (!IsGuardable(loop, dominators) || !IsHoistOrigin(anchor, loop, dominators))
+        continue;
+      if (divisions.Any(division => division.Parent is not { } block || !loop.Body.Contains(block)))
+        continue;
+
+      // CountedLoop is the repository's shared exact-trip proof. It deliberately recognizes the canonical
+      // true-body/false-exit counted form; unknown-trip loops still hoist when already profitable statically,
+      // but they cannot use guessed iteration counts to overturn a target cost decision.
+      if (CountedLoop.Match(fn, loop.Header) is not { } counted
+          || !ReferenceEquals(counted.Preheader, loop.Preheader)
+          || !ReferenceEquals(counted.Exit, loop.Exit))
+        continue;
+
+      // Every priced division must execute on every iteration. Dominating the unique latch is the CFG proof
+      // of that fact; a division in one arm of an IF does not dominate the join/latch and is therefore excluded.
+      if (divisions.Any(division => division.Parent is not { } block || !dominators.Dominates(block, counted.Latch)))
+        continue;
+
+      var dynamicCount = counted.Trips * divisions.Count;
+      return dynamicCount >= int.MaxValue ? int.MaxValue : (int)dynamicCount;
+    }
+
+    return null;
+  }
+
   private static (Loop Loop, List<IrBinary> Reciprocals)? FindPlan(IrFunction fn, IrDominators dominators) {
     foreach (var loop in DetectLoops(fn, dominators)) {
       if (!IsGuardable(loop, dominators))
@@ -68,11 +112,16 @@ internal static class ReciprocalLoopHoisting {
       && TryMapEntryValue(loop.Test.Rhs, loop, dominators, out _);
   }
 
-  private static bool IsSharedReciprocal(IrBinary binary, Loop loop, IrDominators dominators) {
+  /// <summary>
+  /// Whether a division is exactly where the shared reciprocal generated from it could be hoisted: at the
+  /// beginning of the loop's direct entry body, with an invariant divisor already available at the preheader.
+  /// The test applies both before sharing (to price a projected hoist) and afterwards (to move the generated
+  /// <c>1/d</c>), which keeps profitability and legality on the same shape.
+  /// </summary>
+  private static bool IsHoistOrigin(IrBinary binary, Loop loop, IrDominators dominators) {
     if (binary is not {
           Op: IrBinaryOp.FDiv,
           Type: { Kind: IrTypeKind.Float, Format: IrFloatFormat.Ieee, Bits: 32 or 64 or 80 },
-          Lhs: IrConstantFloat { Value: 1.0 },
         }
         || (binary.FastMathFlags & IrFastMathFlags.AllowReciprocal) == 0
         || binary.Parent is not { } parent
@@ -91,12 +140,16 @@ internal static class ReciprocalLoopHoisting {
         || !ReferenceEquals(parent.Instructions.FirstOrDefault(instruction => instruction is not IrPhi), binary))
       return false;
 
-    if (binary.Rhs is IrInstruction divisorInstruction) {
-      if (divisorInstruction.Parent is not { } divisorBlock
-          || loop.Body.Contains(divisorBlock)
-          || !dominators.Dominates(divisorBlock, loop.Preheader))
-        return false;
-    }
+    if (binary.Rhs is not IrInstruction divisorInstruction)
+      return true;
+    return divisorInstruction.Parent is { } divisorBlock
+      && !loop.Body.Contains(divisorBlock)
+      && dominators.Dominates(divisorBlock, loop.Preheader);
+  }
+
+  private static bool IsSharedReciprocal(IrBinary binary, Loop loop, IrDominators dominators) {
+    if (binary.Lhs is not IrConstantFloat { Value: 1.0 } || !IsHoistOrigin(binary, loop, dominators))
+      return false;
 
     var users = binary.Users.ToList();
     return users.Count >= 2
@@ -105,8 +158,9 @@ internal static class ReciprocalLoopHoisting {
   }
 
   private static int Apply(IrFunction fn, Loop loop, IReadOnlyList<IrBinary> reciprocals) {
-    if (!TryMapEntryValue(loop.Test.Lhs, loop, IrDominators.Build(fn)!, out var guardLhs)
-        || !TryMapEntryValue(loop.Test.Rhs, loop, IrDominators.Build(fn)!, out var guardRhs)
+    var dominators = IrDominators.Build(fn)!;
+    if (!TryMapEntryValue(loop.Test.Lhs, loop, dominators, out var guardLhs)
+        || !TryMapEntryValue(loop.Test.Rhs, loop, dominators, out var guardRhs)
         || loop.Preheader.Terminator is not { } oldTerminator)
       return 0;
 
