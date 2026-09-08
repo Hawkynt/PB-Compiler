@@ -54,8 +54,16 @@ public sealed class DataLayoutTransformsTests {
 
     Assert.That(HotColdFieldSplitting.Run(fn), Is.EqualTo(1));
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
-    Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a => a.Name == "entity.hot"), Is.True);
-    Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a => a.Name?.EndsWith(".cold", StringComparison.Ordinal) == true), Is.True);
+    var hot = entry.Instructions.OfType<IrAlloca>().Single(a => a.Name == "entity.hot");
+    Assert.That(hot.Allocated, Is.EqualTo(IrType.I8));
+    Assert.That(hot.Count, Is.EqualTo(64 * 4));
+    Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a =>
+      a.Name == "entity.4.cold" && a.Allocated == IrType.I16 && a.Count == 64), Is.True);
+
+    Assert.That(ArrayOfStructsToStructOfArrays.Run(fn), Is.Zero,
+      "O0320 must not dissolve the hot record selected by O0322");
+    Assert.That(entry.Instructions.Contains(hot), Is.True);
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
   }
 
   [Test]
