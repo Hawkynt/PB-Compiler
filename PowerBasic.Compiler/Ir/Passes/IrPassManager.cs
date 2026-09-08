@@ -161,6 +161,8 @@ public sealed class IrPassManager {
     // inserts survives promotion, so later spilling can still use the proven narrow representation.
     .Add("storagenarrow", fn => StorageNarrowing.Run(fn, minimumIntegerStorageBits))
     .Add("mem2reg", Mem2Reg.Run)
+    // Some source variables become phis only after promotion; their ranges are strongest in SSA form.
+    .Add("storagenarrow-ssa", fn => StorageNarrowing.Run(fn, minimumIntegerStorageBits))
     // O0320-O0329 have to see the explicit memory graph and the original counted-loop shape. Run the
     // aggregate transforms before AoS->SoA destroys record identity, then the loop/data transforms,
     // and only then unroll. Every one declines escaped/opaque storage rather than speculating aliasing.
@@ -213,6 +215,7 @@ public sealed class IrPassManager {
     // same proof before the second promotion removes their storage graph.
     .Add("storagenarrow2", fn => StorageNarrowing.Run(fn, minimumIntegerStorageBits))
     .Add("mem2reg2", Mem2Reg.Run)
+    .Add("storagenarrow-ssa2", fn => StorageNarrowing.Run(fn, minimumIntegerStorageBits))
     // O0346/O0347 consume strict FP facts here, including branch-refined integer ranges at conversion
     // sites. SPEED supplies its explicit no-NaN/no-inf assumptions without changing strict defaults.
     .Add("fpsimplify", fn => FpSimplify.Run(fn,
