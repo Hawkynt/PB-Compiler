@@ -112,8 +112,8 @@ public sealed class IrPassManager {
   /// </list>
   /// <para>
   /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
-  /// unrolling, sccp, correlate, pointer checks, integer/float range folds, overflow coalescing,
-  /// sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery, equality saturation,
+  /// unrolling, sccp, correlate, block versioning, pointer checks, integer/float range folds, overflow
+  /// coalescing, sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery, equality saturation,
   /// verified arithmetic lowering, demote, phicong, gvn, memopt, dse, interchange, licm,
   /// reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec, switch formation and the
   /// string/global module passes. Caller-only late specialization such as
@@ -181,6 +181,10 @@ public sealed class IrPassManager {
     .AddWhen(optimizeForSpeed, "demandedbits", DemandedBits.Run)
     .Add("sccp", Sccp.Run)
     .Add("correlate", CorrelatedValueProp.Run)
+    // O0305 is the materialized counterpart to correlation: after edge-local facts have propagated as
+    // far as dominance permits, duplicate a small reconverged block when doing so removes a repeated
+    // guard. The following proof/value passes consume the constants exposed inside each version.
+    .Add("bbversion", BasicBlockVersioning.Run)
     // O0351 shares the dominator-scoped edge facts with correlation, but only explicit pointer-null
     // tests count: dereferencing address zero is not a fault on PB's DOS memory model.
     .Add("ptrcheck", PointerCheckElim.Run)
