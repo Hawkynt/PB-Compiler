@@ -69,7 +69,7 @@ public static class ArrayZeroFillElision {
     if (!TryMatchLoop(function, toHeader.Target, preheader, out var loop))
       return false;
 
-    var allocationIndex = preheader.Instructions.IndexOf(allocation);
+    var allocationIndex = preheader.Instructions.ToList().IndexOf(allocation);
     if (allocationIndex < 0)
       return false;
     foreach (var instruction in preheader.Instructions.Skip(allocationIndex + 1)) {
