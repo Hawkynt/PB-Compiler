@@ -53,7 +53,7 @@ public static class FpDomainSpecialization {
     var argument = call.Args.First();
     if (argument.Type.Bits is not (32 or 64)
         || !domains.TryDiscreteDomain(argument, block, _MAX_TABLE_ENTRIES, out var domain)
-        || domain.Source.Type is not { IsInteger: true, Bits: <= 16 })
+        || domain.Source.Type is not { IsInteger: true })
       return false;
 
     var values = new double[domain.Count];
@@ -73,13 +73,15 @@ public static class FpDomainSpecialization {
 
     // Compute a dense 0-based index in the source's modular integer type. For a signed domain with a
     // negative lower endpoint the subtraction may wrap at the source width, but the proven span is at
-    // most 256 values, so the resulting bit pattern is exactly 0..N-1. Widen only after that step.
+    // most 256 values, so the resulting bit pattern is exactly 0..N-1. Normalize only after that proof:
+    // widen byte-sized sources, and truncate wider LONG/DWORD/QUAD sources exactly into a u16 table index.
     IrValue indexValue = domain.Source;
     if (domain.Lo != 0)
       indexValue = block.InsertBefore(new IrBinary(IrBinaryOp.Sub, indexValue,
         new IrConstantInt(indexValue.Type, domain.Lo)), call);
-    if (indexValue.Type.Bits < 16)
-      indexValue = block.InsertBefore(new IrCast(IrCastOp.ZExt, indexValue, IrType.U16), call);
+    if (indexValue.Type.Bits != 16)
+      indexValue = block.InsertBefore(new IrCast(
+        indexValue.Type.Bits < 16 ? IrCastOp.ZExt : IrCastOp.Trunc, indexValue, IrType.U16), call);
 
     var address = block.InsertBefore(new IrGep(table, indexValue, call.Type), call);
     var replacement = block.InsertBefore(new IrLoad(call.Type, address), call);
