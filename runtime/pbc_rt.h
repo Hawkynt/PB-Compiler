@@ -179,6 +179,7 @@ void *rt_fget_str(int32_t n, int32_t count);
 /* Sizes are BYTES; the _ptr variants take element COUNTS because only this file knows how wide a
    target pointer is. See the definitions for the whole argument. */
 void *rt_arr_alloc(int32_t bytes);
+void *rt_arr_alloc_nz(int32_t bytes);
 void *rt_arr_alloc_ptr(int32_t count);
 void *rt_arr_realloc(void *p, int32_t oldBytes, int32_t newBytes);
 void *rt_arr_realloc_ptr(void *p, int32_t oldCount, int32_t newCount);
