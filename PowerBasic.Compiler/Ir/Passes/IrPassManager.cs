@@ -111,10 +111,10 @@ public sealed class IrPassManager {
   /// unrolling, sccp, correlate, pointer checks, integer/float range folds, overflow coalescing,
   /// sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery, equality saturation,
   /// verified arithmetic lowering, demote, phicong, gvn, memopt, dse, interchange, licm,
-  /// reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the string/global
-  /// module passes. So are the steps the caller runs around the pipeline - <c>Inliner</c>,
-  /// <c>SwitchFormation</c> and <c>MemoryRoutineSpecialization</c>, the last of which is not in
-  /// <see cref="Standard"/> at all because it wants the final shape (see CodeGenerator.Backend).
+  /// reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the argument-structure,
+  /// string and global module passes. So are the steps the caller runs around the pipeline -
+  /// <c>Inliner</c>, <c>SwitchFormation</c> and <c>MemoryRoutineSpecialization</c>, the last of which is
+  /// not in <see cref="Standard"/> at all because it wants the final shape (see CodeGenerator.Backend).
   /// </para>
   /// </summary>
   public static IrPassManager Legalize() => new IrPassManager()
@@ -269,6 +269,10 @@ public sealed class IrPassManager {
     // could not previously see through. What it then does with it differs from the original, which is
     // a finding about that optimizer and not about this pass. Until that is chased down, the summaries
     // are available to callers and this consumer is off.
+    // O0280 changes a function signature, so it must see every direct call and must run as a module
+    // pass. Run it before SPEED inlining; a successful rewrite triggers the normal function sweep,
+    // which can immediately SROA caller aggregates that no longer escape through the call.
+    .AddModulePassWhen(includeModulePasses, "argstruct", ArgumentStructureReduction.Run)
     // SPEED inlining is a module pass so it can see the call graph after the first function fixpoint;
     // every successful inline immediately triggers another function sweep over the exposed body.
     .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "inline-speed",

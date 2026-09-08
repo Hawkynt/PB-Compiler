@@ -87,6 +87,32 @@ public sealed class IrFunction : IrGlobalValue {
     return argument;
   }
 
+  /// <summary>
+  /// Replaces the complete formal-parameter list after an interprocedural signature rewrite has
+  /// detached every old use. Replacement arguments are fresh values whose immutable indices already
+  /// match their new positions.
+  /// </summary>
+  internal void ReplaceParameters(IEnumerable<IrArgument> parameters) {
+    ArgumentNullException.ThrowIfNull(parameters);
+    if (this._parameters.Any(parameter => !parameter.HasNoUsers))
+      throw new InvalidOperationException("cannot replace function parameters while old parameters still have users");
+
+    var replacements = parameters.ToList();
+    for (var i = 0; i < replacements.Count; ++i) {
+      var replacement = replacements[i];
+      if (replacement.Parent is not null)
+        throw new InvalidOperationException("replacement parameter already belongs to a function");
+      if (replacement.Index != i)
+        throw new ArgumentException("replacement parameter indices must match signature order", nameof(parameters));
+    }
+
+    foreach (var parameter in this._parameters)
+      parameter.Parent = null;
+    this._parameters.Clear();
+    foreach (var replacement in replacements)
+      this.AddParameter(replacement);
+  }
+
   /// <summary>Appends a block to the end of the function.</summary>
   public IrBasicBlock AddBlock(IrBasicBlock block) {
     block.Parent = this;
