@@ -6,8 +6,8 @@
 | **Stage** | Mid-end |
 | **Source** | `Ir/Passes/ReciprocalSequenceReuse.cs`, `Ir/Passes/ReciprocalLoopHoisting.cs` |
 | **Gate** | `--optimize`; non-exact/runtime reciprocal reuse additionally requires `$OPTIMIZE SPEED` / `-OZF` or an explicit `AllowReciprocal` flag |
-| **Verified by** | `ArithmeticIdiomOptimizationTests`, `TargetCostTests` |
-| **Related** | [O0028](O0028-loop-invariant-code-motion.md), [O0174](O0174-target-cost-model.md), [O0341](O0341-reciprocal-approximation.md), [O0345](O0345-common-denominator-factoring.md) |
+| **Verified by** | `ArithmeticIdiomOptimizationTests`, `ReciprocalLoopHoistingTests`, `ReciprocalCostPipelineTests`, `TargetCostTests` |
+| **Related** | [O0028](O0028-loop-invariant-code-motion.md), [O0174](O0174-target-cost-models.md), [O0341](O0341-reciprocal-approximation.md), [O0345](O0345-common-denominator-factoring.md) |
 
 ## The idea
 
@@ -61,7 +61,7 @@ A shared reciprocal inside a loop is still one divide **per iteration**. Ordinar
 the preheader because a zero-trip loop would then execute `1/d` even though the original program executed no
 division.
 
-For the canonical counted-loop shape, O0338 instead clones the loop-entry comparison into the preheader:
+For the canonical loop shape, O0338 instead clones the loop-entry comparison into the preheader:
 
 ```text
 preheader:
@@ -85,7 +85,12 @@ from the old preheader to `recip.init`, so SSA remains valid. The current transf
 - a header consisting of phis plus the comparison/conditional branch,
 - no calls in the loop,
 - an invariant divisor available before the preheader,
+- the shared reciprocal to originate as the first real operation in the body block selected directly by the header,
 - no exit phis and no loop-header phi values used outside the loop.
+
+The direct-body requirement matters independently of the zero-trip guard. A reciprocal originally inside an
+inner `IF` must not be evaluated merely because the loop entered; such a conditional sequence may still share
+one reciprocal inside its dominated arm, but it is not preheader-hoisted.
 
 Those restrictions make the CFG rewrite transactional and avoid inventing broad SSA-repair machinery merely to
 force a match. More complicated multi-exit or live-out loops are a different transform, not a silently weaker
@@ -114,9 +119,19 @@ to preserve the historically important ordering: reciprocal reuse that clearly w
 FPU need not win for only two divisions on an early discrete coprocessor. Size/balanced objectives decline the
 non-exact widening rewrite.
 
-`IrPassManager.Standard` accepts the arithmetic cost model explicitly. Target-neutral/hosted callers that do not
-have one retain the legal transform once SPEED supplied `arcp`; target pipelines can pass O0174 to make the
-choice machine-specific.
+For a guarded-hoist candidate, O0338 composes that target query with the repository's shared `CountedLoop`
+analysis. If the static sequence loses but the trip count is exact, profitability may be retried with the number
+of divisions eliminated over the complete loop: e.g. two divisions over four proven iterations are priced as
+eight original `FDIV`s versus one hoisted `FDIV` plus eight `FMUL`s. This amplification is used only when each
+priced division's block dominates the unique latch, proving it executes on every iteration; conditional arms are
+not assigned imaginary executions.
+
+Unknown-trip loops can still be guarded-hoisted after a statically profitable reuse, but an unknown trip count is
+never guessed merely to overturn a target cost refusal.
+
+`IrPassManager.Standard` accepts the arithmetic cost model explicitly, and the routed x86 pipeline passes its
+`SelectionCost` under `$OPTIMIZE SPEED`. Target-neutral/hosted callers that do not have a model retain the legal
+transform once SPEED supplied `arcp`.
 
 ## Interaction with O0345
 
@@ -128,6 +143,7 @@ canonical loop.
 
 - Native 80-bit literal payloads beyond binary64's exponent/significand range require a richer IR constant type;
   runtime F80 reciprocal reuse itself already supports x87 extended values.
-- Multi-entry/multi-exit loops and loops with live-out header phis are declined rather than repaired speculatively.
+- Multi-entry/multi-exit loops, inner-conditional reciprocal origins, and loops with live-out header phis are
+  declined for hoisting rather than repaired/speculated.
 - Exact target timings can be refined as individual backend CPU models become more detailed; the legality proof is
   independent of those estimates.
