@@ -22,16 +22,22 @@ a canonical counted loop. It moves the loop's single `rt_arr_alloc(bytes)` to th
 preheader and the matching `rt_arr_free(ptr, bytes)` to the exit when all of the
 following are proven:
 
-- the byte count is a positive constant and the loop executes more than once;
-- the loop has one body/latch block, so the allocation executes on every
-  iteration and the free covers every back edge;
+- the byte count is a positive compile-time constant and the loop executes more
+  than once; explicit REDIM extent arithmetic is evaluated with the shared IR
+  constant-folding semantics even though O0290 runs before ordinary InstCombine;
+- the temporary lifetime lives in one work block, either as the latch itself or
+  followed by PB lowering's dedicated `for.inc` latch containing only the induction
+  update and branch;
 - the allocation address and all derived GEPs stay inside the allocation/free
   lifetime and are used only for direct loads/stores;
-- the body contains no other calls, so no other allocation can get above this
-  block in PB's topmost-only bump allocator and no callee can observe its address;
+- the work block contains no other calls, so no other allocation can get above
+  this block in PB's topmost-only bump allocator and no callee can observe its address;
 - every load from the buffer is covered by stores from the **current** iteration.
   This last proof preserves `rt_arr_alloc`'s zero-fill semantics: bytes left by a
-  previous iteration can never become newly observable.
+  previous iteration can never become newly observable;
+- the header contains only phi selection, the counted-loop comparison and branch,
+  so moving allocation ahead of it cannot reorder an independent trap/error ahead
+  of a possible out-of-memory failure.
 
 The pass runs after `mem2reg` and the O0320–O0329 data-layout transforms, but
 before loop unrolling. That ordering exposes descriptor-held allocation results
@@ -41,7 +47,7 @@ as SSA values while keeping the original one-allocation loop lifetime intact.
 
 The implemented case is a scratch dynamic array whose contents are completely
 written before they are read on each trip, for example a fixed-size `REDIM` /
-`ERASE` buffer used only inside a counted loop.
+`ERASE` buffer used only inside a counted `FOR` loop.
 
 The broader motivating string case remains useful:
 
@@ -62,8 +68,8 @@ covers one exact-trip append-builder shape without changing that ABI.
 
 ## What remains
 
-- Extend the matcher beyond the single-body counted-loop form while proving that
-  allocation dominates every use and deallocation post-dominates every iteration.
+- Extend the matcher to conditional/multi-block temporary lifetimes while proving
+  allocation dominance and deallocation post-dominance over every iteration.
 - Support bounded/grow-on-demand string temporaries once their representation can
   retain capacity independently of logical length.
 - Consider pointer-element arrays once the pass has target data-layout facts; the
