@@ -83,19 +83,21 @@ public static class LoopTemporaryReuse {
         || !ReadsSeeCurrentIterationWrites(allocation, body, allocationIndex, freeIndex, size.Value))
       return false;
 
-    body.Remove(allocation);
-    loop.Preheader.InsertBefore(allocation, preBranch);
-
-    body.Remove(free);
+    // Resolve every insertion point before mutating either block. Apart from being tidier, this means
+    // malformed hand-built IR is declined atomically rather than being left half-hoisted.
     var exitAnchor = loop.Exit.Instructions.FirstOrDefault(instruction => instruction is not IrPhi);
     if (exitAnchor is null)
-      return false;                          // valid IR normally has a terminator; decline malformed input
+      return false;
+
+    body.Remove(allocation);
+    loop.Preheader.InsertBefore(allocation, preBranch);
+    body.Remove(free);
     loop.Exit.InsertBefore(free, exitAnchor);
     return true;
   }
 
   private static bool IsCall(IrCall call, string name, int arguments)
-    => call.Callee is IrFunction { Name: var callee } && callee == name && call.ArgCount == arguments;
+    => call.Callee is IrFunction callee && callee.Name == name && call.ArgCount == arguments;
 
   /// <summary>
   /// Proves the allocation address cannot survive an iteration or be observed as an identity. Derived
