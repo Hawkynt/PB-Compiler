@@ -246,7 +246,8 @@ internal static class RuntimeAbi {
     ["rt_str_concat"] = new("rt_strcat",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
 
-    // "StrCatVar: AX=target handle, DX=source handle -> AX". It grows the TARGET in place when it is the topmost heap block and copies the source's bytes into it - so it consumes the
+    // "StrCatVar: AX=target handle, DX=source handle -> AX". It grows the TARGET in place when the
+    // target is the topmost heap block and copies the source's bytes into it - so it consumes the
     // target and BORROWS the source, which is what makes Ir.Passes.StringAppendInPlace drop the copy
     // the lowering made of the source.
     ["rt_str_append_var"] = new("rt_strcatvar",
@@ -471,7 +472,7 @@ internal static class RuntimeAbi {
     // AX = position or 0 (consumes both)". INSTR ANY and VERIFY are the same routine under one flag,
     // which is a CONSTANT at every call site - so it is a preset here rather than an argument, and
     // the two spellings become two entries over one label. The answer is a word the IR types i32,
-    // hence the CWD the emitter writes after the call.
+    // hence the CWD the direct emitter writes after the call.
     ["rt_str_scanset"] = new("rt_scanset",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX), new(ArgKind.Word, Reg.CX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.WidenedWord, Constants: [(Reg.BX, 0)]),
@@ -600,8 +601,8 @@ internal static class RuntimeAbi {
       Answer: ResultKind.Pair, Constants: [(Reg.AX, 0)]),
     ["rt_finput_i64"] = new("rt_inp_i64", [new(ArgKind.Word, Reg.AX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.St0ToQword),
-    ["rt_input_i64"] = new("rt_inp_i64", [], _callerSaved, Result: Reg.AX,
-      Answer: ResultKind.St0ToQword, Constants: [(Reg.AX, 0)]),
+    ["rt_input_i64"] = new("rt_inp_i64", [], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.St0ToQword, Constants: [(Reg.AX, 0)]),
 
     // "Rnd: -> ST0 = next SINGLE in [0,1)"
     ["rt_rnd"] = new("rt_rnd", [], _callerSaved, Answer: ResultKind.St0),
