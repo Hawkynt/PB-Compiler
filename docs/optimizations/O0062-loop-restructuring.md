@@ -78,12 +78,16 @@ The multiply and address/value arithmetic inside the body then become dead and
 are collected by the normal value passes.
 
 The accepted slice is intentionally proof-friendly: the counter and constants
-must have the same integer width, and the expression tree may contain only
-`add`, `sub`, and multiplication with one constant side. Nonlinear expressions
-such as `i*i`, casts, divisions, shifts, calls, memory-derived values and direct
-phi-edge users decline. A cheap `i + constant` also stays as-is because replacing
-one add with another add plus extra loop-carried state is not profitable. If the
-affine scale wraps to zero, the derived value collapses to a constant instead.
+must have the same integer width, and the expression tree may contain `add`,
+`sub`, multiplication with one constant side, and a constant left shift. The
+left-shift case matters in the real pipeline: `InstCombine` lowers `i*2` to
+`i<<1`, while `VerifiedArithmeticLowering` lowers factors such as three into a
+shift plus add before O0062 runs. Both are still exactly affine modulo the integer
+width. Nonlinear expressions such as `i*i`, casts, division/right shifts, calls,
+memory-derived values and direct phi-edge users decline. A cheap `i + constant`
+also stays as-is because replacing one add with another add plus extra
+loop-carried state is not profitable. If the affine scale wraps to zero, the
+derived value collapses to a constant instead.
 
 The pass runs immediately before O0111 `phicong`. That ordering is deliberate:
 O0062 creates derived recurrences; O0111 can then coalesce recurrences that are
