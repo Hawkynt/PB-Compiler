@@ -12,11 +12,12 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// </para>
 ///
 /// <para>
-/// This first slice is deliberately strict: one canonical counted body block, one
-/// <c>rt_arr_alloc</c>/<c>rt_arr_free</c> pair, a constant byte size, no other calls, and no pointer
-/// escape. Those restrictions do two jobs. They make the allocation execute on every iteration, and
-/// they keep the array block topmost in PB's bump allocator, so hoisting the allocation and sinking
-/// the free changes neither the address-space lifetime nor the allocator's rollback behaviour.
+/// This first slice is deliberately strict: one canonical counted work block (plus PB lowering's
+/// optional dedicated increment block), one <c>rt_arr_alloc</c>/<c>rt_arr_free</c> pair, a constant byte
+/// size, no other calls, and no pointer escape. Those restrictions do two jobs. They make the
+/// allocation execute on every iteration, and they keep the array block topmost in PB's bump allocator,
+/// so hoisting the allocation and sinking the free changes neither the address-space lifetime nor the
+/// allocator's rollback behaviour.
 /// </para>
 /// </summary>
 public static class LoopTemporaryReuse {
@@ -41,14 +42,9 @@ public static class LoopTemporaryReuse {
   }
 
   private static bool TryReuse(CountedLoop loop) {
-    if (loop.Region.Count != 2 || loop.Preheader.Terminator is not IrBr preBranch
-        || !ReferenceEquals(preBranch.Target, loop.Header)
-        || loop.Header.Terminator is not IrCondBr branch || !ReferenceEquals(branch.IfFalse, loop.Exit))
-      return false;
-
-    var body = loop.Region.Single(block => !ReferenceEquals(block, loop.Header));
-    if (!ReferenceEquals(body, loop.Latch) || !ReferenceEquals(branch.IfTrue, body)
-        || body.Terminator is not IrBr back || !ReferenceEquals(back.Target, loop.Header))
+    if (loop.Preheader.Terminator is not IrBr preBranch || !ReferenceEquals(preBranch.Target, loop.Header)
+        || loop.Header.Terminator is not IrCondBr branch || !ReferenceEquals(branch.IfFalse, loop.Exit)
+        || !TryWorkBlock(loop, branch, out var body))
       return false;
 
     var exitPredecessors = loop.Exit.Predecessors.ToList();
@@ -90,9 +86,9 @@ public static class LoopTemporaryReuse {
     if (exitAnchor is null)
       return false;
 
-    // Lowering intentionally leaves REDIM's constant extent arithmetic in explicit IR until the
-    // ordinary constant folder runs. O0290 runs before unrolling and therefore before that fold; make
-    // the lifetime-moved calls independent of their old body-local arithmetic before moving them.
+    // Lowering intentionally leaves REDIM's constant extent/address arithmetic in explicit IR until
+    // the ordinary constant folder runs. O0290 runs before unrolling and therefore before that fold;
+    // make the lifetime-moved calls independent of their old body-local arithmetic before moving them.
     allocation.SetOperand(1, new IrConstantInt(allocation.GetOperand(1).Type, size));
     free.SetOperand(2, new IrConstantInt(free.GetOperand(2).Type, size));
 
@@ -103,13 +99,43 @@ public static class LoopTemporaryReuse {
     return true;
   }
 
+  /// <summary>
+  /// Finds the one block that owns the temporary lifetime. Hand-built canonical loops commonly use
+  /// that block as the latch itself; source FOR lowering uses a separate <c>for.inc</c> latch. In the
+  /// latter case the latch may contain only the induction update and its branch, so extending the heap
+  /// lifetime across it cannot hide another allocation or observable effect.
+  /// </summary>
+  private static bool TryWorkBlock(CountedLoop loop, IrCondBr branch, out IrBasicBlock body) {
+    body = null!;
+    var nonHeader = loop.Region.Where(block => !ReferenceEquals(block, loop.Header)).ToList();
+    if (nonHeader.Count == 1) {
+      body = nonHeader[0];
+      return ReferenceEquals(body, loop.Latch) && ReferenceEquals(branch.IfTrue, body)
+        && body.Terminator is IrBr back && ReferenceEquals(back.Target, loop.Header);
+    }
+
+    if (nonHeader.Count != 2)
+      return false;
+    body = nonHeader.SingleOrDefault(block => !ReferenceEquals(block, loop.Latch))!;
+    if (body is null || !ReferenceEquals(branch.IfTrue, body)
+        || body.Terminator is not IrBr toLatch || !ReferenceEquals(toLatch.Target, loop.Latch)
+        || loop.Latch.Terminator is not IrBr backToHeader || !ReferenceEquals(backToHeader.Target, loop.Header))
+      return false;
+
+    var next = loop.Counter.IncomingFrom(loop.Latch);
+    return next is IrBinary { Op: IrBinaryOp.Add } increment
+      && ReferenceEquals(increment.Lhs, loop.Counter)
+      && loop.Latch.Instructions.All(instruction => ReferenceEquals(instruction, increment) || instruction is IrBr);
+  }
+
   private static bool IsCall(IrCall call, string name, int arguments)
     => call.Callee is IrFunction callee && callee.Name == name && call.ArgCount == arguments;
 
   /// <summary>
-  /// Resolves the small pure integer expression family REDIM lowering uses for constant bounds. This
-  /// is not a second general constant folder: it recursively supplies constant operands to the shared
-  /// <see cref="IrConstFold"/> rules, so wrapping, cast and invalid-operation semantics stay identical.
+  /// Resolves the small pure integer expression family REDIM lowering uses for constant bounds and
+  /// offsets. This is not a second general constant folder: it recursively supplies constant operands
+  /// to the shared <see cref="IrConstFold"/> rules, so wrapping, cast and invalid-operation semantics
+  /// stay identical.
   /// </summary>
   private static bool TryConstantInteger(IrValue value, out long constant) {
     switch (value) {
@@ -117,7 +143,7 @@ public static class LoopTemporaryReuse {
         constant = immediate.Value;
         return true;
 
-      case IrBinary binary
+      case IrBinary { Type.IsInteger: true } binary
           when TryConstantInteger(binary.Lhs, out var left) && TryConstantInteger(binary.Rhs, out var right): {
         var candidate = new IrBinary(binary.Op,
           new IrConstantInt(binary.Lhs.Type, left), new IrConstantInt(binary.Rhs.Type, right));
@@ -130,7 +156,7 @@ public static class LoopTemporaryReuse {
         break;
       }
 
-      case IrCast cast when TryConstantInteger(cast.Value, out var operand): {
+      case IrCast { Type.IsInteger: true } cast when TryConstantInteger(cast.Value, out var operand): {
         var candidate = new IrCast(cast.Op, new IrConstantInt(cast.Value.Type, operand), cast.Type);
         var folded = IrConstFold.TryFold(candidate) as IrConstantInt;
         candidate.DropOperandUses();
@@ -242,7 +268,7 @@ public static class LoopTemporaryReuse {
       offset = 0;
       return true;
     }
-    if (pointer is not IrGep { ByteOffset: IrConstantInt displacement } gep
+    if (pointer is not IrGep gep || !TryConstantInteger(gep.ByteOffset, out var displacement)
         || !TryOffset(gep.BasePtr, allocation, out var baseOffset)) {
       offset = 0;
       return false;
@@ -254,7 +280,7 @@ public static class LoopTemporaryReuse {
       return false;
     }
     try {
-      offset = checked(baseOffset + checked(displacement.Value * scale));
+      offset = checked(baseOffset + checked(displacement * scale));
       return true;
     } catch (OverflowException) {
       offset = 0;
