@@ -154,12 +154,22 @@ public sealed class TargetCost : IIrArithmeticCostModel {
   /// exact-constant reciprocals never query this because their rewrite is semantics-preserving.
   /// </summary>
   public bool PreferReciprocalReuse(IrType type, int divisionCount) {
-    if (this.Objective != CostObjective.Speed || divisionCount < 2
-        || type is not { Kind: IrTypeKind.Float, Format: IrFloatFormat.Ieee, Bits: 32 or 64 or 80 })
+    if (this.Objective != CostObjective.Speed || divisionCount < 2 || !IsX87ArithmeticType(type))
       return false;
     return (long)divisionCount * this.X87DivideCycles
       > this.X87DivideCycles + (long)divisionCount * this.X87MultiplyCycles;
   }
+
+  /// <summary>
+  /// O0338 when <c>1/d</c> already exists: no reciprocal-formation cost remains, so each replacement is
+  /// simply one FDIV versus one FMUL. Keep the SPEED gate consistent with the general relaxed rewrite.
+  /// </summary>
+  public bool PreferExistingReciprocalUse(IrType type, int divisionCount)
+    => this.Objective == CostObjective.Speed && divisionCount >= 1 && IsX87ArithmeticType(type)
+       && this.X87MultiplyCycles < this.X87DivideCycles;
+
+  private static bool IsX87ArithmeticType(IrType type)
+    => type is { Kind: IrTypeKind.Float, Format: IrFloatFormat.Ieee, Bits: 32 or 64 or 80 };
 
   /// <summary>True when writing an 8-bit sub-register (packing two BYTE locals into <c>AL</c>/<c>AH</c>,
   /// O0058) is a net win: on the byte-starved early parts it saves real bytes and a full-width move, but on a
@@ -216,7 +226,7 @@ public sealed class TargetCost : IIrArithmeticCostModel {
     if (this.Objective == CostObjective.Size || bodyInstrBytes <= 0)
       return 1;
     if (tripCount is > 0 and < 4)
-      return 1; // too few iterations to amortise the tail
+      return 1; // too few iterations to amortise a tail
     var byTier = this.Tier switch {
       <= CpuTier.I80286 => 2,   // fetch-bound: a little unrolling, then bytes hurt
       <= CpuTier.I80486 => 4,
