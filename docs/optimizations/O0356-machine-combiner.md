@@ -15,7 +15,7 @@ replace a sequence whose target-independent IR representation was already lost.
 `Backend/MachineCombiner.cs` currently performs two conservative combines:
 
 - `CMP r,0 -> TEST r,r`, preserving the condition-code information consumed by
-  the backend while avoiding an immediate operand;
+  ordinary branches/carry chains while avoiding an immediate operand;
 - `MOV d,s ; ADD/SUB d,imm -> LEA d,[s +/- imm]` when the arithmetic flags are
   proven dead and using `s` as an address cannot create a new register-class
   constraint.
@@ -43,6 +43,12 @@ when `bx` is already constrained to an address-capable register class.
 
 ## Safety and limits
 
+- `CMP r,0 -> TEST r,r` is guarded by auxiliary-flag observability. The two
+  instructions agree on the flags used by `Jcc`, `ADC`/`SBB`, and
+  `RCL`/`RCR`, but x86 defines AF after `CMP r,0` and leaves AF undefined after
+  `TEST r,r`. Inline assembly can observe that difference through `LAHF` or
+  `PUSHF`, so O0356 follows CFG successors and declines the combine if a generic
+  flag reader can see AF before an instruction that definitely overwrites it.
 - `LEA` replacement requires a later flag-writing instruction before any flag
   read. Falling out of the block is not considered proof of dead flags.
 - A virtual source is accepted only when some existing memory operand already

@@ -30,6 +30,16 @@ public sealed class O0355O0358MachineOptimizationTests {
       new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
         ReadsMemory: false, WritesMemory: false));
 
+  private static MInstr ObserveFlags()
+    => new(MOpcode.InlineAsm, [],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: true, WritesFlags: false,
+        ReadsMemory: false, WritesMemory: false));
+
+  private static MInstr Branch(string target)
+    => new(MOpcode.Jcc, [new MOperand.LabelRef(target)],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: true, WritesFlags: false,
+        ReadsMemory: false, WritesMemory: false), Condition.Equal);
+
   private static MInstr Call()
     => new(MOpcode.Call, [new MOperand.LabelRef("rt_x")],
       new MInstrEffect([], [], ReadsFlags: false, WritesFlags: true, ReadsMemory: true, WritesMemory: true),
@@ -85,6 +95,45 @@ public sealed class O0355O0358MachineOptimizationTests {
     var test = function.Blocks[0].Instructions.Single();
     Assert.That(test.Opcode, Is.EqualTo(MOpcode.Test));
     Assert.That(test.Operands[0], Is.EqualTo(test.Operands[1]));
+  }
+
+  [Test]
+  public void MachineCombiner_GivenCompareAgainstZeroAndJcc_WhenRun_ThenEquivalentFlagConsumerStillAllowsTest() {
+    var function = OneBlock(Compare(0, 0), Branch("done"));
+
+    Assert.That(MachineCombiner.Run(function), Is.EqualTo(1));
+    Assert.That(function.Blocks[0].Instructions[0].Opcode, Is.EqualTo(MOpcode.Test));
+  }
+
+  [Test]
+  public void MachineCombiner_GivenCompareAgainstZeroAndGenericFlagRead_WhenRun_ThenCompareIsPreserved() {
+    var function = OneBlock(Compare(0, 0), ObserveFlags());
+
+    Assert.That(MachineCombiner.Run(function), Is.Zero);
+    Assert.That(function.Blocks[0].Instructions[0].Opcode, Is.EqualTo(MOpcode.Cmp),
+      "TEST leaves AF undefined, while CMP r,0 clears AF; an opaque flag consumer may observe it");
+  }
+
+  [Test]
+  public void MachineCombiner_GivenSuccessorObservingFlags_WhenRun_ThenCompareIsPreservedAcrossTheCfgEdge() {
+    var function = new MFunction("f") { VirtualRegisterCount = 16 };
+    var entry = new MBlock("entry");
+    entry.Instructions.Add(Compare(0, 0));
+    entry.Successors.Add("next");
+    var next = new MBlock("next");
+    next.Instructions.Add(ObserveFlags());
+    function.Blocks.AddRange([entry, next]);
+
+    Assert.That(MachineCombiner.Run(function), Is.Zero);
+    Assert.That(entry.Instructions[0].Opcode, Is.EqualTo(MOpcode.Cmp));
+  }
+
+  [Test]
+  public void MachineCombiner_GivenAuxiliaryFlagOverwriteBeforeGenericRead_WhenRun_ThenTestIsStillAllowed() {
+    var function = OneBlock(Compare(0, 0), Add(1, 1), ObserveFlags());
+
+    Assert.That(MachineCombiner.Run(function), Is.EqualTo(1));
+    Assert.That(function.Blocks[0].Instructions[0].Opcode, Is.EqualTo(MOpcode.Test));
   }
 
   [Test]
