@@ -27,6 +27,12 @@ public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialec
   /// </summary>
   public Dialect EffectiveDialect { get; } = compatDialect ?? dialect;
 
+  /// <summary>
+  /// The optimization objective most recently applied to this module. Late passes outside
+  /// <see cref="Passes.IrPassManager.Standard"/> use it to keep size-growing rewrites SPEED-only.
+  /// </summary>
+  public bool OptimizeForSpeed { get; internal set; }
+
   public IReadOnlyList<IrFunction> Functions => this._functions;
   public IReadOnlyList<IrGlobalVariable> Globals => this._globals;
 
@@ -45,6 +51,7 @@ public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialec
     => this._procedureLoweringDeclines[name] = reason;
 
   public IrFunction AddFunction(IrFunction function) {
+    function.Module = this;
     this._functions.Add(function);
     return function;
   }
@@ -55,7 +62,12 @@ public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialec
   }
 
   /// <summary>Removes a function from the module (global dead-code elimination); returns whether it was present.</summary>
-  public bool RemoveFunction(IrFunction function) => this._functions.Remove(function);
+  public bool RemoveFunction(IrFunction function) {
+    if (!this._functions.Remove(function))
+      return false;
+    function.Module = null;
+    return true;
+  }
 
   /// <summary>Removes a global variable from the module (global dead-code elimination); returns whether it was present.</summary>
   public bool RemoveGlobal(IrGlobalVariable global) => this._globals.Remove(global);
