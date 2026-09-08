@@ -3,7 +3,7 @@ using PowerBasic.Compiler.Ir.Passes;
 
 namespace PowerBasic.Compiler.Tests.Ir;
 
-/// <summary>Global value numbering: redundant pure computations are replaced by a dominating equal.</summary>
+/// <summary>Global value numbering: redundant pure computations and unchanged loads use dominating leaders.</summary>
 [TestFixture]
 public sealed class GvnTests {
 
@@ -120,6 +120,70 @@ public sealed class GvnTests {
 
     Assert.That(removed, Is.EqualTo(0));
     Assert.That(Count<IrBinary>(fn), Is.EqualTo(2));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
+  public void Run_EliminatesDominatedLoadAcrossNonAliasingStore() {
+    var fn = new IrFunction("f", IrType.I16);
+    var entry = fn.CreateBlock("entry");
+    var tail = fn.CreateBlock("tail");
+    var b = new IrBuilder(entry);
+    var observed = b.Alloca(IrType.I16);
+    var other = b.Alloca(IrType.I16);
+    b.Store(IrBuilder.ConstInt(IrType.I16, 3), observed);
+    var first = b.Load(IrType.I16, observed);
+    b.Store(IrBuilder.ConstInt(IrType.I16, 9), other);
+    b.Br(tail);
+    b.Position(tail);
+    var second = b.Load(IrType.I16, observed);
+    b.Ret(b.Add(first, second));
+
+    var removed = Gvn.Run(fn);
+
+    Assert.That(removed, Is.EqualTo(1));
+    Assert.That(Count<IrLoad>(fn), Is.EqualTo(1));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
+  public void Run_DoesNotMergeLoadsAcrossAliasingStore() {
+    var fn = new IrFunction("f", IrType.I16);
+    var entry = fn.CreateBlock("entry");
+    var tail = fn.CreateBlock("tail");
+    var b = new IrBuilder(entry);
+    var observed = b.Alloca(IrType.I16);
+    b.Store(IrBuilder.ConstInt(IrType.I16, 3), observed);
+    var first = b.Load(IrType.I16, observed);
+    b.Store(IrBuilder.ConstInt(IrType.I16, 9), observed);
+    b.Br(tail);
+    b.Position(tail);
+    var second = b.Load(IrType.I16, observed);
+    b.Ret(b.Add(first, second));
+
+    var removed = Gvn.Run(fn);
+
+    Assert.That(removed, Is.Zero);
+    Assert.That(Count<IrLoad>(fn), Is.EqualTo(2));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
+  public void Run_DoesNotMergeLoadsAcrossOpaqueCall() {
+    var fn = new IrFunction("f", IrType.I16);
+    var opaque = new IrFunction("opaque", IrType.Void);
+    var b = new IrBuilder(fn.CreateBlock("entry"));
+    var observed = b.Alloca(IrType.I16);
+    b.Store(IrBuilder.ConstInt(IrType.I16, 3), observed);
+    var first = b.Load(IrType.I16, observed);
+    b.Call(IrType.Void, opaque);
+    var second = b.Load(IrType.I16, observed);
+    b.Ret(b.Add(first, second));
+
+    var removed = Gvn.Run(fn);
+
+    Assert.That(removed, Is.Zero);
+    Assert.That(Count<IrLoad>(fn), Is.EqualTo(2));
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
   }
 }
