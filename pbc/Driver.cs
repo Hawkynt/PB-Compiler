@@ -31,6 +31,7 @@ public static class Driver {
     var checkOverflow = false;
     var checkStack = false;
     var optimizeSpeed = false;
+    var parallelLoops = false;
     bool? useExperimentalBackend = null;
     bool? optimize = null; // null = dialect default (on for pb36); --optimize/--no-optimize override
 
@@ -76,6 +77,9 @@ public static class Driver {
         case "--no-optimize":
           optimize = false; // the pb35-faithful escape hatch, even for pb36
           break;
+        case "--parallel-loops":
+          parallelLoops = true;
+          break;
         case "--x-backend":
           useExperimentalBackend = true;
           break;
@@ -105,6 +109,10 @@ public static class Driver {
     }
     if (!File.Exists(source)) {
       stderr.WriteLine($"pbc: source file '{source}' not found");
+      return 1;
+    }
+    if (parallelLoops && dumpStage is not ("--emit-c" or "--emit-llvm")) {
+      stderr.WriteLine("pbc: --parallel-loops is only available with --emit-c or --emit-llvm");
       return 1;
     }
 
@@ -189,11 +197,25 @@ public static class Driver {
             hostedOptimize = false;
           hostedSpeed = mode.Text.Equals("SPEED", StringComparison.OrdinalIgnoreCase);
         }
+        if (parallelLoops && !hostedOptimize) {
+          stderr.WriteLine("pbc: --parallel-loops requires optimization; remove --no-optimize / $OPTIMIZE OFF");
+          return 1;
+        }
 
         var pipeline = hostedOptimize
           ? IrPassManager.Standard(optimizeForSpeed: hostedSpeed,
               enableFpLookupTables: dumpStage == "--emit-llvm")
           : IrPassManager.Legalize();
+
+        // O0311 needs the original counted-loop/memory graph, but its dependence proof wants SSA.
+        // Promote first, version while that shape is still intact, then let the ordinary pipeline
+        // optimize both the retained sequential loop and the outlined parallel iteration helper.
+        if (parallelLoops)
+          foreach (var f in module.Functions)
+            if (!f.IsDeclaration)
+              Mem2Reg.Run(f);
+        if (parallelLoops)
+          ParallelLoopVersioning.Run(module);
         pipeline.RunOnModule(module);
 
         if (hostedOptimize) {
@@ -459,6 +481,7 @@ public static class Driver {
     w.WriteLine("  -OZF           prefer SPEED; enables size-for-speed and relaxed-FP transforms when optimizing");
     w.WriteLine("  --optimize     enable the optimizer for any dialect");
     w.WriteLine("  --no-optimize  disable optimization even for pb36 / $OPTIMIZE SPEED");
+    w.WriteLine("  --parallel-loops opt in to O0311 for hosted C/LLVM; link runtime/pbc_parallel.c with OpenMP");
     w.WriteLine("  --dump-tokens  stop after lexing/preprocessing and list tokens");
     w.WriteLine("  --dump-ast     stop after parsing");
     w.WriteLine("  --dump-bind    stop after semantic analysis");
