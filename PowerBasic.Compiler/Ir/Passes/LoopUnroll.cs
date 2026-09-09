@@ -35,7 +35,11 @@ public static class LoopUnroll {
   public static int Run(IrFunction fn) {
     if (fn.HasErrorHandler)
       return 0;                                  // a fault can enter this function anywhere - see IrFunction
-    var unrolled = 0;
+
+    // O0272 consumes runtime trip distributions before the compile-time-only full unroller. The two
+    // transforms share this early loop slot because both want the pristine SSA loop shape and both
+    // expose straight-line copies for the simplification passes that follow.
+    var unrolled = ProfileGuidedLoopOptimization.Run(fn);
     foreach (var header in fn.Blocks.ToList())
       if (Match(fn, header) is { } loop && TryUnroll(fn, loop))
         ++unrolled;
