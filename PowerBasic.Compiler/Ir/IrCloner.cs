@@ -41,11 +41,13 @@ public sealed class IrCloner {
     => Clone(into, source, seed, labelPrefix, out _);
 
   /// <summary>
-  /// The same, also handing back the VALUE mapping.
+  /// The same, also handing back the INSTRUCTION/value mapping.
   ///
-  /// A caller that rewires anything outside the cloned region needs it: a phi in the loop's exit names
-  /// a value defined in the block that was cloned, and after the original is removed that operand
-  /// dominates nothing. The block map alone cannot answer "which value in the copy corresponds".
+  /// A caller that rewires anything outside the cloned region needs value mappings: a phi in the
+  /// loop's exit names a value defined in the block that was cloned, and after the original is removed
+  /// that operand dominates nothing. Metadata consumers also need the identity of cloned void
+  /// instructions such as stores, which can never be SSA operands but still carry access-specific
+  /// facts. The block map alone can answer neither question.
   /// </summary>
   public static IReadOnlyDictionary<IrBasicBlock, IrBasicBlock> Clone(
       IrFunction into, IReadOnlyList<IrBasicBlock> source, Dictionary<IrValue, IrValue> seed, string labelPrefix,
@@ -88,8 +90,7 @@ public sealed class IrCloner {
       cloned.FastMathFlags = inst.FastMathFlags;
       dst.Append(cloned);
       this._cloned.Add((inst, cloned));
-      if (!inst.Type.IsVoid)
-        this._values[inst] = cloned;
+      this._values[inst] = cloned;
     }
   }
 
