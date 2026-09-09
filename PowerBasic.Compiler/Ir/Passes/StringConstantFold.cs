@@ -1,16 +1,18 @@
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
-/// Answers at compile time the string operations whose operands are literals, and drops the ones
-/// whose result is the empty string however the argument turns out.
+/// Answers at compile time the string operations whose operands are literals, drops the ones whose
+/// result is the empty string however the argument turns out, and cancels lossless representation
+/// round trips whose runtime handles are private to the pair.
 ///
 /// <para>
-/// This is the IR half of three of the direct emitter's string folds - pb36 O0177 (a concatenation of
+/// This is the IR half of four of the direct emitter's string folds - pb36 O0177 (a concatenation of
 /// literals is one pooled literal), the literal side of O0299 (a comparison between two literals is a
-/// number) and O0266 (a zero-length substring is the empty string). None of them is available to the
-/// ordinary constant folders here: a PB string is a runtime HANDLE, so every one of these is spelled
-/// as a call, and <see cref="Sccp"/> and <see cref="InstCombine"/> reason about values rather than
-/// about what a particular runtime routine means.
+/// number), O0266 (a zero-length substring is the empty string), and the lossless integer half of
+/// O0301 (<c>VAL(STR$(n))</c> keeps <c>n</c> numeric). None of them is available to the ordinary
+/// constant folders here: a PB string is a runtime HANDLE, so every one of these is spelled as a
+/// call, and <see cref="Sccp"/> and <see cref="InstCombine"/> reason about values rather than about
+/// what a particular runtime routine means.
 /// </para>
 ///
 /// <para>
@@ -18,8 +20,10 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// handle arguments. Folding a call therefore has to account for the handles it was going to eat.
 /// Where both operands are literals that is free - the literal's own producing call goes with it, so
 /// no handle is ever made - and where an argument is a value from somewhere else the fold RELEASES
-/// it, either by cancelling the borrow it came from or by freeing it where the call stood. Getting
-/// this wrong does not read as a leak in a small program; it reads as OUT OF STRING SPACE two
+/// it, either by cancelling the borrow it came from or by freeing it where the call stood. The O0301
+/// integer round trip is the same ownership argument in miniature: the formatter result must have one
+/// reader, so removing formatter and parser means the temporary handle never exists at all.
+/// Getting this wrong does not read as a leak in a small program; it reads as OUT OF STRING SPACE two
 /// thousand assignments later, which is the failure mode <c>STRHEAP.BAS</c> exists to catch.
 /// </para>
 ///
@@ -27,8 +31,12 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// What it deliberately does not do:
 /// </para>
 /// <list type="bullet">
-///   <item>fold a literal producer with more than one reader. The result is consumed by whoever
-///   takes it, so a second reader is a second handle, and one call cannot make two;</item>
+///   <item>fold a literal or formatter producer with more than one reader. The result is consumed by
+///   whoever takes it, so a second reader is a second handle, and one call cannot make two;</item>
+///   <item>fold <c>VAL(STR$(x))</c> for floating-point <c>x</c>. STR$ selects a dialect-dependent
+///   printable precision there, so text can discard bits before VAL sees it;</item>
+///   <item>fold <c>STR$(VAL(s$))</c>. Formatting normalizes the spelling, so that direction is not an
+///   identity even when the numeric value survives;</item>
 ///   <item>fold an ORDERING comparison against an equality entry or the reverse - the two routines
 ///   answer differently and this pass folds each by its own rule;</item>
 ///   <item>touch a function with an armed error handler or inline assembly, for the reason the pass
@@ -43,6 +51,7 @@ public static class StringConstantFold {
   private const string _COMPARE_EQ = "rt_str_compare_eq";
   private const string _DUP = "rt_str_dup";
   private const string _FREE = "rt_str_free";
+  private const string _VAL = "rt_str_val";
 
   /// <summary>Folds what it can across the module; the number of calls folded away.</summary>
   public static int Run(IrModule module) {
@@ -76,6 +85,9 @@ public static class StringConstantFold {
           continue;
         case _COMPARE or _COMPARE_EQ when call.ArgCount == 2:
           folded += FoldCompare(call, callee.Name == _COMPARE_EQ) ? 1 : 0;
+          continue;
+        case _VAL when call.ArgCount == 1:
+          folded += FoldIntegerTextRoundTrip(call) ? 1 : 0;
           continue;
         case "rt_str_left" or "rt_str_right" when call.ArgCount == 2:
           folded += FoldEmptySubstring(module, call, call.GetOperand(2)) ? 1 : 0;
@@ -125,6 +137,50 @@ public static class StringConstantFold {
     right.Call.EraseFromParent();
     return true;
   }
+
+  /// <summary>
+  /// <c>VAL(STR$(integer))</c> never needs to cross the heap/text boundary. STR$'s integer formatter
+  /// prints the exact integer value and VAL returns that numeric value as F64, so the pair is the
+  /// integer-to-F64 conversion the consumer needed all along.
+  ///
+  /// The formatter handle must be private to VAL. Runtime string calls consume their handles, so a
+  /// second reader would require another owned copy and deleting the producer would invalidate it.
+  /// Signedness comes from the formatter name rather than from storage width: i32 and u32 print
+  /// different values for the same top-bit-set payload and therefore require SIToFP and UIToFP
+  /// respectively.
+  /// </summary>
+  private static bool FoldIntegerTextRoundTrip(IrCall call) {
+    if (!call.Type.Equals(IrType.F64)
+        || call.GetOperand(1) is not IrCall { Callee: IrFunction formatter } producer
+        || producer.Users.Count != 1
+        || producer.ArgCount != 1
+        || IntegerFormatter(formatter.Name) is not { } form)
+      return false;
+
+    var value = producer.GetOperand(1);
+    if (!value.Type.Equals(IrType.Integer(form.Bits, form.Signed)))
+      return false;
+
+    var numeric = new IrCast(form.Signed ? IrCastOp.SIToFP : IrCastOp.UIToFP, value, IrType.F64);
+    call.Parent!.InsertBefore(numeric, call);
+    call.ReplaceAllUsesWith(numeric);
+    call.EraseFromParent();
+    producer.EraseFromParent();       // no text handle is allocated, parsed or freed
+    return true;
+  }
+
+  /// <summary>The integer width/signedness encoded by a STR$ runtime formatter name.</summary>
+  private static (bool Signed, int Bits)? IntegerFormatter(string name) => name switch {
+    "rt_str_from_i8" => (true, 8),
+    "rt_str_from_u8" => (false, 8),
+    "rt_str_from_i16" => (true, 16),
+    "rt_str_from_u16" => (false, 16),
+    "rt_str_from_i32" => (true, 32),
+    "rt_str_from_u32" => (false, 32),
+    "rt_str_from_i64" => (true, 64),
+    "rt_str_from_u64" => (false, 64),
+    _ => null,
+  };
 
   /// <summary>
   /// LEFT$/RIGHT$/MID$ of a length that is constant zero is the empty string, which a PB handle
