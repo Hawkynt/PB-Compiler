@@ -118,7 +118,7 @@ public sealed class DataLayoutTransformsTests {
   }
 
   [Test]
-  public void O0326_PowerOfTwoRowStride_GetsOneElementPad() {
+  public void O0326_ConflictingRowStride_GetsOneCacheLinePad() {
     var row = new IrArgument(IrType.I32, 0, "row");
     var col = new IrArgument(IrType.I32, 1, "col");
     var fn = new IrFunction("f", IrType.I16, [row, col]);
@@ -132,7 +132,71 @@ public sealed class DataLayoutTransformsTests {
 
     Assert.That(CacheConflictPadding.Run(fn, cacheSizeBytes: 64, cacheLineBytes: 16), Is.EqualTo(1));
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
-    Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a => a.Name == "m.cachepad" && a.Count == 8 * 33), Is.True);
+    Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a => a.Name == "m.cachepad" && a.Count == 8 * 40), Is.True);
+  }
+
+  [Test]
+  public void O0326_SetAssociativeConflictPeriod_IsCacheSizeDividedByWays() {
+    var row = new IrArgument(IrType.I32, 0, "row");
+    var col = new IrArgument(IrType.I32, 1, "col");
+    var fn = new IrFunction("f", IrType.I16, [row, col]);
+    var entry = fn.CreateBlock("entry");
+    var array = entry.Append(new IrAlloca(IrType.I16) { Count = 8 * 8, Name = "m" });
+    var index = entry.Append(new IrBinary(IrBinaryOp.Add,
+      entry.Append(new IrBinary(IrBinaryOp.Mul, row, new IrConstantInt(IrType.I32, 8))), col));
+    var ptr = entry.Append(new IrGep(array, index, IrType.I16));
+    var value = entry.Append(new IrLoad(IrType.I16, ptr));
+    entry.Append(new IrRet(value));
+
+    Assert.That(CacheConflictPadding.Run(fn, cacheSizeBytes: 64, cacheLineBytes: 16), Is.Zero,
+      "a 16-byte row does not conflict in a direct-mapped 64-byte cache");
+    Assert.That(CacheConflictPadding.Run(fn, cacheSizeBytes: 64, cacheLineBytes: 16, cacheAssociativity: 4), Is.EqualTo(1),
+      "a four-way cache repeats its set mapping every 16 bytes");
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a => a.Name == "m.cachepad" && a.Count == 8 * 16), Is.True);
+  }
+
+  [Test]
+  public void O0326_StandardPipeline_ForwardsTargetAssociativity() {
+    var row = new IrArgument(IrType.I32, 0, "row");
+    var col = new IrArgument(IrType.I32, 1, "col");
+    var fn = new IrFunction("f", IrType.I16, [row, col]);
+    var entry = fn.CreateBlock("entry");
+    var array = entry.Append(new IrAlloca(IrType.I16) { Count = 8 * 8, Name = "m" });
+    var index = entry.Append(new IrBinary(IrBinaryOp.Add,
+      entry.Append(new IrBinary(IrBinaryOp.Mul, row, new IrConstantInt(IrType.I32, 8))), col));
+    var ptr = entry.Append(new IrGep(array, index, IrType.I16));
+    var value = entry.Append(new IrLoad(IrType.I16, ptr));
+    entry.Append(new IrRet(value));
+
+    var pipeline = IrPassManager.Standard(includeModulePasses: false,
+      dataLayoutTarget: new(PointerBits: 16, CacheSizeBytes: 64, CacheLineBytes: 16, CacheAssociativity: 4));
+    _ = pipeline.Run(fn);
+
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a => a.Name == "m.cachepad"), Is.True);
+  }
+
+  [Test]
+  public void O0326_UnrebuildableAffineAccess_DeclinesWithoutPartialRewrite() {
+    var row = new IrArgument(IrType.I32, 0, "row");
+    var col32 = new IrArgument(IrType.I32, 1, "col32");
+    var col16 = new IrArgument(IrType.I16, 2, "col16");
+    var fn = new IrFunction("f", IrType.Void, [row, col32, col16]);
+    var entry = fn.CreateBlock("entry");
+    var array = entry.Append(new IrAlloca(IrType.I16) { Count = 8 * 32, Name = "m" });
+    var rowOffset = entry.Append(new IrBinary(IrBinaryOp.Mul, row, new IrConstantInt(IrType.I32, 32)));
+    var firstIndex = entry.Append(new IrBinary(IrBinaryOp.Add, rowOffset, col32));
+    _ = entry.Append(new IrLoad(IrType.I16, entry.Append(new IrGep(array, firstIndex, IrType.I16))));
+    var widenedCol = entry.Append(new IrCast(IrCastOp.ZExt, col16, IrType.I32));
+    var secondIndex = entry.Append(new IrBinary(IrBinaryOp.Add, rowOffset, widenedCol));
+    _ = entry.Append(new IrLoad(IrType.I16, entry.Append(new IrGep(array, secondIndex, IrType.I16))));
+    entry.Append(new IrRet());
+
+    Assert.That(CacheConflictPadding.Run(fn, cacheSizeBytes: 64, cacheLineBytes: 16), Is.Zero);
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a => a.Name?.Contains(".cachepad", StringComparison.Ordinal) == true), Is.False);
+    Assert.That(entry.Instructions.Contains(array), Is.True);
   }
 
   [Test]
