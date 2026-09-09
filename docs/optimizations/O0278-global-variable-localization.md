@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Implemented — `LocalizeGlobals`, registered in `IrPassManager.Standard` |
 | **Stage** | Whole-program |
 | **IR** | ✅ `Ir/Passes/LocalizeGlobals.cs` — a scalar global whose only user is one function becomes an alloca there, after which `Mem2Reg` promotes it and every value pass sees it. The condition that makes it legal is NOT "only one function uses it": a global keeps its value between calls and a local does not, so the pass also requires a store in the ENTRY block with no load of the same global before it - which makes that store dominate every load, so whatever a previous call left cannot be observed. The accessing function must also be non-reentrant: direct/mutual recursion, indirect-call paths, and escaping function addresses are rejected because overlapping invocations must still share the same global storage. Registered with `AddModulePass`; verified by `LocalizeGlobalsTests` and `IrPassObservableEquivalenceTests` |
 | **Related** | [O0023](O0023-dead-global-elimination.md), [O0165](O0165-readonly-global-propagation.md), [O0005](O0005-register-residency.md) |

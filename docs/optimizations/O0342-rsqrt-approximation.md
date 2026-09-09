@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Partial — canonical `1/SQR(x)` now exposes LLVM's current rsqrt contract; hardware rsqrt/refinement remains target-selected |
+| **Status** | 🟡 Partial — canonical `1/SQR(x)` now exposes LLVM's current rsqrt contract; hardware rsqrt/refinement remains target-selected |
 | **Stage** | IR middle end + target lowering |
 | **Gate** | Optimizer + `$OPTIMIZE SPEED` / `-OZF` |
 | **IR** | `FpFastMath`: canonical rsqrt gives `sqrt` `contract+afn` and its `FDiv` `arcp+contract+afn`; LLVM receives the complete pattern-specific permission set |

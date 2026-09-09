@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Partial — IR whole-function private-frame stores are eliminated; the late assembler also removes guaranteed straight-line overwrites; post-selection/register-allocation spill death still needs backend-private slot metadata |
+| **Status** | 🟡 Partial — IR whole-function private-frame stores are eliminated; the late assembler also removes guaranteed straight-line overwrites; post-selection/register-allocation spill death still needs backend-private slot metadata |
 | **Stage** | IR mid-end + assembler fallback |
 | **IR** | ✅ `Ir/Passes/DeadStoreElim.cs` |
 | **Related** | [O0034](O0034-redundant-load-elimination.md), [O0048](O0048-ir-dead-store-elimination.md), [O0060](O0060-memory-ssa.md) |

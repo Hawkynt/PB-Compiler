@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | 🟡 Partial — `StringByteRead` is the IR half of the direct emitter's pb36 O0297/O0290; the wider temporary-reuse case is not done |
 | **Stage** | Mid-end |
 | **Related** | [O0286](O0286-allocation-elimination.md), [O0009](O0009-string-temp-economy.md), [O0329](O0329-array-contraction.md) |
 

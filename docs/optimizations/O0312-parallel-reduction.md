@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Partial — IR reduction analysis is implemented; hosted worker lowering waits for [O0311](O0311-parallel-loop-versioning.md) |
+| **Status** | 🟡 Partial — IR reduction analysis is implemented; hosted worker lowering waits for [O0311](O0311-parallel-loop-versioning.md) |
 | **Stage** | Mid-end |
 | **IR** | `Ir/Passes/ParallelReduction.cs` — `ParallelReduction.Analyze` |
 | **Verified by** | `PowerBasic.Compiler.Tests/Ir/ParallelReductionTests.cs` |

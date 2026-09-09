@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Basic width-aware IR analysis implemented; type-based and allocation-site layers remain planned |
+| **Status** | 🟡 Basic width-aware IR analysis implemented; type-based and allocation-site layers remain planned |
 | **Stage** | Analysis infrastructure |
 | **Source** | `Ir/Analysis/IrAliasAnalysis.cs` |
 | **Related** | [O0060](O0060-memory-ssa.md), [O0140](O0140-load-store-motion.md), [O0152](O0152-vector-alias-versioning.md), [O0161](O0161-function-summaries.md), [O0172](O0172-loop-dependence-analysis.md) |

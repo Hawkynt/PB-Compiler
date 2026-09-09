@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Implemented — `PostRegisterAllocationPeepholes` fuses the LEA forms after register allocation |
 | **Stage** | Emitter (instruction selection) |
 | **Related** | [O0004](O0004-strength-reduction.md), [O0061](O0061-reassociation.md), [C0001](C0001-386-codegen.md) |
 

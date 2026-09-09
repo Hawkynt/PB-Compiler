@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Implemented — `ProfileGuidedLoopOptimization`, run from `LoopUnroll.Run` |
 | **Stage** | Emitter |
 | **Related** | [O0063](O0063-duff-unrolling.md), [O0129](O0129-unroll-factor-cost-model.md), [O0026](O0026-auto-vectorization.md) |
 

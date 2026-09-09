@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Partial — integer scan recognition/SSA formation implemented; hosted worker splitting remains dependent on [O0311](O0311-parallel-loop-versioning.md) |
+| **Status** | 🟡 Partial — integer scan recognition/SSA formation implemented; hosted worker splitting remains dependent on [O0311](O0311-parallel-loop-versioning.md) |
 | **Stage** | Mid-end |
 | **Source** | `Ir/Passes/ParallelPrefixScan.cs` |
 | **Verified by** | `PowerBasic.Compiler.Tests/Ir/ParallelPrefixScanTests.cs` |

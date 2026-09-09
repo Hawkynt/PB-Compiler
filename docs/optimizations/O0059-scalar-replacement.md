@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Partial — independent local fields plus proven whole-record copy/raw-equality decomposition implemented |
+| **Status** | 🟡 Partial — independent local fields plus proven whole-record copy/raw-equality decomposition implemented |
 | **Stage** | Mid-end, IR byte-region analysis |
 | **Source** | `Ir/Passes/AggregateBlockScalarization.cs`, `Ir/Passes/ScalarReplaceAggregates.cs`, followed by `Mem2Reg` |
 | **Gate** | Standard optimized IR pipeline |

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Partial — equal and constant-offset same-step integer induction variables are eliminated; general affine/SCEV equivalence remains planned |
+| **Status** | 🟡 Partial — equal and constant-offset same-step integer induction variables are eliminated; general affine/SCEV equivalence remains planned |
 | **Stage** | Mid-end |
 | **IR** | ✅ `Ir/Passes/PhiCongruence.cs` — equal loop-carried values are merged, and two same-width integer phis with constant starts plus the same constant wrapping step are represented by one carried phi and one header-local constant offset. In `IrPassManager.Standard()` before GVN; verified by `PhiCongruenceTests`, `OffsetInductionCongruenceTests` and `IrPassObservableEquivalenceTests` |
 | **Related** | [O0110](O0110-general-induction-variables.md), [O0112](O0112-countdown-loop.md), [O0027](O0027-copy-propagation.md), [O0016](O0016-value-fact-analysis.md) |
