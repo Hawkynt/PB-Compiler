@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented for one-element sliding-window recurrences |
+| **Status** | ✅ Implemented for fixed-width sliding-window recurrences |
 | **Stage** | Mid-end |
-| **IR** | ✅ `Ir/Passes/DataLayoutTransforms.cs` — recognizes `t(i) = f(t(i-1), …)` with one seed and one final-element read, replaces the previous-element load with a loop-carried phi, and removes the array traffic/storage |
-| **Related** | [O0328](O0328-temporary-array-fusion.md), [O0138](O0138-overlapping-load-combining.md), [O0290](O0290-loop-temporary-reuse.md) |
+| **IR** | ✅ `Ir/Passes/DataLayoutTransforms.cs` — recognizes `t(i) = f(t(i-1), …, t(i-k), …)`, requires a complete affine dependence proof, carries the live history as loop-carried phis, and removes the array traffic/storage |
+| **Related** | [O0328](O0328-temporary-array-fusion.md), [O0138](O0138-overlapping-load-combining.md), [O0172](O0172-loop-dependence-analysis.md), [O0290](O0290-loop-temporary-reuse.md) |
 
 ## The idea
 
@@ -24,7 +24,8 @@ NEXT
 PRINT t%(999)                       ' and only the last element escapes
 ```
 
-becomes a single running scalar.
+becomes a single running scalar. A recurrence such as
+`t(i) = t(i-1) + t(i-2)` becomes a two-value shift register instead.
 
 ## What it needs
 
@@ -38,7 +39,10 @@ becomes a single running scalar.
 - It composes with [O0138](O0138-overlapping-load-combining.md), which carries
   the same window in registers without changing the storage.
 
-The current IR pass implements the common distance-one recurrence. It requires
-exactly one seed store before the counted loop, one previous-element load and
-one current-element store inside it, and one final-element load afterwards.
-Wider windows remain planned rather than being approximated.
+The current IR pass contracts a fixed backward window covered by explicit seed
+stores. It requires exactly one current-element store on every loop iteration,
+one or more prior-element loads at constant positive distances, one seed store
+for every history slot, and only reads from the final live window after the
+loop. O0172 must produce a complete wrap-free affine dependence proof. Mixed-
+width accesses, missing seeds, non-unit forward steps, opaque memory effects,
+and reads outside the final live window are declined rather than approximated.

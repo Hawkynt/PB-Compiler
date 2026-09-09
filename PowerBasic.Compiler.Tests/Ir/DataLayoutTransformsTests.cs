@@ -252,6 +252,106 @@ public sealed class DataLayoutTransformsTests {
   }
 
   [Test]
+  public void O0329_TwoElementWindow_BecomesShiftRegisterPhis() {
+    var fn = new IrFunction("f", IrType.I16);
+    var entry = fn.CreateBlock("entry");
+    var header = fn.CreateBlock("loop.header");
+    var body = fn.CreateBlock("loop.body");
+    var latch = fn.CreateBlock("loop.latch");
+    var exit = fn.CreateBlock("exit");
+    var temp = entry.Append(new IrAlloca(IrType.I16) { Count = 8, Name = "fib" });
+    entry.Append(new IrStore(new IrConstantInt(IrType.I16, 1), entry.Append(new IrGep(temp, new IrConstantInt(IrType.I32, 0), IrType.I16))));
+    entry.Append(new IrStore(new IrConstantInt(IrType.I16, 1), entry.Append(new IrGep(temp, new IrConstantInt(IrType.I32, 1), IrType.I16))));
+    entry.Append(new IrBr(header));
+
+    var i = header.AppendPhi(new IrPhi(IrType.I32));
+    i.AddIncoming(new IrConstantInt(IrType.I32, 2), entry);
+    header.Append(new IrCondBr(header.Append(new IrCmp(IrCmpPred.Sle, i, new IrConstantInt(IrType.I32, 7))), body, exit));
+    var previousIndex = body.Append(new IrBinary(IrBinaryOp.Sub, i, new IrConstantInt(IrType.I32, 1)));
+    var olderIndex = body.Append(new IrBinary(IrBinaryOp.Sub, i, new IrConstantInt(IrType.I32, 2)));
+    var previous = body.Append(new IrLoad(IrType.I16, body.Append(new IrGep(temp, previousIndex, IrType.I16))));
+    var older = body.Append(new IrLoad(IrType.I16, body.Append(new IrGep(temp, olderIndex, IrType.I16))));
+    var nextValue = body.Append(new IrBinary(IrBinaryOp.Add, previous, older));
+    body.Append(new IrStore(nextValue, body.Append(new IrGep(temp, i, IrType.I16))));
+    body.Append(new IrBr(latch));
+    var next = latch.Append(new IrBinary(IrBinaryOp.Add, i, new IrConstantInt(IrType.I32, 1)));
+    latch.Append(new IrBr(header));
+    i.AddIncoming(next, latch);
+    var last = exit.Append(new IrLoad(IrType.I16, exit.Append(new IrGep(temp, new IrConstantInt(IrType.I32, 7), IrType.I16))));
+    var penultimate = exit.Append(new IrLoad(IrType.I16, exit.Append(new IrGep(temp, new IrConstantInt(IrType.I32, 6), IrType.I16))));
+    exit.Append(new IrRet(exit.Append(new IrBinary(IrBinaryOp.Add, last, penultimate))));
+
+    Assert.That(ArrayContraction.Run(fn), Is.EqualTo(1));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(fn.AllInstructions.OfType<IrAlloca>().Any(a => a.Name == "fib"), Is.False);
+    Assert.That(header.Phis.Count(), Is.EqualTo(3));
+  }
+
+  [Test]
+  public void O0329_MixedWidthWindowAccess_Declines() {
+    var fn = new IrFunction("f", IrType.I16);
+    var entry = fn.CreateBlock("entry");
+    var header = fn.CreateBlock("loop.header");
+    var body = fn.CreateBlock("loop.body");
+    var latch = fn.CreateBlock("loop.latch");
+    var exit = fn.CreateBlock("exit");
+    var temp = entry.Append(new IrAlloca(IrType.I16) { Count = 8, Name = "t" });
+    entry.Append(new IrStore(new IrConstantInt(IrType.I16, 1), entry.Append(new IrGep(temp, new IrConstantInt(IrType.I32, 0), IrType.I16))));
+    entry.Append(new IrBr(header));
+
+    var i = header.AppendPhi(new IrPhi(IrType.I32));
+    i.AddIncoming(new IrConstantInt(IrType.I32, 1), entry);
+    header.Append(new IrCondBr(header.Append(new IrCmp(IrCmpPred.Sle, i, new IrConstantInt(IrType.I32, 7))), body, exit));
+    var previousIndex = body.Append(new IrBinary(IrBinaryOp.Sub, i, new IrConstantInt(IrType.I32, 1)));
+    var previousByte = body.Append(new IrLoad(IrType.I8, body.Append(new IrGep(temp, previousIndex, IrType.I16))));
+    var previous = body.Append(new IrCast(IrCastOp.ZExt, previousByte, IrType.I16));
+    body.Append(new IrStore(previous, body.Append(new IrGep(temp, i, IrType.I16))));
+    body.Append(new IrBr(latch));
+    var next = latch.Append(new IrBinary(IrBinaryOp.Add, i, new IrConstantInt(IrType.I32, 1)));
+    latch.Append(new IrBr(header));
+    i.AddIncoming(next, latch);
+    var answer = exit.Append(new IrLoad(IrType.I16, exit.Append(new IrGep(temp, new IrConstantInt(IrType.I32, 7), IrType.I16))));
+    exit.Append(new IrRet(answer));
+
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(ArrayContraction.Run(fn), Is.Zero);
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(fn.AllInstructions.OfType<IrAlloca>().Any(a => a.Name == "t"), Is.True);
+  }
+
+  [Test]
+  public void O0329_NonFinalOutsideRead_Declines() {
+    var fn = new IrFunction("f", IrType.I16);
+    var entry = fn.CreateBlock("entry");
+    var header = fn.CreateBlock("loop.header");
+    var body = fn.CreateBlock("loop.body");
+    var latch = fn.CreateBlock("loop.latch");
+    var exit = fn.CreateBlock("exit");
+    var temp = entry.Append(new IrAlloca(IrType.I16) { Count = 8, Name = "t" });
+    var seedPointer = entry.Append(new IrGep(temp, new IrConstantInt(IrType.I32, 0), IrType.I16));
+    entry.Append(new IrStore(new IrConstantInt(IrType.I16, 1), seedPointer));
+    var observedSeed = entry.Append(new IrLoad(IrType.I16, seedPointer));
+    entry.Append(new IrBr(header));
+
+    var i = header.AppendPhi(new IrPhi(IrType.I32));
+    i.AddIncoming(new IrConstantInt(IrType.I32, 1), entry);
+    header.Append(new IrCondBr(header.Append(new IrCmp(IrCmpPred.Sle, i, new IrConstantInt(IrType.I32, 7))), body, exit));
+    var previousIndex = body.Append(new IrBinary(IrBinaryOp.Sub, i, new IrConstantInt(IrType.I32, 1)));
+    var previous = body.Append(new IrLoad(IrType.I16, body.Append(new IrGep(temp, previousIndex, IrType.I16))));
+    body.Append(new IrStore(previous, body.Append(new IrGep(temp, i, IrType.I16))));
+    body.Append(new IrBr(latch));
+    var next = latch.Append(new IrBinary(IrBinaryOp.Add, i, new IrConstantInt(IrType.I32, 1)));
+    latch.Append(new IrBr(header));
+    i.AddIncoming(next, latch);
+    var final = exit.Append(new IrLoad(IrType.I16, exit.Append(new IrGep(temp, new IrConstantInt(IrType.I32, 7), IrType.I16))));
+    exit.Append(new IrRet(exit.Append(new IrBinary(IrBinaryOp.Add, final, observedSeed))));
+
+    Assert.That(ArrayContraction.Run(fn), Is.Zero);
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(fn.AllInstructions.OfType<IrAlloca>().Any(a => a.Name == "t"), Is.True);
+  }
+
+  [Test]
   public void LayoutTransforms_DeclineEscapedStorage() {
     var i = new IrArgument(IrType.I32, 0, "i");
     var callee = new IrFunction("opaque", IrType.Void, [new IrArgument(IrType.Ptr, 0, "p")]);
