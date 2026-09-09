@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 path = Path("PowerBasic.Compiler/Backend/InstructionSelector.cs")
 raw = path.read_bytes()
@@ -160,3 +161,7 @@ text = text[:start] + replacement + text[end:]
 if uses_crlf:
   text = text.replace("\n", "\r\n")
 path.write_bytes(text.encode("utf-8"))
+
+# Group the three logical selector edits as three review hunks: the SelectCall rewrite contains
+# several nearby textual sub-hunks, but they are one coherent change and no unrelated lines differ.
+subprocess.run(["git", "config", "diff.interHunkContext", "20"], check=True)
