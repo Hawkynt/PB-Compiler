@@ -2,60 +2,76 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial (the one-byte pattern selects a `REPNE SCASB` scan; the short/long constant patterns still use the general probe) |
+| **Status** | ✅ Implemented |
 | **Stage** | Emitter + runtime |
 | **Related** | [O0154](O0154-swar-search.md), [O0330](O0330-library-call-recognition.md), [R0003](R0003-string-engine.md) |
 
 ## The idea
 
-`INSTR` uses one algorithm for every pattern. The right algorithm depends on
-properties the compiler often knows at compile time:
+`INSTR` should not pay for the same general substring probe when the compiler
+already knows enough about the needle to select a better search:
 
 | Pattern | Strategy |
 |---|---|
-| one byte | a byte scan — SWAR or `REP SCASB` |
-| short, constant | SWAR parallel compare of the first byte plus a verify |
-| longer, constant | Boyer-Moore-Horspool with a compile-time-generated skip table |
-| runtime pattern | the general two-way scan |
+| one byte | `REPNE SCASB` byte scan |
+| 2–4 byte constant | `REPNE SCASB` candidate scan + `REPE CMPSB` verification |
+| 5+ byte constant | Boyer-Moore-Horspool with a compile-time-generated skip table |
+| runtime pattern | the general per-position `REPE CMPSB` probe |
 
-A constant pattern also means the **skip table is data**, generated at compile
-time rather than built at run time on every call.
+A constant pattern also means the needle need not be materialized as a dynamic
+string. The long-pattern skip table is compile-time data rather than work repeated
+at every call.
 
 ## Applies to
 
 ```basic
-DIM s$, p%
-p% = INSTR(s$, "x")          ' single byte
-p% = INSTR(s$, "BEGIN")      ' short constant
+DIM s$, p%, k%
+p% = INSTR(s$, "x")          ' byte scan
+p% = INSTR(s$, "AB")         ' short candidate scan + verify
+p% = INSTR(k%, s$, "BEGIN")  ' Horspool, explicit start retained
 ```
 
-## Now
+## Implementation
 
-The **one-byte** row of the table ships. `INSTR(s$, "c")`, `INSTR(s$, CHR$(n))`, and
-the **start-position form** `INSTR(k, s$, "c")` (the hot path of a tokenizing loop
-that finds the *next* delimiter) with a single-character constant needle dispatch to
-`rt_scanchar` (`EmitScanChar`), a `REPNE SCASB` hardware byte scan, instead of the
-general per-position `REPE CMPSB` probe — and the one-byte needle is passed as a
-value, so it is never allocated. The 1-based start clamps to 1 and a start past the
-end yields 0, matching `rt_instr`. It preserves `INSTR`'s exact semantics: the 1-based
-position of the first occurrence, 0 when not found, 0 for an empty haystack, and any
-byte value (a `CHR$(0)` needle searches for a NUL). `rt_scanchar` lives in its own
-trimmed section referenced only by the optimized emitter, so the faithful build keeps
-the general `rt_instr` byte-for-byte (golden gate 250/250). Verified by a
-self-differential DOSBox run — the delimiter at several positions, at the string end,
-a miss, an empty haystack, a `CHR$(44)` needle, and a literal haystack — identical to
-`$OPTIMIZE OFF`. The start-position form, `VERIFY`, and `INSTR … ANY` keep their
-existing paths.
+The existing single-byte path remains `rt_scanchar` (`EmitScanChar`), using
+`REPNE SCASB` and passing the byte in `DL`, so a one-byte needle never allocates.
 
-## Still planned
+For a foldable 2–4 byte needle the emitter reads the needle directly from the
+literal pool. `REPNE SCASB` advances between occurrences of the first byte and a
+candidate is verified with `REPE CMPSB`. Positions that cannot contain the whole
+needle are excluded from the scan count up front.
 
-- The **short/long constant** rows: SWAR first-byte compare + verify, and
-  Boyer-Moore-Horspool with a compile-time skip table (data, not built per call).
+For a foldable needle of five or more bytes the emitter generates a 256-byte
+Boyer-Moore-Horspool bad-character table. The search compares the candidate's
+last byte first, verifies a possible match with `REPE CMPSB`, and indexes the
+precomputed shift table with `XLAT`. A distance greater than 255 is saturated to
+255; this can only shorten a legal shift, so patterns longer than 255 bytes remain
+correct without growing the table to 512 bytes.
 
-## What it needs
+All three specialized paths preserve `INSTR` semantics: the optional start is
+1-based and clamps to 1, a start past the last possible match returns 0, matches
+return their 1-based position, and the owned haystack temporary is consumed just
+like `rt_instr`. Empty needles, non-byte compile-time strings, runtime needles,
+`VERIFY`, and `INSTR ... ANY` keep their existing generic paths so dialect-specific
+or set-search semantics are not changed.
 
-- Specialized runtime entry points, selected by the emitter from the pattern's
-  compile-time properties.
-- The exact `INSTR` semantics preserved in each: 1-based result, 0 for not
-  found, the start-position argument, and the empty-pattern case (which differs
-  between dialects — see `docs/BASIC-FAMILY.md`).
+## References and licensing
+
+The implementation was derived clean-room from the public algorithm description
+and the compiler's own string ABI; no third-party implementation code was copied.
+
+- R. Nigel Horspool, *Practical fast searching in strings*, Software: Practice and
+  Experience 10(6), 1980, DOI `10.1002/spe.4380100608`. The paper motivates the
+  bad-character search and notes that very short needles are a case where dedicated
+  hardware string-search instructions can be preferable.
+- NIST Dictionary of Algorithms and Data Structures, *Boyer-Moore-Horspool
+  algorithm*, for the end-oriented comparison and bad-character shift definition.
+
+## Verification
+
+- `SearchAlgorithmSelectionTests` pins the 2–4 byte candidate-scan instruction
+  shape, the long-pattern skip table and `XLAT` path, explicit-start selection,
+  and the runtime-needle fallback.
+- `tests/diff/DIFF122.BAS` covers one-byte, short and long constants, explicit
+  starts, repeated prefixes, misses, a too-long remaining needle, and a runtime
+  needle against the differential DOS battery.
