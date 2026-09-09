@@ -90,17 +90,17 @@ public sealed partial class CodeGenerator {
     var previous = functionStart;
     var lastBlockStart = -1;
     foreach (var block in machine.Blocks) {
-      var match = image.AllBoundLabels
+      var matches = image.AllBoundLabels
         .Where(bound => bound.Name == block.Label && bound.Offset >= previous && bound.Offset < codeLength)
         .OrderBy(bound => bound.Offset)
-        .FirstOrDefault();
-      if (match.Offset < previous)
+        .Take(2)
+        .ToArray();
+      if (matches.Length == 0)
         return null;
-      // default(AsmBoundLabel) has Offset 0; only accept it when the requested block genuinely starts
-      // there. A routed procedure itself cannot start below functionStart, so zero otherwise means no match.
-      if (match.Offset == 0 && functionStart != 0 && block.Label != image.AllBoundLabels
-          .FirstOrDefault(bound => bound.Offset == 0).Name)
-        return null;
+      // Two equally named labels after the current cursor are possible across different procedures.
+      // The first is the current machine block because MachineEmitter binds blocks in list order; the
+      // monotonic cursor prevents a later function's same-spelled "entry" from being chosen early.
+      var match = matches[0];
       lastBlockStart = match.Offset;
       previous = match.Offset;
     }
