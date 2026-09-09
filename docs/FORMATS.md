@@ -19,7 +19,7 @@ main code. `END`/`SYSTEM` terminate via int 21h AH=4Ch.
 | Offset | Field |
 |--------|-------|
 | 0 | magic `PBU1` |
-| 4 | u16 format version (currently 1) |
+| 4 | u16 format version (currently **2**; the reader also accepts version 1) |
 | 6 | u16 cpu flags (bit0: needs 80186, bit1: 80286, bit2: 80386, bit3: x87 used) |
 | 8 | unit name (string) |
 | | u16 export count, then per export: name (string), u8 kind (0=SUB, 1=FUNCTION), u32 signature hash, u32 code offset |
@@ -29,8 +29,15 @@ main code. `END`/`SYSTEM` terminate via int 21h AH=4Ch.
 | | u32 data length, data bytes |
 | | u32 bss size |
 | | u16 relocation count, then per fixup: u32 site offset, u8 type (0=near target offset, 1=data offset, 2=segment base, 3=import near call, 4=import absolute offset), u16 target (import index for types 3/4, else reserved 0) |
+| | **v2:** u16 fragment count, then per fragment: function (string), i32 stable block id, u32 original code offset, u32 encoded length, u32 body length, u8 control kind, i32 primary target block id, i32 secondary target block id, u8 x86 condition nibble, u16 successor count, then i32 successor ids |
+| | **v2:** u32 internal-relative count, then per record: u32 instruction offset, u8 encoded length, u8 kind (0=CALL, 1=JMP, 2=Jcc), u8 x86 condition nibble, u32 target code offset |
 
-Fixup semantics (all sites are 16-bit words inside the code image):
+Version 1 ends after the ordinary relocation table. A v1 unit therefore reads
+with empty fragment/internal-relative collections and links exactly as before.
+The magic remains `PBU1`; compatibility is carried by the explicit version
+field rather than by multiplying magic strings.
+
+Fixup semantics (all persisted sites are 16-bit words inside the code image):
 
 - **0 NearCode** — site holds an offset relative to the unit's code base; the
   linker adds the final code base.
@@ -41,6 +48,32 @@ Fixup semantics (all sites are 16-bit words inside the code image):
   linker writes `target - (site + 2)`.
 - **4 ImportOffset** — site holds an addend; the linker adds the import's
   final absolute offset (used for runtime data cells and CODEPTR of imports).
+
+### PBU2 fragment metadata
+
+PBU2 keeps the machine CFG that the compiler already knows instead of making a
+post-link optimizer rediscover it by disassembling its own output. Fragment
+metadata is emitted only for x86-backend-routed functions whose machine-block
+boundaries are known exactly; direct-emitter, runtime and foreign regions stay
+opaque and immovable.
+
+A fragment's `body length` excludes only the layout-dependent terminal
+`JMP`/`Jcc` sequence. Its control record says how to reconstruct that transfer:
+
+- **0 Preserve** — copy the complete fragment byte-for-byte; used for terminal,
+  indirect or otherwise non-reconstructable control.
+- **1 Unconditional** — one successor; materialize a jump only when the target
+  is not the next physical fragment.
+- **2 Conditional** — two successors; `primary` is the target when the stored
+  x86 condition is true and `secondary` is the other edge. The linker may
+  invert the condition when that makes the primary edge the fall-through.
+
+Stable block IDs are function-local and independent of physical address/order.
+The internal-relative table retains already-resolved internal `CALL`, `JMP` and
+`Jcc` sites that ordinary relocations historically discarded after assembly.
+That is required when a block move changes a displacement: retained
+non-terminal transfers are repatched, while reconstructed terminal transfers
+are regenerated and relaxed after the new layout is known.
 
 The *signature hash* is a FNV-1a-32 over the upper-cased canonical signature
 string, letting the linker reject unit/caller mismatches that PB 3.5 only
@@ -83,8 +116,15 @@ into the EXE (library semantics, like `.LIB`).
    order; library units are pulled only while they satisfy unresolved imports
    (transitively).
 3. Signature hashes must match; mismatch is a compile-time error.
-4. Pulled-in unit code is appended behind the main image, unit data behind
-   all code; every block is word-aligned. Fixups are applied (near offsets
-   relative to final layout, segment fixups become MZ relocation entries).
-5. Unresolved symbols after the sweep abort the compile, as does a combined
+4. When a post-link profile is supplied, fragment-aware routed functions are
+   reordered **after** the participating unit set is fixed and **before** unit
+   bases/final fixups are assigned. Terminal branches are reconstructed for the
+   new fall-throughs, then short/near encodings are relaxed monotonically to a
+   fixpoint. Opaque code remains in place inside its unit.
+5. Unit code is appended behind the main image, unit data behind all code;
+   every unit base is word-aligned. Ordinary fixups are then applied against the
+   rewritten offsets, segment fixups becoming MZ relocation entries.
+6. The linked image exposes the final fragment address map used to attribute
+   sampled instruction pointers back to stable function/block IDs.
+7. Unresolved symbols after the sweep abort the compile, as does a combined
    image beyond the single-segment 64 KiB.

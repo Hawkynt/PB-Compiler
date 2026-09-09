@@ -105,6 +105,7 @@ public sealed partial class CodeGenerator {
     var asm = this._asm;
     this._isUnit = true;
     this._allowExternalCalls = true;
+    this.ResetPostLinkFunctions();
     this._scratch = asm.DefineLabel("cg_scratch");
     this._rt.BindExternal(asm);
 
@@ -138,12 +139,17 @@ public sealed partial class CodeGenerator {
 
     // the same dispatch the executable path uses: a routed procedure is emitted by the x86-16 back
     // end from its SSA IR, everything else the ordinary way. A unit's exports keep the stack
-    // convention either way, which is what makes the two interchangeable here
+    // convention either way, which is what makes the two interchangeable here. Routed functions also
+    // retain their exact byte range so PBU2 can preserve the machine blocks O0276 is allowed to move.
     foreach (var proc in model.Procedures.Values)
       if (!proc.IsExternal) {
-        if (this.IsBackendRouted(proc))
+        if (this.IsBackendRouted(proc)) {
+          var start = this.ProcLabelOf(proc);
           this.EmitBackendFunction(proc);
-        else
+          var end = asm.DefineLabel();
+          asm.MarkLabel(end);
+          this.TrackPostLinkFunction(proc, this.BackendProcs()[proc].Fn, start, end);
+        } else
           this.EmitProcedure(proc);
       }
 
@@ -155,14 +161,15 @@ public sealed partial class CodeGenerator {
     asm.Align(2);
     this._listingDataLength = asm.Position - codeLength;
 
-    var relocatable = asm.ToRelocatable();
-    var unit = new PbuFile { Name = name };
+    var relocatable = asm.ToPostLinkRelocatable();
+    var unit = new PbuFile { Name = name, CpuFlags = this.CpuRequirementFlags() };
     foreach (var (proc, label) in this._procLabels)
       if (!proc.IsExternal)
         unit.Exports.Add(new(proc.Name, proc.IsFunction ? PbuExportKind.Function : PbuExportKind.Sub,
           PbuFile.HashSignature(SignatureOf(proc)), (uint)label.Position));
 
     this.AddImportsAndFixups(unit, relocatable, codeLength);
+    this.PopulatePostLinkMetadata(unit, relocatable, codeLength);
     unit.Code = relocatable.Image[..codeLength];
     unit.Data = relocatable.Image[codeLength..];
     return unit;
@@ -177,8 +184,8 @@ public sealed partial class CodeGenerator {
   /// (rt_*) resolve against the embedded runtime.
   /// </summary>
   private byte[] LinkImage(IReadOnlyList<PbuFile> units, IReadOnlyList<PblFile> libraries, IReadOnlyList<Emit.Omf.OmfLibrary> omfLibraries) {
-    var relocatable = this._asm.ToRelocatable();
-    var main = new PbuFile { Name = "MAIN", Code = relocatable.Image };
+    var relocatable = this._asm.ToPostLinkRelocatable();
+    var main = new PbuFile { Name = "MAIN", Code = relocatable.Image, CpuFlags = this.CpuRequirementFlags() };
 
     foreach (var (proc, label) in this._procLabels)
       if (!proc.IsExternal)
@@ -190,8 +197,12 @@ public sealed partial class CodeGenerator {
       main.Exports.Add(new(symbol, PbuExportKind.Sub, 0u, (uint)position));
 
     this.AddImportsAndFixups(main, relocatable, relocatable.Image.Length);
+    this.PopulatePostLinkMetadata(main, relocatable,
+      this._listingCodeLength > 0 ? this._listingCodeLength : relocatable.Image.Length);
 
     var linker = new Linker();
+    if (this.PostLinkProfile is { } profile)
+      linker.UsePostLinkProfile(profile);
     foreach (var unit in units)
       linker.AddUnit(unit);
     foreach (var library in libraries)

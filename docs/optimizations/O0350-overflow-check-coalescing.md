@@ -32,6 +32,14 @@ impossible; O0350 handles the remaining straight-line case by delaying the first
 pure, non-trapping IR and testing `overflow1 OR overflow2` at the next Error 6 guard. Repeating that
 rewrite coalesces longer chains.
 
+The straight-line requirement is a CFG property, not merely adjacency in the block list. The first
+Error 6 trap must be reached only from the guard being removed, and the continuation must be reached
+only from that guard or its trap. Otherwise the first overflow predicate could affect a path that never
+executed the first checked operation, or a value defined in the guard block could stop dominating the
+continuation after the rewrite. When the discarded trap contributed an incoming edge to continuation
+phi nodes, O0350 removes that now-unreachable incoming value as part of the same CFG edit so the IR
+remains verifier-clean after the pass itself.
+
 This is intentionally narrower than a generic trap merger. Loads, stores, calls, divisions and other
 observable or trapping instructions break the chain. Functions with `ON ERROR` handlers are excluded
 by the pass manager, so the transform never changes a recoverable `RESUME` point. The abandoned Error

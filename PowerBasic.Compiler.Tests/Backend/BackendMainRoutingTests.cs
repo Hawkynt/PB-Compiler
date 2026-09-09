@@ -74,13 +74,13 @@ public sealed class BackendMainRoutingTests {
   }
 
   /// <summary>
-  /// A PROCEDURE that arms one is still excluded, and for the reason the module body never had: the
-  /// direct path saves the caller's handler triple on entry and restores it on every exit, and that
-  /// bookkeeping has no equivalent in the routed prologue yet. Routing it would lose the caller's
-  /// handler silently.
+  /// A procedure that arms a handler routes too: selection expands the trap intrinsics inline and
+  /// ProcedureErrorHandlerPreservation wraps the machine body with caller-handler save/restore.
+  /// The caller and callee can therefore remain on the same routed path instead of forcing a mixed
+  /// image solely because the callee contains ON ERROR / RESUME / TRY.
   /// </summary>
   [Test]
-  public void Emit_GivenErrorHandlingInAProcedure_ThenItStaysWithTheDirectPath() {
+  public void Emit_GivenErrorHandlingInAProcedure_ThenBothCallerAndCalleeRoute() {
     var routed = new CodeGenerator(Bind("""
       CALL Risky
       END
@@ -95,6 +95,10 @@ public sealed class BackendMainRoutingTests {
 
     routed.EmitExecutable();
 
-    Assert.That(routed.BackendRoutedNames, Does.Not.Contain("Risky"));
+    Assert.Multiple(() => {
+      Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+      Assert.That(routed.BackendRoutedNames, Does.Contain("Risky"));
+      Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
+    });
   }
 }

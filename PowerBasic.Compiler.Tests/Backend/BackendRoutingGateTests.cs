@@ -63,6 +63,34 @@ public sealed class BackendRoutingGateTests {
       END FUNCTION
       PRINT F(1)
       """, "F"),
+    new("QUAD parameter and result", """
+      FUNCTION F(BYVAL a&&) AS QUAD
+        F = a&& + 2
+      END FUNCTION
+      DIM q AS QUAD
+      q = 4294967297
+      PRINT F(q)
+      """, "F"),
+    new("BYTE parameter and result", """
+      FUNCTION F(BYVAL a AS BYTE) AS BYTE
+        F = a + 1
+      END FUNCTION
+      DIM b AS BYTE
+      b = 200
+      PRINT F(b)
+      """, "F"),
+    // A BYVAL FIX parameter crosses as its raw scaled i64 cell. Changing pbvFixDigits before the
+    // assignment makes the runtime-owned scale observable, so this cannot pass by hard-coding 100.
+    new("FIX BYVAL parameter", """
+      FUNCTION F(BYVAL a@) AS DOUBLE
+        F = a@ * 2
+      END FUNCTION
+      DIM x AS DOUBLE, v@
+      x = 1.23456
+      pbvFixDigits = 4
+      v@ = x
+      PRINT F(v@)
+      """, "F"),
     new("SINGLE parameter and result", """
       FUNCTION F(BYVAL a!) AS SINGLE
         F = a! + 1
@@ -74,6 +102,24 @@ public sealed class BackendRoutingGateTests {
         F = a# + 1
       END FUNCTION
       PRINT F(1)
+      """, "F"),
+    // EXT uses the same x87 value channel as the narrower reals while retaining the full ten-byte
+    // stack representation. This row exercises both routed call boundaries: main stages five words
+    // per BYVAL TBYTE and the callee reads those TBYTE parameter cells before returning in ST(0).
+    new("EXT parameters and result definition", """
+      FUNCTION F(BYVAL a##, BYVAL b##) AS EXT
+        F = a## * 2 + b##
+      END FUNCTION
+      DIM x##, y##
+      x## = 1.25
+      y## = 2.5
+      PRINT F(x##, y##)
+      """, "F"),
+    new("EXT result definition", """
+      FUNCTION F(BYVAL a%) AS EXT
+        F = a% / 2
+      END FUNCTION
+      PRINT F(3)
       """, "F"),
     new("BYREF INTEGER parameter", """
       FUNCTION F(a%) AS INTEGER
@@ -140,6 +186,19 @@ public sealed class BackendRoutingGateTests {
       q.a = 2
       PRINT F(q)
       """, "F"),
+    // Handler intrinsics already select inline. A routed procedure additionally saves the caller's
+    // handler triple into its own frame and restores it before every RET; the focused execution tests
+    // exercise both normal return and a handled inner fault with an outer trap still armed.
+    new("error handling in a procedure body", """
+      SUB S
+        ON ERROR GOTO H
+        PRINT 1
+        EXIT SUB
+      H:
+        RESUME NEXT
+      END SUB
+      S
+      """, "S"),
     new("module body: INTEGER arithmetic", """
       DIM n AS INTEGER
       n = 6
@@ -329,55 +388,17 @@ public sealed class BackendRoutingGateTests {
   /// their shared stack ABI; unsupported conventions still strand the caller.</para>
   /// </summary>
   private static readonly Construct[] _declines = [
-    new("QUAD parameter and result", """
-      FUNCTION F(BYVAL a&&) AS QUAD
-        F = a&& + 1
-      END FUNCTION
-      PRINT F(1)
-      """, "F", "filter: return type outside the routed ABI (QUAD)"),
-    new("QUAD result alone", """
-      FUNCTION F(BYVAL a%) AS QUAD
-        F = a%
-      END FUNCTION
-      PRINT F(3)
-      """, "F", "filter: return type outside the routed ABI (QUAD)"),
-    new("BYTE parameter and result", """
-      FUNCTION F(BYVAL a AS BYTE) AS BYTE
-        F = a + 1
-      END FUNCTION
-      DIM b AS BYTE
-      b = 3
-      PRINT F(b)
-      """, "F", "filter: return type outside the routed ABI (BYTE)"),
-    new("BYTE result alone", """
-      FUNCTION F(BYVAL a%) AS BYTE
-        F = a%
-      END FUNCTION
-      PRINT F(3)
-      """, "F", "filter: return type outside the routed ABI (BYTE)"),
     // Records have no row here any more. BYREF records route (see the routing list above), and BYVAL
     // of a record is refused by the DIRECT emitter too ("not yet generated: load of UdtType"), so it
     // is not a routing class at all - a gate case failing on both paths would measure the front end.
-    new("FIX parameter", """
-      FUNCTION F(BYVAL a@) AS INTEGER
-        F = 1
-      END FUNCTION
-      DIM v@
-      PRINT F(v@)
-      """, "F", "filter: parameter type outside the routed ABI (FIX)"),
-    new("EXT parameter", """
-      FUNCTION F(BYVAL a##) AS INTEGER
-        F = 1
-      END FUNCTION
-      DIM v##
-      PRINT F(v##)
-      """, "F", "filter: parameter type outside the routed ABI (EXT)"),
-    new("EXT result", """
-      FUNCTION F(BYVAL a%) AS EXT
-        F = a%
+    // A FIX result is deliberately still closed: the IR result slot is the scaled i64 cell, while
+    // the source-level FUNCTION result is numeric and therefore needs rt_fix_down before ST(0).
+    new("FIX result", """
+      FUNCTION F(BYVAL a%) AS FIX
+        F = a% / 2
       END FUNCTION
       PRINT F(3)
-      """, "F", "filter: return type outside the routed ABI (EXT)"),
+      """, "F", "filter: return type outside the routed ABI (FIX)"),
     new("FASTCALL convention", """
       SUB S FASTCALL (BYVAL a%)
         PRINT a%
@@ -390,20 +411,7 @@ public sealed class BackendRoutingGateTests {
       END SUB
       S 1
       """, "S", "filter: calling convention outside the routed ABI (Watcall)"),
-    // not about the ABI: the direct path saves and restores the caller's handler triple around such
-    // a body, and the routed prologue/epilogue has no equivalent bookkeeping. The module body is a
-    // different case and DOES route with a handler armed (BackendMainRoutingTests).
-    new("error handling in a procedure body", """
-      SUB S
-        ON ERROR GOTO H
-        PRINT 1
-        EXIT SUB
-      H:
-        RESUME NEXT
-      END SUB
-      S
-      """, "S", "filter: error handling in a procedure body (ON ERROR / RESUME / TRY)"),
-    // ...and not a filter at all: an array parameter stops the whole MODULE from lowering, which is
+    // ...not a filter at all: an array parameter stops the whole MODULE from lowering, which is
     // a level above the filter and costs the module body too
     new("array parameter", """
       SUB S(a%())
