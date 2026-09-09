@@ -302,6 +302,9 @@ public sealed class IrPassManager {
     .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "fpdomain",
       module => FpDomainSpecialization.Run(module, enableFpLookupTables))
     .AddModulePassWhen(includeModulePasses, "lutelim", LookupTableElimination.Run)
+    // O0285 sees the finalized byte-table population here. Literal globals stay with O0011 and every
+    // other candidate must prove its complete pointer-use tree read-only and non-escaping.
+    .AddModulePassWhen(includeModulePasses, "const-data-merge", ConstantDataMerging.Run)
     // The string passes are module passes because they mint module-level things - a runtime
     // declaration, a pooled literal - which a function pass has no handle on. They run last, after
     // the value passes have folded whatever the arguments were going to fold into.
