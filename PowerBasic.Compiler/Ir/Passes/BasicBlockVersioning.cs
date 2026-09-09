@@ -7,10 +7,10 @@ namespace PowerBasic.Compiler.Ir.Passes;
 ///
 /// <para>
 /// A branch establishes facts on each outgoing edge. When control later reconverges, ordinary SSA
-/// must represent every incoming context in one block and those facts can disappear. This pass
-/// materializes useful contexts in the CFG: it clones a small join block for an outcome that makes a
-/// later guard decidable, routes that edge to the specialized copy, and leaves the original block as
-/// the fully general fallback for every context that was not worth versioning.
+/// must represent every incoming context in one region and those facts can disappear. This pass
+/// materializes useful contexts in the CFG: it clones a small single-entry forward region for an
+/// outcome that makes a later guard decidable, routes that edge to the specialized copy, and leaves
+/// the original region as the fully general fallback for every context that was not worth versioning.
 /// </para>
 /// <para>
 /// The specialization domain is deliberately small and proof-driven. Besides the branch condition
@@ -20,11 +20,20 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// low-bit implications. No load/store alignment is asserted: the IR does not carry such metadata
 /// yet, so O0305 only folds checks whose truth is proved.
 /// </para>
+/// <para>
+/// Cloning is SSA-complete for the bounded region shape accepted here. Successor phis gain one mapped
+/// incoming for each specialized exit. A value used directly after a versioned region is merged in
+/// the region's unique continuation when that continuation is the sole original exit; more general
+/// multi-exit SSA repair remains outside this local transform rather than being guessed.
+/// </para>
 /// </summary>
 public static class BasicBlockVersioning {
 
-  /// <summary>Hard code-growth budget for each specialized block copy.</summary>
+  /// <summary>Hard code-growth budget for the whole source region copied for one context.</summary>
   private const int _MAX_INSTRUCTIONS = 32;
+
+  /// <summary>Maximum number of blocks in one forward versioned region.</summary>
+  private const int _MAX_REGION_BLOCKS = 4;
 
   /// <summary>
   /// Versions at most one reconvergence per invocation. A reconvergence may gain one true and one
@@ -57,12 +66,22 @@ public static class BasicBlockVersioning {
   private sealed record ComparisonFact(IrCmp Comparison, bool? WhenTrue, bool? WhenFalse);
 
   private sealed record Candidate(
-    IrBasicBlock Join,
+    IReadOnlyList<IrBasicBlock> Region,
     IncomingEdge WhenTrue,
     IncomingEdge WhenFalse,
     IReadOnlyList<ComparisonFact> Comparisons,
+    IReadOnlyList<IrInstruction> EscapingValues,
+    IrBasicBlock? MergeExit,
     bool VersionTrue,
-    bool VersionFalse);
+    bool VersionFalse) {
+    public IrBasicBlock Entry => this.Region[0];
+    public IrBasicBlock Tail => this.Region[^1];
+  }
+
+  private sealed record VersionCopy(
+    bool Outcome,
+    IReadOnlyDictionary<IrBasicBlock, IrBasicBlock> Blocks,
+    IReadOnlyDictionary<IrValue, IrValue> Values);
 
   private sealed record ScalarComparison(IrValue Value, IrCmpPred Pred, IrConstantInt Constant);
 
@@ -83,8 +102,6 @@ public static class BasicBlockVersioning {
         if (ReferenceEquals(join, guard) || ReferenceEquals(trueEdge.From, falseEdge.From)
             || ReferenceEquals(join, guard.Parent?.Entry) || addressed.Contains(join))
           continue;
-        if (join.Instructions.Count > _MAX_INSTRUCTIONS)
-          continue;
 
         var predecessors = join.Predecessors.ToList();
         if (!predecessors.Any(p => ReferenceEquals(p, trueEdge.From))
@@ -92,35 +109,157 @@ public static class BasicBlockVersioning {
           continue;
         if (predecessors.Any(predecessor => dominators.Dominates(join, predecessor)))
           continue;                                  // no loop-header/back-edge versioning in this slice
-        if (join.Successors.Any(successor => successor.Phis.Any()))
-          continue;                                  // successor phis need version-aware incoming expansion
-        if (join.Instructions.Any(value => value.Users.Any(user => !ReferenceEquals(user.Parent, join))))
-          continue;                                  // escaping definitions need an explicit merge after versions
 
-        var conditionUsedAsGuard = branch.Condition.Users.Any(user =>
-          ReferenceEquals(user.Parent, join) && user is IrCondBr or IrSelect);
-        var comparisons = new List<ComparisonFact>();
-        foreach (var comparison in join.Instructions.OfType<IrCmp>()) {
-          if (!IsGuardUse(comparison, join))
-            continue;
-          var whenTrue = Decide(branch, comparison, guard, ranges, outcome: true);
-          var whenFalse = Decide(branch, comparison, guard, ranges, outcome: false);
-          if (whenTrue is not null || whenFalse is not null)
-            comparisons.Add(new(comparison, whenTrue, whenFalse));
+        foreach (var region in RegionPrefixes(join, addressed, dominators)) {
+          if (HasParallelBoundaryEdges(region))
+            continue;                                // phis are predecessor-indexed, not parallel-edge-indexed
+
+          var (comparisons, conditionUsedAsGuard) = Facts(branch, guard, region, ranges);
+          var versionTrue = conditionUsedAsGuard || comparisons.Any(fact => fact.WhenTrue is not null);
+          var versionFalse = conditionUsedAsGuard || comparisons.Any(fact => fact.WhenFalse is not null);
+          if (!versionTrue && !versionFalse)
+            continue;                                // every copy must buy a concrete guard simplification
+
+          var escaping = DirectEscapes(region);
+          IrBasicBlock? mergeExit = null;
+          if (escaping.Count > 0
+              && (mergeExit = FindMergeExit(region, escaping, dominators)) is null)
+            continue;                                // direct SSA users need one precise continuation to merge in
+
+          return new(region, trueEdge, falseEdge, comparisons, escaping, mergeExit, versionTrue, versionFalse);
         }
-
-        var versionTrue = conditionUsedAsGuard || comparisons.Any(fact => fact.WhenTrue is not null);
-        var versionFalse = conditionUsedAsGuard || comparisons.Any(fact => fact.WhenFalse is not null);
-        if (!versionTrue && !versionFalse)
-          continue;                                  // every copy must buy a concrete guard simplification
-
-        return new(join, trueEdge, falseEdge, comparisons, versionTrue, versionFalse);
       }
     return null;
   }
 
-  private static bool IsGuardUse(IrCmp comparison, IrBasicBlock block)
-    => comparison.Users.Any(user => ReferenceEquals(user.Parent, block) && user is IrCondBr or IrSelect);
+  /// <summary>
+  /// Enumerates increasingly long single-entry forward chains, shortest first. This preserves the
+  /// old one-block behaviour and spends extra code only when the profitable guard is farther away.
+  /// Every interior block has exactly one predecessor, so no unversioned context can enter the middle
+  /// of a clone and no region-local phi needs an external incoming beyond the entry's guarded edge.
+  /// </summary>
+  private static IEnumerable<IReadOnlyList<IrBasicBlock>> RegionPrefixes(
+      IrBasicBlock entry,
+      IReadOnlySet<IrBasicBlock> addressed,
+      IrDominators dominators) {
+    var region = new List<IrBasicBlock> { entry };
+    var instructions = entry.Instructions.Count;
+    if (instructions > _MAX_INSTRUCTIONS)
+      yield break;
+
+    while (true) {
+      yield return region.ToList();
+      if (region.Count >= _MAX_REGION_BLOCKS || region[^1].Terminator is not IrBr bridge)
+        yield break;
+
+      var next = bridge.Target;
+      if (ReferenceEquals(next, entry) || addressed.Contains(next)
+          || dominators.Dominates(next, region[^1]))
+        yield break;                                 // address identity or a back edge ends the forward region
+
+      var predecessors = next.Predecessors.ToList();
+      if (predecessors.Count != 1 || !ReferenceEquals(predecessors[0], region[^1]))
+        yield break;                                 // an interior block must have no external entry
+
+      instructions += next.Instructions.Count;
+      if (instructions > _MAX_INSTRUCTIONS)
+        yield break;
+      region.Add(next);
+    }
+  }
+
+  private static (IReadOnlyList<ComparisonFact> Comparisons, bool ConditionUsedAsGuard) Facts(
+      IrCondBr branch,
+      IrBasicBlock guard,
+      IReadOnlyList<IrBasicBlock> region,
+      IrRangeAnalysis ranges) {
+    var inside = region.ToHashSet(ReferenceEqualityComparer.Instance);
+    var conditionUsedAsGuard = branch.Condition.Users.Any(user =>
+      user.Parent is { } block && inside.Contains(block) && user is IrCondBr or IrSelect);
+
+    var comparisons = new List<ComparisonFact>();
+    foreach (var comparison in region.SelectMany(block => block.Instructions).OfType<IrCmp>()) {
+      if (!IsGuardUse(comparison, inside))
+        continue;
+      var whenTrue = Decide(branch, comparison, guard, ranges, outcome: true);
+      var whenFalse = Decide(branch, comparison, guard, ranges, outcome: false);
+      if (whenTrue is not null || whenFalse is not null)
+        comparisons.Add(new(comparison, whenTrue, whenFalse));
+    }
+    return (comparisons, conditionUsedAsGuard);
+  }
+
+  private static bool IsGuardUse(IrCmp comparison, IReadOnlySet<IrBasicBlock> region)
+    => comparison.Users.Any(user =>
+      user.Parent is { } block && region.Contains(block) && user is IrCondBr or IrSelect);
+
+  private static List<IrInstruction> DirectEscapes(IReadOnlyList<IrBasicBlock> region) {
+    var inside = region.ToHashSet(ReferenceEqualityComparer.Instance);
+    return region
+      .SelectMany(block => block.Instructions)
+      .Where(value => !value.Type.IsVoid && value.Users.Any(user =>
+        user.Parent is { } block && !inside.Contains(block) && !IsBoundaryPhiUse(value, user, inside)))
+      .ToList();
+  }
+
+  private static bool IsBoundaryPhiUse(
+      IrValue value,
+      IrInstruction user,
+      IReadOnlySet<IrBasicBlock> region) {
+    if (user is not IrPhi phi || phi.Parent is null)
+      return false;
+    for (var i = 0; i < phi.IncomingBlocks.Count; ++i)
+      if (ReferenceEquals(phi.GetOperand(i), value) && region.Contains(phi.IncomingBlocks[i]))
+        return true;
+    return false;
+  }
+
+  /// <summary>
+  /// Direct users of a region definition can be repaired locally when every original path leaves
+  /// through one unconditional edge into a block that dominates those users. The exit originally has
+  /// exactly one predecessor; after versioning it therefore becomes the natural phi merge for the
+  /// fallback and specialized definitions.
+  /// </summary>
+  private static IrBasicBlock? FindMergeExit(
+      IReadOnlyList<IrBasicBlock> region,
+      IReadOnlyList<IrInstruction> escaping,
+      IrDominators dominators) {
+    var inside = region.ToHashSet(ReferenceEqualityComparer.Instance);
+    var tail = region[^1];
+    if (tail.Terminator is not IrBr branch || inside.Contains(branch.Target))
+      return null;
+    var exit = branch.Target;
+    var predecessors = exit.Predecessors.ToList();
+    if (predecessors.Count != 1 || !ReferenceEquals(predecessors[0], tail))
+      return null;
+
+    foreach (var value in escaping)
+      foreach (var user in value.Users) {
+        if (user.Parent is not { } block || inside.Contains(block) || IsBoundaryPhiUse(value, user, inside))
+          continue;
+        if (user is not IrPhi phi) {
+          if (!dominators.Dominates(exit, block))
+            return null;
+          continue;
+        }
+        for (var i = 0; i < phi.IncomingBlocks.Count; ++i)
+          if (ReferenceEquals(phi.GetOperand(i), value)
+              && !dominators.Dominates(exit, phi.IncomingBlocks[i]))
+            return null;                             // a phi operand is used on its predecessor edge
+      }
+    return exit;
+  }
+
+  private static bool HasParallelBoundaryEdges(IReadOnlyList<IrBasicBlock> region) {
+    var inside = region.ToHashSet(ReferenceEqualityComparer.Instance);
+    foreach (var block in region) {
+      var seen = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance);
+      foreach (var successor in block.Successors)
+        if (!inside.Contains(successor) && !seen.Add(successor))
+          return true;
+    }
+    return false;
+  }
 
   private static IEnumerable<(IrBasicBlock Join, IncomingEdge Edge)> JoinCandidates(
       IrBasicBlock guard, IrBasicBlock target) {
@@ -307,34 +446,49 @@ public static class BasicBlockVersioning {
   #endregion
 
   private static void Version(IrFunction fn, IrCondBr branch, Candidate match) {
-    IrBasicBlock? trueBlock = null;
-    IrBasicBlock? falseBlock = null;
+    var copies = new List<VersionCopy>(2);
+    if (match.VersionTrue)
+      copies.Add(CreateVersion(fn, branch, match, outcome: true, match.WhenTrue.From));
+    if (match.VersionFalse)
+      copies.Add(CreateVersion(fn, branch, match, outcome: false, match.WhenFalse.From));
 
-    if (match.VersionTrue) {
-      var clones = IrCloner.Clone(fn, [match.Join], Seed(branch.Condition, true), "bbv.t.", out var values);
-      trueBlock = clones[match.Join];
-      Specialize(trueBlock, values, match.Comparisons, true, match.WhenTrue.From);
+    foreach (var copy in copies)
+      ExpandBoundaryPhis(match.Region, copy);
+
+    foreach (var copy in copies) {
+      var edge = copy.Outcome ? match.WhenTrue : match.WhenFalse;
+      Retarget(branch, copy.Outcome, edge, copy.Blocks[match.Entry]);
     }
-    if (match.VersionFalse) {
-      var clones = IrCloner.Clone(fn, [match.Join], Seed(branch.Condition, false), "bbv.f.", out var values);
-      falseBlock = clones[match.Join];
-      Specialize(falseBlock, values, match.Comparisons, false, match.WhenFalse.From);
-    }
 
-    if (trueBlock is not null)
-      Retarget(branch, true, match.WhenTrue, trueBlock);
-    if (falseBlock is not null)
-      Retarget(branch, false, match.WhenFalse, falseBlock);
-
-    foreach (var phi in match.Join.Phis.ToList()) {
-      if (trueBlock is not null)
+    foreach (var phi in match.Entry.Phis.ToList()) {
+      if (match.VersionTrue)
         phi.RemoveIncoming(match.WhenTrue.From);
-      if (falseBlock is not null)
+      if (match.VersionFalse)
         phi.RemoveIncoming(match.WhenFalse.From);
     }
 
-    if (!match.Join.Predecessors.Any())
-      fn.RemoveBlock(match.Join);                    // every incoming context received a specialized version
+    var keepOriginal = match.Entry.Predecessors.Any();
+    if (match.EscapingValues.Count > 0)
+      MergeEscapingValues(match, copies, keepOriginal);
+
+    if (keepOriginal)
+      return;
+
+    RemoveOriginalBoundaryPhiInputs(match.Region);
+    for (var i = match.Region.Count - 1; i >= 0; --i)
+      fn.RemoveBlock(match.Region[i]);
+  }
+
+  private static VersionCopy CreateVersion(
+      IrFunction fn,
+      IrCondBr branch,
+      Candidate match,
+      bool outcome,
+      IrBasicBlock keepIncoming) {
+    var prefix = outcome ? "bbv.t." : "bbv.f.";
+    var blocks = IrCloner.Clone(fn, match.Region, Seed(branch.Condition, outcome), prefix, out var values);
+    Specialize(blocks[match.Entry], values, match.Comparisons, outcome, keepIncoming);
+    return new(outcome, blocks, values);
   }
 
   private static Dictionary<IrValue, IrValue> Seed(IrValue condition, bool outcome)
@@ -343,12 +497,12 @@ public static class BasicBlockVersioning {
     };
 
   private static void Specialize(
-      IrBasicBlock block,
+      IrBasicBlock entry,
       IReadOnlyDictionary<IrValue, IrValue> values,
       IReadOnlyList<ComparisonFact> comparisons,
       bool outcome,
       IrBasicBlock keepIncoming) {
-    foreach (var phi in block.Phis.ToList())
+    foreach (var phi in entry.Phis.ToList())
       foreach (var incoming in phi.IncomingBlocks.Where(candidate => !ReferenceEquals(candidate, keepIncoming)).ToList())
         phi.RemoveIncoming(incoming);
 
@@ -357,6 +511,62 @@ public static class BasicBlockVersioning {
       if (decided is { } value && values.TryGetValue(fact.Comparison, out var clone))
         clone.ReplaceAllUsesWith(IrBuilder.ConstBool(value));
     }
+  }
+
+  /// <summary>
+  /// A cloned region exits through cloned predecessors, so every pre-existing phi in an outside
+  /// successor needs the corresponding mapped incoming value. This is the same obligation LLVM's
+  /// CloneBasicBlock documentation calls out explicitly; <see cref="IrCloner"/> intentionally cannot
+  /// perform it because the successor lies outside the cloned set.
+  /// </summary>
+  private static void ExpandBoundaryPhis(IReadOnlyList<IrBasicBlock> region, VersionCopy copy) {
+    var inside = region.ToHashSet(ReferenceEqualityComparer.Instance);
+    foreach (var source in region)
+      foreach (var successor in source.Successors)
+        if (!inside.Contains(successor)) {
+          var clonedPredecessor = copy.Blocks[source];
+          foreach (var phi in successor.Phis.ToList()) {
+            var incoming = phi.IncomingFrom(source)
+              ?? throw new InvalidOperationException("prechecked boundary phi is missing its source predecessor");
+            phi.AddIncoming(copy.Values.GetValueOrDefault(incoming, incoming), clonedPredecessor);
+          }
+        }
+  }
+
+  private static void MergeEscapingValues(Candidate match, IReadOnlyList<VersionCopy> copies, bool keepOriginal) {
+    var exit = match.MergeExit
+      ?? throw new InvalidOperationException("prechecked escaping SSA values have no merge exit");
+    var inside = match.Region.ToHashSet(ReferenceEqualityComparer.Instance);
+
+    foreach (var original in match.EscapingValues) {
+      var merge = exit.AppendPhi(new IrPhi(original.Type) {
+        Name = original.Name,
+        FastMathFlags = original.FastMathFlags,
+      });
+      if (keepOriginal)
+        merge.AddIncoming(original, match.Tail);
+      foreach (var copy in copies) {
+        if (!copy.Values.TryGetValue(original, out var mapped))
+          throw new InvalidOperationException("cloned region did not map an escaping definition");
+        merge.AddIncoming(mapped, copy.Blocks[match.Tail]);
+      }
+
+      foreach (var user in original.Users.ToList()) {
+        if (ReferenceEquals(user, merge) || user.Parent is not { } block || inside.Contains(block)
+            || IsBoundaryPhiUse(original, user, inside))
+          continue;
+        user.ReplaceOperand(original, merge);
+      }
+    }
+  }
+
+  private static void RemoveOriginalBoundaryPhiInputs(IReadOnlyList<IrBasicBlock> region) {
+    var inside = region.ToHashSet(ReferenceEqualityComparer.Instance);
+    foreach (var source in region)
+      foreach (var successor in source.Successors)
+        if (!inside.Contains(successor))
+          foreach (var phi in successor.Phis.ToList())
+            phi.RemoveIncoming(source);
   }
 
   private static void Retarget(IrCondBr branch, bool outcome, IncomingEdge edge, IrBasicBlock target) {
