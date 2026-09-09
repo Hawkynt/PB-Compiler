@@ -129,7 +129,7 @@ public sealed class IrPassManager {
   /// </list>
   /// <para>
   /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
-  /// speculative overflow versioning, unrolling, sccp, correlate, pointer checks, integer/float range folds, speculative narrowing,
+  /// speculative overflow versioning, ownership batching, unrolling, sccp, correlate, pointer checks, integer/float range folds, speculative narrowing,
   /// overflow coalescing, sroa, aggregate-sroa, mem2reg2, strcow, ownership elision, reassociate, polynomial recovery,
   /// equality saturation, verified arithmetic lowering, demote, ivsimplify, phicong, gvn, memopt, dse,
   /// interchange, licm, reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the
@@ -205,6 +205,9 @@ public sealed class IrPassManager {
     // O0308 matches lowering's checked signed-add/sub predicate before InstCombine canonicalizes its
     // XOR/AND tree. It versions only exact counted loops with an O(1) invariant safety guard.
     .Add("overflow-version", SpeculativeOverflowElimination.Run)
+    // O0292 wants the ownership phi before a small counted loop is expanded into repeated copies.
+    // It is therefore the last SSA loop/data rewrite before unrolling gets a chance to erase the loop.
+    .Add("ownershipbatch", OwnershipBatching.Run)
     // unrolling goes early, right after values reach SSA: a fully unrolled loop turns its counter
     // into a constant in every copy, which is what gives the rest of the pipeline something to fold
     .Add("unroll", LoopUnroll.Run)
