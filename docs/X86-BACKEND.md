@@ -477,10 +477,17 @@ calls to defined procedures from exactly the functions the routing does take.
 
 ### Calls (the widening that ranking bought)
 
-`SelectCall` handles a direct call to a defined procedure or linker-resolved declaration. It reads the
-convention recorded on `IrCall`: BASIC/PASCAL push argument groups **left to right** and let the callee
-clean, CDECL/STDCALL push them **right to left**, and CDECL restores SP in the caller. Integer results
-arrive in `AX` or `DX:AX`; IEEE results arrive in `ST(0)`.
+`SelectCall` handles both a direct call to a defined procedure/linker-resolved declaration and a computed
+**near** IR code pointer. It reads the convention recorded on `IrCall`: BASIC/PASCAL push argument groups
+**left to right** and let the callee clean, CDECL/STDCALL push them **right to left**, and CDECL restores SP
+in the caller. Integer results arrive in `AX` or `DX:AX`; IEEE results arrive in `ST(0)`.
+
+For a computed target the selector stages the 16-bit pointer in `BX` immediately before the transfer and
+emits `CALL BX`. That is the 8086 `FF /2` `CALL r/m16` form, not the PB36 delegate ABI: source-level
+`ProcPtrType` values are eight-byte fat closures with a far code pointer plus environment and continue to
+use their dedicated legacy far-call lowering. First-class direct function addresses inside IR are represented
+as `MOperand.CodeOffset`; when one is passed as a word argument it is materialized through `MOV reg, OFFSET`
+then `PUSH reg`, avoiding the 80186-only `PUSH imm16` encoding on baseline 8086 targets.
 
 Two soundness rules make that safe:
 

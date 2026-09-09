@@ -71,6 +71,32 @@ public sealed class BackendCallRoutingTests {
       "this ABI preserves nothing, so the call must declare it destroys the register file");
   }
 
+  [Test]
+  public void Select_GivenNearIndirectCall_ThenStagesTargetInBxAndEmitsFfSlash2() {
+    var target = new IrArgument(IrType.Ptr, 0, "target");
+    var value = new IrArgument(IrType.I16, 1, "value");
+    var fn = new IrFunction("Invoke", IrType.I16, [target, value]);
+    var entry = fn.CreateBlock("entry");
+    var call = entry.Append(new IrCall(IrType.I16, target, [value], IrCallConvention.Basic));
+    entry.Append(new IrRet(call));
+
+    var selected = InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(selected, Is.Not.Null, $"declined: {reason}");
+    var indirect = selected!.AllInstructions.Single(i => i.Opcode == MOpcode.Call);
+    Assert.That(indirect.Operands[0], Is.EqualTo(new MOperand.Register(MReg.Physical_(Reg.BX))),
+      "the computed near target is pinned in BX for CALL r/m16");
+    var allocation = LinearScanAllocator.Allocate(selected, out var allocationReason);
+    Assert.That(allocation, Is.Not.Null, $"allocation declined: {allocationReason}");
+
+    var asm = new Assembler();
+    MachineEmitter.EmitFunction(asm, selected, allocation!, [6, 4], 4);
+    var bytes = asm.ToArray();
+
+    Assert.That(Contains(bytes, 0xFF, 0xD3), Is.True,
+      "CALL BX must encode as the 8086 near-indirect FF /2 form");
+  }
+
   [TestCase(IrCallConvention.Cdecl, true)]
   [TestCase(IrCallConvention.Stdcall, false)]
   public void Select_GivenRightToLeftStackConvention_ThenReversesArgumentGroupsAndUsesDeclaredCleanup(
@@ -381,4 +407,11 @@ public sealed class BackendCallRoutingTests {
     Assert.That(routed.BackendRoutedNames, Does.Contain("Sum"));
     Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
   }
+  private static bool Contains(byte[] bytes, byte first, byte second) {
+    for (var i = 0; i + 1 < bytes.Length; ++i)
+      if (bytes[i] == first && bytes[i + 1] == second)
+        return true;
+    return false;
+  }
+
 }

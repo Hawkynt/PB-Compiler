@@ -2451,6 +2451,14 @@ public sealed partial class InstructionSelector {
           this._vregs[cast] = labelReg;
           return true;
         }
+        if (cast.Value is IrFunction function) {
+          var offsetReg = this.FreshVreg(to);
+          var offsetDest = new MOperand.Register(offsetReg);
+          var address = new MOperand.LabelRef(function.Name);
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [offsetDest, address], MovEffect(offsetDest, address)));
+          this._vregs[cast] = offsetReg;
+          return true;
+        }
         if (cast.Value is IrGlobalVariable global) {
           if (!IsAddressableGlobal(global))
             return this.Decline($"ptrtoint: global '{global.Name}' has no addressable data cell");
@@ -2573,14 +2581,13 @@ public sealed partial class InstructionSelector {
     => name.StartsWith("rt_", StringComparison.Ordinal) || name.StartsWith("llvm.", StringComparison.Ordinal);
 
   private bool SelectCall(IrCall call, MBlock block) {
-    if (call.Callee is not IrFunction callee)
-      return this.Decline("call: indirect (through a procedure pointer)");
+    var callee = call.Callee as IrFunction;
     // A declaration is one of two very different things. A RUNTIME routine has a hand-written body
     // with a register convention, and reaching it needs an entry in the ABI table - anything not
     // listed declines, which is the signal the coverage census reads. An EXTERNAL user procedure has
     // no body HERE but a source-declared ABI, supplied by another object file and resolved by the
     // linker; its IrCall convention chooses the ordinary stack-call path below.
-    if (callee.IsDeclaration) {
+    if (callee is { IsDeclaration: true }) {
       if (NonLocalJumpIntrinsics.Contains(callee.Name))
         return this.SelectNonLocalJumpIntrinsic(call, callee);
       if (MathSequence(callee.Name, this._target.Cpu386OrLater) is { } sequence)
@@ -2592,30 +2599,55 @@ public sealed partial class InstructionSelector {
       if (IsRuntimeName(callee.Name))
         return this.Decline($"call: {callee.Name} (runtime declaration - not in the runtime ABI table)");
     }
+
+    var calleeName = callee?.Name ?? "indirect procedure";
     if (!call.Type.IsVoid && !call.Type.IsIeeeFloat && !IsWide(call.Type) && !IsQuad(call.Type)
         && RegSize(call.Type) != MRegSize.Word
         && call.Type is not { IsInteger: true, Bits: 8 })
-      return this.Decline($"call: {callee.Name} returns {call.Type} (unsupported result shape)");
+      return this.Decline($"call: {calleeName} returns {call.Type} (unsupported result shape)");
 
     var abi = X86CallAbi.For(call.Convention);
     if (abi.Distance != X86CallDistance.Near)
-      return this.Decline($"call: {callee.Name} uses a far return address");
+      return this.Decline($"call: {calleeName} uses a far return address");
     if (abi.ArgumentRegisters.Count > 0)
-      return this.Decline($"call: {callee.Name} uses {call.Convention} register arguments");
+      return this.Decline($"call: {calleeName} uses {call.Convention} register arguments");
 
     var arguments = abi.StackArgumentOrder == X86StackArgumentOrder.RightToLeft
       ? call.Args.Reverse()
       : call.Args;
     var stackBytes = 0;
     foreach (var arg in arguments) {
-      if (!this.PushStackCallArgument(arg, callee.Name, out var argumentBytes))
+      if (!this.PushStackCallArgument(arg, calleeName, out var argumentBytes))
         return false;
       stackBytes += argumentBytes;
     }
 
-    this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef(callee.Name)],
-      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
-        ReadsMemory: true, WritesMemory: true),
+    MOperand callTarget;
+    if (callee is not null)
+      callTarget = new MOperand.LabelRef(callee.Name);
+    else {
+      // The IR's generic pointer type is a NEAR code offset here, not PB36's source-level fat closure
+      // (ProcPtrType lowers through the legacy far-call path). Keep the computed target in a pinned
+      // word register immediately across the CALL: `FF /2` accepts any r/m16 on the 8086, and BX is
+      // already one of the backend's ABI scratch registers. The staging instruction is a barrier so
+      // scheduling cannot insert an allocated value between the pointer load and its consumption.
+      if (!call.Callee.Type.IsPointer)
+        return this.Decline("call: indirect target is not a near pointer");
+      if (!this.TryOperand(call.Callee, out var through))
+        return false;
+      if (through is not (MOperand.Register or MOperand.Memory or MOperand.StackSlot
+          or MOperand.DataCell or MOperand.ParamCell or MOperand.LabelRef))
+        return this.Decline($"call: indirect target has unsupported operand {through.GetType().Name}");
+
+      var bx = new MOperand.Register(MReg.Physical_(Reg.BX, MRegSize.Word));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [bx, through], MovEffect(bx, through),
+        condition: null, clobbers: [Reg.BX]));
+      callTarget = bx;
+    }
+
+    this._current.Instructions.Add(new MInstr(MOpcode.Call, [callTarget],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: callTarget is MOperand.Register ? [0] : [],
+        ReadsFlags: false, WritesFlags: true, ReadsMemory: true, WritesMemory: true),
       condition: null, clobbers: _callClobbers));
 
     if (abi.StackCleanup == X86StackCleanup.Caller && stackBytes > 0) {
@@ -2718,6 +2750,14 @@ public sealed partial class InstructionSelector {
       return this.Decline($"call: {calleeName} takes {argument.Type} (word arguments only)");
     if (!this.TryOperand(argument, out var pushed))
       return false;
+    if (pushed is MOperand.LabelRef) {
+      // PUSH imm16 starts at the 80186. A code address is relocatable and therefore cannot use the
+      // 8086's absence of that instruction; materialize it with MOV reg,imm16 and push the register.
+      var held = this.FreshVreg(argument.Type);
+      var register = new MOperand.Register(held);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [register, pushed], MovEffect(register, pushed)));
+      pushed = register;
+    }
     this._current.Instructions.Add(PushOf(pushed));
     bytes = 2;
     return true;
@@ -4351,6 +4391,9 @@ public sealed partial class InstructionSelector {
       // one PointerMemory uses to turn a global into a DataCell: having a cell and having an offset
       // are the same fact, so a second spelling of the question could only drift away from the first
       // and answer it differently for some name neither list was written with in mind.
+      case IrFunction function:
+        operand = new MOperand.LabelRef(function.Name);
+        return true;
       case IrGlobalVariable g when IsAddressableGlobal(g):
         operand = new MOperand.DataOffset(g.Name, 0);
         return true;

@@ -163,6 +163,11 @@ public sealed class IrPassManager {
   /// empty loops because they may be intentional delay loops.
   /// </para>
   /// <para>
+  /// <paramref name="optimizeForSize"/> reflects <c>$OPTIMIZE SIZE</c>. It enables whole-module
+  /// transformations whose profitability comes from sharing code rather than reducing dynamic work;
+  /// O0284 semantic function merging is currently the only such IR pass.
+  /// </para>
+  /// <para>
   /// <paramref name="dataLayoutTarget"/> supplies facts that are not properties of target-neutral IR:
   /// pointer storage width, vector width and cache geometry. O0324-O0326 stay disabled when those facts
   /// are absent rather than guessing a target. The remaining O0320-O0323 and O0327-O0329 are guarded
@@ -175,7 +180,7 @@ public sealed class IrPassManager {
   /// </para>
   /// </summary>
   public static IrPassManager Standard(bool optimizeForSpeed = false, bool includeModulePasses = true,
-      IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false)
+      IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false, bool optimizeForSize = false)
     => new IrPassManager { OptimizeForSpeed = optimizeForSpeed }
     // O0068 must see the allocation descriptor and the source-shaped FOR before mem2reg/unrolling
     // turn them into a different proof problem. It is a module pass only because it may mint the
@@ -382,5 +387,8 @@ public sealed class IrPassManager {
     .AddModulePassWhen(includeModulePasses, "localize-globals", LocalizeGlobals.Run)
     // O0279 wants the SSA/global cleanup above, and IPCP wants the direct edges O0279 exposes.
     .AddModulePassWhen(includeModulePasses, "devirt", WholeProgramDevirtualization.Run)
-    .AddModulePassWhen(includeModulePasses, "ipconstprop", IpConstantProp.Run);
+    .AddModulePassWhen(includeModulePasses, "ipconstprop", IpConstantProp.Run)
+    // O0284 is intentionally last. Every earlier interprocedural/local pass gets the original ABI and
+    // the maximum opportunity to make bodies congruent; only SIZE then pays the one-parameter ABI cost.
+    .AddModulePassWhen(includeModulePasses && optimizeForSize, "semantic-merge", SemanticFunctionMerging.Run);
 }
