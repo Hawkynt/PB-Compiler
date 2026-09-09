@@ -2,22 +2,26 @@ namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
 /// Decomposes fixed-size whole-record copies and equality tests into scalar memory operations when
-/// the surrounding typed accesses prove a complete, independent byte partition of the record.
+/// the surrounding typed accesses prove a complete, independent byte partition of the record, or
+/// when a local copy destination proves that the omitted bytes can never be observed.
 ///
 /// <para>
 /// Whole UDT assignment and BYVAL lowering deliberately use <c>llvm.memcpy</c>, and UDT equality uses
 /// <c>rt_mem_compare</c>, because those operations preserve the record's observable bytes without
 /// inventing field semantics. That conservative representation also makes an otherwise non-escaping
 /// record look escaped to <see cref="ScalarReplaceAggregates"/>. This pass removes that barrier only
-/// when the record's ordinary field accesses prove exactly how every byte is partitioned.
+/// when ordinary field accesses prove the scalar regions needed to preserve every observable byte.
 /// </para>
 ///
 /// <para>
-/// The proof is deliberately stricter than "these fields look useful". Regions must cover the whole
-/// copied/compared extent without gaps or overlap, every region must have one storage type, and every
-/// other use of a local backing allocation must be either a typed scalar access or another exact
-/// whole-object copy/comparison. Padding, UNION type-punning, dynamic offsets, nested addresses,
-/// pointer-width fields and other escapes therefore keep the original byte operation.
+/// The complete-layout proof is deliberately stricter than "these fields look useful". Regions must
+/// cover the whole copied/compared extent without gaps or overlap, every region must have one storage
+/// type, and every other use of a local backing allocation must be either a typed scalar access or
+/// another exact whole-object copy/comparison. A copy gets one additional conservative path: when its
+/// destination has no escape or other whole-object observer, bytes never named by any destination
+/// scalar access are unobservable and need not keep the block copy alive. Padding, UNION type-punning,
+/// dynamic offsets, nested addresses, pointer-width fields and escapes otherwise keep the original
+/// byte operation.
 /// </para>
 ///
 /// <para>
@@ -61,8 +65,8 @@ public static class AggregateBlockScalarization {
     var bytes = (int)sizeConstant.Value;
     var destination = args[0];
     var source = args[1];
-    if (destination is not IrAlloca { Allocated: var allocated, Count: var count }
-        || allocated != IrType.I8 || count != bytes)
+    if (destination is not IrAlloca destinationAlloca
+        || destinationAlloca.Allocated != IrType.I8 || destinationAlloca.Count != bytes)
       return false;                                  // only a whole local packed record can disappear
 
     if (ReferenceEquals(destination, source)) {
@@ -76,7 +80,8 @@ public static class AggregateBlockScalarization {
         && (sourceAlloca.Allocated != IrType.I8 || sourceAlloca.Count != bytes))
       return false;
 
-    if (!TryCompleteLayout(bytes, destination as IrAlloca, source as IrAlloca, out var layout))
+    if (!TryCompleteLayout(bytes, destinationAlloca, source as IrAlloca, out var layout)
+        && !TryObservableDestinationLayout(destinationAlloca, call, out layout))
       return false;
 
     var block = call.Parent;
@@ -86,9 +91,9 @@ public static class AggregateBlockScalarization {
     if (at < 0)
       return false;
 
-    // Load the complete source value before writing any destination region. memcpy requires
-    // non-overlap, but this ordering also preserves the intuitive whole-copy snapshot if a malformed
-    // producer ever hands us aliases the intrinsic itself would not permit.
+    // Load every source region before writing any destination region. Besides preserving memcpy's
+    // ordinary whole-copy snapshot, this is essential for the dead-field path: fields that survive
+    // are sampled exactly where the original copy happened rather than at their later use sites.
     var values = new List<(Region Region, IrValue Value)>(layout.Count);
     foreach (var region in layout) {
       var sourceAddress = InsertAddress(block, ref at, source, region.Offset);
@@ -103,6 +108,16 @@ public static class AggregateBlockScalarization {
     call.EraseFromParent();
     return true;
   }
+
+  /// <summary>
+  /// Recovers the destination regions that can be observed after this copy. Unlike
+  /// <see cref="TryCompleteLayout"/>, this set may contain gaps or even be empty: the proof here is
+  /// instead that the destination has no escaping address and no whole-object observer besides this
+  /// exact copy. A byte no scalar access ever names therefore cannot affect program behaviour through
+  /// this destination. This is deliberately whole-function conservative rather than path-sensitive.
+  /// </summary>
+  private static bool TryObservableDestinationLayout(IrAlloca destination, IrCall copy, out List<Region> layout)
+    => TryObservedRegions(destination, out layout, copy);
 
   private static bool TryScalarizeEquality(IrCall call) {
     if (call.Callee is not IrFunction { Name: _MEM_COMPARE } || call.ArgCount != 3)
@@ -225,10 +240,15 @@ public static class AggregateBlockScalarization {
 
   /// <summary>
   /// Recovers typed scalar regions from one byte-backed local. Exact whole-object operations are
-  /// transparent to this analysis because they contribute no field type; every other non-scalar use
-  /// is an escape and rejects the layout.
+  /// transparent to the complete-layout analysis because they contribute no field type; every other
+  /// non-scalar use is an escape and rejects the layout. When <paramref name="onlyWholeObjectCall"/>
+  /// is supplied, even another otherwise-exact whole-object operation rejects the proof; this is what
+  /// proves omitted destination bytes unobservable for dead-field copy scalarization.
   /// </summary>
-  private static bool TryObservedRegions(IrAlloca alloca, out List<Region> regions) {
+  private static bool TryObservedRegions(
+      IrAlloca alloca,
+      out List<Region> regions,
+      IrCall? onlyWholeObjectCall = null) {
     regions = [];
 
     foreach (var user in alloca.Users)
@@ -249,7 +269,8 @@ public static class AggregateBlockScalarization {
           }
           break;
 
-        case IrCall call when IsExactWholeObjectCall(call, alloca):
+        case IrCall call when IsExactWholeObjectCall(call, alloca)
+            && (onlyWholeObjectCall is null || ReferenceEquals(call, onlyWholeObjectCall)):
           break;
 
         default:
