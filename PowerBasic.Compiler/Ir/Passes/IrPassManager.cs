@@ -323,6 +323,10 @@ public sealed class IrPassManager {
     // O0353 consumes the exact-trip append shape produced immediately above and batches its suffix
     // into REPEAT$ + one concatenation in the preheader, so no per-iteration capacity check remains.
     .AddModulePassWhen(includeModulePasses, "strcapacity", StringCapacityHoisting.Run)
+    // O0287 wants the canonical bounded builders above, then turns only structurally non-escaping
+    // PRINT temporaries into frame bytes. Consumers below see either the untouched handle graph or
+    // the already-lowered raw print, so they cannot accidentally reinterpret an SS pointer as a handle.
+    .AddModulePassWhen(includeModulePasses, "strstack", StringStackPromotion.Run)
     .AddModulePassWhen(includeModulePasses, "strbyte", StringByteRead.Run)
     .AddModulePassWhen(includeModulePasses, "strcmpeq", StringCompareEquality.Run)
     .AddModulePassWhen(includeModulePasses, "strempty", StringEmptinessTest.Run)
