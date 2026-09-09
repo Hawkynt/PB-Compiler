@@ -1,7 +1,11 @@
 from pathlib import Path
 
 path = Path("PowerBasic.Compiler/Backend/InstructionSelector.cs")
-text = path.read_text()
+raw = path.read_bytes()
+text = raw.decode("utf-8")
+uses_crlf = b"\r\n" in raw
+if uses_crlf:
+  text = text.replace("\r\n", "\n")
 
 old = '''      case IrGlobalVariable g when IsAddressableGlobal(g):
         operand = new MOperand.DataOffset(g.Name, 0);
@@ -153,4 +157,6 @@ replacement = '''  private bool SelectCall(IrCall call, MBlock block) {
 
 '''
 text = text[:start] + replacement + text[end:]
-path.write_text(text)
+if uses_crlf:
+  text = text.replace("\n", "\r\n")
+path.write_bytes(text.encode("utf-8"))
