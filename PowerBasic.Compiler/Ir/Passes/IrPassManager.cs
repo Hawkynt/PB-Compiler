@@ -319,5 +319,7 @@ public sealed class IrPassManager {
     .AddModulePassWhen(includeModulePasses, "strempty", StringEmptinessTest.Run)
     .AddModulePassWhen(includeModulePasses, "readonly-globals", ReadOnlyGlobals.Run)
     .AddModulePassWhen(includeModulePasses, "localize-globals", LocalizeGlobals.Run)
+    // O0279 wants the SSA/global cleanup above, and IPCP wants the direct edges O0279 exposes.
+    .AddModulePassWhen(includeModulePasses, "devirt", WholeProgramDevirtualization.Run)
     .AddModulePassWhen(includeModulePasses, "ipconstprop", IpConstantProp.Run);
 }
