@@ -114,7 +114,7 @@ public sealed class IrPassManager {
   /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
   /// unrolling, sccp, correlate, pointer checks, integer/float range folds, speculative narrowing,
   /// overflow coalescing, sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery,
-  /// equality saturation, verified arithmetic lowering, demote, phicong, gvn, memopt, dse,
+  /// equality saturation, verified arithmetic lowering, demote, ivsimplify, phicong, gvn, memopt, dse,
   /// interchange, licm, reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the
   /// string/global module passes. So are the steps the caller runs around the pipeline - <c>Inliner</c>,
   /// <c>SwitchFormation</c> and <c>MemoryRoutineSpecialization</c>, the last of which is not in
@@ -245,8 +245,10 @@ public sealed class IrPassManager {
     // GVN cannot number a phi - a loop phi's operands include the value coming back round the latch,
     // which is derived from the phi itself - so congruent induction variables survive it untouched
     // after mem2reg has made the counter a phi, and before the value passes, so the integer form is
-    // what they see
+    // what they see. O0062's derived-IV pass runs immediately before phi congruence: it creates the
+    // carried affine values, then O0111 can coalesce any of those that turn out to be redundant.
     .Add("demote", FloatDemotion.Run)
+    .Add("ivsimplify", InductionVariableSimplification.Run)
     .Add("phicong", PhiCongruence.Run)
     .Add("gvn", Gvn.Run)
     // tiny intrinsic expansion is deliberately after GVN: one canonical memcpy/memset call is easier
