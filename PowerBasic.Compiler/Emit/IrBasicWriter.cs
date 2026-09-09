@@ -614,7 +614,24 @@ public sealed class IrBasicWriter {
     return parts.Length == 3 ? parts[1] : null;
   }
 
+  /// <summary>
+  /// The routine a coalesced string entry stands for. O0289 batches several bounded allocations into
+  /// one preflighted heap region and points them at <c>NAME_coalesced</c> (or
+  /// <c>NAME_borrow_coalesced</c>, which additionally takes its source without a copy). Both keep the
+  /// original signature and compute the original value, so they spell as the intrinsic they came
+  /// from - which arena the bytes were carved out of has no more of a BASIC spelling than
+  /// <c>rt_str_dup</c> does.
+  /// </summary>
+  private static string Uncoalesced(string runtime) => runtime switch {
+    _ when runtime.EndsWith("_borrow_coalesced", StringComparison.Ordinal)
+      => runtime[..^"_borrow_coalesced".Length],
+    _ when runtime.EndsWith("_coalesced", StringComparison.Ordinal)
+      => runtime[..^"_coalesced".Length],
+    _ => runtime,
+  };
+
   private bool TryStringExpression(IrCall call, IrFunction callee) {
+    var name = Uncoalesced(callee.Name);
     if (MathName(callee.Name) is { } math) {
       // exponentiation is an operator in BASIC, not a function - it is what '^' lowered to
       if (math == "pow" && call.Args.Count() == 2) {
@@ -626,11 +643,11 @@ public sealed class IrBasicWriter {
         return true;
       }
     }
-    if (_intrinsics.TryGetValue(callee.Name, out var intrinsic)) {
+    if (_intrinsics.TryGetValue(name, out var intrinsic)) {
       this._names[call] = $"{intrinsic}({string.Join(", ", call.Args.Select(this.Ref))})";
       return true;
     }
-    switch (callee.Name) {
+    switch (name) {
       // rt_str_const(bytes, length) IS a string literal - it is what one lowers to
       case "rt_str_const" when call.Args.FirstOrDefault() is IrGlobalVariable { Bytes: { } bytes }:
         this._names[call] = Quote(System.Text.Encoding.ASCII.GetString(bytes));
@@ -832,7 +849,9 @@ public sealed class IrBasicWriter {
       // Releasing the handle an assignment replaced is the same kind of bookkeeping rt_str_dup is,
       // and has the same spelling here: none. BASIC assigns strings by value and says nothing about
       // when the old one goes.
-      if (callee.Name == "rt_str_free")
+      // ...and so is the transaction O0289 wraps a batch of allocations in. Both markers are heap
+      // bookkeeping around calls that are individually spelled already.
+      if (callee.Name is "rt_str_free" or "rt_str_coalesce_begin" or "rt_str_coalesce_end")
         return;
       if (this.TryStringExpression(call, callee))
         return;

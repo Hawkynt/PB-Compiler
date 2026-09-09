@@ -275,6 +275,24 @@ void *rt_str_chr(int32_t code) {
   return rt_make(&c, 1);
 }
 
+/* O0289 is a DOS heap-layout optimization. The hosted runtime already allocates each result through
+   malloc and has no compacting tail to preflight, so region markers carry no observable work and
+   specialized producers simply preserve the ordinary hosted string semantics. The borrowed and
+   consuming substring variants are intentionally identical here: hosted string consumers do not
+   destroy their input handles, so there is no ownership copy to cancel at runtime. */
+void rt_str_coalesce_begin(int16_t capacity) { (void)capacity; }
+void rt_str_coalesce_end(void) { }
+void *rt_str_const_coalesced(void *bytes, int32_t len) { return rt_str_const(bytes, len); }
+void *rt_str_left_coalesced(void *s, int32_t n) { return rt_str_left(s, n); }
+void *rt_str_right_coalesced(void *s, int32_t n) { return rt_str_right(s, n); }
+void *rt_str_mid_coalesced(void *s, int32_t start, int32_t len) { return rt_str_mid(s, start, len); }
+void *rt_str_left_borrow_coalesced(void *s, int32_t n) { return rt_str_left(s, n); }
+void *rt_str_right_borrow_coalesced(void *s, int32_t n) { return rt_str_right(s, n); }
+void *rt_str_mid_borrow_coalesced(void *s, int32_t start, int32_t len) { return rt_str_mid(s, start, len); }
+void *rt_str_space_coalesced(int32_t n) { return rt_str_space(n); }
+void *rt_str_string_coalesced(int32_t n, int32_t ch) { return rt_str_string(n, ch); }
+void *rt_str_chr_coalesced(int32_t code) { return rt_str_chr(code); }
+
 int32_t rt_str_asc(void *s) {
   pb_str *x = rt_of(s);
   return x->len ? (unsigned char)x->data[0] : -1;   /* PB: ASC("") is -1 */
