@@ -115,8 +115,8 @@ public sealed class IrPassManager {
   /// unrolling, sccp, correlate, block versioning, pointer checks, integer/float range folds, overflow
   /// coalescing, sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery, equality saturation,
   /// verified arithmetic lowering, demote, phicong, gvn, memopt, dse, interchange, licm,
-  /// reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec, switch formation and the
-  /// string/global module passes. Caller-only late specialization such as
+  /// reciprocal reuse, unswitch, loop versioning, closed-form, deadloop, ifconv, tailrec, switch
+  /// formation and the string/global module passes. Caller-only late specialization such as
   /// <c>MemoryRoutineSpecialization</c> is off as well (see CodeGenerator.Backend).
   /// </para>
   /// </summary>
@@ -253,6 +253,10 @@ public sealed class IrPassManager {
     // by cloning - each clone gets its own copy of the compare, so binding the original to a constant
     // reaches nothing. LICM hoists it out first, which is what makes the value substitutable.
     .Add("unswitch", LoopUnswitch.Run)
+    // O0306 follows LICM for loop-invariant guard operands, and follows unswitch so the fast clone's
+    // deliberately constant-false Error 9 branches are not mistaken for invariant branches to split.
+    // The original checked loop remains the fallback; only its clone is specialized.
+    .Add("loopversion", LoopVersioning.Run)
     .Add("dce", Dce.Run)
     // AFTER dce: IntegerRecovery leaves the float-shaped arithmetic it replaced standing beside the
     // integer form, and until that shadow is collected the accumulator still has a reader inside the

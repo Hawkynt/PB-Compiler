@@ -45,6 +45,7 @@ public sealed class IrPassObservableEquivalenceTests {
     ("phicong", PhiCongruence.Run),
     ("demote", FloatDemotion.Run),
     ("unswitch", LoopUnswitch.Run),
+    ("loopversion", LoopVersioning.Run),
     ("closed-form", RecurrenceClosedForm.Run),
   ];
 
@@ -103,6 +104,21 @@ public sealed class IrPassObservableEquivalenceTests {
       NEXT i
       PRINT
       END
+      """),
+    ("versioned bounds", """
+      $ERROR BOUNDS ON
+      DIM a(0 TO 31) AS INTEGER
+      DIM i AS INTEGER
+      DIM n AS INTEGER
+      n = RuntimeLimit%(31)
+      FOR i = 0 TO n
+        a(i) = i * 3 - 1
+      NEXT i
+      PRINT a(31)
+      END
+      FUNCTION RuntimeLimit%(BYVAL v%) NOINLINE
+        RuntimeLimit% = v%
+      END FUNCTION
       """),
     ("calls", """
       PRINT Twice%(21)
