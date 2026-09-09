@@ -74,6 +74,54 @@ public sealed class DataLayoutTransformsTests {
   }
 
   [Test]
+  public void O0321_CountedLoopAccess_OutweighsRepeatedColdAccesses() {
+    var index = new IrArgument(IrType.I32, 0, "index");
+    var fn = new IrFunction("f", IrType.Void, [index]);
+    var entry = fn.CreateBlock("entry");
+    var header = fn.CreateBlock("loop.header");
+    var body = fn.CreateBlock("loop.body");
+    var latch = fn.CreateBlock("loop.latch");
+    var exit = fn.CreateBlock("exit");
+    var records = entry.Append(new IrAlloca(IrType.I8) { Count = 64 * 6, Name = "records" });
+
+    for (var n = 0; n < 3; ++n)
+      _ = LoadRecordField(entry, records, index, 6, 0, IrType.I16);
+    for (var n = 0; n < 2; ++n)
+      _ = LoadRecordField(entry, records, index, 6, 2, IrType.I16);
+    entry.Append(new IrBr(header));
+
+    var counter = header.AppendPhi(new IrPhi(IrType.I32));
+    counter.AddIncoming(new IrConstantInt(IrType.I32, 0), entry);
+    var test = header.Append(new IrCmp(IrCmpPred.Slt, counter, new IrConstantInt(IrType.I32, 8)));
+    header.Append(new IrCondBr(test, body, exit));
+    _ = LoadRecordField(body, records, counter, 6, 4, IrType.I16);
+    body.Append(new IrBr(latch));
+    var next = latch.Append(new IrBinary(IrBinaryOp.Add, counter, new IrConstantInt(IrType.I32, 1)));
+    latch.Append(new IrBr(header));
+    counter.AddIncoming(next, latch);
+    exit.Append(new IrRet());
+
+    Assert.That(FieldReordering.Run(fn), Is.EqualTo(1), "one loop-body access executes eight times and must be the hottest field");
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(FieldReordering.Run(fn), Is.Zero, "the loop-weighted order must be a fixpoint");
+  }
+
+  [Test]
+  public void O0321_EqualHotness_PreservesPackedFieldOrder() {
+    var index = new IrArgument(IrType.I32, 0, "index");
+    var fn = new IrFunction("f", IrType.Void, [index]);
+    var entry = fn.CreateBlock("entry");
+    var records = entry.Append(new IrAlloca(IrType.I8) { Count = 64 * 6, Name = "records" });
+    _ = LoadRecordField(entry, records, index, 6, 0, IrType.I8);
+    _ = LoadRecordField(entry, records, index, 6, 1, IrType.I8);
+    _ = LoadRecordField(entry, records, index, 6, 2, IrType.I32);
+    entry.Append(new IrRet());
+
+    Assert.That(FieldReordering.Run(fn), Is.Zero, "packed fields with equal hotness have no profitable reorder");
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
   public void O0322_ColdField_IsSplitFromHotRecord() {
     var i = new IrArgument(IrType.I32, 0, "i");
     var fn = new IrFunction("f", IrType.Void, [i]);

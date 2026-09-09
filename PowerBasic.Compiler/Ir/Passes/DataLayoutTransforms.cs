@@ -15,7 +15,7 @@ public static class ArrayOfStructsToStructOfArrays {
   public static int Run(IrFunction fn) => DataLayoutTransformCore.RewriteRecordArrays(fn, DataLayoutTransformCore.RecordMode.Soa);
 }
 
-/// <summary>O0321 — reorders private packed-record fields by static access frequency.</summary>
+/// <summary>O0321 — reorders private packed-record fields by estimated access frequency.</summary>
 public static class FieldReordering {
   public static int Run(IrFunction fn) => DataLayoutTransformCore.RewriteRecordArrays(fn, DataLayoutTransformCore.RecordMode.Reorder);
 }
@@ -141,6 +141,7 @@ internal static class DataLayoutTransformCore {
   internal static int RewriteRecordArrays(IrFunction fn, RecordMode mode) {
     if (fn.Entry is null)
       return 0;
+    var executionWeights = mode == RecordMode.Reorder ? StaticExecutionWeights(fn) : null;
     var ranges = mode == RecordMode.Soa ? IrRangeAnalysis.Build(fn) : null;
     if (mode == RecordMode.Soa && ranges is null)
       return 0;
@@ -150,7 +151,7 @@ internal static class DataLayoutTransformCore {
         continue;
       changed += mode switch {
         RecordMode.Soa => ToSoa(shape!, ranges!),
-        RecordMode.Reorder => Reorder(shape!),
+        RecordMode.Reorder => Reorder(shape!, executionWeights!),
         RecordMode.HotCold => SplitHotCold(shape!),
         _ => 0,
       };
@@ -660,10 +661,13 @@ internal static class DataLayoutTransformCore {
     return 1;
   }
 
-  private static int Reorder(RecordShape shape) {
+  private static int Reorder(RecordShape shape, IReadOnlyDictionary<IrBasicBlock, long> executionWeights) {
     if (shape.Elements < 8 || shape.Fields.Count < 3 || !ExactFields(shape))
       return 0;
-    var desired = shape.Fields.OrderByDescending(f => f.Weight).ThenByDescending(f => f.Size).ThenBy(f => f.Offset).ToList();
+    var desired = shape.Fields
+      .OrderByDescending(field => ReorderWeight(field, executionWeights))
+      .ThenBy(field => field.Offset)
+      .ToList();
     var newOffsets = new Dictionary<Field, long>();
     long offset = 0;
     foreach (var field in desired) {
@@ -687,6 +691,45 @@ internal static class DataLayoutTransformCore {
         return 0;
     CleanupDeadGeps(shape.Root);
     return 1;
+  }
+
+  private static long ReorderWeight(Field field, IReadOnlyDictionary<IrBasicBlock, long> executionWeights) {
+    var weight = 0L;
+    foreach (var access in field.Accesses) {
+      var repetitions = access.Instruction.Parent is { } block && executionWeights.TryGetValue(block, out var blockWeight)
+        ? blockWeight
+        : 1L;
+      var accessWeight = access.IsStore ? 2L : 1L;
+      weight = SaturatingAdd(weight, SaturatingMultiply(repetitions, accessWeight));
+    }
+    return weight;
+  }
+
+  private static Dictionary<IrBasicBlock, long> StaticExecutionWeights(IrFunction fn) {
+    var result = fn.Blocks.ToDictionary<IrBasicBlock, IrBasicBlock, long>(
+      block => block,
+      _ => 1L,
+      ReferenceEqualityComparer.Instance);
+    foreach (var loop in fn.Blocks.Select(header => CountedLoop.Match(fn, header)).OfType<CountedLoop>())
+      foreach (var block in loop.Region)
+        result[block] = SaturatingMultiply(result[block], loop.Trips);
+    return result;
+  }
+
+  private static long SaturatingMultiply(long left, long right) {
+    try {
+      return checked(left * right);
+    } catch (OverflowException) {
+      return long.MaxValue;
+    }
+  }
+
+  private static long SaturatingAdd(long left, long right) {
+    try {
+      return checked(left + right);
+    } catch (OverflowException) {
+      return long.MaxValue;
+    }
   }
 
   private static int SplitHotCold(RecordShape shape) {
