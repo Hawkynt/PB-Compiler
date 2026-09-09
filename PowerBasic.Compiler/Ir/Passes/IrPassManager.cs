@@ -130,7 +130,7 @@ public sealed class IrPassManager {
   /// <para>
   /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
   /// speculative overflow versioning, unrolling, sccp, correlate, pointer checks, integer/float range folds, speculative narrowing,
-  /// overflow coalescing, sroa, aggregate-sroa, mem2reg2, strcow, reassociate, polynomial recovery,
+  /// overflow coalescing, sroa, aggregate-sroa, mem2reg2, strcow, ownership elision, reassociate, polynomial recovery,
   /// equality saturation, verified arithmetic lowering, demote, ivsimplify, phicong, gvn, memopt, dse,
   /// interchange, licm, reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the
   /// string/global module passes. So are the steps the caller runs around the pipeline - <c>Inliner</c>,
@@ -248,6 +248,9 @@ public sealed class IrPassManager {
     // O0293 wants the ownership graph after all scalar source-variable storage has become SSA. It
     // removes only local dup/free lifetimes whose raw handles neither escape nor cross a CFG edge.
     .Add("strcow", StringCopyOnWriteElision.Run)
+    // O0291 is an ownership transform, not generic call DCE. It wants local string storage promoted
+    // to SSA first, so exact use-lists expose a copied owner's nested borrows and matching release.
+    .Add("ownership-elision", HandleOwnershipElision.Run)
     // O0346/O0347 consume strict FP facts here, including branch-refined integer ranges at conversion
     // sites. SPEED supplies its explicit no-NaN/no-inf assumptions without changing strict defaults.
     .Add("fpsimplify", fn => FpSimplify.Run(fn,
