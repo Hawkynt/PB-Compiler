@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Implemented infrastructure — one exact side exit per canonical loop version |
+| **Status** | ✅ Implemented infrastructure — one exact side exit per canonical loop version |
 | **Stage** | IR middle-end |
 | **IR** | ✅ `Ir/Passes/SideExitDeoptimization.cs` — clones a speculative fast loop plus only the generic remainder of the failed iteration; SSA values are the state map |
 | **Verified by** | `SideExitDeoptimizationTests` |

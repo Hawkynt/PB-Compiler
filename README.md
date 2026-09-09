@@ -273,10 +273,10 @@ status column below cannot drift apart:
 | Family | ✅ implemented | 🟡 partial | ⬜ planned | total |
 |---|---:|---:|---:|---:|
 | C — target-CPU code generation | 3 | 0 | 0 | 3 |
-| O — optimization passes | 187 | 62 | 157 | 407 |
+| O — optimization passes | 193 | 65 | 149 | 407 |
 | P — lean output | 7 | 0 | 0 | 7 |
 | R — runtime speed | 4 | 0 | 0 | 4 |
-| **all** | **201** | **62** | **157** | **421** |
+| **all** | **207** | **65** | **149** | **421** |
 
 
 **One entry, one optimization.** Where a single ID used to cover a family — "peephole",
@@ -593,7 +593,7 @@ next free number rather than displacing anything.
 | 🟡 | [O0281](docs/optimizations/O0281-return-structure-reduction.md) | Return structure reduction | A `FUNCTION` returning a `TYPE` by value (or a tuple — `FUNCTION DivMod(...) AS (LONG, LONG)`) writes the whole aggregate through a struct return. |
 | 🟡 | [O0282](docs/optimizations/O0282-internal-calling-convention.md) | Internal calling-convention specialization | When the compiler owns every call site, the calling convention is an implementation detail it may choose per procedure. |
 | ⬜ | [O0283](docs/optimizations/O0283-context-sensitive-cloning.md) | Context-sensitive cloning | Interprocedural facts are joined over all callers, so one imprecise caller destroys the precision for everybody. |
-| ⬜ | [O0284](docs/optimizations/O0284-semantic-function-merging.md) | Semantic function merging | O0040 merges procedures whose bytes are identical. |
+| ✅ | [O0284](docs/optimizations/O0284-semantic-function-merging.md) | Semantic function merging | O0040 merges procedures whose bytes are identical. |
 | ✅ | [O0285](docs/optimizations/O0285-constant-data-merging.md) | Program-wide constant data merging | O0011 packs *string* literals within one compilation. |
 
 ### O — allocation and ownership
@@ -602,12 +602,12 @@ next free number rather than displacing anything.
 |---|---|---|---|
 | 🟡 | [O0286](docs/optimizations/O0286-allocation-elimination.md) | Allocation elimination | A heap allocation whose contents can live entirely in registers or a frame slot should not happen at all. |
 | ⬜ | [O0287](docs/optimizations/O0287-stack-promotion.md) | Stack promotion | A non-escaping dynamic allocation of bounded size can live in the frame instead of the heap. |
-| ⬜ | [O0288](docs/optimizations/O0288-allocation-sinking.md) | Allocation sinking | An allocation performed unconditionally but used only on a rare path should happen on that path. |
+| 🟡 | [O0288](docs/optimizations/O0288-allocation-sinking.md) | Allocation sinking | An allocation performed unconditionally but used only on a rare path should happen on that path. |
 | ⬜ | [O0289](docs/optimizations/O0289-allocation-coalescing.md) | Allocation coalescing | Several short-lived allocations with overlapping lifetimes become one block, carved up internally. |
 | 🟡 | [O0290](docs/optimizations/O0290-loop-temporary-reuse.md) | Temporary reuse across loop iterations | A temporary allocated and freed inside a loop body is allocated and freed once per iteration. |
-| ⬜ | [O0291](docs/optimizations/O0291-handle-ownership-elision.md) | Handle ownership elision | The string manager's discipline is: assigning a value duplicates it and frees the old handle; leaving scope frees it. |
-| ⬜ | [O0292](docs/optimizations/O0292-ownership-batching.md) | Ownership operation batching | Where a dup/free pair cannot be removed, it can often be moved out of a loop: acquire once before, release once after, instead of per iteration. |
-| ⬜ | [O0293](docs/optimizations/O0293-copy-on-write-elision.md) | Copy-on-write elision | A copy made only because two names might both be live is unnecessary when ownership is provably exclusive: the source is dead, or neither party ever mutates the value. |
+| ✅ | [O0291](docs/optimizations/O0291-handle-ownership-elision.md) | Handle ownership elision | The string manager's discipline is: assigning a value duplicates it and frees the old handle; leaving scope frees it. |
+| ✅ | [O0292](docs/optimizations/O0292-ownership-batching.md) | Ownership operation batching | Where a dup/free pair cannot be removed, it can often be moved out of a loop: acquire once before, release once after, instead of per iteration. |
+| 🟡 | [O0293](docs/optimizations/O0293-copy-on-write-elision.md) | Copy-on-write elision | A copy made only because two names might both be live is unnecessary when ownership is provably exclusive: the source is dead, or neither party ever mutates the value. |
 
 ### O — strings
 
@@ -621,7 +621,7 @@ next free number rather than displacing anything.
 | ✅ | [O0299](docs/optimizations/O0299-interned-literal-identity.md) | Interned literal identity comparison | The literal pool is deduplicated and packed (O0011), so two occurrences of the same literal have the same address. |
 | ✅ | [O0300](docs/optimizations/O0300-ascii-string-specialization.md) | ASCII string specialization | `UCASE$`, `LCASE$` and case-insensitive comparison have to consider the whole byte range, including the DOS code-page characters above 127. |
 | 🟡 | [O0301](docs/optimizations/O0301-encoding-conversion-elimination.md) | Encoding-conversion elimination | Back-to-back conversions that cancel out should not happen, and a value should be kept in the representation its consumers want. |
-| 🟡 | [O0302](docs/optimizations/O0302-search-algorithm-selection.md) | Search algorithm selection by pattern | `INSTR` uses one algorithm for every pattern. |
+| ✅ | [O0302](docs/optimizations/O0302-search-algorithm-selection.md) | Search algorithm selection by pattern | `INSTR` uses one algorithm for every pattern. |
 | 🟡 | [O0303](docs/optimizations/O0303-formatted-print-specialization.md) | Formatted-print specialization | `PRINT USING` and `PRINT` with mixed operands go through a general formatting engine that interprets the format at run time. |
 
 ### O — speculative optimization
@@ -630,11 +630,11 @@ next free number rather than displacing anything.
 |---|---|---|---|
 | ✅ | [O0304](docs/optimizations/O0304-guarded-specialization.md) | Guarded specialization | Check a profitable assumption once, then execute a version compiled under it:. |
 | 🟡 | [O0305](docs/optimizations/O0305-basic-block-versioning.md) | Basic-block versioning | Create specialized copies of a CFG region for different fact sets — a range, an alignment, a known value — and route execution into the right one. |
-| ⬜ | [O0306](docs/optimizations/O0306-loop-versioning.md) | Loop versioning | Keep the fully general loop, and generate a second one with no alias, bounds, alignment or overflow checks at all. |
+| 🟡 | [O0306](docs/optimizations/O0306-loop-versioning.md) | Loop versioning | Keep the fully general loop, and generate a second one with no alias, bounds, alignment or overflow checks at all. |
 | ⬜ | [O0307](docs/optimizations/O0307-speculative-devirtualization.md) | Speculative devirtualization | Where the target set of an indirect call is not provably complete, optimize for the likely target anyway and keep the indirect call as the fallback. |
-| ⬜ | [O0308](docs/optimizations/O0308-speculative-overflow-elimination.md) | Speculative overflow elimination | O0219 drops a check only when the range proof succeeds. |
+| ✅ | [O0308](docs/optimizations/O0308-speculative-overflow-elimination.md) | Speculative overflow elimination | O0219 drops a check only when the range proof succeeds. |
 | 🟡 | [O0309](docs/optimizations/O0309-speculative-narrowing.md) | Speculative integer narrowing | O0221 narrows a 32-bit operation when the lattice proves both operands fit a word. |
-| ⬜ | [O0310](docs/optimizations/O0310-side-exit-deoptimization.md) | Side exits and deoptimization | Enter optimized code under an assumption and exit to generic code the moment it fails — mid-loop, not only at the entry guard. |
+| ✅ | [O0310](docs/optimizations/O0310-side-exit-deoptimization.md) | Side exits and deoptimization | Enter optimized code under an assumption and exit to generic code the moment it fails — mid-loop, not only at the entry guard. |
 
 ### O — automatic parallelization (hosted back ends only)
 
@@ -764,7 +764,7 @@ next free number rather than displacing anything.
 | ⬜ | [O0402](docs/optimizations/O0402-layout-aware-outlining.md) | Layout-aware outlining | Outline code specifically so that the remaining hot region fits into one cache line, one page, or one segment. |
 | ⬜ | [O0403](docs/optimizations/O0403-scenario-weighted-layout.md) | Scenario-weighted layout | Optimizing for one profiling run produces a layout that is excellent for that run and arbitrary for everything else. |
 | ⬜ | [O0404](docs/optimizations/O0404-stale-profile-matching.md) | Stale profile matching | A profile is collected from one build and used by the next. |
-| 🟨 | [O0405](docs/optimizations/O0405-sample-based-reordering.md) | Sample-based binary reordering | Consume sampled execution data — a timer interrupt recording the instruction pointer, or hardware branch history where it exists. |
+| 🟡 | [O0405](docs/optimizations/O0405-sample-based-reordering.md) | Sample-based binary reordering | Consume sampled execution data — a timer interrupt recording the instruction pointer, or hardware branch history where it exists. |
 | ⬜ | [O0406](docs/optimizations/O0406-layout-assertion-battery.md) | Executable-layout assertion battery | ## What it needs. |
 
 ### P — lean output: pay only for what you use

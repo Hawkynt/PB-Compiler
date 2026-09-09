@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟢 Implemented — whole-module IR plus ABI-preserving native x86 entry thunks under `$OPTIMIZE SIZE`, including compatible varying call targets |
+| **Status** | ✅ Implemented — whole-module IR plus ABI-preserving native x86 entry thunks under `$OPTIMIZE SIZE`, including compatible varying call targets |
 | **Stage** | Whole-module IR under SIZE; native x86 routing after the normal IR cleanup pipeline |
 | **IR** | ✅ `PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs` and `SemanticFunctionMerging.Thunks.cs` |
 | **Native x86** | ✅ `PowerBasic.Compiler/CodeGen/CodeGenerator.SemanticMerge.cs` — private merged helpers behind source-ABI entry thunks |

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Partial — straight-line SSA string ownership sharing implemented; path-sensitive/runtime COW remains planned |
+| **Status** | 🟡 Partial — straight-line SSA string ownership sharing implemented; path-sensitive/runtime COW remains planned |
 | **Stage** | IR middle end |
 | **Gate** | Ordinary optimizer |
 | **Source** | `Ir/Passes/StringCopyOnWriteElision.cs`, registered as `strcow` after `mem2reg2` |

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Partial — final-address block attribution, sampled block weights, edge-flow inference and relink consumption implemented; DOS sampler/CLI producer remains |
+| **Status** | 🟡 Partial — final-address block attribution, sampled block weights, edge-flow inference and relink consumption implemented; DOS sampler/CLI producer remains |
 | **Stage** | Post-link |
 | **Source** | `Emit/PostLinkLayout.cs` (`PostLinkSampleAttribution`, `PostLinkProfile`, `PostLinkLayoutPlanner`) |
 | **Related** | [O0276](O0276-post-link-optimization.md), [O0268](O0268-profile-collection.md), [O0404](O0404-stale-profile-matching.md) |

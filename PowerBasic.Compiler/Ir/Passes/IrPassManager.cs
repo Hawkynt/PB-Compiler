@@ -129,19 +129,15 @@ public sealed class IrPassManager {
   /// </list>
   /// <para>
   /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
-  /// speculative overflow versioning, ownership batching, unrolling, sccp, correlate, pointer checks, integer/float range folds, speculative narrowing,
-  /// overflow coalescing, sroa, aggregate-sroa, mem2reg2, strcow, ownership elision, reassociate, polynomial recovery,
-  /// equality saturation, verified arithmetic lowering, demote, ivsimplify, phicong, gvn, memopt, dse,
-  /// interchange, licm, reciprocal reuse, unswitch, allocation sinking, closed-form, deadloop, ifconv, tailrec and the
-  /// string/global module passes. So are the steps the caller runs around the pipeline - <c>Inliner</c>,
-  /// <c>SwitchFormation</c> and <c>MemoryRoutineSpecialization</c>, the last of which is not in
+  /// prefix-scan formation, speculative overflow versioning, ownership batching, unrolling, sccp,
+  /// correlate, block versioning, loop versioning, pointer checks, integer/float range folds,
+  /// speculative narrowing, overflow coalescing, sroa, aggregate-sroa, mem2reg2, strcow,
+  /// ownership elision, reassociate, polynomial recovery, equality saturation, verified arithmetic
+  /// lowering, demote, ivsimplify, phicong, gvn, memopt, dse, interchange, licm, reciprocal reuse,
+  /// unswitch, allocation sinking, closed-form, deadloop, ifconv, tailrec, switch formation and the
+  /// string/global module passes. Caller-only steps such as <c>Inliner</c> and
+  /// <c>MemoryRoutineSpecialization</c> are off as well; the latter is not in
   /// <see cref="Standard"/> at all because it wants the final shape (see CodeGenerator.Backend).
-  /// unrolling, sccp, correlate, block versioning, pointer checks, integer/float range folds, overflow
-  /// coalescing, sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery, equality saturation,
-  /// verified arithmetic lowering, demote, phicong, gvn, memopt, dse, interchange, licm,
-  /// reciprocal reuse, unswitch, loop versioning, closed-form, deadloop, ifconv, tailrec, switch
-  /// formation and the string/global module passes. Caller-only late specialization such as
-  /// <c>MemoryRoutineSpecialization</c> is off as well (see CodeGenerator.Backend).
   /// </para>
   /// </summary>
   public static IrPassManager Legalize() => new IrPassManager()

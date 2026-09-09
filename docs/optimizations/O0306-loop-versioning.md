@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Partial — guarded bounds-check versioning for canonical signed unit-step loops |
+| **Status** | 🟡 Partial — guarded bounds-check versioning for canonical signed unit-step loops |
 | **Stage** | Mid-end |
 | **IR** | ✅ `Ir/Passes/LoopVersioning.cs`, in `IrPassManager.Standard()` after LICM/unswitch and before DCE |
 | **Verified by** | `LoopVersioningTests`, `IrPassObservableEquivalenceTests` |
