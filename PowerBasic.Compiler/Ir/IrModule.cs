@@ -58,6 +58,7 @@ public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialec
 
   public IrGlobalVariable AddGlobal(IrGlobalVariable global) {
     this._globals.Add(global);
+    this.ReserveStringOrdinal(global.Name);
     return global;
   }
 
@@ -78,7 +79,7 @@ public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialec
     if (this._internedStrings.TryGetValue(key, out var existing))
       return existing;
     var global = new IrGlobalVariable($".str{this._stringOrdinal++}", IrType.I8) { Bytes = bytes, IsZeroInitialized = false };
-    this._globals.Add(global);
+    this.AddGlobal(global);
     this._internedStrings[key] = global;
     return global;
   }
@@ -88,4 +89,20 @@ public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialec
 
   /// <summary>Finds a global variable by name, or null.</summary>
   public IrGlobalVariable? FindGlobal(string name) => this._globals.FirstOrDefault(g => g.Name == name);
+
+  /// <summary>
+  /// Imported/cloned IR may already contain generated <c>.strN</c> globals. Keep the allocator beyond
+  /// the largest imported ordinal so a later string pass cannot mint a duplicate symbol name.
+  /// Deliberately do not add imported bytes to <see cref="_internedStrings"/>: an arbitrary global
+  /// named like a literal is not proof that its storage is immutable and safe to coalesce.
+  /// </summary>
+  private void ReserveStringOrdinal(string globalName) {
+    const string prefix = ".str";
+    if (!globalName.StartsWith(prefix, StringComparison.Ordinal)
+        || !int.TryParse(globalName.AsSpan(prefix.Length), out var ordinal)
+        || ordinal < 0
+        || ordinal == int.MaxValue)
+      return;
+    this._stringOrdinal = Math.Max(this._stringOrdinal, ordinal + 1);
+  }
 }
