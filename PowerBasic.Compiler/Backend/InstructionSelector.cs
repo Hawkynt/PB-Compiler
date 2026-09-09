@@ -148,8 +148,14 @@ public sealed partial class InstructionSelector {
         continue;
       }
       if (IsWide(arg.Type)) {
-        // a 32-bit argument arrives as two words: its low half at the parameter's own offset and its
-        // high half at +2, each into its own register
+        if (this.UsesNativeDwordRegisters) {
+          var native = this.FreshVreg(arg.Type);
+          this._vregs[arg] = native;
+          this._function.ArgumentLoads.Add((native.VirtualId, index, 0));
+          continue;
+        }
+        // Baseline targets keep the ABI's two stack words in two virtual registers. An optimized 386
+        // SPEED target above reads the same four bytes whole without changing the public stack ABI.
         var (lo, hi) = this.FreshPair(arg);
         this._function.ArgumentLoads.Add((lo.Reg.VirtualId, index, 0));
         this._function.ArgumentLoads.Add((hi.Reg.VirtualId, index, 2));
@@ -252,9 +258,9 @@ public sealed partial class InstructionSelector {
 
   /// <summary>
   /// Finds the loop-carried LONG phis whose complete recurrence can stay in native dwords. The set is
-  /// reduced to a fixed point: a phi remains only when every incoming value is a constant, another
-  /// remaining phi, or an arithmetic expression composed solely from those values. A runtime result,
-  /// load, argument, cast, or unsupported operation keeps that whole recurrence on word pairs.
+  /// reduced to a fixed point: a phi remains only when every incoming value is a constant, a 32-bit
+  /// argument, another remaining phi, or an arithmetic expression composed solely from those values.
+  /// Runtime results, loads, casts, and unsupported operations keep that whole recurrence on word pairs.
   /// </summary>
   private static HashSet<IrPhi> NativeDwordPhis(IrFunction function, IrDominators dominators) {
     var candidates = new HashSet<IrPhi>(ReferenceEqualityComparer.Instance);
@@ -266,6 +272,7 @@ public sealed partial class InstructionSelector {
 
     bool IsNativeExpression(IrValue value) => value switch {
       IrConstantInt => true,
+      IrArgument argument when IsWide(argument.Type) => true,
       IrPhi phi => candidates.Contains(phi),
       IrBinary binary when binary.Op is IrBinaryOp.Add or IrBinaryOp.Sub
           or IrBinaryOp.And or IrBinaryOp.Or or IrBinaryOp.Xor
