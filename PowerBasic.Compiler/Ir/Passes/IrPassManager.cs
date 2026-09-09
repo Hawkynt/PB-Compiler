@@ -112,13 +112,19 @@ public sealed class IrPassManager {
   /// </list>
   /// <para>
   /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
-  /// prefix-scan formation, unrolling, sccp, correlate, block versioning, pointer checks,
-  /// integer/float range folds, overflow coalescing, sroa, aggregate-sroa, mem2reg2, reassociate,
-  /// polynomial recovery, equality saturation, verified arithmetic lowering, demote, phicong, gvn,
-  /// memopt, dse, interchange, licm, reciprocal reuse, unswitch, closed-form, deadloop, ifconv,
-  /// tailrec, switch formation and the string/global module passes. Caller-only steps such as
-  /// <c>Inliner</c> and <c>MemoryRoutineSpecialization</c> are off as well; the latter is not in
+  /// unrolling, sccp, correlate, pointer checks, integer/float range folds, speculative narrowing,
+  /// overflow coalescing, sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery,
+  /// equality saturation, verified arithmetic lowering, demote, phicong, gvn, memopt, dse,
+  /// interchange, licm, reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the
+  /// string/global module passes. So are the steps the caller runs around the pipeline - <c>Inliner</c>,
+  /// <c>SwitchFormation</c> and <c>MemoryRoutineSpecialization</c>, the last of which is not in
   /// <see cref="Standard"/> at all because it wants the final shape (see CodeGenerator.Backend).
+  /// unrolling, sccp, correlate, block versioning, pointer checks, integer/float range folds, overflow
+  /// coalescing, sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery, equality saturation,
+  /// verified arithmetic lowering, demote, phicong, gvn, memopt, dse, interchange, licm,
+  /// reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec, switch formation and the
+  /// string/global module passes. Caller-only late specialization such as
+  /// <c>MemoryRoutineSpecialization</c> is off as well (see CodeGenerator.Backend).
   /// </para>
   /// </summary>
   public static IrPassManager Legalize() => new IrPassManager()
@@ -131,7 +137,6 @@ public sealed class IrPassManager {
   /// The default optimization pipeline: promote memory to registers, then iterate
   /// simplification, conditional constant propagation, value numbering and dead-code
   /// elimination to a fixpoint.
-  ///
   /// <para>
   /// <paramref name="optimizeForSpeed"/> reflects <c>$OPTIMIZE SPEED</c>. SPEED may spend code size to
   /// erase abstraction overhead: it runs demanded-bit cleanup, admits larger callees to the inliner,
@@ -199,6 +204,9 @@ public sealed class IrPassManager {
     // What is left after those two is the class this answers: a loop counter, an IF-joined variable,
     // a masked or divided index - none of which is a constant, and all of which are bounded.
     .Add("rangefold", RangeCheckElim.Run)
+    // O0309 consumes the same branch-refined integer ranges, but may duplicate a loop to amortize one
+    // invariant guard across repeated word-width operations. That code-growth trade is SPEED-only.
+    .AddWhen(optimizeForSpeed, "specnarrow", SpeculativeIntegerNarrowing.Run)
     // O0352 is the NaN-aware adjunct to the integer lattice. It deliberately handles only floats
     // whose provenance proves they are ordinary numbers (not an arbitrary float that could be NaN).
     .Add("conversion-rangefold", ConversionRangeCheckElim.Run)
