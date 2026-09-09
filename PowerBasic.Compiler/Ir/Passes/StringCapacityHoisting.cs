@@ -15,12 +15,12 @@ namespace PowerBasic.Compiler.Ir.Passes;
 ///
 /// <para>
 /// The matcher is intentionally strict. The FOR-shaped loop must be a single-entry straight-line
-/// natural loop with a compile-time trip count, and its body may have no observable operation other
-/// than the one append. The string phi may not be read in the loop except by that append. Therefore
-/// moving the construction to the preheader cannot make a partially built value visible, skip an
-/// intervening side effect, or change an early-exit result. A variable piece is accepted only when its
-/// SSA value is loop-invariant; it is duplicated once before <c>rt_str_repeat</c> so the variable's
-/// owner is not consumed.
+/// natural loop with a compile-time, machine-width-correct trip count, and its entire region may have
+/// no observable operation other than the one append. The string phi may not be read anywhere in the
+/// loop except by that append. Therefore moving the construction to the preheader cannot make a
+/// partially built value visible, skip an intervening side effect, or change an early-exit result. A
+/// variable piece is accepted only when its SSA value is loop-invariant; it is duplicated once before
+/// <c>rt_str_repeat</c> so the variable's owner is not consumed.
 /// </para>
 /// </summary>
 public static class StringCapacityHoisting {
@@ -48,50 +48,45 @@ public static class StringCapacityHoisting {
     return changed;
   }
 
-  private sealed record Loop(
-    IrBasicBlock Header,
-    IReadOnlyList<IrBasicBlock> Body,
-    IrBasicBlock Latch,
-    IrBasicBlock Preheader,
-    int Trips,
-    IrCall Append,
-    IrPhi StringPhi);
+  private sealed record Loop(CountedLoop Counted, IrCall Append, IrPhi StringPhi);
 
   private static Loop? Match(IrBasicBlock header) {
     if (header.Parent is not { } function
-        || header.Terminator is not IrCondBr { Condition: IrCmp test } branch)
+        || header.Terminator is not IrCondBr branch
+        || CountedLoop.Match(function, header) is not { } counted
+        || counted.Trips <= 1
+        || counted.Trips > int.MaxValue)
       return null;
 
+    if (counted.Preheader.Terminator is not IrBr preheaderBranch
+        || !ReferenceEquals(preheaderBranch.Target, header))
+      return null;
+
+    // O0353 deliberately handles only one straight-line path from the header back to itself. Reuse
+    // CountedLoop for the CFG/trip-count proof, then make the stricter builder topology explicit here.
     var body = new List<IrBasicBlock>();
-    IrBasicBlock? latch = null;
-    for (var at = branch.IfTrue; latch is null;) {
+    for (var at = branch.IfTrue;;) {
       if (ReferenceEquals(at, header) || body.Contains(at))
         return null;
       body.Add(at);
       if (at.Terminator is not IrBr next)
         return null;
       if (ReferenceEquals(next.Target, header))
-        latch = at;
-      else
-        at = next.Target;
+        break;
+      at = next.Target;
     }
-
-    var predecessors = header.Predecessors.ToList();
-    if (predecessors.Count != 2)
-      return null;
-    var preheader = predecessors.SingleOrDefault(p => !ReferenceEquals(p, latch));
-    if (preheader?.Terminator is not IrBr preheaderBranch || !ReferenceEquals(preheaderBranch.Target, header))
+    if (!ReferenceEquals(body[^1], counted.Latch)
+        || !counted.Region.SetEquals(body.Append(header)))
       return null;
 
-    if (test.Lhs is not IrPhi counter || test.Rhs is not IrConstantInt limit)
-      return null;
-    if (counter.IncomingFrom(preheader) is not IrConstantInt initial)
-      return null;
-    if (counter.IncomingFrom(latch) is not IrBinary { Op: IrBinaryOp.Add } nextCounter
-        || !ReferenceEquals(nextCounter.Lhs, counter) || nextCounter.Rhs is not IrConstantInt step)
-      return null;
-    if (TripCount(initial.Value, step.Value, limit.Value, test.Pred) is not { } trips || trips <= 1)
-      return null;
+    // CountedLoop identifies the natural-loop region but does not make this pass's stronger
+    // single-entry promise for non-header blocks. Keep that explicit: the preheader-built value must
+    // dominate every route that can reach the append.
+    foreach (var block in function.Blocks)
+      if (!counted.Region.Contains(block))
+        foreach (var successor in block.Successors)
+          if (counted.Region.Contains(successor) && !ReferenceEquals(successor, header))
+            return null;
 
     var appends = body.SelectMany(b => b.Instructions).OfType<IrCall>()
       .Where(c => c.Callee is IrFunction { Name: _APPEND_LIT or _APPEND_VAR })
@@ -101,22 +96,27 @@ public static class StringCapacityHoisting {
     var append = appends[0];
     if (append.GetOperand(1) is not IrPhi stringPhi
         || !ReferenceEquals(stringPhi.Parent, header)
-        || !ReferenceEquals(stringPhi.IncomingFrom(latch), append)
-        || stringPhi.IncomingFrom(preheader) is null)
+        || !ReferenceEquals(stringPhi.IncomingFrom(counted.Latch), append)
+        || stringPhi.IncomingFrom(counted.Preheader) is null)
       return null;
 
-    var bodySet = new HashSet<IrBasicBlock>(body, ReferenceEqualityComparer.Instance);
-    if (stringPhi.Users.Any(user => user.Parent is { } where && bodySet.Contains(where) && !ReferenceEquals(user, append)))
+    // The prebuilt handle becomes the phi's value from the first header visit onwards. Any other use
+    // of the old partially-built value anywhere in the loop would therefore observe the rewrite.
+    if (stringPhi.Users.Any(user => user.Parent is { } where
+        && counted.Region.Contains(where)
+        && !ReferenceEquals(user, append)))
       return null;
 
-    // The loop is moved in TIME, not merely rewritten in place. Anything observable between its
-    // iterations would make that movement visible, so only arithmetic/address plumbing is admitted.
-    foreach (var instruction in body.SelectMany(b => b.Instructions)) {
-      if (ReferenceEquals(instruction, append) || instruction is IrBr or IrPhi)
+    // The build is moved in TIME, not merely rewritten in place. Observable or trapping work in the
+    // header is just as relevant as work in the body, so validate the complete natural-loop region.
+    foreach (var instruction in counted.Region.SelectMany(b => b.Instructions)) {
+      if (ReferenceEquals(instruction, append) || instruction is IrPhi || instruction.IsTerminator)
         continue;
       if (instruction is not (IrBinary or IrCmp or IrCast or IrGep or IrSelect))
         return null;
-      if (instruction is IrBinary { Op: IrBinaryOp.SDiv or IrBinaryOp.UDiv or IrBinaryOp.SRem or IrBinaryOp.URem or IrBinaryOp.FDiv })
+      if (instruction is IrBinary {
+          Op: IrBinaryOp.SDiv or IrBinaryOp.UDiv or IrBinaryOp.SRem or IrBinaryOp.URem or IrBinaryOp.FDiv,
+        })
         return null;
     }
 
@@ -124,44 +124,37 @@ public static class StringCapacityHoisting {
       if (append.ArgCount != 3 || append.GetOperand(3) is not IrConstantInt { Value: > 0 })
         return null;
     } else {
-      if (append.ArgCount != 2 || !IsLoopInvariant(append.GetOperand(2), header, bodySet))
+      if (append.ArgCount != 2 || !IsLoopInvariant(append.GetOperand(2), counted.Region))
         return null;
       if (ReferenceEquals(append.GetOperand(2), stringPhi))
         return null;
     }
 
-    // Nothing may enter the straight-line body from outside its header.
-    foreach (var block in function.Blocks)
-      if (!bodySet.Contains(block) && !ReferenceEquals(block, header))
-        foreach (var successor in block.Successors)
-          if (bodySet.Contains(successor))
-            return null;
-
-    return new(header, body, latch, preheader, trips, append, stringPhi);
+    return new(counted, append, stringPhi);
   }
 
   private static bool TryRewrite(IrModule module, Loop loop) {
-    var initial = loop.StringPhi.IncomingFrom(loop.Preheader)!;
-    var anchor = loop.Preheader.Terminator!;
+    var initial = loop.StringPhi.IncomingFrom(loop.Counted.Preheader)!;
+    var anchor = loop.Counted.Preheader.Terminator!;
     IrValue piece;
 
     if (loop.Append.Callee is IrFunction { Name: _APPEND_LIT }) {
       var make = Declare(module, _CONST, IrType.Ptr, IrType.Ptr, IrType.I32);
-      piece = loop.Preheader.InsertBefore(new IrCall(IrType.Ptr, make,
+      piece = loop.Counted.Preheader.InsertBefore(new IrCall(IrType.Ptr, make,
         [loop.Append.GetOperand(2), loop.Append.GetOperand(3)]), anchor);
     } else {
       var dup = Declare(module, _DUP, IrType.Ptr, IrType.Ptr);
-      piece = loop.Preheader.InsertBefore(new IrCall(IrType.Ptr, dup, [loop.Append.GetOperand(2)]), anchor);
+      piece = loop.Counted.Preheader.InsertBefore(new IrCall(IrType.Ptr, dup, [loop.Append.GetOperand(2)]), anchor);
     }
 
     var repeat = Declare(module, _REPEAT, IrType.Ptr, IrType.I32, IrType.Ptr);
-    var suffix = loop.Preheader.InsertBefore(new IrCall(IrType.Ptr, repeat,
-      [IrBuilder.ConstI32(loop.Trips), piece]), anchor);
+    var suffix = loop.Counted.Preheader.InsertBefore(new IrCall(IrType.Ptr, repeat,
+      [IrBuilder.ConstI32((int)loop.Counted.Trips), piece]), anchor);
     var concat = Declare(module, _CONCAT, IrType.Ptr, IrType.Ptr, IrType.Ptr);
-    var built = loop.Preheader.InsertBefore(new IrCall(IrType.Ptr, concat, [initial, suffix]), anchor);
+    var built = loop.Counted.Preheader.InsertBefore(new IrCall(IrType.Ptr, concat, [initial, suffix]), anchor);
 
     for (var i = 0; i < loop.StringPhi.IncomingBlocks.Count; ++i)
-      if (ReferenceEquals(loop.StringPhi.IncomingBlocks[i], loop.Preheader)) {
+      if (ReferenceEquals(loop.StringPhi.IncomingBlocks[i], loop.Counted.Preheader)) {
         loop.StringPhi.SetOperand(i, built);
         break;
       }
@@ -173,39 +166,10 @@ public static class StringCapacityHoisting {
     return true;
   }
 
-  private static bool IsLoopInvariant(IrValue value, IrBasicBlock header, HashSet<IrBasicBlock> body)
+  private static bool IsLoopInvariant(IrValue value, HashSet<IrBasicBlock> region)
     => value is not IrInstruction instruction
        || instruction.Parent is not { } block
-       || (!ReferenceEquals(block, header) && !body.Contains(block));
-
-  private static int? TripCount(long initial, long step, long limit, IrCmpPred predicate) {
-    if (step == 0)
-      return null;
-    Int128 count;
-    switch (predicate) {
-      case IrCmpPred.Sle when step > 0:
-        if (initial > limit) return 0;
-        count = ((Int128)limit - initial) / step + 1;
-        break;
-      case IrCmpPred.Slt when step > 0:
-        if (initial >= limit) return 0;
-        count = ((Int128)limit - initial - 1) / step + 1;
-        break;
-      case IrCmpPred.Sge when step < 0:
-        if (initial < limit) return 0;
-        count = ((Int128)initial - limit) / -(Int128)step + 1;
-        break;
-      case IrCmpPred.Sgt when step < 0:
-        if (initial <= limit) return 0;
-        count = ((Int128)initial - limit - 1) / -(Int128)step + 1;
-        break;
-      default:
-        return null;
-    }
-    // Operators, not a relational pattern: a pattern needs its constants to already be Int128,
-    // and neither 0 nor int.MaxValue is one, which is CS9135.
-    return count > 0 && count <= int.MaxValue ? (int)count : null;
-  }
+       || !region.Contains(block);
 
   private static IrFunction Declare(IrModule module, string name, IrType returnType, params IrType[] parameters)
     => module.FindFunction(name)
