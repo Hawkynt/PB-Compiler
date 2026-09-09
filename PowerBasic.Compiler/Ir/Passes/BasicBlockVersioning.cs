@@ -173,7 +173,7 @@ public static class BasicBlockVersioning {
       IrBasicBlock guard,
       IReadOnlyList<IrBasicBlock> region,
       IrRangeAnalysis ranges) {
-    var inside = region.ToHashSet(ReferenceEqualityComparer.Instance);
+    var inside = BlockSet(region);
     var conditionUsedAsGuard = branch.Condition.Users.Any(user =>
       user.Parent is { } block && inside.Contains(block) && user is IrCondBr or IrSelect);
 
@@ -194,7 +194,7 @@ public static class BasicBlockVersioning {
       user.Parent is { } block && region.Contains(block) && user is IrCondBr or IrSelect);
 
   private static List<IrInstruction> DirectEscapes(IReadOnlyList<IrBasicBlock> region) {
-    var inside = region.ToHashSet(ReferenceEqualityComparer.Instance);
+    var inside = BlockSet(region);
     return region
       .SelectMany(block => block.Instructions)
       .Where(value => !value.Type.IsVoid && value.Users.Any(user =>
@@ -224,7 +224,7 @@ public static class BasicBlockVersioning {
       IReadOnlyList<IrBasicBlock> region,
       IReadOnlyList<IrInstruction> escaping,
       IrDominators dominators) {
-    var inside = region.ToHashSet(ReferenceEqualityComparer.Instance);
+    var inside = BlockSet(region);
     var tail = region[^1];
     if (tail.Terminator is not IrBr branch || inside.Contains(branch.Target))
       return null;
@@ -251,7 +251,7 @@ public static class BasicBlockVersioning {
   }
 
   private static bool HasParallelBoundaryEdges(IReadOnlyList<IrBasicBlock> region) {
-    var inside = region.ToHashSet(ReferenceEqualityComparer.Instance);
+    var inside = BlockSet(region);
     foreach (var block in region) {
       var seen = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance);
       foreach (var successor in block.Successors)
@@ -260,6 +260,9 @@ public static class BasicBlockVersioning {
     }
     return false;
   }
+
+  private static HashSet<IrBasicBlock> BlockSet(IEnumerable<IrBasicBlock> blocks)
+    => new(blocks, ReferenceEqualityComparer.Instance);
 
   private static IEnumerable<(IrBasicBlock Join, IncomingEdge Edge)> JoinCandidates(
       IrBasicBlock guard, IrBasicBlock target) {
@@ -520,7 +523,7 @@ public static class BasicBlockVersioning {
   /// perform it because the successor lies outside the cloned set.
   /// </summary>
   private static void ExpandBoundaryPhis(IReadOnlyList<IrBasicBlock> region, VersionCopy copy) {
-    var inside = region.ToHashSet(ReferenceEqualityComparer.Instance);
+    var inside = BlockSet(region);
     foreach (var source in region)
       foreach (var successor in source.Successors)
         if (!inside.Contains(successor)) {
@@ -536,7 +539,7 @@ public static class BasicBlockVersioning {
   private static void MergeEscapingValues(Candidate match, IReadOnlyList<VersionCopy> copies, bool keepOriginal) {
     var exit = match.MergeExit
       ?? throw new InvalidOperationException("prechecked escaping SSA values have no merge exit");
-    var inside = match.Region.ToHashSet(ReferenceEqualityComparer.Instance);
+    var inside = BlockSet(match.Region);
 
     foreach (var original in match.EscapingValues) {
       var merge = exit.AppendPhi(new IrPhi(original.Type) {
@@ -561,7 +564,7 @@ public static class BasicBlockVersioning {
   }
 
   private static void RemoveOriginalBoundaryPhiInputs(IReadOnlyList<IrBasicBlock> region) {
-    var inside = region.ToHashSet(ReferenceEqualityComparer.Instance);
+    var inside = BlockSet(region);
     foreach (var source in region)
       foreach (var successor in source.Successors)
         if (!inside.Contains(successor))
