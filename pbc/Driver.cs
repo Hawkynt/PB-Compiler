@@ -167,6 +167,7 @@ public static class Driver {
           stderr.WriteLine($"pbc: {dumpStage}: {declined ?? "unsupported construct"} - outside the IR lowering's subset (see docs/IR.md)");
           return 1;
         }
+        module.AsciiOnly = model.AsciiOnly;
 
         // The hosted backends must make the same optimizer-objective decision as CodeGenerator. The
         // CLI seeds the defaults, then the source's single $OPTIMIZE directive wins exactly as it does

@@ -658,6 +658,16 @@ public sealed partial class Parser {
       if (option.Text.Equals("SIGNED", StringComparison.OrdinalIgnoreCase)
           || option.Text.Equals("GOSUB", StringComparison.OrdinalIgnoreCase))
         return;
+      // ASCII is a PB36-only promise that all string bytes stay in the 7-bit repertoire. It is an
+      // optimization contract, not a run-time check: violating it makes the specialized result
+      // unspecified instead of paying a high-bit validation walk before every string operation.
+      if (option.Text.Equals("ASCII", StringComparison.OrdinalIgnoreCase)) {
+        if (!this._dialect.IsPbAtLeast(Dialect.Pb36))
+          throw new ParserException(
+            $"$OPTION ASCII requires PowerBASIC 3.6 (current dialect: {this._dialect.DisplayName()})",
+            command.Position);
+        return;
+      }
       // $OPTION itself is Bob Zale's and PBC 3.0 and 3.5 take SIGNED, GOSUB and CNTLBREAK - but not
       // VIDEO, which they answer "Syntax error". Only the one argument is gated.
       if (option.Text.Equals("VIDEO", StringComparison.OrdinalIgnoreCase)) {
@@ -670,7 +680,7 @@ public sealed partial class Parser {
         && (mode.Text.Equals("ON", StringComparison.OrdinalIgnoreCase)
           || mode.Text.Equals("OFF", StringComparison.OrdinalIgnoreCase)))
       return;
-    throw new ParserException("$OPTION requires SIGNED, GOSUB, VIDEO, or CNTLBREAK ON|OFF", command.Position);
+    throw new ParserException("$OPTION requires SIGNED, GOSUB, ASCII, VIDEO, or CNTLBREAK ON|OFF", command.Position);
   }
 
   private static void RequireOneOf(Token command, IReadOnlyList<Token> arguments, params string[] choices) {
