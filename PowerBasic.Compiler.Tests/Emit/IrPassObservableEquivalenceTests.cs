@@ -50,6 +50,7 @@ public sealed class IrPassObservableEquivalenceTests {
 
   /// <summary>The interprocedural passes, which need the whole module rather than one function.</summary>
   private static readonly (string Name, Func<IrModule, int> Run)[] _modulePasses = [
+    ("devirt", WholeProgramDevirtualization.Run),
     ("ipconstprop", IpConstantProp.Run),
     ("readonly-globals", ReadOnlyGlobals.Run),
     ("localize-globals", LocalizeGlobals.Run),
