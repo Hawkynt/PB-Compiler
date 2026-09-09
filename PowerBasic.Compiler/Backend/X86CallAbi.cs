@@ -12,6 +12,9 @@ public enum X86StackCleanup { Caller, Callee }
 /// <summary>The return-address width used by a 16-bit x86 call.</summary>
 public enum X86CallDistance { Near, Far }
 
+/// <summary>The BP-relative incoming-parameter layout of a stack-only x86-16 function definition.</summary>
+public readonly record struct X86DefinitionStackLayout(int[] ParameterOffsets, int ParameterBytes);
+
 /// <summary>
 /// The concrete x86-16 rules selected from a source-level calling-convention identity. Register
 /// lists describe the compiler's existing DOS convention in argument order; remaining arguments
@@ -52,5 +55,60 @@ public sealed record X86CallAbi(
     IrCallConvention.Fastcall => _FASTCALL,
     IrCallConvention.Watcall => _WATCALL,
     _ => throw new ArgumentOutOfRangeException(nameof(convention), convention, null),
+  };
+
+  /// <summary>
+  /// Derives the complete incoming stack layout of an IR function definition. This is deliberately
+  /// definition-side: generated functions have no <c>ProcedureSymbol</c>, but their IR signature and
+  /// <see cref="IrFunction.Convention"/> are sufficient for every stack-only ABI the routed backend
+  /// supports. Register conventions still decline until the prologue has an explicit register spill
+  /// plan rather than pretending their arguments live at positive BP offsets.
+  /// </summary>
+  public static bool TryDefinitionStackLayout(IrFunction function,
+      out X86DefinitionStackLayout layout, out string? declineReason) {
+    ArgumentNullException.ThrowIfNull(function);
+    layout = default;
+    declineReason = null;
+
+    var abi = For(function.Convention);
+    if (abi.Distance != X86CallDistance.Near) {
+      declineReason = $"far definition ABI is not supported ({function.Convention})";
+      return false;
+    }
+    if (abi.ArgumentRegisters.Count > 0) {
+      declineReason = $"register definition ABI is not supported ({function.Convention})";
+      return false;
+    }
+
+    var sizes = new int[function.Parameters.Count];
+    for (var i = 0; i < sizes.Length; ++i)
+      if (StackSlotSize(function.Parameters[i].Type) is not { } size) {
+        declineReason = $"parameter {i} has no routed x86-16 ABI slot ({function.Parameters[i].Type})";
+        return false;
+      } else
+        sizes[i] = size;
+
+    var offsets = new int[sizes.Length];
+    var offset = 4;
+    IEnumerable<int> order = abi.StackArgumentOrder == X86StackArgumentOrder.RightToLeft
+      ? Enumerable.Range(0, sizes.Length)
+      : Enumerable.Range(0, sizes.Length).Reverse();
+    foreach (var index in order) {
+      offsets[index] = offset;
+      offset += sizes[index];
+    }
+
+    layout = new X86DefinitionStackLayout(offsets, offset - 4);
+    return true;
+  }
+
+  /// <summary>Bytes one IR argument occupies in the routed 16-bit stack ABI, or null when unsupported.</summary>
+  private static int? StackSlotSize(IrType type) => type switch {
+    { IsPointer: true, AddressSpace: 0 } => 2,
+    { IsInteger: true, Bits: 16 } => 2,
+    { IsInteger: true, Bits: 32 } => 4,
+    { IsIeeeFloat: true, Bits: 32 } => 4,
+    { IsIeeeFloat: true, Bits: 64 } => 8,
+    _ => null,
   };
 }

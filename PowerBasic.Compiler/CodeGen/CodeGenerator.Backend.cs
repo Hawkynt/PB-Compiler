@@ -249,6 +249,11 @@ public sealed partial class CodeGenerator {
       if (!f.IsDeclaration)
         byName[f.Name] = f;
 
+    // Middle-end generated definitions have no ProcedureSymbol. Select/allocate them from their IR
+    // signature and definition ABI now; source/generated call-graph pruning below decides whether the
+    // provisional bodies can actually coexist with the direct fallback.
+    this.PrepareBackendGenerated(module);
+
     var candidates = new List<(ProcedureSymbol Proc, IrFunction Fn, MFunction Machine)>();
     foreach (var proc in model.ProcedureList) {
       // The filter admits a SHAPE the ABI can express; whether the body can be compiled at all is the
@@ -304,8 +309,11 @@ public sealed partial class CodeGenerator {
     // Stack-only conventions are represented on IrCall and selected from X86CallAbi. SPEED
     // optimization can still convert a directly-emitted procedure through OptRegParm after this set
     // is known, so an unrouted local callee must remain one of the direct-compatible conventions.
-    // Dropping one can invalidate its callers, so this iterates.
+    // Generated definitions participate in the exact same reachability set: if a source caller was
+    // rebound to an O0283 clone, that clone is now a real private ABI partner rather than a stranded
+    // name which forces the caller back to the direct emitter.
     var routable = candidates.Select(c => c.Proc.Name).ToHashSet(System.StringComparer.OrdinalIgnoreCase);
+    routable.UnionWith(this.BackendGeneratedNames);
     for (var changed = true; changed;) {
       changed = false;
       for (var i = candidates.Count - 1; i >= 0; --i) {
@@ -332,18 +340,20 @@ public sealed partial class CodeGenerator {
       this._backendProcs[proc] = (mfn, alloc, this.Optimize && FrameElision.IsCandidate(irFn));
     }
 
-    // an allocation failure can strand a caller whose callee is no longer routed - re-check
+    // Allocation can strand either side of a source/generated call edge. Iterate both sets together:
+    // first drop source callers whose callee has gone, then drop generated definitions whose original
+    // source definition or defined callee did not survive. The next round catches the reverse edge.
     for (var changed = true; changed;) {
       changed = false;
       foreach (var (proc, fn, _) in candidates)
         if (this._backendProcs.ContainsKey(proc)
             && CalleeNames(fn).FirstOrDefault(name =>
-              !this._backendProcs.Keys.Any(p => p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase))
-              && !this.CanCallDirectCallee(name)) is { } stranded) {
+              !this.IsBackendFunctionRouted(name) && !this.CanCallDirectCallee(name)) is { } stranded) {
           this._backendDeclines.Add((proc.Name, $"routing: calls '{stranded}', which is not routed"));
           this._backendProcs.Remove(proc);
           changed = true;
         }
+      changed |= this.PruneBackendGenerated(module);
     }
 
     return this._backendProcs;
@@ -383,6 +393,7 @@ public sealed partial class CodeGenerator {
     this._backendDataOwnershipDenied |= dataSplit;
     this._backendDynArrayOwnershipDenied |= dynSplit;
     this._backendProcs = null;
+    this.ResetBackendGenerated();
     this._backendModule = null;
     this._backendMain = null;
     this._backendDeclines.Clear();
@@ -419,7 +430,7 @@ public sealed partial class CodeGenerator {
 
   private (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)? RouteMain() {
     this._backendMainKnown = true;
-    var routed = this.BackendProcs();               // also lowers the module and fills _backendModule
+    _ = this.BackendProcs();                         // also lowers the module and fills _backendModule
     // Error handling used to disqualify the module body outright. It no longer does: the selector
     // expands the ON ERROR intrinsics inline (arming captures the CURRENT BP/SP, so a CALL would
     // capture its own), and a handler is named by its block's offset. A PROCEDURE that arms one is
@@ -439,8 +450,7 @@ public sealed partial class CodeGenerator {
     if (this._backendModule.FindFunction("main") is not { IsDeclaration: false } main)
       return this.DeclineMain("lowering: the IR module has no main");
     if (CalleeNames(main).FirstOrDefault(name =>
-          !routed.Keys.Any(p => p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase))
-          && !this.CanCallDirectCallee(name)) is { } stranded)
+          !this.IsBackendFunctionRouted(name) && !this.CanCallDirectCallee(name)) is { } stranded)
       return this.DeclineMain($"routing: calls '{stranded}', which is not routed");
     if (this.ExternalCalleeDecline(main) is { } externalDecline)
       return this.DeclineMain(externalDecline);
@@ -492,6 +502,7 @@ public sealed partial class CodeGenerator {
         asm.Mov(Asm.Reg.AL, (Asm.Imm)0);
         asm.Jmp(this._rt.Exit);
       }, alignLoops: this.Optimize && this.Cost.AlignHotLoops);
+    this.EmitBackendGeneratedFunctions();
   }
 
   /// <summary>
@@ -678,6 +689,8 @@ public sealed partial class CodeGenerator {
     // function.
     if (name.StartsWith("rt_", System.StringComparison.Ordinal))
       return RuntimeTrimmer.Instance.ProviderOf.ContainsKey(name) ? this._asm.Lbl(name) : null;
+    if (this.GeneratedCalleeLabel(name) is { } generated)
+      return generated;
     var proc = model.ProcedureList.FirstOrDefault(p =>
       p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase) && this.BackendProcs().ContainsKey(p));
     proc ??= this.DirectCalleeWithCompatibleAbi(name);
@@ -964,10 +977,11 @@ public sealed partial class CodeGenerator {
       asm.AlignCode(16);
     asm.MarkLabel(this.ProcLabelOf(proc));
     var paramOffsets = proc.Parameters.Select(p => p.Offset).ToArray();
-    // LayoutFrame already reflects the declared stack order. CDECL differs only in cleanup ownership:
-    // its caller restores SP after the call, so the routed epilogue must emit RET rather than RET n.
+    // Source procedures still get their public/export frame from ProcedureSymbol. Generated private
+    // definitions use the equivalent IR-derived layout in CodeGenerator.BackendGenerated.cs.
     var calleeCleanupBytes = CallerCleansStack(proc) ? 0 : paramBytes;
     MachineEmitter.EmitFunction(asm, mfn, alloc, paramOffsets, calleeCleanupBytes, this.CalleeLabel, this.DataCellOf,
       alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: elideFrame);
+    this.EmitBackendGeneratedFunctions();
   }
 }

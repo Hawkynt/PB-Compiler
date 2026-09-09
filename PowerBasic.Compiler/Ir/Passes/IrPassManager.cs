@@ -134,10 +134,11 @@ public sealed class IrPassManager {
   /// <para>
   /// <paramref name="optimizeForSpeed"/> reflects <c>$OPTIMIZE SPEED</c>. SPEED may spend code size to
   /// erase abstraction overhead: it runs demanded-bit cleanup, admits larger callees to the inliner,
-  /// recognizes library loops, generates lookup tables, compiles static searches, removes semantically
-  /// dead loops, and grants the relaxed floating-point contract used by O0340-O0345/O0343. The ordinary
-  /// optimization objective keeps strict FP semantics, the conservative size budget, and preserves
-  /// empty loops because they may be intentional delay loops.
+  /// preserves profitable caller-specific facts through bounded cloning, recognizes library loops,
+  /// generates lookup tables, compiles static searches, removes semantically dead loops, and grants
+  /// the relaxed floating-point contract used by O0340-O0345/O0343. The ordinary optimization objective
+  /// keeps strict FP semantics, the conservative size budget, and preserves empty loops because they
+  /// may be intentional delay loops.
   /// </para>
   /// <para>
   /// <paramref name="dataLayoutTarget"/> supplies facts that are not properties of target-neutral IR:
@@ -281,9 +282,15 @@ public sealed class IrPassManager {
     // could not previously see through. What it then does with it differs from the original, which is
     // a finding about that optimizer and not about this pass. Until that is chased down, the summaries
     // are available to callers and this consumer is off.
-    // SPEED inlining is a module pass so it can see the call graph after the first function fixpoint;
-    // every successful inline immediately triggers another function sweep over the exposed body.
+    // SPEED first inlines callees already beneath its structural budget. O0283 then spends its own hard
+    // growth budget only on the surviving larger calls, so caller specialization does not duplicate a
+    // body the inliner was about to erase anyway. A changed context clone immediately receives another
+    // function sweep from RunOnModule; the second inliner can therefore consume a clone that the seeded
+    // facts shrank beneath its threshold.
     .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "inline-speed",
+      module => Inliner.Run(module, optimizeForSpeed: true))
+    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "ctxclone", ContextSensitiveCloning.Run)
+    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "inline-context",
       module => Inliner.Run(module, optimizeForSpeed: true))
     // The advanced data/search passes run before the string passes: searches need the original static
     // table shape, bitset packing needs whole-module escape information, and generated tables must
