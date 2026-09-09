@@ -12,14 +12,48 @@ public sealed class DataLayoutTransformsTests {
     var fn = new IrFunction("f", IrType.Void, [i]);
     var entry = fn.CreateBlock("entry");
     var records = entry.Append(new IrAlloca(IrType.I8) { Count = 64 * 4, Name = "p" });
-    _ = LoadRecordField(entry, records, i, 4, 0, IrType.I16);
-    _ = LoadRecordField(entry, records, i, 4, 2, IrType.I16);
+    var bounded = entry.Append(new IrBinary(IrBinaryOp.And, i, new IrConstantInt(IrType.I32, 63)));
+    _ = LoadRecordField(entry, records, bounded, 4, 0, IrType.I16);
+    _ = LoadRecordField(entry, records, bounded, 4, 2, IrType.I16);
     entry.Append(new IrRet());
 
     Assert.That(ArrayOfStructsToStructOfArrays.Run(fn), Is.EqualTo(1));
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
     Assert.That(entry.Instructions.OfType<IrAlloca>().Count(a => a.Allocated == IrType.I16 && a.Count == 64), Is.EqualTo(2));
     Assert.That(entry.Instructions.Contains(records), Is.False);
+  }
+
+  [Test]
+  public void O0320_WrappingStrideArithmetic_DeclinesWithoutMutatingStorage() {
+    var i = new IrArgument(IrType.I32, 0, "i");
+    var fn = new IrFunction("f", IrType.Void, [i]);
+    var entry = fn.CreateBlock("entry");
+    var records = entry.Append(new IrAlloca(IrType.I8) { Count = 64 * 4, Name = "p" });
+    _ = LoadRecordField(entry, records, i, 4, 0, IrType.I16);
+    _ = LoadRecordField(entry, records, i, 4, 2, IrType.I16);
+    entry.Append(new IrRet());
+
+    Assert.That(ArrayOfStructsToStructOfArrays.Run(fn), Is.Zero);
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(entry.Instructions.Contains(records), Is.True);
+    Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a => a.Name?.EndsWith(".soa", StringComparison.Ordinal) == true), Is.False);
+  }
+
+  [Test]
+  public void O0320_WideningCastInAddress_DeclinesWithoutChangingInterpretation() {
+    var i = new IrArgument(IrType.U16, 0, "i");
+    var fn = new IrFunction("f", IrType.Void, [i]);
+    var entry = fn.CreateBlock("entry");
+    var records = entry.Append(new IrAlloca(IrType.I8) { Count = 64 * 4, Name = "p" });
+    var widened = entry.Append(new IrCast(IrCastOp.SExt, i, IrType.I32));
+    _ = LoadRecordField(entry, records, widened, 4, 0, IrType.I16);
+    _ = LoadRecordField(entry, records, widened, 4, 2, IrType.I16);
+    entry.Append(new IrRet());
+
+    Assert.That(ArrayOfStructsToStructOfArrays.Run(fn), Is.Zero);
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(entry.Instructions.Contains(records), Is.True);
+    Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a => a.Name?.EndsWith(".soa", StringComparison.Ordinal) == true), Is.False);
   }
 
   [Test]
