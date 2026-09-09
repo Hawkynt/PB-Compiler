@@ -129,7 +129,7 @@ public sealed class IrPassManager {
   /// </list>
   /// <para>
   /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
-  /// prefix-scan formation, speculative overflow versioning, ownership batching, unrolling, sccp,
+  /// prefix-scan formation, speculative overflow versioning, ownership batching, speculative devirtualization, unrolling, sccp,
   /// correlate, block versioning, loop versioning, pointer checks, integer/float range folds,
   /// speculative narrowing, overflow coalescing, sroa, aggregate-sroa, mem2reg2, strcow,
   /// ownership elision, reassociate, polynomial recovery, equality saturation, verified arithmetic
@@ -347,6 +347,12 @@ public sealed class IrPassManager {
     // chains, so every successful reduction immediately triggers another function sweep and lets
     // DCE/SCCP collect them before later module transforms.
     .AddModulePassWhen(includeModulePasses, "return-structure-reduction", ReturnStructureReduction.Run)
+    // O0307 deliberately spends one compare/branch and duplicates the call site, so keep it under the
+    // SPEED objective. It follows O0271, which promotes on real profile evidence and whose fallback is
+    // itself an indirect call this pass must not version again; running it immediately before SPEED
+    // inlining lets the guarded direct path expose an inlinable callee while the mismatch path retains
+    // the original indirect call.
+    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "spec-devirt", SpeculativeDevirtualization.Run)
     // SPEED inlining is a module pass so it can see the call graph after the first function fixpoint;
     // every successful inline immediately triggers another function sweep over the exposed body.
     .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "inline-speed",
