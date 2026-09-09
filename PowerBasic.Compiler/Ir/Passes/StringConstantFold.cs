@@ -47,7 +47,9 @@ public static class StringConstantFold {
   /// <summary>Folds what it can across the module; the number of calls folded away.</summary>
   public static int Run(IrModule module) {
     ArgumentNullException.ThrowIfNull(module);
-    var folded = 0;
+    // O0303 shares this late module phase because it also materializes pooled literal bytes after the
+    // function pipeline has exposed every formatted field whose scaled value is constant.
+    var folded = FormattedPrintSpecialization.Run(module);
     foreach (var function in module.Functions.ToList()) {
       if (function.IsDeclaration || function.HasErrorHandler || function.HasInlineAsm)
         continue;

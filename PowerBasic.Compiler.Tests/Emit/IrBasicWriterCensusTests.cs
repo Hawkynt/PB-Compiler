@@ -155,6 +155,7 @@ public sealed class IrBasicWriterCensusTests {
   /// first measurement, 80 with SHARED globals, 94 once each program was lowered in the dialect it
   /// was written in, 95 with the TYPE-variable render fixed - and then back to 94 when an
   /// optimization-battery scenario using MIN%/MAX% was added, which is why this is a set now.
+  /// O0303 adds PRTUSING once constant USING fields become ordinary literal prints.
   ///
   /// Add a name when a program starts re-binding. Removing one is a regression and needs a reason.
   /// </summary>
@@ -251,6 +252,7 @@ public sealed class IrBasicWriterCensusTests {
     "pb36/DIFF97.BAS",
     "pb36/DIFF99.BAS",
     "pb36/HELLO.BAS",
+    "pb36/PRTUSING.BAS", // O0303 removes the otherwise unsupported constant rt_using_field call
     "pb36/RANGES.BAS",
     "pb36/SHAREDG.BAS",
     "pb36/STRHEAP.BAS",
