@@ -66,14 +66,26 @@ public static class SuperoptimizedPeepholes {
 
   private static bool FlagsDeadAfter(MBlock block, int index) {
     for (var i = index + 1; i < block.Instructions.Count; ++i) {
-      var effect = block.Instructions[i].Effect;
-      if (effect.ReadsFlags)
+      var instruction = block.Instructions[i];
+      if (instruction.Effect.ReadsFlags)
         return false;
-      if (effect.WritesFlags)
+      if (FullyDefinesArithmeticFlags(instruction))
         return true;
     }
     return false;                                  // a successor may consume the flags
   }
+
+  /// <summary>
+  /// Whether an instruction replaces all condition-code flags a later machine operation can observe,
+  /// without consulting the incoming flags. This deliberately mirrors the conservative definition
+  /// used by O0092 after emission instead of treating every <see cref="MInstrEffect.WritesFlags"/> as
+  /// a kill: INC/DEC preserve CF, while ADC/SBB consume it.
+  /// </summary>
+  private static bool FullyDefinesArithmeticFlags(MInstr instruction)
+    => instruction.Effect.WritesFlags
+       && !instruction.Effect.ReadsFlags
+       && instruction.Opcode is MOpcode.Add or MOpcode.Sub or MOpcode.And or MOpcode.Or or MOpcode.Xor
+         or MOpcode.Cmp or MOpcode.Test or MOpcode.Neg;
 
   private static IReadOnlyDictionary<SourcePattern, Candidate> DiscoverCatalog() {
     var result = new Dictionary<SourcePattern, Candidate>();
@@ -121,18 +133,17 @@ public static class SuperoptimizedPeepholes {
     _ => throw new ArgumentOutOfRangeException(nameof(candidate)),
   };
 
-  // Conservative generic-register encoding sizes on 8086. A replacement is admitted only when this
-  // upper-level model says it is strictly shorter; register-special accumulator encodings can only
-  // make a source cheaper, never make an admitted replacement incorrect.
+  // Exact register-encoding sizes for the supported 8086 word forms. The assembler uses 83 /op ib
+  // for these small signed immediates and the legacy 40+rw / 48+rw one-byte INC/DEC forms.
   private static int SourceCost(SourcePattern pattern) => pattern switch {
-    SourcePattern.AddOne or SourcePattern.SubOne => 3,
-    SourcePattern.XorAllOnes or SourcePattern.AndZero => 4,
+    SourcePattern.AddOne or SourcePattern.SubOne or SourcePattern.XorAllOnes or SourcePattern.AndZero => 3,
     SourcePattern.AddSelf => 2,
     _ => int.MaxValue,
   };
 
   private static int CandidateCost(Candidate candidate) => candidate switch {
-    Candidate.Inc or Candidate.Dec or Candidate.Not or Candidate.ShlOne or Candidate.XorSelf => 2,
+    Candidate.Inc or Candidate.Dec => 1,
+    Candidate.Not or Candidate.ShlOne or Candidate.XorSelf => 2,
     _ => int.MaxValue,
   };
 
