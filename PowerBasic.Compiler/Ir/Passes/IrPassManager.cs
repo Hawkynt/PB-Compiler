@@ -132,7 +132,7 @@ public sealed class IrPassManager {
   /// speculative overflow versioning, ownership batching, unrolling, sccp, correlate, pointer checks, integer/float range folds, speculative narrowing,
   /// overflow coalescing, sroa, aggregate-sroa, mem2reg2, strcow, ownership elision, reassociate, polynomial recovery,
   /// equality saturation, verified arithmetic lowering, demote, ivsimplify, phicong, gvn, memopt, dse,
-  /// interchange, licm, reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the
+  /// interchange, licm, reciprocal reuse, unswitch, allocation sinking, closed-form, deadloop, ifconv, tailrec and the
   /// string/global module passes. So are the steps the caller runs around the pipeline - <c>Inliner</c>,
   /// <c>SwitchFormation</c> and <c>MemoryRoutineSpecialization</c>, the last of which is not in
   /// <see cref="Standard"/> at all because it wants the final shape (see CodeGenerator.Backend).
@@ -302,6 +302,10 @@ public sealed class IrPassManager {
     // reaches nothing. LICM hoists it out first, which is what makes the value substitutable.
     .Add("unswitch", LoopUnswitch.Run)
     .Add("dce", Dce.Run)
+    // O0288 runs late enough that dead scalar residue no longer blocks sinking, but before if-convert
+    // and simplifycfg erase the simple no-else IF shape. The pass itself refuses every heap-observable
+    // crossing and moves the matching cleanup with the allocation.
+    .Add("allocsink", AllocationSinking.Run)
     // AFTER dce: IntegerRecovery leaves the float-shaped arithmetic it replaced standing beside the
     // integer form, and until that shadow is collected the accumulator still has a reader inside the
     // loop - which is exactly the condition this pass requires to be absent
