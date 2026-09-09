@@ -111,7 +111,7 @@ public sealed class IrPassManager {
   ///   <item><b>simplifycfg</b> removes constant branch forms the selector cannot encode directly.</item>
   /// </list>
   /// <para>
-  /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
+  /// Everything else in <see cref="Standard"/> is optimization and is off: storage/data-layout rewrites,
   /// unrolling, sccp, correlate, block versioning, pointer checks, integer/float range folds, overflow
   /// coalescing, sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery, equality saturation,
   /// verified arithmetic lowering, demote, phicong, gvn, memopt, dse, interchange, licm,
@@ -146,15 +146,26 @@ public sealed class IrPassManager {
   /// entirely by IR provenance/escape/dependence proofs and therefore run on every optimized target.
   /// </para>
   /// <para>
+  /// <paramref name="minimumIntegerStorageBits"/> is the O0057 backend profitability decision. The
+  /// shared analysis proves the narrower representation, while the caller chooses the smallest cell
+  /// worth materializing. The current default is one x86-16 word; hosted targets may request 8 bits.
+  /// </para>
+  /// <para>
   /// <paramref name="enableFpLookupTables"/> is a backend capability, not another numerical mode. It
   /// allows O0343 to materialize typed floating constant tables when the selected backend can carry
   /// them; range-specialized polynomial kernels remain available under SPEED without it.
   /// </para>
   /// </summary>
   public static IrPassManager Standard(bool optimizeForSpeed = false, bool includeModulePasses = true,
-      IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false)
+      IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false,
+      int minimumIntegerStorageBits = 16)
     => new IrPassManager { OptimizeForSpeed = optimizeForSpeed }
+    // O0057 has to see direct scalar storage before mem2reg erases it. The truncation/extension pair it
+    // inserts survives promotion, so later spilling can still use the proven narrow representation.
+    .Add("storagenarrow", fn => StorageNarrowing.Run(fn, minimumIntegerStorageBits))
     .Add("mem2reg", Mem2Reg.Run)
+    // Some source variables become phis only after promotion; their ranges are strongest in SSA form.
+    .Add("storagenarrow-ssa", fn => StorageNarrowing.Run(fn, minimumIntegerStorageBits))
     // O0320-O0329 have to see the explicit memory graph and the original counted-loop shape. Run the
     // aggregate transforms before AoS->SoA destroys record identity, then the loop/data transforms,
     // and only then unroll. Every one declines escaped/opaque storage rather than speculating aliasing.
@@ -207,7 +218,11 @@ public sealed class IrPassManager {
     // homogeneous elements. Keep the proofs separate: arrays use element stride, aggregates use
     // region bounds and reject overlap so UNION aliasing remains shared storage.
     .Add("aggregate-sroa", ScalarReplaceAggregates.Run)
+    // SROA can expose new scalar cells after the first narrowing opportunity. Give those cells the
+    // same proof before the second promotion removes their storage graph.
+    .Add("storagenarrow2", fn => StorageNarrowing.Run(fn, minimumIntegerStorageBits))
     .Add("mem2reg2", Mem2Reg.Run)
+    .Add("storagenarrow-ssa2", fn => StorageNarrowing.Run(fn, minimumIntegerStorageBits))
     // O0346/O0347 consume strict FP facts here, including branch-refined integer ranges at conversion
     // sites. SPEED supplies its explicit no-NaN/no-inf assumptions without changing strict defaults.
     .Add("fpsimplify", fn => FpSimplify.Run(fn,
