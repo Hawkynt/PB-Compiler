@@ -3,7 +3,7 @@ using PowerBasic.Compiler.Ir.Passes;
 
 namespace PowerBasic.Compiler.Tests.Ir;
 
-/// <summary>O0305 — path facts materialized as specialized copies of a reconverged basic block.</summary>
+/// <summary>O0305 — path facts materialized as specialized copies of bounded reconverged regions.</summary>
 [TestFixture]
 public sealed class BasicBlockVersioningTests {
 
@@ -182,6 +182,194 @@ public sealed class BasicBlockVersioningTests {
       Assert.That(join.Parent, Is.SameAs(fn), "the undecided alignment context remains the fallback");
       Assert.That(IrVerifier.Verify(fn), Is.Empty);
     });
+  }
+
+  [Test]
+  public void Branch_GivenTheProfitableGuardIsInASecondBlock_ThenTheWholeForwardRegionIsVersioned() {
+    var x = new IrArgument(IrType.I16, 0, "x");
+    var fn = new IrFunction("f", IrType.I16, [x]);
+    var entry = fn.CreateBlock("entry");
+    var whenTrue = fn.CreateBlock("when.true");
+    var whenFalse = fn.CreateBlock("when.false");
+    var join = fn.CreateBlock("join");
+    var check = fn.CreateBlock("check");
+    var small = fn.CreateBlock("small");
+    var large = fn.CreateBlock("large");
+
+    var guard = entry.Append(new IrCmp(IrCmpPred.Slt, x, new IrConstantInt(IrType.I16, 256)));
+    entry.Append(new IrCondBr(guard, whenTrue, whenFalse));
+    whenTrue.Append(new IrBr(join));
+    whenFalse.Append(new IrBr(join));
+    join.Append(new IrBr(check));
+    var repeated = check.Append(new IrCmp(IrCmpPred.Slt, x, new IrConstantInt(IrType.I16, 256)));
+    check.Append(new IrCondBr(repeated, small, large));
+    small.Append(new IrRet(new IrConstantInt(IrType.I16, 1)));
+    large.Append(new IrRet(new IrConstantInt(IrType.I16, 0)));
+
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(BasicBlockVersioning.Run(fn), Is.EqualTo(1));
+
+    var trueJoin = fn.Blocks.Single(block => block.Label == "bbv.t.join");
+    var falseJoin = fn.Blocks.Single(block => block.Label == "bbv.f.join");
+    var trueCheck = fn.Blocks.Single(block => block.Label == "bbv.t.check");
+    var falseCheck = fn.Blocks.Single(block => block.Label == "bbv.f.check");
+    Assert.Multiple(() => {
+      Assert.That(join.Parent, Is.Null);
+      Assert.That(check.Parent, Is.Null);
+      Assert.That(((IrBr)trueJoin.Terminator!).Target, Is.SameAs(trueCheck));
+      Assert.That(((IrBr)falseJoin.Terminator!).Target, Is.SameAs(falseCheck));
+      Assert.That(((IrConstantInt)((IrCondBr)trueCheck.Terminator!).Condition).Value, Is.EqualTo(1));
+      Assert.That(((IrConstantInt)((IrCondBr)falseCheck.Terminator!).Condition).Value, Is.Zero);
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void Branch_GivenSuccessorPhis_ThenEachVersionAddsMappedIncomingValues() {
+    var x = new IrArgument(IrType.I16, 0, "x");
+    var fn = new IrFunction("f", IrType.I16, [x]);
+    var entry = fn.CreateBlock("entry");
+    var whenTrue = fn.CreateBlock("when.true");
+    var whenFalse = fn.CreateBlock("when.false");
+    var join = fn.CreateBlock("join");
+    var small = fn.CreateBlock("small");
+    var large = fn.CreateBlock("large");
+
+    var guard = entry.Append(new IrCmp(IrCmpPred.Slt, x, new IrConstantInt(IrType.I16, 256)));
+    entry.Append(new IrCondBr(guard, whenTrue, whenFalse));
+    whenTrue.Append(new IrBr(join));
+    whenFalse.Append(new IrBr(join));
+    var payload = join.Append(new IrBinary(IrBinaryOp.Add,
+      new IrConstantInt(IrType.I16, 20), new IrConstantInt(IrType.I16, 22)));
+    var repeated = join.Append(new IrCmp(IrCmpPred.Slt, x, new IrConstantInt(IrType.I16, 256)));
+    join.Append(new IrCondBr(repeated, small, large));
+
+    var smallPhi = small.AppendPhi(new IrPhi(IrType.I16));
+    smallPhi.AddIncoming(payload, join);
+    small.Append(new IrRet(smallPhi));
+    var largePhi = large.AppendPhi(new IrPhi(IrType.I16));
+    largePhi.AddIncoming(payload, join);
+    large.Append(new IrRet(largePhi));
+
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(BasicBlockVersioning.Run(fn), Is.EqualTo(1));
+
+    var trueVersion = fn.Blocks.Single(block => block.Label == "bbv.t.join");
+    var falseVersion = fn.Blocks.Single(block => block.Label == "bbv.f.join");
+    Assert.Multiple(() => {
+      Assert.That(join.Parent, Is.Null);
+      Assert.That(smallPhi.IncomingBlocks, Is.EquivalentTo(new[] { trueVersion, falseVersion }));
+      Assert.That(largePhi.IncomingBlocks, Is.EquivalentTo(new[] { trueVersion, falseVersion }));
+      Assert.That(smallPhi.Operands, Has.All.Not.SameAs(payload), "successor phis must use cloned definitions");
+      Assert.That(largePhi.Operands, Has.All.Not.SameAs(payload), "successor phis must use cloned definitions");
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void Branch_GivenAnEscapingValueAndUniqueExit_ThenTheExitMergesSpecializedDefinitions() {
+    var x = new IrArgument(IrType.I16, 0, "x");
+    var fn = new IrFunction("f", IrType.I16, [x]);
+    var entry = fn.CreateBlock("entry");
+    var whenTrue = fn.CreateBlock("when.true");
+    var whenFalse = fn.CreateBlock("when.false");
+    var join = fn.CreateBlock("join");
+    var compute = fn.CreateBlock("compute");
+    var exit = fn.CreateBlock("exit");
+
+    var guard = entry.Append(new IrCmp(IrCmpPred.Slt, x, new IrConstantInt(IrType.I16, 256)));
+    entry.Append(new IrCondBr(guard, whenTrue, whenFalse));
+    whenTrue.Append(new IrBr(join));
+    whenFalse.Append(new IrBr(join));
+    join.Append(new IrBr(compute));
+    var selected = compute.Append(new IrSelect(guard,
+      new IrConstantInt(IrType.I16, 10), new IrConstantInt(IrType.I16, 20)));
+    compute.Append(new IrBr(exit));
+    var ret = exit.Append(new IrRet(selected));
+
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(BasicBlockVersioning.Run(fn), Is.EqualTo(1));
+
+    var trueCompute = fn.Blocks.Single(block => block.Label == "bbv.t.compute");
+    var falseCompute = fn.Blocks.Single(block => block.Label == "bbv.f.compute");
+    var merge = exit.Phis.Single();
+    Assert.Multiple(() => {
+      Assert.That(join.Parent, Is.Null);
+      Assert.That(compute.Parent, Is.Null);
+      Assert.That(merge.IncomingBlocks, Is.EquivalentTo(new[] { trueCompute, falseCompute }));
+      Assert.That(ret.Value, Is.SameAs(merge));
+      Assert.That(((IrConstantInt)trueCompute.Instructions.OfType<IrSelect>().Single().Condition).Value, Is.EqualTo(1));
+      Assert.That(((IrConstantInt)falseCompute.Instructions.OfType<IrSelect>().Single().Condition).Value, Is.Zero);
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void Branch_GivenOneProfitableContextAndAnEscapingValue_ThenTheExitMergesFallbackAndVersion() {
+    var x = new IrArgument(IrType.I16, 0, "x");
+    var fn = new IrFunction("f", IrType.I16, [x]);
+    var entry = fn.CreateBlock("entry");
+    var whenTrue = fn.CreateBlock("when.true");
+    var whenFalse = fn.CreateBlock("when.false");
+    var join = fn.CreateBlock("join");
+    var compute = fn.CreateBlock("compute");
+    var exit = fn.CreateBlock("exit");
+
+    var guard = entry.Append(new IrCmp(IrCmpPred.Slt, x, new IrConstantInt(IrType.I16, 256)));
+    entry.Append(new IrCondBr(guard, whenTrue, whenFalse));
+    whenTrue.Append(new IrBr(join));
+    whenFalse.Append(new IrBr(join));
+    join.Append(new IrBr(compute));
+    var repeated = compute.Append(new IrCmp(IrCmpPred.Slt, x, new IrConstantInt(IrType.I16, 128)));
+    var selected = compute.Append(new IrSelect(repeated,
+      new IrConstantInt(IrType.I16, 10), new IrConstantInt(IrType.I16, 20)));
+    compute.Append(new IrBr(exit));
+    var ret = exit.Append(new IrRet(selected));
+
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(BasicBlockVersioning.Run(fn), Is.EqualTo(1));
+
+    var falseJoin = fn.Blocks.Single(block => block.Label == "bbv.f.join");
+    var falseCompute = fn.Blocks.Single(block => block.Label == "bbv.f.compute");
+    var merge = exit.Phis.Single();
+    Assert.Multiple(() => {
+      Assert.That(fn.Blocks.Any(block => block.Label == "bbv.t.join"), Is.False);
+      Assert.That(join.Parent, Is.SameAs(fn), "the undecided true context stays on the generic region");
+      Assert.That(((IrBr)whenTrue.Terminator!).Target, Is.SameAs(join));
+      Assert.That(((IrBr)whenFalse.Terminator!).Target, Is.SameAs(falseJoin));
+      Assert.That(merge.IncomingBlocks, Is.EquivalentTo(new[] { compute, falseCompute }));
+      Assert.That(ret.Value, Is.SameAs(merge));
+      Assert.That(((IrConstantInt)falseCompute.Instructions.OfType<IrSelect>().Single().Condition).IsZero, Is.True);
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void Branch_GivenAnEscapingValueAndMultipleExits_ThenItIsNotVersioned() {
+    var x = new IrArgument(IrType.I16, 0, "x");
+    var fn = new IrFunction("f", IrType.I16, [x]);
+    var entry = fn.CreateBlock("entry");
+    var whenTrue = fn.CreateBlock("when.true");
+    var whenFalse = fn.CreateBlock("when.false");
+    var join = fn.CreateBlock("join");
+    var small = fn.CreateBlock("small");
+    var large = fn.CreateBlock("large");
+
+    var guard = entry.Append(new IrCmp(IrCmpPred.Slt, x, new IrConstantInt(IrType.I16, 256)));
+    entry.Append(new IrCondBr(guard, whenTrue, whenFalse));
+    whenTrue.Append(new IrBr(join));
+    whenFalse.Append(new IrBr(join));
+    var payload = join.Append(new IrBinary(IrBinaryOp.Add,
+      new IrConstantInt(IrType.I16, 20), new IrConstantInt(IrType.I16, 22)));
+    var repeated = join.Append(new IrCmp(IrCmpPred.Slt, x, new IrConstantInt(IrType.I16, 256)));
+    join.Append(new IrCondBr(repeated, small, large));
+    small.Append(new IrRet(payload));
+    large.Append(new IrRet(payload));
+
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(BasicBlockVersioning.Run(fn), Is.Zero,
+      "a direct SSA value crossing multiple versioned exits still needs a general SSA updater");
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
   }
 
   [Test]
