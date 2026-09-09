@@ -112,6 +112,13 @@ public sealed class IrPassManager {
   /// </list>
   /// <para>
   /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
+  /// ownership batching, unrolling, sccp, correlate, pointer checks, integer/float range folds,
+  /// overflow coalescing, sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery,
+  /// equality saturation, verified arithmetic lowering, demote, phicong, gvn, memopt, dse,
+  /// interchange, licm, reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the
+  /// string/global module passes. So are the steps the caller runs around the pipeline -
+  /// <c>Inliner</c>, <c>SwitchFormation</c> and <c>MemoryRoutineSpecialization</c>, the last of which
+  /// is not in <see cref="Standard"/> at all because it wants the final shape (see CodeGenerator.Backend).
   /// unrolling, sccp, correlate, block versioning, pointer checks, integer/float range folds, overflow
   /// coalescing, sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery, equality saturation,
   /// verified arithmetic lowering, demote, phicong, gvn, memopt, dse, interchange, licm,
@@ -157,7 +164,8 @@ public sealed class IrPassManager {
     .Add("mem2reg", Mem2Reg.Run)
     // O0320-O0329 have to see the explicit memory graph and the original counted-loop shape. Run the
     // aggregate transforms before AoS->SoA destroys record identity, then the loop/data transforms,
-    // and only then unroll. Every one declines escaped/opaque storage rather than speculating aliasing.
+    // and only then ownership batching + unroll. Every one declines escaped/opaque storage rather than
+    // speculating aliasing.
     .Add("structpack", StructurePackingByRange.Run)
     .Add("fieldreorder", FieldReordering.Run)
     .Add("hotcold", HotColdFieldSplitting.Run)
@@ -171,6 +179,9 @@ public sealed class IrPassManager {
       fn => CacheConflictPadding.Run(fn, dataLayoutTarget!.CacheSizeBytes, dataLayoutTarget.CacheLineBytes))
     .AddWhen(dataLayoutTarget?.VectorBytes > 1, "arraypad",
       fn => ArrayPaddingAlignment.Run(fn, dataLayoutTarget!.VectorBytes))
+    // O0292 wants the ownership phi before a small counted loop is expanded into repeated copies.
+    // It is therefore the last SSA loop/data rewrite before unrolling gets a chance to erase the loop.
+    .Add("ownershipbatch", OwnershipBatching.Run)
     // unrolling goes early, right after values reach SSA: a fully unrolled loop turns its counter
     // into a constant in every copy, which is what gives the rest of the pipeline something to fold
     .Add("unroll", LoopUnroll.Run)
