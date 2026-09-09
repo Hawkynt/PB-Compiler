@@ -193,7 +193,8 @@ public static class StaticSearchRecognition {
       var root = BuildBinary(function, failure, search, 0, search.Keys.Length - 1);
       ((IrBr)loop.Preheader.Terminator!).Target = root;
     } else {
-      var dispatch = new IrSwitch(search.Key, failure);
+      var dispatchKey = DispatchKey(loop.Preheader, search);
+      var dispatch = new IrSwitch(dispatchKey, failure);
       for (var i = 0; i < search.Keys.Length; ++i)
         dispatch.AddCase(search.Keys[i], Hit(function, search.Result, i));
       loop.Preheader.Terminator!.EraseFromParent();
@@ -205,6 +206,21 @@ public static class StaticSearchRecognition {
         resultPhi.RemoveIncoming(block);
     foreach (var block in loop.Region.ToList())
       function.RemoveBlock(block);
+  }
+
+  /// <summary>
+  /// The x86 dispatch selector operates on word/dword switch subjects. A byte search therefore widens
+  /// its raw key pattern before forming the switch so O0335 can actually reach the perfect-hash path.
+  /// The table type defines the extension: equality on the original byte only compared the pattern, and
+  /// the table's signedness is what gave that pattern its case value in <see cref="TryKeys"/>.
+  /// </summary>
+  private static IrValue DispatchKey(IrBasicBlock preheader, Search search) {
+    if (search.Key.Type.Bits != 8)
+      return search.Key;
+    var type = search.Unsigned ? IrType.U16 : IrType.I16;
+    return preheader.InsertBefore(
+      new IrCast(search.Unsigned ? IrCastOp.ZExt : IrCastOp.SExt, search.Key, type),
+      preheader.Terminator!);
   }
 
   private static IrBasicBlock Failure(IrFunction function, SearchResult result) {
