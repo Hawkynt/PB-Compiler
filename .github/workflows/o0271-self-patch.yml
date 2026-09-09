@@ -5,6 +5,7 @@ on:
     branches:
       - o0271-backend-followup
     paths:
+      - .github/o0271_patch.py
       - .github/workflows/o0271-self-patch.yml
 
 permissions:
@@ -26,6 +27,8 @@ jobs:
         run: |
           set -euo pipefail
           git diff --check
+          git diff --stat
+          git diff --numstat
           test "$(git diff --name-only)" = "PowerBasic.Compiler/Backend/InstructionSelector.cs"
           test "$(git diff -- PowerBasic.Compiler/Backend/InstructionSelector.cs | grep -c '^@@')" -eq 3
 
