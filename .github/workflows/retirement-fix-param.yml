@@ -1,4 +1,4 @@
-name: Validate BYVAL FIX parameter retirement
+name: Finalize BYTE and BYVAL FIX retirement
 on:
   push:
     branches: [feature/retire-direct-emitter-abi2]
@@ -15,7 +15,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - name: Admit BYVAL FIX and pin incompatible direct callees closed
+      - name: Apply validated FIX ABI patch and review cleanup
         shell: python
         run: |
           from pathlib import Path
@@ -33,14 +33,17 @@ jobs:
           if text.count(anchor) != 1:
               raise SystemExit(f'ABI helper: expected one match, got {text.count(anchor)}')
           text = text.replace(anchor, replacement)
-          text = text.replace('''  /// native ten-byte TBYTE stack representation. Records are supported only BYREF (their ABI value is\n  /// one near pointer). FIX/BCD and array values still need routed ABI work.''', '''  /// native ten-byte TBYTE stack representation. Records are supported only BYREF (their ABI value is\n  /// one near pointer). BYVAL FIX is admitted separately because its stack representation is the raw\n  /// scaled i64 cell; FIX results, BCD values and array values still need routed ABI work.''')
+          old_doc = '''  /// native ten-byte TBYTE stack representation. Records are supported only BYREF (their ABI value is\n  /// one near pointer). FIX/BCD and array values still need routed ABI work.'''
+          new_doc = '''  /// native ten-byte TBYTE stack representation. Records are supported only BYREF (their ABI value is\n  /// one near pointer). BYVAL FIX is admitted separately because its stack representation is the raw\n  /// scaled i64 cell; FIX results, BCD values and array values still need routed ABI work.'''
+          if text.count(old_doc) != 1:
+              raise SystemExit(f'ABI documentation: expected one match, got {text.count(old_doc)}')
+          text = text.replace(old_doc, new_doc)
 
           direct_old = '''    return matches.Count == 1 && IsBackendAbiConvention(matches[0]) ? matches[0] : null;'''
           direct_new = '''    // A shared stack convention is necessary but not sufficient: the routed caller must also be able\n    // to transport every argument/result VALUE shape. Otherwise a direct FIX-returning callee, for\n    // example, hands back its scaled cell through an ABI the routed call cannot interpret.\n    return matches.Count == 1\n      && IsBackendAbiConvention(matches[0])\n      && BackendAbiShapeReason(matches[0]) is null\n        ? matches[0]\n        : null;'''
           if text.count(direct_old) != 1:
               raise SystemExit(f'direct-callee ABI gate: expected one match, got {text.count(direct_old)}')
-          text = text.replace(direct_old, direct_new)
-          p.write_text(text)
+          p.write_text(text.replace(direct_old, direct_new))
 
           p = Path('PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs')
           text = p.read_text()
@@ -48,17 +51,21 @@ jobs:
           if text.count(old) != 1:
               raise SystemExit(f'FIX decline row: expected one match, got {text.count(old)}')
           text = text.replace(old, '')
-          anchor = '''    new("SINGLE parameter and result", """'''
+          route_anchor = '''    new("SINGLE parameter and result", """'''
           route = '''    // A BYVAL FIX parameter crosses as its raw scaled i64 cell. Changing pbvFixDigits before the\n    // assignment makes the runtime-owned scale observable, so this cannot pass by hard-coding 100.\n    new("FIX BYVAL parameter", """\n      FUNCTION F(BYVAL a@) AS DOUBLE\n        F = a@ * 2\n      END FUNCTION\n      DIM x AS DOUBLE, v@\n      x = 1.23456\n      pbvFixDigits = 4\n      v@ = x\n      PRINT F(v@)\n      """, "F"),\n'''
-          if text.count(anchor) != 1:
-              raise SystemExit(f'route insertion: expected one match, got {text.count(anchor)}')
-          text = text.replace(anchor, route + anchor)
+          if text.count(route_anchor) != 1:
+              raise SystemExit(f'FIX route insertion: expected one match, got {text.count(route_anchor)}')
+          text = text.replace(route_anchor, route + route_anchor)
           decline_anchor = '''    new("FASTCALL convention", """'''
           result_decline = '''    // A FIX result is deliberately still closed: the IR result slot is the scaled i64 cell, while\n    // the source-level FUNCTION result is numeric and therefore needs rt_fix_down before ST(0).\n    new("FIX result", """\n      FUNCTION F(BYVAL a%) AS FIX\n        F = a% / 2\n      END FUNCTION\n      PRINT F(3)\n      """, "F", "filter: return type outside the routed ABI (FIX)"),\n'''
           if text.count(decline_anchor) != 1:
-              raise SystemExit(f'decline insertion: expected one match, got {text.count(decline_anchor)}')
+              raise SystemExit(f'FIX result insertion: expected one match, got {text.count(decline_anchor)}')
           text = text.replace(decline_anchor, result_decline + decline_anchor)
-          p.write_text(text)
+          stale_ext = '''    // EXT definitions use the same x87 value channel as the narrower reals, but keep the full\n    // 10-byte stack representation. The direct main deliberately stays the caller here: the routed\n    // call pusher still declines f80, so this row proves the definition-side boundary independently -\n    // two TBYTE parameters are read at their real offsets and the answer returns in ST(0).'''
+          current_ext = '''    // EXT uses the same x87 value channel as the narrower reals while retaining the full ten-byte\n    // stack representation. This row exercises both routed call boundaries: main stages five words\n    // per BYVAL TBYTE and the callee reads those TBYTE parameter cells before returning in ST(0).'''
+          if text.count(stale_ext) != 1:
+              raise SystemExit(f'EXT comment cleanup: expected one match, got {text.count(stale_ext)}')
+          p.write_text(text.replace(stale_ext, current_ext))
 
           p = Path('PowerBasic.Compiler.Tests/Backend/BackendFixBcdTests.cs')
           text = p.read_text()
@@ -66,27 +73,42 @@ jobs:
           test = '''  /// <summary>\n  /// A BYVAL FIX argument travels as the eight-byte scaled cell, not as a floating value. The caller\n  /// quantizes with the current runtime scale, the callee reads the same cell through rt_fix_down,\n  /// and changing pbvFixDigits to four makes both halves observable.\n  /// </summary>\n  [Test]\n  public void Route_GivenByValFixParameter_ThenTheScaledQwordCrossesTheProcedureBoundary() {\n    const string source = """\n      FUNCTION F(BYVAL a@) AS DOUBLE\n        F = a@ * 2\n      END FUNCTION\n      DIM x AS DOUBLE, v@\n      x = 1.23456\n      pbvFixDigits = 4\n      v@ = x\n      PRINT F(v@)\n      """;\n\n    var (output, names) = Run(source, routed: true);\n\n    Assert.Multiple(() => {\n      Assert.That(names, Does.Contain("F"), "the FIX-taking function did not route");\n      Assert.That(output, Is.EqualTo(Run(source, routed: false).Output), "the two emitters disagree");\n      Assert.That(output, Is.EqualTo("2.4692"), "the runtime four-digit FIX scale was not preserved across the call");\n    });\n  }\n\n'''
           if text.count(anchor) != 1:
               raise SystemExit(f'FIX test insertion: expected one match, got {text.count(anchor)}')
-          text = text.replace(anchor, test + anchor)
-          p.write_text(text)
+          p.write_text(text.replace(anchor, test + anchor))
 
           p = Path('PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs')
           text = p.read_text()
           anchor = '''  [Test]\n  public void Route_GivenUnoptimizedMainCallingUnresolvedDeclaration_ThenDeclinesTheCaller() {'''
           test = '''  [Test]\n  public void Route_GivenUnoptimizedMainCallingDirectCalleeWithUnsupportedResultShape_ThenDeclinesTheCaller() {\n    var generator = new CodeGenerator(Bind("""\n      FUNCTION F(BYVAL a%) AS FIX\n        F = a% / 2\n      END FUNCTION\n      PRINT F(3)\n      END\n      """)) {\n      Optimize = false,\n      UseExperimentalBackend = true,\n    };\n\n    var routed = generator.BackendRoutedNames.ToList();\n    var declines = generator.BackendDeclines.ToList();\n\n    Assert.Multiple(() => {\n      Assert.That(routed, Does.Not.Contain("F"), "FIX results are not a routed return shape yet");\n      Assert.That(routed, Does.Not.Contain("main"),\n        "a routed caller must not consume a direct callee result shape it cannot transport");\n      Assert.That(declines.Any(d => d.Name == "main" && d.Reason.Contains("calls 'F', which is not routed", StringComparison.Ordinal)),\n        Is.True, string.Join(" | ", declines.Select(d => d.Name + ": " + d.Reason)));\n    });\n  }\n\n'''
           if text.count(anchor) != 1:
-              raise SystemExit(f'call routing insertion: expected one match, got {text.count(anchor)}')
-          text = text.replace(anchor, test + anchor)
-          p.write_text(text)
-      - name: Run focused ABI tests
-        run: dotnet test PowerBasic.Compiler.Tests --configuration Release --filter "FullyQualifiedName~BackendRoutingGateTests|FullyQualifiedName~BackendFixBcdTests|FullyQualifiedName~BackendCallRoutingTests" --logger "console;verbosity=normal"
+              raise SystemExit(f'call-routing test insertion: expected one match, got {text.count(anchor)}')
+          p.write_text(text.replace(anchor, test + anchor))
+
+          p = Path('PowerBasic.Compiler/Backend/InstructionSelector.cs')
+          text = p.read_text()
+          byte_block = '''    // FILD has no byte source form: it reads signed m16/m32/m64 integers. A BYTE/SBYTE\n    // therefore gets its value-preserving word representation first. Keep the extension in\n    // virtual registers rather than pinning AX just to use CBW: BYTE clears the high byte;\n    // SBYTE uses (x XOR 80h) - 80h, the two's-complement sign-extension identity over the\n    // zero-extended low byte. Both forms are 8086 instructions and leave a signed word FILD\n    // can read exactly.\n    if (from is { IsInteger: true, Bits: 8 }) {\n      if (!this.TryOperand(cast.Value, out var source))\n        return false;\n      var id = this._nextVreg++;\n      var word = new MOperand.Register(MReg.Virtual(id, MRegSize.Word));\n      var lowByte = new MOperand.Register(MReg.Virtual(id, MRegSize.Byte));\n      var zero = new MOperand.Immediate(0);\n      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [word, zero], MovEffect(word, zero)));\n      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lowByte, source], MovEffect(lowByte, source)));\n      if (from.Signed) {\n        this.Add(MOpcode.Xor, word, new MOperand.Immediate(0x80));\n        this.Add(MOpcode.Sub, word, new MOperand.Immediate(0x80));\n      }\n      var byteSlot = this._function.StackSlots.Count;\n      this._function.StackSlots.Add(2);\n      var byteCell = new MOperand.StackSlot(byteSlot, MRegSize.Word);\n      this.StoreWord(byteCell, word);\n      this.EmitX87(MOpcode.Fild, byteCell, reads: true);\n      this.PopRounded(cast.Type, this.FloatCell(cast));\n      return true;\n    }\n'''
+          if text.count(byte_block) != 2 or byte_block + byte_block not in text:
+              raise SystemExit(f'BYTE staging cleanup: expected two consecutive copies, got {text.count(byte_block)}')
+          p.write_text(text.replace(byte_block + byte_block, byte_block, 1))
+
+          p = Path('docs/DIRECT-EMITTER-RETIREMENT.md')
+          text = p.read_text()
+          if text.count('- FIX parameters;') != 1:
+              raise SystemExit('retirement blocker list no longer has exactly one FIX parameter entry')
+          text = text.replace('- FIX parameters;', '- FIX results;')
+          closed_anchor = '- Procedure-local error handling —'
+          fixed = '''- BYVAL FIX procedure parameters — FIX crosses the stack as the raw scaled signed i64 cell already used by routed FIX storage, not as an IEEE value. The callee performs the ordinary `rt_fix_down` read conversion, so the runtime-owned scale remains authoritative. `BackendFixBcdTests.Route_GivenByValFixParameter_ThenTheScaledQwordCrossesTheProcedureBoundary` sets `pbvFixDigits = 4`, observes `2.4692`, and compares routed execution with the direct emitter. FIX FUNCTION results remain deliberately fenced until their numeric return conversion has a routed ABI.\n'''
+          if text.count(closed_anchor) != 1:
+              raise SystemExit('retirement closed-list anchor changed')
+          p.write_text(text.replace(closed_anchor, fixed + closed_anchor))
+      - name: Run focused retirement tests
+        run: dotnet test PowerBasic.Compiler.Tests --configuration Release --filter "FullyQualifiedName~BackendByteParameterRoutingTests|FullyQualifiedName~BackendExtendedParameterRoutingTests|FullyQualifiedName~BackendRoutingGateTests|FullyQualifiedName~BackendFixBcdTests|FullyQualifiedName~BackendCallRoutingTests|FullyQualifiedName~BackendProcedureErrorHandlerRoutingTests" --logger "console;verbosity=normal"
       - name: Run full core suite
         run: dotnet test PowerBasic.Compiler.Tests --configuration Release --logger "console;verbosity=minimal"
-      - name: Commit BYVAL FIX parameter support
+      - name: Commit validated production changes
         shell: bash
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git pull --rebase origin feature/retire-direct-emitter-abi2
-          git add PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs PowerBasic.Compiler.Tests/Backend/BackendFixBcdTests.cs PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs
+          git add PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs PowerBasic.Compiler/Backend/InstructionSelector.cs PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs PowerBasic.Compiler.Tests/Backend/BackendFixBcdTests.cs PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs docs/DIRECT-EMITTER-RETIREMENT.md
           git commit -m "+ route BYVAL FIX parameters through qword ABI"
           git push origin HEAD:feature/retire-direct-emitter-abi2
