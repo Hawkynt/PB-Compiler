@@ -95,6 +95,39 @@ public sealed class LoopUnrollTests {
       END
       """);
 
+  /// <summary>
+  /// O0066: the counter value of every fully-unrolled copy is known before cloning. The unroller has
+  /// to seed that literal directly rather than threading the previous copy's increment instruction,
+  /// otherwise later copies only become constant after another optimization sweep.
+  /// </summary>
+  [Test]
+  public void Unroll_GivenCounterDerivedArithmetic_ThenEveryCopyReceivesCounterLiteral() {
+    var module = Lowered("""
+      DIM i AS INTEGER
+      FOR i = 1 TO 7 STEP 2
+        PRINT i * i
+      NEXT i
+      END
+      """);
+
+    Assert.That(Unroll(module), Is.EqualTo(1));
+
+    var bodies = module.FindFunction("main")!.Blocks
+      .Where(b => b.Label.StartsWith("unroll", StringComparison.Ordinal)
+        && b.Label.Contains("body", StringComparison.Ordinal))
+      .ToList();
+
+    Assert.That(bodies, Has.Count.EqualTo(4));
+    // PRINT promotes the product, so the multiply itself is an FMul over casts rather than an
+    // integer Mul over the counter. What O0066 guarantees is the value behind those casts: each copy
+    // already sees its own counter as a literal, before InstCombine or SCCP run.
+    Assert.That(
+      bodies.Select(b => b.Instructions.SelectMany(i => i.Operands).OfType<IrConstantInt>()
+        .Select(c => c.Value).Distinct().Single()),
+      Is.EqualTo(new long[] { 1, 3, 5, 7 }),
+      "every copy must see the induction variable as a literal before InstCombine/SCCP run");
+  }
+
   [Test]
   public void Unroll_GivenOutputInTheBody_ThenEveryIterationStillPrints() =>
     UnrollsAndStillPrintsTheSame("""

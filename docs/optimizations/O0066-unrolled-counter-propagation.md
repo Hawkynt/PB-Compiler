@@ -3,18 +3,17 @@
 | | |
 |---|---|
 | **Status** | ✅ Done |
-| **Stage** | Emitter |
+| **Stage** | IR middle-end + legacy direct emitter |
+| **IR** | ✅ `Ir/Passes/LoopUnroll.cs` — each fully-unrolled copy is seeded with the exact induction-variable literal before cloning |
 | **Related** | [O0007](O0007-loop-unrolling.md), [O0036](O0036-constant-subscript-folding.md), [O0016](O0016-value-fact-analysis.md) |
 
 ## The idea
 
-[O0007](O0007-loop-unrolling.md) fully unrolls a tiny constant-trip `FOR`, but
-each copy still **reads the counter cell** and recomputes everything derived
-from it. In an unrolled body the counter is a known constant per copy, so the
-subscripts and the arithmetic should fold
-([O0001](O0001-constant-folding.md), [O0036](O0036-constant-subscript-folding.md)).
-
-## Applies to
+[O0007](O0007-loop-unrolling.md) fully unrolls a tiny constant-trip `FOR`. Once the
+trip count, initial counter and constant step are known, the induction variable is
+not merely *derivable* in each copy — it is an exact compile-time literal. Feeding
+that literal into the cloned body exposes every counter-derived subscript and
+arithmetic expression to the normal middle-end folders.
 
 ```basic
 $OPTIMIZE SPEED
@@ -24,24 +23,14 @@ FOR i% = 0 TO 3
 NEXT
 ```
 
-## Today
+The useful result is equivalent to:
 
-Four copies, each with a multiply and an address computation:
-
-```asm
-    mov     ax, [i]
-    imul    ax, ax, 2
-    mov     bx, ax
-    mov     ax, [i]
-    push    ax
-    mov     ax, [i]
-    pop     bx
-    imul    bx
-    mov     [a+bx], ax
-    ...                      ; three more times
+```basic
+a%(0) = 0 : a%(1) = 1 : a%(2) = 4 : a%(3) = 9
+i% = 4
 ```
 
-## Planned
+and, after the ordinary simplification passes, can become:
 
 ```asm
     mov     word ptr [a+0], 0000h
@@ -51,36 +40,60 @@ Four copies, each with a multiply and an address computation:
     mov     word ptr [i], 0004h
 ```
 
-## Equivalent BASIC
+## IR implementation
 
-```basic
-a%(0) = 0 : a%(1) = 1 : a%(2) = 4 : a%(3) = 9
-i% = 4
-```
+`LoopUnroll.Match` already proves a deliberately narrow counted-loop shape with a
+constant initial value, constant non-zero step, constant limit and a small,
+wrap-free trip count. O0066 keeps those induction facts in the matched-loop record.
 
-## How it works
+`TryUnroll` still carries arbitrary header phis from copy to copy exactly as before,
+but treats the induction phi specially: immediately before cloning each iteration it
+seeds that phi with a fresh `IrConstantInt` for the exact value of that trip. After
+the copy, it advances the compile-time counter by the proven constant step and keeps
+the final counter value as a literal for uses after the removed loop.
 
-The per-iteration constant override the "what it needs" section anticipated: no
-cloning, no side-table duplication. `ConstantFolder` already takes an optional
-`resolve` callback, so `OptFolder` is given one (`ResolveUnrollCounter`) that
-returns the counter's current value. `TryEmitUnrolledFor` sets `_unrollCounter =
-(counter, value)` around each copy's body; every fold site downstream —
-`TryFold`, and through it `FactsOf`, `IndexRangeOf`, constant-subscript folding —
-then reads the literal for `i%`. Outside unrolling the field is null, so the
-resolver is inert on every other path (the golden gate never sees it).
+That distinction matters. Previously iteration zero received the constant entry
+value, but iteration one and later could receive the previous copy's cloned
+`counter + step` instruction. The value was mathematically constant but remained an
+IR node until a later pass/fixpoint sweep simplified it. Counter-derived operations
+in those copies therefore were not guaranteed to start with literal operands.
 
-`i%`-derived arithmetic and subscripts collapse: `s = s + i% * i%` over `1…4`
-emits four `add`-immediates with **no runtime multiply**, and `a%(i%) = i%*i%`
-becomes four constant stores. Verified byte-identical against the genuine oracle,
-and a regression test confirms the unrolled `i% * i%` leaves no `IMUL`.
+With O0066 in the unroller, every copy immediately contains the literal counter.
+`InstCombine`, SCCP, array-subscript folding and the rest of the standard pipeline
+can then simplify the derived expressions without first rediscovering the induction
+progression.
 
-### Safety
+The direct emitter keeps its existing `ResolveUnrollCounter`/`_unrollCounter` hook
+for the legacy native path. The middle-end implementation is target-neutral and is
+the one used by IR back ends.
 
-The override is set **only when the body cannot reassign the counter**
-(`IsModifiedIn`), so a later read can never fold to a stale value. Since the copy
-still writes the counter cell (`mov [i], value`), any read the folder does *not*
-collapse — a by-ref pass, say — still sees the correct runtime value.
+## Safety
 
-Native-only, in `CodeGenerator`. The IR back ends emit the unrolled body (from
-LLVM's own full-unroll) with the counter as an SSA constant, so their folders
-propagate it without this hook.
+No new speculation is introduced. The literal sequence is generated only for the
+same loops `LoopUnroll` already accepts: constant entry, constant step, constant
+limit, supported comparison, bounded code growth and a trip count whose simulated
+counter never wraps the supported integer range. Other loop-carried phis continue
+to use their cloned latch values unchanged.
+
+The final induction value is generated by the same proven progression, so uses after
+the fully-unrolled loop see the exact value the removed loop would have produced.
+
+## Verification
+
+`LoopUnrollTests.Unroll_GivenCounterDerivedArithmetic_ThenEveryCopyReceivesCounterLiteral`
+checks O0066 directly after `LoopUnroll.Run`, before `InstCombine` or SCCP can hide a
+regression. A `STEP 2` loop must produce four `i * i` copies whose operands are the
+literal sequence `1, 3, 5, 7`.
+
+Existing observable-equivalence tests continue to cover accumulator, non-unit-step,
+descending and multi-phi loops, while the whole-loop compile-time-evaluation test
+checks composition with the rest of the standard pipeline.
+
+## References
+
+The implementation is independent and uses no external code. The design was checked
+against the usual compiler treatment of induction variables during unrolling:
+LLVM documents loop unrolling after induction-variable canonicalization, and GCC's
+`-fsplit-ivs-in-unroller` explicitly exposes later unrolled iterations in terms that
+break induction dependency chains. Those references were used as behavioral/design
+checks only.
