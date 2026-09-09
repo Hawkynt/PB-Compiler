@@ -1,7 +1,10 @@
 namespace PowerBasic.Compiler.Emit;
 
 /// <summary>One linked artifact ready for the MZ writer.</summary>
-public sealed record LinkedImage(byte[] Code, byte[] Data, uint BssSize, IReadOnlyList<int> SegmentRelocationSites, IReadOnlyDictionary<string, uint> ResolvedExports);
+public sealed record LinkedImage(byte[] Code, byte[] Data, uint BssSize, IReadOnlyList<int> SegmentRelocationSites, IReadOnlyDictionary<string, uint> ResolvedExports) {
+  /// <summary>Final address map for every fragment-aware machine block in <see cref="Code"/>.</summary>
+  public IReadOnlyList<LinkedFragment> Fragments { get; init; } = [];
+}
 
 /// <summary>Raised when symbol resolution fails or signatures mismatch.</summary>
 public sealed class LinkException(string message) : Exception(message);
@@ -17,6 +20,7 @@ public sealed class Linker {
   private readonly List<PbuFile> _mandatoryUnits = [];
   private readonly List<PblFile> _libraries = [];
   private readonly List<Omf.OmfLibrary> _omfLibraries = [];
+  private PostLinkProfile? _postLinkProfile;
   private bool _crtSupportPulled;
 
   public void AddUnit(PbuFile unit) => this._mandatoryUnits.Add(unit);
@@ -24,6 +28,13 @@ public sealed class Linker {
 
   /// <summary>Adds a foreign OMF .LIB for lazy, dictionary-driven selective extraction (only referenced members are pulled).</summary>
   public void AddOmfLibrary(Omf.OmfLibrary library) => this._omfLibraries.Add(library);
+
+  /// <summary>
+  /// Supplies stable block/edge counts from a previous linked image. Once the participating unit set
+  /// is known, O0276 plans and applies fragment layout before final bases/fixups are assigned.
+  /// </summary>
+  public void UsePostLinkProfile(PostLinkProfile profile)
+    => this._postLinkProfile = profile ?? throw new ArgumentNullException(nameof(profile));
 
   /// <summary>
   /// Links <paramref name="main"/> (a unit-shaped image whose exports are the
@@ -101,6 +112,22 @@ public sealed class Linker {
           throw new LinkException($"signature mismatch for {import.Name}: {unit.Name} expects a different parameter list than {found.Unit.Name} provides");
       }
 
+    // O0276 runs only after library extraction has fixed the program's actual unit set. Rewriting
+    // changes code offsets but never symbol names/signatures/imports, so selection above remains valid;
+    // rebuild the export indices afterwards because their PbuFile/PbuExport objects have changed.
+    if (this._postLinkProfile is { } profile) {
+      var rewritten = new List<PbuFile>(participating.Count);
+      foreach (var unit in participating) {
+        var layouts = PostLinkLayoutPlanner.Plan(unit, profile);
+        rewritten.Add(layouts.Count == 0 ? unit : PostLinkLayoutRewriter.Rewrite(unit, layouts));
+      }
+      participating = rewritten;
+      bySensitive.Clear();
+      byInsensitive.Clear();
+      foreach (var unit in participating)
+        Index(unit);
+    }
+
     // 3. layout: code blocks back to back, then data blocks; BSS accumulates.
     // Blocks are kept word-aligned so the units' internal Align(2) data holds.
     var codeBase = new Dictionary<PbuFile, uint>(ReferenceEqualityComparer.Instance);
@@ -176,7 +203,17 @@ public sealed class Linker {
     // foreign case-only variants (_foo/_FOO) stay distinct. BASIC names are matched
     // case-insensitively during resolution (above); lookups here use the exact name.
     var resolved = bySensitive.ToDictionary(kv => kv.Key, kv => codeBase[kv.Value.Unit] + kv.Value.Export.CodeOffset, StringComparer.Ordinal);
-    return new(code, data, bssSize, segmentSites, resolved);
+    var fragments = participating
+      .SelectMany(unit => unit.Fragments.Select(fragment => new LinkedFragment(
+        unit.Name,
+        fragment.Function,
+        fragment.BlockId,
+        codeBase[unit] + fragment.Offset,
+        fragment.Length,
+        fragment.Successors)))
+      .OrderBy(fragment => fragment.Offset)
+      .ToArray();
+    return new(code, data, bssSize, segmentSites, resolved) { Fragments = fragments };
   }
 
   private static ushort Read16(byte[] image, int site) => (ushort)(image[site] | (image[site + 1] << 8));
