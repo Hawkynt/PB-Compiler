@@ -112,6 +112,13 @@ public sealed class IrPassManager {
   /// </list>
   /// <para>
   /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
+  /// prefix-scan formation, unrolling, sccp, correlate, pointer checks, integer/float range folds,
+  /// overflow coalescing, sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery,
+  /// equality saturation, verified arithmetic lowering, demote, phicong, gvn, memopt, dse,
+  /// interchange, licm, reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the
+  /// string/global module passes. So are the steps the caller runs around the pipeline -
+  /// <c>Inliner</c>, <c>SwitchFormation</c> and <c>MemoryRoutineSpecialization</c>, the last of which is
+  /// not in <see cref="Standard"/> at all because it wants the final shape (see CodeGenerator.Backend).
   /// unrolling, sccp, correlate, block versioning, pointer checks, integer/float range folds, overflow
   /// coalescing, sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery, equality saturation,
   /// verified arithmetic lowering, demote, phicong, gvn, memopt, dse, interchange, licm,
@@ -155,9 +162,10 @@ public sealed class IrPassManager {
       IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false)
     => new IrPassManager { OptimizeForSpeed = optimizeForSpeed }
     .Add("mem2reg", Mem2Reg.Run)
-    // O0320-O0329 have to see the explicit memory graph and the original counted-loop shape. Run the
-    // aggregate transforms before AoS->SoA destroys record identity, then the loop/data transforms,
-    // and only then unroll. Every one declines escaped/opaque storage rather than speculating aliasing.
+    // O0320-O0329 and O0313 have to see the explicit memory graph and the original counted-loop shape.
+    // Run the aggregate transforms before AoS->SoA destroys record identity, then the loop/data
+    // transforms, form scan recurrences, and only then unroll. Every one declines escaped/opaque
+    // storage rather than speculating aliasing.
     .Add("structpack", StructurePackingByRange.Run)
     .Add("fieldreorder", FieldReordering.Run)
     .Add("hotcold", HotColdFieldSplitting.Run)
@@ -165,6 +173,7 @@ public sealed class IrPassManager {
     .Add("transpose", DataTransposition.Run)
     .Add("arrayfusion", TemporaryArrayFusion.Run)
     .Add("arraycontract", ArrayContraction.Run)
+    .Add("prefixscan", ParallelPrefixScan.Run)
     .AddWhen(dataLayoutTarget?.PointerBits > 16, "ptrcompress",
       fn => PointerCompression.Run(fn, dataLayoutTarget!.PointerBits))
     .AddWhen(dataLayoutTarget?.CacheSizeBytes > 0, "cachepad",
