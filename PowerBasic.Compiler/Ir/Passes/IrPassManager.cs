@@ -129,7 +129,7 @@ public sealed class IrPassManager {
   /// </list>
   /// <para>
   /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
-  /// unrolling, sccp, correlate, pointer checks, integer/float range folds, speculative narrowing,
+  /// speculative overflow versioning, unrolling, sccp, correlate, pointer checks, integer/float range folds, speculative narrowing,
   /// overflow coalescing, sroa, aggregate-sroa, mem2reg2, strcow, reassociate, polynomial recovery,
   /// equality saturation, verified arithmetic lowering, demote, ivsimplify, phicong, gvn, memopt, dse,
   /// interchange, licm, reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the
@@ -184,8 +184,8 @@ public sealed class IrPassManager {
     .Add("mem2reg", Mem2Reg.Run)
     // O0320-O0329 and O0313 have to see the explicit memory graph and the original counted-loop shape.
     // Run the aggregate transforms before AoS->SoA destroys record identity, then the loop/data
-    // transforms, form scan recurrences, and only then unroll. Every one declines escaped/opaque
-    // storage rather than speculating aliasing.
+    // transforms, form scan recurrences, and only then the overflow versioner and the unroller. Every
+    // one declines escaped/opaque storage rather than speculating aliasing.
     .Add("structpack", StructurePackingByRange.Run)
     .Add("fieldreorder", FieldReordering.Run)
     .Add("hotcold", HotColdFieldSplitting.Run)
@@ -202,6 +202,9 @@ public sealed class IrPassManager {
       fn => ArrayPaddingAlignment.Run(fn, dataLayoutTarget!.VectorBytes))
     .AddWhen(dataLayoutTarget?.VectorBytes > 1, "arrayalign",
       fn => ArrayBaseAlignment.Run(fn, dataLayoutTarget!.VectorBytes, dataLayoutTarget.PointerBits))
+    // O0308 matches lowering's checked signed-add/sub predicate before InstCombine canonicalizes its
+    // XOR/AND tree. It versions only exact counted loops with an O(1) invariant safety guard.
+    .Add("overflow-version", SpeculativeOverflowElimination.Run)
     // unrolling goes early, right after values reach SSA: a fully unrolled loop turns its counter
     // into a constant in every copy, which is what gives the rest of the pipeline something to fold
     .Add("unroll", LoopUnroll.Run)
