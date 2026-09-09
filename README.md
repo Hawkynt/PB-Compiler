@@ -273,10 +273,10 @@ status column below cannot drift apart:
 | Family | ✅ implemented | 🟡 partial | ⬜ planned | total |
 |---|---:|---:|---:|---:|
 | C — target-CPU code generation | 3 | 0 | 0 | 3 |
-| O — optimization passes | 183 | 61 | 163 | 407 |
+| O — optimization passes | 187 | 62 | 157 | 407 |
 | P — lean output | 7 | 0 | 0 | 7 |
 | R — runtime speed | 4 | 0 | 0 | 4 |
-| **all** | **197** | **61** | **163** | **421** |
+| **all** | **201** | **62** | **157** | **421** |
 
 
 **One entry, one optimization.** Where a single ID used to cover a family — "peephole",
@@ -580,7 +580,7 @@ next free number rather than displacing anything.
 | ✅ | [O0273](docs/optimizations/O0273-profile-guided-register-allocation.md) | Profile-guided register allocation | Spill cost is not uniform: a reload inside a loop that runs a million times costs a million memory accesses, and one on an error path costs one. |
 | 🟡 | [O0274](docs/optimizations/O0274-profile-guided-code-layout.md) | Profile-guided code layout | Arrange functions and blocks by observed execution so that the hot path is contiguous. |
 | ⬜ | [O0275](docs/optimizations/O0275-cold-code-outlining.md) | Cold-code outlining | Extract error paths, rare cases and exceptional cleanup out of a hot procedure into a separate cold procedure, so the hot body shrinks. |
-| ⬜ | [O0276](docs/optimizations/O0276-post-link-optimization.md) | Post-link optimization | Reorder and rewrite the final executable using its actual addresses and a sampled profile. |
+| ✅ | [O0276](docs/optimizations/O0276-post-link-optimization.md) | Post-link optimization | Reorder and rewrite the final executable using its actual addresses and a sampled profile. |
 
 ### O — whole-program optimization
 
@@ -619,7 +619,7 @@ next free number rather than displacing anything.
 | 🟡 | [O0297](docs/optimizations/O0297-substring-view.md) | Substring as a view | `LEFT$`, `RIGHT$` and `MID$` allocate a copy. |
 | 🟡 | [O0298](docs/optimizations/O0298-string-compare-length-guard.md) | String comparison length guard | For `=` and `<>`, two strings of different lengths are unequal — no byte needs to be examined. |
 | ✅ | [O0299](docs/optimizations/O0299-interned-literal-identity.md) | Interned literal identity comparison | The literal pool is deduplicated and packed (O0011), so two occurrences of the same literal have the same address. |
-| ⬜ | [O0300](docs/optimizations/O0300-ascii-string-specialization.md) | ASCII string specialization | `UCASE$`, `LCASE$` and case-insensitive comparison have to consider the whole byte range, including the DOS code-page characters above 127. |
+| ✅ | [O0300](docs/optimizations/O0300-ascii-string-specialization.md) | ASCII string specialization | `UCASE$`, `LCASE$` and case-insensitive comparison have to consider the whole byte range, including the DOS code-page characters above 127. |
 | 🟡 | [O0301](docs/optimizations/O0301-encoding-conversion-elimination.md) | Encoding-conversion elimination | Back-to-back conversions that cancel out should not happen, and a value should be kept in the representation its consumers want. |
 | 🟡 | [O0302](docs/optimizations/O0302-search-algorithm-selection.md) | Search algorithm selection by pattern | `INSTR` uses one algorithm for every pattern. |
 | 🟡 | [O0303](docs/optimizations/O0303-formatted-print-specialization.md) | Formatted-print specialization | `PRINT USING` and `PRINT` with mixed operands go through a general formatting engine that interprets the format at run time. |
@@ -633,7 +633,7 @@ next free number rather than displacing anything.
 | ⬜ | [O0306](docs/optimizations/O0306-loop-versioning.md) | Loop versioning | Keep the fully general loop, and generate a second one with no alias, bounds, alignment or overflow checks at all. |
 | ⬜ | [O0307](docs/optimizations/O0307-speculative-devirtualization.md) | Speculative devirtualization | Where the target set of an indirect call is not provably complete, optimize for the likely target anyway and keep the indirect call as the fallback. |
 | ⬜ | [O0308](docs/optimizations/O0308-speculative-overflow-elimination.md) | Speculative overflow elimination | O0219 drops a check only when the range proof succeeds. |
-| ⬜ | [O0309](docs/optimizations/O0309-speculative-narrowing.md) | Speculative integer narrowing | O0221 narrows a 32-bit operation when the lattice proves both operands fit a word. |
+| 🟡 | [O0309](docs/optimizations/O0309-speculative-narrowing.md) | Speculative integer narrowing | O0221 narrows a 32-bit operation when the lattice proves both operands fit a word. |
 | ⬜ | [O0310](docs/optimizations/O0310-side-exit-deoptimization.md) | Side exits and deoptimization | Enter optimized code under an assumption and exit to generic code the moment it fails — mid-loop, not only at the entry guard. |
 
 ### O — automatic parallelization (hosted back ends only)
@@ -719,7 +719,7 @@ next free number rather than displacing anything.
 
 | | # | Optimization | What it does |
 |---|---|---|---|
-| ⬜ | [O0360](docs/optimizations/O0360-basic-block-fragments.md) | Relocatable basic-block fragments | Layout optimization needs to move code around. |
+| ✅ | [O0360](docs/optimizations/O0360-basic-block-fragments.md) | Relocatable basic-block fragments | Layout optimization needs to move code around. |
 | ⬜ | [O0361](docs/optimizations/O0361-weighted-call-graph-clustering.md) | Weighted call-graph function clustering | Build a call graph weighted by observed transitions and place procedures that frequently call one another adjacent in the image. |
 | ⬜ | [O0362](docs/optimizations/O0362-temporal-function-clustering.md) | Temporal function clustering | Procedures that execute during the same time window belong together, even when neither calls the other. |
 | ⬜ | [O0363](docs/optimizations/O0363-interprocedural-block-placement.md) | Interprocedural basic-block placement | Stop treating a procedure as an indivisible unit. |
@@ -741,7 +741,7 @@ next free number rather than displacing anything.
 | ⬜ | [O0379](docs/optimizations/O0379-selective-loop-alignment.md) | Selective loop alignment | O0231 pads every loop top to 16 bytes under `$CPU 80486` + `$OPTIMIZE SPEED`. |
 | ⬜ | [O0380](docs/optimizations/O0380-selective-function-alignment.md) | Selective function alignment | Aligning every procedure entry to 16 bytes costs, on average, eight bytes per procedure. |
 | ⬜ | [O0381](docs/optimizations/O0381-branch-distance-minimization.md) | Branch distance minimization | Minimize the execution-weighted distance between branches and their targets. |
-| ⬜ | [O0382](docs/optimizations/O0382-post-layout-branch-relaxation.md) | Post-layout branch relaxation | Layout must not be the last step. |
+| ✅ | [O0382](docs/optimizations/O0382-post-layout-branch-relaxation.md) | Post-layout branch relaxation | Layout must not be the last step. |
 | ⬜ | [O0383](docs/optimizations/O0383-call-displacement-optimization.md) | Call displacement optimization | Place callers and callees so that direct calls use the compact encoding. |
 | ⬜ | [O0384](docs/optimizations/O0384-branch-island-minimization.md) | Branch island minimization | When a branch cannot reach its target directly, the toolchain inserts a veneer — a trampoline that jumps the rest of the way. |
 | ⬜ | [O0385](docs/optimizations/O0385-cross-function-fallthrough.md) | Cross-function fall-through | Where the ABI and the symbol rules permit, place two fragments so that execution flows directly from one into the other without a jump at all. |
@@ -764,7 +764,7 @@ next free number rather than displacing anything.
 | ⬜ | [O0402](docs/optimizations/O0402-layout-aware-outlining.md) | Layout-aware outlining | Outline code specifically so that the remaining hot region fits into one cache line, one page, or one segment. |
 | ⬜ | [O0403](docs/optimizations/O0403-scenario-weighted-layout.md) | Scenario-weighted layout | Optimizing for one profiling run produces a layout that is excellent for that run and arbitrary for everything else. |
 | ⬜ | [O0404](docs/optimizations/O0404-stale-profile-matching.md) | Stale profile matching | A profile is collected from one build and used by the next. |
-| ⬜ | [O0405](docs/optimizations/O0405-sample-based-reordering.md) | Sample-based binary reordering | Consume sampled execution data — a timer interrupt recording the instruction pointer, or hardware branch history where it exists. |
+| 🟨 | [O0405](docs/optimizations/O0405-sample-based-reordering.md) | Sample-based binary reordering | Consume sampled execution data — a timer interrupt recording the instruction pointer, or hardware branch history where it exists. |
 | ⬜ | [O0406](docs/optimizations/O0406-layout-assertion-battery.md) | Executable-layout assertion battery | ## What it needs. |
 
 ### P — lean output: pay only for what you use
