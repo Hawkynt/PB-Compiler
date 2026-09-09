@@ -29,7 +29,7 @@ public static class StructurePackingByRange {
   public static int Run(IrFunction fn) => DataLayoutTransformCore.PackRecordFields(fn);
 }
 
-/// <summary>O0324 — stores same-region pointers as 16-bit element indices when the target pointer is wider.</summary>
+/// <summary>O0324 — stores same-region pointers as 16-bit encoded element indices when the target pointer is wider.</summary>
 public static class PointerCompression {
   public static int Run(IrFunction fn, int pointerBits) => DataLayoutTransformCore.CompressPointerArrays(fn, pointerBits);
 }
@@ -200,7 +200,8 @@ internal static class DataLayoutTransformCore {
       if (!PrivatePointerTree(root))
         continue;
       var geps = root.Users.OfType<IrGep>().ToList();
-      if (geps.Count == 0 || geps.Any(g => g.ElementType is not { IsPointer: true }))
+      if (geps.Count == 0 || root.Users.Any(user => user is not IrGep)
+          || geps.Any(g => g.ElementType is not { IsPointer: true }))
         continue;
       IrValue? region = null;
       IrType? regionElement = null;
@@ -241,12 +242,15 @@ internal static class DataLayoutTransformCore {
             case IrStore store: {
               IrValue compressed;
               if (store.Value is IrNullPtr)
-                compressed = new IrConstantInt(IrType.U16, ushort.MaxValue);
+                compressed = new IrConstantInt(IrType.U16, 0);
               else {
                 var target = (IrGep)store.Value;
-                compressed = target.ByteOffset.Type.Bits > 16
-                  ? store.Parent!.InsertBefore(new IrCast(IrCastOp.Trunc, target.ByteOffset, IrType.U16), store)
-                  : target.ByteOffset;
+                IrValue index = target.ByteOffset;
+                if (!index.Type.SameStorage(IrType.U16))
+                  index = store.Parent!.InsertBefore(new IrCast(
+                    index.Type.Bits > 16 ? IrCastOp.Trunc : IrCastOp.ZExt, index, IrType.U16), store);
+                compressed = store.Parent!.InsertBefore(new IrBinary(
+                  IrBinaryOp.Add, index, new IrConstantInt(IrType.U16, 1)), store);
               }
               store.Parent!.InsertBefore(new IrStore(compressed, narrowPtr), store);
               store.EraseFromParent();
@@ -255,8 +259,10 @@ internal static class DataLayoutTransformCore {
             case IrLoad load: {
               var block = load.Parent!;
               var encoded = block.InsertBefore(new IrLoad(IrType.U16, narrowPtr), load);
-              var isNull = block.InsertBefore(new IrCmp(IrCmpPred.Eq, encoded, new IrConstantInt(IrType.U16, ushort.MaxValue)), load);
-              var index = block.InsertBefore(new IrCast(IrCastOp.ZExt, encoded, IrType.I32), load);
+              var isNull = block.InsertBefore(new IrCmp(IrCmpPred.Eq, encoded, new IrConstantInt(IrType.U16, 0)), load);
+              var decoded = block.InsertBefore(new IrBinary(IrBinaryOp.Sub, encoded, new IrConstantInt(IrType.U16, 1)), load);
+              var safeIndex = block.InsertBefore(new IrSelect(isNull, new IrConstantInt(IrType.U16, 0), decoded), load);
+              var index = block.InsertBefore(new IrCast(IrCastOp.ZExt, safeIndex, IrType.I32), load);
               var target = block.InsertBefore(new IrGep(region, index, regionElement), load);
               var value = block.InsertBefore(new IrSelect(isNull, new IrNullPtr(target.Type), target), load);
               load.ReplaceAllUsesWith(value);
