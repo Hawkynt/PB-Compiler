@@ -219,7 +219,7 @@ public sealed class IrPassManager {
     // O0351 shares the dominator-scoped edge facts with correlation, but only explicit pointer-null
     // tests count: dereferencing address zero is not a fault on PB's DOS memory model.
     .Add("ptrcheck", PointerCheckElim.Run)
-    // AFTER sccp and correlate, and the order is the whole of it: the range analysis reasons about
+    // AFTER sccp and correlate, and the order is the whole composition: the range analysis reasons about
     // what an expression CAN be, so it wants the values that are already known to be one thing folded
     // in first - a bounds check against a subscript sccp has resolved is not a range question at all.
     // What is left after those two is the class this answers: a loop counter, an IF-joined variable,
@@ -355,9 +355,13 @@ public sealed class IrPassManager {
     // O0353 consumes the exact-trip append shape produced immediately above and batches its suffix
     // into REPEAT$ + one concatenation in the preheader, so no per-iteration capacity check remains.
     .AddModulePassWhen(includeModulePasses, "strcapacity", StringCapacityHoisting.Run)
-    .AddModulePassWhen(includeModulePasses, "strbyte", StringByteRead.Run)
+    // Classify equality and empty-string comparisons while they are still ordinary string compares;
+    // the O0297 view consumer then preserves that classification with its equality-only view entry.
     .AddModulePassWhen(includeModulePasses, "strcmpeq", StringCompareEquality.Run)
     .AddModulePassWhen(includeModulePasses, "strempty", StringEmptinessTest.Run)
+    .AddModulePassWhen(includeModulePasses, "strslice", StringSliceLength.Run)
+    .AddModulePassWhen(includeModulePasses, "strbyte", StringByteRead.Run)
+    .AddModulePassWhen(includeModulePasses, "strview", StringSliceView.Run)
     .AddModulePassWhen(includeModulePasses, "readonly-globals", ReadOnlyGlobals.Run)
     .AddModulePassWhen(includeModulePasses, "localize-globals", LocalizeGlobals.Run)
     // O0279 wants the SSA/global cleanup above, and IPCP wants the direct edges O0279 exposes.

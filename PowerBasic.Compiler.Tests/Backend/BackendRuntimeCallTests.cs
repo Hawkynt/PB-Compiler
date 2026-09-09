@@ -38,9 +38,16 @@ public sealed class BackendRuntimeCallTests {
 
     FUNCTION StringOps%(BYVAL start%, BYVAL count%) NOINLINE
       DIM value AS STRING
+      DIM tail AS STRING
+      DIM head AS STRING
       value = "abcdef"
-      PRINT MID$(value, start%)
-      IF MID$(value, start%, 1) < "z" THEN PRINT "less"
+      ' The substrings are BOUND rather than printed and compared in place: O0297 consumes a slice
+      ' that flows straight into PRINT or a comparison as a borrowed view, and this fixture is about
+      ' the kernels a materialized substring still calls.
+      tail = MID$(value, start%)
+      PRINT tail
+      head = MID$(value, start%, 1)
+      IF head < "z" THEN PRINT "less"
       MID$(value, start%, count%) = "XYZ"
       PRINT value
       StringOps% = 7
