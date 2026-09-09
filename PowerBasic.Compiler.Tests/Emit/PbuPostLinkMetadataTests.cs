@@ -24,7 +24,10 @@ public sealed class PbuPostLinkMetadataTests {
     Assert.Multiple(() => {
       Assert.That(read.CpuFlags, Is.EqualTo(PbuCpuFlags.Needs386));
       Assert.That(read.Fragments, Has.Count.EqualTo(1));
-      Assert.That(read.Fragments[0], Is.EqualTo(unit.Fragments[0]));
+      var expected = unit.Fragments[0];
+      var actual = read.Fragments[0];
+      Assert.That(actual with { Successors = expected.Successors }, Is.EqualTo(expected));
+      Assert.That(actual.Successors, Is.EqualTo(expected.Successors));
       Assert.That(read.RelativeFixups, Is.EqualTo(unit.RelativeFixups));
     });
   }
