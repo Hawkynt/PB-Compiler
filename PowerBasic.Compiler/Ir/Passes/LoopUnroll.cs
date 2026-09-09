@@ -13,9 +13,11 @@ namespace PowerBasic.Compiler.Ir.Passes;
 ///
 /// <para>
 /// The transform deletes the loop rather than peeling it: each iteration's copy of the body is cloned
-/// with every header phi mapped to its value at that iteration, so the counter becomes a constant
-/// inside each copy and the arithmetic built from it folds. What flows out of the loop is each phi's
-/// value after the last iteration, which is what uses after the loop are rewritten to.
+/// with every header phi mapped to its value at that iteration. O0066 additionally seeds the induction
+/// phi with the exact literal for that copy instead of carrying the previous copy's increment node, so
+/// arithmetic and addressing derived from the counter are immediately exposed to constant folding.
+/// What flows out of the loop is each phi's value after the last iteration, which is what uses after
+/// the loop are rewritten to.
 /// </para>
 /// <para>
 /// It is checked the way every IR pass here is: by rendering the IR back to BASIC before and after
@@ -49,7 +51,8 @@ public static class LoopUnroll {
   /// <summary>A recognized counted loop: the blocks that make it and the counter's constant progression.</summary>
   private sealed record Loop(
     IrBasicBlock Header, IReadOnlyList<IrBasicBlock> Body, IrBasicBlock Latch,
-    IrBasicBlock Preheader, IrBasicBlock Exit, int Trips);
+    IrBasicBlock Preheader, IrBasicBlock Exit, IrPhi Counter,
+    IrConstantInt CounterInit, IrConstantInt CounterStep, int Trips);
 
   private static Loop? Match(IrFunction fn, IrBasicBlock header) {
     if (header.Terminator is not IrCondBr branch || branch.Condition is not IrCmp test)
@@ -129,7 +132,7 @@ public static class LoopUnroll {
     if (trips is not { } count || count == 0 || (count + 1) * size > _MAX_INSTRUCTIONS)
       return null;
 
-    return new(header, bodyBlocks, latch, preheader, exit, count);
+    return new(header, bodyBlocks, latch, preheader, exit, counter, init, step, count);
   }
 
   /// <summary>
@@ -177,8 +180,16 @@ public static class LoopUnroll {
       current[phi] = entry;
     }
 
+    // O0066: the induction value is not merely derivable for every copy, it is already KNOWN here.
+    // Keep it as a literal instead of threading the previous copy's cloned `counter + step` through
+    // the next seed. That makes every counter-derived expression local constant-folding material and
+    // also makes the value after the fully-unrolled loop a literal.
+    var counterValue = loop.CounterInit.Value;
+
     IrBasicBlock? first = null, previousLatch = null;
     for (var trip = 0; trip < loop.Trips; ++trip) {
+      current[loop.Counter] = new IrConstantInt(loop.Counter.Type, counterValue);
+
       var seed = new Dictionary<IrValue, IrValue>(ReferenceEqualityComparer.Instance);
       foreach (var phi in phis)
         seed[phi] = current[phi];
@@ -199,6 +210,9 @@ public static class LoopUnroll {
       }
       foreach (var phi in phis)
         current[phi] = carried[phi];
+
+      counterValue += loop.CounterStep.Value;
+      current[loop.Counter] = new IrConstantInt(loop.Counter.Type, counterValue);
     }
     if (first is null || previousLatch is null)
       return false;
