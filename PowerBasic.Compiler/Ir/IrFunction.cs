@@ -91,6 +91,22 @@ public sealed class IrFunction : IrGlobalValue {
     return argument;
   }
 
+  /// <summary>
+  /// Removes an unused formal parameter and closes the signature gap by re-indexing the survivors.
+  /// ABI-changing passes must rewrite every owned call site before calling this method.
+  /// </summary>
+  internal IrArgument RemoveParameterAt(int index) {
+    var parameter = this._parameters[index];
+    if (!parameter.HasNoUsers)
+      throw new InvalidOperationException("cannot remove a parameter that is still used");
+
+    this._parameters.RemoveAt(index);
+    parameter.Parent = null;
+    for (var i = index; i < this._parameters.Count; ++i)
+      this._parameters[i].Index = i;
+    return parameter;
+  }
+
   /// <summary>Appends a block to the end of the function.</summary>
   public IrBasicBlock AddBlock(IrBasicBlock block) {
     this.AttachProfileIdentity(block);

@@ -24,7 +24,9 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// </para>
 /// <para>
 /// It runs to a fixpoint, because propagating a return value into a caller can make one of THAT
-/// caller's arguments constant, which can make its return constant, and so on up the graph.
+/// caller's arguments constant, which can make its return constant, and so on up the graph. Once the
+/// constant fixpoint is reached, O0069 consumes any parameters that became dead and can specialize a
+/// bounded dominant literal call shape while those whole-program ownership facts are still available.
 /// </para>
 /// </summary>
 public static class IpConstantProp {
@@ -44,7 +46,7 @@ public static class IpConstantProp {
         }
       }
     }
-    return replaced;
+    return replaced + DeadParameterElimination.Run(module);
   }
 
   /// <summary>
