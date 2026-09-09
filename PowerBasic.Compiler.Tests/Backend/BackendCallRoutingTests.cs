@@ -318,6 +318,31 @@ public sealed class BackendCallRoutingTests {
   }
 
   [Test]
+  public void Route_GivenUnoptimizedMainCallingDirectCalleeWithUnsupportedResultShape_ThenDeclinesTheCaller() {
+    var generator = new CodeGenerator(Bind("""
+      FUNCTION F(BYVAL a%) AS FIX
+        F = a% / 2
+      END FUNCTION
+      PRINT F(3)
+      END
+      """)) {
+      Optimize = false,
+      UseExperimentalBackend = true,
+    };
+
+    var routed = generator.BackendRoutedNames.ToList();
+    var declines = generator.BackendDeclines.ToList();
+
+    Assert.Multiple(() => {
+      Assert.That(routed, Does.Not.Contain("F"), "FIX results are not a routed return shape yet");
+      Assert.That(routed, Does.Not.Contain("main"),
+        "a routed caller must not consume a direct callee result shape it cannot transport");
+      Assert.That(declines.Any(d => d.Name == "main" && d.Reason.Contains("calls 'F', which is not routed", StringComparison.Ordinal)),
+        Is.True, string.Join(" | ", declines.Select(d => d.Name + ": " + d.Reason)));
+    });
+  }
+
+  [Test]
   public void Route_GivenUnoptimizedMainCallingUnresolvedDeclaration_ThenDeclinesTheCaller() {
     var generator = new CodeGenerator(Bind("""
       DECLARE FUNCTION Imported%(BYVAL v%)

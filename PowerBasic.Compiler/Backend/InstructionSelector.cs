@@ -3900,33 +3900,6 @@ public sealed partial class InstructionSelector {
       this.PopRounded(cast.Type, this.FloatCell(cast));
       return true;
     }
-    // FILD has no byte source form: it reads signed m16/m32/m64 integers. A BYTE/SBYTE
-    // therefore gets its value-preserving word representation first. Keep the extension in
-    // virtual registers rather than pinning AX just to use CBW: BYTE clears the high byte;
-    // SBYTE uses (x XOR 80h) - 80h, the two's-complement sign-extension identity over the
-    // zero-extended low byte. Both forms are 8086 instructions and leave a signed word FILD
-    // can read exactly.
-    if (from is { IsInteger: true, Bits: 8 }) {
-      if (!this.TryOperand(cast.Value, out var source))
-        return false;
-      var id = this._nextVreg++;
-      var word = new MOperand.Register(MReg.Virtual(id, MRegSize.Word));
-      var lowByte = new MOperand.Register(MReg.Virtual(id, MRegSize.Byte));
-      var zero = new MOperand.Immediate(0);
-      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [word, zero], MovEffect(word, zero)));
-      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lowByte, source], MovEffect(lowByte, source)));
-      if (from.Signed) {
-        this.Add(MOpcode.Xor, word, new MOperand.Immediate(0x80));
-        this.Add(MOpcode.Sub, word, new MOperand.Immediate(0x80));
-      }
-      var byteSlot = this._function.StackSlots.Count;
-      this._function.StackSlots.Add(2);
-      var byteCell = new MOperand.StackSlot(byteSlot, MRegSize.Word);
-      this.StoreWord(byteCell, word);
-      this.EmitX87(MOpcode.Fild, byteCell, reads: true);
-      this.PopRounded(cast.Type, this.FloatCell(cast));
-      return true;
-    }
     if (!from.IsInteger || from.Bits is not (16 or 32))
       return this.Decline($"floating point: {cast.Op} from {from}");
     // FILD reads a SIGNED integer, so an unsigned source is staged one size LARGER than itself with

@@ -124,7 +124,7 @@ public sealed partial class CodeGenerator {
       // the routed lowering already models. Dynamic strings use the word as a handle-cell pointer.
       if (!parameter.ByVal && !IsBackendAbiType(parameter.Type))
         return $"filter: BYREF parameter ({DescribeType(parameter.Type)})";
-      if (parameter.ByVal && !IsBackendAbiType(parameter.Type))
+      if (parameter.ByVal && !IsBackendByValParameterAbiType(parameter.Type))
         return $"filter: parameter type outside the routed ABI ({DescribeType(parameter.Type)})";
     }
     return null;
@@ -135,8 +135,18 @@ public sealed partial class CodeGenerator {
   /// AX (the byte forms consume/produce AL while retaining PB's word-sized stack slot), LONG in DX:AX,
   /// SINGLE/DOUBLE/EXT reals in ST(0), and a dynamic-string handle in AX. EXT arguments keep their
   /// native ten-byte TBYTE stack representation. Records are supported only BYREF (their ABI value is
-  /// one near pointer). FIX/BCD and array values still need routed ABI work.
+  /// one near pointer). BYVAL FIX is admitted separately because its stack representation is the raw
+  /// scaled i64 cell; FIX results, BCD values and array values still need routed ABI work.
   /// </summary>
+  /// <summary>
+  /// Value shapes a BYVAL stack parameter can carry. FIX is special: its call representation is the
+  /// scaled i64 CELL, not the numeric value, so the existing qword stack transport is exactly its ABI.
+  /// The callee converts that cell through rt_fix_down when the parameter is read. This deliberately
+  /// does not make FIX a general result shape: returning the raw i64 would expose the scaled integer.
+  /// </summary>
+  private static bool IsBackendByValParameterAbiType(PbType type)
+    => IsBackendAbiType(type) || type is BcdType { IsFixedPoint: true };
+
   private static bool IsBackendAbiType(PbType type)
     => type is ScalarType { IsFloat: false, ByteSize: 1 or 2 or 4 or 8 }
             or ScalarType { IsFloat: true, ByteSize: 4 or 8 or 10 }
@@ -933,7 +943,14 @@ public sealed partial class CodeGenerator {
         && proc.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase))
       .Take(2)
       .ToList();
-    return matches.Count == 1 && IsBackendAbiConvention(matches[0]) ? matches[0] : null;
+    // A shared stack convention is necessary but not sufficient: the routed caller must also be able
+    // to transport every argument/result VALUE shape. Otherwise a direct FIX-returning callee, for
+    // example, hands back its scaled cell through an ABI the routed call cannot interpret.
+    return matches.Count == 1
+      && IsBackendAbiConvention(matches[0])
+      && BackendAbiShapeReason(matches[0]) is null
+        ? matches[0]
+        : null;
   }
 
   /// <summary>

@@ -23,7 +23,7 @@ Every source body accepted by the DOS compiler must either lower and select thro
 
 The remaining pinned blockers are:
 
-- FIX parameters;
+- FIX results;
 - FASTCALL/WATCALL procedure definitions and register-argument calls;
 - array parameters;
 - module-body wrappers still emitted outside IR, notably `CHAIN`.
@@ -37,6 +37,7 @@ Closed so far:
 - EXT procedure ABI — the complete parameter/result ABI is now represented on the routed path. A BYVAL EXT argument is staged at its declared ten-byte width with `FSTP TBYTE` and pushed as five words from high to low; the callee addresses that caller-owned argument through a TBYTE `ParamCell`; and an EXT result leaves the function in ST(0). This is the same representation already used by the direct emitter, so no conversion format or second calling convention is introduced. `BackendExtendedParameterRoutingTests` executes two ten-byte parameters plus an EXT result against the direct path in both optimizer modes; the selector's stack-call pusher now closes the former call-side gap as well.
 - BYTE procedure ABI — BYTE/SBYTE retain PowerBASIC's word-sized call slot while the value itself is the low byte. Routed calls materialize that word before `PUSH`, routed definitions read the same slot, and byte FUNCTION results cross in AL. The routing gate uses 200 rather than a tiny value so unsigned BYTE semantics are observable rather than accidentally identical to INTEGER.
 - QUAD procedure ABI — a BYVAL QUAD remains eight signed-integer bytes on the stack and is copied into the routed backend's existing qword SSA cell on first use. Calls push the four words high-to-low. PowerBASIC's QUAD result channel is x87 ST(0), so routed returns use `FILD qword` and routed callers immediately recover the integer with `FISTP qword`; every signed 64-bit integer is exact in the x87 extended significand.
+- BYVAL FIX procedure parameters — FIX crosses the stack as the raw scaled signed i64 cell already used by routed FIX storage, not as an IEEE value. The callee performs the ordinary `rt_fix_down` read conversion, so the runtime-owned scale remains authoritative. `BackendFixBcdTests.Route_GivenByValFixParameter_ThenTheScaledQwordCrossesTheProcedureBoundary` sets `pbvFixDigits = 4`, observes `2.4692`, and compares routed execution with the direct emitter. FIX FUNCTION results remain deliberately fenced until their numeric return conversion has a routed ABI.
 - Procedure-local error handling — `ON ERROR` / `RESUME` / `TRY` already lower to inline handler intrinsics. `ProcedureErrorHandlerPreservation` adds the procedure-boundary ABI rule the module body does not need: save the caller's `rt_onerr`/`rt_onerr_bp`/`rt_onerr_sp` triple in this invocation's frame and restore it before every `RET`. `BackendProcedureErrorHandlerRoutingTests` executes both normal return and an inner handled fault while proving the outer caller trap is restored, with optimization on and off.
 
 BYVAL records are deliberately absent from both lists: the direct emitter refuses them as well ("not yet generated: load of UdtType"), so they are a front-end gap rather than a routing class, and they do not block retirement.
