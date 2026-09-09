@@ -180,6 +180,8 @@ public sealed class IrPassManager {
       fn => CacheConflictPadding.Run(fn, dataLayoutTarget!.CacheSizeBytes, dataLayoutTarget.CacheLineBytes, dataLayoutTarget.CacheAssociativity))
     .AddWhen(dataLayoutTarget?.VectorBytes > 1, "arraypad",
       fn => ArrayPaddingAlignment.Run(fn, dataLayoutTarget!.VectorBytes))
+    .AddWhen(dataLayoutTarget?.VectorBytes > 1, "arrayalign",
+      fn => ArrayBaseAlignment.Run(fn, dataLayoutTarget!.VectorBytes, dataLayoutTarget.PointerBits))
     // unrolling goes early, right after values reach SSA: a fully unrolled loop turns its counter
     // into a constant in every copy, which is what gives the rest of the pipeline something to fold
     .Add("unroll", LoopUnroll.Run)
