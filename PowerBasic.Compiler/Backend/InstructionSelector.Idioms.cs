@@ -406,6 +406,11 @@ public sealed partial class InstructionSelector {
   /// </para>
   /// </summary>
   private bool TrySelectBranchlessAbs(IrBinary bin) {
+    // SelectBinary calls this first among the multi-instruction binary idioms. O0056 owns a multiply,
+    // not an ABS tail, but keeping its recognition beside the other IR-shape selectors avoids putting
+    // target-specific reciprocal machinery into the target-neutral pass.
+    if (this.TrySelectSignedMulHigh(bin))
+      return true;
     if (!this._target.Optimize || AbsShape(bin) is not { } shape)
       return false;
     if (!this.TryOperand(shape.Source, out var source))

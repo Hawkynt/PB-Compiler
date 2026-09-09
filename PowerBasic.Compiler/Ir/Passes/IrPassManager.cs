@@ -232,9 +232,9 @@ public sealed class IrPassManager {
     // O0354: unlike the sequential canonicalizers above, local equality saturation keeps several
     // equivalent pure-integer forms alive under a hard budget and extracts the cheapest result.
     .Add("eqsat", EqualitySaturation.Run)
-    // O0359: arithmetic identities used for lowering DIV/MOD and non-trivial constant multiplies are
-    // admitted only after exhaustive verification over the complete 16-bit input domain.
-    .Add("verified-arith", VerifiedArithmeticLowering.Run)
+    // O0359 and O0056: exact integer strength reductions are admitted only after exhaustive Int16
+    // verification; O0056's reciprocal-multiply expansion remains a SPEED-only size/cycle trade.
+    .Add("verified-arith", fn => VerifiedArithmeticLowering.Run(fn, optimizeForSpeed))
     // Horner recovery wants the canonical integer expression after reassociation, while its result is
     // still early enough for GVN and DCE to collect the now-dead literal power tree.
     .Add("polynomial", PolynomialEvaluation.Run)
