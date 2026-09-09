@@ -281,6 +281,10 @@ public sealed class IrPassManager {
     // could not previously see through. What it then does with it differs from the original, which is
     // a finding about that optimizer and not about this pass. Until that is chased down, the summaries
     // are available to callers and this consumer is off.
+    // O0271 must run before either inliner. It consumes source-site profile metadata and creates a
+    // genuine direct call on the hot arm; the fallback keeps the original indirect call and has its
+    // profile cleared, so a later module sweep cannot build an unbounded chain of guards.
+    .AddModulePassWhen(includeModulePasses, "icp", IndirectCallPromotion.Run)
     // SPEED inlining is a module pass so it can see the call graph after the first function fixpoint;
     // every successful inline immediately triggers another function sweep over the exposed body.
     .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "inline-speed",
