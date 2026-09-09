@@ -12,8 +12,8 @@ public sealed partial class CodeGenerator {
   private sealed record PostLinkFunctionRange(
     ProcedureSymbol Procedure,
     MFunction Machine,
-    Label Start,
-    Label End);
+    int Start,
+    int End);
 
   /// <summary>Starts a fresh O0360 metadata census for one emitted artifact.</summary>
   private void ResetPostLinkFunctions() => this._postLinkFunctionRanges.Clear();
@@ -23,17 +23,43 @@ public sealed partial class CodeGenerator {
   /// procedures deliberately do not participate: without machine-block boundaries their bytes are
   /// opaque and O0276 must not pretend otherwise.
   /// </summary>
-  private void TrackPostLinkFunction(ProcedureSymbol procedure, MFunction machine, Label start, Label end)
-    => this._postLinkFunctionRanges.Add(new(procedure, machine, start, end));
+  private void TrackPostLinkFunction(ProcedureSymbol procedure, MFunction machine, Label start, Label end) {
+    if (!start.IsBound || !end.IsBound)
+      throw new InvalidOperationException("post-link function ranges must be recorded after both labels are bound");
+    this._postLinkFunctionRanges.Add(new(procedure, machine, start.Position, end.Position));
+  }
 
   /// <summary>
   /// Converts routed machine blocks plus the assembler's surviving internal branch records into the
-  /// PBU2 fragment map consumed by the final linker rewriter.
+  /// PBU2 fragment map consumed by the final linker rewriter. Unit emission records exact end labels;
+  /// the main executable path historically did not, so its routed procedures infer the end from the
+  /// first assembler label after the final machine block. Routed functions contain no inline asm or
+  /// hidden block-local labels, making that boundary an assembler fact rather than byte disassembly.
   /// </summary>
   private void PopulatePostLinkMetadata(PbuFile unit, RelocatableImage image, int codeLength) {
     ArgumentNullException.ThrowIfNull(unit);
     ArgumentNullException.ThrowIfNull(image);
-    if (this._postLinkFunctionRanges.Count == 0)
+
+    var ranges = new List<PostLinkFunctionRange>(this._postLinkFunctionRanges);
+    var tracked = new HashSet<ProcedureSymbol>(
+      this._postLinkFunctionRanges.Select(range => range.Procedure),
+      ReferenceEqualityComparer.Instance);
+
+    // MAIN does not wrap each routed function with a synthetic end label. Recover that one missing
+    // boundary from the complete bound-label map: MachineEmitter binds exactly one label per block,
+    // and the first later label is therefore the next procedure/thunk/data region. The final block's
+    // epilogue lies before it and remains part of the block as required.
+    foreach (var (procedure, backend) in this.BackendProcs()) {
+      if (tracked.Contains(procedure)
+          || !this._procLabels.TryGetValue(procedure, out var procedureLabel)
+          || !procedureLabel.IsBound
+          || backend.Fn.Blocks.Count == 0)
+        continue;
+      if (this.TryInferPostLinkRange(image, procedure, backend.Fn, procedureLabel.Position, codeLength) is { } inferred)
+        ranges.Add(inferred);
+    }
+
+    if (ranges.Count == 0)
       return;
 
     foreach (var relative in image.RelativeFixups) {
@@ -52,14 +78,49 @@ public sealed partial class CodeGenerator {
         (uint)relative.TargetOffset));
     }
 
-    foreach (var range in this._postLinkFunctionRanges)
+    foreach (var range in ranges.OrderBy(range => range.Start))
       this.TryAppendFragments(unit, image, range, codeLength);
+  }
+
+  private PostLinkFunctionRange? TryInferPostLinkRange(RelocatableImage image,
+      ProcedureSymbol procedure, MFunction machine, int functionStart, int codeLength) {
+    if (functionStart < 0 || functionStart >= codeLength)
+      return null;
+
+    var previous = functionStart;
+    var lastBlockStart = -1;
+    foreach (var block in machine.Blocks) {
+      var match = image.AllBoundLabels
+        .Where(bound => bound.Name == block.Label && bound.Offset >= previous && bound.Offset < codeLength)
+        .OrderBy(bound => bound.Offset)
+        .FirstOrDefault();
+      if (match.Offset < previous)
+        return null;
+      // default(AsmBoundLabel) has Offset 0; only accept it when the requested block genuinely starts
+      // there. A routed procedure itself cannot start below functionStart, so zero otherwise means no match.
+      if (match.Offset == 0 && functionStart != 0 && block.Label != image.AllBoundLabels
+          .FirstOrDefault(bound => bound.Offset == 0).Name)
+        return null;
+      lastBlockStart = match.Offset;
+      previous = match.Offset;
+    }
+    if (lastBlockStart < functionStart)
+      return null;
+
+    var functionEnd = image.AllBoundLabels
+      .Where(bound => bound.Offset > lastBlockStart && bound.Offset <= codeLength)
+      .Select(bound => bound.Offset)
+      .DefaultIfEmpty(codeLength)
+      .Min();
+    return functionEnd > functionStart
+      ? new(procedure, machine, functionStart, functionEnd)
+      : null;
   }
 
   private void TryAppendFragments(PbuFile unit, RelocatableImage image,
       PostLinkFunctionRange range, int codeLength) {
-    var functionStart = range.Start.Position;
-    var functionEnd = range.End.Position;
+    var functionStart = range.Start;
+    var functionEnd = range.End;
     if (functionStart < 0 || functionEnd <= functionStart || functionEnd > codeLength)
       return;
     if (range.Machine.Blocks.Count == 0)
