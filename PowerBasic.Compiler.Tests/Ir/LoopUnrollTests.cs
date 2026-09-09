@@ -9,8 +9,8 @@ using PowerBasic.Compiler.Tests.Exec;
 namespace PowerBasic.Compiler.Tests.Ir;
 
 /// <summary>
-/// Full unrolling of a constant-trip counted loop, on the IR - the first optimization ported from the
-/// direct emitter to the retargetable path.
+/// Loop unrolling on the IR: O0007 full unrolling for small constant-trip loops and O0063 Duff-style
+/// factor-four unrolling for canonical unit-stride loops with a run-time trip count.
 ///
 /// Two things have to be true of it, and only one is about the IR. It has to actually unroll (a pass
 /// that quietly declines everything passes any behavioural test), and the program has to still print
@@ -44,8 +44,8 @@ public sealed class LoopUnrollTests {
     return count;
   }
 
-  private static string Run(string source) {
-    var cg = new CodeGenerator(Bind(source)) { Optimize = true };
+  private static string Run(string source, bool optimize = true) {
+    var cg = new CodeGenerator(Bind(source)) { Optimize = optimize };
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     return Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|");
@@ -175,23 +175,96 @@ public sealed class LoopUnrollTests {
     Assert.That(((IrConstantInt)printed.Args.First()).Value, Is.EqualTo(15), "1+2+3+4+5");
   }
 
-  /// <summary>A loop whose trip count is not known must be left alone rather than guessed at.</summary>
+  /// <summary>O0063: the run-time count selects one of four shared entries, including zero-trip.</summary>
   [Test]
-  public void Unroll_GivenARuntimeBound_ThenItDeclines() {
-    var module = Lowered("""
-      DIM i AS INTEGER
-      DIM n AS INTEGER
-      INPUT n
-      FOR i = 1 TO n
-        PRINT i
-      NEXT i
+  public void Unroll_GivenARuntimeBound_ThenDuffDispatchHandlesEveryRemainderAndZeroTrip() {
+    const string source = """
+      DECLARE SUB Emit(BYVAL n AS INTEGER)
+      CALL Emit(0)
+      CALL Emit(1)
+      CALL Emit(2)
+      CALL Emit(3)
+      CALL Emit(4)
+      CALL Emit(5)
       END
+      SUB Emit(BYVAL n AS INTEGER)
+        DIM i AS INTEGER
+        DIM s AS INTEGER
+        s = 0
+        FOR i = 1 TO n
+          s = s * 10 + i
+        NEXT i
+        PRINT s
+      END SUB
+      """;
+    var expected = Run(source, optimize: false);
+    var module = Lowered(source);
+
+    Assert.That(Unroll(module), Is.EqualTo(1));
+
+    var emit = module.Functions.Single(f => f.Name.Equals("Emit", StringComparison.OrdinalIgnoreCase));
+    var dispatch = emit.Blocks.Single(b => b.Label == "duff.dispatch");
+    var sw = dispatch.Terminator as IrSwitch;
+    Assert.That(sw, Is.Not.Null, "runtime unrolling needs a four-way entry dispatch");
+    Assert.That(sw!.Cases.Select(c => c.Value), Is.EquivalentTo(new long[] { 1, 2, 3 }));
+    Assert.That(emit.Blocks.Count(b => b.Label is "duff.1" or "duff.2" or "duff.3" or "duff.4"), Is.EqualTo(4));
+    Assert.That(IrVerifier.Verify(emit), Is.Empty);
+    Assert.That(Run(IrBasicWriter.Write(module), optimize: false), Is.EqualTo(expected));
+  }
+
+  [Test]
+  public void Unroll_GivenADescendingRuntimeBound_ThenDuffDispatchPreservesTheDirection() {
+    const string source = """
+      DECLARE SUB Emit(BYVAL n AS INTEGER)
+      CALL Emit(7)
+      CALL Emit(5)
+      CALL Emit(4)
+      CALL Emit(3)
+      CALL Emit(2)
+      CALL Emit(1)
+      END
+      SUB Emit(BYVAL n AS INTEGER)
+        DIM i AS INTEGER
+        DIM s AS INTEGER
+        s = 0
+        FOR i = 5 TO n STEP -1
+          s = s * 10 + i
+        NEXT i
+        PRINT s
+      END SUB
+      """;
+    var expected = Run(source, optimize: false);
+    var module = Lowered(source);
+
+    Assert.That(Unroll(module), Is.EqualTo(1));
+
+    var emit = module.Functions.Single(f => f.Name.Equals("Emit", StringComparison.OrdinalIgnoreCase));
+    Assert.That(IrVerifier.Verify(emit), Is.Empty);
+    Assert.That(Run(IrBasicWriter.Write(module), optimize: false), Is.EqualTo(expected));
+  }
+
+  /// <summary>
+  /// A modular step larger than one can jump across the comparison boundary and wrap back into the
+  /// accepted range. O0063 deliberately leaves that shape scalar until a trip-count proof models it.
+  /// </summary>
+  [Test]
+  public void Unroll_GivenARuntimeNonUnitStep_ThenItDeclines() {
+    var module = Lowered("""
+      DECLARE SUB Emit(BYVAL n AS INTEGER)
+      CALL Emit(9)
+      END
+      SUB Emit(BYVAL n AS INTEGER)
+        DIM i AS INTEGER
+        FOR i = 1 TO n STEP 2
+          PRINT i
+        NEXT i
+      END SUB
       """);
 
     Assert.That(Unroll(module), Is.Zero);
   }
 
-  /// <summary>Too many iterations to be worth copying: correct to decline, and it must.</summary>
+  /// <summary>Too many constant iterations to be worth copying: correct to decline, and it must.</summary>
   [Test]
   public void Unroll_GivenALongLoop_ThenItDeclinesRatherThanExplode() {
     var module = Lowered("""
