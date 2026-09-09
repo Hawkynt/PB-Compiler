@@ -29,6 +29,12 @@ public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialec
   public Dialect EffectiveDialect { get; } = compatDialect ?? dialect;
 
   /// <summary>
+  /// Whether source explicitly promises that all string bytes are 7-bit ASCII. The front-end sets
+  /// this from PB36 <c>$OPTION ASCII</c>; middle-end passes may use it to choose implementations that
+  /// are only correct under that contract. It is false for ordinary modules and must never be inferred
+  /// merely from the selected dialect.
+  /// </summary>
+  public bool AsciiOnly { get; set; }
   /// Optional execution profile associated with this module. Optimizations must treat a missing entry
   /// exactly like a missing profile and fall back to their static heuristics rather than inventing heat.
   /// </summary>

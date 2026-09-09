@@ -53,6 +53,16 @@ public sealed class SemanticModel {
   /// <summary>R1 $OPTION VIDEO: console PRINT writes glyphs straight into B800 text memory (fast path in the runtime); explicit opt-in - direct video ignores DOS handle redirection, like genuine PB screen writes.</summary>
   public bool FastVideo { get; set; }
 
+  /// <summary>
+  /// PB36 <c>$OPTION ASCII</c>: the program promises that every string byte remains in the 7-bit
+  /// ASCII repertoire. This is a compile-time contract, not a run-time validator; the IR may select
+  /// ASCII-only implementations whose correctness relies on the promise.
+  /// </summary>
+  public bool AsciiOnly => this.MetaStatements.Any(meta =>
+    meta.Command.Equals("OPTION", StringComparison.OrdinalIgnoreCase)
+    && meta.Arguments is [{ } option, ..]
+    && option.Text.Equals("ASCII", StringComparison.OrdinalIgnoreCase));
+
   /// <summary>pb36 nullable types (<c>T?</c>): maps a synthesized nullable UDT's name to its underlying value type. A UDT in this set carries a <c>Value</c> field and a <c>HasValue</c> presence flag.</summary>
   public Dictionary<string, PbType> NullableUnderlying { get; } = new(StringComparer.OrdinalIgnoreCase);
 

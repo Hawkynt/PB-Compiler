@@ -8,6 +8,13 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// <para>
 /// This is the IR half of four of the direct emitter's string folds - pb36 O0177 (a concatenation of
 /// literals is one pooled literal), the literal side of O0299 (a comparison between two literals is a
+/// number) and O0266 (a zero-length substring is the empty string). O0300 lives here too: UCASE$/LCASE$
+/// of a compile-time-proven 7-bit literal becomes a mapped literal, while a module carrying the explicit
+/// <c>$OPTION ASCII</c> contract redirects a dynamic call to the ASCII-specialized runtime entry.
+/// None of these folds is available to the ordinary constant folders here: a PB string is a runtime
+/// HANDLE, so every one of these is spelled as a call, and <see cref="Sccp"/> and
+/// <see cref="InstCombine"/> reason about values rather than about what a particular runtime routine
+/// means.
 /// number), O0266 (a zero-length substring is the empty string), and the lossless integer half of
 /// O0301 (<c>VAL(STR$(n))</c> keeps <c>n</c> numeric). None of them is available to the ordinary
 /// constant folders here: a PB string is a runtime HANDLE, so every one of these is spelled as a
@@ -31,6 +38,11 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// What it deliberately does not do:
 /// </para>
 /// <list type="bullet">
+///   <item>fold a literal producer with more than one reader. The result is consumed by whoever
+///   takes it, so a second reader is a second handle, and one call cannot make two;</item>
+///   <item>infer that an arbitrary dynamic string is ASCII. Without <see cref="IrModule.AsciiOnly"/>,
+///   O0300 only acts when every input byte is present in the IR and proven below 128. The module flag
+///   is an explicit source contract, never a conclusion drawn from the dialect or from nearby data;</item>
 ///   <item>fold a literal or formatter producer with more than one reader. The result is consumed by
 ///   whoever takes it, so a second reader is a second handle, and one call cannot make two;</item>
 ///   <item>fold <c>VAL(STR$(x))</c> for floating-point <c>x</c>. STR$ selects a dialect-dependent
@@ -49,11 +61,15 @@ public static class StringConstantFold {
   private const string _CONCAT = "rt_str_concat";
   private const string _COMPARE = "rt_str_compare";
   private const string _COMPARE_EQ = "rt_str_compare_eq";
+  private const string _UCASE = "rt_str_ucase";
+  private const string _LCASE = "rt_str_lcase";
+  private const string _UCASE_ASCII = "rt_str_ucase_ascii";
+  private const string _LCASE_ASCII = "rt_str_lcase_ascii";
   private const string _DUP = "rt_str_dup";
   private const string _FREE = "rt_str_free";
   private const string _VAL = "rt_str_val";
 
-  /// <summary>Folds what it can across the module; the number of calls folded away.</summary>
+  /// <summary>Folds what it can across the module; the number of calls folded away or specialized.</summary>
   public static int Run(IrModule module) {
     ArgumentNullException.ThrowIfNull(module);
     // O0303 shares this late module phase because it also materializes pooled literal bytes after the
@@ -80,6 +96,18 @@ public static class StringConstantFold {
       if (call.Parent is null || call.Callee is not IrFunction callee)
         continue;
       switch (callee.Name) {
+        case _UCASE or _LCASE when call.ArgCount == 1: {
+          var toUpper = callee.Name == _UCASE;
+          if (FoldAsciiCase(module, call, toUpper)) {
+            ++folded;
+            continue;
+          }
+          if (module.AsciiOnly) {
+            call.SetOperand(0, AsciiCaseEntry(module, toUpper));
+            ++folded;
+          }
+          continue;
+        }
         case _CONCAT when call.ArgCount == 2:
           folded += FoldConcat(module, call) ? 1 : 0;
           continue;
@@ -98,6 +126,48 @@ public static class StringConstantFold {
       }
     }
     return folded;
+  }
+
+  /// <summary>
+  /// O0300's strongest case: maps UCASE$/LCASE$ at compile time when the operand's entire byte vector
+  /// is known to be 7-bit ASCII. ASCII fixes the case pairs at A-Z/a-z with a 0x20 delta; bytes outside
+  /// those two ranges are unchanged. A high-bit byte refuses the fold instead of treating an unproved
+  /// value as ASCII. The literal producer has exactly one user (enforced by
+  /// <see cref="LiteralOperand"/>), so replacing both calls with one newly interned literal preserves
+  /// the consuming-handle contract.
+  /// </summary>
+  private static bool FoldAsciiCase(IrModule module, IrCall call, bool toUpper) {
+    if (LiteralOperand(call, 1) is not { } literal || literal.Bytes.Any(static b => b >= 0x80))
+      return false;
+
+    var bytes = literal.Bytes.ToArray();
+    for (var i = 0; i < bytes.Length; ++i) {
+      var value = bytes[i];
+      if (toUpper && value is >= (byte)'a' and <= (byte)'z')
+        bytes[i] = (byte)(value - ('a' - 'A'));
+      else if (!toUpper && value is >= (byte)'A' and <= (byte)'Z')
+        bytes[i] = (byte)(value + ('a' - 'A'));
+    }
+
+    var mapped = new IrCall(IrType.Ptr, literal.Call.Callee,
+      [module.AddStringConstant(bytes), new IrConstantInt(IrType.I32, bytes.Length)]);
+    call.Parent!.InsertBefore(mapped, call);
+    call.ReplaceAllUsesWith(mapped);
+    call.EraseFromParent();
+    literal.Call.EraseFromParent();
+    return true;
+  }
+
+  /// <summary>
+  /// Declares the ASCII-only consuming case routine selected by the module contract. Keeping a
+  /// distinct runtime symbol rather than changing the meaning of <c>rt_str_ucase</c>/<c>rt_str_lcase</c>
+  /// preserves the ordinary ABI for modules that made no promise and lets runtime trimming keep the
+  /// SWAR implementation out of such images entirely.
+  /// </summary>
+  private static IrFunction AsciiCaseEntry(IrModule module, bool toUpper) {
+    var name = toUpper ? _UCASE_ASCII : _LCASE_ASCII;
+    return module.FindFunction(name)
+      ?? module.AddFunction(new IrFunction(name, IrType.Ptr, [new IrArgument(IrType.Ptr, 0)]));
   }
 
   /// <summary>A concatenation of two literals becomes the one literal it spells.</summary>

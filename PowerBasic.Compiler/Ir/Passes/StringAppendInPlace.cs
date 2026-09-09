@@ -59,8 +59,8 @@ public static class StringAppendInPlace {
   private static readonly HashSet<string> _freshAllocations = new(StringComparer.Ordinal) {
     _CONST, _CONCAT, _APPEND_VAR, _APPEND_LIT,
     "rt_str_concat_n", "rt_str_left", "rt_str_right", "rt_str_mid", "rt_str_mid2",
-    "rt_str_ucase", "rt_str_lcase", "rt_str_ltrim", "rt_str_rtrim",
-    "rt_str_space", "rt_str_string", "rt_str_string_s", "rt_str_chr",
+    "rt_str_ucase", "rt_str_lcase", "rt_str_ucase_ascii", "rt_str_lcase_ascii",
+    "rt_str_ltrim", "rt_str_rtrim", "rt_str_space", "rt_str_string", "rt_str_string_s", "rt_str_chr",
   };
 
   /// <summary>Rewrites what it can across the module; the number of concatenations changed.</summary>

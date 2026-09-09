@@ -1,0 +1,59 @@
+name: O0300 focused ASCII specialization patch
+
+on:
+  push:
+    branches:
+      - opt/o0300-ascii-string-specialization
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: opt/o0300-ascii-string-specialization
+          fetch-depth: 0
+
+      - name: Recover and apply focused edit script
+        shell: bash
+        run: |
+          git show HEAD^:.github/workflows/o0300-self-patch.yml > /tmp/o0300-old.yml
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path('/tmp/o0300-old.yml').read_text()
+          start_marker = '      - name: Apply O0300 completion edits\n        shell: python\n        run: |\n'
+          end_marker = '      - name: Run focused O0300 tests\n'
+          start = text.index(start_marker) + len(start_marker)
+          end = text.index(end_marker, start)
+          lines = text[start:end].splitlines()
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines) + '\n'
+          Path('/tmp/o0300_patch.py').write_text(script)
+          PY
+          python3 /tmp/o0300_patch.py
+
+      - name: Run focused O0300 tests
+        shell: bash
+        run: |
+          dotnet test PowerBasic.Compiler.Tests/PowerBasic.Compiler.Tests.csproj -c Release \
+            --filter 'FullyQualifiedName~AsciiStringSpecializationTests|FullyQualifiedName~AsciiCaseRuntimeTests|FullyQualifiedName~AsciiStringSpecializationBackendTests|FullyQualifiedName~CBackendTests.Emit_GivenAsciiOption'
+
+      - name: Review patch shape
+        shell: bash
+        run: |
+          git diff --check
+          git status --short
+          git diff --stat
+
+      - name: Commit focused edits and remove helper workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/o0300-self-patch.yml
+          git add PowerBasic.Compiler PowerBasic.Compiler.Tests runtime docs pbc/Driver.cs
+          git diff --cached --check
+          git commit -m "+ complete O0300 ASCII string specialization"
+          git push origin HEAD:opt/o0300-ascii-string-specialization
