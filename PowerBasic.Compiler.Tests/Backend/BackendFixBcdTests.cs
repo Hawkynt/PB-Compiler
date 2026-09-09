@@ -150,6 +150,33 @@ public sealed class BackendFixBcdTests {
       """, "2 | 1.23 | 1.2346");
 
   /// <summary>
+  /// A BYVAL FIX argument travels as the eight-byte scaled cell, not as a floating value. The caller
+  /// quantizes with the current runtime scale, the callee reads the same cell through rt_fix_down,
+  /// and changing pbvFixDigits to four makes both halves observable.
+  /// </summary>
+  [Test]
+  public void Route_GivenByValFixParameter_ThenTheScaledQwordCrossesTheProcedureBoundary() {
+    const string source = """
+      FUNCTION F(BYVAL a@) AS DOUBLE
+        F = a@ * 2
+      END FUNCTION
+      DIM x AS DOUBLE, v@
+      x = 1.23456
+      pbvFixDigits = 4
+      v@ = x
+      PRINT F(v@)
+      """;
+
+    var (output, names) = Run(source, routed: true);
+
+    Assert.Multiple(() => {
+      Assert.That(names, Does.Contain("F"), "the FIX-taking function did not route");
+      Assert.That(output, Is.EqualTo(Run(source, routed: false).Output), "the two emitters disagree");
+      Assert.That(output, Is.EqualTo("2.4692"), "the runtime four-digit FIX scale was not preserved across the call");
+    });
+  }
+
+  /// <summary>
   /// What the lowering actually emits, so the test above cannot pass by accident: a FIX cell is an
   /// i64, a read is <c>sitofp</c> then <c>rt_fix_down</c>, and a write is <c>rt_fix_up</c> then
   /// <c>fptosi</c>. A BCD cell is an f80 with no conversion either way.

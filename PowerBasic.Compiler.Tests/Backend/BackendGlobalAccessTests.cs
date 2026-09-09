@@ -206,18 +206,18 @@ public sealed class BackendGlobalAccessTests {
 
   /// <summary>
   /// Two pools are only sound while nothing uses both, so a DATA reader the routing CANNOT take
-  /// costs the pool to every other reader. <c>Grab</c> here arms an error handler, which the
-  /// procedure filter refuses outright, and it READs - so leaving the module body routed would have
-  /// it advancing <c>ir_dataptr</c> while <c>Grab</c> consults <c>rt_dataptr</c>. The whole
-  /// arrangement is refused, and refused at ROUTING time: by emission the only answer left would be
-  /// an exception, because <c>DataCellOf</c> has no cell to hand back and <c>MachineEmitter</c>
-  /// raises on null.
+  /// costs the pool to every other reader. <c>Grab</c> here is deliberately FASTCALL, a calling
+  /// convention the routed procedure ABI still refuses, and it READs - so leaving the module body
+  /// routed would have it advancing <c>ir_dataptr</c> while <c>Grab</c> consults <c>rt_dataptr</c>.
+  /// The whole arrangement is refused at ROUTING time: by emission the only answer left would be an
+  /// exception, because <c>DataCellOf</c> has no cell to hand back and <c>MachineEmitter</c> raises on
+  /// null.
   ///
   /// <para>
-  /// The subject used to be a SUB that merely was never CALLED, which no longer demonstrates
-  /// anything: an uncalled procedure routes like any other, and both readers then land on the same
-  /// side, which is the arrangement this guard exists to permit. The split has to be forced by a
-  /// reader that genuinely cannot route.
+  /// The subject is intentionally uncalled. That isolates DATA ownership from call compatibility:
+  /// the split exists merely because two bodies which may execute in the program would otherwise
+  /// own different cursor representations. A genuinely unroutable reader is sufficient to prove the
+  /// guard without relying on procedure-local error handling, which now routes.
   /// </para>
   /// </summary>
   [Test]
@@ -229,14 +229,10 @@ public sealed class BackendGlobalAccessTests {
       DATA one, two
       END
 
-      SUB Grab
+      SUB Grab FASTCALL (BYVAL ignored%)
         DIM t AS STRING
-        ON ERROR GOTO Failed
         READ t
         PRINT t
-        EXIT SUB
-      Failed:
-        RESUME NEXT
       END SUB
       """;
     var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
@@ -246,7 +242,7 @@ public sealed class BackendGlobalAccessTests {
     Assert.Multiple(() => {
       Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
       Assert.That(routed.BackendRoutedNames, Does.Not.Contain("Grab"),
-        "the premise: the error handler keeps this procedure on the direct emitter");
+        "the premise: FASTCALL still keeps this DATA reader on the direct emitter");
       Assert.That(routed.BackendRoutedNames, Does.Not.Contain("main"));
       Assert.That(image, Is.Not.Empty);
     });
