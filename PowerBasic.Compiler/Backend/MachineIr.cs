@@ -64,8 +64,15 @@ public abstract record MOperand {
   public sealed record Memory(MReg? Base, MReg? Index, int Scale, int Disp, MRegSize Size,
     MReg? Segment = null, string? SegmentCell = null) : MOperand;
 
-  /// <summary>A code label (branch target) or a data/global symbol address.</summary>
+  /// <summary>A code label used as a direct branch/call target.</summary>
   public sealed record LabelRef(string Name) : MOperand;
+
+  /// <summary>
+  /// The 16-bit near OFFSET of a code symbol as a value. This is distinct from <see cref="LabelRef"/>:
+  /// a label reference is consumed by a control-transfer opcode, while a code offset may be moved or
+  /// pushed like any other word value before a later indirect transfer.
+  /// </summary>
+  public sealed record CodeOffset(string Name) : MOperand;
 
   /// <summary>
   /// A frame stack slot - allocas and register spills resolve to <c>[BP + Offset]</c> at emission.
