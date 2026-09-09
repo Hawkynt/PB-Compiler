@@ -168,7 +168,7 @@ public sealed class IrPassManager {
     .AddWhen(dataLayoutTarget?.PointerBits > 16, "ptrcompress",
       fn => PointerCompression.Run(fn, dataLayoutTarget!.PointerBits))
     .AddWhen(dataLayoutTarget?.CacheSizeBytes > 0, "cachepad",
-      fn => CacheConflictPadding.Run(fn, dataLayoutTarget!.CacheSizeBytes, dataLayoutTarget.CacheLineBytes))
+      fn => CacheConflictPadding.Run(fn, dataLayoutTarget!.CacheSizeBytes, dataLayoutTarget.CacheLineBytes, dataLayoutTarget.CacheAssociativity))
     .AddWhen(dataLayoutTarget?.VectorBytes > 1, "arraypad",
       fn => ArrayPaddingAlignment.Run(fn, dataLayoutTarget!.VectorBytes))
     // unrolling goes early, right after values reach SSA: a fully unrolled loop turns its counter

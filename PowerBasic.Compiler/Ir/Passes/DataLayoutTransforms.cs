@@ -7,7 +7,8 @@ public sealed record IrDataLayoutTarget(
   int PointerBits,
   int VectorBytes = 1,
   int CacheSizeBytes = 0,
-  int CacheLineBytes = 0);
+  int CacheLineBytes = 0,
+  int CacheAssociativity = 1);
 
 /// <summary>O0320 — converts private arrays of packed scalar records into one scalar array per used field.</summary>
 public static class ArrayOfStructsToStructOfArrays {
@@ -39,10 +40,10 @@ public static class ArrayPaddingAlignment {
   public static int Run(IrFunction fn, int vectorBytes) => DataLayoutTransformCore.PadScalarArrays(fn, vectorBytes);
 }
 
-/// <summary>O0326 — pads two-dimensional row strides that are exact cache-size multiples.</summary>
+/// <summary>O0326 — pads two-dimensional row strides that alias one cache set across all ways.</summary>
 public static class CacheConflictPadding {
-  public static int Run(IrFunction fn, int cacheSizeBytes, int cacheLineBytes = 0)
-    => DataLayoutTransformCore.PadConflictingRows(fn, cacheSizeBytes, cacheLineBytes);
+  public static int Run(IrFunction fn, int cacheSizeBytes, int cacheLineBytes = 0, int cacheAssociativity = 1)
+    => DataLayoutTransformCore.PadConflictingRows(fn, cacheSizeBytes, cacheLineBytes, cacheAssociativity);
 }
 
 /// <summary>O0327 — transposes private two-dimensional arrays when the innermost loop walks the strided dimension.</summary>
@@ -302,9 +303,10 @@ internal static class DataLayoutTransformCore {
     return changed;
   }
 
-  internal static int PadConflictingRows(IrFunction fn, int cacheSizeBytes, int cacheLineBytes) {
-    if (cacheSizeBytes <= 0 || fn.Entry is null)
+  internal static int PadConflictingRows(IrFunction fn, int cacheSizeBytes, int cacheLineBytes, int cacheAssociativity) {
+    if (cacheSizeBytes <= 0 || cacheAssociativity <= 0 || cacheSizeBytes % cacheAssociativity != 0 || fn.Entry is null)
       return 0;
+    var conflictSpanBytes = cacheSizeBytes / cacheAssociativity;
     var changed = 0;
     foreach (var root in fn.Entry.Instructions.OfType<IrAlloca>().ToList()) {
       if (root.Name?.Contains(".cachepad", StringComparison.Ordinal) == true)
@@ -317,26 +319,40 @@ internal static class DataLayoutTransformCore {
       if (!TryCommonTwoDimensionalShape(accesses, elementBytes, root.Count, out var rowElements, out var rows, out var rowTerm))
         continue;
       var rowBytes = checked(rowElements * elementBytes);
-      if (rowBytes % cacheSizeBytes != 0)
+      if (rowBytes % conflictSpanBytes != 0)
         continue;
-      var padBytes = Math.Max(elementBytes, cacheLineBytes > 0 ? Gcd(cacheLineBytes, elementBytes) : elementBytes);
-      var padElements = Math.Max(1L, padBytes / elementBytes);
-      var physicalRow = rowElements + padElements;
-      var replacement = InsertAllocaAfter(root, root.Allocated, checked((int)(rows * physicalRow)), (root.Name ?? "array") + ".cachepad");
-      var ok = true;
+      var padElements = cacheLineBytes > 0
+        ? Math.Max(1L, ((long)cacheLineBytes + elementBytes - 1) / elementBytes)
+        : 1L;
+      var physicalRow = checked(rowElements + padElements);
+      var rewrites = new Dictionary<Access, Linear>();
       foreach (var access in accesses) {
         var logical = access.Bytes.Clone();
         if (!logical.DivideExact(elementBytes)
             || !logical.Terms.TryGetValue(rowTerm!, out var rowCoefficient)
-            || Math.Abs(rowCoefficient) != rowElements) { ok = false; break; }
+            || Math.Abs(rowCoefficient) != rowElements) {
+          rewrites.Clear();
+          break;
+        }
         logical.Terms[rowTerm!] = Math.Sign(rowCoefficient) * physicalRow;
         var scaled = TryScaleCopy(logical, elementBytes);
-        if (scaled is null || !RewriteAccess(access, replacement, scaled)) { ok = false; break; }
+        if (scaled is null || !CanBuildLinear(scaled) || access.Instruction.Parent is null) {
+          rewrites.Clear();
+          break;
+        }
+        rewrites[access] = scaled;
       }
-      if (!ok) {
-        replacement.EraseFromParent();
+      if (rewrites.Count != accesses.Count)
+        continue;
+      int paddedElements;
+      try {
+        paddedElements = checked((int)(rows * physicalRow));
+      } catch (OverflowException) {
         continue;
       }
+      var replacement = InsertAllocaAfter(root, root.Allocated, paddedElements, (root.Name ?? "array") + ".cachepad");
+      foreach (var (access, bytes) in rewrites)
+        _ = RewriteAccess(access, replacement, bytes); // preflight above makes this non-failing.
       CleanupDeadGeps(root);
       if (root.HasNoUsers)
         root.EraseFromParent();
