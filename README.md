@@ -273,10 +273,10 @@ status column below cannot drift apart:
 | Family | ✅ implemented | 🟡 partial | ⬜ planned | total |
 |---|---:|---:|---:|---:|
 | C — target-CPU code generation | 3 | 0 | 0 | 3 |
-| O — optimization passes | 193 | 65 | 149 | 407 |
+| O — optimization passes | 195 | 65 | 147 | 407 |
 | P — lean output | 7 | 0 | 0 | 7 |
 | R — runtime speed | 4 | 0 | 0 | 4 |
-| **all** | **207** | **65** | **149** | **421** |
+| **all** | **209** | **65** | **147** | **421** |
 
 
 **One entry, one optimization.** Where a single ID used to cover a family — "peephole",
@@ -603,7 +603,7 @@ next free number rather than displacing anything.
 | 🟡 | [O0286](docs/optimizations/O0286-allocation-elimination.md) | Allocation elimination | A heap allocation whose contents can live entirely in registers or a frame slot should not happen at all. |
 | ⬜ | [O0287](docs/optimizations/O0287-stack-promotion.md) | Stack promotion | A non-escaping dynamic allocation of bounded size can live in the frame instead of the heap. |
 | 🟡 | [O0288](docs/optimizations/O0288-allocation-sinking.md) | Allocation sinking | An allocation performed unconditionally but used only on a rare path should happen on that path. |
-| ⬜ | [O0289](docs/optimizations/O0289-allocation-coalescing.md) | Allocation coalescing | Several short-lived allocations with overlapping lifetimes become one block, carved up internally. |
+| ✅ | [O0289](docs/optimizations/O0289-allocation-coalescing.md) | Allocation coalescing | Several short-lived allocations with overlapping lifetimes become one block, carved up internally. |
 | 🟡 | [O0290](docs/optimizations/O0290-loop-temporary-reuse.md) | Temporary reuse across loop iterations | A temporary allocated and freed inside a loop body is allocated and freed once per iteration. |
 | ✅ | [O0291](docs/optimizations/O0291-handle-ownership-elision.md) | Handle ownership elision | The string manager's discipline is: assigning a value duplicates it and frees the old handle; leaving scope frees it. |
 | ✅ | [O0292](docs/optimizations/O0292-ownership-batching.md) | Ownership operation batching | Where a dup/free pair cannot be removed, it can often be moved out of a loop: acquire once before, release once after, instead of per iteration. |
@@ -631,7 +631,7 @@ next free number rather than displacing anything.
 | ✅ | [O0304](docs/optimizations/O0304-guarded-specialization.md) | Guarded specialization | Check a profitable assumption once, then execute a version compiled under it:. |
 | 🟡 | [O0305](docs/optimizations/O0305-basic-block-versioning.md) | Basic-block versioning | Create specialized copies of a CFG region for different fact sets — a range, an alignment, a known value — and route execution into the right one. |
 | 🟡 | [O0306](docs/optimizations/O0306-loop-versioning.md) | Loop versioning | Keep the fully general loop, and generate a second one with no alias, bounds, alignment or overflow checks at all. |
-| ⬜ | [O0307](docs/optimizations/O0307-speculative-devirtualization.md) | Speculative devirtualization | Where the target set of an indirect call is not provably complete, optimize for the likely target anyway and keep the indirect call as the fallback. |
+| ✅ | [O0307](docs/optimizations/O0307-speculative-devirtualization.md) | Speculative devirtualization | Where the target set of an indirect call is not provably complete, optimize for the likely target anyway and keep the indirect call as the fallback. |
 | ✅ | [O0308](docs/optimizations/O0308-speculative-overflow-elimination.md) | Speculative overflow elimination | O0219 drops a check only when the range proof succeeds. |
 | 🟡 | [O0309](docs/optimizations/O0309-speculative-narrowing.md) | Speculative integer narrowing | O0221 narrows a 32-bit operation when the lattice proves both operands fit a word. |
 | ✅ | [O0310](docs/optimizations/O0310-side-exit-deoptimization.md) | Side exits and deoptimization | Enter optimized code under an assumption and exit to generic code the moment it fails — mid-loop, not only at the entry guard. |
