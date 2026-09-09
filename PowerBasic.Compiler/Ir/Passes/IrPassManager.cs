@@ -294,6 +294,11 @@ public sealed class IrPassManager {
     // genuine direct call on the hot arm; the fallback keeps the original indirect call and has its
     // profile cleared, so a later module sweep cannot build an unbounded chain of guards.
     .AddModulePassWhen(includeModulePasses, "icp", IndirectCallPromotion.Run)
+    // O0281 needs the direct-call/result-buffer shape before any module inliner can absorb the callee,
+    // and O0271 above is one of the things that produces it. Its removal exposes ordinary pure producer
+    // chains, so every successful reduction immediately triggers another function sweep and lets
+    // DCE/SCCP collect them before later module transforms.
+    .AddModulePassWhen(includeModulePasses, "return-structure-reduction", ReturnStructureReduction.Run)
     // SPEED inlining is a module pass so it can see the call graph after the first function fixpoint;
     // every successful inline immediately triggers another function sweep over the exposed body.
     .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "inline-speed",
