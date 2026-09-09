@@ -26,9 +26,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git diff --check
           git diff --stat
           git diff --numstat
+          git diff --name-only
+          echo "selector hunks: $(git diff -- PowerBasic.Compiler/Backend/InstructionSelector.cs | grep -c '^@@' || true)"
+          git diff --unified=2 -- PowerBasic.Compiler/Backend/InstructionSelector.cs | sed -n '1,260p'
+          git diff --check
           test "$(git diff --name-only)" = "PowerBasic.Compiler/Backend/InstructionSelector.cs"
           test "$(git diff -- PowerBasic.Compiler/Backend/InstructionSelector.cs | grep -c '^@@')" -eq 3
 
