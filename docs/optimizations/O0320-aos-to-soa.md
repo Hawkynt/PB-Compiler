@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | ✅ Implemented for private fixed-size packed scalar record arrays |
 | **Stage** | Whole-program data layout |
-| **IR** | ✅ `Ir/Passes/DataLayoutTransforms.cs` — recovers affine record stride/field offsets from byte GEPs, rejects escaping or overlapping storage, then replaces the record buffer with one typed array per field |
+| **IR** | ✅ `Ir/Passes/DataLayoutTransforms.cs` — recovers affine record stride/field offsets from byte GEPs, proves the decomposed and rebuilt fixed-width address arithmetic wrap-free, rejects escaping or overlapping storage, then replaces the record buffer with one typed array per field |
 | **Related** | [O0059](O0059-scalar-replacement.md), [O0163](O0163-dead-field-elimination.md), [O0026](O0026-auto-vectorization.md), [O0144](O0144-interleaved-access-vectorization.md) |
 
 ## The idea
@@ -41,5 +41,10 @@ NEXT
 
 The IR implementation deliberately takes the narrow safe subset: fixed-size stack
 storage, scalar field loads/stores, affine byte offsets, and no opaque use of the
-record pointer. Dynamic/far arrays and whole-record operations therefore decline
-rather than exposing a representation mismatch.
+record pointer. O0320 cancels a recovered record stride only when `IrRangeAnalysis`
+proves every decomposed fixed-width add/subtract/constant-multiply is wrap-free at
+the access, and it preflights the rebuilt field index before changing any storage.
+Widening casts that the generic affine parser would otherwise erase are declined,
+because changing their numeric interpretation or reconstruction width would change
+the address. Dynamic/far arrays, element-scaled GEPs and whole-record operations
+therefore decline rather than exposing a representation mismatch.

@@ -140,12 +140,15 @@ internal static class DataLayoutTransformCore {
   internal static int RewriteRecordArrays(IrFunction fn, RecordMode mode) {
     if (fn.Entry is null)
       return 0;
+    var ranges = mode == RecordMode.Soa ? IrRangeAnalysis.Build(fn) : null;
+    if (mode == RecordMode.Soa && ranges is null)
+      return 0;
     var changed = 0;
     foreach (var root in fn.Entry.Instructions.OfType<IrAlloca>().ToList()) {
       if (!TryRecordShape(fn, root, out var shape))
         continue;
       changed += mode switch {
-        RecordMode.Soa => ToSoa(shape!),
+        RecordMode.Soa => ToSoa(shape!, ranges!),
         RecordMode.Reorder => Reorder(shape!),
         RecordMode.HotCold => SplitHotCold(shape!),
         _ => 0,
@@ -508,11 +511,29 @@ internal static class DataLayoutTransformCore {
     return changed;
   }
 
-  private static int ToSoa(RecordShape shape) {
+  private static int ToSoa(RecordShape shape, IrRangeAnalysis ranges) {
     if (shape.Root.Name?.EndsWith(".hot", StringComparison.Ordinal) == true)
       return 0; // O0322 selected this grouping; the following O0320 pass must not immediately undo it.
     if (shape.Elements < 16 || shape.Fields.Count < 2)
       return 0;
+
+    var indexes = new Dictionary<Access, Linear>();
+    foreach (var field in shape.Fields)
+      foreach (var access in field.Accesses) {
+        if (access.Instruction.Parent is not { } block
+            || !LinearizedPointerIsExact(access.Pointer, shape.Root, ranges, block))
+          return 0;
+        var index = access.Bytes.Clone();
+        try {
+          index.Constant = checked(index.Constant - field.Offset);
+        } catch (OverflowException) {
+          return 0;
+        }
+        if (!index.DivideExact(shape.Stride) || !CanBuildLinearExactly(index, ranges, block))
+          return 0;
+        indexes[access] = index;
+      }
+
     var entry = shape.Root.Parent!;
     var at = entry.Instructions.ToList().IndexOf(shape.Root);
     if (at < 0)
@@ -527,10 +548,7 @@ internal static class DataLayoutTransformCore {
 
     foreach (var field in shape.Fields)
       foreach (var access in field.Accesses) {
-        var index = access.Bytes.Clone();
-        index.Constant -= field.Offset;
-        if (!index.DivideExact(shape.Stride) || BuildLinear(access.Instruction.Parent!, access.Instruction, index) is not { } value)
-          return 0;
+        var value = BuildLinear(access.Instruction.Parent!, access.Instruction, indexes[access])!;
         var pointer = access.Instruction.Parent!.InsertBefore(new IrGep(fieldArrays[field], value, field.Type), access.Instruction);
         SetPointer(access.Instruction, pointer);
       }
@@ -782,8 +800,11 @@ internal static class DataLayoutTransformCore {
     long stride = 0;
     foreach (var access in accesses)
       foreach (var coefficient in access.Bytes.Terms.Values)
-        if (coefficient != 0)
+        if (coefficient != 0) {
+          if (coefficient == long.MinValue)
+            return false;
           stride = Gcd(stride, Math.Abs(coefficient));
+        }
     if (stride < 2 || stride > root.Count || root.Count % stride != 0)
       return false;
     var fields = new Dictionary<long, Field>();
@@ -915,6 +936,101 @@ internal static class DataLayoutTransformCore {
       if (!term.Type.SameStorage(type!)) return false;
     }
     return true;
+  }
+
+  private static bool LinearizedPointerIsExact(
+      IrValue pointer,
+      IrAlloca root,
+      IrRangeAnalysis ranges,
+      IrBasicBlock block) {
+    var current = pointer;
+    while (current is IrGep gep) {
+      // O0320 is documented for byte-addressed packed records. Element-indexed GEP scaling happens
+      // in pointer arithmetic, whose target index width is deliberately absent from target-neutral IR.
+      if (gep.ElementType is not null || !LinearizedValueIsExact(gep.ByteOffset, ranges, block))
+        return false;
+      current = gep.BasePtr;
+    }
+    return ReferenceEquals(current, root);
+  }
+
+  private static bool LinearizedValueIsExact(IrValue value, IrRangeAnalysis ranges, IrBasicBlock block, int depth = 0) {
+    if (depth > 16 || !value.Type.IsInteger)
+      return false;
+
+    switch (value) {
+      case IrConstantInt constant:
+        return ValueRange.OfType(constant.Type).Contains(constant.Value);
+
+      case IrBinary { Op: IrBinaryOp.Add or IrBinaryOp.Sub } binary: {
+        if (!LinearizedValueIsExact(binary.Lhs, ranges, block, depth + 1)
+            || !LinearizedValueIsExact(binary.Rhs, ranges, block, depth + 1))
+          return false;
+        var left = ranges.RangeAt(binary.Lhs, block);
+        var right = ranges.RangeAt(binary.Rhs, block);
+        var mathematical = binary.Op == IrBinaryOp.Add ? left.Add(right) : left.Subtract(right);
+        return FitsExactly(mathematical, binary.Type);
+      }
+
+      case IrBinary { Op: IrBinaryOp.Mul } binary when binary.Lhs is IrConstantInt
+                                                       || binary.Rhs is IrConstantInt: {
+        if (!LinearizedValueIsExact(binary.Lhs, ranges, block, depth + 1)
+            || !LinearizedValueIsExact(binary.Rhs, ranges, block, depth + 1))
+          return false;
+        var mathematical = ranges.RangeAt(binary.Lhs, block).Multiply(ranges.RangeAt(binary.Rhs, block));
+        return FitsExactly(mathematical, binary.Type);
+      }
+
+      // TryLinear currently erases widening casts. That is only algebraically valid when both the
+      // interpretation and the reconstruction width are preserved; keeping that proof out of O0320
+      // is safer than silently turning zext/sext bit semantics into a different field index.
+      case IrCast { Op: IrCastOp.ZExt or IrCastOp.SExt } cast when cast.Type.Bits >= cast.Value.Type.Bits:
+        return false;
+
+      default:
+        return true; // TryLinear keeps this SSA value opaque, so its exact runtime semantics survive.
+    }
+  }
+
+  private static bool CanBuildLinearExactly(Linear expression, IrRangeAnalysis ranges, IrBasicBlock block) {
+    if (!CanBuildLinear(expression))
+      return false;
+
+    var type = expression.Terms.Keys.FirstOrDefault()?.Type ?? IrType.I32;
+    var bounds = ValueRange.OfType(type);
+    ValueRange? accumulated = null;
+    if (expression.Constant != 0 || expression.Terms.Count == 0) {
+      if (!bounds.Contains(expression.Constant))
+        return false;
+      accumulated = ValueRange.Of(expression.Constant);
+    }
+
+    foreach (var (term, coefficient) in expression.Terms) {
+      if (coefficient != 1 && !bounds.Contains(coefficient))
+        return false;
+      var termRange = ranges.RangeAt(term, block);
+      var contribution = coefficient == 1
+        ? termRange
+        : termRange.Multiply(ValueRange.Of(coefficient));
+      if (!FitsExactly(contribution, type))
+        return false;
+      if (accumulated is not { } current) {
+        accumulated = contribution;
+        continue;
+      }
+      var sum = current.Add(contribution);
+      if (!FitsExactly(sum, type))
+        return false;
+      accumulated = sum;
+    }
+    return accumulated is not null;
+  }
+
+  private static bool FitsExactly(ValueRange range, IrType type) {
+    if (range.IsEmpty || range.IsTop)
+      return false;
+    var bounds = ValueRange.OfType(type);
+    return !bounds.IsTop && range.Lo >= bounds.Lo && range.Hi <= bounds.Hi;
   }
 
   private static IrValue? BuildLinear(IrBasicBlock block, IrInstruction before, Linear expression) {
