@@ -273,6 +273,15 @@ internal static class RuntimeAbi {
     ["rt_fprint_strvar"] = new("rt_str_print",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.AX)], _callerSaved, FileSelect: true),
 
+    // O0297 view PRINT borrows the stable string handle and prints the already-clamped range. Start
+    // and length are i32 in target-neutral IR but are bounded by PB's <=32750-byte string limit, so
+    // LowWord is the deliberate narrowing rather than a guessed Word conversion.
+    ["rt_print_strview"] = new("rt_str_print_view",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.LowWord, Reg.CX), new(ArgKind.LowWord, Reg.DX)], _callerSaved),
+    ["rt_fprint_strview"] = new("rt_str_print_view",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.AX),
+       new(ArgKind.LowWord, Reg.CX), new(ArgKind.LowWord, Reg.DX)], _callerSaved, FileSelect: true),
+
     // files. The runtime documents these conventions at the head of DosRuntime.Files.cs:
     // FOpen AX=filename handle, BX=PB file number, CX=mode, SI=reclen; FClose AX=file number.
     // The IR names the file number first, the runtime puts it in BX - hence the per-position table
@@ -353,6 +362,9 @@ internal static class RuntimeAbi {
     // ResultKind.WidenedWord for why, and why the CWD is not optional
     ["rt_str_len"] = new("rt_len", [new(ArgKind.Word, Reg.AX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.WidenedWord),
+    // O0297's descriptor query is the same word result without consuming the stable handle.
+    ["rt_str_len_borrow"] = new("rt_len_borrow", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.WidenedWord),
 
     // "Val: AX=handle -> ST0 (consumes)". The only runtime entry so far that answers on the x87 stack
     ["rt_str_val"] = new("rt_val", [new(ArgKind.Word, Reg.AX)], _callerSaved,
@@ -390,6 +402,19 @@ internal static class RuntimeAbi {
     ["rt_str_compare_eq"] = new("rt_strcmpeq",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.WidenedWord),
+
+    // O0297 compares two borrowed ranges. All four bounds are clamped to the <=32750-byte source
+    // descriptors before the call, so their low words are the complete DOS values. The six-register
+    // convention is intentionally explicit because any accidental overlap would be a silent compare
+    // against the wrong range.
+    ["rt_str_compare_view"] = new("rt_strviewcmp", [
+      new(ArgKind.Word, Reg.AX), new(ArgKind.LowWord, Reg.CX), new(ArgKind.LowWord, Reg.BX),
+      new(ArgKind.Word, Reg.DX), new(ArgKind.LowWord, Reg.SI), new(ArgKind.LowWord, Reg.DI),
+    ], _callerSaved, Result: Reg.AX, Answer: ResultKind.WidenedWord),
+    ["rt_str_compare_eq_view"] = new("rt_strviewcmpeq", [
+      new(ArgKind.Word, Reg.AX), new(ArgKind.LowWord, Reg.CX), new(ArgKind.LowWord, Reg.BX),
+      new(ArgKind.Word, Reg.DX), new(ArgKind.LowWord, Reg.SI), new(ArgKind.LowWord, Reg.DI),
+    ], _callerSaved, Result: Reg.AX, Answer: ResultKind.WidenedWord),
 
     // "MidSet: AX=target handle, CX=start, BX=length limit, DX=value handle (in-place replace;
     // consumes the value handle only)". The IR declares a pointer result and the routine returns
