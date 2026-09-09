@@ -197,8 +197,12 @@ public sealed partial class CodeGenerator {
       main.Exports.Add(new(symbol, PbuExportKind.Sub, 0u, (uint)position));
 
     this.AddImportsAndFixups(main, relocatable, relocatable.Image.Length);
+    this.PopulatePostLinkMetadata(main, relocatable,
+      this._listingCodeLength > 0 ? this._listingCodeLength : relocatable.Image.Length);
 
     var linker = new Linker();
+    if (this.PostLinkProfile is { } profile)
+      linker.UsePostLinkProfile(profile);
     foreach (var unit in units)
       linker.AddUnit(unit);
     foreach (var library in libraries)
