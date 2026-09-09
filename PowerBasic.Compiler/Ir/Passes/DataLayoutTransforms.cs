@@ -55,7 +55,7 @@ public static class TemporaryArrayFusion {
   public static int Run(IrFunction fn) => DataLayoutTransformCore.EliminateTemporaryArrays(fn);
 }
 
-/// <summary>O0329 — contracts a one-element sliding-window array recurrence to a loop-carried SSA value.</summary>
+/// <summary>O0329 — contracts a fixed-width sliding-window array recurrence to loop-carried SSA values.</summary>
 public static class ArrayContraction {
   public static int Run(IrFunction fn) => DataLayoutTransformCore.ContractSlidingWindows(fn);
 }
@@ -440,62 +440,142 @@ internal static class DataLayoutTransformCore {
     if (fn.Entry is null)
       return 0;
     var loops = fn.Blocks.Select(h => CountedLoop.Match(fn, h)).Where(l => l is not null).Cast<CountedLoop>().ToList();
-    if (loops.Count == 0)
-      return 0;
-    var dom = IrDominators.Build(fn);
-    if (dom is null)
+    if (loops.Count == 0 || IrDominators.Build(fn) is not { } dom)
       return 0;
     var changed = 0;
     foreach (var root in fn.Entry.Instructions.OfType<IrAlloca>().ToList()) {
       if (root.Count < 2 || IrAliasAnalysis.StorageBytes(root.Allocated) is not { } elementBytes || !PrivatePointerTree(root))
         continue;
       var accesses = CollectAccesses(fn, root);
-      if (accesses is null)
+      if (accesses is null
+          || accesses.Any(a => a.BytesWide != elementBytes || !a.ValueType.SameStorage(root.Allocated)))
         continue;
       foreach (var loop in loops) {
+        if (IrLoopDependenceAnalysis.Analyze(fn, loop.Header) is not { IsComplete: true })
+          continue;
+
         var insideStores = accesses.Where(a => a.Instruction is IrStore && a.Instruction.Parent is { } b && loop.Region.Contains(b)).ToList();
         var insideLoads = accesses.Where(a => a.Instruction is IrLoad && a.Instruction.Parent is { } b && loop.Region.Contains(b)).ToList();
         var outsideStores = accesses.Where(a => a.Instruction is IrStore && (a.Instruction.Parent is not { } b || !loop.Region.Contains(b))).ToList();
         var outsideLoads = accesses.Where(a => a.Instruction is IrLoad && (a.Instruction.Parent is not { } b || !loop.Region.Contains(b))).ToList();
-        if (insideStores.Count != 1 || insideLoads.Count != 1 || outsideStores.Count != 1 || outsideLoads.Count != 1)
+        if (insideStores.Count != 1 || insideLoads.Count == 0 || outsideLoads.Count == 0)
           continue;
         if (!TryCounterProgression(loop, out var firstCounter, out var step) || step != 1)
-          continue; // distance-one contraction currently models an advancing one-element window only.
+          continue; // the scalar shift below models an advancing fixed-width window.
+
         var current = IndexOf(insideStores[0], loop.Counter, elementBytes);
-        var previous = IndexOf(insideLoads[0], loop.Counter, elementBytes);
-        if (current is null || previous is null || current.Value - previous.Value != 1)
+        if (current is null)
           continue;
-        if (!ConstantElement(outsideStores[0], elementBytes, out var initialIndex)
-            || !ConstantElement(outsideLoads[0], elementBytes, out var finalIndex))
+        var historyLoads = new List<(IrLoad Load, int Distance)>(insideLoads.Count);
+        var width = 0;
+        var valid = true;
+        foreach (var access in insideLoads) {
+          var previous = IndexOf(access, loop.Counter, elementBytes);
+          long distance;
+          try {
+            distance = previous is null ? 0 : checked(current.Value - previous.Value);
+          } catch (OverflowException) {
+            valid = false;
+            break;
+          }
+          if (previous is null || distance <= 0 || distance > root.Count) {
+            valid = false;
+            break;
+          }
+          var slot = checked((int)distance);
+          width = Math.Max(width, slot);
+          historyLoads.Add(((IrLoad)access.Instruction, slot));
+        }
+        if (!valid || width == 0 || outsideStores.Count != width)
           continue;
-        long expectedInitial;
-        long expectedFinal;
+
+        long firstCurrent;
+        long lastCurrent;
         try {
-          expectedInitial = checked(firstCounter + previous.Value);
-          expectedFinal = checked(firstCounter + current.Value + checked((loop.Trips - 1) * step));
+          firstCurrent = checked(firstCounter + current.Value);
+          lastCurrent = checked(firstCurrent + checked((loop.Trips - 1) * step));
         } catch (OverflowException) {
           continue;
         }
-        if (initialIndex != expectedInitial || finalIndex != expectedFinal)
-          continue;
-        var seedStore = (IrStore)outsideStores[0].Instruction;
-        var recurrenceStore = (IrStore)insideStores[0].Instruction;
-        var previousLoad = (IrLoad)insideLoads[0].Instruction;
-        var finalLoad = (IrLoad)outsideLoads[0].Instruction;
-        if (seedStore.Parent is null || recurrenceStore.Parent is null || finalLoad.Parent is null
-            || !dom.Dominates(seedStore.Parent, loop.Preheader)
-            || !dom.Dominates(recurrenceStore.Parent, loop.Latch)
-            || !dom.Dominates(loop.Exit, finalLoad.Parent))
+        if (firstCurrent < width || lastCurrent < firstCurrent || lastCurrent >= root.Count)
           continue;
 
-        var phi = loop.Header.AppendPhi(new IrPhi(root.Allocated) { Name = (root.Name ?? "array") + ".window" });
-        phi.AddIncoming(seedStore.Value, loop.Preheader);
-        previousLoad.ReplaceAllUsesWith(phi);
-        phi.AddIncoming(recurrenceStore.Value, loop.Latch);
-        finalLoad.ReplaceAllUsesWith(phi);
-        previousLoad.EraseFromParent();
-        finalLoad.EraseFromParent();
-        seedStore.EraseFromParent();
+        var seeds = new IrStore?[width];
+        foreach (var access in outsideStores) {
+          if (!ConstantElement(access, elementBytes, out var seedIndex)) {
+            valid = false;
+            break;
+          }
+          long distance;
+          try {
+            distance = checked(firstCurrent - seedIndex);
+          } catch (OverflowException) {
+            valid = false;
+            break;
+          }
+          if (distance is < 1 || distance > width) {
+            valid = false;
+            break;
+          }
+          var store = (IrStore)access.Instruction;
+          var slot = checked((int)distance) - 1;
+          if (seeds[slot] is not null || store.Parent is null || !dom.Dominates(store.Parent, loop.Preheader)) {
+            valid = false;
+            break;
+          }
+          seeds[slot] = store;
+        }
+        if (!valid || seeds.Any(seed => seed is null))
+          continue;
+
+        var finalLoads = new List<(IrLoad Load, int Distance)>(outsideLoads.Count);
+        foreach (var access in outsideLoads) {
+          if (!ConstantElement(access, elementBytes, out var finalIndex)) {
+            valid = false;
+            break;
+          }
+          long distance;
+          try {
+            distance = checked(checked(lastCurrent - finalIndex) + 1);
+          } catch (OverflowException) {
+            valid = false;
+            break;
+          }
+          var load = (IrLoad)access.Instruction;
+          if (distance is < 1 || distance > width || load.Parent is null || !dom.Dominates(loop.Exit, load.Parent)) {
+            valid = false;
+            break;
+          }
+          finalLoads.Add((load, checked((int)distance)));
+        }
+        if (!valid)
+          continue;
+
+        var recurrenceStore = (IrStore)insideStores[0].Instruction;
+        if (recurrenceStore.Parent is null || !dom.Dominates(recurrenceStore.Parent, loop.Latch))
+          continue; // every current element must be produced on every iteration.
+
+        var history = new IrPhi[width];
+        for (var slot = 0; slot < history.Length; ++slot) {
+          var suffix = width == 1 ? ".window" : $".window.{slot + 1}";
+          var phi = loop.Header.AppendPhi(new IrPhi(root.Allocated) { Name = (root.Name ?? "array") + suffix });
+          phi.AddIncoming(seeds[slot]!.Value, loop.Preheader);
+          history[slot] = phi;
+        }
+
+        foreach (var (load, distance) in historyLoads)
+          load.ReplaceAllUsesWith(history[distance - 1]);
+        for (var slot = 0; slot < history.Length; ++slot)
+          history[slot].AddIncoming(slot == 0 ? recurrenceStore.Value : history[slot - 1], loop.Latch);
+        foreach (var (load, distance) in finalLoads)
+          load.ReplaceAllUsesWith(history[distance - 1]);
+
+        foreach (var (load, _) in historyLoads)
+          load.EraseFromParent();
+        foreach (var (load, _) in finalLoads)
+          load.EraseFromParent();
+        foreach (var seed in seeds)
+          seed!.EraseFromParent();
         recurrenceStore.EraseFromParent();
         CleanupDeadGeps(root);
         Dce.Run(fn);
