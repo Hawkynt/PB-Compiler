@@ -27,6 +27,38 @@ public sealed class TargetCostTests {
     });
   }
 
+  [TestCase(CpuTier.I8086, 16, 3, 4)]
+  [TestCase(CpuTier.I80286, 16, 4, 6)]
+  [TestCase(CpuTier.I80386, 32, 4, 8)]
+  [TestCase(CpuTier.I80486, 32, 6, 12)]
+  [TestCase(CpuTier.Pentium, 32, 8, 16)]
+  [TestCase(CpuTier.P6, 32, 8, 16)]
+  public void MemoryRoutineBudget_GivenCpuTier_ThenWidthAndStoreLimitsAreTargetSpecific(
+      CpuTier tier, int scalarBits, int memcpyStores, int memsetStores) {
+    var cost = Cost(tier, CostObjective.Speed);
+
+    Assert.Multiple(() => {
+      Assert.That(cost.MemoryScalarBits, Is.EqualTo(scalarBits));
+      Assert.That(cost.MaxStoresPerMemcpy, Is.EqualTo(memcpyStores));
+      Assert.That(cost.MaxStoresPerMemset, Is.EqualTo(memsetStores));
+    });
+  }
+
+  [Test]
+  public void MemoryRoutineBudget_GivenSizeObjective_ThenLaterTargetsAreClamped() {
+    var p6Speed = Cost(CpuTier.P6, CostObjective.Speed);
+    var p6Size = Cost(CpuTier.P6, CostObjective.Size);
+
+    Assert.Multiple(() => {
+      Assert.That(p6Speed.MaxStoresPerMemcpy, Is.EqualTo(8));
+      Assert.That(p6Size.MaxStoresPerMemcpy, Is.EqualTo(4));
+      Assert.That(p6Speed.MaxStoresPerMemset, Is.EqualTo(16));
+      Assert.That(p6Size.MaxStoresPerMemset, Is.EqualTo(8));
+      Assert.That(p6Size.MemoryScalarBits, Is.EqualTo(32),
+        "SIZE changes the profitability budget, not which scalar instructions the CPU can execute");
+    });
+  }
+
   [Test]
   public void PreferBranchless_GivenNoPredictorTiers_WhenAsked_ThenKeepsTheBranch() {
     // 8086/286/386 have no dynamic predictor: a not-taken branch is nearly free, so branchless mask
