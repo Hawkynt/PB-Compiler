@@ -601,8 +601,8 @@ internal static class RuntimeAbi {
       Answer: ResultKind.Pair, Constants: [(Reg.AX, 0)]),
     ["rt_finput_i64"] = new("rt_inp_i64", [new(ArgKind.Word, Reg.AX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.St0ToQword),
-    ["rt_input_i64"] = new("rt_inp_i64", [], _callerSaved, Result: Reg.AX,
-      Answer: ResultKind.St0ToQword, Constants: [(Reg.AX, 0)]),
+    ["rt_input_i64"] = new("rt_inp_i64", [], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.St0ToQword, Constants: [(Reg.AX, 0)]),
 
     // "Rnd: -> ST0 = next SINGLE in [0,1)"
     ["rt_rnd"] = new("rt_rnd", [], _callerSaved, Answer: ResultKind.St0),
@@ -708,8 +708,10 @@ internal static class RuntimeAbi {
     // it. On this target that scaling is a 32-bit doubling, which is the whole body of the shim.
     //
     //   "rt_arr_alloc:     DX:AX = byte count  -> AX = offset within rt_arrseg (zero-filled)"
+    //   "rt_arr_alloc_nz:  DX:AX = byte count  -> AX = offset within rt_arrseg (not initialized)"
     //   "rt_arr_alloc_ptr: DX:AX = element count -> the same, for a block of target pointers"
     ["rt_arr_alloc"] = new("rt_arr_alloc", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
+    ["rt_arr_alloc_nz"] = new("rt_arr_alloc_nz", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
     ["rt_arr_alloc_ptr"] = new("rt_arr_alloc_ptr", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
 
     //   "rt_arr_realloc: BX = old block, CX = old byte count, DX:AX = new byte count -> AX = new block"

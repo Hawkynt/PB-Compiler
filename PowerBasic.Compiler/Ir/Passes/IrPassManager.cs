@@ -17,6 +17,7 @@ public sealed class IrVerificationException(string pass, IReadOnlyList<string> e
 public sealed class IrPassManager {
 
   private readonly List<(string Name, Func<IrFunction, int> Run)> _passes = [];
+  private readonly List<(string Name, Func<IrModule, int> Run)> _earlyModulePasses = [];
   private readonly List<(string Name, Func<IrModule, int> Run)> _modulePasses = [];
 
   /// <summary>When true, verifies the function after each pass and throws on any error.</summary>
@@ -33,6 +34,19 @@ public sealed class IrPassManager {
   /// <summary>Adds a pass only when <paramref name="condition"/> holds, so the pipeline stays one expression.</summary>
   public IrPassManager AddWhen(bool condition, string name, Func<IrFunction, int> pass)
     => condition ? this.Add(name, pass) : this;
+
+  /// <summary>
+  /// Adds a module pass that must see freshly lowered IR, before function passes erase its proof shape.
+  /// Such passes run once at the start of <see cref="RunOnModule"/>.
+  /// </summary>
+  public IrPassManager AddEarlyModulePass(string name, Func<IrModule, int> pass) {
+    this._earlyModulePasses.Add((name, pass));
+    return this;
+  }
+
+  /// <summary>Adds an early module pass only when <paramref name="condition"/> holds.</summary>
+  public IrPassManager AddEarlyModulePassWhen(bool condition, string name, Func<IrModule, int> pass)
+    => condition ? this.AddEarlyModulePass(name, pass) : this;
 
   /// <summary>Adds an interprocedural pass, run by <see cref="RunOnModule"/> around the function pipeline.</summary>
   public IrPassManager AddModulePass(string name, Func<IrModule, int> pass) {
@@ -75,17 +89,20 @@ public sealed class IrPassManager {
   }
 
   /// <summary>
-  /// Runs the pipeline over a module: the interprocedural passes first, then the function pipeline
-  /// over each body, then the interprocedural passes once more.
+  /// Runs the pipeline over a module: early module passes first while lowering provenance is intact,
+  /// then the function pipeline over each body, then the interprocedural passes. Every changing late
+  /// module pass is followed by another function sweep over what it exposed.
   ///
-  /// The order is the point. A pass that reasons across the call graph wants the bodies simplified —
-  /// a return is only recognisably constant after the body's arithmetic has folded — while the
-  /// function passes want the call-graph facts, because a parameter that turns out to be a literal is
-  /// what makes a branch inside the body foldable. Neither can go first and be right, so both run,
-  /// and the second interprocedural sweep is followed by another function sweep for what it exposed.
+  /// The order is the point. Early passes are the exceptional transformations whose safety proof IS
+  /// the lowering shape and therefore cannot wait for mem2reg/unrolling. Ordinary interprocedural
+  /// passes instead want bodies simplified — a return is only recognisably constant after arithmetic
+  /// has folded — while the function passes want call-graph facts. Those late passes therefore run
+  /// after the first function fixpoint and each successful one feeds another function sweep.
   /// </summary>
   public void RunOnModule(IrModule module) {
     module.OptimizeForSpeed = this.OptimizeForSpeed;
+    foreach (var (_, run) in this._earlyModulePasses)
+      run(module);
     RunFunctions();
     foreach (var (_, run) in this._modulePasses)
       if (run(module) > 0)
@@ -160,6 +177,10 @@ public sealed class IrPassManager {
   public static IrPassManager Standard(bool optimizeForSpeed = false, bool includeModulePasses = true,
       IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false)
     => new IrPassManager { OptimizeForSpeed = optimizeForSpeed }
+    // O0068 must see the allocation descriptor and the source-shaped FOR before mem2reg/unrolling
+    // turn them into a different proof problem. It is a module pass only because it may mint the
+    // rt_arr_alloc_nz declaration; the actual proof is local to one function.
+    .AddEarlyModulePassWhen(includeModulePasses, "array-zero-fill", ArrayZeroFillElision.Run)
     .Add("mem2reg", Mem2Reg.Run)
     // O0320-O0329 and O0313 have to see the explicit memory graph and the original counted-loop shape.
     // Run the aggregate transforms before AoS->SoA destroys record identity, then the loop/data

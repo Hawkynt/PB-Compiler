@@ -747,6 +747,7 @@ public sealed class BackendCoverageTests {
     "MATHUNIT.BAS",
     "MINI.BAS",       // $INCLUDE - absent until the census ran the preprocessor rather than the lexer
     "WEIRD.BAS",      // $INCLUDE plus a $IF chain; brings 49 procedures and the corpus's only ON…GOSUB
+    "O0068IR.BAS",    // the O0068 oracle: a $DYNAMIC array whose FOR overwrites every element
     "ONERR.BAS",
     "ONERRNXT.BAS",
     "CODEGEN.BAS",
@@ -944,5 +945,7 @@ public sealed class BackendCoverageTests {
     // They routed all along.
     "MINI.BAS",
     "WEIRD.BAS",
+    // Added with O0068: the zero-fill elision oracle. A new corpus program, not a widening.
+    "O0068IR.BAS",
   ];
 }
