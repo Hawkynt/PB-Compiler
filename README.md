@@ -110,13 +110,18 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
   namespace; the enum name aliases its underlying integer type.
 
 **Expressions and operators**
-- **Compound assignment** — `+= -= *= /= \= ^= &=` (e.g. `n% += 1`, `s$ &= t$`).
+- **Compound assignment** — `+= -= *= /= \= ^= &=`, and the shift/rotate
+  operators below (e.g. `n% += 1`, `s$ &= t$`, `n% <<= 1`).
 - **Short-circuit ternary `IF()`** — `IF(cond, whenTrue, whenFalse)` evaluates
   only the taken branch.
 - **`ANDALSO` / `ORELSE`** — short-circuiting boolean operators (vs. PB's bitwise
   `AND`/`OR`).
 - **Shift / rotate / bitwise operators** — `<<`, `>>`, `<<<`, `>>>`, `<<>`,
-  `<>>`, `|`, each with a compound-assignment form.
+  `<>>`, `|`, each with a compound-assignment form (`n% <<= 1`). These are the
+  3.6 spelling; the wordy `SHIFT LEFT`/`SHIFT RIGHT` and `ROTATE LEFT`/`ROTATE
+  RIGHT` statements are older (PB 3.0) and still accepted. They are not quite
+  synonyms: the statements shift **logically**, so `SHIFT RIGHT n%, 1` is
+  `n% >>>= 1` rather than the arithmetic `n% >>= 1`.
 - **Scaled pointer arithmetic** — `ptr +* index` / `ptr -* index` step a typed
   pointer by element size (leaving raw `ptr + n` unscaled, as before).
 - **From-end array index** — `arr(^1)` is the last element.
@@ -268,10 +273,10 @@ status column below cannot drift apart:
 | Family | ✅ implemented | 🟡 partial | ⬜ planned | total |
 |---|---:|---:|---:|---:|
 | C — target-CPU code generation | 3 | 0 | 0 | 3 |
-| O — optimization passes | 182 | 60 | 165 | 407 |
+| O — optimization passes | 183 | 61 | 163 | 407 |
 | P — lean output | 7 | 0 | 0 | 7 |
 | R — runtime speed | 4 | 0 | 0 | 4 |
-| **all** | **196** | **60** | **165** | **421** |
+| **all** | **197** | **61** | **163** | **421** |
 
 
 **One entry, one optimization.** Where a single ID used to cover a family — "peephole",
@@ -415,7 +420,7 @@ next free number rather than displacing anything.
 | 🟡 | [O0129](docs/optimizations/O0129-unroll-factor-cost-model.md) | Unroll factor by cost model | Pick the factor from register pressure, code size, latency and trip count — not a constant 4. |
 | ✅ | [O0130](docs/optimizations/O0130-trip-count-versioning.md) | Trip-count versioning | Scalar, unrolled and vector variants of a loop, selected at run time by the count. |
 | ⬜ | [O0131](docs/optimizations/O0131-exact-trip-count.md) | Exact trip count | One analysis deriving the iteration count from start, end, step and PB's wrap semantics. |
-| ⬜ | [O0132](docs/optimizations/O0132-compile-time-loop-evaluation.md) | Compile-time loop evaluation | A finite pure loop runs at compile time and becomes initialized data. |
+| ✅ | [O0132](docs/optimizations/O0132-compile-time-loop-evaluation.md) | Compile-time loop evaluation | A finite pure loop runs at compile time and becomes initialized data. |
 | ⬜ | [O0133](docs/optimizations/O0133-loop-prefix-evaluation.md) | Loop prefix evaluation | Evaluate the first iterations, then start the runtime loop from that state. |
 | ✅ | [O0134](docs/optimizations/O0134-recurrence-shortening.md) | Recurrence shortening & closed forms | Replace a loop-carried recurrence with its closed form where the wrap semantics permit. |
 | ⬜ | [O0135](docs/optimizations/O0135-loop-phi-constants.md) | Loop-phi constants | A loop-carried value that never actually changes folds; a decidable back edge collapses. |
@@ -581,7 +586,7 @@ next free number rather than displacing anything.
 
 | | # | Optimization | What it does |
 |---|---|---|---|
-| ⬜ | [O0277](docs/optimizations/O0277-link-time-optimization.md) | Link-time optimization | Most of this compiler's interprocedural passes are restricted to a self-contained main. |
+| 🟡 | [O0277](docs/optimizations/O0277-link-time-optimization.md) | Link-time optimization | Most of this compiler's interprocedural passes are restricted to a self-contained main. |
 | ✅ | [O0278](docs/optimizations/O0278-global-variable-localization.md) | Global variable localization | A `DIM SHARED` global that only one procedure ever touches is not really global. |
 | ✅ | [O0279](docs/optimizations/O0279-whole-program-devirtualization.md) | Whole-program devirtualization | When the complete set of possible targets of an indirect call is known, the call can be resolved statically. |
 | ⬜ | [O0280](docs/optimizations/O0280-argument-structure-reduction.md) | Argument structure reduction | A procedure that takes a whole `TYPE` (or a descriptor) but reads only two of its fields does not need the aggregate. |

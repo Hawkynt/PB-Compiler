@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned (pure *function* calls with constant arguments already fold — [O0025](O0025-pure-function-folding.md)) |
+| **Status** | ✅ Implemented — falls out of `LoopUnroll` + `Sccp` + `Dce` composing, pinned by `LoopUnrollTests` |
 | **Stage** | Mid-end |
 | **IR** | ✅ falls out of `LoopUnroll` + `Sccp` + `Dce` composing — a constant-trip loop is unrolled, its counter becomes a constant in each copy, the arithmetic folds and the dead copies go. `FOR i = 1 TO 5 / s = s + i / NEXT` becomes `PRINT 15`. Pinned by `LoopUnrollTests` |
 | **Related** | [O0025](O0025-pure-function-folding.md), [O0020](O0020-idiom-replacement.md), [O0133](O0133-loop-prefix-evaluation.md) |

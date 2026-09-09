@@ -280,7 +280,7 @@ public static class DialectFacts {
     [LanguageFeature.ConsInOut] = (Dialect.Pb35, "CONSIN/CONSOUT"),
     [LanguageFeature.StringPtrInType] = (Dialect.Pb35, "STRING PTR fields inside TYPE/UNION"),
     [LanguageFeature.ExpressionBodiedProc] = (Dialect.Pb36, "expression-bodied FUNCTION ('= expression' single-expression body)"),
-    [LanguageFeature.CompoundAssignment] = (Dialect.Pb36, "compound assignment operators (+=, -=, *=, /=, \\=, ^=, &=)"),
+    [LanguageFeature.CompoundAssignment] = (Dialect.Pb36, "compound assignment operators (+=, -=, *=, /=, \\=, ^=, &=, |=, <<=, >>=, <<<=, >>>=, <<>=, <>>=)"),
     [LanguageFeature.DimInitializer] = (Dialect.Pb36, "DIM with initializer ('DIM x = value' / 'DIM x AS type = value')"),
     [LanguageFeature.TernaryIf] = (Dialect.Pb36, "ternary IF() operator ('IF(condition, trueValue, falseValue)')"),
     [LanguageFeature.ObjectInitializer] = (Dialect.Pb36, "object initializer ('NEW type { .field = value }')"),
