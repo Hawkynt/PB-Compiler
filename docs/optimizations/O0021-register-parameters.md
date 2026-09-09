@@ -6,7 +6,7 @@
 | **Stage** | Whole-program analysis + emitter (both sides of the call) |
 | **Source** | `CodeGen/OptRegParm.cs`, `CodeGen/CodeGenerator.Procs.cs` (`ConventionRegisters`) |
 | **Gate** | `--optimize` + `$OPTIMIZE SPEED`, `pb36` only |
-| **Related** | [O0006](O0006-inlining.md), [O0018](O0018-interprocedural-constant-propagation.md), [docs/LINKER.md](../LINKER.md) (`WATCALL`) |
+| **Related** | [O0006](O0006-inlining.md), [O0018](O0018-interprocedural-constant-propagation.md), [O0282](O0282-internal-calling-convention.md), [docs/LINKER.md](../LINKER.md) (`WATCALL`) |
 
 ## What it is
 
@@ -16,6 +16,11 @@ self-contained module and its address is never taken via `CODEPTR`/`CALL DWORD`
 (AX, DX, BX, CX) instead of on the stack, reusing the existing `WATCALL`
 lowering. Caller and callee flip together, so the behavior is identical and the
 per-call push/pop traffic disappears along with the frame slots.
+
+O0282 now owns the per-procedure policy around this mechanism: an address escape
+fences the escaped target instead of disabling unrelated procedures, and one-word
+BYREF near pointers can use the same register slots. O0021 remains the original
+word-sized `BYVAL` lowering.
 
 ## Sample
 
@@ -70,8 +75,10 @@ The `pb36` spelling of the same thing by hand would be a `WATCALL` declaration.
 
 ## Why it is safe
 
-- The optimization is **disabled wholesale** if any procedure address is taken:
-  an indirect call could reach the procedure with the stack convention.
+- An explicitly address-taken procedure keeps its BASIC convention; unrelated
+  procedures may still specialize under O0282's per-procedure ownership proof.
+- Typed procedure-pointer dispatch remains a conservative module-wide fence until
+  its complete target set is represented and can be proven.
 - It is **skipped when external units or libraries are linked** — they may call
   with the stack convention and were compiled without this knowledge.
 - It is not applied to non-`pb36` dialects at all, so the golden output of every
@@ -81,7 +88,7 @@ The `pb36` spelling of the same thing by hand would be a `WATCALL` declaration.
 ## Limits
 
 LONG, float and pointer arguments in register *pairs* are the remaining piece
-(see the roadmap item "full register arg-size rules" in `docs/ROADMAP.md`); the
-general internal calling convention — BYREF collapse after inlining, segment
-register pinning — is [O0071](O0071-segment-register-allocation.md) and
-[O0069](O0069-dead-parameter-elimination.md).
+(see [O0282](O0282-internal-calling-convention.md)); the general internal calling
+convention also composes with BYREF collapse and dead-parameter elimination
+([O0069](O0069-dead-parameter-elimination.md)) and segment-register allocation
+([O0071](O0071-segment-register-allocation.md)).
