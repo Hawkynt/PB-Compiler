@@ -11,6 +11,16 @@ the equivalent BASIC the transformed program behaves like.
 - ⬜ **planned** — a roadmap idea. The "after" code on those pages is what the
   pass *would* emit; the compiler does not do it yet.
 
+**Where it stands.**
+
+| Family | ✅ implemented | 🟡 partial | ⬜ planned | total |
+|---|---:|---:|---:|---:|
+| C — target-CPU code generation | 3 | 0 | 0 | 3 |
+| O — optimization passes | 182 | 60 | 165 | 407 |
+| P — lean output | 7 | 0 | 0 | 7 |
+| R — runtime speed | 4 | 0 | 0 | 4 |
+| **all** | **196** | **60** | **165** | **421** |
+
 **A 🟡 page's "Still planned" list can be behind the code, so check before building
 from it.** Of eight partial pages read closely on 2026-08-06, four named work that
 had already shipped: O0113's constant-limit fold (present for word counters, only

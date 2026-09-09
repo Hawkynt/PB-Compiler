@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Implemented — `WholeProgramDevirtualization`, registered as the `devirt` module pass |
 | **Stage** | Whole-program |
 | **IR** | ✅ `Ir/Passes/WholeProgramDevirtualization.cs` — exact singleton-target devirtualization over function values, pointer-preserving bitcasts, phi/select merges, fully-visible callback parameters, and closed local pointer cells. Null-capable, multi-target, escaping, cyclic, or signature-incompatible flows decline. Registered after global localization and before IPCP; verified by `WholeProgramDevirtualizationTests` and `IrPassObservableEquivalenceTests` |
 | **Related** | [O0271](O0271-indirect-call-promotion.md), [O0307](O0307-speculative-devirtualization.md), [O0022](O0022-dead-procedure-elimination.md) |

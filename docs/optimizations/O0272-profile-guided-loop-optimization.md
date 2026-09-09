@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Partial — IR trip histograms + dominant-small-trip peeling implemented; collection, vector-width policy and bimodal versioning remain |
+| **Status** | 🟡 Partial — IR trip histograms + dominant-small-trip peeling implemented; collection, vector-width policy and bimodal versioning remain |
 | **Stage** | Mid-end policy |
 | **IR** | ✅ `Ir/IrProfileMetadata.cs`, `Ir/Passes/ProfileGuidedLoopOptimization.cs` — distribution-aware guarded prefix peeling; wired into the early loop/unroll slot |
 | **Verified by** | `PowerBasic.Compiler.Tests/Ir/ProfileGuidedLoopOptimizationTests.cs` |

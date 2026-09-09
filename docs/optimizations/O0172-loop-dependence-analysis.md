@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Partial — exact equal-stride affine dependences plus GCD/interval disproval are implemented; general SIV/MIV and nested-loop direction vectors remain |
+| **Status** | 🟡 Partial — exact equal-stride affine dependences plus GCD/interval disproval are implemented; general SIV/MIV and nested-loop direction vectors remain |
 | **Stage** | Analysis infrastructure |
 | **Source** | `Ir/Analysis/IrLoopDependenceAnalysis.cs` |
 | **Related** | [O0171](O0171-alias-analysis.md), [O0122](O0122-loop-interchange.md), [O0123](O0123-loop-distribution.md), [O0026](O0026-auto-vectorization.md) |

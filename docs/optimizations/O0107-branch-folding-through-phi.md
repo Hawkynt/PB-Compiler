@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Partial — `SimplifyCfg` threads unconditional predecessors around PHI-only conditional blocks when the incoming `i1` is constant; general expression folding, critical edges and code duplication remain planned |
+| **Status** | 🟡 Partial — `SimplifyCfg` threads unconditional predecessors around PHI-only conditional blocks when the incoming `i1` is constant; general expression folding, critical edges and code duplication remain planned |
 | **Stage** | SSA mid-end |
 | **Related** | [O0017](O0017-sccp.md), [O0045](O0045-ir-correlated-value-propagation.md), [O0106](O0106-trace-formation.md) |
 

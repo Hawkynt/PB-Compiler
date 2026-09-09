@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Partial — conservative two-level IR interchange implemented; general dependence-direction vectors and richer nests remain |
+| **Status** | 🟡 Partial — conservative two-level IR interchange implemented; general dependence-direction vectors and richer nests remain |
 | **Stage** | Mid-end |
 | **Source** | `Ir/Passes/LoopInterchange.cs` |
 | **Verified by** | `PowerBasic.Compiler.Tests/Ir/LoopInterchangeTests.cs` |

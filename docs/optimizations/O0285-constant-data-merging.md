@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
+| **Status** | ✅ Implemented — `ConstantDataMerging`, registered in `IrPassManager.Standard` |
 | **Stage** | Linker / image writer |
 | **IR** | ✅ `Ir/Passes/ConstantDataMerging.cs` — module-level exact, containment and prefix/suffix pooling for provably non-escaping read-only byte blobs; cross-unit pooling still awaits [O0277](O0277-link-time-optimization.md) |
 | **Gate** | `--optimize` |

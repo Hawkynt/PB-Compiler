@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Partial — exact binary32 basic-arithmetic narrowing is implemented; general expression/error-budget analysis remains planned |
+| **Status** | 🟡 Partial — exact binary32 basic-arithmetic narrowing is implemented; general expression/error-budget analysis remains planned |
 | **Stage** | IR middle end |
 | **Gate** | Ordinary optimizer for the exact cases |
 | **IR** | `FpSimplify.NarrowDemandedPrecision` |

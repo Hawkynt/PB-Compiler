@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 IR basic-block layout consumer implemented; native/linker integration remains in O0268/O0360–O0406 |
+| **Status** | 🟡 IR basic-block layout consumer implemented; native/linker integration remains in O0268/O0360–O0406 |
 | **Stage** | IR middle-end consumer → backend/linker layout integration |
 | **Related** | [O0104](O0104-block-placement.md), [O0268](O0268-profile-collection.md), [O0360](O0360-basic-block-fragments.md) |
 

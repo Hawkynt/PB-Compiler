@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Partial — local single-use `FAdd`/`FSub`/`FMul` trees are balanced; loop-reduction splitting remains target-gated work |
+| **Status** | 🟡 Partial — local single-use `FAdd`/`FSub`/`FMul` trees are balanced; loop-reduction splitting remains target-gated work |
 | **Stage** | IR middle end |
 | **Gate** | Optimizer + `$OPTIMIZE SPEED` / `-OZF` |
 | **IR** | `FpFastMath` with `IrFastMathFlags.Reassociate`; subtraction additionally requires `NoSignedZeros` |

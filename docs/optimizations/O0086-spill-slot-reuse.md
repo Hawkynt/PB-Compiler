@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Partial — direct-emitter CSE temporaries reuse physical 4-byte frame slots across proven-dead top-level runs; within-run coloring, argument staging and backend spill slots remain planned |
+| **Status** | 🟡 Partial — direct-emitter CSE temporaries reuse physical 4-byte frame slots across proven-dead top-level runs; within-run coloring, argument staging and backend spill slots remain planned |
 | **Stage** | Frame layout |
 | **Related** | [O0003](O0003-common-subexpression-elimination.md), [O0019](O0019-zero-elision.md), [O0065](O0065-dead-frame-store-elimination.md) |
 
