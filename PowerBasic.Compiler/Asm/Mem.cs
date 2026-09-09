@@ -1,15 +1,21 @@
 namespace PowerBasic.Compiler.Asm;
 
 /// <summary>
-/// A 16-bit real-mode memory operand: any legal combination of base
-/// (BX/BP), index (SI/DI), displacement and/or label, an optional segment
-/// override and an optional explicit operand size.
+/// A real-mode memory/effective-address operand: 8086 16-bit base/index forms or, when a 386
+/// register is named, a 32-bit ModRM/SIB form with scale 1/2/4/8. The operand may additionally carry
+/// a displacement or label, segment override and explicit data width.
 /// </summary>
 public readonly struct Mem {
 
+  private int _scale { get; init; }
+
   public Reg? Base { get; private init; }
   public Reg? Index { get; private init; }
+  public int Scale => this._scale == 0 ? 1 : this._scale;
   public int Displacement { get; private init; }
+
+  /// <summary>Whether this operand needs the 386 address-size override in 16-bit real mode.</summary>
+  public bool Uses32BitAddressing => this.Base?.IsDword() == true || this.Index?.IsDword() == true;
 
   /// <summary>When set, the bound label's image offset is added to <see cref="Displacement"/>.</summary>
   public Label? Label { get; private init; }
@@ -22,20 +28,28 @@ public readonly struct Mem {
   public static Mem At(int displacement) => new() { Displacement = displacement };
 
   public static Mem At(Reg @base, int displacement = 0) {
-    ValidateRegister(@base, null);
-    return new() { Base = @base, Displacement = displacement };
+    ValidateRegisters(@base, null, 1);
+    return new() { Base = @base, _scale = 1, Displacement = displacement };
   }
 
   public static Mem At(Reg @base, Reg index, int displacement = 0) {
-    ValidateRegister(@base, index);
-    return new() { Base = @base, Index = index, Displacement = displacement };
+    ValidateRegisters(@base, index, 1);
+    return new() { Base = @base, Index = index, _scale = 1, Displacement = displacement };
+  }
+
+  /// <summary>Creates a 386 SIB address <c>[base + index*scale + displacement]</c>.</summary>
+  public static Mem AtScaled(Reg? @base, Reg index, int scale, int displacement = 0) {
+    ValidateRegisters(@base, index, scale);
+    if (!index.IsDword())
+      throw new ArgumentException("Scaled addressing requires 32-bit address registers.", nameof(index));
+    return new() { Base = @base, Index = index, _scale = scale, Displacement = displacement };
   }
 
   public static Mem At(Label label, int displacement = 0) => new() { Label = label ?? throw new ArgumentNullException(nameof(label)), Displacement = displacement };
 
   public static Mem At(Reg @base, Label label, int displacement = 0) {
-    ValidateRegister(@base, null);
-    return new() { Base = @base, Label = label ?? throw new ArgumentNullException(nameof(label)), Displacement = displacement };
+    ValidateRegisters(@base, null, 1);
+    return new() { Base = @base, _scale = 1, Label = label ?? throw new ArgumentNullException(nameof(label)), Displacement = displacement };
   }
 
   #endregion
@@ -91,17 +105,31 @@ public readonly struct Mem {
   public Mem Fs() => this.Seg(Reg.FS);
   public Mem Gs() => this.Seg(Reg.GS);
 
-  private static void ValidateRegister(Reg @base, Reg? index) {
+  private static void ValidateRegisters(Reg? @base, Reg? index, int scale) {
+    if (scale is not (1 or 2 or 4 or 8))
+      throw new ArgumentOutOfRangeException(nameof(scale), scale, "x86 scale must be 1, 2, 4 or 8.");
+
+    var usesDword = @base?.IsDword() == true || index?.IsDword() == true;
+    if (usesDword) {
+      if (@base is { } b && !b.IsDword())
+        throw new ArgumentException("16- and 32-bit address registers cannot be mixed.", nameof(@base));
+      if (index is { } i && !i.IsDword())
+        throw new ArgumentException("16- and 32-bit address registers cannot be mixed.", nameof(index));
+      if (index == Reg.ESP)
+        throw new ArgumentException("ESP cannot be a SIB index register.", nameof(index));
+      return;
+    }
+
     if (@base is not (Reg.BX or Reg.BP or Reg.SI or Reg.DI))
       throw new ArgumentException($"{@base} cannot address memory in 16-bit mode (use BX, BP, SI or DI).", nameof(@base));
-
-    if (index is not { } i)
+    if (scale != 1)
+      throw new ArgumentException("Scaled addressing requires 32-bit address registers.", nameof(scale));
+    if (index is not { } wordIndex)
       return;
-
-    if (i is not (Reg.SI or Reg.DI))
-      throw new ArgumentException($"{i} is not a valid index register (use SI or DI).", nameof(index));
+    if (wordIndex is not (Reg.SI or Reg.DI))
+      throw new ArgumentException($"{wordIndex} is not a valid index register (use SI or DI).", nameof(index));
     if (@base is not (Reg.BX or Reg.BP))
-      throw new ArgumentException($"{@base}+{i} is not a valid base/index combination.", nameof(@base));
+      throw new ArgumentException($"{@base}+{wordIndex} is not a valid base/index combination.", nameof(@base));
   }
 
   public override string ToString() {
@@ -109,7 +137,7 @@ public readonly struct Mem {
     if (this.Base is { } b)
       parts.Add(b.ToString());
     if (this.Index is { } i)
-      parts.Add(i.ToString());
+      parts.Add(this.Scale == 1 ? i.ToString() : $"{i}*{this.Scale}");
     if (this.Label is { } l)
       parts.Add(l.ToString());
     if (this.Displacement != 0 || parts.Count == 0)

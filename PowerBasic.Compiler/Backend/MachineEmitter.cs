@@ -290,7 +290,14 @@ public sealed class MachineEmitter {
         else
           asm.Imul(this.Reg(ops[0]), this.Reg(ops[1]));
         break;
-      case MOpcode.Lea: asm.Lea(this.Reg(ops[0]), this.Mem(ops[1])); break;
+      case MOpcode.Lea: {
+        var address = this.Mem(ops[1]);
+        if (address.Uses32BitAddressing)
+          asm.Lea386(this.Reg(ops[0]), address);
+        else
+          asm.Lea(this.Reg(ops[0]), address);
+        break;
+      }
       // the read-modify-write pair the peephole folds a load/add/store trio into - one instruction
       // against the cell, and no register spent on a value nobody reads
       case MOpcode.Inc:
@@ -662,6 +669,10 @@ public sealed class MachineEmitter {
     MOperand.ParamCell p => Sized(Asm.Mem.At(Asm.Reg.BP,
       this._paramOffsets[p.ArgumentIndex] + p.ByteDelta), p.Size),
     MOperand.DataCell cell => this.DataCell(cell),
+    MOperand.Memory m when m.Index is { } x
+        && (m.Scale != 1 || m.Base?.Size == MRegSize.Dword || x.Size == MRegSize.Dword)
+      => Segmented(Sized(Asm.Mem.AtScaled(m.Base is { } b ? this.Resolve(b) : null,
+        this.Resolve(x), m.Scale, m.Disp), m.Size), m),
     MOperand.Memory m when m.Index is { } x => Segmented(Sized(Asm.Mem.At(this.Resolve(m.Base!.Value), this.Resolve(x), m.Disp), m.Size), m),
     MOperand.Memory m when m.Base is { } b => Segmented(Sized(Asm.Mem.At(this.Resolve(b), m.Disp), m.Size), m),
     MOperand.Memory m => Segmented(Sized(Asm.Mem.At(m.Disp), m.Size), m),
